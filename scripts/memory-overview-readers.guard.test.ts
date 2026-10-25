@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const READERS: Record<string, { kind: 'owner' | 'outward'; why: string }> = {
-  'src/daemon/bootstrap/wire-visit.ts': { kind: 'outward', why: '串门「CC 眼中的主人」,进别人 CC 的 prompt' },
+  'src/features/social/wire-visit.ts': { kind: 'outward', why: '串门「CC 眼中的主人」,进别人 CC 的 prompt' },
   'src/lib/memory-synthesis.ts': { kind: 'owner', why: '写它的人(合成)' },
   'src/lib/memory-artifacts.ts': { kind: 'owner', why: '清单登记它是生成物' },
   'src/lib/memory-edit.ts': { kind: 'owner', why: '记忆编辑能编辑的路径之一' },

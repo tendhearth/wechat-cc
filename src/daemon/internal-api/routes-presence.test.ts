@@ -63,7 +63,7 @@ describe('GET /v1/companion/presence', () => {
 
   it('串门登记 → visiting;外发 degraded → offline;子系统 degraded → degraded', async () => {
     const d = deps({
-      social: { penpal: { activeVisit: () => ({ id: 'v', peerLabel: '邻居「阿柚」', hosting: false, sinceMs: NOW }) } } as never,
+      socialView: { activeVisit: () => ({ id: 'v', peerLabel: '邻居「阿柚」', hosting: false, sinceMs: NOW }) } as never,
       outbound: () => ({ state: 'degraded', consecutiveFailures: 3, lastOkAt: null, lastError: 'x' }) as never,
     })
     const r = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)

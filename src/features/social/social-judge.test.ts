@@ -1,0 +1,119 @@
+import { describe, expect, it } from 'vitest'
+import { makeJudge, type JudgeInput } from './social-judge'
+import { NetworkUnprotectedError } from '../../lib/network-gate'
+
+const card: JudgeInput = { topic: '找摄影搭子' }
+
+describe('makeJudge', () => {
+  it('parses a clean {"match":"yes","blurb":"..."} verdict', async () => {
+    const judge = makeJudge({
+      policy: '兴趣可说；住址不可',
+      runTurn: async () => JSON.stringify({ match: 'yes', blurb: '我主人也爱摄影' }),
+    })
+    const r = await judge(card)
+    expect(r).toEqual({ match: 'yes', blurb: '我主人也爱摄影' })
+  })
+
+  it('tolerates stray prose around the JSON', async () => {
+    const judge = makeJudge({
+      policy: 'p',
+      runTurn: async () => 'Sure, here is my answer:\n```json\n{"match":"yes","blurb":"也爱摄影"}\n```\nHope that helps!',
+    })
+    const r = await judge(card)
+    expect(r).toEqual({ match: 'yes', blurb: '也爱摄影' })
+  })
+
+  it('parses a {"match":"no"} verdict with no blurb', async () => {
+    const judge = makeJudge({
+      policy: 'p',
+      runTurn: async () => JSON.stringify({ match: 'no' }),
+    })
+    expect(await judge(card)).toEqual({ match: 'no' })
+  })
+
+  // 评审 #193 P2-3:被网络守护拒了 ≠ 判了「不能」。判成 no 会让心愿被转问、主人听到「我说不知道」——
+  // 可判官根本没跑。原样抛出,调用方整件事算跳过。
+  it('runTurn refused by the network guard → rethrows (not a silent no)', async () => {
+    const judge = makeJudge({ policy: 'p', runTurn: async () => { throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude') } })
+    await expect(judge(card)).rejects.toMatchObject({ code: 'network_unprotected' })
+  })
+
+  it('unparseable garbage → match:no (fail closed, never leak)', async () => {
+    const judge = makeJudge({
+      policy: 'p',
+      runTurn: async () => 'this is not json at all',
+    })
+    expect(await judge(card)).toEqual({ match: 'no' })
+  })
+
+  it('a match:"yes" with no blurb field is still a yes (blurb optional)', async () => {
+    const judge = makeJudge({
+      policy: 'p',
+      runTurn: async () => JSON.stringify({ match: 'yes' }),
+    })
+    expect(await judge(card)).toEqual({ match: 'yes' })
+  })
+
+  it('runTurn throwing → match:no (never surfaces the error as a match)', async () => {
+    const judge = makeJudge({
+      policy: 'p',
+      runTurn: async () => { throw new Error('model down') },
+    })
+    expect(await judge(card)).toEqual({ match: 'no' })
+  })
+
+  it('builds the user prompt from topic + city when city is present', async () => {
+    let capturedUserPrompt = ''
+    const judge = makeJudge({
+      policy: 'p',
+      runTurn: async (_sys, user) => { capturedUserPrompt = user; return JSON.stringify({ match: 'no' }) },
+    })
+    await judge({ ...card, city: '南京' })
+    expect(capturedUserPrompt).toContain('找摄影搭子')
+    expect(capturedUserPrompt).toContain('南京')
+  })
+
+  it('includes the policy in the system prompt', async () => {
+    let capturedSystemPrompt = ''
+    const judge = makeJudge({
+      policy: '住址绝不可说',
+      runTurn: async (sys) => { capturedSystemPrompt = sys; return JSON.stringify({ match: 'no' }) },
+    })
+    await judge(card)
+    expect(capturedSystemPrompt).toContain('住址绝不可说')
+  })
+
+  it('injects grounding text into the judge turn', async () => {
+    let seenUser = ''
+    const judge = makeJudge({
+      runTurn: async (_s, u) => { seenUser = u; return '{"match":"yes","blurb":"我也爱摄影"}' },
+      ground: async () => '主人相关事实：\n- 爱好: 摄影',
+      policy: 'p',
+    })
+    const v = await judge({ topic: '摄影' })
+    expect(seenUser).toContain('摄影')
+    expect(v.match).toBe('yes')
+  })
+
+  it('ground throwing degrades to empty grounding, still a verdict', async () => {
+    const judge = makeJudge({
+      runTurn: async () => '{"match":"no"}',
+      ground: async () => { throw new Error('x') },
+      policy: 'p',
+    })
+    const v = await judge({ topic: 't' })
+    expect(v.match).toBe('no')
+  })
+
+  it('ground throwing SYNCHRONOUSLY (non-async fn) degrades to empty grounding, judge still runs blind (does not short-circuit)', async () => {
+    let runTurnCalled = false
+    const judge = makeJudge({
+      runTurn: async () => { runTurnCalled = true; return '{"match":"no"}' },
+      ground: (() => { throw new Error('sync') }) as any,
+      policy: 'p',
+    })
+    const v = await judge({ topic: 't' })
+    expect(v).toEqual({ match: 'no' })
+    expect(runTurnCalled).toBe(true)
+  })
+})

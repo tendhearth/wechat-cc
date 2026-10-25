@@ -3,7 +3,7 @@
  *
  * 放在测试文件外面是因为 steps.test.ts、run.test.ts、run.integration.test.ts
  * 要的是**同一套**假件:哪天 PipelineDeps 多一个口子,只有一处要补。
- * (照 src/daemon/bootstrap/social-trio.fixture.ts 的先例。)
+ * (照 src/features/social/social-trio.fixture.ts 的先例。)
  */
 import type { TriageReport } from '../ci-triage'
 import type { SelfDeployResult } from '../self-deploy'

@@ -40,16 +40,16 @@ import { wireCoordinator } from './wire-coordinator'
 import { wireA2a } from './wire-a2a'
 import { yiModule } from './wire-yi'
 import { resolveClaudeBinary, hydrateClaudeAuthEnvFromUserSettings } from './claude-env'
-import { socialModule, mailboxPollerModule, INERT_SOCIAL } from './social-module'
+import { socialFeature, INERT_SOCIAL, type SocialWiring } from '../../features/social'
 import { a2aServerModule, type A2aServerWiring } from './wire-a2a-server'
 import { pairingModule } from './wire-pairing'
 import { wireHealth } from './wire-health'
 import { selfRestartModule } from './self-restart-module'
 import type { WireSelfRestartResult } from './wire-self-restart'
-import type { SocialWiring } from './wire-social'
 import type { YiHub } from '../../core/yi-hub'
 type PairingEngine = NonNullable<Bootstrap['pairing']>
 import { resolveSelfAgentId } from '../../core/self-agent-id'
+import type { InternalApi } from '../internal-api/types'
 import { createModules, type DaemonModule, type ModuleCtx } from '../modules/container'
 import { liftModule } from '../modules/lift'
 import type { SubsystemSupervisor } from '../subsystems'
@@ -191,6 +191,8 @@ type BootCore = Awaited<ReturnType<typeof bootCore>>
 export function bootstrapModules(outer: { needs?: readonly string[]; lazy?: readonly string[]; deps: (ctx: ModuleCtx) => BootstrapDeps }): DaemonModule[] {
   const base = (c: { get<T>(n: string): T }) => c.get<BootBase>('boot-base')
   const core = (c: { get<T>(n: string): T }) => c.get<BootCore>('boot-core')
+  // 生产里(daemon-modules.ts)外面这一层 needs internal-api;只有这一组的测试容器(buildBootstrap)里没有。
+  const hasApi = outer.needs?.includes('internal-api') ?? false
   return [
     {
       name: 'boot-base',
@@ -241,29 +243,45 @@ export function bootstrapModules(outer: { needs?: readonly string[]; lazy?: read
       selfRestartCheck: () => c.maybe<WireSelfRestartResult>('self-restart')?.check ?? null,
       log: base(c).deps.log,
     })),
-    // 社交 + 笔友信箱轮询(./social-module.ts):开关就是 social_enabled;关着 / 坏了 ⇒ 下游看到 INERT_SOCIAL。
-    liftModule({ name: 'social', needs: ['boot-base', 'boot-core'], wants: ['knowledge'] }, (up) => {
-      const b = base(up), c = core(up)
-      return socialModule({
-        log: b.deps.log, ...(b.deps.speech ? { speech: b.deps.speech } : {}),
-        stateDir: b.deps.stateDir,
-        sendFile: b.deps.ilink.sendFile ? (chat, p) => b.deps.ilink.sendFile!(chat, p) : undefined,
-        db: b.deps.db,
-        configuredAgent: b.configuredAgent,
-        selfId: b.selfId,
-        registry: c.registry,
-        defaultProviderId: c.defaultProviderId,
-        resolveOperatorChatId: c.resolveOperatorChatId,
-        sendAssistantText: c.sendAssistantText,
-        a2aRegistry: c.a2aRegistry,
-        a2aClient: c.a2aClient,
-        knowledge: up.maybe<NonNullable<Bootstrap['knowledge']>>('knowledge') ?? undefined,
-        // 串门 / 答心愿是脱离会话的后台模型活 —— 登记进 busy,空闲自动重启才不会掐在半程。
-        holdBusy: b.busyRegistry.hold,
-      })
+    // 社交 + 笔友信箱轮询:一个功能一个目录(src/features/social);开关就是 social_enabled;关着 / 坏了 ⇒ 下游看到 INERT_SOCIAL。
+    // 路由自己挂(要 internal-api:生产里外面这一层 needs 它;只有这一组的测试容器里没有 ⇒ 不挂)。
+    // 信箱里给对端叫名字经 A2A 服务那一侧(a2a-server wants social ⇒ 这一条是环边,经 late 现取;它没起就叫 id,跟以前一样)。
+    ...socialFeature({
+      needs: ['boot-base', 'boot-core', ...(hasApi ? ['internal-api'] : [])],
+      wants: ['knowledge'],
+      lazy: ['a2a-server'],
+      deps: (up) => {
+        const b = base(up), c = core(up)
+        return {
+          log: b.deps.log, ...(b.deps.speech ? { speech: b.deps.speech } : {}),
+          stateDir: b.deps.stateDir,
+          sendFile: b.deps.ilink.sendFile ? (chat, p) => b.deps.ilink.sendFile!(chat, p) : undefined,
+          db: b.deps.db,
+          configuredAgent: b.configuredAgent,
+          selfId: b.selfId,
+          registry: c.registry,
+          defaultProviderId: c.defaultProviderId,
+          resolveOperatorChatId: c.resolveOperatorChatId,
+          sendAssistantText: c.sendAssistantText,
+          a2aRegistry: c.a2aRegistry,
+          a2aClient: c.a2aClient,
+          knowledge: up.maybe<NonNullable<Bootstrap['knowledge']>>('knowledge') ?? undefined,
+          // 串门 / 答心愿是脱离会话的后台模型活 —— 登记进 busy,空闲自动重启才不会掐在半程。
+          holdBusy: b.busyRegistry.hold,
+        }
+      },
+      ...(hasApi ? {
+        api: (ctx: ModuleCtx) => {
+          const internalApi = ctx.get<Pick<InternalApi, 'mount' | 'provide'>>('internal-api')
+          const a2a = ctx.late<A2aServerWiring>('a2a-server')
+          return { mount: internalApi.mount, provide: internalApi.provide, peerName: (id: string) => a2a()?.a2aDeps?.registry.get(id)?.name }
+        },
+      } : {}),
+      mailbox: {
+        needs: ['boot-base', 'boot-core'],
+        deps: (up) => [base(up).ctx, { a2aRegistry: core(up).a2aRegistry, readAgentConfig: core(up).readAgentConfig }],
+      },
     }),
-    liftModule({ name: 'mailbox-poller', needs: ['boot-base', 'boot-core', 'social'] }, (up) =>
-      mailboxPollerModule(base(up).ctx, { a2aRegistry: core(up).a2aRegistry, readAgentConfig: core(up).readAgentConfig })),
     liftModule({ name: 'a2a-server', needs: ['boot-base', 'boot-core'], wants: ['social'] }, (up) => {
       const b = base(up), c = core(up)
       return a2aServerModule({

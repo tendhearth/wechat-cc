@@ -334,7 +334,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         internalApi.provide({ conversation: { setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) } })
         // 可选子系统没起(配置没开 / 降级)⇒ 不 provide,对应路由照旧 503。
         if (boot.a2aDeps) internalApi.provide({ a2a: boot.a2aDeps })
-        if (boot.social) internalApi.provide({ social: boot.social })
+        // 社交的路由和窄口(socialView)由社交模块自己挂 / 交(src/features/social),不经这里。
         if (boot.knowledge) internalApi.provide({ knowledge: boot.knowledge })
         if (boot.pairing) internalApi.provide({ pairing: boot.pairing })
         // daemon 自己跑的 LLM 记忆操作(spec 2026-07-23):这里是唯一跑它们的地方(不在编译出来的 CLI 里)。

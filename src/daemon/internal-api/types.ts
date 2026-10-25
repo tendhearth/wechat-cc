@@ -269,29 +269,15 @@ export interface InternalApiDeps {
     baseUrl: string | null
   }
   /**
-   * 社交 — undefined when `social_enabled` + `social_disclosure_policy`
-   * aren't both configured (or bootstrap hasn't late-bound it yet).
-   * /v1/social/wish* and /v1/penpal/* return 503 until this is set.
-   * Late-bound by main.ts from `bootstrap.social` (mirrors the `a2a` dep
-   * above / `setA2A`).
+   * 社交模块(src/features/social)交出来的窄口 —— 只给两处不标模块的读:关系视图(`GET /v1/social/relationships`,
+   * 社交关着也要能看)和桌宠的「在串门」(presence)。串门 / 心愿 / 介绍 / 笔友信箱的路由归模块自己挂。
+   * 社交没起(没开 / 降级)⇒ 缺席:关系视图里没有笔友信道,桌宠不显示串门 —— 和以前 `social` 缺席时一样。
+   * 只写结构:internal-api 不能 import 功能目录(功能的模块清单要引这里的类型,会成环)。
    */
-  social?: {
-    /** 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)— boot.social.penpal
-     *  原样带入。可选:老 fixture/未接线时 undefined ⇒ /v1/penpal/* 503。 */
-    penpal?: {
-      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-      resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-      channelStore: import('../../core/penpal-channel-store').ChannelStore
-      letterStore: import('../../core/penpal-letter-store').LetterStore
-      /** 串门(架构重构 §2.3)。可选:老 fixture 没有。 */
-      startVisit?(target?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
-      /** 进行中的串门(spec 2026-09-03-companion-presence §2.2)。可选:老 fixture 没有。 */
-      activeVisit?(): import('../../domain/companion-presence').ActiveVisit | null
-    }
-    /** 派心愿(spec 2026-09-04-wish-postcard)。可选:老 fixture / 未接线时 undefined。 */
-    wish?: Omit<import('../bootstrap/wire-wish').WishService, 'onInbound'>
-    /** 介绍(spec 2026-09-04-introduction)。可选:老 fixture / 未接线时 undefined。 */
-    intro?: Omit<import('../bootstrap/wire-intro').IntroService, 'onInbound'>
+  socialView?: {
+    channelStore: Pick<import('../../core/penpal-channel-store').ChannelStore, 'list'>
+    letterStore: { listForChannel(channelId: string): ReadonlyArray<{ kind: string; payload: string | null; created_at: string; direction: 'in' | 'out' }> }
+    activeVisit(): import('../../domain/companion-presence').ActiveVisit | null
   }
   /**
    * Knowledge Kernel (Phase 01, T3) — the daemon-owned KnowledgeStore +
@@ -574,7 +560,7 @@ export interface InternalApiDeps {
 
 /** 可以晚绑定的那些依赖 —— 只有这里列的键能经 `provide` 交进来。 */
 export const LATE_KEYS = [
-  'delegate', 'conversation', 'a2a', 'social', 'knowledge', 'pairing', 'memoryLlm', 'incidents',
+  'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'memoryLlm', 'incidents',
   'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
   'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
   'memoryNightly', 'cliUpgrade',
