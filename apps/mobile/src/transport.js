@@ -1,77 +1,96 @@
 /*@@CCP@@*/
-// 传输层:先直连(同 Wi-Fi),失败且配了 remote 就走中继隧道(端到端加密)。
-// v1 密封帧改由本文件顶部那行占位注释挂的 CCP(packages/protocol,noble 实
-// 现,apps/mobile/sources.ts 的 readMobileSource 在读这个文件时原地替换成
-// apps/mobile/src/protocol-generated.js 的内容)算,跟 daemon(同一个包)字
-// 节级兼容;这里不再手写 WebCrypto 的 subtle 那一块,沙箱可以没有它(只要有
-// crypto.getRandomValues / TextEncoder / TextDecoder / atob / btoa)。hs 握
-// 手交换的裸公钥还是走下面这份手写 base64url(不是 v1 密封帧,CCP 管不着;
-// continuation-materials.test.ts 按大文件场景专门测过)。
+// 传输层:先直连(同 Wi-Fi),失败且配了 remote 就走中继(端到端加密)。
+// 2026-10-25(架构终态 F4):中继那一路跟原生 App 用同一个协议客户端 —— 本文件顶部那行占位注释挂的
+// CCP.makeProtocolClient(packages/protocol 的 client.ts,apps/mobile/sources.ts 的 readMobileSource 在读这个
+// 文件时原地替换成 apps/mobile/src/protocol-generated.js 的内容),说协议 v2(双向密钥、计数器 nonce、
+// 防重放)。握手自报 client:"web",daemon 据此把这里建的事记成网页出生。v1 与老 VPS 中继(t… id)已退休:
+// 还拿着老中继 id、或 daemon 回 upgrade_required 的页面,提示主人在电脑上重新扫码配对(ccNeedsRepair)。
+// 沙箱可以没有 crypto.subtle(只要有 crypto.getRandomValues / TextEncoder / TextDecoder / WebSocket)。
 // 注:占位注释写成合法的空 JS 注释而不是 apps/mobile 的构建期包含语法(见
 // assemble.ts 的 INCLUDE 正则)—— 那套标记不是合法 JS,这个文件若以它开头,`tsc -p apps/mobile`
 // 把 src/*.js 当真 JS 解析(checkJs)会在替换之前就报语法错误。这份注释故意
 // 不重复打印顶部那行占位注释的确切写法 —— sources.ts 用字符串替换,写第二
 // 遍会被当成第二处替换点,把生成物插进注释中间炸成语法错误(relay/pset.src.html
 // 踩过一次同款坑,原因相同:占位标记只能在真正要展开的地方出现一次)。
-var b64u = { enc: function(b){ var bytes=new Uint8Array(b),parts=[];for(var i=0;i<bytes.length;i+=0x8000)parts.push(String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000)));return btoa(parts.join("")).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
-  dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
+var CC_REPAIR_TEXT = "连接方式升级了，请在电脑上重新扫码配对"
+var CC_REPAIR_HINT = "在电脑上点「连接手机」，用这台手机扫出现的码。"
+/** 老 VPS 中继的 id(t…):随 v1 退休,连不上了。 */
+function ccLegacyRemote(/** @type {any} */ r) { return !!r && typeof r.id === "string" && r.id.charAt(0) === "t" }
+var ccRepairShown = false
+// 连接方式升级了:丢掉指着老中继的那份远程信息(和绑在老中继 id 上的设备令牌),在页面顶上说清楚怎么重新配对。
+function ccNeedsRepair() {
+  try {
+    localStorage.removeItem("ccRemote")
+    var dtId = localStorage.getItem("deviceTokenId")
+    if (dtId && dtId.charAt(0) === "t") { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") }
+  } catch (e) {}
+  if (ccRepairShown || typeof document === "undefined" || !document.body) return
+  ccRepairShown = true
+  var box = document.createElement("div")
+  box.id = "cc-repair"
+  box.setAttribute("role", "alert")
+  box.style.cssText = "margin:8px 14px;padding:12px 14px;background:var(--wash);border-radius:var(--r-s);color:var(--ink);font-size:14px;line-height:1.6"
+  var t = document.createElement("div"); t.textContent = CC_REPAIR_TEXT
+  var h = document.createElement("div"); h.textContent = CC_REPAIR_HINT; h.style.cssText = "color:var(--soft);font-size:12.5px;margin-top:2px"
+  box.appendChild(t); box.appendChild(h)
+  document.body.insertBefore(box, document.body.firstChild)
+}
+/** 浏览器 WebSocket → 协议客户端要的 ProtocolSocket。 */
+function ccSocket(/** @type {string} */ url) {
+  var ws = new WebSocket(url)
+  /** @type {null | (() => void)} */ var onOpen = null
+  /** @type {null | ((s: string) => void)} */ var onMsg = null
+  /** @type {null | (() => void)} */ var onClose = null
+  ws.onopen = function() { if (onOpen) onOpen() }
+  ws.onmessage = function(ev) { if (onMsg) onMsg(typeof ev.data === "string" ? ev.data : String(ev.data)) }
+  ws.onclose = function() { if (onClose) onClose() }
+  ws.onerror = function() { try { ws.close() } catch (e) {} }
+  return {
+    send: function(/** @type {string} */ s) { ws.send(s) },
+    close: function() { try { ws.close() } catch (e) {} },
+    onOpen: function(/** @type {() => void} */ cb) { onOpen = cb },
+    onMessage: function(/** @type {(s: string) => void} */ cb) { onMsg = cb },
+    onClose: function(/** @type {() => void} */ cb) { onClose = cb },
+  }
+}
+// 一个令牌一个客户端:配对换了令牌之后 resetTunnel() 关掉旧的,下一次 api() 用新令牌重新握手。
 var tun = null
-var tunWs = null
 function tunnel() {
-  if (tun) return tun
-  tun = new Promise(function(resolve, reject) {
-    if (!REMOTE) { reject(new Error("no_remote")); return }
-    var ws = new WebSocket(REMOTE.relay + "?id=" + encodeURIComponent(REMOTE.id))
-    tunWs = ws
-    // relay tags streams itself — the phone sends/receives BARE frames.
-    var key = null, kp = null, pending = {}
-    var ready = false
-    function failAllPending(err) { for (var k in pending) { try { pending[k](null, err) } catch (e) {} } pending = {} }
-    ws.onopen = function() {
-      kp = CCP.x25519KeyPair()
-      ws.send(JSON.stringify({ hs: b64u.enc(kp.pub) }))
-    }
-    ws.onmessage = function(ev) {
-      var f = JSON.parse(ev.data)
-      // 握手前的错误让 tunnel() 失败;握手后的(daemon 认不出这台手机:auth_failed)让挂着的请求全部失败,别永远等。
-      if (f.error) { var err = new Error(f.error); reject(err); failAllPending(err); try { ws.close() } catch (e) {}; return }
-      if (f.hs) {
-        // Key BOUND to the device token — proves to the daemon we hold it,
-        // without ever putting it on the wire; defeats a MITM relay.
-        var shared = CCP.x25519Shared(kp.priv, b64u.dec(f.hs))
-        key = CCP.deriveV1Key(shared, T)
-        ready = true; resolve(send)
-        return
-      }
-      if (!key || !f.iv) return
-      var pt = CCP.openV1(key, { iv: f.iv, ct: f.ct })
-      var r = JSON.parse(new TextDecoder().decode(pt))
-      var cb = pending[r.rid]; delete pending[r.rid]
-      if (cb) cb(r)
-    }
-    ws.onerror = function(){ reject(new Error("ws_error")) }
-    // 只清自己那条:resetTunnel() 之后旧 socket 的 close 事件是异步晚到的,那时 tun 可能已是新开的隧道(plan 7a)。
-    ws.onclose = function(){ if (tunWs === ws) { tun = null; tunWs = null } failAllPending(new Error("closed")); if (!ready) reject(new Error("ws_closed")) }
-    var ridSeq = 0
-    function send(path, opts) {
-      var rid = "r" + (ridSeq++)
-      // token NEVER travels — the bound key already authenticated us; the
-      // daemon injects the device token server-side. Send the BARE path.
-      var body = JSON.stringify({ path: path, method: (opts && opts.method) || "GET", body: opts && opts.body, rid: rid })
-      var frame = CCP.sealV1(key, new TextEncoder().encode(body))
-      return new Promise(function(res, rej) {
-        pending[rid] = function(r, err){ if (err) { rej(err); return } res({ status: r.status, text: function(){ return Promise.resolve(r.body) }, json: function(){ return Promise.resolve(JSON.parse(r.body)) } }) }
-        ws.send(JSON.stringify({ iv: frame.iv, ct: frame.ct }))
-      })
-    }
-  })
+  if (!tun) {
+    var remote = REMOTE
+    tun = CCP.makeProtocolClient({
+      open: function() { return ccSocket(remote.relay + "?id=" + encodeURIComponent(remote.id)) },
+      token: T,
+      client: "web",
+      // 页面会发慢请求(说一句、转写一段话):单次等 30 秒;握手 15 秒没回就重连。
+      requestTimeoutMs: 30000,
+      handshakeTimeoutMs: 15000,
+      // 中继把握手里的 v 抹掉 / 后台只会退休了的 v1:客户端拒绝降级,这里提示重新配对。
+      onProtocolError: function(/** @type {string} */ reason) { if (reason === "downgrade_refused") ccNeedsRepair() },
+    })
+  }
   return tun
+}
+/** 经中继发一个请求;回 {status, json(), text()}(跟 fetch 的 Response 用法一样,json/text 是 Promise)。 */
+function viaTunnel(/** @type {string} */ path, /** @type {any} */ opts) {
+  if (ccLegacyRemote(REMOTE)) { ccNeedsRepair(); return Promise.reject(new Error("upgrade_required")) }
+  var o = opts || {}
+  /** @type {any} */
+  var req = { method: o.method || "GET", path: path }
+  if (o.headers) { /** @type {Record<string, string>} */ var hs = {}; for (var k in o.headers) if (typeof o.headers[k] === "string") hs[k] = o.headers[k]; req.headers = hs }
+  if (typeof o.body === "string") req.body = o.body
+  return tunnel().request(req).then(function(/** @type {any} */ r) {
+    return { status: r.status, text: function() { return Promise.resolve(r.text()) }, json: function() { return Promise.resolve(r.json()) } }
+  }, function(/** @type {Error} */ err) {
+    if (err && err.message === "upgrade_required") ccNeedsRepair()
+    throw err
+  })
 }
 // 配对换了令牌(nav.js)之后,绑着旧短令牌的隧道作废:关掉,下一次 api() 用新令牌重新握手(plan 7a)。
 function resetTunnel() {
-  var w = tunWs
-  tunWs = null; tun = null
-  if (w) { try { w.close() } catch (e) {} }
+  var c = tun
+  tun = null
+  if (c) { try { c.close() } catch (e) {} }
 }
 // 401:只有「发请求时用的令牌」就是现在这枚,才说明本机令牌失效;刚配对换令牌时在飞的旧请求回 401 不算(plan 7a)。
 /** @param {string} sentAs */
@@ -84,7 +103,7 @@ function onUnauthorized(sentAs) {
 // 直接走隧道,不再每次白等 2.5s。返回 {status, json(), text()}。
 var preferTunnel = false
 function api(path, opts) {
-  if (preferTunnel && REMOTE) return tunnel().then(function(send){ return send(path, opts) })
+  if (preferTunnel && REMOTE) return viaTunnel(path, opts)
   var ctrl = new AbortController()
   var to = setTimeout(function(){ ctrl.abort() }, 2500)
   return fetch(q(path), Object.assign({ signal: ctrl.signal }, opts || {})).then(function(r){
@@ -93,7 +112,7 @@ function api(path, opts) {
     clearTimeout(to)
     if (!REMOTE) throw new Error("no_lan_no_remote")
     preferTunnel = true
-    return tunnel().then(function(send){ return send(path, opts) })
+    return viaTunnel(path, opts)
   })
 }
 // 壳模式(公网 pset 引导页注入):没有可用的直连域,强制走隧道。

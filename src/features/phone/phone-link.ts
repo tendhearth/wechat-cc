@@ -19,19 +19,22 @@ export interface PhoneLinkInputs {
   tunnelOn: boolean
   /** 这次启动实际连上的远程隧道 id(开机时定的);没开隧道 ⇒ null。 */
   bootRemoteId: string | null
+  /** 开机时配置就要连中继(remote_tunnel + relay_v2_url 都在),却没连成(relay-identity.json 坏了等)。
+   *  重启也换不来 ⇒ relay_unavailable,不当 starting。 */
+  bootFailed?: boolean
 }
 
 export function phoneLinkState(i: PhoneLinkInputs): PhoneLinkState {
   if (!i.owner) return 'no_owner'
   if (!i.v2Configured) return 'relay_not_configured'
   if (!i.tunnelOn) return 'remote_off'
-  if (i.bootRemoteId === null) return 'starting'
+  if (i.bootRemoteId === null) return i.bootFailed ? 'relay_unavailable' : 'starting'
   if (!RELAY_ID_RE.test(i.bootRemoteId)) return 'relay_unavailable'
   return 'ready'
 }
 
 /** 中继上的公网壳页链接;令牌在 # 锚点里(锚点不上服务器,中继看不到)。 */
 export function psetUrl(remote: { relay: string; id: string }, token: string, lan: string | null): string {
-  const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/(tunnel|v2)\/phone$/, '')
+  const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/v2\/phone$/, '')
   return `${base}/pset/#id=${encodeURIComponent(remote.id)}&t=${token}&p=${encodeURIComponent('/set')}${lan ? `&lan=${lan}` : ''}`
 }

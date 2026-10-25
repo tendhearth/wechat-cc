@@ -1,5 +1,5 @@
 /**
- * linkUrl 指向中继上的壳页:v2 中继(`…/v2/phone`)与老中继(`…/tunnel/phone`)都要去掉路径尾巴。
+ * linkUrl 指向中继上的壳页:v2 中继(`…/v2/phone`)要去掉路径尾巴(老中继 `…/tunnel/phone` 随 v1 退休)。
  * lanIp 被 mock 成固定地址 —— CI 机器可能没有私网网卡,linkUrl 会直接回 null。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,9 +27,5 @@ describe('settings panel linkUrl', () => {
   it('v2 中继 ⇒ https://relay.tendhearth.com/pset/#id=…', async () => {
     const p = mk({ id: 'rabc', relay: 'wss://relay.tendhearth.com/v2/phone' })
     try { expect(await p.linkUrl()).toMatch(/^https:\/\/relay\.tendhearth\.com\/pset\/#id=rabc&t=/) } finally { p.stop() }
-  })
-  it('老中继照旧 ⇒ https://cc.tendhearth.com/pset/#id=…', async () => {
-    const p = mk({ id: 'tabc', relay: 'wss://cc.tendhearth.com/tunnel/phone' })
-    try { expect(await p.linkUrl()).toMatch(/^https:\/\/cc\.tendhearth\.com\/pset\/#id=tabc&t=/) } finally { p.stop() }
   })
 })

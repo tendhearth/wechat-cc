@@ -8,7 +8,7 @@
  *  - `mobile-*.ts`:各块 `/m/api/*` 的处理器(一件事 / 工作台、对话、做过的事、读终端会话与会话、首屏、首屏焦点);
  *    `mobile-page*.ts` + 两份 json:手机页的生成物(apps/mobile 构建出来)与 presence 美术;
  *  - `phone-*.ts`:推送、在线设备、订阅事件与主题来源、批准说明 / 进展概括(便宜模型)、看改动、出码、手机对话、传输标记;
- *  - `tunnel-client.ts` / `tunnel-v2-stream.ts`:连中继的隧道(老中继 + v2);`remote-*` / `relay-identity.ts`:中继配置与身份;
+ *  - `tunnel-client.ts` / `tunnel-v2-stream.ts`:连中继 v2 的隧道(老中继随 v1 在 2026-10-25 退休);`remote-*` / `relay-identity.ts`:中继配置与身份;
  *    `device-store.ts`:已配对的设备;
  *  - `routes.ts`:桌面「连接手机」那两条 `/v1/phone/*`(路由表标了 module: 'phone');
  *  - 这个文件:模块清单 + 外面能用的那几样。
@@ -39,7 +39,7 @@ export { makeApprovalExplainer } from './phone-explain'
 export { makeProgressSummarizer } from './phone-progress'
 export { currentPhoneClient, surfaceOrigin } from './phone-client'
 export { makeRemoteToggle, relayV2Configured } from './remote-toggle'
-export { resolveRemoteRelays, mergeOnlineDevices } from './remote-relay-config'
+export { resolveRemoteRelay } from './remote-relay-config'
 export { makePhonePush, type PushPayload } from './phone-push'
 export { fanoutPush, makePhoneNotifier } from './phone-notifier'
 export { deviceIdOf } from './device-store'

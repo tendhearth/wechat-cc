@@ -8,14 +8,14 @@ const LINK: ParsedLink = { daemonId: 'r' + 'a'.repeat(26), linkToken: 't' + '0'.
 const DEV = 'd' + '1'.repeat(48)
 
 type Script = Record<string, { status: number; json: unknown } | Error>
-function fakeConnect(byToken: Record<string, { script: Script; version?: 1 | 2 }>) {
+function fakeConnect(byToken: Record<string, { script: Script; version?: 2 | null }>) {
   const log: Array<{ token: string; key: string; body?: any }> = []
   const closed: string[] = []
   const connect = (url: string, token: string): ProtocolClient => {
     expect(url).toBe(LINK.relayUrl)
     const cfg = byToken[token] ?? { script: {} }
     return {
-      version: () => cfg.version ?? 2,
+      version: () => (cfg.version === undefined ? 2 : cfg.version),
       async request(r: ProtocolRequest) {
         const key = `${r.method} ${r.path}`
         log.push({ token, key, body: typeof r.body === 'string' ? JSON.parse(r.body) : undefined })
@@ -61,8 +61,8 @@ describe('pairWithLink', () => {
       await expect(pairWithLink(LINK, { connect: f.connect, label: 'x' })).rejects.toMatchObject({ code: 'offline' })
     }
   })
-  it('电脑上的版本太老(协商出 v1)⇒ too_old', async () => {
-    const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: true, device_token: DEV } } } }, [DEV]: { ...happyDevice, version: 1 } })
+  it('电脑上的版本太老(没协商出 v2)⇒ too_old', async () => {
+    const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: true, device_token: DEV } } } }, [DEV]: { ...happyDevice, version: null } })
     await expect(pairWithLink(LINK, { connect: f.connect, label: 'x' })).rejects.toMatchObject({ code: 'too_old' })
   })
   it('起名失败不影响配对', async () => {
@@ -92,7 +92,7 @@ describe('pairWithLink', () => {
     expect(f.closed).toContain(DEV)
   })
   it('too_old 同样回收设备位;unpair_self 失败不改变抛出的错误', async () => {
-    const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: true, device_token: DEV } } } }, [DEV]: { ...happyDevice, script: { 'GET /set/api/state': { status: 200, json: STATE }, 'POST /set/api/apply': new Error('boom') }, version: 1 } })
+    const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: true, device_token: DEV } } } }, [DEV]: { ...happyDevice, script: { 'GET /set/api/state': { status: 200, json: STATE }, 'POST /set/api/apply': new Error('boom') }, version: null } })
     await expect(pairWithLink(LINK, { connect: f.connect, label: 'x' })).rejects.toMatchObject({ code: 'too_old', message: 'too_old' })
     expect(f.log.some(l => l.token === DEV && l.body?.op === 'unpair_self')).toBe(true)
   })

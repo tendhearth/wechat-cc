@@ -15,7 +15,7 @@ export interface ProtocolSocket {
   send(s: string): void
   /** 主动关闭。可重复调用;关闭后可以(但不必)再触发 `onClose`。 */
   close(): void
-  /** 连接建立(WebSocket 的 open 事件)。客户端在这里发握手 `{hs, v:[1,2]}`。 */
+  /** 连接建立(WebSocket 的 open 事件)。客户端在这里发握手 `{hs, v:[2]}`。 */
   onOpen(cb: () => void): void
   /** 收到一帧文本(WebSocket message 事件的 data)。 */
   onMessage(cb: (s: string) => void): void
@@ -51,24 +51,26 @@ export interface ClientOpts {
   /**
    * 保活间隔,缺省 30 s,0 关掉。v2 连接上挂着订阅、又没有挂起请求时,这么久什么都没收到就发
    * 一个 `ping`;`requestTimeoutMs` 内一帧都没回来 ⇒ 当死连接丢掉、退避重连、带 since 重新订阅。
-   * v1 连接从不发。
    */
   keepaliveMs?: number
   /**
-   * 只接受 v2(2026-10-10)。版本协商是明文,中继能把双方的 `v` 剥掉、降到没有防重放的 v1,
-   * 再把抓到的密封请求重放。只跟会说 v2 的后台打交道的客户端(原生 app)应当打开:
-   * 后台回的 hello 不是 v2 ⇒ 报 `downgrade_refused`、断开按退避重连,绝不走 v1。缺省 false(老后台照旧能连)。
+   * 浏览器 /m 页填 `'web'`,握手里带上(daemon 据此把这条流上建的事记成网页出生,见
+   * src/features/phone/phone-client.ts)。原生 App 不填。只是标记,不是身份 —— 身份只来自令牌。
+   *
+   * (2026-10-25 起客户端只说 v2:后台回的 hello 不是 v2 ⇒ 报 `downgrade_refused`、断开按退避
+   * 重连,绝不降级。原来的 `requireV2` 开关随 v1 一起删了。)
    */
-  requireV2?: boolean
+  client?: 'web'
   /** 时钟(毫秒),缺省 Date.now。用于判断连接是否稳定到可以清零退避。 */
   now?: () => number
   /** 丢弃了一条畸形/无法解密的线上消息,或 hello 畸形(只做记录)。 */
   onProtocolError?: (reason: string, detail?: unknown) => void
-  /** 订阅被后台拒绝(`err{sid}`)或老后台不支持订阅;该订阅随即作废。 */
+  /** 订阅被后台拒绝(`err{sid}`),或连接致命失败(`auth_failed` / `upgrade_required`);该订阅随即作废。 */
   onSubscriptionError?: (topic: string, code: string) => void
   /**
    * 连接状态变化:开始一条新连接 `connecting`;握手完成 `ready`;这条连接作废 `down`(之后按退避重连,
-   * 或没事可做就不连);明文 `auth_failed` ⇒ `auth_failed`(致命,不会再连,之后不再报)。`close()` 之后不再报。
+   * 或没事可做就不连);明文 `auth_failed` / `upgrade_required` ⇒ `auth_failed`(致命,不会再连,之后不再报;
+   * 哪一个看挂起请求的拒绝原因)。`close()` 之后不再报。
    * 钩子抛错被吞掉。
    */
   onStatus?: (s: ClientStatus) => void
@@ -78,7 +80,7 @@ export interface ProtocolRequest {
   method: string
   path: string
   headers?: Record<string, string>
-  /** 字符串按 utf8 发;Uint8Array 按 base64 发(老后台 v1 不支持,拒绝 binary_body_needs_v2)。 */
+  /** 字符串按 utf8 发;Uint8Array 按 base64 发。 */
   body?: string | Uint8Array
   /**
    * 超时后是否重试(次数见 `ClientOpts.retries`)。缺省:GET/HEAD 为 true,其它为
@@ -89,7 +91,6 @@ export interface ProtocolRequest {
 
 export interface ProtocolResponse {
   status: number
-  /** v1 后台没有响应头,恒为 `{}`。 */
   headers: Record<string, string>
   body: Uint8Array
   text(): string
@@ -100,9 +101,9 @@ export interface EventMeta { epoch: string; seq: number }
 
 export interface ProtocolClient {
   /** 最近一次握手协商出的版本;还没握过手为 null。 */
-  version(): 1 | 2 | null
+  version(): 2 | null
   request(r: ProtocolRequest): Promise<ProtocolResponse>
-  /** 老后台(v1)下抛 Error('subscriptions_need_v2')。返回取消函数(幂等)。 */
+  /** 返回取消函数(幂等)。 */
   subscribe(topic: string, onEvent: (data: unknown, meta: EventMeta) => void): () => void
   close(): void
 }

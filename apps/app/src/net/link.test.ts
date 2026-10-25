@@ -13,9 +13,12 @@ describe('parsePairLink', () => {
       relayUrl: `wss://relay.tendhearth.com/v2/phone?id=${RID}`, lan: '192.168.1.5:51234',
     } })
   })
-  it('老中继(t… id)⇒ /tunnel/phone;带端口的主机保留端口', () => {
-    const r = parsePairLink(`https://relay.example.com:8443/pset/#id=${TID}&t=${TOK}&p=%2Fset&lan=10.0.0.2:1`)
-    expect(r).toMatchObject({ ok: true, link: { relayHost: 'relay.example.com:8443', relayUrl: `wss://relay.example.com:8443/tunnel/phone?id=${TID}` } })
+  it('带端口的主机保留端口', () => {
+    const r = parsePairLink(`https://relay.example.com:8443/pset/#id=${RID}&t=${TOK}&p=%2Fset&lan=10.0.0.2:1`)
+    expect(r).toMatchObject({ ok: true, link: { relayHost: 'relay.example.com:8443', relayUrl: `wss://relay.example.com:8443/v2/phone?id=${RID}` } })
+  })
+  it('老中继(t… id)随 v1 退休 ⇒ bad_link', () => {
+    expect(parsePairLink(`https://cc.tendhearth.com/pset/#id=${TID}&t=${TOK}&p=%2Fset`)).toEqual({ ok: false, error: 'bad_link' })
   })
   it('粘贴时带的空白与换行去掉;参数顺序无关;没有 lan 也行', () => {
     const r = parsePairLink(`  \nhttps://relay.tendhearth.com/pset/#t=${TOK}&id=${RID}\n`)

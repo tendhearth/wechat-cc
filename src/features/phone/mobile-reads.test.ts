@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
+import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
 import { mobileReadsRoutes, cacheSessions, SESSIONS_DONE_MAX, type MobileSessionsDeps } from './mobile-reads'
 import { routePhone } from './phone-route-table'
 import type { ConnectionsSnapshot } from '../../daemon/connections'
 import { buildOverseerToday } from '../../domain/overseer-today'
-import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../../lib/tunnel-crypto'
 
 const SNAP: ConnectionsSnapshot = {
   generatedAt: 1, computers: [{ id: 'home', label: 'Mac', online: true, since: 0, version: '1.7.1' }], recent: [], outputs: [],
@@ -162,16 +161,15 @@ describe('cacheSessions(单飞 + 短缓存,裁定 8)', () => {
   })
 })
 
-/** 旧中继线上真实大小:tunnel-client 的 {rid,status,body} 再 JSON 一次、封帧(base64url)、套 {stream,frame}。 */
-async function legacyWireBytes(status: number, bodyText: string): Promise<number> {
-  const a = await generateTunnelKeypair(), b = await generateTunnelKeypair()
-  const key = await deriveSharedKey(a.privateKey, b.publicKey, new TextEncoder().encode('t'.repeat(43)))
-  const reply = new TextEncoder().encode(JSON.stringify({ rid: 'r'.repeat(64), status, body: bodyText }))
-  return Buffer.byteLength(JSON.stringify({ stream: 's'.repeat(64), frame: await sealFrame(key, reply) }), 'utf8')
+/** 中继线上真实大小(v2):tunnel-v2-stream 的 res 消息封帧、套 {stream,frame}(响应头按 JSON 的算)。 */
+async function wireBytes(status: number, bodyText: string): Promise<number> {
+  const key = new Uint8Array(32).fill(7)
+  const msg = new TextEncoder().encode(JSON.stringify({ t: 'res', rid: 'r'.repeat(64), status, headers: { 'content-type': 'application/json; charset=utf-8' }, body: bodyText, bodyEncoding: 'utf8' }))
+  return Buffer.byteLength(JSON.stringify({ stream: 's'.repeat(64), frame: makeV2Channel({ c2s: key, s2c: key }, 'server').seal(msg) }), 'utf8')
 }
 const RELAY_FRAME_MAX = 512 * 1024
 
-describe('旧中继帧大小(终审 M1):会话页 / 会话列表最坏情况也不超 512 KiB,不 413 整页', () => {
+describe('中继帧大小(终审 M1):会话页 / 会话列表最坏情况也不超 512 KiB,不 413 整页', () => {
   for (const [name, ch] of [['汉字', '汉'], ['控制字符', '\u0001'], ['引号', '"']] as const) {
     it(`读一页 20 条 × 4000 个${name} ⇒ 服务端再截短(truncated),条数不少,线上 < 512 KiB`, async () => {
       const msgs = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, role: 'assistant' as const, text: ch.repeat(4000), truncated: false }))
@@ -185,7 +183,7 @@ describe('旧中继帧大小(终审 M1):会话页 / 会话列表最坏情况也�
         expect(body.messages).toHaveLength(20);expect(body.window).toBe(window)
         expect(body.nextCursor).toBe('n')
         if (ch !== '汉') expect(body.messages.every((m: { truncated: boolean }) => m.truncated)).toBe(true)
-        expect(await legacyWireBytes(200, text)).toBeLessThan(RELAY_FRAME_MAX)
+        expect(await wireBytes(200, text)).toBeLessThan(RELAY_FRAME_MAX)
         PHONE_API_SCHEMAS['GET /m/api/session']!.parse(body)
       }
     })
@@ -196,7 +194,7 @@ describe('旧中继帧大小(终审 M1):会话页 / 会话列表最坏情况也�
       expect(r.status).toBe(200)
       const text = await r.text()
       expect(JSON.parse(text).items).toHaveLength(30)
-      expect(await legacyWireBytes(200, text)).toBeLessThan(RELAY_FRAME_MAX)
+      expect(await wireBytes(200, text)).toBeLessThan(RELAY_FRAME_MAX)
     })
   }
 })

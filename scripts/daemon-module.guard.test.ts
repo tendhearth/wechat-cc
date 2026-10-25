@@ -51,7 +51,7 @@ const BASELINE: Record<string, Partial<Record<Kind, number>>> = {
   'src/daemon/speech/pending-notices.ts': { setInterval: 1 },
   'src/features/phone/tunnel-client.ts': { setInterval: 1 },    // 同上
   'src/daemon/wiring/pipeline-deps.ts': { Ref: 1 },
-  'src/daemon/wiring/wire-phone.ts': { 'phoneLc.add': 7 },
+  'src/daemon/wiring/wire-phone.ts': { 'phoneLc.add': 6 },
   // 回退备份 ref 每天清一次:service 自己起、shutdown 里停(模块经 ctx.own 停 service)。随工作台搬进 features 才被扫到(架构终态 A5),
   // 该换成 ctx.interval,搬家不改逻辑,单独做
   'src/features/workbench/service/rewind.ts': { setInterval: 1 },

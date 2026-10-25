@@ -2,7 +2,7 @@
  * phone-app-live-e2e.test.ts — 手机 app 的 LiveBackend 与配对,对着进程内真 daemon 手机端跑
  * (计划 docs/superpowers/plans/2026-09-30-tendhearth-app-live.md Task 9)。
  *
- * 与 phone-e2e.test.ts 同一套真东西:中继实现 + 真面板 + 真工作台(执行者是假的)+ 真隧道客户端 + 手机事件集线器;
+ * 与 phone-e2e.test.ts 同一套真东西:进程内中继替身 + 真面板 + 真工作台(执行者是假的)+ 真隧道客户端 + 手机事件集线器;
  * 手机这头是 apps/app/src 的纯 TS 模块(不引 RN)。线上只有同步转发的内存管道。
  * 这里不需要静态夹具:数据全是真 daemon 生成的(app 的形状夹具在 apps/app/src/backend/fixtures.ts,那边的单测用)。
  * 状态目录全在 mkdtemp 里,不碰真 state dir。
@@ -25,7 +25,7 @@ import { makeWorkbenchService, type WorkbenchService } from '../workbench/servic
 import { encodeNativeHistoryKey, historyPreview, type NativeHistoryItem, type NativeHistoryReader } from '../../core/workbench/native-history'
 import { MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
-import { makeTunnelHub, type TunnelHub } from '../../../relay/tunnel'
+import { makeMemoryRelay, type MemoryRelay } from './memory-relay.fixture'
 import { makeTunnelClient, type TunnelClient, type TunnelWS } from './tunnel-client'
 import { makePhoneEventsWiring } from './phone-topic-sources'
 import { makePhoneOwner } from './mobile-chat'
@@ -37,7 +37,7 @@ import { parsePairLink, type ParsedLink } from '../../../apps/app/src/net/link'
 import { pairWithLink } from '../../../apps/app/src/net/pairing'
 import { makeCredentialStore, type CredentialStore } from '../../../apps/app/src/net/credentials'
 
-const DAEMON = 't' + 'a'.repeat(36)   // 老中继 id 的形状,好让 parsePairLink 认;内存中继只拿它当键
+const DAEMON = 'r' + 'a'.repeat(26)   // 中继 v2 id 的形状,好让 parsePairLink 认;内存中继只拿它当键
 
 let root: string, managedRoot: string, db: Db
 let nativeDir: string
@@ -45,7 +45,7 @@ let matters: MatterStore, messages: MessagesStore
 /** 跟 CC 说:假 converse 收到的每句正文;releaseConverse(reply) 放行最早那句,并像 persistAppTurn 那样把一问一答写进 messages。 */
 let conversed: string[]
 let converseGates: Array<{ text: string; go: (reply: string) => void }>
-let workbench: WorkbenchService, panel: SettingsPanel, hub: TunnelHub, tunnel: TunnelClient
+let workbench: WorkbenchService, panel: SettingsPanel, hub: MemoryRelay, tunnel: TunnelClient
 let wiring: ReturnType<typeof makePhoneEventsWiring>
 let deviceToken: string
 let handled: string[]
@@ -156,7 +156,7 @@ beforeEach(async () => {
       pendingMatter: () => phoneChat.pendingMatter(),
     },
   })
-  hub = makeTunnelHub()
+  hub = makeMemoryRelay()
   let incoming: ((ev: { data?: unknown }) => void) | undefined
   const daemonSocket: TunnelWS = {
     readyState: 1,
@@ -180,6 +180,7 @@ beforeEach(async () => {
     reconnectMs: 50,
     events: wiring.events,
     log: () => {},
+    relayUrl: 'wss://relay.test/v2/daemon', login: { sign: () => ({ pub: 'P', sig: 'S' }) },
   })
   tunnel.start()
 })
@@ -197,7 +198,7 @@ afterEach(async () => {
   removeTempDir(root); removeTempDir(managedRoot)
 })
 
-/** 一条手机 ↔ 中继的内存 WebSocket(同 phone-e2e.test.ts 的 phoneLine,去掉了 v1 改写)。 */
+/** 一条手机 ↔ 中继的内存 WebSocket(同 phone-e2e.test.ts 的 phoneLine,去掉了抹 v 的改写)。 */
 function phoneSocket(): ProtocolSocket {
   let onMsg: ((s: string) => void) | undefined, onClose: (() => void) | undefined, onOpen: (() => void) | undefined
   let dead = false

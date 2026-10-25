@@ -1,12 +1,13 @@
 /**
- * client.ts — 手机隧道协议客户端(未来的 Expo/RN app 与 CLI 自检用)。
+ * client.ts — 手机隧道协议客户端。原生 App、手机网页(经 browser.ts 打成 IIFE)与 CLI 自检共用这一份。
  *
  * 一条连接的生命周期:
  *   1. `opts.open()` 拿到一个 socket(接口见 client-types.ts),等它 `onOpen`。
- *   2. 明文发 `{hs, v:[1,2]}`,开握手期限(缺省 = requestTimeoutMs,过期或
- *      hello 畸形 ⇒ 断开按退避重连);后台回 `{hs, v:2}` ⇒ v2,回 `{hs}` ⇒ 老后台 v1。
+ *   2. 明文发 `{hs, v:[2]}`(网页再带 `client:'web'`),开握手期限(缺省 = requestTimeoutMs,
+ *      过期或 hello 畸形 ⇒ 断开按退避重连);后台回 `{hs, v:2}` ⇒ 就绪。回的不是 v2(老后台只会
+ *      v1,或中继剥掉了 `v`)⇒ 报 `downgrade_refused`、断开按退避重连,绝不降级(v1 2026-10-25 退休)。
  *      密钥经 HKDF 绑定设备令牌(令牌从不上线)。
- *   3. 之后全是密封帧。v2 每次握手新建一条 V2Channel —— 每次重连都是新的
+ *   3. 之后全是密封帧。每次握手新建一条 V2Channel —— 每次重连都是新的
  *      X25519 密钥对 ⇒ 新密钥 ⇒ 新 channel,同一组密钥永不重建(否则
  *      计数器 nonce 复用)。
  *
@@ -23,14 +24,15 @@
  *     没事可做时不重连,下次用到再连。
  *   - 订阅重连后带最后见过的 `{epoch, seq}` 重新 `sub`;事件是状态快照,
  *     不保证每条中间事件都到,同 epoch 下 seq 不更新的一律丢(去重)。
- *   - 明文 `auth_failed` ⇒ 所有挂起请求以它拒绝,永不再连;订阅者收到 onSubscriptionError(topic,'auth_failed');明文 `stream_unknown`
+ *   - 明文 `auth_failed` / `upgrade_required`(后台说这条握手是退休了的 v1)⇒ 所有挂起请求以它拒绝,
+ *     永不再连;订阅者收到 onSubscriptionError(topic, 同一个码);明文 `stream_unknown`
  *     (后台跟中继重连过、忘了这条流)⇒ 断开按退避重连,这条连接上在途的可重试请求耗一次
  *     重试以同一 rid 重发,不可重试的以 `stream_unknown` 拒绝,订阅带 since 重新 sub;其它
  *     明文错误(中继的 `daemon_offline` 等)⇒ 挂起请求以该 code 拒绝,断开后按退避重连。
  *     `frame_too_large` ⇒ 已发出的请求失败不重试;`rate_limited` / `quota_exceeded` /
  *     `too_many_streams` ⇒ 至少 30 s 后才重连。
  *   - 保活:v2 连接上只挂订阅、没有挂起请求时,空闲 `keepaliveMs`(缺省 30 s)就发 `ping`,
- *     `requestTimeoutMs` 内一帧都没回 ⇒ 当死连接丢掉重连。v1 连接从不发。
+ *     `requestTimeoutMs` 内一帧都没回 ⇒ 当死连接丢掉重连。
  *   - 线上来的一切先过 zod;不合形状就丢并报 `onProtocolError`,永不从
  *     socket 回调里往外抛。
  *
@@ -39,13 +41,12 @@
  */
 import { b64uEncode, b64uDecode } from './b64u'
 import { x25519KeyPair, x25519Shared } from './x25519'
-import { deriveV1Key, sealV1, openV1 } from './v1'
 import { deriveV2Keys, makeV2Channel } from './v2'
 import type { V2Channel } from './v2'
 import {
-  ServerHello, ErrorFrame, SealedV1Frame, SealedV2Frame, V1Response, V2ServerMessage, b64Encode, b64Decode,
+  ServerHello, ErrorFrame, SealedV2Frame, V2ServerMessage, b64Encode, b64Decode,
 } from './messages'
-import type { V1RequestT, ReqMsgT, V2ClientMessageT, V2ServerMessageT } from './messages'
+import type { ReqMsgT, V2ClientMessageT, V2ServerMessageT } from './messages'
 
 import type { ProtocolSocket, ClientOpts, ProtocolRequest, ProtocolResponse, EventMeta, ProtocolClient, ClientStatus } from './client-types'
 
@@ -64,14 +65,13 @@ type Timer = ReturnType<typeof setTimeout>
 interface Conn {
   sock: ProtocolSocket
   priv: Uint8Array
-  version: 1 | 2 | null
-  v1Key?: Uint8Array
+  version: 2 | null
   chan?: V2Channel
   readyAt?: number
   /** 这条连接收到过几帧(任何帧都算,用来判断「悄悄死掉」)。 */
   recv: number
   hsTimer?: Timer
-  /** 保活:空闲 keepaliveMs 后触发;每收到一帧重新计时。只在 v2 连接上用。 */
+  /** 保活:空闲 keepaliveMs 后触发;每收到一帧重新计时。握手完成后才用。 */
   kaTimer?: Timer
   /** 保活 ping 已发、在等任何一帧回来(requestTimeoutMs)。 */
   pingTimer?: Timer
@@ -130,7 +130,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   }
 
   let conn: Conn | null = null
-  let negotiated: 1 | 2 | null = null
+  let negotiated: 2 | null = null
   let closed = false
   let fatal: Error | null = null
   let reconnectTimer: Timer | null = null
@@ -162,7 +162,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     c.hsTimer = setTimeout(() => { c.hsTimer = undefined; if (c.version === null) dropConn(c) }, hsTimeoutMs)
     sock.onOpen(() => {
       if (conn !== c) return
-      sendRaw(c, JSON.stringify({ hs: b64uEncode(kp.pub), v: [1, 2] }))
+      sendRaw(c, JSON.stringify(opts.client ? { hs: b64uEncode(kp.pub), v: [2], client: opts.client } : { hs: b64uEncode(kp.pub), v: [2] }))
     })
     sock.onMessage(s => {
       if (conn !== c) return
@@ -202,7 +202,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   // 只挂订阅、没有挂起请求的客户端没有任何超时会触发:后台把流忘了(它跟中继重连过)或者
   // 连接悄悄死了,都永远察觉不到。所以空闲 keepaliveMs 就发一个 v2 `ping`;requestTimeoutMs
   // 内一帧都没回来 ⇒ 当死连接丢掉、按退避重连、重新 sub。后台不认这条流会明文回
-  // `stream_unknown`,走 onErrorFrame 那条更快的路。v1 连接永远不发(老后台不认 ping)。
+  // `stream_unknown`,走 onErrorFrame 那条更快的路。
 
   function armKeepalive(c: Conn): void {
     if (keepaliveMs <= 0 || c.version !== 2 || conn !== c) return
@@ -240,15 +240,15 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     const errFrame = ErrorFrame.safeParse(f)
     if (errFrame.success) { onErrorFrame(c, errFrame.data.error); return }
     if (c.version === null) { onHello(c, f); return }
-    if (c.version === 1) onV1Frame(c, f)
-    else onV2Frame(c, f)
+    onV2Frame(c, f)
   }
 
   function onErrorFrame(c: Conn, code: string): void {
-    if (code === 'auth_failed') {
-      fatal = new Error('auth_failed')
+    if (code === 'auth_failed' || code === 'upgrade_required') {
+      // upgrade_required:后台说这条握手是退休了的 v1(只有老客户端会发)。跟 auth_failed 一样再连也没用。
+      fatal = new Error(code)
       failAll(fatal)
-      for (const sub of [...subs.values()]) { subs.delete(sub.sid); subErr(sub.topic, 'auth_failed') }
+      for (const sub of [...subs.values()]) { subs.delete(sub.sid); subErr(sub.topic, code) }
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       dropConn(c)
       status('auth_failed')
@@ -293,37 +293,17 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       theirPub = b64uDecode(h.data.hs)
       shared = x25519Shared(c.priv, theirPub)
     } catch (e) { protoErr('bad_hello_key', e); dropConn(c); return }
-    if (h.data.v !== 2 && opts.requireV2) { protoErr('downgrade_refused'); dropConn(c); return }
-    if (h.data.v === 2) {
-      c.chan = makeV2Channel(deriveV2Keys(shared, opts.token), 'client')
-      c.version = 2
-    } else {
-      c.v1Key = deriveV1Key(shared, opts.token)
-      c.version = 1
-    }
-    negotiated = c.version
+    // 版本协商是明文:中继能把 `v` 剥掉、想把双方降到没有防重放的 v1。v1 已经退休,回来的不是 v2 一律当篡改。
+    if (h.data.v !== 2) { protoErr('downgrade_refused'); dropConn(c); return }
+    c.chan = makeV2Channel(deriveV2Keys(shared, opts.token), 'client')
+    c.version = 2
+    negotiated = 2
     c.readyAt = now()
     status('ready')
     if (c.hsTimer) { clearTimeout(c.hsTimer); c.hsTimer = undefined }
     armKeepalive(c)
-    if (c.version === 1) {
-      for (const sub of [...subs.values()]) { subs.delete(sub.sid); subErr(sub.topic, 'subscriptions_need_v2') }
-    } else {
-      for (const sub of subs.values()) sendSub(c, sub)
-    }
+    for (const sub of subs.values()) sendSub(c, sub)
     for (const p of [...byRid.values()]) if (!p.sent) sendReq(c, p)
-  }
-
-  function onV1Frame(c: Conn, f: unknown): void {
-    const sealed = SealedV1Frame.safeParse(f)
-    if (!sealed.success) { protoErr('bad_v1_frame', sealed.error); return }
-    let pt: Uint8Array
-    try { pt = openV1(c.v1Key!, sealed.data) } catch (e) { protoErr('v1_open_failed', e); return }
-    let body: unknown
-    try { body = JSON.parse(utf8d.decode(pt)) } catch { protoErr('v1_not_json'); return }
-    const r = V1Response.safeParse(body)
-    if (!r.success) { protoErr('bad_v1_response', r.error); return }
-    settle(r.data.rid, p => p.resolve(makeResponse(r.data.status, {}, utf8.encode(r.data.body))))
   }
 
   function onV2Frame(c: Conn, f: unknown): void {
@@ -413,14 +393,6 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
 
   function sendReq(c: Conn, p: Pending): void {
     const { req } = p
-    if (c.version === 1) {
-      if (req.body instanceof Uint8Array) { settle(p.rid, q => q.reject(new Error('binary_body_needs_v2'))); return }
-      const m: V1RequestT = { path: req.path, method: req.method, rid: p.rid }
-      if (req.body !== undefined) m.body = req.body
-      markSent(c, p)
-      sendRaw(c, JSON.stringify(sealV1(c.v1Key!, utf8.encode(JSON.stringify(m)))))
-      return
-    }
     const m: ReqMsgT = { t: 'req', rid: p.rid, method: req.method, path: req.path }
     if (req.headers) m.headers = req.headers
     if (req.body instanceof Uint8Array) { m.body = b64Encode(req.body); m.bodyEncoding = 'base64' }
@@ -464,7 +436,6 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     subscribe(topic, onEvent) {
       if (closed) throw new Error('closed')
       if (fatal) throw fatal
-      if (negotiated === 1) throw new Error('subscriptions_need_v2')
       const sub: Sub = { sid: `s${++sidSeq}`, topic, cb: onEvent }
       subs.set(sub.sid, sub)
       ensureConnected()

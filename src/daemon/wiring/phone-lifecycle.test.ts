@@ -11,10 +11,9 @@ describe('phone lifecycle(手机那一簇关机时停掉:隧道 / notifier / 订
     lc.add('phone-events', () => { order.push('phone-events') })
     lc.add('notifier', () => { order.push('notifier') })               // 异步 import 回来以后才到
     lc.add('v2-tunnel', () => { order.push('v2-tunnel') })
-    lc.add('legacy-tunnel', () => { order.push('legacy-tunnel') })
     lc.add('media-mirror', () => { order.push('media-mirror') })          // 媒体镜像的单槽回调最先放掉:不再往手机对话里记
     await lc.stop()
-    expect(order).toEqual(['media-mirror', 'legacy-tunnel', 'v2-tunnel', 'notifier', 'phone-events', 'settings-panel'])
+    expect(order).toEqual(['media-mirror', 'v2-tunnel', 'notifier', 'phone-events', 'settings-panel'])
   })
   it('stops once; a failing stop is logged and does not skip the rest', async () => {
     const order: string[] = []

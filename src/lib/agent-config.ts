@@ -42,11 +42,12 @@ export interface AgentConfig {
   cursorAgentBin?: string
   /** 自定义 ACP 执行者(2026-10-07):任何会说 ACP 的 CLI 接进一起做。见 core/acp/agents.ts。 */
   acp_agents?: Array<{ id: string; name: string; command: string; args?: string[]; auth_method?: string }>
-  /** 随身 CC 远程隧道开关(2026-08-26):true 则 daemon 拨中继,手机出门
-   *  可访问。默认关。`remote_relay_url` 可覆盖默认 relay。 */
+  /** 随身 CC 远程隧道开关(2026-08-26):true 且设了 `relay_v2_url` 则 daemon 拨中继,手机出门
+   *  可访问。默认关。 */
   remote_tunnel?: boolean
+  /** 老 VPS 中继的地址。2026-10-25 随协议 v1 退休:还读进来(老配置文件不报错),但 daemon 不再用它。 */
   remote_relay_url?: string
-  /** 官方中继 v2 的地址(wss 源,不带路径)。**不设(或空串)⇒ v2 关**,只连老中继;没有隐式缺省。
+  /** 官方中继 v2 的地址(wss 源,不带路径)。**不设(或空串)⇒ 远程关**(老中继已退休);没有隐式缺省。
    *  上线步骤:生产中继 /healthz 正常后设 `"relay_v2_url": "wss://relay.tendhearth.com"`(docs/maintainer/relay.md)。 */
   relay_v2_url?: string
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走

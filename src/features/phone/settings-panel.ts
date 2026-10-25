@@ -170,10 +170,10 @@ export interface SettingsPanelDeps {
   remoteInfo?: () => { relay: string; id: string } | null
   /** agent-config.json 的 relay_v2_url 现在非空吗(桌面「连接手机」用;只读,主人事项)。缺省 ⇒ 当没开通。 */
   relayV2Configured?: () => boolean
-  /** 这次启动时 relay_v2_url 就已非空吗(开机快照,pipeline-deps 传入)。为 true 时运行中仍是老 id
-   *  = v2 身份坏了(relay-identity.json 读不出等),重启也换不来 v2 ⇒ 不重启,直接 relay_unavailable
-   *  (否则每个新进程都会再重启一次,成了重启循环)。缺省 ⇒ false(当开机时没配)。 */
-  relayV2AtBoot?: boolean
+  /** 这次启动时配置就要连中继吗(remote_tunnel 开 + relay_v2_url 非空;开机快照,wire-settings-panel 传入)。
+   *  为 true 而运行中没有中继 = v2 身份坏了(relay-identity.json 读不出等),重启也换不来 ⇒ 不重启,直接
+   *  relay_unavailable(否则每个新进程都会再重启一次,成了重启循环)。缺省 ⇒ false(当开机时没配)。 */
+  remoteAtBoot?: boolean
   /** 远程访问一键开关(2026-08-26):读/写 remote_tunnel + 触发重启。
    *  缺省 ⇒ 设置页不显示远程访问开关。 */
   remote?: {
@@ -273,7 +273,7 @@ export function phoneMayOpenMatter(matter: unknown, owner: string | null): boole
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
   let server: Server | null = null
-  let v2RestartRequested = false
+  let remoteRestartRequested = false
 
   // 令牌都在内部 API 的 token-registry 里(梳理第 6 步):链接令牌 origin 'link'、
   // 10 分钟;长期设备令牌(随身 CC 配对)origin 'device'、永不过期但可按台撤销。
@@ -637,20 +637,22 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         v2Configured: deps.relayV2Configured?.() ?? false,
         tunnelOn: deps.remote?.isEnabled() ?? false,
         bootRemoteId: remote?.id ?? null,
+        bootFailed: !!deps.remoteAtBoot && !remote,
       })
       if (state === 'remote_off' && opts.enableRemote && deps.remote) {
         // 桌面就是主人自己的电脑(裁决 4):点「连接手机」= 打开远程隧道。只写 remote_tunnel,不碰 relay_v2_url。
         deps.remote.setEnabled(true)
         deps.audit?.('remote_tunnel: → true — 桌面「连接手机」')
+        remoteRestartRequested = true
         deps.remote.requestRestart()
         return { ok: false, state: 'starting' }
       }
-      if (state === 'relay_unavailable' && opts.enableRemote && deps.remote && !deps.relayV2AtBoot && !v2RestartRequested) {
-        // 开机时隧道已开、relay_v2_url 是之后才配的:运行中的还是老 id,隧道不会自己换。重启一次让它按现在的配置连 v2。
-        // 只在运行中的中继与配置不符、且开机时还没配 v2 时触发;同进程只重启一次,免得点一下重启一下。
-        // 开机时就配了 v2 还是老 id ⇒ 身份坏了,重启无用(新进程照样是老 id),不重启。
-        v2RestartRequested = true
-        deps.audit?.('relay_v2_url 已配置但运行中的隧道仍是老中继 — 桌面「连接手机」触发重启')
+      if (state === 'starting' && !remote && opts.enableRemote && deps.remote && !remoteRestartRequested) {
+        // 配置现在说要连(隧道开 + relay_v2_url 在),这次启动却没连:其中一样是开机之后才配的,隧道不会自己起来。
+        // 重启一次让它按现在的配置连。同进程只重启一次,免得点一下重启一下;开机时就该连却没连成 ⇒ 上面判成
+        // relay_unavailable(身份坏了,重启无用),走不到这里。
+        remoteRestartRequested = true
+        deps.audit?.('relay_v2_url / remote_tunnel 是开机之后才配的 — 桌面「连接手机」触发重启')
         deps.remote.requestRestart()
         return { ok: false, state: 'starting' }
       }

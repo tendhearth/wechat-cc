@@ -43,7 +43,7 @@ export interface WireSettingsPanelDeps {
   memoryNightly: MemoryNightlyRuntime
   /** 手机那一簇建好的几样(没开中继 / 没接 matters ⇒ null)。 */
   phone: {
-    remoteCfg: { relay_v2_url?: string }
+    remoteCfg: { remote_tunnel?: boolean; relay_v2_url?: string }
     remoteTunnel: NonNullable<Parameters<typeof makeSettingsPanel>[0]['remoteInfo']> extends () => infer R ? R | null : never
     push: Parameters<typeof makeSettingsPanel>[0]['push'] | null
     owner: ReturnType<typeof makePhoneOwner> | null
@@ -69,7 +69,7 @@ return makeSettingsPanel({
   stateDir,
   ownerChatId,
   relayV2Configured: () => relayV2Configured(stateDir),
-  relayV2AtBoot: typeof remoteCfg.relay_v2_url === 'string' && remoteCfg.relay_v2_url.trim() !== '',
+  remoteAtBoot: remoteCfg.remote_tunnel === true && typeof remoteCfg.relay_v2_url === 'string' && remoteCfg.relay_v2_url.trim() !== '',
   // 手机洞察(批准说明 + 进展概括):explainer / summarizer 各建一个实例(内含缓存),不是每请求一建。
   ...(mattersService ? (() => {
     const cheap = () => wrapCheapEvalWithAuthFailCheck(boot.registry.getCheapEval(), (tag, line) => log(tag, line)) ?? null
