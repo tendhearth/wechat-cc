@@ -16,12 +16,11 @@
  * so it's unit-testable without a timer or a live ilink.
  */
 import type { Lifecycle } from '../../lib/lifecycle'
+import { backoffMs, RETRY_WINDOW_MS } from '../../lib/delivery-backoff'
+export { backoffMs, RETRY_WINDOW_MS }
 import type { RemindersStore } from './store'
-import { isProactiveWindowClosed } from '../ilink/outbound-health'
+import { isProactiveWindowClosed } from '../../daemon/ilink/outbound-health'
 import { toLocalISO } from '../../core/prompt-format'
-
-/** How long after due_at we keep retrying a failing delivery before giving up. */
-export const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000 // 24h
 
 /**
  * 过了重试窗口也要至少真试过这么多次才放弃。窗口从 due_at 算,电脑睡/断网
@@ -30,16 +29,6 @@ export const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000 // 24h
  * 退避(1+2+4+8 分钟)约一刻钟,够网络恢复。
  */
 export const MIN_ATTEMPTS_BEFORE_GIVE_UP = 5
-
-/**
- * Exponential retry backoff: 1min, 2min, 4min, … capped at 60min. June's
- * flat every-sweep retry meant a disconnected hour produced 60 send attempts
- * per reminder — the no-retry-storm rule requires exponential spacing
- * (WeChat risk control). `attempts` is the count of failures so far (>=1).
- */
-export function backoffMs(attempts: number): number {
-  return Math.min(3_600_000, 60_000 * 2 ** (attempts - 1))
-}
 
 /**
  * Per-sweep send-attempt budget (review issue 1b). Backoff only spaces out
@@ -191,7 +180,7 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
  *  - 两条路都送不到 ⇒ `deferred`(留着,不算失败);
  *  - 放行 ⇒ 经 proactive-channel 送(微信能用走微信,降级落到 App),结果原样交回,-2 / 退避 / 放弃窗口照旧。
  */
-export function sendReminderVia(speech: import('../speech/policy').SpeechPolicy, log: (tag: string, line: string) => void): SweepDeps['send'] {
+export function sendReminderVia(speech: import('../../daemon/speech/policy').SpeechPolicy, log: (tag: string, line: string) => void): SweepDeps['send'] {
   return async (chatId, text) => {
     let sent: { ok: boolean; error?: string } = { ok: false, error: 'not_sent' }
     const o = await speech.say({ kind: 'reminder', chatId }, async (turn) => {

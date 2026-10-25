@@ -79,8 +79,7 @@ import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
 import { registerPolling, type PollingLifecycle } from './polling-lifecycle'
 import { startCliUpgrade } from './cli-upgrade/start'
-import { registerReminders, sendReminderVia } from './reminders/sweeper'
-import { makeRemindersStore } from './reminders/store'
+import { remindersFeature } from '../features/reminders'
 import { registerReportSweeper, sendReportVia } from './reports/sweeper'
 import { runStartupSweeps } from './startup-sweeps'
 import { isHeartbeatFresh } from './single-instance'
@@ -632,14 +631,12 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         return { upgrader: () => upgrader }
       },
     } satisfies DaemonModule<CliUpgradeModule>,
-    // 提醒(spec 2026-08-20-reminders-port):精确到点送达;走 SpeechPolicy(requested:免打扰照发),两条路都送不到 ⇒ 留着。
-    lifecycleModule('reminders', (ctx) => registerReminders({
-      store: makeRemindersStore(db),
-      send: sendReminderVia(ctx.get<WiredDeps>('wired').speech, (t, l) => log(t, l)),
-      log: (t, l) => log(t, l),
-      activityLog: ctx.get<OwnerCommands>('owner-commands').activity.activityLog,
-      isOwner,
-    }), { needs: ['wired', 'owner-commands'] }),
+    // 提醒:一个功能一个目录(src/features/reminders);路由自己挂。
+    remindersFeature({
+      db, isOwner, needs: ['wired', 'owner-commands'],
+      speech: (c) => c.get<WiredDeps>('wired').speech,
+      activityLog: (c) => c.get<OwnerCommands>('owner-commands').activity.activityLog,
+    }),
     // 定时任务每分钟一拍(wire-jobs.ts):坏了只降级。
     lifecycleModule('scheduled-jobs', (ctx) => ctx.get<OwnerCommands>('owner-commands').jobs.startRunner(), { needs: ['owner-commands', 'wired'] }),
     // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来再送。

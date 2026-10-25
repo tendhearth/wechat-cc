@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { chooseChannel, makeProactiveOutbound, type AppChannel, type ProactiveChannelDeps } from './proactive-channel'
 import { openTestDb } from '../../lib/db'
-import { makeRemindersStore } from '../reminders/store'
-import { runReminderSweep } from '../reminders/sweeper'
+import { makeRemindersStore } from '../../features/reminders/store'
+import { runReminderSweep } from '../../features/reminders/sweeper'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { makeAppChannel } from './app-channel'
 

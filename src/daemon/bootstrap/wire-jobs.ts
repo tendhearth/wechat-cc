@@ -30,7 +30,7 @@ import { combineReplyHandlers, makeAsksReply } from '../scheduled-jobs/asks-repl
 import { makeOwnerAsksStore, OWNER_ASKS_FILE } from '../../core/owner-asks-store'
 import { parseAgenda, selectDue } from '../companion/agenda'
 import { localParts } from '../memory/nightly-schedule'
-import { makeRemindersStore } from '../reminders/store'
+import { makeRemindersStore } from '../../features/reminders'
 import { pickJobExecutor, type TickBodies } from '../wiring/tick-bodies'
 
 type RunJobTurn = TickBodies['runJobTurn']

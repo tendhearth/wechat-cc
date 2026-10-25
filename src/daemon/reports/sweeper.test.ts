@@ -5,7 +5,7 @@ import {makeReportOutboxStore, type ReportOutboxStore} from './outbox'
 import {runReportSweep, sendReportVia, HELD_OVERRIDE_MS} from './sweeper'
 import {makeSpeechPolicy} from '../speech/policy'
 import type {ProactiveOutbound} from '../companion/proactive-channel'
-import {RETRY_WINDOW_MS} from '../reminders/sweeper'
+import {RETRY_WINDOW_MS} from '../../features/reminders/sweeper'
 
 /**
  * 投递器(brief Step 6,分路按评审修复轮 1/2/3 收紧):读 status='pending' AND

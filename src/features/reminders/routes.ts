@@ -1,7 +1,7 @@
 /**
- * internal-api reminder routes (spec 2026-08-20-reminders-port-design §2.3,
- * ported from the June feat/reminders branch). Delivered by the reminder
- * sweeper (src/daemon/reminders), persisted in the daemon db.
+ * 提醒的路由(spec 2026-08-20-reminders-port-design §2.3,ported from the June feat/reminders branch).
+ * Delivered by the reminder sweeper (./sweeper.ts), persisted in the daemon db. 由 reminders 模块自己挂
+ * (internalApi.mount;路由表标了 module: 'reminders')。
  *
  * Scope rule (user ruling 2026-08-20): session-origin callers — ANY tier —
  * may only touch their own chat ("提醒我" semantics). The June version let
@@ -9,10 +9,11 @@
  * guest path is a harassment/impersonation primitive. File/operator tokens
  * (the CLI) are unrestricted. The 403 never echoes the requested chat_id.
  */
-import { makeRemindersStore, MAX_PENDING_PER_CHAT } from '../reminders/store'
-import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
-import { errMsg } from './types'
-import type { ReminderScheduleRequestT, ReminderCancelRequestT } from './schema'
+import { makeRemindersStore, MAX_PENDING_PER_CHAT } from './store'
+import type { Db } from '../../lib/db'
+import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
+import { errMsg } from '../../daemon/internal-api/types'
+import type { ReminderScheduleRequestT, ReminderCancelRequestT } from '../../daemon/internal-api/schema'
 
 type Caller = Parameters<RouteHandler>[2]
 
@@ -22,10 +23,9 @@ function scopeDenied(chatId: string, caller: Caller): boolean {
 }
 const DENIED = { status: 403, body: { error: 'reminder_scope_denied' } }
 
-export function remindersRoutes(deps: InternalApiDeps): RouteTable {
+export function remindersRoutes(deps: { db: Db; log?: (tag: string, line: string) => void }): RouteTable {
   return {
     'POST /v1/reminders/schedule': async (_q, body, caller) => {
-      if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
       const { chat_id, text, due_at, delay_seconds } = body as ReminderScheduleRequestT
       if (scopeDenied(chat_id, caller)) return DENIED
       try {
@@ -48,7 +48,6 @@ export function remindersRoutes(deps: InternalApiDeps): RouteTable {
       }
     },
     'POST /v1/reminders/cancel': async (_q, body, caller) => {
-      if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
       const { chat_id, reminder_id } = body as ReminderCancelRequestT
       if (scopeDenied(chat_id, caller)) return DENIED
       try {
@@ -60,7 +59,6 @@ export function remindersRoutes(deps: InternalApiDeps): RouteTable {
       }
     },
     'GET /v1/reminders/list': async (q, _body, caller) => {
-      if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
       const chatId = q.get('chat_id')
       if (!chatId) return { status: 400, body: { ok: false, error: 'chat_id required' } }
       if (scopeDenied(chatId, caller)) return DENIED

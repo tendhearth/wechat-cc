@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
-import { remindersRoutes } from './routes-reminders'
-import { MAX_PENDING_PER_CHAT } from '../reminders/store'
-import type { InternalApiDeps } from './types'
+import { remindersRoutes } from './routes'
+import { MAX_PENDING_PER_CHAT } from './store'
 
 describe('reminders routes', () => {
   let db: Db
   let routes: ReturnType<typeof remindersRoutes>
   beforeEach(() => {
     db = openTestDb()
-    routes = remindersRoutes({ db } as InternalApiDeps)
+    routes = remindersRoutes({ db })
   })
   afterEach(() => { db.close() })
 
