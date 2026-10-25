@@ -17,7 +17,7 @@
 | 功能怎么接进来 | 启停五种写法(`lc.register` / `teardown.add` / `phoneLc.add` / `sup.start` / 单模块容器 ×13),晚绑定六种(`Ref`、`{current}`、`let`、`provide` ×25、setter、`bootRef?.x ?? null`);容器的 `needs` 全仓只用了一次(`bootstrap/social-module.ts:50`) | 新人照着抄,会抄到六种里的随便一种 |
 | 依赖包 | `InternalApiDeps` 111 个字段、`Bootstrap` 49、`WireMainOpts` 约 35;68 个不同的 `*_not_wired` 错误码 | 「还没接上」被拆成 68 种说法;每加一个功能,三个包各加几个字段 |
 | 一个功能在哪 | 删掉打猎要碰约 18 处,画室约 15,信约 13,工作台约 15,手机约 40 个平铺文件;没有一个功能能「删一个目录就没了」 | 「少用的功能收成可选模块」(10-20 拍板)落不了地 |
-| 执行者 | 一家执行者有两到三套实现:对话一套(`*-agent-provider.ts`)、工作台一套(`codex-app-server.ts`、`claude-workbench-*`、`acp-workbench-provider.ts`、`api-task-provider.ts`),各进一个**不同的** `ProviderRegistry`(`bootstrap/providers.ts:195`、`wire-workbench.ts:181`);便宜模型又是一套;流解析五份 | 接一家新执行者要写两遍;工作台那份登记表丢过便宜模型(`wire-workbench.ts:244` 的注释) |
+| 执行者 | 对话和工作台共用 `AgentProvider` 一个口,但 Codex(SDK vs app-server)和 OpenAI 兼容(自建循环 vs 文件工具会话)各有两份实现;便宜模型 / 强模型的一次性调用散在几处(`cursor-eval.ts`、`codex-cheap-model.ts`);脚本化的测试替身放在生产代码里 | 接一家新执行者时,该照哪一份抄说不清;两份实现的行为会慢慢分叉 |
 | 权限 | `compilePolicy` 是一张翻译表,但 Claude 对话不走它(`tierProfileToClaudeSdkOpts` + 自己的 `canUseTool`),Claude 工作台在 `wire-workbench.ts:63-73` 又手写一套;逐工具判定在五处;主人的放行规则只接了终端会话和一起做 | 「这一步能不能做」没有一个地方说了算,只能靠表格**描述**缺口(`tier-enforcement.ts`) |
 | core 层 | 276 个文件里约 126 个是适配器(起进程、写文件、SDK、直接 SQL);`core-no-node` 守卫只数 `node:` 字符串,把 `node:child_process` 换成 `lib/runtime/process` 就过了 | 守卫在洗白,不是在分层 |
 | 协调器 | `createConversationCoordinator` 一个 1200 行闭包;档位 / 准入在七处重算;回复交付新旧两条路并跑(`shadow` 12 处) | 按函数拆文件(#605 的稿子)会把纠缠原样搬进六个文件 |
@@ -152,13 +152,23 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 
 ### 阶段 B:执行者一个口
 
+> **2026-10-25 逐家核过之后改写**(初稿照审查结论写成「每家两三套」,说重了):对话和工作台本来就共用 `AgentProvider` /
+> `AgentSession` 这一个口(工作台多一个可选的 `workbenchRuntime`),工作台那张登记表是跟着主表走的视图(`onRegister`),
+> 便宜模型也已改走主表。真正「一家两份实现」的只有两家:
+
+| 家 | 对话 | 工作台 | 现状 |
+|---|---|---|---|
+| Cursor | `acp-cursor-chat.ts` → `acp-agent-provider.ts` | `acp-workbench-provider.ts`(9 行,桥到同一个 ACP 客户端) | 已经一份 |
+| Claude | `createClaudeAgentProvider` | 同一个,换工作台的 SDK 选项(`wire-workbench.ts` 的 `workbenchClaudeOptions`)+ `claude-workbench-runtime` 管长寿命 | 一份;选项的拼法要收进 C(权限一个判定) |
+| agy / Gemini | 各自的 provider | 同一个(免审执行者) | 一份 |
+| **Codex** | SDK(`codex-agent-provider.ts`,408 行) | app-server(`workbench/codex-app-server.ts`,902 行) | **两份** |
+| **OpenAI 兼容** | 自己的循环 + MCP 桥(`openai-agent-provider.ts`) | 文件工具 + 持久会话(`workbench/api-task-provider.ts`) | **两份** |
+
 | # | 内容 | 做完怎么算 |
 |---|---|---|
-| B1 | 定 `Executor` / `Run` / `ExecutorEvent`,先给 openai 兼容那家实现(最简单、对话和工作台两套都有)并让对话、工作台都用它 | 那一家只剩一个适配器 |
-| B2 | Cursor(ACP 两条合一)、agy、Gemini | 同上 |
-| B3 | Codex:对话改走 app-server 那条;SDK 那条退休 | 同上 |
-| B4 | Claude:对话和工作台合成一个适配器 | 同上;一张登记表;`wire-workbench.ts` 里不再 `createProviderRegistry` |
-| B5 | `oneShot` 取代 CheapEval / StrongEval / `cursor-eval` / `codex-cheap-model`;脚本替身搬出生产代码 | `src/` 里没有 `*-scripted.ts` |
+| B1 | Codex 对话改走 app-server(工作台那条已经更全:中途插话、后台任务、原生历史);SDK 那条退休。**先出逐项差异表**(中途插话、思考过程、工具调用显示、恢复会话、额度报错),有主人看得见的差异 ⇒ 攒进「等主人点头」 | `codex-agent-provider.ts` 删掉 |
+| B2 | OpenAI 兼容:一个会话类型,工具面按用途配(对话 = 微信工具,工作台 = 文件工具 + 微信工具);会话持久化统一用 `api-sessions` | 两份实现合成一份 |
+| B3 | `oneShot` 收 CheapEval / StrongEval 的散实现(`cursor-eval.ts`、`codex-cheap-model.ts`);脚本替身(`*-scripted.ts`)搬出生产代码 | `src/` 里没有 `*-scripted.ts` |
 
 ### 阶段 C:权限一个判定(B 之后,适配器只报不判)
 
@@ -168,7 +178,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | C2 | 对话的逐工具判定(`permission-relay`、Gemini gate、openai gate、`wire-model-options`)全换成 `authorize` | 逐工具判定只有一处;Claude 工作台手写的 ask / deny 删掉 |
 | C3 | `tier-enforcement.ts` 变成 `compile()` 的快照测试 | 那个文件没了 |
 
-### 阶段 D:协调器流水线(B、C 之后)
+### 阶段 D:协调器流水线(不依赖 B;`admit` 做完后 C 接得更顺)
 
 | # | 内容 | 做完怎么算 |
 |---|---|---|
@@ -203,7 +213,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 ## 顺序为什么这样排
 
 - A 先做:后面每一步都要往「一个模块」里放东西,模块的形状不定,搬过去还得再搬一次。A1 的设计稿和主人的降级确认都已经有了。
-- B 在 C、D 前:权限的判定点散,是因为每家执行者各自判;先把执行者收成「只报不判」,`authorize` 才有地方接。协调器的 `admit` 也要吃统一的描述。
+- B 只剩两家要合(Codex、OpenAI 兼容),而且合的时候要真机核对行为差异,所以不挡别的:D(协调器)先做,`admit` 一处定档位以后,C 的 `authorize` 正好接在那里。
 - E 跟着 B–D 走:目录挪动本身不改逻辑,在每一块搬完时顺手挪,不单独来一轮大挪动(大挪动会跟所有在途分支冲突)。
 - F 碰的是协议包、`internal-api` 的处理器挂法、桌面和 App,和 A–E 的文件基本不重叠,可以并行。
 - G 碰主人看得见的记忆,而且有一串在途的 PR,放最后。
@@ -225,7 +235,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 
 | 步 | 状态 |
 |---|---|
-| A1 | 整个 daemon 一个容器(`foundation.ts` + `daemon-modules.ts`,main.ts 1062 → 约 190 行);main.ts 的 Ref / lc.register / sup.start 归零,关机顺序一位不变(#665)。`daemon_starting` 门与降级留给 A1b |
+| A1 | 整个 daemon 一个容器(`foundation.ts` + `daemon-modules.ts`,main.ts 1062 → 约 190 行);main.ts 的 Ref / lc.register / sup.start 归零,关机顺序一位不变(#665)。`daemon_starting` 门与 internal-api / 工作台降级挪到 F2:降级要求所有用 internal-api 的模块改成 wants 并自己兜「没有」,换来的只是覆盖「127.0.0.1:0 绑不上」这种几乎不发生的失败;F2 重做路由挂法时顺手做最自然 |
 | A2 | bootstrap 拆成一组模块进同一个容器(boot-base / knowledge / boot-core / self-restart / idle-sweep / social / mailbox-poller / a2a-server / pairing / yi / bootstrap);收尾清单、module-group 桥删掉;`enabled()` 能读上游 |
 | A3 + A4 | 功能目录 `src/features/<名>/`:模块自己 `internalApi.mount` 路由(路由表 `module` 字段,关 / 坏 / 还没挂上 ⇒ module_off / module_degraded / module_starting);depcheck 三条边界;日历整块搬进去做样板,`InternalApiDeps` 少一个字段;[加一个功能](maintainer/add-a-feature.md) |
 | A5 · 提醒 | `src/features/reminders/`(store / sweeper / routes / 模块清单),路由自己挂;重试退避挪到 `lib/delivery-backoff.ts`(任务回报共用,不再伸进提醒内部) |
