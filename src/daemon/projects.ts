@@ -2,9 +2,10 @@
  * 项目登记(别名 → 文件夹,state/projects.json)。架构终态 A6:以前挂在 ilink 适配器上(`ilink.projects` /
  * `ilink.loadProjects`),可它跟微信一点关系都没有 —— 只是读写一个文件。现在是地基里的一样东西,谁要谁拿。
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { addProject, listProjects, setCurrent, removeProject } from '../lib/project-registry'
+import { readJsonFile } from '../lib/read-json-file'
 import type { WechatProjectsDep } from './wechat-tool-deps'
 
 export interface ProjectsSnapshot { projects: Record<string, { path: string; last_active: number }>; current: string | null }
@@ -35,10 +36,11 @@ export function makeProjects(stateDir: string): Projects {
     load() {
       if (!existsSync(projectsFile)) return { projects: {}, current: null }
       try {
-        const parsed = JSON.parse(readFileSync(projectsFile, 'utf8')) as {
+        // 容忍 BOM(PowerShell 写的 UTF-8 带 BOM,裸 JSON.parse 会炸;仓库守卫 read-json-file.test 管着)
+        const parsed = readJsonFile<{
           projects?: Record<string, { path: string; last_active: string }>
           current?: string | null
-        }
+        }>(projectsFile)
         const out: Record<string, { path: string; last_active: number }> = {}
         for (const [alias, entry] of Object.entries(parsed.projects ?? {})) {
           out[alias] = { path: entry.path, last_active: new Date(entry.last_active).getTime() }
