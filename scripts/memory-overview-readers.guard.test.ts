@@ -18,7 +18,7 @@ const READERS: Record<string, { kind: 'owner' | 'outward'; why: string }> = {
   'src/lib/memory-synthesis.ts': { kind: 'owner', why: '写它的人(合成)' },
   'src/lib/memory-artifacts.ts': { kind: 'owner', why: '清单登记它是生成物' },
   'src/lib/memory-edit.ts': { kind: 'owner', why: '记忆编辑能编辑的路径之一' },
-  'src/daemon/internal-api/schema.ts': { kind: 'owner', why: '记忆编辑请求的 path 枚举' },
+  'packages/protocol/src/desktop-api.ts': { kind: 'owner', why: '记忆编辑请求的 path 枚举(/v1 契约,架构终态 F1 从 daemon 搬过来)' },
   'src/daemon/memory/nightly-runtime.ts': { kind: 'owner', why: '记忆编辑的 view / edit(admin + operator)' },
   'src/daemon/memory/nightly.ts': { kind: 'owner', why: '首次整理 memory.md 的素材;memory.md 只在主人对话注入' },
   'src/daemon/memory/fs-api.ts': { kind: 'owner', why: '过期就藏、写回时剥过期标签;MCP 读只限各自对话的目录' },
@@ -49,7 +49,7 @@ const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8')
 
 describe('_overview.md 的读者都登记过;对外的去掉主人原话', () => {
   it('提到 _overview.md 的文件都在名单里', () => {
-    const files = [...walk(join(ROOT, 'src')), join(ROOT, 'cli.ts')].map(f => relative(ROOT, f).split('\\').join('/'))
+    const files = [...walk(join(ROOT, 'src')), ...walk(join(ROOT, 'packages', 'protocol', 'src')), join(ROOT, 'cli.ts')].map(f => relative(ROOT, f).split('\\').join('/'))
     expect(files.filter(rel => !(rel in READERS) && mentionsOverview(read(rel))), '新读者:登记成 owner 或 outward(outward 要经 overviewForOthers)').toEqual([])
   })
   it('对外的读者都调了 overviewForOthers', () => {

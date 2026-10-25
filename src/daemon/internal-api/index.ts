@@ -38,6 +38,16 @@ import {
   type RouteTable,
 } from './types'
 import { makeMaybePrefix, makeRoutes } from './routes'
+import { UNDER_TEST_RUNNER } from '../../lib/config'
+import { RESPONSE_SCHEMAS } from '@wechat-cc/protocol/desktop-api'
+
+/** 回包对不上响应契约 ⇒ 抛(只在测试里调)。没有契约的路由不核。 */
+export function assertResponseContract(routeKey: string, body: unknown): void {
+  const schema = RESPONSE_SCHEMAS[routeKey]
+  if (!schema) return
+  const r = schema.safeParse(body)
+  if (!r.success) throw new Error(`response_contract ${routeKey}: ${JSON.stringify(r.error.issues).slice(0, 600)}`)
+}
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
 import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
@@ -361,6 +371,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       const onSent: Array<() => void> = []
       try {
         const out = await route(url.searchParams, body, callerInfo, { signal: ac.signal, onSent: (cb) => { onSent.push(cb) } })
+        // 契约(架构终态 F1):测试里每个 2xx 回包都对着响应契约核一遍 —— 契约写错了、处理器回的形状变了,测试当场红;
+        // 生产里不核(不为契约多花一次 parse,也不因契约漏写一个可选字段就让主人的请求失败)。
+        if (UNDER_TEST_RUNNER && out.status >= 200 && out.status < 300) assertResponseContract(routeKey, out.body)
         if (onSent.length && !ac.signal.aborted) res.once('finish', () => { for (const cb of onSent) { try { cb() } catch { /* 回调出错不影响已回的包 */ } } })
         send(res, out.status, out.body, origin)
       } finally {

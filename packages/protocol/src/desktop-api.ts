@@ -407,6 +407,8 @@ export const WechatReplyRequest = z.object({
 })
 export const WechatReplyResponse = z.union([
   z.object({ ok: z.literal(true), msg_id: z.string() }),
+  // App 那条路开着回话口(reply sink)时:话被截给 App,没经微信发,所以没有 msg_id。
+  z.object({ ok: z.literal(true), captured: z.literal(true) }),
   z.object({ ok: z.literal(false), error: z.string() }),
 ])
 
