@@ -242,6 +242,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | A5 · 信 | `src/features/letters/`(写、排版、调度、存档、手机只读页、路由、模块清单);`InternalApiDeps.letters` 去掉。定下功能的写法:功能声明它要的 `deps` 类型,组装的地方(daemon-modules.ts)从上游模块填 |
 | A5 · 定时 | `src/features/jobs/`(命令、早报 / 周报、runner、手机页、模块清单:必需的 `jobs` + 可选的 `scheduled-jobs`);「做过的事」单独成 `activity` 模块;`ReplyHandler` 类型归命令平台(`commands/registry.ts`);容器新规矩:必需模块不许 needs 可选模块(开机就抛) |
 | F1 第 1 步 | `/v1` 的 zod 契约搬进协议包(`packages/protocol/src/desktop-api.ts`,daemon 的 `internal-api/schema.ts` 只转出);守卫:契约表的键都在路由表里。现在 36 / 209 条 `/v1` 路由有响应契约 |
+| A6 第 1 步 | 项目登记(别名 → 文件夹)搬出 ilink 适配器:`src/daemon/projects.ts`,地基里一份;`IlinkAdapter` 少 `projects` / `loadProjects` 两项 |
 
 ## 修订记录
 

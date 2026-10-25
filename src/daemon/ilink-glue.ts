@@ -10,7 +10,7 @@
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
+import type { WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
 import { howToReplyLine, parsePermissionReply, type PendingPermissionMeta, type PendingPermissionView, type PermissionDecision } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
@@ -19,12 +19,6 @@ import type { SessionStateStore } from '../core/session-state'
 import { sendReplyOnce, chunk } from '../lib/send-reply'
 import { MAX_TEXT_CHUNK } from '../lib/config'
 import { log } from '../lib/log'
-import {
-  addProject,
-  listProjects,
-  setCurrent,
-  removeProject,
-} from '../lib/project-registry'
 import {
   sharePage as docsShare,
   resurfacePage as docsResurface,
@@ -100,7 +94,6 @@ export interface IlinkAdapter {
   }, signal?: AbortSignal): Promise<WorkbenchNoticeOutcome>
   uploadWorkbenchArtifact?(request:{id:string;ownerChatId:string;accountId:string;bytes:Uint8Array;name:string;mime:string},signal?:AbortSignal):Promise<{status:'uploaded';item:WorkbenchMediaItem}|{status:'retryable'|'blocked';reason:string}>
   sendWorkbenchArtifact?(receipt:{id:string;taskId:string;artifactId:string;artifactSha256:string;ownerChatId:string;accountId:string;name:string},item:WorkbenchMediaItem,signal?:AbortSignal):Promise<ArtifactTransportOutcome>
-  projects: WechatProjectsDep
   voice: WechatVoiceDep
   companion: WechatCompanionDep
   /**
@@ -108,7 +101,6 @@ export interface IlinkAdapter {
    * `keepOnUndelivered` ⇒ 条目留在登记处等到点 —— 调用方另有面(手机 app 推送)能拍板时用。
    */
   askUser(chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { keepOnUndelivered?: boolean }): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
-  loadProjects(): { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId(): string | null
   markChatActive(chatId: string, accountId?: string): void
   captureContextToken(chatId: string, ctxToken?: string): void
@@ -445,34 +437,6 @@ export function makeIlinkAdapter(opts: {
       return outcome
     },
 
-    projects: {
-      list() {
-        const views = listProjects(projectsFile)
-        return views.map(v => ({
-          alias: v.alias,
-          path: v.path,
-          current: v.is_current,
-        }))
-      },
-      async switchTo(alias) {
-        try {
-          setCurrent(projectsFile, alias)
-          const views = listProjects(projectsFile)
-          const entry = views.find(v => v.alias === alias)
-          if (!entry) return { ok: false as const, reason: `alias '${alias}' not found after switch` }
-          return { ok: true as const, path: entry.path }
-        } catch (err) {
-          return { ok: false as const, reason: err instanceof Error ? err.message : String(err) }
-        }
-      },
-      async add(alias, path) {
-        addProject(projectsFile, alias, path)
-      },
-      async remove(alias) {
-        removeProject(projectsFile, alias)
-      },
-    },
-
     voice,
     companion,
 
@@ -515,29 +479,6 @@ export function makeIlinkAdapter(opts: {
         },
       )
       return resultPromise
-    },
-
-    loadProjects() {
-      if (!existsSync(projectsFile)) {
-        return { projects: {}, current: null }
-      }
-      try {
-        const raw = readFileSync(projectsFile, 'utf8')
-        const parsed = JSON.parse(raw) as {
-          projects?: Record<string, { path: string; last_active: string }>
-          current?: string | null
-        }
-        const out: Record<string, { path: string; last_active: number }> = {}
-        for (const [alias, entry] of Object.entries(parsed.projects ?? {})) {
-          out[alias] = {
-            path: entry.path,
-            last_active: new Date(entry.last_active).getTime(),
-          }
-        }
-        return { projects: out, current: parsed.current ?? null }
-      } catch {
-        return { projects: {}, current: null }
-      }
     },
 
     lastActiveChatId: transport.lastActiveChatId,

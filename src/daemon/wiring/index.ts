@@ -32,6 +32,8 @@ import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
+  /** 项目登记(别名 → 文件夹),伙伴那一拍选文件夹用。 */
+  projects: import('../projects').Projects
   /** 比 wireMain 晚才有的几样(拉消息、入站管道、App 一轮、知识库催一下):调用时现取,模块容器的 ctx.late。 */
   late: PipelineDepsLate
   workbench?: import('../../core/workbench/service').WorkbenchService

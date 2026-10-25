@@ -34,6 +34,7 @@ import { makeCareLedger } from './companion/care-ledger'
 import { makeProviderRefusals } from './provider-refusals'
 import { pinHuntForExistingOwner } from './companion/hunt-default'
 import { SubsystemSupervisor } from './subsystems'
+import { makeProjects } from './projects'
 
 export async function openFoundation(opts: { stateDir: string }, undo: Array<() => void>) {
   const { stateDir } = opts
@@ -153,6 +154,8 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     conversationStore,
     memoryFS: makeMemoryFS({ rootDir: join(stateDir, 'memory'), layout: 'all-chats' }),
     messagesStore: makeMessagesStore(db),
+    // 项目登记(别名 → 文件夹):以前挂在 ilink 适配器上,跟微信无关(架构终态 A6)。
+    projects: makeProjects(stateDir),
     jobsStore: makeJobsStore(stateDir),
     // 「一件事」登记处:一份 store,工作台、微信入站、app 对话、内部 API 都用它(2026-09-16)。
     matters: makeMatterStore(db),

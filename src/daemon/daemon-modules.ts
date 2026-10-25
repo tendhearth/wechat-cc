@@ -169,7 +169,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const polling = ctx.late<LifecycleHolder<PollingLifecycle>>('polling')
         const wired = ctx.late<WiredDeps>('wired')
         const api: InternalApiLifecycle = await registerInternalApi({
-          stateDir, daemonPid: process.pid, memory: f.memoryFS, db, projects: ilink.projects,
+          stateDir, daemonPid: process.pid, memory: f.memoryFS, db, projects: f.projects,
           atelier: makeAtelierStore(stateDir),
           getChatPrefs: (c) => f.chatPrefs.get(c),
           setChatPref: (c, p) => f.chatPrefs.set(c, p),
@@ -265,7 +265,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const workbench = ctx.late<WorkbenchService>('workbench')
         const wired = ctx.late<WiredDeps>('wired')
         return {
-          stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate,
+          stateDir, db, ilink, loadProjects: () => f.projects.load(), networkGate: guardRt.gate,
           // CC 开口那道门在 wired 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 现取。
           speech: () => wired()?.speech ?? null,
           // 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire;工作台还没起 ⇒ 不冲突。
@@ -336,7 +336,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const workbench = ctx.late<WorkbenchService>('workbench')
         return wireCliSessions({
           speech: () => wired()?.speech ?? null,
-          stateDir, dangerously, db, ilink: ctx.get('ilink-adapter'), own: (n, s) => ctx.own(n, s),
+          stateDir, dangerously, db, ilink: ctx.get('ilink-adapter'), projects: f.projects, own: (n, s) => ctx.own(n, s),
           internalApi: ctx.get('internal-api'), boot: ctx.get<Bootstrap>('bootstrap'), networkGate: ctx.get<GuardRuntime>('network-gate').gate,
           workbench: () => workbench(),
           appPush: () => wired()?.appPush ?? null,
@@ -507,7 +507,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           stickers: f.stickerLib,
           requestRestart: (reason) => f.requestRestart(reason),
           llmHealth,
-          stateDir, db, ilink, accounts: f.accounts, boot, dangerously, chatPrefs: f.chatPrefs, careLedger: f.careLedger, replySinks: f.replySinks,
+          stateDir, db, ilink, projects: f.projects, accounts: f.accounts, boot, dangerously, chatPrefs: f.chatPrefs, careLedger: f.careLedger, replySinks: f.replySinks,
           outboundTaps: f.outboundTaps, huntStore: f.huntStore, petSignals: f.petSignals, replyDelivery: ctx.get('reply-delivery'),
           // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
           turns: f.turnRecordStore,

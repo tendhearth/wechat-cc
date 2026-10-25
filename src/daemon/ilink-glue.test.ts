@@ -1,3 +1,4 @@
+import { makeProjects } from './projects'
 import { describe, it, expect, vi } from 'vitest'
 import { makeIlinkAdapter, loadAllAccounts, type Account } from './ilink-glue'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -80,14 +81,15 @@ describe('makeIlinkAdapter (composed)', () => {
     expect(typeof a.resurfacePage).toBe('function')
     expect(typeof a.setUserName).toBe('function')
     expect(typeof a.askUser).toBe('function')
-    expect(typeof a.loadProjects).toBe('function')
     expect(typeof a.lastActiveChatId).toBe('function')
     expect(typeof a.flush).toBe('function')
     expect(typeof a.handlePermissionReply).toBe('function')
     expect(typeof a.markChatActive).toBe('function')
     expect(typeof a.captureContextToken).toBe('function')
     expect(typeof a.resolveUserName).toBe('function')
-    expect(a.projects).toBeDefined()
+    // 项目登记不在 ilink 上了(架构终态 A6,src/daemon/projects.ts)
+    expect('projects' in a).toBe(false)
+    expect('loadProjects' in a).toBe(false)
   })
 
   it('setUserName persists through conversationStore (PR5 Task 21)', async () => {
@@ -147,9 +149,8 @@ describe('makeIlinkAdapter (composed)', () => {
     }
   })
 
-  it('loadProjects returns {projects: {}, current: null} when projects.json missing', () => {
-    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
-    const snap = a.loadProjects()
+  it('projects.load() returns {projects: {}, current: null} when projects.json missing', () => {
+    const snap = makeProjects(newStateDir()).load()
     expect(snap.projects).toEqual({})
     expect(snap.current).toBeNull()
   })
@@ -263,8 +264,7 @@ describe('makeIlinkAdapter (composed)', () => {
   })
 
   it('projects.list() returns empty array when projects.json missing', () => {
-    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
-    expect(a.projects.list()).toEqual([])
+    expect(makeProjects(newStateDir()).list()).toEqual([])
   })
 
   it('voice.configStatus returns configured:false when voice-config.json absent', () => {

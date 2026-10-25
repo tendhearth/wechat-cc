@@ -219,8 +219,8 @@ function setupDeps(opts: {
   const deps: TickDeps = {
     stateDir,
     db,
+    projects: { load: () => ({ projects: {}, current: null }) },
     ilink: {
-      loadProjects: () => ({ projects: {}, current: null }),
     } as never,
     boot: {
       sessionManager: { acquire, isInFlight } as never,

@@ -127,7 +127,7 @@ export function makeIngestTick(deps: TickDeps): () => Promise<void> {
     // processes, so ingesting in parallel would open a second set on the same
     // sqlite (SQLITE_BUSY / lock contention).
     const messagesStore = makeMessagesStore(deps.db)
-    const snapshot = deps.ilink.loadProjects()
+    const snapshot = deps.projects.load()
     const alias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : '_default'
     try {
       const defaultChatId = loadCompanionConfig(deps.stateDir).default_chat_id
