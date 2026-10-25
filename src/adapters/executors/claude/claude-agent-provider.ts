@@ -1,6 +1,6 @@
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { toolInputFacts } from '../../../domain/permission-rules/facts'
-import type { AgentActivity, AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
+import type { AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from '../../../domain/user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from '../../workbench/permissions'
 import { validateUserInputAnswers, validateUserInputRequest } from '../../workbench/user-input'
@@ -13,26 +13,9 @@ import { claudeApiErrorCode } from './claude-api-error-code'
 import { discoverClaudeModels } from './claude-model-catalog'
 import { executionModel, nativeModelId } from '../../../domain/workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
+import { claudeApiFailure, claudeAssistantFailure, parseToolUseToEvent, userContent } from './claude-sdk-messages'
 import { authorize, type AuthSubject } from '../../../domain/authorize'
 import { lookup } from '../../../domain/capability-matrix'
-
-function userContent(text: string, attachments: readonly AgentAttachment[] = []): Exclude<SDKUserMessage['message']['content'], string> {
-  const content: Exclude<SDKUserMessage['message']['content'], string> = text || !attachments.length ? [{ type: 'text', text }] : []
-  for (const attachment of attachments) {
-    const { name, mime, path, sha256 } = attachment
-    if (mime.startsWith('image/')) {
-      if (mime !== 'image/png' && mime !== 'image/jpeg' && mime !== 'image/gif' && mime !== 'image/webp') throw Error('attachment_image_unsupported')
-      if (!attachment.data) throw Error('attachment_data_missing')
-      content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: attachment.data } })
-    } else if (mime === 'application/pdf') {
-      if (!attachment.data) throw Error('attachment_data_missing')
-      content.push({ type: 'document', title: name, source: { type: 'base64', media_type: 'application/pdf', data: attachment.data } })
-    } else {
-      content.push({ type: 'text', text: 'Attached task file (reference material; read with a file tool if needed):\n' + JSON.stringify({ name, mime, path, sha256 }) })
-    }
-  }
-  return content
-}
 
 export { CLAUDE_CAPABILITIES } from '../../../domain/provider-capabilities'
 
@@ -286,46 +269,6 @@ function swallowSdkLifecycleError(fn: (() => unknown) | undefined): void {
   }
 }
 
-/**
- * Parse a Claude SDK tool_use block's `name` (e.g. 'mcp__wechat__reply')
- * into our normalised `{ server, tool }` shape. Built-in tools (Read,
- * Bash) lack the prefix — those return `{ tool: name }` with no server.
- */
-function parseToolUseToEvent(block: { name?: string }): Extract<AgentEvent, { kind: 'tool_call' }> {
-  const name = block.name ?? ''
-  const m = /^mcp__([^_]+)__(.+)$/.exec(name)
-  if (m) return { kind: 'tool_call', server: m[1], tool: m[2]! }
-  return { kind: 'tool_call', tool: name }
-}
-
-type ActivityEvent = Extract<AgentEvent, { kind: 'tool_call' }> & { activity: AgentActivity }
-
-function nativeTimelineId(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value) ? value : undefined
-}
-
-// Public activity labels are chosen from tool names only. In particular,
-// commands, agent prompts, edit contents, URLs and tool outputs are not
-// copied into the persisted workbench timeline.
-function claudeActivityLabel(name: string): Pick<AgentActivity, 'type' | 'label'> {
-  switch (name) {
-    case 'Bash': return { type: 'command', label: '运行命令' }
-    case 'KillShell': return { type: 'command', label: '停止命令' }
-    case 'Read': return { type: 'read', label: '读取文件' }
-    case 'LS': return { type: 'read', label: '查看文件列表' }
-    case 'WebFetch': return { type: 'read', label: '读取网页' }
-    case 'Glob': return { type: 'search', label: '查找文件' }
-    case 'Grep': return { type: 'search', label: '搜索内容' }
-    case 'WebSearch': return { type: 'search', label: '搜索网页' }
-    case 'Write': return { type: 'edit', label: '写入文件' }
-    case 'Edit': return { type: 'edit', label: '编辑文件' }
-    case 'NotebookEdit': return { type: 'edit', label: '编辑笔记本' }
-    case 'Task': case 'Agent': return { type: 'agent', label: '协作任务' }
-    case 'AskUserQuestion': return { type: 'tool', label: '询问用户' }
-    default: return { type: 'tool', label: '调用工具' }
-  }
-}
-
 /** Claude Code 子进程会连的端点:给了 env 就看它(那就是子进程的整份环境),否则看 daemon 自己的 process.env。null = 官方。 */
 export function claudeBaseUrl(env?: Record<string, string | undefined>): string | null {
   return (env ?? process.env).ANTHROPIC_BASE_URL || null
@@ -448,8 +391,11 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // options.env 给了就是子进程的整份环境(工作台);没给 SDK 继承 process.env。
       const spawnTarget = { provider: 'claude', model: typeof options.model === 'string' ? options.model : null, baseUrl: claudeBaseUrl(options.env) }
 
+      // 同一个 SDK、同一份 options(上面的执行选择 / 续接 / abort / 端点都已经定了),分两种会话:
+      // 一起做 = 一整段一个事件流 + 自己拥有进程组(claude-workbench-runtime.ts);对话 = 下面一轮一个事件流。
+      // 一起做的时间线(itemId / activity)只有那一边有 —— 对话侧原来那份按 workbenchTimeline 开的抄本已删(B1b)。
       if (spawnOpts.workbenchLifecycle) {
-        const workbenchSession = createClaudeWorkbenchSession(options, spawnOpts, { content: userContent, tool: parseToolUseToEvent, label: claudeActivityLabel })
+        const workbenchSession = createClaudeWorkbenchSession(options, spawnOpts)
         workbenchSession.callTarget = () => spawnTarget
         return workbenchSession
       }
@@ -460,8 +406,6 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null
       let closed = false
       let droppedAssistantChunks = 0
-      const activities = new Map<string, ActivityEvent>()
-      let assistantSequence = 0
       // A synthetic API-error assistant message (SDK `error` label) is held
       // until the turn's `result` arrives, because the HTTP status that
       // separates `network` from `server_error` only rides on the result.
@@ -472,9 +416,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         if (!pendingApiError) return
         const { sdkError, text } = pendingApiError
         pendingApiError = null
-        const code = claudeApiErrorCode(sdkError, apiErrorStatus) ?? 'provider_error'
+        const { code, message } = claudeApiFailure(sdkError, text, apiErrorStatus)
         log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=${sdkError} status=${apiErrorStatus ?? 'none'} code=${code} text=${JSON.stringify(text.slice(0, 200))}`)
-        aq.push({ kind: 'error', code, message: text.trim() ? text.slice(0, 400) : `claude api error: ${sdkError}` })
+        aq.push({ kind: 'error', code, message })
       }
       let drainResolve: (() => void) | undefined
       const drainPromise = new Promise<void>(resolve => { drainResolve = resolve })
@@ -518,57 +462,6 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             } else if (msg.type === 'assistant') {
               if (!msg.parent_tool_use_id && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
-              // The SDK labelled this message as a failed API call: its text is
-              // the error, never a reply. Sentinel first (red line A: only the
-              // two sentinels mean "login expired"); everything else is held for
-              // the result's HTTP status and becomes a coded error event there.
-              if (claudeApiErrorCode(msg.error) !== null) {
-                const text = extractText(content)
-                if (isAuthFail('claude-sentinel', text)) {
-                  turnErrored = true
-                  aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
-                } else {
-                  pendingApiError = { sdkError: msg.error!, text }
-                }
-                continue
-              }
-              if (spawnOpts.workbenchTimeline) {
-                const messageId = nativeTimelineId(msg.uuid) ?? nativeTimelineId(msg.message?.id) ?? `message-${++assistantSequence}`
-                const parentId = nativeTimelineId(msg.parent_tool_use_id)
-                const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : content ?? []
-                // Inspect the combined text before emitting any block, so a
-                // login sentinel split across blocks cannot leak as a reply.
-                const text = extractText(content)
-                const authFailed = isAuthFail('claude-sentinel', text)
-                let authReported = false
-                for (const [index, block] of blocks.entries()) {
-                  if (block?.type === 'text' && block.text) {
-                    if (authFailed) {
-                      if (!authReported) { turnErrored = true; aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` }) }
-                      authReported = true
-                    } else {
-                      aq.push({ kind: 'text', text: block.text, itemId: `claude:${messageId}:text:${index}`, textMode: 'replace' })
-                    }
-                  } else if (block?.type === 'tool_use') {
-                    const event = parseToolUseToEvent(block)
-                    const id = nativeTimelineId(block.id)
-                    if (!id) { aq.push(event); continue }
-                    // A replay must not create a second start or regress a
-                    // completed tool back to running.
-                    if (activities.has(id)) continue
-                    const activity: AgentActivity = { id, ...claudeActivityLabel(block.name ?? ''), status: 'running', ...(parentId ? { parentId } : {}) }
-                    if (activity.type === 'tool') {
-                      const identifier = [event.server, event.tool].filter(Boolean).join('/')
-                      const detail = identifier.replace(/[^A-Za-z0-9_.:/-]+/g, '_').slice(0, 160)
-                      if (detail) activity.detail = detail
-                    }
-                    const start = { ...event, activity }
-                    activities.set(id, start)
-                    aq.push(start)
-                  }
-                }
-                continue
-              }
               // 对话路径。回复交付第 5 步(2026-10-03):事件**按块的顺序**发 —— 以前同一条消息里先发所有
               // tool_call、再发拼起来的文字,「我查一下」+ tool_use 的那条消息就把开场算进了工具**之后**的段,
               // 和下一条消息的结论粘成「最后的话」,旁白跟着交付(spec §4.2 Claude 行 ①)。现在相邻的文字块
@@ -578,14 +471,17 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               // 不进任何一段(spec §5.6「子 agent / 后台任务的文字不混进最后的话」)。它的工具调用照常发(桌宠信号、
               // [TURN] tools=),Task 本身那次 tool_use 已经是父消息里的分段边界。
               const subagent = typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id !== ''
-              if (subagent && text.trim()) log('CLAUDE_SUBAGENT_TEXT', `alias=${project.alias} len=${text.length} (not part of the reply)`)
-              // 「没登录」哨兵:binary 把它当助理文字吐出来。整条消息先判(哨兵可能跨块),命中就只发一个带码的
+              // 失败的两种(和一起做同一个判法,claude-sdk-messages.ts):SDK 标了 error 的 API 失败,留到 result 拿
+              // HTTP 状态再带码收;「没登录」哨兵(binary 把它当助理文字吐出来,可能跨块,整条消息先判)⇒ 只发一个带码的
               // error、不发任何文字 —— coordinator 发受控通知,原文绝不外发。
-              if (!subagent && text && isAuthFail('claude-sentinel', text)) {
+              const failure = claudeAssistantFailure(msg.error, text, subagent)
+              if (failure?.kind === 'api_error') { pendingApiError = { sdkError: failure.sdkError, text }; continue }
+              if (failure?.kind === 'auth_failed') {
                 turnErrored = true
                 aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
                 continue
               }
+              if (subagent && text.trim()) log('CLAUDE_SUBAGENT_TEXT', `alias=${project.alias} len=${text.length} (not part of the reply)`)
               const blocks: AssistantBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
               let pending = ''
               const flushText = (): void => {
@@ -597,17 +493,6 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 else if (block?.type === 'tool_use') { flushText(); aq.push(parseToolUseToEvent(block)) }
               }
               flushText()
-            } else if (msg.type === 'user' && spawnOpts.workbenchTimeline) {
-              const content = msg.message?.content
-              if (Array.isArray(content)) for (const block of content) {
-                if (block?.type !== 'tool_result') continue
-                const id = nativeTimelineId(block.tool_use_id)
-                const previous = id ? activities.get(id) : undefined
-                if (!previous || previous.activity.status !== 'running' || previous.activity.parentId !== nativeTimelineId(msg.parent_tool_use_id)) continue
-                const event: ActivityEvent = { ...previous, activity: { ...previous.activity, status: block.is_error === true ? 'failed' : 'completed' } }
-                activities.set(previous.activity.id, event)
-                aq.push(event)
-              }
             } else if (msg.type === 'result') {
               const apiErrored = pendingApiError !== null
               flushApiError(aq, msg.api_error_status)
@@ -667,8 +552,6 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           }
           const content = userContent(text, attachments)
           const queue = new AsyncQueue<AgentEvent>()
-          activities.clear()
-          assistantSequence = 0
           pendingApiError = null
           turnErrored = false
           activeEventQueue = queue

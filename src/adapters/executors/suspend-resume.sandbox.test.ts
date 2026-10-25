@@ -123,7 +123,6 @@ describe.skipIf(!ENABLED)('suspend → drop → resume, real executors against 1
     const session = createClaudeWorkbenchSession(
       { cwd: work, env, model: 'claude-sonnet-4-5', pathToClaudeCodeExecutable: which('claude')!, settingSources: [], permissionMode: 'default', stderr: () => {} },
       { tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'sandbox', workbenchLifecycle: true },
-      { content: text => [{ type: 'text', text }], tool: block => ({ kind: 'tool_call', tool: block.name ?? 'tool' }), label: name => ({ type: 'tool', label: name }) },
     )
     const events: AgentEvent[] = []
     const runtime = session.workbenchRuntime!
