@@ -22,12 +22,12 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from './conversation-coordinator'
 import { createProviderRegistry } from './provider-registry'
-import { createAcpCursorChatProvider } from './acp-cursor-chat'
+import { createAcpCursorChatProvider } from '../core/acp-cursor-chat'
 import { createScriptedAcpAgent, type ScriptedTurn, type ScriptedToolCall, type ScriptStep } from '../test-support/executors/acp-scripted-agent'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { Mode } from '../domain/conversation'
 import type { InboundMsg } from '../domain/prompt-format'
-import type { PermissionMode } from './agent-provider'
+import type { PermissionMode } from '../ports/agent-provider'
 import type { TurnReply } from '../domain/turn-reply'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 
@@ -209,7 +209,7 @@ describe.skipIf(process.platform === 'win32')('Cursor:双发旁白在 daemon 模
 
 // ─── 原样回放 2026-09-17 真机录到的 cursor-agent 报文 ──────────────────────────────
 type Obj = Record<string, any>
-const FIXTURE = fileURLToPath(new URL('./acp/fixtures/cursor-acp-2026-09-17.jsonl', import.meta.url))
+const FIXTURE = fileURLToPath(new URL('../core/acp/fixtures/cursor-acp-2026-09-17.jsonl', import.meta.url))
 const rows = readFileSync(FIXTURE, 'utf8').split('\n').filter(l => l.trim()).map(l => JSON.parse(l) as Obj)
 /** 一个录到的场景(第一次 session/prompt 之后、它的应答之前)的 update,原样当剧本。 */
 function recordedTurn(scenario: string): ScriptedTurn {

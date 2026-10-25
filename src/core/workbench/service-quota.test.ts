@@ -3,9 +3,9 @@ import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
-import {AsyncQueue} from '../async-queue'
-import {createProviderRegistry} from '../provider-registry'
-import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime} from '../agent-provider'
+import {AsyncQueue} from '../../lib/async-queue'
+import {createProviderRegistry} from '../../app/provider-registry'
+import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime} from '../../ports/agent-provider'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
@@ -68,7 +68,7 @@ it('已订阅时,失败通知带原因和"交给另一位继续?"',async()=>{
 
 it('评审 #5:额度错误到达时就登记,不等结算;之后任何成功回合即清除',async()=>{
   // 保留会话:先出一条额度错误事件,run 不结算;然后下一轮正常 result。
-  const {AsyncQueue}=await import('../async-queue')
+  const {AsyncQueue}=await import('../../lib/async-queue')
   const q=new AsyncQueue<AgentEvent>()
   let state:AgentRuntimeSnapshot={retained:true,foreground:'running',backgroundCount:0,input:'send'}
   const registry=createProviderRegistry()

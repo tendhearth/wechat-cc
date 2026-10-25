@@ -21,12 +21,12 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from './conversation-coordinator'
 import { createProviderRegistry } from './provider-registry'
-import { createCodexAgentProvider } from './codex-agent-provider'
+import { createCodexAgentProvider } from '../core/codex-agent-provider'
 import { createScriptedCodex, type CodexScriptedTurn, type CodexScriptedCall, type CodexScriptStep } from '../test-support/executors/codex-scripted'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { Mode } from '../domain/conversation'
 import type { InboundMsg } from '../domain/prompt-format'
-import type { PermissionMode } from './agent-provider'
+import type { PermissionMode } from '../ports/agent-provider'
 import type { TurnReply } from '../domain/turn-reply'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 
@@ -181,7 +181,7 @@ describe('Codex:双发旁白 / 吞话在 daemon 模式下结构性消失(生产�
 
 // ─── 回放 2026-10-03 沙盒真跑录到的 codex exec 事件流 ──────────────────────────────
 type Obj = Record<string, any>
-const FIXTURE = fileURLToPath(new URL('./fixtures/codex-exec-2026-10-03.jsonl', import.meta.url))
+const FIXTURE = fileURLToPath(new URL('../core/fixtures/codex-exec-2026-10-03.jsonl', import.meta.url))
 const rows = readFileSync(FIXTURE, 'utf8').split('\n').filter(l => l.trim()).map(l => JSON.parse(l) as Obj)
 /** 一个录到的回合:原样当剧本(只取 item.* 事件;thread.started / turn.* 由假 Codex 自己发)。 */
 function recordedTurn(id: string): CodexScriptedTurn {

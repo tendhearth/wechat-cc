@@ -13,7 +13,7 @@ import { handoffArtifactText, handoffContext, handoffToken, handoffTokenHash, va
 import { decodeNativeHistoryKey, historyDeadline, historyHash, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryListInput, type NativeHistoryMessage, type NativeHistoryPreview, type NativeHistoryProvider, type NativeHistoryReadInput } from '../native-history'
 import { NATIVE_CONTINUE_REFUSAL, nativeImportInput, nativeResumeToken, pageInput, publicSource, readNativeImport, selectNativeImportMessages, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeContinuePreview, type NativeContinueState, type NativeImportInput, type NativeResumeDecision } from '../native-adoption'
 import { pathsConflict } from '../scheduler'
-import type { AgentExecutionChoice } from '../../agent-provider'
+import type { AgentExecutionChoice } from '../../../ports/agent-provider'
 import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask } from '../store'
 import { normalizeInputRequestId } from '../live-inputs'
 import { checkedText } from './checked-text'

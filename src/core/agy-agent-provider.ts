@@ -12,7 +12,7 @@
  */
 import { compilePolicy } from '../domain/policy'
 import { tmpdir } from 'node:os'
-import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type SpawnContext } from './agent-provider'
+import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type SpawnContext } from '../ports/agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from './turn-emitter'
 import { agyErrorCode } from './agy-errors'

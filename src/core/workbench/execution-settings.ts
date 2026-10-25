@@ -1,5 +1,5 @@
 import type {Db} from '../../lib/db'
-import type {AgentExecutionChoice,AgentExecutionObservation} from '../agent-provider'
+import type {AgentExecutionChoice,AgentExecutionObservation} from '../../ports/agent-provider'
 
 export const PROVIDER_EXECUTION_CHOICE:Readonly<AgentExecutionChoice>={defaults:'provider',model:null,reasoningEffort:null}
 export const NATIVE_EXECUTION_CHOICE:Readonly<AgentExecutionChoice>={defaults:'native',model:null,reasoningEffort:null}

@@ -15,10 +15,10 @@
 import { compilePolicy } from '../domain/policy'
 import { acpSupportedOn } from './acp/platform'
 import { spawn as nodeSpawn } from 'node:child_process'
-import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnContext } from './agent-provider'
-import { AsyncQueue } from './async-queue'
+import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnContext } from '../ports/agent-provider'
+import { AsyncQueue } from '../lib/async-queue'
 import { makeTurnEmitter } from './turn-emitter'
-import { isAuthFail } from './auth-fail'
+import { isAuthFail } from '../domain/auth-fail'
 import { acpErrorCode, cursorAcpInbandError } from './cursor-errors'
 import { withProviderCode } from '../lib/provider-error-code'
 import { AcpRequestError, createAcpConnection, type AcpConnection } from './acp/rpc'
@@ -173,7 +173,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
     // 这一轮真正用哪个模型要等会话起来、agent 自己报(见下面 session.callTarget)。'session' 只是起来之前的
     // 预测:钉了模型就按钉的,没钉就说不准(null)。
     ...(targetProvider ? {
-      callTarget(kind: import('./agent-provider').CallTargetKind, ctx?: Partial<SpawnContext>) {
+      callTarget(kind: import('../ports/agent-provider').CallTargetKind, ctx?: Partial<SpawnContext>) {
         if (kind === 'spawn') return { provider: targetProvider, purpose: 'setup' as const }
         if (kind !== 'session') return null
         const wanted = options.model?.((ctx ?? {}) as SpawnContext)

@@ -1,7 +1,7 @@
 import { acpSupportedOn } from '../../core/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
-import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
+import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
 import { withFirstUseProbe } from '../../core/first-use-probe'
 import { readJsonFile } from '../../lib/read-json-file'
 import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'

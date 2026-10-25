@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { makeFakeSession } from './test-helpers'
-import type { AgentEvent } from './agent-provider'
+import type { AgentEvent } from '../ports/agent-provider'
 
 async function drain(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = []

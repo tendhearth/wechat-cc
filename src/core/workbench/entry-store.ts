@@ -1,5 +1,5 @@
 import type {Db} from '../../lib/db'
-import type {AgentExecutionChoice} from '../agent-provider'
+import type {AgentExecutionChoice} from '../../ports/agent-provider'
 import type {Attachment} from './attachments'
 import type {EntryTarget} from './task-entry'
 

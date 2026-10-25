@@ -1,7 +1,7 @@
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk'
 import type { Mode, ProviderId } from '../domain/conversation'
 import { lookup, type Capability, type PermissionMode } from '../domain/capability-matrix'
-import { isReplyToolName } from './agent-provider'
+import { isReplyToolName } from '../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind, type UserTier } from '../domain/user-tier'
 import { decideTool } from '../domain/tool-decision'
 

@@ -104,7 +104,7 @@ describe('仓库守卫 —— auth 判定的词汇只能有一份', () => {
       if (file.endsWith(join('lib', 'auth-failure.ts'))) continue
       // auth-fail.ts 是**另一件事**:从 provider 输出文本里认哨兵(决定要不要
       // 抛 auth_failed),不是判定「这个错误是不是 auth」。它有自己的红线注释。
-      if (file.endsWith(join('core', 'auth-fail.ts'))) continue
+      if (file.endsWith(join('domain', 'auth-fail.ts'))) continue
       if (EXEMPT.some(e => file.endsWith(e.file))) continue
       readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
         const t = line.trimStart()

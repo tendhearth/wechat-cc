@@ -8,7 +8,7 @@ import { buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from '../../
 import { describeProviderDenial, slashFor } from '../../domain/provider-policy'
 import { capabilitiesFor } from '../../domain/capability-matrix'
 import { makeTurnTextCollector, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
-import { TURN_TIMEOUT_CODE, type TurnSummary } from '../agent-provider'
+import { TURN_TIMEOUT_CODE, type TurnSummary } from '../../ports/agent-provider'
 import { isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
 import type { CoordinatorCtx, ProjectRef } from './ctx'
 import type { TurnPlan } from './plan'

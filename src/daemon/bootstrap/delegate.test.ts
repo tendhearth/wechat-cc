@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildDelegateDispatch } from './delegate'
 import { makeFakeSession } from '../../core/test-helpers'
-import type { AgentProvider } from '../../core/agent-provider'
+import type { AgentProvider } from '../../ports/agent-provider'
 import { TIER_PROFILES } from '../../domain/user-tier'
 
 // Bug #86 regression seam — spy on the real factory so we can assert it is

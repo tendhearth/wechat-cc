@@ -3,7 +3,7 @@
  * 按任务版本缓存;版本变了也至多每 30 秒重算一次;模型不可用 / 失败 / 不合格 ⇒ 原文回退(最近一段文字 + 最近的工具调用),
  * 并对该键做指数退避(30s→…→10min,成功清零),退避期内不调模型。
  */
-import type { CheapEval } from '../core/agent-provider'
+import type { CheapEval } from '../ports/agent-provider'
 import { clipChars, extractJsonObject, hasJudgement, runCheap, type InsightLang } from './phone-insight-llm'
 
 export interface ProgressStep { title: string; detail: string }

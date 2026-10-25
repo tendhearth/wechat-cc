@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openTestDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
-import type {AgentActivity} from '../agent-provider'
+import type {AgentActivity} from '../../ports/agent-provider'
 
 let db:Db,store:ReturnType<typeof makeWorkbenchStore>
 beforeEach(()=>{db=openTestDb();store=makeWorkbenchStore(db)})

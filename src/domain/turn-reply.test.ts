@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentEvent } from '../core/agent-provider'
+import type { AgentEvent } from '../ports/agent-provider'
 import {
   extractTurnReply, makeTurnTextCollector, parseSilence, buildTurnReply, NO_REPLY_TOKEN,
   silenceAllowed, type TurnAttachment,

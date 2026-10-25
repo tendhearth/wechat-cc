@@ -7,7 +7,7 @@
  */
 import type { CareLevel, CareLedgerEntry, PlanAction, PlanContext } from '../../domain/companion-plan'
 import type { AvoidTopic } from '../../domain/companion-topics'
-import type { CheapEval } from '../../core/agent-provider'
+import type { CheapEval } from '../../ports/agent-provider'
 
 /** 主动找主人那一拍里,某一个对话此刻的处境(已经过了 care off / 免打扰 / 到期 agenda 那几道)。 */
 export interface CompanionTickCtx {

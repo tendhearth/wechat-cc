@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentSession } from './agent-provider'
+import type { AgentEvent, AgentSession } from '../ports/agent-provider'
 
 export interface MakeFakeSessionOpts {
   /** Static event list — used if `getEventsForTurn` isn't provided. */

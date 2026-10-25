@@ -18,7 +18,7 @@ import {
   type Opening, type Contention, type RankedSpeaker,
 } from '../../domain/chatroom-conductor'
 import { buildTurnReply, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
-import type { TurnSummary } from '../agent-provider'
+import type { TurnSummary } from '../../ports/agent-provider'
 import type { CoordinatorCtx, ProjectRef } from './ctx'
 import type { TurnAuth, TurnPlan } from './plan'
 import type { TurnRunner } from './runner'

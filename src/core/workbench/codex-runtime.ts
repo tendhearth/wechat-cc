@@ -1,4 +1,4 @@
-import type { AgentActivity, AgentEvent } from '../agent-provider'
+import type { AgentActivity, AgentEvent } from '../../ports/agent-provider'
 
 /** Public child replies only. Tool output, prompts and reasoning never enter this map. */
 export class CodexChildOccurrence {

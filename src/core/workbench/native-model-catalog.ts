@@ -1,4 +1,4 @@
-import type {AgentExecutionChoice, AgentExecutionModel, AgentModelCatalog} from '../agent-provider'
+import type {AgentExecutionChoice, AgentExecutionModel, AgentModelCatalog} from '../../ports/agent-provider'
 
 const invalid = () => new Error('model_catalog_invalid')
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { GEMINI_CAPABILITIES, tierProfileToGeminiSdkOpts, mcpToolsToFunctionDeclarations, runDispatchLoop, createGeminiAgentProvider, makeGeminiToolGate, type GenaiPort, type McpPort, type GeminiGateDeps, type ToolGate } from './gemini-agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
-import { collectTurn } from './agent-provider'
+import { collectTurn } from '../ports/agent-provider'
 
 describe('GEMINI_CAPABILITIES', () => {
   it('declares per-tool gating, no SDK sandbox, no delegation/resume in v1', () => {

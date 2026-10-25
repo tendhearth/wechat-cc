@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createProviderRegistry, DEFAULT_CHEAP_EVAL_BUDGET_MS, isAuthError } from './provider-registry'
 import { errorWithProviderCode } from '../lib/provider-error-code'
-import { makeFakeSession } from './test-helpers'
-import type { AgentProvider } from './agent-provider'
+import { makeFakeSession } from '../core/test-helpers'
+import type { AgentProvider } from '../ports/agent-provider'
 
 const stub: AgentProvider = {
   spawn: async () => makeFakeSession({

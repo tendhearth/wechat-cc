@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import type { Codex, Thread, ThreadEvent } from '@openai/codex-sdk'
 import { codexAppServerErrorCode, codexErrorCode, watchCodexEvents } from './codex-errors'
 import { createCodexAgentProvider } from './codex-agent-provider'
-import type { AgentEvent } from './agent-provider'
+import type { AgentEvent } from '../ports/agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
 import { providerErrorCodeOf } from '../lib/provider-error-code'
 

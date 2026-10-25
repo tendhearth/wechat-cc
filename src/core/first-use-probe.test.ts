@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { withFirstUseProbe } from './first-use-probe'
-import type { AgentProvider } from './agent-provider'
+import type { AgentProvider } from '../ports/agent-provider'
 
 function inner(): AgentProvider & { spawns: number } {
   const p = {

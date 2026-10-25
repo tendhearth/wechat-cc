@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isReplyToolCall } from '../agent-provider'
+import { isReplyToolCall } from '../../ports/agent-provider'
 import { acpActivityId, acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './events'
 import { cursorAcpInbandError } from '../cursor-errors'
 

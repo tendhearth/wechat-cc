@@ -5,7 +5,7 @@ import {mkdtempSync,mkdirSync,realpathSync,readFileSync,existsSync} from 'node:f
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
-import {createProviderRegistry} from '../provider-registry'
+import {createProviderRegistry} from '../../app/provider-registry'
 import {createApiModel} from './api-model'
 import {createApiTaskProvider,apiTaskConnectionHash} from './api-task-provider'
 import {makeApiSessionStore} from './api-sessions'

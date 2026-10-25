@@ -18,7 +18,7 @@ import {tmpdir} from 'node:os'
 import {dirname,join,resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {createRequire} from 'node:module'
-import type {AgentAttachment,AgentProvider,AgentExecutionChoice} from '../src/core/agent-provider'
+import type {AgentAttachment,AgentProvider,AgentExecutionChoice} from '../src/ports/agent-provider'
 
 // Resolve the desktop dependency at runtime so this root script does not depend
 // on Bun's versioned node_modules layout. Keep the used browser surface typed.
@@ -102,7 +102,7 @@ async function main(){
   process.env.WECHAT_DISABLE_LOG_FILE='1'
   const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy}]=await Promise.all([
     import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/core/workbench/service'),
-    import('../src/core/provider-registry'),import('../src/daemon/internal-api/index'),
+    import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),
     import('../apps/desktop/workbench-proxy'),
   ])
   const {chromium}=createRequire(join(repo,'apps/desktop/package.json'))('@playwright/test') as {chromium:{launch(options:{headless:boolean}):Promise<Browser>}}

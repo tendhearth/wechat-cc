@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { StoredTask, TaskEvent } from './store'
-import type {AgentExecutionChoice} from '../agent-provider'
+import type {AgentExecutionChoice} from '../../ports/agent-provider'
 import {PROVIDER_EXECUTION_CHOICE} from './execution-settings'
 
 export interface RestartPreview {

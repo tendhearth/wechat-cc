@@ -4,7 +4,7 @@
  */
 import type { ProviderId } from '../../domain/conversation'
 import { capabilitiesFor } from '../../domain/capability-matrix'
-import type { TurnSummary } from '../agent-provider'
+import type { TurnSummary } from '../../ports/agent-provider'
 import type { CoordinatorCtx } from './ctx'
 
 /** User-facing notice when a provider reports an auth failure.

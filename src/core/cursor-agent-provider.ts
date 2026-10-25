@@ -5,7 +5,7 @@ import { compilePolicy } from '../domain/policy'
  * Third registered provider alongside claude / codex. Uses
  * `@cursor/sdk` (loaded via dynamic import in bootstrap) and conforms
  * to the AgentProvider / AgentSession interface defined in
- * src/core/agent-provider.ts.
+ * src/ports/agent-provider.ts.
  *
  * Permission surface is the coarsest of the three providers — Cursor
  * has neither a per-tool callback (cf. Claude's canUseTool) nor a
@@ -15,7 +15,7 @@ import { compilePolicy } from '../domain/policy'
  *
  * See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
  */
-import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from './agent-provider'
+import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from '../ports/agent-provider'
 import type { TierProfile } from '../domain/user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'

@@ -1,5 +1,5 @@
-import type { AgentEvent } from './agent-provider'
-import { isAuthFail, isAuthFailError } from './auth-fail'
+import type { AgentEvent } from '../ports/agent-provider'
+import { isAuthFail, isAuthFailError } from '../domain/auth-fail'
 
 /**
  * 每 turn 的事件制造 + 记账(spec §1d)。只制造事件对象,不接管循环、不接管

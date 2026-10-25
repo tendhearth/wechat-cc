@@ -4,7 +4,7 @@
  */
 import { JOB_PROFILE, REVIEW_PROFILE } from '../../domain/user-tier'
 import { replyTextStrategyFor } from '../../domain/capability-matrix'
-import { collectTurn, TURN_TIMEOUT_CODE } from '../../core/agent-provider'
+import { collectTurn, TURN_TIMEOUT_CODE } from '../../ports/agent-provider'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
 import type { TickDispatch } from './tick-dispatch'

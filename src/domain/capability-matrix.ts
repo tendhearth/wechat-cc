@@ -21,7 +21,7 @@
 
 import type { ReplyTextStrategy } from './turn-reply'
 import type { Mode, ProviderId } from './conversation'
-import type { ProviderCapabilities, PermissionMode } from '../core/agent-provider'
+import type { ProviderCapabilities, PermissionMode } from '../ports/agent-provider'
 import { ACP_CURSOR_CAPABILITIES, AGY_CAPABILITIES, CLAUDE_CAPABILITIES, CODEX_CAPABILITIES, GEMINI_CAPABILITIES, OPENAI_CAPABILITIES } from './provider-capabilities'
 
 // Backwards-compat re-export: PermissionMode used to live here. Moved

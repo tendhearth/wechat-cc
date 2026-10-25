@@ -21,7 +21,7 @@
  */
 import { turnTimeoutMsFromEnv } from '../../lib/turn-timeout'
 import { idleSweepModule } from './wire-idle-sweep'
-import { SessionManager } from '../../core/session-manager'
+import { SessionManager } from '../../app/session-manager'
 import type { ProviderId } from '../../domain/conversation'
 import { formatInbound } from '../../domain/prompt-format'
 import { join } from 'node:path'

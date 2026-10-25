@@ -9,7 +9,7 @@
  * Autonomous agent plugins will reuse this manifest with `kind: "a2a"` on a
  * separate lane — one plugin concept, two contracts.
  */
-import { CORE_MCP_SERVER_NAMES } from '../../core/agent-provider'
+import { CORE_MCP_SERVER_NAMES } from '../../ports/agent-provider'
 
 export interface PluginSpawn {
   /** Executable, e.g. "python3" or "node". Resolved via the daemon's PATH. */

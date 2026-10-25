@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import type { AgentEvent } from '../agent-provider'
+import type { AgentEvent } from '../../ports/agent-provider'
 import { acpImageCapable } from '../acp-agent-provider'
 import { acpActivityId, createAcpTranslator } from './events'
 

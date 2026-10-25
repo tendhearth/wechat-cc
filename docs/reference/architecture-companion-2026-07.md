@@ -140,7 +140,7 @@ teardown, tier→SDK translation, and the MCP stdio spec type (4 near-identical 
 
 ### 2.2 Channel / Session / Turn layer
 
-**Turn lifecycle** (`src/core/conversation-coordinator.ts`, `src/daemon/inbound/`, `reply-sinks.ts`):
+**Turn lifecycle** (`src/app/conversation-coordinator.ts`, `src/daemon/inbound/`, `reply-sinks.ts`):
 - **WeChat**: `poll-loop` (turn runs *inline* in the poll loop) → onion pipeline (`inbound/build.ts`;
   order is load-bearing: access-gate before side-effects, dedup wraps the turn, attachments and voice
   transcription *before* the read-only intent probe `mw-route`, then the single consumer table

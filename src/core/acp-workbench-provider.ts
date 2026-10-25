@@ -1,5 +1,5 @@
 /** 工作台专用封装:逐工具权限桥 + 逐字流。通用实现见 acp-agent-provider.ts。 */
-import type { AgentProvider } from './agent-provider'
+import type { AgentProvider } from '../ports/agent-provider'
 import { createAcpProvider, type AcpProviderBaseOptions } from './acp-agent-provider'
 
 export type AcpWorkbenchProviderOptions = AcpProviderBaseOptions

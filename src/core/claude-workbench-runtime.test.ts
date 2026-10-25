@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createClaudeAgentProvider } from './claude-agent-provider'
-import type { AgentEvent, AgentSession } from './agent-provider'
+import type { AgentEvent, AgentSession } from '../ports/agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
 
 const native = vi.hoisted(() => ({

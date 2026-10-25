@@ -28,7 +28,7 @@ describe('执行者叫什么 —— 照收敛清单 ⑥ 最右一列(主人 10-2
 
 describe('registry.namesOf —— 读的时候按现在注册了谁来定', () => {
   it('agy 先注册、gemini 后注册(重探补上)⇒ 那一刻起 agy 就叫「Gemini(账号)」;自定义 ACP 用注册时给的名字;内置的写了也不看', async () => {
-    const { createProviderRegistry } = await import('../core/provider-registry')
+    const { createProviderRegistry } = await import('../app/provider-registry')
     const reg = createProviderRegistry()
     const p = { spawn: async () => { throw new Error('unused') } } as never
     reg.register('agy', p, { displayName: '随便写的', canResume: () => true })

@@ -14,9 +14,9 @@
  *   · lib/auth-failure 的 classifyProviderFailure(三档闭集;今天没有调用方)
  *   · core/provider-quota 的额度/限流判定与 Cursor 的「整条回复就是催升级」
  */
-import { isAuthFail, isAuthFailError } from '../../core/auth-fail'
+import { isAuthFail, isAuthFailError } from '../../domain/auth-fail'
 import { classifyProviderError, isQuotaRefusalText } from '../../domain/provider-quota'
-import { isAuthError } from '../../core/provider-registry'
+import { isAuthError } from '../../app/provider-registry'
 import { classifyProviderFailure, type ProviderFailureKind } from '../../lib/auth-failure'
 import { isConnectFailure } from '../../lib/net-errors'
 import { classifyFailure, type FailureKind } from '../health/classify'

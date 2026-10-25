@@ -1,4 +1,4 @@
-import type { AgentActivity, AgentEvent } from '../agent-provider'
+import type { AgentActivity, AgentEvent } from '../../ports/agent-provider'
 
 type Item = Record<string, unknown>
 const object = (value: unknown): value is Item => value !== null && typeof value === 'object' && !Array.isArray(value)

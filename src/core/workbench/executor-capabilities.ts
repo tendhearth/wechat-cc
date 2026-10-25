@@ -1,4 +1,4 @@
-import type {AgentExecutionChoice} from '../agent-provider'
+import type {AgentExecutionChoice} from '../../ports/agent-provider'
 
 /** Code-level adapter promise, not automatic detection or filesystem isolation. */
 export interface WorkbenchExecutorCapabilities {

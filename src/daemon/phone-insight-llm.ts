@@ -2,7 +2,7 @@
  * 手机「洞察」(批准说明、进展概括)共用的便宜模型小工具(spec 2026-09-30-tendhearth-app-v1 §5)。
  * 便宜模型的输出只是说明,永远有原文兜底;这里只管:带预算调用、从回复里抽 JSON、语言归一、判断词识别。
  */
-import type { CheapEval } from '../core/agent-provider'
+import type { CheapEval } from '../ports/agent-provider'
 
 export type InsightLang = 'en' | 'zh-Hans'
 

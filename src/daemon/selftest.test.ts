@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runSelftestConverse, SELFTEST_PROJECT_PATH, type SelftestConverseDeps } from './selftest'
 import { makeFakeSession } from '../core/test-helpers'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, SpawnContext } from '../core/agent-provider'
-import type { ProviderRegistry } from '../core/provider-registry'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, SpawnContext } from '../ports/agent-provider'
+import type { ProviderRegistry } from '../app/provider-registry'
 
 /** 这份测试自己的草稿项目目录(每次一个新的临时目录):真路径 SELFTEST_PROJECT_PATH 是固定的,
  *  别的测试文件(guard/effective-target)也会经 runSelftestConverse 写它,并行时一边删一边写 ⇒ ENOTEMPTY。 */

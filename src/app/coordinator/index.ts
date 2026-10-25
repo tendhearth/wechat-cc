@@ -15,7 +15,7 @@
 import type { Mode, ProviderId } from '../../domain/conversation'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { capabilitiesFor } from '../../domain/capability-matrix'
-import { makeChatMutex } from '../async-mutex'
+import { makeChatMutex } from '../../lib/async-mutex'
 import { createCoordinatorCtx } from './ctx'
 import { createPlanner } from './plan'
 import { createTurnRunner } from './runner'

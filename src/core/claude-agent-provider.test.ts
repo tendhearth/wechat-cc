@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
-import type { AgentEvent } from './agent-provider'
+import type { AgentEvent } from '../ports/agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
 
 // Helper: drain an async iterable into an array for assertion.

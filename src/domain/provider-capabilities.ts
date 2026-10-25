@@ -4,7 +4,7 @@
  * capability never loads a provider SDK, and so that a provider can depend on
  * capability-matrix without a cycle. Each provider module re-exports its own.
  */
-import type { ProviderCapabilities } from '../core/agent-provider'
+import type { ProviderCapabilities } from '../ports/agent-provider'
 
 /**
  * RFC 05 Phase 2 — static capabilities. Claude is the only provider with
