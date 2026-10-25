@@ -1,40 +1,35 @@
 /**
- * tunnel-client.ts — the daemon's outbound leg of 随身 CC 的远程中继
- * (2026-08-26, mobile route step 4). Dials ONE WebSocket out to the relay's
- * /tunnel/daemon?id=<opaque> (NAT-piercing), then for each phone stream:
+ * tunnel-client.ts — the daemon's outbound leg of the remote relay (官方中继 v2, Cloudflare,
+ * `apps/relay`). Dials ONE WebSocket out to `<relay>/v2/daemon` (NAT-piercing; the daemon id rides
+ * in the WebSocket subprotocol and the room challenges it to sign a login), then for each phone stream:
  *
- *   1. handshake: the phone sends `{hs:<its X25519 pubkey b64>}` plaintext;
- *      the daemon mints a FRESH ephemeral keypair per stream, replies
- *      `{hs:<daemon pubkey>}`, and derives the AES-GCM shared key. Perfect
- *      forward secrecy per stream (a leaked key can't decrypt other streams).
- *   2. request: the phone seals `{path,method,body}` → the daemon opens it,
- *      synthesizes a Request, runs it through the SAME handleRequest the LAN
- *      settings-panel uses (so /m/* and /set/* behave identically), seals the
- *      `{status,headers,body}` back under that stream.
+ *   1. handshake: the phone sends `{hs:<its X25519 pubkey b64u>, v:[…2], client?:'web'}` plaintext;
+ *      the daemon mints a FRESH ephemeral keypair per stream and replies `{hs:<daemon pubkey>, v:2}`.
+ *      Perfect forward secrecy per stream (a leaked key can't decrypt other streams).
+ *   2. the first sealed frame identifies the device: whichever paired token's HKDF-bound v2 channel
+ *      opens it (tunnel-v2-stream.ts `identifyV2`). The token is NEVER on the wire, so a MITM relay
+ *      (which knows no token) can't forge a working key.
+ *   3. after that the stream speaks protocol v2 (tunnel-v2-stream.ts): per-direction keys, counter
+ *      nonces + replay rejection, `req`/`res` with headers + binary bodies, `sub`/`unsub` onto the
+ *      PhoneEvents hub. Requests run through the SAME handleRequest the LAN settings panel uses.
  *
- * Protocol v2 (2026-09-29): a phone whose handshake carries `v:[…,2]` gets
- * `{hs, v:2}` back and speaks v2 on that stream — per-direction keys, counter
- * nonces + replay rejection, `req`/`res` with headers + binary bodies, and
- * `sub`/`unsub` onto the PhoneEvents hub. That per-stream logic lives in
- * tunnel-v2-stream.ts; this file only negotiates, identifies the device and
- * routes frames. v1 streams behave exactly as before (fully concurrent). Only
- * the ordering-sensitive part is serialized per stream (one promise chain):
- * handshakes, v2 device identification and v2 `channel.open` — the counter
- * check needs frames OPENED in arrival order. A v2 `req` is dispatched off the
- * chain once opened, so a slow request (a chat `say` awaiting a model turn)
- * never head-of-line-blocks the requests behind it.
+ * Protocol v1 (one shared key, random iv, `{path,method,body,rid}`) and the legacy VPS relay
+ * (`/tunnel/daemon`, `t…` ids) retired on 2026-10-25 (架构终态 F4). A handshake that doesn't ask for
+ * v2 gets a plaintext `{error:'upgrade_required'}` and the stream is closed — the web page then tells
+ * its owner to pair again (apps/mobile/src/transport.js).
  *
- * The relay never sees plaintext (tunnel.ts is content-blind); confidentiality
- * lives entirely here + on the phone. Device-token auth still applies: the
- * synthesized request carries the phone's `d=` token in its URL, so an
+ * Ordering-sensitive work (handshake, identification, `channel.open` — the counter check needs frames
+ * OPENED in arrival order) runs on one promise chain per stream. A `req` is dispatched off the chain
+ * once opened, so a slow request (a chat `say` awaiting a model turn) never head-of-line-blocks the
+ * requests behind it.
+ *
+ * The relay never sees plaintext; confidentiality lives entirely here + on the phone. Device-token
+ * auth still applies: the synthesized request carries the phone's `d=` token in its URL, so an
  * un-paired phone's requests 401 exactly as on the LAN.
- *
- * 中继 v2(2026-09-30):给了 `login` ⇒ id 走子协议、socket 里挑战登录;登录后才发控制帧(推送登记 / 发送)。
  */
-import { RELAY_SUBPROTOCOL, relayIdProtocol } from '@wechat-cc/protocol'
-import { deriveSharedBits, hkdfAesKey, generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, sealFrame, openFrame, type TunnelKeypair, type TunnelSharedKey } from '../../lib/tunnel-crypto'
+import { RELAY_SUBPROTOCOL, relayIdProtocol, b64uDecode, b64uEncode, x25519KeyPair, x25519Shared } from '@wechat-cc/protocol'
 import type { PhoneEvents } from './phone-events'
-import { identifyV2, makeV2Stream, tunnelRequestUrl, type V2Stream } from './tunnel-v2-stream'
+import { identifyV2, makeV2Stream, type V2Stream } from './tunnel-v2-stream'
 
 /** Minimal WS surface (browser-style events) both Bun's WebSocket and a fake satisfy. */
 export interface TunnelWS {
@@ -59,7 +54,8 @@ export interface TunnelClientDeps {
   activeLinkToken?: () => string | null
   /** Opens the outbound WS. Default dials the relay via Bun's WebSocket. */
   connect?: (url: string, protocols?: string[]) => TunnelWS
-  relayUrl?: string
+  /** `<relay>/v2/daemon`(remote-relay-config.ts 拼好的)。 */
+  relayUrl: string
   reconnectMs?: number
   /** 心跳间隔(ms)。默认 20s。一轮 ping 没等到 pong 就判连接已死、强制重连。 */
   pingIntervalMs?: number
@@ -68,18 +64,23 @@ export interface TunnelClientDeps {
   log?: (tag: string, line: string) => void
   /** v2 订阅的事件集线器。没有 ⇒ v2 的 `sub` 一律回 `err subscriptions_unavailable`。 */
   events?: PhoneEvents
-  /** 给了 ⇒ 走官方中继 v2:id 放子协议,收到 {challenge} 用它签名回复。 */
-  login?: { sign(challenge: string): { pub: string; sig: string } }
+  /** 中继 v2 登录:id 放子协议,收到 {challenge} 用它签名回复。 */
+  login: { sign(challenge: string): { pub: string; sig: string } }
   /** v2 非流控制帧:push_result / push_invalid / error。 */
   onControl?: (msg: Record<string, unknown>) => void
   /** v2 登录成功(每次重连后都会再来一次)。 */
   onLogin?: () => void
 }
 
-/** Does this handshake ask for v2? (`v` is an array containing 2; anything else ⇒ v1.) */
+/** Does this handshake ask for v2? (`v` is an array containing 2; anything else is a retired v1 client.) */
 function wantsV2(frame: unknown): boolean {
   const v = (frame as { v?: unknown }).v
   return Array.isArray(v) && v.includes(2)
+}
+
+/** 浏览器 /m 页在握手里自报 `client:'web'`(packages/protocol ClientOpts.client);不带 ⇒ 原生 App。 */
+function handshakeClient(frame: unknown): 'app' | 'web' {
+  return (frame as { client?: unknown }).client === 'web' ? 'web' : 'app'
 }
 
 /** Read a plaintext handshake control frame → the peer's pubkey b64, or null. */
@@ -93,9 +94,9 @@ export function handshakePlaintext(frame: unknown): string | null {
 export interface TunnelClient {
   start(): void
   stop(): void
-  /** 发一条控制帧;v2 模式要已登录,否则 false。 */
+  /** 发一条控制帧;要已登录,否则 false。 */
   sendControl(msg: object): boolean
-  /** 此刻连着中继(v2 要已登录)= 控制帧(推送)发得出去。 */
+  /** 此刻连着中继且已登录 = 控制帧(推送)发得出去。 */
   connected(): boolean
   /** 有活订阅的已识别流对应的设备令牌(= 在线设备)。 */
   subscribedDeviceTokens(): Set<string>
@@ -105,23 +106,22 @@ export interface TunnelClient {
 export const MAX_QUEUED_FRAMES_PER_STREAM = 64
 
 export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
-  const relayUrl = deps.relayUrl ?? 'wss://cc.tendhearth.com/tunnel/daemon'
+  const relayUrl = deps.relayUrl
   // 指数退避重连(2026-08-27 日志:网络抖动时固定 15s 重连,恢复慢 + 日志
   // 刷屏)。首次断开 2s 重试(瞬时抖动秒回),连败翻倍到 reconnectMs 上限。
   const maxReconnectMs = deps.reconnectMs ?? 15_000
   const minReconnectMs = 2_000
   const log = deps.log ?? (() => {})
-  let reconnectAttempts = 0     // 连续失败计数(老中继 open 成功清零;v2 要等 login_ok 才清零,见 markConnected)
+  let reconnectAttempts = 0     // 连续失败计数(要等 login_ok 才清零,见 markConnected)
   let downSince = 0             // 首次断开时刻(重连成功时算下线时长)
   let now = deps.now ?? (() => Date.now())
-  // Per-stream ephemeral state: our keypair, the raw ECDH bits, and — once the
-  // first frame identifies the device — the token-bound key + that device token.
-  // v2 streams also carry `v2: true` from the handshake and, once identified, their V2Stream.
-  type StreamState = { kp: TunnelKeypair; bits: ArrayBuffer; key?: TunnelSharedKey; device?: string; v2?: boolean; v2s?: V2Stream }
+  // Per-stream ephemeral state: the raw ECDH shared secret, who the handshake said it was
+  // (app / web), and — once the first sealed frame identifies the device — that device
+  // token + its V2Stream.
+  type StreamState = { shared: Uint8Array; client: 'app' | 'web'; device?: string; v2s?: V2Stream }
   const streams = new Map<string, StreamState>()
-  // One promise chain per stream for the ordering-sensitive work (handshake, v2
-  // identification + open). v2 req handling is dispatched off it; v1 never uses it
-  // once its handshake is done.
+  // One promise chain per stream for the ordering-sensitive work (handshake, identification
+  // + open). req handling is dispatched off it.
   const chains = new Map<string, Promise<void>>()
   const queued = new Map<string, number>()
   const queueWarnedAt = new Map<string, number>()
@@ -203,12 +203,11 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     ws?.send(JSON.stringify({ stream, frame }))
   }
 
-  /** 明文告诉手机「没认出你」。中继 v2 模式下紧跟 `{stream, close:true}`:房间关掉这条流、立刻腾名额
-   *  (否则知道 id 的人能用认不出的流占满 16 个名额)。房间关流时不再回 `closed`,这里自己忘掉它。
-   *  老中继不认 close,会把没有 frame 的消息当 `{}` 转给手机 —— 所以只在 `deps.login` 时发。 */
-  function rejectStream(stream: string): void {
-    sendToStream(stream, { error: 'auth_failed' })
-    if (!deps.login) return
+  /** 明文告诉手机为什么不收这条流(`auth_failed` 没认出你 / `upgrade_required` 说的是退休了的 v1),紧跟
+   *  `{stream, close:true}`:房间关掉这条流、立刻腾名额(否则知道 id 的人能用认不出的流占满 16 个名额)。
+   *  房间关流时不再回 `closed`,这里自己忘掉它。 */
+  function rejectStream(stream: string, error: 'auth_failed' | 'upgrade_required' = 'auth_failed'): void {
+    sendToStream(stream, { error })
     try { ws?.send(JSON.stringify({ stream, close: true })) } catch { /* close 会接手 */ }
     forgetStream(stream)
   }
@@ -216,85 +215,29 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   async function onStreamFrame(stream: string, frame: unknown): Promise<void> {
     const hsPub = handshakePlaintext(frame)
     if (hsPub) {
-      // New stream (or re-handshake): fresh ephemeral keypair, compute raw ECDH
-      // bits, reply with our pubkey. The FINAL key isn't derivable yet — it's
-      // HKDF-bound to the device token, which we learn by trial-decrypting the
-      // first sealed frame below.
+      // New stream (or re-handshake): fresh ephemeral keypair, compute the raw ECDH secret,
+      // reply with our pubkey. The channel keys aren't derivable yet — they're HKDF-bound to
+      // the device token, which we learn by trial-opening the first sealed frame below.
       // A re-handshake on the same stream id drops the old keys + subscriptions.
       streams.get(stream)?.v2s?.close()
-      const kp = await generateTunnelKeypair()
-      let bits: ArrayBuffer
-      try { bits = await deriveSharedBits(kp.privateKey, await importPublicKeyB64(hsPub)) }
-      catch { log('TUNNEL', `bad handshake pubkey on ${stream}`); return }
-      if (wantsV2(frame)) {
-        streams.set(stream, { kp, bits, v2: true })
-        sendToStream(stream, { hs: await exportPublicKeyB64(kp.publicKey), v: 2 })
+      streams.delete(stream)
+      if (!wantsV2(frame)) {
+        // v1 退休了(2026-10-25):明文说清楚,老页面据此提示「重新扫码配对」,别让它卡在「连回你的电脑…」。
+        log('TUNNEL', `v1 handshake on ${stream} (retired) — told phone upgrade_required`)
+        rejectStream(stream, 'upgrade_required')
         return
       }
-      streams.set(stream, { kp, bits })
-      sendToStream(stream, { hs: await exportPublicKeyB64(kp.publicKey) })
+      const kp = x25519KeyPair()
+      let shared: Uint8Array
+      try { shared = x25519Shared(kp.priv, b64uDecode(hsPub)) }
+      catch { log('TUNNEL', `bad handshake pubkey on ${stream}`); return }
+      streams.set(stream, { shared, client: handshakeClient(frame) })
+      sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2 })
       return
     }
-    // Sealed request — resolve/verify the device on the FIRST frame by finding
-    // the paired token whose HKDF(bits, token) key decrypts it. A MITM relay
-    // knows no token, so no candidate authenticates → dropped.
     const st = streams.get(stream)
     if (!st) { notifyStreamUnknown(stream, frame); return }
-    if (st.v2) { await onV2Frame(stream, st, frame); return }
-    let reqBytes: Uint8Array | null = null
-    if (st.key) {
-      try { reqBytes = await openFrame(st.key, frame as { iv: string; ct: string }) } catch { reqBytes = null }
-    } else {
-      const link = deps.activeLinkToken?.() ?? null
-      for (const tok of link ? [...deps.knownDeviceTokens(), link] : deps.knownDeviceTokens()) {
-        try {
-          const cand = await hkdfAesKey(st.bits, new TextEncoder().encode(tok))
-          const opened = await openFrame(cand, frame as { iv: string; ct: string })
-          st.key = cand; st.device = tok; reqBytes = opened; break
-        } catch { /* not this token */ }
-      }
-    }
-    if (!reqBytes) {
-      log('TUNNEL', `frame auth failed on ${stream} (no paired device / expired link / MITM) — dropped`)
-      // 明文告诉手机「没认出你」,别让页面永远卡在「连回你的电脑…」。不带任何令牌或密文信息。
-      rejectStream(stream)
-      return
-    }
-    let parsed: { path?: unknown; method?: unknown; body?: unknown; rid?: unknown }
-    try { parsed = JSON.parse(new TextDecoder().decode(reqBytes)) }
-    catch { return }
-    if (typeof parsed.path !== 'string') return
-    const rid = typeof parsed.rid === 'string' ? parsed.rid : ''
-
-    // Synthesize the request against a loopback origin; handleRequest only
-    // reads pathname/searchParams/method/body. The device token is NEVER on
-    // the wire — the daemon injects the AUTHENTICATED device's token (st.device,
-    // proven by the HKDF trial-decrypt above) into the ?d= query so
-    // routeRequest's auth passes exactly as on the LAN path.
-    const method = typeof parsed.method === 'string' ? parsed.method : 'GET'
-    const init: RequestInit = { method }
-    if (typeof parsed.body === 'string' && method !== 'GET' && method !== 'HEAD') {
-      init.body = parsed.body
-      init.headers = { 'content-type': 'application/json' }
-    }
-    // 路径来自手机 —— 已认证但仍是不可信输入。必须以 / 开头,否则 new URL 会把
-    // 它拼进 authority(host 被污染 → 误路由到别的 pathname);畸形路径(如裸 %、
-    // 带空格)还会让 new URL 直接抛 —— 而 onStreamFrame 是 void 调用,抛出即变成
-    // 未捕获的 promise rejection。两种都干净丢弃,不路由、不 reject。
-    // tunnelRequestUrl also marks tunnel-origin (_via=tunnel) so mutating/dangerous ops can refuse over remote.
-    const synthUrl = tunnelRequestUrl(parsed.path, st.device)
-    if (typeof synthUrl === 'string') { log('TUNNEL', `${synthUrl} path on ${stream} — dropped`); return }
-    let res: Response
-    try { res = await deps.handleRequest(new Request(synthUrl.toString(), init)) }
-    catch (e) { log('TUNNEL', `handleRequest threw on ${stream}: ${String(e)}`); return }
-
-    const bodyText = await res.text()
-    const replyBytes = new TextEncoder().encode(JSON.stringify({
-      rid,
-      status: res.status,
-      body: bodyText,
-    }))
-    if (st.key) sendToStream(stream, await sealFrame(st.key, replyBytes))
+    await onV2Frame(stream, st, frame)
   }
 
   /** Token list the tunnel accepts right now: paired devices + the active /set link token. */
@@ -306,7 +249,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   async function onV2Frame(stream: string, st: StreamState, frame: unknown): Promise<void> {
     if (st.v2s) { await st.v2s.onFrame(frame); return }
     // First sealed frame: identify the device by which token's channel opens it.
-    const hit = identifyV2(new Uint8Array(st.bits), candidateTokens(), frame)
+    const hit = identifyV2(st.shared, candidateTokens(), frame)
     if (!hit) {
       log('TUNNEL', `frame auth failed on ${stream} (no paired device / expired link / MITM) — dropped`)
       rejectStream(stream)
@@ -315,7 +258,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     const token = hit.token
     st.device = token
     st.v2s = makeV2Stream({
-      stream, channel: hit.channel, token,
+      stream, channel: hit.channel, token, client: st.client,
       send: (f) => { if (streams.get(stream) === st) sendToStream(stream, f) },
       handleRequest: deps.handleRequest,
       events: deps.events,
@@ -333,11 +276,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   function open(): void {
     if (stopped) return
     loggedIn = false
-    ws = deps.login
-      ? connect(relayUrl, [RELAY_SUBPROTOCOL, relayIdProtocol(deps.daemonId)])
-      : connect(`${relayUrl}?id=${encodeURIComponent(deps.daemonId)}`, undefined)
-    // 连上后的总账:摘要日志 + 退避清零。v2 模式中继在 open 之后才可能拒绝(login_failed 4001 /
-    // rate_limited 4008 / replaced 4000),所以 v2 只在 login_ok 时清零,否则被拒会永远 2s 重连成风暴。
+    ws = connect(relayUrl, [RELAY_SUBPROTOCOL, relayIdProtocol(deps.daemonId)])
+    // 连上后的总账:摘要日志 + 退避清零。中继在 open 之后才可能拒绝(login_failed 4001 /
+    // rate_limited 4008 / replaced 4000),所以只在 login_ok 时清零,否则被拒会永远 2s 重连成风暴。
     function markConnected(): void {
       if (reconnectAttempts > 0) {
         // 从一段断连中恢复 —— 一条摘要代替刷屏(N 次尝试 / 下线 Xs)。
@@ -348,7 +289,6 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       reconnectAttempts = 0
     }
     ws.addEventListener('open', () => {
-      if (!deps.login) markConnected()
       if (ws) startHeartbeat(ws)
     })
     ws.addEventListener('message', (ev) => {
@@ -359,7 +299,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       // 被代理拖慢、但数据帧在流)误杀健康连接。ping/pong 只是空闲时的兜底。
       awaitingPong = false
       if (msg.pong !== undefined) return   // 纯心跳回执,不是数据帧
-      if (deps.login && typeof (msg as { challenge?: unknown }).challenge === 'string') {
+      if (typeof (msg as { challenge?: unknown }).challenge === 'string') {
         try { ws?.send(JSON.stringify(deps.login.sign((msg as { challenge: string }).challenge))) } catch { /* close 会接手 */ }
         return
       }
@@ -380,10 +320,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       }
       if (msg.closed === true) { forgetStream(msg.stream); return }   // relay 通知手机断开 — 释放该 stream 的密钥条目与订阅
       const stream = msg.stream, frame = msg.frame
-      // Handshakes, v2 streams, and anything queued behind a pending handshake go
-      // through the per-stream chain; an established v1 stream stays fully concurrent.
-      if (handshakePlaintext(frame) || streams.get(stream)?.v2 || chains.has(stream)) enqueue(stream, () => onStreamFrame(stream, frame))
-      else void onStreamFrame(stream, frame)
+      // Everything goes through the per-stream chain (counter nonces need arrival order);
+      // a `req` is dispatched off it once opened (tunnel-v2-stream.ts).
+      enqueue(stream, () => onStreamFrame(stream, frame))
     })
     ws.addEventListener('close', () => {
       stopHeartbeat()
@@ -396,8 +335,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       ws = null
       if (stopped) return
       // 指数退避:min·2^n,封顶 max。只在首次断开记一条,后续静默重试
-      // (避免网络抖动时每 15s 刷一行)—— 恢复时 markConnected 的摘要报清总账
-      // (老中继在 open 时,v2 在 login_ok 时)。
+      // (避免网络抖动时每 15s 刷一行)—— 恢复时 markConnected 的摘要报清总账(login_ok 时)。
       if (reconnectAttempts === 0) { downSince = now(); log('TUNNEL', 'relay socket closed — reconnecting…') }
       const delay = Math.min(maxReconnectMs, minReconnectMs * 2 ** reconnectAttempts)
       reconnectAttempts++
@@ -409,11 +347,11 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   return {
     start() { stopped = false; open() },
     sendControl(msg) {
-      if (!ws || (deps.login && !loggedIn)) return false
+      if (!ws || !loggedIn) return false
       try { ws.send(JSON.stringify(msg)); return true } catch { return false }
     },
     connected() {
-      return !!ws && ws.readyState === 1 && (!deps.login || loggedIn)
+      return !!ws && ws.readyState === 1 && loggedIn
     },
     subscribedDeviceTokens() {
       const out = new Set<string>()

@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
+import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
 import { makePhoneChatId, makePhoneOwner, mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
 import { routePhone } from './phone-route-table'
-import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../../lib/tunnel-crypto'
 import type { MessageRecord } from '../../lib/messages-store'
 import { openTestDb } from '../../lib/db'
 import { makeMatterStore } from '../../adapters/store/matters-store'
@@ -122,16 +121,17 @@ describe('makePhoneOwner(Ruling 3:读只查不写,说才登记)', () => {
   })
 })
 
-/** 旧中继线上真实大小:tunnel-client 的 {rid,status,body} 再 JSON 一次、封帧(base64url)、套 {stream,frame}。 */
-async function legacyWireBytes(res: Response): Promise<number> {
-  const a = await generateTunnelKeypair(), b = await generateTunnelKeypair()
-  const key = await deriveSharedKey(a.privateKey, b.publicKey, new TextEncoder().encode('t'.repeat(43)))
-  const reply = new TextEncoder().encode(JSON.stringify({ rid: 'r'.repeat(64), status: res.status, body: await res.text() }))
-  return Buffer.byteLength(JSON.stringify({ stream: 's'.repeat(64), frame: await sealFrame(key, reply) }), 'utf8')
+/** 中继线上真实大小(v2):tunnel-v2-stream 的 res 消息(带响应头)封帧、套 {stream,frame}。 */
+async function wireBytes(res: Response): Promise<number> {
+  const key = new Uint8Array(32).fill(7)
+  const headers: Record<string, string> = {}
+  res.headers.forEach((v, k) => { headers[k] = v })
+  const msg = new TextEncoder().encode(JSON.stringify({ t: 'res', rid: 'r'.repeat(64), status: res.status, headers, body: await res.text(), bodyEncoding: 'utf8' }))
+  return Buffer.byteLength(JSON.stringify({ stream: 's'.repeat(64), frame: makeV2Channel({ c2s: key, s2c: key }, 'server').seal(msg) }), 'utf8')
 }
 const RELAY_FRAME_MAX = 512 * 1024
 
-describe('旧中继帧大小(终审 M1):一页整页不能超过 512 KiB,也不能 413 整页', () => {
+describe('中继帧大小(终审 M1):一页整页不能超过 512 KiB,也不能 413 整页', () => {
   const worst = (text: string) => vi.fn(async (_c: string, o: { limit: number }) => Array.from({ length: o.limit }, (_, i) => rec(i, { text })))
   for (const [name, text] of [['4000 个汉字', '汉'.repeat(4000)], ['控制字符(转义两次最胀)', '\u0001'.repeat(4000)], ['引号', '"'.repeat(4000)]] as const) {
     it(`每条 ${name} ⇒ 少给几条(hasMore、nextBefore 指向本页最旧那条),线上 < 512 KiB`, async () => {
@@ -145,7 +145,7 @@ describe('旧中继帧大小(终审 M1):一页整页不能超过 512 KiB,也不�
       // 下一页从本页最旧那条往前接:不留洞
       expect(body.nextBefore).toBe(rec(31 - body.messages.length).ts)
       expect(body.messages[0].id).toBe(`m${31 - body.messages.length}`)
-      expect(await legacyWireBytes(res)).toBeLessThan(RELAY_FRAME_MAX)
+      expect(await wireBytes(res)).toBeLessThan(RELAY_FRAME_MAX)
       PHONE_API_SCHEMAS['GET /m/api/chat']!.parse(body)
     })
   }

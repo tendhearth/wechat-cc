@@ -1,7 +1,7 @@
 /**
  * phone-e2e.test.ts — 手机协议 v2 的进程内端到端互通(spec 2026-09-29-phone-protocol-v2 §5 第 3 条)。
  *
- * 全是真的:`makeTunnelHub`(中继实现)+ 真面板 + 真工作台(只有执行者是假的)+ 真隧道客户端 +
+ * 全是真的(中继是进程内替身 memory-relay.fixture.ts,照中继 v2 房间的转发语义)+ 真面板 + 真工作台(只有执行者是假的)+ 真隧道客户端 +
  * 手机事件集线器(daemon 同一份接线 makePhoneEventsWiring)+ 协议包客户端 `makeProtocolClient`。
  * 线上只剩两只假 socket:daemon↔中继、手机↔中继,都是同步转发的内存管道。
  */
@@ -20,7 +20,7 @@ import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../workbench/service'
 import { MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
-import { makeTunnelHub, type TunnelHub } from '../../../relay/tunnel'
+import { makeMemoryRelay, type MemoryRelay } from './memory-relay.fixture'
 import { makeTunnelClient, type TunnelClient, type TunnelWS } from './tunnel-client'
 import { makePhoneEventsWiring } from './phone-topic-sources'
 
@@ -28,7 +28,7 @@ const DAEMON = 'e2e-daemon'
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x10, 0x80])
 
 let root: string, managedRoot: string, db: Db
-let workbench: WorkbenchService, panel: SettingsPanel, hub: TunnelHub, tunnel: TunnelClient
+let workbench: WorkbenchService, panel: SettingsPanel, hub: MemoryRelay, tunnel: TunnelClient
 let wiring: ReturnType<typeof makePhoneEventsWiring>
 let store: ReturnType<typeof makeWorkbenchStore>, matters: ReturnType<typeof makeMatterStore>
 let deviceToken: string
@@ -78,7 +78,7 @@ beforeEach(async () => {
   deviceToken = paired.device_token
 
   wiring = makePhoneEventsWiring({ workbench, matters, home: panel.home, changes: workbench.changes, pollMs: 40 })
-  hub = makeTunnelHub()
+  hub = makeMemoryRelay()
   let incoming: ((ev: { data?: unknown }) => void) | undefined
   let closed: ((ev: { data?: unknown }) => void) | undefined
   const daemonSocket: TunnelWS = {
@@ -98,6 +98,7 @@ beforeEach(async () => {
     reconnectMs: 50,
     events: wiring.events,
     log: () => {},
+    relayUrl: 'wss://relay.test/v2/daemon', login: { sign: () => ({ pub: 'P', sig: 'S' }) },
   })
   tunnel.start()
 })
@@ -112,7 +113,7 @@ afterEach(async () => {
   removeTempDir(root); removeTempDir(managedRoot)
 })
 
-/** 一条手机 ↔ 中继的内存 WebSocket。`stripV`:把握手里的 `v` 两个方向都抹掉 = 对面是不认识 v 的老后台。 */
+/** 一条手机 ↔ 中继的内存 WebSocket。`stripV`:把握手里的 `v` 两个方向都抹掉 = 中继想把双方降到退休了的 v1。 */
 interface PhoneLine { sent: string[]; streamId: () => string; drop: () => void; handshakes: () => number }
 function phoneLine(opts: { stripV?: boolean } = {}): { open: () => ProtocolSocket; line: PhoneLine } {
   const sent: string[] = []
@@ -184,8 +185,8 @@ const utf8 = new TextEncoder()
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 describe('手机协议 v2 进程内端到端', () => {
-  it.each([false,true])('reads one persistent input through encrypted v1 fallback=%s after the detail window and frame limit',async stripV=>{
-    const {client,line}=phone({stripV}),task=createTask('receipt-'+(stripV?'v1':'v2'))
+  it('reads one persistent input through the encrypted relay after the detail window and frame limit',async()=>{
+    const {client,line}=phone(),task=createTask('receipt-v2')
     await expect.poll(()=>workbench.detail(task.id).runId).toBeTruthy()
     const runId=workbench.detail(task.id).runId!,requestId=randomUUID(),text='原始要求\r\n  保留空格'
     const accepted=await client.request({method:'POST',path:'/m/api/matter/say',body:JSON.stringify({id:task.id,runId,requestId,text})})
@@ -203,7 +204,7 @@ describe('手机协议 v2 进程内端到端', () => {
     const oversized=await client.request({method:'GET',path:'/m/api/matter?id='+task.id})
     expect(oversized.status).toBe(413);expect(oversized.json()).toEqual({ok:false,error:'detail_too_large'})
     const result=await client.request({method:'GET',path:'/m/api/matter/input-receipt?id='+task.id+'&requestId='+requestId})
-    expect(client.version()).toBe(stripV?1:2);expect(result.status).toBe(200)
+    expect(client.version()).toBe(2);expect(result.status).toBe(200)
     expect(MatterInputReceiptResult.parse(result.json())).toEqual({ok:true,input:{id:requestId,taskId:task.id,runId,text,status:'pending',error:null}})
     expect(line.sent.every(frame=>Buffer.byteLength(frame)<512*1024)).toBe(true)
     expect(handled.filter(item=>item==='POST /m/api/matter/say')).toHaveLength(1)
@@ -349,15 +350,11 @@ describe('手机协议 v2 进程内端到端', () => {
     expect(handled.slice(before)).toEqual(['GET /m/api/home'])
   })
 
-  it('老后台(握手回包里没有 v)⇒ 退回 v1:一问一答照常,订阅与二进制正文明确拒绝', async () => {
+  it('中继把握手里的 v 抹掉(想降到退休了的 v1)⇒ daemon 明文回 upgrade_required,客户端以它失败、不降级', async () => {
     const { client } = phone({ stripV: true })
-    const home = await client.request({ method: 'GET', path: '/m/api/home?limit=1' })
-    expect(client.version()).toBe(1)
-    expect(home.status).toBe(200)
-    expect(home.headers).toEqual({})
-    expect(home.json<{ ok: boolean }>().ok).toBe(true)
-    expect(() => client.subscribe('agents', () => {})).toThrow('subscriptions_need_v2')
-    await expect(client.request({ method: 'POST', path: '/m/api/seen', body: utf8.encode('{}') })).rejects.toThrow('binary_body_needs_v2')
+    await expect(client.request({ method: 'GET', path: '/m/api/home?limit=1' })).rejects.toThrow('upgrade_required')
+    expect(client.version()).toBeNull()
+    expect(handled).not.toContain('GET /m/api/home')
   })
 
   it('撤销设备后连接立刻失效:下一条事件发出前关流,之后的请求都是 auth_failed', async () => {

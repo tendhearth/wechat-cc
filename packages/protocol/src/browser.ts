@@ -13,21 +13,18 @@
  * 标记本身不是合法 JS——见 transport.js 的头注释——而且只认单个点的扩展名,
  * `protocol.generated.js` 这种名字也匹配不上它)。
  *
- * 只碰 `globalThis.crypto.getRandomValues`(见 x25519.ts / v1.ts 的随机数来
- * 源)—— 不碰 Web Crypto 的 subtle 那一块,调用方(浏览器沙箱、中继壳页)
- * 可以没有它。
+ * 2026-10-25(架构终态 F4):网页退掉 v1,跟原生 App 用同一个协议客户端
+ * `makeProtocolClient`(client.ts)说 v2 —— 不再有第三份手写的隧道客户端。
+ *
+ * 只碰 `globalThis.crypto.getRandomValues`(见 x25519.ts 的随机数来源)——
+ * 不碰 Web Crypto 的 subtle 那一块,调用方(浏览器沙箱、中继壳页)可以没有它。
  */
 import { b64uEncode, b64uDecode } from './b64u'
-import { x25519KeyPair, x25519Shared } from './x25519'
-import { deriveV1Key, sealV1, openV1 } from './v1'
+import { makeProtocolClient } from './client'
 
 const CCP = {
   b64u: { encode: b64uEncode, decode: b64uDecode },
-  x25519KeyPair,
-  x25519Shared,
-  deriveV1Key,
-  sealV1,
-  openV1,
+  makeProtocolClient,
 }
 
 ;(globalThis as unknown as { CCP: typeof CCP }).CCP = CCP

@@ -99,3 +99,15 @@ describe('终端里的 Claude Code / Codex(2026-10-14)', () => {
     expect(term([{ source: 'cursor', health: 'stale' }])).toMatchObject({ name: '终端里的 Cursor', state: 'needs_you', code: 'terminal.stale', params: { names: 'Cursor' } })
   })
 })
+
+describe('手机:老中继退休(F4)', () => {
+  const base = { wechat: { outbound: 'ok' as const, expired: 0 }, brain: { provider: 'claude', name: 'Claude', registered: true, retrying: false }, guard: null, fullDiskAccess: null, knowledge: null, memory: null, subsystems: [] }
+  it('配置里只有老中继(没有 relay_v2_url)⇒ needs_you,一句「换新中继、重新配对」,指向连接手机', () => {
+    const phone = buildCapabilities({ ...base, phone: { relay: false, devices: 2, legacyRelay: true } }).find(c => c.id === 'phone')!
+    expect(phone).toMatchObject({ state: 'needs_you', code: 'phone.relay_retired', reason: '手机连接要换新中继，在「连接手机」里重新配对。', action: { where: 'desktop' } })
+  })
+  it('没有老配置 ⇒ 照旧「没开手机连接」;设了 relay_v2_url ⇒ 老配置不算', () => {
+    expect(buildCapabilities({ ...base, phone: { relay: false, devices: 0 } }).find(c => c.id === 'phone')).toMatchObject({ state: 'off', code: 'phone.relay_off' })
+    expect(buildCapabilities({ ...base, phone: { relay: true, devices: 1, legacyRelay: false } }).find(c => c.id === 'phone')).toMatchObject({ state: 'ok' })
+  })
+})

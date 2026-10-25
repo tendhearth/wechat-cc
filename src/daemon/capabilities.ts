@@ -44,7 +44,9 @@ export interface CapabilityInputs {
   memory: { failures: number; firstRunDone: boolean } | null
   /** 后台判断(便宜模型)连续真失败的次数;null = 读不到(不出现)。 */
   background?: { failures: number; lastError: string | null } | null
-  phone: { relay: boolean; devices: number }
+  /** legacyRelay:配置里还是老中继那一套(remote_tunnel / remote_relay_url,没有 relay_v2_url)——随 v1 在 2026-10-25 退休,
+   *  daemon 不再开远程,只记一行日志;这里让主人在「CC 的连接」里看得见。 */
+  phone: { relay: boolean; devices: number; legacyRelay?: boolean }
   /**
    * 终端里的 Claude Code / Codex(2026-10-14):只有接了 hooks,终端会话才到得了 CC。
    * sources 只列这台机上有的那几家(CLI 找得到或已装过 hook);空 / null ⇒ 不出现。
@@ -106,7 +108,8 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
 
   if (i.terminal && i.terminal.sources.length > 0) out.push(terminalCapability(i.terminal))
 
-  if (!i.phone.relay) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.relay_off', reason: '没开手机连接。' })
+  if (!i.phone.relay && i.phone.legacyRelay) out.push({ id: 'phone', name: '手机', state: 'needs_you', code: 'phone.relay_retired', reason: '手机连接要换新中继，在「连接手机」里重新配对。', action: { label: '在电脑上连接手机', where: 'desktop' }, detail: 'agent-config.json 里只有老中继(remote_tunnel / remote_relay_url),没有 relay_v2_url;老中继随协议 v1 在 2026-10-25 退休' })
+  else if (!i.phone.relay) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.relay_off', reason: '没开手机连接。' })
   else if (i.phone.devices === 0) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.no_device', reason: '还没连接手机。', action: { label: '在电脑上连接手机', where: 'desktop' } })
   else out.push({ id: 'phone', name: '手机', state: 'ok', code: 'phone.ok', params: { n: i.phone.devices }, reason: `已连接 ${i.phone.devices} 台。` })
 

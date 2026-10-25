@@ -12,15 +12,14 @@
   2026-09-24 删掉「先探 LAN」:家里直接用电脑,手机网页只在外面用;
   而且 https 页里探 http 私网地址会被现代浏览器拦,探测几乎总失败,白等 2s。
   链接里的 lan= 参数保留但不再使用。
-  2026-09-29(手机协议包 v2 Task 4):v1 密封帧改由 packages/protocol 的
-  CCP(noble 实现,构建期由 apps/mobile/build.ts 打包塞进下面 script 顶部
-  那处占位注释)算,跟 daemon(同一个包)字节级兼容;这里不再手写
-  crypto.subtle —— 本页运行的沙箱可以没有它(只要有
-  crypto.getRandomValues / TextEncoder / TextDecoder / atob / btoa)。改的
-  是 relay/pset.src.html 这份源码;relay/pset.html 是
-  `bun run build:mobile` 写出的生成物,别手改。占位注释的确切写法只在
-  script 里出现这一处,别在别的注释里重复打(build.ts 用字符串
-  replace,认第一处)。
+  2026-10-25(架构终态 F4):v1 退休。壳跟原生 App、手机网页用同一个协议客户端
+  CCP.makeProtocolClient(packages/protocol,构建期由 apps/mobile/build.ts 打包塞进下面
+  script 顶部那处占位注释)说 v2,握手自报 client:"web";只连中继 v2 的 /v2/phone。链接
+  里是老中继 id(t…)、或 daemon 回 upgrade_required ⇒ 提示在电脑上重新扫码配对。本页运行
+  的沙箱可以没有 crypto.subtle(只要有 crypto.getRandomValues / TextEncoder /
+  TextDecoder / WebSocket)。改的是 relay/pset.src.html 这份源码;relay/pset.html 是
+  `bun run build:mobile` 写出的生成物,别手改。占位注释的确切写法只在 script 里出现这一
+  处,别在别的注释里重复打(build.ts 用字符串 replace,认第一处)。
 -->
 <style>
   /* 色值与 apps/mobile/src/tokens.css 保持一致(壳页单独部署,不能引用它;src/daemon/design-tokens.test.ts 守着) */
@@ -46,54 +45,62 @@ try { var dt = localStorage.getItem("deviceToken"); DT_ID = localStorage.getItem
 var msg = document.getElementById("msg")
 if (!ID || !T) { msg.textContent = "链接不完整,回微信跟 CC 再要一个" }
 
-// hs 握手交换的裸公钥不是 v1 密封帧,CCP 管不着,还是手写这份 base64url。
-var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
-  dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
+var REPAIR = "连接方式升级了，请在电脑上重新扫码配对"
+var EXPIRED = "这个链接已经用过或过期了，回微信跟 CC 再要一个"
+var TAMPERED = "家里的电脑暂时连不上（连接在半路被改过），过一会儿再试"
+
+/** 浏览器 WebSocket → 协议客户端要的 ProtocolSocket。 */
+function socket(url) {
+  var ws = new WebSocket(url), onOpen = null, onMsg = null, onClose = null
+  ws.onopen = function() { if (onOpen) onOpen() }
+  ws.onmessage = function(ev) { if (onMsg) onMsg(typeof ev.data === "string" ? ev.data : String(ev.data)) }
+  ws.onclose = function() { if (onClose) onClose() }
+  ws.onerror = function() { try { ws.close() } catch (e) {} }
+  return {
+    send: function(s) { ws.send(s) }, close: function() { try { ws.close() } catch (e) {} },
+    onOpen: function(cb) { onOpen = cb }, onMessage: function(cb) { onMsg = cb }, onClose: function(cb) { onClose = cb },
+  }
+}
+
+// 老中继(t… id)随 v1 退休:连不上了。丢掉绑在它上面的设备令牌,说清楚怎么重新配对。
+function needsRepair() {
+  try { var dt = localStorage.getItem("deviceTokenId"); if (dt && dt.charAt(0) === "t") { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } } catch (e) {}
+  msg.textContent = REPAIR
+}
 
 function viaTunnel() {
   msg.textContent = "从远处连回你的电脑…(加密直达)"
-  var relay = "wss://" + location.host + (ID.charAt(0) === "r" ? "/v2/phone" : "/tunnel/phone")
-  var ws = new WebSocket(relay + "?id=" + encodeURIComponent(ID))
-  var key = null, kp = null
-  var timer = setTimeout(function(){ msg.textContent = "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)
-  ws.onopen = function() {
-    kp = CCP.x25519KeyPair()
-    ws.send(JSON.stringify({ hs: b64u.enc(kp.pub) }))
-  }
-  ws.onmessage = function(ev) {
-    var f = JSON.parse(ev.data)
-    if (f.error) {
-      clearTimeout(timer); try { ws.close() } catch (e) {}
-      if (f.error === "auth_failed") {
-        // 本域存的设备令牌不被认了(解除配对 / 换了电脑):丢掉它,用链接里的短令牌重来一次。
-        if (T !== LINK_T && LINK_T) { if (DT_ID === ID) { try { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } catch (e) {} } T = LINK_T; viaTunnel(); return }
-        msg.textContent = "这个链接已经用过或过期了，回微信跟 CC 再要一个"; return
-      }
-      msg.textContent = f.error === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : ("连接出错:" + f.error); return
-    }
-    if (f.hs) {
-      // Key BOUND to the device token — proves to the daemon we hold it,
-      // without ever putting it on the wire; defeats a MITM relay.
-      var shared = CCP.x25519Shared(kp.priv, b64u.dec(f.hs))
-      key = CCP.deriveV1Key(shared, T)
-      var body = JSON.stringify({ path: PATH + "?t=" + T, method: "GET", rid: "shell" })
-      var frame = CCP.sealV1(key, new TextEncoder().encode(body))
-      ws.send(JSON.stringify({ iv: frame.iv, ct: frame.ct }))
-      return
-    }
-    if (!key || !f.iv) return
-    var pt = CCP.openV1(key, { iv: f.iv, ct: f.ct })
-    var r = JSON.parse(new TextDecoder().decode(pt))
-    clearTimeout(timer)
-    ws.close()
-    if (r.status === 401) { msg.textContent = "这个链接已经用过或过期了，回微信跟 CC 再要一个" ; return }
-    if (r.status !== 200) { msg.textContent = "打开失败(" + r.status + "),稍后再试" ; return }
+  var relay = "wss://" + location.host + "/v2/phone"
+  var cli = CCP.makeProtocolClient({
+    open: function() { return socket(relay + "?id=" + encodeURIComponent(ID)) },
+    token: T, client: "web", retries: 0,
+    // 中继把握手里的 v 抹掉:客户端拒绝降级、按退避自己再试;配对原样留着,只说一声。
+    onProtocolError: function(reason) { if (reason === "downgrade_refused" && !settled) { tampered = true; msg.textContent = TAMPERED } },
+  })
+  var settled = false, tampered = false
+  function done() { if (settled) return false; settled = true; clearTimeout(timer); try { cli.close() } catch (e) {} ; return true }
+  var timer = setTimeout(function(){ if (done()) msg.textContent = tampered ? TAMPERED : "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)
+  cli.request({ method: "GET", path: PATH + "?t=" + T }).then(function(r) {
+    if (!done()) return
+    if (r.status === 401) { msg.textContent = EXPIRED; return }
+    if (r.status !== 200) { msg.textContent = "打开失败(" + r.status + "),稍后再试"; return }
     var shell = { relay: relay, id: ID }
-    var html = r.body.replace(/<script>/, "<scr" + "ipt>window.__CC_SHELL__=" + JSON.stringify(shell) + ";</scr" + "ipt><scr" + "ipt>")
+    var html = r.text().replace(/<script>/, "<scr" + "ipt>window.__CC_SHELL__=" + JSON.stringify(shell) + ";</scr" + "ipt><scr" + "ipt>")
     document.open(); document.write(html); document.close()
-  }
-  ws.onerror = function(){ clearTimeout(timer); msg.textContent = "网络不给力,稍后再试" }
+  }, function(err) {
+    if (!done()) return
+    var code = err && err.message
+    if (code === "auth_failed") {
+      // 本域存的设备令牌不被认了(解除配对 / 换了电脑):丢掉它,用链接里的短令牌重来一次。
+      if (T !== LINK_T && LINK_T) { if (DT_ID === ID) { try { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } catch (e) {} } T = LINK_T; settled = false; viaTunnel(); return }
+      msg.textContent = EXPIRED; return
+    }
+    if (code === "upgrade_required") { needsRepair(); return }
+    if (tampered) { msg.textContent = TAMPERED; return }
+    msg.textContent = code === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : code === "unreachable" || code === "timeout" ? "网络不给力,稍后再试" : ("连接出错:" + code)
+  })
 }
 
-if (ID && T) viaTunnel()
+if (ID && ID.charAt(0) === "t") needsRepair()
+else if (ID && T) viaTunnel()
 </script></body></html>

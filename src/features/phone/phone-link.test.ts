@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { phoneLinkState, psetUrl } from './phone-link'
 
 const RID = 'r' + 'a'.repeat(26)
-const LEGACY = 't' + '0'.repeat(36)
 const base = { owner: true, v2Configured: true, tunnelOn: true, bootRemoteId: RID }
 
 describe('phoneLinkState(spec §4.1 的表,按顺序判)', () => {
@@ -11,7 +10,8 @@ describe('phoneLinkState(spec §4.1 的表,按顺序判)', () => {
     [{ ...base, v2Configured: false, tunnelOn: false }, 'relay_not_configured'],
     [{ ...base, tunnelOn: false, bootRemoteId: null }, 'remote_off'],
     [{ ...base, bootRemoteId: null }, 'starting'],
-    [{ ...base, bootRemoteId: LEGACY }, 'relay_unavailable'],
+    [{ ...base, bootRemoteId: null, bootFailed: true }, 'relay_unavailable'],
+    [{ ...base, bootRemoteId: 't' + '0'.repeat(36) }, 'relay_unavailable'],
     [base, 'ready'],
   ] as const)('%o ⇒ %s', (i, want) => {
     expect(phoneLinkState(i)).toBe(want)

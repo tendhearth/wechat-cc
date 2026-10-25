@@ -2,7 +2,7 @@
  * v2.test.ts — 手机隧道 v2:双向密钥 + 计数器 nonce + 防重放。
  *
  * 向量在 `packages/protocol/vectors/v2.json`:不是跟别的实现比对字节兼容
- * (v1 那份是跟 WebCrypto 对齐),而是**这份 noble 实现自己生成的回归钉子**
+ * (退休了的 v1 那份是跟 WebCrypto 对齐),而是**这份 noble 实现自己生成的回归钉子**
  * ——固定 shared/bind,记录两把方向密钥和头 3 帧密文,以后改动这份代码如果
  * 悄悄改变了输出,这里就会红。生成方式见 vectors/v2.json 里的 `_generatedBy`
  * 字段说明。

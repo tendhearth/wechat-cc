@@ -1,6 +1,6 @@
 /**
  * 手机那一簇(重构第二批步 6c,从 pipeline-deps.ts 搬出来):中继 v2 推送、在线设备、终端会话的 App 推送出口、
- * 主人对话 / 手机「跟 CC 说」、App 主动通道、媒体镜像、设置面板、两条隧道、推送 notifier、手机订阅(phone-events)。
+ * 主人对话 / 手机「跟 CC 说」、App 主动通道、媒体镜像、设置面板、中继隧道、推送 notifier、手机订阅(phone-events)。
  *
  * 簇里有一个真环:phonePush 要读面板的设备,面板又要 phonePush(还有主人对话 / 手机对话)当值。解法是显式的 late 对象 ——
  * 面板建好就填进去,读的地方判空(没建好 ⇒ 当没有设备)。隧道 / notifier / 订阅本来就是异步 import 之后才到的 `let … = null`,
@@ -17,7 +17,7 @@ import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../core/matters/service'
 import type { MemoryNightlyRuntime } from '../../features/memory'
 import { loadCompanionConfig } from '../companion/config'
-import { makePhoneChatId, makePhoneOwner, makePhoneChat, makePhoneEventsWiring, resolveRemoteRelays, mergeOnlineDevices, makePhonePush, fanoutPush, makePhoneNotifier, deviceIdOf, currentPhoneClient, loadTunnelClient } from '../../features/phone'
+import { makePhoneChatId, makePhoneOwner, makePhoneChat, makePhoneEventsWiring, resolveRemoteRelay, makePhonePush, fanoutPush, makePhoneNotifier, deviceIdOf, currentPhoneClient, loadTunnelClient } from '../../features/phone'
 import { makePushGate } from '../speech/push-gate'
 import { makeAppChannel } from '../companion/app-channel'
 import { makeMediaMirror } from '../companion/media-mirror'
@@ -56,17 +56,16 @@ export function wirePhone(d: WirePhoneDeps) {
 // Remote tunnel opt-in (随身 CC out-of-home) — resolve id/relay BEFORE the
 // panel so its /m page can bake them in for out-of-home phones.
 const remoteCfg = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: string; relay_v2_url?: string }
-// 过渡期双中继(spec 2026-09-30 §8):老 VPS 中继 + 官方中继 v2;remoteInfo 优先 v2。
-const relays = resolveRemoteRelays(stateDir, remoteCfg, (tag, line) => log(tag, line))
-const remoteTunnel = relays?.remoteInfo ?? null
+// 官方中继 v2(老 VPS 中继随协议 v1 在 2026-10-25 退休,架构终态 F4)。没设 relay_v2_url ⇒ 远程关。
+const relay = resolveRemoteRelay(stateDir, remoteCfg, (tag, line) => log(tag, line))
+const remoteTunnel = relay?.remoteInfo ?? null
 // 推送(中继 v2):先建,面板与隧道都要它;发送走 v2 隧道客户端(稍后才建 —— 懒绑定)。
 // 手机那一簇关机时要停的东西(重构第二批步 6d):main.ts 在 polling 之前登记 ⇒ 倒序时入站先停,App 在途回复还能经隧道送完。
 const phoneLc = makePhoneLifecycle((tag, line) => log(tag, line))
 let v2Tunnel: import('../../features/phone').TunnelClient | null = null
-let legacyTunnel: import('../../features/phone').TunnelClient | null = null
 let notifier: { refresh(): void } | null = null
 // 面板在下面才建(它要 phonePush 当值):经 late.panel 读,没建好 ⇒ 当没有设备(见 PR #492 的 null 行为表)。
-const phonePush = relays?.v2 ? makePhonePush({
+const phonePush = relay ? makePhonePush({
   stateDir,
   send: (m) => v2Tunnel?.sendControl(m) ?? false,
   deviceToken: (id) => late.panel?.deviceTokens().find(t => deviceIdOf(t) === id) ?? null,
@@ -75,8 +74,8 @@ const phonePush = relays?.v2 ? makePhonePush({
   log: (tag, line) => log(tag, line),
 }) : null
 
-// 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。隧道没建 ⇒ 空。
-const onlineDevices = () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf)
+// 在线设备 = 中继隧道上挂着订阅的设备(按设备 id 去重)。隧道没建 ⇒ 空。
+const onlineDevices = () => new Set([...(v2Tunnel?.subscribedDeviceTokens() ?? [])].map(deviceIdOf))
 // 推送本身(在线的跳过、失败只记日志)。这个文件里只有这一处调 fanoutPush;用它的三处:
 //  - App 主动通道(companionApp.push):只在 proactive-channel 那一轮收尾时推,那一轮已经过了门(say);
 //  - 工作台通知(phone-notifier)、终端会话(features/terminal/app-push 的 appPush):由状态变化直接触发 ⇒ 先过 pushGate 问门。
@@ -142,8 +141,8 @@ late.panel = settingsPanel
 
 // 远程中继隧道 daemon leg — dials the relay out (NAT-piercing); phone
 // reaches it via the SAME settingsPanel.handleRequest. OFF unless
-// remote_tunnel:true (resolved into relays above). 过渡期两条:老中继 + v2。
-if (relays) {
+// remote_tunnel:true + relay_v2_url (resolved into `relay` above).
+if (relay) {
   // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
   // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。关机时由 phoneLc 退订。
   const phone = makePhoneEventsWiring({
@@ -168,22 +167,16 @@ if (relays) {
       activeLinkToken: () => settingsPanel.activeLinkToken(),
       log: (tag: string, line: string) => log(tag, line),
     }
-    // 过渡期(spec §8):老中继照连,已配对的手机网页还指着它。
-    legacyTunnel = makeTunnelClient({ ...common, daemonId: relays.legacy.id, relayUrl: relays.legacy.daemonUrl })
-    legacyTunnel.start()
-    phoneLc.add('legacy-tunnel', () => legacyTunnel?.stop())
-    if (relays.v2) {
-      v2Tunnel = makeTunnelClient({
-        ...common,
-        daemonId: relays.v2.identity.id,
-        relayUrl: relays.v2.daemonUrl,
-        login: relays.v2.identity,
-        onLogin: () => phonePush?.resync(),
-        onControl: (m) => phonePush?.onControl(m),
-      })
-      v2Tunnel.start()
-      phoneLc.add('v2-tunnel', () => v2Tunnel?.stop())
-    }
+    v2Tunnel = makeTunnelClient({
+      ...common,
+      daemonId: relay.identity.id,
+      relayUrl: relay.daemonUrl,
+      login: relay.identity,
+      onLogin: () => phonePush?.resync(),
+      onControl: (m) => phonePush?.onControl(m),
+    })
+    v2Tunnel.start()
+    phoneLc.add('v2-tunnel', () => v2Tunnel?.stop())
     if (phonePush && opts.workbench) {
       const wb = opts.workbench
       const n = makePhoneNotifier({
@@ -198,7 +191,7 @@ if (relays) {
       phoneLc.add('notifier', () => n.dispose())
     }
     phoneLc.add('phone-events', () => phone.dispose())
-    log('TUNNEL', `remote tunnel enabled — legacy ${relays.legacy.id.slice(0, 8)}…${relays.v2 ? `, v2 ${relays.v2.identity.id.slice(0, 8)}…` : ''}`)
+    log('TUNNEL', `remote tunnel enabled — relay v2 ${relay.identity.id.slice(0, 8)}…`)
   }).catch(err => log('TUNNEL', `tunnel client load failed: ${err instanceof Error ? err.message : err}`))
 }
 

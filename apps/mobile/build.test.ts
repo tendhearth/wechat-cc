@@ -6,6 +6,9 @@ import vm from 'node:vm'
 import { assembleMobilePage, serializeMobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, MOBILE_SRC } from './sources'
 import { buildProtocolJs, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
+import { makeFakeV2Relay } from './fake-v2-relay'
+import { makeV2Channel } from '../../packages/protocol/src/index'
+import { mobilePhoneHtml } from '../../src/features/phone/mobile-page'
 
 describe('apps/mobile → src/features/phone/mobile-page.generated.json', () => {
   const page = assembleMobilePage(readMobileSource)
@@ -84,29 +87,39 @@ describe('apps/mobile/src/protocol-generated.js', () => {
     expect(generated).not.toMatch(/\brequire\(/)
   })
 
-  it('runs a full v1 seal/open round trip in a vm sandbox that only has crypto.getRandomValues + TextEncoder/TextDecoder/atob/btoa — no crypto.subtle at all', () => {
+  it('runs a full v2 request through CCP.makeProtocolClient in a vm sandbox that only has crypto.getRandomValues + TextEncoder/TextDecoder + timers — no crypto.subtle at all', async () => {
+    const relay = makeFakeV2Relay({ tokens: () => ['device-token'], handler: r => ({ status: 200, body: JSON.stringify({ path: r.path }) }) })
     const sandbox: Record<string, unknown> = {
       crypto: { getRandomValues: (arr: Uint8Array) => { for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256); return arr } },
-      TextEncoder, TextDecoder, atob, btoa,
+      TextEncoder, TextDecoder, setTimeout, clearTimeout, queueMicrotask,
+      // 沙箱外的假中继 + daemon(协议包的真密码学),包成协议客户端要的 ProtocolSocket
+      __open: () => {
+        const ws = new relay.WebSocket('wss://relay.test/v2/phone?id=r1')
+        return { send: (s: string) => ws.send(s), close: () => ws.close(), onOpen: (cb: () => void) => { ws.onopen = cb }, onMessage: (cb: (s: string) => void) => { ws.onmessage = ev => cb(ev.data) }, onClose: (cb: () => void) => { ws.onclose = cb } }
+      },
     }
     vm.createContext(sandbox)
     vm.runInContext(generated, sandbox)
     expect(typeof (sandbox as any).CCP).toBe('object')
     expect('subtle' in (sandbox.crypto as object)).toBe(false)
     vm.runInContext(`
-      var alice = CCP.x25519KeyPair()
-      var bob = CCP.x25519KeyPair()
-      var sharedFromAlice = CCP.x25519Shared(alice.priv, bob.pub)
-      var sharedFromBob = CCP.x25519Shared(bob.priv, alice.pub)
-      var keyAlice = CCP.deriveV1Key(sharedFromAlice, 'device-token')
-      var keyBob = CCP.deriveV1Key(sharedFromBob, 'device-token')
-      var frame = CCP.sealV1(keyAlice, new TextEncoder().encode(JSON.stringify({ path: '/m/api/home', rid: 'r0' })))
-      globalThis.__opened = new TextDecoder().decode(CCP.openV1(keyBob, frame))
+      globalThis.__res = CCP.makeProtocolClient({ open: __open, token: 'device-token', client: 'web' })
+        .request({ method: 'GET', path: '/m/api/home' }).then(function (r) { return r.status + ' ' + r.text() })
       // b64u 也挂在 CCP 上,顺带验一遍 encode/decode 互逆。
       globalThis.__b64u = CCP.b64u.decode(CCP.b64u.encode(new Uint8Array([1, 2, 3, 255])))
     `, sandbox)
-    expect((sandbox as any).__opened).toBe(JSON.stringify({ path: '/m/api/home', rid: 'r0' }))
+    expect(await (sandbox as any).__res).toBe('200 {"path":"/m/api/home"}')
+    expect(relay.sockets[0]!.hellos[0]).toMatchObject({ v: [2], client: 'web' })
     expect(Array.from((sandbox as any).__b64u as Uint8Array)).toEqual([1, 2, 3, 255])
+  })
+
+  it('the whole /m page still fits in one relay frame once sealed as a v2 res (the pset shell fetches it through the relay)', () => {
+    const html = mobilePhoneHtml('d'.repeat(48), { relay: 'wss://relay.tendhearth.com/v2/phone', id: 'r' + 'a'.repeat(26) })
+    const key = new Uint8Array(32)
+    const msg = JSON.stringify({ t: 'res', rid: 'r'.repeat(36), status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html, bodyEncoding: 'utf8' })
+    const wire = JSON.stringify({ stream: 's'.repeat(64), frame: makeV2Channel({ c2s: key, s2c: key }, 'server').seal(new TextEncoder().encode(msg)) })
+    // 中继一帧 512 KiB(apps/relay/src/limits.ts);留一半余量给页面以后长大
+    expect(Buffer.byteLength(wire, 'utf8')).toBeLessThan(256 * 1024)
   })
 })
 
@@ -123,7 +136,7 @@ describe('relay/pset.html', () => {
     expect(html).not.toContain('@@CCP@@')
   })
 
-  it('never calls crypto.subtle — the shell runs before the phone page loads, same v1 CCP as transport.js', () => {
+  it('never calls crypto.subtle — the shell runs before the phone page loads, same CCP client as transport.js', () => {
     const html = readFileSync(PSET_SHELL_OUT, 'utf8')
     const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1]!
     // 文档注释里提到 "crypto.subtle" 这个词本身没问题(说的是"不再用它");

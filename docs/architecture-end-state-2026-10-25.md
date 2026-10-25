@@ -225,6 +225,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 - ~~对话要不要也走主人的放行规则~~ ⟨10-25 主人点头:只在主人自己的对话里、红线照旧问、放了就在回复里说一行;见进度表「C2 补 · 对话走放行规则」⟩
 - Codex 对话从 SDK 换到 app-server、Claude 对话和工作台合一:目标是行为不变,但两条协议细节(比如中途插话、思考过程)可能有差异;做的时候逐项列出差异,有看得见的再问。
 - 网页 v1 传输退休:旧的已配对网页要不要提示重新配对。
+- ~~网页 v1 传输退休:旧的已配对网页要不要提示重新配对。~~ 主人 10-25 定:直接退休,老页面提示重新扫码配对(F4)。
 
 ## 和别的文档的关系
 
@@ -270,6 +271,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | C2 | 逐工具判定只有一处:纯函数 `domain/authorize.ts` 的 `authorize(subject, descriptor, action) → allow / ask / deny`,按序组合旁路(权限模式,经 `compilePolicy`)、扇出拒 reply、坏名字、一起做的登记表、定时任务只读档(污点 / 读的范围 / 红线;要碰路径的事实由调用方算好)、档位 × 类别(`decideTool`)、问不了(`relayAs`)、主人的放行规则。调它的:对话的 `permission-relay`、Gemini gate、openai gate、`wire-model-options` 的定时任务闸门、一起做 Claude 的 `makeWorkbenchClaudeCanUseTool`(`wire-workbench` 外面手包的「没登记就拒」收进来,登记表当 descriptor)、一起做放行规则的落点(`makeRunPermissions`)、终端会话(`permission-gate.makeTerminalDecide`)。放行规则只在 `subject.surface` 是 terminal / workbench 时看(`OWNER_RULE_SURFACES`);对话要不要也走,等主人(10-25 主人点头,见下面「C2 补」)。`effectivePolicy` 删掉。逐格对照 `authorize.parity.test.ts`:改之前的七份实现原样抄进测试,约 16 万格一位不差(结果、问主人的话 / 码 / 时限、日志、通道调用)。没做:放行规则的 floor / rules-file / decide 还在 `core/permission-rules`(靠 node:path 的 posix / win32 归一,搬进 domain 要先把路径归一做成纯的),`authorize` 经 `permission-gate.decide` 拿它的裁决;ACP 对话侧按模式选放行 / 拒绝项(`compilePolicy('cursor-acp')`)是编译好的常量答案,没过 `authorize`;网络守护按调用目标判、不是逐工具,不在里面 |
 | C3 | 每家 × 每档 × 每类工具实际会怎样,从真判定推出来:纯函数 `domain/enforcement-matrix.ts`(派发拒走 `providerDenialFor`;有逐工具回调的取 `authorize` 在对话面上的结论;没有的看档位那一格 + wechat MCP 按会话档位注册(`adminMcpTools` 为假 ⇒ 钉成 trusted)+ `compilePolicy` strict 设置里问不了时怎么落:codex `approvalPolicy` never ⇒ 放,ACP Cursor 应答 reject ⇒ 拒,agy 没有应答项 ⇒ 放)。`noAskNotice` 改成看「哪一档哪一类出现『档位说问、它放了』」算出来,不再读手设的 `doesNotAsk`;算出的提醒对象和原来一位不差(codex、agy)。`tier-enforcement.ts` 与它的两份测试删掉:整张表在 `enforcement-matrix.test.ts` 钉快照(能力表 / 档位 / `authorize` / `compilePolicy` 一改就有 diff),每家缺口的理由搬到快照旁的 `WHY_GAPS`(有缺口没理由、有理由没缺口都红);真调三家闸门的证明测试留着,改名 `enforcement-matrix.proof.test.ts`,并和推出来的格子对照。推导比原来的手写表细一格:agy 在主人聊天里 admin 专用工具(含 `daemon_remediate`)根本不注册,是「调不到」不是「不问」 |
 | B1 | Codex 对话改走 `codex app-server`(主人 2026-10-25 拍板:统一到更强的那条协议,直接改)。协议客户端只有一份:`codex-app-server.ts` 的 `spawnCodexAppServerSession`,工作台不传 `chat` ⇒ 行为一字不变;对话侧 `codex-chat-provider.ts` 传 `CodexChatProfile`(compilePolicy 的沙箱 / 审批、daemon 的 MCP 作线程配置、老形状的事件、审批请求一律拒)。起子进程的那一下单独成接缝 `codex-app-server-process.ts`,daemon e2e 把它换成剧本 app-server(`test-support/executors/codex-scripted.ts`,同一个替身也给对话侧单测和交付测试用)。删掉:`codex-agent-provider.ts` 与测试、`watchCodexEvents`(超时归 app-server 的回合看门狗)、`@openai/codex-sdk` 依赖(CLI `memory` 命令的一次性评估改用同一个 provider;codex-autofix 只对齐 `@openai/codex`)。C3 快照不动(对话仍是审批 never)。差异见下表 |
+| F4 | 网页切 v2、v1 退休(主人 10-25 定:直接退,不等生产中继):手机网页与公网壳页跟 App 用同一个 `makeProtocolClient`(经 `CCP`,握手自报 `client:'web'`,出生地照记 web);`messages.ts` 改用协议包自己的小校验器 `shape.ts`(完整版 zod 会把整页撑出中继一帧;`zod/mini` 跟完整版同进 `bun build --compile` 的包会初始化失败)。删掉:协议包 `v1.ts` / v1 向量 / v1 消息与 `requireV2`、daemon 的 v1 流与老中继连接(`tunnel-id.json`、`remote_relay_url` 不再用)、`src/lib/tunnel-crypto.ts`、VPS 的 `relay/tunnel.ts` 与 `/tunnel/*`。不带 v2 的握手回明文 `upgrade_required` 并关流;网页 / 壳页拿着老中继 id(`t…`)、收到 `upgrade_required` 或被降级 ⇒「连接方式升级了，请在电脑上重新扫码配对」。**发版顺序**:① 中继 Worker(它打包新的 `relay/pset.html`)→ ② daemon `self deploy` → ③ 可选:VPS 换新 `relay/server.ts`(只剩 mailbox)与静态 `pset.html`;①不能晚于②,见 [relay.md](maintainer/relay.md) 第 8 节 |
 
 ### B1:Codex 对话 SDK → app-server 差异表
 
@@ -297,3 +299,4 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 
 - 2026-10-25:初稿。
 - 2026-10-25:主人点头「对话也走放行规则」(只在主人自己的对话、红线照旧问、放了在回复里说一行),进度表加「C2 补」一行,等主人点头的那一条划掉。
+- 2026-10-25:F4 做完(进度表);「等主人点头」里网页 v1 那条主人已定。

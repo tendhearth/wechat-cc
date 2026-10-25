@@ -35,13 +35,13 @@ function makeResponse(status: number, body: unknown): ProtocolResponse {
  *  `packages/protocol`'s own suite). `emit(topic, data, meta)` pushes to every
  *  live subscriber of that topic. */
 function fakeClient(opts: {
-  version?: 1 | 2 | null
+  version?: 2 | null
   onRequest?: (req: { method: string; path: string; body?: unknown }) => ProtocolResponse | Promise<ProtocolResponse>
 } = {}): { client: ProtocolClient; requests: RecordedCall[]; emit: (topic: string, data: unknown, meta?: { epoch: string; seq: number }) => void; closed: boolean } {
   const requests: RecordedCall[] = []
   const subs = new Map<string, { topic: string; cb: (data: unknown, meta: { epoch: string; seq: number }) => void }>()
   let sidSeq = 0
-  const state = { closed: false, version: opts.version ?? 2 }
+  const state = { closed: false, version: opts.version === undefined ? 2 : opts.version }
   const client: ProtocolClient = {
     version: () => state.version,
     async request(req) {
@@ -202,7 +202,7 @@ describe('relay unreachable', () => {
       fetch: fetchImpl,
       connect: (url, token) => {
         connectCalls++
-        expect(url).toBe('wss://relay.example.com/tunnel/phone?id=daemon-1')
+        expect(url).toBe('wss://relay.example.com/v2/phone?id=daemon-1')
         expect(token).toBe('link-tok')
         return {
           version: () => null,
@@ -280,10 +280,10 @@ describe('device negotiates v1 (not v2)', () => {
           return client
         }
         deviceClientConnectCount++
-        // A fresh v1-negotiated client (used for both the initial device
+        // A client that never negotiated v2 (used for both the initial device
         // connection and the post-revoke auth_failed probe).
         const { client } = fakeClient({
-          version: 1,
+          version: null,
           onRequest: (req) => {
             if (req.path === '/set/api/state') return makeResponse(200, { remote: { devices: [{ id: 'dev-42', current: true }] } })
             throw new Error(`unexpected: ${req.path}`)
@@ -448,7 +448,7 @@ describe('success path', () => {
       // for the task to disappear.
       sleep: async () => { taskStatus = 'completed'; emitAgents([]) },
       connect: (url, token) => {
-        expect(url).toBe('wss://relay.example.com/tunnel/phone?id=daemon-1')
+        expect(url).toBe('wss://relay.example.com/v2/phone?id=daemon-1')
         if (token === 'link-tok') {
           const { client } = fakeClient({ onRequest: (req) => {
             if (req.path === '/set/api/pair') return makeResponse(200, { ok: true, device_token: 'device-tok' })
@@ -602,7 +602,7 @@ describe('token reachable via a bubbled fetch/relay error (fix round 2)', () => 
         // (from this same relay call), reaching the vulnerable /set/api/apply
         // fetch directly, no LAN id-recovery detour needed.
         const { client } = fakeClient({
-          version: 1,
+          version: null,
           onRequest: (req) => {
             if (req.path === '/set/api/state') return makeResponse(200, { remote: { devices: [{ id: 'dev-42', current: true }] } })
             throw new Error(`unexpected: ${req.path}`)
@@ -1123,18 +1123,20 @@ describe('selftest phone --relay v2', () => {
     h.deviceRoutes['POST /m/api/push/test'] = { ok: true, result: { ok: false, code: 'BadDeviceToken' } }
     const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2', timeoutMs: 5000 })
     expect(h.connectedUrls[0]).toBe('wss://relay.tendhearth.com/v2/phone?id=rabcdefghijklmnopqrstuvwxyz')
-    for (const n of ['relay_v2_link', 'relay_healthz', 'push_registered', 'apns_auth_accepted']) {
+    for (const n of ['relay_healthz', 'push_registered', 'apns_auth_accepted']) {
       expect(r.checks.find((c) => c.name === n)?.ok, `${n}: ${JSON.stringify(r.checks)}`).toBe(true)
     }
     expect(r.ok).toBe(true)
     assertNoTokenLeak(r)
   })
-  it('legacy t… id with --relay v2 ⇒ relay_v2_link FAIL and stops', async () => {
-    const h = makeHarness({ linkUrl: V1_LINK })
-    const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2' })
-    expect(r.checks.find((c) => c.name === 'relay_v2_link')?.ok).toBe(false)
-    expect(r.ok).toBe(false)
-    expect(h.connectedUrls).toEqual([])
+  it('legacy t… id (relay retired with v1) ⇒ link_url_shape FAIL and stops, with or without --relay', async () => {
+    for (const relay of ['v2', undefined] as const) {
+      const h = makeHarness({ linkUrl: V1_LINK })
+      const r = await runPhoneSelftest(h.deps, { executor: 'cursor', ...(relay ? { relay } : {}) })
+      expect(r.checks.find((c) => c.name === 'link_url_shape')).toMatchObject({ ok: false, detail: expect.stringContaining('retired') })
+      expect(r.ok).toBe(false)
+      expect(h.connectedUrls).toEqual([])
+    }
   })
   it('InvalidProviderToken ⇒ apns_auth_accepted FAIL with the code in detail', async () => {
     const h = makeHarness({ linkUrl: V2_LINK })
@@ -1151,11 +1153,5 @@ describe('selftest phone --relay v2', () => {
     h.deviceRoutes['POST /m/api/push/test'] = { ok: true, result: { ok: false, code: 'BadDeviceToken' } }
     const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2', timeoutMs: 5000 })
     expect(r.checks.find((c) => c.name === 'relay_healthz')?.ok).toBe(false)
-  })
-  it('without --relay: legacy link still uses /tunnel/phone and runs no push checks', async () => {
-    const h = makeHarness({ linkUrl: V1_LINK })
-    const r = await runPhoneSelftest(h.deps, { executor: 'cursor', timeoutMs: 5000 })
-    expect(h.connectedUrls[0]).toBe('wss://cc.tendhearth.com/tunnel/phone?id=tdeadbeef')
-    expect(r.checks.some((c) => c.name === 'push_registered' || c.name === 'relay_healthz')).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 # Mailbox relay — deploy runbook (v0, single relay)
 
-> 手机隧道已迁到官方中继 v2(`apps/relay`,见 docs/maintainer/relay.md);本目录的 `/tunnel/*` 只在过渡期服务老的已配对手机网页,mailbox 仍在这里。
+> 手机隧道在官方中继 v2(`apps/relay`,见 docs/maintainer/relay.md)。本目录原来的 `/tunnel/*` 随协议 v1 在 2026-10-25 退休(架构终态 F4),代码已删;这里只剩 mailbox。`pset.html` / `pset.src.html` 是中继 v2 也在用的公网壳页(`bun run build:mobile` 生成)。
 
 > Standalone content-blind mailbox relay for wechat-cc sub-project B. NOT part of
 > the daemon. Node-builtin-only (Bun + bun:sqlite). Manually verified on the VPS

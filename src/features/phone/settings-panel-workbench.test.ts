@@ -14,10 +14,10 @@ import {makeWorkbenchService,type WorkbenchService} from '../workbench/service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
 import {saveArtifactSnapshot} from '../../core/workbench/artifacts'
 import {makeSettingsPanel,type SettingsPanel} from './settings-panel'
-import {makeTunnelHub} from '../../../relay/tunnel'
+import {makeMemoryRelay} from './memory-relay.fixture'
 import {makeTunnelClient,type TunnelWS} from './tunnel-client'
 import {currentPhoneClient,markAppRequest} from './phone-client'
-import {generateTunnelKeypair,exportPublicKeyB64,importPublicKeyB64,deriveSharedKey,sealFrame,openFrame} from '../../lib/tunnel-crypto'
+import {x25519KeyPair,x25519Shared,deriveV2Keys,makeV2Channel,b64uEncode,b64uDecode} from '@wechat-cc/protocol'
 import {AsyncQueue} from '../../lib/async-queue'
 import type {AgentEvent} from '../../ports/agent-provider'
 
@@ -249,24 +249,28 @@ describe('phone task controls keep the existing execution boundary',()=>{
     token=panel.issueToken() // 链接令牌一次性(plan 7a)
     const bytes=Buffer.alloc(710_123,73)
     saveArtifactSnapshot(store,task.id,{name:'large.txt',mime:'text/plain',bytes},root)
-    const artifact=store.artifacts(task.id)[0]!,hub=makeTunnelHub(),received:string[]=[],frames:string[]=[]
+    const artifact=store.artifacts(task.id)[0]!,hub=makeMemoryRelay(),received:string[]=[],frames:string[]=[]
     let incoming:((ev:{data?:unknown})=>void)|undefined
     const socket:TunnelWS={readyState:1,send(raw){frames.push(raw);hub.onDaemonFrame('test-daemon',raw)},close(){},addEventListener(type,handler){if(type==='message')incoming=handler}}
     hub.registerDaemon('test-daemon',{readyState:1,send(raw){incoming?.({data:raw})},close(){}})
     const phone=hub.attachPhone('test-daemon',{readyState:1,send(raw){received.push(raw)},close(){}})
-    const client=makeTunnelClient({daemonId:'test-daemon',knownDeviceTokens:()=>[paired.device_token],handleRequest:panel.handleRequest,connect:()=>socket,log:()=>{}})
+    const client=makeTunnelClient({daemonId:'test-daemon',knownDeviceTokens:()=>panel.deviceTokens(),handleRequest:panel.handleRequest,connect:()=>socket,log:()=>{},relayUrl:'wss://relay.test/v2/daemon',login:{sign:()=>({pub:'P',sig:'S'})}})
     client.start()
     try{
-      const keys=await generateTunnelKeypair()
-      hub.onPhoneFrame(phone.streamId!,JSON.stringify({hs:await exportPublicKeyB64(keys.publicKey)}))
+      const keys=x25519KeyPair()
+      hub.onPhoneFrame(phone.streamId!,JSON.stringify({hs:b64uEncode(keys.pub),v:[2],client:'web'}))
       await expect.poll(()=>received.length).toBe(1)
-      const key=await deriveSharedKey(keys.privateKey,await importPublicKeyB64(JSON.parse(received.shift()!).hs),new TextEncoder().encode(paired.device_token))
+      const chan=makeV2Channel(deriveV2Keys(x25519Shared(keys.priv,b64uDecode(JSON.parse(received.shift()!).hs)),paired.device_token),'client')
+      // 明文错误帧(auth_failed 等)原样回 {status:0, body:{error}};密封的 res 解开。
       const remote=async(path:string,body?:unknown)=>{
-        const frame=JSON.stringify(await sealFrame(key,new TextEncoder().encode(JSON.stringify({path,method:body===undefined?'GET':'POST',...(body===undefined?{}:{body:JSON.stringify(body)}),rid:randomUUID()}))))
+        const req={t:'req',rid:randomUUID(),method:body===undefined?'GET':'POST',path,...(body===undefined?{}:{body:JSON.stringify(body),bodyEncoding:'utf8'})}
+        const frame=JSON.stringify(chan.seal(new TextEncoder().encode(JSON.stringify(req))))
         frames.push(frame);hub.onPhoneFrame(phone.streamId!,frame)
         await expect.poll(()=>received.length).toBe(1)
-        const decoded=JSON.parse(new TextDecoder().decode(await openFrame(key,JSON.parse(received.shift()!))))
-        return {status:decoded.status,body:JSON.parse(decoded.body)}
+        const f=JSON.parse(received.shift()!)
+        if(typeof f.error==='string')return {status:0,body:f as {error:string}}
+        const decoded=JSON.parse(new TextDecoder().decode(chan.open(f)))
+        return {status:decoded.status as number,body:JSON.parse(decoded.body)}
       }
       expect((await remote('/m/api/matter/permission',{id:task.id,runId:live.runId,requestId:live.permissions[0]!.id,decision:'allow'})).status).toBe(200)
       await expect.poll(()=>workbench.detail(task.id).questions.length).toBe(1)
@@ -301,14 +305,9 @@ describe('phone task controls keep the existing execution boundary',()=>{
       const oversized=await remote('/m/api/matter?id='+task.id)
       expect(oversized.status).toBe(413)
       expect(oversized.body).toEqual({ok:false,error:'detail_too_large'})
+      // 撤销之后:这条流在下一个请求进面板之前就被关掉(明文 auth_failed),面板一个都收不到。
       await panel.apply({op:'forget_devices'})
-      expect((await remote('/m/api/attachment/upload?id='+imageId+'&draftId='+imageDraft)).status).toBe(401)
-      expect((await remote('/m/api/attachment/discard',{id:imageId,draftId:imageDraft})).status).toBe(401)
-      expect((await remote('/m/api/attachment/chunk',{id:imageId,draftId:imageDraft})).status).toBe(401)
-      expect((await remote('/m/api/entry/options')).status).toBe(401)
-      expect((await remote('/m/api/matter/create',{requestId:randomUUID(),text:'revoked',target:{kind:'managed'}})).status).toBe(401)
-      expect((await remote('/m/api/matter/create-receipt?requestId='+randomUUID())).status).toBe(401)
-      expect((await remote('/m/api/matter/answer',{id:task.id,runId:live.runId,requestId:question.id,answers:null})).status).toBe(401)
+      expect(await remote('/m/api/attachment/upload?id='+imageId+'&draftId='+imageDraft)).toEqual({status:0,body:{error:'auth_failed'}})
     }finally{client.stop();hub.dropPhone(phone.streamId!)}
   })
 })

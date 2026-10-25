@@ -6,7 +6,7 @@
 
 - 设计:`docs/superpowers/specs/2026-09-30-relay-cloudflare-push-design.md`
 - 计划:`docs/superpowers/plans/2026-09-30-relay-cloudflare-push.md`
-- 老中继(VPS,`relay/`)的 `/tunnel/*` 只在过渡期服务已配对的老手机网页,mailbox 仍在那里。
+- 老中继(VPS,`relay/`)的 `/tunnel/*` 与协议 v1 一起在 2026-10-25 退休(架构终态 F4),代码已删;VPS 上只剩 mailbox。手机网页、公网壳页、原生 App 现在都只走这里的 `/v2/phone`。
 
 主机名:生产 `relay.tendhearth.com`,staging `relay-staging.tendhearth.com`。
 
@@ -59,9 +59,11 @@ GitHub:
 wechat-cc selftest phone --executor cursor --relay v2
 ```
 
-## 6. 过渡
+## 6. 过渡(已结束)
 
-v2 **默认关**:daemon 只有在 `agent-config.json` 里显式设了 `relay_v2_url`(非空)才连 v2,此时与老中继双连,新生成的链接指向 v2。没设 ⇒ 只连老中继,行为与这次改动之前完全一样。想让某台 daemon 先走 staging:设 `"relay_v2_url": "wss://relay-staging.tendhearth.com"` 后重启 daemon。老中继隧道何时关,由主人定。
+v2 **默认关**:daemon 只有在 `agent-config.json` 里 `remote_tunnel: true` 且显式设了 `relay_v2_url`(非空)才开远程。没设 `relay_v2_url` ⇒ 远程关(日志 `relay_v2_url is not set — remote off this boot`)。想让某台 daemon 先走 staging:设 `"relay_v2_url": "wss://relay-staging.tendhearth.com"` 后重启 daemon。
+
+2026-10-25 主人定:老中继隧道与协议 v1 直接退休,不等生产中继(架构终态 F4)。daemon 不再连老中继、不再说 v1;还指着老中继的网页(`t…` id)提示「连接方式升级了，请在电脑上重新扫码配对」。发版顺序见下面第 8 节「F4 发版顺序」。
 
 ## 7. 排障
 
@@ -75,10 +77,11 @@ v2 **默认关**:daemon 只有在 `agent-config.json` 里显式设了 `relay_v2_
 ## 8. 上线前后必读 / go-live notes
 
 - **首次部署前:先开 Workers Analytics Engine(账号级,一次)**:`wrangler.toml` 两个环境都绑了 `analytics_engine_datasets`(`METRICS`)。账号没开 Analytics Engine 时 `wrangler deploy` 直接失败,报错码 **10089**。到 Cloudflare 控制台 → Workers & Pages → Analytics Engine,点一次启用即可(数据集会在第一次写入时自动建)。**别为了让部署过去而删掉这个绑定**——巡检的 `push_ok` / `push_fail` 和 `ip_rate_limited` 计数都靠它。
-- **上线步骤(顺序不能反)**:① 生产 Worker 部署完、secrets 设好、`https://relay.tendhearth.com/healthz` 正常;② 按 IP 限速随部署自带(第 3 节,Worker 内的 `IP_LIMIT`,无需手动配);③ 再在 `agent-config.json` 设 `"relay_v2_url": "wss://relay.tendhearth.com"` 并重启 daemon(`self deploy`)。设了之后 daemon 会把新生成的链接、`/m` 页的 REMOTE、手机上存的 `ccRemote` 全部切到 v2 中继(`r…` id)。没设这个键时,带这次改动的 daemon 部署下去也只走老中继,所以 daemon 可以先于中继发版。
+- **上线步骤(顺序不能反)**:① 生产 Worker 部署完、secrets 设好、`https://relay.tendhearth.com/healthz` 正常;② 按 IP 限速随部署自带(第 3 节,Worker 内的 `IP_LIMIT`,无需手动配);③ 再在 `agent-config.json` 设 `"relay_v2_url": "wss://relay.tendhearth.com"` 并重启 daemon(`self deploy`)。设了之后 daemon 会把新生成的链接、`/m` 页的 REMOTE、手机上存的 `ccRemote` 全部切到 v2 中继(`r…` id)。没设这个键时 daemon 不开远程(老中继 2026-10-25 已退休)。
 - **id 变化**:daemon id 从 `t…` 变 `r…` 时,手机网页里按 id 存的浏览器缓存(首页缓存、附件 / 事项 / 条目草稿)会被孤立一次——预期行为。
-- **自建中继**:只设 `remote_relay_url` 的自建者不受影响——v2 不会被隐式打开,链接照旧指向自建的老中继。
-- **身份文件损坏**:`relay-identity.json` 损坏的 daemon 只跑老中继(日志 `relay v2 disabled this boot: relay_identity_corrupt`)。修好它,或有意删掉(= 新身份,手机要重新配对)。
+- **自建中继**:`remote_relay_url`(自建的老中继)随 v1 退休,daemon 不再用它(还读得进,不报错);自建者改部署 `apps/relay`,设 `relay_v2_url`。
+- **身份文件损坏**:`relay-identity.json` 损坏的 daemon 这次不开远程(日志 `relay v2 disabled this boot: relay_identity_corrupt`;桌面「连接手机」显示 relay_unavailable)。修好它,或有意删掉(= 新身份,手机要重新配对)。
+- **F4 发版顺序(2026-10-25,v1 退休)**:① 先部署中继 Worker(staging,然后 production;`apps/relay` 代码没变,变的是它打包的 `relay/pset.html` —— 新壳页说 v2;老 daemon 本来就会说 v2,所以新壳页对新老 daemon 都能用);② 再 `self deploy` daemon(停说 v1、停连老中继;网页由 daemon 自带,跟着一起换成 v2);③ 最后(可选)VPS:把 `relay/server.ts` 换成新版(只剩 mailbox,`/tunnel/*` 404),并把 VPS 静态目录里的 `pset.html` 换成新生成的那份 —— 老主屏图标打开时直接显示「连接方式升级了，请在电脑上重新扫码配对」,而不是一直「连回你的电脑…」。① 不能晚于 ②:daemon 先停 v1 时,还没换的老壳页取不到页面(daemon 回 upgrade_required,老壳页只会显示「连接出错」)。注意 staging 是「推 dev 自动部署」(第 3 节):标准回路里 `self ship` 在 `git push origin dev` 之前,照做的话 ① 会晚于 ②。F4 这一次请先推 dev、等 `Relay deploy` 把 staging 部署完(`/healthz` 的 `version` 等于这次提交),再 `self ship`;主人的 daemon 现在指着 staging。production 中继还没上线,上线时照第 8 节「上线步骤」来,壳页已经是新的。
 - **不要双开**:绝不要让两个 daemon 用同一份 `relay-identity.json`——它们会互相顶掉(关闭码 4000,带退避)。
 - **开关(首次运行前做完)**:先在 GitHub 建好环境 `relay-staging` 和 `relay-production`(后者要设 required reviewer = 主人,并把 deployment branch policy 限制为 dev / master),再设仓库变量 `RELAY_DEPLOY=on`(打开部署工作流);中继上线后再设 `RELAY_WATCH=on`(打开每小时巡检)。变量没设时两个工作流的作业是跳过状态,不会红、不会发邮件。
 - **手机 app 的推送**需要:中继 v2 上线且 daemon 设了 `relay_v2_url`(否则 app 设置页显示「电脑还没用上 Tendhearth 中继」)、Worker 的 APNs / FCM secrets(第 4 节)。开发构建登记的是 `apns_sandbox`,TestFlight / 商店是 `apns`。

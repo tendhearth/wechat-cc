@@ -1,10 +1,18 @@
+/**
+ * 隧道客户端的传输层:心跳、重连退避、中继 v2 登录与控制帧、每条流的排队上限,以及几条
+ * 端到端的流(真 settings-panel、过期链接、中继说手机走了)。协议 v2 一条流里的细节见
+ * tunnel-client-v2.test.ts。手机一端用协议包的真密码学拼,不手搓密文。
+ */
 import { describe, expect, it, vi } from 'vitest'
-import { generateTunnelKeypair, deriveSharedKey, sealFrame, openFrame, exportPublicKeyB64 } from '../../lib/tunnel-crypto'
-const DTOK = 'dtest0000'
-import { makeTunnelClient, handshakePlaintext, MAX_QUEUED_FRAMES_PER_STREAM } from './tunnel-client'
-import { phoneClientOf } from './phone-client'
+import { x25519KeyPair, x25519Shared, deriveV2Keys, makeV2Channel, b64uEncode, b64uDecode, ServerHello, V2ServerMessage } from '@wechat-cc/protocol'
+import type { V2ClientMessageT } from '@wechat-cc/protocol'
+import { makeTunnelClient, MAX_QUEUED_FRAMES_PER_STREAM } from './tunnel-client'
 
-// A fake WS pair: daemon-side socket the client drives; test plays the relay+phone.
+const DTOK = 'dtest0000'
+const LOGIN = { sign: (c: string) => ({ pub: 'P', sig: `S(${c})` }) }
+const RELAY = 'wss://relay.test/v2/daemon'
+
+// A fake WS: daemon-side socket the client drives; the test plays the relay + phone.
 function fakeSocket() {
   const sent: string[] = []
   const handlers: Record<string, (ev: unknown) => void> = {}
@@ -21,23 +29,57 @@ function fakeSocket() {
     emitClose: () => handlers['close']?.({}),
   }
 }
+type Sock = ReturnType<typeof fakeSocket>
+
+async function waitFor(cond: () => boolean, what = 'condition'): Promise<void> {
+  for (let i = 0; i < 400; i++) { if (cond()) return; await new Promise(r => setTimeout(r, 1)) }
+  throw new Error(`timed out waiting for ${what}`)
+}
+
+/** 握手一条 v2 流,返回发消息 / 读回复的两只手。 */
+async function phone(sock: Sock, stream: string, token = DTOK) {
+  const kp = x25519KeyPair()
+  const start = sock.sent.length
+  sock.emitMessage(JSON.stringify({ stream, frame: { hs: b64uEncode(kp.pub), v: [2] } }))
+  await waitFor(() => sock.sent.slice(start).some(s => JSON.parse(s).stream === stream), 'hello')
+  const hello = ServerHello.parse(JSON.parse(sock.sent.slice(start).find(s => JSON.parse(s).stream === stream)!).frame)
+  const chan = makeV2Channel(deriveV2Keys(x25519Shared(kp.priv, b64uDecode(hello.hs)), token), 'client')
+  let cursor = start
+  const inbox: unknown[] = []
+  return {
+    send(m: V2ClientMessageT) { sock.emitMessage(JSON.stringify({ stream, frame: chan.seal(new TextEncoder().encode(JSON.stringify(m))) })) },
+    /** 握手之后发给这台手机的帧(按到达顺序):明文错误原样,密封帧解开(每帧只开一次,计数器不许回头)。 */
+    replies(): unknown[] {
+      for (; cursor < sock.sent.length; cursor++) {
+        const e = JSON.parse(sock.sent[cursor]!)
+        if (e.stream !== stream || e.close || e.frame?.hs) continue
+        inbox.push(typeof e.frame?.error === 'string' ? { error: e.frame.error } : V2ServerMessage.parse(JSON.parse(new TextDecoder().decode(chan.open(e.frame)))))
+      }
+      return inbox
+    },
+  }
+}
+
+function mk(sock: Sock, over: Partial<Parameters<typeof makeTunnelClient>[0]> = {}) {
+  const client = makeTunnelClient({
+    daemonId: 'rabc', knownDeviceTokens: () => [DTOK],
+    handleRequest: async () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
+    connect: () => sock.ws as never, log: () => {}, relayUrl: RELAY, login: LOGIN, ...over,
+  })
+  client.start()
+  return client
+}
 
 describe('tunnel-client (daemon side)', () => {
-  it('心跳:定时 ping;有 pong 就保持,连续两轮没 pong 就强制 close(触发重连)', () => {
+  it('心跳:定时 ping;有 pong 就保持,连续两轮没 pong 就强制 close(触发重连);心跳是固定的 {"ping":1}', () => {
     vi.useFakeTimers()
     try {
       const sock = fakeSocket()
-      const client = makeTunnelClient({
-        daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
-        handleRequest: async () => new Response('x'),
-        connect: () => sock.ws as never, log: () => {},
-        pingIntervalMs: 100, now: () => 0,
-      })
-      client.start()
+      mk(sock, { pingIntervalMs: 100, now: () => 0 })
       sock.emitOpen()
       // 第一轮:发出 ping,还没判死
       vi.advanceTimersByTime(100)
-      expect(sock.sent.some(s => s.includes('"ping"'))).toBe(true)
+      expect(sock.sent).toContain('{"ping":1}')
       expect(sock.ws.close).not.toHaveBeenCalled()
       // 回 pong → 活着,下一轮继续 ping、不关
       sock.emitMessage(JSON.stringify({ pong: 0 }))
@@ -55,13 +97,7 @@ describe('tunnel-client (daemon side)', () => {
     vi.useFakeTimers()
     try {
       const sock = fakeSocket()
-      const client = makeTunnelClient({
-        daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
-        handleRequest: async () => new Response('x'),
-        connect: () => sock.ws as never, log: () => {},
-        pingIntervalMs: 100, now: () => 0,
-      })
-      client.start()
+      mk(sock, { pingIntervalMs: 100, now: () => 0 })
       sock.emitOpen()
       vi.advanceTimersByTime(100)                                   // 发出 ping、等 pong
       sock.emitMessage(JSON.stringify({ stream: 'sX', frame: {} })) // 来了个数据帧 = 连接活着
@@ -70,51 +106,6 @@ describe('tunnel-client (daemon side)', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-
-  it('decrypts a phone request, runs handleRequest, seals the response back under the stream', async () => {
-    const phone = await generateTunnelKeypair()
-    const sock = fakeSocket()
-    let seenPath = ''
-    let seenClient = ''
-    const client = makeTunnelClient({
-      daemonId: 'cc-1',
-      knownDeviceTokens: () => [DTOK],
-      handleRequest: async (req) => {
-        seenPath = new URL(req.url).pathname
-        // v1 隧道是浏览器 /m(transport.js / 中继壳页)走的那条,不是原生 App(2026-10-19 出生地)
-        seenClient = phoneClientOf(req)
-        return new Response(JSON.stringify({ ok: true, echo: await req.text() }), { headers: { 'content-type': 'application/json' } })
-      },
-      connect: () => sock.ws as never,
-      log: () => {},
-    })
-    client.start()
-
-    // phone completes the handshake: sends its pubkey; daemon replies with its pubkey (plaintext control frame)
-    sock.emitMessage(JSON.stringify({ stream: 'sA', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-    // daemon's handshake reply carries its pubkey
-    const hsReply = JSON.parse(sock.sent.at(-1)!)
-    expect(hsReply.stream).toBe('sA')
-    const daemonPub = handshakePlaintext(hsReply.frame)
-    expect(daemonPub).toBeTruthy()
-
-    // phone derives the shared key and sends a sealed request
-    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub!), new TextEncoder().encode(DTOK))
-    const reqBytes = new TextEncoder().encode(JSON.stringify({ path: '/m/api/state', method: 'POST', body: 'hello' }))
-    sock.emitMessage(JSON.stringify({ stream: 'sA', frame: await sealFrame(key, reqBytes) }))
-    for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
-
-    expect(seenPath).toBe('/m/api/state')
-    expect(seenClient).toBe('web')
-    // the reply frame is sealed; phone opens it
-    const replyMsg = JSON.parse(sock.sent.at(-1)!)
-    expect(replyMsg.stream).toBe('sA')
-    const opened = JSON.parse(new TextDecoder().decode(await openFrame(key, replyMsg.frame)))
-    expect(opened.status).toBe(200)
-    expect(opened.rid).toBe('')   // test request carried no rid
-    expect(JSON.parse(opened.body)).toEqual({ ok: true, echo: 'hello' })
   })
 
   it('/m/api/home 经隧道往返:真 settings-panel 处理,设备 token 生效', async () => {
@@ -133,24 +124,14 @@ describe('tunnel-client (daemon side)', () => {
       log: () => {},
     })
     try {
-      const phone = await generateTunnelKeypair()
       const sock = fakeSocket()
-      const client = makeTunnelClient({
-        daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
-        handleRequest: (req) => panel.handleRequest(req),
-        connect: () => sock.ws as never, log: () => {},
-      })
-      client.start()
-      sock.emitMessage(JSON.stringify({ stream: 'sH', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-      for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-      const daemonPub = handshakePlaintext(JSON.parse(sock.sent.at(-1)!).frame)
-      const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub!), new TextEncoder().encode(DTOK))
-      const reqBytes = new TextEncoder().encode(JSON.stringify({ path: `/m/api/home?d=${DTOK}`, method: 'GET' }))
-      sock.emitMessage(JSON.stringify({ stream: 'sH', frame: await sealFrame(key, reqBytes) }))
-      for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
-      const opened = JSON.parse(new TextDecoder().decode(await openFrame(key, JSON.parse(sock.sent.at(-1)!).frame)))
-      expect(opened.status).toBe(200)
-      const body = JSON.parse(opened.body)
+      mk(sock, { handleRequest: (req) => panel.handleRequest(req) })
+      const p = await phone(sock, 'sH')
+      p.send({ t: 'req', rid: 'r1', method: 'GET', path: `/m/api/home?d=${DTOK}` })
+      await waitFor(() => p.replies().length === 1, 'home reply')
+      const res = p.replies()[0] as { t: string; status: number; body: string }
+      expect(res).toMatchObject({ t: 'res', rid: 'r1', status: 200 })
+      const body = JSON.parse(res.body)
       expect(body.ok).toBe(true)
       expect(body.events).toEqual([])
       expect(body.sources_degraded).toEqual([])
@@ -160,195 +141,60 @@ describe('tunnel-client (daemon side)', () => {
     }
   })
 
-  it('畸形路径被干净丢弃 —— 不路由、不 unhandled reject(边界测试)', async () => {
-    // '%' / ' /x' 会让 new URL 抛(onStreamFrame 是 void 调用 → 未捕获 rejection);
-    // 'set/api' 会把 host 污染成 127.0.0.1set → 误路由到 /api。都该被丢弃。
+  it('畸形路径被干净拒绝 —— 不路由、不 unhandled reject(边界测试)', async () => {
+    // '%' / ' /x' 会让 new URL 抛;'set/api' 会把 host 污染成 127.0.0.1set → 误路由到 /api。都该被拒。
     for (const badPath of ['%', ' /x', 'set/api', '@evil.com/steal']) {
-      const phone = await generateTunnelKeypair()
       const sock = fakeSocket()
       let calls = 0
-      const client = makeTunnelClient({
-        daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
-        handleRequest: async () => { calls++; return new Response('x') },
-        connect: () => sock.ws as never, log: () => {},
-      })
-      client.start()
-      sock.emitMessage(JSON.stringify({ stream: 'sA', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-      for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-      const daemonPub = handshakePlaintext(JSON.parse(sock.sent.at(-1)!).frame)!
-      const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode(DTOK))
-      const reqBytes = new TextEncoder().encode(JSON.stringify({ path: badPath, method: 'GET' }))
-      sock.emitMessage(JSON.stringify({ stream: 'sA', frame: await sealFrame(key, reqBytes) }))
-      for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 5))
-      expect(calls).toBe(0)   // 畸形路径 → handleRequest 从没被调用,也没崩
+      mk(sock, { handleRequest: async () => { calls++; return new Response('x') } })
+      const p = await phone(sock, 'sA')
+      p.send({ t: 'req', rid: 'r1', method: 'GET', path: badPath })
+      await waitFor(() => p.replies().length === 1, `reply for ${badPath}`)
+      expect(p.replies()[0]).toMatchObject({ t: 'err', rid: 'r1', code: 'bad_request' })
+      expect(calls).toBe(0)
     }
   })
 
   it('排队帧上限:握手未完时同一流连发 70 帧 ⇒ 超出 64 的丢弃,只记一行 queue full', async () => {
     const sock = fakeSocket()
     const logs: string[] = []
-    const client = makeTunnelClient({ daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'), connect: () => sock.ws as never, log: (_t, l) => { logs.push(l) }, now: () => 0 })
-    client.start()
-    const kp = await generateTunnelKeypair()
-    sock.emitMessage(JSON.stringify({ stream: 'sQ', frame: { hs: await exportPublicKeyB64(kp.publicKey) } }))
-    for (let i = 0; i < 69; i++) sock.emitMessage(JSON.stringify({ stream: 'sQ', frame: { iv: 'aa', ct: 'bb' } }))
+    mk(sock, { log: (_t, l) => { logs.push(l) }, now: () => 0 })
+    sock.emitMessage(JSON.stringify({ stream: 'sQ', frame: { hs: b64uEncode(x25519KeyPair().pub), v: [2] } }))
+    for (let i = 0; i < 69; i++) sock.emitMessage(JSON.stringify({ stream: 'sQ', frame: { c: String(i), ct: 'bb' } }))
     await new Promise(r => setTimeout(r, 50))
     expect(MAX_QUEUED_FRAMES_PER_STREAM).toBe(64)
     expect(logs.filter(l => l.includes('queue full'))).toHaveLength(1)
   })
 
-  it('a sealed request before handshake is dropped (no key yet)', async () => {
-    const sock = fakeSocket()
-    const client = makeTunnelClient({ daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'), connect: () => sock.ws as never, log: () => {} })
-    client.start()
-    sock.emitMessage(JSON.stringify({ stream: 'sZ', frame: { iv: 'aa', ct: 'bb' } }))
-    await new Promise(r => setTimeout(r, 0))
-    // Nothing sealed back (no key). Only a plaintext stream_unknown, so a phone whose stream the
-    // daemon forgot (relay reconnect) closes and re-handshakes instead of hanging (2026-09-29).
-    expect(sock.sent.map(s => JSON.parse(s))).toEqual([{ stream: 'sZ', frame: { error: 'stream_unknown' } }])
-  })
-
-  it('a frame from a device whose token the daemon does not know is dropped (MITM/unknown device)', async () => {
-    const phone = await generateTunnelKeypair()
+  it('an expired /set link (no active link token) is refused with auth_failed + close', async () => {
     const sock = fakeSocket()
     let handled = false
-    const client = makeTunnelClient({
-      daemonId: 'cc-1', knownDeviceTokens: () => ['dsomeother'],   // NOT the phone's token
-      handleRequest: async () => { handled = true; return new Response('x') },
-      connect: () => sock.ws as never, log: () => {},
-    })
-    client.start()
-    sock.emitMessage(JSON.stringify({ stream: 'sB', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
-    // phone binds to ITS token 'dmine' — daemon only knows 'dsomeother'
-    const { importPublicKeyB64: imp } = await import('../../lib/tunnel-crypto')
-    const key = await deriveSharedKey(phone.privateKey, await imp(daemonPub), new TextEncoder().encode('dmine'))
-    const req = new TextEncoder().encode(JSON.stringify({ path: '/m/api/state', method: 'GET', rid: 'r1' }))
-    sock.emitMessage(JSON.stringify({ stream: 'sB', frame: await sealFrame(key, req) }))
-    await new Promise(r => setTimeout(r, 30))
-    expect(handled).toBe(false)                 // never reached the router
-    // 握手回复之外只多一个明文错误帧(2026-09-24:以前静默丢弃,手机页永远卡在「连回你的电脑…」)。
-    // 它不带任何密文或令牌信息 —— 中继本来就知道这条流没通。
-    expect(sock.sent.length).toBe(2)
-    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ stream: 'sB', frame: { error: 'auth_failed' } })
-  })
-
-  it('中继 v2 模式:认证失败 ⇒ 先发明文 auth_failed,紧跟 {stream, close:true} 让房间关流腾名额', async () => {
-    const phone = await generateTunnelKeypair()
-    const sock = fakeSocket()
-    const client = makeTunnelClient({
-      daemonId: 'rabc', knownDeviceTokens: () => ['dsomeother'],
-      handleRequest: async () => new Response('x'),
-      connect: () => sock.ws as never, log: () => {}, relayUrl: 'wss://relay.test/v2/daemon',
-      login: { sign: () => ({ pub: 'P', sig: 'S' }) },
-    })
-    client.start()
-    sock.emitMessage(JSON.stringify({ login_ok: true }))
-    sock.emitMessage(JSON.stringify({ stream: 'sC', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
-    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode('dmine'))
-    sock.emitMessage(JSON.stringify({ stream: 'sC', frame: await sealFrame(key, new TextEncoder().encode('{"path":"/m"}')) }))
-    for (let i = 0; i < 20 && sock.sent.length < 3; i++) await new Promise(r => setTimeout(r, 5))
-    expect(sock.sent.slice(1).map(s => JSON.parse(s))).toEqual([
-      { stream: 'sC', frame: { error: 'auth_failed' } },
-      { stream: 'sC', close: true },
-    ])
-  })
-
-  it('老中继模式(无 login):认证失败只发 auth_failed,不发 close(老中继会把它当空帧转给手机)', async () => {
-    const phone = await generateTunnelKeypair()
-    const sock = fakeSocket()
-    const client = makeTunnelClient({
-      daemonId: 'tabc', knownDeviceTokens: () => ['dsomeother'],
-      handleRequest: async () => new Response('x'),
-      connect: () => sock.ws as never, log: () => {},
-    })
-    client.start()
-    sock.emitMessage(JSON.stringify({ stream: 'sD', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
-    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode('dmine'))
-    sock.emitMessage(JSON.stringify({ stream: 'sD', frame: await sealFrame(key, new TextEncoder().encode('{"path":"/m"}')) }))
-    await new Promise(r => setTimeout(r, 40))
-    expect(sock.sent.slice(1).map(s => JSON.parse(s))).toEqual([{ stream: 'sD', frame: { error: 'auth_failed' } }])
-  })
-
-  it('accepts the active /set link token, so an unpaired phone can open the link from outside', async () => {
-    const LINK = 'tlink0000'
-    const phone = await generateTunnelKeypair()
-    const sock = fakeSocket()
-    let seenToken: string | null = null
-    const client = makeTunnelClient({
-      daemonId: 'cc-1', knownDeviceTokens: () => [], activeLinkToken: () => LINK,
-      handleRequest: async (req) => { seenToken = new URL(req.url).searchParams.get('d'); return new Response('{}') },
-      connect: () => sock.ws as never, log: () => {},
-    })
-    client.start()
-    sock.emitMessage(JSON.stringify({ stream: 'sL', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
-    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode(LINK))
-    const req = new TextEncoder().encode(JSON.stringify({ path: '/set', method: 'GET', rid: 'r1' }))
-    sock.emitMessage(JSON.stringify({ stream: 'sL', frame: await sealFrame(key, req) }))
-    for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
-    // 认证后注入的是这个链接令牌 —— routeRequest 照常用 validToken 判它是否还在 10 分钟内。
-    expect(seenToken).toBe(LINK)
-    const opened = JSON.parse(new TextDecoder().decode(await openFrame(key, JSON.parse(sock.sent.at(-1)!).frame)))
-    expect(opened.status).toBe(200)
-  })
-
-  it('an expired /set link (no active link token) is refused with an error frame', async () => {
-    const phone = await generateTunnelKeypair()
-    const sock = fakeSocket()
-    let handled = false
-    const client = makeTunnelClient({
-      daemonId: 'cc-1', knownDeviceTokens: () => [], activeLinkToken: () => null,
-      handleRequest: async () => { handled = true; return new Response('x') },
-      connect: () => sock.ws as never, log: () => {},
-    })
-    client.start()
-    sock.emitMessage(JSON.stringify({ stream: 'sE', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
-    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode('tstale'))
-    sock.emitMessage(JSON.stringify({ stream: 'sE', frame: await sealFrame(key, new TextEncoder().encode('{"path":"/set"}')) }))
-    for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
+    mk(sock, { knownDeviceTokens: () => [], activeLinkToken: () => null, handleRequest: async () => { handled = true; return new Response('x') } })
+    const p = await phone(sock, 'sE', 'tstale')
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/set' })
+    await waitFor(() => sock.sent.some(s => JSON.parse(s).close === true), 'close')
     expect(handled).toBe(false)
-    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ stream: 'sE', frame: { error: 'auth_failed' } })
+    expect(p.replies()).toEqual([{ error: 'auth_failed' }])
   })
 
-  it('a closed control frame frees the stream state (later sealed frames drop)', async () => {
-    const phone = await generateTunnelKeypair()
+  it('a closed control frame frees the stream state (later sealed frames ⇒ stream_unknown, never the router)', async () => {
     const sock = fakeSocket()
     let handled = 0
-    const client = makeTunnelClient({
-      daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
-      handleRequest: async () => { handled++; return new Response('{}') },
-      connect: () => sock.ws as never, log: () => {},
-    })
-    client.start()
-    sock.emitMessage(JSON.stringify({ stream: 'sC', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
-    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
-    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
-    const { importPublicKeyB64: imp2 } = await import('../../lib/tunnel-crypto')
-    const key = await deriveSharedKey(phone.privateKey, await imp2(daemonPub), new TextEncoder().encode(DTOK))
+    mk(sock, { handleRequest: async () => { handled++; return new Response('{}') } })
+    const p = await phone(sock, 'sC')
     sock.emitMessage(JSON.stringify({ stream: 'sC', closed: true }))   // relay says: phone gone
-    const req = new TextEncoder().encode(JSON.stringify({ path: '/m/api/state', method: 'GET', rid: 'r9' }))
-    sock.emitMessage(JSON.stringify({ stream: 'sC', frame: await sealFrame(key, req) }))
-    await new Promise(r => setTimeout(r, 30))
-    // 条目已清:密封帧要走「重识别」路径(仍会成功识别 token)——关键是
-    // 无 dangling entry;这里验证请求依然被安全处理而非用陈旧密钥
-    expect(handled).toBeLessThanOrEqual(1)
+    p.send({ t: 'req', rid: 'r9', method: 'GET', path: '/m/api/state' })
+    await waitFor(() => p.replies().length === 1, 'stream_unknown')
+    expect(p.replies()).toEqual([{ error: 'stream_unknown' }])
+    expect(handled).toBe(0)
   })
 
   it('reconnects after the socket closes', async () => {
     let connects = 0
     const socks = [fakeSocket(), fakeSocket()]
     const client = makeTunnelClient({
-      daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'),
-      connect: () => socks[connects++]!.ws as never, reconnectMs: 5, log: () => {},
+      daemonId: 'rabc', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'),
+      connect: () => socks[connects++]!.ws as never, reconnectMs: 5, log: () => {}, relayUrl: RELAY, login: LOGIN,
     })
     client.start()
     expect(connects).toBe(1)
@@ -360,21 +206,22 @@ describe('tunnel-client (daemon side)', () => {
 
   it('collapses reconnect churn into one disconnect line + one recovery summary', async () => {
     // Regression (2026-08-27 日志:网络抖动时每 15s 刷一条 "socket closed",
-    // 1338 行淹没真信号)。现在:首次断开一条,后续静默重试,恢复报摘要。
+    // 1338 行淹没真信号)。现在:首次断开一条,后续静默重试,恢复(login_ok)报摘要。
     const logs: string[] = []
     const socks = [fakeSocket(), fakeSocket(), fakeSocket()]
     let ci = 0, clock = 0
     const client = makeTunnelClient({
-      daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'),
+      daemonId: 'rabc', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'),
       connect: () => socks[ci++]!.ws as never, reconnectMs: 3, now: () => (clock += 1000),
-      log: (_tag, line) => logs.push(line),
+      log: (_tag, line) => logs.push(line), relayUrl: RELAY, login: LOGIN,
     })
     client.start()
     socks[0]!.emitClose()                          // 1st close → one "socket closed" line
     await new Promise(r => setTimeout(r, 12))      // reconnect → sock1
     socks[1]!.emitClose()                          // churn → NO new "socket closed" line
     await new Promise(r => setTimeout(r, 12))      // reconnect → sock2
-    socks[2]!.emitOpen()                           // recovery → summary
+    socks[2]!.emitOpen()
+    socks[2]!.emitMessage(JSON.stringify({ login_ok: true }))   // recovery → summary
     client.stop()
     const closedLines = logs.filter(l => l.includes('socket closed'))
     const recoveredLines = logs.filter(l => l.includes('reconnected to relay after'))
@@ -384,11 +231,6 @@ describe('tunnel-client (daemon side)', () => {
   })
 })
 
-async function importDaemonPub(b64: string) {
-  const { importPublicKeyB64 } = await import('../../lib/tunnel-crypto')
-  return importPublicKeyB64(b64)
-}
-
 describe('tunnel-client:中继 v2 登录与控制帧', () => {
   function v2Client(extra: Partial<Parameters<typeof makeTunnelClient>[0]> = {}) {
     const sock = fakeSocket()
@@ -396,8 +238,7 @@ describe('tunnel-client:中继 v2 登录与控制帧', () => {
     const client = makeTunnelClient({
       daemonId: 'rabc', knownDeviceTokens: () => [DTOK],
       handleRequest: async () => new Response('x'),
-      connect, log: () => {}, relayUrl: 'wss://relay.test/v2/daemon',
-      login: { sign: (c: string) => ({ pub: 'P', sig: `S(${c})` }) },
+      connect, log: () => {}, relayUrl: RELAY, login: LOGIN,
       ...extra,
     })
     return { sock, connect, client }
@@ -448,20 +289,6 @@ describe('tunnel-client:中继 v2 登录与控制帧', () => {
     } finally { vi.useRealTimers() }
   })
 
-  it('老模式(无 login):URL 带 ?id=,不传子协议;心跳是固定的 {"ping":1}', () => {
-    vi.useFakeTimers()
-    try {
-      const sock = fakeSocket()
-      const connect = vi.fn((_u: string, _p?: string[]) => sock.ws as never)
-      const client = makeTunnelClient({ daemonId: 'tabc', knownDeviceTokens: () => [], handleRequest: async () => new Response(''), connect, log: () => {}, relayUrl: 'wss://old/tunnel/daemon', pingIntervalMs: 100 })
-      client.start(); sock.emitOpen()
-      expect(connect).toHaveBeenCalledWith('wss://old/tunnel/daemon?id=tabc', undefined)
-      vi.advanceTimersByTime(100)
-      expect(sock.sent).toContain('{"ping":1}')
-      client.stop()
-    } finally { vi.useRealTimers() }
-  })
-
   it('v2 被拒(open 后 login_failed 再 close)⇒ 退避翻倍,不卡在 2s', () => {
     vi.useFakeTimers()
     try {
@@ -470,8 +297,7 @@ describe('tunnel-client:中继 v2 登录与控制帧', () => {
       const connect = vi.fn((_u: string, _p?: string[]) => socks[n++]!.ws as never)
       const client = makeTunnelClient({
         daemonId: 'rabc', knownDeviceTokens: () => [], handleRequest: async () => new Response(''),
-        connect, log: () => {}, relayUrl: 'wss://relay.test/v2/daemon',
-        login: { sign: () => ({ pub: 'P', sig: 'S' }) },
+        connect, log: () => {}, relayUrl: RELAY, login: { sign: () => ({ pub: 'P', sig: 'S' }) },
       })
       client.start()
       for (let i = 0; i < 2; i++) {
@@ -498,8 +324,7 @@ describe('tunnel-client:中继 v2 登录与控制帧', () => {
       const connect = vi.fn((_u: string, _p?: string[]) => socks[n++]!.ws as never)
       const client = makeTunnelClient({
         daemonId: 'rabc', knownDeviceTokens: () => [], handleRequest: async () => new Response(''),
-        connect, log: () => {}, relayUrl: 'wss://relay.test/v2/daemon',
-        login: { sign: () => ({ pub: 'P', sig: 'S' }) },
+        connect, log: () => {}, relayUrl: RELAY, login: { sign: () => ({ pub: 'P', sig: 'S' }) },
       })
       client.start()
       socks[0]!.emitOpen(); socks[0]!.emitClose()               // 被拒:attempts=1

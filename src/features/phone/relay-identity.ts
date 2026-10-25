@@ -1,9 +1,9 @@
 /**
  * 官方中继 v2 的 daemon 身份(spec 2026-09-30 §4)。Ed25519 私钥种子存 `<stateDir>/relay-identity.json`
- * (0600),与老中继的 `tunnel-id.json` 分开。id 由公钥派生(`r…`)。
+ * (0600)。id 由公钥派生(`r…`)。(老中继的 `tunnel-id.json` 随 v1 在 2026-10-25 退休,不再读写。)
  *
  * 丢了私钥 = 换了一台新「电脑」:新 id,手机要重新配对。所以文件在但读不出时**抛出**而不是重生成 ——
- * 上层记一条日志、这次不连 v2,老中继照常;修文件(或主人明确删掉它)之后重启即恢复。
+ * 上层记一条日志、这次不连中继;修文件(或主人明确删掉它)之后重启即恢复。
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'

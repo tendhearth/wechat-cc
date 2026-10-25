@@ -10,7 +10,6 @@ import {
 import type { V2ClientMessageT, V2ServerMessageT, SealedFrameV2 } from '@wechat-cc/protocol'
 import { makeTunnelClient } from './tunnel-client'
 import { MAX_SUBS_PER_STREAM, MAX_INFLIGHT_REQS_PER_STREAM } from './tunnel-v2-stream'
-import { generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, deriveSharedKey, sealFrame, openFrame } from '../../lib/tunnel-crypto'
 import { makePhoneEvents, type PhoneEvents, type TopicSource } from './phone-events'
 import { phoneClientOf } from './phone-client'
 
@@ -42,11 +41,11 @@ async function settle(): Promise<void> { for (let i = 0; i < 20; i++) await new 
 
 type Inbound = { error: string } | V2ServerMessageT
 
-/** 一台 v2 手机:握手、发密封消息、按顺序拆收件箱。 */
-async function v2Phone(sock: Sock, stream: string, token = DTOK) {
+/** 一台 v2 手机:握手、发密封消息、按顺序拆收件箱。缺省扮老 App(握手 v:[1,2]);`web` ⇒ 网页的握手。 */
+async function v2Phone(sock: Sock, stream: string, token = DTOK, opts: { web?: boolean } = {}) {
   const kp = x25519KeyPair()
   const start = sock.sent.length
-  sock.emit({ stream, frame: { hs: b64uEncode(kp.pub), v: [1, 2] } })
+  sock.emit({ stream, frame: opts.web ? { hs: b64uEncode(kp.pub), v: [2], client: 'web' } : { hs: b64uEncode(kp.pub), v: [1, 2] } })
   await waitFor(() => sock.sent.slice(start).some(s => JSON.parse(s).stream === stream), 'hello')
   const idx = sock.sent.findIndex((s, i) => i >= start && JSON.parse(s).stream === stream)
   const hello = ServerHello.parse(JSON.parse(sock.sent[idx]!).frame)
@@ -106,29 +105,35 @@ function client(sock: Sock, over: Partial<Parameters<typeof makeTunnelClient>[0]
   const c = makeTunnelClient({
     daemonId: 'cc-1', knownDeviceTokens: () => [DTOK],
     handleRequest: async () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
-    connect: () => sock.ws as never, log: () => {}, ...over,
+    connect: () => sock.ws as never, log: () => {},
+    relayUrl: 'wss://relay.test/v2/daemon', login: { sign: () => ({ pub: 'P', sig: 'S' }) }, ...over,
   })
   c.start()
   return c
 }
 
 describe('tunnel-client v2', () => {
-  it('握手:v 含 2 ⇒ 回 {hs, v:2};不带 v ⇒ 回的还是只有 {hs}(v1 原样)', async () => {
+  it('握手:v 含 2 ⇒ 回 {hs, v:2};不带 v / 只有 v:[1](退休了的 v1)⇒ 明文 upgrade_required,紧跟 {stream, close:true}', async () => {
     const sock = fakeSocket()
-    client(sock)
+    const logs: string[] = []
+    client(sock, { log: (_t, l) => { logs.push(l) } })
     const p = await v2Phone(sock, 's2')
     expect(p.hello.v).toBe(2)
-    sock.emit({ stream: 's1', frame: { hs: b64uEncode(x25519KeyPair().pub) } })
-    await waitFor(() => sock.sent.some(s => JSON.parse(s).stream === 's1'))
-    const v1Reply = JSON.parse(sock.sent.find(s => JSON.parse(s).stream === 's1')!).frame
-    expect(Object.keys(v1Reply)).toEqual(['hs'])
-    // v:[1] 只会 v1 ⇒ 也按 v1
-    sock.emit({ stream: 's3', frame: { hs: b64uEncode(x25519KeyPair().pub), v: [1] } })
-    await waitFor(() => sock.sent.some(s => JSON.parse(s).stream === 's3'))
-    expect(Object.keys(JSON.parse(sock.sent.find(s => JSON.parse(s).stream === 's3')!).frame)).toEqual(['hs'])
+    for (const [stream, frame] of [['s1', { hs: b64uEncode(x25519KeyPair().pub) }], ['s3', { hs: b64uEncode(x25519KeyPair().pub), v: [1] }]] as const) {
+      sock.emit({ stream, frame })
+      await waitFor(() => sock.sent.some(s => JSON.parse(s).stream === stream && JSON.parse(s).close === true), `close ${stream}`)
+      expect(sock.sent.map(s => JSON.parse(s)).filter(m => m.stream === stream)).toEqual([
+        { stream, frame: { error: 'upgrade_required' } },
+        { stream, close: true },
+      ])
+    }
+    expect(logs.filter(l => l.includes('upgrade_required'))).toHaveLength(2)
+    // 被拒的流不留状态:之后的密封帧只当认不出的流
+    sock.emit({ stream: 's1', frame: { c: '0', ct: 'AAAA' } })
+    await waitFor(() => sock.sent.some(s => JSON.parse(s).stream === 's1' && JSON.parse(s).frame?.error === 'stream_unknown'), 'stream_unknown')
   })
 
-  it('req ⇒ res:URL 改写同 v1(去 d/t、注入认证过的 d 与 _via),带全部响应头,JSON 正文 utf8', async () => {
+  it('req ⇒ res:URL 改写(去 d/t、注入认证过的 d 与 _via),带全部响应头,JSON 正文 utf8', async () => {
     const sock = fakeSocket()
     let seen: URL | null = null
     let seenBody = ''
@@ -152,8 +157,18 @@ describe('tunnel-client v2', () => {
     expect(seen!.searchParams.get('_via')).toBe('tunnel')
     expect(seenBody).toBe('{"a":1}')
     expect(seenCT).toBe('application/json')
-    // 中继 v2 密封帧只有原生 App 说(2026-10-19 出生地):daemon 合成的 Request 打上标记
+    // 握手没自报 web ⇒ 原生 App(2026-10-19 出生地):daemon 合成的 Request 打上标记
     expect(seenClient).toBe('app')
+  })
+
+  it('网页握手(client:"web")⇒ 合成的 Request 不打 App 标记(出生地记 web)', async () => {
+    const sock = fakeSocket()
+    let seenClient: string | null = null
+    client(sock, { handleRequest: async (req) => { seenClient = phoneClientOf(req); return new Response('{}', { headers: { 'content-type': 'application/json' } }) } })
+    const p = await v2Phone(sock, 'sW', DTOK, { web: true })
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/home' })
+    expect(await p.next()).toMatchObject({ t: 'res', rid: 'r1', status: 200 })
+    expect(seenClient).toBe('web')
   })
 
   it('二进制(贴纸):image/png 响应 ⇒ base64;base64 请求正文按字节交给面板', async () => {
@@ -207,9 +222,9 @@ describe('tunnel-client v2', () => {
     expect(calls).toBe(0)
   })
 
-  it('中继 v2 模式(有 login):v2 流未知令牌 ⇒ auth_failed 后紧跟 {stream, close:true}', async () => {
+  it('未知令牌 ⇒ auth_failed 后紧跟 {stream, close:true}', async () => {
     const sock = fakeSocket()
-    client(sock, { knownDeviceTokens: () => ['dother'], login: { sign: () => ({ pub: 'P', sig: 'S' }) } })
+    client(sock, { knownDeviceTokens: () => ['dother'] })
     sock.emit({ login_ok: true })
     const p = await v2Phone(sock, 'sK', 'dmine')
     p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/x' })
@@ -219,15 +234,6 @@ describe('tunnel-client v2', () => {
     expect(tail).toEqual([{ stream: 'sK', frame: { error: 'auth_failed' } }, { stream: 'sK', close: true }])
   })
 
-  it('没 login(老中继):v2 流未知令牌只发 auth_failed,不发 close', async () => {
-    const sock = fakeSocket()
-    client(sock, { knownDeviceTokens: () => ['dother'] })
-    const p = await v2Phone(sock, 'sJ', 'dmine')
-    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/x' })
-    expect(await p.next()).toEqual({ error: 'auth_failed' })
-    await settle()
-    expect(sock.sent.some(s => 'close' in JSON.parse(s))).toBe(false)
-  })
 
   it('链接令牌也能握 v2', async () => {
     const sock = fakeSocket()
@@ -290,26 +296,6 @@ describe('tunnel-client v2', () => {
     expect(p.drain()).toEqual([])
   })
 
-  it('v1:两个并发请求,第一个慢 —— 第二个先回(Task 10 之前的行为)', async () => {
-    const g = gatedHandler()
-    const sock = fakeSocket()
-    client(sock, { handleRequest: g.handleRequest })
-    const kp = await generateTunnelKeypair()
-    sock.emit({ stream: 'v1', frame: { hs: await exportPublicKeyB64(kp.publicKey) } })
-    await waitFor(() => sock.sent.length === 1, 'v1 hello')
-    const key = await deriveSharedKey(kp.privateKey, await importPublicKeyB64(JSON.parse(sock.sent[0]!).frame.hs), new TextEncoder().encode(DTOK))
-    const req = (rid: string, path: string) => sealFrame(key, new TextEncoder().encode(JSON.stringify({ path, method: 'GET', rid })))
-    const fa = await req('a', '/slow'), fb = await req('b', '/fast')
-    sock.emit({ stream: 'v1', frame: fa })
-    sock.emit({ stream: 'v1', frame: fb })
-    await waitFor(() => sock.sent.length === 2, 'first v1 reply')
-    const first = JSON.parse(new TextDecoder().decode(await openFrame(key, JSON.parse(sock.sent[1]!).frame)))
-    expect(first.rid).toBe('b')
-    g.release()
-    await waitFor(() => sock.sent.length === 3, 'second v1 reply')
-    const second = JSON.parse(new TextDecoder().decode(await openFrame(key, JSON.parse(sock.sent[2]!).frame)))
-    expect(second.rid).toBe('a')
-  })
 
   it('sub:先收到当下状态,poke 后收到变化;同 epoch seq 递增', async () => {
     let state = { n: 1 }
@@ -332,9 +318,9 @@ describe('tunnel-client v2', () => {
     hub.dispose()
   })
 
-  it('connected:中继 v2 要等 login_ok 才算连着;断开 ⇒ false;stop ⇒ false', () => {
+  it('connected:要等 login_ok 才算连着;断开 ⇒ false;stop ⇒ false', () => {
     const sock = fakeSocket()
-    const c = client(sock, { login: { sign: () => ({ pub: 'P', sig: 'S' }) } })
+    const c = client(sock)
     expect(c.connected()).toBe(false)          // socket 开了,还没登录:推送发不出去
     sock.emit({ login_ok: true })
     expect(c.connected()).toBe(true)
@@ -460,7 +446,7 @@ describe('tunnel-client v2', () => {
   it('中继 v2 模式:撤销设备(onRevoked)⇒ auth_failed 后紧跟 {stream, close:true}', async () => {
     let tokens = [DTOK]
     const sock = fakeSocket()
-    client(sock, { knownDeviceTokens: () => tokens, login: { sign: () => ({ pub: 'P', sig: 'S' }) } })
+    client(sock, { knownDeviceTokens: () => tokens })
     sock.emit({ login_ok: true })
     const p = await v2Phone(sock, 'sR')
     p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/x' })
@@ -518,7 +504,7 @@ describe('tunnel-client:认不出的流 ⇒ 明文 stream_unknown(中继重连�
   const unknownFrames = (sock: Sock, stream: string) =>
     sock.sent.map(s => JSON.parse(s)).filter(e => e.stream === stream && e.frame?.error === 'stream_unknown')
 
-  it('密封帧(v1 形状或 v2 形状)落在没握过手的流上 ⇒ 回一次 stream_unknown;同一流几秒内只回一次', async () => {
+  it('密封帧(老 v1 形状或 v2 形状)落在没握过手的流上 ⇒ 回一次 stream_unknown;同一流几秒内只回一次', async () => {
     let t = 1_000_000
     const sock = fakeSocket()
     client(sock, { now: () => t })
@@ -560,6 +546,7 @@ describe('tunnel-client:认不出的流 ⇒ 明文 stream_unknown(中继重连�
     const c = makeTunnelClient({
       daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('{}'),
       connect: () => socks[n++]!.ws as never, reconnectMs: 5, log: () => {},
+      relayUrl: 'wss://relay.test/v2/daemon', login: { sign: () => ({ pub: 'P', sig: 'S' }) },
     })
     c.start()
     const p = await v2Phone(socks[0]!, 'sKeep')

@@ -5,7 +5,7 @@
  *
  *   - 帧由 tunnel-client 按流串行喂进来(计数器检查依赖到达顺序)。重放 / 认证失败的帧
  *     丢掉、流不断,每条流只记一次日志。
- *   - `req`:跟 v1 同一套 URL 改写(去 d/t、注入认证过的 d= 与 _via=tunnel),交给面板;
+ *   - `req`:URL 改写(去 d/t、注入认证过的 d= 与 _via=tunnel),交给面板;
  *     `res` 带全部响应头,正文按 content-type 判 utf8 / base64。
  *   - `ping` ⇒ `pong`(同 rid):手机只挂着订阅时的保活,顺带核对令牌。
  *   - `sub` / `unsub`:接到 PhoneEvents 集线器;每条 `ev` 发出前、每个 `req` 处理前
@@ -29,7 +29,7 @@ const utf8 = new TextEncoder()
 const utf8d = new TextDecoder()
 
 /**
- * 手机给的路径 → 合成的 loopback URL(v1 / v2 共用)。路径已认证但仍是不可信输入:必须以
+ * 手机给的路径 → 合成的 loopback URL。路径已认证但仍是不可信输入:必须以
  * / 开头(否则会拼进 authority 污染 host),畸形的(裸 %、带空格)new URL 会抛 —— 两种都
  * 返回原因字符串让调用方丢弃。d/t 一律剥掉,换成认证过的设备令牌;_via=tunnel 标记来源。
  */
@@ -69,6 +69,8 @@ export interface V2StreamDeps {
   channel: V2Channel
   /** 认证这条流的令牌(设备令牌或 /set 链接令牌)。 */
   token: string
+  /** 握手里自报的客户端(浏览器 /m 页带 `client:'web'`,原生 App 不带)。只决定「一件事的出生地」。 */
+  client?: 'app' | 'web'
   /** 往这条流发一个帧(已封好的密封帧)。 */
   send: (frame: unknown) => void
   handleRequest: (req: Request) => Promise<Response>
@@ -136,8 +138,8 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
       if (!Object.keys(headers).some(k => k.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json'
     }
     let req: Request
-    // 标成原生 App 来的(phone-client.ts):v2 密封帧只有 App 的协议客户端会说,浏览器 /m 走直连或 v1。
-    try { init.headers = headers; req = markAppRequest(new Request(url.toString(), init)) }
+    // 原生 App 来的才标(phone-client.ts);浏览器 /m 页握手时自报了 web ⇒ 不标,跟局域网直连一样算 web。
+    try { init.headers = headers; req = new Request(url.toString(), init); if (deps.client !== 'web') markAppRequest(req) }
     catch { sendMsg({ t: 'err', rid: m.rid, code: 'bad_request' }); return }
     let res: Response
     let bytes: Uint8Array

@@ -4,9 +4,10 @@
  *   - 握手之后 daemon 回的明文错误帧(auth_failed)要让挂着的请求失败,而不是永远等。
  * 两段都是经典脚本,这里按页面里的全局变量把它们跑起来。
  */
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { readMobileSource } from './sources'
-import { generateTunnelKeypair, exportPublicKeyB64 } from '../../src/lib/tunnel-crypto'
+import { Window } from 'happy-dom'
+import { makeFakeV2Relay } from './fake-v2-relay'
 
 function el() {
   const handlers: Record<string, () => void> = {}
@@ -53,70 +54,142 @@ describe('pair button', () => {
   })
 })
 
-describe('transport error frame after the handshake', () => {
-  it('fails pending requests with the daemon error instead of hanging', async () => {
-    let sock: { onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; send: (s: string) => void; close: () => void } | null = null
-    class FakeWS {
-      onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; onerror?: () => void
-      sent: string[] = []
-      constructor() { sock = this; setTimeout(() => this.onopen?.(), 0) }
-      send(s: string) { this.sent.push(s) }
-      close() { this.onclose?.() }
-    }
-    const env = {
-      WebSocket: FakeWS, crypto: globalThis.crypto, TextEncoder, TextDecoder, btoa, atob,
-      T: 'tLINK', REMOTE: { relay: 'wss://r', id: 'x' }, q: (p: string) => p,
-      window: { __CC_SHELL__: { relay: 'wss://r', id: 'x' } }, location: {},
-      fetch: vi.fn(async () => { throw new Error('offline') }),
-    }
-    const api = new Function(...Object.keys(env), `${readMobileSource('transport.js')}\nreturn api`)(...Object.values(env)) as
-      (path: string, opts?: object) => Promise<unknown>
-    const pending = api('/m/api/home')
-    await vi.waitFor(() => expect((sock as unknown as FakeWS | null)?.sent.length).toBe(1))   // phone sent its hs
-    const daemon = await generateTunnelKeypair()
-    sock!.onmessage!({ data: JSON.stringify({ hs: await exportPublicKeyB64(daemon.publicKey) }) })
-    await vi.waitFor(() => expect((sock as unknown as FakeWS).sent.length).toBe(2))            // sealed request went out
-    sock!.onmessage!({ data: JSON.stringify({ error: 'auth_failed' }) })
-    await expect(pending).rejects.toThrow('auth_failed')
+/** 在 new Function 里跑 transport.js(经典脚本,按页面里的全局变量喂),中继 + daemon 是 fake-v2-relay 的假 socket。 */
+function runTunnel(relay: ReturnType<typeof makeFakeV2Relay>, o: { T?: string; remote?: { relay: string; id: string }; document?: unknown; store?: Map<string, string> } = {}) {
+  const remote = o.remote ?? { relay: 'wss://r/v2/phone', id: 'rX' }
+  const store = o.store ?? new Map<string, string>()
+  const env = {
+    WebSocket: relay.WebSocket, crypto: globalThis.crypto, TextEncoder, TextDecoder,
+    T: o.T ?? 'tLINK', REMOTE: remote, q: (p: string) => p,
+    window: { __CC_SHELL__: remote }, location: {},
+    fetch: vi.fn(async () => { throw new Error('offline') }),
+    localStorage: { getItem: (k: string) => store.get(k) ?? null, removeItem: (k: string) => { store.delete(k) } },
+    document: o.document,
+  }
+  return new Function(...Object.keys(env), `${readMobileSource('transport.js')}\nreturn { api, resetTunnel }`)(...Object.values(env)) as
+    { api(path: string, opts?: object): Promise<{ status: number; json(): Promise<unknown>; text(): Promise<string> }>; resetTunnel(): void }
+}
+
+describe('transport over relay v2 (F4:跟 App 同一个协议客户端)', () => {
+  it('handshakes v2 as the web client, sends method / headers / body, resolves a fetch-like response', async () => {
+    const relay = makeFakeV2Relay({ tokens: () => ['tLINK'], handler: r => ({ status: 200, body: JSON.stringify({ ok: true, device_token: 'dNEW', echo: r.body }) }) })
+    const t = runTunnel(relay)
+    const r = await t.api('/set/api/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ ok: true, device_token: 'dNEW', echo: '{}' })
+    expect(relay.sockets[0]!.url).toBe('wss://r/v2/phone?id=rX')
+    expect(relay.sockets[0]!.hellos[0]).toMatchObject({ v: [2], client: 'web' })
+    expect(relay.sockets[0]!.reqs[0]).toMatchObject({ method: 'POST', path: '/set/api/pair', headers: { 'content-type': 'application/json' }, body: '{}' })
   })
 
-  it('stream_unknown (daemon reconnected to the relay and forgot this stream) ⇒ the request fails, the socket closes, the next api() re-handshakes on a fresh socket', async () => {
-    const socks: Array<{ onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; sent: string[]; closed: boolean }> = []
-    class FakeWS {
-      onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; onerror?: () => void
-      sent: string[] = []; closed = false
-      constructor() { socks.push(this); setTimeout(() => this.onopen?.(), 0) }
-      send(s: string) { this.sent.push(s) }
-      close() { this.closed = true; this.onclose?.() }
-    }
-    const env = {
-      WebSocket: FakeWS, crypto: globalThis.crypto, TextEncoder, TextDecoder, btoa, atob,
-      T: 'tLINK', REMOTE: { relay: 'wss://r', id: 'x' }, q: (p: string) => p,
-      window: { __CC_SHELL__: { relay: 'wss://r', id: 'x' } }, location: {},
-      fetch: vi.fn(async () => { throw new Error('offline') }),
-    }
-    const api = new Function(...Object.keys(env), `${readMobileSource('transport.js')}\nreturn api`)(...Object.values(env)) as
-      (path: string, opts?: object) => Promise<unknown>
-    const daemon = await generateTunnelKeypair()
-    const hs = JSON.stringify({ hs: await exportPublicKeyB64(daemon.publicKey) })
-    const first = api('/m/api/home')
-    await vi.waitFor(() => expect(socks[0]?.sent.length).toBe(1))
-    socks[0]!.onmessage!({ data: hs })
-    await vi.waitFor(() => expect(socks[0]!.sent.length).toBe(2))
-    socks[0]!.onmessage!({ data: JSON.stringify({ error: 'stream_unknown' }) })
-    await expect(first).rejects.toThrow('stream_unknown')
-    expect(socks[0]!.closed).toBe(true)
-    void api('/m/api/home').catch(() => {})
-    await vi.waitFor(() => expect(socks[1]?.sent.length).toBe(1))                              // new socket, new hs
-    expect(JSON.parse(socks[1]!.sent[0]!)).toHaveProperty('hs')
+  it('fails pending requests with the daemon error (auth_failed) instead of hanging', async () => {
+    const relay = makeFakeV2Relay({ tokens: () => [] })
+    await expect(runTunnel(relay).api('/m/api/home')).rejects.toThrow('auth_failed')
   })
+
+  it('stream_unknown (daemon reconnected to the relay and forgot this stream) ⇒ the socket closes, a GET is retried once on a fresh handshake', async () => {
+    const relay = makeFakeV2Relay({ tokens: () => ['tLINK'], auto: false })
+    const t = runTunnel(relay)
+    const first = t.api('/m/api/home')
+    await vi.waitFor(() => expect(relay.sockets[0]?.hellos).toHaveLength(1))
+    relay.sockets[0]!.hello()
+    await vi.waitFor(() => expect(relay.sockets[0]!.reqs).toHaveLength(1))
+    relay.sockets[0]!.deliver({ error: 'stream_unknown' })
+    await vi.waitFor(() => expect(relay.sockets[0]!.closed).toBe(true))
+    await vi.waitFor(() => expect(relay.sockets[1]?.hellos).toHaveLength(1), { timeout: 3000 })   // 退避之后新 socket、新握手
+    relay.sockets[1]!.hello()
+    await vi.waitFor(() => expect(relay.sockets[1]!.reqs).toHaveLength(1))
+    expect(relay.sockets[1]!.reqs[0]!.rid).toBe(relay.sockets[0]!.reqs[0]!.rid)                     // 同一个 rid 重发
+    relay.sockets[1]!.reply(relay.sockets[1]!.reqs[0]!.rid, { status: 200, body: '{"ok":true}' })
+    expect((await first).status).toBe(200)
+  })
+})
+
+describe('v1 退休之后的老配对(F4):提示重新扫码配对', () => {
+  const REPAIR = '连接方式升级了，请在电脑上重新扫码配对'
+  const windows: Window[] = []
+  afterEach(async () => { await Promise.all(windows.splice(0).map(w => w.happyDOM.abort())) })
+  function page() {
+    const w = new Window({ url: 'https://relay.test/pset/' }); windows.push(w)
+    w.document.body.innerHTML = '<div id="banner"></div>'
+    return w.document
+  }
+  const repairText = (d: ReturnType<typeof page>) => d.getElementById('cc-repair')?.textContent ?? null
+
+  it('还拿着老中继的远程信息(t… id)⇒ 不连,请求以 upgrade_required 失败;页面顶上出那句话,丢掉老的 ccRemote 和绑在老中继上的设备令牌', async () => {
+    const relay = makeFakeV2Relay({ tokens: () => ['dOLD'] })
+    const doc = page()
+    const store = new Map([['ccRemote', '{"relay":"wss://cc.tendhearth.com/tunnel/phone","id":"t000"}'], ['deviceToken', 'dOLD'], ['deviceTokenId', 't000']])
+    const t = runTunnel(relay, { T: 'dOLD', remote: { relay: 'wss://cc.tendhearth.com/tunnel/phone', id: 't' + '0'.repeat(36) }, document: doc, store })
+    await expect(t.api('/m/api/home')).rejects.toThrow('upgrade_required')
+    expect(relay.sockets).toHaveLength(0)
+    expect(repairText(doc)).toContain(REPAIR)
+    expect(repairText(doc)).toContain('连接手机')
+    expect(doc.body.firstElementChild?.id).toBe('cc-repair')
+    expect([...store.keys()]).toEqual([])
+    // 再来一次不叠第二块
+    await expect(t.api('/m/api/home')).rejects.toThrow('upgrade_required')
+    expect(doc.querySelectorAll('#cc-repair')).toHaveLength(1)
+  })
+
+  it('daemon 明文回 upgrade_required ⇒ 同一句话,不再重连;手里是 v2 配对(r… id)⇒ 配对不删(明文谁都能伪造)', async () => {
+    const relay = makeFakeV2Relay({ tokens: () => ['dX'], auto: false })
+    const doc = page()
+    const store = new Map([['ccRemote', '{"relay":"wss://r/v2/phone","id":"rX"}'], ['deviceToken', 'dX'], ['deviceTokenId', 'rX']])
+    const t = runTunnel(relay, { T: 'dX', document: doc, store })
+    const p = t.api('/m/api/home')
+    await vi.waitFor(() => expect(relay.sockets[0]?.hellos).toHaveLength(1))
+    relay.sockets[0]!.deliver({ error: 'upgrade_required' })
+    await expect(p).rejects.toThrow('upgrade_required')
+    expect(repairText(doc)).toContain(REPAIR)
+    expect(store.get('ccRemote')).toContain('rX')
+    expect(store.get('deviceToken')).toBe('dX')
+    await new Promise(r => setTimeout(r, 50))
+    expect(relay.sockets).toHaveLength(1)
+  })
+
+  it('v2 配对的握手回来不是 v2(中继抹掉了 v)⇒ 拒绝降级、不发请求、配对原样留着;说「连接在半路被改过」而不是重新配对;按退避重连,不刷屏', async () => {
+    vi.useFakeTimers()
+    try {
+      const relay = makeFakeV2Relay({ tokens: () => ['dX'], stripV: true })
+      const doc = page()
+      const store = new Map([['ccRemote', '{"relay":"wss://r/v2/phone","id":"rX"}'], ['deviceToken', 'dX'], ['deviceTokenId', 'rX']])
+      const t = runTunnel(relay, { T: 'dX', document: doc, store })
+      void t.api('/m/api/home').catch(() => {})
+      await vi.advanceTimersByTimeAsync(10)
+      expect(doc.getElementById('cc-tamper')?.textContent).toContain('连接在半路被改过')
+      expect(repairText(doc)).toBeNull()
+      expect([...store.keys()].sort()).toEqual(['ccRemote', 'deviceToken', 'deviceTokenId'])
+      // 10 秒里只按退避重连几次(500ms、1s、2s、4s…),不是一直狂连
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(relay.sockets.length).toBeGreaterThan(1)
+      expect(relay.sockets.length).toBeLessThanOrEqual(6)
+      expect(relay.sockets.every(s => s.reqs.length === 0)).toBe(true)
+      expect(doc.querySelectorAll('#cc-tamper')).toHaveLength(1)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('那块「半路被改过」在下一次连上之后自己消失', async () => {
+    let strip = true
+    const relayStrip = makeFakeV2Relay({ tokens: () => ['dX'], stripV: true })
+    const relayOk = makeFakeV2Relay({ tokens: () => ['dX'] })
+    const Both = function (this: unknown, url: string) { return strip ? new relayStrip.WebSocket(url) : new relayOk.WebSocket(url) } as unknown as typeof relayOk.WebSocket
+    const doc = page()
+    const t = runTunnel({ WebSocket: Both, sockets: [] }, { T: 'dX', document: doc })
+    const p = t.api('/m/api/home')
+    await vi.waitFor(() => expect(doc.getElementById('cc-tamper')).not.toBeNull())
+    strip = false
+    expect((await p).status).toBe(200)
+    expect(doc.getElementById('cc-tamper')).toBeNull()
+  })
+
 })
 
 describe('配对换令牌之后的 401(plan 7a 单次配对)', () => {
   function runTransport(T0: string) {
     const store = new Map<string, string>([['deviceToken', 'dNEW']])
     const env = {
-      WebSocket: class {}, crypto: globalThis.crypto, TextEncoder, TextDecoder, btoa, atob,
+      WebSocket: class {}, crypto: globalThis.crypto, TextEncoder, TextDecoder,
       T: T0, REMOTE: null, q: (p: string) => p, window: {}, fetch: vi.fn(),
       localStorage: { removeItem: (k: string) => { store.delete(k) } },
       location: { replace: vi.fn() },
@@ -138,38 +211,16 @@ describe('配对换令牌之后的 401(plan 7a 单次配对)', () => {
     expect(env.location.replace).not.toHaveBeenCalled()
   })
   it('resetTunnel 之后旧 socket 的 close 是异步到的:不许把已经开好的新隧道清掉(真 WebSocket 的 onclose 晚到)', async () => {
-    const socks: Array<{ onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; sent: string[]; closed: boolean }> = []
-    class FakeWS {
-      onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; onerror?: () => void
-      sent: string[] = []; closed = false
-      constructor() { socks.push(this); setTimeout(() => this.onopen?.(), 0) }
-      send(s: string) { this.sent.push(s) }
-      close() { this.closed = true; setTimeout(() => this.onclose?.(), 20) }   // 浏览器里 close 事件晚一拍
-    }
-    const env = {
-      WebSocket: FakeWS, crypto: globalThis.crypto, TextEncoder, TextDecoder, btoa, atob,
-      T: 'tLINK', REMOTE: { relay: 'wss://r', id: 'x' }, q: (p: string) => p,
-      window: { __CC_SHELL__: { relay: 'wss://r', id: 'x' } }, location: {},
-      fetch: vi.fn(async () => { throw new Error('offline') }),
-    }
-    const t = new Function(...Object.keys(env), `${readMobileSource('transport.js')}\nreturn { api, resetTunnel }`)(...Object.values(env)) as
-      { api(path: string, opts?: object): Promise<unknown>; resetTunnel(): void }
-    const daemon = await generateTunnelKeypair()
-    const hs = JSON.stringify({ hs: await exportPublicKeyB64(daemon.publicKey) })
-    void t.api('/m/api/home').catch(() => {})
-    await vi.waitFor(() => expect(socks[0]?.sent.length).toBe(1))
-    socks[0]!.onmessage!({ data: hs })
-    await vi.waitFor(() => expect(socks[0]!.sent.length).toBe(2))
+    const relay = makeFakeV2Relay({ tokens: () => ['tLINK'] })
+    const t = runTunnel(relay)
+    expect((await t.api('/m/api/home')).status).toBe(200)
     t.resetTunnel()
-    expect(socks[0]!.closed).toBe(true)
-    void t.api('/m/api/home').catch(() => {})                                                   // 新隧道,旧 close 还没到
-    await vi.waitFor(() => expect(socks[1]?.sent.length).toBe(1))
-    socks[1]!.onmessage!({ data: hs })
-    await vi.waitFor(() => expect(socks[1]!.sent.length).toBe(2))
-    await new Promise((r) => setTimeout(r, 40))                                                  // 旧 socket 的 onclose 这时才到
-    void t.api('/m/api/home').catch(() => {})
-    await vi.waitFor(() => expect(socks[1]!.sent.length).toBe(3))                                // 还走新隧道
-    expect(socks).toHaveLength(2)                                                                // 没有第三次握手
+    expect(relay.sockets[0]!.closed).toBe(true)
+    expect((await t.api('/m/api/home')).status).toBe(200)                                       // 新隧道,旧 close 也许还没到
+    await new Promise((r) => setTimeout(r, 40))                                                  // 旧 socket 的 onclose 这时早到了
+    expect((await t.api('/m/api/home')).status).toBe(200)
+    expect(relay.sockets).toHaveLength(2)                                                        // 没有第三次握手
+    expect(relay.sockets[1]!.reqs).toHaveLength(2)                                               // 还走新隧道
   })
   it('没有隧道时 resetTunnel 不抛', () => {
     expect(() => runTransport('dNEW').api.resetTunnel()).not.toThrow()
