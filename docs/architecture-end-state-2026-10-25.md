@@ -221,13 +221,16 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 
 ## 等主人点头的(攒在这里,不中途问)
 
-- 对话要不要也走主人的放行规则(今天不走;收进 `authorize` 后照旧不走)。
-- ~~Codex 对话从 SDK 换到 app-server~~:主人 2026-10-25 定了(统一到 app-server、直接改),差异表见「进度」下的 B1 节。Claude 对话和工作台合一:目标是行为不变,但两条协议细节可能有差异;做的时候逐项列出差异,有看得见的再问。
-- ~~对话要不要也走主人的放行规则~~ ⟨10-25 主人点头:只在主人自己的对话里、红线照旧问、放了就在回复里说一行;见进度表「C2 补 · 对话走放行规则」⟩
-- Codex 对话从 SDK 换到 app-server、Claude 对话和工作台合一:目标是行为不变,但两条协议细节(比如中途插话、思考过程)可能有差异;做的时候逐项列出差异,有看得见的再问。
-- 网页 v1 传输退休:旧的已配对网页要不要提示重新配对。
-- ~~网页 v1 传输退休:旧的已配对网页要不要提示重新配对。~~ 主人 10-25 定:直接退休,老页面提示重新扫码配对(F4)。
-- F6:桌面里 daemon 已经有路由的那几个 CLI 调用(`mode set`、`memory list|read|write|view|edit`、`sessions list-projects`、`plugin list`)换成 `/v1` 以后,daemon 没起时这几处会从「照常显示」变成「读不到」。换不换、要不要先只换 `mode set`(它本来就要 daemon 在)?
+已定(2026-10-25,主人):
+- ~~Codex 对话换 app-server~~:统一到能力强的那条、直接改(B1,差异表见进度);原则推广到每家执行者只留一份(B2、B1b)。
+- ~~对话也走主人的放行规则~~:只在主人自己的对话里、红线照旧问、放了就在回复里说一行(C2 补)。
+- ~~网页 v1 传输退休~~:直接退,老页面提示重新扫码配对(F4)。
+
+还等的:
+- **F6**:桌面里剩下的几处 CLI 调用(mode set、memory list/read/write/view/edit、sessions list-projects、plugin list)换成 `/v1` —— daemon 没在跑时这几样会用不了(今天走 CLI 还能用)。
+- **Claude 一起做的 `is_error` 判定**(B1b 留的口子):对话里「标了 is_error 但消息不像报错」的结果算 `provider_error`,一起做不算;对齐的话一些一起做回合会从「完成」变「失败」。
+- **G 记忆一个源**:设计稿 `docs/superpowers/specs/2026-10-25-memory-single-source-design.md` 列的五个决定(待办点「不对」算不算收回、`corrections.md` 换成「收回的话」、收回能不能「恢复」、手改 `memory.md` 怎么处理、导入后的老文件留多久),各附建议。
+- **Codex 对话逐条问**(B1 发现的机会):app-server 能 `on-request`,对话里 admin 的危险命令可以改成问主人(今天照旧不问)。
 
 ## 和别的文档的关系
 
