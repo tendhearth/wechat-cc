@@ -82,3 +82,48 @@ describe('模块门', () => {
     }
   })
 })
+
+describe('功能模块自己挂路由(架构终态 A3:internalApi.mount)', () => {
+  let stateDir: string
+  let api: InternalApi | null = null
+  let subsystems: SubsystemStatus[] = []
+  beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'mount-')); subsystems = [] })
+  afterEach(async () => { if (api) await api.stop(); api = null; rmSync(stateDir, { recursive: true, force: true }) })
+
+  async function start() {
+    api = createInternalApi({ stateDir, daemonPid: 1, subsystems: () => subsystems })
+    const { port } = await api.start()
+    const token = api.mintSessionToken('admin', 'claude/main/owner-chat')
+    return (path: string) => fetch(`http://127.0.0.1:${port}${path}`, { headers: { Authorization: `Bearer ${token}` } })
+  }
+  const ok = { name: 'calendar', state: 'ok' as const, sinceIso: '2026-10-25T00:00:00.000Z' }
+
+  it('挂上之后走模块自己的处理器', async () => {
+    subsystems = [ok]
+    const get = await start()
+    api!.mount('calendar', { 'GET /v1/calendar/agenda': async () => ({ status: 200, body: { ok: true, text: 'x' } }) })
+    const r = await get('/v1/calendar/agenda')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ ok: true, text: 'x' })
+  })
+  it('模块开着、还没挂上(开机途中)⇒ 503 module_starting(不是关了、不是坏了、也不是 404)', async () => {
+    subsystems = [ok]
+    const get = await start()
+    const r = await get('/v1/calendar/agenda')
+    expect(r.status).toBe(503)
+    expect(await r.json()).toEqual({ error: 'module_starting', module: 'calendar' })
+  })
+  it('模块关着 ⇒ module_off;坏了 ⇒ module_degraded(处理器挂没挂都一样)', async () => {
+    subsystems = [{ ...ok, state: 'off' }]
+    const get = await start()
+    expect(await (await get('/v1/calendar/agenda')).json()).toEqual({ error: 'module_off', module: 'calendar' })
+    subsystems = [{ ...ok, state: 'degraded', error: 'osascript missing' }]
+    expect(await (await get('/v1/calendar/agenda')).json()).toEqual({ error: 'module_degraded', module: 'calendar', detail: 'osascript missing' })
+  })
+  it('只能挂表里标给自己的路由;不能重复挂;不能顶掉总表里的', async () => {
+    await start()
+    expect(() => api!.mount('calendar', { 'GET /v1/social/wishes': async () => ({ status: 200, body: {} }) })).toThrow(/does not mark it/)
+    api!.mount('calendar', { 'GET /v1/calendar/agenda': async () => ({ status: 200, body: {} }) })
+    expect(() => api!.mount('calendar', { 'GET /v1/calendar/agenda': async () => ({ status: 200, body: {} }) })).toThrow(/already registered/)
+  })
+})

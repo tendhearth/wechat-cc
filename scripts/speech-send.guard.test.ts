@@ -75,6 +75,8 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 主人发的命令的回话:「定时 …」「做过的事 …」
   'src/daemon/bootstrap/wire-jobs.ts': ['reply', 1],
   'src/daemon/bootstrap/wire-activity.ts': ['reply', 1],
+  // 主人发的「日历 …」的回话(功能目录 src/features/calendar,架构终态 A4)
+  'src/features/calendar/index.ts': ['reply', 1],
   // 主人回「允许 12」之后告诉访客「主人同意啦!」:主人当面的操作,发给谁也是主人定的
   'src/daemon/wiring/command-router.ts': ['reply', 1],
   // 主人刚发「任务 X 文件 <id>」点名要的那份成果:在处理这条命令时同步送、结果就是这条命令的回话;worker 没有定时 / 扫描,
@@ -97,7 +99,7 @@ describe('发送原语只在登记过的地方出现,次数只许降', () => {
     expect(ilinkSendMethods()).not.toContain('sendTyping')
   })
   const counts = new Map<string, number>()
-  for (const d of ['src/daemon', 'src/core', 'src/lib']) {
+  for (const d of ['src/daemon', 'src/features', 'src/core', 'src/lib']) {
     for (const f of walk(join(ROOT, d))) {
       const n = (readFileSync(f, 'utf8').match(SEND) ?? []).length
       if (n > 0) counts.set(relative(ROOT, f).split('\\').join('/'), n)

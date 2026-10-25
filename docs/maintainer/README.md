@@ -24,6 +24,7 @@
 
 - [加一个执行者](add-an-executor.md):一份事实(`executor-facts`)+ 一份能力(`provider-capabilities`)+ 两处构造,其余推导,漏了由测试点名。
 - [加一个微信命令](add-a-command.md):一张表、顺序就是优先级;放哪一族(admin / mode / control / 文本命令)、族内两两互斥、路由快照怎么看。
+- [加一个功能](add-a-feature.md):一个目录 + 一个模块(`src/features/<名>/index.ts`),路由自己挂、命令自己交;样板是日历。新功能只有这一种写法。
 - [加一页](add-a-page.md):路由表一行(档位 / 令牌 / 宿主 / 链接 / 模块)、gen:routes 和要发版的那几格、错误码表、三端客户端怎么接、漏了哪步谁会红。
 
 ## 最短路径

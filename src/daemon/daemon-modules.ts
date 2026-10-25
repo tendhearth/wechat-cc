@@ -64,9 +64,9 @@ import { wireWorkbenchNotifications } from './bootstrap/wire-workbench-notificat
 import { wireWorkbenchArtifacts } from './bootstrap/wire-workbench-artifacts'
 import { wireLetters } from './bootstrap/wire-letters'
 import { makeProjectLessonsCommand } from './project-lessons-command'
-import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
+import { calendarFeature, type CalendarFeature } from '../features/calendar'
 import { fromReplyHandler } from './commands/registry'
-import { defaultRunner, makeCliReplyHandler } from './cli-reply-handler'
+import { makeCliReplyHandler } from './cli-reply-handler'
 import { makeCliPhoneActions } from './cli-phone-actions'
 import { liveSessionIds } from './claude-live-window'
 import { scopedSend } from './inbound/reply-scope'
@@ -347,10 +347,13 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<CliSessions>,
 
+    // —— 功能(一个功能一个目录,src/features/<名>)——
+    calendarFeature({ stateDir, isOwner }),
+
     // —— 主人的命令:命令现在就要(进命令表),要用的只读轮 / 工作台 / 门都在后面 ⇒ 经 late 现取 ——
     {
       name: 'owner-commands',
-      needs: ['bootstrap', 'cli-sessions', 'ilink-adapter', 'internal-api', 'network-gate'],
+      needs: ['bootstrap', 'cli-sessions', 'calendar', 'ilink-adapter', 'internal-api', 'network-gate'],
       lazy: ['workbench', 'wired'],
       init(ctx): OwnerCommands {
         const boot = ctx.get<Bootstrap>('bootstrap')
@@ -373,15 +376,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           isOwner, say, now: () => Date.now(),
           importEntries: (items, label) => { const w = wired(); if (!w) throw new Error('memory_not_wired'); return w.memoryNightly.importEntries(items, label) },
         })
-        // 读日历和提醒(只读,spec 2026-10-20-calendar-read-design):默认关;「日历 开」才请求授权。只进主人的轮次。
-        const calendar = makeCalendar({
-          stateDir, run: defaultRunner, platform: process.platform,
-          bundleHasUsage: () => appBundleHasCalendarUsage(process.execPath),
-          now: () => Date.now(), timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
-          log: (t, l) => log(t, l),
-        })
-        internalApi.provide({ calendarAgenda: (offset) => agendaReplyText(calendar, offset) })
-        const calendarCommand = makeCalendarCommand({ calendar, isOwner, say })
+        // 读日历和提醒:一个功能一个目录(src/features/calendar);命令和早报素材从那里来。
+        const { calendar, command: calendarCommand } = ctx.get<CalendarFeature>('calendar')
         // 定时 / 早报 / 周报 / 换一家来审(bootstrap/wire-jobs.ts):runner 在 scheduled-jobs 模块里起。
         const jobs = wireJobs({
           stateDir, db, ilink, boot, jobsStore: f.jobsStore, activityLog: activity.activityLog, activity: activity.activity, calendar, overseerToday: cli.overseerToday, careLedger: f.careLedger,
