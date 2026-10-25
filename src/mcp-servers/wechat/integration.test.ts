@@ -898,7 +898,7 @@ describe('wechat-mcp stdio integration', () => {
 
     async function toolsForCodexSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
       const { createCodexAgentProvider } = await import('../../core/codex-agent-provider')
-      const { createScriptedCodex } = await import('../../core/codex-scripted')
+      const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
       const { TIER_PROFILES } = await import('../../core/user-tier')
       const scripted = createScriptedCodex({ turns: [] })
       const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'codex')

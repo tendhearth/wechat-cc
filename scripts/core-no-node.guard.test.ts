@@ -50,7 +50,6 @@ const BASELINE: Record<string, number> = {
   'src/core/a2a-registry.ts': 2,
   'src/core/acp-agent-provider.ts': 1,
   'src/core/acp-cursor-chat.ts': 1,
-  'src/core/acp/scripted-agent.ts': 4,
   'src/core/agy-agent-provider.ts': 1,
   'src/core/avatar/store.ts': 3,
   'src/core/claude-workbench-process.ts': 1,

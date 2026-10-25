@@ -7,7 +7,7 @@
  *   同一个模型行为(同样的旁白、同样的工具、同样的话),分别用两套词汇演 ——
  *     codex_legacy:照今天的提示词用 reply / reply_voice 工具说话,codex 一轮最后照例再写一条最终消息;
  *     codex_daemon:没有 reply 族,话写在最后一条 agent_message 里,语音走附件工具 voice。
- *   对面是照 codex exec 事件形状演的假 Codex(src/core/codex-scripted.ts),这边是**生产的**全链:
+ *   对面是照 codex exec 事件形状演的假 Codex(src/test-support/executors/codex-scripted.ts),这边是**生产的**全链:
  *   Codex provider(createCodexAgentProvider 的事件翻译)→ 协调器(solo)→ legacy 的 FALLBACK_REPLY /
  *   daemon 的 reply-delivery 运行时(sendText 换成记账)。
  *
@@ -25,7 +25,7 @@ import { STATE_DIR } from './isolate'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from '../../../src/core/conversation-coordinator'
 import { createProviderRegistry } from '../../../src/core/provider-registry'
 import { createCodexAgentProvider } from '../../../src/core/codex-agent-provider'
-import { createScriptedCodex, type CodexScriptedCall, type CodexScriptedTurn, type CodexScriptStep } from '../../../src/core/codex-scripted'
+import { createScriptedCodex, type CodexScriptedCall, type CodexScriptedTurn, type CodexScriptStep } from '../../../src/test-support/executors/codex-scripted'
 import { TIER_PROFILES } from '../../../src/core/user-tier'
 import type { AgentEvent, PermissionMode } from '../../../src/core/agent-provider'
 import type { Mode } from '../../../src/core/conversation'

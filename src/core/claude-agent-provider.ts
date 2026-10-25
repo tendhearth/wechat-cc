@@ -63,7 +63,7 @@ export interface ClaudeAgentProviderOptions {
    */
   strongModel?: () => string
   /**
-   * Test / experiment only: replace the SDK's `query()` (src/core/claude-scripted.ts plays scripted SDK message
+   * Test / experiment only: replace the SDK's `query()` (src/test-support/executors/claude-scripted.ts plays scripted SDK message
    * streams through it — the reply-once harness can't `vi.mock` a module). Production omits this.
    */
   queryImpl?: typeof query
