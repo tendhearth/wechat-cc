@@ -7,9 +7,10 @@
  * 方法也比(以前从源码抓路径字面量,只比得了路径)。
  */
 import { describe, it, expect, afterAll } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { ROUTES } from '@wechat-cc/protocol/routes'
 import { PHONE_ROUTES, PHONE_TOPICS, phoneTopicAllowed } from '../src/daemon/phone-routes'
 import { makePhoneTopicSources } from '../src/daemon/phone-topic-sources'
@@ -83,5 +84,18 @@ describe('PHONE_TOPICS 与手机事件来源对得上', () => {
     for (const [i, source] of sources.entries()) {
       expect(samples.some(t => source.match(t)), `source #${i}`).toBe(true)
     }
+  })
+})
+
+/**
+ * 手机这边的处理器只经路由表分发(F2):settings-panel 里不许再手写 `url.pathname === '/…'` 分支绕过表 ——
+ * 上面的双向核对只看得见表里的键,看不见表外的分支。只留两处:鉴权失败时给哪一页(/m 的开机页、/set 的过期页),
+ * 那时还没有合法令牌,查不了表。
+ */
+describe('settings-panel 不在表外手写手机路由', () => {
+  it('url.pathname === 只出现在两处鉴权失败页', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'daemon', 'settings-panel.ts'), 'utf8')
+    const hits = [...src.matchAll(/url\.pathname === '([^']+)'/g)].map(m => m[1])
+    expect(hits.sort()).toEqual(['/m', '/set'])
   })
 })
