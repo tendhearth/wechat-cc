@@ -17,18 +17,11 @@ import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../core/matters/service'
 import type { MemoryNightlyRuntime } from '../../features/memory'
 import { loadCompanionConfig } from '../companion/config'
-import { makePhoneChatId, makePhoneOwner } from '../mobile-chat'
-import { makePhoneChat } from '../phone-chat'
-import { makePhoneEventsWiring } from '../phone-topic-sources'
-import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
-import { makePhonePush } from '../phone-push'
-import { fanoutPush, makePhoneNotifier } from '../phone-notifier'
+import { makePhoneChatId, makePhoneOwner, makePhoneChat, makePhoneEventsWiring, resolveRemoteRelays, mergeOnlineDevices, makePhonePush, fanoutPush, makePhoneNotifier, deviceIdOf, currentPhoneClient, loadTunnelClient } from '../../features/phone'
 import { makePushGate } from '../speech/push-gate'
 import { makeAppChannel } from '../companion/app-channel'
 import { makeMediaMirror } from '../companion/media-mirror'
-import { deviceIdOf } from '../device-store'
 import type { makeMatterActivity } from '../matter-activity'
-import { currentPhoneClient } from '../phone-client'
 import { makePhoneLifecycle } from './phone-lifecycle'
 import { wireSettingsPanel, type WireSettingsPanelDeps } from './wire-settings-panel'
 import type { CompanionConverse } from './wire-converse'
@@ -69,8 +62,8 @@ const remoteTunnel = relays?.remoteInfo ?? null
 // 推送(中继 v2):先建,面板与隧道都要它;发送走 v2 隧道客户端(稍后才建 —— 懒绑定)。
 // 手机那一簇关机时要停的东西(重构第二批步 6d):main.ts 在 polling 之前登记 ⇒ 倒序时入站先停,App 在途回复还能经隧道送完。
 const phoneLc = makePhoneLifecycle((tag, line) => log(tag, line))
-let v2Tunnel: import('../tunnel-client').TunnelClient | null = null
-let legacyTunnel: import('../tunnel-client').TunnelClient | null = null
+let v2Tunnel: import('../../features/phone').TunnelClient | null = null
+let legacyTunnel: import('../../features/phone').TunnelClient | null = null
 let notifier: { refresh(): void } | null = null
 // 面板在下面才建(它要 phonePush 当值):经 late.panel 读,没建好 ⇒ 当没有设备(见 PR #492 的 null 行为表)。
 const phonePush = relays?.v2 ? makePhonePush({
@@ -87,7 +80,7 @@ const onlineDevices = () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTo
 // 推送本身(在线的跳过、失败只记日志)。这个文件里只有这一处调 fanoutPush;用它的三处:
 //  - App 主动通道(companionApp.push):只在 proactive-channel 那一轮收尾时推,那一轮已经过了门(say);
 //  - 工作台通知(phone-notifier)、终端会话(features/terminal/app-push 的 appPush):由状态变化直接触发 ⇒ 先过 pushGate 问门。
-const fanout = (p: import('../phone-push').PushPayload) =>
+const fanout = (p: import('../../features/phone').PushPayload) =>
   phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
 const pushGate = makePushGate({ speech, ownerChatId, push: fanout, log: (tag, line) => log(tag, line) })
 phoneLc.add('push-gate', () => pushGate.stop())
@@ -99,7 +92,7 @@ const appPush: import('../../features/terminal').AppPushOutlet = (p) => (phonePu
 // 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B。
 const phoneChatId = makePhoneChatId({ ownerChatId, converseChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null, log: (tag, line) => log(tag, line) })
 const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters, origin: currentPhoneClient }) : null
-let phoneEvents: import('../phone-events').PhoneEvents | null = null
+let phoneEvents: import('../../features/phone').PhoneEvents | null = null
 // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:
 // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
 const phoneChat = phoneOwner ? makePhoneChat({
@@ -164,7 +157,7 @@ if (relays) {
     log: (tag, line) => log(tag, line),
   })
   phoneEvents = phone.events
-  import('../tunnel-client').then(({ makeTunnelClient }) => {
+  loadTunnelClient().then(({ makeTunnelClient }) => {
     // 关机先到、隧道后建:不再连上去
     if (phoneLc.stopped()) { phone.dispose(); return }
     const common = {

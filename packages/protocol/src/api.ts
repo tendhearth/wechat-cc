@@ -12,7 +12,7 @@
  * 只两类路由没有形状:`GET /set`、`GET /m` 回 HTML,不是 JSON;登记在
  * `PHONE_HTML_ROUTES`,由 daemon 那边的守卫测试显式排除并核对理由。
  *
- * `PHONE_API_SCHEMAS` 用 `"METHOD /path"` 精确键,跟 `src/daemon/phone-routes.ts`
+ * `PHONE_API_SCHEMAS` 用 `"METHOD /path"` 精确键,跟 `src/features/phone/phone-routes.ts`
  * 的 `PHONE_ROUTES` 同一个键形状(含 `GET /m/api/sticker/` 这个前缀键 —— schema
  * 只覆盖它 `?b64=1` 的 JSON 形式,裸图片二进制不是 JSON,不在这里管)。
  *

@@ -8,9 +8,7 @@
  * 信是私事:只给设备令牌(配过对的主人手机);/set 链接令牌(10 分钟、可能随 URL 外泄)不在册(phone-routes.ts 的
  * LINK_ROUTES 拿掉了这两条)。手机只给 id + 页码,路径永远在 daemon 这边拼、只认存档里的形状。正文不进日志。
  */
-import { framedTooLarge } from '../../daemon/mobile-matter-response'
-import { fileChunkResponse } from '../../daemon/mobile-chat'
-import { ownsMethod, type PhoneRouteTable } from '../../daemon/phone-route-table'
+import { framedTooLarge, fileChunkResponse, ownsMethod, type PhoneRouteTable } from '../phone'
 import type { LetterListItem } from './archive'
 
 export interface MobileLettersDeps {

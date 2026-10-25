@@ -1,5 +1,5 @@
 /**
- * 手机订阅主题的数据形状(与 src/daemon/phone-topic-sources.ts 的四个来源一一对应)。
+ * 手机订阅主题的数据形状(与 src/features/phone/phone-topic-sources.ts 的四个来源一一对应)。
  * 事件只带小摘要与版本号,大内容照旧用 req 拉。daemon 的测试拿真实快照对着这里 parse,防漂移。
  */
 import z from 'zod'

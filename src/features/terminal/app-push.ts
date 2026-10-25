@@ -18,7 +18,11 @@
 import type { CliPushItem } from '../../core/cli-events'
 import type { CliPermissionRequest } from '../../core/cli-permission-relay'
 import type { PendingPermissionMeta, PermissionDecision } from '../../daemon/pending-permissions'
-import type { PushPayload } from '../../daemon/phone-push'
+import type { PushPlaintextT } from '@wechat-cc/protocol'
+
+// 推送的形状直接按协议包(和 features/phone 的 PushPayload 是同一个定义):手机的 /m/api/cli/* 处理器要终端会话的类型,
+// 这里再 import 手机功能就成环(A5 · 手机)。
+type PushPayload = Omit<PushPlaintextT, 'ts'>
 
 /** app 认这个前缀:后面是终端会话 id;空 ⇒ 去「一起做」的终端列表。 */
 export const CLI_PUSH_TASK_PREFIX = 'cli:'

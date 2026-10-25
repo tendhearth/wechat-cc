@@ -38,7 +38,7 @@ export type PushKindT = z.infer<typeof PushKind>
 
 /**
  * `openPush` 解开之后的明文形状。`openPush` 只校验 `ts`(时间窗),其余字段由
- * 收方再过一遍这个 schema;daemon 这头也按它组装(src/daemon/phone-push.ts)。
+ * 收方再过一遍这个 schema;daemon 这头也按它组装(src/features/phone/phone-push.ts)。
  */
 export const PushPlaintext = z.object({
   ts: z.number(),

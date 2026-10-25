@@ -90,7 +90,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 
 桌面 `/v1/*`、手机 `/m/*`、设置页 `/set/*` 都一样:**在 `packages/protocol/src/routes.ts` 加一行,跑 `bun run gen:routes`**,生成物 `apps/desktop/src-tauri/generated/workbench-routes.json` 一起提交。档位、operator 等令牌的放行、打包版 / dev 代理白名单、手机链接令牌能不能走,都写在那一行里;daemon 的 `ROUTE_MIN_TIER`、`routeAllow`、`PHONE_ROUTES`、`LINK_*` 和 lib.rs / `workbench-proxy.ts` 都从它推出来。字段说明在文件头,规矩见 [rules-from-real-machines.md](rules-from-real-machines.md#路由登记)。
 
-**链接令牌(`/set` 链接里 10 分钟的 `t…`)的范围 = 链接页面实际调用的路由**(架构复查 10-21 理念 2「权限跟着入口走」)。链接页面是手机网页 `apps/mobile/src`、设置页 `src/daemon/settings-panel-html.ts`、中继壳页 `relay/pset.src.html`,外加 App 与 `selftest phone` 配对那一步;`scripts/link-routes-from-source.guard.test.ts` 扫这些源码,要求 routes.ts 里 `link: 'read' | 'write'` 的集合与扫出来的**相等**,不靠人逐条判「这条算不算私事」。所以:
+**链接令牌(`/set` 链接里 10 分钟的 `t…`)的范围 = 链接页面实际调用的路由**(架构复查 10-21 理念 2「权限跟着入口走」)。链接页面是手机网页 `apps/mobile/src`、设置页 `src/features/phone/settings-panel-html.ts`、中继壳页 `relay/pset.src.html`,外加 App 与 `selftest phone` 配对那一步;`scripts/link-routes-from-source.guard.test.ts` 扫这些源码,要求 routes.ts 里 `link: 'read' | 'write'` 的集合与扫出来的**相等**,不靠人逐条判「这条算不算私事」。所以:
 - **给链接页面加一条调用:先写进页面,守卫会红着告诉你去 routes.ts 开哪一行(写 `reason`)。**页面删掉一处调用,守卫也会红着让你把那条收成 `'none'`。
 - 页面里只在设备令牌下才走的调用(`isDevice` 分支),在调用前紧挨着写 `/* link-scan: device-only */`,不计入链接范围。
 - 扫描器认不出的调用形状(路径先放进变量、`method` 不是字面量……)直接报错,不会静默跳过;认得哪些形状写在 `scripts/link-routes-scan.ts` 文件头。

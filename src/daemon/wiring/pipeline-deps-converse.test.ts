@@ -20,7 +20,7 @@ import type { AppTurn } from '../inbound/build'
 import { scopedReply } from '../inbound/reply-scope'
 import { makeMessagesStore } from '../../lib/messages-store'
 import type { StickerLib } from '../../features/stickers'
-import { withPhoneClient } from '../phone-client'
+import { withPhoneClient } from '../../features/phone/phone-client'
 
 // Task 2 HIGH-severity fix (app-conversation-channel spec §3): companionConverse
 // must refuse to start an app turn while a WeChat turn is already in flight on

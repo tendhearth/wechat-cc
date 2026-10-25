@@ -71,6 +71,6 @@ interface ProtocolSocket {
 
 ## 后台侧对应
 
-- 协商与串行开流:`src/daemon/tunnel-client.ts`、`tunnel-v2-stream.ts`(握手/识别设备/`channel.open` 串行,`req` 并发处理)。
-- 订阅主题:`src/daemon/phone-events.ts` + `phone-topic-sources.ts`,白名单 `PHONE_TOPICS`(`src/daemon/phone-routes.ts`)。
+- 协商与串行开流:`src/features/phone/tunnel-client.ts`、`tunnel-v2-stream.ts`(握手/识别设备/`channel.open` 串行,`req` 并发处理)。
+- 订阅主题:`src/features/phone/phone-events.ts` + `phone-topic-sources.ts`,白名单 `PHONE_TOPICS`(`src/features/phone/phone-routes.ts`)。
 - 真机闭环:`wechat-cc selftest phone`(见 `docs/maintainer/verify.md`)。

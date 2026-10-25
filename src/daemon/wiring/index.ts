@@ -33,7 +33,7 @@ export interface WireMainOpts {
   /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
   cliSessions?: () => import('../../adapters/store/cli-session-store').CliSessionView[]
   /** 「CC 做过的事」(B9):透传给手机面板。 */
-  activity?: import('../mobile-activity').MobileActivityDeps
+  activity?: import('../../features/phone').MobileActivityDeps
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../../features/terminal').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
@@ -150,7 +150,7 @@ export interface WiredDeps {
   /** 「CC 的连接」快照(缓存 10 s);main.ts setConnections 到 internal-api。 */
   connections: () => import('../connections').ConnectionsSnapshot
   /** 桌面「连接手机」;main.ts setPhoneConnect 到 internal-api。 */
-  phoneConnect: import('../internal-api/types').PhoneConnectDep
+  phoneConnect: import('../../features/phone').PhoneConnectDep
   /** 手机 app 原生推送出口(pipeline-deps 造);main.ts 接给终端会话推送。 */
   appPush: import('../../features/terminal').AppPushOutlet
   /**

@@ -1,6 +1,6 @@
 /**
  * client.test.ts — 协议客户端对着进程内假后台跑。假后台只用协议包自己的
- * 加密(x25519 + v1 / v2 密封),行为照 src/daemon/tunnel-client.ts:收
+ * 加密(x25519 + v1 / v2 密封),行为照 src/features/phone/tunnel-client.ts:收
  * `{hs}` 回 `{hs}`(v2 后台多带 `v:2`),凭设备令牌推的密钥认人,认不出就
  * 明文回 `{error:'auth_failed'}`。
  *

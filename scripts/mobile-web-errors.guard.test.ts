@@ -25,7 +25,7 @@ import { workbenchErrorHttp } from '../packages/protocol/src/workbench-errors'
 import { assembleMobilePage } from '../apps/mobile/assemble'
 import { readMobileSource } from '../apps/mobile/sources'
 import { scanSource } from './link-routes-scan'
-import { PHONE_ROUTES } from '../src/daemon/phone-routes'
+import { PHONE_ROUTES } from '../src/features/phone/phone-routes'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 // Windows 检出是 CRLF(autocrlf):统一成 \n 再切片,不然 '\n}\n' 这类边界找不到(#526 Windows CI)
@@ -42,7 +42,7 @@ function slice({ file, from, to }: Slice): string {
   return src.slice(start, end)
 }
 
-const SP = 'src/daemon/settings-panel.ts'
+const SP = 'src/features/phone/settings-panel.ts'
 /** 面板处理器表(F2)里一条的开头;下一条的开头就是这一条的结尾。 */
 const entry = (key: string) => `'${key}': `
 const NEXT_ROUTE = "\n    '"
@@ -63,14 +63,14 @@ const ROUTE_CODES: Record<string, RouteCodes> = {
     direct: ['matters_not_wired', 'invalid', 'matter_not_found', 'unavailable', 'detail_too_large'],
     slices: [
       { file: SP, from: entry('GET /m/api/matter'), to: NEXT_ROUTE },
-      { file: 'src/daemon/mobile-matter-response.ts', from: 'export function mobileMatterDetailResponse', to: '\n}\n' },
+      { file: 'src/features/phone/mobile-matter-response.ts', from: 'export function mobileMatterDetailResponse', to: '\n}\n' },
     ],
   },
   'POST /m/api/matter/stop': {
     direct: ['method_not_allowed'],
     thrown: ['invalid_request', 'workbench_not_wired', 'invalid_matter_id', 'matter_not_found', 'matter_task_required', 'input_stale', 'control_stale'],
     slices: [
-      { file: 'src/daemon/mobile-workbench.ts', from: 'const stop=route(', to: 'const runRoute=' },
+      { file: 'src/features/phone/mobile-workbench.ts', from: 'const stop=route(', to: 'const runRoute=' },
       { file: 'src/core/matters/service.ts', from: 'const require=', to: 'const current=' },
       { file: 'src/core/matters/service.ts', from: 'async stop(id,runId){', to: 'answer(' },
       { file: 'src/core/workbench/service/lifecycle.ts', from: 'async function cancel(', to: 'function shutdown' },

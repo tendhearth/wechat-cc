@@ -11,7 +11,7 @@ apps/desktop/src/shared/task-entry-contract.js text eol=lf
 apps/desktop/src/shared/agent-avatars.js text eol=lf
 apps/desktop/src/shared/agent-avatars.css text eol=lf
 apps/desktop/src/vendor/markdown.js text eol=lf
-src/daemon/mobile-page.generated.json text eol=lf
+src/features/phone/mobile-page.generated.json text eol=lf
 
 # 公网中继壳页(手机协议包 v2 Task 4):relay/pset.html 是从 relay/pset.src.html
 # 生成的,apps/mobile/build.test.ts 同理按整份文本比对,同上理由钉死 LF。

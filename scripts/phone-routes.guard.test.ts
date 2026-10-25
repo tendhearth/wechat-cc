@@ -1,8 +1,8 @@
 /**
  * 手机面板路由的**接缝守卫**(梳理第 6 步,2026-09-29;F2 起对着处理器表核对)。
  *
- * 面板的令牌带 routeAllow(`src/daemon/phone-routes.ts` 的 PHONE_ROUTES,从路由表 ROUTES 推出来);处理器登记在
- * `settings-panel.ts` 合成的那张 `"METHOD /path"` 表里(面板自己几条 + 各 mobile-*.ts 导出的表)。两边各写各的,
+ * 面板的令牌带 routeAllow(`src/features/phone/phone-routes.ts` 的 PHONE_ROUTES,从路由表 ROUTES 推出来);处理器登记在
+ * `settings-panel.ts` 合成的那张 `"METHOD /path"` 表里(面板自己几条 + 各 mobile-*.ts 导出的表 + 别的功能经 `featureRoutes` 交来的表)。两边各写各的,
  * 漏登记的症状是「新加的手机功能一律 403 route_not_allowed」或「在册却 404」。这里拿真表的键和路由表双向比 ——
  * 方法也比(以前从源码抓路径字面量,只比得了路径)。
  */
@@ -12,9 +12,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '@wechat-cc/protocol/routes'
-import { PHONE_ROUTES, PHONE_TOPICS, phoneTopicAllowed } from '../src/daemon/phone-routes'
-import { makePhoneTopicSources } from '../src/daemon/phone-topic-sources'
-import { makeSettingsPanel } from '../src/daemon/settings-panel'
+import { PHONE_ROUTES, PHONE_TOPICS, phoneTopicAllowed } from '../src/features/phone/phone-routes'
+import { makePhoneTopicSources } from '../src/features/phone/phone-topic-sources'
+import { makeSettingsPanel } from '../src/features/phone/settings-panel'
+import { mobileLettersRoutes } from '../src/features/letters'
+import { mobileJobsRoutes } from '../src/features/jobs'
 
 const diff = (a: Iterable<string>, b: ReadonlySet<string>) => [...a].filter(k => !b.has(k)).sort()
 
@@ -25,6 +27,8 @@ describe('手机面板处理器表与路由表对得上', () => {
   const panel = makeSettingsPanel({
     stateDir, ownerChatId: () => null, chatPrefs: { get: () => ({}), set: () => ({}) },
     getUserName: () => null, setUserName: async () => {}, log: () => {},
+    // 别的功能交来的表(A5 · 手机起不再由面板 import):和生产里 wire-settings-panel 交的是同一组,缺 deps 照样登记键
+    featureRoutes: [mobileLettersRoutes(undefined), mobileJobsRoutes(undefined)],
   })
   const keys = new Set(panel.routeKeys())
   /** 路由表里属于面板的路径(/m、/m/…、/set、/set/…),不管带没带 phone / set 块。 */
@@ -43,7 +47,7 @@ describe('手机面板处理器表与路由表对得上', () => {
 })
 
 /**
- * 事件主题(第 9 步,`src/daemon/phone-events.ts` 的 `subscribe`)的双向核对:
+ * 事件主题(第 9 步,`src/features/phone/phone-events.ts` 的 `subscribe`)的双向核对:
  * `PHONE_TOPICS` 里的每个名字都要被 `phoneTopicAllowed` 接受,几个有代表性的坏主题
  * 都要被拒。"每个主题都有登记的来源、每个来源都对得上主题" 在下一块(第 11 步真来源接上后)。
  */
@@ -66,7 +70,7 @@ describe('PHONE_TOPICS 与 phoneTopicAllowed 对得上', () => {
 })
 
 /**
- * 主题 ↔ 来源(第 11 步,`src/daemon/phone-topic-sources.ts`)的双向核对:在册的每个主题恰好
+ * 主题 ↔ 来源(第 11 步,`src/features/phone/phone-topic-sources.ts`)的双向核对:在册的每个主题恰好
  * 一个来源认领(集线器按 find 取第一个,两个来源抢同一主题说明有一个永远不会被调用);每个
  * 来源至少认领一个在册主题(否则是死代码,或者主题忘了登记 ⇒ 手机订阅一律 topic_not_allowed)。
  * 只用 match(),不调 snapshot(),所以依赖给空壳就行。
@@ -94,7 +98,7 @@ describe('PHONE_TOPICS 与手机事件来源对得上', () => {
  */
 describe('settings-panel 不在表外手写手机路由', () => {
   it('url.pathname === 只出现在两处鉴权失败页', () => {
-    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'daemon', 'settings-panel.ts'), 'utf8')
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'features', 'phone', 'settings-panel.ts'), 'utf8')
     const hits = [...src.matchAll(/url\.pathname === '([^']+)'/g)].map(m => m[1])
     expect(hits.sort()).toEqual(['/m', '/set'])
   })

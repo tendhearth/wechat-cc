@@ -56,6 +56,7 @@ import { atelierFeature } from '../features/atelier'
 import { journalFeature } from '../features/journal'
 import { huntFeature } from '../features/hunt'
 import { voiceFeature } from '../features/voice'
+import { phoneFeature } from '../features/phone'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { calendarFeature, type CalendarFeature } from '../features/calendar'
 import { fromReplyHandler } from './commands/registry'
@@ -282,6 +283,17 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     voiceFeature({
       needs: ['ilink-adapter'],
       deps: (ctx) => ({ voice: ctx.get<IlinkAdapter>('ilink-adapter').voice }),
+    }),
+
+    // 手机:一个功能一个目录(src/features/phone)。这里只挂桌面「连接手机」那两条 `/v1/phone/*`,紧跟 internal-api(以前随 internal-api
+    // 一起就在);出码要的设置面板在 wired 里建(手机那一簇的装配还在 wiring/wire-phone.ts)⇒ 经 lazy 现取,没建好照旧 503 phone_not_wired。
+    phoneFeature({
+      needs: [],
+      lazy: ['wired'],
+      deps: (ctx) => {
+        const wired = ctx.late<WiredDeps>('wired')
+        return { phoneConnect: () => wired()?.phoneConnect ?? null, log: (t, l) => log(t, l) }
+      },
     }),
 
     // —— 贴纸:一个功能一个目录(src/features/stickers);路由自己挂。表情库全 daemon 一份,bootstrap(提示词)和 wired 都要它 ——
@@ -549,7 +561,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         internalApi.provide({ petTurn: wired.petTurn })
         internalApi.provide({ settingsLink: wired.settingsPanelLink })
         internalApi.provide({ connections: wired.connections })
-        internalApi.provide({ phoneConnect: wired.phoneConnect })
         // 「一件事」活动时间:先于工作台停,退订 changes + 清节流定时器。
         ctx.own('matter-activity', async () => wired.stopMatterActivity())
         // 手机那一簇(隧道 / notifier / 订阅 / 设置面板):比 polling 晚停 ⇒ 入站先停,App 在途的回复还能经隧道送完。

@@ -17,7 +17,7 @@
 import type { MessageRecord } from '../../lib/messages-store'
 import type { TurnAttachment } from '../../domain/turn-reply'
 import { projectReplyExtras, type AppAttachment } from '../app-reply'
-import type { PushPayload } from '../phone-push'
+import type { PushPayload } from '../../features/phone'
 import type { AppChannel } from './proactive-channel'
 import { attachmentRow } from './media-mirror'
 

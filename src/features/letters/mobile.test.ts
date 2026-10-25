@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mobileLettersRoutes, type MobileLettersDeps } from './mobile'
-import { routePhone } from '../../daemon/phone-route-table'
-import { framedTooLarge } from '../../daemon/mobile-matter-response'
+import { routePhone } from '../phone/phone-route-table'
+import { framedTooLarge } from '../phone/mobile-matter-response'
 import type { LetterListItem } from './archive'
 
 const req = (path: string, method = 'GET') => { const url = new URL(`http://x${path}`); return { url, req: new Request(url, { method }) } }

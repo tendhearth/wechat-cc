@@ -4,7 +4,7 @@
 
 > **2026-10-21 收敛 5b 之后网页只剩三样**:配对、此刻(CC 亮不亮 + 一行状态 +「电脑连不上」+ 只看的「等你」卡)、一起做(列表 + 只看状态的详情 +「停下」),外加右上角「设置」。下文的回忆、待办、画像、表情、CC 眼中的你、交办、接着说、审批 / 回答、成果预览、额度交接、终端会话、项目经验、电脑会话都已从网页删掉,在手机 App 和桌面上;`/m/api/feed`、`/m/api/art/blink`、三条 `/m/api/lessons` 连路由删了。见[收敛清单](../convergence-list-2026-10-21.md)。
 
-> 2026-09-24 起页面源码在 [`apps/mobile/src`](../../apps/mobile/README.md),改完跑 `bun run build:mobile`;daemon 只读生成物 `src/daemon/mobile-page.generated.json`。下文提到的 `mobile-presence-view` / `mobile-workbench-client` 已并入 `apps/mobile/src/presence.*` / `workbench.js`,测试改名为 `mobile-page-presence` / `mobile-page-workbench`。
+> 2026-09-24 起页面源码在 [`apps/mobile/src`](../../apps/mobile/README.md),改完跑 `bun run build:mobile`;daemon 只读生成物 `src/features/phone/mobile-page.generated.json`。下文提到的 `mobile-presence-view` / `mobile-workbench-client` 已并入 `apps/mobile/src/presence.*` / `workbench.js`,测试改名为 `mobile-page-presence` / `mobile-page-workbench`。
 
 ## 页面和数据
 

@@ -2,7 +2,6 @@ import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'
 import { mattersRoutes } from './routes-matters'
 import { connectionsRoutes } from './routes-connections'
-import { phoneRoutes } from './routes-phone'
 /**
  * Route table for internal-api. Returns the full Record<"METHOD /path", handler>
  * given a deps closure + a `getDelegate` accessor (for late-binding via
@@ -78,7 +77,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     ...workbenchRoutes(deps),
     ...mattersRoutes(deps),
     ...connectionsRoutes(deps),
-    ...phoneRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
       body: {

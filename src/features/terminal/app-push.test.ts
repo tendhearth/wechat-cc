@@ -4,7 +4,7 @@ import { makeCliPermissionRelay, type CliPermissionRelay } from '../../core/cli-
 import { buildCliPushPayload, cliPushTaskId, makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './app-push'
 import { makeCliPhoneActions } from './phone-actions'
 import { PendingPermissions } from '../../daemon/pending-permissions'
-import type { PushPayload } from '../../daemon/phone-push'
+import type { PushPayload } from '../phone/phone-push'
 
 /**
  * 终端会话推到手机 app(2026-10-14):与微信并列的第二个出口。推送与微信都是假的;

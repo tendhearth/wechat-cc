@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProactiveOutbound } from '../companion/proactive-channel'
-import type { PushPayload } from '../phone-push'
+import type { PushPayload } from '../../features/phone/phone-push'
 import { makeSpeechPolicy, type SpeechLedgerEntry } from './policy'
 import { makePushGate } from './push-gate'
 

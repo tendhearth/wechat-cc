@@ -55,7 +55,7 @@ try {
 await copyFile(resolve(desktop, 'src-tauri/icons/128x128@2x.png'), resolve(desktop, 'src/wechat-cc-logo.png'))
 await copyFile(resolve(desktop, 'src-tauri/icons/icon.png'), resolve(desktop, 'wechat-cc-logo.png'))
 // Embed the same logo for the phone route; compiled sidecars have no source tree.
-await writeFile(resolve(desktop, '../../src/daemon/mobile-brand-icon.json'), JSON.stringify({
+await writeFile(resolve(desktop, '../../src/features/phone/mobile-brand-icon.json'), JSON.stringify({
   source: 'apps/desktop/src/wechat-cc-logo.png',
   pngBase64: (await readFile(resolve(desktop, 'src/wechat-cc-logo.png'))).toString('base64'),
 }, null, 2) + '\n')

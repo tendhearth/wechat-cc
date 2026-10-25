@@ -5,8 +5,8 @@
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
-import { MOBILE_TOKENS_CSS, mobilePhoneHtml, MOBILE_BOOTSTRAP_HTML } from './mobile-page'
-import { pageHtml, EXPIRED_HTML } from './settings-panel-html'
+import { MOBILE_TOKENS_CSS, mobilePhoneHtml, MOBILE_BOOTSTRAP_HTML } from '../features/phone/mobile-page'
+import { pageHtml, EXPIRED_HTML } from '../features/phone/settings-panel-html'
 import { renderTokensCss } from '../../packages/design-tokens/src/index'
 
 const LEGACY = ['#f5ead8', '#5a3f2d', '#8b5e3c', '#b0563a', 'rgba(176,86,58', 'rgba(89,63,44', '#d8c6ae']

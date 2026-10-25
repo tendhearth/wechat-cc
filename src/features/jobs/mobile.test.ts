@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mobileJobsRoutes, type MobileJobsDeps } from './mobile'
-import { routePhone } from '../../daemon/phone-route-table'
+import { routePhone } from '../phone/phone-route-table'
 
 const call = async (deps: MobileJobsDeps | undefined, path: string, method = 'GET', body?: unknown) => {
   const url = new URL(`http://x${path}`)

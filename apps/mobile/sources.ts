@@ -3,7 +3,7 @@ import { renderTokensCss } from '../../packages/design-tokens/src/index'
 
 export const MOBILE_SRC = new URL('./src/', import.meta.url)
 /** daemon 吃的生成物;与 mobile-presence-art.json 同理 —— 编译后的 sidecar 没有源码树。 */
-export const MOBILE_PAGE_OUT = new URL('../../src/daemon/mobile-page.generated.json', import.meta.url)
+export const MOBILE_PAGE_OUT = new URL('../../src/features/phone/mobile-page.generated.json', import.meta.url)
 
 /**
  * transport.js(与 relay/pset.src.html)里协议 IIFE 该嵌入的地方。手机协议包

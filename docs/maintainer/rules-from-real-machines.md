@@ -25,7 +25,7 @@
 
 ## 路由登记
 
-新加一条路由(桌面 `/v1/*`、手机 `/m/*`、设置页 `/set/*` 都一样):**在 `packages/protocol/src/routes.ts` 加一行,跑 `bun run gen:routes`**(重构第二批 5a,2026-10-20)。处理器照旧写在 `routes-*.ts` / `settings-panel.ts` / `mobile-*.ts`,两边都是 `"METHOD /path"` 键的表项(手机侧 F2 起,`src/daemon/phone-route-table.ts`;漏写处理器 `scripts/phone-routes.guard.test.ts` 会红)。
+新加一条路由(桌面 `/v1/*`、手机 `/m/*`、设置页 `/set/*` 都一样):**在 `packages/protocol/src/routes.ts` 加一行,跑 `bun run gen:routes`**(重构第二批 5a,2026-10-20)。处理器照旧写在 `routes-*.ts` / `settings-panel.ts` / `mobile-*.ts`,两边都是 `"METHOD /path"` 键的表项(手机侧 F2 起,`src/features/phone/phone-route-table.ts`;漏写处理器 `scripts/phone-routes.guard.test.ts` 会红)。
 
 - 桌面这一端写 `desktop: { tier, tokens?, tauri?, devProxy? }`:`tokens: ['operator']` 就是以前 token-registry 的 `routeAllow`;`tauri: true` 是打包版宿主代理(lib.rs)放行,`devProxy: true` 是浏览器预览的 dev 代理放行。lib.rs 与 `workbench-proxy.ts` 都读生成的 `apps/desktop/src-tauri/generated/workbench-routes.json`,不再手写名单。
 - 手机 / 设置页这一端写 `phone` / `set: { link: 'none' | 'read' | 'write', reason? }`:`none` = 只给配过对的设备;链接令牌能走的要写一句理由。`link` 不是自己挑的:它必须等于链接页面源码里扫出来的调用(`scripts/link-routes-from-source.guard.test.ts`,理念 2)—— 新路由给 App 用就写 `'none'`;要让链接页面调,先改页面,守卫告诉你开哪一行。
