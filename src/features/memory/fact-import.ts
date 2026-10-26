@@ -20,6 +20,7 @@ import { MEMORY_SECTIONS, factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFac
 import { MIN_RETRACTED_CHARS, markWrittenBack, normalizeCorrectionsText, normalizeFactText, placeholderTombstone, renderCorrectionsMd, retractedTextSet, tombstonesFromCorrections } from '../../domain/memory/corrections'
 import { EXPORT_NOTICE, renderMemoryForPrompt, renderMemoryMd, renderOwnerForPrompt, renderOwnerMd } from '../../domain/memory/render'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { correctedTexts } from '../../lib/memory-corrections'
 import { parseOwnerDoc, renderOwnerForPrompt as ownerPromptToday, serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
 import { parseMemoryDoc, renderForPrompt, serializeMemoryDoc, type MemoryDoc } from './curated-doc'
@@ -73,7 +74,7 @@ function withoutRetracted(doc: MemoryDoc, retracted: ReadonlySet<string>): { doc
  * 一个对话的磁盘文件 → 表(一个事务)。`now` 毫秒;`day` 是留档文件名里的日期。
  * 只在 daemon 的串行处调(开机、memory 模块之前);抛错 = 程序错,核对不过不抛、返回 mismatch。
  */
-export function importChatMemory(store: MemoryFactsStore, root: string, chatId: string, now: number, day: string): ImportOutcome {
+export function importChatMemory(store: MemoryFactsStore, root: string, chatId: string, now: number, day: string, opts: { ownerChat?: boolean } = {}): ImportOutcome {
   const files = readMemoryFiles(root)
   const hash = filesHash(files)
   if (!hash) return { chatId, outcome: 'empty' }
@@ -81,7 +82,8 @@ export function importChatMemory(store: MemoryFactsStore, root: string, chatId: 
   if (prior === hash) return { chatId, outcome: 'unchanged' }
   // G4 起:磁盘上的 memory.md 和最后一次导出不一样、头部还带着「这是生成的」⇒ 是主人手改的,不当成源同步;
   // 交给每晚整理运行时的 reconcileHandEdit 按记忆编辑那张比对表变成更正 / 原话(主人 10-26 定)。
-  const lastExport = store.exportHash(chatId, 'memory.md')
+  // 只有主人的对话有人去核对手改(每晚整理运行时只管主人);别的对话(F6 起桌面能整份写别人的 memory.md)照文件同步。
+  const lastExport = opts.ownerChat ? store.exportHash(chatId, 'memory.md') : null
   if (lastExport && files['memory.md'] !== null && files['memory.md'].includes(EXPORT_NOTICE)
     && createHash('sha256').update(files['memory.md']).digest('hex') !== lastExport) return { chatId, outcome: 'hand_edited' }
 
@@ -144,10 +146,11 @@ export function importMemoryOnBoot(d: { store: MemoryFactsStore; stateDir: strin
   let names: string[] = []
   try { names = readdirSync(base).filter(n => !n.startsWith('.') && statSync(join(base, n)).isDirectory()) } catch { return [] }
   const nowMs = d.now(), day = new Date(nowMs).toISOString().slice(0, 10)
+  const owner = loadCompanionConfig(d.stateDir).default_chat_id
   const out: ImportOutcome[] = []
   for (const chatId of names) {
     try {
-      const r = importChatMemory(d.store, join(base, chatId), chatId, nowMs, day)
+      const r = importChatMemory(d.store, join(base, chatId), chatId, nowMs, day, { ownerChat: chatId === owner })
       out.push(r)
       if (r.outcome === 'imported') d.log('MEMORY_IMPORT', `${chatId}: ${r.first ? 'imported' : 'resynced'} (+${r.added} ~${r.updated} status ${r.statusChanged} gone ${r.gone})`)
       else if (r.outcome === 'mismatch') d.log('MEMORY_IMPORT', `${chatId}: NOT imported — ${r.what} differs (${r.diff}); stays on the file path, retried next boot`)
