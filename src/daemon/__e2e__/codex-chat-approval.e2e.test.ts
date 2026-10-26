@@ -68,7 +68,9 @@ async function withDaemon(command: string | { file: string }, finalText: string,
 const texts = (msgs: readonly OutboundMsg[], chatId = 'chat1') => msgs.filter(m => m.chatId === chatId && m.endpoint === 'sendmessage').map(m => m.text ?? '')
 const isCard = (t: string) => t.includes('Codex 想执行命令')
 
-describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍板卡)', () => {
+// 60s:每个用例都冷启动一个 daemon,第一个还要冷 import 整个 daemon;满载下超过全局的 30s,超时的用例的 daemon 还在跑,
+// 会和下一个用例的 daemon 抢同一份进程级状态(STATE_DIR、假 SDK 的剧本),连环红。
+describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍板卡)', { timeout: 60_000 }, () => {
   it('规则放:不弹卡,命令照跑,回复后面单独一行「按规则「…」放行了 …」', async () => {
     await withDaemon('ls', '列好了。', async (daemon, decision) => {
       daemon.sendText('chat1', '列一下目录')
