@@ -65,6 +65,7 @@ jobs:
               - 'packages/protocol/**'
             migrations:
               - 'src/lib/db/migrations/**'
+              - 'src/adapters/knowledge/migrations/**'
       # 只改了 Markdown(设计稿、手册、roadmap)⇒ code=false,构建和测试整块跳过。
       # 单独一步:`every` 是整个过滤器的量词,放进上面那份会把 relay 这种多条路径的过滤器变成「同时匹配」。
       # 没有测试读仓库里的 .md;以后有了,把那份文件从这里的排除里拿出来。

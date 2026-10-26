@@ -162,7 +162,7 @@ describe('matter origin (v77, 2026-10-19)',()=>{
       for(let i=0;i<76;i++)migrations[i]!(legacy)
       legacy.exec('PRAGMA user_version = 76;')
       legacy.query("INSERT INTO matters(id,kind,title,status,owner_chat_id,created_at,updated_at) VALUES('eeeeeeee','task','老的事','open','owner',1,1)").run()
-      runMigrations(legacy)
+      runMigrations(legacy, migrations)
       expect((legacy.query('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(migrations.length)
       const old=makeMatterStore(legacy).get('eeeeeeee')
       expect(old?.title).toBe('老的事')

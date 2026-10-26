@@ -4,7 +4,8 @@
  * 主人真机跑的就是 dev:一个迁移合进 dev、部署一次,就已经在他的库里跑过了。`PRAGMA user_version` 只记跑了几个,
  * 改一个已经跑过的迁移,对已过那一位的库毫无作用(v49 / v59 那次),还会让新库和老库的 schema 悄悄分叉。所以:
  *
- *   origin/dev 上 src/lib/db/migrations/ 里的每个 v*.ts,在这一版里必须还在、而且一字不差。只有新加的文件能改。
+ *   origin/dev 上 src/lib/db/migrations/ 里的每个 v*.ts(和三个迁移共用的 shared-ddl.ts),以及知识库四个库
+ *   src/adapters/knowledge/migrations/<库>/ 里的每个 v*.ts(架构终态 G1),在这一版里必须还在、而且一字不差。只有新加的文件能改。
  *
  * 紧急要改老迁移:PR 标题带 `[migration-edit]`、描述写理由 —— 放行,但把改了哪几个打出来。
  * 标题从环境变量 PR_TITLE 读(workflow 用 env 传,不在 run 里插值:标题是不可信输入)。
@@ -14,7 +15,15 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const DIR = 'src/lib/db/migrations'
+const DIRS = [
+  'src/lib/db/migrations',
+  'src/adapters/knowledge/migrations/source',
+  'src/adapters/knowledge/migrations/semantic',
+  'src/adapters/knowledge/migrations/graph',
+  'src/adapters/knowledge/migrations/facts',
+]
+/** 迁移本身(v*.ts),加上被冻结迁移调用的共用建表语句 —— 它变了,v056–v058 的内容就变了。 */
+const FROZEN_FILE = /^(v\d+|shared-ddl)\.ts$/
 const BASE = 'origin/dev'
 const git = (args: string[]) => spawnSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 
@@ -29,21 +38,21 @@ if (!hasBase) {
   process.exit(0)
 }
 
-const listed = git(['ls-tree', '--name-only', `${BASE}:${DIR}`])
-if (listed.status !== 0) {
-  // dev 上还没有这个目录(拆文件之前):没有已冻结的迁移
-  console.log(`migration-frozen:${BASE} 上还没有 ${DIR},没有需要冻结的迁移。`)
-  process.exit(0)
-}
-const frozen = listed.stdout.split('\n').filter(f => /^v\d+\.ts$/.test(f))
+const frozen: string[] = []
 const changed: string[] = []
-for (const f of frozen) {
-  const path = `${DIR}/${f}`
-  const onDev = git(['show', `${BASE}:${path}`])
-  if (onDev.status !== 0) { changed.push(`${path}(读不出 dev 上的版本)`); continue }
-  const local = join(process.cwd(), path)
-  if (!existsSync(local)) { changed.push(`${path}(被删掉或改名了)`); continue }
-  if (readFileSync(local, 'utf8') !== onDev.stdout) changed.push(path)
+for (const dir of DIRS) {
+  const listed = git(['ls-tree', '--name-only', `${BASE}:${dir}`])
+  // dev 上还没有这个目录(拆文件之前 / 这个库还没进迁移框架):没有已冻结的迁移
+  if (listed.status !== 0) continue
+  for (const f of listed.stdout.split('\n').filter(f => FROZEN_FILE.test(f))) {
+    const path = `${dir}/${f}`
+    frozen.push(path)
+    const onDev = git(['show', `${BASE}:${path}`])
+    if (onDev.status !== 0) { changed.push(`${path}(读不出 dev 上的版本)`); continue }
+    const local = join(process.cwd(), path)
+    if (!existsSync(local)) { changed.push(`${path}(被删掉或改名了)`); continue }
+    if (readFileSync(local, 'utf8') !== onDev.stdout) changed.push(path)
+  }
 }
 
 if (changed.length === 0) {

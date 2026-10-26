@@ -8,12 +8,18 @@
  *     少登记一个也红);
  *  3. 每个迁移文件只导出一个 `migration`。
  * 两路各自加了 v085.ts ⇒ git 报同名文件冲突(以前是数组末尾各加一项、git 静默合成 v85 / v86)。
+ * 知识库的四个库(架构终态 G1:source / semantic / graph / facts)各有一张迁移表,在 src/adapters/knowledge/migrations/<库>/,
+ * 同样钉这三件事(文件末尾那一段)。
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { migrations } from '../src/lib/db'
+import { migrations, type Migration } from '../src/lib/db'
+import { migrations as knowledgeSource } from '../src/adapters/knowledge/migrations/source'
+import { migrations as knowledgeSemantic } from '../src/adapters/knowledge/migrations/semantic'
+import { migrations as knowledgeGraph } from '../src/adapters/knowledge/migrations/graph'
+import { migrations as knowledgeFacts } from '../src/adapters/knowledge/migrations/facts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DIR = join(ROOT, 'src', 'lib', 'db', 'migrations')
@@ -57,3 +63,38 @@ describe('迁移一版一个文件:文件名 = 位置', () => {
     }
   })
 })
+
+const KNOWLEDGE: Array<[string, readonly Migration[]]> = [
+  ['source', knowledgeSource], ['semantic', knowledgeSemantic], ['graph', knowledgeGraph], ['facts', knowledgeFacts],
+]
+for (const [lib, list] of KNOWLEDGE) {
+  describe(`知识库 ${lib}.db 的迁移:文件名 = 位置`, () => {
+    const dir = join(ROOT, 'src', 'adapters', 'knowledge', 'migrations', lib)
+    const files = readdirSync(dir).filter(f => /^v\d+\.ts$/.test(f)).sort()
+    const index = readFileSync(join(dir, 'index.ts'), 'utf8')
+
+    it('the files are v001…vN with no gaps or duplicates, and N equals the list length', () => {
+      expect(files.length).toBeGreaterThan(0)
+      expect(files).toEqual(Array.from({ length: files.length }, (_, k) => `v${pad(k + 1)}.ts`))
+      expect(list.length).toBe(files.length)
+    })
+
+    it('index.ts lists them in order: the i-th entry is v{i}, imported from ./v{i}', () => {
+      const body = index.slice(index.indexOf('export const migrations'))
+      const entries = [...body.matchAll(/^\s+(v\d{3}),$/gm)].map(m => m[1])
+      expect(entries).toEqual(files.map(f => f.replace(/\.ts$/, '')))
+      const imports = [...index.matchAll(/^import \{ migration as (v\d{3}) \} from '\.\/(v\d{3})'$/gm)].map(m => [m[1], m[2]])
+      expect(imports.every(([as, from]) => as === from)).toBe(true)
+      expect(imports.map(([as]) => as)).toEqual(entries)
+    })
+
+    it('each migration file exports exactly one `migration` and carries no test-accommodation guard', () => {
+      for (const f of files) {
+        const src = readFileSync(join(dir, f), 'utf8')
+        expect([...src.matchAll(/^export /gm)].length, f).toBe(1)
+        expect(src, f).toMatch(/^export const migration: Migration = /m)
+        expect(src, f).not.toMatch(/起跑的夹具|test harness|unit-test harnesses|单测库/)
+      }
+    })
+  })
+}
