@@ -82,6 +82,15 @@ export function renderCorrectionsMd(tombstones: readonly RenderableTombstone[]):
     .map(t => `${correctionLine(t)}\n${t.notes.join('')}`).join('')
 }
 
+/** 行里正文等于某条收回的话(规范化、够长)的记忆条目 ⇒ 状态改成 retracted(导入与写者落库共用:写回的旧话进表就是收回的)。 */
+export function markWrittenBack<T extends { key: string; text: string; status: string }>(rows: readonly T[], retracted: ReadonlySet<string>): T[] {
+  return rows.map(r => {
+    if (!(r.key.startsWith('m:') || r.key.startsWith('u:')) || r.status !== 'active') return r
+    const n = normalizeFactText(r.text)
+    return [...n].length >= MIN_RETRACTED_CHARS && retracted.has(n) ? { ...r, status: 'retracted' } : r
+  })
+}
+
 /** 拿来比对的收回名单(规范化后、够长的):整理丢写回、导入判「写回的旧话」、出口过滤都用这一份。 */
 export function retractedTextSet(tombstones: ReadonlyArray<{ kind?: string | null; text: string }>): Set<string> {
   const s = new Set<string>()

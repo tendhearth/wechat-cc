@@ -15,6 +15,7 @@ import { readJsonFile } from '../../lib/read-json-file'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { isConnectFailure } from '../../lib/net-errors'
 import { providerErrorCodeOf } from '../../lib/provider-error-code'
+import type { MemoryWriter } from './memory-export'
 import { MEMORY_FILENAME, assignMissingIds, parseMemoryDoc, serializeMemoryDoc } from './curated-doc'
 import { applyNightly, parseOps, type NightlyOps } from './nightly-ops'
 import { composeNotice, noticeItems, type NightlyRunResult } from './nightly-notify'
@@ -52,6 +53,8 @@ export interface NightlyRunDeps {
   now: () => number
   newId: () => string
   log: (tag: string, line: string) => void
+  /** memory.md / owner.md / corrections.md 唯一的写者:先落表、再导出(架构终态 G4,./memory-export)。 */
+  writer: MemoryWriter
 }
 
 export const MEMORY_LOG_FILE = 'memory-log.jsonl'
@@ -341,7 +344,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
     }
     // 每晚整理:源里多了 / 整理了东西,旧总览只是不全 ⇒ 'added'(3e 记忆第 2 步)。先记过期再写源。
     invalidateDerivedMemory(root, 'added')
-    writeFileAtomic(memPath, serializeMemoryDoc(res.doc, nowIso))
+    deps.writer.commitMemory(owner, res.doc, { actor: 'nightly', ts: nowMs }, nowIso)
 
     // Only append expired-entry lines AFTER the rename succeeded — otherwise
     // a failure further down (or on a later retry re-expiring the same

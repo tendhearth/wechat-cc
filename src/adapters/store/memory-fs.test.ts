@@ -81,15 +81,6 @@ describe('MemoryFS', () => {
     expect(() => chatFs.write('owner.md', 'x')).toThrow(MemoryPathError)
   })
 
-  it('主人原话一写下,这个对话的生成物就过期(往藏的方向)', async () => {
-    const { derivedMemoryStatus } = await import('../../lib/memory-derived-state')
-    const { writeOwnerAssertions } = await import('../../lib/memory-owner')
-    make().write('c1/_overview.md', 'v1')
-    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('fresh')
-    writeOwnerAssertions(join(root, 'c1'), { assertions: [{ id: 'a1b2', text: '我不喝咖啡', date: '2026-10-23', origin: 'overview' }], extra: [] })
-    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('retracted')
-  })
-
   it('write then read roundtrips content', () => {
     const fs = make()
     fs.write('profile.md', '# Hi\nuser is 顾时瑞')

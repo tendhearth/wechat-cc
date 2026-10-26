@@ -140,11 +140,11 @@ describe('synthesizeOverview', () => {
   })
   // 记忆编辑第 3 步:主人原话由代码逐字插在最前面「## 你写的」,不过出口过滤;模型看不到它(不喂合成),也伪造不了那一节。
   it('puts the owner\'s own words verbatim at the top, never shows them to the model, and drops a model-made 你写的 section', async () => {
-    const { writeOwnerAssertions } = await import('./memory-owner')
+    const { serializeOwnerDoc } = await import('./memory-owner')
     seedProject('-alpha', { 'MEMORY.md': 'idx', 'x.md': 'fact' })
     const chat = join(stateDir, 'memory', 'admin@im.wechat')
     mkdirSync(chat, { recursive: true })
-    writeOwnerAssertions(chat, { assertions: [{ id: 'a1b2', text: '我不喝咖啡', date: '2026-10-23', origin: 'overview' }], extra: [] })
+    writeFileSync(join(chat, 'owner.md'), serializeOwnerDoc({ assertions: [{ id: 'a1b2', text: '我不喝咖啡', date: '2026-10-23', origin: 'overview' }], extra: [] }))
     // 主人原话恰好也是一条被更正的话的超集:出口过滤不该挡它
     writeFileSync(join(chat, 'corrections.md'), '- 2026-10-22 主人说这条记错了,整理时不要再写回:[总览 · c:c1] 喝咖啡\n')
     let prompt = ''

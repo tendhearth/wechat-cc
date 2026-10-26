@@ -17,6 +17,12 @@ import { memoryArtifactKind } from '../../lib/memory-artifacts'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { getMemoryProfileStatus, summarizeProjectMemories } from '../../lib/memory-synthesis'
 import { makeLifeStoresReader } from '../../daemon/life-stores'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { makeMemoryWriter } from './memory-export'
+import { parseMemoryDoc } from './curated-doc'
 import { MemoryListOutput, MemoryReadOutput, MemoryWriteOutput, MemoryProfileStatusOutput } from '../../cli/schema'
 
 export interface MemoryOwnerRoutesDeps {
@@ -57,6 +63,16 @@ export function memoryOwnerRoutes(deps: MemoryOwnerRoutesDeps): RouteTable {
         // daemon 自己就在跑,所以只回那句拒绝(CLI 会再补一句「守护进程没在跑」)。
         const refusal = wholeFileWriteRefusal(path, memoryArtifactKind(path), userId, loadCompanionConfig(deps.stateDir).default_chat_id ?? null)
         if (refusal) throw new Error(refusal)
+        // 架构终态 G4:搬进表的对话,memory.md 只经导出器写(先落表、再导出)—— 直接写文件就成了「手改」,下次开机才被
+        // 存档、照文件同步。主人那一份上面已经拒了(要在记忆页逐行改)。
+        const norm = path.split('\\').join('/').replace(/^(\.\/)+/, '').toLowerCase()
+        const writer = makeMemoryWriter({ store: makeMemoryFactsStore(deps.db), stateDir: deps.stateDir })
+        if (norm === 'memory.md' && writer.isOnTable(userId)) {
+          const created = !existsSync(join(deps.stateDir, 'memory', userId, 'memory.md'))
+          invalidateDerivedMemory(join(deps.stateDir, 'memory', userId), 'retracted')
+          writer.commitMemory(userId, parseMemoryDoc(b.content), { actor: 'owner', ts: Date.now() }, new Date().toISOString())
+          return { status: 200, body: MemoryWriteOutput.parse({ ok: true, userId, path, bytesWritten: Buffer.byteLength(b.content, 'utf8'), created }) }
+        }
         const result = writeMemoryFile(deps.stateDir, userId, path, b.content)
         return { status: 200, body: MemoryWriteOutput.parse({ ok: true, userId, path, ...result }) }
       } catch (err) {

@@ -28,6 +28,7 @@ import { registerMemoryNightly } from './nightly-lifecycle'
 import type { MemoryLlmOps } from './llm-ops'
 import type { MemoryNightlyRuntime } from './nightly-runtime'
 import { importMemoryOnBoot } from './fact-import'
+import { makeMemoryWriter } from './memory-export'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 
 export { wireMemory, type WireMemoryDeps } from './wire'
@@ -70,7 +71,12 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
       const d = o.deps(ctx)
       // 架构终态 G3:记忆文件 → 主库的表,开机一次、在任何记忆读写之前;按对话逐个,核对不过的对话留在文件路径上。
       // 出错只记日志,不挡开机(G3 时还没人读表)。
-      try { importMemoryOnBoot({ store: makeMemoryFactsStore(d.db), stateDir: d.stateDir, now: () => Date.now(), log: d.log }) }
+      try {
+        const store = makeMemoryFactsStore(d.db)
+        const writer = makeMemoryWriter({ store, stateDir: d.stateDir })
+        // 上次导出没写成(表比文件新)的先补写,不然导入看到的指纹没变,表和文件就一直对不上(数据安全评审第 4 条)
+        importMemoryOnBoot({ store, stateDir: d.stateDir, now: () => Date.now(), log: d.log, beforeChat: (chatId) => writer.syncStale(chatId, new Date().toISOString(), Date.now()) })
+      }
       catch (e) { d.log('MEMORY_IMPORT', `skipped: ${e instanceof Error ? e.message : String(e)}`) }
       ctx.get<InternalApiLifecycle>('internal-api').mount('memory', {
         ...memoryFsRoutes({ memory: d.memory, db: d.db, log: d.log }),

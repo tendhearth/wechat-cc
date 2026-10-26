@@ -15,7 +15,7 @@ import type { NightlyRunResult } from './nightly-notify'
 import { MAX_ENTRY_CHARS, type AppliedOp } from './nightly-ops'
 import { localParts, noticeTiming } from './nightly-schedule'
 import { writeFileAtomic } from '../../lib/json-file'
-import { OWNER_FILENAME, readOwnerDoc, writeOwnerAssertions, type AssertionOrigin } from '../../lib/memory-owner'
+import { OWNER_FILENAME, readOwnerDoc, type AssertionOrigin } from '../../lib/memory-owner'
 import { BULK_CORRECTIONS, baseHashOf, keyGeneratedLines, overviewTextLines, ownerLines, planEdit, type EditLine, type EditableMemoryPath, type Replaces, type ViewLine } from '../../lib/memory-edit'
 
 export interface NoticeDeps {
@@ -68,11 +68,6 @@ export type MemoryEditResult =
   | { ok: false; code: 'memory_changed' }
 export interface ImportResult { added: number; skipped: { duplicate: number; corrected: number; invalid: number; cap: number } }
 export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
-const VERDICT_LINE: Record<MemoryVerdict, string> = {
-  wrong: '主人说这条记错了,整理时不要再写回',
-  outdated: '主人说这条已经过时,整理时不要再写回',
-  delete: '主人说这条不用记,整理时不要再写回',
-}
 
 const CHANGED_WINDOW_MS = 36 * 3_600_000
 
@@ -116,7 +111,7 @@ function lastLog(root: string): { at: string; ops: AppliedOp[] } | null {
 const AGENDA_EVAL_TIMEOUT_MS = 60_000
 
 export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): MemoryNightlyRuntime {
-  async function dropAgendaByModel(c: { text: string; root: string; day: string; archive: string; stamp: string }): Promise<void> {
+  async function dropAgendaByModel(c: Done): Promise<void> {
     const items = openAgendaItems(c.root)
     if (items.length === 0) return
     const evalFn = deps.cheapEval()
@@ -138,11 +133,12 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     // 主人看得到:在更正记录里补一行,说清是 CC 判断的。这一行不能带「] 」—— 更正记录按它认「被更正的原话」,
     // 待办原文里有的话会被当成又一条更正(换成全角)。
     const named = picks.map(p => p.text.replace(/\]/g, '］')).join(';')
-    appendFileSync(join(c.root, CORRECTIONS_FILENAME), `  (CC 又判断 agenda.md 里 ${n} 条待办在跟进这件事,也改成 dropped:${named})\n`)
+    deps.writer.addCorrectionNote(c.chatId, c.key, `  (CC 又判断 agenda.md 里 ${n} 条待办在跟进这件事,也改成 dropped:${named})\n`, { actor: 'cc', ts: deps.now() })
     deps.log('MEMORY_NIGHTLY', `agenda model drop: ${n}`)
   }
 
-  type Done = { text: string; root: string; day: string; archive: string; stamp: string }
+  /** 一条更正落下之后,后台再问便宜模型关待办要的东西;key = 那条收回在表里的 key(说明追加在它底下)。 */
+  type Done = { text: string; root: string; chatId: string; key: string; day: string; archive: string; stamp: string }
   /** 从 memory.md 的文档里拿掉一条(按编号)。 */
   function takeEntry(doc: ReturnType<typeof parseMemoryDoc>, id: string): { section: Section; text: string } | null {
     for (const name of SECTIONS) {
@@ -183,9 +179,9 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     catch (err) { deps.log('MEMORY_NIGHTLY', `agenda drop failed: ${err instanceof Error ? err.message : String(err)}`) }
     const parts = [...purged.map(p => `${p.file} 删了 ${p.lines} 行`), ...(agendaDropped ? [`agenda.md 里 ${agendaDropped} 条待办改成 dropped`] : [])]
     const purgeNote = parts.length ? `  (随之从 ${parts.join('、')};原文件在 memory-archive/${owner ?? 'unknown'}/corrections/)\n` : ''
-    const label = o.correctionId ? `${section} · c:${o.correctionId}` : section
-    // 改名成功后才记:失败了 memory.md 没动,也不留一行假的纠正
-    appendFileSync(join(r, CORRECTIONS_FILENAME), `- ${day} ${VERDICT_LINE[verdict]}:[${label}] ${text}\n${purgeNote}`)
+    // memory.md 改好了才记:失败了 memory.md 没动,也不留一行假的纠正。落表 + 导出 corrections.md(架构终态 G4)。
+    const chatId = owner ?? ''
+    const key = deps.writer.addCorrection(chatId, { day, verdict, section, correctionId: o.correctionId ?? null, text, note: purgeNote }, { actor: 'owner', ts: nowMs })
     if (o.entryId) {
       const src = readSources(r)
       if (src[o.entryId]) { delete src[o.entryId]; try { writeSources(r, src) } catch { /* 出处是附带的 */ } }
@@ -196,7 +192,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       appendFileSync(join(archiveDir, 'memory-expired.md'), `- ${day} [${section}] ${text}(owner_outdated)\n`)
     }
     deps.log('MEMORY_NIGHTLY', `owner ${verdict} ${o.entryId ?? o.correctionId ?? ''}`)
-    return { text, root: r, day, archive: purgeArchive, stamp: `${day}-${nowMs}` }
+    return { text, root: r, chatId, key, day, archive: purgeArchive, stamp: `${day}-${nowMs}` }
   }
   /** corrections.md 里按编号找回那条被更正的原话(view 把 replaces 展开成旧话用)。 */
   function correctionTextById(r: string): (id: string) => string | null {
@@ -209,10 +205,14 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     }
     return id => map.get(id) ?? null
   }
-  function buildView(path: EditableMemoryPath): MemoryView {
+  /** `memoryOverride`:拿这份当 memory.md(手改核对时用表里的样子,不用磁盘上被改过的那份)。 */
+  function buildView(path: EditableMemoryPath, memoryOverride?: string): MemoryView {
     const r = root(), chatId = deps.ownerChatId()
     if (!r || !chatId) throw new Error('no_owner')
-    const readText = (name: string) => { try { return readFileSync(join(r, name), 'utf8') } catch { return '' } }
+    const readText = (name: string) => {
+      if (memoryOverride !== undefined && name === MEMORY_FILENAME) return memoryOverride
+      try { return readFileSync(join(r, name), 'utf8') } catch { return '' }
+    }
     const file = readText(path), ownerRaw = path === OWNER_FILENAME ? file : readText(OWNER_FILENAME)
     const owner = ownerLines(readOwnerDoc(r), correctionTextById(r))
     let generated: ViewLine[] = []
@@ -221,13 +221,117 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       generated = keyGeneratedLines(overviewTextLines(file))
       generatedAt = /生成 · (\d{4}-\d{2}-\d{2}T[^ ]+) -->/.exec(file)?.[1] ?? null
     } else if (path === 'memory.md') {
-      const doc = parseMemoryDoc(file)
-      const entries = SECTIONS.flatMap(n => doc.sections[n])
-      const extra = doc.extra.map(l => l.trim()).filter(l => l && !/^#{1,6}\s/.test(l) && !l.startsWith('<!--')).map(l => l.replace(/^(?:[-*+]|\d+[.)])\s+/, ''))
-      generated = keyGeneratedLines([...entries.map(e => e.text), ...extra], [...entries.map(e => e.id), ...extra.map(() => null)])
+      generated = memoryViewLines(file)
     }
     return { chatId, path, baseHash: baseHashOf(file, ownerRaw), generatedAt, stale: path === '_overview.md' && isDerivedMemoryStale(r, 'overview'), lines: [...owner, ...generated] }
   }
+
+  /** memory.md 里能编辑的行(带键):条目按编号,栏外的按文字。 */
+  function memoryViewLines(file: string): ViewLine[] {
+    const doc = parseMemoryDoc(file)
+    const entries = SECTIONS.flatMap(n => doc.sections[n])
+    const extra = doc.extra.map(l => l.trim()).filter(l => l && !/^#{1,6}\s/.test(l) && !l.startsWith('<!--')).map(l => l.replace(/^(?:[-*+]|\d+[.)])\s+/, ''))
+    return keyGeneratedLines([...entries.map(e => e.text), ...extra], [...entries.map(e => e.id), ...extra.map(() => null)])
+  }
+
+  /**
+   * 落一份编辑计划(记忆页的编辑、和手改 memory.md 的核对共用):更正逐条记(清源头 / 关待办 / 收回),memory.md 里那几行拿掉,
+   * 新的主人原话进 owner.md。`doc` = 编辑之前的 memory.md。
+   */
+  function applyPlan(r: string, path: EditableMemoryPath, plan: import('../../lib/memory-edit').EditPlan, doc: ReturnType<typeof parseMemoryDoc> | null, nowMs: number):
+    { corrections: Array<{ id: string; text: string }>; assertions: Array<{ id: string; text: string; replaces?: Replaces }>; done: Done[]; docChanged: boolean } {
+    const day = localParts(nowMs, deps.config().timezone).day
+    const origin: AssertionOrigin = path === '_overview.md' ? 'overview' : path === 'memory.md' ? 'memory' : 'owner'
+    let docChanged = false
+    const done: Done[] = []
+    // 顺序是有意的:先过期、再逐条记更正(清源头 / 关待办 / 收回),最后才写 memory.md / owner.md。
+    // 中途失败 ⇒ 「已经更正、文件还没改」:被更正的话已经进了清单,出口过滤和整理都会挡住它,不会被说出去 —— 宁可这样,
+    // 不要反过来(文件改了、更正没记,下次整理又从别处学回来)。
+    invalidateDerivedMemory(r, 'retracted')
+    const corrections: Array<{ id: string; text: string }> = []
+    for (const c of plan.corrections) {
+      const cid = deps.newId()
+      let section = c.assertionId ? '你写的' : origin === 'overview' ? '总览' : '记忆'
+      const entryId = c.lineKey?.startsWith('m:') ? c.lineKey.slice(2) : null
+      if (entryId && doc) {
+        const hit = takeEntry(doc, entryId)
+        if (hit) { section = hit.section; docChanged = true }
+      } else if (doc && origin === 'memory' && c.lineKey) {
+        // 没编号的那几行(栏外 / 还没补编号的条目)按文字拿掉一行
+        docChanged = takeLineByText(doc, c.text) || docChanged
+      }
+      done.push(recordCorrection(r, section, c.text, 'wrong', { correctionId: cid, nowMs }))
+      corrections.push({ id: cid, text: c.text })
+    }
+    if (doc && docChanged) deps.writer.commitMemory(deps.ownerChatId()!, doc, { actor: 'owner', ts: nowMs }, new Date(nowMs).toISOString())
+    const ownerDoc = readOwnerDoc(r)
+    const removed = new Set(plan.removedAssertionIds)
+    ownerDoc.assertions = ownerDoc.assertions.filter(a => !removed.has(a.id))
+    const assertions: Array<{ id: string; text: string; replaces?: Replaces }> = []
+    for (const a of plan.assertions) {
+      const id = deps.newId()
+      const rep = a.replacesIndex !== undefined ? corrections[a.replacesIndex] : undefined
+      ownerDoc.assertions.push({ id, text: a.text, date: day, origin, ...(rep ? { replaces: rep.id } : {}) })
+      assertions.push({ id, text: a.text, ...(rep ? { replaces: { correctionId: rep.id, text: rep.text } } : {}) })
+    }
+    if (removed.size || assertions.length) deps.writer.commitOwner(deps.ownerChatId()!, ownerDoc, { actor: 'owner', ts: nowMs })
+    return { corrections, assertions, done, docChanged }
+  }
+
+  /** 后台问便宜模型关换了说法的待办;一次最多问 BULK_CORRECTIONS 次。 */
+  function dropAgendaInBackground(done: readonly Done[]): void {
+    for (const d of done.slice(0, BULK_CORRECTIONS)) {
+      void serial(() => dropAgendaByModel(d)).catch(err => deps.log('MEMORY_NIGHTLY', `agenda model drop failed: ${err instanceof Error ? err.message : String(err)}`))
+    }
+    if (done.length > BULK_CORRECTIONS) deps.log('MEMORY_NIGHTLY', `agenda model drop: skipped ${done.length - BULK_CORRECTIONS} of a bulk edit (verbatim drop still ran)`)
+  }
+
+  /** 比较用:去掉头部注释、行尾空白和空行。只差这些 ⇒ 不算手改了什么。 */
+  const normalizeForCompare = (md: string) => md.replace(/^\uFEFF/, '').split('\n').map(l => l.trimEnd()).filter(l => l && !l.startsWith('<!-- wechat-cc 记忆')).join('\n')
+
+  /**
+   * 每个读写 memory.md 的入口先过这里(数据安全评审第 1 条:不只是每晚那一拍):
+   *  1. 上次导出没写成(表比文件新)⇒ 照表补写;
+   *  2. 主人用编辑器直接改了导出的 memory.md(主人 10-26 定,设计稿 §4 第 4 条)—— 只看内容指纹,删了头部、整份覆盖都认得出:
+   *     不悄悄覆盖,也不悄悄采纳。和表里的样子有实质差别 ⇒ **先存一份进 memory-archive/**,再按记忆编辑那张比对表
+   *     (表里的样子 → 磁盘上的样子)变成更正 / 原话、落表、重新导出,微信里告诉主人一次;比对表看不出的改动(挪栏、改尾注 …)
+   *     或者多到要主人确认的,不照办,导出照表里的样子,告诉主人原样存在哪儿。只差空白 / 头部 ⇒ 照表重新导出,不打扰。
+   * 导出写下以后指纹就对上了,同一次手改只会处理、通知一次。
+   */
+  function syncDisk(): void {
+    const owner = deps.ownerChatId(), r = root()
+    if (!owner || !r) return
+    const nowMs = deps.now(), nowIso = new Date(nowMs).toISOString()
+    deps.writer.syncStale(owner, nowIso, nowMs)
+    const disk = deps.writer.handEdited(owner)
+    if (disk === null) return
+    const tableMd = deps.writer.tableMemoryMd(owner, nowIso)
+    if (tableMd === null) return
+    if (normalizeForCompare(disk) === normalizeForCompare(tableMd)) { deps.writer.reexportMemory(owner, nowIso, nowMs); return }
+    deps.writer.archiveDisk(owner, 'hand-edit')
+    const before = buildView('memory.md', tableMd)
+    const lines: EditLine[] = [
+      ...before.lines.filter(l => l.origin === 'owner').map(l => ({ text: l.text, assertionId: l.assertionId! })),
+      ...memoryViewLines(disk).map(l => ({ text: l.text, lineKey: l.lineKey! })),
+    ]
+    const planned = planEdit(before.lines, lines, { confirmBulk: false })
+    let notice: string
+    if (planned.ok && (planned.plan.corrections.length || planned.plan.assertions.length)) {
+      const res = applyPlan(r, 'memory.md', planned.plan, parseMemoryDoc(tableMd), nowMs)
+      deps.writer.reexportMemory(owner, nowIso, nowMs)
+      dropAgendaInBackground(res.done)
+      notice = `你直接在编辑器里改了 memory.md。那份是生成的,改那里本来不算数 —— 这次我照记忆页的规矩记下了:${res.corrections.length} 条当作记错了、${res.assertions.length} 条记成你说的(改之前那份存在 memory-archive/${owner}/ 里)。以后改记忆请到记忆页。`
+      deps.log('MEMORY_NIGHTLY', `hand edit of memory.md reconciled: ${res.corrections.length} corrections, ${res.assertions.length} assertions; kept a copy`)
+    } else {
+      deps.writer.reexportMemory(owner, nowIso, nowMs)
+      notice = planned.ok
+        ? `你直接在编辑器里改了 memory.md,改的是位置 / 格式这类我照记忆页的规矩认不出来的东西,所以没有照办(原样存在 memory-archive/${owner}/ 里)。memory.md 是生成的,要改记忆请到记忆页。`
+        : `你直接在编辑器里改了 memory.md,改动太多,我没有自动照办(原样存在 memory-archive/${owner}/ 里)。memory.md 是生成的,要改记忆请到记忆页。`
+      deps.log('MEMORY_NIGHTLY', `hand edit of memory.md not applied (${planned.ok ? 'not_line_level' : planned.code}); kept a copy, re-exported`)
+    }
+    writeNightlyState(deps.stateDir, { ...readNightlyState(deps.stateDir), pendingNotice: { text: notice, createdAtMs: nowMs } })
+  }
+  const syncDiskSafely = () => { try { syncDisk() } catch (err) { deps.log('MEMORY_NIGHTLY', `hand-edit check failed: ${err instanceof Error ? err.message : String(err)}`) } }
 
   const root = (): string | null => {
     const owner = deps.ownerChatId()
@@ -252,6 +356,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
   let lastSkipReason: string | null = null
   return {
     tick: () => serial(async () => {
+      syncDiskSafely()
       const r = await runMemoryNightly(deps, { force: false })
       if (r.status === 'skipped') {
         if (r.reason !== 'not_due' && r.reason !== lastSkipReason) deps.log('MEMORY_NIGHTLY', `tick: skipped (${r.reason})`)
@@ -262,10 +367,11 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       }
       await deliverPendingNotice(deps)
     }),
-    runNow: () => serial(() => runMemoryNightly(deps, { force: true })),
+    runNow: () => serial(() => { syncDiskSafely(); return runMemoryNightly(deps, { force: true }) }),
     // 与每晚整理同一条串行链:不会和它同时改 memory.md
     correct: async (id, verdict) => {
       const done = await serial(async () => {
+      syncDiskSafely()
       const got = readDoc()
       if (!got) throw new Error('memory_not_found')
       const hit = takeEntry(got.doc, id)
@@ -273,7 +379,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       const nowMs = deps.now()
       // 先让生成物过期再改源:中途崩了,宁可总览多藏一会儿,也不把撤掉的话留在外面
       invalidateDerivedMemory(got.root, 'retracted')
-      writeFileAtomic(join(got.root, MEMORY_FILENAME), serializeMemoryDoc(got.doc, new Date(nowMs).toISOString()))
+      deps.writer.commitMemory(deps.ownerChatId()!, got.doc, { actor: 'owner', ts: nowMs }, new Date(nowMs).toISOString())
       return recordCorrection(got.root, hit.section, hit.text, verdict, { entryId: id, nowMs })
       })
       // 逐字匹配是底线;CC 自己换了说法的待办(「关心杭州之行」对「下周去杭州出差」)再问一次便宜模型。
@@ -282,9 +388,10 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       void serial(() => dropAgendaByModel(done)).catch(err => deps.log('MEMORY_NIGHTLY', `agenda model drop failed: ${err instanceof Error ? err.message : String(err)}`))
       return { text: done.text }
     },
-    view: (path) => buildView(path),
+    view: (path) => { syncDiskSafely(); return buildView(path) },
     edit: async (req) => {
       const out = await serial(async (): Promise<{ result: MemoryEditResult; done: Done[] }> => {
+        syncDiskSafely()
         const r = root()
         if (!r) throw new Error('no_owner')
         const before = buildView(req.path)
@@ -293,56 +400,21 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         if (!planned.ok) return { result: planned, done: [] }
         const { plan } = planned
         if (!plan.corrections.length && !plan.assertions.length) return { result: { ok: true, corrections: [], assertions: [], regenerate: 'not_needed' }, done: [] }
-        const nowMs = deps.now(), day = localParts(nowMs, deps.config().timezone).day
-        const origin: AssertionOrigin = req.path === '_overview.md' ? 'overview' : req.path === 'memory.md' ? 'memory' : 'owner'
+        const nowMs = deps.now()
         // 记忆里的条目:先从 memory.md 拿掉(和逐条纠错同一个动作),再记更正
         const memPath = join(r, MEMORY_FILENAME)
         const doc = existsSync(memPath) ? parseMemoryDoc(readFileSync(memPath, 'utf8')) : null
-        let docChanged = false
-        const done: Done[] = []
-        // 顺序是有意的:先过期、再逐条记更正(清源头 / 关待办 / 写 corrections.md),最后才写 memory.md / owner.md。
-        // 中途失败 ⇒ 「已经更正、文件还没改」:被更正的话已经进了清单,出口过滤和整理都会挡住它,不会被说出去 —— 宁可这样,
-        // 不要反过来(文件改了、更正没记,下次整理又从别处学回来)。
-        invalidateDerivedMemory(r, 'retracted')
-        const corrections: Array<{ id: string; text: string }> = []
-        for (const c of plan.corrections) {
-          const cid = deps.newId()
-          let section = c.assertionId ? '你写的' : origin === 'overview' ? '总览' : '记忆'
-          const entryId = c.lineKey?.startsWith('m:') ? c.lineKey.slice(2) : null
-          if (entryId && doc) {
-            const hit = takeEntry(doc, entryId)
-            if (hit) { section = hit.section; docChanged = true }
-          } else if (doc && origin === 'memory' && c.lineKey) {
-            // 没编号的那几行(栏外 / 还没补编号的条目)按文字拿掉一行
-            docChanged = takeLineByText(doc, c.text) || docChanged
-          }
-          done.push(recordCorrection(r, section, c.text, 'wrong', { correctionId: cid, nowMs }))
-          corrections.push({ id: cid, text: c.text })
-        }
-        if (doc && docChanged) writeFileAtomic(memPath, serializeMemoryDoc(doc, new Date(nowMs).toISOString()))
-        const ownerDoc = readOwnerDoc(r)
-        const removed = new Set(plan.removedAssertionIds)
-        ownerDoc.assertions = ownerDoc.assertions.filter(a => !removed.has(a.id))
-        const assertions: Array<{ id: string; text: string; replaces?: Replaces }> = []
-        for (const a of plan.assertions) {
-          const id = deps.newId()
-          const rep = a.replacesIndex !== undefined ? corrections[a.replacesIndex] : undefined
-          ownerDoc.assertions.push({ id, text: a.text, date: day, origin, ...(rep ? { replaces: rep.id } : {}) })
-          assertions.push({ id, text: a.text, ...(rep ? { replaces: { correctionId: rep.id, text: rep.text } } : {}) })
-        }
-        if (removed.size || assertions.length) writeOwnerAssertions(r, ownerDoc)
+        const { corrections, assertions, done } = applyPlan(r, req.path, plan, doc, nowMs)
         deps.log('MEMORY_NIGHTLY', `owner edit ${req.path}: ${corrections.length} corrections, ${assertions.length} assertions`)
         // 'queued' = 总览已过期、在下一次定时整理(或主人点「整理记忆」)时重新生成;这里不额外调模型(3e 的懒过期)。
         return { result: { ok: true, corrections, assertions, regenerate: 'queued' }, done }
       })
       // 和逐条纠错一样在后台问便宜模型关换了说法的待办;一次编辑最多问 BULK_CORRECTIONS 次(主人确认过的大批删除不跟着翻倍花钱)。
-      for (const d of out.done.slice(0, BULK_CORRECTIONS)) {
-        void serial(() => dropAgendaByModel(d)).catch(err => deps.log('MEMORY_NIGHTLY', `agenda model drop failed: ${err instanceof Error ? err.message : String(err)}`))
-      }
-      if (out.done.length > BULK_CORRECTIONS) deps.log('MEMORY_NIGHTLY', `agenda model drop: skipped ${out.done.length - BULK_CORRECTIONS} of a bulk edit (verbatim drop still ran)`)
+      dropAgendaInBackground(out.done)
       return out.result
     },
     importEntries: (items, label) => serial(async (): Promise<ImportResult> => {
+      syncDiskSafely()
       const r = root()
       if (!r) throw new Error('no_owner')
       mkdirSync(r, { recursive: true })
@@ -367,7 +439,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       }
       if (added.length) {
         invalidateDerivedMemory(r, 'added')  // 导入只加不删
-        writeFileAtomic(memPath, serializeMemoryDoc(doc, nowIso))
+        deps.writer.commitMemory(deps.ownerChatId()!, doc, { actor: 'import', ts: nowMs }, nowIso)
         // 「CC 做过的事」里的记忆那一行读这份日志;出处标成导入(手机「CC 眼中的你」显示「从 X 导入」)
         try { appendFileSync(join(r, MEMORY_LOG_FILE), JSON.stringify({ at: nowIso, ops: added.map(a => ({ kind: 'add', ...a })), source: 'import' }) + '\n') } catch { /* 日志是附带的 */ }
         try {
@@ -381,6 +453,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       return { added: added.length, skipped }
     }),
     readCurated() {
+      syncDiskSafely()
       const got = readDoc()
       if (!got) return null
       const state = readNightlyState(deps.stateDir)
@@ -396,6 +469,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       })
     },
     curatedView() {
+      syncDiskSafely()
       const state = readNightlyState(deps.stateDir)
       const got = readDoc()
       if (!got) return { updated_at: null, when_label: null, mood: 'first', failures: state.failures, changes: [], sections: [] }

@@ -33,10 +33,19 @@ function memoryParts(rows: readonly RenderableFact[]): { sections: Array<[string
 /** 记忆条目的编号(尾注里的 m:<id>),没有编号 ⇒ null。 */
 const entryId = (f: RenderableFact) => (f.key.startsWith('m:') ? f.key.slice(2) : null)
 
-/** memory.md 全文。`stampIso` 是头部的「最近整理」(终态:该对话最后一条事件的时间)。 */
-export function renderMemoryMd(rows: readonly RenderableFact[], stampIso: string): string {
+/**
+ * 导出的 memory.md 头部多的那一句(主人 10-26 定,设计稿 §4 第 4 条)。仍在同一行 HTML 注释里:今天和老版本的解析器都跳过这一行,
+ * 注入的提示词不变。daemon 认它判断「磁盘上这份是不是我导出的、后来被人手改了」(src/features/memory/memory-export.ts)。
+ */
+export const EXPORT_NOTICE = '这是生成的:直接改这里不算数,去记忆页改'
+
+/**
+ * memory.md 全文。`stampIso` 是头部的「最近整理」(终态:该对话最后一条事件的时间)。
+ * `exported` ⇒ 头部带 `EXPORT_NOTICE`(写到磁盘上的导出用);不带 ⇒ 与今天的 serializeMemoryDoc 逐字节一样(金样钉着)。
+ */
+export function renderMemoryMd(rows: readonly RenderableFact[], stampIso: string, opts: { exported?: boolean } = {}): string {
   const { sections, extra } = memoryParts(rows)
-  const out = [`${MEMORY_HEADER_PREFIX} · 每晚整理 · 最近整理 ${stampIso} · 编号是给整理用的,别删;删了也不会丢,只会被当成新条目 -->`]
+  const out = [`${MEMORY_HEADER_PREFIX}${opts.exported ? ` · ${EXPORT_NOTICE}` : ''} · 每晚整理 · 最近整理 ${stampIso} · 编号是给整理用的,别删;删了也不会丢,只会被当成新条目 -->`]
   for (const [s, entries] of sections) {
     out.push('', `## ${s}`)
     for (const e of entries) {
