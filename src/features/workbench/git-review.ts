@@ -1,9 +1,9 @@
 import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
 import {createHash} from 'node:crypto'
-import {lstatSync,mkdtempSync,rmSync,writeFileSync} from 'node:fs'
+import {copyFileSync,lstatSync,mkdtempSync,rmSync,statSync,utimesSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
-import {isAbsolute,join} from 'node:path'
+import {isAbsolute,join,resolve} from 'node:path'
 import {readAnchoredRegular,MAX_ARTIFACT_BYTES} from '../../adapters/workbench/artifacts'
 
 export const GIT_REVIEW_MIME='application/vnd.cc.workbench-review+json'
@@ -36,11 +36,11 @@ class GitReader {
   private filters:string[]=[]
   private readonly safe=['--no-pager','--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null']
   remaining(){return Math.max(0,this.deadline-Date.now())}
-  async run(project:string,args:string[],maxBuffer=4*1024*1024) {
+  async run(project:string,args:string[],maxBuffer=4*1024*1024,index?:string) {
     const timeout=Math.min(5000,this.remaining())
     if(this.signal?.aborted)throw new Error('review_cancelled')
     if(!timeout)throw new Error('review_deadline')
-    const {stdout}=await execute('git',[...this.safe,...this.filters,...args],{cwd:project,env:gitEnv(),encoding:'buffer',maxBuffer,timeout,signal:this.signal})
+    const {stdout}=await execute('git',[...this.safe,...this.filters,...args],{cwd:project,env:index?{...gitEnv(),GIT_INDEX_FILE:index}:gitEnv(),encoding:'buffer',maxBuffer,timeout,signal:this.signal})
     return Buffer.from(stdout)
   }
   async configure(project:string) {this.filters.push(...await filterOverrides(args=>this.run(project,args)))}
@@ -81,8 +81,29 @@ function working(project:string,path:string,limits:Limits,remaining=limits.maxTo
 async function allPaths(reader:GitReader,project:string) {
   return [...new Set(paths(await reader.run(project,['ls-files','--cached','--others','--exclude-standard','-z','--','.'])))].filter(inScope).sort()
 }
+/**
+ * 瓷器命令 `git diff <commit>` 比完会悄悄把刷新过的 stat 写回 index(refresh_index_quietly),**不认
+ * --no-optional-locks / GIT_OPTIONAL_LOCKS=0** —— 它要拿真 index 的 index.lock。这里只读:在 index 的
+ * 一份拷贝上跑,写回落在拷贝上(同 checkpoints.ts 的做法;拷贝 mtime 往回拨,racily-clean 判定不变松)。
+ * 拷不成(还没有 index)⇒ 照旧直接跑。
+ */
+async function trackedChanges(reader:GitReader,project:string,head:string) {
+  const args=['diff','--no-ext-diff','--no-textconv','--ignore-submodules=all','--no-renames','--relative','--name-only','-z',head,'--','.']
+  let scratch:string|undefined,index:string|undefined
+  try {
+    const real=resolve(project,(await reader.run(project,['rev-parse','--git-path','index'])).toString('utf8').trim()||'.')
+    const original=statSync(real)
+    if(original.isFile()){
+      scratch=mkdtempSync(join(tmpdir(),'cc-review-index-'));index=join(scratch,'index')
+      copyFileSync(real,index)
+      const back=new Date(original.mtimeMs-1000);utimesSync(index,back,back)
+    }
+  } catch(error) {if(error instanceof Error&&/^review_/.test(error.message))throw error;index=undefined}
+  try {return paths(await reader.run(project,args,undefined,index))}
+  finally {if(scratch)rmSync(scratch,{recursive:true,force:true})}
+}
 async function changed(reader:GitReader,project:string,head:string|null) {
-  const tracked=head?paths(await reader.run(project,['diff','--no-ext-diff','--no-textconv','--ignore-submodules=all','--no-renames','--relative','--name-only','-z',head,'--','.'])):[]
+  const tracked=head?await trackedChanges(reader,project,head):[]
   return [...new Set([...tracked,...paths(await reader.run(project,['ls-files','--others','--exclude-standard','-z','--','.']))])].filter(inScope).sort()
 }
 export async function captureGitBaseline(project:string,overrides:Partial<Limits>={},signal?:AbortSignal,deadlineMs?:number):Promise<GitBaseline> {
