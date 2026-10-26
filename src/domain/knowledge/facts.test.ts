@@ -124,7 +124,7 @@ test('settleObligations resolves only this contact\'s active obligations', () =>
   const theirs = s.upsertFact({ contact: 'wxid_b', kind: 'obligation', predicate: 'x', value: 'y' }, 1000)
   const attr = s.upsertFact({ contact: 'wxid_a', kind: 'attribute', predicate: 'city', value: '上海' }, 1000)
   const done = s.upsertFact({ contact: 'wxid_a', kind: 'obligation', predicate: 'z', value: 'w' }, 1000)
-  s.setFactStatusById(done.id, 'resolved', 1500)
+  s.changeFactStatus(done.id, 'resolved', 1500)
   const res = api.settleObligations('wxid_a', [
     mine.id,      // valid
     theirs.id,    // other contact — skipped

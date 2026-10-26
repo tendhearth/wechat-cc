@@ -39,7 +39,8 @@ const CONFIG_JSON_ALLOWLIST = [
   'user_account_ids.json', join('plugins', 'plugins.json'),
 ]
 
-const SQLITE_SNAPSHOTS = ['wechat-cc.db', join('knowledge', 'facts.db'), join('knowledge', 'graph.db')]
+// 联系人事实从架构终态 G7 起在主库(wechat-cc.db)里;knowledge/ 下那份旧的事实库只是导入前的原样留档,不再进每日备份。
+const SQLITE_SNAPSHOTS = ['wechat-cc.db', join('knowledge', 'graph.db')]
 const DIR_COPIES = ['memory', 'memory-archive']
 
 function stamp(now: Date): string {

@@ -38,6 +38,15 @@ export interface RetractOpts {
 export interface RetractReceipt { key: string; targets: string[] }
 
 export interface MemoryFactsStore {
+  /** 联系人事实(架构终态 G7:以前在 facts.db;知识库的店面把这一块交给它)。 */
+  contactFacts: import('./knowledge').KnowledgeFactsStore
+  /**
+   * 开机导入 facts.db 的一行(架构终态 G7):表里没有 ⇒ 原样插(id、状态、时间一一对应;rejected / superseded 各补一条事件);
+   * 表里有、facts.db 那一行更新 ⇒ 照它改(回滚到老二进制后它写过);一样 ⇒ 不动。只给导入用。
+   */
+  importContactFact(row: import('./knowledge').FactRow, nowMs: number): 'inserted' | 'updated' | 'same'
+  importFactWatermark(contact: string, lastTs: number, lastLocalId: number, updatedAt: number): void
+  importJudgeState(key: string, fingerprint: string | null, judgedAt: number): void
   /** 在一个事务里跑 `fn`(SQLite 的 immediate 事务;`fn` 抛错 ⇒ 全部回滚)。 */
   atomically<T>(fn: () => T): T
   /**

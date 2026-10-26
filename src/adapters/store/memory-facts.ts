@@ -1,6 +1,14 @@
 import type { Db } from '../../lib/db'
 import type { DesiredFact, FactStatus, MemoryDerived, MemoryFactEvent, MemoryFactView } from '../../domain/memory/facts'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
+import type { FactRow, KnowledgeFactsStore } from '../../ports/knowledge'
+
+/** 联系人事实那几行的 chat_id(它们不属于哪个对话;设计稿说「记主人的 chat」,但主人会换、知识库不认主人,固定一个空串)。 */
+export const CONTACT_CHAT = ''
+/** 从旧事实库导入那几条事件的说明。 */
+const LEGACY_NOTE = 'imported from the knowledge facts file'
+/** Confidence ranking for upsertFact's merge (higher wins, never downgrades). */
+const CONF_RANK: Record<string, number> = { low: 0, med: 1, high: 2 }
 import { MIN_RETRACTED_CHARS, normalizeFactText } from '../../domain/memory/corrections'
 
 /**
@@ -48,7 +56,165 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
   /** 改状态只经这里(G5 起守卫钉住:`UPDATE memory_facts SET status` 只在本文件)。 */
   const setStatus = (id: number, status: FactStatus, ts: number) => { db.query('UPDATE memory_facts SET status = ?, updated_at = ? WHERE id = ?').run(status, ts, id) }
 
+
+  // ---- 联系人事实(架构终态 G7:以前在 knowledge/facts.db)----------------------------------------------------------
+  // memory_facts 里 doc = 'contact' 的行,chat_id = CONTACT_CHAT,key = 'k:<id>'(id 就是 facts.db 的原 id,待办页 / MCP 认它)。
+  // 时间列沿用 facts.db 的单位(秒);事件的 ts 照表里别的事件用毫秒。facts 的 'rejected' 在表里是 'retracted'(进出时换名)。
+  const C = CONTACT_CHAT
+  const FACT_SELECT = `SELECT CAST(substr(key, 3) AS INTEGER) AS id, subject AS contact, kind, predicate, text AS value, related_contact,
+    time_ref, confidence, evidence AS source_msg_keys, CASE status WHEN 'retracted' THEN 'rejected' ELSE status END AS status,
+    created_at, updated_at, valid_from, invalidated_at, superseded_by FROM memory_facts WHERE doc = 'contact'`
+  const toStatus = (s: string): string => (s === 'rejected' ? 'retracted' : s)
+  const parseRow = (r: any): FactRow => ({ ...r, confidence: r.confidence ?? 'med', source_msg_keys: r.source_msg_keys ? JSON.parse(r.source_msg_keys) : [] })
+  const rows = (sql: string, ...args: unknown[]): FactRow[] => (db.query(sql).all(...(args as never[])) as any[]).map(parseRow)
+  const factRowId = (factId: number): number | null =>
+    db.query<{ id: number }, [string, string]>('SELECT id FROM memory_facts WHERE chat_id = ? AND key = ?').get(C, `k:${factId}`)?.id ?? null
+  const factEvent = (rowId: number, nowSec: number, action: string, note: string | null = null) =>
+    event.run(rowId, C, nowSec * 1000, action, 'judge', null, null, note)
+  /** 改联系人事实的状态只经这几个(和记忆那边的 retract / restore / resolve / supersede 同一个 setStatus)。 */
+  const factTransition = (factId: number, to: FactStatus, nowSec: number, action: string, onlyFrom?: FactStatus): boolean => {
+    const rowId = factRowId(factId)
+    if (rowId === null) return false
+    const cur = db.query<{ status: FactStatus }, [number]>('SELECT status FROM memory_facts WHERE id = ?').get(rowId)!.status
+    if (onlyFrom && cur !== onlyFrom) return false
+    setStatus(rowId, to, nowSec)
+    factEvent(rowId, nowSec, action)
+    return true
+  }
+  const contactFacts: KnowledgeFactsStore = {
+    upsertFact(fact, now) {
+      return atomically(() => {
+        const keys = [...(fact.source_msg_keys ?? [])]
+        const conf = fact.confidence || 'med'
+        const cur = rows(`${FACT_SELECT} AND subject = ? AND predicate = ? AND text = ?`, fact.contact, fact.predicate, fact.value)[0]
+        if (!cur) {
+          const next = (db.query<{ m: number | null }, []>("SELECT MAX(CAST(substr(key, 3) AS INTEGER)) AS m FROM memory_facts WHERE doc = 'contact'").get()?.m ?? 0) + 1
+          const r = insertFact.run(C, `k:${next}`, 'contact', fact.contact, null, 0, fact.kind ?? null, fact.predicate, fact.related_contact ?? null,
+            fact.time_ref ?? null, conf, fact.value, 'active', 'extract', null, 'chat', JSON.stringify(keys), null, now, null, null, null, now, now)
+          factEvent(Number(r.lastInsertRowid), now, 'added')
+          return { outcome: 'inserted' as const, id: next }
+        }
+        const merged = [...new Set([...cur.source_msg_keys, ...keys])] // ordered union
+        const best = (CONF_RANK[conf] ?? 1) > (CONF_RANK[cur.confidence ?? 'med'] ?? 1) ? conf : cur.confidence
+        db.query(`UPDATE memory_facts SET kind = ?, related_contact = ?, time_ref = ?, confidence = ?, evidence = ?, updated_at = ?
+          WHERE chat_id = ? AND key = ?`) // status + valid_from untouched
+          .run(fact.kind || cur.kind, fact.related_contact || cur.related_contact, fact.time_ref || cur.time_ref, best, JSON.stringify(merged), now, C, `k:${cur.id}`)
+        return { outcome: 'merged' as const, id: cur.id }
+      })
+    },
+    activeFactsSharingPredicate(contact, predicate, excludeValue) {
+      return rows(`${FACT_SELECT} AND subject = ? AND predicate = ? AND text <> ? AND status = 'active' ORDER BY updated_at DESC`, contact, predicate, excludeValue)
+    },
+    supersedeFactById(oldId, newId, now) {
+      return atomically(() => {
+        if (!factTransition(oldId, 'superseded', now, 'superseded', 'active')) return false
+        db.query('UPDATE memory_facts SET invalidated_at = ?, superseded_by = ? WHERE chat_id = ? AND key = ?').run(now, newId, C, `k:${oldId}`)
+        return true
+      })
+    },
+    factById(id) { return rows(`${FACT_SELECT} AND key = ?`, `k:${id}`)[0] ?? null },
+    obligationHeavyContacts(limit, minCount = 2) {
+      return db.query(`SELECT subject AS contact, COUNT(*) AS n FROM memory_facts WHERE doc = 'contact' AND kind = 'obligation' AND status = 'active'
+        GROUP BY subject HAVING n >= ? ORDER BY n DESC LIMIT ?`).all(minCount, limit) as Array<{ contact: string; n: number }>
+    },
+    conflictedFactGroups(limit) {
+      const groups = db.query(`SELECT subject AS contact, predicate FROM memory_facts WHERE doc = 'contact' AND status = 'active'
+        GROUP BY subject, predicate HAVING COUNT(DISTINCT text) >= 2 ORDER BY MAX(updated_at) DESC LIMIT ?`).all(limit) as Array<{ contact: string; predicate: string }>
+      return groups.map(g => ({ contact: g.contact, predicate: g.predicate,
+        facts: rows(`${FACT_SELECT} AND subject = ? AND predicate = ? AND status = 'active' ORDER BY updated_at DESC, id DESC`, g.contact, g.predicate) }))
+    },
+    judgeFingerprint(key) {
+      return db.query<{ fingerprint: string | null }, [string]>('SELECT fingerprint FROM knowledge_judge_state WHERE key = ?').get(key)?.fingerprint ?? null
+    },
+    setJudgeFingerprint(key, fingerprint, now) {
+      db.query(`INSERT INTO knowledge_judge_state(key, fingerprint, judged_at) VALUES (?,?,?)
+        ON CONFLICT(key) DO UPDATE SET fingerprint = excluded.fingerprint, judged_at = excluded.judged_at`).run(key, fingerprint, now)
+    },
+    factWatermark(contact) {
+      const r = db.query<{ last_ts: number; last_local_id: number }, [string]>('SELECT last_ts, last_local_id FROM knowledge_extraction_state WHERE contact = ?').get(contact)
+      return r ? [r.last_ts, r.last_local_id] : [0, 0]
+    },
+    advanceFactWatermark(contact, ts, localId, now) {
+      const [pt, pl] = contactFacts.factWatermark(contact)
+      const nt = ts > pt || (ts === pt && localId > pl) ? [ts, localId] : [pt, pl] // monotonic tuple
+      db.query(`INSERT INTO knowledge_extraction_state(contact, last_ts, last_local_id, updated_at) VALUES (?,?,?,?)
+        ON CONFLICT(contact) DO UPDATE SET last_ts = excluded.last_ts, last_local_id = excluded.last_local_id, updated_at = excluded.updated_at`)
+        .run(contact, nt[0]!, nt[1]!, now)
+    },
+    allFactWatermarks() {
+      const m = new Map<string, [number, number]>()
+      for (const r of db.query<{ contact: string; last_ts: number; last_local_id: number }, []>('SELECT contact, last_ts, last_local_id FROM knowledge_extraction_state').all())
+        m.set(r.contact, [r.last_ts, r.last_local_id])
+      return m
+    },
+    factsForContact(contact, status) {
+      return rows(`${FACT_SELECT} AND subject = ? AND status = ? ORDER BY updated_at DESC`, contact, toStatus(status))
+    },
+    findFactRows(kind, predicate, query, status, limit) {
+      let sql = `${FACT_SELECT} AND status = ?`
+      const args: unknown[] = [toStatus(status)]
+      if (kind) { sql += ' AND kind = ?'; args.push(kind) }
+      if (predicate) { sql += ' AND predicate = ?'; args.push(predicate) }
+      if (query) { sql += " AND (predicate LIKE '%'||?||'%' OR text LIKE '%'||?||'%')"; args.push(query, query) }
+      sql += ' ORDER BY updated_at DESC LIMIT ?'
+      args.push(limit)
+      return rows(sql, ...args)
+    },
+    changeFactStatus(id, status, now) {
+      return atomically(() => {
+        switch (status) {
+          case 'resolved': return factTransition(id, 'resolved', now, 'resolved')
+          case 'rejected': return factTransition(id, 'retracted', now, 'retracted')
+          case 'superseded': return factTransition(id, 'superseded', now, 'superseded')
+          case 'active': return factTransition(id, 'active', now, 'restored')
+          default: return false
+        }
+      })
+    },
+    factCountsByKind() {
+      const out: Record<string, number> = {}
+      for (const r of db.query<{ kind: string; n: number }, []>("SELECT kind, COUNT(*) AS n FROM memory_facts WHERE doc = 'contact' GROUP BY kind").all()) out[r.kind] = r.n
+      return out
+    },
+  }
+
   return {
+    contactFacts,
+    importContactFact(f, nowMs) {
+      return atomically(() => {
+        const cur = contactFacts.factById(f.id)
+        const st = toStatus(f.status ?? 'active') as FactStatus
+        if (!cur) {
+          const r = insertFact.run(C, `k:${f.id}`, 'contact', f.contact, null, 0, f.kind ?? null, f.predicate, f.related_contact ?? null, f.time_ref ?? null,
+            f.confidence ?? 'med', f.value, st, 'import', null, 'chat', JSON.stringify(f.source_msg_keys ?? []), null,
+            f.valid_from ?? null, f.invalidated_at ?? null, f.superseded_by ?? null, null, f.created_at, f.updated_at)
+          const rowId = Number(r.lastInsertRowid)
+          event.run(rowId, C, nowMs, 'added', 'import', null, null, LEGACY_NOTE)
+          if (st === 'retracted') event.run(rowId, C, nowMs, 'retracted', 'import', null, null, `${LEGACY_NOTE}: rejected`)
+          if (st === 'superseded') event.run(rowId, C, nowMs, 'superseded', 'import', null, null, f.superseded_by ? `by:k:${f.superseded_by}` : null)
+          if (st === 'resolved') event.run(rowId, C, nowMs, 'resolved', 'import', null, null, LEGACY_NOTE)
+          return 'inserted' as const
+        }
+        if ((f.updated_at ?? 0) <= (cur.updated_at ?? 0)) return 'same' as const
+        const rowId = factRowId(f.id)!
+        db.query(`UPDATE memory_facts SET kind = ?, predicate = ?, text = ?, related_contact = ?, time_ref = ?, confidence = ?, evidence = ?,
+          valid_from = ?, invalidated_at = ?, superseded_by = ?, updated_at = ? WHERE id = ?`)
+          .run(f.kind ?? null, f.predicate, f.value, f.related_contact ?? null, f.time_ref ?? null, f.confidence ?? 'med', JSON.stringify(f.source_msg_keys ?? []),
+            f.valid_from ?? null, f.invalidated_at ?? null, f.superseded_by ?? null, f.updated_at, rowId)
+        if (toStatus(cur.status) !== st) { setStatus(rowId, st, f.updated_at); event.run(rowId, C, nowMs, st === 'active' ? 'restored' : st === 'retracted' ? 'retracted' : st, 'import', null, null, LEGACY_NOTE) }
+        else event.run(rowId, C, nowMs, 'updated', 'import', null, null, LEGACY_NOTE)
+        return 'updated' as const
+      })
+    },
+    importFactWatermark(contact, lastTs, lastLocalId, updatedAt) {
+      const [pt, pl] = contactFacts.factWatermark(contact)
+      if (lastTs > pt || (lastTs === pt && lastLocalId > pl)) contactFacts.advanceFactWatermark(contact, lastTs, lastLocalId, updatedAt)
+    },
+    importJudgeState(key, fingerprint, judgedAt) {
+      const cur = db.query<{ judged_at: number }, [string]>('SELECT judged_at FROM knowledge_judge_state WHERE key = ?').get(key)
+      if (!cur || cur.judged_at < judgedAt) db.query(`INSERT INTO knowledge_judge_state(key, fingerprint, judged_at) VALUES (?,?,?)
+        ON CONFLICT(key) DO UPDATE SET fingerprint = excluded.fingerprint, judged_at = excluded.judged_at`).run(key, fingerprint, judgedAt)
+    },
     atomically,
     mirror(chatId, desired, opts) {
       return atomically(() => {

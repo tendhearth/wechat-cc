@@ -31,10 +31,11 @@ import { runMigrations } from '../../lib/db'
 import { migrations as sourceMigrations } from './migrations/source'
 import { migrations as semanticMigrations } from './migrations/semantic'
 import { migrations as graphMigrations } from './migrations/graph'
-import { migrations as factsMigrations } from './migrations/facts'
 import type { Contact, Edge } from '../../domain/knowledge/graph'
 import type { Profile } from '../../domain/knowledge/graph-profiles'
-import type { Chunk, DocSummary, Fact, FactRow, KnowledgeStore, SourceMention, SourceMsg } from '../../ports/knowledge'
+import type { Chunk, DocSummary, KnowledgeFactsStore, KnowledgeStore, SourceMention, SourceMsg } from '../../ports/knowledge'
+import { makeMemoryFactsStore } from '../store/memory-facts'
+import { openDb } from '../../lib/db'
 
 function openSqlite(path: string): Database {
   const db = openRuntimeSqlite(path, { create: true })
@@ -49,16 +50,13 @@ function vectorToBlob(vector: number[]): Uint8Array {
   return new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength)
 }
 
-/** Confidence ranking for `upsertFact`'s merge (higher wins, never downgrades). */
-const CONF_RANK: Record<string, number> = { low: 0, med: 1, high: 2 }
 
-/** facts.db stores `source_msg_keys` as a JSON-encoded TEXT column; every
- *  read path goes through this to get back the `string[]` shape callers see. */
-function parseFactRow(r: any): FactRow {
-  return { ...r, source_msg_keys: r.source_msg_keys ? JSON.parse(r.source_msg_keys) : [] }
-}
-
-export function openKnowledge(root: string): KnowledgeStore {
+/**
+ * `facts`:联系人事实那一块(架构终态 G7 起在主库,`makeMemoryFactsStore(db).contactFacts`)。没给(只测 source / semantic / graph 的单测)⇒
+ * 用一个内存里的主库,关掉就没了。daemon 永远给。
+ */
+export function openKnowledge(root: string, opts: { facts?: KnowledgeFactsStore } = {}): KnowledgeStore {
+  const facts = opts.facts ?? makeMemoryFactsStore(openDb({ path: ':memory:' })).contactFacts
   if (!existsSync(root)) mkdirSync(root, { recursive: true, mode: 0o700 })
 
   // ---- source.db --------------------------------------------------------
@@ -346,11 +344,6 @@ export function openKnowledge(root: string): KnowledgeStore {
   )
   const stmtGraphCountContacts = graphDb.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM contacts')
 
-  // ---- facts.db (facts + person slice) -------------------------------------
-  // TS port of wxfacts's store.py (facts table + extraction_state watermark).
-  const factsDb = openSqlite(join(root, 'facts.db'))
-  runMigrations(factsDb, factsMigrations)
-
   return {
     putSourceMessages(msgs) {
       const watermark = runPutSourceMessages(msgs)
@@ -511,138 +504,8 @@ export function openKnowledge(root: string): KnowledgeStore {
       return stmtGraphCountContacts.get()?.n ?? 0
     },
 
-    // ---- facts.db ------------------------------------------------------------
-    upsertFact(fact, now) {
-      const keys = [...(fact.source_msg_keys ?? [])]
-      const conf = fact.confidence || 'med'
-      const cur = factsDb.query('SELECT * FROM facts WHERE contact=? AND predicate=? AND value=?')
-        .get(fact.contact, fact.predicate, fact.value) as any
-      if (!cur) {
-        const r = factsDb.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
-          confidence,source_msg_keys,status,created_at,updated_at,valid_from) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .run(fact.contact, fact.kind ?? null, fact.predicate, fact.value,
-               fact.related_contact ?? null, fact.time_ref ?? null, conf,
-               JSON.stringify(keys), 'active', now, now, now)
-        return { outcome: 'inserted', id: Number((r as unknown as { lastInsertRowid: number | bigint }).lastInsertRowid) }
-      }
-      const prev = parseFactRow(cur)
-      const merged = [...new Set([...prev.source_msg_keys, ...keys])] // ordered union
-      const best = (CONF_RANK[conf] ?? 1) > (CONF_RANK[prev.confidence ?? 'med'] ?? 1) ? conf : prev.confidence
-      factsDb.query(`UPDATE facts SET kind=?, related_contact=?, time_ref=?, confidence=?,
-        source_msg_keys=?, updated_at=? WHERE id=?`) // status + valid_from untouched
-        .run(fact.kind || prev.kind, fact.related_contact || prev.related_contact,
-             fact.time_ref || prev.time_ref, best, JSON.stringify(merged), now, prev.id)
-      return { outcome: 'merged', id: prev.id }
-    },
-
-    activeFactsSharingPredicate(contact, predicate, excludeValue) {
-      return (factsDb.query(
-        "SELECT * FROM facts WHERE contact=? AND predicate=? AND value<>? AND status='active' ORDER BY updated_at DESC",
-      ).all(contact, predicate, excludeValue) as any[]).map(parseFactRow)
-    },
-
-    supersedeFactById(oldId, newId, now) {
-      const c = factsDb.query(
-        "UPDATE facts SET status='superseded', invalidated_at=?, superseded_by=?, updated_at=? WHERE id=? AND status='active'",
-      ).run(now, newId, now, oldId)
-      return (c as unknown as { changes: number }).changes > 0
-    },
-
-    factById(id) {
-      const r = factsDb.query('SELECT * FROM facts WHERE id=?').get(id) as any
-      return r ? parseFactRow(r) : null
-    },
-
-    obligationHeavyContacts(limit, minCount = 2) {
-      // minCount=2 is the dedup feed (a duplicate needs a pair); the
-      // settlement backfill passes 1 — a lone promise can still be settled.
-      return factsDb.query(
-        `SELECT contact, COUNT(*) AS n FROM facts
-         WHERE kind='obligation' AND status='active'
-         GROUP BY contact HAVING n >= ? ORDER BY n DESC LIMIT ?`,
-      ).all(minCount, limit) as Array<{ contact: string; n: number }>
-    },
-
-    conflictedFactGroups(limit) {
-      // Stock-sweep feed: ACTIVE same-(contact,predicate) groups holding ≥2
-      // distinct values — contradictions recorded before conflict detection
-      // existed (or whose judge call failed). Newest-first inside each group
-      // so the sweep can treat facts[0] as the presumed-current value.
-      const groups = factsDb.query(
-        `SELECT contact, predicate FROM facts WHERE status='active'
-         GROUP BY contact, predicate HAVING COUNT(DISTINCT value) >= 2
-         ORDER BY MAX(updated_at) DESC LIMIT ?`,
-      ).all(limit) as Array<{ contact: string; predicate: string }>
-      return groups.map((g) => ({
-        contact: g.contact,
-        predicate: g.predicate,
-        facts: (factsDb.query(
-          "SELECT * FROM facts WHERE contact=? AND predicate=? AND status='active' ORDER BY updated_at DESC, id DESC",
-        ).all(g.contact, g.predicate) as any[]).map(parseFactRow),
-      }))
-    },
-
-    judgeFingerprint(key) {
-      const r = factsDb.query('SELECT fingerprint FROM judge_state WHERE key=?').get(key) as
-        { fingerprint: string } | null
-      return r ? r.fingerprint : null
-    },
-
-    setJudgeFingerprint(key, fingerprint, now) {
-      factsDb.query(`INSERT INTO judge_state(key,fingerprint,judged_at) VALUES(?,?,?)
-        ON CONFLICT(key) DO UPDATE SET fingerprint=excluded.fingerprint, judged_at=excluded.judged_at`)
-        .run(key, fingerprint, now)
-    },
-
-    factWatermark(contact) {
-      const r = factsDb.query('SELECT last_ts,last_local_id FROM extraction_state WHERE contact=?')
-        .get(contact) as any
-      return r ? [r.last_ts, r.last_local_id] : [0, 0]
-    },
-
-    advanceFactWatermark(contact, ts, localId, now) {
-      const [pt, pl] = this.factWatermark(contact)
-      const nt = ts > pt || (ts === pt && localId > pl) ? [ts, localId] : [pt, pl] // monotonic tuple
-      factsDb.query(`INSERT INTO extraction_state(contact,last_ts,last_local_id,updated_at)
-        VALUES(?,?,?,?) ON CONFLICT(contact) DO UPDATE SET last_ts=excluded.last_ts,
-        last_local_id=excluded.last_local_id, updated_at=excluded.updated_at`)
-        .run(contact, nt[0]!, nt[1]!, now)
-    },
-
-    allFactWatermarks() {
-      const m = new Map<string, [number, number]>()
-      for (const r of factsDb.query('SELECT contact,last_ts,last_local_id FROM extraction_state').all() as any[])
-        m.set(r.contact, [r.last_ts, r.last_local_id])
-      return m
-    },
-
-    factsForContact(contact, status) {
-      return (factsDb.query('SELECT * FROM facts WHERE contact=? AND status=? ORDER BY updated_at DESC')
-        .all(contact, status) as any[]).map(parseFactRow)
-    },
-
-    findFactRows(kind, predicate, query, status, limit) {
-      let sql = 'SELECT * FROM facts WHERE status=?'
-      const args: any[] = [status]
-      if (kind) { sql += ' AND kind=?'; args.push(kind) }
-      if (predicate) { sql += ' AND predicate=?'; args.push(predicate) }
-      if (query) { sql += " AND (predicate LIKE '%'||?||'%' OR value LIKE '%'||?||'%')"; args.push(query, query) }
-      sql += ' ORDER BY updated_at DESC LIMIT ?'
-      args.push(limit)
-      return (factsDb.query(sql).all(...args) as any[]).map(parseFactRow)
-    },
-
-    setFactStatusById(id, status, now) {
-      const c = factsDb.query('UPDATE facts SET status=?, updated_at=? WHERE id=?').run(status, now, id)
-      return c.changes > 0
-    },
-
-    factCountsByKind() {
-      const out: Record<string, number> = {}
-      for (const r of factsDb.query('SELECT kind, COUNT(*) n FROM facts GROUP BY kind').all() as any[])
-        out[r.kind] = r.n
-      return out
-    },
+    // 联系人事实(架构终态 G7):主库 memory_facts 里的行,店面在 src/adapters/store/memory-facts.ts
+    ...facts,
 
     oneToOneTextMessages() {
       return sourceDb.query(`SELECT msg_key, conversation, sender, time, text FROM messages
@@ -661,7 +524,6 @@ export function openKnowledge(root: string): KnowledgeStore {
       sourceDb.close()
       semanticDb.close()
       graphDb.close()
-      factsDb.close()
     },
   }
 }
