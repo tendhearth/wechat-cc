@@ -1,7 +1,15 @@
+// @ts-check
+/// <reference lib="dom" />
 // Browser-mode fallback used when window.__TAURI__ is missing.
 // In bundled Tauri or shim mode this file is loaded but mockInvoke is never
 // called — the real invoke replaces it.
 
+/**
+ * @param {string} command
+ * @param {any} args
+ * @param {any} [state]
+ * @returns {Promise<any>}
+ */
 export async function mockInvoke(command, args, state) {
   await new Promise(resolve => setTimeout(resolve, 120))
   if (command === "wechat_cli_json" && args.args?.[0] === "doctor") {

@@ -1,3 +1,5 @@
+// @ts-check
+/// <reference lib="dom" />
 // Read-only local CC Atelier gallery for the overview pane.
 import { escapeHtml } from "../view.js"
 import { openSettingsDrawer } from "./settings-drawer.js"
@@ -5,20 +7,34 @@ import {createRecordReader} from './record-reader.js'
 import {saveRecordDocument} from './record-export.js'
 import { V1, v1, v1Path } from '../daemon-client.js'
 
+/** 画室的一幅作品(`GET /v1/atelier/works` 的一行;字段都可能缺)。
+ * @typedef {{ id?: string, image_data?: string | null, caption?: string | null, createdAt?: string | null, width?: number | null, height?: number | null, rendererId?: string | null, shareState?: string | null,
+ *   background?: { title?: string | null, origin?: string | null, approach?: string | null, kind?: string | null } | null,
+ *   impulse?: { subject?: string | null, medium?: string | null } | null }} AtelierWork */
+/** @typedef {{ invokeApi: (method: any, path: string, body?: any, opts?: any) => Promise<unknown> }} AtelierDeps */
+/** 画笔下载状态(`GET /v1/atelier/model-status` 的 `status`)。 @typedef {{ state?: string, received?: number, total?: number }} AtelierModelStatus */
+/** @typedef {{ mode?: string, status?: AtelierModelStatus | null }} AtelierModelStatusData */
+/** 作品详情对话框:把当前作品挂在元素上,保存时取。 @typedef {HTMLElement & { __atelierWork?: AtelierWork, dataset: DOMStringMap }} AtelierDialog */
+
+/** @param {AtelierWork} work */
 export const atelierImage = work => /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(work.image_data||'')?work.image_data:null
-const workTitle = work => work.background?.title || work.caption || work.impulse?.subject || '未命名作品'
-let galleryGeneration=0, galleryWorks=[]
+const workTitle = (/** @type {AtelierWork} */ work) => work.background?.title || work.caption || work.impulse?.subject || '未命名作品'
+let galleryGeneration=0
+/** @type {AtelierWork[]} */
+let galleryWorks=[]
+/** @type {Map<string | undefined, 'pending' | 'shared'>} */
 const shareOperations=new Map()
+/** @param {string | undefined} id @param {string} message @param {Element} source */
 function updateSharingResult(id,message,source){
   const current=workReader.element
-  if(current?.querySelector('.atelier-work')?.dataset.workId!==id)return
+  if(/** @type {HTMLElement | null | undefined} */ (current?.querySelector('.atelier-work'))?.dataset.workId!==id)return
   const state=shareOperations.get(id)
-  const opener=current.querySelector('[data-atelier-share-open]')
+  const opener=/** @type {HTMLButtonElement | null} */ (/** @type {HTMLDialogElement} */ (current).querySelector('[data-atelier-share-open]'))
   if(opener){opener.disabled=!!state;opener.textContent=state==='shared'?'已分享':state==='pending'?'发送中':'分享…'}
-  if(current!==source){const status=current.querySelector('[data-atelier-share-result]');if(status)status.textContent=message}
+  if(current!==source){const status=/** @type {HTMLDialogElement} */ (current).querySelector('[data-atelier-share-result]');if(status)status.textContent=message}
 }
 const workReader=createRecordReader({focusFallback(trigger){
-  return [...document.querySelectorAll('[data-atelier-open]')].find(b=>b.dataset.workId===trigger?.dataset.workId&&!b.closest('[hidden]'))
+  return /** @type {HTMLElement[]} */ ([...document.querySelectorAll('[data-atelier-open]')]).find(b=>b.dataset.workId===/** @type {HTMLElement | null} */ (trigger)?.dataset.workId&&!b.closest('[hidden]'))
 }})
 export function deactivateAtelierGallery(){
   galleryGeneration++
@@ -27,12 +43,13 @@ export function deactivateAtelierGallery(){
 
 // Paint-set download status → label (mirrors daemon formatAtelierModelStatus).
 // The download runs on this Mac; the gallery is its durable home to check on it.
+/** @param {AtelierModelStatus | null} st */
 function atelierModelLabel(st) {
   if (!st) return { label: "", done: false, failed: false }
   if (st.state === "checking") return { label: "正在检查画笔…", done: false, failed: false }
   if (st.state === "downloading") {
-    if (!(st.total > 0)) return { label: "正在下载画笔…", done: false, failed: false }
-    const pct = Math.min(100, Math.round((st.received / st.total) * 100))
+    if (!(/** @type {number} */ (st.total) > 0)) return { label: "正在下载画笔…", done: false, failed: false }
+    const pct = Math.min(100, Math.round((/** @type {number} */ (st.received) / /** @type {number} */ (st.total)) * 100))
     return { label: `正在下载画笔… ${pct}%`, done: false, failed: false }
   }
   if (st.state === "ready") return { label: "画笔就绪 ✓", done: true, failed: false }
@@ -40,6 +57,7 @@ function atelierModelLabel(st) {
   return { label: "", done: false, failed: false }
 }
 
+/** @param {AtelierDeps} deps @param {import('../generated/daemon-calls.js').V1Key} call @returns {Promise<any>} */
 async function apiGet(deps, call) {
   try {
     return await v1(deps.invokeApi, call)
@@ -50,6 +68,7 @@ async function apiGet(deps, call) {
   }
 }
 
+/** @param {AtelierModelStatusData | null | undefined} data */
 export function atelierEmptyState(data) {
   if (!data) return { title: "暂时无法确认画室状态", detail: "请检查首页连接后重试。已有作品仍保存在这台 Mac。", action: "retry" }
   if (data.mode === "off") return { title: "画室尚未开启", detail: "在设置里点「连接手机」，用手机打开设置，开启「让 CC 自己画画」。首次需下载约 5GB 的画笔。", action: "home" }
@@ -60,6 +79,7 @@ export function atelierEmptyState(data) {
   return { title: "还没有作品", detail: "暂时无法确认画笔是否就绪。请到首页的手机设置检查画室开关。", action: "home" }
 }
 
+/** @param {AtelierModelStatusData | null | undefined} data */
 function renderAtelierEmpty(data) {
   const box = document.getElementById("atelier-gallery")
   if (!box || box.dataset.empty !== "1") return
@@ -67,10 +87,13 @@ function renderAtelierEmpty(data) {
   box.innerHTML = `<div class="cc-page-status" role="status"><h2>${escapeHtml(state.title)}</h2><p>${escapeHtml(state.detail)}</p><button type="button" data-atelier-status-action="${state.action}">${state.action === "home" ? "连接手机与设置画室" : "重新检查"}</button></div>`
 }
 
+/** @type {ReturnType<typeof setTimeout> | null} */
 let atelierStatusTimer = null
+/** @param {AtelierDeps} deps @param {number} [generation] */
 async function loadAtelierModelStatus(deps, generation=galleryGeneration) {
   const el = document.getElementById("atelier-model-status")
   if (!el) return
+  /** @type {AtelierModelStatusData | null} */
   let data = null
   try { data = await apiGet(deps, V1.atelier.modelStatus) } catch { /* show recoverable state */ }
   if(generation!==galleryGeneration)return
@@ -88,6 +111,7 @@ async function loadAtelierModelStatus(deps, generation=galleryGeneration) {
   }
 }
 
+/** @param {string | undefined} id @param {boolean} includeBackground @param {{ title?: string, origin?: string, approach?: string }} fields */
 export function buildAtelierShareRequest(id, includeBackground, fields) {
   return {
     id,
@@ -99,6 +123,7 @@ export function buildAtelierShareRequest(id, includeBackground, fields) {
   }
 }
 
+/** @param {any} error */
 export function atelierShareErrorLabel(error) {
   const text = String(error?.message || error || "")
   if (text.includes("owner_chat_not_configured")) return "还没有默认微信会话，先和 CC 说句话再试。"
@@ -108,6 +133,7 @@ export function atelierShareErrorLabel(error) {
   return "暂时没发出去，作品仍安全地留在画室里。"
 }
 
+/** @param {AtelierDialog} box @param {AtelierDeps} deps */
 function bindAtelierSharing(box, deps) {
   if (box.dataset.shareBound === "1") return
   box.dataset.shareBound = "1"
@@ -115,13 +141,13 @@ function bindAtelierSharing(box, deps) {
     const target = event.target instanceof Element ? event.target : null
     const open = target?.closest("[data-atelier-share-open]")
     const cancel = target?.closest("[data-atelier-share-cancel]")
-    const send = target?.closest("[data-atelier-share-send]")
-    const save = target?.closest('[data-atelier-save]')
+    const send = /** @type {HTMLButtonElement | null | undefined} */ (target?.closest("[data-atelier-share-send]"))
+    const save = /** @type {HTMLButtonElement | null | undefined} */ (target?.closest('[data-atelier-save]'))
     if(save){
       save.disabled=true
       const status=box.querySelector('[data-atelier-save-status]')
       try{
-        await saveRecordDocument(`CC-作品-${Date.now()}.html`,atelierWorkDocument(box.__atelierWork))
+        await saveRecordDocument(`CC-作品-${Date.now()}.html`,atelierWorkDocument(/** @type {AtelierWork} */ (box.__atelierWork)))
         if(status?.isConnected)status.textContent='作品和手记已保存为可离线打开的网页。'
       }catch{if(status?.isConnected)status.textContent='保存失败，请重试。作品仍在画室里。'}
       finally{save.disabled=false}
@@ -129,26 +155,26 @@ function bindAtelierSharing(box, deps) {
     }
     if (!open && !cancel && !send) return
     event.preventDefault()
-    const work = target.closest(".atelier-work")
-    const panel = work?.querySelector(".atelier-share-panel")
+    const work = /** @type {HTMLElement | null} */ (/** @type {Element} */ (target).closest(".atelier-work"))
+    const panel = /** @type {HTMLElement | null | undefined} */ (work?.querySelector(".atelier-share-panel"))
     if (!work || !panel) return
     if (open) {
       panel.hidden = false
-      work.querySelector('.atelier-detail-actions').hidden=true
+      ;/** @type {HTMLElement} */ (work.querySelector('.atelier-detail-actions')).hidden=true
       panel.querySelector("input")?.focus()
       return
     }
     if (cancel) {
       panel.hidden = true
-      const opener = work.querySelector("[data-atelier-share-open]")
-      work.querySelector('.atelier-detail-actions').hidden=false
+      const opener = /** @type {HTMLButtonElement | null} */ (work.querySelector("[data-atelier-share-open]"))
+      ;/** @type {HTMLElement} */ (work.querySelector('.atelier-detail-actions')).hidden=false
       if (opener) opener.focus({preventScroll:true})
       return
     }
-    const include = panel.querySelector("[data-atelier-share-background]")?.checked !== false
-    const title = panel.querySelector("[data-atelier-share-title]")?.value || ""
-    const origin = panel.querySelector("[data-atelier-share-origin]")?.value || ""
-    const approach = panel.querySelector("[data-atelier-share-approach]")?.value || ""
+    const include = /** @type {HTMLInputElement | null} */ (panel.querySelector("[data-atelier-share-background]"))?.checked !== false
+    const title = /** @type {HTMLInputElement | null} */ (panel.querySelector("[data-atelier-share-title]"))?.value || ""
+    const origin = /** @type {HTMLTextAreaElement | null} */ (panel.querySelector("[data-atelier-share-origin]"))?.value || ""
+    const approach = /** @type {HTMLTextAreaElement | null} */ (panel.querySelector("[data-atelier-share-approach]"))?.value || ""
     const status = panel.querySelector("[data-atelier-share-status]")
     const id=work.dataset.workId
     if(shareOperations.get(id))return
@@ -156,48 +182,49 @@ function bindAtelierSharing(box, deps) {
       if (status) status.textContent = "要附上手记时，这三段都需要保留一点内容。"
       return
     }
-    send.disabled = true
+    ;/** @type {HTMLButtonElement} */ (send).disabled = true
     shareOperations.set(id,'pending')
-    panel.querySelectorAll('input,textarea,[data-atelier-share-cancel]').forEach(field=>{field.disabled=true})
-    send.textContent = "正在发…"
+    panel.querySelectorAll('input,textarea,[data-atelier-share-cancel]').forEach(/** @param {any} field */ field=>{field.disabled=true})
+    ;/** @type {HTMLButtonElement} */ (send).textContent = "正在发…"
     if (status) status.textContent = ""
     try {
-      const response = await v1(deps.invokeApi, V1.atelier.share, { body: buildAtelierShareRequest(work.dataset.workId, include, { title, origin, approach }) }, { timeoutMs: 30_000 })
+      const response = /** @type {{ ok?: boolean, error?: string, warning?: string } | null | undefined} */ (await v1(deps.invokeApi, V1.atelier.share, { body: buildAtelierShareRequest(work.dataset.workId, include, { title, origin, approach }) }, { timeoutMs: 30_000 }))
       if (!response?.ok) throw new Error(response?.error || "share_failed")
       panel.classList.add("is-done")
       shareOperations.set(id,'shared')
-      box.__atelierWork.shareState='shared'
-      send.textContent = "已分享"
-      const opener = work.querySelector("[data-atelier-share-open]")
-      work.querySelector('.atelier-detail-actions').hidden=false
+      ;/** @type {AtelierWork} */ (box.__atelierWork).shareState='shared'
+      ;/** @type {HTMLButtonElement} */ (send).textContent = "已分享"
+      const opener = /** @type {HTMLButtonElement | null} */ (work.querySelector("[data-atelier-share-open]"))
+      ;/** @type {HTMLElement} */ (work.querySelector('.atelier-detail-actions')).hidden=false
       if (opener) { opener.disabled = true; opener.textContent = "已分享" }
-      const message = response.warning === "background_send_failed"
+      const message = /** @type {{ warning?: string }} */ (response).warning === "background_send_failed"
         ? "画已经发出，手记没有发成功。"
-        : response.warning
+        : /** @type {{ warning?: string }} */ (response).warning
           ? "画已经发出，发送状态稍后再确认。"
           : include ? "作品和手记已发到你的微信。" : "作品已发到你的微信，没有附手记。"
       if(status)status.textContent=message
       updateSharingResult(id,message,box)
     } catch (error) {
       shareOperations.delete(id)
-      panel.querySelectorAll('input,textarea,[data-atelier-share-cancel]').forEach(field=>{field.disabled=field.matches('input[type=text],textarea')&&!include})
-      send.disabled = false
-      send.textContent = "发到我的微信"
+      panel.querySelectorAll('input,textarea,[data-atelier-share-cancel]').forEach(/** @param {any} field */ field=>{field.disabled=field.matches('input[type=text],textarea')&&!include})
+      ;/** @type {HTMLButtonElement} */ (send).disabled = false
+      ;/** @type {HTMLButtonElement} */ (send).textContent = "发到我的微信"
       const message=atelierShareErrorLabel(error)
       if (status) status.textContent = message
       updateSharingResult(id,message,box)
     }
   })
   box.addEventListener("change", (event) => {
-    const toggle = event.target instanceof Element ? event.target.closest("[data-atelier-share-background]") : null
+    const toggle = /** @type {HTMLInputElement | null} */ (event.target instanceof Element ? event.target.closest("[data-atelier-share-background]") : null)
     if (!toggle) return
     const panel = toggle.closest(".atelier-share-panel")
-    panel?.querySelectorAll("input[type=text], textarea").forEach(field => { field.disabled = !toggle.checked })
+    panel?.querySelectorAll("input[type=text], textarea").forEach(/** @param {any} field */ field => { field.disabled = !toggle.checked })
     const hint = panel?.querySelector("[data-atelier-share-hint]")
     if (hint) hint.textContent = toggle.checked ? "发送前可以改成你愿意分享的说法。" : "这次只发作品，不附创作手记。"
   })
 }
 
+/** @param {AtelierWork} work */
 export function atelierWorkDocument(work) {
   const title=escapeHtml(workTitle(work)), image=atelierImage(work)
   const origin=escapeHtml(work.background?.origin || '这幅作品还没有留下创作手记。')
@@ -205,6 +232,7 @@ export function atelierWorkDocument(work) {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{max-width:760px;margin:40px auto;padding:24px;background:#faf7f2;color:#2a2622;font:16px/1.6 Georgia,"Songti SC",serif}img{display:block;max-width:100%;max-height:70vh;margin:auto}p{white-space:pre-wrap;overflow-wrap:anywhere}h1{font-size:22px;font-weight:400}h2{font-size:18px;font-weight:400}</style><h1>${title}</h1>${image?`<img src="${escapeHtml(image)}" alt="${title}">`:''}<h2>这幅画从哪里来</h2><p>${origin}</p>${approach?`<h2>为什么这样画</h2><p>${approach}</p>`:''}</html>`
 }
 
+/** @param {AtelierWork} work @param {AtelierDeps} deps @param {Element | null | undefined} [trigger] */
 export function openAtelierWork(work,deps,trigger) {
   const title=escapeHtml(workTitle(work)), image=atelierImage(work)
   const medium=escapeHtml(work.impulse?.medium || '自由表达')
@@ -229,15 +257,17 @@ export function openAtelierWork(work,deps,trigger) {
         <div class="atelier-share-actions"><button type="button" data-atelier-share-cancel>取消</button><button class="is-primary" type="button" data-atelier-share-send>发到我的微信</button></div><p class="atelier-share-status" role="status" data-atelier-share-status></p>
       </div>
     </div></article>`})
-  dialog.__atelierWork=work
+  ;/** @type {AtelierDialog} */ (dialog).__atelierWork=work
   bindAtelierSharing(dialog,deps)
 }
 
+/** @param {AtelierWork} work */
 function atelierCard(work) {
   const title=escapeHtml(workTitle(work)), image=atelierImage(work)
   return `<article class="atelier-work"><button type="button" data-atelier-open data-work-id="${escapeHtml(work.id || '')}" aria-label="查看作品：${title}">${image?`<img src="${escapeHtml(image)}" alt="${title}" loading="lazy">`:'<span class="atelier-image-missing">图片暂时无法显示</span>'}<span class="atelier-work-meta"><strong>${title}</strong><span>${escapeHtml(work.impulse?.medium || '自由表达')} · ${escapeHtml(String(work.createdAt || '').slice(0,10))}</span></span></button></article>`
 }
 
+/** @param {AtelierDeps} deps */
 export async function loadAtelierGallery(deps) {
   const box = document.getElementById("atelier-gallery")
   if (!box) return
@@ -246,7 +276,7 @@ export async function loadAtelierGallery(deps) {
   if(box.dataset.readerBound!=='1'){
     box.dataset.readerBound='1'
     box.addEventListener('click',event=>{
-      const button=event.target.closest?.('[data-atelier-open]')
+      const button=/** @type {HTMLElement | null | undefined} */ (/** @type {Element} */ (event.target).closest?.('[data-atelier-open]'))
       const work=galleryWorks.find(w=>w.id===button?.dataset.workId)
       if(work)openAtelierWork(work,deps,button)
     })

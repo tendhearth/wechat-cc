@@ -1,3 +1,5 @@
+// @ts-check
+/// <reference lib="dom" />
 // Pure renderer for events.jsonl rows shown in the memory pane bottom
 // folded zone. Click → toggles `expanded` class which CSS uses to render
 // reasoning via ::after.
@@ -6,6 +8,7 @@ import { escapeHtml } from "../view.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
 
+/** @type {Record<string, string>} */
 const ICON_BY_KIND = {
   cron_eval_pushed: 'mail-01',
   cron_eval_skipped: 'time-02',
@@ -14,10 +17,16 @@ const ICON_BY_KIND = {
   milestone: 'star',
 }
 
+/** @param {string} kind */
 export function decisionGlyph(kind) {
   return icon(ICON_BY_KIND[kind] || 'more-horizontal', { size: 18 })
 }
 
+/**
+ * @typedef {{ id?: string, kind: string, ts?: any, push_text?: string, reasoning?: string, [key: string]: any }} DecisionEvent
+ */
+
+/** @param {DecisionEvent} ev */
 export function decisionSummary(ev) {
   if (ev.kind === 'cron_eval_pushed') {
     const text = ev.push_text || '(空)'
@@ -30,6 +39,7 @@ export function decisionSummary(ev) {
   return '(未知事件)'
 }
 
+/** @param {DecisionEvent} ev */
 export function decisionRow(ev) {
   const glyph = decisionGlyph(ev.kind)
   const ts = formatRelativeTimeShort(ev.ts)

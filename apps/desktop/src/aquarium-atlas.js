@@ -20,7 +20,7 @@ export async function loadAquariumAtlas(source, targets, aligned = false) {
     let left = cellWidth, top = cellHeight, right = -1, bottom = -1
     // Ignore the 4px atlas gutter; it is not part of any sprite.
     for (let y = 4; y < cellHeight - 4; y++) for (let x = 4; x < cellWidth - 4; x++) {
-      if (rgba[(y * cellWidth + x) * 4 + 3] > 8) {
+      if (/** @type {number} */ (rgba[(y * cellWidth + x) * 4 + 3]) > 8) {
         left = Math.min(left, x); right = Math.max(right, x)
         top = Math.min(top, y); bottom = Math.max(bottom, y)
       }
@@ -40,7 +40,8 @@ export async function loadAquariumAtlas(source, targets, aligned = false) {
     crop.height = aligned ? crop.width : height
     crop.getContext('2d')?.drawImage(part.cell, bounds.left, bounds.top, width, height,
       (crop.width - width) / 2, (crop.height - height) / 2, width, height)
-    targets[index].src = crop.toDataURL()
-    await targets[index].decode()
+    const target = /** @type {HTMLImageElement} */ (targets[index])
+    target.src = crop.toDataURL()
+    await target.decode()
   }))
 }

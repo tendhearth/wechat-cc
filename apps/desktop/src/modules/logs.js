@@ -1,3 +1,5 @@
+// @ts-check
+/// <reference lib="dom" />
 // Logs pane module. Tails the daemon's channel.log via `wechat-cc logs
 // --tail N --json`, renders one row per entry, and refreshes on user
 // click + on a slow background tick (10s — log lines change less often
@@ -11,6 +13,7 @@
 
 import { escapeHtml } from "../view.js"
 
+/** @type {Record<string, string>} */
 const TAG_TONES = {
   // error-tone: things that imply something broke
   ERROR: "error", FATAL: "error", PANIC: "error",
@@ -23,6 +26,7 @@ const TAG_TONES = {
   POLL: "info", BOOT: "info", READY: "info",
 }
 
+/** @param {string | null | undefined} tag */
 function tagToneClass(tag) {
   const upper = String(tag || "").toUpperCase()
   if (TAG_TONES[upper]) return `tag-${TAG_TONES[upper]}`
@@ -33,6 +37,7 @@ function tagToneClass(tag) {
   return ""
 }
 
+/** @param {any} iso */
 function formatLocalTime(iso) {
   if (!iso) return ""
   const t = Date.parse(iso)
@@ -41,6 +46,11 @@ function formatLocalTime(iso) {
   return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
 }
 
+/** @typedef {{timestamp:number|null, tag:string|null, message:string}} LogEntry */
+/** @typedef {{ ok: boolean, error?: string, entries: LogEntry[], totalLines: number, logFile: string }} LogsResult */
+/** @typedef {{ invoke: (command: string, args: Record<string, any>) => Promise<any>, formatInvokeError: (err: any) => string }} LogsDeps */
+
+/** @param {LogEntry[]} entries */
 function renderRows(entries) {
   if (!entries.length) return `<p class="empty-state">没有日志（daemon 还没产生事件）。</p>`
   return entries.map(e => {
@@ -73,6 +83,7 @@ function renderRows(entries) {
 export function filterLogEntries(entries, query) {
   const q = (query || "").trim().toLowerCase()
   if (!q) return entries
+  /** @type {typeof entries} */
   const out = []
   let keepingCont = false
   for (const e of entries) {
@@ -88,13 +99,15 @@ export function filterLogEntries(entries, query) {
   return out
 }
 
+/** @type {{ lastResult: LogsResult | null, busy: boolean, autoTimer: ReturnType<typeof setInterval> | null }} */
 let logsState = { lastResult: null, busy: false, autoTimer: null }
 
 /** 按当前筛选词渲染一次(不重新读日志 —— 那要走 CLI,几百 KB)。 */
+/** @param {LogsResult} result */
 function paintLogs(result) {
   const body = document.getElementById("logs-body")
   if (!body) return []
-  const raw = document.getElementById("logs-filter")?.value || ""
+  const raw = /** @type {HTMLInputElement | null} */ (document.getElementById("logs-filter"))?.value || ""
   const q = raw.trim()
   const shown = filterLogEntries(result.entries, raw)
   body.innerHTML = renderRows(shown)
@@ -113,14 +126,16 @@ export function rerenderLogs() {
   if (logsState.lastResult) paintLogs(logsState.lastResult)
 }
 
+/** @param {LogsDeps} deps */
 export async function loadLogsPane(deps) {
   if (logsState.busy) return
   logsState.busy = true
-  const select = document.getElementById("logs-tail-select")
+  const select = /** @type {HTMLSelectElement | null} */ (document.getElementById("logs-tail-select"))
   const tail = Number.parseInt(select?.value || "50", 10) || 50
   const body = document.getElementById("logs-body")
   if (!body) { logsState.busy = false; return }
   if (!logsState.lastResult) body.innerHTML = `<p class="empty-state">加载中…</p>`
+  /** @type {LogsResult} */
   let result
   try {
     // Route through wechat_cli_json_via_file: 200/500-line tails produce
@@ -157,6 +172,10 @@ export async function loadLogsPane(deps) {
 
 // Start a 10s auto-refresh tick while the logs pane is the active one.
 // stopLogsAutoRefresh stops it. main.js wires these to switchPane.
+/**
+ * @param {LogsDeps} deps
+ * @param {number} [intervalMs]
+ */
 export function startLogsAutoRefresh(deps, intervalMs = 10000) {
   if (logsState.autoTimer) return
   logsState.autoTimer = setInterval(() => loadLogsPane(deps), intervalMs)

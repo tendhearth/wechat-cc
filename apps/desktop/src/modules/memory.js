@@ -1,4 +1,3 @@
-import { ccPageArt } from "../cc-page-art.js"
 // @ts-check
 /// <reference lib="dom" />
 /** @typedef {import('../../../../src/cli/schema').MemoryListOutputT} MemoryList */
@@ -24,6 +23,7 @@ import { ccPageArt } from "../cc-page-art.js"
 //       #memory-editor (textarea), #memory-line-editor (主人那一份的逐行编辑,
 //       见 memory-line-edit.js), #memory-status (save feedback)
 
+import { ccPageArt } from "../cc-page-art.js"
 import { escapeHtml, formatRelativeTime } from "../view.js"
 import { renderMarkdown } from "../vendor/markdown.js"
 import { observationRow, milestoneCard } from "./observations.js"
@@ -773,7 +773,7 @@ export function renderMemoryProfileOverview(deps) {
     const trigger=/** @type {HTMLElement} */(element)
     trigger.addEventListener('click',()=>{
       const [kind,rawIndex]=(trigger.dataset.memoryEvidence||'').split(':'),index=Number(rawIndex)
-      const card=(kind==='trait'?profile.traits:kind==='preference'?profile.preferences:profile.snippets)[index]
+      const card=/** @type {ProfileCard | undefined} */ ((kind==='trait'?profile.traits:kind==='preference'?profile.preferences:profile.snippets)[index])
       const generated=memoryState.profile
       if(!card?.generated||!generated)return
       if(!memoryEvidenceDialog)memoryEvidenceDialog=mountMemoryEvidenceDialog({call:deps.invokeApi,onReviewed:({chatId,action})=>{
