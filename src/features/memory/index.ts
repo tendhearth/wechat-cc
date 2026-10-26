@@ -27,6 +27,8 @@ import { makeMemoryPromptReads, type MemoryPromptReads } from './prompt-reads'
 import { registerMemoryNightly } from './nightly-lifecycle'
 import type { MemoryLlmOps } from './llm-ops'
 import type { MemoryNightlyRuntime } from './nightly-runtime'
+import { importMemoryOnBoot } from './fact-import'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 
 export { wireMemory, type WireMemoryDeps } from './wire'
 export { makeMemoryLlmOps, resolveCheapEval, type MemoryLlmOps } from './llm-ops'
@@ -66,6 +68,10 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
     ...(o.lazy ? { lazy: o.lazy } : {}),
     init(ctx) {
       const d = o.deps(ctx)
+      // 架构终态 G3:记忆文件 → 主库的表,开机一次、在任何记忆读写之前;按对话逐个,核对不过的对话留在文件路径上。
+      // 出错只记日志,不挡开机(G3 时还没人读表)。
+      try { importMemoryOnBoot({ store: makeMemoryFactsStore(d.db), stateDir: d.stateDir, now: () => Date.now(), log: d.log }) }
+      catch (e) { d.log('MEMORY_IMPORT', `skipped: ${e instanceof Error ? e.message : String(e)}`) }
       ctx.get<InternalApiLifecycle>('internal-api').mount('memory', {
         ...memoryFsRoutes({ memory: d.memory, db: d.db, log: d.log }),
         ...memoryRoutes({ stateDir: d.stateDir, memoryLlm: d.memoryLlm, memoryNightly: d.memoryNightly, resolveAdminChatId: d.resolveAdminChatId }),

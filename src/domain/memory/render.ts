@@ -26,7 +26,8 @@ function live(rows: readonly RenderableFact[], doc: 'memory' | 'owner'): Rendera
 }
 function memoryParts(rows: readonly RenderableFact[]): { sections: Array<[string, RenderableFact[]]>; extra: string[] } {
   const mine = live(rows, 'memory')
-  const sections = MEMORY_SECTIONS.map(s => [s, mine.filter(r => !isExtra(r) && r.section === s)] as [string, RenderableFact[]])
+  const isEntry = (r: RenderableFact) => r.key.startsWith('m:') || r.key.startsWith('u:')
+  const sections = MEMORY_SECTIONS.map(s => [s, mine.filter(r => isEntry(r) && r.section === s)] as [string, RenderableFact[]])
   return { sections, extra: mine.filter(isExtra).map(r => r.text) }
 }
 /** 记忆条目的编号(尾注里的 m:<id>),没有编号 ⇒ null。 */
