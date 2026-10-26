@@ -379,6 +379,8 @@ async function inProcessOwnerRoute(key: string, url: URL, body: unknown): Promis
 async function dryRunOwnerRoute(req: Request, url: URL): Promise<Response | null> {
   const key = `${req.method} ${url.pathname}`
   const q = url.searchParams
+  // 只有自己答的路由才读正文:正文只能读一次,别的 /v1 处理器(a2a、手机配对 ……)还要读(#725 CI)。
+  if (key !== 'POST /v1/conversation/set-mode' && !OWNER_ROUTE_KEYS.has(key)) return null
   let body: Record<string, unknown> = {}
   if (req.method === 'POST') { try { body = (await req.json()) as Record<string, unknown> } catch { body = {} } }
 
@@ -391,7 +393,6 @@ async function dryRunOwnerRoute(req: Request, url: URL): Promise<Response | null
     }
     return Response.json({ ok: true })
   }
-  if (!OWNER_ROUTE_KEYS.has(key)) return null
 
   switch (key) {
     case 'GET /v1/conversations/list': {
