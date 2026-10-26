@@ -226,11 +226,11 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 - ~~对话也走主人的放行规则~~:只在主人自己的对话里、红线照旧问、放了就在回复里说一行(C2 补)。
 - ~~网页 v1 传输退休~~:直接退,老页面提示重新扫码配对(F4)。
 
-还等的:
-- **F6**:桌面里剩下的几处 CLI 调用(mode set、memory list/read/write/view/edit、sessions list-projects、plugin list)换成 `/v1` —— daemon 没在跑时这几样会用不了(今天走 CLI 还能用)。
-- **Claude 一起做的 `is_error` 判定**(B1b 留的口子):对话里「标了 is_error 但消息不像报错」的结果算 `provider_error`,一起做不算;对齐的话一些一起做回合会从「完成」变「失败」。
-- **G 记忆一个源**:设计稿 `docs/superpowers/specs/2026-10-25-memory-single-source-design.md` 列的五个决定(待办点「不对」算不算收回、`corrections.md` 换成「收回的话」、收回能不能「恢复」、手改 `memory.md` 怎么处理、导入后的老文件留多久),各附建议。
-- **Codex 对话逐条问**(B1 发现的机会):app-server 能 `on-request`,对话里 admin 的危险命令可以改成问主人(今天照旧不问)。
+已定(2026-10-26,主人:「1 好 2 好 3 好 4 照建议」):
+- ~~F6~~:桌面剩下的 CLI 调用换成 `/v1`(接受 daemon 没起时那几样用不了)。
+- ~~Claude 一起做的 `is_error` 判定~~:和对话对齐。
+- ~~Codex 对话逐条问~~:admin 的危险命令经 app-server `on-request` 问主人。
+- ~~G 记忆一个源~~:设计稿 §4 五条全照建议。
 
 ## 和别的文档的关系
 
