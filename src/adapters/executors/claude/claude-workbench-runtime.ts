@@ -7,7 +7,7 @@ import { ClaudeWorkbenchEvents } from './claude-workbench-events'
 import { ownClaudeWorkbenchProcess } from './claude-workbench-process'
 import { isAuthFail } from '../../../domain/auth-fail'
 import { errorWithProviderCode } from '../../../lib/provider-error-code'
-import { claudeApiFailure, claudeAssistantFailure, nativeTimelineId as id, parseToolUseToEvent, toolActivityStart, userContent, type ActivityEvent } from './claude-sdk-messages'
+import { claudeApiFailure, claudeAssistantFailure, claudeResultFailure, nativeTimelineId as id, parseToolUseToEvent, toolActivityStart, userContent, type ActivityEvent } from './claude-sdk-messages'
 
 type Value = Record<string, any>
 const object = (value: unknown): value is Value => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -253,6 +253,9 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
     if (message.type === 'result') {
       // 这一轮是 API 失败:不推 result(不能让失败回合被当成「完成 / 这家恢复了」),带码收尾。
       if (pendingApiError) { finish(apiFailure(typeof message.api_error_status === 'number' ? message.api_error_status : null)); return }
+      // result 标了 is_error 却没有标注消息:和对话同一个判法(claudeResultFailure),同样不推 result、带码收尾(主人 2026-10-26)。
+      const resultFailure = claudeResultFailure(message)
+      if (resultFailure) { finish(errorWithProviderCode(resultFailure.message, resultFailure.code)); return }
       foreground = 'idle'
       streamMessageId = null; streamed.clear(); suppressedStream.clear() // a turn boundary bounds streamed-text lifetime explicitly
       // 用量(每件事花了多少,2026-10-20):只取 token;total_cost_usd 在常驻会话里可能是累计的,不记钱。

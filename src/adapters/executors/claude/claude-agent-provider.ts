@@ -13,7 +13,7 @@ import { claudeApiErrorCode } from './claude-api-error-code'
 import { discoverClaudeModels } from './claude-model-catalog'
 import { executionModel, nativeModelId } from '../../../domain/workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
-import { claudeApiFailure, claudeAssistantFailure, parseToolUseToEvent, userContent } from './claude-sdk-messages'
+import { claudeApiFailure, claudeAssistantFailure, claudeResultFailure, parseToolUseToEvent, userContent } from './claude-sdk-messages'
 import { authorize, type AuthSubject } from '../../../domain/authorize'
 import { lookup } from '../../../domain/capability-matrix'
 
@@ -503,12 +503,15 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                   : JSON.stringify(msg).slice(0, 400)
                 log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
                 aq.push({ kind: 'error', message: `subtype=${msg.subtype}` })
-              } else if (msg.is_error === true && !apiErrored && !turnErrored) {
+              } else if (!apiErrored && !turnErrored) {
                 // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
                 // result.result 就是错误原文。带码收尾,coordinator 只发通知 —— 一个字都不进回复(#190 红线)。
-                const summary = typeof msg.result === 'string' ? msg.result : ''
-                log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=none is_error=true status=${msg.api_error_status ?? 'none'} code=provider_error text=${JSON.stringify(summary.slice(0, 200))}`)
-                aq.push({ kind: 'error', code: 'provider_error', message: summary.trim() ? summary.slice(0, 400) : 'claude result is_error' })
+                // 判法和一起做同一个(claude-sdk-messages.ts 的 claudeResultFailure)。
+                const resultFailure = claudeResultFailure(msg)
+                if (resultFailure) {
+                  log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=none is_error=true status=${msg.api_error_status ?? 'none'} code=${resultFailure.code} text=${JSON.stringify(resultFailure.message.slice(0, 200))}`)
+                  aq.push({ kind: 'error', ...resultFailure })
+                }
               }
               // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
               // 分段的结果(回复交付第 5 步:交付用分段,见 AgentEvent.result 的注释)。

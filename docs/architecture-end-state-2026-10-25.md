@@ -194,6 +194,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | E2 | 执行者适配器(B 搬完的)进 `adapters/executors/`;store 进 `adapters/store/` | — |
 | E3 | `src/core` 清空 | 删掉 `core-no-node` 守卫和 `src/core` 目录 |
 | B1b | Claude 对话和一起做核过一遍(主人 2026-10-25 定:一家一条实现,直接改):**本来就是同一条路** —— 两边都是 Agent SDK 的 `query()`(流式输入),同一个 `provider.spawn`、同一份 `sdkOptionsForProject`(权限回调、MCP、档位)、同一套执行选择 / 续接 / abort / 端点捕获;`claude-workbench-runtime` 是在它上面加了进程组所有权、常驻、后台任务、逐字流、中途插话、事件预算,会话生命周期不同(一整段一个事件流 vs 一轮一个)。所以不硬合成一个会话类:对话搬到常驻那一边会丢 Windows(它拒 win32)、改掉回复分段和 `finalText`(看得见)。做了的:SDK 消息 → 事件的共用部分收进 `claude-sdk-messages.ts` 一份(用户消息内容 / 工具调用 / 活动标签与 detail 清洗 / 「API 失败 or 没登录」的判法 / API 失败的码和话),运行时不再靠 provider 注入 `helpers`;删掉对话循环里按 `workbenchTimeline` 开的时间线抄本(生产里只和 `workbenchLifecycle` 一起传过,走不到)和它的 6 条测试(时间线顺序 / 不抄输入 / detail 清洗 / 失败结果 / 错父结果这几条搬进运行时测试)。权限 / 档位一行没动(C3 快照不变)。逐项差异见下表 |
+| B1b 补 | 一起做的 `is_error` 判定和对话对齐(主人 2026-10-26 定):result 标了 `is_error: true`、subtype 是 success、而这一轮没有带 `error` 标注的助理消息也没有哨兵 ⇒ 两边都收成 `provider_error`,同一个函数 `claudeResultFailure`(`claude-sdk-messages.ts`),对话的 spawn 和 `claude-workbench-runtime.ts` 都调它,没有第二份。一起做那边不推 result、带码收掉这一轮(和 SDK 标注的 API 失败同一个收法)⇒ 以前显示「完成」的这种回合现在是「失败」。工作台的码表 `taskErrorForProviderCode`(`src/adapters/store/workbench/execution-settings.ts`)给 `provider_error` 一个任务失败码 `provider_failed` 和一句人话(桌面 `apps/desktop/src/modules/workbench-execution.js` 有同一句的桌面版,微信完成通知说原因,原文跟在任务记录的那条错误后面);以前 `provider_error` 落成原文当 `task.error` —— Codex / Cursor 报的 `provider_error` 也跟着换成这句(仍是失败,只是说法)。测试:`claude-result-is-error.test.ts` 同一组 SDK 样本喂两边、结局逐条一样;`src/features/workbench/service-provider-code.test.ts` 管 `provider_error ⇒ provider_failed` |
 | E4 | 工作台服务:`Options` 原样传成 `deps`(删掉那行 2245 字符的复制);十个域按依赖顺序构造,彼此依赖接口,`Ref<ServiceActions>` 删掉 | 删掉 `workbench-service-ratchet` 守卫;service 里没有 `Ref` |
 
 ### 阶段 F:契约与客户端(和 A–E 并行,碰的文件不重叠)
@@ -228,7 +229,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 
 已定(2026-10-26,主人:「1 好 2 好 3 好 4 照建议」):
 - ~~F6~~:桌面剩下的 CLI 调用换成 `/v1`(接受 daemon 没起时那几样用不了)。
-- ~~Claude 一起做的 `is_error` 判定~~:和对话对齐。
+- ~~Claude 一起做的 `is_error` 判定~~:和对话对齐(B1b 补做了)。
 - ~~Codex 对话逐条问~~:admin 的危险命令经 app-server `on-request` 问主人。
 - ~~G 记忆一个源~~:设计稿 §4 五条全照建议。
 
@@ -339,12 +340,12 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | 续接 | `options.resume = resumeSessionId` | 同 | 本来一份 |
 | 图片 / PDF | `userContent`:图片、PDF 原样给,其他文件给元数据 | 同一个 `userContent` | 合了(`claude-sdk-messages.ts`;以前靠 `helpers` 注入) |
 | 思考 | thinking 块丢掉;effort / thinking 选项同一套 | 同 | 本来一样 |
-| 额度 / 认证报错 | SDK `error` 标注 → 码(`billing_error` ⇒ quota、`authentication_failed` ⇒ auth_rejected …),等 result 的 HTTP 状态;两句哨兵 ⇒ auth_failed | 同一个判法 | 合了(`claudeAssistantFailure` / `claudeApiFailure`)。还剩两处不同,都没动:对话侧 result `is_error: true` 而没有标注消息时补一个 `provider_error`,一起做没有这一条(加上会让一起做里某些回合从「完成」变「失败」,看得见,攒进后续);auth_failed 的 message 对话带原文前 160 字、一起做不带(两边都按码说话,message 不给人看) |
+| 额度 / 认证报错 | SDK `error` 标注 → 码(`billing_error` ⇒ quota、`authentication_failed` ⇒ auth_rejected …),等 result 的 HTTP 状态;两句哨兵 ⇒ auth_failed | 同一个判法 | 合了(`claudeAssistantFailure` / `claudeApiFailure`)。`is_error` 而无标注那一条后来也合了(B1b 补,`claudeResultFailure`)。还剩一处不同,没动:auth_failed 的 message 对话带原文前 160 字、一起做不带(两边都按码说话,message 不给人看) |
 | 取消 | `interrupt()`(吞掉 transport 已死的错),这一轮等 result 收尾 | `interrupt()`;关的时候整组收掉 | 不合:跟着生命周期走 |
 | 文字 / 时间线 | 相邻文字块攒一段、遇工具冲出;子 agent 文字不发;成功轮带 `finalText` | 逐字流 append + 整块 replace(itemId)、工具活动开始 / 完成、子助手文字进它那条活动的 output | 工具活动的构造合了(`toolActivityStart`);对话侧那份时间线抄本删了 |
 | Windows | 能跑 | 拒(`claude_workbench_process_groups_unsupported`,没有进程组) | **这是不合并成一个会话类的硬理由**:对话搬过去 Windows 上的 Claude 对话就没了 |
 
-**后续**:一起做要不要也认「`is_error` 而无标注」那种失败(看得见,先问);对话侧的中途插话等协调器定行为后可以直接用运行时的 `submit` 那套确认法。
+**后续**:~~一起做要不要也认「`is_error` 而无标注」那种失败~~(主人 2026-10-26 定对齐,B1b 补做了);对话侧的中途插话等协调器定行为后可以直接用运行时的 `submit` 那套确认法。
 
 ## 修订记录
 
@@ -356,4 +357,5 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 - 2026-10-25:G 设计稿出了(进度表「G 设计稿」),五条等主人点头的在稿 §4。
 - 2026-10-25:B1b 做完(进度表 + 逐项差异):Claude 两条本来同一个 SDK,收共用的消息映射,删对话侧走不到的时间线抄本。
 - 2026-10-25:F5 做完(进度表):桌面没有手写的 `/v1` 字符串,`lib.rs` 不再照抄路径表、两个代理合成 `daemon_request`;F6 只清点没换(换了 daemon 没起就读不到,要主人点头)。
+- 2026-10-26:B1b 补做完(进度表 + 逐项差异):一起做的 `is_error` 判定和对话共用 `claudeResultFailure`,这种回合在一起做里从「完成」变「失败」(`provider_failed`)。
 - 2026-10-25:E5 做完(进度表):app 只经 ports / domain 认 adapters,depcheck `app-does-not-reach-up` 零例外。
