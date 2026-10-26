@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openDb, type Db } from '../../lib/db'
 import { makeCliEventHub, type CliEvent } from '../../app/cli-events'
-import {
-  makeCliSessionStore, effectiveStatus, sortCliSessionViews, toCliSessionView,
-  CLI_SESSION_STALE_MS, CLI_SESSION_ENDED_RETAIN_MS, CLI_SESSION_ABANDONED_RETAIN_MS, CLI_SESSION_MAX_ROWS,
-} from './cli-session-store'
+import { makeCliSessionStore, CLI_SESSION_ENDED_RETAIN_MS, CLI_SESSION_ABANDONED_RETAIN_MS, CLI_SESSION_MAX_ROWS } from './cli-session-store'
+import { effectiveStatus, sortCliSessionViews, toCliSessionView, CLI_SESSION_STALE_MS } from '../../domain/cli-session-view'
 
 let db: Db
 let clock: number

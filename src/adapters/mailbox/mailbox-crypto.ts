@@ -14,11 +14,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { generateKeypair, deriveSharedKey, sealLetter, openLetter } from './penpal-crypto'
 import { writeJsonAtomic } from '../../lib/json-file'
-
-export interface Envelope { eph_pub: string; nonce: string; ct: string; tag: string }
-export interface EnvelopeInner { path: string; bearer: string; body: unknown }
-export interface PeerMailbox { addr: string; enc_pub: string; relays: string[] }
-export interface MailboxIdentity { addr: string; enc_pub: string; enc_priv: string; sign(message: string): string }
+import type { Envelope, EnvelopeInner, MailboxIdentity } from '../../ports/mailbox'
 
 const KEY_FILE = 'mailbox-key.json'
 

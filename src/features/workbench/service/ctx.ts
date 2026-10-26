@@ -10,7 +10,7 @@ import type { UsageSnapshot } from '../../../domain/subscription-usage'
 import type { WorkbenchStore } from '../../../adapters/store/workbench/store'
 import type { NativeHistoryProvider, NativeHistoryReader } from '../../../adapters/workbench/native-history'
 import type { WorkbenchRuntimeState } from './state'
-import type { MatterStore } from '../../../adapters/store/matters-store'
+import type { MatterStore } from '../../../ports/matters'
 import type { ReportSink } from '../../../domain/matters/report'
 import type { RecollectSink } from '../../../domain/matters/recollection'
 

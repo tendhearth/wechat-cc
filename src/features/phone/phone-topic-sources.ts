@@ -15,7 +15,7 @@
  */
 import { TERMINAL_TASK_STATUSES } from '../../adapters/store/workbench/store'
 import type { WorkbenchService } from '../workbench'
-import type { MatterStore } from '../../adapters/store/matters-store'
+import type { MatterStore } from '../../ports/matters'
 import type { HomePayload } from './settings-panel'
 import { makePhoneEvents, type PhoneEvents, type TopicSource } from './phone-events'
 

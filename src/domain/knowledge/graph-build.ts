@@ -29,7 +29,7 @@
  */
 import { buildMentionEdges, detectOwner, type MentionRow } from './graph'
 import { buildProfiles, DEFAULT_WEIGHTS, type Msg, type Weights } from './graph-profiles'
-import type { KnowledgeStore, SourceMsg } from '../../adapters/knowledge/store'
+import type { KnowledgeStore, SourceMsg } from '../../ports/knowledge'
 
 /** All source is read in pages of this size (same shape as the indexer's
  *  DEFAULT_BATCH) — keeps a single page's memory bounded even though the

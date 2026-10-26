@@ -8,29 +8,8 @@
  * channel address.
  */
 import type { Db } from '../../lib/db'
-import type { PenpalHandle } from '../mailbox/penpal-crypto'
-import type { PeerMailbox } from '../mailbox/mailbox-crypto'
-
-export interface ChannelRow {
-  id: string; seek_id: string; my_privkey: string; my_pubkey: string; my_channel_id: string
-  peer_pubkey: string | null; peer_channel_id: string | null; peer_mailbox: string | null
-  degree: number; relay_via: string | null; peer_agent_id: string | null
-  status: 'pending' | 'open'; created_at: string
-}
-export interface ChannelStore {
-  create(c: { id: string; seekId: string; myPrivkey: string; myPubkey: string; myChannelId: string; degree: number; relayVia?: string | null; peerAgentId?: string | null }): void
-  get(id: string): ChannelRow | null
-  getByMyChannelId(channelId: string): ChannelRow | null
-  /** Stores the peer's crossed handle. Deliberately does NOT touch `status`:
-   *  the handle can legitimately land BEFORE my own consent (the peer revealed
-   *  first, and an async transport gives no second chance to deliver it), and a
-   *  channel must never read as `open` — the 信箱 surface filters on exactly
-   *  that — until both sides have consented. Opening is an explicit
-   *  `setStatus(id, 'open')` at the mutual instant. */
-  setPeerHandle(id: string, handle: PenpalHandle): void
-  setStatus(id: string, status: ChannelRow['status']): void
-  list(): ChannelRow[]
-}
+import type { ChannelRow, ChannelStore } from '../../ports/penpal-channel'
+import type { PeerMailbox } from '../../ports/mailbox'
 
 export function makeChannelStore(db: Db): ChannelStore {
   const ins = db.query<unknown, [string, string, string, string, string, number, string | null, string | null, string]>(
@@ -54,30 +33,6 @@ export function makeChannelStore(db: Db): ChannelStore {
     setStatus(id, status) { updStatus.run(status, id) },
     list() { return selAll.all() },
   }
-}
-
-/**
- * 「一个对方一条信道」的那一条 —— 每个 `peer_agent_id` 只留**最新的那条 open
- * 行**,其余(旧的、pending 的)全滤掉。
- *
- * WHY:重新配对总是按 initiator nonce 建新行(两侧才对称),所以同一个对端
- * 完全可能有好几条 open 行。不收敛的话,一条心愿会往同一个人那儿投 N 次
- * (他的主人被打扰 N 次),关系视图里同一个朋友也会出现 N 遍。
- *
- * `peer_agent_id` 为空(经介绍人的匿名信道)一律保留 —— 它们没有「同一个人」
- * 可言,各是各的。同 `created_at` 时保留**先出现的那条**:store 的 list() 是
- * `created_at DESC, rowid DESC`,先出现的就是新的。
- */
-export function primaryChannels<T extends { peer_agent_id?: string | null; status: string; created_at?: string }>(rows: readonly T[]): T[] {
-  const newest = new Map<string, T>()
-  for (const r of rows) {
-    const pid = r.peer_agent_id
-    if (r.status !== 'open' || pid === null || pid === undefined) continue
-    const cur = newest.get(pid)
-    if (!cur || (r.created_at ?? '') > (cur.created_at ?? '')) newest.set(pid, r)
-  }
-  const pid = (r: T): string | null | undefined => r.peer_agent_id
-  return rows.filter(r => r.status === 'open' && (pid(r) === null || pid(r) === undefined || newest.get(pid(r)!) === r))
 }
 
 /** Parses the row's stored `peer_mailbox` JSON back into a `PeerMailbox`, or

@@ -12,7 +12,7 @@ import { makeMailboxPoller } from './mailbox-poller'
 import { makeCursorStore } from './mailbox-cursor-store'
 import { startCompanionScheduler } from '../../daemon/companion/scheduler'
 import type { Lifecycle } from '../../lib/lifecycle'
-import type { A2ARegistry } from '../../adapters/a2a/a2a-registry'
+import type { A2ARegistry } from '../../ports/a2a'
 import type { A2AServerOpts } from '../../adapters/a2a/a2a-server'
 
 export interface MailboxPollerDeps {

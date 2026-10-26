@@ -7,3 +7,6 @@ import { createHash } from 'node:crypto'
 export function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
 }
+
+/** 「一件事」说一句的回执只存正文的指纹(adapters/store/say-receipts.ts;架构终态 E5 从那里搬来,app 的服务要算它)。 */
+export const sayTextHash=(text:string)=>createHash('sha256').update(text,'utf8').digest('hex')

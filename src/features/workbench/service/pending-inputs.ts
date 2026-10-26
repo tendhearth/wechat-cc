@@ -6,7 +6,8 @@
  * 这三个函数只认 ctx(store + state),不碰任何别的域,搬到这里之后 lifecycle 和 inputs 都依赖它,
  * 彼此之间只剩 inputs → lifecycle 一个方向。execute 收尾也直接用它。
  */
-import { sameAttachments, type LiveInput } from '../../../adapters/store/workbench/live-inputs'
+import { sameAttachments } from '../../../adapters/store/workbench/live-inputs'
+import type { LiveInput } from '../../../ports/workbench'
 import type { ServiceCtx } from './ctx'
 import type { Active } from './state'
 

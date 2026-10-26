@@ -6,7 +6,7 @@
  * stageFinishedNotice 由 execute / cancelRun 在 store.atomic 里同步调用 —— 这里不许变成 async。
  */
 import { executionFailureMessage } from '../../../adapters/store/workbench/execution-settings'
-import { normalizeInputRequestId } from '../../../adapters/store/workbench/live-inputs'
+import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
 import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../../adapters/workbench/permissions'
 import { providerDisplayName } from '../../../domain/provider-display-names'
 import { TERMINAL_TASK_STATUSES, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'

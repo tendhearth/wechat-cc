@@ -3,7 +3,8 @@ import { openSqlite } from '../../lib/runtime/sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openKnowledge, type KnowledgeStore, type SourceMsg, type Chunk } from './store'
+import { openKnowledge } from './store'
+import type { KnowledgeStore, SourceMsg, Chunk } from '../../ports/knowledge'
 
 function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {
   return {

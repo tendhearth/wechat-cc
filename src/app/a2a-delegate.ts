@@ -6,9 +6,8 @@
  * generic A2A client `send` — the hand's /a2a/exec runs its LOCAL agent and
  * returns an ExecResult, which we surface back to the caller.
  */
-import type { A2AClient } from '../adapters/a2a/a2a-client'
+import type { A2AClient, ExecResult } from '../ports/a2a'
 import type { A2AAgentRecord } from '../lib/agent-config'
-import type { ExecResult } from '../adapters/a2a/a2a-server'
 
 /**
  * Default brain-side timeout for one delegated task (`WECHAT_A2A_EXEC_TIMEOUT_MS`

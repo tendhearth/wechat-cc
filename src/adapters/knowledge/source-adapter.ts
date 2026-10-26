@@ -116,7 +116,7 @@ const IMMUTABLE_RO = SQLITE_OPEN.READONLY | SQLITE_OPEN.URI
 import { createHash } from 'node:crypto'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import type { KnowledgeStore, SourceMention, SourceMsg } from './store'
+import type { KnowledgeStore, SourceMention, SourceMsg } from '../../ports/knowledge'
 
 const TEXT_TYPE = 1
 const APP_TYPE = 49

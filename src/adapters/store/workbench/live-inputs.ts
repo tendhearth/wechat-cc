@@ -1,15 +1,7 @@
 import type {Db} from '../../../lib/db'
-import type {Attachment} from '../../workbench/attachments'
-import type {AgentExecutionChoice} from '../../../ports/agent-provider'
+import type {Attachment,LiveInput,LiveInputStatus} from '../../../ports/workbench'
 import {normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 
-export function normalizeInputRequestId(value:unknown):string{
-  if(typeof value!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value))throw Error('invalid_request')
-  return value.toLowerCase()
-}
-
-export type LiveInputStatus='pending'|'sending'|'delivered'|'held'|'withdrawn'
-export interface LiveInput {id:string;taskId:string;runId:string;text:string;status:LiveInputStatus;createdAt:number;error:string|null;attachments?:Attachment[];execution?:AgentExecutionChoice}
 type InputRow=Omit<LiveInput,'attachments'|'execution'>&{attachmentsJson:string;executionJson:string|null}
 const SELECT='SELECT id,task_id AS taskId,run_id AS runId,text,status,created_at AS createdAt,error,attachments_json AS attachmentsJson,execution_json AS executionJson FROM workbench_live_inputs'
 const publicInput=(row:InputRow|null):LiveInput|null=>{if(!row)return null;const {attachmentsJson,executionJson,...input}=row;const attachments=JSON.parse(attachmentsJson) as Attachment[];return {...input,...(attachments.length?{attachments}:{}),...(executionJson?{execution:normalizeExecutionChoice(JSON.parse(executionJson),PROVIDER_EXECUTION_CHOICE)}:{})}}

@@ -1,4 +1,4 @@
-import type {Matter} from '../../adapters/store/matters-store'
+import type { Matter } from '../../ports/matters'
 
 /**
  * matters/report.ts — 每轮答复该不该回原对话、回什么。

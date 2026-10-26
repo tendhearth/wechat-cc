@@ -3,10 +3,10 @@ import {closeSync,constants,fstatSync,lstatSync,readdirSync,readSync,unlinkSync,
 import {basename,dirname,extname,isAbsolute,join,resolve} from 'node:path'
 import type {Db} from '../../lib/db'
 import type {AgentAttachment} from '../../ports/agent-provider'
+import type {Attachment} from '../../ports/workbench'
 import {ATTACHMENT_METADATA_BYTES,UPLOAD_METADATA_BYTES,UPLOAD_TOMBSTONE_BYTES,type AttachmentBudgetInput} from '../../domain/workbench/attachment-budget'
 import {O_NONBLOCK,readBounded,lstatNoLink,mkdirAnchored,openAnchored} from './anchored-fs'
 
-export interface Attachment {id:string;name:string;mime:string;size:number;sha256:string}
 export interface AttachmentUpload {id:string;draftId:string;taskId?:string;name:string;mime:string;base64:string}
 export interface AttachmentScope {ownerKey:string;allowLegacyUnbound?:boolean}
 interface StoredAttachment extends Attachment {draftId:string;taskId:string|null;uploadTaskId:string|null;storagePath:string;createdAt:number;ownerKey:string|null}

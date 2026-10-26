@@ -14,9 +14,9 @@
  * so it drops straight into sealEnvelope / openEnvelope / signFetch.
  */
 import { hkdfSync, createPrivateKey, createPublicKey, sign as edSign } from 'node:crypto'
+import type { PairingCrypto, RendezvousIdentity } from '../../ports/mailbox'
+import { sealEnvelope, openEnvelope, signFetch } from './mailbox-crypto'
 
-/** Same shape as MailboxIdentity — usable by sealEnvelope/openEnvelope/signFetch. */
-export interface RendezvousIdentity { addr: string; enc_pub: string; enc_priv: string; sign(message: string): string }
 
 // Domain-separation constants — FIXED on both sides (spec §4). Never add relayUrl.
 const HKDF_SALT = Buffer.from('wcc-pair-v1')
@@ -53,3 +53,6 @@ export function deriveRendezvous(code: string): RendezvousIdentity {
     sign: (message) => edSign(null, Buffer.from(message, 'utf8'), edPriv).toString('base64url'),
   }
 }
+
+/** 配对引擎(src/app/pairing.ts)经 `PairingDeps.crypto` 拿的那一组,原样转交这几个函数。 */
+export const pairingCrypto: PairingCrypto = { deriveRendezvous, sealEnvelope, openEnvelope, signFetch }

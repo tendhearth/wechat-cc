@@ -30,14 +30,14 @@ import { makeMailboxPoller } from './mailbox-poller'
 import { makeEnvelopeDispatch } from './mailbox-dispatch'
 import { makeCursorStore } from './mailbox-cursor-store'
 import { openDb } from '../../lib/db'
-import { makeChannelStore, type ChannelStore } from '../../adapters/store/penpal-channel-store'
+import { makeChannelStore } from '../../adapters/store/penpal-channel-store'
+import type { ChannelStore } from '../../ports/penpal-channel'
 import { makeLetterStore } from './penpal-letter-store'
 import { makeCorrespondent } from './penpal-correspondent'
 import { generateKeypair } from '../../adapters/mailbox/penpal-crypto'
 import { makeRoutePostLetter } from './postletter-route'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
-import type { PeerMailbox } from '../../adapters/mailbox/mailbox-crypto'
-import type { MailboxClient } from '../../adapters/mailbox/mailbox-client'
+import type { PeerMailbox, MailboxClient } from '../../ports/mailbox'
 
 function inProcClient(relay: ReturnType<typeof makeRelayServer>): MailboxClient {
   const post = (p: string, b: unknown) => relay.fetchHandler(new Request(`http://relay${p}`, { method: 'POST', body: JSON.stringify(b) }), '127.0.0.1')

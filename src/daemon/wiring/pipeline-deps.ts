@@ -54,7 +54,7 @@ import { wireCompanionConverse } from './wire-converse'
 import { makeDedupStore } from '../../lib/dedup-store'
 import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../app/a2a-delegate'
 import type { YiHub, YiDispatch } from '../../app/yi-hub'
-import type { ExecResult } from '../../adapters/a2a/a2a-server'
+import type { ExecResult } from '../../ports/a2a'
 import { makeMattersService } from '../../app/matters/service'
 import { makeSayReceipts } from '../../adapters/store/say-receipts'
 import { surfaceOrigin } from '../../features/phone'
@@ -190,7 +190,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
   // often tens of seconds to minutes. The shared a2aDeps.client's 10s timeout
   // is tuned for notify/send; exec needs a long one. Lazily built + reused.
-  let execA2AClient: import('../../adapters/a2a/a2a-client').A2AClient | undefined
+  let execA2AClient: import('../../ports/a2a').A2AClient | undefined
 
   const fireMilestonesFor = makeFireMilestonesFor({ stateDir, db, dayTzOffsetMinutes: boot.agentConfig.day_tz_offset_minutes })
 
@@ -648,7 +648,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       watchTask:async(taskId:string,accountId:string)=>{opts.workbench!.setWechatWatch(taskId,accountId,true)},
       // 换人接着做:新那件的出生地跟着被接手的那件走(同 service/quota-handoff);那件不知道 ⇒ 也不写。
       createTask:async({fromTaskId,...input}:{path:string;providerId:string;text:string;fromTaskId?:string})=>{
-        let origin:import('../../adapters/store/matters-store').MatterOrigin|null=null
+        let origin:import('../../ports/matters').MatterOrigin|null=null
         try{origin=fromTaskId?opts.matters?.get(fromTaskId)?.origin??null:null}catch{/* 查不到就不写 */}
         const task=await opts.workbench!.create({...input,origin});return {id:task.id}
       },

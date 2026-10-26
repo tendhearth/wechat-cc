@@ -11,7 +11,8 @@
  * 逼作者显式地重新做这个权衡。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { generateMailboxIdentity, sealEnvelope, type PeerMailbox } from '../../adapters/mailbox/mailbox-crypto'
+import { generateMailboxIdentity, sealEnvelope } from '../../adapters/mailbox/mailbox-crypto'
+import type { PeerMailbox } from '../../ports/mailbox'
 import { makeMailboxClient } from '../../adapters/mailbox/mailbox-client'
 import { makeMailboxSender } from './mailbox-sender'
 

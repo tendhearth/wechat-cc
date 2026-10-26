@@ -40,7 +40,8 @@ import { readWishes, writeWishes, markWishSeen } from './wish-memory'
 import { readIntroIndex, writeIntroIndex } from './intro-memory'
 import { newReplyId as coreNewReplyId, pruneIntroIndex, FORWARD_ONLY_WHEN_UNABLE, HINT_MAX, type IntroIndex } from './intro'
 import type { Envelope } from '../../domain/envelope'
-import { primaryChannels, type ChannelStore } from '../../adapters/store/penpal-channel-store'
+import { primaryChannels } from '../../domain/penpal-channels'
+import type { ChannelStore } from '../../ports/penpal-channel'
 
 export interface WishDeps {
   stateDir: string

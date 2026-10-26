@@ -2,7 +2,7 @@ import type { SessionManager } from '../../app/session-manager'
 import type { TierProfile } from '../../domain/user-tier'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import type { ConversationCoordinator, TurnRecord } from '../../app/conversation-coordinator'
-import type { ConversationStore } from '../../adapters/store/conversation-store'
+import type { ConversationStore } from '../../ports/conversation-store'
 import { formatInbound } from '../../domain/prompt-format'
 import type { ProviderId } from '../../domain/conversation'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
@@ -264,7 +264,7 @@ export interface BootstrapDeps {
 
 export interface Bootstrap {
   sessionManager: SessionManager
-  sessionStore: import('../../adapters/store/session-store').SessionStore
+  sessionStore: import('../../ports/session-store').SessionStore
   conversationStore: ConversationStore
   registry: ProviderRegistry
   coordinator: ConversationCoordinator
@@ -309,8 +309,8 @@ export interface Bootstrap {
    * a2a-server 子系统降级(wireA2aServer 抛错,spec 2026-08-17).
    */
   a2aDeps?: {
-    registry: import('../../adapters/a2a/a2a-registry').A2ARegistry
-    client: import('../../adapters/a2a/a2a-client').A2AClient
+    registry: import('../../ports/a2a').A2ARegistry
+    client: import('../../ports/a2a').A2AClient
     eventsStore: import('../../adapters/store/a2a-events-store').A2AEventsStore
     recordEvent: (event: AppendInput) => void
     serverEnabled: boolean
@@ -355,7 +355,7 @@ export interface Bootstrap {
     penpal: {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-      channelStore: import('../../adapters/store/penpal-channel-store').ChannelStore
+      channelStore: import('../../ports/penpal-channel').ChannelStore
       letterStore: import('../../features/social').LetterStore
       startVisit(channelRowId?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
       /** 进行中的串门(spec 2026-09-03-companion-presence)。 */
@@ -423,7 +423,7 @@ export interface Bootstrap {
    * resolved (store/search are still present in that case).
    */
   knowledge?: {
-    store: import('../../adapters/knowledge/store').KnowledgeStore
+    store: import('../../ports/knowledge').KnowledgeStore
     search: typeof import('../../domain/knowledge/search').semanticSearch
     embedder?: import('../../adapters/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>

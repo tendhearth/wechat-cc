@@ -15,13 +15,8 @@
  * 自己答了权限,hook 都不会再报一声。
  */
 import type { Db } from '../../lib/db'
+import type { CliSessionRow, CliSessionStore } from '../../ports/cli-session'
 
-export type CliSessionStatus = 'running' | 'waiting' | 'idle' | 'ended'
-/** 同 cli-events.ts 的 CliSource;这里单写一份是为了不和 hub 互相 import(depcruise no-circular 连 type 也算)。 */
-type CliSource = 'claude' | 'codex' | 'cursor'
-
-/** running / waiting 多久没事件就当 idle(读时判定,不跑定时器)。 */
-export const CLI_SESSION_STALE_MS = 30 * 60_000
 /** 已结束的会话留多久。 */
 export const CLI_SESSION_ENDED_RETAIN_MS = 7 * 24 * 3600_000
 /** 没报过 SessionEnd(终端被直接关掉)的会话,多久没动静就清掉。 */
@@ -30,65 +25,6 @@ export const CLI_SESSION_ABANDONED_RETAIN_MS = 30 * 24 * 3600_000
 export const CLI_SESSION_MAX_ROWS = 500
 /** 每写这么多次修剪一次(建 store 时也修一次)。 */
 const PRUNE_EVERY = 50
-
-export interface CliSessionRow {
-  session_id: string
-  source: CliSource
-  cwd: string
-  machine: string | null
-  transcript_path: string | null
-  origin_agent: string | null
-  status: CliSessionStatus
-  last_event_at: number
-  last_prompt_at: number | null
-  last_summary: string | null
-  pending_tool: string | null
-  pending_summary: string | null
-  pending_at: number | null
-  created_at: number
-}
-
-/** 对外(内部 API / 手机)的一条:状态已按 stale 规则折算。 */
-export interface CliSessionView {
-  session_id: string
-  /** 微信「看 码」「@码」用的短码(会话 id 前 6 位)。 */
-  code: string
-  source: CliSource
-  status: CliSessionStatus
-  /** 库里记的是 running / waiting,但超过 30 分钟没事件 ⇒ 折算成 idle。 */
-  stale: boolean
-  project: string
-  cwd: string
-  machine: string | null
-  origin_agent: string | null
-  last_summary: string | null
-  last_event_at: number
-  last_prompt_at: number | null
-  created_at: number
-  /** 等批准的那一项;只在 status='waiting' 时有。 */
-  pending: { tool: string; summary: string | null; since: number } | null
-}
-
-export interface CliSessionIdentity {
-  session_id: string
-  source: CliSource
-  cwd: string
-  machine?: string | undefined
-  transcript_path?: string | undefined
-  origin_agent?: string | undefined
-}
-
-export interface CliSessionStore {
-  /** 见到一条事件:没有就建(status=running),有就刷新身份字段与 last_event_at。 */
-  touch(id: CliSessionIdentity, at: number): void
-  setStatus(sessionId: string, status: CliSessionStatus, at: number, extra?: { summary?: string | null; promptAt?: number; pending?: { tool: string; summary: string | null } }): void
-  get(sessionId: string): CliSessionRow | null
-  /** 按会话 id 前缀找(不分大小写),不含已结束的;多条命中取最近有事件的。 */
-  findByPrefix(prefix: string): CliSessionRow | null
-  /** 最近有事件的在前。 */
-  list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionRow[]
-  prune(now: number): void
-}
 
 const COLS = 'session_id,source,cwd,machine,transcript_path,origin_agent,status,last_event_at,last_prompt_at,last_summary,pending_tool,pending_summary,pending_at,created_at'
 
@@ -149,44 +85,4 @@ export function makeCliSessionStore(db: Db, now: () => number = () => Date.now()
   }
   prune(now())
   return store
-}
-
-function basename(p: string): string {
-  const parts = p.split(/[\\/]+/).filter(Boolean)
-  return parts[parts.length - 1] ?? p
-}
-
-/** 读时折算:running / waiting 超过 STALE_MS 没事件 ⇒ idle。 */
-export function effectiveStatus(row: Pick<CliSessionRow, 'status' | 'last_event_at'>, now: number): { status: CliSessionStatus; stale: boolean } {
-  if ((row.status === 'running' || row.status === 'waiting') && now - row.last_event_at > CLI_SESSION_STALE_MS) return { status: 'idle', stale: true }
-  return { status: row.status, stale: false }
-}
-
-export function toCliSessionView(row: CliSessionRow, now: number): CliSessionView {
-  const { status, stale } = effectiveStatus(row, now)
-  return {
-    session_id: row.session_id,
-    code: row.session_id.slice(0, 6),
-    source: row.source,
-    status,
-    stale,
-    project: basename(row.cwd),
-    cwd: row.cwd,
-    machine: row.machine,
-    origin_agent: row.origin_agent,
-    last_summary: row.last_summary,
-    last_event_at: row.last_event_at,
-    last_prompt_at: row.last_prompt_at,
-    created_at: row.created_at,
-    pending: status === 'waiting' && row.pending_tool ? { tool: row.pending_tool, summary: row.pending_summary, since: row.pending_at ?? row.last_event_at } : null,
-  }
-}
-
-/** 等你批准的在最前,其余按最近事件倒序(不按状态再分组 —— 主人要的是「刚刚谁动了」)。 */
-export function sortCliSessionViews(views: CliSessionView[]): CliSessionView[] {
-  return [...views].sort((a, b) => {
-    const wa = a.status === 'waiting' ? 0 : 1, wb = b.status === 'waiting' ? 0 : 1
-    if (wa !== wb) return wa - wb
-    return b.last_event_at - a.last_event_at
-  })
 }

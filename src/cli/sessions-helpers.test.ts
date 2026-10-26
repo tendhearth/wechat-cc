@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { groupChats, filterProjectsByChat, pickReadRecord, chatsToDelete } from './sessions-helpers'
-import type { SessionRecord } from '../adapters/store/session-store'
+import type { SessionRecord } from '../ports/session-store'
 
 function rec(p: Partial<SessionRecord>): SessionRecord {
   return {

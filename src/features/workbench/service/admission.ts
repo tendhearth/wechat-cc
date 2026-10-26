@@ -10,7 +10,7 @@ import { normalizeExecutionChoice } from '../../../adapters/store/workbench/exec
 import { canResumeWorkbenchExecutor, isUnattendedExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, requireWorkbenchInput, type WorkbenchExecutorCapabilities } from '../../../domain/workbench/executor-capabilities'
 import { snapshotHash } from '../../../adapters/workbench/native-adoption'
 import { TERMINAL_TASK_STATUSES, type StoredTask } from '../../../adapters/store/workbench/store'
-import type { Attachment } from '../../../adapters/workbench/attachments'
+import type { Attachment } from '../../../ports/workbench'
 import type { AgentExecutionChoice, AgentModelCatalog } from '../../../ports/agent-provider'
 import type { ServiceCtx } from './ctx'
 import type { AdmittedProvider } from './types'

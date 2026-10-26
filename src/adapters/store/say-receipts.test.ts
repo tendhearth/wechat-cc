@@ -1,9 +1,11 @@
 import {randomUUID} from 'node:crypto'
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {openDb,type Db} from '../../lib/db'
-import {makeMatterStore,type MatterStore} from './matters-store'
+import { makeMatterStore } from './matters-store'
+import type { MatterStore } from '../../ports/matters'
 import {makeMattersService} from '../../app/matters/service'
-import {makeSayReceipts,SAY_RECEIPT_TTL_MS,sayTextHash} from './say-receipts'
+import { makeSayReceipts, SAY_RECEIPT_TTL_MS } from './say-receipts'
+import { sayTextHash } from '../../lib/content-hash'
 
 /**
  * 对主人微信聊天那件事「说一句」按 requestId 去重(v70)——与工作台输入回执同一规矩:

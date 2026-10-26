@@ -9,7 +9,7 @@ export interface RestartPreview {
   eventCount: number
   includedEventCount: number
   truncated: boolean
-  attachments?:import('../../adapters/workbench/attachments').Attachment[]
+  attachments?:import('../../ports/workbench').Attachment[]
   omittedAttachmentCount?:number
 }
 export type Continuation = { mode: 'new' | 'resume'; restart?: never } | { mode: 'restart_required'; restart: RestartPreview }

@@ -11,7 +11,8 @@ import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime}
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
-import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
+import { makeMatterStore } from '../../adapters/store/matters-store'
+import type { MatterStore } from '../../ports/matters'
 import type {ReportSink} from '../../domain/matters/report'
 import {makeReportSink,makeReportOutboxStore} from '../reports'
 

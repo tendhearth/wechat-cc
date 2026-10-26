@@ -1,7 +1,5 @@
-import {realpathSync} from 'node:fs'
-import {pathsConflict} from './scheduler'
+import {canonicalClaimPath, pathsConflict} from '../../lib/claim-paths'
 export interface ExecutionClaim {owner:string;path:string;providerId:string;nativeId:string|null}
-export function canonicalClaimPath(path:string):string {try{return realpathSync(path)}catch{return path}}
 export function claimConflicts(a:ExecutionClaim,b:ExecutionClaim):boolean {
  return a.owner!==b.owner&&((!!a.nativeId&&a.providerId===b.providerId&&a.nativeId===b.nativeId)||pathsConflict(canonicalClaimPath(a.path),canonicalClaimPath(b.path)))
 }

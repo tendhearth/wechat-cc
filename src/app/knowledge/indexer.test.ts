@@ -11,7 +11,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runIndexer } from './indexer'
-import { openKnowledge, type KnowledgeStore, type SourceMsg } from '../../adapters/knowledge/store'
+import { openKnowledge } from '../../adapters/knowledge/store'
+import type { KnowledgeStore, SourceMsg } from '../../ports/knowledge'
 
 function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {
   return {

@@ -143,7 +143,7 @@ export function wireWorkbench(opts: {
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
-  matters?: import('../../adapters/store/matters-store').MatterStore
+  matters?: import('../../ports/matters').MatterStore
   /** 回报(task-3,2026-09-23;功能目录 src/features/reports 造好交进来):与 matters 一起有才接得上,单传一个不够。 */
   reports?: import('../../domain/matters/report').ReportSink
   /** 换一家来审(10-20):「任务 <编号> 请 @codex 审」起一次只读轮;main 里接 tickBodies.runJobTurn。 */

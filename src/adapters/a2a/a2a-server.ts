@@ -20,7 +20,7 @@
  *
  * See docs/superpowers/specs/2026-05-24-a2a-integration-design.md.
  */
-import type { A2ARegistry } from './a2a-registry'
+import type { A2ARegistry, ExecResult } from '../../ports/a2a'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import type { ProviderId } from '../../domain/conversation'
 import { A2A_PROTO_VERSION } from '../../domain/a2a-intent'
@@ -58,8 +58,6 @@ export interface ExecEvent {
   prompt: string
   cwd?: string
 }
-
-export type ExecResult = { ok: true; response: string } | { ok: false; reason: string }
 
 /**
  * A pairing handshake: a brain presents a one-time invite secret (minted by

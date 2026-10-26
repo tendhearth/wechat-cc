@@ -1,4 +1,4 @@
-import { isAbsolute, relative, sep } from 'node:path'
+import { pathsConflict } from '../../lib/claim-paths'
 
 /** 三种都由路径关系判定(见 findPathBlocker)。占用从派发到会话关闭为止,所以「挡路的那条
  *  会话已经答复」不是另一种原因 —— 它仍然占着文件夹
@@ -12,16 +12,6 @@ export interface PathReservation {
   path: string
   order: number
   state: 'queued' | 'active' | 'uncertain'
-}
-
-function within(parent: string, child: string): boolean {
-  const rel=relative(parent,child)
-  return rel === '' || (!!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
-}
-
-/** Paths arrive canonicalized; compare components rather than string prefixes. */
-export function pathsConflict(a: string, b: string): boolean {
-  return within(a,b) || within(b,a)
 }
 
 export function findPathBlocker(candidate: PathReservation, possible: PathReservation[]): WaitingFor | null {

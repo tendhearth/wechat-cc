@@ -9,7 +9,7 @@
  * 手(capabilities 含 exec)不在这里 —— 它是设备。
  */
 
-import { primaryChannels } from '../adapters/store/penpal-channel-store'
+import { primaryChannels } from '../domain/penpal-channels'
 
 export type RelationshipKind = 'peer' | 'anon' | 'neighbor' | 'human'
 

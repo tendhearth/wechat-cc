@@ -14,7 +14,7 @@
 import type { Db } from '../../lib/db'
 import type { Lifecycle } from '../../lib/lifecycle'
 import type { ReportSink } from '../../domain/matters/report'
-import type { MatterStore } from '../../adapters/store/matters-store'
+import type { MatterStore } from '../../ports/matters'
 import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import type { DaemonModule, ModuleCtx } from '../../daemon/modules/container'
 import { lifecycleModule } from '../../daemon/modules/lifecycle-module'

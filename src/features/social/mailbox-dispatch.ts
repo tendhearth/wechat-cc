@@ -15,7 +15,7 @@
  * at the call site (Task 8).
  */
 import type { A2AServerOpts } from '../../adapters/a2a/a2a-server'
-import type { EnvelopeInner } from '../../adapters/mailbox/mailbox-crypto'
+import type { EnvelopeInner } from '../../ports/mailbox'
 
 export interface EnvelopeDispatch { dispatch(inner: EnvelopeInner): Promise<void> }
 

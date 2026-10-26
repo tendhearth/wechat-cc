@@ -22,7 +22,7 @@
  * and re-opens the group naturally.
  */
 import type { FactsApi } from '../../../domain/knowledge/facts'
-import type { FactRow } from '../../../adapters/knowledge/store'
+import type { FactRow } from '../../../ports/knowledge'
 import { buildConflictPrompt, parseSupersedePairs, type ConflictGroup } from './extract'
 import { pausedReason } from './paused'
 

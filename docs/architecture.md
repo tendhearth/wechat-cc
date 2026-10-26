@@ -33,14 +33,14 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
 ```text
 apps/*  ──HTTP──►  packages/protocol(路由表、错误码,纯数据)
 src/cli ──spawn / HTTP──►  src/daemon ──► src/features ──► src/app ──► src/ports / src/domain ──► src/lib
-                          src/app ──► src/adapters(executors / store / workbench / git / a2a / mailbox / knowledge …,实现 ports)
+                          src/daemon / src/features ──► src/adapters(executors / store / workbench / git / a2a / mailbox / knowledge …,实现 ports;src/app 不直接依赖它)
 src/mcp-servers ──HTTP──►  src/daemon(internal API)
 ```
 
 - `src/lib`:最底层,零业务依赖(可以用 `node:*`);事实表、文件写法、db、运行时适配。
 - `src/domain`:纯规则 —— 档位与放行(`policy` / `user-tier` / `tool-decision` / `provider-policy`)、开口(`speech/decide`、`quiet-hours`)、伙伴判定、提示词(`prompt-builder`)、能力表。**零例外**:运行时只依赖 domain 自己和 lib 里不碰 I/O 的,不碰 node 内置(depcheck `domain-is-pure` / `domain-no-node`)。
-- `src/ports`:接口 —— 执行者的口(`agent-provider`)、微信的十个窄口(`wechat.ts`:send / permissions / pages / link / contacts / accounts / companion / voice / polling / workbench;模块 `needs` 口名,只拿那一片,没有谁拿整个 ilink 适配器)、陪伴的贡献点(`companion-contributions.ts`)。只依赖 domain 与纯 lib。
-- `src/app`:用例 —— 对话协调器(`coordinator/`:`planTurn` / `admit` 一轮定一次档位,`TurnRunner` 三种派法共用)、会话管理、执行者登记、「一件事」服务(`matters/service.ts`)、终端会话的事件判定与权限中继(`cli-events` / `cli-permission-relay`)、配对、关系视图、乙(`yi-hub` / `yi-hand`)、A2A 委派、知识库的一轮(`knowledge/`)。不往上依赖、不碰 node(随机 id 经 `lib/random.ts`)。
+- `src/ports`:接口 —— 执行者的口(`agent-provider`)、微信的十个窄口(`wechat.ts`:send / permissions / pages / link / contacts / accounts / companion / voice / polling / workbench;模块 `needs` 口名,只拿那一片,没有谁拿整个 ilink 适配器)、陪伴的贡献点(`companion-contributions.ts`),以及 app 认 adapters 用的形状(E5):`a2a`、`mailbox`(含配对加密口 `PairingCrypto`)、`penpal-channel`、`session-store`、`conversation-store`、`cli-session`、`knowledge`、`matters`、`workbench`。只依赖 domain 与纯 lib。
+- `src/app`:用例 —— 对话协调器(`coordinator/`:`planTurn` / `admit` 一轮定一次档位,`TurnRunner` 三种派法共用)、会话管理、执行者登记、「一件事」服务(`matters/service.ts`)、终端会话的事件判定与权限中继(`cli-events` / `cli-permission-relay`)、配对、关系视图、乙(`yi-hub` / `yi-hand`)、A2A 委派、知识库的一轮(`knowledge/`)。不往上依赖、不碰 node(随机 id 经 `lib/random.ts`),**只经 ports / domain 认 adapters**(depcheck `app-does-not-reach-up` 零例外,只引类型也不行):要 node 的小工具在 lib(`claim-paths`、`content-hash`),配对的加解密由 `daemon/bootstrap/wire-pairing.ts` 经 deps 注入。
 - `src/adapters/executors/<家>`:各家执行者的适配器(对话侧 + 工作台侧),实现 ports;不往上依赖 app / daemon。
 - `src/adapters/store`:通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」、定时任务、信道、A2A 事件、背包、记忆目录 MemoryFS …);`store/workbench/` 是工作台的 store 与它的子表。同一条 `adapters-implement-ports` 规则。
 - `src/adapters/` 其余:`workbench/`(工作台的文件层、附件、成果、原生历史、权限 / 提问登记、文件夹占用 …,执行者和工作台功能共用)、`git/`(独立工作区)、`a2a/`(A2A 传输)、`mailbox/`(信箱客户端与加密)、`knowledge/`(知识库的 store、来源、嵌入子进程)、`cli-upgrade/`(探外部 CLI 的版本与布局)、`permission-rules/`(放行规则:路径归一靠 `node:path` 的 posix / win32 解析,所以不在 domain)。

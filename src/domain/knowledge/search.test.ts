@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openKnowledge, type KnowledgeStore, type Chunk } from '../../adapters/knowledge/store'
+import { openKnowledge } from '../../adapters/knowledge/store'
+import type { KnowledgeStore, Chunk } from '../../ports/knowledge'
 import { semanticSearch } from './search'
 
 function chunk(msg_key: string, overrides: Partial<Chunk> = {}): Chunk {

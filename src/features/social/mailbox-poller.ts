@@ -6,8 +6,8 @@
  * undecryptable envelopes are silently skipped (GCM failure = not for us /
  * tampered). Never throws. See spec §3.3 / §5.
  */
-import { openEnvelope, signFetch, signAck, type MailboxIdentity, type Envelope } from '../../adapters/mailbox/mailbox-crypto'
-import type { MailboxClient } from '../../adapters/mailbox/mailbox-client'
+import { openEnvelope, signFetch, signAck } from '../../adapters/mailbox/mailbox-crypto'
+import type { MailboxIdentity, Envelope, MailboxClient } from '../../ports/mailbox'
 import type { EnvelopeDispatch } from './mailbox-dispatch'
 import type { CursorStore } from './mailbox-cursor-store'
 

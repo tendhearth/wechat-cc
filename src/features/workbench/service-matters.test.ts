@@ -10,7 +10,8 @@ import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime}
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
-import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
+import { makeMatterStore } from '../../adapters/store/matters-store'
+import type { MatterStore } from '../../ports/matters'
 
 /**
  * 工作台任务与 matter(事)一对一,id 相同(docs/cc-workbench.md「一件事」,2026-09-16)。

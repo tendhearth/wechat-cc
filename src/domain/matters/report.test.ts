@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest'
-import type {Matter} from '../../adapters/store/matters-store'
+import type { Matter } from '../../ports/matters'
 import {renderReport, shouldDisturb, VIEWED_RECENTLY_MS} from './report'
 
 /**

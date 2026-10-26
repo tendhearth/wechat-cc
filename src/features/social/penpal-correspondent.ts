@@ -7,10 +7,11 @@
  */
 import { randomUUID } from 'node:crypto'
 import { openEnvelope, sealEnvelope, type Envelope } from '../../domain/envelope'
-import { peerMailboxOfRow, type ChannelStore } from '../../adapters/store/penpal-channel-store'
+import { peerMailboxOfRow } from '../../adapters/store/penpal-channel-store'
+import type { ChannelStore } from '../../ports/penpal-channel'
 import type { LetterStore } from './penpal-letter-store'
 import { deriveSharedKey, sealLetter, openLetter } from '../../adapters/mailbox/penpal-crypto'
-import type { PeerMailbox } from '../../adapters/mailbox/mailbox-crypto'
+import type { PeerMailbox } from '../../ports/mailbox'
 
 export interface CorrespondentDeps {
   channelStore: ChannelStore

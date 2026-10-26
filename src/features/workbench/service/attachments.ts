@@ -3,7 +3,7 @@
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 2 项);只认 ctx。
  * 主人身份只从 ctx.deps.ownerChatId 取;停机闸走 ctx.ensureAccepting(service.ts 定义一次)。
  */
-import type { Attachment } from '../../../adapters/workbench/attachments'
+import type { Attachment } from '../../../ports/workbench'
 import type { AttachmentSelection } from '../handoff'
 import type { EntryContext } from '../../../adapters/workbench/task-entry'
 import type { WorkbenchStore } from '../../../adapters/store/workbench/store'

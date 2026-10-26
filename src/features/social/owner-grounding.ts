@@ -9,7 +9,7 @@
  * a knowledge-kernel hiccup should never block the judge from running (it
  * just runs blind, same as before this slice existed).
  */
-import type { KnowledgeStore } from '../../adapters/knowledge/store'
+import type { KnowledgeStore } from '../../ports/knowledge'
 import type { FactsApi } from '../../domain/knowledge/facts'
 import type { semanticSearch as SemSearch } from '../../domain/knowledge/search'
 

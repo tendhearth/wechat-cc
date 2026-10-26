@@ -5,7 +5,7 @@
  * send(raw) callback; the I/O layer feeds inbound frames via onMessage().
  */
 import { buildRequest, parseMessage } from '../domain/yi-protocol'
-import type { ExecResult } from '../adapters/a2a/a2a-server'
+import type { ExecResult } from '../ports/a2a'
 
 /** `peer` 省略 ⇒ 由**手那一侧**决定用哪个 agent —— 只有那台机器知道自己装了
  *  什么。大脑仍可显式指定(「让 win 用 codex 跑」)。见 delegate.ts。 */

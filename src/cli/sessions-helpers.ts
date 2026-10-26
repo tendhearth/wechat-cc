@@ -1,4 +1,4 @@
-import type { SessionRecord } from '../adapters/store/session-store'
+import type { SessionRecord } from '../ports/session-store'
 
 export interface ProjectEntryShape {
   alias: string

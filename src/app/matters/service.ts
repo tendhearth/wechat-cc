@@ -1,11 +1,8 @@
-import type {ListMatters,Matter,MatterBinding,MatterOrigin,MatterSession,MatterStore} from '../../adapters/store/matters-store'
+import type { ListMatters, Matter, MatterBinding, MatterOrigin, MatterSession, MatterStore, SayReceipts } from '../../ports/matters'
 import {randomUUID} from '../../lib/random'
-import type {PendingWorkbenchPermission,PermissionDecision} from '../../adapters/workbench/permissions'
-import type {PendingUserInput} from '../../adapters/workbench/user-input'
-import type {Artifact} from '../../adapters/store/workbench/store'
-import {normalizeInputRequestId,type LiveInput} from '../../adapters/store/workbench/live-inputs'
-import type {Attachment} from '../../adapters/workbench/attachments'
-import {sayTextHash,type SayReceipts} from '../../adapters/store/say-receipts'
+import type { PendingWorkbenchPermission, PermissionDecision, PendingUserInput, Artifact, LiveInput, Attachment } from '../../ports/workbench'
+import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
+import { sayTextHash } from '../../lib/content-hash'
 import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts'
 
 /**
