@@ -25,6 +25,8 @@ import { overviewForOthers, parseOwnerDoc, readOwnerDoc, renderOwnerForPrompt, s
 import { makeMemoryPromptReads } from './prompt-reads'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
 import { openKnowledge } from '../../adapters/knowledge/store'
+import { migrations as factsMigrations } from '../../adapters/knowledge/migrations/facts'
+import { importFactsDb } from '../../adapters/knowledge/facts-import'
 import { makeFactsApi } from '../../domain/knowledge/facts'
 import { makeGraphQueryApi } from '../../domain/knowledge/graph-query'
 import { distillOwnerKnowledge } from '../companion/knowledge-distill'
@@ -44,7 +46,11 @@ let stateDir = ''
 let knowledgeRoot = ''
 
 function seedKnowledge(root: string): void {
-  openKnowledge(root)   // 建表(今天的建法)
+  openKnowledge(root).close()   // 建 source / semantic / graph 三个库
+  // facts.db:G7 起知识库不再建它;夹具照 G1 之前的样子(facts 迁移的 v001)造一份,由开机导入搬进主库
+  const fdb = openSqlite(join(root, 'facts.db'))
+  factsMigrations[0]!(fdb)
+  fdb.close()
   const fixture = JSON.parse(readFileSync(join(MEMORY_FIXTURES, 'facts.json'), 'utf8')) as {
     facts: Array<Record<string, unknown>>
     contacts: Array<Record<string, unknown>>
@@ -78,7 +84,10 @@ async function produce(): Promise<Record<string, string>> {
   const read = (c: ChatName, f: string) => { const p = join(memoryDir(c), f); return existsSync(p) ? readFileSync(p, 'utf8') : null }
 
   // knowledge.md:从 facts + graph 蒸馏(tick-ingest 写进主人对话的 memory 目录,注入时再读回来)
-  const store = openKnowledge(knowledgeRoot)
+  // G7:联系人事实经开机导入进主库,知识库从主库读 —— knowledge.md 必须和 G0 一字不差
+  const mainStore = makeMemoryFactsStore(openTestDb())
+  importFactsDb({ store: mainStore, knowledgeRoot, now: () => 1_761_400_000_000, log: () => {} })
+  const store = openKnowledge(knowledgeRoot, { facts: mainStore.contactFacts })
   const knowledge = await distillOwnerKnowledge({ facts: makeFactsApi(store), graph: makeGraphQueryApi(store) })
   out['knowledge.md'] = knowledge
   if (knowledge) writeFileSync(join(memoryDir('owner'), 'knowledge.md'), knowledge)

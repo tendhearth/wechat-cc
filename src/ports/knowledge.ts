@@ -93,7 +93,63 @@ export interface FactRow {
   superseded_by: number | null
 }
 
-export interface KnowledgeStore {
+/**
+ * 联系人事实 + 抽取水位 + 判官指纹(架构终态 G7,设计稿 docs/superpowers/specs/2026-10-25-memory-single-source-design.md §3):
+ * 以前在 knowledge/facts.db,现在是主库 memory_facts 里 doc = 'contact' 的行(key = `k:<原 id>`,对外的 id 不变)和
+ * knowledge_extraction_state / knowledge_judge_state 两张表。实现在 src/adapters/store/memory-facts.ts(唯一写那张表的地方)。
+ */
+export interface KnowledgeFactsStore {
+  /** Faithful port of wxfacts's `store.py` merge semantics: on conflict of
+   *  (contact,predicate,value), MERGE rather than replace — `source_msg_keys`
+   *  is an ordered union (no dupes), `confidence` takes the max by
+   *  `{low:0,med:1,high:2}`, `related_contact`/`time_ref` fill only when
+   *  currently absent, and `status` is left untouched (a resolved fact
+   *  merging new evidence stays resolved). Returns which branch fired plus
+   *  the row id (inserted or existing) — conflict detection needs the id. */
+  upsertFact(fact: Fact & { contact: string }, now: number): { outcome: 'inserted' | 'merged'; id: number }
+  /** Same-predicate different-value ACTIVE facts for a contact — the
+   *  conflict-candidate set a just-recorded fact is judged against. */
+  activeFactsSharingPredicate(contact: string, predicate: string, excludeValue: string): FactRow[]
+  /** Marks `oldId` superseded by `newId` (status='superseded',
+   *  invalidated_at=now, superseded_by=newId). Only fires on an ACTIVE row —
+   *  returns false (and stamps nothing) otherwise, so a double supersede
+   *  never rewrites history. */
+  supersedeFactById(oldId: number, newId: number, now: number): boolean
+  factById(id: number): FactRow | null
+  /** ACTIVE same-(contact,predicate) groups with ≥2 distinct values — the
+   *  stock-conflict sweep's feed. Facts inside each group are newest-first
+   *  (updated_at DESC). */
+  conflictedFactGroups(limit: number): Array<{ contact: string; predicate: string; facts: FactRow[] }>
+  /** Contacts carrying ≥2 ACTIVE obligations, heaviest first — the
+   *  obligation-dedup sweep's feed. */
+  obligationHeavyContacts(limit: number, minCount?: number): Array<{ contact: string; n: number }>
+  /** Sweep judge-state: the fingerprint last judged under `key` (null =
+   *  never judged). Sweeps skip stock whose fingerprint hasn't changed
+   *  since the last no-action verdict — see companion/ingest sweeps. */
+  judgeFingerprint(key: string): string | null
+  setJudgeFingerprint(key: string, fingerprint: string, now: number): void
+  /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
+   *  row yet. */
+  factWatermark(contact: string): [number, number]
+  /** Advances the watermark iff `(ts, localId)` is strictly greater than the
+   *  stored tuple (ts first, then localId) — never regresses. */
+  advanceFactWatermark(contact: string, ts: number, localId: number, now: number): void
+  allFactWatermarks(): Map<string, [number, number]>
+  factsForContact(contact: string, status: string): FactRow[]
+  /** `kind`/`predicate` are exact-match filters (null = no filter); `query`
+   *  is a substring match over predicate OR value (null = no filter). */
+  findFactRows(kind: string | null, predicate: string | null, query: string | null, status: string, limit: number): FactRow[]
+  /**
+   * 改一条联系人事实的状态(待办页「完成 / 捞回 / 不对」、MCP set_fact_status):`resolved` = 办完了(resolve),
+   * `rejected` = 不对(收回,retract)、`superseded` = 被取代(supersede)、`active` = 捞回(reopen)。每次都记一条事件。
+   * 别的状态 / 没有这一条 ⇒ false。架构终态 G7 起在主库的表里(以前是 facts.db 的 setFactStatusById,直接 UPDATE)。
+   */
+  changeFactStatus(id: number, status: string, now: number): boolean
+  factCountsByKind(): Record<string, number>
+
+}
+
+export interface KnowledgeStore extends KnowledgeFactsStore {
   putSourceMessages(msgs: SourceMsg[]): { watermark: number }
   /** `kind` optionally filters to one normalized kind (e.g. 'text' — what
    *  the search indexer wants); omitted returns every kind. */
@@ -177,51 +233,7 @@ export interface KnowledgeStore {
   setGraphMeta(key: string, value: string): void
   countContacts(): number
 
-  // ---- facts.db (facts + person slice) ------------------------------------
-  /** Faithful port of wxfacts's `store.py` merge semantics: on conflict of
-   *  (contact,predicate,value), MERGE rather than replace — `source_msg_keys`
-   *  is an ordered union (no dupes), `confidence` takes the max by
-   *  `{low:0,med:1,high:2}`, `related_contact`/`time_ref` fill only when
-   *  currently absent, and `status` is left untouched (a resolved fact
-   *  merging new evidence stays resolved). Returns which branch fired plus
-   *  the row id (inserted or existing) — conflict detection needs the id. */
-  upsertFact(fact: Fact & { contact: string }, now: number): { outcome: 'inserted' | 'merged'; id: number }
-  /** Same-predicate different-value ACTIVE facts for a contact — the
-   *  conflict-candidate set a just-recorded fact is judged against. */
-  activeFactsSharingPredicate(contact: string, predicate: string, excludeValue: string): FactRow[]
-  /** Marks `oldId` superseded by `newId` (status='superseded',
-   *  invalidated_at=now, superseded_by=newId). Only fires on an ACTIVE row —
-   *  returns false (and stamps nothing) otherwise, so a double supersede
-   *  never rewrites history. */
-  supersedeFactById(oldId: number, newId: number, now: number): boolean
-  factById(id: number): FactRow | null
-  /** ACTIVE same-(contact,predicate) groups with ≥2 distinct values — the
-   *  stock-conflict sweep's feed. Facts inside each group are newest-first
-   *  (updated_at DESC). */
-  conflictedFactGroups(limit: number): Array<{ contact: string; predicate: string; facts: FactRow[] }>
-  /** Contacts carrying ≥2 ACTIVE obligations, heaviest first — the
-   *  obligation-dedup sweep's feed. */
-  obligationHeavyContacts(limit: number, minCount?: number): Array<{ contact: string; n: number }>
-  /** Sweep judge-state: the fingerprint last judged under `key` (null =
-   *  never judged). Sweeps skip stock whose fingerprint hasn't changed
-   *  since the last no-action verdict — see companion/ingest sweeps. */
-  judgeFingerprint(key: string): string | null
-  setJudgeFingerprint(key: string, fingerprint: string, now: number): void
-  /** `[last_ts, last_local_id]`, `[0, 0]` when the contact has no watermark
-   *  row yet. */
-  factWatermark(contact: string): [number, number]
-  /** Advances the watermark iff `(ts, localId)` is strictly greater than the
-   *  stored tuple (ts first, then localId) — never regresses. */
-  advanceFactWatermark(contact: string, ts: number, localId: number, now: number): void
-  allFactWatermarks(): Map<string, [number, number]>
-  factsForContact(contact: string, status: string): FactRow[]
-  /** `kind`/`predicate` are exact-match filters (null = no filter); `query`
-   *  is a substring match over predicate OR value (null = no filter). */
-  findFactRows(kind: string | null, predicate: string | null, query: string | null, status: string, limit: number): FactRow[]
-  /** Returns whether a row with that id existed (and was updated). */
-  setFactStatusById(id: number, status: string, now: number): boolean
-  factCountsByKind(): Record<string, number>
-
+  // ---- facts(架构终态 G7 起在主库,见 KnowledgeFactsStore)----------------------
   // ---- source reads (source.db, read by the facts extractor) --------------
   /** Every 1:1 (non-group) text message in source.db — the extractor's full
    *  candidate set before per-contact watermark filtering. */

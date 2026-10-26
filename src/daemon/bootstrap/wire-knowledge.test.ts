@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startModules } from '../modules/container'
 import { knowledgeModule } from './wire-knowledge'
+import { openTestDb } from '../../lib/db'
 import type { Bootstrap } from './types'
 
-const base = () => ({ log: () => {}, stateDir: mkdtempSync(join(tmpdir(), 'wk-')) })
+const base = () => ({ log: () => {}, stateDir: mkdtempSync(join(tmpdir(), 'wk-')), db: openTestDb() })
 async function run(ctx: ReturnType<typeof base> & { configuredAgent: never }) {
   const mods = await startModules([knowledgeModule(ctx, [])], { log: () => {} })
   return { k: mods.provided<Bootstrap['knowledge']>('knowledge'), state: mods.status()[0]!.state, mods }

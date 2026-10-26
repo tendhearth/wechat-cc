@@ -539,9 +539,11 @@ describe('knowledgeRoutes', () => {
         const findR = await factsRoutes['POST /v1/knowledge/facts/find_facts']!(new URLSearchParams(), {})
         const id = (findR.body as any).results[0].id
 
-        const r = await factsRoutes['POST /v1/knowledge/facts/set_fact_status']!(new URLSearchParams(), { id, status: 'archived' })
+        const r = await factsRoutes['POST /v1/knowledge/facts/set_fact_status']!(new URLSearchParams(), { id, status: 'resolved' })
         expect(r.status).toBe(200)
         expect(r.body).toEqual({ ok: true })
+        // G7:状态只认四种(resolved / rejected / superseded / active);别的不改、回 ok:false
+        expect((await factsRoutes['POST /v1/knowledge/facts/set_fact_status']!(new URLSearchParams(), { id, status: 'archived' })).body).toEqual({ ok: false })
 
         const badR = await factsRoutes['POST /v1/knowledge/facts/set_fact_status']!(new URLSearchParams(), { status: 'archived' })
         expect(badR.status).toBe(400)

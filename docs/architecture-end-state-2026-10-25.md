@@ -316,6 +316,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | G4 | 记忆的写者切到表:`src/features/memory/memory-export.ts` 是 memory.md / owner.md / corrections.md 唯一的写者(先落表、再导出;没搬进表的对话照旧写文件),整理 / 纠错 / 编辑 / 导入 / 关待办都改调它,`writeOwnerAssertions` 删掉;守卫「往这三份文件写只许在导出器」基线 0。主人 10-26 第 4 条:导出头部写明「这是生成的」,手改的 memory.md 按记忆编辑比对表变成更正 / 原话、微信说一次。主人看得见的三处见[设计稿](superpowers/specs/2026-10-25-memory-single-source-design.md) §6 |
 | G5 | 一种收回:店面 `retract` / `restore` / `resolve` / `supersede`,四个入口(记忆页删改、待办「不对」与 MCP superseded、证据审阅纠正 / 过期)都走每晚整理运行时同一个用例(清源头、关待办、生成物过期),名单从表来(整理、出口过滤、导入命令),命中记 `redacted_on_output`;`correctedTexts` / `memory-redactions.json` 删掉。守卫:状态只在店面改,`'corrections.md'` 只在导入 / 导出器 / 分类表。`setFactStatusById` 到 G7 才能删;收回的话列表与恢复的路由和界面在 G6(见[设计稿](superpowers/specs/2026-10-25-memory-single-source-design.md) §6) |
 | G6 | 读者切到表:daemon 里读 memory.md / owner.md 只经导出器(注入、信、整理、运行时、合成、画像指纹、快照、回忆、`memory_read`、桌面看文件),守卫 `memory-file-readers` 基线 0;`_overview.md` 的读者随 G8 换。收回的话与恢复:桌面记忆页一折、App「CC 记得你」页一张列表(`/v1/memory/retractions*`、`/m/api/memory/retractions` / `restore`) |
+| G7 | 联系人事实进主库:`memory_facts` 里 doc = 'contact' 的行(id 不变),抽取水位 / 判官指纹两张表(v89);知识库的店面不再打开 facts.db,`setFactStatusById` 删掉换成按状态走 resolve / 收回 / 取代 / 捞回的 `changeFactStatus`;开机导入一行一个事务(坏行规整或跳过、不卡整库)、新 id 不低于 facts.db 最大 id、按 (联系人, 谓语, 内容) 认同一件事(撞 id 换新 id)、逐行核对,facts.db 只读不删(留一份 `*.imported-<日期>`);守卫 `'facts.db'` 只在导入里。`knowledge.md` 金样经导入后逐字节相等 |
 
 
 ### B2:OpenAI 兼容 对话 / 工作台 → 一种会话 差异表
@@ -377,3 +378,4 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 - 2026-10-26:G4 做完(进度表):记忆写者先落表再导出,手改 memory.md 照记忆编辑处理(主人 10-26 第 4 条)。
 - 2026-10-26:G5 做完(进度表):一种收回,四个入口一路传到底(主人 10-26 第 1–3 条);列表与恢复的界面在 G6。
 - 2026-10-26:G6 做完(进度表):记忆读者切到表;收回的话列表与恢复上了桌面和 App(主人 10-26 第 2、3 条)。
+- 2026-10-26:G7 做完(进度表):联系人事实进主库(v89),facts.db 只读留档。

@@ -49,7 +49,7 @@ describe('backup', () => {
     expect(r.bytes).toBeGreaterThan(0)
     const listing = spawnSync(['tar', '-tzf', r.path]).stdout.toString()
     expect(listing).toContain('wechat-cc.db')
-    expect(listing).toContain('knowledge/facts.db')
+    expect(listing).not.toContain('knowledge/facts.db')   // G7:事实在主库里,旧库不再进备份
     expect(listing).toContain('knowledge/graph.db')
     expect(listing).toContain('memory/chat1/profile.md')
     expect(listing).toContain('memory/chat1/notes/a.md')

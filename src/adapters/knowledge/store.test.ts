@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openKnowledge } from './store'
+import { makeMemoryFactsStore } from '../store/memory-facts'
+import { openTestDb } from '../../lib/db'
 import type { KnowledgeStore, SourceMsg, Chunk } from '../../ports/knowledge'
 
 function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {
@@ -463,7 +465,7 @@ describe('facts store', () => {
     s.close()
   })
 
-  it('findFactRows filters by kind/predicate/substring/status; setFactStatusById; countsByKind', () => {
+  it('findFactRows filters by kind/predicate/substring/status; changeFactStatus; countsByKind', () => {
     const s = freshStore()
     s.upsertFact({ contact: 'c', kind: 'obligation', predicate: 'owes', value: '200 to Bob',
                    source_msg_keys: [] }, 1)
@@ -472,7 +474,7 @@ describe('facts store', () => {
     expect(s.findFactRows(null, null, 'Bob', 'active', 50).length).toBe(1)   // substring on value
     expect(s.factCountsByKind()).toEqual({ obligation: 1, entity: 1 })
     const id = s.factsForContact('c', 'active').find((r) => r.kind === 'obligation')!.id
-    expect(s.setFactStatusById(id, 'resolved', 9)).toBe(true)
+    expect(s.changeFactStatus(id, 'resolved', 9)).toBe(true)
     expect(s.findFactRows('obligation', null, null, 'active', 50).length).toBe(0)
     expect(s.findFactRows('obligation', null, null, 'resolved', 50).length).toBe(1)
     s.close()
@@ -564,35 +566,7 @@ describe('facts store', () => {
       s.close()
     })
 
-    it('reopening a pre-upgrade facts.db adds the columns and backfills valid_from from created_at', () => {
-      const migDir = mkdtempSync(join(tmpdir(), 'kk-facts-migrate-'))
-      try {
-        // Simulate a facts.db created BEFORE the temporal columns existed.
-        const legacy = openSqlite(join(migDir, 'facts.db'), { create: true })
-        legacy.exec(`
-          CREATE TABLE IF NOT EXISTS facts (
-            id INTEGER PRIMARY KEY, contact TEXT, kind TEXT, predicate TEXT, value TEXT,
-            related_contact TEXT, time_ref TEXT, confidence TEXT, source_msg_keys TEXT,
-            status TEXT, created_at INTEGER, updated_at INTEGER,
-            UNIQUE(contact, predicate, value));
-          CREATE TABLE IF NOT EXISTS extraction_state (
-            contact TEXT PRIMARY KEY, last_ts INTEGER, last_local_id INTEGER DEFAULT 0,
-            updated_at INTEGER);`)
-        legacy.query(`INSERT INTO facts(contact,kind,predicate,value,related_contact,time_ref,
-          confidence,source_msg_keys,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
-          .run('u1', 'entity', 'p', 'v', null, null, 'med', '[]', 'active', 777, 777)
-        legacy.close()
-
-        const s = openKnowledge(migDir)
-        const row = s.factsForContact('u1', 'active')[0]!
-        expect(row.valid_from).toBe(777)          // backfilled from created_at
-        expect(row.invalidated_at).toBeNull()
-        expect(row.superseded_by).toBeNull()
-        s.close()
-      } finally {
-        rmSync(migDir, { recursive: true, force: true })
-      }
-    })
+    // facts.db 旧形状的升级在 G7 起归开机导入(src/features/memory/facts-import.test.ts),知识库的店面不再打开 facts.db。
   })
 
   it('oneToOneTextMessages excludes groups and non-text; recentMessages is newest-first', () => {
@@ -650,10 +624,12 @@ describe('judge state (2026-08-28: sweeps re-judged unchanged stock every cycle)
 
   it('judge state survives reopen (persisted, not in-memory)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kk-judge-'))
-    const s1 = openKnowledge(dir)
+    // G7:判官指纹在主库(knowledge_judge_state);同一个主库重开知识库照样在
+    const facts = makeMemoryFactsStore(openTestDb()).contactFacts
+    const s1 = openKnowledge(dir, { facts })
     s1.setJudgeFingerprint('settle:u9', '4200|1,2', 1000)
     s1.close()
-    const s2 = openKnowledge(dir)
+    const s2 = openKnowledge(dir, { facts })
     expect(s2.judgeFingerprint('settle:u9')).toBe('4200|1,2')
     s2.close()
   })

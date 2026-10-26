@@ -1,7 +1,7 @@
 /**
  * 待办「不对」、MCP 的 superseded 也是一种收回(架构终态 G5,主人 10-26 第 1 条;设计稿 §2.3)。
  *
- * 联系人事实还在 facts.db(G7 才进主库),待办页 / 手机 / MCP 照旧经 FactsApi.setFactStatus 改它的状态;这里包一层:
+ * 联系人事实在主库(G7 起;店面 changeFactStatus 记事件),待办页 / 手机 / MCP 经 FactsApi.setFactStatus 改它的状态;这里包一层:
  * 状态真的改成了 `rejected`(主人点「不对」)或 `superseded`(MCP 说被取代了),就把这件事的说法交给 retract ——
  * 记忆、笔记、总览里同一句话也一路收回,和在记忆页删一行一样。`resolved`(已办)**不是**收回:办完了不等于没发生过。
  */

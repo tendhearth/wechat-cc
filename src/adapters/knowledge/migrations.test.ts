@@ -90,7 +90,7 @@ describe('older shapes left on real machines upgrade to today\'s structure', () 
     expect(db.query('SELECT id, valid_from, invalidated_at, superseded_by FROM facts').all()).toEqual([{ id: 1, valid_from: 100, invalidated_at: null, superseded_by: null }])
   })
 
-  it('openKnowledge on a pre-G1 directory stamps all four files and keeps their rows', () => {
+  it('openKnowledge on a pre-G1 directory stamps source / semantic / graph and keeps their rows; facts.db is no longer opened (G7)', () => {
     const root = mkdtempSync(join(tmpdir(), 'knowledge-g1-'))
     try {
       for (const [lib, list] of LIBS) {
@@ -98,15 +98,15 @@ describe('older shapes left on real machines upgrade to today\'s structure', () 
         list[0]!(db)                     // G1 之前的 store.ts 建的就是这个结构,user_version 0
         db.close()
       }
-      const pre = openSqlite(join(root, 'facts.db'))
-      pre.exec(`INSERT INTO facts(id, contact, kind, predicate, value, confidence, source_msg_keys, status, created_at, updated_at, valid_from)
-        VALUES (5, 'u1', 'obligation', '答应', '回电话', 'med', '[]', 'active', 1, 1, 1)`)
+      const pre = openSqlite(join(root, 'graph.db'))
+      pre.exec("INSERT INTO contacts(username, display) VALUES ('u1', '小林')")
       pre.close()
       const store = openKnowledge(root)
-      expect(store.factById(5)?.value).toBe('回电话')
+      expect(store.getContact('u1')?.display).toBe('小林')
+      store.close()
       for (const [lib, list] of LIBS) {
         const db = openSqlite(join(root, `${lib}.db`))
-        expect(version(db), lib).toBe(list.length)
+        expect(version(db), lib).toBe(lib === 'facts' ? 0 : list.length)   // facts.db 只由开机导入读,不再升级它
         db.close()
       }
     } finally {

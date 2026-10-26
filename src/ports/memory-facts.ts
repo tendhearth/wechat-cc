@@ -38,6 +38,23 @@ export interface RetractOpts {
 export interface RetractReceipt { key: string; targets: string[] }
 
 export interface MemoryFactsStore {
+  /** 联系人事实(架构终态 G7:以前在 facts.db;知识库的店面把这一块交给它)。 */
+  contactFacts: import('./knowledge').KnowledgeFactsStore
+  /**
+   * 开机导入 facts.db 的一行(架构终态 G7):表里没有 ⇒ 原样插(id、状态、时间一一对应;rejected / superseded 各补一条事件);
+   * 表里有、facts.db 那一行更新 ⇒ 照它改(回滚到老二进制后它写过);一样 ⇒ 不动。只给导入用。
+   */
+  importContactFact(row: import('./knowledge').FactRow, nowMs: number, notes?: readonly string[]): { outcome: 'inserted' | 'updated' | 'same' | 'reassigned'; id: number }
+  /**
+   * 联系人事实新 id 的下限(数据安全评审 G7 第 1 条):facts.db 还在、还没导完时,知识库新记的事实不许用到旧库已经用过的 id
+   * (不然后面导入会撞上)。导入一开始就把它抬到 facts.db 里最大的 id;只升不降。
+   */
+  raiseContactIdFloor(maxLegacyId: number): void
+  contactIdFloor(): number
+  /** 按 (联系人, 谓语, 内容) 找那一条联系人事实(这三样定「是不是同一件事」,id 不算)。 */
+  contactFactByText(contact: string, predicate: string, value: string): import('./knowledge').FactRow | null
+  importFactWatermark(contact: string, lastTs: number, lastLocalId: number, updatedAt: number): void
+  importJudgeState(key: string, fingerprint: string | null, judgedAt: number): void
   /** 在一个事务里跑 `fn`(SQLite 的 immediate 事务;`fn` 抛错 ⇒ 全部回滚)。 */
   atomically<T>(fn: () => T): T
   /**

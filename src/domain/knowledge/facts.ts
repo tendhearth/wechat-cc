@@ -149,7 +149,7 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
     findFacts(kind, predicate, query, status, limit) {
       return { results: store.findFactRows(kind, predicate, query, status ?? 'active', limit ?? 50) }
     },
-    setFactStatus(id, status, now) { return { ok: store.setFactStatusById(id, status, now) } },
+    setFactStatus(id, status, now) { return { ok: store.changeFactStatus(id, status, now) } },
     conflictedGroups(limit) { return store.conflictedFactGroups(limit) },
     obligationHeavyContacts(limit, minCount) { return store.obligationHeavyContacts(limit, minCount) },
     judgeFingerprint(key) { return store.judgeFingerprint(key) },
@@ -177,7 +177,7 @@ export function makeFactsApi(store: KnowledgeStore): FactsApi {
         const row = store.factById(id)
         if (!row || row.contact !== un) continue
         if (row.kind !== 'obligation' || row.status !== 'active') continue
-        if (store.setFactStatusById(id, 'resolved', now)) settled++
+        if (store.changeFactStatus(id, 'resolved', now)) settled++
       }
       return { settled }
     },

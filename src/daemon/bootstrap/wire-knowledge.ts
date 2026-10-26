@@ -15,6 +15,8 @@ import { join } from 'node:path'
 import { findOnPath } from '../../lib/util'
 import { pluginDataDir } from '../plugins/paths'
 import { openKnowledge } from '../../adapters/knowledge/store'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { importFactsDb } from '../../adapters/knowledge/facts-import'
 import { semanticSearch } from '../../domain/knowledge/search'
 import { runSourceAdapter } from '../../adapters/knowledge/source-adapter'
 import { runIndexer } from '../../app/knowledge/indexer'
@@ -42,7 +44,7 @@ import type { DaemonModule } from '../modules/container'
 const KNOWLEDGE_EMBED_MODEL_VERSION = '1'
 
 export function knowledgeModule(
-  ctx: Pick<BootstrapCtx, 'log' | 'stateDir' | 'configuredAgent'>,
+  ctx: Pick<BootstrapCtx, 'log' | 'stateDir' | 'configuredAgent' | 'db'>,
   loadedPlugins: PluginsSlice['loadedPlugins'],
 ): DaemonModule<Bootstrap['knowledge']> {
   // Knowledge Kernel Phase 01 (T5) — daemon-owned KnowledgeStore + the
@@ -59,7 +61,11 @@ export function knowledgeModule(
   // little further down in this function (a background job outside the
   // companion tick graph in wiring/tick-bodies.ts, not competing with it).
   return { name: 'knowledge', optional: true, enabled: () => !!ctx.configuredAgent.knowledge_enabled, init: (m) => {
-    const knowledgeStore = openKnowledge(join(ctx.stateDir, 'knowledge'))
+    // 架构终态 G7:联系人事实住在主库。先把 knowledge/facts.db 导进来(开机一次,只复制、不删),再开知识库。
+    const memoryFacts = makeMemoryFactsStore(ctx.db)
+    try { importFactsDb({ store: memoryFacts, knowledgeRoot: join(ctx.stateDir, 'knowledge'), now: () => Date.now(), log: ctx.log }) }
+    catch (e) { ctx.log('FACTS_IMPORT', `skipped: ${e instanceof Error ? e.message : String(e)}`) }
+    const knowledgeStore = openKnowledge(join(ctx.stateDir, 'knowledge'), { facts: memoryFacts.contactFacts })
     // 一打开就登记关法:后面任何一步抛错,容器都会关掉它(以前这里是手写的 try / catch 半构造清理)
     m.own('store close', () => knowledgeStore.close())
     {
