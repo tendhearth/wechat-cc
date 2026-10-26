@@ -42,9 +42,9 @@ describe('matchRule 在对话面上:按项目 / 路径限定只看目标路径,�
 describe('decide 在对话面上', () => {
   const file = (rules: Rule[]): RulesFile => ({ version: 1, enabled: true, review: 'low_risk', rules })
   const allowAll = file([{ id: 'all', when: { tool: 'mcp__wechat__memory_delete' }, then: 'allow', note: '随便删' }])
-  it('allow 规则只对逐工具过闸门的三家生效(codex / cursor / agy 在对话里走不到这里,按 id 再守一道)', async () => {
-    for (const provider of ['claude', 'gemini', 'openai']) expect((await decide({ ...chatAsk(call({}), 'darwin'), provider }, allowAll, {})).verdict, provider).toBe('allow')
-    for (const provider of ['codex', 'cursor', 'agy']) expect((await decide({ ...chatAsk(call({}), 'darwin'), provider }, allowAll, {})).verdict, provider).toBe('ask')
+  it('allow 规则只对逐条过 authorize 的四家生效(codex 自 2026-10-26 起;cursor / agy 在对话里走不到这里,按 id 再守一道)', async () => {
+    for (const provider of ['claude', 'gemini', 'openai', 'codex']) expect((await decide({ ...chatAsk(call({}), 'darwin'), provider }, allowAll, {})).verdict, provider).toBe('allow')
+    for (const provider of ['cursor', 'agy']) expect((await decide({ ...chatAsk(call({}), 'darwin'), provider }, allowAll, {})).verdict, provider).toBe('ask')
   })
   it('命中的规则带上备注(提醒那一行用)', async () => {
     expect(await decide(chatAsk(call({}), 'darwin'), allowAll, {})).toMatchObject({ verdict: 'allow', by: 'rule', ruleId: 'all', note: '随便删' })

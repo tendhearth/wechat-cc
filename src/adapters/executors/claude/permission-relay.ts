@@ -4,7 +4,7 @@ import { lookup, type PermissionMode } from '../../../domain/capability-matrix'
 import { isReplyToolName } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type UserTier } from '../../../domain/user-tier'
 import { authorize } from '../../../domain/authorize'
-import { authorizeChatCall, type ChatOwnerRules } from '../../permission-rules/chat'
+import { authorizeChatToolUse, type ChatOwnerRules } from '../../permission-rules/chat'
 
 export interface PermissionRelayDeps {
   askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
@@ -76,10 +76,11 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     const tp = TIER_PROFILES[tier]
     const kind = classifyToolUse(toolName, input as Record<string, unknown>)
     const base = lookup(deps.mode(), deps.provider, deps.permissionMode)
-    const auth = await authorizeChatCall(
+    // 和 Codex 对话的审批同一个入口(permission-rules/chat.ts 的 authorizeChatToolUse:分类 + authorizeChatCall)。
+    const auth = await authorizeChatToolUse(
       { tier: tp, permissionMode: deps.permissionMode, executor: 'claude', fanOut },
-      { name: toolName, kind, askUser: base.askUser, replyFamily },
-      { chatId: deps.initiatingChatId() ?? '', provider: 'claude', tool: toolName, input: input as Record<string, unknown> },
+      { tool: toolName, input: input as Record<string, unknown>, askUser: base.askUser, replyFamily },
+      deps.initiatingChatId() ?? '',
       deps.ownerRules?.() ?? null,
     )
     const decision = auth.verdict

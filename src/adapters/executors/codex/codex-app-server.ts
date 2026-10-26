@@ -48,7 +48,9 @@ export type CodexAppServerOptions = Options
  *     令牌不出现在 ps 里);不读、不关主人自己的 MCP(和以前 SDK 一样继承主人的 codex 配置)。
  *   - 事件按对话的老形状:每条完整的助理消息一个 text(ownSegment),每个工具类条目一个 tool_call
  *     (MCP 带 server / tool),不发逐字增量、不发工作台的活动时间线。
- *   - codex 发来的任何审批 / 提问请求一律拒(对话没有界面接它们),不当成协议错误停掉会话。
+ *   - codex 发来的提问请求一律拒(对话没有界面接它们),不当成协议错误停掉会话。审批请求(命令 / 改文件 / MCP 调用)
+ *     只在给了 `approve` 时交给它(主人对话的 on-request,2026-10-26:codex-chat-gate.ts 逐条过 authorize);
+ *     没给 ⇒ 一律拒。核实不了 / 显示不全的审批请求在对话里只拒这一条、记一行,不停会话(工作台是停任务)。
  *   - 取消:中断确认后这一轮就以「已停止」收尾,不等 turn/completed。
  */
 export interface CodexChatProfile {
@@ -60,7 +62,20 @@ export interface CodexChatProfile {
   env: NodeJS.ProcessEnv
   /** 非致命的事件(被拒的请求、错误条目)记一行。 */
   log?: (tag: string, line: string) => void
+  /**
+   * 审批 on-request 时,codex 报上来要批的那一条交给谁答(true ⇒ accept)。只在 approvalPolicy 是 on-request 时给;
+   * 不给 ⇒ 审批请求一律拒。signal:这一轮停了 / 会话关了 ⇒ 中止,迟到的答复不再发给 codex。
+   */
+  approve?: CodexChatApprove
 }
+
+/**
+ * 对话侧一条审批请求。tool:`commandExecution` / `fileChange` / `mcp__<server>__<tool>`;command / paths / cwd 是
+ * 放行规则要的原文(带了额外授权 —— 网络、项目外读写 —— 的请求不给,只能问主人;和工作台同一条规矩);
+ * input 是 MCP 调用的参数(按档位分类要用)。
+ */
+export interface CodexChatApprovalRequest { tool: string; description: string; command?: string; paths?: string[]; cwd?: string; input?: Record<string, unknown> }
+export type CodexChatApprove = (request: CodexChatApprovalRequest, signal: AbortSignal) => Promise<boolean>
 
 /** 对话侧多要一样东西:这条 app-server 还活着吗(死了 ⇒ 下一轮换一个新进程续接同一个 thread)。 */
 export type CodexAppServerSession = AgentSession & { alive(): boolean; threadId(): string }
@@ -534,11 +549,14 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           : (typeof command === 'string' && command.trim() ? { command: command.slice(0, 2000), ...(typeof params.cwd === 'string' && params.cwd ? { cwd: params.cwd } : {}) } : {})
         if (!supported) {
           send({ id, result: { decision: entry.rejection } })
+          // 对话:只拒这一条(codex 会把它记成失败,模型看得到),会话照常 —— 和以前「一律拒」同一个落点。
+          if (chat) { approvals.delete(id); chat.log?.('CODEX_REQUEST_DECLINED', `alias=${project.alias} method=${message.method} unverifiable`); return }
           fatal('无法核实或完整显示本次 Codex 权限请求，工作台已停止任务。')
           return
         }
-        void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && context.requestPermission
-          ? context.requestPermission({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts }, controller.signal)
+        const ask = chat ? chat.approve : context.requestPermission
+        void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && ask
+          ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts }, controller.signal)
           : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
@@ -588,6 +606,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         const permission = codexMcpApproval(params, turn.items.values(), turn.completedItems, enabledMcp)
         if (!permission) {
           send({ id, result: declinedMcp() })
+          // 对话没有活动时间线:只记一行(一个 tool_call 事件会变成回复的分段边界)。
+          if (chat) { chat.log?.('CODEX_REQUEST_DECLINED', `alias=${project.alias} method=${message.method} unverifiable`); return }
           turn.events.push({ kind: 'tool_call', tool: 'mcpElicitation', activity: {
             id: `mcp-request-${String(id).slice(0, 100)}`, type: 'tool', status: 'failed', label: '工具请求未能处理',
             detail: '此工具需要尚未支持的表单、外部认证，或无法唯一核实的调用；已拒绝本次请求。',
@@ -597,8 +617,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (!requestCapacity()) return
         const controller = new AbortController(), entry: Approval = { controller, turn, rejection: 'decline', mcp: true }
         approvals.set(id, entry)
-        void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && context.requestPermission
-          ? context.requestPermission(permission, controller.signal) : false,
+        const { input, ...request } = permission
+        void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && (chat ? chat.approve : context.requestPermission)
+          ? chat ? chat.approve!({ ...request, input }, controller.signal) : context.requestPermission!(request, controller.signal) : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
           send({ id, result: { action: allow === true ? 'accept' : 'decline', content: null, _meta: null } }, () => {
@@ -647,8 +668,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           const params = message.params ?? {}
           const isRequest = rpcId(message.id)
           const approval = message.method === 'item/commandExecution/requestApproval' || message.method === 'item/fileChange/requestApproval'
-          if (chat && isRequest) {
-            // 对话没有界面接审批 / 提问 / MCP 表单:一律拒(= 审批 never;访客的 untrusted 也是拒),会话照常往下跑。
+          // 主人对话的 on-request(2026-10-26):命令 / 改文件 / MCP 调用的审批交给 chat.approve,走下面和工作台同一条路。
+          if (chat && isRequest && !(chat.approve && (approval || isMcpRequest(message)))) {
+            // 对话没有界面接提问 / 其余请求;没给 approve 的会话审批也一律拒(= 审批 never;访客的 untrusted 也是拒),会话照常往下跑。
             // codex 收到拒绝会把这次调用记成失败,模型看得到、可以改用别的说法 —— 和以前 SDK 下 codex exec 自己拒掉一样。
             chat.log?.('CODEX_REQUEST_DECLINED', `alias=${project.alias} method=${message.method}`)
             if (message.method === 'item/permissions/requestApproval') send({ id: message.id, result: { permissions: {}, scope: 'turn' } })
@@ -763,6 +785,11 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
                 if (done) chat.log?.('CODEX_ITEM_ERROR', `alias=${project.alias} ${String(item.message ?? '').slice(0, 300)}`)
                 return
               }
+              // 审批要对上条目(改文件的 diff、MCP 调用的参数):有人答审批时,进行中的工具条目留一份,完成就丢。
+              if (chat.approve && codexItemId(item.id)) {
+                if (done) turn.items.delete(item.id)
+                else cacheItem(turn, { ...turn.items.get(item.id), ...item })
+              }
               // 工具类条目:每个只产一次 tool_call,在第一次见到它时(通常是 item/started —— 分段边界落在命令开跑之前)。
               const key = codexItemId(item.id) ? item.id : undefined
               const seen = (turn.toolItems ??= new Set())
@@ -772,7 +799,10 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
               if (call) turn.events.push(call)
               return
             }
-            // 逐字增量 / 补丁增量:对话只要整条消息与每个工具一次,工作台的时间线不发。
+            // 逐字增量 / 补丁增量:对话只要整条消息与每个工具一次,工作台的时间线不发。补丁增量更新留着的条目(审批看 diff)。
+            if (message.method === 'item/fileChange/patchUpdated' && chat.approve && codexItemId(params.itemId) && Array.isArray(params.changes) && turn.items.has(params.itemId)) {
+              cacheItem(turn, { ...turn.items.get(params.itemId), id: params.itemId, type: 'fileChange', changes: params.changes })
+            }
             if (message.method === 'item/agentMessage/delta' || message.method === 'item/fileChange/patchUpdated') return
           }
           if (message.method === 'item/started' && object(params.item)) {
@@ -880,8 +910,12 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         let response: ObjectValue
         if (chat) {
           // 对话侧:系统指令走 codex 的开发者指令槽(以前 SDK 没有这个槽,只能前置到第一条消息里)。
+          // 有人答审批:审批交给客户端(不让主人配置里的自动审阅代答),daemon 给的 MCP 才认它的审批请求
+          // (主人自己 codex 配置里的 MCP 不认,照旧拒);版本太旧核实不了 MCP 审批 ⇒ MCP 审批照旧拒。
+          if (chat.approve && object(chat.config.mcp_servers) && supportsCodexMcpApproval(initialized.userAgent)) for (const name of Object.keys(chat.config.mcp_servers)) enabledMcp.add(name)
           response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
             ...resumeParams, cwd: project.path, approvalPolicy: chat.approvalPolicy, sandbox: chat.sandbox,
+            ...(chat.approve ? { approvalsReviewer: 'user' } : {}),
             ...(context.appendInstructions ? { developerInstructions: context.appendInstructions } : {}),
             config: chat.config, ...(model ? { model } : {}),
           })
@@ -907,7 +941,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         const sandbox = response.sandbox
         if (chat) {
           // 起出来的线程必须就是 compilePolicy 要的那一档;codex 报回来的对不上(配置层盖掉了、版本不认)⇒ 不开。
-          if (response.approvalPolicy !== chat.approvalPolicy || sandbox?.type !== SANDBOX_TYPE[chat.sandbox]) throw new Error('codex_unverified_thread_policy')
+          if (response.approvalPolicy !== chat.approvalPolicy || sandbox?.type !== SANDBOX_TYPE[chat.sandbox] ||
+              (chat.approve && response.approvalsReviewer !== 'user')) throw new Error('codex_unverified_thread_policy')
         } else if (response.approvalPolicy !== 'on-request' || response.approvalsReviewer !== 'user' ||
             sandbox?.type !== 'workspaceWrite' || sandbox.networkAccess !== false ||
             sandbox.excludeTmpdirEnvVar !== true || sandbox.excludeSlashTmp !== true ||

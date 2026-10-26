@@ -43,7 +43,7 @@ export interface OwnerRuling { verdict: Verdict; by: string }
 
 /**
  * 这一次调用发生在哪个面上。放行规则按它开关(见 OWNER_RULE_SURFACES)。
- *   chat      微信 / App 对话(Claude 的 permission-relay、Gemini、OpenAI 兼容的闸门)
+ *   chat      微信 / App 对话(Claude 的 permission-relay、Gemini、OpenAI 兼容的闸门、Codex 的 on-request 审批)
  *   workbench 一起做(工作台任务)
  *   terminal  终端会话(hook 报上来的权限请求)
  *   job       定时任务那一轮的只读档(没人看着)
@@ -60,8 +60,12 @@ export type AuthSurface = 'chat' | 'workbench' | 'terminal' | 'job'
  */
 export const OWNER_RULE_SURFACES: ReadonlySet<AuthSurface> = new Set<AuthSurface>(['terminal', 'workbench', 'chat'])
 
-/** 自己跑逐工具闸门、并且闸门的旁路 / 「问」怎么落由编译策略说了算的执行者。其余执行者在这里不看权限模式。 */
-export type GateExecutor = 'claude' | 'gemini' | 'openai'
+/**
+ * 自己跑逐工具闸门、并且闸门的旁路 / 「问」怎么落由编译策略说了算的执行者。其余执行者在这里不看权限模式。
+ * codex(2026-10-26):主人对话里 app-server 是 on-request,它报上来要批的命令 / 改文件 / MCP 调用逐条过这里
+ * (adapters/executors/codex/codex-chat-gate.ts);旁路和 Claude 一样是静态设置(dangerously ⇒ 审批 never,根本不报)。
+ */
+export type GateExecutor = 'claude' | 'gemini' | 'openai' | 'codex'
 
 /** 谁在调:哪个面、哪一档、什么权限模式、哪家执行者的闸门、这个对话是不是扇出。 */
 export interface AuthSubject {
@@ -230,6 +234,6 @@ function gateRelay(subject: AuthSubject): 'bypass' | 'deny' | 'ask' {
   }
   if (subject.executor === 'gemini') return compilePolicy('gemini', subject.tier, subject.permissionMode).gateEnabled ? 'ask' : 'bypass'
   // claude:canUseTool 只在 SDK 没被旁路时才会被调(bypassPermissions 是 compilePolicy('claude') 给的静态设置),
-  // 闸门里从来不看权限模式 —— 这里也不看。
+  // 闸门里从来不看权限模式 —— 这里也不看。codex 同理:dangerously 下审批是 never,app-server 不会报上来。
   return 'ask'
 }

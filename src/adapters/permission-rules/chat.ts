@@ -1,6 +1,7 @@
 /**
- * chat.ts — 主人自己的对话也走放行规则(2026-10-25 主人点头,看得见的变化)。三家逐工具过闸门的执行者(Claude 的
- * permission-relay、Gemini gate、openai gate)都经这里,判定本身仍只在 domain/authorize.ts。
+ * chat.ts — 主人自己的对话也走放行规则(2026-10-25 主人点头,看得见的变化)。逐工具过闸门的执行者(Claude 的
+ * permission-relay、Gemini gate、openai gate,以及 2026-10-26 起 Codex 的 on-request 审批 codex-chat-gate)都经这里,
+ * 判定本身仍只在 domain/authorize.ts。
  *
  * 三条约束,各落在哪:
  *   1. 只在主人自己的对话里:`rules.isOwnerChat(chatId)` 在判的那一刻现算(daemon 接的是 access.json 的 admins,按原始
@@ -16,6 +17,7 @@
 import { authorize, type AuthSubject, type Authorization, type GateExecutor, type ToolDescriptor } from '../../domain/authorize'
 import type { Decision, PermissionAsk } from '../../domain/permission-rules/types'
 import { toolInputFacts } from '../../domain/permission-rules/facts'
+import { classifyToolUse } from '../../domain/user-tier'
 import { isAbsolutePath, type Platform } from './paths'
 
 /** 对话里的一次工具调用(规则只看这几样)。tool 用 SDK 形状的名字(Bash、mcp__wechat__memory_delete …),三家一致。 */
@@ -120,4 +122,24 @@ export async function authorizeChatCall(
   if (ruled.verdict === 'deny') return { ...ruled, detail: d.reason, denyMessage: `The owner's permission rule denied this (${d.reason}). Do not retry it; tell the user it was blocked by their rule.` }
   // 规则层说放、提醒却没登记上(没走 beforeAllow 的实现)⇒ 不放。
   return noted ? ruled : noRule()
+}
+
+/**
+ * 对话里一次 SDK 形状的工具调用(Bash / Edit / mcp__wechat__… + 它的参数)怎么判:按 classifyToolUse 分类,再交给
+ * authorizeChatCall。Claude 的 canUseTool(permission-relay.ts)和 Codex 的审批(codex-chat-gate.ts,把报上来的命令 /
+ * 改文件 / MCP 调用翻成同样的 SDK 形状)都调这一个 —— 同一个调用,两家得到同一个结论。
+ */
+export function authorizeChatToolUse(
+  subject: Omit<AuthSubject, 'surface' | 'ownerChat'>,
+  use: { tool: string; input: Record<string, unknown>; askUser?: ToolDescriptor['askUser']; replyFamily?: boolean },
+  chatId: string,
+  rules: ChatOwnerRules | null | undefined,
+): Promise<ChatAuthorization> {
+  const kind = classifyToolUse(use.tool, use.input)
+  return authorizeChatCall(
+    subject,
+    { name: use.tool, kind, ...(use.askUser !== undefined ? { askUser: use.askUser } : {}), ...(use.replyFamily ? { replyFamily: true } : {}) },
+    { chatId, provider: subject.executor, tool: use.tool, input: use.input },
+    rules,
+  )
 }

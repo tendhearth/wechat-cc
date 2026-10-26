@@ -7,7 +7,7 @@ const name = (value: unknown): value is string => typeof value === 'string' && v
 
 /** Native 0.153.4 tool approvals use an empty form and privileged metadata.
  * Bind the request to an observed invocation, never infer a tool from prose. */
-export function codexMcpApproval(params: Value, items: Iterable<Value>, completed: Set<string>, enabled: Set<string>): { tool: string; description: string } | null {
+export function codexMcpApproval(params: Value, items: Iterable<Value>, completed: Set<string>, enabled: Set<string>): { tool: string; description: string; input: Record<string, unknown> } | null {
   const meta = params._meta, schema = params.requestedSchema
   if (!name(params.serverName) || !enabled.has(params.serverName) || params.mode !== 'form' ||
       !object(meta) || meta.codex_approval_kind !== 'mcp_tool_call' ||
@@ -24,7 +24,8 @@ export function codexMcpApproval(params: Value, items: Iterable<Value>, complete
     if (argumentsPreview === null) return null
     const description = `MCP server: ${params.serverName}\nTool: ${item.tool}\nArguments:\n${argumentsPreview}\nApprove this invocation only.`
     if (description.length > 20_000) return null
-    return { tool: `mcp__${params.serverName}__${item.tool}`, description }
+    // input:对上的那次调用的参数(对话侧按档位分类要用;工作台不转给审批卡)。
+    return { tool: `mcp__${params.serverName}__${item.tool}`, description, input: object(item.arguments) ? item.arguments : {} }
   } catch { return null }
 }
 

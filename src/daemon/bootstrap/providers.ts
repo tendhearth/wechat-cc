@@ -8,6 +8,7 @@ import { DEFAULT_CLAUDE_MODEL } from '../../adapters/executors/claude/claude-age
 import { DEFAULT_AGY_MODEL } from '../../adapters/executors/agy/agy-agent-provider'
 import { createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
 import { createCodexChatProvider } from '../../adapters/executors/codex/codex-chat-provider'
+import { makeCodexChatGate } from '../../adapters/executors/codex/codex-chat-gate'
 import { buildSystemPrompt } from '../../domain/prompt-builder'
 import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../domain/capability-matrix'
 import type { ProviderId } from '../../domain/conversation'
@@ -373,13 +374,22 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         ...(process.env.CODEX_MODEL ? { model: process.env.CODEX_MODEL } : {}),
         // Task 6: sandboxMode + approvalPolicy moved out of CodexAgentProviderOptions —
         // they're now derived per-spawn from spawnOpts.tierProfile inside the provider.
-        // admin tier maps to danger-full-access + never (matches the old --dangerously
-        // posture); trusted → workspace-write + never; guest → read-only + untrusted.
+        // strict: admin → workspace-write + on-request (answered by `approvals` below);
+        // trusted → workspace-write + never; guest → read-only + untrusted (refused at
+        // dispatch anyway). --dangerously → danger-full-access + never for everyone.
         // The dangerouslyBypassApprovalsAndSandbox flag stays here: when the daemon
         // runs --dangerously, MCP tool calls skip codex's approval gate (else codex
         // refuses every MCP call under approval "never"). Applied per spawn only when
         // THAT spawn is dangerously (codex-chat-provider.codexChatThreadConfig).
         dangerouslyBypassApprovalsAndSandbox: permissionMode === 'dangerously',
+        // 主人对话(admin、strict)审批 on-request(2026-10-26):codex 报上来要批的那一条逐条过 authorize,
+        // 要问就发和 Claude 对话同一张微信拍板卡;主人的放行规则在这里一样生效(chatOwnerRules)。
+        approvals: makeCodexChatGate({
+          askUser: deps.ilink.askUser,
+          adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
+          ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
+          log: deps.log,
+        }),
         // The per-spawn instructions (SpawnContext.appendInstructions, assembled
         // by buildInstructions below) ride codex app-server's developerInstructions
         // slot on thread/start / thread/resume, so nothing is baked here.

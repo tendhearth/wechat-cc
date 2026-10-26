@@ -16,6 +16,8 @@ import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTa
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../domain/capability-matrix'
 import { noAskNotice } from '../../domain/enforcement-matrix'
+import { resolveTier, type UserTier } from '../../domain/user-tier'
+import { loadAccess } from '../../lib/access'
 import { PROVIDER_IDS } from '../../lib/provider-ids'
 import { normalizeUserName } from '../../lib/user-name'
 import type { Mode } from '../../domain/conversation'
@@ -451,7 +453,10 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
       const humanName = kindNames[mode.kind] ?? String(mode.kind)
       // 切到一家「问不了就放行」的执行者:照实说一句(稿 2026-10-22-policy-compile §6)。provider_switch(quiet)
       // 由 agent 转告主人,所以放进回执;控制台那条直接接在回执后面。
-      const notice = mode.kind === 'solo' && 'provider' in mode ? noAskNotice(mode.provider) : null
+      // 主人自己的对话按 admin 档说(codex 在那里逐条问 ⇒ 不提醒);别的对话 / 读不到 access ⇒ 不分档,宁可多提醒
+      // (访客本来就切不过去,派发时就拒)。
+      const tierOf = (): UserTier | undefined => { try { return resolveTier(chatId, loadAccess()) === 'admin' ? 'admin' : undefined } catch { return undefined } }
+      const notice = mode.kind === 'solo' && 'provider' in mode ? noAskNotice(mode.provider, tierOf()) : null
       // Best-effort wechat reply — never fail the route if send fails.
       // `quiet`: an agent (wechat-mcp provider_switch) is the caller and will
       // tell the user itself — a second「来自控制台」line would be noise.

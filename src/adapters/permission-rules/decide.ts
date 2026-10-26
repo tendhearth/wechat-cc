@@ -39,12 +39,13 @@ function missingFacts(ask: PermissionAsk): string | null {
 export const EDIT_REPORTING_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
 
 /**
- * 对话面(2026-10-25):每一次工具调用都过 authorize 的执行者(C3 快照里 perToolCallback 的那三家)。Codex / Cursor / agy
- * 在对话里问不了单个工具,根本走不到规则这一层;这里再按 id 守一道,新接的执行者默认不放。
+ * 对话面(2026-10-25):每一次工具调用都过 authorize 的执行者(C3 快照里 perToolCallback 的那三家),加上 2026-10-26 起的
+ * Codex(主人对话里 app-server on-request,报上来要批的每一条过 authorize,codex-chat-gate.ts)。Cursor / agy 在对话里
+ * 问不了单个工具,根本走不到规则这一层;这里再按 id 守一道,新接的执行者默认不放。
  * 对话里不靠「改文件先报」那条理由:主人的对话里普通 shell 和写文件按档位本来就直接放(不问),规则能多放的只有档位要问的
  * 那几类(破坏性命令 / 删记忆 / 动 daemon)—— 破坏性命令每一条都撞红线,还是问主人。
  */
-export const CHAT_GATED_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'gemini', 'openai'])
+export const CHAT_GATED_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'gemini', 'openai', 'codex'])
 
 export async function decide(
   ask: PermissionAsk,
