@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench', 'companion'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench', 'companion', 'console'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 /**
@@ -186,6 +186,13 @@ export interface RouteSpec {
  * 改的是主人自己的记忆,只给主人。trusted 档的那把 file token 也在别人对话的会话手里,所以不能走 trusted;
  * `wechat-cc memory view|edit` 与桌面(经宿主)用 operator 凭据。
  *   → POST /v1/memory/view, POST /v1/memory/edit
+ *
+ * 桌面不再起 CLI(架构终态 F6,主人 2026-10-26 拍板):桌面以前 `wechat_cli_json` 读写的主人私事(记忆文件整份读写、画像、
+ * 本机项目记忆、对话页、会话名单、观察 / 里程碑 / 决策、头像、allowlist 里的 admins、对话模式快照)改走这些路由,
+ * 经宿主代理(daemon_request)用 operator 凭据。不能是 trusted:trusted 那把 file token 别人对话的会话手里也有,
+ * 这些都是别人的聊天记录 / 主人的记忆。处理器在 src/features/console 与 src/features/memory/owner-routes.ts,
+ * 每条调的是原来那条 CLI 命令调的同一个函数、回同一个形状。
+ *   → GET /v1/memory/files, GET /v1/memory/file, POST /v1/memory/file/write, GET /v1/memory/profile, GET /v1/memory/profile/status, GET /v1/memory/projects, GET /v1/conversations/list, GET /v1/observations/list, POST /v1/observations/archive, GET /v1/milestones/list, GET /v1/events/list, GET /v1/access/list, GET /v1/avatar/info, POST /v1/avatar/set, POST /v1/avatar/remove, GET /v1/sessions/projects, GET /v1/sessions/chats, POST /v1/sessions/delete, GET /v1/dialogue/timeline, GET /v1/dialogue/threads, GET /v1/dialogue/thread, GET /v1/dialogue/search, POST /v1/dialogue/unlock
  */
 const ROUTE_TABLE = {
   // ── 内部 API(/v1/*)。注释原样搬自 route-tiers.ts 的 ROUTE_MIN_TIER ─────────────────────
@@ -458,8 +465,33 @@ const ROUTE_TABLE = {
   'GET /v1/memory/source': { module: 'memory', desktop: { tier: 'trusted' } },
   'POST /v1/memory/source/review': { module: 'memory', desktop: { tier: 'trusted' } },
   'POST /v1/memory/profile/generate': { module: 'memory', desktop: { tier: 'trusted' } },
-  'POST /v1/memory/view': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'] } },
-  'POST /v1/memory/edit': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'] } },
+  // 桌面经宿主调(F6 起,以前桌面起 `wechat-cc memory view|edit`):打 tauri / devProxy。
+  'POST /v1/memory/view': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/memory/edit': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // 桌面不再起 CLI(架构终态 F6):主人私事,admin + operator,经宿主代理。理由见文件头 operator 那一段。
+  'GET /v1/memory/files': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/memory/file': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/memory/file/write': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/memory/profile': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/memory/profile/status': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/memory/projects': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/conversations/list': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/observations/list': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/observations/archive': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/milestones/list': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/events/list': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/access/list': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/avatar/info': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/avatar/set': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/avatar/remove': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/sessions/projects': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/sessions/chats': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/sessions/delete': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/dialogue/timeline': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/dialogue/threads': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/dialogue/thread': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/dialogue/search': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/dialogue/unlock': { module: 'console', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/llm/health': { desktop: { tier: 'trusted' } },
   'POST /v1/net/probe': { desktop: { tier: 'trusted' } },
   'POST /v1/llm/keys': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },

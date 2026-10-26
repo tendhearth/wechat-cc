@@ -56,6 +56,7 @@ import { voiceFeature } from '../features/voice'
 import { phoneFeature } from '../features/phone'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { calendarFeature, type CalendarFeature } from '../features/calendar'
+import { consoleFeature } from '../features/console'
 import { fromReplyHandler } from './commands/registry'
 import { wireMain, type WiredDeps } from './wiring'
 import { buildInboundPipeline, type AppTurn } from './inbound/build'
@@ -269,6 +270,9 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         }
       },
     }),
+    // 桌面控制台(src/features/console,架构终态 F6):桌面以前起 CLI 读写的对话页、会话名单、观察 / 里程碑 / 决策、头像 ……
+    // 只挂路由;紧跟 internal-api,桌面开机就来读。
+    consoleFeature({ stateDir, db, conversationStore: f.conversationStore }),
     // 画室:一个功能一个目录(src/features/atelier);路由自己挂,紧跟 internal-api(以前这几条路由随 internal-api 一起就在,桌面开机就来看画)。画一拍还在伙伴的反省那一拍里(wiring 经 makeAtelierTick 接)。
     atelierFeature({
       needs: [W.send],

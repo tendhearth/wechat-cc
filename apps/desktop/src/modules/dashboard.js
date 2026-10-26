@@ -727,9 +727,8 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
       _providerSwitchInflight = true
       menu.querySelectorAll("button").forEach(b => { b.disabled = true })
       try {
-        await deps.invoke("wechat_cli_json", {
-          args: ["mode", "set", chatId, JSON.stringify({ kind: "solo", provider: name }), "--json"],
-        })
+        // POST /v1/conversation/set-mode(架构终态 F6;以前起 `wechat-cc mode set`,那条 CLI 也只是转发这一条)
+        await v1(deps.invokeApi, V1.conversation.setMode, { body: { chatId, mode: { kind: "solo", provider: name } } })
       } catch (err) {
         setPending(`切换 ${name} 失败：${deps.formatInvokeError ? deps.formatInvokeError(err) : String(err)}`)
         setTimeout(() => setPending(""), 3000)

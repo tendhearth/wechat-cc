@@ -4,6 +4,7 @@
  *
  *  - `fs-routes.ts`:`/v1/memory/{read,write,list,delete}`(MCP 记忆工具走这四条;会话只能碰自己那个对话);
  *  - `routes.ts`:LLM 记忆操作与每晚整理(立即运行 / 看 / 改);`review-routes.ts`:证据审阅;
+ *  - `owner-routes.ts`:桌面记忆页看 / 改的原样文件、画像、本机项目记忆(F6 起桌面不再起 CLI 读这些);
  *  - `nightly*` / `curated-doc` / `memory-text` / `sources` / `today-draft`:每晚整理和它的文件格式;
  *  - `llm-ops.ts`:概览 / 画像 / 小像;`gardener.ts`:伙伴反省时理笔记;`recall` / `snapshot`:回忆与快照;
  *  - `prompt-reads.ts`:每次起会话现读的记忆素材(bootstrap `needs: ['memory']` 拿);
@@ -21,6 +22,7 @@ import type { InternalApiLifecycle } from '../../daemon/internal-api/lifecycle'
 import { memoryFsRoutes } from './fs-routes'
 import { memoryRoutes } from './routes'
 import { memoryReviewRoutes } from './review-routes'
+import { memoryOwnerRoutes } from './owner-routes'
 import { makeMemoryPromptReads, type MemoryPromptReads } from './prompt-reads'
 import { registerMemoryNightly } from './nightly-lifecycle'
 import type { MemoryLlmOps } from './llm-ops'
@@ -68,6 +70,7 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
         ...memoryFsRoutes({ memory: d.memory, db: d.db, log: d.log }),
         ...memoryRoutes({ stateDir: d.stateDir, memoryLlm: d.memoryLlm, memoryNightly: d.memoryNightly, resolveAdminChatId: d.resolveAdminChatId }),
         ...memoryReviewRoutes({ stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId }),
+        ...memoryOwnerRoutes({ stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId }),
       })
       return { promptReads: makeMemoryPromptReads({ stateDir: d.stateDir, memory: d.memory }) }
     },

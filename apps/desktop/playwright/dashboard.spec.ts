@@ -263,16 +263,14 @@ test('a2a add modal opens + closes via ✕ button (regression for fix 5ddeb72)',
   await expect(page.locator('dialog#a2a-add-modal[open]')).toHaveCount(0)
 })
 
-// ── Data flow regression — shim seeding propagates through the CLI ──────
+// ── Data flow regression — shim seeding propagates through /v1(架构终态 F6 起不再经 CLI)──────
 
-test('observations list reflects seeded data', async ({ shim }) => {
+test('observations list reflects seeded data', async ({ shim, shimUrl }) => {
   // Direct shim API test — no UI needed; verifies the data layer works
   // end-to-end. Seed 5 observations for test_chat.
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
-  const result = await shim.invoke('wechat_cli_json', {
-    args: ['observations', 'list', 'test_chat', '--json'],
-  }) as { result?: { observations?: unknown[] } }
-  const observations = result.result?.observations ?? []
+  const result = (await (await fetch(`${shimUrl}/v1/observations/list?chat_id=test_chat`)).json()) as { observations?: unknown[] }
+  const observations = result.observations ?? []
   expect(observations.length).toBe(5)
 })
 

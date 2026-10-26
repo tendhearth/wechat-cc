@@ -1,7 +1,7 @@
 // Interaction tests — driven against test-shim.ts (DRY_RUN=1).
 //
 // Coverage:
-//   1. archive observation        — data layer (shim ↔ CLI ↔ mock state)
+//   1. archive observation        — data layer (shim /v1 ↔ mock state)
 //   2. session favorite toggle    — localStorage persistence
 //   3. settings drawer            — open / close (button / ESC / backdrop)
 //                                   + toggle aria-pressed flip
@@ -56,23 +56,17 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // ── Existing coverage (preserved) ─────────────────────────────────────
 
-test('archive observation removes it from active list', async ({ shim }) => {
+test('archive observation removes it from active list', async ({ shim, shimUrl }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
-  const before = await shim.invoke('wechat_cli_json', {
-    args: ['observations', 'list', 'test_chat', '--json'],
-  }) as { result?: { observations?: Array<{ id: string }> } }
-  const observations = before.result?.observations ?? []
+  // 架构终态 F6:桌面经宿主调 /v1/observations/*;mock 模式下 shim 按路径答
+  const list = async () => (await (await fetch(`${shimUrl}/v1/observations/list?chat_id=test_chat`)).json()) as { observations?: Array<{ id: string }> }
+  const observations = (await list()).observations ?? []
   expect(observations.length).toBe(5)
 
   const firstId = observations[0]!.id
-  await shim.invoke('wechat_cli_json', {
-    args: ['observations', 'archive', 'test_chat', firstId, '--json'],
-  })
+  await fetch(`${shimUrl}/v1/observations/archive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: 'test_chat', id: firstId }) })
 
-  const after = await shim.invoke('wechat_cli_json', {
-    args: ['observations', 'list', 'test_chat', '--json'],
-  }) as { result?: { observations?: Array<{ id: string }> } }
-  const remaining = after.result?.observations ?? []
+  const remaining = (await list()).observations ?? []
   expect(remaining.length).toBe(4)
   expect(remaining.map(o => o.id)).not.toContain(firstId)
 })

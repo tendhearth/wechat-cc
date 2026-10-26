@@ -1,8 +1,10 @@
 // @ts-check
+import { V1, v1 } from './daemon-client.js'
 /** @typedef {import('../../../src/cli/schema').ConversationsListOutputT} ConversationsList */
 
-// conversations-poller — RFC 03 P5.2. Polls
-// `wechat-cc conversations list --json` and notifies subscribers.
+// conversations-poller — RFC 03 P5.2. Polls the daemon's
+// GET /v1/conversations/list (架构终态 F6;以前起 `wechat-cc conversations list --json`,形状一样)
+// and notifies subscribers. daemon 没在跑 ⇒ 这一拍失败、lastError 记下,上一份快照照旧在。
 // Same lifecycle contract as doctor-poller, intentionally dumb (no
 // dedup-across-tabs or anything fancy) because the payload is small
 // and changes infrequently — modes flip only when the user types a
@@ -14,9 +16,9 @@
 // than that.
 
 /**
- * @param {{ invoke: (cmd: string, args: { args: string[] }) => Promise<unknown>, intervalMs?: number }} opts
+ * @param {{ call: (method: 'GET', path: string) => Promise<unknown>, intervalMs?: number }} opts  call = 宿主代理(invokeWorkbenchApi)
  */
-export function createConversationsPoller({ invoke, intervalMs = 10000 }) {
+export function createConversationsPoller({ call, intervalMs = 10000 }) {
   /** @type {ConversationsList | null} */
   let last = null
   /** @type {unknown} */
@@ -40,7 +42,7 @@ export function createConversationsPoller({ invoke, intervalMs = 10000 }) {
     if (inflight) return inflight
     inflight = (async () => {
       try {
-        const report = /** @type {ConversationsList} */ (await invoke("wechat_cli_json", { args: ["conversations", "list", "--json"] }))
+        const report = /** @type {ConversationsList} */ (await v1(call, V1.conversations.list))
         last = report
         lastError = null
         notify(report)

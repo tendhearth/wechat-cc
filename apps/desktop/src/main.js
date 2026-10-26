@@ -16,6 +16,7 @@
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
+import { V1, v1 } from "./daemon-client.js"
 import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine, guardRowVisible, hasUsableProvider, providerReady } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createPresencePoller } from "./presence-poller.js"
@@ -202,7 +203,7 @@ async function loadLifeCategory(category) {
   else await lifeArchive?.load(category)
 }
 
-const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
+const conversationsPoller = createConversationsPoller({ call: (method, path) => invokeWorkbenchApi(method, path), intervalMs: 10000 })
 
 // 等你的事:全局只读一份(GET /v1/workbench/attention)。列表只在「此刻」(N 件事等你)与一起做的「等你处理」;
 // 别的页面只在主导航「此刻」旁边写个数 —— 不再有顶部横条(2026-10-05,同一件事只出现一次)。
@@ -496,7 +497,7 @@ function wireDoctorSubscribers() {
     loadExecutorNames(deps.invokeApi)
   })
   conversationsPoller.subscribe(report => {
-    if (state.mode === "dashboard") renderConversations(report, { invoke })
+    if (state.mode === "dashboard") renderConversations(report, { invokeApi })
   })
 }
 
@@ -962,7 +963,7 @@ function wireEvents() {
   })
 
   wireSettingsDrawer({
-    deps: { invoke },
+    deps: { invokeWorkbenchApi },
     onOpen: () => { void refreshGuardStatus() },
     onToggleChange: async (id, on) => {
       // 返回 false → 持久化失败,让 settings-drawer 回滚开关(别让 UI 撒谎)。
@@ -1440,7 +1441,7 @@ async function openAvatarModal(deps, key) {
   /** @type {AvatarInfo | null} */
   let info = null
   try {
-    info = /** @type {AvatarInfo} */ (await deps.invoke("wechat_cli_json", { args: ["avatar", "info", key, "--json"] }))
+    info = /** @type {AvatarInfo} */ (await v1(deps.invokeWorkbenchApi, V1.avatar.info, { query: { key: key ?? "" } }))
   } catch { /* ignore — preview falls back */ }
   const previewHtml = info?.exists
     ? `<img src="/attachment?path=${encodeURIComponent(info.path)}&v=${Date.now()}"/>`
@@ -1483,7 +1484,7 @@ async function openAvatarModal(deps, key) {
   body.querySelector("#avatar-modal-cancel")?.addEventListener("click", closeLightbox)
   body.querySelector("#avatar-modal-remove")?.addEventListener("click", async () => {
     try {
-      /** @type {AvatarRemove} */ (await deps.invoke("wechat_cli_json", { args: ["avatar", "remove", key, "--json"] }))
+      /** @type {AvatarRemove} */ (await v1(deps.invokeWorkbenchApi, V1.avatar.remove, { body: { key } }))
       closeLightbox()
       reopenCurrentSession(deps)
     } catch (err) {
@@ -1510,7 +1511,7 @@ async function handleAvatarFile(deps, key, file, previewEl) {
   }
   try {
     const base64 = await imageToResizedPngBase64(file, 80)
-    const _avatarSetResult = /** @type {AvatarSet} */ (await deps.invoke("wechat_cli_json", { args: ["avatar", "set", key, "--base64", base64, "--json"] }))
+    const _avatarSetResult = /** @type {AvatarSet} */ (await v1(deps.invokeWorkbenchApi, V1.avatar.set, { body: { key, base64 } }))
     void _avatarSetResult
     closeLightbox()
     reopenCurrentSession(deps)

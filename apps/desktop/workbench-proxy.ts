@@ -30,9 +30,12 @@ async function boundedBody(req:Request,maxBytes:number):Promise<string> {
 export function createWorkbenchProxy(opts:Options) {
   return async (req:Request):Promise<Response|null> => {
     const url=new URL(req.url)
-    // /v1/connections(此刻的连接浮层)、/v1/phone/*(连接手机)、/v1/cli/sessions(此刻里的终端会话)也走这里;mock 模式下交给 test-shim 的演示路由
+    // /v1/connections(此刻的连接浮层)、/v1/phone/*(连接手机)、/v1/cli/sessions(此刻里的终端会话)也走这里;mock 模式下交给 test-shim 的演示路由。
+    // 架构终态 F6 起,桌面不再起 CLI 读的那些主人私事(记忆页、对话页、会话名单 ……)也是:名单里有、又不是工作台的,一律按这一类。
+    const isWorkbench=url.pathname==='/v1/workbench'||url.pathname.startsWith('/v1/workbench/')
     const ownerSurface=url.pathname==='/v1/connections'||url.pathname.startsWith('/v1/phone/')||url.pathname==='/v1/cli/sessions'||url.pathname.startsWith('/v1/cli/hooks/')
-    if(!ownerSurface&&url.pathname!=='/v1/workbench'&&!url.pathname.startsWith('/v1/workbench/'))return null
+      ||(!isWorkbench&&ROUTES.has(`${req.method} ${url.pathname}`))
+    if(!ownerSurface&&!isWorkbench)return null
     if(ownerSurface&&opts.dryRun)return null
     if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return Response.json({error:'forbidden'},{status:403})
     const origin=req.headers.get('origin'), site=req.headers.get('sec-fetch-site')

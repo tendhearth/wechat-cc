@@ -37,6 +37,10 @@ import { makeLiveReload, injectReloadScript } from './dev-reload'
 import { makeAtelierStore } from '../../src/features/atelier'
 import { executorNames } from '../../src/domain/provider-display-names'
 import { PROVIDER_IDS } from '../../src/lib/provider-ids'
+import { consoleRoutes } from '../../src/features/console/routes'
+import { memoryOwnerRoutes } from '../../src/features/memory/owner-routes'
+import { openWechatDb, type Db } from '../../src/lib/db'
+import { makeConversationStore } from '../../src/adapters/store/conversation-store'
 
 const ROOT = process.env.WECHAT_CC_ROOT ?? join(import.meta.dir, '..', '..')
 // Accepts both spellings: src/lib/config.ts and lib.rs read WECHAT_STATE_DIR,
@@ -343,6 +347,162 @@ async function runCli(
     new Response(proc.stderr).text(),
   ])
   return { stdout, stderr, code }
+}
+
+// ── 架构终态 F6:桌面以前起 CLI 读的主人私事,现在走 /v1(经宿主代理);mock 模式下由这里按路径答 ─────────────
+// 有演示数据的(demo.seed 种下的会话 / 对话 / 观察 …)照旧答演示数据,逻辑原样搬自以前按 CLI 参数拦的那几段;
+// 没有演示数据的,和以前「掉到真 CLI」一样:读 ⇒ 本进程里跑 daemon 同一个处理器(读 STATE_DIR),
+// 写 ⇒ 和 dev-guard 一样默认拒(--allow-mutations 才放)。
+let _ownerRoutes: Record<string, (q: URLSearchParams, body: unknown) => unknown> | null = null
+let _ownerDb: Db | null = null
+function ownerRoutesInProcess() {
+  if (_ownerRoutes) return _ownerRoutes
+  _ownerDb = openWechatDb(STATE_DIR)
+  _ownerRoutes = {
+    ...consoleRoutes({ stateDir: STATE_DIR, db: _ownerDb, conversationStore: makeConversationStore(_ownerDb) }),
+    ...memoryOwnerRoutes({ stateDir: STATE_DIR, db: _ownerDb }),
+  } as unknown as Record<string, (q: URLSearchParams, body: unknown) => unknown>
+  return _ownerRoutes
+}
+const OWNER_ROUTE_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(consoleRoutes({ stateDir: '', db: null as unknown as Db, conversationStore: null as never })),
+  ...Object.keys(memoryOwnerRoutes({ stateDir: '', db: null as unknown as Db })),
+])
+async function inProcessOwnerRoute(key: string, url: URL, body: unknown): Promise<Response> {
+  if (!key.startsWith('GET ') && !allowMutations) {
+    return Response.json({ error: `dev-guard: ${key} 会改真实状态,mock 模式下默认不跑(加 --allow-mutations)` }, { status: 403 })
+  }
+  const r = await ownerRoutesInProcess()[key]!(url.searchParams, body) as { status: number; body: unknown }
+  return Response.json(r.body, { status: r.status })
+}
+
+async function dryRunOwnerRoute(req: Request, url: URL): Promise<Response | null> {
+  const key = `${req.method} ${url.pathname}`
+  const q = url.searchParams
+  // 只有自己答的路由才读正文:正文只能读一次,别的 /v1 处理器(a2a、手机配对 ……)还要读(#725 CI)。
+  if (key !== 'POST /v1/conversation/set-mode' && !OWNER_ROUTE_KEYS.has(key)) return null
+  let body: Record<string, unknown> = {}
+  if (req.method === 'POST') { try { body = (await req.json()) as Record<string, unknown> } catch { body = {} } }
+
+  if (key === 'POST /v1/conversation/set-mode') {
+    // 更新镜像,下一次 conversations list 读到的就是这次写的(以前拦 `mode set`)。
+    const chatId = typeof body.chatId === 'string' ? body.chatId : ''
+    const mode = body.mode as DaemonMode | undefined
+    if (mode && chatId && __mockState.conversations) {
+      __mockState.conversations = __mockState.conversations.map(c => c.chat_id === chatId ? { ...c, mode } : c)
+    }
+    return Response.json({ ok: true })
+  }
+
+  switch (key) {
+    case 'GET /v1/conversations/list': {
+      // 第一次从本机读一份(手动测试看得到真数据),之后答内存镜像(set-mode 会改它)。
+      if (__mockState.conversations === null) {
+        try {
+          const r = await ownerRoutesInProcess()[key]!(q, null) as { body: { conversations?: DaemonConversation[] } }
+          __mockState.conversations = r.body.conversations ?? []
+        } catch { __mockState.conversations = [] }
+      }
+      return Response.json({ ok: true, conversations: __mockState.conversations })
+    }
+    case 'GET /v1/observations/list':
+      if (__mockState.observations.length === 0) break
+      return Response.json({ observations: __mockState.observations.filter(o => !o.archived) })
+    case 'POST /v1/observations/archive': {
+      if (__mockState.observations.length === 0) break
+      const obsId = typeof body.id === 'string' ? body.id : ''
+      if (obsId) __mockState.observations = __mockState.observations.map(o => o.id === obsId ? { ...o, archived: true } : o)
+      return Response.json({ ok: true })
+    }
+    case 'GET /v1/milestones/list':
+      if (__mockState.milestones.length === 0) break
+      return Response.json({ milestones: __mockState.milestones })
+    case 'GET /v1/memory/files': {
+      // 无条件答:掉到本机会读到开发机真实的记忆目录(「没有对话」的断言看到真用户 GSR 那次)。
+      if (__mockState.chats.length === 0) return Response.json([])
+      const chat = __mockState.chats[0]!
+      return Response.json([{ userId: chat.id, fileCount: 1, files: [{ path: 'profile.md', size: 128, mtime: new Date().toISOString() }] }])
+    }
+    case 'GET /v1/sessions/projects': {
+      // 无条件答:掉到本机会读开发机的 ~/.claude/projects,真项目名漏进测试。
+      const chatFilter = q.get('chat')
+      const projects = __mockState.sessions
+        .filter(s => !chatFilter || (s.chat_id || '_legacy') === chatFilter)
+        .map(s => ({ alias: s.project, session_id: `sess-${s.id}`, last_used_at: new Date(s.created_at).toISOString(), summary: null, summary_updated_at: null }))
+      return Response.json({ projects })
+    }
+    case 'POST /v1/sessions/delete': {
+      const alias = typeof body.alias === 'string' ? body.alias : ''
+      const before = __mockState.sessions.length
+      __mockState.sessions = __mockState.sessions.filter(s => s.project !== alias)
+      return Response.json({ ok: true, deleted: before - __mockState.sessions.length })
+    }
+    case 'GET /v1/sessions/chats': {
+      const names: Record<string, string> = { 'chatA@im.wechat': '小白', 'chatB@im.wechat': '小明' }
+      const byChat = new Map<string, { aliases: Set<string>; last: number }>()
+      for (const s of __mockState.sessions) {
+        const id = s.chat_id || '_legacy'
+        const g = byChat.get(id) ?? { aliases: new Set<string>(), last: 0 }
+        g.aliases.add(s.project)
+        if (s.created_at > g.last) g.last = s.created_at
+        byChat.set(id, g)
+      }
+      // 没种会话(对话页的测试只 seed 了 chat_id)⇒ 从 chats 拼一份,对话切换器照样有东西。
+      if (byChat.size === 0 && __mockState.chats.length > 0) {
+        for (const c of __mockState.chats) {
+          byChat.set(c.id, { aliases: new Set(['_default']), last: c.last_active })
+          names[c.id] = c.name
+        }
+      }
+      const chats = [...byChat.entries()]
+        .map(([chat_id, g]) => ({ chat_id, user_name: names[chat_id] ?? null, account_id: 'bot1', session_count: g.aliases.size, last_used_at: new Date(g.last).toISOString() }))
+        .sort((a, b) => Date.parse(b.last_used_at) - Date.parse(a.last_used_at))
+      return Response.json({ ok: true, chats })
+    }
+    // 对话页:无条件答,不掉到本机(CI 里没有库,开发机上会漏真聊天)。
+    case 'GET /v1/dialogue/timeline': {
+      const beforeTs = q.get('before')
+      let msgs = __mockState.dialogueMessages
+      if (beforeTs) msgs = msgs.filter(m => m.ts < beforeTs)
+      const limit = Number.parseInt(q.get('limit') ?? '100', 10)
+      return Response.json({ messages: msgs.slice(-limit), hasMore: msgs.length > limit })
+    }
+    case 'GET /v1/dialogue/threads': {
+      const facet = q.get('facet')
+      // 客户端带不带 include_private 说了算(重新上锁后就不带了),别把 dialogueUnlocked 或进来。
+      let threads = __mockState.dialogueThreads
+      if (facet) threads = threads.filter(t => t.facets.includes(facet))
+      if (q.get('include_private') !== '1') threads = threads.filter(t => !t.private)
+      return Response.json({ threads })
+    }
+    case 'GET /v1/dialogue/thread': {
+      const thread = __mockState.dialogueThreads.find(t => t.id === q.get('id'))
+      if (!thread) return Response.json({ ok: false, error: 'not_found' })
+      const episodes = thread.episodes.map(ep => ({
+        from_ts: ep.from_ts, to_ts: ep.to_ts,
+        messages: __mockState.dialogueMessages.filter(m => m.ts >= ep.from_ts && m.ts <= ep.to_ts),
+      }))
+      return Response.json({ thread, episodes })
+    }
+    case 'GET /v1/dialogue/search': {
+      const query = (q.get('q') ?? '').toLowerCase().trim()
+      const hits = query.length >= 2 ? __mockState.dialogueMessages.filter(m => m.text.toLowerCase().includes(query)) : []
+      return Response.json({ hits })
+    }
+    case 'POST /v1/dialogue/unlock': {
+      // '\x00no_lock' = 没设口令 ⇒ no_lock_configured,对话页就不显示上锁入口。
+      if (__mockState.dialoguePassphrase === '\x00no_lock') return Response.json({ ok: false, error: 'no_lock_configured' })
+      if (body.passphrase === __mockState.dialoguePassphrase) {
+        __mockState.dialogueUnlocked = true
+        return Response.json({ ok: true })
+      }
+      return Response.json({ ok: false, error: 'wrong_passphrase' })
+    }
+    case 'GET /v1/avatar/info':
+      // 一律「没有」:页面退回字母头像,不读真文件。
+      return Response.json({ ok: true, exists: false, path: '' })
+  }
+  return inProcessOwnerRoute(key, url, req.method === 'POST' ? body : null)
 }
 
 function placeholderQr(text: string): string {
@@ -857,48 +1017,8 @@ Bun.serve({
             })
           }
 
-          // Intercept observations list in DRY_RUN when demo data has been seeded.
-          // Frontend calls: ["observations", "list", <chatId>, "--json"]
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'observations' &&
-            cliArgs[1] === 'list' &&
-            __mockState.observations.length > 0
-          ) {
-            const visible = __mockState.observations.filter(o => !o.archived)
-            return Response.json({ result: { observations: visible } })
-          }
-
-          // Intercept observations archive in DRY_RUN when demo data has been seeded.
-          // Frontend calls: ["observations", "archive", <chatId>, <obsId>, "--json"]
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'observations' &&
-            cliArgs[1] === 'archive' &&
-            __mockState.observations.length > 0
-          ) {
-            const obsId = cliArgs[3]  // ["observations", "archive", chatId, obsId, "--json"]
-            if (obsId) {
-              __mockState.observations = __mockState.observations.map(o =>
-                o.id === obsId ? { ...o, archived: true } : o
-              )
-            }
-            return Response.json({ result: { ok: true } })
-          }
-
-          // Intercept milestones list in DRY_RUN when demo data has been seeded.
-          // Frontend calls: ["milestones", "list", <chatId>, "--json"]
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'milestones' &&
-            cliArgs[1] === 'list' &&
-            __mockState.milestones.length > 0
-          ) {
-            return Response.json({ result: { milestones: __mockState.milestones } })
-          }
+          // (架构终态 F6:观察 / 里程碑 / 记忆列表 / 会话名单 / 对话页 / 头像 / 对话模式这些以前按 CLI 参数拦的演示数据,
+          //  桌面现在走 /v1 —— 演示数据挪到下面的 dryRunOwnerRoute,按路径答。)
 
           // Record service stop / service start / kill-residual calls.
           // Used by reconnect-diagnose Playwright tests to assert that the
@@ -1036,220 +1156,6 @@ Bun.serve({
             })
           }
 
-          // Intercept memory list in DRY_RUN unconditionally — return seeded
-          // shape when demo.seed has run, empty list otherwise. The
-          // unconditional intercept is deliberate: without it the shim
-          // falls through to the real CLI which reads the dev machine's
-          // ~/.claude/channels/wechat/memory/ — leaking real user data into
-          // playwright tests (a "no chats" assertion saw a real "GSR" user
-          // and failed for environment-contaminated reasons, not real bugs).
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'memory' &&
-            cliArgs[1] === 'list'
-          ) {
-            if (__mockState.chats.length === 0) {
-              return Response.json({ result: [] })
-            }
-            const chat = __mockState.chats[0]!
-            return Response.json({
-              result: [{
-                userId: chat.id,
-                fileCount: 1,
-                files: [{ path: 'profile.md', size: 128, mtime: new Date().toISOString() }],
-              }],
-            })
-          }
-
-          // Intercept sessions list-projects in DRY_RUN unconditionally.
-          // Frontend calls: ["sessions", "list-projects", "--json"].
-          // Empty state when no sessions seeded (deliberately uncoupled
-          // from chats to let playwright exercise the empty-state path
-          // while still having accounts bound — without this the shim
-          // would fall through to the real CLI and read the dev box's
-          // ~/.claude/projects, leaking real project names into tests).
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'sessions' &&
-            cliArgs[1] === 'list-projects'
-          ) {
-            const chatIdx = cliArgs.indexOf('--chat')
-            const chatFilter = chatIdx >= 0 ? cliArgs[chatIdx + 1] : null
-            const projects = __mockState.sessions
-              .filter(s => !chatFilter || (s.chat_id || '_legacy') === chatFilter)
-              .map(s => ({
-                alias: s.project,
-                session_id: `sess-${s.id}`,
-                last_used_at: new Date(s.created_at).toISOString(),
-                summary: null,
-                summary_updated_at: null,
-              }))
-            return Response.json({ result: { projects } })
-          }
-
-          // sessions delete <alias> [--chat C] --json — used by the settings
-          // drawer 项目管理 list. Drop the matching session(s) from mock state.
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'sessions' &&
-            cliArgs[1] === 'delete'
-          ) {
-            const alias = cliArgs[2]
-            const before = __mockState.sessions.length
-            __mockState.sessions = __mockState.sessions.filter(s => s.project !== alias)
-            return Response.json({ result: { ok: true, deleted: before - __mockState.sessions.length } })
-          }
-
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'sessions' &&
-            cliArgs[1] === 'list-chats'
-          ) {
-            const names: Record<string, string> = { 'chatA@im.wechat': '小白', 'chatB@im.wechat': '小明' }
-            const byChat = new Map<string, { aliases: Set<string>; last: number }>()
-            for (const s of __mockState.sessions) {
-              const id = s.chat_id || '_legacy'
-              const g = byChat.get(id) ?? { aliases: new Set<string>(), last: 0 }
-              g.aliases.add(s.project)
-              if (s.created_at > g.last) g.last = s.created_at
-              byChat.set(id, g)
-            }
-            // When no sessions were seeded (e.g. dialogue-page tests that
-            // call demo.seed with chat_id but not withSessions), fall back to
-            // building the chat list from __mockState.chats so the dialogue
-            // chat-switcher still has something to show.
-            if (byChat.size === 0 && __mockState.chats.length > 0) {
-              for (const c of __mockState.chats) {
-                byChat.set(c.id, { aliases: new Set(['_default']), last: c.last_active })
-                names[c.id] = c.name
-              }
-            }
-            const chats = [...byChat.entries()]
-              .map(([chat_id, g]) => ({ chat_id, user_name: names[chat_id] ?? null, account_id: 'bot1', session_count: g.aliases.size, last_used_at: new Date(g.last).toISOString() }))
-              .sort((a, b) => Date.parse(b.last_used_at) - Date.parse(a.last_used_at))
-            return Response.json({ result: { ok: true, chats } })
-          }
-
-          // ── Dialogue namespace interceptors (DRY_RUN) ─────────────────────
-          // dialogue-page.js calls these to populate the 对话 pane without a
-          // real SQLite DB. All intercepts are unconditional in DRY_RUN so the
-          // page never falls through to the actual CLI (which would fail or leak
-          // real data in CI).
-          //
-          // dialogue timeline --chat-id X --limit N [--before T] --json
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'dialogue' &&
-            cliArgs[1] === 'timeline'
-          ) {
-            const PAGE = 100
-            const beforeTs = cliArgs.includes('--before') ? cliArgs[cliArgs.indexOf('--before') + 1] : null
-            let msgs = __mockState.dialogueMessages
-            if (beforeTs) {
-              msgs = msgs.filter(m => m.ts < beforeTs)
-            }
-            const limitIdx = cliArgs.indexOf('--limit')
-            const limit = limitIdx >= 0 ? Number.parseInt(cliArgs[limitIdx + 1] ?? String(PAGE), 10) : PAGE
-            const slice = msgs.slice(-limit)
-            const hasMore = msgs.length > limit
-            return Response.json({ result: { messages: slice, hasMore } })
-          }
-
-          // dialogue threads --chat-id X --facet F [--include-private] --json
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'dialogue' &&
-            cliArgs[1] === 'threads'
-          ) {
-            const facetIdx = cliArgs.indexOf('--facet')
-            const facet = facetIdx >= 0 ? cliArgs[facetIdx + 1] : null
-            // The CLIENT flag is authoritative — dialogue-page.js only sends
-            // --include-private while it considers the session unlocked, and
-            // drops it again on re-lock. (Don't OR in __mockState.dialogueUnlocked:
-            // that would leak private threads after the user re-locks.)
-            const includePrivate = cliArgs.includes('--include-private')
-            let threads = __mockState.dialogueThreads
-            if (facet) threads = threads.filter(t => t.facets.includes(facet))
-            if (!includePrivate) threads = threads.filter(t => !t.private)
-            return Response.json({ result: { threads } })
-          }
-
-          // dialogue thread-detail <id> --json
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'dialogue' &&
-            cliArgs[1] === 'thread-detail'
-          ) {
-            const threadId = cliArgs[2]
-            const thread = __mockState.dialogueThreads.find(t => t.id === threadId)
-            if (!thread) return Response.json({ result: { ok: false, error: 'not_found' } })
-            // Build episodes from the thread's episode ranges + matching msgs.
-            const episodes = thread.episodes.map((ep, i) => ({
-              from_ts: ep.from_ts,
-              to_ts: ep.to_ts,
-              messages: __mockState.dialogueMessages.filter(m => m.ts >= ep.from_ts && m.ts <= ep.to_ts),
-            }))
-            return Response.json({ result: { thread, episodes } })
-          }
-
-          // dialogue search --chat-id X <query> --json
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'dialogue' &&
-            cliArgs[1] === 'search'
-          ) {
-            // query is the 3rd positional arg (after --chat-id X which is flags)
-            const chatIdIdx = cliArgs.indexOf('--chat-id')
-            // collect remaining non-flag tokens as the query
-            const flags = new Set(['--chat-id', '--json', cliArgs[chatIdIdx + 1] ?? ''])
-            const query = cliArgs.filter(a => !a.startsWith('--') && !flags.has(a) && a !== 'dialogue' && a !== 'search').join(' ').toLowerCase().trim()
-            const hits = query.length >= 2
-              ? __mockState.dialogueMessages.filter(m => m.text.toLowerCase().includes(query))
-              : []
-            return Response.json({ result: { hits } })
-          }
-
-          // dialogue unlock --passphrase P --json
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'dialogue' &&
-            cliArgs[1] === 'unlock'
-          ) {
-            const ppIdx = cliArgs.indexOf('--passphrase')
-            const passphrase = ppIdx >= 0 ? cliArgs[ppIdx + 1] : ''
-            // Sentinel '\x00no_lock' means the lock is not configured — return
-            // no_lock_configured so dialogue-page hides the lock affordance.
-            if (__mockState.dialoguePassphrase === '\x00no_lock') {
-              return Response.json({ result: { ok: false, error: 'no_lock_configured' } })
-            }
-            if (passphrase === __mockState.dialoguePassphrase) {
-              __mockState.dialogueUnlocked = true
-              return Response.json({ result: { ok: true } })
-            }
-            return Response.json({ result: { ok: false, error: 'wrong_passphrase' } })
-          }
-
-          // avatar info <key> --json — used by dialogue-page.js to resolve
-          // custom avatars. Return not-found for all keys in DRY_RUN so the
-          // page falls back to letter bubbles without making real file reads.
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'avatar' &&
-            cliArgs[1] === 'info'
-          ) {
-            return Response.json({ result: { ok: true, exists: false, path: '' } })
-          }
-
           // Intercept setup --qr-json in DRY_RUN for QR auto-pass flow.
           // Frontend calls: ["setup", "--qr-json"]
           if (
@@ -1343,34 +1249,6 @@ Bun.serve({
             return Response.json({ result: { ...__mockState.installProgress } })
           }
 
-          // Intercept conversations list in DRY_RUN. First call lazy-seeds
-          // from the real daemon (so manual testers see real data); subsequent
-          // calls return the in-memory mirror that mode set keeps updated.
-          // Without this, dropdown clicks update __mockState but the next
-          // 10s poll round-trips to the real daemon and renders stale data
-          // — visible as "切了 codex 又切回 claude" revert.
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'conversations' &&
-            cliArgs[1] === 'list'
-          ) {
-            if (__mockState.conversations === null) {
-              const r = await runCli(cliArgs)
-              if (r.code !== 0) {
-                __mockState.conversations = []
-              } else {
-                try {
-                  const parsed = JSON.parse(r.stdout.trim()) as { conversations?: DaemonConversation[] }
-                  __mockState.conversations = parsed.conversations ?? []
-                } catch {
-                  __mockState.conversations = []
-                }
-              }
-            }
-            return Response.json({ result: { ok: true, conversations: __mockState.conversations } })
-          }
-
           // Intercept provider set in DRY_RUN — record the call in
           // __mockState.providerInvokes so Playwright tests can assert
           // that the provider-switch dropdown fired the right command.
@@ -1385,33 +1263,6 @@ Bun.serve({
             const provider = cliArgs[2] ?? ''
             __mockState.providerInvokes.push({ provider, ts: Date.now() })
             return Response.json({ result: `provider set: ${provider}` })
-          }
-
-          // Intercept mode set in DRY_RUN — update the mirror so the next
-          // conversations list read is consistent with this write.
-          // Frontend calls: ["mode", "set", <chatId>, <mode>, "--json"]
-          if (
-            dryRun &&
-            body.command === 'wechat_cli_json' &&
-            cliArgs[0] === 'mode' &&
-            cliArgs[1] === 'set'
-          ) {
-            const chatId = cliArgs[2]
-            const modeArg = cliArgs[3]
-            const SHORTHAND: Record<string, DaemonMode> = {
-              cc:    { kind: 'solo', provider: 'claude' },
-              codex: { kind: 'solo', provider: 'codex' },
-              solo:  { kind: 'solo', provider: 'claude' },
-              both:  { kind: 'parallel', providers: ['claude', 'codex'] },
-              chat:  { kind: 'chatroom', providers: ['claude', 'codex'] },
-            }
-            const mode = modeArg ? (SHORTHAND[modeArg] ?? (() => { try { return JSON.parse(modeArg) as DaemonMode } catch { return null } })()) : null
-            if (mode && chatId && __mockState.conversations) {
-              __mockState.conversations = __mockState.conversations.map(c =>
-                c.chat_id === chatId ? { ...c, mode } : c
-              )
-            }
-            return Response.json({ result: { ok: true } })
           }
 
           const r = await runCli(cliArgs)
@@ -1553,6 +1404,11 @@ Bun.serve({
       } catch (err) {
         return Response.json({ error: err instanceof Error ? err.message : String(err) })
       }
+    }
+
+    if (dryRun && url.pathname.startsWith('/v1/')) {
+      const owned = await dryRunOwnerRoute(req, url)
+      if (owned) return owned
     }
 
     // ── A2A internal-API routes (DRY_RUN) ─────────────────────────────────────

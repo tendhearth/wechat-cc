@@ -51,7 +51,34 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
   // 链接页面源码核对(理念 2,10-21):收回的 22 条已从快照的 link / LINK_* 里删掉,所以这里 link 的新增照旧是空。
   it('令牌能碰到的范围:新增必须在这里显式点头', () => {
     // operator:记忆编辑(2026-10-23,设计稿 memory-edits-stick):改的是主人自己的记忆,trusted 那把 file token 别人对话的会话也有,只能给 operator。
-    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['POST /v1/memory/edit', 'POST /v1/memory/view'], federation: [], selftest: [], link: [] }
+    // operator:架构终态 F6(主人 2026-10-26 拍板):桌面不再起 CLI 读写的主人私事(记忆页原样文件 / 画像 / 本机项目记忆、对话页、会话名单、
+    // 观察 / 里程碑 / 决策、头像、admins、对话模式快照)改走 daemon,经宿主代理用 operator 凭据;别人对话的记录不能给 trusted。
+    const F6_DESKTOP_OWNER = [
+      'GET /v1/memory/files',
+      'GET /v1/memory/file',
+      'POST /v1/memory/file/write',
+      'GET /v1/memory/profile',
+      'GET /v1/memory/profile/status',
+      'GET /v1/memory/projects',
+      'GET /v1/conversations/list',
+      'GET /v1/observations/list',
+      'POST /v1/observations/archive',
+      'GET /v1/milestones/list',
+      'GET /v1/events/list',
+      'GET /v1/access/list',
+      'GET /v1/avatar/info',
+      'POST /v1/avatar/set',
+      'POST /v1/avatar/remove',
+      'GET /v1/sessions/projects',
+      'GET /v1/sessions/chats',
+      'POST /v1/sessions/delete',
+      'GET /v1/dialogue/timeline',
+      'GET /v1/dialogue/threads',
+      'GET /v1/dialogue/thread',
+      'GET /v1/dialogue/search',
+      'POST /v1/dialogue/unlock',
+    ]
+    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['POST /v1/memory/edit', 'POST /v1/memory/view', ...F6_DESKTOP_OWNER], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
     reg.registerOperatorToken('op')
     const all = (a: Iterable<string>) => [...a].sort()

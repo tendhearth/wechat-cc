@@ -7,6 +7,7 @@
 // (POST /__invoke that re-dispatches into `bun cli.ts`).
 
 import { mockInvoke } from "./mock.js"
+import { DAEMON_DOWN_TEXT, isDaemonDownError } from "./daemon-errors.js"
 
 const mock = !(/** @type {any} */ (window).__TAURI__?.core?.invoke)
 
@@ -32,5 +33,7 @@ export function formatInvokeError(err) {
       ? "无法连接到 wechat-cc CLI（开发 shim 已停止）。"
       : "无法连接到 wechat-cc CLI。请检查 daemon 进程是否运行。"
   }
+  if (isDaemonDownError(msg)) return DAEMON_DOWN_TEXT
   return msg
 }
+

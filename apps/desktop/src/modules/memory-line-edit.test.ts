@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest'
-import { DERIVED_MEMORY_PATHS, bulkConfirmText, bulkGate, isDerivedMemoryPath, collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from './memory-line-edit.js'
+import { DERIVED_MEMORY_PATHS, bulkConfirmText, bulkGate, isDerivedMemoryPath, collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditBody, memoryEditFailure, renderLineEditor, renderOwnerBlock } from './memory-line-edit.js'
 
 const view = (lines: any[], extra: Record<string, unknown> = {}): any => ({ ok: true, chatId: 'owner@im.wechat', path: 'memory.md', baseHash: 'a'.repeat(64), generatedAt: null, stale: false, lines, ...extra })
 const owned = { text: '我不喝咖啡', origin: 'owner', assertionId: 'o1', editedAt: '2026-10-23', replaces: { correctionId: 'c1', text: '喜欢美式' } }
@@ -79,15 +79,16 @@ describe('read-only owner block', () => {
   })
 })
 
-describe('memory edit args', () => {
-  it('lines go as base64 JSON (UTF-8 safe); --confirm-bulk only after the owner confirmed', () => {
-    const args = memoryEditArgs('memory.md', 'b'.repeat(64), [{ text: '住在杭州', lineKey: 'm:7' }], false)
-    expect(args.slice(0, 5)).toEqual(['memory', 'edit', 'memory.md', '--base', 'b'.repeat(64)])
-    const b64 = args[args.indexOf('--lines-base64') + 1]!
-    expect(JSON.parse(decodeURIComponent(escape(atob(b64))))).toEqual([{ text: '住在杭州', lineKey: 'm:7' }])
-    expect(args).not.toContain('--confirm-bulk')
-    expect(args.at(-1)).toBe('--json')
-    expect(memoryEditArgs('memory.md', 'b'.repeat(64), [], true)).toContain('--confirm-bulk')
+describe('memory edit body (POST /v1/memory/edit)', () => {
+  it('same fields `wechat-cc memory edit` sent; confirmBulk only after the owner confirmed', () => {
+    expect(memoryEditBody('memory.md', 'b'.repeat(64), [{ text: '住在杭州', lineKey: 'm:7' }], false))
+      .toEqual({ path: 'memory.md', baseHash: 'b'.repeat(64), lines: [{ text: '住在杭州', lineKey: 'm:7' }] })
+    expect(memoryEditBody('memory.md', 'b'.repeat(64), [], true)).toEqual({ path: 'memory.md', baseHash: 'b'.repeat(64), lines: [], confirmBulk: true })
+  })
+  it('a failed host call becomes the { ok:false, code } the CLI used to print', () => {
+    expect(memoryEditFailure(new Error('memory_no_owner'))).toEqual({ ok: false, code: 'memory_no_owner' })
+    expect(memoryEditFailure(new Error('request error: connection refused'))).toEqual({ ok: false, code: 'daemon_unreachable' })
+    expect(editOutcome(memoryEditFailure(new Error('read /x/internal-api-info.json: No such file'))).message).toBe('需要守护进程运行后才能保存')
   })
 })
 

@@ -10,9 +10,11 @@
 import { escapeHtml } from "../view.js"
 import { readFavorites, toggleFavorite, deleteProjectByAlias } from "./sessions.js"
 import { icon } from "./icons.js"
+import { V1, v1 } from "../daemon-client.js"
+import { daemonErrorText } from "../daemon-errors.js"
 
 let listenersAttached = false
-/** @type {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }|null} */
+/** @type {{ invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> }|null} */
 let projectsDeps = null
 /** @type {(() => void)|null} */
 let onDrawerOpen = null
@@ -40,13 +42,13 @@ export function openSettingsDrawer() {
 /**
  * Render the 项目管理 list — one row per project with a favorite-star toggle
  * and a two-step delete button. Reuses sessions.js's favorites + delete.
- * @param {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} deps
+ * @param {{ invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> }} deps
  */
 async function loadProjectsAdmin(deps) {
   const list = document.getElementById("projects-admin-list")
   if (!list) return
   try {
-    const resp = /** @type {any} */ (await deps.invoke("wechat_cli_json", { args: ["sessions", "list-projects", "--json"] }))
+    const resp = /** @type {any} */ (await v1(deps.invokeWorkbenchApi, V1.sessions.projects))
     /** @type {ProjectEntry[]} */
     const projects = (resp && resp.projects) || []
     if (projects.length === 0) {
@@ -63,7 +65,7 @@ async function loadProjectsAdmin(deps) {
     })
     list.innerHTML = projects.map(p => projectAdminRow(p, favorites.has(p.alias))).join("")
   } catch (err) {
-    list.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    list.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(daemonErrorText(err))}</p>`
   }
 }
 
@@ -80,7 +82,7 @@ function projectAdminRow(p, isFav) {
 
 /**
  * Handle a click inside the 项目管理 list (delegated).
- * @param {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} deps
+ * @param {{ invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> }} deps
  * @param {Event} ev
  */
 async function handleProjectsAdminClick(deps, ev) {
@@ -133,7 +135,7 @@ export function closeSettingsDrawer() {
  * Attach drawer event handlers. Safe to call multiple times — only
  * the first call wires.
  *
- * @param {{ onToggleChange: (id: string, on: boolean) => void | boolean | Promise<void | boolean>, onOpen?: () => void, deps?: { invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } }} opts
+ * @param {{ onToggleChange: (id: string, on: boolean) => void | boolean | Promise<void | boolean>, onOpen?: () => void, deps?: { invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> } }} opts
  */
 export function wireSettingsDrawer(opts) {
   if (listenersAttached) return

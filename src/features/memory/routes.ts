@@ -32,9 +32,10 @@ export interface MemoryRoutesDeps {
 }
 
 /** 码与 HTTP 状态都在 packages/protocol/src/workbench-errors.ts 那一张表里。 */
-function noOwner(err: unknown): { status: number; body: { ok: false; code: string } } {
+function noOwner(err: unknown): { status: number; body: { ok: false; code: string; error: string } } {
   const code = err instanceof Error && err.message === 'no_owner' ? 'memory_no_owner' : 'memory_edit_failed'
-  return { status: workbenchErrorHttp(code, 'desktop').status, body: { ok: false, code } }
+  // error 同码:桌面经宿主代理调,宿主把非 2xx 变成失败时只留 error 这个字段(架构终态 F6)。
+  return { status: workbenchErrorHttp(code, 'desktop').status, body: { ok: false, code, error: code } }
 }
 
 export function memoryRoutes(deps: MemoryRoutesDeps): RouteTable {
