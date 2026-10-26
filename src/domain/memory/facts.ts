@@ -62,6 +62,9 @@ export type NewMemoryFact =
   & Partial<Pick<MemoryFact, 'section' | 'ord' | 'kind' | 'predicate' | 'relatedContact' | 'timeRef' | 'confidence' | 'origin' | 'scope' | 'evidence' | 'seenAt' | 'validFrom' | 'invalidatedAt' | 'supersededBy'>>
   & { replacesKey?: string | null }
 
+/** 「表应该是这个样子」的一行(导入 / 写者落库时给 `mirror`):外加新墓碑的说法与说明(写进事件)。 */
+export type DesiredFact = NewMemoryFact & { verdict?: string | null; notes?: readonly string[] }
+
 export type FactEventAction = 'added' | 'updated' | 'retracted' | 'restored' | 'superseded' | 'resolved' | 'redacted_on_output'
 export type FactEventActor = 'owner' | 'nightly' | 'cc' | 'judge' | 'import'
 
