@@ -387,6 +387,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     {
       name: 'boot-api',
       needs: ['bootstrap', 'internal-api'],
+      // 待办「不对」一路收回要 wired 造的每晚整理(G5);只在知识库起了才取 ⇒ 测试里不走这条,守卫 scripts/module-lazy.guard.test.ts 静态核
+      lazy: ['wired'],
       init(ctx): BootApi {
         const boot = ctx.get<Bootstrap>('bootstrap')
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
