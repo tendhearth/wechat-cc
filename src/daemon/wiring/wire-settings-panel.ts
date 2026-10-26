@@ -12,7 +12,7 @@ import type { WechatContacts, WechatVoice } from '../../ports/wechat'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../app/matters/service'
-import type { MemoryNightlyRuntime } from '../../features/memory'
+import { retractOnFactStatus, type MemoryNightlyRuntime } from '../../features/memory'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
 import { jobsView, jobsAction, mobileJobsRoutes } from '../../features/jobs'
 import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
@@ -156,7 +156,14 @@ return makeSettingsPanel({
     todos: {
       facts: {
         findFacts: (k, pr, q2, st, li) => boot.knowledge!.facts!.findFacts(k, pr, q2, st, li),
-        setFactStatus: (id, st, n) => boot.knowledge!.facts!.setFactStatus(id, st, n),
+        // 待办「不对」= 收回(架构终态 G5,主人 10-26 第 1 条):记忆、笔记、总览里同一句也一路收回
+        setFactStatus: retractOnFactStatus({ setFactStatus: (id: number, st: string, n: number) => boot.knowledge!.facts!.setFactStatus(id, st, n) }, {
+          factById: (id) => boot.knowledge!.store.factById(id),
+          retract: (text, verdict) => {
+            const owner = ownerChatId()
+            if (owner) void memoryNightly.retractText(owner, text, verdict, '待办').catch(err => log('MEMORY_NIGHTLY', `todo retract failed: ${err instanceof Error ? err.message : String(err)}`))
+          },
+        }).setFactStatus,
       },
       names: () => {
         try { return (boot.knowledge?.graph?.topContacts('closeness', 500, 'person') ?? []) as Array<{ username: string; display: string }> } catch { return [] }

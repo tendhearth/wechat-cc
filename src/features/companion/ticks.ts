@@ -5,6 +5,7 @@
  * 别的功能交来的东西(推送候选、自省的几步、记忆快照)经 `CompanionContributions` 进来:登记表在组装的地方
  * (daemon/wiring/tick-bodies.ts),这里一个功能的名字都不认识。
  */
+import type { SynthesisRetractions } from '../../lib/memory-synthesis'
 import type { TickDeps } from './tick-deps'
 import { makeRunJobTurn, type JobTurnResult, type JOB_PROVIDERS } from './tick-job'
 import type { TickTextStyle } from './tick-texts'
@@ -33,13 +34,15 @@ export interface TickBodies {
  * 别的功能交给陪伴的东西。**顺序就是行为**(登记表那边写了为什么):
  *  - `actions`:推送那一拍的候选(以及日程判断 prompt 里候选的顺序);
  *  - `steps`:自省那一拍固定维护之后逐个跑的几步;
- *  - `memorySnapshot`:反思要的记忆快照(记忆功能做)。
+ *  - `memorySnapshot`:反思要的记忆快照(记忆功能做);
+ *  - `synthesisRetractions`:每天自动刷新总览时出口过滤要的收回名单(记忆功能从表里给;陪伴不 import 记忆,免得成环)。
  * 两张表各在造这几拍的时候问一次(同搬家前:先造 dispatch,再按推送 → 自省的顺序拿表)。
  */
 export interface CompanionContributions {
   actions(deps: TickDeps, dispatch: TickDispatch): CompanionAction[]
   steps(deps: TickDeps): IntrospectStep[]
   memorySnapshot: MemorySnapshot
+  synthesisRetractions: (chatId: string) => SynthesisRetractions
 }
 
 export function makeCompanionTicks(deps: TickDeps, contributions: CompanionContributions): TickBodies {
@@ -47,7 +50,7 @@ export function makeCompanionTicks(deps: TickDeps, contributions: CompanionContr
   return {
     ingestTick: makeIngestTick(deps),
     pushTick: makePushTick(deps, dispatch, contributions.actions(deps, dispatch)),
-    introspectTick: makeIntrospectTick(deps, contributions.steps(deps), contributions.memorySnapshot),
+    introspectTick: makeIntrospectTick(deps, contributions.steps(deps), contributions.memorySnapshot, contributions.synthesisRetractions),
     runJobTurn: makeRunJobTurn(deps, dispatch),
   }
 }

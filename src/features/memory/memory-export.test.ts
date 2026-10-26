@@ -62,11 +62,11 @@ describe('MemoryWriter', () => {
     expect(out).toContain('换了一台显示器')
   })
 
-  it('addCorrection appends a line in today\'s exact format (with / without id); a later note lands under its own entry', () => {
+  it('retract appends a line in today\'s exact format (with / without id); a later note lands under its own entry', () => {
     seedFixture()
     const before = file('corrections.md')
-    const k1 = writer.addCorrection(OWNER, { day: '2026-10-26', verdict: 'wrong', section: '偏好', correctionId: 'abc123', text: '喜欢喝拿铁', note: '  (随之从 profile.md 删了 1 行)\n' }, by)
-    const k2 = writer.addCorrection(OWNER, { day: '2026-10-26', verdict: 'outdated', section: '近况', text: '在准备搬家' }, by)
+    const k1 = writer.retract(OWNER, { text: '喜欢喝拿铁' }, { day: '2026-10-26', verdict: 'wrong', section: '偏好', correctionId: 'abc123', text: '喜欢喝拿铁', note: '  (随之从 profile.md 删了 1 行)\n' }, by)
+    const k2 = writer.retract(OWNER, { text: '在准备搬家' }, { day: '2026-10-26', verdict: 'outdated', section: '近况', text: '在准备搬家' }, by)
     expect([k1, k2]).toEqual(['c:abc123', 'c:~4'])
     writer.addCorrectionNote(OWNER, k1, '  (CC 又判断 agenda.md 里 1 条待办在跟进这件事,也改成 dropped:问拿铁)\n', by)
     expect(file('corrections.md')).toBe(before
@@ -93,7 +93,7 @@ describe('MemoryWriter', () => {
     const doc = parseMemoryDoc(file('memory.md'))
     writer.commitMemory(OWNER, doc, by, STAMP)
     expect(file('memory.md')).toBe(serializeMemoryDoc(doc, STAMP))
-    writer.addCorrection(OWNER, { day: '2026-10-26', verdict: 'delete', section: '总览', text: '随便一句话' }, by)
+    writer.retract(OWNER, { text: '随便一句话' }, { day: '2026-10-26', verdict: 'delete', section: '总览', text: '随便一句话' }, by)
     expect(file('corrections.md').endsWith('- 2026-10-26 主人说这条不用记,整理时不要再写回:[总览] 随便一句话\n')).toBe(true)
     expect(store.list(OWNER)).toEqual([])
   })

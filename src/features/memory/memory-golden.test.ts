@@ -17,8 +17,10 @@ import { fileURLToPath } from 'node:url'
 import { removeTempDir } from '../../lib/test-temp'
 import { openSqlite } from '../../lib/runtime/sqlite'
 import { emptyDoc, parseMemoryDoc, serializeMemoryDoc } from './curated-doc'
-import { correctedTexts } from '../../lib/memory-corrections'
 import { CORRECTIONS_BLOCK, OWNER_BLOCK, readCorrections } from './nightly'
+import { makeMemoryWriter } from './memory-export'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { openTestDb } from '../../lib/db'
 import { overviewForOthers, parseOwnerDoc, readOwnerDoc, renderOwnerForPrompt, serializeOwnerDoc } from '../../lib/memory-owner'
 import { makeMemoryPromptReads } from './prompt-reads'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
@@ -95,13 +97,15 @@ async function produce(): Promise<Record<string, string>> {
     out[`${name}/prompt-knowledge.txt`] = reads.knowledgeMemoryFor(chat)
     // 每晚整理素材最前面的两块(runMemoryNightly 里拼的那样)+ 代码里逐字拦写回的那张名单
     const root = memoryDir(name)
-    const corrections = readCorrections(root)
+    // G5 起名单在表里;这里的表是空的(没导入)⇒ 导出器走「没搬进表的对话」那条路,直接读磁盘上的 corrections.md —— 产出必须和 G0 一样
+    const writer = makeMemoryWriter({ store: makeMemoryFactsStore(openTestDb()), stateDir })
+    const corrections = readCorrections(writer, chat)
     const ownerWords = renderOwnerForPrompt(readOwnerDoc(root))
     out[`${name}/nightly-head.txt`] = [
       corrections.block ? `### ${CORRECTIONS_BLOCK}\n${corrections.block}` : '',
       ownerWords ? `### ${OWNER_BLOCK}\n${ownerWords}` : '',
     ].filter(Boolean).join('\n\n')
-    out[`${name}/corrected-texts.json`] = JSON.stringify([...correctedTexts(root)].sort(), null, 2) + '\n'
+    out[`${name}/corrected-texts.json`] = JSON.stringify([...writer.retractedTexts(chat)].sort(), null, 2) + '\n'
     const overview = read(name, '_overview.md')
     out[`${name}/overview-for-others.md`] = overview === null ? '' : overviewForOthers(overview)
   }

@@ -21,22 +21,42 @@ import { writeFileAtomic } from '../../lib/json-file'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
 import { factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFact, type FactEventActor, type FactSource } from '../../domain/memory/facts'
-import { correctionLine, markWrittenBack, renderCorrectionsMd, retractedTextSet, type Verdict } from '../../domain/memory/corrections'
+import { correctionLine, markWrittenBack, normalizeFactText, renderCorrectionsMd, retractedTextSet, type Verdict } from '../../domain/memory/corrections'
 import { renderMemoryMd, renderOwnerMd } from '../../domain/memory/render'
-import type { MemoryFactsStore } from '../../ports/memory-facts'
+import type { MemoryFactsStore, RetractRef } from '../../ports/memory-facts'
+import type { Db } from '../../lib/db'
+import type { SynthesisRetractions } from '../../lib/memory-synthesis'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import { serializeMemoryDoc, type MemoryDoc } from './curated-doc'
-import { IMPORTED_FILES, archiveMemoryFile, diskStateOf, filesHash, readMemoryFiles } from './fact-import'
+import { IMPORTED_FILES, archiveMemoryFile, diskStateOf, fileTombstones, filesHash, readMemoryFiles } from './fact-import'
 
 export interface WriteBy { actor: FactEventActor; ts: number }
 export interface NewCorrection { day: string; verdict: Verdict; section: string; correctionId?: string | null; text: string; note?: string }
+/** 收回的话列表里的一条(G5;桌面 / 手机的列表与「恢复」在 G6 接,见设计稿 §6)。 */
+export interface Retraction { key: string; section: string | null; text: string; day: string | null; verdict: string | null; note: string }
 
 export interface MemoryWriter {
   /** 一个对话的 memory.md 改成这份(整理、纠错、编辑、导入调)。`stampIso` 写进头部的「最近整理」。 */
   commitMemory(chatId: string, doc: MemoryDoc, by: WriteBy, stampIso: string): void
   /** owner.md 改成这份(只有记忆编辑调)。主人原话是源 ⇒ 生成物往藏的方向过期。 */
   commitOwner(chatId: string, doc: OwnerDoc, by: WriteBy): void
-  /** 记一条收回的话(墓碑 + 导出 corrections.md)。返回它的 key(之后追加说明用)。 */
-  addCorrection(chatId: string, c: NewCorrection, by: WriteBy): string
+  /**
+   * 收回一句话(设计稿 §2.3 的 retract;墓碑 + 被收回的行 + 导出)。`ref` 是表里的一行或一段正文;`c.text` 是那句话本身
+   * (没搬进表的对话按今天的格式追加到 corrections.md 用)。返回墓碑的 key(之后追加说明用)。
+   */
+  retract(chatId: string, ref: RetractRef, c: NewCorrection, by: WriteBy): string
+  /** 撤销一次收回:当时被它收回的行回到记忆里;之前随之删掉的笔记行不会回来。没有这条 / 没搬进表 ⇒ null。 */
+  restore(chatId: string, tombstoneKey: string, by: WriteBy): { restored: string[] } | null
+  /** 收回的话(最新的在后;已恢复的不在里面)。 */
+  retractions(chatId: string): Retraction[]
+  /** 拿来比对的收回名单(规范化):整理丢写回、导入、出口过滤用。取代以前解析 corrections.md 的 correctedTexts。 */
+  retractedTexts(chatId: string): Set<string>
+  /** 每晚整理提示词里「纠正过的条目」那一段的原文(和以前的 corrections.md 同格式;截断由调用方做)。 */
+  correctionsText(chatId: string): string
+  /** 更正编号 → 被更正的那句(记忆编辑的 view 把 replaces 展开成旧话用)。 */
+  correctionText(chatId: string, correctionId: string): string | null
+  /** 出口过滤挡掉了含这些收回的话的内容:每条记一次 `redacted_on_output`(取代 memory-redactions.json)。 */
+  redacted(chatId: string, kind: 'overview' | 'profile', hits: readonly string[], ts: number): void
   /** 在那一条收回底下追加一段说明(`  (…)\n`)。 */
   addCorrectionNote(chatId: string, key: string, note: string, by: WriteBy): void
   /** 磁盘上的 memory.md 被手改过(内容和我们写过的都不一样)⇒ 它的内容;否则 null。 */
@@ -51,6 +71,13 @@ export interface MemoryWriter {
   tableMemoryMd(chatId: string, stampIso: string): string | null
   /** 把表里的样子重新导出成 memory.md(手改被拒时用)。 */
   reexportMemory(chatId: string, stampIso: string, ts: number): void
+}
+
+/** 合成(总览 / 画像)要的那份收回名单与命中记账,来自同一张表(lib/memory-synthesis 不认表,由这里给)。 */
+export function synthesisRetractionsFor(db: Db, stateDir: string, chatId: string): SynthesisRetractions {
+  let writer: MemoryWriter | null = null   // 用到时才开(合成可能在 dryRun / 没东西可合成时根本不走到出口过滤)
+  const w = () => (writer ??= makeMemoryWriter({ store: makeMemoryFactsStore(db), stateDir }))
+  return { texts: () => w().retractedTexts(chatId), redacted: (kind, hits) => w().redacted(chatId, kind, hits, Date.now()) }
 }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
@@ -91,7 +118,13 @@ export function makeMemoryWriter(d: {
   const activeTombstones = (chatId: string) => store.tombstones(chatId).filter(t => t.status === 'retracted' || t.status === 'outdated')
   const exportMemory = (chatId: string, stampIso: string, ts: number) =>
     writeOut(chatId, 'memory.md', renderMemoryMd(store.list(chatId), stampIso, { exported: true }), ts)
+  // 主人 10-26 第 2 条:corrections.md 换成「收回的话」列表,导出期间磁盘上照旧有一份只读的、从历史渲染的(再过一个版本删)。
   const exportCorrections = (chatId: string, ts: number) => writeOut(chatId, 'corrections.md', renderCorrectionsMd(activeTombstones(chatId)), ts)
+  /** 收回 / 恢复动了哪几份文档里的行,就重新导出哪几份。 */
+  const reexportTouched = (chatId: string, keys: readonly string[], ts: number) => {
+    if (keys.some(k => k.startsWith('m:') || k.startsWith('u:'))) exportMemory(chatId, new Date(ts).toISOString(), ts)
+    if (keys.some(k => k.startsWith('o:'))) writeOut(chatId, 'owner.md', renderOwnerMd(store.list(chatId)), ts)
+  }
 
   return {
     commitMemory(chatId, doc, by, stampIso) {
@@ -113,25 +146,49 @@ export function makeMemoryWriter(d: {
       })
       writeOut(chatId, 'owner.md', renderOwnerMd(store.list(chatId)), by.ts)
     },
-    addCorrection(chatId, c, by) {
+    retract(chatId, ref, c, by) {
       const note = c.note ?? ''
       if (!onTable(chatId)) {
         const key = c.correctionId ? `c:${c.correctionId}` : 'c:~legacy'
         appendFileSync(join(rootOf(chatId), 'corrections.md'), `${correctionLine({ key, section: c.section, text: c.text, seenAt: c.day, verdict: c.verdict })}\n${note}`)
         return key
       }
-      const key = store.atomically(() => {
-        const all = store.tombstones(chatId)
-        const k = c.correctionId ? `c:${c.correctionId}` : `c:~${all.filter(t => t.key.startsWith('c:~')).length + 1}`
-        const ord = all.reduce((m, t) => Math.max(m, t.ord + 1), 0)
-        store.mirror(chatId, [{
-          chatId, key: k, doc: 'memory', subject: 'owner', section: c.section, ord, text: c.text,
-          status: c.verdict === 'outdated' ? 'outdated' : 'retracted', source: 'review', seenAt: c.day, verdict: c.verdict, notes: note ? [note] : [],
-        }], { by, goneIf: () => false })
-        return k
-      })
+      const receipt = store.retract(chatId, ref, { verdict: c.verdict, section: c.section, day: c.day, correctionId: c.correctionId ?? null, text: c.text, note, by })
       exportCorrections(chatId, by.ts)
-      return key
+      reexportTouched(chatId, receipt.targets, by.ts)
+      return receipt.key
+    },
+    restore(chatId, tombstoneKey, by) {
+      if (!onTable(chatId)) return null
+      const res = store.restore(chatId, tombstoneKey, by)
+      if (!res) return null
+      invalidateDerivedMemory(rootOf(chatId), 'added')
+      exportCorrections(chatId, by.ts)
+      reexportTouched(chatId, res.restored, by.ts)
+      return res
+    },
+    retractions(chatId) {
+      const list = onTable(chatId) ? activeTombstones(chatId) : fileTombstones(rootOf(chatId), chatId).map(t => ({ ...t, kind: t.kind ?? null, section: t.section ?? null, seenAt: t.seenAt ?? null }))
+      return list.filter(t => t.kind !== 'placeholder').map(t => ({ key: t.key, section: t.section, text: t.text, day: t.seenAt, verdict: t.verdict ?? null, note: t.notes.join('') }))
+    },
+    retractedTexts(chatId) {
+      return retractedTextSet(onTable(chatId) ? activeTombstones(chatId) : fileTombstones(rootOf(chatId), chatId))
+    },
+    correctionsText(chatId) {
+      return onTable(chatId) ? renderCorrectionsMd(activeTombstones(chatId)) : renderCorrectionsMd(fileTombstones(rootOf(chatId), chatId).map(t => ({ ...t, kind: t.kind ?? null, section: t.section ?? null, seenAt: t.seenAt ?? null, ord: t.ord ?? 0 })))
+    },
+    correctionText(chatId, correctionId) {
+      const key = `c:${correctionId}`
+      if (onTable(chatId)) return store.byKey(chatId, key)?.text ?? null
+      return fileTombstones(rootOf(chatId), chatId).find(t => t.key === key)?.text ?? null
+    },
+    redacted(chatId, kind, hits, ts) {
+      if (!onTable(chatId) || !hits.length) return
+      const byText = new Map(activeTombstones(chatId).map(t => [normalizeFactText(t.text), t.key]))
+      for (const h of hits) {
+        const key = byText.get(normalizeFactText(h))
+        if (key) store.addEvent(chatId, key, { action: 'redacted_on_output', note: kind }, { actor: 'cc', ts })
+      }
     },
     addCorrectionNote(chatId, key, note, by) {
       if (!onTable(chatId)) { appendFileSync(join(rootOf(chatId), 'corrections.md'), note); return }

@@ -21,7 +21,7 @@
  * (same pattern as summarizer-runtime), so the CLI wires the admin's provider
  * (claude/codex) and tests pass a mock.
  */
-import { correctedTexts, dropCorrectedLines, dropCorrectedValues, recordRedactions } from './memory-corrections'
+import { dropCorrectedLines, dropCorrectedValues } from './memory-corrections'
 import { feedsSynthesis } from './memory-artifacts'
 import { readOwnerDoc, renderOwnerOverviewSection, stripOwnerOverviewSection } from './memory-owner'
 import { createHash } from 'node:crypto'
@@ -385,7 +385,18 @@ export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null
   return out
 }
 
+/**
+ * 主人收回的话(架构终态 G5):名单在主库的表里,由记忆功能给(src/features/memory 的 MemoryWriter);lib 不认表。
+ * `redacted` = 出口过滤挡掉了含这几句的内容,每句记一条 `redacted_on_output` 事件(以前是 memory-redactions.json)。
+ */
+export interface SynthesisRetractions {
+  texts(): ReadonlySet<string>
+  redacted(kind: 'overview' | 'profile', hits: readonly string[]): void
+}
+
 export interface SynthesizeDeps {
+  /** 必给:总览 / 画像会进串门人设,收回的话一定要在写盘前挡掉。 */
+  retractions: SynthesisRetractions
   stateDir: string
   /** Admin's chat_id (== userId); the overview is written under its memory dir. */
   adminChatId: string
@@ -476,8 +487,8 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   if (sourceFingerprint((await buildOverviewSource(deps)).prompt) !== sourceFingerprint(prompt)) return base
 
   // 卡出口(3b):含主人更正过的话的行一律丢掉、记数 —— 串门拿到的总览一定过这一层。逐字比对,换说法会漏(见 lib/memory-corrections)。
-  const redacted = dropCorrectedLines(overview, correctedTexts(memoryRoot))
-  recordRedactions(memoryRoot, 'overview', redacted.dropped, new Date().toISOString())
+  const redacted = dropCorrectedLines(overview, deps.retractions.texts())
+  if (redacted.hits.length) deps.retractions.redacted('overview', redacted.hits)
   // 主人原话(记忆编辑第 3 步):由代码逐字插在最前面一节,不过出口过滤 —— 那是主人说的;模型自己写出的同名一节先去掉。
   const ownerSection = renderOwnerOverviewSection(readOwnerDoc(memoryRoot))
   const body = stripOwnerOverviewSection(redacted.text).trim()
@@ -821,8 +832,8 @@ export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<Sy
   profile.sourceFingerprint = source.fingerprint
   profile.minRefreshAfter = addDays(profile.generatedAt, AUTO_REFRESH_DAYS) ?? undefined
   // 卡出口(3b):画像里命中被更正之话的字符串去掉 / 置空、记数。
-  const redactedProfile = dropCorrectedValues(profile, correctedTexts(memoryRoot))
-  recordRedactions(memoryRoot, 'profile', redactedProfile.dropped, new Date().toISOString())
+  const redactedProfile = dropCorrectedValues(profile, deps.retractions.texts())
+  if (redactedProfile.hits.length) deps.retractions.redacted('profile', redactedProfile.hits)
   const body = `${JSON.stringify(redactedProfile.value, null, 2)}\n`
   let bytesWritten = 0
   const committed = commitDerivedMemory(memoryRoot, 'profile', revision, () => {

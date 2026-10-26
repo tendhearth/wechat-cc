@@ -18,11 +18,10 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import { dirname, join } from 'node:path'
 import { writeFileAtomic } from '../../lib/json-file'
 import { MEMORY_SECTIONS, factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFact } from '../../domain/memory/facts'
-import { MIN_RETRACTED_CHARS, markWrittenBack, normalizeCorrectionsText, normalizeFactText, placeholderTombstone, renderCorrectionsMd, retractedTextSet, tombstonesFromCorrections } from '../../domain/memory/corrections'
+import { type Tombstone, MIN_RETRACTED_CHARS, markWrittenBack, normalizeCorrectionsText, normalizeFactText, placeholderTombstone, renderCorrectionsMd, retractedTextSet, tombstonesFromCorrections } from '../../domain/memory/corrections'
 import { renderMemoryForPrompt, renderMemoryMd, renderOwnerForPrompt, renderOwnerMd } from '../../domain/memory/render'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
 import { loadCompanionConfig } from '../../lib/companion-config'
-import { correctedTexts } from '../../lib/memory-corrections'
 import { parseOwnerDoc, renderOwnerForPrompt as ownerPromptToday, serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
 import { parseMemoryDoc, renderForPrompt, serializeMemoryDoc, type MemoryDoc } from './curated-doc'
 
@@ -83,6 +82,12 @@ export function archiveMemoryFile(root: string, chatId: string, file: string, co
   const p = join(dir, `${file}.kept-${sha256(content).slice(0, 12)}.md`)
   if (!existsSync(p)) writeFileAtomic(p, content, { mode: 0o600 })
   return p
+}
+
+/** 还没搬进表的对话:直接从磁盘上的 corrections.md 读出墓碑(读不出 ⇒ 空)。只给导出器的旧路径分支用。 */
+export function fileTombstones(root: string, chatId: string): Tombstone[] {
+  const raw = readMemoryFiles(root)['corrections.md']
+  return raw === null ? [] : tombstonesFromCorrections(chatId, raw) ?? []
 }
 
 /** 三份文件的总指纹(不存在也算进去)。三份都不存在 ⇒ null。 */
@@ -169,7 +174,7 @@ export function importChatMemory(store: MemoryFactsStore, root: string, chatId: 
       const tomb = store.tombstones(chatId).filter(t => t.status === 'retracted' || t.status === 'outdated')
       if (files['corrections.md'] !== null) {
         check('corrections.md', normalizeCorrectionsText(files['corrections.md']), renderCorrectionsMd(tomb))
-        check('retracted texts', [...correctedTexts(root)].sort().join('\n'), [...retractedTextSet(tomb)].sort().join('\n'))
+        check('retracted texts', [...retractedTextSet(fileTombstones)].sort().join('\n'), [...retractedTextSet(tomb.filter(t => fileTombstones.some(f => f.key === t.key)))].sort().join('\n'))
       }
       store.setImportHash(chatId, hash, now)
       return counts

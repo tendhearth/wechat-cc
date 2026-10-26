@@ -10,7 +10,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MEMORY_CAP_CHARS, MEMORY_FILENAME, SECTIONS, assignMissingIds, docChars, parseDue, parseMemoryDoc, serializeMemoryDoc, type Section } from './curated-doc'
 import { DISPLAY_ORDER, dueLabel, formatWeChatMemory, splitPerson, spokenTime, stripDue, viewChanges, type ViewChange } from './memory-text'
-import { CORRECTIONS_FILENAME, MEMORY_LOG_FILE, ownerMemoryRoot, readCorrections, readNightlyState, runMemoryNightly, writeNightlyState, type NightlyRunDeps } from './nightly'
+import type { RetractRef } from '../../ports/memory-facts'
+import type { Retraction } from './memory-export'
+import { MEMORY_LOG_FILE, ownerMemoryRoot, readCorrections, readNightlyState, runMemoryNightly, writeNightlyState, type NightlyRunDeps } from './nightly'
 import type { NightlyRunResult } from './nightly-notify'
 import { MAX_ENTRY_CHARS, type AppliedOp } from './nightly-ops'
 import { localParts, noticeTiming } from './nightly-schedule'
@@ -57,6 +59,15 @@ export interface MemoryNightlyRuntime {
   importEntries(items: ReadonlyArray<{ section: Section; text: string }>, label: string): Promise<ImportResult>
   /** 记忆编辑的底稿(设计稿 2026-10-23 记忆改了就算数 §3):主人原话在前,生成的行在后,每行带键。 */
   view(path: EditableMemoryPath): MemoryView
+  /**
+   * 一种收回的另外几个入口(G5):待办「不对」、证据审阅的纠正 / 过期、MCP 的 superseded。只给一句话:找得到同样的记忆条目 / 原话
+   * 就一起收回,找不到也留下收回的记录;清源头、关待办和逐条纠错一样(含后台问便宜模型)。只认主人自己的对话。
+   */
+  retractText(chatId: string, text: string, verdict: MemoryVerdict, section: string): Promise<{ key: string } | null>
+  /** 撤销一次收回(主人 10-26 第 3 条):那一行回到记忆里;之前随之删掉的笔记行不会回来。 */
+  restore(key: string): Promise<{ restored: string[] } | null>
+  /** 收回的话(主人 10-26 第 2 条:记忆页上的 corrections.md 换成这张列表)。 */
+  retractions(): Retraction[]
   /** 记忆编辑(§4):按键比对,删 / 改 ⇒ 更正,加 / 改写 ⇒ 主人原话。与每晚整理同一条串行链。 */
   edit(req: { path: EditableMemoryPath; baseHash: string; lines: readonly EditLine[]; confirmBulk?: boolean }): Promise<MemoryEditResult>
 }
@@ -162,7 +173,11 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
    * 一条更正落下之后的那几步(调用方已经在串行链上,memory.md 已经改好或不用改):生成物过期、清源头、关待办、
    * 记进 corrections.md。correctionId 记在段名里(`[总览 · c:<id>]`)—— 更正记录按「] 」认原话,段名里不能有「] 」。
    */
-  function recordCorrection(r: string, section: string, text: string, verdict: MemoryVerdict, o: { entryId?: string; correctionId?: string; nowMs: number }): Done {
+  /**
+   * 一种收回(架构终态 G5,设计稿 §2.3):逐条纠错、记忆编辑、待办「不对」、证据审阅、MCP 的 superseded 都走这里。
+   * 副作用(生成物过期、清源头、关待办)是收回的后果,回执写进墓碑的说明;收回本身是表里的一行墓碑 + 被收回的行(`ref`)。
+   */
+  function recordCorrection(r: string, section: string, text: string, verdict: MemoryVerdict, o: { entryId?: string; correctionId?: string; ref?: RetractRef; actor?: 'owner' | 'judge'; nowMs: number }): Done {
     const nowMs = o.nowMs, day = localParts(nowMs, deps.config().timezone).day
     // 主人纠正 / 标过期 ⇒ 'retracted':旧总览里可能正好有这句,藏起来等重新生成(3e 记忆第 2 步)。
     invalidateDerivedMemory(r, 'retracted')
@@ -179,9 +194,10 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     catch (err) { deps.log('MEMORY_NIGHTLY', `agenda drop failed: ${err instanceof Error ? err.message : String(err)}`) }
     const parts = [...purged.map(p => `${p.file} 删了 ${p.lines} 行`), ...(agendaDropped ? [`agenda.md 里 ${agendaDropped} 条待办改成 dropped`] : [])]
     const purgeNote = parts.length ? `  (随之从 ${parts.join('、')};原文件在 memory-archive/${owner ?? 'unknown'}/corrections/)\n` : ''
-    // memory.md 改好了才记:失败了 memory.md 没动,也不留一行假的纠正。落表 + 导出 corrections.md(架构终态 G4)。
+    // memory.md 改好了才记:失败了 memory.md 没动,也不留一行假的纠正。落表 + 导出。
     const chatId = owner ?? ''
-    const key = deps.writer.addCorrection(chatId, { day, verdict, section, correctionId: o.correctionId ?? null, text, note: purgeNote }, { actor: 'owner', ts: nowMs })
+    const ref: RetractRef = o.ref ?? (o.entryId ? { key: `m:${o.entryId}` } : { text })
+    const key = deps.writer.retract(chatId, ref, { day, verdict, section, correctionId: o.correctionId ?? null, text, note: purgeNote }, { actor: o.actor ?? 'owner', ts: nowMs })
     if (o.entryId) {
       const src = readSources(r)
       if (src[o.entryId]) { delete src[o.entryId]; try { writeSources(r, src) } catch { /* 出处是附带的 */ } }
@@ -194,17 +210,6 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     deps.log('MEMORY_NIGHTLY', `owner ${verdict} ${o.entryId ?? o.correctionId ?? ''}`)
     return { text, root: r, chatId, key, day, archive: purgeArchive, stamp: `${day}-${nowMs}` }
   }
-  /** corrections.md 里按编号找回那条被更正的原话(view 把 replaces 展开成旧话用)。 */
-  function correctionTextById(r: string): (id: string) => string | null {
-    let raw = ''
-    try { raw = readFileSync(join(r, CORRECTIONS_FILENAME), 'utf8') } catch { return () => null }
-    const map = new Map<string, string>()
-    for (const line of raw.split('\n')) {
-      const m = /· c:([0-9a-z-]+)\] (.+)$/.exec(line)
-      if (m) map.set(m[1]!, m[2]!)
-    }
-    return id => map.get(id) ?? null
-  }
   /** `memoryOverride`:拿这份当 memory.md(手改核对时用表里的样子,不用磁盘上被改过的那份)。 */
   function buildView(path: EditableMemoryPath, memoryOverride?: string): MemoryView {
     const r = root(), chatId = deps.ownerChatId()
@@ -214,7 +219,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       try { return readFileSync(join(r, name), 'utf8') } catch { return '' }
     }
     const file = readText(path), ownerRaw = path === OWNER_FILENAME ? file : readText(OWNER_FILENAME)
-    const owner = ownerLines(readOwnerDoc(r), correctionTextById(r))
+    const owner = ownerLines(readOwnerDoc(r), id => deps.writer.correctionText(chatId, id))
     let generated: ViewLine[] = []
     let generatedAt: string | null = null
     if (path === '_overview.md') {
@@ -260,7 +265,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         // 没编号的那几行(栏外 / 还没补编号的条目)按文字拿掉一行
         docChanged = takeLineByText(doc, c.text) || docChanged
       }
-      done.push(recordCorrection(r, section, c.text, 'wrong', { correctionId: cid, nowMs }))
+      const ref: RetractRef = c.assertionId ? { key: `o:${c.assertionId}` } : c.lineKey?.startsWith('m:') ? { key: c.lineKey } : { text: c.text }
+      done.push(recordCorrection(r, section, c.text, 'wrong', { correctionId: cid, ref, nowMs }))
       corrections.push({ id: cid, text: c.text })
     }
     if (doc && docChanged) deps.writer.commitMemory(deps.ownerChatId()!, doc, { actor: 'owner', ts: nowMs }, new Date(nowMs).toISOString())
@@ -389,6 +395,31 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       return { text: done.text }
     },
     view: (path) => { syncDiskSafely(); return buildView(path) },
+    retractText: async (chatId, text, verdict, section) => {
+      const owner = deps.ownerChatId()
+      if (!owner || chatId !== owner || !text.trim()) return null
+      const done = await serial(async () => {
+        syncDiskSafely()
+        const r = root()
+        if (!r) return null
+        return recordCorrection(r, section, text.trim(), verdict, { ref: { text: text.trim() }, nowMs: deps.now() })
+      })
+      if (!done) return null
+      dropAgendaInBackground([done])
+      return { key: done.key }
+    },
+    restore: (key) => serial(async () => {
+      syncDiskSafely()
+      const owner = deps.ownerChatId()
+      if (!owner) return null
+      const res = deps.writer.restore(owner, key, { actor: 'owner', ts: deps.now() })
+      if (res) deps.log('MEMORY_NIGHTLY', `owner restored ${key}: ${res.restored.length} line(s) back`)
+      return res
+    }),
+    retractions: () => {
+      const owner = deps.ownerChatId()
+      return owner ? deps.writer.retractions(owner) : []
+    },
     edit: async (req) => {
       const out = await serial(async (): Promise<{ result: MemoryEditResult; done: Done[] }> => {
         syncDiskSafely()
@@ -423,7 +454,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       const doc = assignMissingIds(parseMemoryDoc(existsSync(memPath) ? readFileSync(memPath, 'utf8') : ''), deps.newId, day)
       const norm = (t: string) => t.replace(/\s+/g, ' ').trim()
       const have = new Set(SECTIONS.flatMap(s => doc.sections[s].map(e => norm(e.text))))
-      const rejected = readCorrections(r).texts
+      const rejected = readCorrections(deps.writer, deps.ownerChatId()!).texts
       const skipped = { duplicate: 0, corrected: 0, invalid: 0, cap: 0 }
       const added: Array<{ id: string; section: Section; text: string }> = []
       for (const it of items) {

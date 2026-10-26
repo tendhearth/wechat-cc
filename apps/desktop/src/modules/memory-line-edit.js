@@ -26,7 +26,7 @@ export const LINE_EDITABLE_PATHS = ["_overview.md", "memory.md", "owner.md"]
 export function isDerivedMemoryPath(path) {
   return DERIVED_MEMORY_PATHS.includes(path)
 }
-export const DERIVED_MEMORY_PATHS = ["_overview.md", "_profile.json", "portrait.svg", "portrait.json", "knowledge.md"]
+export const DERIVED_MEMORY_PATHS = ["_overview.md", "_profile.json", "portrait.svg", "portrait.json", "knowledge.md", "corrections.md"]
 
 /** @param {string} path */
 export function isLineEditablePath(path) {

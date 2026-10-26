@@ -15,7 +15,7 @@ export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKin
   'profile.md': { kind: 'source', why: 'CC 自己的笔记(MCP memory_write);gardener 会压缩' },
   // 不喂合成:每一行都复述了被纠正的那句(「主人说这条已经过时:<原话>」)—— 当素材喂进去,总览可能正好把主人撤掉的话写回来,
   // 而总览会进串门人设、带到别人的 CC 那里。它是给 nightly 的指令,不是关于主人的事实。
-  'corrections.md': { kind: 'source', why: '主人的纠正,nightly 据此不再加回', synthesisInput: false },
+  'corrections.md': { kind: 'derived', why: '收回的话的只读导出(架构终态 G5 起从主库的表渲染;主人 10-26 定再留一个版本)', synthesisInput: false },
   'preferences.md': { kind: 'source', why: 'CC 记下的偏好' },
   'persona.md': { kind: 'source', why: 'CC 的人设' },
   // 不喂合成(总览):由代码原样插成「## 你写的」一节,对外(串门)时整节去掉。要是也喂给模型,它会把主人原话换个说法写进
@@ -31,7 +31,6 @@ export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKin
   'memory-log.jsonl': { kind: 'ledger', why: 'nightly 的审计日志,只追加' },
   'memory-sources.json': { kind: 'ledger', why: '整理时的出处映射(当时的消息 id)' },
   '.derived-state.json': { kind: 'ledger', why: '生成物过期标记本身' },
-  'memory-redactions.json': { kind: 'ledger', why: '合成出口挡掉被更正之话的次数(3b 的数据)' },
 }
 
 /**

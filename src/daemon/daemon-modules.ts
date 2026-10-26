@@ -41,7 +41,7 @@ import { makeSelfChangeGlue } from './self-change-glue'
 import { runSelftestConverse } from './selftest'
 import { providerDisplayName } from './provider-display-names'
 import { bootstrapModules, resolveAdminChatId, type Bootstrap } from './bootstrap'
-import { memoryFeature, memoryNightlyModule, makeMemoryLlmOps, resolveCheapEval, makeMemoryImportCommand, type MemoryFeature, type MemoryLlmOps, type MemoryPromptReads } from '../features/memory'
+import { memoryFeature, memoryNightlyModule, makeMemoryLlmOps, retractOnFactStatus, resolveCheapEval, makeMemoryImportCommand, type MemoryFeature, type MemoryLlmOps, type MemoryPromptReads } from '../features/memory'
 import { loadCompanionConfig } from '../lib/companion-config'
 import { companionFeature, careLevel, companionOfferEligible, registerCompanionPush, registerCompanionIntrospect, registerIngest } from '../features/companion'
 import { makeLlmHealth, type LlmHealth } from './llm-health'
@@ -395,7 +395,18 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         // 可选子系统没起(配置没开 / 降级)⇒ 不 provide,对应路由照旧 503。
         if (boot.a2aDeps) internalApi.provide({ a2a: boot.a2aDeps })
         // 社交的路由和窄口(socialView)由社交模块自己挂 / 交(src/features/social),不经这里。
-        if (boot.knowledge) internalApi.provide({ knowledge: boot.knowledge })
+        // 待办「不对」/ MCP 的 superseded 走 /v1/knowledge/facts/set_fact_status:状态改了就一路收回(架构终态 G5,主人 10-26 第 1 条)
+        if (boot.knowledge) {
+          const k = boot.knowledge
+          const wiredLate = ctx.late<WiredDeps>('wired')
+          internalApi.provide({ knowledge: k.facts ? { ...k, facts: retractOnFactStatus(k.facts, {
+            factById: (id) => k.store.factById(id),
+            retract: (text, verdict) => {
+              const owner = ownerChatId(), w = wiredLate()
+              if (owner && w) void w.memoryNightly.retractText(owner, text, verdict, '待办').catch(err => log('MEMORY_NIGHTLY', `fact retract failed: ${err instanceof Error ? err.message : String(err)}`))
+            },
+          }) } : k })
+        }
         if (boot.pairing) internalApi.provide({ pairing: boot.pairing })
         internalApi.provide({ incidents: boot.health.incidents })
         // LLM 通道体检:没有开机探测、没有定时器(主人 2026-08-25:断网时无人要求的外呼是风控形状),只在点「测试连接」时拨。

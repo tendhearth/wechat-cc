@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { MEMORY_ARTIFACTS, memoryArtifactKind } from '../../lib/memory-artifacts'
 import { MEMORY_FILENAME } from './curated-doc'
-import { CORRECTIONS_FILENAME, MEMORY_LOG_FILE } from './nightly'
+import { MEMORY_LOG_FILE } from './nightly'
+const CORRECTIONS_FILENAME = 'corrections.md'
 import { TODAY_DRAFT_FILENAME } from './today-draft'
 import { SOURCES_FILE } from './sources'
 import { OVERVIEW_FILENAME, PROFILE_FILENAME } from '../../lib/memory-synthesis'
@@ -11,7 +12,7 @@ import { OVERVIEW_FILENAME, PROFILE_FILENAME } from '../../lib/memory-synthesis'
 describe('memory artifacts manifest', () => {
   it('every filename constant the code defines is classified, as the design inventory says', () => {
     expect(memoryArtifactKind(MEMORY_FILENAME)).toBe('source')
-    expect(memoryArtifactKind(CORRECTIONS_FILENAME)).toBe('source')
+    expect(memoryArtifactKind(CORRECTIONS_FILENAME)).toBe('derived')   // G5 起是从表渲染的只读导出
     expect(memoryArtifactKind(OVERVIEW_FILENAME)).toBe('derived')
     expect(memoryArtifactKind(PROFILE_FILENAME)).toBe('derived')
     expect(memoryArtifactKind(TODAY_DRAFT_FILENAME)).toBe('queue')
@@ -28,9 +29,9 @@ describe('memory artifacts manifest', () => {
     expect(memoryArtifactKind('._overview.md.123.abc.tmp')).toBe('ledger')
     expect(memoryArtifactKind('./_overview.md')).toBe('derived')
   })
-  it('derived artifacts are exactly the four synthesized views plus knowledge.md', () => {
+  it('derived artifacts are exactly the four synthesized views, knowledge.md, and the read-only corrections.md export (G5)', () => {
     expect(Object.entries(MEMORY_ARTIFACTS).filter(([, v]) => v.kind === 'derived').map(([k]) => k).sort())
-      .toEqual(['_overview.md', '_profile.json', 'knowledge.md', 'portrait.json', 'portrait.svg'])
+      .toEqual(['_overview.md', '_profile.json', 'corrections.md', 'knowledge.md', 'portrait.json', 'portrait.svg'])
   })
 })
 

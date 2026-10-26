@@ -14,14 +14,14 @@ import { recentInboundTexts } from './recent-inbound'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { runThreadsExtraction } from '../../daemon/threads/extractor'
 import { runLocalImportIfEnabled } from '../../daemon/local-import'
-import { synthesizeOverview } from '../../lib/memory-synthesis'
+import { synthesizeOverview, type SynthesisRetractions } from '../../lib/memory-synthesis'
 import { makeLifeStoresReader } from '../../daemon/life-stores'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
 import type { IntrospectStep, MemorySnapshot } from '../../ports/companion-contributions'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
-export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectStep[], memorySnapshot: MemorySnapshot): (opts?: { nowIso?: string }) => Promise<void> {
+export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectStep[], memorySnapshot: MemorySnapshot, synthesisRetractions: (chatId: string) => SynthesisRetractions): (opts?: { nowIso?: string }) => Promise<void> {
   async function introspectTick(opts?: { nowIso?: string }): Promise<void> {
     // opts.nowIso is otherwise ignored for MVP — observations/memory internal
     // timestamps stay wall-clock. Keeping the symmetric signature avoids
@@ -115,7 +115,7 @@ export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectSte
     // No-op unless companion.import_local_history is on.
     if (loadCompanionConfig(deps.stateDir).import_local_history) {
       try {
-        await synthesizeOverview({ stateDir: deps.stateDir, adminChatId: chatId, sdkEval, lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), includeFileSurvey: true })
+        await synthesizeOverview({ stateDir: deps.stateDir, adminChatId: chatId, retractions: synthesisRetractions(chatId), sdkEval, lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), includeFileSurvey: true })
         deps.log('SYNTHESIZE', `overview refreshed for ${chatId} (24h auto)`)
       } catch (err) {
         deps.log('SYNTHESIZE', `auto refresh failed: ${err instanceof Error ? err.message : err}`)

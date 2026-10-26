@@ -135,3 +135,15 @@ describe('importMemoryOnBoot', () => {
     expect(logs.filter(l => l.includes('imported')).length).toBe(2)
   })
 })
+
+describe('after import the nightly prompt\'s corrections block and the retracted list come from the table, byte-equal to G0', () => {
+  it('readCorrections(table) equals the G0 golden nightly head; retractedTexts equals the G0 list', async () => {
+    const { makeMemoryWriter } = await import('./memory-export')
+    const { readCorrections, CORRECTIONS_BLOCK } = await import('./nightly')
+    run()
+    const writer = makeMemoryWriter({ store, stateDir })
+    const c = readCorrections(writer, OWNER)
+    expect(golden('owner/nightly-head.txt').startsWith(`### ${CORRECTIONS_BLOCK}\n${c.block}\n\n`)).toBe(true)
+    expect(JSON.stringify([...c.texts].sort(), null, 2) + '\n').toBe(golden('owner/corrected-texts.json'))
+  })
+})

@@ -240,9 +240,10 @@ const memorySynthesizeCmd = defineCommand({
 
     const { synthesizeOverview } = await import('../../lib/memory-synthesis')
     const { makeLifeStoresReader } = await import('../../daemon/life-stores')
+    const { synthesisRetractionsFor } = await import('../../features/memory')
     let result
     try {
-      result = await synthesizeOverview({ stateDir: STATE_DIR, adminChatId: chatId, sdkEval, dryRun, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
+      result = await synthesizeOverview({ stateDir: STATE_DIR, adminChatId: chatId, retractions: synthesisRetractionsFor(db, STATE_DIR, chatId), sdkEval, dryRun, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
     } finally {
       db.close()
     }
@@ -359,10 +360,12 @@ async function runMemoryProfileGenerate(args: {
       provider = await profileProvider(chatId, args.provider, db)
       const { synthesizeProfile } = await import('../../lib/memory-synthesis')
       const { makeLifeStoresReader } = await import('../../daemon/life-stores')
+      const { synthesisRetractionsFor } = await import('../../features/memory')
       const dryRun = Boolean(args['dry-run'])
       result = await synthesizeProfile({
         stateDir: STATE_DIR,
         adminChatId: chatId,
+        retractions: synthesisRetractionsFor(db, STATE_DIR, chatId),
         sdkEval: makeProfileSdkEval(provider),
         dryRun,
         lifeStores: makeLifeStoresReader(db, STATE_DIR),
