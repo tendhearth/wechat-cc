@@ -7,6 +7,7 @@
  *
  * 这里失败(锁抢不到、库打不开、access.json 坏了)⇒ 抛;`undo` 里登记的按倒序放掉(main.ts 的 bootDaemon 负责)。
  */
+import { makeMemoryFactsStore } from '../adapters/store/memory-facts'
 import { join } from 'node:path'
 import { acquireInstanceLockWaitingForShutdown, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS, LOCK_WAIT_FOR_SHUTDOWN_MS } from './single-instance'
 import { openDb, type Db } from '../lib/db'
@@ -130,7 +131,7 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     // 执行者「真被拒着」(地区不可用):只看真回合,一轮真完成才清(provider-refusals.ts)
     providerRefusals: makeProviderRefusals({ stateDir, log }),
     conversationStore,
-    memoryFS: makeMemoryFS({ rootDir: join(stateDir, 'memory'), layout: 'all-chats' }),
+    memoryFS: makeMemoryFS({ rootDir: join(stateDir, 'memory'), layout: 'all-chats', fences: makeMemoryFactsStore(db).fence }),
     messagesStore: makeMessagesStore(db),
     // 项目登记(别名 → 文件夹):以前挂在 ilink 适配器上,跟微信无关(架构终态 A6)。
     projects: makeProjects(stateDir),

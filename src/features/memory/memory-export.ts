@@ -18,8 +18,8 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { writeFileAtomic } from '../../lib/json-file'
-import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
-import { parseOwnerDoc, serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
+import type { DerivedFence } from '../../lib/derived-fence'
+import { overviewForOthers, parseOwnerDoc, serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
 import { factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFact, type FactEventActor, type FactSource } from '../../domain/memory/facts'
 import { correctionLine, markWrittenBack, normalizeFactText, renderCorrectionsMd, retractedTextSet, type Verdict } from '../../domain/memory/corrections'
 import { renderMemoryMd, renderOwnerMd } from '../../domain/memory/render'
@@ -81,6 +81,8 @@ export interface MemoryWriter {
   ownerDoc(chatId: string): OwnerDoc
   /** owner.md 原文(没有 ⇒ '';记忆编辑的 baseHash 用)。 */
   ownerMd(chatId: string): string
+  /** 这个对话生成物的过期围栏(架构终态 G8,主库里)。 */
+  fence(chatId: string): DerivedFence
   /** 把表里的样子重新导出成 memory.md(手改被拒时用)。 */
   reexportMemory(chatId: string, stampIso: string, ts: number): void
 }
@@ -89,6 +91,8 @@ export interface MemoryWriter {
 export function memoryFactsFor(db: Db, stateDir: string): MemoryWriter {
   return makeMemoryWriter({ store: makeMemoryFactsStore(db), stateDir })
 }
+
+export { overviewForOthersFromTable } from '../../adapters/store/memory-overview'
 
 /** 合成(总览 / 画像)要的那份收回名单与命中记账,来自同一张表(lib/memory-synthesis 不认表,由这里给)。 */
 export function synthesisMemoryFor(db: Db, stateDir: string, chatId: string): SynthesisMemory {
@@ -99,6 +103,7 @@ export function synthesisMemoryFor(db: Db, stateDir: string, chatId: string): Sy
     redacted: (kind, hits) => w().redacted(chatId, kind, hits, Date.now()),
     ownerDoc: () => w().ownerDoc(chatId),
     memoryMd: () => w().memoryMd(chatId),
+    get fence() { return w().fence(chatId) },
   }
 }
 
@@ -161,7 +166,7 @@ export function makeMemoryWriter(d: {
     commitOwner(chatId, doc, by) {
       const root = rootOf(chatId)
       mkdirSync(root, { recursive: true, mode: 0o700 })
-      invalidateDerivedMemory(root, 'retracted')
+      store.fence(chatId).invalidate('retracted')
       if (!onTable(chatId)) { writeFileAtomic(join(root, 'owner.md'), serializeOwnerDoc(doc), { mode: 0o600 }); return }
       store.atomically(() => {
         store.mirror(chatId, factsFromOwnerDoc(chatId, doc), { by, goneIf: k => k.startsWith('o:') || k.startsWith('x:owner:') })
@@ -184,7 +189,7 @@ export function makeMemoryWriter(d: {
       if (!onTable(chatId)) return null
       const res = store.restore(chatId, tombstoneKey, by)
       if (!res) return null
-      invalidateDerivedMemory(rootOf(chatId), 'added')
+      store.fence(chatId).invalidate('added')
       exportCorrections(chatId, by.ts)
       reexportTouched(chatId, res.restored, by.ts)
       return res
@@ -260,6 +265,7 @@ export function makeMemoryWriter(d: {
     ownerDoc(chatId) {
       return parseOwnerDoc(api.ownerMd(chatId))
     },
+    fence: (chatId) => store.fence(chatId),
     ownerMd(chatId) {
       if (!onTable(chatId)) { try { return readFileSync(join(rootOf(chatId), 'owner.md'), 'utf8') } catch { return '' } }
       const rows = store.list(chatId, { doc: 'owner' }).filter(r => !r.key.startsWith('c:'))

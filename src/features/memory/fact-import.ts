@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { writeFileAtomic } from '../../lib/json-file'
+import { readJsonFile } from '../../lib/read-json-file'
 import { MEMORY_SECTIONS, factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFact } from '../../domain/memory/facts'
 import { type Tombstone, MIN_RETRACTED_CHARS, markWrittenBack, normalizeCorrectionsText, normalizeFactText, placeholderTombstone, renderCorrectionsMd, retractedTextSet, tombstonesFromCorrections } from '../../domain/memory/corrections'
 import { renderMemoryForPrompt, renderMemoryMd, renderOwnerForPrompt, renderOwnerMd } from '../../domain/memory/render'
@@ -192,6 +193,34 @@ export function importChatMemory(store: MemoryFactsStore, root: string, chatId: 
   }
 }
 
+/** 旧的生成物围栏文件(架构终态 G8 起围栏在主库;这个文件名只许出现在导入里,scripts/memory-retract.guard.test.ts 旁的守卫钉住)。 */
+const DERIVED_STATE_FILE = '.derived-state.json'
+
+/**
+ * 开机一次:把一个对话旧的生成物围栏(`.derived-state.json`)和磁盘上的生成物(`_overview.md` / `_profile.json`)放进主库
+ * (架构终态 G8)。表里已经有这个对话的围栏 ⇒ 什么都不做。没有旧文件 ⇒ 生成物算新的(和以前没有那个文件时一样);
+ * 旧文件坏了 ⇒ 两样都按「收回」过期(藏起来,等重新生成),和以前读坏了的围栏一样往保守那边走。旧文件不删。
+ */
+export function importDerivedState(store: MemoryFactsStore, root: string, chatId: string, now: number): boolean {
+  let fresh = { overview: true, profile: true }, retracted = { overview: false, profile: false }
+  const p = join(root, DERIVED_STATE_FILE)
+  if (existsSync(p)) {
+    try {
+      const st = readJsonFile(p) as { version?: number; revision?: string; overview?: string | null; profile?: string | null; retracted?: { overview?: boolean; profile?: boolean } }
+      if (st.version !== 1 || typeof st.revision !== 'string' || !st.revision) throw new Error('bad')
+      fresh = { overview: st.overview === st.revision, profile: st.profile === st.revision }
+      retracted = { overview: !fresh.overview && (st.retracted?.overview ?? true), profile: !fresh.profile && (st.retracted?.profile ?? true) }
+    } catch {
+      fresh = { overview: false, profile: false }; retracted = { overview: true, profile: true }
+    }
+  }
+  const bodies: Partial<Record<'overview' | 'profile', { body: string; at: number }>> = {}
+  for (const [kind, file] of [['overview', '_overview.md'], ['profile', '_profile.json']] as const) {
+    try { bodies[kind] = { body: readFileSync(join(root, file), 'utf8'), at: Math.floor(statSync(join(root, file)).mtimeMs) } } catch { /* 没有就不缓存 */ }
+  }
+  return store.importFence(chatId, { fresh, retracted, bodies }, now)
+}
+
 /** 开机:`<stateDir>/memory/` 下每个有这三份文件之一的对话各导一次。一个对话出错不影响别的。 */
 export function importMemoryOnBoot(d: {
   store: MemoryFactsStore; stateDir: string; now: () => number; log: (tag: string, line: string) => void
@@ -206,6 +235,7 @@ export function importMemoryOnBoot(d: {
   const out: ImportOutcome[] = []
   for (const chatId of names) {
     try {
+      try { importDerivedState(d.store, join(base, chatId), chatId, nowMs) } catch (e) { d.log('MEMORY_IMPORT', `${chatId}: derived-state import failed: ${e instanceof Error ? e.message : String(e)}`) }
       try { d.beforeChat?.(chatId) } catch (e) { d.log('MEMORY_IMPORT', `${chatId}: re-export before import failed: ${e instanceof Error ? e.message : String(e)}`) }
       const r = importChatMemory(d.store, join(base, chatId), chatId, nowMs, day, { ownerChat: chatId === owner, ownerUnknown: owner === null })
       out.push(r)

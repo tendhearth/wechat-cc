@@ -30,7 +30,6 @@ export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKin
   'today-draft.md': { kind: 'queue', why: 'profile.md 每次写的差异,nightly 读完删' },
   'memory-log.jsonl': { kind: 'ledger', why: 'nightly 的审计日志,只追加' },
   'memory-sources.json': { kind: 'ledger', why: '整理时的出处映射(当时的消息 id)' },
-  '.derived-state.json': { kind: 'ledger', why: '生成物过期标记本身' },
 }
 
 /**

@@ -105,7 +105,7 @@ describe('route-tiers', () => {
   })
 
   it('reviewed memory sources require trusted and are mounted by the memory module (src/features/memory)', () => {
-    const routes = memoryReviewRoutes({ stateDir: '/tmp' })
+    const routes = memoryReviewRoutes({ stateDir: '/tmp', fences: () => { throw new Error('not used') } })
     for (const route of ['GET /v1/memory/source', 'POST /v1/memory/source/review']) {
       expect(minTierFor(route)).toBe('trusted')
       expect(moduleFor(route)).toBe('memory')

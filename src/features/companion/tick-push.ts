@@ -2,6 +2,7 @@
  * 伙伴主动找主人那一拍(20 分钟一拍,从 tick-bodies.ts 原样搬出):到点的跟进 → 日程判断 → 来访叙述。
  * 日程判断在哪些事里挑,由登记进来的候选决定(ports/companion-contributions.ts,登记表在 daemon/wiring/tick-bodies.ts);这里不认识任何一个。
  */
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import { inQuietHours } from '../../domain/quiet-hours'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
@@ -62,7 +63,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
 
     // Gate on the agenda: only wake the agent if a self-authored intention is
     // due (per-chat memory/<chatId>/agenda.md).
-    const agendaFs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', chatId) })
+    const agendaFs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', chatId), fences: makeMemoryFactsStore(deps.db).fence })
     const agendaMd = agendaFs.read('agenda.md') ?? ''
     const due = selectDue(parseAgenda(agendaMd), today)
 

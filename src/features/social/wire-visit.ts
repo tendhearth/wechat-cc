@@ -37,7 +37,6 @@ import type { ActiveVisit } from '../../domain/companion-presence'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
 import { NEIGHBORS, pickNeighbor, neighborById, neighborPersona, type Neighbor } from '../../domain/neighbors'
-import { overviewForOthers } from '../../lib/memory-owner'
 
 const OVERVIEW_MAX = 1500
 
@@ -46,6 +45,11 @@ export const VISIT_STALE_MS = 6 * 60 * 60_000
 
 export interface VisitDeps {
   stateDir: string
+  /**
+   * 主人的总览,已经是对外的那一份(架构终态 G8:记忆功能从主库的缓存给,过期因收回就不给、去掉「你写的」);没有 ⇒ ''。
+   * 串门不再读 _overview.md 文件。
+   */
+  ownerOverviewForOthers(ownerChatId: string): string
   channelStore: ChannelStore
   letterStore: LetterStore
   /** 发一个信封到信道(correspondent.sendEnvelope)。 */
@@ -127,10 +131,10 @@ export function makeVisit(deps: VisitDeps): Visit {
     try {
       const owner = loadCompanionConfig(deps.stateDir).default_chat_id
       if (owner && !owner.includes('..') && !owner.includes('/') && !owner.includes('\\')) {
-        const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', owner) })
+        const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', owner), fences: null })
         personaMd = fs.read('persona.md') ?? null
-        // 对外:经 overviewForOthers 去掉主人原话那一节(记忆编辑第 3 步)
-        overview = overviewForOthers(fs.read('_overview.md') ?? '').slice(0, OVERVIEW_MAX) || null
+        // 对外:主库缓存里的总览,已经去掉主人原话那一节(记忆编辑第 3 步、架构终态 G8)
+        overview = deps.ownerOverviewForOthers(owner).slice(0, OVERVIEW_MAX) || null
       }
     } catch { /* 读不到就当白纸 —— 串门不该因为记忆目录出问题而失败 */ }
     return { myName: deps.myName, persona: personaMd, ownerOverview: overview, disclosurePolicy: deps.disclosurePolicy }

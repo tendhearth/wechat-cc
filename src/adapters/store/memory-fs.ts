@@ -15,9 +15,9 @@
  * memory_write calls, not wired into this module.
  */
 
+import type { DerivedFence, InvalidationReason } from '../../lib/derived-fence'
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import { derivedMemoryStatus, invalidateDerivedMemory, type InvalidationReason } from '../../lib/memory-derived-state'
 import { memoryArtifactKind } from '../../lib/memory-artifacts'
 import { OWNER_FILENAME } from '../../lib/memory-owner'
 import { writeFileAtomic } from '../../lib/json-file'
@@ -58,6 +58,11 @@ export interface MemoryFSOptions {
    */
   layout?: 'chat' | 'all-chats'
   allowedExt?: string[]      // default ['.md']
+  /**
+   * 这个对话生成物的过期围栏(架构终态 G8:在主库,`makeMemoryFactsStore(db).fence`)。写源时记过期、读 _overview.md 时看它
+   * 是不是该藏 / 贴标签。必须明说:null = 这一份既不写源、也不读总览(只读 agenda / knowledge.md 之类),给了 null 却去写源 ⇒ 抛错。
+   */
+  fences: ((chatId: string) => DerivedFence) | null
 }
 
 export class MemoryPathError extends Error {
@@ -68,6 +73,7 @@ export class MemoryPathError extends Error {
 }
 
 export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
+  const fences = opts.fences
   const root = resolve(opts.rootDir)
   const maxBytes = opts.maxFileBytes ?? 100_000
   const exts = new Set((opts.allowedExt ?? ['.md']).map(s => s.toLowerCase()))
@@ -184,7 +190,9 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
    */
   function overviewStatus(full: string): 'fresh' | 'added' | 'retracted' {
     const real = realpathSync(full)
-    return basename(real) === '_overview.md' ? derivedMemoryStatus(dirname(real), 'overview') : 'fresh'
+    if (basename(real) !== '_overview.md') return 'fresh'
+    if (!opts.fences) throw new MemoryPathError('reading _overview.md needs the derived fence (fences: null)')
+    return opts.fences(basename(dirname(real))).status('overview')
   }
   /** 读的时候贴上去的那句。写回来时剥掉(可能叠了好几层),不然模型读完原样 memory_write 回去,标签就成了正文(整合者评审 #581)。 */
   const STALE_LABEL = /^> \(这份整体理解是[^\n]*整理的,之后记忆又有变化,可能不全。\)\n\n/
@@ -229,7 +237,10 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       // path (which may not yet exist).
       assertWithinRealRoot(full, false)
       const chatRoot = chatRootOf(full)
-      if (memoryArtifactKind(relative(chatRoot, full)) === 'source') invalidateDerivedMemory(chatRoot, opts?.reason ?? 'retracted')
+      if (memoryArtifactKind(relative(chatRoot, full)) === 'source') {
+        if (!fences) throw new MemoryPathError('writing a memory source needs the derived fence (fences: null)')
+        fences(basename(chatRoot)).invalidate(opts?.reason ?? 'retracted')
+      }
       writeFileAtomic(full, content, { mode: 0o600 })
     },
 

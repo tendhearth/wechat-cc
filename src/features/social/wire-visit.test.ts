@@ -27,7 +27,7 @@ function side(name: string, evalText: (p: string) => Promise<string>): Side {
   const busy: Side['busy'] = []
   let peer: Side | null = null
   const deps: VisitDeps = {
-    stateDir: mkdtempSync(join(tmpdir(), 'visit-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'visit-')), ownerOverviewForOthers: () => '',
     channelStore: { get: (id: string) => (id === 'ch' ? { id: 'ch', status: 'open', degree: 1 } : null), list: () => [{ id: 'ch', status: 'open', degree: 1 }] } as never,
     letterStore: {
       listForChannel: () => letters,
@@ -200,7 +200,7 @@ describe('去邻居家串门 —— 没有真对端时也有地方可去', () =>
     const owner: string[] = []; const recorded: Array<{ text: string; peerLabel: string }> = []
     const stateDir = mkdtempSync(join(tmpdir(), 'visit-nb-'))
     const visit = makeVisit({
-      stateDir, channelStore: { get: () => null, list: () => [] } as never,
+      stateDir, ownerOverviewForOthers: () => '', channelStore: { get: () => null, list: () => [] } as never,
       letterStore: { listForChannel: () => [], markRead: () => {} } as never,
       sendEnvelope: async () => ({ ok: true }), evalText, myName: '煞笔', disclosurePolicy: '不说住址',
       notifyOwner: (t) => owner.push(t), recordVisit: (a) => { recorded.push(a); return `row-${recorded.length}` }, log: () => {}, ...extra,
@@ -317,7 +317,7 @@ describe('明信片', () => {
   const mk = (evalText: (p: string) => Promise<string>, postcard: NonNullable<VisitDeps['postcard']>) => {
     const owner: string[] = []; const recorded: Array<{ text: string; peerLabel: string }> = []
     const visit = makeVisit({
-      stateDir: mkdtempSync(join(tmpdir(), 'visit-pc-')), channelStore: { get: () => null, list: () => [] } as never,
+      stateDir: mkdtempSync(join(tmpdir(), 'visit-pc-')), ownerOverviewForOthers: () => '', channelStore: { get: () => null, list: () => [] } as never,
       letterStore: { listForChannel: () => [], markRead: () => {} } as never,
       sendEnvelope: async () => ({ ok: true }), evalText, myName: '煞笔', disclosurePolicy: 'p',
       notifyOwner: (t) => owner.push(t), recordVisit: (a) => { recorded.push(a); return 'row-1' }, postcard, log: () => {},
@@ -357,7 +357,7 @@ describe('activeVisit —— 桌宠要知道熊在不在家(spec 2026-09-03-comp
   const lonelyVisit = (evalText: (p: string, v: ReturnType<typeof makeVisit>) => Promise<string>, extra: Partial<VisitDeps> = {}) => {
     let self: ReturnType<typeof makeVisit>
     self = makeVisit({
-      stateDir: mkdtempSync(join(tmpdir(), 'visit-av-')),
+      stateDir: mkdtempSync(join(tmpdir(), 'visit-av-')), ownerOverviewForOthers: () => '',
       channelStore: { get: () => null, list: () => [] } as never,
       letterStore: { listForChannel: () => [], markRead: () => {} } as never,
       sendEnvelope: async () => ({ ok: true }),
@@ -413,7 +413,7 @@ describe('activeVisit —— 桌宠要知道熊在不在家(spec 2026-09-03-comp
     // side() 不暴露 deps,所以直接 makeVisit:一条开着的远程信道,对方永远不回,时钟可控
     const letters: Array<{ id: string; direction: 'in' | 'out'; plaintext: string | null; read_at: string | null; kind: string; payload: string | null }> = []
     const visit = makeVisit({
-      stateDir: mkdtempSync(join(tmpdir(), 'visit-stale-')),
+      stateDir: mkdtempSync(join(tmpdir(), 'visit-stale-')), ownerOverviewForOthers: () => '',
       channelStore: { get: () => ({ id: 'ch', status: 'open', degree: 1 }), list: () => [{ id: 'ch', status: 'open', degree: 1 }] } as never,
       letterStore: { listForChannel: () => letters, markRead: () => {} } as never,
       sendEnvelope: async (_c, env) => { letters.push({ id: `o${letters.length}`, direction: 'out', plaintext: '', read_at: null, kind: env.kind, payload: JSON.stringify(env.payload) }); return { ok: true } },
@@ -459,9 +459,10 @@ describe('来访的上限与隐私', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'visit-ov-'))
     await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), default_chat_id: 'owner' })
     mkdirSync(join(stateDir, 'memory', 'owner'), { recursive: true })
-    writeFileSync(join(stateDir, 'memory', 'owner', '_overview.md'), '主人住在杭州西湖区某某小区')
+    writeFileSync(join(stateDir, 'memory', 'owner', '_overview.md'), '这份文件不再被串门读(G8:总览从主库缓存来)')
     const v = makeVisit({
       stateDir,
+      ownerOverviewForOthers: (o) => (o === 'owner' ? '主人住在杭州西湖区某某小区' : ''),
       channelStore: { get: () => ({ id: 'ch', status: 'open', degree: 1 }), list: () => [] } as never,
       letterStore: { listForChannel: () => [], markRead: () => {} } as never,
       sendEnvelope: async () => ({ ok: true }),

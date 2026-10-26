@@ -3,6 +3,7 @@
  * 小像、记忆园丁、画室。各自门控、各自失败不拖累后面的步;登记在 tick-bodies.ts,顺序就是执行顺序。
  * 贴纸那一步归贴纸功能自己(src/features/stickers 的 stickerArtistStep),在登记表里排第一。
  */
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import { join } from 'node:path'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { runGarden } from '../../features/memory'
@@ -71,7 +72,7 @@ export function portraitArtistStep(deps: Pick<TickDeps, 'stateDir' | 'log'> & In
  * as the steps before it. See docs/superpowers/specs/2026-07-10-
  * memory-gardener-design.md.
  */
-export function memoryGardenStep(deps: Pick<TickDeps, 'stateDir' | 'log'>): IntrospectStep {
+export function memoryGardenStep(deps: Pick<TickDeps, 'stateDir' | 'log' | 'db'>): IntrospectStep {
   return {
     id: 'memory-garden', logTag: 'GARDEN', failLabel: 'tick',
     async run({ sdkEval, memoryRoot, today }) {
@@ -82,6 +83,7 @@ export function memoryGardenStep(deps: Pick<TickDeps, 'stateDir' | 'log'>): Intr
         cheapEval: sdkEval,
         log: deps.log,
         today,
+        fences: makeMemoryFactsStore(deps.db).fence,
       })
       if (gardened > 0 || skipped > 0) {
         deps.log('GARDEN', `tick complete: gardened=${gardened} skipped=${skipped}`)

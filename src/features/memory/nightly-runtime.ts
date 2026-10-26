@@ -4,7 +4,6 @@
  */
 import { agendaDropPrompt, dropAgendaItems, dropCorrectedAgenda, normalizeMemoryText, openAgendaItems, parseAgendaDropAnswer, purgeCorrectedFromSources } from '../../lib/memory-corrections'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
-import { invalidateDerivedMemory, isDerivedMemoryStale } from '../../lib/memory-derived-state'
 import { readSources, writeSources } from './sources'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -180,7 +179,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
   function recordCorrection(r: string, section: string, text: string, verdict: MemoryVerdict, o: { entryId?: string; correctionId?: string; ref?: RetractRef; actor?: 'owner' | 'judge'; nowMs: number }): Done {
     const nowMs = o.nowMs, day = localParts(nowMs, deps.config().timezone).day
     // 主人纠正 / 标过期 ⇒ 'retracted':旧总览里可能正好有这句,藏起来等重新生成(3e 记忆第 2 步)。
-    invalidateDerivedMemory(r, 'retracted')
+    deps.writer.fence(deps.ownerChatId()!).invalidate('retracted')
     // 清源头(3b (a)):CC 的笔记 / 偏好 / notes/ 里含这句的行也删掉,不然下次合成又学回来(主人以为 CC 忘了,其实只是暂时没说)。
     // 每个改动的文件先快照进 memory-archive,能找回;删了哪几个文件几行记在这一条底下,主人看得到。
     const owner = deps.ownerChatId()
@@ -230,7 +229,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     } else if (path === 'memory.md') {
       generated = memoryViewLines(file)
     }
-    return { chatId, path, baseHash: baseHashOf(file, ownerRaw), generatedAt, stale: path === '_overview.md' && isDerivedMemoryStale(r, 'overview'), lines: [...owner, ...generated] }
+    return { chatId, path, baseHash: baseHashOf(file, ownerRaw), generatedAt, stale: path === '_overview.md' && deps.writer.fence(chatId).isStale('overview'), lines: [...owner, ...generated] }
   }
 
   /** memory.md 里能编辑的行(带键):条目按编号,栏外的按文字。 */
@@ -254,7 +253,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     // 顺序是有意的:先过期、再逐条记更正(清源头 / 关待办 / 收回),最后才写 memory.md / owner.md。
     // 中途失败 ⇒ 「已经更正、文件还没改」:被更正的话已经进了清单,出口过滤和整理都会挡住它,不会被说出去 —— 宁可这样,
     // 不要反过来(文件改了、更正没记,下次整理又从别处学回来)。
-    invalidateDerivedMemory(r, 'retracted')
+    deps.writer.fence(deps.ownerChatId()!).invalidate('retracted')
     const corrections: Array<{ id: string; text: string }> = []
     for (const c of plan.corrections) {
       const cid = deps.newId()
@@ -386,7 +385,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       if (!hit) throw new Error('memory_entry_not_found')
       const nowMs = deps.now()
       // 先让生成物过期再改源:中途崩了,宁可总览多藏一会儿,也不把撤掉的话留在外面
-      invalidateDerivedMemory(got.root, 'retracted')
+      deps.writer.fence(deps.ownerChatId()!).invalidate('retracted')
       deps.writer.commitMemory(deps.ownerChatId()!, got.doc, { actor: 'owner', ts: nowMs }, new Date(nowMs).toISOString())
       return recordCorrection(got.root, hit.section, hit.text, verdict, { entryId: id, nowMs })
       })
@@ -469,7 +468,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         have.add(text); added.push({ id, section: it.section, text })
       }
       if (added.length) {
-        invalidateDerivedMemory(r, 'added')  // 导入只加不删
+        deps.writer.fence(deps.ownerChatId()!).invalidate('added')  // 导入只加不删
         deps.writer.commitMemory(deps.ownerChatId()!, doc, { actor: 'import', ts: nowMs }, nowIso)
         // 「CC 做过的事」里的记忆那一行读这份日志;出处标成导入(手机「CC 眼中的你」显示「从 X 导入」)
         try { appendFileSync(join(r, MEMORY_LOG_FILE), JSON.stringify({ at: nowIso, ops: added.map(a => ({ kind: 'add', ...a })), source: 'import' }) + '\n') } catch { /* 日志是附带的 */ }

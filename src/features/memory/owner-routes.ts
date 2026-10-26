@@ -19,7 +19,6 @@ import { getMemoryProfileStatus, summarizeProjectMemories } from '../../lib/memo
 import { makeLifeStoresReader } from '../../daemon/life-stores'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import { makeMemoryWriter, synthesisMemoryFor } from './memory-export'
 import { parseMemoryDoc } from './curated-doc'
@@ -74,11 +73,11 @@ export function memoryOwnerRoutes(deps: MemoryOwnerRoutesDeps): RouteTable {
         const writer = makeMemoryWriter({ store: makeMemoryFactsStore(deps.db), stateDir: deps.stateDir })
         if (norm === 'memory.md' && writer.isOnTable(userId)) {
           const created = writer.memoryMd(userId) === null
-          invalidateDerivedMemory(join(deps.stateDir, 'memory', userId), 'retracted')
+          writer.fence(userId).invalidate('retracted')
           writer.commitMemory(userId, parseMemoryDoc(b.content), { actor: 'owner', ts: Date.now() }, new Date().toISOString())
           return { status: 200, body: MemoryWriteOutput.parse({ ok: true, userId, path, bytesWritten: Buffer.byteLength(b.content, 'utf8'), created }) }
         }
-        const result = writeMemoryFile(deps.stateDir, userId, path, b.content)
+        const result = writeMemoryFile(deps.stateDir, userId, path, b.content, writer.fence(userId))
         return { status: 200, body: MemoryWriteOutput.parse({ ok: true, userId, path, ...result }) }
       } catch (err) {
         return { status: 200, body: MemoryWriteOutput.parse({ ok: false, error: msgOf(err) }) }
@@ -89,7 +88,7 @@ export function memoryOwnerRoutes(deps: MemoryOwnerRoutesDeps): RouteTable {
     'GET /v1/memory/profile': (q) => {
       const chatId = chatOf(q) ?? ''
       try {
-        const content = readMemoryProfileFile(deps.stateDir, chatId)
+        const content = readMemoryProfileFile(deps.stateDir, chatId, makeMemoryFactsStore(deps.db).fence(chatId))
         return { status: 200, body: MemoryReadOutput.parse({ ok: true, userId: chatId, path: '_profile.json', content }) }
       } catch (err) {
         return { status: 200, body: MemoryReadOutput.parse({ ok: false, error: msgOf(err) }) }

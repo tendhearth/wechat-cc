@@ -133,3 +133,33 @@ describe('retracting a key that is not in the table (数据安全评审第 3 条
     expect(store.tombstones(CHAT)).toEqual([])
   })
 })
+
+describe('derived fence (G8:以前的 .derived-state.json)', () => {
+  it('fresh until a source changes; added stays added, retracted wins and sticks until a commit', () => {
+    const f = store.fence(CHAT)
+    expect(f.status('overview')).toBe('fresh')
+    f.invalidate('added')
+    expect(f.status('overview')).toBe('added')
+    f.invalidate('retracted')
+    expect(f.status('overview')).toBe('retracted')
+    f.invalidate('added')                                    // 一次 added 冲不掉还没重新生成的 retracted
+    expect(f.status('overview')).toBe('retracted')
+    expect(f.commit('overview', f.revision(), 'body v1', () => {})).toBe(true)
+    expect(f.status('overview')).toBe('fresh')
+    expect(f.status('profile')).toBe('retracted')            // 另一样还是过期的
+    expect(f.body('overview')).toBe('body v1')
+    f.invalidate('added')
+    expect(f.status('overview')).toBe('added')
+    expect(store.fence('other').status('overview')).toBe('fresh')
+  })
+  it('a commit whose source changed during generation (or during the write) is refused and leaves the old cache', () => {
+    const f = store.fence(CHAT)
+    f.commit('profile', f.revision(), 'v1', () => {})
+    const rev = f.revision()
+    f.invalidate()
+    expect(f.commit('profile', rev, 'late', () => { throw new Error('must not write') })).toBe(false)
+    const rev2 = f.revision()
+    expect(f.commit('profile', rev2, 'racy', () => f.invalidate())).toBe(false)
+    expect(f.body('profile')).toBe('v1')
+  })
+})

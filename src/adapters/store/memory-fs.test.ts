@@ -3,23 +3,24 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, symlinkSync,
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeMemoryFS, MemoryPathError } from './memory-fs'
-import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
+import { testFences } from '../../test-support/memory-fences'
 
 describe('MemoryFS', () => {
   let root: string
-  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'memfs-')) })
+  let fences: ReturnType<typeof testFences>
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'memfs-')); fences = testFences() })
   afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
-  const make = () => makeMemoryFS({ rootDir: root, layout: 'all-chats' })
+  const make = () => makeMemoryFS({ rootDir: root, layout: 'all-chats', fences })
 
   it('hides stale overview from reads and listings for both global and per-chat memory roots', () => {
     const fs = make()
     fs.write('c1/_overview.md', 'stale judgment')
     fs.write('c1/profile.md', 'canonical profile')
-    invalidateDerivedMemory(join(root, 'c1'))
+    fences('c1').invalidate()
     expect(fs.read('c1/_overview.md')).toBeNull()
     expect(fs.list()).toEqual(['c1/profile.md'])
-    const chatFs = makeMemoryFS({ rootDir: join(root, 'c1') })
+    const chatFs = makeMemoryFS({ rootDir: join(root, 'c1'), fences })
     expect(chatFs.read('_overview.md')).toBeNull()
     expect(chatFs.list()).toEqual(['profile.md'])
     expect(existsSync(join(root, 'c1', '_overview.md'))).toBe(true)
@@ -31,40 +32,39 @@ describe('MemoryFS', () => {
   it('an overview that is only incomplete (added) is served with a label; one after an owner retraction stays hidden', () => {
     const fs = make()
     fs.write('c1/_overview.md', 'owner likes hiking')
-    invalidateDerivedMemory(join(root, 'c1'), 'added')
+    fences('c1').invalidate('added')
     const got = fs.read('c1/_overview.md')
     expect(got).toContain('owner likes hiking')
     expect(got).toMatch(/^> \(这份整体理解是 \d{4}-\d{2}-\d{2} 整理的,之后记忆又有变化,可能不全。\)\n\nowner likes hiking$/)
     expect(fs.list()).toContain('c1/_overview.md')
-    invalidateDerivedMemory(join(root, 'c1'), 'retracted')
+    fences('c1').invalidate('retracted')
     expect(fs.read('c1/_overview.md')).toBeNull()
     expect(fs.list()).not.toContain('c1/_overview.md')
   })
   it('the stale label is stripped when an overview is written back, so it never becomes body text or stacks up', () => {
     const fs = make()
     fs.write('c1/_overview.md', 'owner likes hiking')
-    invalidateDerivedMemory(join(root, 'c1'), 'added')
+    fences('c1').invalidate('added')
     const labelled = fs.read('c1/_overview.md')!
     fs.write('c1/_overview.md', labelled + '\nand cooking')
     fs.write('c1/_overview.md', fs.read('c1/_overview.md')!)
     expect(readFileSync(join(root, 'c1', '_overview.md'), 'utf8')).toBe('owner likes hiking\nand cooking')
   })
   it('writing a source invalidates that chat: CC notes are "added", anything else defaults to "retracted"; writing a derived file does not', async () => {
-    const { derivedMemoryStatus } = await import('../../lib/memory-derived-state')
     const fs = make()
     fs.write('c1/_overview.md', 'v1')
-    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('fresh')
+    expect(fences('c1').status('overview')).toBe('fresh')
     fs.write('c1/profile.md', 'note', { reason: 'added' })
-    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('added')
+    expect(fences('c1').status('overview')).toBe('added')
     fs.write('c1/notes/trip.md', 'edited by owner')
-    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('retracted')
+    expect(fences('c1').status('overview')).toBe('retracted')
     // 别的对话不受影响
     fs.write('c2/_overview.md', 'other')
-    expect(derivedMemoryStatus(join(root, 'c2'), 'overview')).toBe('fresh')
+    expect(fences('c2').status('overview')).toBe('fresh')
     // per-chat 根下写也找得到同一层
-    const chatFs = makeMemoryFS({ rootDir: join(root, 'c2') })
+    const chatFs = makeMemoryFS({ rootDir: join(root, 'c2'), fences })
     chatFs.write('profile.md', 'x', { reason: 'added' })
-    expect(derivedMemoryStatus(join(root, 'c2'), 'overview')).toBe('added')
+    expect(fences('c2').status('overview')).toBe('added')
   })
 
   it('owner.md 是主人原话:CC 写不了、删不了(不分大小写、绕路径也不行);notes/owner.md 是普通笔记照写', () => {
@@ -77,7 +77,7 @@ describe('MemoryFS', () => {
     expect(existsSync(join(root, 'c1', 'owner.md'))).toBe(false)
     fs.write('c1/notes/owner.md', '一份叫 owner 的笔记')
     expect(fs.read('c1/notes/owner.md')).toBe('一份叫 owner 的笔记')
-    const chatFs = makeMemoryFS({ rootDir: join(root, 'c2') })
+    const chatFs = makeMemoryFS({ rootDir: join(root, 'c2'), fences })
     expect(() => chatFs.write('owner.md', 'x')).toThrow(MemoryPathError)
   })
 
@@ -255,7 +255,7 @@ describe('MemoryFS', () => {
     })
 
     it('respects custom allowedExt', () => {
-      const fs = makeMemoryFS({ rootDir: root, allowedExt: ['.md', '.txt'] })
+      const fs = makeMemoryFS({ rootDir: root, allowedExt: ['.md', '.txt'], fences })
       fs.write('a.txt', 'ok')
       expect(fs.read('a.txt')).toBe('ok')
     })
@@ -263,7 +263,7 @@ describe('MemoryFS', () => {
 
   describe('size limit', () => {
     it('rejects writes larger than maxFileBytes', () => {
-      const fs = makeMemoryFS({ rootDir: root, maxFileBytes: 100 })
+      const fs = makeMemoryFS({ rootDir: root, maxFileBytes: 100, fences })
       const big = 'x'.repeat(200)
       expect(() => fs.write('big.md', big)).toThrow(/too large/)
     })
@@ -287,7 +287,7 @@ describe('MemoryFS', () => {
   it('rootDir is auto-created if missing', () => {
     const newRoot = join(root, 'fresh-dir')
     expect(existsSync(newRoot)).toBe(false)
-    const fs = makeMemoryFS({ rootDir: newRoot })
+    const fs = makeMemoryFS({ rootDir: newRoot, fences })
     fs.write('a.md', 'x')
     expect(existsSync(newRoot)).toBe(true)
   })

@@ -1,4 +1,5 @@
 import { makeTellOwner } from './social-tell'
+import { overviewForOthersFromTable } from '../../adapters/store/memory-overview'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { makeJudge } from './social-judge'
 import { makeVisit } from './wire-visit'
@@ -243,6 +244,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       const correspondent = makeCorrespondent({ channelStore, letterStore, postLetter, onInbound })
       visit = makeVisit({
         stateDir: deps.stateDir,
+        ownerOverviewForOthers: (owner) => overviewForOthersFromTable(deps.db, owner),
         channelStore, letterStore,
         // 出门 / 回程都持 busy token(空闲重启不能掐在半句话中间)。
         holdBusy: deps.holdBusy,

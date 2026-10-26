@@ -9,7 +9,6 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openTestDb, type Db } from '../../lib/db'
 import { removeTempDir } from '../../lib/test-temp'
-import { derivedMemoryStatus } from '../../lib/memory-derived-state'
 import { parseOwnerDoc, serializeOwnerDoc } from '../../lib/memory-owner'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
@@ -85,7 +84,7 @@ describe('MemoryWriter', () => {
     expect(file('owner.md')).toBe(serializeOwnerDoc(doc))
     expect(store.byKey(OWNER, 'o:k7x9q3')!.status).toBe('outdated')
     expect(store.byKey(OWNER, 'o:n3w001')).toMatchObject({ status: 'active', scope: 'owner_only', origin: 'memory' })
-    expect(derivedMemoryStatus(root, 'overview')).toBe('retracted')
+    expect(store.fence(OWNER).status('overview')).toBe('retracted')
   })
 
   it('a chat that did not pass the import check stays on the old path: today\'s bytes, nothing in the table', () => {

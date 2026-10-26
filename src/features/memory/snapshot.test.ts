@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { buildMemorySnapshot } from './snapshot'
 import { memoryFactsFor } from './memory-export'
 import { openTestDb } from '../../lib/db'
-import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 
 describe('buildMemorySnapshot', () => {
   let stateDir: string
@@ -18,8 +17,9 @@ describe('buildMemorySnapshot', () => {
     writeFileSync(join(root, '_overview.md'), 'outdated judgment')
     writeFileSync(join(root, 'profile.md'), 'canonical profile')
     writeFileSync(join(root, 'note.md'), 'corrected note')
-    invalidateDerivedMemory(root)
-    const snap = await buildMemorySnapshot(stateDir, 'c1', memoryFactsFor(openTestDb(), stateDir))
+    const facts = memoryFactsFor(openTestDb(), stateDir)
+    facts.fence('c1').invalidate()
+    const snap = await buildMemorySnapshot(stateDir, 'c1', facts)
     expect(snap).not.toContain('outdated judgment')
     expect(snap).toContain('canonical profile')
     expect(snap).toContain('corrected note')

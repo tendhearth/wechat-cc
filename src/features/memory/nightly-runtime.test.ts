@@ -227,8 +227,9 @@ describe('owner corrections, step A (2026-10-06)', () => {
     expect(archived.some(f => f.startsWith('profile.md.'))).toBe(true)
   })
   it('the nightly tidy marks derived memory "added"; an owner correction marks it "retracted"', async () => {
-    const { derivedMemoryStatus } = await import('../../lib/memory-derived-state')
-    const rt = makeMemoryNightlyRuntime(deps())
+    const d = deps()
+    const rt = makeMemoryNightlyRuntime(d)
+    const derivedMemoryStatus = (_root: string, kind: 'overview' | 'profile') => d.writer.fence(OWNER).status(kind)
     await rt.runNow()
     expect(derivedMemoryStatus(root, 'overview')).toBe('added')
     const id = rt.curatedView().sections.flatMap(s => s.items)[0]!.id!

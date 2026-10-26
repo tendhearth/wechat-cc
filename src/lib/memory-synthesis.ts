@@ -43,7 +43,7 @@ export interface LifeStoresReader {
 }
 export interface LifeSourceRecord { id: string; body: string }
 import { readMemoryProfileFile, writeMemoryFile, writeMemoryProfileFile } from './memory'
-import { beginDerivedGeneration, commitDerivedMemory, isDerivedMemoryStale, readDerivedRevision } from './memory-derived-state'
+import type { DerivedFence } from './derived-fence'
 import { surveyFiles, formatFileSurvey, type SurveyResult } from './file-survey'
 
 /** Default root for Claude Code's per-project memory dirs. */
@@ -398,6 +398,8 @@ export interface SynthesisMemory {
   redacted(kind: 'overview' | 'profile', hits: readonly string[]): void
   ownerDoc(): OwnerDoc
   memoryMd(): string | null
+  /** 这个对话生成物的过期围栏(架构终态 G8,在主库;以前是 .derived-state.json)。 */
+  fence: DerivedFence
 }
 
 export interface SynthesizeDeps {
@@ -472,7 +474,7 @@ async function buildOverviewSource(deps: SynthesizeDeps) {
 
 export async function synthesizeOverview(deps: SynthesizeDeps): Promise<SynthesizeResult> {
   const memoryRoot = join(deps.stateDir, 'memory', deps.adminChatId)
-  const revision = deps.dryRun ? readDerivedRevision(memoryRoot) : beginDerivedGeneration(memoryRoot)
+  const revision = deps.memory.fence.revision()
   const { projects, filesScanned, life, survey, prompt } = await buildOverviewSource(deps)
   const base: SynthesizeResult = {
     projectsFound: projects.length,
@@ -500,8 +502,9 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   const body = stripOwnerOverviewSection(redacted.text).trim()
   const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${ownerSection ? `${ownerSection}\n\n` : ''}${body}\n`
   let bytesWritten = 0
-  const committed = commitDerivedMemory(memoryRoot, 'overview', revision, () => {
-    bytesWritten = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped).bytesWritten
+  // 总览是生成物:写它不让源过期(fence 给 null);缓存进主库(memory_derived,架构终态 G8),磁盘上那份是导出
+  const committed = deps.memory.fence.commit('overview', revision, stamped, () => {
+    bytesWritten = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped, null).bytesWritten
   })
   return committed ? { ...base, overview: body, written: { path: OVERVIEW_FILENAME, bytesWritten } } : base
 }
@@ -762,9 +765,9 @@ function daysSince(iso: string): number | null {
   return Math.floor((Date.now() - t) / 86_400_000)
 }
 
-function readExistingProfile(stateDir: string, chatId: string): MemoryProfileDoc | null {
+function readExistingProfile(stateDir: string, chatId: string, fence: DerivedFence): MemoryProfileDoc | null {
   try {
-    const raw = readMemoryProfileFile(stateDir, chatId)
+    const raw = readMemoryProfileFile(stateDir, chatId, fence)
     const parsed = JSON.parse(raw)
     return parsed && typeof parsed === 'object' ? parsed as MemoryProfileDoc : null
   } catch {
@@ -774,7 +777,7 @@ function readExistingProfile(stateDir: string, chatId: string): MemoryProfileDoc
 
 async function buildProfileSource(opts: {
   /** memory.md 从表来(G6);画像的指纹要和合成时用的是同一份。 */
-  memory: Pick<SynthesisMemory, 'memoryMd'>
+  memory: Pick<SynthesisMemory, 'memoryMd' | 'fence'>
   stateDir: string
   adminChatId: string
   projectsRoot?: string
@@ -816,7 +819,7 @@ async function buildProfileSource(opts: {
 
 export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<SynthesizeProfileResult> {
   const memoryRoot = join(deps.stateDir, 'memory', deps.adminChatId)
-  const revision = deps.dryRun ? readDerivedRevision(memoryRoot) : beginDerivedGeneration(memoryRoot)
+  const revision = deps.memory.fence.revision()
   const source = await buildProfileSource(deps)
   const base: SynthesizeProfileResult = {
     projectsFound: source.stats.projectsFound,
@@ -844,7 +847,7 @@ export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<Sy
   if (redactedProfile.hits.length) deps.memory.redacted('profile', redactedProfile.hits)
   const body = `${JSON.stringify(redactedProfile.value, null, 2)}\n`
   let bytesWritten = 0
-  const committed = commitDerivedMemory(memoryRoot, 'profile', revision, () => {
+  const committed = deps.memory.fence.commit('profile', revision, body, () => {
     bytesWritten = writeMemoryProfileFile(deps.stateDir, deps.adminChatId, body).bytesWritten
   })
   return committed ? { ...base, profile: redactedProfile.value, written: { path: PROFILE_FILENAME, bytesWritten } } : base
@@ -852,7 +855,7 @@ export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<Sy
 
 export async function getMemoryProfileStatus(opts: {
   /** memory.md 从表来(G6);画像的指纹要和合成时用的是同一份。 */
-  memory: Pick<SynthesisMemory, 'memoryMd'>
+  memory: Pick<SynthesisMemory, 'memoryMd' | 'fence'>
   stateDir: string
   adminChatId: string
   projectsRoot?: string
@@ -861,12 +864,12 @@ export async function getMemoryProfileStatus(opts: {
   surveyRoots?: string[]
 }): Promise<MemoryProfileStatusResult> {
   const source = await buildProfileSource(opts)
-  const existing = readExistingProfile(opts.stateDir, opts.adminChatId)
+  const existing = readExistingProfile(opts.stateDir, opts.adminChatId, opts.memory.fence)
   const enough = hasEnoughProfileSource(source.stats)
   const generatedAt = existing?.generatedAt ?? null
   const minRefreshAfter = existing?.minRefreshAfter ?? (generatedAt ? addDays(generatedAt, AUTO_REFRESH_DAYS) : null)
   const previousSourceFingerprint = existing?.sourceFingerprint ?? null
-  const needsRefresh = isDerivedMemoryStale(join(opts.stateDir, 'memory', opts.adminChatId), 'profile')
+  const needsRefresh = opts.memory.fence.isStale('profile')
   const changed = needsRefresh || (previousSourceFingerprint ? previousSourceFingerprint !== source.fingerprint : false)
   const days = generatedAt ? daysSince(generatedAt) : null
   const oldEnough = days === null ? false : days >= AUTO_REFRESH_DAYS

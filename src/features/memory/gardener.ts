@@ -26,7 +26,7 @@
  *     successful write; repeated validation failures on the same content
  *     back off instead of retrying forever (see recordValidationFailure).
  */
-import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
+import type { DerivedFence } from '../../lib/derived-fence'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -57,6 +57,8 @@ export interface GardenerDeps {
   log: (tag: string, line: string) => void
   /** YYYY-MM-DD, injected — no `new Date()` inside this module. */
   today: string
+  /** 每个对话生成物的过期围栏(架构终态 G8,主库里);压缩了笔记 ⇒ 记一次 added。 */
+  fences: (chatId: string) => DerivedFence
 }
 
 export interface GardenResult {
@@ -421,7 +423,7 @@ export async function runGarden(deps: GardenerDeps): Promise<GardenResult> {
       // Safety rail 1: archive BEFORE overwrite.
       archiveOriginal(archiveRoot, item.chatId, item.relPath, today, item.content)
       // Then the atomic overwrite. 压缩只是整理(原文已归档),生成物只是不全 ⇒ 'added'(3e 记忆第 2 步)。
-      invalidateDerivedMemory(join(memoryRoot, item.chatId), 'added')
+      deps.fences(item.chatId).invalidate('added')
       atomicWriteFile(item.fullPath, curated)
 
       gardened++

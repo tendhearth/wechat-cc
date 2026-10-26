@@ -7,12 +7,11 @@
  * MCP. The desktop GUI / CLI need to enumerate ACROSS users, so this layer
  * sits one level up. Path-traversal protection mirrors memory-fs's logic.
  */
-import { invalidateDerivedMemory, type InvalidationReason } from './memory-derived-state'
+import type { DerivedFence, InvalidationReason } from './derived-fence'
 import { memoryArtifactKind } from './memory-artifacts'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { writeFileAtomic } from './json-file'
 import { dirname, join, relative, resolve } from 'node:path'
-import { isDerivedMemoryStale } from './memory-derived-state'
 import { OWNER_FILENAME } from './memory-owner'
 
 export interface MemoryFileEntry {
@@ -74,7 +73,8 @@ const PROFILE_FILENAME = '_profile.json'
 // user's file by id, so this top-level helper composes resolveSafe +
 // MemoryFS-equivalent atomic write logic without instantiating one
 // MemoryFS per user.
-export function writeMemoryFile(stateDir: string, userId: string, relPath: string, body: string, opts: { reason?: InvalidationReason } = {}): { bytesWritten: number; created: boolean } {
+/** `fence`:这个对话生成物的过期围栏(架构终态 G8,在主库)。写源要给;只写生成物(合成写回总览)可以给 null。 */
+export function writeMemoryFile(stateDir: string, userId: string, relPath: string, body: string, fence: DerivedFence | null, opts: { reason?: InvalidationReason } = {}): { bytesWritten: number; created: boolean } {
   const target = resolveSafe(stateDir, userId, relPath)
   // 主人原话只经记忆编辑写(lib/memory-owner),整份覆盖会绕过「删 = 更正、加 = 原话」那一步。
   if (relative(resolve(join(stateDir, 'memory', userId)), target).split('\\').join('/').toLowerCase() === OWNER_FILENAME) {
@@ -82,7 +82,10 @@ export function writeMemoryFile(stateDir: string, userId: string, relPath: strin
   }
   // 写的是源 ⇒ 先让这个对话的生成物过期(3e 记忆第 2 步)。主人在桌面编辑可能是删改 ⇒ 缺省 'retracted';
   // 合成写回 _overview.md 是生成物,不触发。
-  if (memoryArtifactKind(relPath) === 'source') invalidateDerivedMemory(join(stateDir, 'memory', userId), opts.reason ?? 'retracted')
+  if (memoryArtifactKind(relPath) === 'source') {
+    if (!fence) throw new Error('writing a memory source needs the derived fence')
+    fence.invalidate(opts.reason ?? 'retracted')
+  }
   const bytes = Buffer.byteLength(body, 'utf8')
   if (bytes > MAX_BYTES) {
     throw new Error(`body too large: ${bytes}B exceeds ${MAX_BYTES}B`)
@@ -93,13 +96,13 @@ export function writeMemoryFile(stateDir: string, userId: string, relPath: strin
   return { bytesWritten: bytes, created }
 }
 
-export function readMemoryProfileFile(stateDir: string, userId: string): string {
+export function readMemoryProfileFile(stateDir: string, userId: string, fence: DerivedFence): string {
   const target = resolveProfileSafe(stateDir, userId)
   if (!existsSync(target)) {
     throw new Error(`file not found: ${userId}/${PROFILE_FILENAME}`)
   }
   const content = readFileSync(target, 'utf8')
-  if (!isDerivedMemoryStale(dirname(target), 'profile')) return content
+  if (!fence.isStale('profile')) return content
   return JSON.stringify({ ...JSON.parse(content), needsRefresh: true })
 }
 
