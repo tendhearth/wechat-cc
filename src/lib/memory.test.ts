@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listAllMemory, readMemoryFile, writeMemoryFile, readMemoryProfileFile } from './memory'
-import { invalidateDerivedMemory } from './memory-derived-state'
+import { testFences } from '../test-support/memory-fences'
+// G8:生成物围栏在主库;一个测试文件一份内存主库
+const testFencesL = testFences()
 
 let stateDir: string
 
@@ -12,9 +14,9 @@ it('marks the preserved structured profile as needing refresh after review', () 
   const root = join(stateDir, 'memory', userId)
   const raw = JSON.stringify({ summary: 'old judgment', tags: [] })
   writeFileSync(join(root, '_profile.json'), raw)
-  expect(readMemoryProfileFile(stateDir, userId)).toBe(raw)
-  invalidateDerivedMemory(root)
-  expect(JSON.parse(readMemoryProfileFile(stateDir, userId))).toMatchObject({ summary: 'old judgment', needsRefresh: true })
+  expect(readMemoryProfileFile(stateDir, userId, testFencesL(userId))).toBe(raw)
+  testFencesL(userId).invalidate()
+  expect(JSON.parse(readMemoryProfileFile(stateDir, userId, testFencesL(userId)))).toMatchObject({ summary: 'old judgment', needsRefresh: true })
   expect(readFileSync(join(root, '_profile.json'), 'utf8')).toBe(raw)
 })
 
@@ -93,31 +95,31 @@ describe('writeMemoryFile', () => {
 
   it('owner.md (主人原话) cannot be overwritten wholesale — only via memory edit', () => {
     for (const p of ['owner.md', 'OWNER.md', './owner.md', 'x/../owner.md']) {
-      expect(() => writeMemoryFile(stateDir, USER, p, '- 我说的\n'), p).toThrow(/owner\.md/)
+      expect(() => writeMemoryFile(stateDir, USER, p, '- 我说的\n', testFencesL(USER)), p).toThrow(/owner\.md/)
     }
-    expect(() => writeMemoryFile(stateDir, USER, 'notes/owner.md', '普通笔记\n')).not.toThrow()
+    expect(() => writeMemoryFile(stateDir, USER, 'notes/owner.md', '普通笔记\n', testFencesL(USER))).not.toThrow()
   })
 
   it('writes a new file and reports created=true', () => {
-    const result = writeMemoryFile(stateDir, USER, 'fresh.md', '# 新笔记\n')
+    const result = writeMemoryFile(stateDir, USER, 'fresh.md', '# 新笔记\n', testFencesL(USER))
     expect(result.created).toBe(true)
     expect(result.bytesWritten).toBe(Buffer.byteLength('# 新笔记\n', 'utf8'))
     expect(readMemoryFile(stateDir, USER, 'fresh.md')).toBe('# 新笔记\n')
   })
 
   it('overwrites existing file with created=false', () => {
-    const result = writeMemoryFile(stateDir, USER, 'profile.md', '# 顾时瑞 (edited)\n')
+    const result = writeMemoryFile(stateDir, USER, 'profile.md', '# 顾时瑞 (edited)\n', testFencesL(USER))
     expect(result.created).toBe(false)
     expect(readMemoryFile(stateDir, USER, 'profile.md')).toBe('# 顾时瑞 (edited)\n')
   })
 
   it('auto-creates nested parent directories', () => {
-    writeMemoryFile(stateDir, USER, 'patterns/work/style.md', 'concise replies')
+    writeMemoryFile(stateDir, USER, 'patterns/work/style.md', 'concise replies', testFencesL(USER))
     expect(readMemoryFile(stateDir, USER, 'patterns/work/style.md')).toBe('concise replies')
   })
 
   it('uses atomic rename — partial state never visible', () => {
-    writeMemoryFile(stateDir, USER, 'profile.md', 'final content')
+    writeMemoryFile(stateDir, USER, 'profile.md', 'final content', testFencesL(USER))
     // No .tmp- artifacts left behind
     const userDir = join(stateDir, 'memory', USER)
     const tmpFiles = readdirSync(userDir).filter(n => n.includes('.tmp-'))
@@ -126,34 +128,34 @@ describe('writeMemoryFile', () => {
 
   it('refuses bodies larger than 100KB', () => {
     const tooBig = 'x'.repeat(101 * 1024)
-    expect(() => writeMemoryFile(stateDir, USER, 'huge.md', tooBig)).toThrow(/too large/)
+    expect(() => writeMemoryFile(stateDir, USER, 'huge.md', tooBig, testFencesL(USER))).toThrow(/too large/)
     // Failed write must not leave a partial file behind
     expect(existsSync(join(stateDir, 'memory', USER, 'huge.md'))).toBe(false)
   })
 
   it('refuses non-.md extensions', () => {
-    expect(() => writeMemoryFile(stateDir, USER, 'note.txt', 'x')).toThrow(/only \.md files/)
+    expect(() => writeMemoryFile(stateDir, USER, 'note.txt', 'x', testFencesL(USER))).toThrow(/only \.md files/)
   })
 
   it('refuses path traversal', () => {
-    expect(() => writeMemoryFile(stateDir, USER, '../../escape.md', 'x')).toThrow(/escapes/)
+    expect(() => writeMemoryFile(stateDir, USER, '../../escape.md', 'x', testFencesL(USER))).toThrow(/escapes/)
   })
 
   it('refuses null bytes', () => {
-    expect(() => writeMemoryFile(stateDir, USER, 'evil\0.md', 'x')).toThrow(/invalid path/)
+    expect(() => writeMemoryFile(stateDir, USER, 'evil\0.md', 'x', testFencesL(USER))).toThrow(/invalid path/)
   })
 
   it('refuses oversized paths', () => {
-    expect(() => writeMemoryFile(stateDir, USER, 'a'.repeat(501) + '.md', 'x')).toThrow(/invalid path/)
+    expect(() => writeMemoryFile(stateDir, USER, 'a'.repeat(501) + '.md', 'x', testFencesL(USER))).toThrow(/invalid path/)
   })
 
   it('refuses unsafe user ids', () => {
-    expect(() => writeMemoryFile(stateDir, '../etc', 'note.md', 'x')).toThrow(/invalid user id/)
+    expect(() => writeMemoryFile(stateDir, '../etc', 'note.md', 'x', testFencesL('../etc'))).toThrow(/invalid user id/)
   })
 
   it('roundtrips UTF-8 multibyte content faithfully', () => {
     const body = '# 你好世界 🍣\n\n表情符号 + 中文应该原样保留'
-    writeMemoryFile(stateDir, USER, 'i18n.md', body)
+    writeMemoryFile(stateDir, USER, 'i18n.md', body, testFencesL(USER))
     const stored = readFileSync(join(stateDir, 'memory', USER, 'i18n.md'), 'utf8')
     expect(stored).toBe(body)
   })
@@ -166,16 +168,15 @@ describe('writeMemoryFile × derived memory', () => {
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
     const { writeMemoryFile } = await import('./memory')
-    const { derivedMemoryStatus } = await import('./memory-derived-state')
     const stateDir = mkdtempSync(join(tmpdir(), 'memory-src-'))
     try {
       const chat = join(stateDir, 'memory', 'owner1')
-      writeMemoryFile(stateDir, 'owner1', '_overview.md', 'synth')
-      expect(derivedMemoryStatus(chat, 'overview')).toBe('fresh')
-      writeMemoryFile(stateDir, 'owner1', 'notes/a.md', 'x', { reason: 'added' })
-      expect(derivedMemoryStatus(chat, 'overview')).toBe('added')
-      writeMemoryFile(stateDir, 'owner1', 'memory.md', 'owner edit')
-      expect(derivedMemoryStatus(chat, 'overview')).toBe('retracted')
+      writeMemoryFile(stateDir, 'owner1', '_overview.md', 'synth', testFencesL('owner1'))
+      expect(testFencesL('owner1').status('overview')).toBe('fresh')
+      writeMemoryFile(stateDir, 'owner1', 'notes/a.md', 'x', testFencesL('owner1'), { reason: 'added' })
+      expect(testFencesL('owner1').status('overview')).toBe('added')
+      writeMemoryFile(stateDir, 'owner1', 'memory.md', 'owner edit', testFencesL('owner1'))
+      expect(testFencesL('owner1').status('overview')).toBe('retracted')
     } finally { rmSync(stateDir, { recursive: true, force: true }) }
   })
 })

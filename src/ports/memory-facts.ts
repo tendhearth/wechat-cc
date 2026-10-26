@@ -38,6 +38,13 @@ export interface RetractOpts {
 export interface RetractReceipt { key: string; targets: string[] }
 
 export interface MemoryFactsStore {
+  /** 这个对话生成物(总览 / 画像)的过期围栏(架构终态 G8;以前是 .derived-state.json)。 */
+  fence(chatId: string): import('../lib/derived-fence').DerivedFence
+  /**
+   * 开机导入用:把一个对话旧的围栏状态(以及磁盘上的生成物原文)放进表。`fresh[kind]` = 旧围栏说它是新的;
+   * `retracted[kind]` = 过期是因为收回。表里已经有这个对话的围栏 ⇒ 什么都不做。
+   */
+  importFence(chatId: string, s: { fresh: Record<'overview' | 'profile', boolean>; retracted: Record<'overview' | 'profile', boolean>; bodies: Partial<Record<'overview' | 'profile', { body: string; at: number }>> }, at: number): boolean
   /** 联系人事实(架构终态 G7:以前在 facts.db;知识库的店面把这一块交给它)。 */
   contactFacts: import('./knowledge').KnowledgeFactsStore
   /**

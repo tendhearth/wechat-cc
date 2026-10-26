@@ -36,7 +36,7 @@ export function recallFromMemory(
   chatId: string,
   query: string,
   /** memory.md / owner.md 从主库的表来(G6);null ⇒ 这两份跳过。 */
-  facts: Pick<MemoryWriter, 'memoryMd' | 'ownerMd'> | null,
+  facts: Pick<MemoryWriter, 'memoryMd' | 'ownerMd' | 'fence'> | null,
   limit = 3,
 ): string[] {
   // Same chatId-shape guard as main.ts's personaFor — the id feeds a path join.
@@ -52,7 +52,7 @@ export function recallFromMemory(
   let files: string[]
   let memory: ReturnType<typeof makeMemoryFS>
   try {
-    memory = makeMemoryFS({ rootDir: root })
+    memory = makeMemoryFS({ rootDir: root, fences: facts ? (c: string) => facts.fence(c) : null })
     files = memory.list().filter((f) => !EXCLUDED.has(f)).slice(0, MAX_FILES)
   } catch {
     return []

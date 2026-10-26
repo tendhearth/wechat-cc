@@ -14,6 +14,9 @@ import type { MemoryFactsStore } from '../../ports/memory-facts'
 import { renderMemoryForPrompt, renderMemoryMd, renderOwnerMd } from '../../domain/memory/render'
 import { renderCorrectionsMd } from '../../domain/memory/corrections'
 import { importChatMemory, importMemoryOnBoot } from './fact-import'
+import { testFences } from '../../test-support/memory-fences'
+// G8:生成物围栏在主库;这个文件一份内存主库
+const TEST_FENCES = testFences()
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'test-support', 'fixtures', 'memory')
 const golden = (rel: string) => readFileSync(join(FIXTURES, 'golden', rel), 'utf8')
@@ -160,8 +163,42 @@ describe('G6:readers read the table — after import the prompt sections equal G
     // 磁盘上的文件挪走也照读:读者已经不看文件了
     writeFileSync(join(root, 'memory.md'), '这份文件已经不是源了\n')
     writeFileSync(join(root, 'owner.md'), '这份也不是\n')
-    const reads = makeMemoryPromptReads({ stateDir, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }), facts: makeMemoryWriter({ store, stateDir }) })
+    const reads = makeMemoryPromptReads({ stateDir, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES }), facts: makeMemoryWriter({ store, stateDir }) })
     expect(reads.curatedMemoryFor(OWNER)).toBe(golden('owner/prompt-curated.txt').replace('- 下周要去杭州出差三天\n', '').replace('- 年糕是狸花猫\n', ''))
     expect(reads.ownerMemoryFor(OWNER)).toBe(golden('owner/prompt-owner.txt'))
+  })
+})
+
+describe('G8:旧的 .derived-state.json 与生成物原文进主库;串门读主库缓存', () => {
+  it('imports a stale-by-retraction fence and caches the old overview; the outward overview is then withheld until regenerated', async () => {
+    const { importDerivedState } = await import('./fact-import')
+    const { overviewForOthersFromTable } = await import('./memory-export')
+    writeFileSync(join(root, '_overview.md'), '<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · 2026-10-20 -->\n\n## 你写的\n- 原话 <!-- o:a1 -->\n\n## 这个人\n在杭州做开发\n')
+    writeFileSync(join(root, '.derived-state.json'), JSON.stringify({ version: 1, revision: 'r2', overview: 'r1', profile: 'r2', retracted: { overview: true, profile: false } }))
+    expect(importDerivedState(store, root, OWNER, 1)).toBe(true)
+    expect(importDerivedState(store, root, OWNER, 2)).toBe(false)              // 已经有了:不再导
+    const f = store.fence(OWNER)
+    expect(f.status('overview')).toBe('retracted')
+    expect(f.status('profile')).toBe('fresh')
+    expect(overviewForOthersFromTable(db, OWNER)).toBe('')                  // 因收回过期 ⇒ 不给
+    f.commit('overview', f.revision(), readFileSync(join(root, '_overview.md'), 'utf8'), () => {})
+    const out = overviewForOthersFromTable(db, OWNER)
+    expect(out).toContain('在杭州做开发')
+    expect(out).not.toContain('原话')                                        // 「你写的」一节对外去掉
+    f.invalidate('added')
+    expect(overviewForOthersFromTable(db, OWNER)).toMatch(/^> \(这份整体理解是 \d{4}-\d{2}-\d{2} 整理的/)
+  })
+  it('no old fence file ⇒ fresh (as before); a corrupt one ⇒ both hidden', async () => {
+    const { importDerivedState } = await import('./fact-import')
+    writeFileSync(join(root, '_overview.md'), 'x')
+    importDerivedState(store, root, OWNER, 1)
+    expect(store.fence(OWNER).status('overview')).toBe('fresh')
+    const other = join(stateDir, 'memory', 'c2')
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(other, { recursive: true })
+    writeFileSync(join(other, '.derived-state.json'), '{ broken')
+    importDerivedState(store, other, 'c2', 1)
+    expect(store.fence('c2').status('overview')).toBe('retracted')
+    expect(store.fence('c2').status('profile')).toBe('retracted')
   })
 })

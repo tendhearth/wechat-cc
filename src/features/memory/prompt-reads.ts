@@ -23,7 +23,8 @@ export interface MemoryPromptReads {
 /** `facts`:memory.md / owner.md 从主库的表读(架构终态 G6;没搬进表的对话由它照旧读文件)。 */
 export function makeMemoryPromptReads(d: { stateDir: string; memory: MemoryFS; facts: Pick<MemoryWriter, 'memoryDoc' | 'ownerDoc'> }): MemoryPromptReads {
   const { stateDir } = d
-  const memoryOf = (c: string) => makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
+  // 只读人格 / 画像 / 知识这几份(不碰总览、不写源)⇒ 不要围栏
+  const memoryOf = (c: string) => makeMemoryFS({ rootDir: join(stateDir, 'memory', c), fences: null })
   return {
     // persona design §2 — owner chat's persona.md, read fresh per spawn; cultivate only in the owner's own chat.
     personaFor: (c: string) => {

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const READERS: Record<string, { kind: 'owner' | 'outward'; why: string }> = {
-  'src/features/social/wire-visit.ts': { kind: 'outward', why: '串门「CC 眼中的主人」,进别人 CC 的 prompt' },
+  'src/features/memory/fact-import.ts': { kind: 'owner', why: '架构终态 G8 开机导入:旧的 _overview.md 原文缓存进主库(memory_derived)' },
   'src/lib/memory-synthesis.ts': { kind: 'owner', why: '写它的人(合成)' },
   'src/lib/memory-artifacts.ts': { kind: 'owner', why: '清单登记它是生成物' },
   'src/lib/memory-edit.ts': { kind: 'owner', why: '记忆编辑能编辑的路径之一' },
@@ -55,6 +55,13 @@ describe('_overview.md 的读者都登记过;对外的去掉主人原话', () =>
   it('对外的读者都调了 overviewForOthers', () => {
     const missing = Object.entries(READERS).filter(([rel, r]) => r.kind === 'outward' && !/\boverviewForOthers\(/.test(read(rel))).map(([rel]) => rel)
     expect(missing).toEqual([])
+  })
+  // 架构终态 G8:对外(串门「CC 眼中的主人」)不再读 _overview.md 文件,读主库缓存;那一处在 overviewForOthersFromTable,
+  // 照样必须经 overviewForOthers 去掉主人原话那一节。串门只经它拿总览。
+  it('对外的总览只经 overviewForOthersFromTable(主库缓存 + overviewForOthers)', () => {
+    expect(read('src/adapters/store/memory-overview.ts')).toMatch(/export function overviewForOthersFromTable[\s\S]*?overviewForOthers\(/)
+    expect(read('src/features/social/wire-social.ts')).toMatch(/ownerOverviewForOthers: \(owner\) => overviewForOthersFromTable\(/)
+    expect(mentionsOverview(read('src/features/social/wire-visit.ts'))).toBe(false)
   })
   it('名单里没有过期的(不再提到就删掉那一行)', () => {
     expect(Object.keys(READERS).filter(rel => !mentionsOverview(read(rel)))).toEqual([])

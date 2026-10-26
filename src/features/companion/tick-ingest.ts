@@ -53,7 +53,7 @@ export const INGEST_QUIET_MS = 3 * 60_000
 export async function distillAndPushOwnerKnowledge(deps: TickDeps, ownerChat: string): Promise<void> {
   try {
     const digest = await distillOwnerKnowledge(deps.boot.knowledge)
-    const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', ownerChat) })
+    const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', ownerChat), fences: null })   // 只写 knowledge.md(生成物)
     // 内容没变就不写、不记(10-13:每轮 ~20 分钟都重写同样的 540 字并记一行,纯噪声)
     if (digest) { if (fs.read('knowledge.md') !== digest) { fs.write('knowledge.md', digest); deps.log('INGEST', `distilled knowledge.md for ${ownerChat} (${digest.length} chars)`) } }
     else if (fs.read('knowledge.md')) fs.delete('knowledge.md')

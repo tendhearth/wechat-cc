@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { testFences } from '../../test-support/memory-fences'
 import {
   contentOverlap,
   MAX_GARDEN_CURATED_BYTES,
@@ -87,6 +88,7 @@ describe('runGarden', () => {
       archiveRoot,
       stateFile,
       cheapEval: async () => 'curated content',
+      fences: testFences(),
       log: (tag, line) => { logs.push(`${tag}|${line}`) },
       today: TODAY,
       ...overrides,

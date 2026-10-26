@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import { defaultClaudeProjectsRoot } from '../../lib/memory-synthesis'
-import { invalidateDerivedMemory, isDerivedMemoryStale } from '../../lib/memory-derived-state'
+import type { DerivedFence } from '../../lib/derived-fence'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
 import { makeObservationsStore } from '../../daemon/observations/store'
 import { makeMilestonesStore } from '../../daemon/milestones/store'
@@ -22,6 +22,8 @@ export interface MemoryReviewDeps {
    * 在审阅落库之后调,失败不影响审阅本身;不是主人自己的对话由运行时忽略。
    */
   retract?: (chatId: string, text: string, verdict: 'wrong' | 'outdated') => void
+  /** 每个对话生成物的过期围栏(架构终态 G8,主库里)。 */
+  fences: (chatId: string) => DerivedFence
 }
 
 type Kind = 'memory' | 'observation' | 'milestone' | 'project'
@@ -77,7 +79,7 @@ function legacyFile(root: string, name: string): string | undefined {
 
 function readSource(deps: MemoryReviewDeps, key: SourceKey): Source {
   const root = chatRoot(deps, key.chat_id)
-  const needsRefresh = isDerivedMemoryStale(root, 'overview') || isDerivedMemoryStale(root, 'profile')
+  const needsRefresh = deps.fences(key.chat_id).isStale('overview') || deps.fences(key.chat_id).isStale('profile')
   if (key.kind === 'memory' || key.kind === 'project') {
     let sourceRoot = root
     if (key.kind === 'project') {
@@ -154,9 +156,10 @@ export function memoryReviewRoutes(deps: MemoryReviewDeps): RouteTable {
         if (source.archived) fail(409, 'source_changed')
         if (!source.editable) fail(403, 'source_read_only')
         const root = chatRoot(deps, key.chat_id)
-        invalidateDerivedMemory(root)
+        // 围栏在主库(G8):观察的审阅在一个事务里,围栏要在事务外先记,事务回滚了它也照样是过期的(往保守那边走)
+        if (!(key.kind === 'observation' && deps.db)) deps.fences(key.chat_id).invalidate()
         if (key.kind === 'memory') {
-          makeMemoryFS({ rootDir: root, maxFileBytes: 100 * 1024 }).write(key.path!, input.content as string)
+          makeMemoryFS({ rootDir: root, maxFileBytes: 100 * 1024, fences: () => deps.fences(key.chat_id) }).write(key.path!, input.content as string)
           return { ok: true, needsRefresh: true, revision: readSource(deps, key).revision }
         }
         const db = deps.db!
@@ -175,6 +178,7 @@ export function memoryReviewRoutes(deps: MemoryReviewDeps): RouteTable {
       // SQLite keeps archiving, replacement and audit inseparable. The metadata
       // fence intentionally stays stale even if a database transaction rolls back.
       const before = key.kind === 'observation' ? readSource(deps, key).row?.body ?? null : null
+      if (key.kind === 'observation' && deps.db) deps.fences(key.chat_id).invalidate()
       const out = key.kind === 'observation' && deps.db ? deps.db.transaction(commit)() : commit()
       if (before) deps.retract?.(key.chat_id, before, input.action === 'outdated' ? 'outdated' : 'wrong')
       return out

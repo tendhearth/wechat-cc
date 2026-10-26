@@ -1,6 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { makeMemoryLlmOps, resolveCheapEval } from './llm-ops'
-import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
+import { openTestDb } from '../../lib/db'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+// G8:生成物围栏在主库;portrait 的测试和 llm-ops 用同一个库
+let DB = openTestDb()
+beforeEach(() => { DB = openTestDb() })
+const invalidate = () => makeMemoryFactsStore(DB).fence('admin1').invalidate()
 
 // 这个测试和 llm-ops.ts 都在 src/features/memory/ 下(原 src/daemon/memory-llm-ops.*),
 // mock 的相对路径要和实现里的动态 import 一致。
@@ -14,7 +19,7 @@ vi.mock('../../daemon/life-stores', () => ({ makeLifeStoresReader: () => ({}) })
 function make(over: Record<string, any> = {}) {
   const cheapEval = vi.fn(async (p: string) => `EVAL:${p}`)
   const deps = {
-    stateDir: '/tmp/s', db: {} as any,
+    stateDir: '/tmp/s', db: DB as any,
     getMode: vi.fn(() => ({ kind: 'solo', provider: 'claude' })),
     registry: { get: vi.fn(() => ({ provider: { cheapEval } })), getCheapEval: () => cheapEval },
     ...over,
@@ -66,7 +71,7 @@ describe('generatePortrait (CC 手绘小像)', () => {
     const root = join(stateDir, 'memory', 'admin1')
     writeFileSync(join(root, '_profile.json'), JSON.stringify({ summary: 'stale profile' }))
     writeFileSync(join(root, 'profile.md'), 'canonical fresh profile')
-    invalidateDerivedMemory(root)
+    invalidate()
     const { ops, cheapEval } = make({ stateDir })
     cheapEval.mockResolvedValueOnce(GOOD_SVG)
     expect((await ops.generatePortrait('admin1')).ok).toBe(true)
@@ -78,7 +83,7 @@ describe('generatePortrait (CC 手绘小像)', () => {
     const stateDir = seedState()
     const { ops, cheapEval } = make({ stateDir })
     cheapEval.mockImplementationOnce(async () => {
-      invalidateDerivedMemory(join(stateDir, 'memory', 'admin1'))
+      invalidate()
       return GOOD_SVG
     })
     expect(await ops.generatePortrait('admin1')).toMatchObject({ ok: false, error: 'source_changed' })

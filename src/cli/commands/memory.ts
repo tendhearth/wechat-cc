@@ -93,7 +93,7 @@ const memoryWriteCmd = defineCommand({
         }
         throw new Error(up ? refusal : `${refusal}。守护进程现在没在跑,先开起来才能逐行改`)
       }
-      const result = writeMemoryFile(STATE_DIR, args.userId, args.path, body)
+      const result = writeMemoryFile(STATE_DIR, args.userId, args.path, body, (await import('../../features/memory')).memoryFactsFor((await import('../../lib/db')).openWechatDb(STATE_DIR), STATE_DIR).fence(args.userId))
       if (args.json) console.log(JSON.stringify(MemoryWriteOutput.parse({ ok: true, userId: args.userId, path: args.path, ...result }), null, 2))
       else console.log(`${result.created ? 'created' : 'updated'}: ${args.userId}/${args.path} (${result.bytesWritten}B)`)
     } catch (err) {
@@ -117,7 +117,7 @@ const memoryProfileReadCmd = defineCommand({
   async run({ args }) {
     const { readMemoryProfileFile } = await import('../../lib/memory.ts')
     try {
-      const content = readMemoryProfileFile(STATE_DIR, args.userId)
+      const content = readMemoryProfileFile(STATE_DIR, args.userId, (await import('../../features/memory')).memoryFactsFor((await import('../../lib/db')).openWechatDb(STATE_DIR), STATE_DIR).fence(args.userId))
       if (args.json) console.log(JSON.stringify(MemoryReadOutput.parse({ ok: true, userId: args.userId, path: '_profile.json', content }), null, 2))
       else process.stdout.write(content)
     } catch (err) {

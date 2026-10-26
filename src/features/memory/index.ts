@@ -35,7 +35,7 @@ export { wireMemory, type WireMemoryDeps } from './wire'
 export { makeMemoryLlmOps, resolveCheapEval, type MemoryLlmOps } from './llm-ops'
 export { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './curated-doc'
 export { makeMemoryImportCommand } from './import-command'
-export { synthesisMemoryFor, memoryFactsFor } from './memory-export'
+export { synthesisMemoryFor, memoryFactsFor, overviewForOthersFromTable } from './memory-export'
 export { RESTORE_NOTE } from './routes'
 export { retractOnFactStatus } from './fact-status'
 export { formatNightlyReply, type NightlyRunResult } from './nightly-notify'
@@ -85,7 +85,7 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
         ...memoryFsRoutes({ memory: d.memory, db: d.db, facts: memoryFactsFor(d.db, d.stateDir), log: d.log }),
         ...memoryRoutes({ stateDir: d.stateDir, memoryLlm: d.memoryLlm, memoryNightly: d.memoryNightly, resolveAdminChatId: d.resolveAdminChatId }),
         ...memoryReviewRoutes({
-          stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId,
+          stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId, fences: makeMemoryFactsStore(d.db).fence,
           retract: (chatId, text, verdict) => {
             const n = d.memoryNightly()
             if (n) void n.retractText(chatId, text, verdict, '观察').catch(err => d.log('MEMORY_NIGHTLY', `review retract failed: ${err instanceof Error ? err.message : String(err)}`))

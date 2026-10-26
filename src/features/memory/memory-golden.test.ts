@@ -30,6 +30,9 @@ import { importFactsDb } from '../../adapters/knowledge/facts-import'
 import { makeFactsApi } from '../../domain/knowledge/facts'
 import { makeGraphQueryApi } from '../../domain/knowledge/graph-query'
 import { distillOwnerKnowledge } from '../companion/knowledge-distill'
+import { testFences } from '../../test-support/memory-fences'
+// G8:生成物围栏在主库;这个文件一份内存主库
+const TEST_FENCES = testFences()
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const MEMORY_FIXTURES = join(HERE, '..', '..', 'test-support', 'fixtures', 'memory')
@@ -93,7 +96,7 @@ async function produce(): Promise<Record<string, string>> {
   if (knowledge) writeFileSync(join(memoryDir('owner'), 'knowledge.md'), knowledge)
 
   // G6 起 memory.md / owner.md 经导出器读;这里的表是空的(没导入)⇒ 走「没搬进表」那条路读夹具文件,产出必须和 G0 一样
-  const reads = makeMemoryPromptReads({ stateDir, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }), facts: makeMemoryWriter({ store: makeMemoryFactsStore(openTestDb()), stateDir }) })
+  const reads = makeMemoryPromptReads({ stateDir, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES }), facts: makeMemoryWriter({ store: makeMemoryFactsStore(openTestDb()), stateDir }) })
   for (const name of Object.keys(CHATS) as ChatName[]) {
     const chat = CHATS[name]
     const mem = read(name, 'memory.md')

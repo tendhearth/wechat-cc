@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { openTestDb, type Db } from '../../lib/db'
-import { isDerivedMemoryStale, readDerivedRevision } from '../../lib/memory-derived-state'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import { makeObservationsStore } from '../../daemon/observations/store'
 import { makeMilestonesStore } from '../../daemon/milestones/store'
 import { makeEventsStore } from '../../daemon/events/store'
@@ -19,7 +19,7 @@ describe('reviewed memory sources', () => {
     projectsRoot = join(stateDir, 'projects')
     mkdirSync(root, { recursive: true })
     db = openTestDb()
-    routes = memoryReviewRoutes({ stateDir, db, resolveAdminChatId: () => 'owner', projectsRoot })
+    routes = memoryReviewRoutes({ stateDir, db, resolveAdminChatId: () => 'owner', projectsRoot, fences: makeMemoryFactsStore(db).fence })
   })
   afterEach(() => { db.close(); rmSync(stateDir, { recursive: true, force: true }) })
   const get = (params: Record<string, string>) => routes['GET /v1/memory/source']!(new URLSearchParams({ chat_id: 'owner', ...params }), null)
@@ -38,21 +38,21 @@ describe('reviewed memory sources', () => {
     expect(response.body).toMatchObject({ ok: true, needsRefresh: true })
     expect(readFileSync(join(root, 'note.md'), 'utf8')).toBe('corrected fact')
     expect(readFileSync(join(root, '_overview.md'), 'utf8')).toBe('preserved artifact')
-    expect(isDerivedMemoryStale(root, 'overview')).toBe(true)
-    expect(isDerivedMemoryStale(root, 'profile')).toBe(true)
+    expect(makeMemoryFactsStore(db).fence('owner').isStale('overview')).toBe(true)
+    expect(makeMemoryFactsStore(db).fence('owner').isStale('profile')).toBe(true)
     expect((await review({ kind: 'memory', path: 'note.md', revision, action: 'correct', content: 'overwrite' })).status).toBe(409)
     expect(readFileSync(join(root, 'note.md'), 'utf8')).toBe('corrected fact')
   })
 
   it('rejects missing, mismatched and externally modified note revisions without invalidating', async () => {
-    const initial = readDerivedRevision(root)
+    const initial = makeMemoryFactsStore(db).fence('owner').revision()
     expect((await review({ kind: 'memory', path: 'missing.md', revision: 'x', action: 'correct', content: 'x' })).status).toBe(404)
     writeFileSync(join(root, 'note.md'), 'before')
     const read = await get({ kind: 'memory', path: 'note.md' })
     writeFileSync(join(root, 'note.md'), 'external edit')
     expect((await review({ kind: 'memory', path: 'note.md', revision: (read.body as any).revision, action: 'correct', content: 'x' })).status).toBe(409)
     expect((await review({ kind: 'memory', path: 'note.md', action: 'correct', content: 'x' })).status).toBe(409)
-    expect(readDerivedRevision(root)).toBe(initial)
+    expect(makeMemoryFactsStore(db).fence('owner').revision()).toBe(initial)
   })
 
   it('archives the old observation, appends its correction, and records the audit together', async () => {
@@ -92,7 +92,7 @@ describe('reviewed memory sources', () => {
     expect(result.status).toBe(500)
     expect(await store.listActive()).toMatchObject([{ id, body: 'original' }])
     expect(await store.listArchived()).toEqual([])
-    expect(isDerivedMemoryStale(root, 'overview')).toBe(true)
+    expect(makeMemoryFactsStore(db).fence('owner').isStale('overview')).toBe(true)
   })
 
   it('permits only one of two competing reviews of the same observation', async () => {
@@ -110,7 +110,7 @@ describe('reviewed memory sources', () => {
     writeFileSync(join(root, 'note.md'), 'original')
     const api = createInternalApi({ stateDir, daemonPid: 1, db, resolveAdminChatId: () => 'owner' })
     // 这两条归记忆功能(路由表标 module: 'memory'),daemon 里由 memory 模块挂;这里照样挂上去。
-    api.mount('memory', memoryReviewRoutes({ stateDir, db, resolveAdminChatId: () => 'owner' }))
+    api.mount('memory', memoryReviewRoutes({ stateDir, db, resolveAdminChatId: () => 'owner', fences: makeMemoryFactsStore(db).fence }))
     const { port, tokenFilePath, operatorTokenFilePath } = await api.start()
     try {
       const url = `http://127.0.0.1:${port}/v1/memory/source?chat_id=owner&kind=memory&path=note.md`

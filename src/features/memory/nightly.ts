@@ -5,7 +5,6 @@
  */
 import { MIN_CORRECTED_CHARS } from '../../lib/memory-corrections'
 import { readOwnerDoc, renderOwnerForPrompt } from '../../lib/memory-owner'
-import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { writeFileAtomic } from '../../lib/json-file'
 import { nextSources, readSources, writeSources, SOURCE_EXCERPT_MAX, type SourceRef } from './sources'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
@@ -342,7 +341,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
       if (!existsSync(archivePath)) writeFileAtomic(archivePath, currentText)
     }
     // 每晚整理:源里多了 / 整理了东西,旧总览只是不全 ⇒ 'added'(3e 记忆第 2 步)。先记过期再写源。
-    invalidateDerivedMemory(root, 'added')
+    deps.writer.fence(owner).invalidate('added')
     deps.writer.commitMemory(owner, res.doc, { actor: 'nightly', ts: nowMs }, nowIso)
 
     // Only append expired-entry lines AFTER the rename succeeded — otherwise

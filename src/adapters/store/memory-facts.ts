@@ -2,6 +2,7 @@ import type { Db } from '../../lib/db'
 import type { DesiredFact, FactStatus, MemoryDerived, MemoryFactEvent, MemoryFactView } from '../../domain/memory/facts'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
 import type { FactRow, KnowledgeFactsStore } from '../../ports/knowledge'
+import type { DerivedFence, DerivedKind } from '../../lib/derived-fence'
 
 /** 联系人事实那几行的 chat_id(它们不属于哪个对话;设计稿说「记主人的 chat」,但主人会换、知识库不认主人,固定一个空串)。 */
 export const CONTACT_CHAT = ''
@@ -185,7 +186,70 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
     },
   }
 
+  // ---- 生成物的过期围栏(架构终态 G8)----------------------------------------------------------------------------
+  const fenceRow = (chatId: string) => db.query<{ rev: number; overview_retracted: number; profile_retracted: number }, [string]>(
+    'SELECT rev, overview_retracted, profile_retracted FROM memory_source_revisions WHERE chat_id = ?').get(chatId) ?? null
+  const fence = (chatId: string): DerivedFence => {
+    const rev = () => fenceRow(chatId)?.rev ?? 0
+    const derivedRev = (kind: DerivedKind) => db.query<{ r: number }, [string, string]>('SELECT input_rev AS r FROM memory_derived WHERE chat_id = ? AND kind = ?').get(chatId, kind)?.r ?? null
+    // 没有围栏行(从没改过源)⇒ 生成物算新的(和以前没有 .derived-state.json 时一样)
+    const fresh = (kind: DerivedKind) => { const row = fenceRow(chatId); return !row || derivedRev(kind) === row.rev }
+    const self: DerivedFence = {
+      revision: rev,
+      isStale: (kind) => !fresh(kind),
+      status(kind) {
+        if (fresh(kind)) return 'fresh'
+        return (fenceRow(chatId)?.[`${kind}_retracted`] ?? 1) ? 'retracted' : 'added'
+      },
+      invalidate(reason = 'retracted') {
+        atomically(() => {
+          const row = fenceRow(chatId)
+          // 已经因为 retracted 过期、还没重新生成的,别被一次 added 冲掉
+          const flag = (kind: DerivedKind) => (reason === 'retracted' ? 1 : (!row || fresh(kind)) ? 0 : row[`${kind}_retracted`])
+          const o = flag('overview'), p = flag('profile'), next = (row?.rev ?? 0) + 1
+          db.query(`INSERT INTO memory_source_revisions(chat_id, rev, overview_retracted, profile_retracted, updated_at) VALUES (?,?,?,?,?)
+            ON CONFLICT(chat_id) DO UPDATE SET rev = excluded.rev, overview_retracted = excluded.overview_retracted, profile_retracted = excluded.profile_retracted, updated_at = excluded.updated_at`)
+            .run(chatId, next, o, p, Date.now())
+        })
+      },
+      commit(kind, expectedRevision, body, write) {
+        if (rev() !== expectedRevision) return false
+        write()
+        if (rev() !== expectedRevision) return false   // 同步写的时候源又被改了:不盖住更新的围栏
+        atomically(() => {
+          db.query(`INSERT INTO memory_derived(chat_id, kind, body, input_rev, generated_at) VALUES (?,?,?,?,?)
+            ON CONFLICT(chat_id, kind) DO UPDATE SET body = excluded.body, input_rev = excluded.input_rev, generated_at = excluded.generated_at`)
+            .run(chatId, kind, body, expectedRevision, Date.now())
+          if (fenceRow(chatId)) db.query(`UPDATE memory_source_revisions SET ${kind}_retracted = 0 WHERE chat_id = ?`).run(chatId)
+          else db.query('INSERT INTO memory_source_revisions(chat_id, rev, updated_at) VALUES (?, 0, ?)').run(chatId, Date.now())
+        })
+        return true
+      },
+      body: (kind) => db.query<{ body: string }, [string, string]>('SELECT body FROM memory_derived WHERE chat_id = ? AND kind = ?').get(chatId, kind)?.body || null,
+      generatedAt: (kind) => db.query<{ at: number }, [string, string]>('SELECT generated_at AS at FROM memory_derived WHERE chat_id = ? AND kind = ?').get(chatId, kind)?.at ?? null,
+    }
+    return self
+  }
+
   return {
+    fence,
+    importFence(chatId, st, at) {
+      return atomically(() => {
+        if (fenceRow(chatId)) return false
+        const stale = !st.fresh.overview || !st.fresh.profile
+        const r = stale ? 1 : 0
+        db.query('INSERT INTO memory_source_revisions(chat_id, rev, overview_retracted, profile_retracted, updated_at) VALUES (?,?,?,?,?)')
+          .run(chatId, r, st.fresh.overview ? 0 : st.retracted.overview ? 1 : 0, st.fresh.profile ? 0 : st.retracted.profile ? 1 : 0, at)
+        for (const kind of ['overview', 'profile'] as const) {
+          // 没有原文、旧围栏说它是新的 ⇒ 记一行空正文,只为了「新」这个状态(读正文的把空当没有)
+          const b = st.bodies[kind] ?? (st.fresh[kind] ? { body: '', at } : null)
+          if (!b) continue
+          db.query(`INSERT INTO memory_derived(chat_id, kind, body, input_rev, generated_at) VALUES (?,?,?,?,?)
+            ON CONFLICT(chat_id, kind) DO NOTHING`).run(chatId, kind, b.body, st.fresh[kind] ? r : r - 1, b.at)
+        }
+        return true
+      })
+    },
     contactFacts,
     contactIdFloor,
     contactFactByText: (contact, predicate, value) => rows(`${FACT_SELECT} AND subject = ? AND predicate = ? AND text = ?`, contact, predicate, value)[0] ?? null,

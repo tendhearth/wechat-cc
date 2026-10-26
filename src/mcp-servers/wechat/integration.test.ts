@@ -17,6 +17,9 @@ import { setupAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from '../../daemon/boo
 import { acpMcpServersFor } from '../../adapters/executors/acp/acp-cursor-chat'
 import { socialRoutes } from '../../features/social/routes'
 import { memoryFsRoutes } from '../../features/memory/fs-routes'
+import { testFences } from '../../test-support/memory-fences'
+// G8:生成物围栏在主库;这个文件一份内存主库
+const TEST_FENCES = testFences()
 
 // 记忆文件的四条路由归记忆功能(src/features/memory,路由表标 module: 'memory'),daemon 里由 memory 模块挂;测试照样挂上去。
 function withMemoryRoutes(api: InternalApi, memory: MemoryFS, db?: Db): InternalApi {
@@ -73,7 +76,7 @@ describe('wechat-mcp stdio integration', () => {
   })
 
   async function bootChain(opts: { admin?: boolean } = {}): Promise<{ client: Client }> {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
     api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777 }), memory)
     const { port, tokenFilePath } = await api.start()
 
@@ -221,7 +224,7 @@ describe('wechat-mcp stdio integration', () => {
   })
 
   async function bootChainWithDb(): Promise<{ client: Client; db: Db }> {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
     const db = openTestDb()
     api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777, db }), memory, db)
     const { port, tokenFilePath } = await api.start()
@@ -274,7 +277,7 @@ describe('wechat-mcp stdio integration', () => {
   // ── B3: projects + set_user_name end-to-end ─────────────────────────────
 
   async function bootChainWithProjects(): Promise<{ client: Client; setUserNameCalls: Array<[string, string]>; switchToCalls: string[] }> {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
     const setUserNameCalls: Array<[string, string]> = []
     const switchToCalls: string[] = []
     const projects = {
@@ -348,7 +351,7 @@ describe('wechat-mcp stdio integration', () => {
   // ── B5: share_page / resurface_page end-to-end ────────────────────────
 
   it('share_page publishes then resurface_page returns the same record (legacy wire shapes preserved)', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
     const published = new Map<string, { url: string; slug: string; title: string }>()
     const sharePage = async (
       title: string,
@@ -418,7 +421,7 @@ describe('wechat-mcp stdio integration', () => {
   // ── B6: companion proactive-tick controls end-to-end ──────────────────
 
   it('companion enable → snooze → status round-trips through stdio + HTTP', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
     let enabled = false
     let snoozeUntil: string | null = null
     const companion = {
@@ -490,7 +493,7 @@ describe('wechat-mcp stdio integration', () => {
   })
 
   it('save_voice_config → voice_config_status round-trips through stdio + HTTP', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
     let stored: { provider: 'http_tts'; default_voice: string; base_url: string; model: string; saved_at: string } | null = null
     const voice = {
       replyVoice: async (): Promise<{ ok: false; reason: string }> => ({ ok: false, reason: 'unused_in_voice_config_test' }),

@@ -21,7 +21,7 @@ const OVERVIEW_FILENAME = '_overview.md'
 /**
  * `facts`:memory.md / owner.md 的内容从主库的表来(架构终态 G6,经导出器);null = 没有表可问(只测文件层的单测),这两份跳过。
  */
-export async function buildMemorySnapshot(stateDir: string, chatId: string, facts: Pick<MemoryWriter, 'memoryMd' | 'ownerMd'> | null): Promise<string> {
+export async function buildMemorySnapshot(stateDir: string, chatId: string, facts: Pick<MemoryWriter, 'memoryMd' | 'ownerMd' | 'fence'> | null): Promise<string> {
   if (!chatId || chatId.includes('..') || /[\\/\0]/.test(chatId)) return ''
   const dir = join(stateDir, 'memory', chatId)
   if (!existsSync(dir)) return ''
@@ -36,7 +36,7 @@ export async function buildMemorySnapshot(stateDir: string, chatId: string, fact
     return a.localeCompare(b)
   })
   const out: string[] = []
-  const memory = makeMemoryFS({ rootDir: dir })
+  const memory = makeMemoryFS({ rootDir: dir, fences: facts ? (c: string) => facts.fence(c) : null })
   for (const name of names) {
     try {
       // No async gap between freshness check and returning the snapshot.

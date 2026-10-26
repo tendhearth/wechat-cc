@@ -6,7 +6,6 @@ import { recallFromMemory } from './recall'
 import { memoryFactsFor } from './memory-export'
 import { openTestDb } from '../../lib/db'
 // G6:memory.md / owner.md 经导出器读;表是空的 ⇒ 读夹具文件
-import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 
 describe('recallFromMemory', () => {
   let stateDir: string
@@ -24,8 +23,9 @@ describe('recallFromMemory', () => {
 
   it('excludes invalidated generated memories from future recall', () => {
     seed('c1', { '_overview.md': '上海出差以前的判断', 'notes/a.md': '上海出差修正后的笔记' })
-    invalidateDerivedMemory(join(stateDir, 'memory', 'c1'))
-    expect(recallFromMemory(stateDir, 'c1', '上海出差', facts())).toEqual(['[notes/a.md] 上海出差修正后的笔记'])
+    const f = facts()
+    f.fence('c1').invalidate()
+    expect(recallFromMemory(stateDir, 'c1', '上海出差', f)).toEqual(['[notes/a.md] 上海出差修正后的笔记'])
   })
 
   it('finds matching lines across memory files, tagged with their file', () => {
