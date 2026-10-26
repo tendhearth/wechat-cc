@@ -10,7 +10,7 @@ import type { Db } from '../../lib/db'
 import type { WechatProjectsDep } from '../wechat-tool-deps'
 import type { Journal } from '../../adapters/store/journal-store'
 import type { ReplySinks } from '../reply-sinks'
-import type { ConversationStore } from '../../adapters/store/conversation-store'
+import type { ConversationStore } from '../../ports/conversation-store'
 import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { UserTier } from '../../domain/user-tier'
@@ -234,8 +234,8 @@ export interface InternalApiDeps {
    * When absent, POST /v1/a2a/send returns 503.
    */
   a2a?: {
-    registry: import('../../adapters/a2a/a2a-registry').A2ARegistry
-    client: import('../../adapters/a2a/a2a-client').A2AClient
+    registry: import('../../ports/a2a').A2ARegistry
+    client: import('../../ports/a2a').A2AClient
     /** Read/write events store — used by dashboard activity + counts routes. */
     eventsStore: import('../../adapters/store/a2a-events-store').A2AEventsStore
     recordEvent: (event: {
@@ -260,7 +260,7 @@ export interface InternalApiDeps {
    * 只写结构:internal-api 不能 import 功能目录(功能的模块清单要引这里的类型,会成环)。
    */
   socialView?: {
-    channelStore: Pick<import('../../adapters/store/penpal-channel-store').ChannelStore, 'list'>
+    channelStore: Pick<import('../../ports/penpal-channel').ChannelStore, 'list'>
     letterStore: { listForChannel(channelId: string): ReadonlyArray<{ kind: string; payload: string | null; created_at: string; direction: 'in' | 'out' }> }
     activeVisit(): import('../../domain/companion-presence').ActiveVisit | null
   }
@@ -299,7 +299,7 @@ export interface InternalApiDeps {
    */
   latestInboundTs?: (chatId: string) => Promise<string | null>
   knowledge?: {
-    store: import('../../adapters/knowledge/store').KnowledgeStore
+    store: import('../../ports/knowledge').KnowledgeStore
     search: typeof import('../../domain/knowledge/search').semanticSearch
     embedder?: import('../../adapters/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>

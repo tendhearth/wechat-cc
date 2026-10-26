@@ -5,8 +5,9 @@
  * deps.stateDir/db → ctx.*。`cachedOperatorChatId` 那个 `let` 是缓存不是晚绑定,
  * 随函数留在这里(不改 Ref)。wireA2aServer 仍在 index 里(它本来就是 wire-*)。
  */
-import { createA2ARegistry, type A2ARegistry } from '../../adapters/a2a/a2a-registry'
-import { createA2AClient, type A2AClient } from '../../adapters/a2a/a2a-client'
+import { createA2ARegistry } from '../../adapters/a2a/a2a-registry'
+import type { A2ARegistry, A2AClient } from '../../ports/a2a'
+import { createA2AClient } from '../../adapters/a2a/a2a-client'
 import { makeA2AEventsStore, type A2AEventsStore } from '../../adapters/store/a2a-events-store'
 import type { BootstrapCtx } from './types'
 

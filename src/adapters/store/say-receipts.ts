@@ -1,5 +1,5 @@
-import {createHash} from 'node:crypto'
 import type {Db} from '../../lib/db'
+import type {SayReceipt,SayReceiptStatus,SayReceipts} from '../../ports/matters'
 
 /**
  * matters/say-receipts.ts — 对主人微信聊天那件事「说一句」的 requestId 回执(迁移 v70)。
@@ -14,16 +14,6 @@ import type {Db} from '../../lib/db'
  * 界限:按收下时刻 30 天过期,每次登记时顺手清;工作台回执不清,这里存的回复可能长,所以给个期限。
  */
 export const SAY_RECEIPT_TTL_MS=30*24*3_600_000
-export type SayReceiptStatus='pending'|'replied'
-export interface SayReceipt {requestId:string;matterId:string;textHash:string;status:SayReceiptStatus;reply:string|null;createdAt:number}
-export interface SayReceipts {
-  get(requestId:string):SayReceipt|null
-  /** 登记一句新话;已有同 id 的回执 ⇒ 返回它、不改(调用方判冲突)。 */
-  reserve(input:{requestId:string;matterId:string;textHash:string}):{fresh:boolean;receipt:SayReceipt}
-  settle(requestId:string,reply:string):void
-  drop(requestId:string):void
-}
-export const sayTextHash=(text:string)=>createHash('sha256').update(text,'utf8').digest('hex')
 
 type Row={requestId:string;matterId:string;textHash:string;status:SayReceiptStatus;reply:string|null;createdAt:number}
 const SELECT='SELECT request_id AS requestId,matter_id AS matterId,text_hash AS textHash,status,reply,created_at AS createdAt FROM matter_say_receipts'

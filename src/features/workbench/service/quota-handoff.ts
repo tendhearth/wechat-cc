@@ -8,9 +8,9 @@
  */
 import { createHash } from 'node:crypto'
 import { isWorkbenchProviderId } from '../../../domain/workbench/executor-capabilities'
-import { normalizeInputRequestId } from '../../../adapters/store/workbench/live-inputs'
+import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
 import { quotaTakeoverText, QUOTA_TAKEOVER_DEFAULT_REQUEST } from '../quota-takeover'
-import type { MatterOrigin } from '../../../adapters/store/matters-store'
+import type { MatterOrigin } from '../../../ports/matters'
 import type { ServiceCtx } from './ctx'
 import type { ExecuteDomain } from './execute'
 import type { QuotaDomain } from './quota'

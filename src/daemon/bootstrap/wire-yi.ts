@@ -9,7 +9,7 @@
  *    「半构造清理」(hand 侧抛了先停 hub)和 HAND_ONLY 哨兵都不要了:init 抛错时容器停掉已经登记的;只配 hand
  *    就是 ok、提供 undefined。
  */
-import type { A2ARegistry } from '../../adapters/a2a/a2a-registry'
+import type { A2ARegistry } from '../../ports/a2a'
 import { createYiHub, type YiHub } from '../../app/yi-hub'
 import { createYiWsServer } from '../yi-ws-server'
 import type { DaemonModule } from '../modules/container'

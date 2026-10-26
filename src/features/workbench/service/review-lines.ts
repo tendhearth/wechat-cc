@@ -4,8 +4,8 @@
  */
 import { createHash } from 'node:crypto'
 import { GIT_REVIEW_MIME, type GitReview, type ReviewFile } from '../git-review'
-import type { LiveInput } from '../../../adapters/store/workbench/live-inputs'
-import { normalizeInputRequestId } from '../../../adapters/store/workbench/live-inputs'
+import type { LiveInput } from '../../../ports/workbench'
+import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
 import { composeCommentsText, derivedCommentsRequestId, type CommentForText, type RevertedHunkForText } from '../review'
 import { anchorFromDiff, locateHunks, switchHunks, type Hunk, type HunkSide } from '../review-hunks'
 import { commentView, laterTouchLookup, type ReviewCommentView } from '../review-annotations'

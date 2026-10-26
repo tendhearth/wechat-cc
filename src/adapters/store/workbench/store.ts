@@ -6,6 +6,7 @@ import type {StoredHandoff,HandoffView} from './handoff-record'
 import {publicSource,type StoredNativeSource} from '../../workbench/native-adoption'
 import type {NativeHistoryMessage} from '../../workbench/native-history'
 import type { Db } from '../../../lib/db'
+import type { Artifact } from '../../../ports/workbench'
 import {makeLiveInputStore} from './live-inputs'
 import {makeTaskAttachmentStore} from '../../workbench/attachments'
 import {createAttachmentUploads} from '../../workbench/attachment-uploads'
@@ -57,7 +58,6 @@ function parseScriptGroups(raw:string|null):{groups:number[]|null;boot:number|nu
 export interface GoalRecord { taskId:string; command:string; maxRounds:number; rounds:number; status:'active'|'passed'|'exhausted'|'stopped'; lastExit:number|null; stopReason:string|null; checkedTurn:string|null; updatedAt:number }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
 export type {TaskEvent} from './timeline-events'
-export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt,workspace_kind AS workspaceKind FROM workbench_tasks'
 const HANDOFF_SELECT='SELECT id,source_task_id AS sourceTaskId,target_task_id AS targetTaskId,purpose,request,packet_sha256 AS packetSha256,artifact_refs_json AS artifactRefsJson,quote_json AS quoteJson,created_at AS createdAt,request_event_id AS requestEventId,source_native_id AS sourceNativeId,target_native_id AS targetNativeId,packet_json AS packetJson,token_hash AS tokenHash FROM workbench_handoffs'

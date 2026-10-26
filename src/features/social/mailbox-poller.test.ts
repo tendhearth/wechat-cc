@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'; import { tmpdir } from 'node:os'; import 
 import { makeMailboxPoller } from './mailbox-poller'
 import { loadMailboxIdentity, sealEnvelope } from '../../adapters/mailbox/mailbox-crypto'   // real identity + real seal — no testkit
 import { makeCursorStore } from './mailbox-cursor-store'
-import type { MailboxClient } from '../../adapters/mailbox/mailbox-client'
+import type { MailboxClient } from '../../ports/mailbox'
 
 describe('makeMailboxPoller', () => {
   it('fetch → open → dispatch → ack, advancing the per-relay cursor; malformed envelopes are skipped', async () => {

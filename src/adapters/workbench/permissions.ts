@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { authorize, type AuthSubject } from '../../domain/authorize'
 import { TIER_PROFILES } from '../../domain/user-tier'
+import type { PendingWorkbenchPermission, PermissionDecision } from '../../ports/workbench'
 
 /**
  * 执行者报上来要批准的调用(Claude 的 canUseTool 落到「问」、Codex app-server 的审批、ACP 的权限卡、OpenAI 兼容任务的
@@ -15,16 +16,7 @@ export const WORKBENCH_PERMISSION_TIMEOUT_MS = 5 * 60_000
 export const WORKBENCH_PERMISSION_TOOL_MAX = 160
 export const WORKBENCH_PERMISSION_DESCRIPTION_MAX = 20_000
 
-export type PermissionDecision = 'allow' | 'deny'
 export type PermissionOutcome = PermissionDecision | 'aborted' | 'expired' | 'cancelled' | 'ended'
-
-export interface PendingWorkbenchPermission {
-  id: string
-  taskId: string
-  tool: string
-  description: string
-  createdAt: number
-}
 
 export type WorkbenchPermissionAudit =
   | { type: 'request'; permission: PendingWorkbenchPermission }

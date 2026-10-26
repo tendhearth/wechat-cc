@@ -22,7 +22,7 @@
  * skipped contacts make room for the backlog behind the cap.
  */
 import type { FactsApi } from '../../../domain/knowledge/facts'
-import type { FactRow } from '../../../adapters/knowledge/store'
+import type { FactRow } from '../../../ports/knowledge'
 import { buildSettlementPrompt, parseResolvedIds } from './extract'
 import { pausedReason } from './paused'
 import { SWEEP_FEED_OVERSCAN } from './sweep-conflicts'

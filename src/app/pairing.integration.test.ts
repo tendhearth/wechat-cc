@@ -18,7 +18,7 @@ import { describe, it, expect } from 'vitest'
 import { openSqlite } from '../lib/runtime/sqlite'
 import { makeRelayServer } from '../../relay/server'
 import { makePairing, type PairingDeps } from './pairing'
-import type { MailboxClient } from '../adapters/mailbox/mailbox-client'
+import type { MailboxClient } from '../ports/mailbox'
 
 const NOW = 1_700_000_000_000
 

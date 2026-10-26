@@ -21,7 +21,7 @@ import { socialRoutes } from './routes'
 import { wireMailboxDeps } from './wire-mailbox-deps'
 import { registerMailboxPoller } from './wire-mailbox'
 import type { Lifecycle } from '../../lib/lifecycle'
-import type { A2ARegistry } from '../../adapters/a2a/a2a-registry'
+import type { A2ARegistry } from '../../ports/a2a'
 import type { AgentConfig } from '../../lib/agent-config'
 
 /** 社交关着 / 起失败时下游看到的形状(handler 全缺席,a2a / mailbox 的门原样生效)。 */

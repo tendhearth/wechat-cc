@@ -9,7 +9,7 @@
  * 纯函数:不碰库、不碰微信。输入是登记处的视图(状态已按 stale 折算、等你批准的已排在前)。
  */
 import { executorNames } from './provider-display-names'
-import type { CliSessionView } from '../adapters/store/cli-session-store'
+import type { CliSessionView } from '../ports/cli-session'
 
 /** 一次最多列这么多条(微信一屏)。 */
 export const CLI_DIGEST_MAX_ROWS = 8

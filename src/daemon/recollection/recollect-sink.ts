@@ -82,7 +82,7 @@
  * abort signal — out of scope here, recorded as a known gap, not silently
  * assumed away.
  */
-import type {MatterStore} from '../../adapters/store/matters-store'
+import type { MatterStore } from '../../ports/matters'
 import {maybeRecollect, buildRecollectionPrompt, crossedOvernight, RETURNED_SIGNAL_UNAVAILABLE, type RecollectSink} from '../../domain/matters/recollection'
 import type {Journal} from '../../adapters/store/journal-store'
 import type {CheapEval} from '../../ports/agent-provider'

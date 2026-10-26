@@ -12,7 +12,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, unlinkSync }
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runSourceAdapter } from './source-adapter'
-import { openKnowledge, type KnowledgeStore } from './store'
+import { openKnowledge } from './store'
+import type { KnowledgeStore } from '../../ports/knowledge'
 
 // A real WCDB-style "dictionary-less zstd" frame with NO content-size field
 // in its header — produced once via Python's

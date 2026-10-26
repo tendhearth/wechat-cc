@@ -12,7 +12,7 @@
  * the case a caller passes a vector from a different model under the same
  * model_id label (the T1 review's per-row/dim-mismatch concern).
  */
-import type { DocSummary, KnowledgeStore } from '../../adapters/knowledge/store'
+import type { DocSummary, KnowledgeStore } from '../../ports/knowledge'
 
 export interface SemanticSearchOpts {
   queryVector: number[]

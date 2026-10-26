@@ -16,7 +16,7 @@
  * point rather than fighting over one shared cursor — consistent with
  * provenance being per-model throughout the store (T1/T2).
  */
-import type { Chunk, KnowledgeStore, SourceMsg } from '../../adapters/knowledge/store'
+import type { Chunk, KnowledgeStore, SourceMsg } from '../../ports/knowledge'
 
 const DEFAULT_BATCH = 200
 

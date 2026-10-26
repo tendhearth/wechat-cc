@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto'
 import type {AgentUserInputAnswers,AgentUserInputRequest} from '../../ports/agent-provider'
+import type {PendingUserInput} from '../../ports/workbench'
 
 const object=(value:unknown):value is Record<string,unknown> => !!value&&typeof value==='object'&&!Array.isArray(value)
 const text=(value:unknown,max:number):value is string => typeof value==='string'&&value.trim().length>0&&value.length<=max
@@ -36,7 +37,6 @@ export function validateUserInputAnswers(request:AgentUserInputRequest,value:unk
   return Object.fromEntries(pairs)
 }
 
-export interface PendingUserInput extends AgentUserInputRequest {id:string;taskId:string;createdAt:number}
 export function makeRunUserInput(opts:{taskId:string;audit?:(event:{type:'request'|'answer'|'closed';request:PendingUserInput;answers?:AgentUserInputAnswers|null})=>void}) {
   let closed=false
   const entries=new Map<string,{view:PendingUserInput;finish:(answers:AgentUserInputAnswers|null)=>void}>()

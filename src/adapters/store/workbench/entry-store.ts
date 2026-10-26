@@ -1,6 +1,6 @@
 import type {Db} from '../../../lib/db'
 import type {AgentExecutionChoice} from '../../../ports/agent-provider'
-import type {Attachment} from '../../workbench/attachments'
+import type { Attachment } from '../../../ports/workbench'
 import type {EntryTarget} from '../../workbench/task-entry'
 
 /** Internal, validated choices; HTTP bodies cannot supply these values. */

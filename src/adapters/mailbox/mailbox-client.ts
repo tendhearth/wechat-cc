@@ -3,11 +3,7 @@
  * HTTP, timeout-bounded, no app logic — the mailbox analogue of a2a-client.ts.
  * See spec §3.1.
  */
-export interface MailboxClient {
-  drop(relayUrl: string, to: string, envelope: string): Promise<boolean>
-  fetch(relayUrl: string, mailbox: string, since: number, ts: number, sig: string): Promise<{ items: Array<{ cursor: number; envelope: string }>; next_cursor: number } | null>
-  ack(relayUrl: string, mailbox: string, upToCursor: number, ts: number, sig: string): Promise<boolean>
-}
+import type { MailboxClient } from '../../ports/mailbox'
 
 const base = (u: string) => u.replace(/\/+$/, '')
 

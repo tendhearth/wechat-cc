@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle, isAdvertisableUrl, adoptPeerCard, buildOwnCard } from './pairing'
-import { primaryChannels } from '../adapters/store/penpal-channel-store'
+import { primaryChannels } from '../domain/penpal-channels'
 import { deriveRendezvous } from '../adapters/mailbox/pairing-crypto'
 import { sealEnvelope } from '../adapters/mailbox/mailbox-crypto'
-import type { MailboxClient } from '../adapters/mailbox/mailbox-client'
-import type { A2ARegistry } from '../adapters/a2a/a2a-registry'
+import type { MailboxClient } from '../ports/mailbox'
+import type { A2ARegistry } from '../ports/a2a'
 import type { A2AAgentRecord } from '../lib/agent-config'
 
 // ── shared in-process relay (a Map keyed by rendezvous addr) ──

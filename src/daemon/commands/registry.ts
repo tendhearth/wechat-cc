@@ -11,7 +11,7 @@
  * 冲突由基线快照与冲突测试抓(command-baseline.test.ts、__e2e__/command-routing.e2e.test.ts)。
  */
 import type { InboundMsg } from '../../domain/prompt-format'
-import type { MatterOrigin } from '../../adapters/store/matters-store'
+import type { MatterOrigin } from '../../ports/matters'
 
 /**
  * 这一轮的上下文(只有少数命令要看)。origin:App 一轮(桌面 / 手机)里建出来的事记在哪个表面;

@@ -3,7 +3,7 @@
  * 原来住在 execute 域里,lifecycle / native 经晚绑定回头借它 —— 可它只看 ctx.deps.matters,
  * 跟 execute 毫无关系。单独放一个只认 ctx 的模块,谁用谁直接调,那两条借道的边就没了。
  */
-import type { MatterStore } from '../../../adapters/store/matters-store'
+import type { MatterStore } from '../../../ports/matters'
 import type { ServiceCtx } from './ctx'
 
 /** matter 同步永不打断任务本身:登记失败只是少一条索引,任务照跑。没接 matters(老接线)⇒ 什么都不做。 */

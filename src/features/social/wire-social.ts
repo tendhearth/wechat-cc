@@ -23,8 +23,7 @@ import { FORWARD_PER_SENDER, FORWARD_WINDOW_MS } from './intro'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
 import type { A2AServerOpts } from '../../adapters/a2a/a2a-server'
-import type { A2ARegistry } from '../../adapters/a2a/a2a-registry'
-import type { A2AClient } from '../../adapters/a2a/a2a-client'
+import type { A2ARegistry, A2AClient } from '../../ports/a2a'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import type { ProviderId } from '../../domain/conversation'
 import type { AgentConfig } from '../../lib/agent-config'
@@ -86,7 +85,7 @@ export interface SocialWiring {
     penpal: {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-      channelStore: import('../../adapters/store/penpal-channel-store').ChannelStore
+      channelStore: import('../../ports/penpal-channel').ChannelStore
       letterStore: import('./penpal-letter-store').LetterStore
       /** 串门(2026-09-03 实验):伙伴主动去一个开着的信道那头聊几句。 */
       startVisit: import('./wire-visit').Visit['startVisit']
@@ -123,7 +122,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   let socialPenpal: {
     sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
     resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-    channelStore: import('../../adapters/store/penpal-channel-store').ChannelStore
+    channelStore: import('../../ports/penpal-channel').ChannelStore
     letterStore: import('./penpal-letter-store').LetterStore
     startVisit: import('./wire-visit').Visit['startVisit']
     activeVisit: import('./wire-visit').Visit['activeVisit']

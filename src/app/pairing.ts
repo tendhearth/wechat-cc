@@ -19,9 +19,9 @@
  * start() supersedes). Not restart-persistent (§8).
  */
 import { deriveRendezvous } from '../adapters/mailbox/pairing-crypto'
-import { sealEnvelope, openEnvelope, signFetch, type Envelope } from '../adapters/mailbox/mailbox-crypto'
-import type { MailboxClient } from '../adapters/mailbox/mailbox-client'
-import type { A2ARegistry } from '../adapters/a2a/a2a-registry'
+import { sealEnvelope, openEnvelope, signFetch } from '../adapters/mailbox/mailbox-crypto'
+import type { Envelope, MailboxClient } from '../ports/mailbox'
+import type { A2ARegistry } from '../ports/a2a'
 import type { A2AAgentRecord } from '../lib/agent-config'
 
 export interface PairCard {
@@ -78,7 +78,7 @@ export interface PairingDeps {
   ttlMs?: number
   log?: (msg: string) => void
   /** 配对即开信道(spec 2026-09-04-wish-postcard §2)。 */
-  channelStore: Pick<import('../adapters/store/penpal-channel-store').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list' | 'get'>
+  channelStore: Pick<import('../ports/penpal-channel').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list' | 'get'>
   /** 生成我方信道句柄:X25519 密钥对 + 收信地址。 */
   genChannel: () => { channelId: string; pubkey: string; privkey: string }
 }
@@ -166,7 +166,7 @@ export function buildOwnCard(deps: CardDeps, role: PairCard['role'], nonce: stri
 
 export interface AdoptDeps {
   registry: A2ARegistry
-  channelStore: Pick<import('../adapters/store/penpal-channel-store').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list' | 'get'>
+  channelStore: Pick<import('../ports/penpal-channel').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list' | 'get'>
   log?: (msg: string) => void
 }
 

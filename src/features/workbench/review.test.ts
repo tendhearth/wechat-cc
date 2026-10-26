@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { composeReturnText, derivedReturnRequestId, parseGitReviewSnapshot } from './review'
-import { normalizeInputRequestId } from '../../adapters/store/workbench/live-inputs'
+import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
 import { serializeGitReview, type GitReview, type ReviewFile } from './git-review'
 
 const file = (path: string, over: Partial<ReviewFile> = {}): ReviewFile => ({ path, preexisting: false, kind: 'modified', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), diff: `@@ -1 +1 @@\n-老 ${path}\n+新 ${path}`, ...over })

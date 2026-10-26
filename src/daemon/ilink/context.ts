@@ -12,7 +12,7 @@ import { makeSessionStateStore, type SessionStateStore } from '../../adapters/st
 import { PendingPermissions } from '../pending-permissions'
 import { unknownChatIdError, missingContextTokenError } from '../../lib/send-reply'
 import type { Db } from '../../lib/db'
-import type { ConversationStore } from '../../adapters/store/conversation-store'
+import type { ConversationStore } from '../../ports/conversation-store'
 
 export interface Account {
   id: string

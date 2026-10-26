@@ -13,7 +13,7 @@
 import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
 import type { CliEvent, CliEventAction } from '../../app/cli-events'
 import type { CliPermissionRelay, CliPermissionRequest } from '../../app/cli-permission-relay'
-import type { CliSessionView } from '../../adapters/store/cli-session-store'
+import type { CliSessionView } from '../../ports/cli-session'
 import type { OverseerToday } from '../../domain/overseer-today'
 import { workbenchErrorHttp } from '@wechat-cc/protocol'
 import { TERMINAL_SAY_POLL_CAP_MS, type TerminalSay } from './terminal-say'

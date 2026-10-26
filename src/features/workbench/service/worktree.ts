@@ -4,7 +4,7 @@
  * 10-20 工作区脚本(service/scripts.ts):删之前先停在跑的脚本、跑批过的 archive ⇒ 这时删除是异步的,回 `removing:true`;重新打开后照样跑 setup。
  */
 import { existsSync } from 'node:fs'
-import { pathsConflict } from '../../../adapters/workbench/scheduler'
+import { pathsConflict } from '../../../lib/claim-paths'
 import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree, worktreeDirty } from '../../../adapters/git/worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 import type { ScriptsDomain } from './scripts'

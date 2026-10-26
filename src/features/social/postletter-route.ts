@@ -3,7 +3,7 @@
  * peer mailbox goes relay-direct (seal+drop, W exits the loop); a push-only
  * peer falls through to A's Task-9 push/W-forward. See spec §3.5 / brief #9.
  */
-import type { PeerMailbox } from '../../adapters/mailbox/mailbox-crypto'
+import type { PeerMailbox } from '../../ports/mailbox'
 
 export type PostLetterBody = { channel_id: string; nonce: string; ct: string; tag: string }
 export type PostLetterTarget = { agentId: string; relayVia: string | null; mailbox?: PeerMailbox }

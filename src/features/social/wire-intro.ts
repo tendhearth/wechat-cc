@@ -42,7 +42,7 @@ import { findPostcardRef, attachMyIntro, clearMyIntro, type PostcardRef } from '
 import { readWishes, writeWishes } from './wish-memory'
 import type { Envelope } from '../../domain/envelope'
 import type { PairCard } from '../../app/pairing'
-import type { ChannelStore } from '../../adapters/store/penpal-channel-store'
+import type { ChannelStore } from '../../ports/penpal-channel'
 
 /** 我这边为这一笔介绍现开的信道句柄 + 铸的钥匙(和 PostcardRef['myIntro'] 同形)。 */
 type MyIntro = NonNullable<PostcardRef['myIntro']>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseUntil, untilContinuation, untilRequestId, UNTIL_COMMAND_MAX } from './until'
-import { normalizeInputRequestId } from '../store/workbench/live-inputs'
+import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
 
 describe('parseUntil', () => {
   it('command 1–300 chars, maxRounds 1–10 (default 3), nothing else', () => {

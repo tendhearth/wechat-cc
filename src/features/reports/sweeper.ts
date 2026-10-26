@@ -110,7 +110,7 @@
  * without grepping every tick.
  */
 import type {Lifecycle} from '../../lib/lifecycle'
-import type {MatterStore} from '../../adapters/store/matters-store'
+import type { MatterStore } from '../../ports/matters'
 import type {ReportOutboxStore} from './outbox'
 import {isProactiveWindowClosed} from '../../daemon/ilink/outbound-health'
 import {backoffMs, RETRY_WINDOW_MS} from '../../lib/delivery-backoff'

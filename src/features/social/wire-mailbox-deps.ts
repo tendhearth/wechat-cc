@@ -5,7 +5,7 @@
  * deps.stateDir/log → ctx.*,configuredAgent → ctx.configuredAgent,a2aRegistry /
  * socialWiring.onMailboxLetter / readAgentConfig 走 parts.*。
  */
-import type { A2ARegistry } from '../../adapters/a2a/a2a-registry'
+import type { A2ARegistry } from '../../ports/a2a'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { MailboxPollerDeps } from './wire-mailbox'
 import type { SocialWiring } from './wire-social'

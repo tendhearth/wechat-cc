@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { openDb } from '../../lib/db'
-import { makeChannelStore, primaryChannels } from './penpal-channel-store'
+import { makeChannelStore } from './penpal-channel-store'
+import { primaryChannels } from '../../domain/penpal-channels'
 
 describe('makeChannelStore', () => {
   it('creates a pending channel, looks it up by id + my_channel_id, opens it on peer handle', () => {

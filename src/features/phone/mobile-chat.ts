@@ -1,7 +1,7 @@
 import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES } from '@wechat-cc/protocol'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { MessageRecord } from '../../lib/messages-store'
-import type { MatterOrigin, MatterStore } from '../../adapters/store/matters-store'
+import type { MatterOrigin, MatterStore } from '../../ports/matters'
 import type { ChatJob, PhoneChat } from './phone-chat'
 import { framedTooLarge } from './mobile-matter-response'
 import { ownsMethod, sharedRoute, type PhoneRouteTable } from './phone-route-table'

@@ -4,7 +4,7 @@
  * service.ts 对容器解构(引用不变),对 6 个标量走 state.x;域模块经 ctx.state 看同一份。
  */
 import type { AgentExecutionChoice, AgentSession } from '../../../ports/agent-provider'
-import type { Attachment } from '../../../adapters/workbench/attachments'
+import type { Attachment, LiveInput } from '../../../ports/workbench'
 import type { ArtifactSelection, HandoffPreview } from '../handoff'
 import type { AcceptedNativeResume } from '../../../adapters/workbench/native-adoption'
 import type { GitBaseline } from '../git-review'
@@ -12,7 +12,6 @@ import type { RestartPreview } from '../continuation'
 import type { PathReservation } from '../../../adapters/workbench/scheduler'
 import type { RunPermissions } from '../../../adapters/workbench/permissions'
 import type { RunUserInput } from '../../../adapters/workbench/user-input'
-import type { LiveInput } from '../../../adapters/store/workbench/live-inputs'
 import type { StoredTask } from '../../../adapters/store/workbench/store'
 import type { ArtifactDeliveryReceipt } from '../../../adapters/store/workbench/artifact-deliveries'
 

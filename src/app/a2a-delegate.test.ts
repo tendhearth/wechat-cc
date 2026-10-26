@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { A2AClient, SendRequest, SendResult } from '../adapters/a2a/a2a-client'
+import type { A2AClient, SendRequest, SendResult } from '../ports/a2a'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import { delegateToHand, handExecUrl, letterUrl } from './a2a-delegate'
 

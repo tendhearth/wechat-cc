@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createA2AServer } from './a2a-server'
-import type { A2ARegistry } from './a2a-registry'
+import type { A2ARegistry } from '../../ports/a2a'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { A2A_PROTO_VERSION } from '../../domain/a2a-intent'
 
@@ -28,7 +28,7 @@ function fakeRegistry(agents: A2AAgentRecord[]): A2ARegistry {
 async function startServer(opts: {
   agents?: A2AAgentRecord[]
   onNotify?: (event: import('./a2a-server').NotifyEvent) => Promise<void>
-  onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
+  onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('../../ports/a2a').ExecResult>
   onLetter?: (event: import('./a2a-server').LetterEvent) => Promise<{ ok: boolean; error?: string }>
 } = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})

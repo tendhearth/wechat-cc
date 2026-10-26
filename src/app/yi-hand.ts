@@ -5,7 +5,7 @@
  * onMessage(raw) returns the frames to send back.
  */
 import { buildRequest, buildResponse, parseMessage } from '../domain/yi-protocol'
-import type { ExecResult } from '../adapters/a2a/a2a-server'
+import type { ExecResult } from '../ports/a2a'
 import type { YiDispatch } from './yi-hub'
 
 export interface YiHandDeps {

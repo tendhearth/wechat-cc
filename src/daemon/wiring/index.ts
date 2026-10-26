@@ -32,7 +32,7 @@ export interface WireMainOpts {
   late: PipelineDepsLate
   workbench?: import('../../features/workbench').WorkbenchService
   /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
-  cliSessions?: () => import('../../adapters/store/cli-session-store').CliSessionView[]
+  cliSessions?: () => import('../../ports/cli-session').CliSessionView[]
   /** 「CC 做过的事」(B9):透传给手机面板。 */
   activity?: import('../../features/phone').MobileActivityDeps
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
@@ -50,7 +50,7 @@ export interface WireMainOpts {
   /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
-  matters?: import('../../adapters/store/matters-store').MatterStore
+  matters?: import('../../ports/matters').MatterStore
   stateDir: string
   db: Db
   /** 微信那一侧:入站管道那一簇 + 拉消息 / 冲盘(src/ports/wechat.ts 的几口;组装的地方挑好了交进来)。 */

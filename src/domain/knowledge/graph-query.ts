@@ -22,7 +22,7 @@
  * `connectors` call right after a fresh ingest doesn't serve a stale index,
  * without re-scanning on every single call either).
  */
-import type { KnowledgeStore } from '../../adapters/knowledge/store'
+import type { KnowledgeStore } from '../../ports/knowledge'
 import {
   connectors as connectorsFn,
   contactProfile as contactProfileFn,

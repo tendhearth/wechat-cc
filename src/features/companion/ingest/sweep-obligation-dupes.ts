@@ -17,7 +17,7 @@
  * make room for that backlog.
  */
 import type { FactsApi } from '../../../domain/knowledge/facts'
-import type { FactRow } from '../../../adapters/knowledge/store'
+import type { FactRow } from '../../../ports/knowledge'
 import { parseSupersedePairs } from './extract'
 import { SWEEP_FEED_OVERSCAN } from './sweep-conflicts'
 import { pausedReason } from './paused'

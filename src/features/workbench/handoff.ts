@@ -5,7 +5,7 @@ import {snapshotHash,type NativeResumeDecision} from '../../adapters/workbench/n
 import type {Continuation} from './continuation'
 import type {StoredTask,TaskEvent,WorkbenchStore} from '../../adapters/store/workbench/store'
 import {readArtifactSnapshot} from '../../adapters/workbench/artifacts'
-import type {Attachment} from '../../adapters/workbench/attachments'
+import type { Attachment } from '../../ports/workbench'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
 export interface AttachmentSelection {taskId:string;attachmentId:string;sha256:string}
 export interface HandoffInput {sourceTaskId:string;targetProviderId:string;purpose:'review'|'revision';request:string;artifacts:ArtifactSelection[];attachments?:AttachmentSelection[];quote?:ReviewQuote;targetTaskId?:string}

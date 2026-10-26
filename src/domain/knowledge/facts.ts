@@ -10,7 +10,7 @@
  * is parsed out of `msg_key`, whose format is `"<table>:<local_id>"`: the
  * integer AFTER THE LAST `:` (matches wxfacts/source.py's msg_key parsing).
  */
-import type { KnowledgeStore, Fact } from '../../adapters/knowledge/store'
+import type { KnowledgeStore, Fact } from '../../ports/knowledge'
 import { resolveName } from './graph'
 
 const localIdOf = (msgKey: string): number => {

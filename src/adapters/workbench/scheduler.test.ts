@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { findPathBlocker, pathsConflict, type PathReservation } from './scheduler'
+import { findPathBlocker, type PathReservation } from './scheduler'
+import { pathsConflict } from '../../lib/claim-paths'
 
 const entry = (taskId:string,path:string,order:number,state:PathReservation['state']='active'):PathReservation => ({
   identity:`run-${taskId}`,taskId,title:`task ${taskId}`,path,order,state,

@@ -12,7 +12,7 @@
  * gracefully via `safe()`: a missing/erroring sibling yields a null/[] field,
  * never a crash — this module writes NOTHING (pure read composite).
  */
-import type { KnowledgeStore } from '../../adapters/knowledge/store'
+import type { KnowledgeStore } from '../../ports/knowledge'
 import { resolveName } from './graph'
 import { makeGraphQueryApi } from './graph-query'
 import { makeFactsApi } from './facts'

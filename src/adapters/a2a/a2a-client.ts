@@ -14,42 +14,10 @@
  * See docs/superpowers/specs/2026-05-24-a2a-integration-design.md.
  */
 
-export interface AgentCard {
-  name: string
-  description?: string
-  version?: string
-  /** A2A wire-protocol version; ABSENT on pre-versioning peers ⇒ treat as 1. */
-  proto_version?: number
-  auth?: { type: string; required: boolean }
-  capabilities?: Array<{
-    name: string
-    description?: string
-    endpoint?: string
-    method?: string
-    request_schema?: unknown
-  }>
-}
-
-export interface SendRequest {
-  url: string
-  bearer: string
-  body: unknown
-}
-
-export interface SendResult {
-  ok: boolean
-  http_status?: number
-  response?: unknown
-  error?: string
-}
+import type { A2AClient, AgentCard } from '../../ports/a2a'
 
 export interface A2AClientOpts {
   timeoutMs?: number
-}
-
-export interface A2AClient {
-  fetchAgentCard(baseUrl: string): Promise<AgentCard>
-  send(req: SendRequest): Promise<SendResult>
 }
 
 export function createA2AClient(opts: A2AClientOpts = {}): A2AClient {
