@@ -92,7 +92,7 @@ wechat-cc ci triage --sha <sha> --json      # 给机器看的一份
 | `scripts/cli-help.guard`(`plugin --help` 等;只读命令 `cli status` 等) | 一条测试里同步冷启 1 + 子命令个 `bun cli.ts`;只读命令自己还要挨个跑各家 CLI 的 `--version` | 每族 60s(每次 spawn 仍 15s 上限);只读命令单次 45s、每条 60s |
 | `workbench/codex-app-server`(两条) | **生产 bug**:关闭循环先查期限再发 SIGKILL,一次卡顿就抛 `codex_process_not_exited` 而一次 SIGKILL 都没发 | 单独 PR 修生产代码 |
 | `workbench/service-one-session`(f99.txt) | **生产**:`git-review.ts` 的审阅期限写死 15s,忙时报告悄悄缺文件 | 交工作台那一路:做成可注入 |
-| `workbench/service-rewind`(eol) | 偶发 `rewind_unavailable`,疑似 settle 没等后台 git | 交工作台那一路:先把 reason 打出来 |
+| `workbench/service-rewind`(eol、switch window、boot) | **生产**:偶发 `rewind_unavailable` / `git_in_progress`,detail 是 `rebase-apply` / `index.lock` —— 测试里谁都没建它们、那个窗口里也没有别的 git 在写真 index。`worktreeState` 每个标记各跑一次 `rev-parse --git-path`、输出原样 `resolve(root, 输出)`:输出丢了(空)就 resolve 成 root 本身,永远「存在」 | 一次 rev-parse 拿齐、逐行校验,不成形重读一次、再不成形报 `git_error`,不再当成进行中;断言改成摊开 reason / detail。顺带:基线的 `git diff <commit>` 不认 `--no-optional-locks`、会拿真 index 的 `index.lock` 写回 stat,改在 index 拷贝上跑 |
 
 **以后这里面哪条再在满载下红,先当新问题看**(上面的病因已经拿掉了);不在表里的,按同样的三类去摸:墙钟断言 ⇒ 注入时钟 / 赛跑;等完成的期限 ⇒ 只给那一处放宽或给旋钮;真吃 CPU ⇒ 先找自找的开销(大对象 `toEqual`、重复计算),再考虑单独串行。
 

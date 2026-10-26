@@ -146,6 +146,23 @@ it('worktreeState: linked vs main checkout, and an in-progress merge', () => {
   expect(worktreeState(g).inProgress).toBe('MERGE_HEAD')
 })
 
+it('worktreeState: lost / garbled rev-parse output is never read as "a git action is in progress"', () => {
+  // 以前空输出 ⇒ resolve(root, '') = root ⇒「存在」⇒ git_in_progress(CI 上 detail=rebase-apply / index.lock)
+  const real = (args: string[]) => execFileSync('git', args, { cwd: wt, stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim()
+  let blank = 1
+  const flaky = (args: string[]) => args[0] === 'rev-parse' && blank-- > 0 ? '' : real(args)
+  expect(worktreeState(g, flaky)).toMatchObject({ inProgress: null, headRef: `refs/heads/${BRANCH}` })
+  // 一行丢了 / 串成别的路径:同样重读一次
+  let cut = 1
+  const short = (args: string[]) => { const out = real(args); return args[0] === 'rev-parse' && cut-- > 0 ? out.split('\n').slice(0, -1).join('\n') : out }
+  expect(worktreeState(g, short).inProgress).toBeNull()
+  let swap = 1
+  const swapped = (args: string[]) => { const out = real(args); return args[0] === 'rev-parse' && swap-- > 0 ? out.replace(/\/rebase-apply$/m, '') : out }
+  expect(worktreeState(g, swapped).inProgress).toBeNull()
+  // 一直不成形 ⇒ 抛(调用方报 git_error),不是 git_in_progress
+  expect(() => worktreeState(g, args => args[0] === 'rev-parse' ? '' : real(args))).toThrow('rewind_git_failed')
+})
+
 it('droppedCommits: merged into the project HEAD vs only present elsewhere', async () => {
   const P = head()
   put('c.txt', 'x\n'); run(wt, 'add', 'c.txt'); run(wt, 'commit', '-qm', 'c')

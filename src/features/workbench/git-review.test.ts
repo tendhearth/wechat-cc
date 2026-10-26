@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
 import {execFileSync} from 'node:child_process'
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync,utimesSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {captureGitBaseline,finishGitReview} from './git-review'
@@ -21,6 +21,14 @@ it('compares actual baseline including pre-existing staged edits without changin
  expect(change.preexisting).toBe(true);expect(change.diff).toContain('-const answer = 2');expect(change.diff).toContain('+const answer = 3');expect(change.diff).not.toContain('-const answer = 1')
  expect(report.files.some(f=>f.path==='notes.md')).toBe(false)
  expect(git('rev-parse','HEAD')).toBe(head);expect(readFileSync(join(root,'.git/index'))).toEqual(index);expect(git('status','--porcelain')).toBe(status)
+})
+it('a stat-only change is not reported, and the baseline never writes the real index back (index.lock)',async()=>{
+ // porcelain `git diff <commit>` 会把刷新后的 stat 写回 index、不认 --no-optional-locks;基线得在拷贝上跑
+ const old=new Date(Date.now()-3600_000);utimesSync(join(root,'app.ts'),old,old)
+ const index=readFileSync(join(root,'.git/index'))
+ const baseline=await captureGitBaseline(root)
+ expect(baseline.preexistingPaths).not.toContain('app.ts')
+ expect(readFileSync(join(root,'.git/index')).equals(index)).toBe(true)
 })
 it('includes changes committed during the run, new files and deleted files',async()=>{
  const baseline=await captureGitBaseline(root);file('app.ts','const answer = 9\n');git('add','app.ts');git('commit','-qm','agent commit');file('new.py','print(1)\n')

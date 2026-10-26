@@ -121,16 +121,39 @@ export function droppedCommits(g: RewindGit, parent: string, head: string, branc
   return { count: all.length, merged, elsewhere }
 }
 
-/** linked worktree 的现场:git 目录、公共目录、HEAD 指向、有没有进行中的合并 / rebase / 锁。 */
-export function worktreeState(g: RewindGit): { gitDir: string; commonDir: string; headRef: string | null; inProgress: string | null } {
-  const real = (p: string) => { try { return realpathSync.native(p) } catch { return resolve(p) } }
-  const [gitDir = '', commonDir = ''] = str(g, ['rev-parse', '--git-dir', '--git-common-dir']).split('\n').map(p => real(resolve(g.root, p.trim())))
-  let headRef: string | null = null
-  try { headRef = str(g, ['symbolic-ref', '-q', 'HEAD']) || null } catch { /* 游离 HEAD */ }
-  let inProgress: string | null = null
-  for (const name of ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'index.lock', 'HEAD.lock']) {
-    if (existsSync(resolve(g.root, str(g, ['rev-parse', '--git-path', name])))) { inProgress = name; break }
+const IN_PROGRESS = ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'index.lock', 'HEAD.lock'] as const
+type WorktreeState = { gitDir: string; commonDir: string; headRef: string | null; inProgress: string | null }
+/**
+ * linked worktree 的现场:git 目录、公共目录、HEAD 指向、有没有进行中的合并 / rebase / 锁。
+ *
+ * 一次 rev-parse 拿齐所有路径,**逐行校验**再 existsSync:以前每个标记各跑一次 `--git-path`、输出原样
+ * `resolve(root, 输出)` —— 输出要是空的(子进程输出丢了),resolve 出来就是 root 本身,永远「存在」,
+ * 回退就被说成 git_in_progress(CI 上见过 detail=rebase-apply / index.lock,而那两个测试里谁都没建它们)。
+ * 输出不成形 ⇒ 重读一次;还不成形 ⇒ 抛(调用方报 git_error),绝不当成「有进行中的动作」。
+ * read 只给测试注入。
+ */
+export function worktreeState(g: RewindGit, read: (args: string[]) => string = args => str(g, args)): WorktreeState {
+  let last: unknown
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { return readWorktreeState(g, read) } catch (error) { last = error }
   }
+  throw last
+}
+function readWorktreeState(g: RewindGit, read: (args: string[]) => string): WorktreeState {
+  const real = (p: string) => { try { return realpathSync.native(p) } catch { return resolve(p) } }
+  const lines = read(['rev-parse', '--git-dir', '--git-common-dir', ...IN_PROGRESS.flatMap(name => ['--git-path', name])]).split('\n').map(l => l.trim())
+  if (lines.length !== 2 + IN_PROGRESS.length || lines.some(l => !l)) throw new Error('rewind_git_failed')
+  const [gitDir, commonDir] = [real(resolve(g.root, lines[0]!)), real(resolve(g.root, lines[1]!))]
+  let inProgress: string | null = null
+  for (const [i, name] of IN_PROGRESS.entries()) {
+    const path = lines[2 + i]!
+    // 每行必须就是这个标记的路径:不是 ⇒ 输出串了 / 丢了,不能拿去判「在不在」
+    if (!path.replace(/\\/g, '/').endsWith(`/${name}`) && path !== name) throw new Error('rewind_git_failed')
+    if (inProgress === null && existsSync(resolve(g.root, path))) inProgress = name
+  }
+  let headRef: string | null = null
+  try { headRef = read(['symbolic-ref', '-q', 'HEAD']) || null } catch { /* 游离 HEAD */ }
+  if (headRef !== null && !headRef.startsWith('refs/')) throw new Error('rewind_git_failed')
   return { gitDir, commonDir, headRef, inProgress }
 }
 

@@ -60,6 +60,10 @@ async function next(id:string,turn:(path:string)=>void,status='completed'){
   service.continueTask(id,'再改',{inputRequestId:randomUUID()})
   await settle(id,status)
 }
+/** 拒绝摊成普通对象再比:偶发失败时直接看到 reason / detail(曾见 git_in_progress),不只一句 message。 */
+const flat=(e:Error&Record<string,unknown>)=>({message:e.message,code:e.code,reason:e.reason,detail:e.detail,rolledBack:e.rolledBack,path:e.path,conflicts:e.conflicts})
+/** 该成功的那一步:失败就把 reason / detail 一起抛出来。 */
+const ok=async<T>(p:Promise<T>)=>p.catch((e:Error&Record<string,unknown>)=>{throw new Error(`unexpected ${JSON.stringify(flat(e))}`)})
 const rounds=(id:string)=>[...service.reviewList(id)].reverse()
 const read=(id:string,rel:string)=>readFileSync(join(service.detail(id).task.path,rel),'utf8')
 const has=(id:string,rel:string)=>existsSync(join(service.detail(id).task.path,rel))
@@ -259,15 +263,16 @@ describe('回滚没回干净 ⇒ 停住,主人拍板', () => {
     let wtRoot='',once=true
     await service.shutdown();service=make({inject:s=>{if(s==='branch'&&once){once=false;writeFileSync(join(wtRoot,'pkg','a.txt'),'edited mid-rewind\n');throw new Error('boom')}}})
     const {id,wt,oldHead}=await twoRounds();wtRoot=wt.root
-    const [r1]=rounds(id),p=await service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'})
-    await expect(service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token})).rejects.toMatchObject({message:'rewind_failed',rolledBack:false,conflicts:['pkg/a.txt']})
+    const [r1]=rounds(id),p=await ok(service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'}))
+    const error=await service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token}).then(()=>null,flat)
+    expect(error).toMatchObject({message:'rewind_failed',rolledBack:false,conflicts:['pkg/a.txt']})
     expect(read(id,'a.txt')).toBe('edited mid-rewind\n')
     const [row]=store.rewinds.list(id)
     expect(row!.state).toBe('needs_owner')
     const text=service.detail(id).events.at(-1)!.text
     expect(text).toContain('分支已恢复');expect(text).toContain('pkg/a.txt');expect(text).toContain(row!.backupRef)
     expect(()=>service.continueTask(id,'接着做',{inputRequestId:randomUUID()})).toThrow('rewind_needs_owner')
-    await service.rewindResolve(id,'restore_backup')
+    await ok(service.rewindResolve(id,'restore_backup'))
     expect(read(id,'a.txt')).toBe('r2\n');expect(read(id,'r2.txt')).toBe('two\n')
     expect(g(wt.root,'rev-parse','HEAD')).toBe(oldHead)
     expect(store.rewinds.get(row!.id)).toMatchObject({state:'failed',resolution:'restore_backup'})
@@ -280,9 +285,9 @@ describe('回滚没回干净 ⇒ 停住,主人拍板', () => {
     writeFileSync(join(repo,'.gitattributes'),'*.txt text eol=crlf\n');g(repo,'add','-A');g(repo,'commit','-q','-m','attrs')
     const {id,oldHead}=await twoRounds()
     const before=read(id,'a.txt')
-    const [r1]=rounds(id),p=await service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'})
+    const [r1]=rounds(id),p=await ok(service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'}))
     // 摊开成普通对象再比:偶发失败时(曾见 rewind_unavailable)要能直接看到 reason / detail,而不是只有一句 message
-    const error=await service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token}).then(()=>null,(e:Error&Record<string,unknown>)=>({message:e.message,code:e.code,reason:e.reason,detail:e.detail,rolledBack:e.rolledBack,path:e.path}))
+    const error=await service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token}).then(()=>null,flat)
     expect(error).toMatchObject({message:'rewind_failed',rolledBack:true,reason:'eol_mismatch',path:'a.txt'})
     // 回滚只保证 git 等价:eol 属性下检出的换行跟着属性走(已知限制,设计稿)
     expect(read(id,'a.txt').replace(/\r\n/g,'\n')).toBe(before.replace(/\r\n/g,'\n'));expect(g(store.worktrees.get(id)!.root,'rev-parse','HEAD')).toBe(oldHead)
