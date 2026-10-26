@@ -17,6 +17,7 @@ import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { makePairing, type PairingEngine } from '../../app/pairing'
 import { makeMailboxClient } from '../../adapters/mailbox/mailbox-client'
 import { loadMailboxIdentity } from '../../adapters/mailbox/mailbox-crypto'
+import { pairingCrypto } from '../../adapters/mailbox/pairing-crypto'
 import { makeChannelStore } from '../../adapters/store/penpal-channel-store'
 import { generateKeypair } from '../../adapters/mailbox/penpal-crypto'
 import type { A2ARegistry } from '../../ports/a2a'
@@ -58,6 +59,7 @@ export function wirePairing(deps: PairingWireDeps): PairingEngine | undefined {
   const mailbox = loadMailboxIdentity(deps.stateDir) // idempotent read; persists on first ever use
   const engine = makePairing({
     client: makeMailboxClient(),
+    crypto: pairingCrypto,
     registry: deps.a2aRegistry,
     self: { mailbox_addr: mailbox.addr, mailbox_enc_pub: mailbox.enc_pub, relays },
     selfId: () => deps.selfId,

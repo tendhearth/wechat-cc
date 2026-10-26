@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle, isAdvertisableUrl, adoptPeerCard, buildOwnCard } from './pairing'
 import { primaryChannels } from '../domain/penpal-channels'
-import { deriveRendezvous } from '../adapters/mailbox/pairing-crypto'
+import { deriveRendezvous, pairingCrypto } from '../adapters/mailbox/pairing-crypto'
 import { sealEnvelope } from '../adapters/mailbox/mailbox-crypto'
 import type { MailboxClient } from '../ports/mailbox'
 import type { A2ARegistry } from '../ports/a2a'
@@ -74,6 +74,7 @@ async function mustStart(engine: { start(): Promise<{ ok: true; code: string; ex
 function baseDeps(over: Partial<PairingDeps>): PairingDeps {
   return {
     client: makeFakeRelay().client,
+    crypto: pairingCrypto,
     registry: makeFakeRegistry(),
     self: { mailbox_addr: 'MB', mailbox_enc_pub: 'EP', relays: ['https://r.example/mailbox'] },
     selfId: () => 'cc-self0001',

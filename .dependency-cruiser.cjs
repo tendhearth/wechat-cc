@@ -94,9 +94,9 @@ module.exports = {
     {
       name: 'app-does-not-reach-up',
       severity: 'error',
-      comment: '架构终态 E1:src/app 是用例(协调器、会话管理、执行者登记)。不许往上依赖 daemon / cli / features / mcp-servers / test-support,也不碰 node 内置(要随机 id 经 lib/random)。眼下还能直接用 adapters(store、工作台零件);以后收紧成「只经 ports」。',
+      comment: '架构终态 E1 / E5:src/app 是用例(协调器、会话管理、执行者登记、「一件事」、配对 ……)。不许往上依赖 daemon / cli / features / mcp-servers / test-support,也不碰 node 内置(要随机 id 经 lib/random)。E5 起只经 ports 认 adapters(只引类型也不行):store / 工作台零件 / a2a / 信箱的形状在 src/ports,纯函数在 src/domain,要 node 的(加解密)由组装的地方经 deps 注入。零例外。',
       from: { path: '^src/app/', pathNot: '\\.test\\.ts$' },
-      to: { path: '^src/(daemon|cli|features|mcp-servers|test-support)/' },
+      to: { path: '^src/(daemon|cli|features|mcp-servers|test-support|adapters)/' },
     },
     {
       name: 'app-no-node',

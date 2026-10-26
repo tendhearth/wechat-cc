@@ -18,9 +18,7 @@
  * each side ignores its own. Only one active initiator code at a time (a new
  * start() supersedes). Not restart-persistent (§8).
  */
-import { deriveRendezvous } from '../adapters/mailbox/pairing-crypto'
-import { sealEnvelope, openEnvelope, signFetch } from '../adapters/mailbox/mailbox-crypto'
-import type { Envelope, MailboxClient } from '../ports/mailbox'
+import type { Envelope, MailboxClient, PairingCrypto } from '../ports/mailbox'
 import type { A2ARegistry } from '../ports/a2a'
 import type { A2AAgentRecord } from '../lib/agent-config'
 
@@ -56,6 +54,8 @@ export interface PairScheduleHandle { cancel(): void }
 
 export interface PairingDeps {
   client: MailboxClient
+  /** 会面身份 + 封 / 拆信封 + 取件签名(要 node:crypto,app 拿不了);组装的地方传 adapters/mailbox 的 `pairingCrypto`。 */
+  crypto: PairingCrypto
   registry: A2ARegistry
   self: { mailbox_addr: string; mailbox_enc_pub: string; relays: string[] }
   selfId: () => string
@@ -321,13 +321,13 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   }
   function readCards(rvAddr: string, rvEncPriv: string, rvSign: (m: string) => string): Promise<PairCard[]> {
     const ts = deps.now()
-    return deps.client.fetch(rendezvousRelay, rvAddr, 0, ts, signFetch(rvSign, rvAddr, ts)).then(res => {
+    return deps.client.fetch(rendezvousRelay, rvAddr, 0, ts, deps.crypto.signFetch(rvSign, rvAddr, ts)).then(res => {
       if (!res) return []
       const cards: PairCard[] = []
       for (const item of res.items) {
         let env: Envelope
         try { env = JSON.parse(item.envelope) as Envelope } catch { continue }
-        const inner = openEnvelope(rvEncPriv, env)
+        const inner = deps.crypto.openEnvelope(rvEncPriv, env)
         if (!inner) continue
         const problem = cardProblem(inner.body)
         if (problem === null) cards.push(inner.body as PairCard)
@@ -348,7 +348,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   async function start(): Promise<PairStartResult> {
     stop() // supersede any prior active code (§8: one at a time)
     const code = deps.genCode()
-    const rv = deriveRendezvous(code)
+    const rv = deps.crypto.deriveRendezvous(code)
     const myKey = deps.mintKey()
     const nonce = deps.genNonce()
     const mine = deps.genChannel()
@@ -363,7 +363,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     // and report `expired_or_wrong` with zero diagnostics on either side. A
     // code whose card never reached the relay can never be redeemed — fail
     // loudly here instead.
-    const env = sealEnvelope({ path: '/pair', bearer: '', body: buildOwnCard(deps, 'initiator', nonce, myKey, mine) }, rv.enc_pub)
+    const env = deps.crypto.sealEnvelope({ path: '/pair', bearer: '', body: buildOwnCard(deps, 'initiator', nonce, myKey, mine) }, rv.enc_pub)
     let dropped: boolean
     try {
       dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
@@ -412,7 +412,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
   }
 
   async function accept(code: string): Promise<PairResult> {
-    const rv = deriveRendezvous(code)
+    const rv = deps.crypto.deriveRendezvous(code)
     const cards = await readCards(rv.addr, rv.enc_priv, rv.sign)
     const initiator = cards.find(c => c.role === 'initiator')
     if (!initiator) return { ok: false, reason: 'expired_or_wrong' }
@@ -437,7 +437,7 @@ export function makePairing(deps: PairingDeps): PairingEngine {
     // rollback path needed. (Writing first and rolling back on drop failure
     // would need an explicit registry.remove() undo and risks a
     // half-committed peer if THAT itself fails.)
-    const env = sealEnvelope({ path: '/pair', bearer: '', body: buildOwnCard(deps, 'acceptor', deps.genNonce(), myKey, mine) }, rv.enc_pub)
+    const env = deps.crypto.sealEnvelope({ path: '/pair', bearer: '', body: buildOwnCard(deps, 'acceptor', deps.genNonce(), myKey, mine) }, rv.enc_pub)
     let dropped: boolean
     try {
       dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))

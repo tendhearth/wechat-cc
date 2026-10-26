@@ -18,6 +18,7 @@ import { describe, it, expect } from 'vitest'
 import { openSqlite } from '../lib/runtime/sqlite'
 import { makeRelayServer } from '../../relay/server'
 import { makePairing, type PairingDeps } from './pairing'
+import { pairingCrypto } from '../adapters/mailbox/pairing-crypto'
 import type { MailboxClient } from '../ports/mailbox'
 
 const NOW = 1_700_000_000_000
@@ -78,14 +79,14 @@ describe('pairing integration (two engines, one in-process relay)', () => {
     const relays = ['https://brain.example/mailbox']
 
     const A = makePairing({
-      client, registry: regA, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays },
+      client, crypto: pairingCrypto, registry: regA, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays },
       selfId: () => 'cc-aaaa1111', name: () => 'Alice', now: () => NOW,
       mintKey: () => 'A-inbound-key-0000000000', genCode: () => '246810', genNonce: () => 'nA',
       notify: () => {}, schedule: sched.schedule,
       channelStore: makeFakeChannelStore(), genChannel: makeGenChannel(),
     })
     const B = makePairing({
-      client, registry: regB, self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays },
+      client, crypto: pairingCrypto, registry: regB, self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays },
       selfId: () => 'cc-bbbb2222', name: () => 'Bob', now: () => NOW,
       mintKey: () => 'B-inbound-key-0000000000', genCode: () => 'unused', genNonce: () => 'nB',
       notify: () => {}, schedule: () => ({ cancel() {} }),
@@ -125,7 +126,7 @@ describe('pairing integration (two engines, one in-process relay)', () => {
     const relays = ['https://brain.example/mailbox']
 
     const A = makePairing({
-      client, registry: regA, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays },
+      client, crypto: pairingCrypto, registry: regA, self: { mailbox_addr: 'A_MB', mailbox_enc_pub: 'A_EP', relays },
       selfId: () => 'cc-aaaa1111', name: () => 'Alice', now: () => NOW,
       mintKey: () => 'A-inbound-key-0000000000', genCode: () => '135791', genNonce: () => 'nA',
       notify: () => {}, schedule: sched.schedule,
@@ -184,14 +185,14 @@ describe('pairing integration (two engines, one in-process relay)', () => {
     const staleConfig = loadAgentConfig(stateDir)
     const selfIdB = resolveSelfAgentId(staleConfig, stateDir) // resolved ONCE (persists self_agent_id via merge)
     const B = makePairing({
-      client, registry: registryB, self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays },
+      client, crypto: pairingCrypto, registry: registryB, self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays },
       selfId: () => selfIdB, name: () => 'Bob', now: () => NOW,
       mintKey: () => 'B-inbound-key-0000000000', genCode: () => 'x', genNonce: () => 'nB',
       notify: () => {}, schedule: () => ({ cancel() {} }),
       channelStore: makeFakeChannelStore(), genChannel: makeGenChannel(),
     })
     const initiator = (id: string, code: string) => makePairing({
-      client, registry: memRegistry(), self: { mailbox_addr: `${id}_MB`, mailbox_enc_pub: 'EP', relays },
+      client, crypto: pairingCrypto, registry: memRegistry(), self: { mailbox_addr: `${id}_MB`, mailbox_enc_pub: 'EP', relays },
       selfId: () => id, name: () => id, now: () => NOW,
       mintKey: () => `${id}-key-000000000000`, genCode: () => code, genNonce: () => `n-${id}`,
       notify: () => {}, schedule: () => ({ cancel() {} }),
