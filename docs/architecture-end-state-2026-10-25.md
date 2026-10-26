@@ -310,6 +310,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | G 设计稿 | [记忆一个源设计稿](superpowers/specs/2026-10-25-memory-single-source-design.md):主库一张 `memory_facts` 表(状态 / 来源 / 历史事件),`memory.md` / `owner.md` / 总览「你写的」从表渲染、文件只作导出;四条收回(更正、出口过滤的名单、`set_fact_status`、证据审阅)收成 `retract` / `restore`(「已办」走 `resolve`,不算收回);`facts.db` 并进主库,另三个知识库各一张迁移表。切法 G0 金样 → G8 生成物缓存,每步删旧的 + 零基线守卫;五条等主人点头的在稿 §4 |
 | G0 | 记忆金样:合成夹具 `src/test-support/fixtures/memory/`(主人 / 访客 / 空三个对话 + `facts.json`),`src/features/memory/memory-golden.test.ts` 用今天的代码产出、逐字节钉在 `fixtures/memory/golden/`(`memory.md` / `owner.md` 序列化、五段注入、整理的纠正段、`overviewForOthers`、`knowledge.md`)。零行为变化;夹具与读代码的发现见[设计稿](superpowers/specs/2026-10-25-memory-single-source-design.md) §6 |
 | G1 | 知识库进迁移框架:`runMigrations(db, list)`;`source` / `semantic` / `graph` / `facts` 四个库各一张迁移表(`src/adapters/knowledge/migrations/<库>/`,`v001` = 原来 `store.ts` 的建表 + 守着的 `ALTER`,幂等,存量库跑一遍什么都不变),`store.ts` 里不再建表。新守卫 `scripts/schema-ddl-in-migrations.guard.test.ts`:生产代码建表 / 改表只在 `**/migrations/**`,基线 0(v056–v058 共用的建表语句随之进 `src/lib/db/migrations/shared-ddl.ts`)。冻结检查与 CI 路径过滤覆盖知识库目录。零行为变化 |
+| G2 | 记忆表与渲染:迁移 v87 建 `memory_facts` / `memory_fact_events` / `memory_derived`;`src/domain/memory/facts.ts`(形状 + 今天的文档 → 行)、`src/domain/memory/render.ts`(`memory.md` / `owner.md` / 两段注入,从行渲染)、`src/ports/memory-facts.ts`、`src/adapters/store/memory-facts.ts`(唯一写这三张表的地方)。还没人读写;金样:`render(parse(夹具))` 与 G0 逐字节相等(纯渲染、进表再读出来各一份)。表和初稿的五处差别见[设计稿](superpowers/specs/2026-10-25-memory-single-source-design.md) §6。零行为变化 |
 
 
 ### B2:OpenAI 兼容 对话 / 工作台 → 一种会话 差异表
@@ -363,3 +364,4 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 - 2026-10-25:E5 做完(进度表):app 只经 ports / domain 认 adapters,depcheck `app-does-not-reach-up` 零例外。
 - 2026-10-26:G0 做完(进度表):记忆金样进库,G2 起每步都跑。
 - 2026-10-26:G1 做完(进度表):知识库四个库进迁移框架,建表 / 改表只在迁移里(守卫基线 0)。
+- 2026-10-26:G2 做完(进度表):主库三张记忆表(v87)+ 从行渲染,金样逐字节相等。

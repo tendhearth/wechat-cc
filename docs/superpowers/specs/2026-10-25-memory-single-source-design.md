@@ -43,28 +43,34 @@
 主库 `wechat-cc.db` 加两张表(下一个空号的迁移):
 
 ```sql
+-- 建在 v87(`src/lib/db/migrations/v087.ts`,G2);和初稿的差别见 §6
 CREATE TABLE memory_facts (
   id            INTEGER PRIMARY KEY,           -- facts.db 搬过来的行保留原 id(待办页、MCP 认的是它)
-  key           TEXT NOT NULL UNIQUE,          -- 'm:<hex>' 记忆条目 / 'o:<id>' 主人原话 / 'k:<原 id>' 联系人事实 / 'c:<id>' 只剩更正的墓碑
   chat_id       TEXT NOT NULL,                 -- 哪个对话的记忆;联系人事实记主人的 chat
+  key           TEXT NOT NULL,                 -- 'm:<hex>' 有编号的记忆条目 / 'u:<n>' 没编号的 / 'o:<id>' 主人原话 / 'x:<文档>:<n>' 认不出的行 / 'c:<id>' 只剩更正的墓碑 / 'k:<原 id>' 联系人事实
+  doc           TEXT NOT NULL,                 -- memory / owner / contact:这一行属于哪份文档(CHECK)
   subject       TEXT NOT NULL,                 -- 'owner' 或联系人 username
-  section       TEXT,                          -- 记忆五栏之一;联系人事实为 NULL
-  kind          TEXT, predicate TEXT, related_contact TEXT, time_ref TEXT, confidence TEXT,  -- facts.db 原列
+  section       TEXT,                          -- 记忆五栏之一;别的为 NULL
+  ord           INTEGER NOT NULL DEFAULT 0,    -- 在那份文档里的先后
+  kind TEXT, predicate TEXT, related_contact TEXT, time_ref TEXT, confidence TEXT,  -- facts.db 原列
   text          TEXT NOT NULL,                 -- 一句话本身(记忆条目 = 正文;联系人事实 = value)
-  status        TEXT NOT NULL,                 -- active / retracted / outdated / superseded / resolved
+  status        TEXT NOT NULL,                 -- active / retracted / outdated / superseded / resolved(CHECK)
   source        TEXT NOT NULL,                 -- owner / nightly / import / extract / review / legacy_correction
-  scope         TEXT NOT NULL DEFAULT 'chat',  -- 'owner_only' = 只在主人对话出现、对外一律去掉(今天 owner.md 的规矩)
+  origin        TEXT,                          -- owner.md 原话写在哪儿:overview / memory / owner
+  scope         TEXT NOT NULL DEFAULT 'chat',  -- 'owner_only' = 只在主人对话出现、对外一律去掉(今天 owner.md 的规矩;CHECK)
   evidence      TEXT,                          -- JSON:消息 key / 观察 id(今天 memory-sources.json 与 source_msg_keys)
   seen_at TEXT, valid_from INTEGER, invalidated_at INTEGER, superseded_by INTEGER,
-  replaces      INTEGER,                       -- 主人改写:新原话指向被收回的那一行
-  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-);
+  replaces      INTEGER REFERENCES memory_facts(id),  -- 主人改写:新原话指向被收回的那一行
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  UNIQUE(chat_id, key)
+) STRICT;
 CREATE TABLE memory_fact_events (            -- 历史,只追加
-  seq INTEGER PRIMARY KEY, fact_id INTEGER NOT NULL, ts INTEGER NOT NULL,
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, fact_id INTEGER NOT NULL REFERENCES memory_facts(id), chat_id TEXT NOT NULL, ts INTEGER NOT NULL,
   action TEXT NOT NULL,                        -- added / updated / retracted / restored / superseded / resolved / redacted_on_output
   actor  TEXT NOT NULL,                        -- owner / nightly / cc / judge / import
   verdict TEXT, prev_text TEXT, note TEXT      -- note = 清源头 / 关待办的回执(今天写在 corrections.md 那条底下)
-);
+) STRICT;
+CREATE TABLE memory_derived (chat_id TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, input_rev INTEGER NOT NULL, generated_at INTEGER NOT NULL, PRIMARY KEY(chat_id, kind)) STRICT;
 ```
 
 - 一个对话的「修订号」= 该 chat 最大的 `memory_fact_events.seq`。它取代 `.derived-state.json` 的 revision 和记忆编辑的 `baseHash`(`memory_changed` 语义不变)。
@@ -181,9 +187,12 @@ restore(chatId, key, actor)          // 撤销收回;只恢复这一行,清掉�
 |---|---|---|
 | G0 金样 | 做完 | 夹具 `src/test-support/fixtures/memory/chats/`(owner:BOM、栏外 / 认不出的行、没编号的条目、半截尾注、已更正又被写回的「下周要去杭州出差三天」「年糕是狸花猫」、`替换:` 两条、短于 `MIN_CORRECTED_CHARS` 的更正;guest:CRLF、磁盘上有 `owner.md` 但不该注入、超过注入上限的 `profile.md`;empty:什么都没有)与 `facts.json`(facts 五种状态 + 图的联系人)。金样 `fixtures/memory/golden/`,由 `src/features/memory/memory-golden.test.ts` 用今天的代码生成并逐字节比:每个对话的 `memory.md` / `owner.md` 序列化、五段注入(`curatedMemoryFor` / `ownerMemoryFor` / `coreMemoryFor` / `todayDraftFor` / `knowledgeMemoryFor`)、整理素材头两块(纠正 + 原话)、`correctedTexts` 名单、`overviewForOthers`;外加 `knowledge.md` 蒸馏。`.gitattributes` 让这棵树按字节进出 |
 | G1 知识库迁移 | 做完 | `runMigrations(db, list)`(#79 的修复只对主库那张表);`src/adapters/knowledge/migrations/{source,semantic,graph,facts}/`,每个 `v001` = G1 之前 `store.ts` 的建表 + 守着的 `ALTER`,原样、幂等;`store.ts` 里没有 `CREATE TABLE` / `ALTER TABLE` 了。守卫 `scripts/schema-ddl-in-migrations.guard.test.ts`(`src/` 与 `cli.ts` 的生产代码里建表 / 改表只许在 `**/migrations/**`,基线 0);v056–v058 共用的工作台建表语句随之搬进 `src/lib/db/migrations/shared-ddl.ts`(`schema-helpers` 照原名转出,`migration-frozen` 一起冻)。`scripts/db-migrations.guard.test.ts` 钉住四张知识库迁移表,`migration-frozen` 与 CI 路径过滤加上知识库目录。升级路径测试 `src/adapters/knowledge/migrations.test.ts`(从 0、今天的结构再跑 v001、真机旧形状、`openKnowledge` 打开 G1 之前的目录) |
+| G2 表与渲染 | 做完 | 迁移 v87 建 `memory_facts` / `memory_fact_events` / `memory_derived`(升级测试从真 v86 起,`src/lib/db.test.ts`);形状与「今天的文档 → 行」的纯转换 `src/domain/memory/facts.ts`(`factsFromMemoryDoc` / `factsFromOwnerDoc`,G3 导入用);渲染 `src/domain/memory/render.ts`(`renderMemoryMd` / `renderMemoryForPrompt` / `renderOwnerMd` / `renderOwnerForPrompt`);口 `src/ports/memory-facts.ts`、店面 `src/adapters/store/memory-facts.ts`(插入一批 + 每行一条 `added` 事件同一事务、按对话列、修订号、事件、生成物缓存)。没人读写。金样:`src/domain/memory/render.test.ts`(纯渲染)与 `src/adapters/store/memory-facts.test.ts`(进表再读出来)都和 G0 逐字节相等 |
 
 读代码时发现的(金样照今天的样子钉住,不在 G0 改):
 
 - 每轮注入的 `memory.md`(`curatedMemoryFor`)**不过**纠正名单:已更正又被整理写回的行(夹具里「年糕是狸花猫」)今天照样进主人对话的提示词。§1.2 / 「数据怎么搬」第 1 条说这类行「靠出口过滤挡着」,只对合成产出成立。G3 把它导成 `retracted` 以后,G6 读表时它就从提示词里消失了 —— 这是一处**看得见**的变化(变好),G6 的金样要单独更新这一处并在 PR 里写明。
 - §2.4 只说三个库各一张迁移表、「`facts.db` 不再单独迁移」;但 G1 的结束条件是 `store.ts` 里没有建表 / 改表,而 `facts.db` 要到 G7 才搬走 ⇒ G1 给 `facts.db` 也建了一张(共四张,加主库五张)。G7 之后它只在导入时读一次,那张表留着不再追加。
 - 主库这边也不只 `migrations/` 里有建表:`src/lib/db/schema-helpers.ts` 有三段被 v056–v058 调用的工作台建表语句。零基线的守卫要求它们进 `migrations/`(见上);它们本来就是冻结迁移的内容,以前没有被冻住。
+- §2.1 初稿的表在落地时改了五处(上面的 SQL 已是落地的样子):① `key` 只在一个对话里唯一(`UNIQUE(chat_id, key)`):`m:` 编号是每个对话各自随机的 6 位十六进制,`o:` 也是,全库唯一会撞。② 加 `ord`:`memory.md` 要逐字节还原「顺序」,初稿没有放顺序的列。③ 加 `doc`:认不出的行(`extra`)和没编号的条目也要进表(`x:` / `u:` 两种 key),光靠 `source` 分不出一行属于 `memory.md` 还是 `owner.md`。④ 加 `origin`:`owner.md` 每条尾注里的 `overview / memory / owner` 初稿没有列放。⑤ 事件表加 `chat_id` 并按它建索引,修订号不用每次连表;`seq` 用 `AUTOINCREMENT`,保证修订号永不回头。另外只有 `doc` / `status` / `scope` 用 CHECK 钉死,`source` / `action` / `actor` 的取值在 TS 类型里(以后加值不用重建表)。
+- 被 `替换:` 指到的更正在导入时必须先有一行墓碑(`replaces` 是外键);`owner.md` 渲染时从那一行的 `c:<id>` 取编号。G2 的金样测试按这个顺序造行(先墓碑、后原话)。
