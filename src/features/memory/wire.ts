@@ -16,6 +16,7 @@ import { makeMemoryLlmOps, resolveCheapEval } from './llm-ops'
 import { makeMemoryNightlyRuntime, type MemoryNightlyRuntime } from './nightly-runtime'
 import { makeNightlySources } from './nightly-sources'
 import { makeMemoryWriter } from './memory-export'
+import { memoryOwnerChatId } from './fact-import'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 
 export interface WireMemoryDeps {
@@ -42,7 +43,8 @@ export function wireMemory(d: WireMemoryDeps) {
     registry: boot.registry,
   })
   // 每晚整理长期记忆 memory.md(spec 2026-09-25-memory-nightly-design)。定时器由 main.ts 挂。
-  const nightlyOwner = (): string | null => loadCompanionConfig(stateDir).default_chat_id ?? null
+  // 记忆的主人只有一处定义(fact-import 的 memoryOwnerChatId),开机导入认手改用的是同一个。
+  const nightlyOwner = (): string | null => memoryOwnerChatId(stateDir)
   const nightlyRuntime = makeMemoryNightlyRuntime({
     stateDir,
     ownerChatId: nightlyOwner,

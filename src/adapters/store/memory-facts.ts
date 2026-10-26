@@ -113,12 +113,16 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
       event.run(cur.id, chatId, by.ts, 'updated', by.actor, null, null, note)
       return true
     },
-    exportHash(chatId, file) {
-      return db.query<{ h: string }, [string, string]>('SELECT sha256 AS h FROM memory_exports WHERE chat_id = ? AND file = ?').get(chatId, file)?.h ?? null
+    exportRecord(chatId, file) {
+      return db.query<{ sha256: string | null; pending: string | null }, [string, string]>('SELECT sha256, pending_sha256 AS pending FROM memory_exports WHERE chat_id = ? AND file = ?').get(chatId, file) ?? null
     },
-    setExportHash(chatId, file, sha256, at) {
-      db.query(`INSERT INTO memory_exports(chat_id, file, sha256, at) VALUES (?,?,?,?)
-        ON CONFLICT(chat_id, file) DO UPDATE SET sha256 = excluded.sha256, at = excluded.at`).run(chatId, file, sha256, at)
+    markExportPending(chatId, file, sha256, at) {
+      db.query(`INSERT INTO memory_exports(chat_id, file, sha256, pending_sha256, at) VALUES (?,?,NULL,?,?)
+        ON CONFLICT(chat_id, file) DO UPDATE SET pending_sha256 = excluded.pending_sha256, at = excluded.at`).run(chatId, file, sha256, at)
+    },
+    markExportDone(chatId, file, sha256, at) {
+      db.query(`INSERT INTO memory_exports(chat_id, file, sha256, pending_sha256, at) VALUES (?,?,?,NULL,?)
+        ON CONFLICT(chat_id, file) DO UPDATE SET sha256 = excluded.sha256, pending_sha256 = NULL, at = excluded.at`).run(chatId, file, sha256, at)
     },
     insert(facts, by) {
       return atomically(() => {

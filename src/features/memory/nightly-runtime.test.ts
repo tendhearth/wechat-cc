@@ -499,3 +499,85 @@ describe('hand edits of the exported memory.md (G4,主人 10-26 定)', () => {
     expect(sent[0]).toContain('没有自动照办')
   })
 })
+
+describe('the hand-edit check runs before every memory.md reader / writer (数据安全评审)', () => {
+  const DOC = '## 偏好\n- 咖啡只喝美式 <!-- m:aa01 · 2026-10-20 -->\n- 周末喜欢爬山 <!-- m:aa02 · 2026-10-20 -->\n## 近况\n- 在赶发版 <!-- m:aa03 · 2026-10-20 -->\n'
+  function handEdited() {
+    const store = makeMemoryFactsStore(openTestDb())
+    const writer = makeMemoryWriter({ store, stateDir })
+    writer.commitMemory(OWNER, parseMemoryDoc(DOC), { actor: 'nightly', ts: now }, '2026-10-20T04:00:00.000Z')
+    const exported = readFileSync(join(root, 'memory.md'), 'utf8')
+    const edited = exported.replace('- 在赶发版 <!-- m:aa03 · 2026-10-20 -->\n', '')   // 主人在编辑器里删了一行
+    writeFileSync(join(root, 'memory.md'), edited)
+    const rt = makeMemoryNightlyRuntime(deps({ writer, config: () => ({ enabled: false, at: '04:00', timezone: 'UTC' }) }))
+    return { store, writer, rt, edited }
+  }
+  const expectReconciled = (store: ReturnType<typeof makeMemoryFactsStore>) => {
+    // 删掉的那一行成了一条收回(有墓碑),不是悄悄 outdated
+    expect(store.byKey(OWNER, 'm:aa03')!.status).not.toBe('active')   // G4:拿掉 + 墓碑;G5 起是 retracted
+    expect(store.tombstones(OWNER).map(t => t.text)).toContain('在赶发版')
+    expect(readNightlyState(stateDir).pendingNotice?.text).toContain('1 条当作记错了')
+    expect(readFileSync(join(root, 'corrections.md'), 'utf8')).toContain('在赶发版')
+  }
+  beforeEach(() => { now = Date.parse('2026-09-25T10:00:00Z') })
+
+  it('correct', async () => {
+    const { store, rt } = handEdited()
+    await rt.correct('aa01', 'wrong')
+    expectReconciled(store)
+  })
+  it('edit (view first, then edit with its hash)', async () => {
+    const { store, rt } = handEdited()
+    const v = rt.view('memory.md')
+    expectReconciled(store)
+    const r = await rt.edit({ path: 'memory.md', baseHash: v.baseHash, lines: v.lines.filter(l => l.text !== '周末喜欢爬山').map(l => ({ text: l.text, ...(l.lineKey ? { lineKey: l.lineKey } : {}), ...(l.assertionId ? { assertionId: l.assertionId } : {}) })) })
+    expect(r.ok).toBe(true)
+  })
+  it('edit straight away (no fresh view) ⇒ reconciles first, then memory_changed', async () => {
+    const { store, rt, edited } = handEdited()
+    const r = await rt.edit({ path: 'memory.md', baseHash: 'stale', lines: [{ text: edited }] })
+    expect(r).toEqual({ ok: false, code: 'memory_changed' })
+    expectReconciled(store)
+  })
+  it('runNow', async () => {
+    const { store, rt } = handEdited()
+    await rt.runNow()
+    expectReconciled(store)
+    // 整理没把删掉的那行写回来
+    expect(readFileSync(join(root, 'memory.md'), 'utf8')).not.toContain('在赶发版')
+  })
+  it('importEntries', async () => {
+    const { store, rt } = handEdited()
+    const r = await rt.importEntries([{ section: '近况', text: '在赶发版' }, { section: '偏好', text: '爱喝茶' }], '别的助手')
+    expectReconciled(store)
+    expect(r.skipped.corrected).toBe(1)          // 刚收回的那句不会被导入回来
+    expect(r.added).toBe(1)
+  })
+
+  it('a section-move-only edit (the line-level plan sees nothing) is archived and told, not silently thrown away', async () => {
+    const store = makeMemoryFactsStore(openTestDb())
+    const writer = makeMemoryWriter({ store, stateDir })
+    writer.commitMemory(OWNER, parseMemoryDoc(DOC), { actor: 'nightly', ts: now }, '2026-10-20T04:00:00.000Z')
+    const exported = readFileSync(join(root, 'memory.md'), 'utf8')
+    const moved = exported.replace('- 周末喜欢爬山 <!-- m:aa02 · 2026-10-20 -->\n', '').replace('## 近况\n', '## 近况\n- 周末喜欢爬山 <!-- m:aa02 · 2026-10-20 -->\n')
+    writeFileSync(join(root, 'memory.md'), moved)
+    await makeMemoryNightlyRuntime(deps({ writer, config: () => ({ enabled: false, at: '04:00', timezone: 'UTC' }) })).tick()
+    const { createHash } = await import('node:crypto')
+    const kept = join(stateDir, 'memory-archive', OWNER, `memory.md.kept-${createHash('sha256').update(moved).digest('hex').slice(0, 12)}.md`)
+    expect(readFileSync(kept, 'utf8')).toBe(moved)
+    expect(readFileSync(join(root, 'memory.md'), 'utf8')).not.toBe(moved)
+    expect(sent[0]).toContain('没有照办')
+  })
+
+  it('no notice loop: the daemon\'s own exports are never flagged; one hand edit ⇒ at most one notice', async () => {
+    const store = makeMemoryFactsStore(openTestDb())
+    const writer = makeMemoryWriter({ store, stateDir })
+    writer.commitMemory(OWNER, parseMemoryDoc(DOC), { actor: 'nightly', ts: now }, '2026-10-20T04:00:00.000Z')
+    const rt = makeMemoryNightlyRuntime(deps({ writer, config: () => ({ enabled: false, at: '04:00', timezone: 'UTC' }) }))
+    await rt.tick(); await rt.correct('aa02', 'wrong'); await rt.tick()
+    expect(sent).toEqual([])
+    writeFileSync(join(root, 'memory.md'), readFileSync(join(root, 'memory.md'), 'utf8').replace('咖啡只喝美式', '咖啡只喝手冲'))
+    await rt.tick(); rt.view('memory.md'); await rt.tick(); rt.curatedView()
+    expect(sent).toHaveLength(1)
+  })
+})

@@ -286,45 +286,52 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     if (done.length > BULK_CORRECTIONS) deps.log('MEMORY_NIGHTLY', `agenda model drop: skipped ${done.length - BULK_CORRECTIONS} of a bulk edit (verbatim drop still ran)`)
   }
 
+  /** 比较用:去掉头部注释、行尾空白和空行。只差这些 ⇒ 不算手改了什么。 */
+  const normalizeForCompare = (md: string) => md.replace(/^\uFEFF/, '').split('\n').map(l => l.trimEnd()).filter(l => l && !l.startsWith('<!-- wechat-cc 记忆')).join('\n')
+
   /**
-   * 主人用编辑器直接改了导出的 memory.md(主人 10-26 定,设计稿 §4 第 4 条):不悄悄覆盖。和最后一次导出不一样 ⇒ 按记忆编辑
-   * 那张比对表(表里的样子 → 磁盘上的样子)变成更正 / 原话,落表、重新导出,在微信里告诉主人一次。改动多到要主人确认的
-   * (记忆页上也要点确认的那种)⇒ 不自动照办:手改的那份存进 memory-archive,导出照表里的样子,告诉主人去记忆页改。
+   * 每个读写 memory.md 的入口先过这里(数据安全评审第 1 条:不只是每晚那一拍):
+   *  1. 上次导出没写成(表比文件新)⇒ 照表补写;
+   *  2. 主人用编辑器直接改了导出的 memory.md(主人 10-26 定,设计稿 §4 第 4 条)—— 只看内容指纹,删了头部、整份覆盖都认得出:
+   *     不悄悄覆盖,也不悄悄采纳。和表里的样子有实质差别 ⇒ **先存一份进 memory-archive/**,再按记忆编辑那张比对表
+   *     (表里的样子 → 磁盘上的样子)变成更正 / 原话、落表、重新导出,微信里告诉主人一次;比对表看不出的改动(挪栏、改尾注 …)
+   *     或者多到要主人确认的,不照办,导出照表里的样子,告诉主人原样存在哪儿。只差空白 / 头部 ⇒ 照表重新导出,不打扰。
+   * 导出写下以后指纹就对上了,同一次手改只会处理、通知一次。
    */
-  function reconcileHandEdit(): void {
+  function syncDisk(): void {
     const owner = deps.ownerChatId(), r = root()
     if (!owner || !r) return
+    const nowMs = deps.now(), nowIso = new Date(nowMs).toISOString()
+    deps.writer.syncStale(owner, nowIso, nowMs)
     const disk = deps.writer.handEdited(owner)
     if (disk === null) return
-    const nowMs = deps.now(), nowIso = new Date(nowMs).toISOString()
     const tableMd = deps.writer.tableMemoryMd(owner, nowIso)
     if (tableMd === null) return
+    if (normalizeForCompare(disk) === normalizeForCompare(tableMd)) { deps.writer.reexportMemory(owner, nowIso, nowMs); return }
+    deps.writer.archiveDisk(owner, 'hand-edit')
     const before = buildView('memory.md', tableMd)
     const lines: EditLine[] = [
       ...before.lines.filter(l => l.origin === 'owner').map(l => ({ text: l.text, assertionId: l.assertionId! })),
       ...memoryViewLines(disk).map(l => ({ text: l.text, lineKey: l.lineKey! })),
     ]
     const planned = planEdit(before.lines, lines, { confirmBulk: false })
-    let notice: string | null = null
+    let notice: string
     if (planned.ok && (planned.plan.corrections.length || planned.plan.assertions.length)) {
       const res = applyPlan(r, 'memory.md', planned.plan, parseMemoryDoc(tableMd), nowMs)
-      if (!res.docChanged) deps.writer.reexportMemory(owner, nowIso, nowMs)
-      dropAgendaInBackground(res.done)
-      notice = `你直接在编辑器里改了 memory.md。那份是生成的,改那里本来不算数 —— 这次我照记忆页的规矩记下了:${res.corrections.length} 条当作记错了、${res.assertions.length} 条记成你说的。以后改记忆请到记忆页。`
-      deps.log('MEMORY_NIGHTLY', `hand edit of memory.md reconciled: ${res.corrections.length} corrections, ${res.assertions.length} assertions`)
-    } else if (planned.ok) {
-      deps.writer.reexportMemory(owner, nowIso, nowMs)   // 只动了空白 / 头部:照表重新导出,不打扰主人
-    } else {
-      const archiveDir = join(deps.stateDir, 'memory-archive', owner)
-      mkdirSync(archiveDir, { recursive: true })
-      const kept = join(archiveDir, `memory.md.hand-edit-${nowMs}.md`)
-      writeFileAtomic(kept, disk, { mode: 0o600 })
       deps.writer.reexportMemory(owner, nowIso, nowMs)
-      notice = `你直接在编辑器里改了 memory.md,改动太多,我没有自动照办(原样存在 memory-archive/${owner}/ 里)。memory.md 是生成的,要改记忆请到记忆页。`
-      deps.log('MEMORY_NIGHTLY', `hand edit of memory.md not applied (${planned.code}); kept a copy, re-exported`)
+      dropAgendaInBackground(res.done)
+      notice = `你直接在编辑器里改了 memory.md。那份是生成的,改那里本来不算数 —— 这次我照记忆页的规矩记下了:${res.corrections.length} 条当作记错了、${res.assertions.length} 条记成你说的(改之前那份存在 memory-archive/${owner}/ 里)。以后改记忆请到记忆页。`
+      deps.log('MEMORY_NIGHTLY', `hand edit of memory.md reconciled: ${res.corrections.length} corrections, ${res.assertions.length} assertions; kept a copy`)
+    } else {
+      deps.writer.reexportMemory(owner, nowIso, nowMs)
+      notice = planned.ok
+        ? `你直接在编辑器里改了 memory.md,改的是位置 / 格式这类我照记忆页的规矩认不出来的东西,所以没有照办(原样存在 memory-archive/${owner}/ 里)。memory.md 是生成的,要改记忆请到记忆页。`
+        : `你直接在编辑器里改了 memory.md,改动太多,我没有自动照办(原样存在 memory-archive/${owner}/ 里)。memory.md 是生成的,要改记忆请到记忆页。`
+      deps.log('MEMORY_NIGHTLY', `hand edit of memory.md not applied (${planned.ok ? 'not_line_level' : planned.code}); kept a copy, re-exported`)
     }
-    if (notice) writeNightlyState(deps.stateDir, { ...readNightlyState(deps.stateDir), pendingNotice: { text: notice, createdAtMs: nowMs } })
+    writeNightlyState(deps.stateDir, { ...readNightlyState(deps.stateDir), pendingNotice: { text: notice, createdAtMs: nowMs } })
   }
+  const syncDiskSafely = () => { try { syncDisk() } catch (err) { deps.log('MEMORY_NIGHTLY', `hand-edit check failed: ${err instanceof Error ? err.message : String(err)}`) } }
 
   const root = (): string | null => {
     const owner = deps.ownerChatId()
@@ -349,7 +356,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
   let lastSkipReason: string | null = null
   return {
     tick: () => serial(async () => {
-      try { reconcileHandEdit() } catch (err) { deps.log('MEMORY_NIGHTLY', `hand-edit check failed: ${err instanceof Error ? err.message : String(err)}`) }
+      syncDiskSafely()
       const r = await runMemoryNightly(deps, { force: false })
       if (r.status === 'skipped') {
         if (r.reason !== 'not_due' && r.reason !== lastSkipReason) deps.log('MEMORY_NIGHTLY', `tick: skipped (${r.reason})`)
@@ -360,10 +367,11 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       }
       await deliverPendingNotice(deps)
     }),
-    runNow: () => serial(() => runMemoryNightly(deps, { force: true })),
+    runNow: () => serial(() => { syncDiskSafely(); return runMemoryNightly(deps, { force: true }) }),
     // 与每晚整理同一条串行链:不会和它同时改 memory.md
     correct: async (id, verdict) => {
       const done = await serial(async () => {
+      syncDiskSafely()
       const got = readDoc()
       if (!got) throw new Error('memory_not_found')
       const hit = takeEntry(got.doc, id)
@@ -380,9 +388,10 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       void serial(() => dropAgendaByModel(done)).catch(err => deps.log('MEMORY_NIGHTLY', `agenda model drop failed: ${err instanceof Error ? err.message : String(err)}`))
       return { text: done.text }
     },
-    view: (path) => buildView(path),
+    view: (path) => { syncDiskSafely(); return buildView(path) },
     edit: async (req) => {
       const out = await serial(async (): Promise<{ result: MemoryEditResult; done: Done[] }> => {
+        syncDiskSafely()
         const r = root()
         if (!r) throw new Error('no_owner')
         const before = buildView(req.path)
@@ -405,6 +414,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       return out.result
     },
     importEntries: (items, label) => serial(async (): Promise<ImportResult> => {
+      syncDiskSafely()
       const r = root()
       if (!r) throw new Error('no_owner')
       mkdirSync(r, { recursive: true })
@@ -443,6 +453,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       return { added: added.length, skipped }
     }),
     readCurated() {
+      syncDiskSafely()
       const got = readDoc()
       if (!got) return null
       const state = readNightlyState(deps.stateDir)
@@ -458,6 +469,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       })
     },
     curatedView() {
+      syncDiskSafely()
       const state = readNightlyState(deps.stateDir)
       const got = readDoc()
       if (!got) return { updated_at: null, when_label: null, mood: 'first', failures: state.failures, changes: [], sections: [] }

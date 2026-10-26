@@ -32,9 +32,15 @@ export interface MemoryFactsStore {
   setImportHash(chatId: string, filesHash: string, at: number): void
   /** 墓碑底下追加一段说明(CC 后来又关掉的待办 …):一条事件。没有这一行 ⇒ false。 */
   addNote(chatId: string, key: string, note: string, by: Omit<FactWrite, 'action'>): boolean
-  /** 我们最后一次导出这份文件时的内容指纹;没导出过 ⇒ null。 */
-  exportHash(chatId: string, file: string): string | null
-  setExportHash(chatId: string, file: string, sha256: string, at: number): void
+  /**
+   * 这份文件的导出记录:`sha256` = 最后一次确认写到磁盘上的内容指纹,`pending` = 表已经改了、正要写的那份(写成功就清掉)。
+   * 没导出过 ⇒ null。
+   */
+  exportRecord(chatId: string, file: string): { sha256: string | null; pending: string | null } | null
+  /** 写文件之前:记下正要写的那份。 */
+  markExportPending(chatId: string, file: string, sha256: string, at: number): void
+  /** 写成功之后:这份就是磁盘上的了。 */
+  markExportDone(chatId: string, file: string, sha256: string, at: number): void
   /** 一个事务里插这些行,每行记一条 `added` 事件;任何一行失败 ⇒ 全部不插。`replacesKey` 要指向同一对话里已有的(或这一批里更早的)一行。 */
   insert(facts: readonly NewMemoryFact[], by: FactWrite): MemoryFactView[]
   /** 一个对话的行,按 doc、ord、id 排;`replacesKey` 已经解析好。 */

@@ -2,6 +2,7 @@
  * G4:写者落表、文件变成导出(设计稿 docs/superpowers/specs/2026-10-25-memory-single-source-design.md §3)。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -14,7 +15,7 @@ import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
 import { EXPORT_NOTICE, renderMemoryMd } from '../../domain/memory/render'
 import { emptyDoc, parseMemoryDoc, renderForPrompt, serializeMemoryDoc } from './curated-doc'
-import { importChatMemory } from './fact-import'
+import { importChatMemory, importMemoryOnBoot } from './fact-import'
 import { makeMemoryWriter, type MemoryWriter } from './memory-export'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'test-support', 'fixtures', 'memory')
@@ -31,6 +32,7 @@ beforeEach(() => {
 })
 afterEach(() => { db.close(); removeTempDir(stateDir) })
 const file = (f: string) => readFileSync(join(root, f), 'utf8')
+const archived = (content: string) => join(stateDir, 'memory-archive', OWNER, `memory.md.kept-${createHash('sha256').update(content).digest('hex').slice(0, 12)}.md`)
 const seedFixture = () => { cpSync(join(FIXTURES, 'chats', 'owner'), root, { recursive: true }); expect(importChatMemory(store, root, OWNER, 1, '2026-10-26').outcome).toBe('imported') }
 
 describe('MemoryWriter', () => {
@@ -96,17 +98,72 @@ describe('MemoryWriter', () => {
     expect(store.list(OWNER)).toEqual([])
   })
 
-  it('handEdited: only a changed file that still carries the generated notice counts; an old binary\'s rewrite does not', () => {
+  it('handEdited looks only at the content hash: a removed header or an old binary\'s rewrite still counts; our own export never does', () => {
     seedFixture()
     writer.commitMemory(OWNER, parseMemoryDoc(file('memory.md')), by, STAMP)
     expect(writer.handEdited(OWNER)).toBeNull()
+    writer.commitMemory(OWNER, parseMemoryDoc(file('memory.md')), { ...by, ts: by.ts + 1 }, '2026-10-27T04:00:00.000Z')
+    expect(writer.handEdited(OWNER)).toBeNull()                          // 自己的导出永远不算手改
     const exported = file('memory.md')
     writeFileSync(join(root, 'memory.md'), exported.replace('- 每天早上七点起床跑步', '- 每天早上六点起床跑步'))
     expect(writer.handEdited(OWNER)).toContain('六点')
-    // 老版本二进制整份重写:头部没有「这是生成的」⇒ 不算手改(开机导入照文件同步)
+    // 删掉头部(连「这是生成的」那句一起)照样认得出
+    writeFileSync(join(root, 'memory.md'), exported.split('\n').slice(1).join('\n'))
+    expect(writer.handEdited(OWNER)).not.toBeNull()
+    // 老版本二进制整份重写(头部换成老格式):有导出记录 ⇒ 也当手改,往保守那边走
     writeFileSync(join(root, 'memory.md'), serializeMemoryDoc(parseMemoryDoc(exported), STAMP))
-    expect(writer.handEdited(OWNER)).toBeNull()
-    expect(importChatMemory(store, root, OWNER, 3, '2026-10-26').outcome).toBe('imported')
+    expect(writer.handEdited(OWNER)).not.toBeNull()
+    expect(importChatMemory(store, root, OWNER, 3, '2026-10-26', { ownerChat: true }).outcome).toBe('hand_edited')
+  })
+
+  it('with the header removed, the boot import keeps a copy and does not adopt it', () => {
+    seedFixture()
+    writer.commitMemory(OWNER, parseMemoryDoc(file('memory.md')), by, STAMP)
+    const edited = file('memory.md').split('\n').slice(1).join('\n').replace('- 咖啡只喝美式,不加糖 <!-- m:b0b0b1 · 2026-09-30 -->\n', '')
+    writeFileSync(join(root, 'memory.md'), edited)
+    expect(importChatMemory(store, root, OWNER, 3, '2026-10-26', { ownerChat: true }).outcome).toBe('hand_edited')
+    expect(store.byKey(OWNER, 'm:b0b0b1')!.status).toBe('active')
+    expect(readFileSync(archived(edited), 'utf8')).toBe(edited)
+    expect(file('memory.md')).toBe(edited)                               // 文件不动,留给运行时核对
+  })
+
+  it('boot with default_chat_id unset: nobody can reconcile, so a hand-edited memory.md is kept and not adopted (no crash)', () => {
+    seedFixture()
+    writer.commitMemory(OWNER, parseMemoryDoc(file('memory.md')), by, STAMP)
+    const edited = file('memory.md').replace('不加糖', '加一点糖')
+    writeFileSync(join(root, 'memory.md'), edited)
+    const out = importMemoryOnBoot({ store, stateDir, now: () => by.ts + 5, log: () => {}, beforeChat: (c) => writer.syncStale(c, STAMP, by.ts + 5) })
+    expect(out).toEqual([{ chatId: OWNER, outcome: 'hand_edited' }])
+    expect(store.byKey(OWNER, 'm:b0b0b1')!.text).toBe('咖啡只喝美式,不加糖')
+    expect(existsSync(archived(edited))).toBe(true)
+  })
+
+  it('an export that fails after the table commit: the table is ahead, the next boot re-exports it (and a later hand edit is still a hand edit)', () => {
+    seedFixture()
+    writer.commitMemory(OWNER, parseMemoryDoc(file('memory.md')), by, STAMP)
+    const before = file('memory.md')
+    const broken = makeMemoryWriter({ store, stateDir, writeFile: () => { throw new Error('ENOSPC') } })
+    const doc = parseMemoryDoc(before)
+    doc.sections['近况'].push({ id: 'cc03', text: '刚换了一台显示器', seen: '2026-10-26' })
+    expect(() => broken.commitMemory(OWNER, doc, { ...by, ts: by.ts + 1 }, STAMP)).toThrow('ENOSPC')
+    expect(store.byKey(OWNER, 'm:cc03')!.status).toBe('active')       // 表已经改了
+    expect(file('memory.md')).toBe(before)                              // 文件没写成
+    expect(store.exportRecord(OWNER, 'memory.md')!.pending).not.toBeNull()
+    expect(writer.handEdited(OWNER)).toBeNull()                         // 不是手改:磁盘还是上一份确认写下的
+    // 下次开机:先补写,再导入(指纹没变也不会挡住)
+    const out = importMemoryOnBoot({ store, stateDir, now: () => by.ts + 2, log: () => {}, beforeChat: (c) => writer.syncStale(c, STAMP, by.ts + 2) })
+    expect(out[0]!.outcome).toBe('unchanged')
+    expect(file('memory.md')).toContain('刚换了一台显示器')
+    expect(store.exportRecord(OWNER, 'memory.md')).toMatchObject({ pending: null })
+  })
+
+  it('nothing on disk is overwritten without a copy: a file we did not write is archived before the export replaces it', () => {
+    seedFixture()
+    writer.commitMemory(OWNER, parseMemoryDoc(file('memory.md')), by, STAMP)
+    const foreign = file('memory.md').replace('不加糖', '加奶')
+    writeFileSync(join(root, 'memory.md'), foreign)
+    writer.commitMemory(OWNER, parseMemoryDoc(file('memory.md')), { ...by, ts: by.ts + 1 }, STAMP)
+    expect(readFileSync(archived(foreign), 'utf8')).toBe(foreign)
   })
 
   it('the boot import leaves a hand-edited export alone (the nightly runtime reconciles it)', () => {

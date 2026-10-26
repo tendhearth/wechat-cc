@@ -8,8 +8,11 @@
  *
  * 还没搬进表的对话(G3 核对不过、留在旧路径的)照旧按今天的格式写文件,下次开机再试着导入;对话里一份文件都还没有 ⇒ 直接走表。
  *
- * 导出的 memory.md 头部带「这是生成的」(主人 10-26 定)。磁盘上那份和最后一次导出不一样、头部还带着这句 ⇒ 是被人手改过的
- * (`handEdited`;老版本二进制写的没有这句,开机导入照文件同步)。手改的处理在 nightly-runtime 的 reconcileHandEdit。
+ * 导出的 memory.md 头部带「这是生成的」(主人 10-26 定),只是写给人看的。认手改**只看内容指纹**(数据安全评审第 1 条):
+ * 我们导出过、磁盘却和我们写过的都不一样 ⇒ 手改(删了头部、整份粘贴覆盖也算;老二进制回滚后写的也当手改,往保守那边走)。
+ * 导出两步记账(先记「正要写的」、写成功再记「已写」),写文件失败时下次开机看得出表比文件新(`syncStale`)。
+ * **磁盘上任何不是我们自己写下的内容,覆盖之前都先存进 memory-archive/**(`writeOut` 里兜底,评审第 2 条)。
+ * 手改的处理在 nightly-runtime 的 reconcileHandEdit。
  */
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
@@ -19,10 +22,10 @@ import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
 import { factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFact, type FactEventActor, type FactSource } from '../../domain/memory/facts'
 import { correctionLine, markWrittenBack, renderCorrectionsMd, retractedTextSet, type Verdict } from '../../domain/memory/corrections'
-import { EXPORT_NOTICE, renderMemoryMd, renderOwnerMd } from '../../domain/memory/render'
+import { renderMemoryMd, renderOwnerMd } from '../../domain/memory/render'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
 import { serializeMemoryDoc, type MemoryDoc } from './curated-doc'
-import { filesHash, readMemoryFiles } from './fact-import'
+import { IMPORTED_FILES, archiveMemoryFile, diskStateOf, filesHash, readMemoryFiles } from './fact-import'
 
 export interface WriteBy { actor: FactEventActor; ts: number }
 export interface NewCorrection { day: string; verdict: Verdict; section: string; correctionId?: string | null; text: string; note?: string }
@@ -36,8 +39,14 @@ export interface MemoryWriter {
   addCorrection(chatId: string, c: NewCorrection, by: WriteBy): string
   /** 在那一条收回底下追加一段说明(`  (…)\n`)。 */
   addCorrectionNote(chatId: string, key: string, note: string, by: WriteBy): void
-  /** 磁盘上的 memory.md 被手改过 ⇒ 它的内容;否则 null。 */
+  /** 磁盘上的 memory.md 被手改过(内容和我们写过的都不一样)⇒ 它的内容;否则 null。 */
   handEdited(chatId: string): string | null
+  /** 上次导出没写成(表比文件新)的那几份,照表重新导出;手改过的不碰(交给手改核对)。 */
+  syncStale(chatId: string, stampIso: string, ts: number): void
+  /** 存一份磁盘上现在的 memory.md 进 memory-archive/(手改核对在覆盖之前调)。没有文件 ⇒ null。 */
+  archiveDisk(chatId: string, reason: string): string | null
+  /** 这个对话由表管吗(导入过,或者一份文件都还没有)。 */
+  isOnTable(chatId: string): boolean
   /** 表里的样子渲染出来的 memory.md(不带导出那一句,和今天的序列化同格式);没搬进表 ⇒ null。 */
   tableMemoryMd(chatId: string, stampIso: string): string | null
   /** 把表里的样子重新导出成 memory.md(手改被拒时用)。 */
@@ -47,7 +56,12 @@ export interface MemoryWriter {
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 const sourceOf = (actor: FactEventActor): FactSource => (actor === 'owner' ? 'review' : actor === 'import' ? 'import' : 'nightly')
 
-export function makeMemoryWriter(d: { store: MemoryFactsStore; stateDir: string }): MemoryWriter {
+export function makeMemoryWriter(d: {
+  store: MemoryFactsStore; stateDir: string
+  /** 测试用:换掉写文件(模拟写到一半失败)。 */
+  writeFile?: (path: string, body: string) => void
+}): MemoryWriter {
+  const writeFile = d.writeFile ?? ((p: string, body: string) => writeFileAtomic(p, body, { mode: 0o600 }))
   const { store } = d
   const rootOf = (chatId: string) => {
     if (!chatId || chatId.includes('..') || chatId.includes('/') || chatId.includes('\\')) throw new Error(`memory-export: bad chat id ${JSON.stringify(chatId)}`)
@@ -58,11 +72,21 @@ export function makeMemoryWriter(d: { store: MemoryFactsStore; stateDir: string 
   const writeOut = (chatId: string, file: string, body: string, ts: number) => {
     const root = rootOf(chatId)
     mkdirSync(root, { recursive: true, mode: 0o700 })
-    writeFileAtomic(join(root, file), body, { mode: 0o600 })
-    store.setExportHash(chatId, file, sha(body), ts)
+    const h = sha(body)
+    // 兜底:磁盘上这份不是我们写下的(没记录时是导入前的原文件 / 别人写的;有记录时是手改)⇒ 覆盖之前先存一份
+    const rec = store.exportRecord(chatId, file)
+    let disk: string | null = null
+    try { disk = readFileSync(join(root, file), 'utf8') } catch { disk = null }
+    if (disk !== null) {
+      const dh = sha(disk)
+      if (dh !== h && dh !== rec?.sha256 && dh !== rec?.pending) archiveMemoryFile(root, chatId, file, disk, rec ? 'overwritten' : 'before-first-export')
+    }
+    store.markExportPending(chatId, file, h, ts)
+    writeFile(join(root, file), body)
+    store.markExportDone(chatId, file, h, ts)
     // 文件是我们刚写的 ⇒ 下次开机的导入看到的就是它,不再同步
-    const h = filesHash(readMemoryFiles(root))
-    if (h) store.setImportHash(chatId, h, ts)
+    const fh = filesHash(readMemoryFiles(root))
+    if (fh) store.setImportHash(chatId, fh, ts)
   }
   const activeTombstones = (chatId: string) => store.tombstones(chatId).filter(t => t.status === 'retracted' || t.status === 'outdated')
   const exportMemory = (chatId: string, stampIso: string, ts: number) =>
@@ -114,12 +138,26 @@ export function makeMemoryWriter(d: { store: MemoryFactsStore; stateDir: string 
       if (store.addNote(chatId, key, note, by)) exportCorrections(chatId, by.ts)
     },
     handEdited(chatId) {
-      const last = store.exportHash(chatId, 'memory.md')
-      if (!last) return null
-      let disk: string
-      try { disk = readFileSync(join(rootOf(chatId), 'memory.md'), 'utf8') } catch { return null }
-      return sha(disk) !== last && disk.includes(EXPORT_NOTICE) ? disk : null
+      const st = diskStateOf(store, rootOf(chatId), chatId, 'memory.md', Date.now())
+      return st.state === 'edited' ? st.disk ?? '' : null
     },
+    syncStale(chatId, stampIso, ts) {
+      if (!onTable(chatId)) return
+      const root = rootOf(chatId)
+      for (const file of IMPORTED_FILES) {
+        if (diskStateOf(store, root, chatId, file, ts).state !== 'stale') continue
+        if (file === 'memory.md') exportMemory(chatId, stampIso, ts)
+        else if (file === 'owner.md') writeOut(chatId, 'owner.md', renderOwnerMd(store.list(chatId)), ts)
+        else exportCorrections(chatId, ts)
+      }
+    },
+    archiveDisk(chatId, reason) {
+      const root = rootOf(chatId)
+      let disk: string
+      try { disk = readFileSync(join(root, 'memory.md'), 'utf8') } catch { return null }
+      return archiveMemoryFile(root, chatId, 'memory.md', disk, reason)
+    },
+    isOnTable: (chatId) => onTable(chatId),
     tableMemoryMd(chatId, stampIso) {
       return onTable(chatId) ? renderMemoryMd(store.list(chatId), stampIso) : null
     },
