@@ -214,12 +214,14 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
   function buildView(path: EditableMemoryPath, memoryOverride?: string): MemoryView {
     const r = root(), chatId = deps.ownerChatId()
     if (!r || !chatId) throw new Error('no_owner')
-    const readText = (name: string) => {
-      if (memoryOverride !== undefined && name === MEMORY_FILENAME) return memoryOverride
+    // G6:memory.md / owner.md 从表里读(经导出器;没搬进表的对话照旧读文件)。_overview.md 到 G8 才进表,这里照旧读文件。
+    const viewSource = (name: string): string => {
+      if (name === 'memory.md') return memoryOverride ?? deps.writer.memoryMd(chatId) ?? ''
+      if (name === 'owner.md') return deps.writer.ownerMd(chatId)
       try { return readFileSync(join(r, name), 'utf8') } catch { return '' }
     }
-    const file = readText(path), ownerRaw = path === OWNER_FILENAME ? file : readText(OWNER_FILENAME)
-    const owner = ownerLines(readOwnerDoc(r), id => deps.writer.correctionText(chatId, id))
+    const file = viewSource(path), ownerRaw = path === 'owner.md' ? file : viewSource('owner.md')
+    const owner = ownerLines(deps.writer.ownerDoc(chatId), id => deps.writer.correctionText(chatId, id))
     let generated: ViewLine[] = []
     let generatedAt: string | null = null
     if (path === '_overview.md') {
@@ -270,7 +272,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       corrections.push({ id: cid, text: c.text })
     }
     if (doc && docChanged) deps.writer.commitMemory(deps.ownerChatId()!, doc, { actor: 'owner', ts: nowMs }, new Date(nowMs).toISOString())
-    const ownerDoc = readOwnerDoc(r)
+    const ownerDoc = deps.writer.ownerDoc(deps.ownerChatId()!)
     const removed = new Set(plan.removedAssertionIds)
     ownerDoc.assertions = ownerDoc.assertions.filter(a => !removed.has(a.id))
     const assertions: Array<{ id: string; text: string; replaces?: Replaces }> = []
@@ -344,9 +346,9 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     return owner ? ownerMemoryRoot(deps.stateDir, owner) : null
   }
   const readDoc = () => {
-    const r = root()
-    const p = r ? join(r, MEMORY_FILENAME) : null
-    return r && p && existsSync(p) ? { root: r, doc: parseMemoryDoc(readFileSync(p, 'utf8')) } : null
+    const r = root(), owner = deps.ownerChatId()
+    const doc = r && owner ? deps.writer.memoryDoc(owner) : null
+    return r && doc ? { root: r, doc } : null
   }
   // tick() and runNow() (CLI, /v1/memory/nightly/run, 微信「整理记忆」) share
   // one chain: a call waits for any in-flight run, so this process never has
@@ -433,8 +435,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         if (!plan.corrections.length && !plan.assertions.length) return { result: { ok: true, corrections: [], assertions: [], regenerate: 'not_needed' }, done: [] }
         const nowMs = deps.now()
         // 记忆里的条目:先从 memory.md 拿掉(和逐条纠错同一个动作),再记更正
-        const memPath = join(r, MEMORY_FILENAME)
-        const doc = existsSync(memPath) ? parseMemoryDoc(readFileSync(memPath, 'utf8')) : null
+        const doc = deps.writer.memoryDoc(deps.ownerChatId()!)
         const { corrections, assertions, done } = applyPlan(r, req.path, plan, doc, nowMs)
         deps.log('MEMORY_NIGHTLY', `owner edit ${req.path}: ${corrections.length} corrections, ${assertions.length} assertions`)
         // 'queued' = 总览已过期、在下一次定时整理(或主人点「整理记忆」)时重新生成;这里不额外调模型(3e 的懒过期)。
@@ -449,9 +450,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       const r = root()
       if (!r) throw new Error('no_owner')
       mkdirSync(r, { recursive: true })
-      const memPath = join(r, MEMORY_FILENAME)
       const nowMs = deps.now(), nowIso = new Date(nowMs).toISOString(), day = localParts(nowMs, deps.config().timezone).day
-      const doc = assignMissingIds(parseMemoryDoc(existsSync(memPath) ? readFileSync(memPath, 'utf8') : ''), deps.newId, day)
+      const doc = assignMissingIds(deps.writer.memoryDoc(deps.ownerChatId()!) ?? parseMemoryDoc(''), deps.newId, day)
       const norm = (t: string) => t.replace(/\s+/g, ' ').trim()
       const have = new Set(SECTIONS.flatMap(s => doc.sections[s].map(e => norm(e.text))))
       const rejected = readCorrections(deps.writer, deps.ownerChatId()!).texts

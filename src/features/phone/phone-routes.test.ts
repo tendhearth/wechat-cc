@@ -26,7 +26,9 @@ describe('phoneRouteAllowed', () => {
       'GET /m/api/state', 'GET /m/api/today', 'GET /m/api/sticker/', 'GET /m/api/connections', 'GET /m/api/entry/options', 'GET /m/api/entry/models',
       'GET /m/api/attachment/upload', 'POST /m/api/attachment/chunk', 'POST /m/api/attachment/discard', 'GET /m/api/matter/create-receipt', 'GET /m/api/matter/input-receipt',
       'GET /m/api/matter/insight', 'GET /m/api/matter/changes', 'GET /m/api/matter/artifact', 'GET /m/api/chat/transcribe', 'POST /m/api/chat/transcribe',
-      'GET /m/api/chat/model', 'POST /m/api/chat/model', 'POST /m/api/seen', 'POST /m/api/todo', 'POST /m/api/memory/correct', 'POST /m/api/matter/review-mark']
+      'GET /m/api/chat/model', 'POST /m/api/chat/model', 'POST /m/api/seen', 'POST /m/api/todo', 'POST /m/api/memory/correct', 'POST /m/api/matter/review-mark',
+      // 收回的话与恢复(架构终态 G6):只有配好的设备(App)用
+      'GET /m/api/memory/retractions', 'POST /m/api/memory/restore']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     // 链接令牌剩下的就是链接页面会调的那几条:配对、设置页、此刻、一起做的看与停

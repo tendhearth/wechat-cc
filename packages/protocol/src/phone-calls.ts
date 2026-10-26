@@ -40,6 +40,8 @@ export const PHONE_CALLS = {
   memory: {
     get: call('GET /m/api/memory'),
     correct: call('POST /m/api/memory/correct', { body: t<{ id: string; verdict: string }>() }),
+    retractions: call('GET /m/api/memory/retractions'),
+    restore: call('POST /m/api/memory/restore', { body: t<{ key: string }>() }),
   },
   matters: {
     list: call('GET /m/api/matters'),

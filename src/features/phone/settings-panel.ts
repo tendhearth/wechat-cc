@@ -20,6 +20,7 @@
  *    pairing, restore, restart) are deliberately NOT here — they stay
  *    conversational where CC can confirm context.
  */
+import { RESTORE_NOTE } from '../memory'
 import { executorNames } from '../../domain/provider-display-names'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -165,6 +166,9 @@ export interface SettingsPanelDeps {
   curatedMemory?: () => import('../memory').CuratedView
   /** 主人逐条纠错(2026-10-06):不对 / 过时 / 删掉。没接 ⇒ 503。 */
   correctMemory?: (id: string, verdict: import('../memory').MemoryVerdict) => Promise<{ text: string }>
+  /** 收回的话与恢复(架构终态 G6):列表、恢复一条(null = 不在了)。 */
+  memoryRetractions?: () => Array<{ key: string; section: string | null; text: string; day: string | null; verdict: string | null; note: string }>
+  restoreMemory?: (key: string) => Promise<{ restored: string[] } | null>
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
@@ -781,6 +785,23 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         const m = e instanceof Error ? e.message : ''
         return m === 'memory_entry_not_found' || m === 'memory_not_found' ? json({ ok: false, error: 'not_found' }, 404) : json({ ok: false, error: 'unavailable' }, 500)
       }
+    }),
+    'GET /m/api/memory/retractions': async () => {
+      if (!deps.memoryRetractions) return json({ ok: false, error: 'memory_not_wired' }, 503)
+      try { return json({ ok: true, items: deps.memoryRetractions() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
+    },
+    // 恢复一条收回的话(主人 10-26 第 3 条):正文恰好 key;回应带 note(随之删掉的笔记行不会回来),手机原样显示。
+    'POST /m/api/memory/restore': ownsMethod(async (_url, req) => {
+      if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.restoreMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
+      let b: unknown
+      try { b = await req.json() } catch { return json({ ok: false, error: 'invalid' }, 400) }
+      const o = b as { key?: unknown } | null
+      if (!o || typeof o !== 'object' || Array.isArray(o) || Object.keys(o).some(k => k !== 'key') || typeof o.key !== 'string' || !/^c:[^\s]{1,80}$/.test(o.key)) return json({ ok: false, error: 'invalid' }, 400)
+      try {
+        const res = await deps.restoreMemory(o.key)
+        return res ? json({ ok: true, restored: res.restored, note: RESTORE_NOTE }) : json({ ok: false, error: 'not_found' }, 404)
+      } catch { return json({ ok: false, error: 'unavailable' }, 500) }
     }),
     'GET /m/api/home': async (url) => {
       return json(await home(parseLimit(url)))

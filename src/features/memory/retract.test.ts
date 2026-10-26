@@ -12,7 +12,7 @@ import { dropCorrectedLines } from '../../lib/memory-corrections'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
 import { parseMemoryDoc, renderForPrompt } from './curated-doc'
-import { makeMemoryWriter, synthesisRetractionsFor, type MemoryWriter } from './memory-export'
+import { makeMemoryWriter, synthesisMemoryFor, type MemoryWriter } from './memory-export'
 import { makeMemoryNightlyRuntime, type MemoryNightlyRuntime } from './nightly-runtime'
 import { dropCorrected, readCorrections } from './nightly'
 import { retractOnFactStatus, type FactStatusSetter } from './fact-status'
@@ -57,8 +57,8 @@ async function assertGoneEverywhere(tombKey: string) {
   const { texts } = readCorrections(writer, OWNER)
   expect(dropCorrected({ add: [{ section: '近况', text: LINE }], update: [], confirm: [], remove: [] } as never, texts).add).toEqual([])
   // 合成产出带它 ⇒ 被滤、记一条 redacted_on_output
-  const r = synthesisRetractionsFor(db, stateDir, OWNER)
-  const out = dropCorrectedLines(`他${LINE}\n他喜欢跑步`, r.texts())
+  const r = synthesisMemoryFor(db, stateDir, OWNER)
+  const out = dropCorrectedLines(`他${LINE}\n他喜欢跑步`, r.retractedTexts())
   expect(out.text).toBe('他喜欢跑步')
   r.redacted('overview', out.hits)
   expect(store.events(OWNER).some(e => e.action === 'redacted_on_output' && e.factId === store.byKey(OWNER, tombKey)!.id)).toBe(true)

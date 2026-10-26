@@ -641,7 +641,7 @@ describe('ReminderScheduleRequest', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 48 entries', () => {
+  it('REQUEST_SCHEMAS has 49 entries', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
     // + 1 companion/import-local + 3 plugins (toggle, install, upgrade)
@@ -652,13 +652,14 @@ describe('schema lookup tables', () => {
     // + 2 cli/hooks install / uninstall(接上终端里的 Claude Code / Codex,2026-10-14)
     // + 2 memory/view、memory/edit(记忆编辑,2026-10-23)
     // + 2 cli/say POST + GET query(terminal_say,2026-10-24)
+    // + 1 memory/retractions/restore(收回的话,架构终态 G6)
     // (P4: social/seek's SocialSeekRequest was deleted — the propose/
     // confirm/cancel routes that replaced it are inline-validated, no
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(48)
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(49)
   })
   it('RESPONSE_SCHEMAS has one entry per route', () => {
-    // F1(架构终态):每一条 /v1 路由都有响应契约 —— 209 条,与路由表里 /v1 的条数相同。
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(209)
+    // F1(架构终态):每一条 /v1 路由都有响应契约 —— 211 条(G6 加了收回的话两条),与路由表里 /v1 的条数相同。
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(211)
   })
 })

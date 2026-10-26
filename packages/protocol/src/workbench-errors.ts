@@ -178,6 +178,8 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   // 还没有主人(没绑微信)⇒ 409;daemon 内部出错 ⇒ 500,不带原文。
   memory_no_owner: {desktop: 409},
   memory_edit_failed: {desktop: 500},
+  // 收回的话(架构终态 G6,主人 10-26 第 2 / 3 条):要恢复的那一条不在(已经恢复过 / 编号不对)⇒ 404。
+  memory_retraction_not_found: {desktop: 404, phone: 404},
   // ── 补充 / 提问 / 权限 / 轮次
   artifact_changed: {desktop: 409, phone: 409, wechat: '成果文件已变化或未通过校验，没有发送。请在桌面查看保存的版本。'},
   execution_conflict: {desktop: 409},

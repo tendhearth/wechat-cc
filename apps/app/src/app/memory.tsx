@@ -42,6 +42,20 @@ export default function Memory() {
   const [todoNote, setTodoNote] = useState<string | null>(null)
   // 同一帧连点两下:state 还没更新,靠 ref 挡住第二下
   const todoInFlight = useRef(false)
+  // 收回的话(架构终态 G6,主人 10-26 第 2 / 3 条):主人收回过的那几句,每条能恢复;恢复后显示电脑回的那句(随之删掉的笔记行不会回来)
+  const retractions = useQuery('memory-retractions', () => backend.memoryRetractions(), { refreshOnMount: true })
+  const [restoring, setRestoring] = useState<string | null>(null)
+  const [restoreNote, setRestoreNote] = useState<string | null>(null)
+  const restore = async (key: string) => {
+    if (restoring || !online) return
+    setRestoring(key); setRestoreNote(null)
+    try {
+      const r = await backend.restoreMemory(key)
+      setRestoreNote(r.note)
+      await Promise.all([retractions.refresh().catch(() => {}), memory.refresh().catch(() => {})])
+    } catch (e) { setRestoreNote(t(lang, e instanceof BackendError && e.code === 'not_found' ? 'memory.gone' : 'memory.retractions.failed')) }
+    finally { setRestoring(null) }
+  }
 
   const setTodo = async (id: number, status: TodoStatus) => {
     if (todoInFlight.current || !online) return
@@ -147,6 +161,26 @@ export default function Memory() {
           </View>
         ))}
         {note ? <Txt testID="memory-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{note}</Txt> : null}
+        {retractions.data && retractions.data.length ? (
+          <View testID="memory-retractions" style={{ gap: space.s }}>
+            <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'memory.retractions.title')}</Txt>
+            <Txt role="meta" tone="inkSoft">{t(lang, 'memory.retractions.hint')}</Txt>
+            {[...retractions.data].reverse().map(r => (
+              <View key={r.key} testID={`memory-retraction-${r.key}`} style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, borderBottomWidth: 1, borderBottomColor: c.hair, paddingBottom: space.s }}>
+                <View style={{ flex: 1, gap: space.xs }}>
+                  <Txt role="bubble" content="user" tone="inkSoft" style={{ textDecorationLine: 'line-through' }}>{r.text}</Txt>
+                  <Txt role="meta" tone="inkSoft" content="user">{[r.section, r.day].filter(Boolean).join(' · ')}</Txt>
+                </View>
+                <Pressable testID={`memory-restore-${r.key}`} accessibilityRole="button" accessibilityState={{ disabled: !online || restoring !== null, busy: restoring === r.key }} disabled={!online || restoring !== null}
+                  onPress={() => void restore(r.key)}
+                  style={({ pressed }) => ({ minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: !online || restoring !== null ? 0.55 : pressed ? 0.7 : 1 })}>
+                  <Txt role="meta">{t(lang, 'memory.retractions.restore')}</Txt>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {restoreNote ? <Txt testID="memory-restore-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{restoreNote}</Txt> : null}
         {v && v.mood !== 'first' ? <Txt role="meta" tone="inkSoft">{t(lang, 'memory.hint')}</Txt> : null}
       </ScrollView>
     </SafeAreaView>

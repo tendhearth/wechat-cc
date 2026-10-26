@@ -28,14 +28,15 @@ import { registerMemoryNightly } from './nightly-lifecycle'
 import type { MemoryLlmOps } from './llm-ops'
 import type { MemoryNightlyRuntime } from './nightly-runtime'
 import { importMemoryOnBoot } from './fact-import'
-import { makeMemoryWriter } from './memory-export'
+import { makeMemoryWriter, memoryFactsFor } from './memory-export'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 
 export { wireMemory, type WireMemoryDeps } from './wire'
 export { makeMemoryLlmOps, resolveCheapEval, type MemoryLlmOps } from './llm-ops'
 export { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './curated-doc'
 export { makeMemoryImportCommand } from './import-command'
-export { synthesisRetractionsFor } from './memory-export'
+export { synthesisMemoryFor, memoryFactsFor } from './memory-export'
+export { RESTORE_NOTE } from './routes'
 export { retractOnFactStatus } from './fact-status'
 export { formatNightlyReply, type NightlyRunResult } from './nightly-notify'
 export { MEMORY_LOG_FILE, ownerMemoryRoot, readNightlyState } from './nightly'
@@ -58,7 +59,7 @@ export interface MemoryFeatureDeps {
   /** LLM 记忆操作:bootstrap 起来以前是 null(路由照旧 503 memory_not_wired)。 */
   memoryLlm: () => MemoryLlmOps | null
   /** 每晚整理的运行时:wired 起来以前是 null(路由照旧 503 memory_nightly_not_wired)。 */
-  memoryNightly: () => Pick<MemoryNightlyRuntime, 'runNow' | 'view' | 'edit' | 'retractText'> | null
+  memoryNightly: () => Pick<MemoryNightlyRuntime, 'runNow' | 'view' | 'edit' | 'retractText' | 'retractions' | 'restore'> | null
   /** 请求里没写 chat_id ⇒ access.json 里唯一的 admin。 */
   resolveAdminChatId: () => string | null
   log: (tag: string, line: string) => void
@@ -81,7 +82,7 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
       }
       catch (e) { d.log('MEMORY_IMPORT', `skipped: ${e instanceof Error ? e.message : String(e)}`) }
       ctx.get<InternalApiLifecycle>('internal-api').mount('memory', {
-        ...memoryFsRoutes({ memory: d.memory, db: d.db, log: d.log }),
+        ...memoryFsRoutes({ memory: d.memory, db: d.db, facts: memoryFactsFor(d.db, d.stateDir), log: d.log }),
         ...memoryRoutes({ stateDir: d.stateDir, memoryLlm: d.memoryLlm, memoryNightly: d.memoryNightly, resolveAdminChatId: d.resolveAdminChatId }),
         ...memoryReviewRoutes({
           stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId,
@@ -92,7 +93,7 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
         }),
         ...memoryOwnerRoutes({ stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId }),
       })
-      return { promptReads: makeMemoryPromptReads({ stateDir: d.stateDir, memory: d.memory }) }
+      return { promptReads: makeMemoryPromptReads({ stateDir: d.stateDir, memory: d.memory, facts: makeMemoryWriter({ store: makeMemoryFactsStore(d.db), stateDir: d.stateDir }) }) }
     },
   }
 }

@@ -6,7 +6,7 @@ import type { Lifecycle } from '../../lib/lifecycle'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { startCompanionScheduler } from '../../daemon/companion/scheduler'
-import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from '../memory'
+import { memoryFactsFor, renderForPrompt } from '../memory'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
 import { makeLetterRuntime, type LetterApp, type LetterRuntime } from './runtime'
 import type { AppChannel } from '../../daemon/companion/proactive-channel'
@@ -59,14 +59,16 @@ export function letterToApp(app: AppChannel): LetterApp {
 export function wireLetters(d: WireLettersDeps): { runtime: LetterRuntime; start(): Lifecycle } {
   const owner = () => loadCompanionConfig(d.stateDir).default_chat_id ?? null
   const messages = makeMessagesStore(d.db)
+  const facts = memoryFactsFor(d.db, d.stateDir)
   const base = makeLetterRuntime({
     stateDir: d.stateDir,
     enabled: () => loadCompanionConfig(d.stateDir).letters_enabled,
     timezone: () => loadCompanionConfig(d.stateDir).timezone,
     ownerChatId: owner,
     memory: (c) => {
-      const raw = makeMemoryFS({ rootDir: join(d.stateDir, 'memory', c) }).read(MEMORY_FILENAME)
-      return raw ? renderForPrompt(parseMemoryDoc(raw)) : ''
+      // G6:主人的长期记忆从主库的表读(记忆功能给)
+      const doc = facts.memoryDoc(c)
+      return doc ? renderForPrompt(doc) : ''
     },
     chatSince: async (c, sinceIso) => {
       const rows = (await messages.listRange(c, { limit: 400 })).filter(m => m.ts > sinceIso)

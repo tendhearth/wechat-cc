@@ -81,6 +81,8 @@ export interface MemoryFactsStore {
   /** 一个对话的行,按 doc、ord、id 排;`replacesKey` 已经解析好。 */
   list(chatId: string, filter?: ListMemoryFacts): MemoryFactView[]
   byKey(chatId: string, key: string): MemoryFactView | null
+  /** 一个对话最后一条事件的时间(毫秒);还没有 ⇒ null。memory.md 头部的「最近整理」取它。 */
+  lastEventAt(chatId: string): number | null
   /** 一个对话的修订号 = 它最大的事件 seq;还没有事件 ⇒ 0。 */
   revision(chatId: string): number
   /** 一个对话 seq 大于 `afterSeq` 的事件,按 seq 升序。 */

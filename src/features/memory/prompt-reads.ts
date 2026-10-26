@@ -3,11 +3,12 @@
  * 原来是 daemon-modules.ts 里 promptReads 的一半;记忆搬进功能目录时跟过来(架构终态 A5),bootstrap 经 `needs: ['memory']` 拿。
  */
 import { join } from 'node:path'
-import { readOwnerDoc, renderOwnerForPrompt } from '../../lib/memory-owner'
+import { renderOwnerForPrompt } from '../../lib/memory-owner'
+import type { MemoryWriter } from './memory-export'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../../domain/prompt-builder'
 import { makeMemoryFS, type MemoryFS } from '../../adapters/store/memory-fs'
 import { loadCompanionConfig } from '../../lib/companion-config'
-import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './curated-doc'
+import { renderForPrompt } from './curated-doc'
 import { readDraftForPrompt } from './today-draft'
 
 export interface MemoryPromptReads {
@@ -19,7 +20,8 @@ export interface MemoryPromptReads {
   knowledgeMemoryFor(c: string): string
 }
 
-export function makeMemoryPromptReads(d: { stateDir: string; memory: MemoryFS }): MemoryPromptReads {
+/** `facts`:memory.md / owner.md 从主库的表读(架构终态 G6;没搬进表的对话由它照旧读文件)。 */
+export function makeMemoryPromptReads(d: { stateDir: string; memory: MemoryFS; facts: Pick<MemoryWriter, 'memoryDoc' | 'ownerDoc'> }): MemoryPromptReads {
   const { stateDir } = d
   const memoryOf = (c: string) => makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
   return {
@@ -38,13 +40,13 @@ export function makeMemoryPromptReads(d: { stateDir: string; memory: MemoryFS })
     },
     // 每晚整理的长期记忆(2026-09-25):有 memory.md 就注入它(去尾注),prompt-builder 据此不再注入 profile.md。
     curatedMemoryFor: (c: string) => {
-      const raw = memoryOf(c).read(MEMORY_FILENAME)
-      return raw ? renderForPrompt(parseMemoryDoc(raw)) : ''
+      const doc = d.facts.memoryDoc(c)
+      return doc ? renderForPrompt(doc) : ''
     },
     // 主人原话(记忆编辑设计稿 2026-10-23 §1):只在主人自己的对话里注入,访客 / trusted 的对话读不到。
     ownerMemoryFor: (c: string) => {
       if (c !== loadCompanionConfig(stateDir).default_chat_id) return ''
-      return renderOwnerForPrompt(readOwnerDoc(join(stateDir, 'memory', c)))
+      return renderOwnerForPrompt(d.facts.ownerDoc(c))
     },
     // 今天的草稿(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,随 memory.md 一起注入。
     todayDraftFor: (c: string) => { try { return readDraftForPrompt(d.memory, c) } catch { return '' } },

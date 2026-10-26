@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { memoryFactsFor } from '../features/memory'
 import { socialRoutes as socialFeatureRoutes } from '../features/social/routes'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -22,8 +23,8 @@ import { terminalRoutes, type TerminalRoutesDeps } from '../features/terminal/ro
 import { memoryFsRoutes } from '../features/memory/fs-routes'
 
 // 记忆文件的四条路由归记忆功能(src/features/memory,路由表标 module: 'memory'),daemon 里由 memory 模块挂;测试照样挂上去。
-function withMemoryRoutes(api: InternalApi, memory: MemoryFS, db?: Db): InternalApi {
-  api.mount('memory', memoryFsRoutes({ memory, ...(db ? { db } : {}) }))
+function withMemoryRoutes(api: InternalApi, memory: MemoryFS, db?: Db, facts?: Parameters<typeof memoryFsRoutes>[0]['facts']): InternalApi {
+  api.mount('memory', memoryFsRoutes({ memory, ...(db ? { db } : {}), ...(facts ? { facts } : {}) }))
   return api
 }
 
@@ -205,7 +206,8 @@ describe('internal-api', () => {
     async function startWithMemory(): Promise<{ port: number; token: string }> {
       memoryRoot = join(stateDir, 'memory')
       const memory = makeMemoryFS({ rootDir: memoryRoot, layout: 'all-chats' })
-      api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999 }), memory)
+      // G6:memory.md 经导出器读;表是空的 ⇒ 走「没搬进表」那条路,读的就是这里的文件
+      api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999 }), memory, undefined, memoryFactsFor(openTestDb(), stateDir))
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
       return { port, token }

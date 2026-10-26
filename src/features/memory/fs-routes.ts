@@ -13,13 +13,26 @@ import { makeEventsStore } from '../../daemon/events/store'
 import { errMsg, type RouteTable } from '../../daemon/internal-api/types'
 import type { MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT } from '../../daemon/internal-api/schema'
 import { chatOfProfilePath, recordProfileWrite } from './today-draft'
+import type { MemoryWriter } from './memory-export'
 
 export interface MemoryFsRoutesDeps {
   /** 整个记忆目录那一份(地基里造的,layout 'all-chats')。 */
   memory: MemoryFS
   /** 删记忆时往那个对话的事件流里记一笔审计(daemon 里总有;测试不给 ⇒ 删除回 503 db_not_wired)。 */
   db?: Db
+  /**
+   * 主人的长期记忆 memory.md / owner.md(架构终态 G6:从主库的表读,经导出器;没搬进表的对话它照旧读文件)。
+   * CC 的 memory_read 读这两份、写 profile.md 时判断「有没有长期记忆」都问它。没给(只测文件层的单测)⇒ 按文件层读、当成没有长期记忆。
+   */
+  facts?: Pick<MemoryWriter, 'memoryMd' | 'ownerMd'>
   log?: (tag: string, line: string) => void
+}
+
+/** `<chat>/memory.md` / `<chat>/owner.md`(规范化以后,不分大小写)⇒ [对话, 哪份];别的 ⇒ null。 */
+function curatedDocOf(path: string): [string, 'memory' | 'owner'] | null {
+  const n = posix.normalize(path.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '')
+  const m = /^([^/]+)\/(memory|owner)\.md$/i.exec(n)
+  return m && m[1] !== '..' && m[1] !== '.' ? [m[1]!, m[2]!.toLowerCase() as 'memory' | 'owner'] : null
 }
 
 /**
@@ -77,7 +90,8 @@ export function memoryFsRoutes(deps: MemoryFsRoutesDeps): RouteTable {
       const { path } = body as MemoryReadRequestT
       if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       try {
-        const content = deps.memory.read(path)
+        const doc = deps.facts ? curatedDocOf(path) : null
+        const content = doc ? (doc[1] === 'memory' ? deps.facts!.memoryMd(doc[0]) : (deps.facts!.ownerMd(doc[0]) || null)) : deps.memory.read(path)
         return { status: 200, body: content === null ? { exists: false } : { exists: true, content } }
       } catch (err) {
         return { status: 200, body: { error: errMsg(err) } }
@@ -95,7 +109,7 @@ export function memoryFsRoutes(deps: MemoryFsRoutesDeps): RouteTable {
         // CC 自己记笔记 ⇒ 生成物只是不全('added');别的来路(主人在桌面 / 设置里写)⇒ 缺省 'retracted'。
         deps.memory.write(path, content, caller?.origin === 'session' ? { reason: 'added' } : undefined)
         if (draftChat) {
-          try { recordProfileWrite(deps.memory, draftChat, before, content) }
+          try { recordProfileWrite(deps.memory, draftChat, before, content, deps.facts ? deps.facts.memoryMd(draftChat) !== null : false) }
           catch (err) { deps.log?.('MEMORY', `today-draft append failed: ${errMsg(err)}`) }
         }
         return { status: 200, body: { ok: true } }

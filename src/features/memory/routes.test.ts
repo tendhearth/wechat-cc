@@ -84,3 +84,16 @@ describe('POST /v1/memory/view · /v1/memory/edit(记忆编辑)', () => {
     expect(await memoryRoutes(deps({ memoryNightly: boom }))['POST /v1/memory/edit']!(q(), {})).toEqual({ status: 500, body: { ok: false, code: 'memory_edit_failed', error: 'memory_edit_failed' } })
   })
 })
+
+describe('收回的话与恢复(架构终态 G6)', () => {
+  it('lists, restores with the note, and 404s a key that is not there', async () => {
+    const nightly = { retractions: () => [{ key: 'c:~1', section: '偏好', text: '只喝美式', day: '2026-10-26', verdict: 'wrong', note: '' }], restore: vi.fn(async (k: string) => k === 'c:~1' ? { restored: ['m:aa01'] } : null) }
+    const r = memoryRoutes(deps({ memoryNightly: nightly }))
+    expect((await r['GET /v1/memory/retractions']!(q(), null)).body).toEqual({ ok: true, items: nightly.retractions() })
+    const ok = await r['POST /v1/memory/retractions/restore']!(q(), { key: 'c:~1' })
+    expect(ok.status).toBe(200)
+    expect((ok.body as { note: string }).note).toContain('不会回来')
+    expect(await r['POST /v1/memory/retractions/restore']!(q(), { key: 'c:nope' })).toEqual({ status: 404, body: { ok: false, code: 'memory_retraction_not_found' } })
+    expect((await memoryRoutes(deps())['GET /v1/memory/retractions']!(q(), null)).status).toBe(503)
+  })
+})

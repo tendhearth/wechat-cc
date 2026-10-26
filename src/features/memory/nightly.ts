@@ -257,9 +257,10 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   }
 
   mkdirSync(root, { recursive: true })
-  const memPath = join(root, MEMORY_FILENAME)
-  const firstRun = !existsSync(memPath)
-  const currentText = readIf(memPath)
+  // G6:memory.md 从表里读(没搬进表的对话照旧读文件,由导出器决定)
+  const current = deps.writer.memoryMd(owner)
+  const firstRun = current === null
+  const currentText = current ?? ''
   const { text: rest, truncated, refs } = await gatherMaterial(root, deps.sources, state.lastRunIso, firstRun)
   if (truncated) deps.log('MEMORY_NIGHTLY', `material over budget (${MATERIAL_BUDGET} chars) — lower-priority blocks dropped/truncated`)
   // 今天的草稿(同日失忆修复,2026-10-01):放最前面,不占素材预算(本身封顶 600 字)。它的每一行都
@@ -267,7 +268,8 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   // 白白多调一次模型。
   const draft = readIf(join(root, TODAY_DRAFT_FILENAME))
   const corrections = readCorrections(deps.writer, owner)
-  const ownerWords = renderOwnerForPrompt(readOwnerDoc(root))
+  const ownerDoc = deps.writer.ownerDoc(owner)
+  const ownerWords = renderOwnerForPrompt(ownerDoc)
   const material = [
     corrections.block ? `### ${CORRECTIONS_BLOCK}\n${corrections.block}` : '',
     ownerWords ? `### ${OWNER_BLOCK}\n${ownerWords}` : '',
@@ -313,13 +315,13 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   }
   const parsed = parseOps(raw)
   if (!parsed) return fail('bad_json')
-  const owned = dropOwnerWords(dropCorrected(parsed, corrections.texts), readOwnerDoc(root).assertions.map(a => a.text))
+  const owned = dropOwnerWords(dropCorrected(parsed, corrections.texts), ownerDoc.assertions.map(a => a.text))
   if (owned.dropped) deps.log('MEMORY_NIGHTLY', `dropped ${owned.dropped} op(s) that copied the owner's own words into memory.md`)
   const ops = owned.ops
   const res = applyNightly(doc, ops, { today: day, newId: deps.newId })
   if (!res.ok) return fail(res.reason)
 
-  if (readIf(memPath) !== currentText) {
+  if ((deps.writer.memoryMd(owner) ?? '') !== currentText) {
     deps.log('MEMORY_NIGHTLY', 'memory.md changed during the run — dropped, will retry')
     return { status: 'skipped', reason: 'owner_edited' }
   }
@@ -337,7 +339,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
       // run (e.g. owner forces 整理记忆 after the 04:00 tidy already ran)
       // must not overwrite it with that later run's own (already-tidied)
       // pre-write content.
-      if (!existsSync(archivePath)) copyFileSync(memPath, archivePath)
+      if (!existsSync(archivePath)) writeFileAtomic(archivePath, currentText)
     }
     // 每晚整理:源里多了 / 整理了东西,旧总览只是不全 ⇒ 'added'(3e 记忆第 2 步)。先记过期再写源。
     invalidateDerivedMemory(root, 'added')

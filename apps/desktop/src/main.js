@@ -33,7 +33,7 @@ import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkGuardOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { executorName, haveExecutorNames, loadExecutorNames } from "./modules/executor-names.js"
 import { renderConversations } from "./modules/conversations.js"
-import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
+import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, loadMemoryRetractions, restoreMemoryRetraction, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
@@ -1137,6 +1137,22 @@ function wireEvents() {
       body.hidden = wasOpen
     })
   }
+
+  // 收回的话(架构终态 G6):展开时读;点「恢复」经 daemon 放回去
+  document.getElementById("memory-retractions-toggle")?.addEventListener("click", () => {
+    const toggle = document.getElementById("memory-retractions-toggle")
+    const body = document.getElementById("memory-retractions-body")
+    if (!toggle || !body) return
+    const wasOpen = toggle.getAttribute("aria-expanded") === "true"
+    toggle.setAttribute("aria-expanded", wasOpen ? "false" : "true")
+    body.hidden = wasOpen
+    if (!wasOpen) loadMemoryRetractions(deps).catch(err => console.error("retractions load failed", err))
+  })
+  document.getElementById("memory-retractions")?.addEventListener("click", (e) => {
+    const btn = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='restore-retraction']") : null)
+    const key = btn?.getAttribute("data-key")
+    if (key) restoreMemoryRetraction(deps, key).catch(err => console.error("restore failed", err))
+  })
 
   // Local-project-memory fold: lazy-load on first expand (it's a CLI read of
   // ~/.claude/projects, not needed until the user looks).

@@ -325,6 +325,13 @@ export const PhoneActivityItem = z.object({
   ref: z.object({ type: z.string(), id: z.string() }).optional(),
 })
 export type PhoneActivityItemT = z.infer<typeof PhoneActivityItem>
+/** 收回的话(架构终态 G6,主人 10-26 第 2 / 3 条):手机「CC 记得你」页底下那张列表,每条能恢复。 */
+export const MemoryRetractionsSuccess = z.object({
+  ok: z.literal(true),
+  items: z.array(z.object({ key: z.string(), section: z.string().nullable(), text: z.string(), day: z.string().nullable(), verdict: z.string().nullable(), note: z.string() })),
+})
+export const MemoryRestoreSuccess = z.object({ ok: z.literal(true), restored: z.array(z.string()), note: z.string() })
+
 export const MemorySuccess = z.object({
   ok: z.literal(true), updated_at: z.string().nullable(), when_label: z.string().nullable(),
   mood: z.enum(['changed', 'steady', 'first']), failures: z.number(), changes: z.array(ViewChange),
@@ -600,6 +607,8 @@ const PHONE_API = {
   'GET /m/api/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   'GET /m/api/memory': z.union([MemorySuccess, PhoneErrorResponse]),
   'POST /m/api/memory/correct': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  'GET /m/api/memory/retractions': z.union([MemoryRetractionsSuccess, PhoneErrorResponse]),
+  'POST /m/api/memory/restore': z.union([MemoryRestoreSuccess, PhoneErrorResponse]),
   'GET /m/api/home': z.union([HomeSuccess, PhoneErrorResponse]),
   'POST /m/api/seen': z.union([z.object({ ok: z.literal(true), seen_until: z.string() }), PhoneErrorResponse]),
   'GET /m/api/matters': z.union([z.object({ ok: z.literal(true), matters: z.array(Matter) }), PhoneErrorResponse]),

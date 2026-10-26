@@ -47,6 +47,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let demoChatModel: ChatModelViewT = { mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'openai', name: 'API' }] }
   // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
+  // 收回的话(演示):逐条纠错拿掉的那句挪到这里;恢复就放回去
+  const demoRetracted: Array<{ key: string; id: string; text: string; day: string }> = []
   let chatJobs = new Map<string, ChatJobT>()
   // 定时(演示):停 / 开 / 删只改内存里这两样,reset() 还原
   let jobPaused = new Map<string, boolean>()
@@ -576,7 +578,18 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async correctMemory(id) {
       const i = demoMemory.findIndex(m => m.id === id)
       if (i < 0) throw new BackendError('not_found')
-      demoMemory.splice(i, 1)
+      const [gone] = demoMemory.splice(i, 1)
+      demoRetracted.push({ key: `c:~${demoRetracted.length + 1}`, id: gone!.id, text: gone!.text, day: new Date(now()).toISOString().slice(0, 10) })
+    },
+    async memoryRetractions() {
+      return demoRetracted.map(r => ({ key: r.key, section: '偏好', text: r.text, day: r.day, verdict: 'wrong', note: '' }))
+    },
+    async restoreMemory(key) {
+      const i = demoRetracted.findIndex(r => r.key === key)
+      if (i < 0) throw new BackendError('not_found')
+      const [r] = demoRetracted.splice(i, 1)
+      demoMemory.push({ id: r!.id, text: r!.text })
+      return { restored: [`m:${r!.id}`], note: lastLang === 'en' ? 'It is back in my memory. Note lines that were removed along with it do not come back.' : '已经放回记忆里了。当初随这条一起从笔记里删掉的那几行不会回来。' }
     },
     async pocket() {
       const rows = demoTodoList()

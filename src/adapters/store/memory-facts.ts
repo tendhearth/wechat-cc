@@ -223,6 +223,9 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
       return db.query<MemoryFactView, string[]>(`${SELECT} WHERE ${where.join(' AND ')}${ORDER}`).all(...params)
     },
     byKey,
+    lastEventAt(chatId) {
+      return db.query<{ ts: number | null }, [string]>('SELECT MAX(ts) AS ts FROM memory_fact_events WHERE chat_id = ?').get(chatId)?.ts ?? null
+    },
     revision(chatId) {
       return db.query<{ rev: number | null }, [string]>('SELECT MAX(seq) AS rev FROM memory_fact_events WHERE chat_id = ?').get(chatId)?.rev ?? 0
     },

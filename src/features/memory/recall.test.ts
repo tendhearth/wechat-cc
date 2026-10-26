@@ -3,10 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { recallFromMemory } from './recall'
+import { memoryFactsFor } from './memory-export'
+import { openTestDb } from '../../lib/db'
+// G6:memory.md / owner.md 经导出器读;表是空的 ⇒ 读夹具文件
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 
 describe('recallFromMemory', () => {
   let stateDir: string
+  const facts = () => memoryFactsFor(openTestDb(), stateDir)
   beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'own-recall-')) })
   afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
 
@@ -21,7 +25,7 @@ describe('recallFromMemory', () => {
   it('excludes invalidated generated memories from future recall', () => {
     seed('c1', { '_overview.md': '上海出差以前的判断', 'notes/a.md': '上海出差修正后的笔记' })
     invalidateDerivedMemory(join(stateDir, 'memory', 'c1'))
-    expect(recallFromMemory(stateDir, 'c1', '上海出差')).toEqual(['[notes/a.md] 上海出差修正后的笔记'])
+    expect(recallFromMemory(stateDir, 'c1', '上海出差', facts())).toEqual(['[notes/a.md] 上海出差修正后的笔记'])
   })
 
   it('finds matching lines across memory files, tagged with their file', () => {
@@ -29,7 +33,7 @@ describe('recallFromMemory', () => {
       'preferences.md': '- 喜欢简短回复\n- 上海出差时倾向早上开会\n',
       'notes/travel.md': '# 出行\n下个月去上海出差三天\n',
     })
-    const hits = recallFromMemory(stateDir, 'c1', '上海出差的安排')
+    const hits = recallFromMemory(stateDir, 'c1', '上海出差的安排', facts())
     expect(hits.length).toBeGreaterThanOrEqual(2)
     expect(hits.some(h => h.includes('notes/travel.md') && h.includes('上海出差三天'))).toBe(true)
     expect(hits.some(h => h.includes('preferences.md'))).toBe(true)
@@ -41,7 +45,7 @@ describe('recallFromMemory', () => {
       'knowledge.md': '上海出差相关事实\n',
       'agenda.md': '- [ ] due:2026-09-01 问上海出差报销\n',
     })
-    const hits = recallFromMemory(stateDir, 'c1', '上海出差')
+    const hits = recallFromMemory(stateDir, 'c1', '上海出差', facts())
     expect(hits).toHaveLength(1)
     expect(hits[0]).toContain('agenda.md')
   })
@@ -50,22 +54,22 @@ describe('recallFromMemory', () => {
     seed('c1', {
       'notes/a.md': '上海出差住宿偏好如家\n只提上海\n无关行数\n',
     })
-    const hits = recallFromMemory(stateDir, 'c1', '上海出差住宿', 1)
+    const hits = recallFromMemory(stateDir, 'c1', '上海出差住宿', facts(), 1)
     expect(hits).toHaveLength(1)
     expect(hits[0]).toContain('住宿')
   })
 
   it('no memory dir / no match / weird chatId → empty, never throws', () => {
-    expect(recallFromMemory(stateDir, 'no-such-chat', '上海出差')).toEqual([])
+    expect(recallFromMemory(stateDir, 'no-such-chat', '上海出差', facts())).toEqual([])
     seed('c1', { 'notes/a.md': '完全无关的内容\n' })
-    expect(recallFromMemory(stateDir, 'c1', '北极科考站')).toEqual([])
-    expect(recallFromMemory(stateDir, '../escape', '上海出差')).toEqual([])
-    expect(recallFromMemory(stateDir, 'a/b', '上海出差')).toEqual([])
+    expect(recallFromMemory(stateDir, 'c1', '北极科考站', facts())).toEqual([])
+    expect(recallFromMemory(stateDir, '../escape', '上海出差', facts())).toEqual([])
+    expect(recallFromMemory(stateDir, 'a/b', '上海出差', facts())).toEqual([])
   })
 
   it('truncates long matched lines', () => {
     seed('c1', { 'notes/a.md': '上海出差' + 'x'.repeat(500) + '\n' })
-    const hits = recallFromMemory(stateDir, 'c1', '上海出差')
+    const hits = recallFromMemory(stateDir, 'c1', '上海出差', facts())
     expect(hits[0]!.length).toBeLessThan(220)
   })
 })

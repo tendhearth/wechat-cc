@@ -21,7 +21,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
-import { makeMemoryWriter } from './memory-export'
+import { makeMemoryWriter, synthesisMemoryFor } from './memory-export'
 import { parseMemoryDoc } from './curated-doc'
 import { MemoryListOutput, MemoryReadOutput, MemoryWriteOutput, MemoryProfileStatusOutput } from '../../cli/schema'
 
@@ -47,7 +47,12 @@ export function memoryOwnerRoutes(deps: MemoryOwnerRoutesDeps): RouteTable {
     'GET /v1/memory/file': (q) => {
       const userId = q.get('user_id') ?? '', path = q.get('path') ?? ''
       try {
-        const content = readMemoryFile(deps.stateDir, userId, path)
+        // G6:memory.md / owner.md 从主库的表读(经导出器);别的文件照旧读磁盘
+        const norm = path.split('\\').join('/').replace(/^(\.\/)+/, '').toLowerCase()
+        const facts = norm === 'memory.md' || norm === 'owner.md' ? makeMemoryWriter({ store: makeMemoryFactsStore(deps.db), stateDir: deps.stateDir }) : null
+        const fromTable = facts ? (norm === 'memory.md' ? facts.memoryMd(userId) : (facts.ownerMd(userId) || null)) : null
+        if (facts && fromTable === null) throw new Error(`file not found: ${userId}/${path}`)
+        const content = fromTable ?? readMemoryFile(deps.stateDir, userId, path)
         return { status: 200, body: MemoryReadOutput.parse({ ok: true, userId, path, content }) }
       } catch (err) {
         return { status: 200, body: MemoryReadOutput.parse({ ok: false, error: msgOf(err) }) }
@@ -68,7 +73,7 @@ export function memoryOwnerRoutes(deps: MemoryOwnerRoutesDeps): RouteTable {
         const norm = path.split('\\').join('/').replace(/^(\.\/)+/, '').toLowerCase()
         const writer = makeMemoryWriter({ store: makeMemoryFactsStore(deps.db), stateDir: deps.stateDir })
         if (norm === 'memory.md' && writer.isOnTable(userId)) {
-          const created = !existsSync(join(deps.stateDir, 'memory', userId, 'memory.md'))
+          const created = writer.memoryMd(userId) === null
           invalidateDerivedMemory(join(deps.stateDir, 'memory', userId), 'retracted')
           writer.commitMemory(userId, parseMemoryDoc(b.content), { actor: 'owner', ts: Date.now() }, new Date().toISOString())
           return { status: 200, body: MemoryWriteOutput.parse({ ok: true, userId, path, bytesWritten: Buffer.byteLength(b.content, 'utf8'), created }) }
@@ -96,7 +101,7 @@ export function memoryOwnerRoutes(deps: MemoryOwnerRoutesDeps): RouteTable {
       const chatId = chatOf(q)
       if (!chatId) return { status: 200, body: MemoryProfileStatusOutput.parse({ ok: false, error: 'No admins in access.json — pass --chat-id explicitly' }) }
       try {
-        const status = await getMemoryProfileStatus({ stateDir: deps.stateDir, adminChatId: chatId, lifeStores: makeLifeStoresReader(deps.db, deps.stateDir) })
+        const status = await getMemoryProfileStatus({ memory: synthesisMemoryFor(deps.db, deps.stateDir, chatId), stateDir: deps.stateDir, adminChatId: chatId, lifeStores: makeLifeStoresReader(deps.db, deps.stateDir) })
         return { status: 200, body: MemoryProfileStatusOutput.parse({ ok: true, ...status }) }
       } catch (err) {
         return { status: 200, body: MemoryProfileStatusOutput.parse({ ok: false, error: msgOf(err) }) }

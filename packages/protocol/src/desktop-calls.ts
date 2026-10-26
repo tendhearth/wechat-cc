@@ -99,6 +99,8 @@ export const DESKTOP_CALLS = {
   },
   memory: {
     edit: call('POST /v1/memory/edit', body()),
+    retractions: call('GET /v1/memory/retractions'),
+    restore: call('POST /v1/memory/retractions/restore', body()),
     file: call('GET /v1/memory/file', { query: t<{ user_id: string; path: string }>() }),
     fileWrite: call('POST /v1/memory/file/write', body()),
     files: call('GET /v1/memory/files'),

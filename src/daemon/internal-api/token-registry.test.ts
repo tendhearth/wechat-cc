@@ -105,6 +105,9 @@ describe('token-registry', () => {
       'POST /v1/letters/settings',
       'POST /v1/memory/view',
       'POST /v1/memory/edit',
+      // 架构终态 G6:收回的话与恢复,和记忆编辑同一档
+      'GET /v1/memory/retractions',
+      'POST /v1/memory/retractions/restore',
       // 架构终态 F6:桌面不再起 CLI 读写的主人私事,经宿主代理(路由表文件头 operator 那一段)
       'GET /v1/memory/files',
       'GET /v1/memory/file',

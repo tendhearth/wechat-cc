@@ -23,7 +23,7 @@
  */
 import { dropCorrectedLines, dropCorrectedValues } from './memory-corrections'
 import { feedsSynthesis } from './memory-artifacts'
-import { readOwnerDoc, renderOwnerOverviewSection, stripOwnerOverviewSection } from './memory-owner'
+import { renderOwnerOverviewSection, stripOwnerOverviewSection, type OwnerDoc } from './memory-owner'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -358,7 +358,7 @@ function lifeIsEmpty(life: LifeContext | null): boolean {
  * missing table / file degrades to empty rather than failing the synthesis.
  * Excludes `_overview.md` (our own output — never feed it back in).
  */
-export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null; stateDir: string; adminChatId: string }): Promise<LifeContext> {
+export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null; stateDir: string; adminChatId: string; memoryMd?: () => string | null }): Promise<LifeContext> {
   const { stores, stateDir, adminChatId } = opts
   const memoryRoot = join(stateDir, 'memory')
   const out: LifeContext = { observations: [], milestones: [], memoryNotes: [] }
@@ -379,6 +379,8 @@ export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null
       // 只吃源(lib/memory-artifacts,3e 记忆第 3 步):生成物不喂生成物 —— 以前只排除了 _overview.md 自己,knowledge.md
       // 被读两遍(下面 readOwnerKnowledge 单独读了一份)、today-draft 和 profile.md 重复;corrections.md 复述被纠正的原话,也不喂。
       if (!feedsSynthesis(rel)) continue
+      // memory.md 从主库的表来(架构终态 G6,由记忆功能给);没给(老调用方)⇒ 不喂,不再直接读文件
+      if (rel === 'memory.md') { const md = opts.memoryMd?.(); if (md !== null && md !== undefined) out.memoryNotes.push({ name: rel, content: md }); continue }
       try { out.memoryNotes.push({ name: rel, content: readFileSync(join(dir, rel), 'utf8') }) } catch { /* skip */ }
     }
   } catch { /* best-effort */ }
@@ -386,17 +388,21 @@ export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null
 }
 
 /**
- * 主人收回的话(架构终态 G5):名单在主库的表里,由记忆功能给(src/features/memory 的 MemoryWriter);lib 不认表。
- * `redacted` = 出口过滤挡掉了含这几句的内容,每句记一条 `redacted_on_output` 事件(以前是 memory-redactions.json)。
+ * 合成要的那几样主人记忆,都在主库的表里,由记忆功能给(src/features/memory 的 MemoryWriter);lib 不认表。
+ *  - `retractedTexts` / `redacted`:收回的话与出口过滤的命中记账(架构终态 G5;以前解析 corrections.md、记 memory-redactions.json);
+ *  - `ownerDoc`:总览最前面「## 你写的」那一节的主人原话(G6;以前读 owner.md);
+ *  - `memoryMd`:每晚整理的长期记忆(G6;以前生活侧素材里直接读 memory.md 文件)。没有 ⇒ null。
  */
-export interface SynthesisRetractions {
-  texts(): ReadonlySet<string>
+export interface SynthesisMemory {
+  retractedTexts(): ReadonlySet<string>
   redacted(kind: 'overview' | 'profile', hits: readonly string[]): void
+  ownerDoc(): OwnerDoc
+  memoryMd(): string | null
 }
 
 export interface SynthesizeDeps {
   /** 必给:总览 / 画像会进串门人设,收回的话一定要在写盘前挡掉。 */
-  retractions: SynthesisRetractions
+  memory: SynthesisMemory
   stateDir: string
   /** Admin's chat_id (== userId); the overview is written under its memory dir. */
   adminChatId: string
@@ -452,7 +458,7 @@ async function buildOverviewSource(deps: SynthesizeDeps) {
   const projectsRoot = deps.projectsRoot ?? defaultClaudeProjectsRoot()
   const projects = discoverProjectMemory(projectsRoot)
   const filesScanned = projects.reduce((n, p) => n + (p.index ? 1 : 0) + p.files.length, 0)
-  const life = deps.lifeStores ? await gatherLifeContext({ stores: deps.lifeStores, stateDir: deps.stateDir, adminChatId: deps.adminChatId }) : null
+  const life = deps.lifeStores ? await gatherLifeContext({ stores: deps.lifeStores, stateDir: deps.stateDir, adminChatId: deps.adminChatId, memoryMd: () => deps.memory.memoryMd() }) : null
   const survey = deps.includeFileSurvey
     ? gatherFileSurvey({ stateDir: deps.stateDir, adminChatId: deps.adminChatId, roots: deps.surveyRoots })
     : null
@@ -487,10 +493,10 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   if (sourceFingerprint((await buildOverviewSource(deps)).prompt) !== sourceFingerprint(prompt)) return base
 
   // 卡出口(3b):含主人更正过的话的行一律丢掉、记数 —— 串门拿到的总览一定过这一层。逐字比对,换说法会漏(见 lib/memory-corrections)。
-  const redacted = dropCorrectedLines(overview, deps.retractions.texts())
-  if (redacted.hits.length) deps.retractions.redacted('overview', redacted.hits)
+  const redacted = dropCorrectedLines(overview, deps.memory.retractedTexts())
+  if (redacted.hits.length) deps.memory.redacted('overview', redacted.hits)
   // 主人原话(记忆编辑第 3 步):由代码逐字插在最前面一节,不过出口过滤 —— 那是主人说的;模型自己写出的同名一节先去掉。
-  const ownerSection = renderOwnerOverviewSection(readOwnerDoc(memoryRoot))
+  const ownerSection = renderOwnerOverviewSection(deps.memory.ownerDoc())
   const body = stripOwnerOverviewSection(redacted.text).trim()
   const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${ownerSection ? `${ownerSection}\n\n` : ''}${body}\n`
   let bytesWritten = 0
@@ -767,6 +773,8 @@ function readExistingProfile(stateDir: string, chatId: string): MemoryProfileDoc
 }
 
 async function buildProfileSource(opts: {
+  /** memory.md 从表来(G6);画像的指纹要和合成时用的是同一份。 */
+  memory: Pick<SynthesisMemory, 'memoryMd'>
   stateDir: string
   adminChatId: string
   projectsRoot?: string
@@ -787,7 +795,7 @@ async function buildProfileSource(opts: {
   const projectsRoot = opts.projectsRoot ?? defaultClaudeProjectsRoot()
   const projects = discoverProjectMemory(projectsRoot)
   const filesScanned = projects.reduce((n, p) => n + (p.index ? 1 : 0) + p.files.length, 0)
-  const life = opts.lifeStores ? await gatherLifeContext({ stores: opts.lifeStores, stateDir: opts.stateDir, adminChatId: opts.adminChatId }) : null
+  const life = opts.lifeStores ? await gatherLifeContext({ stores: opts.lifeStores, stateDir: opts.stateDir, adminChatId: opts.adminChatId, memoryMd: () => opts.memory.memoryMd() }) : null
   const survey = opts.includeFileSurvey
     ? gatherFileSurvey({ stateDir: opts.stateDir, adminChatId: opts.adminChatId, roots: opts.surveyRoots })
     : null
@@ -832,8 +840,8 @@ export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<Sy
   profile.sourceFingerprint = source.fingerprint
   profile.minRefreshAfter = addDays(profile.generatedAt, AUTO_REFRESH_DAYS) ?? undefined
   // 卡出口(3b):画像里命中被更正之话的字符串去掉 / 置空、记数。
-  const redactedProfile = dropCorrectedValues(profile, deps.retractions.texts())
-  if (redactedProfile.hits.length) deps.retractions.redacted('profile', redactedProfile.hits)
+  const redactedProfile = dropCorrectedValues(profile, deps.memory.retractedTexts())
+  if (redactedProfile.hits.length) deps.memory.redacted('profile', redactedProfile.hits)
   const body = `${JSON.stringify(redactedProfile.value, null, 2)}\n`
   let bytesWritten = 0
   const committed = commitDerivedMemory(memoryRoot, 'profile', revision, () => {
@@ -843,6 +851,8 @@ export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<Sy
 }
 
 export async function getMemoryProfileStatus(opts: {
+  /** memory.md 从表来(G6);画像的指纹要和合成时用的是同一份。 */
+  memory: Pick<SynthesisMemory, 'memoryMd'>
   stateDir: string
   adminChatId: string
   projectsRoot?: string
