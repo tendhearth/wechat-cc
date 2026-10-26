@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { openTestDb } from '../../lib/db'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { makeMemoryWriter } from './memory-export'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeMemoryNightlyRuntime, deliverPendingNotice, type NoticeDeps } from './nightly-runtime'
 import { readNightlyState, writeNightlyState, type NightlyRunDeps } from './nightly'
+import { parseMemoryDoc } from './curated-doc'
 import { makeSpeechPolicy, type SpeechPolicy } from '../../daemon/speech/policy'
 import type { ProactiveOutbound } from '../../daemon/companion/proactive-channel'
 
@@ -31,6 +35,7 @@ function deps(over: Partial<NightlyRunDeps & NoticeDeps> = {}): NightlyRunDeps &
     now: () => now,
     newId: () => (0xa000 + n++).toString(16),
     log: () => {},
+    writer: makeMemoryWriter({ store: makeMemoryFactsStore(openTestDb()), stateDir }),
     careGate: () => ({ ok: true }),
     claim: vi.fn(),
     speech: speechFor(),
@@ -454,5 +459,43 @@ describe('记忆编辑 view / edit(设计稿 2026-10-23 记忆改了就算数 §
     expect(r.ok && r.corrections.map(c => c.text)).toEqual(['周末不谈工作'])
     expect(read('owner.md')).not.toContain('周末不谈工作')
     expect(read('corrections.md')).toMatch(/\[你写的 · c:[0-9a-f]+\] 周末不谈工作/)
+  })
+})
+
+describe('hand edits of the exported memory.md (G4,主人 10-26 定)', () => {
+  it('become corrections / owner words like a memory-page edit, the export is restored, and the owner is told once', async () => {
+    now = Date.parse('2026-09-25T10:00:00Z')
+    const writer = makeMemoryWriter({ store: makeMemoryFactsStore(openTestDb()), stateDir })
+    const doc = parseMemoryDoc('## 偏好\n- 咖啡只喝美式 <!-- m:aa01 · 2026-10-20 -->\n- 周末喜欢爬山 <!-- m:aa02 · 2026-10-20 -->\n## 近况\n- 在赶发版 <!-- m:aa03 · 2026-10-20 -->\n')
+    writer.commitMemory(OWNER, doc, { actor: 'nightly', ts: now }, '2026-10-20T04:00:00.000Z')
+    const exported = readFileSync(join(root, 'memory.md'), 'utf8')
+    writeFileSync(join(root, 'memory.md'), exported.replace('- 咖啡只喝美式', '- 咖啡只喝手冲').replace('- 在赶发版 <!-- m:aa03 · 2026-10-20 -->\n', ''))
+    const rt = makeMemoryNightlyRuntime(deps({ writer, config: () => ({ enabled: false, at: '04:00', timezone: 'UTC' }) }))
+    await rt.tick()
+    const mem = readFileSync(join(root, 'memory.md'), 'utf8')
+    expect(mem).toContain('周末喜欢爬山')
+    expect(mem).not.toContain('咖啡只喝')
+    expect(mem).not.toContain('在赶发版')
+    expect(writer.handEdited(OWNER)).toBeNull()
+    expect(readFileSync(join(root, 'owner.md'), 'utf8')).toMatch(/- 咖啡只喝手冲 <!-- o:[0-9a-f]+ · \d{4}-\d{2}-\d{2} · memory · 替换:[0-9a-f]+ -->/)
+    const corr = readFileSync(join(root, 'corrections.md'), 'utf8')
+    expect(corr).toMatch(/\[偏好 · c:[0-9a-f]+\] 咖啡只喝美式/)
+    expect(corr).toMatch(/\[近况 · c:[0-9a-f]+\] 在赶发版/)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('2 条当作记错了、1 条记成你说的')
+    await rt.tick()
+    expect(sent).toHaveLength(1)
+  })
+
+  it('too many changes at once ⇒ nothing applied: the hand-edited copy goes to memory-archive, the export is restored, the owner is told', async () => {
+    now = Date.parse('2026-09-25T10:00:00Z')
+    const writer = makeMemoryWriter({ store: makeMemoryFactsStore(openTestDb()), stateDir })
+    const doc = parseMemoryDoc('## 偏好\n' + Array.from({ length: 8 }, (_, i) => `- 第 ${i} 条偏好 <!-- m:ab0${i} · 2026-10-20 -->`).join('\n') + '\n')
+    writer.commitMemory(OWNER, doc, { actor: 'nightly', ts: now }, '2026-10-20T04:00:00.000Z')
+    const exported = readFileSync(join(root, 'memory.md'), 'utf8')
+    writeFileSync(join(root, 'memory.md'), exported.split('\n').filter(l => !l.startsWith('- 第')).join('\n'))
+    await makeMemoryNightlyRuntime(deps({ writer, config: () => ({ enabled: false, at: '04:00', timezone: 'UTC' }) })).tick()
+    expect(readFileSync(join(root, 'memory.md'), 'utf8')).toBe(exported.replace('2026-10-20T04:00:00.000Z', new Date(now).toISOString()))
+    expect(sent[0]).toContain('没有自动照办')
   })
 })

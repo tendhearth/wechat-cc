@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { openTestDb } from '../../lib/db'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { makeMemoryWriter } from './memory-export'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runMemoryNightly, readNightlyState, writeNightlyState, gatherMaterial, buildNightlyPrompt, MATERIAL_BUDGET, MEMORY_LOG_FILE, type NightlyRunDeps } from './nightly'
 import { parseMemoryDoc } from './curated-doc'
 import { NetworkUnprotectedError } from '../../lib/network-gate'
-import { writeOwnerAssertions } from '../../lib/memory-owner'
+import { serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
+const writeOwnerFile = (r: string, doc: OwnerDoc) => writeFileSync(join(r, 'owner.md'), serializeOwnerDoc(doc))
 
 const OWNER = 'owner@im.wechat'
 let stateDir: string, root: string, calls: string[], reply: string, now: number
@@ -27,6 +31,7 @@ function deps(over: Partial<NightlyRunDeps> = {}): NightlyRunDeps {
     now: () => now,
     newId: () => (0xa000 + n++).toString(16),
     log: () => {},
+    writer: makeMemoryWriter({ store: makeMemoryFactsStore(openTestDb()), stateDir }),
     ...over,
   }
 }
@@ -268,7 +273,7 @@ describe('today-draft (同日失忆, 2026-10-01)', () => {
 describe('owner.md 主人原话(记忆编辑设计稿 2026-10-23 §1)', () => {
   const assert1 = { id: 'a1b2', text: '我不喝咖啡', date: '2026-10-23', origin: 'overview' as const }
   it('作为只读素材给模型,整理之后 owner.md 一个字节不变', async () => {
-    writeOwnerAssertions(root, { assertions: [assert1], extra: [] })
+    writeOwnerFile(root, { assertions: [assert1], extra: [] })
     const before = readFileSync(join(root, 'owner.md'), 'utf8')
     expect((await runMemoryNightly(deps(), { force: true })).status).toBe('written')
     expect(calls[0]).toContain('主人亲手写的原话')
@@ -277,7 +282,7 @@ describe('owner.md 主人原话(记忆编辑设计稿 2026-10-23 §1)', () => {
     expect(readFileSync(join(root, 'owner.md'), 'utf8')).toBe(before)
   })
   it('模型照抄主人原话进 memory.md ⇒ 代码丢掉那一条(等于,或包含够长的原话);别的照写', async () => {
-    writeOwnerAssertions(root, { assertions: [assert1, { id: 'b2c3', text: '周末不谈工作的事', date: '2026-10-23', origin: 'memory' }], extra: [] })
+    writeOwnerFile(root, { assertions: [assert1, { id: 'b2c3', text: '周末不谈工作的事', date: '2026-10-23', origin: 'memory' }], extra: [] })
     reply = JSON.stringify({ add: [
       { section: '偏好', text: '我不喝咖啡' },
       { section: '偏好', text: '主人说周末不谈工作的事,要记住' },
@@ -292,7 +297,7 @@ describe('owner.md 主人原话(记忆编辑设计稿 2026-10-23 §1)', () => {
   it('主人新写了原话 ⇒ 算新素材(记忆里可能有冲突要改);没写过 ⇒ 照旧跳过', async () => {
     await runMemoryNightly(deps(), { force: true })
     expect(await runMemoryNightly(deps(), { force: true })).toEqual({ status: 'skipped', reason: 'no_new_material' })
-    writeOwnerAssertions(root, { assertions: [assert1], extra: [] })
+    writeOwnerFile(root, { assertions: [assert1], extra: [] })
     expect((await runMemoryNightly(deps(), { force: true })).status).toBe('written')
     expect(calls).toHaveLength(2)
   })

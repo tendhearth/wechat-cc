@@ -15,6 +15,8 @@ import { shouldSpeak, careLevel, type CareLedger } from '../companion'
 import { makeMemoryLlmOps, resolveCheapEval } from './llm-ops'
 import { makeMemoryNightlyRuntime, type MemoryNightlyRuntime } from './nightly-runtime'
 import { makeNightlySources } from './nightly-sources'
+import { makeMemoryWriter } from './memory-export'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 
 export interface WireMemoryDeps {
   stateDir: string
@@ -61,6 +63,7 @@ export function wireMemory(d: WireMemoryDeps) {
     },
     now: () => Date.now(),
     newId: () => randomBytes(3).toString('hex'),
+    writer: makeMemoryWriter({ store: makeMemoryFactsStore(db), stateDir }),
     log: (t, l) => log(t, l),
     careGate: (chatId, nowIso) => shouldSpeak({
       kind: 'memory',

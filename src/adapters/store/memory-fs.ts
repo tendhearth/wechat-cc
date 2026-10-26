@@ -169,7 +169,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
   }
 
   /**
-   * 主人原话 owner.md 只经记忆编辑写(lib/memory-owner 的 writeOwnerAssertions):CC 不能替主人「说」话,也不能删主人说的。
+   * 主人原话 owner.md 只经记忆编辑写(features/memory/memory-export 的 commitOwner):CC 不能替主人「说」话,也不能删主人说的。
    * 只认对话那一层的 owner.md(notes/owner.md 是普通笔记);不分大小写 —— macOS 默认卷上 Owner.md 是同一个文件。
    */
   function refuseOwnerFile(full: string): void {

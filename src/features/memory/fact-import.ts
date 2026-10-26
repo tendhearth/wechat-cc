@@ -17,8 +17,8 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { MEMORY_SECTIONS, factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFact } from '../../domain/memory/facts'
-import { MIN_RETRACTED_CHARS, normalizeCorrectionsText, normalizeFactText, placeholderTombstone, renderCorrectionsMd, retractedTextSet, tombstonesFromCorrections } from '../../domain/memory/corrections'
-import { renderMemoryForPrompt, renderMemoryMd, renderOwnerForPrompt, renderOwnerMd } from '../../domain/memory/render'
+import { MIN_RETRACTED_CHARS, markWrittenBack, normalizeCorrectionsText, normalizeFactText, placeholderTombstone, renderCorrectionsMd, retractedTextSet, tombstonesFromCorrections } from '../../domain/memory/corrections'
+import { EXPORT_NOTICE, renderMemoryForPrompt, renderMemoryMd, renderOwnerForPrompt, renderOwnerMd } from '../../domain/memory/render'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
 import { correctedTexts } from '../../lib/memory-corrections'
 import { parseOwnerDoc, renderOwnerForPrompt as ownerPromptToday, serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
@@ -30,13 +30,13 @@ type Files = Record<(typeof IMPORTED_FILES)[number], string | null>
 const CHECK_STAMP = '1970-01-01T00:00:00.000Z'
 
 export type ImportOutcome =
-  | { chatId: string; outcome: 'empty' | 'unchanged' }
+  | { chatId: string; outcome: 'empty' | 'unchanged' | 'hand_edited' }
   | { chatId: string; outcome: 'imported'; first: boolean; added: number; updated: number; statusChanged: number; gone: number }
   | { chatId: string; outcome: 'mismatch'; what: string; diff: string }
 
 class Mismatch extends Error { constructor(readonly what: string, readonly diff: string) { super(`memory import mismatch: ${what}`) } }
 
-function readFiles(root: string): Files {
+export function readMemoryFiles(root: string): Files {
   const read = (f: string) => { try { return readFileSync(join(root, f), 'utf8') } catch { return null } }
   return { 'memory.md': read('memory.md'), 'owner.md': read('owner.md'), 'corrections.md': read('corrections.md') }
 }
@@ -57,19 +57,16 @@ function firstDiff(want: string, got: string): string {
 }
 const check = (what: string, want: string, got: string) => { if (want !== got) throw new Mismatch(what, firstDiff(want, got)) }
 
-/** 去掉正文等于某条收回的话的条目(导入成 retracted 的那些),返回剩下的文档和被认出的编号 / 正文。 */
-function withoutRetracted(doc: MemoryDoc, retracted: ReadonlySet<string>): { doc: MemoryDoc; hits: Set<MemoryDoc['sections'][keyof MemoryDoc['sections']][number]> } {
-  const hits = new Set<MemoryDoc['sections'][keyof MemoryDoc['sections']][number]>()
+/** 去掉正文等于某条收回的话的条目(导入成 retracted 的那些):核对时「今天的代码该看到的那份」。和 markWrittenBack 同一条规则。 */
+function withoutRetracted(doc: MemoryDoc, retracted: ReadonlySet<string>): { doc: MemoryDoc } {
   const next: MemoryDoc = { sections: { ...doc.sections }, extra: doc.extra }
   for (const s of MEMORY_SECTIONS) {
     next.sections[s] = doc.sections[s].filter(e => {
       const n = normalizeFactText(e.text)
-      const hit = [...n].length >= MIN_RETRACTED_CHARS && retracted.has(n)
-      if (hit) hits.add(e)
-      return !hit
+      return !([...n].length >= MIN_RETRACTED_CHARS && retracted.has(n))
     })
   }
-  return { doc: next, hits }
+  return { doc: next }
 }
 
 /**
@@ -77,11 +74,16 @@ function withoutRetracted(doc: MemoryDoc, retracted: ReadonlySet<string>): { doc
  * 只在 daemon 的串行处调(开机、memory 模块之前);抛错 = 程序错,核对不过不抛、返回 mismatch。
  */
 export function importChatMemory(store: MemoryFactsStore, root: string, chatId: string, now: number, day: string): ImportOutcome {
-  const files = readFiles(root)
+  const files = readMemoryFiles(root)
   const hash = filesHash(files)
   if (!hash) return { chatId, outcome: 'empty' }
   const prior = store.importHash(chatId)
   if (prior === hash) return { chatId, outcome: 'unchanged' }
+  // G4 起:磁盘上的 memory.md 和最后一次导出不一样、头部还带着「这是生成的」⇒ 是主人手改的,不当成源同步;
+  // 交给每晚整理运行时的 reconcileHandEdit 按记忆编辑那张比对表变成更正 / 原话(主人 10-26 定)。
+  const lastExport = store.exportHash(chatId, 'memory.md')
+  if (lastExport && files['memory.md'] !== null && files['memory.md'].includes(EXPORT_NOTICE)
+    && createHash('sha256').update(files['memory.md']).digest('hex') !== lastExport) return { chatId, outcome: 'hand_edited' }
 
   const fileTombstones = files['corrections.md'] === null ? [] : tombstonesFromCorrections(chatId, files['corrections.md'])
   if (!fileTombstones) return { chatId, outcome: 'mismatch', what: 'corrections.md', diff: 'unrecognized lines before the first entry' }
@@ -92,12 +94,7 @@ export function importChatMemory(store: MemoryFactsStore, root: string, chatId: 
       const memDoc = files['memory.md'] === null ? null : parseMemoryDoc(files['memory.md'])
       const ownerDoc: OwnerDoc | null = files['owner.md'] === null ? null : parseOwnerDoc(files['owner.md'])
       const kept = memDoc ? withoutRetracted(memDoc, retracted) : null
-      const memRows: DesiredFact[] = memDoc ? factsFromMemoryDoc(chatId, memDoc, 'import') : []
-      if (kept) {
-        // factsFromMemoryDoc 按 SECTIONS 顺序逐条产出,和 doc 里的条目一一对应 ⇒ 按同样顺序认出被收回的那几条
-        const entries = MEMORY_SECTIONS.flatMap(s => memDoc!.sections[s])
-        entries.forEach((e, i) => { if (kept.hits.has(e)) memRows[i] = { ...memRows[i]!, status: 'retracted' } })
-      }
+      const memRows: DesiredFact[] = memDoc ? markWrittenBack(factsFromMemoryDoc(chatId, memDoc, 'import'), retracted) : []
       const ownRows: DesiredFact[] = ownerDoc ? factsFromOwnerDoc(chatId, ownerDoc) : []
       const haveKeys = new Set([...known.map(t => t.key), ...fileTombstones.map(t => t.key)])
       const placeholders = [...new Set(ownRows.flatMap(r => (r.replacesKey && !haveKeys.has(r.replacesKey) ? [r.replacesKey] : [])))]

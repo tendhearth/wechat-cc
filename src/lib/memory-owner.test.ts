@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OWNER_FILENAME, overviewForOthers, renderOwnerOverviewSection, stripOwnerOverviewSection, parseOwnerDoc, readOwnerDoc, renderOwnerForPrompt, serializeOwnerDoc, writeOwnerAssertions, type OwnerDoc } from './memory-owner'
+import { OWNER_FILENAME, overviewForOthers, renderOwnerOverviewSection, stripOwnerOverviewSection, parseOwnerDoc, readOwnerDoc, renderOwnerForPrompt, serializeOwnerDoc, type OwnerDoc } from './memory-owner'
 
 const doc: OwnerDoc = {
   assertions: [
@@ -44,10 +44,10 @@ describe('owner.md', () => {
     expect(renderOwnerForPrompt({ assertions: [], extra: [] })).toBe('')
   })
 
-  it('写下去能读回来(过期见 adapters/store/memory-fs.test)', () => {
+  it('写下去能读回来(写者是 features/memory/memory-export 的 commitOwner,见那边的测试)', () => {
     const root = mkdtempSync(join(tmpdir(), 'owner-md-'))
     try {
-      writeOwnerAssertions(root, doc)
+      writeFileSync(join(root, OWNER_FILENAME), serializeOwnerDoc(doc))
       expect(readFileSync(join(root, OWNER_FILENAME), 'utf8')).toContain('我不喝咖啡')
       expect(readOwnerDoc(root)).toEqual(doc)
     } finally { rmSync(root, { recursive: true, force: true }) }

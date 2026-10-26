@@ -30,6 +30,11 @@ export interface MemoryFactsStore {
   /** 上次「文件 → 表」核对通过时文件的总指纹;没导入过 ⇒ null。 */
   importHash(chatId: string): string | null
   setImportHash(chatId: string, filesHash: string, at: number): void
+  /** 墓碑底下追加一段说明(CC 后来又关掉的待办 …):一条事件。没有这一行 ⇒ false。 */
+  addNote(chatId: string, key: string, note: string, by: Omit<FactWrite, 'action'>): boolean
+  /** 我们最后一次导出这份文件时的内容指纹;没导出过 ⇒ null。 */
+  exportHash(chatId: string, file: string): string | null
+  setExportHash(chatId: string, file: string, sha256: string, at: number): void
   /** 一个事务里插这些行,每行记一条 `added` 事件;任何一行失败 ⇒ 全部不插。`replacesKey` 要指向同一对话里已有的(或这一批里更早的)一行。 */
   insert(facts: readonly NewMemoryFact[], by: FactWrite): MemoryFactView[]
   /** 一个对话的行,按 doc、ord、id 排;`replacesKey` 已经解析好。 */

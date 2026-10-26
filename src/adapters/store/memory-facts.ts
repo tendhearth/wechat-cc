@@ -107,6 +107,19 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
       db.query(`INSERT INTO memory_import(chat_id, files_hash, at) VALUES (?,?,?)
         ON CONFLICT(chat_id) DO UPDATE SET files_hash = excluded.files_hash, at = excluded.at`).run(chatId, filesHash, at)
     },
+    addNote(chatId, key, note, by) {
+      const cur = byKey(chatId, key)
+      if (!cur) return false
+      event.run(cur.id, chatId, by.ts, 'updated', by.actor, null, null, note)
+      return true
+    },
+    exportHash(chatId, file) {
+      return db.query<{ h: string }, [string, string]>('SELECT sha256 AS h FROM memory_exports WHERE chat_id = ? AND file = ?').get(chatId, file)?.h ?? null
+    },
+    setExportHash(chatId, file, sha256, at) {
+      db.query(`INSERT INTO memory_exports(chat_id, file, sha256, at) VALUES (?,?,?,?)
+        ON CONFLICT(chat_id, file) DO UPDATE SET sha256 = excluded.sha256, at = excluded.at`).run(chatId, file, sha256, at)
+    },
     insert(facts, by) {
       return atomically(() => {
         const inserted: MemoryFactView[] = []
