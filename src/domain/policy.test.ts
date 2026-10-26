@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { compilePolicy, POLICY_TARGETS } from './policy'
-import { TIER_PROFILES, type UserTier } from './user-tier'
+import { JOB_PROFILE, REVIEW_PROFILE, TIER_PROFILES, type UserTier } from './user-tier'
 import type { PermissionMode } from './permission-mode'
 
 const TIERS: UserTier[] = ['admin', 'trusted', 'guest']
@@ -30,8 +30,12 @@ describe('compilePolicy —— 档位 × 模式 → 每家执行者实际的设�
       expect(compilePolicy('agy', tp, 'dangerously').skipPermissions).toBe(true)
     }
   })
-  it('strict: guest codex is read-only and offline; admin / trusted codex is workspace-write without per-command approval', () => {
+  it('strict: guest codex is read-only and offline; trusted is workspace-write without approval; admin asks per request (on-request, 2026-10-26)', () => {
     expect(compilePolicy('codex', TIER_PROFILES.guest, 'strict')).toMatchObject({ sandboxMode: 'read-only', approvalPolicy: 'untrusted', webSearchEnabled: false })
-    for (const tier of ['admin', 'trusted'] as const) expect(compilePolicy('codex', TIER_PROFILES[tier], 'strict')).toMatchObject({ sandboxMode: 'workspace-write', approvalPolicy: 'never' })
+    expect(compilePolicy('codex', TIER_PROFILES.trusted, 'strict')).toMatchObject({ sandboxMode: 'workspace-write', approvalPolicy: 'never' })
+    expect(compilePolicy('codex', TIER_PROFILES.admin, 'strict')).toMatchObject({ sandboxMode: 'workspace-write', approvalPolicy: 'on-request' })
+    // 定时 / 审查档不是 admin:仍是只读 + 没人应答。
+    expect(compilePolicy('codex', JOB_PROFILE, 'strict').approvalPolicy).not.toBe('on-request')
+    expect(compilePolicy('codex', REVIEW_PROFILE, 'strict').approvalPolicy).not.toBe('on-request')
   })
 })

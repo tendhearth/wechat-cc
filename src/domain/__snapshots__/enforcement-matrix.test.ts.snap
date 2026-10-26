@@ -245,7 +245,7 @@ exports[`provider × tier × tool-kind enforcement (derived) > the derived matri
         "social_seek",
         "subagent",
       ],
-      "ask→allow": [
+      "ask": [
         "daemon_remediate",
         "memory_delete",
         "shell_destructive",

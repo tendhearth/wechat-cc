@@ -10,7 +10,7 @@ import { log } from '../../../lib/log'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import { codexErrorCode, type CodexTimeouts } from './codex-errors'
-import { spawnCodexAppServerSession, type CodexAppServerSession, type CodexChatProfile } from './codex-app-server'
+import { spawnCodexAppServerSession, type CodexAppServerSession, type CodexChatApprove, type CodexChatProfile } from './codex-app-server'
 import type { CodexAppServerSpawn } from './codex-app-server-process'
 
 export { CODEX_CAPABILITIES } from '../../../domain/provider-capabilities'
@@ -25,7 +25,9 @@ export { codexChatToolCall } from './codex-app-server'
  *   - 续接:SpawnContext.resumeSessionId ⇒ thread/resume;续接不上(线程没了)⇒ 记一行、起新线程。
  *   - 子进程中途没了(崩溃 / 被杀):下一轮换一个新进程,续接同一个 thread —— 和以前每轮一个 exec 一样不怕上一轮的进程。
  *   - 系统指令走开发者指令槽(developerInstructions),每次起线程 / 续接都带上;不再前置到第一条消息。
- *   - 沙箱 / 审批:compilePolicy('codex') 原样(审批 never,访客 untrusted;codex 发来的审批请求一律拒,见 CodexChatProfile)。
+ *   - 沙箱 / 审批:compilePolicy('codex') 原样。主人对话(admin、strict)是 on-request:codex 报上来要批的那一条交给
+ *     `approvals`(codex-chat-gate.ts,逐条过 authorize,要问就发微信拍板卡,2026-10-26);没给 `approvals` 的 provider
+ *     (delegate、CLI 的一次性评估)没人可问 ⇒ 落回 never,和以前一样。其余档审批 never / 访客 untrusted,请求一律拒。
  *   - wechat / delegate / 插件 MCP 作为线程配置;会话令牌与档位只并进核心 MCP 的 env(第三方插件永远拿不到令牌)。
  *   - 中途插话:session.steer(turn/steer)接好了;对话的协调器目前不调它(没有新界面),见 B1 进度行。
  *
@@ -54,13 +56,22 @@ export interface CodexChatProviderOptions {
   closeTimeoutMs?: number
   /** 测试接缝:起 app-server 子进程(src/test-support/executors/codex-scripted.ts 的剧本替身)。生产不传。 */
   spawnProcess?: CodexAppServerSpawn
+  /**
+   * 审批 on-request 的会话:每次 spawn 造一个应答者(codex-chat-gate.ts 的 makeCodexChatGate)。不给 ⇒ 没人可问,
+   * compilePolicy 说 on-request 的也落回 never(以前的行为)。
+   */
+  approvals?: (ctx: SpawnContext) => CodexChatApprove
 }
 
-/** 这次 spawn 交给 codex 的线程配置:MCP(并好会话 env、放宽超时、dangerously 时免审)+ 档位不给网时关联网搜索。 */
+/**
+ * 这次 spawn 交给 codex 的线程配置:MCP(并好会话 env、放宽超时、dangerously 时免审、有人答审批时每次调用都报上来)
+ * + 档位不给网时关联网搜索。
+ */
 export function codexChatThreadConfig(
   mcpServers: Record<string, McpStdioSpec> | undefined,
   ctx: Pick<SpawnContext, 'mcpEnv' | 'permissionMode' | 'tierProfile'>,
   dangerouslyBypass: boolean,
+  askEachMcpCall = false,
 ): Record<string, unknown> {
   const tierOpts = compilePolicy('codex', ctx.tierProfile, ctx.permissionMode)
   const config: Record<string, unknown> = {}
@@ -75,6 +86,9 @@ export function codexChatThreadConfig(
       // terminal_say(2026-10-24)要等终端会话回话到 10 分钟;只能按服务器给 ⇒ 只放宽 admin 会话的 wechat。
       if (name === 'wechat' && sessionEnv.WECHAT_SESSION_TIER === 'admin') server.tool_timeout_sec = TERMINAL_SAY_TOOL_TIMEOUT_MS / 1000
       if (dangerouslyBypass) server.default_tools_approval_mode = 'approve'
+      // on-request 且有人答(2026-10-26):每次 MCP 调用都报上来,由 authorize 按档位放 / 问(不靠 codex 按工具注解猜);
+      // 工作台的 MCP 也是这个设法(codex-config.ts)。
+      else if (askEachMcpCall) server.default_tools_approval_mode = 'prompt'
       servers[name] = server
     }
     config.mcp_servers = servers
@@ -142,9 +156,12 @@ export function createCodexChatProvider(opts: CodexChatProviderOptions = {}): Ag
       const tierOpts = compilePolicy('codex', ctx.tierProfile, ctx.permissionMode)
       // 只在**这一次** spawn 是 dangerously 时才免审(安全 10-20)。
       const bypass = !!opts.dangerouslyBypassApprovalsAndSandbox && ctx.permissionMode === 'dangerously'
-      const config = codexChatThreadConfig(opts.mcpServers, ctx, bypass)
+      // on-request 只在有人答的时候开:没接应答者 ⇒ never(不让 codex 停在一个没人回的审批上)。
+      const approve = tierOpts.approvalPolicy === 'on-request' ? opts.approvals?.(ctx) : undefined
+      const config = codexChatThreadConfig(opts.mcpServers, ctx, bypass, !!approve)
       const model = ctx.model ?? opts.model
-      const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy: tierOpts.approvalPolicy, config, env: process.env, log }
+      const approvalPolicy = tierOpts.approvalPolicy === 'on-request' && !approve ? 'never' : tierOpts.approvalPolicy
+      const profile: CodexChatProfile = { sandbox: tierOpts.sandboxMode, approvalPolicy, config, env: process.env, log, ...(approve ? { approve } : {}) }
       // 对话只把这几样交给协议客户端;工作台专用的(审批桥、时间线、后台生命周期)一律不带。
       const base: SpawnContext = {
         tierProfile: ctx.tierProfile, permissionMode: ctx.permissionMode, chatId: ctx.chatId,

@@ -177,6 +177,60 @@ describe('Codex 对话 provider —— 一轮的事件', () => {
     expect(events.at(-1)).toMatchObject({ kind: 'result' })
   })
 
+  describe('主人对话 on-request(2026-10-26):审批交给 approvals', () => {
+    const seen: Array<{ chatId: string; req: Record<string, unknown> }> = []
+    const approvals = (answer: (req: Record<string, unknown>) => boolean): CodexChatProviderOptions['approvals'] => (c) => async (req) => { seen.push({ chatId: c.chatId, req: req as unknown as Record<string, unknown> }); return answer(req as unknown as Record<string, unknown>) }
+    afterEach(() => { seen.length = 0 })
+
+    it('admin strict + 接了 approvals ⇒ on-request、审批交给客户端;trusted / 没接 ⇒ never;MCP 每次调用都报上来', async () => {
+      const r = rig({}, { approvals: approvals(() => true), mcpServers: { wechat: { command: 'bun' } } })
+      await r.spawn({ permissionMode: 'strict' })
+      expect(lastStart(r).params).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'on-request', approvalsReviewer: 'user', config: { mcp_servers: { wechat: { default_tools_approval_mode: 'prompt' } } } })
+      await r.spawn({ permissionMode: 'strict', tierProfile: TIER_PROFILES.trusted })
+      expect(lastStart(r).params).toMatchObject({ approvalPolicy: 'never' })
+      expect(lastStart(r).params).not.toHaveProperty('approvalsReviewer')
+      expect((lastStart(r).params.config as any).mcp_servers.wechat).not.toHaveProperty('default_tools_approval_mode')
+      const bare = rig({}, { mcpServers: { wechat: { command: 'bun' } } })
+      await bare.spawn({ permissionMode: 'strict' })
+      expect(lastStart(bare).params).toMatchObject({ approvalPolicy: 'never' })
+    })
+
+    it('codex 报回来的不是「审批交给客户端」⇒ 不开(fail closed)', async () => {
+      const scripted = createScriptedCodex({ turns: [], rewrite: m => m.result?.approvalsReviewer ? { ...m, result: { ...m.result, approvalsReviewer: 'guardian_subagent' } } : m })
+      const p = createCodexChatProvider({ codexPathOverride: '/bin/codex', spawnProcess: scripted.spawn, rpcTimeoutMs: 2_000, closeTimeoutMs: 300, approvals: approvals(() => true) })
+      await expect(p.spawn({ alias: 'a', path: '/p' }, ctx({ permissionMode: 'strict' }))).rejects.toThrow(/codex_unverified_thread_policy/)
+    })
+
+    it('命令 / 改文件 / MCP 调用的审批逐条交给 approvals:true ⇒ accept,false ⇒ decline;提问照旧拒;核实不了的只拒这一条', async () => {
+      const r = rig({ turns: [{ steps: [
+        { request: { method: 'item/commandExecution/requestApproval', params: { itemId: 'c1', command: 'rm -rf build', cwd: '/p', availableDecisions: ['accept', 'decline'] } } },
+        { request: { method: 'item/commandExecution/requestApproval', params: { itemId: 'c2', command: 'git push', availableDecisions: ['accept', 'decline'] } } },
+        { notify: { method: 'item/started', params: { item: { id: 'f1', type: 'fileChange', status: 'inProgress', changes: [{ path: '/p/a.ts', kind: { type: 'update' }, diff: '+x' }] } } } },
+        { request: { method: 'item/fileChange/requestApproval', params: { itemId: 'f1' } } },
+        { notify: { method: 'item/started', params: { item: { id: 'm1', type: 'mcpToolCall', server: 'wechat', tool: 'memory_delete', arguments: { path: 'x.md' }, status: 'inProgress' } } } },
+        { request: { method: 'mcpServer/elicitation/request', params: { serverName: 'wechat', mode: 'form', message: 'ok?', _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: 'memory_delete', tool_params: { path: 'x.md' } }, requestedSchema: { type: 'object', properties: {} } } } },
+        { request: { method: 'item/tool/requestUserInput', params: { itemId: 'q1', questions: [] } } },
+        { request: { method: 'item/commandExecution/requestApproval', params: { itemId: 'c3', command: 'ls', environmentId: 'remote-box' } } },
+        { say: '好了。' },
+      ] }] }, { approvals: approvals(req => req.command !== 'git push'), mcpServers: { wechat: { command: 'bun' } } })
+      const s = await r.spawn({ permissionMode: 'strict', chatId: 'owner' })
+      const events = await drain(s.dispatch('hi'))
+      expect(r.scripted.responses).toEqual([
+        { method: 'item/commandExecution/requestApproval', result: { decision: 'accept' } },
+        { method: 'item/commandExecution/requestApproval', result: { decision: 'decline' } },
+        { method: 'item/fileChange/requestApproval', result: { decision: 'accept' } },
+        { method: 'mcpServer/elicitation/request', result: { action: 'accept', content: null, _meta: null } },
+        { method: 'item/tool/requestUserInput', result: { answers: {} } },
+        { method: 'item/commandExecution/requestApproval', result: { decision: 'decline' } },
+      ])
+      expect(seen.map(x => x.chatId)).toEqual(['owner', 'owner', 'owner', 'owner'])
+      expect(seen[0]!.req).toMatchObject({ tool: 'commandExecution', command: 'rm -rf build', cwd: '/p' })
+      expect(seen[2]!.req).toMatchObject({ tool: 'fileChange', paths: ['/p/a.ts'] })
+      expect(seen[3]!.req).toMatchObject({ tool: 'mcp__wechat__memory_delete', input: { path: 'x.md' } })
+      expect(extractTurnReply(events).finalText).toBe('好了。')
+    })
+  })
+
   it('close() 之后 dispatch 是空的', async () => {
     const r = rig()
     const s = await r.spawn()

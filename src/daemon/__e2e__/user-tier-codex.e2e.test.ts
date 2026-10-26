@@ -15,10 +15,9 @@
 //   Two chats on the same daemon — one in `admins`, one not, both with
 //   mode=solo+codex — produce different `sandboxMode` + `approvalPolicy`
 //   on app-server `thread/start` at spawn time. Under strict mode
-//   (dangerously=false) admin gets `workspace-write` + `never`; guest
-//   gets `read-only` + `untrusted`. (Post-RFC-05, admin no longer gets
-//   `danger-full-access` in strict mode — its destructive ops relay, and
-//   codex can't honor a relay, so it drops to workspace-write. Only
+//   (dangerously=false) admin gets `workspace-write` + `on-request` (each
+//   approval request goes through authorize and, when it asks, the owner's
+//   WeChat card — 2026-10-26); guest gets `read-only` + `untrusted`. Only
 //   `--dangerously` yields `danger-full-access`, regardless of tier.)
 //
 // Tier-change-invalidation is NOT re-exercised here — user-tier.e2e
@@ -96,9 +95,11 @@ describe('e2e: user-tier permissions (codex)', () => {
       const adminSpawn = spawns.find(s => s.sandboxMode === 'workspace-write')
       expect(adminSpawn, 'expected a workspace-write spawn for admin_chat').toBeTruthy()
       if (adminSpawn) {
-        // Admin profile under strict mode: write within cwd, no approval
-        // prompt. danger-full-access is --dangerously-only (see tierProfileToCodexSdkOpts).
-        expect(adminSpawn.approvalPolicy).toBe('never')
+        // Admin profile under strict mode: write within cwd; codex's approval
+        // requests go to the owner per request (on-request → codex-chat-gate →
+        // authorize, 2026-10-26). danger-full-access is --dangerously-only
+        // (see tierProfileToCodexSdkOpts).
+        expect(adminSpawn.approvalPolicy).toBe('on-request')
       }
       expect(spawns.find(s => s.sandboxMode === 'read-only')).toBeUndefined()
     } finally {

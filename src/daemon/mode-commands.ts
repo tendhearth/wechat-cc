@@ -364,7 +364,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         }
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId })
         const dn = namesIn(deps.registry, providerId).short
-        const notice = noAskNotice(providerId)
+        const notice = noAskNotice(providerId, deps.resolveTier(msg.chatId))
         await reply(msg.chatId, `这个对话切到 ${dn} (solo)。下条消息开始生效。${notice ? `\n${notice}` : ''}`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId}`)
         return true
@@ -492,7 +492,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId, model })
         const dn = namesIn(deps.registry, providerId).short
         const shown = aliased ? `${model}(别名 ${tail})` : model !== tail ? `${model}(按网关拼法,你输的是 ${tail})` : model
-        const notice = noAskNotice(providerId)
+        const notice = noAskNotice(providerId, deps.resolveTier(msg.chatId))
         await reply(msg.chatId, `这个对话切到 ${dn} (solo)，模型 = ${shown}（只对这个对话）。下条消息开始生效。${unverified ? '(网关列表拿不到,没核对这个名字;下条消息报错就换一个)' : ''}${notice ? `\n${notice}` : ''}`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${model}`)
         return true

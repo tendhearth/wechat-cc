@@ -11,10 +11,13 @@ import { KNOWN_PROVIDER_IDS } from './capability-matrix'
  * 有箭头格子的执行者必须在这里有一条理由;不再有箭头的,删掉这条(下面的守卫两头都查)。
  */
 const WHY_GAPS: Readonly<Record<string, string>> = {
-  // trusted / admin:ask→allow(shell_destructive / memory_delete / a2a_send / daemon_remediate)。
-  codex: 'strict 下 workspace-write 沙箱 + approval never:破坏性 shell 和 wechat MCP 上要问的那几类都不会停下来问。'
-    + 'codex 的审批只有整轮粗粒度(on-request 会让每条越界命令都弹卡,也分不出哪条是破坏性的),问不了 ⇒ 维持不问,'
-    + '主人切过去时照实说(设计稿 2026-10-22-policy-compile-design.md §6)。admin 专用工具靠 wechat MCP 按档注册挡住;插件 MCP 在 strict 下被 codex 取消。',
+  // trusted:ask→allow(shell_destructive / memory_delete / a2a_send)。admin 自 2026-10-26 起没有缺口(见下)。
+  codex: 'trusted 的对话:strict 下 workspace-write 沙箱 + approval never,破坏性 shell 和 wechat MCP 上要问的那几类都不会停下来问'
+    + '(审批卡发给主人,问的却是别人的对话 —— 主人只点头了自己对话的逐条问),问不了 ⇒ 维持不问,切过去时照实说'
+    + '(设计稿 2026-10-22-policy-compile-design.md §6)。admin 专用工具靠 wechat MCP 按档注册挡住。'
+    + '主人自己的对话(admin):approval on-request,codex 报上来的每一条过 authorize(codex-chat-gate.ts);MCP 每次调用都报'
+    + '(default_tools_approval_mode = prompt),所以 memory_delete / daemon_remediate 是真问;shell_destructive 记成「问」靠的是 codex'
+    + '自己会把越出沙箱 / 它认为危险的命令报上来 —— 沙箱里它觉得不危险的破坏性命令(比如工作目录里的某些删除)不会报,这是 codex 判断的边界。',
   // trusted / admin:ask→deny。
   cursor: 'ACP 对话侧按模式应答(compilePolicy 的 cursor-acp):strict 下每条权限请求都拒 —— 档位说问,它直接拒,比档位严,不用提醒。'
     + '执行命令有权限卡(拒掉);改文件不弹卡(trusted / admin 本来允许改)。只挂 wechat MCP(按会话档位注册),不挂插件和 delegate。'
@@ -74,6 +77,10 @@ describe('provider × tier × tool-kind enforcement (derived)', () => {
   // 准绳(稿 §6):问不了、于是放行的那几家,主人切过去时照实说一句;比档位严的(cursor / openai 直接拒)不用提醒。
   it('the "it will not ask you" notice goes exactly to the executors that let ask-kinds through', () => {
     expect(KNOWN_PROVIDER_IDS.filter(p => noAskNotice(p) !== null).sort()).toEqual(['agy', 'codex'])
+    // 按切换的那个对话的档位说(2026-10-26):codex 在主人自己的对话里逐条问 ⇒ 不提醒;信任的对话照旧提醒。
+    expect(KNOWN_PROVIDER_IDS.filter(p => noAskNotice(p, 'admin') !== null).sort()).toEqual(['agy'])
+    expect(KNOWN_PROVIDER_IDS.filter(p => noAskNotice(p, 'trusted') !== null).sort()).toEqual(['agy', 'codex'])
+    expect(KNOWN_PROVIDER_IDS.filter(p => noAskNotice(p, 'guest') !== null)).toEqual([])
     expect(noAskNotice('codex')).toBe('提醒:它不会逐条问你,删东西也不会。')
     expect(noAskNotice('agy')).toBe('提醒:它不会逐条问你,删东西也不会。')
     expect(noAskNotice('claude')).toBeNull()

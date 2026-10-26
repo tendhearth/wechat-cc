@@ -57,7 +57,7 @@ exports[`compilePolicy —— 档位 × 模式 → 每家执行者实际的设�
     "sandboxMode": "danger-full-access",
   },
   "codex / admin / strict": {
-    "approvalPolicy": "never",
+    "approvalPolicy": "on-request",
     "sandboxMode": "workspace-write",
   },
   "codex / guest / dangerously": {

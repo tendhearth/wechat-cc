@@ -37,8 +37,8 @@ export type CodexScriptStep =
   | { raw: unknown }
   /** 原样发一条 app-server 通知(params 里的 threadId / turnId 缺省自动补上)。 */
   | { notify: { method: string; params?: Record<string, unknown> } }
-  /** 发一条服务端请求(审批 / 提问 / MCP 表单),等客户端应答,应答记进 `responses`。 */
-  | { request: { method: string; params?: Record<string, unknown> } }
+  /** 发一条服务端请求(审批 / 提问 / MCP 表单),等客户端应答,应答记进 `responses`(也交给 onResponse)。 */
+  | { request: { method: string; params?: Record<string, unknown> }; onResponse?: (response: { result?: unknown; error?: unknown }) => void }
   /** codex 自己在重连(`error{willRetry:true}`)。 */
   | { reconnect: string }
   /** 停一会儿(长任务);中断会提前叫醒。 */
@@ -191,7 +191,9 @@ export function createScriptedCodex(opts: ScriptedCodexOptions): ScriptedCodex {
             const answered = new Promise<Rpc>(resolve => pending.set(id, resolve))
             send({ id, method: s.request.method, params: { ...at, ...(s.request.params ?? {}) } })
             const m = await answered
-            responses.push({ method: s.request.method, ...(m.result !== undefined ? { result: m.result } : {}), ...(m.error !== undefined ? { error: m.error } : {}) })
+            const got = { ...(m.result !== undefined ? { result: m.result } : {}), ...(m.error !== undefined ? { error: m.error } : {}) }
+            responses.push({ method: s.request.method, ...got })
+            s.onResponse?.(got)
           } else if ('shell' in s) {
             const id = nextId('cmd')
             itemNote('item/started', { id, type: 'commandExecution', command: s.shell, cwd: '/', status: 'inProgress', commandActions: [], aggregatedOutput: null, exitCode: null })
@@ -252,7 +254,7 @@ export function createScriptedCodex(opts: ScriptedCodexOptions): ScriptedCodex {
           if (m.method === 'thread/resume') threadId = String(p.threadId)
           else if (cheap) threadId = `cheap-${++cheapSeq}`
           else { const k = threadSeq++; threadId = `${opts.threadId ?? 'scripted-thread'}${k ? `-${k + 1}` : ''}` }
-          return reply(m, { thread: { id: threadId }, cwd: p.cwd, model: p.model ?? 'scripted-model', approvalPolicy: p.approvalPolicy, sandbox: { type: SANDBOX[p.sandbox] ?? p.sandbox } })
+          return reply(m, { thread: { id: threadId }, cwd: p.cwd, model: p.model ?? 'scripted-model', approvalPolicy: p.approvalPolicy, ...(p.approvalsReviewer ? { approvalsReviewer: p.approvalsReviewer } : {}), sandbox: { type: SANDBOX[p.sandbox] ?? p.sandbox } })
         }
         case 'turn/start': {
           if (current && !current.stopped) return send({ id: m.id, error: { code: -32600, message: 'turn already running' } })

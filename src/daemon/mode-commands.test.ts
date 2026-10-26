@@ -110,6 +110,16 @@ describe('makeModeCommands', () => {
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'codex' })
   })
 
+  // 「Codex 对话逐条问」(2026-10-26):主人自己的对话里 codex 逐条问 ⇒ 不再说「它不会逐条问你」;信任的对话照旧说。
+  it('/codex: the "it will not ask you" notice follows the chat tier', async () => {
+    const admin = setup()
+    await admin.cmds.handle(inbound('/codex'))
+    expect(admin.sentMessages[0]?.[1]).not.toContain('不会逐条问')
+    const trusted = setup({ tier: 'trusted' })
+    await trusted.cmds.handle(inbound('/codex'))
+    expect(trusted.sentMessages[0]?.[1]).toContain('提醒:它不会逐条问你,删东西也不会。')
+  })
+
   it('/cursor switches mode to solo+cursor', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
     const consumed = await cmds.handle(inbound('/cursor'))

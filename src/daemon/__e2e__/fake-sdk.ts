@@ -38,6 +38,11 @@ export interface FakeSdkScript {
   onDispatch(text: string): Promise<{
     toolCalls: Array<{ name: string; input: unknown }>
     finalText: string
+    /**
+     * Codex only: raw scripted app-server steps played BEFORE the tool calls / final text
+     * (e.g. a `request` step for an approval — see test-support/executors/codex-scripted.ts).
+     */
+    codexSteps?: import('../../test-support/executors/codex-scripted').CodexScriptStep[]
   }>
 }
 
@@ -359,6 +364,7 @@ vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
       if (!script) return { steps: [] }
       const result = await script.onDispatch(text)
       return { steps: [
+        ...(result.codexSteps ?? []),
         ...result.toolCalls.map(tc => ({ mcp: { server: 'wechat', tool: tc.name, args: (tc.input ?? {}) as Record<string, unknown> } })),
         ...(result.finalText ? [{ say: result.finalText }] : []),
       ] }

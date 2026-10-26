@@ -10,7 +10,7 @@
  * 缺口登记(档位说「问」、执行者做不到)和分派时拒,是第 2、3 步。
  */
 import type { PermissionMode } from './permission-mode'
-import type { TierProfile, ToolKind } from './user-tier'
+import { tierNameFromProfile, type TierProfile, type ToolKind } from './user-tier'
 
 // ── claude(从 claude-agent-provider.ts 逐字搬来)
 /**
@@ -118,11 +118,10 @@ export interface CodexTierSdkOpts {
  * Tier enforcement is therefore coarser:
  *   - `permissionMode='dangerously'` → full access on every chat (operator
  *     opted into bypass; tier doesn't matter)
- *   - admin → workspace-write sandbox. Admin's destructive ops relay on
- *     the Claude side via canUseTool, but codex has no equivalent gate to
- *     honor that relay — so rather than hand admin unconditional
- *     danger-full-access, it drops to workspace-write (write within cwd,
- *     no approval). danger-full-access is `--dangerously`-only.
+ *   - admin → workspace-write sandbox + 'on-request'(主人 2026-10-26 点头:「Codex 对话逐条问」)。
+ *     app-server 把它要批的命令 / 改文件 / MCP 调用发给客户端,对话侧逐条交给 authorize()(adapters/executors/codex/
+ *     codex-chat-gate.ts):放行规则可以替主人放(回复里说一行),红线照旧问,其余经微信拍板卡问主人。没人可问的
+ *     spawn(delegate、CLI 的一次性评估)在 codex-chat-provider 里落回 'never'。danger-full-access 仍只给 `--dangerously`。
  *   - trusted → workspace-write sandbox (no admin UI to field
  *     'on-request' prompts, so we use 'never' approval — destructive
  *     ops within the workspace cwd are still possible; documented
@@ -150,7 +149,7 @@ export function tierProfileToCodexSdkOpts(tp: TierProfile, permissionMode: Permi
   // denied a tool unrelated to fs/shell scope (e.g. the admin-only
   // daemon_introspect now in trusted.deny), collapsing trusted to read-only.
   if (tp.allow.has('fs_write') && tp.allow.has('shell')) {
-    return { sandboxMode: 'workspace-write', approvalPolicy: 'never' }
+    return { sandboxMode: 'workspace-write', approvalPolicy: tierNameFromProfile(tp) === 'admin' ? 'on-request' : 'never' }
   }
   return { sandboxMode: 'read-only', approvalPolicy: 'untrusted' }
 }

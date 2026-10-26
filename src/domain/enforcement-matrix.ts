@@ -6,6 +6,10 @@
  *   - 派发时拒:`providerDenialFor`(访客一来就拒,按原始档位,--dangerously 解不开);
  *   - 有逐工具回调的执行者(能力表 perToolCallback):每一格就是 `authorize()` 在对话面上的结论 ——
  *     「问」落成拒(openai 的 relayAs)也由它算;
+ *   - codex 在审批 on-request 的那几档(compilePolicy 说的;2026-10-26 起是主人自己的 admin 档):app-server 把要批的
+ *     命令 / 改文件 / MCP 调用逐条报上来(MCP 每次调用都报:`default_tools_approval_mode = "prompt"`),对话侧逐条过
+ *     `authorize()`(codex-chat-gate.ts)⇒ 每一格也取 authorize 的结论。自带工具上「问不问」由 codex 自己的判断起头
+ *     (越出沙箱 / 它认为危险的命令),所以档位说问的 shell_destructive 记作「问」是按 codex 会报上来算的;为什么写在快照旁;
  *   - 没有逐工具回调的执行者:档位那一格(`decideTool`,能力表把 askUser 压成 never)+ 两样静态事实 ——
  *       · wechat MCP / 插件上的工具:wechat MCP 按会话档位注册(能力表 adminMcpTools 为假 ⇒ 钉成 trusted),
  *         没注册的就调不到;注册了的,执行者照自己的方式跑;
@@ -48,7 +52,8 @@ const GATE_EXECUTOR: Readonly<Record<string, GateExecutor>> = { claude: 'claude'
 
 /**
  * 没有逐工具回调的执行者:档位说「问」时它实际怎么落,从 compilePolicy 编出来的 strict 设置读。
- *   codex       approvalPolicy 'never' ⇒ 不问就跑(放);别的审批档在 SDK 的 exec 里没人应答 ⇒ 拒
+ *   codex       approvalPolicy 'never' ⇒ 不问就跑(放);'on-request' 不走这里(逐条过 authorize,见 asksEachRequest);
+ *               别的审批档(访客的 untrusted)没人应答 ⇒ 拒
  *   cursor-acp  对话侧按模式应答权限请求:answer 'allow' ⇒ 放,'reject' ⇒ 拒
  *   agy         设置里没有「被问到怎么答」这一项(只有跳过权限的开关),也没有能问的通道 ⇒ 没人拦它 ⇒ 放
  * 新接一家没有逐工具回调的执行者:这里没它就抛,逼着说清楚它问不了时怎么落。
@@ -58,6 +63,11 @@ function unattendedAnswer(provider: string, tp: TierProfile): 'allow' | 'deny' {
   if (provider === 'cursor') return compilePolicy('cursor-acp', tp, 'strict').answer === 'allow' ? 'allow' : 'deny'
   if (provider === 'agy') return 'allow'
   throw new Error(`enforcement-matrix: ${provider} 没有逐工具回调,也没说明问不了时怎么落(unattendedAnswer)`)
+}
+
+/** codex 这一档的会话审批是 on-request ⇒ 报上来的每一条都过 authorize(对话侧 codex-chat-gate.ts)。 */
+function asksEachRequest(provider: string, tp: TierProfile): boolean {
+  return provider === 'codex' && compilePolicy('codex', tp, 'strict').approvalPolicy === 'on-request'
 }
 
 function tierSays(v: 'allow' | 'relay' | 'deny'): 'allow' | 'ask' | 'deny' {
@@ -70,6 +80,14 @@ export function enforcementFor(provider: string, tier: UserTier, kind: ToolKind)
   const cap = capabilitiesFor(provider)
   const tp = TIER_PROFILES[tier]
   const askUser = deriveCapability(cap, 'solo', 'strict').askUser
+
+  if (asksEachRequest(provider, tp)) {
+    // 档位拒的 MCP 工具不注册(调不到);注册了的每次调用报上来,authorize 说什么就是什么。
+    const registered = isExecutorOwnKind(kind) || !TIER_PROFILES[cap.adminMcpTools ? tier : 'trusted'].deny.has(kind)
+    const a = authorize({ surface: 'chat', tier: tp, permissionMode: 'strict', executor: 'codex' }, { name: kind, kind, askUser })
+    if (!registered) return a.verdict === 'deny' ? 'deny' : a.verdict === 'allow' ? 'allow→deny' : 'ask→deny'
+    return a.verdict
+  }
 
   if (cap.perToolCallback) {
     const executor = GATE_EXECUTOR[provider]
@@ -103,17 +121,19 @@ export function enforcementMatrix(providers: readonly string[] = KNOWN_PROVIDER_
   return Object.fromEntries(providers.map(p => [p, Object.fromEntries(ENFORCEMENT_TIERS.map(t => [t, Object.fromEntries([...ALL_KINDS].map(k => [k, enforcementFor(p, t, k)]))]))])) as EnforcementMatrix
 }
 
-/** 档位说「问」、这家放了的那几格还有没有(任一档、任一类)。 */
-export function letsAskKindsThrough(provider: string): boolean {
-  return ENFORCEMENT_TIERS.some(t => [...ALL_KINDS].some(k => enforcementFor(provider, t, k) === 'ask→allow'))
+/** 档位说「问」、这家放了的那几格还有没有(给了档位 ⇒ 只看这一档;不给 ⇒ 任一档)。 */
+export function letsAskKindsThrough(provider: string, tier?: UserTier): boolean {
+  return (tier ? [tier] : ENFORCEMENT_TIERS).some(t => [...ALL_KINDS].some(k => enforcementFor(provider, t, k) === 'ask→allow'))
 }
 
 /**
- * 主人切到这家时要照实说的那一句(CC 不骗人):档位说「问」的,它放行、不问。没有就 null。
+ * 切到这家时要照实说的那一句(CC 不骗人):档位说「问」的,它放行、不问。没有就 null。
  * 微信 /codex /agy、控制台切换、provider_switch 工具三条路都用这一句。能力表里没有的(自定义执行者)⇒ null,和以前一样。
+ * tier:切换的那个对话的档位(按 access.json 现算)。codex 在主人自己的对话里会逐条问(2026-10-26)、在信任的对话里不问,
+ * 所以同一家对不同的对话说法不同;不知道档位 ⇒ 任一档有就说(宁可多提醒)。
  */
-export function noAskNotice(provider: string): string | null {
+export function noAskNotice(provider: string, tier?: UserTier): string | null {
   if (!KNOWN_PROVIDER_IDS.includes(provider)) return null
   // 用「它」不用名字:这一句总是跟在「切到 X」后面;agy 的短名是 Gemini,单说会跟密钥连接的 Gemini 混。
-  return letsAskKindsThrough(provider) ? '提醒:它不会逐条问你,删东西也不会。' : null
+  return letsAskKindsThrough(provider, tier) ? '提醒:它不会逐条问你,删东西也不会。' : null
 }

@@ -116,6 +116,8 @@ export interface TestDaemonOpts {
    * on-disk SQLite db to verify state survives a stop+start cycle.
    */
   stateDirOverride?: string
+  /** Extra files to write into stateDir before boot (relative path → content), e.g. `permission-rules.json`. */
+  seedFiles?: Record<string, string>
 }
 
 export interface DaemonHandle {
@@ -165,6 +167,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
     ...(opts.access?.trusted ? { trusted: opts.access.trusted } : {}),
   }
   writeFileSync(join(stateDir, 'access.json'), JSON.stringify(access, null, 2))
+  for (const [rel, content] of Object.entries(opts.seedFiles ?? {})) writeFileSync(join(stateDir, rel), content)
 
   // 2b. Optional agent-config.json seed — used by tests that need
   // provider-specific config (e.g. cursor's cursorModel requirement).
