@@ -268,6 +268,13 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async correctMemory(id, verdict) {
       await api.memory.correct({ body: { id, verdict } })
     },
+    async memoryRetractions() {
+      return (await api.memory.retractions()).items
+    },
+    async restoreMemory(key) {
+      const r = await api.memory.restore({ body: { key } })
+      return { restored: r.restored, note: r.note }
+    },
     async pocket() {
       // 这一条还带名字、SVG 画像、表情库;App 只取待办与 PNG 画像
       const r = await api.state.get()

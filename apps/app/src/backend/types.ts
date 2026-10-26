@@ -2,7 +2,7 @@ import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
   FeedEvent, Presence,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, PhoneJobT as ProtocolPhoneJobT, PhoneRewindPreviewT, PhoneActivityItemT, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, MemoryRetractionsSuccess, ChatSearchHit, PhoneJobT as ProtocolPhoneJobT, PhoneRewindPreviewT, PhoneActivityItemT, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -28,6 +28,8 @@ export type EntryModelCatalogT = z.infer<typeof EntryModelCatalog>
 /** 交办时指定的模型 / 思考强度;不给 ⇒ 用执行者自己的默认。 */
 export type EntryExecution = { model?: string; reasoningEffort?: string }
 export type MemoryViewT = Omit<z.infer<typeof MemorySuccess>, 'ok'>
+/** 收回的话里的一条(架构终态 G6):主人说过「不对 / 过时 / 不用记」的那句。 */
+export type MemoryRetractionT = z.infer<typeof MemoryRetractionsSuccess>['items'][number]
 /** 主人对话用哪个后端 / 模型(2026-10-06);model=null ⇒ 用这个后端的全局设置 globalModel。 */
 export type ChatModelViewT = Omit<z.infer<typeof ChatModelView>, 'ok'>
 export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
@@ -150,6 +152,10 @@ export interface Backend {
   memory(): Promise<MemoryViewT>
   /** 逐条纠错(POST /m/api/memory/correct,2026-10-06):立刻拿掉,CC 记下这次纠正、当晚整理不写回。不在了 ⇒ BackendError('not_found')。 */
   correctMemory(id: string, verdict: MemoryVerdict): Promise<void>
+  /** 收回的话(GET /m/api/memory/retractions,架构终态 G6):最新的在后。 */
+  memoryRetractions(): Promise<MemoryRetractionT[]>
+  /** 恢复一条(POST /m/api/memory/restore):那一行回到记忆里;note 是给主人看的那句(随之删掉的笔记行不会回来)。不在了 ⇒ BackendError('not_found')。 */
+  restoreMemory(key: string): Promise<{ restored: string[]; note: string }>
   /** 待办与 CC 画的你(GET /m/api/state;同一条里还有名字、表情库,App 不读)。 */
   pocket(): Promise<PocketT>
   /** 完成 / 捞回一条待办(POST /m/api/todo,正文恰好 { id, status })。电脑没接待办 ⇒ BackendError('unavailable')。 */

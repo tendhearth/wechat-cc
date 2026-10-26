@@ -6,7 +6,7 @@
  * routes the desktop calls (./routes.ts). This is the single place LLM
  * memory ops run — NEVER the compiled CLI sidecar (spec §1).
  */
-import { synthesisRetractionsFor } from './memory-export'
+import { synthesisMemoryFor } from './memory-export'
 import { writeFileAtomic } from '../../lib/json-file'
 import type { Db } from '../../lib/db'
 import { readJsonFile } from '../../lib/read-json-file'
@@ -51,7 +51,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
       const { synthesizeOverview } = await import('../../lib/memory-synthesis')
       const { makeLifeStoresReader } = await import('../../daemon/life-stores')
       const cheapEval = requireCheapEval(adminChatId)
-      return synthesizeOverview({ stateDir: deps.stateDir, adminChatId, retractions: synthesisRetractionsFor(deps.db, deps.stateDir, adminChatId), sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), includeFileSurvey: true })
+      return synthesizeOverview({ stateDir: deps.stateDir, adminChatId, memory: synthesisMemoryFor(deps.db, deps.stateDir, adminChatId), sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), includeFileSurvey: true })
     },
     async generateProfile(adminChatId) {
       const { synthesizeProfile } = await import('../../lib/memory-synthesis')
@@ -59,7 +59,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
       const mode = deps.getMode(adminChatId)
       const modelProvider = mode && mode.kind === 'solo' ? (mode.provider ?? 'claude') : 'claude'
       const cheapEval = requireCheapEval(adminChatId)
-      return synthesizeProfile({ stateDir: deps.stateDir, adminChatId, retractions: synthesisRetractionsFor(deps.db, deps.stateDir, adminChatId), sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), generatedBy: 'manual', modelProvider })
+      return synthesizeProfile({ stateDir: deps.stateDir, adminChatId, memory: synthesisMemoryFor(deps.db, deps.stateDir, adminChatId), sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), generatedBy: 'manual', modelProvider })
     },
     async generatePortrait(adminChatId) {
       const { existsSync, readFileSync, writeFileSync } = await import('node:fs')

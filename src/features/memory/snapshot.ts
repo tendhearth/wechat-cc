@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import type { MemoryWriter } from './memory-export'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
@@ -17,7 +18,10 @@ import { makeMemoryFS } from '../../adapters/store/memory-fs'
 // literal to avoid pulling that CLI module into the hot daemon snapshot path.
 const OVERVIEW_FILENAME = '_overview.md'
 
-export async function buildMemorySnapshot(stateDir: string, chatId: string): Promise<string> {
+/**
+ * `facts`:memory.md / owner.md 的内容从主库的表来(架构终态 G6,经导出器);null = 没有表可问(只测文件层的单测),这两份跳过。
+ */
+export async function buildMemorySnapshot(stateDir: string, chatId: string, facts: Pick<MemoryWriter, 'memoryMd' | 'ownerMd'> | null): Promise<string> {
   if (!chatId || chatId.includes('..') || /[\\/\0]/.test(chatId)) return ''
   const dir = join(stateDir, 'memory', chatId)
   if (!existsSync(dir)) return ''
@@ -36,7 +40,9 @@ export async function buildMemorySnapshot(stateDir: string, chatId: string): Pro
   for (const name of names) {
     try {
       // No async gap between freshness check and returning the snapshot.
-      const content = memory.read(name)
+      const content = name === 'memory.md' ? facts?.memoryMd(chatId) ?? null
+        : name === 'owner.md' ? (facts?.ownerMd(chatId) || null)
+        : memory.read(name)
       if (content === null) continue
       out.push(`# ${name}\n${content}`)
     } catch { /* skip unreadable */ }

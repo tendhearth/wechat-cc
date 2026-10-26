@@ -39,7 +39,7 @@ async function main(){
  writeFileSync(join(root,'rhythm.md'),initial);writeFileSync(join(root,'projects.md'),'你正在整理 CC 工作台。');writeFileSync(join(root,'reading.md'),'你喜欢简洁的说明和可核对的来源。');writeFileSync(join(root,'_overview.md'),'过时的总结：晚上才工作。')
  const obsId=await observations.append({body:'你总是深夜工作。',tone:'curious'})
  await milestones.fire({id:'first_project',body:'你完成了第一版工作台。'})
- const generation={retractions:{texts:()=>new Set<string>(),redacted:()=>{}},stateDir,adminChatId:'owner',projectsRoot,lifeStores,sdkEval:async(prompt:string)=>{
+ const generation={memory:{retractedTexts:()=>new Set<string>(),redacted:()=>{},ownerDoc:()=>({assertions:[],extra:[]}),memoryMd:()=>null},stateDir,adminChatId:'owner',projectsRoot,lifeStores,sdkEval:async(prompt:string)=>{
    const refs=[...prompt.matchAll(/【依据 (e_[a-f0-9]+)】([^\n]+)\n/g)].map(m=>({id:m[1]!,label:m[2]!}))
    const note=refs.find(ref=>ref.label==='rhythm.md'),obs=refs.find(ref=>ref.label.startsWith('观察：'))
    return JSON.stringify({insight:'你希望做事时能专心，也给生活留一些空白。',summary:'这里的理解来自你的记忆与观察，可以随时核对并改正。',tags:['重视专注'],traits:[{title:'作息节奏',body:readFileSync(join(root,'rhythm.md'),'utf8'),sourceRefs:note?[note.id]:[]}],preferences:obs?[{title:'最近的观察',body:'最近记录过你的工作时间。',sourceRefs:[obs.id]}]:[],rememberedEvents:[]})

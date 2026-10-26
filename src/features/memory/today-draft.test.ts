@@ -84,13 +84,13 @@ describe('recordProfileWrite / readDraftForPrompt', () => {
   it('appends profile additions to <chat>/today-draft.md once memory.md exists', () => {
     writeFileSync(join(rootDir, 'owner', 'memory.md'), '## 关于你\n- 叫大人\n')
     const fs = makeMemoryFS({ rootDir })
-    expect(recordProfileWrite(fs, 'owner', '- 叫大人\n', '- 叫大人\n- 下周三去上海\n')).toBe(true)
+    expect(recordProfileWrite(fs, 'owner', '- 叫大人\n', '- 叫大人\n- 下周三去上海\n', true)).toBe(true)
     expect(readFileSync(join(rootDir, 'owner', TODAY_DRAFT_FILENAME), 'utf8')).toBe('- 下周三去上海\n')
     expect(readDraftForPrompt(fs, 'owner')).toBe('- 下周三去上海')
   })
   it('does nothing while there is no memory.md (profile.md itself is still injected then)', () => {
     const fs = makeMemoryFS({ rootDir })
-    expect(recordProfileWrite(fs, 'owner', '', '- 新事\n')).toBe(false)
+    expect(recordProfileWrite(fs, 'owner', '', '- 新事\n', false)).toBe(false)
     expect(existsSync(join(rootDir, 'owner', TODAY_DRAFT_FILENAME))).toBe(false)
   })
   it('readDraftForPrompt is empty when the draft is missing or blank', () => {

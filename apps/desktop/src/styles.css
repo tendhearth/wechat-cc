@@ -3311,6 +3311,10 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 /* Read-only local-project-memory layer (memory sources fold). */
 .memory-projects { display: flex; flex-direction: column; gap: 10px; }
 .mem-proj-grp { border: 1px solid var(--line, var(--th-hair)); border-radius: 8px; overflow: hidden; }
+/* 收回的话(架构终态 G6):一行一句,划掉的正文 + 段名 / 日期 + 「恢复」 */
+.memory-retraction { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line, var(--th-hair)); }
+.memory-retraction-text { flex: 1; text-decoration: line-through; font-family: var(--cjk); }
+.memory-retractions-note:empty { display: none; }
 .mem-proj-head {
   font-family: var(--cjk);
   display: flex; align-items: baseline; justify-content: space-between;

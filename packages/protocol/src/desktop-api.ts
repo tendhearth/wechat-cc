@@ -173,6 +173,8 @@ export const MemoryWriteResponse = z.union([
 
 const EditableMemoryPath = z.enum(['_overview.md', 'memory.md', 'owner.md'])
 export const MemoryViewRequest = z.object({ path: EditableMemoryPath })
+/** 收回的话里「恢复」一条(架构终态 G6,主人 10-26 第 3 条)。key = 那一条的编号(`c:…`)。 */
+export const MemoryRestoreRequest = z.object({ key: z.string().regex(/^c:[^\s]{1,80}$/) })
 export const MemoryEditRequest = z.object({
   path: EditableMemoryPath,
   baseHash: z.string().regex(/^[0-9a-f]{64}$/),
@@ -1835,6 +1837,20 @@ export const OwnerMemEditResponse = z.union([
   z.object({ ok: z.literal(false), code: z.literal('memory_edit_bulk'), count: z.number(), deleted: z.number(), rewritten: z.number() }),
 ])
 
+// ── GET /v1/memory/retractions · POST /v1/memory/retractions/restore(收回的话,架构终态 G6)──
+// 记忆页上 corrections.md 换成这张列表(主人 10-26 第 2 条);每条可「恢复」(第 3 条):那一行回到记忆里,
+// 之前随之删掉的笔记行不会回来 —— 回应里的 note 原样给主人看。
+export const MemoryRetractionShape = z.object({
+  key: z.string(),
+  section: z.string().nullable(),
+  text: z.string(),
+  day: z.string().nullable(),
+  verdict: z.string().nullable(),
+  note: z.string(),
+})
+export const OwnerMemRetractionsResponse = z.object({ ok: z.literal(true), items: z.array(MemoryRetractionShape) })
+export const OwnerMemRestoreResponse = z.object({ ok: z.literal(true), restored: z.array(z.string()), note: z.string() })
+
 // ── POST /v1/memory/portrait/generate ──
 // generatePortrait 原样回:成功带 path,失败 ok:false + error(bad_chat_id / no_profile / source_changed / unsafe_svg)。
 export const OwnerMemPortraitGenerateResponse = z.union([
@@ -2374,6 +2390,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/memory/delete': MemoryDeleteRequest,
   'POST /v1/memory/view': MemoryViewRequest,
   'POST /v1/memory/edit': MemoryEditRequest,
+  'POST /v1/memory/retractions/restore': MemoryRestoreRequest,
 
   // projects
   'POST /v1/projects/switch': ProjectsSwitchRequest,
@@ -2599,6 +2616,8 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/memory/profile/generate': OwnerMemProfileGenerateResponse,
   'POST /v1/memory/view': OwnerMemViewResponse,
   'POST /v1/memory/edit': OwnerMemEditResponse,
+  'GET /v1/memory/retractions': OwnerMemRetractionsResponse,
+  'POST /v1/memory/retractions/restore': OwnerMemRestoreResponse,
   'POST /v1/memory/portrait/generate': OwnerMemPortraitGenerateResponse,
   'GET /v1/memory/portrait': OwnerMemPortraitResponse,
   'POST /v1/knowledge/source/put': KnowledgeSourcePutResponse,

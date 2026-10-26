@@ -12,7 +12,6 @@
  */
 import { posix } from 'node:path'
 import type { MemoryFS } from '../../adapters/store/memory-fs'
-import { MEMORY_FILENAME } from './curated-doc'
 
 export const TODAY_DRAFT_FILENAME = 'today-draft.md'
 export const TODAY_DRAFT_MAX_CHARS = 600
@@ -82,9 +81,12 @@ export function chatOfProfilePath(path: string): string | null {
   return m && m[1] !== '..' && m[1] !== '.' ? m[1]! : null
 }
 
-/** daemon 在 profile.md 写入成功后调用。返回是否真的往草稿里记了东西。 */
-export function recordProfileWrite(fs: Pick<MemoryFS, 'read' | 'write'>, chatId: string, before: string | null, after: string): boolean {
-  if (fs.read(`${chatId}/${MEMORY_FILENAME}`) === null) return false
+/**
+ * daemon 在 profile.md 写入成功后调用。返回是否真的往草稿里记了东西。`hasCurated`:这个对话已经有每晚整理的长期记忆
+ * (G6 起由调用方从主库的表问,不再看 memory.md 文件在不在)。
+ */
+export function recordProfileWrite(fs: Pick<MemoryFS, 'read' | 'write'>, chatId: string, before: string | null, after: string, hasCurated: boolean): boolean {
+  if (!hasCurated) return false
   const add = profileAdditions(before, after)
   if (!add.length) return false
   const path = `${chatId}/${TODAY_DRAFT_FILENAME}`

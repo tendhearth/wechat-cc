@@ -1286,6 +1286,44 @@ export async function loadProjectMemory(deps) {
 }
 
 /**
+ * 收回的话(架构终态 G6,主人 10-26 第 2 / 3 条):以前记忆页上是 corrections.md 那个文件,现在是这张列表;每条能「恢复」——
+ * 那一行回到记忆里,当初随之从笔记里删掉的行不会回来(daemon 回的 note 原样显示)。最新的在上面。
+ * @param {Deps} deps
+ */
+export async function loadMemoryRetractions(deps) {
+  const box = document.getElementById("memory-retractions")
+  if (!box) return
+  /** @type {{ ok?: boolean, items?: Array<{ key: string, section: string | null, text: string, day: string | null }> }} */
+  let resp
+  try { resp = /** @type {any} */ (await v1(deps.invokeWorkbenchApi, V1.memory.retractions)) }
+  catch (err) { box.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`; return }
+  const items = [...((resp && resp.items) || [])].reverse()
+  if (items.length === 0) { box.innerHTML = `<p class="empty-state">还没有收回过什么。</p>`; return }
+  box.innerHTML = items.map(r => `
+    <div class="memory-retraction" data-key="${escapeHtml(r.key)}">
+      <span class="memory-retraction-text">${escapeHtml(r.text)}</span>
+      <span class="meta">${escapeHtml([r.section, r.day].filter(Boolean).join(" · "))}</span>
+      <button class="btn ghost" type="button" data-action="restore-retraction" data-key="${escapeHtml(r.key)}">恢复</button>
+    </div>`).join("")
+}
+
+/**
+ * @param {Deps} deps
+ * @param {string} key
+ */
+export async function restoreMemoryRetraction(deps, key) {
+  const note = document.getElementById("memory-retractions-note")
+  if (note) note.textContent = "恢复中…"
+  try {
+    const resp = /** @type {{ ok?: boolean, note?: string }} */ (await v1(deps.invokeWorkbenchApi, V1.memory.restore, { body: { key } }))
+    if (note) note.textContent = resp && resp.note ? resp.note : "已恢复。"
+  } catch (err) {
+    if (note) note.textContent = `没恢复成：${deps.formatInvokeError(err)}`
+  }
+  await loadMemoryRetractions(deps)
+}
+
+/**
  * @param {Deps} deps
  * @param {string} obsId
  */

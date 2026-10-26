@@ -19,15 +19,15 @@ import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { writeFileAtomic } from '../../lib/json-file'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
-import { serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
+import { parseOwnerDoc, serializeOwnerDoc, type OwnerDoc } from '../../lib/memory-owner'
 import { factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFact, type FactEventActor, type FactSource } from '../../domain/memory/facts'
 import { correctionLine, markWrittenBack, normalizeFactText, renderCorrectionsMd, retractedTextSet, type Verdict } from '../../domain/memory/corrections'
 import { renderMemoryMd, renderOwnerMd } from '../../domain/memory/render'
 import type { MemoryFactsStore, RetractRef } from '../../ports/memory-facts'
 import type { Db } from '../../lib/db'
-import type { SynthesisRetractions } from '../../lib/memory-synthesis'
+import type { SynthesisMemory } from '../../lib/memory-synthesis'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
-import { serializeMemoryDoc, type MemoryDoc } from './curated-doc'
+import { emptyDoc, parseMemoryDoc, serializeMemoryDoc, type MemoryDoc } from './curated-doc'
 import { IMPORTED_FILES, archiveMemoryFile, diskStateOf, fileTombstones, filesHash, readMemoryFiles } from './fact-import'
 
 export interface WriteBy { actor: FactEventActor; ts: number }
@@ -69,15 +69,37 @@ export interface MemoryWriter {
   isOnTable(chatId: string): boolean
   /** 表里的样子渲染出来的 memory.md(不带导出那一句,和今天的序列化同格式);没搬进表 ⇒ null。 */
   tableMemoryMd(chatId: string, stampIso: string): string | null
+  // ---- 读(架构终态 G6:daemon 里读 memory.md / owner.md 只经这里;没搬进表的对话照旧读文件)----
+  /**
+   * 这个对话的 memory.md 原文(从表渲染;头部的「最近整理」= 最后一条事件的时间,两次读之间没变化就逐字节一样)。
+   * 这份记忆还不存在(从没写过)⇒ null —— 和以前「文件不存在」同一个意思。
+   */
+  memoryMd(chatId: string): string | null
+  /** 同上,解析好的文档。 */
+  memoryDoc(chatId: string): MemoryDoc | null
+  /** 主人原话(没有 ⇒ 空文档)。 */
+  ownerDoc(chatId: string): OwnerDoc
+  /** owner.md 原文(没有 ⇒ '';记忆编辑的 baseHash 用)。 */
+  ownerMd(chatId: string): string
   /** 把表里的样子重新导出成 memory.md(手改被拒时用)。 */
   reexportMemory(chatId: string, stampIso: string, ts: number): void
 }
 
+/** 别的功能 / daemon 要读主人的记忆(memory.md / owner.md)时用这一个(G6)。 */
+export function memoryFactsFor(db: Db, stateDir: string): MemoryWriter {
+  return makeMemoryWriter({ store: makeMemoryFactsStore(db), stateDir })
+}
+
 /** 合成(总览 / 画像)要的那份收回名单与命中记账,来自同一张表(lib/memory-synthesis 不认表,由这里给)。 */
-export function synthesisRetractionsFor(db: Db, stateDir: string, chatId: string): SynthesisRetractions {
+export function synthesisMemoryFor(db: Db, stateDir: string, chatId: string): SynthesisMemory {
   let writer: MemoryWriter | null = null   // 用到时才开(合成可能在 dryRun / 没东西可合成时根本不走到出口过滤)
   const w = () => (writer ??= makeMemoryWriter({ store: makeMemoryFactsStore(db), stateDir }))
-  return { texts: () => w().retractedTexts(chatId), redacted: (kind, hits) => w().redacted(chatId, kind, hits, Date.now()) }
+  return {
+    retractedTexts: () => w().retractedTexts(chatId),
+    redacted: (kind, hits) => w().redacted(chatId, kind, hits, Date.now()),
+    ownerDoc: () => w().ownerDoc(chatId),
+    memoryMd: () => w().memoryMd(chatId),
+  }
 }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
@@ -126,7 +148,7 @@ export function makeMemoryWriter(d: {
     if (keys.some(k => k.startsWith('o:'))) writeOut(chatId, 'owner.md', renderOwnerMd(store.list(chatId)), ts)
   }
 
-  return {
+  const api: MemoryWriter = {
     commitMemory(chatId, doc, by, stampIso) {
       if (!onTable(chatId)) { writeFileAtomic(join(rootOf(chatId), 'memory.md'), serializeMemoryDoc(doc, stampIso)); return }
       store.atomically(() => {
@@ -215,6 +237,34 @@ export function makeMemoryWriter(d: {
       return archiveMemoryFile(root, chatId, 'memory.md', disk, reason)
     },
     isOnTable: (chatId) => onTable(chatId),
+    memoryMd(chatId) {
+      if (!onTable(chatId)) { try { return readFileSync(join(rootOf(chatId), 'memory.md'), 'utf8') } catch { return null } }
+      const rows = store.list(chatId, { doc: 'memory' })
+      if (!rows.some(r => !r.key.startsWith('c:')) && !store.exportRecord(chatId, 'memory.md')) return null
+      return renderMemoryMd(store.list(chatId), new Date(store.lastEventAt(chatId) ?? 0).toISOString())
+    },
+    memoryDoc(chatId) {
+      if (!onTable(chatId)) { const md = api.memoryMd(chatId); return md === null ? null : parseMemoryDoc(md) }
+      if (api.memoryMd(chatId) === null) return null
+      // 直接从行拼文档(不经「渲染 → 再解析」:那一圈会把 extra 里的空行吃掉,注入的提示词就差了一个字节)
+      const doc = emptyDoc()
+      const live = store.list(chatId, { doc: 'memory', statuses: ['active'] })
+      for (const r of live) {
+        if (r.key.startsWith('x:')) doc.extra.push(r.text)
+        else if ((r.key.startsWith('m:') || r.key.startsWith('u:')) && r.section && r.section in doc.sections) {
+          doc.sections[r.section as keyof MemoryDoc['sections']].push({ id: r.key.startsWith('m:') ? r.key.slice(2) : null, text: r.text, seen: r.seenAt })
+        }
+      }
+      return doc
+    },
+    ownerDoc(chatId) {
+      return parseOwnerDoc(api.ownerMd(chatId))
+    },
+    ownerMd(chatId) {
+      if (!onTable(chatId)) { try { return readFileSync(join(rootOf(chatId), 'owner.md'), 'utf8') } catch { return '' } }
+      const rows = store.list(chatId, { doc: 'owner' }).filter(r => !r.key.startsWith('c:'))
+      return rows.length || store.exportRecord(chatId, 'owner.md') ? renderOwnerMd(store.list(chatId)) : ''
+    },
     tableMemoryMd(chatId, stampIso) {
       return onTable(chatId) ? renderMemoryMd(store.list(chatId), stampIso) : null
     },
@@ -222,4 +272,5 @@ export function makeMemoryWriter(d: {
       if (onTable(chatId)) exportMemory(chatId, stampIso, ts)
     },
   }
+  return api
 }

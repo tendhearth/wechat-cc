@@ -23,10 +23,13 @@ import type { MemoryNightlyRuntime } from './nightly-runtime'
  * 这几条要的东西。LLM 记忆操作要 bootstrap 的执行者登记、每晚整理要 wired 里 CC 开口那道门 —— 都比路由挂上来晚,
  * 所以是现取的:还没有 ⇒ null ⇒ 照旧 503 memory_not_wired / memory_nightly_not_wired(搬家前是 internal-api 的晚绑定)。
  */
+/** 恢复之后给主人看的那句(主人 10-26 第 3 条:说清楚随之删掉的笔记行不会回来)。手机、桌面同一句。 */
+export const RESTORE_NOTE = '已经放回记忆里了。当初随这条一起从笔记里删掉的那几行不会回来。'
+
 export interface MemoryRoutesDeps {
   stateDir: string
   memoryLlm: () => MemoryLlmOps | null
-  memoryNightly: () => Pick<MemoryNightlyRuntime, 'runNow' | 'view' | 'edit'> | null
+  memoryNightly: () => Pick<MemoryNightlyRuntime, 'runNow' | 'view' | 'edit' | 'retractions' | 'restore'> | null
   /** 请求里没写 chat_id ⇒ access.json 里唯一的 admin。 */
   resolveAdminChatId?: () => string | null
 }
@@ -78,6 +81,19 @@ export function memoryRoutes(deps: MemoryRoutesDeps): RouteTable {
       if (!nightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
       try { return { status: 200, body: await nightly.edit(body as MemoryEditRequestT) } }
       catch (err) { return noOwner(err) }
+    },
+    // 收回的话(架构终态 G6,主人 10-26 第 2 / 3 条):记忆页上 corrections.md 换成这张列表,每条能恢复。
+    'GET /v1/memory/retractions': async () => {
+      const nightly = deps.memoryNightly()
+      if (!nightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
+      return { status: 200, body: { ok: true, items: nightly.retractions() } }
+    },
+    'POST /v1/memory/retractions/restore': async (_q, body) => {
+      const nightly = deps.memoryNightly()
+      if (!nightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
+      const res = await nightly.restore((body as { key: string }).key)
+      if (!res) return { status: workbenchErrorHttp('memory_retraction_not_found', 'desktop').status, body: { ok: false, code: 'memory_retraction_not_found' } }
+      return { status: 200, body: { ok: true, restored: res.restored, note: RESTORE_NOTE } }
     },
     // CC 手绘小像 (2026-08-25) — draw the owner from profile material.
     'POST /v1/memory/portrait/generate': async (_q, body) => {

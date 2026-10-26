@@ -10,6 +10,7 @@
  * injects them EVERY turn (core/knowledge memory sections) — recalling them
  * again would only duplicate context.
  */
+import type { MemoryWriter } from './memory-export'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
@@ -34,6 +35,8 @@ export function recallFromMemory(
   stateDir: string,
   chatId: string,
   query: string,
+  /** memory.md / owner.md 从主库的表来(G6);null ⇒ 这两份跳过。 */
+  facts: Pick<MemoryWriter, 'memoryMd' | 'ownerMd'> | null,
   limit = 3,
 ): string[] {
   // Same chatId-shape guard as main.ts's personaFor — the id feeds a path join.
@@ -59,7 +62,9 @@ export function recallFromMemory(
   for (const file of files) {
     let content: string
     try {
-      const read = memory.read(file)
+      const read = file === 'memory.md' ? facts?.memoryMd(chatId) ?? null
+        : file === 'owner.md' ? (facts?.ownerMd(chatId) || null)
+        : memory.read(file)
       if (read === null) continue
       content = read
     } catch {

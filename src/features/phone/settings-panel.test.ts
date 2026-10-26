@@ -1113,4 +1113,28 @@ describe('phone curated memory', () => {
       expect(correctMemory).toHaveBeenCalledTimes(2)
     } finally { await p.stop() }
   })
+  it('收回的话与恢复(架构终态 G6):只给设备;正文恰好 key;不在了 ⇒ 404;恢复回那句「随之删掉的笔记行不会回来」', async () => {
+    const restoreMemory = vi.fn(async (key: string) => key === 'c:gone' ? null : { restored: ['m:aa01'] })
+    const items = [{ key: 'c:~1', section: '偏好', text: '只喝美式', day: '2026-10-26', verdict: 'wrong', note: '' }]
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-memr-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+      memoryRetractions: () => items, restoreMemory,
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`, tok = await deviceOf(p, base)
+      expect((await fetch(`${base}/m/api/memory/retractions?t=${p.issueToken()}`)).status).toBe(403)
+      expect(await (await fetch(`${base}/m/api/memory/retractions?d=${tok}`)).json()).toEqual({ ok: true, items })
+      const post = (body: unknown, t: string | null = tok) => fetch(`${base}/m/api/memory/restore${t ? `?t=${t}` : ''}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      expect((await post({ key: 'c:~1' }, p.issueToken())).status).toBe(403)
+      const ok = await (await post({ key: 'c:~1' })).json()
+      expect(ok).toMatchObject({ ok: true, restored: ['m:aa01'] })
+      expect(ok.note).toContain('不会回来')
+      for (const b of [{}, { key: 'm:aa01' }, { key: 'c:x', extra: 1 }, { key: 'c: x' }]) expect((await post(b)).status).toBe(400)
+      expect((await post({ key: 'c:gone' })).status).toBe(404)
+    } finally { await p.stop() }
+  })
+
 })

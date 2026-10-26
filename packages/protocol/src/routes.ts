@@ -468,6 +468,9 @@ const ROUTE_TABLE = {
   // 桌面经宿主调(F6 起,以前桌面起 `wechat-cc memory view|edit`):打 tauri / devProxy。
   'POST /v1/memory/view': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/memory/edit': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // 收回的话(架构终态 G6):和记忆编辑同一档,桌面经宿主调。
+  'GET /v1/memory/retractions': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/memory/retractions/restore': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 桌面不再起 CLI(架构终态 F6):主人私事,admin + operator,经宿主代理。理由见文件头 operator 那一段。
   'GET /v1/memory/files': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/memory/file': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
@@ -583,6 +586,9 @@ const ROUTE_TABLE = {
   'GET /m/api/memory': { phone: { link: 'none' } },
   // 「CC 记得你」逐条纠错(2026-10-06)
   'POST /m/api/memory/correct': { phone: { link: 'none' } },
+  // 收回的话与恢复(架构终态 G6)
+  'GET /m/api/memory/retractions': { phone: { link: 'none' } },
+  'POST /m/api/memory/restore': { phone: { link: 'none' } },
   'GET /m/api/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
   'POST /m/api/seen': { phone: { link: 'none' } },
   'GET /m/api/matters': { phone: { link: 'read', reason: '一起做的列表' } },

@@ -21,7 +21,7 @@ import { makeSessionStore } from '../../adapters/store/session-store'
 import type { Db } from '../../lib/db'
 import { needsRefresh, formatSummaryRequest } from './summarizer'
 import { resolveProjectJsonlPath } from './path-resolver'
-import { buildMemorySnapshot } from '../../features/memory'
+import { buildMemorySnapshot, memoryFactsFor } from '../../features/memory'
 
 export interface SummaryRefreshDeps {
   stateDir: string
@@ -51,7 +51,7 @@ export async function triggerStaleSummaryRefresh(deps: SummaryRefreshDeps): Prom
     let memorySnapshot = ''
     if (chatId) {
       try {
-        memorySnapshot = await buildMemorySnapshot(deps.stateDir, chatId)
+        memorySnapshot = await buildMemorySnapshot(deps.stateDir, chatId, memoryFactsFor(deps.db, deps.stateDir))
       } catch (err) {
         deps.log?.('SUMMARY', `memory load failed for ${chatId}: ${err instanceof Error ? err.message : err}`)
       }

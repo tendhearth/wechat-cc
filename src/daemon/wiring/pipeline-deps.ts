@@ -9,7 +9,7 @@ import { makePermissionAnswer } from '../permission-answer'
 import { choiceTakes, type OpenChoice } from '../inbound/mw-task-reference'
 import { makeTaskCommand } from '../commands/task-command'
 import { join } from 'node:path'
-import { recallFromMemory } from '../../features/memory'
+import { memoryFactsFor, recallFromMemory } from '../../features/memory'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
@@ -708,7 +708,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       // Non-admin lane — deterministic keyword recall over the chat's OWN
       // memory files only (same subtree memory_read grants it). Sync under
       // the hood; wrapped to satisfy the middleware's async contract.
-      recallFallback: async (chatId: string, text: string) => recallFromMemory(stateDir, chatId, text),
+      recallFallback: async (chatId: string, text: string) => recallFromMemory(stateDir, chatId, text, memoryFactsFor(db, stateDir)),
       // Auto-recall (2026-08 memory-upgrades) — hybrid search over the
       // knowledge kernel, embedder-fallback shape mirrors POST /v1/knowledge/
       // search (routes-knowledge.ts): the shared embedder is the single

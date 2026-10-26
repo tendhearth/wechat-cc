@@ -83,7 +83,8 @@ async function produce(): Promise<Record<string, string>> {
   out['knowledge.md'] = knowledge
   if (knowledge) writeFileSync(join(memoryDir('owner'), 'knowledge.md'), knowledge)
 
-  const reads = makeMemoryPromptReads({ stateDir, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }) })
+  // G6 起 memory.md / owner.md 经导出器读;这里的表是空的(没导入)⇒ 走「没搬进表」那条路读夹具文件,产出必须和 G0 一样
+  const reads = makeMemoryPromptReads({ stateDir, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }), facts: makeMemoryWriter({ store: makeMemoryFactsStore(openTestDb()), stateDir }) })
   for (const name of Object.keys(CHATS) as ChatName[]) {
     const chat = CHATS[name]
     const mem = read(name, 'memory.md')

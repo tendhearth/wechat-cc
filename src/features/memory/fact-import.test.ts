@@ -147,3 +147,21 @@ describe('after import the nightly prompt\'s corrections block and the retracted
     expect(JSON.stringify([...c.texts].sort(), null, 2) + '\n').toBe(golden('owner/corrected-texts.json'))
   })
 })
+
+describe('G6:readers read the table — after import the prompt sections equal G0 except the listed change', () => {
+  it('curated memory = G0 minus the two written-back retracted lines; owner words = G0 byte for byte', async () => {
+    const { makeMemoryWriter } = await import('./memory-export')
+    const { makeMemoryPromptReads } = await import('./prompt-reads')
+    const { makeMemoryFS } = await import('../../adapters/store/memory-fs')
+    const { mkdirSync } = await import('node:fs')
+    run()
+    mkdirSync(join(stateDir, 'companion'), { recursive: true })
+    writeFileSync(join(stateDir, 'companion', 'config.json'), JSON.stringify({ default_chat_id: OWNER }))
+    // 磁盘上的文件挪走也照读:读者已经不看文件了
+    writeFileSync(join(root, 'memory.md'), '这份文件已经不是源了\n')
+    writeFileSync(join(root, 'owner.md'), '这份也不是\n')
+    const reads = makeMemoryPromptReads({ stateDir, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }), facts: makeMemoryWriter({ store, stateDir }) })
+    expect(reads.curatedMemoryFor(OWNER)).toBe(golden('owner/prompt-curated.txt').replace('- 下周要去杭州出差三天\n', '').replace('- 年糕是狸花猫\n', ''))
+    expect(reads.ownerMemoryFor(OWNER)).toBe(golden('owner/prompt-owner.txt'))
+  })
+})
