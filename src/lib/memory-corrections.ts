@@ -1,6 +1,7 @@
 /**
- * 主人更正过的话:一张清单(memory/<chat>/corrections.md),清源头和卡出口共读(第三批 3e 记忆第 3b 步,设计稿
- * docs/superpowers/specs/2026-10-23-memory-source-vs-derived-design.md §6b)。
+ * 主人收回的话:清源头和卡出口(第三批 3e 记忆第 3b 步,设计稿 docs/superpowers/specs/2026-10-23-memory-source-vs-derived-design.md §6b)。
+ * 名单本身从架构终态 G5 起在主库的表里(src/features/memory/memory-export.ts 的 retractedTexts;以前是解析 corrections.md),
+ * 命中记成表里的 `redacted_on_output` 事件(以前是 memory-redactions.json)。这里只剩纯的比对与清源头。
  *
  * 原则:能用代码确定做到的,不交给模型。被更正的那句从不喂进合成(lib/memory-artifacts 的 synthesisInput: false),
  * 也不写进提示词;这里只做两件确定的事:
@@ -12,68 +13,43 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { readJsonFile } from './read-json-file'
 import { writeFileAtomic } from './json-file'
 
-export const CORRECTIONS_FILE = 'corrections.md'
-const COUNT_FILE = 'memory-redactions.json'
 /** 被更正的话短于这个(规范化后的字数)就不做跨文件清理 / 出口过滤:一个短词会误删、误挡无关的内容。 */
 export const MIN_CORRECTED_CHARS = 6
 
 export const normalizeMemoryText = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
-/** corrections.md 里每一条被更正的正文(规范化后)。格式:`- <日期> <说法>:[<段>] <正文>`;续行不含 `] `,不会被当成一条。 */
-export function correctedTexts(memoryRoot: string): Set<string> {
-  const texts = new Set<string>()
-  let raw = ''
-  try { raw = readFileSync(join(memoryRoot, CORRECTIONS_FILE), 'utf8') } catch { return texts }
-  for (const line of raw.split('\n')) {
-    const m = /\] (.+)$/.exec(line)
-    if (m) texts.add(normalizeMemoryText(m[1]!))
-  }
-  return texts
-}
-
 const longEnough = (texts: Iterable<string>) => [...texts].filter(t => [...t].length >= MIN_CORRECTED_CHARS)
-const hits = (s: string, needles: readonly string[]) => { const n = normalizeMemoryText(s); return needles.some(t => n.includes(t)) }
+/** 命中的是哪一句(第一句命中的);没命中 ⇒ null。 */
+const hitOf = (s: string, needles: readonly string[]): string | null => { const n = normalizeMemoryText(s); return needles.find(t => n.includes(t)) ?? null }
 
-/** 去掉含被更正之话的行。返回留下的文本和丢掉的行数。 */
-export function dropCorrectedLines(text: string, corrected: Iterable<string>): { text: string; dropped: number } {
+/** 去掉含被更正之话的行。返回留下的文本、丢掉的行数,和每一处命中的是哪一句(记事件用)。 */
+export function dropCorrectedLines(text: string, corrected: Iterable<string>): { text: string; dropped: number; hits: string[] } {
   const needles = longEnough(corrected)
-  if (!needles.length) return { text, dropped: 0 }
-  let dropped = 0
-  const kept = text.split('\n').filter(line => { if (line.trim() && hits(line, needles)) { dropped++; return false } return true })
-  return { text: kept.join('\n'), dropped }
+  if (!needles.length) return { text, dropped: 0, hits: [] }
+  const hits: string[] = []
+  const kept = text.split('\n').filter(line => { const h = line.trim() ? hitOf(line, needles) : null; if (h) { hits.push(h); return false } return true })
+  return { text: kept.join('\n'), dropped: hits.length, hits }
 }
 
 /** 结构化产出(画像 JSON):数组里命中的字符串整项去掉,对象里命中的字符串字段置空。 */
-export function dropCorrectedValues<T>(value: T, corrected: Iterable<string>): { value: T; dropped: number } {
+export function dropCorrectedValues<T>(value: T, corrected: Iterable<string>): { value: T; dropped: number; hits: string[] } {
   const needles = longEnough(corrected)
-  if (!needles.length) return { value, dropped: 0 }
-  let dropped = 0
+  if (!needles.length) return { value, dropped: 0, hits: [] }
+  const hits: string[] = []
+  const hit = (x: unknown) => { const h = typeof x === 'string' ? hitOf(x, needles) : null; if (h) hits.push(h); return h !== null }
   const walk = (v: unknown): unknown => {
     if (typeof v === 'string') return v
-    if (Array.isArray(v)) return v.filter(x => { if (typeof x === 'string' && hits(x, needles)) { dropped++; return false } return true }).map(walk)
+    if (Array.isArray(v)) return v.filter(x => !hit(x)).map(walk)
     if (v && typeof v === 'object') {
       const out: Record<string, unknown> = {}
-      for (const [k, x] of Object.entries(v)) {
-        if (typeof x === 'string' && hits(x, needles)) { dropped++; out[k] = '' } else out[k] = walk(x)
-      }
+      for (const [k, x] of Object.entries(v)) out[k] = hit(x) ? '' : walk(x)
       return out
     }
     return v
   }
-  return { value: walk(value) as T, dropped }
-}
-
-/** 出口过滤每命中一次记一笔(按对话累计,ledger)。记不上不影响合成。 */
-export function recordRedactions(memoryRoot: string, kind: 'overview' | 'profile', n: number, nowIso: string): void {
-  if (n <= 0) return
-  const p = join(memoryRoot, COUNT_FILE)
-  let cur: { total?: number; byKind?: Record<string, number>; last?: string } = {}
-  try { if (existsSync(p)) cur = readJsonFile(p) as typeof cur } catch { cur = {} }
-  const byKind = { ...(cur.byKind ?? {}), [kind]: (cur.byKind?.[kind] ?? 0) + n }
-  try { writeFileAtomic(p, JSON.stringify({ total: (cur.total ?? 0) + n, byKind, last: nowIso }, null, 2) + '\n', { mode: 0o600 }) } catch { /* 计数是附带的 */ }
+  return { value: walk(value) as T, dropped: hits.length, hits }
 }
 
 /** 清源头时扫的文件:CC 的笔记、偏好、主人和 CC 的 notes/。memory.md 由更正本身处理;agenda / persona 不是关于主人的事实,不动。 */

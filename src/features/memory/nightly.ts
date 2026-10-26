@@ -3,7 +3,7 @@
  * 素材 → 指纹(没新东西不调模型)→ 便宜模型出改动清单 → 程序校验执行 → 修订检查(主人正在改就作废)
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
-import { MIN_CORRECTED_CHARS, correctedTexts } from '../../lib/memory-corrections'
+import { MIN_CORRECTED_CHARS } from '../../lib/memory-corrections'
 import { readOwnerDoc, renderOwnerForPrompt } from '../../lib/memory-owner'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { writeFileAtomic } from '../../lib/json-file'
@@ -102,21 +102,18 @@ export function ownerMemoryRoot(stateDir: string, owner: string): string | null 
 const readIf = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '')
 
 /**
- * 主人纠正过的条目(2026-10-10):「记错了 / 过时了 / 不用记」各记一行,只归 daemon 写(会话写会被拒)。
- * 原先追加在 profile.md 末尾:profile 一长就被素材截断砍掉、CC 整个重写 profile 也会把它抹掉 ⇒ 第二晚又被写回。
- * 现在单独一个文件,整理时放在素材最前面、不占预算;写回的逐字相同条目在代码里直接丢掉,不全靠模型听话。
+ * 主人纠正过的条目(2026-10-10):「记错了 / 过时了 / 不用记」各记一条,只归 daemon 写(会话写会被拒)。
+ * 整理时放在素材最前面、不占预算;写回的逐字相同条目在代码里直接丢掉,不全靠模型听话。
+ * 架构终态 G5 起名单在主库的表里(收回的话),这一段从表渲染,格式、截断和以前的 corrections.md 一样。
  */
-export const CORRECTIONS_FILENAME = 'corrections.md'
 export const CORRECTIONS_BLOCK = '主人纠正过的条目 corrections.md(这些内容一律不要再 add 或 update 回记忆)'
 const CORRECTIONS_CAP = 3000
 /** 主人原话 owner.md(记忆编辑设计稿 2026-10-23 §1):只读素材,放在纠正后面、不占预算;整理从不写它。 */
 export const OWNER_BLOCK = '主人亲手写的原话(只读:不要改写、不要再写进记忆;记忆里和它冲突的条目改掉或删掉)'
 const normalizeEntry = (text: string): string => text.replace(/\s+/g, ' ').trim()
-/** 纠正记录:给模型看的尾部(最新的在后,封顶)+ 全部纠正过的正文(代码里拦逐字写回)。 */
-export function readCorrections(root: string): { block: string; texts: Set<string> } {
-  const raw = readIf(join(root, CORRECTIONS_FILENAME))
-  // 解析和清源头 / 卡出口共用一份(lib/memory-corrections,3b)
-  return { block: raw.trim().slice(-CORRECTIONS_CAP), texts: correctedTexts(root) }
+/** 纠正记录:给模型看的尾部(最新的在后,封顶)+ 全部纠正过的正文(代码里拦逐字写回)。都从表里来(G5)。 */
+export function readCorrections(writer: Pick<MemoryWriter, 'correctionsText' | 'retractedTexts'>, chatId: string): { block: string; texts: Set<string> } {
+  return { block: writer.correctionsText(chatId).trim().slice(-CORRECTIONS_CAP), texts: writer.retractedTexts(chatId) }
 }
 /** 去掉模型写回的、主人纠正过的条目(逐字比较,空白归一)。 */
 export function dropCorrected(ops: NightlyOps, texts: ReadonlySet<string>): NightlyOps {
@@ -269,7 +266,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   // 来自 profile.md 的新增,profile 变了指纹自然会变 —— 所以指纹不算草稿,否则清掉草稿第二晚就会
   // 白白多调一次模型。
   const draft = readIf(join(root, TODAY_DRAFT_FILENAME))
-  const corrections = readCorrections(root)
+  const corrections = readCorrections(deps.writer, owner)
   const ownerWords = renderOwnerForPrompt(readOwnerDoc(root))
   const material = [
     corrections.block ? `### ${CORRECTIONS_BLOCK}\n${corrections.block}` : '',

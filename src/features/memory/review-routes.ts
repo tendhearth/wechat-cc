@@ -17,6 +17,11 @@ export interface MemoryReviewDeps {
   /** 只由服务端定的 Claude 项目目录(测试用);从不收请求里的。缺省 ⇒ defaultClaudeProjectsRoot()。 */
   projectsRoot?: string
   resolveAdminChatId?: () => string | null
+  /**
+   * 证据审阅里纠正 / 标过期一条观察 = 收回那句话(架构终态 G5,设计稿 §2.3):记忆、笔记、总览里同一句也一路收回。
+   * 在审阅落库之后调,失败不影响审阅本身;不是主人自己的对话由运行时忽略。
+   */
+  retract?: (chatId: string, text: string, verdict: 'wrong' | 'outdated') => void
 }
 
 type Kind = 'memory' | 'observation' | 'milestone' | 'project'
@@ -169,7 +174,10 @@ export function memoryReviewRoutes(deps: MemoryReviewDeps): RouteTable {
       }
       // SQLite keeps archiving, replacement and audit inseparable. The metadata
       // fence intentionally stays stale even if a database transaction rolls back.
-      return key.kind === 'observation' && deps.db ? deps.db.transaction(commit)() : commit()
+      const before = key.kind === 'observation' ? readSource(deps, key).row?.body ?? null : null
+      const out = key.kind === 'observation' && deps.db ? deps.db.transaction(commit)() : commit()
+      if (before) deps.retract?.(key.chat_id, before, input.action === 'outdated' ? 'outdated' : 'wrong')
+      return out
     }),
   }
 }

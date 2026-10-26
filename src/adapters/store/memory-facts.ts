@@ -1,6 +1,7 @@
 import type { Db } from '../../lib/db'
 import type { DesiredFact, FactStatus, MemoryDerived, MemoryFactEvent, MemoryFactView } from '../../domain/memory/facts'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
+import { MIN_RETRACTED_CHARS, normalizeFactText } from '../../domain/memory/corrections'
 
 /**
  * 主人事实表的店面(架构终态 G2,迁移 v87;设计稿 docs/superpowers/specs/2026-10-25-memory-single-source-design.md §2.1)。
@@ -106,6 +107,82 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
     setImportHash(chatId, filesHash, at) {
       db.query(`INSERT INTO memory_import(chat_id, files_hash, at) VALUES (?,?,?)
         ON CONFLICT(chat_id) DO UPDATE SET files_hash = excluded.files_hash, at = excluded.at`).run(chatId, filesHash, at)
+    },
+    retract(chatId, ref, opts) {
+      return atomically(() => {
+        const ts = opts.by.ts, actor = opts.by.actor
+        const status: FactStatus = opts.verdict === 'outdated' ? 'outdated' : 'retracted'
+        let targets: MemoryFactView[] = []
+        if ('key' in ref) {
+          const row = byKey(chatId, ref.key)
+          if (row && !ref.key.startsWith('c:') && row.status !== 'retracted') targets = [row]
+        } else {
+          const n = normalizeFactText(ref.text)
+          if ([...n].length >= MIN_RETRACTED_CHARS) {
+            targets = db.query<MemoryFactView, [string]>(`${SELECT} WHERE f.chat_id = ? AND f.status IN ('active', 'outdated') AND (f.key LIKE 'm:%' OR f.key LIKE 'u:%' OR f.key LIKE 'o:%')`)
+              .all(chatId).filter(r => normalizeFactText(r.text) === n)
+          }
+        }
+        // 正文优先用调用方给的那句;按 key 收回、调用方没给时才用表里那一行的;都没有 ⇒ 不收回(不许拿 key 当正文)
+        const text = opts.text?.trim() || ('key' in ref ? (targets[0]?.text ?? byKey(chatId, ref.key)?.text ?? null) : ref.text)
+        if (!text) throw new Error(`memory-facts: retract ${'key' in ref ? ref.key : '(text)'} without the sentence itself`)
+        const tombs = db.query<{ key: string; ord: number }, [string]>("SELECT key, ord FROM memory_facts WHERE chat_id = ? AND key LIKE 'c:%'").all(chatId)
+        const key = opts.correctionId ? `c:${opts.correctionId}` : `c:~${tombs.filter(t => t.key.startsWith('c:~')).length + 1}`
+        const ord = tombs.reduce((m, t) => Math.max(m, t.ord + 1), 0)
+        const r = insertFact.run(chatId, key, 'memory', 'owner', opts.section, ord, null, null, null, null, null, text, status, 'review', null, 'chat',
+          null, opts.day, null, null, null, null, ts, ts)
+        const tombId = Number(r.lastInsertRowid)
+        event.run(tombId, chatId, ts, 'retracted', actor, opts.verdict, null, opts.note || null)
+        for (const t of targets) {
+          setStatus(t.id, status, ts)
+          event.run(t.id, chatId, ts, 'retracted', actor, opts.verdict, null, `by:${key}`)
+        }
+        return { key, targets: targets.map(t => t.key) }
+      })
+    },
+    restore(chatId, tombstoneKey, by) {
+      return atomically(() => {
+        const tomb = byKey(chatId, tombstoneKey)
+        if (!tomb || !tombstoneKey.startsWith('c:') || (tomb.status !== 'retracted' && tomb.status !== 'outdated')) return null
+        setStatus(tomb.id, 'superseded', by.ts)
+        event.run(tomb.id, chatId, by.ts, 'restored', by.actor, null, null, '之前随之删掉的笔记行不会回来')
+        const restored: string[] = []
+        const hit = db.query<{ id: number; key: string; status: FactStatus }, [string, string]>(
+          "SELECT DISTINCT f.id, f.key, f.status FROM memory_fact_events e JOIN memory_facts f ON f.id = e.fact_id WHERE e.chat_id = ? AND e.action = 'retracted' AND e.note = ?",
+        ).all(chatId, `by:${tombstoneKey}`)
+        for (const t of hit) {
+          if (t.status === 'active') continue
+          setStatus(t.id, 'active', by.ts)
+          event.run(t.id, chatId, by.ts, 'restored', by.actor, null, null, `by:${tombstoneKey}`)
+          restored.push(t.key)
+        }
+        return { restored }
+      })
+    },
+    resolve(chatId, key, by) {
+      return atomically(() => {
+        const row = byKey(chatId, key)
+        if (!row || row.status !== 'active') return false
+        setStatus(row.id, 'resolved', by.ts)
+        event.run(row.id, chatId, by.ts, 'resolved', by.actor, null, null, null)
+        return true
+      })
+    },
+    supersede(chatId, key, byKey_, by) {
+      return atomically(() => {
+        const row = byKey(chatId, key), keeper = byKey(chatId, byKey_)
+        if (!row || !keeper || row.status !== 'active') return false
+        setStatus(row.id, 'superseded', by.ts)
+        db.query('UPDATE memory_facts SET superseded_by = ?, invalidated_at = ? WHERE id = ?').run(keeper.id, by.ts, row.id)
+        event.run(row.id, chatId, by.ts, 'superseded', by.actor, null, null, `by:${byKey_}`)
+        return true
+      })
+    },
+    addEvent(chatId, key, e, by) {
+      const cur = byKey(chatId, key)
+      if (!cur) return false
+      event.run(cur.id, chatId, by.ts, e.action, by.actor, e.verdict ?? null, null, e.note ?? null)
+      return true
     },
     addNote(chatId, key, note, by) {
       const cur = byKey(chatId, key)

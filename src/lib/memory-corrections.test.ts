@@ -2,24 +2,16 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { agendaDropPrompt, correctedTexts, dropAgendaItems, dropCorrectedAgenda, openAgendaItems, parseAgendaDropAnswer, dropCorrectedLines, dropCorrectedValues, purgeCorrectedFromSources, recordRedactions, MIN_CORRECTED_CHARS } from './memory-corrections'
+import { agendaDropPrompt, dropAgendaItems, dropCorrectedAgenda, openAgendaItems, parseAgendaDropAnswer, dropCorrectedLines, dropCorrectedValues, purgeCorrectedFromSources, MIN_CORRECTED_CHARS } from './memory-corrections'
 
 const dirs: string[] = []
 const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'mem-corr-')); dirs.push(d); return d }
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
 
-describe('correctedTexts', () => {
-  it('reads each corrected sentence; continuation lines (the purge note) are not mistaken for entries', () => {
-    const d = fresh()
-    writeFileSync(join(d, 'corrections.md'), '- 2026-10-22 主人说这条记错了,整理时不要再写回:[事实] 住在   杭州西湖区\n  (随之从 profile.md 删了 1 行;原文件在 memory-archive/o/corrections/)\n')
-    expect([...correctedTexts(d)]).toEqual(['住在 杭州西湖区'])
-  })
-})
-
 describe('dropCorrectedLines / dropCorrectedValues (卡出口)', () => {
   it('drops lines containing a corrected sentence (whitespace-normalised) and counts them', () => {
     const r = dropCorrectedLines('他喜欢爬山\n他住在 杭州西湖区,常去湖边\n养了一只猫', ['住在 杭州西湖区'])
-    expect(r).toEqual({ text: '他喜欢爬山\n养了一只猫', dropped: 1 })
+    expect(r).toEqual({ text: '他喜欢爬山\n养了一只猫', dropped: 1, hits: ['住在 杭州西湖区'] })
   })
   it(`ignores corrected sentences shorter than ${MIN_CORRECTED_CHARS} chars (a short word would blank unrelated lines)`, () => {
     expect(dropCorrectedLines('他喜欢猫\n猫很好', ['猫']).dropped).toBe(0)
@@ -32,11 +24,9 @@ describe('dropCorrectedLines / dropCorrectedValues (卡出口)', () => {
     expect(r.value).toEqual({ title: '画像', cards: [{ title: '住处', body: '' }], tags: ['爱爬山'] })
     expect(r.dropped).toBe(2)
   })
-  it('records a running count per chat', () => {
-    const d = fresh()
-    recordRedactions(d, 'overview', 2, '2026-10-23T00:00:00Z')
-    recordRedactions(d, 'profile', 1, '2026-10-23T01:00:00Z')
-    expect(JSON.parse(readFileSync(join(d, 'memory-redactions.json'), 'utf8'))).toEqual({ total: 3, byKind: { overview: 2, profile: 1 }, last: '2026-10-23T01:00:00Z' })
+  it('reports which sentence each dropped line / value hit (the table records one redacted_on_output event per hit)', () => {
+    expect(dropCorrectedLines('a 住在 杭州西湖区\nb\n又是 住在 杭州西湖区', ['住在 杭州西湖区', '另一句很长的话']).hits).toEqual(['住在 杭州西湖区', '住在 杭州西湖区'])
+    expect(dropCorrectedValues({ x: ['住在 杭州西湖区的房子'] }, ['住在 杭州西湖区']).hits).toEqual(['住在 杭州西湖区'])
   })
 })
 

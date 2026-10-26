@@ -8,7 +8,7 @@ import { visitAction } from './companion-actions'
 import { huntAction } from '../../features/hunt'
 import { portraitArtistStep, memoryGardenStep, atelierStep, type IntrospectStepExtras } from './introspect-steps'
 import { stickerArtistStep } from '../../features/stickers'
-import { buildMemorySnapshot } from '../../features/memory'
+import { buildMemorySnapshot, synthesisRetractionsFor } from '../../features/memory'
 
 // 原有的导出原样转出去(都来自陪伴功能的 index.ts),调用方不用改。
 export { INGEST_BATCH_CAP, INGEST_QUIET_MS, distillAndPushOwnerKnowledge, JOB_PROVIDERS, JOB_TURN_MAX_MS, pickJobExecutor, type JobTurnResult } from '../../features/companion'
@@ -38,5 +38,6 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     actions: (_d, dispatch) => companionActions(deps, dispatch),
     steps: () => introspectSteps(deps),
     memorySnapshot: buildMemorySnapshot,
+    synthesisRetractions: (chatId) => synthesisRetractionsFor(deps.db, deps.stateDir, chatId),
   })
 }

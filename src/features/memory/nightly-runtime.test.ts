@@ -346,13 +346,12 @@ describe('correction → agenda drop by cheap model', () => {
     await vi.waitFor(() => expect(read('agenda.md')).toContain('- [x] dropped:'))
   })
   it('the note line never reads as another correction, even when the to-do text has "] " in it', async () => {
-    const { correctedTexts } = await import('../../lib/memory-corrections')
     const { rt, id, read } = await setup(async () => '1')
     writeFileSync(join(root, 'agenda.md'), '- [ ] due:2026-10-30 [杭州] 问问出差顺不顺利\n')
-    const before = correctedTexts(root).size
+    const before = rt.retractions().length
     await rt.correct(id, 'wrong')
     await vi.waitFor(() => expect(read('corrections.md')).toContain('CC 又判断'))
-    expect(correctedTexts(root).size).toBe(before + 1)   // 只多了主人那一条
+    expect(rt.retractions().length).toBe(before + 1)   // 只多了主人那一条
   })
   it.each([
     ['model error', async () => { throw new Error('boom') }],
@@ -514,7 +513,7 @@ describe('the hand-edit check runs before every memory.md reader / writer (数�
   }
   const expectReconciled = (store: ReturnType<typeof makeMemoryFactsStore>) => {
     // 删掉的那一行成了一条收回(有墓碑),不是悄悄 outdated
-    expect(store.byKey(OWNER, 'm:aa03')!.status).not.toBe('active')   // G4:拿掉 + 墓碑;G5 起是 retracted
+    expect(store.byKey(OWNER, 'm:aa03')!.status).toBe('retracted')   // G5:一种收回,有墓碑也有被收回的行
     expect(store.tombstones(OWNER).map(t => t.text)).toContain('在赶发版')
     expect(readNightlyState(stateDir).pendingNotice?.text).toContain('1 条当作记错了')
     expect(readFileSync(join(root, 'corrections.md'), 'utf8')).toContain('在赶发版')

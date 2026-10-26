@@ -35,6 +35,8 @@ export { wireMemory, type WireMemoryDeps } from './wire'
 export { makeMemoryLlmOps, resolveCheapEval, type MemoryLlmOps } from './llm-ops'
 export { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './curated-doc'
 export { makeMemoryImportCommand } from './import-command'
+export { synthesisRetractionsFor } from './memory-export'
+export { retractOnFactStatus } from './fact-status'
 export { formatNightlyReply, type NightlyRunResult } from './nightly-notify'
 export { MEMORY_LOG_FILE, ownerMemoryRoot, readNightlyState } from './nightly'
 export type { CuratedView, MemoryNightlyRuntime, MemoryVerdict } from './nightly-runtime'
@@ -56,7 +58,7 @@ export interface MemoryFeatureDeps {
   /** LLM 记忆操作:bootstrap 起来以前是 null(路由照旧 503 memory_not_wired)。 */
   memoryLlm: () => MemoryLlmOps | null
   /** 每晚整理的运行时:wired 起来以前是 null(路由照旧 503 memory_nightly_not_wired)。 */
-  memoryNightly: () => Pick<MemoryNightlyRuntime, 'runNow' | 'view' | 'edit'> | null
+  memoryNightly: () => Pick<MemoryNightlyRuntime, 'runNow' | 'view' | 'edit' | 'retractText'> | null
   /** 请求里没写 chat_id ⇒ access.json 里唯一的 admin。 */
   resolveAdminChatId: () => string | null
   log: (tag: string, line: string) => void
@@ -81,7 +83,13 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
       ctx.get<InternalApiLifecycle>('internal-api').mount('memory', {
         ...memoryFsRoutes({ memory: d.memory, db: d.db, log: d.log }),
         ...memoryRoutes({ stateDir: d.stateDir, memoryLlm: d.memoryLlm, memoryNightly: d.memoryNightly, resolveAdminChatId: d.resolveAdminChatId }),
-        ...memoryReviewRoutes({ stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId }),
+        ...memoryReviewRoutes({
+          stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId,
+          retract: (chatId, text, verdict) => {
+            const n = d.memoryNightly()
+            if (n) void n.retractText(chatId, text, verdict, '观察').catch(err => d.log('MEMORY_NIGHTLY', `review retract failed: ${err instanceof Error ? err.message : String(err)}`))
+          },
+        }),
         ...memoryOwnerRoutes({ stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId }),
       })
       return { promptReads: makeMemoryPromptReads({ stateDir: d.stateDir, memory: d.memory }) }

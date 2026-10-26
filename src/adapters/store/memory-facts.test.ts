@@ -81,3 +81,55 @@ describe('memory-facts store', () => {
     expect(store.getDerived(CHAT, 'overview')).toEqual({ chatId: CHAT, kind: 'overview', body: 'v2', inputRev: store.revision(CHAT), generatedAt: 2 })
   })
 })
+
+describe('retract / restore / resolve / supersede (G5)', () => {
+  const by2 = { actor: 'owner' as const, ts: 9 }
+  const row = (key: string, text: string): NewMemoryFact => ({ chatId: CHAT, key, doc: key.startsWith('o:') ? 'owner' : 'memory', subject: 'owner', section: '偏好', text, status: 'active', source: 'nightly' })
+  it('retract by text hits every active entry / owner word with that sentence and always leaves a tombstone', () => {
+    store.insert([row('m:aa01', '只喝美式不加糖'), row('o:bb01', '只喝美式不加糖'), row('m:aa02', '别的')], by)
+    const r = store.retract(CHAT, { text: ' 只喝美式  不加糖' .replace('  ', '') }, { verdict: 'wrong', section: '偏好', day: '2026-10-26', by: by2 })
+    expect(r.targets.sort()).toEqual(['m:aa01', 'o:bb01'])
+    expect(store.byKey(CHAT, r.key)).toMatchObject({ status: 'retracted', section: '偏好', seenAt: '2026-10-26' })
+    const none = store.retract(CHAT, { text: '总览上一句没编号的话' }, { verdict: 'delete', section: '总览', day: '2026-10-26', by: by2 })
+    expect(none.targets).toEqual([])
+    expect(store.byKey(CHAT, none.key)!.text).toBe('总览上一句没编号的话')
+  })
+  it('restore brings back exactly what that retraction took, once', () => {
+    store.insert([row('m:aa01', '只喝美式不加糖')], by)
+    const r = store.retract(CHAT, { key: 'm:aa01' }, { verdict: 'outdated', section: '偏好', day: '2026-10-26', by: by2 })
+    expect(store.byKey(CHAT, 'm:aa01')!.status).toBe('outdated')
+    expect(store.restore(CHAT, r.key, by2)).toEqual({ restored: ['m:aa01'] })
+    expect(store.byKey(CHAT, 'm:aa01')!.status).toBe('active')
+    expect(store.restore(CHAT, r.key, by2)).toBeNull()
+    expect(store.restore(CHAT, 'm:aa01', by2)).toBeNull()
+  })
+  it('resolve and supersede are not retractions: no tombstone', () => {
+    store.insert([row('k:1', '答应帮小林看简历'), row('k:2', '答应帮小林看简历(重复)'), row('k:3', '保留的那条')], by)
+    expect(store.resolve(CHAT, 'k:1', by2)).toBe(true)
+    expect(store.supersede(CHAT, 'k:2', 'k:3', by2)).toBe(true)
+    expect(store.byKey(CHAT, 'k:1')!.status).toBe('resolved')
+    expect(store.byKey(CHAT, 'k:2')).toMatchObject({ status: 'superseded', supersededBy: store.byKey(CHAT, 'k:3')!.id })
+    expect(store.tombstones(CHAT)).toEqual([])
+    expect(store.resolve(CHAT, 'k:1', by2)).toBe(false)
+  })
+})
+
+describe('retracting a key that is not in the table (数据安全评审第 3 条)', () => {
+  const by2 = { actor: 'owner' as const, ts: 9 }
+  it('the tombstone carries the caller\'s sentence, never the key, so it enters the retracted list', () => {
+    const r = store.retract(CHAT, { key: 'm:feed99' }, { verdict: 'wrong', section: '偏好', day: '2026-10-26', text: '只喝美式不加糖', by: by2 })
+    expect(r.targets).toEqual([])
+    expect(store.byKey(CHAT, r.key)!.text).toBe('只喝美式不加糖')
+    expect(store.tombstones(CHAT).map(t => t.text)).toEqual(['只喝美式不加糖'])
+  })
+  it('the caller\'s text wins over the row\'s even when the row exists', () => {
+    store.insert([{ chatId: CHAT, key: 'm:aa01', doc: 'memory', subject: 'owner', section: '偏好', text: '表里的写法', status: 'active', source: 'nightly' }], by)
+    const r = store.retract(CHAT, { key: 'm:aa01' }, { verdict: 'wrong', section: '偏好', day: '2026-10-26', text: '主人看到的那句', by: by2 })
+    expect(store.byKey(CHAT, r.key)!.text).toBe('主人看到的那句')
+    expect(store.byKey(CHAT, 'm:aa01')!.status).toBe('retracted')
+  })
+  it('no sentence at all ⇒ refuses instead of writing the key as the text', () => {
+    expect(() => store.retract(CHAT, { key: 'm:nope' }, { verdict: 'wrong', section: '偏好', day: '2026-10-26', by: by2 })).toThrow(/without the sentence/)
+    expect(store.tombstones(CHAT)).toEqual([])
+  })
+})
