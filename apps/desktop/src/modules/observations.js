@@ -1,9 +1,12 @@
+// @ts-check
+/// <reference lib="dom" />
 // Pure renderers for memory pane top zone. No DOM mutation here — return
 // HTML strings that main.js mounts. Tested in observations.test.ts.
 
 import { escapeHtml } from "../view.js"
 import { icon } from "./icons.js"
 
+/** @type {Record<string, string>} */
 const TONE_ICON = {
   concern: 'heart-check',
   curious: 'search-01',
@@ -12,9 +15,10 @@ const TONE_ICON = {
   quiet:   'edit-02',
 }
 
+/** @param {{ id: string, body: string, ts: string, tone?: string }} obs */
 export function observationRow(obs) {
   const toneAttr = obs.tone ? ` data-tone="${escapeHtml(obs.tone)}"` : ''
-  const glyph = icon(TONE_ICON[obs.tone] || 'edit-02', { size: 18 })
+  const glyph = icon(TONE_ICON[/** @type {string} */ (obs.tone)] || 'edit-02', { size: 18 })
   // Outer is a div (no row-level click action exists today). Archive is a
   // real <button> for keyboard reachability + screen-reader announcement —
   // a clickable <span> nested inside <button> is invalid HTML and the
@@ -29,6 +33,7 @@ export function observationRow(obs) {
   `
 }
 
+/** @param {{ id: string, body: string, ts: string }} ms */
 export function milestoneCard(ms) {
   return `
     <div class="milestone-card" data-id="${escapeHtml(ms.id)}">
@@ -39,6 +44,7 @@ export function milestoneCard(ms) {
   `
 }
 
+/** @param {string} iso */
 export function formatRelativeTimeShort(iso) {
   const ms = Date.now() - new Date(iso).getTime()
   if (ms < 3600_000) return '刚刚'

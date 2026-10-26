@@ -1,16 +1,17 @@
+// @ts-check
+/// <reference lib="dom" />
 // Local subset of Hugeicons (MIT via Iconify hugeicons collection).
 // Source: https://icon-sets.iconify.design/hugeicons/
 // Keep this file small: add only icons actually used by the desktop app.
 
+/** @type {Record<string, string>} */
 const ICONS = {
   "brush": '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7.495 13.753c3.088-3.589 10.084-10.598 13.044-10.749c1.83-.175-1.817 6.321-10.46 13.43m1.38-6.39l2.257 2.28M3 20.855c.71-2.507.262-1.275.504-4.162c.13-.428.389-1.754 2.01-2.415c1.842-.752 3.193.384 3.542.918c1.029 1.115 1.148 2.5 0 4.082S4.504 21.253 3 20.855"/>',
   "attachment": '<path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9m-6 12 8-8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
   "mail-01": '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 6 8 7 8-7"/></g>',
   "edit-02": '<path d="m4 16 12-12 4 4L8 20H4v-4Zm9-9 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
 
-  "mic-01": '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3m-3 0h6"/></g>',
   "stop": '<rect x="6" y="6" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>',
-  "play": '<path d="m9 5 10 7-10 7Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
   "sent": '<path d="m4 12 16-8-6 16-3-6-7-2Zm7 2 9-10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
 
   "add-01": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d=\"M12.001 5v14.002m7.001-7H5\"/>",
@@ -49,8 +50,12 @@ const ICONS = {
   "wifi-02": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d=\"M2 8.32a15 15 0 0 1 20 0M5 12.359a10 10 0 0 1 14 0m-10.5 3.57a5 5 0 0 1 7 0m-3.374 3.321H12m.25 0a.25.25 0 1 1-.5 0a.25.25 0 0 1 .5 0\"/>",
 }
 
+/**
+ * @param {string | undefined} name
+ * @param {{ size?: number, className?: string, label?: string }} [options]
+ */
 export function icon(name, options = {}) {
-  const body = ICONS[name]
+  const body = ICONS[/** @type {string} */ (name)]
   if (!body) return ""
   const size = options.size ?? 24
   const cls = options.className ? ` ${escapeAttr(options.className)}` : ""
@@ -70,6 +75,7 @@ export function mountHugeicons(root = document) {
   })
 }
 
+/** @param {unknown} value */
 function escapeAttr(value) {
   return String(value)
     .replace(/&/g, "&amp;")

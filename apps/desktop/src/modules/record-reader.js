@@ -1,6 +1,11 @@
+// @ts-check
+/// <reference lib="dom" />
 // A single reading surface for kept pictures and words. Callers own their data/actions.
-const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+const esc=(/** @type {unknown} */ value)=>String(value??'').replace(/[&<>"']/g,c=>/** @type {string} */ (/** @type {Record<string,string>} */ ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]))
+/** @typedef {{ readonly element: HTMLDialogElement|null, close: (options?: { restoreFocus?: boolean }) => void, open: (options: { label: string, html: string, trigger?: Element|null, onAction?: (event: MouseEvent, dialog: HTMLDialogElement) => void|Promise<void> }) => HTMLDialogElement }} RecordReader */
+/** @type {RecordReader|null} */
 let active=null
+/** @param {{ restoreFocus?: boolean }} [options] */
 export function closeRecordReader(options={}) { active?.close(options) }
 
 /** @param {Element|null} element */
@@ -12,12 +17,13 @@ export function isVisibleRecordTarget(element) {
  return true
 }
 
-/** @param {{focusFallback?:(opener:Element|null)=>Element|null,onClose?:()=>void}} [options] */
+/** @param {{focusFallback?:(opener:Element|null)=>Element|null|undefined,onClose?:()=>void}} [options] @returns {RecordReader} */
 export function createRecordReader({focusFallback=()=>null,onClose=()=>{}}={}) {
  /** @type {HTMLDialogElement|null} */ let element=null
  /** @type {Element|null} */ let opener=null
  const reader={
   get element(){return element},
+  /** @param {{ restoreFocus?: boolean }} [options] */
   close({restoreFocus=true}={}){
    const previous=element;if(!previous)return
    element=null;if(active===reader)active=null
@@ -25,7 +31,7 @@ export function createRecordReader({focusFallback=()=>null,onClose=()=>{}}={}) {
    previous.remove();onClose()
    if(restoreFocus){
     const target=isVisibleRecordTarget(opener)?opener:focusFallback(opener)
-    target?.focus?.({preventScroll:true})
+    ;/** @type {HTMLElement|null|undefined} */ (target)?.focus?.({preventScroll:true})
    }
   },
   /** @param {{label:string,html:string,trigger?:Element|null,onAction?:(event:MouseEvent,dialog:HTMLDialogElement)=>void|Promise<void>}} options */
@@ -39,7 +45,7 @@ export function createRecordReader({focusFallback=()=>null,onClose=()=>{}}={}) {
    dialog.addEventListener('cancel',event=>{event.preventDefault();reader.close()})
    dialog.addEventListener('close',()=>{if(element===dialog)reader.close()})
    dialog.addEventListener('click',async event=>{
-    if(event.target.closest?.('[data-record-close]')){reader.close();return}
+    if(/** @type {Element} */ (event.target).closest?.('[data-record-close]')){reader.close();return}
     if(event.target===dialog){
      const r=dialog.getBoundingClientRect()
      if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom){reader.close();return}

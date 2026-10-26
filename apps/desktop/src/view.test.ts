@@ -376,12 +376,10 @@ describe('dashboardHero 3-state', () => {
     expect(h.state).toBe('taken_over')
   })
   it('probe verdict taken_over wins even with no expiry recorded yet', () => {
-    // @ts-expect-error JS function infers lastProbe:null; the object is valid at runtime
     const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 0, lastProbe: { state: 'taken_over' } })
     expect(h.state).toBe('taken_over')
   })
   it('probe verdict connected promotes a daemon-down machine', () => {
-    // @ts-expect-error JS function infers lastProbe:null; the object is valid at runtime
     const h = dashboardHero({ daemonAlive: false, accountCount: 1, expiredCount: 0, lastProbe: { state: 'connected' } })
     expect(h.state).toBe('connected')
   })

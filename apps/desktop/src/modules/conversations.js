@@ -1,3 +1,5 @@
+// @ts-check
+/// <reference lib="dom" />
 // Conversations module — RFC 03 P5.2 mode display + programmatic switch.
 // Owns the dashboard's per-chat mode table (#conversations-body,
 // #conversations-meta). Mode can now be flipped from the console via
@@ -13,6 +15,7 @@ import { conversationRows, escapeHtml } from "../view.js"
 
 // Map badge.tone → the closest shorthand for pre-selecting the dropdown.
 // parallel → both, primary_tool → primary (no clean shorthand, use cc as fallback).
+/** @param {any} mode */
 function modeToShorthand(mode) {
   if (!mode || typeof mode !== "object") return "cc"
   if (mode.kind === "solo") return mode.provider === "codex" ? "codex" : "cc"
@@ -24,11 +27,19 @@ function modeToShorthand(mode) {
 
 // Truncate long opaque ids (wxid_xxxx, gh_xxxx) so the table stays scannable.
 // Full value is preserved in `title` attributes for hover-to-reveal.
+/**
+ * @param {string} s
+ * @param {number} n
+ */
 function truncate(s, n) {
   if (!s) return ""
   return s.length > n ? `${s.slice(0, n)}…` : s
 }
 
+/**
+ * @param {{ conversations?: any[] } | null | undefined} report
+ * @param {{ invoke?: (command: string, args: Record<string, any>) => Promise<any> } | undefined} deps
+ */
 export function renderConversations(report, deps) {
   const tbody = document.getElementById("conversations-body")
   const meta = document.getElementById("conversations-meta")
@@ -41,7 +52,7 @@ export function renderConversations(report, deps) {
   }
   const conversations = report?.conversations || []
   tbody.innerHTML = rows.map(row => {
-    const conv = conversations.find(c => c.chat_id === row.chatId)
+    const conv = conversations.find((/** @type {any} */ c) => c.chat_id === row.chatId)
     const currentShorthand = conv ? modeToShorthand(conv.mode) : "cc"
     // 用户列 = 显示名 + 截短 wxid（hover 看完整）。账号列在 v0.5.6 删了：
     // 1-用户-1-bot 是常规设置，bot 路由对人来说是冗余信息。需要查 bot 账号
@@ -71,12 +82,13 @@ export function renderConversations(report, deps) {
   // Wire change handlers for mode-select dropdowns.
   tbody.querySelectorAll("select.mode-select").forEach(sel => {
     sel.addEventListener("change", async (ev) => {
-      const select = ev.currentTarget
+      const select = /** @type {HTMLSelectElement} */ (ev.currentTarget)
       const chatId = select.dataset.chatId
       const newMode = select.value
-      const prevMode = select.dataset.current
+      const prevMode = /** @type {string} */ (select.dataset.current)
 
       // Optimistic UI: update the select's tone class immediately.
+      /** @type {Record<string, string>} */
       const toneMap = { cc: "solo", codex: "solo", both: "parallel", chat: "chatroom" }
       select.className = `mode-select mode-${toneMap[newMode] || "solo"}`
 

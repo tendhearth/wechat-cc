@@ -1,4 +1,3 @@
-import { showToast, armConfirm } from "../view.js"
 // @ts-check
 /// <reference lib="dom" />
 /**
@@ -10,6 +9,7 @@ import { showToast, armConfirm } from "../view.js"
  * so there are no event-listener leaks across list reloads.
  */
 
+import { showToast, armConfirm } from "../view.js"
 import { invokeApi } from '../api.js'
 import { initHuntBag, refreshHuntBag } from './journal.js'
 import { initPeople, refreshPeople } from './people.js'
@@ -29,13 +29,20 @@ let refreshGeneration = 0
 let initializedList = null
 // Keep mutations single-flight even if their page or dialog closes.
 const agentMutations = new Map()
+/** @type {{ generation: number } | null} */
 let inboundOperation = null
 let inboundAvailable = true
+/** @type {{ generation: number } | null} */
 let socialEnableOperation = null
 let activityRevision = 0
+/** @typedef {{ id: string, generation: number }} TestSession */
+/** @type {TestSession | null} */
 let testSession = null
 const testSending = new Map()
+/** @typedef {{ generation: number }} AddSession */
+/** @type {AddSession | null} */
 let addSession = null
+/** @type {{ session: AddSession | null } | null} */
 let previewOperation = null
 const addInstalling = new Map()
 
@@ -55,13 +62,20 @@ export function deactivateA2AAgentsTab() {
 
 /** Only module_off means social is off (daemon route gate + handler fallback, 第三批 3b). module_degraded (on but not
  * running) deliberately falls through to the generic "暂时读不到" path — it is not off. */
+/** @param {unknown} error */
 function isSocialUnwired(error) { return error === 'module_off' }
+/** @param {unknown} err */
 function readErrorText(err) { return err instanceof Error ? err.message : String(err) }
+/**
+ * @param {string} what
+ * @param {string} [action]
+ */
 function renderReadError(what, action = 'forage-retry') {
   return `<div class="fd-empty" role="status">${escapeHtml(what)}暂时读不到。<button class="btn ghost" data-action="${action}" type="button">重试</button></div>`
 }
+/** @param {Event} e */
 async function onForageRetry(e) {
-  const target = e.target?.closest?.('[data-action="forage-retry"], [data-action="mailbox-retry"]')
+  const target = /** @type {any} */ (e.target)?.closest?.('[data-action="forage-retry"], [data-action="mailbox-retry"]')
   if (!target || target.disabled || !active) return
   target.disabled = true
   try { await refresh() } finally { if (target.isConnected) target.disabled = false }
@@ -84,6 +98,7 @@ async function onForageRetry(e) {
 const SOCIAL_OFF_HINT = '它会让你的 CC 代表你和朋友的 CC 打交道,所以默认关着。'
 
 /** 未启用时统一的空态:一句人话 + 一个就地启用按钮(不再打发人去终端)。 */
+/** @param {string} what */
 function renderSocialOffState(what) {
   return `<div class="fd-empty">${escapeHtml(what)}${escapeHtml(SOCIAL_OFF_HINT)}
     <div style="margin-top:8px"><button class="btn" data-action="social-enable" type="button">启用社交</button></div></div>`
@@ -94,6 +109,7 @@ function renderSocialOffState(what) {
  *
  * 与同页的入站开关(/v1/social/inbound)保持一致的姿态。重启会短暂断开微信
  * 连接,那是用户该自己挑时机的事;替他决定不合适。
+ * @param {any} btn
  */
 async function onSocialEnableClick(btn) {
   if (!btn || btn.disabled || !active || socialEnableOperation) return
@@ -124,7 +140,7 @@ export async function initA2AAgentsTab() {
   if (!list) return
 
   const pane = document.querySelector?.('.dash-pane[data-pane="a2a-agents"]')
-  if (!pane || !pane.hidden) await refresh()
+  if (!pane || !/** @type {HTMLElement} */ (pane).hidden) await refresh()
   else deactivateA2AAgentsTab()
   if (initializedList === list) return
   initializedList = list
@@ -161,10 +177,10 @@ export async function initA2AAgentsTab() {
   document.getElementById('fd-mailbox-count')?.addEventListener('click', onForageRetry)
   document.getElementById('fd-connect-btn')?.addEventListener('click', () => {
     const details = document.querySelector?.('#fd-net > details')
-    if (details) details.open = true
+    if (details) /** @type {HTMLDetailsElement} */ (details).open = true
     document.getElementById('fd-pair-start')?.focus()
   })
-  for (const [id, close] of [['a2a-add-modal', closeAddModal], ['a2a-test-modal', closeTestModal]]) {
+  for (const [id, close] of /** @type {Array<[string, () => void]>} */ ([['a2a-add-modal', closeAddModal], ['a2a-test-modal', closeTestModal]])) {
     const modal = document.getElementById(id)
     modal?.addEventListener('cancel', event => { event.preventDefault(); close() })
     modal?.addEventListener('close', () => {
@@ -190,9 +206,13 @@ export async function refresh() {
   active = true
   const generation = pageGeneration
   const request = ++refreshGeneration
+  /**
+   * @param {import('../daemon-client.js').V1Key} call
+   * @param {string} key
+   */
   const read = async (call, key) => {
     try {
-      const data = await v1(invokeApi, call)
+      const data = /** @type {any} */ (await v1(invokeApi, call))
       if (!data || (key && !Array.isArray(data[key]))) throw new Error('返回内容不完整')
       if (call === V1.social.inbound && typeof data.enabled !== 'boolean') throw new Error('返回内容不完整')
       return { data, error: '' }
@@ -217,7 +237,7 @@ export async function refresh() {
   if (sub) {
     if (mail.error) sub.textContent = isSocialUnwired(mail.error) ? '' : '信箱暂时读不到'
     else {
-      const unread = mail.data.channels.reduce((a, c) => a + (Number(c.unread) || 0), 0)
+      const unread = mail.data.channels.reduce((/** @type {number} */ a, /** @type {any} */ c) => a + (Number(c.unread) || 0), 0)
       sub.textContent = unread ? `${unread} 封未读` : ''
     }
   }
@@ -296,17 +316,19 @@ function renderAgents(agents, list) {
  * relays 里。原先这里直接印 `a.url`,对信箱对端就渲染出字符串 "undefined",
  * 看着像装坏了。见 routes-a2a.list.test.ts(接口那半边的同一个洞)。
  */
+/** @param {any} a */
 export function peerReach(a) {
   if (a.url) return a.url
   if (a.transport === 'mailbox') {
     const hosts = (a.relays ?? [])
-      .map(u => { try { return new URL(u).host } catch { return u } })
+      .map((/** @type {string} */ u) => { try { return new URL(u).host } catch { return u } })
       .join('、')
     return hosts ? `信箱 · 经 ${hosts}` : '信箱 · 还没有中继'
   }
   return '没有地址'
 }
 
+/** @param {{ agents: Array<any> | null, agentsError?: string, inbound: any, inboundError?: string, mailbox?: Array<any> | null, mailboxError?: string }} data */
 export function renderForageDesk(data) {
   const agents = Array.isArray(data.agents) ? data.agents : null
   const unwired = isSocialUnwired(data.mailboxError) || isSocialUnwired(data.inboundError)
@@ -343,7 +365,7 @@ export function renderForageDesk(data) {
     }
   }
 
-  const toggle = document.getElementById('fd-inbound-toggle')
+  const toggle = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-inbound-toggle'))
   const inboundNote = document.getElementById('fd-inbound-note')
   if (toggle) {
     const on = data.inbound?.enabled === true
@@ -410,8 +432,7 @@ function renderMailChannel(c) {
     `</div>`
 }
 
-/** @param {Array<any>} letters — 路由返回 newest-first;渲染 reverse 成正序。
- *  @param {string} channelId */
+/** @param {Array<any>} letters — 路由返回 newest-first;渲染 reverse 成正序。 */
 function renderMailBubbles(letters) {
   return letters.slice().reverse().map(l =>
     `<div class="fd-mail-bubble ${l.direction === 'out' ? 'fd-out' : 'fd-in'}">` +
@@ -419,6 +440,11 @@ function renderMailBubbles(letters) {
     `<div class="fd-mail-time">${escapeHtml(fdRelTime(l.created_at))}</div>` +
     `</div>`).join('')
 }
+/**
+ * @param {Array<any> | null} letters
+ * @param {string} channelId
+ * @param {string} [draft]
+ */
 function renderMailThread(letters, channelId, draft = '') {
   const bubbles = renderMailBubbles(letters ?? [])
   return `<div class="fd-mail-bubbles">${bubbles || (letters ? '<div class="fd-empty">还没有信 —— 写下第一封吧。</div>' : '<div class="fd-empty">正在读信…</div>')}</div>` +
@@ -433,7 +459,7 @@ function renderMailThread(letters, channelId, draft = '') {
 
 /** @param {MouseEvent} e */
 async function onCardAction(e) {
-  const target = e.target?.closest?.('button[data-action]')
+  const target = /** @type {any} */ (e.target)?.closest?.('button[data-action]')
   if (!(target instanceof HTMLButtonElement) || target.disabled || !active) return
   const action = target.dataset.action
   if (action === 'social-enable') { await onSocialEnableClick(target); return }
@@ -473,20 +499,27 @@ async function onCardAction(e) {
 // ✉️ 信箱 — 展开看信(即读即清未读) + 回信。同时只展开一个线程。
 /** @type {any} */
 let openMailThreadEl = null
-/** @type {{id:string, card:any, thread:any, generation:number, read:number, reading:boolean}|null} */
+/** @typedef {{id:string, card:any, thread:any, generation:number, read:number, reading:boolean}} MailOwner */
+/** @type {MailOwner|null} */
 let openMailThread = null
 /** @type {Map<string, {draft:string, revision:number, letters:Array<any>|null}>} */
 const mailThreads = new Map()
 /** @type {Map<string, object>} */
 const mailSending = new Map()
+/** @param {string} id */
 function mailState(id) {
   if (!mailThreads.has(id)) mailThreads.set(id, { draft: '', revision: 0, letters: null })
-  return mailThreads.get(id)
+  return /** @type {{draft:string, revision:number, letters:Array<any>|null}} */ (mailThreads.get(id))
 }
+/**
+ * @param {string} id
+ * @param {string} draft
+ */
 function updateMailDraft(id, draft) {
   const state = mailState(id)
   if (state.draft !== draft) { state.draft = draft; state.revision++ }
 }
+/** @param {MailOwner | null} owner */
 function saveMailDraft(owner) {
   if (!owner) return
   const input = owner.card.querySelector('.fd-mail-input')
@@ -499,10 +532,15 @@ function closeMailThread() {
   openMailThreadEl = null
   openMailThread = null
 }
+/**
+ * @param {MailOwner | null} owner
+ * @returns {owner is MailOwner}
+ */
 function isCurrentMail(owner) {
   return !!owner && openMailThread === owner && isPageCurrent(owner.generation)
     && owner.thread.isConnected !== false && !owner.thread.hidden
 }
+/** @param {string} id */
 function setMailSending(id) {
   if (openMailThread?.id !== id || !isCurrentMail(openMailThread)) return
   const button = openMailThread.card.querySelector('[data-action="mail-send"]')
@@ -532,7 +570,7 @@ async function onMailboxAction(e) {
   if (target.dataset.action === 'forage-retry' || target.dataset.action === 'mailbox-retry') return onForageRetry(e)
   if (target.dataset.action === 'social-enable') return onSocialEnableClick(target)
   if (target.dataset.action === 'mail-toggle') return showMailThread(target)
-  if (target.dataset.action === 'mail-retry' && openMailThread?.id === target.dataset.id) return readMailThread(openMailThread)
+  if (target.dataset.action === 'mail-retry' && openMailThread?.id === target.dataset.id) return readMailThread(/** @type {MailOwner} */ (openMailThread))
   if (target.dataset.action === 'mail-send') return sendMailReply(target)
 }
 
@@ -559,6 +597,7 @@ async function showMailThread(target) {
   await readMailThread(owner)
 }
 
+/** @param {MailOwner} owner */
 async function readMailThread(owner) {
   if (!isCurrentMail(owner)) return
   const request = ++owner.read
@@ -566,7 +605,7 @@ async function readMailThread(owner) {
   const note = owner.card.querySelector('.fd-mail-note')
   if (note) { note.hidden = false; note.textContent = '正在读信…' }
   try {
-    const r = await v1(invokeApi, V1.penpal.letters, { query: { channel_id: owner.id } })
+    const r = /** @type {any} */ (await v1(invokeApi, V1.penpal.letters, { query: { channel_id: owner.id } }))
     if (!isCurrentMail(owner) || request !== owner.read) return
     if (!Array.isArray(r?.letters)) throw new Error('返回内容不完整')
     mailState(owner.id).letters = r.letters
@@ -620,9 +659,9 @@ async function sendMailReply(target) {
   const submittedRevision = mailState(id).revision
   target.disabled = true
   try {
-    const r = pending
+    const r = /** @type {any} */ (pending
       ? await v1(invokeApi, V1.penpal.resend, { body: { letter_id: pending.letterId } })
-      : await v1(invokeApi, V1.penpal.send, { body: { channel_id: id, text } })
+      : await v1(invokeApi, V1.penpal.send, { body: { channel_id: id, text } }))
     if (r?.ok) {
       delete mailRetry[id]
       // Reconcile only the draft represented by this submission. A later edit,
@@ -675,7 +714,7 @@ async function sendMailReply(target) {
 }
 
 async function onInboundToggle() {
-  const toggle = document.getElementById('fd-inbound-toggle')
+  const toggle = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-inbound-toggle'))
   const note = document.getElementById('fd-inbound-note')
   if (!toggle || toggle.disabled || !active || inboundOperation) return
   const operation = { generation: pageGeneration }
@@ -683,7 +722,7 @@ async function onInboundToggle() {
   toggle.disabled = true
   const next = !toggle.classList.contains('fd-on')
   try {
-    const r = await v1(invokeApi, V1.social.setInbound, { body: { enabled: next } })
+    const r = /** @type {any} */ (await v1(invokeApi, V1.social.setInbound, { body: { enabled: next } }))
     if (!isPageCurrent(operation.generation) || inboundOperation !== operation) return
     if (typeof r?.enabled !== 'boolean') throw new Error('返回内容不完整')
     const enabled = r.enabled
@@ -700,7 +739,7 @@ async function onInboundToggle() {
   } finally {
     if (inboundOperation === operation) {
       inboundOperation = null
-      const currentToggle = document.getElementById('fd-inbound-toggle')
+      const currentToggle = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-inbound-toggle'))
       if (active && currentToggle) currentToggle.disabled = !inboundAvailable
     }
   }
@@ -945,13 +984,17 @@ async function openTestModal(id) {
   testSession = { id, generation: pageGeneration }
   const title = document.getElementById('a2a-test-title')
   if (title) title.textContent = `测试连通 · ${id}`
-  const textInput = document.getElementById('a2a-test-text')
+  const textInput = /** @type {HTMLInputElement | null} */ (document.getElementById('a2a-test-text'))
   if (textInput) textInput.value = `test from ${id} via wechat-cc`
   const result = document.getElementById('a2a-test-result')
   if (result) { result.textContent = ''; result.className = 'a2a-test-result' }
   if (!modal.open) modal.showModal()
   syncTestButtons()
 }
+/**
+ * @param {TestSession | null} session
+ * @returns {session is TestSession}
+ */
 function isTestCurrent(session) {
   const modal = document.getElementById('a2a-test-modal')
   return !!session && testSession === session && isPageCurrent(session.generation)
@@ -960,8 +1003,8 @@ function isTestCurrent(session) {
 function syncTestButtons() {
   if (!isTestCurrent(testSession)) return
   for (const id of ['a2a-test-inbound', 'a2a-test-outbound']) {
-    const button = document.getElementById(id)
-    if (button) button.disabled = testSending.has(testSession.id)
+    const button = /** @type {HTMLButtonElement | null} */ (document.getElementById(id))
+    if (button) button.disabled = testSending.has(/** @type {TestSession} */ (testSession).id)
   }
 }
 
@@ -969,7 +1012,7 @@ function syncTestButtons() {
 async function runTest(outbound) {
   const session = testSession
   if (!isTestCurrent(session) || testSending.has(session.id)) return
-  const textInput = document.getElementById('a2a-test-text')
+  const textInput = /** @type {HTMLInputElement | null} */ (document.getElementById('a2a-test-text'))
   const result = document.getElementById('a2a-test-result')
   if (!result) return
   const text = textInput?.value || `test from ${session.id} via wechat-cc`
@@ -979,7 +1022,7 @@ async function runTest(outbound) {
   result.textContent = 'sending…'
   result.className = 'a2a-test-result pending'
   try {
-    const r = await v1(invokeApi, V1.a2a.test, { body: { agent_id: session.id, text, outbound } })
+    const r = /** @type {any} */ (await v1(invokeApi, V1.a2a.test, { body: { agent_id: session.id, text, outbound } }))
     if (!isTestCurrent(session)) return
     if (r?.ok) {
       const dir = r.direction === 'in' ? 'inbound' : 'outbound'
@@ -1020,7 +1063,7 @@ function openAddModal() {
   if (form) { form.hidden = false; form.reset() }
   invalidateAddSession()
   addSession = { generation: pageGeneration }
-  const submit = form?.querySelector('button[type="submit"]')
+  const submit = /** @type {HTMLButtonElement | null | undefined} */ (form?.querySelector('button[type="submit"]'))
   if (submit) { submit.disabled = false; submit.textContent = '看看是谁 →' }
   syncInstallButton()
   if (!modal.open) modal.showModal()
@@ -1032,6 +1075,10 @@ function invalidateAddSession() {
   previewedCard = null
   previewedUrl = ''
 }
+/**
+ * @param {AddSession | null} session
+ * @returns {session is AddSession}
+ */
 function isAddCurrent(session) {
   const modal = document.getElementById('a2a-add-modal')
   return !!session && addSession === session && isPageCurrent(session.generation)
@@ -1039,13 +1086,14 @@ function isAddCurrent(session) {
 }
 function syncInstallButton() {
   const preview = document.getElementById('a2a-add-preview')
-  const id = preview?.querySelector('input[name="id"]')?.value?.trim() ?? ''
-  const button = document.getElementById('a2a-install-confirm')
+  const id = /** @type {HTMLInputElement | null | undefined} */ (preview?.querySelector('input[name="id"]'))?.value?.trim() ?? ''
+  const button = /** @type {HTMLButtonElement | null} */ (document.getElementById('a2a-install-confirm'))
   if (button) {
     button.disabled = addInstalling.has(id)
     button.textContent = button.disabled ? '连接中…' : '连上'
   }
 }
+/** @param {any} [refreshList] */
 function closeAddModal(refreshList = true) {
   invalidateAddSession()
   const modal = document.getElementById('a2a-add-modal')
@@ -1170,6 +1218,7 @@ async function openActivityDrawer(id) {
   if (ul) ul.innerHTML = '<li class="empty">加载中…</li>'
   drawer.hidden = false
 
+  /** @type {any} */
   let r
   try {
     r = await v1(invokeApi, V1.a2a.activity, { query: { agent_id: id, limit: 50 } })
