@@ -81,6 +81,13 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
     factEvent(rowId, nowSec, action)
     return true
   }
+  /** 下一个联系人事实 id:表里最大的、和旧事实库还没导完时它最大的,两者取大再加一(永远不和旧库撞 id)。 */
+  const FLOOR_MARK = '__facts.db.id_floor__'
+  const contactIdFloor = () => Number(db.query<{ h: string }, [string]>('SELECT files_hash AS h FROM memory_import WHERE chat_id = ?').get(FLOOR_MARK)?.h ?? 0) || 0
+  const nextContactId = () => Math.max(
+    db.query<{ m: number | null }, []>("SELECT MAX(CAST(substr(key, 3) AS INTEGER)) AS m FROM memory_facts WHERE doc = 'contact'").get()?.m ?? 0,
+    contactIdFloor(),
+  ) + 1
   const contactFacts: KnowledgeFactsStore = {
     upsertFact(fact, now) {
       return atomically(() => {
@@ -88,7 +95,7 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
         const conf = fact.confidence || 'med'
         const cur = rows(`${FACT_SELECT} AND subject = ? AND predicate = ? AND text = ?`, fact.contact, fact.predicate, fact.value)[0]
         if (!cur) {
-          const next = (db.query<{ m: number | null }, []>("SELECT MAX(CAST(substr(key, 3) AS INTEGER)) AS m FROM memory_facts WHERE doc = 'contact'").get()?.m ?? 0) + 1
+          const next = nextContactId()
           const r = insertFact.run(C, `k:${next}`, 'contact', fact.contact, null, 0, fact.kind ?? null, fact.predicate, fact.related_contact ?? null,
             fact.time_ref ?? null, conf, fact.value, 'active', 'extract', null, 'chat', JSON.stringify(keys), null, now, null, null, null, now, now)
           factEvent(Number(r.lastInsertRowid), now, 'added')
@@ -180,30 +187,47 @@ export function makeMemoryFactsStore(db: Db): MemoryFactsStore {
 
   return {
     contactFacts,
-    importContactFact(f, nowMs) {
+    contactIdFloor,
+    contactFactByText: (contact, predicate, value) => rows(`${FACT_SELECT} AND subject = ? AND predicate = ? AND text = ?`, contact, predicate, value)[0] ?? null,
+    raiseContactIdFloor(maxLegacyId) {
+      if (maxLegacyId <= contactIdFloor()) return
+      db.query(`INSERT INTO memory_import(chat_id, files_hash, at) VALUES (?,?,?)
+        ON CONFLICT(chat_id) DO UPDATE SET files_hash = excluded.files_hash, at = excluded.at`).run(FLOOR_MARK, String(maxLegacyId), Date.now())
+    },
+    /**
+     * 旧事实库的一行进表(调用方已经把它规整好:状态是认得的四种之一、数字是整数、正文 / 联系人不为空)。
+     * 认「是不是同一件事」看 (联系人, 谓语, 内容),不看 id —— 老二进制回滚后用 max(rowid)+1 编的号可能正好是新二进制用过的:
+     *  - 表里已经有这一句 ⇒ 同一件事:facts.db 那边严格更新过才照改,否则不动;
+     *  - 没有这一句、原 id 空着 ⇒ 用原 id 插;
+     *  - 没有这一句、原 id 被别的事实占了 ⇒ 冲突:换一个新 id 插,事件里记下原 id(`reassigned`)。
+     */
+    importContactFact(f, nowMs, notes = []) {
       return atomically(() => {
-        const cur = contactFacts.factById(f.id)
         const st = toStatus(f.status ?? 'active') as FactStatus
-        if (!cur) {
-          const r = insertFact.run(C, `k:${f.id}`, 'contact', f.contact, null, 0, f.kind ?? null, f.predicate, f.related_contact ?? null, f.time_ref ?? null,
+        const same = rows(`${FACT_SELECT} AND subject = ? AND predicate = ? AND text = ?`, f.contact, f.predicate, f.value)[0]
+        if (!same) {
+          const taken = contactFacts.factById(f.id) !== null
+          const id = taken ? nextContactId() : f.id
+          const r = insertFact.run(C, `k:${id}`, 'contact', f.contact, null, 0, f.kind ?? null, f.predicate, f.related_contact ?? null, f.time_ref ?? null,
             f.confidence ?? 'med', f.value, st, 'import', null, 'chat', JSON.stringify(f.source_msg_keys ?? []), null,
             f.valid_from ?? null, f.invalidated_at ?? null, f.superseded_by ?? null, null, f.created_at, f.updated_at)
           const rowId = Number(r.lastInsertRowid)
-          event.run(rowId, C, nowMs, 'added', 'import', null, null, LEGACY_NOTE)
+          event.run(rowId, C, nowMs, 'added', 'import', null, null, [LEGACY_NOTE, ...(taken ? [`id ${f.id} was taken by another fact; reassigned to ${id}`] : []), ...notes].join('; '))
           if (st === 'retracted') event.run(rowId, C, nowMs, 'retracted', 'import', null, null, `${LEGACY_NOTE}: rejected`)
           if (st === 'superseded') event.run(rowId, C, nowMs, 'superseded', 'import', null, null, f.superseded_by ? `by:k:${f.superseded_by}` : null)
           if (st === 'resolved') event.run(rowId, C, nowMs, 'resolved', 'import', null, null, LEGACY_NOTE)
-          return 'inserted' as const
+          return { outcome: taken ? 'reassigned' as const : 'inserted' as const, id }
         }
-        if ((f.updated_at ?? 0) <= (cur.updated_at ?? 0)) return 'same' as const
-        const rowId = factRowId(f.id)!
-        db.query(`UPDATE memory_facts SET kind = ?, predicate = ?, text = ?, related_contact = ?, time_ref = ?, confidence = ?, evidence = ?,
+        if ((f.updated_at ?? 0) <= (same.updated_at ?? 0)) return { outcome: 'same' as const, id: same.id }
+        const rowId = factRowId(same.id)!
+        db.query(`UPDATE memory_facts SET kind = ?, related_contact = ?, time_ref = ?, confidence = ?, evidence = ?,
           valid_from = ?, invalidated_at = ?, superseded_by = ?, updated_at = ? WHERE id = ?`)
-          .run(f.kind ?? null, f.predicate, f.value, f.related_contact ?? null, f.time_ref ?? null, f.confidence ?? 'med', JSON.stringify(f.source_msg_keys ?? []),
+          .run(f.kind ?? null, f.related_contact ?? null, f.time_ref ?? null, f.confidence ?? 'med', JSON.stringify(f.source_msg_keys ?? []),
             f.valid_from ?? null, f.invalidated_at ?? null, f.superseded_by ?? null, f.updated_at, rowId)
-        if (toStatus(cur.status) !== st) { setStatus(rowId, st, f.updated_at); event.run(rowId, C, nowMs, st === 'active' ? 'restored' : st === 'retracted' ? 'retracted' : st, 'import', null, null, LEGACY_NOTE) }
-        else event.run(rowId, C, nowMs, 'updated', 'import', null, null, LEGACY_NOTE)
-        return 'updated' as const
+        const note = [LEGACY_NOTE, ...notes].join('; ')
+        if (toStatus(same.status) !== st) { setStatus(rowId, st, f.updated_at); event.run(rowId, C, nowMs, st === 'active' ? 'restored' : st === 'retracted' ? 'retracted' : st, 'import', null, null, note) }
+        else event.run(rowId, C, nowMs, 'updated', 'import', null, null, note)
+        return { outcome: 'updated' as const, id: same.id }
       })
     },
     importFactWatermark(contact, lastTs, lastLocalId, updatedAt) {
