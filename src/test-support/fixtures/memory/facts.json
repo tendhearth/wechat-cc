@@ -1,0 +1,17 @@
+{
+  "facts": [
+    { "id": 1, "contact": "wxid_fx_lin", "kind": "obligation", "predicate": "答应帮小林", "value": "看一下他的简历", "related_contact": null, "time_ref": "这周", "confidence": "high", "source_msg_keys": ["wxid_fx_lin:101"], "status": "active", "created_at": 1760900000, "updated_at": 1760900000, "valid_from": 1760900000, "invalidated_at": null, "superseded_by": null },
+    { "id": 2, "contact": "wxid_fx_mom", "kind": "obligation", "predicate": "答应妈妈", "value": "寄回老照片", "related_contact": null, "time_ref": "11 月前", "confidence": "med", "source_msg_keys": ["wxid_fx_mom:7", "wxid_fx_mom:9"], "status": "active", "created_at": 1760800000, "updated_at": 1760850000, "valid_from": 1760800000, "invalidated_at": null, "superseded_by": null },
+    { "id": 3, "contact": "wxid_fx_qing", "kind": "obligation", "predicate": "答应阿青", "value": "周末去咖啡馆捧场", "related_contact": null, "time_ref": null, "confidence": "low", "source_msg_keys": [], "status": "resolved", "created_at": 1760700000, "updated_at": 1760950000, "valid_from": 1760700000, "invalidated_at": null, "superseded_by": null },
+    { "id": 4, "contact": "wxid_fx_lin", "kind": "obligation", "predicate": "答应小林", "value": "下周去深圳找他", "related_contact": null, "time_ref": "下周", "confidence": "med", "source_msg_keys": ["wxid_fx_lin:88"], "status": "rejected", "created_at": 1760600000, "updated_at": 1760960000, "valid_from": 1760600000, "invalidated_at": null, "superseded_by": null },
+    { "id": 5, "contact": "wxid_fx_mom", "kind": "obligation", "predicate": "答应妈妈", "value": "寄照片", "related_contact": null, "time_ref": null, "confidence": "low", "source_msg_keys": ["wxid_fx_mom:5"], "status": "superseded", "created_at": 1760500000, "updated_at": 1760850000, "valid_from": 1760500000, "invalidated_at": 1760850000, "superseded_by": 2 },
+    { "id": 6, "contact": "wxid_fx_lin", "kind": "relation", "predicate": "是", "value": "大学室友", "related_contact": null, "time_ref": null, "confidence": "high", "source_msg_keys": ["wxid_fx_lin:3"], "status": "active", "created_at": 1760400000, "updated_at": 1760400000, "valid_from": 1760400000, "invalidated_at": null, "superseded_by": null },
+    { "id": 7, "contact": "wxid_fx_qing", "kind": "preference", "predicate": "不喜欢", "value": "被叫全名", "related_contact": "wxid_fx_lin", "time_ref": null, "confidence": "med", "source_msg_keys": [], "status": "active", "created_at": 1760300000, "updated_at": 1760300000, "valid_from": null, "invalidated_at": null, "superseded_by": null }
+  ],
+  "contacts": [
+    { "username": "wxid_fx_lin", "display": "小林", "is_group": 0, "closeness": 0.9, "last_ts": 1760900000, "total": 500, "s_volume": 0.9, "s_intimacy": 0.9, "s_recency": 0.9 },
+    { "username": "wxid_fx_mom", "display": "妈妈", "is_group": 0, "closeness": 0.8, "last_ts": 1760850000, "total": 300, "s_volume": 0.6, "s_intimacy": 0.8, "s_recency": 0.7 },
+    { "username": "wxid_fx_qing", "display": "", "is_group": 0, "closeness": 0.4, "last_ts": 1750000000, "total": 120, "s_volume": 0.5, "s_intimacy": 0.6, "s_recency": 0.1 },
+    { "username": "fx_group@chatroom", "display": "大学群", "is_group": 1, "closeness": 0.95, "last_ts": 1760950000, "total": 2000, "s_volume": 1, "s_intimacy": 0.2, "s_recency": 0.95 }
+  ]
+}

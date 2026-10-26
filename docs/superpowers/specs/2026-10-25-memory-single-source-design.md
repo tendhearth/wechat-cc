@@ -172,3 +172,15 @@ restore(chatId, key, actor)          // 撤销收回;只恢复这一行,清掉�
 - 导入:跑两次一样;已更正又被写回的行导成 `retracted`;`替换:` 链保留;facts.db 的 id 与状态逐行一致;核对不过 ⇒ 这个对话不搬、文件不改名。
 - 回滚:导出后用老格式解析器(`parseMemoryDoc` / `parseOwnerDoc`)读回,与表一致;老二进制追加的条目在下次开机被差异导入。
 - 迁移:四张迁移表各自的「从 0 升上来」与「已经是今天的结构再跑 v001」两条(照 `docs/maintainer/migrations.md` 的 `migratedTo(n)` 写法)。
+
+## 6. 进度
+
+§4 那五条主人 2026-10-26 全部照建议点头。
+
+| 步 | 状态 | 落在哪 |
+|---|---|---|
+| G0 金样 | 做完 | 夹具 `src/test-support/fixtures/memory/chats/`(owner:BOM、栏外 / 认不出的行、没编号的条目、半截尾注、已更正又被写回的「下周要去杭州出差三天」「年糕是狸花猫」、`替换:` 两条、短于 `MIN_CORRECTED_CHARS` 的更正;guest:CRLF、磁盘上有 `owner.md` 但不该注入、超过注入上限的 `profile.md`;empty:什么都没有)与 `facts.json`(facts 五种状态 + 图的联系人)。金样 `fixtures/memory/golden/`,由 `src/features/memory/memory-golden.test.ts` 用今天的代码生成并逐字节比:每个对话的 `memory.md` / `owner.md` 序列化、五段注入(`curatedMemoryFor` / `ownerMemoryFor` / `coreMemoryFor` / `todayDraftFor` / `knowledgeMemoryFor`)、整理素材头两块(纠正 + 原话)、`correctedTexts` 名单、`overviewForOthers`;外加 `knowledge.md` 蒸馏。`.gitattributes` 让这棵树按字节进出 |
+
+读代码时发现的(金样照今天的样子钉住,不在 G0 改):
+
+- 每轮注入的 `memory.md`(`curatedMemoryFor`)**不过**纠正名单:已更正又被整理写回的行(夹具里「年糕是狸花猫」)今天照样进主人对话的提示词。§1.2 / 「数据怎么搬」第 1 条说这类行「靠出口过滤挡着」,只对合成产出成立。G3 把它导成 `retracted` 以后,G6 读表时它就从提示词里消失了 —— 这是一处**看得见**的变化(变好),G6 的金样要单独更新这一处并在 PR 里写明。
