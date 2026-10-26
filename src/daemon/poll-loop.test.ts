@@ -826,8 +826,8 @@ describe('startLongPollLoops — recordHeartbeat', () => {
   })
 })
 
-// 快车道(2026-10-26):一轮卡在等主人拍板时,主人在同一个微信对话里回的「y」要当场被处理;
-// 普通消息照旧一条接一条、按到达顺序;游标照旧在处理完之后才落盘。
+// 快车道(2026-10-26):一轮卡在等主人拍板时,主人在同一个微信对话里回的「y」要当场放开它;快车道只消费回答、
+// 从不内联跑一轮(没消费的照普通消息排队);普通消息照旧一条接一条、按到达顺序;游标照旧在处理完之后才落盘。
 describe('startLongPollLoops — fastLane (permission answers while a turn awaits approval)', () => {
   const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: 'buf0' }
   const text = (from: string, t: string, at = 1000): RawUpdate => ({ from_user_id: from, create_time_ms: at, message_type: 1, message_state: 2, item_list: [{ type: 1, text_item: { text: t } }] })
@@ -840,10 +840,20 @@ describe('startLongPollLoops — fastLane (permission answers while a turn await
       return { updates: [], sync_buf: sb }
     })
   }
+  /** 一张待批卡:fastLane 只在它还开着时消费「y」(和 daemon/permission-answer.ts 一样:没消费 ⇒ false)。 */
+  const pendingCard = () => {
+    let answer!: (v: string) => void
+    const answered = new Promise<string>(r => { answer = r })
+    let open = true
+    return {
+      answered,
+      resolveElsewhere: () => { open = false; answer('desktop') },
+      fastLane: (m: { text: string }) => { if (m.text !== 'y' || !open) return false; open = false; answer('allow'); return true },
+    }
+  }
 
-  it('a "y" that arrives while a turn is blocked waiting for it is handled at once and unblocks the turn', async () => {
-    let approve!: (v: string) => void
-    const approval = new Promise<string>(r => { approve = r })
+  it('a "y" that arrives while a turn is blocked waiting for it is consumed at once, unblocks the turn, and never enters the pipeline', async () => {
+    const card = pendingCard()
     const events: string[] = []
     const getUpdates = batches([
       { updates: [text('owner', '删掉 build')], sync_buf: 'buf1' },
@@ -851,22 +861,48 @@ describe('startLongPollLoops — fastLane (permission answers while a turn await
     ])
     const handle = startLongPollLoops({
       accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
-      fastLane: (m) => m.text === 'y',
+      fastLane: card.fastLane,
       onInbound: async (m) => {
-        if (m.text === 'y') { events.push('answer'); approve('allow'); return }
-        events.push('turn:start')
-        events.push(`turn:got ${await approval}`)   // 这一轮在等主人拍板
+        events.push(`pipeline ${m.text}`)
+        events.push(`turn got ${await card.answered}`)   // 这一轮在等主人拍板
       },
     })
-    await waitFor(() => events.includes('turn:got allow'))
-    expect(events).toEqual(['turn:start', 'answer', 'turn:got allow'])
+    await waitFor(() => events.includes('turn got allow'))
+    await new Promise(r => setTimeout(r, 30))
+    expect(events).toEqual(['pipeline 删掉 build', 'turn got allow'])   // 「y」没进流水线
     await handle.stop()
   })
 
-  it('normal messages stay strictly ordered behind the running turn; only fast-lane ones jump ahead', async () => {
+  it('stale pending (resolved elsewhere between arrival and handling): the "y" is NOT run in the fast lane — it queues behind T1 in arrival order', async () => {
+    const card = pendingCard()
+    const seen: string[] = []
+    let releaseT1!: () => void
+    const t1 = new Promise<void>(r => { releaseT1 = r })
+    const getUpdates = batches([
+      { updates: [text('owner', 'T1')], sync_buf: 'b1' },
+      { updates: [text('owner', 'y', 2000)], sync_buf: 'b2' },
+    ])
+    // 「y」到之前,桌面已经把这张卡拍掉了。
+    card.resolveElsewhere()
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: card.fastLane,
+      onInbound: async (m) => { seen.push(`start ${m.text}`); if (m.text === 'T1') await t1; seen.push(`end ${m.text}`) },
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 3)
+    await new Promise(r => setTimeout(r, 30))
+    expect(seen).toEqual(['start T1'])   // 「y」没在快车道里内联跑,排在 T1 后面
+    releaseT1()
+    await waitFor(() => seen.includes('end y'))
+    expect(seen).toEqual(['start T1', 'end T1', 'start y', 'end y'])
+    await handle.stop()
+  })
+
+  it('normal messages stay strictly ordered behind the running turn; only consumed answers jump ahead', async () => {
     let release!: () => void
     const gate = new Promise<void>(r => { release = r })
     const seen: string[] = []
+    const consumed: string[] = []
     const getUpdates = batches([
       { updates: [text('c1', 'first')], sync_buf: 'b1' },
       { updates: [text('c1', 'second'), text('c2', 'other')], sync_buf: 'b2' },
@@ -874,14 +910,14 @@ describe('startLongPollLoops — fastLane (permission answers while a turn await
     ])
     const handle = startLongPollLoops({
       accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
-      fastLane: (m) => m.text === 'y',
+      fastLane: (m) => { if (m.text !== 'y') return false; consumed.push('y'); return true },
       onInbound: async (m) => { seen.push(`start ${m.text}`); if (m.text === 'first') await gate; seen.push(`end ${m.text}`) },
     })
-    await waitFor(() => seen.includes('end y'))
-    expect(seen).toEqual(['start first', 'start y', 'end y'])   // second / other 排在 first 后面,没开始
+    await waitFor(() => consumed.length === 1)
+    expect(seen).toEqual(['start first'])   // second / other 排在 first 后面,没开始
     release()
     await waitFor(() => seen.includes('end other'))
-    expect(seen).toEqual(['start first', 'start y', 'end y', 'end first', 'start second', 'end second', 'start other', 'end other'])
+    expect(seen).toEqual(['start first', 'end first', 'start second', 'end second', 'start other', 'end other'])
     await handle.stop()
   })
 
@@ -896,15 +932,15 @@ describe('startLongPollLoops — fastLane (permission answers while a turn await
     ])
     const handle = startLongPollLoops({
       accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
-      fastLane: (m) => m.text === 'y',
+      fastLane: (m) => { if (m.text !== 'y') return false; order.push('consumed y'); return true },
       onInbound: async (m) => { if (m.text === 'slow') await gate; order.push(`handled ${m.text}`) },
       onSyncBuf: (_id, buf) => { order.push(`persist ${buf}`) },
     })
-    await waitFor(() => order.includes('handled y') && getUpdates.mock.calls.length >= 4)
-    expect(order).toEqual(['handled y'])   // 「slow」还没处理完 ⇒ 一个游标都不落盘(崩溃了 slow / y / next 都重放)
+    await waitFor(() => order.includes('consumed y') && getUpdates.mock.calls.length >= 4)
+    expect(order).toEqual(['consumed y'])   // 「slow」还没处理完 ⇒ 一个游标都不落盘(崩溃了 slow / y / next 都重放)
     release()
     await waitFor(() => order.includes('persist b3'))
-    expect(order).toEqual(['handled y', 'handled slow', 'persist b1', 'persist b2', 'handled next', 'persist b3'])
+    expect(order).toEqual(['consumed y', 'handled slow', 'persist b1', 'persist b2', 'handled next', 'persist b3'])
     await handle.stop()
   })
 
@@ -956,7 +992,61 @@ describe('startLongPollLoops — fastLane (permission answers while a turn await
     expect(persisted).toEqual(['b1'])   // running 那一批落盘;waiting 没处理 ⇒ 游标停在它之前,重启后重放
   })
 
-  it('a throwing fastLane predicate falls back to the normal queue', async () => {
+  it('stopAccountAndWait(): resolves only after the running message settles; queued ones and answers after abort are skipped', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const handled: string[] = []
+    const consumed: string[] = []
+    const persisted: string[] = []
+    const getUpdates = batches([
+      { updates: [text('c1', 'running')], sync_buf: 'b1' },
+      { updates: [text('c1', 'queued')], sync_buf: 'b2' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: (m) => { consumed.push(m.text); return false },
+      onInbound: async (m) => { if (m.text === 'running') await gate; handled.push(m.text) },
+      onSyncBuf: (_id, buf) => { persisted.push(buf) },
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 3)
+    let settled = false
+    const waiting = handle.stopAccountAndWait('A1').then(() => { settled = true })
+    await new Promise(r => setTimeout(r, 30))
+    expect(settled).toBe(false)   // 还在等跑着的那一条
+    release()
+    await waiting
+    expect(handled).toEqual(['running'])
+    expect(persisted).toEqual(['b1'])
+    expect(handle.running()).toEqual([])
+  })
+
+  it('getUpdates failures back off exponentially in fast-lane mode too, then delivery resumes', async () => {
+    const delays: number[] = []
+    const handled: string[] = []
+    let calls = 0
+    const handle = startLongPollLoops({
+      accounts: [acct], parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: () => false,
+      ilink: {
+        getUpdates: async () => {
+          calls += 1
+          if (calls <= 4) throw new Error('unknown certificate verification error')
+          if (calls === 5) return { sync_buf: 'x', updates: [text('c1', 'after')] }
+          await new Promise(r => setTimeout(r, 200))
+          return { sync_buf: 'x', updates: [] }
+        },
+      },
+      sleepFn: async (ms: number) => { delays.push(ms); await new Promise(r => setTimeout(r, 0)) },
+      onInbound: async (m) => { handled.push(m.text) },
+    })
+    await waitFor(() => handled.length === 1)
+    await handle.stop()
+    expect(delays).toHaveLength(4)
+    expect(delays[0]).toBeLessThan(delays[3]!)
+    expect(handled).toEqual(['after'])
+  })
+
+  it('a throwing fastLane handler counts as not consumed: the message goes to the normal queue', async () => {
     const seen: string[] = []
     const getUpdates = batches([{ updates: [text('c1', 'hi')], sync_buf: 'b1' }])
     const handle = startLongPollLoops({

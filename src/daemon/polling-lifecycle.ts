@@ -39,10 +39,10 @@ export interface PollingDeps {
     recordFailure(dep: 'wechat', err: unknown): void
   }
   /**
-   * 这条入站是不是对一张待批拍板卡的回答(微信「y / n」)。给了 ⇒ poll loop 不再整轮内联,这种消息一到就处理,
-   * 不排在正在等拍板的那一轮后面(poll-loop.ts 的 fastLane)。
+   * 试着把这条入站当成对一张待批拍板卡的回答当场消费(daemon/permission-answer.ts),消费了回 true。给了 ⇒ poll loop
+   * 不再整轮内联,回答一到就放开在等它的那一轮;没消费的照普通消息排队(poll-loop.ts 的 fastLane)。
    */
-  isPermissionAnswer?: (msg: InboundMsg) => boolean
+  consumePermissionAnswer?: (msg: InboundMsg) => boolean
 }
 
 export interface PollingLifecycle extends Lifecycle {
@@ -94,7 +94,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     resolveUserName: deps.resolveUserName,
     log: deps.log,
     ...(deps.onPollCycle ? { onPollCycle: deps.onPollCycle } : {}),
-    ...(deps.isPermissionAnswer ? { fastLane: deps.isPermissionAnswer } : {}),
+    ...(deps.consumePermissionAnswer ? { fastLane: deps.consumePermissionAnswer } : {}),
     // Persist the advanced ilink poll cursor so a daemon restart resumes from
     // where it left off instead of replaying ilink's unacked backlog (each
     // replay re-runs the agent + re-sends a fallback that ilink rejects with

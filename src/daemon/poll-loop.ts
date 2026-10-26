@@ -268,13 +268,15 @@ export interface PollLoopOptions {
     recordFailure(dep: 'wechat', err: unknown): void
   }
   /**
-   * 快车道(2026-10-26):这条消息要不要**马上**处理,不排在正在跑的那一轮后面 —— 给了它,poll loop 就不再整轮内联:
-   * 普通消息按到达顺序串行处理(和以前一样一条接一条,同一个账号里的顺序不变),loop 不等它们、接着拉下一批;
-   * 快车道的消息(主人对拍板卡的「y / n」)一到就处理,好让在等主人拍板的那一轮当场接着跑。
-   * 以前一轮卡在等拍板时 loop 不取新消息,主人在同一个微信对话里回的「y」要等这一轮超时之后才读到(那时已经拒了)。
+   * 快车道(2026-10-26):一到就试着**当场消费**这条消息(主人对拍板卡的「y / n」:daemon/permission-answer.ts),
+   * 消费了回 true;不是回答、或者那条待批已经没了(桌面拍过、到点过期)⇒ false,这条照普通消息排队。
+   * 它**只**放开等拍板的那一轮,从不走整条入站流水线 / 开一轮 —— 快车道里永远不会内联跑一轮。
+   * 给了它,poll loop 就不再整轮内联:普通消息按到达顺序串行处理(和以前一样一条接一条,同一个账号里的顺序不变),
+   * loop 不等它们、接着拉下一批。以前一轮卡在等拍板时 loop 不取新消息,主人在同一个微信对话里回的「y」要等这一轮
+   * 超时之后才读到(那时已经拒了)。
    * 游标照旧在**处理完之后**才落盘:某一批的游标排在这一批所有普通消息之后写,崩溃了从上一个落盘点重放(至少一次)。
    * 没处理完的普通消息最多攒 READ_AHEAD_MAX 条,攒满了就等它们跑完再拉。不给 ⇒ 老的整轮内联行为。
-   * 判定不能抛;抛了当普通消息。
+   * 抛了当没消费(排队)。
    */
   fastLane?: (msg: InboundMsg) => boolean
   /** Test injection point; defaults to this file's sleep(). */
@@ -463,10 +465,12 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
           }
           for (const msg of msgs) {
             if (fastLane) {
-              let urgent = false
-              try { urgent = fastLane(msg) === true } catch { urgent = false }
-              // 快车道:当场处理(拍板卡的回答 —— 不必等前面排着的普通消息,它要放开的正是在跑的那一轮)。
-              if (urgent) await handle(msg)
+              // 停下了:这一批剩下的不再处理(包括快车道),游标停在它们之前,重启后重放。
+              if (sig.aborted) { skipped = true; continue }
+              let consumed = false
+              try { consumed = fastLane(msg) === true } catch { consumed = false }
+              // 快车道:拍板卡的回答当场消费(放开在等它的那一轮),不排在前面的普通消息后面;没消费 ⇒ 普通队列,按到达顺序。
+              if (consumed) { try { onPollCycle?.() } catch { /* never throw into the loop */ } }
               else enqueue(msg)
               continue
             }
