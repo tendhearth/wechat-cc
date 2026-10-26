@@ -825,3 +825,147 @@ describe('startLongPollLoops — recordHeartbeat', () => {
     expect(recordHeartbeat).not.toHaveBeenCalled()
   })
 })
+
+// 快车道(2026-10-26):一轮卡在等主人拍板时,主人在同一个微信对话里回的「y」要当场被处理;
+// 普通消息照旧一条接一条、按到达顺序;游标照旧在处理完之后才落盘。
+describe('startLongPollLoops — fastLane (permission answers while a turn awaits approval)', () => {
+  const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: 'buf0' }
+  const text = (from: string, t: string, at = 1000): RawUpdate => ({ from_user_id: from, create_time_ms: at, message_type: 1, message_state: 2, item_list: [{ type: 1, text_item: { text: t } }] })
+  /** 每次 getUpdates 按顺序给一批;给完以后空轮询(10ms 一次)。 */
+  const batches = (list: Array<{ updates: RawUpdate[]; sync_buf: string }>) => {
+    let i = 0
+    return vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      if (i < list.length) return list[i++]!
+      await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+      return { updates: [], sync_buf: sb }
+    })
+  }
+
+  it('a "y" that arrives while a turn is blocked waiting for it is handled at once and unblocks the turn', async () => {
+    let approve!: (v: string) => void
+    const approval = new Promise<string>(r => { approve = r })
+    const events: string[] = []
+    const getUpdates = batches([
+      { updates: [text('owner', '删掉 build')], sync_buf: 'buf1' },
+      { updates: [text('owner', 'y', 2000)], sync_buf: 'buf2' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: (m) => m.text === 'y',
+      onInbound: async (m) => {
+        if (m.text === 'y') { events.push('answer'); approve('allow'); return }
+        events.push('turn:start')
+        events.push(`turn:got ${await approval}`)   // 这一轮在等主人拍板
+      },
+    })
+    await waitFor(() => events.includes('turn:got allow'))
+    expect(events).toEqual(['turn:start', 'answer', 'turn:got allow'])
+    await handle.stop()
+  })
+
+  it('normal messages stay strictly ordered behind the running turn; only fast-lane ones jump ahead', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const seen: string[] = []
+    const getUpdates = batches([
+      { updates: [text('c1', 'first')], sync_buf: 'b1' },
+      { updates: [text('c1', 'second'), text('c2', 'other')], sync_buf: 'b2' },
+      { updates: [text('c1', 'y')], sync_buf: 'b3' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: (m) => m.text === 'y',
+      onInbound: async (m) => { seen.push(`start ${m.text}`); if (m.text === 'first') await gate; seen.push(`end ${m.text}`) },
+    })
+    await waitFor(() => seen.includes('end y'))
+    expect(seen).toEqual(['start first', 'start y', 'end y'])   // second / other 排在 first 后面,没开始
+    release()
+    await waitFor(() => seen.includes('end other'))
+    expect(seen).toEqual(['start first', 'start y', 'end y', 'end first', 'start second', 'end second', 'start other', 'end other'])
+    await handle.stop()
+  })
+
+  it('a batch cursor is persisted only after every normal message up to it has been handled', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const order: string[] = []
+    const getUpdates = batches([
+      { updates: [text('c1', 'slow')], sync_buf: 'b1' },
+      { updates: [text('c1', 'y')], sync_buf: 'b2' },
+      { updates: [text('c1', 'next')], sync_buf: 'b3' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: (m) => m.text === 'y',
+      onInbound: async (m) => { if (m.text === 'slow') await gate; order.push(`handled ${m.text}`) },
+      onSyncBuf: (_id, buf) => { order.push(`persist ${buf}`) },
+    })
+    await waitFor(() => order.includes('handled y') && getUpdates.mock.calls.length >= 4)
+    expect(order).toEqual(['handled y'])   // 「slow」还没处理完 ⇒ 一个游标都不落盘(崩溃了 slow / y / next 都重放)
+    release()
+    await waitFor(() => order.includes('persist b3'))
+    expect(order).toEqual(['handled y', 'handled slow', 'persist b1', 'persist b2', 'handled next', 'persist b3'])
+    await handle.stop()
+  })
+
+  it('the loop keeps polling (and stamping the heartbeat) while a turn runs; read-ahead is bounded', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    let cycles = 0
+    const flood = Array.from({ length: 60 }, (_, i) => ({ updates: [text('c1', `m${i}`)], sync_buf: `b${i + 1}` }))
+    const getUpdates = batches(flood)
+    const handled: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: () => false,
+      onPollCycle: () => { cycles++ },
+      onInbound: async (m) => { if (m.text === 'm0') await gate; handled.push(m.text) },
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 50)
+    await new Promise(r => setTimeout(r, 50))
+    // 第一条卡着:loop 照样在拉、在盖心跳,但最多攒 READ_AHEAD_MAX 条就停下等。
+    expect(getUpdates.mock.calls.length).toBe(50)
+    expect(cycles).toBeGreaterThanOrEqual(50)
+    expect(handled).toEqual([])
+    release()
+    await waitFor(() => handled.length === 60)
+    expect(handled).toEqual(flood.map((_, i) => `m${i}`))
+    await handle.stop()
+  })
+
+  it('stop(): waits for the running turn, skips not-yet-started messages and never persists past them', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const handled: string[] = []
+    const persisted: string[] = []
+    const getUpdates = batches([
+      { updates: [text('c1', 'running')], sync_buf: 'b1' },
+      { updates: [text('c1', 'waiting')], sync_buf: 'b2' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: () => false, stopGraceMs: 5_000,
+      onInbound: async (m) => { if (m.text === 'running') await gate; handled.push(m.text) },
+      onSyncBuf: (_id, buf) => { persisted.push(buf) },
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 3)
+    const stopped = handle.stop()
+    setTimeout(release, 20)
+    await stopped
+    expect(handled).toEqual(['running'])
+    expect(persisted).toEqual(['b1'])   // running 那一批落盘;waiting 没处理 ⇒ 游标停在它之前,重启后重放
+  })
+
+  it('a throwing fastLane predicate falls back to the normal queue', async () => {
+    const seen: string[] = []
+    const getUpdates = batches([{ updates: [text('c1', 'hi')], sync_buf: 'b1' }])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: () => { throw new Error('boom') },
+      onInbound: async (m) => { seen.push(m.text) },
+    })
+    await waitFor(() => seen.length === 1)
+    expect(seen).toEqual(['hi'])
+    await handle.stop()
+  })
+})

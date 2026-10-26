@@ -3,11 +3,10 @@
 //
 // 整条链真跑:inbound → 协调器 → codex-chat-provider(审批 on-request)→ 剧本 app-server 发 commandExecution 审批请求 →
 // codex-chat-gate → authorizeChatCall → permission-gate(读 stateDir 的 permission-rules.json、红线)→ 放 / 卡片 →
-// 主人拍板 → 应答回到 app-server。四种:规则放(回复多一行)、主人同意、主人拒绝、红线照旧问。
+// 主人拍板 → 应答回到 app-server。规则放(回复多一行)、改文件直接放、主人同意、主人拒绝、红线照旧问。
 //
-// 主人拍板走的是卡片登记进的同一个待批登记处,从桌面那条口子答(POST /v1/permissions/resolve,桌宠的权限卡就用它):
-// 微信里回「y」要等 poll loop 读到,而 poll loop 在这一轮跑完之前不再取消息(onInbound 整轮内联,poll-loop.ts)——
-// 同一个对话里卡着等主人回话,微信那条读不到;Claude 对话的拍板卡是同一个处境(见 PR 说明)。
+// 主人在**同一个微信对话**里回「y」/「n」:这一轮正卡在等它,poll loop 的快车道(poll-loop.ts 的 fastLane)当场处理这句,
+// 不排在这一轮后面。红线那条从桌面那条口子答(POST /v1/permissions/resolve,桌宠的权限卡),两条路都钉住。
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
@@ -93,24 +92,24 @@ describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍�
     })
   })
 
-  it('主人同意:拍板卡发到主人微信,主人点同意 ⇒ codex 收到 accept', async () => {
+  it('主人同意:拍板卡发到主人微信,主人在同一个对话里回「y」⇒ 当场生效,codex 收到 accept', async () => {
     await withDaemon('rm -rf build', '删好了。', async (daemon, decision) => {
       daemon.sendText('chat1', '把 build 删了')
       const card = await daemon.waitForOutbound(m => texts(m).some(isCard), 10_000)
       expect(texts(card).find(isCard)).toContain('rm -rf build')
       expect(decision()).toBeUndefined()
-      await resolvePending(daemon.stateDir, 'allow')
+      daemon.sendText('chat1', 'y')
       await daemon.waitForOutbound(m => texts(m).some(t => t.includes('删好了。')), 10_000)
       expect(decision()).toBe('accept')
       expect(texts(daemon.ilink.outbox()).some(t => t.includes('按规则'))).toBe(false)
     })
   })
 
-  it('主人拒绝 ⇒ codex 收到 decline,这一轮照常收尾', async () => {
+  it('主人拒绝:同一个对话里回「n」⇒ codex 收到 decline,这一轮照常收尾', async () => {
     await withDaemon('rm -rf build', '没删,被拒了。', async (daemon, decision) => {
       daemon.sendText('chat1', '把 build 删了')
       await daemon.waitForOutbound(m => texts(m).some(isCard), 10_000)
-      await resolvePending(daemon.stateDir, 'deny')
+      daemon.sendText('chat1', 'n')
       await daemon.waitForOutbound(m => texts(m).some(t => t.includes('没删,被拒了。')), 10_000)
       expect(decision()).toBe('decline')
     })

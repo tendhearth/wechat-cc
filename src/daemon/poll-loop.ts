@@ -267,6 +267,16 @@ export interface PollLoopOptions {
     recordSuccess(dep: 'wechat'): void
     recordFailure(dep: 'wechat', err: unknown): void
   }
+  /**
+   * 快车道(2026-10-26):这条消息要不要**马上**处理,不排在正在跑的那一轮后面 —— 给了它,poll loop 就不再整轮内联:
+   * 普通消息按到达顺序串行处理(和以前一样一条接一条,同一个账号里的顺序不变),loop 不等它们、接着拉下一批;
+   * 快车道的消息(主人对拍板卡的「y / n」)一到就处理,好让在等主人拍板的那一轮当场接着跑。
+   * 以前一轮卡在等拍板时 loop 不取新消息,主人在同一个微信对话里回的「y」要等这一轮超时之后才读到(那时已经拒了)。
+   * 游标照旧在**处理完之后**才落盘:某一批的游标排在这一批所有普通消息之后写,崩溃了从上一个落盘点重放(至少一次)。
+   * 没处理完的普通消息最多攒 READ_AHEAD_MAX 条,攒满了就等它们跑完再拉。不给 ⇒ 老的整轮内联行为。
+   * 判定不能抛;抛了当普通消息。
+   */
+  fastLane?: (msg: InboundMsg) => boolean
   /** Test injection point; defaults to this file's sleep(). */
   sleepFn?: (ms: number, signal: AbortSignal) => Promise<void>
   /** 停止宽限:abort 后最多等这么久让 loop 自然退出,超时也返回(见 stop()）。 */
@@ -318,6 +328,9 @@ export interface PollLoopHandle {
  *  flipped to failing (~3 min at the 35s client timeout). */
 export const ZOMBIE_TIMEOUT_STREAK = 5
 
+/** 快车道模式下,还没处理完的普通消息最多攒这么多条,再多就先等它们跑完再拉下一批(不把 ilink 的积压全搬进内存)。 */
+export const READ_AHEAD_MAX = 50
+
 interface LoopRecord {
   abort: AbortController
   promise: Promise<void>
@@ -350,6 +363,39 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
     let syncBuf = account.syncBuf
     let failStreak = 0
     let timeoutStreak = 0
+
+    // 处理一条:出错只记日志;每处理完一条也盖一次心跳(见下面老路径的注释)。
+    const handle = async (msg: InboundMsg): Promise<void> => {
+      try {
+        await onInbound(msg)
+      } catch (err) {
+        log('ERROR', `onInbound threw: ${err}`)
+      }
+      try { onPollCycle?.() } catch { /* never throw into the loop */ }
+    }
+    // 快车道模式(opts.fastLane):普通消息与游标落盘排成一条串行的链,loop 不等它。
+    const fastLane = opts.fastLane
+    let work: Promise<void> = Promise.resolve()
+    let queued = 0
+    let persisted = syncBuf
+    // 停下以后还没开始处理的普通消息不再处理(重启后从落盘的游标重放);跳过了一条,后面的游标就不能再落盘。
+    let skipped = false
+    const enqueue = (msg: InboundMsg) => {
+      queued++
+      work = work.then(async () => {
+        try {
+          if (sig.aborted) { skipped = true; return }
+          await handle(msg)
+        } finally { queued-- }
+      })
+    }
+    const enqueuePersist = (cursor: string) => {
+      work = work.then(() => {
+        if (skipped || cursor === persisted) return
+        persisted = cursor
+        onSyncBuf?.(account.id, cursor)
+      })
+    }
 
     log('POLL', `loop started for ${account.id}`)
 
@@ -416,28 +462,35 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
             log('POLL', `inbound ${msgs.length} message(s) from ${[...new Set(msgs.map(m => m.chatId))].join(',')}`)
           }
           for (const msg of msgs) {
-            try {
-              await onInbound(msg)
-            } catch (err) {
-              log('ERROR', `onInbound threw: ${err}`)
+            if (fastLane) {
+              let urgent = false
+              try { urgent = fastLane(msg) === true } catch { urgent = false }
+              // 快车道:当场处理(拍板卡的回答 —— 不必等前面排着的普通消息,它要放开的正是在跑的那一轮)。
+              if (urgent) await handle(msg)
+              else enqueue(msg)
+              continue
             }
-            // Stamp the heartbeat after EACH message too, not just per
-            // getUpdates round-trip. onInbound runs the full agent turn inline,
-            // so a batch of slow turns would otherwise hold the loop (and the
-            // heartbeat) for sum-of-turns — long enough for the instance lock
-            // to look stale and be stolen by a second daemon. Per-message
-            // stamping bounds the gap to a single turn. Guarded; never throws.
-            try { onPollCycle?.() } catch { /* never throw into the loop */ }
+            // Stamp the heartbeat after EACH message too (inside handle), not
+            // just per getUpdates round-trip. onInbound runs the full agent turn
+            // inline here, so a batch of slow turns would otherwise hold the
+            // loop (and the heartbeat) for sum-of-turns — long enough for the
+            // instance lock to look stale and be stolen by a second daemon.
+            // Per-message stamping bounds the gap to a single turn.
+            await handle(msg)
           }
         }
 
-        // Persist AFTER the onInbound loop above, so a crash mid-batch
+        // Persist AFTER the batch's messages are handled, so a crash mid-batch
         // redelivers; only on an actual change to avoid disk churn on the
-        // idle long-poll returns that echo the same cursor.
+        // idle long-poll returns that echo the same cursor. 快车道模式:排在这一批
+        // 普通消息之后(处理完才落盘),loop 先拿新游标接着拉。
         if (resp.sync_buf !== undefined && resp.sync_buf !== syncBuf) {
           syncBuf = resp.sync_buf
-          onSyncBuf?.(account.id, syncBuf)
+          if (fastLane) enqueuePersist(syncBuf)
+          else onSyncBuf?.(account.id, syncBuf)
         }
+        // 攒满了就先等排着的跑完(背压:积压留在 ilink,不搬进内存)。
+        if (fastLane && queued >= READ_AHEAD_MAX) await work
 
         // Record a heartbeat for every successful (non-expired) poll.
         // Placed after sync_buf update so the timestamp reflects a completed
@@ -467,6 +520,8 @@ export function startLongPollLoops(opts: PollLoopOptions): PollLoopHandle {
       }
     }
 
+    // 快车道模式:等正在跑的那一条收尾(和以前 loop 卡在 onInbound 里等它一样);没开始的跳过,游标停在它们之前。
+    if (fastLane) await work
     log('POLL', `loop stopped for ${account.id}`)
   }
 

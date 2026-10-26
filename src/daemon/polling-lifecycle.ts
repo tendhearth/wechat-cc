@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { Lifecycle } from '../lib/lifecycle'
 import { startLongPollLoops, parseUpdates, type RawUpdate } from './poll-loop'
+import type { InboundMsg } from '../domain/prompt-format'
 import { loadAllAccounts, type IlinkAccount } from './ilink-glue'
 import type { PipelineRun } from './inbound/types'
 import { writeFileAtomic } from '../lib/json-file'
@@ -37,6 +38,11 @@ export interface PollingDeps {
     recordSuccess(dep: 'wechat'): void
     recordFailure(dep: 'wechat', err: unknown): void
   }
+  /**
+   * 这条入站是不是对一张待批拍板卡的回答(微信「y / n」)。给了 ⇒ poll loop 不再整轮内联,这种消息一到就处理,
+   * 不排在正在等拍板的那一轮后面(poll-loop.ts 的 fastLane)。
+   */
+  isPermissionAnswer?: (msg: InboundMsg) => boolean
 }
 
 export interface PollingLifecycle extends Lifecycle {
@@ -88,6 +94,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     resolveUserName: deps.resolveUserName,
     log: deps.log,
     ...(deps.onPollCycle ? { onPollCycle: deps.onPollCycle } : {}),
+    ...(deps.isPermissionAnswer ? { fastLane: deps.isPermissionAnswer } : {}),
     // Persist the advanced ilink poll cursor so a daemon restart resumes from
     // where it left off instead of replaying ilink's unacked backlog (each
     // replay re-runs the agent + re-sends a fallback that ilink rejects with

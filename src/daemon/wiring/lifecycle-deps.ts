@@ -4,7 +4,7 @@
  */
 import type { Db } from '../../lib/db'
 import type { IlinkAccount } from '../ilink-glue'
-import type { WechatContacts, WechatPolling } from '../../ports/wechat'
+import type { WechatContacts, WechatPermissions, WechatPolling } from '../../ports/wechat'
 import type { Bootstrap } from '../bootstrap'
 import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../../features/companion'
 import type { SchedulerDeps } from '../guard/scheduler'
@@ -28,7 +28,7 @@ export interface LifecycleDepsOpts {
   stateDir: string
   db: Db
   /** 拉消息与关机冲盘(polling / ilink 两个生命周期)、拉消息时给对方起名字。 */
-  ilink: WechatPolling & Pick<WechatContacts, 'resolveUserName'>
+  ilink: WechatPolling & Pick<WechatContacts, 'resolveUserName'> & Pick<WechatPermissions, 'probePermissionReply'>
   accounts: IlinkAccount[]
   boot: Bootstrap
   dangerously: boolean
@@ -154,6 +154,8 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, s
       },
       parse: parseUpdates,
       resolveUserName: (cid) => ilink.resolveUserName(cid),
+      // 主人对拍板卡的「y / n」一到就处理(和命令表里 permission-reply 那一条同一个判定),不排在等拍板的那一轮后面。
+      isPermissionAnswer: (m) => ilink.probePermissionReply(m.text ?? '', m.chatId, m.quote?.text),
       log,
       // Daemon-health heartbeat: each successful poll round-trip stamps the
       // file the instance lock reads, so a wedged/half-started daemon (poll
