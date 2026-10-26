@@ -3,8 +3,10 @@
 /** @typedef {import('../../../../src/cli/schema').SessionsDeleteOutputT} SessionsDelete */
 /** @typedef {import('../../../../src/cli/schema').AvatarInfoOutputT} AvatarInfo */
 /**
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} Deps
+ * invokeWorkbenchApi:宿主代理(daemon_request)。头像、会话名单都是主人的私事,admin 档(架构终态 F6 起不再起 CLI)。
+ * @typedef {{ invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> }} Deps
  */
+import { V1, v1 } from '../daemon-client.js'
 
 // Shared helpers left over from the old 「会话」 pane.
 //
@@ -16,16 +18,6 @@
 // 要找旧渲染代码看 git history。
 
 const FAV_STORAGE_KEY = 'wechat-cc:favorite-sessions'
-
-/**
- * Append `--chat <chatId>` to a sessions CLI arg list when chatId is set.
- * @param {string[]} args
- * @param {string|null|undefined} chatId
- * @returns {string[]}
- */
-function withChat(args, chatId) {
-  return chatId ? [...args, "--chat", chatId] : args
-}
 
 /**
  * Default-avatar initial — first non-whitespace char of the name,
@@ -57,14 +49,14 @@ export function toggleFavorite(alias) {
 
 /**
  * Look up a custom avatar for a contact key. Never throws — a missing or
- * failing avatar CLI just means the chat falls back to the letter avatar.
+ * failing avatar lookup (daemon not running) just means the chat falls back to the letter avatar.
  * @param {Deps} deps
  * @param {string} key
  * @returns {Promise<{ exists: boolean, path: string }|null>}
  */
 export async function avatarInfo(deps, key) {
   try {
-    const r = /** @type {AvatarInfo} */ (await deps.invoke("wechat_cli_json", { args: ["avatar", "info", key, "--json"] }))
+    const r = /** @type {AvatarInfo} */ (await v1(deps.invokeWorkbenchApi, V1.avatar.info, { query: { key } }))
     if (r && r.ok) return { exists: !!r.exists, path: String(r.path || '') }
     return null
   } catch { return null }
@@ -98,6 +90,6 @@ export function attachmentUrl(path) {
 export async function deleteProjectByAlias(deps, alias, chatId = null) {
   if (!alias) return
   await /** @type {Promise<SessionsDelete>} */ (
-    deps.invoke("wechat_cli_json", { args: withChat(["sessions", "delete", alias, "--json"], chatId) })
+    v1(deps.invokeWorkbenchApi, V1.sessions.delete, { body: chatId ? { alias, chat: chatId } : { alias } })
   )
 }

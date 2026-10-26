@@ -1298,7 +1298,7 @@ describe('provider menu', () => {
     expect(menuButtons.map(b => b.dataset.provider)).toEqual(['claude', 'codex', 'cursor'])
   })
 
-  it('user card provider click invokes mode set with JSON solo provider', async () => {
+  it('user card provider click posts /v1/conversation/set-mode with the solo provider', async () => {
     const { menuButtons } = installProviderMenuDom()
     const row = { dataset: { chatId: 'chat-1', currentProvider: 'claude' } }
     const anchor = {
@@ -1308,23 +1308,17 @@ describe('provider menu', () => {
       contains: (_node: any) => false,
     }
     const invoke = vi.fn(async () => ({ ok: true }))
+    const invokeApi = vi.fn(async (_method: string, path: string, _body?: unknown) => path === '/v1/llm/health' ? ({ok:true,registered:['claude','codex','cursor']}) : ({ ok: true }))
 
-    await toggleUserProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { refresh: vi.fn(async () => null) } }, anchor, makeProviderReport('claude'))
+    await toggleUserProviderMenu({ invoke, invokeApi, doctorPoller: { refresh: vi.fn(async () => null) } }, anchor, makeProviderReport('claude'))
     const geminiBtn = menuButtons.find(b => b.dataset.provider === 'cursor')
     expect(geminiBtn).toBeDefined()
     for (const handler of geminiBtn!._clickHandlers) {
       await handler({ stopPropagation: () => {} })
     }
 
-    const modeSetCall = invoke.mock.calls.find(c => {
-      const a = (c as any[])[1] as any
-      return a?.args?.[0] === 'mode' && a?.args?.[1] === 'set'
-    })
-    expect(modeSetCall).toBeDefined()
-    const args = (modeSetCall as any)[1].args
-    expect(args[2]).toBe('chat-1')
-    expect(JSON.parse(args[3])).toEqual({ kind: 'solo', provider: 'cursor' })
-    expect(args[4]).toBe('--json')
+    expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/conversation/set-mode', { chatId: 'chat-1', mode: { kind: 'solo', provider: 'cursor' } })
+    expect(invoke).not.toHaveBeenCalledWith('wechat_cli_json', expect.anything())
   })
 })
 

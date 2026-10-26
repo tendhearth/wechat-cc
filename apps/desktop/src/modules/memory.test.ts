@@ -26,11 +26,12 @@ function fakeEl() {
   }
 }
 
-/** Bare deps stub — invoke/invokeApi mocked per-test, other deps no-ops. */
+/** Bare deps stub — invoke/invokeApi/invokeWorkbenchApi mocked per-test, other deps no-ops. */
 function makeDeps(overrides: Record<string, any> = {}) {
   return {
     invoke: vi.fn(),
     invokeApi: vi.fn(),
+    invokeWorkbenchApi: vi.fn(),
     formatInvokeError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
     doctorPoller: { current: null },
     ...overrides,
@@ -80,15 +81,13 @@ describe('generateMemoryProfile', () => {
     const statusEl = fakeEl()
     ;(globalThis as any).document.getElementById = (id: string) => (id === 'memory-status' ? statusEl : null)
     const deps = makeDeps({
-      // loadMemoryPane (via currentChatId) reads `memory list` through deps.invoke,
-      // then refreshMemoryProfileStatus also goes through deps.invoke — both stay
-      // on the sidecar (pure IO, out of scope for this task).
-      invoke: vi.fn().mockImplementation((_cmd: string, args: { args: string[] }) => {
-        const sub = args.args
-        if (sub[0] === 'memory' && sub[1] === 'list') {
+      // loadMemoryPane (via currentChatId) reads GET /v1/memory/files through the host proxy,
+      // then refreshMemoryProfileStatus reads GET /v1/memory/profile/status the same way(架构终态 F6).
+      invokeWorkbenchApi: vi.fn().mockImplementation((_method: string, path: string) => {
+        if (path === '/v1/memory/files') {
           return Promise.resolve([{ userId: 'chat123@im.wechat', fileCount: 1, files: [] }])
         }
-        if (sub[0] === 'memory' && sub[1] === 'profile' && sub[1 + 1] === 'status') {
+        if (path.startsWith('/v1/memory/profile/status')) {
           return Promise.resolve({ ok: true, status: 'ready', canGenerate: true, reason: 'ok' })
         }
         return Promise.resolve({ ok: true })
@@ -104,12 +103,11 @@ describe('generateMemoryProfile', () => {
     const statusEl = fakeEl()
     ;(globalThis as any).document.getElementById = (id: string) => (id === 'memory-status' ? statusEl : null)
     const deps = makeDeps({
-      invoke: vi.fn().mockImplementation((_cmd: string, args: { args: string[] }) => {
-        const sub = args.args
-        if (sub[0] === 'memory' && sub[1] === 'list') {
+      invokeWorkbenchApi: vi.fn().mockImplementation((_method: string, path: string) => {
+        if (path === '/v1/memory/files') {
           return Promise.resolve([{ userId: 'chat123@im.wechat', fileCount: 1, files: [] }])
         }
-        if (sub[0] === 'memory' && sub[1] === 'profile' && sub[1 + 1] === 'status') {
+        if (path.startsWith('/v1/memory/profile/status')) {
           return Promise.resolve({ ok: true, status: 'ready', canGenerate: true, reason: 'ok' })
         }
         return Promise.resolve({ ok: true })
@@ -154,7 +152,7 @@ describe('memory page availability', () => {
     const root = fakeEl()
     root.innerHTML = '正在整理 CC 眼中的你…'
     ;(globalThis as any).document.getElementById = (id: string) => id === 'memory-profile-content' ? root : null
-    await loadMemoryTopZone(makeDeps({ invoke: vi.fn().mockResolvedValue({ users: [] }) }) as any)
+    await loadMemoryTopZone(makeDeps({ invokeWorkbenchApi: vi.fn().mockResolvedValue({ users: [] }) }) as any)
     expect(root.innerHTML).toContain('还没有可用的会话')
     expect(root.innerHTML).toContain('首页')
     expect(root.innerHTML).not.toContain('正在整理')
@@ -168,12 +166,13 @@ describe('profile evidence and honest empty states',()=>{
     const root={...fakeEl(),querySelector:()=>null,querySelectorAll:()=>[]},box=fakeEl()
     ;(globalThis as any).requestAnimationFrame=()=>0
     ;(globalThis as any).document.getElementById=(id:string)=>id==='memory-profile-content'?root:['memory-observations','memory-milestones'].includes(id)?box:null
-    const deps=makeDeps({invoke:vi.fn(async(_cmd:string,{args}:{args:string[]})=>{
-      if(args[0]==='memory'&&args[1]==='list')return[{userId:'owner',fileCount:files.length,files}]
-      if(args[0]==='observations')return{observations}
-      if(args[0]==='milestones')return{milestones:[]}
-      if(args[1]==='profile-read')return profile?{ok:true,content:JSON.stringify(profile)}:{ok:false}
-      if(args[0]==='memory'&&args[1]==='read')return overview?{ok:true,content:overview}:{ok:false}
+    const deps=makeDeps({invokeWorkbenchApi:vi.fn(async(_method:string,path:string)=>{
+      const route=path.split('?')[0]
+      if(route==='/v1/memory/files')return[{userId:'owner',fileCount:files.length,files}]
+      if(route==='/v1/observations/list')return{observations}
+      if(route==='/v1/milestones/list')return{milestones:[]}
+      if(route==='/v1/memory/profile')return profile?{ok:true,content:JSON.stringify(profile)}:{ok:false}
+      if(route==='/v1/memory/file')return overview?{ok:true,content:overview}:{ok:false}
       return{ok:false}
     })})
     await memory.loadMemoryPane(deps as any);await memory.loadMemoryTopZone(deps as any);return root.innerHTML

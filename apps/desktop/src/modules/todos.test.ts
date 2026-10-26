@@ -136,7 +136,7 @@ describe('待办 — 操作层级与提醒生命周期', () => {
   let defaultChatId: string | null
   let admins: string[]
   let api: Mock<(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>>
-  let invoke: Mock<(cmd: string, args: Record<string, unknown>) => Promise<unknown>>
+  let invoke: Mock<(method: string, path: string, body?: Record<string, unknown>) => Promise<unknown>>
   let pageModule: typeof todosModule
   let lifecycle: { deactivateTodosPage?: () => void } = {}
 
@@ -157,7 +157,7 @@ describe('待办 — 操作层级与提醒生命周期', () => {
   }
 
   async function mount() {
-    pageModule.initTodosPage({ invoke }, { api })
+    pageModule.initTodosPage({ invokeWorkbenchApi: invoke }, { api })
     await settle()
   }
 
@@ -193,9 +193,8 @@ describe('待办 — 操作层级与提醒生命周期', () => {
       if (path === '/v1/companion/status') return { enabled: true, timezone: 'America/Los_Angeles', default_chat_id: defaultChatId, snooze_until: null, import_local_history: false }
       return { ok: true }
     })
-    invoke = vi.fn(async (_cmd: string, args: Record<string, unknown>): Promise<unknown> => {
-      const argv = args.args as string[]
-      if (argv[0] === 'access') return { ok: true, admins, trusted: ['guest-chat'], allowFrom: [], dmPolicy: 'allowlist' }
+    invoke = vi.fn(async (_method: string, path: string): Promise<unknown> => {
+      if (path === '/v1/access/list') return { ok: true, admins, trusted: ['guest-chat'], allowFrom: [], dmPolicy: 'allowlist' }
       // Actual memory list is an array; its first entry may be a guest.
       return [{ userId: 'guest-chat', facts: 1 }, { userId: 'second-owner', facts: 3 }]
     })
@@ -235,8 +234,8 @@ describe('待办 — 操作层级与提醒生命周期', () => {
     await settle()
     expect(scheduleCalls()).toHaveLength(1)
     expect(scheduleCalls()[0]).toEqual(['POST', '/v1/reminders/schedule', expect.objectContaining({ chat_id: 'second-owner', text: '⏰ 待办：发出合同' })])
-    expect(invoke).toHaveBeenCalledWith('wechat_cli_json', { args: ['access', 'list', '--json'] })
-    expect(invoke.mock.calls.some(call => (call[1].args as string[])[0] === 'memory')).toBe(false)
+    expect(invoke).toHaveBeenCalledWith('GET', '/v1/access/list')
+    expect(invoke.mock.calls.some(call => String(call[1]).startsWith('/v1/memory'))).toBe(false)
     expect([...pop.querySelectorAll<HTMLInputElement | HTMLButtonElement>('button,input')].every(control => control.disabled)).toBe(true)
     pop.querySelector<HTMLButtonElement>('[data-remind-at]')!.click()
     await settle()
@@ -309,9 +308,8 @@ describe('待办 — 操作层级与提醒生命周期', () => {
   it('旧提醒迟到成功不会关闭随后打开的另一条选择器', async () => {
     // Let the old implementation reach its schedule call so this test isolates
     // picker lifetime independently of the owner contract regression.
-    invoke.mockImplementation(async (_cmd, args) => {
-      const argv = args.args as string[]
-      return argv[0] === 'access' ? { ok: true, admins } : { users: [{ userId: 'second-owner' }] }
+    invoke.mockImplementation(async (_method, path) => {
+      return path === '/v1/access/list' ? { ok: true, admins } : { users: [{ userId: 'second-owner' }] }
     })
     const pending = deferred<{ ok: boolean }>()
     const normal = api.getMockImplementation()!
@@ -341,7 +339,7 @@ describe('待办 — 操作层级与提醒生命周期', () => {
     const owner = deferred<unknown>()
     const normal = api.getMockImplementation()!
     api.mockImplementation((method, path, body) => path === '/v1/companion/status' ? owner.promise : normal(method, path, body))
-    invoke.mockImplementation((_cmd, args) => (args.args as string[])[0] === 'memory' ? owner.promise : Promise.resolve({ ok: true, admins }))
+    invoke.mockImplementation((_method, path) => path.startsWith('/v1/memory') ? owner.promise : Promise.resolve({ ok: true, admins }))
     await mount()
     const pop = await openPicker()
     pop.querySelector<HTMLButtonElement>('[data-remind-at]')!.click()
@@ -387,7 +385,7 @@ describe('待办 — 操作层级与提醒生命周期', () => {
     let readCount = 0
     api.mockImplementation((method, path, body) => path === '/v1/knowledge/facts/find_facts' && body?.status === 'active' && ++readCount === 1
       ? oldRead.promise : normal(method, path, body))
-    pageModule.initTodosPage({ invoke }, { api })
+    pageModule.initTodosPage({ invokeWorkbenchApi: invoke }, { api })
     await settle()
     expect(typeof lifecycle.deactivateTodosPage).toBe('function')
     lifecycle.deactivateTodosPage!()

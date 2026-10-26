@@ -3,15 +3,37 @@
 // Conversations module — RFC 03 P5.2 mode display + programmatic switch.
 // Owns the dashboard's per-chat mode table (#conversations-body,
 // #conversations-meta). Mode can now be flipped from the console via
-// the dropdown — fires `mode set <chatId> <shorthand> --json` through
-// the same coordinator.setMode path that /cc /codex use, plus a wechat
+// the dropdown — POST /v1/conversation/set-mode (架构终态 F6;以前起 `wechat-cc mode set`,那条 CLI 本身也只是转发这一条)
+// through the same coordinator.setMode path that /cc /codex use, plus a wechat
 // reply "🎛 已切换到 X（来自控制台）".
 //
-// Rendering is driven by a periodic `wechat-cc conversations list --json`
+// Rendering is driven by a periodic GET /v1/conversations/list
 // poll (10s tick). Dropdown onChange fires immediately; poller picks up the
 // new persisted mode on next tick.
 
 import { conversationRows, escapeHtml } from "../view.js"
+import { V1, v1 } from "../daemon-client.js"
+
+/**
+ * 下拉框的简写 ⇒ 完整的 Mode(搬自 `wechat-cc mode set` 的 SHORTHAND,一字不差;不认识的照旧当 JSON 解析)。
+ * @param {string} shorthand
+ * @returns {Record<string, unknown>}
+ */
+export function modeFromShorthand(shorthand) {
+  /** @type {Record<string, Record<string, unknown>>} */
+  const SHORTHAND = {
+    cc: { kind: "solo", provider: "claude" },
+    codex: { kind: "solo", provider: "codex" },
+    solo: { kind: "solo", provider: "claude" },
+    both: { kind: "parallel" },
+    chat: { kind: "chatroom" },
+  }
+  const known = SHORTHAND[shorthand]
+  if (known) return known
+  const parsed = JSON.parse(shorthand)
+  if (typeof parsed !== "object" || parsed === null) throw new Error(`unrecognised mode '${shorthand}'`)
+  return parsed
+}
 
 // Map badge.tone → the closest shorthand for pre-selecting the dropdown.
 // parallel → both, primary_tool → primary (no clean shorthand, use cc as fallback).
@@ -38,7 +60,7 @@ function truncate(s, n) {
 
 /**
  * @param {{ conversations?: any[] } | null | undefined} report
- * @param {{ invoke?: (command: string, args: Record<string, any>) => Promise<any> } | undefined} deps
+ * @param {{ invokeApi?: (method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> } | undefined} deps
  */
 export function renderConversations(report, deps) {
   const tbody = document.getElementById("conversations-body")
@@ -92,10 +114,10 @@ export function renderConversations(report, deps) {
       const toneMap = { cc: "solo", codex: "solo", both: "parallel", chat: "chatroom" }
       select.className = `mode-select mode-${toneMap[newMode] || "solo"}`
 
-      if (!deps?.invoke) return
+      if (!deps?.invokeApi || !chatId) return
 
       try {
-        await deps.invoke("wechat_cli_json", { args: ["mode", "set", chatId, newMode, "--json"] })
+        await v1(deps.invokeApi, V1.conversation.setMode, { body: { chatId, mode: modeFromShorthand(newMode) } })
         // Success: update current shorthand so next change event has a correct prev value.
         select.dataset.current = newMode
       } catch (err) {

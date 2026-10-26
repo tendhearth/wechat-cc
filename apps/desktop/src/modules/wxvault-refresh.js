@@ -21,6 +21,8 @@ let inFlight = null
 export function refreshWxvaultOnAppStart(deps) {
   if (inFlight) return inFlight
   inFlight = (async () => {
+    // 留在 CLI(架构终态 F6 清点):GET /v1/plugins/list 按设计不列 hidden 插件,wxvault 正是 hidden 的(解密基础设施);
+    // 而且接下来的 `plugin setup` 要在 app 的身份下起子进程(完全磁盘访问权限),本来就是装服务 / setup 那一族。
     const rows = /** @type {PluginRow[]} */ (
       await deps.invoke('wechat_cli_json', { args: ['plugin', 'list', '--json'] })
     )

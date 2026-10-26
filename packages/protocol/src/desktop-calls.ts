@@ -25,6 +25,12 @@ type Body = Record<string, unknown>
 const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
+  access: { list: call('GET /v1/access/list') },
+  avatar: {
+    info: call('GET /v1/avatar/info', { query: t<{ key: string }>() }),
+    set: call('POST /v1/avatar/set', body()),
+    remove: call('POST /v1/avatar/remove', body()),
+  },
   a2a: {
     list: call('GET /v1/a2a/list'),
     info: call('GET /v1/a2a/info'),
@@ -51,6 +57,16 @@ export const DESKTOP_CALLS = {
     thoughts: call('GET /v1/companion/thoughts'),
   },
   connections: { get: call('GET /v1/connections') },
+  conversation: { setMode: call('POST /v1/conversation/set-mode', body()) },
+  conversations: { list: call('GET /v1/conversations/list') },
+  dialogue: {
+    timeline: call('GET /v1/dialogue/timeline', { query: t<{ chat_id: string; limit: number; before?: string }>() }),
+    threads: call('GET /v1/dialogue/threads', { query: t<{ chat_id: string; facet: string; include_private?: number }>() }),
+    thread: call('GET /v1/dialogue/thread', { query: t<{ id: string }>() }),
+    search: call('GET /v1/dialogue/search', { query: t<{ chat_id: string; q: string }>() }),
+    unlock: call('POST /v1/dialogue/unlock', body()),
+  },
+  events: { list: call('GET /v1/events/list', { query: t<{ chat_id: string; limit: number }>() }) },
   health: {
     get: call('GET /v1/health'),
     incidents: call('GET /v1/health/incidents'),
@@ -82,6 +98,14 @@ export const DESKTOP_CALLS = {
     ownerChatSearch: call('GET /v1/matter/owner-chat/search', { query: t<{ q: string; limit: number }>() }),
   },
   memory: {
+    edit: call('POST /v1/memory/edit', body()),
+    file: call('GET /v1/memory/file', { query: t<{ user_id: string; path: string }>() }),
+    fileWrite: call('POST /v1/memory/file/write', body()),
+    files: call('GET /v1/memory/files'),
+    profile: call('GET /v1/memory/profile', { query: t<{ chat_id: string }>() }),
+    profileStatus: call('GET /v1/memory/profile/status', { query: t<{ chat_id: string }>() }),
+    projects: call('GET /v1/memory/projects'),
+    view: call('POST /v1/memory/view', body()),
     portrait: call('GET /v1/memory/portrait'),
     portraitGenerate: call('POST /v1/memory/portrait/generate', body()),
     profileGenerate: call('POST /v1/memory/profile/generate', body()),
@@ -89,7 +113,12 @@ export const DESKTOP_CALLS = {
     sourceReview: call('POST /v1/memory/source/review', body()),
     synthesize: call('POST /v1/memory/synthesize'),
   },
+  milestones: { list: call('GET /v1/milestones/list', { query: t<{ chat_id: string }>() }) },
   net: { probe: call('POST /v1/net/probe', body()) },
+  observations: {
+    list: call('GET /v1/observations/list', { query: t<{ chat_id: string }>() }),
+    archive: call('POST /v1/observations/archive', body()),
+  },
   pair: {
     accept: call('POST /v1/pair/accept', body()),
     start: call('POST /v1/pair/start'),
@@ -111,6 +140,11 @@ export const DESKTOP_CALLS = {
     toggle: call('POST /v1/plugins/toggle', body()),
     install: call('POST /v1/plugins/install', body()),
     upgrade: call('POST /v1/plugins/upgrade', body()),
+  },
+  sessions: {
+    projects: call('GET /v1/sessions/projects', { query: t<{ chat?: string }>() }),
+    chats: call('GET /v1/sessions/chats'),
+    delete: call('POST /v1/sessions/delete', body()),
   },
   reminders: { schedule: call('POST /v1/reminders/schedule', body()) },
   social: {

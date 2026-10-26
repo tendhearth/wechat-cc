@@ -11,12 +11,9 @@ async function boot(page:Page,shimUrl:string,shim:any){
  await page.route('**/v1/knowledge/facts/find_facts',r=>r.fulfill({status:state.mode==='error'?503:200,json:state.mode==='error'?{error:'unavailable'}:{results:r.request().postDataJSON().status==='active'?state.active:state.settled}}))
  await page.route('**/v1/knowledge/graph/top_contacts',r=>r.fulfill({json:{contacts:[{username:'friend',display:'阿柚'}]}}))
  await page.route('**/v1/companion/status',r=>r.fulfill({json:{default_chat_id:state.preferred}}))
- await page.route('**/__invoke',r=>{
-  const body=r.request().postDataJSON()
-  if(body.command==='wechat_cli_json'&&body.args?.args?.[0]==='access')return r.fulfill({json:{result:{ok:true,admins:state.admins}}})
-  if(body.command==='wechat_cli_json'&&body.args?.args?.[0]==='memory')state.memoryCalls++
-  return r.continue()
- })
+ // 架构终态 F6:access list 走 GET /v1/access/list(经宿主);记忆列表是 /v1/memory/*,数一下有没有被拿来猜主人。
+ await page.route('**/v1/access/list',r=>r.fulfill({json:{ok:true,admins:state.admins}}))
+ await page.route(u=>/\/v1\/memory\/(files|file|file\/write|profile|profile\/status|projects|view|edit)$/.test(u.pathname),r=>{state.memoryCalls++;return r.continue()})
  await page.route('**/v1/knowledge/facts/set_fact_status',r=>{
   const body=r.request().postDataJSON();state.mutations.push(body)
   if(body.status==='resolved'){state.active=state.active.filter(f=>f.id!==body.id);state.settled=[fact]}

@@ -52,10 +52,20 @@ export function lineViewFor(result, userId) {
  * @param {EditLine[]} lines
  * @param {boolean} confirmBulk
  */
-export function memoryEditArgs(path, baseHash, lines, confirmBulk) {
-  const json = JSON.stringify(lines)
-  const b64 = btoa(unescape(encodeURIComponent(json)))
-  return ["memory", "edit", path, "--base", baseHash, "--lines-base64", b64, ...(confirmBulk ? ["--confirm-bulk"] : []), "--json"]
+export function memoryEditBody(path, baseHash, lines, confirmBulk) {
+  return { path, baseHash, lines, ...(confirmBulk ? { confirmBulk: true } : {}) }
+}
+
+/**
+ * POST /v1/memory/edit 经宿主代理调(架构终态 F6;以前起 `wechat-cc memory edit --json`,CLI 把失败也印成 `{ ok:false, code }`)。
+ * 宿主把非 2xx 变成 invoke 失败、只留 `error` 那一个字段 ⇒ 这里翻回 `{ ok:false, code }`,editOutcome 照旧按码分支:
+ * daemon 回的 `memory_*` 码原样;连不上 daemon(没在跑 / 读不到连接信息)⇒ daemon_unreachable,和 CLI 那时一样。
+ * @param {unknown} err
+ * @returns {{ ok: false, code: string }}
+ */
+export function memoryEditFailure(err) {
+  const msg = String(/** @type {any} */ (err)?.message ?? err ?? "")
+  return { ok: false, code: /^memory_[a-z_]+$/.test(msg) ? msg : "daemon_unreachable" }
 }
 
 /**

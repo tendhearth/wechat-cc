@@ -10,12 +10,13 @@
 /** @typedef {import('../../../../src/cli/schema').MilestonesListOutputT} MilestonesList */
 /** @typedef {import('../../../../src/cli/schema').EventsListOutputT} EventsList */
 /**
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, invokeApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<unknown>, formatInvokeError: (err: unknown) => string, doctorPoller: { current: { userNames?: Record<string, string> } | null } }} Deps
+ * invokeWorkbenchApi:宿主代理(daemon_request),记忆页读写主人所有对话的记忆、观察 / 里程碑 / 决策都走它(admin,架构终态 F6 起不再起 CLI)。
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, invokeApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<unknown>, invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, formatInvokeError: (err: unknown) => string, doctorPoller: { current: { userNames?: Record<string, string> } | null } }} Deps
  */
 
 // Memory pane module. Lists Companion v2 memory files (per-user grouping),
 // renders selected .md files with the shared safe markdown renderer (vendor/markdown.js), and lets
-// the user edit + save them in-place via `wechat-cc memory write`.
+// the user edit + save them in-place via POST /v1/memory/file/write (以前是 `wechat-cc memory write`,形状一样).
 //
 // Owns: #memory-sidebar, #memory-rendered, #memory-meta, #memory-count,
 //       #memory-content-head, #memory-content-path, #memory-content-mtime,
@@ -30,7 +31,7 @@ import { observationRow, milestoneCard } from "./observations.js"
 import { decisionRow } from "./decisions.js"
 import { icon } from "./icons.js"
 import { mountMemoryEvidenceDialog, normalizeMemorySourceRefs } from "./memory-evidence.js"
-import { bulkGate, collectLines, editOutcome, isDerivedMemoryPath, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
+import { bulkGate, collectLines, editOutcome, isDerivedMemoryPath, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditBody, memoryEditFailure, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
 import { V1, v1 } from '../daemon-client.js'
 
 // `selected` doubles as the edit-target identity (userId + path) AND the
@@ -110,7 +111,7 @@ async function loadMarked() {
 
 /** @param {Deps} deps */
 export async function loadMemoryPane(deps) {
-  const result = /** @type {MemoryList} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "list", "--json"] }))
+  const result = /** @type {MemoryList} */ (await v1(deps.invokeWorkbenchApi, V1.memory.files))
   memoryState.users = Array.isArray(result) ? result : []
   renderMemorySidebar(deps)
   const totalFiles = memoryState.users.reduce((s, u) => s + u.fileCount, 0)
@@ -209,7 +210,7 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
   if (rendered) rendered.innerHTML = `<p class="empty-state">读取中…</p>`
   let result
   try {
-    result = /** @type {MemoryRead} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "read", userId, relPath, "--json"] }))
+    result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.file, { query: { user_id: userId, path: relPath } }))
   } catch (err) {
     if (rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
     return
@@ -242,7 +243,7 @@ function canEditOpenFile() {
  * @param {string} relPath
  */
 async function loadLineView(deps, userId, relPath) {
-  try { return lineViewFor(await deps.invoke("wechat_cli_json", { args: ["memory", "view", relPath, "--json"] }), userId) }
+  try { return lineViewFor(await v1(deps.invokeWorkbenchApi, V1.memory.view, { body: { path: relPath } }), userId) }
   catch { return null }
 }
 
@@ -303,15 +304,6 @@ async function saveCurrent(deps) {
     setEditMode(false)
     return
   }
-  // Encode for shell-safe arg passing. The btoa(unescape(encodeURIComponent))
-  // dance handles UTF-8 chars (btoa alone fails on multibyte).
-  let bodyB64
-  try {
-    bodyB64 = btoa(unescape(encodeURIComponent(content)))
-  } catch (err) {
-    setStatus(`编码失败：${err}`, "bad")
-    return
-  }
   setStatus("保存中…", "info")
   const saveBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("memory-save-btn"))
   const cancelBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("memory-cancel-btn"))
@@ -319,8 +311,8 @@ async function saveCurrent(deps) {
   if (cancelBtn) cancelBtn.disabled = true
   let result
   try {
-    result = /** @type {MemoryWrite} */ (await deps.invoke("wechat_cli_json", {
-      args: ["memory", "write", memoryState.selected.userId, memoryState.selected.path, "--body-base64", bodyB64, "--json"],
+    result = /** @type {MemoryWrite} */ (await v1(deps.invokeWorkbenchApi, V1.memory.fileWrite, {
+      body: { userId: memoryState.selected.userId, path: memoryState.selected.path, content },
     }))
   } catch (err) {
     if (saveBtn) saveBtn.disabled = false
@@ -368,10 +360,9 @@ async function saveLines(deps, view) {
   if (cancelBtn) cancelBtn.disabled = true
   let result
   try {
-    result = await deps.invoke("wechat_cli_json", { args: memoryEditArgs(view.path, view.baseHash, lines, confirmBulk) })
+    result = await v1(deps.invokeWorkbenchApi, V1.memory.edit, { body: memoryEditBody(view.path, view.baseHash, lines, confirmBulk) })
   } catch (err) {
-    setStatus(`保存失败：${deps.formatInvokeError(err)}`, "bad")
-    return
+    result = memoryEditFailure(err)
   } finally {
     if (saveBtn) saveBtn.disabled = false
     if (cancelBtn) cancelBtn.disabled = false
@@ -483,9 +474,7 @@ export async function refreshMemoryProfileStatus(deps) {
     return null
   }
   try {
-    const result = /** @type {MemoryProfileStatusOutput} */ (await deps.invoke("wechat_cli_json", {
-      args: ["memory", "profile", "status", "--chat-id", chatId, "--json"],
-    }))
+    const result = /** @type {MemoryProfileStatusOutput} */ (await v1(deps.invokeWorkbenchApi, V1.memory.profileStatus, { query: { chat_id: chatId } }))
     memoryState.profileStatus = result && result.ok ? result : null
   } catch {
     memoryState.profileStatus = null
@@ -597,7 +586,7 @@ function parseOverview(md) {
 /** @param {Deps} deps @param {string} chatId */
 async function loadOverview(deps, chatId) {
   try {
-    const result = /** @type {MemoryRead} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "read", chatId, OVERVIEW_PATH, "--json"] }))
+    const result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.file, { query: { user_id: chatId, path: OVERVIEW_PATH } }))
     memoryState.overview = (result && result.ok && typeof result.content === "string")
       ? parseOverview(result.content)
       : null
@@ -644,7 +633,7 @@ function normalizeProfile(value) {
 /** @param {Deps} deps @param {string} chatId */
 async function loadProfile(deps, chatId) {
   try {
-    const result = /** @type {MemoryRead} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "profile-read", chatId, "--json"] }))
+    const result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.profile, { query: { chat_id: chatId } }))
     if (result && result.ok && typeof result.content === "string") {
       memoryState.profile = normalizeProfile(JSON.parse(result.content))
       if(memoryState.profile){
@@ -1199,8 +1188,8 @@ export async function loadMemoryTopZone(deps) {
 
   try {
     const [obsResp, msResp] = /** @type {[ObservationsList, MilestonesList]} */ (await Promise.all([
-      deps.invoke("wechat_cli_json", { args: ["observations", "list", chatId, "--json"] }),
-      deps.invoke("wechat_cli_json", { args: ["milestones", "list", chatId, "--json"] }),
+      v1(deps.invokeWorkbenchApi, V1.observations.list, { query: { chat_id: chatId } }),
+      v1(deps.invokeWorkbenchApi, V1.milestones.list, { query: { chat_id: chatId } }),
     ]))
     const observations = (obsResp.observations || []).slice(0, 3)
     memoryState.observations = obsResp.observations || []
@@ -1240,9 +1229,7 @@ export async function loadMemoryDecisions(deps) {
   if (!box) return
 
   try {
-    const resp = /** @type {EventsList} */ (await deps.invoke("wechat_cli_json", {
-      args: ["events", "list", chatId, "--json", "--limit", "30"],
-    }))
+    const resp = /** @type {EventsList} */ (await v1(deps.invokeWorkbenchApi, V1.events.list, { query: { chat_id: chatId, limit: 30 } }))
     const events = (resp.events || []).reverse() // newest first
     if (events.length === 0) {
       box.innerHTML = `<p class="empty-state">还没记录到决策。</p>`
@@ -1256,7 +1243,7 @@ export async function loadMemoryDecisions(deps) {
 
 // Read-only view of the admin's local Claude per-project memory — the raw
 // source the synthesized overview is distilled from. Lazy-loaded on first
-// fold expand. Content comes inline from `memory projects --json` (the dirs
+// fold expand. Content comes inline from GET /v1/memory/projects (the dirs
 // are local + small), so no per-file read round-trips. No editing here: this
 // memory belongs to Claude Code, not wechat-cc.
 /** @param {Deps} deps */
@@ -1267,7 +1254,7 @@ export async function loadProjectMemory(deps) {
   let resp
   try {
     resp = /** @type {{ ok?: boolean, projects?: Array<{ name: string, index: string | null, files: Array<{ path: string, content: string }> }> }} */ (
-      await deps.invoke("wechat_cli_json", { args: ["memory", "projects", "--json"] })
+      await v1(deps.invokeWorkbenchApi, V1.memory.projects)
     )
   } catch (err) {
     box.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
@@ -1306,9 +1293,7 @@ export async function archiveObservation(deps, obsId) {
   const chatId = await currentChatId(deps)
   if (!chatId) return
   try {
-    await deps.invoke("wechat_cli_json", {
-      args: ["observations", "archive", chatId, obsId, "--json"],
-    })
+    await v1(deps.invokeWorkbenchApi, V1.observations.archive, { body: { chat_id: chatId, id: obsId } })
     await loadMemoryTopZone(deps)
   } catch (err) {
     console.error("archive observation failed", err)
@@ -1317,7 +1302,7 @@ export async function archiveObservation(deps, obsId) {
 
 // Resolve the chat to query — must be in chat_id format (e.g.
 // `<hash>@im.wechat`), the same key the daemon uses for memory/<chat_id>/.
-// memoryState.users is populated by loadMemoryPane (`memory list --json`)
+// memoryState.users is populated by loadMemoryPane (GET /v1/memory/files)
 // and each user.userId is already a chat_id, so reuse it. v0.4 single-chat
 // owner assumption: the first user IS the chat. v0.5 surfaces a picker.
 //

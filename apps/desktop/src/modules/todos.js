@@ -19,8 +19,9 @@ import { V1, v1 } from '../daemon-client.js'
 /** @typedef {{ id: number, contact: string, kind: string|null, predicate: string, value: string, time_ref: string|null, confidence: string, updated_at: number }} ObligationRow */
 
 let api = invokeApi
-/** @type {(cmd: string, args: Record<string, unknown>) => Promise<unknown>} */
-let invokeCli = async () => { throw new Error("not wired") }
+/** 宿主代理(daemon_request):access list 是 admin 档(架构终态 F6 起不再起 `wechat-cc access list`)。
+ * @type {(method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>} */
+let invokeHost = async () => { throw new Error("not wired") }
 let active = false
 let generation = 0
 /** @type {{ generation: number, queued: boolean }|null} */
@@ -197,7 +198,7 @@ async function resolveOwnerChatId() {
   // daemon's resolveAdminChatId contract; a preferred chat must be an admin.
   const [status, access] = await Promise.all([
     /** @type {Promise<{ default_chat_id?: string|null }>} */ (v1(api, V1.companion.status)),
-    /** @type {Promise<{ admins?: string[] }>} */ (invokeCli("wechat_cli_json", { args: ["access", "list", "--json"] })),
+    /** @type {Promise<{ admins?: string[] }>} */ (v1(invokeHost, V1.access.list)),
   ])
   const admins = (access.admins ?? []).filter(id => typeof id === "string" && id.length > 0)
   const preferred = status.default_chat_id
@@ -466,12 +467,12 @@ export function __setApi(fn) { api = fn }
 /**
  * Init the 待办 tab. Idempotent via dataset.ready (same shape as
  * converse.js).
- * @param {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} deps
+ * @param {{ invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> }} deps
  * @param {{ api?: typeof invokeApi }} [options]
  */
 export function initTodosPage(deps, options) {
   if (options?.api) api = options.api
-  invokeCli = deps.invoke
+  invokeHost = deps.invokeWorkbenchApi
   const root = document.getElementById("todos-root")
   if (!root) return
   if (!active) { active = true; generation++ }

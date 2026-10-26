@@ -77,10 +77,10 @@ describe('POST /v1/memory/view · /v1/memory/edit(记忆编辑)', () => {
     const e = await memoryRoutes(deps({ memoryNightly: n }))['POST /v1/memory/edit']!(q(), { path: 'memory.md', baseHash: 'b'.repeat(64), lines: [] })
     expect(e).toEqual({ status: 200, body: { ok: false, code: 'memory_changed' } })
   })
-  it('没有主人 → 409 memory_no_owner;别的异常 → 500,不漏错误原文', async () => {
+  it('没有主人 → 409 memory_no_owner;别的异常 → 500,不漏错误原文;error 同码(宿主代理只留 error 这个字段)', async () => {
     const noOwner = nightly({ view: vi.fn(() => { throw new Error('no_owner') }) })
-    expect(await memoryRoutes(deps({ memoryNightly: noOwner }))['POST /v1/memory/view']!(q(), { path: 'memory.md' })).toEqual({ status: 409, body: { ok: false, code: 'memory_no_owner' } })
+    expect(await memoryRoutes(deps({ memoryNightly: noOwner }))['POST /v1/memory/view']!(q(), { path: 'memory.md' })).toEqual({ status: 409, body: { ok: false, code: 'memory_no_owner', error: 'memory_no_owner' } })
     const boom = nightly({ edit: vi.fn(async () => { throw new Error('/secret/path EACCES') }) })
-    expect(await memoryRoutes(deps({ memoryNightly: boom }))['POST /v1/memory/edit']!(q(), {})).toEqual({ status: 500, body: { ok: false, code: 'memory_edit_failed' } })
+    expect(await memoryRoutes(deps({ memoryNightly: boom }))['POST /v1/memory/edit']!(q(), {})).toEqual({ status: 500, body: { ok: false, code: 'memory_edit_failed', error: 'memory_edit_failed' } })
   })
 })
