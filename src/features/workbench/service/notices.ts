@@ -19,7 +19,7 @@ import type { QuotaDomain } from './quota'
 import type { ArtifactsDomain } from './artifacts'
 
 /** 由 provider 结构化码而来的失败(execution-settings.taskErrorForProviderCode):通知里说原因。 */
-const PROVIDER_FAILURE_NOTICE=new Set(['provider_auth_expired','provider_auth_rejected','provider_network','provider_server_error','provider_invalid_request'])
+const PROVIDER_FAILURE_NOTICE=new Set(['provider_auth_expired','provider_auth_rejected','provider_network','provider_server_error','provider_invalid_request','provider_failed'])
 
 export interface NoticesDomain {
   wakeNotices(context?:{ownerChatId:string;accountId:string}): void

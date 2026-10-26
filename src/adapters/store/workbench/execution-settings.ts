@@ -19,6 +19,8 @@ export function taskErrorForProviderCode(code:string|undefined,raw:string):strin
     case 'server_error':return 'provider_server_error'
     case 'region_unavailable':return 'provider_region_unavailable'
     case 'invalid_request':return executionFailureMessage(raw)!==raw?raw:'provider_invalid_request'
+    // provider 明说这一轮失败了、没说哪类(Claude 的 result is_error 而无标注,等):以前 task.error 就是原文,现在给码 + 一句人话,原文跟在事件里。
+    case 'provider_error':return executionFailureMessage(raw)!==raw?raw:'provider_failed'
     default:return undefined
   }
 }
@@ -56,6 +58,7 @@ export function executionFailureMessage(code:string):string {
     provider_server_error:'这家执行者的服务端出错了（5xx），这一轮没有完成。通常过一会儿会恢复，稍后再继续。',
     provider_region_unavailable:'这家执行者在你现在的网络出口所在地区用不了，这一轮没有完成。换一个出口地区，或交给另一位执行者继续。',
     provider_invalid_request:'这家执行者拒绝了这次请求（请求不合法，比如内容太长或模型不可用），这一轮没有完成。请调整后再继续。',
+    provider_failed:'这家执行者报告这一轮失败了，没说是哪类问题，这一轮没有完成。可以看一眼下面的原文，再继续或交给另一位执行者。',
     network_unprotected:'网络未受保护(bx 未连上或 VPN 探测失败),这个执行者用到需要保护的接口，这一步先暂停，这一轮没有开始。恢复后再继续。',
     api_task_scope_invalid:'无法确认 API 任务的项目范围，任务没有开始。请重新打开项目后再试。',
     api_task_busy:'这个 API 会话正在处理另一轮，请等待当前轮结束。',

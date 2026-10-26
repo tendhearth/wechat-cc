@@ -100,6 +100,19 @@ export function claudeAssistantFailure(sdkError: string | undefined, text: strin
   return null
 }
 
+/**
+ * result 标了 `is_error: true`(subtype 仍是 success),而这一轮没有被别的路接住 —— 没有带 `error` 标注的助理消息、
+ * 也没有哨兵 —— 时的码和话:`provider_error`,话取 result 原文前 400 字(那就是错误原文;空了给一句兜底)。
+ * 对话和一起做用这同一个判法(主人 2026-10-26:一起做和对话对齐;以前一起做把这种回合算「完成」)。
+ * 调用方先判掉 SDK 标注 / 哨兵(那两条带更准的码)和非 success 的 subtype(各自另有收法),再问这里。
+ */
+export function claudeResultFailure(result: { subtype?: unknown; is_error?: unknown; result?: unknown }): { code: 'provider_error'; message: string } | null {
+  if (result.is_error !== true) return null
+  if (typeof result.subtype === 'string' && result.subtype !== 'success') return null
+  const text = typeof result.result === 'string' ? result.result : ''
+  return { code: 'provider_error', message: text.trim() ? text.slice(0, 400) : 'claude result is_error' }
+}
+
 /** 一次 API 失败的码和话:码按 SDK 标注 + HTTP 状态(没响应 = null);话取错误原文前 400 字,空了给一句兜底。 */
 export function claudeApiFailure(sdkError: string, text: string, status?: number | null): { code: ProviderErrorCode; message: string } {
   return { code: claudeApiErrorCode(sdkError, status) ?? 'provider_error', message: text.trim().slice(0, 400) || `claude api error: ${sdkError}` }

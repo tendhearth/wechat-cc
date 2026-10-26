@@ -36,6 +36,8 @@ it.each([
   ['auth_failed','unexpected status 401 Unauthorized: Missing bearer or basic authentication in header','provider_auth_expired',/重新登录/],
   ['server_error','HTTP 524 (after 3 attempts): <html>','provider_server_error',/5xx/],
   ['quota','something only the code knows','provider_quota_exhausted',/额度/],
+  // Claude result is_error 而无标注(claude-result-is-error.test.ts 第一条样本):两边都收成 provider_error ⇒ 失败,不是「完成」(主人 2026-10-26)
+  ['provider_error','改好了，测试也过了。','provider_failed',/失败了/],
 ] as const)('error code %s ⇒ task.error %s, readable event, WeChat notice says why',async(code,message,taskError,reason)=>{
   next=async()=>failing({kind:'error',message,code})
   const task=service.create({path:project,providerId:'codex',text:'x'})
@@ -86,7 +88,7 @@ it.each([
   ['auth_rejected','provider_auth_rejected'],
   ['server_error','provider_server_error'],
   ['invalid_request','provider_invalid_request'],
-  ['provider_error',misleadingQuota],
+  ['provider_error','provider_failed'],
   ['network_unprotected','network_unprotected'],
 ] as const)('authoritative %s does not infer quota from the error text',async(code,taskError)=>{
   next=async()=>failing({kind:'error',message:misleadingQuota,code})
