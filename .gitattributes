@@ -25,3 +25,6 @@ scripts/fonts/tgscc-level-1-2.txt -text
 
 # 生成物(路由表 5a):scripts/route-registry.guard.test.ts 按整份文本比对 renderWorkbenchRoutes(),autocrlf 改成 CRLF 后必红。
 apps/desktop/src-tauri/generated/workbench-routes.json text eol=lf
+
+# 记忆金样(架构终态 G0):夹具里故意放了 BOM 与 CRLF,金样按字节比(src/features/memory/memory-golden.test.ts)。整棵树按原样进出。
+src/test-support/fixtures/memory/** -text
