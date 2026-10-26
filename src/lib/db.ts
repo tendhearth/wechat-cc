@@ -25,12 +25,14 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { migrations } from './db/migrations'
 import { hasTable } from './db/schema-helpers'
+import type { Migration } from './db/migrations/types'
 export { initializeWechatNotificationSchema, initializeArtifactDeliverySchema, initializeApiSessionSchema } from './db/schema-helpers'
 
 export type Db = Database
 
 // 迁移本身一版一个文件,顺序在 ./db/migrations/index.ts(第三批 3e)。
 export { migrations }
+export type { Migration }
 
 export interface OpenDbOpts {
   /**
@@ -104,7 +106,7 @@ export function openDb(opts: OpenDbOpts): Database {
   // bumps last_used_at). With WAL the conflict window is short; the
   // timeout makes it transparent.
   db.exec('PRAGMA busy_timeout = 5000;')
-  runMigrations(db)
+  runMigrations(db, migrations)
   return db
 }
 
@@ -155,15 +157,20 @@ function repairBranchRenumberedSchema(db: Database, current: number): number {
 }
 
 /**
- * Apply any migrations whose index is greater than the database's current
- * PRAGMA user_version. Exported so tests can drive the runner against a
- * pre-populated in-memory db (e.g. simulating an upgrade from v9).
+ * Apply any migrations in `list` whose index is greater than the database's
+ * current PRAGMA user_version. The main db passes `migrations`
+ * (./db/migrations/index.ts); the knowledge libraries pass their own lists
+ * (src/adapters/knowledge/migrations/<库>/index.ts, 架构终态 G1). The #79
+ * repair only concerns the main list, so it runs only for that one.
+ * Exported so tests can drive the runner against a pre-populated in-memory
+ * db (e.g. simulating an upgrade from v9).
  */
-export function runMigrations(db: Database): void {
+export function runMigrations(db: Database, list: readonly Migration[]): void {
   const row = db.query('PRAGMA user_version').get() as { user_version: number } | null
-  const current = repairBranchRenumberedSchema(db, row?.user_version ?? 0)
-  for (let i = current; i < migrations.length; i++) {
-    const next = migrations[i]!
+  const stored = row?.user_version ?? 0
+  const current = list === migrations ? repairBranchRenumberedSchema(db, stored) : stored
+  for (let i = current; i < list.length; i++) {
+    const next = list[i]!
     db.transaction(() => {
       next(db)
       // PRAGMA user_version doesn't accept bound params; safe — value is

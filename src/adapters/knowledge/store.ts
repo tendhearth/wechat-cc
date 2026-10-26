@@ -27,6 +27,11 @@
 import { openSqlite as openRuntimeSqlite, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { runMigrations } from '../../lib/db'
+import { migrations as sourceMigrations } from './migrations/source'
+import { migrations as semanticMigrations } from './migrations/semantic'
+import { migrations as graphMigrations } from './migrations/graph'
+import { migrations as factsMigrations } from './migrations/facts'
 import type { Contact, Edge } from '../../domain/knowledge/graph'
 import type { Profile } from '../../domain/knowledge/graph-profiles'
 import type { Chunk, DocSummary, Fact, FactRow, KnowledgeStore, SourceMention, SourceMsg } from '../../ports/knowledge'
@@ -58,45 +63,8 @@ export function openKnowledge(root: string): KnowledgeStore {
 
   // ---- source.db --------------------------------------------------------
   const sourceDb = openSqlite(join(root, 'source.db'))
-  sourceDb.exec(`
-    CREATE TABLE IF NOT EXISTS messages (
-      msg_key TEXT PRIMARY KEY,
-      conversation TEXT, sender TEXT, time INTEGER,
-      type TEXT, text TEXT, server_id TEXT,
-      local_type INTEGER, is_group INTEGER, kind TEXT,
-      ingested_watermark INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS contacts (
-      username TEXT PRIMARY KEY, display TEXT
-    );
-    CREATE TABLE IF NOT EXISTS source_meta (key TEXT PRIMARY KEY, value TEXT);
-    CREATE TABLE IF NOT EXISTS source_mentions (msg_key TEXT, target_un TEXT);
-    CREATE INDEX IF NOT EXISTS source_mentions_msg_key ON source_mentions(msg_key);
-  `)
-
-  // Migration: a pre-existing (Phase 0/1) source.db has the OLD 8-column
-  // `messages` table (no local_type/is_group/kind) — CREATE TABLE IF NOT
-  // EXISTS above is a no-op against it, so the columns must be added
-  // in-place here. Idempotent: only ALTERs columns that are actually
-  // missing, so this is a no-op on a fresh DB (already has all 3 from the
-  // CREATE TABLE above) and on a DB that's already been migrated once.
-  const existingMessageCols = new Set(
-    sourceDb.query<{ name: string }, []>('PRAGMA table_info(messages)').all().map(r => r.name),
-  )
-  for (const [col, ddlType] of [
-    ['local_type', 'INTEGER'],
-    ['is_group', 'INTEGER'],
-    ['kind', 'TEXT'],
-  ] as const) {
-    if (!existingMessageCols.has(col)) {
-      sourceDb.exec(`ALTER TABLE messages ADD COLUMN ${col} ${ddlType}`)
-    }
-  }
-  sourceDb.exec(`
-    CREATE INDEX IF NOT EXISTS messages_watermark ON messages(ingested_watermark);
-    CREATE INDEX IF NOT EXISTS messages_kind ON messages(kind);
-    CREATE INDEX IF NOT EXISTS messages_time ON messages(time);
-  `)
+  // 四个库的表结构都在 ./migrations/<库>/,和主库同一套规矩(架构终态 G1;docs/maintainer/migrations.md)。
+  runMigrations(sourceDb, sourceMigrations)
 
   const stmtMaxWatermark = sourceDb.query<{ w: number | null }, []>(
     'SELECT MAX(ingested_watermark) AS w FROM messages',
@@ -207,17 +175,7 @@ export function openKnowledge(root: string): KnowledgeStore {
   // against the count captured at cache time, so writes from THIS process
   // (indexer) and any other process are both picked up. Keyed per model_id.
   const vectorCache = new Map<string, { rowids: number[]; dim: number; mat: Float32Array; count: number }>()
-  semanticDb.exec(`
-    CREATE TABLE IF NOT EXISTS chunks (
-      rowid INTEGER PRIMARY KEY,
-      msg_key TEXT, conversation TEXT, sender TEXT,
-      time INTEGER, kind TEXT, text TEXT,
-      vector BLOB, model_id TEXT, model_version TEXT,
-      UNIQUE(msg_key, model_id)
-    );
-    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, tokenize='trigram');
-    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
-  `)
+  runMigrations(semanticDb, semanticMigrations)
 
   const stmtFindChunk = semanticDb.query<{ rowid: number }, [string, string]>(
     'SELECT rowid FROM chunks WHERE msg_key = ? AND model_id = ?',
@@ -289,37 +247,7 @@ export function openKnowledge(root: string): KnowledgeStore {
   // whole-snapshot rebuild per pass (see rebuildGraph below), no incremental
   // patching.
   const graphDb = openSqlite(join(root, 'graph.db'))
-  graphDb.exec(`
-    CREATE TABLE IF NOT EXISTS contacts (
-      username TEXT PRIMARY KEY, display TEXT, is_group INTEGER, total INTEGER, sent INTEGER,
-      recv INTEGER, first_ts INTEGER, last_ts INTEGER, known_days INTEGER, active_days INTEGER,
-      initiations INTEGER, transfer_in INTEGER, transfer_out INTEGER, shared_groups INTEGER,
-      types TEXT, s_volume REAL, s_recency REAL, s_reciprocity REAL, s_intimacy REAL, closeness REAL
-    );
-    CREATE TABLE IF NOT EXISTS edges (a TEXT, b TEXT, kind TEXT, weight REAL, PRIMARY KEY(a, b, kind));
-    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
-  `)
-
-  // Migration guard (mirrors the source.db `messages` ADD-COLUMN pattern
-  // above, GR T1) — forward-compat for a `contacts` table that already
-  // exists (so CREATE TABLE IF NOT EXISTS above is a no-op against it) but
-  // predates one or more of the columns this task's schema needs. No-op on
-  // a fresh DB (already has every column via the CREATE TABLE above) and on
-  // an already-migrated DB.
-  const GRAPH_CONTACT_COL_TYPES: Record<string, string> = {
-    display: 'TEXT', is_group: 'INTEGER', total: 'INTEGER', sent: 'INTEGER', recv: 'INTEGER',
-    first_ts: 'INTEGER', last_ts: 'INTEGER', known_days: 'INTEGER', active_days: 'INTEGER',
-    initiations: 'INTEGER', transfer_in: 'INTEGER', transfer_out: 'INTEGER', shared_groups: 'INTEGER',
-    types: 'TEXT', s_volume: 'REAL', s_recency: 'REAL', s_reciprocity: 'REAL', s_intimacy: 'REAL', closeness: 'REAL',
-  }
-  const existingContactCols = new Set(
-    graphDb.query<{ name: string }, []>('PRAGMA table_info(contacts)').all().map(r => r.name),
-  )
-  for (const [col, ddlType] of Object.entries(GRAPH_CONTACT_COL_TYPES)) {
-    if (!existingContactCols.has(col)) {
-      graphDb.exec(`ALTER TABLE contacts ADD COLUMN ${col} ${ddlType}`)
-    }
-  }
+  runMigrations(graphDb, graphMigrations)
 
   // Insert column order mirrors store.py's `_CONTACT_COLS` (username first).
   const GRAPH_CONTACT_COLS = [
@@ -421,29 +349,7 @@ export function openKnowledge(root: string): KnowledgeStore {
   // ---- facts.db (facts + person slice) -------------------------------------
   // TS port of wxfacts's store.py (facts table + extraction_state watermark).
   const factsDb = openSqlite(join(root, 'facts.db'))
-  factsDb.exec(`
-    CREATE TABLE IF NOT EXISTS facts (
-      id INTEGER PRIMARY KEY, contact TEXT, kind TEXT, predicate TEXT, value TEXT,
-      related_contact TEXT, time_ref TEXT, confidence TEXT, source_msg_keys TEXT,
-      status TEXT, created_at INTEGER, updated_at INTEGER,
-      UNIQUE(contact, predicate, value));
-    CREATE TABLE IF NOT EXISTS extraction_state (
-      contact TEXT PRIMARY KEY, last_ts INTEGER, last_local_id INTEGER DEFAULT 0,
-      updated_at INTEGER);
-    CREATE TABLE IF NOT EXISTS judge_state (
-      key TEXT PRIMARY KEY, fingerprint TEXT, judged_at INTEGER);`)
-  // Temporal validity (2026-08 memory-upgrades) — guarded ALTER so a facts.db
-  // created before these columns existed upgrades in place. valid_from
-  // backfills from created_at exactly once (only when the column was just
-  // added, i.e. every existing row has NULL there).
-  const factCols = new Set(
-    (factsDb.query('PRAGMA table_info(facts)').all() as Array<{ name: string }>).map((c) => c.name),
-  )
-  const hadValidFrom = factCols.has('valid_from')
-  if (!hadValidFrom) factsDb.exec('ALTER TABLE facts ADD COLUMN valid_from INTEGER')
-  if (!factCols.has('invalidated_at')) factsDb.exec('ALTER TABLE facts ADD COLUMN invalidated_at INTEGER')
-  if (!factCols.has('superseded_by')) factsDb.exec('ALTER TABLE facts ADD COLUMN superseded_by INTEGER')
-  if (!hadValidFrom) factsDb.exec('UPDATE facts SET valid_from = created_at WHERE valid_from IS NULL')
+  runMigrations(factsDb, factsMigrations)
 
   return {
     putSourceMessages(msgs) {

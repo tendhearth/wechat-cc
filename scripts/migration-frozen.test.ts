@@ -22,6 +22,9 @@ function repo(): string {
   mkdirSync(join(d, 'src/lib/db/migrations'), { recursive: true })
   writeFileSync(join(d, 'src/lib/db/migrations/v001.ts'), 'export const migration = 1\n')
   writeFileSync(join(d, 'src/lib/db/migrations/v002.ts'), 'export const migration = 2\n')
+  writeFileSync(join(d, 'src/lib/db/migrations/shared-ddl.ts'), 'export const ddl = 1\n')
+  mkdirSync(join(d, 'src/adapters/knowledge/migrations/source'), { recursive: true })
+  writeFileSync(join(d, 'src/adapters/knowledge/migrations/source/v001.ts'), 'export const migration = 1\n')
   g('add', '-A'); g('commit', '-q', '-m', 'base')
   g('update-ref', 'refs/remotes/origin/dev', 'HEAD')
   return d
@@ -38,11 +41,20 @@ describe.skipIf(!HAVE_BUN)('migration-frozen', () => {
   it.each([
     ['edited', (d: string) => writeFileSync(join(d, 'src/lib/db/migrations/v001.ts'), 'export const migration = 99\n')],
     ['deleted', (d: string) => rmSync(join(d, 'src/lib/db/migrations/v002.ts'))],
+    ['a knowledge-library migration edited (G1)', (d: string) => writeFileSync(join(d, 'src/adapters/knowledge/migrations/source/v001.ts'), 'export const migration = 99\n')],
+    ['the shared DDL the frozen v056–v058 call edited', (d: string) => writeFileSync(join(d, 'src/lib/db/migrations/shared-ddl.ts'), 'export const ddl = 99\n')],
   ])('fails when a migration already on dev is %s', (_why, mutate) => {
     const d = repo(); mutate(d)
     const r = run(d)
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('已经进了 dev')
+  })
+  it('a new knowledge-library migration (or a library not on dev yet) passes', () => {
+    const d = repo()
+    writeFileSync(join(d, 'src/adapters/knowledge/migrations/source/v002.ts'), 'export const migration = 2\n')
+    mkdirSync(join(d, 'src/adapters/knowledge/migrations/graph'), { recursive: true })
+    writeFileSync(join(d, 'src/adapters/knowledge/migrations/graph/v001.ts'), 'export const migration = 1\n')
+    expect(run(d).status).toBe(0)
   })
   it('the [migration-edit] title lets an edit through, and lists what changed', () => {
     const d = repo()

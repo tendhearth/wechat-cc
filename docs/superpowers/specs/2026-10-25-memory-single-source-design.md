@@ -180,7 +180,10 @@ restore(chatId, key, actor)          // 撤销收回;只恢复这一行,清掉�
 | 步 | 状态 | 落在哪 |
 |---|---|---|
 | G0 金样 | 做完 | 夹具 `src/test-support/fixtures/memory/chats/`(owner:BOM、栏外 / 认不出的行、没编号的条目、半截尾注、已更正又被写回的「下周要去杭州出差三天」「年糕是狸花猫」、`替换:` 两条、短于 `MIN_CORRECTED_CHARS` 的更正;guest:CRLF、磁盘上有 `owner.md` 但不该注入、超过注入上限的 `profile.md`;empty:什么都没有)与 `facts.json`(facts 五种状态 + 图的联系人)。金样 `fixtures/memory/golden/`,由 `src/features/memory/memory-golden.test.ts` 用今天的代码生成并逐字节比:每个对话的 `memory.md` / `owner.md` 序列化、五段注入(`curatedMemoryFor` / `ownerMemoryFor` / `coreMemoryFor` / `todayDraftFor` / `knowledgeMemoryFor`)、整理素材头两块(纠正 + 原话)、`correctedTexts` 名单、`overviewForOthers`;外加 `knowledge.md` 蒸馏。`.gitattributes` 让这棵树按字节进出 |
+| G1 知识库迁移 | 做完 | `runMigrations(db, list)`(#79 的修复只对主库那张表);`src/adapters/knowledge/migrations/{source,semantic,graph,facts}/`,每个 `v001` = G1 之前 `store.ts` 的建表 + 守着的 `ALTER`,原样、幂等;`store.ts` 里没有 `CREATE TABLE` / `ALTER TABLE` 了。守卫 `scripts/schema-ddl-in-migrations.guard.test.ts`(`src/` 与 `cli.ts` 的生产代码里建表 / 改表只许在 `**/migrations/**`,基线 0);v056–v058 共用的工作台建表语句随之搬进 `src/lib/db/migrations/shared-ddl.ts`(`schema-helpers` 照原名转出,`migration-frozen` 一起冻)。`scripts/db-migrations.guard.test.ts` 钉住四张知识库迁移表,`migration-frozen` 与 CI 路径过滤加上知识库目录。升级路径测试 `src/adapters/knowledge/migrations.test.ts`(从 0、今天的结构再跑 v001、真机旧形状、`openKnowledge` 打开 G1 之前的目录) |
 
 读代码时发现的(金样照今天的样子钉住,不在 G0 改):
 
 - 每轮注入的 `memory.md`(`curatedMemoryFor`)**不过**纠正名单:已更正又被整理写回的行(夹具里「年糕是狸花猫」)今天照样进主人对话的提示词。§1.2 / 「数据怎么搬」第 1 条说这类行「靠出口过滤挡着」,只对合成产出成立。G3 把它导成 `retracted` 以后,G6 读表时它就从提示词里消失了 —— 这是一处**看得见**的变化(变好),G6 的金样要单独更新这一处并在 PR 里写明。
+- §2.4 只说三个库各一张迁移表、「`facts.db` 不再单独迁移」;但 G1 的结束条件是 `store.ts` 里没有建表 / 改表,而 `facts.db` 要到 G7 才搬走 ⇒ G1 给 `facts.db` 也建了一张(共四张,加主库五张)。G7 之后它只在导入时读一次,那张表留着不再追加。
+- 主库这边也不只 `migrations/` 里有建表:`src/lib/db/schema-helpers.ts` 有三段被 v056–v058 调用的工作台建表语句。零基线的守卫要求它们进 `migrations/`(见上);它们本来就是冻结迁移的内容,以前没有被冻住。

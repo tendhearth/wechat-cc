@@ -2,6 +2,10 @@
 
 迁移一版一个文件:`src/lib/db/migrations/v001.ts` … `vNNN.ts`。**顺序只写在一处**:`src/lib/db/migrations/index.ts`,一行一个 import、一行一项,手写(不扫目录、不按文件名排)。`src/lib/db.ts` 只剩 `openDb` / `runMigrations` / #79 的修复,`migrations` 从它转出,外部 import 不变。设计稿:`docs/superpowers/specs/2026-10-23-db-migrations-per-file-design.md`。
 
+**知识库的四个库**(`<stateDir>/knowledge/` 下的 `source.db` / `semantic.db` / `graph.db` / `facts.db`,架构终态 G1)各有一张自己的迁移表:`src/adapters/knowledge/migrations/<库>/index.ts` + `v001.ts`…,规矩和主库完全一样(下面每一条都适用),`store.ts` 打开每个库后 `runMigrations(db, <那张表>)`。`runMigrations(db, list)` 的第二个参数就是这张表;#79 的修复只对主库那张表生效。G1 之前这四个库从没写过 `user_version`(一直是 0),每个库的 `v001` 是当时 `store.ts` 里的建表 + 守着的 `ALTER`,原样搬过来、保持幂等。
+
+**建表 / 改表只许写在迁移里**:生产代码里的 `CREATE [VIRTUAL|TEMP] TABLE` / `ALTER TABLE` / `DROP TABLE` 只许出现在路径带 `/migrations/` 的文件中,基线 0、没有豁免(`scripts/schema-ddl-in-migrations.guard.test.ts`)。v056–v058 共用的三段工作台建表语句因此在 `src/lib/db/migrations/shared-ddl.ts`(`../schema-helpers` 照原名转出),它和 `v*.ts` 一起被冻结。
+
 ## `user_version` 是**计数**,不是编号
 
 SQLite 的 `PRAGMA user_version` 只记「跑过几条」,从不记「跑过哪几条」。所以**位置就是契约**:某个库写着 21,意思是「这个库上次升级时,列表的第 21 项是什么,它就升到了什么」。
@@ -40,7 +44,7 @@ issue #79 就是这么炸的:一条分支从 v18 的树上切出去,自己编了
 
 主人真机跑的就是 `dev`:一个迁移合进 `dev`、部署一次,就已经在他的库里跑过了。之后再改它,对已经过了那一位的库毫无作用,还会让新库和老库的 schema 悄悄分叉。
 
-CI 作业 `migrations · frozen`(`scripts/migration-frozen.ts`)守这一条:只在 PR 改到 `src/lib/db/migrations/**` 时跑(自改流水线也走 PR);`origin/dev` 上已有的每个 `v*.ts`,这一版里必须还在、一字不差。改了、删了、改名了都红。
+CI 作业 `migrations · frozen`(`scripts/migration-frozen.ts`)守这一条:只在 PR 改到 `src/lib/db/migrations/**` 或 `src/adapters/knowledge/migrations/**` 时跑(自改流水线也走 PR);`origin/dev` 上已有的每个 `v*.ts`(主库再加 `shared-ddl.ts`),这一版里必须还在、一字不差。改了、删了、改名了都红。
 
 **真要改老迁移**(比如一个会让新装崩掉的错):PR 标题带 `[migration-edit]`,描述里写清楚为什么、以及**已经跑过旧版的库怎么办**(通常答案是:老的照旧放着,再追加一个迁移去修存量库)。CI 会放行并列出改了哪几个文件。
 
@@ -69,7 +73,7 @@ v49 / v59 就是这样:v49 用 `CREATE TABLE IF NOT EXISTS` 建表,而某一列�
 ## 自检
 
 ```bash
-bun --bun vitest run src/lib/state-migration.test.ts src/lib/migration-order.test.ts src/lib/db.test.ts scripts/db-migrations.guard.test.ts
+bun --bun vitest run src/lib/state-migration.test.ts src/lib/migration-order.test.ts src/lib/db.test.ts scripts/db-migrations.guard.test.ts scripts/schema-ddl-in-migrations.guard.test.ts src/adapters/knowledge/migrations.test.ts
 npm run test:node -- src/lib/migration-order.test.ts        # 换个运行时再来一遍
 bun scripts/migration-frozen.ts                             # 本机有 origin/dev 时,核「进了 dev 的一字没改」
 ```
