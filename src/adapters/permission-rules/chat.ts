@@ -17,6 +17,7 @@
 import { authorize, type AuthSubject, type Authorization, type GateExecutor, type ToolDescriptor } from '../../domain/authorize'
 import type { Decision, PermissionAsk } from '../../domain/permission-rules/types'
 import { toolInputFacts } from '../../domain/permission-rules/facts'
+import { classifyToolUse } from '../../domain/user-tier'
 import { isAbsolutePath, type Platform } from './paths'
 
 /** 对话里的一次工具调用(规则只看这几样)。tool 用 SDK 形状的名字(Bash、mcp__wechat__memory_delete …),三家一致。 */
@@ -25,11 +26,6 @@ export interface ChatToolCall {
   provider: GateExecutor
   tool: string
   input: Record<string, unknown>
-  /**
-   * 执行者自己给出的、这次要碰的文件(Codex 一次改文件可以碰好几个,不在 input 的 file_path 里)。给了就用它,
-   * 不从 input 取;规矩一样:有一条不是绝对路径 ⇒ 当不知道。
-   */
-  paths?: readonly string[]
 }
 
 /** 「按规则放行了」那一行要的东西。key 用来一轮里同一条规则只写一行。 */
@@ -69,19 +65,16 @@ export function chatAsk(call: ChatToolCall, platform: Platform = process.platfor
   // 和终端 hook、一起做同一份取法(命令原文截 2000、file_path / notebook_path / path)。
   const facts = toolInputFacts(call.input)
   if (facts.command) ask.command = facts.command
-  const paths = call.paths ? [...call.paths] : facts.paths
-  if (paths.length && paths.every(p => isAbsolutePath(p, platform))) ask.paths = paths
+  if (facts.paths.length && facts.paths.every(p => isAbsolutePath(p, platform))) ask.paths = facts.paths
   return ask
 }
 
 const oneLine = (s: string, max: number) => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t }
 
 /** 那一行里「放行了 X」的 X:命令原文(截 40 字),否则工具名(wechat 自己的工具去掉 mcp__wechat__ 前缀)。 */
-export function noticeTarget(call: Pick<ChatToolCall, 'tool' | 'input' | 'paths'>): string {
+export function noticeTarget(call: Pick<ChatToolCall, 'tool' | 'input'>): string {
   const cmd = call.input.command
   if (typeof cmd === 'string' && cmd.trim()) return oneLine(cmd, 40)
-  // Codex 改文件:「改 <第一个路径>」,多个再说一共几个。
-  if (call.paths?.length) return `改 ${oneLine(call.paths[0]!, 40)}${call.paths.length > 1 ? ` 等 ${call.paths.length} 个文件` : ''}`
   return call.tool.startsWith('mcp__wechat__') ? call.tool.slice('mcp__wechat__'.length) : call.tool
 }
 
@@ -129,4 +122,24 @@ export async function authorizeChatCall(
   if (ruled.verdict === 'deny') return { ...ruled, detail: d.reason, denyMessage: `The owner's permission rule denied this (${d.reason}). Do not retry it; tell the user it was blocked by their rule.` }
   // 规则层说放、提醒却没登记上(没走 beforeAllow 的实现)⇒ 不放。
   return noted ? ruled : noRule()
+}
+
+/**
+ * 对话里一次 SDK 形状的工具调用(Bash / Edit / mcp__wechat__… + 它的参数)怎么判:按 classifyToolUse 分类,再交给
+ * authorizeChatCall。Claude 的 canUseTool(permission-relay.ts)和 Codex 的审批(codex-chat-gate.ts,把报上来的命令 /
+ * 改文件 / MCP 调用翻成同样的 SDK 形状)都调这一个 —— 同一个调用,两家得到同一个结论。
+ */
+export function authorizeChatToolUse(
+  subject: Omit<AuthSubject, 'surface' | 'ownerChat'>,
+  use: { tool: string; input: Record<string, unknown>; askUser?: ToolDescriptor['askUser']; replyFamily?: boolean },
+  chatId: string,
+  rules: ChatOwnerRules | null | undefined,
+): Promise<ChatAuthorization> {
+  const kind = classifyToolUse(use.tool, use.input)
+  return authorizeChatCall(
+    subject,
+    { name: use.tool, kind, ...(use.askUser !== undefined ? { askUser: use.askUser } : {}), ...(use.replyFamily ? { replyFamily: true } : {}) },
+    { chatId, provider: subject.executor, tool: use.tool, input: use.input },
+    rules,
+  )
 }

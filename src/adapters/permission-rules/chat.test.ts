@@ -65,8 +65,6 @@ describe('提醒那一行', () => {
     expect(noticeTarget({ tool: 'Bash', input: { command: 'rm -rf dist\n  && echo ok' } })).toBe('rm -rf dist && echo ok')
     expect(noticeTarget({ tool: 'Bash', input: { command: 'x'.repeat(60) } })).toHaveLength(40)
     expect(noticeTarget({ tool: 'mcp__wechat__daemon_restart', input: {} })).toBe('daemon_restart')
-    expect(noticeTarget({ tool: 'fileChange', input: {}, paths: ['/w/a.ts', '/w/b.ts'] })).toBe('改 /w/a.ts 等 2 个文件')
-    expect(chatAsk({ ...call({ file_path: '/w/x.ts' }), paths: ['/w/a.ts', '/w/b.ts'] }, 'darwin').paths).toEqual(['/w/a.ts', '/w/b.ts'])
     expect(ruleAllowLine({ rule: '删记忆不用问', target: 'memory_delete' })).toBe('按规则「删记忆不用问」放行了 memory_delete')
     expect(ruleAllowLine({ rule: 'r1', target: 'x' }, 3)).toBe('按规则「r1」放行了 x(这一轮共 3 次)')
   })

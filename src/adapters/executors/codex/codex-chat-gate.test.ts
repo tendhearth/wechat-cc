@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { makeCodexChatGate, type CodexChatGateDeps } from './codex-chat-gate'
+import { claudeEquivalentUses, makeCodexChatGate, type CodexChatGateDeps } from './codex-chat-gate'
+import { makeCanUseTool } from '../claude/permission-relay'
 import { decide } from '../../permission-rules/decide'
 import type { ChatOwnerRules, RuleAllowNotice } from '../../permission-rules/chat'
 import { TIER_PROFILES, type UserTier } from '../../../domain/user-tier'
@@ -79,14 +80,19 @@ describe('Codex 对话审批 → authorize', () => {
     expect(r.cards).toHaveLength(1)
   })
 
-  it('改文件:路径交给规则(绝对路径才算知道);对话没有项目根 ⇒ 写文件撞红线「写到了项目目录之外」,规则放不了,问主人', async () => {
-    const rules = rulesWith([{ id: 'w', when: { tool: 'fileChange', paths: '/w/proj/**' }, then: 'allow' }])
-    const r = rig({ rules, answer: 'allow' })
-    expect(await r.approve({ tool: 'fileChange', description: 'diff', paths: ['/w/proj/a.ts', '/w/proj/b.ts'] }, signal())).toBe(true)
-    expect(rules.asked[0]).toMatchObject({ tool: 'fileChange', paths: ['/w/proj/a.ts', '/w/proj/b.ts'] })
-    expect(rules.notes).toEqual([])
-    expect(r.cards).toHaveLength(1)
-    expect(r.cards[0]!.prompt).toContain('Codex 想改文件')
+  it('改文件:和 Claude 对话里同一次写得到同一个结论(admin 档写文件直接放,不弹卡、不问规则);一次改几个文件逐个判', async () => {
+    const rules = rulesWith([])
+    const r = rig({ rules, answer: 'deny' })
+    expect(await r.approve({ tool: 'fileChange', description: 'diff', paths: ['/w/proj/a.ts', '/tmp/outside.txt'] }, signal())).toBe(true)
+    expect(await r.approve({ tool: 'fileChange', description: 'diff' }, signal())).toBe(true)
+    expect(r.cards).toHaveLength(0)
+    expect(rules.asked).toHaveLength(0)
+    expect(claudeEquivalentUses({ tool: 'fileChange', description: '', paths: ['/a', '/b'] })).toEqual([{ tool: 'Edit', input: { file_path: '/a' } }, { tool: 'Edit', input: { file_path: '/b' } }])
+    // Claude 的 canUseTool 对同一次写:同样直接放。
+    const claude = makeCanUseTool({ askUser: async () => 'deny', initiatingChatId: () => 'owner', adminChatId: () => 'owner', resolveTier: () => 'admin', log: () => {}, mode: () => 'solo', provider: 'claude', permissionMode: 'strict', ownerRules: () => rules })
+    expect((await claude('Edit', { file_path: '/tmp/outside.txt' }, { signal: signal() } as never)).behavior).toBe('allow')
+    // 档位不许写(访客)⇒ 拒。
+    expect(await rig({ tier: 'guest', answer: 'allow' }).approve({ tool: 'fileChange', description: 'd', paths: ['/w/a'] }, signal())).toBe(false)
   })
 
   it('MCP 调用按档位:admin 放的直接放、要问的(删记忆)问;trusted 碰 admin 专用工具 ⇒ 拒', async () => {

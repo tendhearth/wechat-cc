@@ -2,18 +2,20 @@
  * Codex 对话的逐条审批(主人 2026-10-26 点头:「Codex 对话逐条问」)。
  *
  * 主人自己的对话(admin 档,strict)里 codex app-server 跑 on-request:它要批的命令 / 改文件 / MCP 调用发给客户端,
- * 这里逐条交给 authorize()(经 permission-rules/chat.ts 的 authorizeChatCall,和 Claude / Gemini / openai 同一条路):
- *   - 命令 / 改文件:codex 自己已经判定这一条要批(越出沙箱、或它认为危险)⇒ 起点就是「问」(reported);
- *     主人的放行规则可以替主人放(回复里多一行「按规则「…」放行了 …」)、可以拒;红线照旧问;
- *   - MCP 调用:按档位 × 类别判(和 Claude 的 canUseTool 一样):档位放的直接放,档位说问的(memory_delete /
- *     daemon_remediate …)先过规则再问;
- *   - 要问 ⇒ 经微信拍板卡问主人(ilink.askUser,和 Claude 对话同一张卡、同一个待批登记处),10 分钟没回 ⇒ 拒,
- *     卡送不到 ⇒ 拒。拒了 codex 收到 decline,这次调用记成失败,模型看得到。
+ * 这里逐条交给 authorize(经 permission-rules/chat.ts):
+ *   - 改文件、MCP 调用:翻成 **Claude 会发出的同一个工具调用**(每个文件一次 `Edit {file_path}`;`mcp__<server>__<tool>`
+ *     + 参数),走 Claude 的 canUseTool 用的同一个入口 `authorizeChatToolUse` —— 同一个调用,两家同一个结论
+ *     (admin:写文件、绝大多数 wechat 工具直接放;删记忆 / 动 daemon 先过规则再问)。
+ *     一次改好几个文件:每个各判一次,有一个拒 ⇒ 拒,有一个要问 ⇒ 问一次,都放 ⇒ 放。
+ *   - 命令:codex 自己判定这一条要批(越出沙箱、或它认为危险)⇒ 起点就是「问」(reported,和终端 / 一起做里
+ *     执行者报上来的请求同一条路):主人的放行规则可以替主人放(回复里多一行「按规则「…」放行了 …」)、可以拒,红线照旧问。
+ *   - 要问 ⇒ 经微信拍板卡问主人(ilink.askUser,和 Claude 对话同一张卡、同一个待批登记处),10 分钟没回 / 卡送不到 /
+ *     没有可问的人 ⇒ 拒。拒了 codex 收到 decline,这次调用记成失败,模型看得到。
  *
- * 不给网、访客、定时、审查这些档的会话不是 on-request,根本收不到审批请求(compilePolicy('codex'))。
+ * 访客、信任、定时、审查这些档的会话不是 on-request,根本收不到审批请求(compilePolicy('codex'))。
  */
-import { authorizeChatCall, type ChatOwnerRules } from '../../permission-rules/chat'
-import { classifyToolUse, type ToolKind } from '../../../domain/user-tier'
+import { authorizeChatCall, authorizeChatToolUse, type ChatAuthorization, type ChatOwnerRules } from '../../permission-rules/chat'
+import { classifyToolUse } from '../../../domain/user-tier'
 import type { SpawnContext } from '../../../ports/agent-provider'
 import type { CodexChatApprovalRequest, CodexChatApprove } from './codex-app-server'
 
@@ -40,11 +42,15 @@ function shortHash(s: string): string {
 
 const isMcp = (tool: string) => tool.startsWith('mcp__')
 
-/** 这一条审批是什么类别的工具(只用于档位那一层与日志;命令 / 改文件走 reported,类别不改落点)。 */
-function kindOf(req: CodexChatApprovalRequest): ToolKind {
-  if (isMcp(req.tool)) return classifyToolUse(req.tool, req.input ?? {})
-  if (req.tool === 'fileChange') return 'fs_write'
-  return classifyToolUse('Bash', { command: req.command ?? '' })
+/** 改文件 / MCP 调用:Claude 会发出的同一个工具调用(一次改好几个文件 ⇒ 每个文件一个)。命令不在这里(见文件头)。 */
+export function claudeEquivalentUses(req: CodexChatApprovalRequest): Array<{ tool: string; input: Record<string, unknown> }> {
+  if (isMcp(req.tool)) return [{ tool: req.tool, input: req.input ?? {} }]
+  return req.paths?.length ? req.paths.map(p => ({ tool: 'Edit', input: { file_path: p } })) : [{ tool: 'Edit', input: {} }]
+}
+
+/** 几个结论合成一个:有拒 ⇒ 拒(带上规则的话);有问 ⇒ 问;都放 ⇒ 放。 */
+function combine(all: ChatAuthorization[]): ChatAuthorization {
+  return all.find(a => a.verdict === 'deny') ?? all.find(a => a.verdict === 'ask') ?? all[0]!
 }
 
 /** 拍板卡上那一段:命令 / 改文件 / 工具 + codex 给的说明(截断)。 */
@@ -59,16 +65,23 @@ export function makeCodexChatGate(deps: CodexChatGateDeps): (ctx: SpawnContext) 
     let seq = 0
     return async (req, signal) => {
       if (signal.aborted) return false
-      const kind = kindOf(req)
-      const mcp = isMcp(req.tool)
-      const input: Record<string, unknown> = mcp ? (req.input ?? {}) : req.command ? { command: req.command } : {}
-      const auth = await authorizeChatCall(
-        { tier: ctx.tierProfile, permissionMode: ctx.permissionMode, executor: 'codex' },
-        // MCP:档位 × 类别(能力表里 codex 不逐条问 ⇒ never;admin / trusted 每一类档位都明说了)。命令 / 改文件:codex 报上来要批的。
-        mcp ? { name: req.tool, kind, askUser: 'never' } : { name: req.tool, kind, reported: true },
-        { chatId: ctx.chatId, provider: 'codex', tool: req.tool, input, ...(req.paths ? { paths: req.paths } : {}) },
-        deps.ownerRules?.() ?? null,
-      )
+      const subject = { tier: ctx.tierProfile, permissionMode: ctx.permissionMode, executor: 'codex' as const }
+      const rules = deps.ownerRules?.() ?? null
+      let auth: ChatAuthorization
+      let kind: string
+      if (req.tool === 'commandExecution') {
+        const input = req.command ? { command: req.command } : {}
+        const shellKind = classifyToolUse('Bash', input)
+        kind = shellKind
+        auth = await authorizeChatCall(subject, { name: req.tool, kind: shellKind, reported: true }, { chatId: ctx.chatId, provider: 'codex', tool: req.tool, input }, rules)
+      } else {
+        const uses = claudeEquivalentUses(req)
+        const results: ChatAuthorization[] = []
+        // 能力表里 codex 不逐条问 ⇒ askUser never;admin / trusted 每一类档位都明说了,用不上它。
+        for (const use of uses) results.push(await authorizeChatToolUse(subject, { ...use, askUser: 'never' }, ctx.chatId, rules))
+        auth = combine(results)
+        kind = uses.map(u => u.tool).join(',')
+      }
       if (auth.verdict === 'allow') {
         if (auth.reason === 'owner_rules') deps.log('PERMISSION', `allow-by-owner-rule: provider=codex tool=${req.tool} kind=${kind}`)
         return true

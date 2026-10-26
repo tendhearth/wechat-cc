@@ -40,7 +40,12 @@ const approval = (command: string, onDecision: (d: unknown) => void) => ({
   onResponse: (r: { result?: unknown }) => onDecision((r.result as { decision?: unknown } | undefined)?.decision),
 })
 
-async function withDaemon(command: string, finalText: string, run: (d: Awaited<ReturnType<typeof startTestDaemon>>, decision: () => unknown) => Promise<void>) {
+const fileApproval = (path: string, onDecision: (d: unknown) => void) => [
+  { notify: { method: 'item/started', params: { item: { id: 'f1', type: 'fileChange', status: 'inProgress', changes: [{ path, kind: { type: 'add' }, diff: '+hello' }] } } } },
+  { request: { method: 'item/fileChange/requestApproval', params: { itemId: 'f1' } }, onResponse: (r: { result?: unknown }) => onDecision((r.result as { decision?: unknown } | undefined)?.decision) },
+]
+
+async function withDaemon(command: string | { file: string }, finalText: string, run: (d: Awaited<ReturnType<typeof startTestDaemon>>, decision: () => unknown) => Promise<void>) {
   let decision: unknown
   const daemon = await startTestDaemon({
     dangerously: false,
@@ -52,7 +57,8 @@ async function withDaemon(command: string, finalText: string, run: (d: Awaited<R
     claudeScript: { async onDispatch() { return { toolCalls: [], finalText: '' } } },
     codexScript: {
       async onDispatch() {
-        return { toolCalls: [], finalText, codexSteps: [approval(command, d => { decision = d })] }
+        const record = (d: unknown) => { decision = d }
+        return { toolCalls: [], finalText, codexSteps: typeof command === 'string' ? [approval(command, record)] : fileApproval(command.file, record) }
       },
     },
   })
@@ -71,6 +77,17 @@ describe('e2e: Codex 对话逐条问(on-request → authorize → 规则 / 拍�
       expect(texts(out).some(t => t.includes('列好了。'))).toBe(true)
       expect(texts(out).find(t => t.includes('按规则'))).toBe('按规则「列目录不用问」放行了 ls')
       expect(texts(out).some(isCard)).toBe(false)
+    })
+  })
+
+  it('改文件:和 Claude 对话里同一次写同一个结论 —— admin 档直接放,不弹卡、不出「按规则」那一行', async () => {
+    await withDaemon({ file: '/tmp/codex-e2e-note.txt' }, '写好了。', async (daemon, decision) => {
+      daemon.sendText('chat1', '写个文件')
+      const out = await daemon.waitForOutbound(m => texts(m).some(t => t.includes('写好了。')), 10_000)
+      expect(decision()).toBe('accept')
+      expect(texts(out).some(isCard)).toBe(false)
+      expect(texts(out).some(t => t.includes('Codex 想改文件'))).toBe(false)
+      expect(texts(out).some(t => t.includes('按规则'))).toBe(false)
     })
   })
 
