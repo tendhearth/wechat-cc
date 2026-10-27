@@ -24,6 +24,7 @@
  *     「这个改动会不会让某个可选子系统开着时开不了机」—— #729 就是这么漏的:单测全绿、真机开机三连败。
  */
 import { spawnSync } from 'node:child_process'
+import { recordVerified, workingTree } from './verify-stamp'
 
 const argv = process.argv.slice(2)
 const full = argv.includes('--full')
@@ -32,6 +33,9 @@ const BASE = baseArg >= 0 ? argv[baseArg + 1]! : 'origin/dev'
 
 const git = (args: string[]) => spawnSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 const failed: string[] = []
+// 开始时就记下检查的是哪份内容(跑的过程中又改了文件,记的仍是开始那份);全绿才记,pre-push 认它(scripts/verify-stamp.ts)
+const verifiedTree = (() => { try { return workingTree(process.cwd()) } catch { return null } })()
+const stamp = () => { if (verifiedTree) try { recordVerified(process.cwd(), verifiedTree) } catch { /* 记不下只是推的时候要重跑 */ } }
 
 function step(label: string, cmd: string, args: string[], cwd?: string): void {
   console.log(`\n▶ ${label}`)
@@ -46,6 +50,7 @@ function finish(): never {
     console.error(`\n✗ 红了:${failed.join('、')}`)
     process.exit(1)
   }
+  stamp()
   console.log(full ? '\n✓ 全量四条都绿。' : '\n✓ 改动牵连到的都绿。全量、node、三平台交给 CI(要本地全跑:bun run verify --full)。')
   process.exit(0)
 }
@@ -73,10 +78,12 @@ const changed = [...new Set([
 
 if (changed.length === 0) {
   console.log(`相对 ${BASE} 没有改动,不用跑。`)
+  stamp()
   process.exit(0)
 }
 if (changed.every(f => f.endsWith('.md'))) {
   console.log(`只改了 Markdown(${changed.length} 个文件),不用跑。`)
+  stamp()
   process.exit(0)
 }
 

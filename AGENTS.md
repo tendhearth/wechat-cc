@@ -25,7 +25,8 @@ Tendhearth CC 是住在用户自己电脑上的个人 AI,日常称呼为 CC。da
 开发者在自己的分支完成修改、验证和提交,交给整合者。测试只增不减:删掉/放松的测试在 PR 描述 `## 删掉/放松的测试` 写理由;修 bug 的 PR 描述带 `## 红/绿`(撤掉修复时测试红、带上时绿),CI 会查,见 `docs/maintainer/verify.md`。整合者在指定的集成工作区逐项合入 `dev`,对合并后的版本重新验证,再部署、推送。分工、冲突处理和运行环境隔离见[维护者手册](docs/maintainer/README.md#多-agent-协作)。
 
 ```bash
-# 开发分支本地验证:只跑改动牵连到的(typecheck + depcheck + 牵连的测试 + 全部守卫)
+# 开发分支本地验证:只跑改动牵连到的(typecheck + depcheck + 牵连的测试 + 全部守卫 + 真实形状沙盒)
+# 全绿才记下这份内容;git push 时 pre-push 钩子查(装一次:git config core.hooksPath scripts/git-hooks)
 bun run verify
 # 整合者合入 dev 后、部署前:跟 CI 一样四条全跑(test / test:node / typecheck / depcheck)
 bun run verify --full
