@@ -478,6 +478,39 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
   })
 })
 
+// 2026-10 变异基线:#79 修复的两道签名(customer_reviews 在、social_echo 不在)各自换成 false 都不红 ——
+// 上面「真 1.3.2 库」那条两道同时不满足,去掉哪一道都还有另一道兜着。这里各造一个只差一道的库。
+describe('issue #79 — 修复的签名两道缺一不可', () => {
+  const version = (db: Db) => (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+
+  it('没有 customer_reviews(不是那个分支建的库)⇒ 不回退:就算社交表也不在,也照原样往下跑、原样报错', () => {
+    // 真的 v1–v18,user_version 却记成 21:缺社交表,但也没有客户回顾 —— 不是 #79 那批库,修复不认它、不猜。
+    const db = migratedTo(18)
+    db.exec('PRAGMA user_version = 21;')
+    expect(() => runMigrations(db, migrations)).toThrow(/social_relay/)
+    expect(version(db)).toBe(21)
+  })
+
+  it('社交表在(正式发布的 1.3.2 库,又多了客户回顾表)⇒ 不回退,从 v22 正常往下跑', () => {
+    // 回退到 v18 会把 v19–v21 在已有的社交表上重跑一遍;正式发布的库一个字节都不许这样碰。
+    const db = migratedTo(21)
+    migrations[25]!(db) // v26:客户回顾表(CREATE TABLE IF NOT EXISTS,之后 v26 再跑一次是空操作)
+    db.exec('PRAGMA user_version = 21;')
+    expect(() => runMigrations(db, migrations)).not.toThrow()
+    expect(version(db)).toBe(migrations.length)
+  })
+})
+
+describe('openDb — 外键约束是开着的', () => {
+  it('子表指向一条不存在的父行 ⇒ 写入被拒', () => {
+    const db = openTestDb()
+    expect((db.query('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys).toBe(1)
+    expect(() => db.exec(
+      "INSERT INTO workbench_wechat_subscriptions (task_id, owner_chat_id, account_id, enabled, generation, created_at, updated_at) VALUES ('no-such-task', 'c', 'a', 1, 1, 0, 0)",
+    )).toThrow(/FOREIGN KEY/)
+  })
+})
+
 describe('migration v41 — reminders back-fills columns the old June schema lacked', () => {
   it('adds last_attempt_at/last_error/attempts to a pre-v29 reminders table', () => {
     // Reproduce the "no such column: last_attempt_at" boot error: a database

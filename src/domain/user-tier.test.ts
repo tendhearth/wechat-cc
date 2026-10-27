@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { resolveTier, resolveEffectiveTier, TIER_PROFILES, ALL_KINDS, type UserTier, type ToolKind, effectivePermissionMode } from './user-tier'
 import type { Access } from '../lib/access'
+import { decideTool } from './tool-decision'
 
 const baseAccess: Access = {
   dmPolicy: 'allowlist',
@@ -507,5 +508,65 @@ describe('回复交付的新工具(spec 2026-10-03 §4.5 / §4.6)', () => {
     for (const t of ['terminal_say', 'terminal_say_result']) {
       expect(classifyToolUse(`mcp__wechat__${t}`, { code: 'abc123', text: 'x' })).toBe('message_other')
     }
+  })
+})
+
+// 2026-10 变异基线:`sub === 'cc_letter'` 换成 false 不红 —— 没被归成 config_admin 的 wechat 工具会落到末尾的
+// fs_read 默认值,trusted 就能写信 / 改「不定期的信」开关。只断言类别名钉不住「谁能调」,这里按档位断言最终裁决:
+// 每个工具一行,admin / trusted / guest 各自是放、问还是拒。新工具落进默认值、或者分错了类,对应那一行就红。
+describe('wechat 工具 × 档位:谁能调(按最终裁决)', () => {
+  const A = 'allow', R = 'relay', D = 'deny'
+  // [工具, admin, trusted, guest]
+  const table: Array<[string, string, string, string]> = [
+    // 只给主人:用的是主人的记忆 / 配置 / 私事,或者替主人对外说话
+    ['mcp__wechat__cc_letter', A, D, D],
+    ['mcp__wechat__config_get', A, D, D],
+    ['mcp__wechat__config_set', A, D, D],
+    ['mcp__wechat__model_get', A, D, D],
+    ['mcp__wechat__terminal_sessions', A, D, D],
+    ['mcp__wechat__today_digest', A, D, D],
+    ['mcp__wechat__calendar_agenda', A, D, D],
+    ['mcp__wechat__diagnostic_turns', A, D, D],
+    ['mcp__wechat__locate_file', A, D, D],
+    ['mcp__wechat__message', A, D, D],
+    ['mcp__wechat__terminal_say', A, D, D],
+    ['mcp__wechat__terminal_say_result', A, D, D],
+    ['mcp__wechat__social_seek', A, D, D],
+    ['mcp__wechat__wish_send', A, D, D],
+    ['mcp__wechat__knowledge_search', A, D, D],
+    ['mcp__wechat__federated_query', A, D, D],
+    ['mcp__wechat__contact_profile', A, D, D],
+    ['mcp__wechat__record_facts', A, D, D],
+    ['mcp__wechat__person_brief', A, D, D],
+    ['mcp__wxvault__get_messages', A, D, D],
+    // 只给主人,而且主人自己也要再确认一次(重启 / 释放会话 / 换模型)
+    ['mcp__wechat__model_set', R, D, D],
+    ['mcp__wechat__daemon_restart', R, D, D],
+    ['mcp__wechat__session_release', R, D, D],
+    // trusted 能用、访客不行
+    ['mcp__wechat__provider_switch', A, A, D],
+    ['mcp__wechat__set_chat_pref', A, A, D],
+    ['mcp__wechat__save_sticker', A, A, D],
+    ['mcp__wechat__memory_write', A, A, D],
+    ['mcp__wechat__attach_file', A, A, D],
+    ['view_image', A, A, D],
+    ['mcp__wechat__a2a_send', A, R, D],
+    ['mcp__wechat__memory_delete', R, R, D],
+    // 访客也能用:回这一轮的话、读记忆
+    ['mcp__wechat__reply', A, A, A],
+    ['mcp__wechat__voice', A, A, A],
+    ['mcp__wechat__sticker', A, A, A],
+    ['mcp__wechat__send_sticker', A, A, A],
+    ['mcp__wechat__search_online_sticker', A, A, A],
+    ['mcp__wechat__send_online_sticker_candidate', A, A, A],
+    ['mcp__wechat__sticker_feedback', A, A, A],
+    ['mcp__wechat__share_page', A, A, A],
+    ['mcp__wechat__memory_read', A, A, A],
+    ['mcp__wechat__list_stickers', A, A, A],
+    ['mcp__wechat__observations_list', A, A, A],
+  ]
+  it.each(table)('%s ⇒ admin %s / trusted %s / guest %s', (tool, admin, trusted, guest) => {
+    const kind = classifyToolUse(tool, {})
+    expect([decideTool(TIER_PROFILES.admin, kind), decideTool(TIER_PROFILES.trusted, kind), decideTool(TIER_PROFILES.guest, kind)]).toEqual([admin, trusted, guest])
   })
 })
