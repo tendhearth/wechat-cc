@@ -145,7 +145,7 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
     // to the owner's real contacts). 503 until bootstrap wires the runner
     // (registry + mintSessionToken/invalidateSession all come from
     // bootstrap) — the deps.selftestConverse FIELD is wired unconditionally
-    // in daemon-modules.ts (same as every other late-read field: the HTTP
+    // in internal-api/module.ts (same as every other late-read field: the HTTP
     // port opens before bootstrap is up), so "field absent" alone doesn't
     // catch the pre-bootstrap window; the thunk returns `null` there
     // instead, and that maps to 503 too, same as the field being absent.

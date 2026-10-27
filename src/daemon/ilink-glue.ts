@@ -48,7 +48,7 @@ export type { Account } from './ilink/context'
 export type IlinkAccount = import('./ilink/context').Account
 
 /**
- * 整个 ilink 适配器 = 十个窄口的并集(src/ports/wechat.ts,架构终态 A6)。只有 ilink 自己和组装的地方(daemon-modules.ts)
+ * 整个 ilink 适配器 = 十个窄口的并集(src/ports/wechat.ts,架构终态 A6)。只有 ilink 自己(含 ilink/module.ts)和地基
  * 拿得到这一整个;别的模块经容器 needs 口名(`wechat.send` …)只拿它要的那一口(守卫:scripts/ilink-ports.guard.test.ts)。
  */
 export interface IlinkAdapter extends WechatSend, WechatAccounts, WechatContacts, WechatPages, WechatPermissions, WechatLinkStatus, WechatWorkbenchTransport, WechatPolling {
@@ -56,7 +56,7 @@ export interface IlinkAdapter extends WechatSend, WechatAccounts, WechatContacts
   companion: WechatCompanionControls
 }
 
-/** ilink 模块交给容器的窄口(daemon-modules.ts 的 `ilink-adapter` 模块的 `ports`)。语音 / 开关是子对象,其余八口就是 adapter 本身、只收窄类型。 */
+/** ilink 模块交给容器的窄口(ilink/module.ts 的 `ilink-adapter` 模块的 `ports`)。语音 / 开关是子对象,其余八口就是 adapter 本身、只收窄类型。 */
 export const ILINK_PORTS = {
   [WECHAT_PORTS.send]: (a: IlinkAdapter): WechatSend => a,
   [WECHAT_PORTS.voice]: (a: IlinkAdapter): WechatVoice => a.voice,

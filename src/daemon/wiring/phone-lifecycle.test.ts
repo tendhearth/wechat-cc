@@ -35,10 +35,14 @@ describe('phone lifecycle(手机那一簇关机时停掉:隧道 / notifier / 订
     expect(stopped).toBe(true)
   })
   it('the module table owns the phone cluster BEFORE polling ⇒ reverse stop: inbound stops first, in-flight App replies still drain through the tunnel', () => {
-    // 关机顺序的全貌在 __e2e__/shutdown-order 的快照里;这一条只钉住「手机那一簇在拉消息之前登记」。
-    const src = readFileSync(join(__dirname, '..', 'daemon-modules.ts'), 'utf8')
-    const phone = src.indexOf("ctx.own('phone'")
-    const polling = src.indexOf("lifecycleModule('polling'")
+    // 关机顺序的全貌在 __e2e__/shutdown-order 的快照里;这一条只钉住「手机那一簇在拉消息之前登记」:
+    // 手机那一簇由 wired 模块 own(wiring/module.ts),模块表里 wired 排在 polling 前面(2026-10-26 起各模块的定义在各自的 module.ts)。
+    const own = readFileSync(join(__dirname, 'module.ts'), 'utf8')
+    const table = readFileSync(join(__dirname, '..', 'daemon-modules.ts'), 'utf8')
+    expect(own.indexOf("ctx.own('phone'")).toBeGreaterThan(own.indexOf("name: 'wired'"))
+    expect(own.indexOf("name: 'wired'")).toBeGreaterThan(0)
+    const phone = table.indexOf('wiredModule(f)')
+    const polling = table.indexOf('pollingModule()')
     expect(phone).toBeGreaterThan(0)
     expect(polling).toBeGreaterThan(0)
     expect(phone).toBeLessThan(polling)

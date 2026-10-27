@@ -30,7 +30,7 @@ export interface WireActivityDeps {
   jobsStore: ReturnType<typeof makeJobsStore>
 }
 
-/** `activity` 模块的值(daemon-modules.ts;定时、提醒、owner-commands、wired 经 needs 拿)。 */
+/** `activity` 模块的值(activity/module.ts;定时、提醒、owner-commands、wired 经 needs 拿)。 */
 export type Activity = ReturnType<typeof wireActivity>
 
 export function wireActivity(d: WireActivityDeps) {

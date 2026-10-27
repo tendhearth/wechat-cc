@@ -44,6 +44,8 @@ export function calendarFeature(d: { stateDir: string; isOwner(chatId: string): 
    (`ctx.get` / `ctx.late`)里填好 —— `needs` / `lazy` 也写在这里。它会引 `Bootstrap` / `WiredDeps` 这些大包的类型;
    放进 `index.ts` 会成环(`daemon/wiring` 等经 `index.ts` 用功能),所以单独一个文件、只有模块表引它
    (depcheck 的 `feature-module-only-from-the-module-table`)。样板:`src/features/letters/module.ts`。
+   不是功能的平台模块(network-gate、ilink、internal-api、bootstrap 一组、wired …)同一个写法,放在那块代码的目录里:
+   `src/daemon/<块>/module.ts`(`platform-module-only-from-module-files`)。
 2. `src/daemon/daemon-modules.ts` 的模块表里加一行 `<名>Module(f)`,位置放在它要的模块之后、要它的模块之前(表的顺序就是开机顺序,
    关机倒过来;`__e2e__/shutdown-order` 的快照会显示变化)。
 3. 有路由:`packages/protocol/src/routes.ts` 里每一行写 `module: '<名>'`,把名字加进 `MODULE_NAMES`;处理器在模块的 `init` 里
@@ -62,7 +64,7 @@ export function calendarFeature(d: { stateDir: string; isOwner(chatId: string): 
 - `scripts/daemon-module.guard.test.ts` 也扫 `src/features`:裸 `setInterval`、`Ref`、`lc.register` 一出现就红。
 - `scripts/speech-send.guard.test.ts` 也扫 `src/features`:直接发微信的调用要登记成 `reply`(回主人刚发来的那一句),主动开口走 `policy.say`。
 - `internal-api` 的 `mount`:只能挂路由表里标给自己的那几条,重复挂直接抛。
-- `scripts/ilink-ports.guard.test.ts`:`IlinkAdapter` 只在 ilink 自己和 `daemon-modules.ts` / `foundation.ts` 出现,没有模块 needs `ilink-adapter`。
+- `scripts/ilink-ports.guard.test.ts`:`IlinkAdapter` 只在 ilink 自己(含定义 `ilink-adapter` 模块的 `src/daemon/ilink/module.ts`)和 `foundation.ts` 出现,没有模块 needs `ilink-adapter`。
 
 ## 删掉一个功能
 

@@ -141,6 +141,13 @@ module.exports = {
       to: { path: '^src/features/[^/]+/module\\.ts$' },
     },
     {
+      name: 'platform-module-only-from-module-files',
+      severity: 'error',
+      comment: '2026-10-26:src/daemon/<块>/module.ts 是平台模块(network-gate、ilink、internal-api、bootstrap 一组、wired …)接进 daemon 的那一份,跟功能的 module.ts 一样是汇点:只有模块表 daemon-modules.ts 和别的 module.ts(引 BootApi / OwnerCommands / PipelineModule 这类模块值的类型)引它。',
+      from: { pathNot: ['^src/daemon/daemon-modules\\.ts$', '^src/(daemon|features)/[^/]+/module\\.ts$', '\\.test\\.ts$'] },
+      to: { path: '^src/daemon/[^/]+/module\\.ts$' },
+    },
+    {
       name: 'features-not-into-each-other',
       severity: 'error',
       comment: '架构终态 A3:一个功能不许伸进另一个功能的内部文件;要用就经对方的 index.ts(并在模块清单里 needs 它)。',
