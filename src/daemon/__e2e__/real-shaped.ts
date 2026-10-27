@@ -36,6 +36,8 @@ export const SANDBOX_GUEST = 'o9fixture-guest@im.wechat'
 export interface RealShapedOpts extends Pick<TestDaemonOpts, 'claudeScript' | 'codexScript' | 'cursorScript' | 'moderatorScript' | 'recordClaudeSpawnOptions' | 'recordCodexSpawnOptions' | 'modes' | 'seedFiles'> {
   /** 复用上一次的 stateDir(重启场景):不再播种记忆 / 知识库 / 对话,只把指向替身的 URL 换成这次的端口。 */
   stateDir?: string
+  /** 盖在 agent-config.json 上的几项(这次开机的「机器上变了什么」,比如 a2a 端口被别的程序占了)。 */
+  agentConfigPatch?: Record<string, unknown>
 }
 
 export interface HealthBody {
@@ -123,7 +125,7 @@ function seedMachine(stateDir: string): void {
 }
 
 /** 每次开机前:配置文件。指向替身的 URL / 端口每次重写(替身每次是新端口),其余照真机。 */
-function writeConfig(stateDir: string, fakes: { internet: FakeInternet; mailbox: FakeMailboxRelay; phoneRelay: FakePhoneRelay }): void {
+function writeConfig(stateDir: string, fakes: { internet: FakeInternet; mailbox: FakeMailboxRelay; phoneRelay: FakePhoneRelay }, patch: Record<string, unknown> = {}): void {
   writeJson(join(stateDir, 'agent-config.json'), {
     provider: 'claude',
     dangerouslySkipPermissions: false,
@@ -143,6 +145,7 @@ function writeConfig(stateDir: string, fakes: { internet: FakeInternet; mailbox:
     // 出门也能用(手机中继 v2)
     remote_tunnel: true,
     relay_v2_url: fakes.phoneRelay.url,
+    ...patch,
   })
   writeJson(join(stateDir, 'companion', 'config.json'), {
     enabled: true,
@@ -173,7 +176,7 @@ export async function startRealShapedDaemon(opts: RealShapedOpts = {}): Promise<
   const stateDir = opts.stateDir ?? mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-'))
   const internet = startFakeInternet(), mailbox = startFakeMailboxRelay(), phoneRelay = startFakePhoneRelay()
   if (fresh) seedMachine(stateDir)
-  writeConfig(stateDir, { internet, mailbox, phoneRelay })
+  writeConfig(stateDir, { internet, mailbox, phoneRelay }, opts.agentConfigPatch)
 
   // 日志:从 stderr 抓(log.ts 每行都写 stderr)。SANDBOX_LOG=1 时照样打出来。
   const lines: string[] = []

@@ -1,7 +1,7 @@
 # `__e2e__/` — daemon 端到端测试
 
 起**真的** daemon(`bootDaemon`,和 `main.ts` 同一条开机路),只把系统边界换成替身:微信 ilink、模型 SDK、外网。
-32 个文件 / 51 条(2026-10-27),本机全量约 40 秒。
+32 个文件 / 57 条(2026-10-27),本机全量约 40 秒。
 
 ```bash
 bun run test:e2e        # 全部(= bun --bun vitest run -c vitest.e2e.config.ts)
@@ -22,12 +22,31 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 开机 | `/v1/health` 的每个子系统都是 ok(专门开上的那十几样一个不少);日志里没有 `[MODULES] … failed / degraded`;网络守护探到替身、判安全;手机隧道连上替身中继并登录;没有不在名单里的往外请求 |
 | 主人发一句 | 回复落进假 ilink 的外发箱,只一条 |
 | 记忆 | 开机把记忆文件(`memory.md` / `owner.md` / `corrections.md`)和旧的 `knowledge/facts.db` 导进主库(`memory_facts` 有行、facts 7 条、`memory_import` 记了两个对话);会话的提示词里有主人的长期记忆和原话 |
+| 记忆页删一句 | 主人在桌面记忆页(`POST /v1/memory/view` → `/v1/memory/edit`,operator 令牌)删掉 memory.md 的一行 ⇒ `memory_facts` 那一行不再生效、磁盘上导出的 memory.md 没了它、`GET /v1/memory/retractions` 里有它;下一个新起的会话(拍板卡那条的 Codex 线程)开发者指令里没有它、别的记忆还在;再开机也没回来 |
 | 拍板卡 | 主人发 `/codex` 切到 Codex,要跑 `rm -rf build` ⇒ 卡片发到主人微信,主人回 `y` ⇒ 命令放行(app-server 收到 accept) |
+| 放行规则 | 开机前就有的 `permission-rules.json`:`ls` 不弹卡直接放,回复后面单独一行「按规则「列目录不用问」放行了 ls」;有规则放 git,`git push` 是红线照旧弹卡,主人回 `n` ⇒ codex 收到 decline |
+| 微信里派活 | 主人发「任务 项目」⇒ 列出 projects.json 里的 git 项目;「任务 新建 <项目> 用 @codex …」⇒ 执行者在项目里写了文件、桌面看到 `phase: replied`、回报发件箱(`matter_report_outbox`)里有带答复正文的「已答复」;「任务 <编号> 改动」列出 NOTE.md(新建),`GET /v1/workbench/review` 的快照里也有它 |
+| 陌生人加进来 | 不在名单里的人说话 ⇒ 对方收到中性回复、主人收到带码的请求;主人回「允许 <码>」⇒ 对方被问称呼、之后的话到了 CC;访客的会话工具全关(Bash / Write / Edit / Read / WebFetch / Task),提示词里没有主人的长期记忆和原话 |
+| 卡还挂着就重启 | Codex 一张卡在等主人时关机 ⇒ 关机收尾把这条审批按「拒」答回给 codex;再开机后登记处是空的,主人迟到的「y」当普通的一句话交给 CC(有回、没出新卡、没放行任何东西) |
 | 关机再开机 | 正常关机没有哪一步停失败;同一个 stateDir 再开机:不重复导入、照样健康、没有模块坏、对话模式留住了、照样收发 |
+| 开机时一样起不来 | 再开机时 A2A 端口被别的程序占了 ⇒ 照样开起来;`/v1/health` 里只有 `a2a-server=degraded`,其余专门开上的都 ok;主人收到一句「这次开机有几样没起来：CC 之间的往来。其它功能照常。」;照样收发 |
+
+这些场景是**一条时间线**,共用一台 daemon(中途重启三次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。
 
 **红 / 绿实证**:把 boot-api(当时在 `daemon-modules.ts`,现在 `bootstrap/module.ts`)的 `lazy: ['wired'],` 删掉,沙盒在 `beforeAll` 就红
 (`boot-api failed at init (required): modules: 'boot-api' called ctx.late('wired') but 'wired' is not in its lazy`),
 而其余 31 个 e2e 文件照样全绿。加回去就绿。
+
+后加的几条,各自故意改坏一行生产代码、看对应的场景红(引入它们的 PR 描述里 `## 红/绿` 有原文):
+
+| 改坏的那一行 | 红的场景 |
+| --- | --- |
+| `features/memory/memory-export.ts` 从表拼记忆文档时连收回的行也带上(`statuses: ['active', 'retracted']`) | 拍板卡那条(新起的 Codex 线程的开发者指令里又有了那句;记忆页和磁盘上的文件看不出来) |
+| `adapters/permission-rules/rules-file.ts` 读规则文件时一律当成没开(`enabled: false`) | 放行规则(`ls` 也弹卡) |
+| `features/workbench/wire.ts` 工作台不读 projects.json(`registeredProjects: () => []`) | 微信里派活(「任务 项目」里没有那个项目) |
+| `domain/user-tier.ts` 名单里的人都当 admin(补回注释里明说不要的 allowFrom 兜底) | 陌生人加进来(访客会话的工具没关) |
+| `daemon/ilink-glue.ts` 没有待批时的「y」也当成拍板吞掉 | 卡还挂着就重启(迟到的「y」没人回) |
+| `daemon/runtime/boot-report.ts` 降级汇总不发 | 开机时一样起不来(主人没收到那一句) |
 
 ### 开了什么
 
@@ -56,6 +75,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | hearth | 要外部 CLI(`hearth_cmd`)和一个 vault |
 | bx(网络守护的主信号) | 本机工具;`findBx` 在测试进程里永远当没装(`src/daemon/guard/bx.ts`),所以守护走探测 |
 | 测试进程里的代码分叉 | `UNDER_TEST_RUNNER` 时有几处和真机不一样:cheapEval 网络预检不接、守护闸门自己不探测、agy / cursor-agent 不在 PATH 上找(`src/lib/config.ts` 的 `UNDER_TEST_RUNNER`,用到它的地方 grep 得到) |
+| 工作台读本机的 codex 配置 | 工作台起 Codex 前按子进程的环境(`CODEX_HOME`,缺省 `~/.codex`)读开发者自己的 codex 配置,看主人配了哪些 MCP;开发机上配过的会在任务里多一行「本次未带入的本机工具：…」,CI 上没有。只读、不出网,场景不看这一行 |
 | 外部 CLI 的版本探测 | `claude --version` / `codex --version` 是真的跑(本机,不出网);CI 上没装 claude 就探不到 |
 | 自改流水线、桌面 app、真 iPhone | 不在 daemon 进程里;各有自己的验证(`docs/maintainer/self-change.md`、`docs/maintainer/verify.md`) |
 
@@ -67,7 +87,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 ## 替身
 
 - **`fake-ilink-server.ts`** — 假 ilink(`getupdates` / `sendmessage` / `sendfile` / `getconfig` / `sendtyping`),真的线上格式;`waitForOutbound(predicate)` 等外发。
-- **`fake-sdk.ts`** — Claude Agent SDK、Codex app-server(剧本)、Cursor SDK 的替身。测试给一份 `FakeSdkScript`,`onDispatch(text)` 返回工具调用和最终文字;Codex 还能给 `codexSteps`(比如一次审批请求)。
+- **`fake-sdk.ts`** — Claude Agent SDK、Codex app-server(剧本,`src/test-support/executors/codex-scripted.ts`;线程应答照真 codex 报回 workspace-write 的细项,收尾的 `thread/backgroundTerminals/clean|list` 也应答 —— 工作台起线程、收会话时都要核对这些)、Cursor SDK 的替身。测试给一份 `FakeSdkScript`,`onDispatch(text)` 返回工具调用和最终文字;Codex 还能给 `codexSteps`(比如一次审批请求)。
 - **`fake-media.ts`** — 图片入站落成本地 3 字节的桩文件,不碰 CDN。
 - **`fake-boundaries.ts`** — 沙盒用的:外网(探测 / ipify / TTS)、信箱中继、手机中继、网络围栏、空端口。
 - **`harness.ts`** — `startTestDaemon(opts)`:临时 stateDir + 上面这些替身 + `bootDaemon`。`stateDirOverride` 给「同一个目录开两次机」的重启测试用。
