@@ -6,7 +6,7 @@
  *  - 这个文件:两个模块 ——
  *    `jobs`(必需):命令和「换一家来审」,命令表要它,所以开机就得有;
  *    `scheduled-jobs`(可选):每分钟一拍的 runner,坏了只降级。
- * 它要的东西(`WireJobsDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
+ * 它要的东西(`WireJobsDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填。
  */
 import type { DaemonModule, ModuleCtx } from '../../daemon/modules/container'
 import { lifecycleModule } from '../../daemon/modules/lifecycle-module'
@@ -29,6 +29,6 @@ export function jobsFeature(o: { needs: readonly string[]; lazy?: readonly strin
 }
 
 /** 每分钟一拍的 runner(可选):要 wired(只读那一轮)起来以后才开动。 */
-export function jobsRunnerModule(o: { needs: readonly string[] }): DaemonModule {
+export function jobsRunnerFeature(o: { needs: readonly string[] }): DaemonModule {
   return lifecycleModule('scheduled-jobs', (ctx) => ctx.get<JobsFeature>('jobs').startRunner(), { needs: ['jobs', ...o.needs] })
 }

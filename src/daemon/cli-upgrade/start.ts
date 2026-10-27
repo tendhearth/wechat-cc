@@ -13,6 +13,9 @@ import { wireCliUpgrade } from './wire'
 import type { CliUpgrader } from './engine'
 import type { Lifecycle } from '../../lib/lifecycle'
 
+/** `cli-upgrade` 模块的值:升级器在 start 段才造好,之前是 null(bootstrap / 工作台的回合报错经 lazy 现取它)。 */
+export interface CliUpgradeModule { upgrader(): CliUpgrader | null }
+
 export interface StartCliUpgradeDeps {
   stateDir: string
   sessionManager: { anyInFlight(): boolean; list(): Array<{ providerId: string }> }

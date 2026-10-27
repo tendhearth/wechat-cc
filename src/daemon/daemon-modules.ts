@@ -23,9 +23,10 @@ import type { Lifecycle } from '../lib/lifecycle'
 import { SUPERVISED_ENV } from '../domain/supervised-env'
 import { providerCallTarget } from '../app/provider-registry'
 import { capabilitiesFor } from '../domain/capability-matrix'
-import { summarizeJobs } from '../adapters/store/scheduled-jobs-store'
-import { workbenchFeature, workbenchNotificationsModule, workbenchArtifactsModule, makeProjectLessons, type WorkbenchService } from '../features/workbench'
+import { makeProjectLessons, type WorkbenchService } from '../features/workbench'
+import { workbenchModule, workbenchNotificationsModule, workbenchArtifactsModule } from '../features/workbench/module'
 import type { CliUpgrader } from './cli-upgrade/engine'
+import type { CliUpgradeModule } from './cli-upgrade/start'
 import type { DaemonModule } from './modules/container'
 import { lifecycleModule, type LifecycleHolder } from './modules/lifecycle-module'
 import type { Foundation } from './foundation'
@@ -43,14 +44,17 @@ import { providerDisplayName } from './provider-display-names'
 import { bootstrapModules, type Bootstrap } from './bootstrap'
 import { ownerChatIdOf, isOwnerOf } from './owner-chat'
 import { pick } from '../lib/pick'
-import { memoryFeature, memoryNightlyModule, makeMemoryLlmOps, retractOnFactStatus, resolveCheapEval, makeMemoryImportCommand, type MemoryFeature, type MemoryLlmOps, type MemoryPromptReads } from '../features/memory'
+import { retractOnFactStatus, makeMemoryImportCommand, type MemoryFeature, type MemoryPromptReads } from '../features/memory'
+import { memoryModule, memoryNightlyModule } from '../features/memory/module'
 import { loadCompanionConfig } from '../lib/companion-config'
 import { careLevel, companionOfferEligible, type registerIngest } from '../features/companion'
 import { companionModule, companionPushModule, companionIntrospectModule, companionIngestModule } from '../features/companion/module'
 import { makeLlmHealth, type LlmHealth } from './llm-health'
-import { terminalFeature, type TerminalFeature } from '../features/terminal'
+import type { TerminalFeature } from '../features/terminal'
+import { terminalModule } from '../features/terminal/module'
 import { wireActivity, type Activity } from './bootstrap/wire-activity'
-import { jobsFeature, jobsRunnerModule, type JobsFeature } from '../features/jobs'
+import type { JobsFeature } from '../features/jobs'
+import { jobsModule, scheduledJobsModule } from '../features/jobs/module'
 import { lettersModule } from '../features/letters/module'
 import { atelierModule } from '../features/atelier/module'
 import { journalModule } from '../features/journal/module'
@@ -73,7 +77,6 @@ import { startCliUpgrade } from './cli-upgrade/start'
 import { remindersModule } from '../features/reminders/module'
 import type { StickersFeature } from '../features/stickers'
 import { stickersModule } from '../features/stickers/module'
-import type { ReportsFeature } from '../features/reports'
 import { reportOutboxModule, reportsModule } from '../features/reports/module'
 import { runStartupSweeps } from './startup-sweeps'
 import { isHeartbeatFresh } from './single-instance'
@@ -84,7 +87,6 @@ interface BootApi { llmHealth: LlmHealth }
 interface OwnerCommands {
   commands: ReturnType<typeof fromReplyHandler>[]
 }
-interface CliUpgradeModule { upgrader(): CliUpgrader | null }
 
 export function daemonModules(f: Foundation): DaemonModule[] {
   const { stateDir, dangerously, db } = f
@@ -247,30 +249,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         return api
       },
     } satisfies DaemonModule<InternalApiLifecycle>,
-    // 记忆:一个功能一个目录(src/features/memory);`/v1/memory/*` 自己挂,紧跟 internal-api(以前随 internal-api 一起就在,
-    // MCP 的 memory_* 工具、桌面记忆页开机就来)。bootstrap 的提示词要它的素材(needs),它的 LLM 操作要 bootstrap 的执行者登记、
-    // 每晚整理要 wired 造的运行时 —— 环的那一头经 lazy 现取,没有 ⇒ 路由照旧 503(搬家前是 internal-api 的 provide)。
-    memoryFeature({
-      needs: [],
-      lazy: ['bootstrap', 'wired'],
-      deps: (ctx) => {
-        const boot = ctx.late<Bootstrap>('bootstrap')
-        const wired = ctx.late<WiredDeps>('wired')
-        // daemon 自己跑的 LLM 记忆操作(spec 2026-07-23):桌面 / CLI 的路由走这一份(不在编译出来的 CLI 里)。
-        let llm: MemoryLlmOps | null = null
-        return {
-          stateDir, db, memory: f.memoryFS, log: (t, l) => log(t, l),
-          memoryLlm: () => {
-            const b = boot()
-            if (!b) return null
-            return llm ??= makeMemoryLlmOps({ stateDir, db, getMode: (c) => b.coordinator.getMode(c), registry: b.registry })
-          },
-          memoryNightly: () => wired()?.memoryNightly ?? null,
-          // LLM 记忆路由的 chat_id 缺省:access.json 里唯一的 admin。
-          resolveAdminChatId: () => ownerChatId(),
-        }
-      },
-    }),
+    // 记忆:bootstrap 的提示词要它的素材(needs);`/v1/memory/*` 紧跟 internal-api
+    memoryModule(f),
     // 下面这几个只挂路由,紧跟 internal-api(以前随 internal-api 一起就在,桌面 / MCP 工具开机就来):控制台、画室、背包、陪伴、语音、手机
     consoleModule(f),
     atelierModule(f),
@@ -378,33 +358,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<BootApi>,
 
-    // —— 终端会话:一个功能一个目录(src/features/terminal);路由自己挂。这里只填它要的东西 ——
-    terminalFeature({
-      needs: ['bootstrap', W.send, W.pages, W.link, W.permissions, 'network-gate'],
-      lazy: ['workbench', 'wired'],
-      deps: (ctx) => {
-        const wired = ctx.late<WiredDeps>('wired')
-        const workbench = ctx.late<WorkbenchService>('workbench')
-        const wxSend = ctx.get<WechatSend>(W.send)
-        const wxPages = ctx.get<WechatPages>(W.pages)
-        const wxLink = ctx.get<WechatLinkStatus>(W.link)
-        const wxPerm = ctx.get<WechatPermissions>(W.permissions)
-        return {
-          speech: () => wired()?.speech ?? null,
-          stateDir, dangerously, db, projects: f.projects, own: (n, s) => ctx.own(n, s),
-          ilink: {
-            ...pick(wxSend, 'sendMessage'), ...pick(wxPages, 'sharePage'), ...pick(wxLink, 'proactiveClosedSince'),
-            ...pick(wxPerm, 'askUser', 'registerPendingPermission', 'sweepPendingPermissions', 'pendingPermissionCodeOf'),
-          },
-          boot: ctx.get<Bootstrap>('bootstrap'), networkGate: ctx.get<GuardRuntime>('network-gate').gate,
-          workbench: () => workbench(),
-          appPush: () => wired()?.appPush ?? null,
-          jobsSince: (since) => summarizeJobs(f.jobsStore, since),
-          isOwner,
-          resolvePermission: (h, d) => { const ok = wxPerm.resolvePermission(h, d); if (ok) f.petSignals.noteContact(); return ok },
-        }
-      },
-    }),
+    // 终端会话
+    terminalModule(f),
 
     // —— 功能(一个功能一个目录,src/features/<名>)——
     calendarModule(f),
@@ -418,29 +373,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         return wireActivity({ stateDir, db, ilink: ctx.get<WechatSend>(W.send), permissionDecisions: cli.permissionDecisions, cliEvents: cli.cliEvents, jobsStore: f.jobsStore })
       },
     } satisfies DaemonModule<Activity>,
-    // 定时 / 早报 / 周报 / 换一家来审:一个功能一个目录(src/features/jobs)。这里只填它要的东西。
-    jobsFeature({
-      needs: ['bootstrap', 'terminal', 'calendar', 'activity', W.send],
-      lazy: ['wired'],
-      deps: (ctx) => {
-        const wired = ctx.late<WiredDeps>('wired')
-        const activity = ctx.get<Activity>('activity')
-        return {
-          stateDir, db, ilink: ctx.get<WechatSend>(W.send), boot: ctx.get<Bootstrap>('bootstrap'), jobsStore: f.jobsStore,
-          activityLog: activity.activityLog, activity: activity.activity, calendar: ctx.get<CalendarFeature>('calendar').calendar,
-          overseerToday: ctx.get<TerminalFeature>('terminal').overseerToday, careLedger: f.careLedger,
-          quietWindow: () => { const o = ownerChatId(); return o ? f.chatPrefs.get(o).quiet : undefined },
-          // async:没就绪时是一个被拒的 promise,不是同步抛 —— requestReview 的 .catch 接得住,照实告诉主人「没审成」
-          runJobTurn: async (a) => { const w = wired(); if (!w) throw new Error('jobs_not_wired'); return w.ticks.runJobTurn(a) },
-          // 定时那边的一句(连续失败被暂停 …)经 CC 开口那道门(第三批 3a,job_notice 归 report)
-          sendProactive: (chatId, text, kind = 'job_notice') => {
-            const w = wired()
-            if (!w) { log('JOBS', `proactive send dropped (not wired yet) chat=${chatId}`); return }
-            void w.speech.tell(kind, chatId, text)
-          },
-        }
-      },
-    }),
+    // 定时 / 早报 / 周报 / 换一家来审
+    jobsModule(f),
 
     // —— 主人的命令:命令现在就要(进命令表),要用的只读轮 / 工作台 / 门都在后面 ⇒ 经 late 现取 ——
     {
@@ -482,34 +416,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // 回报的队列 + ReportSink:工作台入队要它,所以排在工作台前面;投递那一拍在下面 `reports`
     reportOutboxModule(f),
 
-    // —— 工作台(「一起做」):一个功能一个目录(src/features/workbench);桌面路由自己挂,这里只填它要的东西 ——
-    workbenchFeature({
-      needs: ['bootstrap', 'terminal', 'jobs', W.permissions, 'internal-api', 'network-gate', 'report-outbox'],
-      lazy: ['cli-upgrade'],
-      resolveAdminChatId: () => ownerChatId(),
-      deps: (ctx) => {
-        const boot = ctx.get<Bootstrap>('bootstrap')
-        const cli = ctx.get<TerminalFeature>('terminal')
-        const jobs = ctx.get<JobsFeature>('jobs')
-        const wxPerm = ctx.get<WechatPermissions>(W.permissions)
-        const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
-        return {
-          db, stateDir, boot, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
-          onTurnError: (providerId, code, message) => {
-            cliUpgrade()?.upgrader()?.onTurnError(providerId, code, message)
-            // 一起做里被拒也算(只有 agy 用一起做时,大脑那一行不该落后)
-            f.providerRefusals.onTurn({ provider: providerId, outcome: 'error', ...(code ? { errorCode: code } : {}), endedAt: Date.now() })
-          },
-          onTurnCompleted: (providerId) => f.providerRefusals.onTurn({ provider: providerId, outcome: 'completed', endedAt: Date.now() }),
-          providerRefusal: (providerId) => f.providerRefusals.get(providerId),
-          executionConflict: (path, providerId, nativeId) => boot.sessionManager.hasProjectConflict(path) ||
-            (!!nativeId && Object.values(boot.sessionStore.all()).some(s => s.provider === providerId && s.session_id === nativeId)) ||
-            cli.legacyClaims.conflicts({ owner: 'workbench', path, providerId, nativeId }) ||
-            (!!nativeId && cli.cliEvents.sessions().some(s => s.source === providerId && s.session_id === nativeId && !!s.origin_agent)),
-          askUser: wxPerm.askUser, log: (t, l) => log(t, l),
-        }
-      },
-    }),
+    // 工作台(「一起做」)
+    workbenchModule(f),
 
     // —— wireMain:入站管道的依赖、伙伴 tick、手机那一簇、CC 开口那道门 ——
     {
@@ -615,18 +523,11 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     },
     lifecycleModule('sessions', (ctx) => registerSessions(ctx.get<WiredDeps>('wired').sessionsDeps), { required: true, needs: ['wired'] }),
     lifecycleModule('ilink', (ctx) => registerIlink(ctx.get<WiredDeps>('wired').ilinkDeps), { required: true, needs: ['wired'] }),
-    // 工作台的微信通知 / 成果:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
-    // **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
-    workbenchNotificationsModule({ needs: ['workbench', 'wired', W.workbench], speech: (ctx) => ctx.get<WiredDeps>('wired').speech }),
-    workbenchArtifactsModule({ needs: ['workbench', W.workbench] }),
+    // 工作台的微信通知 / 成果:停在 polling 之后,开动却在开机最后(startup-sweeps)
+    workbenchNotificationsModule(),
+    workbenchArtifactsModule(),
     lifecycleModule('polling', (ctx) => registerPolling({ ...ctx.get<WiredDeps>('wired').pollingDeps, runPipeline: ctx.get<PipelineModule>('pipeline').run }), { required: true, needs: ['wired', 'pipeline'] }),
-    // 每晚整理长期记忆 memory.md(2026-09-25,src/features/memory)。15 分钟一次「该不该跑」。
-    memoryNightlyModule({
-      needs: ['wired', 'bootstrap'],
-      runtime: (ctx) => ctx.get<WiredDeps>('wired').memoryNightly,
-      holdBusy: (ctx) => (l) => ctx.get<Bootstrap>('bootstrap').holdBusy(l),
-      log: (t, l) => log(t, l),
-    }),
+    memoryNightlyModule(),
     lettersModule(f),
     // 外部 agent CLI 自动升级(主人 2026-10-04,docs/maintainer/cli-auto-upgrade.md):空闲时升、升完自检、不过就退回。
     {
@@ -664,8 +565,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<CliUpgradeModule>,
     remindersModule(f),
-    // 定时任务每分钟一拍(src/features/jobs):坏了只降级。
-    jobsRunnerModule({ needs: ['wired'] }),
+    scheduledJobsModule(),
     reportsModule(),
     // 开机的最后一步:一次性清扫(fire-and-forget,含「CC 回来了」),然后才开动工作台的通知 / 成果(见上)。
     {

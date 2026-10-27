@@ -12,7 +12,7 @@
  *  - 这个文件:模块清单。`memory`(必需,紧跟 internal-api:这些路由以前随 internal-api 一起就在)
  *    挂全部 `/v1/memory/*`、交出提示词素材;定时那一拍是 `memory-nightly`(名字、位置都没动)。
  * 记忆文件那一层(MemoryFS)是通用的 store,在 `src/adapters/store/memory-fs.ts`(社交、伙伴、信都在读写);
- * 记忆编辑的纯函数 `lib/memory-edit.ts` 留在 lib(CLI 也用)。它要的东西(`MemoryFeatureDeps`)由 daemon-modules.ts 填。
+ * 记忆编辑的纯函数 `lib/memory-edit.ts` 留在 lib(CLI 也用)。它要的东西(`MemoryFeatureDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)填。
  */
 import type { Db } from '../../lib/db'
 import type { MemoryFS } from '../../adapters/store/memory-fs'
@@ -99,7 +99,7 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
 }
 
 /** 每晚整理那一拍(15 分钟看一次「该不该跑」):要 wired 造好的运行时。 */
-export function memoryNightlyModule(o: {
+export function memoryNightlyFeature(o: {
   needs: readonly string[]
   runtime: (ctx: ModuleCtx) => MemoryNightlyRuntime
   holdBusy: (ctx: ModuleCtx) => (label: string) => () => void

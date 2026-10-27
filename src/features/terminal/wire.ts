@@ -3,7 +3,7 @@
  * hook 事件登记处、权限中继(微信 y/n、手机、放行规则)、「这边 / 那边」的脑手转发、对终端会话说话(送进开着的窗口 / resume)、
  * 「今天」一眼看完、接上 hooks,以及微信「终端 / 看 码 / @码 / y 码」那条命令和手机上的拍板 / 说一句。
  *
- * 它要的(`WireTerminalDeps`)由组装的地方(daemon-modules.ts)从上游模块里填;给出去的(返回值)就是模块的值。
+ * 它要的(`WireTerminalDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填;给出去的(返回值)就是模块的值。
  * 路由不在这里挂:返回值里的 `routes` 交给 index.ts 去 `internalApi.mount('terminal', …)`。
  * 两样晚到的东西:工作台与手机 App 推送出口(wireMain 里才造),都是调用时现取的读口(模块容器的 `ctx.late`)。
  * 要停的东西经 `own` 登记(模块容器的 `ctx.own`,关机逆序)。
@@ -122,7 +122,7 @@ export function wireTerminal(d: WireTerminalDeps) {
   // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
   // 放行规则(spec 2026-10-19-permission-rules-design):终端会话与一起做在问主人之前先问它。
   // 规则文件默认没有 / 关着 ⇒ 每条都是 ask,各入口照旧。初审走 registry 的 cheapEval(自带网络守护)。
-  // 主人自己的对话(2026-10-25)也用这同一个 permissionGate:bootstrap 经 daemon-modules 的 chatOwnerRules 现取它。
+  // 主人自己的对话(2026-10-25)也用这同一个 permissionGate:bootstrap 经模块表里的 chatOwnerRules 现取它。
   const permissionDecisions = makePermissionDecisionsStore(db)
   // 放行 v2 G1:主人 10-23 拍板三层生效 ⇒ 全空默认值的规则文件开机时装一次起步规则(装过 / 改过就不动)
   if (ensureStarterRules(stateDir, log)) {
