@@ -1,20 +1,12 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs'
+import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { writeFileSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { useTempStateDir } from '../test-support/state-dir'
 
-// Override STATE_DIR BEFORE access.ts loads config.ts, so all file
-// operations go to a temp directory instead of the real state dir.
-const TEST_DIR = join(tmpdir(), `wechat-cc-access-test-${Date.now()}`)
-vi.mock('./config.ts', () => ({
-  STATE_DIR: TEST_DIR,
-  ILINK_BASE_URL: 'https://ilinkai.weixin.qq.com',
-  ILINK_APP_ID: 'bot',
-  ILINK_BOT_TYPE: '3',
-  LONG_POLL_TIMEOUT_MS: 35_000,
-}))
-
-mkdirSync(TEST_DIR, { recursive: true })
+// All file operations go to a temp state dir: access.ts resolves the state dir
+// per call from WECHAT_STATE_DIR (no vi.mock of ./config — that mock is what
+// silently didn't apply under `bun test` in the 2026-07-26 incident, see config.ts).
+const TEST_DIR = useTempStateDir('wechat-cc-access-test-')
 const ACCESS_FILE = join(TEST_DIR, 'access.json')
 
 function writeAccess(obj: object): void {

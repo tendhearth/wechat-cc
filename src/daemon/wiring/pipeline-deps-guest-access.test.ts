@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, afterAll } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
 // Guest path (spec docs/superpowers/specs/2026-08-18-guest-path-design.md
 // §2) — buildPipelineDeps wires `pipelineDeps.access`'s five guest fields
@@ -9,16 +10,12 @@ import { join } from 'node:path'
 // file exercises the REAL closures it returns, not a reimplementation.
 //
 // isAdmin/loadAccess (via notifyOwnerOfGuest → resolveAdminChatId) read
-// access.json off the module-level STATE_DIR (src/lib/config.ts), which is
-// NOT one of buildPipelineDeps's injectable opts — so STATE_DIR is
-// redirected to a temp dir via vi.mock BEFORE anything imports
-// access.ts/config.ts, mirroring pipeline-deps-pairing-dispatch.test.ts.
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-guest-access-test-'))
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+// access.json.
+// access.json lives in the state dir, which is NOT one of buildPipelineDeps's
+// injectable opts; access.ts resolves it per call from WECHAT_STATE_DIR, so
+// useTempStateDir points that at a temp dir (no vi.mock of lib/config —
+// see src/test-support/state-dir.ts).
+const ACCESS_STATE_DIR = useTempStateDir('pipeline-deps-guest-access-test-')
 const { buildPipelineDeps } = await import('./pipeline-deps')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
@@ -42,8 +39,6 @@ const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
 }
-
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
 function setup(admins: string[] = ['admin_chat']) {
   writeAccess(admins)
