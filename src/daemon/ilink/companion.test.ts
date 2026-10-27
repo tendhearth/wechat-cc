@@ -6,17 +6,13 @@
  * fallback used to be able to pick a stranger as the proactive-care
  * destination. It must now be filtered to loadAccess().allowFrom.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'ilink-companion-access-test-'))
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+const ACCESS_STATE_DIR = useTempStateDir('ilink-companion-access-test-')
 const { makeCompanion } = await import('./companion')
 const { _clearCache, _resetSnapshotForTest } = await import('../../lib/access')
 

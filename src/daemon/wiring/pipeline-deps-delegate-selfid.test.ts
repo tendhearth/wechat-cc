@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
 // T2/T6 identity-split review finding: pipeline-deps' `delegateToHand`
 // closure used to independently resolve `process.env.WECHAT_A2A_SELF_ID ||
@@ -14,23 +15,12 @@ import { join } from 'node:path'
 // asserts the outbound /a2a/exec call carries `boot.selfId`, not a
 // WECHAT_A2A_SELF_ID env fallback.
 //
-// Same STATE_DIR-mocking recipe as pipeline-deps-social-dispatch.test.ts:
-// isAdmin/loadAccess read from the module-level STATE_DIR (src/lib/config.ts),
-// which isn't one of buildPipelineDeps's injectable opts, so it's redirected
-// via vi.mock BEFORE anything imports config.ts, and pipeline-deps is loaded
-// dynamically afterward so it (transitively) picks up the mock.
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-delegate-selfid-access-'))
-// importOriginal + spread (fix round 2, hardening) — same rationale as
-// pipeline-deps-pairing-dispatch.test.ts: a plain-object factory would
-// silently drop UNDER_TEST_RUNNER (and any other config.ts export) in this
-// module graph, defeating agy-mcp-config.ts's/providers.ts's test-runner
-// guards (fix round 1) should this graph ever boot providers. Mirrors the
-// a2a-delegate mock just below, which already used importOriginal.
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+// isAdmin/loadAccess read access.json, same as pipeline-deps-social-dispatch.test.ts.
+// access.json lives in the state dir, which is NOT one of buildPipelineDeps's
+// injectable opts; access.ts resolves it per call from WECHAT_STATE_DIR, so
+// useTempStateDir points that at a temp dir (no vi.mock of lib/config —
+// see src/test-support/state-dir.ts).
+const ACCESS_STATE_DIR = useTempStateDir('pipeline-deps-delegate-selfid-access-')
 // The dynamic imports inside delegateToHand (`../../app/a2a-delegate` for
 // the actual HTTP POST, `../../adapters/a2a/a2a-client` for the client factory) are
 // mocked so the test never touches the network — and so the mocked
@@ -66,8 +56,6 @@ const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
 }
-
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
 async function pollFor<T>(fn: () => T | null, tries = 50, gapMs = 10): Promise<T | null> {
   for (let i = 0; i < tries; i++) { const v = fn(); if (v) return v; await new Promise(r => setTimeout(r, gapMs)) }

@@ -43,24 +43,15 @@ const BASELINE: Record<string, number> = {
   'src/daemon/__e2e__/fake-media.ts': 1,
   'src/daemon/bootstrap.test.ts': 1,
   'src/daemon/ilink-glue.media-mirror.test.ts': 2,
-  'src/daemon/ilink/companion.test.ts': 1,
-  'src/daemon/inbound/mw-access-cache.test.ts': 1,
-  'src/daemon/wiring/pipeline-deps-delegate-selfid.test.ts': 2,
-  'src/daemon/wiring/pipeline-deps-guest-access.test.ts': 1,
-  'src/daemon/wiring/pipeline-deps-guest-dispatch.test.ts': 1,
-  'src/daemon/wiring/pipeline-deps-llm-down-commands.test.ts': 1,
+  'src/daemon/wiring/pipeline-deps-delegate-selfid.test.ts': 1,
   'src/daemon/wiring/pipeline-deps-native-history.test.ts': 2,
-  'src/daemon/wiring/pipeline-deps-pairing-dispatch.test.ts': 1,
-  'src/daemon/wiring/pipeline-deps-permission-vs-intro.test.ts': 1,
   'src/daemon/wiring/pipeline-deps-pet.test.ts': 1,
   'src/daemon/wiring/pipeline-deps-phone-chat.test.ts': 1,
-  'src/daemon/wiring/pipeline-deps-social-dispatch.test.ts': 1,
   'src/features/memory/llm-ops.test.ts': 2,
   'src/features/phone/settings-panel-link.test.ts': 1,
   'src/features/phone/settings-panel-phone-link.test.ts': 1,
   'src/features/workbench/service-checkpoints-deadline.test.ts': 1,
   'src/features/workbench/wire.test.ts': 1,
-  'src/lib/access.test.ts': 1,
   'vitest.setup.ts': 1,
 }
 
@@ -105,6 +96,6 @@ describe('判法本身', () => {
     expect(kinds(`// ${VM}('../../lib/access')\n * ${VM}('../../lib/access')\nconst g = 'src/*.ts'\n${VM}('../../lib/access')`)).toEqual([true])
   })
   it('真仓库里也认得出(活体抽查:登记过的一个文件确实有内部 mock)', () => {
-    expect(scanInternalMocks()['src/lib/access.test.ts']).toEqual(['src/lib/config'])
+    expect(scanInternalMocks()['src/daemon/bootstrap.test.ts']).toEqual(['src/daemon/bootstrap/wire-self-restart'])
   })
 })

@@ -1,28 +1,19 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { inboundTurn } from './test-inbound-turn'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
 // The `dispatch.coordinator.dispatch` seam in pipeline-deps.ts intercepts an
 // owner control command ("回信 <ch> <text>" / "派 <ref>" / "取消 <ref>") before
 // it reaches a normal agent turn. `isAdmin` (src/lib/access.ts) reads
-// access.json from the module-level STATE_DIR (src/lib/config.ts), which is
-// NOT one of buildPipelineDeps's injectable opts — so, mirroring
-// src/lib/access.test.ts, STATE_DIR is redirected to a temp dir via
-// vi.mock BEFORE anything imports access.ts/config.ts, and pipeline-deps is
-// loaded dynamically afterward so it (transitively) picks up the mock.
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-social-access-test-'))
-// importOriginal + spread (fix round 2, hardening) — same rationale as
-// pipeline-deps-pairing-dispatch.test.ts: a plain-object factory would
-// silently drop UNDER_TEST_RUNNER (and any other config.ts export) in this
-// module graph, defeating agy-mcp-config.ts's/providers.ts's test-runner
-// guards (fix round 1) should this graph ever boot providers.
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+// access.json.
+// access.json lives in the state dir, which is NOT one of buildPipelineDeps's
+// injectable opts; access.ts resolves it per call from WECHAT_STATE_DIR, so
+// useTempStateDir points that at a temp dir (no vi.mock of lib/config —
+// see src/test-support/state-dir.ts).
+const ACCESS_STATE_DIR = useTempStateDir('pipeline-deps-social-access-test-')
 const { buildPipelineDeps } = await import('./pipeline-deps')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
@@ -49,8 +40,6 @@ function writeAccess(admins: string[]): void {
 // Shared cleanup for ACCESS_STATE_DIR — a single top-level afterAll (not
 // nested in either describe below) so it fires once, after every test in
 // this file has run, regardless of which describe block runs last.
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
-
 // Task 10 — the owner's WeChat "回信 <channel> <text>" reply sends an
 // outbound letter on that pen-pal channel instead of dispatching a normal
 // agent turn. boot.penpal is optional and the seam guards on it (Task 11
