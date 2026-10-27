@@ -6,7 +6,7 @@
  *  - `voice-config`:voice-config.json 的读写(0600,原子写);
  *  - `routes.ts`:`/v1/voice/*`、`/v1/wechat/reply_voice`、`/v1/companion/speak`,以及和它们同一个语音口的
  *    STT 三条(路由表标了 module: 'voice');
- *  - 这个文件:模块清单。它要的东西(`VoiceRoutesDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
+ *  - 这个文件:模块清单。它要的东西(`VoiceRoutesDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填。
  *
  * 语音口本身(合成 → 经 ilink 上传发送、网络闸门、媒体镜像)由 ilink 适配器造(`src/daemon/ilink/voice.ts`):
  * 发送那一步绑着 ilink 的 context_token、账号路由和媒体上传,所以实现留在 ilink 里,只对外交窄口 `wechat.voice`

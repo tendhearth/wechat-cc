@@ -60,7 +60,11 @@ const BASELINE: Record<string, [Tag, number]> = {
   // daemon-modules.ts(以前在 main.ts)剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口、贴纸路由的发文件口(主动开口都已经走门,10-21)
   // 7:微信「终端 / @码」那条命令的回话出口(scopedSend 包着的 sendMessage)跟着终端会话搬进 src/features/terminal/wire.ts(架构终态 A5),
   // 从这里减一、在下面 'reply' 那一组加一行,总数不变
-  'src/daemon/daemon-modules.ts': ['primitive', 7],
+  // 7 → 4:各功能的接线搬进 src/features/<名>/module.ts(2026-10-26),信的两处(sendText / sendFile 的出口)、贴纸路由的发文件口跟着走,
+  // 在下面各加一行,总数不变
+  'src/daemon/daemon-modules.ts': ['primitive', 4],
+  'src/features/letters/module.ts': ['primitive', 2],
+  'src/features/stickers/module.ts': ['primitive', 1],
   // pipeline-deps 剩下的全是接线:回话出口、proactive 的微信出口(发字 / 发文件)、给访客的回话、llm-health 的回话;访客申请已走门(10-21)
   'src/daemon/wiring/pipeline-deps.ts': ['primitive', 6],
   // —— 回答对方刚发来的那一句 ——

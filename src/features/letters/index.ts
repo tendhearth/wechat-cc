@@ -6,7 +6,7 @@
  *  - `compose` / `render` / `schedule` / `runtime` / `archive`:写信、排版、什么时候写、写和寄、存档;
  *  - `wire.ts`:把它们接起来(调度器、App 那条路、记忆素材);
  *  - `routes.ts`:`/v1/letters*`(路由表标了 module: 'letters');`mobile.ts`:手机网页的只读存档;
- *  - 这个文件:模块清单。它要的东西(`WireLettersDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
+ *  - 这个文件:模块清单。它要的东西(`WireLettersDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填。
  * 可选模块:坏了只降级。
  */
 import type { Lifecycle } from '../../lib/lifecycle'

@@ -5,7 +5,7 @@
  *  - 表本身(`journal`,v36 起)不在这里:四种东西各有各的写手(打猎、社交、串门来客、回忆),桌宠 / 手机首屏 /
  *    设置面板 / 微信「背包」也读它,所以 store 放在 `src/adapters/store/journal-store.ts`,地基里一份;
  *  - `routes.ts`:`/v1/journal*`(列表 / 明信片册 / 收藏 / 状态 / 删 / 看到哪了),路由表标了 `module: 'journal'`;
- *  - 这个文件:模块清单。它要的东西(`JournalRoutesDeps`)由组装的地方(daemon-modules.ts)从地基里填。
+ *  - 这个文件:模块清单。它要的东西(`JournalRoutesDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从地基里填。
  */
 import type { DaemonModule, ModuleCtx } from '../../daemon/modules/container'
 // 只要 mount 这一口(types.ts 里的 InternalApi),同画室:不引 internal-api/lifecycle。

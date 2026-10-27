@@ -129,9 +129,16 @@ module.exports = {
     {
       name: 'features-through-their-index',
       severity: 'error',
-      comment: '架构终态 A3:功能目录外面(daemon、别的功能)只经 src/features/<名>/index.ts 用它;目录里的文件是它自己的事。测试不受限。',
+      comment: '架构终态 A3:功能目录外面(daemon、别的功能)只经 src/features/<名>/index.ts 用它;目录里的文件是它自己的事。module.ts(接进 daemon 的那一份)见下一条。测试不受限。',
       from: { pathNot: ['^src/features/([^/]+)/', '\\.test\\.ts$'] },
-      to: { path: '^src/features/[^/]+/(?!index\\.ts$)' },
+      to: { path: '^src/features/[^/]+/(?!(index|module)\\.ts$)' },
+    },
+    {
+      name: 'feature-module-only-from-the-module-table',
+      severity: 'error',
+      comment: '2026-10-26:src/features/<名>/module.ts 是这个功能接进 daemon 的那一份(从地基 / 上游模块填它要的,会 import Bootstrap / WiredDeps 这些大包的类型)。只有模块表 daemon-modules.ts 引它 —— 它是一个汇点,所以引那些大包也成不了环;功能自己的 index.ts、别的功能、daemon 别处都不许引。',
+      from: { pathNot: ['^src/daemon/daemon-modules\\.ts$', '\\.test\\.ts$'] },
+      to: { path: '^src/features/[^/]+/module\\.ts$' },
     },
     {
       name: 'features-not-into-each-other',
