@@ -154,6 +154,27 @@ describe('ci.yml —— Tendhearth 手机 app 作业', () => {
   })
 })
 
+// 2026-10-27:测试只增不减 + 修 bug 要有红/绿。这道闸门安静地没了(作业改成也在 push 上跑 ⇒ 读不到描述、
+// 浅克隆 ⇒ 找不到 merge-base、标题插进 run ⇒ 能被注入)都不会当场红,钉在这里。
+describe('ci.yml —— pr-rules(测试只增不减 + 红/绿)', () => {
+  const job = jobs['pr-rules'] as { needs?: string; if?: string; steps?: Array<{ uses?: string; with?: Record<string, unknown>; env?: Record<string, string>; run?: string }> } | undefined
+  it('只在 PR 上跑、认 code 输出(只改 Markdown 跳过)', () => {
+    expect(job, 'jobs.pr-rules 不见了').toBeTruthy()
+    expect(job!.needs).toBe('changes')
+    expect(job!.if).toBe("needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'")
+  })
+  it('全量历史(要算 merge-base),跑的是 scripts/test-shrink-check.ts', () => {
+    expect(job!.steps?.find(s => s.uses?.startsWith('actions/checkout@'))?.with?.['fetch-depth']).toBe(0)
+    const step = job!.steps?.find(s => s.run?.includes('scripts/test-shrink-check.ts'))
+    expect(step, '没有跑 test-shrink-check 的那一步').toBeTruthy()
+  })
+  it('PR 标题和描述经 env 传,run 里不插值', () => {
+    const step = job!.steps!.find(s => s.run?.includes('scripts/test-shrink-check.ts'))!
+    expect(step.env).toEqual({ PR_TITLE: '${{ github.event.pull_request.title }}', PR_BODY: '${{ github.event.pull_request.body }}' })
+    expect(step.run).not.toContain('${{')
+  })
+})
+
 describe('中继工作流 —— 未配置 Cloudflare 时整体跳过', () => {
   const load = (f: string) => parse(readFileSync(join(HERE, '..', '.github', 'workflows', f), 'utf8')) as { jobs: Record<string, { if?: string }>; on?: { schedule?: Array<{ cron: string }> } }
   it('relay.yml 的部署作业受 RELAY_DEPLOY 开关控制', () => {

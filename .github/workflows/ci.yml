@@ -217,6 +217,28 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: bun scripts/migration-frozen.ts
 
+  # 测试只增不减 + 修 bug 要有红/绿(2026-10-27 主人定;规矩见 docs/maintainer/verify.md,判法见 scripts/test-shrink-lib.ts)。
+  # 只对 PR:要读 PR 描述。比的是这个 PR 的合并提交和它跟 base 的 merge-base,所以要全量历史(同 migrations,别让 build 慢一截)。
+  # 测试变少/变松 ⇒ 描述里 `## 删掉/放松的测试` 逐个文件写理由;分支 fix/… 或标题以「修」/fix 开头 ⇒ 描述里要有 `## 红/绿`。
+  # 标题和描述经 env 传,不在 run 里插值(不可信输入)。重跑这个作业用的还是触发那一刻的描述 —— 改完描述推一次或 close/reopen。
+  pr-rules:
+    name: pr · 测试只增不减 + 红/绿
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Tests did not shrink; bug fixes show red/green
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bun scripts/test-shrink-check.ts
+
   relay:
     name: relay · workers
     needs: changes
