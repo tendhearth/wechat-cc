@@ -7,7 +7,7 @@ import type { ReplySinks } from '../reply-sinks'
 
 /**
  * 入站管道与它带起来的那一簇(对话、手机、「CC 现在怎么样」、桌宠)用到的微信那一侧(src/ports/wechat.ts 的几口,架构终态 A6)。
- * 组装的地方(daemon-modules.ts 的 `wired`)按这张表从各口挑出来拼好,不交整个 adapter。
+ * 组装的地方(wiring/module.ts 的 `wired`)按这张表从各口挑出来拼好,不交整个 adapter。
  */
 export type PipelineWechat =
   & Pick<WechatSend, 'sendMessage' | 'sendFile' | 'sendTyping' | 'onMediaSent'>

@@ -2,7 +2,7 @@
  * 微信(ilink)那一侧的窄口(架构终态 A6,docs/architecture-end-state-2026-10-25.md)。
  *
  * 以前模块都 `needs: ['ilink-adapter']` 拿整个 `IlinkAdapter`,其实各自只用一两样。现在按用途分成下面几口,
- * ilink 模块(daemon-modules.ts 里的 `ilink-adapter`)经容器的 `ports` 一口一个名字交出去:
+ * ilink 模块(daemon/ilink/module.ts 里的 `ilink-adapter`)经容器的 `ports` 一口一个名字交出去:
  *
  *   wechat.send         发文字 / 文件、模拟编辑、群发、打字中、媒体镜像            WechatSend
  *   wechat.voice        语音合成 / 发语音 / 转文字与它们的配置                     WechatVoice
@@ -28,7 +28,7 @@ import type { PendingPermissionMeta, PendingPermissionView, PermissionDecision }
 import type { SessionStateStore } from '../adapters/store/session-state'
 import type { ArtifactTransportOutcome, WorkbenchMediaItem, WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
 
-/** 容器里的口名(daemon-modules.ts 的 `ilink-adapter` 模块交出)。 */
+/** 容器里的口名(daemon/ilink/module.ts 的 `ilink-adapter` 模块交出)。 */
 export const WECHAT_PORTS = {
   send: 'wechat.send',
   voice: 'wechat.voice',

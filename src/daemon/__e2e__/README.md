@@ -25,7 +25,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 拍板卡 | 主人发 `/codex` 切到 Codex,要跑 `rm -rf build` ⇒ 卡片发到主人微信,主人回 `y` ⇒ 命令放行(app-server 收到 accept) |
 | 关机再开机 | 正常关机没有哪一步停失败;同一个 stateDir 再开机:不重复导入、照样健康、没有模块坏、对话模式留住了、照样收发 |
 
-**红 / 绿实证**:把 `daemon-modules.ts` 里 boot-api 的 `lazy: ['wired'],` 删掉,沙盒在 `beforeAll` 就红
+**红 / 绿实证**:把 boot-api(当时在 `daemon-modules.ts`,现在 `bootstrap/module.ts`)的 `lazy: ['wired'],` 删掉,沙盒在 `beforeAll` 就红
 (`boot-api failed at init (required): modules: 'boot-api' called ctx.late('wired') but 'wired' is not in its lazy`),
 而其余 31 个 e2e 文件照样全绿。加回去就绿。
 

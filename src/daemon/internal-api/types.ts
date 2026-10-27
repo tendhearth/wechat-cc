@@ -363,7 +363,7 @@ export interface InternalApiDeps {
   /**
    * Optional session releaser — backs POST /v1/sessions/release (admin
    * remediation: force-release a wedged session so the next message spawns a
-   * fresh subprocess). A late read of the bootstrap module (daemon-modules.ts). 503 when unwired.
+   * fresh subprocess). A late read of the bootstrap module (internal-api/module.ts). 503 when unwired.
    */
   releaseSession?: (k: { alias: string; providerId: string; chatId: string }) => Promise<void>
   /**
@@ -507,12 +507,12 @@ export interface InternalApiDeps {
   /**
    * Optional test-conversation runner — backs POST /v1/selftest/converse
    * (spec 2026-09-18-self-maintenance §1). A late read of the bootstrap module wired in
-   * daemon-modules.ts (same posture as forgetProviderSessions above): it closes over
+   * internal-api/module.ts (same posture as forgetProviderSessions above): it closes over
    * the bootstrap registry plus this same internalApi's mintSessionToken /
    * invalidateSession, so it can't exist before bootstrap constructs the
    * provider registry.
    *
-   * This field itself is wired UNCONDITIONALLY in daemon-modules.ts (the HTTP port
+   * This field itself is wired UNCONDITIONALLY in internal-api/module.ts (the HTTP port
    * opens before the bootstrap module is up, same as every other
    * late-read field) — so "the field is present but bootstrap isn't
    * ready yet" is a real, reachable window, not just a test-only shape.

@@ -1,6 +1,6 @@
 /**
  * 每次起会话时现读的记忆素材(人格、画像、长期记忆、主人原话、今天的草稿、知识):手改了文件,不用重启就生效。
- * 原来是 daemon-modules.ts 里 promptReads 的一半;记忆搬进功能目录时跟过来(架构终态 A5),bootstrap 经 `needs: ['memory']` 拿。
+ * 原来是 daemon-modules.ts 里 promptReads 的一半(另一半现在在 daemon/bootstrap/module.ts);记忆搬进功能目录时跟过来(架构终态 A5),bootstrap 经 `needs: ['memory']` 拿。
  */
 import { join } from 'node:path'
 import { renderOwnerForPrompt } from '../../lib/memory-owner'

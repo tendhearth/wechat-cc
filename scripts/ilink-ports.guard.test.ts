@@ -2,10 +2,10 @@
  * 没有模块拿整个 ilink(架构终态 A6,docs/architecture-end-state-2026-10-25.md)。
  *
  * ilink 适配器按用途拆成十个窄口(src/ports/wechat.ts:`wechat.send` / `wechat.voice` / `wechat.permissions` …),
- * 由 daemon-modules.ts 里的 `ilink-adapter` 模块经容器的 `ports` 交出去;别的模块 needs 口名,只拿它用的那一口。规矩:
+ * 由 `ilink-adapter` 模块(src/daemon/ilink/module.ts)经容器的 `ports` 交出去;别的模块 needs 口名,只拿它用的那一口。规矩:
  *  - `IlinkAdapter` 这个类型只在 ilink 自己(ilink-glue.ts 与它的测试、daemon/ilink/**)和组装的地方
- *    (daemon-modules.ts、foundation.ts)出现;别处要什么就引哪一口(测试的假对象也一样)。
- *  - `'ilink-adapter'` 这个模块名只在 daemon-modules.ts 的那一行 `name:` 里:没有人 needs / wants / lazy 它,
+ *    (foundation.ts)出现;别处要什么就引哪一口(测试的假对象也一样)。
+ *  - `'ilink-adapter'` 这个模块名只在 ilink/module.ts 的那一行 `name:` 里:没有人 needs / wants / lazy 它,
  *    没有人 `ctx.get('ilink-adapter')`。
  *  - 十口都交了:ilink-glue.ts 的 `ILINK_PORTS` 每一口都有,模块上挂着 `ports: ILINK_PORTS`。
  * 零例外:下面的 EXCEPTIONS 是空的。真有一处这一步迁不了,写进去并写明为什么。
@@ -17,14 +17,14 @@ import { join, relative, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const ROOT_FILE = 'src/daemon/daemon-modules.ts'
+/** 定义 `ilink-adapter` 模块的地方(2026-10-26 从 daemon-modules.ts 搬到 ilink 自己的 module.ts)。 */
+const ROOT_FILE = 'src/daemon/ilink/module.ts'
 
 /** ilink 自己 + 组装的地方:可以拿整个 IlinkAdapter。 */
 function holdsWholeAdapter(f: string): boolean {
   return f === 'src/daemon/ilink-glue.ts'
     || /^src\/daemon\/ilink-glue(\.[\w-]+)?\.test\.ts$/.test(f)
     || f.startsWith('src/daemon/ilink/')
-    || f === ROOT_FILE
     || f === 'src/daemon/foundation.ts'
 }
 
@@ -65,6 +65,7 @@ describe('没有模块拿整个 ilink(A6)', () => {
     expect(offenders, '引 src/ports/wechat.ts 里你用到的那一口(WechatSend / WechatPermissions …),别引整个 IlinkAdapter').toEqual([])
   })
 
+  // 标题沿用搬家前的(CI 按标题核测试只增不减);那一行现在在 ROOT_FILE(ilink/module.ts)里
   it("'ilink-adapter' 只在 daemon-modules.ts 的 name 那一行:没有人 needs 它、没有人 ctx.get 它", () => {
     const hits = files.flatMap(f => f.lines.filter(l => /['"`]ilink-adapter['"`]/.test(l)).map(l => `${f.rel}: ${l.trim()}`))
     expect(hits).toEqual([`${ROOT_FILE}: name: 'ilink-adapter',`])

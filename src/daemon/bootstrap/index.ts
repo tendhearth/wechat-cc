@@ -16,7 +16,7 @@
  * 可选的那几个:没配置 ⇒ off;起失败 ⇒ degraded,boot 继续;/v1/health.subsystems 看得见。顺序由 ./boot-order.test.ts 钉住。
  *
  * Imported by:
- *   - src/daemon/daemon-modules.ts (production: `...bootstrapModules(...)`)
+ *   - src/daemon/bootstrap/module.ts (production: `bootstrapGroupModules(f)`, listed in daemon-modules.ts)
  *   - src/daemon/bootstrap.test.ts / bootstrap.a2a.test.ts / bootstrap/boot-order.test.ts(经 buildBootstrap:起一个只有这一组的容器)
  */
 import { turnTimeoutMsFromEnv } from '../../lib/turn-timeout'
@@ -193,7 +193,7 @@ type BootCore = Awaited<ReturnType<typeof bootCore>>
 export function bootstrapModules(outer: { needs?: readonly string[]; lazy?: readonly string[]; deps: (ctx: ModuleCtx) => BootstrapDeps }): DaemonModule[] {
   const base = (c: { get<T>(n: string): T }) => c.get<BootBase>('boot-base')
   const core = (c: { get<T>(n: string): T }) => c.get<BootCore>('boot-core')
-  // 生产里(daemon-modules.ts)外面这一层 needs internal-api;只有这一组的测试容器(buildBootstrap)里没有。
+  // 生产里(bootstrap/module.ts)外面这一层 needs internal-api;只有这一组的测试容器(buildBootstrap)里没有。
   const hasApi = outer.needs?.includes('internal-api') ?? false
   return [
     {
@@ -379,7 +379,7 @@ function assemble(b: BootBase, c: BootCore, opt: {
 }
 
 /**
- * 只有 bootstrap 这一组的容器:测试用(生产里这一组在 daemon-modules.ts 的大容器里)。
+ * 只有 bootstrap 这一组的容器:测试用(生产里这一组经 bootstrap/module.ts 进 daemon-modules.ts 的大容器)。
  * 给了 supervisor ⇒ 这一组的状态交给它收养(跟生产一样进 /v1/health.subsystems)。
  */
 export async function buildBootstrap(deps: BootstrapDeps & { supervisor?: SubsystemSupervisor }): Promise<Bootstrap> {

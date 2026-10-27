@@ -3,7 +3,7 @@
 // 一台「照主人真机配置」的 daemon 从开机走到重启:开机没有模块坏、主人说话有回、拍板卡能来回、记忆和 facts.db 导进主库并进了
 // 提示词、正常关机再开机不重复导入。断言的都是看得见的行为(外发的微信、/v1/health、日志、主库里的行),不看内部调用。
 //
-// 红 / 绿的证据(PR 描述里有原文):把 daemon-modules.ts 里 boot-api 的 `lazy: ['wired'],` 删掉,这个文件在 beforeAll 就红 ——
+// 红 / 绿的证据(PR 描述里有原文):把 boot-api(当时在 daemon-modules.ts,现在 bootstrap/module.ts)的 `lazy: ['wired'],` 删掉,这个文件在 beforeAll 就红 ——
 // `boot-api failed at init (required): … called ctx.late('wired') but 'wired' is not in its lazy`,就是 #729 在真机上的样子。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { startRealShapedDaemon, type RealShapedDaemon } from './real-shaped'
