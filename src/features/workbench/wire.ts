@@ -29,10 +29,9 @@ import {resolveAdminChatId} from '../../daemon/companion/resolve-admin'
 import type { Bootstrap } from '../../daemon/bootstrap/types'
 import type { InternalApi } from '../../daemon/internal-api/types'
 import {registerWorkbenchApi} from './workbench-api'
-import { makeUsageMonitor, parseClaudeUsage, parseCodexRateLimits, readClaudeOAuthToken } from '../../domain/subscription-usage'
+import { makeUsageMonitor, parseClaudeUsage, parseCodexRateLimits } from '../../domain/subscription-usage'
+import { readLocalClaudeOAuth } from '../../adapters/executors/claude/claude-oauth-credential'
 import { readCodexRateLimits } from '../../adapters/executors/codex/codex-history-rpc'
-import { spawnSync } from '../../lib/runtime/process'
-import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { createAcpWorkbenchProvider } from '../../adapters/executors/acp/acp-workbench-provider'
 import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../adapters/executors/acp/agents'
@@ -168,7 +167,7 @@ export function wireWorkbench(opts: {
     codex:async()=>{const bin=opts.boot.registry.get('codex')?.opts.bin?.() ?? null;if(!bin)return null
       return gatedUsage({provider:'codex',baseUrl:'https://chatgpt.com',purpose:'usage',exact:true},async()=>{const r=await readCodexRateLimits({codexPathOverride:bin});return r?parseCodexRateLimits(r,Date.now()):null})()},
     ...(opts.boot.registry.has('claude')?{claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage'},async()=>{
-      const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
+      const cred=readLocalClaudeOAuth()
       if(!cred)return null
       const r=await fetch('https://api.anthropic.com/api/oauth/usage',{headers:{authorization:`Bearer ${cred.token}`,'anthropic-beta':'oauth-2025-04-20'},signal:AbortSignal.timeout(8_000)})
       if(!r.ok)return null
