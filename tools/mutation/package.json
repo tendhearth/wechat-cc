@@ -1,0 +1,9 @@
+{
+  "name": "wechat-cc-mutation-tools",
+  "private": true,
+  "description": "变异测试(StrykerJS)的独立依赖。故意不进根 workspace / 根 bun.lock,见 docs/maintainer/verify.md「变异测试」。",
+  "devDependencies": {
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0"
+  }
+}
