@@ -3,7 +3,8 @@ import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, mount } from './native-motion.test-support'
 vi.mock('react-native', async () => (await import('./native-motion.test-support')).nativeBoundary())
-vi.mock('../i18n/useLang', () => ({ useLang: () => 'en' }))
+// 语言走真 useLang:系统语言(设备边界)报英文。
+vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }))
 afterEach(cleanup)
 
 it('opens an accessible explanation without invoking recovery; recovery remains explicit and closing returns to the entry', async () => {

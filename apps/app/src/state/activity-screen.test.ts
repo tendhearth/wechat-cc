@@ -5,14 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import '../ui/native-motion.test-support'
 import { makeDemoBackend } from '../backend/demo'
 import type { ActivityItemT, ActivityPageT, Backend } from '../backend/types'
-import { makeStore, type Store } from './store'
+import { withProviders, type TestCtx } from './providers.test-support'
 import Activity from '../app/activity'
 
 // 「CC 做过的事」页的翻页状态(评审 10-20):游标交接、第一页重拉不冲掉翻到的页、换后端作废旧配对在飞的结果。
 type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
 const roots: Root[] = []
-const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; store: Store }, push: vi.fn() }))
+const host = vi.hoisted(() => ({ ctx: null as unknown as TestCtx, push: vi.fn() }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 vi.mock('react-native', async () => {
@@ -23,15 +23,12 @@ vi.mock('react-native', async () => {
   const Pressable = ({ children, onPress, disabled, testID }: any) => createElement('button', { onClick: onPress, disabled, 'data-testid': testID }, typeof children === 'function' ? children({ pressed: false }) : children)
   return { ...native, View, Text, Pressable, ScrollView: View, ActivityIndicator: View, Image: () => null, Platform: { OS: 'ios', select: (o: any) => o.ios ?? o.default } }
 })
+vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')
   return { SafeAreaView: ({ children }: any) => createElement('main', null, children) }
 })
 vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useRouter: () => ({ canGoBack: () => true, back: vi.fn(), push: host.push, replace: vi.fn() }) }))
-vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
-vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
-vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
-vi.mock('../ui/ConnectionNotice', () => ({ ConnectionNotice: () => null }))
 
 const NOW = Date.now()
 const it_ = (id: string, ago: number, extra: Partial<ActivityItemT> = {}): ActivityItemT => ({ id, kind: 'proactive', at: NOW - ago, title: `t-${id}`, ...extra })
@@ -57,7 +54,7 @@ function fake() {
     },
   }
   return {
-    backend, store: makeStore(backend, { lang: 'zh-Hans' }), calls,
+    backend, calls,
     setFirst: (p: ActivityPageT) => { first = p },
     hold: (on: boolean) => { hold = on },
     release: (cur: string) => pending.get(cur)!(pages[cur]!),
@@ -68,11 +65,12 @@ async function flush() { await act(async () => { await new Promise(r => setTimeo
 const rowIds = () => [...document.querySelectorAll('[data-testid^="activity-row-"]')].map(e => e.getAttribute('data-testid')!.slice('activity-row-'.length))
 const more = () => document.querySelector('[data-testid="activity-more"]') as HTMLButtonElement | null
 async function click(el: Element | null) { await act(async () => { (el as HTMLElement).click() }); await flush() }
-async function mount(ctx: { backend: Backend; store: Store }) {
-  host.ctx = ctx
+// 真 BackendProvider 建 store;host.ctx 拿的是它里面那一份(重验要从那份 store 发起)。
+const view = (backend: Backend) => withProviders(createElement(Activity), { backend, onCtx: ctx => { host.ctx = ctx } })
+async function mount(f: { backend: Backend }) {
   const div = document.createElement('div'); document.body.appendChild(div)
   const root = createRoot(div); roots.push(root)
-  await act(async () => { root.render(createElement(Activity)) })
+  await act(async () => { root.render(view(f.backend)) })
   await flush()
   return root
 }
@@ -103,7 +101,7 @@ describe('CC 做过的事 页面翻页', () => {
     await click(more())
     expect(rowIds()).toEqual(['a1', 'a2', 'b1'])
     f.setFirst({ items: [it_('a0', 500), it_('a1', 1000)], next: 'c1', degraded: [] })
-    await act(async () => { f.store.revalidateAll() })
+    await act(async () => { host.ctx.store.revalidateAll() })
     await flush()
     expect(rowIds()).toEqual(['a0', 'a1', 'b1'])
     // 接着往下翻仍用翻到的那页的游标,不从头再翻
@@ -119,8 +117,7 @@ describe('CC 做过的事 页面翻页', () => {
     expect(a.calls.at(-1)).toBe('c1')
     const b = fake()
     b.setFirst({ items: [it_('x1', 1000)], next: null, degraded: [] })
-    host.ctx = b
-    await act(async () => { root.render(createElement(Activity)) })
+    await act(async () => { root.render(view(b.backend)) })
     await flush()
     expect(rowIds()).toEqual(['x1'])
     await act(async () => { a.release('c1') })

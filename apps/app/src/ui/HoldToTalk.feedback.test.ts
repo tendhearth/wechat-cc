@@ -24,7 +24,8 @@ vi.mock('react-native', async () => {
 vi.mock('expo-router', async () => (await import('./native-motion.test-support')).routerBoundary())
 vi.mock('./talk-recorder', () => ({ TALK_MIME: 'audio/mp4', useTalkRecorder: () => ({ permission: host.permission, start: host.start, stop: host.stop }) }))
 vi.mock('../push/native', () => ({ openSystemSettings: host.settings }))
-vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
+// 语言走真 useLang:系统语言(设备边界)报中文。
+vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'zh-Hans-CN' }] }))
 let root: Root
 let container: HTMLDivElement
 let onSend: ReturnType<typeof vi.fn<() => void>>, transcribe: ReturnType<typeof vi.fn<(x: { mime: string; audioBase64: string }) => Promise<string>>>

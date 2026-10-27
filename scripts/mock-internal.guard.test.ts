@@ -16,20 +16,8 @@ import { BOUNDARY_FILES, ROOT, classify, findMocks, scanInternalMocks } from './
 // 2026-10-26 基线(按文件)。清掉一处减一;清完的行删掉。
 // @debt mock 了自己内部模块的测试(降到 0 = 只在系统边界替身)
 const BASELINE: Record<string, number> = {
-  'apps/app/src/state/activity-screen.test.ts': 4,
-  'apps/app/src/state/chat-feedback.test.ts': 7,
-  'apps/app/src/state/compose-input.test.ts': 4,
-  'apps/app/src/state/home-motion.test.ts': 12,
-  'apps/app/src/state/quiet-lists.test.ts': 6,
-  'apps/app/src/state/session-durable.test.ts': 1,
-  'apps/app/src/state/session-reading.test.ts': 5,
-  'apps/app/src/state/useChat.status.test.ts': 1,
-  'apps/app/src/ui/CCFigure.test.ts': 1,
-  'apps/app/src/ui/HoldToTalk.feedback.test.ts': 1,
-  'apps/app/src/ui/Markdown.test.ts': 4,
-  'apps/app/src/ui/motion.test.ts': 1,
-  'apps/app/src/ui/quiet-status.test.ts': 3,
-  'apps/app/src/ui/StatusHint.test.ts': 1,
+  'apps/app/src/state/compose-input.test.ts': 1,
+  'apps/app/src/ui/Markdown.test.ts': 1,
   'apps/desktop/src/modules/dialogue-page-recovery.test.ts': 1,
   'apps/desktop/src/modules/journal.reading.test.ts': 1,
   'apps/desktop/src/modules/journal.test.ts': 1,

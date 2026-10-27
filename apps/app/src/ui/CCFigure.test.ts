@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { advance, background, cleanup, focus, host, mount, reduce, resetHost } from './native-motion.test-support'
 vi.mock('react-native', async () => (await import('./native-motion.test-support')).nativeBoundary())
 vi.mock('expo-router', async () => (await import('./native-motion.test-support')).routerBoundary())
-vi.mock('../i18n/useLang', () => ({ useLang: () => 'en' }))
+// 语言走真 useLang:系统语言(设备边界)报英文。
+vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }))
 const { CCFigure } = await import('./CCFigure')
 afterEach(cleanup)
 beforeEach(() => { resetHost(); vi.useFakeTimers() })
