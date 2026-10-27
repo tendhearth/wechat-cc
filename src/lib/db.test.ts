@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { openSqlite } from './runtime/sqlite'
-import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
+import { migrations, openTestDb, openDb, openWechatDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import type { Db } from './db'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from './test-temp'
@@ -889,5 +889,81 @@ describe('v87 — 记忆一个源的三张表(G2)', () => {
     db.query("INSERT INTO memory_derived(chat_id,kind,body,input_rev,generated_at) VALUES('c1','overview','x',2,1)").run()
     expect(() => db.query("INSERT INTO memory_derived(chat_id,kind,body,input_rev,generated_at) VALUES('c1','overview','y',3,2)").run()).toThrow()
     db.close()
+  })
+})
+
+// 2026-10 变异基线第二轮:runner 外围活着的变异(重试之间的等待、建状态目录、只吞 ENOENT、#79 修复只给主库)。
+describe('withLockRetry — 两次重试之间等一下,最后一次失败之后不等', () => {
+  it('锁住 3 次全失败 ⇒ 等 2 次,每次按 delayMs', () => {
+    const waits: number[] = []
+    expect(() => withLockRetry(() => { throw new Error('SQLITE_BUSY: database is busy') }, { attempts: 3, delayMs: 7, sleep: ms => waits.push(ms) }))
+      .toThrow(/busy/)
+    expect(waits).toEqual([7, 7])
+  })
+  it('不传 delayMs ⇒ 每次等 250ms;第二次就成功 ⇒ 只等一次', () => {
+    const waits: number[] = []
+    let calls = 0
+    expect(withLockRetry(() => { if (++calls < 2) throw new Error('database is locked'); return 'ok' }, { sleep: ms => waits.push(ms) })).toBe('ok')
+    expect(waits).toEqual([250])
+  })
+})
+
+describe('openDb — 状态目录', () => {
+  it('父目录不在 ⇒ 逐级建出来,权限 0700(别的用户读不到库)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'db-test-dir-'))
+    try {
+      const dir = join(root, 'a', 'b')
+      const db = openDb({ path: join(dir, 'x.db') })
+      db.close()
+      expect(existsSync(join(dir, 'x.db'))).toBe(true)
+      // Windows 没有 POSIX 权限位,只看建出来了
+      if (process.platform !== 'win32') expect(statSync(dir).mode & 0o777).toBe(0o700)
+    } finally {
+      removeTempDir(root)
+    }
+  })
+  it('openWechatDb ⇒ 库就是 <stateDir>/wechat-cc.db,迁移跑完', () => {
+    const root = mkdtempSync(join(tmpdir(), 'db-test-wechat-'))
+    try {
+      const db = openWechatDb(root)
+      expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(migrations.length)
+      db.close()
+      expect(existsSync(join(root, 'wechat-cc.db'))).toBe(true)
+    } finally {
+      removeTempDir(root)
+    }
+  })
+  it('busy_timeout 是 5 秒(CLI 和 daemon 同时写时不立刻报 locked)', () => {
+    const db = openTestDb()
+    const row = db.query('PRAGMA busy_timeout').get() as Record<string, number>
+    expect(Object.values(row)[0]).toBe(5000)
+  })
+})
+
+describe('renameMigrated — 只吞 ENOENT', () => {
+  it('改名因为别的原因失败(目标是个非空目录)⇒ 往上抛,不当成「已经搬过了」', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rm-'))
+    try {
+      const file = join(dir, 'legacy')
+      mkdirSync(file)
+      mkdirSync(join(`${file}.migrated`, 'occupied'), { recursive: true })
+      expect(() => renameMigrated(file)).toThrow()
+      expect(existsSync(file)).toBe(true)
+    } finally {
+      removeTempDir(dir)
+    }
+  })
+})
+
+describe('runMigrations — #79 修复只认主库那份迁移表', () => {
+  it('知识库自己的迁移表:库长得像 #79(v21、有 customer_reviews、没社交表)也不回退', () => {
+    const db = openTestDb()
+    for (const t of ['social_seek', 'social_echo', 'social_pledge', 'social_relay', 'social_seen_intent']) db.exec(`DROP TABLE IF EXISTS ${t};`)
+    db.exec('PRAGMA user_version = 21;')
+    const ran: number[] = []
+    const list = Array.from({ length: 23 }, (_, i) => () => { ran.push(i + 1) })
+    runMigrations(db, list)
+    expect(ran).toEqual([22, 23]) // 回退到 v18 的话会从 v19 跑起
+    expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(23)
   })
 })
