@@ -33,6 +33,7 @@
     "test:e2e": "bun --bun vitest run -c vitest.e2e.config.ts",
     "test:sandbox": "bun --bun vitest run -c vitest.e2e.config.ts src/daemon/__e2e__/real-shaped-sandbox.e2e.test.ts",
     "test:node": "vitest run -c vitest.node.config.ts",
+    "test:mutation": "bun scripts/mutation.ts",
     "test:live-cli": "WECHAT_CC_LIVE_CLI=1 bun --bun vitest run src/adapters/executors/external-cli-contract.live.test.ts",
     "eval:companion": "bun eval/companion/run.ts",
     "spike:atelier-renderer": "bun scripts/atelier-renderer-spike.ts",

@@ -34,9 +34,11 @@ describe('authorize:每一层的理由', () => {
     expect(authorize(job, { name: 'Bash', kind: 'shell_destructive' })).toMatchObject({ verdict: 'deny', reason: 'job_profile' })
     expect(authorize(job, { name: 'WebFetch', kind: 'network' }, { tainted: true })).toMatchObject({ verdict: 'deny', reason: 'job_tainted' })
     expect(authorize(job, { name: 'Read', kind: 'fs_read' }, { tainted: true })).toMatchObject({ verdict: 'allow' })
-    expect(authorize(job, { name: 'Read', kind: 'fs_read' }, { readScope: { pathless: true, outside: true, redLine: 'x' } })).toMatchObject({ reason: 'job_pathless' })
-    expect(authorize(job, { name: 'Read', kind: 'fs_read' }, { readScope: { pathless: false, outside: true, redLine: 'x' } })).toMatchObject({ reason: 'job_outside' })
-    expect(authorize(job, { name: 'Read', kind: 'fs_read' }, { readScope: { pathless: false, outside: false, redLine: '碰到密钥' } })).toMatchObject({ reason: 'job_red_line', detail: '碰到密钥' })
+    // verdict 也要钉:2026-10 变异基线里这三条的 'deny' 换成空串没有一条测试红(只看了 reason)。
+    expect(authorize(job, { name: 'Read', kind: 'fs_read' }, { readScope: { pathless: true, outside: true, redLine: 'x' } })).toMatchObject({ verdict: 'deny', reason: 'job_pathless' })
+    expect(authorize(job, { name: 'Read', kind: 'fs_read' }, { readScope: { pathless: false, outside: true, redLine: 'x' } })).toMatchObject({ verdict: 'deny', reason: 'job_outside' })
+    expect(authorize(job, { name: 'Read', kind: 'fs_read' }, { readScope: { pathless: false, outside: false, redLine: '碰到密钥' } })).toMatchObject({ verdict: 'deny', reason: 'job_red_line', detail: '碰到密钥' })
+    expect(authorize(job, { name: 'Read', kind: 'fs_read' }, { readScope: { pathless: false, outside: false, redLine: null } })).toMatchObject({ verdict: 'allow', reason: 'job_allowed' })
   })
   it('放行规则:只在终端 / 一起做的「问」上;规则表 / 初审 / 红线的放拒才算数', () => {
     const term: AuthSubject = { surface: 'terminal', tier: TIER_PROFILES.admin, permissionMode: 'strict', executor: 'claude' }

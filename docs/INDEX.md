@@ -32,6 +32,7 @@
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | macOS 改名迁移(`Tendhearth CC.app`、进程名、LaunchAgent 自修、1.7.4→1.7.5 真机清单) | [maintainer/app-rename-migration.md](maintainer/app-rename-migration.md) | 主人拍板(2026-10-04) |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
+| 变异测试(测试到底护住了什么:怎么跑、2026-10 基线、活变异逐条解读) | [maintainer/verify.md「变异测试」](maintainer/verify.md#变异测试定期传感器不进-verify--每个-pr-的-ci) + [maintainer/mutation-baseline-2026-10.md](maintainer/mutation-baseline-2026-10.md) | `stryker.config.mjs` / `stryker.db.config.mjs` |
 | 加一个执行者(哪几处要动、哪些是推导出来的、漏了谁会红) | [maintainer/add-an-executor.md](maintainer/add-an-executor.md) | `superpowers/specs/2026-10-22-{executor-detect-once,policy-compile}-design.md` |
 | 加一个微信命令(命令表的顺序、放哪一族、两两互斥、路由快照) | [maintainer/add-a-command.md](maintainer/add-a-command.md) | `superpowers/specs/2026-10-20-refactor-batch2-design.md` §1 |
 | 加一页(路由表一行、要发版的那几格、错误码、桌面 / App / 手机网页怎么接) | [maintainer/add-a-page.md](maintainer/add-a-page.md) | `packages/protocol/src/routes.ts` 顶部注释 |

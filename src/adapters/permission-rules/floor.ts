@@ -30,9 +30,12 @@ export function toolClass(tool: string): ToolClass {
 
 export { pathsUnder } from './paths'
 
-/** 按 shell 操作符切段;每个词去引号 / 反斜杠、取 basename。 */
+/**
+ * 按 shell 操作符切段;每个词去引号 / 反斜杠、取 basename。带 `=` 的词(`of=/dev/disk2`、`FOO=/x`)不取 basename:
+ * 它们是参数 / 赋值不是程序名,取了 basename 之后 dd 的 `of=` 就认不出了(2026-10 变异基线发现 `/bin/dd … of=/dev/…` 漏过红线)。
+ */
 export function commandSegments(cmd: string): string[][] {
-  return cmd.split(/[;&|\n\r()`]|\$\(/).map(seg => seg.split(/\s+/).map(w => w.replace(/['"\\]/g, '')).filter(Boolean).map(w => (w.includes('/') && !w.startsWith('-') && !w.includes('://') ? w.slice(w.lastIndexOf('/') + 1) || w : w))).filter(s => s.length)
+  return cmd.split(/[;&|\n\r()`]|\$\(/).map(seg => seg.split(/\s+/).map(w => w.replace(/['"\\]/g, '')).filter(Boolean).map(w => (w.includes('/') && !w.startsWith('-') && !w.includes('://') && !w.includes('=') ? w.slice(w.lastIndexOf('/') + 1) || w : w))).filter(s => s.length)
 }
 
 const after = (seg: string[], head: string, ...tails: string[][]) => {
