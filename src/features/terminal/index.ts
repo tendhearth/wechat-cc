@@ -8,7 +8,7 @@
  *  - `app-push.ts`:终端会话的事推到手机 App;`brain-forward.ts` / `remote-reply.ts`:这边 / 那边(手把事转给脑、脑把「看 / 说」派给手);
  *  - `hooks.ts`:接上 / 撤掉终端里的 hooks(只在主人点了确认时写);`today.ts`:「今天」一眼看完的两路来源;
  *  - `routes.ts`:`/v1/cli/event|permission|sessions|say|hooks/*`、`/v1/overseer/today`(路由表标了 module: 'terminal');
- *  - 这个文件:模块清单。它要的东西(`WireTerminalDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
+ *  - 这个文件:模块清单。它要的东西(`WireTerminalDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填。
  *
  * 只有这个功能用的 `cli-activity.ts` / `cli-reply.ts` 在这里;`wechat-cc hook` 子命令和工作台也用的不在功能目录
  * (不该为了它们去拉功能目录):事件判定 `src/app/cli-events.ts`、权限中继 `src/app/cli-permission-relay.ts`、

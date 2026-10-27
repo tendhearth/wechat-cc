@@ -7,7 +7,7 @@
  *  - `wire-notifications.ts` / `wire-artifacts.ts`:任务那几句微信通知、主人点名要的成果文件;
  *  - `wechat-control.ts` 与 `wechat-*`:微信「任务 …」那一族命令;`task-reference.ts`:主人原话里指的是哪一件;
  *  - `routes.ts`:桌面的 44 条 `/v1/workbench/*`(路由表标了 module: 'workbench');
- *  - 这个文件:模块清单。它要的东西(`WireWorkbenchDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
+ *  - 这个文件:模块清单。它要的东西(`WireWorkbenchDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填。
  *
  * 不在这里的:store(`src/adapters/store/workbench/`:`store.ts` 与它的十几张子表)和执行者、协调器、「一件事」、
  * 自改也在用的零件 —— 文件层 / 附件 / 成果 / 原生历史 / 权限 / 提问 / 文件夹占用在 `src/adapters/workbench/`,
@@ -72,7 +72,7 @@ export interface DeferredStart { start(): void }
  * 工作台的微信通知:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
  * **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
  */
-export function workbenchNotificationsModule(o: { needs: readonly string[]; speech: (ctx: ModuleCtx) => Pick<SpeechPolicy, 'say'> }): DaemonModule<DeferredStart> {
+export function workbenchNotificationsFeature(o: { needs: readonly string[]; speech: (ctx: ModuleCtx) => Pick<SpeechPolicy, 'say'> }): DaemonModule<DeferredStart> {
   return {
     name: 'workbench-notifications',
     needs: o.needs,
@@ -88,7 +88,7 @@ export function workbenchNotificationsModule(o: { needs: readonly string[]; spee
 }
 
 /** 主人点名要的成果文件(「任务 X 文件 <id>」):和通知一样停在 polling 之后、开在开机最后。 */
-export function workbenchArtifactsModule(o: { needs: readonly string[] }): DaemonModule<DeferredStart> {
+export function workbenchArtifactsFeature(o: { needs: readonly string[] }): DaemonModule<DeferredStart> {
   return {
     name: 'workbench-artifacts',
     needs: o.needs,
