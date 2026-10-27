@@ -26,7 +26,7 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
  一切子系统 ─► DaemonModule 容器(src/daemon/modules/container.ts):启停成对,关机顺序 = 启动倒过来
 ```
 
-入口是 `src/daemon/main.ts`:地基(`foundation.ts`:锁、db、几个必须共享的单例)+ **一个**模块容器,模块表在 `src/daemon/daemon-modules.ts` —— 表的顺序 + `needs` 就是开机顺序,关机严格倒过来(`__e2e__/shutdown-order` 快照钉住);晚到的东西只经 `lazy` / `ctx.late` 拿。bootstrap 是其中一组模块(`bootstrap/index.ts` 的 `bootstrapModules`:基础 → 知识库 → 核心 → 自重启 / 空闲清扫 / 社交 / A2A / 配对 / 乙 → 拼回 `Bootstrap`),每一块的接线仍在 `src/daemon/bootstrap/wire-*.ts`。
+入口是 `src/daemon/main.ts`:地基(`foundation.ts`:锁、db、几个必须共享的单例)+ **一个**模块容器,模块表在 `src/daemon/daemon-modules.ts`(只列模块;每个模块怎么接写在它旁边的 `module.ts`:功能在 `src/features/<名>/module.ts`,平台在 `src/daemon/<块>/module.ts`)—— 表的顺序 + `needs` 就是开机顺序,关机严格倒过来(`__e2e__/shutdown-order` 快照钉住);晚到的东西只经 `lazy` / `ctx.late` 拿。bootstrap 是其中一组模块(`bootstrap/index.ts` 的 `bootstrapModules`:基础 → 知识库 → 核心 → 自重启 / 空闲清扫 / 社交 / A2A / 配对 / 乙 → 拼回 `Bootstrap`),每一块的接线仍在 `src/daemon/bootstrap/wire-*.ts`。
 
 ## 分层:谁能依赖谁
 
