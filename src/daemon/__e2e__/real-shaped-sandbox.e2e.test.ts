@@ -214,7 +214,9 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes('按规则'))).toHaveLength(1)
   })
 
-  it('workbench from WeChat: owner picks a project, hands a task to Codex, the executor edits a file, the owner is told it is done and 「改动」/ the review route show the change', async () => {
+  // win32 不跑:Codex 当工作台执行者在 Windows 上开头就拒绝(src/adapters/executors/codex/codex-app-server.ts,进程树清理未验证),
+  // 跟 vitest.config.ts 里工作台 Codex 测试的 win32 排除同一个理由;Windows 上派活这条路要等 Windows 工作台单独立项。
+  it.skipIf(process.platform === 'win32')('workbench from WeChat: owner picks a project, hands a task to Codex, the executor edits a file, the owner is told it is done and 「改动」/ the review route show the change', async () => {
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
     const listing = texts(list, d.owner).find(t => t.includes('选择要工作的项目'))!
