@@ -71,7 +71,7 @@ export interface Layer extends PrInfo {
 
 export interface MergedPr { number: number; headRefName: string; headRefOid: string }
 
-export interface RollupItem { name?: string; context?: string; status?: string; conclusion?: string; state?: string }
+export interface RollupItem { name?: string; context?: string; status?: string; conclusion?: string; state?: string; startedAt?: string; workflowName?: string }
 
 export type RollupVerdict =
   | { kind: 'green'; counted: number }
@@ -80,10 +80,28 @@ export type RollupVerdict =
   | { kind: 'too_few'; counted: number }
 
 /**
+ * 同一个提交上同一个作业跑过不止一次(close/reopen、改完描述重新触发、被新推送取消的旧一轮)⇒ rollup 里每一次都在。
+ * 只认每个(工作流, 作业名)最近开始的那一次;没有 startedAt 的照旧都算(StatusContext、老数据)。
+ * 2026-10-27 #747:旧一轮 pr-rules 读的是改之前的描述、红了,新一轮绿了,不去重就永远合不下去。
+ */
+export function latestRuns(items: RollupItem[]): RollupItem[] {
+  const latest = new Map<string, RollupItem>()
+  const rest: RollupItem[] = []
+  for (const it of items) {
+    if (it.status === undefined || !it.startedAt || !it.name) { rest.push(it); continue }
+    const key = `${it.workflowName ?? ''}\u0000${it.name}`
+    const prev = latest.get(key)
+    if (!prev || (prev.startedAt ?? '') < it.startedAt) latest.set(key, it)
+  }
+  return [...rest, ...latest.values()]
+}
+
+/**
  * 判一份 statusCheckRollup。CheckRun 看 status/conclusion,StatusContext 看 state。
  * SKIPPED / NEUTRAL 不计数;空的或计数不够 ⇒ too_few(**永远不是 green**)。
  */
-export function judgeRollup(items: RollupItem[], minChecks: number): RollupVerdict {
+export function judgeRollup(all: RollupItem[], minChecks: number): RollupVerdict {
+  const items = latestRuns(all)
   const failed: string[] = []
   let counted = 0
   let pending = false
