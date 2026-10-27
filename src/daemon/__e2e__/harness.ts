@@ -23,6 +23,7 @@ import { installFakeClaude, installClaudeSpawnRecorder, installFakeCodex, instal
 // materialize to local stub files instead of hitting the real ilink CDN.
 // MUST come before bootDaemon imports to take effect.
 import './fake-media'
+import './fake-credentials'
 import type { RawUpdate } from '../poll-loop'
 
 export interface TestDaemonAccount {

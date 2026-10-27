@@ -45,7 +45,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | CLI 自动升级 | 缺省开着(真机也是) | — |
 
 **网络围栏**:沙盒期间 `fetch` / `WebSocket` 只放行本机地址,往外的当场失败并记下来。测试里有一张 `KNOWN_OUTBOUND`
-名单(真机本来就会打、沙盒拦下的),名单外的往外请求 = 红。
+名单(真机本来就会打、沙盒拦下的;现在是空的),名单外的往外请求 = 红。
 
 ### 没开的,以及为什么
 
@@ -86,7 +86,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 ## 已知的坑
 
 - `config.ts` 的 `STATE_DIR`、`log.ts` 的 `channel.log` 路径在 import 时定死:同一个测试文件里第二个 daemon 的日志写进第一个的目录。要读日志就用沙盒的 `log()`(从 stderr 抓的),或像 `shutdown-order` 那样一个文件只起一台。
-- 开发机上有 Claude Code 登录时,工作台的订阅额度监视器会读本机的 OAuth 凭据去问 Anthropic(`src/features/workbench/wire.ts`)。普通 e2e 里这一下是真的出网;沙盒里被围栏拦下(`KNOWN_OUTBOUND` 那一条)。
+- 本机账号凭据是系统边界:`fake-credentials.ts`(harness 副作用 import)把 `src/adapters/executors/claude/claude-oauth-credential.ts` 换成「没有凭据」。以前开发机上有 Claude Code 登录时,工作台的订阅额度监视器会拿开发者自己的凭据真连 Anthropic 的 usage 接口(沙盒的围栏抓到的)。
 
 ## 调试
 

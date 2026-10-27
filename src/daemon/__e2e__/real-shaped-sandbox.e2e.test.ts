@@ -23,11 +23,8 @@ const MUST_BE_ON = ['knowledge', 'social', 'mailbox-poller', 'pairing', 'a2a-ser
  * 真机上本来就会往外打、沙盒的网络围栏(fake-boundaries.ts 的 fenceNetwork)当场拦下的请求。不在这张表里的往外请求 = 红:
  * 新代码想出网,要么走注入的缝让测试换成替身,要么在这里写清它在真机上是干什么的。
  */
-const KNOWN_OUTBOUND: Array<{ url: RegExp; why: string }> = [
-  // 工作台的订阅额度监视器(features/workbench/wire.ts):读本机 Claude Code 的 OAuth 凭据(macOS 钥匙串 / ~/.claude/.credentials.json),
-  // 有凭据就问 Anthropic 的 usage 接口。CI 上没凭据 ⇒ 不出现;开发机上会出现(读的是开发者自己的凭据,围栏拦下了请求)。
-  { url: /^https:\/\/api\.anthropic\.com\/api\/oauth\/usage$/, why: 'subscription usage monitor' },
-]
+// 沙盒里允许出现的外连(目前没有):本机凭据由 fake-credentials 换成「没有」,订阅额度不会再拿开发者的真凭据连 api.anthropic.com。
+const KNOWN_OUTBOUND: Array<{ url: RegExp; why: string }> = []
 const unexpectedOutbound = (blocked: readonly string[]) => blocked.filter(u => !KNOWN_OUTBOUND.some(k => k.url.test(u)))
 
 const texts = (msgs: readonly OutboundMsg[], chatId: string) => msgs.filter(m => m.chatId === chatId && m.endpoint === 'sendmessage').map(m => m.text ?? '')
