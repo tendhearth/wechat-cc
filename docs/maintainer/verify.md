@@ -50,6 +50,12 @@ bun x vitest run <测试文件>            # 绿
 - 改到跨模块的行为(开机顺序、可选子系统、两个模块之间的口子),至少一条测试走沙盒或 `__e2e__/` 的真接线。
 - 加新的可选子系统 / 配置开关:在沙盒里照真机把它开上;开不了的写进 `src/daemon/__e2e__/README.md` 的「没开的」,说清为什么。
 
+这条由 `scripts/mock-internal.guard.test.ts` 按文件数(判法在 `scripts/mock-internal-lib.ts`):`vi.mock` / `vi.doMock` / `mock.module`
+的目标解析进仓库自己的模块就算一处;node 内置、npm 包、`src/adapters/**`、`src/test-support/**` 和 `BOUNDARY_FILES` 里写了理由的几个真边界放行。
+没登记的文件出现内部 mock 就红,登记过的只许降。清一处的换法三选一:用真模块;经参数 / 端口注入假实现;
+或者把要测的行为搬进沙盒 / `__e2e__/` 的场景。只验「mock 被这样调了」的测试,沙盒或 e2e 已经覆盖那个行为的,直接删,
+在 PR 描述的 `## 删掉/放松的测试` 里逐个列出。清完把守卫里 `BASELINE` 的数字调下来(降到 0 的行删掉)—— 少了不调,守卫也红。
+
 ## 推之前跑过 verify,由机器查
 
 `bun run verify` 一开始记下它检查的那份内容(工作区原样的 git 树),全绿才记进这个 worktree 的 git 目录;`git push` 时
