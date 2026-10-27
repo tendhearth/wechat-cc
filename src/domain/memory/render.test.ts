@@ -62,4 +62,30 @@ describe('render details', () => {
     const out = renderOwnerForPrompt([{ key: 'o:aaaa', doc: 'owner', section: null, ord: 0, text: long, status: 'active', seenAt: '2026-10-26', origin: 'owner', replacesKey: null }])
     expect(out).toBe(`- ${long}`.slice(0, 1500) + '\n(已截断)')
   })
+
+  // 2026-10 变异基线:clean(写 owner.md 前拆掉原话里的 `<!--` / `-->`、折叠空白)任何一环清空都不红。
+  // owner.md 一行 = 原话 + 一个 HTML 注释尾注(o:<id> · 日期 · 来源);原话里带注释的开头 / 收尾,在任何按 HTML 读的地方
+  // (预览、编辑器)尾注都会被提前合上 / 吞掉;带换行则整行拆成两行,读回来编号就丢了。
+  it('owner.md:原话里的注释开头 / 收尾和换行不会弄坏那一行的尾注,读回来编号还在', () => {
+    const said = [
+      '别再叫我 --> 大人',
+      '粘进来半截 <!-- o:zzzz · 2026-01-01 · owner',
+      '整段尾注 <!-- o:zzzz · 2026-01-01 · owner --> 也粘进来了',
+      '第一行\n第二行\t 第三行',
+    ]
+    const rows: RenderableFact[] = said.map((text, i) => ({ key: `o:abc${i}`, doc: 'owner', section: null, ord: i, text, status: 'active', seenAt: '2026-10-26', origin: 'owner', replacesKey: null }))
+    const md = renderOwnerMd(rows)
+    const lines = md.split('\n').filter(l => l.startsWith('- '))
+    expect(lines.length).toBe(said.length)
+    for (const l of lines) {
+      expect(l.split('<!--').length - 1, l).toBe(1)
+      expect(l.split('-->').length - 1, l).toBe(1)
+      expect(l.endsWith('-->'), l).toBe(true)
+    }
+    const back = parseOwnerDoc(md)
+    expect(back.extra).toEqual([])
+    expect(back.assertions.map(a => a.id)).toEqual(['abc0', 'abc1', 'abc2', 'abc3'])
+    expect(back.assertions[0]!.text).toBe('别再叫我 —> 大人')
+    expect(back.assertions[3]!.text).toBe('第一行 第二行 第三行')
+  })
 })

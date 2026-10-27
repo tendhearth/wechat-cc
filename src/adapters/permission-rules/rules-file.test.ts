@@ -110,6 +110,35 @@ describe('matchRule', () => {
     expect(matchRule(rules, ask())).toBeNull()
     expect(matchRule(rules, ask({ surface: 'workbench', provider: 'codex' }))).not.toBeNull()
   })
+  // 上一条两个限定一起写、ask 两样都不对 ⇒ 任何一道判断单独失效都还有另一道兜着(2026-10 变异基线:
+  // 两行各自换成 false 都不红)。这里一次只限定一样、另一样照样对上,逐个面 / 执行者核对。
+  it('一条只限定 surface 的放行规则:只在那个面生效,别的面一律不命中', () => {
+    const terminalOnly = [rule({ id: 't', when: { surface: 'terminal', tool: 'Bash' } })]
+    const table: Array<[PermissionAsk['surface'], boolean]> = [['terminal', true], ['workbench', false], ['chat', false]]
+    for (const [surface, hit] of table) {
+      expect(matchRule(terminalOnly, ask({ surface }))?.id ?? null, surface).toBe(hit ? 't' : null)
+    }
+    const workbenchOnly = [rule({ id: 'w', when: { surface: 'workbench' } })]
+    expect(matchRule(workbenchOnly, ask({ surface: 'workbench' }))?.id).toBe('w')
+    expect(matchRule(workbenchOnly, ask({ surface: 'terminal' }))).toBeNull()
+    expect(matchRule(workbenchOnly, ask({ surface: 'chat' }))).toBeNull()
+  })
+  it('一条只限定 provider 的放行规则:换个执行者就不命中', () => {
+    const claudeOnly = [rule({ id: 'c', when: { provider: 'claude', tool: 'Bash' } })]
+    const table: Array<[string, boolean]> = [['claude', true], ['codex', false], ['cursor', false], ['openai', false]]
+    for (const [provider, hit] of table) {
+      for (const surface of ['terminal', 'workbench', 'chat'] as const) {
+        expect(matchRule(claudeOnly, ask({ provider, surface }))?.id ?? null, `${provider}@${surface}`).toBe(hit ? 'c' : null)
+      }
+    }
+  })
+  it('对话里按路径限定的规则:路径里有一条不是绝对路径 ⇒ 不知道碰哪 ⇒ 不命中', () => {
+    // `/**` 什么绝对路径都对得上:相对路径归一时会按 cwd 解析成绝对路径,只有「对话里先看是不是绝对路径」这一道拦得住。
+    const rules = [rule({ id: 'p', when: { paths: '/**' } })]
+    expect(matchRule(rules, ask({ surface: 'chat', tool: 'Read', paths: ['/p/a.ts'] }), 'darwin')?.id).toBe('p')
+    expect(matchRule(rules, ask({ surface: 'chat', tool: 'Read', paths: ['/p/a.ts', 'a.ts'] }), 'darwin')).toBeNull()
+    expect(matchRule(rules, ask({ surface: 'terminal', tool: 'Read', paths: ['/p/a.ts', 'a.ts'] }), 'darwin')?.id).toBe('p')
+  })
 })
 
 describe('rules-file × 终审', () => {

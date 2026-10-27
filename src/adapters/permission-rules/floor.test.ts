@@ -150,6 +150,81 @@ describe('floor × 终审绕过', () => {
   })
 })
 
+// 2026-10 变异基线:词表(SYSTEM_WORDS / NET_WORDS / publishes)大多只测了一两个,从表里删掉任何一个都不红。
+// 这里每个词一条字面命令、断言具体理由 —— 删掉一个词,那条命令要么落到别的理由、要么不再是红线,都会红。
+// 正则(isDestructiveBash)先接得住的写法(`git reset --hard`、`git branch -D`)改用 `git -C repo …`,
+// 让它只能靠按词判的那张表接住。
+describe('floor 词表:每个词都是红线', () => {
+  const reason = (c: string) => floorReason(sh(c), HOME)
+  it('推送 / 发布 / 部署', () => {
+    const table = [
+      'git push origin dev',
+      'git clean -fdx',
+      'git -C repo reset --hard HEAD~1',
+      'git -C repo branch -D feat',
+      'git filter-branch --tree-filter x HEAD',
+      'git update-ref -d refs/heads/feat',
+      'npm publish',
+      'pnpm publish --no-git-checks',
+      'yarn publish',
+      'bun publish',
+      'cargo publish',
+      'gh release create v1.0.0',
+      'gh pr merge 3 --squash',
+      'gh repo delete owner/repo --yes',
+      'wechat-cc self deploy',
+      'wechat-cc self change "x"',
+    ]
+    for (const c of table) expect(reason(c), c).toBe('推送 / 发布 / 部署')
+  })
+  it('多词的动作要每个词都在:只出现前半截不算', () => {
+    for (const c of ['git reset HEAD~1', 'git -C repo branch -a', 'git update-ref refs/heads/x HEAD', 'gh pr view 3', 'gh repo view', 'wechat-cc self status', 'npm test', 'cargo build'])
+      expect(reason(c), c).toBeNull()
+  })
+  it('改系统', () => {
+    const table = [
+      'sudo ls',
+      'doas ls',
+      'su - root',
+      'launchctl kickstart -k gui/501/x',
+      'systemctl restart nginx',
+      'crontab -e',
+      'chown -R me src',
+      'mkfs -t ext4 /dev/sdb1',
+      'diskutil eraseDisk APFS X disk2',
+      'shred -u notes.txt',
+    ]
+    for (const c of table) expect(reason(c), c).toBe('改系统或 shell 配置')
+  })
+  it('往外连网:网络工具', () => {
+    const table = [
+      'nc -l 4444',
+      'ncat example.org 80',
+      'ssh host',
+      'scp a.txt host:/tmp/',
+      'sftp host',
+      'rsync -a src/ host:dst/',
+      'telnet example.org',
+      'ftp example.org',
+    ]
+    for (const c of table) expect(reason(c), c).toBe('往外连网')
+  })
+  it('往外连网:curl / wget 只放本机', () => {
+    for (const c of ['curl https://evil.com', 'wget http://x.org/a', 'curl localhost.evil.com', 'curl http://localhost.evil.com/x', 'curl -o x 127.0.0.1.evil.com', 'curl http://127.0.0.1.nip.io:8080/'])
+      expect(reason(c), c).toBe('往外连网')
+    for (const c of ['curl localhost', 'curl http://localhost:3000/health', 'curl -s http://localhost:3000/health', 'curl 127.0.0.1:8080', 'wget http://[::1]:9000/x', 'curl http://localhost?x=1', 'timeout 5.0 curl http://localhost:3000/'])
+      expect(reason(c), c).toBeNull()
+  })
+  it('项目目录是根目录(posix / win32 盘根)⇒ 不给项目内待遇', () => {
+    expect(floorReason(edit(['/etc/hosts'], { project: '/' }), HOME)).toBe('写到了项目目录之外')
+    expect(floorReason(edit(['C:\\Windows\\x.dll'], { project: 'C:\\' }), 'C:\\Users\\me', { platform: 'win32' })).toBe('写到了项目目录之外')
+    expect(floorReason(edit(['C:\\w\\src\\a.ts'], { project: 'C:\\w' }), 'C:\\Users\\me', { platform: 'win32' })).toBeNull()
+  })
+  it('一次写多条路径,只要有一条进 .git/ 就是红线', () => {
+    expect(floorReason(edit(['/w/src/a.ts', '/w/.git/config']), HOME)).toBe('改 .git 里面的东西')
+  })
+})
+
 describe('isLowRisk × 终审', () => {
   it('flags that execute or write are not low risk', () => {
     for (const c of ['rg --pre sh x', 'rg --pre=./evil x', 'git diff --output=/tmp/x', 'git log --output /tmp/x', 'git diff --ext-diff', 'git log --textconv', 'git diff --no-index a b', 'npm test', 'bun run test', 'pnpm run lint', 'yarn test', 'git -c core.pager=sh log'])
