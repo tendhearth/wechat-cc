@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto'
 import {execFileSync} from 'node:child_process'
 import {existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
-import {join} from 'node:path'
+import {join,resolve} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {createProviderRegistry} from '../../app/provider-registry'
@@ -133,6 +133,18 @@ describe('预览 + 令牌 + 执行 + 撤销', () => {
     await next(id,p=>writeFileSync(join(p,'a.txt'),'r3\n'))
     expect((service.detail(id) as {rewind?:unknown}).rewind).toBeUndefined()
     await expect(service.undoRewind(id)).rejects.toThrow('rewind_undo_stale')
+  })
+
+  it('undo after a newer round is stale even while git holds the worktree (index.lock)', async () => {
+    // CI 上偶发:有新一轮之后撤销,该说 stale,却因为工作区那一刻被 git 占着报成 rewind_unavailable(先查工作区、后查库)
+    const {id,wt}=await twoRounds()
+    const [r1]=rounds(id),p=await service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'})
+    await service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token})
+    await next(id,p=>writeFileSync(join(p,'a.txt'),'r3\n'))
+    const lock=g(wt.root,'rev-parse','--git-path','index.lock')
+    writeFileSync(resolve(wt.root,lock),'')
+    try { await expect(service.undoRewind(id)).rejects.toThrow('rewind_undo_stale') }
+    finally { rmSync(resolve(wt.root,lock),{force:true}) }
   })
 })
 
