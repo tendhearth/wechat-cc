@@ -40,23 +40,27 @@ import { registerInternalApi, type InternalApiLifecycle } from './internal-api/l
 import { makeSelfChangeGlue } from './self-change-glue'
 import { runSelftestConverse } from './selftest'
 import { providerDisplayName } from './provider-display-names'
-import { bootstrapModules, resolveAdminChatId, type Bootstrap } from './bootstrap'
+import { bootstrapModules, type Bootstrap } from './bootstrap'
+import { ownerChatIdOf, isOwnerOf } from './owner-chat'
+import { pick } from '../lib/pick'
 import { memoryFeature, memoryNightlyModule, makeMemoryLlmOps, retractOnFactStatus, resolveCheapEval, makeMemoryImportCommand, type MemoryFeature, type MemoryLlmOps, type MemoryPromptReads } from '../features/memory'
 import { loadCompanionConfig } from '../lib/companion-config'
-import { companionFeature, careLevel, companionOfferEligible, registerCompanionPush, registerCompanionIntrospect, registerIngest } from '../features/companion'
+import { careLevel, companionOfferEligible, type registerIngest } from '../features/companion'
+import { companionModule, companionPushModule, companionIntrospectModule, companionIngestModule } from '../features/companion/module'
 import { makeLlmHealth, type LlmHealth } from './llm-health'
 import { terminalFeature, type TerminalFeature } from '../features/terminal'
-import { wireActivity } from './bootstrap/wire-activity'
+import { wireActivity, type Activity } from './bootstrap/wire-activity'
 import { jobsFeature, jobsRunnerModule, type JobsFeature } from '../features/jobs'
-import { lettersFeature } from '../features/letters'
-import { atelierFeature } from '../features/atelier'
-import { journalFeature } from '../features/journal'
-import { huntFeature } from '../features/hunt'
-import { voiceFeature } from '../features/voice'
-import { phoneFeature } from '../features/phone'
+import { lettersModule } from '../features/letters/module'
+import { atelierModule } from '../features/atelier/module'
+import { journalModule } from '../features/journal/module'
+import { huntModule } from '../features/hunt/module'
+import { voiceModule } from '../features/voice/module'
+import { phoneModule } from '../features/phone/module'
 import { makeProjectLessonsCommand } from './project-lessons-command'
-import { calendarFeature, type CalendarFeature } from '../features/calendar'
-import { consoleFeature } from '../features/console'
+import type { CalendarFeature } from '../features/calendar'
+import { calendarModule } from '../features/calendar/module'
+import { consoleModule } from '../features/console/module'
 import { fromReplyHandler } from './commands/registry'
 import { wireMain, type WiredDeps } from './wiring'
 import { buildInboundPipeline, type AppTurn } from './inbound/build'
@@ -66,9 +70,11 @@ import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
 import { registerPolling, type PollingLifecycle } from './polling-lifecycle'
 import { startCliUpgrade } from './cli-upgrade/start'
-import { remindersFeature } from '../features/reminders'
-import { stickersFeature, type StickersFeature } from '../features/stickers'
-import { reportsFeature, reportSweeperModule, type ReportsFeature } from '../features/reports'
+import { remindersModule } from '../features/reminders/module'
+import type { StickersFeature } from '../features/stickers'
+import { stickersModule } from '../features/stickers/module'
+import type { ReportsFeature } from '../features/reports'
+import { reportOutboxModule, reportsModule } from '../features/reports/module'
 import { runStartupSweeps } from './startup-sweeps'
 import { isHeartbeatFresh } from './single-instance'
 
@@ -78,13 +84,12 @@ interface BootApi { llmHealth: LlmHealth }
 interface OwnerCommands {
   commands: ReturnType<typeof fromReplyHandler>[]
 }
-type Activity = ReturnType<typeof wireActivity>
 interface CliUpgradeModule { upgrader(): CliUpgrader | null }
 
 export function daemonModules(f: Foundation): DaemonModule[] {
   const { stateDir, dangerously, db } = f
-  const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-  const isOwner = (chatId: string) => ownerChatId() === chatId
+  const ownerChatId = () => ownerChatIdOf(stateDir)
+  const isOwner = isOwnerOf(stateDir)
 
   return [
     // —— 网络守护的闸门:语音、provider registry、SessionManager、协调器、工作台都接它,所以最先有 ——
@@ -146,12 +151,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<ReturnType<typeof makeReplyDeliveryRuntime>>,
 
-    // 打猎:一个功能一个目录(src/features/hunt)。init 只跑「默认关」那次的一次性开机步骤 —— 以前在地基里,排在
-    // internal-api 开门、任何伙伴那一拍之前;放在这里还是那个位置。打猎那个陪伴候选在 wiring/tick-bodies.ts 的候选表里登记(陪伴功能不 import 打猎)。
-    huntFeature({
-      needs: [],
-      deps: () => ({ stateDir, chatPrefs: f.chatPrefs, log: (t, l) => log(t, l) }),
-    }),
+    // 打猎「默认关」那次的一次性开机步骤:排在 internal-api 开门、任何伙伴那一拍之前(以前在地基里)
+    huntModule(f),
 
     // —— internal API:bootstrap 要它的 baseUrl / token 去配 MCP,所以在 init 段就监听(桌面这时来问 ⇒ 「还没有」)——
     {
@@ -270,63 +271,16 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         }
       },
     }),
-    // 桌面控制台(src/features/console,架构终态 F6):桌面以前起 CLI 读写的对话页、会话名单、观察 / 里程碑 / 决策、头像 ……
-    // 只挂路由;紧跟 internal-api,桌面开机就来读。
-    consoleFeature({ stateDir, db, conversationStore: f.conversationStore }),
-    // 画室:一个功能一个目录(src/features/atelier);路由自己挂,紧跟 internal-api(以前这几条路由随 internal-api 一起就在,桌面开机就来看画)。画一拍还在伙伴的反省那一拍里(wiring 经 makeAtelierTick 接)。
-    atelierFeature({
-      needs: [W.send],
-      deps: (ctx) => ({ stateDir, ilink: ctx.get<WechatSend>(W.send) }),
-    }),
-    // 伙伴日志(背包):`/v1/journal*` 自己挂(src/features/journal),紧跟 internal-api(以前随 internal-api 一起就在)。表是地基里那一份。
-    journalFeature({
-      needs: [],
-      deps: () => ({ stateDir, journal: f.journal }),
-    }),
+    // 下面这几个只挂路由,紧跟 internal-api(以前随 internal-api 一起就在,桌面 / MCP 工具开机就来):控制台、画室、背包、陪伴、语音、手机
+    consoleModule(f),
+    atelierModule(f),
+    journalModule(f),
+    companionModule(f),
+    voiceModule(),
+    phoneModule(),
 
-    // 陪伴:一个功能一个目录(src/features/companion)。这里只挂 `/v1/companion/status|enable|disable|snooze|import-local|thoughts`,
-    // 紧跟 internal-api(以前随 internal-api 一起就在,MCP 的 companion_* 工具开机就来)。开关那一口还是 ilink 适配器造的(改配置 +
-    // 起停),原样交过去。四拍的定时器是下面 companion.push / introspect / ingest 三个模块,位置没动;候选登记表在 wiring/tick-bodies.ts。
-    companionFeature({
-      needs: [W.companion],
-      deps: (ctx) => {
-        const wxCompanion = ctx.get<WechatCompanionControls>(W.companion)
-        return {
-          stateDir,
-          companion: { enable: () => wxCompanion.enable(), disable: () => wxCompanion.disable(), status: () => wxCompanion.status(), snooze: (m) => wxCompanion.snooze(m), setImportLocal: (e) => wxCompanion.setImportLocal(e) },
-        }
-      },
-    }),
-
-    // 语音(出站 TTS):一个功能一个目录(src/features/voice);路由自己挂,紧跟 internal-api(以前随 internal-api 一起就在)。
-    // 语音口还是 ilink 适配器造的那一份(发送绑着 ilink),这里原样交过去。
-    voiceFeature({
-      needs: [W.voice],
-      deps: (ctx) => ({ voice: ctx.get<WechatVoice>(W.voice) }),
-    }),
-
-    // 手机:一个功能一个目录(src/features/phone)。这里只挂桌面「连接手机」那两条 `/v1/phone/*`,紧跟 internal-api(以前随 internal-api
-    // 一起就在);出码要的设置面板在 wired 里建(手机那一簇的装配还在 wiring/wire-phone.ts)⇒ 经 lazy 现取,没建好照旧 503 phone_not_wired。
-    phoneFeature({
-      needs: [],
-      lazy: ['wired'],
-      deps: (ctx) => {
-        const wired = ctx.late<WiredDeps>('wired')
-        return { phoneConnect: () => wired()?.phoneConnect ?? null, log: (t, l) => log(t, l) }
-      },
-    }),
-
-    // —— 贴纸:一个功能一个目录(src/features/stickers);路由自己挂。表情库全 daemon 一份,bootstrap(提示词)和 wired 都要它 ——
-    stickersFeature({
-      needs: [W.send],
-      deps: (ctx) => {
-        const wxSend = ctx.get<WechatSend>(W.send)
-        return {
-          stateDir, log: (t, l) => log(t, l),
-          ilink: { sendFile: (c, p) => wxSend.sendFile(c, p), noteSentMedia: (c, m) => wxSend.noteSentMedia?.(c, m) },
-        }
-      },
-    }),
+    // 贴纸:表情库全 daemon 一份,bootstrap(提示词)和 wired 都要它
+    stickersModule(f),
 
     // —— bootstrap:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙(一组模块,bootstrap/index.ts)——
     ...bootstrapModules({
@@ -453,7 +407,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     }),
 
     // —— 功能(一个功能一个目录,src/features/<名>)——
-    calendarFeature({ stateDir, isOwner }),
+    calendarModule(f),
 
     // —— 「CC 做过的事」:手机时间线 / 微信「做过的事」/ 周报共用一组来源 ——
     {
@@ -525,8 +479,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<OwnerCommands>,
 
-    // 回报的队列 + ReportSink(src/features/reports):工作台入队要它,所以排在工作台前面;投递那一拍在下面 `reports`。
-    reportsFeature({ needs: [], deps: () => ({ db, matters: f.matters, log: (t, l) => log(t, l) }) }),
+    // 回报的队列 + ReportSink:工作台入队要它,所以排在工作台前面;投递那一拍在下面 `reports`
+    reportOutboxModule(f),
 
     // —— 工作台(「一起做」):一个功能一个目录(src/features/workbench);桌面路由自己挂,这里只填它要的东西 ——
     workbenchFeature({
@@ -649,9 +603,9 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     } satisfies DaemonModule<PipelineModule>,
 
     // —— 起了就跑的那些(start 段按这个顺序起,关机倒过来)——
-    lifecycleModule('companion.push', (ctx) => registerCompanionPush(ctx.get<WiredDeps>('wired').companionPushDeps), { needs: ['wired'] }),
-    lifecycleModule('companion.introspect', (ctx) => registerCompanionIntrospect(ctx.get<WiredDeps>('wired').companionIntrospectDeps), { needs: ['wired'] }),
-    lifecycleModule('companion.ingest', (ctx) => registerIngest(ctx.get<WiredDeps>('wired').companionIngestDeps), { needs: ['wired'] }),
+    companionPushModule(),
+    companionIntrospectModule(),
+    companionIngestModule(),
     lifecycleModule('guard', (ctx) => registerGuard(ctx.get<WiredDeps>('wired').guardDeps), { needs: ['wired'] }),
     // 外部 CLI provider 的退避重探计时器(2026-10-04)—— 关停时别再起探测、别再晚注册。
     {
@@ -673,29 +627,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       holdBusy: (ctx) => (l) => ctx.get<Bootstrap>('bootstrap').holdBusy(l),
       log: (t, l) => log(t, l),
     }),
-    // CC 的信:一个功能一个目录(src/features/letters);路由自己挂。这里只填它要的东西。
-    lettersFeature({
-      needs: ['bootstrap', 'wired', W.send],
-      deps: (ctx) => {
-        const boot = ctx.get<Bootstrap>('bootstrap')
-        const wired = ctx.get<WiredDeps>('wired')
-        const wxSend = ctx.get<WechatSend>(W.send)
-        return {
-          stateDir, db,
-          providerFor: (c) => { const m = boot.coordinator.getMode(c); return m && m.kind === 'solo' ? m.provider : undefined },
-          strongEval: (id) => (typeof boot.registry.getStrongEval === 'function' ? boot.registry.getStrongEval(id as never) : null),
-          cheapEval: (c) => resolveCheapEval({ getMode: (x) => boot.coordinator.getMode(x), registry: boot.registry }, c),
-          wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
-          speech: wired.speech,
-          sendText: (c, t) => wxSend.sendMessage(c, t),
-          // 逐页发不逐页记;寄出之后整封记成主人对话里的一行(App 对话页看得见),微信不通时寄到 App(2026-10-18)。
-          sendFile: (c, file) => wxSend.sendFile(c, file, { mirror: false }),
-          mirror: (c, pages) => wxSend.noteSentMedia?.(c, pages.map(path => ({ kind: 'file' as const, path }))),
-          app: () => wired.companionApp,
-          holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
-        }
-      },
-    }),
+    lettersModule(f),
     // 外部 agent CLI 自动升级(主人 2026-10-04,docs/maintainer/cli-auto-upgrade.md):空闲时升、升完自检、不过就退回。
     {
       name: 'cli-upgrade',
@@ -731,16 +663,10 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         return { upgrader: () => upgrader }
       },
     } satisfies DaemonModule<CliUpgradeModule>,
-    // 提醒:一个功能一个目录(src/features/reminders);路由自己挂。
-    remindersFeature({
-      db, isOwner, needs: ['wired', 'activity'],
-      speech: (c) => c.get<WiredDeps>('wired').speech,
-      activityLog: (c) => c.get<Activity>('activity').activityLog,
-    }),
+    remindersModule(f),
     // 定时任务每分钟一拍(src/features/jobs):坏了只降级。
     jobsRunnerModule({ needs: ['wired'] }),
-    // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来再送(src/features/reports)。
-    reportSweeperModule({ needs: ['wired'], speech: (c) => c.get<WiredDeps>('wired').speech }),
+    reportsModule(),
     // 开机的最后一步:一次性清扫(fire-and-forget,含「CC 回来了」),然后才开动工作台的通知 / 成果(见上)。
     {
       name: 'startup-sweeps',
@@ -758,15 +684,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
 
 interface PipelineModule { run: PipelineRun; appTurn: AppTurn }
 
-/**
- * 从一口里挑几样,拼进还按扁平形状收的接线函数(它们的类型只列用到的那几样,架构终态 A6)。挑出来的就是同一个函数:
- * adapter 的方法不靠 this;可选的那几样(onMediaSent …)没有 ⇒ 挑出来是 undefined,调用方本来就按可选判。
- */
-function pick<T, K extends keyof T>(o: T, ...keys: K[]): Pick<T, K> {
-  const out = {} as Pick<T, K>
-  for (const k of keys) out[k] = o[k]
-  return out
-}
 /** 造好了、但开动的时刻由别的模块定(工作台通知要排在开机清扫之后)。 */
 interface Deferred { start(): void }
 

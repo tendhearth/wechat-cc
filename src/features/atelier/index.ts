@@ -8,7 +8,7 @@
  *  - `provision` / `model-provision`:第一次打开时安静地下颜料(约 5GB,按 SHA-256 验);
  *  - `tick.ts`:反省那一拍的最后一步(wiring 经 `makeAtelierTick` 接上);
  *  - `routes.ts`:`/v1/atelier/*`(路由表标了 module: 'atelier');
- *  - 这个文件:模块清单。它要的东西(`AtelierFeatureDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
+ *  - 这个文件:模块清单。它要的东西(`AtelierFeatureDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填。
  * 可选模块:坏了只降级。
  */
 import type { DaemonModule, ModuleCtx } from '../../daemon/modules/container'

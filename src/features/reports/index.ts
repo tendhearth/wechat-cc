@@ -9,7 +9,7 @@
  *      搬家前队列在地基里造,造不出来照样挡开机,所以是必需的;
  *    `reports`(可选):投递那一拍,要 wired(CC 开口那道门)起来以后才开动,坏了只降级 ——
  *      名字、位置都跟搬家前一样(/v1/health.subsystems、关机顺序快照不变)。
- * 它要的东西(`ReportsFeatureDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
+ * 它要的东西(`ReportsFeatureDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填。
  */
 import type { Db } from '../../lib/db'
 import type { Lifecycle } from '../../lib/lifecycle'
@@ -77,6 +77,6 @@ export function makeReports(d: ReportsFeatureDeps): ReportsFeature {
 }
 
 /** 投递那一拍(可选):要 wired(CC 开口那道门)起来以后才开动。 */
-export function reportSweeperModule(o: { needs: readonly string[]; speech: (ctx: ModuleCtx) => SpeechPolicy }): DaemonModule {
+export function reportSweeperFeature(o: { needs: readonly string[]; speech: (ctx: ModuleCtx) => SpeechPolicy }): DaemonModule {
   return lifecycleModule('reports', (ctx) => ctx.get<ReportsFeature>('report-outbox').startSweeper(o.speech(ctx)), { needs: ['report-outbox', ...o.needs] })
 }

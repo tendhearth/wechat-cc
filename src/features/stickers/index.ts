@@ -5,7 +5,7 @@
  *  - `source.ts`:联网表情源(GIPHY / 中转);`feedback.ts`:主人对每张的反应(影响以后挑哪张);
  *  - `artist.ts` + `artist-step.ts`:CC 每天给自己画一张缺的心情,交给陪伴自省那一拍(IntrospectStep 贡献点);
  *  - `routes.ts`:`/v1/wechat/*sticker*`、`/v1/stickers`(路由表标了 module: 'stickers');
- *  - 这个文件:模块清单。它要的东西(`StickersFeatureDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
+ *  - 这个文件:模块清单。它要的东西(`StickersFeatureDeps`)由同目录的 `module.ts`(接进 daemon 的那一份)从上游模块里填。
  *
  * 交出去的是表情库本身(`lib`):提示词里的贴纸段、手机页 / 设置面板、App 对话、自省那一步都读同一份 ——
  * 第二份会读到过期的内存索引。必需模块(搬家前在地基里造,造不出来照样挡开机),所以 bootstrap / wired 可以 needs 它。

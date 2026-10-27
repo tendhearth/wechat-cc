@@ -53,7 +53,7 @@ export { maxDecryptedMtime } from './ingest/cycle'
 export type CompanionFeatureDeps = CompanionRoutesDeps
 
 /**
- * 陪伴的模块:只挂路由(四拍的定时器是 lifecycle.ts 的三个模块,由组装的地方按原来的名字和位置放,关机顺序不变)。
+ * 陪伴的模块:只挂路由(四拍的定时器是 lifecycle.ts 的三个模块,由 `module.ts` 交出,在模块表里还是原来的名字和位置,关机顺序不变)。
  * 必需:搬家前这几条随 internal-api 一起就在,MCP 的 companion_* 工具开机就来。
  */
 export function companionFeature(o: { needs: readonly string[]; deps: (ctx: ModuleCtx) => CompanionFeatureDeps }): DaemonModule<void> {

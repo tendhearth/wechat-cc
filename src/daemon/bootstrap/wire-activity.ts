@@ -30,6 +30,9 @@ export interface WireActivityDeps {
   jobsStore: ReturnType<typeof makeJobsStore>
 }
 
+/** `activity` 模块的值(daemon-modules.ts;定时、提醒、owner-commands、wired 经 needs 拿)。 */
+export type Activity = ReturnType<typeof wireActivity>
+
 export function wireActivity(d: WireActivityDeps) {
   const { stateDir, db, ilink, permissionDecisions, cliEvents, jobsStore } = d
   // 「CC 做过的事」(B9,spec 2026-10-20-cc-activity-design):没留记录的动作(主动说话 / 定时 / 提醒)补记一行,

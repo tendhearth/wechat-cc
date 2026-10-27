@@ -7,7 +7,8 @@
 
 ```
 src/features/<名>/
-  index.ts      模块清单:要什么(needs)、给什么(init 的返回值)、挂哪些路由 —— 外面只许 import 这个文件
+  index.ts      模块清单:要什么(needs)、给什么(init 的返回值)、挂哪些路由 —— 别的代码只许 import 这个文件
+  module.ts     接进 daemon 的那一份:它要的 deps 从地基 / 上游模块里怎么填 —— 只有模块表 daemon-modules.ts import 它
   <名>.ts       功能本身(纯规则尽量放 src/domain,对外 I/O 放 src/adapters,这里是接线和状态)
   routes.ts     它的 HTTP 路由(可选)
   *.test.ts
@@ -39,20 +40,25 @@ export function calendarFeature(d: { stateDir: string; isOwner(chatId: string): 
 
 ## 接进 daemon
 
-1. `src/daemon/daemon-modules.ts` 的模块表里加一行,位置放在它要的模块之后、要它的模块之前(表的顺序就是开机顺序,关机倒过来;
-   `__e2e__/shutdown-order` 的快照会显示变化)。
-2. 有路由:`packages/protocol/src/routes.ts` 里每一行写 `module: '<名>'`,把名字加进 `MODULE_NAMES`;处理器在模块的 `init` 里
+1. 功能目录里写 `module.ts`:导出 `<名>Module(f: Foundation)`,里面调 `index.ts` 的工厂,把它要的东西从地基(`f`)和上游模块
+   (`ctx.get` / `ctx.late`)里填好 —— `needs` / `lazy` 也写在这里。它会引 `Bootstrap` / `WiredDeps` 这些大包的类型;
+   放进 `index.ts` 会成环(`daemon/wiring` 等经 `index.ts` 用功能),所以单独一个文件、只有模块表引它
+   (depcheck 的 `feature-module-only-from-the-module-table`)。样板:`src/features/letters/module.ts`。
+2. `src/daemon/daemon-modules.ts` 的模块表里加一行 `<名>Module(f)`,位置放在它要的模块之后、要它的模块之前(表的顺序就是开机顺序,
+   关机倒过来;`__e2e__/shutdown-order` 的快照会显示变化)。
+3. 有路由:`packages/protocol/src/routes.ts` 里每一行写 `module: '<名>'`,把名字加进 `MODULE_NAMES`;处理器在模块的 `init` 里
    `internalApi.mount('<名>', routes)`,**不进** `internal-api/routes.ts` 的总表,也不往 `InternalApiDeps` 加字段。
    模块关着 / 坏了 / 还没挂上,路由层自己回 `module_off` / `module_degraded` / `module_starting`,处理器里不用写分支。
    搬家前客户端已经认得别的「没准备好」码(工作台的 `workbench_not_wired`)⇒ 在 `MODULE_UNAVAILABLE_CODE` 里登记,模块门原样回那个码。
-3. 有手机 `/m/api/*` 处理器:写在功能自己的目录里(用 `src/features/phone/index.ts` 导出的 `ownsMethod` / `PhoneRouteTable`),
+4. 有手机 `/m/api/*` 处理器:写在功能自己的目录里(用 `src/features/phone/index.ts` 导出的 `ownsMethod` / `PhoneRouteTable`),
    从功能的 `index.ts` 导出那张表,由 `src/daemon/wiring/wire-settings-panel.ts` 放进面板的 `featureRoutes`(样板是信、定时);
    路由表里那几行照旧写 `phone` 块(给不给链接令牌、为什么)。手机功能不 import 别的功能。
-4. 有微信命令:模块交出 `command`,在命令表里放到它该在的优先级(现在是 `owner-commands` 那一组的列表,顺序就是优先级)。
+5. 有微信命令:模块交出 `command`,在命令表里放到它该在的优先级(现在是 `owner-commands` 那一组的列表,顺序就是优先级)。
 
 ## 机器管着的
 
-- `bun run depcheck`:`core` / `lib` / `mcp-servers` 不许依赖功能;功能目录外面只许经 `index.ts` 用它;功能之间不许伸进对方的内部文件。
+- `bun run depcheck`:`core` / `lib` / `mcp-servers` 不许依赖功能;功能目录外面只许经 `index.ts` 用它(`module.ts` 只给模块表);功能之间不许伸进对方的内部文件。
+- `scripts/module-lazy.guard.test.ts`:`ctx.late` / `ctx.lazy` 取的名字必须写在同一个字面量的 `lazy` 里 —— 模块字面量和交给工厂的选项字面量(`module.ts` 里那种)都核。
 - `scripts/daemon-module.guard.test.ts` 也扫 `src/features`:裸 `setInterval`、`Ref`、`lc.register` 一出现就红。
 - `scripts/speech-send.guard.test.ts` 也扫 `src/features`:直接发微信的调用要登记成 `reply`(回主人刚发来的那一句),主动开口走 `policy.say`。
 - `internal-api` 的 `mount`:只能挂路由表里标给自己的那几条,重复挂直接抛。
@@ -60,4 +66,4 @@ export function calendarFeature(d: { stateDir: string; isOwner(chatId: string): 
 
 ## 删掉一个功能
 
-删目录 + 模块表里那一行 + 路由表里那几行。typecheck 会指出还在用它的地方。
+删目录 + 模块表里那一行(和它的 import)+ 路由表里那几行。typecheck 会指出还在用它的地方。
