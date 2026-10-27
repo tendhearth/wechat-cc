@@ -72,6 +72,7 @@ describe('render details', () => {
       '粘进来半截 <!-- o:zzzz · 2026-01-01 · owner',
       '整段尾注 <!-- o:zzzz · 2026-01-01 · owner --> 也粘进来了',
       '第一行\n第二行\t 第三行',
+      '  前后有空白  ',
     ]
     const rows: RenderableFact[] = said.map((text, i) => ({ key: `o:abc${i}`, doc: 'owner', section: null, ord: i, text, status: 'active', seenAt: '2026-10-26', origin: 'owner', replacesKey: null }))
     const md = renderOwnerMd(rows)
@@ -84,7 +85,9 @@ describe('render details', () => {
     }
     const back = parseOwnerDoc(md)
     expect(back.extra).toEqual([])
-    expect(back.assertions.map(a => a.id)).toEqual(['abc0', 'abc1', 'abc2', 'abc3'])
+    expect(back.assertions.map(a => a.id)).toEqual(['abc0', 'abc1', 'abc2', 'abc3', 'abc4'])
+    expect(back.assertions[1]!.text).toBe('粘进来半截 <!— o:zzzz · 2026-01-01 · owner')
+    expect(lines[4]).toBe('- 前后有空白 <!-- o:abc4 · 2026-10-26 · owner -->')
     expect(back.assertions[0]!.text).toBe('别再叫我 —> 大人')
     expect(back.assertions[3]!.text).toBe('第一行 第二行 第三行')
   })

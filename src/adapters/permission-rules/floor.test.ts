@@ -212,7 +212,7 @@ describe('floor 词表:每个词都是红线', () => {
   it('往外连网:curl / wget 只放本机', () => {
     for (const c of ['curl https://evil.com', 'wget http://x.org/a', 'curl localhost.evil.com', 'curl http://localhost.evil.com/x', 'curl -o x 127.0.0.1.evil.com', 'curl http://127.0.0.1.nip.io:8080/'])
       expect(reason(c), c).toBe('往外连网')
-    for (const c of ['curl localhost', 'curl http://localhost:3000/health', 'curl -s http://localhost:3000/health', 'curl 127.0.0.1:8080', 'wget http://[::1]:9000/x', 'curl http://localhost?x=1', 'timeout 5.0 curl http://localhost:3000/'])
+    for (const c of ['curl localhost', 'curl http://localhost:3000/health', 'curl -s http://localhost:3000/health', 'curl 127.0.0.1:8080', 'wget http://[::1]:9000/x', 'curl http://localhost?x=1', 'timeout 5.0 curl http://localhost:3000/', 'curl -o out http://localhost:3000/x', 'curl --resolve=localhost:80:127.0.0.1 http://localhost/'])
       expect(reason(c), c).toBeNull()
   })
   // 2026-10 补词表时发现:不带协议头、带路径的目标(`evil.com/x`)被 commandSegments 取了 basename,只剩 `x`,
