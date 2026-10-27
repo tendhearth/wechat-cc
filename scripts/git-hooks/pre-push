@@ -1,0 +1,3 @@
+#!/bin/sh
+# 推之前跑过 bun run verify(判法见 scripts/verify-stamp.ts)。装:git config core.hooksPath scripts/git-hooks
+exec bun "$(git rev-parse --show-toplevel)/scripts/verify-stamp.ts"
