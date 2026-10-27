@@ -124,6 +124,13 @@ describe('floor × 终审绕过', () => {
     for (const c of ['git -C x push', 'git -c a=b push origin', 'git --git-dir=.git push', '\\git push', '"git" push', "'git' push", 'git\tpush', '/usr/bin/git push', 'git -c x=y reset --hard HEAD~5', 'git --no-pager clean -fd', '/usr/bin/sudo ls', 'doas ls', 'env sudo ls', 'command git push', 'gh pr merge 3'])
       hit(sh(c))
   })
+  // 2026-10 变异基线:按词判的 rm / dd 那半截(segs.some(...))整个换成 false 没有一条测试红 —— 上面的用例都先被
+  // isDestructiveBash 的正则接住了。这里只放正则接不住、只能靠按词判的写法;`/bin/dd if=/dev/zero of=…` 当时真漏了
+  // (参数被取了 basename,`of=/dev/disk2` 变成 `disk2`)。
+  it('rm / dd behind an absolute path, an escape, quotes or xargs are still destructive', () => {
+    for (const c of ['/bin/rm -rf build', '\\rm -rf build', '"rm" -rf build', "'rm' -r build", 'find . -name x | xargs rm', '/bin/dd if=/dev/zero of=/dev/disk2', '\\dd of=/dev/disk2 if=/dev/zero'])
+      expect(floorReason(sh(c), HOME), c).toBe('破坏性命令')
+  })
   it('.git internals are a red line for writes', () => {
     hit(edit(['/w/.git/hooks/pre-commit']))
     hit(edit(['/w/.git/config']))
