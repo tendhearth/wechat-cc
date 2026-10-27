@@ -59,7 +59,9 @@ describe('daemon 的接线(源码守卫)', () => {
 
   it('makeOutboundTaps 只构造一次(在地基里)', () => {
     expect(foundation.match(/makeOutboundTaps\(\)/g) ?? []).toHaveLength(1)
-    for (const src of [modules, main, apiModule, wiredModule]) expect(src.match(/makeOutboundTaps\(/g) ?? []).toHaveLength(0)
+    expect(modules.match(/makeOutboundTaps\(/g) ?? []).toHaveLength(0)
+    expect(main.match(/makeOutboundTaps\(/g) ?? []).toHaveLength(0)
+    for (const src of [apiModule, wiredModule]) expect(src.match(/makeOutboundTaps\(/g) ?? []).toHaveLength(0)
   })
 
   it('同一个实例同时给到 internal-api(写)和 wireMain(读)', () => {
