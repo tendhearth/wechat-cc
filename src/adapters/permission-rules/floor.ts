@@ -35,7 +35,11 @@ export { pathsUnder } from './paths'
  * 它们是参数 / 赋值不是程序名,取了 basename 之后 dd 的 `of=` 就认不出了(2026-10 变异基线发现 `/bin/dd … of=/dev/…` 漏过红线)。
  */
 export function commandSegments(cmd: string): string[][] {
-  return cmd.split(/[;&|\n\r()`]|\$\(/).map(seg => seg.split(/\s+/).map(w => w.replace(/['"\\]/g, '')).filter(Boolean).map(w => (w.includes('/') && !w.startsWith('-') && !w.includes('://') && !w.includes('=') ? w.slice(w.lastIndexOf('/') + 1) || w : w))).filter(s => s.length)
+  return rawSegments(cmd).map(seg => seg.map(w => (w.includes('/') && !w.startsWith('-') && !w.includes('://') && !w.includes('=') ? w.slice(w.lastIndexOf('/') + 1) || w : w)))
+}
+/** 同 commandSegments,但词不取 basename(下标一一对应):判网络目标要看整个词 —— `evil.com/x` 取了 basename 只剩 `x`。 */
+function rawSegments(cmd: string): string[][] {
+  return cmd.split(/[;&|\n\r()`]|\$\(/).map(seg => seg.split(/\s+/).map(w => w.replace(/['"\\]/g, '')).filter(Boolean)).filter(s => s.length)
 }
 
 const after = (seg: string[], head: string, ...tails: string[][]) => {
@@ -53,10 +57,14 @@ const SYSTEM_WORDS = new Set(['sudo', 'doas', 'su', 'launchctl', 'systemctl', 'c
 const NET_WORDS = new Set(['nc', 'ncat', 'ssh', 'scp', 'sftp', 'rsync', 'telnet', 'ftp'])
 const LOCAL_TARGET = /^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?#]|$)/
 
-function outbound(seg: string[]): boolean {
+/** 一个 curl / wget 参数要拿来判「是不是外面的主机」的那个样子:像本机路径的(`/…`、`./…`、`../…`、`~…`)照旧看 basename,
+ * 别的看整个词 —— 不带协议头的 `evil.com/upload` 取了 basename 只剩 `upload`,认不出主机(2026-10 补词表时发现的漏洞)。 */
+const netTarget = (raw: string, base: string) => (/^(?:\/|\.{1,2}\/|~)/.test(raw) ? base : raw)
+
+function outbound(seg: string[], raw: string[]): boolean {
   if (seg.some(w => NET_WORDS.has(w))) return true
   const i = seg.findIndex(w => w === 'curl' || w === 'wget')
-  return i >= 0 && seg.slice(i + 1).some(t => !t.startsWith('-') && /[.:]/.test(t) && !LOCAL_TARGET.test(t))
+  return i >= 0 && seg.slice(i + 1).some((b, k) => { const t = netTarget(raw[i + 1 + k]!, b); return !t.startsWith('-') && /[.:]/.test(t) && !LOCAL_TARGET.test(t) })
 }
 
 const SHELL_RC = /\.(?:zshrc|zprofile|zshenv|bashrc|bash_profile|profile)\b/
@@ -98,7 +106,7 @@ export function floorReason(ask: PermissionAsk, home: string = homedir(), extra:
   if (SECRETS.some(r => r.test(text))) return '碰到密钥'
   if (CC_CONFIG.test(text)) return '改 CC 自己的配置'
   if (GIT_INTERNALS.test(cmd)) return '碰 .git 里面的东西'
-  if (segs.some(outbound)) return '往外连网'
+  if (cmd) { const raws = rawSegments(cmd); if (segs.some((s, k) => outbound(s, raws[k]!))) return '往外连网' }
   return null
 }
 
