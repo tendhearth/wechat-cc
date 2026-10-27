@@ -86,6 +86,8 @@ export interface TestDaemonOpts {
   companion?: { enabled?: boolean; default_chat_id?: string }
   /** preset bot accounts — default: 1 fake bot pointing at fake ilink */
   accounts?: TestDaemonAccount[]
+  /** 缺省那个 bot 的 userId(扫码绑定它的那个微信)。缺省 'owner1';真实形状沙盒里是主人自己的对话 id。 */
+  botUserId?: string
   /** Pre-set conversation modes (chatId → Mode). Persisted to conversations.json so coordinator picks them up. */
   modes?: Record<string, { kind: 'solo' | 'parallel' | 'primary_tool' | 'chatroom'; provider?: string; primary?: string; secondary?: string; max_rounds?: number }>
   /**
@@ -186,7 +188,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
 
   // 3. Write fake bot account(s) — format: accounts/<id>/account.json + token
   const accounts: TestDaemonAccount[] = opts.accounts ?? [{
-    id: 'bot1', botId: 'bot1', userId: 'owner1',
+    id: 'bot1', botId: 'bot1', userId: opts.botUserId ?? 'owner1',
     baseUrl: ilink.baseUrl, token: 'fake-token', syncBuf: '',
   }]
   for (const a of accounts) {

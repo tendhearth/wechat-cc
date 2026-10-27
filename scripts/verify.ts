@@ -19,6 +19,9 @@
  *   - import 图看不见的输入(.html / .css / .json 这类被测试 readFileSync 的文件)⇒ 点名列出来,
  *     并把源码里提到这个文件名的测试一起跑;Playwright(desktop-e2e)本地不跑,改了桌面看 CI。
  *   - 不跑 node 那一遍(test:node):它测的是「换运行时」,改动牵连判不准,交给 CI;要跑就 --full。
+ *   - 真实形状沙盒(`bun run test:sandbox`,src/daemon/__e2e__/real-shaped.ts):每次都跑,两档都跑(本机几秒)。
+ *     起整台照真机配置的 daemon(知识库、社交、配对、手机中继 …… 全开),替身只在系统边界。import 图判不出
+ *     「这个改动会不会让某个可选子系统开着时开不了机」—— #729 就是这么漏的:单测全绿、真机开机三连败。
  */
 import { spawnSync } from 'node:child_process'
 
@@ -52,6 +55,7 @@ if (full) {
   step('depcheck', 'bun', ['run', 'depcheck'])
   step('测试(bun)', 'bun', ['run', 'test'])
   step('测试(node)', 'npm', ['run', 'test:node'])
+  step('真实形状沙盒', 'bun', ['run', 'test:sandbox'])
   finish()
 }
 
@@ -98,5 +102,6 @@ if (nonImport.length) {
 }
 const marked = lines(git(['grep', '-l', '@repo-guard', '--', 'src/**/*.test.ts']).stdout)
 step('测试 · 守卫', 'bun', ['--bun', 'vitest', 'run', 'scripts/', 'guard.test', 'no-bun-globals', ...marked])
+step('真实形状沙盒', 'bun', ['run', 'test:sandbox'])
 if (touched('apps/relay/', 'packages/protocol/')) step('中继单测', 'bun', ['run', 'test'], 'apps/relay')
 finish()

@@ -172,6 +172,15 @@ jobs:
         # (PR7 — vitest needs Bun's runtime to resolve `bun:sqlite`).
         run: bun run test
 
+      - name: Real-shaped sandbox
+        # 整台照主人真机配置的 daemon(知识库 / 社交 / 配对 / 手机中继 …… 全开,替身只在系统边界),
+        # 三个平台都跑 —— 可选子系统「开着才走」的那几行只有这样开机才走得到(#729:单测全绿、真机开机三连败)。
+        # 见 src/daemon/__e2e__/README.md。Windows 上这套 e2e harness 以前从没跑过:先不挡(continue-on-error),
+        # 在 dev 上绿过两次就把这一行删掉;红了照样看得见(步骤是红的),只是不让整个作业红。
+        if: ${{ !cancelled() }}
+        continue-on-error: ${{ matrix.os == 'windows-latest' }}
+        run: bun run test:sandbox
+
   # 「换运行时的出口是真的」的证明:同一套单元测试(整个 src,只差 Bun.serve 上的 ws 服务端)
   # 在 Node 24 上跑。2026-09-16 起步时 lib + core 是 2765 过 / 38 红;适配层补齐后同日整个 src
   # 全绿,于是改成必绿 —— 以后谁在业务代码里直接用 Bun.*,这里和 no-bun-globals.test 一起红。
@@ -323,7 +332,8 @@ jobs:
       - name: Install Playwright Chromium
         working-directory: apps/desktop
         run: bun x playwright install --with-deps chromium
-      - run: bun --bun vitest run -c vitest.e2e.config.ts
+      # 真实形状沙盒在上面 build 的三平台矩阵里跑过了,这里不再跑第二遍
+      - run: bun --bun vitest run -c vitest.e2e.config.ts --exclude 'src/daemon/__e2e__/real-shaped-sandbox.e2e.test.ts'
 
   desktop-e2e:
     # Desktop GUI Playwright suite (apps/desktop) — wizard, dashboard panes,
