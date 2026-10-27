@@ -9,6 +9,18 @@ const ok = (name: string) => ({ name, status: 'COMPLETED', conclusion: 'SUCCESS'
 const skip = (name: string) => ({ name, status: 'COMPLETED', conclusion: 'SKIPPED' })
 
 describe('judgeRollup', () => {
+  // 2026-10-27 #747:同一提交上 pr-rules 跑了两次(旧一轮读的是改之前的描述 ⇒ 红,新一轮 ⇒ 绿),只认最近那一次
+  it('同一个作业跑了几次:只认最近开始的那一次', () => {
+    const five = ['a', 'b', 'c', 'd'].map(name => ({ name, workflowName: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-27T08:00:00Z' }))
+    const old = { name: 'pr', workflowName: 'CI', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: '2026-10-27T07:55:25Z' }
+    const fresh = { name: 'pr', workflowName: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-27T08:01:31Z' }
+    expect(judgeRollup([...five, old, fresh], 5)).toEqual({ kind: 'green', counted: 5 })
+    expect(judgeRollup([...five, fresh, old], 5)).toEqual({ kind: 'green', counted: 5 })
+    // 反过来:最近那一次红了就是红,旧的绿不算数
+    expect(judgeRollup([...five, { ...old, conclusion: 'SUCCESS' }, { ...fresh, conclusion: 'FAILURE' }], 5)).toEqual({ kind: 'red', failed: ['pr'] })
+    // 不同工作流里同名的作业各算各的
+    expect(judgeRollup([...five, { ...old, workflowName: 'Other' }, fresh], 5)).toEqual({ kind: 'red', failed: ['pr'] })
+  })
   it('空 rollup 永远不是绿', () => {
     expect(judgeRollup([], 5)).toEqual({ kind: 'too_few', counted: 0 })
     expect(judgeRollup([], 0).kind).toBe('green')
