@@ -54,18 +54,41 @@ function publishes(seg: string[]): boolean {
   return after(seg, 'wechat-cc', ['self', 'deploy'], ['self', 'change'])
 }
 const SYSTEM_WORDS = new Set(['sudo', 'doas', 'su', 'launchctl', 'systemctl', 'crontab', 'chown', 'mkfs', 'diskutil', 'shred'])
-const NET_WORDS = new Set(['nc', 'ncat', 'ssh', 'scp', 'sftp', 'rsync', 'telnet', 'ftp'])
-const LOCAL_TARGET = /^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?#]|$)/
+const NET_WORDS = new Set(['nc', 'ncat', 'ssh', 'scp', 'sftp', 'rsync', 'telnet', 'ftp', 'socat', 'aria2c', 'lynx', 'w3m'])
+const LOCAL_TARGET = /^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\])(?::(?:\d+|\$\w+|\$\{\w+\}))?(?:[/?#]|$)/  // 端口可以是变量(localhost:$PORT)
 
 /** 一个 curl / wget 参数要拿来判「是不是外面的主机」的那个样子:像本机路径的(`/…`、`./…`、`../…`、`~…`)照旧看 basename,
  * 别的看整个词 —— 不带协议头的 `evil.com/upload` 取了 basename 只剩 `upload`,认不出主机(2026-10 补词表时发现的漏洞)。 */
 const netTarget = (raw: string, base: string) => (/^(?:\/|\.{1,2}\/|~)/.test(raw) ? base : raw)
 
+/** 值是主机 / 网址的 `--x=` 选项(别的 `--x=…` 不是网址,如 `--resolve=localhost:80:127.0.0.1`)。 */
+const HOST_VALUE_OPTS = ['--url=', '--proxy=', '--preproxy=', '--connect-to=']
+/**
+ * 往外连网。2026-10 两轮独立评审(#749、#750)补的按词漏判:
+ *  - 直接往 `/dev/tcp/<host>/<port>`、`/dev/udp/…` 写(bash 的网络重定向;`>` 不切段,整个词取了 basename 只剩端口);
+ *  - 值是主机的 `--url=` / `--proxy=` / `--preproxy=` / `--connect-to=`(带 `-` 的词以前一律跳过);
+ *  - 目标是变量(`curl $URL`、`curl -s "$HOST/x"`):这一段里**没有一个写明的目标**、却有 `$…` ⇒ 看不出往哪连 ⇒ 当外面。
+ *    有写明的本机目标时 `$…` 当数据(`-d "$BODY"`、`-H "X-Token:$T"`),本机端口是变量(`localhost:$PORT`)也算本机。
+ *  - `$(…)` / 反引号的输出当目标:切段时被切走了,在 floorReason 里按原命令看(`curlSubstitution`)。
+ * 不带点、不带冒号的裸主机名(`intranet/up`)仍认不出:跟本机相对路径(`-o out`)分不开,硬判会拦一大片正常命令。
+ */
 function outbound(seg: string[], raw: string[]): boolean {
   if (seg.some(w => NET_WORDS.has(w))) return true
+  if (raw.some(w => /\/dev\/(?:tcp|udp)\//.test(w))) return true
+  if (after(seg, 'openssl', ['s_client'], ['s_time'])) return true
   const i = seg.findIndex(w => w === 'curl' || w === 'wget')
-  return i >= 0 && seg.slice(i + 1).some((b, k) => { const t = netTarget(raw[i + 1 + k]!, b); return !t.startsWith('-') && /[.:]/.test(t) && !LOCAL_TARGET.test(t) })
+  if (i < 0) return false
+  const args = raw.slice(i + 1)
+  for (const r of args) {
+    const opt = HOST_VALUE_OPTS.find(o => r.startsWith(o))
+    if (opt && !LOCAL_TARGET.test(r.slice(opt.length))) return true
+  }
+  if (seg.slice(i + 1).some((b, k) => { const t = netTarget(args[k]!, b); return !t.startsWith('-') && !t.includes('$') && /[.:]/.test(t) && !LOCAL_TARGET.test(t) })) return true
+  const explicitTarget = args.some(r => !r.startsWith('-') && !r.includes('$') && (LOCAL_TARGET.test(r) || r.includes('://'))) || args.some(r => LOCAL_TARGET.test(r))
+  return !explicitTarget && args.some(r => r.includes('$'))
 }
+/** `curl $(cat url)` / `` wget `cat u` ``:目标是命令替换的输出,切段时被切走了 ⇒ 按原命令看。 */
+const curlSubstitution = (cmd: string) => /(?:^|[\s;&|(])(?:\S*\/)?(?:curl|wget)\b[^;&|\n]*(?:\$\(|`)/.test(cmd)
 
 const SHELL_RC = /\.(?:zshrc|zprofile|zshenv|bashrc|bash_profile|profile)\b/
 const SECRETS = [
@@ -106,7 +129,7 @@ export function floorReason(ask: PermissionAsk, home: string = homedir(), extra:
   if (SECRETS.some(r => r.test(text))) return '碰到密钥'
   if (CC_CONFIG.test(text)) return '改 CC 自己的配置'
   if (GIT_INTERNALS.test(cmd)) return '碰 .git 里面的东西'
-  if (cmd) { const raws = rawSegments(cmd); if (segs.some((s, k) => outbound(s, raws[k]!))) return '往外连网' }
+  if (cmd) { const raws = rawSegments(cmd); if (curlSubstitution(cmd) || segs.some((s, k) => outbound(s, raws[k]!))) return '往外连网' }
   return null
 }
 
