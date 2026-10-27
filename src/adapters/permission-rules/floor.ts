@@ -54,17 +54,35 @@ function publishes(seg: string[]): boolean {
   return after(seg, 'wechat-cc', ['self', 'deploy'], ['self', 'change'])
 }
 const SYSTEM_WORDS = new Set(['sudo', 'doas', 'su', 'launchctl', 'systemctl', 'crontab', 'chown', 'mkfs', 'diskutil', 'shred'])
-const NET_WORDS = new Set(['nc', 'ncat', 'ssh', 'scp', 'sftp', 'rsync', 'telnet', 'ftp'])
+const NET_WORDS = new Set(['nc', 'ncat', 'ssh', 'scp', 'sftp', 'rsync', 'telnet', 'ftp', 'socat', 'aria2c', 'lynx', 'w3m'])
+/** curl / wget 里值是本机文件的选项:它后面那个词是 `$OUT` 也不当成「看不出往哪连」。 */
+const LOCAL_VALUE_OPTS = new Set(['-o', '--output', '-T', '--upload-file', '-K', '--config', '-c', '--cookie-jar', '-b', '--cookie', '-D', '--dump-header', '--cacert', '--cert', '--key', '-P', '--directory-prefix', '-O', '--output-document', '-a', '--append-output', '-i', '--input-file'])
 const LOCAL_TARGET = /^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/?#]|$)/
 
 /** 一个 curl / wget 参数要拿来判「是不是外面的主机」的那个样子:像本机路径的(`/…`、`./…`、`../…`、`~…`)照旧看 basename,
  * 别的看整个词 —— 不带协议头的 `evil.com/upload` 取了 basename 只剩 `upload`,认不出主机(2026-10 补词表时发现的漏洞)。 */
 const netTarget = (raw: string, base: string) => (/^(?:\/|\.{1,2}\/|~)/.test(raw) ? base : raw)
 
+/**
+ * 往外连网。2026-10 独立评审补的三处(都是「按词看」漏掉的):
+ *  - 直接往 `/dev/tcp/<host>/<port>`、`/dev/udp/…` 写(bash 的网络重定向;`>` 不切段,整个词取了 basename 只剩端口);
+ *  - `--url=evil.com/x`(带 `-` 的词以前一律跳过;只认 `--url=`,别的 `--x=…` 值不是网址,如 `--resolve=localhost:80:127.0.0.1`);
+ *  - 目标是变量(`$HOST/x`、`"$URL"`):看不出往哪连 ⇒ 当外面(值是本机文件的选项后面那个除外,如 `-o $OUT`)。
+ * 不带点、不带冒号的裸主机名(`intranet/up`)仍认不出:跟本机相对路径(`-o out`)分不开,硬判会拦一大片正常命令。
+ */
 function outbound(seg: string[], raw: string[]): boolean {
   if (seg.some(w => NET_WORDS.has(w))) return true
+  if (raw.some(w => /\/dev\/(?:tcp|udp)\//.test(w))) return true
+  if (after(seg, 'openssl', ['s_client'])) return true
   const i = seg.findIndex(w => w === 'curl' || w === 'wget')
-  return i >= 0 && seg.slice(i + 1).some((b, k) => { const t = netTarget(raw[i + 1 + k]!, b); return !t.startsWith('-') && /[.:]/.test(t) && !LOCAL_TARGET.test(t) })
+  if (i < 0) return false
+  return seg.slice(i + 1).some((b, k) => {
+    const r = raw[i + 1 + k]!
+    if (r.startsWith('--url=')) { const v = r.slice('--url='.length); return !LOCAL_TARGET.test(v) }
+    if (r.includes('$') && !LOCAL_VALUE_OPTS.has(raw[i + k]!)) return true
+    const t = netTarget(r, b)
+    return !t.startsWith('-') && /[.:]/.test(t) && !LOCAL_TARGET.test(t)
+  })
 }
 
 const SHELL_RC = /\.(?:zshrc|zprofile|zshenv|bashrc|bash_profile|profile)\b/
