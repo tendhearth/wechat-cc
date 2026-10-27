@@ -436,8 +436,10 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: RewindDomains, opts: 
     /** 撤销最近一次回退:同一套流程,目标 = 那次的备份 B;撤销本身也先备份。 */
     async undoRewind(id: string, expected?: string): Promise<RewindResult> {
       return guarded(id, async () => {
-        const first = scene(id, [], true)
+        // 先看库里的事实(之后有没有新的审阅轮 / 是不是桌面看到的那一次),再碰工作区:有新一轮就是 stale,
+        // 跟工作区这会儿是不是正被 git 占着无关(以前反过来,CI 偶发报成 rewind_unavailable)
         undoable(id, expected)
+        const first = scene(id, [], true)
         if (first.quietOwn) await closeQuiet(id, first.quietOwn)
         const root = first.quietOwn ? scene(id, [], false).root : first.root
         const B = await backupNow(id, root)
