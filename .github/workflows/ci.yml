@@ -175,10 +175,9 @@ jobs:
       - name: Real-shaped sandbox
         # 整台照主人真机配置的 daemon(知识库 / 社交 / 配对 / 手机中继 …… 全开,替身只在系统边界),
         # 三个平台都跑 —— 可选子系统「开着才走」的那几行只有这样开机才走得到(#729:单测全绿、真机开机三连败)。
-        # 见 src/daemon/__e2e__/README.md。Windows 上这套 e2e harness 以前从没跑过:先不挡(continue-on-error),
-        # 在 dev 上绿过两次就把这一行删掉;红了照样看得见(步骤是红的),只是不让整个作业红。
+        # 见 src/daemon/__e2e__/README.md。Windows 上起初先不挡(continue-on-error),dev 上 e74e791e、c83dc3cb 起连续绿,
+        # 2026-10-26 去掉:三个平台一样,红了整个作业红。
         if: ${{ !cancelled() }}
-        continue-on-error: ${{ matrix.os == 'windows-latest' }}
         run: bun run test:sandbox
 
   # 「换运行时的出口是真的」的证明:同一套单元测试(整个 src,只差 Bun.serve 上的 ws 服务端)

@@ -27,10 +27,10 @@ describe('ratchetDebts', () => {
     ])
   })
 
-  it('真守卫上的两个标记都还认得出(守卫改了写法,这里先红,别让这一源安静地变空)', () => {
+  it('真守卫上的三个标记都还认得出(守卫改了写法,这里先红,别让这一源安静地变空)', () => {
     const files = readdirSync(SCRIPTS).filter(f => f.endsWith('.guard.test.ts')).map(f => ({ path: `scripts/${f}`, text: readFileSync(join(SCRIPTS, f), 'utf8') }))
     const guards = ratchetDebts(files).map(d => d.guard).sort()
-    expect(guards).toEqual(['scripts/cli-ratchet.guard.test.ts', 'scripts/daemon-module.guard.test.ts'])
+    expect(guards).toEqual(['scripts/cli-ratchet.guard.test.ts', 'scripts/daemon-module.guard.test.ts', 'scripts/mock-internal.guard.test.ts'])
     for (const d of ratchetDebts(files)) expect(d.total, d.guard).toBeGreaterThanOrEqual(0)
   })
 

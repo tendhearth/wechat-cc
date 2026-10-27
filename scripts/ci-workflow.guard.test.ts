@@ -214,6 +214,11 @@ describe('ci.yml —— 提速的边界', () => {
     expect(os).toContain('["ubuntu-latest","macos-latest"]')
     expect(os).toContain('["ubuntu-latest","macos-latest","windows-latest"]')
   })
+  it('真实形状沙盒三个平台一样挡:不许 continue-on-error(Windows 在 dev 上连续绿过,2026-10-26 去掉的)', () => {
+    const step = (jobs.build!.steps ?? []).find(s => (s as { name?: string }).name === 'Real-shaped sandbox') as Record<string, unknown> | undefined
+    expect(step?.run).toBe('bun run test:sandbox')
+    expect(step).not.toHaveProperty('continue-on-error')
+  })
   it('只取消同一个 PR 的旧运行,推送一条都不取消', () => {
     const c = doc.concurrency as { group: string; 'cancel-in-progress': string }
     expect(c['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}")
