@@ -103,6 +103,17 @@ export type ScriptedRpc = { id?: string | number; method?: string; params?: any;
 type Rpc = ScriptedRpc
 
 const SANDBOX: Record<string, string> = { 'read-only': 'readOnly', 'workspace-write': 'workspaceWrite', 'danger-full-access': 'dangerFullAccess' }
+/**
+ * 线程应答里的 sandbox:真 codex 把生效的那一档连同 workspace-write 的细项一起报回来(和 codex-app-server.test.ts 里的形状一样)——
+ * 工作台起线程后逐项核对(网络关、排除 TMPDIR 与 /tmp、可写根只有项目),只报 type 的话工作台判 codex_unverified_thread_policy。
+ * 细项照线程配置 `sandbox_workspace_write` 回填(真 codex 也是从配置算出来的)。
+ */
+function sandboxOf(p: Record<string, any>): Record<string, unknown> {
+  const type = SANDBOX[p.sandbox] ?? p.sandbox
+  if (type !== 'workspaceWrite') return { type }
+  const w = p.config?.sandbox_workspace_write ?? {}
+  return { type, writableRoots: Array.isArray(w.writable_roots) ? w.writable_roots : [], networkAccess: w.network_access === true, excludeTmpdirEnvVar: w.exclude_tmpdir_env_var === true, excludeSlashTmp: w.exclude_slash_tmp === true }
+}
 const camelStatus = (s: unknown) => s === 'in_progress' ? 'inProgress' : s
 const inputText = (input: unknown): string => Array.isArray(input) ? input.filter(i => i?.type === 'text').map(i => String(i.text)).join('\n') : ''
 
@@ -254,7 +265,7 @@ export function createScriptedCodex(opts: ScriptedCodexOptions): ScriptedCodex {
           if (m.method === 'thread/resume') threadId = String(p.threadId)
           else if (cheap) threadId = `cheap-${++cheapSeq}`
           else { const k = threadSeq++; threadId = `${opts.threadId ?? 'scripted-thread'}${k ? `-${k + 1}` : ''}` }
-          return reply(m, { thread: { id: threadId }, cwd: p.cwd, model: p.model ?? 'scripted-model', approvalPolicy: p.approvalPolicy, ...(p.approvalsReviewer ? { approvalsReviewer: p.approvalsReviewer } : {}), sandbox: { type: SANDBOX[p.sandbox] ?? p.sandbox } })
+          return reply(m, { thread: { id: threadId }, cwd: p.cwd, model: p.model ?? 'scripted-model', approvalPolicy: p.approvalPolicy, ...(p.approvalsReviewer ? { approvalsReviewer: p.approvalsReviewer } : {}), sandbox: sandboxOf(p) })
         }
         case 'turn/start': {
           if (current && !current.stopped) return send({ id: m.id, error: { code: -32600, message: 'turn already running' } })
@@ -293,6 +304,10 @@ export function createScriptedCodex(opts: ScriptedCodexOptions): ScriptedCodex {
           }
           return reply(m, {})
         }
+        // 收尾时清后台终端(工作台关一个留着的会话前先清、再列到空为止 —— 0.153.4 的 app-server 有这两条;剧本里从不起后台终端)。
+        // 不应答的话收尾核实不了,工作台把这一轮记成「执行程序未确认退出」(interrupted / writer_not_closed)。
+        case 'thread/backgroundTerminals/clean': return reply(m, {})
+        case 'thread/backgroundTerminals/list': return reply(m, { data: [], nextCursor: null })
         default:
           return send({ id: m.id, error: { code: -32601, message: `scripted codex: ${m.method} not implemented` } })
       }
