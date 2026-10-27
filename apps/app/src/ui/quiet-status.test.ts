@@ -3,7 +3,9 @@ import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import './native-motion.test-support'
-import type { Connection } from '../backend/types'
+import { makeDemoBackend } from '../backend/demo'
+import type { Backend, Connection } from '../backend/types'
+import { withProviders } from '../state/providers.test-support'
 import type { InputSnapshot } from '../state/matter-inputs'
 import type { CompanionCard as CardData } from '../view/companion'
 import { connectionNotice } from '../view/connection'
@@ -33,7 +35,8 @@ vi.mock('react-native', async () => {
   class Value { constructor(public value: number) {} setValue(n: number) { this.value = n }; stopAnimation() {}; interpolate() { return this } }
   const animation = (_: any, config: any) => ({ start: (fn?: (r: { finished: boolean }) => void) => { if (fn) host.finish.push(() => fn({ finished: true })) }, stop: () => {} })
   return {
-    View, Text: View, Pressable, ScrollView: View, Image: () => null, ActivityIndicator: View,
+    // selectable 的文字(原文)标出来,好按原样核对
+    View, Text: (p: any) => createElement('span', { ...props(p), 'data-selectable': p.selectable || undefined }, p.children), Pressable, ScrollView: View, Image: () => null, ActivityIndicator: View,
     Modal: ({ visible, children }: any) => visible ? createElement('dialog', { open: true }, children) : null,
     Linking: { openURL: host.openURL }, findNodeHandle: () => null,
     Animated: { Value, View, timing: animation, parallel: (a: any[]) => ({ start: (fn?: (r: { finished: boolean }) => void) => { a.forEach(n => n.start()); if (fn) host.finish.push(() => fn({ finished: true })) }, stop: () => {} }), loop: () => ({ start() {}, stop() {} }) },
@@ -51,13 +54,16 @@ vi.mock('expo-router', async () => {
     return () => { if (cleanup) { cleanup(); host.blurListeners.delete(cleanup) } }
   }, [fn]) }
 })
-vi.mock('../i18n/useLang', () => ({ useLang: () => 'en' }))
-vi.mock('../state/hooks', () => ({ useConnection: () => host.conn }))
-vi.mock('./Markdown', () => ({ MessageText: ({ text }: any) => createElement('pre', null, text) }))
+// 语言、连接都走真的:系统语言(设备边界)报英文;连接状态从注入真 BackendProvider 的假后端来(网络边界)。
+vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }))
 
 const el = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null
 async function flush() { await act(async () => { await new Promise(r => setTimeout(r, 0)) }) }
 async function click(id: string) { await act(async () => { el(id)?.click() }); await flush() }
+const connected = (node: ReactNode) => {
+  const backend: Backend = { ...makeDemoBackend({ lang: 'en' }), connection: () => host.conn, onConnection: cb => { cb(host.conn); return () => {} } }
+  return withProviders(node, { backend, lang: 'en' })
+}
 async function mount(node: ReactNode) {
   const div = document.createElement('div'); document.body.appendChild(div)
   const root = createRoot(div); roots.push(root)
@@ -73,7 +79,7 @@ afterEach(async () => {
 describe('compact native status details', () => {
   it('keeps offline status discoverable and exposes the exact stale-sync explanation on demand', async () => {
     const description = connectionNotice(host.conn, Date.now(), 'en')!.text
-    await mount(createElement(ConnectionNotice))
+    await mount(connected(createElement(ConnectionNotice)))
     expect(el('conn-notice-offline')?.tagName).toBe('BUTTON')
     expect(el('conn-notice-offline')?.closest('[aria-live="polite"]')).not.toBeNull()
     expect(document.body.textContent).not.toContain(description)
@@ -83,7 +89,7 @@ describe('compact native status details', () => {
 
   it('revoked pairing always retains its explicit repair action, including the home-only mode', async () => {
     host.conn = { state: 'revoked', lastSyncedAt: null, epoch: 2 }
-    await mount(createElement<{ only?: 'revoked' }>(ConnectionNotice, { only: 'revoked' }))
+    await mount(connected(createElement<{ only?: 'revoked' }>(ConnectionNotice, { only: 'revoked' })))
     expect(el('conn-notice-revoked')?.textContent).toContain("This phone can't connect anymore")
     await click('conn-repair')
     expect(host.push).toHaveBeenCalledWith('/pair')
@@ -93,7 +99,7 @@ describe('compact native status details', () => {
     const row: InputSnapshot = { taskId: 'task1', requestId: 'request1', runId: 'run1', text: 'original', rawText: '  original\n\n text  ', status: 'uncertain' }
     const restore = vi.fn(), retry = vi.fn()
     await mount(createElement(InputReceipts, { rows: [row], onRestore: restore, onRetry: retry }))
-    expect(document.querySelector('pre')?.textContent).toBe('  original\n\n text  ')
+    expect(el('input-receipt-request1')?.querySelector('[data-selectable]')?.textContent).toBe('  original\n\n text  ')
     expect(el('input-status-request1')?.closest('[aria-live="polite"]')).not.toBeNull()
     expect(document.body.textContent).not.toContain(inputStatusText('uncertain', 'en'))
     await click('input-status-request1')

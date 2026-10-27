@@ -11,13 +11,13 @@ import Activity from '../app/activity'
 import Jobs from '../app/jobs'
 import Letters from '../app/letters'
 import Sessions from '../app/sessions'
-import { makeStore, type Store } from './store'
+import { withProviders, type TestCtx } from './providers.test-support'
 import { useWork } from './useWork'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
 const roots: Root[] = []
-const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; store: Store }, work: null as unknown as ReturnType<typeof useWork> }))
+const host = { ctx: null as unknown as TestCtx, work: null as unknown as ReturnType<typeof useWork> }
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 vi.mock('react-native', async () => {
@@ -39,26 +39,21 @@ vi.mock('react-native', async () => {
   }
 })
 vi.mock('react-native-safe-area-context', async () => ({ SafeAreaView: ({ children }: any) => createElement('main', null, children) }))
+vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('expo-router', () => ({ useRouter: () => ({ push: vi.fn() }), useFocusEffect: (fn: () => void) => useEffect(fn, [fn]) }))
-vi.mock('../i18n/useLang', () => ({ useLang: () => 'en' }))
-vi.mock('./BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
-vi.mock('./useMatterInputs', () => ({ useAllMatterInputs: () => [], useInputRecovery: () => ({ phase: 'ready' }) }))
-vi.mock('./useTerminal', () => ({ useTerminalSessions: () => ({ sessions: [] }) }))
-vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
-vi.mock('../ui/ConnectionNotice', () => ({ ConnectionNotice: () => null }))
 
 const el = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null
 async function flush() { await act(async () => { await new Promise(r => setTimeout(r, 0)) }) }
 async function mount(backend: Backend, node: ReactNode) {
-  host.ctx = { backend, store: makeStore(backend, { lang: 'en' }) }
   const div = document.createElement('div'); document.body.appendChild(div)
   const root = createRoot(div); roots.push(root)
-  await act(async () => { root.render(node) })
+  await act(async () => { root.render(withProviders(node, { backend, lang: 'en', onCtx: ctx => { host.ctx = ctx } })) })
   await flush()
 }
 function WorkProbe() { host.work = useWork(); return null }
+// 终端会话这一路给空(此前是把 useTerminal 整个 mock 成空;现在走真 hook,空列表放在后端边界上)。
 function backendWithMatters(load: () => Promise<MatterT[]>): Backend {
-  return { ...makeDemoBackend({ lang: 'en' }), matters: load }
+  return { ...makeDemoBackend({ lang: 'en' }), cliSessions: async () => [], matters: load }
 }
 afterEach(async () => {
   await act(() => { for (const root of roots.splice(0)) root.unmount() })

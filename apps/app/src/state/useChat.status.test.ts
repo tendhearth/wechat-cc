@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type ChatPageT } from '../backend/types'
 import { clearDrafts, getDraft, listReceipts, putReceipt, setDraft } from './drafts'
-import { makeStore, type Store } from './store'
+import { withProviders } from './providers.test-support'
 import { useChat } from './useChat'
 
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
-const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; store: Store } }))
-vi.mock('./BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
+// 真 BackendProvider(注入假后端);它要 react-native 的 AppState、useLang 要系统语言 —— 都是设备边界。
+vi.mock('react-native', async () => (await import('../ui/native-motion.test-support')).nativeBoundary())
+vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let view: ReturnType<typeof useChat>
 const roots: Array<{ unmount(): void }> = []
@@ -20,10 +21,9 @@ async function flush() { await act(async () => { await new Promise(r => setTimeo
 async function mount(chat: Backend['chat']) {
   const chatSay = vi.fn(makeDemoBackend({ lang: 'zh-Hans' }).chatSay)
   const backend = { ...makeDemoBackend({ lang: 'zh-Hans' }), chat, chatSay }
-  host.ctx = { backend, store: makeStore(backend, { lang: 'zh-Hans' }) }
   const div = document.createElement('div'); document.body.appendChild(div)
   const root = createRoot(div); roots.push(root)
-  await act(() => root.render(createElement(Probe))); await flush()
+  await act(() => root.render(withProviders(createElement(Probe), { backend }))); await flush()
   return { backend, chatSay }
 }
 beforeEach(() => clearDrafts())

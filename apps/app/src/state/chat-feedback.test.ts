@@ -5,18 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type ChatPageT } from '../backend/types'
 import { clearDrafts, getDraft, putReceipt, setDraft } from './drafts'
-import { makeStore, type Store } from './store'
+import { withProviders } from './providers.test-support'
 import Chat from '../app/chat'
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
-const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; store: Store } }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-vi.mock('./BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
-vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
 vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
 vi.mock('react-native', async () => {
   const { createElement, forwardRef } = await import('react')
   const { nativeBoundary } = await import('../ui/native-motion.test-support')
-  const View = ({ children, testID, accessibilityLabel, accessibilityRole }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole }, children)
+  // 无障碍「激活」= 点一下(发送键是 View + onAccessibilityAction,没有 onPress)
+  const View = ({ children, testID, accessibilityLabel, accessibilityRole, onAccessibilityAction }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole,
+    onClick: onAccessibilityAction ? () => onAccessibilityAction({ nativeEvent: { actionName: 'activate' } }) : undefined }, children)
   const Text = ({ children, testID }: any) => createElement('span', { 'data-testid': testID }, children)
   const Pressable = ({ children, testID, accessibilityLabel, disabled, onPress }: any) => createElement('button', { 'data-testid': testID, 'aria-label': accessibilityLabel, disabled, onClick: onPress }, children)
   const TextInput = forwardRef<any, any>(({ value, onChangeText, testID }: any, ref) => createElement('textarea', { ref, value, 'data-testid': testID, onInput: (e: any) => onChangeText(e.currentTarget.value) }))
@@ -25,16 +24,14 @@ vi.mock('react-native', async () => {
   return { ...nativeBoundary(), View, Text, Pressable, TextInput, FlatList, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View }
 
 })
+// 设备边界:系统语言、录音 / 播放、文件系统(真页面、真 Provider、真 TopBar / Markdown / ReplyExtras 都照常渲染)。
+vi.mock('expo-localization', () => ({ getLocales: () => [] }))
+vi.mock('expo-audio', () => ({ createAudioPlayer: () => ({}), setAudioModeAsync: async () => {} }))
+vi.mock('expo-file-system', () => ({ File: class {}, Paths: {} }))
 vi.mock('react-native-safe-area-context', async () => { const { createElement } = await import('react'); return { SafeAreaView: ({ children }: any) => createElement('main', null, children) } })
-vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
-vi.mock('../ui/ConnectionNotice', () => ({ ConnectionNotice: () => null }))
-vi.mock('../ui/ReplyExtras', () => ({ ReplyAttachments: () => null, ReplyProcess: () => null }))
-vi.mock('../ui/Markdown', async () => { const { createElement } = await import('react'); return { MessageText: ({ text }: any) => createElement('p', null, text) } })
-vi.mock('../ui/HoldToTalk', async () => {
-  const { createElement } = await import('react')
-  return { useHoldToTalk: () => ({ view: {}, ctl: { clearNote() {} }, elapsedMs: 0 }), TalkStatus: () => null,
-    SendTalkButton: ({ onTap, testID, sendable }: any) => createElement('button', { 'data-testid': testID, onClick: onTap, disabled: !sendable }) }
-})
+// 真的 HoldToTalk / SendTalkButton;录音器、系统设置是设备边界(守卫的 BOUNDARY_FILES 里登记过)。
+vi.mock('../ui/talk-recorder', () => ({ TALK_MIME: 'audio/mp4', useTalkRecorder: () => ({ permission: async () => 'granted', start: async () => {}, stop: async () => null }) }))
+vi.mock('../push/native', () => ({ openSystemSettings() {} }))
 let root: { render(node: ReactNode): void; unmount(): void }, container: HTMLDivElement
 const empty = (): ChatPageT => ({ matterId: 'owner', title: 'CC', messages: [], pending: null, failed: null, hasMore: false, nextBefore: null })
 const byId = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
@@ -43,8 +40,7 @@ async function click(id: string) { await act(() => byId(id).click()); await flus
 async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = false) {
   const read = vi.fn(async () => { if (fail) throw new BackendError('offline'); return page })
   const backend = { ...makeDemoBackend({ lang: 'zh-Hans' }), chat: read, chatSay: say }
-  host.ctx = { backend, store: makeStore(backend, { lang: 'zh-Hans' }) }
-  await act(() => root.render(createElement(Chat))); await flush()
+  await act(() => root.render(withProviders(createElement(Chat), { backend }))); await flush()
   return { read, say }
 }
 beforeEach(() => { clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
