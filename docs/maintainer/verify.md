@@ -10,6 +10,36 @@ wechat-cc ci triage --wait --rerun
 
 退出码 0 绿 / 1 真红(`unknown` 也算)/ 2 这个 SHA 上没有运行、`gh` 出错、或开关写错了 / 3 是 `src/cli/ci-flakes.json` 里登记过的 flake。给了 `--rerun` 的话已知 flake 会自动重跑一次,**第二次仍红一律改判真红**。细则、退出码全表、怎么往登记表里加一条,见 [ci-and-flakes.md](ci-and-flakes.md)。
 
+## 测试只增不减
+
+AI 写代码有两个老毛病(Kent Beck 说过):为了变绿把测试删掉、跳过、改松;事后补一条「没有修复也会过」的测试。前一个在 diff 里看得见,只是评审时没人去数 —— 所以让机器数(2026-10-27 主人定)。
+
+`scripts/test-shrink-check.ts` 比 PR 头和它跟 base 的 merge-base,逐个测试文件看(判法写在 `scripts/test-shrink-lib.ts` 开头):
+
+- 用例少了(按标题配对,**跨文件**配:搬家、拆文件、git 认出或没认出的改名都不算;只改标题的在同一文件里按顺序配上);
+- 配上的用例 expect 少了(含 `expect.soft` / `expect.poll` / `assert.*`),或精确断言(`toBe` / `toEqual` / `toHaveLength` / 快照 …)少了 —— `toBe(3)` 改成 `toBeDefined()` 就是这一条;
+- `skip` / `skipIf` / `runIf` / `todo` / `fails` 变多;任何地方新出现 `.only`;
+- `.snap` 少了条目;`vitest*.config.*` 的 `exclude` 多了项(Windows 排除清单就是这么长出来的)。
+
+报了不等于错:功能删了、测试跟着删是正常的。规矩是**说出来**:PR 描述里写一节 `## 删掉/放松的测试`,每个被点名的文件一行(全路径或文件名)加理由,CI 才放行。只看 TS / JS 测试和快照;Rust / Swift / Kotlin 不管,`it.each` 表格少几行也看不出来 —— 这些靠评审。把断言挪进 helper 会被当成 expect 变少,写一句理由即可。
+
+本机先看一眼:`bun scripts/test-shrink-check.ts`(只报告、退出 0;`--base <ref>` 换基线)。整合者按某个 PR 判、跟 CI 同一个结论:`bun scripts/test-shrink-check.ts --pr <N>`。
+
+## 红/绿
+
+**修 bug 的 PR,描述里要有 `## 红/绿`**:贴出那条命令,证明新加/改过的测试在**撤掉修复时红、带上修复时绿**。只「带上修复时绿」证明不了测试抓得住这个 bug。做法:
+
+```bash
+git stash push -- <被修的源文件>        # 或 git checkout origin/dev -- <源文件>,只撤修复、留着测试
+bun x vitest run <测试文件>            # 红:贴失败的那一行
+git stash pop
+bun x vitest run <测试文件>            # 绿
+```
+
+写不了测试的修复(纯配置、只有真机能复现)也写这一节,说为什么、怎么验的。CI 怎么认「修 bug」:分支以 `fix/` 开头,或标题以 `fix` / 「修」开头(「修改」「修订」不算;自改的标题是「自改 #…」,不在内)。
+
+两条都在 `ci.yml` 的 **pr · 测试只增不减 + 红/绿** 作业里查,只在 PR 上跑、只改 Markdown 时跳过。它读的是触发那一刻的 PR 描述:红了改完描述,**重跑作业没用**,推一次或 `gh pr close <N> && gh pr reopen <N>`。自改流水线的 PR 也查:自改删了测试就停在 CI 红,交给人看。
+
 ## 两种用法
 
 ```bash

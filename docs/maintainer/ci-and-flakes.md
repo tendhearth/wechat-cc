@@ -7,6 +7,7 @@
 - **build · ${{ matrix.os }}** —— `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台(**进 dev 的 PR 只跑前两个**,见下面「提速的边界」),`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` → 编译版 sidecar smoke → `bun run test`。
 - **node · core suite** —— `npm run test:node`,同一套源码在 node 下再跑一遍。这条不是冗余:`bun:sqlite` 的 URI 打开方式、`bun:test` 的 import,在 Mac 上看着好好的,换个运行时就炸。本地复现就是 `npm run test:node`。
 - **changes · paths** —— 一个只算一件事的小作业(`dorny/paths-filter`):这一推里 `apps/desktop/**` 动没动过。
+- **pr · 测试只增不减 + 红/绿** —— 只在 PR 上跑:测试变少/变松要在描述里写理由,修 bug 的 PR 描述里要有 `## 红/绿`。规矩和判法见 [verify.md](verify.md#测试只增不减)。
 - **e2e**(vitest e2e 配置)所有 PR 和 master 推送都跑,dev 的日常推送不跑。
 - **desktop-e2e**(Playwright)master / PR 照旧跑;**dev 推送里只要动过 `apps/desktop/**` 也跑**(靠上面那个 `changes` 输出)。没动桌面的推送仍然跳过。本地要先跑一遍就是 `cd apps/desktop && bun x playwright test`,注意 4176 端口别被占。
 
