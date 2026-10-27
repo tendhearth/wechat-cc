@@ -9,6 +9,7 @@ import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import { writeFileAtomic } from '../../lib/json-file'
+import { log } from '../../lib/log'
 
 export const BOOT_FAILURE_FILE = 'boot-failures.json'
 export const BOOT_BACKOFF_BASE_MS = 10_000
@@ -37,4 +38,15 @@ export function recordBootFailure(stateDir: string, now: number): { count: numbe
 /** 启动成功:清零。 */
 export function clearBootFailures(stateDir: string): void {
   try { rmSync(join(stateDir, BOOT_FAILURE_FILE), { force: true }) } catch { /* 没有就没有 */ }
+}
+
+/**
+ * 开机失败、退出之前:记一次、写一行原因进 channel.log、按连续失败次数等(main.ts 的 catch 里调;从 main.ts 抽出来,2026-10-26)。
+ * 原因进 channel.log:以前只在 stderr(launchd.err.log),日志里只有一句「startup failed」,self soak / self discover
+ * 和主人都看不出为什么(10-21~22 真机 9 次,原因全是「another daemon already running」,只能去翻 stderr)。
+ */
+export async function waitAfterBootFailure(stateDir: string, err: unknown): Promise<void> {
+  const { count, delayMs } = recordBootFailure(stateDir, Date.now())
+  log('DAEMON', `startup failed (${count} in a row): ${(err instanceof Error ? err.message : String(err)).slice(0, 300)} — waiting ${Math.round(delayMs / 1000)}s before exit`)
+  await new Promise(r => setTimeout(r, delayMs))
 }
