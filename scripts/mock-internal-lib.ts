@@ -31,7 +31,8 @@ export const BOUNDARY_FILES: Record<string, string> = {
 }
 
 const BOUNDARY_DIRS = ['src/adapters/', 'src/test-support/']
-const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'vendor', 'generated', 'target', 'dist', 'build', 'Pods', '.expo', 'coverage', 'native', 'docs'])
+// .stryker-tmp:变异测试的沙箱是整个仓库的副本,中断 / 没清掉时会让这里把每个测试数两遍(bun run verify 因此红过)。
+const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'vendor', 'generated', 'target', 'dist', 'build', 'Pods', '.expo', 'coverage', 'native', 'docs', '.stryker-tmp'])
 const CODE = /\.(m?[jt]sx?)$/
 const MOCK_HEAD = /\b(?:vi\.(?:mock|doMock)|mock\.module)\(\s*/g
 const BUILTINS = new Set(builtinModules)
