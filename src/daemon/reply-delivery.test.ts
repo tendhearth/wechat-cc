@@ -447,3 +447,153 @@ describe('放行规则的提醒(2026-10-25:主人自己的对话里规则替主�
     expect(sendText).not.toHaveBeenCalled()
   })
 })
+
+// 2026-10 变异测试第二轮:发什么、去不去重、失败怎么回落、一轮的句柄怎么收口 —— 基线里这些分支要么没跑到,要么改了不红。
+describe('deliverTurnReply — 与 message 工具去重(变异测试第二轮)', () => {
+  it.each([
+    // [message 工具发过的, 最后的话, 去不去重]
+    ['我到了，在门口等你', '我到了在门口等你', true],          // 只差标点空白
+    ['我到了，在门口等你。顺便带了伞', '在门口等你', true],     // 说过的话包含最后的话
+    ['到了', '我到了门口', true],                               // 最后的话包含说过的话
+    ['你好', '再见', false],
+    ['。。。', '好的收到', false],                              // 说过的只有标点:去掉以后是空,什么都「包含」空串,不能算说过
+  ] as const)('%s / %s ⇒ %s', async (said, text, deduped) => {
+    const h = harness()
+    const r = await deliverTurnReply({ chatId: 'c', reply: reply(text), attachments: [], context: 'dm', messagedOwner: [said] }, h.deps)
+    expect(h.sent).toEqual(deduped ? [] : [text])
+    expect(r.deduped === true).toBe(deduped)
+  })
+  it('句柄:message 只认发给主人聊天的那笔', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const t = rt.begin('c', { context: 'dm', providerId: 'claude' })
+    rt.noteMessage('c', { toOwner: false, text: '同一句话' })
+    await t.deliver({ finalText: '同一句话', narration: [] })
+    expect(h.sent).toEqual(['同一句话'])
+  })
+})
+
+describe('deliverTurnReply — app 接收器的交付分类(变异测试第二轮)', () => {
+  const sink = () => { const got: TurnReply[] = []; return { got, sink: { captureReply: (_c: string, r: TurnReply) => { got.push(r); return true } } } }
+  it.each([
+    ['有字', reply('好'), { delivery: 'text', bubbles: 1 }],
+    ['只有附件', reply('  ', { attachments: [{ kind: 'file', path: '/a' }] }), { delivery: 'attachments_only', bubbles: 0 }],
+    ['静默', reply('', { silent: true }), { delivery: 'silent', bubbles: 0 }],
+    ['什么都没有', reply(''), { delivery: 'empty', bubbles: 0 }],
+  ] as const)('%s', async (_n, r, want) => {
+    const s = sink()
+    const h = harness({ sink: s.sink })
+    expect(await deliverTurnReply({ chatId: 'c', reply: r, attachments: [], context: 'dm' }, h.deps))
+      .toEqual({ ...want, target: 'sink', attachmentsSent: 0, failures: [], msgIds: [] })
+    expect(h.sent).toEqual([])
+  })
+  it('提醒:模型静默 / 没说话 ⇒ 接收器只拿到提醒,且不再算静默;多段时提醒成为最后一段(静默的段不交)', async () => {
+    const s = sink()
+    const h = harness({ sink: s.sink })
+    await deliverTurnReply({ chatId: 'c', reply: reply('', { silent: true, segments: ['不该出现'] }), attachments: [], context: 'tick', notices: ['提醒'] }, h.deps)
+    expect(s.got[0]).toMatchObject({ text: '提醒', silent: false, segments: ['提醒'] })
+    await deliverTurnReply({ chatId: 'c', reply: reply('一\n\n二', { segments: ['一', '二'] }), attachments: [], context: 'dm', notices: ['提醒'] }, h.deps)
+    expect(s.got[1]).toMatchObject({ text: '一\n\n二\n\n提醒', segments: ['一', '二', '提醒'] })
+    await deliverTurnReply({ chatId: 'c', reply: reply('   '), attachments: [], context: 'dm', notices: ['提醒'] }, h.deps)
+    expect(s.got[2]!.text).toBe('提醒')
+  })
+})
+
+describe('deliverTurnReply — 节奏与失败(变异测试第二轮)', () => {
+  it('条与条之间停一下;最后一条之后有附件也停一下;只有一条、没附件 ⇒ 不停', async () => {
+    const one = harness()
+    await deliverTurnReply({ chatId: 'c', reply: reply('只有一条'), attachments: [], context: 'dm' }, one.deps)
+    expect(one.sleeps).toHaveLength(0)
+    const withAtt = harness()
+    await deliverTurnReply({ chatId: 'c', reply: reply('只有一条'), attachments: [pending({ kind: 'sticker', ref: { tag: 'x' } })], context: 'dm' }, withAtt.deps)
+    expect(withAtt.sleeps).toHaveLength(1)
+  })
+  it('非语音附件发送失败 ⇒ 记进 failures(没给原因就记 <kind>_failed),不改发文字', async () => {
+    const h = harness()
+    const r = await deliverTurnReply({
+      chatId: 'c', reply: reply(''), context: 'dm',
+      attachments: [pending({ kind: 'file', path: '/a' }, { ok: false }), pending({ kind: 'sticker', ref: { tag: 'x' } }, { ok: false, error: 'too_big' })],
+    }, h.deps)
+    expect(h.sent).toEqual([])
+    expect(r).toMatchObject({ delivery: 'empty', bubbles: 0, attachmentsSent: 0, failures: ['file_failed', 'too_big'] })
+  })
+  it('附件的 send 抛异常 ⇒ 当失败记下,不往外抛', async () => {
+    const h = harness()
+    const boom: PendingAttachment = { attachment: { kind: 'file', path: '/a' }, send: async () => { throw new Error('ENOENT') } }
+    const r = await deliverTurnReply({ chatId: 'c', reply: reply(''), attachments: [boom], context: 'dm' }, h.deps)
+    expect(r.failures).toEqual(['ENOENT'])
+  })
+  it('只收文字的出口、没有 sendAttachment:语音改发同样的字,算一条文字气泡', async () => {
+    const h = harness({ textOnly: () => true })
+    const r = await deliverTurnReply({ chatId: 'c', reply: reply(''), attachments: [pending({ kind: 'voice', text: '晚安' })], context: 'dm' }, h.deps)
+    expect(h.sent).toEqual(['晚安'])
+    expect(r).toMatchObject({ delivery: 'text', bubbles: 1, attachmentsSent: 0 })
+  })
+  it('提醒那一条发失败(回 error / 抛错)⇒ 记进 failures,不进 msgIds;模型的话照常算', async () => {
+    let n = 0
+    const h = harness({ sendText: async (_c, t) => { n++; if (t.startsWith('按规则')) return { msgId: '', error: 'ret=-2' }; return { msgId: `m${n}` } } })
+    const r = await deliverTurnReply({ chatId: 'c', reply: reply('好'), attachments: [], context: 'dm', notices: ['按规则「甲」放行了 x'] }, h.deps)
+    expect(r).toMatchObject({ delivery: 'text', bubbles: 1, failures: ['ret=-2'], msgIds: ['m1'] })
+    const t = harness({ sendText: async (_c, txt) => { if (txt.startsWith('按规则')) throw new Error('socket closed'); return { msgId: 'm1' } } })
+    const r2 = await deliverTurnReply({ chatId: 'c', reply: reply('好'), attachments: [], context: 'dm', notices: ['按规则「甲」放行了 x'] }, t.deps)
+    expect(r2).toMatchObject({ failures: ['socket closed'], msgIds: ['m1'] })
+  })
+})
+
+describe('makeReplyDeliveryRuntime — 句柄收口(变异测试第二轮)', () => {
+  const notice = (key: string) => ({ key, rule: key, target: 'memory_delete' })
+  it('两位共用一轮:先交付的那位走了,登记口还开着;两位都走了才关', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const a = rt.begin('c', { context: 'parallel', providerId: 'claude' })
+    const b = rt.begin('c', { context: 'parallel', providerId: 'codex' })
+    expect(rt.hasOpenTurn('c')).toBe(true)
+    await a.deliver({ finalText: '甲说完了', narration: [] })
+    a.abandon('late') // 交付以后再放弃:幂等,不会把另一位的轮也关掉
+    expect(rt.hasOpenTurn('c')).toBe(true)
+    expect(rt.attach('c', pending({ kind: 'sticker', ref: { tag: 'x' } }))).toBe(true)
+    await b.deliver({ finalText: '乙说完了', narration: [] })
+    expect(rt.hasOpenTurn('c')).toBe(false)
+  })
+  it('交付以后 progress 不再发;空白的 progress 不发', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const t = rt.begin('c', { context: 'dm', providerId: 'claude' })
+    await t.progress('   ')
+    expect(h.sent).toEqual([])
+    await t.deliver({ finalText: '完了', narration: [] })
+    await t.progress('还在跑')
+    expect(h.sent).toEqual(['完了'])
+  })
+  it('/both 里提醒只跟第一位交付的走,第二位不重复', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const a = rt.begin('c', { context: 'parallel', providerId: 'claude' })
+    const b = rt.begin('c', { context: 'parallel', providerId: 'codex' })
+    rt.noteRuleAllow('c', notice('甲'))
+    await a.deliver({ finalText: '一', narration: [] })
+    await b.deliver({ finalText: '二', narration: [] })
+    expect(h.sent).toEqual(['一', '按规则「甲」放行了 memory_delete', '二'])
+  })
+  it('撤销登记:只撤一次;同一条规则登记两次撤一次 ⇒ 剩一次;全撤了 ⇒ 不发提醒', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const t = rt.begin('c', { context: 'dm', providerId: 'claude' })
+    rt.noteRuleAllow('c', notice('甲'))
+    const undo = rt.noteRuleAllow('c', notice('甲'))!
+    undo(); undo()
+    const undoB = rt.noteRuleAllow('c', notice('乙'))!
+    undoB()
+    undoB()
+    await t.deliver({ finalText: '好', narration: [] })
+    expect(h.sent).toEqual(['好', '按规则「甲」放行了 memory_delete'])
+  })
+  it('撤销在交付之后才来(那条已经发走了)⇒ 什么都不做', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const t = rt.begin('c', { context: 'dm', providerId: 'claude' })
+    const undo = rt.noteRuleAllow('c', notice('甲'))!
+    await t.deliver({ finalText: '好', narration: [] })
+    expect(() => undo()).not.toThrow()
+  })
+})
