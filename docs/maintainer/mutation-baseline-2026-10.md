@@ -459,3 +459,34 @@ bun tools/mutation/unique-kills.ts reports/mutation/inc/adm-after.json reports/m
 1. **补完测试后用增量重跑,原来活着的变异会被原样沿用**。`reply-delivery` 那份补了 21 条用例,增量重跑出来 110 个活变异一个没少(手工改坏其中一处,新用例当场红);`turn-reply` 的 7 个模块级正则(静态变异)同样。增量判断「要不要重测」看的是覆盖它的旧测试改没改,新加的测试杀不杀得了一个原来活着的变异,它看不见。**补测试后的复跑:先把增量文件里 `Survived` / `NoCoverage` 的条目删掉**(只加了测试,被杀的不会变活),或者 `--force`。
 2. 工作台三份(`admission` / `inputs` / `lifecycle`)不 bail 很慢:每个变异要把牵连到的 900 多条工作台测试里覆盖它的全跑完,`admission` 121 个变异 57 分钟,`lifecycle` 638 个预计五个小时 —— 所以 `lifecycle` 只量分数(默认 bail),唯一杀的清单只数了 `admission` + `inputs` 两份(牵连的是同一批工作台测试)。
 3. `lifecycle` 第一次跑到 37% 时主人开始用机器(CPU 空闲掉到 11%),超时从 19 / 78 涨到 85 / 210 —— 机器忙把正常变异判成 Timeout(算「护住」,虚高)。中断后删掉增量里的 Timeout 条目,等空闲再接着跑。`vm.loadavg` 在这台机器上读数乱跳(同一秒 4 和 900),等空闲改看 `iostat` 的 CPU 空闲。
+
+## 2026-10-28 第三轮:删测试(权限这一块,先做一批)
+
+只删同时满足三条的:**唯一杀为 0**、**行为有别处的表 / 沙盒钉住**、**删前删后变异分数不掉**。
+
+### 先按用例(不按文件)数
+
+第二轮的「唯一杀为 0 的测试文件」不能直接拿来删:那份只量了 authorize + permission-rules 六份源文件,工作台 / 手机那十几份集成测试在这六份上杀不了东西,但它们本来测的是工作台,删不得。所以只在七份**测的就是这六份源文件**的测试文件里,按单条用例数唯一杀(读同一批不 bail 报告的 `killedBy`),再贪心挑一组「一起删也不会让任何一个被杀的变异没人杀」的:142 条里挑出 70 条。
+
+逐条看过以后,绝大多数不删:红线 / 放行规则 / 起步规则那些用例(`git push ⇒ 不按规则放`、`git status && rm -rf x`、红线压过 allow 规则、伪造闭合标签、外来意图不进初审、`\rm` / `"rm"` 这类绕法……)是**安全性质的说明书**,变异算子模拟不出「以后有人换一种写法重写这段」,它们互相重叠正是表的意思。真正像脚手架的只有 `src/domain/authorize.parity.test.ts`:C2 迁移时把旧实现原样抄进来逐格对照,迁移完成后它成了「改行为要同步改一份旧实现」的负担。
+
+### 量:删的那几面牵连到的源文件,删前删后
+
+先把六面对照里在权限六份上零独有杀的四面(对话 Claude、OpenAI 兼容、定时任务只读档、一起做 Claude)全删,量它们真正跑过的源文件(`--mutate` 单文件,默认 bail 只看分数,2 worker,nice):
+
+| 源文件 | 删前 | 四面全删 | 只删 OpenAI 兼容那一面(最终) |
+|---|---:|---:|---|
+| `src/adapters/executors/claude/permission-relay.ts` | 83.9 | **62.0** | 不变(那一面留着) |
+| `src/daemon/bootstrap/wire-model-options.ts` | 76.0 | **60.7** | 不变(留着) |
+| `src/adapters/executors/claude/claude-agent-provider.ts:80-172`(一起做的 canUseTool) | 74.2 | **65.1** | 不变(留着) |
+| `src/adapters/executors/openai/openai-gate.ts` | 100 | 100 | 100 |
+| `src/daemon/permission-gate.ts` | 65.1 | 65.1 | 65.1 |
+| `src/domain/authorize.ts` | 95.5 | 95.5 | 95.5 |
+
+三份掉了:那三面对照在 authorize / 放行规则上没有独有贡献,却是 permission-relay、定时任务只读闸门、一起做的 canUseTool **的主力**(旁边的单测没覆盖到它们杀的那几十个变异)。所以只删 OpenAI 兼容那一面(和它那份旧实现),`authorize.parity.test.ts` 742 → 693 行,其余照旧。
+
+**教训**:「唯一杀为 0」只对量过的那几份源文件成立。删一条测试之前,要量的是**它真正跑过的每一份源文件**,不是当初为了别的目的挑的那几份;第三条「分数不掉」就是挡这个的,这一轮它挡住了一次错删。
+
+### 下一步
+
+三面对照想删,得先在 permission-relay / wire-model-options / 一起做的 canUseTool 旁边补直接的表(按上面那几十个会变活的变异补,红 → 绿),补完再删、再量。这是加测试的活,不在这一批。
