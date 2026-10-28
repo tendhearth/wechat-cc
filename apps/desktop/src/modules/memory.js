@@ -1288,6 +1288,10 @@ export async function loadProjectMemory(deps) {
 // Locks belong to the record, not a rendered button: expanding/reloading a
 // disclosure can replace its DOM while the same system request is pending.
 const pendingRetractionRestores = new Set()
+// A confirmed restore stays non-repeatable even if its refresh is superseded.
+// Only an accepted authoritative list that no longer contains the key retires
+// this guard; finishing an ignored read is not evidence that its row is gone.
+const confirmedRetractionRestores = new Set()
 let retractionsReadGeneration = 0
 let retractionsFeedbackGeneration = 0
 
@@ -1296,10 +1300,11 @@ function syncRetractionRestoreButtons(box) {
   box.querySelectorAll("[data-action='restore-retraction']").forEach(el => {
     const button = /** @type {HTMLButtonElement} */ (el)
     const pending = pendingRetractionRestores.has(button.dataset.key)
-    button.disabled = pending
+    const confirmed = confirmedRetractionRestores.has(button.dataset.key)
+    button.disabled = pending || confirmed
     if (pending) button.setAttribute("aria-busy", "true")
     else button.removeAttribute("aria-busy")
-    button.textContent = pending ? "恢复中…" : "恢复"
+    button.textContent = pending ? "恢复中…" : confirmed ? "已恢复" : "恢复"
   })
 }
 
@@ -1322,6 +1327,12 @@ export async function loadMemoryRetractions(deps) {
   }
   if (!current()) return
   const items = [...((resp && resp.items) || [])].reverse()
+  if (resp?.ok === true && Array.isArray(resp.items)) {
+    const remaining = new Set(items.map(item => item.key))
+    for (const key of confirmedRetractionRestores) {
+      if (!remaining.has(key)) confirmedRetractionRestores.delete(key)
+    }
+  }
   if (items.length === 0) { box.innerHTML = `<p class="empty-state">还没有收回过什么。</p>`; return }
   box.innerHTML = items.map(r => `
     <div class="memory-retraction" data-key="${escapeHtml(r.key)}">
@@ -1337,7 +1348,7 @@ export async function loadMemoryRetractions(deps) {
  * @param {string} key
  */
 export async function restoreMemoryRetraction(deps, key) {
-  if (pendingRetractionRestores.has(key)) return
+  if (pendingRetractionRestores.has(key) || confirmedRetractionRestores.has(key)) return
   pendingRetractionRestores.add(key)
   // Invalidate pre-mutation reads; they may still contain this restored row.
   ++retractionsReadGeneration
@@ -1351,6 +1362,7 @@ export async function restoreMemoryRetraction(deps, key) {
   try {
     const resp = /** @type {{ ok?: boolean, code?: string, note?: string }} */ (await v1(deps.invokeWorkbenchApi, V1.memory.restore, { body: { key } }))
     if (resp?.ok !== true) throw new Error(resp?.code || "未收到恢复确认")
+    confirmedRetractionRestores.add(key)
     if (note && ownsFeedback()) note.textContent = resp.note || "已恢复。当初从笔记中删掉的行不会恢复。"
   } catch (err) {
     if (note && ownsFeedback()) note.textContent = `没恢复成：${deps.formatInvokeError(err)}`
@@ -1362,8 +1374,8 @@ export async function restoreMemoryRetraction(deps, key) {
     } finally {
       pendingRetractionRestores.delete(key)
       const liveBox = document.getElementById("memory-retractions")
-      // Reopened views retain the lock too; release their buttons without
-      // replacing the new view's list or feedback with the old operation.
+      // Reopened views retain the guards too; sync pending/confirmed state
+      // without replacing their list or feedback with the old operation.
       if (liveBox) syncRetractionRestoreButtons(liveBox)
     }
   }
