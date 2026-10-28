@@ -158,3 +158,61 @@ describe('makeLifecycleDomain · 占用、取消、收尾', () => {
     expect(order).toEqual(['collection', 'dispose']); expect(state.shutdownComplete).toBe(true); expect(state.reservations.size).toBe(0); expect(state.runsByTask.size).toBe(0)
   })
 })
+
+// 2026-10 变异测试第二轮:派发泵里「起不来」那一支(launch 失败)整段没有测试跑到 —— 收卡、撤凭据、还文件夹、
+// 起过会话的挂成「没确认退出」继续占着;归档撤销时 matter 回到哪一态也没被钉住。
+describe('makeLifecycleDomain · 起不来与归档撤销(变异测试第二轮)', () => {
+  const queued = (s: ReturnType<typeof setup>, over: Partial<Active> = {}) => {
+    const r = s.running({ state: 'queued', launch: async () => { throw new Error('spawn failed') }, ...over })
+    s.state.queue.push(r); s.state.runsByTask.set(r.taskId, r); s.state.runningText.set(r.identity, '做')
+    return r
+  }
+  it('launch 失败、还没起会话 ⇒ 收掉提问和权限卡(ended)、标完成、还文件夹', async () => {
+    const s = setup()
+    const r = queued(s)
+    s.domain.pump(); await vi.advanceTimersByTimeAsync(0)
+    expect((r.questions as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledTimes(1)
+    expect(r.permissions.rejectAll).toHaveBeenCalledWith('ended')
+    expect(s.hub.bumped).toHaveBeenCalledWith(r.taskId)
+    expect(r.publicFinished).toBe(true)
+    expect(r.uncertain).toBe(false)
+    expect(s.state.reservations.has(r.identity)).toBe(false)
+    expect(s.state.runsByTask.has(r.taskId)).toBe(false)
+  })
+  it('已取消的 run 起不来 ⇒ 权限卡按 cancelled 拒;发过凭据 ⇒ 撤掉', async () => {
+    const revoke = vi.fn()
+    const s = setup({ revokeSessionToken: revoke })
+    const r = queued(s, { cancelled: true, credentialsMinted: true })
+    s.domain.pump(); await vi.advanceTimersByTimeAsync(0)
+    expect(r.permissions.rejectAll).toHaveBeenCalledWith('cancelled')
+    expect(revoke).toHaveBeenCalledWith(`workbench/${r.taskId}`)
+  })
+  it('起过会话再失败 ⇒ 挂成「没确认退出」,文件夹继续占着', async () => {
+    const s = setup()
+    const r = queued(s, { session: {} as never })
+    s.domain.pump(); await vi.advanceTimersByTimeAsync(0)
+    expect(r.uncertain).toBe(true)
+    expect(r.state).toBe('uncertain')
+    expect(s.state.reservations.get(r.identity)).toBe(r)
+    expect(r.publicFinished).toBe(true)
+  })
+  it('已经公开收尾的 run 再报 launch 失败 ⇒ 什么都不动', async () => {
+    const s = setup()
+    const r = queued(s, { launch: async () => { r.publicFinished = true; throw new Error('late') } })
+    s.domain.pump(); await vi.advanceTimersByTimeAsync(0)
+    expect(r.permissions.rejectAll).not.toHaveBeenCalled()
+    expect(s.state.reservations.get(r.identity)).toBe(r)
+  })
+  it.each([
+    // [任务状态, 视图 phase, 撤销归档后 matter 的状态]
+    ['interrupted', 'working', 'open'],
+    ['completed', 'working', 'done'],
+    ['running', 'replied', 'replied'],
+    ['running', 'working', 'open'],
+  ] as const)('取消归档:%s / %s ⇒ matter %s', (status, phase, want) => {
+    const s = setup(undefined, { taskView: t => ({ ...t, phase, canArchive: true, waitingFor: null }) as never })
+    s.store.update(s.task.id, status)
+    s.domain.setArchived(s.task.id, false)
+    expect(s.spies.matterSync).toHaveBeenLastCalledWith(s.task.id, want)
+  })
+})
