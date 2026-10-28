@@ -19,6 +19,7 @@ import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
 import { makeDaemonShutdown } from './runtime/shutdown'
 import { makeRequestRestart } from './runtime/restart'
 import { reportBoot } from './runtime/boot-report'
+import { reportVoidedCards } from './pending-cards'
 import { installCrashGuards } from './runtime/crash-guards'
 import { loadDaemonEnv } from './runtime/daemon-env'
 import { waitAfterBootFailure, clearBootFailures } from './runtime/boot-backoff'
@@ -91,6 +92,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     return { shutdown, fireTick: async () => {} }
   }
   reportBoot({ stateDir, dangerously, accounts: base.accounts.length, degraded: f.sup.degraded(), speech: wired.speech })
+  // 重启前挂着的拍板卡:不管这次重启是不是计划内的,主人都丢了那张卡 ⇒ 说一次(和上面「几样没起来」是两件事,各说各的)
+  void reportVoidedCards({ voided: base.voidedCards, now: Date.now(), speech: wired.speech, log: (t, l) => log(t, l) })
 
   const polling = modules.provided<LifecycleHolder<PollingLifecycle>>('polling')?.current() ?? null
   return {

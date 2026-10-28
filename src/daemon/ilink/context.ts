@@ -10,6 +10,8 @@ import { mkdirSync } from 'node:fs'
 import { makeStateStore, type StateStore } from '../state-store'
 import { makeSessionStateStore, type SessionStateStore } from '../../adapters/store/session-state'
 import { PendingPermissions } from '../pending-permissions'
+import { makePendingCardJournal, makePendingCardsStore } from '../pending-cards'
+import { log } from '../../lib/log'
 import { unknownChatIdError, missingContextTokenError } from '../../lib/send-reply'
 import type { Db } from '../../lib/db'
 import type { ConversationStore } from '../../ports/conversation-store'
@@ -84,7 +86,8 @@ export function makeIlinkContext(opts: {
   const acctStore = makeStateStore(join(stateDir, 'user_account_ids.json'), { debounceMs: 0 })
   const sessionState = makeSessionStateStore(db, { migrateFromFile: join(stateDir, 'session-state.json') })
 
-  const pending = new PendingPermissions()
+  // 开卡 / 了结落进 pending_cards(v91):重启后告诉主人哪几张作废了(pending-cards.ts)
+  const pending = new PendingPermissions(makePendingCardJournal(makePendingCardsStore(db), (t, l) => log(t, l)))
   const sweepTimer = setInterval(() => { pending.sweep() }, 30_000)
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref()
 

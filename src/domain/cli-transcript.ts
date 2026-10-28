@@ -36,9 +36,22 @@ const SECRET_PATTERNS: RegExp[] = [
   /\bxox[abposr]-[A-Za-z0-9-]{10,}/g,
 ]
 const SECRET_ASSIGN = /\b([A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD)[A-Za-z0-9_]*)(\s*[=:]\s*)(["']?)([^\s"',;]{4,})\3/gi
+/**
+ * 命令行里常见的口令写法(2026-10-28 补,重启作废卡的那句话要进库、进微信):保留前面那截,只遮口令本身。
+ * 只认明确是口令的位置,别的不碰:`mkdir -p`、`ssh -p 2222` 这种不在里面。
+ */
+const SECRET_INLINE: Array<[RegExp, string]> = [
+  [/\b(Authorization:\s*(?:Bearer|Basic|Token)\s+)[^\s"',;]+/gi, '$1[已打码]'],   // 请求头:不管令牌长什么样
+  [/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1[已打码]'],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"']+:)[^\s@/"']+@/gi, '$1[已打码]@'],          // https://user:pass@host
+  [/(\bsshpass\s+-p\s*)\S+/g, '$1[已打码]'],
+  [/(\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n|;&]*?\s-p)(?!\s)\S+/g, '$1[已打码]'],   // mysql -pSECRET(连写)
+  [/(\s(?:-u|--user)[\s=]+[^\s:]+:)[^\s"']+/g, '$1[已打码]'],                       // curl -u user:pass
+]
 export function redactSecrets(text: string): string {
   let out = text
   for (const re of SECRET_PATTERNS) out = out.replace(re, '[已打码]')
+  for (const [re, to] of SECRET_INLINE) out = out.replace(re, to)
   return out.replace(SECRET_ASSIGN, (_m, k: string, sep: string, q: string) => `${k}${sep}${q}[已打码]${q}`)
 }
 

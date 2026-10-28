@@ -46,6 +46,7 @@ export const SPEECH_KINDS = {
   pairing:         { origin: 'blocking',   label: '配对' },
   outbound_health: { origin: 'report',     label: '外发出了问题' },
   restart_notice:  { origin: 'report',     label: '重启了' },
+  restart_voided_cards: { origin: 'report', label: '重启前的卡作废了' },   // 2026-10-28 补:daemon/pending-cards.ts
   reminder:        { origin: 'requested',  label: '提醒' },
   job:             { origin: 'requested',  label: '定时任务' },
   matter_report:   { origin: 'report',     label: '一件事的回报' },

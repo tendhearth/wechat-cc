@@ -38,6 +38,8 @@ export const SPEECH_KINDS = {
   cli_session: { origin: 'report', label: '终端会话', expiring: true },
   rules_notice: { origin: 'report', label: '放行规则出了问题' },
   restart_notice: { origin: 'report', label: '重启了' },
+  // 重启前挂着的拍板卡作废了(daemon/pending-cards.ts):这一句本身不带码,推后了照样补说
+  restart_voided_cards: { origin: 'report', label: '重启前的卡作废了' },
   brief: { origin: 'initiative', label: '早报' },
   recap: { origin: 'initiative', label: '周报' },
   letter: { origin: 'initiative', label: '信' },
