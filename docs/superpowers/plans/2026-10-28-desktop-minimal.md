@@ -62,7 +62,7 @@
 ### Task 4: Integration and verification
 
 - [x] Review each task's diff against the approved specs; serially integrate into root's branch.
-- [ ] Run focused impacted checks, `bun run verify --base origin/dev`, and affected desktop Playwright flows using a unique dry-run port/state directory.
-- [ ] Inspect actual wide/narrow screenshots with seeded working task data; do not present unimplemented mock endpoints as product state.
-- [ ] Obtain a fresh whole-branch correctness review; resolve important findings and repeat only affected checks.
-- [ ] Save evidence and acceptance notes, stop only owned local servers, and leave a clean committed independent branch.
+- [x] Run focused impacted checks, `bun run verify` against pinned dev baseline, and affected desktop Playwright flows using a unique dry-run port/state directory.
+- [x] Inspect actual wide/narrow screenshots with seeded working task data; do not present unimplemented mock endpoints as product state.
+- [x] Obtain a fresh whole-branch correctness review; resolve important findings and repeat only affected checks.
+- [x] Save evidence and acceptance notes, stop only owned local servers, and leave a clean committed independent branch.
