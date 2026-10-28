@@ -72,17 +72,19 @@
 .cc-now-pane[data-cc="away"] .now-figure::before { opacity: 0; }
 .now-waiting[hidden] { display: none; }
 .now-waiting h2 { font-size: var(--th-size-meta); font-weight: 500; color: var(--th-ink-soft); margin: 0 0 6px; letter-spacing: var(--th-tracking-meta); }
-.now-waiting[data-state="unknown"] h2 { font-weight: 400; margin: 0; }
+.now-waiting[data-state="unknown"] h2, .now-waiting[data-state="partial"] h2 { font-weight: 400; }
+.now-waiting[data-state="unknown"] h2 { margin: 0; }
 .now-waiting[data-state="unknown"] ul { display: none; }
-.now-waiting ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--th-hair); }
-.now-waiting-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 16px 4px; border-bottom: 1px solid var(--th-hair); text-align: left; }
+.now-waiting ul { list-style: none; margin: 0; padding: 0; }
+.now-waiting-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 12px 4px; text-align: left; }
 .now-waiting-row .t { font-size: var(--th-size-item); margin: 0; overflow-wrap: anywhere; }
-.now-waiting-row .d { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; }
+.now-waiting-row .d { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; overflow-wrap: anywhere; }
 .now-waiting-row .d:empty { display: none; }
-.now-waiting-row .go { color: var(--th-ink-soft); font-size: var(--th-size-bubble); white-space: nowrap; }
+.now-waiting-row .go { display: inline-flex; align-items: center; color: var(--th-ink-soft); font-size: var(--th-size-meta); white-space: nowrap; }
+.now-request-arrow { transform: rotate(180deg); flex: none; }
 .now-waiting-row:hover .t, .now-waiting-row:focus-visible .t { color: var(--th-accent); }
-.now-waiting-row:focus-visible { outline: none; }
-/* 终端里等批准的会话(2026-10-14):开了码的整行是按钮,只给「看清楚 ›」,点开小窗再拍板(2026-10-16);没开码的只写「回终端处理」。 */
+.now-waiting-row:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
+/* 终端请求点开小窗再拍板;没开码的仍明确写「回终端处理」,不画可点击的箭头。 */
 div.now-terminal-row { cursor: default; }
 div.now-terminal-row:hover .t { color: var(--th-ink); }
 .now-terminal-dialog { height: auto; }
