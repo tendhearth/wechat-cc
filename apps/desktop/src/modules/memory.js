@@ -1285,6 +1285,24 @@ export async function loadProjectMemory(deps) {
   }).join("")
 }
 
+// Locks belong to the record, not a rendered button: expanding/reloading a
+// disclosure can replace its DOM while the same system request is pending.
+const pendingRetractionRestores = new Set()
+let retractionsReadGeneration = 0
+let retractionsFeedbackGeneration = 0
+
+/** @param {HTMLElement} box */
+function syncRetractionRestoreButtons(box) {
+  box.querySelectorAll("[data-action='restore-retraction']").forEach(el => {
+    const button = /** @type {HTMLButtonElement} */ (el)
+    const pending = pendingRetractionRestores.has(button.dataset.key)
+    button.disabled = pending
+    if (pending) button.setAttribute("aria-busy", "true")
+    else button.removeAttribute("aria-busy")
+    button.textContent = pending ? "恢复中…" : "恢复"
+  })
+}
+
 /**
  * 收回的话(架构终态 G6,主人 10-26 第 2 / 3 条):以前记忆页上是 corrections.md 那个文件,现在是这张列表;每条能「恢复」——
  * 那一行回到记忆里,当初随之从笔记里删掉的行不会回来(daemon 回的 note 原样显示)。最新的在上面。
@@ -1293,10 +1311,16 @@ export async function loadProjectMemory(deps) {
 export async function loadMemoryRetractions(deps) {
   const box = document.getElementById("memory-retractions")
   if (!box) return
+  const generation = ++retractionsReadGeneration
+  const current = () => generation === retractionsReadGeneration && document.getElementById("memory-retractions") === box
   /** @type {{ ok?: boolean, items?: Array<{ key: string, section: string | null, text: string, day: string | null }> }} */
   let resp
   try { resp = /** @type {any} */ (await v1(deps.invokeWorkbenchApi, V1.memory.retractions)) }
-  catch (err) { box.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`; return }
+  catch (err) {
+    if (current()) box.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
+    return
+  }
+  if (!current()) return
   const items = [...((resp && resp.items) || [])].reverse()
   if (items.length === 0) { box.innerHTML = `<p class="empty-state">还没有收回过什么。</p>`; return }
   box.innerHTML = items.map(r => `
@@ -1305,6 +1329,7 @@ export async function loadMemoryRetractions(deps) {
       <span class="meta">${escapeHtml([r.section, r.day].filter(Boolean).join(" · "))}</span>
       <button class="btn ghost" type="button" data-action="restore-retraction" data-key="${escapeHtml(r.key)}">恢复</button>
     </div>`).join("")
+  syncRetractionRestoreButtons(box)
 }
 
 /**
@@ -1312,15 +1337,36 @@ export async function loadMemoryRetractions(deps) {
  * @param {string} key
  */
 export async function restoreMemoryRetraction(deps, key) {
+  if (pendingRetractionRestores.has(key)) return
+  pendingRetractionRestores.add(key)
+  // Invalidate pre-mutation reads; they may still contain this restored row.
+  ++retractionsReadGeneration
+  const generation = ++retractionsFeedbackGeneration
+  const box = document.getElementById("memory-retractions")
   const note = document.getElementById("memory-retractions-note")
+  const currentView = () => document.getElementById("memory-retractions") === box
+  const ownsFeedback = () => currentView() && generation === retractionsFeedbackGeneration && document.getElementById("memory-retractions-note") === note
+  if (box) syncRetractionRestoreButtons(box)
   if (note) note.textContent = "恢复中…"
   try {
-    const resp = /** @type {{ ok?: boolean, note?: string }} */ (await v1(deps.invokeWorkbenchApi, V1.memory.restore, { body: { key } }))
-    if (note) note.textContent = resp && resp.note ? resp.note : "已恢复。"
+    const resp = /** @type {{ ok?: boolean, code?: string, note?: string }} */ (await v1(deps.invokeWorkbenchApi, V1.memory.restore, { body: { key } }))
+    if (resp?.ok !== true) throw new Error(resp?.code || "未收到恢复确认")
+    if (note && ownsFeedback()) note.textContent = resp.note || "已恢复。当初从笔记中删掉的行不会恢复。"
   } catch (err) {
-    if (note) note.textContent = `没恢复成：${deps.formatInvokeError(err)}`
+    if (note && ownsFeedback()) note.textContent = `没恢复成：${deps.formatInvokeError(err)}`
+  } finally {
+    try {
+      // Keep the lock through the authoritative refresh: until the row is
+      // removed a second click would still submit the already restored key.
+      if (currentView()) await loadMemoryRetractions(deps)
+    } finally {
+      pendingRetractionRestores.delete(key)
+      const liveBox = document.getElementById("memory-retractions")
+      // Reopened views retain the lock too; release their buttons without
+      // replacing the new view's list or feedback with the old operation.
+      if (liveBox) syncRetractionRestoreButtons(liveBox)
+    }
   }
-  await loadMemoryRetractions(deps)
 }
 
 /**

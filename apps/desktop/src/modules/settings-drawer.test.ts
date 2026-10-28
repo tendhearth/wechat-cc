@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect, vi } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 
 // No jsdom in this project — hand-stub the tiny DOM surface wireSettingsDrawer
 // touches so we can exercise the toggle click handler and its revert-on-failure.
@@ -95,5 +95,54 @@ describe('settings-drawer toggle — 保存反馈与防重复点击', () => {
     wireSettingsDrawer({ onToggleChange: async () => true })
     await t._click()
     expect(t._state()).toEqual({ pressed: 'true', on: true })
+  })
+})
+
+describe('settings-drawer temporary success feedback', () => {
+  beforeEach(() => { vi.resetModules(); vi.useFakeTimers() })
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
+  it('clears only the brief saved confirmation while keeping the persisted toggle', async () => {
+    const t = fakeToggle('guard-toggle'), fb = { textContent: '', dataset: {} as Record<string, string> }
+    installDom([t], { 'guard-toggle-feedback': fb })
+    const { wireSettingsDrawer } = await import('./settings-drawer.js')
+    wireSettingsDrawer({ onToggleChange: async () => true })
+    await t._click()
+    expect(fb.textContent).toBe('已保存')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(fb.textContent).toBe('')
+    expect(fb.dataset.state).toBeUndefined()
+    expect(t._state()).toEqual({ pressed: 'true', on: true })
+  })
+  it('an older success timeout never clears newer saving or a durable error', async () => {
+    const t = fakeToggle('guard-toggle'), fb = { textContent: '', dataset: {} as Record<string, string> }
+    installDom([t], { 'guard-toggle-feedback': fb })
+    let release!: (value: boolean) => void
+    const onToggleChange = vi.fn().mockResolvedValueOnce(true).mockImplementationOnce(() => new Promise<boolean>(r => { release = r }))
+    const { wireSettingsDrawer } = await import('./settings-drawer.js')
+    wireSettingsDrawer({ onToggleChange })
+    await t._click()
+    await vi.advanceTimersByTimeAsync(1000)
+    const pending = t._click()
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(fb.textContent).toBe('保存中…')
+    release(false)
+    await pending
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(fb.textContent).toBe('没保存上,已恢复原来的设置')
+    expect(fb.dataset.state).toBe('error')
+    expect(t._state()).toEqual({ pressed: 'true', on: true })
+  })
+  it('gives a newer success its own full confirmation interval', async () => {
+    const t = fakeToggle('guard-toggle'), fb = { textContent: '', dataset: {} as Record<string, string> }
+    installDom([t], { 'guard-toggle-feedback': fb })
+    const { wireSettingsDrawer } = await import('./settings-drawer.js')
+    wireSettingsDrawer({ onToggleChange: async () => true })
+    await t._click()
+    await vi.advanceTimersByTimeAsync(1000)
+    await t._click()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(fb.textContent).toBe('已保存')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(fb.textContent).toBe('')
   })
 })

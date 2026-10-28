@@ -169,6 +169,33 @@ test('life facet: locked state shows lock row; unlock with correct passphrase re
   await expect(groups).toContainText('糟糕的心情', { timeout: 5_000 })
 })
 
+test('privacy dialog stays usable at a 200% zoom equivalent low-height viewport', async ({ page, shimUrl, shim }) => {
+  // A 1520×560 desktop window at 200% zoom has 760×280 CSS pixels.
+  await page.setViewportSize({ width: 760, height: 280 })
+  await bootAndOpenDialogue(page, shimUrl, shim)
+  await page.locator('#dialogue-views [data-view="life"]').click()
+  const groups = page.locator('#dialogue-groups')
+  await expect(groups.locator('.dialogue-locked-row')).toBeVisible()
+  await groups.locator('.dialogue-locked-row').click()
+  const dialog = page.locator('#privacy-dialog')
+  const card = dialog.locator('.privacy-card')
+  await expect(dialog).toBeVisible()
+  await expect(card).toBeInViewport({ ratio: 1 })
+  await expect(card).toContainText('部分话题包含较私人的内容，输入密码后才能查看。')
+  await page.locator('#privacy-password').fill('1234')
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(groups).not.toContainText('和花艺师闺蜜的周末')
+
+  await groups.locator('.dialogue-locked-row').click()
+  await expect(dialog).toBeVisible()
+  await page.locator('#privacy-password').fill('1234')
+  await dialog.getByRole('button', { name: '解锁私密话题', exact: true }).click()
+  await expect(dialog).toBeHidden({ timeout: 5_000 })
+  await expect(groups).toContainText('和花艺师闺蜜的周末', { timeout: 5_000 })
+  await expect(groups).toContainText('糟糕的心情', { timeout: 5_000 })
+})
+
 test('re-lock: after unlocking, 重新锁定 re-arms the session lock and hides private threads', async ({ page, shimUrl, shim }) => {
   await bootAndOpenDialogue(page, shimUrl, shim)
 
