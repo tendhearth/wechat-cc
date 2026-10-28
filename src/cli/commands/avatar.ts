@@ -9,7 +9,7 @@ const avatarInfoCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { avatarInfo } = await import('../../core/avatar/store')
+    const { avatarInfo } = await import('../../adapters/store/avatar-store')
     const info = avatarInfo(STATE_DIR, args.key)
     if (args.json) console.log(JSON.stringify(AvatarInfoOutput.parse({ ok: true, ...info })))
     else console.log(`${args.key}: ${info.exists ? info.path : '(no avatar)'}`)
@@ -24,7 +24,7 @@ const avatarSetCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { setAvatar } = await import('../../core/avatar/store')
+    const { setAvatar } = await import('../../adapters/store/avatar-store')
     try {
       const result = setAvatar(STATE_DIR, args.key, args.base64)
       if (args.json) console.log(JSON.stringify(AvatarSetOutput.parse(result)))
@@ -45,7 +45,7 @@ const avatarRemoveCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { removeAvatar } = await import('../../core/avatar/store')
+    const { removeAvatar } = await import('../../adapters/store/avatar-store')
     const result = removeAvatar(STATE_DIR, args.key)
     if (args.json) console.log(JSON.stringify(AvatarRemoveOutput.parse(result)))
     else console.log(`removed ${args.key}`)

@@ -1,11 +1,12 @@
 /**
  * STT config — where the daemon reaches the gateway whisper server. Separate
  * file from voice-config.json (TTS) because it's an independent concern with an
- * independent save route. Mirror of tts/voice-config.ts.
+ * independent save route. Mirror of features/voice/voice-config.ts.
  */
-import { writeFileSync, existsSync, renameSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export interface STTConfig {
   provider: 'http_stt'
@@ -48,7 +49,5 @@ export function loadSTTConfig(stateDir: string): STTConfig | null {
 export function saveSTTConfig(stateDir: string, cfg: STTConfig): void {
   const p = configPath(stateDir)
   mkdirSync(dirname(p), { recursive: true })
-  const tmp = `${p}.tmp-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf8')
-  renameSync(tmp, p)
+  writeFileAtomic(p, JSON.stringify(cfg, null, 2))
 }

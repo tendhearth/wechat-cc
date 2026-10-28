@@ -3,25 +3,23 @@
  * (buildInstructions)。从 bootstrap/index.ts 逐字搬出(2026-09-27 bootstrap 拆分,
  * spec 2026-09-27-bootstrap-split-design);块内逻辑与注释不变,只参数化:
  * wire-plugins 的 delegateStdioByProvider / knowledgePluginNames、defaultProviderId、
- * knowledge 走 parts.*;原来的 `let socialToolsWired` 改成 index 持有的 Ref<boolean>
- * (spec §3 规矩 1),social 接线完成后 index set;没 set 就调用是编程错误,直接抛。
+ * knowledge 走 parts.*;社交在不在是 parts.socialWired() 现问(social 模块在后面,模块容器的 ctx.late)。
  */
-import type { ProviderId } from '../../core/conversation'
-import type { TierProfile } from '../../core/user-tier'
-import { buildSystemPrompt } from '../../core/prompt-builder'
-import { capabilitiesFor, replyDeliveryFor, replyTextStrategyFor } from '../../core/capability-matrix'
-import type { Ref } from '../../lib/lifecycle'
+import type { ProviderId } from '../../domain/conversation'
+import type { TierProfile } from '../../domain/user-tier'
+import { buildSystemPrompt } from '../../domain/prompt-builder'
+import { capabilitiesFor, replyTextStrategyFor } from '../../domain/capability-matrix'
 import type { Bootstrap, BootstrapDeps } from './types'
 import type { PluginsSlice } from './wire-plugins'
 
 export function wireInstructions(
-  deps: Pick<BootstrapDeps, 'ilink' | 'personaFor' | 'stickerTagsFor' | 'careLevelFor' | 'newRelationshipFor' | 'companionOfferFor' | 'coreMemoryFor' | 'curatedMemoryFor' | 'todayDraftFor' | 'knowledgeMemoryFor' | 'bubbleRepliesFor'>,
+  deps: Pick<BootstrapDeps, 'ilink' | 'personaFor' | 'stickerTagsFor' | 'careLevelFor' | 'newRelationshipFor' | 'companionOfferFor' | 'coreMemoryFor' | 'curatedMemoryFor' | 'ownerMemoryFor' | 'todayDraftFor' | 'knowledgeMemoryFor' | 'bubbleRepliesFor'>,
   parts: {
     plugins: Pick<PluginsSlice, 'delegateStdioByProvider' | 'knowledgePluginNames'>
     defaultProviderId: ProviderId
     knowledge: Bootstrap['knowledge']
-    /** social 接线完成后 index 置位;每次 build 都 deref —— 没 set 就调用是编程错误,直接抛。 */
-    socialWired: Ref<boolean>
+    /** 社交此刻接上了没有(social 模块在后面;每次 build 时现问,关着 / 没起 ⇒ false)。 */
+    socialWired: () => boolean
   },
 ): Bootstrap['buildInstructions'] {
   // The single, provider-agnostic source of every session's system prompt.
@@ -77,13 +75,12 @@ export function wireInstructions(
     const stickerTags = rawStickerTags !== null && rawStickerTags.length === 0 && !tierProfile.allow.has('memory_write')
       ? null
       : rawStickerTags
-    // 回复交付(spec 2026-10-03 §4.11):走 daemon 交付的 provider 拿 final_text 版提示(不教 reply 族工具,
-    // 教附件 + admin 的 message);legacy / shadow 照旧。message 只在 MCP 真的注册了它时才提(admin + 每会话
-    // tier 的 provider —— agy 那种钉死 trusted 的拿不到)。
-    const finalText = replyDeliveryFor(providerId) === 'daemon'
+    // 回复交付(spec 2026-10-03 §4.11):提示词不教 reply 族工具,教附件 + admin 的 message。message 只在 MCP
+    // 真的注册了它时才提(admin + 每会话 tier 的 provider —— agy 那种钉死 trusted 的拿不到)。
     return buildSystemPrompt({
       providerId,
-      ...(finalText ? { replyDelivery: 'final_text' as const, replyText: replyTextStrategyFor(providerId), messageToolAvailable: tierProfile.allow.has('message_other') && capabilitiesFor(providerId).adminMcpTools } : {}),
+      replyText: replyTextStrategyFor(providerId),
+      messageToolAvailable: tierProfile.allow.has('message_other') && capabilitiesFor(providerId).adminMcpTools,
       // 让 bot 知道自己此刻跑的是哪个模型(session-manager 按 spawn 解析后
       // 传进来;claude 的解析见下面 currentModelFor 的 claude 分支)。
       model,
@@ -91,7 +88,9 @@ export function wireInstructions(
       peerProviderId: capabilitiesFor(providerId).defaultPeer ?? parts.defaultProviderId,
       companionEnabled: deps.ilink.companion.status().enabled,
       delegateAvailable: !!parts.plugins.delegateStdioByProvider[providerId],
-      daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
+      // 同 socialAvailable:agy 的 wechat MCP 钉死 trusted,diagnostic_* / today_digest / calendar_agenda 都没注册 ——
+      // 提示词里不能写着有(执行者会以为工具坏了反复去试,或跟主人说「查不到」)。
+      daemonOpsAvailable: tierProfile.allow.has('daemon_introspect') && capabilitiesFor(providerId).adminMcpTools,
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
       // Tracks tool registration exactly, same posture as fileLocateAvailable:
       // `social_act` is ADMIN_ONLY (user-tier.ts), matching wechat-mcp/main.ts's
@@ -104,7 +103,7 @@ export function wireInstructions(
       // send the model to call tools that don't exist. cursor is per-session now
       // (acp-cursor-chat.ts threads WECHAT_SESSION_TIER through session/new
       // each call), so its adminMcpTools tracks the real tier like claude/codex.
-      socialAvailable: parts.socialWired.deref('buildInstructions') && tierProfile.allow.has('social_act') && capabilitiesFor(providerId).adminMcpTools,
+      socialAvailable: parts.socialWired() && tierProfile.allow.has('social_act') && capabilitiesFor(providerId).adminMcpTools,
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
       // Tri-state (owner-onboarding design §C2) — absent thunk defaults to
       // `null` (pref-off shape), NOT `[]`, so an unwired bootstrap stays
@@ -144,6 +143,7 @@ export function wireInstructions(
       // nightly memory tidy design, Task 8 — when present, prompt-builder
       // injects this INSTEAD of coreMemory's profile excerpt.
       curatedMemory: deps.curatedMemoryFor?.(chatId),
+      ownerMemory: deps.ownerMemoryFor?.(chatId),
       // 同日失忆修复(2026-10-01):今天的草稿,prompt-builder 只在有 curatedMemory 时渲染它。
       todayDraft: deps.todayDraftFor?.(chatId),
       knowledgeMemory: deps.knowledgeMemoryFor?.(chatId),

@@ -1,0 +1,121 @@
+import { describe, it, expect } from 'vitest'
+import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from './companion-config'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+function freshDir(): string {
+  const d = mkdtempSync(join(tmpdir(), 'wcc-cc-'))
+  mkdirSync(join(d, 'companion'), { recursive: true })
+  return d
+}
+
+describe('companion/config (v2 — memory-first, no triggers/personas)', () => {
+  it('defaultCompanionConfig returns disabled + sensible defaults', () => {
+    const cfg = defaultCompanionConfig()
+    expect(cfg.enabled).toBe(false)
+    expect(cfg.atelier_mode).toBe('off')
+    expect(cfg.snooze_until).toBeNull()
+    expect(cfg.default_chat_id).toBeNull()
+    expect(typeof cfg.timezone).toBe('string')
+    expect(cfg.timezone.length).toBeGreaterThan(0)
+  })
+
+  it('loadCompanionConfig returns default when file missing', () => {
+    const d = mkdtempSync(join(tmpdir(), 'wcc-cc-miss-'))
+    const cfg = loadCompanionConfig(d)
+    expect(cfg.enabled).toBe(false)
+  })
+
+  it('saveCompanionConfig + loadCompanionConfig round-trip', async () => {
+    const d = freshDir()
+    const cfg = {
+      ...defaultCompanionConfig(),
+      enabled: true,
+      default_chat_id: 'chat-1',
+      snooze_until: '2026-04-25T00:00:00Z',
+    }
+    await saveCompanionConfig(d, cfg)
+    const loaded = loadCompanionConfig(d)
+    expect(loaded.enabled).toBe(true)
+    expect(loaded.default_chat_id).toBe('chat-1')
+    expect(loaded.snooze_until).toBe('2026-04-25T00:00:00Z')
+  })
+
+  describe('ingest_enabled field (knowledge-ingestion engine)', () => {
+    it('is undefined when absent (⇒ ingestion ON when companion enabled)', () => {
+      const d = freshDir()
+      writeFileSync(join(d, 'companion', 'config.json'), JSON.stringify({ enabled: true }))
+      expect(loadCompanionConfig(d).ingest_enabled).toBeUndefined()
+    })
+    it('round-trips an explicit false (the independent off-switch)', async () => {
+      const d = freshDir()
+      await saveCompanionConfig(d, { ...defaultCompanionConfig(), enabled: true, ingest_enabled: false })
+      expect(loadCompanionConfig(d).ingest_enabled).toBe(false)
+    })
+    it('ignores a non-boolean ingest_enabled', () => {
+      const d = freshDir()
+      writeFileSync(join(d, 'companion', 'config.json'), JSON.stringify({ enabled: true, ingest_enabled: 'yes' }))
+      expect(loadCompanionConfig(d).ingest_enabled).toBeUndefined()
+    })
+  })
+
+  it('silently drops legacy triggers/per_project_persona fields (v1 → v2 migration)', () => {
+    const d = freshDir()
+    writeFileSync(join(d, 'companion', 'config.json'), JSON.stringify({
+      enabled: true,
+      triggers: [{ id: 't1', project: 'p', schedule: '* * * * *' }],
+      per_project_persona: { _default: 'assistant' },
+      default_chat_id: 'c1',
+    }))
+    const cfg = loadCompanionConfig(d)
+    expect(cfg.enabled).toBe(true)
+    expect(cfg.default_chat_id).toBe('c1')
+    // Legacy fields are not surfaced on the v2 interface; first save drops them.
+    expect('triggers' in cfg).toBe(false)
+    expect('per_project_persona' in cfg).toBe(false)
+  })
+
+  it('tolerates malformed JSON', () => {
+    const d = freshDir()
+    writeFileSync(join(d, 'companion', 'config.json'), '{ not json')
+    expect(loadCompanionConfig(d).enabled).toBe(false)
+  })
+
+  it('saveCompanionConfig creates companion dir if missing', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'wcc-cc-nodir-'))
+    await saveCompanionConfig(d, { ...defaultCompanionConfig(), enabled: true })
+    expect(loadCompanionConfig(d).enabled).toBe(true)
+  })
+
+  describe('last_introspect_at field (v0.4 fix-up bundle D)', () => {
+    it('defaults to null when absent on disk', () => {
+      const d = freshDir()
+      const cfg = loadCompanionConfig(d)
+      expect(cfg.last_introspect_at).toBeNull()
+    })
+
+    it('round-trips through save+load', async () => {
+      const d = freshDir()
+      const ts = '2026-04-29T12:00:00Z'
+      await saveCompanionConfig(d, { ...loadCompanionConfig(d), last_introspect_at: ts })
+      expect(loadCompanionConfig(d).last_introspect_at).toBe(ts)
+    })
+
+    it('preserves null when explicitly set', async () => {
+      const d = freshDir()
+      await saveCompanionConfig(d, { ...loadCompanionConfig(d), last_introspect_at: null })
+      expect(loadCompanionConfig(d).last_introspect_at).toBeNull()
+    })
+  })
+})
+
+describe('memory nightly config', () => {
+  it('defaults to enabled at 04:00 and rejects malformed times', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-'))
+    expect(loadCompanionConfig(dir)).toMatchObject({ memory_nightly_enabled: true, memory_nightly_at: '04:00', letters_enabled: false })
+    mkdirSync(join(dir, 'companion'), { recursive: true })
+    writeFileSync(join(dir, 'companion', 'config.json'), JSON.stringify({ memory_nightly_enabled: false, memory_nightly_at: '4am' }))
+    expect(loadCompanionConfig(dir)).toMatchObject({ memory_nightly_enabled: false, memory_nightly_at: '04:00' })
+  })
+})

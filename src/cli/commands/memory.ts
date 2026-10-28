@@ -78,7 +78,22 @@ const memoryWriteCmd = defineCommand({
       // unsafely if we tried to inline the content). Decoder + UTF-8
       // assumption matches the GUI's btoa(unescape(encodeURIComponent(body))).
       const body = Buffer.from(args['body-base64'], 'base64').toString('utf8')
-      const result = writeMemoryFile(STATE_DIR, args.userId, args.path, body)
+      // 记忆编辑第 4 步:生成物、主人那一份的 memory.md / owner.md 不许整份覆盖(走 `memory edit`)
+      const { wholeFileWriteRefusal } = await import('../../lib/memory-edit')
+      const { memoryArtifactKind } = await import('../../lib/memory-artifacts')
+      const { loadCompanionConfig } = await import('../../lib/companion-config')
+      const refusal = wholeFileWriteRefusal(args.path, memoryArtifactKind(args.path), args.userId, loadCompanionConfig(STATE_DIR).default_chat_id ?? null)
+      if (refusal) {
+        // 逐行改走 daemon 的 /v1/memory/edit:daemon 不通时多说一句「先开起来」,通的时候不说(说了就是假话)。
+        const { readApiInfo } = await import('../../lib/api-info')
+        const info = readApiInfo(STATE_DIR)
+        let up = false
+        if (info) {
+          try { up = (await fetch(`${info.baseUrl}/v1/health`, { headers: { authorization: `Bearer ${info.token}` }, signal: AbortSignal.timeout(1500) })).ok } catch { /* 不通 */ }
+        }
+        throw new Error(up ? refusal : `${refusal}。守护进程现在没在跑,先开起来才能逐行改`)
+      }
+      const result = writeMemoryFile(STATE_DIR, args.userId, args.path, body, (await import('../../features/memory')).memoryFactsFor((await import('../../lib/db')).openWechatDb(STATE_DIR), STATE_DIR).fence(args.userId))
       if (args.json) console.log(JSON.stringify(MemoryWriteOutput.parse({ ok: true, userId: args.userId, path: args.path, ...result }), null, 2))
       else console.log(`${result.created ? 'created' : 'updated'}: ${args.userId}/${args.path} (${result.bytesWritten}B)`)
     } catch (err) {
@@ -102,7 +117,7 @@ const memoryProfileReadCmd = defineCommand({
   async run({ args }) {
     const { readMemoryProfileFile } = await import('../../lib/memory.ts')
     try {
-      const content = readMemoryProfileFile(STATE_DIR, args.userId)
+      const content = readMemoryProfileFile(STATE_DIR, args.userId, (await import('../../features/memory')).memoryFactsFor((await import('../../lib/db')).openWechatDb(STATE_DIR), STATE_DIR).fence(args.userId))
       if (args.json) console.log(JSON.stringify(MemoryReadOutput.parse({ ok: true, userId: args.userId, path: '_profile.json', content }), null, 2))
       else process.stdout.write(content)
     } catch (err) {
@@ -191,7 +206,7 @@ const memorySynthesizeCmd = defineCommand({
     let provider = args.provider
     if (!provider) {
       try {
-        const { makeConversationStore } = await import('../../core/conversation-store')
+        const { makeConversationStore } = await import('../../adapters/store/conversation-store')
         const conv = makeConversationStore(db).get(chatId)
         if (conv?.mode?.kind === 'solo') provider = conv.mode.provider
       } catch { /* no conversation yet — default below */ }
@@ -206,25 +221,7 @@ const memorySynthesizeCmd = defineCommand({
     // Mirrors each provider's cheapEval (claude haiku-class / codex minimal),
     // built inline so the CLI doesn't need a live daemon ProviderRegistry.
     const sdkEval = async (prompt: string): Promise<string> => {
-      if (provider === 'codex') {
-        const { Codex } = await import('@openai/codex-sdk')
-        const { resolveCodexCheapModel } = await import('../../core/codex-cheap-model')
-        const { tmpdir } = await import('node:os')
-        const thread = new Codex().startThread({
-          model: resolveCodexCheapModel(),
-          sandboxMode: 'read-only',
-          approvalPolicy: 'never',
-          webSearchEnabled: false,
-          networkAccessEnabled: false,
-          workingDirectory: tmpdir(),
-          skipGitRepoCheck: true,
-        })
-        const turn = await thread.run(prompt)
-        return (turn.items as Array<{ type?: string; text?: string }>)
-          .filter(i => i.type === 'agent_message' && typeof i.text === 'string')
-          .map(i => i.text!)
-          .join('')
-      }
+      if (provider === 'codex') return codexCheapEval(prompt)
       // claude (default)
       const { query } = await import('@anthropic-ai/claude-agent-sdk')
       const model = process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || 'claude-haiku-4-5'
@@ -243,9 +240,10 @@ const memorySynthesizeCmd = defineCommand({
 
     const { synthesizeOverview } = await import('../../lib/memory-synthesis')
     const { makeLifeStoresReader } = await import('../../daemon/life-stores')
+    const { synthesisMemoryFor } = await import('../../features/memory')
     let result
     try {
-      result = await synthesizeOverview({ stateDir: STATE_DIR, adminChatId: chatId, sdkEval, dryRun, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
+      result = await synthesizeOverview({ stateDir: STATE_DIR, adminChatId: chatId, memory: synthesisMemoryFor(db, STATE_DIR, chatId), sdkEval, dryRun, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
     } finally {
       db.close()
     }
@@ -294,34 +292,24 @@ async function resolveProfileChatId(chatIdArg: string | undefined): Promise<stri
 async function profileProvider(chatId: string, requested: string | undefined, db: ReturnType<typeof import('../../lib/db').openWechatDb>): Promise<string> {
   if (requested) return requested
   try {
-    const { makeConversationStore } = await import('../../core/conversation-store')
+    const { makeConversationStore } = await import('../../adapters/store/conversation-store')
     const conv = makeConversationStore(db).get(chatId)
     if (conv?.mode?.kind === 'solo') return conv.mode.provider
   } catch { /* no conversation yet — default below */ }
   return 'claude'
 }
 
+/** codex 的一次性评估:和 daemon 里 Codex provider 的 cheapEval 同一条路(codex app-server,只读、不给网、不给工具)。 */
+async function codexCheapEval(prompt: string): Promise<string> {
+  const { createCodexChatProvider } = await import('../../adapters/executors/codex/codex-chat-provider')
+  const { findCodexBinary } = await import('../../lib/find-codex-binary')
+  const bin = findCodexBinary()
+  return createCodexChatProvider(bin ? { codexPathOverride: bin } : {}).cheapEval!(prompt)
+}
+
 function makeProfileSdkEval(provider: string): (prompt: string) => Promise<string> {
   return async (prompt: string): Promise<string> => {
-    if (provider === 'codex') {
-      const { Codex } = await import('@openai/codex-sdk')
-      const { resolveCodexCheapModel } = await import('../../core/codex-cheap-model')
-      const { tmpdir } = await import('node:os')
-      const thread = new Codex().startThread({
-        model: resolveCodexCheapModel(),
-        sandboxMode: 'read-only',
-        approvalPolicy: 'never',
-        webSearchEnabled: false,
-        networkAccessEnabled: false,
-        workingDirectory: tmpdir(),
-        skipGitRepoCheck: true,
-      })
-      const turn = await thread.run(prompt)
-      return (turn.items as Array<{ type?: string; text?: string }>)
-        .filter(i => i.type === 'agent_message' && typeof i.text === 'string')
-        .map(i => i.text!)
-        .join('')
-    }
+    if (provider === 'codex') return codexCheapEval(prompt)
     const { query } = await import('@anthropic-ai/claude-agent-sdk')
     const model = process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || 'claude-haiku-4-5'
     let text = ''
@@ -372,10 +360,12 @@ async function runMemoryProfileGenerate(args: {
       provider = await profileProvider(chatId, args.provider, db)
       const { synthesizeProfile } = await import('../../lib/memory-synthesis')
       const { makeLifeStoresReader } = await import('../../daemon/life-stores')
+      const { synthesisMemoryFor } = await import('../../features/memory')
       const dryRun = Boolean(args['dry-run'])
       result = await synthesizeProfile({
         stateDir: STATE_DIR,
         adminChatId: chatId,
+        memory: synthesisMemoryFor(db, STATE_DIR, chatId),
         sdkEval: makeProfileSdkEval(provider),
         dryRun,
         lifeStores: makeLifeStoresReader(db, STATE_DIR),
@@ -448,7 +438,7 @@ const memoryProfileStatusCmd = defineCommand({
       try {
         const { getMemoryProfileStatus } = await import('../../lib/memory-synthesis')
         const { makeLifeStoresReader } = await import('../../daemon/life-stores')
-        status = await getMemoryProfileStatus({ stateDir: STATE_DIR, adminChatId: chatId, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
+        status = await getMemoryProfileStatus({ memory: (await import('../../features/memory')).synthesisMemoryFor(db, STATE_DIR, chatId), stateDir: STATE_DIR, adminChatId: chatId, lifeStores: makeLifeStoresReader(db, STATE_DIR) })
       } finally {
         db.close()
       }
@@ -574,12 +564,69 @@ const memoryStatusCmd = defineCommand({
   },
 })
 
+// 记忆编辑(设计稿 2026-10-23 记忆改了就算数):薄壳,真正的比对和更正在 daemon(与每晚整理同一条串行链)。
+// 用 operator 凭据 —— 改的是主人自己的记忆,trusted 那把 file token 别人对话的会话也拿得到。
+async function memoryEditCall(route: 'view' | 'edit', body: unknown): Promise<{ status: number; body: unknown }> {
+  const { readApiInfo } = await import('../../lib/api-info')
+  const info = readApiInfo(STATE_DIR)
+  if (!info) return { status: 0, body: { ok: false, code: 'daemon_required' } }
+  try {
+    const r = await fetch(`${info.baseUrl}/v1/memory/${route}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${info.operatorToken}` },
+      body: JSON.stringify(body),
+    })
+    return { status: r.status, body: await r.json().catch(() => ({ ok: false, code: `http_${r.status}` })) }
+  } catch (err) {
+    return { status: 0, body: { ok: false, code: 'daemon_unreachable', error: err instanceof Error ? err.message : String(err) } }
+  }
+}
+/**
+ * --json(桌面经 lib.rs 的 wechat_cli_json 调)⇒ 只要输出的是 JSON 就退出码 0,桌面按 ok / code 分支 —— 宿主把非 0 当 Err、
+ * 吞掉 stdout,桌面就读不到 memory_edit_bulk 的 count 这类载荷(同 memory read / write --json)。没有 --json(人在终端)⇒ 失败退 1。
+ */
+export function printEditResult(r: { body: unknown }, json: boolean): void {
+  console.log(json ? JSON.stringify(r.body) : JSON.stringify(r.body, null, 2))
+  if (!json && (r.body as { ok?: unknown })?.ok !== true) process.exitCode = 1
+}
+
+const memoryViewCmd = defineCommand({
+  meta: { name: 'view', description: '记忆编辑的底稿:_overview.md | memory.md | owner.md 的行(带键,主人原话标 owner)' },
+  args: {
+    path: { type: 'positional', required: true, description: '_overview.md | memory.md | owner.md', valueHint: 'path' },
+    json: { type: 'boolean', description: '机器可读输出', default: false },
+  },
+  async run({ args }) {
+    printEditResult(await memoryEditCall('view', { path: args.path }), args.json)
+  },
+})
+
+const memoryEditCmd = defineCommand({
+  meta: { name: 'edit', description: '按 view 的键回传改过的行:删 / 改 ⇒ 更正,加 / 改写 ⇒ 主人原话' },
+  args: {
+    path: { type: 'positional', required: true, description: '_overview.md | memory.md | owner.md', valueHint: 'path' },
+    base: { type: 'string', required: true, description: 'view 给的 baseHash' },
+    'lines-base64': { type: 'string', required: true, description: 'Base64 编码的 JSON 数组:[{ text, lineKey?, assertionId? }]' },
+    'confirm-bulk': { type: 'boolean', description: '主人确认过大批删除(超过 5 条更正)', default: false },
+    json: { type: 'boolean', description: '机器可读输出', default: false },
+  },
+  async run({ args }) {
+    let lines: unknown
+    try { lines = JSON.parse(Buffer.from(args['lines-base64'], 'base64').toString('utf8')) }
+    catch { printEditResult({ body: { ok: false, code: 'bad_lines' } }, args.json); return }
+    const body = { path: args.path, baseHash: args.base, lines, ...(args['confirm-bulk'] ? { confirmBulk: true } : {}) }
+    printEditResult(await memoryEditCall('edit', body), args.json)
+  },
+})
+
 export const memoryCmd = defineCommand({
   meta: { name: 'memory', description: 'Companion v2 memory files (per user)' },
   subCommands: {
     list: memoryListCmd,
     read: memoryReadCmd,
     write: memoryWriteCmd,
+    view: memoryViewCmd,
+    edit: memoryEditCmd,
     'profile-read': memoryProfileReadCmd,
     synthesize: memorySynthesizeCmd,
     nightly: memoryNightlyCmd,

@@ -58,10 +58,12 @@ const ROWS: Row[] = [
 
 const WAIT_MS = 60
 
-function runtimeFor(row: Row) {
+function runtimeFor(row: Row, firstProbeWaitMs = WAIT_MS) {
   const readBx = vi.fn(async () => row.bx ?? BX_UNREADABLE)
   const probeOnce = vi.fn(() => new Promise<{ reachable: boolean }>(() => {}))  // 永远等不到
+  const sched = row.probe !== 'none' ? lifecycle(probeState(row.probe === 'ok')) : null
   const rt = makeGuardRuntime({
+    lifecycle: () => sched,
     stateDir: '/nonexistent',
     log: () => {},
     config: () => ({ ...defaultGuardConfig(), enabled: true, signal_source: row.signalSource ?? 'auto' }),
@@ -70,23 +72,23 @@ function runtimeFor(row: Row) {
     probeOnce,
     agentConfig: () => null,
     env: {},
-    firstProbeWaitMs: WAIT_MS,
+    firstProbeWaitMs,
   })
-  if (row.probe !== 'none') rt.ref.set(lifecycle(probeState(row.probe === 'ok')))
   return { rt, readBx, probeOnce }
 }
 
 describe('owner table — new calls (protected vs domestic / self-hosted)', () => {
   it.each(ROWS)('$name', async (row) => {
-    const { rt, readBx } = runtimeFor(row)
     // 国内 / 自建:永远放行,而且根本不看信号(不读 bx、不等探测)。
-    const t0 = Date.now()
+    // 「不等」不用墙钟判(负载下 65ms 对 60ms 假红,10-21):首次探测等 10 分钟的运行时里,决定必须在一个 0ms 定时器之前出来 ——
+    // 只走微任务的路径永远赢定时器;真去等探测就输。
+    const quick = runtimeFor(row, 10 * 60_000)
     for (const t of [DOMESTIC, SELF_HOSTED]) {
-      const d = await decideCall(rt.gate, t)
+      const d = await Promise.race([decideCall(quick.rt.gate, t), new Promise<'waited'>(r => setTimeout(r, 0, 'waited'))])
       expect(d).toMatchObject({ allowed: true, protectedCall: false, verdict: null })
     }
-    expect(Date.now() - t0).toBeLessThan(WAIT_MS)
-    expect(readBx).not.toHaveBeenCalled()
+    expect(quick.readBx).not.toHaveBeenCalled()
+    const { rt, readBx } = runtimeFor(row)
 
     // 需要保护的:按表走。
     const t1 = Date.now()
@@ -173,16 +175,18 @@ describe('classification through the daemon gate (endpoint + model resolution)',
 
 describe('health (守护 v2)', () => {
   it('reports per-provider classification; paused only when a protected provider is in use', async () => {
+    const sched = lifecycle({ ...initialState(), source: 'bx', safe: false, reachable: false, detail: BX_OFF.detail, lastChecked: new Date().toISOString() })
+    let inUse = [{ id: 'openai', model: 'deepseek-chat' }, { id: 'cursor', model: 'auto' }] as Array<{ id: string; model: string | null }>
     const r = makeGuardRuntime({
       stateDir: '/nonexistent', log: () => {},
       config: () => ({ ...defaultGuardConfig(), enabled: true }),
       findBx: () => '/fake/bx', readBx: async () => BX_OFF,
       agentConfig: () => ({ openaiBaseUrl: 'https://api.deepseek.com/v1', openaiModel: 'deepseek-chat' }) as never, env: {},
+      lifecycle: () => sched,
+      providersInUse: () => inUse as never,
     })
-    r.ref.set(lifecycle({ ...initialState(), source: 'bx', safe: false, reachable: false, detail: BX_OFF.detail, lastChecked: new Date().toISOString() }))
-    r.setProvidersInUse(() => [{ id: 'openai', model: 'deepseek-chat' }, { id: 'cursor', model: 'auto' }])
     expect(r.health()).toMatchObject({ safe: false, protected_in_use: false, paused: false })
-    r.setProvidersInUse(() => [{ id: 'openai', model: 'deepseek-chat' }, { id: 'claude', model: null }])
+    inUse = [{ id: 'openai', model: 'deepseek-chat' }, { id: 'claude', model: null }]
     const h = r.health()
     expect(h).toMatchObject({ safe: false, protected_in_use: true, paused: true })
     expect(h.providers).toEqual(expect.arrayContaining([

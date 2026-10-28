@@ -4,7 +4,7 @@ import {
   initialMode, afterScanTarget, dashboardHero, accountRows, formatRelativeTime,
   hasUsableProvider, providerReady,
   updateProbeLine, updateApplyLine, restartButtonState, deleteAccountConfirmCopy,
-  UPDATE_REASON_COPY, modeBadge, conversationRows, diagnose, guardLine,
+  UPDATE_REASON_COPY, modeBadge, conversationRows, diagnose, guardLine, guardRowVisible,
 } from './view.js'
 
 // Single source of truth for UpdateReason union — must stay in sync with
@@ -376,12 +376,10 @@ describe('dashboardHero 3-state', () => {
     expect(h.state).toBe('taken_over')
   })
   it('probe verdict taken_over wins even with no expiry recorded yet', () => {
-    // @ts-expect-error JS function infers lastProbe:null; the object is valid at runtime
     const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 0, lastProbe: { state: 'taken_over' } })
     expect(h.state).toBe('taken_over')
   })
   it('probe verdict connected promotes a daemon-down machine', () => {
-    // @ts-expect-error JS function infers lastProbe:null; the object is valid at runtime
     const h = dashboardHero({ daemonAlive: false, accountCount: 1, expiredCount: 0, lastProbe: { state: 'connected' } })
     expect(h.state).toBe('connected')
   })
@@ -1138,8 +1136,8 @@ describe('diagnose — code 9 backend still on the old version', () => {
 })
 
 describe('guardLine (网络守护,2026-10-02)', () => {
-  it('bx protected → 「bx 保护中」 ok', () => {
-    expect(guardLine({ enabled: true, source: 'bx', safe: true, detail: 'bx 保护中' })).toEqual({ state: 'ok', text: 'bx 保护中', detail: 'bx 保护中' })
+  it('bx protected → 「网络已保护」 ok,bx 只留在悬停详情里', () => {
+    expect(guardLine({ enabled: true, source: 'bx', safe: true, detail: 'bx 保护中' })).toEqual({ state: 'ok', text: '网络已保护', detail: 'bx 保护中' })
   })
   it('unsafe (bx or probe) with protected providers in use → 「⚠ 网络未受保护：用到 Claude 等的调用暂停」 down, detail kept', () => {
     expect(guardLine({ enabled: true, source: 'bx', safe: false, detail: 'bx 未保护(protection_state=off)', protected_in_use: true, providers: [{ id: 'openai', protected: false, label: 'DeepSeek' }, { id: 'claude', protected: true, label: 'Claude' }] }))
@@ -1163,5 +1161,15 @@ describe('guardLine (网络守护,2026-10-02)', () => {
   })
   it('probe safe → 探测可达', () => {
     expect(guardLine({ enabled: true, source: 'probe', safe: true, detail: '探测可达' })?.text).toBe('网络守护 · 探测可达')
+  })
+})
+
+describe('guardRowVisible (网络守护开关显不显示,2026-10-18)', () => {
+  it('没装 bx 又没开 ⇒ 不显示;装了 bx 或已开 ⇒ 显示', () => {
+    expect(guardRowVisible({ enabled: false, bx_installed: false })).toBe(false)
+    expect(guardRowVisible({ enabled: false })).toBe(false)
+    expect(guardRowVisible(null)).toBe(false)
+    expect(guardRowVisible({ enabled: false, bx_installed: true })).toBe(true)
+    expect(guardRowVisible({ enabled: true, bx_installed: false })).toBe(true)
   })
 })

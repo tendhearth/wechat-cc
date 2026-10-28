@@ -46,6 +46,8 @@ nothing is eagerly copied across projects.
 
 ## 4 · Multi-agent (`/cc` `/codex` `/both` `/chat`) — Claude × Codex on the same chat
 
+> **2026-10-21:** parallel (`/both`) and chatroom (`/chat`) are no longer started from WeChat — typing them there replies "start multi-model discussion on the desktop". Pick them in the desktop conversation's mode selector; chats already in these modes keep working. WeChat keeps the single-brain modes and `/cc + codex`. The rest of this section describes how the two modes behave once on.
+
 Pick the **conversation mode** per chat with a slash command. Each chat
 remembers its choice across daemon restarts (`conversations.json`).
 
@@ -126,7 +128,7 @@ round. The loop ends when one of them just `@user`s a final answer, or when
 The architecture is **open** — providers are an open string brand registered
 through `ProviderRegistry`, not a Claude+Codex enum. **Cursor** ships as the
 third provider out of the box (env-var-only, see [Cursor setup](#cursor-optional-third-provider)
-below); adding a fourth SDK (Gemini / your own) is a new file in `src/core/`
+below); adding a fourth SDK (Gemini / your own) is a new adapter in `src/adapters/executors/<name>/`
 plus a registry entry. See [`docs/rfc/03-multi-agent-architecture.md`](docs/rfc/03-multi-agent-architecture.md)
 Appendix D.
 

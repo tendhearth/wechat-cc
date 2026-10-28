@@ -551,6 +551,7 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
   steps.push(restart)
   let health: SelfDeployStep | null = null
   let pluginsStep: SelfDeployStep | null = null
+  let pollingStep: SelfDeployStep | null = null
   if (restart.ok) {
     deps.log(`waiting for health check (up to ${plan.healthTimeoutMs}ms)...`)
     const gate = await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, version)
@@ -566,9 +567,14 @@ async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promis
       }
       steps.push(pluginsStep)
     }
+    // 6c. 拉消息 —— 同上,老 daemon 没这一格就不判。没有 --allow 开关:收不到微信的一版不该留着。
+    if (health.ok && gate.polling !== undefined) {
+      pollingStep = judgePolling(gate.polling)
+      steps.push(pollingStep)
+    }
   }
 
-  if (restart.ok && health?.ok && (pluginsStep === null || pluginsStep.ok)) {
+  if (restart.ok && health?.ok && (pluginsStep === null || pluginsStep.ok) && (pollingStep === null || pollingStep.ok)) {
     return { ok: true, exitCode: 0, steps, version }
   }
 
@@ -708,7 +714,12 @@ interface HealthGate {
   step: SelfDeployStep
   /** `GET /v1/health.plugins` once it is an object; undefined when the daemon doesn't report it. */
   plugins?: HealthPlugins
+  /** `GET /v1/health.polling` once it is an object; undefined when the daemon doesn't report it. */
+  polling?: HealthPolling
 }
+
+/** 开机时该拉消息的账号数 / 实际起了循环的数(src/daemon/polling-lifecycle.ts `bootSummary`)。 */
+interface HealthPolling { eligible: number; started: number }
 
 /**
  * Wire shape of `GET /v1/health.plugins` (src/daemon/plugins/health.ts
@@ -743,15 +754,16 @@ async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs
           if (res.ok) {
             let cliVersion: string | undefined
             let head: string | null | undefined
-            let body: { version?: { cli?: string; head?: string | null }; plugins?: HealthPlugins | null } = {}
+            let body: { version?: { cli?: string; head?: string | null }; plugins?: HealthPlugins | null; polling?: HealthPolling | null } = {}
             try {
               body = (await res.json()) as typeof body
               cliVersion = body.version?.cli; head = body.version?.head
             } catch { /* body optional */ }
             // `plugins: null` = the daemon is up but bootstrap hasn't wired the
             // plugin lane yet — not a verdict; keep polling.
-            if (body.plugins === null) {
-              if (deps.now() >= deadline) return { step: { name: 'health', ok: false, detail: 'timed out waiting for bootstrap (health.plugins stayed null)' } }
+            // `polling: null` 同理:开机还没走到拉消息那一步。
+            if (body.plugins === null || body.polling === null) {
+              if (deps.now() >= deadline) return { step: { name: 'health', ok: false, detail: `timed out waiting for bootstrap (health.${body.plugins === null ? 'plugins' : 'polling'} stayed null)` } }
               await deps.sleep(HEALTH_POLL_INTERVAL_MS)
               continue
             }
@@ -769,7 +781,7 @@ async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs
             const shaBad = !!wantSha && wantSha !== 'dev' && !!head && head !== wantSha
             const seen = `${cliVersion ?? '?'}${head ? ` (${head})` : ''}`
             const step = { name: 'health', ok: true, detail: versionBad || shaBad ? `version mismatch: preflight=${expectedVersion} health=${seen}` : seen }
-            return body.plugins ? { step, plugins: body.plugins } : { step }
+            return { step, ...(body.plugins ? { plugins: body.plugins } : {}), ...(body.polling ? { polling: body.polling } : {}) }
           }
         } catch { /* daemon may still be coming up — keep polling */ }
       }
@@ -802,6 +814,11 @@ function ensurePluginsSource(src: { stateDir: string; candidates: string[] }): S
  * explicitly enabled — was not even discovered, or the registered source holds
  * nothing any more.
  */
+function judgePolling(p: HealthPolling): SelfDeployStep {
+  if (p.started < p.eligible) return { name: 'polling', ok: false, detail: `only ${p.started} of ${p.eligible} account poll loop(s) started — this build would not receive WeChat messages` }
+  return { name: 'polling', ok: true, detail: p.eligible === 0 ? 'no account to poll at boot (none bound, or all multi-device standby)' : `${p.started}/${p.eligible} account poll loop(s) started` }
+}
+
 function judgePlugins(p: HealthPlugins): SelfDeployStep {
   const from = p.via ? `via ${p.via}` : 'no bundled plugins dir'
   const problems: string[] = []

@@ -1,0 +1,30 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`daemon shutdown order (snapshot) > stops every subsystem in the recorded order 1`] = `
+[
+  "module reports/stop",
+  "module scheduled-jobs/stop",
+  "module reminders/stop",
+  "module cli-upgrade/stop",
+  "module letters/stop",
+  "module memory-nightly/stop",
+  "module polling/stop",
+  "module workbench-artifacts/stop",
+  "module workbench-notifications/stop",
+  "module ilink/stop",
+  "module sessions/stop",
+  "module provider-probes/stop",
+  "module guard/stop",
+  "module companion.ingest/stop",
+  "module companion.introspect/stop",
+  "module companion.push/stop",
+  "module wired/speech-pending-flush",
+  "module wired/phone",
+  "module wired/matter-activity",
+  "module workbench/stop",
+  "module terminal/cli-permissions",
+  "module terminal/cli-events",
+  "module idle-sweep/tick",
+  "module internal-api/stop",
+]
+`;

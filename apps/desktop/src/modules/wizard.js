@@ -1,3 +1,5 @@
+// @ts-check
+/// <reference lib="dom" />
 // Wizard UI module — environment check rendering, step navigation, and
 // the "进入控制台" gate.
 //
@@ -10,10 +12,14 @@
 // Subscribes to: doctorPoller (renders env list on each successful poll)
 
 import { doctorRows, daemonStatusLine, escapeHtml, hasUsableProvider } from "../view.js"
+import { executorName } from "./executor-names.js"
 import { icon } from "./icons.js"
+
+/** @typedef {import('../view.js').DoctorReportLike} DoctorReportLike */
 
 const STEP_ORDER = ["doctor", "provider", "wechat", "service"]
 
+/** @param {DoctorReportLike} report */
 export function renderDoctorWizard(report) {
   const list = document.getElementById("checks")
   if (list) {
@@ -65,7 +71,8 @@ export function renderDoctorWizard(report) {
 
 const LOGIN_COMMAND = /** @type {Record<string,string>} */ ({ claude: 'claude', codex: 'codex login' })
 /** The same readiness signal drives startup, the headline and the next action.
- * 能用的只有「装了但本机没看到登录」的 claude / codex ⇒ 照样能继续,但标题说还差登录,并给那一条命令(现象 → 原因 → 一个动作)。 */
+ * 能用的只有「装了但本机没看到登录」的 claude / codex ⇒ 照样能继续,但标题说还差登录,并给那一条命令(现象 → 原因 → 一个动作)。
+ * @param {DoctorReportLike} report */
 export function doctorHeadline(report) {
   const ready = hasUsableProvider(report)
   if (!ready) return { ready, title: "还差一步就能见面了", note: "先连接一个可用的 AI，再继续。" }
@@ -76,11 +83,12 @@ export function doctorHeadline(report) {
   const needLogin = ['claude', 'codex'].filter(id => checks[id]?.ok && checks[id]?.loggedIn === false)
   if (!loggedInElsewhere && needLogin.length) {
     const how = needLogin.map(id => `「${LOGIN_COMMAND[id]}」`).join('或')
-    return { ready, needsLogin: needLogin, title: "装好了，还差登录", note: `没看到 ${needLogin.map(id => id === 'claude' ? 'Claude Code' : 'Codex').join(' / ')} 的登录，CC 会回不了话。在终端里运行${how}按提示登录，再点「重新检测」。` }
+    return { ready, needsLogin: needLogin, title: "装好了，还差登录", note: `没看到 ${needLogin.map(executorName).join(' / ')} 的登录，CC 会回不了话。在终端里运行${how}按提示登录，再点「重新检测」。` }
   }
   return { ready, title: "已经能见面了", note: "已检测到可用的 AI，可以继续连接微信。" }
 }
 
+/** @param {DoctorReportLike} report */
 function renderDoctorHeadline(report) {
   const h = doctorHeadline(report)
   const title = document.getElementById("doctor-headline")
@@ -94,6 +102,10 @@ function renderDoctorHeadline(report) {
   if (illus) { illus.classList.toggle("launch-illus-missing", !h.ready); illus.classList.toggle("launch-illus-ready", h.ready) }
 }
 
+/**
+ * @param {string} provider
+ * @param {any} check
+ */
 function renderProviderStatus(provider, check) {
   const card = document.getElementById(`${provider}-status-card`)
   const label = document.getElementById(`${provider}-status-label`)
@@ -102,6 +114,7 @@ function renderProviderStatus(provider, check) {
   if (label) label.textContent = !check.ok ? "未链接" : loggedOut ? "未登录" : "已链接"
 }
 
+/** @param {DoctorReportLike} report */
 function renderWslNotice(report) {
   if (!report.wslDetected) return ""
   // Tip-style: single muted line with click-to-expand details. Avoids
@@ -116,6 +129,7 @@ function renderWslNotice(report) {
   `
 }
 
+/** @param {import('../view.js').DaemonLike} daemon */
 export function updateFooterStatus(daemon) {
   const line = daemonStatusLine(daemon)
   for (const id of ["wizard-foot-dot"]) {
@@ -136,8 +150,9 @@ export function updateFooterStatus(daemon) {
 // 例外(plan 7a M1):引导页的「连接手机」块正在说「CC 会重启一下」时,daemon 掉线
 // 是那次自动重启,十来秒就回来 —— 不挡按钮,也不挂「先点安装并启动」这种误导的提示。
 // 块的状态由 phone-connect.js mountOnboardPhone 写在 #onboard-phone 的 data-phase 上。
+/** @param {DoctorReportLike} report */
 export function refreshEnterDashboardButton(report) {
-  const btn = document.getElementById("enter-dashboard")
+  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById("enter-dashboard"))
   if (!btn) return
   const phone = document.getElementById("onboard-phone")
   const restarting = !!phone && !phone.hidden && phone.dataset.phase === "preparing"
@@ -152,13 +167,17 @@ export function refreshEnterDashboardButton(report) {
 // Imperative step navigator. Caller (main.js) wires the .steps buttons
 // + continue-* buttons to this. Returns the resolved step name so callers
 // can persist it in their own state if needed.
+/**
+ * @param {{ currentStep?: string }} stepState
+ * @param {string} name
+ */
 export function showStep(stepState, name) {
   stepState.currentStep = name
   document.querySelectorAll(".wizard .screen").forEach(el => el.classList.remove("active"))
   document.querySelector(`#screen-${name}`)?.classList.add("active")
   const idx = STEP_ORDER.indexOf(name)
   document.querySelectorAll(".steps .step").forEach((el) => {
-    const stepIdx = STEP_ORDER.indexOf(el.dataset.step)
+    const stepIdx = STEP_ORDER.indexOf(/** @type {string} */ (/** @type {HTMLElement} */ (el).dataset.step))
     el.classList.remove("is-done", "is-active")
     if (stepIdx < idx) el.classList.add("is-done")
     else if (stepIdx === idx) el.classList.add("is-active")
@@ -178,6 +197,7 @@ export const STEP_ORDER_EXPORTED = STEP_ORDER
 //   - link: opens externally — labelled "安装指南 ↗" so 小白 know where it
 //           goes (a lone "↗" looks like decoration).
 // Kept tight — no headings, no expandable detail, no long copy.
+/** @param {{ command?: string, action?: string, link?: string } | null | undefined} fix */
 function renderFixHint(fix) {
   if (!fix) return ""
   const parts = []

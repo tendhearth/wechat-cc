@@ -1,51 +1,28 @@
 /**
- * internal-api social routes — 笔友信道 / 关系 / 心愿. Mirrors routes-a2a.ts's
- * `/v1/a2a/send` shape: 503 when social wiring is absent (social_enabled +
- * social_disclosure_policy not both configured), else delegate straight to it.
- * Split into its own file (rather than appended to routes-a2a.ts) since the
- * social surface is a distinct capability/trust surface from the bare a2a
- * exec/notify/pair routes.
- *
- * 心愿 (spec 2026-09-04-wish-postcard §4) replaced the P4 propose→confirm/
- * cancel seek/seeks/echoes/pledges/*reveal routes with four wish routes:
- * propose gates + stashes a draft WITHOUT sending; send broadcasts the
- * stored redacted wording verbatim to every open channel; cancel voids a
- * draft/open row; the GET list gives the redacted text + effective status
- * (never the raw text or a stale `open` past expiry).
+ * internal-api social routes —— 社交关着也要能用的那几条:关系视图、社交总开关、入站开关。
+ * 串门 / 心愿 / 介绍 / 笔友信箱(路由表标了 `module: 'social'`)归社交模块自己挂(src/features/social/routes.ts,
+ * 架构终态 A5);这里不再碰社交的接线,关系视图只经 `socialView` 那个窄口读信道。
  */
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import type { InternalApiDeps, RouteTable } from './types'
-import type { PostcardRef } from '../../core/wish'
 import { applySocialSwitch } from '../../cli/social-enable'
-import { buildRelationships, type RelationshipInputs } from '../../core/relationships'
-import { NEIGHBORS } from '../../core/neighbors'
+import { buildRelationships, type RelationshipInputs } from '../../app/relationships'
+import { NEIGHBORS } from '../../domain/neighbors'
 import { readNeighborMemory } from '../companion/neighbor-memory'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { makeConversationStore } from '../../core/conversation-store'
+import { makeConversationStore } from '../../adapters/store/conversation-store'
 import { loadAccess } from '../../lib/access'
-import { loadCompanionConfig } from '../companion/config'
-import { resolveEffectiveTier } from '../../core/user-tier'
-import { isIntroClaimLive } from '../../core/intro'
+import { loadCompanionConfig } from '../../lib/companion-config'
+import { resolveEffectiveTier } from '../../domain/user-tier'
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 
 export function socialRoutes(deps: InternalApiDeps): RouteTable {
   return {
-    // 串门(桌面「认识的人」里的按钮)。整趟要跑两三分钟(6-7 次模型调用),
-    // 不等 —— 起跑就回,结果经微信 + 日志(journal)到主人手里。
-    'POST /v1/social/visit': async (_q, body) => {
-      const penpal = deps.social?.penpal
-      if (!penpal?.startVisit) return { status: 503, body: { error: 'social_not_wired' } }
-      const target = ((body ?? {}) as { target?: unknown }).target
-      if (target !== undefined && (typeof target !== 'string' || target === '')) return { status: 400, body: { error: 'bad_target' } }
-      void penpal.startVisit!(target as string | undefined).catch(() => { /* 失败已在 wire-visit 记日志 */ })
-      return { status: 200, body: { ok: true, started: true } }
-    },
-
     // 关系视图(架构重构 §2.2):四种对方,一张表。派生,不落表。
     // trusted:桌面端的凭证是 FILE token(=trusted)。
     'GET /v1/social/relationships': async () => {
-      const penpal = deps.social?.penpal
+      const penpal = deps.socialView
       const channels = penpal ? penpal.channelStore.list() : []
       const visitsByChannel: Record<string, { ids: number; lastAt: string | null; peerReplied: boolean }> = {}
       if (penpal) {
@@ -90,73 +67,6 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
       return { status: 200, body: { relationships } }
     },
 
-    // 心愿(spec 2026-09-04-wish-postcard §4)。propose 只存草稿 —— 发出必须是主人的动作。
-    'POST /v1/social/wish': async (_q, body) => {
-      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
-      const text = ((body ?? {}) as { text?: unknown }).text
-      if (typeof text !== 'string' || text.trim() === '') return { status: 400, body: { error: 'missing_text' } }
-      return { status: 200, body: await deps.social.wish.propose(text.trim()) }
-    },
-    'POST /v1/social/wish/send': async (_q, body) => {
-      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
-      const id = ((body ?? {}) as { id?: unknown }).id
-      if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
-      const r = await deps.social.wish.send(id)
-      return { status: 200, body: r.ok ? { ok: true, sent_to: r.sentTo } : r }
-    },
-    'POST /v1/social/wish/cancel': async (_q, body) => {
-      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
-      const id = ((body ?? {}) as { id?: unknown }).id
-      if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
-      return { status: 200, body: deps.social.wish.cancel(id) }
-    },
-    'GET /v1/social/wishes': async () => {
-      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
-      return {
-        status: 200,
-        body: {
-          wishes: deps.social.wish.list().map(w => {
-            const base = { id: w.id, text: w.redacted, status: w.effective, created_at: w.createdAt, expires_at: w.expiresAt, sent_to: w.sentTo, replies: w.replies }
-            const postcards = w.postcards as Array<PostcardRef & { viaLabel: string }> | undefined
-            // `requested` = 「已在问」这四个字要不要顶掉「想认识 TA」按钮。
-            // 光看 myIntro 在不在不行:claim 和介绍人那条 pending 同一把 7 天
-            // 尺子(isIntroClaimLive),过了就该重新露出按钮,不然一封丢掉的
-            // card 会把这张明信片永远钉死在「已在问」上。
-            return postcards
-              ? { ...base, postcards: postcards.map(p => ({ reply_id: p.replyId, via_label: p.viaLabel, preview: p.preview, at: p.at, requested: isIntroClaimLive(p.myIntro, Date.now()) })) }
-              : base
-          }),
-        },
-      }
-    },
-    // 介绍(spec 2026-09-04-introduction)。handler 形状照上面的 wish/* 三兄弟:
-    // 缺线 → 503;body 里的 reply_id 非空字符串校验 → 400;service 已经把结果
-    // 归一成 {ok:true, replyId} | {ok:false, reason},这里只是转成 snake_case。
-    'POST /v1/social/intro/request': async (_q, body) => {
-      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
-      const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
-      if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
-      const r = await deps.social.intro.request(replyId)
-      return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
-    },
-    'POST /v1/social/intro/accept': async (_q, body) => {
-      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
-      const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
-      if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
-      const r = await deps.social.intro.accept(replyId)
-      return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
-    },
-    'POST /v1/social/intro/decline': async (_q, body) => {
-      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
-      const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
-      if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
-      const r = await deps.social.intro.decline(replyId)
-      return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
-    },
-    'GET /v1/social/intro/offers': async () => {
-      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
-      return { status: 200, body: { offers: deps.social.intro.offers().map(o => ({ reply_id: o.replyId, hint: o.hint, via_label: o.viaLabel, at: o.at })) } }
-    },
     // 觅食台 P2 Task 3 — inbound on/off toggle over a2a_listen, replacing the
     // "hand-edit agent-config.json" instruction. restart_required: true
     // because the A2A server binds a2a_listen at boot (bootstrap/index.ts);
@@ -165,7 +75,7 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
       const l = loadAgentConfig(deps.stateDir).a2a_listen
       return { status: 200, body: l ? { enabled: true, host: l.host, port: l.port } : { enabled: false } }
     },
-    // 社交总开关。**刻意不依赖 deps.social** —— 社交没开时那个字段根本不存在,
+    // 社交总开关。**刻意不依赖社交模块** —— 社交没开时模块根本没起,
     // 而"没开"恰恰是唯一需要这条路由的时候。它只读写 agent-config.json,与
     // `wechat-cc social enable` 共用 applySocialSwitch 那一份逻辑。
     //

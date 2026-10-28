@@ -1121,7 +1121,13 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .toggle.on { background: var(--green); }
 .toggle.on::after { left: 18px; }
 
-/* (plan-h / service-plan / post-stop-alert / force-kill removed in single-page refactor) */
+/* 引导页「后台服务」(2026-10-16):只有外面一层卡;开关行是卡里的普通行,行间一条细线,技术详情收在卡底。 */
+#screen-service .bg-body { gap: 0; }
+#screen-service .bg-actions { padding-bottom: var(--th-space-m); }
+#screen-service .toggle-row { border: 0; border-radius: 0; border-top: 1px solid var(--th-hair); padding: 12px 0; }
+#screen-service .service-plan-toggle { align-self: flex-start; margin-top: 0; padding-top: var(--th-space-s); border-top: 1px solid var(--th-hair); width: 100%; text-align: left; }
+#service-plan { display: none; margin: var(--th-space-s) 0 0; font-family: var(--mono); font-size: 11px; line-height: 1.55; color: var(--th-ink-soft); white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }
+#service-plan.show { display: block; }
 
 /* wizard footer */
 .wz-foot {
@@ -1806,28 +1812,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .dialogue-turn {
   max-width: 980px;
   margin-bottom: 30px;
-  display: grid;
-  grid-template-columns: 23px minmax(0, 1fr);
-  gap: 12px;
 }
-.dialogue-avatar {
-  width: 23px;
-  height: 23px;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border-radius: 50%;
-  font-size: 10px;
-  font-weight: 500;
-}
-.dialogue-avatar img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-}
-.dialogue-avatar-user { border: 1px solid color-mix(in srgb, var(--th-hair) 26%, transparent); background: transparent; }
-.dialogue-avatar-ai { border-radius: 5px; background: color-mix(in srgb, var(--th-rail) 72%, transparent); }
 .dialogue-turn-body { min-width: 0; }
 .dialogue-author {
   margin-bottom: 4px;
@@ -3326,6 +3311,10 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 /* Read-only local-project-memory layer (memory sources fold). */
 .memory-projects { display: flex; flex-direction: column; gap: 10px; }
 .mem-proj-grp { border: 1px solid var(--line, var(--th-hair)); border-radius: 8px; overflow: hidden; }
+/* 收回的话(架构终态 G6):一行一句,划掉的正文 + 段名 / 日期 + 「恢复」 */
+.memory-retraction { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line, var(--th-hair)); }
+.memory-retraction-text { flex: 1; text-decoration: line-through; font-family: var(--cjk); }
+.memory-retractions-note:empty { display: none; }
 .mem-proj-head {
   font-family: var(--cjk);
   display: flex; align-items: baseline; justify-content: space-between;
@@ -3497,6 +3486,19 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   border-radius: 4px;
 }
 .memory-status[hidden] { display: none !important; }
+/* 主人自己的记忆逐行编辑(记忆改了就算数):一行一个输入框,键跟着行走 */
+.memory-line-editor { margin: 18px; }
+.memory-line-editor[hidden] { display: none !important; }
+.memory-line-hint { margin: 0 0 12px; font-size: 24px; color: var(--ink-3); }
+.memory-lines { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.memory-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
+.memory-line-input { width: 100%; box-sizing: border-box; padding: 8px 12px; font-size: 26px; color: var(--ink); background: var(--paper); border: 1px solid var(--hair); border-radius: 6px; outline: none; }
+.memory-line-input:focus { border-color: var(--green-ink); }
+.memory-line-was { grid-column: 1 / -1; font-size: 22px; color: var(--ink-3); }
+.memory-owned-tag { font-size: 22px; padding: 2px 8px; border-radius: 4px; color: var(--green-ink); background: var(--green-soft); white-space: nowrap; }
+.memory-owner-block { margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--hair); border-radius: 6px; }
+.memory-owner-block h3 { margin: 0 0 8px; font-size: 26px; }
+.memory-owner-block ul { margin: 0; padding-left: 1.2em; }
 .memory-status[data-tone="ok"]   { background: var(--green-soft); color: var(--green-ink); }
 .memory-status[data-tone="bad"]  { background: var(--rouge-soft); color: var(--rouge); }
 .memory-status[data-tone="info"] { background: var(--paper-2); color: var(--ink-3); }
@@ -3909,15 +3911,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .wechat-avatar { cursor: default; }
 .wechat-avatar-image { padding: 0; overflow: hidden; }
 .wechat-avatar-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.dialogue-page .dialogue-avatar.wechat-avatar {
-  width: 23px;
-  height: 23px;
-  border-radius: 50%;
-  font-size: 10px;
-}
-.dialogue-page .dialogue-avatar-ai.wechat-avatar {
-  border-radius: 3px;
-}
 
 /* Avatar edit modal — small dialog overlaid on the lightbox layer. */
 .avatar-modal {
@@ -4992,7 +4985,10 @@ b, strong { font-weight: 500; }
 /* 引导页最后一步的「连接手机」码(spec 2026-10-01-tendhearth-pairing-ux §5):无阴影、无图标、只在拿到码时出现 */
 .onboard-phone { display: flex; flex-direction: column; align-items: center; gap: var(--th-space-s); padding: var(--th-space-l) 0; border-top: 1px solid var(--th-hair); }
 .onboard-phone[hidden] { display: none; }
-.onboard-terminal { display: flex; flex-direction: column; gap: var(--th-space-s); padding: var(--th-space-l) 0; border-top: 1px solid var(--th-hair); }
+.onboard-terminal { display: flex; flex-direction: column; align-items: center; gap: var(--th-space-s); padding: var(--th-space-l) 0; border-top: 1px solid var(--th-hair); text-align: center; }
+/* 与上面「连接手机」一样居中(2026-10-16):确认一句、「详细」、按钮都排在中线上。 */
+.onboard-terminal .hooks-buttons { justify-content: center; }
+.onboard-terminal .hooks-detail > summary { margin: 0 auto; }
 .onboard-terminal[hidden] { display: none; }
 .onboard-terminal h3 { margin: 0; font-size: var(--th-size-item); line-height: var(--th-lh-item); font-weight: 500; color: var(--th-ink); }
 .onboard-terminal .onboard-terminal-note { margin: 0; font-size: var(--th-size-small); color: var(--th-ink-soft); }
@@ -5000,3 +4996,16 @@ b, strong { font-weight: 500; }
 .onboard-phone .qr-svg svg { width: 180px; height: 180px; }
 .onboard-phone .qr-note { margin: 0; color: var(--th-ink); }
 .onboard-phone .qr-sub { margin: 0; font-size: var(--th-size-small); color: var(--th-ink-soft); }
+
+/* 执行者头像放在哪儿(图形与半叠的画法在 shared/agent-avatars.css):描边色跟着所在行的底色。 */
+.wb-sidebar .th-agents { --th-agent-ring: var(--wb-sidebar); --th-agent-fill: var(--th-paper); }
+.wb-task:hover .th-agents, .wb-task.is-selected .th-agents { --th-agent-ring: var(--th-ground); }
+.wb-task-meta .th-agents { margin: -3px 0 -3px auto; --th-agent-size: 20px; }
+/* 出生地字形(2026-10-19)跟头像组挨着,一起推到行尾。 */
+.wb-task-marks { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.wb-task-marks .th-agents { margin-left: 0; }
+.wb-task-meta .th-origin { --th-origin-size: 14px; }
+.wb-task-agents { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--wb-muted); font-size: 12px; line-height: 1.5; }
+.wb-task-agents > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-waiting-row.now-terminal-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+.now-terminal-agent { display: inline-flex; }

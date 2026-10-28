@@ -42,6 +42,21 @@ describe('/v1/model — per-provider', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
+  // 10-21:默认执行者是 agy 时,不带 provider 的读写落在 `model` 上 —— agy 根本不读它,读回来却说成功(说假话)。
+  it('default provider agy: POST without provider writes agyModel, and GET reads back exactly what agy will use', async () => {
+    const dir = stateDirWith({ provider: 'agy', agyModel: 'gemini-3.7-flash-high', model: 'claude-opus-4-8' })
+    try {
+      const r = routesWith({ stateDir: dir })
+      expect((await r['GET /v1/model']!(new URLSearchParams(), undefined)).body).toEqual({ provider: 'agy', model: 'gemini-3.7-flash-high' })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'gemini-3.8-pro' })
+      expect(res.body).toMatchObject({ ok: true, provider: 'agy', model: 'gemini-3.8-pro' })
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.agyModel).toBe('gemini-3.8-pro')
+      expect(cfg.model).toBe('claude-opus-4-8')
+      expect((await r['GET /v1/model']!(new URLSearchParams(), undefined)).body).toEqual({ provider: 'agy', model: 'gemini-3.8-pro' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('POST without provider keeps the legacy behavior (global default provider)', async () => {
     const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8' })
     try {
@@ -137,6 +152,21 @@ describe('POST /v1/conversation/set-mode — provider_switch path', () => {
     const r = routesWith({ conversation: { setMode: vi.fn() }, ilink: { sendReply } })
     await r['POST /v1/conversation/set-mode']!(new URLSearchParams(), { chatId: 'c1', mode: { kind: 'solo', provider: 'claude' } })
     expect(sendReply).toHaveBeenCalledTimes(1)
+  })
+  // 3c Policy 第 2 步(稿 §6):切到「问不了就放行」的那几家(codex / agy),回执带一句 notice 让 agent 原话转告;
+  // 控制台那条直接接在后面。claude 这类逐条问的不带。
+  it.each(['codex', 'agy'])('switching to %s carries the "it will not ask you" notice, in the receipt and the console line', async (provider) => {
+    const sendReply = vi.fn(async () => ({}))
+    const r = routesWith({ conversation: { setMode: vi.fn() }, ilink: { sendReply } })
+    const quiet = await r['POST /v1/conversation/set-mode']!(new URLSearchParams(), { chatId: 'c1', mode: { kind: 'solo', provider }, quiet: true })
+    expect(quiet.body).toEqual({ ok: true, notice: '提醒:它不会逐条问你,删东西也不会。' })
+    await r['POST /v1/conversation/set-mode']!(new URLSearchParams(), { chatId: 'c1', mode: { kind: 'solo', provider } })
+    expect((sendReply.mock.calls[0] as unknown[])[1]).toContain('提醒:它不会逐条问你')
+  })
+  it('a per-tool executor gets no notice', async () => {
+    const r = routesWith({ conversation: { setMode: vi.fn() } })
+    const res = await r['POST /v1/conversation/set-mode']!(new URLSearchParams(), { chatId: 'c1', mode: { kind: 'solo', provider: 'claude' }, quiet: true })
+    expect(res.body).toEqual({ ok: true })
   })
   it('surfaces the coordinator\'s unknown-provider rejection as 400', async () => {
     const r = routesWith({ conversation: { setMode: () => { throw new Error('unknown provider: bogus') } } })

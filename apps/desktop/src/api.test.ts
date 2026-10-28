@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe('invokeApi', () => {
   it('sends workbench requests through the host-only workbench proxy', async () => {
-    const invoke = vi.fn(async (command: string) => command === 'workbench_api'
+    const invoke = vi.fn(async (command: string) => command === 'daemon_request'
       ? JSON.stringify({ tasks: [], providers: [], defaultProvider: 'codex', canWechat: false })
       : Promise.reject(new Error(`unexpected IPC command: ${command}`)))
     root.window = { __TAURI__: { core: { invoke } } }
@@ -24,7 +24,7 @@ describe('invokeApi', () => {
     const { invokeWorkbenchApi } = await import('./api.js')
     await expect(invokeWorkbenchApi('GET', '/v1/workbench')).resolves.toMatchObject({ tasks: [] })
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(invoke).toHaveBeenCalledWith('workbench_api', { method: 'GET', path: '/v1/workbench' })
+    expect(invoke).toHaveBeenCalledWith('daemon_request', { method: 'GET', path: '/v1/workbench' })
   })
   it('refreshes daemon discovery after a stale localhost port fails to connect', async () => {
     let credentialCalls = 0
@@ -57,6 +57,26 @@ describe('invokeApi', () => {
     })
   })
 
+  // daemon 拒写配置(3e):409 config_unreadable / config_busy ⇒ 主人看得懂的一句 + 原码留在 .code;别的码照旧是 message
+  it('turns a refused config write into a readable message and keeps the code', async () => {
+    const invoke = vi.fn(async () => ({ ok: true, baseUrl: 'http://127.0.0.1:54091', token: 't' }))
+    root.window = { __TAURI__: { core: { invoke } } }
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'config_unreadable', detail: '/x/agent-config.json: Unexpected token' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'config_busy' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'module_off', module: 'social' }), { status: 503 })) as unknown as typeof fetch
+    vi.resetModules()
+    const { invokeApi } = await import('./api.js')
+    const a = await invokeApi('POST', '/v1/social/enable', { enabled: true }).then(() => { throw new Error('should have thrown') }, (e: unknown) => e as Error & { code?: string })
+    expect(a.message).toBe('配置文件好像坏了,CC 没敢改它(/x/agent-config.json: Unexpected token)')
+    expect(a.code).toBe('config_unreadable')
+    const b = await invokeApi('POST', '/v1/social/enable', { enabled: true }).then(() => { throw new Error('should have thrown') }, (e: unknown) => e as Error & { code?: string })
+    expect(b.message).toContain('再试一次')
+    expect(b.code).toBe('config_busy')
+    const c = await invokeApi('GET', '/v1/social/wishes').then(() => { throw new Error('should have thrown') }, (e: unknown) => e as Error)
+    expect(c.message).toBe('module_off')
+  })
+
   it('never fetches owner-workspace routes from JS — the host holds that credential', async () => {
     // The operator token is admin-tier. Keeping it in Rust is the whole point:
     // a script running in the webview must not be able to lift it and then
@@ -64,7 +84,7 @@ describe('invokeApi', () => {
     // (Was the customer-review route until 2026-09-27; that module is gone,
     // the 待办 routes use the same host command.)
     const invoke = vi.fn(async (command: string) => {
-      if (command === 'customer_review_api') return JSON.stringify({ items: [] })
+      if (command === 'daemon_request') return JSON.stringify({ items: [] })
       throw new Error(`unexpected IPC command: ${command}`)
     })
     root.window = { __TAURI__: { core: { invoke } } }
@@ -76,9 +96,9 @@ describe('invokeApi', () => {
     await expect(invokeApi('GET', '/v1/companion/thoughts')).resolves.toEqual({ items: [] })
 
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(invoke).toHaveBeenCalledWith('customer_review_api', { method: 'GET', path: '/v1/companion/thoughts' })
+    expect(invoke).toHaveBeenCalledWith('daemon_request', { method: 'GET', path: '/v1/companion/thoughts' })
     // and no api-info call at all — no credential was needed in this process
-    expect(invoke.mock.calls.every(c => c[0] === 'customer_review_api')).toBe(true)
+    expect(invoke.mock.calls.every(c => c[0] === 'daemon_request')).toBe(true)
   })
 
   it('does NOT replay a POST after a transport failure', async () => {

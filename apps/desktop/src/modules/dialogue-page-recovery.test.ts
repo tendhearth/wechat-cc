@@ -22,7 +22,7 @@ it('shows a read failure instead of an empty history, then recovers the chat lis
     .mockRejectedValueOnce(new Error('private database disconnected'))
     .mockResolvedValueOnce({ chats: [{ chat_id: 'visual-review', user_name: '我', session_count: 1 }] })
     .mockResolvedValueOnce({ messages: [], hasMore: false })
-  initDialoguePage({ invoke })
+  initDialoguePage({ invoke: vi.fn(), invokeWorkbenchApi: invoke })
   await vi.waitFor(() => expect(stage.innerHTML).toContain('暂时没能打开对话记录'))
   expect(stage.innerHTML).not.toContain('private database')
   expect(stage.innerHTML).not.toContain('还没有对话')
@@ -30,10 +30,10 @@ it('shows a read failure instead of an empty history, then recovers the chat lis
   expect(stage.innerHTML).toContain('暂时没能打开对话记录')
   expect(invoke).toHaveBeenCalledTimes(1)
   await retry!()
-  expect(invoke.mock.calls.map(call => call[1].args)).toEqual([
-    ['sessions', 'list-chats', '--json'],
-    ['sessions', 'list-chats', '--json'],
-    ['dialogue', 'timeline', '--chat-id', 'visual-review', '--limit', '100', '--json'],
+  expect(invoke.mock.calls).toEqual([
+    ['GET', '/v1/sessions/chats'],
+    ['GET', '/v1/sessions/chats'],
+    ['GET', '/v1/dialogue/timeline?chat_id=visual-review&limit=100'],
   ])
   expect(stage.innerHTML).toContain('这个对话还没有消息')
 })

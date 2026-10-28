@@ -40,7 +40,12 @@ export interface SelfChangeDep {
 
 export interface SelfChangeGlueDeps {
   ownerChatId: () => string | null
-  sendMessage: (chatId: string, text: string) => Promise<unknown>
+  /**
+   * CC 开口那道门(第三批 3a),懒取(main.ts 的 Ref;glue 比门早接线)。进展走 `tell`(self_change_progress,report:
+   * 推后 / 没发出去进待说队列,之后补说);拍板卡走 `say`(self_change_ask,blocking),**不进队列** —— 卡上的码会过期,
+   * 晚几个小时补出去主人回了也认不上;没送到条目照样留在登记处,桌面 / 终端仍可拍板。取不到门 ⇒ 不发。
+   */
+  speech: () => Pick<import('./speech/policy').SpeechPolicy, 'tell' | 'say'> | null
   /** 只登记、不发卡(= ilink.registerPendingPermission = pending.register)。 */
   registerPending: (hash: string, timeoutMs: number, meta: PendingPermissionMeta) => Promise<PermissionDecision>
   /** 到点扫一遍待批(= ilink.sweepPendingPermissions);照 askUser 的做法在 timeoutMs+1 排一次。 */
@@ -77,16 +82,10 @@ export function makeSelfChangeGlue(deps: SelfChangeGlueDeps): SelfChangeDep {
       sweep()
       const owner = deps.ownerChatId()
       if (!owner) return { ok: false, error: 'owner_chat_unknown' }
-      try {
-        // sendMessage 回 { msgId, error? }:外发失败时它**不抛**,只把 error 填上
-        // (errcode=-2 主动推送窗口关着就是这样)。两种都得当成没送到,否则自改
-        // 流水线会以为主人已经知道了,一路往下跑。
-        const r = (await deps.sendMessage(owner, text)) as { error?: unknown } | null | undefined
-        if (r && typeof r === 'object' && 'error' in r && r.error) return { ok: false, error: 'send_failed' }
-      } catch {
-        return { ok: false, error: 'send_failed' }
-      }
-      return { ok: true }
+      const speech = deps.speech()
+      if (!speech) return { ok: false, error: 'send_failed' }   // 门还没接上:照「没送到」说,不另造错误码
+      // 没说出去(被推后 / 发失败)⇒ 门的待说队列接住,之后补说;这里照实回 send_failed
+      try { return (await speech.tell('self_change_progress', owner, text)) ? { ok: true } : { ok: false, error: 'send_failed' } } catch { return { ok: false, error: 'send_failed' } }
     },
 
     async ask(prompt, timeoutMs) {
@@ -111,16 +110,17 @@ export function makeSelfChangeGlue(deps: SelfChangeGlueDeps): SelfChangeDep {
 
       // 发卡。措辞与工具权限卡共用 howToReplyLine —— 主人认的就是这一行。
       const card = `${prompt}\n${howToReplyLine(code, hash, timeoutMs)}`
-      let delivered = true
-      try {
-        const r = (await deps.sendMessage(owner, card)) as { error?: unknown } | null | undefined
-        if (r && typeof r === 'object' && 'error' in r && r.error) {
-          delivered = false
-          deps.log?.(`self-change 拍板卡没送到 ${owner}:${String(r.error)} —— 条目留在登记处,桌面 / 终端仍可拍板`)
+      let delivered = false
+      const speech = deps.speech()
+      if (!speech) deps.log?.(`self-change 拍板卡没发:门还没接上 —— 条目留在登记处,桌面 / 终端仍可拍板`)
+      else {
+        try {
+          // 拍板卡经门的 say(blocking:别烦我 / 免打扰都不拦),**不进待说队列**(码会过期)
+          const o = await speech.say({ kind: 'self_change_ask', chatId: owner }, async (turn) => { delivered = !(await turn.sendText(owner, card)).error })
+          if (!delivered) deps.log?.(`self-change 拍板卡没送到 ${owner}:${'allow' in o ? 'send failed' : o.reason} —— 条目留在登记处,桌面 / 终端仍可拍板`)
+        } catch (err) {
+          deps.log?.(`self-change 拍板卡外发抛了 ${owner}:${err instanceof Error ? err.message : String(err)} —— 条目留在登记处,桌面 / 终端仍可拍板`)
         }
-      } catch (err) {
-        delivered = false
-        deps.log?.(`self-change 拍板卡外发抛了 ${owner}:${err instanceof Error ? err.message : String(err)} —— 条目留在登记处,桌面 / 终端仍可拍板`)
       }
       // 注意:这里**不** fail(hash)。卡片没送到 ≠ 没人能拍板。
       return { ok: true, hash, code, delivered }

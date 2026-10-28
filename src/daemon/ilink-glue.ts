@@ -10,21 +10,14 @@
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
-import { howToReplyLine, parsePermissionReply, type PendingPermissionMeta, type PendingPermissionView, type PermissionDecision } from './pending-permissions'
+import { WECHAT_PORTS, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling } from '../ports/wechat'
+import { howToReplyLine, parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
-import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText, type ArtifactTransportOutcome,type WorkbenchMediaItem,type WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
-import type { SessionStateStore } from '../core/session-state'
+import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText } from '../lib/ilink-workbench'
 import { sendReplyOnce, chunk } from '../lib/send-reply'
 import { MAX_TEXT_CHUNK } from '../lib/config'
 import { log } from '../lib/log'
-import {
-  addProject,
-  listProjects,
-  setCurrent,
-  removeProject,
-} from '../lib/project-registry'
 import {
   sharePage as docsShare,
   resurfacePage as docsResurface,
@@ -34,11 +27,14 @@ import { makeIlinkContext, type Account } from './ilink/context'
 import { gateVoice, makeVoice } from './ilink/voice'
 import { makeCompanion } from './ilink/companion'
 import { makeTransport } from './ilink/transport'
-import { makeOutboundHealthTracker, isProactiveWindowClosed, type OutboundHealth } from './ilink/outbound-health'
+import { makeOutboundHealthTracker, isProactiveWindowClosed } from './ilink/outbound-health'
 import type { Db } from '../lib/db'
-import type { ConversationStore } from '../core/conversation-store'
+import type { ConversationStore } from '../ports/conversation-store'
 import { makeMessagesStore } from '../lib/messages-store'
 import { readJsonFile } from '../lib/read-json-file'
+import { isAdmin } from '../lib/access'
+import { EXPIRED_NOTIFY_TEXT, expiredNoticeRecipients } from './ilink/expired-notice'
+import type { SentMedia } from './companion/media-mirror'
 
 /**
  * Monotonic counter to keep same-millisecond outbound IDs unique. Module
@@ -51,102 +47,27 @@ export type { Account } from './ilink/context'
 /** Alias for Account — used in polling-lifecycle public API. */
 export type IlinkAccount = import('./ilink/context').Account
 
-export interface IlinkAdapter {
-  sendMessage(chatId: string, text: string, metadata?: {source:'workbench'}): Promise<{ msgId: string; error?: string }>
-  sendFile(chatId: string, path: string): Promise<void>
-  /** Passive outbound link health (spec 2026-08-22-outbound-health). */
-  outboundHealth(): OutboundHealth
-  /**
-   * 这个 chat 的主动推送窗口从什么时候起是关的(ilink errcode=-2:对方太久没说话);null = 没关。
-   * 下一次发给它成功就清掉。给「CC 现在怎么样」用:主人那一路关了,完成通知和提醒都会丢,而解法只有主人随便回一句。
-   */
-  proactiveClosedSince(chatId: string): string | null
-  editMessage(chatId: string, msgId: string, text: string): Promise<void>
-  broadcast(text: string, accountId?: string): Promise<{ ok: number; failed: number }>
-  sharePage(title: string, content: string, opts?: { needs_approval?: boolean; chat_id?: string; account_id?: string }): Promise<{ url: string; slug: string }>
-  resurfacePage(q: { slug?: string; title_fragment?: string }): Promise<{ url: string; slug: string } | null>
-  setUserName(chatId: string, name: string): Promise<void>
-  resolveUserName(chatId: string): string | undefined
-  /**
-   * Resolve the ilink account bound to a chat (persisted routing, falling
-   * back to the first configured account — mirrors the internal
-   * resolveAccount() used by sendMessage/sendFile). Exposed for the
-   * app-conversation-channel converse route (app-conversation-channel
-   * plan, Stage 0 Task 2), which synthesizes an InboundMsg for the owner
-   * chat and needs a valid accountId to dispatch it through the coordinator.
-   */
-  resolveAccountId(chatId: string): string
-  /** Strict persisted-route lookup for workbench notifications; never falls back. */
-  chatAccountId?(chatId: string): string | null
-  /** Single-attempt task text delivery with explicit server acknowledgement. */
-  sendWorkbenchNotice?(notice: {
-    id: string
-    taskId: string
-    runId: string
-    ownerChatId: string
-    accountId: string
-    text: string
-  }, signal?: AbortSignal): Promise<WorkbenchNoticeOutcome>
-  uploadWorkbenchArtifact?(request:{id:string;ownerChatId:string;accountId:string;bytes:Uint8Array;name:string;mime:string},signal?:AbortSignal):Promise<{status:'uploaded';item:WorkbenchMediaItem}|{status:'retryable'|'blocked';reason:string}>
-  sendWorkbenchArtifact?(receipt:{id:string;taskId:string;artifactId:string;artifactSha256:string;ownerChatId:string;accountId:string;name:string},item:WorkbenchMediaItem,signal?:AbortSignal):Promise<ArtifactTransportOutcome>
-  projects: WechatProjectsDep
-  voice: WechatVoiceDep
-  companion: WechatCompanionDep
-  /**
-   * 发拍板卡到 chatId 并等 y/n。卡片没送到(errcode=-2 等)默认立刻 resolve 'undelivered'(没人能回,别死等);
-   * `keepOnUndelivered` ⇒ 条目留在登记处等到点 —— 调用方另有面(手机 app 推送)能拍板时用。
-   */
-  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { keepOnUndelivered?: boolean }): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
-  loadProjects(): { projects: Record<string, { path: string; last_active: number }>; current: string | null }
-  lastActiveChatId(): string | null
-  markChatActive(chatId: string, accountId?: string): void
-  captureContextToken(chatId: string, ctxToken?: string): void
-  /** Account-routing without the lastActiveRef side effect — see
-   *  TransportMethods.routeChatToAccount's doc comment (guest-path §2). */
-  routeChatToAccount(chatId: string, accountId: string): void
-  sendTyping(chatId: string, accountId?: string): Promise<void>
-  /**
-   * Long-poll wrapper for poll-loop. Detects errcode=-14 session timeout and
-   * flips SessionStateStore + returns { expired: true } so the loop stops.
-   */
-  getUpdatesForLoop(accountId: string, baseUrl: string, token: string, syncBuf: string, signal?: AbortSignal): Promise<{
-    updates?: unknown[]
-    sync_buf?: string
-    expired?: boolean
-    standby?: boolean
-    /** Client-side long-poll timeout — see GetUpdatesResp.timed_out. */
-    timed_out?: boolean
-  }>
-  /**
-   * 微信侧的「y/n <hash>」。`fromChatId` 是发这句话的 chat —— 条目带 meta 时
-   * **只有当初被问的那个 chat** 能拍板(hash 现在经 /v1/companion/pet 对所有
-   * trusted 调用方可见,不校验来源等于谁看到 hash 谁就能替主人批准)。
-   * 老条目(无 meta)保持原行为。
-   */
-  handlePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
-  /** 只读版 handlePermissionReply:同样的判定,不 consume、不发消息。 */
-  probePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
-  /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
-  listPendingPermissions(): PendingPermissionView[]
-  /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
-  resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
-  /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
-  pendingPermissionCodeOf(hash: string): string | null
-  /**
-   * 只登记一条待批,**不发卡**。= pending.register.
-   *
-   * 自改流水线要的就是这个口子:`askUser` 在外发失败时会 `pending.fail(hash)`
-   * 把条目从登记处删掉(对一轮工具调用是对的 —— 没人能回,别死等),可自改的
-   * 拍板还有桌面权限卡和 `self change --approve <id>` 两条路。外发不通时把条目
-   * 留着,主人换个面拍板就行(2026-09-18 真机:errcode=-2 让整条流水线白跑到
-   * approval_timeout)。发卡由调用方自己做。
-   */
-  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta): Promise<PermissionDecision>
-  /** 到点扫一遍待批(把过期的 resolve 成 timeout)。= pending.sweep. */
-  sweepPendingPermissions(): void
-  /** Session state accessor for admin commands (/health, cleanup). */
-  sessionState: SessionStateStore
-  flush(): Promise<void>
+/**
+ * 整个 ilink 适配器 = 十个窄口的并集(src/ports/wechat.ts,架构终态 A6)。只有 ilink 自己(含 ilink/module.ts)和地基
+ * 拿得到这一整个;别的模块经容器 needs 口名(`wechat.send` …)只拿它要的那一口(守卫:scripts/ilink-ports.guard.test.ts)。
+ */
+export interface IlinkAdapter extends WechatSend, WechatAccounts, WechatContacts, WechatPages, WechatPermissions, WechatLinkStatus, WechatWorkbenchTransport, WechatPolling {
+  voice: WechatVoice
+  companion: WechatCompanionControls
+}
+
+/** ilink 模块交给容器的窄口(ilink/module.ts 的 `ilink-adapter` 模块的 `ports`)。语音 / 开关是子对象,其余八口就是 adapter 本身、只收窄类型。 */
+export const ILINK_PORTS = {
+  [WECHAT_PORTS.send]: (a: IlinkAdapter): WechatSend => a,
+  [WECHAT_PORTS.voice]: (a: IlinkAdapter): WechatVoice => a.voice,
+  [WECHAT_PORTS.companion]: (a: IlinkAdapter): WechatCompanionControls => a.companion,
+  [WECHAT_PORTS.accounts]: (a: IlinkAdapter): WechatAccounts => a,
+  [WECHAT_PORTS.contacts]: (a: IlinkAdapter): WechatContacts => a,
+  [WECHAT_PORTS.pages]: (a: IlinkAdapter): WechatPages => a,
+  [WECHAT_PORTS.permissions]: (a: IlinkAdapter): WechatPermissions => a,
+  [WECHAT_PORTS.link]: (a: IlinkAdapter): WechatLinkStatus => a,
+  [WECHAT_PORTS.workbench]: (a: IlinkAdapter): WechatWorkbenchTransport => a,
+  [WECHAT_PORTS.polling]: (a: IlinkAdapter): WechatPolling => a,
 }
 
 export async function loadAllAccounts(stateDir: string): Promise<Account[]> {
@@ -181,38 +102,55 @@ export function makeIlinkAdapter(opts: {
   conversationStore: ConversationStore
   /** 网络闸门(2026-10-02):语音合成 / 识别出门前问一次。 */
   networkGate?: import('../lib/network-gate').NetworkGate
+  /**
+   * CC 开口那道门(第三批 3a),懒取(门比 adapter 晚建)。askUser 的权限卡只用它**记账**(policy.ask,permission_ask):
+   * blocking 一律放行,投递仍是下面那条 fail-fast,行为不变 —— 只是账上多一行「为什么说了」,跟工作台的卡、App 推送同一种口径。
+   */
+  speech?: () => Pick<import('./speech/policy').SpeechPolicy, 'ask'> | null
 }): IlinkAdapter {
   const ctx = makeIlinkContext(opts)
+  const speechOf = opts.speech   // askUser 的形参也叫 opts,先取出来
   const messagesStore = makeMessagesStore(opts.db)
   const { stateDir, accounts, ctxStore, conversationStore, acctStore, sessionState, pending, sweepTimer, projectsFile, resolveAccount, assertChatRoutable } = ctx
 
-  const voice = gateVoice(makeVoice(ctx), opts.networkGate)
+  // 媒体镜像(2026-10-18):发给主人的图 / 表情 / 语音也进 App 对话页。报不出去只记日志,绝不影响发送结果。
+  let mediaSent: ((chatId: string, m: SentMedia | readonly SentMedia[]) => void) | null = null
+  const reportMedia = (chatId: string, m: SentMedia | readonly SentMedia[]) => {
+    if (!mediaSent) return
+    try { mediaSent(chatId, m) } catch (err) { log('MESSAGES', `media mirror threw: ${err instanceof Error ? err.message : err}`) }
+  }
+  const gatedVoice = gateVoice(makeVoice(ctx), opts.networkGate)
+  const voice: WechatVoice = {
+    ...gatedVoice,
+    async replyVoice(chatId, text) {
+      const r = await gatedVoice.replyVoice(chatId, text)
+      // 不存音频:手机点了再按这段字合成(GET /m/api/chat/voice)。
+      if (r.ok) reportMedia(chatId, { kind: 'voice', text })
+      return r
+    },
+  }
   const companion = makeCompanion(ctx)
   const outbound = makeOutboundHealthTracker({ log: (t, l) => log(t, l) })
   const windowClosed = new Map<string, string>()
 
   // PR4 Task 15 — when ilink rejects an account with errcode=-14 ("rebound
-  // elsewhere"), fan out a 3-line user-facing notification to every chat
-  // that ever messaged through this account. The session is dead so the
-  // sends will mostly fail; per-chat failures are logged and swallowed.
-  // Desktop badge + dashboard signal (PR4 Task 16) cover the case where
-  // no chat has messaged since boot.
+  // elsewhere"), tell the owner. The session is dead so the sends will mostly
+  // fail; per-chat failures are logged and swallowed. Desktop badge +
+  // dashboard signal (PR4 Task 16) cover the case where no admin chat has
+  // messaged since boot. 只发给 admin(./ilink/expired-notice.ts):以前访客也会收到。
   //
   // PR5 Task 23: chat lookup migrated from in-memory accountChatIndex to
   // `WHERE account_id = ?` SQL — populated by mw-identity on every inbound.
-  const expiredNotifyText = `⚠️ 这个 WeChat 账号的绑定已被替换 —— 你或其他人在别处重新扫码绑了同一个账号到 wechat-cc / OpenClaw。
-本机的旧 session 已失效，不会再收到新消息。
-要继续在这台机用，到桌面 dashboard 重新扫一次码。`
-
   const transport = makeTransport(ctx, {
     onAccountExpired: (accountId, _reason) => {
-      const chats = conversationStore.chatsForAccount(accountId)
+      const all = conversationStore.chatsForAccount(accountId)
+      const chats = expiredNoticeRecipients(all, isAdmin)
       for (const chatId of chats) {
-        sendReplyOnce(chatId, expiredNotifyText, stateDir).then(r => {
+        sendReplyOnce(chatId, EXPIRED_NOTIFY_TEXT, stateDir).then(r => {
           if (!r.ok) log('EXPIRED_NOTIFY', `chat=${chatId} acct=${accountId} send failed: ${r.error}`)
         }).catch(err => log('EXPIRED_NOTIFY', `chat=${chatId} acct=${accountId} threw: ${err instanceof Error ? err.message : err}`))
       }
-      log('EXPIRED_NOTIFY', `acct=${accountId} fan-out to ${chats.length} chat(s)`)
+      log('EXPIRED_NOTIFY', `acct=${accountId} told ${chats.length} admin chat(s) of ${all.length} on this account`)
     },
   })
 
@@ -273,7 +211,10 @@ export function makeIlinkAdapter(opts: {
     outboundHealth: () => outbound.snapshot(),
     proactiveClosedSince: (chatId) => windowClosed.get(chatId) ?? null,
 
-    async sendFile(chatId, filePath) {
+    onMediaSent(fn) { mediaSent = fn },
+    noteSentMedia: (chatId, m) => reportMedia(chatId, m),
+
+    async sendFile(chatId, filePath, sendOpts) {
       assertSendable(filePath)
       // Fail before the CDN upload — without on-disk routing state, the
       // subsequent ilink/sendmessage will fail anyway with a less helpful
@@ -289,6 +230,7 @@ export function makeIlinkAdapter(opts: {
         item_list: [item],
         context_token: ctxToken,
       })
+      if (sendOpts?.mirror !== false) reportMedia(chatId, { kind: 'file', path: filePath })
     },
 
     // ilink has no true edit API. We send a new message prefixed with
@@ -413,34 +355,6 @@ export function makeIlinkAdapter(opts: {
       return outcome
     },
 
-    projects: {
-      list() {
-        const views = listProjects(projectsFile)
-        return views.map(v => ({
-          alias: v.alias,
-          path: v.path,
-          current: v.is_current,
-        }))
-      },
-      async switchTo(alias) {
-        try {
-          setCurrent(projectsFile, alias)
-          const views = listProjects(projectsFile)
-          const entry = views.find(v => v.alias === alias)
-          if (!entry) return { ok: false as const, reason: `alias '${alias}' not found after switch` }
-          return { ok: true as const, path: entry.path }
-        } catch (err) {
-          return { ok: false as const, reason: err instanceof Error ? err.message : String(err) }
-        }
-      },
-      async add(alias, path) {
-        addProject(projectsFile, alias, path)
-      },
-      async remove(alias) {
-        removeProject(projectsFile, alias)
-      },
-    },
-
     voice,
     companion,
 
@@ -464,6 +378,8 @@ export function makeIlinkAdapter(opts: {
       // reply can EVER come. Don't dead-wait the full 10-min timeout (which
       // races the turn's own no-activity kill → user gets nothing). Resolve
       // 'undelivered' at once so the turn ends now with an honest reason.
+      // 只记账,不拦:permission_ask 是 blocking,判定表里不会推后 / 丢(整合者定的口径,#536)。
+      try { speechOf?.()?.ask({ kind: 'permission_ask', chatId }, { channel: 'wechat', deliverable: true }) } catch (err) { log('PERMISSION', `speech ledger failed: ${err instanceof Error ? err.message : String(err)}`) }
       adapter.sendMessage(chatId, card).then(
         (res) => {
           const err = (res as { error?: string } | null | undefined)?.error
@@ -481,29 +397,6 @@ export function makeIlinkAdapter(opts: {
         },
       )
       return resultPromise
-    },
-
-    loadProjects() {
-      if (!existsSync(projectsFile)) {
-        return { projects: {}, current: null }
-      }
-      try {
-        const raw = readFileSync(projectsFile, 'utf8')
-        const parsed = JSON.parse(raw) as {
-          projects?: Record<string, { path: string; last_active: string }>
-          current?: string | null
-        }
-        const out: Record<string, { path: string; last_active: number }> = {}
-        for (const [alias, entry] of Object.entries(parsed.projects ?? {})) {
-          out[alias] = {
-            path: entry.path,
-            last_active: new Date(entry.last_active).getTime(),
-          }
-        }
-        return { projects: out, current: parsed.current ?? null }
-      } catch {
-        return { projects: {}, current: null }
-      }
     },
 
     lastActiveChatId: transport.lastActiveChatId,

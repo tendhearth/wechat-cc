@@ -1,4 +1,4 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
 /** Manual, opt-in QA. Uses only owned temporary fixtures; never scans private sessions.
  * If an approval appears, inspect it, then enter {"taskId":"…","id":"…","decision":"allow"|"deny"}.
  * Existing native configuration and strict permissions remain in effect. */
@@ -10,18 +10,18 @@ import {homedir,tmpdir} from 'node:os'
 import {randomBytes} from 'node:crypto'
 import {openDb} from '../src/lib/db'
 import {findCodexBinary} from '../src/lib/find-codex-binary'
-import {createProviderRegistry} from '../src/core/provider-registry'
-import {createWorkbenchCodexProvider} from '../src/core/workbench/codex-app-server'
-import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/core/claude-agent-provider'
-import {workbenchClaudeOptions} from '../src/daemon/bootstrap/wire-workbench'
+import {createProviderRegistry} from '../src/app/provider-registry'
+import {createWorkbenchCodexProvider} from '../src/adapters/executors/codex/codex-app-server'
+import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/adapters/executors/claude/claude-agent-provider'
+import {workbenchClaudeOptions} from '../src/features/workbench/wire'
 import {workbenchClaudeAuthEnv} from './workbench-claude-config'
-import {makeWorkbenchStore} from '../src/core/workbench/store'
-import {saveArtifactSnapshot} from '../src/core/workbench/artifacts'
-import {makeWorkbenchService} from '../src/core/workbench/service'
-import {TIER_PROFILES} from '../src/core/user-tier'
-import {createClaudeHistoryReader} from '../src/core/workbench/native-claude-history'
-import {createCodexHistoryReader} from '../src/core/workbench/native-codex-history'
-import {encodeNativeHistoryKey} from '../src/core/workbench/native-history'
+import {makeWorkbenchStore} from '../src/adapters/store/workbench/store'
+import {saveArtifactSnapshot} from '../src/adapters/workbench/artifacts'
+import {makeWorkbenchService} from '../src/features/workbench/service'
+import {TIER_PROFILES} from '../src/domain/user-tier'
+import {createClaudeHistoryReader} from '../src/adapters/executors/claude/native-claude-history'
+import {createCodexHistoryReader} from '../src/adapters/executors/codex/native-codex-history'
+import {encodeNativeHistoryKey} from '../src/adapters/workbench/native-history'
 import {readJsonFile} from '../src/lib/read-json-file'
 if(!process.argv.includes('--run')){console.log('Manual model test. Creates disposable native sessions and a project; uses configured model access. Run with --run.');process.exit(0)}
 const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-workbench-native-smoke-'))),cwd=join(root,'project');mkdirSync(cwd)
@@ -30,7 +30,7 @@ git('init','-q');git('config','user.name','Owned QA');git('config','user.email',
 writeFileSync(join(cwd,'math.mjs'),'export const sum = values => values.reduce((a, b) => a + b, 0);\n');writeFileSync(join(cwd,'notes.txt'),'user base\n');git('add','.');git('commit','-qm','Owned base');writeFileSync(join(cwd,'notes.txt'),'user unfinished notes\n')
 const binary=findCodexBinary(),claude=Bun.which('claude')??join(homedir(),'.local','bin','claude'),registry=createProviderRegistry()
 registry.register('codex',createWorkbenchCodexProvider({codexPathOverride:binary!}),{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Codex',canResume:()=>true})
-registry.register('claude',createClaudeAgentProvider({sdkOptionsForProject(_a,path,_t,_c,_e,instructions,context){const settingsPath=join(homedir(),'.claude','settings.json'),settings=existsSync(settingsPath)?readJsonFile(settingsPath):{};return workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claude,env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)},maxTurns:12},instructions??'',makeWorkbenchClaudeCanUseTool(context?.requestPermission))}}),{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude',canResume:()=>true})
+registry.register('claude',createClaudeAgentProvider({sdkOptionsForProject(_a,path,_t,_c,_e,instructions,context){const settingsPath=join(homedir(),'.claude','settings.json'),settings=existsSync(settingsPath)?readJsonFile(settingsPath):{};return workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claude,env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)},maxTurns:12},instructions??'',makeWorkbenchClaudeCanUseTool(context?.requestPermission,undefined,[],[]))}}),{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude',canResume:()=>true})
 const db=openDb({path:join(root,'cc.db')}),store=makeWorkbenchStore(db),service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,timeoutMs:120000,permissionTimeoutMs:180000})
 const approved=new Set<string>(),seen=new Set<string>();const input=createInterface({input:process.stdin});input.on('line',line=>{try{const value=JSON.parse(line);if(typeof value.taskId==='string'&&typeof value.id==='string'&&['allow','deny'].includes(value.decision)){service.resolvePermission(value.taskId,value.id,value.decision);approved.add(value.id)}}catch{console.log('Invalid approval input')}})
 async function finished(id:string){

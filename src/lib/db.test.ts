@@ -1,11 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { openSqlite } from './runtime/sqlite'
-import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
+import { migrations, openTestDb, openDb, openWechatDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import type { Db } from './db'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from './test-temp'
+
+/**
+ * 一个真正走到第 n 版的库(第三批 3e 迁移第 3 步):用前 n 个真迁移建出来,再把 user_version 记成 n。
+ * 以前这几条测试手写一个「声称自己在 v9 / v26」的假库,表和真 v9 / v26 不一样 —— 迁移体里那批「表在不在」的守卫就是为
+ * 这些假库加的。改从真迁移起步以后,测的就是用户真正走的那条升级路。
+ */
+function migratedTo(n: number): Db {
+  const db = openSqlite(':memory:') as unknown as Db
+  db.exec('PRAGMA foreign_keys = ON;')
+  for (const m of migrations.slice(0, n)) m(db)
+  db.exec(`PRAGMA user_version = ${n};`)
+  return db
+}
 
 describe('withLockRetry', () => {
   const noop = () => {}
@@ -124,23 +137,13 @@ describe('renameMigrated', () => {
 
 describe('migration v10 — sessions.chat_id', () => {
   it('adds chat_id column with _legacy default for pre-existing rows', () => {
-    const db = openSqlite(':memory:')
+    const db = migratedTo(9)
     db.exec(`
-      PRAGMA user_version = 9;
-      CREATE TABLE sessions (
-        alias TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        last_used_at TEXT NOT NULL,
-        summary TEXT,
-        summary_updated_at TEXT,
-        PRIMARY KEY (alias, provider)
-      ) STRICT;
       INSERT INTO sessions(alias, provider, session_id, last_used_at)
         VALUES ('_default', 'claude', 'sess1', '${new Date().toISOString()}');
     `)
 
-    runMigrations(db)
+    runMigrations(db, migrations)
 
     const cols = db.query("PRAGMA table_info('sessions')").all() as Array<{ name: string }>
     expect(cols.map(c => c.name)).toContain('chat_id')
@@ -153,20 +156,14 @@ describe('migration v10 — sessions.chat_id', () => {
   })
 
   it('legacy rows older than 1 day are cleaned up', () => {
-    const db = openSqlite(':memory:')
+    const db = migratedTo(9)
     const oldTs = new Date(Date.now() - 2 * 86_400_000).toISOString()
     db.exec(`
-      PRAGMA user_version = 9;
-      CREATE TABLE sessions (
-        alias TEXT NOT NULL, provider TEXT NOT NULL, session_id TEXT NOT NULL,
-        last_used_at TEXT NOT NULL, summary TEXT, summary_updated_at TEXT,
-        PRIMARY KEY (alias, provider)
-      ) STRICT;
       INSERT INTO sessions(alias, provider, session_id, last_used_at) VALUES
         ('_default', 'claude', 'old_sess', '${oldTs}'),
         ('_default', 'codex',  'fresh',    '${new Date().toISOString()}');
     `)
-    runMigrations(db)
+    runMigrations(db, migrations)
     const remaining = db.query<{ session_id: string }, []>('SELECT session_id FROM sessions').all()
     expect(remaining.map(r => r.session_id)).toContain('fresh')
     expect(remaining.map(r => r.session_id)).not.toContain('old_sess')
@@ -200,41 +197,16 @@ describe('migration v12 — a2a_events table', () => {
 
 describe('migration v27/v28 — customer review completed elsewhere and analysis coverage', () => {
   it('upgrades v26 review feedback without losing items or evidence', () => {
-    const db = openSqlite(':memory:')
+    const db = migratedTo(26)
     db.exec(`
-      PRAGMA foreign_keys = ON;
-      PRAGMA user_version = 26;
-      CREATE TABLE customer_reviews (id TEXT PRIMARY KEY NOT NULL) STRICT;
-      CREATE TABLE customer_review_items (
-        review_id TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
-        source_key TEXT NOT NULL, commitment TEXT NOT NULL,
-        ai_status TEXT NOT NULL CHECK (ai_status IN ('open','completed')),
-        due_date TEXT, confidence TEXT NOT NULL CHECK (confidence IN ('medium','high')),
-        review_status TEXT NOT NULL DEFAULT 'unreviewed'
-          CHECK (review_status IN ('unreviewed','confirmed','corrected','rejected','ignored')),
-        corrected_text TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        PRIMARY KEY (review_id, source_key)
-      ) STRICT;
-      CREATE TABLE customer_review_evidence (
-        review_id TEXT NOT NULL, source_key TEXT NOT NULL, evidence_key TEXT NOT NULL,
-        role TEXT NOT NULL CHECK (role IN ('commitment','completion','due_date')),
-        message_time TEXT NOT NULL, sender_side TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
-        PRIMARY KEY (review_id, source_key, evidence_key, role),
-        FOREIGN KEY (review_id, source_key)
-          REFERENCES customer_review_items(review_id, source_key) ON DELETE CASCADE
-      ) STRICT;
-      CREATE TABLE customer_review_feedback (
-        contact_id TEXT NOT NULL, source_key TEXT NOT NULL,
-        review_status TEXT NOT NULL CHECK (review_status IN ('confirmed','corrected','rejected','ignored')),
-        corrected_text TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (contact_id, source_key)
-      ) STRICT;
-      INSERT INTO customer_reviews VALUES ('r1');
+      INSERT INTO customer_reviews(id, contact_id, contact_display_name, range_from, range_to, status, provider, created_at, updated_at)
+        VALUES ('r1', 'c1', '客户一', '2026-01-01', '2026-01-31', 'ready', 'claude', '2026-01-01', '2026-01-01');
       INSERT INTO customer_review_items VALUES ('r1','k1','发送报价','open',NULL,'high','confirmed',NULL,'2026-01-01','2026-01-01');
       INSERT INTO customer_review_evidence VALUES ('r1','k1','e1','commitment','2026-01-01','me');
       INSERT INTO customer_review_feedback VALUES ('c1','k1','confirmed',NULL,'2026-01-01');
     `)
 
-    runMigrations(db)
+    runMigrations(db, migrations)
 
     const version = db.query('PRAGMA user_version').get() as { user_version: number }
     expect(version.user_version).toBe(migrations.length)
@@ -292,43 +264,16 @@ describe('migration v13 — events.kind adds memory_deleted + memory_path column
 
 describe('migration v13→v14 upgrade — events data preserved', () => {
   it('preserves pre-v14 rows through the table recreate, memory_path intact', () => {
-    // Build a db that has run migrations 0..12 (user_version=13) so it
-    // has the v13 events schema (with memory_deleted kind + memory_path col)
-    // but has NOT yet run v14. We do this by running all migrations then
-    // rolling back user_version — but since SQLite doesn't support undoing
-    // DDL, the cleanest approach is to construct the v13 schema directly,
-    // matching the shape the v13 migration leaves behind, then run v14.
-    const db = openSqlite(':memory:')
-    // Replicate the exact v13 schema so runMigrations sees user_version=13
-    // and only applies v14.
-    db.exec(`
-      PRAGMA user_version = 13;
-      CREATE TABLE events (
-        id TEXT PRIMARY KEY NOT NULL,
-        chat_id TEXT NOT NULL,
-        ts TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN (
-          'cron_eval_pushed', 'cron_eval_skipped', 'cron_eval_failed',
-          'observation_written', 'milestone',
-          'memory_deleted'
-        )),
-        trigger TEXT NOT NULL,
-        reasoning TEXT NOT NULL,
-        push_text TEXT,
-        observation_id TEXT,
-        milestone_id TEXT,
-        jsonl_session_id TEXT,
-        memory_path TEXT
-      ) STRICT;
-      CREATE INDEX events_chat_ts ON events(chat_id, ts DESC);
-    `)
+    // 用前 13 个真迁移走到 v13(3e 迁移第 3 步:以前这里手写了一个只有 events 表的假 v13 库,说「SQLite 撤不回 DDL」——
+    // 但撤不回不用撤,只跑前 13 个就是真的 v13)。之后只有 v14 起的那些会跑。
+    const db = migratedTo(13)
     // Insert a row using the memory_deleted kind and a non-null memory_path
     db.exec(
       "INSERT INTO events(id, chat_id, ts, kind, trigger, reasoning, memory_path) " +
       "VALUES ('evt_pre14', 'chat1', '2026-06-01T00:00:00.000Z', 'memory_deleted', 'mcp_tool_call', 'user said forget', '/foo/bar.md')"
     )
     // Run remaining migrations (only v14 applies, since user_version=13)
-    runMigrations(db)
+    runMigrations(db, migrations)
     // The row must have survived the CHECK rebuild
     const row = db.query<{ reasoning: string; memory_path: string | null }, []>(
       "SELECT reasoning, memory_path FROM events WHERE id = 'evt_pre14'"
@@ -464,12 +409,12 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
 
   it('runMigrations no longer dies on `no such table: social_relay`', () => {
     const db = branchBuildDb()
-    expect(() => runMigrations(db)).not.toThrow()
+    expect(() => runMigrations(db, migrations)).not.toThrow()
   })
 
   it('restores every missing social/penpal table (though v43 later drops social ones)', () => {
     const db = branchBuildDb()
-    runMigrations(db)
+    runMigrations(db, migrations)
     const present = db
       .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
       .all()
@@ -485,7 +430,7 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
 
   it('keeps the customer-review rows the branch build had already written', () => {
     const db = branchBuildDb()
-    runMigrations(db)
+    runMigrations(db, migrations)
     const row = db
       .query<{ id: string; contact_display_name: string }, []>('SELECT id, contact_display_name FROM customer_reviews')
       .get()
@@ -494,7 +439,7 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
 
   it('leaves the database fully migrated afterwards', () => {
     const db = branchBuildDb()
-    runMigrations(db)
+    runMigrations(db, migrations)
     const fresh = (openTestDb().query('PRAGMA user_version').get() as { user_version: number }).user_version
     const healed = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     expect(healed).toBe(fresh)
@@ -513,7 +458,7 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     for (let i = 0; i < 21; i++) migrations[i]!(db)
     db.exec('PRAGMA user_version = 21;')
 
-    expect(() => runMigrations(db)).not.toThrow()
+    expect(() => runMigrations(db, migrations)).not.toThrow()
 
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     expect(v).toBe(migrations.length)
@@ -527,9 +472,42 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
   it('leaves an already-healthy fully-migrated database alone', () => {
     const db = openTestDb()
     const before = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
-    expect(() => runMigrations(db)).not.toThrow()
+    expect(() => runMigrations(db, migrations)).not.toThrow()
     const after = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     expect(after).toBe(before)
+  })
+})
+
+// 2026-10 变异基线:#79 修复的两道签名(customer_reviews 在、social_echo 不在)各自换成 false 都不红 ——
+// 上面「真 1.3.2 库」那条两道同时不满足,去掉哪一道都还有另一道兜着。这里各造一个只差一道的库。
+describe('issue #79 — 修复的签名两道缺一不可', () => {
+  const version = (db: Db) => (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
+
+  it('没有 customer_reviews(不是那个分支建的库)⇒ 不回退:就算社交表也不在,也照原样往下跑、原样报错', () => {
+    // 真的 v1–v18,user_version 却记成 21:缺社交表,但也没有客户回顾 —— 不是 #79 那批库,修复不认它、不猜。
+    const db = migratedTo(18)
+    db.exec('PRAGMA user_version = 21;')
+    expect(() => runMigrations(db, migrations)).toThrow(/social_relay/)
+    expect(version(db)).toBe(21)
+  })
+
+  it('社交表在(正式发布的 1.3.2 库,又多了客户回顾表)⇒ 不回退,从 v22 正常往下跑', () => {
+    // 回退到 v18 会把 v19–v21 在已有的社交表上重跑一遍;正式发布的库一个字节都不许这样碰。
+    const db = migratedTo(21)
+    migrations[25]!(db) // v26:客户回顾表(CREATE TABLE IF NOT EXISTS,之后 v26 再跑一次是空操作)
+    db.exec('PRAGMA user_version = 21;')
+    expect(() => runMigrations(db, migrations)).not.toThrow()
+    expect(version(db)).toBe(migrations.length)
+  })
+})
+
+describe('openDb — 外键约束是开着的', () => {
+  it('子表指向一条不存在的父行 ⇒ 写入被拒', () => {
+    const db = openTestDb()
+    expect((db.query('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys).toBe(1)
+    expect(() => db.exec(
+      "INSERT INTO workbench_wechat_subscriptions (task_id, owner_chat_id, account_id, enabled, generation, created_at, updated_at) VALUES ('no-such-task', 'c', 'a', 1, 1, 0, 0)",
+    )).toThrow(/FOREIGN KEY/)
   })
 })
 
@@ -539,8 +517,8 @@ describe('migration v41 — reminders back-fills columns the old June schema lac
     // that ran June's feat/reminders (a reminders table without the backoff
     // columns) already has the table, so v29's CREATE TABLE IF NOT EXISTS
     // skips it and the columns never arrive. user_version=29 marks v29 done.
-    const db = openSqlite(':memory:')
-    db.exec('PRAGMA foreign_keys = ON;')
+    // 真的 v1–v28,再加六月 feat/reminders 那张缺退避列的旧表 —— 这才是那批真机上的样子(3e 迁移第 3 步:以前整个库只有这一张表)。
+    const db = migratedTo(28)
     db.exec(`
       CREATE TABLE reminders (
         id         TEXT PRIMARY KEY NOT NULL,
@@ -556,7 +534,7 @@ describe('migration v41 — reminders back-fills columns the old June schema lac
       "INSERT INTO reminders (id, chat_id, due_at, text, created_at) VALUES ('r1','c1','2026-08-20T10:00:00.000Z','hi','2026-08-20T09:00:00.000Z')",
     )
 
-    expect(() => runMigrations(db)).not.toThrow()
+    expect(() => runMigrations(db, migrations)).not.toThrow()
 
     const cols = new Set(
       db.query<{ name: string }, []>('PRAGMA table_info(reminders)').all().map((r) => r.name),
@@ -575,7 +553,7 @@ describe('migration v41 — reminders back-fills columns the old June schema lac
 
   it('is a no-op on a fresh database where v29 already created the columns', () => {
     const db = openTestDb()
-    expect(() => runMigrations(db)).not.toThrow()
+    expect(() => runMigrations(db, migrations)).not.toThrow()
     const cols = new Set(
       db.query<{ name: string }, []>('PRAGMA table_info(reminders)').all().map((r) => r.name),
     )
@@ -588,7 +566,7 @@ describe('migration v42 — heals the Atelier-branch v35 tool_calls collision', 
     const db = openTestDb()
     db.exec('ALTER TABLE turn_records DROP COLUMN tool_calls; PRAGMA user_version = 41;')
 
-    expect(() => runMigrations(db)).not.toThrow()
+    expect(() => runMigrations(db, migrations)).not.toThrow()
 
     const cols = db.query<{ name: string }, []>("PRAGMA table_info('turn_records')").all().map(c => c.name)
     expect(cols).toContain('tool_calls')
@@ -648,9 +626,9 @@ it('upgrades v51 with separate durable control receipts while preserving task hi
     db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original input',3,'run-original')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','delivered',4)
     const tasks=db.query('SELECT * FROM workbench_tasks').all(),events=db.query('SELECT * FROM workbench_events').all(),inputs=db.query('SELECT * FROM workbench_live_inputs').all()
-    runMigrations(db)
+    runMigrations(db, migrations)
     db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
-    runMigrations(db)
+    runMigrations(db, migrations)
     expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})))
     expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events.map(row=>({...row as object,attachments_json:'[]',seq:0})))
     expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs.map(row=>({...row as object,attachments_json:'[]',execution_json:null})))
@@ -666,7 +644,7 @@ it('upgrades v52 with staged attachments and empty refs on existing messages and
     db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('deadbeef','task','/project','claude','completed',1,2)
     db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original',3,'run-original')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','held',4)
-    runMigrations(db);runMigrations(db)
+    runMigrations(db, migrations);runMigrations(db, migrations)
     expect(db.query('SELECT attachments_json FROM workbench_events').get()).toEqual({attachments_json:'[]'})
     expect(db.query('SELECT attachments_json FROM workbench_live_inputs').get()).toEqual({attachments_json:'[]'})
     expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_attachments'").get()).toEqual({name:'workbench_attachments'})
@@ -694,7 +672,7 @@ it('adds request_event_id to a workbench_handoffs table that predates the column
     db.query('INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,quote_json,created_at,source_native_id,target_native_id,packet_json,token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run('h1','srctask1','tgttask1','review','看一下','sha','[]',null,3,null,null,'{}','tok')
     db.exec('PRAGMA user_version=49')
-    runMigrations(db);runMigrations(db)
+    runMigrations(db, migrations);runMigrations(db, migrations)
     const columns=db.query<{name:string},[]>('PRAGMA table_info(workbench_handoffs)').all().map(column=>column.name)
     expect(columns).toContain('request_event_id')
     // 补列不能把既有交接记录洗掉。
@@ -711,7 +689,7 @@ it('upgrades v53 with provider defaults, native import defaults and nullable que
     db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('source','feedbeef','claude','native-original','/project',3,'sha','fingerprint',0,0,'{}','[]')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input','deadbeef','run','queued','held',4)
     const oldTasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
-    runMigrations(db);runMigrations(db)
+    runMigrations(db, migrations);runMigrations(db, migrations)
     const tasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
     expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null}),seq:0,workspace_kind:'project',writer_groups:null})))
     expect(db.query('SELECT execution_json FROM workbench_live_inputs').get()).toEqual({execution_json:null})
@@ -732,7 +710,7 @@ it('upgrades v67 without assigning staged legacy attachments to a new owner',()=
     db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('deadbeef','old','/project','claude','completed',1,2)
     db.query('INSERT INTO workbench_attachments(id,draft_id,task_id,upload_task_id,name,mime,size,sha256,storage_path,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run('old-attachment','old-draft',null,null,'old.txt','text/plain',3,'old-hash','/private/blob',3)
     const prior=db.query('SELECT * FROM workbench_attachments').get()
-    runMigrations(db);runMigrations(db)
+    runMigrations(db, migrations);runMigrations(db, migrations)
     expect(db.query('SELECT * FROM workbench_attachments').get()).toEqual({...prior as object,owner_key:null})
     expect(db.query('SELECT workspace_kind FROM workbench_tasks').get()).toEqual({workspace_kind:'project'})
     expect(db.query('SELECT * FROM workbench_entry_requests').all()).toEqual([])
@@ -763,10 +741,10 @@ it('v63 migrates old task folders into durable projects without changing session
   db.exec('PRAGMA foreign_keys=ON')
   for(const migration of migrations.slice(0,62))migration(db)
   db.exec("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,session_id) VALUES ('aaaaaaaa','first','/old/site','codex','completed',1,2,'native-one'),('bbbbbbbb','second','/old/site','claude','completed',3,4,'native-two'); PRAGMA user_version=62")
-  runMigrations(db)
+  runMigrations(db, migrations)
   expect(db.query('SELECT path FROM workbench_projects').all()).toEqual([{path:'/old/site'}])
   expect(db.query('SELECT session_id FROM workbench_tasks ORDER BY id').all()).toEqual([{session_id:'native-one'},{session_id:'native-two'}])
-  const before=db.query('SELECT * FROM workbench_projects').all();runMigrations(db)
+  const before=db.query('SELECT * FROM workbench_projects').all();runMigrations(db, migrations)
   expect(db.query('SELECT * FROM workbench_projects').all()).toEqual(before)
  }finally{db.close()}
 })
@@ -795,4 +773,197 @@ it('v72 adds the nullable extras column to messages (app reply attachments + nar
     const cols=(db.query("PRAGMA table_info('messages')").all() as {name:string;notnull:number}[])
     expect(cols.find(c=>c.name==='extras')).toMatchObject({notnull:0})
   }finally{db.close()}
+})
+
+it('v79 adds worktree script/port columns, a unique port index and the script approvals table',()=>{
+  const db=openTestDb()
+  try{
+    const cols=(db.query("PRAGMA table_info('workbench_worktrees')").all() as {name:string;notnull:number}[])
+    for(const name of ['script_sha','port','script_groups','setup_at'])expect(cols.find(c=>c.name===name)).toMatchObject({notnull:0})
+    const add=(id:string,port:number|null)=>db.query('INSERT INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at,port) VALUES(?,?,?,?,?,?,?)').run(id,'/p','/p','/r/'+id,'cc/'+id,1,port)
+    add('a',null);add('b',null);add('c',47100)
+    expect(()=>add('d',47100)).toThrow()
+    expect(db.query('SELECT * FROM workbench_script_approvals').all()).toEqual([])
+  }finally{db.close()}
+})
+
+it('v81 creates workbench_rewinds with the applying/done/failed/needs_owner state check and a task index',()=>{
+  const db=openTestDb()
+  try{
+    db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES('t1','t','/p','claude','completed',1,1)").run()
+    const add=(id:string,state:string,point='end')=>db.query("INSERT INTO workbench_rewinds(id,task_id,target_artifact_id,target_point,target_commit,prior_head,backup_ref,backup_commit,discarded_json,state,created_at) VALUES(?,'t1','a',?,'c','h','refs/tendhearth/rewind/t1/1','b','[]',?,1)").run(id,point,state)
+    add('r1','applying');add('r2','done');add('r3','failed');add('r6','needs_owner')
+    expect(()=>db.query("UPDATE workbench_rewinds SET resolution='maybe' WHERE id='r6'").run()).toThrow()
+    db.query("UPDATE workbench_rewinds SET resolution='keep' WHERE id='r6'").run()
+    expect(()=>add('r4','undone')).toThrow()
+    expect(()=>add('r5','done','middle')).toThrow()
+    const cols=(db.query("PRAGMA table_info('workbench_rewinds')").all() as {name:string;notnull:number}[])
+    for(const name of ['notice_sent_at','undone_at','resolution'])expect(cols.find(c=>c.name===name)).toMatchObject({notnull:0})
+    expect((db.query("PRAGMA index_list('workbench_rewinds')").all() as {name:string}[]).map(i=>i.name)).toContain('workbench_rewinds_task')
+    db.query("DELETE FROM workbench_tasks WHERE id='t1'").run()
+    expect(db.query('SELECT * FROM workbench_rewinds').all()).toEqual([])
+  }finally{db.close()}
+})
+
+it('v83 creates review comment + hunk tables with state checks, a task index and task cascade',()=>{
+  const db=openTestDb()
+  try{
+    db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES('t1','t','/p','claude','completed',1,1)").run()
+    const comment=(id:string,state:string)=>db.query("INSERT INTO workbench_review_comments(id,task_id,artifact_id,artifact_sha256,path,hunk_index,hunk_sha256,quote,body,state,created_at,updated_at) VALUES(?,'t1','a','s','f.ts',0,'h','q','b',?,1,1)").run(id,state)
+    comment('c1','draft');comment('c2','sent')
+    expect(()=>comment('c3','resolved')).toThrow()
+    expect(()=>comment('c1','draft')).toThrow()
+    const hunk=(i:number,state:string)=>db.query("INSERT INTO workbench_review_hunks(task_id,artifact_sha256,path,hunk_index,hunk_sha256,state,created_at) VALUES('t1','s','f.ts',?,'h',?,1)").run(i,state)
+    hunk(0,'reverted');hunk(1,'restored')
+    expect(()=>hunk(2,'accepted')).toThrow()
+    expect(()=>hunk(0,'restored')).toThrow()
+    // STRICT:整数列不收文本
+    expect(()=>db.query("INSERT INTO workbench_review_hunks(task_id,artifact_sha256,path,hunk_index,hunk_sha256,state,created_at) VALUES('t1','s','f.ts','x','h','reverted',1)").run()).toThrow()
+    const cols=(db.query("PRAGMA table_info('workbench_review_comments')").all() as {name:string;notnull:number}[])
+    for(const name of ['row_start','row_end','side','line_start','line_end','sent_request_id','sent_at','resolved_at'])expect(cols.find(c=>c.name===name)).toMatchObject({notnull:0})
+    expect((db.query("PRAGMA index_list('workbench_review_comments')").all() as {name:string}[]).map(i=>i.name)).toContain('workbench_review_comments_task')
+    expect(()=>db.query("INSERT INTO workbench_review_hunks(task_id,artifact_sha256,path,hunk_index,hunk_sha256,state,created_at) VALUES('nope','s','f.ts',0,'h','reverted',1)").run()).toThrow()
+    db.query("DELETE FROM workbench_tasks WHERE id='t1'").run()
+    expect(db.query('SELECT * FROM workbench_review_comments').all()).toEqual([])
+    expect(db.query('SELECT * FROM workbench_review_hunks').all()).toEqual([])
+  }finally{db.close()}
+})
+
+it('v84 creates speech_log (CC 主动开口的外发账) with origin / outcome checks, a chat index, STRICT, and no text column',()=>{
+  const db=openTestDb()
+  try{
+    const ins=(origin:string,outcome:string)=>db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel) VALUES(1,'companion',?,'c',?,NULL,NULL)").run(origin,outcome)
+    for(const o of ['blocking','requested','report','initiative'])ins(o,'allowed')
+    for(const o of ['deferred','dropped','failed'])ins('initiative',o)
+    expect(()=>ins('urgent','allowed')).toThrow()
+    expect(()=>ins('initiative','sent')).toThrow()
+    expect(()=>db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome) VALUES('x','k','report','c','allowed')").run()).toThrow()
+    const cols=(db.query("PRAGMA table_info('speech_log')").all() as {name:string}[]).map(c=>c.name)
+    expect(cols).toEqual(['id','at','kind','origin','chat_id','outcome','reason','channel'])
+    expect((db.query("PRAGMA index_list('speech_log')").all() as {name:string}[]).map(i=>i.name)).toContain('speech_log_chat_at')
+  }finally{db.close()}
+})
+
+describe('v85 — permission_decisions 的 surface 放开 chat(重建表)', () => {
+  it('从真 v84 升上来:每一行原样留着、chat 能写进去、索引还在', () => {
+    const db = migratedTo(84)
+    const ins = db.query('INSERT INTO permission_decisions(id,at,surface,provider,project,tool,summary,verdict,by_,rule_id,reason,scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+    const rows = [
+      [7, 1_700_000_000_000, 'terminal', 'claude', '/w/proj', 'Bash', 'git status', 'allow', 'rule', 's1', '看状态不用问', 'sess-1'],
+      [8, 1_700_000_000_500, 'workbench', 'codex', null, 'fileChange', 'src/a.ts', 'allow', 'review', null, '初审:低风险', 'task-9'],
+      [42, 1_700_000_001_000, 'terminal', 'claude', '/w/other', 'Bash', 'rm -rf x', 'deny', 'rule', 'no-rm', '规则拒绝', 'sess-2'],
+    ] as const
+    for (const r of rows) ins.run(...r)
+    expect(() => ins.run(43, 1, 'chat', 'claude', null, 't', 's', 'allow', 'rule', 'r', 'x', 'chat:a')).toThrow()
+    runMigrations(db, migrations)
+    const after = db.query('SELECT id,at,surface,provider,project,tool,summary,verdict,by_,rule_id,reason,scope FROM permission_decisions ORDER BY id').all() as Record<string, unknown>[]
+    expect(after.map(r => Object.values(r))).toEqual(rows.map(r => [...r]))
+    ins.run(43, 1_700_000_002_000, 'chat', 'gemini', null, 'mcp__wechat__memory_delete', 'memory_delete', 'allow', 'rule', 'mem', '删记忆不用问', 'chat:owner')
+    expect(db.query("SELECT COUNT(*) AS n FROM permission_decisions WHERE surface='chat'").get()).toEqual({ n: 1 })
+    expect(() => ins.run(44, 1, 'phone', 'claude', null, 't', 's', 'allow', 'rule', 'r', 'x', 'p')).toThrow()
+    expect(db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='permission_decisions_at' AND tbl_name='permission_decisions'").get()).toEqual({ name: 'permission_decisions_at' })
+    expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'permission_decisions_v85%'").all()).toEqual([])
+  })
+})
+
+describe('v87 — 记忆一个源的三张表(G2)', () => {
+  it('从真 v86 升上来:旧数据不动、三张表建好,约束和外键都在', () => {
+    const db = migratedTo(86)
+    db.query("INSERT INTO openai_chat_sessions(id,chat_id,alias,path,config_hash,revision,messages_json,state,created_at,updated_at) VALUES('s1','c1','ds','/w','h',0,'[]','ready',1,1)").run()
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query('SELECT id, state FROM openai_chat_sessions').all()).toEqual([{ id: 's1', state: 'ready' }])
+    const ins = db.query("INSERT INTO memory_facts(chat_id,key,doc,subject,text,status,source,created_at,updated_at,replaces) VALUES(?,?,?,'owner',?,?,'import',1,1,?)")
+    ins.run('c1', 'c:aa01', 'memory', '年糕是狸花猫', 'retracted', null)
+    ins.run('c1', 'o:k1', 'owner', '年糕是橘猫', 'active', 1)
+    ins.run('c2', 'o:k1', 'owner', '另一个对话可以用同一个 key', 'active', null)
+    expect(() => ins.run('c1', 'o:k1', 'owner', '同一个对话 key 不许重复', 'active', null)).toThrow()
+    expect(() => ins.run('c1', 'm:01', 'notes', 'x', 'active', null)).toThrow()
+    expect(() => ins.run('c1', 'm:02', 'memory', 'x', 'deleted', null)).toThrow()
+    expect(() => ins.run('c1', 'm:03', 'memory', 'x', 'active', 999)).toThrow()
+    expect(db.query("SELECT scope, ord FROM memory_facts WHERE key='c:aa01'").get()).toEqual({ scope: 'chat', ord: 0 })
+    const ev = db.query("INSERT INTO memory_fact_events(fact_id,chat_id,ts,action,actor) VALUES(?,?,1,'added','import')")
+    ev.run(1, 'c1'); ev.run(2, 'c1')
+    expect(() => ev.run(99, 'c1')).toThrow()
+    expect(db.query('SELECT MAX(seq) AS rev FROM memory_fact_events WHERE chat_id = ?').get('c1')).toEqual({ rev: 2 })
+    db.query("INSERT INTO memory_derived(chat_id,kind,body,input_rev,generated_at) VALUES('c1','overview','x',2,1)").run()
+    expect(() => db.query("INSERT INTO memory_derived(chat_id,kind,body,input_rev,generated_at) VALUES('c1','overview','y',3,2)").run()).toThrow()
+    db.close()
+  })
+})
+
+// 2026-10 变异基线第二轮:runner 外围活着的变异(重试之间的等待、建状态目录、只吞 ENOENT、#79 修复只给主库)。
+describe('withLockRetry — 两次重试之间等一下,最后一次失败之后不等', () => {
+  it('锁住 3 次全失败 ⇒ 等 2 次,每次按 delayMs', () => {
+    const waits: number[] = []
+    expect(() => withLockRetry(() => { throw new Error('SQLITE_BUSY: database is busy') }, { attempts: 3, delayMs: 7, sleep: ms => waits.push(ms) }))
+      .toThrow(/busy/)
+    expect(waits).toEqual([7, 7])
+  })
+  it('不传 delayMs ⇒ 每次等 250ms;第二次就成功 ⇒ 只等一次', () => {
+    const waits: number[] = []
+    let calls = 0
+    expect(withLockRetry(() => { if (++calls < 2) throw new Error('database is locked'); return 'ok' }, { sleep: ms => waits.push(ms) })).toBe('ok')
+    expect(waits).toEqual([250])
+  })
+})
+
+describe('openDb — 状态目录', () => {
+  it('父目录不在 ⇒ 逐级建出来,权限 0700(别的用户读不到库)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'db-test-dir-'))
+    try {
+      const dir = join(root, 'a', 'b')
+      const db = openDb({ path: join(dir, 'x.db') })
+      db.close()
+      expect(existsSync(join(dir, 'x.db'))).toBe(true)
+      // Windows 没有 POSIX 权限位,只看建出来了
+      if (process.platform !== 'win32') expect(statSync(dir).mode & 0o777).toBe(0o700)
+    } finally {
+      removeTempDir(root)
+    }
+  })
+  it('openWechatDb ⇒ 库就是 <stateDir>/wechat-cc.db,迁移跑完', () => {
+    const root = mkdtempSync(join(tmpdir(), 'db-test-wechat-'))
+    try {
+      const db = openWechatDb(root)
+      expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(migrations.length)
+      db.close()
+      expect(existsSync(join(root, 'wechat-cc.db'))).toBe(true)
+    } finally {
+      removeTempDir(root)
+    }
+  })
+  it('busy_timeout 是 5 秒(CLI 和 daemon 同时写时不立刻报 locked)', () => {
+    const db = openTestDb()
+    const row = db.query('PRAGMA busy_timeout').get() as Record<string, number>
+    expect(Object.values(row)[0]).toBe(5000)
+  })
+})
+
+describe('renameMigrated — 只吞 ENOENT', () => {
+  it('改名因为别的原因失败(目标是个非空目录)⇒ 往上抛,不当成「已经搬过了」', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rm-'))
+    try {
+      const file = join(dir, 'legacy')
+      mkdirSync(file)
+      mkdirSync(join(`${file}.migrated`, 'occupied'), { recursive: true })
+      expect(() => renameMigrated(file)).toThrow()
+      expect(existsSync(file)).toBe(true)
+    } finally {
+      removeTempDir(dir)
+    }
+  })
+})
+
+describe('runMigrations — #79 修复只认主库那份迁移表', () => {
+  it('知识库自己的迁移表:库长得像 #79(v21、有 customer_reviews、没社交表)也不回退', () => {
+    const db = openTestDb()
+    for (const t of ['social_seek', 'social_echo', 'social_pledge', 'social_relay', 'social_seen_intent']) db.exec(`DROP TABLE IF EXISTS ${t};`)
+    db.exec('PRAGMA user_version = 21;')
+    const ran: number[] = []
+    const list = Array.from({ length: 23 }, (_, i) => () => { ran.push(i + 1) })
+    runMigrations(db, list)
+    expect(ran).toEqual([22, 23]) // 回退到 v18 的话会从 v19 跑起
+    expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(23)
+  })
 })

@@ -4,7 +4,7 @@
  * 不断言任何中文文案(文案是模型的活)。走 InMemoryTransport 起真的
  * McpServer,和 federated-source.test.ts 同一套。
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -104,11 +104,11 @@ describe('registerSocialTools', () => {
 
   it('a 503 from the route becomes a structured error text, never an MCP exception', async () => {
     const { call } = await harness({
-      'POST /v1/social/intro/request': new InternalApiError('503', 503, '/v1/social/intro/request', { error: 'social_not_wired' }),
+      'POST /v1/social/intro/request': new InternalApiError('503', 503, '/v1/social/intro/request', { error: 'module_off', module: 'social' }),
     })
     const r = await call('intro_request', { reply_ref: 'ab' })
     expect(String(r.error)).toContain('503')
-    expect(String(r.error)).toContain('social_not_wired')
+    expect(String(r.error)).toContain('module_off')
   })
 
   it('social_seek is unchanged: proposes via POST /v1/social/wish and adds the hint', async () => {
@@ -129,5 +129,22 @@ describe('registerSocialTools', () => {
     } catch { rejected = true }
     expect(rejected).toBe(true)
     expect(calls).toEqual([])   // 没打到 internal API
+  })
+})
+
+describe('socialIsUp:社交没起就不挂工具(第三批 3b 第 3 步 3-2)', () => {
+  const clientWith = (impl: () => Promise<unknown>) => ({ request: vi.fn(impl) }) as unknown as import('./client').InternalApiClient
+  it('social 是 ok ⇒ 挂;off / degraded ⇒ 不挂', async () => {
+    const { socialIsUp } = await import('./tools-social')
+    for (const [state, up] of [['ok', true], ['off', false], ['degraded', false]] as const) {
+      expect(await socialIsUp(clientWith(async () => ({ subsystems: [{ name: 'knowledge', state: 'off' }, { name: 'social', state }] })))).toBe(up)
+    }
+  })
+  it('**失败就放行**:读不到 / 老 daemon 没有 social 这一项 / 超时 ⇒ 照旧挂(路由那道门仍会照实回)', async () => {
+    const { socialIsUp } = await import('./tools-social')
+    expect(await socialIsUp(clientWith(async () => { throw new Error('ECONNREFUSED') }))).toBe(true)
+    expect(await socialIsUp(clientWith(async () => ({ subsystems: [] })))).toBe(true)
+    expect(await socialIsUp(clientWith(async () => ({})))).toBe(true)
+    expect(await socialIsUp(clientWith(() => new Promise(() => {})), 20)).toBe(true)
   })
 })

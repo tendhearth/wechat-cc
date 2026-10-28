@@ -29,6 +29,28 @@ wechat-cc self deploy --json     # 机器可读
 
 健康门不过 ⇒ 自动回滚(同样 copy+rename 换 inode)+ 再 kickstart + 再等健康;无论回滚成不成,都会打印 `launchctl print` 里的 `last exit reason` / `runs` 和 `launchd.err.log` 尾 40 行。退出码:成功 0,失败(已回滚)1,回滚也失败 3,平台不对 2。
 
+## 一条命令走完:`wechat-cc self ship`(2026-10-23)
+
+整合者合完一批以后用它,不再手敲「构建 → 部署 → 两条自检」四步。顺序就是该检查的顺序,**什么都还没动的时候**先问能不能动:
+
+0. **装的是哪棵树**:工作区有未提交的改动 ⇒ 不装,退 6(没有开关能放行);HEAD 不是 `origin/dev`(先 fetch)⇒ 退 6,真要试一条分支加 `--allow-off-dev`,会照实打出 HEAD 和 origin/dev。不查的话 soak 会把一条功能分支的版本当 dev 报。在整合者自己那棵 detached、站在 origin/dev 上的树里跑。
+1. **负载**:1 分钟负载 / 核数 > 1.0(`--max-load` 改)⇒ 不动,退 3。`--wait-min N` 每分钟再看一次,最多等 N 分钟。满载下自检超时会被当成真红、白白回滚(2026-10-22 主人玩游戏 + Xcode,load 328)。它看的是「机器给不给得出公正的判决」,不是「主人在不在」。
+2. **网络守护**:读不到、或开着但不安全 ⇒ 不动,退 5。自检要调模型,直连会封号;部署完才发现跑不了自检,只能回滚。
+3. **构建 sidecar**(`--skip-build` 跳过)⇒ 红退 4。
+4. **`self deploy`**(上面六步,它自己红了自己回滚)⇒ 红退 1。
+5. **自检**:工作台 + 对话,跟自改同一套,执行者 / 供应商取 agent-config 的 `self_change.selftest_executor` / `selftest_provider`(缺省 claude)。红 ⇒ 回滚到 `.prev`,退 2。
+6. 绿 ⇒ 退 0,提示过几个小时看 `self soak`。
+
+自改流水线的 deploy 步过的是同一道门:机器忙最多等一个小时,还忙就 `machine_busy`;守护不安全就 `network_unprotected`。两种都停在 deploy、不推 `fail_streak`,`--resume` 接着来。
+
+## 部署完稳不稳:`wechat-cc self soak`(2026-10-23)
+
+以前「部署后跑满一整天才合下一步」,大半是空等。现在看信号:从日志里最后一次 self deploy 的重启算起,有没有意外重启、`[MODULES]` 失败 / 降级、`uncaughtException`、开机失败、关机被迫退出;健康接口上子系统、心跳、拉消息是不是都好。够时长(缺省 4 小时)且干净 ⇒ 退 0;有异常 ⇒ 退 1;还不够时长 ⇒ 退 2。只读。
+
+- 改到开机 / 关机顺序的(核心链那几步):`--min-restarts 1`,要求部署后至少优雅重启过一次 —— 没重启过,关机那条路这一版就没走过。手动走一次:`launchctl kickstart -k gui/$(id -u)/<label>`(整合者做,别的执行者不碰真机 daemon)。
+- 日志轮转掉了部署那一行 ⇒ 判红并让你 `--since <ISO>`。
+- 风险大的一步要更久,就 `--min-hours 24`;时长只是其中一条。
+
 ## 签名:换完 inode 顺手用 Developer ID 重签(2026-09-28)
 
 公司的 `Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)` 证书到手之后,`self deploy` 在本机钥匙串里探到它(`security find-identity -v -p codesigning`)就多做两步,否则一切照旧(build-sidecar 打的 ad-hoc):

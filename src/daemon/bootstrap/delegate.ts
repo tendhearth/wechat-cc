@@ -10,17 +10,18 @@
  * Each delegate call spawns a fresh thread; SessionManager isn't involved
  * because these are throwaway one-shot consultations.
  */
-import { withNetworkGate } from '../../core/provider-registry'
-import { DEFAULT_CLAUDE_MODEL, createClaudeAgentProvider } from '../../core/claude-agent-provider'
-import { createCodexAgentProvider } from '../../core/codex-agent-provider'
-import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
-import { createAiSdkChatModel } from '../../core/openai-chat-model'
-import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
-import { collectTurn, type AgentProvider } from '../../core/agent-provider'
+import { withNetworkGate } from '../../app/provider-registry'
+import { DEFAULT_CLAUDE_MODEL, createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
+import { createCodexChatProvider } from '../../adapters/executors/codex/codex-chat-provider'
+import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
+import { createApiModel } from '../../adapters/executors/openai/api-model'
+import { createMcpToolBridge } from '../../adapters/executors/openai/openai-mcp-bridge'
+import { collectTurn, type AgentProvider } from '../../ports/agent-provider'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
-import type { ProviderId } from '../../core/conversation'
+import { executorCredential, executorMissingConfig } from '../../lib/executor-detect'
+import type { ProviderId } from '../../domain/conversation'
 import { loadAgentConfig } from '../../lib/agent-config'
-import { TIER_PROFILES, type TierProfile } from '../../core/user-tier'
+import { TIER_PROFILES, type TierProfile } from '../../domain/user-tier'
 
 export interface DelegateBuildDeps {
   /** State dir — used as the default cwd when caller doesn't pass one. */
@@ -120,19 +121,16 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
 
   // Bug #86 — mirror the openai branch below: only build the codex delegate
   // when bootstrap has already verified a real CLI (deps.codexPathOverride).
-  // createCodexAgentProvider eagerly constructs the SDK (`new Codex()` inside
-  // its factory), which calls the bundled SDK's findCodexPath(); on a
-  // Bun-compiled desktop sidecar (/$bunfs/...) that throws because it can't
-  // resolve @openai/codex from real node_modules. Building this
-  // unconditionally meant a refused-or-absent codex CLI took the whole
-  // daemon down at boot for claude-only users. Without an override, we skip
-  // construction entirely — dispatchDelegate('codex', …) then falls through
-  // to the unknown_peer branch below, same as any other unconfigured peer.
+  // (Historically the SDK factory resolved the bundled binary eagerly and took
+  // a compiled sidecar down at boot; the app-server provider spawns lazily, but
+  // without a verified CLI every delegate turn would just fail.) Without an
+  // override, we skip construction entirely — dispatchDelegate('codex', …) then
+  // falls through to the unknown_peer branch below, same as any other
+  // unconfigured peer.
   const delegateCodex: AgentProvider | null = deps.codexPathOverride
-    ? createCodexAgentProvider({
-        // A Bun-compiled desktop sidecar cannot resolve the SDK's optional
-        // platform package from /$bunfs. Reuse the verified user CLI path passed
-        // by bootstrap, just as the main Codex provider does.
+    ? createCodexChatProvider({
+        // Reuse the verified user CLI path passed by bootstrap, just as the
+        // main Codex provider does.
         codexPathOverride: deps.codexPathOverride,
         ...(process.env.CODEX_MODEL || configuredAgent.model
           ? { model: process.env.CODEX_MODEL ?? configuredAgent.model }
@@ -161,16 +159,17 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   // 外部集成反馈 #3 (2026-08-26):配齐即全会话可 delegate 相当于给所有
   // 会话开了一条通往该端点的路;delegateOpenai:false 可关(默认 true 保持
   // 向后兼容 —— "端点只服务某一个会话"的场景显式关掉)。
-  const openaiKey = process.env.WECHAT_OPENAI_API_KEY
+  const openaiKey = executorCredential('openai', process.env)
   const delegateOpenai: AgentProvider | null =
-    configuredAgent.delegateOpenai !== false && openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel
+    configuredAgent.delegateOpenai !== false && openaiKey && executorMissingConfig('openai', configuredAgent).length === 0 && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel
       ? (() => {
           const baseURL = configuredAgent.openaiBaseUrl
           const defaultModel = configuredAgent.openaiModel
           return createOpenAiAgentProvider({
             endpoint: { baseUrl: baseURL, model: defaultModel },
+            // 和对话侧同一种会话(B2):不设每步输出上限、AI SDK 重试 2 次;不给 sessions ⇒ 内存,不续接(委派每次都是新的)。
             makeChatModel: (model) =>
-              createAiSdkChatModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel }),
+              createApiModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel, maxOutputTokens: null, maxRetries: 2, providerName: 'wechat-openai' }),
             // Empty spec set → bridge with zero MCP tools (bare-bones).
             makeMcpBridge: async () => createMcpToolBridge({}),
           })

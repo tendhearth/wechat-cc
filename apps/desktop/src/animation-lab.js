@@ -1,15 +1,24 @@
+// @ts-check
+/// <reference lib="dom" />
 import { loadAquariumAtlas } from "./aquarium-atlas.js"
 import { CC_GROUND as ccGround, ccBox, ccContains, WATER, waterContains } from "./aquarium-layout.js"
-const canvas = document.getElementById("companion-stage")
-const ctx = canvas.getContext("2d")
-const hint = document.getElementById("stage-hint")
-const bearMessage = document.getElementById("bear-message")
-const crabEscapeOverlay = document.getElementById("crab-escape")
+/** @typedef {{ x: number, y: number, rotation: number }} CrabSpot */
+/** @typedef {{ from: CrabSpot, to: CrabSpot, arc: number }} CrabRoute */
+/** @typedef {{ curiosity: number, speedScale: number, warmup: number, startleRadius: number, burst: number, sizeScale: number }} FishTrait */
+/** @typedef {FishTrait & { x: number, y: number, vx: number, vy: number, size: number, alpha: number, kind: number, phase: number, orbit: number, pointerMix: number, fleeUntil: number }} Fish */
+/** @typedef {{ x: number, y: number, radius: number, speed: number, phase: number, drift: number }} Bubble */
+/** @typedef {{ bearPresent: boolean, bearPose: string, tint: string, sign: string | null, prop: string | null, badge: number, bubble: string | null }} SceneState */
+const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("companion-stage"))
+const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"))
+const hint = /** @type {HTMLElement} */ (document.getElementById("stage-hint"))
+const bearMessage = /** @type {HTMLElement} */ (document.getElementById("bear-message"))
+const crabEscapeOverlay = /** @type {HTMLImageElement} */ (document.getElementById("crab-escape"))
 const calmToggle = document.getElementById("calm-toggle")
 const background = new Image()
 background.src = "./assets/home-cc-aquarium-base.png"
 // Three equally spaced, left-facing fish. Trim transparent padding at load
 // time so swimming sizes describe the fish rather than the atlas cell.
+/** @type {HTMLImageElement[]} */
 const fishSprites = []
 const fishAtlas = new Image()
 fishAtlas.onload = () => {
@@ -17,13 +26,13 @@ fishAtlas.onload = () => {
     const cell = document.createElement("canvas")
     cell.width = Math.floor(fishAtlas.naturalWidth / 3)
     cell.height = fishAtlas.naturalHeight
-    const context = cell.getContext("2d")
+    const context = /** @type {CanvasRenderingContext2D} */ (cell.getContext("2d"))
     context.drawImage(fishAtlas, -index * cell.width, 0)
     const pixels = context.getImageData(0, 0, cell.width, cell.height).data
     let left = cell.width, top = cell.height, right = 0, bottom = 0
     for (let y = 0; y < cell.height; y++) {
       for (let x = 0; x < cell.width; x++) {
-        if (pixels[(y * cell.width + x) * 4 + 3] > 8) {
+        if (/** @type {number} */ (pixels[(y * cell.width + x) * 4 + 3]) > 8) {
           left = Math.min(left, x); right = Math.max(right, x)
           top = Math.min(top, y); bottom = Math.max(bottom, y)
         }
@@ -32,12 +41,13 @@ fishAtlas.onload = () => {
     const crop = document.createElement("canvas")
     crop.width = right - left + 1
     crop.height = bottom - top + 1
-    crop.getContext("2d").drawImage(cell, left, top, crop.width, crop.height, 0, 0, crop.width, crop.height)
+    const cropContext = /** @type {CanvasRenderingContext2D} */ (crop.getContext("2d"))
+    cropContext.drawImage(cell, left, top, crop.width, crop.height, 0, 0, crop.width, crop.height)
     const sprite = new Image()
     sprite.src = crop.toDataURL()
     return sprite
   })
-  fishSprites.push(...[0, 0, 2, 1, 0, 2, 1, 2].map(index => colors[index]))
+  fishSprites.push(...[0, 0, 2, 1, 0, 2, 1, 2].map(index => /** @type {HTMLImageElement} */ (colors[index])))
 }
 fishAtlas.src = "./assets/home-cc-fish-atlas.png"
 const ccCharacter = new Image()
@@ -49,7 +59,7 @@ function prepareSceneCC() {
   if (ccCharacter.naturalWidth !== ccMask.naturalWidth || ccCharacter.naturalHeight !== ccMask.naturalHeight) return
   ccSceneSprite.width = ccCharacter.naturalWidth
   ccSceneSprite.height = ccCharacter.naturalHeight
-  const sceneContext = ccSceneSprite.getContext("2d")
+  const sceneContext = /** @type {CanvasRenderingContext2D} */ (ccSceneSprite.getContext("2d"))
   sceneContext.drawImage(ccCharacter, 0, 0)
   // Homepage-only composition: retain the solid character, remove the desktop
   // glow over the paper and foliage. Frozen files remain unchanged. The mask
@@ -71,14 +81,16 @@ const lotusLeaves = new Image()
 const lotusPetal = new Image()
 const lotusBud = new Image()
 const crabFrames = Array.from({ length: 3 }, () => new Image())
-const crabSprite = crabFrames[0]
+const crabSprite = /** @type {HTMLImageElement} */ (crabFrames[0])
 loadAquariumAtlas("./assets/animation/lotus-watercolor-atlas.png", [lotusLeaves, lotusPetal, lotusBud])
   .catch(error => console.error("Lotus artwork unavailable", error))
 loadAquariumAtlas("./assets/animation/crab-watercolor-atlas.png", crabFrames, true)
   .then(() => { crabEscapeOverlay.src = crabSprite.src })
   .catch(error => console.error("Crab artwork unavailable", error))
 
+/** @type {Fish[]} */
 const fish = []
+/** @type {Bubble[]} */
 const bubbles = []
 const pointer = { x: .66, y: .45, active: false }
 const fishTraits = [
@@ -96,14 +108,18 @@ const fishTraits = [
 // ── 桌宠状态(spec 2026-09-03-companion-presence §3.3)────────────────────
 // 外面(companion-presence.js)算好 SceneState 喂进来;渲染循环只读它。
 // 默认值 = 什么都不知道时的样子:熊在、闲着、正常光、没牌子没道具。
+/** @type {SceneState} */
 const sceneState = { bearPresent: true, bearPose: "idle", tint: "normal", sign: null, prop: null, badge: 0, bubble: null }
-window.__companionScene = {
+const companionWindow = /** @type {any} */ (window)
+companionWindow.__companionScene = {
+  /** @param {Partial<SceneState>} next */
   setState(next) {
     Object.assign(sceneState, next)
     applySceneBubble()
   },
   getState() { return { ...sceneState } },
-  /** 点脚边道具时调;由 companion-presence.js 赋值。 */
+  /** 点脚边道具时调;由 companion-presence.js 赋值。
+   * @type {null | (() => void)} */
   onPropClick: null,
   /** 螃蟹此刻藏在哪(画布比例坐标)。给 e2e 用:场景换图后位置会变,测试不该写死像素。 */
   crabSpot() { return { x: crabHideSpot.x, y: crabHideSpot.y } },
@@ -146,13 +162,15 @@ const crabHideSpots = [
   { x: .414, y: .703, rotation: -.12 }, // left round water plant
 ]
 let crabHideIndex = 0
-let crabHideSpot = crabHideSpots[crabHideIndex]
+let crabHideSpot = /** @type {CrabSpot} */ (crabHideSpots[crabHideIndex])
+/** @type {CrabRoute | null} */
 let crabRoute = null
 let crabMoveStartedAt = -Infinity
 // A crab should react like it has been startled: a quick sideways scuttle,
 // not a slow glide from one plant to the next.
 const crabMoveDuration = 720
 let crabEscapeStartedAt = -Infinity
+/** @type {CrabSpot | null} */
 let crabEscapeFrom = null
 let crabClickStreak = 0
 const crabEscapeThreshold = 3
@@ -180,6 +198,7 @@ const bearRig = {
   messageOriginY: .29,
 }
 
+/** @param {number} x @param {number} y @param {number} [scale] */
 function scaleFromBearGround(x, y, scale = bearRig.baseScale) {
   const offsetX = bearLocalOffsetX()
   const anchorX = bearRig.anchorX + offsetX
@@ -201,7 +220,7 @@ function seedFish() {
   // rather than the repeating default in the aquarium.
   const fishKindPlan = [0, 1, 2, 3, 4, 5, 6]
   for (const kind of fishKindPlan) {
-    const trait = fishTraits[kind]
+    const trait = /** @type {FishTrait} */ (fishTraits[kind])
     fish.push({
       x: .39 + Math.random() * .40,
       y: .44 + Math.random() * .21,
@@ -220,6 +239,7 @@ function seedFish() {
   }
 }
 
+/** @param {Bubble} bubble @param {boolean} [startInWater] */
 function resetBubble(bubble, startInWater = false) {
   bubble.x = .34 + Math.random() * .47
   bubble.y = startInWater ? .43 + Math.random() * .25 : .71 + Math.random() * .08
@@ -232,7 +252,7 @@ function resetBubble(bubble, startInWater = false) {
 function seedBubbles() {
   bubbles.length = 0
   for (let index = 0; index < 15; index += 1) {
-    const bubble = {}
+    const bubble = /** @type {Bubble} */ ({})
     resetBubble(bubble, true)
     bubbles.push(bubble)
   }
@@ -255,17 +275,22 @@ function bearLocalOffsetX() {
   const displayScale = Math.min(devicePixelRatio || 1, 2)
   return 20 * displayScale / canvas.width
 }
+/** @param {number} x @param {number} y */
 function bearContains(x, y) {
   return sceneState.bearPresent && ccContains(x, y, canvas.width, canvas.height)
 }
 
+/** @param {number} x @param {number} y */
 function lotusContains(x, y) { return x > .455 && x < .545 && y > .655 && y < .79 }
+/** @param {number} pixels */
 function canvasXForCssPixels(pixels) {
   return pixels * Math.min(devicePixelRatio || 1, 2) / canvas.width
 }
+/** @param {number} pixels */
 function canvasYForCssPixels(pixels) {
   return pixels * Math.min(devicePixelRatio || 1, 2) / canvas.height
 }
+/** @param {number} value @param {number} min @param {number} max */
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)) }
 
 function canvasCssWidth() {
@@ -298,6 +323,7 @@ function activeFish() {
   return fish.slice(0, count)
 }
 
+/** @param {Fish} f */
 function swimBounds(f) {
   const sprite = fishSprites[f.kind]
   const aspect = sprite?.naturalWidth ? sprite.naturalHeight / sprite.naturalWidth : .42
@@ -313,14 +339,17 @@ function swimBounds(f) {
   }
 }
 
+/** @param {Fish} f */
 function fishTouchRadius(f) {
   return f.size * compactFishScale() * (f.kind === 5 ? 5.45 : 5.1) / 2 + .008
 }
 
+/** @param {number} time @param {Fish[]} school */
 function triggerFishEscape(time, school) {
   if (!pointer.active || !waterContains(pointer.x, pointer.y) || lotusContains(pointer.x, pointer.y)) return
   if (Math.hypot(pointer.x - lastFleePointer.x, pointer.y - lastFleePointer.y) < .05) return
 
+  /** @type {Fish | null} */
   let closest = null
   let closestDistance = Infinity
   for (const f of school) {
@@ -355,6 +384,7 @@ function drawSceneBackground() {
   if (background.complete && background.naturalWidth) ctx.drawImage(background, 0, 0, w, h)
 }
 
+/** @param {HTMLImageElement} image @param {number} pivotX @param {number} pivotY @param {number} width @param {number} [rotation] @param {boolean} [flip] @param {number} [opacity] */
 function drawLotusSprite(image, pivotX, pivotY, width, rotation = 0, flip = false, opacity = 1) {
   if (!image.complete || !image.naturalWidth) return
   const height = width * (image.naturalHeight / image.naturalWidth)
@@ -418,6 +448,7 @@ function drawInteractiveLotus() {
   drawLotusSprite(lotusBud, centerX, baseY + h * .005, budWidth)
 }
 
+/** @param {number} time */
 function automaticLotusClosure(time) {
   const elapsed = time - lotusAutoCycleStartedAt
   if (!Number.isFinite(elapsed) || elapsed < 0) return 0
@@ -430,10 +461,11 @@ function automaticLotusClosure(time) {
   return 0
 }
 
+/** @param {number} time @returns {(CrabSpot & { opacity: number, hiding: boolean, walking?: boolean }) | null} */
 function crabCanvasPose(time) {
   const escapeElapsed = time - crabEscapeStartedAt
   if (Number.isFinite(escapeElapsed) && escapeElapsed >= 0) {
-    const escapeStart = crabHideSpots[0]
+    const escapeStart = /** @type {CrabSpot} */ (crabHideSpots[0])
     if (escapeElapsed < crabEscapeApproachDuration) {
       const progress = smoothstep(0, crabEscapeApproachDuration, escapeElapsed)
       const from = crabEscapeFrom || crabHideSpot
@@ -494,12 +526,14 @@ function crabCanvasPose(time) {
   }
 }
 
+/** @param {number} width @param {number} motionTime */
 function drawCrabWalkingFrame(width, motionTime) {
-  const frame = crabFrames[Math.floor(motionTime / 125) % 3]
+  const frame = /** @type {HTMLImageElement} */ (crabFrames[Math.floor(motionTime / 125) % 3])
   const sprite = frame.complete && frame.naturalWidth ? frame : crabSprite
   ctx.drawImage(sprite, -width / 2, -width / 2, width, width)
 }
 
+/** @param {number} time @param {boolean} behindPlants */
 function drawCrab(time, behindPlants) {
   if (!crabSprite.complete || !crabSprite.naturalWidth) return
   const pose = crabCanvasPose(time)
@@ -518,6 +552,7 @@ function drawCrab(time, behindPlants) {
   ctx.restore()
 }
 
+/** @param {number} time */
 function updateCrabEscapeOverlay(time) {
   const elapsed = time - crabEscapeStartedAt
   const overlayStart = crabEscapeApproachDuration + crabEscapeCanvasDuration
@@ -542,32 +577,34 @@ function updateCrabEscapeOverlay(time) {
     { x: outerRailX, y: outerRailBottom },
     { x: window.innerWidth + size, y: outerRailBottom },
   ]
-  const segments = path.slice(1).map((point, index) => Math.hypot(point.x - path[index].x, point.y - path[index].y))
+  const segments = path.slice(1).map((point, index) => Math.hypot(point.x - /** @type {{ x: number, y: number }} */ (path[index]).x, point.y - /** @type {{ x: number, y: number }} */ (path[index]).y))
   const totalLength = segments.reduce((sum, length) => sum + length, 0) || 1
   let travelled = progress * totalLength
   let segmentIndex = 0
-  while (segmentIndex < segments.length - 1 && travelled > segments[segmentIndex]) {
-    travelled -= segments[segmentIndex]
+  while (segmentIndex < segments.length - 1 && travelled > /** @type {number} */ (segments[segmentIndex])) {
+    travelled -= /** @type {number} */ (segments[segmentIndex])
     segmentIndex += 1
   }
-  const from = path[segmentIndex]
-  const to = path[segmentIndex + 1]
-  const segmentProgress = segments[segmentIndex] ? travelled / segments[segmentIndex] : 1
+  const from = /** @type {{ x: number, y: number }} */ (path[segmentIndex])
+  const to = /** @type {{ x: number, y: number }} */ (path[segmentIndex + 1])
+  const segmentProgress = segments[segmentIndex] ? travelled / /** @type {number} */ (segments[segmentIndex]) : 1
   const x = from.x + (to.x - from.x) * segmentProgress - size / 2
   const y = from.y + (to.y - from.y) * segmentProgress - size / 2 + Math.sin(elapsed * .031) * size * .022
   const rotation = Math.atan2(to.y - from.y, to.x - from.x)
-  const walkFrame = crabFrames[Math.floor(elapsed / 125) % 3]
+  const walkFrame = /** @type {HTMLImageElement} */ (crabFrames[Math.floor(elapsed / 125) % 3])
   if (walkFrame.complete && walkFrame.naturalWidth && crabEscapeOverlay.src !== walkFrame.src) crabEscapeOverlay.src = walkFrame.src
   crabEscapeOverlay.style.width = `${size}px`
   crabEscapeOverlay.style.opacity = String(Math.min(1, progress / .08) * (1 - Math.max(0, progress - .9) / .1))
   crabEscapeOverlay.style.transform = `translate3d(${x}px, ${y}px, 0) rotate(${rotation}rad)`
 }
 
+/** @param {number} x @param {number} y */
 function crabContains(x, y) {
   if (crabRoute || Number.isFinite(crabEscapeStartedAt)) return false
   return Math.hypot(x - crabHideSpot.x, y - crabHideSpot.y) < .068
 }
 
+/** @param {number} time */
 function startCrabHideSearch(time) {
   let nextIndex = Math.floor(Math.random() * crabHideSpots.length)
   if (crabHideSpots.length > 1 && nextIndex === crabHideIndex) {
@@ -575,7 +612,7 @@ function startCrabHideSearch(time) {
   }
   crabRoute = {
     from: crabHideSpot,
-    to: crabHideSpots[nextIndex],
+    to: /** @type {CrabSpot} */ (crabHideSpots[nextIndex]),
     arc: .028 + Math.random() * .030,
   }
   crabHideIndex = nextIndex
@@ -583,6 +620,7 @@ function startCrabHideSearch(time) {
   crabEscapeOverlay.style.opacity = "0"
 }
 
+/** @param {number} time */
 function startCrabEscape(time) {
   crabRoute = null
   crabEscapeFrom = crabHideSpot
@@ -590,6 +628,7 @@ function startCrabEscape(time) {
   crabEscapeOverlay.style.opacity = "0"
 }
 
+/** @param {number} time */
 function startCrabInteraction(time) {
   const canEscape = canvasCssWidth() >= 480
   if (canEscape) {
@@ -606,6 +645,7 @@ function startCrabInteraction(time) {
   return "hide"
 }
 
+/** @param {number} x @param {number} y @param {number} radius @param {number} phase @param {number} [variation] */
 function drawHandDrawnBubbleContour(x, y, radius, phase, variation = 0) {
   const points = 13
   for (let index = 0; index <= points; index += 1) {
@@ -620,6 +660,7 @@ function drawHandDrawnBubbleContour(x, y, radius, phase, variation = 0) {
   }
 }
 
+/** @param {number} time @param {number} dt */
 function drawBubbles(time, dt) {
   const w = canvas.width
   const h = canvas.height
@@ -653,6 +694,7 @@ function drawBubbles(time, dt) {
   }
 }
 
+/** @param {HTMLImageElement} image @param {[number, number, number, number]} box @param {[number, number]} pivot @param {number} rotation @param {number} lift @param {number} [scale] */
 function drawPuppetPart(image, box, pivot, rotation, lift, scale = 1) {
   if (!image.complete || !image.naturalWidth) return
   const w = canvas.width
@@ -671,17 +713,20 @@ function drawPuppetPart(image, box, pivot, rotation, lift, scale = 1) {
   ctx.restore()
 }
 
+/** @param {number} start @param {number} end @param {number} value */
 function smoothstep(start, end, value) {
   const progress = clamp((value - start) / (end - start), 0, 1)
   return progress * progress * (3 - 2 * progress)
 }
 
+/** @param {number} progress */
 function armPlumpWeight(progress) {
   // Keep all visible hand and forearm pixels at their original shape. Only
   // the shoulder root opens more, then tapers gradually toward the hand.
   return .26 * (1 - smoothstep(.06, .58, progress))
 }
 
+/** @param {number} time */
 function drawBearPuppet(time) {
   // Retain the bridge's bearPresent/bearPose keys for compatibility; the visible
   // character is now CC. Greeting gestures are a small grounded nod, never an arm.
@@ -736,11 +781,13 @@ function drawSceneSign() {
 
 /** 道具区(归一化坐标),点击命中用。 */
 const propBox = { x: .30, y: .80, w: .07, h: .10 }
+/** @param {number} x @param {number} y */
 function propContains(x, y) {
   return !!sceneState.prop && x > propBox.x && x < propBox.x + propBox.w && y > propBox.y && y < propBox.y + propBox.h
 }
 
 /** 熊脚边的道具:包袱 / 明信片 / 信,带未看数字。emoji 直接画,不加素材。 */
+/** @param {number} time */
 function drawSceneProp(time) {
   if (!sceneState.prop) return
   const w = canvas.width, h = canvas.height
@@ -773,6 +820,7 @@ function drawSceneTint() {
   ctx.restore()
 }
 
+/** @param {Fish} f @param {number} time */
 function drawFish(f, time) {
   const fishSprite = fishSprites[f.kind]
   if (!fishSprite?.complete || !fishSprite.naturalWidth) return
@@ -792,6 +840,7 @@ function drawFish(f, time) {
   ctx.restore()
 }
 
+/** @param {Fish} f @param {number} dt @param {number} time @param {Fish[]} school */
 function update(f, dt, time, school) {
   const factor = calm ? .48 : 1
   f.phase += dt * .002
@@ -839,6 +888,7 @@ function update(f, dt, time, school) {
   if (f.y < bounds.top || f.y > bounds.bottom) { f.vy *= -1; f.y = clamp(f.y, bounds.top, bounds.bottom) }
 }
 
+/** @param {number} time @param {number} x @param {number} y */
 function scatterFish(time, x, y) {
   for (const f of activeFish()) {
     let dx = f.x - x
@@ -857,6 +907,7 @@ function scatterFish(time, x, y) {
   lastFleePointer = { x, y }
 }
 
+/** @param {number} time */
 function drawPointerSignal(time) {
   if (!pointer.active || !waterContains(pointer.x, pointer.y) || lotusContains(pointer.x, pointer.y)) return
   const w = canvas.width
@@ -871,6 +922,7 @@ function drawPointerSignal(time) {
   ctx.restore()
 }
 
+/** @param {number} time */
 function frame(time) {
   const dt = Math.min(32, time - lastTime); lastTime = time
   // When nobody is visiting the bear, let it make a small periodic greeting.
@@ -910,11 +962,13 @@ function frame(time) {
   requestAnimationFrame(frame)
 }
 
+/** @param {MouseEvent} event */
 function positionFromEvent(event) {
   const rect = canvas.getBoundingClientRect()
   return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }
 }
 
+/** @param {number} x @param {number} y */
 function positionHint(x, y) {
   // Keep the label near the pointer but flip its side before it can overlap
   // the aquarium edge or the waterline.
@@ -944,7 +998,7 @@ function startBearWave(time = performance.now()) {
 function showNextBearGreeting(time = performance.now()) {
   if (sceneState.bubble) return
   bearGreetingIndex = (bearGreetingIndex + 1) % bearGreetings.length
-  bearMessage.textContent = bearGreetings[bearGreetingIndex]
+  bearMessage.textContent = /** @type {string} */ (bearGreetings[bearGreetingIndex])
   bearMessage.classList.add("is-visible")
   bearMessageUntil = time + bearMessageDuration
 }
@@ -994,7 +1048,7 @@ canvas.addEventListener("pointerleave", () => {
 canvas.addEventListener("click", event => {
   const p = positionFromEvent(event)
   if (propContains(p.x, p.y)) {
-    try { window.__companionScene.onPropClick?.() } catch (err) { console.warn("prop click handler failed", err) }
+    try { companionWindow.__companionScene.onPropClick?.() } catch (err) { console.warn("prop click handler failed", err) }
     return
   }
   const showClickFeedback = shouldShowInteractionHints()

@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerProviders, type ProviderDeps } from './providers'
 import { openTestDb } from '../../lib/db'
-import { makeConversationStore } from '../../core/conversation-store'
+import { makeConversationStore } from '../../adapters/store/conversation-store'
 import type { AgentConfig } from '../../lib/agent-config'
-import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
+import type { McpStdioSpec } from '../../adapters/executors/mcp-stdio-spec'
 import { AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
 
 /**
@@ -117,7 +117,7 @@ describe('registerProviders — agy (fix round 1: test-runner guard)', () => {
       expect(logs.some(([tag, line]) => tag === 'BOOT' && line.includes('internalApi/mintSessionToken unavailable'))).toBe(true)
     })
 
-    it('agyBin opt-in + explicit agyGeminiConfigDir ⇒ registered, displayName = "Gemini (agy)", and the global MCP config is written to THAT dir (never the real home dir)', async () => {
+    it('agyBin opt-in + explicit agyGeminiConfigDir ⇒ registered, named "Gemini" (收敛清单 ⑥), and the global MCP config is written to THAT dir (never the real home dir)', async () => {
       const binDir = mkdtempSync(join(tmpdir(), 'providers-test-bin-'))
       const agyBin = makeFakeAgyBin(binDir)
       const geminiConfigDir = mkdtempSync(join(tmpdir(), 'providers-test-gemini-config-'))
@@ -132,7 +132,7 @@ describe('registerProviders — agy (fix round 1: test-runner guard)', () => {
 
       expect(registry.has('agy')).toBe(true)
       const entry = registry.get('agy')
-      expect(entry?.opts.displayName).toBe('Gemini (agy)')
+      expect(registry.namesOf('agy')).toEqual({ name: 'Gemini', short: 'Gemini', settings: 'Gemini · 账号连接' })
       expect(entry?.opts.canResume('/any/cwd', 'any-thread')).toBe(true)
 
       // mintSessionToken was called with the tier-C fixed shape: ONE
@@ -194,5 +194,22 @@ describe('registerProviders — cursor ACP chat provider on Windows', () => {
       if (prevKey === undefined) delete process.env.CURSOR_API_KEY; else process.env.CURSOR_API_KEY = prevKey
       vi.restoreAllMocks()
     }
+  })
+})
+
+// B2(2026-10-25):OpenAI 兼容一份实现 —— 对话侧登记带着会话存档(有 DB 才续接);工作台不拿微信工具。
+describe('registerProviders — openai (one session type, B2)', () => {
+  const openaiConfig = baseConfig({ openaiBaseUrl: 'https://gateway.example/v1', openaiModel: 'fixture-model' })
+  it('with a db: canResume reads the chat session store; the registration hands the workbench no wechat tools', async () => {
+    vi.stubEnv('WECHAT_OPENAI_API_KEY', 'fixture-key')
+    try {
+      const db = openTestDb()
+      const { registry } = await registerProviders(baseDeps({ configuredAgent: openaiConfig, db, wechatStdioForOpenai: fakeWechatSpec }))
+      const entry = registry.get('openai')!
+      expect(entry.opts.canResume('/p', 'no-such-session')).toBe(false)
+      expect(Object.keys(entry.opts)).not.toContain('workbenchMcpTools')
+      const bare = await registerProviders(baseDeps({ configuredAgent: openaiConfig }))
+      expect(bare.registry.get('openai')!.opts.canResume('/p', 'x')).toBe(false)
+    } finally { vi.unstubAllEnvs() }
   })
 })

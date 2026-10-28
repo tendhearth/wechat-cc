@@ -76,6 +76,7 @@ it('explains execution choice failures without exposing machine codes or changin
  expect(executionErrorMessage('provider_auth_rejected')).toContain('401/403')
  expect(executionErrorMessage('provider_auth_rejected')).not.toMatch(/登录|过期/)
  expect(executionErrorMessage('provider_server_error')).toContain('5xx')
+ expect(executionErrorMessage('provider_failed')).toContain('没说是哪类')
  expect(executionErrorMessage('provider_rate_limited')).toContain('稍后')
  expect(executionErrorMessage('workbench_busy')).toContain('文件夹')
  expect(executionErrorMessage('review_file_unmarkable')).toContain('不能标记')

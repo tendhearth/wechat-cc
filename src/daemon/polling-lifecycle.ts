@@ -1,10 +1,12 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { Lifecycle } from '../lib/lifecycle'
 import { startLongPollLoops, parseUpdates, type RawUpdate } from './poll-loop'
+import type { InboundMsg } from '../domain/prompt-format'
 import { loadAllAccounts, type IlinkAccount } from './ilink-glue'
 import type { PipelineRun } from './inbound/types'
+import { writeFileAtomic } from '../lib/json-file'
 
 export interface PollingDeps {
   stateDir: string
@@ -36,6 +38,11 @@ export interface PollingDeps {
     recordSuccess(dep: 'wechat'): void
     recordFailure(dep: 'wechat', err: unknown): void
   }
+  /**
+   * 试着把这条入站当成对一张待批拍板卡的回答当场消费(daemon/permission-answer.ts),消费了回 true。给了 ⇒ poll loop
+   * 不再整轮内联,回答一到就放开在等它的那一轮;没消费的照普通消息排队(poll-loop.ts 的 fastLane)。
+   */
+  consumePermissionAnswer?: (msg: InboundMsg) => boolean
 }
 
 export interface PollingLifecycle extends Lifecycle {
@@ -52,6 +59,11 @@ export interface PollingLifecycle extends Lifecycle {
   running(): string[]
   /** Add a freshly-bound account to the polling loop without restart. */
   addAccount(account: IlinkAccount): void
+  /**
+   * 开机时该拉消息的账号数(多设备账号待命不算)和实际起了循环的数。`self deploy` 的健康门比这两个数:
+   * 起的少于该起的 ⇒ 这一版没把拉消息接上。之后账号过期自己停的循环不影响 started(那不是部署的错)。
+   */
+  bootSummary(): { eligible: number; started: number }
 }
 
 export function registerPolling(deps: PollingDeps): PollingLifecycle {
@@ -82,6 +94,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     resolveUserName: deps.resolveUserName,
     log: deps.log,
     ...(deps.onPollCycle ? { onPollCycle: deps.onPollCycle } : {}),
+    ...(deps.consumePermissionAnswer ? { fastLane: deps.consumePermissionAnswer } : {}),
     // Persist the advanced ilink poll cursor so a daemon restart resumes from
     // where it left off instead of replaying ilink's unacked backlog (each
     // replay re-runs the agent + re-sends a fallback that ilink rejects with
@@ -92,9 +105,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
         const acctDir = join(deps.stateDir, 'accounts', accountId)
         if (!existsSync(acctDir)) return
         const dest = join(acctDir, 'sync_buf')
-        const tmp = `${dest}.tmp`
-        writeFileSync(tmp, syncBuf, { mode: 0o600 })
-        renameSync(tmp, dest)
+        writeFileAtomic(dest, syncBuf, { mode: 0o600 })
       } catch (err) {
         deps.log('POLL', `sync_buf persist failed for ${accountId}: ${err instanceof Error ? err.message : err}`)
       }
@@ -114,6 +125,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     },
   })
 
+  const boot = { eligible: startupAccounts.length, started: handle.running().length }
   return {
     name: 'polling',
     stop: async () => {
@@ -141,5 +153,6 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     stopAccountAndWait: (id) => handle.stopAccountAndWait(id),
     running: () => handle.running(),
     addAccount: (a) => handle.addAccount(a),
+    bootSummary: () => ({ ...boot }),
   }
 }

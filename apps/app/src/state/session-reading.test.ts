@@ -2,11 +2,11 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import '../ui/native-motion.test-support'
 import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolRequest } from '@wechat-cc/protocol'
 import { makeLiveBackend } from '../backend/live'
 import type { Backend, NativeSessionPageT, NativeSessionRowT, SessionContinueT } from '../backend/types'
-import { makeStore, type Store } from './store'
-import { watchConnection } from './wiring'
+import { withProviders } from './providers.test-support'
 import Sessions from '../app/sessions/index'
 import SessionReader from '../app/sessions/[key]'
 import Together from '../app/(tabs)/together'
@@ -15,10 +15,11 @@ import { palette } from '../ui/tokens'
 type Root = { render(node: ReactNode): void; unmount(): void }
 type FocusEntry = { run(): void | (() => void); cleanup?: void | (() => void) }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
-const roots: Root[] = [], disposers: Array<() => void> = []
-const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; store: Store }, params: { key: 'k1' }, focused: true, focusEntries: new Set<FocusEntry>(), back: vi.fn(), push: vi.fn(), replace: vi.fn(), dotColours: [] as string[] }))
+const roots: Root[] = []
+const host = vi.hoisted(() => ({ backend: null as unknown as Backend, params: { key: 'k1' }, focused: true, focusEntries: new Set<FocusEntry>(), back: vi.fn(), push: vi.fn(), replace: vi.fn(), dotColours: [] as string[] }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 vi.mock('react-native', async () => {
+  const native = (await import('../ui/native-motion.test-support')).nativeBoundary()
   const { createElement, forwardRef } = await import('react')
   const View = ({ children, testID, style }: any) => {
     const flat = Object.assign({}, ...(Array.isArray(style) ? style : [style]))
@@ -30,8 +31,10 @@ vi.mock('react-native', async () => {
   const Pressable = ({ children, onPress, disabled, testID, accessibilityLabel, accessibilityRole, accessibilityState }: any) => createElement('button', { onClick: onPress, disabled, 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole, 'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled }, children)
   const Modal = ({ visible, children }: any) => visible ? createElement('div', null, children) : null
   const FlatList = ({ data, renderItem, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }: any) => createElement('div', null, ListHeaderComponent, data.length ? data.map((item: any) => createElement('div', { key: item.id }, renderItem({ item }))) : ListEmptyComponent, ListFooterComponent)
-  return { View, Text, TextInput, Pressable, Modal, FlatList, ScrollView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
+  const SectionList = ({ sections, renderItem, renderSectionHeader, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }: any) => createElement('div', null, ListHeaderComponent, sections.length ? sections.map((section: any) => createElement('section', { key: section.key }, renderSectionHeader?.({ section }), section.data.map((item: any) => createElement('div', { key: item.id }, renderItem({ item, section }))))) : ListEmptyComponent, ListFooterComponent)
+  return { ...native, View, Text, TextInput, Pressable, Modal, FlatList, SectionList, ScrollView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
+vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')
   return { SafeAreaView: ({ children }: any) => createElement('main', null, children) }
@@ -48,17 +51,12 @@ vi.mock('expo-router', async () => {
     }, [run]),
   }
 })
-vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
-vi.mock('./BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
-vi.mock('./useWork', () => ({ useWork: () => ({ approvals: [], agents: undefined, matters: [] }) }))
-vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
-vi.mock('../ui/CCFigure', () => ({ CCFigure: () => null }))
 
 type Reply = { status: number; json: unknown } | Error
 const ok = (json: unknown, status = 200): Reply => ({ status, json })
-const row = (key = 'k1', provider: 'claude' | 'codex' = 'claude'): NativeSessionRowT => ({ key, provider, title: `会话 ${key}`, project: 'demo', updatedAt: 1, active: true })
+const row = (key = 'k1', provider: 'claude' | 'codex' = 'claude'): NativeSessionRowT => ({ key, provider, displayName: provider === 'codex' ? 'Codex' : 'Claude', title: `会话 ${key}`, project: 'demo', updatedAt: 1, active: true })
 const messages = (start: number, end: number): NativeSessionPageT['messages'] => Array.from({ length: end - start }, (_, i) => ({ id: `msg-${i + start}`, role: i % 2 ? 'assistant' : 'user', text: `第${i + start}条`, truncated: false }))
-const ready = (state: SessionContinueT['state'] = 'ready'): SessionContinueT => ({ state, provider: 'claude', project: 'demo', mode: state === 'ready' ? 'native_resume' : null, matterId: null })
+const ready = (state: SessionContinueT['state'] = 'ready'): SessionContinueT => ({ state, provider: 'claude', displayName: 'Claude', project: 'demo', mode: state === 'ready' ? 'native_resume' : null, matterId: null })
 function harness() {
   let list: (url: URL) => Reply | Promise<Reply> = url => ok({ ok: true, items: [row(url.searchParams.get('q') || 'k1', url.searchParams.get('provider') as 'claude' | 'codex')], nextCursor: null })
   let read: (url: URL) => Reply | Promise<Reply> = url => {
@@ -82,6 +80,7 @@ function harness() {
         else if (url.pathname === '/m/api/session') reply = await read(url)
         else if (url.pathname === '/m/api/session/continue') reply = request.method === 'GET' ? await preview(url) : await adopt(body)
         else if (url.pathname === '/m/api/chat') reply = ok({ ok: false, error: 'no_owner_chat' }, 404)
+        else if (url.pathname === '/m/api/matters') reply = ok({ ok: true, matters: [] })
         else throw new Error(`unexpected ${request.path}`)
         if (reply instanceof Error) throw reply
         if (reply.status < 400) expect(PHONE_API_SCHEMAS[`${request.method} ${url.pathname}`]?.safeParse(reply.json).success).toBe(true)
@@ -93,16 +92,14 @@ function harness() {
     }
   }
   const backend = makeLiveBackend({ open: () => { throw new Error('no network') }, token: 'test-only', makeClient })
-  const store = makeStore(backend, { lang: 'zh-Hans' }), stop = watchConnection(backend, store, () => {})
-  disposers.push(() => { stop(); backend.dispose() })
+  // store、重连重验(watchConnection)、卸载时 dispose 都由真 BackendProvider 做(mount 时包上)。
   const status = (state: 'ready' | 'down') => clients.at(-1)!.opts.onStatus?.(state)
-  status('ready'); host.ctx = { backend, store }
-  return { backend, store, requests, status, setList: (run: typeof list) => { list = run }, setRead: (run: typeof read) => { read = run }, setPreview: (run: typeof preview) => { preview = run }, setAdopt: (run: typeof adopt) => { adopt = run }, posts: () => requests.filter(request => request.method === 'POST') }
+  status('ready'); host.backend = backend
+  return { backend, requests, status, setList: (run: typeof list) => { list = run }, setRead: (run: typeof read) => { read = run }, setPreview: (run: typeof preview) => { preview = run }, setAdopt: (run: typeof adopt) => { adopt = run }, posts: () => requests.filter(request => request.method === 'POST') }
 }
 beforeEach(() => { host.params = { key: 'k1' }; host.focused = true; host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.dotColours.length = 0 })
 afterEach(async () => {
   await act(() => { for (const root of roots.splice(0)) root.unmount() })
-  for (const dispose of disposers.splice(0)) dispose()
   host.focusEntries.clear(); document.body.innerHTML = ''
 })
 async function flush() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }) }
@@ -117,13 +114,15 @@ async function focus(on: boolean) { await act(() => {
 async function mount(component: () => ReactNode) {
   const container = document.createElement('div'); document.body.appendChild(container)
   const root = createRoot(container); roots.push(root)
-  await act(() => root.render(createElement(component))); await flush()
+  const view = () => withProviders(createElement(component), { backend: host.backend })
+  await act(() => root.render(view())); await flush()
+  const rerender = async () => { await act(() => root.render(view())); await flush() }
   const byId = <T extends Element = HTMLElement>(id: string) => container.querySelector<T>(`[data-testid="${id}"]`)!
   const click = async (id: string) => { await act(() => byId<HTMLButtonElement>(id).click()); await flush() }
   const type = async (value: string) => { await act(() => {
     const input = byId<HTMLTextAreaElement>('sessions-search-input'); input.value = value; input.dispatchEvent(new Event('input', { bubbles: true }))
   }); await flush() }
-  return { container, root, byId, click, type }
+  return { container, root, rerender, byId, click, type }
 }
 function gate<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(run => { resolve = run }); return { promise, resolve } }
 
@@ -177,7 +176,7 @@ describe('session reading with real LiveBackend and native UI', () => {
     await act(() => recent.resolve(ok({ ok: true, session: row(), messages: [{ id: 'old', role: 'assistant', text: '过期近期回包', truncated: false }], nextCursor: null, managed: false, window: 'recent' }))); await flush()
     expect(ui.container.textContent).not.toContain('过期近期回包')
     await act(() => ui.byId<HTMLButtonElement>('session-more').click()); await flush()
-    host.params = { key: 'k2' }; await act(() => ui.root.render(createElement(SessionReader))); await flush()
+    host.params = { key: 'k2' }; await ui.rerender()
     await act(() => headPage.resolve(ok({ ok: true, session: row(), messages: [{ id: 'old2', role: 'assistant', text: '过期追加页', truncated: false }], nextCursor: null, managed: false, window: 'start' }))); await flush()
     expect(ui.byId('session-window').textContent).toBe('最近的对话')
     expect(ui.container.textContent).toContain('另一个会话的新消息')
@@ -197,7 +196,7 @@ describe('session reading with real LiveBackend and native UI', () => {
     await ui.click('continue-confirm')
     expect(h.posts()).toHaveLength(0)
     await act(() => check.resolve(ok({ ok: true, ...ready() }))); await flush()
-    expect(ui.container.textContent).toContain('先让电脑上原来那个 Claude Code 停下')
+    expect(ui.container.textContent).toContain('先让电脑上原来那个 Claude 停下')
     expect(ui.byId('continue-confirm').textContent).toBe('已经停了，接着做')
     await ui.click('continue-confirm')
     expect(h.posts()).toEqual([{ path: '/m/api/session/continue', method: 'POST', body: { key: 'k1' } }])
@@ -280,7 +279,7 @@ describe('session reading with real LiveBackend and native UI', () => {
     expect(ui.container.textContent).toContain('第39条')
     const other = harness()
     other.setRead(() => ok({ ok: true, session: row(), messages: [{ id: 'other', role: 'assistant', text: '另一台电脑的记录', truncated: false }], nextCursor: null, managed: false, window: 'recent' }))
-    await act(() => ui.root.render(createElement(SessionReader))); await flush()
+    await ui.rerender()
     expect(other.requests.filter(request => request.path.startsWith('/m/api/session?'))).toHaveLength(1)
     expect(ui.container.textContent).toContain('另一台电脑的记录')
     expect(ui.container.textContent).not.toContain('第39条')

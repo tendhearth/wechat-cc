@@ -18,16 +18,13 @@
  *     执行者的工具表里,按 #199 的计划收紧 —— 被拒的 admin 会话收到的 403 明说「改用 message」。
  *     收紧前主人机器上的 `chat_scope_admin_cross` 是 0 行(#199 部署后),没有正在用的路被拦断。
  *   - broadcast(发给所有人,天然跨 chat):只有 admin 会话可以;非 admin ⇒ 拒。
- *   - 非 admin 的 session 令牌读不出 chat(sessionKey 不是三段)⇒ 拒(fail closed),
- *     唯一例外是 `agy-static`,见下。
+ *   - 非 admin 的 session 令牌读不出 chat(sessionKey 不是三段)⇒ 拒(fail closed)。
  *   - `agy-static`:agy 只有一份全局 MCP 配置,所有 agy 对话共用这一枚 trusted
- *     令牌,它没有「自己的 chat」。
- *       · agy 走 legacy / shadow(用 reply 工具说话):照旧放行 —— 它与 trusted 的 file
- *         令牌同级(同样落盘、同样跨对话),补偿控制仍是 `/agy` 拒 guest。
- *       · agy 走 daemon 交付(回复交付第 2 步,2026-10-03):它不再需要按 chat_id 发任何
- *         东西(回复由 daemon 送达,附件绑在本轮上)⇒ 豁免取消。它的「自己的 chat」就是
- *         此刻正在跑的那一轮 agy 的聊天(`ReplyDeliveryRuntime.turnChatFor('agy')`);
- *         没有轮在跑 / 同时有两轮 ⇒ 读不出 ⇒ 按 trusted 规则拒(fail closed)。
+ *     令牌,它没有「自己的 chat」。回复由 daemon 送达、附件绑在本轮上(回复交付第 2 步,
+ *     2026-10-03),它不需要按 chat_id 发任何东西 ⇒ 不豁免。它的「自己的 chat」就是
+ *     此刻正在跑的那一轮 agy 的聊天(`ReplyDeliveryRuntime.turnChatFor('agy')`);
+ *     没有轮在跑 / 同时有两轮 ⇒ 读不出 ⇒ 按 trusted 规则拒(fail closed)。
+ *     (旧路 —— agy 用 reply 工具说话 —— 下它曾经整枚放行;D3 随旧路删了这条豁免。)
  *     见 docs/reference/internal-api-auth.md。
  *
  * 拒绝:403 `{ error: 'chat_scope', message }`,message 明说什么都没发出去;
@@ -36,7 +33,7 @@
  * 门放在 dispatcher(index.ts),在 schema 校验之后、handler 之前 —— 在 sink
  * 截流、旁听、分片、ilink 之前,所以被拒的请求一个字都碰不到微信或 App。
  */
-import type { UserTier } from '../../core/user-tier'
+import type { UserTier } from '../../domain/user-tier'
 import type { TokenOrigin } from './token-registry'
 import { AGY_STATIC_SESSION_KEY } from './token-registry'
 
@@ -92,8 +89,6 @@ export interface SendScopeCaller {
   origin: TokenOrigin
   chatId?: string | undefined
   sessionKey?: string | undefined
-  /** 共享令牌已按本轮绑定(agy daemon 模式):不再豁免,`chatId` 是绑定到的那一轮的聊天(可能读不出)。 */
-  sharedTokenBound?: boolean
 }
 
 /** 会话跨 chat 发送的唯一一条路(admin 专用的 `message` 工具,回复交付 spec §4.6)。 */
@@ -118,7 +113,6 @@ const ALLOW: SendScopeDecision = { kind: 'allow' }
 export function sendScopeDecision(target: SendTarget, caller: SendScopeCaller, routeKey?: string): SendScopeDecision {
   if (target === null) return ALLOW
   if (caller.origin !== 'session') return ALLOW
-  if (caller.sessionKey === AGY_STATIC_SESSION_KEY && caller.sharedTokenBound !== true) return ALLOW
   if (target === ALL_CHATS) return caller.tier === 'admin' ? ALLOW : { kind: 'deny', message: BROADCAST_SCOPE_MESSAGE }
   if (caller.chatId && caller.chatId === target) return ALLOW
   if (caller.tier === 'admin') {
@@ -129,14 +123,14 @@ export function sendScopeDecision(target: SendTarget, caller: SendScopeCaller, r
 }
 
 /**
- * 共享令牌按「本轮」绑定(回复交付第 2 步)。只对 `agy-static` 且 agy 走 daemon 交付时生效;否则 undefined
- * (调用方照旧)。纯函数:模式与运行时的查询由 dispatcher 注入。
+ * 共享令牌按「本轮」绑定(回复交付第 2 步)。只对 `agy-static` 生效;别的令牌 ⇒ undefined(调用方照旧)。
+ * 纯函数:运行时的查询由 dispatcher 注入。
  */
 export function sharedTokenTurn(
   caller: { origin: TokenOrigin; sessionKey?: string | undefined },
-  opts: { agyDaemon: boolean; turnChatFor?: ((providerId: string) => { kind: 'bound'; chatId: string } | { kind: 'none' } | { kind: 'ambiguous'; count: number }) | undefined },
+  opts: { turnChatFor?: ((providerId: string) => { kind: 'bound'; chatId: string } | { kind: 'none' } | { kind: 'ambiguous'; count: number }) | undefined },
 ): { kind: 'bound'; chatId: string } | { kind: 'none' } | { kind: 'ambiguous' } | undefined {
-  if (caller.origin !== 'session' || caller.sessionKey !== AGY_STATIC_SESSION_KEY || !opts.agyDaemon) return undefined
+  if (caller.origin !== 'session' || caller.sessionKey !== AGY_STATIC_SESSION_KEY) return undefined
   const b = opts.turnChatFor?.('agy') ?? { kind: 'none' as const }
   return b.kind === 'bound' ? b : b.kind === 'ambiguous' ? { kind: 'ambiguous' } : { kind: 'none' }
 }

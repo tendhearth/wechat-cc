@@ -5,14 +5,15 @@ import {createExecutionCatalogs, renderExecutionControls, executionErrorMessage}
 import {createWorkbenchThumbnails} from './workbench-thumbnails.js'
 import {ENTRY_LIMITS,entryContentError,entryFailureKind} from '../shared/task-entry-contract.js'
 import {renderWorkbenchMarkdown,renderWorkbenchUserText,captureUserSources,restoreUserSources} from './workbench-markdown.js'
+import { V1, v1 } from '../daemon-client.js'
 
-/** @typedef {import('../../../../src/core/workbench/task-entry').EntryInput} EntryInput */
-/** @typedef {import('../../../../src/core/workbench/service').EntryResult} EntryResult */
-/** @typedef {import('../../../../src/core/workbench/task-entry').EntryOptions} EntryOptions */
+/** @typedef {import('../../../../src/adapters/workbench/task-entry').EntryInput} EntryInput */
+/** @typedef {import('../../../../src/features/workbench/service').EntryResult} EntryResult */
+/** @typedef {import('../../../../src/adapters/workbench/task-entry').EntryOptions} EntryOptions */
 /** @typedef {{role:'user'|'cc',text:string,pending?:boolean}} Message */
 /** @typedef {{text:string,visibleMessages?:Message[],projectPath?:string}} Draft */
 /** @typedef {{input:EntryInput,signature:string,uncertain:boolean,material:import('./workbench-window-state.js').Draft}} Submission */
-/** @typedef {{sourceText:string,text:string,draftId:string,target:EntryInput['target'],providerId:string,execution:import('./workbench-execution.js').ExecutionChoice,candidates:Message[],selected:number[],pending:Submission|null}} EntryDraft */
+/** @typedef {{sourceText:string,text:string,draftId:string,target:EntryInput['target'],providerId:string,execution:import('./workbench-execution.js').ExecutionChoice,candidates:Message[],selected:number[],pending:Submission|null,untilCommand?:string,untilRounds?:number}} EntryDraft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,storage?:Pick<Storage,'getItem'|'setItem'|'removeItem'>|null,createAttachments?:typeof createWorkbenchAttachments,onAccepted?:(result:EntryResult)=>void|Promise<void>}} Deps */
 const KEY='cc.task-entry.window.v1'
 const esc=(/** @type {unknown} */v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]??c)
@@ -86,7 +87,7 @@ export function createTaskEntry(deps){
       /** @param {string} requestId @returns {EntryInput} */
       const input=requestId=>{
         const material=drafts.get(scope),selected=state.selected.flatMap(i=>state.candidates[i]?[state.candidates[i]]:[])
-        return{requestId,text:state.text,target:structuredClone(state.target),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
+        return{requestId,text:state.text,target:structuredClone(state.target),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(state.untilCommand&&state.target.kind==='project'&&state.target.isolation==='worktree'?{until:{command:state.untilCommand,maxRounds:state.untilRounds??3}}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
       }
       const signature=()=>JSON.stringify([input(''),attachmentSignature(drafts.get(scope).attachments)])
       const disabled=()=>busy||(!state.pending?.uncertain&&(!options||projectUnavailable()||!provider()?.available||!attachments.ready(scope)||(!state.text.trim()&&!drafts.get(scope).attachments?.length)))
@@ -106,7 +107,7 @@ export function createTaskEntry(deps){
           <label>执行者<select name="provider">${(options?.providers??[]).map(p=>`<option value="${esc(p.id)}"${state.providerId===p.id?' selected':''}${p.available?'':' disabled'}>${esc(p.displayName)}${p.available?'':` · ${esc(p.unavailableReason?.message??'暂不可用')}`}</option>`).join('')}</select></label>
           ${canExecution?`<label>默认设置<select name="defaults"><option value="provider"${state.execution.defaults==='provider'?' selected':''}>沿用 CC 设置</option><option value="native"${state.execution.defaults==='native'?' selected':''}>沿用执行者本身设置</option></select></label>${p?renderExecutionControls(state.execution,catalogs.get(state.providerId,p.path)).replaceAll('wb-model','task-entry-model').replaceAll('wb-reasoning-effort','task-entry-effort'):'<p class="task-entry-hint">新事项使用自动模型；选择已有项目后可读取该项目的模型设置。</p>'}`:'<p class="task-entry-hint">这个执行者沿用已连接的设置。</p>'}</details>
           <p class="task-entry-destination">${projectPath&&!recovering&&!destinationChosen&&!options?'正在确认所选项目…':state.target.kind==='managed'?'随手交办：CC 会为这件事准备独立文件夹。':`项目：${esc(p?.name??'所选项目暂不可用')}`}</p>
-          ${state.target.kind==='project'&&p?`<label class="task-entry-isolate"><input type="checkbox" name="isolation"${state.target.isolation==='worktree'?' checked':''}> 在独立工作区里做 <small>同一个项目可以同时做几件，互不排队。从最新提交开始，不带你还没提交的改动；项目需要是 Git 仓库。.env 这类不进 Git 的文件，列在项目根的 .worktreeinclude 里就会一起带上。</small></label>${state.target.isolation==='worktree'?`<label class="task-entry-base">从分支开始 <span class="task-entry-hint">可选</span><input name="base" maxlength="200" autocomplete="off" spellcheck="false" placeholder="留空 = 最新提交；或写本地分支名，如 feature/login" value="${esc(state.target.base??'')}"></label>`:''}`:''}
+          ${state.target.kind==='project'&&p?`<label class="task-entry-isolate"><input type="checkbox" name="isolation"${state.target.isolation==='worktree'?' checked':''}> 在独立工作区里做 <small>同一个项目可以同时做几件，互不排队。从最新提交开始，不带你还没提交的改动；项目需要是 Git 仓库。.env 这类不进 Git 的文件，列在项目根的 .worktreeinclude 里就会一起带上。</small></label>${state.target.isolation==='worktree'?`<label class="task-entry-base">从分支开始 <span class="task-entry-hint">可选</span><input name="base" maxlength="200" autocomplete="off" spellcheck="false" placeholder="留空 = 最新提交；或写本地分支名，如 feature/login" value="${esc(state.target.base??'')}"></label><label class="task-entry-until">直到这条命令通过 <span class="task-entry-hint">可选</span><input name="until" maxlength="300" autocomplete="off" spellcheck="false" placeholder="如 bun run test" value="${esc(state.untilCommand??'')}"><select name="untilRounds" aria-label="最多几轮">${[1,2,3,5,10].map(n=>`<option value="${n}"${(state.untilRounds??3)===n?' selected':''}>最多 ${n} 轮</option>`).join('')}</select><small>每轮做完，CC 在这件事自己的独立工作区里跑一次这条命令，没过就接着改。没开放行规则时，执行者每一步照样要你点。</small></label>`:''}`:''}
           ${visibleError?`<p class="task-entry-error" role="alert">${esc(visibleError)}</p>`:''}${notice?`<p class="task-entry-notice" role="status">${esc(notice)}</p>`:''}
           ${accepted?'<button type="button" data-entry-action="accepted">查看已交办任务</button>':''}</div>
           <footer><button type="button" data-entry-action="cancel">${state.pending?.uncertain?'暂时关闭，保留待确认请求':'取消'}</button><button type="submit"${disabled()?' disabled':''}>${busy?'正在确认…':state.pending?.uncertain?'确认结果 / 重试原请求':'交给 CC 做'}</button></footer></form>`
@@ -129,7 +130,7 @@ export function createTaskEntry(deps){
       }
       /** @param {Submission} submission */
       async function lookup(submission){
-        try{return receipt(await deps.invokeWorkbenchApi('GET',`/v1/workbench/entry-receipt?requestId=${encodeURIComponent(submission.input.requestId)}`),submission.input.requestId)}catch{return null}
+        try{return receipt(await v1(deps.invokeWorkbenchApi, V1.workbench.entryReceipt, { query: { requestId: submission.input.requestId } }),submission.input.requestId)}catch{return null}
       }
       async function submit(){
         if(busy)return
@@ -153,7 +154,7 @@ export function createTaskEntry(deps){
           if(known){receive(known,submission);return}
           submission.uncertain=true;persist(state)
           creating=true
-          const response=await deps.invokeWorkbenchApi('POST','/v1/workbench/create-entry',/** @type {Record<string,unknown>} */(structuredClone(submission.input)))
+          const response=await v1(deps.invokeWorkbenchApi, V1.workbench.createEntry, { body: /** @type {Record<string,unknown>} */(structuredClone(submission.input)) })
           const confirmed=receipt(response,submission.input.requestId)
           if(!confirmed)throw Error('unconfirmed_receipt')
           receive(confirmed,submission)
@@ -180,9 +181,12 @@ export function createTaskEntry(deps){
         if(name==='excerpt'){const index=Number(field.value);if(state.candidates[index])state.selected=field.checked?[...new Set([...state.selected,index])].sort((a,b)=>a-b):state.selected.filter(i=>i!==index)}
         else if(name==='project'){const p=options?.projects.find(p=>p.id===field.value);if(field.value!=='managed'&&!p)return;destinationChosen=true;error='';setDestination(p?{kind:'project',projectId:p.id}:{kind:'managed'},p?.providerId??options?.defaultProviderId)}
         // 独立工作区(2026-10-07):只对项目有效;换项目时 setDestination 换了新对象,自然取消勾选。
-        else if(name==='isolation'&&state.target.kind==='project'){const {isolation:_,base:__,...rest}=state.target;state.target=field.checked?{...rest,isolation:'worktree'}:rest}
+        else if(name==='isolation'&&state.target.kind==='project'){const {isolation:_,base:__,...rest}=state.target;state.target=field.checked?{...rest,isolation:'worktree'}:rest;if(!field.checked)state.untilCommand=undefined}
         // 从哪个分支开始(10-08):留空 = 最新提交;名字格式不对时 daemon 拒(invalid_target),这里只去掉首尾空白
         else if(name==='base'&&state.target.kind==='project'&&state.target.isolation==='worktree'){const {base:_,...rest}=state.target,value=field.value.trim();state.target=value?{...rest,base:value}:rest;persist(state);return}
+        // 做到条件成立为止(对标 #9):只跟独立工作区一起出现;空 = 不设。命令原样交给 daemon 校验(一行、≤300 字)。
+        else if(name==='until'){state.untilCommand=field.value.trim()||undefined;persist(state);return}
+        else if(name==='untilRounds'){state.untilRounds=Number(field.value)||3;persist(state);return}
         else if(name==='provider'){if(!options?.providers.some(p=>p.id===field.value&&p.available))return;state.providerId=field.value;state.execution=auto()}
         else if(name==='defaults')state.execution={...state.execution,defaults:field.value==='native'?'native':'provider'}
         else if(field.id==='task-entry-model')state.execution={...state.execution,model:field.value||null,reasoningEffort:null}
@@ -208,7 +212,7 @@ export function createTaskEntry(deps){
       void(async()=>{
         if(state.pending){busy=true;render();const submission=state.pending,known=await lookup(submission);busy=false;if(!alive)return;if(known){receive(known,submission);if(!alive)return}}
         try{
-          const loaded=/** @type {EntryOptions} */(await deps.invokeWorkbenchApi('GET','/v1/workbench/entry-options'))
+          const loaded=/** @type {EntryOptions} */(await v1(deps.invokeWorkbenchApi, V1.workbench.entryOptions))
           if(!Array.isArray(loaded?.projects)||!Array.isArray(loaded?.providers))throw Error('invalid_options')
           if(!alive)return
           options=loaded

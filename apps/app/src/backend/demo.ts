@@ -1,10 +1,11 @@
-import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
+import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
-import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT } from './types'
+import { DEMO_PORTRAIT_PNG, DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
+import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT, type TodoStatus } from './types'
 import {
-  copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
-  demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
+  copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, DEMO_REWIND_TOKEN, DEMO_HUNK_SHA, entryOptions,
+  demoActivity, demoConnections, demoJobs, demoLetters, demoTodos, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
+  demoName, demoNames,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -46,31 +47,45 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let demoChatModel: ChatModelViewT = { mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'openai', name: 'API' }] }
   // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
+  // 收回的话(演示):逐条纠错拿掉的那句挪到这里;恢复就放回去
+  const demoRetracted: Array<{ key: string; id: string; text: string; day: string }> = []
   let chatJobs = new Map<string, ChatJobT>()
+  // 定时(演示):停 / 开 / 删只改内存里这两样,reset() 还原
+  let jobPaused = new Map<string, boolean>()
+  let jobRemoved = new Set<string>()
+  const demoJobList = () => demoJobs(lastLang, now()).filter(j => !jobRemoved.has(j.id)).map(j => ({ ...j, paused: jobPaused.get(j.id) ?? j.paused }))
+  // 待办(演示):完成 / 捞回只记在内存里(id → 改成什么、什么时候改的),reset() 还原
+  let todoSet = new Map<number, { status: TodoStatus; at: number }>()
+  const demoTodoList = () => demoTodos(lastLang, now()).map(r => {
+    const o = todoSet.get(r.id)
+    return o ? { ...r, settled: o.status === 'resolved', updated_at: Math.floor(o.at / 1000) } : r
+  })
   const subs = new Map<Topic, Set<(d: any) => void>>()
   // 终端里的会话(演示):一条等你批准(能在手机上拍)、一条在跑(说一句的框是灰的)、一条歇着(能接着说一句)。最后一句按语言读时生成。
+  // 等批准那条开在电脑窗口里:拍完在跑时也能说,说了先「在送」、一会儿「送到」(同 daemon 的 say_id / last_say)。
   type CliRec = Omit<CliSessionRowT, 'last_summary'> & { summaryKey: Copy | null }
   const seedCli = (): CliRec[] => {
     const n = now()
     const base = { stale: false, machine: null, last_prompt_at: null }
     return [
-      { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR,
+      { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR, live_window: true,
         pending: { tool: 'Bash', summary: 'npm run deploy', since: n - 90_000, hash: 'dm0a1', actionable: true } },
       { ...base, session_id: 'demo-cli-docs', code: 'democr', source: 'claude', status: 'running', project: 'docs', summaryKey: 'cliDocsLast', last_event_at: n - 40_000, created_at: n - 2 * HOUR, last_prompt_at: n - 5 * 60_000, pending: null },
       { ...base, session_id: 'demo-cli-api', code: 'democx', source: 'codex', status: 'idle', project: 'api-server', summaryKey: 'cliApiLast', last_event_at: n - 25 * 60_000, created_at: n - 3 * HOUR, pending: null },
     ]
   }
   let cli = seedCli()
+  let saySeq = 0
   const cliGet = (id: string) => { const r = cli.find(x => x.session_id === id); if (!r) throw new BackendError('not_found'); return r }
 
-  function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number): MatterT {
-    return { id, kind, title, projectPath: path, status, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts }
+  function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number, agents?: string[]): MatterT {
+    return { id, kind, title, projectPath: path, status, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts, ...(agents ? { agents } : {}) }
   }
   function mkDetail(m: MatterT, task: MatterDetailT['task'], extra: Partial<MatterDetailT> = {}): MatterDetailT {
     return { matter: m, bindings: [], sessions: [], task, events: [], permissions: [], questions: [], artifacts: [], inputs: [], ...extra }
   }
-  const taskOf = (id: string, title: string, path: string, phase: string, ts: number) =>
-    ({ id, title, status: phase === 'working' ? 'running' : 'completed', phase, providerId: 'claude', path, error: null, updatedAt: ts })
+  const taskOf = (id: string, title: string, path: string, phase: string, ts: number, providerId = 'claude') =>
+    ({ id, title, status: phase === 'working' ? 'running' : 'completed', phase, providerId, path, error: null, updatedAt: ts })
 
   const tripQuestion = (l: Lang, createdAt: number): MatterDetailT['questions'][number] => ({
     id: QUESTION_ID, taskId: IDS.trip, createdAt,
@@ -89,8 +104,9 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       map.set(d.matter.id, e); ids.push(d.matter.id)
     }
     const pTitle = t(lastLang, 'portfolioTitle')
-    add(mkDetail(mkMatter(IDS.portfolio, 'task', pTitle, 'open', '~/Projects/portfolio', n - 600_000),
-      taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), {
+    add(mkDetail(mkMatter(IDS.portfolio, 'task', pTitle, 'open', '~/Projects/portfolio', n - 600_000, ['claude', 'codex']),
+      // 用了多少额度(#437):演示给一行合计;cache 这类这家没报 ⇒ null(界面写「不报」)
+      { ...taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), usage: { turns: 3, input: 48_210, output: 6_120, cacheRead: null, cacheWrite: null, reasoning: null, costUsd: null } }, {
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
         permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'npm install sharp', createdAt: n - 60_000 }],
       }), 'pending', [
@@ -98,19 +114,21 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       { kind: 'tool_call', key: 'ev2', createdAt: n - 300_000 },
     ], 'portfolioTitle')
     const tTitle = t(lastLang, 'tripTitle')
-    add(mkDetail(mkMatter(IDS.trip, 'task', tTitle, 'open', '~/Projects/trip', n - 400_000),
-      taskOf(IDS.trip, tTitle, '~/Projects/trip', 'working', n - 30_000), {
+    add(mkDetail(mkMatter(IDS.trip, 'task', tTitle, 'open', '~/Projects/trip', n - 400_000, ['codex']),
+      taskOf(IDS.trip, tTitle, '~/Projects/trip', 'working', n - 30_000, 'codex'), {
         runId: RUN_IDS[IDS.trip], inputMode: 'steer',
         questions: [tripQuestion(lastLang, n - 30_000)],
       }), 'ask', [{ kind: 'tool_call', key: 'stepTrip1', createdAt: n - 200_000 }], 'tripTitle')
     const nTitle = t(lastLang, 'notesTitle')
-    add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY),
+    add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY, ['claude']),
       // 演示独立工作区(2026-10-08):提交 / 合回 / 删除 / 重开 / 另做一份 都有地方点
-      { ...taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY), worktree: { branch: 'cc/notes001', removed: false, projectId: 'portfolio' } }), 'replied',
+      { ...taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY), worktree: { branch: 'cc/notes001', removed: false, projectId: 'portfolio', port: 47100, setup: 'done', run: 'idle', approved: true },
+        // 演示「直到…通过」(10-20):第 2 轮检查通过
+        until: { command: 'bun run test', maxRounds: 3, rounds: 2, status: 'passed', lastExit: 0, stopReason: null } }), 'replied',
       [{ kind: 'user', key: 'notesTitle', createdAt: n - DAY - 60_000 }], 'notesTitle')
-    // 额度用完的一件(spec continue-sessions §7-3):Claude Code 没做完,电脑说可以交给 Codex 继续
+    // 额度用完的一件(spec continue-sessions §7-3):Claude 没做完,电脑说可以交给 Codex 继续
     const rTitle = t(lastLang, 'reportTitle')
-    add(mkDetail(mkMatter(IDS.report, 'task', rTitle, 'done', '~/Projects/notes', n - 2 * HOUR),
+    add(mkDetail(mkMatter(IDS.report, 'task', rTitle, 'done', '~/Projects/notes', n - 2 * HOUR, ['claude']),
       { id: IDS.report, title: rTitle, status: 'failed', phase: 'failed', providerId: 'claude', path: '~/Projects/notes', error: 'provider_quota_exhausted', updatedAt: n - 2 * HOUR }, {
         quotaHandoff: { state: 'offer', from: 'claude', to: 'codex', kind: 'quota', resetAt: n + 40 * 60_000 },
       }), 'replied', [
@@ -132,7 +150,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     chatPending = null
     chatJobs = new Map()
   }
-  function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat() }
+  // 伙伴的动态(演示):40 分钟前打猎带回来一篇;主人还没看过(水位 = null 与 daemon 一致:全算没看)
+  let huntAt = 0
+  let seenUntil: string | null = null
+  function seedCompanion() { huntAt = now() - 40 * 60_000; seenUntil = null }
+  function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat(); seedCompanion() }
   const chatText = (m: ChatRec, l: Lang) => (m.key ? t(l, m.key) : m.text ?? '')
   const chatExtras = (m: ChatRec, l: Lang): Pick<ChatMessageT, 'attachments' | 'narration'> => ({
     ...(m.narr?.length ? { narration: m.narr.map(k => t(l, k)) } : {}),
@@ -149,6 +171,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     if (d.task) d.task.title = title
     d.questions = d.questions.map(q => (q.id === QUESTION_ID ? tripQuestion(l, q.createdAt) : q))
     if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'text', createdAt: m.at, text: chatText(m, l) }))
+    // 跟 daemon 一样带上这件事里出现过的执行者叫什么(收敛清单 ⑥)
+    const q = d.quotaHandoff
+    const names = demoNames([...(d.matter.agents ?? []), d.task?.providerId, d.nativeStart?.providerId, q?.from, q && 'to' in q ? q.to : undefined])
+    if (Object.keys(names).length) d.matter.agentNames = names
     return d
   }
   /** 读的语言变了 ⇒ 记下,并在当前调用之后把非 matter 主题按新语言补推一次。 */
@@ -178,13 +204,23 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { running: tasks.filter(x => x.phase === 'working').length, waiting, tasks }
     }
     if (topic === 'home') {
-      const unread = list().reduce((s, e) => s + e.detail.permissions.length + e.detail.questions.length, 0)
-      return { unread, presenceState: { level: 'ok', activity: unread > 0 ? 'waiting' : 'idle' }, nextCursor: null }
+      // 与 daemon 同口径:未读 = 水位之后的动态条数;activity 只用真有的那几种(演示里只会是在忙 / 歇着)
+      return { unread: companionEvents(lastLang).filter(e => seenUntil === null || e.ts > seenUntil).length, presenceState: { level: 'ok', activity: activityKind() }, nextCursor: null }
     }
     const id = topic.slice('matter/'.length)
     const e = entries.get(id)
     if (e && id === CHAT_ID) return { found: true, kind: 'chat', version: e.version, phase: chatPending ? 'working' : e.detail.matter.status }
     return e ? { found: true, kind: e.detail.matter.kind, version: e.version, phase: phaseOf(e) } : { found: false }
+  }
+  /** 演示里 CC 在干什么:有执行者正在写 ⇒ working,否则 idle(不演别的状态)。 */
+  function activityKind(): 'working' | 'idle' {
+    return list().some(e => e.detail.task && phaseOf(e) === 'working' && !e.detail.permissions.length && !e.detail.questions.length) ? 'working' : 'idle'
+  }
+  function companionEvents(l: Lang): FeedEventT[] {
+    const ts = new Date(huntAt).toISOString()
+    const hhmm = new Date(huntAt).toTimeString().slice(0, 5)
+    return [{ id: 'journal:demo-hunt-1', ts, kind: 'hunt', title: t(l, 'huntTitle'), note: t(l, 'huntNote'), day: ts.slice(0, 10), hhmm,
+      ref: { url: DEMO_HUNT_URL, image_svg: null, status: 'new' } }]
   }
   function publish(ids: string[]) {
     for (const id of ids) { const e = entries.get(id); if (e) e.version++ }
@@ -204,6 +240,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const later = (ms: number, fn: () => void) => { const ep = epoch; schedule(() => { if (ep === epoch) fn() }, ms) }
   const ev = (e: Entry, kind: string, key: Copy, extra?: string) => { e.evs = [...e.evs, { kind, key, extra, createdAt: now() }] }
   const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }] }
+  const reviewMarks = new Map<string, { mark: 'accepted' | 'returned'; comment: string; createdAt: number }>()
+  let rewound = false
+  // 行评论(切片 4):演示里的草稿 / 已发出,按评论 id
+  const reviewComments = new Map<string, { path: string; hunk: number; body: string; state: 'draft' | 'sent'; sentAt?: number }>()
   const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('not_found'); return e }
 
   /** 演示里三条会话能不能接:进行中的那条看得见在跑;另两条一条能恢复、一条只能带记录新开。 */
@@ -236,7 +276,60 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const explanations: Record<string, ApprovalExplanationT> = e.detail.permissions.some(p => p.id === PERM_ID) ? { [PERM_ID]: explanation(l) } : {}
       return { explanations, progress: progress(l, id, e.stage) }
     },
-    async changes(id) { get(id); return id === IDS.portfolio ? changesTurn(now()) : null },
+    async changes(id) {
+      get(id)
+      if (id !== IDS.portfolio || rewound) return null
+      const turn = changesTurn(now())
+      const pending = [...reviewComments.values()].filter(c => c.state === 'draft').length
+      return { ...turn, ...(pending ? { pendingComments: pending } : {}), files: turn.files.map(f => {
+        const m = reviewMarks.get(f.path)
+        const notes = [...reviewComments.entries()].filter(([, c]) => c.path === f.path).map(([cid, c]) => ({ id: cid, hunk: c.hunk, body: c.body, state: c.state, ...(c.sentAt ? { sentAt: c.sentAt } : {}) }))
+        return { ...f, ...(m ? { mark: m } : {}), ...(notes.length ? { comments: notes } : {}) }
+      }) }
+    },
+    // 撤掉这一轮(回退切片 4):演示只有作品集那件有一轮可撤;撤了之后改动面板空了、时间线多一句
+    async rewindPreview({ id, artifactId }) {
+      get(id)
+      if (id !== IDS.portfolio || rewound || artifactId !== 'demo-review') throw new BackendError('rewind_stale')
+      const files = changesTurn(now()).files.map(f => ({ status: 'M', path: f.path }))
+      return { token: DEMO_REWIND_TOKEN, round: 1, rounds: [1], files: { count: files.length, paths: files }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false },
+        rebuildHint: t(lastLang, 'rewindRebuild'), session: 'none', devServer: false, goalWillStop: false }
+    },
+    async rewind({ id, artifactId, token }) {
+      const e = get(id)
+      if (id !== IDS.portfolio || rewound || artifactId !== 'demo-review' || token !== DEMO_REWIND_TOKEN) throw new BackendError('rewind_stale')
+      rewound = true
+      evText(e, 'system', t(lastLang, 'rewindDone')); publish([id])
+    },
+    async reviewMark({ id, path }) { get(id); reviewMarks.set(path, { mark: 'accepted', comment: '', createdAt: now() }) },
+    async reviewComment({ id, commentId, artifactId, path, hunk, hunkSha256, body }) {
+      get(id)
+      const i = changesTurn(now()).files.findIndex(f => f.path === path)
+      if (rewound || artifactId !== 'demo-review' || i < 0 || hunk !== 0 || hunkSha256 !== DEMO_HUNK_SHA[i]) throw new BackendError('hunk_stale')
+      const had = reviewComments.get(commentId)
+      if (had) { if (had.body !== body || had.path !== path) throw new BackendError('comment_conflict'); return }
+      reviewComments.set(commentId, { path, hunk, body, state: 'draft' })
+    },
+    async reviewCommentDelete({ id, commentId }) {
+      get(id)
+      const had = reviewComments.get(commentId)
+      if (!had) throw new BackendError('not_found')
+      if (had.state === 'sent') throw new BackendError('comment_sent')
+      reviewComments.delete(commentId)
+    },
+    async reviewCommentsSend({ id, summary }) {
+      const e = get(id)
+      const drafts = [...reviewComments.values()].filter(c => c.state === 'draft')
+      if (!drafts.length) throw new BackendError('not_found')
+      for (const c of drafts) { c.state = 'sent'; c.sentAt = now() }
+      evText(e, 'user', [summary, ...drafts.map(c => `${c.path}: ${c.body}`)].filter(Boolean).join('\n')); publish([id])
+      return { sent: drafts.length, remaining: 0, skippedDiscarded: 0 }
+    },
+    async reviewReturn({ id, paths, comment }) {
+      const e = get(id)
+      for (const path of paths) reviewMarks.set(path, { mark: 'returned', comment, createdAt: now() })
+      evText(e, 'user', comment); publish([id])
+    },
     async chat(_p) {
       const l = lastLang
       return {
@@ -291,10 +384,29 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       // 演示里的文件只是一个名字(放在电脑上的那份不存在)
       throw new BackendError('not_found')
     },
+    async jobs() { return { timezone: 'Asia/Shanghai', executor: 'claude', jobs: demoJobList() } },
+    async jobsAction(id, action) {
+      if (!demoJobList().some(j => j.id === id)) throw new BackendError('not_found')
+      if (action === 'remove') jobRemoved.add(id)
+      else jobPaused.set(id, action === 'pause')
+    },
+    async activity() { return { items: demoActivity(lastLang, now()), next: null, degraded: [] } },
+    async letters() { return demoLetters(lastLang, now()) },
+    async letterPageChunk() {
+      // 演示里的信按文字寄(pages=0),没有信纸图可读
+      throw new BackendError('not_found')
+    },
     async chatVoice(messageId, index) {
       const a = chatMsgs.find(m => m.id === messageId)?.atts?.[index]
       if (!a || a.kind !== 'voice') throw new BackendError('not_found')
       return { ...DEMO_VOICE }
+    },
+    // 按住说话:演示里不送去任何地方,回一句写好的话(只填进输入框,和真连接一样不自动发)。
+    async transcribeStatus() { return { configured: true } },
+    async transcribe(p) {
+      if (!p.audioBase64) throw new BackendError('invalid')
+      if (p.audioBase64.length > Math.ceil(PHONE_TRANSCRIBE_MAX_BYTES / 3) * 4) throw new BackendError('too_large')
+      return lastLang === 'zh-Hans' ? '明天上午提醒我把周报发出去。' : 'Remind me tomorrow morning to send the weekly report.'
     },
     async sticker(file) {
       if (file !== DEMO_STICKER_FILE) throw new BackendError('not_found')
@@ -304,7 +416,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async sessions(provider, _cursor, q) {
       if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
       const needle = q?.trim().toLowerCase() ?? ''
-      return { items: demoSessions(lastLang, now(), provider).filter(row => !needle || `${row.title}\n${row.project ?? ''}`.toLowerCase().includes(needle)), nextCursor: null }
+      return { items: demoSessions(lastLang, now(), provider).filter(row => !needle || `${row.title}\n${row.project ?? ''}`.toLowerCase().includes(needle)), nextCursor: null, names: demoNames(['claude', 'codex']) }
     },
     async session(key, cursor, window = 'start') {
       if (window === 'recent' && cursor !== undefined) throw new BackendError('invalid')
@@ -315,9 +427,9 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async continuePreview(key) {
       const row = sessionRow(key), matterId = adopted.get(key) ?? null
-      if (matterId) return { state: 'managed', provider: row.provider, project: row.project, mode: null, matterId }
+      if (matterId) return { state: 'managed', provider: row.provider, displayName: demoName(row.provider), project: row.project, mode: null, matterId }
       const c = DEMO_CONTINUE[key] ?? { state: 'empty' as const, mode: null }
-      return { state: c.state, provider: row.provider, project: row.project, mode: c.mode, matterId: null }
+      return { state: c.state, provider: row.provider, displayName: demoName(row.provider), project: row.project, mode: c.mode, matterId: null }
     },
     async continueSession(key) {
       const dup = adopted.get(key)
@@ -389,6 +501,16 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       }
       return action === 'commit' ? { branch: 'cc/demo1234', committed: true } : action === 'merge' ? { branch: 'cc/demo1234', merged: true } : action === 'reopen' ? { branch: 'cc/demo1234', reopened: true } : { branch: 'cc/demo1234', removed: true }
     },
+    async worktreeScript({ id, action }) {
+      // 演示里不真起进程:运行 / 停下只翻状态,运行时给两行输出
+      const e = entries.get(id), wt = e?.detail.task?.worktree
+      if (!e?.detail.task || !wt || wt.removed || wt.run === undefined) throw new BackendError('no_scripts')
+      const running = action === 'run'
+      e.detail.task = { ...e.detail.task, worktree: { ...wt, run: running ? 'running' : 'idle', ...(running ? { lastLines: ['$ bun run dev', `ready on http://localhost:${wt.port ?? 47100}`] } : {}) } }
+      e.version++; publish([id])
+      const { branch, port, setup, run, approved } = e.detail.task.worktree!
+      return { branch, ...(port !== undefined ? { port } : {}), ...(setup !== undefined ? { setup } : {}), ...(run !== undefined ? { run } : {}), ...(approved !== undefined ? { approved } : {}) }
+    },
     async stop({ id, runId }) {
       const e = entries.get(id)
       if (!e || e.detail.runId !== runId) throw new BackendError('input_stale')
@@ -456,7 +578,33 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async correctMemory(id) {
       const i = demoMemory.findIndex(m => m.id === id)
       if (i < 0) throw new BackendError('not_found')
-      demoMemory.splice(i, 1)
+      const [gone] = demoMemory.splice(i, 1)
+      demoRetracted.push({ key: `c:~${demoRetracted.length + 1}`, id: gone!.id, text: gone!.text, day: new Date(now()).toISOString().slice(0, 10) })
+    },
+    async memoryRetractions() {
+      return demoRetracted.map(r => ({ key: r.key, section: '偏好', text: r.text, day: r.day, verdict: 'wrong', note: '' }))
+    },
+    async restoreMemory(key) {
+      const i = demoRetracted.findIndex(r => r.key === key)
+      if (i < 0) throw new BackendError('not_found')
+      const [r] = demoRetracted.splice(i, 1)
+      demoMemory.push({ id: r!.id, text: r!.text })
+      return { restored: [`m:${r!.id}`], note: lastLang === 'en' ? 'It is back in my memory. Note lines that were removed along with it do not come back.' : '已经放回记忆里了。当初随这条一起从笔记里删掉的那几行不会回来。' }
+    },
+    async pocket() {
+      const rows = demoTodoList()
+      const strip = ({ settled: _s, ...r }: (typeof rows)[number]) => r
+      return {
+        todos: {
+          active: rows.filter(r => !r.settled).map(strip),
+          settled: rows.filter(r => r.settled).sort((a, b) => b.updated_at - a.updated_at).map(strip),
+        },
+        portraitPng: DEMO_PORTRAIT_PNG,
+      }
+    },
+    async setTodo(id, status) {
+      if (!demoTodoList().some(r => r.id === id)) throw new BackendError('not_found')
+      todoSet.set(id, { status, at: now() })
     },
     async uploadChunk(p) {
       const cur = uploads.get(p.id) ?? { id: p.id, draftId: p.draftId, size: p.size, nextOffset: 0, status: 'uploading' as const }
@@ -473,7 +621,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { ...cur }
     },
     async discardUpload(id) { uploads.delete(id) },
-    async create({ requestId, text, projectId }) {
+    async create({ requestId, text, projectId, isolation, until }) {
       const dup = createdBy.get(requestId)
       if (dup) return { matterId: dup }
       const projectPath = projectId ? entryOptions(lastLang).projects.find(p => p.id === projectId)?.path ?? null : null
@@ -485,7 +633,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         stage: 'working', version: 1, seeded: false,
         evs: [{ kind: 'user', text, createdAt: ts }, { kind: 'tool_call', key: 'creating', createdAt: ts }],
         detail: mkDetail(mkMatter(matterId, 'task', title, 'open', projectPath ?? null, ts),
-          taskOf(matterId, title, projectPath ?? '~/Projects/portfolio', 'working', ts),
+          // 独立工作区 + until(10-20):演示里也带上,进展页那一行看得见
+          { ...taskOf(matterId, title, projectPath ?? '~/Projects/portfolio', 'working', ts),
+            ...(projectId && isolation ? { worktree: { branch: `cc/${matterId}`, removed: false, projectId } } : {}),
+            ...(projectId && isolation && until ? { until: { command: until.command, maxRounds: until.maxRounds, rounds: 0, status: 'active' as const, lastExit: null, stopReason: null } } : {}) },
           { runId: `run-${matterId}`, inputMode: 'steer' }),
       }
       entries.set(matterId, e); order.unshift(matterId); publish([matterId])
@@ -501,7 +652,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async testPush() { return { ok: false, code: 'demo' } },
     async unpair() {},
     async cliSessions() {
-      const rows = cli.map(({ summaryKey, ...r }) => ({ ...r, last_summary: summaryKey ? t(lastLang, summaryKey) : null }))
+      const rows = cli.map(({ summaryKey, ...r }) => ({ ...r, displayName: demoName(r.source), last_summary: summaryKey ? t(lastLang, summaryKey) : null }))
       return rows.sort((a, b) => (Number(b.status === 'waiting') - Number(a.status === 'waiting')) || b.last_event_at - a.last_event_at)
     },
     // 「今天」(演示):与 daemon 同一个分组口径 —— 终端演示会话 + 演示里的一起做,过去 24 小时。
@@ -509,7 +660,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const n = now(), since = n - DAY
       const needsYou: OverseerTodayT['needsYou'] = [], done: TodayItemT[] = [], running: TodayItemT[] = [], stuck: OverseerTodayT['stuck'] = []
       for (const r of cli) {
-        const base: TodayItemT = { source: 'terminal', id: r.session_id, code: r.code, project: r.project, agent: r.source === 'codex' ? 'Codex' : r.source === 'cursor' ? 'Cursor' : 'Claude Code', title: null,
+        const base: TodayItemT = { source: 'terminal', id: r.session_id, code: r.code, project: r.project, agent: demoName(r.source), title: null,
           summary: r.summaryKey ? t(lastLang, r.summaryKey) : null, at: r.last_event_at, machine: null }
         if (r.status === 'waiting' && r.pending) needsYou.push({ ...base, kind: 'permission', count: 1, replyRef: r.pending.hash ?? null, at: r.pending.since, summary: `${r.pending.tool}: ${r.pending.summary ?? ''}` })
         else if (r.status === 'running') running.push(base)
@@ -518,7 +669,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       for (const e of list()) {
         const d = localize(e, lastLang)
         if (d.matter.kind !== 'task' || !d.task) continue
-        const base: TodayItemT = { source: 'together', id: d.matter.id, code: d.matter.id, project: (d.task.path.split('/').filter(Boolean).pop() ?? ''), agent: d.task.providerId === 'codex' ? 'Codex' : 'Claude',
+        const base: TodayItemT = { source: 'together', id: d.matter.id, code: d.matter.id, project: (d.task.path.split('/').filter(Boolean).pop() ?? ''), agent: demoName(d.task.providerId),
           title: d.matter.title, summary: null, at: d.task.updatedAt, machine: null }
         const waiting = d.permissions.length + d.questions.length
         if (waiting) needsYou.push({ ...base, kind: d.permissions.length ? 'permission' : 'question', count: waiting, replyRef: null })
@@ -530,6 +681,24 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { generatedAt: n, since, windowHours: 24, needsYou, done, running, stuck,
         counts: { needsYou: needsYou.length, done: done.length, running: running.length, stuck: stuck.length }, unavailable: [] }
     },
+    async home(l): Promise<CompanionHomeT> {
+      noteLang(l)
+      const events = companionEvents(l)
+      const unseen = events.filter(e => seenUntil === null || e.ts > seenUntil)
+      return {
+        presence: { presence: 'ok', activity: { kind: activityKind(), label: '', since: null },
+          news: { unread: unseen.length, latest_kind: unseen[0]?.kind ?? null, latest_title: unseen[0]?.title ?? null } },
+        seenUntil, unread: unseen.length, events,
+      }
+    },
+    async markSeen(until) {
+      // 与 daemon 同:夹到现在、只前进
+      const ms = Date.parse(until)
+      if (!Number.isFinite(ms)) throw new BackendError('invalid')
+      const clamped = new Date(Math.min(ms, now())).toISOString()
+      if (seenUntil === null || clamped > seenUntil) { seenUntil = clamped; queueMicrotask(() => publish([])) }
+      return seenUntil
+    },
     async cliPermission({ sessionId, hash, decision }) {
       const r = cliGet(sessionId)
       if (r.status !== 'waiting' || !r.pending || (hash && r.pending.hash !== hash)) throw new BackendError('stale')
@@ -537,16 +706,34 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       // 允许 ⇒ 接着跑完;拒绝 ⇒ 终端那边停下这一步
       later(2000, () => { r.status = 'idle'; r.last_event_at = now(); if (decision === 'allow') r.summaryKey = 'cliDemoReply' })
     },
+    async cliActivity(sessionId) {
+      const r = cliGet(sessionId)
+      if (r.session_id !== 'demo-cli-docs') return []
+      const n = now(), at = (s: number) => n - s * 1000
+      return ([['you', 'cliActYou', 300], ['step', 'cliActRead', 280], ['said', 'cliActSaid', 250], ['step', 'cliActEdit', 120], ['step', 'cliActRun', 40]] as const)
+        .map(([kind, key, ago]) => ({ kind, text: t(lastLang, key), at: at(ago),
+          ...(key === 'cliActEdit' ? { detail: '- ## 安装(七步)\n+ ## 安装(三步)' } : key === 'cliActRun' ? { detail: 'docs ok · 0 broken links' } : {}) }))
+    },
     async cliSay(sessionId, text) {
       const r = cliGet(sessionId)
       if (!text.trim()) throw new BackendError('invalid')
+      if (r.live_window && r.status !== 'waiting') {
+        // 开着窗口:收下即回 say_id,后台「送进窗口」;同一条又说一句 ⇒ 旧那句的结果不覆盖新的
+        const id = `demo-say-${++saySeq}`
+        r.last_say = { id, state: 'sending', at: now() }
+        later(1500, () => { if (r.last_say?.id === id) r.last_say = { id, state: 'sent', at: now() } })
+        if (r.status !== 'running') { r.status = 'running'; r.last_event_at = now(); r.last_prompt_at = now() }
+        later(3000, () => { r.status = 'idle'; r.last_event_at = now(); r.summaryKey = 'cliDemoReply' })
+        return { sayId: id }
+      }
       if (r.status === 'running' || r.status === 'waiting') throw new BackendError('busy')
       if (r.status === 'ended') throw new BackendError('cli_ended')
       r.status = 'running'; r.last_event_at = now(); r.last_prompt_at = now()
       later(3000, () => { r.status = 'idle'; r.last_event_at = now(); r.summaryKey = 'cliDemoReply' })
+      return { sayId: null }
     },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }

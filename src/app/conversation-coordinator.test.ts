@@ -1,0 +1,3153 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createConversationCoordinator as createCoordinatorRaw, authFailNotice, turnPolicy, turnErrorNotice, type ConversationCoordinatorDeps } from './conversation-coordinator'
+import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
+import { errorWithProviderCode } from '../lib/provider-error-code'
+import { createProviderRegistry } from './provider-registry'
+import { makeFakeSession } from '../test-support/test-helpers'
+import type { AgentEvent, AgentProvider, AgentSession } from '../ports/agent-provider'
+import type { Mode, ProviderId } from '../domain/conversation'
+import { formatInbound, type InboundMsg } from '../domain/prompt-format'
+import type { AcquireRequest } from './session-manager'
+import { TIER_PROFILES, type TierProfile } from '../domain/user-tier'
+import type { Access } from '../lib/access'
+
+describe('authFailNotice', () => {
+  it('returns the provider-specific hint from ProviderCapabilities (incl. cursor)', () => {
+    expect(authFailNotice('claude')).toContain('claude login')
+    expect(authFailNotice('codex')).toContain('codex login')
+    // cursor's chat provider is ACP now (acp-cursor-chat.ts) — subscription
+    // auth via `cursor-agent login`, not an API key or Claude's login flow.
+    const cur = authFailNotice('cursor')
+    expect(cur).toContain('cursor-agent login')
+    expect(cur).not.toContain('claude login')
+  })
+
+  it('auth_rejected(凭证被拒,非哨兵):不说登录过期,不给 login 命令(红线 A,owner 2026-10-02)', () => {
+    const t = authFailNotice('claude', 'auth_rejected')
+    expect(t).toContain('认证没通过(API 返回 401/403)')
+    expect(t).toContain('账号或密钥')
+    expect(t).not.toMatch(/登录|过期|login/)
+    expect(authFailNotice('claude', 'auth_failed')).toBe(authFailNotice('claude'))
+  })
+})
+
+/**
+ * 交付端口(D3 起必填,只有这一条路)。这个文件里的用例大多只给了 sendAssistantText:没指定端口时接一个真的
+ * daemon 交付运行时,出口就是那个 sendAssistantText(不节奏、不接 app 接收器)—— 「主人收到了什么」照旧从
+ * sendAssistantText 看。以前没有端口就走旧路(reply 工具 + FALLBACK_REPLY),那些只钉旧路的用例随 D3 删了。
+ */
+function createConversationCoordinator(deps: Omit<ConversationCoordinatorDeps, 'replyDelivery'> & { replyDelivery?: ConversationCoordinatorDeps['replyDelivery'] }) {
+  const replyDelivery = deps.replyDelivery ?? makeReplyDeliveryRuntime({
+    sendText: async (chatId, text) => { await deps.sendAssistantText?.(chatId, text); return { msgId: 'm' } },
+    sleep: async () => {},
+    log: () => {},
+  })
+  return createCoordinatorRaw({ ...deps, replyDelivery })
+}
+
+/**
+ * Default access fixture used by most coordinator tests: every chatId
+ * those tests touch is listed in `admins`, so `resolveTier()` returns
+ * 'admin' and acquire() receives `TIER_PROFILES.admin` — the behaviour
+ * pre-Task 10 tests were written against. Tests that need to exercise
+ * trusted/guest behaviour should construct their own access fixture.
+ */
+function adminAccess(): Access {
+  return {
+    dmPolicy: 'allowlist',
+    allowFrom: [],
+    admins: ['chat-1', 'chat-2', 'chat-p', 'chat-r', 'chat-abc'],
+  }
+}
+
+/** Minimal AgentProvider whose spawn() returns a session that emits no events. */
+const dummyProvider: AgentProvider = {
+  spawn: async () => makeFakeSession({
+    events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+  }),
+}
+
+function makeMockStore() {
+  const data = new Map<string, { mode: Mode }>()
+  return {
+    get: (chatId: string) => data.get(chatId) ?? null,
+    set: vi.fn((chatId: string, mode: Mode) => { data.set(chatId, { mode }) }),
+    setParticipants: vi.fn((chatId: string, participants: string[] | null) => {
+      const cur = data.get(chatId)
+      if (!cur) return
+      if (cur.mode.kind !== 'parallel' && cur.mode.kind !== 'chatroom') {
+        throw new Error(`setParticipants on ${cur.mode.kind}`)
+      }
+      const next = participants
+        ? { ...cur.mode, participants }
+        : (() => { const m = { ...cur.mode } as Mode & { participants?: string[] }; delete m.participants; return m })()
+      data.set(chatId, { mode: next as Mode })
+    }),
+    _peek: () => data,
+  }
+}
+
+function inbound(chatId: string, text: string): InboundMsg {
+  return {
+    chatId, userId: chatId, text, msgType: 'text',
+    createTimeMs: Date.now(), accountId: 'acct-1',
+  }
+}
+
+/**
+ * A session whose dispatch yields `emit` then hangs forever (never emits a
+ * `result`, never closes) — models the Claude SDK subprocess going silent
+ * mid-turn. `next()` hangs once the buffer drains; `return()` resolves
+ * immediately, mirroring the real provider's AsyncQueue iterator.
+ */
+function hangingSession(emit: AgentEvent[] = []): AgentSession {
+  return {
+    dispatch() {
+      const buf = [...emit]
+      const it: AsyncIterator<AgentEvent> = {
+        next() {
+          if (buf.length > 0) return Promise.resolve({ value: buf.shift()!, done: false })
+          return new Promise<IteratorResult<AgentEvent>>(() => {})
+        },
+        return() { return Promise.resolve({ value: undefined, done: true }) },
+      }
+      return { [Symbol.asyncIterator]: () => it }
+    },
+    async cancel() {},
+    async close() {},
+  }
+}
+
+/** Make a fake handle that the acquire mock returns. */
+function makeHandle(providerId: string, session: ReturnType<typeof makeFakeSession>) {
+  return {
+    alias: 'a',
+    path: '/p',
+    providerId,
+    lastUsedAt: 0,
+    dispatch: (text: string) => session.dispatch(text),
+    cancel: async () => { await session.cancel?.() },
+    close: async () => {},
+  }
+}
+
+describe('ConversationCoordinator', () => {
+  it('falls back to default mode when no persisted mode exists', () => {
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => null,
+      manager: { acquire: vi.fn() },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    expect(c.getMode('chat-1')).toEqual({ kind: 'solo', provider: 'claude' })
+  })
+
+  it('returns persisted mode when present', () => {
+    const store = makeMockStore()
+    store.set('chat-1', { kind: 'solo', provider: 'codex' })
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => null,
+      manager: { acquire: vi.fn() },
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    expect(c.getMode('chat-1')).toEqual({ kind: 'solo', provider: 'codex' })
+  })
+
+  it('setMode rejects unknown provider in solo', () => {
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => null,
+      manager: { acquire: vi.fn() },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    expect(() => c.setMode('chat-1', { kind: 'solo', provider: 'mystery' }))
+      .toThrow(/unknown provider: mystery/)
+  })
+
+  it('setMode persists valid solo mode', () => {
+    const store = makeMockStore()
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => null,
+      manager: { acquire: vi.fn() },
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    c.setMode('chat-1', { kind: 'solo', provider: 'codex' })
+    expect(store.set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'codex' })
+  })
+
+  it('setMode with a changed model pin (same provider) releases that chat\'s sessions; a provider change does not', () => {
+    const store = makeMockStore()
+    const registry = createProviderRegistry()
+    registry.register('openai', dummyProvider, { displayName: 'API', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const releaseFor = vi.fn(async () => 1)
+    const c = createConversationCoordinator({
+      resolveProject: () => null,
+      manager: { acquire: vi.fn(), releaseFor },
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(releaseFor).not.toHaveBeenCalled()          // provider changed (claude→openai): handoff path, not release
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'Qwen3.8' })
+    expect(releaseFor).toHaveBeenCalledWith('openai', 'chat-1')
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'Qwen3.8' })
+    expect(releaseFor).toHaveBeenCalledTimes(1)        // same pin → no churn
+  })
+
+  it('dispatch drops when resolver returns null (no project)', async () => {
+    const acquire = vi.fn()
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const log = vi.fn()
+    const c = createConversationCoordinator({
+      resolveProject: () => null,
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log,
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('drop'))
+  })
+
+  it('dispatch acquires session under the chat\'s persisted provider', async () => {
+    const store = makeMockStore()
+    store.set('chat-1', { kind: 'solo', provider: 'codex' })
+    const dispatched: string[] = []
+    const session = makeFakeSession({
+      events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+      onDispatch: t => dispatched.push(t),
+    })
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
+      makeHandle('codex', session)
+    )
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: (m) => `[fmt]${m.text}`,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    await c.dispatch(inbound('chat-1', 'hi codex'))
+    expect(acquire).toHaveBeenCalledWith({
+      alias: 'a',
+      path: '/p',
+      providerId: 'codex',
+      chatId: 'chat-1',
+      tierProfile: TIER_PROFILES.admin,
+      permissionMode: 'strict',
+    })
+    expect(dispatched).toContain('[fmt]hi codex')
+  })
+
+  it('dispatch threads chatId into session acquire with resolved tier (admin lookup)', async () => {
+    // Task 10 — coordinator now uses the inbound's real chatId (not the
+    // pre-task '_legacy' placeholder) and computes the TierProfile from
+    // resolveTier(chatId, loadAccess()). adminChat ∈ access.admins so
+    // TIER_PROFILES.admin is passed; a different chatId (guestChat) not
+    // listed anywhere collapses to TIER_PROFILES.guest. This pins the
+    // chatId pass-through + per-chatId tier resolution in one test.
+    const acquireCalls: Array<{ alias: string; chatId: string; tierProfile: TierProfile }> = []
+    const session = makeFakeSession({
+      events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+    })
+    const acquire = vi.fn(async (req: AcquireRequest) => {
+      acquireCalls.push({ alias: req.alias, chatId: req.chatId, tierProfile: req.tierProfile })
+      return makeHandle(req.providerId, session)
+    })
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      // adminChat is admin; guestChat is neither admin nor trusted → guest.
+      loadAccess: () => ({
+        dmPolicy: 'allowlist',
+        allowFrom: [],
+        admins: ['adminChat'],
+      }),
+      log: () => {},
+    })
+    await c.dispatch(inbound('adminChat', 'hi'))
+    expect(acquireCalls[0]).toMatchObject({ chatId: 'adminChat' })
+    expect(acquireCalls[0]?.tierProfile).toBe(TIER_PROFILES.admin)
+    await c.dispatch(inbound('guestChat', 'hi'))
+    expect(acquireCalls[1]).toMatchObject({ chatId: 'guestChat' })
+    expect(acquireCalls[1]?.tierProfile).toBe(TIER_PROFILES.guest)
+  })
+
+  it('dispatch falls back to default provider when persisted mode references unknown provider', async () => {
+    const store = makeMockStore()
+    store.set('chat-1', { kind: 'solo', provider: 'gemini' })  // not registered
+    const session = makeFakeSession({
+      events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+    })
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
+      makeHandle('claude', session)
+    )
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const log = vi.fn()
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log,
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledWith({
+      alias: 'a',
+      path: '/p',
+      providerId: 'claude',
+      chatId: 'chat-1',
+      tierProfile: TIER_PROFILES.admin,
+      permissionMode: 'strict',
+    })
+    expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining("provider 'gemini' not registered"))
+  })
+
+  it('on auth_failed: suppresses raw assistant text AND sends a single neutral notice', async () => {
+    // When the provider emits a structured auth_failed error (claude binary
+    // surfaced "Please run /login" as assistant text), the coordinator must
+    // NOT forward any of the text via fallback-reply. It instead sends one
+    // controlled user-facing notice — generic, no terminal instructions.
+    const session = makeFakeSession({
+      events: [
+        // Provider intercepts the "Please run /login" text and emits a
+        // structured error in its place (see claude-agent-provider).
+        { kind: 'error', code: 'auth_failed', message: 'claude reports not logged in: Not logged in · Please run /login' },
+        { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+      ],
+    })
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
+      makeHandle('claude', session)
+    )
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      sendAssistantText,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    // Exactly one outbound message, NOT the raw "Please run /login" text.
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('chat-1')
+    expect(text).not.toContain('Please run /login')
+    expect(text).not.toContain('Not logged in')
+    expect(text).toMatch(/Claude 登录已过期/)
+    expect(text).toContain('claude login')
+  })
+
+  it('on auth_failed: releases the in-memory session so the next dispatch starts a fresh subprocess', async () => {
+    // The notice alone is not enough — without releasing the session, a
+    // busy chat (where dispatch() keeps bumping lastUsedAt) never goes
+    // idle, so sweepIdle never recycles the poisoned subprocess and the
+    // user is stuck behind the throttle window with no recovery.
+    const release = vi.fn(async () => {})
+    const session = makeFakeSession({
+      events: [
+        { kind: 'error', code: 'auth_failed', message: 'x' },
+        { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+      ],
+    })
+    const acquire = vi.fn(async (req: AcquireRequest) =>
+      makeHandle(req.providerId, session)
+    )
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire, release },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      sendAssistantText: async () => {},
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-1' })
+  })
+
+  it('on turn timeout: returns (no hang), releases the wedged session, and sends a retry notice', async () => {
+    // The reported failure: a silently-stalled turn left the pipeline wedged
+    // forever. With a per-turn watchdog, dispatch must RETURN, discard the
+    // poisoned session (so the next message gets a fresh subprocess), and
+    // tell the user to retry.
+    const release = vi.fn(async () => {})
+    const acquire = vi.fn(async (req: AcquireRequest) =>
+      makeHandle(req.providerId, hangingSession([{ kind: 'text', text: 'partial…' }]))
+    )
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire, release },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      sendAssistantText,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      turnTimeoutMs: 30,
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-1' })
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const [chatId, text] = sendAssistantText.mock.calls[0]!
+    expect(chatId).toBe('chat-1')
+    expect(text).toMatch(/掉了|再发/)
+  }, 3000)
+
+  it('emits a structured TurnRecord for a completed solo turn', async () => {
+    const session = makeFakeSession({
+      events: [
+        { kind: 'text', text: 'hi there' },
+        { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+        { kind: 'result', sessionId: 's1', numTurns: 1, durationMs: 0 },
+      ],
+    })
+    const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, session))
+    const recordTurn = vi.fn()
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    let clock = 1_000
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      recordTurn,
+      now: () => clock,
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(recordTurn).toHaveBeenCalledTimes(1)
+    expect(recordTurn.mock.calls[0]![0]).toMatchObject({
+      chatId: 'chat-1',
+      provider: 'claude',
+      alias: 'a',
+      mode: 'solo',
+      outcome: 'completed',
+      replyToolCalled: true,
+    })
+  })
+
+  it('labels a primary_tool turn as mode=primary_tool (not solo) in its TurnRecord', async () => {
+    // primary_tool dispatches through dispatchSolo; a literal mode:'solo' would
+    // mislabel it in GET /v1/turns and misdirect "why did chat X stop replying".
+    const session = makeFakeSession({ events: [
+      { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+      { kind: 'result', sessionId: 's1', numTurns: 1, durationMs: 0 },
+    ] })
+    const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, session))
+    const recordTurn = vi.fn()
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    const store = makeMockStore()
+    store.set('chat-pt', { kind: 'primary_tool', primary: 'claude' })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      recordTurn,
+    })
+    await c.dispatch(inbound('chat-pt', 'hi'))
+    expect(recordTurn).toHaveBeenCalledTimes(1)
+    expect(recordTurn.mock.calls[0]![0]).toMatchObject({ chatId: 'chat-pt', mode: 'primary_tool', outcome: 'completed' })
+  })
+
+  it('emits a TurnRecord with outcome=timeout when the watchdog fires', async () => {
+    const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, hangingSession()))
+    const recordTurn = vi.fn()
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire, release: async () => {} },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      sendAssistantText: async () => {},
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      recordTurn,
+      turnTimeoutMs: 30,
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(recordTurn).toHaveBeenCalledTimes(1)
+    expect(recordTurn.mock.calls[0]![0]).toMatchObject({ chatId: 'chat-1', provider: 'claude', outcome: 'timeout' })
+  }, 3000)
+
+  it('on auth_failed: throttles repeated notices for the same chat', async () => {
+    const session = makeFakeSession({
+      events: [
+        { kind: 'error', code: 'auth_failed', message: 'x' },
+        { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+      ],
+    })
+    const acquire = vi.fn(async (_req: AcquireRequest) =>
+      makeHandle('claude', session)
+    )
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    let clock = 1_000_000
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      sendAssistantText,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      authFailNotifyThrottleMs: 1000,
+      now: () => clock,
+    })
+    // First failure: one notice.
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    // 500ms later (within throttle window): silent.
+    clock += 500
+    await c.dispatch(inbound('chat-1', 'hi again'))
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    // Past the window: notice again.
+    clock += 600
+    await c.dispatch(inbound('chat-1', 'still broken?'))
+    expect(sendAssistantText).toHaveBeenCalledTimes(2)
+    // Different chat shares no throttle slot — first hit notifies immediately.
+    await c.dispatch(inbound('chat-2', 'hi'))
+    expect(sendAssistantText).toHaveBeenCalledTimes(3)
+  })
+
+  // chatroom is now implemented in P5 — see "chatroom mode (P5)" describe block below.
+
+  // ─── solo/parallel cancel — post-cancel-review CRITICAL 1 ──────────────
+  // Chatroom already had its own AbortController-based preempt loop
+  // (inFlightAborters, tested above under "cancel / preemption"). Solo/
+  // parallel/primary_tool dispatches have no such loop — they're single-
+  // shot — but the acquired SessionHandle DOES support cancel() (forwards
+  // to the provider's AgentSession.cancel). These tests pin that
+  // coordinator.cancel(chatId) actually reaches that handle.
+
+  describe('solo/parallel cancel reaches the in-flight SessionHandle', () => {
+    /** A session whose dispatch() hangs until cancel() is called, at which
+     *  point it yields one result event and completes — models a real
+     *  provider whose cancel() unblocks its dispatch generator at the next
+     *  boundary. cancelSpy lets the test assert cancel() actually fired. */
+    function cancellableHangingSession(): { session: AgentSession; cancelSpy: ReturnType<typeof vi.fn> } {
+      let unblock: (() => void) | undefined
+      const cancelSpy = vi.fn(async () => { unblock?.() })
+      const session: AgentSession = {
+        dispatch() {
+          let finished = false
+          const it: AsyncIterator<AgentEvent> = {
+            next() {
+              if (finished) return Promise.resolve({ value: undefined, done: true })
+              return new Promise<IteratorResult<AgentEvent>>((resolve) => {
+                unblock = () => {
+                  finished = true
+                  resolve({ value: { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }, done: false })
+                }
+              })
+            },
+          }
+          return { [Symbol.asyncIterator]: () => it }
+        },
+        cancel: cancelSpy,
+        async close() {},
+      }
+      return { session, cancelSpy }
+    }
+
+    it('coordinator.cancel(chatId) reaches a hanging solo dispatch: session.cancel fires and the turn ends', async () => {
+      const { session, cancelSpy } = cancellableHangingSession()
+      const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, session as any))
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: makeMockStore(),
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      // No turn in flight yet.
+      expect(c.cancel('chat-1')).toBe(false)
+
+      const dispatchPromise = c.dispatch(inbound('chat-1', 'hi'))
+      // Let acquire()/dispatch() run far enough to register the handle.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(c.cancel('chat-1')).toBe(true)
+      expect(cancelSpy).toHaveBeenCalledTimes(1)
+
+      // The turn actually ends (collectTurn's `for await` sees the
+      // cancel-triggered result event, then done:true) — dispatch()
+      // resolves instead of hanging forever.
+      await dispatchPromise
+
+      // Cleared after the turn settles.
+      expect(c.cancel('chat-1')).toBe(false)
+    })
+
+    it('coordinator.cancel(chatId) reaches every in-flight participant of a parallel dispatch', async () => {
+      const a = cancellableHangingSession()
+      const b = cancellableHangingSession()
+      const sessionsByProvider: Record<string, ReturnType<typeof cancellableHangingSession>> = { claude: a, codex: b }
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        makeHandle(req.providerId, sessionsByProvider[req.providerId]!.session as any),
+      )
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'parallel', participants: ['claude', 'codex'] })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      const dispatchPromise = c.dispatch(inbound('chat-1', 'hi'))
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(c.cancel('chat-1')).toBe(true)
+      expect(a.cancelSpy).toHaveBeenCalledTimes(1)
+      expect(b.cancelSpy).toHaveBeenCalledTimes(1)
+
+      await dispatchPromise
+      expect(c.cancel('chat-1')).toBe(false)
+    })
+  })
+
+  // ─── primary_tool mode (RFC 03 P4) ──────────────────────────────────
+
+  describe('primary_tool mode (P4)', () => {
+    function setupPrimaryTool(opts: { initialMode?: { kind: 'primary_tool'; primary: string } } = {}) {
+      const store = makeMockStore()
+      if (opts.initialMode) store.set('chat-1', opts.initialMode)
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const dispatched: string[] = []
+      const session = makeFakeSession({
+        events: [
+          { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+        onDispatch: t => dispatched.push(t),
+      })
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        makeHandle(req.providerId, session)
+      )
+      const log = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log,
+      })
+      return { c, acquire, dispatched, log, store }
+    }
+
+    it('dispatches solo to the primary provider (peer reachable via delegate-mcp tool, not parallel session)', async () => {
+      const { c, acquire, dispatched } = setupPrimaryTool({ initialMode: { kind: 'primary_tool', primary: 'claude' } })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquire).toHaveBeenCalledTimes(1)
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('claude')
+      expect(dispatched).toHaveLength(1)
+    })
+
+    it('reverse — primary_tool with codex primary dispatches to codex', async () => {
+      const { c, acquire } = setupPrimaryTool({ initialMode: { kind: 'primary_tool', primary: 'codex' } })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('codex')
+    })
+
+    it('falls back to solo+default when persisted primary is no longer registered', async () => {
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'primary_tool', primary: 'gemini' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const session = makeFakeSession({
+        events: [
+          { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+      })
+      const acquire = vi.fn(async (_req: AcquireRequest) =>
+        makeHandle('claude', session)
+      )
+      const log = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log,
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('claude')
+      expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining("primary 'gemini' not registered"))
+    })
+
+    it('setMode rejects primary_tool when peer provider missing from registry', () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      // codex missing
+      const c = createConversationCoordinator({
+        resolveProject: () => null,
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      expect(() => c.setMode('chat-1', { kind: 'primary_tool', primary: 'claude' }))
+        .toThrow(/missing: codex/)
+    })
+
+    it('setMode rejects primary_tool when primary cannot delegate (B2, gemini supportsDelegation=false)', () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('gemini', dummyProvider, { displayName: 'Gemini', canResume: () => true })
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => null,
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      expect(() => c.setMode('chat-1', { kind: 'primary_tool', primary: 'gemini' }))
+        .toThrow(/cannot delegate/)
+    })
+  })
+
+  // ─── parallel mode (RFC 03 P3) ───────────────────────────────────────
+
+  describe('parallel mode (P3)', () => {
+    function setupParallel(opts: {
+      claudeEvents?: AgentEvent[]
+      codexEvents?: AgentEvent[]
+      claudeThrows?: Error
+      codexThrows?: Error
+      recordTurn?: (r: import('./conversation-coordinator').TurnRecord) => void
+      haikuEval?: (prompt: string) => Promise<string>
+    } = {}) {
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'parallel' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const dispatchCalls: Array<{ providerId: string; text: string }> = []
+
+      const defaultResultEvent: AgentEvent = { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }
+      const defaultReplyEvents: AgentEvent[] = [
+        { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+        defaultResultEvent,
+      ]
+
+      const claudeEvents = opts.claudeEvents ?? defaultReplyEvents
+      const codexEvents = opts.codexEvents ?? defaultReplyEvents
+
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        const { alias, path, providerId } = req
+        if (providerId === 'claude' && opts.claudeThrows) {
+          return {
+            alias, path, providerId, lastUsedAt: 0,
+            dispatch: (_text: string): AsyncIterable<AgentEvent> => {
+              const err = opts.claudeThrows!
+              return {
+                async *[Symbol.asyncIterator]() { throw err },
+              }
+            },
+            close: async () => {},
+          }
+        }
+        if (providerId === 'codex' && opts.codexThrows) {
+          return {
+            alias, path, providerId, lastUsedAt: 0,
+            dispatch: (_text: string): AsyncIterable<AgentEvent> => {
+              const err = opts.codexThrows!
+              return {
+                async *[Symbol.asyncIterator]() { throw err },
+              }
+            },
+            close: async () => {},
+          }
+        }
+        const events = providerId === 'claude' ? claudeEvents : codexEvents
+        const session = makeFakeSession({
+          events,
+          onDispatch: t => dispatchCalls.push({ providerId, text: t }),
+        })
+        return makeHandle(providerId, session)
+      })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        ...(opts.recordTurn ? { recordTurn: opts.recordTurn } : {}),
+        ...(opts.haikuEval ? { haikuEval: opts.haikuEval } : {}),
+      })
+      return { c, acquire, sendAssistantText, dispatchCalls }
+    }
+
+    // ── 2026-09:/both 末尾补一条收口 ───────────────────────────────────
+    // 原本是「N 条答案并排丢给用户」,合并的活全推给人 —— 在微信这块屏幕
+    // 上尤其糟。并排保留(对比本身有价值),末尾补一条能直接用的答案。
+    const textEvents = (t: string): AgentEvent[] => [
+      { kind: 'text', text: t },
+      { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+    ]
+
+    it('两条答案都拿到 → 末尾多一条 🎯 收口,并排照旧', async () => {
+      const seen: string[] = []
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: textEvents('走 A'),
+        codexEvents: textEvents('走 B'),
+        haikuEval: async (p: string) => { seen.push(p); return '就走 A' },
+      })
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      const sent = sendAssistantText.mock.calls.map(cc => cc[1] as string)
+      expect(sent.filter(t => t.startsWith('['))).toHaveLength(2)   // 并排还在
+      expect(sent.some(t => t.startsWith('🎯'))).toBe(true)          // 收口来了
+      // 收口的输入必须是匿名的 —— 裁判也是模型,也会看名牌行事
+      expect(seen[0]).toContain('走 A')
+      expect(seen[0]).not.toContain('claude')
+    })
+
+    it('只拿到一条答案 → 不收口(一条答案的"综合"只是复读)', async () => {
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: textEvents('走 A'),
+        codexEvents: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+        haikuEval: async () => '不该被调用',
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      const sent = sendAssistantText.mock.calls.map(cc => cc[1] as string)
+      expect(sent.some(t => t.startsWith('🎯'))).toBe(false)
+    })
+
+    it('没有 eval → 只并排,不抛', async () => {
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: textEvents('走 A'),
+        codexEvents: textEvents('走 B'),
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      const sent = sendAssistantText.mock.calls.map(cc => cc[1] as string)
+      expect(sent.filter(t => t.startsWith('['))).toHaveLength(2)
+      expect(sent.some(t => t.startsWith('🎯'))).toBe(false)
+    })
+
+    it('收口失败不影响已经发出去的并排答案', async () => {
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: textEvents('走 A'),
+        codexEvents: textEvents('走 B'),
+        haikuEval: async () => { throw new Error('eval down') },
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      const sent = sendAssistantText.mock.calls.map(cc => cc[1] as string)
+      expect(sent.filter(t => t.startsWith('['))).toHaveLength(2)
+    })
+
+    it('on auth_failed: releases ONLY the failing provider; other provider replies normally', async () => {
+      // The solo path's release-on-auth-failed pattern must extend to /both
+      // mode too — without it, a stale-credential provider stays cached in
+      // the session pool for the full idle window (30 min) and every /both
+      // dispatch silently produces no reply from that side.
+      const store = makeMockStore()
+      store.set('chat-p', { kind: 'parallel' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const release = vi.fn(async () => {})
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        const { providerId } = req
+        const events: AgentEvent[] = providerId === 'claude'
+          ? [
+              { kind: 'error', code: 'auth_failed', message: 'claude reports not logged in' },
+              { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+            ]
+          : [
+              { kind: 'text', text: 'codex reply' },
+              { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+            ]
+        return makeHandle(providerId, makeFakeSession({ events }))
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire, release },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      await c.dispatch(inbound('chat-p', 'hi'))
+
+      // Failing provider was released; healthy one was not.
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-p' })
+      expect(release).not.toHaveBeenCalledWith('a', 'codex')
+      // Codex's normal reply made it through with the parallel-mode prefix.
+      const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
+      expect(sent.some(t => t === '[Codex] codex reply')).toBe(true)
+      // Exactly one neutral auth-fail notice, regardless of which provider failed.
+      const notices = sent.filter(t => /登录已过期/.test(t))
+      expect(notices).toHaveLength(1)
+      expect(notices[0]).toMatch(/Claude 登录已过期/)
+      expect(notices[0]).toContain('claude login')
+      // The raw "Not logged in / Please run /login" string did NOT leak.
+      expect(sent.some(t => /Please run \/login|Not logged in/.test(t))).toBe(false)
+    })
+
+    it('on turn timeout in parallel: releases ONLY the stalled provider; the other still replies', async () => {
+      // Parity with the auth_failed parallel path: a silently-stalled
+      // participant must not hang the whole /both turn (Promise.allSettled
+      // would never settle). The watchdog bounds it, releases that side,
+      // tells the user, and the healthy provider's reply still goes out.
+      const store = makeMockStore()
+      store.set('chat-p', { kind: 'parallel' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const release = vi.fn(async () => {})
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        req.providerId === 'claude'
+          ? makeHandle('claude', hangingSession([{ kind: 'text', text: 'partial…' }]))
+          : makeHandle('codex', makeFakeSession({ events: [
+              { kind: 'text', text: 'codex reply' },
+              { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+            ] }))
+      )
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire, release },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        turnTimeoutMs: 30,
+      })
+      await c.dispatch(inbound('chat-p', 'hi'))
+      // Stalled provider released; healthy one untouched.
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-p' })
+      const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
+      // Codex's reply still forwarded with the parallel-mode prefix.
+      expect(sent.some(t => t === '[Codex] codex reply')).toBe(true)
+      // One timeout notice for the stalled side.
+      expect(sent.some(t => /掉了|再发/.test(t))).toBe(true)
+    }, 3000)
+
+    it('on acquire failure in parallel: the other provider still replies (allSettled acquire)', async () => {
+      // Regression: dispatchParallel used Promise.all for the ACQUIRE phase, so
+      // a single acquire rejection (spawn failure / pool exhausted) threw the
+      // whole batch — BOTH providers dropped with no reply and no TurnRecord,
+      // contradicting the documented "if one throws the other's reply still
+      // goes through" guarantee (which only held for the dispatch phase).
+      const store = makeMockStore()
+      store.set('chat-p', { kind: 'parallel' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        if (req.providerId === 'claude') throw new Error('spawn failed: pool exhausted')
+        return makeHandle('codex', makeFakeSession({ events: [
+          { kind: 'text', text: 'codex reply' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ] }))
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const recordTurn = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire, release: vi.fn(async () => {}) },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        recordTurn,
+      })
+      await c.dispatch(inbound('chat-p', 'hi'))
+      const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
+      // Codex's reply still goes through despite claude's acquire failing.
+      expect(sent.some(t => t === '[Codex] codex reply')).toBe(true)
+      // A TurnRecord is emitted for BOTH providers — claude=error, codex=completed.
+      const byProvider = Object.fromEntries(recordTurn.mock.calls.map(([r]) => [r.provider, r]))
+      expect(byProvider['claude']).toMatchObject({ mode: 'parallel', outcome: 'error' })
+      expect(byProvider['codex']).toMatchObject({ mode: 'parallel', outcome: 'completed' })
+    })
+
+    it('fans out the same inbound to both providers concurrently', async () => {
+      const { c, acquire, dispatchCalls } = setupParallel()
+      await c.dispatch(inbound('chat-1', 'hello both'))
+      // acquire called twice — once per provider
+      expect(acquire).toHaveBeenCalledTimes(2)
+      expect(acquire.mock.calls.map(([req]) => req.providerId).sort()).toEqual(['claude', 'codex'])
+      // dispatch called twice with same text
+      expect(dispatchCalls).toHaveLength(2)
+      expect(dispatchCalls[0]?.text).toBe('hello both')
+      expect(dispatchCalls[1]?.text).toBe('hello both')
+    })
+
+    it('emits one TurnRecord per participant in parallel mode', async () => {
+      // Observability parity with solo: /both must leave a structured record
+      // for EACH provider's turn, tagged mode=parallel, so "why did this chat
+      // stop replying" is answerable for /both too.
+      const recordTurn = vi.fn()
+      const { c } = setupParallel({
+        claudeEvents: [
+          { kind: 'text', text: 'hi' },
+          { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+        codexEvents: [
+          { kind: 'text', text: 'yo' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+        recordTurn,
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(recordTurn).toHaveBeenCalledTimes(2)
+      const byProvider = Object.fromEntries(
+        recordTurn.mock.calls.map(([r]) => [r.provider, r]),
+      )
+      expect(byProvider['claude']).toMatchObject({ mode: 'parallel', outcome: 'completed', replyToolCalled: true })
+      expect(byProvider['codex']).toMatchObject({ mode: 'parallel', outcome: 'completed', replyToolCalled: false, textChunks: 1 })
+    })
+
+    it('emits a TurnRecord with outcome=timeout for a stalled participant in parallel mode', async () => {
+      const recordTurn = vi.fn()
+      const store = makeMockStore()
+      store.set('chat-p', { kind: 'parallel' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        req.providerId === 'claude'
+          ? makeHandle('claude', hangingSession([{ kind: 'text', text: 'partial…' }]))
+          : makeHandle('codex', makeFakeSession({ events: [
+              { kind: 'text', text: 'codex reply' },
+              { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+            ] }))
+      )
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire, release: async () => {} },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async () => {},
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        recordTurn,
+        turnTimeoutMs: 30,
+      })
+      await c.dispatch(inbound('chat-p', 'hi'))
+      const byProvider = Object.fromEntries(recordTurn.mock.calls.map(([r]) => [r.provider, r]))
+      expect(byProvider['claude']).toMatchObject({ mode: 'parallel', outcome: 'timeout' })
+      expect(byProvider['codex']).toMatchObject({ mode: 'parallel', outcome: 'completed' })
+    }, 3000)
+
+    it("delivers each provider's final text, prefixed per-provider", async () => {
+      const { c, sendAssistantText } = setupParallel({
+        claudeEvents: [
+          { kind: 'text', text: 'claude raw 1' },
+          { kind: 'text', text: 'claude raw 2' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+        codexEvents: [
+          { kind: 'text', text: 'codex raw' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      const sent = sendAssistantText.mock.calls.map(([, t]) => t).sort()
+      expect(sent).toEqual([
+        '[Claude] claude raw 1',
+        '[Claude] claude raw 2',
+        '[Codex] codex raw',
+      ])
+    })
+
+    it('one provider throwing does NOT block the other (allSettled semantics)', async () => {
+      const { c, sendAssistantText } = setupParallel({
+        claudeThrows: new Error('claude went poof'),
+        codexEvents: [
+          { kind: 'text', text: 'codex still here' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      // Codex's text still made it through
+      expect(sendAssistantText).toHaveBeenCalledWith('chat-1', '[Codex] codex still here')
+    })
+
+    it('falls back to solo+default when parallel resolves to a single participant', async () => {
+      // P3 N-way: when the registry has only 1 provider, resolveParticipants
+      // returns a 1-element list and dispatch degrades to solo (using that
+      // one provider directly — semantically equivalent to "no point fanning
+      // out to a single member"). Replaces the pre-P3 "missing provider"
+      // hard fallback path.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'parallel' })
+      // Only claude registered — codex missing
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const session = makeFakeSession({
+        events: [
+          { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+      })
+      const acquire = vi.fn(async (_req: AcquireRequest) =>
+        makeHandle('claude', session)
+      )
+      const log = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log,
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      // Acquired ONCE under solo, not twice
+      expect(acquire).toHaveBeenCalledTimes(1)
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('claude')
+      expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('degrading to solo'))
+    })
+
+    it('setMode rejects parallel when explicit participants include an unregistered provider', () => {
+      // P3 N-way: validateMode now only rejects when participants are
+      // explicitly stated AND include an unknown id. Undefined participants
+      // defers to dispatch-time resolution.
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      // codex not registered
+      const c = createConversationCoordinator({
+        resolveProject: () => null,
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      expect(() => c.setMode('chat-1', { kind: 'parallel', participants: ['claude', 'codex'] }))
+        .toThrow(/unknown providers.*codex/)
+    })
+
+    it('honours custom parallelProviders list (e.g. for tests with non-default ids)', async () => {
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'parallel' })
+      const registry = createProviderRegistry()
+      registry.register('alice', dummyProvider, { displayName: 'Alice', canResume: () => true })
+      registry.register('bob', dummyProvider, { displayName: 'Bob', canResume: () => true })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
+        const session = makeFakeSession({
+          events: [
+            { kind: 'text', text: `hi from ${providerId}` },
+            { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+          ],
+        })
+        return makeHandle(providerId, session)
+      })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'alice',
+        parallelProviders: ['alice', 'bob'],
+        format: () => 'x',
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      const sent = sendAssistantText.mock.calls.map(([, t]) => t).sort()
+      expect(sent).toEqual(['[Alice] hi from alice', '[Bob] hi from bob'])
+    })
+  })
+
+  // ─── chatroom mode (RFC 03 P5) ───────────────────────────────────────
+
+  describe('chatroom mode (P5, three-beat pipeline)', () => {
+    /**
+     * Minimal shared setup: both providers reply with their providerId text,
+     * haikuEval returns a 🎯 verdict string by default. Overridable per-test.
+     */
+    function setupChatroom(opts: {
+      claudeReply?: string | null   // null = throw; default = 'claude-reply'
+      codexReply?: string | null    // null = throw; default = 'codex-reply'
+      haikuResponse?: string | ((callNum: number, prompt: string) => string)
+      recordTurn?: (r: import('./conversation-coordinator').TurnRecord) => void
+      release?: () => Promise<void>
+      turnTimeoutMs?: number
+      verdictEval?: (prompt: string) => Promise<string>
+      claudeRepliesViaTool?: boolean
+    } = {}) {
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const sent: string[] = []
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
+        const reply = providerId === 'claude'
+          ? (opts.claudeReply !== undefined ? opts.claudeReply : 'claude-reply')
+          : (opts.codexReply !== undefined ? opts.codexReply : 'codex-reply')
+        if (reply === null) throw new Error(`${providerId} session failed`)
+        const viaReplyTool = providerId === 'claude' && opts.claudeRepliesViaTool
+        return {
+          alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+          dispatch: (_text: string): AsyncIterable<AgentEvent> => ({
+            async *[Symbol.asyncIterator]() {
+              if (viaReplyTool) {
+                // Simulate an agent that ignored the no-reply-tool rule: it
+                // calls the reply tool (content escapes the beat) and emits
+                // only meta-chatter as assistant text.
+                yield { kind: 'tool_call', server: 'wechat', tool: 'reply' } as AgentEvent
+                yield { kind: 'text', text: '（本轮结束）' } as AgentEvent
+              } else {
+                yield { kind: 'text', text: reply } as AgentEvent
+              }
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }),
+          close: async () => {},
+        }
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, text: string) => { sent.push(text) })
+      let haikuCallNum = 0
+      // 同一个 cheapEval 现在要服务三种结构完全不同的 prompt(争点地图 /
+      // 收敛判定 / 裁决),所以默认假实现按 prompt 分流 —— 一个固定串会让
+      // 争点地图解析失败,而「解析失败 = 没有争点 = 跳过互驳」是正确行为,
+      // 于是每个既有用例都会安静地少跑一拍。按 prompt 分流才是真实形状。
+      const haikuEval = vi.fn(async (prompt: string) => {
+        const n = haikuCallNum++
+        if (typeof opts.haikuResponse === 'function') return opts.haikuResponse(n, prompt)
+        if (opts.haikuResponse !== undefined) return opts.haikuResponse
+        if (prompt.includes('contested')) return '{"contested":["A 和 B 谁更快"],"agreed":[]}'
+        if (prompt.includes('converged')) return '{"converged":true}'
+        return '🎯 verdict'
+      })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire, release: opts.release },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+        ...(opts.verdictEval ? { verdictEval: opts.verdictEval } : {}),
+        ...(opts.recordTurn ? { recordTurn: opts.recordTurn } : {}),
+        ...(opts.turnTimeoutMs !== undefined ? { turnTimeoutMs: opts.turnTimeoutMs } : {}),
+      })
+      return { c, acquire, sent, sendAssistantText, haikuEval }
+    }
+
+    // ── New three-beat tests (Task 3 Step 1) ─────────────────────────────
+
+    it('/chat runs opening → cross-talk → verdict, ending with a 🎯 verdict', async () => {
+      // Happy path: both agents reply in beat 1 and beat 2; haikuEval
+      // returns a 🎯 verdict in beat 3. Expect ≥4 prefixed messages
+      // (2 openings + 2 rebuttals) plus exactly one 🎯 message.
+      const { c, sent } = setupChatroom()
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      // Opening (2) + cross-talk (2) = at least 4 prefixed messages.
+      expect(sent.filter(s => s.startsWith('[')).length).toBeGreaterThanOrEqual(4)
+      // Verdict always emitted.
+      expect(sent.some(s => s.startsWith('🎯'))).toBe(true)
+    })
+
+    it('/chat verdict uses the STRONG verdictEval (not haikuEval) when provided', async () => {
+      // verdictEval (default provider's strong model) handles beat ③; haikuEval
+      // stays for the tiny convergence check only. The 🎯 message must be the
+      // strong eval's output, and verdictEval must have been called.
+      const verdictEval = vi.fn(async (_prompt: string) => '🎯 强模型裁决')
+      const { c, sent, haikuEval } = setupChatroom({ verdictEval })
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      expect(verdictEval).toHaveBeenCalledTimes(1)
+      expect(sent.some(s => s === '🎯 强模型裁决')).toBe(true)
+      // The strong eval's verdict prompt is the verdict structure, not convergence JSON.
+      expect(verdictEval.mock.calls[0]![0]).toMatch(/共识|分歧|结论/)
+      // haikuEval never produced the 🎯 line (its default '🎯 verdict' must be absent).
+      expect(sent.some(s => s === '🎯 verdict')).toBe(false)
+      // haikuEval may still run for convergence, but never for the verdict.
+      void haikuEval
+    })
+
+    it('/chat verdict is still produced when one agent fails every beat (graceful degrade)', async () => {
+      // codex throws on every acquire; only claude's opening makes it through.
+      // Cross-talk is skipped (openings.length < 2), but verdict still runs
+      // because haikuEval is defined.
+      const { c, sent } = setupChatroom({ codexReply: null })
+      await c.dispatch(inbound('chat-1', '问题'))
+      expect(sent.some(s => s.startsWith('[Claude]'))).toBe(true)
+      expect(sent.some(s => s.startsWith('[Codex]'))).toBe(false)
+      expect(sent.some(s => s.startsWith('🎯'))).toBe(true)
+    })
+
+    it('/chat does NOT crash when the convergence check returns truncated JSON', async () => {
+      // The first haikuEval call (convergence after beat 2) returns malformed
+      // truncated JSON. parseConvergence must absorb it without throwing.
+      // The verdict call (second haikuEval) then runs and emits normally.
+      let callNum = 0
+      const { c, sent } = setupChatroom({
+        haikuResponse: (_n, _p) => {
+          callNum++
+          if (callNum === 1) return '{"converged": false, "disagreement": "...'  // truncated
+          return '🎯 判决：A 更好。'
+        },
+      })
+      await expect(c.dispatch(inbound('chat-1', 'q'))).resolves.toBeUndefined()
+      expect(sent.some(s => s.startsWith('🎯'))).toBe(true)
+    })
+
+    // ── Auth/timeout resilience (adapted from old moderator tests) ────────
+
+    it('on speaker auth_failed: releases speaker session, sends notice, verdict still runs', async () => {
+      // claude emits auth_failed in the opening beat → runBeat releases
+      // claude, sends the neutral notice, and returns only codex's opening.
+      // Cross-talk is skipped (single opening). haikuEval is called once
+      // for the verdict (beat 3 always runs when haikuEval is present).
+      const store = makeMockStore()
+      store.set('chat-r', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const release = vi.fn(async () => {})
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
+        const events: AgentEvent[] = providerId === 'claude'
+          ? [
+              { kind: 'error', code: 'auth_failed', message: 'stale claude' },
+              { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+            ]
+          : [
+              { kind: 'text', text: 'codex reply' },
+              { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+            ]
+        return makeHandle(providerId, makeFakeSession({ events }))
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      let haikuCalls = 0
+      const haikuEval = vi.fn(async () => { haikuCalls++; return '🎯 verdict' })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire, release },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+      await c.dispatch(inbound('chat-r', '开始讨论'))
+
+      // claude's session released on auth_failed.
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-r' })
+      // haikuEval called once — verdict only (cross-talk skipped: one opening).
+      expect(haikuCalls).toBe(1)
+      // User got the neutral notice — NOT the raw "Please run /login" text.
+      const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
+      expect(sent.some(t => /Claude 登录已过期/.test(t) && t.includes('claude login'))).toBe(true)
+      expect(sent.some(t => /Please run \/login|Not logged in/.test(t))).toBe(false)
+      // No [Claude] prefix (claude produced no text in the opening beat).
+      expect(sent.some(t => /^\[Claude\]/.test(t))).toBe(false)
+    })
+
+    it('on speaker turn timeout: releases both sessions, sends retry notice, skips verdict', async () => {
+      // Both speakers hang in the opening beat → openings.length === 0 →
+      // coordinator sends the "two AIs couldn't respond" retry notice and
+      // returns early. haikuEval is never called.
+      const store = makeMockStore()
+      store.set('chat-r', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const release = vi.fn(async () => {})
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) =>
+        makeHandle(providerId, hangingSession([{ kind: 'text', text: 'partial…' }]))
+      )
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const haikuEval = vi.fn(async () => '🎯 verdict')
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire, release },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+        turnTimeoutMs: 30,
+      })
+      await c.dispatch(inbound('chat-r', '开始讨论'))
+      // Both sessions released on timeout.
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'claude', chatId: 'chat-r' })
+      expect(release).toHaveBeenCalledWith({ alias: 'a', providerId: 'codex', chatId: 'chat-r' })
+      // User sees a retry notice — "再发" is in the per-provider timeout message.
+      const sent = sendAssistantText.mock.calls.map(call => call[1] as string)
+      expect(sent.some(t => /再发/.test(t))).toBe(true)
+      // haikuEval not called (returned early on empty openings).
+      expect(haikuEval).not.toHaveBeenCalled()
+    }, 3000)
+
+    // ── 2026-09 改造的三条行为 ──────────────────────────────────────────
+
+    it('开场没有实质分歧 → 整个互驳拍跳过,只剩两条开场 + 裁决', async () => {
+      // 这是这次改造最省的一刀:三个模型说的是同一件事时,再逼他们互驳
+      // 只会产出客套话和虚假对立,而且贵三倍。
+      const { c, sent, acquire } = setupChatroom({
+        haikuResponse: (_n, prompt) =>
+          prompt.includes('contested') ? '{"contested":[],"agreed":["都说先压测"]}' : '🎯 verdict',
+      })
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      expect(sent.filter(t => t.startsWith('[')).length).toBe(2)   // 只有开场
+      expect(sent.some(t => t.startsWith('🎯'))).toBe(true)         // 裁决照出
+      expect(acquire.mock.calls.length).toBe(2)                     // 只 spawn 了一拍
+      // 省下这一刀是对的,但它长得跟「互驳坏了」一样 —— 必须说一句
+      expect(sent.find(t => t.startsWith('🎯'))).toContain('跳过了互驳')
+    })
+
+    it('有争点 → 照常互驳;争点原文进了第二拍的 prompt', async () => {
+      const prompts: string[] = []
+      const { c, sent } = setupChatroom({
+        haikuResponse: (_n, prompt) =>
+          prompt.includes('contested') ? '{"contested":["并发安全性谁说了算"],"agreed":[]}'
+          : prompt.includes('converged') ? '{"converged":true}'
+          : '🎯 verdict',
+      })
+      // 借 dispatch 的副作用抓不到 prompt,改从发出去的条数判断即可;
+      // prompt 内容由 chatroom-conductor.test.ts 单独覆盖。
+      void prompts
+      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
+      expect(sent.filter(t => t.startsWith('[')).length).toBeGreaterThanOrEqual(4)
+    })
+
+    it('cheapEval 缺席时不把「问不出争点」当成「没有争点」—— 退回旧行为照常互驳', async () => {
+      // 否则整个辩论会因为少了一个可选依赖而**悄悄**退化成一拍,
+      // 这正是本仓库反复栽的那种「没人告诉你」的坑。
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const sent: string[] = []
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: {
+          acquire: async ({ providerId }: AcquireRequest) => ({
+            alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+            dispatch: (): AsyncIterable<AgentEvent> => ({
+              async *[Symbol.asyncIterator]() {
+                yield { kind: 'text', text: `${providerId}-say` } as AgentEvent
+                yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+              },
+            }),
+            close: async () => {},
+          }),
+        },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async (_c: string, t: string) => { sent.push(t) },
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        // 刻意不给 haikuEval / verdictEval
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      expect(sent.filter(t => t.startsWith('[')).length).toBeGreaterThanOrEqual(4)
+    })
+
+    it('互评名次跟裁决同一条消息发出,不额外打扰', async () => {
+      const { c, sent } = setupChatroom({
+        claudeReply: 'A 更好\n#RANK: B > A',
+        codexReply: 'B 更好\n#RANK: B > A',
+      })
+      await c.dispatch(inbound('chat-1', 'q'))
+      const verdict = sent.find(t => t.startsWith('🎯'))!
+      expect(verdict).toContain('互评')
+      expect(sent.filter(t => t.startsWith('互评')).length).toBe(0)   // 没有单独一条
+      // #RANK 那行是内部信号,不能出现在给用户看的发言里
+      expect(sent.some(t => t.includes('#RANK'))).toBe(false)
+    })
+
+    it('emits a TurnRecord per participant per beat in chatroom mode', async () => {
+      // Each runBeat call records one TurnRecord per participant. With both
+      // agents responding in opening (beat 1) and cross-talk (beat 2),
+      // expect at least 4 records (2 providers × 2 beats), all mode=chatroom.
+      const recordTurn = vi.fn()
+      const { c } = setupChatroom({ recordTurn })
+      await c.dispatch(inbound('chat-1', 'q'))
+      expect(recordTurn.mock.calls.length).toBeGreaterThanOrEqual(4)
+      for (const [r] of recordTurn.mock.calls) {
+        expect(r).toMatchObject({ mode: 'chatroom', outcome: 'completed', chatId: 'chat-1' })
+      }
+      const providers = recordTurn.mock.calls.map(([r]) => r.provider)
+      expect(providers.filter((p: string) => p === 'claude').length).toBeGreaterThanOrEqual(2)
+      expect(providers.filter((p: string) => p === 'codex').length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('does not duplicate attachment markers when format(msg) already includes them', async () => {
+      // In the new flow, format(msg) is called once to produce the question;
+      // every opening-beat dispatch receives the same question string, so the
+      // image marker appears exactly once per provider dispatch.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+
+      const dispatchedTexts: Array<{ providerId: string; text: string }> = []
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (text: string): AsyncIterable<AgentEvent> => {
+          dispatchedTexts.push({ providerId, text })
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }
+        },
+        close: async () => {},
+      }))
+
+      const haikuEval = vi.fn(async () => '🎯 verdict')
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: formatInbound,
+        sendAssistantText: vi.fn(),
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+
+      await c.dispatch({
+        chatId: 'chat-1', userId: 'u1', text: '这是什么',
+        msgType: 'image', createTimeMs: 1, accountId: 'a',
+        attachments: [{ kind: 'image', path: '/inbox/a/x.jpg' }],
+      })
+
+      // Image marker appears exactly once in each opening-beat dispatch.
+      const occurrences = (dispatchedTexts[0]?.text.match(/\[image:\/inbox\/a\/x\.jpg\]/g) ?? []).length
+      expect(occurrences).toBe(1)
+    })
+
+    // ── cancel / preemption ───────────────────────────────────────────────
+
+    it('cancel(chatId) returns true while in-flight; subsequent dispatch preempts cleanly', async () => {
+      // cancel() signals the aborter (returns true). The aborter is registered
+      // synchronously before the first await. After the dispatch completes
+      // (or aborts at a beat boundary) the aborter slot is cleared (returns false).
+      const { c } = setupChatroom()
+      expect(c.cancel('chat-1')).toBe(false)
+      const p = c.dispatch(inbound('chat-1', 'first'))
+      // aborter is set synchronously inside dispatchChatroom before its first await
+      expect(c.cancel('chat-1')).toBe(true)
+      await p
+      expect(c.cancel('chat-1')).toBe(false)
+    })
+
+    it('cancel before beat ② causes subsequent beats to be skipped', async () => {
+      // cancel() sets abort signal before beat ① completes. Once beat ① finishes,
+      // the first beat-boundary abort check fires and returns early — beats ②,
+      // ②b, and ③ must NOT run. haikuEval (used only in ②b and ③) must not be called.
+      const { c, haikuEval } = setupChatroom()
+      const p = c.dispatch(inbound('chat-1', 'debate'))
+      // aborter is registered synchronously before the first await (beat ①)
+      expect(c.cancel('chat-1')).toBe(true)
+      await p
+      // haikuEval is only invoked in beats ②b (convergence) and ③ (verdict).
+      // If neither ran, abort-at-boundary is working correctly.
+      expect(haikuEval).not.toHaveBeenCalled()
+    })
+
+    it('/stop mid-beat cancels the running speakers and delivers nothing they say afterwards', async () => {
+      // 一拍进行中主人 /stop:正在说话的几位要被真正取消(否则跑满一拍超时),
+      // 取消之后它们收尾吐出来的话不许再发到微信,也不发「没有 AI 成功回应」。
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const cancelSpies: Array<ReturnType<typeof vi.fn>> = []
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
+        let unblock: (() => void) | undefined
+        const cancel = vi.fn(async () => { unblock?.() })
+        cancelSpies.push(cancel)
+        return {
+          alias: 'a', path: '/p', providerId, lastUsedAt: 0, cancel,
+          dispatch: (): AsyncIterable<AgentEvent> => ({
+            async *[Symbol.asyncIterator]() {
+              await new Promise<void>(r => { unblock = r })
+              // 取消后像正常结束一样吐出一段话(有的 provider 就是这样收尾的)
+              yield { kind: 'text', text: '被打断前想说的话' } as AgentEvent
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }),
+          close: async () => {},
+        }
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const haikuEval = vi.fn(async () => '🎯 verdict')
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+      const p = c.dispatch(inbound('chat-1', 'debate'))
+      await vi.waitFor(() => expect(acquire).toHaveBeenCalledTimes(2))
+      await new Promise(r => setTimeout(r, 0))
+      expect(c.cancel('chat-1')).toBe(true)
+      await p
+      expect(cancelSpies).toHaveLength(2)
+      for (const spy of cancelSpies) expect(spy).toHaveBeenCalled()
+      expect(sendAssistantText).not.toHaveBeenCalled()
+    })
+
+    it('falls back to solo+default when chatroom resolves to a single participant', async () => {
+      // P3 N-way: when the registry has only 1 provider, resolveParticipants
+      // returns a 1-element list and dispatch degrades to solo (using that
+      // one provider directly). Replaces the pre-P3 "missing provider" hard
+      // fallback path.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      // Only claude registered
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const session = makeFakeSession({
+        events: [
+          { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+        ],
+      })
+      const acquire = vi.fn(async (_req: AcquireRequest) =>
+        makeHandle('claude', session)
+      )
+      const log = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log,
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      // Solo dispatch — single acquire, claude.
+      expect(acquire).toHaveBeenCalledTimes(1)
+      expect(acquire.mock.calls[0]?.[0]?.providerId).toBe('claude')
+      expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('degrading to solo'))
+    })
+
+    it('all speakers failing sends retry notice (opening beat returns empty)', async () => {
+      // When every acquire() throws in beat 1, openings.length === 0 and
+      // the coordinator sends "⚠️ 这轮没有 AI 成功回应，请稍后重发一次。"
+      // instead of silently returning. haikuEval is not called.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const acquire = vi.fn(async () => { throw new Error('session crashed') })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const haikuEval = vi.fn(async () => '🎯 verdict')
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('这轮没有 AI 成功回应'))
+      expect(haikuEval).not.toHaveBeenCalled()
+    })
+
+    // ── Preemption / rapid-dispatch tests (adapted for three-beat flow) ───
+
+    it('rapid follow-up message preempts prior dispatch and both resolve cleanly', async () => {
+      // Gate A on its first haikuEval call (the convergence check after
+      // beat 2). B arrives while A is gated, preempts A (logs "preempting
+      // prior in-flight dispatch"), and awaits A's promise. On gate release
+      // A finishes, then B runs its own three-beat loop. Both resolve.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (_text: string): AsyncIterable<AgentEvent> => ({
+          async *[Symbol.asyncIterator]() {
+            yield { kind: 'text', text: `${providerId}-reply` } as AgentEvent
+            yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+          },
+        }),
+        close: async () => {},
+      }))
+
+      let resolveGate: () => void = () => {}
+      const gate = new Promise<void>(res => { resolveGate = res })
+      let haikuCallCount = 0
+      const haikuEval = vi.fn(async () => {
+        if (++haikuCallCount === 1) await gate  // pause A at first convergence call
+        return '🎯 verdict'
+      })
+
+      const logs: string[] = []
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async () => {},
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: (_tag, line) => { if (typeof line === 'string') logs.push(line) },
+        haikuEval,
+      })
+
+      const pA = c.dispatch(inbound('chat-1', 'Q-from-A'))
+      await new Promise(r => setImmediate(r))  // let A reach the haikuEval gate
+
+      const pB = c.dispatch(inbound('chat-1', 'Q-from-B'))  // B preempts A
+      resolveGate()   // release A so it can finish; B then runs
+      await Promise.all([pA, pB])
+
+      // B preempted A (logged it).
+      const preemptLogs = logs.filter(l => l.includes('preempting prior in-flight dispatch'))
+      expect(preemptLogs.length).toBeGreaterThanOrEqual(1)
+      // Both A and B ran haikuEval (A's convergence+verdict, B's convergence+verdict).
+      expect(haikuCallCount).toBeGreaterThanOrEqual(2)
+    })
+
+    it('three-or-more rapid dispatches resolve cleanly, preempt chain fires ≥2 times', async () => {
+      // Safety invariant: A, B, C all arrive rapidly → B preempts A,
+      // C preempts A initially (B hasn't set its aborter yet), then C
+      // preempts B after B claims the slot. The while-loop re-read ensures
+      // the chain doesn't lose a wave. All three resolve without deadlock.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (_text: string): AsyncIterable<AgentEvent> => ({
+          async *[Symbol.asyncIterator]() {
+            yield { kind: 'text', text: `${providerId}-reply` } as AgentEvent
+            yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+          },
+        }),
+        close: async () => {},
+      }))
+
+      let resolveGate: () => void = () => {}
+      const gate = new Promise<void>(res => { resolveGate = res })
+      let haikuCallCount = 0
+      const haikuEval = vi.fn(async () => {
+        if (++haikuCallCount === 1) await gate  // pause A's convergence check
+        return '🎯 verdict'
+      })
+
+      const logs: string[] = []
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async () => {},
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: (_tag, line) => { if (typeof line === 'string') logs.push(line) },
+        haikuEval,
+      })
+
+      // Three rapid dispatches; A paused at gate while B and C arrive.
+      const pA = c.dispatch(inbound('chat-1', 'Q-A'))
+      await new Promise(r => setImmediate(r))  // let A reach the gate
+      const pB = c.dispatch(inbound('chat-1', 'Q-B'))  // B preempts A synchronously
+      const pC = c.dispatch(inbound('chat-1', 'Q-C'))  // C also preempts A synchronously
+
+      resolveGate()  // A finishes → B claims slot → C preempts B → C runs
+      await Promise.all([pA, pB, pC])
+
+      // The preempt chain fired at least twice (B preempts A, C preempts B).
+      const preemptLogs = logs.filter(l => l.includes('preempting prior in-flight dispatch'))
+      expect(preemptLogs.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('verdict/convergence prompts for dispatch 2 do not contain a prior failed question', async () => {
+      // When dispatch 1 has one acquire throw (only one provider responds),
+      // dispatch 2 (a clean follow-up) must see only its own question in
+      // convergence/verdict prompts — the prompts are built from the current
+      // runBeat outputs and question only, never from persisted cross-dispatch history.
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+
+      let failOnce = true
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
+        if (failOnce) {
+          failOnce = false
+          throw new Error('simulated speaker session crash')
+        }
+        return {
+          alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+          dispatch: (_text: string): AsyncIterable<AgentEvent> => ({
+            async *[Symbol.asyncIterator]() {
+              yield { kind: 'text', text: `${providerId}-reply` } as AgentEvent
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }),
+          close: async () => {},
+        }
+      })
+
+      const promptsSeen: string[] = []
+      const haikuEval = vi.fn(async (prompt: string) => {
+        promptsSeen.push(prompt)
+        return '🎯 verdict'
+      })
+
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async () => {},
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+
+      // Dispatch 1 — one acquire throws, only one provider responds.
+      await c.dispatch(inbound('chat-1', 'Q-failed'))
+
+      // Dispatch 2 — clean follow-up. The verdict/convergence prompts must
+      // contain 'Q-followup' and NOT the failed prior question.
+      promptsSeen.length = 0
+      await c.dispatch(inbound('chat-1', 'Q-followup'))
+
+      expect(promptsSeen[0]).toBeDefined()
+      expect(promptsSeen[0]!).toContain('Q-followup')
+      expect(promptsSeen[0]!).not.toContain('Q-failed')
+    })
+
+    it('cancel(chatId) returns false when no in-flight loop', async () => {
+      const { c } = setupChatroom()
+      expect(c.cancel('chat-1')).toBe(false)
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(c.cancel('chat-1')).toBe(false)
+    })
+
+    it('setMode rejects chatroom when explicit participants include an unregistered provider', () => {
+      // P3 N-way: validateMode only rejects when participants are explicitly
+      // stated AND include an unknown id. Undefined participants defers to
+      // dispatch-time resolution.
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => null,
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      expect(() => c.setMode('chat-1', { kind: 'chatroom', participants: ['claude', 'codex'] }))
+        .toThrow(/unknown providers.*codex/)
+    })
+  })
+
+  describe('N-way participants (P3)', () => {
+    /** Reusable per-test setup for N-way parallel dispatch tracking. */
+    function setupNway(registered: ProviderId[]) {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      for (const id of registered) {
+        registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
+      }
+      const acquiredProviders: ProviderId[] = []
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        acquiredProviders.push(req.providerId)
+        const session = makeFakeSession({
+          events: [
+            { kind: 'tool_call', server: 'wechat', tool: 'reply' },
+            { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+          ],
+        })
+        return makeHandle(req.providerId, session)
+      })
+      const log = vi.fn()
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: vi.fn(async () => {}),
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log,
+      })
+      return { c, store, acquire, acquiredProviders, log }
+    }
+
+    it('explicit participants on parallel mode are passed verbatim (skips unlisted providers)', async () => {
+      const { c, store, acquiredProviders } = setupNway(['claude', 'codex', 'cursor'])
+      store.set('chat-1', { kind: 'parallel', participants: ['claude', 'cursor'] })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquiredProviders.sort()).toEqual(['claude', 'cursor'])
+    })
+
+    it('parallel mode with explicit full-registry participants fans out to all 3', async () => {
+      // Verifies that with 3+ registered providers and explicit
+      // participants matching the full registry, all 3 are acquired.
+      // (Per the legacy-backfill test below, undefined participants on a
+      // persisted parallel row backfills to first-2 — so the only way to
+      // exercise N=3 dispatch is via explicit participants.)
+      const { c, store, acquiredProviders } = setupNway(['claude', 'codex', 'cursor'])
+      store.set('chat-1', { kind: 'parallel', participants: ['claude', 'codex', 'cursor'] })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquiredProviders.sort()).toEqual(['claude', 'codex', 'cursor'])
+    })
+
+    it('legacy parallel row (participants undefined) backfills to first-two-registered and persists', async () => {
+      const { c, store, acquiredProviders } = setupNway(['claude', 'codex', 'cursor'])
+      // Simulate a pre-v11 row: parallel mode with no participants property.
+      store.set('chat-1', { kind: 'parallel' })
+      // First dispatch: backfills to first 2 (claude+codex).
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquiredProviders.sort()).toEqual(['claude', 'codex'])
+      expect(store.setParticipants).toHaveBeenCalledWith('chat-1', ['claude', 'codex'])
+      // Second dispatch: now persisted with explicit participants. setParticipants NOT called again.
+      const callsAfterFirst = (store.setParticipants as ReturnType<typeof vi.fn>).mock.calls.length
+      acquiredProviders.length = 0
+      await c.dispatch(inbound('chat-1', 'hi again'))
+      expect(acquiredProviders.sort()).toEqual(['claude', 'codex'])
+      expect((store.setParticipants as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirst)
+    })
+
+    // agy final-review CRITICAL 1 — the registry-derived fallback (legacy
+    // backfill AND fresh-chat) must never auto-include agy. A registry of
+    // EXACTLY ['claude', 'agy'] is the sharpest case: naive first-two
+    // backfill would pick both, silently putting a guest chat's turn on
+    // agy's shared trusted-token channel. It must instead degrade to
+    // solo+claude (the only non-agy provider left).
+    it('legacy parallel row on a registry of exactly [claude, agy] never backfills agy — degrades to solo+claude', async () => {
+      const { c, store, acquiredProviders } = setupNway(['claude', 'agy'])
+      store.set('chat-1', { kind: 'parallel' })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquiredProviders).toEqual(['claude'])
+    })
+
+    it('>3 participants is capped at 3 with a log line', async () => {
+      const { c, store, acquiredProviders, log } = setupNway(['claude', 'codex', 'cursor', 'extra'])
+      store.set('chat-1', { kind: 'parallel', participants: ['claude', 'codex', 'cursor', 'extra'] })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      // First 3 only.
+      expect(acquiredProviders.sort()).toEqual(['claude', 'codex', 'cursor'])
+      const sawCap = log.mock.calls.some(([, line]) => typeof line === 'string' && line.includes('capping'))
+      expect(sawCap).toBe(true)
+    })
+
+    it('participants filter silently drops unregistered providers with a log line', async () => {
+      const { c, store, acquiredProviders, log } = setupNway(['claude', 'codex'])
+      store.set('chat-1', { kind: 'parallel', participants: ['claude', 'codex', 'cursor'] })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquiredProviders.sort()).toEqual(['claude', 'codex'])
+      const sawFilter = log.mock.calls.some(([, line]) => typeof line === 'string' && line.includes('filtered'))
+      expect(sawFilter).toBe(true)
+    })
+
+    it('participants resolving to 0 degrades to solo+default', async () => {
+      const { c, store, acquiredProviders } = setupNway(['claude'])
+      store.set('chat-1', { kind: 'parallel', participants: ['codex', 'cursor'] })
+      // validateMode would reject this — bypass by writing directly via store.
+      // (Operator scenario: registry shrank after persist.)
+      await c.dispatch(inbound('chat-1', 'hi'))
+      // Degrades to solo+default (claude).
+      expect(acquiredProviders).toEqual(['claude'])
+    })
+
+    it('participants resolving to 1 degrades to solo with that 1', async () => {
+      const { c, store, acquiredProviders } = setupNway(['claude', 'codex', 'cursor'])
+      store.set('chat-1', { kind: 'parallel', participants: ['cursor'] })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquiredProviders).toEqual(['cursor'])
+    })
+
+    it('chatroom: 3 explicit participants dispatched without 2-tuple throw', async () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      for (const id of ['claude', 'codex', 'cursor']) {
+        registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
+      }
+      store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'codex', 'cursor'] })
+      const acquired: ProviderId[] = []
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        acquired.push(req.providerId)
+        return makeHandle(req.providerId, makeFakeSession({
+          events: [
+            { kind: 'text', text: `I am ${req.providerId}` },
+            { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+          ],
+        }))
+      })
+      // Scripted moderator: round 1 → cursor, round 2 → end.
+      let round = 0
+      const haikuEval = vi.fn(async () => {
+        round++
+        if (round === 1) return JSON.stringify({ action: 'continue', speaker: 'cursor', prompt: 'go', reasoning: 'r1' })
+        return JSON.stringify({ action: 'end', reasoning: 'done' })
+      })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: vi.fn(async () => {}),
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        haikuEval,
+        log: () => {},
+      })
+      // Should not throw despite 3 participants (pre-P3 would throw 2-tuple).
+      await expect(c.dispatch(inbound('chat-1', 'hi'))).resolves.toBeUndefined()
+      // Cursor was the picked speaker.
+      expect(acquired).toContain('cursor')
+    })
+
+    it('chatroom: legacy row (no participants) backfills to first-two and persists', async () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      for (const id of ['claude', 'codex']) {
+        registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
+      }
+      store.set('chat-1', { kind: 'chatroom' })
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        makeHandle(req.providerId, makeFakeSession({
+          events: [{ kind: 'text', text: 'x' }, { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+        })))
+      const haikuEval = vi.fn(async () => JSON.stringify({ action: 'end', reasoning: 'short' }))
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: vi.fn(async () => {}),
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        haikuEval,
+        log: () => {},
+      })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(store.setParticipants).toHaveBeenCalledWith('chat-1', ['claude', 'codex'])
+    })
+  })
+
+  describe('validateMode — N-way participants', () => {
+    function setupValidate(registered: ProviderId[]) {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      for (const id of registered) {
+        registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
+      }
+      const c = createConversationCoordinator({
+        resolveProject: () => null,
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      return c
+    }
+
+    it('setMode(parallel) with explicit unknown provider throws naming the bad provider', () => {
+      const c = setupValidate(['claude', 'codex'])
+      expect(() => c.setMode('chat-1', { kind: 'parallel', participants: ['claude', 'unknown'] }))
+        .toThrow(/unknown.*unknown/i)
+    })
+
+    it('setMode(parallel) with all participants registered succeeds', () => {
+      const c = setupValidate(['claude', 'codex', 'cursor'])
+      expect(() => c.setMode('chat-1', { kind: 'parallel', participants: ['claude', 'cursor'] })).not.toThrow()
+    })
+
+    it('setMode(parallel) with undefined participants succeeds (deferred to dispatch)', () => {
+      const c = setupValidate(['claude', 'codex', 'cursor'])
+      expect(() => c.setMode('chat-1', { kind: 'parallel' })).not.toThrow()
+    })
+
+    it('setMode(chatroom) with participants.length < 2 throws', () => {
+      const c = setupValidate(['claude', 'codex', 'cursor'])
+      expect(() => c.setMode('chat-1', { kind: 'chatroom', participants: ['claude'] }))
+        .toThrow(/≥2|at least 2/)
+    })
+
+    // ── agy final-review CRITICAL 1 — structural exclusion from
+    // parallel/chatroom (shared tier-C 'trusted' MCP token, spec §7
+    // non-goal). This is the ONE chokepoint every caller goes through —
+    // mode-commands.ts's /both and /chat handlers AND
+    // POST /v1/conversation/set-mode (which calls coordinator.setMode
+    // directly, no mode-commands involvement) both land here.
+
+    it('setMode(parallel) with participants [claude, agy] throws', () => {
+      const c = setupValidate(['claude', 'agy'])
+      expect(() => c.setMode('chat-1', { kind: 'parallel', participants: ['claude', 'agy'] }))
+        .toThrow(/agy.*cannot join parallel\/chatroom/)
+    })
+
+    it('setMode(chatroom) with participants [codex, agy] throws', () => {
+      const c = setupValidate(['claude', 'codex', 'agy'])
+      expect(() => c.setMode('chat-1', { kind: 'chatroom', participants: ['codex', 'agy'] }))
+        .toThrow(/agy.*cannot join parallel\/chatroom/)
+    })
+  })
+
+  describe('agy dispatch-time gate (final review Important 1 & 2)', () => {
+    /** access.json fixture where chat-1 is guest (not in admins/trusted). */
+    function guestAccess(): Access {
+      return { dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: [] }
+    }
+    /** access.json fixture where chat-1 is trusted (not admin). */
+    function trustedAccess(): Access {
+      return { dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: ['chat-1'] }
+    }
+
+    function setupAgyDispatch(loadAccess: () => Access) {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('agy', dummyProvider, { displayName: 'Agy', canResume: () => true })
+      const acquire = vi.fn(async (req: AcquireRequest) =>
+        makeHandle(req.providerId, makeFakeSession({
+          events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+        })))
+      const sendAssistantText = vi.fn(async () => {})
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess,
+        log: () => {},
+      })
+      return { c, store, acquire, sendAssistantText }
+    }
+
+    // Important 2 — a persisted solo+agy mode reaches dispatchSolo through
+    // BOTH bypass paths named in the finding: a trusted-token
+    // POST /v1/conversation/set-mode call (which skips mode-commands'
+    // /agy tier gate entirely, since it calls coordinator.setMode
+    // directly) and a chat that was trusted when solo+agy was set but
+    // has since been demoted to guest in access.json (no re-validation
+    // on demotion). Both collapse to the same shape here: a persisted
+    // solo+agy row + a chat that resolves to guest RIGHT NOW.
+    it('persisted solo+agy mode + guest-tier chat: dispatch refuses, never spawns', async () => {
+      const { c, store, acquire, sendAssistantText } = setupAgyDispatch(guestAccess)
+      store.set('chat-1', { kind: 'solo', provider: 'agy' })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquire).not.toHaveBeenCalled()
+      expect(sendAssistantText).toHaveBeenCalledWith(
+        'chat-1',
+        '/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。',
+      )
+    })
+
+    it('persisted solo+agy mode + trusted-tier chat: dispatch proceeds and spawns agy', async () => {
+      const { c, store, acquire, sendAssistantText } = setupAgyDispatch(trustedAccess)
+      store.set('chat-1', { kind: 'solo', provider: 'agy' })
+      await c.dispatch(inbound('chat-1', 'hi'))
+      expect(acquire).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'agy', chatId: 'chat-1' }))
+      expect(sendAssistantText).not.toHaveBeenCalledWith(
+        'chat-1',
+        expect.stringContaining('目前仅管理员/信任聊天可用'),
+      )
+    })
+  })
+
+  describe('integration — 3-way chatroom over 4 rounds', () => {
+    it('moderator picks all 3 participants across the rounds; sendAssistantText prefixes each speaker', async () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      for (const id of ['claude', 'codex', 'cursor']) {
+        registry.register(id, dummyProvider, { displayName: id[0]!.toUpperCase() + id.slice(1), canResume: () => true })
+      }
+      store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'codex', 'cursor'] })
+      const acquired: ProviderId[] = []
+      const acquire = vi.fn(async (req: AcquireRequest) => {
+        acquired.push(req.providerId)
+        return makeHandle(req.providerId, makeFakeSession({
+          events: [
+            { kind: 'text', text: `${req.providerId} weighs in` },
+            { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
+          ],
+        }))
+      })
+      // Scripted moderator: round 1=claude, 2=codex, 3=cursor, 4=end.
+      const pickOrder: ProviderId[] = ['claude', 'codex', 'cursor']
+      let i = 0
+      const haikuEval = vi.fn(async () => {
+        if (i < pickOrder.length) {
+          const speaker = pickOrder[i]!
+          i++
+          return JSON.stringify({ action: 'continue', speaker, prompt: `as ${speaker}`, reasoning: `r${i}` })
+        }
+        return JSON.stringify({ action: 'end', reasoning: 'done' })
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        haikuEval,
+        log: () => {},
+      })
+      await c.dispatch(inbound('chat-1', 'what do you all think?'))
+      // All 3 speakers were acquired at least once.
+      expect(new Set(acquired)).toEqual(new Set(['claude', 'codex', 'cursor']))
+      // sendAssistantText carried the prefixed text from each speaker.
+      const sentTexts = sendAssistantText.mock.calls.map((c) => c[1])
+      expect(sentTexts.some((t) => t.includes('[Claude]'))).toBe(true)
+      expect(sentTexts.some((t) => t.includes('[Codex]'))).toBe(true)
+      expect(sentTexts.some((t) => t.includes('[Cursor]'))).toBe(true)
+    })
+  })
+
+  // ─── Task 1 (session-serialization) — per-chatId dispatch mutex ────────
+  describe('per-chatId serialization (dispatch mutex)', () => {
+    it('two dispatch() calls on the SAME chatId serialize — 2nd starts only after 1st ends', async () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+
+      const order: string[] = []
+      let gate1Resolve: () => void = () => {}
+      const gate1 = new Promise<void>(res => { gate1Resolve = res })
+      let callCount = 0
+
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (_text: string): AsyncIterable<AgentEvent> => {
+          callCount++
+          const n = callCount
+          return {
+            async *[Symbol.asyncIterator]() {
+              order.push(`start-${n}`)
+              if (n === 1) await gate1
+              order.push(`end-${n}`)
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }
+        },
+        close: async () => {},
+      }))
+
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async () => {},
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      const p1 = c.dispatch(inbound('chat-1', 'first'))
+      await new Promise(r => setImmediate(r))  // let dispatch 1 acquire, hit the gate
+      const p2 = c.dispatch(inbound('chat-1', 'second'))
+      await new Promise(r => setImmediate(r))
+      // dispatch 2 must NOT have started its own acquire()/dispatch() yet —
+      // it's queued behind the mutex holding dispatch 1's turn.
+      expect(callCount).toBe(1)
+
+      gate1Resolve()
+      await Promise.all([p1, p2])
+
+      expect(order).toEqual(['start-1', 'end-1', 'start-2', 'end-2'])
+    })
+
+    it('two dispatch() calls on DIFFERENT chatIds run concurrently (interleaved, not serialized)', async () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+
+      const entered: string[] = []
+      let gateAResolve: () => void = () => {}
+      const gateA = new Promise<void>(res => { gateAResolve = res })
+      let gateBResolve: () => void = () => {}
+      const gateB = new Promise<void>(res => { gateBResolve = res })
+
+      const acquire = vi.fn(async ({ providerId, chatId }: AcquireRequest) => ({
+        alias: 'a', path: '/p', providerId, lastUsedAt: 0,
+        dispatch: (_text: string): AsyncIterable<AgentEvent> => ({
+          async *[Symbol.asyncIterator]() {
+            entered.push(chatId)
+            await (chatId === 'chat-a' ? gateA : gateB)
+            yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+          },
+        }),
+        close: async () => {},
+      }))
+
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        sendAssistantText: async () => {},
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+
+      const pA = c.dispatch(inbound('chat-a', 'a-msg'))
+      const pB = c.dispatch(inbound('chat-b', 'b-msg'))
+      await new Promise(r => setImmediate(r))
+
+      // Both entered before either gate resolved — proves they ran
+      // concurrently rather than one waiting on the other's mutex.
+      expect(entered.sort()).toEqual(['chat-a', 'chat-b'])
+
+      gateBResolve()
+      gateAResolve()
+      await Promise.all([pA, pB])
+    })
+
+    it('exposes submitTurn and runExclusive on the coordinator (dispatchInner is private — D3)', () => {
+      const store = makeMockStore()
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire: vi.fn() },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: (m) => m.text,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+      })
+      expect(typeof c.submitTurn).toBe('function')
+      expect(typeof c.runExclusive).toBe('function')
+      expect('dispatchInner' in c).toBe(false)   // D3: no longer bare-callable
+    })
+  })
+})
+
+describe('turnPolicy (D3)', () => {
+  it('preempt for chatroom, queue for everything else', () => {
+    expect(turnPolicy({ kind: 'chatroom', participants: ['claude', 'codex'] })).toBe('preempt')
+    expect(turnPolicy({ kind: 'solo', provider: 'claude' })).toBe('queue')
+    expect(turnPolicy({ kind: 'parallel', participants: ['claude', 'codex'] })).toBe('queue')
+    expect(turnPolicy({ kind: 'primary_tool', primary: 'claude' })).toBe('queue')
+  })
+})
+
+describe('submitTurn (D3 — single entrypoint)', () => {
+  function newCoord() {
+    const session = makeFakeSession({
+      events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+      onDispatch: () => {},
+    })
+    const acquire = vi.fn(async (_req: AcquireRequest) => makeHandle('claude', session))
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    return createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+  }
+
+  it('serializes queue-mode turns for one chat — within runs one at a time', async () => {
+    const c = newCoord()
+    const order: string[] = []
+    let releaseA: () => void = () => {}
+    const gateA = new Promise<void>(r => { releaseA = r })
+    const p1 = c.submitTurn(inbound('chat-1', 'a'), { within: async (d) => { order.push('A-start'); await gateA; await d(); order.push('A-end') } })
+    const p2 = c.submitTurn(inbound('chat-1', 'b'), { within: async (d) => { order.push('B-start'); await d(); order.push('B-end') } })
+    await new Promise(r => setTimeout(r, 15))
+    expect(order).toEqual(['A-start'])   // B is blocked behind A's lock
+    releaseA()
+    await Promise.all([p1, p2])
+    expect(order).toEqual(['A-start', 'A-end', 'B-start', 'B-end'])
+  })
+
+  it('returns the within-hook result (the app reply-capture path)', async () => {
+    const c = newCoord()
+    const r = await c.submitTurn(inbound('chat-1', 'x'), { within: async (d) => { await d(); return 'captured-reply' } })
+    expect(r).toBe('captured-reply')
+  })
+
+  it('different chats do not serialize against each other', async () => {
+    const c = newCoord()
+    const order: string[] = []
+    let releaseA: () => void = () => {}
+    const gateA = new Promise<void>(r => { releaseA = r })
+    const p1 = c.submitTurn(inbound('chat-1', 'a'), { within: async (d) => { order.push('A-start'); await gateA; await d(); order.push('A-end') } })
+    const p2 = c.submitTurn(inbound('chat-2', 'b'), { within: async (d) => { order.push('B-start'); await d(); order.push('B-end') } })
+    await new Promise(r => setTimeout(r, 15))
+    expect(order).toEqual(['A-start', 'B-start', 'B-end'])   // chat-2 ran while chat-1 held its own lock
+    releaseA()
+    await Promise.all([p1, p2])
+  })
+})
+
+describe('onTurnEvent (CC 桌宠 Phase B)', () => {
+  it('solo 回合里每个 provider 事件都转给 onTurnEvent(chatId, ev),tool_call 在内;钩子抛错不影响回合', async () => {
+    const seen: Array<[string, string]> = []
+    const session = makeFakeSession({
+      events: [
+        { kind: 'init', sessionId: 's' },
+        { kind: 'tool_call', tool: 'Bash' },
+        { kind: 'text', text: 'ok' },
+        { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 5 },
+      ],
+    })
+    const acquire = vi.fn(async (_req: AcquireRequest) => makeHandle('claude', session))
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      sendAssistantText,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      onTurnEvent: (chatId, ev) => {
+        seen.push([chatId, ev.kind])
+        // 观察者抛错不许弄坏回合。
+        if (ev.kind === 'text') throw new Error('boom')
+      },
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(seen).toEqual([
+      ['chat-1', 'init'], ['chat-1', 'tool_call'], ['chat-1', 'text'], ['chat-1', 'result'],
+    ])
+    // 回合本身照常收口:文本仍然发出去了。
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', 'ok')
+  })
+})
+
+// ── provider policy at dispatch + cold-start context for non-resume providers ──
+describe('dispatch-time provider policy + cold-start block', () => {
+  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }>; permissionMode?: 'strict' | 'dangerously'; resumedHistory?: boolean } = {}) {
+    const store = makeMockStore()
+    const registry = createProviderRegistry()
+    for (const id of ['claude', 'cursor', 'agy', 'openai']) registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
+    const dispatched: string[] = []
+    const acquire = vi.fn(async (req: AcquireRequest) =>
+      ({ ...makeHandle(req.providerId, makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }], onDispatch: t => dispatched.push(t) })), ...(extra.resumedHistory !== undefined ? { resumedHistory: extra.resumedHistory } : {}) }))
+    const sendAssistantText = vi.fn(async () => {})
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire, ...(extra.has ? { has: extra.has } : {}) },
+      conversationStore: store, registry, defaultProviderId: 'claude',
+      format: (m) => m.text, sendAssistantText, permissionMode: extra.permissionMode ?? 'strict', loadAccess: access, log: () => {},
+      ...(extra.trustedProviders ? { trustedProviders: extra.trustedProviders } : {}),
+      ...(extra.recent ? { recentTurns: async () => extra.recent! } : {}),
+    })
+    return { c, store, acquire, sendAssistantText, dispatched }
+  }
+  const guest = (): Access => ({ dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: [] })
+  const trusted = (): Access => ({ dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: ['chat-1'] })
+
+  it('persisted solo+agy + guest chat: refused at dispatch (shared-token hazard — one static trusted MCP token for every session)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(guest)
+    store.set('chat-1', { kind: 'solo', provider: 'agy' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('/agy 目前仅管理员/信任聊天可用'))
+  })
+  it('persisted solo+cursor + guest chat: refused at dispatch — ACP Cursor edits the workspace without a permission card, so a guest tier cannot confine it (guestSafe:false)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(guest)
+    store.set('chat-1', { kind: 'solo', provider: 'cursor' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('Cursor 对访客不开放'))
+  })
+  it('persisted solo+cursor + trusted chat: dispatches normally (only guest is gated)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(trusted)
+    store.set('chat-1', { kind: 'solo', provider: 'cursor' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(sendAssistantText).not.toHaveBeenCalledWith('chat-1', expect.stringContaining('对访客不开放'))
+  })
+  // 2026-10-10 评审:/both、/chat 原先只剥 agy,不查 guestSafe / trusted_providers ⇒ 访客 `/both claude cursor`
+  // 就把 Cursor 以访客档拉起来(工作区内编辑不经权限卡),也绕过主人的 /set providers 限制。
+  it('parallel + guest chat: cursor is dropped from the participants, never acquired', async () => {
+    const { c, store, acquire } = setupWith(guest)
+    store.set('chat-1', { kind: 'parallel', participants: ['claude', 'cursor'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('cursor')
+  })
+  it('parallel + trusted chat outside the admin allowlist: the disallowed participant is dropped', async () => {
+    const { c, store, acquire } = setupWith(trusted, { trustedProviders: () => ['claude'] })
+    store.set('chat-1', { kind: 'parallel', participants: ['claude', 'openai'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('openai')
+  })
+  it('chatroom + guest chat: cursor never speaks', async () => {
+    const { c, store, acquire } = setupWith(guest)
+    store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'cursor', 'openai'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('cursor')
+  })
+  // 2026-10-10 评审:--dangerously(缺省开)原先把每个对话都提成 admin、会话也带 dangerously ⇒ 访客拿到 shell / 文件 /
+  // 主人的微信记录。访客的会话要以访客档 + strict 起;主人选过的 trusted 照旧随 --dangerously。
+  it('--dangerously: a guest turn is spawned with the guest profile and strict mode; trusted keeps dangerously', async () => {
+    const g = setupWith(guest, { permissionMode: 'dangerously' })
+    g.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await g.c.dispatch(inbound('chat-1', 'hi'))
+    expect(g.acquire).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'strict', tierProfile: TIER_PROFILES.guest }))
+    const t = setupWith(trusted, { permissionMode: 'dangerously' })
+    t.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await t.c.dispatch(inbound('chat-1', 'hi'))
+    expect(t.acquire).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'dangerously', tierProfile: TIER_PROFILES.admin }))
+  })
+  it('trusted chat on a provider outside the admin allowlist is refused; inside dispatches', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(trusted, { trustedProviders: () => ['claude'] })
+    store.set('chat-1', { kind: 'solo', provider: 'agy' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('没把 /agy 开放给非管理员'))
+    store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+  })
+  it('openai (no resume) cold spawn with prior turns: the turn is prefixed with a cold-start context block', async () => {
+    const { c, store, dispatched } = setupWith(adminAccess, { has: () => false, recent: [{ dir: 'in', text: '明天去看房', ts: 't1' }, { dir: 'out', text: '记得带身份证', ts: 't2' }] })
+    store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await c.dispatch(inbound('chat-1', '几点合适?'))
+    expect(dispatched[0]).toContain('<handoff hint="这是系统的续接说明')
+    expect(dispatched[0]).toContain('你(openai)刚刚重新开了会话线程')
+    expect(dispatched[0]).toContain('用户: 明天去看房')
+    expect(dispatched[0]).toContain('你: 记得带身份证')
+    expect(dispatched[0]?.endsWith('几点合适?')).toBe(true)
+  })
+  // B2(2026-10-25):openai 对话的历史存进 api-sessions、能续接 —— 会话自己报续没续上,协调器按它,不按能力表猜。
+  it('the session says whether it resumed: openai that resumed its history gets no block; claude that could not resume gets one', async () => {
+    const recent = [{ dir: 'in' as const, text: '明天去看房', ts: 't1' }]
+    const resumed = setupWith(adminAccess, { has: () => false, recent, resumedHistory: true })
+    resumed.store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await resumed.c.dispatch(inbound('chat-1', 'hi'))
+    expect(resumed.dispatched[0]).toBe('hi')
+    const fresh = setupWith(adminAccess, { has: () => false, recent, resumedHistory: false })
+    fresh.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await fresh.c.dispatch(inbound('chat-1', 'hi'))
+    expect(fresh.dispatched[0]).toContain('刚刚重新开了会话线程')
+  })
+  it('claude (resumes) and warm sessions and empty history get no cold-start block', async () => {
+    const a = setupWith(adminAccess, { has: () => false, recent: [{ dir: 'in', text: 'x', ts: 't' }] })
+    a.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await a.c.dispatch(inbound('chat-1', 'hi'))
+    expect(a.dispatched[0]).toBe('hi')
+    const b = setupWith(adminAccess, { has: () => true, recent: [{ dir: 'in', text: 'x', ts: 't' }] })
+    b.store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await b.c.dispatch(inbound('chat-1', 'hi'))
+    expect(b.dispatched[0]).toBe('hi')
+    const d = setupWith(adminAccess, { has: () => false, recent: [] })
+    d.store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await d.c.dispatch(inbound('chat-1', 'hi'))
+    expect(d.dispatched[0]).toBe('hi')
+  })
+})
+
+describe('spawn failure is told to the user (first-use probe / missing binary)', () => {
+  it('acquire throwing → one human notice with the provider\'s own detail, no silent drop', async () => {
+    const registry = createProviderRegistry()
+    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const store = makeMockStore(); store.set('chat-1', { kind: 'solo', provider: 'codex' })
+    const sendAssistantText = vi.fn(async () => {})
+    const log = vi.fn()
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire: vi.fn(async () => { throw new Error('codex 探测没通过:400 requires a newer version of Codex') }) },
+      conversationStore: store, registry, defaultProviderId: 'claude', format: m => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: adminAccess, log,
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string] | undefined)?.[1] ?? ''
+    expect(text).toContain('codex 这次没起来')
+    expect(text).toContain('requires a newer version of Codex')
+    expect(text).toContain('/cc')
+    expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('spawn failed'), expect.objectContaining({ event: 'spawn_failed' }))
+  })
+})
+
+describe('spawn failure carrying a provider code (arch backlog #4 第 2 步)', () => {
+  function setup(err: Error) {
+    const registry = createProviderRegistry()
+    registry.register('cursor', dummyProvider, { displayName: 'Cursor', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const store = makeMockStore(); store.set('chat-1', { kind: 'solo', provider: 'cursor' })
+    const sendAssistantText = vi.fn(async () => {})
+    const recordTurn = vi.fn()
+    const release = vi.fn(async () => {})
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire: vi.fn(async () => { throw err }), release },
+      conversationStore: store, registry, defaultProviderId: 'claude', format: m => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: adminAccess, log: vi.fn(), recordTurn,
+    })
+    return { c, sendAssistantText, recordTurn, release }
+  }
+  it('auth code (ACP -32000 未登录) ⇒ 认证分支:节流提示 + 回合 auth_failed,不把裸码 acp_auth_required 发给主人', async () => {
+    const { c, sendAssistantText, recordTurn } = setup(errorWithProviderCode('acp_auth_required', 'auth_failed'))
+    await c.dispatch(inbound('chat-1', 'hi'))
+    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string])[1]
+    expect(text).not.toContain('acp_auth_required')
+    expect(text).toMatch(/cursor-agent login/)
+    expect(recordTurn).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'auth_failed', errorCode: 'auth_failed', error: 'acp_auth_required' }))
+  })
+  it('network code ⇒ 说网络问题;回合记下原文与码(以前 spawn 失败的回合 error 为空)', async () => {
+    const { c, sendAssistantText, recordTurn } = setup(errorWithProviderCode('acp_session_failed: Failed to reach the Cursor API', 'network'))
+    await c.dispatch(inbound('chat-1', 'hi'))
+    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string])[1]
+    expect(text).toContain('cursor 这次没起来')
+    expect(text).toMatch(/网络问题/)
+    expect(recordTurn).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'error', errorCode: 'network' }))
+  })
+})
+
+describe('turnErrorNotice / providerFailureReason — 按码说原因', () => {
+  it('network / server_error / rate_limited / quota 各有一句老实话;无码保持通用说法', () => {
+    expect(turnErrorNotice('codex', 'x', 'network')).toMatch(/连不上 codex 的服务/)
+    expect(turnErrorNotice('openai', 'x', 'server_error')).toMatch(/服务那边出错/)
+    expect(turnErrorNotice('openai', 'x', 'rate_limited')).toMatch(/限流/)
+    expect(turnErrorNotice('codex', 'x', 'quota')).toMatch(/额度用完/)
+    // 2026-10-23 真机:agy 在当前出口地区被拒 —— 照实说是地区问题、重发没用,不说成网络或登录
+    expect(turnErrorNotice('agy', 'x', 'region_unavailable')).toMatch(/出口所在地区用不了.*重发也没用/)
+    expect(turnErrorNotice('codex', 'boom', undefined)).toContain('脑子卡了一下')
+    expect(turnErrorNotice('codex', 'boom', 'provider_error')).toContain('脑子卡了一下')
+  })
+})
+
+describe('network gate (2026-10-02)', () => {
+  const UNSAFE = { check: async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }) }
+  const SAFE = { check: async () => ({ safe: true, source: 'bx' as const, detail: 'bx 保护中' }) }
+
+  function make(gate: { check: () => Promise<{ safe: boolean; source: 'bx'; detail: string }> }, mode: Mode = { kind: 'solo', provider: 'claude' }) {
+    const store = makeMockStore()
+    store.set('chat-1', mode)
+    const registry = createProviderRegistry()
+    // 评审 #193:provider 报自己实际连到哪里(官方端点 / cursor + 这次钉的模型);协调器按它判。
+    const reporting = (id: string): AgentProvider => ({ ...dummyProvider, callTarget: (_k, ctx) => ({ provider: id, model: ctx?.model ?? (id === 'cursor' ? 'auto' : null) }) })
+    registry.register('claude', reporting('claude'), { displayName: 'Claude', canResume: () => true })
+    registry.register('codex', reporting('codex'), { displayName: 'Codex', canResume: () => true })
+    registry.register('cursor' as ProviderId, reporting('cursor'), { displayName: 'Cursor', canResume: () => true })
+    const acquire = vi.fn(async (_req: AcquireRequest) => ({
+      alias: 'p', path: '/p', providerId: 'claude' as ProviderId, lastUsedAt: 0,
+      dispatch: () => makeFakeSession({ events: [{ kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 }] }).dispatch('x'),
+      cancel: async () => {}, close: async () => {},
+    }))
+    const sendAssistantText = vi.fn(async (_c: string, _t: string) => {})
+    const haikuEval = vi.fn(async () => 'x')
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'p', path: '/p' }),
+      manager: { acquire } as never,
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: (m) => m.text,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      sendAssistantText,
+      haikuEval,
+      networkGate: gate,
+    })
+    return { c, acquire, sendAssistantText, haikuEval }
+  }
+
+  it.each<[string, Mode]>([
+    ['solo', { kind: 'solo', provider: 'claude' }],
+    ['parallel', { kind: 'parallel', participants: ['claude', 'codex'] }],
+    ['chatroom', { kind: 'chatroom', participants: ['claude', 'codex'] }],
+    ['primary_tool', { kind: 'primary_tool', primary: 'claude' }],
+  ])('unsafe + only protected providers → %s turn never acquires a session; one uniform notice, no retry', async (_n, mode) => {
+    const { c, acquire, sendAssistantText, haikuEval } = make(UNSAFE, mode)
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(haikuEval).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    expect(sendAssistantText.mock.calls[0]?.[1]).toMatch(/^网络未受保护\(bx 未连上\),用到 .*Claude.* 的这一步先暂停，恢复后再试。$/)
+  })
+
+  it('solo Claude paused names Claude exactly', async () => {
+    const { c, sendAssistantText } = make(UNSAFE)
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(sendAssistantText.mock.calls[0]?.[1]).toBe('网络未受保护(bx 未连上),用到 Claude 的这一步先暂停，恢复后再试。')
+  })
+
+  // 守护 v2:只拒需要保护的那一次;不需要保护的照常。
+  it('unsafe + solo on an unprotected provider (Cursor auto) → dispatches normally, signal never read', async () => {
+    const check = vi.fn(UNSAFE.check)
+    const { c, acquire, sendAssistantText } = make({ check }, { kind: 'solo', provider: 'cursor' as ProviderId, model: 'auto' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(sendAssistantText).not.toHaveBeenCalled()
+    expect(check).not.toHaveBeenCalled()
+  })
+
+  it('unsafe + solo Cursor pinned to a Claude model → refused, naming that model', async () => {
+    const { c, acquire, sendAssistantText } = make(UNSAFE, { kind: 'solo', provider: 'cursor' as ProviderId, model: 'claude-4.5-sonnet' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText.mock.calls[0]?.[1]).toBe('网络未受保护(bx 未连上),用到 Cursor(claude-4.5-sonnet) 的这一步先暂停，恢复后再试。')
+  })
+
+  it('unsafe + parallel Claude & Cursor(auto) → Claude dropped with one notice, Cursor still answers (degrades to solo)', async () => {
+    const { c, acquire, sendAssistantText } = make(UNSAFE, { kind: 'parallel', participants: ['claude', 'cursor' as ProviderId] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(sendAssistantText.mock.calls[0]?.[1]).toBe('网络未受保护(bx 未连上),用到 Claude 的这一步先暂停，恢复后再试。')
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(acquire.mock.calls[0]?.[0].providerId).toBe('cursor')
+  })
+
+  it('safe → dispatches normally', async () => {
+    const { c, acquire } = make(SAFE)
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+  })
+})
+
+// 评审 #193 P2-4:/both、/chat 被守护筛到只剩一个模型时,执行退成单模型,排队也必须跟着退成单模型。
+describe('guard-filtered group → one executing model is scheduled like solo (review #193 P2)', () => {
+  const UNSAFE = { check: async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }) }
+  const cursorAuto: AgentProvider = {
+    spawn: dummyProvider.spawn,
+    callTarget: () => ({ provider: 'cursor', model: 'auto' }),
+  } as AgentProvider
+  const claudeOfficial: AgentProvider = {
+    spawn: dummyProvider.spawn,
+    callTarget: () => ({ provider: 'claude', model: null, baseUrl: null }),
+  } as AgentProvider
+
+  function make(mode: Mode) {
+    const store = makeMockStore()
+    store.set('chat-1', mode)
+    const registry = createProviderRegistry()
+    registry.register('claude', claudeOfficial, { displayName: 'Claude', canResume: () => true })
+    registry.register('cursor' as ProviderId, cursorAuto, { displayName: 'Cursor', canResume: () => true })
+    // 一个 ACP 式会话:同一会话上一轮还没完就再来一轮 → acp_turn_already_running(真实 cursor 的行为)。
+    let active = false
+    const ran: string[] = []
+    const errors: string[] = []
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>(r => { releaseFirst = r })
+    let n = 0
+    const acquire = vi.fn(async (req: AcquireRequest) => ({
+      alias: 'p', path: '/p', providerId: req.providerId, lastUsedAt: 0,
+      dispatch: (text: string): AsyncIterable<AgentEvent> => {
+        if (active) { errors.push('acp_turn_already_running'); throw new Error('acp_turn_already_running') }
+        active = true
+        const me = ++n
+        return {
+          async *[Symbol.asyncIterator]() {
+            try {
+              if (me === 1) await firstGate
+              ran.push(text)
+              yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 } as AgentEvent
+            } finally { active = false }
+          },
+        }
+      },
+      cancel: async () => {}, close: async () => {},
+    }))
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'p', path: '/p' }),
+      manager: { acquire } as never,
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: (m) => m.text,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      sendAssistantText: async () => {},
+      haikuEval: async () => 'x',
+      networkGate: UNSAFE,
+    })
+    return { c, acquire, ran, errors, releaseFirst }
+  }
+
+  it.each<[string, Mode]>([
+    ['chatroom (/chat)', { kind: 'chatroom', participants: ['claude', 'cursor' as ProviderId] }],
+    ['parallel (/both)', { kind: 'parallel', participants: ['claude', 'cursor' as ProviderId] }],
+  ])('%s filtered to Cursor only: a 2nd message sent while the 1st runs waits its turn and is executed', async (_n, mode) => {
+    const { c, ran, errors, releaseFirst } = make(mode)
+    const p1 = c.dispatch(inbound('chat-1', 'first'))
+    await new Promise(r => setTimeout(r, 10))
+    const p2 = c.dispatch(inbound('chat-1', 'second'))
+    await new Promise(r => setTimeout(r, 10))
+    expect(errors).toEqual([])          // 第二条没有撞上还在跑的第一条
+    releaseFirst()
+    await Promise.all([p1, p2])
+    expect(errors).toEqual([])
+    expect(ran.map(t => t.includes('first') ? 'first' : t.includes('second') ? 'second' : t)).toEqual(['first', 'second'])
+  })
+})
+
+// 第二轮评审 #194 P2:网络来回切换时,单模型队列和群聊抢占两条路的交接。复现:①不安全,第一条由 Cursor
+// 单独执行;②恢复,第二条按群聊等待;③又不安全,第三条进单模型队列。第一条结束后第二、三条同时调
+// Cursor ⇒ acp_turn_already_running。规矩:同一个底层会话同一时刻只有一个回合。
+describe('unsafe → safe → unsafe flips: one turn per underlying session at a time (review #194 P2)', () => {
+  it('three back-to-back messages across the flips never overlap on the Cursor session', async () => {
+    const net = { safe: false }
+    const gate = { check: async () => ({ safe: net.safe, source: 'bx' as const, detail: net.safe ? 'bx 保护中' : 'bx 未保护' }) }
+    const store = makeMockStore()
+    store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'cursor' as ProviderId] })
+    const registry = createProviderRegistry()
+    registry.register('claude', { spawn: dummyProvider.spawn, callTarget: () => ({ provider: 'claude', model: null }) } as AgentProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('cursor' as ProviderId, { spawn: dummyProvider.spawn, callTarget: () => ({ provider: 'cursor', model: 'auto' }) } as AgentProvider, { displayName: 'Cursor', canResume: () => true })
+    const active = new Set<string>()
+    const errors: string[] = []
+    const ran: string[] = []
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>(r => { releaseFirst = r })
+    let firstSeen = false
+    const acquire = vi.fn(async (req: AcquireRequest) => ({
+      alias: 'p', path: '/p', providerId: req.providerId, lastUsedAt: 0,
+      dispatch: (text: string): AsyncIterable<AgentEvent> => {
+        // 一个 ACP 式会话:同一 provider 的会话上一轮没完又来一轮就拒。
+        if (active.has(req.providerId)) { errors.push(`${req.providerId}:acp_turn_already_running`); throw new Error('acp_turn_already_running') }
+        active.add(req.providerId)
+        const isFirst = !firstSeen && text.includes('first')
+        if (isFirst) firstSeen = true
+        return {
+          async *[Symbol.asyncIterator]() {
+            try {
+              if (isFirst) await firstGate
+              await new Promise(r => setTimeout(r, 2))
+              ran.push(`${req.providerId}:${text.includes('first') ? 'first' : text.includes('second') ? 'second' : text.includes('third') ? 'third' : 'beat'}`)
+              yield { kind: 'text', text: `${req.providerId} says` } as AgentEvent
+              yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 } as AgentEvent
+            } finally { active.delete(req.providerId) }
+          },
+        }
+      },
+      cancel: async () => {}, close: async () => {},
+    }))
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'p', path: '/p' }),
+      manager: { acquire } as never,
+      conversationStore: store, registry, defaultProviderId: 'claude',
+      format: (m) => m.text, permissionMode: 'strict', loadAccess: adminAccess, log: () => {},
+      sendAssistantText: async () => {}, haikuEval: async () => '{"converged":true}', networkGate: gate,
+    })
+    const tick = () => new Promise(r => setTimeout(r, 10))
+    const p1 = c.dispatch(inbound('chat-1', 'first'))      // 不安全:只剩 Cursor,单模型
+    await tick()
+    net.safe = true
+    const p2 = c.dispatch(inbound('chat-1', 'second'))     // 恢复:群聊
+    await tick()
+    net.safe = false
+    const p3 = c.dispatch(inbound('chat-1', 'third'))      // 又不安全:单模型
+    await tick()
+    releaseFirst()
+    await Promise.all([p1, p2, p3])
+    expect(errors).toEqual([])
+    expect(ran).toContain('cursor:first')
+    expect(ran).toContain('cursor:third')
+  })
+})
+
+// D1 评审:排队之前定的计划只用来决定排队方式;真正开跑时(锁里)重新定档位 / 被拒 / 守护。
+// 复现:/chat 被守护筛到只剩 Cursor(单模型排队);第二条排在第一条后面时,主人把这个 chat 降成访客。
+// 第二条开跑时必须按访客判:Cursor 对访客不开放、Claude 被守护挡下 ⇒ 一个会话也不起,更不能带着 admin 档起。
+describe('plan made before queueing never authorizes the run (D1 review)', () => {
+  it('chat demoted to guest while B waits behind A: B is re-admitted at dispatch time and never spawns with the stale admin profile', async () => {
+    const UNSAFE = { check: async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }) }
+    const store = makeMockStore()
+    store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'cursor' as ProviderId] })
+    const registry = createProviderRegistry()
+    registry.register('claude', { spawn: dummyProvider.spawn, callTarget: () => ({ provider: 'claude', model: null, baseUrl: null }) } as AgentProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('cursor' as ProviderId, { spawn: dummyProvider.spawn, callTarget: () => ({ provider: 'cursor', model: 'auto' }) } as AgentProvider, { displayName: 'Cursor', canResume: () => true })
+    let access: Access = adminAccess()
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>(r => { releaseFirst = r })
+    let n = 0
+    const acquire = vi.fn(async (req: AcquireRequest) => ({
+      alias: 'p', path: '/p', providerId: req.providerId, lastUsedAt: 0,
+      dispatch: (): AsyncIterable<AgentEvent> => {
+        const me = ++n
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (me === 1) await firstGate
+            yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 } as AgentEvent
+          },
+        }
+      },
+      cancel: async () => {}, close: async () => {},
+    }))
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'p', path: '/p' }),
+      manager: { acquire } as never,
+      conversationStore: store, registry, defaultProviderId: 'claude',
+      format: (m) => m.text, permissionMode: 'dangerously', loadAccess: () => access, log: () => {},
+      sendAssistantText: async () => {}, haikuEval: async () => 'x', networkGate: UNSAFE,
+    })
+    const tick = () => new Promise(r => setTimeout(r, 10))
+    const p1 = c.dispatch(inbound('chat-1', 'first'))
+    await tick()
+    expect(acquire).toHaveBeenCalledTimes(1)
+    const p2 = c.dispatch(inbound('chat-1', 'second'))
+    await tick()
+    access = { dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: [] }
+    releaseFirst()
+    await Promise.all([p1, p2])
+    expect(acquire).toHaveBeenCalledTimes(1)
+    for (const [req] of acquire.mock.calls.slice(1)) expect(req.tierProfile).toBe(TIER_PROFILES.guest)
+  })
+})

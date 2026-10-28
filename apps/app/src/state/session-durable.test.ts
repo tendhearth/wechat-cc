@@ -8,7 +8,8 @@ import type { PairingRecord } from '../net/pairing'
 import { INPUT_JOURNAL_KEY, makeInputJournal } from './input-journal'
 import { matterInputState } from './matter-inputs'
 import { SessionProvider, useSession } from './session'
-vi.mock('../i18n/useLang', async () => ({ LangOverrideCtx: (await import('react')).createContext(null) }))
+// 系统语言是设备边界;session.tsx 用的是真 LangOverrideCtx。
+vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (el: Element) => { render(node: ReactNode): void; unmount(): void }
 const A: PairingRecord = { v: 1, daemonId: 'r' + 'a'.repeat(26), relayHost: 'relay.test', relayUrl: 'wss://relay.test/v2/phone?id=r'+'a'.repeat(26), deviceToken: 'd'+'1'.repeat(48), deviceId: 'aabb0011', pairedAt: 1 }

@@ -7,15 +7,21 @@ on:
     # piled up, which is how type errors accumulated unnoticed. The heavy e2e
     # jobs below stay master/PR-only to keep routine dev pushes fast.
     #
-    # `self/**` 是自改流水线(spec 2026-09-18-self-change-pipeline)推的分支:
-    # CC 自己给自己改一版,先推 self/<题目>,CI 绿才是它进 dev 的闸门。漏了这一
-    # 行,那道闸门就根本不存在 —— 而且是**安静地**不存在(推上去一条运行都没有,
-    # 看上去和「跑完了还没红」一模一样)。
-    branches: [master, dev, 'self/**']
+    # 没有 `self/**`(2026-10-23):自改流水线推 self/<id> 时开一个进 dev 的 PR,CI 认的是 PR 那一份
+    # (下面 pull_request)。两处都列着,同一个提交会跑两遍,ci land 还得等推送那一遍也进 rollup。
+    # 推送单跑是以前那道闸门的位置 —— 现在没有 PR 就没有 CI,所以自改开不了 PR 就停(ci_unavailable)。
+    branches: [master, dev]
   pull_request:
     # dev 也在内:CI 只在 push 后跑等于永远事后 —— 2026-09-11~14 有 69 条提交
-    # 在本地攒了三天才到 dev,期间一次没验。重型 e2e 仍按 base_ref 限定在 master。
-    branches: [master, dev]
+    # 在本地攒了三天才到 dev,期间一次没验。
+    # 不限 base(2026-10-23):叠起来的一串 PR,上层的 base 是下层分支(claude/…),限成 [master, dev]
+    # 它就一条 CI 都没有 —— 而「一串只看最上面那个的 CI」正靠它(docs/maintainer/ci-and-flakes.md)。
+
+# 同一个 PR 推了新版本(rebase、改评审意见)⇒ 旧的那次作废,不再白跑 20 分钟。
+# 只对 PR:dev / master 的推送一条都不取消 —— `ci triage --wait` 和自改闸门都按提交看结果。
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # 只为算一件事:这一推里 apps/desktop/** 动没动过。
@@ -28,12 +34,19 @@ jobs:
     name: changes · paths
     runs-on: ubuntu-latest
     outputs:
-      desktop: ${{ steps.filter.outputs.desktop }}
-      relay: ${{ steps.filter.outputs.relay }}
-      app: ${{ steps.filter.outputs.app }}
-      app_native: ${{ steps.filter.outputs.app_native }}
+      desktop: ${{ steps.stack.outputs.all || steps.filter.outputs.desktop }}
+      relay: ${{ steps.stack.outputs.all || steps.filter.outputs.relay }}
+      app: ${{ steps.stack.outputs.all || steps.filter.outputs.app }}
+      app_native: ${{ steps.stack.outputs.all || steps.filter.outputs.app_native }}
+      migrations: ${{ steps.stack.outputs.all || steps.filter.outputs.migrations }}
+      code: ${{ steps.stack.outputs.all || steps.code.outputs.code }}
     steps:
       - uses: actions/checkout@v4
+      # 叠在别的分支上的 PR:paths-filter 只看得见这一层相对下层的改动,下层动过的桌面 / 代码它看不见。
+      # 这一层的 CI 是整串的闸门,所以全当「都动过」,每个作业都跑。
+      - id: stack
+        if: github.event_name == 'pull_request' && github.base_ref != 'dev' && github.base_ref != 'master'
+        run: echo "all=true" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -50,15 +63,35 @@ jobs:
             app_native:
               - 'apps/app/native/**'
               - 'packages/protocol/**'
+            migrations:
+              - 'src/lib/db/migrations/**'
+              - 'src/adapters/knowledge/migrations/**'
+      # 只改了 Markdown(设计稿、手册、roadmap)⇒ code=false,构建和测试整块跳过。
+      # 单独一步:`every` 是整个过滤器的量词,放进上面那份会把 relay 这种多条路径的过滤器变成「同时匹配」。
+      # 没有测试读仓库里的 .md;以后有了,把那份文件从这里的排除里拿出来。
+      - uses: dorny/paths-filter@v3
+        id: code
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
 
   build:
     name: build · ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       # Let every platform complete so we can see which ones break at a
       # glance instead of the first failure cancelling the rest.
       fail-fast: false
+      # 不进 master 的 PR 不跑 Windows(进 dev 的、叠在别的分支上的):它一次 18 分钟,是整次 CI 的长杆(其余都在 9 分钟内)。
+      # Windows 不是不跑 —— 推 dev、进 master 的 PR、自改的 PR(head 是 self/…)都照旧三平台,发版前必须绿。
+      # 自改例外:它没人盯着、合完就部署,Windows 才有的问题等推 dev 那次才看见就晚了。
+      # 代价:Windows 才有的问题合进 dev 后才看见(推 dev 那次 CI 会红),补一个修复。
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref != 'master' && !startsWith(github.head_ref, 'self/') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -91,12 +124,16 @@ jobs:
       # saved — so it would skip on every subsequent run too. No-op on a hit.
       - name: Prefetch embedding model
         run: >
-          bun -e "import { makeJsEmbedder } from './src/core/knowledge/js-embedder.ts';
+          bun -e "import { makeJsEmbedder } from './src/adapters/knowledge/js-embedder.ts';
           await makeJsEmbedder({ model_id: 'bge-small-zh-v1.5' }).embed(['warm'])"
 
       - name: Typecheck
         # 独立于前面的检查:一条红不该让后面几条一次都不执行。
         if: ${{ !cancelled() }}
+        # 堆上限写明(2026-10-25):整个仓库一次 tsc 要 ~2.5 GB(本机 --extendedDiagnostics 量的),node 的缺省堆随机器内存变,
+        # macOS 跑器上不到这个数就 OOM —— 不靠机器碰运气。
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: bun run typecheck
 
       - name: Module-boundary check
@@ -135,11 +172,21 @@ jobs:
         # (PR7 — vitest needs Bun's runtime to resolve `bun:sqlite`).
         run: bun run test
 
+      - name: Real-shaped sandbox
+        # 整台照主人真机配置的 daemon(知识库 / 社交 / 配对 / 手机中继 …… 全开,替身只在系统边界),
+        # 三个平台都跑 —— 可选子系统「开着才走」的那几行只有这样开机才走得到(#729:单测全绿、真机开机三连败)。
+        # 见 src/daemon/__e2e__/README.md。Windows 上起初先不挡(continue-on-error),dev 上 e74e791e、c83dc3cb 起连续绿,
+        # 2026-10-26 去掉:三个平台一样,红了整个作业红。
+        if: ${{ !cancelled() }}
+        run: bun run test:sandbox
+
   # 「换运行时的出口是真的」的证明:同一套单元测试(整个 src,只差 Bun.serve 上的 ws 服务端)
   # 在 Node 24 上跑。2026-09-16 起步时 lib + core 是 2765 过 / 38 红;适配层补齐后同日整个 src
   # 全绿,于是改成必绿 —— 以后谁在业务代码里直接用 Bun.*,这里和 no-bun-globals.test 一起红。
   node:
     name: node · core suite
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +204,49 @@ jobs:
 
   # 官方中继 v2(apps/relay,Cloudflare Workers)。测试跑在本地 workerd 里,只在 Linux 上跑一份;
   # 只在中继、协议包或壳页源码动过时跑(跟 desktop-e2e 同一个 changes 输出机制)。
+  # 进了 dev 的迁移一字不许改(第三批 3e,scripts/migration-frozen.ts)。主人真机跑的就是 dev,迁移一合进去就在他的库里跑过了。
+  # 单独一个轻作业、只在改到迁移目录时跑:只有它要全量历史(fetch-depth: 0),别让三平台的 build 都慢一截。
+  # PR 用 PR 标题放行 [migration-edit];自改流水线也走 PR(标题里的 [migration-edit] 被它去掉了,放行不了)。
+  # 标题经 env 传进去,不在 run 里直接插值:标题里带反引号或 $() 会被 shell 执行。
+  migrations:
+    name: migrations · frozen
+    needs: changes
+    if: needs.changes.outputs.migrations == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Migrations already on dev are frozen
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bun scripts/migration-frozen.ts
+
+  # 测试只增不减 + 修 bug 要有红/绿(2026-10-27 主人定;规矩见 docs/maintainer/verify.md,判法见 scripts/test-shrink-lib.ts)。
+  # 只对 PR:要读 PR 描述。比的是这个 PR 的合并提交和它跟 base 的 merge-base,所以要全量历史(同 migrations,别让 build 慢一截)。
+  # 测试变少/变松 ⇒ 描述里 `## 删掉/放松的测试` 逐个文件写理由;分支 fix/… 或标题以「修」/fix 开头 ⇒ 描述里要有 `## 红/绿`。
+  # 标题和描述经 env 传,不在 run 里插值(不可信输入)。重跑这个作业用的还是触发那一刻的描述 —— 改完描述推一次或 close/reopen。
+  pr-rules:
+    name: pr · 测试只增不减 + 红/绿
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Tests did not shrink; bug fixes show red/green
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bun scripts/test-shrink-check.ts
+
   relay:
     name: relay · workers
     needs: changes
@@ -226,7 +316,8 @@ jobs:
     # 也跑在进 dev 的 PR 上(2026-10-04):#197 把两条 e2e 弄红,因为这一作业只在 base=master 时跑,
     # 红了两天没人知道,直到下一次发版 PR 才会砸下来。这套只有 27 个文件 / 49 条,代价可接受。
     # 直接推 dev 仍跳过(PR 那一步已经跑过)。
-    if: github.base_ref == 'master' || github.base_ref == 'dev' || github.ref == 'refs/heads/master'
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -240,7 +331,8 @@ jobs:
       - name: Install Playwright Chromium
         working-directory: apps/desktop
         run: bun x playwright install --with-deps chromium
-      - run: bun --bun vitest run -c vitest.e2e.config.ts
+      # 真实形状沙盒在上面 build 的三平台矩阵里跑过了,这里不再跑第二遍
+      - run: bun --bun vitest run -c vitest.e2e.config.ts --exclude 'src/daemon/__e2e__/real-shaped-sandbox.e2e.test.ts'
 
   desktop-e2e:
     # Desktop GUI Playwright suite (apps/desktop) — wizard, dashboard panes,
@@ -250,7 +342,7 @@ jobs:
     # Heavy suite — master/PR always, plus any push that actually touched
     # apps/desktop/** (see the `changes` job above).
     needs: changes
-    if: github.base_ref == 'master' || github.ref == 'refs/heads/master' || needs.changes.outputs.desktop == 'true'
+    if: needs.changes.outputs.code == 'true' && (github.base_ref == 'master' || github.ref == 'refs/heads/master' || needs.changes.outputs.desktop == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

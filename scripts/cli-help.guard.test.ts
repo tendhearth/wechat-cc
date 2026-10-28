@@ -18,9 +18,9 @@ const CLI = join(ROOT, 'cli.ts')
 // 只读命令的 STATE_DIR 放系统临时目录:doctor / status 会开 sqlite,别把 .db 写进 checkout。
 const STATE_DIR = mkdtempSync(join(tmpdir(), 'cli-help-guard-'))
 
-function run(args: string[]): { code: number; out: string } {
+function run(args: string[], timeout = 15_000): { code: number; out: string } {
   const r = spawnSync('bun', [CLI, ...args], {
-    cwd: ROOT, encoding: 'utf8', timeout: 15_000,
+    cwd: ROOT, encoding: 'utf8', timeout,
     env: { ...process.env, NO_COLOR: '1', WECHAT_STATE_DIR: STATE_DIR },
   })
   return { code: r.status ?? -1, out: ((r.stdout ?? '') + (r.stderr ?? '')).replace(/\r\n/g, '\n') }
@@ -57,7 +57,8 @@ describe('cli.ts --help 快照(逐字节)', () => {
         expect(c.code, c.out).toBe(0)
         expect(c.out).toMatchSnapshot(`${name} ${child} --help`)
       }
-    })
+      // 一族要冷启 1 + 子命令个 `bun cli.ts`(plugin 一族就有好几个),满载下单个冷启几秒,20s 不够(10-21);每次 spawn 自己仍有 15s 上限
+    }, 60_000)
   }
 })
 
@@ -72,14 +73,15 @@ describe('只读命令真的跑(动态 import 路径)', () => {
   ]
   for (const args of READ_ONLY) {
     it(args.join(' '), () => {
-      const r = run(args)
+      // 只读命令真的跑:`cli status` 要挨个跑各家 CLI 的 --version,`doctor` 开库、探测 —— 满载下 15s 的单次上限不够(10-21 `cli status` 被杀,code -1)
+      const r = run(args, 45_000)
       // 只要求退出码 0、有输出(内容随机器状态变,不快照;`status` / `backup list`
       // 没有 --json 也照跑 —— 要抓的是动态 import 路径,不是输出格式)。
       // 必须是 0:run() 里 import 路径写错时 main().catch 以 1 退出,`< 2` 会放过它(2026-09-27 评审抓到)。
       expect(r.code, r.out).toBe(0)
       expect(r.out, 'dynamic import failed').not.toContain('Cannot find module')
       expect(r.out.trim().length, 'no output').toBeGreaterThan(0)
-    })
+    }, 60_000)
   }
 })
 

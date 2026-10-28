@@ -1,0 +1,93 @@
+import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { createAgentAvatars } from './agent-avatars.js'
+
+const A = createAgentAvatars()
+// 名字只由 daemon 下发(收敛清单 ⑥):这里扮 daemon 给一份;没给的念 id
+const NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' }
+const nameOf = (id: string) => NAMES[id]
+
+describe('执行者头像(桌面 / 手机网页共用)', () => {
+  it('认得的几家有图标,别的画首字母;名字只认 daemon 给的,没给 ⇒ id', () => {
+    expect(A.AGENT_GLYPHS).toEqual(['claude', 'codex', 'cursor', 'agy', 'gemini', 'kimi', 'openai', 'deepseek', 'qwen'])
+    expect(A.agentGlyph('claude')).toBe('claude')
+    expect(A.agentGlyph('my-acp')).toBeNull()
+    expect(A.agentGlyph('toString')).toBeNull()
+    expect(A.agentMonogram('my-acp')).toBe('M')
+    expect(A.agentMonogram('my-acp', () => '小助手')).toBe('小')
+    expect(A.agentName('codex')).toBe('codex')
+    expect(A.agentName('codex', nameOf)).toBe('Codex')
+    expect(A.agentName('my-acp')).toBe('my-acp')
+    expect(A.agentName('claude', id => id === 'claude' ? 'Claude' : undefined)).toBe('Claude')
+  })
+
+  it('最多露 3 个,正好多一个就直接画出来,再多折成 +N;去重、去空、保持顺序', () => {
+    expect(A.agentStack(undefined)).toEqual({ shown: [], more: 0 })
+    expect(A.agentStack(['codex', 'claude', 'codex', '', null])).toEqual({ shown: ['codex', 'claude'], more: 0 })
+    expect(A.agentStack(['a', 'b', 'c', 'd'])).toEqual({ shown: ['a', 'b', 'c', 'd'], more: 0 })
+    expect(A.agentStack(['a', 'b', 'c', 'd', 'e'])).toEqual({ shown: ['a', 'b', 'c'], more: 2 })
+  })
+
+  it('读屏念名字;任务那一家排第一,老 daemon 不带 agents 也有', () => {
+    expect(A.agentsLabel(['claude', 'codex'], nameOf)).toBe('Claude、Codex')
+    expect(A.matterAgents('codex', ['claude', 'codex'])).toEqual(['codex', 'claude'])
+    expect(A.matterAgents('claude', undefined)).toEqual(['claude'])
+    expect(A.matterAgents(null, [])).toEqual([])
+  })
+
+  it('画出来:正在做的压在最上(z-index 递减),+N 垫底;整组一张图,标签和 title 念全部名字;没有就空串', () => {
+    expect(A.agentAvatarsHtml([])).toBe('')
+    expect(A.agentAvatarsHtml(undefined)).toBe('')
+    const html = A.agentAvatarsHtml(['codex', 'claude', 'cursor', 'my-acp', 'kimi'], { cls: 'x', nameOf })
+    expect(html).toMatch(/^<span class="th-agents x" role="img" aria-label="Codex、Claude、Cursor、my-acp、kimi" title="Codex、Claude、Cursor、my-acp、kimi">/)
+    expect([...html.matchAll(/style="z-index:(\d+)" data-agent="([^"]+)"/g)].map(m => [m[2], Number(m[1])])).toEqual([['codex', 4], ['claude', 3], ['cursor', 2]])
+    expect(html).toContain('<span class="th-agent th-agent-more" style="z-index:0" aria-hidden="true">+2</span>')
+    // 单色:跟着 currentColor 走,不带任何品牌色
+    expect(html).toContain('fill="currentColor"')
+    expect(html).not.toMatch(/fill="#|stop-color|style="fill/)
+  })
+
+  it('没图标的画首字母圆;id / 名字都转义', () => {
+    const html = A.agentAvatarsHtml(['<x>'], { nameOf: () => '"引号"' })
+    expect(html).toContain('aria-label="&quot;引号&quot;"')
+    expect(html).toContain('data-agent="&lt;x&gt;"')
+    expect(html).toContain('<span class="th-agent-mono" aria-hidden="true">&quot;</span>')
+    expect(html).not.toContain('<svg')
+  })
+
+  it('图形来自 LobeHub(MIT):许可原文跟 app 那份一字不差,源码里带着许可声明(手机页整段内联时一起带走)', () => {
+    const here = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
+    expect(here('./agent-glyphs-LICENSE.txt')).toBe(here('../../../app/assets/agents/LICENSE.txt'))
+    const source = here('./agent-avatars.js')
+    const factory = source.slice(source.indexOf('export function createAgentAvatars'))
+    expect(factory).toContain('Copyright (c) 2023 LobeHub')
+    expect(factory).toContain('The above copyright notice and this permission notice shall be included in all')
+  })
+})
+
+describe('出生地小字形(2026-10-19)', () => {
+  it('六种出生地各一个单色线条字形,读屏 / title 念「从哪来的」', () => {
+    expect(A.MATTER_ORIGINS).toEqual(['wechat', 'desktop', 'app', 'web', 'cli', 'companion'])
+    const labels = Object.fromEntries(A.MATTER_ORIGINS.map(o => [o, A.originLabel(o)]))
+    expect(labels).toEqual({ wechat: '从微信来的', desktop: '从电脑来的', app: '从手机 App 来的', web: '从浏览器来的', cli: '从终端来的', companion: 'CC 自己起的' })
+    for (const o of A.MATTER_ORIGINS) {
+      const html = A.originMarkHtml(o)
+      expect(html).toContain(`role="img" aria-label="${A.originLabel(o)}" title="${A.originLabel(o)}" data-origin="${o}"`)
+      expect(html).toContain('stroke="currentColor"')
+      // 同一支笔:不带任何颜色值
+      expect(html).not.toMatch(/#[0-9a-f]{3,6}|rgb\(|fill="(?!none)/i)
+    }
+  })
+
+  it('不知道 ⇒ 什么都不画(老的事是 null,老 daemon 不带;认不出的新值、原型链上的名字都当不知道)', () => {
+    for (const o of [undefined, null, '', 'phone', 'toString', '__proto__', 42, {}]) {
+      expect(A.originMarkHtml(o)).toBe('')
+      expect(A.originLabel(o)).toBe('')
+      expect(A.matterOrigin(o)).toBeNull()
+    }
+  })
+
+  it('cls 转义', () => {
+    expect(A.originMarkHtml('cli', { cls: 'a"b' })).toContain('class="th-origin a&quot;b"')
+  })
+})

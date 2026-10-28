@@ -5,14 +5,15 @@
  * 块内逻辑与注释不变,只参数化:deps.db/stateDir/log → ctx.*。
  */
 import { join } from 'node:path'
-import { makeBusyRegistry } from '../../core/busy-registry'
-import { makeResolver } from '../../core/project-resolver'
-import { makeCanUseTool } from '../../core/permission-relay'
-import type { PermissionMode } from '../../core/capability-matrix'
-import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
-import { resolveTier } from '../../core/user-tier'
+import { makeBusyRegistry } from '../busy-registry'
+import { makeResolver } from '../../domain/project-resolver'
+import { makeCanUseTool } from '../../adapters/executors/claude/permission-relay'
+import type { PermissionMode } from '../../domain/capability-matrix'
+import { makeConversationStore } from '../../adapters/store/conversation-store'
+import type { ConversationStore } from '../../ports/conversation-store'
+import { resolveTier } from '../../domain/user-tier'
 import { loadAccess } from '../../lib/access'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import type { Bootstrap, BootstrapDeps, BootstrapCtx } from './types'
 
@@ -25,7 +26,7 @@ export interface PermissionsSlice {
 }
 
 export function wirePermissions(
-  deps: Pick<BootstrapDeps, 'loadProjects' | 'fallbackProject' | 'dangerouslySkipPermissions' | 'conversationStore' | 'ilink'>,
+  deps: Pick<BootstrapDeps, 'loadProjects' | 'fallbackProject' | 'dangerouslySkipPermissions' | 'conversationStore' | 'ilink' | 'chatOwnerRules'>,
   ctx: Pick<BootstrapCtx, 'db' | 'stateDir' | 'log'>,
 ): PermissionsSlice {
   // busy-registry (spec 2026-08-11 §1) — the "work is happening" complement
@@ -100,6 +101,9 @@ export function wirePermissions(
     mode: () => conversationStore.get(chatId)?.mode.kind ?? 'solo',
     provider: 'claude',
     permissionMode,
+    // 主人自己的对话走放行规则(2026-10-25)。主人与否不看上面的 resolveTier(--dangerously 下它对谁都说 admin),
+    // 由 chatOwnerRules.isOwnerChat 按 access.json 的 admins 现算。
+    ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
   })
 
   return { busyRegistry, resolve, permissionMode, conversationStore, buildCanUseTool }

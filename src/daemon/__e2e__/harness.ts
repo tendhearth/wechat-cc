@@ -23,6 +23,7 @@ import { installFakeClaude, installClaudeSpawnRecorder, installFakeCodex, instal
 // materialize to local stub files instead of hitting the real ilink CDN.
 // MUST come before bootDaemon imports to take effect.
 import './fake-media'
+import './fake-credentials'
 import type { RawUpdate } from '../poll-loop'
 
 export interface TestDaemonAccount {
@@ -61,15 +62,13 @@ export interface TestDaemonOpts {
    */
   recordClaudeSpawnOptions?: (options: Record<string, unknown>) => void
   /**
-   * Optional callback fired with the thread options passed to
-   * `Codex.startThread()` / `resumeThread()` for each spawned codex
-   * AgentSession. Used by tier-permissions e2e tests to assert that
-   * admin / trusted / guest chats produce different `sandboxMode` +
-   * `approvalPolicy` shapes on the codex side.
+   * Optional callback fired with the app-server `thread/start` /
+   * `thread/resume` params (plus `sandboxMode` = sandbox, `workingDirectory`
+   * = cwd) for each spawned codex AgentSession. Used by tier-permissions e2e
+   * tests to assert that admin / trusted / guest chats produce different
+   * `sandboxMode` + `approvalPolicy` shapes on the codex side.
    *
-   * Not called for cheapEval — the cheap codex thread uses `thread.run()`
-   * (not runStreamed), which the fake doesn't implement, so the recorder
-   * naturally only fires on the session-spawn path.
+   * Not called for cheapEval one-shot threads (see fake-sdk.ts).
    */
   recordCodexSpawnOptions?: (options: Record<string, unknown>) => void
   /**
@@ -88,6 +87,8 @@ export interface TestDaemonOpts {
   companion?: { enabled?: boolean; default_chat_id?: string }
   /** preset bot accounts — default: 1 fake bot pointing at fake ilink */
   accounts?: TestDaemonAccount[]
+  /** 缺省那个 bot 的 userId(扫码绑定它的那个微信)。缺省 'owner1';真实形状沙盒里是主人自己的对话 id。 */
+  botUserId?: string
   /** Pre-set conversation modes (chatId → Mode). Persisted to conversations.json so coordinator picks them up. */
   modes?: Record<string, { kind: 'solo' | 'parallel' | 'primary_tool' | 'chatroom'; provider?: string; primary?: string; secondary?: string; max_rounds?: number }>
   /**
@@ -104,8 +105,6 @@ export interface TestDaemonOpts {
     dangerouslySkipPermissions?: boolean
     autoStart?: boolean
     closeStopsDaemon?: boolean
-    /** 回复交付的运行时回滚开关(agent-config `reply_delivery`,见 docs/maintainer/reply-delivery.md)。 */
-    reply_delivery?: Record<string, 'legacy' | 'shadow' | 'daemon'>
   }
   /**
    * Pre-known users (chatId → name). Populates user_names.json so onboarding
@@ -120,6 +119,8 @@ export interface TestDaemonOpts {
    * on-disk SQLite db to verify state survives a stop+start cycle.
    */
   stateDirOverride?: string
+  /** Extra files to write into stateDir before boot (relative path → content), e.g. `permission-rules.json`. */
+  seedFiles?: Record<string, string>
 }
 
 export interface DaemonHandle {
@@ -169,6 +170,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
     ...(opts.access?.trusted ? { trusted: opts.access.trusted } : {}),
   }
   writeFileSync(join(stateDir, 'access.json'), JSON.stringify(access, null, 2))
+  for (const [rel, content] of Object.entries(opts.seedFiles ?? {})) writeFileSync(join(stateDir, rel), content)
 
   // 2b. Optional agent-config.json seed — used by tests that need
   // provider-specific config (e.g. cursor's cursorModel requirement).
@@ -181,14 +183,13 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
       dangerouslySkipPermissions: opts.agentConfig.dangerouslySkipPermissions ?? false,
       autoStart: opts.agentConfig.autoStart ?? false,
       closeStopsDaemon: opts.agentConfig.closeStopsDaemon ?? false,
-      ...(opts.agentConfig.reply_delivery ? { reply_delivery: opts.agentConfig.reply_delivery } : {}),
     }
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify(cfg, null, 2))
   }
 
   // 3. Write fake bot account(s) — format: accounts/<id>/account.json + token
   const accounts: TestDaemonAccount[] = opts.accounts ?? [{
-    id: 'bot1', botId: 'bot1', userId: 'owner1',
+    id: 'bot1', botId: 'bot1', userId: opts.botUserId ?? 'owner1',
     baseUrl: ilink.baseUrl, token: 'fake-token', syncBuf: '',
   }]
   for (const a of accounts) {

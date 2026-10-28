@@ -1,4 +1,4 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
 /// <reference lib="dom" />
 /** Production desktop modules → host proxy → internal HTTP → service → SQLite.
  * Native execution alone is a deterministic fixture; this is not native proof.
@@ -11,7 +11,7 @@ import {tmpdir} from 'node:os'
 import {dirname,join,resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {randomUUID} from 'node:crypto'
-import type {AgentEvent,AgentProvider,AgentRuntimeSnapshot} from '../src/core/agent-provider'
+import type {AgentEvent,AgentProvider,AgentRuntimeSnapshot} from '../src/ports/agent-provider'
 
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'..'),src=join(repo,'apps/desktop/src')
 interface Locator {scrollIntoViewIfNeeded():Promise<void>;setInputFiles(files:Array<{name:string,mimeType:string,buffer:Buffer}>):Promise<void>;fill(text:string):Promise<void>;click():Promise<void>;count():Promise<number>;textContent():Promise<string|null>}
@@ -32,7 +32,7 @@ function channel(){
 }
 async function eventually(test:()=>boolean){const deadline=Date.now()+10_000;while(!test()){if(Date.now()>deadline)throw Error('fixture deadline');await Bun.sleep(20)}}
 const harness=`window.__TAURI__={core:{invoke:async(command,args)=>{
-if(command!=='workbench_api')throw Error(command);const res=await fetch(args.path,{method:args.method,...(args.method==='POST'?{headers:{'content-type':'application/json'},body:args.body??'{}'}:{})});
+if(command!=='daemon_request')throw Error(command);const res=await fetch(args.path,{method:args.method,...(args.method==='POST'?{headers:{'content-type':'application/json'},body:args.body??'{}'}:{})});
 const body=await res.text();if(!res.ok)throw Error(body);return body;
 }}};const {initWorkbenchPage}=await import('/modules/workbench.js');const {invokeWorkbenchApi}=await import('/api.js');initWorkbenchPage({invokeWorkbenchApi,pollMs:100});`
 const html='<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/styles/workbench.css"><style>*{box-sizing:border-box}body{margin:0;font-family:system-ui}#workbench-root{height:100vh}</style></head><body><div id="workbench-root"></div><script type="module" src="/harness.js"></script></body></html>'
@@ -41,8 +41,8 @@ async function main(){
   const temporary=realpathSync(mkdtempSync(join(tmpdir(),'cc-background-browser-state-'))),evidence=realpathSync(mkdtempSync(join(tmpdir(),'cc-background-browser-evidence-')))
   const stateDir=join(temporary,'state'),project=join(temporary,'project');mkdirSync(stateDir);mkdirSync(project)
   process.env.WECHAT_STATE_DIR=stateDir;process.env.WECHAT_DISABLE_LOG_FILE='1'
-  const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy}]=await Promise.all([
-    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/core/workbench/service'),import('../src/core/provider-registry'),import('../src/daemon/internal-api/index'),import('../apps/desktop/workbench-proxy'),
+  const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy},{workbenchRoutes}]=await Promise.all([
+    import('../src/lib/db'),import('../src/adapters/store/workbench/store'),import('../src/features/workbench/service'),import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),import('../apps/desktop/workbench-proxy'),import('../src/features/workbench/routes'),
   ])
   const {chromium}=createRequire(join(repo,'apps/desktop/package.json'))('@playwright/test') as {chromium:{launch(options:{headless:boolean}):Promise<Browser>}}
   const ack=gate(),started:string[]=[],closed:string[]=[],submissions:Array<{requestId:string;text:string}>=[]
@@ -70,7 +70,8 @@ async function main(){
   }}
   const registry=createProviderRegistry();registry.register('claude',provider,{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude',canResume:()=>true})
   const db=openDb({path:join(stateDir,'workbench.db')}),store=makeWorkbenchStore(db),service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>null})
-  const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,db})
+  const api=createInternalApi({stateDir,daemonPid:process.pid,db})
+  api.mount('workbench',workbenchRoutes({workbench:service}))
   let host:ReturnType<typeof Bun.serve>|undefined,browser:Browser|undefined,page:Page|undefined
   const pageErrors:string[]=[],httpErrors:string[]=[]
   let detailUnavailable=false,attachmentUnavailable=false
@@ -149,7 +150,7 @@ async function main(){
     assert.equal(store.events(next.id).filter(event=>event.kind==='user').length,1)
     await page.locator(`[data-task-id="${task.id}"]`).click()
     assert.equal(next.status,'queued');assert.equal(started.length,1)
-    const {outputDirectory}=await import('../src/core/workbench/artifacts')
+    const {outputDirectory}=await import('../src/adapters/workbench/artifacts')
     writeFileSync(join(outputDirectory(project,task.id),'background-result.md'),'# 已核对的成果\n')
     writeFileSync(join(outputDirectory(project,task.id),'generated.png'),thumbnailPng)
     await page.getByRole('button',{name:'结束后台会话',exact:true}).click()

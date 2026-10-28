@@ -133,7 +133,7 @@ Ten things it does. **Full detail with screenshots and examples: [docs/reference
 | **Two-way chat with the agent on your desk** | WeChat in, Claude Code / Codex / Cursor out — the agent runs on your machine, in your repos |
 | **`share_page`** | long-form output becomes a page you can read on your phone |
 | **Multi-project switching** | one bot, many repos (register folders on the desktop or say "切到 <alias>") |
-| **Multi-agent** | `/cc` `/codex` `/cursor` `/api` `/agy` `/both` `/chat` — several brains on the same chat, including a chatroom debate |
+| **Multi-agent** | `/cc` `/codex` `/cursor` `/api` `/agy` pick the brain; several brains at once (parallel answers, a chatroom debate) are started from the desktop |
 | **Companion** | the Claude that reaches out first, with memory that outlives any one provider |
 | **Two mirrors of accompaniment** | the dashboard: what you did, and what CC noticed |
 | **Hearth integration** | govern your markdown vault from your phone |
@@ -167,7 +167,7 @@ Per-provider behaviour (Claude relays each tool, Codex uses its own `approval_po
 | Command | What |
 |---|---|
 | `/help` · `/whoami` | what you can do here · who you are + current mode |
-| `/cc` · `/codex` · `/cursor` · `/api` · `/agy` · `/both` · `/chat` | which agent answers, or all of them |
+| `/cc` · `/codex` · `/cursor` · `/api` · `/agy` | which agent answers (several at once: on the desktop) |
 | `/set` | the graphical settings panel (you don't have to memorise commands) |
 | `/health` · `/reset` | is its brain reachable · start the conversation over (admin) |
 | `任务 …` | workbench tasks from your phone ([docs/cc-workbench.md](docs/cc-workbench.md)) |

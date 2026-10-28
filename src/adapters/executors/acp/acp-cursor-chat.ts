@@ -1,0 +1,68 @@
+/**
+ * 对话侧的 Cursor:同一个 ACP 客户端(acp-agent-provider.ts),每会话一个常驻 cursor-agent acp,
+ * wechat / delegate MCP 按会话注入并带逐会话 token 与 tier —— 于是主人聊天拿得到 admin 工具
+ * (adminMcpTools:true),不再需要往 ~/.cursor/mcp.json 塞一把静态钥匙。
+ * 一次性评估仍走 print(cursor-eval.ts)。
+ */
+import type { AgentProvider, SpawnContext } from '../../../ports/agent-provider'
+import { assertNotAuthFailed, CORE_MCP_SERVER_NAMES } from '../../../ports/agent-provider'
+import type { McpStdioSpec } from '../mcp-stdio-spec'
+import { createAcpProvider, type AcpMcpServer } from './acp-agent-provider'
+import { cursorOneShotEval, defaultCursorSpawnFn, type CursorSpawnFn } from './cursor-eval'
+
+/** cursorModel 没设时的兜底('auto' = 让 Cursor 自己挑)。 */
+export const DEFAULT_CURSOR_MODEL = 'auto'
+
+export { ACP_CURSOR_CAPABILITIES } from '../../../domain/provider-capabilities'
+
+export interface AcpCursorChatOptions {
+  bin: string
+  model: string
+  log: (tag: string, line: string) => void
+  /** boot 给的 MCP spec,键就是规范名;null ⇒ 不注入。 */
+  mcpSpecs: { wechat: McpStdioSpec | null; delegate: McpStdioSpec | null }
+  evalSpawn?: CursorSpawnFn
+  spawn?: typeof import('node:child_process').spawn
+}
+
+/** MCP 子进程 env:PATH/HOME(gemini 曾因缺这层拿不到 PATH)+ spec.env + 会话 env(只给 CORE 名字,与 mergeEnvIntoMcpServers 同一条规矩)。 */
+export function acpMcpServersFor(specs: AcpCursorChatOptions['mcpSpecs'], mcpEnv?: Record<string, string>): AcpMcpServer[] {
+  const servers: AcpMcpServer[] = []
+  for (const name of ['wechat', 'delegate'] as const) {
+    const spec = specs[name]
+    if (!spec) continue
+    const env: Record<string, string> = {}
+    for (const key of ['PATH', 'HOME']) { const value = process.env[key]; if (typeof value === 'string') env[key] = value }
+    Object.assign(env, spec.env ?? {}, CORE_MCP_SERVER_NAMES.has(name) ? mcpEnv ?? {} : {})
+    servers.push({ name, command: spec.command, args: spec.args ?? [], env: Object.entries(env).map(([k, v]) => ({ name: k, value: v })) })
+  }
+  return servers
+}
+
+export function createAcpCursorChatProvider(options: AcpCursorChatOptions): AgentProvider {
+  const evalSpawn = options.evalSpawn ?? defaultCursorSpawnFn(options.bin)
+  const base = createAcpProvider({
+    command: options.bin, args: ['acp'], displayName: 'Cursor', log: options.log, spawn: options.spawn, targetProvider: 'cursor',
+    permissions: 'mode', text: 'messages', resume: 'fallback', notice: null,
+    mcpServers: (context: SpawnContext) => acpMcpServersFor(options.mcpSpecs, context.mcpEnv),
+    model: (context: SpawnContext) => context.model ?? options.model,
+  })
+  return {
+    spawn: base.spawn,
+    // 守护(评审 #193 P1-1):一次性评估用的是构造时的 options.model(下面 cursorOneShotEval 的那个),
+    // 不是此刻配置里的;会话那一侧交给 ACP 自报的当前模型。
+    callTarget: (kind, ctx) => kind === 'cheapEval' || kind === 'strongEval' ? { provider: 'cursor', model: options.model } : base.callTarget?.(kind, ctx) ?? null,
+    /** CLI 子进程一档,与 codex 同量级。 */
+    cheapEvalBudgetMs: 20_000,
+    async cheapEval(prompt: string): Promise<string> {
+      const text = await cursorOneShotEval(evalSpawn, options.model, prompt)
+      assertNotAuthFailed(text, options.log, 'cursor cheapEval')
+      return text
+    },
+    async strongEval(prompt: string): Promise<string> {
+      const text = await cursorOneShotEval(evalSpawn, options.model, prompt)
+      assertNotAuthFailed(text, options.log, 'cursor strongEval')
+      return text
+    },
+  }
+}

@@ -1,6 +1,6 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
-import {createClaudeHistoryReader} from '../src/core/workbench/native-claude-history'
-import {createCodexHistoryReader} from '../src/core/workbench/native-codex-history'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
+import {createClaudeHistoryReader} from '../src/adapters/executors/claude/native-claude-history'
+import {createCodexHistoryReader} from '../src/adapters/executors/codex/native-codex-history'
 /** Live development: production task engine, isolated state, existing companion untouched.
  * bun scripts/dev-cc-workbench.ts
  * Only workbench writes are enabled in the frontend; no sample tasks are seeded.
@@ -11,18 +11,19 @@ import {join,resolve} from 'node:path'
 import {openDb} from '../src/lib/db'
 import {findCodexBinary} from '../src/lib/find-codex-binary'
 import {codexSessionJsonlPaths,claudeSessionJsonlPath} from '../src/daemon/bootstrap/session-paths'
-import {createProviderRegistry} from '../src/core/provider-registry'
-import {createWorkbenchCodexProvider} from '../src/core/workbench/codex-app-server'
-import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/core/claude-agent-provider'
-import {workbenchClaudeOptions} from '../src/daemon/bootstrap/wire-workbench'
-import {readNativeClaudeTools} from '../src/core/workbench/claude-native-config'
-import {claudeNativeCapabilityNotice} from '../src/core/workbench/native-capability-notice'
-import {makeWorkbenchStore} from '../src/core/workbench/store'
-import {makeWorkbenchService} from '../src/core/workbench/service'
+import {createProviderRegistry} from '../src/app/provider-registry'
+import {createWorkbenchCodexProvider} from '../src/adapters/executors/codex/codex-app-server'
+import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/adapters/executors/claude/claude-agent-provider'
+import {workbenchClaudeOptions} from '../src/features/workbench/wire'
+import {readNativeClaudeTools} from '../src/adapters/executors/claude/claude-native-config'
+import {claudeNativeCapabilityNotice} from '../src/adapters/workbench/native-capability-notice'
+import {makeWorkbenchStore} from '../src/adapters/store/workbench/store'
+import {makeWorkbenchService} from '../src/features/workbench/service'
 import {createInternalApi,type InternalApiDeps} from '../src/daemon/internal-api'
+import {workbenchRoutes} from '../src/features/workbench/routes'
 import {workbenchClaudeAuthEnv} from './workbench-claude-config'
 import {loadAgentConfig} from '../src/lib/agent-config'
-import {registerWorkbenchApi} from '../src/daemon/bootstrap/workbench-api'
+import {registerWorkbenchApi} from '../src/features/workbench/workbench-api'
 
 const root=resolve(import.meta.dir,'..')
 const stateDir=join(homedir(),'.claude','channels','wechat-workbench-dev')
@@ -57,7 +58,7 @@ if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
     if(notice)context?.reportNotice?.(notice)
     return workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claudeBinary,
       env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)}},
-      instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers)),native)
+      instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers)),native)
   },
 }),{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude Code',canResume:(cwd,id)=>existsSync(claudeSessionJsonlPath(homedir(),cwd,id))})
 registerWorkbenchApi(registry,db,stateDir,loadAgentConfig(stateDir),process.env)
@@ -71,7 +72,7 @@ const workbench=makeWorkbenchService({
   mintSessionToken:key=>api.mintSessionToken('trusted',key,{routeAllow:new Set()}),
   revokeSessionToken:key=>api.invalidateSession(key),
 })
-api.setWorkbench(workbench)
+api.mount('workbench', workbenchRoutes({ workbench }))
 const started=await api.start()
 writeFileSync(infoPath,JSON.stringify({baseUrl:`http://127.0.0.1:${started.port}`,daemonPid:process.pid,...started}),{mode:0o600})
 const port=process.env.WECHAT_CC_SHIM_PORT??'4187'

@@ -1,76 +1,73 @@
 /**
  * wire-yi.ts — 乙 v2:BRAIN 侧的 ws rendezvous(yiHub)+ HAND 侧的出站连接。
- * 从 bootstrap/index.ts 逐字搬出(2026-09-27 bootstrap 拆分,spec
- * 2026-09-27-bootstrap-split-design);块内逻辑与注释不变,只参数化:
- * deps.log → ctx.log,configuredAgent → ctx.configuredAgent,a2aRegistry /
- * dispatchDelegate 走 parts.*。
+ * 从 bootstrap/index.ts 逐字搬出(2026-09-27 bootstrap 拆分,spec 2026-09-27-bootstrap-split-design)。
  *
- * 形状上的唯一变化(spec §3 规矩 2):整块套进 ctx.sup.start('yi', …)。以前 hub 的
- * 端口绑不上会让整个 boot 抛;现在降级为 yiHub undefined + /v1/health.subsystems
- * 里 'yi' degraded,boot 继续。两段都没配 ⇒ 返回 null ⇒ off。
+ * 2026-10-22 起是一个 DaemonModule(第三批 3b 第 2 步,设计稿 2026-10-22-daemon-module-design):
+ *  - 两段都没配 ⇒ `enabled` 为 false ⇒ off(以前是 fn 返回 null)。
+ *  - 起失败 ⇒ degraded,boot 继续(`optional`,以前是 sup.start)。
+ *  - hub 的监听、hand 的出站连接在 init 里造好、经 `own` 登记停法,start 段才 listen / connect。以前那两处手写的
+ *    「半构造清理」(hand 侧抛了先停 hub)和 HAND_ONLY 哨兵都不要了:init 抛错时容器停掉已经登记的;只配 hand
+ *    就是 ok、提供 undefined。
  */
-import type { A2ARegistry } from '../../core/a2a-registry'
-import { createYiHub, type YiHub } from '../../core/yi-hub'
+import type { A2ARegistry } from '../../ports/a2a'
+import { createYiHub, type YiHub } from '../../app/yi-hub'
 import { createYiWsServer } from '../yi-ws-server'
+import type { DaemonModule } from '../modules/container'
 import type { DelegateDispatch } from './delegate'
 import type { BootstrapCtx } from './types'
 
-/** 只配 hand 时的返回哨兵:让 supervisor 记 ok;wireYi 出口折回 undefined。 */
-const HAND_ONLY = Symbol('yi-hand-only')
-
-export async function wireYi(
-  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'configuredAgent'>,
-  parts: { a2aRegistry: A2ARegistry; dispatchDelegate: DelegateDispatch },
-): Promise<YiHub | undefined> {
-  const { a2aRegistry, dispatchDelegate } = parts
-  // sup.start:fn 返回 null ⇒ off、抛 ⇒ degraded,两者都给 undefined。只配 hand 的
-  // daemon 没有 hub 可返回,但子系统是活的 —— 用 HAND_ONLY 哨兵让 supervisor 记 ok
-  // 而不是 off(2026-09-27 终审 #2),出口再折回 undefined。
-  const hub = await ctx.sup.start('yi', async () => {
-    let yiHub: YiHub | undefined
-    let yiServer: ReturnType<typeof createYiWsServer> | undefined
-    let handStarted = false
-    // ── 乙 v2 wiring (guarded — no-op when config absent) ────────────────────
-    // BRAIN side: start a WebSocket rendezvous that hands connect to.
-    if ((ctx.configuredAgent as { yi_hub_listen?: { host: string; port: number } }).yi_hub_listen) {
-      const cfg = (ctx.configuredAgent as { yi_hub_listen: { host: string; port: number } }).yi_hub_listen
-      yiHub = createYiHub()
-      yiServer = createYiWsServer({
-        host: cfg.host,
-        port: cfg.port,
-        hub: yiHub,
-        verify: (id, tok) => !!a2aRegistry.verifyBearer(id, tok),
-      })
-      await yiServer.start()
-      ctx.log('YI', `hub listening on ws://${cfg.host}:${yiServer.port()}`)
-    }
-
-    // HAND side: connect outbound to a brain's rendezvous.
-    // 半构造清理(2026-09-27 终审 #1,同 wire-knowledge 关 sqlite 句柄的姿态):hub 已经
-    // 在监听、hand 侧抛(比如 yi_brain.url 畸形让 new WebSocket 同步抛)⇒ 先把 hub 的
-    // 监听器停掉再外抛,不然 'yi' 记 degraded、端口却还被一个没人驾驭的 hub 占着。
-    try {
-      if ((ctx.configuredAgent as { yi_brain?: { url: string; handId: string; authToken: string } }).yi_brain) {
-        const cfg = (ctx.configuredAgent as { yi_brain: { url: string; handId: string; authToken: string } }).yi_brain
-        const { createYiWsClient } = await import('../yi-ws-client')
-        const yiClient = createYiWsClient({
-          brainUrl: cfg.url,
-          handId: cfg.handId,
-          authToken: cfg.authToken,
-          capabilities: ['exec'],
-          onExec: (t) => dispatchDelegate(t.peer, t.prompt, t.cwd),
-          log: (m) => ctx.log('YI', m),
-        })
-        yiClient.start()
-        handStarted = true
-        ctx.log('YI', `hand connecting to brain at ${cfg.url}`)
-      }
-    } catch (err) {
-      if (yiServer) { try { await yiServer.stop() } catch { /* best-effort */ } }
-      throw err
-    }
-
-    return yiHub ?? (handStarted ? HAND_ONLY : null)
-  })
-  return hub === undefined || hub === null || hub === HAND_ONLY ? undefined : hub
+type YiConfig = {
+  yi_hub_listen?: { host: string; port: number }
+  yi_brain?: { url: string; handId: string; authToken: string }
 }
+
+export function yiModule(
+  configuredAgent: BootstrapCtx['configuredAgent'],
+  parts: { a2aRegistry: A2ARegistry; dispatchDelegate: DelegateDispatch },
+): DaemonModule<YiHub | undefined> {
+  const cfg = configuredAgent as YiConfig
+  return {
+    name: 'yi',
+    optional: true,
+    enabled: () => !!cfg.yi_hub_listen || !!cfg.yi_brain,
+    async init(ctx) {
+      let yiHub: YiHub | undefined
+      // BRAIN side: a WebSocket rendezvous that hands connect to.
+      if (cfg.yi_hub_listen) {
+        const listen = cfg.yi_hub_listen
+        const hub = createYiHub()
+        const server = createYiWsServer({
+          host: listen.host,
+          port: listen.port,
+          hub,
+          verify: (id, tok) => !!parts.a2aRegistry.verifyBearer(id, tok),
+        })
+        ctx.own('hub server', () => server.stop())   // 没 start 过也能停(server?.stop())
+        // 端口在 init 里就占(跟 A2A 服务、internal-api 一样):占不上 ⇒ 在这里抛 ⇒ 只是 yi 降级。放到 onStart 里抛,
+        // 拿了 yi 的 bootstrap(wants)会跟着降级,整个 daemon 跟着倒(架构终态 A2 评审)。
+        await server.start()
+        ctx.log(`hub listening on ws://${listen.host}:${server.port()}`)
+        yiHub = hub
+      }
+      // HAND side: connect outbound to a brain's rendezvous.
+      if (cfg.yi_brain) {
+        const brain = cfg.yi_brain
+        const { createYiWsClient } = await import('../yi-ws-client')
+        const client = createYiWsClient({
+          brainUrl: brain.url,
+          handId: brain.handId,
+          authToken: brain.authToken,
+          capabilities: ['exec'],
+          onExec: (t) => parts.dispatchDelegate(t.peer, t.prompt, t.cwd),
+          log: (m) => ctx.log(m),
+        })
+        ctx.own('hand client', () => client.stop())
+        // 同上:连不上的错(地址畸形)在 init 里抛,只让 yi 降级。
+        client.start()
+        ctx.log(`hand connecting to brain at ${brain.url}`)
+      }
+      return yiHub
+    },
+  }
+}
+

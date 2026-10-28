@@ -1,14 +1,16 @@
 import type { SessionContinueT } from '../backend/types'
 import { t, type Lang } from '../i18n'
+import { agentName, type AgentNames } from './agents'
 
 /**
  * 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions §4.4 / §4.5):读页底部那一块、确认卡、
  * 提交失败的那一句、接过来的事「第一句会怎样」。纯函数;页面只照着画。
  */
 
-/** {provider} 填的名字:与会话页的分段同名;别的执行者原样(这一版只有 claude / codex 会走到这里)。 */
-export const providerName = (p: string, lang: Lang): string =>
-  p === 'claude' ? t(lang, 'sessions.claude') : p === 'codex' ? t(lang, 'sessions.codex') : p
+/** {provider} 填的名字:daemon 给的(收敛清单 ⑥,预览 / 会话行的 displayName、一件事的 agentNames);没有 ⇒ id。 */
+export const providerName = (p: string, names?: AgentNames): string => agentName(p, names)
+/** 预览自己带的名字。 */
+const namesOf = (p: { provider: string; displayName?: string }): AgentNames => (p.displayName ? { [p.provider]: p.displayName } : undefined)
 
 /**
  * CC 看不看得见这个执行者在电脑上跑没跑(spec D3):Codex 的会话状态 daemon 读得到(在跑 ⇒ 预览就是 busy_session);
@@ -17,8 +19,8 @@ export const providerName = (p: string, lang: Lang): string =>
 const runSeen = (provider: string): boolean => provider === 'codex'
 
 /** 「先让原来那个停下」那一句:看不见的说 CC 没法确认;看得见的如实说「没看到在跑」,再提醒一句。 */
-const stopLine = (provider: string, lang: Lang): string =>
-  t(lang, runSeen(provider) ? 'continue.notSeenRunning' : 'continue.stopFirst', { provider: providerName(provider, lang) })
+const stopLine = (provider: string, lang: Lang, names?: AgentNames): string =>
+  t(lang, runSeen(provider) ? 'continue.notSeenRunning' : 'continue.stopFirst', { provider: providerName(provider, names) })
 
 export type ContinueBlock =
   | { kind: 'none' }
@@ -27,11 +29,11 @@ export type ContinueBlock =
   | { kind: 'note'; text: string; retry: boolean }
 
 type Refusal = Exclude<SessionContinueT['state'], 'ready' | 'managed'>
-function refusalText(state: Refusal, provider: string, lang: Lang): string {
+function refusalText(state: Refusal, provider: string, lang: Lang, names?: AgentNames): string {
   switch (state) {
     case 'busy_session': return t(lang, 'continue.busySession')
     case 'busy_folder': return t(lang, 'continue.busyFolder')
-    case 'provider_missing': return t(lang, 'continue.providerMissing', { provider: providerName(provider, lang) })
+    case 'provider_missing': return t(lang, 'continue.providerMissing', { provider: providerName(provider, names) })
     case 'folder_missing': return t(lang, 'continue.folderMissing')
     case 'quota': return t(lang, 'continue.quota')
     case 'empty': return t(lang, 'continue.empty')
@@ -44,17 +46,17 @@ export function continueBlock(p: SessionContinueT | 'loading' | 'failed', lang: 
   if (p === 'failed') return { kind: 'note', text: t(lang, 'continue.unknown'), retry: true }
   if (p.state === 'ready') return { kind: 'continue', label: t(lang, 'continue.action') }
   if (p.state === 'managed') return { kind: 'open', label: t(lang, 'continue.open') }
-  return { kind: 'note', text: refusalText(p.state, p.provider, lang), retry: true }
+  return { kind: 'note', text: refusalText(p.state, p.provider, lang, namesOf(p)), retry: true }
 }
 
 /** 确认卡:在哪台电脑、用谁、哪个文件夹;接原会话还是带记录新开(从不让人选,spec D2);会用额度;先让原来那个停下(spec D3)。 */
 export function continueSheetLines(p: SessionContinueT, lang: Lang): string[] {
-  const provider = providerName(p.provider, lang)
+  const provider = providerName(p.provider, namesOf(p))
   return [
     t(lang, 'continue.runsOn', { provider, project: p.project ?? t(lang, 'continue.unknownFolder') }),
     t(lang, p.mode === 'fresh_context' ? 'continue.modeFresh' : 'continue.modeResume'),
     t(lang, 'continue.quotaNote', { provider }),
-    stopLine(p.provider, lang),
+    stopLine(p.provider, lang, namesOf(p)),
   ]
 }
 
@@ -70,11 +72,11 @@ export const CONTINUE_RECHECK: ReadonlySet<string> = new Set(['session_busy', 'f
  * provider 来自预览或会话行;都没有 ⇒ null,说「这个执行者」。只有真没送到(离线 / 那一块没接上)才说「没有送到电脑上」;
  * 电脑那边答了、但没接上的(裁决 R5)说中性的一句。
  */
-export function continueErrorText(code: string, provider: string | null, lang: Lang): string {
+export function continueErrorText(code: string, provider: string | null, lang: Lang, names?: AgentNames): string {
   switch (code) {
     case 'session_busy': return t(lang, 'continue.busySession')
     case 'folder_busy': return t(lang, 'continue.busyFolder')
-    case 'provider_missing': return provider ? t(lang, 'continue.providerMissing', { provider: providerName(provider, lang) }) : t(lang, 'continue.providerMissingAny')
+    case 'provider_missing': return provider ? t(lang, 'continue.providerMissing', { provider: providerName(provider, names) }) : t(lang, 'continue.providerMissingAny')
     case 'folder_missing': return t(lang, 'continue.folderMissing')
     case 'quota': return t(lang, 'continue.quota')
     case 'session_changed': return t(lang, 'continue.changed')
@@ -95,10 +97,10 @@ export function continueErrorDot(code: string): 'bad' | 'warn' | 'unknown' {
 
 /** 接过来、还没发第一句的那件事(进展页 / 说一句页顶上):第一句会怎样 + 先让原来那个停下。
  *  Codex 那一句是接手那一刻查的,不是现在 ⇒ 用过去时(final fix M3);Claude Code 那句本来就不说看没看到,照旧。 */
-export function nativeStartLines(n: { mode: 'native_resume' | 'fresh_context'; providerId: string }, lang: Lang): string[] {
-  const provider = providerName(n.providerId, lang)
+export function nativeStartLines(n: { mode: 'native_resume' | 'fresh_context'; providerId: string }, lang: Lang, names?: AgentNames): string[] {
+  const provider = providerName(n.providerId, names)
   return [
     t(lang, n.mode === 'fresh_context' ? 'continue.firstFresh' : 'continue.firstResume', { provider }),
-    runSeen(n.providerId) ? t(lang, 'continue.notSeenRunningAtPickup', { provider }) : stopLine(n.providerId, lang),
+    runSeen(n.providerId) ? t(lang, 'continue.notSeenRunningAtPickup', { provider }) : stopLine(n.providerId, lang, names),
   ]
 }

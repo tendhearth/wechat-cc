@@ -6,6 +6,7 @@ import { turnRoutes } from './routes-turn'
 import { minTierFor } from './route-tiers'
 import { SEND_SCOPED_ROUTES, ALL_CHATS } from './send-scope'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
+import { voiceRoutes } from '../../features/voice/routes'
 import type { InternalApiDeps, RouteTable } from './types'
 
 const q = new URLSearchParams()
@@ -27,13 +28,18 @@ function setup(over: Partial<InternalApiDeps> = {}, table: RouteTable = {}) {
       editMessage: vi.fn(async () => {}),
       broadcast: vi.fn(async () => ({ ok: true, sent: 3 })),
     },
-    voice: { replyVoice: vi.fn(async () => ({ ok: true as const, msgId: 'v1' })) },
-    stickers: { resolve: (tag: string) => tag === '庆祝' ? '/lib/庆祝.gif' : null, allTags: () => ['庆祝'] },
     resolveAdminChatId: () => 'owner',
     ...over,
   } as unknown as InternalApiDeps
-  const routes = turnRoutes(deps, () => table)
-  return { routes, rt, sent, deps }
+  // 表情库归 stickers 模块:它挂上的 GET /v1/stickers(测试里给一个只有「庆祝」的库)。
+  // 语音归 voice 模块(src/features/voice):它挂的 reply_voice 也由 internal-api 按键查到,一起放进挂上来的那张表。
+  const voice = { replyVoice: vi.fn(async (_c: string, _t: string) => ({ ok: true as const, msgId: 'v1' })) }
+  const mounted: RouteTable = {
+    'GET /v1/stickers': () => ({ status: 200, body: { ok: true, stickers: [{ file: '庆祝.gif', tags: ['庆祝'] }], tags: ['庆祝'] } }),
+    'POST /v1/wechat/reply_voice': voiceRoutes({ voice: voice as never })['POST /v1/wechat/reply_voice'],
+  }
+  const routes = turnRoutes(deps, (key) => table[key] ?? mounted[key])
+  return { routes, rt, sent, deps, voice }
 }
 
 describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
@@ -50,11 +56,11 @@ describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
 
   it('目标永远是本轮的聊天(会话令牌里的 chat),不收 chat_id', async () => {
     const t = setup()
-    const h = t.rt.begin('owner', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const h = t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
     const r = await t.routes['POST /v1/turn/attach']!(q, { kind: 'voice', text: '晚安' }, admin('owner'))
     expect(r.body).toEqual({ ok: true, attached: true })
     await h.deliver({ finalText: '', narration: [] })
-    expect((t.deps.voice as any).replyVoice).toHaveBeenCalledWith('owner', '晚安')
+    expect(t.voice.replyVoice).toHaveBeenCalledWith('owner', '晚安')
   })
 
   it('不是会话令牌(读不出 chat)⇒ 400', async () => {
@@ -65,22 +71,37 @@ describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
 
   it('语音 > 500 字 ⇒ 当场拒(too_long),不登记', async () => {
     const t = setup()
-    t.rt.begin('owner', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
     const r = await t.routes['POST /v1/turn/attach']!(q, { kind: 'voice', text: 'a'.repeat(501) }, admin())
     expect(r.body).toMatchObject({ ok: false, reason: 'too_long', limit: 500 })
   })
 
   it('本地表情 tag 不存在 ⇒ 当场拒并给出可用 tags', async () => {
     const t = setup()
-    t.rt.begin('owner', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
     const r = await t.routes['POST /v1/turn/attach']!(q, { kind: 'sticker', tag: '不存在' }, admin())
     expect(r.body).toMatchObject({ ok: false, reason: 'no_sticker_for_tag', tags: ['庆祝'] })
+  })
+
+  it('表情库(stickers 模块)没挂上 ⇒ 503 stickers_not_wired,跟以前没接表情库一样', async () => {
+    const t = setup()
+    t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
+    const r = turnRoutes(t.deps, () => undefined)
+    expect(await r['POST /v1/turn/attach']!(q, { kind: 'sticker', tag: '庆祝' }, admin())).toEqual({ status: 503, body: { error: 'stickers_not_wired' } })
+  })
+
+  it('tag 的比法跟表情库 resolve 一样:trim + 不分大小写', async () => {
+    const t = setup()
+    t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
+    const lib: RouteTable = { 'GET /v1/stickers': () => ({ status: 200, body: { ok: true, stickers: [{ file: 'h.png', tags: ['Happy'] }], tags: ['Happy'] } }) }
+    const r = turnRoutes(t.deps, (key) => lib[key])
+    expect((await r['POST /v1/turn/attach']!(q, { kind: 'sticker', tag: ' happy ' }, admin())).body).toEqual({ ok: true, attached: true })
   })
 
   it('表情在交付时走原来的 send_sticker 路由(冷却 / 记偏好原样复用)', async () => {
     const sendSticker = vi.fn(async () => ({ status: 200, body: { ok: true, file: '庆祝.gif' } }))
     const t = setup({}, { 'POST /v1/wechat/send_sticker': sendSticker })
-    const h = t.rt.begin('owner', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const h = t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
     expect((await t.routes['POST /v1/turn/attach']!(q, { kind: 'sticker', tag: '庆祝' }, admin())).body).toEqual({ ok: true, attached: true })
     const report = await h.deliver({ finalText: '恭喜恭喜上线成功', narration: [] })
     expect(sendSticker).toHaveBeenCalledWith(expect.anything(), { chat_id: 'owner', tag: '庆祝' }, undefined)
@@ -91,7 +112,7 @@ describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
     const cand = vi.fn(async () => ({ status: 200, body: { ok: true } }))
     const search = vi.fn(async () => ({ status: 200, body: { ok: true } }))
     const t = setup({}, { 'POST /v1/wechat/send_online_sticker_candidate': cand, 'POST /v1/wechat/search_online_sticker': search })
-    const h = t.rt.begin('owner', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const h = t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
     await t.routes['POST /v1/turn/attach']!(q, { kind: 'sticker', mood: '开心', id: 'g1', url: 'https://media.giphy.com/x.gif' }, admin())
     await t.routes['POST /v1/turn/attach']!(q, { kind: 'sticker', mood: '开心', query: 'happy dance' }, admin())
     await h.deliver({ finalText: '', narration: [] })
@@ -104,9 +125,9 @@ describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
     try {
       const f = join(dir, 'a.pdf'); writeFileSync(f, 'x')
       const t = setup()
-      t.rt.begin('g1', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+      t.rt.begin('g1', { context: 'dm', providerId: 'openai' })
       expect((await t.routes['POST /v1/turn/attach']!(q, { kind: 'file', path: f }, guest())).body).toMatchObject({ ok: false, error: 'forbidden' })
-      const h = t.rt.begin('owner', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+      const h = t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
       expect((await t.routes['POST /v1/turn/attach']!(q, { kind: 'file', path: f }, admin())).body).toEqual({ ok: true, attached: true })
       await h.deliver({ finalText: '文件在这里了请查收', narration: [] })
       expect((t.deps.ilink as any).sendFile).toHaveBeenCalledWith('owner', f)
@@ -115,7 +136,7 @@ describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
 
   it('文件不存在 / 不是绝对路径 ⇒ 当场拒', async () => {
     const t = setup()
-    t.rt.begin('owner', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
     expect((await t.routes['POST /v1/turn/attach']!(q, { kind: 'file', path: 'rel.txt' }, admin())).body).toMatchObject({ ok: false })
     expect((await t.routes['POST /v1/turn/attach']!(q, { kind: 'file', path: '/no/such/file' }, admin())).body).toMatchObject({ ok: false })
   })
@@ -152,7 +173,7 @@ describe('POST /v1/wechat/message — admin 往别处发(spec §4.6)', () => {
 
   it("to='owner' 解析成主人的聊天;发给主人的话记一笔给交付去重", async () => {
     const t = setup()
-    const h = t.rt.begin('other-chat', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const h = t.rt.begin('other-chat', { context: 'dm', providerId: 'openai' })
     await t.routes['POST /v1/wechat/message']!(q, { to: 'owner', text: '会议改到明天下午三点' }, admin('other-chat'))
     expect((t.deps.ilink as any).sendReply).toHaveBeenCalledWith('owner', '会议改到明天下午三点')
     const report = await h.deliver({ finalText: '会议改到明天下午三点', narration: [] })

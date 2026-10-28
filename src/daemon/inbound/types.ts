@@ -1,8 +1,9 @@
 // src/daemon/inbound/types.ts
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 import type { Intent } from './intent'
+import type { MatterOrigin } from '../../ports/matters'
 
-export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'cli-reply' | 'guard' | 'access' | 'health' | 'workbench'
+export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'command' | 'guard' | 'access' | 'health' | 'workbench'
 
 export interface InboundCtx {
   readonly msg: InboundMsg
@@ -22,6 +23,11 @@ export interface InboundCtx {
    * no restart needed) and the echo dispatch is silently swallowed.
    */
   readonly redispatch?: boolean
+  /**
+   * App 一轮(桌面 / 手机说的话过同一张消费者表)才有:这一轮里建出来的事从哪个表面来(2026-10-19)。
+   * 省略 ⇒ 真的是微信入站(wechat);null ⇒ 是 App 一轮但分不清 App / 浏览器,不写出生地。
+   */
+  readonly origin?: MatterOrigin | null
 }
 
 export type Middleware = (ctx: InboundCtx, next: () => Promise<void>) => Promise<void>

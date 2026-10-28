@@ -24,6 +24,8 @@
 // Reads service status via `deps.invoke` directly (one-shot) and uses
 // `deps.doctorPoller.waitForCondition` for the post-action settle.
 
+import { executorName } from "./executor-names.js"
+
 const DAEMON_SETTLE_TIMEOUT_MS = 8000
 const DAEMON_SETTLE_POLL_MS = 500
 const PROGRESS_POLL_MS = 250
@@ -264,7 +266,8 @@ function collectHardReds(report) {
   const out = []
   const c = report.checks
   if (c.provider && !c.provider.ok && c.provider.severity === "hard") {
-    out.push(c.provider.provider === "codex" ? "Codex" : "Claude Code")
+    // 叫什么由 daemon 定(收敛清单 ⑥);还没拿到名字 ⇒ 照 id 写。
+    out.push(executorName(c.provider.provider || "claude"))
   }
   return out
 }

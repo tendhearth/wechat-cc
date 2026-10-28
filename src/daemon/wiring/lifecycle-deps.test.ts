@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { openTestDb } from '../../lib/db'
 import type { Bootstrap } from '../bootstrap'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { LifecycleDepsOpts } from './lifecycle-deps'
 import type { TickBodies } from './tick-bodies'
 import type { CallTarget } from '../../lib/network-gate'
 
@@ -38,8 +38,9 @@ describe('buildLifecycleDeps — holdBusy forwarding', () => {
       flush: async () => {},
       getUpdatesForLoop: async () => ({ ok: true, updates: [] }),
       resolveUserName: () => null,
-    } as unknown as IlinkAdapter
+    } as unknown as LifecycleDepsOpts['ilink']
     const ticks: TickBodies = {
+      runJobTurn: async () => 'silent',
       ingestTick: async () => {},
       pushTick: async () => {},
       introspectTick: async () => {},
@@ -87,8 +88,8 @@ describe('buildLifecycleDeps — network guard suspends running tasks', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'lifecycle-deps-suspend-'))
     const shutdownProtected = vi.fn(async () => 1)
     const boot = { holdBusy: vi.fn(), sessionManager: { shutdownProtected }, sessionStore: {}, conversationStore: {}, health: { onSuccess: vi.fn(), onFailure: vi.fn() } } as unknown as Bootstrap
-    const ilink = { flush: async () => {}, getUpdatesForLoop: async () => ({ ok: true, updates: [] }), resolveUserName: () => null } as unknown as IlinkAdapter
-    const ticks: TickBodies = { ingestTick: async () => {}, pushTick: async () => {}, introspectTick: async () => {} }
+    const ilink = { flush: async () => {}, getUpdatesForLoop: async () => ({ ok: true, updates: [] }), resolveUserName: () => null } as unknown as LifecycleDepsOpts['ilink']
+    const ticks: TickBodies = { ingestTick: async () => {}, pushTick: async () => {}, introspectTick: async () => {}, runJobTurn: async () => 'silent' }
     const seen: Array<{ protected: string | null }> = []
     const workbench = {
       suspendForNetwork: vi.fn((select: (run: { providerId: string; model: string | null; target: CallTarget }) => string | null) => {

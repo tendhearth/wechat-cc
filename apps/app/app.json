@@ -12,7 +12,9 @@
       "zh-Hans": "./locales/zh-Hans.json"
     },
     "ios": {
-      "bundleIdentifier": "com.tendhearth.app"
+      "bundleIdentifier": "com.tendhearth.app",
+      "buildNumber": "2",
+      "config": { "usesNonExemptEncryption": false }
     },
     "android": {
       "package": "com.tendhearth.app",
@@ -39,7 +41,7 @@
         "expo-camera",
         {
           "cameraPermission": "Tendhearth uses the camera only to scan the pairing code shown on your computer.",
-          "microphonePermission": false,
+          "microphonePermission": "Tendhearth uses the microphone only while you hold the talk button, to turn your voice into text.",
           "recordAudioAndroid": false
         }
       ],
@@ -48,7 +50,16 @@
         {
           "photosPermission": "Tendhearth uses your photos only when you pick a picture to send to CC.",
           "cameraPermission": "Tendhearth uses the camera only to scan the pairing code shown on your computer.",
-          "microphonePermission": false
+          "microphonePermission": "Tendhearth uses the microphone only while you hold the talk button, to turn your voice into text."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Tendhearth uses the microphone only while you hold the talk button, to turn your voice into text.",
+          "recordAudioAndroid": true,
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false
         }
       ]
     ],

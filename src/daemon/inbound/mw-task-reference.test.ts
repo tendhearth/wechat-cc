@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
-import type { TaskCandidate } from '../../core/workbench/task-reference'
+import type { TaskCandidate } from '../../features/workbench/task-reference'
 import type { InboundCtx } from './types'
 
 /**
@@ -56,7 +56,7 @@ describe('mw-task-reference', () => {
     const r = await run('整理 TODO 那件,把下周那条也放进去')
     expect(r.nexted).toBe(false); expect(r.consumed).toBe('workbench')
     expect(commands).toEqual(['任务 a85aec02 补充 整理 TODO 那件,把下周那条也放进去'])
-    expect(sent[0]).toMatch(/^📁 sample-project · 读 NOTES\.md,整理成 TODO\.md · Claude/)
+    expect(sent[0]).toMatch(/^sample-project · 读 NOTES\.md,整理成 TODO\.md · Claude/)
     expect(sent[0]).toContain('任务 a85aec02：好的。')
   })
 
@@ -160,6 +160,8 @@ describe('额度止损:执行者额度用完时,不再往它送,直接问"交给
     await run('是')
     expect(created).toHaveLength(1)
     expect(created[0]).toMatchObject({ path: '/s/project-b', providerId: 'claude' })
+    // 新那件的出生地跟着被接手的那件走(接线方按 fromTaskId 查),不按这一轮从哪说的
+    expect(typeof (created[0] as { fromTaskId?: string }).fromTaskId).toBe('string')
     expect(created[0]!.text).toContain('读 DATA.md,哪三个模型在 1 秒以内'); expect(created[0]!.text).toContain('再加一列百分比'); expect(created[0]!.text).toMatch(/接替 Codex/)
     expect(sent.at(-1)).toMatch(/已交给 Claude/); expect(sent.at(-1)).toMatch(/c0ffee00/)
   })
@@ -170,6 +172,26 @@ describe('额度止损:执行者额度用完时,不再往它送,直接问"交给
     expect(sent.at(-1)).toMatch(/好/)
     const r = await run('是')
     expect(created).toEqual([]); expect(r.nexted).toBe(true)
+  })
+  it('额度恢复后接着做(2026-10-20):接管邀请里多一句「等恢复」;回「等恢复」⇒ 排一次,回话写清时刻与只试一次', async () => {
+    const asked: string[] = []
+    const { run, sent, created } = quotaOn({ quotaResume: (id) => { asked.push(id); return { ok: true as const, at: T + 27 * 60_000 } } })
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    expect(sent.at(-1)).toMatch(/回「等恢复」/)
+    await run('等恢复')
+    expect(asked).toHaveLength(1)
+    expect(created).toEqual([])
+    expect(sent.at(-1)).toMatch(/额度恢复/); expect(sent.at(-1)).toMatch(/只试一次/)
+    // 之后的「是」不再算接管(已经选了等)
+    const r = await run('是')
+    expect(created).toEqual([]); expect(r.nexted).toBe(true)
+  })
+  it('没有接手的执行者时也能「等恢复」;排不了就照实说', async () => {
+    const { run, sent } = quotaOn({ fallbackExecutor: () => null, quotaResume: () => ({ ok: false as const, error: 'quota_reset_too_far' as const }) })
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    expect(sent.at(-1)).toMatch(/回「等恢复」/)
+    await run('等恢复')
+    expect(sent.at(-1)).toMatch(/排不了/)
   })
   it('没有可接的执行者(两家都没额度)⇒ 说清楚,不新开', async () => {
     const { run, sent, created } = quotaOn({ fallbackExecutor: () => null })

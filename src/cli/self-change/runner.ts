@@ -17,7 +17,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 import { wrapForProcessTree } from '../../lib/jobspawn'
 
-import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 
 export interface RunnerInput {
   cwd: string
@@ -72,14 +72,39 @@ const RAW_TEXT_CAP = 4000
  * `claude mcp list -- --bogus` 不报 —— 解析器认 `--`。
  * 同一次探测还确认了 `--max-turns` 与 `--append-system-prompt-file` 虽然没印在 --help 里,但都接受。
  */
+/**
+ * 只读会话(评审、规划)的锁:2026-10-23 在 claude 2.1.309 上实测过。
+ *
+ * 以前只是 `--dangerously-skip-permissions` + 关掉四把写工具:Bash 照样全开(能写树外、能 git push、能 curl),
+ * porcelain 只查得到树里;主人的用户 MCP 也照样加载 —— 跟 #634 给 Codex 堵上的是同一个洞(整合者评审 #646)。
+ * 现在:
+ *   - `--restricted`:去掉跑命令的工具(除非 --tools 点名)、不读用户 / 项目 / 本地设置、文件工具关在工作目录里、拒绝 bypassPermissions;
+ *   - `--strict-mcp-config`(不给 --mcp-config)⇒ 一个 MCP 都不加载;
+ *   - `--tools Read,Grep,Glob,Bash` + `--permission-mode dontAsk` + 只放行 `git diff / log / show`:评审提示词要它
+ *     `git diff <base>...HEAD`、`git log`,别的命令一律被拒(实测 `touch` 被拒、`git log` 能跑、工具只剩这四个)。
+ * 不再带 `--dangerously-skip-permissions`(restricted 本来就拒它)。
+ * 那三条 git 自带的写口(`--output` / `--ext-diff` / `--textconv`)单独拒掉,见常量里的注释。
+ */
+export const CLAUDE_READONLY_LOCKDOWN = [
+  '--restricted', '--strict-mcp-config',
+  '--tools', 'Read,Grep,Glob,Bash',
+  '--permission-mode', 'dontAsk',
+  '--allowedTools', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)',
+  // 放行的那三条自己也能写 / 能跑东西:`--output=<任意路径>` 写文件,`--ext-diff` / `--textconv` 跑仓库配置里的外部程序
+  // (整合者评审 #647)。实测:通配的拒绝规则拦得住选项出现在中间的写法(`git diff HEAD~1 --stat --output=…`);
+  // 重定向(`> file`)、`;` / `&&` 串命令本来就被拒。
+  '--disallowedTools', 'Bash(*--output*)', 'Bash(*--ext-diff*)', 'Bash(*--textconv*)',
+] as const
+
 export function claudeArgs(input: RunnerInput): string[] {
   return [
-    '-p', '--output-format', 'json', '--dangerously-skip-permissions',
+    '-p', '--output-format', 'json',
+    ...(input.readOnly ? CLAUDE_READONLY_LOCKDOWN : ['--dangerously-skip-permissions']),
     '--max-budget-usd', String(input.budgetUsd),
     '--max-turns', String(input.maxTurns),
     ...(input.resume ? ['--resume', input.resume] : []),
     ...(input.systemPromptFile ? ['--append-system-prompt-file', input.systemPromptFile] : []),
-    ...(input.readOnly ? ['--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit'] : []),
+    // `--allowedTools` 吃变长参数:靠下面这个 `--` 收住,不然需求正文会被当成又一个工具名。
     '--', input.prompt,
   ]
 }
@@ -186,6 +211,123 @@ export function makeClaudeRunner(deps: ClaudeRunnerDeps): ImplementRunner {
       return result
     },
   }
+}
+
+/**
+ * 调模型之前先看网络守护(红线:直连官方端点会封号;Claude / Codex 都是需要保护的官方端点)。
+ * 2026-10-23 之前自改从来不看:守护在 daemon 里,而自改的执行者是 CLI 直接起的 `claude -p`,绕过了它。
+ * 守护开着且不安全 ⇒ 这一轮不起进程,回 `network_unprotected`;读不到守护状态 ⇒ 同样不起(缺省往拒绝兜底);
+ * 主人自己关了守护 ⇒ 照常。
+ */
+export function guardedRunner(inner: ImplementRunner, guard: () => Promise<{ enabled: boolean; safe: boolean; detail: string } | null>): ImplementRunner {
+  return {
+    async run(input) {
+      const g = await guard().catch(() => null)
+      if (!g || (g.enabled && !g.safe)) {
+        const why = !g ? '读不到网络守护的状态(daemon 不通?)' : `网络守护说现在不安全:${g.detail}`
+        return { ok: false, sessionId: null, text: `${why} —— 先不调模型,等网络受保护了再 --resume`, costUsd: 0, turns: 0, stderrTail: [], timedOut: false, error: 'network_unprotected' }
+      }
+      return await inner.run(input)
+    },
+  }
+}
+
+// ── 评审换人:Codex 只读评审(CC 自己跑开发设计稿 §4.2 / §6 第 2 步) ─────────────────
+//
+// 评审跟实现不是同一家,才有两路会话那种互相纠正(设计稿 §3 第 3 条)。主人 10-23:谁写谁审「应该让 CC 来决定」
+// ⇒ chooseReviewer 按谁此刻能用来挑,挑的理由记进 state、上拍板卡。
+//
+// `codex exec -s read-only`:沙箱只读,能读代码、跑只读命令,写不了工作树(流水线照旧在评审后查 HEAD / 工作区有没有被动过)。
+// `--json` 是一行一个事件(2026-10-23 在 codex-cli 0.164.0 上实测):`thread.started.thread_id`、
+// `item.completed` 里 `item.type === 'agent_message'` 的 `text`(取最后一条)、`turn.completed.usage`;
+// `item.type === 'error'` 是 hooks / MCP 的噪声,不算失败。Codex 走订阅,不报美元 ⇒ costUsd 记 0。
+
+/**
+ * 只读沙箱只管文件写,管不住 MCP 工具:主人的 ~/.codex 里装着插件带的 MCP(2026-10-23 本机:cua_repl / node_repl 是 enabled,
+ * 能驱动电脑和浏览器)。`-c mcp_servers={}` 在 0.164.0 上**没用**(插件的那几个照样在)。实测管用的是:不读主人的
+ * config.toml(`--ignore-user-config`,登录照旧用 CODEX_HOME)+ 关掉插件 / 浏览器 / 电脑操作 / apps / hooks 这几个功能。
+ * 关完以后实跑一次问它能调什么:cua_repl、node_repl、computer-use 都没了,hooks 的噪声也没了;剩下的是 codex 自带的
+ * (exec_command 在只读沙箱里、spawn_agent 之类;web__run / image_gen 下面也关了)—— 已知,写进 self-change.md。
+ */
+// 联网搜索和画图也关掉(整合者评审 #630):评审的提示词里有 diff,`web__run` 是唯一会把仓库内容带出这台机器的内置工具。
+// web_search 没有 feature 开关,是配置项:`-c web_search="disabled"`;画图是 feature `image_generation`。10-23 实跑核过:关完以后
+// 工具表里没有 web__run / image_gen 了。
+export const CODEX_REVIEW_LOCKDOWN = ['--ignore-user-config', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'computer_use', '--disable', 'apps', '--disable', 'hooks', '--disable', 'image_generation', '-c', 'web_search="disabled"']
+
+export function codexReviewArgs(input: RunnerInput): string[] {
+  return ['exec', ...CODEX_REVIEW_LOCKDOWN, '-s', 'read-only', '-C', input.cwd, '--json', '--', input.prompt]
+}
+
+export interface CodexJson { threadId: string | null; text: string; failed: string | null; turns: number }
+
+export function parseCodexJson(stdout: string): CodexJson {
+  let threadId: string | null = null
+  let text = ''
+  let failed: string | null = null
+  let turns = 0
+  for (const line of stdout.split('\n')) {
+    const o = asObject(line)
+    if (!o) continue
+    if (o.type === 'thread.started' && typeof o.thread_id === 'string') threadId = o.thread_id
+    else if (o.type === 'turn.completed') turns++
+    else if (o.type === 'turn.failed') failed = typeof (o.error as { message?: unknown } | undefined)?.message === 'string' ? (o.error as { message: string }).message : 'turn_failed'
+    else if (o.type === 'item.completed') {
+      const item = o.item as { type?: unknown; text?: unknown } | undefined
+      if (item?.type === 'agent_message' && typeof item.text === 'string') text = item.text
+    }
+  }
+  return { threadId, text, failed, turns }
+}
+
+export interface CodexRunnerDeps {
+  launch: ClaudeRunnerDeps['launch']
+  env: NodeJS.ProcessEnv
+  /** 缺省 `codex`(走 PATH)。 */
+  codexBin?: string
+}
+
+/** 只做评审:不是 readOnly 的调用一律拒(实现仍然只给 Claude,Codex 写工作树那条路没验过)。 */
+export function makeCodexReviewRunner(deps: CodexRunnerDeps): ImplementRunner {
+  return {
+    async run(input: RunnerInput): Promise<RunnerResult> {
+      const fail = (error: string, stderrTail: string[] = []): RunnerResult => ({ ok: false, sessionId: null, text: '', costUsd: 0, turns: 0, stderrTail, timedOut: false, error })
+      if (!input.readOnly) return fail('codex_runner_review_only')
+      let out: { code: number | null; stdout: string; stderr: string; timedOut?: boolean }
+      try {
+        out = await deps.launch(deps.codexBin ?? 'codex', codexReviewArgs(input), {
+          cwd: input.cwd,
+          env: runnerEnv(deps.env),
+          timeoutMs: input.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+        })
+      } catch (err) {
+        return fail('codex_spawn_failed', [String(err instanceof Error ? err.message : err)])
+      }
+      const parsed = parseCodexJson(out.stdout)
+      const ok = out.code === 0 && !parsed.failed && parsed.text.trim() !== ''
+      const result: RunnerResult = {
+        ok,
+        sessionId: parsed.threadId,
+        text: parsed.text || out.stdout.slice(-RAW_TEXT_CAP),
+        costUsd: 0,
+        turns: parsed.turns,
+        stderrTail: tail(out.stderr, STDERR_TAIL_LINES),
+        timedOut: out.timedOut === true,
+      }
+      if (!ok) result.error = parsed.failed ?? (parsed.text ? `codex_exit_${out.code}` : 'codex_no_answer')
+      return result
+    },
+  }
+}
+
+export interface ReviewerChoice { id: 'codex' | 'claude'; why: string }
+
+/**
+ * 谁来审:实现是 Claude ⇒ 优先 Codex(不同家);Codex 不能用(没装 / 没登录)⇒ 退回 Claude 的另一个只读会话,
+ * 并照实写理由。`codexLoggedIn` 由调用方给(生产 = `codex login status` 退 0)。
+ */
+export function chooseReviewer(o: { codexLoggedIn: boolean }): ReviewerChoice {
+  if (o.codexLoggedIn) return { id: 'codex', why: '实现是 Claude,评审换 Codex(不同家才互相挑得出错)' }
+  return { id: 'claude', why: 'Codex 没装或没登录,退回 Claude 的另一个只读会话(同一家,互相纠正弱一些)' }
 }
 
 /** SIGTERM 之后留给执行者把 JSON 打完的时间,过了就硬杀。 */

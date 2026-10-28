@@ -6,14 +6,16 @@ import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { STATE_DIR } from '../lib/config'
 import { findOnPath, probeBinaryVersion } from '../lib/util'
+import { findCodexBinary } from '../lib/find-codex-binary'
+import { cursorSdkFallback, executorBinary, executorCredential, executorMissingConfig } from '../lib/executor-detect'
 import { loadAgentConfig, type AgentConfig } from '../lib/agent-config'
 import { buildServicePlan, isServiceInstalled, type ServiceKind } from './service-manager'
 import { appMainBinaryPath, compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
 import { probeFsAccess, describeFsAccess } from '../lib/fs-access'
 import { openWechatDb } from '../lib/db'
-import { makeConversationStore } from '../core/conversation-store'
-import { makeSessionStateStore } from '../core/session-state'
-import { makeHeartbeatStore } from '../core/connection-heartbeat'
+import { makeConversationStore } from '../adapters/store/conversation-store'
+import { makeSessionStateStore } from '../adapters/store/session-state'
+import { makeHeartbeatStore } from '../adapters/store/connection-heartbeat'
 import { scanSatelliteRepos, type SatelliteRepo } from './satellite-repos'
 import { readJsonFile } from '../lib/read-json-file'
 
@@ -53,6 +55,8 @@ export type Runtime = 'compiled-bundle' | 'source'
 export interface DoctorDeps {
   stateDir: string
   findOnPath: (cmd: string) => string | null
+  /** 找 codex:真接线用 daemon 同一个 findCodexBinary(PATH + ~/.nvm);缺省只看 PATH(测试注入 findOnPath 时不碰真机)。 */
+  findCodex?: () => string | null
   /**
    * 扫 `plugins/*` 指向的卫星仓库有没有未推的提交(见 satellite-repos.ts 的
    * 事故说明)。纯开发期检查:缺省不接线,打包版用户根本没有这些仓库。
@@ -195,7 +199,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   const bun = deps.findOnPath('bun')
   const git = deps.findOnPath('git')
   const claude = deps.findOnPath('claude')
-  const codex = deps.findOnPath('codex')
+  const codex = deps.findCodex ? deps.findCodex() : deps.findOnPath('codex')
   const probe = deps.probeBinaryVersion ?? (() => null)
   const claudeVersion = claude ? probe(claude) : null
   const codexVersion = codex ? probe(codex) : null
@@ -212,7 +216,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   // "binary" equivalent.
   // agy 有自己的二进制(与 daemon 同一条:agent-config 的 agyBin,否则 PATH 上的 agy);openai 是 API,没有二进制。
   // 2026-10-13 以前除 codex / cursor / gemini 外一律当 claude —— 只装了 agy 的人被叫去装 Claude。
-  const agyPath = agent.agyBin ?? deps.findOnPath('agy')
+  const agyPath = executorBinary('agy', agent, deps.findOnPath)
   const providerBinary = agent.provider === 'codex'
     ? codex
     : agent.provider === 'agy'
@@ -221,14 +225,14 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
         ? null
         : claude
   // openai 的 key 只在 daemon 的环境里(WECHAT_OPENAI_API_KEY),这里看不到 —— 配了地址和模型就不拦。
-  const openaiOk = !!(agent.openaiBaseUrl && agent.openaiModel)
+  const openaiOk = executorMissingConfig('openai', agent).length === 0
   const claudeIsActive = agent.provider === 'claude'
   const codexIsActive = agent.provider === 'codex'
   const cursorIsActive = agent.provider === 'cursor'
   const geminiIsActive = agent.provider === 'gemini'
   // 与 daemon 注册同一条(bootstrap/providers.ts,2026-10-13):首选 cursor-agent CLI(订阅登录 `cursor-agent login`),
   // Windows 上 ACP 那条没验过不注册;API key + @cursor/sdk 只是兜底。以前只看兜底 ⇒ 装好 CLI 的人也被说成「缺少 CURSOR_API_KEY」。
-  const cursorCli = (deps.platform ?? osPlatform()) !== 'win32' && !!(agent.cursorAgentBin ?? deps.findOnPath('cursor-agent'))
+  const cursorCli = (deps.platform ?? osPlatform()) !== 'win32' && !!executorBinary('cursor', agent, deps.findOnPath)
   const cursorOk = cursorCli || (cursorProbe.apiKeySet && cursorProbe.sdkInstalled)
   const geminiOk = geminiProbe.apiKeySet && geminiProbe.sdkInstalled
   // WSL is a Windows-only concept; checking findOnPath('wsl') on non-win32
@@ -484,7 +488,7 @@ export function defaultProbeLogin(cli: 'claude' | 'codex', env: NodeJS.ProcessEn
 }
 
 export function defaultProbeCursor(): { apiKeySet: boolean; sdkInstalled: boolean } {
-  const apiKeySet = !!process.env.CURSOR_API_KEY
+  const apiKeySet = !!cursorSdkFallback({}, process.env).key
   let sdkInstalled = false
   try {
     createRequire(import.meta.url).resolve('@cursor/sdk')
@@ -501,7 +505,7 @@ export function defaultProbeCursor(): { apiKeySet: boolean; sdkInstalled: boolea
  * both under `bun cli.ts` (ESM) and the compiled-bundle sidecar.
  */
 export function defaultProbeGemini(): { apiKeySet: boolean; sdkInstalled: boolean } {
-  const apiKeySet = !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)
+  const apiKeySet = !!executorCredential('gemini', process.env)
   let sdkInstalled = false
   try {
     createRequire(import.meta.url).resolve('@google/genai')
@@ -535,6 +539,7 @@ export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
   return {
     stateDir,
     findOnPath,
+    findCodex: () => findCodexBinary(),
     probeBinaryVersion,
     probeLogin: cli => defaultProbeLogin(cli),
     probeCursor: defaultProbeCursor,

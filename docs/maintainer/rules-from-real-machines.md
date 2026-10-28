@@ -6,7 +6,7 @@
 
 - **MCP 的 `structuredContent` 只能含 `outputSchema` 里声明过的键。** 多一个键,严格的客户端(cursor-agent)就回 `-32602`,模型看不懂错误于是原地重试,一直转圈。wechat MCP 的 `ping` 就这么栽过。
 - **ACP 的 `initialize` 结果里,`promptCapabilities` 嵌在 `agentCapabilities` 下面**(`result.agentCapabilities.promptCapabilities.image`),不是平铺在 `result` 上。2026-09-18 照文档写的那版就取空了。
-- **凡是照协议文档写的字段路径,先去录到的报文里对一遍。** 仓库里有真机报文:`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`,回放契约测试 `src/core/acp/fixtures.test.ts`。
+- **凡是照协议文档写的字段路径,先去录到的报文里对一遍。** 仓库里有真机报文:`src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`,回放契约测试 `src/adapters/executors/acp/fixtures.test.ts`。
 - ACP 的 `toolCallId` 里会嵌**字面换行**;拿它当 DOM id / event key 之前一律过 `acpActivityId()`。
 - ACP 的 `agent_message_chunk` **一条 `messageId` 都没有**;同一轮里工具调用前后是两条助理消息,itemId 只能自己合成。
 - 外部 CLI 的 MCP 命名空间各家不同(agy 的 server 名带命名空间前缀,cursor 的 envelope 形状完全是另一套);别假设「就叫 `wechat`」,用 `normalizeWechatMcpServer` 折回规范名。
@@ -25,14 +25,15 @@
 
 ## 路由登记
 
-新加一条内部 API 路由:
+新加一条路由(桌面 `/v1/*`、手机 `/m/*`、设置页 `/set/*` 都一样):**在 `packages/protocol/src/routes.ts` 加一行,跑 `bun run gen:routes`**(重构第二批 5a,2026-10-20)。处理器照旧写在 `routes-*.ts` / `settings-panel.ts` / `mobile-*.ts`,两边都是 `"METHOD /path"` 键的表项(手机侧 F2 起,`src/features/phone/phone-route-table.ts`;漏写处理器 `scripts/phone-routes.guard.test.ts` 会红)。
 
-- **桌面 app 会调** ⇒ 要登记**五处**:`src/daemon/internal-api/route-tiers.ts`、`token-registry.ts` 的 `routeAllow` **以及它那个精确集合测试**、`apps/desktop/src-tauri/src/lib.rs` 的 `matches!` **以及它的测试表**、`apps/desktop/workbench-proxy.ts`。
-- **桌面不调** ⇒ 登记**三处**(route-tiers + token-registry + 它的精确集合测试)。
+- 桌面这一端写 `desktop: { tier, tokens?, tauri?, devProxy? }`:`tokens: ['operator']` 就是以前 token-registry 的 `routeAllow`;`tauri: true` 是打包版宿主代理(lib.rs)放行,`devProxy: true` 是浏览器预览的 dev 代理放行。lib.rs 与 `workbench-proxy.ts` 都读生成的 `apps/desktop/src-tauri/generated/workbench-routes.json`,不再手写名单。
+- 手机 / 设置页这一端写 `phone` / `set: { link: 'none' | 'read' | 'write', reason? }`:`none` = 只给配过对的设备;链接令牌能走的要写一句理由。`link` 不是自己挑的:它必须等于链接页面源码里扫出来的调用(`scripts/link-routes-from-source.guard.test.ts`,理念 2)—— 新路由给 App 用就写 `'none'`;要让链接页面调,先改页面,守卫告诉你开哪一行。
 
-漏一处的典型症状是按钮按下去 403 `route_not_allowed`,而且只在打包版上出现。
+以前「桌面会调要登记五处」漏一处的症状是按钮按下去 403 `route_not_allowed`,而且只在打包版上出现;现在只有一处可漏。
 
-- 2026-09-27 起四份白名单的包含关系(`lib.rs ⊆ workbench-proxy ⊆ routeAllow ⊆ ROUTE_MIN_TIER`)由 `scripts/route-registry.guard.test.ts` 钉住;漏登记会在本地就红,不用等打包版。鉴权模型现状见 [reference/internal-api-auth.md](../reference/internal-api-auth.md)。
+- `scripts/route-registry.guard.test.ts` 盯着生成物与表一致(忘了跑 `gen:routes` 本地就红)和表内约束(`devProxy ⇒ tauri ⇒ operator`);`scripts/routes-snapshot.guard.test.ts` 把每份名单对着 `scripts/fixtures/routes-snapshot-2026-10-20.json` 逐条比 —— 只比快照里已有的路由:加新路由不用碰它;**有意改了已有路由的档位 / 令牌 / link(或删掉一条),把快照里那一条一起改,在 PR 里写明。**鉴权模型现状见 [reference/internal-api-auth.md](../reference/internal-api-auth.md)。
+- 桌面白名单编在 .app 里,`self deploy` 只换 sidecar:新加的 `tauri` 路由要等下一版 App 才走得通(生成物带 `version`,「请更新 App」的码留给第 5c 步)。
 - 同类守卫:`scripts/provider-registry.guard.test.ts`(加一家 provider 要改的名单)、`scripts/cli-ratchet.guard.test.ts`(`cli.ts` 只许变小)。
 
 ## 加 CLI 命令(2026-09-27 起)
@@ -48,7 +49,7 @@
 - **新接线进 `src/daemon/bootstrap/wire-*.ts`,`index.ts` 只组装**(spec `docs/superpowers/specs/2026-09-27-bootstrap-split-design.md`;守卫 `scripts/bootstrap-ratchet.guard.test.ts` 钉住行数与 `let x | null = null` 个数只降不升,`bootstrap/boot-order.test.ts` 钉住 `sup.start` 名字序列)。晚绑定用 `src/lib/lifecycle.ts` 的 `Ref`(没 wire 就读会抛);可能失败 / 可能未配置的块经 `deps.supervisor.start(name)`,名字别重复(重复直接 throw)。2026-09-27 之前 `index.ts` 1321 行、7 月以来改了 84 次,拆完 460。
 - **STATE_DIR 两个环境变量名的优先级是 `WECHAT_STATE_DIR` > `WECHAT_CC_STATE_DIR`**(`src/daemon/resolve-state-dir.ts` 头注释);`src/lib/config.ts` 只认前者。e2e harness 两个都设,所以测试发现不了漂移 —— 改 state-dir 相关代码时手动只设一个名试。
 - **入站链开了意图路由后,每个在场消费者必须交探针,漏一个 boot 即抛**(`src/daemon/inbound/build.ts` 注释);探针要看的字段(附件、语音转文字)必须在路由之前就绪。
-- **A2A `proto_version` 现在是 3**(`src/core/a2a-intent.ts`);改信封形状要升它,两台真机都得重新配对。
+- **A2A `proto_version` 现在是 3**(`src/domain/a2a-intent.ts`);改信封形状要升它,两台真机都得重新配对。
 - **`agent-config.json` 只经 `saveAgentConfig` 写**(`src/lib/agent-config.ts`);裸读改写(2026-09 还有四处)会互相覆盖字段,09-17 丢过 `workbench_unattended_ack_at`。
 
 ## 对话侧

@@ -5,10 +5,12 @@ import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import { assembleMobilePage, serializeMobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, MOBILE_SRC } from './sources'
-import { buildProtocolJs, buildMarkdownJs, escapeInlineMarkdownScript, assembleRelayShell, PROTOCOL_JS_OUT, MARKDOWN_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
-import * as serverEntry from '../../src/core/workbench/task-entry'
+import { buildProtocolJs, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
+import { makeFakeV2Relay } from './fake-v2-relay'
+import { makeV2Channel } from '../../packages/protocol/src/index'
+import { mobilePhoneHtml } from '../../src/features/phone/mobile-page'
 
-describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
+describe('apps/mobile → src/features/phone/mobile-page.generated.json', () => {
   const page = assembleMobilePage(readMobileSource)
 
   it('generated page is in sync with apps/mobile/src (fix: bun run build:mobile)', () => {
@@ -18,9 +20,10 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
 
   it('sources and the generated JSON check out with LF on every platform (Windows autocrlf would desync the sync test)', () => {
     const paths = [
-      'apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'apps/desktop/src/shared/task-entry-contract.js', 'src/daemon/mobile-page.generated.json',
+      'apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'src/features/phone/mobile-page.generated.json',
+      'apps/desktop/src/shared/agent-avatars.js', 'apps/desktop/src/shared/agent-avatars.css',
       // 手机协议包 v2 Task 4:三份新生成物,同一个理由(整份文本比对,CRLF 必红)。
-      'apps/mobile/src/protocol-generated.js', 'apps/mobile/src/markdown-generated.js', 'relay/pset.src.html', 'relay/pset.html',
+      'apps/mobile/src/protocol-generated.js', 'relay/pset.src.html', 'relay/pset.html',
     ]
     const root = fileURLToPath(new URL('../../', import.meta.url))
     const out = execFileSync('git', ['check-attr', 'eol', '--', ...paths], { cwd: root, encoding: 'utf8' })
@@ -39,7 +42,7 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
     // readMobileSource)—— 后者(手机协议包 v2 Task 4 起)会把顶部占位注释
     // 原地换成 protocol-generated.js 那份压缩后的 IIFE,首行天然以 `(` 开头,
     // 那是机器产物自己的 IIFE 包裹,不是这条测试要抓的手写代码 ASI 隐患。
-    for (const name of ['boot.js', 'transport.js', 'nav.js', 'workbench.js', 'attachments.js', 'entry.js', 'presence.js', 'you.js', 'home.js', 'sw.js']) {
+    for (const name of ['boot.js', 'transport.js', 'nav.js', 'workbench.js', 'presence.js', 'home.js', 'sw.js']) {
       const source = name === 'transport.js' ? readFileSync(new URL(name, MOBILE_SRC), 'utf8') : readMobileSource(name)
       const bad = source.split('\n').map((line, i) => [i + 1, line.replace(/\/\*\*.*?\*\/\s*/g, '')] as const)
         .filter(([, line]) => /^\s*[([]/.test(line))
@@ -52,73 +55,21 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
     expect(page.phone).not.toMatch(/<link[^>]*rel="stylesheet"/)
   })
 
-  it('loads the shared Markdown bundle exactly once before the dialogue renderer, inside a syntax-valid inline script', () => {
-    expect(page.phone).toContain(readMobileSource('markdown.js'))
-    expect(page.phone.match(/globalThis\.CCM=/g)).toHaveLength(1)
-    expect(page.phone.indexOf('globalThis.CCM=')).toBeLessThan(page.phone.indexOf('function mRenderEvents'))
+  it('the inline page script is syntax-valid and carries no Markdown renderer (收敛 5b:详情只看状态)', () => {
+    expect(page.phone).not.toContain('globalThis.CCM=')
     expect(page.phone).not.toContain('@@CCM@@')
     const script=/<script>([\s\S]*?)<\/script>/.exec(page.phone)![1]!
       .replace('{{TOKEN_JSON}}','"fixture"').replace('{{REMOTE_JSON}}','null')
     expect(()=>new Function(script)).not.toThrow()
   })
 
-  it('inlines the same browser-safe entry contract into the classic script without importing runtime modules',()=>{
-    const source=readMobileSource('entry.js')
-    const contract=new Function('REMOTE','location',source+'\nreturn eContract')(null,{host:'localhost'})
-    expect(contract.ENTRY_LIMITS).toEqual(serverEntry.ENTRY_LIMITS)
-    const input={text:'要求',context:{excerpts:[{role:'assistant',text:'讨论'}]}}
-    expect(contract.composeEntryPrompt(input)).toBe(serverEntry.composeEntryPrompt(input as any))
-    expect(contract.entryFailureKind('api_task_attachment_invalid',{surface:'phone',method:'POST',status:400})).toBe('rejected')
-    expect(page.phone).toContain(source)
-    expect(source).not.toMatch(/^\s*(?:import|export)\s/m)
-  })
-
-  it('keeps inline contract bytes identical between the production builder and the test runtime',()=>{
+  it('keeps the inlined agent-avatar factory bytes identical between the production builder and the test runtime',()=>{
     const root=fileURLToPath(new URL('../../',import.meta.url))
-    const production=execFileSync('bun',['--eval',"import {readMobileSource} from './apps/mobile/sources.ts'; process.stdout.write(readMobileSource('entry.js'))"],{cwd:root,encoding:'utf8'})
-    expect(production).toBe(readMobileSource('entry.js'))
+    const production=execFileSync('bun',['--eval',"import {readMobileSource} from './apps/mobile/sources.ts'; process.stdout.write(readMobileSource('workbench.js'))"],{cwd:root,encoding:'utf8'})
+    expect(production).toBe(readMobileSource('workbench.js'))
   })
 })
 
-describe('apps/mobile/src/markdown-generated.js', () => {
-  const generated=readFileSync(MARKDOWN_JS_OUT,'utf8')
-
-  it.skipIf(!process.versions.bun)('is in sync with packages/markdown/src/browser.ts (fix: bun run build:mobile)', async () => {
-    expect(generated).toBe(await buildMarkdownJs())
-  })
-
-  it('is self-contained, has no HTML script boundaries, and preserves Markdown rendering in a browser sandbox', () => {
-    expect(generated).not.toMatch(/\b(?:import|require)\(/)
-    expect(generated).not.toMatch(/<\/script|<!--/i)
-    const sandbox=vm.createContext({})
-    vm.runInContext(generated,sandbox)
-    const api=sandbox.CCM as {renderMarkdown:(s:string)=>string;markdownPlainText:(s:string)=>string;hasMarkdownFormatting:(s:string)=>boolean}
-    expect(api.renderMarkdown('**重点** [文档](https://example.com)')).toContain('<strong>重点</strong>')
-    expect(api.renderMarkdown('<script>bad()</script> [坏链接](javascript:bad())')).not.toMatch(/<script|href="javascript:/)
-    expect(api.markdownPlainText('**重点** [文档](https://example.com)')).not.toMatch(/\*\*|\]\(/)
-    expect(api.hasMarkdownFormatting('普通消息')).toBe(false)
-    expect(api.hasMarkdownFormatting('**有格式**')).toBe(true)
-  })
-
-  it('escapes HTML parser sentinels without changing JavaScript string and replacement-pattern semantics', () => {
-    const source='globalThis.fixture="</ScRiPt><script><!-- $& $1 $$ $`"'
-    const escaped=escapeInlineMarkdownScript(source)
-    expect(escaped).not.toMatch(/<\/script|<!--/i)
-    const sandbox=vm.createContext({})
-    vm.runInContext(escaped,sandbox)
-    expect(sandbox.fixture).toBe('</ScRiPt><script><!-- $& $1 $$ $`')
-  })
-})
-
-/**
- * 手机协议包 v2 Task 4:手机页 /m 与中继壳页 relay/pset.html 的 v1 加密改由
- * packages/protocol 生成,不再手写 WebCrypto。apps/mobile/src/protocol-generated.js
- * 是 `Bun.build({ format:'iife' })` 打包 packages/protocol/src/browser.ts 的产物 ——
- * Bun.build 是 Bun 专属 API,只有下面「is in sync」这一条断言用 it.skipIf 在
- * Node 作业上跳过(理由字符串见断言本身);其余断言(LF、无 crypto.subtle、
- * 沙箱往返、relay/pset.html 跟已提交的 protocol-generated.js 一致)两个运行
- * 器都跑。
- */
 describe('apps/mobile/src/protocol-generated.js', () => {
   const generated = readFileSync(PROTOCOL_JS_OUT, 'utf8')
 
@@ -136,29 +87,39 @@ describe('apps/mobile/src/protocol-generated.js', () => {
     expect(generated).not.toMatch(/\brequire\(/)
   })
 
-  it('runs a full v1 seal/open round trip in a vm sandbox that only has crypto.getRandomValues + TextEncoder/TextDecoder/atob/btoa — no crypto.subtle at all', () => {
+  it('runs a full v2 request through CCP.makeProtocolClient in a vm sandbox that only has crypto.getRandomValues + TextEncoder/TextDecoder + timers — no crypto.subtle at all', async () => {
+    const relay = makeFakeV2Relay({ tokens: () => ['device-token'], handler: r => ({ status: 200, body: JSON.stringify({ path: r.path }) }) })
     const sandbox: Record<string, unknown> = {
       crypto: { getRandomValues: (arr: Uint8Array) => { for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256); return arr } },
-      TextEncoder, TextDecoder, atob, btoa,
+      TextEncoder, TextDecoder, setTimeout, clearTimeout, queueMicrotask,
+      // 沙箱外的假中继 + daemon(协议包的真密码学),包成协议客户端要的 ProtocolSocket
+      __open: () => {
+        const ws = new relay.WebSocket('wss://relay.test/v2/phone?id=r1')
+        return { send: (s: string) => ws.send(s), close: () => ws.close(), onOpen: (cb: () => void) => { ws.onopen = cb }, onMessage: (cb: (s: string) => void) => { ws.onmessage = ev => cb(ev.data) }, onClose: (cb: () => void) => { ws.onclose = cb } }
+      },
     }
     vm.createContext(sandbox)
     vm.runInContext(generated, sandbox)
     expect(typeof (sandbox as any).CCP).toBe('object')
     expect('subtle' in (sandbox.crypto as object)).toBe(false)
     vm.runInContext(`
-      var alice = CCP.x25519KeyPair()
-      var bob = CCP.x25519KeyPair()
-      var sharedFromAlice = CCP.x25519Shared(alice.priv, bob.pub)
-      var sharedFromBob = CCP.x25519Shared(bob.priv, alice.pub)
-      var keyAlice = CCP.deriveV1Key(sharedFromAlice, 'device-token')
-      var keyBob = CCP.deriveV1Key(sharedFromBob, 'device-token')
-      var frame = CCP.sealV1(keyAlice, new TextEncoder().encode(JSON.stringify({ path: '/m/api/home', rid: 'r0' })))
-      globalThis.__opened = new TextDecoder().decode(CCP.openV1(keyBob, frame))
+      globalThis.__res = CCP.makeProtocolClient({ open: __open, token: 'device-token', client: 'web' })
+        .request({ method: 'GET', path: '/m/api/home' }).then(function (r) { return r.status + ' ' + r.text() })
       // b64u 也挂在 CCP 上,顺带验一遍 encode/decode 互逆。
       globalThis.__b64u = CCP.b64u.decode(CCP.b64u.encode(new Uint8Array([1, 2, 3, 255])))
     `, sandbox)
-    expect((sandbox as any).__opened).toBe(JSON.stringify({ path: '/m/api/home', rid: 'r0' }))
+    expect(await (sandbox as any).__res).toBe('200 {"path":"/m/api/home"}')
+    expect(relay.sockets[0]!.hellos[0]).toMatchObject({ v: [2], client: 'web' })
     expect(Array.from((sandbox as any).__b64u as Uint8Array)).toEqual([1, 2, 3, 255])
+  })
+
+  it('the whole /m page still fits in one relay frame once sealed as a v2 res (the pset shell fetches it through the relay)', () => {
+    const html = mobilePhoneHtml('d'.repeat(48), { relay: 'wss://relay.tendhearth.com/v2/phone', id: 'r' + 'a'.repeat(26) })
+    const key = new Uint8Array(32)
+    const msg = JSON.stringify({ t: 'res', rid: 'r'.repeat(36), status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html, bodyEncoding: 'utf8' })
+    const wire = JSON.stringify({ stream: 's'.repeat(64), frame: makeV2Channel({ c2s: key, s2c: key }, 'server').seal(new TextEncoder().encode(msg)) })
+    // 中继一帧 512 KiB(apps/relay/src/limits.ts);留一半余量给页面以后长大
+    expect(Buffer.byteLength(wire, 'utf8')).toBeLessThan(256 * 1024)
   })
 })
 
@@ -175,7 +136,7 @@ describe('relay/pset.html', () => {
     expect(html).not.toContain('@@CCP@@')
   })
 
-  it('never calls crypto.subtle — the shell runs before the phone page loads, same v1 CCP as transport.js', () => {
+  it('never calls crypto.subtle — the shell runs before the phone page loads, same CCP client as transport.js', () => {
     const html = readFileSync(PSET_SHELL_OUT, 'utf8')
     const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1]!
     // 文档注释里提到 "crypto.subtle" 这个词本身没问题(说的是"不再用它");

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 import type { StateStore } from './state-store'
 
 // Controllable node:crypto randomInt — most tests leave the queue empty and

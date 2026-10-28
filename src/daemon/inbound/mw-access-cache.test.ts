@@ -17,26 +17,19 @@
  * appendAllowFrom) is what has to save the day, not test setup avoiding
  * the stale-cache window via _clearCache().
  */
-import { describe, it, expect, vi, afterAll } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { describe, it, expect, vi } from 'vitest'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'mw-access-cache-test-'))
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+const ACCESS_STATE_DIR = useTempStateDir('mw-access-cache-test-')
 const { loadAccess, appendAllowFrom } = await import('../../lib/access')
 const { makeMwAccess } = await import('./mw-access')
 
 import type { InboundCtx } from './types'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 
 const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
-
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
 // access.ts's loadAccess() cache is MODULE-scoped, so test order within
 // this file matters: the sanity check runs FIRST (on its own clean cache

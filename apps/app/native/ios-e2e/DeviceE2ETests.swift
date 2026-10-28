@@ -151,31 +151,99 @@ final class DeviceE2ETests: XCTestCase {
     let input = byId("chat-input")
     until(timeout("E2E_WAIT", 30), "chat-input") { input.exists }
     Thread.sleep(forTimeInterval: 2) // 等历史那一页拉完,免得把旧回复当成新的
+    // 气泡是没有无障碍标签的 View,字在里面的 StaticText 上,而且列表会把屏外的气泡回收:
+    // 自己那条按全屏 StaticText 找 nonce(唯一);CC 的回复 = 发送后多出来的、不带 nonce 的新字,或者 cc 气泡多了一个(同一句限流提示会原样再来)
     let ccBubbles = app.descendants(matching: .any).matching(identifier: "chat-bubble-cc")
-    var before = Set<String>()
-    for i in 0..<ccBubbles.count { before.insert(ccBubbles.element(boundBy: i).label) }
-    out("cc_bubbles_before", "\(before.count)")
+    // 一次快照里收全(逐个按下标取会跟列表刷新撞:「No matches found for Element at index …」)
+    func texts() -> [String] {
+      guard let root = try? app.snapshot() else { return [] }
+      var out: [String] = []
+      func walk(_ n: XCUIElementSnapshot) { if n.elementType == .staticText { out.append(n.label) }; n.children.forEach(walk) }
+      walk(root)
+      return out
+    }
+    out("cc_bubbles_before", "\(ccBubbles.count)")
     input.tap()
     input.typeText(text)
     let send = byId("chat-send")
     until(10, "chat-send enabled") { send.exists && send.isEnabled }
     send.tap()
-    let mine = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'chat-bubble-me' AND label CONTAINS %@", text)).firstMatch
+    let nonce = text.split(separator: " ").prefix(2).joined(separator: " ")
+    let mine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", nonce)).firstMatch
     until(timeout("E2E_WAIT", 30), "own bubble") { mine.exists }
     out("thinking_seen", byId("chat-thinking").exists ? "yes" : "no")
     attachScreenshot("chat-sent")
+    let caption = try! NSRegularExpression(pattern: "^.{1,8} · \\d{1,2}:\\d{2}$")
+    let isCaption = { (t: String) in caption.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) != nil }
     var reply: String?
-    until(timeout("E2E_WAIT_REPLY", 240), "a new CC reply bubble") {
-      if self.byId("chat-thinking").exists { return false }
-      for i in 0..<ccBubbles.count {
-        let l = ccBubbles.element(boundBy: i).label
-        if !before.contains(l) { reply = l; return true }
+    // CC 的回复 = 列表里排在自己那条后面的第一段正文(快照顺序 = 列表顺序)。同一句限流提示原样再来也认得出,不靠「没见过的字」
+    let replyEnd = Date().addingTimeInterval(timeout("E2E_WAIT_REPLY", 240))
+    while Date() < replyEnd {
+      if !byId("chat-thinking").exists {
+        let all = texts()
+        if let i = all.lastIndex(where: { $0.contains(nonce) }) {
+          reply = all[(i + 1)...].first { t in t.count > 2 && !isCaption(t) && t != "CC" && !t.contains(nonce) }
+          if reply != nil { break }
+        }
       }
-      return false
+      Thread.sleep(forTimeInterval: 2)
     }
+    if reply == nil { XCTFail("no CC reply after the own bubble within the wait"); return }
     out("reply_label", String((reply ?? "").prefix(160)))
     attachScreenshot("chat-reply")
     // 回此刻,给下一步留一个确定的起点
+    let back = byId("topbar-back")
+    if back.exists { back.tap() }
+  }
+
+  /// b'. 对终端会话说一句(#392):一起做 → 终端里的会话 → 指定那一条 → 说 → 「已送进电脑上的窗口」。
+  /// 送没送进窗口由编排脚本看目标窗口的会话记录判;这里只断言 app 这头:行在、是开着的窗口、发得出去、提示对。
+  func testTerminalSay() {
+    let id = param("E2E_TERMINAL_ID")
+    let text = param("E2E_TERMINAL_TEXT")
+    foreground()
+    // 上一步可能停在某个子页(键盘还开着):先一路返回到有底栏的地方
+    for _ in 0..<4 {
+      let back = byId("topbar-back")
+      if byId("tab-together").exists || !back.exists { break }
+      back.tap()
+      Thread.sleep(forTimeInterval: 0.6)
+    }
+    let tab = byId("tab-together")
+    until(timeout("E2E_WAIT", 30), "tab-together") { tab.exists }
+    tab.tap()
+    let row = byId("terminal-open-\(id)")
+    // 终端区在列表最底下(ListFooterComponent):没看见就往上划,最多几下;列表 15 秒拉一次,给它时间
+    // 慢慢往上划(整页快划会一下跳过去);划到底还没看见就往回划(10-20 真机:行在终端区靠上,快划直接越过了它)
+    var swipes = 0
+    until(timeout("E2E_WAIT", 90), "terminal row \(id.prefix(8))") {
+      if row.exists && row.isHittable { return true }
+      if swipes < 8 { self.app.swipeUp(velocity: .slow) } else { self.app.swipeDown(velocity: .slow) }
+      swipes = (swipes + 1) % 16
+      return false
+    }
+    out("terminal_row_label", row.label)
+    row.tap()
+    let input = byId("terminal-say-input")
+    until(timeout("E2E_WAIT", 30), "terminal-say-input") { input.exists }
+    out("live_window", byId("terminal-say-live").exists ? "yes" : "no")
+    out("say_busy", byId("terminal-say-busy").exists ? "yes" : "no")
+    attachScreenshot("terminal-detail")
+    input.tap()
+    input.typeText(text)
+    let send = byId("terminal-say-send")
+    until(10, "terminal-say-send enabled") { send.exists && send.isEnabled }
+    send.tap()
+    let note = byId("terminal-detail-note")
+    until(timeout("E2E_WAIT", 30), "terminal-detail-note") { note.exists }
+    // 新 App(#423)先说「正在送进…」,对上电脑给的结果才改口:等到定下来的那句(老 App 一上来就是「已送进」)
+    let settledWords = ["已送进", "没送进", "收下了", "还没确认"]
+    until(timeout("E2E_WAIT_SAY", 90), "terminal-detail-note settled") {
+      let l = note.label
+      return settledWords.contains { l.contains($0) } && !l.contains("正在送进")
+    }
+    out("note", note.label)
+    attachScreenshot("terminal-sent")
     let back = byId("topbar-back")
     if back.exists { back.tap() }
   }
@@ -255,7 +323,7 @@ final class DeviceE2ETests: XCTestCase {
     out("progress_status", progress.label)
   }
 
-  /// d. daemon 撤销了这台测试设备 ⇒ app 显示「这台手机已不再配对」。
+  /// d. daemon 撤销了这台测试设备 ⇒ app 显示「这台手机已经不能连了,在电脑上重新配对」。
   func testRevokedNotice() {
     foreground()
     // 回到此刻(撤销卡在此刻页);从进展页 / 对话页最多返回三次
@@ -266,7 +334,7 @@ final class DeviceE2ETests: XCTestCase {
     }
     let notice = byId("conn-notice-revoked")
     until(timeout("E2E_WAIT", 90), "conn-notice-revoked") { notice.exists }
-    let title = anyLabel(["这台手机已不再配对", "no longer paired"])
+    let title = anyLabel(["这台手机已经不能连了", "can't connect anymore"])
     XCTAssertTrue(title.exists, "revoked title text")
     out("revoked_label", title.label)
     attachScreenshot("revoked")

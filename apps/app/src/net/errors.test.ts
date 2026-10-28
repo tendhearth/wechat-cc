@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { WORKBENCH_ERRORS, workbenchErrorHttp } from '@wechat-cc/protocol'
 import { mapPhoneError, transportErrorCode } from './errors'
 
 describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
@@ -24,6 +25,27 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
     [503, { ok: false, error: 'insight_not_wired' }, 'unknown'],
     [500, null, 'unknown'],
     [403, { error: 'route_not_allowed' }, 'unknown'],
+    // 工作区脚本(2026-10-20):批准只在电脑上 / 在跑 / setup 跑完接着运行 / 没有 run 脚本
+    [428, { ok: false, error: 'script_needs_computer' }, 'scripts_unapproved'],
+    [409, { ok: false, error: 'script_running' }, 'script_running'],
+    [409, { ok: false, error: 'script_setup_running' }, 'script_queued'],
+    [422, { ok: false, error: 'no_scripts' }, 'no_scripts'],
+    // 做到条件成立为止(2026-10-20):不能落到 invalid_ 前缀规则里
+    [400, { ok: false, error: 'invalid_until' }, 'until_invalid'],
+    [422, { ok: false, error: 'until_requires_worktree' }, 'until_requires_worktree'],
+    [422, { ok: false, error: 'until_unattended_unsupported' }, 'until_unattended'],
+    // 按住说话(2026-10-18)
+    [422, { ok: false, error: 'stt_not_configured' }, 'stt_not_configured'],
+    [503, { ok: false, error: 'stt_blocked' }, 'stt_blocked'],
+    [502, { ok: false, error: 'stt_failed' }, 'stt_failed'],
+    [504, { ok: false, error: 'stt_timeout' }, 'stt_failed'],
+    [422, { ok: false, error: 'no_speech' }, 'no_speech'],
+    [413, { ok: false, error: 'audio_too_large' }, 'too_large'],
+    [503, { ok: false, error: 'voice_not_wired' }, 'unavailable'],
+    // 待办(收敛清单 ④):电脑没接待办 ⇒ unavailable;正文不对 ⇒ invalid;bad_json 不是我们会发的,按 unknown
+    [503, { ok: false, error: 'todos_not_wired' }, 'unavailable'],
+    [400, { ok: false, error: 'invalid' }, 'invalid'],
+    [400, { ok: false, error: 'bad_json' }, 'unknown'],
   ])('%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)
   })
@@ -78,4 +100,36 @@ describe('transportErrorCode(协议客户端拒绝的原因 → BackendCode)', (
     expect(transportErrorCode(new Error(msg))).toBe(want)
   })
   it('不是 Error ⇒ offline', () => { expect(transportErrorCode('x')).toBe('offline') })
+})
+
+/**
+ * 工作台错误码一张表(packages/protocol workbench-errors):daemon 在手机上会回的每个码,App 都得有个说法。
+ * 下面这些是有意按通用说法走的(invalid_* ⇒「不对」,其余 ⇒「没做成」);表里加了手机码 ⇒ 要么在 errors.ts 里给一句,要么加进这里。
+ */
+const GENERIC = new Set([
+  // 交办被拒
+  'api_task_attachment_invalid', 'api_task_attachment_unsupported', 'api_task_input_invalid', 'attachment_changed', 'entry_expired', 'project_stale',
+  'unattended_ack_required', 'workbench_attachments_unsupported', 'workbench_execution_unsupported',
+  'invalid_context', 'invalid_entry', 'invalid_execution', 'invalid_provider', 'invalid_request_id', 'invalid_target', 'invalid_text', 'invalid_title',
+  'invalid_entry_owner', 'invalid_managed_workspace', 'invalid_attachment_size',
+  // 附件 / 分块上传
+  'attachment_conflict', 'attachment_in_use', 'attachment_limit', 'attachment_scope', 'attachment_storage_limit',
+  'upload_changed', 'upload_conflict', 'upload_discarded', 'upload_expired', 'upload_invalid_content', 'upload_limit', 'upload_not_found', 'upload_offset', 'upload_unfinished_limit',
+  // 独立工作区
+  'worktree_branch_exists', 'worktree_conflict', 'worktree_git_failed', 'issue_unattended_unsupported', 'worktree_open', 'worktree_project_missing', 'worktree_removed',
+  // 其余
+  'external_close_confirmation_required', 'restart_confirmation_stale', 'creation_conflict', 'entry_not_wired', 'managed_workspace_changed', 'managed_workspace_unavailable',
+  'network_unprotected', 'workbench_stopping', 'artifact_changed', 'matter_say_unsupported', 'matter_task_required', 'workbench_archived',
+])
+describe('工作台错误码表 × App(daemon 在手机上会回的码都有说法)', () => {
+  const phone = Object.keys(WORKBENCH_ERRORS).filter(code => WORKBENCH_ERRORS[code]!.phone !== undefined)
+  it.each(phone)('%s', code => {
+    const { status, error } = workbenchErrorHttp(code, 'phone')
+    const mapped = mapPhoneError(status, { ok: false, error })
+    if (GENERIC.has(code)) expect(['unknown', 'invalid'], code).toContain(mapped)
+    else expect(['unknown', 'invalid'], code).not.toContain(mapped)
+  })
+  it('GENERIC 里没有表外的码', () => {
+    expect([...GENERIC].filter(code => !phone.includes(code))).toEqual([])
+  })
 })

@@ -1,4 +1,4 @@
-import { BackendError, type Backend } from '../backend/types'
+import { BackendError, type Backend, type FileChunkT } from '../backend/types'
 import { base64ToBytes } from './image-upload'
 
 /** 手机上一次最多读多大的成果(2026-10-06):整份放在内存里再交给预览 / 分享,太大的请到电脑上看。 */
@@ -39,17 +39,17 @@ export function humanSize(n: number): string {
 }
 
 /**
- * CC 回复里的一个文件(GET /m/api/chat/file,2026-10-06):大小与 sha256 由第一块告诉我们,读完整份核对。
- * 中途那份换了(大小 / 哈希变了)⇒ 'stale';超过上限 ⇒ 'too_large'(电脑那边也会 413)。
+ * 按块读完一份电脑上的文件(chat/file 与 letters/page 同一个形状):大小与 sha256 由第一块告诉我们,读完整份核对。
+ * 中途那份换了(大小 / 哈希变了)⇒ 'stale';超过 maxBytes(缺省 20MB,电脑那边也会 413)⇒ 'too_large',不往下读。
  */
-export async function downloadReplyFile(
-  backend: Pick<Backend, 'chatFileChunk'>, messageId: string, index: number, sha256Hex: (bytes: Uint8Array) => Promise<string>,
+export async function downloadChunks(
+  fetchChunk: (offset: number) => Promise<FileChunkT>, sha256Hex: (bytes: Uint8Array) => Promise<string>, maxBytes = ARTIFACT_MAX_BYTES,
 ): Promise<Uint8Array> {
   let offset = 0, out: Uint8Array | null = null, size = 0, sha = ''
   for (;;) {
-    const c = await backend.chatFileChunk({ messageId, index, offset })
+    const c = await fetchChunk(offset)
     if (!out) {
-      if (c.size > ARTIFACT_MAX_BYTES) throw new BackendError('too_large')
+      if (c.size > maxBytes) throw new BackendError('too_large')
       out = new Uint8Array(c.size); size = c.size; sha = c.sha256
     }
     const bytes = base64ToBytes(c.contentBase64)
@@ -61,4 +61,18 @@ export async function downloadReplyFile(
   }
   if ((await sha256Hex(out)) !== sha) throw new BackendError('stale')
   return out
+}
+
+/** CC 回复里的一个文件(GET /m/api/chat/file,2026-10-06)。maxBytes:对话里直接画成图的只读这么大(大图点开再看)。 */
+export function downloadReplyFile(
+  backend: Pick<Backend, 'chatFileChunk'>, messageId: string, index: number, sha256Hex: (bytes: Uint8Array) => Promise<string>, maxBytes?: number,
+): Promise<Uint8Array> {
+  return downloadChunks(offset => backend.chatFileChunk({ messageId, index, offset }), sha256Hex, maxBytes)
+}
+
+/** 一封信的第 page 页(GET /m/api/letters/page,2026-10-18)。 */
+export function downloadLetterPage(
+  backend: Pick<Backend, 'letterPageChunk'>, id: string, page: number, sha256Hex: (bytes: Uint8Array) => Promise<string>,
+): Promise<Uint8Array> {
+  return downloadChunks(offset => backend.letterPageChunk({ id, page, offset }), sha256Hex)
 }

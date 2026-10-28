@@ -1,10 +1,9 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createA2AServer, type NotifyEvent, type A2AServerOpts, type A2AServer } from '../../core/a2a-server'
+import { createA2AServer, type NotifyEvent, type A2AServerOpts, type A2AServer } from '../../adapters/a2a/a2a-server'
 import { verifyAndConsumeInvite } from '../../lib/a2a-pairing'
-import type { A2ARegistry } from '../../core/a2a-registry'
-import type { A2AClient } from '../../core/a2a-client'
-import type { A2AEventsStore, AppendInput } from '../../core/a2a-events-store'
+import type { A2ARegistry, A2AClient } from '../../ports/a2a'
+import type { A2AEventsStore, AppendInput } from '../../adapters/store/a2a-events-store'
 import type { DelegateDispatch } from './delegate'
 import type { SendAssistantText } from './fallback-reply'
 import type { AgentConfig } from '../../lib/agent-config'
@@ -21,6 +20,8 @@ export interface A2aServerDeps {
   dispatchDelegate: DelegateDispatch
   resolveOperatorChatId: () => string | null
   sendAssistantText: SendAssistantText | undefined
+  /** CC 开口那道门(懒取)。取不到 ⇒ 不发、记一行,不退回直接发(跟社交通知同一个做法)。 */
+  speech?: () => import('../speech/policy').SpeechPolicy | null
   onLetter: A2AServerOpts['onLetter']
 }
 
@@ -52,9 +53,10 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
       return
     }
     const formatted = `[A2A:${event.agent.id}] ${event.text}`
-    if (sendAssistantText) {
-      await sendAssistantText(operatorChatId, formatted)
-    }
+    // 经 CC 开口那道门(a2a_notify,report):投递仍走 sendAssistantText;推后 / 没发出去 ⇒ 门的待说队列补说
+    const speech = deps.speech?.()
+    if (sendAssistantText && speech) await speech.tell('a2a_notify', operatorChatId, formatted, sendAssistantText)
+    else if (sendAssistantText) deps.log('A2A_NOTIFY_IN', `notify from ${event.agent.id} not sent: speech policy not wired yet`)
     a2aEventsStore.append({
       direction: 'in', agent_id: event.agent.id, text: event.text,
       urgency: event.urgency, status: 'ok',
@@ -193,4 +195,22 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
   }
 
   return { a2aServer, a2aDeps }
+}
+
+/**
+ * A2A 服务是一个模块(第三批 3b 第 5 步):总是 ok(没配 a2a_listen 时服务是 null,出站照样能用 —— 跟以前一样)。
+ * 服务一起来就经 `own` 登记停法。以前由 runtime/shutdown 经 boot() 停,开机没走完 boot 还是 null,端口就不放;
+ * 而且现在按开机的倒序,它在社交、知识库**之前**停:先关进来的门,再关处理来信的人。
+ */
+export function a2aServerModule(deps: A2aServerDeps): import('../modules/container').DaemonModule<A2aServerWiring> {
+  return {
+    name: 'a2a-server',
+    optional: true,
+    async init(m) {
+      const w = await wireA2aServer(deps)
+      const server = w.a2aServer
+      if (server) m.own('server', () => server.stop())
+      return w
+    },
+  }
 }

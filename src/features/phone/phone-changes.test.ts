@@ -1,0 +1,155 @@
+import { describe, it, expect } from 'vitest'
+import { PhoneChangesTurn } from '@wechat-cc/protocol'
+import { latestChanges, CHANGES_TEXT_MAX, CHANGES_MAX_NOTES, CHANGES_FILE_DIFF_MAX, CHANGES_TOTAL_DIFF_MAX, CHANGES_MAX_FILES, CHANGES_PATH_MAX, CHANGES_MAX_COMMENTS } from './phone-changes'
+
+const turn = (createdAt: number, files: Array<{ path: string; kind: 'added' | 'deleted' | 'modified' | 'not_reviewed'; diff?: string; reason?: string; risk?: string[] }>, notes: string[] = []) =>
+  ({ artifactId: `a${createdAt}`, sha256: 's', name: 'n', createdAt, status: 'complete' as const, headBefore: null, headAfter: null, preexistingPaths: [], notes, files: files.map(f => ({ preexisting: false, ...f })) })
+
+describe('latestChanges', () => {
+  it('带上轮次的 artifactId 与文件已有的标记(手机逐文件审阅要用)', () => {
+    const t = turn(3, [{ path: 'a.ts', kind: 'modified', diff: '+1' }, { path: 'b.ts', kind: 'modified', diff: '+2' }])
+    const marked = { ...t, files: [{ ...t.files[0]!, mark: { mark: 'returned' as const, comment: '改回去', createdAt: 7 } }, t.files[1]!] }
+    const r = latestChanges([marked])!
+    expect(r.artifactId).toBe('a3')
+    expect(r.files[0]!.mark).toEqual({ mark: 'returned', comment: '改回去', createdAt: 7 })
+    expect(r.files[1]!.mark).toBeUndefined()
+    expect(PhoneChangesTurn.parse(r)).toEqual(r)
+  })
+  it('没有轮次 ⇒ null', () => { expect(latestChanges([])).toBeNull() })
+  it('回退撤掉的轮不算(v81):取没撤掉的最近一轮;全撤了 ⇒ null', () => {
+    const r = latestChanges([turn(1, [{ path: 'kept', kind: 'modified', diff: '+k' }]), { ...turn(5, [{ path: 'gone', kind: 'added', diff: '+g' }]), discarded: true as const }])!
+    expect(r.createdAt).toBe(1)
+    expect(r.files.map(f => f.path)).toEqual(['kept'])
+    expect(latestChanges([{ ...turn(5, []), discarded: true as const }])).toBeNull()
+  })
+  it('撤掉这一轮(切片 4):能撤 ⇒ rewindable;比它新、已撤掉的轮数 ⇒ discardedAfter;都过协议', () => {
+    const r = latestChanges([
+      { ...turn(1, []), rewindable: { start: true, end: true } },
+      { ...turn(4, [], []), discarded: true as const, rewindable: { start: false, end: false } },
+      { ...turn(5, []), discarded: true as const, rewindable: { start: false, end: false } },
+    ])!
+    expect(r).toMatchObject({ artifactId: 'a1', rewindable: true, discardedAfter: 2 })
+    expect(PhoneChangesTurn.parse(r)).toEqual(r)
+    // 没有开始前的回退点(老轮次 / 不是独立工作区)⇒ 不带;也没撤过 ⇒ 不带 discardedAfter
+    const plain = latestChanges([{ ...turn(2, []), rewindable: { start: false, end: true } }])!
+    expect('rewindable' in plain).toBe(false); expect('discardedAfter' in plain).toBe(false)
+    expect('rewindable' in latestChanges([turn(3, [])])!).toBe(false)
+  })
+  it('取最近一轮;diff 原样;not_reviewed 无 diff', () => {
+    const r = latestChanges([turn(1, [{ path: 'old', kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b' }]), turn(5, [
+      { path: 'src/a.ts', kind: 'modified', diff: '@@ -1 +1 @@\n-x\n+y' },
+      { path: 'big.bin', kind: 'not_reviewed' },
+    ])])!
+    expect(r.createdAt).toBe(5)
+    expect(r.files).toEqual([
+      { path: 'src/a.ts', kind: 'modified', diff: '@@ -1 +1 @@\n-x\n+y', truncated: false },
+      { path: 'big.bin', kind: 'not_reviewed', truncated: false },
+    ])
+    expect(r.omittedFiles).toBe(0)
+    expect(r.notes).toEqual([])
+  })
+  it('带上文件的 reason(为什么没审/被截)与本轮 notes;各自裁到 200 字、notes 至多 10 条;符合协议 schema', () => {
+    const long = '因'.repeat(CHANGES_TEXT_MAX + 50)
+    const r = latestChanges([turn(1, [
+      { path: 'big.bin', kind: 'not_reviewed', reason: 'binary file' },
+      { path: 'huge.txt', kind: 'not_reviewed', reason: long },
+      { path: 'a.ts', kind: 'modified', diff: '+1' },
+    ], [...Array.from({ length: CHANGES_MAX_NOTES + 3 }, (_, i) => `note ${i}`), long])])!
+    expect(CHANGES_TEXT_MAX).toBe(200)
+    expect(CHANGES_MAX_NOTES).toBe(10)
+    expect(r.files[0]).toEqual({ path: 'big.bin', kind: 'not_reviewed', reason: 'binary file', truncated: false })
+    expect([...r.files[1]!.reason!].length).toBeLessThanOrEqual(CHANGES_TEXT_MAX)
+    expect(r.files[2]).toEqual({ path: 'a.ts', kind: 'modified', diff: '+1', truncated: false })
+    expect(r.notes).toHaveLength(CHANGES_MAX_NOTES)
+    expect(r.notes[0]).toBe('note 0')
+    const r2 = latestChanges([turn(1, [], [long])])!
+    expect([...r2.notes[0]!].length).toBeLessThanOrEqual(CHANGES_TEXT_MAX)
+    expect(PhoneChangesTurn.parse(r)).toEqual(r)
+    expect(PhoneChangesTurn.safeParse({ ...r, notes: undefined }).success).toBe(false)
+  })
+  it('单文件超上限 ⇒ 不给 diff、truncated;按 UTF-8 字节算', () => {
+    const cjk = '中'.repeat(Math.ceil(CHANGES_FILE_DIFF_MAX / 3) + 10)
+    const r = latestChanges([turn(1, [{ path: 'a', kind: 'modified', diff: cjk }])])!
+    expect(r.files[0]).toEqual({ path: 'a', kind: 'modified', truncated: true })
+  })
+  it('累计超总量 ⇒ 之后的文件不给 diff;5 MB 的 diff 不会进回包', () => {
+    const chunk = 'x'.repeat(CHANGES_FILE_DIFF_MAX - 10)
+    const n = Math.ceil(CHANGES_TOTAL_DIFF_MAX / chunk.length) + 2
+    const files = Array.from({ length: n }, (_, i) => ({ path: `f${i}`, kind: 'modified' as const, diff: chunk }))
+    files.push({ path: 'huge', kind: 'modified', diff: 'y'.repeat(5 * 1024 * 1024) })
+    const r = latestChanges([turn(1, files)])!
+    const total = r.files.reduce((s, f) => s + (f.diff ? Buffer.byteLength(f.diff) : 0), 0)
+    expect(total).toBeLessThanOrEqual(CHANGES_TOTAL_DIFF_MAX)
+    expect(r.files.at(-1)).toEqual({ path: 'huge', kind: 'modified', truncated: true })
+    expect(JSON.stringify(r).length).toBeLessThan(CHANGES_TOTAL_DIFF_MAX + 64 * 1024)
+  })
+  it('risk(B6)原样带上:空的不带、非字符串剔掉、至多 6 条、各裁到 200 字', () => {
+    const r = latestChanges([turn(1, [
+      { path: 'src/auth.ts', kind: 'modified' as const, diff: '+1', risk: ['鉴权 / 权限'] },
+      { path: 'a.ts', kind: 'added' as const, diff: '+1', risk: [] },
+      { path: 'b.ts', kind: 'not_reviewed' as const, risk: ['x'.repeat(300), 3 as never, '', 'b', 'c', 'd', 'e', 'f', 'g'] },
+    ])])!
+    expect(r.files[0]!.risk).toEqual(['鉴权 / 权限'])
+    expect(r.files[1]).not.toHaveProperty('risk')
+    expect(r.files[2]!.risk).toHaveLength(6)
+    expect([...r.files[2]!.risk![0]!].length).toBe(CHANGES_TEXT_MAX)
+    // 协议 schema 不剥掉它(App 那头才看得见)
+    expect(PhoneChangesTurn.parse(r).files[0]!.risk).toEqual(['鉴权 / 权限'])
+  })
+  it('文件数超上限 ⇒ 计入 omittedFiles', () => {
+    const files = Array.from({ length: CHANGES_MAX_FILES + 7 }, (_, i) => ({ path: `f${i}`, kind: 'added' as const, diff: '+1' }))
+    const r = latestChanges([turn(1, files)])!
+    expect(r.files).toHaveLength(CHANGES_MAX_FILES)
+    expect(r.omittedFiles).toBe(7)
+  })
+  it('最坏输入:长路径 + 引号/换行密集的 diff ⇒ 序列化后 < 400 KiB,路径留尾', () => {
+    const files = Array.from({ length: CHANGES_MAX_FILES + 20 }, (_, i) => ({ path: `${'d/'.repeat(2048)}file${i}.ts`, kind: 'modified' as const, diff: '"\n'.repeat(Math.floor(CHANGES_FILE_DIFF_MAX / 4)) }))
+    const r = latestChanges([turn(1, files)])!
+    expect(Buffer.byteLength(JSON.stringify(r))).toBeLessThan(400 * 1024)
+    for (const [i, f] of r.files.entries()) {
+      expect(f.path.length).toBeLessThanOrEqual(CHANGES_PATH_MAX)
+      expect(f.path.startsWith('…')).toBe(true)
+      expect(f.path.endsWith(`file${i}.ts`)).toBe(true)
+    }
+    expect(latestChanges([turn(1, [{ path: 'short.ts', kind: 'added', diff: '+1' }])])!.files[0]!.path).toBe('short.ts')
+  })
+  it('行评论(切片 4):带了 diff 的文件给 hunks(块头裁短、多余字段不带);评论正文裁短、整轮至多 50 条;pendingComments 数没撤掉各轮的草稿', () => {
+    const hunk = { index: 0, sha256: 'a'.repeat(64), header: '@@ -1 +1 @@ ' + '函'.repeat(300), oldStart: 1, oldCount: 1, newStart: 1, newCount: 1, rows: 2 }
+    const draft = (id: string, body = '改') => ({ id, hunk: 0, body, state: 'draft', side: 'new', lineStart: 1 })
+    const old = { ...turn(1, [{ path: 'x.ts', kind: 'modified', diff: '+x' }]), files: [{ path: 'x.ts', kind: 'modified' as const, preexisting: false, diff: '+x', comments: [draft('o1')] }] }
+    const gone = { ...turn(2, []), discarded: true as const, files: [{ path: 'y.ts', kind: 'modified' as const, preexisting: false, diff: '+y', comments: [draft('g1')] }] }
+    const many = Array.from({ length: CHANGES_MAX_COMMENTS + 5 }, (_, i) => draft(`m${i}`))
+    const t = { ...turn(3, []), files: [
+      { path: 'a.ts', kind: 'modified' as const, preexisting: false, diff: '@@ -1 +1 @@\n-a\n+b', hunks: [hunk], comments: [draft('c1', '长'.repeat(400)), { id: 's1', hunk: 0, rowStart: 2, rowEnd: 3, body: '发了', state: 'sent', sentAt: 9 }, { id: 'n1', hunk: 0, body: '以后', state: 'resolved_later' }] },
+      { path: 'b.ts', kind: 'modified' as const, preexisting: false, diff: '+b', comments: many },
+      { path: 'big.bin', kind: 'not_reviewed' as const, preexisting: false, comments: [draft('z1')] },
+    ] }
+    const r = latestChanges([old, gone, t])!
+    const a = r.files[0]!
+    expect(a.hunks).toEqual([{ index: 0, sha256: 'a'.repeat(64), header: expect.any(String) }])
+    expect([...a.hunks![0]!.header].length).toBe(CHANGES_TEXT_MAX)
+    expect(a.comments!.map(c => c.id)).toEqual(['c1', 's1', 'n1'])
+    expect([...a.comments![0]!.body].length).toBe(CHANGES_TEXT_MAX)
+    expect(a.comments![0]).not.toHaveProperty('side')
+    expect(a.comments![1]).toEqual({ id: 's1', hunk: 0, rowStart: 2, rowEnd: 3, body: '发了', state: 'sent', sentAt: 9 })
+    expect(r.files[1]!.hunks).toBeUndefined()
+    expect(r.files.reduce((n, f) => n + (f.comments?.length ?? 0), 0)).toBe(CHANGES_MAX_COMMENTS)
+    expect(r.files[2]!.comments).toBeUndefined()
+    // a 的 1 条 + b 的 55 条 + big.bin 1 条 + 更早那一轮 1 条;撤掉那一轮的不算
+    expect(r.pendingComments).toBe(1 + CHANGES_MAX_COMMENTS + 5 + 1 + 1)
+    expect(PhoneChangesTurn.parse(r)).toEqual(r)
+    // 没草稿 ⇒ 不带 pendingComments
+    expect('pendingComments' in latestChanges([turn(4, [{ path: 'a', kind: 'added', diff: '+1' }])])!).toBe(false)
+  })
+  it('行评论:路径被裁 / diff 没带(太大)⇒ 不给 hunks;块清单和 diff 一起计字节', () => {
+    const hunks = [{ index: 0, sha256: 'b'.repeat(64), header: '@@ -1 +1 @@' }]
+    const long = { path: `${'d/'.repeat(400)}f.ts`, kind: 'modified' as const, preexisting: false, diff: '+1', hunks }
+    const big = { path: 'big.ts', kind: 'modified' as const, preexisting: false, diff: 'x'.repeat(CHANGES_FILE_DIFF_MAX + 1), hunks }
+    // diff 本身刚好装得下,加上块清单就超了 ⇒ 当作被截
+    const edge = { path: 'edge.ts', kind: 'modified' as const, preexisting: false, diff: 'x'.repeat(CHANGES_FILE_DIFF_MAX - 10), hunks }
+    const r = latestChanges([{ ...turn(1, []), files: [long, big, edge] }])!
+    expect(r.files[0]!.diff).toBe('+1'); expect(r.files[0]!.hunks).toBeUndefined()
+    expect(r.files[1]).toEqual({ path: 'big.ts', kind: 'modified', truncated: true })
+    expect(r.files[2]).toEqual({ path: 'edge.ts', kind: 'modified', truncated: true })
+  })
+})

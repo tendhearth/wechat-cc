@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { collectAgentCliStatus, formatAgentCliStatus } from './agent-cli-status'
-import { makeMemoryStateStore } from '../core/cli-upgrade/state'
-import { resolveCliUpgradeConfig } from '../core/cli-upgrade/config'
-import type { CommandRunner } from '../core/cli-upgrade/detect'
+import { makeMemoryStateStore } from '../adapters/cli-upgrade/state'
+import { resolveCliUpgradeConfig } from '../domain/cli-upgrade/config'
+import type { CommandRunner } from '../adapters/cli-upgrade/detect'
 
 const versions: Record<string, string> = {
   '/fake/claude': '2.1.289 (Claude Code)', '/fake/codex': 'codex-cli 0.153.4', '/fake/cursor-agent': '2026.09.02-c22c1a3',

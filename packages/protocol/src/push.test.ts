@@ -11,7 +11,6 @@ import { gcm } from '@noble/ciphers/aes.js'
 import { b64uEncode, b64uDecode } from './b64u'
 import { derivePushKey, sealPush, openPush, PushPlaintext, PushKind, pushDedupeKey, makePushDedupe, PUSH_DEDUPE_CAPACITY, PUSH_DEDUPE_TTL_MS } from './push'
 import type { SealedPush } from './push'
-import { deriveV1Key } from './v1'
 import { deriveV2Keys } from './v2'
 import * as index from './index'
 import vectorsFile from '../vectors/push.json'
@@ -43,22 +42,18 @@ describe('derivePushKey', () => {
     expect(a).toEqual(b)
   })
 
-  it('推送密钥跟隧道 v1 / v2 密钥都不相等(同一个「令牌当共享秘密」场景下)', () => {
-    // 把同一个字节串既当 v1/v2 的 shared secret,又当 push 的 deviceToken —— 验证
-    // 三条 HKDF info 命名空间的分隔起了作用,不是意外撞上同一把密钥。
+  it('推送密钥跟隧道 v2 密钥都不相等(同一个「令牌当共享秘密」场景下)', () => {
+    // 把同一个字节串既当 v2 的 shared secret,又当 push 的 deviceToken —— 验证
+    // 几条 HKDF info 命名空间的分隔起了作用,不是意外撞上同一把密钥。
     const shared = new TextEncoder().encode('token-reused-as-shared-secret')
     const bind = 'bind-token'
 
     const pushKey = derivePushKey('token-reused-as-shared-secret')
-    const v1Key = deriveV1Key(shared, bind)
     const { c2s, s2c } = deriveV2Keys(shared, bind)
 
-    expect(b64uEncode(pushKey)).not.toBe(b64uEncode(v1Key))
     expect(b64uEncode(pushKey)).not.toBe(b64uEncode(c2s))
     expect(b64uEncode(pushKey)).not.toBe(b64uEncode(s2c))
-    // 顺带确认这三把本来就互不相同(不是巧合地只跟 push 不一样)。
-    expect(b64uEncode(v1Key)).not.toBe(b64uEncode(c2s))
-    expect(b64uEncode(v1Key)).not.toBe(b64uEncode(s2c))
+    // 顺带确认两个方向本来就互不相同(不是巧合地只跟 push 不一样)。
     expect(b64uEncode(c2s)).not.toBe(b64uEncode(s2c))
   })
 
@@ -241,8 +236,8 @@ describe('PushPlaintext —— 解开之后的明文形状(daemon 与原生端�
     expect(index.PushPlaintext).toBe(PushPlaintext)
     expect(index.PushKind).toBe(PushKind)
   })
-  it('kind 只有五种', () => {
-    expect(PushKind.options).toEqual(['permission', 'question', 'task_done', 'task_failed', 'test'])
+  it('kind 只有六种', () => {
+    expect(PushKind.options).toEqual(['permission', 'question', 'task_done', 'task_failed', 'test', 'companion'])
   })
   it('合法载荷 seal → open → parse 通过;缺 title / 未知 kind / ts 非数字 ⇒ 拒', () => {
     const key = derivePushKey('schema-token')

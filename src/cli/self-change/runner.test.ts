@@ -30,12 +30,18 @@ describe('claudeArgs', () => {
     expect(args).not.toContain('--disallowedTools')
   })
 
-  it('评审轮:readOnly 关掉四把写工具', () => {
+  it('只读轮(评审 / 规划):restricted + 不加载 MCP + 只留读工具,Bash 只放行 git diff / log / show;不再 skip permissions', () => {
     const args = claudeArgs({ ...base, readOnly: true })
-    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Edit,Write,MultiEdit,NotebookEdit')
+    expect(args).toEqual(expect.arrayContaining(['--restricted', '--strict-mcp-config', '--permission-mode', 'dontAsk']))
+    expect(args[args.indexOf('--tools') + 1]).toBe('Read,Grep,Glob,Bash')
+    expect(args.slice(args.indexOf('--allowedTools') + 1, args.indexOf('--disallowedTools'))).toEqual(['Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)'])
+    expect(args).not.toContain('--dangerously-skip-permissions')
+    expect(args).not.toContain('--mcp-config')
+    // 放行的 git 三条自带的写口单独拒掉(实测通配拦得住选项在中间的写法)。
+    expect(args.slice(args.indexOf('--disallowedTools') + 1, args.indexOf('--max-budget-usd'))).toEqual(['Bash(*--output*)', 'Bash(*--ext-diff*)', 'Bash(*--textconv*)'])
   })
 
-  it('需求正文前面必须有 --(--disallowedTools 是变长选项,不然会把正文当成又一个工具名吃掉)', () => {
+  it('需求正文前面必须有 --(--allowedTools 是变长选项,不然会把正文当成又一个工具名吃掉)', () => {
     const args = claudeArgs({ ...base, readOnly: true })
     expect(args.at(-2)).toBe('--')
     expect(args.at(-1)).toBe('做点事')
@@ -43,11 +49,13 @@ describe('claudeArgs', () => {
 
   it('四样都给时顺序稳定', () => {
     expect(claudeArgs({ ...base, resume: 's', systemPromptFile: '/b.md', readOnly: true })).toEqual([
-      '-p', '--output-format', 'json', '--dangerously-skip-permissions',
+      '-p', '--output-format', 'json',
+      '--restricted', '--strict-mcp-config', '--tools', 'Read,Grep,Glob,Bash', '--permission-mode', 'dontAsk',
+      '--allowedTools', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)',
+      '--disallowedTools', 'Bash(*--output*)', 'Bash(*--ext-diff*)', 'Bash(*--textconv*)',
       '--max-budget-usd', '20', '--max-turns', '300',
       '--resume', 's',
       '--append-system-prompt-file', '/b.md',
-      '--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit',
       '--', '做点事',
     ])
   })
@@ -227,4 +235,90 @@ describe.skipIf(process.platform === 'win32')('spawnCollect 的超时', () => {
       rmSync(area, { recursive: true, force: true })
     }
   }, 15_000)
+})
+
+// ── 调模型前先看网络守护 ──────────────────────────────────────────────────
+import { guardedRunner } from './runner'
+
+describe('guardedRunner —— 网络不受保护就不调模型', () => {
+  const ok = { ok: true, sessionId: 's', text: 'done', costUsd: 1, turns: 1, stderrTail: [], timedOut: false }
+  const input = { cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1 }
+  const counted = () => { let n = 0; return { runner: { run: async () => { n++; return ok } }, calls: () => n } }
+  it('守护开着、安全 ⇒ 照常调', async () => {
+    const c = counted()
+    expect((await guardedRunner(c.runner, async () => ({ enabled: true, safe: true, detail: '' })).run(input)).ok).toBe(true)
+    expect(c.calls()).toBe(1)
+  })
+  it('守护开着、不安全 ⇒ 不起进程,network_unprotected,带守护的原话', async () => {
+    const c = counted()
+    const r = await guardedRunner(c.runner, async () => ({ enabled: true, safe: false, detail: 'bx 没开' })).run(input)
+    expect(r).toMatchObject({ ok: false, error: 'network_unprotected' })
+    expect(r.text).toContain('bx 没开')
+    expect(c.calls()).toBe(0)
+  })
+  it('读不到守护(daemon 不通 / 抛错)⇒ 也不调(缺省往拒绝兜底)', async () => {
+    const c = counted()
+    expect((await guardedRunner(c.runner, async () => null).run(input)).error).toBe('network_unprotected')
+    expect((await guardedRunner(c.runner, async () => { throw new Error('x') }).run(input)).error).toBe('network_unprotected')
+    expect(c.calls()).toBe(0)
+  })
+  it('主人自己关了守护 ⇒ 照常调', async () => {
+    const c = counted()
+    expect((await guardedRunner(c.runner, async () => ({ enabled: false, safe: false, detail: '' })).run(input)).ok).toBe(true)
+    expect(c.calls()).toBe(1)
+  })
+})
+
+// ── 评审换人:Codex 只读评审 ──────────────────────────────────────────────
+import { chooseReviewer, codexReviewArgs, makeCodexReviewRunner, parseCodexJson } from './runner'
+
+// 2026-10-23 在 codex-cli 0.164.0 上实跑 `codex exec -s read-only --json` 录下的形状(thread id 换成假的)。
+const CODEX_OUT = [
+  '{"type":"thread.started","thread_id":"thread-1"}',
+  '{"type":"item.completed","item":{"id":"item_0","type":"error","message":"clamping SessionEnd hook timeout to 3s in ~/.codex/hooks.json"}}',
+  '{"type":"turn.started"}',
+  '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\\"verdict\\":\\"approve\\",\\"findings\\":[]}"}}',
+  '{"type":"turn.completed","usage":{"input_tokens":18330,"output_tokens":61}}',
+].join('\n')
+
+describe('Codex 只读评审', () => {
+  it('参数:锁住 MCP / 插件、只读沙箱、指定目录、JSON 事件流,prompt 在 -- 之后', () => {
+    const args = codexReviewArgs({ cwd: '/w', prompt: '--看看', budgetUsd: 1, maxTurns: 1, readOnly: true })
+    expect(args.slice(-7)).toEqual(['-s', 'read-only', '-C', '/w', '--json', '--', '--看看'])
+    // 主人的 MCP / 插件 / hooks 一样都不带进来(只读沙箱管不住 MCP 工具)
+    expect(args).toContain('--ignore-user-config')
+    for (const f of ['plugins', 'browser_use', 'computer_use', 'apps', 'hooks', 'image_generation']) expect(args.join(' ')).toContain(`--disable ${f}`)
+    // 联网搜索:唯一会把 diff 带出这台机器的内置工具
+    expect(args.join(' ')).toContain('-c web_search="disabled"')
+  })
+  it('解析:thread id、最后一条 agent_message;hooks 的 error 条目不算失败', () => {
+    expect(parseCodexJson(CODEX_OUT)).toEqual({ threadId: 'thread-1', text: '{"verdict":"approve","findings":[]}', failed: null, turns: 1 })
+  })
+  it('turn.failed ⇒ 失败带原因', () => {
+    expect(parseCodexJson('{"type":"turn.failed","error":{"message":"usage limit"}}').failed).toBe('usage limit')
+  })
+  it('跑通 ⇒ ok、costUsd 0(订阅不报美元)、sessionId = thread id', async () => {
+    const r = makeCodexReviewRunner({ launch: async () => ({ code: 0, stdout: CODEX_OUT, stderr: '' }), env: {} })
+    const out = await r.run({ cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1, readOnly: true })
+    expect(out).toMatchObject({ ok: true, sessionId: 'thread-1', costUsd: 0 })
+    expect(out.text).toContain('approve')
+  })
+  it('没有回答 ⇒ 不 ok(codex_no_answer);起不来 ⇒ codex_spawn_failed', async () => {
+    const empty = makeCodexReviewRunner({ launch: async () => ({ code: 0, stdout: '{"type":"thread.started","thread_id":"t"}', stderr: '' }), env: {} })
+    expect((await empty.run({ cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1, readOnly: true })).error).toBe('codex_no_answer')
+    const broken = makeCodexReviewRunner({ launch: async () => { throw new Error('ENOENT') }, env: {} })
+    expect((await broken.run({ cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1, readOnly: true })).error).toBe('codex_spawn_failed')
+  })
+  it('只做评审:不是 readOnly 的调用直接拒,一个进程都不起', async () => {
+    let launched = 0
+    const r = makeCodexReviewRunner({ launch: async () => { launched++; return { code: 0, stdout: CODEX_OUT, stderr: '' } }, env: {} })
+    expect((await r.run({ cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1 })).error).toBe('codex_runner_review_only')
+    expect(launched).toBe(0)
+  })
+  it('谁审:Codex 登录着 ⇒ Codex;不能用 ⇒ 退回 Claude,照实写理由', () => {
+    expect(chooseReviewer({ codexLoggedIn: true }).id).toBe('codex')
+    const fb = chooseReviewer({ codexLoggedIn: false })
+    expect(fb.id).toBe('claude')
+    expect(fb.why).toMatch(/同一家/)
+  })
 })

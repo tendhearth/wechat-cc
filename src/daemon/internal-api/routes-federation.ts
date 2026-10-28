@@ -24,12 +24,14 @@
 // token self-invalidates quickly instead of living until the next restart.
 import type { InternalApiDeps, RouteTable } from './types'
 import { readGrant } from './federation-grant'
+import { routesForToken } from './route-tiers'
 
 const FEDERATION_SESSION_KEY = 'hearth-federated'
 // The one route federated_query calls — see tools-federated.ts. Any other
 // admin route (companion/converse, daemon/restart, /v1/locate, ...) must
 // stay unreachable through this credential even though its TIER is admin.
-const FEDERATION_ROUTE_ALLOW: ReadonlySet<string> = new Set(['POST /v1/knowledge/search'])
+// 名单在路由表(packages/protocol/src/routes.ts)里:`desktop.tokens` 含 'federation' 的行(就那一条)。
+const FEDERATION_ROUTE_ALLOW: ReadonlySet<string> = routesForToken('federation')
 const FEDERATION_TOKEN_TTL_MS = 5 * 60_000 // 5 minutes
 
 export function federationRoutes(deps: InternalApiDeps): RouteTable {

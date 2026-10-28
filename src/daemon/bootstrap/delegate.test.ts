@@ -3,21 +3,19 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildDelegateDispatch } from './delegate'
-import { makeFakeSession } from '../../core/test-helpers'
-import type { AgentProvider } from '../../core/agent-provider'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { makeFakeSession } from '../../test-support/test-helpers'
+import type { AgentProvider } from '../../ports/agent-provider'
+import { TIER_PROFILES } from '../../domain/user-tier'
 
 // Bug #86 regression seam — spy on the real factory so we can assert it is
 // NEVER invoked when no codexPathOverride is supplied. This is the only way
-// to observe "construction was skipped" from outside delegate.ts: the real
-// createCodexAgentProvider eagerly constructs the SDK (new Codex() inside
-// its factory), which is exactly what crashes boot in a compiled bundle
-// (findCodexPath() can't resolve @openai/codex from /$bunfs). Mocking it
-// here means these tests don't depend on that codepath actually throwing —
-// they assert the conditional construction directly.
-const createCodexAgentProviderMock = vi.fn((_opts?: unknown) => ({ spawn: vi.fn() }) as unknown as AgentProvider)
-vi.mock('../../core/codex-agent-provider', () => ({
-  createCodexAgentProvider: (opts?: unknown) => createCodexAgentProviderMock(opts),
+// to observe "construction was skipped" from outside delegate.ts. (The old
+// SDK factory eagerly resolved the bundled binary and crashed a compiled
+// bundle; the app-server provider no longer does, but a delegate without a
+// verified CLI must still report unknown_peer rather than fail per turn.)
+const createCodexChatProviderMock = vi.fn((_opts?: unknown) => ({ spawn: vi.fn() }) as unknown as AgentProvider)
+vi.mock('../../adapters/executors/codex/codex-chat-provider', () => ({
+  createCodexChatProvider: (opts?: unknown) => createCodexChatProviderMock(opts),
 }))
 
 function tmpState(): string {
@@ -91,12 +89,12 @@ describe('buildDelegateDispatch — openai/Kimi peer wiring', () => {
 // ─── codex delegate is conditional on a verified CLI (#86) ─────────────────
 describe('buildDelegateDispatch — codex peer is conditional on codexPathOverride', () => {
   it('does NOT construct the codex provider when no codexPathOverride is passed (the boot-crash regression)', () => {
-    createCodexAgentProviderMock.mockClear()
+    createCodexChatProviderMock.mockClear()
     buildDelegateDispatch({ stateDir: tmpState() })
     // The real factory eagerly constructs the SDK — never calling it at all
     // (not "call it and swallow the throw") is the fix: a refused/absent
     // codex CLI must not touch codex construction at boot.
-    expect(createCodexAgentProviderMock).not.toHaveBeenCalled()
+    expect(createCodexChatProviderMock).not.toHaveBeenCalled()
   })
 
   it('reports unknown_peer for codex when no codexPathOverride is passed', async () => {
@@ -115,11 +113,11 @@ describe('buildDelegateDispatch — codex peer is conditional on codexPathOverri
   })
 
   it('DOES construct the codex provider when codexPathOverride is passed (verified CLI)', () => {
-    createCodexAgentProviderMock.mockClear()
+    createCodexChatProviderMock.mockClear()
     const log = vi.fn()
     buildDelegateDispatch({ stateDir: tmpState(), codexPathOverride: '/usr/local/bin/codex', log })
-    expect(createCodexAgentProviderMock).toHaveBeenCalledTimes(1)
-    expect(createCodexAgentProviderMock).toHaveBeenCalledWith(
+    expect(createCodexChatProviderMock).toHaveBeenCalledTimes(1)
+    expect(createCodexChatProviderMock).toHaveBeenCalledWith(
       expect.objectContaining({ codexPathOverride: '/usr/local/bin/codex' }),
     )
     // No skip line when the delegate was actually built.

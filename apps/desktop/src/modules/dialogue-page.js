@@ -20,18 +20,16 @@
 // the user has unlocked private threads this session).
 
 import { escapeHtml, showToast } from "../view.js"
+import { executorName } from "./executor-names.js"
 import { renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from "./workbench-markdown.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
 import { showPageError } from "./page-status.js"
-// Shared, Tauri-safe helpers — single source of truth lives in sessions.js.
-// attachmentUrl routes through convertFileSrc in packaged Tauri (no
-// /attachment HTTP handler exists there); avatarInitial / avatarInfo were
-// duplicated here before this refactor.
-import { attachmentUrl, avatarInitial, avatarInfo } from "./sessions.js"
+import { V1, v1 } from "../daemon-client.js"
 
 /**
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} Deps
+ * invokeWorkbenchApi:宿主代理(daemon_request)—— 对话页读的是别人的聊天记录,admin 档(架构终态 F6 起不再起 CLI)。
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> }} Deps
  * @typedef {{ id: string, chatId: string, ts: string, direction: 'in'|'out', kind: string, text: string, provider?: string, source: string }} Message
  * @typedef {{ id: string, chatId: string, title: string, summary: string, facets: string[], tags: string[], private: boolean, status: 'active'|'dormant'|'done', episodes: Array<{from_ts:string,to_ts:string}>, createdTs: string, lastActive: string }} Thread
  * @typedef {{ from_ts: string, to_ts: string, messages: Message[] }} Episode
@@ -81,9 +79,12 @@ const STATUS_LABEL = { active: "进行中", dormant: "搁置", done: "完结" }
 
 // ── small helpers ──────────────────────────────────────────────────────
 
-/** @param {Deps} deps @param {string[]} args */
-async function cli(deps, args) {
-  return deps.invoke("wechat_cli_json", { args })
+/**
+ * 对话页的读写都经这一处(以前是 `wechat-cc dialogue …` / `sessions list-chats`,形状一样)。
+ * @param {Deps} deps @param {import('../daemon-client.js').V1Key} key @param {import('../daemon-client.js').V1Args} [args]
+ */
+async function api(deps, key, args) {
+  return v1(deps.invokeWorkbenchApi, key, args)
 }
 
 /**
@@ -94,21 +95,6 @@ async function cli(deps, args) {
 function humanName(chatId) {
   if (chatId && chatNames[chatId]) return chatNames[chatId]
   return "我"
-}
-
-/**
- * Render an avatar span — custom image when available, else a coloured
- * initial bubble. Reuses the mockup's dialogue-avatar / dialogue-avatar-*
- * classes so the existing CSS keeps working.
- *
- * @param {{ kind: 'user'|'ai', name: string, src?: string|null, avatarKey?: string|null }} arg0
- */
-function avatarHtml({ kind, name, src, avatarKey }) {
-  const cls = `dialogue-avatar dialogue-avatar-${kind} wechat-avatar`
-  if (src) {
-    return `<span class="${cls}"><img src="${escapeHtml(src)}" alt="${escapeHtml(name)}" /></span>`
-  }
-  return `<span class="${cls}">${escapeHtml(avatarInitial(name))}</span>`
 }
 
 // ── skeleton ───────────────────────────────────────────────────────────
@@ -171,7 +157,7 @@ function renderSkeleton(root) {
 async function loadChats(deps) {
   const switcher = document.getElementById("dialogue-chat-switcher")
   // A failed read must not erase the selection or masquerade as no history.
-  const resp = /** @type {any} */ (await cli(deps, ["sessions", "list-chats", "--json"]))
+  const resp = /** @type {any} */ (await api(deps, V1.sessions.chats))
   const chats = /** @type {Array<{chat_id:string,user_name:string|null,session_count:number,last_used_at?:string}>} */ (resp?.chats || [])
 
   chatNames = {}
@@ -200,7 +186,7 @@ async function loadChats(deps) {
  * Render sent user and assistant text as readable documents. Formatted user
  * text includes the original source; commands and media keep literal text.
  * @param {Message} m
- * @param {{ userName: string, userAvatar?: string|null, botAvatar?: string|null, userAvatarKey?: string|null, botAvatarKey?: string|null }} ctx
+ * @param {{ userName: string }} ctx
  */
 export function renderDialogueMessage(m, ctx) {
   if (m.kind === "command") {
@@ -208,26 +194,20 @@ export function renderDialogueMessage(m, ctx) {
   }
   const isUser = m.direction === "in"
   const name = isUser ? ctx.userName : (botLabel(m))
-  const avatar = avatarHtml({
-    kind: isUser ? "user" : "ai",
-    name,
-    src: isUser ? ctx.userAvatar : ctx.botAvatar,
-    avatarKey: isUser ? ctx.userAvatarKey : ctx.botAvatarKey,
-  })
   const time = formatTurnTime(m.ts)
   const author = `<div class="dialogue-author">${escapeHtml(name)}${time ? `<span class="dialogue-time">${escapeHtml(time)}</span>` : ""}</div>`
   const markdown = !isUser && m.kind === "text"
   const userText=isUser&&m.kind==='text'
   const body = `<div class="dialogue-message-text ${markdown ? 'cc-readable-markdown wb-markdown' : userText ? '' : 'dialogue-message-plain'}">${markdown ? renderWorkbenchMarkdown(m.text) : userText ? renderWorkbenchUserText(m.text,`dialogue:${m.chatId}:${m.id}`) : escapeHtml(m.text)}</div>`
+  // 只写名字 + 时间,不画头像圈 / 方块(2026-10-16:装饰头像是噪音)。
   return `<div class="dialogue-turn" data-msg-id="${escapeHtml(m.id)}">
-    ${avatar}
     <div class="dialogue-turn-body">${author}${body}</div>
   </div>`
 }
 
-/** Bot display label — provider-aware. @param {Message} m */
+/** Bot display label — provider-aware(「CC · Claude」,不是小写 id)。 @param {Message} m */
 function botLabel(m) {
-  return m.provider ? `CC · ${m.provider}` : "CC"
+  return m.provider ? `CC · ${executorName(m.provider)}` : "CC"
 }
 
 /** HH:MM for a message ts; a timeline without times isn't a timeline.
@@ -263,13 +243,12 @@ async function loadTimeline(deps, opts = {}) {
   if (seq !== loadSeq) return
   stage.innerHTML = `<p class="empty-state">加载中…</p>`
 
-  const args = ["dialogue", "timeline", "--chat-id", selectedChatId, "--limit", String(TIMELINE_PAGE), "--json"]
-  if (opts.beforeTs) args.push("--before", opts.beforeTs)
+  const query = { chat_id: selectedChatId, limit: TIMELINE_PAGE, before: opts.beforeTs || undefined }
 
   let messages = /** @type {Message[]} */ ([])
   let hasMore = false
   try {
-    const resp = /** @type {any} */ (await cli(deps, args))
+    const resp = /** @type {any} */ (await api(deps, V1.dialogue.timeline, { query }))
     if (seq !== loadSeq) return
     messages = (resp && resp.messages) || []
     hasMore = !!(resp && resp.hasMore)
@@ -289,20 +268,7 @@ async function loadTimeline(deps, opts = {}) {
     return
   }
 
-  // Resolve avatars once (bot + the inbound human) — best-effort.
-  const userName = humanName(selectedChatId)
-  const [userInfo, botInfo] = await Promise.all([
-    selectedChatId ? avatarInfo(deps, selectedChatId) : Promise.resolve(null),
-    avatarInfo(deps, "claude"),
-  ])
-  if (seq !== loadSeq) return
-  const ctx = {
-    userName,
-    userAvatar: userInfo?.exists ? `${attachmentUrl(userInfo.path)}&v=${Date.now()}` : null,
-    botAvatar: botInfo?.exists ? `${attachmentUrl(botInfo.path)}&v=${Date.now()}` : null,
-    userAvatarKey: selectedChatId,
-    botAvatarKey: "claude",
-  }
+  const ctx = { userName: humanName(selectedChatId) }
 
   stage.innerHTML = messages.map(m => renderDialogueMessage(m, ctx)).join("")
   restoreUserSources(stage,open)
@@ -321,7 +287,7 @@ async function loadTimeline(deps, opts = {}) {
  * the top and older pages exist, fetch the prior page and prepend it,
  * preserving the visible scroll position.
  * @param {Deps} deps @param {HTMLElement} stage
- * @param {{ userName: string, userAvatar?: string|null, botAvatar?: string|null }} ctx
+ * @param {{ userName: string }} ctx
  */
 function wireUpwardPaging(deps, stage, ctx) {
   if (stage.dataset.pagingWired === "1") return
@@ -332,8 +298,7 @@ function wireUpwardPaging(deps, stage, ctx) {
     pagingInFlight = true
     const prevHeight = stage.scrollHeight
     try {
-      const args = ["dialogue", "timeline", "--chat-id", selectedChatId, "--limit", String(TIMELINE_PAGE), "--before", oldestLoadedTs, "--json"]
-      const resp = /** @type {any} */ (await cli(deps, args))
+      const resp = /** @type {any} */ (await api(deps, V1.dialogue.timeline, { query: { chat_id: selectedChatId, limit: TIMELINE_PAGE, before: oldestLoadedTs } }))
       const older = /** @type {Message[]} */ ((resp && resp.messages) || [])
       timelineHasMore = !!(resp && resp.hasMore)
       if (older.length > 0) {
@@ -524,13 +489,12 @@ async function loadThreads(deps, facet) {
   if (seq !== loadSeq) return
   groups.innerHTML = `<p class="empty-state">加载中…</p>`
 
-  const args = ["dialogue", "threads", "--chat-id", selectedChatId, "--facet", facet, "--json"]
-  if (unlocked) args.push("--include-private")
+  const query = { chat_id: selectedChatId, facet, include_private: unlocked ? 1 : undefined }
 
   /** @type {Thread[]} */
   let threads = []
   try {
-    const resp = /** @type {any} */ (await cli(deps, args))
+    const resp = /** @type {any} */ (await api(deps, V1.dialogue.threads, { query }))
     if (seq !== loadSeq) return
     threads = (resp && resp.threads) || []
   } catch (err) {
@@ -605,7 +569,7 @@ async function openThreadDetail(deps, threadId) {
   /** @type {{ thread: Thread, episodes: Episode[] }|null} */
   let data = null
   try {
-    const resp = /** @type {any} */ (await cli(deps, ["dialogue", "thread-detail", threadId, "--json"]))
+    const resp = /** @type {any} */ (await api(deps, V1.dialogue.thread, { query: { id: threadId } }))
     if (seq !== loadSeq) return
     if (resp && resp.ok === false) { data = null }
     else data = resp
@@ -621,19 +585,7 @@ async function openThreadDetail(deps, threadId) {
   }
 
   const t = data.thread
-  const userName = humanName(selectedChatId)
-  const [userInfo, botInfo] = await Promise.all([
-    selectedChatId ? avatarInfo(deps, selectedChatId) : Promise.resolve(null),
-    avatarInfo(deps, "claude"),
-  ])
-  if (seq !== loadSeq) return
-  const ctx = {
-    userName,
-    userAvatar: userInfo?.exists ? `${attachmentUrl(userInfo.path)}&v=${Date.now()}` : null,
-    botAvatar: botInfo?.exists ? `${attachmentUrl(botInfo.path)}&v=${Date.now()}` : null,
-    userAvatarKey: selectedChatId,
-    botAvatarKey: "claude",
-  }
+  const ctx = { userName: humanName(selectedChatId) }
 
   const lastEpisode = data.episodes[data.episodes.length - 1] || null
   const anchorTs = lastEpisode ? lastEpisode.to_ts : ""
@@ -692,7 +644,7 @@ async function submitUnlock(deps, passphrase) {
   /** @type {{ok:boolean, error?:string}} */
   let result = { ok: false }
   try {
-    result = /** @type {any} */ (await cli(deps, ["dialogue", "unlock", "--passphrase", passphrase, "--json"]))
+    result = /** @type {any} */ (await api(deps, V1.dialogue.unlock, { body: { passphrase } }))
   } catch (e) {
     console.error("dialogue unlock failed", e)
   }
@@ -747,7 +699,7 @@ async function runSearch(deps, query) {
   /** @type {Message[]} */
   let hits = []
   try {
-    const resp = /** @type {any} */ (await cli(deps, ["dialogue", "search", "--chat-id", selectedChatId, trimmed, "--json"]))
+    const resp = /** @type {any} */ (await api(deps, V1.dialogue.search, { query: { chat_id: selectedChatId, q: trimmed } }))
     if (seq !== loadSeq) return
     hits = (resp && resp.hits) || []
   } catch (err) {
@@ -808,9 +760,7 @@ async function fetchFullTimeline(deps, chatId) {
   let beforeTs = undefined
   // Loop newest-page → older-page; prepend each older page.
   for (let guard = 0; guard < 1000; guard++) {
-    const args = ["dialogue", "timeline", "--chat-id", chatId, "--limit", String(TIMELINE_PAGE), "--json"]
-    if (beforeTs) args.push("--before", beforeTs)
-    const resp = /** @type {any} */ (await cli(deps, args))
+    const resp = /** @type {any} */ (await api(deps, V1.dialogue.timeline, { query: { chat_id: chatId, limit: TIMELINE_PAGE, before: beforeTs } }))
     const page = /** @type {Message[]} */ ((resp && resp.messages) || [])
     const hasMore = !!(resp && resp.hasMore)
     if (page.length === 0) break

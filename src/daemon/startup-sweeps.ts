@@ -1,8 +1,7 @@
 import { join } from 'node:path'
 import type { Db } from '../lib/db'
-import type { IlinkAdapter } from './ilink-glue'
 import { cleanupOldInbox } from './media'
-import { loadCompanionConfig } from './companion/config'
+import { loadCompanionConfig } from '../lib/companion-config'
 import { loadAgentConfig } from '../lib/agent-config'
 import { loadAccess } from '../lib/access'
 import { notifyStartup, resolveRestartNoticeSettings } from './notify-startup'
@@ -16,7 +15,6 @@ import { runLocalImportIfEnabled } from './local-import'
 export interface StartupSweepDeps {
   stateDir: string
   db: Db
-  ilink: IlinkAdapter
   log: (tag: string, line: string) => void
   /** Bound account count (logged only; the WeChat notice no longer carries it). */
   accountCount: number
@@ -24,6 +22,11 @@ export interface StartupSweepDeps {
   dangerously: boolean
   /** 开机最早时读到的「上一个进程怎么停的」证据(main.ts consumePreviousRunEvidence)。 */
   previousRun?: PreviousRunEvidence
+  /**
+   * CC 开口那道门(第三批 3a):重启通知经它说(restart_notice 归 report)。被推后 / 没发出去 ⇒ 门的待说队列接住、之后补说,
+   * 所以这里**交给门就算办完**,不再自己一轮轮重试(那会往队列里塞好几份同样的话)。没接 ⇒ 不发、记一行。
+   */
+  speech?: Pick<import('./speech/policy').SpeechPolicy, 'tell'>
   /** introspect tick body — invoked if 24h+ since last */
   runIntrospectOnce: () => Promise<void>
 }
@@ -75,6 +78,19 @@ async function runInboxCleanup(deps: StartupSweepDeps): Promise<void> {
   }
 }
 
+/**
+ * 重启通知的发送口:交给 CC 开口那道门(restart_notice,report)。说出去了,或者被推后 / 没发出去而进了待说队列 ——
+ * 都算办完(回 {}),notifyStartup 就不再一轮轮重试(那会往待说队列里塞好几份同样的话)。门没接 ⇒ 不发、记一行。
+ */
+export function restartNoticeSender(deps: Pick<StartupSweepDeps, 'speech' | 'log'>): (chatId: string, text: string) => Promise<{ error?: string }> {
+  return async (cid, txt) => {
+    if (!deps.speech) { deps.log('NOTIFY', `restart notice to ${cid} not sent: speech policy not wired`); return {} }
+    const said = await deps.speech.tell('restart_notice', cid, txt)
+    if (!said) deps.log('NOTIFY', `restart notice to ${cid} handed to the pending queue (deferred or not delivered yet)`)
+    return {}
+  }
+}
+
 async function runStartupNotify(deps: StartupSweepDeps): Promise<void> {
   try {
     await notifyStartup(
@@ -84,7 +100,7 @@ async function runStartupNotify(deps: StartupSweepDeps): Promise<void> {
           const a = loadAccess()
           return { allowFrom: a.allowFrom, admins: a.admins }
         },
-        send: (cid, txt) => deps.ilink.sendMessage(cid, txt),
+        send: restartNoticeSender(deps),
         log: deps.log,
         ...(deps.previousRun ? { evidence: deps.previousRun } : {}),
         settings: resolveRestartNoticeSettings(loadAgentConfig(deps.stateDir).restart_notice),

@@ -11,6 +11,8 @@
  * 触发一律来自用户点击(与「不自动外呼」红线同一姿态,虽然这里探测的
  * 是普通网站不是微信)。
  */
+import { EXECUTOR_FACTS } from '../lib/executor-facts'
+import type { KnownProviderId } from '../lib/provider-ids'
 
 export interface ProbeTarget { id: string; label: string; url: string }
 export interface ProbeResult { id: string; label: string; ok: boolean; latency_ms: number; status?: number }
@@ -20,14 +22,15 @@ const BASELINES: ProbeTarget[] = [
   { id: 'internet', label: '国际访问', url: 'https://www.google.com/generate_204' },
 ]
 
-/** provider id → 它真正要连的 API 域。codex 走 openai 端点;agy 走 google。 */
+/** provider id → 它真正要连的 API 域。host 只认 executor-facts 那一份(3c 第 4 步);这里只管探测项的 id(去重用)和显示名。 */
+const url = (pid: KnownProviderId) => `https://${EXECUTOR_FACTS[pid].endpoint.host}`
 const PROVIDER_ENDPOINTS: Record<string, ProbeTarget> = {
-  claude: { id: 'anthropic', label: 'Anthropic(Claude)', url: 'https://api.anthropic.com' },
-  codex: { id: 'openai', label: 'OpenAI(Codex)', url: 'https://api.openai.com' },
-  openai: { id: 'openai', label: 'OpenAI(Codex)', url: 'https://api.openai.com' },
-  agy: { id: 'google_ai', label: 'Google AI(Gemini)', url: 'https://generativelanguage.googleapis.com' },
-  gemini: { id: 'google_ai', label: 'Google AI(Gemini)', url: 'https://generativelanguage.googleapis.com' },
-  cursor: { id: 'cursor', label: 'Cursor', url: 'https://cursor.com' },
+  claude: { id: 'anthropic', label: 'Anthropic(Claude)', url: url('claude') },
+  codex: { id: 'openai', label: 'OpenAI(Codex)', url: url('codex') },
+  openai: { id: 'openai', label: 'OpenAI(Codex)', url: url('openai') },
+  agy: { id: 'google_agy', label: 'Google(Gemini 账号连接)', url: url('agy') },
+  gemini: { id: 'google_ai', label: 'Google AI(Gemini)', url: url('gemini') },
+  cursor: { id: 'cursor', label: 'Cursor', url: url('cursor') },
 }
 
 /** base_url → 干净的 origin(scheme://host[:port]),给 HEAD 探测用;非法则 null。 */

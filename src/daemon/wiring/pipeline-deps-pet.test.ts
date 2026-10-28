@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { inboundTurn } from './test-inbound-turn'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPipelineDeps } from './pipeline-deps'
-import { Ref } from '../../lib/lifecycle'
 import { openTestDb, type Db } from '../../lib/db'
 import { makePetSignals, type PetSignals } from '../pet-signals'
 import { makeReplySinks } from '../reply-sinks'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { Bootstrap } from '../bootstrap/index'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { CareLedger } from '../../features/companion/care-ledger'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 import type { PendingPermissionView } from '../pending-permissions'
 
 // 命令路由的「待批准」分支要求 access.admins 非空 + isAdmin(chatId)。这是
@@ -68,11 +68,9 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
       setUserName: vi.fn(async () => {}),
       resolveUserName: vi.fn(() => undefined),
       resolveAccountId: vi.fn(() => 'acct1'),
-      projects: {} as IlinkAdapter['projects'],
-      voice: {} as IlinkAdapter['voice'],
-      companion: {} as IlinkAdapter['companion'],
+      voice: {} as PipelineWechat['voice'],
+      companion: {} as unknown,
       askUser: vi.fn(async () => 'timeout' as const),
-      loadProjects: vi.fn(() => ({ projects: {}, current: null })),
       lastActiveChatId: vi.fn(() => null),
       markChatActive: vi.fn(),
       captureContextToken: vi.fn(),
@@ -81,9 +79,9 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
       handlePermissionReply: vi.fn(() => false),
       listPendingPermissions: vi.fn(() => opts.pending ?? []),
       resolvePermission: vi.fn(() => false),
-      sessionState: {} as IlinkAdapter['sessionState'],
+      sessionState: {} as PipelineWechat['sessionState'],
       flush: vi.fn(async () => {}),
-    } as unknown as IlinkAdapter
+    } as unknown as PipelineWechat
 
     const boot = {
       sessionManager: { isInFlight: vi.fn(() => opts.inFlight ?? false) } as unknown as Bootstrap['sessionManager'],
@@ -117,7 +115,7 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
 
     const built = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks: makeReplySinks(), petSignals },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
     return { ...built, petSignals, coordinatorDispatch, ilink, boot }
   }
@@ -157,11 +155,12 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
 
   it('被命令路由接走的消息不算一个回合:没起飞标记,也没进 coordinator', async () => {
     const { pipelineDeps, petSignals, coordinatorDispatch } = setup()
-    await pipelineDeps.dispatch.coordinator.dispatch(inbound('owner_chat', '待批准'))
+    await inboundTurn(pipelineDeps, inbound('owner_chat', '待批准'))
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(petSignals.snapshot('owner_chat').inFlightSinceMs).toBeNull()
   })
 
+  // 这条测的是派发那一步本身(起飞 / 落地),直接调 dispatch;owner_chat 在这里是没起名的用户,走整条命令表会被上手那条接走
   it('正常入站:进 coordinator 时起飞,回来时落地(抛错也落地)', async () => {
     let seenDuringDispatch: number | null = null
     const { pipelineDeps, petSignals } = setup({

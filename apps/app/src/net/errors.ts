@@ -4,9 +4,9 @@ const STALE = new Set(['permission_stale', 'question_stale', 'cli_permission_sta
 /** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话。请求内容冲突另说,不能当排队。 */
 const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy', 'cli_session_busy'])
 /** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
-const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported', 'not_found'])
-/** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话。 */
-const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired'])
+const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported', 'not_found', 'review_comment_not_found', 'memory_retraction_not_found'])
+/** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话 / 待办。 */
+const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired', 'review_not_wired', 'todos_not_wired'])
 /** 接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions D11):各有各的一句话,不能都说「没送到」。
  *  必须在 `invalid_` 前缀规则之前判(invalid_path ⇒ folder_missing)。后三个(裁决 R5):会话刚变(可重问预览再接)、
  *  没内容可带、已经接过了(不是错:页面重问预览、打开那件事)。 */
@@ -27,7 +27,19 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   // 电脑太旧、对话还不收图 ⇒ 说清楚要先更新电脑。必须在 `invalid_` 前缀规则之前判。
   ['invalid_attachment', 'images_gone'], ['images_not_supported', 'images_unsupported'],
   // 终端里的会话(2026-10-14):终端自己在问(主人在电脑前,没开码)/ 会话已结束 / 在别的电脑上(手机这口 v1 不转)。
+  // 按住说话(2026-10-18):电脑上没配语音转文字 / 网络守护没放行 / 服务失败或太慢 / 没听出字 / 录音太大。
+  ['stt_not_configured', 'stt_not_configured'], ['stt_blocked', 'stt_blocked'], ['stt_failed', 'stt_failed'], ['stt_timeout', 'stt_failed'], ['no_speech', 'no_speech'], ['audio_too_large', 'too_large'],
+  // 做到条件成立为止(2026-10-20):检查命令格式不对 / 没开独立工作区 / 免审执行者不收。invalid_until 必须在 `invalid_` 前缀规则之前判。
+  ['invalid_until', 'until_invalid'], ['until_requires_worktree', 'until_requires_worktree'], ['until_unattended_unsupported', 'until_unattended'],
   ['cli_not_actionable', 'cli_not_actionable'], ['cli_session_ended', 'cli_ended'], ['cli_session_remote', 'cli_remote'],
+  // 撤掉这一轮(回退切片 4):确认过期 / 不是最新那轮 / 那轮已撤掉 ⇒ 都是「工作区刚变过」,重拉预览;停住 ⇒ 只读一句,回电脑上处理。
+  ['rewind_confirmation_required', 'rewind_stale'], ['rewind_confirmation_stale', 'rewind_stale'], ['rewind_not_latest', 'rewind_stale'], ['review_round_discarded', 'rewind_stale'],
+  ['rewind_needs_owner', 'rewind_needs_owner'], ['rewind_shared_folder', 'rewind_shared'], ['rewind_merged', 'rewind_merged'], ['rewind_ignored_conflict', 'rewind_ignored'],
+  ['rewind_unavailable', 'rewind_unavailable'], ['not_worktree', 'rewind_unavailable'], ['rewind_noop', 'rewind_noop'], ['rewind_failed', 'rewind_failed'],
+  // 行评论(切片 4):块变了 / 已发出 / 同 id 内容不同 / 草稿满了;评论不在了 ⇒ not_found(下面 NOT_FOUND)
+  // 工作区脚本(2026-10-20):批准只在电脑上 / 已经在运行 / setup 在跑(跑完接着运行)/ 没有 run 脚本
+  ['script_needs_computer', 'scripts_unapproved'], ['script_running', 'script_running'], ['script_setup_running', 'script_queued'], ['no_scripts', 'no_scripts'],
+  ['review_hunk_stale', 'hunk_stale'], ['review_comment_sent', 'comment_sent'], ['review_comment_conflict', 'comment_conflict'], ['review_comment_limit', 'comment_limit'],
 ])
 const errOf = (body: unknown): string | null => {
   if (typeof body !== 'object' || body === null) return null

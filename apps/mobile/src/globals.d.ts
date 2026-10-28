@@ -3,26 +3,34 @@ declare var T: string
 declare var REMOTE: { relay: string; id: string } | null
 interface Window { __CC_SHELL__?: { relay: string; id: string } }
 
-/** Shared Markdown browser bundle; HTML and links are filtered before rendering. */
-declare var CCM: {
-  renderMarkdown(value: string): string
-  markdownPlainText(value: string): string
-  hasMarkdownFormatting(value: string): boolean
-}
-
 /**
  * packages/protocol 打包出的 IIFE(apps/mobile/src/protocol-generated.js,
  * sources.ts 的 readMobileSource 原地换进 transport.js 顶部的占位注释)挂的
- * 全局 —— v1 隧道密封帧,跟 daemon 端(同一个包)字节级兼容。形状照抄
- * packages/protocol/src/browser.ts 的 CCP 常量,手改哪边都要带上另一边。
+ * 全局 —— 跟原生 App 同一个协议客户端(说 v2)。形状照抄
+ * packages/protocol/src/browser.ts 的 CCP 常量与 client-types.ts,手改哪边都要带上另一边。
  */
-interface CCPKeyPair { priv: Uint8Array; pub: Uint8Array }
-interface CCPSealedFrame { iv: string; ct: string }
+interface CCPSocket {
+  send(s: string): void
+  close(): void
+  onOpen(cb: () => void): void
+  onMessage(cb: (s: string) => void): void
+  onClose(cb: () => void): void
+}
+interface CCPResponse { status: number; headers: Record<string, string>; body: Uint8Array; text(): string; json<T = any>(): T }
+interface CCPClient {
+  version(): 2 | null
+  request(r: { method: string; path: string; headers?: Record<string, string>; body?: string | Uint8Array; retry?: boolean }): Promise<CCPResponse>
+  subscribe(topic: string, onEvent: (data: unknown, meta: { epoch: string; seq: number }) => void): () => void
+  close(): void
+}
 declare var CCP: {
   b64u: { encode(bytes: Uint8Array): string; decode(s: string): Uint8Array }
-  x25519KeyPair(priv?: Uint8Array): CCPKeyPair
-  x25519Shared(priv: Uint8Array, theirPub: Uint8Array): Uint8Array
-  deriveV1Key(shared: Uint8Array, bind: string): Uint8Array
-  sealV1(key: Uint8Array, plaintext: Uint8Array, iv?: Uint8Array): CCPSealedFrame
-  openV1(key: Uint8Array, frame: CCPSealedFrame): Uint8Array
+  makeProtocolClient(opts: {
+    open: () => CCPSocket
+    token: string
+    client?: 'web'
+    requestTimeoutMs?: number
+    handshakeTimeoutMs?: number
+    onProtocolError?: (reason: string, detail?: unknown) => void
+  }): CCPClient
 }

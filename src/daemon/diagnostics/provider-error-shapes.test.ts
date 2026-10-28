@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { currentVerdicts, expectedHealthKind, type ProviderErrorSample } from './provider-error-verdicts'
 import { classifyFailure } from '../health/classify'
 import { errorWithProviderCode } from '../../lib/provider-error-code'
-import { authFailNotice } from '../../core/conversation-coordinator'
+import { authFailNotice } from '../../app/conversation-coordinator'
 
 const DIR = join(__dirname, '__fixtures__', 'provider-errors')
 const files = readdirSync(DIR).filter(f => f.endsWith('.json')).sort()

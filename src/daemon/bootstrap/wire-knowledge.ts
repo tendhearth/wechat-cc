@@ -3,26 +3,35 @@
  * 的接线。从 bootstrap/index.ts 逐字搬出(2026-09-27 bootstrap 拆分,spec
  * 2026-09-27-bootstrap-split-design);块内逻辑与注释不变,只参数化:
  * deps.log/stateDir → ctx.log/stateDir,configuredAgent → ctx.configuredAgent,
- * loadedPlugins 是参数(wire-plugins 的产物)。经 ctx.sup.start('knowledge')。
+ * loadedPlugins 是参数(wire-plugins 的产物)。
+ *
+ * 2026-10-22 起是一个 DaemonModule(第三批 3b 第 2 步,设计稿 2026-10-22-daemon-module-design):
+ *  - `knowledge_enabled` 没开 ⇒ off;起失败 ⇒ degraded,boot 继续(optional)。
+ *  - store 一打开就经 `own` 登记关法,embedder 同样 ⇒ 后面任何一步抛错,容器都会关掉已经开的(以前手写的半构造清理)。
+ *    关机时也由这一组收尾,不再挂在 runtime/shutdown 上:以前那里经 boot() 取,开机没走完时 boot() 还是 null,知识库就不关。
+ *  - 5 分钟一拍的适配器走 `ctx.interval`(上一次没跑完就跳过这一拍);开机那一次补跑和模型预热在 start 段。
  */
 import { join } from 'node:path'
 import { findOnPath } from '../../lib/util'
 import { pluginDataDir } from '../plugins/paths'
-import { openKnowledge } from '../../core/knowledge/store'
-import { semanticSearch } from '../../core/knowledge/search'
-import { runSourceAdapter } from '../../core/knowledge/source-adapter'
-import { runIndexer } from '../../core/knowledge/indexer'
-import { makeEmbedderService } from '../../core/knowledge/embedder-service'
-import { makeJsEmbedder, withEmbedderFallback } from '../../core/knowledge/js-embedder'
-import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
-import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
-import { makeFactsApi } from '../../core/knowledge/facts'
-import { makePersonApi } from '../../core/knowledge/person'
-import { runKnowledgeCycle } from '../../core/knowledge/cycle'
-import { gateRefreshOnFullDiskAccess, makeWxvaultRefresh } from '../../core/knowledge/wxvault-refresh'
+import { openKnowledge } from '../../adapters/knowledge/store'
+import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { importFactsDb } from '../../adapters/knowledge/facts-import'
+import { semanticSearch } from '../../domain/knowledge/search'
+import { runSourceAdapter } from '../../adapters/knowledge/source-adapter'
+import { runIndexer } from '../../app/knowledge/indexer'
+import { makeEmbedderService } from '../../adapters/knowledge/embedder-service'
+import { makeJsEmbedder, withEmbedderFallback } from '../../adapters/knowledge/js-embedder'
+import { rebuildGraphFromSource } from '../../domain/knowledge/graph-build'
+import { makeGraphQueryApi } from '../../domain/knowledge/graph-query'
+import { makeFactsApi } from '../../domain/knowledge/facts'
+import { makePersonApi } from '../../domain/knowledge/person'
+import { runKnowledgeCycle } from '../../app/knowledge/cycle'
+import { gateRefreshOnFullDiskAccess, makeWxvaultRefresh } from '../../adapters/knowledge/wxvault-refresh'
 import { FDA_MISSING_HINT, hasFullDiskAccess } from '../../lib/fs-access'
 import type { Bootstrap, BootstrapCtx } from './types'
 import type { PluginsSlice } from './wire-plugins'
+import type { DaemonModule } from '../modules/container'
 
 // Knowledge Kernel T7' — provenance tag stamped alongside `knowledge_embed_model`
 // on every semantic.db row this daemon writes (store.putSemantic(model_id,
@@ -34,10 +43,10 @@ import type { PluginsSlice } from './wire-plugins'
 // manual cursor reset (`indexer_cursor:<model_id>` in semantic.db's meta).
 const KNOWLEDGE_EMBED_MODEL_VERSION = '1'
 
-export function wireKnowledge(
-  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'stateDir' | 'configuredAgent'>,
+export function knowledgeModule(
+  ctx: Pick<BootstrapCtx, 'log' | 'stateDir' | 'configuredAgent' | 'db'>,
   loadedPlugins: PluginsSlice['loadedPlugins'],
-): Promise<Bootstrap['knowledge']> {
+): DaemonModule<Bootstrap['knowledge']> {
   // Knowledge Kernel Phase 01 (T5) — daemon-owned KnowledgeStore + the
   // Query-face `semanticSearch`, gated behind `knowledge_enabled` (default
   // off — opt-in during the walking-skeleton slice; T1-T4 built the store/
@@ -51,13 +60,15 @@ export function wireKnowledge(
   // interval is safe — mirrors idleSweepTimer's unref()'d setInterval a
   // little further down in this function (a background job outside the
   // companion tick graph in wiring/tick-bodies.ts, not competing with it).
-  return ctx.sup.start('knowledge', async () => {
-    if (!ctx.configuredAgent.knowledge_enabled) {
-      ctx.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
-      return undefined
-    }
-    const knowledgeStore = openKnowledge(join(ctx.stateDir, 'knowledge'))
-    try {
+  return { name: 'knowledge', optional: true, enabled: () => !!ctx.configuredAgent.knowledge_enabled, init: (m) => {
+    // 架构终态 G7:联系人事实住在主库。先把 knowledge/facts.db 导进来(开机一次,只复制、不删),再开知识库。
+    const memoryFacts = makeMemoryFactsStore(ctx.db)
+    try { importFactsDb({ store: memoryFacts, knowledgeRoot: join(ctx.stateDir, 'knowledge'), now: () => Date.now(), log: ctx.log }) }
+    catch (e) { ctx.log('FACTS_IMPORT', `skipped: ${e instanceof Error ? e.message : String(e)}`) }
+    const knowledgeStore = openKnowledge(join(ctx.stateDir, 'knowledge'), { facts: memoryFacts.contactFacts })
+    // 一打开就登记关法:后面任何一步抛错,容器都会关掉它(以前这里是手写的 try / catch 半构造清理)
+    m.own('store close', () => knowledgeStore.close())
+    {
       const decryptedDir = ctx.configuredAgent.knowledge_source_dir
         ?? join(ctx.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
 
@@ -132,6 +143,8 @@ export function wireKnowledge(
               + `falling back to the python subprocess for the rest of this run`)),
           )
         : pythonEmbedder
+      // 关在 store 之前(逆登记序)。makeEmbedderService 是懒的,没 embed 过就没有子进程,close 是空操作。
+      if (embedder) m.own('embedder close', () => embedder.close())
 
       // Extracted (T7' review Finding 2 + Finding 4) into
       // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
@@ -192,8 +205,8 @@ export function wireKnowledge(
         },
         { onBoot },
       )
-      // Backfill — deferred one tick so it never delays buildBootstrap's return.
-      setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
+      // Backfill — deferred one tick so it never delays buildBootstrap's return. 在 start 段才排(init 只登记)。
+      m.onStart('backfill', () => { setTimeout(() => { void runKnowledgeAdapter(true) }, 0) })
       // Warm the model on the same deferred tick, AFTER the backfill is
       // scheduled. The backfill often finds nothing new (`0 chunk(s) embedded`)
       // and then never calls embed, so without this the model stays unloaded
@@ -203,9 +216,9 @@ export function wireKnowledge(
       // out, and reported 0 hits; the second took 396ms and returned 20.
       // Fire-and-forget and non-rejecting by contract (see warm()'s doc), so it
       // can only cost time, never a boot.
-      if (embedder) setTimeout(() => { void embedder.warm() }, 0)
-      const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
-      knowledgeAdapterTimer.unref()
+      if (embedder) m.onStart('warm embedder', () => { setTimeout(() => { void embedder.warm() }, 0) })
+      // 登记在 store 之后 ⇒ 关机时先停它、再关 store(逆登记序),不会对着关掉的 store 跑
+      m.interval('adapter', 5 * 60_000, () => runKnowledgeAdapter(false))
       return {
         store: knowledgeStore,
         search: semanticSearch,
@@ -223,18 +236,8 @@ export function wireKnowledge(
         facts: makeFactsApi(knowledgeStore),
         person: makePersonApi(knowledgeStore),
       }
-    } catch (err) {
-      // Partial-construction cleanup: the store is already open, so a
-      // failure past this point must close it before rethrowing, or the
-      // sqlite handle leaks past the daemon's lifecycle (main.ts's shutdown
-      // only closes boot.knowledge, which is undefined on a degraded boot).
-      // The embedder needs NO equivalent cleanup here: makeEmbedderService
-      // (embedder-service.ts) is a lazy, respawn-on-death singleton — it
-      // spawns no subprocess until the first embed() call, so at
-      // construction time (this try block) it holds no process handle to
-      // leak; only knowledgeStore's already-open sqlite handle needs closing.
-      try { knowledgeStore.close() } catch { /* best-effort */ }
-      throw err
     }
-  })
+    // (以前这里是 catch:关掉已经开的 store 再外抛。现在 store 一打开就经 own 登记,init 抛错时容器会关它。
+    // embedder 是懒的单例,构造时不占子进程,所以也不用额外清理。)
+  } }
 }

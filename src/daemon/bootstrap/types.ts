@@ -1,16 +1,16 @@
-import type { SessionManager } from '../../core/session-manager'
-import type { TierProfile } from '../../core/user-tier'
-import type { ProviderRegistry } from '../../core/provider-registry'
-import type { ConversationCoordinator, TurnRecord } from '../../core/conversation-coordinator'
-import type { ConversationStore } from '../../core/conversation-store'
-import { formatInbound } from '../../core/prompt-format'
-import type { ProviderId } from '../../core/conversation'
+import type { SessionManager } from '../../app/session-manager'
+import type { TierProfile } from '../../domain/user-tier'
+import type { ProviderRegistry } from '../../app/provider-registry'
+import type { ConversationCoordinator, TurnRecord } from '../../app/conversation-coordinator'
+import type { ConversationStore } from '../../ports/conversation-store'
+import { formatInbound } from '../../domain/prompt-format'
+import type { ProviderId } from '../../domain/conversation'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
-import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { WechatSend, WechatPermissions, WechatCompanionControls } from '../../ports/wechat'
 import type { Db } from '../../lib/db'
 import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
-import type { AppendInput } from '../../core/a2a-events-store'
-import type { YiHub } from '../../core/yi-hub'
+import type { AppendInput } from '../../adapters/store/a2a-events-store'
+import type { YiHub } from '../../app/yi-hub'
 import type { DelegateDispatch } from './delegate'
 import type { SendAssistantText } from './fallback-reply'
 import type { HealthRuntime } from '../health'
@@ -22,19 +22,10 @@ export interface BootstrapDeps {
    * 缺省 = 不拦(测试 / 最小嵌入)。
    */
   networkGate?: import('../../lib/network-gate').NetworkGate
-  ilink: {
-    sendMessage: (chatId: string, text: string) => Promise<{ msgId: string }>
-    sendFile: (chatId: string, path: string) => Promise<void>
-    editMessage: (chatId: string, msgId: string, text: string) => Promise<void>
-    broadcast: (text: string, accountId?: string) => Promise<{ ok: number; failed: number }>
-    sharePage: (title: string, content: string, opts?: { needs_approval?: boolean; chat_id?: string; account_id?: string }) => Promise<{ url: string; slug: string }>
-    resurfacePage: (q: { slug?: string; title_fragment?: string }) => Promise<{ url: string; slug: string } | null>
-    setUserName: (chatId: string, name: string) => Promise<void>
-    projects: WechatProjectsDep
-    voice: WechatVoiceDep
-    companion: WechatCompanionDep
-    askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow'|'deny'|'timeout'|'undelivered'>
-  }
+  /** 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire(SessionManagerOptions.executionGuard);缺省 = 不冲突。 */
+  executionGuard?: (path: string, providerId: string, nativeId: string | null) => boolean
+  /** 微信那一侧只用这几样(架构终态 A6 窄口,src/ports/wechat.ts):回复 / 通知、发文件、工具权限卡、提示词里「主动关心开没开」。 */
+  ilink: Pick<WechatSend, 'sendMessage' | 'sendFile'> & Pick<WechatPermissions, 'askUser'> & { companion: WechatCompanionControls }
   loadProjects: () => { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId: () => string | null
   /** Third `fields` arg lands in the JSONL sidecar (channel.log.jsonl) for
@@ -51,7 +42,7 @@ export interface BootstrapDeps {
   /** Mint/invalidate per-session internal-api tokens — main.ts wires these to
    *  the internal-api token registry so each session's MCP children carry the
    *  caller's tier. Omitted in tests / minimal embeddings. */
-  mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
+  mintSessionToken?: (tier: import('../../domain/user-tier').UserTier, sessionKey: string) => string
   invalidateSession?: (sessionKey: string) => void
   /**
    * Test/harness override for agy's tier-C global MCP config target dir
@@ -70,6 +61,12 @@ export interface BootstrapDeps {
    */
   fallbackProject?: () => { alias: string; path: string } | null
   dangerouslySkipPermissions?: boolean
+  /**
+   * 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts):Claude 的 canUseTool、Gemini gate、openai gate
+   * 每次调用现取。规则那一层(终端会话功能里的 permission-gate)和回复交付都比 bootstrap 晚 / 在外面接线,所以是个函数。
+   * 不给 / 回 null ⇒ 对话不看规则(测试 / 最小嵌入和以前一样)。
+   */
+  chatOwnerRules?: () => import('../../adapters/permission-rules/chat').ChatOwnerRules | null
   agentProviderKind?: AgentProviderKind
   /**
    * When provided, the standalone wechat-mcp stdio MCP server (RFC 03 §5)
@@ -159,6 +156,8 @@ export interface BootstrapDeps {
    * feature existed.
    */
   curatedMemoryFor?: (chatId: string) => string
+  /** 主人原话 owner.md(记忆编辑设计稿 2026-10-23 §1):只对主人自己的对话返回内容,其余 ''。Absent ⇒ 不注入。 */
+  ownerMemoryFor?: (chatId: string) => string
   /**
    * 今天的草稿 today-draft.md(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,
    * 由 internal-api 的 memory/write 路由派生。只随 curatedMemoryFor 注入。Absent ⇒ 不注入。
@@ -234,8 +233,8 @@ export interface BootstrapDeps {
   outboundTaps?: { observe: (chatId: string, text: string) => void }
   /**
    * 回复交付(spec 2026-10-03-reply-delivery)—— main.ts 里造的**同一个**实例,也传给
-   * internal-api(attach / message 路由、reply 路由的 shadow 旁听)和 wireMain(伙伴推送、app 轮)。
-   * 不接 ⇒ 所有 provider 一律按 legacy 走(老 fixture 不变)。
+   * internal-api(attach / message 路由)和 wireMain(伙伴推送、app 轮)。
+   * 不接(测试 / 最小嵌入)⇒ wire-coordinator 就地造一个只会直发微信的(交付只有这一条路,D3)。
    */
   replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
   /**
@@ -257,22 +256,21 @@ export interface BootstrapDeps {
    */
   requestRestart?: () => void
   /**
-   * Subsystem degraded-boot (spec 2026-08-17) — 可选 wire 块(knowledge/
-   * social/a2a-server/pairing/self-restart)经它拉起;失败 ⇒ 对应产物
-   * undefined,类型上等同"未配置"。核心块不经它。
+   * CC 开口那道门(第三批 3a)。门在 wireMain 里才造(它要 App 那条路),比 bootstrap 晚;社交那几条通知都在运行时才发,
+   * 所以这里给懒取(main.ts 的 Ref,只 set 一次)。取不到 ⇒ 那句通知不发、记一行,**不退回直接发**。
    */
-  supervisor: import('../subsystems').SubsystemSupervisor
+  speech?: () => import('../speech/policy').SpeechPolicy | null
 }
 
 export interface Bootstrap {
   sessionManager: SessionManager
-  sessionStore: import('../../core/session-store').SessionStore
+  sessionStore: import('../../ports/session-store').SessionStore
   conversationStore: ConversationStore
   registry: ProviderRegistry
   coordinator: ConversationCoordinator
   resolve: (chatId: string) => { alias: string; path: string } | null
   formatInbound: typeof formatInbound
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options
   /**
    * The single provider-agnostic system-prompt assembler. SessionManager calls
    * it once per spawn and forwards the result via SpawnContext.appendInstructions;
@@ -311,18 +309,19 @@ export interface Bootstrap {
    * a2a-server 子系统降级(wireA2aServer 抛错,spec 2026-08-17).
    */
   a2aDeps?: {
-    registry: import('../../core/a2a-registry').A2ARegistry
-    client: import('../../core/a2a-client').A2AClient
-    eventsStore: import('../../core/a2a-events-store').A2AEventsStore
+    registry: import('../../ports/a2a').A2ARegistry
+    client: import('../../ports/a2a').A2AClient
+    eventsStore: import('../../adapters/store/a2a-events-store').A2AEventsStore
     recordEvent: (event: AppendInput) => void
     serverEnabled: boolean
     baseUrl: string | null
   }
   /**
    * Running A2A HTTP server — null when a2a_listen is not configured.
-   * main.ts calls a2aServer?.stop() in shutdown.
+   * Stopped by its module's own (bootstrap/wire-a2a-server.ts a2aServerModule) — the container stops it,
+   * also when boot didn't finish. Tests that build a bootstrap and never stop the container stop it themselves.
    */
-  a2aServer: import('../../core/a2a-server').A2AServer | null
+  a2aServer: import('../../adapters/a2a/a2a-server').A2AServer | null
   /**
    * 乙 v2 BRAIN hub — present only when yi_hub_listen is configured.
    * pipeline-deps reads this to route ws-transport hands via the hub.
@@ -356,20 +355,20 @@ export interface Bootstrap {
     penpal: {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-      channelStore: import('../../core/penpal-channel-store').ChannelStore
-      letterStore: import('../../core/penpal-letter-store').LetterStore
+      channelStore: import('../../ports/penpal-channel').ChannelStore
+      letterStore: import('../../features/social').LetterStore
       startVisit(channelRowId?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
       /** 进行中的串门(spec 2026-09-03-companion-presence)。 */
-      activeVisit(): import('../../core/companion-presence').ActiveVisit | null
+      activeVisit(): import('../../domain/companion-presence').ActiveVisit | null
       /** 可自动串门的真信道(spec 2026-09-05-companion-plan)。 */
       provenChannels(): Array<{ id: string; label: string }>
     }
     /** 派心愿 / 收明信片(spec 2026-09-04-wish-postcard)。onInbound 留在
      *  wire-social 内部 —— 信封只从 correspondent 一个口进来。 */
-    wish: Omit<import('./wire-wish').WishService, 'onInbound'>
+    wish: Omit<import('../../features/social').WishService, 'onInbound'>
     /** 介绍(spec 2026-09-04-introduction)。onInbound 留在 wire-social 内部 ——
      *  信封只从 correspondent 一个口进来。 */
-    intro: Omit<import('./wire-intro').IntroService, 'onInbound'>
+    intro: Omit<import('../../features/social').IntroService, 'onInbound'>
   }
   /**
    * Anonymous pen-pal channel (Task 8/10/11) — present only once a channel
@@ -381,15 +380,6 @@ export interface Bootstrap {
   penpal?: {
     sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }>
   }
-  /**
-   * Content-blind mailbox transport (sub-project B, Task 8) — deps for
-   * `registerMailboxPoller` (src/daemon/bootstrap/wire-mailbox.ts). Present
-   * only when `social_enabled` AND at least one `mailbox_relays` entry are
-   * configured AND social wiring produced an `onMailboxLetter` (I1's
-   * own-channel-only handler). main.ts registers the poller lifecycle iff
-   * this is set; otherwise the feature is fully inert (no poll timer).
-   */
-  mailboxPollerDeps?: import('./wire-mailbox').MailboxPollerDeps
   /**
    * This daemon's stable-unique self slug (pairing-code design §2), resolved
    * exactly ONCE at boot via `resolveSelfAgentId` and shared by every wiring
@@ -407,7 +397,7 @@ export interface Bootstrap {
    * and internal-api /v1/pair/* routes read this; undefined ⇒ inert (no-op /
    * 503), same posture as `boot.social`/`boot.penpal`.
    */
-  pairing?: import('../../core/pairing').PairingEngine
+  pairing?: import('../../app/pairing').PairingEngine
   /**
    * Knowledge Kernel (Phase 01, T5) — the daemon-owned KnowledgeStore + the
    * Query-face `semanticSearch` function, present only when
@@ -418,12 +408,12 @@ export interface Bootstrap {
    * available before `buildBootstrap` runs, so main.ts can pass this same
    * shape straight into `registerInternalApi`'s `knowledge` dep (T3).
    * Exposed here so bootstrap tests can assert the config gate and so the
-   * store can be closed in test teardown (mirrors `boot.a2aServer`'s
-   * teardown posture — `store.close()` is the caller's job, same as
-   * `a2aServer?.stop()`).
+   * store can be closed in test teardown. In production it is closed by the
+   * knowledge module (wire-knowledge.ts) when the container stops, like the A2A
+   * server — tests that never stop the container close it themselves.
    *
    * Agent-facing Search (Task 2) — `embedder` is the ONE shared, long-lived
-   * embed-subprocess service (../../core/knowledge/embedder-service.ts)
+   * embed-subprocess service (../../adapters/knowledge/embedder-service.ts)
    * used by both the indexer (this file's knowledge cycle) and the query
    * path (internal-api's `embedQuery`); it is NOT closed between cycles,
    * only on daemon shutdown (main.ts). Exposed here (mirrors `store` above)
@@ -433,9 +423,9 @@ export interface Bootstrap {
    * resolved (store/search are still present in that case).
    */
   knowledge?: {
-    store: import('../../core/knowledge/store').KnowledgeStore
-    search: typeof import('../../core/knowledge/search').semanticSearch
-    embedder?: import('../../core/knowledge/embedder-service').EmbedderService
+    store: import('../../ports/knowledge').KnowledgeStore
+    search: typeof import('../../domain/knowledge/search').semanticSearch
+    embedder?: import('../../adapters/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>
     /** 实际在用的向量化路径(2026-10-06,状态总览):js 起不来退回 Python 时是 js_fell_back;没有向量化是 none。 */
     embedStatus?: () => 'js' | 'python' | 'js_fell_back' | 'none'
@@ -448,7 +438,7 @@ export interface Bootstrap {
      * `InternalApiDeps['knowledge']` for the full rationale, which this
      * mirrors.
      */
-    graph?: import('../../core/knowledge/graph-query').GraphQueryApi
+    graph?: import('../../domain/knowledge/graph-query').GraphQueryApi
     /**
      * Facts + Person (Knowledge Facts/Person inproc, Task 5) — mirrors
      * `InternalApiDeps['knowledge'].facts`/`.person` (internal-api/types.ts):
@@ -458,8 +448,8 @@ export interface Bootstrap {
      * `makePersonApi`. Same posture as `graph` above: present whenever
      * `knowledge_enabled` is configured.
      */
-    facts?: import('../../core/knowledge/facts').FactsApi
-    person?: import('../../core/knowledge/person').PersonApi
+    facts?: import('../../domain/knowledge/facts').FactsApi
+    person?: import('../../domain/knowledge/person').PersonApi
   }
   /**
    * Connection-health runtime (connection-health design, Task 7) — wraps the
@@ -479,7 +469,7 @@ export interface Bootstrap {
    * `const release = boot.holdBusy(label); try { ... } finally { release() }`
    * (or the fire-and-forget `.finally(release)` shape used by the
    * background coroutines). Always present — the underlying registry
-   * (src/core/busy-registry.ts) is constructed unconditionally in
+   * (src/daemon/busy-registry.ts) is constructed unconditionally in
    * buildBootstrap, independent of whether self-restart itself is enabled
    * via `deps.requestRestart`. The self-restart idle check reads
    * `busyRegistry.busy()` directly (see ./wire-self-restart.ts), so a held
@@ -508,7 +498,6 @@ export interface Bootstrap {
  * 自己要的键。`configuredAgent` 在 index 里是第 5 步才有的,前面的 wire 拿不到它。
  */
 export interface BootstrapCtx {
-  sup: import('../subsystems').SubsystemSupervisor
   log: BootstrapDeps['log']
   stateDir: string
   db: Db

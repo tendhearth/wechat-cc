@@ -15,29 +15,32 @@
 1. **开工先分配。** 每个任务记录负责人、工作区路径、分支和起点提交,并明确本批的整合者。从已确认的 `dev` 提交创建独立分支和 worktree;已有别人使用的工作区不得接管。未指定整合者时可以开发和提交,不能自行开始共享部署或推送 `dev`。
 2. **按职责拆任务。** 尽量让两个实现者修改不同模块。共享接口、数据库迁移和依赖锁文件提前约定负责人及先后顺序;确实需要修改同一处时,先完成的一方提交,另一方基于该提交继续。worktree 不会消除接口和行为上的冲突。
 3. **交付可复核的提交。** 开发者交付分支、提交号、基线、改动范围、验证结果和已知限制。整合者在自己的集成工作区逐项合入,不去开发者目录修改文件。冲突退回对应负责人处理或由整合者明确接手,不能通过整文件覆盖来消除冲突。
+   评审只报影响正确性的、跳过风格;动开机顺序 / 迁移 / 权限的再要一道没看过写代码过程的评审(见 [verify.md](verify.md#评审只报影响正确性的))。
 4. **验证整合结果。** 分支各自通过不代表组合正确。每次合入后检查累积差异,按改动范围验证;代码改动走下面的本地闸门,随后才部署、真机自检和推送。纯文档改动检查差异、链接与规则一致性,无需构建部署。不得重写共享的 `dev` 历史,进 `master` 仍走 squash PR。
 5. **运行环境也要分开。** worktree 不隔离端口、数据库、daemon、账号配置和已安装的 app。并行验证使用各自的测试数据目录和端口,不要连生产数据做试验。共享 daemon 的重启、桌面安装、部署和 `dev` 推送归整合者串行执行;自动 `self change` 也纳入这份安排。这是协作约定,不代表已有跨进程锁自动替你排队。
 
 收尾只清理自己负责且已确认不再使用的分支和工作树。遇到集成工作区有未知改动或正在被别人使用,先交接,不能 `reset`、`clean` 或替别人 `stash`。
 
+## 怎么加
+
+- [加一个执行者](add-an-executor.md):一份事实(`executor-facts`)+ 一份能力(`provider-capabilities`)+ 两处构造,其余推导,漏了由测试点名。
+- [加一个微信命令](add-a-command.md):一张表、顺序就是优先级;放哪一族(admin / mode / control / 文本命令)、族内两两互斥、路由快照怎么看。
+- [加一个功能](add-a-feature.md):一个目录 + 一个模块(`src/features/<名>/index.ts`),路由自己挂、命令自己交;样板是日历。新功能只有这一种写法。
+- [加一页](add-a-page.md):路由表一行(档位 / 令牌 / 宿主 / 链接 / 模块)、gen:routes 和要发版的那几格、错误码表、三端客户端怎么接、漏了哪步谁会红。
+
 ## 最短路径
 
 ```bash
-# 1. 开发者在独立分支改代码并验证;整合者合入 dev 后复验(四条都要绿)
-bun run test                         # bun --bun vitest run
-npm run test:node                    # 同一套源码在 node 下再跑一遍(见 ci-and-flakes.md)
-bun run typecheck                    # tsc --noEmit
-bun run depcheck                     # 模块边界
+# 1. 开发者在独立分支改代码并验证;整合者合入 dev 后复验
+bun run verify                       # 只跑改动牵连到的 + 全部守卫(scripts/verify.ts 开头写了判法)
+bun run verify --full                # 整合者:test / test:node / typecheck / depcheck 四条全跑,跟 CI 一样
 cd apps/relay && bun run test        # 改了中继 / 协议包时(另有 test:e2e,见 relay.md)
 
-# 2. 以下由整合者串行执行:构建已验证 dev 的 sidecar 并原子换进 .app(macOS)
-cd apps/desktop && bun run build-sidecar && cd -
-wechat-cc self deploy                # 换 inode + kickstart + 健康门,不过自动回滚
-
-# 3. 真机自检(daemon 在跑的前提下)
-wechat-cc selftest workbench --executor cursor --image --resume   # 加 --keep 保留 scratch 项目
-wechat-cc selftest chat --provider cursor --resume
-wechat-cc selftest phone                # 手机协议 v2 真机闭环(需开「出门也能用」)
+# 2+3. 以下由整合者串行执行(macOS):一道部署门走完 —— 负载 → 网络守护 → 构建 sidecar → self deploy → 工作台 + 对话两条自检,红了回滚(deploy.md「一条命令走完」)
+wechat-cc self ship                  # 机器忙退 3、守护不安全退 5,都是什么都没动;--wait-min N 等机器闲
+#   分步跑也行:build-sidecar → self deploy → selftest workbench --image --resume / selftest chat --resume(加 --keep 保留 scratch)
+wechat-cc selftest phone                # 手机协议 v2 真机闭环(需开「出门也能用」),ship 不含它
+# 过几个小时:wechat-cc self soak(改到开机 / 关机顺序的加 --min-restarts 1)
 
 # 4. 推 dev,看 CI
 git push origin dev
@@ -75,17 +78,27 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | [ci-and-flakes.md](ci-and-flakes.md) | 三平台作业、Windows 排除清单的规矩、`ci triage` 与 flake 登记表、PR 与合并纪律 |
 | [self-change.md](self-change.md) | 让 CC 自己改自己:五道闸门、修复轮上限、退出码、停机与 `--unhalt`、微信不通时怎么拍板(`--approve` / 桌面卡)、禁改清单、费用、微信「自改」 |
 | [cli-auto-upgrade.md](cli-auto-upgrade.md) | 外部 agent CLI(claude / codex / cursor-agent / agy)自动升级:官方升级器、只在空闲时、升级后自检 + 协议烟测、自动退回与坏版本、`wechat-cc cli status\|upgrade\|rollback` |
-| [reply-delivery.md](reply-delivery.md) | 回复交付的每家开关(legacy / shadow / daemon)、`agent-config.json` 的 `reply_delivery` 不重新部署就回滚、排查看哪几行日志 |
+| [reply-delivery.md](reply-delivery.md) | 回复交付只剩一条路(D3 删了 legacy / shadow 与 `reply_delivery` 回滚)、排查看哪几行日志 |
 | [migrations.md](migrations.md) | `user_version` 是计数、新迁移要改的三处测试、指纹与 `foreign_keys` 坑 |
+| [practices.md](practices.md) | **干活的**规矩:动手前看什么、怎么证明、什么时候问主人(每条带出处)—— CC 自己跑开发时读的就是它 |
 | [rules-from-real-machines.md](rules-from-real-machines.md) | 真机(而不是单测)抓到的规矩清单 —— 写代码前先扫一眼 |
 
 ## 协议包在哪
 
 手机 ↔ 中继 ↔ 后台的加密与消息在 `packages/protocol`(`@wechat-cc/protocol`),API、向量再生、纯净规则见它的 [README](../../packages/protocol/README.md)。**新运行时接入(比如 RN app)一句话:实现 `ProtocolSocket` 五个方法(含 `onOpen`),把它交给 `makeProtocolClient`,自己别碰加密。**
 
+## 加一条路由
+
+桌面 `/v1/*`、手机 `/m/*`、设置页 `/set/*` 都一样:**在 `packages/protocol/src/routes.ts` 加一行,跑 `bun run gen:routes`**,生成物 `apps/desktop/src-tauri/generated/workbench-routes.json` 一起提交。档位、operator 等令牌的放行、打包版 / dev 代理白名单、手机链接令牌能不能走,都写在那一行里;daemon 的 `ROUTE_MIN_TIER`、`routeAllow`、`PHONE_ROUTES`、`LINK_*` 和 lib.rs / `workbench-proxy.ts` 都从它推出来。字段说明在文件头,规矩见 [rules-from-real-machines.md](rules-from-real-machines.md#路由登记)。
+
+**链接令牌(`/set` 链接里 10 分钟的 `t…`)的范围 = 链接页面实际调用的路由**(架构复查 10-21 理念 2「权限跟着入口走」)。链接页面是手机网页 `apps/mobile/src`、设置页 `src/features/phone/settings-panel-html.ts`、中继壳页 `relay/pset.src.html`,外加 App 与 `selftest phone` 配对那一步;`scripts/link-routes-from-source.guard.test.ts` 扫这些源码,要求 routes.ts 里 `link: 'read' | 'write'` 的集合与扫出来的**相等**,不靠人逐条判「这条算不算私事」。所以:
+- **给链接页面加一条调用:先写进页面,守卫会红着告诉你去 routes.ts 开哪一行(写 `reason`)。**页面删掉一处调用,守卫也会红着让你把那条收成 `'none'`。
+- 页面里只在设备令牌下才走的调用(`isDevice` 分支),在调用前紧挨着写 `/* link-scan: device-only */`,不计入链接范围。
+- 扫描器认不出的调用形状(路径先放进变量、`method` 不是字面量……)直接报错,不会静默跳过;认得哪些形状写在 `scripts/link-routes-scan.ts` 文件头。
+
 ## 为什么有这份手册
 
 2026-09 那几天,四个功能的闭环里单测一个真 bug 都没抓到,全靠真机 smoke;而 smoke 是临时写的脚本、部署是手工 `cp`、规矩全在控制器的私人记忆里。手册 + `selftest` + `self deploy` 就是把这三段搬进仓库。
 
-真机报文也在仓库里:`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`(脱敏后的 cursor-agent ACP 报文),回放契约测试 `src/core/acp/fixtures.test.ts`,重新生成用
-`bun scripts/acp-fixture-from-transcript.ts <transcript.jsonl> src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`。
+真机报文也在仓库里:`src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`(脱敏后的 cursor-agent ACP 报文),回放契约测试 `src/adapters/executors/acp/fixtures.test.ts`,重新生成用
+`bun scripts/acp-fixture-from-transcript.ts <transcript.jsonl> src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`。

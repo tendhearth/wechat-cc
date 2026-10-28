@@ -160,6 +160,23 @@
         "ct": "_O8lp6dMFs5Hb8Di_DeH41z_py9p62S5DCjFtmaYzGRe3Ww7"
       },
       "expect": "stale"
+    },
+    {
+      "name": "ok-companion",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "DA0ODxAREhMUFRYX",
+        "ct": "KmF9WHbWtFq4sN-UU5KpzAdmrpMrXGTZI3XUdI9YyCuFU5LZqOJH7NRSJiQ70vbV1vygGKLBKVi-VSIF5bvaamXUkzfiw_lZ_z55MS-nU7xH3WgGIgQjwHG8kRiUG0DfMVkblcISoLlT-xSm5HwQ27e1ewpXOU8rtSlQ16I"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1699999997000,
+        "kind": "companion",
+        "title": "CC",
+        "body": "前两天说的那个面试,后来怎么样了?"
+      },
+      "dedupeKey": "1699999997000:835d7e194bd489c9bab85bcd848f7866"
     }
   ],
   "dedupe": {

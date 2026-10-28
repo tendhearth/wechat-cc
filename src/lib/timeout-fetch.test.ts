@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { makeTimeoutFetch, type FetchLike } from './timeout-fetch'
 import { providerErrorCodeOf } from './provider-error-code'
 
@@ -24,12 +24,21 @@ describe('makeTimeoutFetch', () => {
     const flowing: FetchLike = async () => new Response(new ReadableStream<Uint8Array>({
       async pull(c) { await new Promise(r => setTimeout(r, 10)); if (++pushes > 5) { c.close(); return } c.enqueue(enc.encode('x')) },
     }))
-    const ok = await makeTimeoutFetch({ connectTimeoutMs: 1_000, idleTimeoutMs: 30 }, flowing)('http://x')
-    expect(await ok.text()).toBe('xxxxx')
+    // 假时钟(10-21):每 10ms 一块、总共 60ms > idle 30ms —— 证明每来一块就重置;真时钟在满载下一个 10ms 的定时器
+    // 就能迟到超过 30ms,流还在动却被掐了(负载 18 下实见)。
+    vi.useFakeTimers()
+    try {
+      const ok = await makeTimeoutFetch({ connectTimeoutMs: 1_000, idleTimeoutMs: 30 }, flowing)('http://x')
+      const text = ok.text()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(await text).toBe('xxxxx')
 
-    const stalled: FetchLike = async () => new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('a')) } }))
-    const res = await makeTimeoutFetch({ connectTimeoutMs: 1_000, idleTimeoutMs: 30 }, stalled)('http://x')
-    expect(providerErrorCodeOf(await res.text().catch(e => e))).toBe('network')
+      const stalled: FetchLike = async () => new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('a')) } }))
+      const res = await makeTimeoutFetch({ connectTimeoutMs: 1_000, idleTimeoutMs: 30 }, stalled)('http://x')
+      const body = res.text().catch(e => e)
+      await vi.advanceTimersByTimeAsync(31)
+      expect(providerErrorCodeOf(await body)).toBe('network')
+    } finally { vi.useRealTimers() }
   })
 
   it('保留 status 与响应头', async () => {

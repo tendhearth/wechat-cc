@@ -37,7 +37,7 @@
 | claude | `createClaudeAgentProvider(...).cheapEval` | 同一 provider 的 `spawn` + `dispatch` | Agent SDK `query()` 原始消息(provider 拍平之前) |
 | codex | `createCodexAgentProvider(...).cheapEval` | `spawn` + `dispatch`(`runStreamed`) | — |
 | cursor | `createAcpCursorChatProvider(...).cheapEval`(print 模式) | 同一 provider 的 `spawn`(ACP) | `cursor-agent acp` 的 JSON-RPC 错误对象(`setupError` 映射之前) |
-| openai 兼容 | `createOpenAiAgentProvider` + `createAiSdkChatModel` 的 `cheapEval` | `spawn` + `dispatch`(自有循环) | 用假 key 打真 DeepSeek / Moonshot 端点,拿真 401 |
+| openai 兼容 | `createOpenAiAgentProvider` + `createApiModel` 的 `cheapEval`(`generate`) | `spawn` + `dispatch`(自有循环) | 用假 key 打真 DeepSeek / Moonshot 端点,拿真 401 |
 | gemini | `createGeminiAgentProvider(...).cheapEval`(真 `GoogleGenAI`,假 key) | — | — |
 
 **agy 没有诱发,只采集**:它的登录态在主人真实 HOME 下(Google OAuth),临时 HOME 下没登录会弹浏览器登录页(就是 `agy-oauth-popup` 那个坑);拿主人真实 HOME 去断网又不算隔离。按安全规则只用历史样本 —— 好在 agy 是日志里样本最多的一家(150+ 行)。
@@ -139,6 +139,7 @@
 | `agy.eof.cheap_eval` | network | 采集 | cheap_eval · thrown | `agy result status=ERROR: Eligibility check failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist": EOF` | **`network`** | network | transient | connectFailure |
 | `agy.userinfo_eof.cheap_eval` | network | 采集 | cheap_eval · thrown | `agy result status=ERROR: Eligibility check failed: Get "https://www.googleapis.com/oauth2/v2/userinfo": EOF` | **`network`** | network | transient | connectFailure |
 | `agy.network_issue.cheap_eval` | network | 采集 | cheap_eval · thrown | `agy result status=ERROR: There was a network issue connecting to the server, please try again.` | **`network`** | network | unknown | — |
+| `agy.region.session` | region | 采集(2026-10-23 抓包) | session · thrown | `agy exited 1: error: Eligibility check failed: Your current account is not eligible for Antigravity, because it is not currently available in your location.` | **`region_unavailable`** | unknown | unknown | — |
 
 ### openai 兼容(自有循环 + AI SDK;DeepSeek / Kimi / 自建 litellm 网关)
 
@@ -292,7 +293,7 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 - 码的流向:`AgentEvent.error.code` → `TurnSummary.errorCode` → `TurnRecord.errorCode`(新字段)→ `reportLlmTurnOutcome` 把码挂在抛出物的 `providerErrorCode` 上 → `classifyFailure` 有码只看码,没码才走旧的文本判定(其余 provider 全走这条回退,答案不变)。
 - `network` 与 `server_error` 的区分用的是 SDK 自己的约定(`api_error_status` 为 null = 没拿到 HTTP 响应),不是正文。
 - fixture:5 条 Claude 会话样本从 `text_event` 改成 `error_event` 并写上码与 `sdkStructure`(403 与超时两条的结构是按同模板诱发样本推定的,标了 `inferred`);今天各判定处的钉住答案一条没变 —— 变的是通道与给人看的话。
-- 测试:`src/core/claude-api-error.test.ts` 把这 5 条样本按真实 SDK 形状重放进真的 Claude provider 与真的 coordinator(含 07-28 那句 403:微信只收到认证提示,不收到原文);`provider-error-shapes.test.ts` 红线组新增 4 条断言。
+- 测试:`src/adapters/executors/claude/claude-api-error.test.ts` 把这 5 条样本按真实 SDK 形状重放进真的 Claude provider 与真的 coordinator(含 07-28 那句 403:微信只收到认证提示,不收到原文);`provider-error-shapes.test.ts` 红线组新增 4 条断言。
 
 **还没做(下一片)**:~~Claude 的一次性评估与工作台运行时;§4.2–§4.8~~ —— 都在 §7 做了。
 

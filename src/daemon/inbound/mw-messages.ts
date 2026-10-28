@@ -9,7 +9,7 @@ import type { Middleware } from './types'
 import type { MessageRecord } from '../../lib/messages-store'
 import { inboundMessageId, inboundFallbackMessageId } from '../../lib/messages-store'
 import { isoFromMs } from '../../lib/iso-time'
-import {isWechatTaskCommand,wechatTaskMessageKey} from '../../core/workbench/wechat-control'
+import {isWechatTaskCommand,wechatTaskMessageKey} from '../../features/workbench'
 
 export interface MessagesMwDeps {
   append(rec: MessageRecord): Promise<number>

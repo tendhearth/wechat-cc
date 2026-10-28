@@ -8,7 +8,7 @@
  *  · `core.hooksPath=<空设备>`:克隆里不跑任何 hook(husky 之类会改 HEAD)。
  *  · `GIT_TERMINAL_PROMPT=0`:凭据不对时立刻失败,不要在后台进程里等人输密码。
  *  · `LC_ALL=C`:输出给机器读(rev-list --count 之类),别被本地化。
- *  · env 里 `GIT_*` 先清干净(照 core/workbench/git-review.ts 的 gitEnv):
+ *  · env 里 `GIT_*` 先清干净(照 features/workbench/git-review.ts 的 gitEnv):
  *    调用方自己可能就跑在一次 rebase / commit 的钩子里,继承来的 GIT_DIR、
  *    GIT_INDEX_FILE 会让这里的每条命令都打到**别人的仓库**上。
  *
@@ -19,7 +19,7 @@
  */
 import { spawnSync } from 'node:child_process'
 
-import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 
 export interface GitResult {
   code: number | null

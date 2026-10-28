@@ -765,7 +765,7 @@ export type UpdateApplyOutputT = z.infer<typeof UpdateApplyOutput>
 // Emits { ok: true, conversations: ConversationEntry[] }.
 // Per-entry: chat_id, plus nullable identity fields user_id/account_id/user_name
 // sourced from conversationStore.getIdentity (v0.6 PR5 Task 22).
-// `mode` is the Mode discriminated union from src/core/conversation.ts —
+// `mode` is the Mode discriminated union from src/domain/conversation.ts —
 // typed as z.unknown() so that adding new Mode.kind values (P3+) doesn't
 // require a schema update; the mode.kind string is validated at runtime
 // by the coordinator, not by this consumer-side schema.
@@ -824,6 +824,8 @@ export const GuardStatusOutput = z.object({
   safe: z.boolean().optional(),
   detail: z.string().optional(),
   bx_path: z.string().nullable().optional(),
+  // 2026-10-18:本机装没装 bx(守护关着也报)。桌面:没装又没开 ⇒ 不显示守护开关。老 CLI 没有。
+  bx_installed: z.boolean().optional(),
   // 守护 v2(按调用判):信号来源设置 + 已配置 provider 各自的分类。老 CLI 没有。
   signal_source: z.enum(['auto', 'probe']).optional(),
   protected_in_use: z.boolean().optional(),

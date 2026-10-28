@@ -17,7 +17,7 @@ const accountRemoveCmd = defineCommand({
     let clearSessionStateBot: ((botId: string) => boolean) | undefined
     try {
       const { openWechatDb } = await import('../../lib/db')
-      const { makeSessionStateStore } = await import('../../core/session-state')
+      const { makeSessionStateStore } = await import('../../adapters/store/session-state')
       const db = openWechatDb(STATE_DIR)
       const store = makeSessionStateStore(db)
       clearSessionStateBot = (botId: string) => {

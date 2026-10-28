@@ -1,9 +1,11 @@
 // @ts-check
 import { escapeWorkbenchHtml as escape, renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from './workbench-markdown.js'
-/** @typedef {import('../../../../src/core/workbench/native-history').NativeHistoryItem} Item */
-/** @typedef {import('../../../../src/core/workbench/native-history').NativeHistoryPage} Page */
-/** @typedef {import('../../../../src/core/workbench/native-history').NativeHistoryPreview} Preview */
-/** @typedef {{providerId:string,providers:string[],q:string,items:Item[],nextCursor:string|null,coverage:string,preview:Preview|null,pages:Preview[],busy:boolean,error:string}} State */
+import { V1, v1 } from '../daemon-client.js'
+/** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryItem} Item */
+/** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryPage} Page */
+/** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryPreview} Preview */
+/** names:执行者 id → 正式名字(工作台列表的 agentNames,daemon 下发;收敛清单 ⑥)。没有 ⇒ 用 id。 */
+/** @typedef {{providerId:string,providers:string[],names?:Record<string,string>,q:string,items:Item[],nextCursor:string|null,coverage:string,preview:Preview|null,pages:Preview[],busy:boolean,error:string}} State */
 /** @typedef {(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>} Invoke */
 /** @param {Preview|null} preview */
 export function nativeImportMessages(preview){
@@ -16,17 +18,18 @@ export function nativeImportMessages(preview){
   }
   return messages
 }
-const names=/** @type {Record<string,string>} */ ({claude:'Claude',codex:'Codex'})
-/** @param {Preview['messages'][number]} message @param {string} providerId @param {string} [text] */
-function renderHistoryMessage(message,providerId,text=message.text,scope='preview'){
+/** @param {State} state @param {string} id */
+const nameOf=(state,id)=>state.names?.[id]??id
+/** @param {Preview['messages'][number]} message @param {string} providerId @param {string} author @param {string} [text] */
+function renderHistoryMessage(message,providerId,author,text=message.text,scope='preview'){
   const user=message.role==='user'
   const body=user?renderWorkbenchUserText(text,`history:${providerId}:${scope}:${message.id}`):renderWorkbenchMarkdown(text)
-  return `<article class="wb-history-message${user?' wb-history-message-user':''}"><div class="wb-history-message-author">${user?'你':escape(names[providerId]??providerId)}</div><div class="wb-history-message-body ${user?'':'wb-markdown'}">${body}</div>${message.truncated?'<small>这段内容已截断。</small>':''}</article>`
+  return `<article class="wb-history-message${user?' wb-history-message-user':''}"><div class="wb-history-message-author">${user?'你':escape(author)}</div><div class="wb-history-message-body ${user?'':'wb-markdown'}">${body}</div>${message.truncated?'<small>这段内容已截断。</small>':''}</article>`
 }
-/** @param {Invoke} invoke @param {()=>void} paint @param {string[]} providers */
-export function createHistoryController(invoke,paint,providers){
+/** @param {Invoke} invoke @param {()=>void} paint @param {string[]} providers @param {Record<string,string>} [names] */
+export function createHistoryController(invoke,paint,providers,names={}){
   /** @type {State} */
-  const state={providerId:providers[0]??'claude',providers,q:'',items:[],nextCursor:null,coverage:'',preview:null,pages:[],busy:false,error:''}
+  const state={providerId:providers[0]??'claude',providers,names,q:'',items:[],nextCursor:null,coverage:'',preview:null,pages:[],busy:false,error:''}
   let generation=0,alive=true
   /** @type {{item:Item,append:boolean}|null} */
   let failedRead=null
@@ -36,7 +39,7 @@ export function createHistoryController(invoke,paint,providers){
     const query=new URLSearchParams({providerId:state.providerId,q:state.q,limit:'50'})
     if(append&&state.nextCursor)query.set('cursor',state.nextCursor)
     try{
-      const page=/** @type {Page} */(await invoke('GET',`/v1/workbench/sessions?${query}`))
+      const page=/** @type {Page} */(await v1(invoke, V1.workbench.sessions, { query: query }))
       if(!alive||request!==generation)return
       state.items=[...new Map([...(append?state.items:[]),...page.items].map(item=>[item.key,item])).values()]
       state.nextCursor=page.nextCursor;state.coverage=page.coverage
@@ -48,7 +51,7 @@ export function createHistoryController(invoke,paint,providers){
     const query=new URLSearchParams({key:item.key,limit:'100'})
     if(append&&state.preview?.nextCursor)query.set('cursor',state.preview.nextCursor)
     try{
-      const page=/** @type {Preview} */(await invoke('GET',`/v1/workbench/session?${query}`))
+      const page=/** @type {Preview} */(await v1(invoke, V1.workbench.session, { query: query }))
       if(!alive||request!==generation)return
       if(page.session.key!==item.key)throw new Error('wrong_session')
       state.pages=append?[...state.pages,page].slice(-5):[page]
@@ -70,7 +73,7 @@ export function createHistoryController(invoke,paint,providers){
       if(!messages.length)return null
       state.busy=true;state.error='';paint()
       try{
-        const result=/** @type {{task:{id:string}}} */(await invoke('POST','/v1/workbench/import',{key:preview.session.key,pages:state.pages.map(p=>({...p.page,sourceFingerprint:p.sourceFingerprint})),messageIds:messages.map(m=>m.id)}))
+        const result=/** @type {{task:{id:string}}} */(await v1(invoke, V1.workbench.import, { body: {key:preview.session.key,pages:state.pages.map(p=>({...p.page,sourceFingerprint:p.sourceFingerprint})),messageIds:messages.map(m=>m.id)} }))
         return alive&&request===generation?result.task.id:null
       }catch(error){if(alive&&request===generation)state.error=fail(error);return null}
       finally{if(alive&&request===generation){state.busy=false;paint()}}
@@ -88,17 +91,17 @@ export function renderHistoryPanel(state){
   const heading=`<header><div><h2>已有会话</h2><p>原记录来自 Claude / Codex，查看不会启动任务。</p></div><button type="button" data-history="close" aria-label="关闭已有会话">×</button></header>`
   if(preview){
     let remaining=160_000,limited=preview.truncated
-    const messages=preview.messages.map(message=>{const text=message.text.slice(0,Math.min(40_000,remaining));remaining-=text.length;if(text.length<message.text.length)limited=true;return text?renderHistoryMessage(message,preview.session.providerId,text):''}).join('')
+    const messages=preview.messages.map(message=>{const text=message.text.slice(0,Math.min(40_000,remaining));remaining-=text.length;if(text.length<message.text.length)limited=true;return text?renderHistoryMessage(message,preview.session.providerId,nameOf(state,preview.session.providerId),text):''}).join('')
     const s=preview.session,selected=nativeImportMessages(preview)
-    const save=preview.managedTaskId?`<footer class="wb-history-import"><p>这条会话已经在 CC 中。</p><button class="wb-btn wb-btn-primary" data-history="open-task">打开任务</button></footer>`:selected.length?`<footer class="wb-history-import"><details id="wb-history-retained"><summary>加入后保留 ${selected.length} 段对话 · 查看内容</summary>${selected.map(m=>renderHistoryMessage(m,s.providerId,m.text,'retained')).join('')}</details><p>只保存这些文字，原工具中的完整会话仍然保留。加入不会启动任务。</p><button class="wb-btn wb-btn-primary" data-history="import"${disabled}>${state.busy?'正在处理…':'加入任务列表'}</button></footer>`:''
-    return `${heading}<div class="wb-history-body"><button class="wb-new" data-history="back">← 返回会话列表</button><h3>${escape(s.title.slice(0,500))}</h3><p class="wb-history-meta">${escape(names[s.providerId])} · ${s.observedState==='active'?'原工具报告正在执行':s.remote?'远程来源':'运行状态未确认'}</p><details><summary>原会话信息</summary><p>${escape(s.cwd??'未记录文件夹')}</p><p>${escape(s.nativeId)}</p></details>${error}${limited?'<p class="wb-history-note">当前显示部分文字，原工具中的完整历史不受影响。</p>':''}${messages||'<p class="wb-history-note">这一页没有可展示的对话文字。</p>'}${preview.nextCursor?`<button class="wb-btn" data-history="more-messages"${disabled}>${state.busy?'正在读取…':'继续读取原对话'}</button>`:''}${save}</div>`
+    const save=preview.managedTaskId?`<footer class="wb-history-import"><p>这条会话已经在 CC 中。</p><button class="wb-btn wb-btn-primary" data-history="open-task">打开任务</button></footer>`:selected.length?`<footer class="wb-history-import"><details id="wb-history-retained"><summary>加入后保留 ${selected.length} 段对话 · 查看内容</summary>${selected.map(m=>renderHistoryMessage(m,s.providerId,nameOf(state,s.providerId),m.text,'retained')).join('')}</details><p>只保存这些文字，原工具中的完整会话仍然保留。加入不会启动任务。</p><button class="wb-btn wb-btn-primary" data-history="import"${disabled}>${state.busy?'正在处理…':'加入任务列表'}</button></footer>`:''
+    return `${heading}<div class="wb-history-body"><button class="wb-new" data-history="back">← 返回会话列表</button><h3>${escape(s.title.slice(0,500))}</h3><p class="wb-history-meta">${escape(nameOf(state,s.providerId))} · ${s.observedState==='active'?'原工具报告正在执行':s.remote?'远程来源':'运行状态未确认'}</p><details><summary>原会话信息</summary><p>${escape(s.cwd??'未记录文件夹')}</p><p>${escape(s.nativeId)}</p></details>${error}${limited?'<p class="wb-history-note">当前显示部分文字，原工具中的完整历史不受影响。</p>':''}${messages||'<p class="wb-history-note">这一页没有可展示的对话文字。</p>'}${preview.nextCursor?`<button class="wb-btn" data-history="more-messages"${disabled}>${state.busy?'正在读取…':'继续读取原对话'}</button>`:''}${save}</div>`
   }
-  const choices=state.providers.map(id=>`<button type="button" data-history="provider" data-provider="${escape(id)}" aria-pressed="${state.providerId===id}">${escape(names[id]??id)}</button>`).join('')
+  const choices=state.providers.map(id=>`<button type="button" data-history="provider" data-provider="${escape(id)}" aria-pressed="${state.providerId===id}">${escape(nameOf(state,id))}</button>`).join('')
   const rows=state.items.map(item=>`<button class="wb-history-row" type="button" data-history="select" data-key="${escape(item.key)}"><strong>${escape(item.title.slice(0,200))}</strong><span>${escape(item.cwd??'未记录文件夹')}</span></button>`).join('')
   return `${heading}<div class="wb-history-body"><div class="wb-history-providers">${choices}</div><form class="wb-history-search"><label class="wb-sr-only" for="wb-history-search">查找原会话</label><input id="wb-history-search" maxlength="200" placeholder="搜索会话名称" value="${escape(state.q)}"><button type="submit"${disabled}>查找</button></form>${state.coverage==='native_indexed_history'?'<p class="wb-history-note">显示本机 Codex 已收录的会话；未收录或已归档的记录可能不在这里。</p>':''}${error}${rows||`<p class="wb-history-note">${state.busy?'正在读取…':state.nextCursor?'这一批没有匹配项，可以继续查找。':state.error?'':'没有找到匹配的会话。'}</p>`}${state.nextCursor?`<button class="wb-btn" data-history="more"${disabled}>${state.busy?'正在读取…':'继续查找'}</button>`:''}</div>`
 }
-/** @param {Invoke} invoke @param {string[]} providers @param {(id:string)=>Promise<void>} [onImported] @returns {()=>void} */
-export function mountHistoryDialog(invoke,providers,onImported){
+/** @param {Invoke} invoke @param {string[]} providers @param {(id:string)=>Promise<void>} [onImported] @param {Record<string,string>} [names] @returns {()=>void} */
+export function mountHistoryDialog(invoke,providers,onImported,names={}){
   const dialog=document.createElement('dialog');dialog.className='wb-history-dialog';dialog.setAttribute('aria-label','已有会话');document.body.append(dialog)
   const controller=createHistoryController(invoke,()=>{
     const input=/** @type {HTMLInputElement|null} */(dialog.querySelector('#wb-history-search'))
@@ -110,7 +113,7 @@ export function mountHistoryDialog(invoke,providers,onImported){
     const next=/** @type {HTMLInputElement|null} */(dialog.querySelector('#wb-history-search'))
     if(next&&draft!==undefined&&focused){next.value=draft;next.focus()}
     const content=dialog.querySelector('.wb-history-body');if(content)content.scrollTop=scroll
-  },providers)
+  },providers,names)
   const destroy=()=>{controller.destroy();dialog.remove()}
   dialog.addEventListener('close',destroy)
   dialog.addEventListener('submit',event=>{event.preventDefault();const field=/** @type {HTMLInputElement|null} */(dialog.querySelector('#wb-history-search'));void controller.search(field?.value??'')})

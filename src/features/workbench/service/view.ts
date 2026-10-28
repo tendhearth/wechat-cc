@@ -1,0 +1,189 @@
+/**
+ * view 域:主人眼里的进度(阶段 / 等待行 / 任务视图)以及 attention / projects / addProject / list / detail 五个只读入口。
+ * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 7 项);只认 ctx。
+ * 唯一的文字改动:waitingFor 里的 quiet(holder) 写成 isReplied(holder)——quiet 本来就是 isReplied 的别名(service.ts 仍保留给 lifecycle 用)。
+ * 跨域三处:addProject 的 provider(admission)、list 的 quotaExhausted(quota)、detail 的 continuation(admission);
+ * 详情里还带额度交接(quota-handoff 的只读那一半)与工作区脚本状态(scripts)。
+ * 这几样都不依赖 view,构造时显式传进来。
+ */
+import { existsSync } from 'node:fs'
+import { canonicalProject } from '../../../adapters/workbench/artifacts'
+import { readableExecutionEvent } from '../../../adapters/executors/codex/codex-execution-error'
+import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../../../domain/workbench/executor-capabilities'
+import { makeProjectCatalog } from '../../../adapters/workbench/project-catalog'
+import { writerAlive } from './writer-exit'
+import { GIT_REVIEW_MIME } from '../git-review'
+import { isRewindParkNote, rewindView } from '../../../adapters/store/workbench/rewind-store'
+import { findPathBlocker } from '../../../adapters/workbench/scheduler'
+import { TERMINAL_TASK_STATUSES, type Task, type WorkbenchListQuery } from '../../../adapters/store/workbench/store'
+import type { AgentRuntimeSnapshot } from '../../../ports/agent-provider'
+import type { TaskWaitingFor } from '../wechat-types'
+import type { WorkbenchPhase, WorkbenchTaskView } from './types'
+import type { ScriptsView } from './scripts'
+import type { Active } from './state'
+import type { ServiceCtx } from './ctx'
+import type { MatterOrigin } from '../../../ports/matters'
+import type { PendingWorkbenchPermission, PendingUserInput } from '../../../ports/workbench'
+import type { QuotaHandoffView } from './types'
+import type { AdmissionDomain } from './admission'
+import type { QuotaDomain } from './quota'
+
+export interface ViewDomains {
+  admission: Pick<AdmissionDomain,'provider'|'continuation'>
+  quota: Pick<QuotaDomain,'quotaExhausted'>
+  /** 详情里的额度交接(只读那一半,不碰 execute);老测试不传。 */
+  quotaHandoff?: (id:string) => QuotaHandoffView | null
+  /** 详情里的工作区脚本状态;老测试不传。 */
+  scripts?: (id:string) => ScriptsView | null
+}
+
+/** attention 里「第一件待决」原文的上限(字符)。桌面「N 件事等你」一行放得下的量;不在这里截就会把整段命令塞进轮询。 */
+export const ATTENTION_TEXT_MAX = 120
+const oneLine=(s:string):string=>{const t=s.replace(/\s+/g,' ').trim();return t.length>ATTENTION_TEXT_MAX?t.slice(0,ATTENTION_TEXT_MAX-1)+'…':t}
+export interface AttentionFirst { kind:'permission'|'question'; text:string }
+/** 第一件待决(权限优先、最早的那件),写法与手机 approvals 话题同一个:权限「工具: 说明」,提问取第一问。 */
+function firstPending(permissions:readonly PendingWorkbenchPermission[],questions:readonly PendingUserInput[]):AttentionFirst|null {
+  const p=[...permissions].sort((a,b)=>(a.createdAt??0)-(b.createdAt??0))[0]
+  if(p){const text=oneLine([p.tool,p.description].filter(x=>typeof x==='string'&&x.trim()).join(': '));if(text)return{kind:'permission',text}}
+  const q=[...questions].sort((a,b)=>(a.createdAt??0)-(b.createdAt??0))[0]
+  const text=q?oneLine(q.questions?.[0]?.question??''):''
+  return text?{kind:'question',text}:null
+}
+
+export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
+  const { store, state } = ctx
+  const { provider, continuation } = domains.admission
+  const { quotaExhausted } = domains.quota
+  /** 当前占着文件夹的 run。 */
+  const held=()=>[...state.reservations.values()]
+  function waitingFor(running:Active):TaskWaitingFor|null {
+    if (running.state !== 'queued') return null
+    const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
+    const blocked=findPathBlocker(running,[...held(),...state.writerOrphans.values(),...earlier])
+    if (!blocked) return null
+    const holder=state.runsByTask.get(blocked.taskId)
+    // 找不到持有者是不该发生的时序缝隙;宁可继续说「还在写」,也不能凭空报一个假的倒计时。
+    return {...blocked,holderWriting:!holder||!isReplied(holder),closeInMs:holder?.idleClose?Math.max(0,holder.idleClose.at-Date.now()):null}
+  }
+  function runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined {
+    const runtime=running?.session?.workbenchRuntime
+    return runtime?{...runtime.snapshot()}:undefined
+  }
+  function inputMode(running:Active):'steer'|'send'|'queue' {
+    return runtimeSnapshot(running)?.input??(running.session?.steer?'steer':'queue')
+  }
+  /** 本轮做完、会话闲着、没有子任务在写、也没有在等主人拍板 —— 只差主人下一句话。 */
+  function isReplied(running:Active):boolean {
+    if (running.cancelled||running.finishing||running.uncertain) return false
+    const snapshot=runtimeSnapshot(running)
+    return !!snapshot&&snapshot.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0
+      &&running.permissions.pending().length===0&&running.questions.pending().length===0
+  }
+  function phaseOf(task:Task, running:Active|undefined):WorkbenchPhase {
+    switch (task.status) {
+      case 'queued': return 'queued'
+      case 'running': case 'cancelling': return running&&isReplied(running)?'replied':'working'
+      case 'completed': return 'replied'
+      case 'failed': case 'cancelled': case 'interrupted': return task.status
+    }
+  }
+  function taskView(task:Task, includePermissions=false):WorkbenchTaskView {
+    const running=state.runsByTask.get(task.id)
+    const runtime=runtimeSnapshot(running)
+    return {
+      ...task,
+      phase:phaseOf(task,running),
+      ...(runtime?{runtime}:{}),
+      ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
+      canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
+      // 独立工作区(2026-10-07):分支、源项目、目录删了没;桌面按源项目归组、给「提交到分支」。
+      // port(2026-10-20):脚本拿到的 TENDHEARTH_PORT,用到时才分配。
+      ...(()=>{const u=store.usage.totals(task.id);return u.turns?{usage:u}:{}})(),
+      ...(()=>{const g=store.goals.get(task.id);return g?{until:{command:g.command,maxRounds:g.maxRounds,rounds:g.rounds,status:g.status,lastExit:g.lastExit,stopReason:g.stopReason}}:{}})(),
+      ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null,merged:wt.mergedAt!==null,...(wt.port!==null?{port:wt.port}:{})}}:{}})(),
+      // 「没确认退出」:进程组还活着 ⇒ 'alive'(先结束它);没有相反证据 ⇒ 'unconfirmed'(主人可以确认已经结束)。
+      ...(task.error==='writer_not_closed'?{writerExit:writerAlive(ctx,task.id)?'alive' as const:'unconfirmed' as const}:{}),
+      waitingFor:running ? waitingFor(running) : null,
+      // 网络守护冻住了这条 run(2026-10-03):桌面 / 手机显示「已暂停(网络未受保护)」。
+      ...(running?.networkSuspended ? { networkSuspended:{since:running.networkSuspended.since} } : {}),
+      ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0,pendingQuestionCount:running?.questions.pending().length ?? 0 } : {}),
+    }
+  }
+  function attention(){
+    const tasks=Array.from(state.runsByTask.values()).flatMap(run=>{
+      const permissions=run.permissions.pending(),questions=run.questions.pending()
+      if(!permissions.length&&!questions.length)return[]
+      return[{id:run.taskId,title:run.title,providerId:run.task.providerId,pendingPermissionCount:permissions.length,pendingQuestionCount:questions.length,first:firstPending(permissions,questions),attentionKey:JSON.stringify([...permissions,...questions].map(q=>q.id).sort())}]
+    })
+    // 回复 / 停下的系统通知(2026-10-06):桌面拿前后两次的 phase 比,「在做 → 回复了 / 停下了」才弹。
+    // 只给 id 与 phase —— 标题、内容不跟着进系统通知(同上面的待处理那条规矩)。在跑的 + 十分钟内动过的、没归档的。
+    const recent=Date.now()-10*60_000
+    const progress=store.list().filter(task=>task.archivedAt===null&&(state.runsByTask.has(task.id)||task.updatedAt>=recent))
+      .map(task=>({id:task.id,phase:phaseOf(task,state.runsByTask.get(task.id))}))
+    return{tasks,progress}
+  }
+  function projects(){
+    const ownerChatId=ctx.deps.ownerChatId();if(!ownerChatId)return[]
+    const providers=ctx.deps.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(ctx.deps.registry.get(id)?.opts.workbench))
+    // 主人在桌面「添加项目」加的那些也算(2026-10-07):以前只有配置里登记的 + 有过任务的才进交办选项,
+    // 新加的项目在第一件事之前选不到 —— 「在独立工作区里做」只对项目有效,于是也开不了。
+    const added=store.projects().map(project=>({path:project.path,providerId:project.providerId}))
+    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:[...store.ownedProjects(ownerChatId,providers),...added],providers,defaultProvider:ctx.deps.defaultProvider})
+  }
+  function addProject(input:{path:string;name?:string;providerId:string}) {
+    if(typeof input.path!=='string'||input.path.length>4096||typeof input.providerId!=='string'||(input.name!==undefined&&(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)))throw Error('invalid_request')
+    provider(input.providerId)
+    return store.addProject({...input,path:canonicalProject(input.path)})
+  }
+  /** 每件事有哪些执行者参与过(matter.agents 同一个出处;一次查一页)。没接 matters / 查不出来 ⇒ 不带,桌面退回任务自己那一家。 */
+  // 出生地(2026-10-19)同一个出处:matters.origin_surface;不知道的不带,桌面就不画来源字形。
+  type Marks={agents:Map<string,string[]>;origins:Map<string,MatterOrigin>}
+  function agentsOf(ids:string[]):Marks {
+    let agents=new Map<string,string[]>(),origins=new Map<string,MatterOrigin>()
+    try{agents=ctx.deps.matters?.agents(ids)??agents}catch{/* 见上 */}
+    try{origins=ctx.deps.matters?.origins(ids)??origins}catch{/* 见上 */}
+    return {agents,origins}
+  }
+  const handoffIds=(h:QuotaHandoffView|null):string[]=>h?[h.from,...('to' in h?[h.to]:[])]:[]
+  /** 执行者 id → 正式名字(收敛清单 ⑥):唯一出处 registry.namesOf;桌面只读这张,不存自己的名字表。 */
+  const agentNamesOf=(ids:Iterable<string|null|undefined>):Record<string,string>=>{const out:Record<string,string>={};for(const id of ids)if(id&&!(id in out))out[id]=ctx.deps.registry.namesOf(id).name;return out}
+  const withAgents=(view:WorkbenchTaskView,marks:Marks):WorkbenchTaskView=>{const a=marks.agents.get(view.id),origin=marks.origins.get(view.id);return a?.length||origin?{...view,...(a?.length?{agents:a}:{}),...(origin?{origin}:{})}:view}
+  function list(query:WorkbenchListQuery={}) {
+    const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,capabilities:structuredClone(p.opts.workbench),quota:quotaExhausted(id),usage:ctx.deps.usage?.(id)??null,refusal:ctx.deps.refusal?.(id)??null}]:[]})
+    const result=store.listPage(query)
+    // 文件夹已经不在、名下也没有没归档的任务 ⇒ 不再列出(2026-10-05):这种项目点进去什么也做不了,
+    // 自检 / 临时目录留下的空壳会把「其他项目」撑到几十个。行不删,文件夹回来了就又出现。
+    const active=store.activeTaskPaths()
+    const projects=store.projects().filter(project=>active.has(project.path)||existsSync(project.path))
+    const projectProviders=Object.fromEntries(projects.map(project=>[project.path,store.projectProvider(project.path)??project.providerId]))
+    const agents=agentsOf(result.tasks.map(task=>task.id)),historyProviders=Object.keys(ctx.deps.nativeHistory??{})
+    const agentNames=agentNamesOf([...providers.map(p=>p.id),...historyProviders,...result.tasks.flatMap(task=>[task.providerId,...(agents.agents.get(task.id)??[])])])
+    return {projects,tasks:result.tasks.map(task => withAgents(taskView(task,true),agents)),page:result.page,projectProviders,providers,historyProviders,agentNames,defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
+  }
+  function rewindOf(id:string){
+    const times=store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>a.createdAt)
+    return rewindView(store.rewinds,id,times,at=>store.events(id).filter(e=>e.kind==='system'&&e.createdAt>=at&&isRewindParkNote(e.text)).at(-1)?.text??null)
+  }
+  function detail(id:string,options:{since?:number}={}) {
+    const detail=store.detail(id,options),running=state.runsByTask.get(id)
+    const runtime=runtimeSnapshot(running)
+    const subscription=store.wechatNotifications.subscription(id)
+    const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
+    // 工作区脚本(2026-10-20)只进详情:读 tendhearth.json 要跑 git,列表不背这个;原文给桌面的确认框。
+    const view=taskView(detail.task,true),scripts=view.worktree?domains.scripts?.(id)??null:null
+    const detailMarks=agentsOf([id]),quotaHandoff=domains.quotaHandoff?.(id)??null
+    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,detailMarks),agentNames:agentNamesOf([view.providerId,...(detailMarks.agents.get(id)??[]),...handoffIds(quotaHandoff)]),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+      // The timeline stays live through cancellation and process cleanup;
+      // accepting supplemental input is a separate, narrower capability.
+      ...(running?{runId:running.identity}:{}),
+      ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:inputMode(running)}:{}),
+      // 回到某一轮(切片 3):只给独立工作区;能撤销的那一次 / 停住等拍板的那一行,都没有就不带。
+      ...(()=>{if(!view.worktree)return{};const r=rewindOf(id);return r?{rewind:r}:{}})(),
+      permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
+    ctx.hub.touched(id,detail.version)
+    return result
+  }
+
+  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,taskView,attention,projects,addProject,list,detail }
+}
+export type ViewDomain = ReturnType<typeof makeViewDomain>

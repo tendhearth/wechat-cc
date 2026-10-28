@@ -1,26 +1,10 @@
 import {readFile} from 'node:fs/promises'
 import {join} from 'node:path'
+import WORKBENCH_ROUTES from './src-tauri/generated/workbench-routes.json'
 
-const ROUTES = new Set([
-  'GET /v1/workbench/entry-options','POST /v1/workbench/create-entry','GET /v1/workbench/entry-receipt',
-  'POST /v1/workbench/attachment','GET /v1/workbench/attachment','POST /v1/workbench/discard-attachment',
-  'GET /v1/workbench/models','GET /v1/workbench','GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task','GET /v1/workbench/artifact',
-  'POST /v1/workbench/project','POST /v1/workbench/create','POST /v1/workbench/continue','POST /v1/workbench/cancel','POST /v1/workbench/approve','POST /v1/workbench/permission','POST /v1/workbench/archive','POST /v1/workbench/writer-exited','POST /v1/workbench/unattended-ack',
-  'GET /v1/workbench/review','POST /v1/workbench/review-mark','POST /v1/workbench/review-return','POST /v1/workbench/review-revert','POST /v1/workbench/worktree',
-  'POST /v1/workbench/import',
-  'POST /v1/workbench/prepare-resume','POST /v1/workbench/prepare-continuation',
-  'POST /v1/workbench/quota-handoff',
-      'POST /v1/workbench/handoff-preview',
-  'POST /v1/workbench/handoff',
-  'GET /v1/workbench/handoff',
-  'GET /v1/workbench/attention','POST /v1/workbench/input','POST /v1/workbench/answer','POST /v1/workbench/withdraw-input',
-  'GET /v1/connections',
-  'POST /v1/phone/link','GET /v1/phone/devices',
-  // 终端会话(2026-10-14):此刻「N 件事等你」里的终端行,只读。
-  'GET /v1/cli/sessions',
-  // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):「CC 现在怎么样」与引导页的按钮,主人点了确认才调。
-  'POST /v1/cli/hooks/install','POST /v1/cli/hooks/uninstall',
-])
+// 放行名单是生成物(重构第二批 5a):路由表 packages/protocol/src/routes.ts 里 `desktop.devProxy` 的行,
+// `bun run gen:routes` 写进这份 JSON;lib.rs 读同一份文件的 `tauri` 名单。别在这里手加。
+const ROUTES:ReadonlySet<string> = new Set(WORKBENCH_ROUTES.devProxy)
 interface Options {
   stateDir:string; dryRun:boolean; allowWrites:boolean
   fetch?:(url:string,init?:RequestInit)=>Promise<Response>
@@ -46,9 +30,12 @@ async function boundedBody(req:Request,maxBytes:number):Promise<string> {
 export function createWorkbenchProxy(opts:Options) {
   return async (req:Request):Promise<Response|null> => {
     const url=new URL(req.url)
-    // /v1/connections(此刻的连接浮层)、/v1/phone/*(连接手机)、/v1/cli/sessions(此刻里的终端会话)也走这里;mock 模式下交给 test-shim 的演示路由
+    // /v1/connections(此刻的连接浮层)、/v1/phone/*(连接手机)、/v1/cli/sessions(此刻里的终端会话)也走这里;mock 模式下交给 test-shim 的演示路由。
+    // 架构终态 F6 起,桌面不再起 CLI 读的那些主人私事(记忆页、对话页、会话名单 ……)也是:名单里有、又不是工作台的,一律按这一类。
+    const isWorkbench=url.pathname==='/v1/workbench'||url.pathname.startsWith('/v1/workbench/')
     const ownerSurface=url.pathname==='/v1/connections'||url.pathname.startsWith('/v1/phone/')||url.pathname==='/v1/cli/sessions'||url.pathname.startsWith('/v1/cli/hooks/')
-    if(!ownerSurface&&url.pathname!=='/v1/workbench'&&!url.pathname.startsWith('/v1/workbench/'))return null
+      ||(!isWorkbench&&ROUTES.has(`${req.method} ${url.pathname}`))
+    if(!ownerSurface&&!isWorkbench)return null
     if(ownerSurface&&opts.dryRun)return null
     if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return Response.json({error:'forbidden'},{status:403})
     const origin=req.headers.get('origin'), site=req.headers.get('sec-fetch-site')

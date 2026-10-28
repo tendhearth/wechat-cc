@@ -1,3 +1,4 @@
+// @repo-guard 这份测试里有扫整个仓库的守卫:bun run verify 不管改了什么都跑它(import 图看不见它守的文件)。
 import { expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -16,9 +17,9 @@ import { fileURLToPath } from 'node:url'
 //
 // which is worse than useless as a diagnostic: it reads like harness noise,
 // and its advice ("run bun test") is wrong for this repo. During the
-// Knowledge Kernel work six suites — src/core/knowledge/{graph,facts,person}
-// .test.ts, src/core/peer-closeness.test.ts, src/daemon/social/
-// owner-grounding.test.ts, src/daemon/companion/knowledge-distill.test.ts —
+// Knowledge Kernel work six suites — src/domain/knowledge/{graph,facts,person}
+// .test.ts, a peer-closeness test (since removed), src/daemon/social/
+// owner-grounding.test.ts, src/features/companion/knowledge-distill.test.ts —
 // sat in exactly that state for a whole feature's lifetime, 52 assertions
 // that had never run once, while required CI stayed red and the message was
 // read as infrastructure trouble. Caught by the v1.3.8 pre-tag gate

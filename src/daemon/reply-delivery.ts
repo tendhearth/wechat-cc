@@ -11,20 +11,22 @@
  *   7. 传输层 4000 字切块(ilink sendReply 自己做;超长代码块已在第 5 步按行切开补围栏)
  *   8. 附件:文字之后、按调用顺序;只有语音(或文字与语音一样)⇒ 只发语音;语音失败 ⇒ 改发文字
  *   9. 记账:DeliveryReport 写进 TurnRecord
+ *  10. 放行规则的提醒(2026-10-25):主人自己的对话里规则替主人放了一次 ⇒ 这一轮最后单独一条「按规则「…」放行了 …」,
+ *      同一条规则一轮一行(core/permission-rules/chat.ts 登记,这里交付);不加发言人前缀,不算进 bubbles(不改交付分类)。
  *
  * 失败处理不改现有规矩:每条只依赖 ilink 自带的重试;第一条失败就停、剩下的不发;**绝不因为送达失败
  * 再调一次模型**(断线时停掉外发与 LLM 轮次)。
  *
- * 迁移期还有一个 shadow 模式:legacy 照旧走 reply 工具,这里只把「如果按新路会发什么」与 legacy 实际
- * 发出去的比一比,记 [REPLY_SHADOW](§5.1 第 3 项)。
+ * 迁移期的 shadow 模式(把旧路实际发出的与新路比一比,记 [REPLY_SHADOW])随旧路一起删了(架构终态 D3)。
  */
 import { splitBubbles } from './reply-bubbles'
 import { paceMs } from './reply-split'
+import { ruleAllowLine, type RuleAllowNotice } from '../adapters/permission-rules/chat'
 import {
   buildTurnReply,
   type DeliveryKind, type DeliveryReport, type ReplyContext, type ReplyDeliveryPort,
   type TurnAttachment, type TurnDeliveryHandle, type TurnReply, type TurnTextParts,
-} from '../core/turn-reply'
+} from '../domain/turn-reply'
 
 /** 登记在这一轮上的附件:描述 + 真正发出去的动作(由 attach 路由在登记时绑好)。 */
 export interface PendingAttachment {
@@ -40,6 +42,10 @@ export interface DeliverDeps {
   sink?: { captureReply(chatId: string, reply: TurnReply): boolean }
   /** 旁听(打猎记账)。 */
   observe?(chatId: string, text: string): void
+  /** 为真 ⇒ 附件不发(这一轮落在只收文字的出口上,如伙伴落到 App);语音改发同样的字。 */
+  textOnly?(): boolean
+  /** textOnly 时附件先交给它(出口自己收得下:伙伴落到 App 的那一轮,第 2 步);收下 ⇒ true。 */
+  sendAttachment?(chatId: string, a: TurnAttachment): Promise<boolean>
   chatPrefs?(chatId: string): { split?: boolean } | undefined
   log(tag: string, line: string, fields?: Record<string, unknown>): void
 }
@@ -52,6 +58,8 @@ export interface DeliverInput {
   participantLabel?: string
   /** 本轮 `message` 工具发给主人聊天的文字(§4.6 去重)。 */
   messagedOwner?: readonly string[]
+  /** 第 10 步:这一轮规则替主人放行的提醒行(已去重)。 */
+  notices?: readonly string[]
 }
 
 const defaultSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -72,8 +80,12 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
   const { chatId, reply, attachments, context } = input
   const sleep = deps.sleep ?? defaultSleep
 
-  // 2. app 接收器:整个对象交过去,一个字都不进微信(包括语音 / 表情 —— 修 §1.2 ④)。
-  if (deps.sink?.captureReply(chatId, reply)) {
+  const noticeText = (input.notices ?? []).join('\n')
+  // 2. app 接收器:整个对象交过去,一个字都不进微信(包括语音 / 表情 —— 修 §1.2 ④)。第 10 步的提醒接在文字末尾一起交过去。
+  const forSink: TurnReply = noticeText
+    ? { ...reply, silent: false, text: reply.silent || !reply.text.trim() ? noticeText : `${reply.text}\n\n${noticeText}`, ...(reply.segments ? { segments: [...(reply.silent ? [] : reply.segments), noticeText] } : {}) }
+    : reply
+  if (deps.sink?.captureReply(chatId, forSink)) {
     const hasText = reply.text.trim() !== ''
     return {
       delivery: hasText ? 'text' : reply.attachments.length > 0 ? 'attachments_only' : reply.silent ? 'silent' : 'empty',
@@ -134,6 +146,20 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
 
   // 8. 附件:按调用顺序;语音失败 ⇒ daemon 自己改发文字。
   for (const a of attachments) {
+    if (deps.textOnly?.()) {
+      // 出口收得下附件(伙伴落到 App,第 2 步:App 对话页画得出表情 / 图 / 语音)⇒ 记进去,不碰微信。
+      if (deps.sendAttachment) {
+        let took = false
+        try { took = await deps.sendAttachment(chatId, a.attachment) } catch (err) {
+          deps.log('REPLY_ATTACHMENT_SKIPPED', `chat=${chatId} kind=${a.attachment.kind} outbound threw: ${err instanceof Error ? err.message : String(err)}`)
+        }
+        if (took) { attachmentsSent++; continue }
+      }
+      // 收不下(或只收文字的出口):语音改发同样的字,别的附件不发也不去碰微信。
+      if (a.attachment.kind === 'voice' && (await sendOne(a.attachment.text))) bubbles++
+      else deps.log('REPLY_ATTACHMENT_SKIPPED', `chat=${chatId} kind=${a.attachment.kind} — text-only outbound`)
+      continue
+    }
     let r: { ok: boolean; error?: string }
     try { r = await a.send() } catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
     if (r.ok) { attachmentsSent++; continue }
@@ -145,6 +171,18 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
     }
     failures.push(r.error ?? `${a.attachment.kind}_failed`)
     deps.log('REPLY_ATTACHMENT_FAIL', `chat=${chatId} kind=${a.attachment.kind} err=${r.error ?? 'unknown'}`)
+  }
+
+  // 10. 放行规则的提醒:最后单独一条(不跟模型的话混在一起分条,也不加 [名字] 前缀)。不算 bubbles —— 交付分类只看模型的话。
+  if (noticeText) {
+    try {
+      const r = await deps.sendText(chatId, noticeText)
+      deps.log('REPLY_RULE_NOTICE', `chat=${chatId} lines=${input.notices!.length}${r.error ? ` err=${r.error}` : ''}`)
+      if (r.error) failures.push(r.error); else msgIds.push(r.msgId)
+    } catch (err) {
+      failures.push(err instanceof Error ? err.message : String(err))
+      deps.log('REPLY_RULE_NOTICE', `chat=${chatId} threw: ${failures[failures.length - 1]}`)
+    }
   }
 
   return {
@@ -168,12 +206,16 @@ export interface ReplyDeliveryRuntime extends ReplyDeliveryPort {
   hasOpenTurn(chatId: string): boolean
   /** message 路由:记一笔,交付时去重(只认发给主人聊天的)。 */
   noteMessage(chatId: string, m: { toOwner: boolean; text: string }): void
-  /** legacy 出口旁听(reply 路由 / fallback):shadow 轮开着才记。 */
-  observeLegacy(chatId: string, text: string): void
   /**
-   * 这家 provider 此刻正在 daemon 模式下跑的那一轮是哪个聊天。给**没有自己的 chat 的共享令牌**用
+   * 放行规则替主人放了一次(主人自己的对话,core/permission-rules/chat.ts):登记到这个 chat 正在进行的那一轮,交付时最后
+   * 单独一条;同一条规则(key)一轮一行,多次只记次数。成功 ⇒ 撤销函数(留痕写不进时调用方撤回这一笔);
+   * 没有开着的轮 ⇒ null(调用方就不放,落回问)。
+   */
+  noteRuleAllow(chatId: string, notice: RuleAllowNotice): (() => void) | null
+  /**
+   * 这家 provider 此刻正在跑的那一轮是哪个聊天。给**没有自己的 chat 的共享令牌**用
    * (agy 的 `agy-static`:一份全局 MCP 配置,所有 agy 对话共用一枚 trusted 令牌 —— 令牌里读不出 chat)。
-   * 恰好一个聊天有这家的 daemon 轮开着 ⇒ 就是它;没有 ⇒ none;不止一个 ⇒ ambiguous(说不清是哪一轮,
+   * 恰好一个聊天有这家的轮开着 ⇒ 就是它;没有 ⇒ none;不止一个 ⇒ ambiguous(说不清是哪一轮,
    * 调用方必须拒绝,绝不猜)。
    */
   turnChatFor(providerId: string): TurnChatBinding
@@ -184,11 +226,17 @@ export type TurnChatBinding =
   | { kind: 'none' }
   | { kind: 'ambiguous'; count: number }
 
-interface OpenTurn { attachments: PendingAttachment[]; messagedOwner: string[]; legacy: string[]; refs: number }
+interface OpenTurn { attachments: PendingAttachment[]; messagedOwner: string[]; ruleNotices: Map<string, { notice: RuleAllowNotice; count: number }>; refs: number }
+
+const takeNotices = (t: OpenTurn): string[] => {
+  const lines = [...t.ruleNotices.values()].map(n => ruleAllowLine(n.notice, n.count))
+  t.ruleNotices.clear()
+  return lines
+}
 
 export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyDeliveryRuntime {
   const open = new Map<string, OpenTurn>()
-  // providerId → (chatId → 开着的 daemon 轮数)。只记 daemon 模式:附件工具只在 daemon 模式下注册。
+  // providerId → (chatId → 开着的轮数)。给没有自己 chat 的共享令牌(agy-static)认本轮用。
   const daemonTurns = new Map<string, Map<string, number>>()
   const trackDaemon = (providerId: string, chatId: string, delta: 1 | -1): void => {
     const byChat = daemonTurns.get(providerId) ?? new Map<string, number>()
@@ -199,7 +247,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
 
   const acquire = (chatId: string): OpenTurn => {
     let t = open.get(chatId)
-    if (!t) { t = { attachments: [], messagedOwner: [], legacy: [], refs: 0 }; open.set(chatId, t) }
+    if (!t) { t = { attachments: [], messagedOwner: [], ruleNotices: new Map(), refs: 0 }; open.set(chatId, t) }
     t.refs++
     return t
   }
@@ -213,42 +261,21 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     let done = false
     const finish = () => { if (!done) { done = true; release(chatId, turn) } }
 
-    if (opts.mode === 'shadow') {
-      return {
-        mode: 'shadow',
-        async progress() { /* shadow 不发任何东西 */ },
-        async deliver(parts: TurnTextParts): Promise<DeliveryReport> {
-          const legacy = [...turn.legacy]
-          finish()
-          const { reply } = buildTurnReply(parts, [], opts.context, opts.textStrategy)
-          const split = deps.chatPrefs?.(chatId)?.split !== false
-          const wouldSend = reply.silent ? [] : (reply.segments ?? [reply.text]).flatMap(seg => splitBubbles(seg, { split }))
-          const legacyJoined = legacy.join('\n')
-          const match = legacy.length === 0 && wouldSend.length === 0 ? 'both_empty'
-            : legacy.length === 0 ? 'legacy_empty'
-            : wouldSend.length === 0 ? 'shadow_empty'
-            : norm(legacyJoined) === norm(reply.text) ? 'same'
-            : sameOrContains(legacyJoined, reply.text) ? 'contains'
-            : 'differs'
-          deps.log('REPLY_SHADOW', `chat=${chatId} provider=${opts.providerId} context=${opts.context} legacy_n=${legacy.length} legacy_len=${legacyJoined.length} shadow_bubbles=${wouldSend.length} shadow_len=${reply.text.length} narration=${reply.narration.length} silent=${reply.silent} match=${match}`, {
-            event: 'reply_shadow', chat_id: chatId, provider: opts.providerId, context: opts.context,
-            legacy_n: legacy.length, shadow_bubbles: wouldSend.length, narration: reply.narration.length, silent: reply.silent, match,
-          })
-          return { delivery: classify({ bubbles: wouldSend.length }, 0, reply.silent), target: 'wechat', bubbles: wouldSend.length, attachmentsSent: 0, failures: [], msgIds: [], shadow: true }
-        },
-        abandon() { finish() },
-      }
-    }
-
     trackDaemon(opts.providerId, chatId, 1)
+    // 这一轮另有出口(伙伴主动找你)⇒ 文字、进度都走它;其余(接收器、旁听、分条)照旧。
+    const out: DeliverDeps = opts.outbound
+      ? {
+          ...deps, sendText: (c, t) => opts.outbound!.sendText(c, t), textOnly: () => opts.outbound!.textOnly?.() ?? false,
+          ...(opts.outbound.sendAttachment ? { sendAttachment: (c: string, a: TurnAttachment) => opts.outbound!.sendAttachment!(c, a) } : {}),
+        }
+      : deps
     const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {
-      mode: 'daemon',
       async progress(text: string) {
         if (done || text.trim() === '') return
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
         try {
-          const r = await deps.sendText(chatId, text)
+          const r = await out.sendText(chatId, text)
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId}${r.error ? ` err=${r.error}` : ''}`)
         } catch (err) {
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId} threw: ${err instanceof Error ? err.message : String(err)}`)
@@ -258,6 +285,8 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         // /both、/chat 里几位共用这一轮:谁先交付谁带走眼下登记的附件,别人不再重发(2026-10-10,原先每位都照单全发)。
         const pending = turn.attachments.splice(0)
         const messagedOwner = [...turn.messagedOwner]
+        // 提醒也一样:/both 里谁先交付谁带走,别人不再重复。
+        const notices = takeNotices(turn)
         finishDaemon()
         const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context, opts.textStrategy)
         if (built.mixed) deps.log('NO_REPLY_MIXED', `chat=${chatId} provider=${opts.providerId} 令牌行已剥掉,其余照发`)
@@ -270,14 +299,21 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
           chatId, reply: built.reply, attachments: pending, context: opts.context,
           ...(opts.participantLabel ? { participantLabel: opts.participantLabel } : {}),
           messagedOwner,
-        }, deps)
+          ...(notices.length ? { notices } : {}),
+        }, out)
         deps.log('REPLY', `chat=${chatId} provider=${opts.providerId} context=${opts.context} target=${report.target} delivery=${report.delivery} bubbles=${report.bubbles} attachments=${report.attachmentsSent}/${pending.length} narration=${built.reply.narration.length}${report.failures.length ? ` failures=${report.failures.length}` : ''}`)
         return report
       },
       abandon(reason: string) {
         if (done) return
         if (turn.attachments.length > 0) deps.log('REPLY_ABANDONED', `chat=${chatId} provider=${opts.providerId} reason=${reason} dropped_attachments=${turn.attachments.length}`)
+        // 这一轮没有话可交付,但规则替主人放过的那几步已经做了 ⇒ 提醒照样送到(主人得看得见)。
+        const notices = takeNotices(turn)
         finishDaemon()
+        if (notices.length) {
+          void deliverTurnReply({ chatId, reply: { text: '', silent: false, attachments: [], narration: [] }, attachments: [], context: opts.context, notices }, out)
+            .catch(err => deps.log('REPLY_RULE_NOTICE', `chat=${chatId} abandoned-turn notice failed: ${err instanceof Error ? err.message : String(err)}`))
+        }
       },
     }
   }
@@ -294,8 +330,20 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     noteMessage(chatId, m) {
       if (m.toOwner) open.get(chatId)?.messagedOwner.push(m.text)
     },
-    observeLegacy(chatId, text) {
-      open.get(chatId)?.legacy.push(text)
+    noteRuleAllow(chatId, notice) {
+      const t = open.get(chatId)
+      if (!t) return null
+      const cur = t.ruleNotices.get(notice.key)
+      if (cur) cur.count++
+      else t.ruleNotices.set(notice.key, { notice, count: 1 })
+      let undone = false
+      return () => {
+        if (undone) return
+        undone = true
+        const n = t.ruleNotices.get(notice.key)
+        if (!n) return
+        if (--n.count <= 0) t.ruleNotices.delete(notice.key)
+      }
     },
     turnChatFor(providerId) {
       const byChat = daemonTurns.get(providerId)

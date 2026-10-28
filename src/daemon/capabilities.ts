@@ -32,7 +32,8 @@ export interface Capability {
 export interface CapabilityInputs {
   /** ownerWindowClosedSince:主人那一路的主动推送窗口关着(errcode=-2)的起始时间。 */
   wechat: { outbound: 'unknown' | 'ok' | 'degraded'; expired: number; lastError?: string | null; ownerWindowClosedSince?: string | null }
-  brain: { provider: string; name: string; registered: boolean; retrying: boolean; lastError?: string | null }
+  /** refused:真回合里被这一家拒着(provider-refusals.ts;目前只有地区不可用)。注册上了也可能被拒 —— 开机探测只跑 --version。 */
+  brain: { provider: string; name: string; registered: boolean; retrying: boolean; lastError?: string | null; refused?: { code: string; since: string } | null }
   /** null = 没开网络守护(不出现)。 */
   guard: { safe: boolean; paused: boolean; detail?: string | null } | null
   /** null = 不是 macOS / 判断不了(不出现)。 */
@@ -43,7 +44,9 @@ export interface CapabilityInputs {
   memory: { failures: number; firstRunDone: boolean } | null
   /** 后台判断(便宜模型)连续真失败的次数;null = 读不到(不出现)。 */
   background?: { failures: number; lastError: string | null } | null
-  phone: { relay: boolean; devices: number }
+  /** legacyRelay:配置里还是老中继那一套(remote_tunnel / remote_relay_url,没有 relay_v2_url)——随 v1 在 2026-10-25 退休,
+   *  daemon 不再开远程,只记一行日志;这里让主人在「CC 的连接」里看得见。 */
+  phone: { relay: boolean; devices: number; legacyRelay?: boolean }
   /**
    * 终端里的 Claude Code / Codex(2026-10-14):只有接了 hooks,终端会话才到得了 CC。
    * sources 只列这台机上有的那几家(CLI 找得到或已装过 hook);空 / null ⇒ 不出现。
@@ -53,9 +56,9 @@ export interface CapabilityInputs {
   subsystems: Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
 }
 
-const SUBSYSTEM_NAMES: Record<string, string> = {
-  knowledge: '知识库', 'cli-upgrade': '外部 CLI 自动升级', 'a2a-server': 'CC 之间的往来', 'customer-review': '客户回顾', guard: '网络守护',
-  'mailbox-poller': '笔友信箱', 'memory-nightly': '记忆整理', pairing: '手机配对', reminders: '提醒', reports: '任务回报', 'self-restart': '空闲自动重启', social: '社交', yi: '一件事',
+export const SUBSYSTEM_NAMES: Record<string, string> = {
+  knowledge: '知识库', 'cli-upgrade': '外部 CLI 自动升级', 'a2a-server': 'CC 之间的往来', guard: '网络守护',
+  'mailbox-poller': '笔友信箱', 'memory-nightly': '记忆整理', pairing: 'CC 之间配对', reminders: '提醒', reports: '任务回报', 'self-restart': '空闲自动重启', social: '社交', yi: '另一台电脑当手',
 }
 
 /** 一两次失败多半是一时的(模型偶尔吐坏格式);连着 3 次才说。 */
@@ -71,7 +74,8 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
   else out.push({ id: 'wechat', name: '微信', state: 'ok', code: i.wechat.outbound === 'ok' ? 'wechat.ok' : 'wechat.idle', reason: i.wechat.outbound === 'ok' ? '收发正常。' : '已连上，还没发过消息。' })
 
   // 大脑:当前选的后端注册上没有。
-  if (i.brain.registered) out.push({ id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', params: { name: i.brain.name }, reason: `在用 ${i.brain.name}。` })
+  if (i.brain.registered && i.brain.refused?.code === 'region_unavailable') out.push({ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.region_unavailable', params: { name: i.brain.name }, reason: `${i.brain.name} 说你现在的网络出口所在地区用不了它(不是登录问题)。`, action: { label: '换一个出口地区,或在设置里换一个大脑', where: 'settings' }, detail: `从 ${i.brain.refused.since} 起;之后有一轮真的答上来了就恢复` })
+  else if (i.brain.registered) out.push({ id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', params: { name: i.brain.name }, reason: `在用 ${i.brain.name}。` })
   else if (i.brain.retrying) out.push({ id: 'brain', name: '大脑', state: 'fallback', code: 'brain.retrying', params: { name: i.brain.name }, reason: `${i.brain.name} 开机时没连上，正在重试。`, ...(i.brain.lastError ? { detail: i.brain.lastError } : {}) })
   else out.push({ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.unavailable', params: { name: i.brain.name }, reason: `选的大脑 ${i.brain.name} 用不了。`, action: { label: '在设置里换一个大脑', where: 'settings' } })
 
@@ -104,7 +108,8 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
 
   if (i.terminal && i.terminal.sources.length > 0) out.push(terminalCapability(i.terminal))
 
-  if (!i.phone.relay) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.relay_off', reason: '没开手机连接。' })
+  if (!i.phone.relay && i.phone.legacyRelay) out.push({ id: 'phone', name: '手机', state: 'needs_you', code: 'phone.relay_retired', reason: '手机连接要换新中继，在「连接手机」里重新配对。', action: { label: '在电脑上连接手机', where: 'desktop' }, detail: 'agent-config.json 里只有老中继(remote_tunnel / remote_relay_url),没有 relay_v2_url;老中继随协议 v1 在 2026-10-25 退休' })
+  else if (!i.phone.relay) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.relay_off', reason: '没开手机连接。' })
   else if (i.phone.devices === 0) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.no_device', reason: '还没连接手机。', action: { label: '在电脑上连接手机', where: 'desktop' } })
   else out.push({ id: 'phone', name: '手机', state: 'ok', code: 'phone.ok', params: { n: i.phone.devices }, reason: `已连接 ${i.phone.devices} 台。` })
 

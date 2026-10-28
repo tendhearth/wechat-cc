@@ -4,14 +4,17 @@
  */
 import type { NetworkGate } from '../../lib/network-gate'
 import { decideCall } from '../../lib/network-gate'
-import { providerCallTarget, type ProviderRegistry } from '../../core/provider-registry'
-import type { UserTier } from '../../core/user-tier'
+import { providerCallTarget, type ProviderRegistry } from '../../app/provider-registry'
+import type { UserTier } from '../../domain/user-tier'
 import { runSelftestConverse } from '../selftest'
 import { defaultSelftestDeps, runWorkbenchSelftest } from '../../cli/selftest'
 import { verifyCliProvider } from './verify'
 import { wireCliUpgrade } from './wire'
-import type { CliUpgrader } from '../../core/cli-upgrade/engine'
+import type { CliUpgrader } from './engine'
 import type { Lifecycle } from '../../lib/lifecycle'
+
+/** `cli-upgrade` 模块的值:升级器在 start 段才造好,之前是 null(bootstrap / 工作台的回合报错经 lazy 现取它)。 */
+export interface CliUpgradeModule { upgrader(): CliUpgrader | null }
 
 export interface StartCliUpgradeDeps {
   stateDir: string

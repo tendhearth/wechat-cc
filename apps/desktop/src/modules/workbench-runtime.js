@@ -1,6 +1,6 @@
 // @ts-check
 
-/** @typedef {import('../../../../src/core/agent-provider').AgentRuntimeSnapshot} RuntimeSnapshot */
+/** @typedef {import('../../../../src/ports/agent-provider').AgentRuntimeSnapshot} RuntimeSnapshot */
 
 /** 网络守护冻住了这条 run(主人 2026-10-03):桌面 / 手机 / 微信同一句。 */
 export const NETWORK_SUSPENDED_LABEL = '已暂停(网络未受保护)'

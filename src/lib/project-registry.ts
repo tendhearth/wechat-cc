@@ -5,9 +5,10 @@
  * (tmp + rename). Tested via fixture files — callers pass the registry
  * path so tests can use tmpdir.
  */
-import { existsSync, renameSync, statSync, writeFileSync } from 'fs'
+import { existsSync, statSync } from 'fs'
 import { isAbsolute } from 'path'
 import { readJsonFile } from './read-json-file'
+import { writeJsonAtomic } from './json-file'
 
 export const ALIAS_REGEX = /^[a-z0-9][a-z0-9_-]{1,19}$/
 
@@ -39,9 +40,7 @@ function loadRegistry(file: string): ProjectRegistry {
 }
 
 function saveRegistry(file: string, reg: ProjectRegistry): void {
-  const tmp = `${file}.tmp`
-  writeFileSync(tmp, JSON.stringify(reg, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, file)
+  writeJsonAtomic(file, reg, { mode: 0o600 })
 }
 
 export function addProject(file: string, alias: string, path: string): void {

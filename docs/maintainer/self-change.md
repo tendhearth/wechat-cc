@@ -31,6 +31,40 @@ wechat-cc self change --abandon 3f2a91bc                            # 这条不�
 | `--no-deploy` | 合完 `dev` 就收工:不构 sidecar、不换 inode、不自检 |
 | `--json` | 打整份 state(不是人读摘要) |
 
+**调模型前先看网络守护**(2026-10-23):实现、修复轮、评审每一次起执行者之前,先读 daemon 的 `/v1/health.guard`。守护开着且不安全(bx 没开 / 暂停中)或者读不到 ⇒ 这一轮不起进程,步骤以 `network_unprotected` 失败,话里带守护的原话;等网络受保护了 `--resume`。主人自己关了守护 ⇒ 照常。以前自改从不看它 —— 守护在 daemon 里,自改的 `claude -p` 是 CLI 直接起的,绕了过去。
+
+## 找活:`wechat-cc self discover`(2026-10-23)
+
+CC 自己迭代时找活用的(设计稿 2026-10-23-cc-runs-development §4.8 的四个来源,做了前三个,外加自改自己的教训)。只读,不联网、不调模型;判断值不值得修、怎么修是规划者的事。`--source log|roadmap|ratchets|lessons|all`(缺省 all)、`--json`(`{ log, roadmap, ratchets, lessons }`)。
+
+- **真机信号**(`log`):读最近 48 小时日志,把**反复出现的失败**按「标签 + 去掉 id / 数字以后那句话」分组,次数多的排前面,带首次 / 最近和一条例子(抹掉了聊天 id、wxid、字母数字混排的联系人编号、消息正文)。每类还数**部署后还有几次**(从日志里最后一次 self deploy 的重启算):48 小时的总数会把已经修好的排在前面,部署后是 0 的多半修好了。`--hours`、`--min-count`。签名和例子都先过同一道抹除。**已知漏的**:不带数字的名字(联系人的中文昵称出现在「发送失败」一类的行里)两道都抹不掉 —— 输出要交给模型(每晚那一版)之前,得在 daemon 那头按联系人表再抹一遍,或者只交签名的标签和次数。
+- **欠账 + 同类产品**(`roadmap`):对标和欠的真机账都已经写在 `docs/roadmap.md` 里,不另起登记表。摘「欠的真机账」「对标…」「已定未做」几节里**没标完成**的条目:划掉的和带 ✅ 的不收;带 🟡 的收,标「在做」;表格行带 PR 号又没 🟡 的当作做完了。这是启发式,roadmap 没跟上代码时会多报,所以输出说「没标完成」,不说「没做」。做完一件就在 roadmap 上打 ✅ + PR 号,这一源就准。打包版旁边没有仓库,这一源照实说读不到。
+- **欠账之二:守卫基线**(`ratchets`):守卫里只许降的数。不是每个 BASELINE 都是欠账(speech-send 的是「允许在这里开口」的登记),所以不猜 —— 守卫自己在那条常量上一行写 `// @debt <降到 0 意味着什么>`,只认带标记的。认 `const X = 38` 和按文件的表(数字求和)。新加一个要降到 0 的棘轮,记得标 `@debt`;`self-discover-ratchets.test.ts` 钉着现有三个标记还认得出。
+- **自改自己吃的亏**(`lessons`):每条自改收场时,把每一轮修复为什么(测试红的 FAIL 行、评审打回的第一条、CI 红)和没做成的结局追加进 `<stateDir>/self-lessons.jsonl`(`src/cli/self-change/lessons.ts`;`--resume` 再收场不重记;正常收场、主人回 n、等超时、作废不记结局)。按「种类 + 第一行的签名」分组,出现两次以上的摆出来,跨了几条运行的排前面 —— 那是「该写进做法清单」的候选。不让模型自己改规矩(清单「新加一条走 PR」),只攒证据;对标 Hermes Agent 做完记教训。只有流水线自己的输出,没有人的数据,`self plan --with-discover` 也交给规划者。
+- 还没接的:主人的话(要读聊天,等 daemon 里每晚跑的那一版)。
+
+## 规划:`wechat-cc self plan "<目标>"`(2026-10-23)
+
+设计稿 2026-10-23-cc-runs-development §4.2 的「规划者」、§6 第 6 步的 CLI 那一半:把一个开发目标拆成 PR 列表。在中枢克隆里开一棵站在 `origin/dev` 上的 detached 树,规划者用只读会话读代码和 docs(AGENTS.md、维护者 README、做法清单、roadmap、相关设计稿),最后回一个 JSON 计划;代码校验 id 唯一、依赖都在、没有环,按依赖排好序。主人看得见的改动标 `visible`,那几步先停在设计稿等点头;改动大的 `designFirst`,第一个 PR 是设计稿;拿不准的写进 `questions`。存 `<stateDir>/self-plans/<id>.json`,`--show <id>` 再看。
+
+- `--planner claude|codex`(缺省 claude;codex 走只读沙箱 + 锁死 MCP 那一套)。调模型前先过网络守护。
+- `--with-discover`:把 `self discover` 的 roadmap 和守卫基线候选一起交给规划者。**日志那一源不交**:里面可能有联系人昵称,redact 抹不掉。
+- 做其中一步:`wechat-cc self change --plan <id> --step p1`。需求从计划里来(标题 + 为什么 + 范围 + 怎么证明 + 出处),依赖没做完不让做(并说现在能做哪步);`visible` 的那步要 `--owner-ok`(主人对设计稿点过头;**这是自己声明的**,只给人在终端里用 —— CC 自动执行之前要换成记下来的主人批准,见设计稿 §6 第 7 步);做过的不让重做。这条走完 `done` 就记回计划文件,`--show` 打勾、列出现在能做的。自动一步步跑下去、并行、`dev_goal` 那件事、三端看进度是第 7、8 步,在核心链之后。
+- 只读会话动了树 ⇒ 照实打一行(树反正会删)。计划不成形 ⇒ 不存,带上规划者最后说的话。
+- 第一次真跑(10-23,「重启后恢复微信主动窗口状态」):$0.62,两个 PR。它先核对了代码,指出外发健康本来就只存内存、没有可读回的东西,改成把窗口标记落盘、开机时跟最新入站比对。
+- `--ask`:把 `visible` 的那几步排进「要主人拍板的」(见下一节);`--show <id> --ask` 给存下的计划补排。
+
+## 问主人:`wechat-cc self ask`(2026-10-24)
+
+设计稿 §4.8「改变主人看得见的行为 ⇒ 攒起来问」、§6 第 5 步问主人的那一半。候选存 `<stateDir>/owner-asks.json`(`src/domain/owner-asks.ts` 是判法,`owner-asks-store.ts` 落盘;CLI 排、daemon 改状态,写走 `updateJsonFile`)。
+
+- 排:`wechat-cc self ask "<一行问题>" --recommend "<一行推荐>" [--key k] [--evidence …] [--priority N]`;`self plan --ask` 按步排(key `plan:<计划>:<步>`,版本 = 整份 PR 列表)。看:`self ask --list [--all]`。
+- 问:**只在早报里**(主人 10-24)。早报那一轮挑最多 3 条,问过的先、再按 priority / 先来后到;编号从早报里已有的「等你」之后接着排;模型在「要你拍板的」末尾写一行 `<<CC_ASKS>>`,daemon 在那里接上(没写 ⇒ 接在「就这些。」前面)。早报 NO_REPLY / 没发出去 ⇒ 不算问过。当天没有候选 ⇒ 早报不加这一段。
+- 答:主人回「2」/「2 要」⇒ 要,「2 不要」⇒ 不要;只认最近一份早报问过、还没答的编号,12 小时内;管家刚问过「哪一件?回数字」(30 分钟)时数字归管家;别的时候「2」照旧是聊天。记录文件正忙记不上 ⇒ 重试一次,还不行就说「没记上,再回一次」。答案记进那一条:谁、什么时候、哪一版(hash)—— 就是 §6 第 7 步要的那条批准记录。同一个 key 内容改了 ⇒ 新的一版,批过的要重批。
+- 问满三天没回 ⇒ 记成「主人没要」(主人 10-24 确认),同一个 key 以后不再提;主人说过不要的同样。
+- 没开早报 ⇒ 不单发(`ASK_ONLY_IN_BRIEF`,**默认,待主人点头**):候选只攒着,`self ask` 会照实说一句。
+- 还没做的:批了的那条自动进开发流程(第 7 步,核心链之后);微信里问「有什么要我拍板的」时把这份列出来(要接 `today_digest`,动 internal API);每晚自动找活排进来(要先有规划者判哪条是看得见的)。
+
 ## 五道闸门
 
 ```
@@ -41,11 +75,11 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 
 1. **guard(禁改清单)** —— 改动碰了下面那张表里的文件,整条**立刻失败**,不给修复轮。这是护栏,不是意见。
 2. **tests** —— 在工作树里依次 `bun run typecheck` → `bun run depcheck` → `bun run test` → `npm run test:node -- --reporter=dot`,第一条红就停(后面几条在同一个坏状态上跑没有信息量)。
-3. **review** —— **新会话**的只读 `claude -p`(`--disallowedTools Edit,Write,MultiEdit,NotebookEdit`),要一份 `{ verdict, findings }` 的 JSON。`critical` / `important` ⇒ 修复轮;`approve` 且只剩 `minor` ⇒ 过,minor 带进拍板卡。判了 `changes` 却一条 `critical` / `important` 都列不出来的,**照样算一轮修复轮**(说要改又说不出哪里要改,不该当成放行)。评审会话要是动了工作树,流水线会还原,并**直接按 `changes` 算**。
-4. **ci** —— 推 `self/<id>`,进程内调 `ci triage --wait --rerun`。绿才过;已知 flake 由 triage 重跑,第二次仍红一律真红。triage 退 2(压根没有运行 / 等超时 / `gh` 没登录)⇒ `ci_unavailable`,**不进修复轮** —— 交给执行者修一个它看不见的 CI 是白烧预算,这条要人去看。
+3. **review** —— **跟实现不同家**的只读评审,谁审由 CC 现挑(2026-10-23):`codex login status` 通 ⇒ `codex exec -s read-only --json`;Codex 不能用 ⇒ 退回**新会话**的只读 `claude -p`:`--restricted --strict-mcp-config --tools Read,Grep,Glob,Bash --permission-mode dontAsk`,Bash 只放行 `git diff / log / show`(它们自带的写口 `--output` / `--ext-diff` / `--textconv` 另外拒掉),不带 `--dangerously-skip-permissions`(`CLAUDE_READONLY_LOCKDOWN`,2026-10-23 在 claude 2.1.309 上实测:`touch` 被拒、`git log` 能跑、工具只剩这四个、一个 MCP 都没有;以前只关四把写工具,Bash 和主人的 MCP 全开 —— 整合者评审 #646)。规划者(`self plan`)用同一把锁。谁审、为什么记在 state 的 `review.by` / `review.why`,拍板卡上写「评审(Codex)」。要一份 `{ verdict, findings }` 的 JSON(带不带 \`\`\`json 围栏都认)。 Codex 评审**不带主人的 MCP / 插件**:只读沙箱只管文件写、管不住 MCP 工具(主人 ~/.codex 里有能驱动电脑和浏览器的插件 MCP),所以加 `--ignore-user-config` 并关掉 plugins / browser_use / computer_use / apps / hooks(`-c mcp_servers={}` 在 0.164.0 上没用,实测过)。联网搜索(`-c web_search="disabled"`)和画图(`--disable image_generation`)也关了 —— 评审提示词里有 diff,`web__run` 是唯一会把仓库内容带出这台机器的内置工具。已知还剩 codex 自带的:只读沙箱里的 `exec_command`、`apply_patch`(沙箱写不了)、`spawn_agent`(继承同一个只读沙箱)。挂住不动由同一个 2 小时墙钟兜(`DEFAULT_RUN_TIMEOUT_MS`,到点 SIGTERM、5 秒后杀进程组)。评审和实现一样先过网络守护。`critical` / `important` ⇒ 修复轮;`approve` 且只剩 `minor` ⇒ 过,minor 带进拍板卡。判了 `changes` 却一条 `critical` / `important` 都列不出来的,**照样算一轮修复轮**(说要改又说不出哪里要改,不该当成放行)。评审会话要是动了工作树,流水线会还原,并**直接按 `changes` 算**。
+4. **ci** —— 推 `self/<id>`、开(或认回)进 `dev` 的 PR,进程内调 `ci triage --wait --rerun`。绿才过;已知 flake 由 triage 重跑,第二次仍红一律真红。triage 退 2(压根没有运行 / 等超时 / `gh` 没登录)⇒ `ci_unavailable`,**不进修复轮** —— 交给执行者修一个它看不见的 CI 是白烧预算,这条要人去看。
 5. **approval** —— 拍板卡发到主人微信(需求、分支、**执行者最后那段交代**、diffstat、测试摘要、评审 verdict、CI 链接、费用),回「y <码>」才合。`n` ⇒ 退 3;超时(缺省 24 小时)⇒ 退 4,`--resume` 会重发卡。daemon 回的 `delivered` 说的是**卡片有没有进微信**:`false` 时条目照样在登记处等着(存盘里记成 `approval.delivered: false`),流水线照常轮询,只是会在终端和微信各说一句「换个面拍」—— 见下一节。
 
-过了五道才 `git rebase origin/dev` + **快进 push**(`git push origin HEAD:refs/heads/dev`,不带 `--force` —— 普通 push 天然只许快进,语义和 `merge --ff-only` 一样;被拒就是远端在这中间前进了 ⇒ `merge_conflict`)合进 `dev`,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。工作树里**不 `checkout dev`**:git 不许同一条分支在两棵树里检出,而且也不需要 —— rebase 完 HEAD 本身就是 `origin/dev` 的直系后代。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
+过了五道才合:**走 PR,跟人同一条路**(2026-10-23,设计稿 `2026-10-23-cc-runs-development-design.md` §6 第 3 步)。ci 步推 `self/<id>` 时开一个进 `dev` 的 PR(标题「自改 #<id>:<需求>」,需求里的 `[migration-edit]` 去掉,迁移闸门不能借道),CI 只认 PR 那一份 —— `self/**` 的推送不再单跑,自改的 PR 照旧三平台(它没人盯、合完就部署);开不了 PR 就没有 CI ⇒ `ci_unavailable`。拍板放行以后 merge 步把树 detach、交给 `wechat-cc ci land <PR>` squash 合(钉死 head、空 rollup 不算绿、网络抖退避、回应丢了先问状态、dev 被人动过就停,见 `src/cli/ci-land.ts` 开头)。合不进去(冲突、head / dev 被人动过)⇒ `merge_conflict`;CI 红、超时、gh 出错 ⇒ `merge_failed`;分支和 PR 都留着。合完把树放到 `origin/dev` 上(`merge.sha` = 树的 HEAD,deploy 断言的就是它)、`bun install --frozen-lockfile`,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。主人回 n、`--abandon` 作废 ⇒ PR 关掉、分支留着。老存盘停在 approval、没有 PR 的那条,`--resume` 到 merge 时补开一个,ci land 等它的 CI。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
 
 **一次运行,一个工作树。** `<workdir>/repo` 只是**中枢克隆**:只用来 `fetch` 和管工作树,不在里面构建、不在里面 checkout 业务分支。每条运行 `git -C <hub> worktree add -B self/<id> <workdir>/runs/<id> origin/<branch>`(`-B` 而不是 `-b`:同名分支照样丢掉重开,省掉一条每轮都注定失败一次的 `branch -D`),之后 implement / guard / tests / review / ci / merge / deploy 全在这棵树里跑。以前所有运行共用一个克隆(每次 `checkout -B` + `reset --hard`),B 的 `repo` 步会在 A 的树底下把文件换掉 —— 2026-09-21 审查 #4 就是这个类。
 
@@ -121,7 +155,7 @@ wechat-cc self change --list
 | 码 | 含义 | 典型 result |
 | --- | --- | --- |
 | 0 | 完成 | `done` |
-| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `deploy_failed` `deploy_tree_mismatch` `selftest_failed_rolled_back` `crashed` |
+| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `merge_failed` `machine_busy` `network_unprotected` `deploy_failed` `deploy_tree_mismatch` `selftest_failed_rolled_back` `crashed` |
 | 2 | **不是这次改动的错**,重试同样的需求没意义 | 非 macOS、`self_change_halted`、`self_change_quota`、`daemon_not_running`、`owner_chat_unknown`、`self_change_busy`、`repo_url_unknown` |
 | 3 | 主人回了 `n` | `declined`(分支保留) |
 | 4 | 没等到拍板 | `approval_timeout`(`--resume <id>` 重发卡) |
@@ -230,7 +264,7 @@ daemon 收到之后 spawn 一个 detached 的 `wechat-cc self change --from wech
 
 - **可恢复的和被杀的运行不会自动回收。** 顺手清理只扫 `done` / `declined` / `abandoned`;别的终局和被杀掉的运行要人用 `--abandon <id>` 明说不接了(见「工作树回收与 `--abandon`」)。没人去作废的话,它们的 `runs/<id>` 照样一直留着 —— 宁可占着盘,也不自动把一轮付过钱的实现扫掉。
 - **微信里没有作废口。** 「自改」只有下单和「状态」两个动作。加一个「自改 作废 <id>」要 daemon 再起一个子进程跑 `--abandon` 并把结果回给主人 —— 不算难,但作废会删掉一轮付过钱的实现,而微信那头看不到 `--list` 的类别和树路径,这次先只在终端做。要做的话:`self-change-spawn.ts` 起 `self change --abandon <id> --json`、按 `code` 回话即可。
-- **rebase 之后不重跑 CI。** 合入前会 `git rebase origin/dev`,动了 HEAD 也不重跑 —— `dev` 上并发提交少,重跑要主人再等一轮。代价是 `ci_sha ≠ merge_sha`,报告里会单独说一句。
+- **dev 动过也不重跑 CI。** 等拍板期间 `dev` 上多了别人的提交、又不冲突,GitHub 直接 squash 在最新的 `dev` 上 —— 合入的树 CI 没跑过,重跑要主人再等一轮。代价是 `merge.rebased`(合入的树 ≠ CI 跑的树),报告里会单独说一句;正式闸门是推 `dev` 那一次。
 - **一次只跑一条。** 第二条进来直接 `self_change_busy` 退 2。
 - **只支持 macOS。** 最后两步踩的是 launchd(`self deploy`)和真机自检,其他平台在第一行就退 2。
 - **打包版必须配 `self_change.repo_url`。** 打包版身边没有 checkout 可问 `git remote get-url origin`,配不上就 `repo_url_unknown` 退 2。

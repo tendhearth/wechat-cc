@@ -1,8 +1,8 @@
 /**
  * client.test.ts — 协议客户端对着进程内假后台跑。假后台只用协议包自己的
- * 加密(x25519 + v1 / v2 密封),行为照 src/daemon/tunnel-client.ts:收
- * `{hs}` 回 `{hs}`(v2 后台多带 `v:2`),凭设备令牌推的密钥认人,认不出就
- * 明文回 `{error:'auth_failed'}`。
+ * 加密(x25519 + v2 密封),行为照 src/features/phone/tunnel-client.ts:收
+ * `{hs, v:[2]}` 回 `{hs, v:2}`,凭设备令牌推的密钥认人,认不出就明文回
+ * `{error:'auth_failed'}`。`version: 1` 的假后台扮演「老后台 / 中继剥掉了 v」:只回 `{hs}`。
  *
  * 一律假时钟,消息经 queueMicrotask 递送(模拟 WebSocket 的异步回调)。
  */
@@ -12,7 +12,6 @@ import type { ProtocolSocket, ClientOpts } from './client'
 import { b64uDecode, b64uEncode } from './b64u'
 import { b64Encode, b64Decode } from './messages'
 import { x25519KeyPair, x25519Shared } from './x25519'
-import { deriveV1Key, sealV1, openV1 } from './v1'
 import { deriveV2Keys, makeV2Channel } from './v2'
 import type { V2Channel } from './v2'
 
@@ -26,7 +25,6 @@ interface Conn {
   closed: boolean
   hellos: unknown[]
   version: 1 | 2 | null
-  v1Key?: Uint8Array
   chan?: V2Channel
   subs: Map<string, { topic: string; since?: { epoch: string; seq: number } }>
   toClient(obj: unknown): void
@@ -135,21 +133,11 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
         conn.toClient({ hs: b64uEncode(kp.pub), v: 2 })
       } else {
         conn.version = 1
-        conn.v1Key = deriveV1Key(shared, token)
         conn.toClient({ hs: b64uEncode(kp.pub) })
       }
       return
     }
-    if (conn.version === 1) {
-      let pt: Uint8Array
-      try { pt = openV1(conn.v1Key!, f as { iv: string; ct: string }) } catch { conn.toClient({ error: 'auth_failed' }); return }
-      const r = JSON.parse(dec.decode(pt)) as ReqSeen
-      reqs.push(r)
-      if (d.dropNextReqs > 0) { d.dropNextReqs--; return }
-      const reply = { rid: r.rid, status: 200, body: JSON.stringify({ path: r.path, method: r.method, body: r.body }) }
-      conn.toClient(sealV1(conn.v1Key!, enc.encode(JSON.stringify(reply))))
-      return
-    }
+    if (conn.version === 1) return   // 老后台:客户端本来就不该发任何密封帧过来
     let pt: Uint8Array
     try { pt = conn.chan!.open(f as { c: string; ct: string }) } catch { conn.toClient({ error: 'auth_failed' }); return }
     const m = JSON.parse(dec.decode(pt)) as Record<string, unknown>
@@ -190,13 +178,14 @@ beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { vi.useRealTimers() })
 
 describe('握手协商', () => {
-  it('v2 后台 ⇒ version()===2,握手带 v:[1,2],请求走 v2 帧', async () => {
+  it('v2 后台 ⇒ version()===2,握手带 v:[2](不带 client),请求走 v2 帧', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
     const { c } = client(daemon)
     expect(c.version()).toBeNull()
     const res = await c.request({ method: 'GET', path: '/v1/health' })
     expect(c.version()).toBe(2)
-    expect(daemon.d.conns[0]!.hellos[0]).toMatchObject({ v: [1, 2] })
+    expect(daemon.d.conns[0]!.hellos[0]).toMatchObject({ v: [2] })
+    expect(daemon.d.conns[0]!.hellos[0]).not.toHaveProperty('client')
     expect(daemon.d.reqs[0]).toMatchObject({ t: 'req', method: 'GET', path: '/v1/health' })
     expect(res.status).toBe(200)
     expect(res.headers['content-type']).toBe('application/json')
@@ -204,46 +193,22 @@ describe('握手协商', () => {
     c.close()
   })
 
-  it('老后台只回 {hs} ⇒ version()===1,请求走 v1 帧,subscribe 抛 subscriptions_need_v2', async () => {
-    const daemon = makeFakeDaemon({ version: 1 })
-    const { c } = client(daemon)
-    const res = await c.request({ method: 'POST', path: '/v1/x', body: '{"a":1}' })
-    expect(c.version()).toBe(1)
-    expect(daemon.d.reqs[0]).toEqual({ path: '/v1/x', method: 'POST', body: '{"a":1}', rid: expect.any(String) })
-    expect(res.status).toBe(200)
-    expect(res.headers).toEqual({})
-    expect(res.json<{ body: string }>().body).toBe('{"a":1}')
-    expect(() => c.subscribe('now', () => {})).toThrow('subscriptions_need_v2')
-    c.close()
-  })
-
-  it('v1 下二进制请求体 ⇒ 拒绝 binary_body_needs_v2', async () => {
-    const daemon = makeFakeDaemon({ version: 1 })
-    const { c } = client(daemon)
-    await c.request({ method: 'GET', path: '/a' })
-    await expect(c.request({ method: 'POST', path: '/b', body: new Uint8Array([1]) })).rejects.toThrow('binary_body_needs_v2')
-    c.close()
-  })
-
-  it('握手前就订阅、结果是老后台 ⇒ onSubscriptionError 报 subscriptions_need_v2', async () => {
-    const daemon = makeFakeDaemon({ version: 1 })
-    const onSubscriptionError = vi.fn()
-    const { c } = client(daemon, { onSubscriptionError })
-    c.subscribe('now', () => {})
-    await flush()
-    expect(c.version()).toBe(1)
-    expect(onSubscriptionError).toHaveBeenCalledWith('now', 'subscriptions_need_v2')
+  it('网页填 client:"web" ⇒ 握手带上', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c } = client(daemon, { client: 'web' })
+    await c.request({ method: 'GET', path: '/m/api/home' })
+    expect(daemon.d.conns[0]!.hellos[0]).toMatchObject({ v: [2], client: 'web' })
     c.close()
   })
 })
 
-// 2026-10-10 评审:版本协商是明文,中继能把 v 剥掉、把双方降到没有防重放的 v1。原生 app 只和会说 v2 的后台
-// 打交道 ⇒ requireV2 时回来的是 v1 一律当篡改:不建 v1 密钥、不发请求,报 downgrade_refused。
-describe('requireV2:拒绝降级', () => {
-  it('requireV2 + 后台只回 {hs} ⇒ 不走 v1、请求不发出去,报 downgrade_refused', async () => {
+// 2026-10-10 评审:版本协商是明文,中继能把 v 剥掉、把双方降到没有防重放的 v1。2026-10-25 v1 退休:
+// 客户端只说 v2,回来的是 v1 一律当篡改:不建密钥、不发请求,报 downgrade_refused。
+describe('拒绝降级', () => {
+  it('后台只回 {hs} ⇒ 请求不发出去,报 downgrade_refused', async () => {
     const daemon = makeFakeDaemon({ version: 1 })
     const onProtocolError = vi.fn()
-    const { c } = client(daemon, { requireV2: true, onProtocolError, requestDeadlineMs: 200 })
+    const { c } = client(daemon, { onProtocolError, requestDeadlineMs: 200 })
     const r = c.request({ method: 'POST', path: '/m/api/chat/say', body: '{"text":"hi"}' })
     const settled = r.then(() => 'resolved', () => 'rejected')
     await vi.advanceTimersByTimeAsync(5_000)
@@ -253,10 +218,24 @@ describe('requireV2:拒绝降级', () => {
     expect(onProtocolError).toHaveBeenCalledWith('downgrade_refused', undefined)
     c.close()
   })
-  it('requireV2 + v2 后台 ⇒ 照常', async () => {
+  it('明文 upgrade_required(后台说这是退休了的 v1)⇒ 挂起请求以它拒绝、订阅报错、不再重连', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
-    const { c } = client(daemon, { requireV2: true })
-    expect((await c.request({ method: 'GET', path: '/v1/health' })).status).toBe(200)
+    const onSubscriptionError = vi.fn()
+    const seen: string[] = []
+    const { c, open } = client(daemon, { onSubscriptionError, onStatus: s => seen.push(s) })
+    c.subscribe('agents', () => {})
+    daemon.d.dropNextReqs = 1
+    const p = c.request({ method: 'GET', path: '/x' })
+    const assertion = expect(p).rejects.toThrow('upgrade_required')
+    await flush()
+    daemon.d.live().raw(JSON.stringify({ error: 'upgrade_required' }))
+    await flush()
+    await assertion
+    expect(onSubscriptionError).toHaveBeenCalledWith('agents', 'upgrade_required')
+    expect(seen.at(-1)).toBe('auth_failed')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(open).toHaveBeenCalledTimes(1)
+    await expect(c.request({ method: 'GET', path: '/y' })).rejects.toThrow('upgrade_required')
     c.close()
   })
 })
@@ -925,15 +904,6 @@ describe('保活(只挂订阅时)', () => {
     c2.close()
   })
 
-  it('v1 连接从不发 ping', async () => {
-    const daemon = makeFakeDaemon({ version: 1 })
-    const { c } = client(daemon, { keepaliveMs: 1_000 })
-    await c.request({ method: 'GET', path: '/a' })
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(daemon.d.conns[0]!.rawIn).toHaveLength(2)    // hello + 那一个请求
-    expect(daemon.d.conns[0]!.closed).toBe(false)
-    c.close()
-  })
 })
 
 describe('onStatus(给 app 的连接状态机)', () => {

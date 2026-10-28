@@ -156,7 +156,7 @@ export function buildInboundFilePreview(path: string, fileName: string, buf: Buf
 
 export const PENDING_CDN_REF = '<pending-cdn-ref>'
 
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 
 interface PendingCaption {
   media?: CDNMedia

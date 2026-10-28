@@ -3,18 +3,17 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPipelineDeps } from './pipeline-deps'
-import { Ref } from '../../lib/lifecycle'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeReplySinks } from '../reply-sinks'
-import { makeChatMutex } from '../../core/async-mutex'
-import { makeMatterStore } from '../../core/matters/store'
+import { makeChatMutex } from '../../lib/async-mutex'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeMessagesStore } from '../../lib/messages-store'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { Bootstrap } from '../bootstrap/index'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { CareLedger } from '../../features/companion/care-ledger'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 
 /**
  * 手机「跟 CC 说」的接线(plan 2026-10-01 Task 4):phoneChat 的 converse 必须是回合串行入口
@@ -50,7 +49,7 @@ describe('phoneChat 走 companionConverse(回合串行入口)', () => {
     const dispatchInner = vi.fn(o.dispatchInner ?? (async (msg: InboundMsg) => { replySinks.capture(msg.chatId, 'cc reply') }))
     const submitTurn = vi.fn(o.submitTurn ?? (<T,>(msg: InboundMsg, opt?: { within?: (d: () => Promise<void>) => Promise<T> }) =>
       (opt?.within ? opt.within(() => dispatchInner(msg)) : dispatchInner(msg) as unknown as Promise<T>)))
-    const ilink = { resolveAccountId: vi.fn(() => 'acct1'), sendMessage: vi.fn(async () => ({ msgId: '1' })) } as unknown as IlinkAdapter
+    const ilink = { resolveAccountId: vi.fn(() => 'acct1'), sendMessage: vi.fn(async () => ({ msgId: '1' })) } as unknown as PipelineWechat
     const boot = {
       sessionManager: { isInFlight: vi.fn(() => o.inFlight ?? false) } as unknown as Bootstrap['sessionManager'],
       sessionStore: {} as Bootstrap['sessionStore'],
@@ -82,7 +81,7 @@ describe('phoneChat 走 companionConverse(回合串行入口)', () => {
     const matters = makeMatterStore(db)
     const built = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks, matters },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
     return { ...built, submitTurn, dispatchInner, matters }
   }

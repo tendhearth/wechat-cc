@@ -1,4 +1,4 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
 /** Explicit, offline native-protocol smoke: only temporary CC-owned MCP servers
  * and a local fake Responses endpoint are started. No user configuration or
  * provider account is used. Run: bun scripts/workbench-codex-native-tools-smoke.ts */
@@ -7,12 +7,12 @@ import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentEvent, AgentProvider, AgentSession, SpawnContext } from '../src/core/agent-provider'
-import { createProviderRegistry } from '../src/core/provider-registry'
-import { createWorkbenchCodexProvider } from '../src/core/workbench/codex-app-server'
-import { makeWorkbenchService } from '../src/core/workbench/service'
-import { makeWorkbenchStore } from '../src/core/workbench/store'
-import { TIER_PROFILES } from '../src/core/user-tier'
+import type { AgentEvent, AgentProvider, AgentSession, SpawnContext } from '../src/ports/agent-provider'
+import { createProviderRegistry } from '../src/app/provider-registry'
+import { createWorkbenchCodexProvider } from '../src/adapters/executors/codex/codex-app-server'
+import { makeWorkbenchService } from '../src/features/workbench/service'
+import { makeWorkbenchStore } from '../src/adapters/store/workbench/store'
+import { TIER_PROFILES } from '../src/domain/user-tier'
 import { openDb } from '../src/lib/db'
 import { findCodexBinary } from '../src/lib/find-codex-binary'
 

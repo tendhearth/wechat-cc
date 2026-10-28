@@ -4,11 +4,14 @@
 // 终端会话只经 hooks 才到得了 CC。「CC 现在怎么样」那一行(daemon capabilities.ts,action.run =
 // cli_hooks_install)和引导页最后一步都用这里的同一个按钮:点了先说一句会改什么、能撤掉,
 // 主人再点「确定」才 POST /v1/cli/hooks/install —— 明确点了才算同意,绝不自动装。
+import { V1, v1, v1Path } from '../daemon-client.js'
 
 export const HOOKS_RUN = 'cli_hooks_install'
 const READ_TRIES = 3
-export const HOOKS_INSTALL_PATH = '/v1/cli/hooks/install'
-export const HOOKS_CONFIRM = '会在 Claude Code 的 ~/.claude/settings.json 和 Codex 的 hooks.json 里加几条 CC 的 hook，终端里的会话才报得到 CC。只动 CC 自己的条目，别的设置不碰；不想要了随时能撤掉（wechat-cc hook uninstall）。'
+export const HOOKS_INSTALL_PATH = v1Path(V1.cli.hooksInstall)
+// 确认只说一句(原因上一行已经说过);改哪几个文件、怎么撤,收在「详细」里(2026-10-16)。
+export const HOOKS_CONFIRM = '只加 CC 自己的几条 hook，随时能撤掉。'
+export const HOOKS_DETAIL = '改的是 Claude Code 的 ~/.claude/settings.json 和 Codex 的 hooks.json，别的设置不碰。想撤掉：在终端运行 wechat-cc hook uninstall。'
 
 /** @typedef {(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>} Call */
 /** @typedef {{ phase: 'idle' | 'confirm' | 'busy' | 'error', error?: string }} HooksUi */
@@ -35,7 +38,7 @@ function btn(cls, text, onClick) {
  */
 export async function runHooksInstall(call) {
   try {
-    const r = /** @type {{ ok?: boolean, results?: Array<{ ok?: boolean, error?: string, skipped?: string }> } | null} */ (await call('POST', HOOKS_INSTALL_PATH, {}))
+    const r = /** @type {{ ok?: boolean, results?: Array<{ ok?: boolean, error?: string, skipped?: string }> } | null} */ (await v1(call, V1.cli.hooksInstall, { body: {} }))
     if (r && r.ok === false) {
       const bad = (r.results ?? []).find(x => x.ok === false)
       return { ok: false, error: bad?.error ?? (bad?.skipped === 'cli_not_found' ? '这台电脑上没找到这个 CLI' : '没接上') }
@@ -74,7 +77,9 @@ export function makeHooksAction(o) {
       else if (ui.phase === 'confirm') {
         const row = el('div', 'hooks-buttons')
         row.append(btn('nc-action hooks-confirm-yes', `确定${label}`, () => { void confirmInstall() }), btn('nc-action hooks-confirm-no', '取消', () => set({ phase: 'idle' })))
-        box.append(el('p', 'hooks-confirm', HOOKS_CONFIRM), row)
+        const more = el('details', 'hooks-detail')
+        more.append(el('summary', '', '详细'), el('p', '', HOOKS_DETAIL))
+        box.append(el('p', 'hooks-confirm', HOOKS_CONFIRM), more, row)
       } else if (ui.phase === 'busy') box.append(el('p', 'hooks-status', '正在接上…'))
       else {
         box.append(el('p', 'hooks-error', `没接上：${ui.error ?? ''}`), btn('nc-action', `再${label}一次`, () => set({ phase: 'confirm' })))
@@ -101,7 +106,7 @@ export function mountOnboardTerminal(deps) {
   function render() {
     if (!started || (!row && !done)) { host.hidden = true; return }
     /** @type {HTMLElement[]} */
-    const parts = [el('h3', 'onboard-terminal-title', '也接上终端里的 Claude Code / Codex（可选）')]
+    const parts = [el('h3', 'onboard-terminal-title', '也接上终端里的会话（可选）')]
     if (done) parts.push(el('p', 'onboard-terminal-note', '接上了。之后终端里的会话做完、等你批准，CC 都会告诉你。'))
     else if (row) parts.push(el('p', 'onboard-terminal-note', row.reason), action.node(row.label))
     host.replaceChildren(...parts)
@@ -110,7 +115,7 @@ export function mountOnboardTerminal(deps) {
   async function load() {
     const mine = ++seq
     try {
-      const r = /** @type {{ capabilities?: Array<{ id: string, name: string, reason: string, state: string, action?: { label: string, run?: string } }> } | null} */ (await deps.call('GET', '/v1/connections'))
+      const r = /** @type {{ capabilities?: Array<{ id: string, name: string, reason: string, state: string, action?: { label: string, run?: string } }> } | null} */ (await v1(deps.call, V1.connections.get))
       if (mine !== seq || !started) return
       const cap = (r?.capabilities ?? []).find(c => c.id === 'terminal')
       row = cap?.action?.run === HOOKS_RUN ? { name: cap.name, reason: cap.reason, label: cap.action.label } : null

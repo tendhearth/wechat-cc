@@ -55,6 +55,16 @@ describe('GET /v1/health', () => {
     expect('provider_probes' in (without.body as any)).toBe(false)
   })
 
+  it('GET /v1/health renders provider_refusals (2026-10-23: 真回合里被拒着) — codes and times only; omitted when unwired', async () => {
+    const { HealthResponse } = await import('./schema')
+    const refusals = { agy: { code: 'region_unavailable', since: '2026-10-23T05:00:00.000Z' } }
+    const r = await makeRoutesUnderTest({ providerRefusals: () => refusals })['GET /v1/health']!({} as any, undefined, { tier: 'guest', origin: 'session' } as any)
+    expect((r.body as any).provider_refusals).toEqual(refusals)
+    expect(HealthResponse.safeParse(r.body).success).toBe(true)
+    const without = await makeRoutesUnderTest({})['GET /v1/health']!({} as any, undefined)
+    expect('provider_refusals' in (without.body as any)).toBe(false)
+  })
+
   it('GET /v1/health renders outbound from the dep and omits it when unwired', async () => {
     const withDep = makeRoutesUnderTest({ outbound: () => ({
       state: 'degraded', consecutiveFailures: 2, lastOkAt: null,
@@ -123,5 +133,19 @@ describe('GET /v1/health · version', () => {
     const r = await routes['GET /v1/health']!(q(), undefined)
     expect(r.status).toBe(200)
     expect('version' in (r.body as object)).toBe(false)
+  })
+})
+
+describe('GET /v1/llm/health · names(收敛清单 ⑥)', () => {
+  const llmHealth = { cached: () => null, dial: async () => null } as unknown as NonNullable<InternalApiDeps['llmHealth']>
+  it('六家内置 + 已注册的(含自定义 ACP)都给正式名字和设置里的写法;没接名字 ⇒ 不带', async () => {
+    const llmNames = (id: string) => id === 'agy' ? { name: 'Gemini(账号)', short: 'Gemini(账号)', settings: 'Gemini · 账号连接' } : { name: `N:${id}`, short: id, settings: `S:${id}` }
+    const r = await makeRoutesUnderTest({ llmHealth, llmRegistered: () => ['claude', 'my-acp'], llmNames })['GET /v1/llm/health']!(q(), undefined)
+    const names = (r.body as { names: Record<string, { displayName: string; settingsLabel: string }> }).names
+    expect(Object.keys(names).sort()).toEqual(['agy', 'claude', 'codex', 'cursor', 'gemini', 'my-acp', 'openai'])
+    expect(names.agy).toEqual({ displayName: 'Gemini(账号)', settingsLabel: 'Gemini · 账号连接' })
+    expect(names['my-acp']).toEqual({ displayName: 'N:my-acp', settingsLabel: 'S:my-acp' })
+    const bare = await makeRoutesUnderTest({ llmHealth, llmRegistered: () => [] })['GET /v1/llm/health']!(q(), undefined)
+    expect((bare.body as { names?: unknown }).names).toBeUndefined()
   })
 })

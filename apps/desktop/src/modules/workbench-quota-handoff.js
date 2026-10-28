@@ -1,5 +1,6 @@
 // @ts-check
-/** @typedef {import('../../../../src/core/workbench/service/quota-handoff').QuotaHandoffView} Offer */
+/** @typedef {import('../../../../src/features/workbench/service/quota-handoff').QuotaHandoffView} Offer */
+import { V1, v1 } from '../daemon-client.js'
 /** @typedef {{id:string,title:string,path:string}} Source */
 /** @typedef {{id:string,displayName:string}} Provider */
 /** @typedef {{requestId:string,providerId:string}} Attempt */
@@ -30,8 +31,8 @@ export function createQuotaHandoffAttempts(storage=null){
  }
 }
 /** @typedef {ReturnType<typeof createQuotaHandoffAttempts>} Attempts */
-const KNOWN_NAMES=new Map([['claude','Claude'],['codex','Codex'],['cursor','Cursor'],['gemini','Gemini']])
-const name=(/** @type {string} */id,/** @type {Provider[]} */providers)=>providers.find(p=>p.id===id)?.displayName??KNOWN_NAMES.get(id)??id
+// 名字只读 daemon 给的执行者列表(收敛清单 ⑥);不在列表里 ⇒ id。
+const name=(/** @type {string} */id,/** @type {Provider[]} */providers)=>providers.find(p=>p.id===id)?.displayName??id
 /** @param {Offer|null|undefined} offer @param {Provider[]} providers */
 export function quotaHandoffCopy(offer,providers){
  if(!offer)return ''
@@ -70,7 +71,7 @@ export function createQuotaHandoffController(deps){
  const notify=()=>{if(valid())changed()}
  const complete=async(/** @type {string} */id)=>{attempts.delete(source.id);state.attempt=null;state.unknown=false;state.done=true;if(valid())await opened(id)}
  const check=async()=>{
-  const offer=readOffer(await invoke('GET',`/v1/workbench/task?id=${encodeURIComponent(source.id)}`),source.id)
+  const offer=readOffer(await v1(invoke, V1.workbench.task, { query: { id: source.id } }),source.id)
   if(!valid())return null
   state.offer=offer;state.attempt=attempts.get(source.id);state.unknown=!!state.attempt;state.ready=true
   if(offer?.state==='handed')await complete(offer.matterId)
@@ -99,7 +100,7 @@ export function createQuotaHandoffController(deps){
     const attempt=old??{requestId:crypto.randomUUID(),providerId:/** @type {Extract<Offer,{state:'offer'}>} */(latest).to}
     if(!old&&!attempts.set(source.id,attempt)){state.ready=false;state.error='确认无法保存，尚未交接。请恢复本地存储后，检查状态并重新确认。';return}
     state.attempt=attempt;state.unknown=true
-    const raw=await invoke('POST','/v1/workbench/quota-handoff',{id:source.id,...attempt})
+    const raw=await v1(invoke, V1.workbench.quotaHandoff, { body: {id:source.id,...attempt} })
     const result=/** @type {{taskId?:string,created?:boolean}|null} */(raw)
     if(!result||typeof result.taskId!=='string'||!TASK.test(result.taskId)||result.taskId===source.id||typeof result.created!=='boolean')throw Error('quota_handoff_unknown_response')
     await complete(result.taskId)

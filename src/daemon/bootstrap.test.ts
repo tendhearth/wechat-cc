@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
+import { makeSpeechPolicy } from './speech/policy'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -6,15 +7,15 @@ import { buildBootstrap, resolveAdminChatId } from './bootstrap'
 import { writeWarmExecFixture } from '../lib/test-temp'
 import { saveAgentConfig } from '../lib/agent-config'
 import { openTestDb } from '../lib/db'
-import { makeChannelStore } from '../core/penpal-channel-store'
-import { generateKeypair, deriveSharedKey, sealLetter } from '../core/penpal-crypto'
-import { TIER_PROFILES } from '../core/user-tier'
+import { makeChannelStore } from '../adapters/store/penpal-channel-store'
+import { generateKeypair, deriveSharedKey, sealLetter } from '../adapters/mailbox/penpal-crypto'
+import { TIER_PROFILES } from '../domain/user-tier'
 import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
-import type { CompanionConfig } from './companion/config'
+import type { CompanionConfig } from '../lib/companion-config'
 import { createInternalApi } from './internal-api'
 import { wireSelfRestart } from './bootstrap/wire-self-restart'
-import { createAcpCursorChatProvider } from '../core/acp-cursor-chat'
+import { createAcpCursorChatProvider } from '../adapters/executors/acp/acp-cursor-chat'
 import { SubsystemSupervisor } from './subsystems'
 import { NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 
@@ -41,8 +42,8 @@ vi.mock('./bootstrap/wire-self-restart', async (importOriginal) => {
 // however the daemon normally builds one whenever internalApi is wired).
 // createAcpCursorChatProvider itself is not mocked away — this only adds
 // an observation point around the real implementation.
-vi.mock('../core/acp-cursor-chat', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../core/acp-cursor-chat')>()
+vi.mock('../adapters/executors/acp/acp-cursor-chat', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../adapters/executors/acp/acp-cursor-chat')>()
   return { ...actual, createAcpCursorChatProvider: vi.fn(actual.createAcpCursorChatProvider) }
 })
 
@@ -83,6 +84,10 @@ function makeIlinkStub() {
     askUser: vi.fn(),
   }
 }
+
+
+// stubEnv 设的环境变量每条测试后都还原,哪怕那条超时了(见 knowledge-orchestration 那条)
+afterEach(() => { vi.unstubAllEnvs() })
 
 describe('bootstrap', () => {
   it('sdkOptionsForProject returns cwd, wechat stdio mcpServer, canUseTool, systemPrompt', async () => {
@@ -921,8 +926,9 @@ describe('bootstrap', () => {
       kind: 'mcp',
       spawn: { command: process.execPath, args: [] },
     }))
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
+    // vi.stubEnv + 文件顶上那个 afterEach 还原:这条超时的话,try / finally 的 finally 要等还在跑的 body 落定才执行,
+    // 下一条就会带着这个插件目录起 bootstrap、看到「知识编排」(10-22 macOS CI 上两条连着红)。afterEach 不等 body。
+    vi.stubEnv('WECHAT_CC_BUNDLED_PLUGINS_DIR', bundledDir)
     try {
       const b = await buildBootstrap({
         supervisor: new SubsystemSupervisor(() => {}),
@@ -947,8 +953,6 @@ describe('bootstrap', () => {
       // knowledgeSearchAvailable:true counterpart).
       expect(prompt).not.toContain('消息检索')
     } finally {
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(base, { recursive: true, force: true })
     }
   })
@@ -1576,7 +1580,8 @@ describe('bootstrap 社交接线', () => {
 
   it('POST /v1/social/wish returns 503 when the social wish service is not wired (deps.social absent)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'internal-api-social-503-'))
-    const api = createInternalApi({ stateDir, daemonPid: 1 } as any)
+    // 社交没起 ⇒ 心愿路由根本没挂(社交模块自己挂,src/features/social),subsystems 里 social 是 off ⇒ 模块门回 module_off。
+    const api = createInternalApi({ stateDir, daemonPid: 1, subsystems: () => [{ name: 'social', state: 'off', sinceIso: 't' }] } as any)
     try {
       const { port } = await api.start()
       // POST /v1/social/wish is trusted-tier (route-tiers.ts, 心愿) —
@@ -1590,7 +1595,7 @@ describe('bootstrap 社交接线', () => {
         body: JSON.stringify({ text: 'x' }),
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toMatchObject({ error: 'social_not_wired' })
+      expect(await resp.json()).toMatchObject({ error: 'module_off', module: 'social' })
     } finally {
       await api.stop()
       rmSync(stateDir, { recursive: true, force: true })
@@ -1629,6 +1634,8 @@ describe('bootstrap 社交接线', () => {
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null,
         log: () => {},
+        // 社交通知要先问 CC 开口那道门(第三批 3a);这里给一个照常放行的门
+        speech: () => makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, log: () => {}, outbound: { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }), open: () => ({ sendText: async () => ({ msgId: 'm' }), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) } }),
       })
       boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
       const peerKey = 'peer-letter-own-key-abc123'
@@ -2039,6 +2046,8 @@ describe('bootstrap pairing-code wiring', () => {
       loadProjects: () => ({ projects: {}, current: null }),
       lastActiveChatId: () => null,
       log: () => {},
+      // 第三批 3b 第 5 步起空闲自动重启是模块,没有 requestRestart 就是 off、不调 wireSelfRestart;这里要看传进去的闭包
+      requestRestart: () => {},
     })
     expect(wireSelfRestart).toHaveBeenCalledTimes(1)
     const passedDeps = vi.mocked(wireSelfRestart).mock.calls[0]![0]
@@ -2066,6 +2075,8 @@ describe('bootstrap pairing-code wiring', () => {
       loadProjects: () => ({ projects: {}, current: null }),
       lastActiveChatId: () => null,
       log: () => {},
+      // 第三批 3b 第 5 步起空闲自动重启是模块,没有 requestRestart 就是 off、不调 wireSelfRestart;这里要看传进去的闭包
+      requestRestart: () => {},
     })
     expect(wireSelfRestart).toHaveBeenCalledTimes(1)
     const passedDeps = vi.mocked(wireSelfRestart).mock.calls[0]![0]
@@ -2109,8 +2120,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     // from that ambient machine state (mirrors the pattern the
     // knowledge-orchestration tests already use for the same reason).
     const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-nobundled-'))
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    vi.stubEnv('WECHAT_CC_BUNDLED_PLUGINS_DIR', emptyBundledDir)   // afterEach 还原,超时也不串到下一条
     try {
       boot = await buildBootstrap({
         supervisor: new SubsystemSupervisor(() => {}),
@@ -2157,8 +2167,6 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       boot?.knowledge?.store.close()
       await boot?.knowledge?.embedder?.close?.()
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(emptyBundledDir, { recursive: true, force: true })
       rmSync(stateDir, { recursive: true, force: true })
     }
@@ -2191,8 +2199,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-graph-nobundled-'))
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    vi.stubEnv('WECHAT_CC_BUNDLED_PLUGINS_DIR', emptyBundledDir)   // afterEach 还原,超时也不串到下一条
     try {
       boot = await buildBootstrap({
         supervisor: new SubsystemSupervisor(() => {}),
@@ -2221,8 +2228,6 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       boot?.knowledge?.store.close()
       await boot?.knowledge?.embedder?.close?.()
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(emptyBundledDir, { recursive: true, force: true })
       rmSync(stateDir, { recursive: true, force: true })
     }

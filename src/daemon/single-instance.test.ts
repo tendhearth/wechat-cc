@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { acquireInstanceLock, releaseInstanceLock, writeHeartbeat, isHeartbeatFresh, startHeartbeatTicker } from './single-instance'
+import { acquireInstanceLock, acquireInstanceLockWaitingForShutdown, releaseInstanceLock, writeHeartbeat, isHeartbeatFresh, startHeartbeatTicker } from './single-instance'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -116,5 +116,50 @@ describe('heartbeat (daemon health signal for the instance lock)', () => {
 
   it('treats a missing heartbeat as fresh — never steal a lock we cannot prove is stale', () => {
     expect(isHeartbeatFresh(join(dir, 'no-such.heartbeat'), 5000, 10_000)).toBe(true)
+  })
+})
+
+describe('acquireInstanceLockWaitingForShutdown:撞上正在收尾的上一个进程就等它退(2026-10-22,kickstart -k 的锁竞争)', () => {
+  // 「占着锁的」用本进程的 pid 模拟(看起来就是我们的 daemon,活着);它「退出」= 删掉 pidfile
+  function fakeClock() {
+    let t = 0
+    return { now: () => t, sleep: async (ms: number) => { t += ms } }
+  }
+  it('**占着锁的正在收尾、过一会儿退了 ⇒ 等到它退、拿到锁**(以前直接判失败、退避 10 秒)', async () => {
+    writeFileSync(pidPath, String(process.pid), 'utf8')
+    const c = fakeClock()
+    let polls = 0
+    const waited: number[] = []
+    const r = await acquireInstanceLockWaitingForShutdown(pidPath, {
+      isHealthy: () => true,
+      holderShuttingDown: () => true,
+      onWait: (pid) => waited.push(pid),
+      now: c.now,
+      sleep: async (ms) => { await c.sleep(ms); if (++polls === 3) unlinkSync(pidPath) },   // 第三次重试前,旧进程收尾完删了 pidfile
+    })
+    expect(r).toEqual({ ok: true })
+    expect(waited).toEqual([process.pid])
+    expect(polls).toBe(3)
+  })
+  it('**占着锁的没在收尾(真的两个同时起)⇒ 立刻拒,一毫秒都不多等**', async () => {
+    writeFileSync(pidPath, String(process.pid), 'utf8')
+    const sleep = vi.fn(async () => {})
+    const r = await acquireInstanceLockWaitingForShutdown(pidPath, { isHealthy: () => true, holderShuttingDown: () => false, sleep })
+    expect(r).toMatchObject({ ok: false, reason: 'another daemon already running' })
+    expect(sleep).not.toHaveBeenCalled()
+    unlinkSync(pidPath)
+  })
+  it('一直不退 ⇒ 等到头就照旧拒(交给开机失败的退避),不无限等', async () => {
+    writeFileSync(pidPath, String(process.pid), 'utf8')
+    const c = fakeClock()
+    const r = await acquireInstanceLockWaitingForShutdown(pidPath, { isHealthy: () => true, holderShuttingDown: () => true, now: c.now, sleep: c.sleep, maxWaitMs: 30_000, pollMs: 250 })
+    expect(r).toMatchObject({ ok: false })
+    expect(c.now()).toBe(30_000)
+    unlinkSync(pidPath)
+  })
+  it('一开始就拿得到 ⇒ 不碰 holderShuttingDown', async () => {
+    const holderShuttingDown = vi.fn(() => true)
+    expect(await acquireInstanceLockWaitingForShutdown(pidPath, { holderShuttingDown })).toEqual({ ok: true })
+    expect(holderShuttingDown).not.toHaveBeenCalled()
   })
 })

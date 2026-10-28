@@ -52,9 +52,10 @@ describe('e2e: degraded boot — optional subsystem failure does not take the bo
 
       // 4. 管理员收到一条降级汇总。
       const outbound = await daemon.waitForOutbound(msgs =>
-        msgs.some(m => m.chatId === 'testadmin' && !!m.text?.includes('a2a-server')))
-      const summary = outbound.find(m => m.chatId === 'testadmin' && m.text?.includes('a2a-server'))
-      expect(summary?.text).toContain('⚠️ 本次启动有')
+        msgs.some(m => m.chatId === 'testadmin' && !!m.text?.includes('CC 之间的往来')))
+      const summary = outbound.find(m => m.chatId === 'testadmin' && m.text?.includes('CC 之间的往来'))
+      // 给主人看功能名,不念子系统 id、不贴原始错误
+      expect(summary?.text).toBe('这次开机有几样没起来：CC 之间的往来。其它功能照常。')
     } finally {
       // 5. shutdown 干净(降级子系统未注册 lifecycle,stop 不报错)。
       await daemon?.stop()

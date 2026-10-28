@@ -4,91 +4,61 @@
  *
  * Refs are passed in for late-bound polling/guard access from closures.
  */
-import type { SinkExtras } from '../reply-sinks'
-import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult, CONVERSE_IMAGE_LIMITS, converseFileStem, isConverseImageMime, type ConverseImage } from '../app-reply'
+import { makeCommandRegistry, yieldNumbersToOpenChoice } from '../commands/registry'
+import { makePermissionAnswer } from '../permission-answer'
+import { choiceTakes, type OpenChoice } from '../inbound/mw-task-reference'
+import { makeTaskCommand } from '../commands/task-command'
 import { join } from 'node:path'
-import { recallFromMemory } from '../memory/recall'
+import { memoryFactsFor, recallFromMemory } from '../../features/memory'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import type { Ref } from '../../lib/lifecycle'
-import type { IlinkAdapter } from '../ilink-glue'
-import type { Bootstrap } from '../bootstrap'
-import type { GuardLifecycle } from '../guard/lifecycle'
+import { existsSync } from 'node:fs'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
 import { isAdmin, loadAccess, appendAllowFrom } from '../../lib/access'
-import { resolveTier } from '../../core/user-tier'
-import { derivePetTurn } from '../../core/pet-turn'
+import { resolveTier } from '../../domain/user-tier'
 import type { PetTurnDep } from '../internal-api/types'
 import { makeAdminCommands } from '../admin-commands'
 import { makeSelfChangeSpawner, resolveSelfCli } from '../self-change-spawn'
 import { makeModeCommands } from '../mode-commands'
-import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { ReplySinks } from '../reply-sinks'
-import { loadCompanionConfig } from '../companion/config'
-import { buildCapabilities } from '../capabilities'
-import { hasFullDiskAccess } from '../../lib/fs-access'
-import { readNightlyState } from '../memory/nightly'
-import { readPlanLogDays } from '../companion/plan-memory'
-import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
-import { makeCheapJudge, type TaskCandidate } from '../../core/workbench/task-reference'
-import { scopedSend, withReplyScope } from '../inbound/reply-scope'
-import type { InboundCtx } from '../inbound/types'
+import { makeCheapJudge, type TaskCandidate } from '../../features/workbench'
+import { scopedSend } from '../inbound/reply-scope'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
-import { makeSettingsPanel, phoneMayOpenMatter } from '../settings-panel'
-import { buildConnections, cacheConnections } from '../connections'
-import { makeRemoteToggle, relayV2Configured } from '../remote-toggle'
-import { cacheSessions } from '../mobile-reads'
-import { maxDecryptedMtime } from '../companion/ingest/cycle'
-import { hostname } from 'node:os'
-import { APP_VERSION } from '../../lib/app-version'
-import { makePhoneChatId, makePhoneOwner } from '../mobile-chat'
-import { makePhoneChat } from '../phone-chat'
-import { makePhoneInsight } from '../phone-insight'
-import { makeApprovalExplainer } from '../phone-explain'
-import { makeProgressSummarizer } from '../phone-progress'
-import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
-import { makePhoneEventsWiring } from '../phone-topic-sources'
-import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
-import { makePhonePush } from '../phone-push'
-import { fanoutPush, makePhoneNotifier } from '../phone-notifier'
-import { deviceIdOf } from '../device-store'
-import { makeCommandRouter } from './command-router'
+import { wireConnections } from './wire-connections'
+import { wirePhone } from './wire-phone'
+import { makeControlCommands } from './command-router'
 import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
-import { makeEventsStore } from '../events/store'
 import { makeGuestRequestStore } from '../guest-requests'
-import { makeForwardBudget } from '../../core/forward-budget'
-import type { InboundMsg } from '../../core/prompt-format'
+import { makeForwardBudget } from '../../domain/forward-budget'
+import type { InboundMsg } from '../../domain/prompt-format'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
-import { loadAgentConfig, modelForProvider, saveAgentConfig } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { socialState } from '../social-state'
 import { writeConfigKey } from '../config-surface'
 import { makeOpenaiModels } from '../openai-models'
-import { hasLlmKey } from '../llm-keys'
 import { findOnPath } from '../../lib/util'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
-import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
+import { makeFireMilestonesFor, makeMaybeWriteWelcomeObservation, makeRecordInbound } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { makeMemoryLlmOps, resolveCheapEval } from '../memory-llm-ops'
-import { makeMemoryNightlyRuntime, type MemoryNightlyRuntime } from '../memory/nightly-runtime'
-import { makeNightlySources } from '../memory/nightly-sources'
-import { shouldSpeak, careLevel } from '../companion/calibration'
+import { wireMemory } from '../../features/memory'
+import { wirePetTurn } from './wire-pet-turn'
+import { wireCompanionConverse } from './wire-converse'
 import { makeDedupStore } from '../../lib/dedup-store'
-import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
-import type { YiHub, YiDispatch } from '../../core/yi-hub'
-import type { ExecResult } from '../../core/a2a-server'
-import type { Mode, ProviderId } from '../../core/conversation'
-import { makeMattersService } from '../../core/matters/service'
-import { makeSayReceipts } from '../../core/matters/say-receipts'
+import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../app/a2a-delegate'
+import type { YiHub, YiDispatch } from '../../app/yi-hub'
+import type { ExecResult } from '../../ports/a2a'
+import { makeMattersService } from '../../app/matters/service'
+import { makeSayReceipts } from '../../adapters/store/say-receipts'
+import { surfaceOrigin } from '../../features/phone'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -98,42 +68,7 @@ export interface DelegateDeps {
   timeoutMs: number
 }
 
-export interface OwnerSessionKeyDeps {
-  resolveProject: (chatId: string) => { alias: string; path: string } | null
-  getMode: (chatId: string) => Mode
-  defaultProviderId: ProviderId
-}
-
-/**
- * Resolves the (alias, providerId) session-manager key for a chat the SAME
- * way ConversationCoordinator.dispatch resolves it internally (resolveProject
- * + mode → provider), mirroring the provider-derivation chain tick-bodies.ts's
- * dispatchToChat uses before its own isInFlight check. Exported/pure so the
- * app-conversation-channel in-flight guard (companionConverse below) is unit
- * testable without constructing a full Bootstrap.
- *
- * Used to check SessionManager.isInFlight with the EXACT key a real dispatch
- * will acquire — so an app /converse turn (companionConverse) refuses to
- * start while a WeChat turn is in flight on the owner's session. Without
- * this, a WeChat message and an app /converse racing on the owner's
- * default_chat_id both resolve the same SessionManager handle and dispatch
- * concurrently on one AgentSession → corruption (e.g. the openai provider
- * pushes to a shared mutable history array with no self-guard). Spec §3
- * (app-conversation-channel Task 2, HIGH review finding).
- *
- * Returns null when the chat has no resolvable project — dispatch would
- * drop the message in that case too, so there's nothing to guard.
- */
-export function resolveOwnerSessionKey(chatId: string, deps: OwnerSessionKeyDeps): { alias: string; providerId: ProviderId } | null {
-  const proj = deps.resolveProject(chatId)
-  if (!proj) return null
-  const mode = deps.getMode(chatId)
-  const providerId =
-    mode.kind === 'solo' ? mode.provider
-    : mode.kind === 'primary_tool' ? mode.primary
-    : (mode.participants?.[0] ?? deps.defaultProviderId)
-  return { alias: proj.alias, providerId }
-}
+export { resolveOwnerSessionKey, type OwnerSessionKeyDeps } from './owner-session-key'
 
 export function makeDelegateToHand(deps: DelegateDeps) {
   return async (handName: string, task: string): Promise<ExecResult & { knownHands?: string[] }> => {
@@ -150,79 +85,32 @@ export function makeDelegateToHand(deps: DelegateDeps) {
   }
 }
 
-export interface PipelineDepsOpts {
-  workbench?: import('../../core/workbench/service').WorkbenchService
-  /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
-  cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
-  /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
-  cliActions?: import('../cli-phone-actions').CliPhoneActions
-  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
-  overseerToday?: () => import('../../core/overseer-today').OverseerToday
-  /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
-  terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
-  /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
-  guardRuntime?: import('../guard/runtime').GuardRuntime
-  /** 可选子系统的开机状态(SubsystemSupervisor.statuses;「CC 现在怎么样」用)。 */
-  subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
-  /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
-  panelTokens?: import('../internal-api/token-registry').PanelTokens
-  matters?: import('../../core/matters/store').MatterStore
-  stateDir: string
-  db: import('../../lib/db').Db
-  ilink: IlinkAdapter
-  boot: Bootstrap
-  log: (tag: string, line: string, fields?: Record<string, unknown>) => void
-  /**
-   * Shared chat-prefs instance — constructed once in main.ts and also fed
-   * to registerInternalApi's getChatPrefs, so the /set command and the
-   * reply-route split logic read/write the SAME in-memory-cached store.
-   */
-  chatPrefs: ChatPrefsStore
-  /**
-   * Shared care-ledger instance — constructed once in main.ts, also fed to
-   * pushTick (via WireMainOpts). The inbound activity middleware resets the
-   * no-reply streak through this SAME store on every inbound message.
-   */
-  careLedger: CareLedger
-  /**
-   * Shared reply-sink registry (app-conversation-channel, voice arc Stage
-   * 0, Task 1/2) — constructed once in main.ts, also fed to
-   * registerInternalApi's `replySinks` so the `POST /v1/wechat/reply`
-   * route captures into the SAME sink the converse closure below opens.
-   * A second instance would never see the capture.
-   */
-  replySinks: ReplySinks
-  /**
-   * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)—— main.ts 里造的**同一个**
-   * 实例(也传给 buildBootstrap)。这里写两笔:入站分发进门时的 noteTurnStart,
-   * 和 companionConverse 的 noteContact / noteTurnStart。读的那一头是下面
-   * 组装出来的 petTurn 闭包。
-   */
-  petSignals?: import('../pet-signals').PetSignals
-  /** 打猎战利品(v36)。缺失 ⇒ 微信「背包」命令说功能没接。 */
-  huntStore?: { list(limit?: number): readonly import('../../core/journal-store').CatchRow[] }
-  /** Sticker library — 随身 CC 手机页展示 + 图片服务(main.ts 传入)。 */
-  stickers?: import('../stickers').StickerLib
-  /** 触发 daemon 重启(远程访问开关切换后套用新隧道接线)。main.ts 传入。 */
-  requestRestart?: (reason: string) => void
-  /** LLM 体检只读缓存 —— 设置面板「模型与后端」的通/不通一列。main.ts 传入。 */
-  llmHealth?: { cached(): import('../llm-health').LlmHealthReport | null }
-  /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
-  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
-  /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
-  presence?: () => Promise<import('../../core/companion-presence').Presence | null>
-  /** 「看 码」「@码 文本」的执行者(daemon/cli-reply-handler)。main.ts 传入。 */
-  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe(text: string, chatId: string): boolean }
+export type { PipelineDepsOpts } from './pipeline-deps-opts'
+import type { PipelineDepsOpts } from './pipeline-deps-opts'
+import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
+import { makeGuestOwnerNotify } from '../inbound/guest-notify'
+import { Ref } from '../../lib/lifecycle'
+import { makeProactiveOutbound, type AppChannel, type ProactiveOutbound } from '../companion/proactive-channel'
+import type { SpeechPolicy } from '../speech/policy'
+import { wireSpeech } from './wire-speech'
+
+/**
+ * 比 pipeline-deps 晚才有的几样(环的那一头,模块容器的 `ctx.late`):调用时现取,还没有 ⇒ null。
+ */
+export interface PipelineDepsLate {
+  polling(): PollingLifecycle | null
+  pipeline(): PipelineRun | null
+  /** 可选:没接(测试 / 最小嵌入)时 App 一轮不过消费表,直接进对话。 */
+  appTurn?(): AppTurn | null
+  /** Ingest nudge — fired per new inbound so the knowledge base tracks fresh activity. */
+  ingestNudge(): (() => void) | null
 }
 
-export interface PipelineDepsRefs {
-  polling: Ref<PollingLifecycle>
-  guard: Ref<GuardLifecycle>
-  pipeline: Ref<PipelineRun>
-  /** 可选:没接(测试 / 最小嵌入)时 App 一轮不过消费表,直接进对话。 */
-  appTurn?: Ref<AppTurn>
-  /** Late-bound ingest nudge — fired per new inbound so the knowledge base tracks fresh activity. */
-  ingestNudge: Ref<() => void>
+/** 管道一定已经在了的地方(它自己的回话 / 访客批准后再派一次)用:没有就是接线错了,照实抛。 */
+function pipelineOf(late: PipelineDepsLate, why: string): PipelineRun {
+  const p = late.pipeline()
+  if (!p) throw new Error(`pipeline not wired yet (${why})`)
+  return p
 }
 
 const STARTED_AT_ISO = new Date().toISOString()
@@ -232,18 +120,20 @@ const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 
 export interface BuildPipelineDepsResult {
   pipelineDeps: InboundPipelineDeps
+  /** 关机时停手机那一簇(隧道 / notifier / 订阅 / 设置面板);main.ts 在 polling 之前登记。 */
+  stopPhone: () => Promise<void>
   /** Mint a fresh settings-panel URL (10-min single-active token) — the
    *  微信 /set(进程内)与 GET /v1/settings/link(admin 档,plan 7a;selftest phone 用)。
    *  桌面「连接手机」走 phoneConnect / POST /v1/phone/link。 */
   settingsPanelLink: () => Promise<string | null>
   /** 手机「跟 CC 说」的任务表(收下即回,converse = companionConverse);没接 matters ⇒ null。 */
-  phoneChat: import('../phone-chat').PhoneChat | null
+  phoneChat: import('../../features/phone').PhoneChat | null
   /** 「CC 的连接」快照(缓存 10 s);手机与 admin 路由共用。 */
   connections: () => import('../connections').ConnectionsSnapshot
   /** 桌面「连接手机」(plan 7a)。 */
-  phoneConnect: import('../internal-api/types').PhoneConnectDep
+  phoneConnect: import('../../features/phone').PhoneConnectDep
   /** 「一件事」读写面(有 matters store 才有)。 */
-  mattersService: import('../../core/matters/service').MattersService | null
+  mattersService: import('../../app/matters/service').MattersService | null
   /** 退订工作台事件 + 清「一件事」活动时间的节流定时器;main.ts 登记进 shutdown。可重复调用。 */
   stopMatterActivity: () => void
   /**
@@ -263,21 +153,45 @@ export interface BuildPipelineDepsResult {
    */
   petTurn: PetTurnDep
   /** 每晚记忆整理运行时;main.ts 挂定时器并接到 internal-api。 */
-  memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
+  memoryNightly: import('../../features/memory').MemoryNightlyRuntime
   /** 手机 app 原生推送出口(中继 v2);没开 v2 ⇒ 调用回 null。终端会话推送用(main.ts 懒绑定)。 */
-  appPush: import('../cli-app-push').AppPushOutlet
+  appPush: import('../../features/terminal').AppPushOutlet
+  /**
+   * CC 主动找你的 App 那条路(2026-10-18,companion/app-channel.ts):记进主人对话 + companion 推送。
+   * 没开中继 v2 / 没有「一件事」库(手机对话不存在)⇒ null,伙伴与提醒只走微信。
+   */
+  companionApp: import('../companion/proactive-channel').AppChannel | null
+  /** CC 主动找你的出口(微信能用走微信,不能用落到 App)。 */
+  proactive: ProactiveOutbound
+  /** CC 主动开口唯一的门(第三批 3a)。 */
+  speech: SpeechPolicy
 }
 
-export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
+export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate): BuildPipelineDepsResult {
   const { stateDir, db, ilink, boot, log, chatPrefs, careLedger, replySinks } = opts
   // 消费者的回话:微信来的一轮直发微信;App 来的一轮(withReplyScope 里)截住交还 App(inbound/reply-scope)。
   const send = scopedSend((cid: string, txt: string, o?: { source: 'workbench' }) => ilink.sendMessage(cid, txt, o))
   const inboxDir = join(stateDir, 'inbox')
 
+  // CC 主动找你的出口 + 开口那道门(第三批 3a)。记忆通知在下面就要用,所以在最前面造。
+  // App 那条路(companionApp)要等 wirePhone 才有 —— 这是一个真实的环:记忆 → 手机页(要显示记忆)→ App 通道 → 门 → 记忆通知。
+  // proactive-channel 的 app() 本来就是为这个设计的懒取;这里用 Ref 接上(只 set 一次,没开中继 v2 就一直是 null)。
+  const companionAppRef = new Ref<AppChannel>('companionApp')
+  const proactive = makeProactiveOutbound({
+    wechatDegraded: () => boot.health.health.shouldSuspend('wechat'),
+    wechatClosedSince: (chatId) => ilink.proactiveClosedSince(chatId),
+    sendWechat: (chatId, text) => ilink.sendMessage(chatId, text),
+    // ilink.sendFile 失败是抛错 —— 折成 {error},proactive-channel 才能改走 App(新贴纸那一句,第三批 3a)
+    sendWechatFile: async (chatId, path) => { try { await ilink.sendFile(chatId, path); return {} } catch (err) { return { error: err instanceof Error ? err.message : String(err) } } },
+    app: () => companionAppRef.current,
+    log: (tag, line) => log(tag, line),
+  })
+  const speech = wireSpeech({ stateDir, db, chatPrefs, proactive, log: (tag, line) => log(tag, line) })
+
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
   // often tens of seconds to minutes. The shared a2aDeps.client's 10s timeout
   // is tuned for notify/send; exec needs a long one. Lazily built + reused.
-  let execA2AClient: import('../../core/a2a-client').A2AClient | undefined
+  let execA2AClient: import('../../ports/a2a').A2AClient | undefined
 
   const fireMilestonesFor = makeFireMilestonesFor({ stateDir, db, dayTzOffsetMinutes: boot.agentConfig.day_tz_offset_minutes })
 
@@ -333,7 +247,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   }
 
   // 管理员控制命令路由 — 从 dispatch 闭包抽出(命令逻辑本体在 command-router.ts)。
-  const commandRouter = makeCommandRouter({
+  const controlCommands = makeControlCommands({
     isAdmin: (c) => isAdmin(c),
     loadAccess: () => loadAccess(),
     appendAllowFrom: (c) => { appendAllowFrom(c) },
@@ -341,10 +255,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(boot.social ? { social: { wish: boot.social.wish, penpal: { startVisit: (c) => boot.social!.penpal.startVisit(c) }, intro: boot.social.intro } } : {}),
     ...(boot.penpal ? { penpal: boot.penpal } : {}),
     ...(boot.pairing ? { pairing: boot.pairing } : {}),
+    socialState: () => socialState(opts.subsystems?.(), loadAgentConfig(stateDir), !!boot.social),
     guestRequests,
     hydrateRoute,
     sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { error?: string }),
-    redispatch: (run) => refs.pipeline.deref('guest approve redispatch')(run),
+    redispatch: (run) => pipelineOf(late, 'guest approve redispatch')(run),
     log: (tag, line) => log(tag, line),
   })
   // Owner notification for the guest branch — resolveAdminChatId
@@ -355,63 +270,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // degraded-subsystem admin summary (~:487-501) — the guest's text is
   // truncated/escaped by mw-access BEFORE it ever reaches this closure, and
   // never passes through a prompt.
-  const notifyOwnerOfGuest = (text: string): Promise<{ error?: string }> => {
-    const adminChatId = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-    if (!adminChatId) return Promise.resolve({ error: 'no_admin_chat_configured' })
-    return ilink.sendMessage(adminChatId, text)
-  }
-  // Shared LLM-backed memory ops (overview synthesis + profile generation),
-  // wired with the daemon's OWN provider registry/coordinator so both the
-  // WeChat admin-command path (below) and the internal-api routes the
-  // desktop calls resolve cheapEval identically. Built once and reused.
-  const memoryLlmOps = makeMemoryLlmOps({
-    stateDir,
-    db,
-    getMode: (cid) => boot.coordinator.getMode(cid),
-    registry: boot.registry,
-  })
-  // 每晚整理长期记忆 memory.md(spec 2026-09-25-memory-nightly-design)。定时器由 main.ts 挂。
-  const nightlyOwner = (): string | null => loadCompanionConfig(stateDir).default_chat_id ?? null
-  const nightlyRuntime = makeMemoryNightlyRuntime({
-    stateDir,
-    ownerChatId: nightlyOwner,
-    config: () => {
-      const c = loadCompanionConfig(stateDir)
-      return { enabled: c.memory_nightly_enabled, at: c.memory_nightly_at, timezone: c.timezone }
-    },
-    sources: makeNightlySources({ db, stateDir, ownerChatId: nightlyOwner }),
-    cheapEval: () => {
-      const o = nightlyOwner()
-      return o ? resolveCheapEval({ getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry }, o) : boot.registry.getCheapEval()
-    },
-    ownerRecentlyActive: async () => {
-      const o = nightlyOwner()
-      if (!o) return false
-      const ts = await makeMessagesStore(db).latestInboundTs(o)
-      return !!ts && Date.now() - Date.parse(ts) < 3 * 60_000
-    },
-    now: () => Date.now(),
-    newId: () => randomBytes(3).toString('hex'),
-    log: (t, l) => log(t, l),
-    careGate: (chatId, nowIso) => shouldSpeak({
-      kind: 'memory',
-      level: careLevel(chatId, chatPrefs.get(chatId), loadCompanionConfig(stateDir).default_chat_id ?? undefined),
-      nowIso,
-      ledger: careLedger.get(chatId),
-    }),
-    claim: (chatId, nowIso) => careLedger.claimMemory(chatId, nowIso),
-    wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
-    send: (chatId, text) => ilink.sendMessage(chatId, text),
-  })
-  // 手动立即运行(内部 API / 以后的微信「整理记忆」)可能跑到 5 分钟 —— 持 busy token,
-  // 免得空闲自动重启把它杀掉。定时 tick 的 busy 由 registerMemoryNightly 自己持。
-  const memoryNightly: MemoryNightlyRuntime = {
-    ...nightlyRuntime,
-    runNow: async () => {
-      const release = boot.holdBusy('memory-nightly-manual')
-      try { return await nightlyRuntime.runNow() } finally { release() }
-    },
-  }
+  // 经 CC 开口那道门(guest_request,blocking);交给门就算办完,重试归待说队列(inbound/guest-notify.ts)
+  const notifyOwnerOfGuest = makeGuestOwnerNotify({ speech: () => speech, adminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null), log: (t, l) => log(t, l) })
+  // 记忆(src/features/memory,经 index.ts):LLM 记忆操作、每晚整理;欢迎时的观察(side-effects.ts)。
+  const { memoryLlmOps, memoryNightly } = wireMemory({ stateDir, db, boot, chatPrefs, careLedger, speech, log })
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
     db,
@@ -423,9 +285,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     stateDir, isAdmin,
     sessionState: ilink.sessionState,
     pollHandle: {
-      stopAccount: (id) => refs.polling.current?.stopAccount(id) ?? Promise.resolve(),
-      stopAccountAndWait: async (id) => { await refs.polling.current?.stopAccountAndWait(id) },
-      running: () => refs.polling.current?.running() ?? [],
+      stopAccount: (id) => late.polling()?.stopAccount(id) ?? Promise.resolve(),
+      stopAccountAndWait: async (id) => { await late.polling()?.stopAccountAndWait(id) },
+      running: () => late.polling()?.running() ?? [],
     },
     resolveUserName: (cid) => ilink.resolveUserName(cid),
     sendMessage: send,
@@ -448,7 +310,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     botNameFallback: (cid) => botNameFromModeFallback(boot.coordinator.getMode(cid)),
     // Follows the admin conversation's provider (decided design); falls back
     // to the registry's cheapest eval when the mode isn't solo / unknown.
-    // Delegates to the shared factory (memory-llm-ops.ts) so this path and
+    // Delegates to the shared factory (src/features/memory/llm-ops.ts) so this path and
     // the internal-api routes the desktop calls resolve cheapEval identically.
     synthesizeMemory: (adminChatId) => memoryLlmOps.synthesize(adminChatId),
     readCuratedMemory: async () => memoryNightly.readCurated(),
@@ -489,8 +351,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 可编辑版。读失败返回空数组而不是抛:一次查询挂掉不该让整条 admin
     // 命令链断在这里。
     huntBag: () => {
-      if (!opts.huntStore?.list) return []
-      try { return opts.huntStore.list(50) } catch { return [] }
+      if (!opts.journal?.list) return []
+      try { return opts.journal.list(50) } catch { return [] }
     },
     // 触发器按**已注册的手名**认派活(不按动词)—— 见 admin-commands 的
     // matchDelegate。id 和 name 都给,两种叫法都能触发。
@@ -528,8 +390,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         listHands: () => a2a.registry.list(),
         hub,
         pushDelegate: async (hand, dispatch, sid, tms) => {
-          const { delegateToHand: doDelegate } = await import('../../core/a2a-delegate')
-          const { createA2AClient } = await import('../../core/a2a-client')
+          const { delegateToHand: doDelegate } = await import('../../app/a2a-delegate')
+          const { createA2AClient } = await import('../../adapters/a2a/a2a-client')
           execA2AClient ??= createA2AClient({ timeoutMs: tms })
           return doDelegate(execA2AClient, { hand, selfId: sid, prompt: dispatch.prompt })
         },
@@ -569,35 +431,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
   })
 
-  // 微信可点开的图形设置面板 (2026-08-25) — lazily-started LAN server, every
-  // endpoint gated on a one-active 10-min token. /set (no args) from an
-  // admin appends the link. See settings-panel.ts's security posture.
-  // Remote tunnel opt-in (随身 CC out-of-home) — resolve id/relay BEFORE the
-  // panel so its /m page can bake them in for out-of-home phones.
-  const remoteCfg = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: string; relay_v2_url?: string }
-  // 过渡期双中继(spec 2026-09-30 §8):老 VPS 中继 + 官方中继 v2;remoteInfo 优先 v2。
-  const relays = resolveRemoteRelays(stateDir, remoteCfg, (tag, line) => log(tag, line))
-  const remoteTunnel = relays?.remoteInfo ?? null
-  // 推送(中继 v2):先建,面板与隧道都要它;发送走 v2 隧道客户端(稍后才建 —— 懒绑定)。
-  let v2Tunnel: import('../tunnel-client').TunnelClient | null = null
-  let legacyTunnel: import('../tunnel-client').TunnelClient | null = null
-  let notifier: { refresh(): void } | null = null
-  // settingsPanel 在下面才定义;deviceToken / deviceIds 两个闭包只在运行时(推送登记 / 发送 / resync)
-  // 才被调用,那时它早已建好 —— 与 companionConverse 的写法同一姿势。
-  const phonePush = relays?.v2 ? makePhonePush({
-    stateDir,
-    send: (m) => v2Tunnel?.sendControl(m) ?? false,
-    deviceToken: (id) => settingsPanel.deviceTokens().find(t => deviceIdOf(t) === id) ?? null,
-    deviceIds: () => settingsPanel.deviceTokens().map(deviceIdOf),
-    onChange: () => notifier?.refresh(),
-    log: (tag, line) => log(tag, line),
-  }) : null
-
-  // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。隧道没建 ⇒ 空。
-  const onlineDevices = () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf)
-  // 终端会话的手机推送出口(cli-app-push.ts):与工作台通知同一套 fanout(在线的跳过、失败只记日志)。
-  const appPush: import('../cli-app-push').AppPushOutlet = (p) =>
-    phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
@@ -605,255 +438,59 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
   // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。stop 退订 + 清定时器,main.ts 登记进 shutdown。
   const stopMatterActivity = wireMatterActivity(matterActivity, opts.workbench?.changes)
+  // App 里跟 CC 说一句(重构第二批步 6c,wire-converse.ts):提到「一件事」与手机对话之前,两处直接拿它,不再靠「在下面才定义」的捕获。
+  const companionConverse = wireCompanionConverse({
+    stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,
+    appTurn: () => late.appTurn?.() ?? null,
+    matters: opts.matters, petSignals: opts.petSignals, stickers: opts.stickers,
+  })
+
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
     ownerChatId,
+    // 执行者叫什么(收敛清单 ⑥):唯一出处是 registry,三端只读 agentNames。
+    executorName: (id: string) => boot.registry.namesOf(id).name,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
-    // companionConverse 在下面才定义;这里只是捕获引用,真正调用发生在请求到来时。
     chat: {
       ownerChatId,
       say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
-      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
+      // 只有附件的行(媒体镜像 / 只发了表情的回复,text 为空)在「一件事」的文字时间线里没东西可显示 —— 跳过;App 对话页另读整行。
+      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).filter(r => r.text.trim() !== '').map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
       search: async (chatId: string, query: string, limit: number) => (await messagesStore.search(chatId, query, limit)).map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
     // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。
     sayReceipts: makeSayReceipts(db),
+    originOf: surfaceOrigin,
   }) : null
-  // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
-  // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
-  // 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B。
-  const phoneChatId = makePhoneChatId({ ownerChatId, converseChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null, log: (tag, line) => log(tag, line) })
-  const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters }) : null
-  let phoneEvents: import('../phone-events').PhoneEvents | null = null
-  // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:
-  // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
-  // companionConverse 在下面才定义;这里只捕获引用,调用发生在请求到来时(与 mattersService 同一姿势)。
-  const phoneChat = phoneOwner ? makePhoneChat({
-    converse: (text, images) => companionConverse(text, 'phone', images),
-    // 手机带的图:材料暂存里按主人取(与交办同一套校验),读完即删,图落到对话 inbox(2026-10-06)。
-    ...(opts.workbench ? { takeImages: (m: { draftId: string; attachmentIds: string[] }) => opts.workbench!.takeChatImages(m, { ownerKey: ownerChatId() ?? '', surface: 'phone' }) } : {}),
-    ownerMatterId: () => phoneOwner.ensure(),
-    onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
-    log: (tag, line) => log(tag, line),
-  }) : null
-  // 「CC 的连接」(spec 2026-10-01):插件快照 / 解密库时间 / 知识库 / 工作台。裁定 8:缓存 10 s、最多 3 次 detail()。
-  // wechatSyncedAt = wxvault 解密库的最近落盘时间(同步时间),不是最新微信消息时间。
-  const startedAt = Date.now() - Math.round(process.uptime() * 1000)
-  const connections = cacheConnections(() => buildConnections({
-    plugins: () => boot.pluginsHealth ?? null,
-    wechatSyncedAt: () => { const m = maxDecryptedMtime(stateDir); return m > 0 ? m : null },
-    knowledge: () => ({ enabled: (loadAgentConfig(stateDir) as { knowledge_enabled?: boolean }).knowledge_enabled === true, built: !!boot.knowledge, latestAt: boot.knowledge?.store.latestMessageAtMs() ?? null, syncedAt: boot.knowledge?.store.lastSyncAtMs() ?? null }),
-    computer: () => ({ label: hostname().replace(/\.local$/, ''), since: startedAt, version: APP_VERSION }),
-    detailLimit: 3,
+  // 「CC 的连接」与「CC 现在怎么样」(重构第二批步 6c,wire-connections.ts)。
+  // 配对过的手机数从设置面板读,面板又要 connections 当值 —— 真环。显式的晚绑定:手机那一簇建好之后才填;
+  // 没填 ⇒ 0(不靠 try/catch 吞 TDZ,catch 只留给真的读失败,#488 评审)。
+  const phoneDevices: { current: (() => number) | null } = { current: null }
+  const connections = wireConnections({
+    stateDir, boot, ilink, ownerChatId,
+    phoneDevices: () => phoneDevices.current?.() ?? 0,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
-    // 「CC 现在怎么样」(2026-10-06):现有信号拼成四态能力表(capabilities.ts);任何一路读不到就当没有,不让整张卡挂掉。
-    capabilities: () => {
-      const cfg = loadAgentConfig(stateDir) as { provider?: string; knowledge_enabled?: boolean }
-      const provider = cfg.provider ?? 'claude'
-      const probe = (boot.providerProbes?.() ?? []).find(p => p.id === provider)
-      const outbound = ilink.outboundHealth()
-      const guard = opts.guardRuntime?.health()
-      const fda = process.platform === 'darwin' ? hasFullDiskAccess() : null
-      const nightly = readNightlyState(stateDir)
-      let devices = 0
-      try { devices = settingsPanel.phoneDevices().length } catch { /* 读不到就当没配对 */ }
-      return buildCapabilities({
-        wechat: { outbound: outbound.state, expired: ilink.sessionState.listExpired().length, lastError: outbound.lastError ?? null, ownerWindowClosedSince: (() => { const o = ownerChatId(); return o ? ilink.proactiveClosedSince(o) : null })() },
-        brain: { provider, name: boot.registry.get(provider)?.opts.displayName ?? provider, registered: boot.registry.has(provider), retrying: probe?.state === 'retrying', lastError: probe?.last_error ?? null },
-        guard: guard?.enabled ? { safe: guard.safe, paused: !!guard.paused, detail: guard.detail ?? null } : null,
-        fullDiskAccess: fda === null ? null : { granted: fda, settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' },
-        knowledge: cfg.knowledge_enabled === true ? { built: !!boot.knowledge, embed: boot.knowledge?.embedStatus?.() ?? (boot.knowledge?.embedder ? 'python' : 'none') } : null,
-        memory: loadCompanionConfig(stateDir).memory_nightly_enabled ? { failures: nightly.failures, firstRunDone: nightly.firstRunDone } : null,
-        background: (() => { const h = boot.registry.cheapEvalHealth?.(); return h ? { failures: h.consecutiveFailures, lastError: h.lastError } : null })(),
-        phone: { relay: relayV2Configured(stateDir), devices },
-        terminal: (() => { try { return opts.terminalHooks?.capabilityInput() ?? null } catch { return null } })(),
-        subsystems: opts.subsystems?.() ?? [],
-      })
-    },
-  }))
-  // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
-  const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
-  const settingsPanel = makeSettingsPanel({
-    connections,
-    ...(opts.cliSessions ? { cliSessions: opts.cliSessions } : {}),
-    ...(opts.cliActions ? { cliActions: opts.cliActions } : {}),
-    ...(opts.overseerToday ? { overseerToday: opts.overseerToday } : {}),
-    ...(phoneSessions ? { sessions: phoneSessions } : {}),
-    // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
-    ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),
-    stateDir,
-    ownerChatId,
-    relayV2Configured: () => relayV2Configured(stateDir),
-    relayV2AtBoot: typeof remoteCfg.relay_v2_url === 'string' && remoteCfg.relay_v2_url.trim() !== '',
-    // 手机洞察(批准说明 + 进展概括):explainer / summarizer 各建一个实例(内含缓存),不是每请求一建。
-    ...(mattersService ? (() => {
-      const cheap = () => wrapCheapEvalWithAuthFailCheck(boot.registry.getCheapEval(), (tag, line) => log(tag, line)) ?? null
-      const budgetMs = () => boot.registry.getCheapEvalBudgetMs()
-      return { insight: makePhoneInsight({
-        // 手机「解读」同详情一条规矩:别人的聊天不拿去给模型总结、也不回给手机
-        detail: async (id: string) => {
-          const d = await mattersService.detail(id)
-          if (!phoneMayOpenMatter(d.matter, ownerChatId())) throw new Error('matter_not_found')
-          return d
-        },
-        explainer: makeApprovalExplainer({ cheapEval: cheap, budgetMs, log: (tag, line) => log(tag, line) }),
-        summarizer: makeProgressSummarizer({ cheapEval: cheap, budgetMs, now: () => Date.now(), log: (tag, line) => log(tag, line) }),
-      }) }
-    })() : {}),
-    ...(opts.workbench ? { changes: (id: string) => opts.workbench!.reviewList(id) } : {}),
-    ...(opts.workbench?{uploads:{
-      chunk:(input:Parameters<typeof opts.workbench.uploadAttachmentChunk>[0])=>opts.workbench!.uploadAttachmentChunk(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-      status:(input:{id:string;draftId:string})=>opts.workbench!.attachmentUploadStatus(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-      discard:(input:{id:string;draftId:string})=>opts.workbench!.discardAttachmentUpload(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-    }}:{}),
-    ...(opts.workbench?{entry:{
-      entryOptions:()=>opts.workbench!.entryOptions({ownerKey:ownerChatId()??'',surface:'phone'}),
-      entryModels:(input:{providerId:string;projectId?:string})=>opts.workbench!.entryModels(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-      createEntry:(input:import('../../core/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-      entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
-    }}:{}),
-    curatedMemory: () => memoryNightly.curatedView(),
-    correctMemory: (id: string, verdict: import('../memory/nightly-runtime').MemoryVerdict) => memoryNightly.correct(id, verdict),
-    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
-    ...(phoneOwner && phoneChat ? { chat: {
-      owner: () => phoneOwner.peek(),
-      history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),
-      chat: phoneChat,
-      message: (chatId: string, id: string) => messagesStore.get(chatId, id),
-      search: (chatId: string, query: string, limit: number) => messagesStore.search(chatId, query, limit),
-      speak: (text: string) => ilink.voice.synthesizeSpeech(text),
-      // 与微信 `/api <模型>` 同一处:Mode.solo 按对话钉,下一句生效(同后端换模型时协调器自己释放旧会话)。
-      model: {
-        current: (chatId: string) => {
-          const mode = boot.coordinator.getMode(chatId), cfg = loadAgentConfig(stateDir)
-          const provider = mode.kind === 'solo' ? mode.provider : cfg.provider
-          return {
-            mode: mode.kind, provider,
-            model: mode.kind === 'solo' ? mode.model ?? null : null,
-            globalModel: modelForProvider(cfg, provider) ?? null,
-            providers: boot.registry.list().map(id => ({ id, name: boot.registry.get(id)?.opts.displayName ?? id })),
-          }
-        },
-        set: (chatId: string, provider: string, model: string | null) => boot.coordinator.setMode(chatId, { kind: 'solo', provider, ...(model ? { model } : {}) }),
-      },
-    } } : {}),
-    ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
-    ...(phonePush ? { push: phonePush } : {}),
-    // 「默认大脑」改完自己重启(与远程开关同一条路)。
-    ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
-    ...(opts.requestRestart ? { remote: makeRemoteToggle(stateDir, () => opts.requestRestart!('remote-toggle')) } : {}),
-    // 随身 CC 数据面 — facts/graph 来自 boot.knowledge(缺则手机页对应区留白)
-    ...(boot.knowledge?.facts ? {
-      todos: {
-        facts: {
-          findFacts: (k, pr, q2, st, li) => boot.knowledge!.facts!.findFacts(k, pr, q2, st, li),
-          setFactStatus: (id, st, n) => boot.knowledge!.facts!.setFactStatus(id, st, n),
-        },
-        names: () => {
-          try { return (boot.knowledge?.graph?.topContacts('closeness', 500, 'person') ?? []) as Array<{ username: string; display: string }> } catch { return [] }
-        },
-      },
-    } : {}),
-    ...(opts.stickers ? { stickers: { list: () => opts.stickers!.list(), dir: join(stateDir, 'stickers') } } : {}),
-    // 随身 CC 首屏「伙伴的一天」三源(spec 2026-09-06-mobile-home-feed §5.4)。
-    // journal 缺 ⇒ 整个 feed 不接(三项 degraded),不半接。
-    ...(opts.huntStore ? {
-      feed: {
-        journal: { list: (n?: number) => opts.huntStore!.list(n) },
-        planLogDays: (d: number) => readPlanLogDays(stateDir, d),
-        // M4:不接线时抛(collectSources 的 try/catch 把它记成
-        // sources_degraded),而不是悄悄给 [] —— [] 会被读成「接了,今天没
-        // 聊天」而不是「这一源读不到」,rule 4 的区分就在这一步丢了。
-        turnsRecent: (n: number) => {
-          if (!opts.turns) throw new Error('turns 未接线')
-          return opts.turns.recent(n)
-        },
-        timezone: () => loadCompanionConfig(stateDir).timezone,
-      },
-    } : {}),
-    ...(opts.presence ? { presence: opts.presence } : {}),
-    seen: { read: () => readJournalSeen(stateDir), write: (iso: string) => writeJournalSeen(stateDir, iso) },
-    // 「模型与后端」:注册表 + 体检缓存 + key 有无(只回 boolean)。
-    llm: {
-      registered: () => boot.registry.list(),
-      cached: () => opts.llmHealth?.cached() ?? null,
-      hasKey: (p) => hasLlmKey(stateDir, p),
-    },
-    chatPrefs: {
-      get: (c) => ({ ...chatPrefs.get(c) }),
-      set: (c, patch) => ({ ...chatPrefs.set(c, patch as Parameters<typeof chatPrefs.set>[1]) }),
-    },
-    getUserName: (c) => ilink.resolveUserName(c) ?? null,
-    setUserName: (c, n) => ilink.setUserName(c, n),
-    audit: (reasoning) => {
-      const auditChat = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) ?? '_operator'
-      makeEventsStore(db, auditChat).append({ kind: 'config_changed', trigger: 'settings_panel', reasoning })
-        .catch(() => { /* audit is best-effort — same posture as routes-config */ })
-    },
-    log: (tag, line) => log(tag, line),
-    // 内部 API 同一个 token-registry(梳理第 6 步);没接上(测试)⇒ 面板自建。
-    ...(opts.panelTokens ? { tokens: opts.panelTokens } : {}),
+    ...(opts.guardRuntime ? { guardRuntime: opts.guardRuntime } : {}),
+    ...(opts.terminalHooks ? { terminalHooks: opts.terminalHooks } : {}),
+    ...(opts.subsystems ? { subsystems: opts.subsystems } : {}),
+    ...(opts.providerRefusals ? { providerRefusals: opts.providerRefusals } : {}),
   })
+  // 手机那一簇(重构第二批步 6c,wire-phone.ts):推送 / 主人对话 / 手机对话 / App 主动通道 / 媒体镜像 / 设置面板 / 隧道 / notifier / 订阅。
+  // 簇里的环在 wirePhone 里面解(显式的 late 对象);这里只拿结果。关机停它的那一项 main.ts 登记在 polling 之前。
+  const phone = wirePhone({
+    opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore,
+    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections, speech,
+  })
+  phoneDevices.current = () => phone.settingsPanel.phoneDevices().length
+  const { appPush, companionApp, phoneChat, settingsPanel } = phone
+  if (companionApp) companionAppRef.set(companionApp)
 
-  // 远程中继隧道 daemon leg — dials the relay out (NAT-piercing); phone
-  // reaches it via the SAME settingsPanel.handleRequest. OFF unless
-  // remote_tunnel:true (resolved into relays above). 过渡期两条:老中继 + v2。
-  if (relays) {
-    // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
-    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。随 daemon 常驻,不 dispose(轮询定时器 unref,且只在有订阅时跑)。
-    const phone = makePhoneEventsWiring({
-      ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
-      ...(opts.matters ? { matters: opts.matters } : {}),
-      home: (limit, o) => settingsPanel.home(limit, o),
-      ...(phoneChat ? { chat: {
-        latestAt: async (chatId: string) => { const ts = await messagesStore.latestTs(chatId); return ts ? Date.parse(ts) : null },
-        pendingMatter: () => phoneChat.pendingMatter(),
-      } } : {}),
-      log: (tag, line) => log(tag, line),
-    })
-    phoneEvents = phone.events
-    import('../tunnel-client').then(({ makeTunnelClient }) => {
-      const common = {
-        events: phone.events,
-        handleRequest: (req: Request) => settingsPanel.handleRequest(req),
-        // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
-        knownDeviceTokens: () => settingsPanel.deviceTokens(),
-        activeLinkToken: () => settingsPanel.activeLinkToken(),
-        log: (tag: string, line: string) => log(tag, line),
-      }
-      // 过渡期(spec §8):老中继照连,已配对的手机网页还指着它。
-      legacyTunnel = makeTunnelClient({ ...common, daemonId: relays.legacy.id, relayUrl: relays.legacy.daemonUrl })
-      legacyTunnel.start()
-      if (relays.v2) {
-        v2Tunnel = makeTunnelClient({
-          ...common,
-          daemonId: relays.v2.identity.id,
-          relayUrl: relays.v2.daemonUrl,
-          login: relays.v2.identity,
-          onLogin: () => phonePush?.resync(),
-          onControl: (m) => phonePush?.onControl(m),
-        })
-        v2Tunnel.start()
-      }
-      if (phonePush && opts.workbench) {
-        const wb = opts.workbench
-        const n = makePhoneNotifier({
-          events: phone.events,
-          push: phonePush,
-          // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。
-          subscribedDevices: onlineDevices,
-          taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
-          log: (tag, line) => log(tag, line),
-        })
-        notifier = n
-        n.refresh()
-      }
-      log('TUNNEL', `remote tunnel enabled — legacy ${relays.legacy.id.slice(0, 8)}…${relays.v2 ? `, v2 ${relays.v2.identity.id.slice(0, 8)}…` : ''}`)
-    }).catch(err => log('TUNNEL', `tunnel client load failed: ${err instanceof Error ? err.message : err}`))
-  }
 
   const modeHandler = makeModeCommands({
+    socialState: () => socialState(opts.subsystems?.(), loadAgentConfig(stateDir), !!boot.social),
+    // 设免打扰时撞上的早报 / 周报当场说(定时那份存在文件里,每次现读,另起一个只读实例不会读到旧的)
+    initiativeJobTimes: () => makeJobsStore(stateDir).list().jobs.filter(j => j.brief || j.recap).map(j => ({ label: j.brief ? '早报' : '周报', at: j.schedule.at })),
     coordinator: boot.coordinator,
     registry: boot.registry,
     defaultProviderId: boot.defaultProviderId,
@@ -922,7 +559,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // boot, no restart involved), so without the flag this re-fire is
       // silently swallowed by mw-dedup's isHandled short-circuit and the
       // user's original question never reaches the provider.
-      await refs.pipeline.deref('onboarding echo dispatch')({
+      await pipelineOf(late, 'onboarding echo dispatch')({
         msg,
         receivedAtMs: Date.now(),
         requestId: randomBytes(4).toString('hex'),
@@ -935,6 +572,31 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     setBotName,
     stateDir,
   })
+
+  // 命令表(重构第二批步 2 / 3b,spec §1):入站只有一站「命令」查这张表。**顺序就是优先级**(ids 就是真实顺序):
+  // 任务 …(工作台)→ 管理员 → (各命令声明的 /词:/cli /today /visit,由 registry 排在兜底之前)→ mode(认任何 /词的兜底)→ 上手(没见过的用户 / 起名阶段的每一句)
+  // → 权限 y/n → 文本命令(定时 / 日历 / 做过的事 / 经验 / 导入记忆 / 终端)→ 控制命令(串门 / 回信 / 配对 / 派 / 认识 / 访客)。
+  // group 沿用老的 consumedBy 标签,trace、welcome、milestone、activity 不用改。
+  // 管家「你说的是哪一件?回数字」开到什么时候(按对话):命令表据此把数字让给它。
+  const butlerChoice = new Map<string, OpenChoice>()
+  const consumePermissionAnswer = makePermissionAnswer({ ilink, log })
+  const commandRegistry = makeCommandRegistry([
+    // 「任务 …」(工作台控制,步 4):排第一 —— 以前是单独一种 intent,排在整张命令表之前。
+    ...(opts.workbench ? [makeTaskCommand({ handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
+    // 管理员命令一条一行(第三批 3d,admin-commands.ts 的 commands()):admin.owner-only(非主人发显式命令)+ admin.<id>,两两互斥
+    ...adminCommandsHandler.commands(),
+    // 斜杠命令一条一行(第三批 3d,mode-commands.ts 的 commands()):mode.provider / set / … / help,最后 mode.unknown 是 /词兜底
+    ...modeHandler.commands(),
+    { id: 'onboarding', group: 'onboarding', probe: (m) => onboardingHandler.probe(m), handle: (m) => onboardingHandler.handle(m) },
+    { id: 'permission-reply', group: 'permission-reply',
+      probe: (m) => ilink.probePermissionReply(m.text ?? '', m.chatId, m.quote?.text),
+      // 和 poll loop 的快车道同一个消费函数(daemon/permission-answer.ts)。
+      handle: async (m) => consumePermissionAnswer(m) },
+    // 文本命令里有早报拍板的「回 2」:管家的「哪一件?回数字」开着时,数字让给管家(整合者评审 #659)。
+    ...yieldNumbersToOpenChoice(opts.commands ?? [], (c, text) => choiceTakes(text, butlerChoice.get(c), Date.now())),
+    // 控制命令一条一行(第三批 3d,command-router.ts 的 makeControlCommands):control.social-off → visit(认 /visit)→ letter → pair → wish → intro → guest
+    ...controlCommands,
+  ])
 
   const pipelineDeps: InboundPipelineDeps = {
     trace: { log },
@@ -963,9 +625,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
-    ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
+    ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c,undefined,'wechat'),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
       ownerChatId,
+      noteChoice:(c:string,e:OpenChoice|null)=>{ if(e===null) butlerChoice.delete(c); else butlerChoice.set(c,e) },
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
       // 时它得还在;焦点指向的任务失败了也不能凭空消失(真机 2026-09-16:Codex 额度耗尽
       // 把任务打成 failed,焦点随之静默失效,后面两句掉进了普通聊天)。项目显示名用目录名。
@@ -983,35 +646,30 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // 额度止损:这家耗尽就不再往它送,问"交给另一位继续?";「是」就在同一文件夹给另一位新开一件。
       quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
       fallbackExecutor:(id:string)=>opts.workbench!.fallbackExecutor(id),
+      // 额度恢复后接着做(2026-10-20):主人回「等恢复」⇒ 排一次,只试一次。
+      quotaResume:(id:string)=>opts.workbench!.quotaResume(id),
       watchTask:async(taskId:string,accountId:string)=>{opts.workbench!.setWechatWatch(taskId,accountId,true)},
-      createTask:async(input:{path:string;providerId:string;text:string})=>{const task=await opts.workbench!.create(input);return {id:task.id}},
+      // 换人接着做:新那件的出生地跟着被接手的那件走(同 service/quota-handoff);那件不知道 ⇒ 也不写。
+      createTask:async({fromTaskId,...input}:{path:string;providerId:string;text:string;fromTaskId?:string})=>{
+        let origin:import('../../ports/matters').MatterOrigin|null=null
+        try{origin=fromTaskId?opts.matters?.get(fromTaskId)?.origin??null:null}catch{/* 查不到就不写 */}
+        const task=await opts.workbench!.create({...input,origin});return {id:task.id}
+      },
       handleWechat:opts.workbench.handleWechat,
       sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'}),
       // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
       ...(boot.registry.getCheapEval()?{judge:makeCheapJudge(boot.registry.getCheapEval()!)}:{}),
       log,
     }}:{}),
-    ...(opts.workbench?{workbench:{handleWechat:opts.workbench.handleWechat,sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'})}}:{}),
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
     route: {
       probes: {
-        admin: (ctx) => adminCommandsHandler.probe(ctx.msg),
-        mode: (ctx) => modeHandler.probe(ctx.msg),
-        onboarding: (ctx) => onboardingHandler.probe(ctx.msg),
-        'permission-reply': (ctx) => ilink.probePermissionReply(ctx.msg.text ?? '', ctx.msg.chatId, ctx.msg.quote?.text),
-        ...(opts.cliReply ? { 'cli-reply': (ctx) => opts.cliReply!.probe(ctx.msg.text ?? '', ctx.msg.chatId) } : {}),
+        command: (ctx) => commandRegistry.probe(ctx.msg),
       },
       ...(opts.matters ? { matterFor: (chatId: string) => opts.matters!.findBySurface('wechat', chatId)?.id ?? null } : {}),
       log,
     },
-    admin: { adminHandler: adminCommandsHandler },
-    mode: { modeHandler },
-    onboarding: { onboardingHandler },
-    permissionReply: {
-      handlePermissionReply: (text: string, fromChatId?: string, quoted?: string) => ilink.handlePermissionReply(text, fromChatId, quoted),
-      log,
-    },
-    ...(opts.cliReply ? { cliReply: { handle: (t: string, c: string) => opts.cliReply!.handle(t, c), log } } : {}),
+    commands: { registry: commandRegistry, log },
     attachments: { materializeAttachments, inboxDir, log },
     transcribeVoice: {
       // ilink.voice.transcribe loads STT config internally and throws
@@ -1038,7 +696,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // Piggyback the ingest nudge on the per-new-inbound recordInbound call:
       // fresh WeChat activity means new data to fold into the knowledge base.
       // Trailing-debounced + gated inside registerIngest, so this is O(1) here.
-      recordInbound: (chatId, when) => { refs.ingestNudge.current?.(); return recordInbound(chatId, when) },
+      recordInbound: (chatId, when) => { late.ingestNudge()?.(); return recordInbound(chatId, when) },
       resetCareNoReply: (c) => careLedger.resetNoReply(c),
       log,
     },
@@ -1050,7 +708,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // Non-admin lane — deterministic keyword recall over the chat's OWN
       // memory files only (same subtree memory_read grants it). Sync under
       // the hood; wrapped to satisfy the middleware's async contract.
-      recallFallback: async (chatId: string, text: string) => recallFromMemory(stateDir, chatId, text),
+      recallFallback: async (chatId: string, text: string) => recallFromMemory(stateDir, chatId, text, memoryFactsFor(db, stateDir)),
       // Auto-recall (2026-08 memory-upgrades) — hybrid search over the
       // knowledge kernel, embedder-fallback shape mirrors POST /v1/knowledge/
       // search (routes-knowledge.ts): the shared embedder is the single
@@ -1097,7 +755,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         // 管理员控制命令(揭晓/回信/配对/派/访客许可)由 command-router 处理;
         // 命中即止,否则落到正常 agent 分发。逻辑本体见 command-router.ts。
         dispatch: async (msg) => {
-          if (await commandRouter.tryHandle(msg)) return
           // 桌宠「起飞了」的时刻(spec §5.1)。定义:一个「回合」= 从入站分发
           // 或 converse 进来的那一趟。所以记在命令路由**之后** —— 一句「待批准」
           // 被路由自己答掉了,桌宠不该说它在想事情。记在这里而不是 coordinator
@@ -1116,214 +773,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
   }
 
-  // App-conversation-channel converse (voice arc Stage 0, Task 2) — drives
-  // one real turn on the owner's own chat session and hands the reply back
-  // synchronously. Synthesizes an InboundMsg the same shape a real WeChat
-  // inbound would have (userId==chatId is correct for a solo owner chat)
-  // and dispatches it straight through the coordinator — NOT through the
-  // poll-loop/inbound-pipeline middleware chain, since this isn't a WeChat
-  // inbound. The agent's `reply` tool still posts to POST /v1/wechat/reply
-  // as normal; the open sink captures it instead of ilink-sending.
-  // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),三个入口看到的是同一段对话。落库失败不影响这一轮。
-  // 回复交付(2026-10-04):附件与旁白跟着回复那一行落库(messages.extras),手机从消息库拉对话时才看得到;
-  // 只有附件、没有文字的一轮也写这一行(text 为空),否则那张表情 / 那段语音就没地方挂。
-  /** 带附件的那句在历史里记成什么样:「原文\n[图片 ×N]」(手机按它认落地,一字不能改),有文件再加「[文件 ×M]」。 */
-  const attachmentRecordText = (text: string, atts: NonNullable<InboundMsg['attachments']>) => {
-    const images = atts.filter(a => a.kind === 'image').length, files = atts.length - images
-    return [text.trim(), images ? `[图片 ×${images}]` : '', files ? `[文件 ×${files}]` : ''].filter(Boolean).join('\n')
-  }
-  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null) => {
-    const ts = new Date().toISOString()
-    const ownerChatId = synthetic.chatId
-    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? attachmentRecordText(text, synthetic.attachments) : text, source: origin }).catch(() => {})
-    const encoded = encodeExtras(extras)
-    if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
-  }
-  // 本地表情:解析一次(标签 → 表情库里随机一张),落库与桌面回包看到的是同一张。
-  const stickerDir = join(stateDir, 'stickers')
-  const projectExtras = (x: SinkExtras | undefined): AppReplyExtras | null =>
-    x ? projectReplyExtras(x, { stickerFile: tag => opts.stickers?.resolve(tag) ?? null }) : null
-  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop', images?: ConverseImage[]): Promise<ConverseResult> => {
-    // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
-    // Task 3 review finding #1) — an App /converse turn is real owner
-    // activity, but it dispatches straight through the coordinator and
-    // NEVER passes through mw-messages (see this function's own doc
-    // comment above), so without this call quietFor() would read Infinity
-    // forever while the owner is mid-conversation in the desktop app,
-    // making the idle-tick self-restart check free to fire between turns.
-    // Same posture as mw-messages: optional, wrapped so a throw here can
-    // never break the app turn it's marking.
-    try { boot.markInboundActivity?.() } catch { /* 绝不能因为记一笔就打断 app 轮次 */ }
-    // 桌宠(spec §5.1):app 里说话也是「主人联系过我」。和上面一样,记一笔
-    // 绝不能打断轮次 —— 但这里只是一次 Math.max 赋值,不会抛。
-    opts.petSignals?.noteContact()
-    const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
-    if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
-    // 「一件事」:app 里对 CC 说的话属于主人那条 chat matter,并且它现在在桌面表面露过面。
-    try { const m = opts.matters?.ensureChat(ownerChatId); if (m) opts.matters!.bind(m.id, 'desktop', 'app') } catch { /* 登记失败不打断轮次 */ }
-    // D3 review follow-up: app-converse captures the reply through a sink, but a
-    // chatroom-mode chat is preempt-policy (submitTurn runs the turn BARE, no
-    // per-chat lock) AND chatroom forbids the `reply` tool — so an app turn on a
-    // chatroom-mode owner chat would run unserialized and capture nothing.
-    // Reject clearly instead of hanging / returning an empty reply. (Pre-D3 this
-    // was a silent no-op; D3 makes the policy explicit, so we guard it explicitly.)
-    if (boot.coordinator.getMode(ownerChatId).kind === 'chatroom') {
-      throw new Error('owner_chat_in_chatroom_mode')
-    }
-    // PRIMARY guard (spec §3, HIGH finding fix): refuse to start an app turn
-    // while a WeChat turn is already dispatching on the owner's session.
-    // replySinks.open() below only catches app-vs-app races (both go through
-    // this closure); a WeChat inbound never touches replySinks, so without
-    // this check a WeChat message and an app /converse racing on the same
-    // (alias, providerId, chatId) would both acquire the SAME SessionManager
-    // handle and dispatch concurrently on one AgentSession. Resolves the key
-    // the exact same way ConversationCoordinator.dispatch will (see
-    // resolveOwnerSessionKey above) and reuses SessionManager.isInFlight —
-    // the SAME in-flight guard the companion push tick checks before
-    // dispatching (tick-bodies.ts's dispatchToChat).
-    const ownerKey = resolveOwnerSessionKey(ownerChatId, {
-      resolveProject: boot.resolve,
-      getMode: (cid) => boot.coordinator.getMode(cid),
-      defaultProviderId: boot.defaultProviderId,
-    })
-    if (ownerKey && boot.sessionManager.isInFlight({ alias: ownerKey.alias, providerId: ownerKey.providerId, chatId: ownerChatId })) {
-      // Same error string as the replySinks guard below so the route's
-      // reply_sink_busy → 409 session_busy mapping (internal-api/routes.ts)
-      // stays unchanged.
-      throw new Error('reply_sink_busy')
-    }
-    // The isInFlight pre-check above is a fast, lock-free rejection for the
-    // still-common case (WeChat turn already running) so the app UI gets an
-    // immediate 409 without waiting on the mutex. Below, session
-    // serialization (session-serialization-design.md) closes the residual
-    // this pre-check alone can't: the SINK's entire open→close lifetime runs
-    // INSIDE the per-chat turn (submitTurn's `within` hook), so a WeChat/tick
-    // turn queued behind this app turn cannot start — and cannot have its
-    // reply-tool output stolen by the still-open app sink — until this turn's
-    // sink is closed. D3: submitTurn owns the lock/policy + the dispatch; the
-    // app path just supplies the capture logic to run within the locked turn
-    // (no more hand-rolled runExclusive/dispatchInner + the deadlock footgun).
-    // 桌面拖进 / 粘进来的图(2026-10-05):和微信收到的图一样落到 inbox,当附件交给 CC(它用读文件工具看)。
-    // 文件名带来源与时刻,权限 0600;inbox 的清理照微信那一套走。
-    const createTimeMs = Date.now()
-    const imagePaths: string[] = []
-    if (images?.length) {
-      const inbox = join(stateDir, 'inbox')
-      mkdirSync(inbox, { recursive: true })
-      images.forEach((img, i) => {
-        const stem = isConverseImageMime(img.mime) ? '' : converseFileStem(img.name)
-        const path = join(inbox, `app-${origin}-${createTimeMs}-${i + 1}${stem ? `-${stem}` : ''}.${CONVERSE_IMAGE_LIMITS.mimes[img.mime] ?? 'bin'}`)
-        writeFileSync(path, img.bytes, { mode: 0o600 })
-        imagePaths.push(path)
-      })
-    }
-    const synthetic: InboundMsg = {
-      chatId: ownerChatId,
-      userId: ownerChatId,
-      text,
-      msgType: imagePaths.length && !text.trim() ? (images!.every(i => isConverseImageMime(i.mime)) ? 'image' : 'file') : 'text',
-      createTimeMs,
-      accountId: ilink.resolveAccountId(ownerChatId),
-      ...(imagePaths.length ? { attachments: imagePaths.map((path, i) => ({ kind: isConverseImageMime(images![i]!.mime) ? 'image' as const : 'file' as const, path })) } : {}),
-    }
-    // 第四步(d):App 说的话也先过 route + consume 这张表(与微信同一份消费者实例)。消费者的
-    // 回话在回复作用域里被截住交还给 App;没人吃 ⇒ 下面照常进对话。没接 appTurn(测试 /
-    // 最小嵌入)⇒ 跳过。
-    const appTurn = refs.appTurn?.current
-    if (appTurn) {
-      const ctx: InboundCtx = { msg: synthetic, receivedAtMs: synthetic.createTimeMs, requestId: `app:${origin}:${synthetic.createTimeMs}` }
-      const front = await withReplyScope(() => appTurn(ctx))
-      log('APP_INBOUND', `origin=${origin} intent=${ctx.intent?.kind ?? '-'} consumed=${front.result.consumed ? (ctx.consumedBy ?? 'yes') : 'dispatched'}`)
-      if (front.result.consumed) {
-        const reply = front.replies.join('\n')
-        persistAppTurn(origin, synthetic, text, reply)
-        return { reply }
-      }
-    }
-    // 起飞时刻:app 轮次不走入站管道(见上面的 dispatch),所以在这儿单独记一笔,
-    // 并且同样用 finally 配对 —— 两条进来的路,同一套 start/stop 语义。
-    opts.petSignals?.noteTurnStart(ownerChatId)
-    try {
-      const captured = await boot.coordinator.submitTurn(synthetic, {
-        within: async (dispatch) => {
-          const sink = replySinks.open(ownerChatId)
-          try {
-            await dispatch()
-            // 回复交付 daemon 模式:附件与旁白随回复交还(桌面 / 手机显示);旧路径两样都是空的。
-            const extras = projectExtras(sink.extras?.())
-            const reply = sink.close()
-            return { reply, extras }
-          } catch (err) {
-            sink.close()
-            throw err
-          }
-        },
-      })
-      // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),
-      // 三个入口看到的是同一段对话。落库失败不影响这一轮。
-      persistAppTurn(origin, synthetic, text, captured.reply, captured.extras)
-      const x = captured.extras
-      if (!hasExtras(x)) return { reply: captured.reply }
-      return {
-        reply: captured.reply,
-        ...(x.attachments.length ? { attachments: withStickerImages(x.attachments, f => stickerDataUri(stickerDir, f)) } : {}),
-        ...(x.narration.length ? { narration: x.narration } : {}),
-      }
-    } finally {
-      opts.petSignals?.noteTurnStop(ownerChatId)
-    }
-  }
+  // 桌宠的「在做什么」(重构第二批步 6c,wire-pet-turn.ts)
+  const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore })
 
-  // 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。推导本身是
-  // core/pet-turn.ts 的纯函数;这里只负责把 daemon 里**已经存在**的信号收齐:
-  // 主人是谁(companion 配置,与 converse 同源)、他的会话在不在飞
-  // (sessionManager.isInFlight,与 converse 的前置守卫同一个判断)、
-  // pet-signals 的三个内存时间戳、待决权限(与微信「y/n」同一份清单)。
-  const petTurn: PetTurnDep = async () => {
-    const nowMs = Date.now()
-    let ownerChatId: string | null = null
-    try { ownerChatId = loadCompanionConfig(stateDir).default_chat_id ?? null } catch { ownerChatId = null }
-    if (!ownerChatId) {
-      // 还没配主人:没有会话可看,也没有「谁能拍板」可言 —— 待决权限一律不外
-      // 泄(见下面的过滤)。但「主人联系过我」这一笔是全局的(converse / 权限
-      // 拍板都会写),照样如实报出去。
-      return derivePetTurn({
-        nowMs, inFlight: false, inFlightSinceMs: null, lastToolCallAtMs: null, lastResultAtMs: null,
-        ownerLastContactAtMs: opts.petSignals?.snapshot('').lastContactMs ?? null,
-        pending: [],
-      })
-    }
-    // 只报**主人自己那些**待决权限。这张表是全 daemon 共享的:任何一个陌生人
-    // 的会话触发的权限询问也在里面,而 hash 一旦露出去就等于一张批准券
-    // (微信侧那条「y <hash>」)。桌宠是主人的面,只该看见主人自己的队列。
-    const pending = opts.ilink.listPendingPermissions().filter(p => p.chatId === ownerChatId)
-    const key = resolveOwnerSessionKey(ownerChatId, {
-      resolveProject: boot.resolve,
-      getMode: (cid) => boot.coordinator.getMode(cid),
-      defaultProviderId: boot.defaultProviderId,
-    })
-    const sessionInFlight = !!key && boot.sessionManager.isInFlight({ alias: key.alias, providerId: key.providerId, chatId: ownerChatId })
-    const sig = opts.petSignals?.snapshot(ownerChatId) ?? { inFlightSinceMs: null, lastToolCallAtMs: null, lastResultAtMs: null, lastContactMs: null }
-    // 两个条件都要:会话在飞(独立事实源)**且**这一趟是从入站/converse 进来的。
-    // 关心推送、打猎、提醒这些**自己发起**的 tick 轮次也会把 isInFlight 抬起来,
-    // 但它们不是「主人问了、我在想」—— 那属于「处境」(presence 那条线),不属于
-    // 桌宠的 turn 相位。没有起飞标记就没有 since 可报,硬报也只能报个 null。
-    const inFlight = sessionInFlight && sig.inFlightSinceMs !== null
-    // 「主人上次联系我」取两边的**较晚者**:消息库只记微信入站,pet-signals 只记
-    // app converse / 权限拍板。任何一边单独看都会把另一边的活动说成「没来过」。
-    const inboundIso = await messagesStore.latestInboundTs(ownerChatId).catch(() => null)
-    const inboundMs = inboundIso ? Date.parse(inboundIso) : NaN
-    const contact = Math.max(Number.isFinite(inboundMs) ? inboundMs : -1, sig.lastContactMs ?? -1)
-    return derivePetTurn({
-      nowMs,
-      inFlight,
-      inFlightSinceMs: sig.inFlightSinceMs,
-      lastToolCallAtMs: sig.lastToolCallAtMs,
-      lastResultAtMs: sig.lastResultAtMs,
-      ownerLastContactAtMs: contact >= 0 ? contact : null,
-      pending,
-    })
-  }
 
-  return { appPush, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }

@@ -1,20 +1,23 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runSelftestConverse, type SelftestConverseDeps } from './selftest'
-import { makeFakeSession } from '../core/test-helpers'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, SpawnContext } from '../core/agent-provider'
-import type { ProviderRegistry } from '../core/provider-registry'
+import { runSelftestConverse, SELFTEST_PROJECT_PATH, type SelftestConverseDeps } from './selftest'
+import { makeFakeSession } from '../test-support/test-helpers'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, SpawnContext } from '../ports/agent-provider'
+import type { ProviderRegistry } from '../app/provider-registry'
 
-/** Scratch project path the runner uses (mirrors SELFTEST_PROJECT_PATH in
- *  selftest.ts). Deliberately NOT under STATE_DIR — that directory holds
- *  the daemon's tokens/account files and the selftest session runs with
- *  `permissionMode:'dangerously'`. */
-const PROJECT_DIR = join(tmpdir(), 'wechat-cc-selftest', 'project')
+/** 这份测试自己的草稿项目目录(每次一个新的临时目录):真路径 SELFTEST_PROJECT_PATH 是固定的,
+ *  别的测试文件(guard/effective-target)也会经 runSelftestConverse 写它,并行时一边删一边写 ⇒ ENOTEMPTY。 */
+let scratchRoot = ''
+let PROJECT_DIR = ''
 
+function freshProjectDir() {
+  scratchRoot = mkdtempSync(join(tmpdir(), 'wcc-selftest-test-'))
+  PROJECT_DIR = join(scratchRoot, 'project')
+}
 function cleanProjectDir() {
-  rmSync(join(tmpdir(), 'wechat-cc-selftest'), { recursive: true, force: true })
+  rmSync(scratchRoot, { recursive: true, force: true })
 }
 
 function makeRegistry(session: AgentSession, opts?: { onSpawn?: (project: AgentProject, ctx: SpawnContext) => void }) {
@@ -42,12 +45,18 @@ function makeDeps(overrides: Partial<SelftestConverseDeps> = {}): SelftestConver
     invalidateSession: overrides.invalidateSession ?? vi.fn(),
     log: overrides.log ?? vi.fn(),
     now: overrides.now,
+    projectDir: PROJECT_DIR,
   }
 }
 
 describe('runSelftestConverse', () => {
-  beforeEach(cleanProjectDir)
+  beforeEach(freshProjectDir)
   afterEach(cleanProjectDir)
+
+  it('the real scratch project lives in tmpdir, never beside the daemon\'s secrets', () => {
+    // 真跑的时候会话以 permissionMode:'dangerously' 跑在这里;STATE_DIR 里是 token 和账号文件。
+    expect(SELFTEST_PROJECT_PATH).toBe(join(tmpdir(), 'wechat-cc-selftest', 'project'))
+  })
 
   it('spawns a scoped session, drains one turn, tears it down, and reports texts/toolCalls', async () => {
     const events: AgentEvent[] = [
@@ -101,7 +110,7 @@ describe('runSelftestConverse', () => {
     expect(closeSpy).toHaveBeenCalledTimes(1)
     expect(invalidateSession).toHaveBeenCalledWith(key)
 
-    // scratch project lives in tmpdir, never beside the daemon's secrets
+    // scratch project is the one we handed in (the real default is pinned by its own test above)
     expect(spawnedProject?.path).toBe(PROJECT_DIR)
     expect(existsSync(PROJECT_DIR)).toBe(true)
     expect(readFileSync(join(PROJECT_DIR, 'README.md'), 'utf8')).toBe('selftest scratch project\n')

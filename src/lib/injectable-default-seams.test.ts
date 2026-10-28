@@ -1,3 +1,4 @@
+// @repo-guard 这份测试里有扫整个仓库的守卫:bun run verify 不管改了什么都跑它(import 图看不见它守的文件)。
 import { expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -40,21 +41,21 @@ const REPO_ROOT = join(dirname(SELF), '..', '..')
  *  test is expected to drive the real default, not a stand-in. */
 const BOUNDARY: Record<string, string> = {
   defaultSdk: 'imports the installed Claude SDK and reads its native history index (workbench/native-claude-history.ts)',
-  defaultSpawn: 'spawns the embed subprocess (src/core/knowledge/embed-runner.ts)',
+  defaultSpawn: 'spawns the embed subprocess (src/adapters/knowledge/embed-runner.ts)',
   defaultSpawnBun: 'spawns `bun add` to realign the codex SDK (src/lib/codex-autofix.ts)',
   defaultImporter: 'dynamic import of the hearth MCP client (src/daemon/hearth-adapter.ts)',
-  defaultPipelineFactory: 'dynamic import of transformers.js + ONNX model load (src/core/knowledge/js-embedder.ts)',
+  defaultPipelineFactory: 'dynamic import of transformers.js + ONNX model load (src/adapters/knowledge/js-embedder.ts)',
   defaultFetchBinary: 'downloads a release binary over the network (src/cli/setup-flow.ts)',
   defaultProbeCursor: 'spawns the cursor CLI to read its version (src/cli/doctor.ts)',
   defaultProbeGemini: 'spawns the gemini CLI to read its version (src/cli/doctor.ts)',
-  defaultSpawnFn: 'spawns the agy (Antigravity) CLI child process per turn (src/core/agy-agent-provider.ts)',
-  defaultConnect: 'opens an outbound WebSocket to the remote relay (src/daemon/tunnel-client.ts)',
-  defaultRunner: 'spawns claude / codex to resume a terminal session from a WeChat reply (src/daemon/cli-reply-handler.ts); also execFile for the CLI auto-upgrader (src/core/cli-upgrade/detect.ts — engine.test.ts drives the real one against fake CLIs in temp dirs)',
+  defaultSpawnFn: 'spawns the agy (Antigravity) CLI child process per turn (src/adapters/executors/agy/agy-agent-provider.ts)',
+  defaultConnect: 'opens an outbound WebSocket to the remote relay (src/features/phone/tunnel-client.ts)',
+  defaultRunner: 'spawns claude / codex to resume a terminal session from a WeChat reply (src/features/terminal/reply-handler.ts); also execFile for the CLI auto-upgrader (src/adapters/cli-upgrade/detect.ts — engine.test.ts drives the real one against fake CLIs in temp dirs)',
   defaultExec: 'spawns sips / powershell / convert to shrink an image before it goes to the model (src/lib/image-prep.ts)',
   defaultTerminalChatId: 'reads user_account_ids.json / context_tokens.json under STATE_DIR to pick the last chat (src/lib/send-reply.ts, seam in src/cli/commands/reply.ts)',
   defaultBxExec: 'spawns `bx status --json` (execFile + timeout) for the network guard (src/daemon/guard/bx.ts; driven against a stand-in script, never the real bx)',
   defaultProviderProbes: 'reads server.pid / internal-api-info.json and GETs the running daemon\'s /v1/health over loopback (src/cli/cli-status.ts; the real default is driven by cli-status.test.ts \'prints "running"\' with node:fs mocked)',
-  defaultCursorSpawnFn: 'spawns the cursor-agent CLI child process for a one-shot cheapEval/strongEval print-mode call (src/core/cursor-eval.ts, used from src/core/acp-cursor-chat.ts)',
+  defaultCursorSpawnFn: 'spawns the cursor-agent CLI child process for a one-shot cheapEval/strongEval print-mode call (src/adapters/executors/acp/cursor-eval.ts, used from src/adapters/executors/acp/acp-cursor-chat.ts)',
 }
 
 /** Seams whose default is a plain value or a pure computation — injecting one
@@ -72,8 +73,8 @@ const PURE: Record<string, string> = {
   defaultSleep: 'setTimeout wrapper',
   defaultModelRepo: 'maps a model id to a HF repo string; no IO',
   defaultIsWritable: 'a single accessSync, already covered by codex-autofix tests',
-  defaultId: 'formats an id from a timestamp + randomUUID; no IO (src/daemon/atelier-store.ts)',
-  defaultLocalDay: 'formats a local YYYY-MM-DD from a timestamp; no IO (src/core/cli-upgrade/engine.ts)',
+  defaultId: 'formats an id from a timestamp + randomUUID; no IO (src/features/atelier/store.ts)',
+  defaultLocalDay: 'formats a local YYYY-MM-DD from a timestamp; no IO (src/daemon/cli-upgrade/engine.ts)',
 }
 
 /** Escape hatch for a BOUNDARY entry no hermetic test can drive.

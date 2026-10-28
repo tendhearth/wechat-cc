@@ -6,6 +6,7 @@
  */
 import { invokeApi } from '../api.js'
 import { escapeHtml, showToast } from '../view.js'
+import { V1, v1 } from '../daemon-client.js'
 
 const STATUS_LABEL = /** @type {Record<string, string>} */ ({
   draft: '草稿', open: '等回音', closed: '已关', expired: '过期', cancelled: '作废',
@@ -39,8 +40,11 @@ function isCurrent(epoch) { return active && generation === epoch }
 /** A generic HTTP 503 or a connection error does not establish this state.
  * @param {unknown} error */
 function isSocialOff(error) {
-  return (error instanceof Error ? error.message : String(error)) === 'social_not_wired'
+  return SOCIAL_OFF_CODES.has(error instanceof Error ? error.message : String(error))
 }
+/** 社交关着:daemon 回 module_off(路由门和处理器兜底同一个形状,第三批 3b)。
+ * module_degraded(开着却没起来)不算关着 —— 走「暂时读不到 / 重试」,别劝主人去「开启」一个已经开着的东西。 */
+const SOCIAL_OFF_CODES = new Set(['module_off'])
 
 /** @param {any} result */
 function wishGateErrText(result) {
@@ -162,12 +166,12 @@ export function renderOffers(data) {
   syncPendingWrites()
 }
 
-/** @param {string} path @param {string} field
+/** @param {import('../daemon-client.js').V1Key} call @param {string} field
  * @returns {Promise<{ items: any[]|null, state?: 'off'|'error' }>} */
-async function readList(path, field) {
+async function readList(call, field) {
   try {
-    const response = /** @type {Record<string, any>|null|undefined} */ (await invokeApi('GET', path))
-    if (response?.error === 'social_not_wired') return { items: null, state: 'off' }
+    const response = /** @type {Record<string, any>|null|undefined} */ (await v1(invokeApi, call))
+    if (SOCIAL_OFF_CODES.has(response?.error)) return { items: null, state: 'off' }
     if (!Array.isArray(response?.[field])) return { items: null, state: 'error' }
     return { items: response[field] }
   } catch (error) {
@@ -180,7 +184,7 @@ export async function refreshWishes() {
   const epoch = generation
   const revision = ++readRevision
   const [wishes, offers] = await Promise.all([
-    readList('/v1/social/wishes', 'wishes'), readList('/v1/social/intro/offers', 'offers'),
+    readList(V1.social.wishes, 'wishes'), readList(V1.social.introOffers, 'offers'),
   ])
   if (!isCurrent(epoch) || revision !== readRevision) return
   renderWishes({ wishes: wishes.items, state: wishes.state })
@@ -259,7 +263,7 @@ export async function onWishCompose(event) {
   setComposeBusy(true)
   try {
     const result = /** @type {{ ok?: boolean, id?: string, preview?: string, error?: string, violations?: unknown[] }} */ (
-      await invokeApi('POST', '/v1/social/wish', { text }))
+      await v1(invokeApi, V1.social.wish, { body: { text } }))
     if (!isCurrent(operation.generation) || creating !== operation) return
     if (!result?.ok || typeof result.id !== 'string' || !result.id || typeof result.preview !== 'string') {
       if (draftRevision === operation.draftRevision) showDraftFeedback(wishGateErrText(result))
@@ -326,11 +330,11 @@ export async function onWishAction(event) {
   pendingWrites.set(key, operation)
   syncPendingWrites()
   try {
-    const path = intro ? action === 'intro' ? '/v1/social/intro/request'
-      : action === 'accept' ? '/v1/social/intro/accept' : '/v1/social/intro/decline'
-      : action === 'send' ? '/v1/social/wish/send' : '/v1/social/wish/cancel'
+    const call = intro ? action === 'intro' ? V1.social.introRequest
+      : action === 'accept' ? V1.social.introAccept : V1.social.introDecline
+      : action === 'send' ? V1.social.wishSend : V1.social.wishCancel
     const result = /** @type {{ ok?: boolean, reason?: string, sent_to?: number }} */ (
-      await invokeApi('POST', path, intro ? { reply_id: replyId } : { id }))
+      await v1(invokeApi, call, { body: intro ? { reply_id: replyId } : { id } }))
     if (!isCurrent(epoch)) return
     if (!result?.ok) {
       const message = intro ? INTRO_FAIL_COPY[String(result?.reason)] ?? '暂时没能完成介绍，请再试一次。'

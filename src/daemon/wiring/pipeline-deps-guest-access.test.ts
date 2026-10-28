@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, afterAll } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
 // Guest path (spec docs/superpowers/specs/2026-08-18-guest-path-design.md
 // §2) — buildPipelineDeps wires `pipelineDeps.access`'s five guest fields
@@ -9,18 +10,13 @@ import { join } from 'node:path'
 // file exercises the REAL closures it returns, not a reimplementation.
 //
 // isAdmin/loadAccess (via notifyOwnerOfGuest → resolveAdminChatId) read
-// access.json off the module-level STATE_DIR (src/lib/config.ts), which is
-// NOT one of buildPipelineDeps's injectable opts — so STATE_DIR is
-// redirected to a temp dir via vi.mock BEFORE anything imports
-// access.ts/config.ts, mirroring pipeline-deps-pairing-dispatch.test.ts.
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-guest-access-test-'))
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+// access.json.
+// access.json lives in the state dir, which is NOT one of buildPipelineDeps's
+// injectable opts; access.ts resolves it per call from WECHAT_STATE_DIR, so
+// useTempStateDir points that at a temp dir (no vi.mock of lib/config —
+// see src/test-support/state-dir.ts).
+const ACCESS_STATE_DIR = useTempStateDir('pipeline-deps-guest-access-test-')
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 // loadAccess() has a 5s in-process TTL cache (src/lib/access.ts) — this
@@ -30,10 +26,10 @@ const { makeReplySinks } = await import('../reply-sinks')
 const { _clearCache, _resetSnapshotForTest } = await import('../../lib/access')
 
 import type { Bootstrap } from '../bootstrap/index'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { CareLedger } from '../../features/companion/care-ledger'
+import type { InboundMsg } from '../../domain/prompt-format'
 
 const fakeHealth = {
   health: { shouldSuspend: () => false, get: () => ({ consecutiveFailures: 0 }) },
@@ -43,8 +39,6 @@ const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
 }
-
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
 function setup(admins: string[] = ['admin_chat']) {
   writeAccess(admins)
@@ -84,7 +78,7 @@ function setup(admins: string[] = ['admin_chat']) {
     captureContextToken,
     markChatActive,
     sendMessage,
-  } as unknown as IlinkAdapter
+  } as unknown as PipelineWechat
 
   const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
   const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: () => {}, claimHunt: () => {}, resetNoReply: () => {} } as unknown as CareLedger
@@ -92,7 +86,7 @@ function setup(admins: string[] = ['admin_chat']) {
 
   const { pipelineDeps } = buildPipelineDeps(
     { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-    { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+    { polling: () => null, pipeline: () => null, ingestNudge: () => null },
   )
   return { pipelineDeps, stateDir, routeChatToAccount, captureContextToken, markChatActive, sendMessage }
 }
@@ -160,7 +154,8 @@ describe('pipeline-deps guest-access wiring (spec §2)', () => {
     try {
       const r = await pipelineDeps.access.notifyOwner!('👋 someone wants to chat')
       expect(sendMessage).toHaveBeenCalledWith('admin_chat', '👋 someone wants to chat')
-      expect(r).toEqual({ msgId: 'sent:1' })
+      // 经 CC 开口那道门(guest_request):交给门就算办完,回 {}(第三批 3a,inbound/guest-notify.ts)
+      expect(r).toEqual({})
     } finally {
       rmSync(stateDir, { recursive: true, force: true })
     }

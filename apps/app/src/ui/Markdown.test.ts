@@ -4,6 +4,9 @@ import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearDrafts } from '../state/drafts'
 import { useChat } from '../state/useChat'
+import { makeDemoBackend } from '../backend/demo'
+import type { Backend } from '../backend/types'
+import { withProviders } from '../state/providers.test-support'
 import { palette } from './tokens'
 import { Markdown, MessageText } from './Markdown'
 
@@ -12,7 +15,7 @@ type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
 const roots: Root[] = []
 const native = vi.hoisted(() => ({ lang: 'zh-Hans' as 'zh-Hans' | 'en', presses: [] as (() => void)[], textStyles: [] as Record<string, unknown>[], texts: [] as { value: unknown; selectable: boolean; id?: string }[], scrolls: [] as Record<string, unknown>[], formatChecks: [] as string[], openURL: vi.fn(async () => {}) }))
-const upstream = vi.hoisted(() => ({ page: undefined as any, refresh: vi.fn(async () => {}), chatSay: vi.fn(async (text: string, requestId: string) => ({ text, requestId, status: 'replied', since: 1 })) }))
+const upstream = vi.hoisted(() => ({ page: undefined as any, chatSay: vi.fn(async (text: string, requestId: string) => ({ text, requestId, status: 'replied' as const, since: 1 })) }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 // 保留真实 Txt / 字体选取 / Markdown 组件,仅把原生宿主控件换成可在 node 读取的树。
@@ -32,19 +35,14 @@ vi.mock('react-native', async () => {
     native.scrolls.push({ horizontal, nestedScrollEnabled, style: flatten(style) })
     return createElement('div', { 'data-horizontal': horizontal ? 'yes' : undefined }, children)
   }
-  return { Text, View, Pressable, ScrollView, Linking: { openURL: native.openURL }, Platform: { select: (options: any) => options.ios ?? options.default } }
+  return { Text, View, Pressable, ScrollView, Linking: { openURL: native.openURL }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { select: (options: any) => options.ios ?? options.default } }
 })
-vi.mock('../i18n/useLang', () => ({ useLang: () => native.lang }))
+// 语言走真 useLang:系统语言(设备边界)按 native.lang 报。
+vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: native.lang === 'en' ? 'en-US' : 'zh-Hans-CN' }] }))
 vi.mock('@wechat-cc/markdown', async importOriginal => {
   const actual = await importOriginal<typeof import('@wechat-cc/markdown')>()
   return { ...actual, hasMarkdownFormatting: (text: string) => { native.formatChecks.push(text); return actual.hasMarkdownFormatting(text) } }
 })
-vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => ({ backend: { chatSay: upstream.chatSay } }) }))
-vi.mock('../state/hooks', () => ({
-  useQuery: () => ({ data: upstream.page, refresh: upstream.refresh }),
-  useTopic: () => undefined,
-  useSubmit: () => async (_key: string, run: () => Promise<void>) => { await run(); return 'ok' },
-}))
 
 beforeEach(() => {
   native.lang = 'zh-Hans'
@@ -170,9 +168,13 @@ describe('native Markdown reader', () => {
     let chat!: ReturnType<typeof useChat>
     function Flow() {
       chat = useChat()
-      return createElement(MessageText, { role: 'user', text: chat.bubbles[0]!.text })
+      // 真 store 是异步读的:第一帧还没有气泡
+      return chat.bubbles[0] ? createElement(MessageText, { role: 'user', text: chat.bubbles[0].text }) : null
     }
-    const { container } = await mount(createElement(Flow))
+    // 真 useChat / 真 store / 真 BackendProvider;后端(网络边界)读回这份记录、发送走 upstream.chatSay。
+    const backend: Backend = { ...makeDemoBackend({ lang: 'zh-Hans' }), chat: async () => upstream.page, chatSay: upstream.chatSay }
+    const { container } = await mount(withProviders(createElement(Flow), { backend }))
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
     await act(() => container.querySelector<HTMLButtonElement>('button')!.click())
     const copyable = container.querySelector('[data-testid="message-source-text"]')!.textContent
     expect(copyable).toBe(record.text)

@@ -4,4 +4,4 @@ import { resolve } from 'node:path'
 const root=resolve(import.meta.dirname,'..')
 const pack=resolve(root,'assets/starter-stickers')
 const manifest=JSON.parse(readFileSync(resolve(pack,'manifest.json'),'utf8'))
-writeFileSync(resolve(root,'src/daemon/cc-starter-pack.json'),JSON.stringify(manifest.map((e: {file:string})=>({...e,png:readFileSync(resolve(pack,e.file)).toString('base64')})))+'\n')
+writeFileSync(resolve(root,'src/features/stickers/cc-starter-pack.json'),JSON.stringify(manifest.map((e: {file:string})=>({...e,png:readFileSync(resolve(pack,e.file)).toString('base64')})))+'\n')

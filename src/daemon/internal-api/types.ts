@@ -6,16 +6,14 @@
  * See ./index.ts for createInternalApi (lifecycle, auth, dispatch loop) and
  * ./routes.ts for the route handler implementations.
  */
-import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
-import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
-import type { Journal } from '../../core/journal-store'
+import type { WechatProjectsDep } from '../wechat-tool-deps'
+import type { Journal } from '../../adapters/store/journal-store'
 import type { ReplySinks } from '../reply-sinks'
-import type { ConversationStore } from '../../core/conversation-store'
-import type { ProviderId } from '../../core/conversation'
-import type { PermissionMode } from '../../core/capability-matrix'
-import type { UserTier } from '../../core/user-tier'
-import type { WorkbenchService } from '../../core/workbench/service'
+import type { ConversationStore } from '../../ports/conversation-store'
+import type { ProviderId } from '../../domain/conversation'
+import type { PermissionMode } from '../../domain/capability-matrix'
+import type { UserTier } from '../../domain/user-tier'
 
 /**
  * RFC 03 P3: when conversation mode is parallel (or chatroom), the
@@ -75,6 +73,11 @@ export interface InternalApiIlinkDep {
   sendReply(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   /** Push a local file (absolute path) to a chat. */
   sendFile(chatId: string, path: string): Promise<void>
+  /**
+   * 报一样已经送出去的东西给媒体镜像(2026-10-18,companion/media-mirror.ts):联网表情发的是临时下载,
+   * 存进表情库之后按库里的文件名报,App 对话页才取得到图。没接 ⇒ 不报。
+   */
+  noteSentMedia?(chatId: string, m: { kind: 'sticker'; file: string; label: string }): void
   /** Edit a previously-sent message. */
   editMessage(chatId: string, msgId: string, text: string): Promise<void>
   /** Broadcast text to all online users; returns success/failure counts. */
@@ -86,39 +89,26 @@ export interface InternalApiIlinkDep {
  * 输入的采集在 wiring/pipeline-deps.ts(那里才有 ownerChatId / sessionManager /
  * petSignals / 消息库)。命名成型是为了 routes-pet.test.ts 能不 cast 就构造 deps。
  */
-export type PetTurnDep = () => Promise<import('../../core/pet-turn').PetTurnPayload>
-
-export interface PhoneConnectDep {
-  link(opts: { enableRemote: boolean }): Promise<import('../phone-link').PhoneLinkResult>
-  devices(): import('../device-store').DeviceRow[]
-}
+export type PetTurnDep = () => Promise<import('../../domain/pet-turn').PetTurnPayload>
 
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
-  /** Optional server-owned Claude projects location; never accepted from a request. */
-  memoryProjectsRoot?: string
-  /** Local CC Atelier store; read-only artwork metadata/images for the desktop dashboard. */
-  atelier?: import('../atelier-store').AtelierStore
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
-  /** Owner-only Workbench service; late-bound after provider bootstrap. */
-  workbench?: WorkbenchService
-  /** 「一件事」读写面(routes-matters);与 workbench 一样晚绑定。 */
-  matters?: import('../../core/matters/service').MattersService
+  /**
+   * 网络守护冻住的那几件任务(routes-matters 给 GET /v1/matters 打「已暂停」标记用;matter 与工作台任务同 id)。
+   * 架构终态 A5:工作台整个搬进 src/features/workbench、桌面路由自己挂,这里只剩这一个窄口,由 workbench 模块 `provide`。
+   */
+  workbenchSuspended?: () => readonly { taskId: string }[]
+  /** 「一件事」读写面(routes-matters);与工作台一样晚绑定。 */
+  matters?: import('../../app/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot
-  /** 桌面「连接手机」(plan 7a);main.ts 在 pipeline 接好后 setPhoneConnect。 */
-  phoneConnect?: PhoneConnectDep
+  // 桌面「连接手机」(phoneConnect)归手机功能(src/features/phone),`/v1/phone/*` 由 phone 模块自己挂。
+  // 记忆(memory / memoryProjectsRoot / memoryLlm / memoryNightly)归记忆功能(src/features/memory),路由由 memory 模块自己挂。
   /**
-   * Sandbox FS for memory_read / memory_write / memory_list (RFC 03 P1.B
-   * B2). The same MemoryFS instance is shared with the legacy in-process
-   * MCP server until B7 deletes it; both paths see the same files.
-   */
-  memory?: MemoryFS
-  /**
-   * SQLite handle — used by /v1/memory/delete to write per-chat audit
-   * events (see docs/specs/2026-05-21-memory-delete-safety-design.md).
+   * SQLite handle — 配置改动 / 社交路由的审计(记忆删除的审计随记忆功能走了,它自己拿 db)。
    * Optional so tests / partial wirings that don't need the audit path
    * still construct the api.
    */
@@ -127,8 +117,6 @@ export interface InternalApiDeps {
   projects?: WechatProjectsDep
   /** Persist a wechat user's display name (RFC 03 P1.B B3). */
   setUserName?: (chatId: string, name: string) => Promise<void>
-  /** TTS config + status + replyVoice (RFC 03 P1.B B4 + B1). */
-  voice?: WechatVoiceDep
   /**
    * Publish a Markdown page to a one-time URL (RFC 03 P1.B B5).
    */
@@ -143,12 +131,10 @@ export interface InternalApiDeps {
   resurfacePage?: (
     q: { slug?: string; title_fragment?: string },
   ) => Promise<{ url: string; slug: string } | null>
-  /** Companion proactive-tick controls (RFC 03 P1.B B6). */
-  companion?: WechatCompanionDep
   /**
    * Ilink message-sending family (RFC 03 P1.B B1). When wired, the
    * /v1/wechat/{reply,send_file,edit_message,broadcast} routes are
-   * served. `voice.replyVoice` covers `reply_voice` separately.
+   * served. `reply_voice` 归语音功能(src/features/voice,自己挂路由)。
    */
   ilink?: InternalApiIlinkDep
   /**
@@ -165,16 +151,15 @@ export interface InternalApiDeps {
    */
   outboundTaps?: { observe(chatId: string, text: string): void }
   /**
-   * 回复交付(spec 2026-10-03-reply-delivery)。第 0 步只用 `observeLegacy`:reply 路由把每一条
-   * legacy 回复交给 shadow 轮比对;attach / message 路由(第 1 步)也挂在这上面。
+   * 回复交付(spec 2026-10-03-reply-delivery):attach / message 路由登记到它上面;dispatcher 用它给
+   * 共享令牌(agy-static)认本轮的聊天。缺失 ⇒ attach 503。
    */
   replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
   /**
-   * 伙伴日志读写(GET/POST /v1/journal*)。缺失 ⇒ 路由 503,桌面端显示
-   * 「这个 daemon 还没有战利品记录」而不是空清单 —— 空清单会被读成
-   * 「CC 什么都没打到」。
+   * 伙伴日志的包袱水位(桌宠「带了什么回来」那一轴,routes-presence 用)。只读这一口:读写路由 `/v1/journal*`
+   * 归日志模块自己挂(src/features/journal)。缺失 ⇒ presence 503,不是空包袱。
    */
-  hunt?: Journal
+  journal?: Pick<Journal, 'summary'>
   /**
    * Optional mode-aware reply prefixing (RFC 03 P3). When wired, the
    * `reply` route consults `conversationStore` for the chat's mode and
@@ -196,7 +181,7 @@ export interface InternalApiDeps {
    * route table doesn't import coordinator internals.
    */
   conversation?: {
-    setMode(chatId: string, mode: import('../../core/conversation').Mode): void
+    setMode(chatId: string, mode: import('../../domain/conversation').Mode): void
   }
   /**
    * Optional app-conversation-channel converse dep (voice arc, Stage 0,
@@ -245,41 +230,14 @@ export interface InternalApiDeps {
    */
   selfChange?: import('../self-change-glue').SelfChangeDep
   /**
-   * 终端 claude / codex 会话的 hook 事件入口(spec 2026-09-09-cli-hook-push)。
-   * main.ts 在 bootstrap 之后 setCliEvents —— hub 要 boot.sendAssistantText。
-   * 没设之前 POST /v1/cli/event 503。
-   */
-  cliEvents?: {
-    ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction>
-    /** 终端会话登记处(v76):GET /v1/cli/sessions。缺席 ⇒ 那条路由 503。 */
-    list?(opts?: { includeEnded?: boolean; limit?: number }): import('../../core/cli-session-store').CliSessionView[]
-  }
-  /**
-   * 「今天」一眼看完(core/overseer-today.ts,2026-10-14):终端 + 一起做,过去 24 小时。
-   * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
-   */
-  overseerToday?: () => import('../../core/overseer-today').OverseerToday
-  /**
-   * 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):POST /v1/cli/hooks/install|uninstall。
-   * main.ts setCliHooks;没设之前 503。只在主人点了确认时调,绝不自动装。
-   */
-  cliHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'install' | 'uninstall'>
-  /** 终端会话权限 → 微信 y/n(spec 2026-09-09-cli-hook-push §6.3)。main.ts setCliPermissions。 */
-  cliPermissions?: Pick<import('../../core/cli-permission-relay').CliPermissionRelay, 'open' | 'status' | 'wait'>
-  /**
-   * Owner-only Customer Review application service. Late-bound after
-   * bootstrap because it needs the active provider registry and wxvault MCP.
-   */
-  customerReview?: import('../customer-review/service').CustomerReviewService
-  /**
    * Optional A2A deps — undefined when a2a_listen is not configured.
    * When absent, POST /v1/a2a/send returns 503.
    */
   a2a?: {
-    registry: import('../../core/a2a-registry').A2ARegistry
-    client: import('../../core/a2a-client').A2AClient
+    registry: import('../../ports/a2a').A2ARegistry
+    client: import('../../ports/a2a').A2AClient
     /** Read/write events store — used by dashboard activity + counts routes. */
-    eventsStore: import('../../core/a2a-events-store').A2AEventsStore
+    eventsStore: import('../../adapters/store/a2a-events-store').A2AEventsStore
     recordEvent: (event: {
       direction: 'in' | 'out'
       agent_id: string
@@ -296,29 +254,15 @@ export interface InternalApiDeps {
     baseUrl: string | null
   }
   /**
-   * 社交 — undefined when `social_enabled` + `social_disclosure_policy`
-   * aren't both configured (or bootstrap hasn't late-bound it yet).
-   * /v1/social/wish* and /v1/penpal/* return 503 until this is set.
-   * Late-bound by main.ts from `bootstrap.social` (mirrors the `a2a` dep
-   * above / `setA2A`).
+   * 社交模块(src/features/social)交出来的窄口 —— 只给两处不标模块的读:关系视图(`GET /v1/social/relationships`,
+   * 社交关着也要能看)和桌宠的「在串门」(presence)。串门 / 心愿 / 介绍 / 笔友信箱的路由归模块自己挂。
+   * 社交没起(没开 / 降级)⇒ 缺席:关系视图里没有笔友信道,桌宠不显示串门 —— 和以前 `social` 缺席时一样。
+   * 只写结构:internal-api 不能 import 功能目录(功能的模块清单要引这里的类型,会成环)。
    */
-  social?: {
-    /** 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)— boot.social.penpal
-     *  原样带入。可选:老 fixture/未接线时 undefined ⇒ /v1/penpal/* 503。 */
-    penpal?: {
-      sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-      resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-      channelStore: import('../../core/penpal-channel-store').ChannelStore
-      letterStore: import('../../core/penpal-letter-store').LetterStore
-      /** 串门(架构重构 §2.3)。可选:老 fixture 没有。 */
-      startVisit?(target?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
-      /** 进行中的串门(spec 2026-09-03-companion-presence §2.2)。可选:老 fixture 没有。 */
-      activeVisit?(): import('../../core/companion-presence').ActiveVisit | null
-    }
-    /** 派心愿(spec 2026-09-04-wish-postcard)。可选:老 fixture / 未接线时 undefined。 */
-    wish?: Omit<import('../bootstrap/wire-wish').WishService, 'onInbound'>
-    /** 介绍(spec 2026-09-04-introduction)。可选:老 fixture / 未接线时 undefined。 */
-    intro?: Omit<import('../bootstrap/wire-intro').IntroService, 'onInbound'>
+  socialView?: {
+    channelStore: Pick<import('../../ports/penpal-channel').ChannelStore, 'list'>
+    letterStore: { listForChannel(channelId: string): ReadonlyArray<{ kind: string; payload: string | null; created_at: string; direction: 'in' | 'out' }> }
+    activeVisit(): import('../../domain/companion-presence').ActiveVisit | null
   }
   /**
    * Knowledge Kernel (Phase 01, T3) — the daemon-owned KnowledgeStore +
@@ -332,7 +276,7 @@ export interface InternalApiDeps {
    * Agent-facing Search (Task 2) — `embedder` is the ONE shared,
    * long-lived embed-subprocess service used by both the indexer and the
    * query path, so both embed in the same model space (see
-   * ../../core/knowledge/embedder-service.ts). `embedQuery` is a thin
+   * ../../adapters/knowledge/embedder-service.ts). `embedQuery` is a thin
    * convenience wrapper (`embedder.embed([t]).then(v => v[0])`) for routes
    * that just need one query vector. Both are undefined when the indexer
    * isn't configured (no resolvable embed script) even though `store`/
@@ -355,9 +299,9 @@ export interface InternalApiDeps {
    */
   latestInboundTs?: (chatId: string) => Promise<string | null>
   knowledge?: {
-    store: import('../../core/knowledge/store').KnowledgeStore
-    search: typeof import('../../core/knowledge/search').semanticSearch
-    embedder?: import('../../core/knowledge/embedder-service').EmbedderService
+    store: import('../../ports/knowledge').KnowledgeStore
+    search: typeof import('../../domain/knowledge/search').semanticSearch
+    embedder?: import('../../adapters/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>
     /**
      * Graph Query (Knowledge Graph inproc, Task 5) — the store-backed
@@ -369,7 +313,7 @@ export interface InternalApiDeps {
      * `/v1/knowledge/graph/*` route 503s knowledge_not_wired, same posture
      * as `knowledge` itself being undefined.
      */
-    graph?: import('../../core/knowledge/graph-query').GraphQueryApi
+    graph?: import('../../domain/knowledge/graph-query').GraphQueryApi
     /**
      * Facts + Person (Knowledge Facts/Person inproc, Task 4) — the
      * candidate-feed/record/query API over facts.db (Task 1) built by
@@ -380,20 +324,20 @@ export interface InternalApiDeps {
      * `/v1/knowledge/facts/*` or `/v1/knowledge/person/*` route 503s
      * knowledge_not_wired.
      */
-    facts?: import('../../core/knowledge/facts').FactsApi
-    person?: import('../../core/knowledge/person').PersonApi
+    facts?: import('../../domain/knowledge/facts').FactsApi
+    person?: import('../../domain/knowledge/person').PersonApi
   }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
   pairing?: {
-    start(): Promise<import('../../core/pairing').PairStartResult>
-    accept(code: string): Promise<import('../../core/pairing').PairResult>
+    start(): Promise<import('../../app/pairing').PairStartResult>
+    accept(code: string): Promise<import('../../app/pairing').PairResult>
   }
   /**
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
    * minimal embeddings / tests, in which case the route returns 503.
    */
-  turns?: import('../../core/turn-record-store').TurnRecordStore
+  turns?: import('../../adapters/store/turn-record-store').TurnRecordStore
   /**
    * Optional live-session lister — backs GET /v1/sessions and the
    * sessions_live count in GET /v1/health. A thunk (not the SessionManager
@@ -407,6 +351,8 @@ export interface InternalApiDeps {
   /** Optional daemon-health probe — backs heartbeat_fresh in GET /v1/health.
    *  main.ts wires it to isHeartbeatFresh(server.heartbeat). */
   heartbeatFresh?: () => boolean
+  /** 开机时拉消息循环起了几个 / 该起几个(`self deploy` 健康门);null = 拉消息还没接上。 */
+  polling?: () => { eligible: number; started: number } | null
   /**
    * 本进程在跑的到底是哪一版 —— backs `version` in GET /v1/health。桌面更新器换入
    * 新 .app 后旧 daemon 不会被杀(2026-09-16 实测),app 若看不到后台版本就无从发现
@@ -417,7 +363,7 @@ export interface InternalApiDeps {
   /**
    * Optional session releaser — backs POST /v1/sessions/release (admin
    * remediation: force-release a wedged session so the next message spawns a
-   * fresh subprocess). A thunk over bootRef.sessionManager. 503 when unwired.
+   * fresh subprocess). A late read of the bootstrap module (internal-api/module.ts). 503 when unwired.
    */
   releaseSession?: (k: { alias: string; providerId: string; chatId: string }) => Promise<void>
   /**
@@ -428,7 +374,7 @@ export interface InternalApiDeps {
    * session carries no model — ACP `session/load`, Claude/Codex thread
    * resume). Deleting this provider's rows makes that next spawn a cold
    * start, which is the only place the model actually gets pinned.
-   * Returns how many rows were dropped. A thunk over bootRef.sessionStore.
+   * Returns how many rows were dropped. A late read of the bootstrap module.
    */
   forgetProviderSessions?: (providerId: string) => number
   /**
@@ -465,52 +411,23 @@ export interface InternalApiDeps {
    * Absent ⇒ the route 503s chat_prefs_not_wired.
    */
   setChatPref?: (chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => { care?: 'off' | 'low' | 'high'; split?: boolean }
-  /**
-   * Shared sticker library (image-stickers plan) — backs
-   * POST /v1/wechat/send_sticker, POST /v1/stickers, GET /v1/stickers.
-   * Wired in main.ts over the shared StickerLib instance. Absent ⇒ the
-   * three routes 503 stickers_not_wired.
-   */
-  stickers?: {
-    /** ABSOLUTE path of a random match for `tag`; trim+case-insensitive; null if no match. */
-    resolve(tag: string, chatId?: string): string | null
-    /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / fs errors. */
-    save(sourcePath: string, tags: string[], desc?: string): { file: string; tags: string[] }
-    list(): { file: string; tags: string[]; desc?: string }[]
-    allTags(): string[]
-  }
-  /** Optional online sticker provider; absent keeps the feature safely disabled. */
-  stickerSource?: import('../sticker-source').StickerSource
-  stickerFeedback?: import('../sticker-feedback').StickerFeedback
-  /**
-   * LLM 记忆操作(daemon-only, spec 2026-07-23-daemon-owns-llm-memory-ops) —
-   * synthesize/generateProfile, late-bound by main.ts's `setMemory()` after
-   * bootstrap builds the coordinator + provider registry (mirrors `social`/
-   * `pairing` above). undefined ⇒ POST /v1/memory/{synthesize,profile/generate}
-   * 503.
-   *
-   * Named `memoryLlm` (NOT `memory`) — `memory` above is already the sandbox
-   * MemoryFS backing memory_read/write/list; a distinct field avoids
-   * colliding with that unrelated, pre-existing dep.
-   */
-  memoryLlm?: import('../memory-llm-ops').MemoryLlmOps
-  /** LLM 通道体检 (llm-health.ts) — late-bound like memoryLlm (needs the
+  /** LLM 通道体检 (llm-health.ts) — late-bound (needs the
    *  provider registry). GET /v1/llm/health 503s until set. */
   llmHealth?: import('../llm-health').LlmHealth
   /** Registered provider ids (registry.list) — set alongside llmHealth. */
   llmRegistered?: () => string[]
+  /** 执行者叫什么(收敛清单 ⑥,registry.namesOf)— set alongside llmHealth。桌面「AI 服务」各处读 GET /v1/llm/health 的 names。 */
+  llmNames?: (id: string) => import('../../domain/provider-display-names').ExecutorNames
   /** provider id → 自配 base_url(如 openai-compatible 的国内/本地端点),
    *  给网络体检探真实端点用。set alongside llmHealth. */
   llmEndpoints?: () => Record<string, string>
   /** Graphical-settings-panel link minter (settings-panel.ts, late-bound). */
   settingsLink?: () => Promise<string | null>
-  /** 每晚记忆整理运行时(pipeline-deps 造,main.ts 通过 setMemoryNightly 接进来)。 */
-  memoryNightly?: { runNow(): Promise<unknown> }
   /** 外部 agent CLI 自动升级引擎(main.ts 通过 setCliUpgrade 接进来;没接 ⇒ /v1/cli/* 回 503)。 */
-  cliUpgrade?: import('../../core/cli-upgrade/engine').CliUpgrader
+  cliUpgrade?: import('../cli-upgrade/engine').CliUpgrader
   /**
-   * Resolves the default admin chat_id (access.json's single admin) when a
-   * memory route's request body omits `chat_id`. Wired eagerly in main.ts
+   * Resolves the default admin chat_id (access.json's single admin) — the
+   * owner for /v1/turn and the workbench entry context. Wired eagerly in main.ts
    * (not late-bound — it only needs loadAccess + loadCompanionConfig, both
    * available before bootstrap runs).
    */
@@ -545,6 +462,8 @@ export interface InternalApiDeps {
    */
   /** 开机探测失败、正在退避重探的外部 CLI provider(2026-10-04)。GET /v1/health.provider_probes。 */
   providerProbes?: () => import('../bootstrap/provider-probe').ProbeRetryStatus[]
+  /** 真回合里被拒着的执行者(地区不可用;provider-refusals.ts)。GET /v1/health.provider_refusals。 */
+  providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
   plugins?: () => import('../plugins/health').PluginsHealth | null
   /** Passive outbound link health from ilink-glue (spec 2026-08-22-outbound-health). */
   outbound?: () => import('../ilink/outbound-health').OutboundHealth
@@ -564,7 +483,7 @@ export interface InternalApiDeps {
   holdBusy?: (label: string) => () => void
   /**
    * busy-registry 的 label 快照(spec 2026-09-03-companion-presence §2.2)——
-   * 桌宠状态推导用。thunk-over-bootRef,同 holdBusy;bootstrap 之前返回 []。
+   * 桌宠状态推导用。bootstrap 模块的晚读(ctx.late),同 holdBusy;bootstrap 之前返回 []。
    */
   busyLabels?: () => string[]
   /**
@@ -587,15 +506,15 @@ export interface InternalApiDeps {
   ) => string
   /**
    * Optional test-conversation runner — backs POST /v1/selftest/converse
-   * (spec 2026-09-18-self-maintenance §1). A thunk-over-bootRef wired in
-   * main.ts (same posture as forgetProviderSessions above): it closes over
-   * bootRef?.registry plus this same internalApi's mintSessionToken /
+   * (spec 2026-09-18-self-maintenance §1). A late read of the bootstrap module wired in
+   * internal-api/module.ts (same posture as forgetProviderSessions above): it closes over
+   * the bootstrap registry plus this same internalApi's mintSessionToken /
    * invalidateSession, so it can't exist before bootstrap constructs the
    * provider registry.
    *
-   * This field itself is wired UNCONDITIONALLY in main.ts (the HTTP port
-   * opens before `bootRef` is assigned, same as every other
-   * thunk-over-bootRef field) — so "the field is present but bootRef isn't
+   * This field itself is wired UNCONDITIONALLY in internal-api/module.ts (the HTTP port
+   * opens before the bootstrap module is up, same as every other
+   * late-read field) — so "the field is present but bootstrap isn't
    * ready yet" is a real, reachable window, not just a test-only shape.
    * Returns `null` in exactly that window; the route treats BOTH "field
    * absent" and "field present but returned null" as 503
@@ -610,6 +529,16 @@ export interface InternalApiDeps {
   }) => Promise<import('../selftest').SelftestConverseResult | null>
 }
 
+/** 可以晚绑定的那些依赖 —— 只有这里列的键能经 `provide` 交进来。 */
+export const LATE_KEYS = [
+  'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
+  'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
+  'workbenchSuspended', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
+  'cliUpgrade',
+] as const satisfies readonly (keyof InternalApiDeps)[]
+export type LateKey = typeof LATE_KEYS[number]
+export type LateDeps = { [K in LateKey]?: NonNullable<InternalApiDeps[K]> }
+
 export interface InternalApi {
   /** Start listening on 127.0.0.1:0; resolves once bound. */
   start(): Promise<{ port: number; tokenFilePath: string; operatorTokenFilePath: string }>
@@ -619,87 +548,16 @@ export interface InternalApi {
   port(): number
   /** Filesystem path of the token file. */
   tokenFilePath(): string
-  /** Late-bind the owner-only Workbench after provider bootstrap. */
-  setWorkbench(service: WorkbenchService): void
-  setMatters(service: import('../../core/matters/service').MattersService): void
   /**
-   * RFC 03 P4 — late-bind the delegate dispatcher after bootstrap has
-   * constructed the bare delegate providers. /v1/delegate route returns
-   * 503 until this is called.
+   * 晚绑定(重构第二批步 6b):bootstrap / wireMain 之后才造得出来的服务,一次交进来一批。
+   * 以前是 24 个 setX 方法,加一样服务要改四处(这里、index.ts、lifecycle.ts、main.ts);现在只在 `LATE_KEYS` 加一个名字。
+   * 没交进来之前,对应的路由照旧 503(xxx_not_wired)或空,行为不变。传 undefined 的键忽略,不会清掉已有的。
    */
-  setDelegate(d: InternalApiDelegateDep): void
-  setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[], endpoints?: () => Record<string, string>): void
-  setSettingsLink(fn: () => Promise<string | null>): void
-  setConnections(fn: () => import('../connections').ConnectionsSnapshot): void
-  setPhoneConnect(p: PhoneConnectDep): void
-  setMemoryNightly(r: { runNow(): Promise<unknown> }): void
-  setCliUpgrade(u: import('../../core/cli-upgrade/engine').CliUpgrader): void
-  /**
-   * Late-bind the conversation controller (coordinator.setMode) after
-   * bootstrap has constructed the coordinator. /v1/conversation/set-mode
-   * returns 503 until this is called.
-   */
-  setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
-  /**
-   * Late-bind the companion converse dep (app-conversation-channel, Stage 0
-   * Task 2) after the wiring layer has built the closure over the
-   * coordinator + reply sinks. POST /v1/companion/converse returns 503
-   * until this is called.
-   */
-  setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
-  /**
-   * Late-bind 桌宠 turn 的组装闭包(CC 桌宠 Phase B),同 setCompanionConverse:
-   * 它闭包了 boot.sessionManager / boot.coordinator,只有 wireMain 返回之后
-   * 才存在。GET /v1/companion/pet 在此之前返回 503。
-   */
-  setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
-  setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
-  setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
-  setOverseerToday(fn: NonNullable<InternalApiDeps['overseerToday']>): void
-  setCliHooks(svc: NonNullable<InternalApiDeps['cliHooks']>): void
+  /** 功能模块挂上自己的路由(表里标了 module 的那几条,架构终态 A3)。key 没标这个模块 / 重复 ⇒ 抛。 */
+  mount(module: import('@wechat-cc/protocol/routes').ModuleName, routes: RouteTable): void
+  provide(patch: LateDeps): void
   /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
-  getPresence(): Promise<import('../../core/companion-presence').Presence | null>
-  /** Late-bind Customer Review after wxvault + an eval provider are ready. */
-  setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
-  /**
-   * Late-bind A2A deps after bootstrap has constructed the registry,
-   * client, and events store. POST /v1/a2a/send returns 503 until this
-   * is called (when a2a_listen is configured).
-   */
-  setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
-  /**
-   * Late-bind the social surface (笔友信道 + 心愿) after bootstrap has
-   * constructed it. POST /v1/social/wish{,/send,/cancel} return 503
-   * until this is called (only happens when social_enabled +
-   * social_disclosure_policy are both configured).
-   */
-  setSocial(social: NonNullable<InternalApiDeps['social']>): void
-  /**
-   * Late-bind the Knowledge Kernel store + semanticSearch (Phase 01 T5)
-   * after bootstrap has constructed `boot.knowledge` (only happens when
-   * `knowledge_enabled` is configured). /v1/knowledge/* routes return 503
-   * knowledge_not_wired until this is called (mirrors `setSocial` above).
-   */
-  setKnowledge(knowledge: NonNullable<InternalApiDeps['knowledge']>): void
-  /**
-   * Late-bind the 配对码 engine (spec §7) after bootstrap has constructed it
-   * (only happens when mailbox_relays is configured). POST /v1/pair/start
-   * and POST /v1/pair/accept return 503 until this is called.
-   */
-  setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
-  /**
-   * Late-bind the LLM memory ops (spec 2026-07-23-daemon-owns-llm-memory-ops)
-   * after bootstrap has constructed the coordinator + provider registry.
-   * POST /v1/memory/{synthesize,profile/generate} return 503 until this is
-   * called.
-   */
-  setMemory(memory: NonNullable<InternalApiDeps['memoryLlm']>): void
-  /**
-   * Late-bind the incident store (Task 8) after bootstrap's `wireHealth`
-   * constructs the health runtime. GET /v1/health/incidents returns an
-   * empty list (not 503) until this is called.
-   */
-  setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
+  getPresence(): Promise<import('../../domain/companion-presence').Presence | null>
   /**
    * Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    * (`provider/alias/chatId`). The daemon injects it into that session's MCP
@@ -714,7 +572,7 @@ export interface InternalApi {
    * keeps its current behavior unchanged.
    */
   mintSessionToken(
-    tier: import('../../core/user-tier').UserTier,
+    tier: import('../../domain/user-tier').UserTier,
     sessionKey: string,
     opts?: import('./token-registry').MintTokenOpts,
   ): string
@@ -750,6 +608,11 @@ export type RouteHandler = (
     turnChatId?: string
     sharedTurn?: 'bound' | 'none' | 'ambiguous'
   },
+  /**
+   * signal:调用方断开时中止(长轮询的路由用;其余忽略)。
+   * onSent:回包真写出去之后再调(没写出去 / 调用方已断 ⇒ 不调)。
+   */
+  ctx?: { signal: AbortSignal; onSent(cb: () => void): void },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

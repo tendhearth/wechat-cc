@@ -7,12 +7,16 @@
  *   src/cli/           ← CLI subcommand handlers (only `cli.ts` invokes these)
  *   src/daemon/        ← Long-running runtime (ilink, internal-api, schedulers)
  *   src/mcp-servers/   ← Standalone stdio MCP children (talk to daemon via HTTP)
- *   src/core/          ← Provider abstraction, conversation coordinator (no I/O)
+ *   src/features/<名>/ ← 一个功能一个目录(架构终态 A3)
+ *   src/app/           ← 用例(协调器、会话管理、执行者登记 …)
+ *   src/adapters/      ← 对外的实现(执行者、store、git、a2a / 信箱 …)
+ *   src/ports/ + src/domain/ ← 接口与纯规则
  *   src/lib/           ← Shared utilities + send-reply (used by both cli + daemon)
+ *   (src/core 已于架构终态 E3 清空删除。)
  *
  * Cross-layer rules:
- *   - lib MUST NOT import from cli, daemon, core, mcp-servers (it's the floor)
- *   - core MUST NOT import from cli, daemon, mcp-servers (platform-agnostic)
+ *   - lib MUST NOT import from any layer above it (it's the floor)
+ *   - domain / ports / adapters / app:见下面 E1 / E2 的几条
  *   - mcp-servers MUST NOT import from cli, daemon (talks via internal-api HTTP)
  *   - cli MUST NOT import from daemon (daemon is a runtime, cli is a launcher
  *     of subcommands; if they need the daemon they should spawn it, not link)
@@ -35,16 +39,16 @@ module.exports = {
     {
       name: 'workbench-service-no-circular',
       severity: 'error',
-      comment: '2026-09-28 workbench service 拆分:service.ts 与 service/<domain>.ts 之间不许有环(type-only 也算);域只认 ctx,动作走 ctx.actions 晚绑定。store 层的环已于 2026-10-10 清零,由 no-circular 兜住。',
-      from: { path: '^src/core/workbench/service(/|\\.ts$)' },
-      to: { circular: true, viaOnly: { path: '^src/core/workbench/(service(/|\\.ts$)|wechat-control\\.ts$)' } },
+      comment: '2026-09-28 workbench service 拆分:service.ts 与 service/<domain>.ts 之间不许有环(type-only 也算);域按依赖顺序构造、显式拿别的域(2026-10-25 E4 删掉了 ctx.actions 晚绑定)。store 层的环已于 2026-10-10 清零,由 no-circular 兜住。',
+      from: { path: '^src/features/workbench/service(/|\\.ts$)' },
+      to: { circular: true, viaOnly: { path: '^src/features/workbench/(service(/|\\.ts$)|wechat-control\\.ts$)' } },
     },
     {
       name: 'wechat-control-must-not-link-service',
       severity: 'error',
       comment: '2026-09-28:wechat-control.ts 需要的三个类型在 wechat-types.ts;回头 import ./service 就是环。',
-      from: { path: '^src/core/workbench/wechat-control\\.ts$' },
-      to: { path: '^src/core/workbench/service\\.ts$' },
+      from: { path: '^src/features/workbench/wechat-control\\.ts$' },
+      to: { path: '^src/features/workbench/service\\.ts$' },
     },
     {
       name: 'bun-builtins-only-in-runtime',
@@ -58,14 +62,97 @@ module.exports = {
       severity: 'error',
       comment: 'src/lib/ is the bottom of the dependency tree — utilities only.',
       from: { path: '^src/lib/', pathNot: '\\.test\\.ts$' },
-      to: { path: '^src/(cli|daemon|core|mcp-servers)/' },
+      to: { path: '^src/(cli|daemon|mcp-servers|features|app|adapters|domain|ports|test-support)/' },
     },
     {
-      name: 'core-must-not-depend-on-runtime',
+      name: 'domain-is-pure',
       severity: 'error',
-      comment: 'src/core/ is platform-agnostic; runtime modules (cli/daemon/mcp) belong above it.',
-      from: { path: '^src/core/', pathNot: '\\.test\\.ts$' },
-      to: { path: '^src/(cli|daemon|mcp-servers)/' },
+      comment: '架构终态 E1:src/domain 是纯规则(档位、开口、伙伴判定、提示词 ……)。运行时只许依赖 domain 自己和 src/lib 里不碰 I/O 的那些;只引类型可以(比如知识库的纯算法引 adapters 里 store 的类型)。零例外。',
+      from: { path: '^src/domain/', pathNot: '\\.test\\.ts$' },
+      to: {
+        path: ['^src/(daemon|cli|features|mcp-servers|test-support|adapters|app)/', '^src/lib/(runtime|db|json-file|read-json-file|log|access|agent-config|messages-store|project-registry|ilink|send-reply|config)'],
+        dependencyTypesNot: ['type-only'],
+      },
+    },
+    {
+      name: 'ports-are-interfaces',
+      severity: 'error',
+      comment: '架构终态 E1:src/ports 是接口(执行者的口 AgentProvider / AgentSession 等)。运行时只许依赖 ports、domain 与 lib 里不碰 I/O 的;零例外。',
+      from: { path: '^src/ports/', pathNot: '\\.test\\.ts$' },
+      to: {
+        path: ['^src/(app|daemon|cli|features|mcp-servers|test-support|adapters)/', '^src/lib/(runtime|db|json-file|read-json-file|log|access|agent-config|messages-store|project-registry|ilink|send-reply|config)'],
+        dependencyTypesNot: ['type-only'],
+      },
+    },
+    {
+      name: 'adapters-implement-ports',
+      severity: 'error',
+      comment: '架构终态 E2:src/adapters 是对外的实现(各家执行者、以后的 store / git)。不许往上依赖 app / daemon / cli / features / mcp-servers / test-support;只引类型也不行(适配器不该知道用例)。零例外。',
+      from: { path: '^src/adapters/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/(app|daemon|cli|features|mcp-servers|test-support)/' },
+    },
+    {
+      name: 'app-does-not-reach-up',
+      severity: 'error',
+      comment: '架构终态 E1 / E5:src/app 是用例(协调器、会话管理、执行者登记、「一件事」、配对 ……)。不许往上依赖 daemon / cli / features / mcp-servers / test-support,也不碰 node 内置(要随机 id 经 lib/random)。E5 起只经 ports 认 adapters(只引类型也不行):store / 工作台零件 / a2a / 信箱的形状在 src/ports,纯函数在 src/domain,要 node 的(加解密)由组装的地方经 deps 注入。零例外。',
+      from: { path: '^src/app/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/(daemon|cli|features|mcp-servers|test-support|adapters)/' },
+    },
+    {
+      name: 'app-no-node',
+      severity: 'error',
+      comment: '架构终态 E1:app 不碰 node / bun 内置。',
+      from: { path: '^src/app/', pathNot: '\\.test\\.ts$' },
+      to: { dependencyTypes: ['core'] },
+    },
+    {
+      name: 'domain-no-node',
+      severity: 'error',
+      comment: '架构终态 E1:domain 不碰 node / bun 内置模块。',
+      from: { path: '^src/domain/', pathNot: '\\.test\\.ts$' },
+      to: { dependencyTypes: ['core'] },
+    },
+    {
+      name: 'test-support-only-from-tests',
+      severity: 'error',
+      comment: '架构终态 B3:src/test-support 是测试替身(照剧本说话的假执行者 …),生产代码不许 import;测试、daemon e2e 的假 SDK 层(src/daemon/__e2e__,B1 起假 codex app-server 从这里接)与 scripts/experiments 才用。',
+      from: { path: '^src/', pathNot: ['\\.test\\.ts$', '^src/test-support/', '^src/daemon/__e2e__/'] },
+      to: { path: '^src/test-support/' },
+    },
+    {
+      name: 'features-only-from-above',
+      severity: 'error',
+      comment: '架构终态 A3:src/features/<名> 是一个功能一个目录。lib / mcp-servers 是它下面的层,不许反过来依赖功能(domain / ports / adapters / app 各有自己那条)。',
+      from: { path: '^src/(lib|mcp-servers)/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/features/' },
+    },
+    {
+      name: 'features-through-their-index',
+      severity: 'error',
+      comment: '架构终态 A3:功能目录外面(daemon、别的功能)只经 src/features/<名>/index.ts 用它;目录里的文件是它自己的事。module.ts(接进 daemon 的那一份)见下一条。测试不受限。',
+      from: { pathNot: ['^src/features/([^/]+)/', '\\.test\\.ts$'] },
+      to: { path: '^src/features/[^/]+/(?!(index|module)\\.ts$)' },
+    },
+    {
+      name: 'feature-module-only-from-the-module-table',
+      severity: 'error',
+      comment: '2026-10-26:src/features/<名>/module.ts 是这个功能接进 daemon 的那一份(从地基 / 上游模块填它要的,会 import Bootstrap / WiredDeps 这些大包的类型)。只有模块表 daemon-modules.ts 引它 —— 它是一个汇点,所以引那些大包也成不了环;功能自己的 index.ts、别的功能、daemon 别处都不许引。',
+      from: { pathNot: ['^src/daemon/daemon-modules\\.ts$', '\\.test\\.ts$'] },
+      to: { path: '^src/features/[^/]+/module\\.ts$' },
+    },
+    {
+      name: 'platform-module-only-from-module-files',
+      severity: 'error',
+      comment: '2026-10-26:src/daemon/<块>/module.ts 是平台模块(network-gate、ilink、internal-api、bootstrap 一组、wired …)接进 daemon 的那一份,跟功能的 module.ts 一样是汇点:只有模块表 daemon-modules.ts 和别的 module.ts(引 BootApi / OwnerCommands / PipelineModule 这类模块值的类型)引它。',
+      from: { pathNot: ['^src/daemon/daemon-modules\\.ts$', '^src/(daemon|features)/[^/]+/module\\.ts$', '\\.test\\.ts$'] },
+      to: { path: '^src/daemon/[^/]+/module\\.ts$' },
+    },
+    {
+      name: 'features-not-into-each-other',
+      severity: 'error',
+      comment: '架构终态 A3:一个功能不许伸进另一个功能的内部文件;要用就经对方的 index.ts(并在模块清单里 needs 它)。',
+      from: { path: '^src/features/([^/]+)/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/features/(?!$1/)[^/]+/(?!index\\.ts$)' },
     },
     {
       name: 'mcp-servers-must-not-link-daemon',
@@ -98,7 +185,7 @@ module.exports = {
     {
       name: 'daemon-reads-mobile-only-via-generated',
       severity: 'error',
-      comment: 'daemon 只吃 src/daemon/mobile-page.generated.json;import apps/mobile 在本地能跑,编译后的 sidecar 没有源码树就挂了。',
+      comment: 'daemon 只吃 src/features/phone/mobile-page.generated.json;import apps/mobile 在本地能跑,编译后的 sidecar 没有源码树就挂了。',
       from: { path: '^src/', pathNot: '\\.test\\.ts$' },
       to: { path: '^apps/mobile/' },
     },

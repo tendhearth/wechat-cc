@@ -4,12 +4,11 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createInternalApi, type InternalApi } from '../internal-api'
-import { makeMemoryFS } from '../memory/fs-api'
-import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
-import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
-import { collectTurn } from '../../core/agent-provider'
-import type { ChatModelClient } from '../../core/openai-chat-model'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { createMcpToolBridge } from '../../adapters/executors/openai/openai-mcp-bridge'
+import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
+import { collectTurn } from '../../ports/agent-provider'
+import { scriptedOpenAiModel } from '../../test-support/executors/openai-scripted'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { buildOpenaiMcpSpecs, openaiMcpBridgeOptions } from './mcp-specs'
 
 /**
@@ -27,29 +26,15 @@ import { buildOpenaiMcpSpecs, openaiMcpBridgeOptions } from './mcp-specs'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const WECHAT_MCP_MAIN = join(HERE, '..', '..', 'mcp-servers', 'wechat', 'main.ts')
 
-function pingThenAnswer(): ChatModelClient {
-  let n = 0
-  return {
-    streamTurn() {
-      n++
-      const first = n === 1
-      const toolCalls = first ? [{ id: 'p1', name: 'ping', input: {} }] : []
-      async function* deltas() {
-        if (first) yield { kind: 'tool_call' as const, id: 'p1', name: 'ping', input: {} }
-        else yield { kind: 'text' as const, text: '好' }
-      }
-      return { deltas: deltas(), finished: Promise.resolve({ messages: [{ role: 'assistant', content: '' }] as never, toolCalls }) }
-    },
-    async generate() { return 'ok' },
-    userMessage: (t) => ({ role: 'user', content: t } as never),
-    systemMessage: (t) => ({ role: 'system', content: t } as never),
-    toolResultMessage: (_id, name, r) => ({ role: 'tool', content: `${name}:${String(r)}` } as never),
-  }
-}
+const pingThenAnswer = () => scriptedOpenAiModel([{ calls: [{ id: 'p1', name: 'ping', input: {} }] }, { text: '好' }]).model
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch { return false }
 }
+
+// 一个预算同时管「卡住的插件要被跳过」和「必需的 wechat MCP 要起来」:3s 在负载下连真 wechat MCP 冷启动都盖不住
+// (10-21 假红「did not start within 3000ms」)。10s:卡住的那个照样被跳过,只是这条测试多等几秒;生产是 20s(mcp-specs)。
+const STARTUP_MS = 10_000
 
 describe('openai session with a stalled plugin MCP server (real wechat MCP + internal API)', () => {
   let stateDir: string
@@ -62,7 +47,7 @@ describe('openai session with a stalled plugin MCP server (real wechat MCP + int
 
   it('skips (and kills) the stalled plugin; the turn still runs through the wechat MCP', async () => {
     stateDir = mkdtempSync(join(tmpdir(), 'openai-plugin-stall-'))
-    api = createInternalApi({ stateDir, daemonPid: 4242, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }) })
+    api = createInternalApi({ stateDir, daemonPid: 4242 })
     const { port, tokenFilePath } = await api.start()
 
     const pidFile = join(stateDir, 'stall.pid')
@@ -83,7 +68,7 @@ describe('openai session with a stalled plugin MCP server (real wechat MCP + int
       makeChatModel: () => pingThenAnswer(),
       makeMcpBridge: (sessionEnv) => createMcpToolBridge(
         buildOpenaiMcpSpecs({ wechat, delegate: null, pluginMcp: { wxvault: stall } }, sessionEnv),
-        { ...openaiMcpBridgeOptions(log), startupTimeoutMs: 3_000 },
+        { ...openaiMcpBridgeOptions(log), startupTimeoutMs: STARTUP_MS },
       ),
       log,
     })
@@ -101,7 +86,7 @@ describe('openai session with a stalled plugin MCP server (real wechat MCP + int
       await session.close()
     }
 
-    expect(logs.some(l => l.startsWith('[MCP]') && l.includes('"wxvault"') && l.includes('3000ms'))).toBe(true)
+    expect(logs.some(l => l.startsWith('[MCP]') && l.includes('"wxvault"') && l.includes(`${STARTUP_MS}ms`))).toBe(true)
     expect(logs.some(l => l.startsWith('[SESSION_SPAWN]'))).toBe(true)
 
     // The given-up child must not be left running.
@@ -110,5 +95,5 @@ describe('openai session with a stalled plugin MCP server (real wechat MCP + int
     const deadline = Date.now() + 5_000
     while (alive(pid) && Date.now() < deadline) await new Promise(r => setTimeout(r, 100))
     expect(alive(pid)).toBe(false)
-  }, 30_000)
+  }, 60_000)
 })

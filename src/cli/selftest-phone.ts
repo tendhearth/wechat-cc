@@ -196,9 +196,9 @@ export function classifyLink(raw: string): { kind: 'remote'; link: RemoteLink } 
     const linkToken = frag.get('t')
     const lan = frag.get('lan')
     if (daemonId && linkToken && lan) {
-      // `r…` ids belong to the Cloudflare relay v2; `t…` to the legacy relay.
-      const path = daemonId.startsWith('r') ? '/v2/phone' : '/tunnel/phone'
-      return { kind: 'remote', link: { relayWsUrl: `wss://${u.host}${path}?id=${encodeURIComponent(daemonId)}`, linkToken, lanBase: `http://${lan}`, host: u.host, daemonId } }
+      // `r…` ids belong to the Cloudflare relay v2. The legacy relay (`t…` ids) retired with v1 (2026-10-25).
+      if (daemonId.startsWith('t')) return { kind: 'invalid', detail: 'link points at the retired legacy relay (t… id) — set relay_v2_url and redeploy the daemon' }
+      return { kind: 'remote', link: { relayWsUrl: `wss://${u.host}/v2/phone?id=${encodeURIComponent(daemonId)}`, linkToken, lanBase: `http://${lan}`, host: u.host, daemonId } }
     }
   }
   if (u.protocol === 'http:' && u.searchParams.get('t')) return { kind: 'lan_only' }
@@ -314,9 +314,6 @@ export async function runPhoneSelftest(
     }
     rec.push('remote_enabled', true)
     if (opts.relay === 'v2') {
-      const isV2 = cls.link.daemonId.startsWith('r')
-      rec.push('relay_v2_link', isV2, isV2 ? undefined : 'link still points at the legacy relay (t… id) — is relay_v2_url set and the daemon redeployed?')
-      if (!isV2) stop()
       const hz = await jsonCall(deps, `https://${cls.link.host}/healthz`, null, 'GET')
       const hzOk = hz.ok && hz.json?.ok === true && hz.json?.apns === true
       rec.push('relay_healthz', hzOk, hzOk ? undefined : `healthz: ${JSON.stringify(hz.json ?? httpErrorDetail(hz))}`)

@@ -8,7 +8,7 @@
 import { type InternalApiDeps, type RouteTable } from './types'
 import { loadAgentConfig, saveAgentConfig, activeModel, withActiveModel, modelForProvider, withModelForProvider } from '../../lib/agent-config'
 import { PROVIDER_IDS } from '../../lib/provider-ids'
-import { isCliId } from '../../core/cli-upgrade/specs'
+import { isCliId } from '../../domain/cli-upgrade/specs'
 
 /** provider ids /v1/model accepts in its optional `provider` field. Mirrors
  *  the switch inside modelForProvider/withModelForProvider — anything else
@@ -145,8 +145,8 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
     // to the owner's real contacts). 503 until bootstrap wires the runner
     // (registry + mintSessionToken/invalidateSession all come from
     // bootstrap) — the deps.selftestConverse FIELD is wired unconditionally
-    // in main.ts (same as every other thunk-over-bootRef field: the HTTP
-    // port opens before bootRef exists), so "field absent" alone doesn't
+    // in internal-api/module.ts (same as every other late-read field: the HTTP
+    // port opens before bootstrap is up), so "field absent" alone doesn't
     // catch the pre-bootstrap window; the thunk returns `null` there
     // instead, and that maps to 503 too, same as the field being absent.
     // ok:false is a normal 200 — the failure lives in the body so a

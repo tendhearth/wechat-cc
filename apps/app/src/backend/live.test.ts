@@ -85,6 +85,92 @@ describe('LiveBackend 读', () => {
     expect(await b.entryOptions('en')).toEqual(OPTIONS)
     expect(reqs.map(r => r.path)).toEqual(['/m/api/matters', `/m/api/matter?id=${ID}`, `/m/api/matter/insight?id=${ID}&lang=zh-Hans`, `/m/api/matter/changes?id=${ID}`, '/m/api/entry/options'])
   })
+  it('逐文件审阅:没问题 / 退回各走自己的路由,带 artifactId;忙 ⇒ busy', async () => {
+    const { b, reqs } = harness({
+      'POST /m/api/matter/review-mark': ok({ ok: true }),
+      'POST /m/api/matter/review-return': ok({ ok: false, error: 'workbench_busy' }, 409),
+    })
+    await b.reviewMark({ id: ID, artifactId: 'a1', path: 'src/a.ts' })
+    await expect(b.reviewReturn({ id: ID, artifactId: 'a1', paths: ['src/a.ts'], comment: '改回去' })).rejects.toMatchObject({ code: 'busy' })
+    expect(reqs.map(r => r.path)).toEqual(['/m/api/matter/review-mark', '/m/api/matter/review-return'])
+    expect(reqs[0]!.body).toEqual({ id: ID, artifactId: 'a1', path: 'src/a.ts', mark: 'accepted' })
+  })
+  it('行评论(切片 4):建 / 删自动重发(按 commentId 幂等)、发出不自动重发;正文恰好那几个键;发出回三个数', async () => {
+    const CID = '11111111-1111-4111-8111-111111111111', RID = '22222222-2222-4222-8222-222222222222'
+    const { b, reqs } = harness({
+      'POST /m/api/matter/review-comment': ok({ ok: true, commentId: CID }),
+      'POST /m/api/matter/review-comments-send': ok({ ok: true, sent: 2, remaining: 1, skippedDiscarded: 0 }),
+    })
+    await b.reviewComment({ id: ID, commentId: CID, artifactId: 'a1', path: 'src/a.ts', hunk: 0, hunkSha256: 'a'.repeat(64), body: '改名' })
+    await b.reviewCommentDelete({ id: ID, commentId: CID })
+    expect(await b.reviewCommentsSend({ id: ID, requestId: RID, summary: '整体还行' })).toEqual({ sent: 2, remaining: 1, skippedDiscarded: 0 })
+    expect(await b.reviewCommentsSend({ id: ID, requestId: RID })).toEqual({ sent: 2, remaining: 1, skippedDiscarded: 0 })
+    expect(reqs.map(r => [r.path, r.retry])).toEqual([['/m/api/matter/review-comment', true], ['/m/api/matter/review-comment', true], ['/m/api/matter/review-comments-send', false], ['/m/api/matter/review-comments-send', false]])
+    expect(reqs[0]!.body).toEqual({ id: ID, commentId: CID, artifactId: 'a1', path: 'src/a.ts', hunk: 0, hunkSha256: 'a'.repeat(64), body: '改名' })
+    expect(reqs[1]!.body).toEqual({ id: ID, commentId: CID, delete: true })
+    expect(reqs[2]!.body).toEqual({ id: ID, inputRequestId: RID, summary: '整体还行' })
+    expect(reqs[3]!.body).toEqual({ id: ID, inputRequestId: RID })
+    // 老 daemon / 少了字段 ⇒ 按 0
+    const thin = harness({ 'POST /m/api/matter/review-comments-send': ok({ ok: true }) })
+    expect(await thin.b.reviewCommentsSend({ id: ID, requestId: RID })).toEqual({ sent: 0, remaining: 0, skippedDiscarded: 0 })
+    await expect(b.reviewComment({ id: ID, commentId: CID, artifactId: 'a1', path: 'a', hunk: 0, hunkSha256: 'a'.repeat(64), body: 'x'.repeat(2001) })).rejects.toMatchObject({ code: 'invalid' })
+  })
+  it('行评论的错误码:块变了 / 已发出 / 冲突 / 满了 / 不在了 / 原会话接不上 / 在写;认不得的码 ⇒ unknown', async () => {
+    const cases: Array<[string, number, string]> = [
+      ['review_hunk_stale', 409, 'hunk_stale'], ['review_comment_sent', 409, 'comment_sent'], ['review_comment_conflict', 409, 'comment_conflict'], ['review_comment_limit', 409, 'comment_limit'],
+      ['review_comment_not_found', 404, 'not_found'], ['review_round_discarded', 409, 'rewind_stale'], ['restart_confirmation_required', 409, 'session_changed'], ['workbench_busy', 409, 'busy'],
+      ['review_something_new', 409, 'unknown'],
+    ]
+    for (const [error, status, code] of cases) {
+      const h = harness({ 'POST /m/api/matter/review-comment': ok({ ok: false, error }, status), 'POST /m/api/matter/review-comments-send': ok({ ok: false, error }, status) })
+      await expect(h.b.reviewComment({ id: ID, commentId: '11111111-1111-4111-8111-111111111111', artifactId: 'a1', path: 'a', hunk: 0, hunkSha256: 'a'.repeat(64), body: 'x' }), error).rejects.toMatchObject({ code })
+      await expect(h.b.reviewCommentsSend({ id: ID, requestId: '22222222-2222-4222-8222-222222222222' }), error).rejects.toMatchObject({ code })
+    }
+  })
+  it('改动里的块与评论:认不得的评论状态照样解析(不让老 App 整页读不出)', async () => {
+    const turn = { artifactId: 'a1', createdAt: 1, status: 'complete', omittedFiles: 0, notes: [], pendingComments: 1,
+      files: [{ path: 'a.ts', kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b', truncated: false, hunks: [{ index: 0, sha256: 'a'.repeat(64), header: '@@ -1 +1 @@' }],
+        comments: [{ id: 'c1', hunk: 0, body: '改', state: 'draft' }, { id: 'c2', hunk: 0, body: '以后', state: 'resolved', sentAt: 5, extra: 1 }] }] }
+    const { b } = harness({ 'GET /m/api/matter/changes': ok({ ok: true, turn }) })
+    const got = (await b.changes(ID))!
+    expect(got.pendingComments).toBe(1)
+    expect(got.files[0]!.comments!.map(c => c.state)).toEqual(['draft', 'resolved'])
+    expect(got.files[0]!.hunks).toEqual([{ index: 0, sha256: 'a'.repeat(64), header: '@@ -1 +1 @@' }])
+  })
+  it('撤掉这一轮:预览 GET 带 id + artifactId(不带 to);执行正文恰好 {id, artifactId, token};回退码各有各的', async () => {
+    const preview = { token: 'f'.repeat(64), round: 2, rounds: [2], files: { count: 1, paths: [{ status: 'M', path: 'a.ts' }] }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false }, rebuildHint: 'x', session: 'none', devServer: false, goalWillStop: false }
+    const { b, reqs } = harness({
+      'GET /m/api/matter/rewind': ok({ ok: true, preview }),
+      'POST /m/api/matter/rewind': ({ body }) => body.token === 'f'.repeat(64) ? ok({ ok: true, discarded: ['a2'] }) : ok({ ok: false, error: 'rewind_confirmation_stale' }, 409),
+    })
+    expect(await b.rewindPreview({ id: ID, artifactId: 'abcdef12' })).toEqual(preview)
+    await b.rewind({ id: ID, artifactId: 'abcdef12', token: 'f'.repeat(64) })
+    await expect(b.rewind({ id: ID, artifactId: 'abcdef12', token: 'e'.repeat(64) })).rejects.toMatchObject({ code: 'rewind_stale' })
+    expect(reqs.map(r => r.path)).toEqual([`/m/api/matter/rewind?id=${ID}&artifactId=abcdef12`, '/m/api/matter/rewind', '/m/api/matter/rewind'])
+    expect(reqs[1]!.body).toEqual({ id: ID, artifactId: 'abcdef12', token: 'f'.repeat(64) })
+    expect(reqs[1]!.retry).toBeFalsy()
+    // 新电脑多给的码 / 字段:老 App 照样解析(code、reason 都是字符串)
+    const cases: Array<[unknown, number, string]> = [
+      [{ ok: false, error: 'rewind_needs_owner' }, 409, 'rewind_needs_owner'],
+      [{ ok: false, error: 'rewind_not_latest' }, 409, 'rewind_stale'],
+      [{ ok: false, error: 'rewind_unavailable', reason: 'some_new_reason' }, 422, 'rewind_unavailable'],
+      [{ ok: false, error: 'rewind_failed', rolledBack: false }, 502, 'rewind_failed'],
+      [{ ok: false, error: 'rewind_merged' }, 409, 'rewind_merged'],
+      [{ ok: false, error: 'workbench_busy' }, 409, 'busy'],
+      [{ ok: false, error: 'rewind_something_new' }, 409, 'unknown'],
+    ]
+    for (const [json, status, code] of cases) {
+      const h = harness({ 'GET /m/api/matter/rewind': ok(json, status) })
+      await expect(h.b.rewindPreview({ id: ID, artifactId: 'abcdef12' }), code).rejects.toMatchObject({ code })
+    }
+    // 新 session 值 / 新状态码不让老 App 解析失败
+    const odd = harness({ 'GET /m/api/matter/rewind': ok({ ok: true, preview: { ...preview, session: 'will_handoff', files: { count: 1, paths: [{ status: 'T', path: 'l' }] } } }) })
+    expect((await odd.b.rewindPreview({ id: ID, artifactId: 'abcdef12' })).session).toBe('will_handoff')
+  })
+  it('撤掉这一轮超时 ⇒ timeout(页面说不确定,不说成了)', async () => {
+    const { b } = harness({ 'POST /m/api/matter/rewind': new Error('timeout') })
+    await expect(b.rewind({ id: ID, artifactId: 'abcdef12', token: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'timeout' })
+  })
   it('返回不合 schema ⇒ BackendError(unknown),记日志(不含令牌)', async () => {
     const { b, logs } = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [{ id: 1 }] }) })
     await expect(b.matters('en')).rejects.toMatchObject({ code: 'unknown' })
@@ -148,6 +234,21 @@ describe('LiveBackend 提交', () => {
     await b.create({ requestId: REQ, text: 't' })
     expect(reqs[0]).toMatchObject({ retry: true, body: { requestId: REQ, text: 't', target: { kind: 'project', projectId: 'p-0123456789abcdef0123' }, providerId: 'claude' } })
     expect(reqs[1]?.body.target).toEqual({ kind: 'managed' })
+  })
+  it('工作区脚本运行 / 停下(10-20):同一个 worktree 路由,正文只有 id + action;没批 ⇒ scripts_unapproved', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/worktree': ok({ ok: true, branch: 'cc/x', port: 47100, setup: 'done', run: 'running', approved: true }) })
+    expect(await b.worktreeScript({ id: ID, action: 'run' })).toEqual({ branch: 'cc/x', port: 47100, setup: 'done', run: 'running', approved: true })
+    expect(reqs[0]?.body).toEqual({ id: ID, action: 'run' })
+    const denied = harness({ 'POST /m/api/matter/worktree': ok({ ok: false, error: 'script_needs_computer' }, 428) })
+    await expect(denied.b.worktreeScript({ id: ID, action: 'run' })).rejects.toMatchObject({ code: 'scripts_unapproved' })
+  })
+  it('交办带 until(10-20):只随独立工作区发,命令原文原样;没开独立工作区 ⇒ 不发', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202) })
+    const until = { command: 'bun run test -- --grep "a b"', maxRounds: 4 }
+    await b.create({ requestId: REQ, text: 't', projectId: 'p-0123456789abcdef0123', isolation: true, until })
+    await b.create({ requestId: REQ, text: 't', projectId: 'p-0123456789abcdef0123', until })
+    expect(reqs[0]?.body).toMatchObject({ target: { kind: 'project', isolation: 'worktree' }, until })
+    expect(reqs[1]?.body).not.toHaveProperty('until')
   })
   it('交办超时 ⇒ 按 requestId 查一次回执:查到当成功,查不到仍是 timeout', async () => {
     const found = harness({ 'POST /m/api/matter/create': new Error('timeout'), 'GET /m/api/matter/create-receipt': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }) })
@@ -443,6 +544,21 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     const down = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'unavailable' }, 503) })
     await expect(down.b.chatSay('hi', SAY_REQ2)).rejects.toMatchObject({ code: 'unavailable' })
   })
+  it('按住说话(2026-10-18):GET 读配没配;POST 只带 mime + audioBase64、不自动重发;太大在手机上就拦;错误码各归各', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/chat/transcribe': ok({ ok: true, configured: false }), 'POST /m/api/chat/transcribe': ok({ ok: true, text: '明天提醒我' }) })
+    expect(await b.transcribeStatus()).toEqual({ configured: false })
+    expect(await b.transcribe({ mime: 'audio/mp4', audioBase64: 'QUFBQQ==' })).toBe('明天提醒我')
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/chat/transcribe', body: { mime: 'audio/mp4', audioBase64: 'QUFBQQ==' } })
+    expect(reqs.at(-1)!.retry).toBeUndefined()
+    const n = reqs.length
+    await expect(b.transcribe({ mime: 'audio/mp4', audioBase64: 'A'.repeat(Math.ceil(200 * 1024 / 3) * 4 + 4) })).rejects.toMatchObject({ code: 'too_large' })
+    await expect(b.transcribe({ mime: 'video/mp4', audioBase64: 'QUFBQQ==' })).rejects.toMatchObject({ code: 'invalid' })
+    expect(reqs).toHaveLength(n)
+    for (const [status, error, code] of [[422, 'stt_not_configured', 'stt_not_configured'], [422, 'no_speech', 'no_speech'], [503, 'stt_blocked', 'stt_blocked'], [504, 'stt_timeout', 'stt_failed'], [413, 'audio_too_large', 'too_large']] as const) {
+      const h = harness({ 'POST /m/api/chat/transcribe': ok({ ok: false, error }, status) })
+      await expect(h.b.transcribe({ mime: 'audio/mp4', audioBase64: 'QUFBQQ==' })).rejects.toMatchObject({ code })
+    }
+  })
   it('chatSay 带图(2026-10-06):draftId + attachmentIds 进正文;电脑上图不在了 ⇒ images_gone;老电脑 ⇒ images_unsupported', async () => {
     const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-222222222222'
     const { b, reqs } = harness({ 'POST /m/api/chat/say': ok({ ok: true, matterId: 'c0ffee01', job: { requestId: SAY_REQ, text: '', status: 'pending', since: 1 } }, 202) })
@@ -588,6 +704,24 @@ describe('终端里的会话(2026-10-14)', () => {
     await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'cli_ended' })
     await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'cli_remote' })
   })
+  it('送进窗口(2026-10-20):say_id 与会话行的 last_say 过 schema 后还在;老 daemon 不带 ⇒ sayId null、没有 last_say', async () => {
+    const LAST = { id: 'a1b2c3d4e5f6', state: 'failed', error: '没送进电脑上开着的窗口(x)', at: 9 }
+    const replies: Reply[] = [ok({ ok: true, accepted: true, say_id: 'a1b2c3d4e5f6' }), ok({ ok: true, accepted: true })]
+    const { b } = harness({
+      'POST /m/api/cli/say': () => replies.shift()!,
+      'GET /m/api/cli/sessions': ok({ ok: true, sessions: [{ ...CLI, status: 'running', pending: null, live_window: true, last_say: LAST }, { ...CLI, session_id: 'sess-2', code: 'sess-2', status: 'idle', pending: null }] }),
+    })
+    expect(await b.cliSay('sess-1', 'go on')).toEqual({ sayId: 'a1b2c3d4e5f6' })
+    expect(await b.cliSay('sess-1', 'again')).toEqual({ sayId: null })
+    const list = await b.cliSessions()
+    expect(list[0]!.last_say).toEqual(LAST)
+    expect(list[0]!.live_window).toBe(true)
+    expect(list[1]!.last_say).toBeUndefined()
+  })
+  it('last_say 形状不对(state 认不出)⇒ 整份不收,不会拿去说送到', async () => {
+    const { b } = harness({ 'GET /m/api/cli/sessions': ok({ ok: true, sessions: [{ ...CLI, last_say: { id: 'x', state: 'delivered', at: 1 } }] }) })
+    await expect(b.cliSessions()).rejects.toMatchObject({ code: 'unknown' })
+  })
   it('今天:GET /m/api/today 回结构里的 today;读不到 ⇒ 抛', async () => {
     const today = { generatedAt: 1, since: 0, windowHours: 24, needsYou: [], done: [], running: [], stuck: [], counts: { needsYou: 0, done: 0, running: 0, stuck: 0 }, unavailable: ['terminal'] }
     const { b, reqs } = harness({ 'GET /m/api/today': ok({ ok: true, today }) })
@@ -595,5 +729,128 @@ describe('终端里的会话(2026-10-14)', () => {
     expect(reqs.at(-1)).toMatchObject({ key: 'GET /m/api/today' })
     const bad = harness({ 'GET /m/api/today': ok({ ok: false, error: 'today_not_wired' }, 503) })
     await expect(bad.b.today()).rejects.toBeTruthy()
+  })
+})
+
+describe('此刻页的伙伴(2026-10-18)', () => {
+  const EVENT = { id: 'journal:7', ts: '2026-10-18T03:00:00.000Z', kind: 'hunt', title: 'An essay', note: null, day: '2026-10-18', hhmm: '11:00', ref: { url: 'https://example.com', image_svg: null, status: 'new' } }
+  const PRESENCE = { presence: 'ok', activity: { kind: 'foraging', label: '觅食中', since: null }, news: { unread: 1, latest_kind: 'hunt', latest_title: 'An essay' } }
+  const HOME = { ok: true, synced_at: '2026-10-18T04:00:00.000Z', today: '2026-10-18', presence: PRESENCE, unread: 1, seen_until: null, events: [EVENT], next_cursor: null, sources_degraded: [] }
+  it('首屏:GET /m/api/home?limit=20,只留此刻页用得到的四样;过 schema', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/home': ok(HOME) })
+    expect(await b.home('en')).toEqual({ presence: PRESENCE, seenUntil: null, unread: 1, events: [EVENT] })
+    expect(reqs.at(-1)).toMatchObject({ key: 'GET /m/api/home', path: '/m/api/home?limit=20' })
+    const bad = harness({ 'GET /m/api/home': ok({ ...HOME, events: [{ ...EVENT, kind: 'nope' }] }) })
+    await expect(bad.b.home('en')).rejects.toMatchObject({ code: 'unknown' })
+  })
+  it('看到这里了:POST /m/api/seen {until},回电脑上生效后的水位;没接 ⇒ 抛', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/seen': ok({ ok: true, seen_until: '2026-10-18T03:00:00.000Z' }) })
+    expect(await b.markSeen('2026-10-18T03:00:00.000Z')).toBe('2026-10-18T03:00:00.000Z')
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/seen', body: { until: '2026-10-18T03:00:00.000Z' } })
+    const off = harness({ 'POST /m/api/seen': ok({ ok: false, error: 'seen_not_wired' }, 503) })
+    await expect(off.b.markSeen('2026-10-18T03:00:00.000Z')).rejects.toBeTruthy()
+  })
+})
+
+describe('CC 的信(2026-10-18)', () => {
+  const L = { id: '2026-10-16-abc123', day: '2026-10-16', sentAt: 1, requested: true, via: 'app', opening: '终于接上 Cursor 了', pages: 2 }
+  it('letters:过 schema、只回列表;letterPageChunk 拼 id / p / offset、去掉 ok', async () => {
+    const { b, reqs } = harness({
+      'GET /m/api/letters': ok({ ok: true, letters: [L] }),
+      'GET /m/api/letters/page': ok({ ok: true, name: 'x.png', mime: 'image/png', size: 3, sha256: 'a'.repeat(64), offset: 0, nextOffset: 3, contentBase64: 'AAAA' }),
+    })
+    expect(await b.letters()).toEqual([L])
+    const c = await b.letterPageChunk({ id: L.id, page: 2, offset: 131072 })
+    expect(reqs.at(-1)!.path).toBe('/m/api/letters/page?id=2026-10-16-abc123&p=2&offset=131072')
+    expect('ok' in c).toBe(false)
+    expect(c.size).toBe(3)
+  })
+  it('页不在了 ⇒ not_found;形状不对 ⇒ unknown(不当成功)', async () => {
+    const gone = harness({ 'GET /m/api/letters/page': ok({ ok: false, error: 'not_found' }, 404) })
+    await expect(gone.b.letterPageChunk({ id: L.id, page: 1, offset: 0 })).rejects.toMatchObject({ code: 'not_found' })
+    const bad = harness({ 'GET /m/api/letters': ok({ ok: true, letters: [{ id: 1 }] }) })
+    await expect(bad.b.letters()).rejects.toMatchObject({ code: 'unknown' })
+  })
+})
+
+describe('定时(2026-10-20)', () => {
+  const JOB = { id: 'j1', label: '每天 08:00(上海)', text: '早报', brief: true, paused: false, last: { day: '2026-10-20', status: 'sent', label: '说了' } }
+  it('jobs:过 schema、去掉 ok;jobsAction 正文恰好 { id, action }', async () => {
+    const { b, reqs } = harness({
+      'GET /m/api/jobs': ok({ ok: true, timezone: 'Asia/Shanghai', executor: null, jobs: [JOB] }),
+      'POST /m/api/jobs/action': ok({ ok: true }),
+    })
+    const v = await b.jobs()
+    expect('ok' in v).toBe(false)
+    expect(v).toEqual({ timezone: 'Asia/Shanghai', executor: null, jobs: [JOB] })
+    await b.jobsAction('j1', 'pause')
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/jobs/action' })
+    expect(reqs.at(-1)!.body).toEqual({ id: 'j1', action: 'pause' })
+  })
+  it('不在了 ⇒ not_found;形状不对 ⇒ unknown(不当成功)', async () => {
+    const gone = harness({ 'POST /m/api/jobs/action': ok({ ok: false, error: 'not_found' }, 404) })
+    await expect(gone.b.jobsAction('j9', 'remove')).rejects.toMatchObject({ code: 'not_found' })
+    const bad = harness({ 'GET /m/api/jobs': ok({ ok: true, timezone: 'UTC', executor: 'claude', jobs: [{ id: 'j1' }] }) })
+    await expect(bad.b.jobs()).rejects.toMatchObject({ code: 'unknown' })
+  })
+})
+
+describe('CC 做过的事(B9,2026-10-20)', () => {
+  const ITEMS = [
+    { id: 'together:e5f6a7b8', kind: 'together', at: 1_760_000_000_000, title: '一起做「整理笔记」做完了', ref: { type: 'task', id: 'e5f6a7b8' } },
+    { id: 'log:1:', kind: 'proactive', at: 1_759_999_000_000, title: '想跟你说一句,没发出去' },
+  ]
+  it('activity:过 schema、去掉 ok;ref / degraded / next 都留着(zod 没剥);游标进查询串', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/activity': ok({ ok: true, items: ITEMS, next: 'MTIzfGE', degraded: ['letters'] }) })
+    const v = await b.activity()
+    expect(reqs.at(-1)!.path).toBe('/m/api/activity')
+    expect('ok' in v).toBe(false)
+    expect(v).toEqual({ items: ITEMS, next: 'MTIzfGE', degraded: ['letters'] })
+    await b.activity({ cursor: 'a/b+c' })
+    expect(reqs.at(-1)!.path).toBe('/m/api/activity?cursor=a%2Fb%2Bc')
+  })
+  it('链接令牌 403 ⇒ 抛错;形状不对 ⇒ unknown(不当成功)', async () => {
+    // 认不得的 kind 不算坏形状(#436 改成 z.string():daemon 多一类时老包照样能看)
+    const unknownKind = harness({ 'GET /m/api/activity': ok({ ok: true, items: [{ id: 'x', kind: 'nope', at: 1, title: 't' }], next: null, degraded: [] }) })
+    await expect(unknownKind.b.activity()).resolves.toMatchObject({ items: [{ id: 'x', kind: 'nope' }] })
+    // 真坏的形状(缺 id、at 不是数)⇒ unknown,不当成功
+    const bad = harness({ 'GET /m/api/activity': ok({ ok: true, items: [{ kind: 'job', at: 'x', title: 't' }], next: null, degraded: [] }) })
+    await expect(bad.b.activity()).rejects.toMatchObject({ code: 'unknown' })
+    const denied = harness({ 'GET /m/api/activity': ok({ ok: false, error: 'forbidden' }, 403) })
+    await expect(denied.b.activity()).rejects.toBeInstanceOf(Error)
+  })
+})
+
+describe('待办与 CC 画的你(收敛清单 ④,2026-10-21)', () => {
+  const ROW = { id: 7, contact: 'mum', predicate: 'obligation', value: '周末回家吃饭', time_ref: '周六', updated_at: 1_760_000_000, display: '妈妈' }
+  const STATE = { ok: true, name: 'CC', todos: { active: [ROW], settled: [{ ...ROW, id: 8, time_ref: null }] }, portrait: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"></svg>', portraitPng: 'iVBORw0KGgo=', stickers: [{ file: 'a.png', tags: ['开心'] }] }
+  it('pocket:读 /m/api/state,只留待办与 PNG 画像(名字、SVG、表情库不要);没有 portraitPng(老 daemon / 不是 macOS)⇒ null', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/state': ok(STATE) })
+    const v = await b.pocket()
+    expect(reqs.at(-1)).toMatchObject({ key: 'GET /m/api/state', path: '/m/api/state' })
+    expect(v).toEqual({ todos: { active: [ROW], settled: [{ ...ROW, id: 8, time_ref: null }] }, portraitPng: 'iVBORw0KGgo=' })
+    const { portraitPng: _png, ...old } = STATE
+    const none = harness({ 'GET /m/api/state': ok(old) })
+    expect((await none.b.pocket()).portraitPng).toBeNull()
+    const bad = harness({ 'GET /m/api/state': ok({ ...STATE, portraitPng: 42 }) })
+    await expect(bad.b.pocket()).rejects.toMatchObject({ code: 'unknown' })
+  })
+  it('setTodo:正文恰好 { id, status };完成 = resolved、捞回 = active', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/todo': ok({ ok: true }) })
+    await b.setTodo(7, 'resolved')
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/todo', path: '/m/api/todo' })
+    expect(reqs.at(-1)!.body).toEqual({ id: 7, status: 'resolved' })
+    await b.setTodo(8, 'active')
+    expect(reqs.at(-1)!.body).toEqual({ id: 8, status: 'active' })
+  })
+  it('错误:没接待办 ⇒ unavailable;正文不对 ⇒ invalid;形状不对 ⇒ unknown(不当成功)', async () => {
+    const unwired = harness({ 'POST /m/api/todo': ok({ ok: false, error: 'todos_not_wired' }, 503) })
+    await expect(unwired.b.setTodo(7, 'resolved')).rejects.toMatchObject({ code: 'unavailable' })
+    const bad = harness({ 'POST /m/api/todo': ok({ ok: false, error: 'invalid' }, 400) })
+    await expect(bad.b.setTodo(7, 'resolved')).rejects.toMatchObject({ code: 'invalid' })
+    const weird = harness({ 'POST /m/api/todo': ok({ ok: 'yes' }) })
+    await expect(weird.b.setTodo(7, 'resolved')).rejects.toMatchObject({ code: 'unknown' })
+    const shape = harness({ 'GET /m/api/state': ok({ ...STATE, todos: { active: [{ id: 'x' }], settled: [] } }) })
+    await expect(shape.b.pocket()).rejects.toMatchObject({ code: 'unknown' })
   })
 })

@@ -12,6 +12,7 @@
 import { invokeApi } from '../api.js'
 import { escapeHtml, showToast } from '../view.js'
 import { dayLabel } from './journal.js'
+import { V1, v1 } from '../daemon-client.js'
 let readGeneration = 0
 let pageGeneration = 0
 const pendingVisits = new Set()
@@ -76,7 +77,7 @@ export function renderPeople(data) {
   if (!host) return
   if (data.relationships == null) {
     if (count) count.textContent = ''
-    host.innerHTML = String(data.error || '').includes('social_not_wired')
+    host.innerHTML = String(data.error || '').includes('module_off')
       ? '<div class="fd-empty" role="status"><p>朋友来往还没有开启。开启后，CC 可以和朋友的 CC 打交道。</p><button type="button" data-action="social-enable">启用社交</button></div>'
       : '<div class="fd-empty" role="status"><p>暂时无法读取联系人。</p><button type="button" data-pp-action="retry">重试</button></div>'
     return
@@ -101,7 +102,7 @@ export async function refreshPeople() {
   const ticket = ++readGeneration
   let error = null
   const resp = /** @type {{relationships?:Array<any>}|null} */ (
-    await invokeApi('GET', '/v1/social/relationships').catch(err => { error = String(err?.message ?? err); return null }))
+    await v1(invokeApi, V1.social.relationships).catch(err => { error = String(err?.message ?? err); return null }))
   if (ticket !== readGeneration) return
   renderPeople({ relationships: Array.isArray(resp?.relationships) ? resp.relationships : null, error })
 }
@@ -117,13 +118,16 @@ export async function onPeopleClick(ev) {
   pendingVisits.add(target)
   btn.disabled = true
   const r = /** @type {{ok?:boolean, error?:string}|null} */ (
-    await invokeApi('POST', '/v1/social/visit', { target }).catch(() => null))
+    // invokeApi 在非 2xx 时抛 Error(error 码);以前 catch 成 null,下面按码说的那几句永远走不到(一律「这次没能出门」)
+    await v1(invokeApi, V1.social.visit, { body: { target } }).catch((/** @type {unknown} */ e) => ({ error: e instanceof Error ? e.message : String(e) })))
   btn.disabled = false
   pendingVisits.delete(target)
   syncVisitButtons()
   if (owner !== pageGeneration) return
   if (r?.ok) showToast('出门了，聊完会在微信里跟你说')
-  else showToast(r?.error === 'social_not_wired' ? '社交还没开' : '这次没能出门，请稍后重试')
+  else if (r?.error === 'module_off') showToast('社交还没开')
+  else if (r?.error === 'module_degraded') showToast('社交开着，但这会儿没起来，请稍后重试')
+  else showToast('这次没能出门，请稍后重试')
 }
 
 export function initPeople() {

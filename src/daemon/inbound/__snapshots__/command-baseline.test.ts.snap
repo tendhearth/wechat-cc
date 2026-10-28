@@ -1,0 +1,319 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`微信命令基线(重构第二批步 1;只加测试) > command examples: who claims each one today 1`] = `
+{
+  "/api list": [
+    "mode",
+  ],
+  "/both": [
+    "mode",
+  ],
+  "/botname 小C": [
+    "admin",
+    "mode",
+  ],
+  "/cc": [
+    "mode",
+  ],
+  "/cc + codex": [
+    "mode",
+  ],
+  "/chat": [
+    "mode",
+  ],
+  "/cli": [
+    "mode",
+    "cli-reply:cli",
+  ],
+  "/codex": [
+    "mode",
+  ],
+  "/foo": [
+    "mode",
+  ],
+  "/health": [
+    "admin",
+    "mode",
+  ],
+  "/hearth list": [
+    "admin",
+    "mode",
+  ],
+  "/help": [
+    "mode",
+  ],
+  "/name 小明": [
+    "mode",
+  ],
+  "/reset": [
+    "admin",
+    "mode",
+  ],
+  "/set": [
+    "mode",
+  ],
+  "/set quiet 关": [
+    "mode",
+  ],
+  "/set 免打扰 23:00-8:00": [
+    "mode",
+  ],
+  "/solo": [
+    "mode",
+  ],
+  "/stop": [
+    "mode",
+  ],
+  "/task": [
+    "task-command",
+    "mode",
+  ],
+  "/today": [
+    "mode",
+    "cli-reply:cli",
+  ],
+  "/update": [
+    "admin",
+    "mode",
+  ],
+  "/visit": [
+    "mode",
+    "router:visit",
+  ],
+  "/whoami": [
+    "mode",
+  ],
+  "/帮助": [
+    "mode",
+  ],
+  "@ab12 继续": [
+    "cli-reply:cli",
+  ],
+  "n 07": [
+    "permission-reply(有待批准时)",
+  ],
+  "y": [
+    "permission-reply(有待批准时)",
+  ],
+  "不了 ab12": [
+    "router:intro",
+  ],
+  "串门": [
+    "router:visit",
+  ],
+  "串门 老王": [
+    "router:visit",
+  ],
+  "任务": [
+    "task-command",
+  ],
+  "任务 abcd1234": [
+    "task-command",
+  ],
+  "任务 abcd1234 停止": [
+    "task-command",
+  ],
+  "任务 abcd1234 补充 再加一个测试": [
+    "task-command",
+  ],
+  "任务 abcd1234 请 @codex 审": [
+    "task-command",
+  ],
+  "任务 列表": [
+    "task-command",
+  ],
+  "任务 对比 abcd1234 ef567890": [
+    "task-command",
+  ],
+  "任务 项目": [
+    "task-command",
+  ],
+  "会话列表": [
+    "cli-reply:cli",
+  ],
+  "做过的事": [
+    "cli-reply:activity",
+  ],
+  "做过的事 本周": [
+    "cli-reply:activity",
+  ],
+  "允许": [
+    "permission-reply(有待批准时)",
+  ],
+  "允许 123456": [
+    "router:guest",
+  ],
+  "取消 w-ab12": [],
+  "同意 07": [
+    "permission-reply(有待批准时)",
+    "router:intro",
+  ],
+  "回信 ch1 你好": [
+    "router:letter",
+  ],
+  "定时": [
+    "cli-reply:jobs",
+  ],
+  "定时 停 j1": [
+    "cli-reply:jobs",
+  ],
+  "定时 周报 周日 20:00": [
+    "cli-reply:jobs",
+  ],
+  "定时 早报 8:00": [
+    "cli-reply:jobs",
+  ],
+  "定时 每天 9:00 看看邮箱": [
+    "cli-reply:jobs",
+  ],
+  "导入记忆": [
+    "cli-reply:memory-import(起头)",
+  ],
+  "导入记忆 ChatGPT": [
+    "cli-reply:memory-import(起头)",
+  ],
+  "待批准": [
+    "router:guest",
+  ],
+  "拒绝 ab12c": [
+    "permission-reply(有待批准时)",
+  ],
+  "整理记忆": [
+    "admin",
+  ],
+  "日历": [
+    "cli-reply:calendar",
+  ],
+  "日历 开": [
+    "cli-reply:calendar",
+  ],
+  "日历 明天": [
+    "cli-reply:calendar",
+  ],
+  "日报": [
+    "cli-reply:cli",
+  ],
+  "早报": [
+    "cli-reply:jobs",
+  ],
+  "早报 少点 天气": [
+    "cli-reply:jobs",
+  ],
+  "有哪些手": [
+    "admin",
+  ],
+  "派 w-ab12": [],
+  "派小黑跑 测试": [
+    "admin",
+  ],
+  "看 ab12": [
+    "cli-reply:cli",
+  ],
+  "看记忆": [
+    "admin",
+  ],
+  "终端": [
+    "cli-reply:cli",
+  ],
+  "经验": [
+    "cli-reply:lessons",
+  ],
+  "经验 wechat-cc 用 bun": [
+    "cli-reply:lessons",
+  ],
+  "背包": [
+    "admin",
+  ],
+  "自改 把早报改短一点": [
+    "admin",
+  ],
+  "自改 状态": [
+    "admin",
+  ],
+  "认识 ab12": [
+    "router:intro",
+  ],
+  "邀请码": [
+    "router:guest",
+  ],
+  "配对": [
+    "router:pair",
+  ],
+  "配对 123456": [
+    "router:pair",
+  ],
+}
+`;
+
+exports[`微信命令基线(重构第二批步 1;只加测试) > conflicts today (two or more claim the same text) — the list CommandRegistry must resolve 1`] = `
+{
+  "/botname 小C": [
+    "admin",
+    "mode",
+  ],
+  "/cli": [
+    "mode",
+    "cli-reply:cli",
+  ],
+  "/health": [
+    "admin",
+    "mode",
+  ],
+  "/hearth list": [
+    "admin",
+    "mode",
+  ],
+  "/reset": [
+    "admin",
+    "mode",
+  ],
+  "/task": [
+    "task-command",
+    "mode",
+  ],
+  "/today": [
+    "mode",
+    "cli-reply:cli",
+  ],
+  "/update": [
+    "admin",
+    "mode",
+  ],
+  "/visit": [
+    "mode",
+    "router:visit",
+  ],
+  "同意 07": [
+    "permission-reply(有待批准时)",
+    "router:intro",
+  ],
+}
+`;
+
+exports[`微信命令基线(重构第二批步 1;只加测试) > ordinary chat: who (wrongly) claims it today 1`] = `
+{
+  "/": [],
+  "/ 你好": [],
+  "1": [],
+  "@claude 你觉得呢": [],
+  "@codex 帮我看看这个函数": [],
+  "不用了": [],
+  "串门好玩吗": [],
+  "今天好累": [],
+  "任务太多了": [],
+  "你好": [],
+  "允许我说一句": [],
+  "全部": [],
+  "同意你的看法": [],
+  "好": [],
+  "定时提醒我喝水": [],
+  "帮我看看这个报错": [],
+  "日历上明天有啥": [],
+  "早报那个能不能早点发": [],
+  "看 README 里怎么写的": [],
+  "看看你": [],
+  "算了": [],
+  "经验告诉我别这么干": [],
+  "配对成功了吗": [],
+}
+`;

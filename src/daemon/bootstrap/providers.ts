@@ -1,25 +1,28 @@
+import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
-import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
-import { withFirstUseProbe } from '../../core/first-use-probe'
+import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
+import { withFirstUseProbe } from '../../app/first-use-probe'
 import { readJsonFile } from '../../lib/read-json-file'
-import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
-import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
-import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
-import { createCodexAgentProvider } from '../../core/codex-agent-provider'
-import { buildSystemPrompt } from '../../core/prompt-builder'
-import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../core/capability-matrix'
-import type { ProviderId } from '../../core/conversation'
-import type { PermissionMode } from '../../core/capability-matrix'
+import { DEFAULT_CLAUDE_MODEL } from '../../adapters/executors/claude/claude-agent-provider'
+import { DEFAULT_AGY_MODEL } from '../../adapters/executors/agy/agy-agent-provider'
+import { createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
+import { createCodexChatProvider } from '../../adapters/executors/codex/codex-chat-provider'
+import { makeCodexChatGate } from '../../adapters/executors/codex/codex-chat-gate'
+import { buildSystemPrompt } from '../../domain/prompt-builder'
+import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../domain/capability-matrix'
+import type { ProviderId } from '../../domain/conversation'
+import type { PermissionMode } from '../../domain/capability-matrix'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
-import type { ConversationStore } from '../../core/conversation-store'
+import type { ConversationStore } from '../../ports/conversation-store'
 import { makeMtimeCachedConfigReader, type AgentConfig, type AgentProviderKind } from '../../lib/agent-config'
 import type { Access } from '../../lib/access'
-import type { CompanionConfig } from '../companion/config'
+import type { CompanionConfig } from '../../lib/companion-config'
 import { loadAccess } from '../../lib/access'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { findOnPath, probeBinaryVersion } from '../../lib/util'
 import { findCodexBinary } from '../../lib/find-codex-binary'
+import { cursorSdkFallback, executorBinary, executorCredential, executorMissingConfig } from '../../lib/executor-detect'
 import { checkCodexVersion } from './codex-version-check'
 import { attemptCodexAutofix } from '../../lib/codex-autofix'
 import { fileURLToPath } from 'node:url'
@@ -65,12 +68,14 @@ function detectUserCodexOnPath(): { path: string | null; version: string | null 
 export interface ProviderDeps {
   log: BootstrapDeps['log']
   stateDir: string
+  /** OpenAI 兼容对话的会话历史存这里(B2,api-sessions 的 openai_chat_sessions)。不给 ⇒ 只在内存,不续接。 */
+  db?: import('../../lib/db').Db
   ilink: Pick<BootstrapDeps['ilink'], 'askUser' | 'companion'>
   agentProviderKind?: AgentProviderKind
   configuredAgent: AgentConfig
   permissionMode: PermissionMode
   conversationStore: ConversationStore
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: import('../../core/user-tier').TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: import('../../domain/user-tier').TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options
   claudeBin: string | undefined
   currentClaudeModel: () => string
   resolveAdminChatId: (access: Access, companion: CompanionConfig, initiatingChatId?: string | null) => string | null
@@ -87,12 +92,14 @@ export interface ProviderDeps {
    *  by bootstrap/index.ts — same value the coordinator uses, threaded here
    *  so the agy provider's `--print-timeout` stays consistent with it. */
   turnTimeoutMs: number
+  /** 主人自己的对话走放行规则(2026-10-25):Gemini gate 与 openai gate 现取。不给 ⇒ 不看规则。 */
+  chatOwnerRules?: BootstrapDeps['chatOwnerRules']
   /** Mint/invalidate per-session internal-api tokens (main.ts-wired; absent
    *  in tests / minimal embeddings) — same seam SessionManager uses
    *  (BootstrapDeps['mintSessionToken']). The agy provider's tier-C MCP
    *  setup (agy-mcp-config.ts) uses this to mint ONE long-lived 'trusted'
    *  token for its global config upsert; never a per-session token. */
-  mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
+  mintSessionToken?: (tier: import('../../domain/user-tier').UserTier, sessionKey: string) => string
   /**
    * Test/harness seam for agy's tier-C global MCP config target dir (fix
    * round 1, 2026-08-17) — threaded straight through to
@@ -133,6 +140,7 @@ export interface ProviderWiring {
   reprobeProvider: (id: string) => Promise<boolean | null>
 }
 
+// 名字不在这里写:内置六家叫什么由 lib/executor-facts 定,读名字走 registry.namesOf(收敛清单 ⑥)。
 export async function registerProviders(deps: ProviderDeps): Promise<ProviderWiring> {
   // Re-materialize the bare locals the moved blocks reference, so their bodies
   // stay byte-identical to the original buildBootstrap code.
@@ -159,6 +167,23 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   }
   /** 晚注册时补一次开机末尾那道矩阵检查(只查这一个 id)。 */
   const assertLateRegistration = (id: ProviderId) => assertMatrixComplete([id])
+  /**
+   * 开机探测失败 ⇒ 后台退避重探,通过就注册(重构第二批步 7:以前 codex / cursor / agy 各抄一份)。
+   * accept:探测通过后还要过的那一关(codex 的版本号);回原因 ⇒ 这次不算。register 回 false ⇒ 「探测通过但注册失败」。
+   */
+  const retryRegistration = (id: ProviderId, bin: string, firstError: string, opts: {
+    accept?: (r: Extract<Awaited<ReturnType<typeof probe>>, { ok: true }>) => string | null
+    register: (bin: string, r: Extract<Awaited<ReturnType<typeof probe>>, { ok: true }>) => boolean | Promise<boolean>
+  }) => scheduleProbeRetry(id, firstError, async () => {
+    if (registry.has(id)) return { ok: true }
+    const r = await probe(bin)
+    if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
+    const rejected = opts.accept?.(r)
+    if (rejected) return { ok: false, reason: rejected }
+    if (!(await opts.register(bin, r))) return { ok: false, reason: '探测通过但注册失败(见上一行 BOOT)' }
+    assertLateRegistration(id)
+    return { ok: true }
+  })
 
   const defaultProviderId: ProviderId = deps.agentProviderKind
     ?? (process.env.WECHAT_AGENT_PROVIDER === 'codex' ? 'codex' : configuredAgent.provider)
@@ -245,7 +270,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     'claude',
     claudeProvider,
     {
-      displayName: 'Claude',
       canResume: (cwd, sid) => existsSync(claudeSessionJsonlPath(HOME, cwd, sid)),
     },
   )
@@ -335,10 +359,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   let codexNote: string | null = null
   const registerCodex = (codexBinary: string, codexVersionCheck: ReturnType<typeof checkCodexVersion>) => {
     const actual = codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '?'
-    const gap = codexVersionCheck.ok ? '' : `(与 SDK ${codexVersionCheck.expectedVersion} 不同版,首次使用时真跑一句探测)`
+    const gap = codexVersionCheck.ok ? '' : `(与对齐的 codex ${codexVersionCheck.expectedVersion} 不同版,首次使用时真跑一句探测)`
     codexNote = `你的 CLI ${actual}${gap} · 未探测`
-    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, SDK ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时探测'})`)
-    const codexInner = createCodexAgentProvider({
+    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时探测'})`)
+    const codexInner = createCodexChatProvider({
         codexPathOverride: codexBinary,
         // Construction-time model default ONLY from CODEX_MODEL. Do NOT fall back
         // to configuredAgent.model — that is the CONFIGURED provider's model, so
@@ -350,17 +374,25 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         ...(process.env.CODEX_MODEL ? { model: process.env.CODEX_MODEL } : {}),
         // Task 6: sandboxMode + approvalPolicy moved out of CodexAgentProviderOptions —
         // they're now derived per-spawn from spawnOpts.tierProfile inside the provider.
-        // admin tier maps to danger-full-access + never (matches the old --dangerously
-        // posture); trusted → workspace-write + never; guest → read-only + untrusted.
-        // The dangerouslyBypassApprovalsAndSandbox flag stays here because it's a
-        // provider-construction-time codex CLI config knob (not a per-thread option).
-        // v0.5.7 — when daemon runs --dangerously, bypass MCP approval (else codex 0.128
-        // cancels every mcp__wechat__reply with "user cancelled MCP tool call").
+        // strict: admin → workspace-write + on-request (answered by `approvals` below);
+        // trusted → workspace-write + never; guest → read-only + untrusted (refused at
+        // dispatch anyway). --dangerously → danger-full-access + never for everyone.
+        // The dangerouslyBypassApprovalsAndSandbox flag stays here: when the daemon
+        // runs --dangerously, MCP tool calls skip codex's approval gate (else codex
+        // refuses every MCP call under approval "never"). Applied per spawn only when
+        // THAT spawn is dangerously (codex-chat-provider.codexChatThreadConfig).
         dangerouslyBypassApprovalsAndSandbox: permissionMode === 'dangerously',
-        // Codex SDK has no system-prompt slot; the per-spawn instructions are
-        // injected into the first user message by the provider from
-        // SpawnContext.appendInstructions (assembled by buildInstructions
-        // below), so nothing is baked at construction here.
+        // 主人对话(admin、strict)审批 on-request(2026-10-26):codex 报上来要批的那一条逐条过 authorize,
+        // 要问就发和 Claude 对话同一张微信拍板卡;主人的放行规则在这里一样生效(chatOwnerRules)。
+        approvals: makeCodexChatGate({
+          askUser: deps.ilink.askUser,
+          adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
+          ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
+          log: deps.log,
+        }),
+        // The per-spawn instructions (SpawnContext.appendInstructions, assembled
+        // by buildInstructions below) ride codex app-server's developerInstructions
+        // slot on thread/start / thread/resume, so nothing is baked here.
         mcpServers: {
           ...(wechatStdioForCodex ? { wechat: wechatStdioForCodex } : {}),
           ...(delegateStdioForCodex ? { delegate: delegateStdioForCodex } : {}),
@@ -371,7 +403,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       probe: () => codexInner.cheapEval!('只回复两个字母:ok'),
       failureMessage: (detail) =>
         `codex 探测没通过:${detail.slice(0, 200)}\n` +
-        `你的 codex CLI(${actual})和 wechat-cc 的 SDK(${codexVersionCheck.expectedVersion})可能不合。` +
+        `你的 codex CLI(${actual})和 wechat-cc 对齐的版本(${codexVersionCheck.expectedVersion})可能不合。` +
         `试试 \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`,或者等 wechat-cc 更新。`,
       onResult: (r) => {
         codexNote = r.ok
@@ -384,8 +416,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       'codex',
       codexProvider,
       {
-        displayName: 'Codex',
         canResume: (_cwd, sid) => codexSessionJsonlPaths(HOME, sid).some(p => existsSync(p)),
+        // 工作台 / 额度查询每次现取(CLI 升级换了路径也跟得上);对话侧仍用开机时验过的那个(两边都是 app-server)。
+        bin: () => findCodexBinary(),
       },
     )
   }
@@ -396,17 +429,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // 探测本身失败(超时 / 非零退出 / 起不来)—— 开机负载下可能只是一时的:退避重探,
       // 通过就注册,不用重启。
       deps.log('BOOT', `codex: ${codexBinary} --version 探测失败(${codexProbeFailure})— 先不注册,后台退避重探`)
-      const bin = codexBinary
-      scheduleProbeRetry('codex', codexProbeFailure, async () => {
-        if (registry.has('codex')) return { ok: true }
-        const r = await probe(bin)
-        if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
-        const check = codexCheckFrom(bin, r)
-        if (check.reason === 'version_probe_failed') return { ok: false, reason: `--version 输出里没有版本号:${check.rawVersion ?? '(空)'}` }
-        codexVersionCheck = check
-        registerCodex(bin, check)
-        assertLateRegistration('codex')
-        return { ok: true }
+      retryRegistration('codex', codexBinary, codexProbeFailure, {
+        accept: (r) => { const check = codexCheckFrom(codexBinary, r); return check.reason === 'version_probe_failed' ? `--version 输出里没有版本号:${check.rawVersion ?? '(空)'}` : null },
+        register: (bin, r) => { const check = codexCheckFrom(bin, r); codexVersionCheck = check; registerCodex(bin, check); return true },
       })
     } else {
       // 跑起来了、退出码 0,但打不出版本号 —— 这是确定性的,不重探。
@@ -444,12 +469,13 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // Same TEST-RUNNER PATH-fallback guard as agy below: a dev box with
   // cursor-agent installed must not register a real provider in every test
   // bootstrap — tests opt in via `cursorAgentBin` in seeded agent-config.
-  const cursorAgentBin = configuredAgent.cursorAgentBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('cursor-agent'))
+  // 「在不在」统一由 executor-detect 判(3c 第 2 步):配置里的路径 trim 后为空 = 没配,回落 PATH。
+  const cursorAgentBin = executorBinary('cursor', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
   let cursorCliRegistered = false
   let cursorCliProbeFailure: string | null = null
   const registerCursorCli = async (cursorAgentBin: string): Promise<boolean> => {
     try {
-      const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../core/acp-cursor-chat')
+      const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../adapters/executors/acp/acp-cursor-chat')
       // 上一版往 ~/.cursor/mcp.json 塞过一把静态 trusted 钥匙(tier C);对话侧走 ACP 后 MCP 按会话注入,
       // 那条目只剩风险 —— boot 时清掉(测试 runner 下 remove 自己会跳过)。独立 try/catch:
       // 清理失败(比如 ~/.cursor 只读或磁盘满)不该拖累注册本身 —— 那样一个坏权限的
@@ -476,7 +502,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           mcpSpecs: { wechat: wechatStdioForCursor, delegate: null },
           log: deps.log,
         }),
-        { displayName: 'Cursor', canResume: () => true },
+        { canResume: () => true },
       )
       deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered (ACP, per-session MCP)')
       return true
@@ -488,7 +514,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // ACP provider 的 close() 靠杀进程组收尾,Windows 上那条路没验过(acp-agent-provider.ts
   // spawn 时会直接抛)。注册了等于每一轮对话都撞一次那句抛错 —— 不如干脆不注册,
   // 让下面的 SDK 兜底照旧判断(有 CURSOR_API_KEY 就走 SDK,没有就是"未注册")。
-  if (cursorAgentBin && process.platform === 'win32') {
+  if (cursorAgentBin && !acpSupportedOn()) {
     deps.log('BOOT', 'cursor: ACP 对话 provider 暂不支持 Windows(进程组清理未验证),未注册')
   } else if (cursorAgentBin) {
     const r = await probe(cursorAgentBin)
@@ -499,10 +525,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     }
   }
 
-  const cursorKey = process.env.CURSOR_API_KEY
+  const { key: cursorKey, missingModel: cursorMissingModel } = cursorSdkFallback(configuredAgent, process.env)
   if (cursorCliRegistered) {
     // CLI path won — the SDK/API-key fallback below is skipped entirely.
-  } else if (cursorKey && !configuredAgent.cursorModel) {
+  } else if (cursorKey && cursorMissingModel) {
     // Cursor SDK's @cursor/sdk/dist/esm/options.d.ts says model is "required
     // for local agents" — local is the only mode wechat-cc uses today.
     // Fail-fast at boot with an actionable message rather than crash on
@@ -515,8 +541,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     )
   } else if (cursorKey) {
     try {
-      const cursorMod = await import('@cursor/sdk') as unknown as import('../../core/cursor-agent-provider').CursorSdkNamespace
-      const { createCursorAgentProvider } = await import('../../core/cursor-agent-provider')
+      const cursorMod = await import('@cursor/sdk') as unknown as import('../../adapters/executors/acp/cursor-agent-provider').CursorSdkNamespace
+      const { createCursorAgentProvider } = await import('../../adapters/executors/acp/cursor-agent-provider')
       registry.register(
         'cursor',
         createCursorAgentProvider({
@@ -530,7 +556,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           },
         }),
         {
-          displayName: 'Cursor',
           // P1 ships with resume disabled — Agent.resume(agentId) is documented
           // but unverified in the spike beyond static types. Enable in a P1.1
           // follow-up after dogfooding.
@@ -548,15 +573,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
 
   // cursor-agent 探测失败(且 SDK 兜底也没注册上 cursor)⇒ 退避重探,通过就注册 ACP 对话 provider。
   if (cursorCliProbeFailure && cursorAgentBin && !registry.has('cursor')) {
-    const bin = cursorAgentBin
-    scheduleProbeRetry('cursor', cursorCliProbeFailure, async () => {
-      if (registry.has('cursor')) return { ok: true }
-      const r = await probe(bin)
-      if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
-      if (!(await registerCursorCli(bin))) return { ok: false, reason: '探测通过但注册失败(见上一行 BOOT)' }
-      assertLateRegistration('cursor')
-      return { ok: true }
-    })
+    retryRegistration('cursor', cursorAgentBin, cursorCliProbeFailure, { register: (bin) => registerCursorCli(bin) })
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -569,56 +586,52 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // skipped with a BOOT log line. The SDK modules are dynamic-imported so a
   // registration failure (missing dep, bad config) degrades to a log line
   // instead of crashing boot.
-  const openaiKey = process.env.WECHAT_OPENAI_API_KEY
-  if (openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
+  const openaiKey = executorCredential('openai', process.env)
+  if (openaiKey && executorMissingConfig('openai', configuredAgent).length === 0 && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
     // Narrowed into locals: property access on `configuredAgent` doesn't
     // stay narrowed inside the `makeChatModel` closure below (TS only
     // preserves narrowing for local const bindings, not object properties).
     const openaiBaseUrl = configuredAgent.openaiBaseUrl
     const defaultOpenaiModel = configuredAgent.openaiModel
     try {
-      const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
-      const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
-      const { createMcpToolBridge } = await import('../../core/openai-mcp-bridge')
-      registry.register(
-        'openai',
-        createOpenAiAgentProvider({
-          // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
-          endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
-          // Built per-spawn (not once at construction) so an operator's
-          // `/api <model>` pin — re-read via the mtime-cached config reader
-          // through currentModelFor → SpawnContext.model — takes effect on
-          // the NEXT session without a daemon restart. `model` is undefined
-          // for background evals (cheapEval/strongEval) and for spawns before
-          // any pin exists; both fall back to the boot-time configured model.
-          // createAiSdkChatModel is cheap (just SDK client wiring, no
-          // network), so constructing one per spawn is fine.
-          makeChatModel: (model) => createAiSdkChatModel({
-            baseURL: openaiBaseUrl,
-            apiKey: openaiKey,
-            model: model ?? defaultOpenaiModel,
-          }),
-          // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see
-          // sessionEnv (WECHAT_SESSION_TOKEN) — third-party plugin MCP specs
-          // must never receive the daemon's loopback bearer token. See
-          // mcp-specs.ts buildOpenaiMcpSpecs doc comment.
-          // Plugins are optional per session (openaiMcpBridgeOptions): one slow
-          // plugin must not take the whole openai spawn down with it.
-          makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
-            buildOpenaiMcpSpecs(
-              { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
-              sessionEnv,
-            ),
-            openaiMcpBridgeOptions(deps.log),
-          ),
-          log: deps.log,
+      const { createOpenAiAgentProvider } = await import('../../adapters/executors/openai/openai-agent-provider')
+      const { createApiModel } = await import('../../adapters/executors/openai/api-model')
+      const { createMcpToolBridge } = await import('../../adapters/executors/openai/openai-mcp-bridge')
+      const { makeChatSessionStore, openAiConnectionHash } = await import('../../adapters/executors/openai/api-sessions')
+      const provider = createOpenAiAgentProvider({
+        // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
+        endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
+        ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
+        // Built per-spawn (not once at construction) so an operator's `/api <model>` pin — re-read via the mtime-cached
+        // config reader through currentModelFor → SpawnContext.model — takes effect on the NEXT session without a daemon
+        // restart. `model` is undefined for background evals (cheapEval/strongEval) and for spawns before any pin
+        // exists; both fall back to the boot-time configured model. Building one is cheap (SDK client wiring, no network).
+        // 对话:不设每步输出上限(交给上游默认)、AI SDK 重试 2 次(和统一之前一样)。
+        makeChatModel: (model) => createApiModel({
+          baseURL: openaiBaseUrl,
+          apiKey: openaiKey,
+          model: model ?? defaultOpenaiModel,
+          maxOutputTokens: null,
+          maxRetries: 2,
+          providerName: 'wechat-openai',
         }),
-        {
-          displayName: 'OpenAI-compatible',
-          // No resume support in v1 — same posture as cursor above.
-          canResume: () => false,
-        },
-      )
+        // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see sessionEnv (WECHAT_SESSION_TOKEN) — third-party
+        // plugin MCP specs must never receive the daemon's loopback bearer token. See mcp-specs.ts buildOpenaiMcpSpecs.
+        // Plugins are optional per session (openaiMcpBridgeOptions): one slow plugin must not take the whole spawn down.
+        makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
+          buildOpenaiMcpSpecs(
+            { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
+            sessionEnv,
+          ),
+          openaiMcpBridgeOptions(deps.log),
+        ),
+        // 会话历史(B2):有 DB 就存进 api-sessions,daemon 重启 / 会话释放后接得上;连接身份不含钉的模型。
+        ...(deps.db ? { sessions: makeChatSessionStore(deps.db), connectionHash: openAiConnectionHash({ baseURL: openaiBaseUrl, apiKey: openaiKey }) } : {}),
+        log: deps.log,
+      })
+      registry.register('openai', provider, {
+        canResume: (path, sessionId) => provider.canResume(path, sessionId),
+      })
       deps.log('BOOT', 'openai: base_url + model + WECHAT_OPENAI_API_KEY present — provider registered')
       // 外部集成反馈 #2:openai 在 cheapEval 偏好序第一,注册即承接全部
       // 后台评估(记忆整理/moderator/introspect)。端点若是特化服务,请在
@@ -646,8 +659,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   //
   // geminiModel must be set via `wechat-cc provider set gemini
   // --model gemini-flash-latest` before the key is useful.
-  const geminiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
-  if (geminiKey && !configuredAgent.geminiModel) {
+  const geminiKey = executorCredential('gemini', process.env)
+  if (geminiKey && executorMissingConfig('gemini', configuredAgent).length > 0) {
     deps.log('BOOT',
       'gemini: GEMINI_API_KEY is set but geminiModel is not configured. ' +
       'Run `wechat-cc provider set gemini --model gemini-flash-latest`. Provider not registered.',
@@ -655,14 +668,15 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   } else if (geminiKey) {
     try {
       const { GoogleGenAI } = await import('@google/genai')
-      const { createGeminiAgentProvider, makeGeminiToolGate, connectWechatMcp } = await import('../../core/gemini-agent-provider')
-      const { lookup } = await import('../../core/capability-matrix')
-      const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../core/gemini-agent-provider').GenaiClient
+      const { createGeminiAgentProvider, makeGeminiToolGate, connectWechatMcp } = await import('../../adapters/executors/gemini/gemini-agent-provider')
+      const { lookup } = await import('../../domain/capability-matrix')
+      const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../adapters/executors/gemini/gemini-agent-provider').GenaiClient
       const buildGate = makeGeminiToolGate({
         askUser: deps.ilink.askUser,
         adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         modeFor: (chatId) => conversationStore.get(chatId)?.mode.kind ?? 'solo',
         lookupBase: (mode, perm) => lookup(mode as never, 'gemini', perm),
+        ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
       })
       registry.register(
         'gemini',
@@ -684,7 +698,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           buildGate,
           cheapModel: process.env.WECHAT_GEMINI_CHEAP_MODEL ?? 'gemini-flash-latest',
         }),
-        { displayName: 'Gemini', canResume: () => false },
+        { canResume: () => false },
       )
       deps.log('BOOT', 'gemini: SDK + API key present — provider registered')
       deps.log('BOOT', 'gemini (API key) is deprecated since 2026-09-27 — prefer /agy (subscription Gemini via Antigravity CLI); this path is kept for existing GEMINI_API_KEY users and gets no new features')
@@ -715,10 +729,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // must opt in explicitly via `agyBin` in its seeded agent-config, exactly
   // like agyGeminiConfigDir below must be explicit to exercise the MCP
   // write path. Production (not under a test runner) is unchanged.
-  const agyBin = configuredAgent.agyBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('agy'))
+  const agyBin = executorBinary('agy', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
   const registerAgy = async (agyBin: string): Promise<boolean> => {
     try {
-      const { createAgyAgentProvider } = await import('../../core/agy-agent-provider')
+      const { createAgyAgentProvider } = await import('../../adapters/executors/agy/agy-agent-provider')
       // Tier C (spec §3): agy has no per-session MCP config surface — the
       // ONLY way to hand it the wechat tool is a boot-time upsert into its
       // global ~/.gemini/config/mcp_config.json, carrying ONE long-lived
@@ -751,7 +765,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           turnTimeoutMs,
           log: deps.log,
         }),
-        { displayName: 'Gemini (agy)', canResume: () => true },
+        { canResume: () => true },
       )
       deps.log('BOOT', 'agy: binary present — provider registered')
       return true
@@ -770,14 +784,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     else {
       const why = describeProbeFailure(r)
       deps.log('BOOT', `agy: ${agyBin} --version 探测失败(${why})— 先不注册,后台退避重探`)
-      scheduleProbeRetry('agy', why, async () => {
-        if (registry.has('agy')) return { ok: true }
-        const r2 = await probe(agyBin)
-        if (!r2.ok) return { ok: false, reason: describeProbeFailure(r2) }
-        if (!(await registerAgy(agyBin))) return { ok: false, reason: '探测通过但注册失败(见上一行 BOOT)' }
-        assertLateRegistration('agy')
-        return { ok: true }
-      })
+      retryRegistration('agy', agyBin, why, { register: (bin) => registerAgy(bin) })
     }
   }
 

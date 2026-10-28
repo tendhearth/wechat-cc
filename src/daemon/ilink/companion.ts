@@ -3,15 +3,18 @@
  *
  * Claude owns `memory/`; this module only toggles the proactive-tick
  * scheduler (enabled / snooze) and records the default_chat_id.
+ *
+ * 架构终态 A6:这是窄口 `WechatCompanionControls`(src/ports/wechat.ts,容器里叫 `wechat.companion`)的实现。
+ * 留在 ilink 里,因为 enable 定主人那条对话要 ilink 的账号表(acctStore)和最近活跃的 chat(lastActiveRef)。
  */
 import { mkdirSync } from 'node:fs'
-import type { WechatCompanionDep } from '../wechat-tool-deps'
-import { companionDir } from '../companion/paths'
-import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from '../companion/config'
+import type { WechatCompanionControls } from '../../ports/wechat'
+import { companionDir } from '../../lib/companion-config'
+import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from '../../lib/companion-config'
 import { loadAccess } from '../../lib/access'
 import type { IlinkContext } from './context'
 
-export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
+export function makeCompanion(ctx: IlinkContext): WechatCompanionControls {
   const { stateDir, acctStore, lastActiveRef } = ctx
 
   return {
@@ -93,5 +96,5 @@ export function makeCompanion(ctx: IlinkContext): WechatCompanionDep {
       await saveCompanionConfig(stateDir, cfg)
       return { ok: true as const, import_local_history: enabled }
     },
-  } satisfies WechatCompanionDep
+  } satisfies WechatCompanionControls
 }

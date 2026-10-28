@@ -160,5 +160,28 @@
       "quotaRefusalText": false,
       "connectFailure": false
     }
+  },
+  {
+    "id": "agy.region.session",
+    "provider": "agy",
+    "truth": "region",
+    "source": "harvested",
+    "path": "session",
+    "channel": "thrown",
+    "errorCode": "region_unavailable",
+    "message": "agy exited 1: error: Eligibility check failed: Your current account is not eligible for Antigravity, because it is not currently available in your location.",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "unknown",
+      "providerFailure": "unknown",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
   }
 ]

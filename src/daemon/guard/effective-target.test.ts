@@ -15,13 +15,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentConfig } from '../../lib/agent-config'
-import { createProviderRegistry } from '../../core/provider-registry'
-import { SessionManager } from '../../core/session-manager'
-import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
-import { createAcpCursorChatProvider } from '../../core/acp-cursor-chat'
-import type { AgentProvider } from '../../core/agent-provider'
-import { makeFakeSession } from '../../core/test-helpers'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { createProviderRegistry } from '../../app/provider-registry'
+import { SessionManager } from '../../app/session-manager'
+import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
+import { createAcpCursorChatProvider } from '../../adapters/executors/acp/acp-cursor-chat'
+import type { AgentProvider } from '../../ports/agent-provider'
+import { makeFakeSession } from '../../test-support/test-helpers'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { runSelftestConverse } from '../selftest'
 
 function daemonGate(cfg: Partial<AgentConfig>, net: { safe: boolean }, env: NodeJS.ProcessEnv = {}) {
@@ -45,7 +45,8 @@ describe('guard classifies the target the executor actually uses (review #193 P1
     const net = { safe: true }
     const { gate } = daemonGate(cfg, net)
     const generate = vi.fn(async () => 'should never run')
-    const chatModel = { streamTurn: vi.fn(), generate, userMessage: (t: string) => ({ role: 'user', content: t }), systemMessage: (t: string) => ({ role: 'system', content: t }), toolResultMessage: vi.fn() }
+    const stream = vi.fn()
+    const chatModel = { stream, generate }
     // 端点在 boot 时定下(和 bootstrap/providers.ts 一样:openaiBaseUrl 是注册那一刻读的)。
     const provider = createOpenAiAgentProvider({
       endpoint: { baseUrl: cfg.openaiBaseUrl!, model: cfg.openaiModel! },
@@ -188,7 +189,10 @@ describe('every send on a session handed out by the gated registry passes the gu
     const f = cursorOnClaude()
     const registry = createProviderRegistry({ networkGate: gate })
     registry.register('cursor' as never, f.provider, { displayName: 'Cursor', canResume: () => true })
-    const r = await runSelftestConverse({ registry, mintSessionToken: () => 't', invalidateSession: () => {}, log: () => {} }, { providerId: 'cursor', text: 'ping' })
+    // 草稿项目给一个自己的临时目录:真路径是固定的,selftest.test.ts 并行时会删它(ENOTEMPTY)
+    const projectDir = mkdtempSync(join(tmpdir(), 'wcc-effective-target-'))
+    const r = await runSelftestConverse({ registry, mintSessionToken: () => 't', invalidateSession: () => {}, log: () => {}, projectDir }, { providerId: 'cursor', text: 'ping' })
+    rmSync(projectDir, { recursive: true, force: true })
     expect(r.ok).toBe(false)
     expect(r.error).toMatch(/网络未受保护/)
     expect(f.sent).not.toHaveBeenCalled()

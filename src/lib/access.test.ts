@@ -1,20 +1,12 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs'
+import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { writeFileSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { useTempStateDir } from '../test-support/state-dir'
 
-// Override STATE_DIR BEFORE access.ts loads config.ts, so all file
-// operations go to a temp directory instead of the real state dir.
-const TEST_DIR = join(tmpdir(), `wechat-cc-access-test-${Date.now()}`)
-vi.mock('./config.ts', () => ({
-  STATE_DIR: TEST_DIR,
-  ILINK_BASE_URL: 'https://ilinkai.weixin.qq.com',
-  ILINK_APP_ID: 'bot',
-  ILINK_BOT_TYPE: '3',
-  LONG_POLL_TIMEOUT_MS: 35_000,
-}))
-
-mkdirSync(TEST_DIR, { recursive: true })
+// All file operations go to a temp state dir: access.ts resolves the state dir
+// per call from WECHAT_STATE_DIR (no vi.mock of ./config — that mock is what
+// silently didn't apply under `bun test` in the 2026-07-26 incident, see config.ts).
+const TEST_DIR = useTempStateDir('wechat-cc-access-test-')
 const ACCESS_FILE = join(TEST_DIR, 'access.json')
 
 function writeAccess(obj: object): void {
@@ -127,6 +119,15 @@ describe('saveAccess + loadAccess round-trip', () => {
     expect(loaded.dmPolicy).toBe('allowlist')
     expect(loaded.allowFrom).toEqual(['alice@im.wechat'])
     expect(loaded.admins).toEqual(['alice@im.wechat'])
+  })
+})
+
+// 3e(2026-10-22):以前带 BOM 的 access.json 会被当成坏文件挪走、daemon 退出(Windows 上 PowerShell 写的就带 BOM)。
+describe('access.json with a UTF-8 BOM', () => {
+  it('loads normally instead of being moved aside as corrupt', () => {
+    writeFileSync(join(TEST_DIR, 'access.json'), '\uFEFF' + JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['bom@im.wechat'], admins: ['bom@im.wechat'] }))
+    _clearCache()
+    expect(loadAccess().admins).toEqual(['bom@im.wechat'])
   })
 })
 

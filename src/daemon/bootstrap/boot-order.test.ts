@@ -1,7 +1,6 @@
 /**
- * boot 顺序钉子(spec 2026-09-27-bootstrap-split,Review Focus #1)。
- * 九块搬进 wire-*.ts 之后,index 里的调用点必须留在原位;可失败的块经 sup.start 拉起,
- * 它们的名字序列就是 boot 顺序的可观测形状。多一块、少一块、换位都在这里红。
+ * boot 顺序钉子(spec 2026-09-27-bootstrap-split,Review Focus #1;架构终态 A2 起 bootstrap 是一组模块)。
+ * 模块表的顺序 = 开机顺序 = 关机的倒序,也就是 supervisor 收养的那一组的名字序列。多一块、少一块、换位都在这里红。
  */
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
@@ -25,11 +24,8 @@ function ilinkStub() {
 }
 
 describe('buildBootstrap boot order', () => {
-  it('sup.start 的名字序列 == knowledge → self-restart → social → a2a-server → pairing → yi', async () => {
+  it('模块序列 == boot-base → knowledge → boot-core → self-restart → idle-sweep → social → mailbox-poller → a2a-server → pairing → yi → bootstrap', async () => {
     const sup = new SubsystemSupervisor(() => {})
-    const names: string[] = []
-    const realStart = sup.start.bind(sup)
-    sup.start = ((name: string, fn: any) => { names.push(name); return realStart(name, fn) }) as typeof sup.start
     const boot = await buildBootstrap({
       supervisor: sup,
       db: openTestDb(),
@@ -41,13 +37,40 @@ describe('buildBootstrap boot order', () => {
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: join(tmpdir(), 'token') },
     })
     try {
-      expect(names).toEqual(['knowledge', 'self-restart', 'social', 'a2a-server', 'pairing', 'yi'])
-      // 每个名字只 start 一次(同名二次 start 直接 throw,这里顺带钉住不重复)。
-      expect(new Set(names).size).toBe(names.length)
+      const names = sup.statuses().map(s => s.name)
+      expect(names).toEqual(['boot-base', 'knowledge', 'boot-core', 'self-restart', 'idle-sweep', 'social', 'mailbox-poller', 'a2a-server', 'pairing', 'yi', 'bootstrap'])
+      // 测试环境什么都没配:可选的几样都是 off,不是 degraded(没配 ≠ 坏了)
+      expect(sup.statuses().filter(s => s.state === 'degraded')).toEqual([])
     } finally {
       await boot.sessionManager.shutdown()
       boot.knowledge?.store.close()
       await boot.a2aServer?.stop()
     }
+  }, 20_000)
+})
+
+describe('一个可选模块坏了,不连累 bootstrap(架构终态 A2 评审)', () => {
+  it('yi 的端口被占 ⇒ 只有 yi degraded;bootstrap 照常起、没有 yiHub', async () => {
+    const { createServer } = await import('node:net')
+    const { writeFileSync } = await import('node:fs')
+    const blocker = createServer()
+    await new Promise<void>(r => blocker.listen(0, '127.0.0.1', r))
+    const port = (blocker.address() as { port: number }).port
+    const stateDir = mkdtempSync(join(tmpdir(), 'boot-yi-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false, yi_hub_listen: { host: '127.0.0.1', port } }))
+    const sup = new SubsystemSupervisor(() => {})
+    try {
+      const boot = await buildBootstrap({
+        supervisor: sup, db: openTestDb(), stateDir, ilink: ilinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }), lastActiveChatId: () => null, log: () => {},
+        internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: join(tmpdir(), 'token') },
+      })
+      expect(boot).toBeDefined()
+      expect(boot.yiHub).toBeUndefined()
+      const states = Object.fromEntries(sup.statuses().map(s => [s.name, s.state]))
+      expect(states.yi).toBe('degraded')
+      expect(states.bootstrap).toBe('ok')
+      await boot.sessionManager.shutdown()
+    } finally { blocker.close() }
   }, 20_000)
 })

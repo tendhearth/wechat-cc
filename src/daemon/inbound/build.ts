@@ -6,11 +6,7 @@ import { makeMwAccess, type AccessMwDeps } from './mw-access'
 import { makeMwDedup, type DedupMwDeps } from './mw-dedup'
 import { makeMwCaptureCtx, type CaptureCtxMwDeps } from './mw-capture-ctx'
 import { makeMwTyping, type TypingMwDeps } from './mw-typing'
-import { makeMwAdmin, type AdminMwDeps } from './mw-admin'
-import { makeMwMode, type ModeMwDeps } from './mw-mode'
-import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
-import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
-import { makeMwCliReply, type CliReplyMwDeps } from './mw-cli-reply'
+import { makeMwCommand, type MwCommandDeps } from './mw-command'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
 import { makeMwTranscribeVoice, type TranscribeVoiceMwDeps } from './mw-transcribe-voice'
 import { makeMwMessages, type MessagesMwDeps } from './mw-messages'
@@ -20,13 +16,12 @@ import { makeMwWelcome, type WelcomeMwDeps } from './mw-welcome'
 import { makeMwRecall, type RecallMwDeps } from './mw-recall'
 import { makeMwLlmHealth, type MwLlmHealthDeps } from './mw-llm-health'
 import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
-import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
 import { makeMwMatter, type MatterMwDeps } from './mw-matter'
 import { makeMwRoute, type RouteMwDeps } from './mw-route'
 import { makeMwConsume, skipWhen } from './mw-consume'
 import type { IntentKind } from './intent'
-import { isWechatTaskCommand } from '../../core/workbench/wechat-control'
+import { isWechatTaskCommand } from '../../features/workbench'
 
 export interface InboundPipelineDeps {
   trace: TraceMwDeps
@@ -34,7 +29,6 @@ export interface InboundPipelineDeps {
   access: AccessMwDeps
   dedup: DedupMwDeps
   capture: CaptureCtxMwDeps
-  workbench?:WorkbenchMwDeps
   /** 管家式指称:主人用自然语言说某件事 ⇒ 落定到活跃任务再走 workbench 命令;缺席 ⇒ 不挂。 */
   taskReference?: TaskReferenceMwDeps
   /** 每个进门的 chat 登记成一条「一件事」;只登记不改逻辑。 */
@@ -42,12 +36,9 @@ export interface InboundPipelineDeps {
   /** 意图路由(intent.ts):闸门之后、消费者之前算一次;第一步只记不改。 */
   route?: RouteMwDeps
   typing: TypingMwDeps
-  admin: AdminMwDeps
-  mode: ModeMwDeps
-  onboarding: OnboardingMwDeps
-  permissionReply: PermissionReplyMwDeps
   /** 「看 码」「@码 文本」;缺席 ⇒ 不挂(测试 / 最小嵌入)。 */
-  cliReply?: CliReplyMwDeps
+  /** 命令表(重构第二批步 2);有它才有「命令」这一站。 */
+  commands?: MwCommandDeps
   attachments: AttachmentsMwDeps
   transcribeVoice: TranscribeVoiceMwDeps
   messages: MessagesMwDeps
@@ -68,28 +59,22 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
   const taskReference = d.taskReference ? makeMwTaskReference(d.taskReference) : null
   const probes: RouteMwDeps['probes'] = {
     ...(d.route?.probes ?? {}),
-    ...(d.workbench ? { 'task-command': (ctx) => isWechatTaskCommand(ctx.msg.text ?? '') } : {}),
     ...(taskReference ? { 'task-reference': taskReference.probe } : {}),
   }
   // 消费者按 intent 早退(第二步):在场的消费者必须有探针,否则它永远轮不到 —— 启动时就报,别等真机。
   if (d.route) {
-    const present: Array<[IntentKind, boolean]> = [['task-command', !!d.workbench], ['admin', true], ['mode', true], ['onboarding', true], ['permission-reply', true], ['cli-reply', !!d.cliReply], ['task-reference', !!taskReference]]
+    const present: Array<[IntentKind, boolean]> = [['command', !!d.commands], ['task-reference', !!taskReference]]
     const missing = present.filter(([kind, on]) => on && !(kind in probes)).map(([kind]) => kind)
     if (missing.length) throw new Error(`inbound route: probe missing for ${missing.join(', ')}`)
   }
   const route = d.route ? makeMwRoute({ ...d.route, probes }) : null
   // 第三步(c):消费者收成一张表(mw-consume);原链里夹在消费者中间的副作用站按意图跳过,语义不变:
-  //   打字中 —— 原来在工作台命令之后,所以任务命令不发;
+  //   打字中 —— 原来在工作台命令之后,所以任务命令不发(「任务 …」现在是命令表第一条,但打字中在路由之前,仍按文字跳过);
   //   (网络守护 v2,2026-10-02:原来这里有个 guard 站,断网时连 y/n、取消、换模型都一并吞掉。
   //    现在不在入站拦 —— 命令和控制回话照常;真要调需要保护的模型时,由协调器 / provider 闸门按调用拦。)
   //   附件 / 语音转文字 —— 提到路由之前,探针才看得到转出来的文字(4b 曾让语音里的指称永远判成 chat)。
   const consume = makeMwConsume({ handlers: {
-    ...(d.workbench ? { 'task-command': makeMwWorkbench(d.workbench) } : {}),
-    admin: makeMwAdmin(d.admin),
-    mode: makeMwMode(d.mode),
-    onboarding: makeMwOnboarding(d.onboarding),
-    'permission-reply': makeMwPermissionReply(d.permissionReply),
-    ...(d.cliReply ? { 'cli-reply': makeMwCliReply(d.cliReply) } : {}),
+    ...(d.commands ? { command: makeMwCommand(d.commands) } : {}),
     ...(taskReference ? { 'task-reference': taskReference } : {}),
   } })
   // 第四步(d):App 一轮走同一张表。链尾那一站只负责记"没人吃"。

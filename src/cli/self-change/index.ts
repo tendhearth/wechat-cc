@@ -15,19 +15,22 @@
  *
  * 设计:docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpus, homedir, loadavg } from 'node:os'
 import { join } from 'node:path'
 
-import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 import { readApiInfo } from '../../lib/api-info'
 import { defaultCiTriageDeps, runCiTriage } from '../ci-triage-run'
 import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type DeveloperIdIdentity, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
 import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type SelftestReport } from '../selftest'
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
+import { SELF_LESSONS_FILE } from './lessons'
+import { ghForge } from './forge'
 import { makeGit, nodeGitSpawnSync } from './git'
-import { makeClaudeRunner, spawnCollect } from './runner'
+import { chooseReviewer, guardedRunner, makeClaudeRunner, makeCodexReviewRunner, spawnCollect } from './runner'
+import { spawnSync } from 'node:child_process'
 import type { SelfChangeState } from './state'
 import { makeStateStore } from './state'
 import { runPath, type PipelineDeps } from './steps'
@@ -84,6 +87,30 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
   return planSelfDeploy({ ...base, binary: plan.prevPath, rollback: false })
 }
 
+/**
+ * 用 repoRoot 里构建好的 sidecar 部署(或回滚到 .prev)。自改的 deploy 步和 `self ship` 共用这一份。
+ * entitlements.plist 从 repoRoot 拿(自改时就是这条运行自己的工作树);签名身份从本机钥匙串探。
+ */
+export async function deployFromRepo(stateDir: string, repoRoot: string, mode: 'deploy' | 'rollback'): Promise<SelfDeployResult> {
+  const homeDir = homedir()
+  const p = launchAgentPlistPath(homeDir)
+  const deps = defaultSelfDeployDeps()
+  const signing = resolveSigningInputs({ repoRoot, disabled: false, spawnSync: deps.spawnSync, exists: existsSync })
+  const plan = selfDeployPlanFor({
+    platform: process.platform,
+    arch: process.arch,
+    homeDir,
+    uid: typeof process.getuid === 'function' ? process.getuid() : 501,
+    repoRoot,
+    stateDir,
+    plistXml: existsSync(p) ? readFileSync(p, 'utf8') : null,
+    mode,
+    ...signing,
+    exists: existsSync,
+  })
+  return await executeSelfDeploy(plan, deps)
+}
+
 /** 自检那两条的注入口(生产是 selftest.ts 的两个真跑,测试塞假件)。 */
 export interface SelftestRunners {
   workbench: (opts: { executor: string; image: boolean; resume: boolean }) => Promise<SelftestReport>
@@ -98,7 +125,7 @@ export interface SelftestRunners {
  * 报告里要说清楚是一条红还是两条都红,人才知道该怀疑哪一层。
  */
 export function makeSelftest(
-  config: SelfChangeConfig,
+  config: Pick<SelfChangeConfig, 'selftestExecutor' | 'selftestProvider'>,
   runners: SelftestRunners,
 ): () => Promise<{ workbench: SelftestReport; chat: SelftestReport }> {
   return async () => {
@@ -130,33 +157,11 @@ export interface PipelineDepsOpts {
  */
 export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, opts: PipelineDepsOpts): PipelineDeps {
   const homeDir = homedir()
-  const uid = typeof process.getuid === 'function' ? process.getuid() : 501
 
-  const readPlist = (): string | null => {
-    const p = launchAgentPlistPath(homeDir)
-    return existsSync(p) ? readFileSync(p, 'utf8') : null
-  }
-
-  const runDeploy = async (repoRoot: string, mode: 'deploy' | 'rollback'): Promise<SelfDeployResult> => {
-    const deps = defaultSelfDeployDeps()
-    // entitlements.plist 从这条运行自己的工作树拿(它就是 repoRoot);身份从本机钥匙串探。
-    const signing = resolveSigningInputs({ repoRoot, disabled: false, spawnSync: deps.spawnSync, exists: existsSync })
-    const plan = selfDeployPlanFor({
-      platform: process.platform,
-      arch: process.arch,
-      homeDir,
-      uid,
-      repoRoot,
-      stateDir,
-      plistXml: readPlist(),
-      mode,
-      ...signing,
-      exists: existsSync,
-    })
-    return await executeSelfDeploy(plan, deps)
-  }
+  const runDeploy = (repoRoot: string, mode: 'deploy' | 'rollback') => deployFromRepo(stateDir, repoRoot, mode)
 
   const runTree = runPath(config, opts.runId)
+  const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch })
 
   return {
     config,
@@ -166,8 +171,19 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     // env 显式过一遍 workbenchSubprocessEnv:和 exec / runner 同一条规矩,
     // 而且写在这儿看得见(gitEnv 里还会再过一次,这是有意的双保险)。
     git: makeGit(nodeGitSpawnSync, runTree, workbenchSubprocessEnv(process.env)),
-    runner: makeClaudeRunner({ launch: spawnCollect, env: process.env }),
-    daemon: makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch }),
+    // 调模型前先看网络守护(runner.ts guardedRunner):实现、修复轮、评审都过它。
+    runner: guardedRunner(makeClaudeRunner({ launch: spawnCollect, env: process.env }), () => daemon.guard()),
+    // 评审换人:谁审由 CC 现挑(设计稿 2026-10-23-cc-runs-development §4.2)。`codex login status` 退 0 ⇒ 登录着。
+    // Codex 打的是 api.openai.com,同样是要保护的官方端点 ⇒ 也包 guardedRunner。
+    reviewer: () => {
+      const st = spawnSync('codex', ['login', 'status'], { encoding: 'utf8', timeout: 10_000, windowsHide: true, env: workbenchSubprocessEnv(process.env) })
+      const choice = chooseReviewer({ codexLoggedIn: st.status === 0 })
+      const inner = choice.id === 'codex'
+        ? makeCodexReviewRunner({ launch: spawnCollect, env: process.env })
+        : makeClaudeRunner({ launch: spawnCollect, env: process.env })
+      return { choice, runner: guardedRunner(inner, () => daemon.guard()) }
+    },
+    daemon,
 
     // bun / npm。env 去掉 daemon 的凭据(和执行者同一条规矩:跑在克隆里的
     // 任何东西都不该看见 daemon 的 token),超时与 windowsHide 由 spawnCollect 兜。
@@ -194,7 +210,13 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
       })
     },
 
+    // ci land 那一套 deps,去掉它用不着的 flake 登记表。
+    forge: ghForge((cwd) => { const { registry: _registry, ...deps } = defaultCiTriageDeps(cwd); return deps }),
+
     deploy: (repoRoot) => runDeploy(repoRoot, 'deploy'),
+    machineLoad: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
+    // 教训账:一行一条 JSON,追加写(lessons.ts)。`self discover --source lessons` 读它。
+    recordLessons: (rows) => { appendFileSync(join(stateDir, SELF_LESSONS_FILE), rows.map(r => JSON.stringify(r)).join('\n') + '\n') },
     rollback: (repoRoot) => runDeploy(repoRoot, 'rollback'),
 
     selftest: makeSelftest(config, {

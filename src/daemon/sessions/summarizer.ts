@@ -10,7 +10,7 @@
  * The actual SDK call lives in main.ts wiring (Task 8); this module is
  * test-friendly pure helpers + the request prompt builder.
  */
-import type { SessionRecord } from '../../core/session-store'
+import type { SessionRecord } from '../../ports/session-store'
 
 export function needsRefresh(rec: SessionRecord, ttlDays = 7): boolean {
   if (!rec.summary || !rec.summary_updated_at) return true

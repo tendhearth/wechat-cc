@@ -10,6 +10,8 @@ import { useConnection, useQuery } from '../../state/hooks'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Dot } from '../../ui/Dot'
+import { BusyIndicator } from '../../ui/motion'
+import { StatusHint } from '../../ui/StatusHint'
 import { TextField } from '../../ui/TextField'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
@@ -17,10 +19,11 @@ import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { mergeSessionPages, sessionRows, sessionSearch } from '../../view/sessions'
 import { canSubmit } from '../../view/connection'
+import { agentName } from '../../view/agents'
 
 type Provider = 'claude' | 'codex'
 
-// 电脑上的 Claude Code / Codex 会话(只读)。第一页走缓存查询;「继续查找」的后续页本地追加。
+// 电脑上的 Claude / Codex 会话(只读)。第一页走缓存查询;「继续查找」的后续页本地追加。
 export default function Sessions() {
   const { c } = useTheme()
   const lang = useLang()
@@ -48,6 +51,10 @@ export default function Sessions() {
   const items = mergeSessionPages(q.data?.items ?? [], more?.items ?? [])
   const next = more ? more.next : q.data?.nextCursor ?? null
   const rows = sessionRows(items, Date.now(), lang)
+  // 分段叫什么:电脑给的 names(收敛清单 ⑥),换段 / 重拉时记住上一次的,免得标签闪回 id;老 daemon 不带 ⇒ id。
+  const lastNames = useRef<Record<string, string> | undefined>(undefined)
+  if (q.data?.names) lastNames.current = q.data.names
+  const names = q.data?.names ?? lastNames.current
   const loadingMore = loadingFor?.key === queryKey && loadingFor.generation === cur.current.generation
   const currentReport = canSubmit(conn) && q.fresh && !q.loading && !q.error
   const activeText = t(lang, currentReport ? 'sessions.activeObserved' : 'sessions.activeCached')
@@ -87,7 +94,7 @@ export default function Sessions() {
         onPress={() => setProvider(p)}
         style={{ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 1, borderBottomColor: on ? c.ink : c.hair }}
       >
-        <Txt role="bubble" tone={on ? 'ink' : 'inkSoft'}>{t(lang, `sessions.${p}`)}</Txt>
+        <Txt role="bubble" tone={on ? 'ink' : 'inkSoft'}>{agentName(p, names)}</Txt>
       </Pressable>
     )
   }
@@ -111,11 +118,11 @@ export default function Sessions() {
           <Txt testID="sessions-unsupported" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'sessions.unsupported')}</Txt>
         ) : !q.data && q.error ? (
           <View style={{ gap: space.m, paddingVertical: space.l }}>
-            <Txt testID="sessions-slow" role="bubble" tone="inkSoft">{t(lang, 'sessions.slow')}</Txt>
+            <StatusHint testID="sessions-slow" icon="alert" label={t(lang, 'sessions.slow')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'sessions.slow')} />
             <Button kind="secondary" testID="sessions-retry" label={t(lang, 'common.retry')} onPress={() => void q.refresh()} />
           </View>
         ) : !q.data ? (
-          <Txt role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'sessions.loading')}</Txt>
+          <View style={{ paddingVertical: space.l }}><BusyIndicator testID="sessions-loading" label={t(lang, 'sessions.loading')} /></View>
         ) : rows.length === 0 ? (
           <Txt testID="sessions-empty" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, query ? 'sessions.searchEmpty' : 'sessions.empty')}</Txt>
         ) : (

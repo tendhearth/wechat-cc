@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
 // T2/T6 identity-split review finding: pipeline-deps' `delegateToHand`
 // closure used to independently resolve `process.env.WECHAT_A2A_SELF_ID ||
@@ -14,46 +15,34 @@ import { join } from 'node:path'
 // asserts the outbound /a2a/exec call carries `boot.selfId`, not a
 // WECHAT_A2A_SELF_ID env fallback.
 //
-// Same STATE_DIR-mocking recipe as pipeline-deps-social-dispatch.test.ts:
-// isAdmin/loadAccess read from the module-level STATE_DIR (src/lib/config.ts),
-// which isn't one of buildPipelineDeps's injectable opts, so it's redirected
-// via vi.mock BEFORE anything imports config.ts, and pipeline-deps is loaded
-// dynamically afterward so it (transitively) picks up the mock.
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-delegate-selfid-access-'))
-// importOriginal + spread (fix round 2, hardening) — same rationale as
-// pipeline-deps-pairing-dispatch.test.ts: a plain-object factory would
-// silently drop UNDER_TEST_RUNNER (and any other config.ts export) in this
-// module graph, defeating agy-mcp-config.ts's/providers.ts's test-runner
-// guards (fix round 1) should this graph ever boot providers. Mirrors the
-// a2a-delegate mock just below, which already used importOriginal.
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
-// The dynamic imports inside delegateToHand (`../../core/a2a-delegate` for
-// the actual HTTP POST, `../../core/a2a-client` for the client factory) are
+// isAdmin/loadAccess read access.json, same as pipeline-deps-social-dispatch.test.ts.
+// access.json lives in the state dir, which is NOT one of buildPipelineDeps's
+// injectable opts; access.ts resolves it per call from WECHAT_STATE_DIR, so
+// useTempStateDir points that at a temp dir (no vi.mock of lib/config —
+// see src/test-support/state-dir.ts).
+const ACCESS_STATE_DIR = useTempStateDir('pipeline-deps-delegate-selfid-access-')
+// The dynamic imports inside delegateToHand (`../../app/a2a-delegate` for
+// the actual HTTP POST, `../../adapters/a2a/a2a-client` for the client factory) are
 // mocked so the test never touches the network — and so the mocked
 // `delegateToHand` can capture exactly what `selfId` it was called with.
 const doDelegateSpy = vi.fn(async () => ({ ok: true as const, response: 'done' }))
-vi.mock('../../core/a2a-delegate', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/a2a-delegate')>()
+vi.mock('../../app/a2a-delegate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../app/a2a-delegate')>()
   return { ...actual, delegateToHand: doDelegateSpy }
 })
-vi.mock('../../core/a2a-client', () => ({
+vi.mock('../../adapters/a2a/a2a-client', () => ({
   createA2AClient: () => ({ send: vi.fn() }),
 }))
 
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 
 import type { Bootstrap } from '../bootstrap/index'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { CareLedger } from '../../features/companion/care-ledger'
+import type { InboundMsg } from '../../domain/prompt-format'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 
 // Connection-health (Task 9) — buildPipelineDeps dereferences boot.health.health
@@ -67,8 +56,6 @@ const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
 }
-
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
 async function pollFor<T>(fn: () => T | null, tries = 50, gapMs = 10): Promise<T | null> {
   for (let i = 0; i < tries; i++) { const v = fn(); if (v) return v; await new Promise(r => setTimeout(r, gapMs)) }
@@ -127,13 +114,13 @@ describe('pipeline-deps delegateToHand selfId (T2/T6 identity-split fix)', () =>
       health: fakeHealth,
     } as unknown as Bootstrap
 
-    const ilink = { sendMessage } as unknown as IlinkAdapter
+    const ilink = { sendMessage } as unknown as PipelineWechat
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
     const replySinks = makeReplySinks()
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
     return { pipelineDeps }
   }
@@ -149,8 +136,8 @@ describe('pipeline-deps delegateToHand selfId (T2/T6 identity-split fix)', () =>
     delete process.env.WECHAT_A2A_SELF_ID
     try {
       const { pipelineDeps } = setup('cc-boot-resolved-1234')
-      const handled = await pipelineDeps.admin.adminHandler.handle(delegateMsg)
-      expect(handled).toBe(true) // fire-and-forget ack — runDelegate continues in the background
+      const handled = await pipelineDeps.commands!.registry.handle(delegateMsg)
+      expect(handled).toEqual({ id: 'admin.delegate', group: 'admin' }) // fire-and-forget ack — runDelegate continues in the background
 
       const call = await pollFor(() => doDelegateSpy.mock.calls[0] ?? null)
       expect(call).not.toBeNull()
@@ -168,7 +155,7 @@ describe('pipeline-deps delegateToHand selfId (T2/T6 identity-split fix)', () =>
     process.env.WECHAT_A2A_SELF_ID = 'env-var-stale-identity'
     try {
       const { pipelineDeps } = setup('cc-boot-resolved-5678')
-      await pipelineDeps.admin.adminHandler.handle(delegateMsg)
+      await pipelineDeps.commands!.registry.handle(delegateMsg)
       const call = await pollFor(() => doDelegateSpy.mock.calls[0] ?? null)
       expect(call).not.toBeNull()
       const [, req] = call as unknown as [unknown, { selfId: string }]

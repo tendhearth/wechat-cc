@@ -154,6 +154,9 @@ const selfChangeCmd = defineCommand({
     abandon: { type: 'string', description: '「这条我不接了」:把某条记成作废(不能再 --resume),当场删掉它的工作树;正在跑的那条拒绝', valueHint: 'id' },
     from: { type: 'string', default: 'cli', description: '进件口:cli | wechat(daemon 从微信接单时传 wechat)' },
     'budget-usd': { type: 'string', description: '这一条的实现预算上限,美元(覆盖 self_change.implement_budget_usd)' },
+    plan: { type: 'string', description: '做某份计划(self plan)里的一步,配 --step;需求从计划里来', valueHint: 'id' },
+    step: { type: 'string', description: '计划里的哪一步(p1…);依赖没做完不让做', valueHint: 'p1' },
+    'owner-ok': { type: 'boolean', description: '这一步主人看得见,主人已经对设计稿点过头' },
     deploy: { type: 'boolean', default: true, description: '合完 dev 之后部署 + 自检;`--no-deploy` 只合不部署' },
     json: { type: 'boolean', description: 'JSON 输出(整份 state),不输出人读版' },
   },
@@ -197,6 +200,8 @@ const selfChangeCmd = defineCommand({
       }
       const id = String(args.abandon)
       const { runAbandon } = await import('../self-change/abandon.ts')
+      const { hubPath } = await import('../self-change/steps.ts')
+      const { spawnSync } = await import('node:child_process')
       const { makeGit, nodeGitSpawnSync } = await import('../self-change/git.ts')
       const { existsSync } = await import('node:fs')
       const outcome = runAbandon({
@@ -207,6 +212,11 @@ const selfChangeCmd = defineCommand({
         now: () => Date.now(),
         lock: () => acquireLock(STATE_DIR, process.pid, undefined, undefined, id),
         liveHolder: () => readLockHolder(STATE_DIR),
+        // gh 要在仓库里跑才认得出是哪个 repo:中枢克隆就是。
+        closePr: (pr, comment) => {
+          const r = spawnSync('gh', ['pr', 'close', String(pr), '--comment', comment], { cwd: hubPath({ workdir }), encoding: 'utf8', timeout: 60_000, windowsHide: true })
+          if (r.status !== 0) console.error(`关 PR #${pr} 失败(不影响作废):${(r.stderr ?? '').trim().slice(0, 200)}`)
+        },
       }, id)
       if (!outcome.ok) {
         bail(1, outcome.code, outcome.message)
@@ -251,7 +261,16 @@ const selfChangeCmd = defineCommand({
 
     // `--unhalt`:给 undefined 等于把键删掉(JSON.stringify 不序列化 undefined)。
     if (args.unhalt) {
-      writeSelfChangeConfigPatch(STATE_DIR, { halted_at: undefined, halt_reason: undefined, fail_streak: 0 })
+      try {
+        writeSelfChangeConfigPatch(STATE_DIR, { halted_at: undefined, halt_reason: undefined, fail_streak: 0 })
+      } catch (err) {
+        // 配置文件读不出来 ⇒ 拒写(不拿缺省值覆盖主人的配置);说一句人话、非零退出。
+        const msg = err instanceof Error ? err.message : String(err)
+        if (json) console.log(JSON.stringify({ ok: false, error: (err as { code?: string }).code ?? 'error', detail: msg }, null, 2))
+        else console.error(`没能解除自改停机:${msg}`)
+        process.exit(1)
+        return
+      }
       if (json) console.log(JSON.stringify({ ok: true, unhalted: true }, null, 2))
       else console.log('自改停机已解除:halted_at / halt_reason 清掉,fail_streak 归零。')
       process.exit(0)
@@ -298,7 +317,24 @@ const selfChangeCmd = defineCommand({
       bail(1, 'self_change_abandoned', `#${resumed.id} 已经作废了(--abandon),不能再接着跑;要做同样的事请重新下一条`)
       return
     }
-    const request = typeof args.request === 'string' ? args.request.trim() : ''
+    let request = typeof args.request === 'string' ? args.request.trim() : ''
+    // 做计划里的一步:需求从计划来,依赖 / 主人点头由 stepGate 把关(src/cli/self-plan.ts)。
+    let planStep: { id: string; step: string } | undefined
+    if (args.plan !== undefined || args.step !== undefined) {
+      if (resumed || request || !args.plan || !args.step) {
+        bail(1, 'invalid_flags', '--plan 和 --step 要一起给,而且不能再带需求正文或 --resume(需求从计划里来)')
+        return
+      }
+      const { stepGate } = await import('../self-plan.ts')
+      const { readJsonFile } = await import('../../lib/read-json-file.ts')
+      const planPath = join(STATE_DIR, 'self-plans', `${String(args.plan)}.json`)
+      const { existsSync } = await import('node:fs')
+      if (!existsSync(planPath)) { bail(1, 'plan_not_found', `没有这份计划:${String(args.plan)}(wechat-cc self plan "<目标>" 先出一份)`); return }
+      const gate = stepGate(readJsonFile(planPath), String(args.step), { ownerOk: Boolean(args['owner-ok']) })
+      if (!gate.ok) { bail(1, 'plan_step_blocked', gate.error); return }
+      request = gate.request
+      planStep = { id: String(args.plan), step: String(args.step) }
+    }
     // `--resume` 又带了需求正文:照存盘里的跑,但得说一声 —— 人多半以为自己
     // 是在「接着跑并且顺手改一下要求」,闷着不响他会等一个永远不会发生的行为。
     if (resumed && request) {
@@ -352,6 +388,7 @@ const selfChangeCmd = defineCommand({
       noDeploy: args.deploy === false,
       now: Date.now(),
     })
+    if (planStep && !state.plan) state.plan = planStep
 
     let outcome: Awaited<ReturnType<typeof runSelfChange>> | null = null
     let crashed: unknown = null
@@ -368,13 +405,322 @@ const selfChangeCmd = defineCommand({
       return
     }
 
+    // 计划里的一步做完了 ⇒ 记回计划文件(`self plan --show` 打勾、列出下一步)。
+    if (outcome.state.result === 'done' && outcome.state.plan) {
+      const { markStepDone } = await import('../self-plan.ts')
+      const { readJsonFile } = await import('../../lib/read-json-file.ts')
+      const { writeJsonAtomic } = await import('../../lib/json-file.ts')
+      const planPath = join(STATE_DIR, 'self-plans', `${outcome.state.plan.id}.json`)
+      try {
+        writeJsonAtomic(planPath, markStepDone(readJsonFile(planPath), outcome.state.plan.step, outcome.state.id, outcome.state.merge.sha, Date.now()))
+      } catch (err) {
+        console.error(`计划 ${outcome.state.plan.id} 没记上 ${outcome.state.plan.step} 做完了(不影响这条自改):${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
     if (json) console.log(JSON.stringify(outcome.state, null, 2))
     else console.log(formatSelfChangeSummary(outcome.state))
     process.exit(outcome.exitCode)
   },
 })
 
+// ── self soak — 这一次部署稳不稳、能不能放下一步(src/cli/self-soak.ts 开头写了判法) ──
+const selfSoakCmd = defineCommand({
+  meta: { name: 'soak', description: '这次部署在真机上稳不稳:从最后一次 self deploy 算起看日志里的意外重启 / 模块失败 / 崩溃,和健康接口;只读' },
+  args: {
+    since: { type: 'string', description: '从哪个时间算起(ISO;缺省 = 日志里最后一次 self deploy 的重启)' },
+    'min-hours': { type: 'string', description: '至少跑几小时才放行(缺省 4)' },
+    'min-restarts': { type: 'string', description: '部署后至少优雅重启过几次(缺省 0;改到关机顺序的给 1)' },
+    json: { type: 'boolean', description: 'JSON 输出' },
+  },
+  async run({ args }) {
+    const { readFileSync, existsSync } = await import('node:fs')
+    const { readApiInfo } = await import('../../lib/api-info')
+    const { LOG_FILE } = await import('../../lib/log')
+    const { judgeSoak, formatSoak, SOAK_EXIT } = await import('../self-soak')
+    const num = (raw: unknown, dflt: number) => (raw === undefined || raw === '' ? dflt : Number(raw))
+    const minHours = num(args['min-hours'], 4)
+    const minRestarts = num(args['min-restarts'], 0)
+    const since = args.since ? Date.parse(String(args.since)) : undefined
+    if (!Number.isFinite(minHours) || minHours < 0 || !Number.isInteger(minRestarts) || minRestarts < 0 || (since !== undefined && !Number.isFinite(since))) {
+      console.error('self soak: 用法 wechat-cc self soak [--since <ISO>] [--min-hours N] [--min-restarts N] [--json]')
+      process.exit(SOAK_EXIT.red)
+      return
+    }
+    const read = (p: string) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+    const log = read(`${LOG_FILE}.1`) + read(LOG_FILE)
+    let health = null
+    const info = readApiInfo(STATE_DIR)
+    if (info) {
+      try {
+        const res = await fetch(`${info.baseUrl}/v1/health`, { headers: { authorization: `Bearer ${info.token}` }, signal: AbortSignal.timeout(5000) })
+        if (res.ok) health = await res.json()
+      } catch { /* 不通 ⇒ health 为 null,判红 */ }
+    }
+    const report = judgeSoak({ log, health, now: Date.now(), ...(since !== undefined ? { since } : {}), minHours, minRestarts })
+    console.log(args.json ? JSON.stringify(report, null, 2) : formatSoak(report))
+    process.exit(SOAK_EXIT[report.verdict])
+  },
+})
+
+// ── self ship — 一批合进 dev 之后的部署门(src/cli/self-ship.ts 开头写了顺序和为什么) ──
+const selfShipCmd = defineCommand({
+  meta: { name: 'ship', description: '部署门:负载 → 网络守护 → 构建 sidecar → self deploy → 自检(红了回滚);之后看 self soak(仅 macOS 源码模式)' },
+  args: {
+    'wait-min': { type: 'string', description: '机器忙时最多等几分钟(缺省 0:忙就不动)' },
+    'max-load': { type: 'string', description: '1 分钟负载 / 核数的上限(缺省 1.0)' },
+    'skip-build': { type: 'boolean', description: '不构建,直接部署已经构建好的 sidecar' },
+    'allow-off-dev': { type: 'boolean', description: 'HEAD 不是 origin/dev 也装(试一条分支);脏树永远不装' },
+  },
+  async run({ args }) {
+    const { runShip, SHIP_EXIT, DEFAULT_MAX_LOAD_PER_CPU } = await import('../self-ship')
+    if (process.platform !== 'darwin' || isCompiledBundle()) {
+      console.error('self ship: 只在 macOS 源码模式下跑(要在仓库里构建 sidecar);打包版用 self deploy --binary')
+      process.exit(SHIP_EXIT.deploy_failed)
+      return
+    }
+    const num = (raw: unknown, dflt: number) => (raw === undefined || raw === '' ? dflt : Number(raw))
+    const waitMin = num(args['wait-min'], 0)
+    const maxLoadPerCpu = num(args['max-load'], DEFAULT_MAX_LOAD_PER_CPU)
+    if (!Number.isFinite(waitMin) || waitMin < 0 || !Number.isFinite(maxLoadPerCpu) || maxLoadPerCpu <= 0) {
+      console.error('self ship: 用法 wechat-cc self ship [--wait-min N] [--max-load X] [--skip-build] [--allow-off-dev]')
+      process.exit(SHIP_EXIT.deploy_failed)
+      return
+    }
+    const { loadavg, cpus } = await import('node:os')
+    const { readApiInfo } = await import('../../lib/api-info')
+    const { makeDaemonClient } = await import('../self-change/daemon-client')
+    const { deployFromRepo, makeSelftest } = await import('../self-change/index')
+    const { spawnCollect } = await import('../self-change/runner')
+    const { SELF_CHANGE_DEFAULTS } = await import('../self-change/policy')
+    const { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest } = await import('../selftest')
+    const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
+    const agent = loadAgentConfig(STATE_DIR).self_change
+    const { spawnSync } = await import('node:child_process')
+    const git = (...a: string[]) => spawnSync('git', a, { cwd: SOURCE_REPO_ROOT, encoding: 'utf8', timeout: 60_000, windowsHide: true })
+    const res = await runShip({
+      tree: () => {
+        // fetch 不成就用本地的 origin/dev(多半旧一点 ⇒ 对不上就拒,宁严勿松)。
+        git('fetch', '-q', 'origin', 'dev')
+        const dev = git('rev-parse', '--verify', '-q', 'origin/dev')
+        return { dirty: git('status', '--porcelain').stdout ?? '', head: (git('rev-parse', 'HEAD').stdout ?? '').trim(), devHead: dev.status === 0 ? dev.stdout.trim() : null }
+      },
+      load: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
+      guard: () => daemon.guard(),
+      build: async () => {
+        const r = await spawnCollect('bun', ['run', 'build-sidecar'], { cwd: join(SOURCE_REPO_ROOT, 'apps', 'desktop'), env: process.env, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
+        return { ok: r.code === 0, detail: (r.stderr || r.stdout).trim().split('\n').slice(-20).join('\n') }
+      },
+      deploy: mode => deployFromRepo(STATE_DIR, SOURCE_REPO_ROOT, mode),
+      // 跟自改同一套自检、同一份配置(agent-config 的 self_change.selftest_executor / selftest_provider)。
+      selftest: makeSelftest({
+        selftestExecutor: agent?.selftest_executor ?? SELF_CHANGE_DEFAULTS.selftest_executor,
+        selftestProvider: agent?.selftest_provider ?? SELF_CHANGE_DEFAULTS.selftest_provider,
+      }, {
+        workbench: o => runWorkbenchSelftest(defaultSelftestDeps(STATE_DIR), o),
+        chat: o => runChatSelftest(defaultSelftestDeps(STATE_DIR), o),
+      }),
+      sleep: ms => new Promise(r => setTimeout(r, ms)),
+      now: () => Date.now(),
+      log: line => console.error(line),
+    }, { waitMin, maxLoadPerCpu, skipBuild: Boolean(args['skip-build']), allowOffDev: Boolean(args['allow-off-dev']) })
+    ;(res.exitCode === SHIP_EXIT.shipped ? console.log : console.error)(res.message)
+    process.exit(res.exitCode)
+  },
+})
+
+// ── self plan — 开发目标 → 计划(拆几个 PR、先后、哪些主人看得见;src/cli/self-plan.ts 开头写了为什么) ──
+const selfPlanCmd = defineCommand({
+  meta: { name: 'plan', description: '规划者:把一个开发目标拆成 PR 列表(先后依赖、哪些主人看得见要先点头);只读,不执行' },
+  args: {
+    goal: { type: 'positional', required: false, description: '开发目标(一句话)' },
+    planner: { type: 'string', description: '谁来规划:claude(缺省)/ codex' },
+    'with-discover': { type: 'boolean', description: '把 self discover 的 roadmap / 守卫基线 / 自改教训候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)' },
+    show: { type: 'string', description: '看一份存下的计划', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON 输出' },
+    ask: { type: 'boolean', description: '主人看得见的那几步排进「要主人拍板的」(接在早报里问,owner-asks.json);也能配 --show 补排' },
+  },
+  async run({ args }) {
+    const { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } = await import('node:fs')
+    const enqueueVisible = async (plan: import('../self-plan').SavedPlan): Promise<string> => {
+      const { planVisibleAsks } = await import('../self-plan')
+      const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../adapters/store/owner-asks-store')
+      const store = makeOwnerAsksStore(join(STATE_DIR, OWNER_ASKS_FILE))
+      const asks = planVisibleAsks(plan)
+      if (!asks.length) return '这份计划没有主人看得见的步,不用问。'
+      return asks.map(a => { const r = store.enqueueVisibleCandidate(a); return `${a.key} → ${ASK_RESULT_WORD[r.result]}(${r.item.id})` }).join('\n')
+    }
+    const { homedir } = await import('node:os')
+    const plansDir = join(STATE_DIR, 'self-plans')
+    if (args.show) {
+      const p = join(plansDir, `${String(args.show)}.json`)
+      if (!existsSync(p)) { console.error(`没有这份计划:${String(args.show)}`); process.exit(1); return }
+      const { formatPlan } = await import('../self-plan')
+      const { readJsonFile } = await import('../../lib/read-json-file')
+      const saved = readJsonFile<import('../self-plan').SavedPlan>(p)
+      console.log(args.json ? JSON.stringify(saved, null, 2) : formatPlan(saved, saved.order))
+      if (args.ask) console.error(await enqueueVisible(saved))
+      return
+    }
+    const goal = String(args.goal ?? '').trim()
+    if (!goal) { console.error('self plan: 用法 wechat-cc self plan "<开发目标>" [--planner claude|codex] [--with-discover] [--json];看存下的:--show <id>'); process.exit(1); return }
+    const planner = String(args.planner ?? 'claude')
+    if (!['claude', 'codex'].includes(planner)) { console.error('self plan: --planner 只认 claude / codex'); process.exit(1); return }
+
+    const { resolveSelfChangeConfig } = await import('../self-change/config')
+    const { makeGit, nodeGitSpawnSync } = await import('../self-change/git')
+    const repoRoot = isCompiledBundle() ? null : SOURCE_REPO_ROOT
+    const origin = repoRoot ? makeGit(nodeGitSpawnSync, repoRoot).run(['remote', 'get-url', 'origin']) : null
+    const resolved = resolveSelfChangeConfig({ agent: loadAgentConfig(STATE_DIR).self_change, homeDir: homedir(), platform: process.platform, originUrl: origin?.code === 0 ? origin.stdout.trim() || null : null })
+    if (!resolved.ok) { console.error('不知道该克隆哪个仓库:打包版请在 agent-config.json 里写 self_change.repo_url'); process.exit(2); return }
+    const config = resolved.config
+
+    // 候选:只交 roadmap 和守卫基线(没有人的数据);日志里可能有联系人昵称,redact 抹不掉(self-change.md 已知限制)。
+    let candidates: string | undefined
+    if (args['with-discover'] && repoRoot) {
+      const { roadmapOpenItems, formatRoadmapItems } = await import('../self-discover-roadmap')
+      const { ratchetDebts, formatRatchetDebts } = await import('../self-discover-ratchets')
+      const scripts = join(repoRoot, 'scripts')
+      const roadmap = join(repoRoot, 'docs', 'roadmap.md')
+      candidates = [
+        existsSync(roadmap) ? formatRoadmapItems(roadmapOpenItems(readFileSync(roadmap, 'utf8'))) : '',
+        existsSync(scripts) ? formatRatchetDebts(ratchetDebts(readdirSync(scripts).filter(f => f.endsWith('.guard.test.ts')).map(f => ({ path: `scripts/${f}`, text: readFileSync(join(scripts, f), 'utf8') })))) : '',
+        // 自改的教训账也交:只有流水线自己的输出(测试 / 评审 / CI 的几行、结局码),没有人的数据。
+        await (async () => {
+          const { lessonCandidates, formatLessonCandidates, SELF_LESSONS_FILE } = await import('../self-change/lessons')
+          const p = join(STATE_DIR, SELF_LESSONS_FILE)
+          return existsSync(p) ? formatLessonCandidates(lessonCandidates(readFileSync(p, 'utf8'))) : ''
+        })(),
+      ].filter(Boolean).join('\n\n')
+    }
+
+    const { readApiInfo } = await import('../../lib/api-info')
+    const { makeDaemonClient } = await import('../self-change/daemon-client')
+    const { guardedRunner, makeClaudeRunner, makeCodexReviewRunner, spawnCollect } = await import('../self-change/runner')
+    const { newSelfChangeId } = await import('../self-change/state')
+    const { runPlan } = await import('../self-plan')
+    const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
+    // 规划者打的是官方端点:先过网络守护(跟实现 / 评审同一道)。
+    const inner = planner === 'codex' ? makeCodexReviewRunner({ launch: spawnCollect, env: process.env }) : makeClaudeRunner({ launch: spawnCollect, env: process.env })
+    const id = newSelfChangeId()
+    console.error(`规划中(${planner},只读)…计划号 ${id}`)
+    const res = await runPlan({
+      git: makeGit(nodeGitSpawnSync, config.workdir),
+      runner: guardedRunner(inner, () => daemon.guard()),
+      exists: p => existsSync(p),
+      mkdirp: p => { mkdirSync(p, { recursive: true }) },
+      writeFile: (p, t) => { writeFileSync(p, t) },
+      now: () => Date.now(),
+      log: l => console.error(l),
+      workdir: config.workdir, repoUrl: config.repoUrl, branch: config.branch, plansDir,
+      budgetUsd: config.reviewBudgetUsd, maxTurns: config.maxTurns,
+    }, { id, goal, ...(candidates ? { candidates } : {}) })
+    if (args.ask && res.ok && res.plan && res.order) console.error(await enqueueVisible({ id, createdAt: new Date().toISOString(), costUsd: res.costUsd, order: res.order, ...res.plan }))
+    if (args.json) console.log(JSON.stringify(res, null, 2))
+    else console.log(res.ok ? `${res.message}\n\n存在 ${res.path}(wechat-cc self plan --show ${id});花了 $${res.costUsd.toFixed(2)}。每个 PR 用 wechat-cc self change "<那一条>" 去做。` : res.message)
+    process.exit(res.ok ? 0 : 1)
+  },
+})
+
+// ── self discover — 找活:真机日志里反复出现的失败 + roadmap 上没标完成的欠账 / 对标(src/cli/self-discover*.ts 开头写了判法) ──
+const selfDiscoverCmd = defineCommand({
+  meta: { name: 'discover', description: '发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的 + 守卫里只许降的基线;只读' },
+  args: {
+    hours: { type: 'string', description: '日志看最近几小时(缺省 48)' },
+    'min-count': { type: 'string', description: '日志里至少出现几次才算(缺省 3)' },
+    source: { type: 'string', description: 'log / roadmap / ratchets / lessons / all(缺省 all)' },
+    json: { type: 'boolean', description: 'JSON 输出({ log, roadmap, ratchets, lessons })' },
+  },
+  async run({ args }) {
+    const { readFileSync, existsSync } = await import('node:fs')
+    const { LOG_FILE } = await import('../../lib/log')
+    const { discover, formatDiscover } = await import('../self-discover')
+    const { roadmapOpenItems, formatRoadmapItems } = await import('../self-discover-roadmap')
+    const { ratchetDebts, formatRatchetDebts } = await import('../self-discover-ratchets')
+    const hours = args.hours === undefined || args.hours === '' ? 48 : Number(args.hours)
+    const minCount = args['min-count'] === undefined || args['min-count'] === '' ? 3 : Number(args['min-count'])
+    const source = String(args.source ?? 'all')
+    if (!Number.isFinite(hours) || hours <= 0 || !Number.isInteger(minCount) || minCount < 1 || !['log', 'roadmap', 'ratchets', 'lessons', 'all'].includes(source)) {
+      console.error('self discover: 用法 wechat-cc self discover [--hours N] [--min-count N] [--source log|roadmap|ratchets|lessons|all] [--json]')
+      process.exit(1)
+      return
+    }
+    const read = (p: string) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+    const { lastDeployAt } = await import('../self-soak')
+    const logText = read(`${LOG_FILE}.1`) + read(LOG_FILE)
+    // 「部署后还有几次」:48 小时的总数会把已经修好的那类排在前面(10-23 agy 被拒,#627 部署后从每小时 1.7 次降到退避节奏)。
+    const want = (k: string) => source === 'all' || source === k
+    const log = !want('log') ? null : discover({ log: logText, now: Date.now(), hours, minCount, deployedAt: lastDeployAt(logText) })
+    // 打包版旁边没有仓库:roadmap 这一源照实说读不到,不当成「没有欠账」。
+    const roadmapPath = isCompiledBundle() ? null : join(SOURCE_REPO_ROOT, 'docs', 'roadmap.md')
+    const roadmap = !want('roadmap') ? null : roadmapPath && existsSync(roadmapPath) ? roadmapOpenItems(readFileSync(roadmapPath, 'utf8')) : null
+    const scriptsDir = isCompiledBundle() ? null : join(SOURCE_REPO_ROOT, 'scripts')
+    const { readdirSync } = await import('node:fs')
+    const ratchets = !want('ratchets') || !scriptsDir || !existsSync(scriptsDir) ? null
+      : ratchetDebts(readdirSync(scriptsDir).filter(f => f.endsWith('.guard.test.ts')).map(f => ({ path: `scripts/${f}`, text: readFileSync(join(scriptsDir, f), 'utf8') })))
+    const { lessonCandidates, formatLessonCandidates, SELF_LESSONS_FILE } = await import('../self-change/lessons')
+    const lessonsPath = join(STATE_DIR, SELF_LESSONS_FILE)
+    const lessons = !want('lessons') ? null : lessonCandidates(existsSync(lessonsPath) ? readFileSync(lessonsPath, 'utf8') : '')
+    if (args.json) {
+      console.log(JSON.stringify({ log, roadmap, ratchets, lessons }, null, 2))
+      return
+    }
+    const parts: string[] = []
+    if (log) parts.push(formatDiscover(log, hours))
+    if (want('roadmap')) parts.push(roadmap ? formatRoadmapItems(roadmap) : '读不到 docs/roadmap.md(打包版旁边没有仓库),欠账 / 对标这一源没看。')
+    if (lessons) parts.push(formatLessonCandidates(lessons))
+    if (want('ratchets')) parts.push(ratchets ? formatRatchetDebts(ratchets) : '读不到 scripts/(打包版旁边没有仓库),守卫基线这一源没看。')
+    console.log(parts.join('\n\n'))
+  },
+})
+
+const ASK_RESULT_WORD = { added: '排上了', updated: '换成新的一版、从头排', same: '已经排着(同一版)', closed: '主人不要 / 三天没回过,不再提' } as const
+
+// ── self ask — 要主人拍板的候选(设计稿 2026-10-23-cc-runs-development §4.8):排进去,早报里问;回「2」/「2 不要」记答案 ──
+const selfAskCmd = defineCommand({
+  meta: { name: 'ask', description: '要主人拍板的候选:排进去(接在早报「要你拍板的」后面问,最多 3 条)、看清单;不单发、不替主人做' },
+  args: {
+    question: { type: 'positional', required: false, description: '一行问题(主人在早报里看到的那句)' },
+    recommend: { type: 'string', description: '一行推荐(必填)' },
+    key: { type: 'string', description: '去重用的键(缺省按问题);同一个键主人不要过 / 三天没回过就不再提' },
+    evidence: { type: 'string', description: '证据(不进早报,--list 看得见)' },
+    priority: { type: 'string', description: '越大越先问(缺省 0)' },
+    list: { type: 'boolean', description: '看清单(缺省只列开着的)' },
+    all: { type: 'boolean', description: '配 --list:连答过的一起列' },
+    json: { type: 'boolean', description: 'JSON 输出' },
+  },
+  async run({ args }) {
+    const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../adapters/store/owner-asks-store')
+    const { formatAsks, ASK_ONLY_IN_BRIEF } = await import('../../domain/owner-asks')
+    const store = makeOwnerAsksStore(join(STATE_DIR, OWNER_ASKS_FILE))
+    if (args.list) {
+      const s = store.read()
+      console.log(args.json ? JSON.stringify(s, null, 2) : formatAsks(s, { all: Boolean(args.all) }))
+      return
+    }
+    const question = String(args.question ?? '').trim()
+    const recommend = String(args.recommend ?? '').trim()
+    const priority = args.priority === undefined || args.priority === '' ? 0 : Number(args.priority)
+    if (!question || !recommend || !Number.isFinite(priority)) {
+      console.error('self ask: 用法 wechat-cc self ask "<一行问题>" --recommend "<一行推荐>" [--key k] [--evidence …] [--priority N];看清单:--list [--all]')
+      process.exit(1)
+      return
+    }
+    const r = store.enqueueVisibleCandidate({
+      key: String(args.key ?? '').trim() || `manual:${question}`, question, recommend, source: 'manual', priority,
+      ...(args.evidence ? { evidence: String(args.evidence) } : {}),
+    })
+    if (args.json) { console.log(JSON.stringify(r, null, 2)); return }
+    console.log(`${r.item.id}:${ASK_RESULT_WORD[r.result]}`)
+    // 没开早报 ⇒ 不单发(默认,待主人点头):照实说这条要等到什么时候才会被看到。
+    if (ASK_ONLY_IN_BRIEF && r.result !== 'closed') {
+      const { makeJobsStore } = await import('../../adapters/store/scheduled-jobs-store')
+      const briefOn = makeJobsStore(STATE_DIR).list().jobs.some(j => j.brief && !j.paused)
+      if (!briefOn) console.error('注意:主人没开早报(或停着),这条只攒着、不会单发;主人开了早报(「定时 早报 8:00」)才会问到。')
+    }
+  },
+})
+
 export const selfCmd = defineCommand({
   meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
-  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, ship: selfShipCmd, soak: selfSoakCmd, discover: selfDiscoverCmd, plan: selfPlanCmd, ask: selfAskCmd },
 })

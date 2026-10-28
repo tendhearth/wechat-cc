@@ -3,7 +3,7 @@ import { renderTokensCss } from '../../packages/design-tokens/src/index'
 
 export const MOBILE_SRC = new URL('./src/', import.meta.url)
 /** daemon 吃的生成物;与 mobile-presence-art.json 同理 —— 编译后的 sidecar 没有源码树。 */
-export const MOBILE_PAGE_OUT = new URL('../../src/daemon/mobile-page.generated.json', import.meta.url)
+export const MOBILE_PAGE_OUT = new URL('../../src/features/phone/mobile-page.generated.json', import.meta.url)
 
 /**
  * transport.js(与 relay/pset.src.html)里协议 IIFE 该嵌入的地方。手机协议包
@@ -15,16 +15,23 @@ export const MOBILE_PAGE_OUT = new URL('../../src/daemon/mobile-page.generated.j
  * 替换前(仓库里存的样子)和替换后(真正执行的样子)都是合法 JS。
  */
 export const CCP_PLACEHOLDER = '/*@@CCP@@*/'
-export const CCM_PLACEHOLDER = '/*@@CCM@@*/'
+
+/** 执行者头像(2026-10-19):跟桌面共用一份图形与画法(apps/desktop/src/shared/agent-avatars.{js,css})。 */
+const AGENT_AVATARS_JS = new URL('../desktop/src/shared/agent-avatars.js', import.meta.url)
+const AGENT_AVATARS_CSS = new URL('../desktop/src/shared/agent-avatars.css', import.meta.url)
 
 export function readMobileSource(name: string): string {
+  if (name === 'agent-avatars.css') return readFileSync(AGENT_AVATARS_CSS, 'utf8')
   const source = readFileSync(new URL(name, MOBILE_SRC), 'utf8')
-  if (name === 'tokens.css') return renderTokensCss() + source
-  if (name === 'markdown.js') {
-    if (source.split(CCM_PLACEHOLDER).length !== 2) throw Error('mobile page: markdown.js must have exactly one Markdown placeholder')
-    const markdownJs = readFileSync(new URL('markdown-generated.js', MOBILE_SRC), 'utf8')
-    return source.replace(CCM_PLACEHOLDER, () => `;${markdownJs};\n`)
+  if (name === 'workbench.js') {
+    // 读源码字节(不用 Function.toString():Bun 与 Vitest 排版不同,会让生成物漂移),只取工厂本身,在经典脚本里调一次。页面要塞进中继一帧,
+    // 工厂里的 JSDoc 与行注释不随页面走(源码里都在);LobeHub 的 MIT 声明是 /* */ 块,原样带上。
+    const factory = /^export (function createAgentAvatars\(\) \{[\s\S]*?^\})/m.exec(readFileSync(AGENT_AVATARS_JS, 'utf8'))?.[1]
+    if (!factory) throw Error('mobile page: shared agent avatars factory shape changed')
+    const lean = factory.replace(/\/\*\*[\s\S]*?\*\/[ \t]*/g, '').replace(/^[ \t]*\/\/.*\n/gm, '').replace(/^[ \t]*\n/gm, '')
+    return `var mAgents = (${lean})()\n${source}`
   }
+  if (name === 'tokens.css') return renderTokensCss() + source
   if (name === 'transport.js') {
     if (!source.includes(CCP_PLACEHOLDER)) throw Error(`mobile page: transport.js is missing the ${CCP_PLACEHOLDER} placeholder`)
     const protocolJs = readFileSync(new URL('protocol-generated.js', MOBILE_SRC), 'utf8')
@@ -34,12 +41,5 @@ export function readMobileSource(name: string): string {
     // assembleRelayShell 踩过一次同款坑,理由写在那边)。
     return source.replace(CCP_PLACEHOLDER, () => protocolJs)
   }
-  if (name !== 'entry.js') return source
-  // No ESM or external URL can survive document.write in the relay shell.
-  // Read source bytes instead of Function.toString(): Bun and Vitest rewrite
-  // function formatting differently, which would drift the generated JSON.
-  const contract = readFileSync(new URL('../desktop/src/shared/task-entry-contract.js', import.meta.url), 'utf8')
-  const factory = /^export (function createEntryContract\(\) \{[\s\S]*?^\})/m.exec(contract)?.[1]
-  if (!factory) throw Error('mobile page: shared entry factory shape changed')
-  return `var eContract = (${factory})()\n${source}`
+  return source
 }

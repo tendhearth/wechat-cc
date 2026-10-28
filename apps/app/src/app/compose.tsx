@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { deleteDraft, getDraft, materialDraftId, pairingGen, requestIdFor, setDraft } from '../state/drafts'
+import { deleteDraft, dropDraftImages, getDraft, materialDraftId, pairingGen, peekDraftImages, requestIdFor, setDraft } from '../state/drafts'
 import { AddImageButton, ImageTray } from '../ui/ImageTray'
 import { bytesToBase64, uploadImages, type PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as MAX_IMAGES } from '@wechat-cc/protocol'
@@ -30,6 +30,7 @@ import { composeOutcome, composeOutcomeDot, composeOutcomeText, composeTooLong, 
 import { nativeStartLines } from '../view/continue'
 import { canSubmit } from '../view/connection'
 import { inputFailure, inputRows, matterInputHint } from '../view/matter-input'
+import { clampRounds, UNTIL_DEFAULT_ROUNDS, UNTIL_MAX_ROUNDS, untilConfirmation, untilDraftError, untilRequest } from '../view/until'
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
 const NO_INPUTS: readonly MatterInputT[] = []
@@ -40,8 +41,15 @@ export default function Compose() {
   const router = useRouter()
   const conn = useConnection()
   const submit = useSubmit()
+  const params = useLocalSearchParams<{ matter?: string; focus?: string; fork?: string; project?: string; exclude?: string }>()
+  const matter = one(params.matter) || undefined
+  // 「另做一份」(2026-10-08):从一件独立工作区的事进来 —— 同一个项目、独立工作区、换一位执行者;草稿单独存,不盖掉「新的一件」的草稿
+  const fork = matter ? undefined : one(params.fork) || undefined
   // 新交办带的图(2026-10-06;补充一句暂不带图)。只在这一屏里,交出去才清。
-  const [images, setImages] = useState<PickedImage[]>([])
+  // 分享进来的图(2026-10-18)只给「新的一件」(分享页放在 'new' 草稿旁边);补一句 / 另做一份不接
+  const takesShared = !matter && !fork
+  const [images, setImages] = useState<PickedImage[]>(() => (takesShared ? peekDraftImages('new') : []))
+  useEffect(() => { if (takesShared) dropDraftImages('new') }, [takesShared])
   const [imageNote, setImageNote] = useState<string | null>(null)
   const addImages = async () => {
     // 用到才加载:相册与哈希是原生模块,不进页面的静态依赖(测试与首屏都不需要它)
@@ -54,10 +62,6 @@ export default function Compose() {
   const { backend } = useBackendCtx()
   const session = useSession()
   const recovery = useInputRecovery()
-  const params = useLocalSearchParams<{ matter?: string; focus?: string; fork?: string; project?: string; exclude?: string }>()
-  const matter = one(params.matter) || undefined
-  // 「另做一份」(2026-10-08):从一件独立工作区的事进来 —— 同一个项目、独立工作区、换一位执行者;草稿单独存,不盖掉「新的一件」的草稿
-  const fork = matter ? undefined : one(params.fork) || undefined
   const excludeProvider = one(params.exclude) || null
   // 从「接着做」进来:输入框直接聚焦,主人接着打字(spec §4.4)
   const focus = one(params.focus) === '1'
@@ -78,6 +82,10 @@ export default function Compose() {
   const baseName = base.trim()
   const baseInvalid = !!baseName && (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(baseName) || baseName.includes('..') || baseName.includes('//') || /(\/|\.lock|\.)$/.test(baseName))
   const [providerId, setProviderId] = useState<string | null>(null)
+  // 直到这条命令通过(10-20):默认收起;只在独立工作区里出现。命令原文提交前在主屏整条显示一遍(安全 6)。
+  const [untilOn, setUntilOn] = useState(false)
+  const [untilCmd, setUntilCmd] = useState('')
+  const [untilRounds, setUntilRounds] = useState(UNTIL_DEFAULT_ROUNDS)
   // 交办时选模型 / 思考强度(2026-10-06,对标 Paseo / Orca);null = 用执行者自己的默认。换执行者 / 项目就回到默认。
   const [modelId, setModelId] = useState<string | null>(null)
   const [effort, setEffort] = useState<string | null>(null)
@@ -124,6 +132,16 @@ export default function Compose() {
   const models = useQuery(`entryModels:${provider?.id ?? ''}:${project?.id ?? ''}`, () => backend.entryModels(provider!.id, project?.id), { enabled: adjust && canPickModel })
   const model = modelId ? models.data?.models.find(m => m.id === modelId) : undefined
   const execution = model ? { model: model.id, ...(effort ? { reasoningEffort: effort } : {}) } : undefined
+  // 实际会接手的执行者:没选 ⇒ 项目自己的 ⇒ 电脑的默认(与 daemon 建任务同一个顺序);免审的不收 until
+  const effectiveProvider = provider ?? opt?.providers.find(p => p.id === (project?.providerId ?? opt?.defaultProviderId))
+  const unattended = effectiveProvider?.capabilities.permissions === 'unattended'
+  const untilShown = !matter && !!project && isolated
+  const untilFilled = untilShown && untilOn && !!untilCmd.trim()
+  const untilErr = untilFilled ? untilDraftError(untilCmd) : null
+  const until = untilShown && untilOn ? untilRequest({ command: untilCmd, maxRounds: untilRounds }, { isolated, unattended }) : undefined
+  // 填了却带不出去(格式不对 / 免审执行者)⇒ 锁住提交,不悄悄当成没填
+  const untilBlocked = untilFilled && !until
+  const untilConfirm = until ? untilConfirmation(until, lang) : null
 
   // 不在线(连接中 / 离线 / 撤销)⇒ 草稿照写,「交给 CC」锁住,ConnectionNotice 说明原因。
   const online = canSubmit(conn) && recovery.phase === 'ready' && (backend.mode !== 'live' || !!recovery.scope && recovery.scope === session.inputScope)
@@ -199,11 +217,11 @@ export default function Compose() {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
       const materials = !matter && images.length ? { draftId: materialDraftId(draftKey), attachmentIds: images.map(i => i.id) } : undefined
       // 换了图或模型就是新的一件:requestId 跟着正文、图、模型一起定
-      const requestId = requestIdFor(draftKey, [body, materials?.attachmentIds.join(',') ?? '', execution ? JSON.stringify(execution) : '', project && isolated ? `worktree:${baseName}` : ''].join('\u0000'))
+      const requestId = requestIdFor(draftKey, [body, materials?.attachmentIds.join(',') ?? '', execution ? JSON.stringify(execution) : '', project && isolated ? `worktree:${baseName}` : '', until ? `until:${until.maxRounds}:${until.command}` : ''].join('\u0000'))
       if (matter) await backend.say(matter, body, requestId)
       else {
         if (materials) await uploadImages(backend, materials.draftId, images, bytesToBase64)
-        newId = (await backend.create({ requestId, text: body, projectId: project?.id, ...(project && isolated ? { isolation: true, ...(baseName ? { base: baseName } : {}) } : {}), providerId: provider?.id, ...(materials ?? {}), ...(execution ? { execution } : {}) })).matterId
+        newId = (await backend.create({ requestId, text: body, projectId: project?.id, ...(project && isolated ? { isolation: true, ...(baseName ? { base: baseName } : {}) } : {}), providerId: provider?.id, ...(materials ?? {}), ...(execution ? { execution } : {}), ...(until ? { until } : {}) })).matterId
       }
     })
     sending.current = false
@@ -239,7 +257,7 @@ export default function Compose() {
               {inputHint ? <Txt role="meta" tone="inkSoft">{inputHint}</Txt> : null}
               {nativeStart ? (
                 <View testID="compose-native-start" style={{ gap: space.xs }}>
-                  {nativeStartLines(nativeStart, lang).map((line, i) => <Txt key={i} role="meta" tone="inkSoft">{line}</Txt>)}
+                  {nativeStartLines(nativeStart, lang, detail.data?.matter.agentNames).map((line, i) => <Txt key={i} role="meta" tone="inkSoft">{line}</Txt>)}
                 </View>
               ) : null}
             </>
@@ -279,7 +297,21 @@ export default function Compose() {
               </Pressable>
             </View>
           )}
-          <Button kind="primary" testID="compose-send" label={t(lang, isTask ? 'input.send' : 'compose.send')} onPress={send} disabled={!text.trim() || !online || (!firstSendReady && !retryDraft) || (!matter && !!project && isolated && baseInvalid)} busy={busy} />
+          {untilConfirm ? (
+            // 提交前把要无人值守跑的命令整条摆出来:等宽、不截断、不限行数(安全 6)
+            <Card testID="compose-until-confirm" style={{ gap: space.xs }}>
+              <Txt role="meta" tone="inkSoft">{untilConfirm.heading}</Txt>
+              <Txt testID="compose-until-confirm-command" role="code" content="user" selectable>{untilConfirm.command}</Txt>
+              <Txt role="meta" tone="inkSoft">{untilConfirm.rounds}</Txt>
+              <Txt role="caption" tone="inkSoft">{untilConfirm.note}</Txt>
+            </Card>
+          ) : null}
+          {untilBlocked ? (
+            <Pressable accessibilityRole="button" testID="compose-until-blocked" onPress={() => setAdjust(true)} style={{ minHeight: 44, justifyContent: 'center' }}>
+              <Txt role="meta" tone="inkSoft">{t(lang, unattended ? 'until.unattended' : untilErr === 'multiline' ? 'until.multiline' : 'until.tooLong')}</Txt>
+            </Pressable>
+          ) : null}
+          <Button kind="primary" testID="compose-send" label={t(lang, isTask ? 'input.send' : 'compose.send')} onPress={send} disabled={!text.trim() || !online || (!firstSendReady && !retryDraft) || (!matter && !!project && isolated && baseInvalid) || untilBlocked} busy={busy} />
           <ConnectionNotice />
           {recovery.phase !== 'ready' ? <View style={{ gap: space.s }}>
             <Txt testID="input-recovery-state" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{t(lang, recovery.phase === 'loading' ? 'input.recovering' : 'input.recoveryFailed')}</Txt>
@@ -292,7 +324,7 @@ export default function Compose() {
           {outcome ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
               <Dot kind={composeOutcomeDot(outcome)} size={8} />
-              <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null, !!matter)}</Txt>
+              <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null, !!matter, matter ? detail.data?.matter.agentNames : provider ? { [provider.id]: provider.displayName } : undefined)}</Txt>
             </View>
           ) : null}
           {rows.length ? <InputReceipts rows={rows} onRestore={restoreInput} onRetry={row => void sendInput(row.rawText, row.runId, row)} disabled={busy || !online} /> : null}
@@ -307,8 +339,11 @@ export default function Compose() {
         </ScrollView>
       </KeyboardAvoidingView>
       <Modal visible={adjust} transparent animationType="slide" onRequestClose={() => setAdjust(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <Pressable accessibilityLabel={t(lang, 'common.cancel')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setAdjust(false)} />
-        <View testID="compose-adjust-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.s, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+        {/* 项目、执行者、模型、until 加起来会超过一屏:整张卡可以滚 */}
+        <View testID="compose-adjust-sheet" style={{ backgroundColor: c.paper, maxHeight: '85%', borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.s }}>
           <Txt role="item" accessibilityRole="header">{t(lang, 'compose.adjustTitle')}</Txt>
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.project')}</Txt>
           {opt?.projects.map((p) => <ChoiceRow key={p.id} label={p.name} content="user" on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
@@ -320,6 +355,31 @@ export default function Compose() {
               <TextField testID="compose-base" value={base} onChangeText={setBase} placeholder={t(lang, 'compose.basePlaceholder')} autoCapitalize="none" autoCorrect={false} maxLength={200}
                 style={{ paddingVertical: space.s, borderBottomWidth: 1, borderBottomColor: baseInvalid ? c.bad : c.hair }} />
               {baseInvalid ? <Txt role="caption" tone="bad">{t(lang, 'compose.baseInvalid')}</Txt> : null}
+            </View>
+          ) : null}
+          {untilShown ? <ChoiceRow testID="compose-until" label={t(lang, 'until.toggle')} on={untilOn} onPress={() => setUntilOn(v => !v)} /> : null}
+          {untilShown && untilOn ? (
+            <View testID="compose-until-section" style={{ gap: space.xs }}>
+              {unattended ? <Txt testID="compose-until-unattended" role="caption" tone="inkSoft">{t(lang, 'until.unattended')}</Txt> : null}
+              <Txt role="caption" tone="inkSoft">{t(lang, 'until.command')}</Txt>
+              {/* 不设 maxLength:粘贴超长会被悄悄截掉,跑的就不是主人写的那条了;超了只提示 */}
+              <TextField testID="compose-until-command" role="code" value={untilCmd} onChangeText={setUntilCmd} placeholder={t(lang, 'until.commandPlaceholder')}
+                accessibilityLabel={t(lang, 'until.command')} autoCapitalize="none" autoCorrect={false} spellCheck={false}
+                style={{ paddingVertical: space.s, borderBottomWidth: 1, borderBottomColor: untilErr ? c.bad : c.hair }} />
+              {untilErr ? <Txt testID="compose-until-error" role="caption" tone="bad">{t(lang, untilErr === 'multiline' ? 'until.multiline' : 'until.tooLong')}</Txt> : null}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, marginTop: space.s }}>
+                <Txt role="caption" tone="inkSoft" style={{ flex: 1 }}>{t(lang, 'until.rounds')}</Txt>
+                <Pressable testID="compose-until-fewer" accessibilityRole="button" accessibilityLabel={t(lang, 'until.fewer')} disabled={untilRounds <= 1} onPress={() => setUntilRounds(n => clampRounds(n - 1))}
+                  style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', opacity: untilRounds <= 1 ? 0.4 : 1 }}>
+                  <Txt role="item" tone="accent">−</Txt>
+                </Pressable>
+                <Txt testID="compose-until-rounds" role="item" accessibilityLiveRegion="polite">{t(lang, 'until.roundsValue', { n: untilRounds })}</Txt>
+                <Pressable testID="compose-until-more" accessibilityRole="button" accessibilityLabel={t(lang, 'until.more')} disabled={untilRounds >= UNTIL_MAX_ROUNDS} onPress={() => setUntilRounds(n => clampRounds(n + 1))}
+                  style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', opacity: untilRounds >= UNTIL_MAX_ROUNDS ? 0.4 : 1 }}>
+                  <Txt role="item" tone="accent">+</Txt>
+                </Pressable>
+              </View>
+              <Txt role="caption" tone="inkSoft">{t(lang, 'until.note')}</Txt>
             </View>
           ) : null}
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.executor')}</Txt>
@@ -342,7 +402,9 @@ export default function Compose() {
             </>
           ) : null}
           <View style={{ marginTop: space.m }}><Button kind="secondary" label={t(lang, 'compose.done')} onPress={() => setAdjust(false)} /></View>
+        </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   )

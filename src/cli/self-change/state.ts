@@ -38,7 +38,8 @@ export interface SelfChangeState {
     /** 三处修复轮各自独立计数,各最多 SELF_CHANGE_DEFAULTS.max_fix_rounds 轮。 */
     rounds: { tests: number; review: number; ci: number }
   }
-  review: { sessionId: string | null; costUsd: number; verdict: 'approve' | 'changes' | null; findings: ReviewFinding[] }
+  /** `by` / `why`:谁审的、为什么挑它(CC 自己挑,设计稿 2026-10-23-cc-runs-development §4.2);老存盘没有这两格。 */
+  review: { sessionId: string | null; costUsd: number; verdict: 'approve' | 'changes' | null; findings: ReviewFinding[]; by?: 'codex' | 'claude'; why?: string }
   /**
    * 测试闸门的抖动账:`flakes` 里每一条是「第一次红、失败文件与本次改动无关、
    * 重跑就绿了」的那条命令。记下来是为了两件事 —— 事后能看出这条自改到底
@@ -49,6 +50,20 @@ export interface SelfChangeState {
   /** `delivered=false`:拍板卡没进微信(外发不通),但条目还在 daemon 的登记处 ——
    *  桌面权限卡和 `self change --approve <id>` 照样能拍。null = 还没问过。 */
   approval: { hash: string | null; code: string | null; decision: string | null; askedAt: number | null; delivered: boolean | null }
+  /**
+   * 每一轮修复为什么(tests / review / ci 的原因,截断)。收场时写进教训账(lessons.ts),`self discover --source lessons`
+   * 把反复出现的摆出来,当「该写进做法清单」的候选。`lessonsWritten`:前几条已经记过了(`--resume` 再收场不重记)。老存盘没有。
+   */
+  fixLog?: Array<{ kind: 'tests' | 'review' | 'ci'; at: number; detail: string }>
+  lessonsWritten?: number
+  /** 这条是某份计划的一步(`self change --plan <id> --step <p>`);做完记回计划文件。 */
+  plan?: { id: string; step: string }
+  /** 进 dev 的那个 PR(ci 步开)。老存盘没有这一格:merge 步会补开一个。 */
+  pr?: { number: number; url: string } | null
+  /**
+   * `sha`:squash 合进去以后 dev 上的那条提交。`rebased`:合入的树跟 CI 跑的树不一样
+   * (等拍板期间 dev 上多了别人的提交)—— 报告里要说清楚,正式闸门是推 dev 那一次。
+   */
   merge: { sha: string | null; rebased: boolean }
   /**
    * `sha`:**真换上去的那条提交**。部署前会断言这条运行的工作树站在 `merge.sha`

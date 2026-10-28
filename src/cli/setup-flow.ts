@@ -1,9 +1,10 @@
-import { existsSync, readdirSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, readdirSync, mkdirSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ILINK_APP_ID, ILINK_BASE_URL, ILINK_BOT_TYPE } from '../lib/config'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { readJsonFile } from '../lib/read-json-file'
+import { readJsonObject, UnreadableJsonError, writeFileAtomic, writeJsonAtomic } from '../lib/json-file'
 
 const ILINK_CLIENT_VERSION = '131335'
 const SETUP_QR_EXPIRES_MS = 480_000
@@ -223,7 +224,7 @@ export async function persistConfirmedAvatar(opts: {
 
   try {
     const stateDir = opts.stateDir ?? join(homedir(), '.claude', 'channels', 'wechat')
-    const { setAvatar } = await import('../core/avatar/store')
+    const { setAvatar } = await import('../adapters/store/avatar-store')
     if (/^https?:\/\//i.test(candidate)) {
       const fetchBinary = opts.fetchBinary ?? defaultFetchBinary
       const buf = await fetchBinary(candidate)
@@ -255,20 +256,25 @@ export function persistConfirmedAccount(opts: {
   const accountId = status.ilink_bot_id.replace(/[^a-zA-Z0-9_-]/g, '-')
   const accountDir = join(accountsDir, accountId)
   mkdirSync(accountDir, { recursive: true, mode: 0o700 })
-  writeFileSync(join(accountDir, 'token'), status.bot_token, { mode: 0o600 })
+  // 令牌和 account.json 都走独立 tmp + fsync + rename,0o600(3e 第 2 步;以前令牌直接覆盖、account.json 用固定 tmp 名)。
+  writeFileAtomic(join(accountDir, 'token'), status.bot_token, { mode: 0o600 })
 
   const account = {
     baseUrl: status.baseurl ?? opts.currentBaseUrl,
     userId: status.ilink_user_id ?? '',
     botId: status.ilink_bot_id,
   }
-  const tmpAccount = join(accountDir, 'account.json.tmp')
-  writeFileSync(tmpAccount, JSON.stringify(account, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmpAccount, join(accountDir, 'account.json'))
+  writeJsonAtomic(join(accountDir, 'account.json'), account, { mode: 0o600 })
 
   if (status.ilink_user_id) {
     let access: { dmPolicy: 'allowlist' | 'disabled'; allowFrom: string[]; admins?: string[] } = { dmPolicy: 'allowlist', allowFrom: [] }
-    try { access = readJsonFile(accessFile) } catch {}
+    // 读不出来:以前吞掉错误、从空名单起再写回 —— 主人原来的名单和管理员就这么没了。现在和 daemon(lib/access.ts)
+    // 同一个做法:把坏文件挪到 .corrupt-<时间>,再从空名单起;数据留着能找回(3e,2026-10-22)。
+    if (existsSync(accessFile)) try { access = readJsonObject(accessFile) as typeof access }
+    catch (err) {
+      if (!(err instanceof UnreadableJsonError)) throw err
+      try { renameSync(accessFile, `${accessFile}.corrupt-${Date.now()}`) } catch { /* 挪不走就照旧从空名单起 */ }
+    }
     if (!access.allowFrom) access.allowFrom = []
     let dirty = false
     if (!access.allowFrom.includes(status.ilink_user_id)) {
@@ -288,11 +294,7 @@ export function persistConfirmedAccount(opts: {
       access.admins = [status.ilink_user_id]
       dirty = true
     }
-    if (dirty) {
-      const tmpAccess = `${accessFile}.tmp`
-      writeFileSync(tmpAccess, JSON.stringify(access, null, 2) + '\n', { mode: 0o600 })
-      renameSync(tmpAccess, accessFile)
-    }
+    if (dirty) writeJsonAtomic(accessFile, access, { mode: 0o600 })
   }
 
   // Determine scenario AFTER writing the new dir but BEFORE dedupe runs.

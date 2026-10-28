@@ -1,0 +1,3 @@
+[install]
+# vitest 用根目录那一份(测试文件 import 的也是它);两份 vitest 实例会对不上。
+peer = false

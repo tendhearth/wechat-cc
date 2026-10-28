@@ -1,3 +1,4 @@
+// @repo-guard 这份测试里有扫整个仓库的守卫:bun run verify 不管改了什么都跑它(import 图看不见它守的文件)。
 import { describe, it, expect } from 'vitest'
 import { AUTH_CODE, classifyProviderFailure, hasAuthCode, looksLikeAuthFailure } from './auth-failure'
 import { isConnectFailure } from './net-errors'
@@ -103,7 +104,7 @@ describe('仓库守卫 —— auth 判定的词汇只能有一份', () => {
       if (file.endsWith(join('lib', 'auth-failure.ts'))) continue
       // auth-fail.ts 是**另一件事**:从 provider 输出文本里认哨兵(决定要不要
       // 抛 auth_failed),不是判定「这个错误是不是 auth」。它有自己的红线注释。
-      if (file.endsWith(join('core', 'auth-fail.ts'))) continue
+      if (file.endsWith(join('domain', 'auth-fail.ts'))) continue
       if (EXEMPT.some(e => file.endsWith(e.file))) continue
       readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
         const t = line.trimStart()

@@ -40,6 +40,8 @@ export interface DaemonClient {
   resolve(hash: string, decision: 'allow' | 'deny'): Promise<boolean>
   /** daemon 还在不在(部署后的健康门)。用窄的那把 file token。 */
   health(): Promise<boolean>
+  /** 网络守护的现状(/v1/health.guard)。null = 读不到(daemon 不通 / 老 daemon 没这一格)。 */
+  guard(): Promise<{ enabled: boolean; safe: boolean; detail: string } | null>
 }
 
 /** 单次请求的上限。拍板本身的等待是轮询出来的,不靠一条长连接吊着。 */
@@ -106,6 +108,13 @@ export function makeDaemonClient(deps: { readApiInfo: () => ApiInfo | null; fetc
       // file token:operator token 根本够不着 /v1/health(见 self-deploy 的健康门)。
       const r = await call('/v1/health', { method: 'GET', token: 'file' })
       return !!r?.ok
+    },
+
+    async guard() {
+      const r = await call('/v1/health', { method: 'GET', token: 'file' })
+      const g = (r?.ok ? (r.body as { guard?: unknown } | undefined)?.guard : undefined) as { enabled?: unknown; safe?: unknown; paused?: unknown; detail?: unknown } | undefined
+      if (!g || typeof g.enabled !== 'boolean' || typeof g.safe !== 'boolean') return null
+      return { enabled: g.enabled, safe: g.safe && g.paused !== true, detail: typeof g.detail === 'string' ? g.detail : '' }
     },
   }
 }

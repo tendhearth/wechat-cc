@@ -641,27 +641,25 @@ describe('ReminderScheduleRequest', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 50 entries', () => {
+  it('REQUEST_SCHEMAS has 49 entries', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
     // + 1 companion/import-local + 3 plugins (toggle, install, upgrade)
-    // + 1 license/activate + 8 customer-review routes
+    // + 1 license/activate(+ 8 customer-review routes,2026-10-21 随客户回顾删掉)
     // + 3 reminders (schedule, cancel, list query) + 1 atelier/share
     // + 3 cli hook (event POST, permission POST + GET query; spec 2026-09-09-cli-hook-push)
     // + 1 cli/sessions GET query(终端会话登记处,v76)
     // + 2 cli/hooks install / uninstall(接上终端里的 Claude Code / Codex,2026-10-14)
+    // + 2 memory/view、memory/edit(记忆编辑,2026-10-23)
+    // + 2 cli/say POST + GET query(terminal_say,2026-10-24)
+    // + 1 memory/retractions/restore(收回的话,架构终态 G6)
     // (P4: social/seek's SocialSeekRequest was deleted — the propose/
     // confirm/cancel routes that replaced it are inline-validated, no
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(50)
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(49)
   })
-  it('RESPONSE_SCHEMAS has 36 entries (one per route)', () => {
-    // 25 original + 2 a2a dashboard response schemas (preview, install)
-    // + 1 a2a server-side test response + 1 memory/delete
-    // + 1 companion/import-local + 3 reminders (schedule, cancel, list)
-    // + 1 atelier/share
-    // + 1 companion/presence (spec 2026-09-03-companion-presence)
-    // + 1 owner-only companion/thoughts
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(36)
+  it('RESPONSE_SCHEMAS has one entry per route', () => {
+    // F1(架构终态):每一条 /v1 路由都有响应契约 —— 211 条(G6 加了收回的话两条),与路由表里 /v1 的条数相同。
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(211)
   })
 })

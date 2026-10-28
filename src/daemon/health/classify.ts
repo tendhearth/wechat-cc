@@ -77,7 +77,8 @@ function classifyProviderCode(code: ProviderErrorCode): FailureClass {
     case 'auth_rejected': return LLM_AUTH_REJECTED
     case 'network': case 'server_error': return NETWORK
     // 限流 / 额度 / 坏请求 / 未分类:不是连通性也不是凭证,不该把整条 LLM 链路判坏。
-    case 'rate_limited': case 'quota': case 'invalid_request': case 'provider_error': return UNKNOWN
+    // 地区不可用:这一家的事,不是整条 LLM 链路坏了(换一家就好);照实的那句在回话里说。
+    case 'rate_limited': case 'quota': case 'invalid_request': case 'provider_error': case 'region_unavailable': return UNKNOWN
   }
 }
 

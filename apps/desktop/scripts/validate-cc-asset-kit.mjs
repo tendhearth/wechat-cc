@@ -10,6 +10,20 @@ import { readRGBA } from './cc-png.mjs'
 const defaultRoot = fileURLToPath(new URL('../src/assets/pet/cc-v1/', import.meta.url))
 /** @param {string | Buffer} s */
 const hash = (s) => createHash('sha256').update(s).digest('hex')
+
+// 解码只看字节:同一份字节(按 sha256)在一个进程里只解一次。纯 JS 解 512² PNG 很贵,而测试 / 发版闸门会对整套的
+// 几份拷贝反复校验 —— 改了的那几张字节不同、照样重新解。结果只读(下面只做比较),共享安全。上限 256 张,先进先出。
+const decodeCache = new Map()
+function decodeOnce(bytes, size = 512) {
+  const key = `${size}:${hash(bytes)}`
+  let decoded = decodeCache.get(key)
+  if (!decoded) {
+    decoded = readRGBA(bytes, size)
+    if (decodeCache.size >= 256) decodeCache.delete(decodeCache.keys().next().value)
+    decodeCache.set(key, decoded)
+  }
+  return decoded
+}
 /** @param {string} p */
 /** 去 BOM 再 parse,同 src/lib/read-json-file.ts 契约。 @param {string} text */
 const parseJson = (text) => JSON.parse(text.replace(/^\uFEFF/, ''))
@@ -78,7 +92,7 @@ export function validateAssetKit(root = defaultRoot) {
           if (!meta.visualReview?.reviewer || !meta.visualReview?.reviewedAt || meta.visualReview?.referenceSha256 !== raw.reference?.sha256) errors.push(`visual_review_missing:${p}`)
         }
         try {
-          const decoded = readRGBA(bytes, 384)
+          const decoded = decodeOnce(bytes, 384)
           if (!decoded.alpha.some(a => a)) errors.push(`prop_empty:${p}`)
           if (decoded.alpha.some((a, i) => a && (i % 384 < 12 || i % 384 >= 372 || Math.floor(i / 384) < 12 || Math.floor(i / 384) >= 372))) errors.push(`prop_padding:${p}`)
         } catch (e) { errors.push(`prop_png:${p}:${String(e)}`) }
@@ -86,7 +100,7 @@ export function validateAssetKit(root = defaultRoot) {
       }
       if (meta && p.endsWith('.png')) {
         try {
-          const decoded = readRGBA(bytes)
+          const decoded = decodeOnce(bytes)
           pixels.set(p, decoded)
           if (decoded.alpha.some((a, i) => a && (i % 512 < 80 || i % 512 >= 432 || Math.floor(i / 512) < 28 || Math.floor(i / 512) >= 470))) errors.push(`png_safe_bbox:${p}`)
           if (!decoded.alpha.some(a => a)) errors.push(`png_empty:${p}`)

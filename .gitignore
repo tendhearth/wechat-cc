@@ -72,3 +72,7 @@ apps/desktop/art/cc-v1/native-qa/dist/
 
 # wrangler tmp dir
 apps/relay/.wrangler/
+
+# 变异测试(bun run test:mutation)的沙箱与报告
+.stryker-tmp/
+reports/mutation/

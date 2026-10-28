@@ -2,7 +2,7 @@
 
 > **主人 2026-10-04 拍板:** wechat-cc **全自动**(默认开)把外部 agent CLI —— Claude Code、Codex、cursor-agent、agy —— 保持最新,因为人会忘;输出格式 / 协议的不兼容要**自动**发现。
 
-代码:`src/core/cli-upgrade/`(引擎,全部副作用注入)、`src/daemon/cli-upgrade/`(daemon 接线、自检)、`src/cli/commands/cli.ts` + `src/cli/agent-cli-status.ts`(命令)。
+代码:`src/daemon/cli-upgrade/engine.ts`(引擎,全部副作用注入)与同目录的 daemon 接线、自检;四家的规格 / 版本比较 / 配置这些纯规则在 `src/domain/cli-upgrade/`,探版本 / 软链布局 / 找程序 / 状态文件在 `src/adapters/cli-upgrade/`、`src/cli/commands/cli.ts` + `src/cli/agent-cli-status.ts`(命令)。
 
 ## 一句话流程
 
@@ -90,8 +90,8 @@ wechat-cc cli rollback <claude|codex|cursor|agy> [--json]            # 退回上
 
 全部用临时目录里的**假 CLI**(真 exec 一个 `#!/bin/sh` 脚本,布局和官方安装器一样),升级器 / 退回都在临时目录里改链接;查最新用注入的 fetch。**永远不碰主人真装的 CLI。** 假 CLI 是 POSIX 脚本,win32 跳过。
 
-- `src/core/cli-upgrade/engine.test.ts`:升级成功 + 一句通知、忙时不升、自检失败 ⇒ 退回(claude 改链接 / codex 改 `current` / cursor 两个链接)+ 记坏版本 + 只通知一次 + 坏版本不重试、出了更新的照常升、agy 退不回 ⇒ 手动步骤、自检暂缓不退回 30 分钟后补做、升级器失败退避、查最新失败退避、报错触发 + 去抖、每天一次、关掉、不并发、CLI 自己在后台升了 ⇒ 补自检 ⇒ 退回、手动退回。
-- `src/core/cli-upgrade/pure.test.ts`:版本解析与比较、报错识别(含真机采集的 codex 原文)、配置、退避、查最新(注入 fetch)。
+- `src/daemon/cli-upgrade/engine.test.ts`:升级成功 + 一句通知、忙时不升、自检失败 ⇒ 退回(claude 改链接 / codex 改 `current` / cursor 两个链接)+ 记坏版本 + 只通知一次 + 坏版本不重试、出了更新的照常升、agy 退不回 ⇒ 手动步骤、自检暂缓不退回 30 分钟后补做、升级器失败退避、查最新失败退避、报错触发 + 去抖、每天一次、关掉、不并发、CLI 自己在后台升了 ⇒ 补自检 ⇒ 退回、手动退回。
+- `src/domain/cli-upgrade/pure.test.ts`:版本解析与比较、报错识别(含真机采集的 codex 原文)、配置、退避、查最新(注入 fetch)。
 - `src/daemon/cli-upgrade/verify.test.ts`、`wire.test.ts`;`routes-daemon-control.test.ts`(路由 + health 块);`src/cli/agent-cli-status.test.ts`;`service-execution.test.ts`(工作台把错误通道交出去)。
 
 ## 已知限制

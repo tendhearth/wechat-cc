@@ -1,0 +1,386 @@
+/**
+ * DaemonModule 容器(第三批 3b,spec docs/superpowers/specs/2026-10-22-daemon-module-design.md)。
+ *
+ * 一个功能 = 一个模块:`init(ctx)` 只造和登记(interval / onStart / own),**不开始干活**;全部 init 成功以后
+ * 容器统一开动(start 段);关机逆序。启停成对靠构造,不靠自觉:模块拿不到裸的 setInterval,登记了的容器负责停。
+ *
+ * 三段:
+ *  - init:按 needs ∪ wants 拓扑序逐个 init。有环、needs / wants 写了不存在的模块 ⇒ 开机就抛(编程错误)。
+ *    enabled() 为 false ⇒ off;needs 的上游不是 ok ⇒ 跟着上游(off / degraded),不 init,原因写上游。
+ *    enabled 可以读 needs / wants 的值(开关常常就在上游给的配置快照里);上游不是 ok 时它读不到,按「跟着上游」算。
+ *    optional 的 init 抛错 ⇒ degraded,它已经登记的 own 立刻逆序停掉,interval / onStart 作废(从没开始)。
+ *    非 optional 的抛错 ⇒ 已经 init 的模块的 own 全部逆序停掉,再把错抛出去(开机失败,跟今天核心链一样)。
+ *  - start:按同样的顺序,开动每个 ok 模块的 interval、依次 await 它的 onStart。onStart 抛错同上:optional ⇒ degraded
+ *    并停掉它自己已经开动的;非 optional ⇒ 停掉全部再抛。`lazy` 拿到的东西只在这之后被用到,两个真环
+ *    (ilink ↔ speech 构造期、pipeline ↔ polling 运行期)靠它。
+ *    **开动每个模块之前再查一遍上游**(整合者评审 #542):上游在 start 段才坏(onStart 抛错 ⇒ degraded、已经停掉)时,
+ *    已经 init 过的下游手里拿着的是一个停了的上游。needs 的上游、以及 init 时经 maybe **真拿到了**的 wants 上游,
+ *    只要不再是 ok ⇒ 下游跟着上游的状态,并停掉它 init 时登记的 own;没拿到的 wants 不算,它本来就没在用。
+ *    **所以会被别人 wants 的可选模块,能失败的事(占端口、连出去)放在 init 里**:在 init 里失败只是它自己降级、
+ *    下游的 maybe 拿到 null;放到 onStart 里失败,拿了它的下游(可能是必需的 bootstrap)会跟着倒(架构终态 A2 评审,yi)。
+ *  - interval 叠跑:上一次还没跑完(async 没结束)⇒ 这一拍跳过,不叠(慢的时候不会越积越多)。
+ *  - stop:模块逆序、模块内逆登记序;单项 5 秒超时,失败只记一行不挡后面(LifecycleSet 的语义)。可重复调。
+ *    **开机途中也能停**(第 2 步,SIGTERM 落在开机途中):`createModules` 先拿到句柄、把 stopAll 交给收尾清单,
+ *    再 `start()`。start 途中调 stopAll ⇒ 下一个模块边界就不再往下 init / start,等手上那一步落定(最多一个
+ *    停止超时),再停掉已经起了的。
+ *
+ * 状态形状沿用 SubsystemStatus(/v1/health.subsystems 读的就是它)。
+ *
+ * 窄口(架构终态 A6):一个模块可以经 `ports` 交出几样「从我的值里取一小块」的东西,各有名字。别的模块 needs / wants /
+ * lazy 写口的名字,经 get / maybe / lazy / late 拿到的就是那一块 —— 不必拿整个值。口不是模块:不进 status、
+ * 不进关机顺序,开机先后、状态、降级都跟着交出它的那个模块(needs 一个口 = needs 那个模块)。
+ */
+import type { SubsystemStatus } from '../subsystems'
+
+export interface DaemonModule<P = unknown> {
+  name: string
+  /** 必须先起;上游不是 ok ⇒ 我也不起(跟着上游的状态)。 */
+  needs?: readonly string[]
+  /** 有就用,没有也能起;经 ctx.maybe 拿,拿到 null 自己兜。 */
+  wants?: readonly string[]
+  /** 真环的那一条边(只有这里写了的名字才能经 ctx.lazy 拿):不进拓扑排序,环写在表里看得见。 */
+  lazy?: readonly string[]
+  /** 起失败 ⇒ degraded,不拖垮开机。缺省 false:起失败 = 开机失败。 */
+  optional?: boolean
+  /** 缺省开。false ⇒ 不 init,状态 off(模块开关;已经有主人开关的东西别用它,见设计稿「一件事只有一个开关」)。 */
+  enabled?: (ctx: EnabledCtx) => boolean
+  /** 只造和登记,不开始干活。返回值 = 对外提供的东西(别的模块 needs 我时经 ctx.get 拿到)。 */
+  init(ctx: ModuleCtx): P | Promise<P>
+  /**
+   * 窄口:名字 → 从 init 的返回值里取哪一块(init 成功后取一次)。名字不许和模块名、别的口重名。
+   * 别的模块 needs 这个名字 ⇒ 拓扑上 needs 的是我,拿到的是那一块。
+   */
+  ports?: Readonly<Record<string, PortPick<P>>>
+}
+
+/** 方法写法让 DaemonModule<具体类型> 还能放进 DaemonModule[](参数双变,React 的 bivarianceHack)。 */
+type PortPick<P> = { pick(value: P): unknown }['pick']
+
+/** enabled() 能看到的:只读上游(needs 里的经 get、wants 里的经 maybe)。上游不是 ok ⇒ get 抛。 */
+export interface EnabledCtx {
+  get<T>(name: string): T
+  maybe<T>(name: string): T | null
+}
+
+export interface ModuleCtx {
+  /** 只能拿 needs 里写了的。 */
+  get<T>(name: string): T
+  /** 只能拿 wants 里写了的;那个模块不是 ok ⇒ null。 */
+  maybe<T>(name: string): T | null
+  /** 唯一的晚绑定,只给真的环用,只能拿 lazy 里写了的。返回的函数在 start 段之前调 ⇒ 抛;那个模块不是 ok ⇒ 抛。 */
+  lazy<T>(name: string): () => T
+  /**
+   * 同一条环边(也只能拿 lazy 里写了的),但「还没有」照实回 null 而不是抛:那个模块还没 init 完、或者不是 ok。
+   * 它一 init 完就拿得到(不等 start 段)—— 跟以前「bootstrap 一建好 bootRef 就有值」一样。
+   * 给「早就被外面调得到」的读口用:internal-api 在 init 段就开始监听,桌面那时来问的健康 / 会话列表
+   * 应该得到「还没有」(503 / 空),不是一个异常。
+   */
+  late<T>(name: string): () => T | null
+  /** 登记一个定时器:start 段才开始计时,关机自动 clear。fn 抛错 / reject 只记一行。 */
+  interval(name: string, ms: number, fn: () => unknown): void
+  /** 登记「开动」:起服务、开始拉消息……start 段按登记顺序 await。要停的东西另用 own 登记。 */
+  onStart(name: string, fn: () => unknown): void
+  /** 登记一个要停的资源(连接、服务):init 里造好就登记,关机逆序停。 */
+  own(name: string, stop: () => unknown): void
+  log(line: string): void
+}
+
+export interface ModuleTimers {
+  setInterval(fn: () => void, ms: number): unknown
+  clearInterval(handle: unknown): void
+}
+
+export interface StartedModules {
+  status(): SubsystemStatus[]
+  /** 拿某个 ok 模块提供的东西;不存在 / 不是 ok ⇒ undefined。给 main.ts 接线用,模块之间走 ctx。 */
+  provided<T>(name: string): T | undefined
+  stopAll(): Promise<void>
+}
+
+export const STOP_TIMEOUT_MS = 5_000
+
+type Reg =
+  | { kind: 'interval'; name: string; ms: number; fn: () => unknown; handle?: unknown; busy?: boolean }
+  | { kind: 'onStart'; name: string; fn: () => unknown }
+  | { kind: 'own'; name: string; stop: () => unknown }
+
+interface Slot { mod: DaemonModule; status: SubsystemStatus; value?: unknown; /** init 已经走完(late 从这一刻起拿得到)。 */ ready?: boolean; regs: Reg[]; started: Reg[]; /** init 时经 maybe 真拿到了的 wants(之后上游坏了,它也跟着)。 */ took: Set<string> }
+
+class UpstreamNotOk extends Error { constructor(name: string) { super(`upstream '${name}' is not running`) } }
+
+function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
+
+/** needs ∪ wants 的拓扑序。有环 / 指向不存在的模块 / 重名 ⇒ 抛。同一层按表里的顺序,结果稳定。 */
+/** 名字 → 交出它的模块名(模块名就是自己;口名是交出口的那个模块)。重名 ⇒ 抛。 */
+function ownersOf(mods: readonly DaemonModule[]): Map<string, string> {
+  const owner = new Map<string, string>()
+  for (const m of mods) {
+    if (owner.has(m.name)) throw new Error(`modules: duplicate name '${m.name}'`)
+    owner.set(m.name, m.name)
+  }
+  for (const m of mods) {
+    for (const p of Object.keys(m.ports ?? {})) {
+      if (owner.has(p)) throw new Error(`modules: port '${p}' of '${m.name}' clashes with '${owner.get(p)}'`)
+      owner.set(p, m.name)
+    }
+  }
+  return owner
+}
+
+export function orderModules(mods: readonly DaemonModule[]): DaemonModule[] {
+  const owner = ownersOf(mods)
+  const byName = new Map<string, DaemonModule>()
+  for (const m of mods) byName.set(m.name, m)
+  /** needs / wants / lazy 里写的名字(模块或口)⇒ 那个模块。 */
+  const mod = (d: string): DaemonModule => byName.get(owner.get(d)!)!
+  for (const m of mods) {
+    for (const d of [...(m.needs ?? []), ...(m.wants ?? []), ...(m.lazy ?? [])]) {
+      if (!owner.has(d)) throw new Error(`modules: '${m.name}' depends on unknown module '${d}'`)
+      if (owner.get(d) === m.name) throw new Error(`modules: '${m.name}' depends on itself`)
+    }
+    // 必需的模块不许 needs 一个可选的:可选的坏了,必需的会跟着「不起」而不报错 —— 开机走到一半悄悄停住。
+    // 要用可选的就 wants(拿不到自己兜),或者把上游也改成必需。
+    if (!m.optional) {
+      const opt = (m.needs ?? []).find(d => mod(d).optional)
+      if (opt) throw new Error(`modules: required '${m.name}' needs optional '${opt}' — use wants, or make '${owner.get(opt)}' required`)
+    }
+    const hard = new Set([...(m.needs ?? []), ...(m.wants ?? [])].map(d => owner.get(d)!))
+    const both = (m.lazy ?? []).find(d => hard.has(owner.get(d)!))
+    if (both) throw new Error(`modules: '${m.name}' lists '${both}' in lazy and in needs / wants — a lazy edge is a cycle edge, pick one`)
+  }
+  const out: DaemonModule[] = []
+  const state = new Map<string, 'visiting' | 'done'>()
+  const visit = (m: DaemonModule, path: string[]): void => {
+    const s = state.get(m.name)
+    if (s === 'done') return
+    if (s === 'visiting') throw new Error(`modules: dependency cycle ${[...path, m.name].join(' → ')} (a real cycle goes through ctx.lazy, not needs / wants)`)
+    state.set(m.name, 'visiting')
+    for (const d of [...(m.needs ?? []), ...(m.wants ?? [])]) visit(mod(d), [...path, m.name])
+    state.set(m.name, 'done')
+    out.push(m)
+  }
+  for (const m of mods) visit(m, [])
+  return out
+}
+
+export interface ModuleGroup extends StartedModules {
+  /** init 段 + start 段。只能调一次。途中被 stopAll ⇒ 停在下一个模块边界,正常返回(不抛)。 */
+  start(): Promise<void>
+}
+
+type ModuleOpts = { log: (tag: string, line: string) => void; timers?: ModuleTimers; now?: () => number; stopTimeoutMs?: number }
+
+/** 建好、起完再返回(没有开机途中要停的场景时用,比如测试)。 */
+export async function startModules(mods: readonly DaemonModule[], opts: ModuleOpts): Promise<StartedModules> {
+  const group = createModules(mods, opts)
+  await group.start()
+  return group
+}
+
+/** 先拿句柄(好把 stopAll 交给收尾清单),再 start()。 */
+export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): ModuleGroup {
+  const timers: ModuleTimers = opts.timers ?? {
+    setInterval: (fn, ms) => { const h = setInterval(fn, ms); (h as { unref?: () => void }).unref?.(); return h },
+    clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+  }
+  const now = opts.now ?? Date.now
+  const stopTimeoutMs = opts.stopTimeoutMs ?? STOP_TIMEOUT_MS
+  const iso = (): string => new Date(now()).toISOString()
+  const ordered = orderModules(mods)
+  const owner = ownersOf(mods)
+  const slots = new Map<string, Slot>()
+  /** 名字(模块或口)⇒ 交出它的那个模块的 slot。 */
+  const slotOf = (n: string): Slot | undefined => slots.get(owner.get(n) ?? n)
+  /** 名字(模块或口)⇒ 拿到的值:模块 = 它的值;口 = init 后取出来的那一块。 */
+  const portVals = new Map<string, unknown>()
+  const valueOf = (n: string): unknown => owner.get(n) === n ? slots.get(n)!.value : portVals.get(n)
+  let phase: 'init' | 'start' | 'running' | 'stopped' = 'init'
+  /** 开机途中有人要停:init / start 循环在下一个模块边界退出。 */
+  let stopRequested = false
+  let starting: Promise<void> | null = null
+  /** 读当前阶段(跨 await 时 TS 会按旧值收窄,这里要的是真值)。 */
+  const stopped = (): boolean => phase === 'stopped'
+
+  const stopOne = async (slot: Slot, r: Reg): Promise<void> => {
+    if (r.kind === 'onStart') return
+    if (r.kind === 'interval') {
+      if (r.handle !== undefined) { timers.clearInterval(r.handle); r.handle = undefined; opts.log('MODULES', `stopped ${slot.mod.name}/${r.name}`) }
+      return
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        Promise.resolve().then(() => r.stop()),
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`stop timeout (${stopTimeoutMs}ms)`)), stopTimeoutMs) }),
+      ])
+      opts.log('MODULES', `stopped ${slot.mod.name}/${r.name}`)
+    } catch (err) {
+      opts.log('MODULES', `stop ${slot.mod.name}/${r.name} failed: ${errMsg(err)}`)
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+  /** 停一个模块:已经开动的 interval + 全部 own,逆登记序。 */
+  const stopSlot = async (slot: Slot): Promise<void> => {
+    const live = slot.regs.filter(r => r.kind === 'own' || (r.kind === 'interval' && r.handle !== undefined))
+    for (const r of live.reverse()) await stopOne(slot, r)
+  }
+  const stopAllSlots = async (): Promise<void> => {
+    for (const m of [...ordered].reverse()) { const s = slots.get(m.name); if (s) await stopSlot(s) }
+  }
+  const degrade = async (slot: Slot, err: unknown, stage: string): Promise<void> => {
+    slot.status = { name: slot.mod.name, state: 'degraded', error: errMsg(err), sinceIso: iso() }
+    opts.log('MODULES', `${slot.mod.name} degraded at ${stage}: ${errMsg(err)}`)
+    await stopSlot(slot)
+    slot.regs = []
+  }
+
+  async function run(): Promise<void> {
+    // —— init 段 ——
+    for (const mod of ordered) {
+      if (stopRequested) return
+      const slot: Slot = { mod, status: { name: mod.name, state: 'ok', sinceIso: iso() }, regs: [], started: [], took: new Set() }
+      slots.set(mod.name, slot)
+      const needs = new Set(mod.needs ?? []), wants = new Set(mod.wants ?? []), lazies = new Set(mod.lazy ?? [])
+      const readCtx: EnabledCtx = {
+        get: <T>(n: string): T => {
+          if (!needs.has(n)) throw new Error(`modules: '${mod.name}' called get('${n}') but '${n}' is not in its needs`)
+          const s = slotOf(n)!
+          if (s.status.state !== 'ok') throw new UpstreamNotOk(n)
+          return valueOf(n) as T
+        },
+        maybe: <T>(n: string): T | null => {
+          if (!wants.has(n)) throw new Error(`modules: '${mod.name}' called maybe('${n}') but '${n}' is not in its wants`)
+          const s = slotOf(n)!
+          return s.status.state === 'ok' ? (valueOf(n) as T) : null
+        },
+      }
+      let on = true
+      if (mod.enabled) {
+        try { on = mod.enabled(readCtx) } catch (err) {
+          // 开关要读的上游没起来 ⇒ 下面按「跟着上游」处理;别的错照抛(编程错误)
+          if (!(err instanceof UpstreamNotOk)) throw err
+        }
+      }
+      if (!on) { slot.status = { name: mod.name, state: 'off', sinceIso: iso() }; continue }
+      const blocker = (mod.needs ?? []).map(n => slotOf(n)!).find(s => s.status.state !== 'ok')
+      if (blocker) {
+        slot.status = { name: mod.name, state: blocker.status.state, ...(blocker.status.state === 'degraded' ? { error: `upstream ${blocker.mod.name} not running` } : {}), sinceIso: iso() }
+        opts.log('MODULES', `${mod.name} ${blocker.status.state}: upstream ${blocker.mod.name} is ${blocker.status.state}`)
+        continue
+      }
+      const ctx: ModuleCtx = {
+        get: <T>(n: string): T => {
+          if (!needs.has(n)) throw new Error(`modules: '${mod.name}' called ctx.get('${n}') but '${n}' is not in its needs`)
+          return valueOf(n) as T
+        },
+        maybe: <T>(n: string): T | null => {
+          if (!wants.has(n)) throw new Error(`modules: '${mod.name}' called ctx.maybe('${n}') but '${n}' is not in its wants`)
+          const s = slotOf(n)!
+          if (s.status.state !== 'ok') return null
+          slot.took.add(n)
+          return valueOf(n) as T
+        },
+        lazy: <T>(n: string): (() => T) => {
+          if (!lazies.has(n)) throw new Error(`modules: '${mod.name}' called ctx.lazy('${n}') but '${n}' is not in its lazy`)
+          return () => {
+            if (phase === 'init') throw new Error(`modules: lazy('${n}') used by '${mod.name}' before start — only start-phase code may touch a lazy dependency`)
+            const s = slotOf(n)
+            if (!s || s.status.state !== 'ok') throw new Error(`modules: lazy('${n}') used by '${mod.name}' but '${n}' is ${s?.status.state ?? 'missing'}`)
+            return valueOf(n) as T
+          }
+        },
+        late: <T>(n: string): (() => T | null) => {
+          if (!lazies.has(n)) throw new Error(`modules: '${mod.name}' called ctx.late('${n}') but '${n}' is not in its lazy`)
+          return () => {
+            const s = slotOf(n)
+            return s && s.ready && s.status.state === 'ok' ? (valueOf(n) as T) : null
+          }
+        },
+        interval: (name, ms, fn) => { slot.regs.push({ kind: 'interval', name, ms, fn }) },
+        onStart: (name, fn) => { slot.regs.push({ kind: 'onStart', name, fn }) },
+        own: (name, stop) => { slot.regs.push({ kind: 'own', name, stop }) },
+        log: (line) => opts.log('MODULES', `${mod.name}: ${line}`),
+      }
+      try {
+        slot.value = await mod.init(ctx)
+        for (const [p, pick] of Object.entries(mod.ports ?? {})) portVals.set(p, pick(slot.value))
+        slot.ready = true
+      } catch (err) {
+        if (mod.optional) { await degrade(slot, err, 'init'); continue }
+        opts.log('MODULES', `${mod.name} failed at init (required): ${errMsg(err)}`)
+        await stopAllSlots()
+        phase = 'stopped'
+        throw err
+      }
+    }
+
+    // —— start 段 ——
+    phase = 'start'
+    for (const mod of ordered) {
+      if (stopRequested) return
+      const slot = slots.get(mod.name)!
+      if (slot.status.state !== 'ok') continue
+      // 上游在 start 段才坏了 ⇒ 我手里拿着的是一个停了的上游:跟着它,停掉我 init 时登记的(整合者评审 #542)
+      const upstream = [...(mod.needs ?? []), ...slot.took].map(n => slotOf(n)!).find(s => s.status.state !== 'ok')
+      if (upstream) {
+        opts.log('MODULES', `${mod.name} not started: upstream ${upstream.mod.name} became ${upstream.status.state} during start`)
+        await stopSlot(slot)
+        slot.regs = []
+        slot.status = { name: mod.name, state: upstream.status.state, ...(upstream.status.state === 'degraded' ? { error: `upstream ${upstream.mod.name} not running` } : {}), sinceIso: iso() }
+        continue
+      }
+      try {
+        for (const r of slot.regs) {
+          if (r.kind === 'interval') {
+            r.handle = timers.setInterval(() => {
+              if (r.busy) return   // 上一次还没跑完 ⇒ 这一拍跳过,不叠
+              r.busy = true
+              const done = (): void => { r.busy = false }
+              try {
+                void Promise.resolve(r.fn())
+                  .catch(err => opts.log('MODULES', `${mod.name}/${r.name} tick failed: ${errMsg(err)}`))
+                  .finally(done)
+              } catch (err) { done(); opts.log('MODULES', `${mod.name}/${r.name} tick failed: ${errMsg(err)}`) }
+            }, r.ms)
+          } else if (r.kind === 'onStart') {
+            await r.fn()
+          }
+        }
+      } catch (err) {
+        if (mod.optional) { await degrade(slot, err, 'start'); continue }
+        opts.log('MODULES', `${mod.name} failed at start (required): ${errMsg(err)}`)
+        await stopAllSlots()
+        phase = 'stopped'
+        throw err
+      }
+    }
+    if (!stopRequested) phase = 'running'
+  }
+
+  return {
+    start: () => {
+      if (starting) throw new Error('modules: start() called twice')
+      starting = run()
+      return starting
+    },
+    status: () => ordered.map(m => ({ ...(slots.get(m.name)?.status ?? { name: m.name, state: 'off' as const, sinceIso: iso() }) })),
+    provided: <T>(name: string): T | undefined => {
+      const s = slotOf(name)
+      return s && s.status.state === 'ok' ? (valueOf(name) as T) : undefined
+    },
+    stopAll: async () => {
+      if (phase === 'stopped') return
+      stopRequested = true
+      // 开机途中:等手上那一步落定(最多一个停止超时),它可能正在登记 own
+      if (starting) {
+        let t: ReturnType<typeof setTimeout> | undefined
+        await Promise.race([starting.catch(() => {}), new Promise<void>(r => { t = setTimeout(r, stopTimeoutMs) })])
+        if (t) clearTimeout(t)
+      }
+      if (stopped()) return   // start 自己失败时已经全停过
+      phase = 'stopped'
+      await stopAllSlots()
+    },
+  }
+}

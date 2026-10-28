@@ -1,0 +1,72 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { buildMemorySnapshot } from './snapshot'
+import { memoryFactsFor } from './memory-export'
+import { openTestDb } from '../../lib/db'
+
+describe('buildMemorySnapshot', () => {
+  let stateDir: string
+  beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'snap-')) })
+  afterEach(() => rmSync(stateDir, { recursive: true, force: true }))
+
+  it('omits stale overview while retaining canonical profile and corrected notes', async () => {
+    const root = join(stateDir, 'memory', 'c1')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, '_overview.md'), 'outdated judgment')
+    writeFileSync(join(root, 'profile.md'), 'canonical profile')
+    writeFileSync(join(root, 'note.md'), 'corrected note')
+    const facts = memoryFactsFor(openTestDb(), stateDir)
+    facts.fence('c1').invalidate()
+    const snap = await buildMemorySnapshot(stateDir, 'c1', facts)
+    expect(snap).not.toContain('outdated judgment')
+    expect(snap).toContain('canonical profile')
+    expect(snap).toContain('corrected note')
+  })
+
+  it('returns empty string when chat dir does not exist', async () => {
+    expect(await buildMemorySnapshot(stateDir, 'nope', memoryFactsFor(openTestDb(), stateDir))).toBe('')
+  })
+
+  it('returns empty string when chat dir has no .md files', async () => {
+    mkdirSync(join(stateDir, 'memory', 'chat_x'), { recursive: true })
+    writeFileSync(join(stateDir, 'memory', 'chat_x', 'observations.jsonl'), 'jsonl')
+    expect(await buildMemorySnapshot(stateDir, 'chat_x', memoryFactsFor(openTestDb(), stateDir))).toBe('')
+  })
+
+  it('concatenates all .md files with filename headers', async () => {
+    const dir = join(stateDir, 'memory', 'chat_x')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'profile.md'), '叫小明')
+    writeFileSync(join(dir, 'preferences.md'), '总结请像朋友说话')
+    const snap = await buildMemorySnapshot(stateDir, 'chat_x', memoryFactsFor(openTestDb(), stateDir))
+    expect(snap).toContain('# profile.md')
+    expect(snap).toContain('叫小明')
+    expect(snap).toContain('# preferences.md')
+    expect(snap).toContain('总结请像朋友说话')
+  })
+
+  it('orders deterministically with _overview.md first, then the rest alphabetically', async () => {
+    const dir = join(stateDir, 'memory', 'chat_x')
+    mkdirSync(dir, { recursive: true })
+    // Written in a non-alphabetical order; the synthesized overview must lead.
+    writeFileSync(join(dir, 'zeta.md'), 'Z')
+    writeFileSync(join(dir, 'preferences.md'), 'P')
+    writeFileSync(join(dir, '_overview.md'), 'OV')
+    const snap = await buildMemorySnapshot(stateDir, 'chat_x', memoryFactsFor(openTestDb(), stateDir))
+    const order = [...snap.matchAll(/^# (\S+\.md)$/gm)].map(m => m[1])
+    expect(order).toEqual(['_overview.md', 'preferences.md', 'zeta.md'])
+  })
+
+  it('skips non-md files in the same dir', async () => {
+    const dir = join(stateDir, 'memory', 'chat_x')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'profile.md'), 'real-md')
+    writeFileSync(join(dir, 'observations.jsonl'), 'not-md')
+    writeFileSync(join(dir, 'archive.txt'), 'not-md')
+    const snap = await buildMemorySnapshot(stateDir, 'chat_x', memoryFactsFor(openTestDb(), stateDir))
+    expect(snap).toContain('real-md')
+    expect(snap).not.toContain('not-md')
+  })
+})

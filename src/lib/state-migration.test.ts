@@ -22,9 +22,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { migrations, openTestDb, type Db } from './db'
-import { makeSessionStateStore } from '../core/session-state'
-import { makeSessionStore } from '../core/session-store'
-import { makeConversationStore } from '../core/conversation-store'
+import { makeSessionStateStore } from '../adapters/store/session-state'
+import { makeSessionStore } from '../adapters/store/session-store'
+import { makeConversationStore } from '../adapters/store/conversation-store'
 import { makeActivityStore } from '../daemon/activity/store'
 import { makeMilestonesStore } from '../daemon/milestones/store'
 import { makeObservationsStore } from '../daemon/observations/store'
@@ -122,14 +122,14 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // 迁移加完之后漏改的(跟上面 v 的字面量是同一处腐烂,一起修)。
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'cli_sessions', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
-      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'matter_bindings', 'matter_report_outbox', 'matter_say_receipts', 'matter_sessions', 'matters', 'message_attempts', 'messages',
-      'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'reminders', 'session_fts_state', 'session_state',
+      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'knowledge_extraction_state', 'knowledge_judge_state', 'matter_bindings', 'matter_report_outbox', 'matter_say_receipts', 'matter_sessions', 'matters', 'memory_derived', 'memory_exports', 'memory_fact_events', 'memory_facts', 'memory_import', 'memory_source_revisions', 'message_attempts', 'messages',
+      'milestones', 'observations', 'openai_chat_sessions', 'pending_cards', 'penpal_channel', 'penpal_letter', 'permission_decisions', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
-      'sessions', 'sqlite_sequence', 'thread_extract_state', 'threads', 'turn_records',
+      'sessions', 'speech_log', 'sqlite_sequence', 'thread_extract_state', 'threads', 'turn_records',
       'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachment_uploads', 'workbench_attachments', 'workbench_control_receipts',
-      'workbench_creation_receipts', 'workbench_entry_requests', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_marks', 'workbench_run_execution',
-      'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions', 'workbench_worktrees',
+      'workbench_creation_receipts', 'workbench_entry_requests', 'workbench_events', 'workbench_goals', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_comments', 'workbench_review_hunks', 'workbench_review_marks', 'workbench_rewinds', 'workbench_run_execution', 'workbench_script_approvals',
+      'workbench_sources', 'workbench_tasks', 'workbench_turn_usage', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions', 'workbench_worktrees',
     ])
   })
 

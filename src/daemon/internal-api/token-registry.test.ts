@@ -33,14 +33,6 @@ describe('token-registry', () => {
       'POST /v1/companion/converse',
       'POST /v1/companion/speak',
       'POST /v1/companion/transcribe',
-      'GET /v1/customer-review/contacts',
-      'POST /v1/customer-review',
-      'POST /v1/customer-review/run',
-      'GET /v1/customer-review',
-      'GET /v1/customer-review/evidence',
-      'GET /v1/customer-review/recent',
-      'GET /v1/customer-review/history',
-      'POST /v1/customer-review/item',
       'POST /v1/knowledge/facts/find_facts',
       'POST /v1/llm/keys',
       'GET /v1/companion/thoughts',
@@ -78,7 +70,14 @@ describe('token-registry', () => {
       'POST /v1/workbench/review-mark',
       'POST /v1/workbench/review-return',
       'POST /v1/workbench/review-revert',
+      'POST /v1/workbench/review-comment',
+      'POST /v1/workbench/review-comments-send',
+      'POST /v1/workbench/review-hunk',
       'POST /v1/workbench/worktree',
+      'POST /v1/workbench/script-approve',
+      'GET /v1/workbench/rewind-preview',
+      'POST /v1/workbench/rewind',
+      'POST /v1/workbench/rewind-resolve',
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
       'POST /v1/workbench/prepare-continuation',
@@ -101,6 +100,38 @@ describe('token-registry', () => {
       'GET /v1/overseer/today',
       'POST /v1/cli/hooks/install',
       'POST /v1/cli/hooks/uninstall',
+      'GET /v1/letters',
+      'POST /v1/letters/write',
+      'POST /v1/letters/settings',
+      'POST /v1/memory/view',
+      'POST /v1/memory/edit',
+      // 架构终态 G6:收回的话与恢复,和记忆编辑同一档
+      'GET /v1/memory/retractions',
+      'POST /v1/memory/retractions/restore',
+      // 架构终态 F6:桌面不再起 CLI 读写的主人私事,经宿主代理(路由表文件头 operator 那一段)
+      'GET /v1/memory/files',
+      'GET /v1/memory/file',
+      'POST /v1/memory/file/write',
+      'GET /v1/memory/profile',
+      'GET /v1/memory/profile/status',
+      'GET /v1/memory/projects',
+      'GET /v1/conversations/list',
+      'GET /v1/observations/list',
+      'POST /v1/observations/archive',
+      'GET /v1/milestones/list',
+      'GET /v1/events/list',
+      'GET /v1/access/list',
+      'GET /v1/avatar/info',
+      'POST /v1/avatar/set',
+      'POST /v1/avatar/remove',
+      'GET /v1/sessions/projects',
+      'GET /v1/sessions/chats',
+      'POST /v1/sessions/delete',
+      'GET /v1/dialogue/timeline',
+      'GET /v1/dialogue/threads',
+      'GET /v1/dialogue/thread',
+      'GET /v1/dialogue/search',
+      'POST /v1/dialogue/unlock',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
@@ -112,7 +143,8 @@ describe('token-registry', () => {
     r.registerFileToken('cc'.repeat(32))
     const session = r.mint('trusted', 'codex/default/contact')
     const workbenchRoutes = [...(r.resolve('dd'.repeat(32))?.routeAllow ?? [])].filter(route => route.includes('/v1/workbench'))
-    expect(workbenchRoutes).toEqual([
+    // 比集合不比顺序:5a 起名单从路由表推出来,Set 的迭代顺序跟表走,不是行为。
+    expect(workbenchRoutes.sort()).toEqual([
       'GET /v1/workbench/entry-options',
       'POST /v1/workbench/create-entry',
       'GET /v1/workbench/entry-receipt',
@@ -138,7 +170,14 @@ describe('token-registry', () => {
       'POST /v1/workbench/review-mark',
       'POST /v1/workbench/review-return',
       'POST /v1/workbench/review-revert',
+      'POST /v1/workbench/review-comment',
+      'POST /v1/workbench/review-comments-send',
+      'POST /v1/workbench/review-hunk',
       'POST /v1/workbench/worktree',
+      'POST /v1/workbench/script-approve',
+      'GET /v1/workbench/rewind-preview',
+      'POST /v1/workbench/rewind',
+      'POST /v1/workbench/rewind-resolve',
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
       'POST /v1/workbench/prepare-continuation',
@@ -150,7 +189,7 @@ describe('token-registry', () => {
       'POST /v1/workbench/input',
       'POST /v1/workbench/answer',
       'POST /v1/workbench/withdraw-input',
-    ])
+    ].sort())
     expect(r.resolve('cc'.repeat(32))?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.tier).toBe('trusted')

@@ -1,10 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeMwAdmin } from './mw-admin'
-import { makeMwMode } from './mw-mode'
-import { makeMwOnboarding } from './mw-onboarding'
-import { makeMwPermissionReply } from './mw-permission-reply'
-import { makeMwCliReply } from './mw-cli-reply'
-import { makeMwWorkbench } from './mw-workbench'
+import { makeMwCommand } from './mw-command'
+import { makeCommandRegistry } from '../commands/registry'
 import { routedAway } from './intent'
 import type { InboundCtx, Middleware } from './types'
 import type { Intent } from './intent'
@@ -18,20 +14,16 @@ async function run(mw: Middleware, ctx: InboundCtx) { let nexted = false; await 
 
 describe('routedAway', () => {
   it('没路由 ⇒ false;路由到我 ⇒ false;路由到别人(含 chat)⇒ true', () => {
-    expect(routedAway({}, 'admin')).toBe(false)
-    expect(routedAway({ intent: { kind: 'admin' } }, 'admin')).toBe(false)
-    expect(routedAway({ intent: { kind: 'chat' } }, 'admin')).toBe(true)
-    expect(routedAway({ intent: { kind: 'mode' } }, 'admin')).toBe(true)
+    expect(routedAway({}, 'command')).toBe(false)
+    expect(routedAway({ intent: { kind: 'command' } }, 'command')).toBe(false)
+    expect(routedAway({ intent: { kind: 'chat' } }, 'command')).toBe(true)
+    expect(routedAway({ intent: { kind: 'task-reference' } }, 'command')).toBe(true)
   })
 })
 
-describe('六个消费者按 intent 早退', () => {
+describe('消费者按 intent 早退(步 4 之后只剩命令表;「任务 …」见 commands/task-command.test.ts)', () => {
   const table: Array<[string, string, (handle: () => boolean) => Middleware]> = [
-    ['admin', 'admin', h => makeMwAdmin({ adminHandler: { handle: async () => h() } })],
-    ['mode', 'mode', h => makeMwMode({ modeHandler: { handle: async () => h() } })],
-    ['onboarding', 'onboarding', h => makeMwOnboarding({ onboardingHandler: { handle: async () => h() } })],
-    ['permission-reply', 'permission-reply', h => makeMwPermissionReply({ handlePermissionReply: () => h(), log: () => {} })],
-    ['cli-reply', 'cli-reply', h => makeMwCliReply({ handle: async () => h(), log: () => {} })],
+    ['command', 'command', h => makeMwCommand({ registry: makeCommandRegistry([{ id: 'x', probe: () => true, handle: async () => h() }]), log: () => {} })],
   ]
   for (const [name, kind, make] of table) {
     it(`${name}:路由到别人 ⇒ 不调 handle 直接 next;路由到我 / 没路由 ⇒ 照常`, async () => {
@@ -45,13 +37,11 @@ describe('六个消费者按 intent 早退', () => {
       expect(unrouted.nexted).toBe(false)
     })
   }
-  it('workbench(任务命令):路由到别人 ⇒ 连 handleWechat 都不调', async () => {
-    const handleWechat = vi.fn(async () => '好的')
-    const mw = makeMwWorkbench({ handleWechat, sendMessage: async () => ({}) })
-    const away = await run(mw, ctxOf({ kind: 'chat' }, '任务 列表'))
-    expect(away.nexted).toBe(true); expect(handleWechat).not.toHaveBeenCalled()
-    const mine = await run(mw, ctxOf({ kind: 'task-command' }, '任务 列表'))
-    expect(mine.consumed).toBe('workbench'); expect(handleWechat).toHaveBeenCalledOnce()
-    expect((await run(mw, ctxOf(undefined, '任务 列表'))).consumed).toBe('workbench')
+})
+
+describe('命令表的 group 沿用老的 consumedBy 标签(3b)', () => {
+  it('admin 那条处理了 ⇒ consumedBy=admin,不是 command', async () => {
+    const mw = makeMwCommand({ registry: makeCommandRegistry([{ id: 'admin', group: 'admin', probe: () => true, handle: async () => true }]), log: () => {} })
+    expect(await run(mw, ctxOf({ kind: 'command' }))).toEqual({ nexted: false, consumed: 'admin' })
   })
 })

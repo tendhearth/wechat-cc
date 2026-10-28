@@ -17,11 +17,13 @@ import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from '
 import {createQuotaHandoffAttempts,mountQuotaHandoffDialog,renderQuotaHandoff} from './workbench-quota-handoff.js'
 import { mountHistoryDialog } from './workbench-history.js'
 import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
+import { isScriptApprovalRequired, mountScriptsApproveDialog, scriptErrorMessage, worktreeScriptsHtml } from './workbench-scripts-approve.js'
 import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText } from './workbench-markdown.js'
 export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
-import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
-/** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
+import { renderReviewPanel, returnLessonText, reviewsSignature } from './workbench-review-panel.js'
+import { REWIND_STALE_NOTICE, isRewindStale, renderRewindBlocked, rewindErrorMessage } from './workbench-rewind.js'
+/** @typedef {import('../../../../src/features/workbench/review').ReviewTurn} ReviewTurn */
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
 import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
@@ -29,6 +31,8 @@ import {permissionControlId,capturePermissionFocus,restorePermissionFocus} from 
 import {captureTimelineReading,restoreTimelineReading} from './workbench-reading-dom.js'
 import { saveFile } from './save-file.js'
 import { armConfirm, showToast } from '../view.js'
+import { createAgentAvatars } from '../shared/agent-avatars.js'
+import { V1, v1, v1Request } from '../daemon-client.js'
 
 /**
  * 「没确认退出」的下一步(2026-10-06):进程组还在 ⇒ 说清要先结束它(结束后会自动解除);
@@ -42,16 +46,27 @@ function writerExitHtml(task) {
 }
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /**
+ * 做到条件成立为止(对标 #9,v80):一行「直到 `命令` 通过 · 第 n/m 轮 · 状态」;没设就不画。命令原文整条显示。
+ * @param {{until?:{command:string,maxRounds:number,rounds:number,status:'active'|'passed'|'exhausted'|'stopped',lastExit:number|null,stopReason:string|null}}} task
+ */
+export function untilHtml(task) {
+  const u = task.until
+  if (!u) return ''
+  const state = u.status === 'passed' ? '通过了' : u.status === 'exhausted' ? '到上限还没过，停了' : u.status === 'stopped' ? `停了${u.stopReason ? `：${u.stopReason}` : ''}` : u.rounds === 0 ? '这一轮做完就检查' : u.lastExit === 0 ? '通过了' : '上次没过，在接着改'
+  return `<p class="wb-worktree wb-until">直到 <code>${escapeWorkbenchHtml(u.command)}</code> 通过 · 第 ${u.rounds}/${u.maxRounds} 轮 · ${escapeWorkbenchHtml(state)}</p>`
+}
+/**
  * 独立工作区那一行(2026-10-07):分支名 + 「提交到分支」「合回项目」(10-08,只快进;别的情况留给主人,时间线里有合并命令)「删除工作区」。
  * 「也交给 X 做一份」(10-08,对标 Conductor / Orca 的多执行者并行):同一个要求在另一个独立工作区里交给另一位执行者,做完挑好的那份合回。
- * @param {{providerId:string,worktree?:{branch:string,projectPath:string,removed:boolean,merged?:boolean}}} task @param {Provider[]} [providers]
+ * 工作区脚本(10-20):tendhearth.json 配了脚本才多一行状态 + 一个「运行 / 停下」(见 workbench-scripts-approve.js)。
+ * @param {{providerId:string,worktree?:{branch:string,projectPath:string,removed:boolean,merged?:boolean,port?:number,scripts?:import('./workbench-scripts-approve.js').ScriptsView}}} task @param {Provider[]} [providers]
  */
 function worktreeHtml(task, providers = []) {
   const wt = task.worktree
   if (!wt) return ''
   if (wt.removed) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。<button type="button" class="wb-new" data-action="worktree-reopen">重新打开工作区</button></p>`
   const status = wt.merged ? '，已合回项目' : '，不影响项目目录本身'
-  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-merge" title="只做快进合并；项目有没提交的改动或已经往前走时不动">合回项目</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>${forkHtml(task, providers)}`
+  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-merge" title="只做快进合并；项目有没提交的改动或已经往前走时不动">合回项目</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>${worktreeScriptsHtml(wt)}${forkHtml(task, providers)}`
 }
 /** @param {{providerId:string}} task @param {Provider[]} providers */
 function forkHtml(task, providers) {
@@ -59,16 +74,19 @@ function forkHtml(task, providers) {
   if (!others.length) return ''
   return `<p class="wb-worktree wb-fork"><label>同样的要求也交给 <select id="wb-fork-provider" aria-label="另一位执行者">${others.map(p => `<option value="${escapeWorkbenchHtml(p.id)}">${escapeWorkbenchHtml(p.displayName)}</option>`).join('')}</select></label><button type="button" class="wb-new" data-action="worktree-fork">另做一份</button><small>在另一个独立工作区里做，做完挑好的那份合回项目。</small></p>`
 }
-/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
+/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,agents?:string[],origin?:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean,merged?:boolean,port?:number,scripts?:import('./workbench-scripts-approve.js').ScriptsView},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null,until?:{command:string,maxRounds:number,rounds:number,status:'active'|'passed'|'exhausted'|'stopped',lastExit:number|null,stopReason:string|null}}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
-/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null}} Provider */
+/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null,refusal?:{code:string,since:string}|null}} Provider */
 /** 执行者名 + 额度状态:用完 / 限流一眼看得出来;订阅执行者带上真实窗口(5h / 周)—— 那不是估算,是厂商自己回的。 @param {Provider} p */
 function providerLabel(p) {
   // 免审记号跟在最后:额度 / 限流是一时的,免审是这位执行者的性子。
   const unattended = unattendedLabelSuffix(p)
+  // 被拒着比额度更要紧:重发没用,换出口地区或换一位(daemon/provider-refusals,最近一次真跑成功才清)。
+  // 只认得 region_unavailable;以后 provider-refusals 加别的常驻码,这里不认就照常显示名字 —— 加码时在这里补一句。
+  if (p.refusal?.code === 'region_unavailable') return `${p.displayName}（你现在的出口地区用不了）${unattended}`
   if (p.quota?.kind === 'quota') return `${p.displayName}（额度已用完）${unattended}`
   if (p.quota?.kind === 'rate_limit') return `${p.displayName}（限流中）${unattended}`
   const windows = (p.usage?.windows ?? []).map(w => `${w.name === 'weekly' ? '周' : w.name} ${Math.round(w.usedPercent)}%`)
@@ -76,22 +94,44 @@ function providerLabel(p) {
 }
 /** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
-/** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
-/** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
-/** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
+/** @typedef {import('../../../../src/adapters/workbench/native-adoption').NativeSource} NativeSource */
+/** @typedef {import('../../../../src/adapters/workbench/native-adoption').NativeResumeDecision} NativeResume */
+/** @typedef {import('../../../../src/features/workbench/handoff').HandoffView} Handoff */
+/** @typedef {{agentNames?:Record<string,string>,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],agentNames?:Record<string,string>,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {import('./workbench-artifact-preview.js').ArtifactPreview|null} Preview */
-/** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null}} WorkbenchState */
+/** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string,asLesson?:boolean}} ReviewReturnOpen */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],agentNames?:Record<string,string>,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,reviewReturnResult?:import('./workbench-review-panel.js').ReviewReturnResult|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
-/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
 
 // 一件事都没改过的任务:签名从一开始就是「空」,免得第一次拉回来白重画一整页。
 const EMPTY_REVIEWS = reviewsSignature([])
+// 行评论 / 按块撤回(2026-10-21):一次至多选 40 行(同服务端 MAX_COMMENT_ROWS);拒绝码 ⇒ 人话
+const LINE_MAX_ROWS = 40
+/** 发完照实说:发了几条、几条太长留在草稿、几条在撤掉的轮上没发。
+ * @param {{sent?:number,remaining?:number,skippedDiscarded?:number}} counts */
+export function sentResultText(counts) {
+  const parts = [`已发出 ${Number(counts.sent) || 0} 条评论。`]
+  if (Number(counts.remaining) > 0) parts.push(`还有 ${counts.remaining} 条装不下，留在草稿里，下次再发。`)
+  if (Number(counts.skippedDiscarded) > 0) parts.push(`撤掉的轮上有 ${counts.skippedDiscarded} 条草稿，没有发出。`)
+  return parts.join('')
+}
+const LINE_ERRORS = /** @type {Record<string,string>} */ ({
+  review_file_changed: '这个文件之后又被改过，不能按块撤回。',
+  review_hunk_stale: '这块已经变了，刷新再试。',
+  review_revert_unavailable: '这一块没法自动撤回（新增或删除的文件、内容不是快照里的样子，或工作区已经不在），请手动处理。',
+  review_comment_limit: '评论太多了：每件事最多 50 条草稿，每一轮最多 200 条。',
+  workbench_busy: '这个文件夹还有会话或检查在跑，等它停下再撤回。',
+  review_round_discarded: '这一轮已经撤掉了，不能再改。',
+  rewind_needs_owner: '回退停住了，先在上面拍板再继续。',
+  review_comment_sent: '这条评论已经发出，不能再改。',
+  review_comment_conflict: '这条评论和已存的对不上，刷新再试。',
+  review_comment_not_found: '这条评论已经不在了，刷新看看。',
+})
 /** 改动记录只跟着成果走:哪几件、各是什么内容。
  * @param {Detail|null|undefined} detail */
 const artifactsSignature = detail => JSON.stringify((detail?.artifacts ?? []).map(a => [a.id, a.sha256]))
@@ -142,7 +182,7 @@ function statusLabel(status, runtime, phase, networkSuspended) {
 /** @param {Task} task */
 function statusValue(task) { return task.importedOnly ? 'imported' : workbenchRuntimePresentation(task.status, task.runtime, task.phase, task.networkSuspended)?.status ?? task.status }
 
-/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] */
+/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null,providerName?:string}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] */
 function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
   if (archivedAt != null) return '<div class="wb-archived-controls"><p>已归档 <span>恢复后可继续</span></p><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>'
   if (status === 'running' && live?.runId && live.inputMode) {
@@ -167,7 +207,7 @@ function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
   </form>`
   if(native?.requiresClose){
     const decision=native.decision,fresh=continuation?.mode==='restart_required'
-    const note=decision?`请先关闭原来的 ${escapeWorkbenchHtml(decision.providerId==='claude'?'Claude':'Codex')} 执行程序，再从这里继续。CC 无法替你确认外部程序已退出。`:fresh?'原会话暂时无法恢复。可以查看将带入的记录，再决定新开一轮。':'已加入任务列表，尚未执行。写下接着要做的事，就能从原会话继续。'
+    const note=decision?`请先关闭原来的 ${escapeWorkbenchHtml(native.providerName||decision.providerId)} 执行程序，再从这里继续。CC 无法替你确认外部程序已退出。`:fresh?'原会话暂时无法恢复。可以查看将带入的记录，再决定新开一轮。':'已加入任务列表，尚未执行。写下接着要做的事，就能从原会话继续。'
     const context=fresh&&continuation?.restart?`<details id="wb-restart-context"><summary>查看将带入的记录</summary><pre>${escapeWorkbenchHtml(continuation.restart.context)}</pre></details>`:''
     return `<section class="wb-recovery"><p>${note}</p>${decision?.changedSinceImport?'<p>原会话加入后有新内容；继续会使用原工具现在保存的历史。</p>':''}${context}</section><form class="wb-followup" data-action="${decision?'native-continue':'native-prepare'}" data-native-token="${escapeWorkbenchHtml(decision?.token??'')}" data-restart-token="${escapeWorkbenchHtml(fresh?continuation?.restart?.token??'':'')}"><label class="wb-sr-only" for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="2" placeholder="接下来要做什么…"></textarea><button class="wb-btn wb-btn-primary" type="submit">${decision?(fresh?'原程序已关闭，带记录新开':'原程序已关闭，继续'):fresh?'查看恢复方式':'继续'}</button></form>`
   }
@@ -180,7 +220,7 @@ function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
   return '<form class="wb-followup" data-action="continue"><label class="wb-sr-only" for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="2" placeholder="继续这个任务…"></textarea><button class="wb-btn wb-btn-primary" type="submit">继续</button></form>'
 }
 
-/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] @param {Draft} [draft] @param {string} [attachmentError] */
+/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null,providerName?:string}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] @param {Draft} [draft] @param {string} [attachmentError] */
 export function renderTaskControls(status,continuation,archivedAt,native,live,draft,attachmentError='') {
   const html=renderTaskControlsBase(status,continuation,archivedAt,native,live).replace('</textarea>','</textarea>'+renderAttachmentComposer(draft,attachmentError))
   return draft?.attachments?.some(a=>a.status!=='ready')?html.replace(/type="submit"(?! disabled)/g,'type="submit" disabled'):html
@@ -222,9 +262,21 @@ const needsDecision = task => task.archivedAt == null && ((task.pendingPermissio
 /** Stable across sorting, filtering and pagination; paths never become selectors. @param {string} path */
 const projectDisclosureId = path => 'wb-project-fold-' + (Array.from(path, c => c.codePointAt(0)?.toString(16)).join('-') || 'managed')
 
-/** @param {Task} task @param {Provider[]} providers @param {string|null} selectedId @param {string} [projectName] */
-function renderTask(task, providers, selectedId, projectName) {
-  const provider = providers.find(item => item.id === task.providerId)?.displayName || task.providerId || '未知执行者'
+// 执行者头像(2026-10-19,同手机 app):行尾一组圆头像,名字只进读屏标签和 title,行里不再写执行者名字。
+const AGENTS = createAgentAvatars()
+/**
+ * 执行者叫什么(收敛清单 ⑥):只读 daemon 给的 —— 详情 / 列表的 agentNames,再是执行者列表的 displayName;
+ * 都没有(老 daemon)⇒ undefined,头像那边退回 id。桌面不存名字表。
+ * @param {{providers:Provider[],agentNames?:Record<string,string>,detail?:{agentNames?:Record<string,string>}|null}} state @returns {(id:string)=>string|undefined}
+ */
+export const providerNameOf = state => id => state.detail?.agentNames?.[id] ?? state.agentNames?.[id] ?? state.providers.find(p => p.id === id)?.displayName
+/** 任务自己的执行者在前,再接 daemon 给的 agents(审阅 / 返工 / 会话;老 daemon 不带)。 @param {{providerId:string,agents?:string[]}} task */
+const taskAgents = task => AGENTS.matterAgents(task.providerId, task.agents)
+
+/** @param {Task} task @param {(id:string)=>string|undefined} nameOf @param {string|null} selectedId @param {string} [projectName] */
+function renderTask(task, nameOf, selectedId, projectName) {
+  const agents = taskAgents(task)
+  const provider = AGENTS.agentsLabel(agents, nameOf) || '未知执行者'
   const pendingPermissionCount = task.pendingPermissionCount ?? 0
   const pendingQuestionCount = task.pendingQuestionCount ?? 0
   const title = task.title || '未命名任务'
@@ -234,13 +286,14 @@ function renderTask(task, providers, selectedId, projectName) {
   const waiting = task.waitingFor?.reason === 'writer_not_closed'
     ? `，等待执行程序退出确认，阻塞任务「${task.waitingFor.title}」`
     : task.waitingFor ? `，等待「${task.waitingFor.title}」` : ''
-  const accessibleLabel = `${title}，${provider}，${(task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended))}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
+  const originText = AGENTS.originLabel(task.origin)
+  const accessibleLabel = `${title}，${provider}${originText ? `，${originText}` : ''}，${(task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended))}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
   const stateHtml = pendingPermissionCount > 0
     ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(statusValue(task))}" aria-label="${escapeWorkbenchHtml((task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended)))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
     : pendingQuestionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingQuestionCount)} 项问题等你回答">等你回答 · ${escapeWorkbenchHtml(pendingQuestionCount)}</span>` : `<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue(task))}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended)))}</span>`
   return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}" aria-label="${escapeWorkbenchHtml(accessibleLabel)}"${updated ? ` title="${escapeWorkbenchHtml(`${title} · ${updated}`)}"` : ''}>
     <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}${task.worktree && !task.worktree.removed ? `<span class="wb-worktree-badge" title="${escapeWorkbenchHtml(task.worktree.branch)}">独立分支</span>` : ''}</span>
-    <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(projectName || provider)}</span>${stateHtml}</span>
+    <span class="wb-task-meta">${projectName ? `<span class="wb-task-provider">${escapeWorkbenchHtml(projectName)}</span>` : ''}${stateHtml}${originText ? `<span class="wb-task-marks">${AGENTS.originMarkHtml(task.origin)}${AGENTS.agentAvatarsHtml(agents, { nameOf })}</span>` : AGENTS.agentAvatarsHtml(agents, { nameOf })}</span>
   </button>`
 }
 
@@ -254,7 +307,7 @@ export function workbenchMessageContext(state) {
   const events = detail?.events ?? []
   return {
     detail,
-    helper: state.providers.find(p => p.id === detail?.task.providerId)?.displayName || detail?.task.providerId || '执行助手',
+    helper: (detail ? providerNameOf(state)(detail.task.providerId) || detail.task.providerId : '') || '执行助手',
     handoffs,
     origin: handoffs.find(h => h.purpose === 'review' && h.targetTaskId === detail?.task.id),
     otherProvider: state.providers.find(p => p.id !== detail?.task.providerId),
@@ -290,7 +343,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const projects=groupWorkbenchTasks(tasks,state.projects).filter(project=>!query.q&&query.archived!=='only'||project.tasks.length||query.archived!=='only'&&project.label.toLowerCase().includes(query.q.toLowerCase()))
   const attentionTasks = tasks.filter(needsDecision)
   const projectName = (/** @type {Task} */ task) => task.workspaceKind === 'managed' ? '随手交办' : projects.find(p => p.path === projectPathOf(task))?.label ?? pathParts(projectPathOf(task)).name
-  const attentionList = attentionTasks.length ? `<section class="wb-attention-list" aria-label="等你处理"><header><h3>等你处理</h3><small>${state.page?.hasMore ? '当前列表' : `${attentionTasks.length} 件`}</small></header>${attentionTasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId, projectName(task))).join('')}</section>` : ''
+  const attentionList = attentionTasks.length ? `<section class="wb-attention-list" aria-label="等你处理"><header><h3>等你处理</h3><small>${state.page?.hasMore ? '当前列表' : `${attentionTasks.length} 件`}</small></header>${attentionTasks.map(task => renderTask(task, providerNameOf(state), state.loadingId ?? state.selectedId, projectName(task))).join('')}</section>` : ''
   const regularProjects = projects.map(project => ({...project, tasks:project.tasks.filter(task => !needsDecision(task))}))
   const visibleProjects = regularProjects.filter(project => project.tasks.length || activeProject?.path === project.path)
   const selectedTask = tasks.find(task => task.id === (state.loadingId ?? state.selectedId)) ?? detail?.task
@@ -306,7 +359,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     const create = 'workspaceKind' in project && project.workspaceKind === 'managed'
       ? '<button type="button" class="wb-new wb-project-new" data-action="task-entry" aria-label="随手交办一件事">＋ 交办</button>'
       : `<button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button>`
-    return `<section class="wb-project"><details id="${id}" data-sidebar-disclosure${open ? ' open' : ''}><summary title="${escapeWorkbenchHtml(project.path)}"><h3>${escapeWorkbenchHtml(project.label)}</h3><small>${project.tasks.length}</small></summary><div class="wb-project-tasks">${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('') || '<p class="wb-empty-copy">在这个项目里交办一件事。</p>'}</div></details>${create}</section>`
+    return `<section class="wb-project"><details id="${id}" data-sidebar-disclosure${open ? ' open' : ''}><summary title="${escapeWorkbenchHtml(project.path)}"><h3>${escapeWorkbenchHtml(project.label)}</h3><small>${project.tasks.length}</small></summary><div class="wb-project-tasks">${project.tasks.map(task => renderTask(task, providerNameOf(state), state.loadingId ?? state.selectedId)).join('') || '<p class="wb-empty-copy">在这个项目里交办一件事。</p>'}</div></details>${create}</section>`
   }
   const otherId = 'wb-other-projects'
   const otherList = otherProjects.length ? `<details id="${otherId}" class="wb-other-projects" data-sidebar-disclosure${query.q || executionView.sidebarDisclosures?.get(otherId) ? ' open' : ''}><summary>其他项目 <small>${otherProjects.length}</small></summary><div>${otherProjects.map(project => `<section class="wb-project wb-project-empty"><h3 title="${escapeWorkbenchHtml(project.path)}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button></section>`).join('')}</div></details>` : ''
@@ -351,22 +404,31 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   // 整块面板共用一份预览额度(和「成果」里那份报告同样的 256KiB / 4000 行):
   // 十几轮 × 几十个文件不能各渲各的,不然这一页会被 diff 压垮。
   const reviewBudget = createReviewDiffBudget()
-  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
+  // 回到某一轮(2026-10-21):确认块 / 撤销回退只在有这些字段时才画,老后台照旧
+  const rewindOptions = detail && (state.rewindOpen || detail.rewind) ? { rewind: { open: state.rewindOpen ?? null, view: detail.rewind ?? null, busy: !!executionView.busy } } : {}
+  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: (file, lines) => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget, lines), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, returnResult: state.reviewReturnResult ?? null, lesson: detail.task.workspaceKind !== 'managed', error: !!state.reviewsError, ...rewindOptions, lines: { select: state.lineSelect ?? null, compose: state.lineCompose ?? null, send: state.commentsSend ?? null } }) : ''
+  const rewindBlocked = detail ? renderRewindBlocked(detail, !!state.rewindRestoreConfirm, escapeWorkbenchHtml, !!executionView.busy) : ''
   const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><button type="button" class="wb-new" data-action="back-to-dialogue">回到对话</button></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
   const executionControls=renderExecutionControls(execution,executionView.catalog,executionDisabled)
   const decisionCount = permissions.length + (detail?.questions ?? []).filter(request => request.taskId === detail?.task.id).length
+  // 标题下那组头像 + 名字(同手机 app 的详情页);标题上一行只留项目。
+  const detailAgentIds = detail ? taskAgents(detail.task) : []
+  // 出生地字形放在头像组旁边、名字前面;名字后面再写一句「从哪来的」(不知道 ⇒ 都不画)。
+  const detailOrigin = detail ? AGENTS.originLabel(detail.task.origin) : ''
+  const detailAgents = detailAgentIds.length || detailOrigin ? `<p class="wb-task-agents">${detailOrigin ? AGENTS.originMarkHtml(detail?.task.origin) : ''}${AGENTS.agentAvatarsHtml(detailAgentIds, { nameOf: providerNameOf(state) })}<span>${escapeWorkbenchHtml([AGENTS.agentsLabel(detailAgentIds, providerNameOf(state)), detailOrigin].filter(Boolean).join(' · '))}</span></p>` : ''
   const progress = detail ? `<div class="wb-task-progress"><span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml(detail.task.importedOnly ? '尚未执行' : statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase, detail.task.networkSuspended))}</span>${decisionCount ? `<button type="button" class="wb-new wb-decision-jump" data-action="show-decisions">${decisionCount} 项等你处理 ↓</button>` : detail.task.phase === 'replied' ? '<span>这一轮已答复，可以继续补充要求</span>' : ''}</div>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${worktreeHtml(detail.task, state.providers)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? `<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button>${detail.task.worktree && !detail.task.worktree.removed ? '<small>独立工作区没有没提交的改动时会一起删掉（分支保留）。</small>' : ''}</div>` : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${detailAgents}${worktreeHtml(detail.task, state.providers)}${untilHtml(detail.task)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? `<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button>${detail.task.worktree && !detail.task.worktree.removed ? '<small>独立工作区没有没提交的改动时会一起删掉（分支保留）。</small>' : ''}</div>` : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const modelErrorInTimeline=detail?.task.error==='execution_model_unsupported'&&detail.events.filter(event=>event.kind==='error').at(-1)?.errorCode==='execution_model_unsupported'
   const content = detail ? `
+    ${rewindBlocked}
     ${related}
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
     ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions,!!detail.runtime?.retained)}
     ${renderQuotaHandoff(detail,state.providers,executionView.quotaAttempt)}
-    ${detail.task.error&&(!detail.quotaHandoff||!['provider_quota_exhausted','provider_rate_limited'].includes(detail.task.error)) ? `<div class="wb-error" role="alert">${modelErrorInTimeline?'':escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}${writerExitHtml(detail.task)}</div>` : ''}
+    ${detail.task.error&&detail.task.error!=='rewind_needs_owner'&&(!detail.quotaHandoff||!['provider_quota_exhausted','provider_rate_limited'].includes(detail.task.error)) ? `<div class="wb-error" role="alert">${modelErrorInTimeline?'':escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}${writerExitHtml(detail.task)}</div>` : ''}
     ${reviewHtml}
     ${artifactHtml}` : !state.loadingId && state.projects && !activeProject && state.newScope !== 'new:add-project' && !draft?.text.trim() ? `
     <div class="wb-welcome"><p class="wb-kicker">交办一件事</p><h1>希望 CC 帮你做什么？</h1><p>写下要求、加上材料，再确认工作位置。</p><button type="button" class="wb-btn wb-btn-primary" data-action="task-entry">交给 CC 做</button></div>` : !detail && !state.loadingId && state.projects && !activeProject && (state.newScope === 'new:add-project' || !!draft?.text.trim()) ? `
@@ -392,7 +454,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
       </form></div>`
   const chosenContinuation=executionView.restartPreview?(executionView.restartPreview.status==='ready'?executionView.restartPreview.continuation??undefined:{mode:'restart_required'}):detail?.continuation
   const previewError=executionView.restartPreview?.error?`<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(executionView.restartPreview.error)} <button type="button" class="wb-new" data-action="retry-continuation-preview">重新读取恢复说明</button></p>`:''
-  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
+  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null,providerName:state.nativeResume?.taskId===detail.task.id?providerNameOf(state)(state.nativeResume.providerId):undefined},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
   return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar"><header><h2>一起做</h2><button type="button" class="wb-btn wb-btn-primary wb-delegate" data-action="task-entry">交办</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
 }
 
@@ -429,14 +491,14 @@ export function createWorkbenchController(deps) {
   // 增量补丁已经把变过的行写进 DOM 了:把重画基准对齐,免得下一次 paint() 为同一批
   // 事件再整页重画一次(那会打断输入和滚动)。
   const syncPaintSnapshot = () => { lastPaint = paintKey() }
-  const forgetReviews = () => { state.reviews = []; state.reviewsSignature = EMPTY_REVIEWS; state.reviewsError = false; state.reviewReturnOpen = null }
+  const forgetReviews = () => { state.reviews = []; state.reviewsSignature = EMPTY_REVIEWS; state.reviewsError = false; state.reviewReturnOpen = null; state.reviewReturnResult = null; state.rewindOpen = null; state.rewindRestoreConfirm = false; state.lineSelect = null; state.lineCompose = null; state.commentsSend = null }
   /** 改动记录跟详情并行拉:读不到只在面板上照实说一句,详情照旧。
    * 标记可能是别的面(微信)改的,所以每次长轮询回来都再问一次;签名没变就不重画。
    * @param {string} id */
   const loadReviews = id => {
     const request = detailRequest
     const current = () => alive && request === detailRequest && state.selectedId === id
-    void deps.invokeWorkbenchApi('GET', `/v1/workbench/review?id=${encodeURIComponent(id)}`).then(response => {
+    void v1(deps.invokeWorkbenchApi, V1.workbench.review, { query: { id: id } }).then(response => {
       if (!current()) return
       const list = /** @type {{reviews?:ReviewTurn[]}} */ (response)?.reviews
       const reviews = Array.isArray(list) ? list : []
@@ -484,7 +546,7 @@ export function createWorkbenchController(deps) {
     syncPaintSnapshot()
   }
   const livePoll = createLongPoll({
-    fetchDetail: (id, since, waitMs) => deps.invokeWorkbenchApi('GET', `/v1/workbench/task?id=${encodeURIComponent(id)}&since=${since}&wait_ms=${waitMs}`),
+    fetchDetail: (id, since, waitMs) => v1(deps.invokeWorkbenchApi, V1.workbench.task, { query: { id: id, since: since, wait_ms: waitMs } }),
     onDetail: detail => applyLiveDetail(/** @type {Detail} */ (detail)),
     // A healthy list says nothing about whether this task is still updating.
     onError: () => {
@@ -494,13 +556,15 @@ export function createWorkbenchController(deps) {
     },
   })
   /** @param {string|null} [cursor] */
-  const listPath = cursor => {
+  const listQuery = cursor => {
     const params = new URLSearchParams()
     if (state.query?.q) params.set('q', state.query.q)
     if (state.query?.archived && state.query.archived !== 'exclude') params.set('archived', state.query.archived)
     if (cursor) params.set('cursor', cursor)
-    return `/v1/workbench${params.size ? `?${params}` : ''}`
+    return params
   }
+  /** @param {string|null} [cursor] */
+  const listTasks = cursor => v1(deps.invokeWorkbenchApi, V1.workbench.list, { query: listQuery(cursor) })
   /** @param {Task[]} tasks */
   const dedupe = tasks => [...new Map(tasks.map(task => [task.id, task])).values()]
   return {
@@ -519,12 +583,12 @@ export function createWorkbenchController(deps) {
       let result
       let pages = 1
       try {
-        result = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', listPath()))
+        result = /** @type {ListResult} */ (await listTasks())
         if (!alive || request !== listRequest) return
         while (pages < loadedPages && result.page?.hasMore && result.page.nextCursor) {
-          const next = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', listPath(result.page.nextCursor)))
+          const next = /** @type {ListResult} */ (await listTasks(result.page.nextCursor))
           if (!alive || request !== listRequest) return
-          result = { ...next, tasks: dedupe([...result.tasks, ...next.tasks]), projectProviders: { ...result.projectProviders, ...next.projectProviders } }
+          result = { ...next, tasks: dedupe([...result.tasks, ...next.tasks]), projectProviders: { ...result.projectProviders, ...next.projectProviders }, agentNames: { ...result.agentNames, ...next.agentNames } }
           pages++
         }
       }
@@ -547,15 +611,16 @@ export function createWorkbenchController(deps) {
     async loadMore() {
       if (!alive || state.loadingMore || !state.page?.hasMore || !state.page.nextCursor) return
       const request = ++listRequest
-      const path = listPath(state.page.nextCursor)
+      const cursor = state.page.nextCursor
       state.loadingMore = true
       paint()
       try {
-        const result = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', path))
+        const result = /** @type {ListResult} */ (await listTasks(cursor))
         if (!alive || request !== listRequest) return
         state.tasks = dedupe([...state.tasks, ...result.tasks])
         state.page = result.page
         state.projectProviders = { ...state.projectProviders, ...result.projectProviders }
+        state.agentNames = { ...state.agentNames, ...result.agentNames }
         state.error = ''
         loadedPages++
       } catch (error) { if (!alive || request !== listRequest) return; throw error }
@@ -583,7 +648,7 @@ export function createWorkbenchController(deps) {
       if (!state.detail) { state.loadingId = id; paint() }
       /** @type {Detail} */
       let result
-      try { result = /** @type {Detail} */ (await deps.invokeWorkbenchApi('GET', `/v1/workbench/task?id=${encodeURIComponent(id)}`)) }
+      try { result = /** @type {Detail} */ (await v1(deps.invokeWorkbenchApi, V1.workbench.task, { query: { id: id } })) }
       catch (error) {
         if (!alive || request !== detailRequest || desiredId !== id) return
         desiredId = null
@@ -705,7 +770,16 @@ export function initWorkbenchPage(deps) {
       if (field) open.comment = field.value
       const boxes = /** @type {HTMLInputElement[]} */ (Array.from(returnForm.querySelectorAll?.('input[name="paths"]') ?? []))
       if (boxes.length) open.paths = [...new Set(boxes.filter(box => box.checked).map(box => box.value))]
+      const lesson = /** @type {HTMLInputElement|null} */ (returnForm.querySelector?.('input[name="asLesson"]'))
+      if (lesson) open.asLesson = lesson.checked
     }
+    // 行评论的输入框 / 发出栏里那句总的意见:同理先收回 state
+    const compose = controller.state.lineCompose
+    // 只认同一条的输入框:刚换成另一条时,旧框还在 DOM 里,不能把它的字抄过去
+    const composeField = compose ? /** @type {HTMLTextAreaElement|null} */ (root.querySelector('.wb-line-compose textarea[name="body"]')) : null
+    if (compose && composeField && composeField.dataset.commentId === compose.commentId) compose.body = composeField.value
+    const summaryField = /** @type {HTMLTextAreaElement|null} */ (root.querySelector('.wb-review-send textarea[name="summary"]'))
+    if (summaryField && summaryField.value !== (controller.state.commentsSend?.summary ?? '')) controller.state.commentsSend = { ...(controller.state.commentsSend ?? {}), summary: summaryField.value }
     if (!document.getElementById('wb-create-form') && !document.getElementById('wb-project-form') && !input('wb-followup-text')) return
     const model=input('wb-model'),effort=input('wb-reasoning-effort'),draft=pageDrafts.get(renderedScope)
     const execution=model&&effort?{defaults:/** @type {'provider'|'native'} */(model.dataset.executionDefaults??draft.execution?.defaults??controller.state.detail?.execution?.defaults??'provider'),model:model.value||null,reasoningEffort:effort.value||null}:undefined
@@ -920,6 +994,7 @@ export function initWorkbenchPage(deps) {
     }
   }
   const confirmUnattended = deps.confirmUnattended ?? (() => mountUnattendedDialog())
+  const confirmScripts = deps.confirmScripts ?? (config => mountScriptsApproveDialog(config))
   /** 第一次把事交给免审执行者时后台回 428。当面确认一次,登记下来,再把同一份请求
    * 原样重发;主人说「先不用」就到此为止,不当成出错。
    * @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
@@ -928,25 +1003,27 @@ export function initWorkbenchPage(deps) {
     catch (error) {
       if (!isAckRequiredError(error)) throw error
       if (!(await confirmUnattended()) || !alive) return null
-      await deps.invokeWorkbenchApi('POST', '/v1/workbench/unattended-ack')
+      await v1(deps.invokeWorkbenchApi, V1.workbench.unattendedAck)
       return /** @type {{task?:Task}} */ (await deps.invokeWorkbenchApi(method, path, body))
     }
   }
   /** onError 让调用方自己接住一类错误(打回遇上「要重开」就是这样):回 true 表示这一笔已经
    * 当场交代清楚了,别再往全局那条错误里塞一句看不懂的话。
-   * @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body
-   * @param {(error:unknown)=>boolean|Promise<boolean>} [onError] */
-  const mutate = async (method, path, body, onError) => {
-    const key = path === '/v1/workbench/create' ? 'create' : `task:${String(body.id ?? '')}`
+   * @param {import('../daemon-client.js').V1Key} call @param {Record<string,unknown>} body
+   * @param {(error:unknown)=>boolean|Promise<boolean>} [onError] @param {(result:unknown)=>void} [onResult] 成功时先看一眼回来的结果(发评论要报发了几条) */
+  const mutate = async (call, body, onError, onResult) => {
+    const { method, path } = v1Request(call)
+    const key = call === V1.workbench.create ? 'create' : `task:${String(body.id ?? '')}`
     if (busy.has(key) || !alive) return false
     busy.add(key);controller.paint(true)
     const navigation = navigationGeneration
     try {
       const result = await sendMutation(method, path, body)
       if (!alive || !result) return false
+      onResult?.(result)
       const id = result.task?.id ?? controller.state.selectedId
       await controller.refresh({ force: true })
-      if (alive && path === '/v1/workbench/create' && navigation === navigationGeneration && id && controller.state.selectedId !== id) await controller.selectTask(id)
+      if (alive && call === V1.workbench.create && navigation === navigationGeneration && id && controller.state.selectedId !== id) await controller.selectTask(id)
       return alive
     } catch (e) {
       if (alive && navigation === navigationGeneration) {
@@ -959,6 +1036,36 @@ export function initWorkbenchPage(deps) {
       }
       return false
     } finally { busy.delete(key);if(alive)controller.paint(true) }
+  }
+  let rewindRequest = 0
+  /** 拉一遍回退预览,结果放进确认块;换了任务 / 点了「算了」就丢掉。
+   * @param {{artifactId:string,to:'start'|'end',round:number}} target @param {string} [notice] */
+  const loadRewindPreview = async (target, notice) => {
+    const id = controller.state.selectedId
+    if (!id || !alive) return
+    const request = ++rewindRequest
+    const keep = notice ? { notice } : {}
+    controller.state.rewindOpen = { ...target, status: 'loading', ...keep }
+    controller.paint(true)
+    /** @type {import('./workbench-rewind.js').RewindOpen} */
+    let next
+    try {
+      const result = /** @type {{preview?:import('./workbench-rewind.js').RewindPreview}} */ (await v1(deps.invokeWorkbenchApi, V1.workbench.rewindPreview, { query: { id: id, artifactId: target.artifactId, to: target.to } }))
+      next = result?.preview ? { ...target, status: 'ready', preview: result.preview, ...keep } : { ...target, status: 'error', error: '暂时读不到回退预览，请稍后再试。' }
+    } catch (error) {
+      next = { ...target, status: 'error', error: rewindErrorMessage(error) ?? String(error instanceof Error ? error.message : error) }
+    }
+    if (!alive || request !== rewindRequest || controller.state.selectedId !== id) return
+    controller.state.rewindOpen = next
+    controller.paint(true)
+  }
+  /** 撤销回退 / 拍板被拒:认得的码说成人话放进全局那条错误;认不出交给 fail。
+   * @param {unknown} e */
+  const rewindFailure = e => {
+    const message = rewindErrorMessage(e)
+    if (!message) return false
+    fail(new Error(message))
+    return true
   }
   const openTask = async (/** @type {string} */ id) => {
     if (!alive || !id) return
@@ -980,6 +1087,84 @@ export function initWorkbenchPage(deps) {
     const navigation = navigationGeneration
     if (await interactions.answer(request, decline)) await refreshInteraction(taskId, navigation)
   }
+  /** 行评论 / 按块撤回被拒:认得的码说成人话。
+   * @param {unknown} error @returns {string|null} */
+  const lineErrorMessage = error => {
+    const code = String(error instanceof Error ? error.message : error).match(/\b(review_file_changed|review_hunk_stale|review_revert_unavailable|review_comment_limit|workbench_busy|review_round_discarded|rewind_needs_owner|review_comment_sent|review_comment_conflict|review_comment_not_found)\b/)?.[1]
+    return code ? LINE_ERRORS[code] ?? null : null
+  }
+  /** @param {HTMLElement} row @param {boolean} extend */
+  const selectLine = (row, extend) => {
+    const box = /** @type {HTMLElement|null} */ (row.closest('[data-review-lines]'))
+    const block = /** @type {HTMLElement|null} */ (row.closest('[data-review-hunk]'))
+    const artifactId = box?.dataset.artifactId, path = box?.dataset.path
+    const hunk = Number(row.dataset.hunk), at = Number(row.dataset.row)
+    if (!artifactId || !path || !Number.isInteger(hunk) || !Number.isInteger(at)) return
+    const view = controller.state.reviews?.find(turn => turn.artifactId === artifactId)?.files.find(file => file.path === path)?.hunks?.find(h => h.index === hunk)
+    if (!view || (block && block.dataset.reviewHunk !== String(hunk))) return
+    captureDraft()
+    const current = controller.state.lineSelect
+    const same = current && current.artifactId === artifactId && current.path === path && current.hunk === hunk
+    if (extend && same) {
+      // Shift 点会顺手拉出一段文字选区:清掉,只留行选区
+      try { window.getSelection?.()?.removeAllRanges() } catch { /* 没有选区可清 */ }
+      const anchor = current.anchor
+      let start = Math.min(anchor, at), end = Math.max(anchor, at)
+      if (end - start + 1 > LINE_MAX_ROWS) { if (at > anchor) end = anchor + LINE_MAX_ROWS - 1; else start = anchor - LINE_MAX_ROWS + 1 }
+      controller.state.lineSelect = { ...current, rowStart: start, rowEnd: end }
+    } else if (same && current.rowStart === at && current.rowEnd === at) controller.state.lineSelect = null
+    else controller.state.lineSelect = { artifactId, path, hunk, hunkSha256: view.sha256, anchor: at, rowStart: at, rowEnd: at }
+    controller.paint(true)
+  }
+  /** 打开行下的输入框;正在写的那条还有字 ⇒ 不顶掉它。
+   * @param {import('./workbench-review-panel.js').LineCompose} next */
+  const openCompose = next => {
+    captureDraft()
+    const current = controller.state.lineCompose
+    if (current && current.body.trim() && current.commentId !== next.commentId) return fail(new Error('先存好或取消正在写的那条评论。'))
+    controller.state.lineCompose = next
+    controller.paint(true)
+    input('wb-line-compose-body')?.focus({ preventScroll: true })
+  }
+  /** @param {string} action @param {HTMLElement} target */
+  const onLineAction = async (action, target) => {
+    const id = controller.state.selectedId
+    if (!id) return
+    if (action === 'line-select-clear') { controller.state.lineSelect = null; controller.paint(true); return }
+    if (action === 'line-comment-cancel') { controller.state.lineCompose = null; controller.paint(true); return }
+    if (action === 'line-comment-open') {
+      const select = controller.state.lineSelect
+      if (!select) return
+      controller.state.lineSelect = null
+      // id 在客户端生成:网络断了重存一次 ⇒ 同一个 id,后台按幂等回原行
+      return openCompose({ artifactId: select.artifactId, path: select.path, hunk: select.hunk, hunkSha256: select.hunkSha256, rowStart: select.rowStart, rowEnd: select.rowEnd, commentId: crypto.randomUUID(), body: '' })
+    }
+    const { artifactId, path } = target.dataset, hunk = Number(target.dataset.hunk), hunkSha256 = target.dataset.hunkSha
+    if (action === 'line-comment-hunk' && artifactId && path && Number.isInteger(hunk) && hunkSha256) return openCompose({ artifactId, path, hunk, hunkSha256, commentId: crypto.randomUUID(), body: '' })
+    const commentId = target.dataset.commentId
+    if ((action === 'line-comment-edit' || action === 'line-comment-delete') && commentId) {
+      /** @type {{turn:ReviewTurn,file:import('../../../../src/features/workbench/review').ReviewTurnFile,comment:import('./workbench-review-panel.js').ReviewCommentView}|null} */
+      let found = null
+      for (const turn of controller.state.reviews ?? []) for (const file of turn.files ?? []) for (const comment of file.comments ?? []) if (comment.id === commentId) found = { turn, file, comment }
+      if (!found || found.comment.state !== 'draft') return
+      if (action === 'line-comment-edit') return openCompose({ artifactId: found.turn.artifactId, path: found.file.path, hunk: found.comment.hunk, commentId, body: found.comment.body, edit: true })
+      if (!armConfirm(target, '再点一次：删掉这条')) return
+      const done = await mutate(V1.workbench.reviewComment, { id, commentId, delete: true }, e => { const message = lineErrorMessage(e); if (!message) return false; fail(new Error(message)); return true })
+      if (done && controller.state.lineCompose?.commentId === commentId) { controller.state.lineCompose = null; controller.paint(true) }
+      return
+    }
+    // 按块撤回 / 恢复:点两下才算(恢复就是退路);被拒的原因说成人话
+    const hunkAction = target.dataset.hunkAction
+    if (action === 'review-hunk' && artifactId && path && Number.isInteger(hunk) && hunkSha256 && (hunkAction === 'revert' || hunkAction === 'restore')) {
+      if (!armConfirm(target, hunkAction === 'revert' ? '再点一次：撤回这一块' : '再点一次：恢复这一块')) return
+      return mutate(V1.workbench.reviewHunk, { id, artifactId, path, hunk, hunkSha256, action: hunkAction }, e => {
+        const message = lineErrorMessage(e)
+        if (!message) return false
+        fail(new Error(message))
+        return true
+      })
+    }
+  }
   /** @param {Event} event */
   const onClick = async event => {
     // Capture before the summary's default toggle, including keyboard activation.
@@ -989,6 +1174,9 @@ export function initWorkbenchPage(deps) {
     // 只靠它放掉的话,收起后紧接着的那次滚动仍算「在翻成果」⇒ 停在底部也不跟新回复。
     else if(summary&&summary.parentElement?.hasAttribute('open'))resultReturnPositions.delete(renderedScope)
     const target = event.target instanceof Element ? event.target.closest('button') : null
+    // 行评论(2026-10-21):点一行选中,Shift 点扩到同一块里(≤ 40 行);再点同一行取消
+    const lineRow = !target && event.target instanceof Element ? /** @type {HTMLElement|null} */ (event.target.closest('[data-row]')) : null
+    if (lineRow) return selectLine(lineRow, !!(/** @type {MouseEvent} */ (event).shiftKey))
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
     let action = target.dataset.action
@@ -1017,7 +1205,7 @@ export function initWorkbenchPage(deps) {
       const previewRequest = action === 'download-input-attachment' ? 0 : ++attachmentPreviewRequest
       if(!taskId||!id||controller.getTargetTaskId()!==taskId)return
       try{
-        const data=action==='preview-image-artifact'?await (async()=>{const result=/** @type {{name:string,mime:string,size:number,sha256:string,contentBase64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/artifact?id=${encodeURIComponent(taskId)}&artifactId=${encodeURIComponent(id)}`));return{attachment:{id,...result},base64:result.contentBase64}})():/** @type {{attachment:import('./workbench-attachments.js').Attachment,base64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/attachment?taskId=${encodeURIComponent(taskId)}&id=${encodeURIComponent(id)}`))
+        const data=action==='preview-image-artifact'?await (async()=>{const result=/** @type {{name:string,mime:string,size:number,sha256:string,contentBase64:string}} */(await v1(deps.invokeWorkbenchApi, V1.workbench.artifact, { query: { id: taskId, artifactId: id } }));return{attachment:{id,...result},base64:result.contentBase64}})():/** @type {{attachment:import('./workbench-attachments.js').Attachment,base64:string}} */(await v1(deps.invokeWorkbenchApi, V1.workbench.attachment, { query: { taskId: taskId, id: id } }))
         if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==taskId||(previewRequest && previewRequest!==attachmentPreviewRequest))return
         if(data.attachment.id!==id)throw Error('附件版本不匹配，请重新打开。')
         const a=data.attachment,bytes=decodeBase64(data.base64),url=URL.createObjectURL(new Blob([bytes],{type:a.mime}))
@@ -1040,8 +1228,9 @@ export function initWorkbenchPage(deps) {
     // 改动面板的按钮也带 data-artifact-id(那是快照那件成果),必须赶在下面
     // 「点成果就预览」那条分支之前认领,否则一点接受就跳去预览了。
     if (action === 'review-accept' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
-      return mutate('POST', '/v1/workbench/review-mark', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path, mark: 'accepted' })
+      return mutate(V1.workbench.reviewMark, { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path, mark: 'accepted' })
     }
+    if (action?.startsWith('line-') || action === 'review-hunk') return onLineAction(action, target)
     // 也交给另一位做一份(10-08):原样的第一句要求 + 同一个源项目 + 独立工作区,走普通交办入口;成了就打开新的那件。
     if (action === 'worktree-fork' && controller.state.detail?.task.worktree && !forking) {
       const detail = controller.state.detail, task = detail.task
@@ -1055,9 +1244,9 @@ export function initWorkbenchPage(deps) {
       try {
         const requestId = crypto.randomUUID()
         const body = { requestId, text, title: task.title, providerId, target: { kind: 'project', projectId: project.id, isolation: 'worktree' } }
-        let created = taskIdOf(await deps.invokeWorkbenchApi('POST', '/v1/workbench/create-entry', body).catch(async error => {
+        let created = taskIdOf(await v1(deps.invokeWorkbenchApi, V1.workbench.createEntry, { body: body }).catch(async error => {
           // 回执不确定 ⇒ 按同一个 requestId 问一次,免得点第二下多建一件
-          try { return await deps.invokeWorkbenchApi('GET', `/v1/workbench/entry-receipt?requestId=${requestId}`) } catch { throw error }
+          try { return await v1(deps.invokeWorkbenchApi, V1.workbench.entryReceipt, { query: { requestId: requestId } }) } catch { throw error }
         }))
         if (typeof created !== 'string') throw new Error('没有收到新任务的回执，请刷新看看。')
         await controller.refresh({ force: true })
@@ -1068,21 +1257,78 @@ export function initWorkbenchPage(deps) {
       } finally { forking = false;target.removeAttribute('disabled') }
       return
     }
+    // 工作区脚本(2026-10-20):运行 / 停下;没批过 ⇒ 后台回 428,当面给主人看三条原文,批了再原样重发一次。
+    if ((action === 'worktree-run' || action === 'worktree-stop' || action === 'worktree-approve-scripts') && controller.state.selectedId && controller.state.detail?.task.worktree?.scripts?.configured) {
+      const id = controller.state.selectedId, scripts = controller.state.detail.task.worktree.scripts
+      /** 主人看过原文、点了确认 ⇒ 按他看到的那份(hash)登记;取消 ⇒ false。 */
+      const approve = async () => {
+        if (!(await confirmScripts(scripts.config)) || !alive) return false
+        await v1(deps.invokeWorkbenchApi, V1.workbench.scriptApprove, { body: { id, hash: scripts.hash } })
+        return true
+      }
+      const explain = (/** @type {unknown} */ error) => { const message = scriptErrorMessage(error); fail(message ? new Error(message) : error) }
+      if (action === 'worktree-approve-scripts') {
+        try { if (await approve()) await controller.refresh({ force: true }) } catch (error) { explain(error); await controller.refresh({ force: true }).catch(() => {}) }
+        return
+      }
+      return mutate(V1.workbench.worktree, { id, action: action.slice('worktree-'.length) }, async e => {
+        if (isScriptApprovalRequired(e)) {
+          try { if (await approve()) { await v1(deps.invokeWorkbenchApi, V1.workbench.worktree, { body: { id, action: 'run' } }); await controller.refresh({ force: true }) } }
+          catch (error) { explain(error); await controller.refresh({ force: true }).catch(() => {}) }
+          return true
+        }
+        const message = scriptErrorMessage(e)
+        if (!message) return false
+        fail(new Error(message))
+        return true
+      })
+    }
     // 独立工作区(2026-10-07):提交到分支 / 合回项目(10-08,只快进)/ 删除工作区(合回、删除都点两下才算)。
     if ((action === 'worktree-commit' || action === 'worktree-merge' || action === 'worktree-remove' || action === 'worktree-reopen') && controller.state.selectedId && controller.state.detail?.task.worktree && controller.state.detail.task.worktree.removed === (action === 'worktree-reopen')) {
       if (action === 'worktree-remove' && !armConfirm(target, '再点一次：删除工作区（分支保留）')) return
       if (action === 'worktree-merge' && !armConfirm(target, '再点一次：快进合并到项目当前分支')) return
-      return mutate('POST', '/v1/workbench/worktree', { id: controller.state.selectedId, action: action.slice('worktree-'.length) }, e => {
+      return mutate(V1.workbench.worktree, { id: controller.state.selectedId, action: action.slice('worktree-'.length) }, e => {
         const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree|worktree_uncommitted|project_dirty|project_detached|worktree_not_ff|project_busy|worktree_branch_missing|worktree_open|worktree_conflict|workbench_archived)\b/)?.[1]
         if (!code) return false
         fail(new Error(code === 'workbench_busy' ? '这个工作区还有会话占着，先收工再操作。' : executionErrorMessage(code) ?? code))
         return true
       })
     }
+    // 回到某一轮(2026-10-21):点按钮先拉预览(后台先打备份 B、回 token),确认块里看清再带 token 执行;
+    // 工作区在那之后变了(409 stale)⇒ 重新拉一遍预览、提示再看一眼。
+    if (action === 'rewind-open' && controller.state.selectedId && target.dataset.artifactId && (target.dataset.to === 'start' || target.dataset.to === 'end')) {
+      return loadRewindPreview({ artifactId: target.dataset.artifactId, to: target.dataset.to, round: Number(target.dataset.round) || 0 })
+    }
+    if (action === 'rewind-cancel') { rewindRequest++; controller.state.rewindOpen = null; controller.paint(true); return }
+    if (action === 'rewind-confirm' && controller.state.selectedId && controller.state.rewindOpen?.status === 'ready' && controller.state.rewindOpen.preview) {
+      const open = controller.state.rewindOpen, preview = open.preview
+      if (!preview) return
+      const { artifactId, to, round } = open
+      const done = await mutate(V1.workbench.rewind, { id: controller.state.selectedId, artifactId, to, token: preview.token }, e => {
+        if (isRewindStale(e)) { void loadRewindPreview({ artifactId, to, round }, REWIND_STALE_NOTICE); return true }
+        controller.state.rewindOpen = { artifactId, to, round, status: 'error', error: rewindErrorMessage(e) ?? String(e instanceof Error ? e.message : e) }
+        controller.paint(true)
+        return true
+      })
+      if (done) { controller.state.rewindOpen = null; controller.paint(true) }
+      return
+    }
+    if (action === 'rewind-undo' && controller.state.selectedId && target.dataset.rewindId) {
+      if (!armConfirm(target, '再点一次：撤销回退')) return
+      return mutate(V1.workbench.rewind, { id: controller.state.selectedId, undo: target.dataset.rewindId }, rewindFailure)
+    }
+    // 回退停住了:保留现在的样子(直接)/ 恢复到回退之前(再确认一次)
+    if (action === 'rewind-keep' && controller.state.selectedId) return mutate(V1.workbench.rewindResolve, { id: controller.state.selectedId, choice: 'keep' }, rewindFailure)
+    if (action === 'rewind-restore' || action === 'rewind-restore-cancel') { controller.state.rewindRestoreConfirm = action === 'rewind-restore'; controller.paint(true); return }
+    if (action === 'rewind-restore-confirm' && controller.state.selectedId) {
+      const done = await mutate(V1.workbench.rewindResolve, { id: controller.state.selectedId, choice: 'restore_backup' }, rewindFailure)
+      if (done) { controller.state.rewindRestoreConfirm = false; controller.paint(true) }
+      return
+    }
     // 逐文件撤销(2026-10-06):点两下才算;被拒的原因说成人话(daemon 那边全是拒绝条件,没有「尽量」)。
     if (action === 'review-revert' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
       if (!armConfirm(target, '再点一次：恢复成这一轮开始前')) return
-      return mutate('POST', '/v1/workbench/review-revert', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path }, e => {
+      return mutate(V1.workbench.reviewRevert, { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path }, e => {
         const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|review_file_changed|review_revert_unavailable)\b/)?.[1]
         if (!code) return false
         fail(new Error({
@@ -1101,6 +1347,7 @@ export function initWorkbenchPage(deps) {
         const paths = open.paths.includes(path) ? open.paths.filter(item => item !== path) : [...open.paths, path]
         controller.state.reviewReturnOpen = paths.length ? { ...open, paths } : null
       } else controller.state.reviewReturnOpen = { artifactId, paths: [path], comment: '' }
+      controller.state.reviewReturnResult = null
       controller.paint(true)
       return
     }
@@ -1226,10 +1473,10 @@ export function initWorkbenchPage(deps) {
       const quote=event&&(selection&&event.text.includes(selection)?selection:event.text)
       if(revision&&quote&&quote.length>8000)return fail(new Error('这段回复较长，请先选中要采纳的一段原文，再交回。'))
       captureDraft();handoffCleanup?.()
-      handoffCleanup=mountHandoffDialog(deps.invokeWorkbenchApi,{sourceTaskId:detail.task.id,targetProviderId:providerId,purpose:revision?'revision':'review',request:revision?'请按选中的意见修改，并说明验证结果。':'请检查是否符合本任务要求，指出有依据的问题和遗漏。',artifacts:revision?[]:defaultReviewArtifacts(detail.artifacts),...(revision&&origin&&event?{targetTaskId:origin.sourceTaskId,quote:{taskId:detail.task.id,eventId:Number(event.id),text:quote??''}}:{})},revision?[]:detail.artifacts,detail.task.title,async id=>{if(!alive)return;navigationGeneration++;artifactRequest++;await controller.refresh({force:true});await controller.selectTask(id)},(detail.attachments??[]).map(a=>({...a,taskId:detail.task.id})))
+      handoffCleanup=mountHandoffDialog(deps.invokeWorkbenchApi,{sourceTaskId:detail.task.id,targetProviderId:providerId,purpose:revision?'revision':'review',request:revision?'请按选中的意见修改，并说明验证结果。':'请检查是否符合本任务要求，指出有依据的问题和遗漏。',artifacts:revision?[]:defaultReviewArtifacts(detail.artifacts),...(revision&&origin&&event?{targetTaskId:origin.sourceTaskId,quote:{taskId:detail.task.id,eventId:Number(event.id),text:quote??''}}:{})},revision?[]:detail.artifacts,detail.task.title,async id=>{if(!alive)return;navigationGeneration++;artifactRequest++;await controller.refresh({force:true});await controller.selectTask(id)},(detail.attachments??[]).map(a=>({...a,taskId:detail.task.id})),providerNameOf(controller.state)(providerId))
       return
     }
-    if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)}); return }
+    if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)},controller.state.agentNames??{}); return }
     if (action === 'refresh') return controller.refresh({ force: true }).catch(fail)
     if (action === 'task-entry') { captureDraft(); try { await deps.onDelegate?.({text:'',...(target.dataset.projectPath ? {projectPath:target.dataset.projectPath} : {})}) } catch(error) { if(alive)fail(error) }; return }
     if (action === 'new-task' || action === 'add-project') { captureDraft(); navigationGeneration++; artifactRequest++; controller.newTask(); if(action==='add-project'){controller.state.newScope='new:add-project';controller.paint(true)}; return }
@@ -1267,27 +1514,27 @@ export function initWorkbenchPage(deps) {
     // 那条 runId 是这条排队任务自己的,和挡路者对不上号,带上去只会被当成过期请求拒掉。
     if (action === 'cancel') {
       const holderId = target.dataset.cancelTaskId
-      return mutate('POST', '/v1/workbench/cancel', { id: holderId || controller.state.selectedId, ...(!holderId && typeof controller.state.detail?.runId === 'string' && controller.state.detail.runId ? { expectedRunId: controller.state.detail.runId } : {}) })
+      return mutate(V1.workbench.cancel, { id: holderId || controller.state.selectedId, ...(!holderId && typeof controller.state.detail?.runId === 'string' && controller.state.detail.runId ? { expectedRunId: controller.state.detail.runId } : {}) })
     }
     // 「没确认退出」的旧记录(2026-10-06):没有相反证据时主人可以确认它已经结束;点两下才算。
     if (action === 'confirm-writer-exited' && controller.state.detail?.task.writerExit === 'unconfirmed') {
       if (!armConfirm(target, '再点一次：确认它已经结束')) return
-      return mutate('POST', '/v1/workbench/writer-exited', { id: controller.state.selectedId })
+      return mutate(V1.workbench.writerExited, { id: controller.state.selectedId })
     }
-    if (action === 'archive-task' && controller.state.detail?.task.canArchive === true) return mutate('POST', '/v1/workbench/archive', { id: controller.state.selectedId, archived: true })
-    if (action === 'restore-task' && controller.state.detail?.task.archivedAt != null) return mutate('POST', '/v1/workbench/archive', { id: controller.state.selectedId, archived: false })
-    if ((action === 'allow-permission' || action === 'deny-permission') && target.dataset.requestId) return mutate('POST', '/v1/workbench/permission', { id: controller.state.selectedId, requestId: target.dataset.requestId, decision: action === 'allow-permission' ? 'allow' : 'deny' })
+    if (action === 'archive-task' && controller.state.detail?.task.canArchive === true) return mutate(V1.workbench.archive, { id: controller.state.selectedId, archived: true })
+    if (action === 'restore-task' && controller.state.detail?.task.archivedAt != null) return mutate(V1.workbench.archive, { id: controller.state.selectedId, archived: false })
+    if ((action === 'allow-permission' || action === 'deny-permission') && target.dataset.requestId) return mutate(V1.workbench.permission, { id: controller.state.selectedId, requestId: target.dataset.requestId, decision: action === 'allow-permission' ? 'allow' : 'deny' })
     if (action === 'copy-wechat-command' && controller.state.selectedId) { try { await navigator.clipboard.writeText(`任务 ${controller.state.selectedId}`) } catch { fail(new Error('复制不了，请手动选中任务编号。')) } return }
     const artifact = controller.state.detail?.artifacts?.find(a => a.id === controller.state.selectedArtifactId)
     if (!artifact) return
-    if (action === 'approve-artifact') return mutate('POST', '/v1/workbench/approve', { id: controller.state.selectedId, artifactId: artifact.id, sha256: artifact.sha256 })
+    if (action === 'approve-artifact') return mutate(V1.workbench.approve, { id: controller.state.selectedId, artifactId: artifact.id, sha256: artifact.sha256 })
     if (action === 'preview-artifact' || action === 'download-artifact') {
       const taskId = controller.state.selectedId
       const requestedArtifactId = artifact.id
       const request = action === 'download-artifact' ? artifactRequest : ++artifactRequest
       const navigation = navigationGeneration
       try {
-        const data = /** @type {{name:string,mime:string,contentBase64:string,size:number,sha256:string}} */ (await deps.invokeWorkbenchApi('GET', `/v1/workbench/artifact?id=${encodeURIComponent(taskId ?? '')}&artifactId=${encodeURIComponent(requestedArtifactId)}`))
+        const data = /** @type {{name:string,mime:string,contentBase64:string,size:number,sha256:string}} */ (await v1(deps.invokeWorkbenchApi, V1.workbench.artifact, { query: { id: taskId ?? '', artifactId: requestedArtifactId } }))
         if (!alive || request !== artifactRequest || navigation !== navigationGeneration || controller.state.selectedId !== taskId || controller.state.selectedArtifactId !== requestedArtifactId) return
         const bytes = decodeBase64(data.contentBase64)
         if (action === 'download-artifact') {
@@ -1347,6 +1594,65 @@ export function initWorkbenchPage(deps) {
     const form = event.target instanceof Element && event.target.tagName === 'FORM' ? /** @type {HTMLFormElement} */ (event.target) : null
     if (!form) return
     if (form.dataset.action === 'answer-question') return answerQuestion(form.dataset.ownerTask, form.dataset.requestId)
+    // 行评论:存草稿(新建带客户端 id,改只带 id + 正文);被拒的原因留在输入框里,字不丢
+    if (form.dataset.action === 'line-comment-save') {
+      const taskId = controller.state.selectedId, compose = controller.state.lineCompose
+      if (!taskId || !compose || controller.getTargetTaskId() !== taskId) return
+      captureDraft()
+      const body = compose.body.trim()
+      const keep = (/** @type {string} */ notice) => { if (controller.state.lineCompose === compose) { compose.notice = notice; controller.paint(true) } }
+      if (!body) return keep('先写一句再存。')
+      // 同一件事上还有一笔没回来(撤回 / 删 / 别的存)⇒ mutate 会直接回 false;说一声,字留着
+      if (busy.has(`task:${taskId}`)) return keep('上一个操作还没完成，稍等再存。')
+      compose.notice = ''
+      const payload = compose.edit ? { id: taskId, commentId: compose.commentId, body }
+        : { id: taskId, commentId: compose.commentId, artifactId: compose.artifactId, path: compose.path, hunk: compose.hunk, hunkSha256: compose.hunkSha256, ...(compose.rowStart !== undefined && compose.rowEnd !== undefined ? { rowStart: compose.rowStart, rowEnd: compose.rowEnd } : {}), body }
+      const done = await mutate(V1.workbench.reviewComment, payload, e => { const message = lineErrorMessage(e); if (!message) return false; keep(message); return true })
+      if (done && controller.state.lineCompose === compose) { controller.state.lineCompose = null; controller.paint(true) }
+      return
+    }
+    // 发出行评论:投递同打回 —— 执行者在写 ⇒ 等它答复;原会话不可恢复 ⇒ 当面确认一次,带重开令牌再发
+    if (form.dataset.action === 'line-comments-send') {
+      const taskId = controller.state.selectedId
+      if (!taskId || controller.getTargetTaskId() !== taskId) return
+      captureDraft()
+      const summary = (controller.state.commentsSend?.summary ?? '').trim()
+      const restartToken = controller.state.commentsSend?.restartToken
+      const keep = (/** @type {string} */ notice, /** @type {string|undefined} */ token) => {
+        const next = { ...(controller.state.commentsSend ?? {}), notice }
+        delete next.result
+        if (token === undefined) delete next.restartToken
+        else next.restartToken = token
+        controller.state.commentsSend = next
+        controller.paint(true)
+      }
+      if (controller.state.detail?.task.phase !== 'replied' && ['running', 'queued', 'cancelling'].includes(controller.state.detail?.task.status ?? '')) return keep('执行者还在写，等它答复后再发出评论。', restartToken)
+      /** @type {{sent?:number,remaining?:number,skippedDiscarded?:number}} */
+      let counts = {}
+      const done = await mutate(V1.workbench.reviewCommentsSend, { id: taskId, ...(summary ? { summary } : {}), ...(restartToken ? { restartToken } : {}) }, async error => {
+        const recovery = recoveryCode(error)
+        if (recovery === 'stale') { keep('', undefined); return false }
+        if (recovery === 'required') {
+          let token = controller.state.detail?.continuation?.restart?.token
+          if (typeof token !== 'string') { try { await controller.refresh({ force: true }) } catch { /* 让 fail() 照实报 */ } token = controller.state.detail?.continuation?.restart?.token }
+          if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return false
+          keep('原会话无法恢复。点「带记录重新开始并发回」，CC 会带上这段记录重新开始，再把这几条评论交回去。', token)
+          return true
+        }
+        const code = String(error instanceof Error ? error.message : error).match(/\b(workbench_busy|review_comment_not_found|rewind_needs_owner)\b/)?.[1]
+        if (!code) return false
+        keep(code === 'workbench_busy' ? '执行者还在写，等它答复后再发出评论。' : code === 'review_comment_not_found' ? '没有能发出的草稿。' : LINE_ERRORS[code] ?? code, restartToken)
+        return true
+      }, result => { counts = /** @type {typeof counts} */ (result) ?? {} })
+      if (done) {
+        // 旧的发出栏还在 DOM 里:先清掉那句,免得重画时又被抄回来
+        const field = /** @type {HTMLTextAreaElement|null} */ (root.querySelector('.wb-review-send textarea[name="summary"]'))
+        if (field) field.value = ''
+        controller.state.commentsSend = { summary: '', result: sentResultText(counts) }
+        controller.paint(true)
+      }
+      return
+    }
     if (form.dataset.action === 'review-return-submit') {
       const taskId = controller.state.selectedId, artifactId = form.dataset.artifactId
       if (!taskId || !artifactId || controller.getTargetTaskId() !== taskId) return
@@ -1356,11 +1662,13 @@ export function initWorkbenchPage(deps) {
       const comment = (/** @type {HTMLTextAreaElement|null} */ (form.querySelector?.('textarea[name="comment"]'))?.value ?? '').trim()
       if (!paths.length) return fail(new Error('请先勾选要打回的文件。'))
       if (!comment) return fail(new Error('请写一句要怎么改，再发回。'))
+      // 同时记成这个项目的经验:随手交办没有项目,框不画;记没记上只是附带的一句,不影响「已发回」
+      const asLesson = controller.state.detail?.task.workspaceKind !== 'managed' && !!(/** @type {HTMLInputElement|null} */ (form.querySelector?.('input[name="asLesson"]'))?.checked)
       // 这一笔没发出去的话,勾选、意见和「为什么没发出去」都得留在 state 里 —— 表单本体活在会被重画冲掉的 DOM。
       const keep = (/** @type {string} */ notice, /** @type {string|undefined} */ token) => {
         const current = controller.state.reviewReturnOpen
         if (!current || current.artifactId !== artifactId) return
-        current.paths = paths; current.comment = comment; current.notice = notice
+        current.paths = paths; current.comment = comment; current.notice = notice; current.asLesson = asLesson
         if (token === undefined) delete current.restartToken
         else current.restartToken = token
         controller.paint(true)
@@ -1372,7 +1680,9 @@ export function initWorkbenchPage(deps) {
       // 但「已答复」的保留会话状态也是 running(会话留着等续接):这时打回是送得出去的,
       // 后台会把它当作续接投给同一条会话(评审 2026-09-21 #7),别在这儿先把它挡了。
       if (controller.state.detail?.task.phase !== 'replied' && ['running', 'queued', 'cancelling'].includes(controller.state.detail?.task.status ?? '')) return keep('这项任务正在跑，等它答复后再打回。', restartToken)
-      const done = await mutate('POST', '/v1/workbench/review-return', { id: taskId, artifactId, paths, comment, ...(restartToken ? { restartToken } : {}) }, async error => {
+      /** @type {unknown} */
+      let lesson
+      const done = await mutate(V1.workbench.reviewReturn, { id: taskId, artifactId, paths, comment, ...(restartToken ? { restartToken } : {}), ...(asLesson ? { asLesson: true } : {}) }, async error => {
         const recovery = recoveryCode(error)
         if (!recovery) return false
         // 令牌过期:丢掉它,重新走一遍「先确认再发」。fail() 那句「记录已更新」照常说。
@@ -1383,9 +1693,10 @@ export function initWorkbenchPage(deps) {
         if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return false
         keep('原会话无法恢复。点「带记录重新开始并发回」，CC 会带上这段记录重新开始，再把这几处交回去。', token)
         return true
-      })
+      }, result => { lesson = /** @type {{lesson?:unknown}} */ (result)?.lesson })
       if (done) {
         controller.state.reviewReturnOpen = null
+        controller.state.reviewReturnResult = asLesson ? { artifactId, text: returnLessonText(lesson) } : null
         controller.paint(true)
       }
       return
@@ -1423,7 +1734,7 @@ export function initWorkbenchPage(deps) {
       const data=new FormData(form),navigation=navigationGeneration
       busy.add('project')
       try{
-        const result=/** @type {{project:{path:string,providerId:string}}} */(await deps.invokeWorkbenchApi('POST','/v1/workbench/project',{path:String(data.get('path')??''),name:String(data.get('name')??'').trim()||undefined,providerId:String(data.get('providerId')??'')}))
+        const result=/** @type {{project:{path:string,providerId:string}}} */(await v1(deps.invokeWorkbenchApi, V1.workbench.project, { body: {path:String(data.get('path')??''),name:String(data.get('name')??'').trim()||undefined,providerId:String(data.get('providerId')??'')} }))
         await controller.refresh({force:true})
         if(!alive||navigation!==navigationGeneration)return
         const {path,providerId}=result.project,scope=`new:${path}`
@@ -1448,7 +1759,7 @@ export function initWorkbenchPage(deps) {
       if(!sent.text.trim()&&!files.attachments?.length)return
       if(!attachments.ready(scope))return fail(new Error('请等附件上传完成，或移除上传失败的附件。'))
       const release=attachments.reserve(scope,files)
-      if (await mutate('POST', '/v1/workbench/create', { title: sent.title || undefined, path: sent.path, providerId: sent.providerId, text: sent.text,...attachmentPayload(files),...executionPayload(files) }).finally(release)) {
+      if (await mutate(V1.workbench.create, { title: sent.title || undefined, path: sent.path, providerId: sent.providerId, text: sent.text,...attachmentPayload(files),...executionPayload(files) }).finally(release)) {
         const draft = pageDrafts.get(scope)
         const changedAttachments=attachmentSignature(draft.attachments)!==attachmentSignature(files.attachments)||executionSignature(draft.execution)!==executionSignature(files.execution)
         // Submitted IDs now belong to the created task. A newly edited task
@@ -1474,7 +1785,7 @@ export function initWorkbenchPage(deps) {
       captureDraft();const sent=pageDrafts.get(renderedScope);busy.add(`task:${id}`);controller.paint(true)
       try{
         const mode=controller.state.detail?.continuation?.mode==='restart_required'?'fresh_context':'native_resume'
-        const decision=/** @type {NativeResume} */(await deps.invokeWorkbenchApi('POST','/v1/workbench/prepare-resume',{id,mode,...executionPayload(sent)}))
+        const decision=/** @type {NativeResume} */(await v1(deps.invokeWorkbenchApi, V1.workbench.prepareResume, { body: {id,mode,...executionPayload(sent)} }))
         if(alive&&controller.state.selectedId===id&&executionSignature(pageDrafts.get(`task:${id}`).execution)===executionSignature(sent.execution)){controller.state.nativeResume=decision;controller.paint()}
       }catch(error){await controller.refresh({force:true}).catch(()=>{});if(alive&&controller.state.selectedId===id)fail(error)}
       finally{busy.delete(`task:${id}`);if(alive)controller.paint(true)}
@@ -1502,7 +1813,7 @@ export function initWorkbenchPage(deps) {
       if (restart && !/^[a-f0-9]{64}$/.test(restartToken ?? '')) return fail(new Error('restart_confirmation_stale'))
       const inputRequestId=sourceClosedToken?undefined:interactions.continuationRequest(taskId,text,files.attachments,files.execution)
       const release=attachments.reserve(`task:${taskId}`,files)
-      if (await mutate('POST', '/v1/workbench/continue', { id: taskId, text,...attachmentPayload(files),...executionPayload(files),...(inputRequestId?{inputRequestId}:{}), ...(restart ? { restartToken } : {}),...(sourceClosedToken?{sourceClosedToken}:{}) }).finally(release)) {
+      if (await mutate(V1.workbench.continue, { id: taskId, text,...attachmentPayload(files),...executionPayload(files),...(inputRequestId?{inputRequestId}:{}), ...(restart ? { restartToken } : {}),...(sourceClosedToken?{sourceClosedToken}:{}) }).finally(release)) {
         const scope = `task:${taskId}`
         const draft = pageDrafts.get(scope)
         const unchanged=attachmentSignature(draft.attachments)===attachmentSignature(files.attachments)&&executionSignature(draft.execution)===executionSignature(files.execution)

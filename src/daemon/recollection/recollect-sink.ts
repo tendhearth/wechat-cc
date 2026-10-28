@@ -1,6 +1,6 @@
 /**
- * recollect-sink.ts — the daemon-side RecollectSink (src/core/matters/
- * recollection.ts) that src/core/workbench/service.ts's terminal-completion
+ * recollect-sink.ts — the daemon-side RecollectSink (src/domain/matters/
+ * recollection.ts) that src/features/workbench/service.ts's terminal-completion
  * branch calls into (via recollectOnce; fix round 1/5, 2026-09-23,
  * controller ruling: this must be wired up this round, not left for a later
  * task). Fix round 3 removed the settleQuiet call point that rounds 1-2 also
@@ -10,7 +10,7 @@
  * overnight-only story — would use up the matter's one slot before any real
  * "back-and-forth" (turns/returned) ever had a chance to accumulate).
  *
- * Thin glue, same philosophy as ../reports/report-sink.ts: look up the
+ * Thin glue, same philosophy as ../../features/reports/report-sink.ts: look up the
  * matter (title + createdAt), pick a cheap model, and let the pure
  * `maybeRecollect` decide whether this crosses the story threshold. If it
  * does, write straight to journal.recordRecollection.
@@ -82,11 +82,11 @@
  * abort signal — out of scope here, recorded as a known gap, not silently
  * assumed away.
  */
-import type {MatterStore} from '../../core/matters/store'
-import {maybeRecollect, buildRecollectionPrompt, crossedOvernight, RETURNED_SIGNAL_UNAVAILABLE, type RecollectSink} from '../../core/matters/recollection'
-import type {Journal} from '../../core/journal-store'
-import type {CheapEval} from '../../core/agent-provider'
-import {GATE_TIMEOUT_MS} from '../../core/a2a-disclosure'
+import type { MatterStore } from '../../ports/matters'
+import {maybeRecollect, buildRecollectionPrompt, crossedOvernight, RETURNED_SIGNAL_UNAVAILABLE, type RecollectSink} from '../../domain/matters/recollection'
+import type {Journal} from '../../adapters/store/journal-store'
+import type {CheapEval} from '../../ports/agent-provider'
+import {GATE_TIMEOUT_MS} from '../../app/a2a-disclosure'
 
 export interface RecollectSinkDeps {
   matters: MatterStore

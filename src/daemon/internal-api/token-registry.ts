@@ -1,5 +1,9 @@
 import { randomBytes } from 'node:crypto'
-import type { UserTier } from '../../core/user-tier'
+import type { UserTier } from '../../domain/user-tier'
+import { routesForToken } from './route-tiers'
+
+/** operator 令牌的 routeAllow(重构第二批 5a 起从路由表推出来)。 */
+const OPERATOR_ROUTE_ALLOW: ReadonlySet<string> = routesForToken('operator')
 
 /**
  * token-registry — maps an internal-api bearer token to the tier and origin
@@ -163,123 +167,9 @@ export function makeTokenRegistry(
       map.set(tokenHex, {
         tier: 'admin',
         origin: 'operator',
-        routeAllow: new Set([
-          'POST /v1/companion/converse',
-          'POST /v1/companion/speak',
-          'POST /v1/companion/transcribe',
-          // Owner-only workspace (admin-tier reads of the owner's wxvault
-          // history + stored customer judgments). Reached ONLY through the
-          // Tauri host's customer_review_api command / the dev server's mirror
-          // of it — never from webview JS, which must not hold this token.
-          'GET /v1/customer-review/contacts',
-          'POST /v1/customer-review',
-          'POST /v1/customer-review/run',
-          'GET /v1/customer-review',
-          'GET /v1/customer-review/evidence',
-          'GET /v1/customer-review/recent',
-          'GET /v1/customer-review/history',
-          'POST /v1/customer-review/item',
-          // 待办 workspace (2026-08-24) — same owner-only trust class and the
-          // same delivery channel (the Tauri host's owner-workspace command;
-          // webview JS never holds this token): obligation list + status
-          // writes, contact display names, reminder scheduling.
-          'POST /v1/knowledge/facts/find_facts',
-          'POST /v1/llm/keys',
-          // Owner's retained thoughts, read through the desktop host only.
-          'GET /v1/companion/thoughts',
-          'POST /v1/knowledge/facts/set_fact_status',
-          'POST /v1/knowledge/graph/top_contacts',
-          'POST /v1/reminders/schedule',
-          // 桌宠权限卡片(spec 2026-09-05-cc-desktop-pet §6)—— 主人在陪伴窗上
-          // 点「允许 / 拒绝」,经 Tauri 的 pet_permission_resolve 命令走这一条。
-          // 路由本身是 admin 档(route-tiers),所以只有这个 operator 凭据够得着;
-          // 少了这一行,按钮按下去必然 403 route_not_allowed(2026-09-05 终审
-          // Critical #1)。**只加 resolve,不加 GET /v1/permissions/pending**:
-          // 这个集合的口径是「桌面 app 真会调的那几条」,而待决列表桌面是从
-          // GET /v1/companion/pet(trusted 档)读的,operator 凭据永远不会去
-          // 调 /v1/permissions/pending —— 不调的就不给。
-          'POST /v1/permissions/resolve',
-          // hearth federation mint (grant-gated, see routes-federation.ts) —
-          // the operator token alone is not enough; readGrant(stateDir) must
-          // also be non-null (explicit owner authorization, design option B).
-          'POST /v1/federation/mint',
-          // Owner Workbench (2026-09-11) — the Tauri host proxies these
-          // requests with this operator credential; the webview never sees
-          // the token. Keep the grant to the exact Workbench methods.
-          'GET /v1/workbench/entry-options',
-          'POST /v1/workbench/create-entry',
-          'GET /v1/workbench/entry-receipt',
-          'POST /v1/workbench/attachment',
-          'GET /v1/workbench/attachment',
-          'POST /v1/workbench/discard-attachment',
-          'GET /v1/workbench',
-          // 「一件事」三条:桌面 / 手机都从这里读同一份列表(2026-09-16)。
-          'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','GET /v1/matter/owner-chat/search','POST /v1/matter/say',
-          // 「CC 的连接」:桌面「此刻」右上角的连接浮层(2026-10-01)。
-          'GET /v1/connections',
-          // 桌面「连接手机」(plan 7a):设置抽屉弹层与引导页的码、轮询「已连上」。
-          'POST /v1/phone/link',
-          'GET /v1/phone/devices',
-          'GET /v1/workbench/models',
-          'GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task',
-          'POST /v1/workbench/project',
-          'POST /v1/workbench/create',
-          'POST /v1/workbench/continue',
-          'POST /v1/workbench/cancel',
-          'GET /v1/workbench/artifact',
-          'POST /v1/workbench/approve',
-          'POST /v1/workbench/permission',
-          'POST /v1/workbench/archive',
-          'POST /v1/workbench/writer-exited',
-          'POST /v1/workbench/unattended-ack',
-          'GET /v1/workbench/review',
-          'POST /v1/workbench/review-mark',
-          'POST /v1/workbench/review-return',
-          'POST /v1/workbench/review-revert',
-          'POST /v1/workbench/worktree',
-      'POST /v1/workbench/import',
-      'POST /v1/workbench/prepare-resume',
-      'POST /v1/workbench/prepare-continuation',
-      'POST /v1/workbench/quota-handoff',
-      'POST /v1/workbench/handoff-preview',
-      'POST /v1/workbench/handoff',
-      'GET /v1/workbench/handoff',
-          'GET /v1/workbench/attention',
-          'POST /v1/workbench/input',
-          'POST /v1/workbench/answer',
-          'POST /v1/workbench/withdraw-input',
-          // 自维护三件套(spec 2026-09-18-self-maintenance §1/§2) — the
-          // `wechat-cc selftest chat` CLI drives this route with the SAME
-          // operator token it uses for Workbench above (own credential
-          // read from internal-api-info.json, never the shared trusted
-          // file token). The desktop app itself never calls this route.
-          'POST /v1/selftest/converse',
-          // 自改流水线(spec 2026-09-18-self-change-pipeline §daemon 侧)——
-          // `wechat-cc self change` 跑在 daemon 外面,用的是和 Workbench /
-          // selftest 同一份 operator 凭据(从 internal-api-info.json 读,不是
-          // 共享的 trusted 文件 token)。三条路由都是 admin 档,少了这三行
-          // 自改一开口就 403 route_not_allowed。
-          'POST /v1/self-change/notice',
-          'POST /v1/self-change/ask',
-          'GET /v1/self-change/decision',
-          // `wechat-cc selftest phone` 用这份 operator 凭据取配对链接 —— 路由 plan 7a 起是 admin 档
-          // (铸 admin 链接令牌),共享的 trusted 文件 token 够不着了。桌面不再调它(改走 /v1/phone/link)。
-          'GET /v1/settings/link',
-          // `wechat-cc cli upgrade|rollback`(外部 agent CLI 自动升级,2026-10-04):同一份 operator 凭据,
-          // admin 档。桌面不调(状态从 /v1/health 的 cli_upgrade 读)。
-          'POST /v1/cli/upgrade',
-          'POST /v1/cli/rollback',
-          // 终端会话登记处(v76,2026-10-14):CC 统管主人所有终端 agent 会话的只读列表。admin 档,
-          // 同一份 operator 凭据。桌面「此刻」的等你行读它(2026-10-14):Tauri 宿主(lib.rs)与
-          // workbench-proxy.ts 都已登记;拍板不走这条,走 POST /v1/permissions/resolve。
-          'GET /v1/cli/sessions',
-          // 「今天」一眼看完(2026-10-14):同一份 operator 凭据,admin 档、只读。桌面暂不调(保持简单)。
-          'GET /v1/overseer/today',
-          // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):桌面「CC 现在怎么样」与引导页的「接上」/「修复」。
-          // admin 档,同一份 operator 凭据;Tauri 宿主(lib.rs)与 workbench-proxy.ts 都已登记。
-          'POST /v1/cli/hooks/install',
-          'POST /v1/cli/hooks/uninstall',
-        ]),
+        // 名单在路由表(packages/protocol/src/routes.ts)里:`desktop.tokens` 含 'operator' 的行。
+        // 每一条为什么给 operator 的说明见本文件顶上的 OPERATOR / ROUTE-SCOPING 两段与表里各行的注释。
+        routeAllow: OPERATOR_ROUTE_ALLOW,
       })
     },
     mint(tier, sessionKey, opts) {

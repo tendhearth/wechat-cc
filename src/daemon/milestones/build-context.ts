@@ -17,10 +17,10 @@ import { join } from 'node:path'
 import type { DetectorContext } from './detector'
 import { makeEventsStore } from '../events/store'
 import { makeActivityStore } from '../activity/store'
-import { makeSessionStore } from '../../core/session-store'
+import { makeSessionStore } from '../../adapters/store/session-store'
 import type { Db } from '../../lib/db'
 import { resolveProjectJsonlPath } from '../sessions/path-resolver'
-import { localDayKey } from '../../core/prompt-format'
+import { localDayKey } from '../../domain/prompt-format'
 
 export interface BuildContextDeps {
   stateDir: string

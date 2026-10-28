@@ -178,7 +178,7 @@ codex 探测、计划内重启静默、`test:live-cli` 两家各一次。
 ## 9 月 23 日 → 9 月 27 日追加的部分
 
 - **手机页统一色板**(`apps/mobile/src/tokens.css`)—— 设置页 / 引导页 / 过期页 / 壳页换成同一套纸色;圆角四档 token;开关关态看得见;源码不再写死颜色,测试守住。
-- **每晚整理长期记忆 `memory.md`** 与手机「CC 眼中的你」—— 详见 [docs/architecture.md §2.4](../architecture.md)。
+- **每晚整理长期记忆 `memory.md`** 与手机「CC 眼中的你」—— 详见 [docs/reference/architecture-companion-2026-07.md §2.4](../reference/architecture-companion-2026-07.md)。
 - **全仓梳理后续**(PR #118)—— 三份总图与 README 按代码说实话;新增三份现状文档(发版管线、内部 API 鉴权、模型与后端管理);三条守卫(桌面路由四份白名单一致、provider 枚举一致、`cli.ts` 只许变小);删掉退役的客户回顾前端、旧会话面板死路径、`log-viewer.ts` 与 10 个 0 引用脚本。`gemini`(API key)标 deprecated,请改用 `/agy`。
 - **发版链自己的两处修**(PR #119)—— macOS 构建的 `stable-diffusion.cpp` 克隆漏了子模块(这一步 09-03 加进来后第一次在真 tag 上跑);路由守卫不再受 CRLF 影响。
 

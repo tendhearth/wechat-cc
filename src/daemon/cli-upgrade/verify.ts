@@ -16,9 +16,9 @@
  * 工具调用没出来、续接断了、工作台检查项不过)才算 fail。
  */
 import { isConnectFailure } from '../../lib/net-errors'
-import { executionFailureMessage } from '../../core/workbench/execution-settings'
-import type { CliSpec } from '../../core/cli-upgrade/specs'
-import type { VerifyResult } from '../../core/cli-upgrade/engine'
+import { executionFailureMessage } from '../../adapters/store/workbench/execution-settings'
+import type { CliSpec } from '../../domain/cli-upgrade/specs'
+import type { VerifyResult } from './engine'
 import type { SelftestConverseResult } from '../selftest'
 import type { SelftestReport } from '../../cli/selftest'
 
@@ -46,11 +46,11 @@ const isGuard = (r: { errorCode?: string; error?: string }) => r.errorCode === '
 
 /** 供应商侧的失败码(lib/provider-error-code):不是 CLI 的错。`invalid_request` / `provider_error` 不在里面 ——
  *  「模型需要更新的 CLI」这类恰恰是 invalid_request,那正是要抓的。 */
-const PROVIDER_SIDE = new Set(['quota', 'rate_limited', 'auth_failed', 'auth_rejected', 'network', 'server_error'])
+const PROVIDER_SIDE = new Set(['quota', 'rate_limited', 'auth_failed', 'auth_rejected', 'network', 'server_error', 'region_unavailable'])
 const providerSide = (r: { errorCode?: string }) => !!r.errorCode && PROVIDER_SIDE.has(r.errorCode)
 
 /** 工作台把同一组码翻成了固定的人话(execution-settings);检查项 detail 里出现这些句子 ⇒ 供应商侧。 */
-const WORKBENCH_PROVIDER_SIDE = ['provider_quota_exhausted', 'provider_rate_limited', 'provider_auth_expired', 'provider_auth_rejected', 'provider_network', 'provider_server_error', 'network_unprotected']
+const WORKBENCH_PROVIDER_SIDE = ['provider_quota_exhausted', 'provider_rate_limited', 'provider_auth_expired', 'provider_auth_rejected', 'provider_network', 'provider_server_error', 'provider_region_unavailable', 'network_unprotected']
   .flatMap(code => [code, executionFailureMessage(code)])
 const workbenchProviderSide = (detail: string | undefined) => !!detail && WORKBENCH_PROVIDER_SIDE.some(m => detail.includes(m))
 

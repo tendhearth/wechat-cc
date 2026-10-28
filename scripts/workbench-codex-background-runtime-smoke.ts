@@ -8,10 +8,10 @@ import {createServer,type ServerResponse} from 'node:http'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {gunzipSync} from 'node:zlib'
-import {createWorkbenchCodexProvider} from '../src/core/workbench/codex-app-server'
+import {createWorkbenchCodexProvider} from '../src/adapters/executors/codex/codex-app-server'
 import {findCodexBinary} from '../src/lib/find-codex-binary'
-import {TIER_PROFILES} from '../src/core/user-tier'
-import type {AgentEvent,AgentSession} from '../src/core/agent-provider'
+import {TIER_PROFILES} from '../src/domain/user-tier'
+import type {AgentEvent,AgentSession} from '../src/ports/agent-provider'
 
 assert(process.argv.includes('--run'));assert.equal(process.platform,'darwin')
 const binary=findCodexBinary();assert(binary)

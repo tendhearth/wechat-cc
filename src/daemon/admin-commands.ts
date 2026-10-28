@@ -14,16 +14,18 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { NICKNAME_RE, NICKNAME_MAX_LEN } from './nickname'
 import { isoFromMs } from '../lib/iso-time'
-import type { InboundMsg } from '../core/prompt-format'
-import type { ProviderRegistry } from '../core/provider-registry'
-import type { SessionManager } from '../core/session-manager'
-import type { SessionStore } from '../core/session-store'
-import type { SessionStateStore, ExpiredBot } from '../core/session-state'
+import type { InboundMsg } from '../domain/prompt-format'
+import type { WechatCommand } from './commands/registry'
+import type { ProviderRegistry } from '../app/provider-registry'
+import type { SessionManager } from '../app/session-manager'
+import type { SessionStore } from '../ports/session-store'
+import type { SessionStateStore, ExpiredBot } from '../adapters/store/session-state'
 import { loadHearthApi, type HearthApi, type HearthLoadResult } from './hearth-adapter'
 import type { SynthesizeResult } from '../lib/memory-synthesis'
 import { isConnectFailure } from '../lib/net-errors'
 import type { SelfChangeSpawner } from './self-change-spawn'
-import { formatNightlyReply } from './memory/nightly-notify'
+import { formatNightlyReply } from '../features/memory'
+import { setRulesEnabled } from './permission-gate'
 
 export interface AdminCommandsDeps {
   stateDir: string
@@ -66,7 +68,7 @@ export interface AdminCommandsDeps {
   /** 每晚整理的长期记忆(渲染好的文本,带「最近整理」首行);没有 memory.md 时 null。 */
   readCuratedMemory?: (adminChatId: string) => Promise<string | null>
   /** 「整理记忆」:立刻跑一次每晚整理。 */
-  runMemoryNightlyNow?: () => Promise<import('./memory/nightly-notify').NightlyRunResult>
+  runMemoryNightlyNow?: () => Promise<import('../features/memory').NightlyRunResult>
   /**
    * Optional. Delegate a task to a registered "hand" (another machine running
    * wechat-cc with A2A exec). Returns the hand's result, or a list of known
@@ -123,6 +125,11 @@ export interface AdminCommands {
   probe(msg: InboundMsg): boolean
   /** Returns true iff the message was consumed (admin command handled or silently dropped). */
   handle(msg: InboundMsg): Promise<boolean>
+  /**
+   * 一条命令一行(第三批 3d,同 control / mode 的写法):`admin.owner-only`(非主人发显式命令 ⇒ 「这条只有主人能用。」)
+   * + 每条命令一行 `admin.<id>`。各行两两互斥(测试钉住),所以表里的先后不影响谁认领。
+   */
+  commands(): WechatCommand[]
 }
 
 const CLEANUP_RE = /^\s*清理\s*(all-expired|所有过期|[a-zA-Z0-9-]+-im-bot)\s*$/
@@ -152,10 +159,21 @@ const BAG_RE = /^\s*(?:\/(?:bag|背包)|背包|打猎背包|猎物|战利品|打
 const SELF_CHANGE_RE = /^\s*自改\s+([\s\S]+)$/
 const SELF_CHANGE_STATUS_RE = /^\s*自改\s*(?:状态|列表)\s*$/
 
-/** 认出一串配对码(裸码或 /hand <码>)。返回去掉空白的码,或 null。 */
-/** 管理员命令的识别面(纯函数)—— handle 与 probe 共用这一份,别再各写一遍。 */
+/**
+ * 明确的命令写法:斜杠命令、手的配对码、「自改 …」—— 不会和日常聊天撞。非主人发来 ⇒ 回一句「只有主人能用」。
+ * 其余(背包 / 看记忆 / 有哪些手 / 整理记忆 / 让X执行…)和日常汉语重合,非主人说的就当普通聊天(重构第二批步 3a)。
+ */
+/**
+ * 显式的管理员命令写法(斜杠开头、配对码、「自改」):非主人发这些 ⇒ 回一句「只有主人能用」;日常说法(「看看有哪些手」
+ * 「背包」…)不认领,交给模型。由行表推出来:斜杠开头,或者命中标了 explicit 的那几行。
+ */
+export function isExplicitAdminCommand(text: string): boolean {
+  return text.startsWith('/') || ADMIN_ROWS.some(r => r.explicit && r.match(text, { handNames: [] }) != null)
+}
+
+/** 管理员命令的识别面(纯函数):任一行认得它。以前是一份手写的、和 handle 里 if 链平行的 19 个正则清单,两边会悄悄对不上。 */
 export function isAdminCommandText(text: string, handNames: readonly string[]): boolean {
-  return !!matchHandJoin(text) || HANDS_LIST_RE.test(text) || BAG_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || !!matchDelegate(text, handNames) || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text) || SELF_CHANGE_STATUS_RE.test(text) || SELF_CHANGE_RE.test(text)
+  return ADMIN_ROWS.some(r => r.match(text, { handNames }) != null)
 }
 
 export function matchHandJoin(text: string): string | null {
@@ -252,6 +270,8 @@ export function isDelegateName(name: string): boolean {
 //   /name <X>     → per-chat user nickname (any sender, via mode-commands)
 //   /botname <X>  → global bot self-name   (admin only, via this handler)
 const BOTNAME_RE = /^\s*\/botname(?:\s+(.+?))?\s*$/
+/** 放行规则的开关(放行 v2 G1 之后;起步规则那句通知里提到的关法)。整句就是这几个字,前后只许空白和句号。 */
+const RULES_TOGGLE_RE = /^\s*放行规则(关掉|关了|关闭|打开|开启)\s*[。.!！]?\s*$/
 const BOTNAME_SKIP_WORDS = new Set(['跳过', '不用', '没有', 'skip', 'clear', '清除'])
 // Same nickname constraint as onboarding + /name — sourced from ./nickname so
 // the allowed set can't drift between them (was a hand-maintained duplicate).
@@ -277,177 +297,161 @@ async function sendHuntBag(deps: AdminCommandsDeps, chatId: string): Promise<voi
   const lines = kept.slice(0, 10).map(r =>
     `· [${LABEL[r.status] ?? '没试'}] ${r.title}${r.url ? `\n  ${r.url}` : ''}`)
   const more = kept.length > lines.length ? `\n\n还有 ${kept.length - lines.length} 件,桌面端「觅食台 → 打猎背包」看全部。` : ''
-  await deps.sendMessage(chatId, `🎒 背包里有 ${kept.length} 件:\n\n${lines.join('\n')}${more}`).catch(() => {})
+  await deps.sendMessage(chatId, `背包里有 ${kept.length} 件:\n\n${lines.join('\n')}${more}`).catch(() => {})
+}
+
+interface AdminCtx { handNames: readonly string[] }
+/**
+ * 一条管理员命令 = 一行(第三批 3d)。`match` 返回非 null ⇒ 这行认得这句,值交给 `run`。**各行两两互斥**(admin-commands
+ * 的测试按语料逐对核):以前 if 链靠先后消歧(「自改 状态」要排在「自改 <需求>」前面),现在每行自己把别人的情况排除掉,
+ * 以后谁调了表的先后也不会悄悄改行为。`background` 的那几行:handle 立刻回,活在后台跑(run 里自己持 holdBusy 的令牌)。
+ */
+interface AdminRow {
+  id: string
+  /** 显式命令写法(非主人发也要回一句「只有主人能用」)。斜杠开头的不用标,isExplicitAdminCommand 按前缀认。 */
+  explicit?: true
+  match(text: string, ctx: AdminCtx): unknown
+  run(deps: AdminCommandsDeps, msg: InboundMsg, m: any): Promise<void>
+  background?: true
+}
+
+const ADMIN_ROWS: readonly AdminRow[] = [
+  { id: 'hand.join', explicit: true, match: t => matchHandJoin(t), run: (d, msg, code: string) => runHandJoin(d, msg.chatId, code) },
+  { id: 'hands.list', match: t => HANDS_LIST_RE.test(t) || null, run: (d, msg) => sendHandsList(d, msg.chatId) },
+  { id: 'bag', match: t => BAG_RE.test(t) || null, run: (d, msg) => sendHuntBag(d, msg.chatId) },
+  { id: 'health', match: t => t === '/health' || null, run: (d, msg) => sendHealthReport(d, msg.chatId) },
+  { id: 'health.ai', match: t => HEALTH_AI_RE.test(t) || null, run: (d, msg) => sendAiHealthReport(d, msg.chatId) },
+  { id: 'reset', match: t => RESET_RE.test(t) || null, run: (d, msg) => runReset(d, msg.chatId) },
+  { id: 'update', match: t => UPDATE_RE.test(t) || null, run: (d, msg) => runUpdate(d, msg.chatId) },
+  { id: 'selfchange.status', explicit: true, match: t => SELF_CHANGE_STATUS_RE.test(t) || null, run: (d, msg) => runSelfChangeStatus(d, msg.chatId) },
+  // 「自改 状态」也落在 `自改\s+<文字>` 里:这一行把它排除掉,两行互斥(以前靠 if 的先后)
+  { id: 'selfchange.start', explicit: true, match: t => SELF_CHANGE_STATUS_RE.test(t) ? null : (SELF_CHANGE_RE.exec(t)?.[1]?.trim() || null), run: (d, msg, need: string) => runSelfChangeStart(d, msg.chatId, need) },
+  { id: 'memory.show', match: t => SHOW_OVERVIEW_RE.test(t) || null, run: (d, msg) => runShowOverview(d, msg.chatId) },
+  // 合成是慢的模型调用:先回、后台跑(runSynthesize 自己持 holdBusy)
+  { id: 'memory.synthesize', background: true, match: t => SYNTHESIZE_RE.test(t) || null, run: (d, msg) => runSynthesize(d, msg.chatId) },
+  // 按**已注册的手名**认(不是按动词):名字没命中就落回正常聊天,「让我看看这个」「让张三跑一趟」都不会被劫走。手跑整个 agent,慢 ⇒ 后台
+  { id: 'delegate', background: true, match: (t, ctx) => matchDelegate(t, ctx.handNames), run: (d, msg, m: DelegateMatch) => runDelegate(d, msg.chatId, m.hand, m.task) },
+  { id: 'cleanup', match: t => CLEANUP_RE.exec(t)?.[1] ?? null, run: (d, msg, which: string) => runCleanup(d, msg.chatId, which) },
+  { id: 'hearth.ingest', match: t => { const m = HEARTH_INGEST_RE.exec(t); return m ? (m[1] ?? '') : null }, run: (d, msg, body: string) => runHearthIngest(d, msg, body) },
+  { id: 'hearth.list', match: t => HEARTH_LIST_RE.test(t) || null, run: (d, msg) => runHearthList(d, msg.chatId) },
+  { id: 'hearth.show', match: t => HEARTH_SHOW_RE.exec(t)?.[1] ?? null, run: (d, msg, id: string) => runHearthShow(d, msg.chatId, id) },
+  { id: 'hearth.apply', match: t => HEARTH_APPLY_RE.exec(t)?.[1] ?? null, run: (d, msg, id: string) => runHearthApply(d, msg, id) },
+  { id: 'hearth.help', match: t => HEARTH_HELP_RE.test(t) || null, run: (d, msg) => sendHearthHelp(d, msg.chatId) },
+  { id: 'rules.toggle', match: t => { const m = RULES_TOGGLE_RE.exec(t); return m ? { on: /打开|开启/.test(m[1]!) } : null }, run: (d, msg, m: { on: boolean }) => runRulesToggle(d, msg.chatId, m.on) },
+  { id: 'botname', match: t => { const m = t.match(BOTNAME_RE); return m ? { arg: m[1]?.trim() ?? '' } : null }, run: (d, msg, m: { arg: string }) => runBotname(d, msg.chatId, m.arg) },
+]
+/** 给测试:行 id 与先后。 */
+export const ADMIN_ROW_IDS: readonly string[] = ADMIN_ROWS.map(r => r.id)
+/** 给测试:哪几行认得这句(两两互斥 ⇒ 至多一行)。 */
+export function adminRowsMatching(text: string, handNames: readonly string[] = []): string[] {
+  return ADMIN_ROWS.filter(r => r.match(text, { handNames }) != null).map(r => r.id)
 }
 
 export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
-  const knownHands = (): readonly string[] => { try { return deps.knownHandNames?.() ?? [] } catch { return [] } }
+  const knownHands = (): readonly string[] => { try { return deps.knownHandNames?.() ?? [] } catch { return [] } }   // 列不出手绝不能让整条消息处理不下去
+  const rowFor = (text: string): { row: AdminRow; m: unknown } | null => {
+    const ctx = { handNames: knownHands() }
+    for (const row of ADMIN_ROWS) { const m = row.match(text, ctx); if (m != null) return { row, m } }
+    return null
+  }
+  const runRow = async (row: AdminRow, msg: InboundMsg, m: unknown): Promise<void> => {
+    if (row.background) { void row.run(deps, msg, m); return }
+    await row.run(deps, msg, m)
+  }
+  const ownerOnly = async (msg: InboundMsg, text: string): Promise<void> => {
+    // 以前一律静默吞掉、一个字不回;现在斜杠命令说清楚,日常说法不认领(进对话)
+    deps.log('ADMIN_CMD', `non-admin ${msg.chatId} sent "${text.slice(0, 30)}" — owner only`)
+    await deps.sendMessage(msg.chatId, '这条只有主人能用。').catch(() => {})
+  }
   return {
-    probe(msg) { return isAdminCommandText(msg.text.trim(), knownHands()) },
+    // 非主人:只认明确的命令写法(回一句「只有主人能用」);日常说法不认领,交给模型(重构第二批步 3a,§1.5 bug 4)
+    probe(msg) { const t = msg.text.trim(); return isAdminCommandText(t, knownHands()) && (deps.isAdmin(msg.chatId) || isExplicitAdminCommand(t)) },
     async handle(msg) {
       const text = msg.text.trim()
-      // 认一次派活指令。按**已注册的手名**认(不是按动词)—— 名字没命中就
-      // 落回正常聊天,所以「让我看看这个」「让张三跑一趟」都不会被劫走。
-      let handNames: readonly string[] = []
-      try { handNames = deps.knownHandNames?.() ?? [] }
-      catch { handNames = [] }   // 列不出手绝不能让整条消息处理不下去
-      const delegateMatch = matchDelegate(text, handNames)
-      const isDelegate = !!delegateMatch
-      const handCode = matchHandJoin(text)
-      const isCmd = isAdminCommandText(text, handNames)
-      if (!isCmd) return false
-
+      const hit = rowFor(text)
+      if (!hit) return false
       if (!deps.isAdmin(msg.chatId)) {
-        deps.log('ADMIN_CMD', `non-admin ${msg.chatId} sent "${text.slice(0, 30)}" — dropped`)
+        if (!isExplicitAdminCommand(text)) return false
+        await ownerOnly(msg, text)
         return true
       }
-
-      if (handCode) {
-        await runHandJoin(deps, msg.chatId, handCode)
-        return true
-      }
-
-      if (HANDS_LIST_RE.test(text)) {
-        const hands = deps.listHands?.() ?? []
-        await deps.sendMessage(msg.chatId, hands.length
-          ? `已配对的手:\n${hands.map(h => `· ${h.name}${h.name === h.id ? '' : `(${h.id})`} → ${h.url ?? '没有地址'}`).join('\n')}\n\n说「让${hands[0]!.name} 看看…」就派给它。`
-          : '还没配对任何手。在那台机器上跑 `wechat-cc hand invite`,把它给出的码粘到这里。').catch(() => {})
-        return true
-      }
-
-      if (BAG_RE.test(text)) {
-        await sendHuntBag(deps, msg.chatId)
-        return true
-      }
-
-      if (text === '/health') {
-        await sendHealthReport(deps, msg.chatId)
-        return true
-      }
-
-      if (HEALTH_AI_RE.test(text)) {
-        await sendAiHealthReport(deps, msg.chatId)
-        return true
-      }
-
-      if (RESET_RE.test(text)) {
-        await runReset(deps, msg.chatId)
-        return true
-      }
-
-      if (UPDATE_RE.test(text)) {
-        await runUpdate(deps, msg.chatId)
-        return true
-      }
-
-      // 「自改 状态」要先认:它也落在 SELF_CHANGE_RE 的 `自改\s+<文字>` 里,
-      // 顺序反了就会把「状态」当成需求下单。
-      if (SELF_CHANGE_STATUS_RE.test(text)) {
-        await runSelfChangeStatus(deps, msg.chatId)
-        return true
-      }
-
-      const selfChange = SELF_CHANGE_RE.exec(text)
-      if (selfChange) {
-        await runSelfChangeStart(deps, msg.chatId, selfChange[1]!.trim())
-        return true
-      }
-
-      if (SHOW_OVERVIEW_RE.test(text)) {
-        await runShowOverview(deps, msg.chatId)
-        return true
-      }
-
-      if (SYNTHESIZE_RE.test(text)) {
-        // Fire-and-forget: synthesis is a slow LLM call — don't block the
-        // message pipeline. We ack now and reply with the result when done.
-        void runSynthesize(deps, msg.chatId)
-        return true
-      }
-
-      if (isDelegate) {
-        // Fire-and-forget: the hand runs a full agent — slow. Ack + reply later.
-        void runDelegate(deps, msg.chatId, delegateMatch!.hand, delegateMatch!.task)
-        return true
-      }
-
-      const cleanup = CLEANUP_RE.exec(text)
-      if (cleanup) {
-        await runCleanup(deps, msg.chatId, cleanup[1]!)
-        return true
-      }
-
-      const hearthIngest = HEARTH_INGEST_RE.exec(text)
-      if (hearthIngest) {
-        await runHearthIngest(deps, msg, hearthIngest[1] ?? '')
-        return true
-      }
-
-      if (HEARTH_LIST_RE.test(text)) {
-        await runHearthList(deps, msg.chatId)
-        return true
-      }
-
-      const hearthShow = HEARTH_SHOW_RE.exec(text)
-      if (hearthShow) {
-        await runHearthShow(deps, msg.chatId, hearthShow[1]!)
-        return true
-      }
-
-      const hearthApply = HEARTH_APPLY_RE.exec(text)
-      if (hearthApply) {
-        await runHearthApply(deps, msg, hearthApply[1]!)
-        return true
-      }
-
-      if (HEARTH_HELP_RE.test(text)) {
-        await sendHearthHelp(deps, msg.chatId)
-        return true
-      }
-
-      const botnameMatch = text.match(BOTNAME_RE)
-      if (botnameMatch) {
-        const arg = botnameMatch[1]?.trim()
-        // /botname (no arg) — show current
-        if (!arg) {
-          const current = deps.getBotName()
-          const display = current && current.trim() ? current.trim() : deps.botNameFallback(msg.chatId)
-          await deps.sendMessage(msg.chatId, `我现在叫 ${display}`)
-          return true
-        }
-        // /botname 跳过 — explicit clear
-        if (BOTNAME_SKIP_WORDS.has(arg.toLowerCase())) {
-          try {
-            await deps.setBotName(null)
-            const fallback = deps.botNameFallback(msg.chatId)
-            await deps.sendMessage(msg.chatId, `好的，回到默认「${fallback}」`)
-          } catch (err) {
-            deps.log('ADMIN_CMD', `/botname clear failed: ${err}`)
-            await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /botname')
-          }
-          return true
-        }
-        // /botname <new-name> — validate + set
-        if (arg.length > BOTNAME_MAX_LEN) {
-          await deps.sendMessage(msg.chatId, `「${arg}」太长（最多 ${BOTNAME_MAX_LEN} 字符）。再试一次?`)
-          return true
-        }
-        if (!BOTNAME_VALID_RE.test(arg)) {
-          await deps.sendMessage(msg.chatId, `「${arg}」不行：只支持中文/字母/数字/空格/_/- (1-24 字)`)
-          return true
-        }
-        try {
-          await deps.setBotName(arg)
-          await deps.sendMessage(msg.chatId, `好的，从现在开始我叫 ${arg}`)
-        } catch (err) {
-          deps.log('ADMIN_CMD', `/botname set failed: ${err}`)
-          await deps.sendMessage(msg.chatId, '我没记住，稍后再试 /botname')
-        }
-        return true
-      }
-
-      return false
+      await runRow(hit.row, msg, hit.m)
+      return true
     },
+    commands() {
+      const t = (msg: InboundMsg) => (msg.text ?? '').trim()
+      return [
+        { id: 'admin.owner-only', group: 'admin',
+          probe: (msg) => !deps.isAdmin(msg.chatId) && isAdminCommandText(t(msg), knownHands()) && isExplicitAdminCommand(t(msg)),
+          handle: async (msg) => { await ownerOnly(msg, t(msg)); return true } },
+        ...ADMIN_ROWS.map((row): WechatCommand => ({
+          id: `admin.${row.id}`, group: 'admin',
+          probe: (msg) => deps.isAdmin(msg.chatId) && row.match(t(msg), { handNames: knownHands() }) != null,
+          handle: async (msg) => {
+            const m = row.match(t(msg), { handNames: knownHands() })
+            if (m == null) return false
+            await runRow(row, msg, m)
+            return true
+          },
+        })),
+      ]
+    },
+  }
+}
+
+/** 「有哪些手」:列出已配对的手(以前写在 handle 的 if 链里)。 */
+async function sendHandsList(deps: AdminCommandsDeps, chatId: string): Promise<void> {
+  const hands = deps.listHands?.() ?? []
+  await deps.sendMessage(chatId, hands.length
+    ? `已配对的手:\n${hands.map(h => `· ${h.name}${h.name === h.id ? '' : `(${h.id})`} → ${h.url ?? '没有地址'}`).join('\n')}\n\n说「让${hands[0]!.name} 看看…」就派给它。`
+    : '还没配对任何手。在那台机器上跑 `wechat-cc hand invite`,把它给出的码粘到这里。').catch(() => {})
+}
+
+/** 「放行规则关掉 / 打开」:主人当面点的操作,回的是这一句(speech-send 守卫里算 reply)。 */
+async function runRulesToggle(deps: AdminCommandsDeps, chatId: string, on: boolean): Promise<void> {
+  const r = setRulesEnabled(deps.stateDir, on)
+  const text = !r.ok ? `没改成:${r.error}`
+    : !r.changed ? (on ? '放行规则本来就开着。' : '放行规则本来就关着,每一步都会问你。')
+    : on ? '放行规则打开了:按规则表替你批,别的照旧问你。' : '放行规则关掉了:以后每一步都问你。想再打开就说「放行规则打开」。'
+  await deps.sendMessage(chatId, text).catch(() => {})
+}
+
+/** /botname [名字 | 跳过]:看 / 清 / 改 CC 的名字(以前写在 handle 的 if 链里,原样搬出来)。 */
+async function runBotname(deps: AdminCommandsDeps, chatId: string, arg: string): Promise<void> {
+  // /botname (no arg) — show current
+  if (!arg) {
+    const current = deps.getBotName()
+    const display = current && current.trim() ? current.trim() : deps.botNameFallback(chatId)
+    await deps.sendMessage(chatId, `我现在叫 ${display}`)
+    return
+  }
+  // /botname 跳过 — explicit clear
+  if (BOTNAME_SKIP_WORDS.has(arg.toLowerCase())) {
+    try {
+      await deps.setBotName(null)
+      const fallback = deps.botNameFallback(chatId)
+      await deps.sendMessage(chatId, `好的，回到默认「${fallback}」`)
+    } catch (err) {
+      deps.log('ADMIN_CMD', `/botname clear failed: ${err}`)
+      await deps.sendMessage(chatId, '我没记住，稍后再试 /botname')
+    }
+    return
+  }
+  // /botname <new-name> — validate + set
+  if (arg.length > BOTNAME_MAX_LEN) {
+    await deps.sendMessage(chatId, `「${arg}」太长（最多 ${BOTNAME_MAX_LEN} 字符）。再试一次?`)
+    return
+  }
+  if (!BOTNAME_VALID_RE.test(arg)) {
+    await deps.sendMessage(chatId, `「${arg}」不行：只支持中文/字母/数字/空格/_/- (1-24 字)`)
+    return
+  }
+  try {
+    await deps.setBotName(arg)
+    await deps.sendMessage(chatId, `好的，从现在开始我叫 ${arg}`)
+  } catch (err) {
+    deps.log('ADMIN_CMD', `/botname set failed: ${err}`)
+    await deps.sendMessage(chatId, '我没记住，稍后再试 /botname')
   }
 }
 
@@ -490,22 +494,22 @@ async function runSelfChangeStatus(deps: AdminCommandsDeps, adminChatId: string)
 
 async function runUpdate(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
   if (!deps.updateSelf) {
-    await deps.sendMessage(adminChatId, '❌ /update 暂不可用：daemon 没接 updater。')
+    await deps.sendMessage(adminChatId, '/update 暂时用不了。')
     return
   }
   try {
     const r = await deps.updateSelf()
     if (!r.ok) {
-      await deps.sendMessage(adminChatId, `❌ 更新没有启动：${r.reason}`)
+      await deps.sendMessage(adminChatId, `更新没有启动：${r.reason}`)
       deps.log('ADMIN_CMD', `/update failed-to-start chat=${adminChatId}: ${r.reason}`)
       return
     }
     const pid = r.pid ? ` pid=${r.pid}` : ''
-    await deps.sendMessage(adminChatId, `收到，开始更新 wechat-cc。更新过程会短暂重启服务，微信回复可能中断。${pid}`)
+    await deps.sendMessage(adminChatId, `收到，开始更新 CC。更新过程会短暂重启服务，微信回复可能中断。${pid}`)
     deps.log('ADMIN_CMD', `/update started chat=${adminChatId}${pid}`)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    await deps.sendMessage(adminChatId, `❌ 更新启动异常：${detail.slice(0, 160)}`)
+    await deps.sendMessage(adminChatId, `更新启动异常：${detail.slice(0, 160)}`)
     deps.log('ADMIN_CMD', `/update threw chat=${adminChatId}: ${detail}`)
   }
 }
@@ -515,7 +519,7 @@ async function runHearthIngest(deps: AdminCommandsDeps, msg: InboundMsg, content
   if (!hearth) return
   const vault = process.env.HEARTH_VAULT
   if (!vault) {
-    await deps.sendMessage(msg.chatId, '❌ HEARTH_VAULT 未设置。daemon 启动时加 env：HEARTH_VAULT=/path/to/vault')
+    await deps.sendMessage(msg.chatId, 'HEARTH_VAULT 未设置。daemon 启动时加 env：HEARTH_VAULT=/path/to/vault')
     return
   }
   const agent = (process.env.HEARTH_AGENT === 'claude' ? 'claude' : 'mock') as 'mock' | 'claude'
@@ -537,7 +541,7 @@ async function runHearthIngest(deps: AdminCommandsDeps, msg: InboundMsg, content
     )
     if (result.ok) {
       const lines = [
-        '🔥 hearth: ' + result.summary,
+        'hearth: ' + result.summary,
       ]
       // If the daemon is wired with share_page, publish a richer review card
       // and surface the URL alongside. The plan stays in pending either way —
@@ -550,7 +554,7 @@ async function runHearthIngest(deps: AdminCommandsDeps, msg: InboundMsg, content
               needs_approval: true,
               chat_id: msg.chatId,
             })
-            lines.push('', '📄 review: ' + card.url)
+            lines.push('', 'review: ' + card.url)
           }
         } catch (err) {
           deps.log('HEARTH', `share_page failed: ${err instanceof Error ? err.message : err}`)
@@ -559,12 +563,12 @@ async function runHearthIngest(deps: AdminCommandsDeps, msg: InboundMsg, content
       lines.push('', '↪ apply: /hearth apply ' + result.change_id)
       await deps.sendMessage(msg.chatId, lines.join('\n'))
     } else {
-      await deps.sendMessage(msg.chatId, '❌ hearth ingest 失败: ' + result.summary + (result.error ? '\n详情: ' + result.error.slice(0, 500) : ''))
+      await deps.sendMessage(msg.chatId, 'hearth ingest 失败: ' + result.summary + (result.error ? '\n详情: ' + result.error.slice(0, 500) : ''))
     }
     deps.log('HEARTH', `${msg.chatId} ingest agent=${agent} ok=${result.ok}`)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    await deps.sendMessage(msg.chatId, '❌ hearth ingest 异常: ' + detail.slice(0, 500))
+    await deps.sendMessage(msg.chatId, 'hearth ingest 异常: ' + detail.slice(0, 500))
     deps.log('HEARTH', `ingest threw: ${detail}`)
   }
 }
@@ -578,7 +582,7 @@ async function runHearthList(deps: AdminCommandsDeps, adminChatId: string): Prom
     deps.log('HEARTH', `${adminChatId} list — ${r.items.length} shown`)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    await deps.sendMessage(adminChatId, '❌ /hearth list 异常: ' + detail.slice(0, 500))
+    await deps.sendMessage(adminChatId, '/hearth list 异常: ' + detail.slice(0, 500))
   }
 }
 
@@ -591,7 +595,7 @@ async function runHearthShow(deps: AdminCommandsDeps, adminChatId: string, chang
     deps.log('HEARTH', `${adminChatId} show ${changeId} ok=${r.ok}`)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    await deps.sendMessage(adminChatId, '❌ /hearth show 异常: ' + detail.slice(0, 500))
+    await deps.sendMessage(adminChatId, '/hearth show 异常: ' + detail.slice(0, 500))
   }
 }
 
@@ -600,7 +604,7 @@ async function runHearthApply(deps: AdminCommandsDeps, msg: InboundMsg, changeId
   if (!hearth) return
   const vault = process.env.HEARTH_VAULT
   if (!vault) {
-    await deps.sendMessage(msg.chatId, '❌ HEARTH_VAULT 未设置')
+    await deps.sendMessage(msg.chatId, 'HEARTH_VAULT 未设置')
     return
   }
   try {
@@ -614,7 +618,7 @@ async function runHearthApply(deps: AdminCommandsDeps, msg: InboundMsg, changeId
     deps.log('HEARTH', `${msg.chatId} apply ${changeId} ok=${r.ok}`)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    await deps.sendMessage(msg.chatId, '❌ /hearth apply 异常: ' + detail.slice(0, 500))
+    await deps.sendMessage(msg.chatId, '/hearth apply 异常: ' + detail.slice(0, 500))
   }
 }
 
@@ -624,14 +628,14 @@ async function getHearthOrReply(deps: AdminCommandsDeps, chatId: string): Promis
 
   const detail = loaded.error ? `\n详情: ${loaded.error.slice(0, 300)}` : ''
   await deps.sendMessage(chatId, [
-    '❌ hearth 未安装或未配置，wechat-cc 其他功能不受影响。',
+    'hearth 未安装或未配置，CC 其他功能不受影响。',
     '',
     '可选配置：',
     '  export HEARTH_HOME=/path/to/hearth',
     '  export HEARTH_MODULE=hearth',
     '  export HEARTH_VAULT=/path/to/vault',
     '',
-    '然后重启 wechat-cc，再使用 /hearth。' + detail,
+    '然后重启 CC，再使用 /hearth。' + detail,
   ].join('\n'))
   deps.log('HEARTH', `not available reason=${loaded.reason} checked=${loaded.checked.join(', ')}`)
   return null
@@ -641,7 +645,7 @@ async function sendHearthHelp(deps: AdminCommandsDeps, adminChatId: string): Pro
   const vault = process.env.HEARTH_VAULT ?? '(未设置 HEARTH_VAULT)'
   const agent = process.env.HEARTH_AGENT === 'claude' ? 'claude' : 'mock'
   const lines = [
-    '🔥 hearth (v0.3.1 channel review surface)',
+    'hearth (v0.3.1 channel review surface)',
     '',
     'vault: ' + vault,
     'agent: ' + agent,
@@ -693,7 +697,7 @@ async function runShowOverview(deps: AdminCommandsDeps, adminChatId: string): Pr
   }
   if (curated) { await deps.sendMessage(adminChatId, curated).catch(() => {}); return }
   if (!deps.readOverview) {
-    await deps.sendMessage(adminChatId, '记忆查看暂不可用（daemon 未接线）。').catch(() => {})
+    await deps.sendMessage(adminChatId, '记忆查看暂时用不了。').catch(() => {})
     return
   }
   try {
@@ -703,7 +707,7 @@ async function runShowOverview(deps: AdminCommandsDeps, adminChatId: string): Pr
       return
     }
     const display = formatOverviewForDisplay(raw)
-    await deps.sendMessage(adminChatId, `🧠 我目前对你的理解：\n\n${display}`)
+    await deps.sendMessage(adminChatId, `我目前对你的理解：\n\n${display}`)
     deps.log('ADMIN_CMD', `show-overview chat=${adminChatId} bytes=${display.length}`)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
@@ -717,7 +721,7 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
   // pipeline doesn't await it), so ANY escaping rejection — including the
   // "整理中" ack send — would surface as an unhandled rejection.
   if (!deps.synthesizeMemory && !deps.runMemoryNightlyNow) {
-    await deps.sendMessage(adminChatId, '记忆整理暂不可用（daemon 未接线）。').catch(() => {})
+    await deps.sendMessage(adminChatId, '记忆整理暂时用不了。').catch(() => {})
     return
   }
   if (synthesizeInFlight.has(adminChatId)) {
@@ -730,7 +734,7 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
     synthesizeInFlight.add(adminChatId)
     const release = deps.holdBusy?.('admin-memory-nightly')
     try {
-      await deps.sendMessage(adminChatId, '🧠 正在整理记忆…').catch(() => {})
+      await deps.sendMessage(adminChatId, '正在整理记忆…').catch(() => {})
       await deps.sendMessage(adminChatId, formatNightlyReply(await deps.runMemoryNightlyNow())).catch(() => {})
     } catch (e) {
       deps.log('ADMIN', `memory nightly failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -743,7 +747,7 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
   }
   const synthesizeMemory = deps.synthesizeMemory
   if (!synthesizeMemory) {
-    await deps.sendMessage(adminChatId, '记忆整理暂不可用（daemon 未接线）。').catch(() => {})
+    await deps.sendMessage(adminChatId, '记忆整理暂时用不了。').catch(() => {})
     return
   }
   synthesizeInFlight.add(adminChatId)
@@ -755,11 +759,11 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
   let releaseBusy: (() => void) | undefined
   try { releaseBusy = deps.holdBusy?.('admin-synthesize') } catch { releaseBusy = undefined }
   try {
-    await deps.sendMessage(adminChatId, '🧠 正在重新整理我对你的理解…')
+    await deps.sendMessage(adminChatId, '正在重新整理我对你的理解…')
     const r = await synthesizeMemory(adminChatId)
     let lines: string[]
     if (r.written) {
-      lines = ['✅ 整理完成，我对你的理解已更新。']
+      lines = ['整理完成，我对你的理解已更新。']
       // Reflect BOTH sides — synthesis spans work (项目) and life (微信观察),
       // so show what got folded in, not just the project count.
       const parts: string[] = []
@@ -824,7 +828,7 @@ async function runDelegate(deps: AdminCommandsDeps, adminChatId: string, handNam
   let releaseBusy: (() => void) | undefined
   try { releaseBusy = deps.holdBusy?.('admin-delegate') } catch { releaseBusy = undefined }
   try {
-    await deps.sendMessage(adminChatId, `🤝 派给「${handName}」执行中…`)
+    await deps.sendMessage(adminChatId, `派给「${handName}」执行中…`)
     const r = await deps.delegateToHand(handName, task)
     if (r.ok) {
       await deps.sendMessage(adminChatId, `「${handName}」的结果:\n${r.response}`)
@@ -857,7 +861,7 @@ async function runHandJoin(deps: AdminCommandsDeps, adminChatId: string, code: s
     await deps.sendMessage(adminChatId, '加手功能未启用(这台没开 A2A)。').catch(() => {})
     return
   }
-  await deps.sendMessage(adminChatId, '🤝 正在配对…').catch(() => {})
+  await deps.sendMessage(adminChatId, '正在配对…').catch(() => {})
   let r: Awaited<ReturnType<NonNullable<AdminCommandsDeps['joinHandByCode']>>>
   try { r = await deps.joinHandByCode(code) }
   catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
@@ -867,7 +871,7 @@ async function runHandJoin(deps: AdminCommandsDeps, adminChatId: string, code: s
     return
   }
   // 地址一定要显出来 —— 粘错一串别人给的码,这是唯一能一眼看见的地方。
-  await deps.sendMessage(adminChatId, `✅ 已加手「${r.name}」→ ${r.url}\n正在试一下能不能派活…`).catch(() => {})
+  await deps.sendMessage(adminChatId, `已加手「${r.name}」→ ${r.url}\n正在试一下能不能派活…`).catch(() => {})
   deps.log('ADMIN_CMD', `hand joined chat=${adminChatId} id=${r.id} url=${r.url}`)
 
   if (!deps.delegateToHand) return
@@ -875,8 +879,8 @@ async function runHandJoin(deps: AdminCommandsDeps, adminChatId: string, code: s
   try { probe = await deps.delegateToHand(r.id, '只回两个字:收到') }
   catch (err) { probe = { ok: false, reason: err instanceof Error ? err.message : String(err) } }
   await deps.sendMessage(adminChatId, probe.ok
-    ? `🎉 通了。现在说「让${r.name} 看看…」就派给它。`
-    : `⚠️ 配上了,但派活没通:${friendlyDelegateReason(probe.reason)}\n手那台还在的话,检查它的 A2A 是否绑在这台能访问的地址上。`,
+    ? `通了。现在说「让${r.name} 看看…」就派给它。`
+    : `配上了,但派活没通:${friendlyDelegateReason(probe.reason)}\n手那台还在的话,检查它的 A2A 是否绑在这台能访问的地址上。`,
   ).catch(() => {})
 }
 
@@ -884,17 +888,17 @@ async function sendHealthReport(deps: AdminCommandsDeps, adminChatId: string): P
   const active = deps.pollHandle.running()
   const expired = deps.sessionState.listExpired()
 
-  const lines: string[] = ['🩺 daemon 健康']
+  const lines: string[] = ['daemon 健康']
   lines.push(`启动时间: ${deps.startedAt}`)
   lines.push('')
 
   lines.push(`活跃 bot (${active.length}):`)
   if (active.length === 0) lines.push('  (无 — 需要 wechat-cc setup)')
-  else for (const id of active) lines.push(`  ✅ ${id}`)
+  else for (const id of active) lines.push(`  ${id}`)
 
   if (expired.length > 0) {
     lines.push('')
-    lines.push(`⚠️ 过期 bot (${expired.length}):`)
+    lines.push(`过期 bot (${expired.length}):`)
     for (const e of expired) lines.push(`  - ${e.id} (${hoursSince(e.first_seen_expired_at)})`)
     lines.push('')
     lines.push('清理：')
@@ -902,7 +906,7 @@ async function sendHealthReport(deps: AdminCommandsDeps, adminChatId: string): P
     lines.push('  "清理所有过期"            (全部)')
   } else {
     lines.push('')
-    lines.push('✨ 无过期 bot')
+    lines.push('无过期 bot')
   }
 
   const result = await deps.sendMessage(adminChatId, lines.join('\n'))
@@ -920,7 +924,7 @@ async function runCleanup(deps: AdminCommandsDeps, adminChatId: string, target: 
   } else {
     const match = expired.find(e => e.id === target)
     if (!match) {
-      await deps.sendMessage(adminChatId, `❌ ${target} 不在过期列表里。先发 /health 确认。`)
+      await deps.sendMessage(adminChatId, `${target} 不在过期列表里。先发 /health 确认。`)
       return
     }
     victims = [match]
@@ -949,7 +953,7 @@ async function runCleanup(deps: AdminCommandsDeps, adminChatId: string, target: 
       deps.log('ADMIN_CMD', `cleaned up expired bot ${v.id}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      results.push(`  ❌ ${v.id}: ${msg}`)
+      results.push(`  ✗ ${v.id}: ${msg}`)
       deps.log('ADMIN_CMD', `cleanup ${v.id} failed: ${msg}`)
     }
   }
@@ -965,7 +969,7 @@ async function runCleanup(deps: AdminCommandsDeps, adminChatId: string, target: 
 async function runReset(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
   const proj = deps.resolveProject(adminChatId)
   if (!proj) {
-    await deps.sendMessage(adminChatId, '❌ 本聊天未绑定任何项目，没有可重置的会话。')
+    await deps.sendMessage(adminChatId, '本聊天未绑定任何项目，没有可重置的会话。')
     return
   }
   // Release every registered provider's in-memory session for this alias,
@@ -993,11 +997,11 @@ async function runReset(deps: AdminCommandsDeps, adminChatId: string): Promise<v
 async function sendAiHealthReport(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
   const proj = deps.resolveProject(adminChatId)
   if (!proj) {
-    await deps.sendMessage(adminChatId, '❌ 本聊天未绑定任何项目，无法查询 AI 会话状态。')
+    await deps.sendMessage(adminChatId, '本聊天未绑定任何项目，无法查询 AI 会话状态。')
     return
   }
   const providers = deps.registry.list()
-  const lines: string[] = ['🤖 AI 会话状态', `project: ${proj.alias}`, '']
+  const lines: string[] = ['AI 会话状态', `project: ${proj.alias}`, '']
   if (providers.length === 0) {
     lines.push('(无已注册的 provider — 检查 daemon 启动日志)')
   } else {

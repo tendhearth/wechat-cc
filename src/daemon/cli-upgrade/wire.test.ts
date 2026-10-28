@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { makeIdleCheck, ignoredBusyLabel } from './wire'
-import { CLI_SPECS } from '../../core/cli-upgrade/specs'
+import { CLI_SPECS } from '../../domain/cli-upgrade/specs'
 
 describe('CLI upgrade idle gate — never interrupt', () => {
   const base = { anyInFlight: () => false, liveSessionProviders: () => [] as string[], busyLabels: () => [] as string[] }

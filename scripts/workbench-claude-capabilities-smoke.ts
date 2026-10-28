@@ -9,9 +9,9 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk'
-import { makeWorkbenchClaudeCanUseTool } from '../src/core/claude-agent-provider'
-import { readNativeClaudeTools } from '../src/core/workbench/claude-native-config'
-import { workbenchClaudeOptions } from '../src/daemon/bootstrap/wire-workbench'
+import { makeWorkbenchClaudeCanUseTool } from '../src/adapters/executors/claude/claude-agent-provider'
+import { readNativeClaudeTools } from '../src/adapters/executors/claude/claude-native-config'
+import { workbenchClaudeOptions } from '../src/features/workbench/wire'
 
 if (!process.argv.includes('--run')) {
   console.log('Owned native Claude fixtures only. macOS required. Run with --run; no paid model calls.')
@@ -117,7 +117,7 @@ for (const mode of ['discovery', 'allow', 'deny', 'cancel'] as Mode[]) {
       return false
     }
     return mode === 'allow'
-  }, undefined, Object.keys(native.servers))
+  }, undefined, Object.keys(native.servers), Object.keys(native.servers))
   const options = workbenchClaudeOptions({ cwd, model: 'claude-sonnet-4-6', pathToClaudeCodeExecutable: wrapper, env }, 'Use only this owned fixture.', async (...args) => { gateCalls.push({ tool: args[0], input: args[1] }); return permit(...args) }, native)
   options.abortController = abort; options.maxTurns = 4
   let stderr = '', error = ''

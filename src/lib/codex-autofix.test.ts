@@ -70,7 +70,7 @@ describe('attemptCodexAutofix', () => {
     expect(spawnBun).not.toHaveBeenCalled()
   })
 
-  it('spawns `bun add @openai/codex-sdk@<userVer> @openai/codex@<userVer>` and returns "fixed" on success', async () => {
+  it('spawns `bun add @openai/codex@<userVer>` (B1: no SDK package any more) and returns "fixed" on success', async () => {
     type SpawnBun = NonNullable<CodexAutofixDeps['spawnBun']>
     const spawnBun = vi.fn<SpawnBun>(async () => ({ ok: true, stderr: '' }))
     const out = await attemptCodexAutofix(baseDeps({ spawnBun }))
@@ -79,7 +79,6 @@ describe('attemptCodexAutofix', () => {
     const call = spawnBun.mock.calls[0]!
     expect(call[0]).toEqual([
       'add',
-      '@openai/codex-sdk@0.133.0',
       '@openai/codex@0.133.0',
     ])
     expect(call[1]).toBe('/repo')

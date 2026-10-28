@@ -16,7 +16,7 @@ allowlist.
 > and `trusted[]` run in bypass. **Guests never do** (2026-10-10): a chat admitted
 > via request→approve or an invite code keeps the guest tier and its sessions run
 > strict even under `--dangerously` (`effectivePermissionMode` in
-> `src/core/user-tier.ts`). Before that, the first approved guest got admin —
+> `src/domain/user-tier.ts`). Before that, the first approved guest got admin —
 > shell, files, the owner's WeChat history (wxvault) and the knowledge base.
 
 > ℹ️ **Note on the recommended install.** The bare `wechat-cc run` is strict,

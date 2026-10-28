@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import type { SelfChangeSettings } from '../../lib/agent-config'
 import { formatTriage, relatedSources, stripAnsi, type TriageReport } from '../ci-triage'
 import { CI_TRIAGE_EXIT } from '../ci-triage-run'
+import { CI_LAND_EXIT } from '../ci-land'
 import type { SelfDeployResult } from '../self-deploy'
 import type { SelftestReport } from '../selftest'
 import { fixPrompt, implementBrief, parseReviewVerdict, reviewPrompt, revertPrompt } from './brief'
@@ -24,8 +25,12 @@ import type { SelfChangeConfig } from './config'
 import { writeSelfChangeConfigPatch } from './config'
 import type { Git } from './git'
 import { FORBIDDEN_EXCEPTIONS, FORBIDDEN_GLOBS, SELF_CHANGE_DEFAULTS, forbiddenPaths } from './policy'
-import type { ImplementRunner } from './runner'
+import type { ImplementRunner, ReviewerChoice } from './runner'
+import { providerDisplayName } from '../../domain/provider-display-names'
 import type { DaemonClient } from './daemon-client'
+import { prTitle, type Forge, type PrRef } from './forge'
+import type { LessonRow } from './lessons'
+import { DEFAULT_MAX_LOAD_PER_CPU, waitForQuietMachine, type MachineLoad } from '../self-ship'
 import type { ReviewFinding, SelfChangeState, SelfChangeStep, StateStore } from './state'
 
 export interface StepOutcome {
@@ -46,6 +51,9 @@ export interface PipelineDeps {
   state: StateStore
   git: Git
   runner: ImplementRunner
+  /** 评审用谁(runner.ts chooseReviewer);不给 ⇒ 跟实现同一个 runner(只读)。 */
+  // 懒取:挑人要跑一次 `codex login status`,建 deps 时就跑会让测试和不走评审的路径也起外部进程。
+  reviewer?: () => { choice: ReviewerChoice; runner: ImplementRunner }
   daemon: DaemonClient
   /**
    * bun / npm。git 不走这里(有 git.ts)。
@@ -55,7 +63,13 @@ export interface PipelineDeps {
    */
   exec: (cmd: string, args: string[], opts: { cwd: string; timeoutMs: number }) => Promise<{ code: number | null; stdout: string; stderr: string }>
   ciTriage: (opts: { sha: string; branch: string }) => Promise<{ report: TriageReport; exitCode: number }>
+  /** 开 PR / 等 CI 合 / 关 PR(forge.ts)。 */
+  forge: Forge
   deploy: (repoRoot: string) => Promise<SelfDeployResult>
+  /** 收场时把这条运行的教训记下来(lessons.ts);不给 ⇒ 不记(测试缺省)。 */
+  recordLessons?: (rows: LessonRow[]) => void
+  /** 部署门的负载(self-ship.ts):1 分钟负载与核数。不给 ⇒ 不看负载(测试缺省)。 */
+  machineLoad?: () => MachineLoad
   rollback: (repoRoot: string) => Promise<SelfDeployResult>
   selftest: () => Promise<{ workbench: SelftestReport; chat: SelftestReport }>
   fs: { exists(p: string): boolean; writeFile(p: string, s: string): void; mkdirp(p: string): void }
@@ -67,6 +81,9 @@ export interface PipelineDeps {
   /** 停机 / fail_streak 写回 agent-config。缺省是真文件;测试塞假件。 */
   writeConfigPatch?: (patch: Partial<SelfChangeSettings>) => void
 }
+
+/** 部署前机器忙,最多等多久(一条自改没人盯,等一个小时比白白回滚强)。 */
+const DEPLOY_LOAD_WAIT_MIN = 60
 
 /** clone / fetch / push 的上限:首次 clone 这个仓库要几分钟。 */
 const NETWORK_TIMEOUT_MS = 10 * 60_000
@@ -108,8 +125,14 @@ function briefPath(config: SelfChangeConfig, id: string): string {
 }
 
 export function writePatch(d: PipelineDeps, patch: Partial<SelfChangeSettings>): void {
-  if (d.writeConfigPatch) d.writeConfigPatch(patch)
-  else writeSelfChangeConfigPatch(d.stateDir, patch)
+  // agent-config.json 读不出来时 lib/json-file 拒写(3e,2026-10-22;以前会拿缺省值把整份配置覆盖掉)。自改流水线
+  // 不能因此半路崩:记一行照实说哪一项没记上,接着走。停机标记没写上的话,下次不会自动停 —— 所以这行要说清楚。
+  try {
+    if (d.writeConfigPatch) d.writeConfigPatch(patch)
+    else writeSelfChangeConfigPatch(d.stateDir, patch)
+  } catch (err) {
+    d.log(`⚠ 自改状态(${Object.keys(patch).join(' / ')})没能写进 agent-config.json:${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 /** 一条 git,失败就抛 —— 步骤用 `guardGit` 把它翻成 StepOutcome。 */
@@ -534,7 +557,10 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     throw err
   }
 
-  const res = await d.runner.run({
+  const reviewer = d.reviewer?.()
+  const reviewRunner = reviewer?.runner ?? d.runner
+  if (reviewer) { s.review.by = reviewer.choice.id; s.review.why = reviewer.choice.why }
+  const res = await reviewRunner.run({
     cwd: dir,
     prompt: reviewPrompt({ request: s.request, branch: s.branch, baseRef }),
     budgetUsd: d.config.reviewBudgetUsd,
@@ -595,15 +621,34 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
 
 // ── ci ───────────────────────────────────────────────────────────────────────
 
+/** 这条运行进 dev 的 PR:存盘里有就用,没有就开(或者认回上一次开过、还没记下的那个)。 */
+async function ensurePr(s: SelfChangeState, d: PipelineDeps, dir: string): Promise<PrRef> {
+  if (s.pr) return s.pr
+  s.pr = await d.forge.ensurePr({
+    cwd: dir,
+    branch: s.branch,
+    base: d.config.branch,
+    title: prTitle(s.id, s.request),
+    body: [`需求:${s.request}`, '', '由 `wechat-cc self change` 开。主人拍板放行之后由 `ci land` squash 合进去;拍板之前别手动合。'].join('\n'),
+  })
+  return s.pr
+}
+
 /**
- * 推上去让真 CI 跑。强推是安全的:`self/<id>` 是这条流水线私有的分支,
- * 修复轮之后本地 HEAD 会和远端分叉。
+ * 推上去、开进 dev 的 PR,让真 CI 跑(CI 只认 PR 这一份,`self/**` 的推送不再单跑)。
+ * 强推是安全的:`self/<id>` 是这条流水线私有的分支,修复轮之后本地 HEAD 会和远端分叉。
  */
 async function ci(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   return await guardGit('push_failed', async () => {
     const dir = runPath(d.config, s.id)
     git(d, dir, ['push', '-u', '--force', 'origin', s.branch], { timeoutMs: NETWORK_TIMEOUT_MS })
     const sha = git(d, dir, ['rev-parse', 'HEAD']).trim()
+    try {
+      await ensurePr(s, d, dir)
+    } catch (err) {
+      // 开不了 PR 就没有 CI(push 不再触发),跟「看不到 CI 结果」是同一回事:人去看,不交给执行者修。
+      return { ok: false, fail: 'ci_unavailable', detail: `分支 ${s.branch} 推上去了,但开不了进 ${d.config.branch} 的 PR(没有 PR 就没有 CI):${errText(err)}` }
+    }
     const { report, exitCode } = await d.ciTriage({ sha, branch: s.branch })
     s.ci = { runId: report.runId, url: report.url, verdict: report.verdict, sha }
     if (report.verdict === 'green') return { ok: true, next: 'approval' }
@@ -649,8 +694,9 @@ function approvalCard(s: SelfChangeState, d: PipelineDeps, diffstat: string): st
     '测试:typecheck / depcheck / bun test / node test 四条全绿',
     // 「全绿」是最后的口径,但中间抖过一次的话,主人有权在拍板前知道。
     ...flakeLine(s),
-    `评审:${s.review.verdict ?? 'unknown'}${minors.length ? `,残余 minor:\n${formatFindings(minors)}` : '(没有残余意见)'}`,
+    `评审${s.review.by ? `(${providerDisplayName(s.review.by)})` : ''}:${s.review.verdict ?? 'unknown'}${minors.length ? `,残余 minor:\n${formatFindings(minors)}` : '(没有残余意见)'}`,
     `CI:${s.ci.url ?? '(没有链接)'}`,
+    ...(s.pr ? [`PR:${s.pr.url}`] : []),
     `费用:$${cost.toFixed(2)}(实现 $${s.implement.costUsd.toFixed(2)} + 评审 $${s.review.costUsd.toFixed(2)})`,
   ].join('\n')
 }
@@ -708,7 +754,11 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
     const decision = await d.daemon.decision(s.approval.hash)
     s.approval.decision = decision
     if (decision === 'allow') return { ok: true, next: 'merge' }
-    if (decision === 'deny') return { ok: false, fail: 'declined', detail: '主人回了 n' }
+    if (decision === 'deny') {
+      // 分支留着给人看,PR 关掉:整合者的列表里不该躺着一条主人已经说了不要的。
+      if (s.pr) await d.forge.close({ cwd: runPath(d.config, s.id), pr: s.pr.number, comment: `主人回了 n,自改 #${s.id} 不合。分支 ${s.branch} 留着。` })
+      return { ok: false, fail: 'declined', detail: '主人回了 n' }
+    }
     if (decision === 'timeout' || decision === 'undelivered') {
       return { ok: false, fail: 'approval_timeout', detail: `daemon 侧报 ${decision}` }
     }
@@ -742,41 +792,49 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
 // ── merge ────────────────────────────────────────────────────────────────────
 
 /**
- * rebase 到最新的 dev,然后**直接把 HEAD 快进推上去**。
+ * 交给 `ci land` 合那个 PR(squash),再把工作树放到合进去的那条提交上,deploy 的断言照旧认 `merge.sha`。
  *
- * 为什么不再 `checkout dev` + `merge --ff-only`:工作树里 checkout 一个别处
- * 已经检出的分支会被 git 直接拒绝。而且也不需要 —— rebase 完 HEAD 本身就是
- * `origin/<branch>` 的直系后代,一条**不带 `--force`** 的 `git push` 天然只许
- * 快进,语义和 `merge --ff-only` 一模一样:远端在这中间前进了就会被拒。
+ * 以前是 rebase + 不带 `--force` 的快进推 dev:一条改动在 GitHub 上没有记录,dev 上是执行者的一串零碎提交。
+ * 现在跟人走同一条路(设计稿 2026-10-23-cc-runs-development §6 第 3 步)。dev 在这中间前进了也不在本地 rebase:
+ * 冲突时 GitHub 拒合(⇒ merge_conflict,分支和 PR 都留着),不冲突就 squash 在最新的 dev 上 —— 那时合入的树
+ * CI 没跑过,记 `rebased`,报告里说清楚(spec 的取舍不变:不让主人为此再等一轮 CI,正式闸门是推 dev 那一次)。
  *
- * rebase 动了 HEAD 也**不重跑 CI**(spec 的取舍:dev 上并发少,重跑要主人再等
- * 一轮),但要把 `ci_sha ≠ merge_sha` 记下来,报告里说清楚。
+ * ci land 要在 detached、干净的树里跑(它是给整合者写的,会 checkout / rebase;单层 PR 其实不会)。
  */
 async function merge(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   return await guardGit('merge_failed', async () => {
     const dir = runPath(d.config, s.id)
-    git(d, dir, ['fetch', 'origin'], { timeoutMs: NETWORK_TIMEOUT_MS })
-    const rebase = d.git.run(['rebase', `origin/${d.config.branch}`], { cwd: dir })
-    if (rebase.code !== 0) {
-      d.git.run(['rebase', '--abort'], { cwd: dir })
-      return { ok: false, fail: 'merge_conflict', detail: `rebase 到 origin/${d.config.branch} 冲突了(分支保留):\n${tail(rebase.stderr || rebase.stdout, 40)}` }
+    let pr: PrRef
+    try {
+      // 老存盘(这一版之前停在 approval 的那条)没有 PR:现在补开,ci land 会等它的 CI。
+      pr = await ensurePr(s, d, dir)
+    } catch (err) {
+      return { ok: false, fail: 'merge_failed', detail: `开不了进 ${d.config.branch} 的 PR:${errText(err)}` }
     }
-    const head = git(d, dir, ['rev-parse', 'HEAD']).trim()
-    s.merge.rebased = head !== s.ci.sha
+    git(d, dir, ['checkout', '-q', '--detach'])
+    const landed = await d.forge.land({ cwd: dir, pr: pr.number, base: d.config.branch })
+    if (landed.exitCode !== CI_LAND_EXIT.landed) {
+      // 合不进去(冲突)、dev / head 被人动过 ⇒ 远端和这条改动对不齐,要重来一轮;别的(CI 红了、超时、gh 出错)⇒ 人看。
+      const conflict = landed.exitCode === CI_LAND_EXIT.conflict || landed.exitCode === CI_LAND_EXIT.moved
+      return { ok: false, fail: conflict ? 'merge_conflict' : 'merge_failed', detail: `PR #${pr.number} 没合进去(ci land 退 ${landed.exitCode};分支和 PR 都留着):${landed.message}` }
+    }
 
-    const push = d.git.run(['push', 'origin', `HEAD:refs/heads/${d.config.branch}`], { cwd: dir, timeoutMs: NETWORK_TIMEOUT_MS })
-    if (push.code !== 0) {
-      // 不快进就推不上去 —— 从 rebase 到这一刻之间远端又前进了(另一个人推了东西)。
-      // 和 rebase 冲突同一个失败码:两者都是「远端和这条改动对不齐,要重来一轮」。
-      return { ok: false, fail: 'merge_conflict', detail: `推不上 ${d.config.branch}(远端在这中间前进了,不快进的推会被拒;分支保留):\n${tail(push.stderr || push.stdout, 40)}` }
-    }
+    // 树放到合进去的那条上,merge.sha 读的是树自己的 HEAD —— deploy 断言的就是这两者一致。
+    git(d, dir, ['fetch', 'origin', d.config.branch], { timeoutMs: NETWORK_TIMEOUT_MS })
+    git(d, dir, ['checkout', '-q', '--detach', `origin/${d.config.branch}`])
+    const head = git(d, dir, ['rev-parse', 'HEAD']).trim()
     s.merge.sha = head
+    // 合入的树和 CI 跑的树一样吗?不一样 = 等拍板期间 dev 上多了别人的提交。
+    s.merge.rebased = !!s.ci.sha && d.git.run(['diff', '--quiet', s.ci.sha, head], { cwd: dir }).code !== 0
+    // dev 多出来的提交可能改过依赖。
+    const install = await d.exec('bun', ['install', '--frozen-lockfile'], { cwd: dir, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
+    if (install.code !== 0) d.log(`[self-change] 合入后 bun install 失败(构建会再报):${tail(install.stderr || install.stdout, 5)}`)
 
     // 删远端分支失败只记一笔:代码已经在 dev 上了,一个残留分支不值得把整条判失败。
     const del = d.git.run(['push', 'origin', '--delete', s.branch], { cwd: dir, timeoutMs: NETWORK_TIMEOUT_MS })
     if (del.code !== 0) d.log(`[self-change] 删远端分支 ${s.branch} 失败(不影响结果):${del.stderr.trim()}`)
 
-    await notify(s, d, `自改 #${s.id} 已合入 ${d.config.branch}(${s.merge.sha.slice(0, 8)})${s.noDeploy ? ',按 --no-deploy 不部署' : ',开始部署'}`)
+    await notify(s, d, `自改 #${s.id} 已合入 ${d.config.branch}(PR #${pr.number},${s.merge.sha.slice(0, 8)})${s.noDeploy ? ',按 --no-deploy 不部署' : ',开始部署'}`)
     return { ok: true, next: s.noDeploy ? 'report' : 'deploy' }
   })
 }
@@ -841,6 +899,19 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   // 装错东西不算「机器坏了」,是「不知道该装什么」—— 不加 fail_streak、不停机,
   // 要的是人来看一眼(把 `<workdir>/runs/<id>` 删掉,`--resume` 会按批准的提交重开)。
   if (mismatch) return mismatch
+
+  // 部署门(跟 `self ship` 同一道,设计稿 2026-10-23-cc-runs-development §6 第 4 步):什么都还没动的时候先问能不能动。
+  // 两种都停在 deploy、不推 fail_streak(机器没坏,是现在不合适),`--resume` 从这里接着来。
+  if (d.machineLoad) {
+    const busy = await waitForQuietMachine({ load: d.machineLoad, sleep: d.sleep, now: d.now, log: d.log }, { waitMin: DEPLOY_LOAD_WAIT_MIN, maxLoadPerCpu: DEFAULT_MAX_LOAD_PER_CPU })
+    if (busy) return { ok: false, fail: 'machine_busy', detail: `${busy}。没部署;wechat-cc self change --resume ${s.id} 接着来` }
+  }
+  // 自检要调模型:网络守护不安全时部署完也验不了,只能回滚。
+  const g = await d.daemon.guard().catch(() => null)
+  if (!g || (g.enabled && !g.safe)) {
+    const why = !g ? '读不到网络守护的状态(daemon 不通?)' : `网络守护说现在不安全:${g.detail}`
+    return { ok: false, fail: 'network_unprotected', detail: `${why}。没部署(自检要调模型);wechat-cc self change --resume ${s.id} 接着来` }
+  }
 
   const build = await d.exec('bun', ['run', 'build-sidecar'], { cwd: join(dir, 'apps', 'desktop'), timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
   if (build.code !== 0) {
@@ -966,8 +1037,8 @@ async function report(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     `自检:工作台 ${mark(s.selftest.workbench)} · 对话 ${mark(s.selftest.chat)}`,
     ...flakeLine(s),
   ]
-  if (s.ci.sha && s.merge.sha && s.ci.sha !== s.merge.sha) {
-    lines.push(`注意:CI 跑的是 ${s.ci.sha.slice(0, 8)},合入的是 ${s.merge.sha.slice(0, 8)}(rebase 过,没有重跑 CI)`)
+  if (s.merge.rebased && s.ci.sha) {
+    lines.push(`注意:等拍板期间 ${d.config.branch} 上多了别人的提交,合入的树 CI 没跑过(CI 跑的是 ${s.ci.sha.slice(0, 8)});看推 ${d.config.branch} 那一次`)
   }
   await notify(s, d, lines.join('\n'))
   return { ok: true, next: 'done' }

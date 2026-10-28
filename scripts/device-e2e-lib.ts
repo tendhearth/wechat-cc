@@ -75,3 +75,31 @@ export function renderReport(r: { ok: boolean; startedAt: string; udid: string; 
   ]
   return lines.join('\n')
 }
+
+/** `~/.claude/sessions/<pid>.json` 的一行(只取用得到的键)。 */
+export interface SessionFileRow { pid: number; name?: string; sessionId?: string; kind?: string }
+
+/**
+ * 按名字挑一个开着的 Claude 窗口(与 daemon 的 findLiveWindow 同一条判据:进程活着、名字在活着的窗口里唯一)。
+ * 同名两个 / 进程没了 / 没这个名字 ⇒ null —— daemon 那头这时也不会送。
+ */
+export function pickLiveWindow(rows: SessionFileRow[], name: string, alive: (pid: number) => boolean): { pid: number; name: string; sessionId: string } | null {
+  const live = rows.filter(r => r.name && r.sessionId && alive(r.pid))
+  const hits = live.filter(r => r.name === name)
+  return hits.length === 1 ? { pid: hits[0]!.pid, name, sessionId: hits[0]!.sessionId! } : null
+}
+
+/**
+ * 目标窗口的会话记录(jsonl)里有没有那句:来自 tendhearth-phone 的会话间消息、带这次的 nonce。
+ * 这是「送进窗口」唯一的正面证据(daemon 成功时不另记一行)。
+ */
+export function phoneRelayArrived(jsonl: string, nonce: string): boolean {
+  for (const line of jsonl.split('\n')) {
+    if (!line.includes('tendhearth-phone') || !line.includes(nonce)) continue
+    try {
+      const text = JSON.stringify(JSON.parse(line))
+      if (/from-name=\\?"tendhearth-phone\\?"/.test(text) && text.includes(nonce)) return true
+    } catch { /* 半行 */ }
+  }
+  return false
+}

@@ -2,7 +2,7 @@
 /// <reference lib="dom" />
 /**
  * Thin helper for the dashboard modules that need to call the running
- * daemon's internal HTTP API (/v1/...).
+ * daemon's internal HTTP API (the /v1 routes; paths come from ./daemon-client.js).
  *
  * Bootstrap: calls `wechat-cc daemon api-info --json` (via Tauri IPC /
  * shim) once to get the bound port + bearer token, then reuses those for
@@ -17,6 +17,7 @@
  */
 
 import { invoke as ipcInvoke } from './ipc.js'
+import { OWNER_WORKSPACE_PATHS as GENERATED_OWNER_WORKSPACE_PATHS } from './generated/daemon-calls.js'
 
 /** @type {{ baseUrl: string; token: string } | null} */
 let _cache = null
@@ -54,12 +55,11 @@ async function getApiCredentials() {
  * then reach everything in that token's routeAllow, including
  * POST /v1/companion/converse (speak to WeChat as the owner).
  *
- * So the host performs the call instead: `customer_review_api` (named for the
- * 客户回顾 workspace it was built for — that frontend module was retired
- * 2026-08-24 and deleted 2026-09-27; the command now serves the 待办 routes
- * below) reads the token in Rust, enforces an exact route allowlist, and
- * returns only the response body. The dev server implements the same command
- * (test-shim.ts), so browser dev keeps the token server-side too.
+ * So the host performs the call instead: `daemon_request` (架构终态 F5 起和工作台
+ * 共用一个宿主命令;以前叫 customer_review_api) reads the token in Rust, enforces
+ * an exact route allowlist (the generated route table), and returns only the
+ * response body. The dev server implements the same command (test-shim.ts),
+ * so browser dev keeps the token server-side too.
  *
  * Demoting the routes to `trusted` was the other candidate and is unsafe:
  * ordinary chat sessions are minted `trusted`, so anyone talking to the bot
@@ -69,18 +69,15 @@ async function getApiCredentials() {
  * @param {Record<string, unknown>} [body]
  * @returns {Promise<unknown>}
  */
-const OWNER_WORKSPACE_PATHS = new Set([
-  '/v1/knowledge/facts/find_facts',
-  '/v1/llm/keys',
-  '/v1/companion/thoughts',
-  '/v1/knowledge/facts/set_fact_status',
-  '/v1/knowledge/graph/top_contacts',
-  '/v1/reminders/schedule',
-])
+/**
+ * 交给宿主的那几条 = 路由表 packages/protocol/src/routes.ts 里 `desktop.ownerWorkspace` 的行。`bun run gen:routes`
+ * 同时写给 lib.rs(src-tauri/generated/workbench-routes.json)和这里(./generated/daemon-calls.js),两份同源。
+ */
+export const OWNER_WORKSPACE_PATHS = /** @type {ReadonlySet<string>} */ (new Set(GENERATED_OWNER_WORKSPACE_PATHS))
 
 /** @param {'GET' | 'POST'} method @param {string} path @param {Record<string, unknown>} [body] */
 async function callOwnerWorkspace(method, path, body) {
-  const raw = /** @type {string} */ (await ipcInvoke('customer_review_api', {
+  const raw = /** @type {string} */ (await ipcInvoke('daemon_request', {
     method,
     path,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -94,9 +91,22 @@ async function callOwnerWorkspace(method, path, body) {
 }
 
 /**
+ * daemon 拒写配置文件(3e,lib/json-file):文件读不出来、或者刚被别处改过。任何一条路由都可能碰上,所以在这里统一
+ * 翻成主人看得懂的一句,`code` 留着原码。detail 里是 daemon 给的原因(含文件路径),原样带上,方便主人去看是哪个文件。
+ * 其余的码照旧:Error.message 就是码,各处按码判断的代码不受影响。
+ * @param {string} code @param {unknown} detail @returns {string | null}
+ */
+export function configRefusalText(code, detail) {
+  const why = typeof detail === 'string' && detail ? `(${detail})` : ''
+  if (code === 'config_unreadable') return `配置文件好像坏了,CC 没敢改它${why}`
+  if (code === 'config_busy') return '配置文件刚被别处改过,这次没写进去,再试一次'
+  return null
+}
+
+/**
  * Call a daemon internal-api endpoint.
  * @param {'GET' | 'POST'} method
- * @param {string} path  e.g. '/v1/a2a/list' or '/v1/a2a/activity?agent_id=x&limit=50'
+ * @param {string} path  built by ./daemon-client.js (`v1(invokeApi, V1.a2a.list)`), query string included
  * @param {Record<string, unknown>} [body]
  * @param {{ timeoutMs?: number }} [opts]  timeoutMs overrides the 10s default —
  *   for routes that do model work inline (seek propose runs the grounded
@@ -115,7 +125,7 @@ export async function invokeApi(method, path, body, opts) {
  * @param {Record<string, unknown>} [body]
  */
 export async function invokeWorkbenchApi(method, path, body) {
-  const raw = /** @type {string} */ (await ipcInvoke('workbench_api', {
+  const raw = /** @type {string} */ (await ipcInvoke('daemon_request', {
     method,
     path,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -190,7 +200,11 @@ async function callApi(method, path, body, retried, opts) {
       return callApi(method, path, body, true, opts)
     }
     let errText = `HTTP ${resp.status}`
-    try { const j = await resp.json(); errText = j?.error ?? errText } catch { /* ignore */ }
+    /** @type {unknown} */
+    let detail
+    try { const j = await resp.json(); errText = j?.error ?? errText; detail = j?.detail } catch { /* ignore */ }
+    const friendly = configRefusalText(errText, detail)
+    if (friendly) throw Object.assign(new Error(friendly), { code: errText })
     throw new Error(errText)
   }
   return resp.json()

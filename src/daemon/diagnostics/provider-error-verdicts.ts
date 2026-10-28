@@ -14,9 +14,9 @@
  *   · lib/auth-failure 的 classifyProviderFailure(三档闭集;今天没有调用方)
  *   · core/provider-quota 的额度/限流判定与 Cursor 的「整条回复就是催升级」
  */
-import { isAuthFail, isAuthFailError } from '../../core/auth-fail'
-import { classifyProviderError, isQuotaRefusalText } from '../../core/provider-quota'
-import { isAuthError } from '../../core/provider-registry'
+import { isAuthFail, isAuthFailError } from '../../domain/auth-fail'
+import { classifyProviderError, isQuotaRefusalText } from '../../domain/provider-quota'
+import { isAuthError } from '../../app/provider-registry'
 import { classifyProviderFailure, type ProviderFailureKind } from '../../lib/auth-failure'
 import { isConnectFailure } from '../../lib/net-errors'
 import { classifyFailure, type FailureKind } from '../health/classify'
@@ -31,6 +31,7 @@ export type FailureTruth =
   | 'server'          // 对端 5xx / 网关挂了
   | 'quota'           // 额度耗尽
   | 'model_unsupported' // 选的模型这个账号/这个 CLI 版本用不了
+  | 'region'          // 账号在当前网络出口所在地区用不了(agy 2026-10-23 真机);换出口或换一家才行,重试没用
   | 'unknown'         // 信息已经丢光(空文本、只剩 "exited with code 1")
   | 'not_provider'    // daemon 自己的错误(看门狗、步数预算),混在同一条通道里
 

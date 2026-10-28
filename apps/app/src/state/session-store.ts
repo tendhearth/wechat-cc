@@ -31,6 +31,22 @@ export async function clearStored(store: CredentialStore, push: { clear(): Promi
   if (p.status === 'rejected') throw p.reason
 }
 
+/**
+ * 被撤销时清钥匙串:先读一遍,只有钥匙串里那份就是被撤的那份(同一个 deviceToken)才清。
+ * 别处(重新配对、真机脚本放回原配对)已经换了一份 ⇒ 不碰它(device-e2e 10-20:晚一拍的「被撤了」删掉了刚放回的主人配对)。
+ * 读不出来 ⇒ 宁可不清(撤销页照样显示,下次启动再判)。没有记下是哪一份(null)⇒ 照旧清。
+ * 注意:store.load() 读到格式坏掉的记录会顺手删掉它 —— 这条判断路径因此也可能删东西,但删的只是读不出的坏数据。
+ */
+export async function clearStoredIfRevoked(store: CredentialStore, push: { clear(): Promise<void> }, revoked: PairingRecord | null, log: Log = devLog): Promise<'cleared' | 'kept'> {
+  if (revoked) {
+    let now: PairingRecord | null
+    try { now = await store.load() } catch (e) { log(`revoke check load failed (${kind(e)})`); return 'kept' }
+    if (now && now.deviceToken !== revoked.deviceToken) { log('revoke: stored pairing is a different one, kept'); return 'kept' }
+  }
+  await clearStored(store, push, log)
+  return 'cleared'
+}
+
 /** 会话读完却没有配对 ⇒ 钥匙串里若还留着推送密钥就该清(上次清失败 / 老版本升级上来)。 */
 export function leftoverPushKey(ready: boolean, pairing: PairingRecord | null): boolean {
   return ready && pairing === null

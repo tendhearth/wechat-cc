@@ -1,1 +1,1 @@
-export { workbenchFeatureConfig, workbenchCodexConfig } from '../src/core/workbench/codex-config'
+export { workbenchFeatureConfig, workbenchCodexConfig } from '../src/adapters/executors/codex/codex-config'

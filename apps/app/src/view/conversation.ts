@@ -1,6 +1,7 @@
 import type { MatterDetailT } from '../backend/types'
 
-export type ConvItem = { kind: 'me' | 'cc' | 'steps' | 'error'; text: string; at: number; count?: number; diagnostic?: string }
+// running(2026-10-17):这串步骤的最后一步还在跑 ⇒ 页面标「正在」。
+export type ConvItem = { kind: 'me' | 'cc' | 'steps' | 'error'; text: string; at: number; count?: number; diagnostic?: string; running?: boolean }
 const MAX = 4000
 const clip = (s: string) => (s.length > MAX ? s.slice(0, MAX) + '…' : s)
 
@@ -13,8 +14,9 @@ export function conversationView(events: MatterDetailT['events']): ConvItem[] {
     else if (e.kind === 'error') out.push({ kind: 'error', text: clip(e.text), at: e.createdAt, ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) })
     else if (e.kind === 'tool_call') {
       const prev = out[out.length - 1]
-      if (prev?.kind === 'steps') { prev.count = (prev.count ?? 1) + 1; prev.text = clip(e.text); prev.at = e.createdAt }
-      else out.push({ kind: 'steps', text: clip(e.text), at: e.createdAt, count: 1 })
+      const running = e.activity?.status === 'running'
+      if (prev?.kind === 'steps') { prev.count = (prev.count ?? 1) + 1; prev.text = clip(e.text); prev.at = e.createdAt; if (running) prev.running = true; else delete prev.running }
+      else out.push({ kind: 'steps', text: clip(e.text), at: e.createdAt, count: 1, ...(running ? { running: true } : {}) })
     }
   }
   return out

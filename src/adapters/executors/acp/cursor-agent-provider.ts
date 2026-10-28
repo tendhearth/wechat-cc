@@ -1,0 +1,379 @@
+import { compilePolicy } from '../../../domain/policy'
+/**
+ * Cursor SDK agent provider.
+ *
+ * Third registered provider alongside claude / codex. Uses
+ * `@cursor/sdk` (loaded via dynamic import in bootstrap) and conforms
+ * to the AgentProvider / AgentSession interface defined in
+ * src/ports/agent-provider.ts.
+ *
+ * Permission surface is the coarsest of the three providers — Cursor
+ * has neither a per-tool callback (cf. Claude's canUseTool) nor a
+ * granular sandbox shape (cf. Codex's read-only / workspace-write /
+ * danger-full-access). `local.sandboxOptions: { enabled }` is the
+ * entire permission surface. Tier mapping reflects that.
+ *
+ * See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
+ */
+import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from '../../../ports/agent-provider'
+import type { TierProfile } from '../../../domain/user-tier'
+import type { McpStdioSpec } from '../mcp-stdio-spec'
+import { makeTurnEmitter } from '../turn-emitter'
+import { log } from '../../../lib/log'
+
+/**
+ * RFC 05 Phase 2 — Cursor's SDK has no per-tool callback and no
+ * read-only sandbox (only workspace-write / full), and no sub-agent
+ * surface (so it can't be a delegate peer in v1 — see RFC 05 §7 #3).
+ * Flip `supportsDelegation` when Cursor ships sub-agent support.
+ */
+// NOTE (2026-09-18): the capability-matrix row the daemon actually runs
+// under for the `cursor` provider id is `ACP_CURSOR_CAPABILITIES`
+// (core/acp-cursor-chat.ts, capability-matrix.ts:113) — chat-side Cursor
+// moved to ACP that day and its MCP child is injected per session/new with
+// the real tier, so `adminMcpTools` is true there, not false. This constant
+// (the `@cursor/sdk` / CURSOR_API_KEY fallback path's own capabilities) is
+// no longer what production wires up; it's kept because
+// createCursorAgentProvider (the SDK provider below) and this file's own
+// tests still reference it.
+export const CURSOR_CAPABILITIES: ProviderCapabilities = {
+  perToolCallback: false,
+  // What the code below actually does: createCursorAgentProvider merges the
+  // spawn's `mcpEnv` (session token + tier) into the CORE MCP children per
+  // session — `mergeEnvIntoMcpServers(opts.mcpServers, sessionEnv,
+  // CORE_MCP_SERVER_NAMES)`, the same seam claude/codex use. The boot-time
+  // `opts.mcpServers` object is only the template; the env is per-session.
+  // So there is no privilege hole in leaving this `false` — it is simply not
+  // the row production reads. `capability-matrix.ts` maps the `cursor`
+  // provider id to ACP_CURSOR_CAPABILITIES (noted above), and that row is
+  // `adminMcpTools: true` for the same reason. Kept conservative here
+  // because this constant is only referenced by this file's own tests.
+  adminMcpTools: false,
+  sandboxLevels: new Set(['workspace-write', 'full']),
+  supportsDelegation: false,
+  supportsResume: true,
+  defaultPeer: 'claude',
+  // 生产读的是 ACP_CURSOR_CAPABILITIES;这一行同样照保守写:沙箱收住写和命令,读工作区外、上网没核实 ⇒ 收不住。
+  confines: { read_outside_workspace: 'none', fs_write: 'sandbox', shell: 'sandbox', network: 'none' },
+  authFailHint: 'Cursor 凭证无效，请检查电脑上的 CURSOR_API_KEY 后再发消息。',
+}
+
+export { tierProfileToCursorSdkOpts, type CursorTierSdkOpts } from '../../../domain/policy'
+
+/**
+ * Parse Cursor's tool name into { server?, tool } for AgentEvent.
+ *
+ * Cursor SDK docs say "tool call schema is not stable" — the exact
+ * format of SDKToolUseMessage.name is unspecified. Handle multiple
+ * plausible formats; fall back to no-server if no known MCP server
+ * name appears as a prefix.
+ *
+ * First successful tool call from Cursor logs the observed format so
+ * the implementer notices if it diverges (see cursor provider's
+ * dispatch loop).
+ */
+export function mapCursorToolName(
+  rawName: string,
+  mcpServerNames: ReadonlySet<string>,
+): { server?: string; tool: string } {
+  // Match against known server names (sorted longest-first so e.g.
+  // `delegate_v2` is tried before `delegate`). The previous regex
+  // `^mcp__([^_]+)__` rejected any server name containing `_`, and the
+  // fallback indexOf('__') matched the literal `mcp` prefix instead of
+  // the server — so `mcp__compass_sidecar__call` resolved to no server
+  // at all and the permission/log path lost attribution.
+  const names = [...mcpServerNames].sort((a, b) => b.length - a.length)
+  for (const name of names) {
+    // Anthropic-style with mcp prefix: mcp__<server>__<tool>
+    const prefixed = `mcp__${name}__`
+    if (rawName.startsWith(prefixed)) {
+      return { server: name, tool: rawName.slice(prefixed.length) }
+    }
+    // Alternate separator forms: <server>__<tool>, <server>:<tool>, <server>/<tool>
+    for (const sep of ['__', ':', '/']) {
+      const probe = `${name}${sep}`
+      if (rawName.startsWith(probe)) {
+        return { server: name, tool: rawName.slice(probe.length) }
+      }
+    }
+  }
+  // Built-in tool or unrecognized — no server
+  return { tool: rawName }
+}
+
+/**
+ * Narrow shape of `@cursor/sdk`'s SDKMessage discriminated union — only
+ * the variants we branch on. The full union has more variants
+ * (rate_limit, partial deltas, etc.); we drop them.
+ *
+ * Defined inline rather than importing from `@cursor/sdk` so this file
+ * remains type-resolvable when the SDK is uninstalled
+ * (`optionalDependencies`). The actual SDK types live alongside
+ * `Agent.create()` in the dynamically-imported module.
+ */
+export interface CursorMessageLike {
+  type: string
+  message?: {
+    content?: Array<{
+      type?: string
+      text?: string
+      name?: string
+      input?: unknown
+    }>
+  }
+  status?: string
+  error?: { message?: string }
+}
+
+/**
+ * Map one Cursor `SDKMessage` → zero-or-more `AgentEvent`s.
+ *
+ * Generator shape so an assistant message with multiple content
+ * blocks (text + tool_use + ...) yields each block as a separate
+ * AgentEvent. The dispatch loop forwards each yielded event verbatim.
+ *
+ * `agentId` is the persisted session id; emitted in `result` events
+ * so session-store can later resume via `Agent.resume(agentId)` (P1.1).
+ *
+ * Event-shape choices reflect the real `AgentEvent` discriminated
+ * union in agent-provider.ts (text / tool_call / init / result /
+ * error). Errors are surfaced as `{ kind: 'error', message }` —
+ * matching the codex provider's `turn.failed` mapping — rather than
+ * piggy-backing on `result`. CANCELLED / EXPIRED carry a stable
+ * `message` string so the coordinator can branch without inspecting
+ * the raw status enum.
+ *
+ * `numTurns` / `durationMs` are placeholders (0) when the mapper
+ * emits the terminal `result`; the dispatch loop (Task 6) tracks the
+ * real values and is free to substitute them. The pure mapper has no
+ * access to wall-clock state.
+ */
+export function* mapCursorMessage(
+  msg: CursorMessageLike,
+  mcpServerNames: ReadonlySet<string>,
+  agentId: string,
+): Generator<AgentEvent, void, void> {
+  if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+    for (const block of msg.message.content) {
+      if (block.type === 'text' && typeof block.text === 'string' && block.text.length > 0) {
+        yield { kind: 'text', text: block.text }
+      } else if (block.type === 'tool_use' && typeof block.name === 'string') {
+        const { server, tool } = mapCursorToolName(block.name, mcpServerNames)
+        if (server !== undefined) {
+          yield { kind: 'tool_call', server, tool }
+        } else {
+          yield { kind: 'tool_call', tool }
+        }
+      }
+    }
+    return
+  }
+  if (msg.type === 'status') {
+    if (msg.status === 'FINISHED') {
+      yield { kind: 'result', sessionId: agentId, numTurns: 0, durationMs: 0 }
+      return
+    }
+    if (msg.status === 'ERROR') {
+      const errMsg = msg.error?.message ?? 'cursor agent error'
+      yield { kind: 'error', message: errMsg }
+      return
+    }
+    if (msg.status === 'CANCELLED') {
+      yield { kind: 'error', message: 'cancelled' }
+      return
+    }
+    if (msg.status === 'EXPIRED') {
+      yield { kind: 'error', message: 'expired' }
+      return
+    }
+    // RUNNING / CREATING — drop
+    return
+  }
+  // thinking / system / user (echo) / request / task — drop
+}
+
+/**
+ * Shape of the `@cursor/sdk` module's relevant exports — narrow
+ * enough that the factory can compile even when the SDK is absent.
+ * The dynamically-imported module is type-erased into this surface.
+ */
+export interface CursorSdkNamespace {
+  Agent: {
+    create(options: Record<string, unknown>): Promise<unknown>
+    resume?(agentId: string, options?: Record<string, unknown>): Promise<unknown>
+  }
+}
+
+export interface CursorAgentProviderOptions {
+  /** The dynamically-imported `@cursor/sdk` namespace (bootstrap loads it via `await import('@cursor/sdk')`). */
+  sdk: CursorSdkNamespace
+  /** Required — Cursor API key. Bootstrap reads from `process.env.CURSOR_API_KEY`. */
+  apiKey: string
+  /** Optional Cursor model id (e.g. `'composer-2'`). When omitted, SDK picks its default. */
+  model?: string
+  /** MCP servers passed into Agent.create — `wechat` + `delegate` come from the bootstrap. */
+  mcpServers?: Record<string, McpStdioSpec>
+}
+
+interface CursorAgentLike {
+  agentId: string
+  send(message: string): Promise<CursorRunLike>
+  close(): void
+}
+interface CursorRunLike {
+  id: string
+  agentId: string
+  stream(): AsyncIterable<unknown>
+  cancel?(): Promise<void>
+}
+
+export function createCursorAgentProvider(opts: CursorAgentProviderOptions): AgentProvider {
+  const mcpServerNames = new Set(Object.keys(opts.mcpServers ?? {}))
+  let firstToolNameLogged = false
+
+  return {
+    // 守护(评审 #193 P1-1):SDK 路径的模型 = 会话钉的 ?? 构造时的(下面 spawn 同一条规则);没有就是 SDK 自选,拿不准。
+    callTarget: (kind, ctx) => {
+      const model = kind === 'session' || kind === 'spawn' ? ctx?.model ?? opts.model : opts.model
+      return model ? { provider: 'cursor', model } : null
+    },
+    async spawn(project: AgentProject, spawnOpts) {
+      const tierOpts = compilePolicy('cursor-sdk', spawnOpts.tierProfile, spawnOpts.permissionMode)
+      // Per-session internal-api auth — merge the env-only token + tier into
+      // the CORE stdio MCP children's env (provider-agnostic seam; same as
+      // claude/codex). Scoped to CORE_MCP_SERVER_NAMES so third-party plugins
+      // never receive the bearer token.
+      const sessionEnv = spawnOpts.mcpEnv ?? {}
+      const mcpWithEnv = opts.mcpServers
+        ? mergeEnvIntoMcpServers(opts.mcpServers, sessionEnv, CORE_MCP_SERVER_NAMES)
+        : undefined
+      // Per-spawn model (daemon's /model pin) wins over the construction-time
+      // default → a model switch applies on the next session, no restart.
+      const model = spawnOpts.model ?? opts.model
+      const createOptions: Record<string, unknown> = {
+        apiKey: opts.apiKey,
+        ...(model ? { model: { id: model } } : {}),
+        ...(mcpWithEnv ? { mcpServers: mcpWithEnv } : {}),
+        local: {
+          cwd: project.path,
+          sandboxOptions: tierOpts.sandboxOptions,
+        },
+      }
+      // Resume an existing Cursor agent when the framework passes a
+      // persisted session id, matching the Claude / Codex providers.
+      // Pre-fix this branch was missing — Cursor sessions cold-started on
+      // every daemon restart and the user's chat history / context was
+      // silently lost. `Agent.resume` is declared optional in the SDK
+      // namespace; if a future SDK build drops it we fall back to create.
+      let agent: CursorAgentLike | null = null
+      if (spawnOpts.resumeSessionId && opts.sdk.Agent.resume) {
+        try {
+          agent = (await opts.sdk.Agent.resume(spawnOpts.resumeSessionId, createOptions)) as CursorAgentLike
+          log('SESSION_RESUME', `alias=${project.alias} agent_id=${spawnOpts.resumeSessionId} provider=cursor`)
+        } catch (err) {
+          // Resume can legitimately fail (agent expired, sdk-side delete);
+          // fall back to a fresh agent so the user still gets a reply.
+          log('SESSION_RESUME', `alias=${project.alias} agent_id=${spawnOpts.resumeSessionId} provider=cursor FAILED — fresh agent: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      if (!agent) {
+        agent = (await opts.sdk.Agent.create(createOptions)) as CursorAgentLike
+      }
+
+      return makeCursorSession(agent, mcpServerNames, (rawName) => {
+        if (!firstToolNameLogged) {
+          firstToolNameLogged = true
+          // Single observability log: helps the next engineer notice if
+          // the SDK's tool name format diverges from our parser.
+          // eslint-disable-next-line no-console
+          console.log(`[CURSOR_TOOL] first observed tool name: ${rawName}`)
+        }
+      })
+    },
+  }
+}
+
+function makeCursorSession(
+  agent: CursorAgentLike,
+  mcpServerNames: ReadonlySet<string>,
+  onFirstToolName: (rawName: string) => void,
+): AgentSession {
+  let turnCounter = 0
+  // Tracks the in-flight run so cancel()/close() can reach it. Set once
+  // agent.send() resolves (before that there's nothing to cancel — the
+  // send call itself isn't interruptible), cleared in the generator's
+  // finally so a stale reference can't be cancelled after its turn ended.
+  let activeRun: CursorRunLike | null = null
+  return {
+    dispatch(text: string) {
+      const em = makeTurnEmitter()
+      turnCounter++
+      const myTurns = turnCounter
+      return (async function* dispatchGenerator() {
+        let run: CursorRunLike
+        try {
+          run = await agent.send(text)
+          activeRun = run
+        } catch (err) {
+          yield em.error(err)
+          return
+        }
+        let sawFinish = false
+        try {
+          for await (const raw of run.stream() as AsyncIterable<CursorMessageLike>) {
+            // Side-effect hook: log first observed tool name once
+            if (raw?.type === 'assistant' && Array.isArray(raw.message?.content)) {
+              for (const block of raw.message.content) {
+                if (block.type === 'tool_use' && typeof block.name === 'string') {
+                  onFirstToolName(block.name)
+                  break
+                }
+              }
+            }
+            // Special-case status: FINISHED — emit our own result with real timings.
+            if (raw?.type === 'status' && (raw as { status?: string }).status === 'FINISHED') {
+              sawFinish = true
+              yield em.finish({ sessionId: agent.agentId, numTurns: myTurns })
+              continue
+            }
+            // All other variants → mapper handles them
+            for (const ev of mapCursorMessage(raw, mcpServerNames, agent.agentId)) {
+              // B3: mapper stays a pure function, auth classification happens
+              // on the consumer side — status:ERROR messages that hit the
+              // sdk-error wide set get upgraded to structured auth_failed.
+              yield ev.kind === 'error' && ev.code === undefined ? em.errorText(ev.message) : ev
+            }
+          }
+          // Stream ended without explicit FINISHED status — emit a result event anyway
+          // so callers can see the dispatch concluded.
+          if (!sawFinish) {
+            yield em.finish({ sessionId: agent.agentId, numTurns: myTurns })
+          }
+        } catch (err) {
+          yield em.error(err)
+        } finally {
+          // Identity guard — a stale finally from an EARLIER turn must not
+          // clear a NEWER turn's activeRun out from under it. Concretely:
+          // turn 1's generator body can still be unwinding (e.g. a slow
+          // `for await` cleanup) after turn 2 has already called
+          // agent.send() and reassigned activeRun — without this check,
+          // turn 1's finally landing after that reassignment would null
+          // out turn 2's still-in-flight run, making turn 2 uncancellable.
+          // See agy-agent-provider.ts's `currentAbort === abort` guard for
+          // the same class of bug (task review round 2, CRITICAL there).
+          if (activeRun === run) activeRun = null
+        }
+      })()
+    },
+    async cancel() {
+      // Best-effort: the SDK's run.cancel is declared optional (older
+      // SDK builds / no in-flight run) — a no-op run or missing method
+      // must never throw into the /stop path.
+      await activeRun?.cancel?.().catch(() => {})
+    },
+    async close() {
+      await activeRun?.cancel?.().catch(() => {})
+      try { agent.close() } catch { /* swallow */ }
+    },
+  }
+}

@@ -20,7 +20,7 @@ const sessionsListProjectsCmd = defineCommand({
   },
   async run({ args }) {
     const outFile = args['out-file']
-    const { makeSessionStore } = await import('../../core/session-store')
+    const { makeSessionStore } = await import('../../adapters/store/session-store')
     const { openWechatDb } = await import('../../lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
@@ -66,16 +66,14 @@ const sessionsListProjectsCmd = defineCommand({
             return
           }
           const { triggerStaleSummaryRefresh } = await import('../../daemon/sessions/summarizer-runtime')
-          // resolveIntrospectChatId is named for its first caller (introspect)
-          // but it's actually a generic "default chat" resolver that reads
-          // companion config. Reusing it here avoids extracting yet another
-          // helper for what is, today, the same v0.4.x single-chat lookup.
-          const { resolveIntrospectChatId } = await import('../../daemon/companion/introspect-runtime')
+          // 默认对话 = companion 配置的 default_chat_id(和陪伴反省那一拍的 resolveIntrospectChatId 同一个读法)。
+          // A5 · 陪伴起直接读 lib 里的配置:CLI 不为一行配置去链陪伴功能(以前链的是 daemon/companion/introspect-runtime)。
+          const { loadCompanionConfig } = await import('../../lib/companion-config')
           const { query } = await import('@anthropic-ai/claude-agent-sdk')
           await triggerStaleSummaryRefresh({
             stateDir: STATE_DIR,
             db,
-            resolveChatId: () => resolveIntrospectChatId(STATE_DIR),
+            resolveChatId: () => loadCompanionConfig(STATE_DIR).default_chat_id ?? null,
             sdkEval: async (prompt) => {
               let text = ''
               const q = query({ prompt, options: { model: 'claude-haiku-4-5', maxTurns: 1 } })
@@ -106,7 +104,7 @@ const sessionsReadJsonlCmd = defineCommand({
   },
   async run({ args }) {
     const outFile = args['out-file']
-    const { makeSessionStore } = await import('../../core/session-store')
+    const { makeSessionStore } = await import('../../adapters/store/session-store')
     const { openWechatDb } = await import('../../lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
@@ -167,7 +165,7 @@ const sessionsDeleteCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { makeSessionStore } = await import('../../core/session-store')
+    const { makeSessionStore } = await import('../../adapters/store/session-store')
     const { openWechatDb } = await import('../../lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
@@ -208,8 +206,8 @@ const sessionsListChatsCmd = defineCommand({
   },
   async run({ args }) {
     const outFile = args['out-file']
-    const { makeSessionStore } = await import('../../core/session-store')
-    const { makeConversationStore } = await import('../../core/conversation-store')
+    const { makeSessionStore } = await import('../../adapters/store/session-store')
+    const { makeConversationStore } = await import('../../adapters/store/conversation-store')
     const { openWechatDb } = await import('../../lib/db')
     const { groupChats } = await import('../sessions-helpers')
     const db = openWechatDb(STATE_DIR)

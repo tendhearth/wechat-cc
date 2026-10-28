@@ -1,6 +1,6 @@
 # @wechat-cc/protocol
 
-手机 ↔ 中继 ↔ 后台那条加密通道的协议,**一份代码四处用**:daemon(Bun/Node)、手机网页、公网壳页 `relay/pset.src.html`、以后的 Expo/React Native app。设计稿:`docs/superpowers/specs/2026-09-29-phone-protocol-v2-design.md`。
+手机 ↔ 中继 ↔ 后台那条加密通道的协议,**一份代码四处用**:daemon(Bun/Node)、手机网页、公网壳页 `relay/pset.src.html`、Expo/React Native app。三个客户端用同一个 `makeProtocolClient`,只说 v2;v1 在 2026-10-25 退休(架构终态 F4)。设计稿:`docs/superpowers/specs/2026-09-29-phone-protocol-v2-design.md`。
 
 ## API 一览(`src/index.ts`)
 
@@ -8,22 +8,19 @@
 | --- | --- | --- |
 | `b64u.ts` | `b64uEncode` `b64uDecode` | base64url,不依赖 `Buffer`/`btoa` |
 | `x25519.ts` | `x25519KeyPair` `x25519Shared` | 握手用的密钥对与共享密钥(noble) |
-| `v1.ts` | `deriveV1Key` `sealV1` `openV1` | 老协议:HKDF(salt=令牌)+ AES-GCM 随机 nonce,无防重放。只为兼容老后台/老页面 |
 | `v2.ts` | `deriveV2Keys` `makeV2Channel` | v2:两个方向各一把密钥、计数器 nonce、收到重复/倒退的计数一律拒绝(防重放) |
 | `push.ts` | `derivePushKey` `sealPush` `openPush` | 推送载荷加密的密钥派生(推送本身在子项目 2 发) |
-| `messages.ts` | `ClientHello` `ServerHello` `ReqMsg` `ResMsg` `SubMsg` `UnsubMsg` `EvMsg` `ErrMsg` `PingMsg` `PongMsg` `V2Message` … | 线上消息的 zod 模式;`b64Encode`/`b64Decode` |
-| `client.ts` | `makeProtocolClient` | 协议客户端:握手协商 v1/v2、`request()`、`subscribe()`、重连退避、保活;`requireV2` 拒绝降级(协商是明文,中继可剥掉 `v` 把双方降到无防重放的 v1;原生 app 打开) |
+| `messages.ts` | `ClientHello` `ServerHello` `ReqMsg` `ResMsg` `SubMsg` `UnsubMsg` `EvMsg` `ErrMsg` `PingMsg` `PongMsg` `V2Message` … | 线上消息的模式(`shape.ts` 的小组合子,只有 `parse` / `safeParse`:这份会打进网页的 IIFE,完整版 zod 太大,`zod/mini` 跟完整版同进编译包会初始化失败);`b64Encode`/`b64Decode` |
+| `client.ts` | `makeProtocolClient` | 协议客户端:握手 `{hs, v:[2]}`(网页加 `client:'web'`)、`request()`、`subscribe()`、重连退避、保活;回来的 hello 不是 v2 一律拒绝降级(`downgrade_refused`);明文 `upgrade_required` / `auth_failed` 致命 |
 | `api.ts` | `PHONE_API_SCHEMAS` `PHONE_HTML_ROUTES` 及 `Matter*` `Presence` `HomeWork` `FeedEvent` … | `/m/api/*` 响应体的 zod 模式;后台有守卫测试对着真实响应核对 |
-| `browser.ts` | (默认导出 `CCP`) | 经典脚本入口,打成 IIFE 挂 `globalThis.CCP`,给不能 `import` 的手写页面用 |
+| `routes.ts`(子路径 `@wechat-cc/protocol/routes`) | `ROUTES` `PHONE_TOPIC_NAMES` | 路由表:每条路由在桌面 / 手机 / 设置页各端的档位、令牌、链接令牌放行。只是数据;daemon 的名单与桌面白名单都从它生成(`bun run gen:routes`) |
+| `browser.ts` | (默认导出 `CCP`:`makeProtocolClient`、`b64u`) | 经典脚本入口,打成 IIFE 挂 `globalThis.CCP`,给不能 `import` 的手写页面(手机网页、公网壳页)用 |
 
 客户端类型在 `client-types.ts`(`ProtocolSocket`、`ClientOpts`、`ProtocolRequest`、`ProtocolResponse`),调用方只看这一份就知道要实现什么。
 
 ## 测试向量
 
-`vectors/{v1,v2,push}.json` 是固定输入 → 固定输出,任何运行时的实现都得对得上。
-
-- v2、push 的向量由包自己的测试守着。
-- **v1 向量再生:`bun scripts/gen-tunnel-vectors.ts`。** 这个脚本**故意保留自己的一份冻结的 WebCrypto 参考实现**(`node:crypto` 的 `webcrypto.subtle` + HKDF + AES-GCM),不 import 协议包也不 import `src/lib/tunnel-crypto.ts`。原因:v1 已经换成 noble 实现,如果生成器也用它,再生出来的向量就是「实现验证实现」,永远绿,抓不到实现漂移。向量必须锚在另一套独立实现上。代价是一份小的重复代码。
+`vectors/{v2,push}.json` 是固定输入 → 固定输出,任何运行时的实现都得对得上,由包自己的测试守着。(v1 的向量、它的 WebCrypto 参考实现 `scripts/legacy-webcrypto-v1.ts` 与生成脚本随 v1 在 2026-10-25 删掉。)
 
 ## 纯净规则(为什么)
 
@@ -47,7 +44,7 @@ interface ProtocolSocket {
 }
 ```
 
-- **`onOpen` 必须实现。** 客户端等 open 才发握手 `{hs, v:[1,2]}`;浏览器和 RN 的 `WebSocket.send` 在 open 之前会抛。所以**适配器不需要做 open 前的缓冲** —— `send` 只会在 `onOpen` 触发之后被调。
+- **`onOpen` 必须实现。** 客户端等 open 才发握手 `{hs, v:[2]}`;浏览器和 RN 的 `WebSocket.send` 在 open 之前会抛。所以**适配器不需要做 open 前的缓冲** —— `send` 只会在 `onOpen` 触发之后被调。
 - `send` 抛错会被客户端吞掉并记为 `send_failed`。
 - 每次重连客户端调一次 `ClientOpts.open()` 拿新连接;`close()` 要可重复调用。
 - 一个协议客户端里,每条流的 v2 通道(`V2Channel`)**只建一次、不重建**;重新握手得到新密钥。拿同一对密钥重建通道会复用 nonce,AES-GCM 下等于泄密。
@@ -63,13 +60,18 @@ interface ProtocolSocket {
 
 ## 保活与 stream_unknown
 
-- **后台会忘掉流。** daemon 心跳判定到中继的连接已死、重连时,会清掉全部流状态(密钥、订阅);但中继(`relay/tunnel.ts` 的 `registerDaemon`)让手机的旧流原样挂到新 socket 上 —— 手机那头的 WebSocket 不会断。
+- **后台会忘掉流。** daemon 心跳判定到中继的连接已死、重连时,会清掉全部流状态(密钥、订阅);但中继房间让手机的旧流原样挂到新的 daemon socket 上 —— 手机那头的 WebSocket 不会断。
 - 这时手机再发的任何密封帧,后台都明文回 `{error:'stream_unknown'}`(每条流 5 s 内最多回一次,防乒乓;握手进行中的流不会收到)。客户端收到后:断开、按退避重连;这条连接上**在途的可重试请求**耗一次重试、以同一 rid 在新连接上重发,**不可重试的**以 `stream_unknown` 拒绝;还没发出去的等新连接;订阅在新握手后带最后的 `{epoch, seq}` 重新 `sub`。
 - **只挂订阅的客户端没有任何超时会触发**,所以有保活:v2 连接上有订阅、没有挂起请求、空闲 `keepaliveMs`(缺省 30 s,`0` 关掉)⇒ 发一个密封的 `{t:'ping', rid}`,后台回 `{t:'pong', rid}`(顺带核对令牌,被撤销就关流)。`requestTimeoutMs` 内**任何一帧**都没回来 ⇒ 当死连接丢掉、退避重连、重新订阅。后台忘了这条流时,ping 会先撞上 `stream_unknown`,恢复更快。
-- v1 连接从不发 ping(老后台不认)。老手机网页(`apps/mobile/src/transport.js`)把任何明文 `{error}` 当「挂起请求全失败、关连接」,下一次 `api()` 自然重连 —— `stream_unknown` 走的就是这条路(`apps/mobile/pairing.test.ts` 有测试)。
+- 手机网页(`apps/mobile/src/transport.js`)与公网壳页用的就是这个客户端(经 `CCP`),行为一样(`apps/mobile/pairing.test.ts`、`pset-shell.test.ts` 有测试)。
+
+## v1 退休(2026-10-25,架构终态 F4)
+
+- daemon 收到不带 `v:[…2]` 的握手 ⇒ 明文 `{error:'upgrade_required'}` 并关流;客户端把它当致命错误(跟 `auth_failed` 一样不再重连)。
+- 老 VPS 中继(`t…` id,`/tunnel/*`)一起退休。网页 / 壳页手里还是 `t…` id、或收到 `upgrade_required` / `downgrade_refused` ⇒ 显示「连接方式升级了，请在电脑上重新扫码配对」。
 
 ## 后台侧对应
 
-- 协商与串行开流:`src/daemon/tunnel-client.ts`、`tunnel-v2-stream.ts`(握手/识别设备/`channel.open` 串行,`req` 并发处理)。
-- 订阅主题:`src/daemon/phone-events.ts` + `phone-topic-sources.ts`,白名单 `PHONE_TOPICS`(`src/daemon/phone-routes.ts`)。
+- 协商与串行开流:`src/features/phone/tunnel-client.ts`、`tunnel-v2-stream.ts`(握手/识别设备/`channel.open` 串行,`req` 并发处理)。
+- 订阅主题:`src/features/phone/phone-events.ts` + `phone-topic-sources.ts`,白名单 `PHONE_TOPICS`(`src/features/phone/phone-routes.ts`)。
 - 真机闭环:`wechat-cc selftest phone`(见 `docs/maintainer/verify.md`)。

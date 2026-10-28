@@ -14,7 +14,8 @@
 |---|---|
 | 这个项目定了什么、为什么这样定、什么被否决过 | [全景导图](全景导图.md)(唯一事实源,HTML 是生成物) |
 | 现在往哪走、卡在哪、欠什么账 | [roadmap](roadmap.md) |
-| 代码是怎么分层的 | [architecture.md](architecture.md) |
+| 代码是怎么分层的、每类东西的「唯一来源」在哪 | [architecture.md](architecture.md)(一页现状图) |
+| 架构往哪收、终态长什么样、按什么顺序做 | [architecture-end-state-2026-10-25.md](architecture-end-state-2026-10-25.md)(终态 + 升级计划) |
 
 ## 按主题:每个领域看哪一份
 
@@ -31,6 +32,10 @@
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | macOS 改名迁移(`Tendhearth CC.app`、进程名、LaunchAgent 自修、1.7.4→1.7.5 真机清单) | [maintainer/app-rename-migration.md](maintainer/app-rename-migration.md) | 主人拍板(2026-10-04) |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
+| 变异测试(测试到底护住了什么:怎么跑、2026-10 基线、活变异逐条解读) | [maintainer/verify.md「变异测试」](maintainer/verify.md#变异测试定期传感器不进-verify--每个-pr-的-ci) + [maintainer/mutation-baseline-2026-10.md](maintainer/mutation-baseline-2026-10.md) | `stryker.config.mjs` / `stryker.db.config.mjs` |
+| 加一个执行者(哪几处要动、哪些是推导出来的、漏了谁会红) | [maintainer/add-an-executor.md](maintainer/add-an-executor.md) | `superpowers/specs/2026-10-22-{executor-detect-once,policy-compile}-design.md` |
+| 加一个微信命令(命令表的顺序、放哪一族、两两互斥、路由快照) | [maintainer/add-a-command.md](maintainer/add-a-command.md) | `superpowers/specs/2026-10-20-refactor-batch2-design.md` §1 |
+| 加一页(路由表一行、要发版的那几格、错误码、桌面 / App / 手机网页怎么接) | [maintainer/add-a-page.md](maintainer/add-a-page.md) | `packages/protocol/src/routes.ts` 顶部注释 |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
 | 外部 agent CLI 自动升级(claude / codex / cursor-agent / agy:官方升级器、升级后自检、自动退回、坏版本、`wechat-cc cli`) | [maintainer/cli-auto-upgrade.md](maintainer/cli-auto-upgrade.md) | 主人拍板(2026-10-04),见 roadmap 修订记录 |
 | 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)；[统一交办开发分支验证](superpowers/plans/2026-09-26-task-entry-validation.md) |
@@ -46,7 +51,8 @@
 | 终端会话 ↔ 微信(`wechat-cc hook`) | [reference/features.md §10](reference/features.md) | `superpowers/specs/2026-09-09-cli-hook-push-design.md` |
 | 多agent分工、消息与交接（调研，未实现协调层） | [现有协作约定](maintainer/README.md#多-agent-协作) | [业内模式与CC建议](superpowers/reports/2026-09-27-agent-coordination-research.md)；[后续交付计划](superpowers/plans/2026-09-27-cc-coordination-delivery.md)；[本次双方分工](superpowers/plans/2026-09-26-cc-agent-coordination.md) |
 | 模型与后端管理 | [reference/model-management.md](reference/model-management.md) | `superpowers/specs/2026-09-08-model-management-design.md` |
-| 每晚整理记忆 / 记忆视图 | [architecture.md §2.4](architecture.md) | `superpowers/specs/2026-09-25-memory-nightly-design.md` + `2026-09-26-memory-view-design.md` |
+| 每晚整理记忆 / 记忆视图 | [reference/architecture-companion-2026-07.md §2.4](reference/architecture-companion-2026-07.md) | `superpowers/specs/2026-09-25-memory-nightly-design.md` + `2026-09-26-memory-view-design.md` |
+| 记忆一个源(主库事实表、一种收回、知识库进迁移框架;架构终态 G,**设计稿**) | [架构终态](architecture-end-state-2026-10-25.md) 第 7 条 | `superpowers/specs/2026-10-25-memory-single-source-design.md`(上承 `2026-10-23-memory-{source-vs-derived,edits-stick}-design.md`) |
 | 网页设计统一(手机 `tokens.css` 唯一色板) | [../apps/mobile/README.md](../apps/mobile/README.md) | `superpowers/specs/2026-09-26-web-design-unify.md` |
 | 桌宠 CC / 美术资产 | — | `superpowers/specs/2026-09-05-cc-desktop-pet-design.md` + `2026-09-08-cc-asset-production-brief.md` + `2026-09-01-cc-atelier-design.md` |
 | 社交层(信封 / 关系 / 觅食台 / 串门 / 明信片 / 介绍) | — | `superpowers/specs/2026-09-04-social-architecture-rethink.md`(重构定案)+ `2026-09-04-{wish-postcard,introduction}-design.md` |
@@ -57,7 +63,7 @@
 | provider(agy / cursor / openai 兼容 / 去重) | [reference/model-management.md](reference/model-management.md) | `superpowers/specs/2026-08-17-{agy-provider,provider-runtime-dedup}-design.md` |
 | provider 失败的真实形状 / 各家边界产什么码、下游怎么读(错误通道结构化 #4) | [reference/provider-error-shapes.md](reference/provider-error-shapes.md);样本 `src/daemon/diagnostics/__fixtures__/provider-errors/`;码闭集 `src/lib/provider-error-code.ts` | 第 2 步 2026-10-02 做完:§6(Claude 会话)、§7(其余各家 + 边界超时 + 下游);§5 是当初的提议 |
 | 可靠性(降级启动 / 自动重启 / 忙登记处) | — | `superpowers/specs/2026-08-17-subsystem-degraded-boot-design.md` + `2026-08-11-daemon-busy-registry-design.md` + `2026-08-03-daemon-self-restart-on-stale-code-design.md` |
-| 画像依据、来源改正与过时处理 | [`cc-memory-evidence.md`](cc-memory-evidence.md) | `src/lib/memory-synthesis.ts` + `src/daemon/internal-api/routes-memory-review.ts` |
+| 画像依据、来源改正与过时处理 | [`cc-memory-evidence.md`](cc-memory-evidence.md) | `src/lib/memory-synthesis.ts` + `src/features/memory/review-routes.ts` |
 | 知识与记忆(图 / 人物事实 / hearth 联邦) | — | `superpowers/specs/2026-08-12-knowledge-{graph,facts-person}-inproc-design.md` + `2026-08-13-hearth-*` |
 | 引导与访客 | [reference/access-control.md](reference/access-control.md) | `superpowers/specs/2026-08-18-{owner-onboarding,guest-path}-design.md` |
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |
@@ -67,7 +73,7 @@
 | 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
 | 插件(含内置插件来源:不随包、`plugin source` 登记、按内置默认开) | [plugins.md](plugins.md);部署侧 [maintainer/deploy.md「内置插件」](maintainer/deploy.md) | `src/lib/plugins-source.ts` + `src/daemon/plugins/health.ts` |
 | 桌面安装器 | [installer/desktop-installer.md](installer/desktop-installer.md) | — |
-| 入站语音 STT(已通:网关形态,`stt-config.json` 门控) | [architecture.md §2.5 Voice](architecture.md) | `superpowers/specs/2026-07-23-inbound-voice-stt-design.md` |
+| 入站语音 STT(已通:网关形态,`stt-config.json` 门控) | [reference/architecture-companion-2026-07.md §2.5 Voice](reference/architecture-companion-2026-07.md) | `superpowers/specs/2026-07-23-inbound-voice-stt-design.md` |
 
 ## 目录都装什么
 

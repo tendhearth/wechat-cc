@@ -14,6 +14,9 @@ describe('rewriteSystemPath —— 深链进 app 之前先洗一遍(不可信输
     expect(rewriteSystemPath('tendhearth://push-open?kind=rm-rf&taskId=a1b2c3d4', false)).toBe('/')
     expect(rewriteSystemPath('tendhearth://push-open?kind=permission&taskId=%E0%A4%A', false)).toBe('/')
     expect(rewriteSystemPath('tendhearth://push-open', false)).toBe('/')
+    // companion(CC 主动找你)本来就不带 taskId ⇒ 照样进中转页(它去对话页);带了畸形 taskId 也只是丢掉
+    expect(rewriteSystemPath('tendhearth://push-open?kind=companion', false)).toBe('/push-open?kind=companion')
+    expect(rewriteSystemPath('tendhearth://push-open?kind=companion&taskId=..%2Fx', false)).toBe('/push-open?kind=companion')
     expect(rewriteSystemPath('tendhearth://push-open?kind=task_done&kind=permission&taskId=a1b2c3d4&taskId=ffffffff', false)).toBe('/push-open?kind=task_done&taskId=a1b2c3d4')
   })
   it('开发用密钥页只在开发构建里可达;发布构建 ⇒ 此刻', () => {
@@ -32,6 +35,15 @@ describe('rewriteSystemPath —— 深链进 app 之前先洗一遍(不可信输
     expect(rewriteSystemPath('tendhearth://relay-staging.tendhearth.com/pset/#id=r1&t=t2', false, s => stash.push(s), true)).toMatch(/^\/pair\?from=link&n=\d+$/)
     expect(stash).toEqual(['https://relay-staging.tendhearth.com/pset/#id=r1&t=t2'])
     expect(rewriteSystemPath('tendhearth://relay-staging.tendhearth.com/pset/#id=r1&t=t2', false, s => stash.push(s), false)).toBe('/')
+  })
+  it('分享扩展开的 dataUrl=… ⇒ 分享页(内容由 ShareGate 从原生模块取,链接里只有键与 nonce);不进暂存格', () => {
+    const stash: string[] = []
+    for (const type of ['text', 'weburl', 'media', 'file']) {
+      expect(rewriteSystemPath(`tendhearth://dataUrl=tendhearthShareKey?nonce=9F2C-11#${type}`, false, s => stash.push(s))).toBe('/share')
+    }
+    expect(rewriteSystemPath('tendhearth://dataUrl=tendhearthShareKey', true, s => stash.push(s))).toBe('/share')
+    expect(rewriteSystemPath('/dataUrl=tendhearthShareKey?nonce=1#text', false, s => stash.push(s))).toBe('/share')
+    expect(stash).toEqual([])
   })
   it('别的路径原样放行(交给路由自己)', () => {
     expect(rewriteSystemPath('tendhearth://settings', false)).toBe('tendhearth://settings')

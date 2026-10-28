@@ -6,9 +6,11 @@
  * allowed through.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs'
+import { readFileSync, renameSync } from 'fs'
 import { join } from 'path'
 import { STATE_DIR } from './config.ts'
+import { writeJsonAtomic } from './json-file'
+import { stripBom } from './read-json-file'
 
 /**
  * 状态目录按调用时解析(2026-10-10):生产里 WECHAT_STATE_DIR 不变(或不设,落到 STATE_DIR),结果和原先的
@@ -71,7 +73,8 @@ function toStringArray(v: unknown): string[] {
 
 function readAccessFile(): Access {
   try {
-    const raw = readFileSync(accessFile(), 'utf8')
+    // 容忍 BOM(3e,2026-10-22):Windows 上 PowerShell 写的文件带 BOM,以前会被当成坏文件挪走、daemon 退出。
+    const raw = stripBom(readFileSync(accessFile(), 'utf8'))
     const parsed = JSON.parse(raw) as Partial<Access>
     return {
       dmPolicy: parsed.dmPolicy === 'disabled' ? 'disabled' : 'allowlist',
@@ -94,10 +97,8 @@ function readAccessFile(): Access {
 }
 
 export function saveAccess(a: Access): void {
-  mkdirSync(stateDir(), { recursive: true, mode: 0o700 })
-  const tmp = accessFile() + '.tmp'
-  writeFileSync(tmp, JSON.stringify(a, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, accessFile())
+  // 独一无二的 tmp 名 + fsync + rename(lib/json-file);以前固定用 access.json.tmp,和 setup-flow 撞同一个。
+  writeJsonAtomic(accessFile(), a, { mode: 0o600 })
 }
 
 /**

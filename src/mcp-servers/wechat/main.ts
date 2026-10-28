@@ -27,8 +27,9 @@ import { registerMessagingTools } from './tools-messaging'
 import { registerCompanionTools } from './tools-companion'
 import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
+import { registerTerminalTools } from './tools-terminal'
 import { registerFileTools } from './tools-files'
-import { registerSocialTools } from './tools-social'
+import { registerSocialTools, socialIsUp } from './tools-social'
 import { registerKnowledgeSearchTool } from './tools-knowledge'
 import { registerFederatedQueryTool } from './tools-federated'
 import { registerGraphTools } from './tools-graph'
@@ -67,10 +68,6 @@ const server = new McpServer(
 // tools registered, AND the route layer rejects a non-admin token anyway
 // (defence in depth).
 const SESSION_IS_ADMIN = process.env.WECHAT_SESSION_TIER === 'admin'
-
-// 回复交付(spec 2026-10-03-reply-delivery):daemon 给 `replyDelivery = daemon` 的 provider 的 MCP 子进程设这个
-// 变量 —— 它们不用工具说话(最后写下的文字就是回复),只拿附件工具;admin 另有往别处发的 message。
-const REPLY_DELIVERY_DAEMON = process.env.WECHAT_REPLY_DELIVERY === 'daemon'
 
 // `ping` stays inline — the canonical "is the MCP-over-stdio + internal-api
 // channel alive" probe that integration tests assert against.
@@ -182,8 +179,10 @@ server.registerTool(
 registerMemoryTools(server, client)
 registerProjectTools(server, client)
 registerVoiceShareTools(server, client)
-registerMessagingTools(server, client, { replyDelivery: REPLY_DELIVERY_DAEMON ? 'daemon' : 'tool' })
-if (REPLY_DELIVERY_DAEMON) registerTurnTools(server, client, { admin: SESSION_IS_ADMIN })
+registerMessagingTools(server, client)
+// 回复交付(spec 2026-10-03-reply-delivery):执行者不用工具说话(最后写下的文字就是回复),只拿本轮回复的附件
+// 工具;admin 另有往别处发的 message。D3 起只有这一套工具表,不再看 WECHAT_REPLY_DELIVERY。
+registerTurnTools(server, client, { admin: SESSION_IS_ADMIN })
 registerCompanionTools(server, client)
 registerA2ASendTool(server, client)
 // 换后端/换模型(按对话)—— 和 /cc /api /agy 斜杠命令同一条路。guest 会话
@@ -196,13 +195,18 @@ if (process.env.WECHAT_SESSION_TIER !== 'guest') {
 // provider-agnostic gate; non-admin sessions never see these tools).
 if (SESSION_IS_ADMIN) {
   registerDaemonTools(server, client)
+  // terminal_say / terminal_say_result(2026-10-24):代主人对终端里正在干活的会话说一句、带回它的回话。
+  // 只给 admin 会话;路由层再只认主人那条聊天的会话令牌(features/terminal/routes.ts)。
+  registerTerminalTools(server, client)
   registerFileTools(server, client)
   // 社交工具面(spec 2026-09-05-social-tools):social_seek + 九个读 / 动
   // 主人社交层的工具。admin-only(user-tier.ts 的 social_seek / social_act
   // 都在 ADMIN_ONLY);非 admin 会话根本看不到。路由层按 trusted 门拒
   // guest;trusted 会话由注册门(SESSION_IS_ADMIN)+ classify 门
   // (social_act ∈ ADMIN_ONLY)挡住。
-  registerSocialTools(server, client)
+  // 社交没起(关着 / 坏了)⇒ 不挂这些工具(第三批 3b 第 3 步 3-2;读不到就照旧挂,见 socialIsUp)
+  if (await socialIsUp(client)) registerSocialTools(server, client)
+  else logErr('social is not running — social tools not registered for this session')
   // agent-facing search (AS T4): knowledge_search runs a semantic query
   // over the owner's WeChat message history — same private-data trust
   // class as file_locate/social_seek, so admin-only.

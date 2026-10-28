@@ -60,7 +60,7 @@ export async function prepareChannels(lang: Lang): Promise<void> {
 }
 
 /** iOS:扩展设的 category 都在这里注册,不带任何动作(通知本身从不执行操作,spec §1)。 */
-export const NOTIFICATION_CATEGORIES = ['th.approval', 'th.question', 'th.done', 'th.failed', 'th.test'] as const
+export const NOTIFICATION_CATEGORIES = ['th.approval', 'th.question', 'th.done', 'th.failed', 'th.test', 'th.companion'] as const
 export async function registerCategories(): Promise<void> {
   if (Platform.OS !== 'ios') return
   for (const id of NOTIFICATION_CATEGORIES) await Notifications.setNotificationCategoryAsync(id, [])

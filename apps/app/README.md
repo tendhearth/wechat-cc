@@ -19,6 +19,12 @@
 - 设计:`docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,设计稿 `docs/design/tendhearth-app-v1/`
 - 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)、`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`(原生通知)、`docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`(跟 CC 说话 + 真历史 + CC 的连接 + 原生会话;spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)
 
+## 手机轻动效与状态反馈（2026-10-24）
+
+CC 沿用两张原图：真实在线时轻呼吸，新的回复、完成和待确认事件各触发一次短动作；首次历史、重复刷新与恢复焦点不重播。离线保持暗色静止，系统减少动态效果、页面失焦或 App 后台时停止。界面共用随包 Lucide 图标、加载指示和可点开的状态说明；连接过期、部分结果与撤销修复仍明确可见。展开内容用短过渡，减少动态效果时即时切换。
+
+聊天「核对状态」只刷新已有 GET 历史，读失败或有限历史里没找到都继续保留未确认；显式重试仍沿用原 requestId。录音只显示静止点与时间，输入按钮按状态切换图标；上滑取消、时限与转写留草稿的行为不变。权限页保留原始命令、执行位置及提交锁，成功后仍回到事项。详见[设计与边界](../../docs/superpowers/specs/2026-10-24-phone-motion-feedback-design.md)。
+
 ## 怎么跑
 
 ```bash
@@ -27,17 +33,18 @@ cd apps/app
 bunx expo start                  # 开发服务器(连已装的 development build)
 bunx expo run:ios                # 首次:生成 ios/ 并在模拟器装 development build
 bun run test                     # vitest(纯逻辑与组件交互,node / happy-dom 环境)
-bun --bun vitest run src/daemon/phone-app-live-e2e.test.ts   # 仓库根目录:LiveBackend 对着进程内真 daemon 的端到端
+bun --bun vitest run src/features/phone/phone-app-live-e2e.test.ts   # 仓库根目录:LiveBackend 对着进程内真 daemon 的端到端
 bun run typecheck                # tsc --noEmit(本工程自己的 tsconfig)
 bun run export:check             # expo export 两个平台,证明能打包
 maestro test .maestro/           # 模拟器上跑演示流程(要先有 development build + 开着 expo start)
 ```
 
 - 加了 `expo-crypto` / `expo-camera`、以及 2026-10-04 的 `expo-audio` / `expo-file-system`(回复里的语音附件)之后要重新 `bunx expo run:ios` 生成 development build,模拟器才有这些原生模块。
+- 2026-10-18「按住说话」给 `expo-audio` 加了配置插件(麦克风说明 + 安卓 RECORD_AUDIO,不开后台录放),相机 / 相册插件的 `microphonePermission` 也改成同一句(写 `false` 会删掉 iOS 说明、在安卓屏蔽 RECORD_AUDIO)。要重新 `bunx expo run:ios` 生成 development build 才有麦克风权限。录音 16 kHz 单声道 AAC 24 kbps,60 秒封顶,送到电脑上用它配的语音转文字(与微信语音同一个),字填进输入框、不自动发。
 - `ios/`、`android/` **不进 git**(`.gitignore` 已列);原生部分以后走 Expo config plugin,保持「预构建可重生」。
 - `expo start` / `expo prebuild` 可能改写 `tsconfig.json` / `package.json`,别把这些改动提交。
 - 换过 bundle 相关的东西后用 `bunx expo start --clear`,免得模拟器拿到旧 bundle。
-- 本工程有自己的 tsconfig 与 vitest;根 `bun run typecheck` 末尾追加了 `tsc --noEmit -p apps/app`,所以根回路也会检查本工程。根目录端到端 `src/daemon/phone-app-live-e2e.test.ts` 会 import 本工程的一部分文件(见下「真连接的规矩」),那些文件要同时过根 tsconfig。
+- 本工程有自己的 tsconfig 与 vitest;根 `bun run typecheck` 末尾追加了 `tsc --noEmit -p apps/app`,所以根回路也会检查本工程。根目录端到端 `src/features/phone/phone-app-live-e2e.test.ts` 会 import 本工程的一部分文件(见下「真连接的规矩」),那些文件要同时过根 tsconfig。
 
 ### Maestro
 
@@ -45,8 +52,8 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 
 | 流程 | 走什么 |
 |---|---|
-| `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮已回复」 |
-| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
+| `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮做完了」 |
+| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 回复位置加载指示 → 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
 | `.maestro/chat-extras.yaml` | 跟 CC 说 → 发一句 → 演示回复带「过程 · 2 段」(默认收起)、语音、本地表情(图)、联网表情(只写情绪)→ 展开过程看到「没有发到微信」→ 点语音不报错(2026-10-04) |
 | `.maestro/connections.yaml` | 设置 → CC 的连接卡(演示数据)→ 各项状态词 → 电脑上的会话列表(只读) |
 | `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它(交办不再是默认动作) |
@@ -80,7 +87,7 @@ bun scripts/device-e2e.ts --only chat,push   # 只跑部分(配对与收尾总�
 | a'' 推送登记 | 测试设备把 APNs 令牌登记到 daemon(`phone-push.json` 只读键名) |
 | b 跟 CC 说 | 此刻 → 说一句 → 打字发送 ⇒ 自己的气泡 ⇒ 一条发送前没有的 CC 气泡 |
 | c 真推送 + 批准 | app 退后台 → 派一个要删探针文件的工作台任务 → SpringBoard 上出现**扩展解密后**的横幅(标题「需要你批准」+ 任务名;占位「CC 有新动态」不算)→ 点开 → 批准页 → 允许 → 进展页;daemon 那头权限清空、任务答完、探针被删 |
-| d 撤销 | 局域网 `revoke_device`(设置页「忘掉」同一个 op)⇒ app 此刻页「这台手机已不再配对」 |
+| d 撤销 | 局域网 `revoke_device`(设置页「忘掉」同一个 op)⇒ app 此刻页「这台手机已经不能连了,在电脑上重新配对」 |
 | e 收尾(无论成败) | 取消 + 归档任务、删 scratch、测试设备还在就撤、`dev-e2e?op=restore` 放回主人的配对、冷启动确认主人那台重新在线 |
 
 **为什么用 XCUITest 不用 Maestro**:Maestro 2.11 对这台 iOS 27 真机直接报 `Device … is not connected`(它这版只认模拟器);XCUITest 能接管正在跑的 app(`XCUIApplication(bundleIdentifier:)`,步骤之间不重启)、能点 SpringBoard 的通知横幅 / 通知中心 / 权限框。UI 测试 target 由 `plugins/with-ios-uitests.js` 在 `TENDHEARTH_UITESTS=1` 的 prebuild 时加进工程(源码 `native/ios-e2e/`),平常的 prebuild / EAS 构建里没有它;每一步是一次 `xcodebuild test-without-building -only-testing:…`,参数走 `TEST_RUNNER_*` 环境变量,结果是 stdout 里的 `E2E_OUT 键=值`。
@@ -91,7 +98,7 @@ bun scripts/device-e2e.ts --only chat,push   # 只跑部分(配对与收尾总�
 
 **要主人做的(自动化做不了)**:手机解锁、亮屏(自动锁定设「永不」,跑完改回);开发者模式开着;每次手机重启后第一次跑 UI 测试,手机会弹「Enable UI Automation · 使用触控 ID 以继续使用 XCTest」,要验证一次触控 ID(没人验证 ⇒ runner 报 `认证已取消`,脚本退出码 2 并写明)。
 
-**已知**:主人原来那台设备位也登记着同一个 APNs token 时,没带 2026-10-01 修复的 daemon 会给同一部手机发两条(collapse-id 相同,后到的顶掉前一条;原来那台的推送密钥已收起,那条只能显示占位,点开落在此刻)。步骤会等横幅落定、只点解密后的那条;落在此刻会写 `landed_on_now`。daemon 部署了「同一 token 换设备位 ⇒ 旧设备位让出登记」(`src/daemon/phone-push.ts`)之后就不会再有第二条。
+**已知**:主人原来那台设备位也登记着同一个 APNs token 时,没带 2026-10-01 修复的 daemon 会给同一部手机发两条(collapse-id 相同,后到的顶掉前一条;原来那台的推送密钥已收起,那条只能显示占位,点开落在此刻)。步骤会等横幅落定、只点解密后的那条;落在此刻会写 `landed_on_now`。daemon 部署了「同一 token 换设备位 ⇒ 旧设备位让出登记」(`src/features/phone/phone-push.ts`)之后就不会再有第二条。
 
 **抓到并修掉的**(2026-10-01 首轮真机):① iOS 上 `getDevicePushTokenAsync` 每调一次都会回调 `addPushTokenListener`,监听无条件强制重登 ⇒ 每 0.6 秒一次 `POST /m/api/push/register` 的重试风暴(主人原来装的包也在刷,daemon 日志一小时近千行)—— `push/register.ts makeTokenWatch` 只认真变了的 token;② 已配对的手机从系统链接冷启动进配对页、点返回,落到欢迎页回不到此刻 —— `view/pair.ts pairBackTarget`;③ 同一部手机两个设备位都登记推送 ⇒ 重复通知(上一条)。
 
@@ -108,7 +115,7 @@ src/i18n/         en 与 zh-Hans 文案表(两份键一致有测试)+ useLang(�
 src/ui/           组件与色板(tokens.ts,复用共享 design-tokens;固定暖纸,CC 明暗由真实信号决定)
 src/push/         推送:key-store(钥匙串里的推送密钥记录)、target / route(点通知去哪)、register(登记生命周期)、PushProvider / PushRouter、前台横幅、开发用 dev-token
 native/           原生通知核心:ios-notify(Swift 通知服务扩展 + `swift test`)、android-push(Kotlin 消息服务 + JVM 单测 `test.sh`)、push-strings.json(原生端标题文案)
-plugins/          Expo config plugin:with-ios-notify(扩展 target + 共享钥匙串)、with-android-push(FCM 服务 + 读 expo-secure-store)、with-ios-scene(iOS 27 场景委托)、with-ios-uitests(真机验收的 XCUITest target,只在 TENDHEARTH_UITESTS=1)及其测试
+plugins/          Expo config plugin:with-ios-notify(扩展 target + 共享钥匙串)、share-intent(分享给 CC:expo-share-intent 的参数)、with-android-push(FCM 服务 + 读 expo-secure-store)、with-ios-scene(iOS 27 场景委托)、with-ios-uitests(真机验收的 XCUITest target,只在 TENDHEARTH_UITESTS=1)及其测试
 native/ios-e2e/   真机验收的 XCUITest 步骤(scripts/device-e2e.ts 逐步调用)
 locales/          iOS InfoPlist 本地化(相机说明 + 显示名,en 与 zh-Hans)
 scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl push)
@@ -122,7 +129,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 
 ## 真连接的规矩
 
-- **只走中继**:`r…` daemon id ⇒ `wss://<中继主机>/v2/phone?id=<id>`;`t…` id ⇒ `wss://<中继主机>/tunnel/phone?id=<id>`。链接里的 `lan=` 解析并记下,但**不使用**(daemon 的局域网口没有 v2 订阅,见计划裁决 1)。
+- **只走中继**:`r…` daemon id ⇒ `wss://<中继主机>/v2/phone?id=<id>`;老中继的 `t…` id 随 v1 退休(2026-10-25)⇒ `bad_link`。链接里的 `lan=` 解析并记下,但**不使用**(daemon 的局域网口没有 v2 订阅,见计划裁决 1)。
 - 所有接口返回都过 `PHONE_API_SCHEMAS` 的 zod schema,主题事件过各自的 Topic schema;解析失败 ⇒ 事件丢弃并记日志,请求抛 `BackendError('unknown')`。
 - 错误映射只在 `src/net/errors.ts` 一处:`permission_stale / question_stale / input_stale` ⇒ `stale`;`auth_failed` 或 HTTP 401 ⇒ `revoked`;`timeout` ⇒ `timeout`(界面当「不确定」);`unreachable / daemon_offline / closed / stream_unknown / rate_limited / quota_exceeded / too_many_streams` 及未知传输错误 ⇒ `offline`(例外:请求在飞时是本机自己关的连接——进后台 / dispose / 撤销——`live.ts` 报 `timeout`,撤销了则报 `revoked`:那一条可能已经送到);`matter_not_found` ⇒ `not_found`;`invalid` 与 `invalid_*`(含 `invalid_answer`)⇒ `invalid`;其余 ⇒ `unknown`。
 - 说一句与交办的 `requestId` 按草稿稳定(`state/drafts.ts` `requestIdFor`:同一份草稿、同样正文重发用同一个,正文改了才换,发成功删草稿时一起丢)。daemon 两条说一句都按它去重:工作台任务走工作台输入回执;微信聊天那件事走 `matter_say_receipts`(2026-10-01,v70)——同 id 同文重发拿回原来的回复(在跑就跟上同一轮),同 id 异文 ⇒ 409 `input_conflict`,那一轮失败不留回执(重发 = 重试),daemon 重启打断的那句当已收下、不再说。
@@ -175,6 +182,8 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 ### 规矩
 
 - 通知从不执行操作(category 无动作):点开只进 app,批准在批准页里做。
+- `companion`(2026-10-18):CC 主动找你、微信不通时落到 App 的那一句(daemon `src/daemon/companion/proactive-channel.ts`)。没有 taskId;iOS category `th.companion`,安卓渠道 `updates`;点开去对话页 `/chat`。微信送到了就不推(那一行 App 对话页本来就看得见)。
+- 媒体与信(2026-10-18,手机伙伴第 2 步):CC 在微信上发给主人的图 / 表情 / 语音 / 文件也记进主人对话(daemon `src/daemon/companion/media-mirror.ts`,只存引用);落到 App 的那一轮附件也记进去、语音保留成语音。对话里 png / jpg / gif / webp 文件直接画成图(≤4MB,点开放大),别的仍是可点的文件名。信:微信窗口关了 / 断着且 App 收得到 ⇒ 几页信纸记成一行 + 一条 `companion` 推送「CC 给你写了一封信」;「设置 → CC 的信」列寄出去了的信(`GET /m/api/letters`,逐页 `GET /m/api/letters/page` 按块读),只给配过对的设备,`/set` 链接令牌够不着。
 - 扩展 / 消息服务**只拿推送密钥记录** `{v,key,lang}`,拿不到设备令牌(令牌能以这台手机的身份操作电脑,扩展只需要解密)。主 app 的 `keychain-access-groups` 把自己的组排第一,保证不带 accessGroup 的写入(配对记录)不落进共享组。
 - 令牌、推送密钥、token 不进日志。解不开 ⇒ 中性占位(「CC / CC 有新动态」);标题按 `kind` 在原生端本地化(`native/push-strings.json`,改文案两种语言一起改),正文是用户自己的数据原样显示。
 - 重复推送 iOS 只能静音(`interruptionLevel = .passive`,丢弃要 Apple 特批权限),中继的 `apns-collapse-id`(= taskId)让同一件事只留最新一条;安卓服务直接不发。
@@ -208,14 +217,41 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 - **iPhone staging 已有真机记录**：2026-10-01 / 10-02 的 `bun run e2e:device` 通过配对(经深链，不经相机)、同码重用被拒、聊天、后台扩展解密后的 APNs 横幅与点开批准、撤销、收尾；当时 staging 已配 APNs、本机 daemon 已设 `relay_v2_url`。该记录对应当时的验收构建，后续补充持久恢复、附件和普通发布包需各自验收，不能据此宣称主人真手机已经更新。
 - **仍需人手的 iOS 验收**：系统相机扫码 / 通用链接、锁屏解密后的文字、进程被杀后点通知冷启动、系统设置拒绝再打开通知权限、撤销后再触发只显示中性占位、加密备份恢复，以及下节聊天 / 会话续接清单。物理 iPhone 的补充日志跨进程恢复仍未实测。
 - **TestFlight 发布条件**：按[中继手册](../../docs/maintainer/relay.md#8-上线前后必读--go-live-notes)经 `relay-production` 环境批准部署 production Worker，配置生产 APNs 并核对健康，再将 daemon 的 `relay_v2_url` 切到生产，打开 `RELAY_WATCH`。staging 的成功不代替生产验收。EAS 仍需 `eas init` 提交 projectId，再 `eas build --profile production --platform ios` 与 `eas submit`；App Store Connect 记录和商店提交另办。
+- **TestFlight 本机出包(2026-10-17 实走,不用 EAS)**:App Store Connect 记录 `Tendhearth CC · Personal AI`(app id 6824007352,API 建不了,网页建);
+  1. `TENDHEARTH_APNS_ENV=production bunx expo prebuild --platform ios --clean --no-install`,之后 `git checkout -- package.json`(prebuild 会改);
+  2. `cd ios && pod install`;
+  3. `xcodebuild archive -workspace Tendhearth.xcworkspace -scheme Tendhearth -configuration Release -destination generic/platform=iOS -allowProvisioningUpdates` + 团队 API key 三参数;
+  4. `xcodebuild -exportArchive`(ExportOptions:method `app-store-connect`、team 9Y6JAPDP7A、automatic);
+  5. `xcrun altool --upload-app --type ios -f <ipa> --apiKey … --apiIssuer …`。
+  - **Xcode 升级后报 `cannot find type '__ObjC::expo'` / SDK built with Swift 6.3.1**:expo-modules-jsi 的 `apple/Products/ExpoModulesJSI.xcframework` 是本机按源码 hash 缓存的,换编译器不会重建 —— 跑它的 `apple/scripts/clear-caches.sh` 并删 DerivedData 再 archive。
+  - 下次上传先把 build number 加 1。导出合规已答(10-17):只用标准算法(@noble 的 X25519/Ed25519、HKDF-SHA256、AES-256-GCM)+ iOS 自带 TLS,无自研密码,暂不上法区 ⇒ 无需文件,`app.json` 的 `ios.config.usesNonExemptEncryption: false`。上法国区前要重答并交法国申报。
 - **安卓 / 商店后置**：安卓需要 Firebase 项目、`google-services.json` / `FCM_SERVICE_ACCOUNT`、App Links 签名指纹、SDK / 设备与实际 APK 验收；Google Play 账号与生产构建另办。凭据步骤见[中继手册](../../docs/maintainer/relay.md)。
 - **旧欠账已关闭**：#165 配对码只配一台，成功配对即作废，重复码已有真机自动化断言；微信聊天那件事的说一句已按 `requestId` 去重(2026-10-01，`matter_say_receipts`，同 id 同文返回原回执，异文返回 `input_conflict`)。相机权限 en / zh-Hans 文案已由 #158 补齐。
+
+## 分享给 CC(2026-10-18)
+
+别的 app(Safari、照片、备忘录…)的系统分享面板里出现 **Tendhearth CC**:文字、一个链接、最多 4 张图(`PHONE_CHAT_MAX_IMAGES`)。分享进来先到 `/share`(`src/app/share.tsx`),摆出内容,三个选择:「跟 CC 说」⇒ 对话页、「交给 CC 做一件事」⇒ 新交办,两条都**只预填输入框、带上图,不自动发**;「算了」清掉。
+
+- **取内容**:`src/state/ShareGate.tsx`(挂在根布局)直接听 expo-share-intent 原生模块的 `onChange`,不用它的 `useShareIntent` —— 那个的 `parseShareIntent` 把安卓的 `content://` 换成文件路径,安卓 13 起没媒体权限读不了。iOS:分享扩展把内容写进 App Group,开 `tendhearth://dataUrl=tendhearthShareKey?nonce=…#类型`,`push/open.ts` 把它改写到 `/share`,ShareGate 拿这个链接去取;安卓:启动与每次回前台问一次(取走即清)。
+- **纯逻辑** `src/view/share.ts`(有测试):原始内容 ⇒ `{text, images, overMax, unsupported, tooLarge}`;链接只当文字(网页标题有就放在链接前一行);去处 `shareRoute`;没配对的门 `shareGate`;并进已有草稿 `mergeDraftText`(原来写的留着,另起一行)。
+- **图**:`src/net/share-read.ts` 和相册选图得到同样的 `PickedImage`:除 GIF 外都按 0.8 重编成 JPEG(HEIC 也转,expo-image-manipulator),再过同一道 5MB / 格式检查;超过 4 张多出来的不收,页面说「一次最多 4 张」。视频、PDF 等:iOS 上分享面板本来就不列出我们,混在一起的那几样不收,页面说一句「这一版只收文字、链接和图片」。
+- **交接**:选了去处 ⇒ 文字进 `drafts`(`chat` / `new` 草稿),图放在草稿旁(`putDraftImages`),对话页 / 交办页挂载时接过来;换配对一起清。还没选去处的那份在 `state/share-inbox.ts`,**不**随换配对清。
+- **没配对**:分享页先请主人「连接我的电脑」或「先看看示例」,分享留着;配好(配对页跳回此刻)或选了先看看之后,ShareGate 把分享页重新打开。演示模式照常能用。
+
+**原生**:用 `expo-share-intent`(**钉死 8.0.1**,peer expo ^57),参数与 EAS 扩展登记在 `plugins/share-intent.js`,`plugins/share-intent.test.ts` 钉住参数、插件在我们配置上的产出(App Links 那条 intent-filter 原样留着、钥匙串组与关联域名不动)和我们依赖的它的实现细节(链接格式、`AppGroupIdentifier`、安卓 `contentUri`)。它与自己的插件共存:扩展 target `TendhearthCC`(显示名 Tendhearth CC,bundle id `com.tendhearth.app.share`)与通知扩展 `TendhearthNotify` 并列;主 app 多一个 `com.apple.security.application-groups = group.com.tendhearth.app`。安卓 `MainActivity` 多两条 intent-filter:`SEND`(`text/*`、`image/*`)与 `SEND_MULTIPLE`(`image/*`)。
+
+**签名 / App Group(下一次 TestFlight 要注意)**:App Group 是新的能力,开发者账号里要有 `group.com.tendhearth.app`,主 app 的 App ID 与新 App ID `com.tendhearth.app.share` 都要勾上它,两份描述文件都要重新生成。上面「TestFlight 本机出包」那条 `xcodebuild archive … -allowProvisioningUpdates` 走自动签名,**按理会**自动登记扩展的 App ID、App Group 并更新描述文件 —— **还没实际验证过**(没上传过带分享扩展的包);若报错,到 developer.apple.com 手动建 App Group 与 `com.tendhearth.app.share` 的 App ID 再重跑。EAS 走 `extra.eas.build.experimental.ios.appExtensions` 里的第二条。
+
+**验过什么(2026-10-18,自建模拟器 iOS 27.0,development build)**:`expo prebuild --platform ios --clean` 产出 `TendhearthCC` 与 `TendhearthNotify` 两个扩展 target,构建出的 app 与扩展都带 App Group(模拟器 simulated entitlements);安卓 prebuild 的 manifest 里 App Links 与两条 SEND 并存。没有点系统分享面板本身:用 `simctl spawn defaults write <App Group>/Library/Preferences/group.com.tendhearth.app tendhearthShareKey …` 写入扩展会写的内容,再 `simctl openurl tendhearth://dataUrl=tendhearthShareKey?nonce=…#text|#media` 模拟扩展跳回 —— 文字:没配对 ⇒ 配对提示 →「先看看示例」→「跟 CC 说」⇒ 输入框里是那段字、没发;HEIC 图:转成 JPEG 显示在分享页 →「交给 CC 做一件事」⇒ 交办页带着那张图。**未验**:真的从 Safari / 照片点分享(扩展本身跑起来、跳回 app)、安卓真机、真机签名。交办页照旧要有字才能交(只有图时先写一句)。
+
+**旧的 development build 没有这个原生模块** ⇒ ShareGate 整个不生效(不崩);要重新 `bunx expo run:ios`。
 
 ## 硬要求(改界面前先对一遍)
 
 - **批准页**:说明来自模型(`source === 'model'`)时,原始命令第一行与工作目录**不折叠、直接可见**(`approval-raw-inline`,Maestro 断言它);完整原始命令在「查看具体操作」里;提交中锁定按钮;以返回结果为准,不做乐观成功;超时 ⇒ 当「不确定」并重新拉详情。
 - **进展页**:状态标签在「CC 的进展」概括之上。
-- **状态词**只用:正在整理 / 等你决定 / 这一轮已回复 / 事情完成 / 没做成 / 已停下(Working on it / Waiting for you / Replied this round / Done / Didn't finish / Stopped),不显示百分比。
+- **状态词**按手机端用词表(`docs/reference/phone-wording.md`):在做 / 等你决定 / 这一轮做完了 / 完成 / 没做成 / 停下了(Working / Waiting on you / Done for this round / Done / Didn't finish / Stopped),不显示百分比。「一起做」按等你 / 在做 / 做完分组,只有「等你」的小标题上强调色。
+- **电脑够不着**(合盖 / 中继不在)是「电脑歇了,事情先停着」:CC 变暗、灰点,不上红;只有撤销是红点。
 - **主动作是跟 CC 说**,交办是显式选项(此刻页入口、发送框默认都是说一句,不是建任务;一次一句,等回复时发送锁住并保留草稿)。
 - **导航**:底部「此刻 / 一起做」;右上角头像进设置,旁边是「家里的电脑」状态点;说一句的入口随处可见。
 - **语言**:`en` 与 `zh-Hans`,跟随系统、设置里可改;所有面向用户的字符串进文案表。

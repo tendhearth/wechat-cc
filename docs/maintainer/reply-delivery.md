@@ -1,52 +1,25 @@
-# 回复交付:开关、回滚与排查
+# 回复交付:一条路与排查
 
 设计见 [`superpowers/specs/2026-10-03-reply-delivery-design.md`](../superpowers/specs/2026-10-03-reply-delivery-design.md),闸门数据见 [`reference/reply-once-experiment.md`](../reference/reply-once-experiment.md)。
 
-## 每家 provider 一个开关
+#### 只有一条路(2026-10-25,架构终态 D3)
 
-| 值 | 行为 |
-|---|---|
-| `legacy` | 今天的样子:模型调 `reply` 工具说话,没调就 FALLBACK_REPLY |
-| `shadow` | 照旧 legacy;每轮另外算「按新路会发什么」,只记 `[REPLY_SHADOW] … match=…`,什么都不多发 |
-| `daemon` | 一轮写下的文字由 daemon 送达(聊天型:全部文字段按顺序;编码型:最后一段);没有 reply 族工具,只有附件工具 + admin 的 `message` |
+一轮写下的文字由 daemon 送达(聊天型:全部文字段按顺序;编码型:最后一段);没有 reply 族工具,只有附件工具(`voice` / `sticker` / `attach_file`)+ admin 的 `message`。哪些文字算回复按执行者类型定(`ProviderCapabilities.replyText`,读法 `capability-matrix.replyTextStrategyFor`)。
 
-默认值写在代码里(各 provider 的 `ProviderCapabilities.replyDelivery`,读法 `capability-matrix.replyDeliveryFor`)。
+迁移期每家 provider 有一个三值开关(`legacy` 用 `reply` 工具说话 + FALLBACK_REPLY / `shadow` 照旧 legacy 另外记 `[REPLY_SHADOW]` / `daemon`),外加 `agent-config.json` 的 `reply_delivery` 运行时回滚。2026-10-03 五家翻到 `daemon`、2026-10-04 gemini 也迁过来,观察期内回滚开关没被用过 ⇒ D3 把 legacy、shadow、回滚开关和 `WECHAT_REPLY_DELIVERY` 一起删了。**已经没有回滚**:出问题就修 daemon 这条路。
 
-现在(2026-10-03,以代码为准):openai `daemon`;agy `daemon`(第 2 步闸门两臂打平,合入时维护者按结构收益翻了,见下面「agy」一节);Cursor `daemon`(第 3 步,见下面「Cursor」一节);Codex `daemon`(第 4 步,见下面「Codex」一节);Claude `daemon`(第 5 步,见下面「Claude」一节)。**迁移序列的五家全部是 daemon**;已 deprecated 的 gemini(API key 版)2026-10-04 也迁到 `daemon`(见下面「gemini」一节)⇒ **没有任何 provider 默认走 legacy**。legacy 路径保留到收尾(spec §5.7 的观察期 + 删除清单)之前,只作回滚的去处,回滚照下面一节。
+- 旧盘上的 `agent-config.json` 里还写着 `reply_delivery` 也照常开机:和别的不认识的键一样被忽略,下次保存配置时不再写回去。
+- `[TURN]` 行:交付过的轮是 `delivery=… bubbles=…`;超时 / 出错 / 中止(没交付)的轮仍是 `reply=…`(TurnRecord 的 `reply_tool_called` 列保留读历史)。
+- 下面各家小节里写的「回滚:…」是迁移期的记录,现在都不成立了。
 
-## 不重新部署就回滚
-
-在 `~/.claude/channels/wechat/agent-config.json` 里加(或改):
-
-```json
-{ "reply_delivery": { "openai": "legacy" } }
-```
-
-然后**重启 daemon**(不需要重新构建或 `self deploy`,只要重启进程):
-
-```bash
-launchctl kickstart -k gui/$(id -u)/com.wechat-cc.daemon
-```
-
-(macOS;同 [deploy.md](deploy.md) 的 restart 一步。)
-
-- 覆盖优先于代码里的默认值;没写的 provider 照旧用默认值。
-- 值只认 `legacy` / `shadow` / `daemon`,写错的那一项会被丢掉(其余照常生效)。
-- **为什么要重启**:开关决定 wechat MCP 子进程注册哪套工具(`WECHAT_REPLY_DELIVERY=daemon`),这在开机时就定了;提示词、协调器、伙伴推送读的是同一个值,所以统一开机装一次,不做热加载(避免一半会话新、一半旧)。
-- 生效确认:`channel.log` 开机有一行 `[BOOT] reply_delivery override (agent-config): openai=legacy`;之后 openai 的 `[TURN]` 行回到 `reply=…`(daemon 模式是 `delivery=… bubbles=…`)。
-
-撤掉回滚:删掉这个键(或整个 `reply_delivery`),再重启。
-
-## 排查
+ 排查
 
 | 现象 | 看哪里 |
 |---|---|
-| 这家 provider 现在走哪条路 | 开机 `[BOOT] reply_delivery override` 行(没有 = 用代码默认值);`[TURN]` 行的 `delivery=`(daemon)或 `reply=`(legacy / shadow) |
 | 主人收到了什么 | `[REPLY] … target= delivery= bubbles= attachments=`;`turn_records` 表的 delivery / bubbles / attachments 列 |
 | 模型写了 NO_REPLY | `[REPLY_SILENT] kind=tick`(推送,正常);`[REPLY_SILENT_IN_DM]`(私聊,异常,计入连击) |
 | 连着几轮什么都没交付 | `[PROVIDER_ANOMALY] … empty-reply streak=` |
 | 第一条就发失败 | `[REPLY_DELIVERY_FAIL] sent=n/m`(不会再调模型) |
-| shadow 的分布 | `[REPLY_SHADOW] … match=same / contains / differs / legacy_empty / shadow_empty` |
 | /both、/chat 里每位参与者交付了什么 | 每位参与者一条 `turn_records`(`mode=parallel` / `chatroom`),daemon 模式的参与者和 solo 一样带 delivery / bubbles / attachments / narration_segments(2026-10-04 起;之前只有 solo 有);`[REPLY] … context=parallel` / `context=chatroom` |
 | 模型想「帮我告诉某人」却被 403 | 2026-10-04 起会话跨 chat 只能用 `message`(admin 专用);reply 族 / share / set-mode 一律只许本 chat。`[INTERNAL_API] 403 … chat_scope`(`chat_scope_denied`,`caller=admin` 就是这种);`message` 的跨 chat 记 `chat_scope_admin_cross`。规则见 `reference/internal-api-auth.md`「发送类路由的 chat 范围」 |
 

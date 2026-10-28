@@ -1,7 +1,7 @@
 // Interaction tests — driven against test-shim.ts (DRY_RUN=1).
 //
 // Coverage:
-//   1. archive observation        — data layer (shim ↔ CLI ↔ mock state)
+//   1. archive observation        — data layer (shim /v1 ↔ mock state)
 //   2. session favorite toggle    — localStorage persistence
 //   3. settings drawer            — open / close (button / ESC / backdrop)
 //                                   + toggle aria-pressed flip
@@ -56,23 +56,17 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // ── Existing coverage (preserved) ─────────────────────────────────────
 
-test('archive observation removes it from active list', async ({ shim }) => {
+test('archive observation removes it from active list', async ({ shim, shimUrl }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
-  const before = await shim.invoke('wechat_cli_json', {
-    args: ['observations', 'list', 'test_chat', '--json'],
-  }) as { result?: { observations?: Array<{ id: string }> } }
-  const observations = before.result?.observations ?? []
+  // 架构终态 F6:桌面经宿主调 /v1/observations/*;mock 模式下 shim 按路径答
+  const list = async () => (await (await fetch(`${shimUrl}/v1/observations/list?chat_id=test_chat`)).json()) as { observations?: Array<{ id: string }> }
+  const observations = (await list()).observations ?? []
   expect(observations.length).toBe(5)
 
   const firstId = observations[0]!.id
-  await shim.invoke('wechat_cli_json', {
-    args: ['observations', 'archive', 'test_chat', firstId, '--json'],
-  })
+  await fetch(`${shimUrl}/v1/observations/archive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: 'test_chat', id: firstId }) })
 
-  const after = await shim.invoke('wechat_cli_json', {
-    args: ['observations', 'list', 'test_chat', '--json'],
-  }) as { result?: { observations?: Array<{ id: string }> } }
-  const remaining = after.result?.observations ?? []
+  const remaining = (await list()).observations ?? []
   expect(remaining.length).toBe(4)
   expect(remaining.map(o => o.id)).not.toContain(firstId)
 })
@@ -191,11 +185,16 @@ test('drawer toggle: 持久化失败时回滚,不静默撒谎(v1.6.4 契约)', a
   // guard 开关要落盘;shim 的 mutations=blocked 让这次写必然失败。开关必须
   // 退回原状,而不是停在乐观的"已开启"上骗人。这条契约此前没有 e2e 覆盖 ——
   // 恰恰是它让上面那条老测试红了七周。
+  // 2026-10-18 起没装 bx 又没开守护时这一行隐藏(CI 机器上就是这样);这里测的是回滚契约,
+  // 等打开抽屉那次刷新落定后再把行亮出来。
+  await expect(page.locator('#guard-status-line')).not.toHaveText(/—|查询中/)
+  await page.evaluate(() => { (document.getElementById('guard-row') as HTMLElement).hidden = false })
+  // 打开抽屉会读回真实状态(shim 的状态目录里可能是开着的),所以按读回的初值断言「点了也不变」。
   const toggle = page.locator('#guard-toggle')
-  await expect(toggle).not.toHaveClass(/\bon\b/)
+  const before = await toggle.getAttribute('aria-pressed')
   await toggle.click()
-  await expect(toggle).not.toHaveClass(/\bon\b/)
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(toggle).toHaveAttribute('aria-pressed', before ?? 'false')
+  await expect(toggle).toHaveClass(before === 'true' ? /\bon\b/ : /^(?!.*\bon\b)/)
 })
 
 test('drawer and wizard step-4 toggles are independent (duplicate-ID fix regression guard)', async ({ page, shimUrl, shim }) => {

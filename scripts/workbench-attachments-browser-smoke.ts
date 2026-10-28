@@ -1,4 +1,4 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
 /// <reference lib="dom" />
 /**
  * Run: bun scripts/workbench-attachments-browser-smoke.ts
@@ -18,7 +18,7 @@ import {tmpdir} from 'node:os'
 import {dirname,join,resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {createRequire} from 'node:module'
-import type {AgentAttachment,AgentProvider,AgentExecutionChoice} from '../src/core/agent-provider'
+import type {AgentAttachment,AgentProvider,AgentExecutionChoice} from '../src/ports/agent-provider'
 
 // Resolve the desktop dependency at runtime so this root script does not depend
 // on Bun's versioned node_modules layout. Keep the used browser surface typed.
@@ -79,7 +79,7 @@ async function openTask(page:Page,id:string){
 // is loaded only by the production host proxy and never enters browser JS.
 const harness=`
 window.__TAURI__={core:{invoke:async(command,args)=>{
-  if(command!=='workbench_api')throw Error('Unexpected IPC command: '+command);
+  if(command!=='daemon_request')throw Error('Unexpected IPC command: '+command);
   const response=await fetch(args.path,{method:args.method,...(args.method==='POST'?{headers:{'content-type':'application/json'},body:args.body??'{}'}:{})});
   const text=await response.text();
   if(!response.ok){let message='HTTP '+response.status;try{message=JSON.parse(text).error??message}catch{}throw Error(message)}
@@ -100,10 +100,10 @@ async function main(){
   // captured at module load. Nothing reads or writes the user's real bot state.
   process.env.WECHAT_STATE_DIR=stateDir
   process.env.WECHAT_DISABLE_LOG_FILE='1'
-  const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy}]=await Promise.all([
-    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/core/workbench/service'),
-    import('../src/core/provider-registry'),import('../src/daemon/internal-api/index'),
-    import('../apps/desktop/workbench-proxy'),
+  const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy},{workbenchRoutes}]=await Promise.all([
+    import('../src/lib/db'),import('../src/adapters/store/workbench/store'),import('../src/features/workbench/service'),
+    import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),
+    import('../apps/desktop/workbench-proxy'),import('../src/features/workbench/routes'),
   ])
   const {chromium}=createRequire(join(repo,'apps/desktop/package.json'))('@playwright/test') as {chromium:{launch(options:{headless:boolean}):Promise<Browser>}}
   type Captured={taskId:string,text:string,execution?:AgentExecutionChoice,attachments:Array<AgentAttachment&{fileBytes:Buffer,dataBytes?:Buffer}>}
@@ -130,7 +130,8 @@ async function main(){
   const dbPath=join(stateDir,'workbench.db');let db=openDb({path:dbPath})
   const store=makeWorkbenchStore(db)
   const service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>null})
-  const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,db})
+  const api=createInternalApi({stateDir,daemonPid:process.pid,db})
+  api.mount('workbench',workbenchRoutes({workbench:service}))
   let host:ReturnType<typeof Bun.serve>|undefined
   let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined
   let page:Page|undefined

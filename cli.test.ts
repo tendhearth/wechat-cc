@@ -78,6 +78,7 @@ describe('citty migrated commands', () => {
       'hook',
       'install',
       'install-progress',
+      'jobs',
       'license',
       'list',
       'log',
@@ -91,6 +92,7 @@ describe('citty migrated commands', () => {
       'plugin',
       'provider',
       'reply',
+      'rules',
       'run',
       'self',
       'selftest',
@@ -110,7 +112,7 @@ describe('citty migrated commands', () => {
   // 会让 docs/maintainer/*.md 里的每条命令一起失效。
   it('exposes the self / selftest subcommand surface', () => {
     const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
-    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['change', 'deploy'])
+    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['ask', 'change', 'deploy', 'discover', 'plan', 'ship', 'soak'])
     expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'embed', 'phone', 'workbench'])
   })
 
@@ -118,7 +120,7 @@ describe('citty migrated commands', () => {
   // 写死的「看 CI」那一步,改名/漏挂会让那几行一起失效。
   it('exposes the ci subcommand surface', () => {
     const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
-    expect(Object.keys(subs.ci?.subCommands ?? {}).sort()).toEqual(['triage'])
+    expect(Object.keys(subs.ci?.subCommands ?? {}).sort()).toEqual(['land', 'triage'])
   })
 
   it('ci triage parses its documented flags', async () => {

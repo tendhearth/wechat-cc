@@ -1,3 +1,5 @@
+// @ts-check
+/// <reference lib="dom" />
 // Dashboard module. Owns the settings drawer's 连接 section: connection verdict (hero), bound-accounts
 // table (incl. inline two-step delete confirm), footer pid indicator,
 // and the smart restart-daemon button.
@@ -9,27 +11,41 @@
 // on every successful poll automatically).
 
 import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose, guardLine } from "../view.js"
+import { rememberExecutorNames, executorSettingsLabel } from "./executor-names.js"
 import { icon } from "./icons.js"
+import { V1, v1 } from '../daemon-client.js'
+
+/** 各入口从 main.js 拿到的依赖包(invokeApi / invoke / doctorPoller / 路由回调 …),形状随入口不同。 @typedef {any} DashboardDeps */
+/** doctor 报告(`wechat-cc doctor --json`)。 @typedef {any} DoctorReport */
 
 // provider 菜单的数据源 = 大脑区已注册列表(/v1/llm/health registered),
 // 由 renderBrainHealth 更新;拿到前用保守兜底。owner 2026-08-26:「切换
 // 只有三个,底下大脑有这么多,很怪」—— 两处必须同源。
+/** @type {string[] | null} */
 let _registeredProviders = null
 const menuProviders = () => _registeredProviders || []
+/** @param {DashboardDeps} deps */
 async function refreshServiceChoices(deps) {
-  const r = await deps.invokeApi?.("GET", "/v1/llm/health").catch(() => null)
+  const r = await (deps.invokeApi ? v1(deps.invokeApi, V1.llm.health).catch(() => null) : undefined)
   _registeredProviders = r?.ok && Array.isArray(r.registered) ? r.registered : []
+  rememberExecutorNames(r?.names)
 }
+/** @param {string | null | undefined} current */
 function serviceChoicesMarkup(current) {
   return `<div class="service-menu-heading">已配置的 AI 服务</div>` + menuProviders().map(p =>
-    `<button class="${p === current ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}<small>${p === current ? "当前使用" : "切换使用"}</small></button>`
+    `<button class="${p === current ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(executorSettingsLabel(p))}<small>${p === current ? "当前使用" : "切换使用"}</small></button>`
   ).join("") + `<p class="service-menu-note">已配置不代表已验证回复。</p><button type="button" data-action="connect-ai">＋ 连接其他 AI 服务</button>`
 }
 // 连接结论(设置抽屉「连接」段顶上那两行)。鱼缸画布 2026-10-01 退休后不再轮换暖场文案,只说事实。
+/** @param {HTMLElement | null} element @param {string} headline */
 function renderHeroHeadline(element, headline) {
   if (element) element.textContent = headline
 }
 
+/** 顶上那颗「现在用的 AI 服务」:名字由 daemon 定(设置里的写法);没连 ⇒「未连接」。 @param {string|null|undefined} id */
+const providerChip = id => id ? executorSettingsLabel(id) : "未连接"
+
+/** @param {DoctorReport} report */
 export function renderDashboard(report) {
   const expiredCount = (report.expiredBots || []).length
   const baseHero = dashboardHero({
@@ -43,13 +59,13 @@ export function renderDashboard(report) {
   if (!card) return
   card.classList.toggle("warn", hero.tone !== "ok")
   renderHeroHeadline(document.getElementById("hero-headline"), hero.headline)
-  document.getElementById("hero-meta").textContent = hero.meta
+  ;/** @type {HTMLElement} */ (document.getElementById("hero-meta")).textContent = hero.meta
   const stopBtn = document.getElementById("dash-stop")
   const restartBtn = document.getElementById("dash-restart")
   const rebindBtn = document.getElementById("dash-rebind")
   const testConnBtn = document.getElementById("dash-test-conn")
   if (stopBtn) stopBtn.hidden = hero.state !== "connected"
-  const connectionOptions = document.getElementById("dash-connection-options")
+  const connectionOptions = /** @type {HTMLDetailsElement | null} */ (document.getElementById("dash-connection-options"))
   if (connectionOptions) {
     connectionOptions.hidden = hero.state !== "connected"
     if (connectionOptions.hidden) connectionOptions.open = false
@@ -64,9 +80,9 @@ export function renderDashboard(report) {
 
   const accounts = report.checks.accounts.items || []
   const expired = report.expiredBots || []
-  const expiredById = Object.fromEntries(expired.map(b => [b.botId, b]))
+  const expiredById = Object.fromEntries(expired.map((/** @type {any} */ b) => [b.botId, b]))
   const rows = accountRows(accounts, report.userNames || {}, expired, report.checks.access.admins || [])
-  const tbody = document.getElementById("accounts-body")
+  const tbody = /** @type {HTMLElement} */ (document.getElementById("accounts-body"))
   const current = document.getElementById("accounts-current")
   const subhead = document.getElementById("accounts-subhead")
 
@@ -76,7 +92,7 @@ export function renderDashboard(report) {
   // Pick the admin row for the "当前连接中的用户" slot. Falls back to first
   // row if no admin is in the bound accounts (e.g. access.json admins[] is
   // empty, or admin hasn't re-bound after a fresh install).
-  const currentRow = rows.find(r => r.isAdmin) || rows[0]
+  const currentRow = rows.find((/** @type {any} */ r) => r.isAdmin) || rows[0]
   if (!hasOpenConfirm && current) {
     if (!currentRow) {
       current.innerHTML = `
@@ -84,7 +100,7 @@ export function renderDashboard(report) {
           <div class="user-name">还没有连接用户</div>
           <div class="user-sub">打开设置添加微信账号</div>
         </div>
-        <span class="provider-chip">${escapeHtml(PROVIDER_LABELS[report.checks.provider.provider] || "未连接")}</span>
+        <span class="provider-chip">${escapeHtml(providerChip(report.checks.provider.provider))}</span>
       `
       tbody.innerHTML = ""
     } else {
@@ -105,7 +121,7 @@ export function renderDashboard(report) {
           <div class="user-sub">微信私聊，${currentSub}</div>
         </div>
         <button class="provider-switch" aria-haspopup="true" aria-label="更换 AI 服务">
-          <span class="provider-chip">${escapeHtml(PROVIDER_LABELS[report.checks.provider.provider] || "未连接")}</span>
+          <span class="provider-chip">${escapeHtml(providerChip(report.checks.provider.provider))}</span>
           <span class="provider-chevron">⌄</span>
         </button>
       `
@@ -115,7 +131,7 @@ export function renderDashboard(report) {
   if (hasOpenConfirm) {
     /* skip */
   } else {
-    const subRows = currentRow ? rows.filter(r => r.id !== currentRow.id) : []
+    const subRows = currentRow ? rows.filter((/** @type {any} */ r) => r.id !== currentRow.id) : []
     if (subhead) subhead.hidden = subRows.length === 0
     tbody.classList.toggle("is-empty", subRows.length === 0)
     if (subRows.length === 0) {
@@ -126,7 +142,7 @@ export function renderDashboard(report) {
         </button>
       `
     } else {
-      tbody.innerHTML = subRows.map((row) => {
+      tbody.innerHTML = subRows.map((/** @type {any} */ row) => {
       const expEntry = expiredById[row.id]
       // Active: honest "已连接" — daemon has no last-active heartbeat for
       // real accounts, so we don't fake a last-active time.
@@ -157,13 +173,14 @@ export function renderDashboard(report) {
       `
       }).join("")
     }
-    const subExpiredCount = subRows.filter(row => row.expired).length
-    document.getElementById("accounts-meta").textContent = subExpiredCount > 0
+    const subExpiredCount = subRows.filter((/** @type {any} */ row) => row.expired).length
+    ;/** @type {HTMLElement} */ (document.getElementById("accounts-meta")).textContent = subExpiredCount > 0
       ? `${subRows.length} 个 · ${subExpiredCount} 已过期`
       : `${subRows.length} 个`
   }
 }
 
+/** @param {any} conversations @param {any} row */
 function conversationForAccount(conversations, row) {
   if (!Array.isArray(conversations)) return null
   return conversations.find(c =>
@@ -173,6 +190,7 @@ function conversationForAccount(conversations, row) {
   ) || null
 }
 
+/** @param {any} mode */
 function providerFromMode(mode) {
   if (!mode || typeof mode !== "object") return null
   if (mode.kind === "solo") return mode.provider || null
@@ -185,8 +203,9 @@ function providerFromMode(mode) {
 // Mutate the dashboard's restart + stop buttons to reflect daemon+service
 // state. Stored separately from renderDashboard so we can call it from
 // places that don't re-render the whole hero (e.g. after account remove).
+/** @param {DoctorReport} report */
 export function renderRestartButton(report) {
-  const btn = document.getElementById("dash-restart")
+  const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById("dash-restart"))
   if (!btn) return
   const hero = reconnectHero(dashboardHero({
     daemonAlive: !!report.checks.daemon?.alive,
@@ -201,7 +220,7 @@ export function renderRestartButton(report) {
   // so a naive `find(TEXT_NODE)` would replace the wrong node and leave
   // the original "重启 daemon" string sitting next to the new label.
   const labelNode = Array.from(btn.childNodes).find(
-    n => n.nodeType === Node.TEXT_NODE && n.textContent.trim().length > 0,
+    n => n.nodeType === Node.TEXT_NODE && /** @type {string} */ (n.textContent).trim().length > 0,
   )
   const visibleLabel = _reconnectPhase === "connecting"
     ? "正在重新连接…"
@@ -218,7 +237,7 @@ export function renderRestartButton(report) {
   // Stop button: meaningful only when the daemon is actually running. When
   // offline, disable to make "nothing to stop" the obvious affordance
   // (instead of clicking and getting an error toast).
-  const stopBtn = document.getElementById("dash-stop")
+  const stopBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("dash-stop"))
   if (stopBtn) {
     stopBtn.hidden = !showOnlineControls
     stopBtn.disabled = false
@@ -230,20 +249,23 @@ export function renderRestartButton(report) {
   if (detailsBtn) detailsBtn.hidden = _reconnectPhase !== "failed"
 }
 
+/** @param {string} msg */
 export function setPending(msg) {
   const el = document.getElementById("dash-pending")
   if (el) el.textContent = msg
 }
 
+/** @param {HTMLElement | null} button @param {string} label */
 function setButtonLabel(button, label) {
   if (!button) return
   const labelNode = Array.from(button.childNodes).find(
-    node => node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0,
+    node => node.nodeType === Node.TEXT_NODE && /** @type {string} */ (node.textContent).trim().length > 0,
   )
   if (labelNode) labelNode.textContent = ` ${label}`
   else button.appendChild(document.createTextNode(` ${label}`))
 }
 
+/** @param {any} hero */
 function reconnectHero(hero) {
   if (hero.state === "taken_over") return hero
   if (_reconnectPhase === "connecting") {
@@ -265,8 +287,9 @@ function reconnectHero(hero) {
   return hero
 }
 
+/** @param {{ state: string }} hero */
 function syncReconnectControls(hero) {
-  const restartBtn = document.getElementById("dash-restart")
+  const restartBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("dash-restart"))
   const detailsBtn = document.getElementById("dash-view-details")
   if (restartBtn) {
     restartBtn.hidden = hero.state !== "recovering"
@@ -283,6 +306,7 @@ function syncReconnectControls(hero) {
   if (detailsBtn) detailsBtn.hidden = _reconnectPhase !== "failed"
 }
 
+/** @param {string} phase @param {string} [message] */
 function setReconnectPhase(phase, message = "暂时无法恢复，请稍后再试") {
   _reconnectPhase = phase
   _reconnectFailureMessage = message
@@ -301,6 +325,7 @@ function setReconnectPhase(phase, message = "暂时无法恢复，请稍后再�
 // Stop the daemon via `service stop` + residual-kill. Mirrors restartDaemon's
 // pending UX but only fires the stop steps. After this returns, restart-button
 // state re-renders to show "启动" (since daemon is now offline).
+/** @param {DashboardDeps} deps */
 export async function stopDaemon(deps) {
   setPending("停止…")
   let stopError = null
@@ -336,6 +361,7 @@ export async function stopDaemon(deps) {
 }
 
 // The actual stop+kill+start chain used by the single-click reconnect flow.
+/** @param {DashboardDeps} deps */
 export async function runRestartSequence(deps) {
   // Capture pid BEFORE the stop step. May be null on non-Windows.
   let beforePid = null
@@ -365,7 +391,7 @@ export async function runRestartSequence(deps) {
   // launchctl/schtasks/systemctl can report command success even when the
   // child exits immediately during bootstrap.
   const refreshed = typeof deps.doctorPoller.waitForCondition === "function"
-    ? await deps.doctorPoller.waitForCondition(r => !!r.checks.daemon?.alive, 8000, 500)
+    ? await deps.doctorPoller.waitForCondition((/** @type {any} */ r) => !!r.checks.daemon?.alive, 8000, 500)
     : await deps.doctorPoller.refresh()
   if (!refreshed?.checks?.daemon?.alive) {
     setReconnectPhase("failed")
@@ -409,11 +435,13 @@ export async function runRestartSequence(deps) {
 // 「测试本机连接」button handler (main.js, Task 7), read on the next
 // renderDashboard so the hero keeps the probe result across the 5s doctor tick.
 export let _lastProbe = null
+/** @param {any} p */
 export function setLastProbe(p) { _lastProbe = p }
 
 // Carries the outcome of the most recent runRestartSequence call into the
 // next restartDaemon (diagnose) invocation. Cleared after consumption so
 // stale signals never linger across multiple clicks.
+/** @type {any} */
 let _lastRestart = null
 let _reconnectPhase = "idle"
 let _reconnectFailureMessage = "暂时无法恢复，请稍后再试"
@@ -424,7 +452,9 @@ let _providerSwitchInflight = false
 
 // One-shot outside-click + Escape handler installed when menu opens.
 // Stored so it can be removed precisely without leaking DOM listeners.
+/** @type {((ev: MouseEvent) => void) | null} */
 let _providerMenuOutsideHandler = null
+/** @type {((ev: KeyboardEvent) => void) | null} */
 let _providerMenuKeyHandler = null
 
 // Throttle state for checkIncidentsOnPoll (Task 8 follow-up) — see that
@@ -450,6 +480,7 @@ export function __resetDashboardState() {
 
 // Smart reconnect: diagnose internally, then execute the matching recovery
 // while keeping the overview hero as the only user-facing status surface.
+/** @param {DashboardDeps} deps */
 export async function restartDaemon(deps) {
   if (_reconnectPhase === "connecting") return
   // If the user got here by explicitly clicking 断开连接, the daemon being
@@ -519,12 +550,12 @@ export async function restartDaemon(deps) {
   // Keep diagnostics internal. The existing hero is the only user-facing
   // recovery surface, so the reconnect button performs the recommended
   // action immediately instead of asking for a second click in another card.
-  switch (diagnosis.primary.action.kind) {
+  switch (/** @type {any} */ (diagnosis.primary.action).kind) {
     case "run-restart-sequence":
       return runRestartSequence(deps)
     case "route-to-wizard":
       setReconnectPhase("idle")
-      if (diagnosis.primary.action.step === "service") deps.routeToWizardService?.()
+      if (/** @type {any} */ (diagnosis.primary.action).step === "service") deps.routeToWizardService?.()
       else deps.routeToWizardBind?.()
       return
     case "show-fix":
@@ -533,7 +564,7 @@ export async function restartDaemon(deps) {
       return
     case "route-to-settings":
       setReconnectPhase("failed", "连接设置需要调整")
-      if (diagnosis.primary.action.section === "access") deps.routeToAccessSettings?.()
+      if (/** @type {any} */ (diagnosis.primary.action).section === "access") deps.routeToAccessSettings?.()
       else deps.routeToProviderSettings?.()
       return
     case "restart-dashboard":
@@ -565,6 +596,7 @@ export function closeProviderMenu() {
 // Toggle the provider-switch dropdown.
 // deps: the standard deps bag ({ invoke, doctorPoller, ... })
 // report: the current doctor report (used to read the active provider)
+/** @param {DashboardDeps} deps @param {DoctorReport} report */
 export async function toggleProviderMenu(deps, report) {
   if (_providerMenuOpen) {
     closeProviderMenu()
@@ -597,7 +629,7 @@ export async function toggleProviderMenu(deps, report) {
   _providerMenuOpen = true
 
   // Wire button clicks inside the menu
-  menu.querySelectorAll("button[data-provider]").forEach(btn => {
+  ;/** @type {NodeListOf<HTMLButtonElement>} */ (menu.querySelectorAll("button[data-provider]")).forEach(btn => {
     btn.addEventListener("click", async (ev) => {
       ev.stopPropagation()
       if (_providerSwitchInflight) return
@@ -623,7 +655,7 @@ export async function toggleProviderMenu(deps, report) {
       }
       closeProviderMenu()
       await runRestartSequence(deps)
-      setPending(`已切换到 ${PROVIDER_LABELS[name] || name}`)
+      setPending(`已切换到 ${executorSettingsLabel(name)}`)
       setTimeout(() => setPending(""), 2500)
       _providerSwitchInflight = false
     })
@@ -631,7 +663,7 @@ export async function toggleProviderMenu(deps, report) {
 
   // Outside-click: close menu when clicking anywhere outside it
   _providerMenuOutsideHandler = (ev) => {
-    if (!menu.contains(ev.target) && !(anchor.contains && anchor.contains(ev.target))) {
+    if (!menu.contains(/** @type {Node | null} */ (ev.target)) && !(anchor.contains && anchor.contains(/** @type {Node | null} */ (ev.target)))) {
       closeProviderMenu()
     }
   }
@@ -644,6 +676,7 @@ export async function toggleProviderMenu(deps, report) {
   document.addEventListener("keydown", _providerMenuKeyHandler)
 }
 
+/** @param {DashboardDeps} deps @param {any} anchor  测试里是假的元素 @param {DoctorReport} [_report] */
 export async function toggleUserProviderMenu(deps, anchor, _report) {
   if (_providerMenuOpen) {
     closeProviderMenu()
@@ -675,7 +708,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
   menu.hidden = false
   _providerMenuOpen = true
 
-  menu.querySelectorAll("button[data-provider]").forEach(btn => {
+  ;/** @type {NodeListOf<HTMLButtonElement>} */ (menu.querySelectorAll("button[data-provider]")).forEach(btn => {
     btn.addEventListener("click", async (ev) => {
       ev.stopPropagation()
       if (_providerSwitchInflight) return
@@ -694,9 +727,8 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
       _providerSwitchInflight = true
       menu.querySelectorAll("button").forEach(b => { b.disabled = true })
       try {
-        await deps.invoke("wechat_cli_json", {
-          args: ["mode", "set", chatId, JSON.stringify({ kind: "solo", provider: name }), "--json"],
-        })
+        // POST /v1/conversation/set-mode(架构终态 F6;以前起 `wechat-cc mode set`,那条 CLI 也只是转发这一条)
+        await v1(deps.invokeApi, V1.conversation.setMode, { body: { chatId, mode: { kind: "solo", provider: name } } })
       } catch (err) {
         setPending(`切换 ${name} 失败：${deps.formatInvokeError ? deps.formatInvokeError(err) : String(err)}`)
         setTimeout(() => setPending(""), 3000)
@@ -706,7 +738,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
       }
       row.dataset.currentProvider = name
       closeProviderMenu()
-      setPending(`已切换到 ${PROVIDER_LABELS[name] || name}`)
+      setPending(`已切换到 ${executorSettingsLabel(name)}`)
       setTimeout(() => setPending(""), 2500)
       _providerSwitchInflight = false
       await deps.doctorPoller?.refresh?.()
@@ -714,7 +746,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
   })
 
   _providerMenuOutsideHandler = (ev) => {
-    if (!menu.contains(ev.target) && !(anchor.contains && anchor.contains(ev.target))) {
+    if (!menu.contains(/** @type {Node | null} */ (ev.target)) && !(anchor.contains && anchor.contains(/** @type {Node | null} */ (ev.target)))) {
       closeProviderMenu()
     }
   }
@@ -728,6 +760,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
 
 // Account row inline two-step confirm handler. Wired by main.js to the
 // #accounts-body click event. Returns true if it handled the click.
+/** @param {DashboardDeps} deps @param {any} ev */
 export async function handleAccountRowClick(deps, ev) {
   const btn = ev.target.closest("button[data-action]")
   if (!btn) return false
@@ -814,6 +847,7 @@ export async function handleAccountRowClick(deps, ev) {
 // old state as a brand-new fault.
 const LAST_SEEN_INCIDENT_KEY = "wechat-cc:health:lastSeenIncidentId"
 
+/** @param {any} incident */
 function incidentSeenKey(incident) {
   return `${incident.id}|${incident.endedAt ?? "open"}`
 }
@@ -838,8 +872,9 @@ function incidentSeenKey(incident) {
  * current composite key without notifying, so installing the app doesn't
  * immediately pop a notification for a week-old incident.
  */
+/** @param {DashboardDeps} deps */
 export async function loadLastIncident(deps) {
-  const res = await deps.invokeApi("GET", "/v1/health/incidents").catch(err => {
+  const res = await v1(deps.invokeApi, V1.health.incidents).catch((/** @type {any} */ err) => {
     console.warn("[health] incidents load failed:", err)
     return null
   })
@@ -847,7 +882,7 @@ export async function loadLastIncident(deps) {
   const banner = document.getElementById("dash-health-banner")
   if (!banner) return
   const latest = list[0]
-  const history = document.getElementById("dash-health-history")
+  const history = /** @type {HTMLDetailsElement | null} */ (document.getElementById("dash-health-history"))
   const historyDetail = document.getElementById("dash-health-history-detail")
   if (!latest) {
     banner.hidden = true
@@ -949,12 +984,11 @@ let _lastBrainCheckAt = 0
 let _troubleshootOpen = false
 let _lastNetRows = ""   // 第一步网络结果,留给用户点「叫醒大脑」时第二步复用
 
-const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini · 账号连接", openai: "自定义 AI 服务", gemini: "Gemini · 密钥连接" }
 
 // 每个大脑自己的小图标(内联 SVG,自包含无外链)。不是像素级复刻官方 logo,
 // 而是用各家品牌色 + 简洁标记做到一眼可辨(Anthropic 珊瑚色星芒 / OpenAI 绿
 // 六边 / Cursor 光标 / Gemini 蓝紫四角星)。14px,基线对齐。
-const _ico = (svg) => `<span class="brain-ico" aria-hidden="true" style="display:inline-flex;vertical-align:-2px;margin-right:4px">${svg}</span>`
+const _ico = (/** @type {string} */ svg) => `<span class="brain-ico" aria-hidden="true" style="display:inline-flex;vertical-align:-2px;margin-right:4px">${svg}</span>`
 const PROVIDER_ICONS = {
   claude: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="#D97757"><path d="M8 .8l1.3 4.5L13.4 3 11 6.9 15.2 8 11 9.1l2.4 3.9-4.1-2.3L8 15.2l-1.3-4.5L2.6 13 5 9.1.8 8 5 6.9 2.6 3l4.1 2.3z"/></svg>'),
   openai: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#10A37F" stroke-width="1.4" stroke-linejoin="round"><path d="M8 1.7l5.2 3v6.6L8 14.3l-5.2-3V4.7z"/><circle cx="8" cy="8" r="2.1" fill="#10A37F" stroke="none"/></svg>'),
@@ -964,28 +998,30 @@ const PROVIDER_ICONS = {
   agy: _ico('<svg width="14" height="14" viewBox="0 0 16 16" fill="#9B72F2"><path d="M8 1c.5 3.5 1.9 5 5.5 5.5C10 7 8.5 8.5 8 12c-.5-3.5-2-5-5.5-5.5C6 6 7.5 4.5 8 1z"/></svg>'),
 }
 /** 大脑名字前挂上自己的图标;没有对应图标就只出名字。 */
+/** @param {string} id */
 function brainLabelWithIcon(id) {
-  return `${PROVIDER_ICONS[id] || ""}${escapeHtml(PROVIDER_LABELS[id] || id)}`
+  return `${/** @type {Record<string, string>} */ (PROVIDER_ICONS)[id] || ""}${escapeHtml(executorSettingsLabel(id))}`
 }
 
 /**
  * cached 巡检入口(poll 驱动,永不拨号):决定「隐藏 / 告警条 / 排障面板刷新」。
- * @param {{ invokeApi: Function }} deps @param {boolean} fresh
+ * @param {{ invokeApi: (method: any, path: string, body?: any, opts?: any) => Promise<any> }} deps @param {boolean} fresh
  */
 export async function loadBrainHealth(deps, fresh) {
   const el = document.getElementById("brain-health")
   if (!el) return
   if (fresh) { await runTroubleshoot(deps); return }   // 旧调用路径直通排障
-  const r = await deps.invokeApi("GET", "/v1/llm/health", undefined, { timeoutMs: 30_000 }).catch(() => null)
+  const r = await v1(deps.invokeApi, V1.llm.health, undefined, { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.ok !== true) { if (!_troubleshootOpen) el.hidden = true; return }
   const registered = Array.isArray(r.registered) ? r.registered : []
   _registeredProviders = registered
+  rememberExecutorNames(r.names)
   if (_troubleshootOpen) return   // 排障面板开着时不覆盖它
   // 还没接任何大脑(新装机常态:没装 CLI、没填 key)—— 这不是「病」是
   // 「还没开始」,必须显眼引导,否则用户被卡死(owner 2026-08-26)。
   if (registered.length === 0) { renderNoBrain(deps); return }
   const results = Array.isArray(r.results) ? r.results : []
-  const broken = results.filter(x => x.provider === r.default_provider && x.ok === false)
+  const broken = results.filter((/** @type {any} */ x) => x.provider === r.default_provider && x.ok === false)
   if (broken.length === 0) { el.hidden = true; return }   // 没病不翻病历
   // 告警条:一句人话 + 入口,不铺技术细节
   el.innerHTML = `
@@ -999,6 +1035,7 @@ export async function loadBrainHealth(deps, fresh) {
  * 的路,还能接任何 OpenAI 兼容端点(OpenAI/Kimi/DeepSeek/本地…),不锁死
  * 在某家订阅 CLI。想用订阅的走第二条(装 CLI)。owner 2026-08-26。
  */
+/** @param {DashboardDeps} deps @param {boolean} [manual] */
 export function renderNoBrain(deps, manual = false) {
   if (manual) _troubleshootOpen = true
   const el = document.getElementById("brain-health")
@@ -1023,6 +1060,7 @@ export function renderNoBrain(deps, manual = false) {
 }
 
 /** 排障流程:网络体检 →(有可达大脑端点就)真拨大脑 → 状态与修复指引。 */
+/** @param {DashboardDeps} deps */
 export async function runTroubleshoot(deps) {
   const el = document.getElementById("brain-health")
   if (!el) return
@@ -1036,9 +1074,9 @@ export async function runTroubleshoot(deps) {
   if (!steps) return
 
   // ── 第一步:网络体检(daemon 侧视角,不带 key,零费用零风险)──
-  const net = await deps.invokeApi("POST", "/v1/net/probe", {}, { timeoutMs: 20_000 }).catch(() => null)
+  const net = await v1(deps.invokeApi, V1.net.probe, { body: {} }, { timeoutMs: 20_000 }).catch(() => null)
   const rawNetRows = net && net.ok
-    ? net.results.map(x => `<div class="brain-net-row ${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.label)}${x.ok ? ` <span class="brain-when">${x.latency_ms}ms</span>` : " 不通"}</div>`).join("")
+    ? net.results.map((/** @type {any} */ x) => `<div class="brain-net-row ${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.label)}${x.ok ? ` <span class="brain-when">${x.latency_ms}ms</span>` : " 不通"}</div>`).join("")
     : `<div class="brain-net-row bad">✗ 网络检查没跑起来</div>`
   const netRows = `<details class="service-details"><summary>查看网络详细结果</summary>${rawNetRows}</details>`
   const verdict = net && net.ok ? net.verdict : "offline"
@@ -1073,6 +1111,7 @@ export async function runTroubleshoot(deps) {
  * 第二步:逐个真拨大脑(唯一的真实拨号入口)。仅在用户点「叫醒大脑」时触发。
  * 复用第一步存下的网络结果(_lastNetRows),不重复探网络。
  */
+/** @param {DashboardDeps} deps */
 export async function runBrainDial(deps) {
   const el = document.getElementById("brain-health")
   if (!el) return
@@ -1082,9 +1121,10 @@ export async function runBrainDial(deps) {
   if (!steps) return
   const netRows = _lastNetRows
   steps.innerHTML = `${netRows}<div class="brain-checking">正在等待当前 AI 服务回复…</div>`
-  const r = await deps.invokeApi("GET", "/v1/llm/health?fresh=1&scope=current", undefined, { timeoutMs: 150_000 }).catch(() => null)
-  const result = r?.results?.find(x => x.provider === r.default_provider)
-  const label = PROVIDER_LABELS[r?.default_provider] || "当前 AI 服务"
+  const r = await v1(deps.invokeApi, V1.llm.health, { query: { fresh: 1, scope: "current" } }, { timeoutMs: 150_000 }).catch(() => null)
+  const result = r?.results?.find((/** @type {any} */ x) => x.provider === r.default_provider)
+  rememberExecutorNames(r?.names)
+  const label = r?.default_provider ? executorSettingsLabel(r.default_provider) : "当前 AI 服务"
   const message = result?.ok === true ? `${label} 可以回复` : result?.ok === false ? `${label} 暂时无法回复` : "尚未验证回复，请稍后重试"
   steps.innerHTML = `${netRows}<div class="brain-net-row ${result?.ok === true ? "ok" : "bad"}">${escapeHtml(message)}</div>
     ${result?.ok === false ? `<details><summary>查看原因</summary>${escapeHtml(result.hint || result.error || "连接失败")}</details>` : ""}
@@ -1094,6 +1134,7 @@ export async function runBrainDial(deps) {
 }
 
 /** 收起排障面板;若缓存里仍有红,回到告警条。 */
+/** @param {DashboardDeps} deps */
 export function closeTroubleshoot(deps) {
   _troubleshootOpen = false
   const el = document.getElementById("brain-health")
@@ -1132,7 +1173,7 @@ const CLI_SETUP = {
   },
 }
 
-/** 点「+」徽章 → 就地展开接入表单/命令。 @param {{ invokeApi: Function }} _deps @param {string} provider */
+/** 点「+」徽章 → 就地展开接入表单/命令。 @param {{ invokeApi: (method: any, path: string, body?: any, opts?: any) => Promise<any> }} _deps @param {string} provider */
 export function openBrainSetup(_deps, provider) {
   const box = document.getElementById("brain-setup")
   if (!box) return
@@ -1140,7 +1181,7 @@ export function openBrainSetup(_deps, provider) {
   if (provider === "openai" || provider === "gemini") {
     const isOpenai = provider === "openai"
     box.innerHTML = `
-      <div class="brain-setup-title">连接 ${isOpenai ? "自定义 AI 服务" : "Gemini"}</div>
+      <div class="brain-setup-title">连接 ${escapeHtml(executorSettingsLabel(provider))}</div>
       <div class="brain-setup-form">
         <input type="password" id="brain-key" placeholder="服务密钥" aria-label="服务密钥" autocomplete="off" />
         ${isOpenai ? `<details open><summary>高级连接：服务地址与模型</summary><input type="text" id="brain-baseurl" placeholder="接口地址,如 https://api.openai.com/v1" autocomplete="off" />
@@ -1150,7 +1191,7 @@ export function openBrainSetup(_deps, provider) {
       </div>`
     return
   }
-  const c = CLI_SETUP[provider]
+  const c = /** @type {Record<string, typeof CLI_SETUP[keyof typeof CLI_SETUP] | undefined>} */ (CLI_SETUP)[provider]
   if (!c) { box.hidden = true; return }
   box.innerHTML = IS_WINDOWS
     ? `
@@ -1158,13 +1199,13 @@ export function openBrainSetup(_deps, provider) {
     <div class="brain-setup-note">${escapeHtml(c.win)};装好登录后回来点「测试连接」。</div>`
     : `
     <div class="brain-setup-title">接入 ${escapeHtml(c.title)} — 在终端里逐条跑:</div>
-    ${c.cmds.map(cmd => `
+    ${c.cmds.map((/** @type {string} */ cmd) => `
       <div class="brain-cmd"><code>${escapeHtml(cmd)}</code><button class="brain-copy" type="button" data-copy-cmd="${escapeHtml(cmd)}">复制</button></div>`).join("")}
     <div class="brain-setup-note">${escapeHtml(c.note)},完成后回来点「测试连接」。</div>`
 }
 
 /** 保存 API key(走 owner-workspace 通道,daemon 落 daemon.env,值不进日志)。
- *  @param {{ invokeApi: Function }} deps @param {string} provider */
+ *  @param {{ invokeApi: (method: any, path: string, body?: any, opts?: any) => Promise<any> }} deps @param {string} provider */
 export async function saveBrainKey(deps, provider) {
   const status = document.getElementById("brain-setup-status")
   const key = /** @type {HTMLInputElement|null} */ (document.getElementById("brain-key"))?.value.trim() ?? ""
@@ -1180,8 +1221,8 @@ export async function saveBrainKey(deps, provider) {
   }
   if (status) status.textContent = "保存中…"
   try {
-    const r = await deps.invokeApi("POST", "/v1/llm/keys", Object.assign({ provider, key },
-      baseUrl ? { base_url: baseUrl } : {}, model ? { model } : {}))
+    const r = await v1(deps.invokeApi, V1.llm.keys, { body: Object.assign({ provider, key },
+      baseUrl ? { base_url: baseUrl } : {}, model ? { model } : {}) })
     if (r && r.ok) {
       if (status) status.innerHTML = `已保存 ✓ 重启 CC 后生效 <button class="brain-recheck" type="button" data-action="brain-restart">立即重启</button>`
     } else {
@@ -1194,6 +1235,7 @@ export async function saveBrainKey(deps, provider) {
 
 /** Piggybacks the 5s doctor tick, throttled. CACHED-ONLY (?fresh 缺省) —
  *  纯读上次结果,绝不触发真实拨号,与 owner 的「只有用户点击才检测」一致。 */
+/** @param {DashboardDeps} deps */
 export function checkBrainHealthOnPoll(deps) {
   const now = Date.now()
   if (_lastBrainCheckAt !== 0 && now - _lastBrainCheckAt < BRAIN_POLL_INTERVAL_MS) return Promise.resolve()
@@ -1205,14 +1247,14 @@ export function checkBrainHealthOnPoll(deps) {
  * 文件访问(macOS TCC,2026-09-04)。问 /v1/health 里 daemon **自己**的探针结果:
  * 权限记在责任进程上,app 能读不代表 daemon 能读。any_denied 才显示;按钮走
  * Rust 的 open_url 打开系统设置的「完全磁盘访问」面板。
- * @param {{ invokeApi: Function, ipcInvoke?: Function }} deps
+ * @param {{ invokeApi: (method: any, path: string, body?: any, opts?: any) => Promise<any>, ipcInvoke?: (...args: any[]) => any }} deps
  */
 export async function loadFsAccess(deps) {
   const card = document.getElementById("dash-fs-access")
   const text = document.getElementById("dash-fs-access-text")
   const btn = document.getElementById("dash-fs-access-open")
   if (!card || !text) return
-  const h = await deps.invokeApi("GET", "/v1/health").catch(() => null)
+  const h = await v1(deps.invokeApi, V1.health.get).catch(() => null)
   const fs = h && h.fs_access
   if (!fs || !fs.any_denied) { card.hidden = true; return }
   text.textContent = String(fs.hint ?? "系统没给 Tendhearth CC 读文件夹的权限")
@@ -1234,7 +1276,7 @@ export async function loadFsAccess(deps) {
 export async function loadGuardLine(deps) {
   const el = document.getElementById("dash-guard-line")
   if (!el) return
-  const h = await deps.invokeApi("GET", "/v1/health").catch(() => null)
+  const h = await v1(deps.invokeApi, V1.health.get).catch(() => null)
   const line = guardLine(h && h.guard)
   if (!line) { el.hidden = true; return }
   el.textContent = line.state === "down" && line.detail ? `${line.text}(${line.detail})` : line.text
@@ -1263,6 +1305,7 @@ export function checkFsAccessOnPoll(deps) {
   return loadFsAccess(deps).catch(err => console.warn("[fs-access] check failed:", err))
 }
 
+/** @param {DashboardDeps} deps */
 export function checkIncidentsOnPoll(deps) {
   const now = Date.now()
   if (_lastIncidentsCheckAt !== 0 && now - _lastIncidentsCheckAt < INCIDENTS_POLL_INTERVAL_MS) return Promise.resolve()

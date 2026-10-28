@@ -14,14 +14,16 @@
  * risk a slug-minting daemon broadcasting two different identities.
  */
 import { randomBytes, randomInt, randomUUID } from 'node:crypto'
-import { makePairing, type PairingEngine } from '../../core/pairing'
-import { makeMailboxClient } from '../../core/mailbox-client'
-import { loadMailboxIdentity } from '../../core/mailbox-crypto'
-import { makeChannelStore } from '../../core/penpal-channel-store'
-import { generateKeypair } from '../../core/penpal-crypto'
-import type { A2ARegistry } from '../../core/a2a-registry'
+import { makePairing, type PairingEngine } from '../../app/pairing'
+import { makeMailboxClient } from '../../adapters/mailbox/mailbox-client'
+import { loadMailboxIdentity } from '../../adapters/mailbox/mailbox-crypto'
+import { pairingCrypto } from '../../adapters/mailbox/pairing-crypto'
+import { makeChannelStore } from '../../adapters/store/penpal-channel-store'
+import { generateKeypair } from '../../adapters/mailbox/penpal-crypto'
+import type { A2ARegistry } from '../../ports/a2a'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { Db } from '../../lib/db'
+import { makeTellOwnerAs, type TellOwnerDeps } from '../../features/social'
 
 export interface PairingWireDeps {
   stateDir: string
@@ -41,17 +43,23 @@ export interface PairingWireDeps {
    *  url-less (pure NAT'd mailbox peer).
    */
   url?: string
-  notify: (msg: string) => void
+  /**
+   * 配对的结果(「连上了 ✓」「配对码过期了」)经 CC 开口那道门告诉主人:kind = pairing(requested —— 主人自己说了「配对」
+   * 在等这一句,不是等他拍板)。门取不到 ⇒ 不发、记一行,不退回直接发(social-tell.ts)。
+   */
+  tellOwner: TellOwnerDeps
   log: (tag: string, msg: string) => void
 }
 
 export function wirePairing(deps: PairingWireDeps): PairingEngine | undefined {
+  const tellPairing = makeTellOwnerAs('pairing', deps.tellOwner)
   const relays = deps.configuredAgent.mailbox_relays
   if (!relays?.length) return undefined
 
   const mailbox = loadMailboxIdentity(deps.stateDir) // idempotent read; persists on first ever use
   const engine = makePairing({
     client: makeMailboxClient(),
+    crypto: pairingCrypto,
     registry: deps.a2aRegistry,
     self: { mailbox_addr: mailbox.addr, mailbox_enc_pub: mailbox.enc_pub, relays },
     selfId: () => deps.selfId,
@@ -61,7 +69,7 @@ export function wirePairing(deps: PairingWireDeps): PairingEngine | undefined {
     mintKey: () => randomBytes(24).toString('hex'), // 48 chars, >= 16
     genCode: () => String(randomInt(0, 1_000_000)).padStart(6, '0'),
     genNonce: () => randomBytes(8).toString('hex'),
-    notify: deps.notify,
+    notify: (msg) => { void tellPairing(msg) },
     schedule: (fn, ms) => { const t = setTimeout(fn, ms); if (typeof t.unref === 'function') t.unref(); return { cancel: () => clearTimeout(t) } },
     log: (m) => deps.log('PAIR', m),
     channelStore: makeChannelStore(deps.db),
@@ -69,4 +77,22 @@ export function wirePairing(deps: PairingWireDeps): PairingEngine | undefined {
   })
   deps.log('BOOT', `pairing: wired (rendezvous relay ${relays[0]})`)
   return engine
+}
+
+/**
+ * 配对是一个模块(第三批 3b 第 5 步):开关是 `mailbox_relays`(不看 social_enabled,是刻意的)。
+ * 停法经 `own` 登记 —— 以前由 runtime/shutdown 经 boot() 停,开机没走完时停不到。
+ */
+export function pairingModule(deps: PairingWireDeps): import('../modules/container').DaemonModule<PairingEngine> {
+  return {
+    name: 'pairing',
+    optional: true,
+    enabled: () => !!deps.configuredAgent.mailbox_relays?.length,
+    init(m) {
+      const engine = wirePairing(deps)
+      if (!engine) throw new Error('pairing: no mailbox relays')   // enabled() 已经挡过,到不了
+      m.own('engine', () => engine.stop())
+      return engine
+    },
+  }
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { PROVIDER_IDS } from './provider-ids'
 import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, modelForProvider, withModelForProvider, resolveForwardBudget, type AgentConfig } from './agent-config'
 
 describe('agent-config', () => {
@@ -630,6 +631,20 @@ describe('makeMtimeCachedConfigReader', () => {
 })
 
 describe('activeModel / withActiveModel — provider-specific model field', () => {
+  it('agy reads and writes agyModel (10-21: it fell through to `model`, so /v1/model on an agy owner wrote a field agy never reads and read it back as success)', () => {
+    const agy = { ...base('agy'), agyModel: 'gemini-3-pro', model: 'ignored' } as AgentConfig
+    expect(activeModel(agy)).toBe('gemini-3-pro')
+    const next = withActiveModel(agy, 'gemini-3-flash')
+    expect(next.agyModel).toBe('gemini-3-flash')
+    expect(next.model).toBe('ignored')
+  })
+  it('agrees with modelForProvider / withModelForProvider for the global provider, for every provider id', () => {
+    for (const id of PROVIDER_IDS) {
+      const c = { ...base(id), model: 'm', cursorModel: 'cm', openaiModel: 'om', geminiModel: 'gm', agyModel: 'am' } as AgentConfig
+      expect(activeModel(c)).toBe(modelForProvider(c, id))
+      expect(withActiveModel(c, 'x')).toEqual(withModelForProvider(c, id, 'x'))
+    }
+  })
   const base = (provider: AgentConfig['provider']): AgentConfig => ({
     provider, dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false,
   })
@@ -970,28 +985,16 @@ describe('provider enum follows lib/provider-ids', () => {
   })
 })
 
-describe('agent-config reply_delivery(回复交付的运行时回滚开关,2026-10-03)', () => {
-  it('合法值保留,非法值逐项丢掉(不整块作废)', () => {
+describe('agent-config reply_delivery(回复交付的回滚开关,D3 起退休)', () => {
+  it('旧盘上还写着 ⇒ 照常读出其余配置,这个键被丢掉;save 之后也不再写回去', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
     try {
-      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ reply_delivery: { openai: 'legacy', claude: 'shadow', agy: 'bogus', cursor: 3 } }))
-      expect(loadAgentConfig(dir).reply_delivery).toEqual({ openai: 'legacy', claude: 'shadow' })
-    } finally { rmSync(dir, { recursive: true, force: true }) }
-  })
-
-  it('没写 / 不是对象 ⇒ 没有这个字段', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
-    try {
-      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ reply_delivery: 'legacy' }))
-      expect(loadAgentConfig(dir).reply_delivery).toBeUndefined()
-    } finally { rmSync(dir, { recursive: true, force: true }) }
-  })
-
-  it('save → load 不丢这个字段', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
-    try {
-      saveAgentConfig(dir, { ...loadAgentConfig(dir), reply_delivery: { openai: 'shadow' } })
-      expect(loadAgentConfig(dir).reply_delivery).toEqual({ openai: 'shadow' })
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'codex', reply_delivery: { openai: 'legacy', claude: 'shadow' } }))
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('codex')
+      expect('reply_delivery' in cfg).toBe(false)
+      saveAgentConfig(dir, cfg)
+      expect(readFileSync(join(dir, 'agent-config.json'), 'utf8')).not.toContain('reply_delivery')
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
@@ -1020,6 +1023,29 @@ describe('agent-config cli_auto_upgrade(外部 CLI 自动升级,2026-10-04)', ()
     const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
     try {
       expect(loadAgentConfig(dir).cli_auto_upgrade).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+// 3e(2026-10-22):load 在文件坏了时给缺省值,save 再写回 —— 整份配置被换成缺省。现在 save 拒写;load 容忍 BOM。
+describe('agent-config — unreadable / BOM files', () => {
+  it('saveAgentConfig refuses to replace an unreadable file (load handed back defaults for it)', async () => {
+    const { readFileSync } = await import('node:fs')
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-torn-'))
+    try {
+      const p = join(dir, 'agent-config.json'), torn = '{"provider":"codex","model":"gpt-5'
+      writeFileSync(p, torn)
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('claude')
+      expect(() => saveAgentConfig(dir, { ...cfg, bot_name: 'x' })).toThrow(expect.objectContaining({ code: 'config_unreadable' }))
+      expect(readFileSync(p, 'utf8')).toBe(torn)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+  it('loadAgentConfig reads a file that starts with a UTF-8 BOM (Windows PowerShell writes one)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-bom-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), '﻿{"provider":"codex","dangerouslySkipPermissions":false,"autoStart":true,"closeStopsDaemon":false}')
+      expect(loadAgentConfig(dir).provider).toBe('codex')
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })

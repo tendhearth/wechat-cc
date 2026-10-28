@@ -8,11 +8,10 @@ apps/desktop/art/** -text
 apps/mobile/src/** text eol=lf
 # 此共享源码也会原样内联进手机生成页。
 apps/desktop/src/shared/task-entry-contract.js text eol=lf
+apps/desktop/src/shared/agent-avatars.js text eol=lf
+apps/desktop/src/shared/agent-avatars.css text eol=lf
 apps/desktop/src/vendor/markdown.js text eol=lf
-src/daemon/mobile-page.generated.json text eol=lf
-
-# 「CC 眼中的你」眨眼帧:二进制原样进出(同 pet 资产)。
-apps/mobile/art/** -text
+src/features/phone/mobile-page.generated.json text eol=lf
 
 # 公网中继壳页(手机协议包 v2 Task 4):relay/pset.html 是从 relay/pset.src.html
 # 生成的,apps/mobile/build.test.ts 同理按整份文本比对,同上理由钉死 LF。
@@ -23,3 +22,9 @@ apps/desktop/src/tokens.css text eol=lf
 
 # 通用规范汉字表(字体子集化的输入):sources.lock.json 按字节钉 sha256,autocrlf 改成 CRLF 后必红(windows-latest)。
 scripts/fonts/tgscc-level-1-2.txt -text
+
+# 生成物(路由表 5a):scripts/route-registry.guard.test.ts 按整份文本比对 renderWorkbenchRoutes(),autocrlf 改成 CRLF 后必红。
+apps/desktop/src-tauri/generated/workbench-routes.json text eol=lf
+
+# 记忆金样(架构终态 G0):夹具里故意放了 BOM 与 CRLF,金样按字节比(src/features/memory/memory-golden.test.ts)。整棵树按原样进出。
+src/test-support/fixtures/memory/** -text

@@ -9,129 +9,55 @@
 {{>tokens.css}}
   * { box-sizing:border-box }
   body { margin:0; font-family:var(--font); background:var(--paper); color:var(--ink); padding-bottom:70px }
+  /* 层级靠字号与留白,不靠粗细:浏览器默认把 b / strong / 标题加粗到 700,这里统一收到中等(500)。 */
+  b, strong, h1, h2, h3, h4, th { font-weight:500 }
   header { padding:18px 16px 8px } header h1 { font-size:22px; margin:0 }
-  header .sub { color:var(--soft); font-size:12.5px }
   .pane { padding:8px 14px 20px; display:none } .pane.on { display:block }
   .card { background:var(--card); border:1px solid var(--line); border-radius:var(--r-m); padding:12px 14px; margin-bottom:10px }
   .todo { display:flex; align-items:center; gap:10px }
-  .todo .tx { flex:1; min-width:0 } .todo .tx b { font-size:14px; font-weight:600; display:block }
+  .todo .tx { flex:1; min-width:0 } .todo .tx b { font-size:14px; font-weight:500; display:block }
   .todo .tx small { color:var(--soft) }
-  .todo button { font:inherit; font-size:12.5px; padding:5px 12px; border:1.5px solid var(--line); border-radius:var(--r-pill); background:var(--card); color:var(--ink) }
-  .todo button.done-btn { background:var(--accent); border-color:var(--accent); color:var(--card) }
-  .grp { color:var(--accent); font-size:13px; font-weight:700; margin:14px 2px 6px }
+  .todo .th-agents { --th-agent-ring:var(--card) }
+  .todo .th-origin { --th-origin-size:14px; margin-right:-4px }
+  .m-agents { display:flex; align-items:center; gap:8px; margin:-2px 2px 8px; color:var(--soft); font-size:13px } .m-agents[hidden] { display:none }
+  .grp { color:var(--ink); font-size:13px; font-weight:500; margin:14px 2px 6px }
   .empty { text-align:center; color:var(--soft); padding:40px 10px }
-  .portrait { text-align:center; padding:12px }
-  .portrait .frame { display:inline-block; background:var(--card); border:1px solid var(--line); border-radius:var(--r-l); padding:16px; max-width:78vw }
-  .portrait svg { width:100%; height:auto } .portrait figcaption { color:var(--soft); font-size:13px; margin-top:8px }
-  .stgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px }
-  .stgrid figure { margin:0; background:var(--card); border:1.5px solid var(--line); border-radius:var(--r-m); padding:8px; text-align:center }
-  .stgrid img { width:100%; height:84px; object-fit:contain } .stgrid figcaption { font-size:11.5px; color:var(--soft) }
   nav { position:fixed; left:0; right:0; bottom:0; display:flex; background:var(--card); border-top:1.5px solid var(--line); padding-bottom:env(safe-area-inset-bottom) }
   nav button { flex:1; font:inherit; font-size:12px; padding:10px 0 8px; border:0; background:none; color:var(--soft) }
-  nav button.on { color:var(--accent); font-weight:700 }
-  nav button .i { display:block; font-size:20px }
+  nav button.on { color:var(--ink); font-weight:500 }
   #pairbar { margin:8px 14px; padding:9px 12px; background:var(--wash); border-radius:var(--r-s); font-size:12.5px; color:var(--soft) }
-  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:var(--r-pill); background:var(--accent); color:var(--card) }
+  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:var(--r-pill); background:var(--accent); color:var(--on-accent) }
   #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:var(--card); padding:7px 16px; border-radius:var(--r-l); font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
-  .pres { display:flex; align-items:center; gap:8px; padding:0 16px 6px; color:var(--soft); font-size:13px }
-  .pres b { color:var(--ink); font-weight:600 }
-  .pres button { margin-left:auto; font:inherit; font-size:12px; padding:3px 10px; border:1.5px solid var(--line); border-radius:var(--r-pill); background:var(--card); color:var(--soft) }
-  #banner { margin:6px 14px; padding:8px 12px; background:var(--wash); border-radius:var(--r-s); font-size:12.5px; color:var(--accent) }
-  .ev { display:flex; gap:10px } .ev .k { font-size:18px; width:26px; text-align:center; flex:none }
-  .ev .tx { flex:1; min-width:0 } .ev .tx b { display:block; font-size:14px; font-weight:600 }
-  .ev .tx p { margin:3px 0 0; font-size:13px; color:var(--soft); white-space:pre-wrap; word-break:break-word }
-  .ev .tx small { color:var(--soft); font-size:11.5px }
-  .ev .tx a { color:var(--accent) }
-  .ev .pc { margin-top:6px } .ev .pc svg { width:100%; height:auto; border:1.5px solid var(--line); border-radius:var(--r-s) }
+  #banner { margin:6px 14px; padding:8px 12px; background:var(--wash); border-radius:var(--r-s); font-size:12.5px; color:var(--ink) }
   .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:var(--r-pill); background:var(--card); color:var(--soft) }
-  .sec { margin-top:18px }
+  #m-list button.card { width:100%; text-align:left; font:inherit; color:inherit }
+  #m-notice { padding:8px 0; white-space:pre-wrap } #m-notice:empty { display:none }
+  #m-conn { padding:8px 10px; margin:8px 0; border:1px solid var(--line); border-radius:var(--r-s); font-size:.92em; opacity:.85 }
+  #m-status p { margin:8px 0; overflow-wrap:anywhere } #m-status .m-state { font-size:17px; color:var(--ink) }
+  #m-status .m-now span { font-weight:500; margin-right:4px } #m-status .m-task-note, .m-elsewhere { color:var(--soft); font-size:13px }
+  #m-status button { display:inline-block; min-height:44px; margin:8px 0 0; padding:9px 16px; border-radius:var(--r-s); color:var(--ink) }
+  #m-status button:disabled { opacity:.5 } #m-status :focus-visible { outline:2px solid var(--accent); outline-offset:3px }
 </style></head><body>
-<header><h1>CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div><button id="nav-set" type="button">设置</button></header>
+<header><h1>CC</h1><button id="nav-set" type="button">设置</button></header>
 <div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
 <div class="pane on" id="p-today">
   <div class="home-toolbar"><button id="refresh" type="button">刷新</button></div>
   <div id="banner" hidden></div>
   {{>presence.html}}
 </div>
-<div class="pane" id="p-memory">
-  <button id="memory-back" class="sessions-text-action" type="button">← 此刻</button>
-  <div class="grp">回忆</div>
-  <div id="feed"></div>
-  <details class="memory-pocket"><summary>待办、画像与表情</summary>
-<div id="p-pocket">
-  <div class="grp">待办</div><div id="todos"></div>
-  <div class="sec"><div class="grp">CC 画的你</div><div class="portrait" id="portrait"></div></div>
-  <div class="sec"><div class="grp">表情</div><div class="stgrid" id="stickers"></div></div>
-</div>
-  </details>
-</div>
-<style>
-#m-controls fieldset{border:1px solid var(--line);border-radius:var(--r-s);margin:12px 0;padding:10px} .m-option{display:block;margin:10px 0} .m-option small{display:block;margin-left:22px} .m-option textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:8px} .m-description{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit} #m-notice{padding:8px 0;white-space:pre-wrap} #m-conn{padding:8px 10px;margin:8px 0;border:1px solid var(--line);border-radius:var(--r-s);font-size:.92em;opacity:.85} #m-controls button{min-height:40px} #m-controls button:disabled,#m-send:disabled{opacity:.5} #m-artifacts small{display:block} #m-list button.card{width:100%;text-align:left;font:inherit;color:inherit} #m-artifact-preview{overflow-wrap:anywhere}
-#m-controls .done-btn,#m-send{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:var(--r-s);background:var(--accent);color:var(--card);cursor:pointer}
-#m-controls .more{display:inline-block;min-height:44px;margin:8px 0 0 8px;padding:9px 16px;border-radius:var(--r-s);color:var(--ink)}
-.m-option textarea{border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);color:var(--ink)}
-#m-controls :focus-visible,#m-send:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.m-tool-events{margin:12px 0}.m-tool-events>summary{cursor:pointer;color:var(--soft);font-size:13px;min-height:44px;padding:12px 0}.m-tool-events .m-description{margin:0 0 8px;font-size:13px}.m-tool-events small{color:var(--soft);font-size:11.5px}
-.m-handoff{margin:20px 0;padding:16px 0;border-top:1px solid var(--line);color:var(--soft);overflow-wrap:anywhere}.m-handoff p{margin:0 0 12px}.m-handoff button{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:var(--r-s);background:var(--accent);color:var(--card);cursor:pointer}.m-handoff .more{margin:0;background:var(--card);border-color:var(--line);color:var(--ink)}.m-handoff button:disabled{opacity:.5}.m-handoff :focus-visible{outline:2px solid var(--accent);outline-offset:3px}.m-task-note{color:var(--soft)}.m-error-diagnostic summary{min-height:44px;padding:12px 0;cursor:pointer;color:var(--soft)}
-</style>
-<div class="pane" id="p-you">
-  <button id="you-back" class="you-back" type="button">← 回去</button>
-  <div class="you-hero" aria-hidden="true"><div class="you-halo"></div><div class="you-cc"><img id="you-img" alt=""></div></div>
-  <div id="you-body" aria-live="polite"></div>
-</div>
 <div class="pane" id="p-matters">
-  <!-- 一起做 = 交给 CC 的事(2026-10-05):交办在这里;回忆是 CC 的生活,住在「此刻」。 -->
-  <button id="home-entry" class="home-action" type="button"><strong>交给 CC 做</strong><span>写要求、加材料 ↗</span></button>
-  <div id="entry-root"></div>
-  <div class="together-links"><button id="sessions-open" type="button">电脑上的会话 ↗</button></div>
-  <!-- 连接提示:平时不在,连续两次联系不上 daemon 才浮出来,恢复后自己消失。
-       放在列表与详情之外,两边共用同一行。 -->
+  <!-- 网页只看状态(收敛 5b,2026-10-21):交办、接着说、拍板、成果、对话记录都在 App 和电脑上。 -->
+  <!-- 连接提示:平时不在,连续两次联系不上 daemon 才浮出来,恢复后自己消失。放在列表与详情之外,两边共用同一行。 -->
   <div id="m-conn" role="status" aria-live="polite" hidden></div>
   <div id="m-list"><div class="empty">正在读…</div></div>
   <div id="m-detail" hidden>
     <button id="m-back" class="more" type="button">← 全部</button>
     <div class="grp" id="m-title"></div>
+    <div class="m-agents" id="m-agents" hidden></div>
     <div id="m-notice" role="status" aria-live="polite"></div>
-    <div id="m-controls"><div id="m-permissions"></div><div id="m-questions"></div></div>
-    <div id="m-artifacts"></div><div id="m-artifact-preview"></div><div id="m-inputs"></div>
-    <section aria-label="对话与执行记录"><div id="m-events"></div></section>
-    <section id="m-task-status" aria-label="继续这件事"></section>
-    <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:var(--r-s);padding:8px;box-sizing:border-box"></textarea>
-      <div id="m-say-materials"></div>
-      <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
-  </div>
-  <!-- 终端里的会话(2026-10-14):CC 外面开的 Claude Code / Codex,和交给 CC 的事并排。打开一件事时隐藏。 -->
-  <section id="terminal-root" aria-label="终端里的会话" hidden>
-    <h2 class="terminal-heading">终端里的会话</h2>
-    <div id="terminal-list" aria-live="polite"></div>
-  </section>
-</div>
-<div class="pane" id="p-sessions">
-  <button id="sessions-back" class="sessions-text-action" type="button">← 一起做</button>
-  <h2 class="sessions-heading">电脑上的会话</h2>
-  <p class="sessions-intro">原记录来自 Claude / Codex。查看不会启动任务。</p>
-  <div id="sessions-list-view">
-    <form id="sessions-search-form" class="sessions-search">
-      <label for="sessions-provider">来自<select id="sessions-provider"><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
-      <label for="sessions-query" class="sessions-search-label">找会话<input id="sessions-query" type="search" maxlength="200" placeholder="会话名称或项目" autocomplete="off"></label>
-      <button type="submit" class="sessions-primary">搜索</button>
-    </form>
-    <div class="sessions-toolbar"><button id="sessions-refresh" class="sessions-text-action" type="button">刷新</button></div>
-    <p id="sessions-list-notice" class="sessions-notice" role="status" aria-live="polite"></p>
-    <div id="sessions-list"></div>
-    <button id="sessions-more" class="sessions-text-action" type="button" hidden>更多会话</button>
-  </div>
-  <div id="sessions-detail" hidden>
-    <button id="sessions-list-back" class="sessions-text-action" type="button">← 会话列表</button>
-    <h3 id="sessions-title" class="sessions-title"></h3>
-    <p id="sessions-meta" class="sessions-meta"></p>
-    <div class="sessions-read-tabs"><button id="sessions-recent" type="button">最近记录</button><button id="sessions-start" type="button">从头查看</button><button id="sessions-read-refresh" class="sessions-text-action" type="button">刷新记录</button></div>
-    <p id="sessions-read-notice" class="sessions-notice" role="status" aria-live="polite"></p>
-    <p id="sessions-source" class="sessions-meta"></p>
-    <div id="sessions-messages"></div>
-    <button id="sessions-read-more" class="sessions-text-action" type="button" hidden>继续往后读</button>
-    <section class="sessions-continue" aria-label="在一起做中继续"><p id="sessions-continue-notice" class="sessions-notice" role="status" aria-live="polite"></p><div id="sessions-continue-actions"></div><button id="sessions-check" class="sessions-text-action" type="button">重新检查能否接着做</button></section>
+    <section id="m-status" aria-label="现在到哪了" aria-live="polite"></section>
+    <p class="m-elsewhere">对话记录、成果和拍板在手机 App 或电脑上看。</p>
   </div>
 </div>
 <nav>
@@ -139,16 +65,9 @@
   <button data-p="matters">一起做</button>
 </nav>
 <style>{{>presence.css}}</style>
-<style>{{>attachments.css}}</style>
-<style>{{>entry.css}}</style>
-<style>{{>you.css}}</style>
-<style>{{>markdown.css}}</style>
-<style>{{>sessions.css}}</style>
-<style>{{>terminal.css}}</style>
-<style>{{>today.css}}</style>
+<style>{{>agent-avatars.css}}</style>
 <div id="toast"></div>
 <script>
 var T = {{TOKEN_JSON}}
-var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>markdown.js}}{{>workbench.js}}
-{{>attachments.js}}{{>entry.js}}
-{{>presence.js}}{{>you.js}}{{>home.js}}{{>sessions.js}}{{>terminal.js}}{{>today.js}}</script></body></html>
+var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>workbench.js}}
+{{>presence.js}}{{>home.js}}</script></body></html>

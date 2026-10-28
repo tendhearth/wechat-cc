@@ -18,9 +18,11 @@ describe('终端里的会话(手机视图)', () => {
     expect(PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.safeParse({ ok: true, sessions: [row(), waiting(true), waiting(false)] }).success).toBe(true)
   })
   it('一行:项目、哪家、多久前、等批准的那一项;只有中继开了码的才能拍', () => {
-    expect(terminalRow(row({ source: 'codex' }), NOW, 'zh-Hans')).toMatchObject({ project: 'blog', source: 'Codex', status: 'idle', ago: '5 分钟前', pendingText: null, actionable: false })
-    expect(terminalRow(row({ source: 'cursor' }), NOW, 'zh-Hans').source).toBe('Cursor')
-    expect(terminalRow(waiting(true), NOW, 'en')).toMatchObject({ pendingText: 'Bash: npm run deploy', actionable: true, hash: 'ab12c', source: 'Claude Code' })
+    expect(terminalRow(row({ source: 'codex', displayName: 'Codex' }), NOW, 'zh-Hans')).toMatchObject({ project: 'blog', source: 'Codex', agent: 'codex', status: 'idle', ago: '5 分钟前', pendingText: null, actionable: false })
+    expect(terminalRow(row({ source: 'cursor', displayName: 'Cursor' }), NOW, 'zh-Hans')).toMatchObject({ source: 'Cursor', agent: 'cursor' })
+    // 名字只由 daemon 给(收敛清单 ⑥);老 daemon 不带 ⇒ 写 id
+    expect(terminalRow(row({ source: 'cursor' }), NOW, 'zh-Hans')).toMatchObject({ source: 'cursor', agent: 'cursor' })
+    expect(terminalRow(waiting(true), NOW, 'en')).toMatchObject({ pendingText: 'Bash: npm run deploy', actionable: true, hash: 'ab12c', source: 'claude' })
     expect(terminalRow(waiting(false), NOW, 'en').actionable).toBe(false)
     // 老 daemon:pending 不带 hash / actionable ⇒ 不可拍
     expect(terminalRow(row({ status: 'waiting', pending: { tool: 'Bash', summary: null, since: 1 } }), NOW, 'en')).toMatchObject({ pendingText: 'Bash', actionable: false })
@@ -38,6 +40,11 @@ describe('终端里的会话(手机视图)', () => {
   it('只有歇着的能接着说', () => {
     expect(canSayTo('idle')).toBe(true)
     for (const s of ['running', 'waiting', 'ended', undefined] as const) expect(canSayTo(s)).toBe(false)
+    // 开在电脑窗口里:在跑也能说(送进窗口);等批准仍要先拍板
+    expect(canSayTo('running', true)).toBe(true)
+    expect(canSayTo('idle', true)).toBe(true)
+    expect(canSayTo('waiting', true)).toBe(false)
+    expect(canSayTo(undefined, true)).toBe(false)
   })
   it('多久前:刚刚 / 分钟 / 小时 / 日期', () => {
     expect(relAgo(NOW - 10_000, NOW, 'en')).toBe('just now')
@@ -55,5 +62,12 @@ describe('终端里的会话(手机视图)', () => {
     expect(mapPhoneError(503, { ok: false, error: 'cli_actions_not_wired' })).toBe('unavailable')
     expect(terminalErrorKey('uncertain')).toBe('terminal.uncertain')
     expect(terminalErrorKey('offline')).toBe('terminal.failed')
+  })
+  it('在跑的会话带 now ⇒ nowText 按界面语言拼;不在跑 / 认不出的 verb 退回原文', () => {
+    const now = { kind: 'step' as const, text: '运行 npm test', at: NOW, verb: 'run', target: 'npm test' }
+    expect(terminalRow(row({ status: 'running', now }), NOW, 'en').nowText).toBe('Run npm test')
+    expect(terminalRow(row({ status: 'running', now }), NOW, 'zh-Hans').nowText).toBe('运行 npm test')
+    expect(terminalRow(row({ status: 'running', now: { ...now, verb: 'teleport' } }), NOW, 'en').nowText).toBe('运行 npm test')
+    expect(terminalRow(row({ status: 'idle', now }), NOW, 'en').nowText).toBeNull()
   })
 })

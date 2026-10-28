@@ -2,7 +2,6 @@ import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'
 import { mattersRoutes } from './routes-matters'
 import { connectionsRoutes } from './routes-connections'
-import { phoneRoutes } from './routes-phone'
 /**
  * Route table for internal-api. Returns the full Record<"METHOD /path", handler>
  * given a deps closure + a `getDelegate` accessor (for late-binding via
@@ -13,117 +12,51 @@ import { phoneRoutes } from './routes-phone'
  * sections are kept in stable order to match the original file's layout
  * so blame survives the split.
  */
-import { basename, join, posix } from 'node:path'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
-import { lookup } from '../../core/capability-matrix'
+import { lookup } from '../../domain/capability-matrix'
+import { noAskNotice } from '../../domain/enforcement-matrix'
+import { resolveTier, type UserTier } from '../../domain/user-tier'
+import { loadAccess } from '../../lib/access'
+import { PROVIDER_IDS } from '../../lib/provider-ids'
 import { normalizeUserName } from '../../lib/user-name'
-import type { Mode } from '../../core/conversation'
+import type { Mode } from '../../domain/conversation'
 import { pluginsHealthForTier } from '../plugins/health'
-import type { UserTier } from '../../core/user-tier'
-import { makeEventsStore } from '../events/store'
-import { chatOfProfilePath, recordProfileWrite } from '../memory/today-draft'
-import { readModelStatus } from '../atelier-provision'
-import { loadCompanionConfig } from '../companion/config'
 import { a2aRoutes } from './routes-a2a'
 import { probeFsAccess, describeFsAccess, hasFullDiskAccess, FDA_MISSING_HINT } from '../../lib/fs-access'
-import { thoughtRoutes } from './routes-thoughts'
-import { journalRoutes } from './routes-journal'
 import { presenceRoutes } from './routes-presence'
 import { petRoutes } from './routes-pet'
-import { cliEventRoutes } from './routes-cli-events'
 import { permissionRoutes } from './routes-permissions'
 import { selfChangeRoutes } from './routes-self-change'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
 import { configRoutes } from './routes-config'
 import { pairRoutes } from './routes-pair'
-import { memoryRoutes } from './routes-memory'
-import { memoryReviewRoutes } from './routes-memory-review'
-import { penpalRoutes } from './routes-penpal'
 import { healthRoutes } from './routes-health'
 import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
-import { customerReviewRoutes } from './routes-customer-review'
 import { federationRoutes } from './routes-federation'
-import { remindersRoutes } from './routes-reminders'
-import { workbenchRoutes } from './routes-workbench'
-import { countForTag, ONLINE_STICKER_K } from '../stickers'
-import { makeCooldown } from '../sticker-source'
 import type {
-  MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
   UserSetNameRequestT,
   SharePageRequestT, ShareResurfaceRequestT,
-  VoiceSaveConfigRequestT,
-  CompanionSnoozeRequestT,
-  CompanionImportLocalRequestT,
-  WechatReplyRequestT, WechatReplyVoiceRequestT, WechatSendFileRequestT,
+  WechatReplyRequestT, WechatSendFileRequestT,
   WechatEditMessageRequestT, WechatBroadcastRequestT,
   DelegateRequestT,
   ConversationSetModeRequestT,
-  AtelierShareRequestT,
 } from './schema'
 
 export interface MakeRoutesContext {
   deps: InternalApiDeps
   getDelegate: () => InternalApiDelegateDep | null
   maybePrefix: (chatId: string, text: string, tag: string | undefined) => string
+  /** 功能模块挂上来的路由(index.ts 的 MOUNTED,模块 init 时才填)。附件交付要经它调到表情那几条(stickers 模块挂的)和语音的 reply_voice(voice 模块挂的)。 */
+  mounted?: RouteTable
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
-
-/**
- * Non-admin SESSION callers may only touch their own chat's memory subtree
- * (`<chatId>/...`) — closes the cross-chat write path that let any trusted
- * chat inject into another chat's persona.md (which broadcasts into every
- * chat's system prompt — persona design §2). File-origin tokens (the
- * operator CLI, which reads the daemon-wide token file) and admin sessions
- * are unrestricted — same trust posture as before this hardening.
- *
- * This is an AUTHORIZATION layer on top of, not instead of, MemoryFS's own
- * resolveSafe traversal guard (fs-api.ts) — that guard stops path escapes
- * off the memory root; this stops in-bounds cross-chat access.
- */
-function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: string; chatId?: string }): boolean {
-  if (!caller || caller.origin !== 'session' || caller.tier === 'admin') return false
-  if (!caller.chatId) return true                      // session with unknown chat ⇒ deny (fail closed)
-  const norm = path.replace(/\\/g, '/')
-  if (norm.split('/').some(seg => seg === '..')) return true
-  return !(norm === caller.chatId || norm.startsWith(`${caller.chatId}/`))
-}
-
-/**
- * 每晚整理的长期记忆由 daemon 独管:会话(任何 tier)不许写 / 删 `<chat>/memory.md`;
- * CLI / 桌面(非 session 来源)照常。
- *
- * Must match the RESOLVED path, not the raw one — MemoryFS's resolveSafe
- * (fs-api.ts) normalizes via `resolve(root, relPath)` before touching disk,
- * so `./ownerchat/memory.md`, `ownerchat//memory.md`, and
- * `ownerchat/x/../memory.md` all land on the same file as `ownerchat/
- * memory.md` and must be caught too (fix round 1, 2026-09-25). Also
- * case-insensitive: default macOS APFS is case-insensitive, so
- * `ownerchat/Memory.md` is the same file on disk there. And trailing
- * slash(es) — `resolve()` strips them (`ownerchat/memory.md/` resolves to
- * the same file) but `posix.normalize` keeps one, so they must be stripped
- * separately before the `$`-anchored match (fix round 2, 2026-09-25).
- */
-function curatedMemoryDenied(path: string, caller?: { origin: string }): boolean {
-  if (!caller || caller.origin !== 'session') return false
-  const n = posix.normalize(path.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '')
-  // today-draft.md(今天的草稿,2026-10-01)同样只归 daemon:它由 profile.md 写入派生、每晚被整理消费,
-  // 会话手写进去会被每次对话当成「主人今天说过的话」注入。
-  // corrections.md(主人纠正过的条目,2026-10-10)同理:会话整份重写会把纠正抹掉,第二晚又被写回。
-  return /^[^/]+\/(?:memory|today-draft|corrections)\.md$/i.test(n)
-}
-const CURATED_READONLY = {
-  status: 200 as const,
-  body: { ok: false, error: 'curated_memory_readonly', hint: 'memory.md、today-draft.md 和 corrections.md 由后台维护,白天别直接改:新情况记到 profile.md(新增的行会自动进今天的草稿)或 notes/,今晚会整理进去。' },
-}
 
 function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
   return {
@@ -134,18 +67,14 @@ function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
   }
 }
 
-export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext): RouteTable {
-const onlineStickerCooldown = makeCooldown(5 * 60_000)
-// Rotate through upstream candidates per chat so repeated requests do not
-// always pick the first (often identical) GIPHY result.
-const onlineStickerCursor = new Map<string, number>()
+export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRoutesContext): RouteTable {
   const table: RouteTable = {
-    // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情附件交付时复用本表里的老路由。
-    ...turnRoutes(deps, () => table),
-    ...workbenchRoutes(deps),
+    // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情 / 语音附件交付时复用老路由
+    // (表情由 stickers 模块、语音由 voice 模块挂上来)。
+    ...turnRoutes(deps, (key) => table[key] ?? mounted?.[key]),
+    // 工作台的 44 条 /v1/workbench/* 由 workbench 模块自己挂(src/features/workbench,路由表标 module: 'workbench')
     ...mattersRoutes(deps),
     ...connectionsRoutes(deps),
-    ...phoneRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
       body: {
@@ -157,6 +86,8 @@ const onlineStickerCursor = new Map<string, number>()
         turns_store_wired: !!deps.turns,
         sessions_live: deps.listSessions?.()?.length ?? 0,
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
+        // 只有两个计数,没有账号 id(这条路由是 guest 档)。null = 开机还没走到拉消息那一步。
+        ...(deps.polling ? { polling: deps.polling() } : {}),
         ...(deps.version ? { version: deps.version() } : {}),
         subsystems: deps.subsystems?.() ?? [],
         // 网络守护(2026-10-02):safe=false 时所有模型调用都暂停。桌面「网络守护」那一行读它。
@@ -166,6 +97,8 @@ const onlineStickerCursor = new Map<string, number>()
         // guest 只给 provider 名、状态、次数和时间;失败原因(可能带路径 / stderr)给 trusted 以上
         // —— CLI 拿的 file token 就是 trusted,`wechat-cc status` 要能说出「为什么」。
         ...(deps.providerProbes ? { provider_probes: deps.providerProbes().map(p => caller?.tier === 'admin' || caller?.tier === 'trusted' ? p : { ...p, last_error: '' }) } : {}),
+        // 真回合里被拒着的执行者(2026-10-23,provider-refusals.ts):只有码和起始时间,guest 也给
+        ...(deps.providerRefusals ? { provider_refusals: deps.providerRefusals() } : {}),
         // 外部 agent CLI 自动升级(2026-10-04):各家装的 / 最新的版本、上次检查与升级、坏版本名单、自检状态。
         // 只有版本号与时间,没有路径(这条路由是 guest 档)。
         ...(deps.cliUpgrade ? { cli_upgrade: (() => { try { return deps.cliUpgrade!.status() } catch { return undefined } })() } : {}),
@@ -188,164 +121,7 @@ const onlineStickerCursor = new Map<string, number>()
       },
     }),
 
-    'GET /v1/atelier/works': async (q) => {
-      if (!deps.atelier) return { status: 503, body: { error: 'atelier_not_wired' } }
-      const limitRaw = Number(q.get('limit') ?? 12)
-      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(24, Math.floor(limitRaw))) : 12
-      const works = deps.atelier.list(limit).map((work) => {
-        const imagePath = deps.atelier!.imagePath(work)
-        let imageData: string | undefined
-        try {
-          if (imagePath) {
-            const bytes = readFileSync(imagePath)
-            if (bytes.byteLength <= 2 * 1024 * 1024) imageData = `data:image/png;base64,${bytes.toString('base64')}`
-          }
-        } catch { /* corrupt/missing image stays metadata-only */ }
-        const { privateCauseSummary: _privateCause, ...publicWork } = work
-        return { ...publicWork, ...(imageData ? { image_data: imageData } : {}) }
-      })
-      return { status: 200, body: { works } }
-    },
-
-    // First-enable paint-set download progress (checking/downloading/ready/
-    // failed). null means the atelier has never been turned on yet.
-    'GET /v1/atelier/model-status': () => {
-      return { status: 200, body: { status: readModelStatus(deps.stateDir), mode: loadCompanionConfig(deps.stateDir).atelier_mode } }
-    },
-
-    // Explicit owner-initiated share from the desktop atelier. The target is
-    // always the configured owner chat; callers cannot supply another chat id.
-    // Edited background copy is send-only and never overwrites CC's original
-    // local artist note. `background:null` sends the image by itself.
-    'POST /v1/atelier/share': async (_q, body) => {
-      if (!deps.atelier) return { status: 503, body: { ok: false, error: 'atelier_not_wired' } }
-      if (!deps.ilink) return { status: 503, body: { ok: false, error: 'ilink_not_wired' } }
-      const { id, background } = body as AtelierShareRequestT
-      const work = deps.atelier.load(id)
-      const imagePath = work ? deps.atelier.imagePath(work) : null
-      if (!work || !imagePath) return { status: 200, body: { ok: false, error: 'artwork_not_found' } }
-      if (work.shareState === 'shared') return { status: 200, body: { ok: false, error: 'already_shared' } }
-      if (work.shareState === 'pending') return { status: 200, body: { ok: false, error: 'share_in_progress' } }
-      const ownerChatId = loadCompanionConfig(deps.stateDir).default_chat_id
-      if (!ownerChatId) return { status: 200, body: { ok: false, error: 'owner_chat_not_configured' } }
-      const claimed = deps.atelier.transitionShare(id, 'private', 'pending')
-      if (!claimed) return { status: 200, body: { ok: false, error: 'share_in_progress' } }
-      try {
-        await deps.ilink.sendFile(ownerChatId, imagePath)
-      } catch (err) {
-        try { deps.atelier.transitionShare(id, 'pending', 'private') } catch { /* next load exposes pending for diagnosis */ }
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-
-      const sharedAt = new Date().toISOString()
-      let warning: string | undefined
-      try {
-        if (!deps.atelier.transitionShare(id, 'pending', 'shared', sharedAt)) warning = 'share_state_update_failed'
-      } catch {
-        warning = 'share_state_update_failed'
-      }
-      let backgroundSent = false
-      if (background) {
-        const note = `《${background.title}》\n\n${background.origin}\n\n${background.approach}`
-        try {
-          const sent = await deps.ilink.sendReply(ownerChatId, note)
-          if (sent.error) warning = warning ?? 'background_send_failed'
-          else backgroundSent = true
-        } catch {
-          warning = warning ?? 'background_send_failed'
-        }
-      }
-      return {
-        status: 200,
-        body: {
-          ok: true, shared_at: sharedAt, background_sent: backgroundSent,
-          ...(warning ? { warning } : {}),
-        },
-      }
-    },
-
-    // ── memory (RFC 03 P1.B B2) ─────────────────────────────────────────
-    'POST /v1/memory/read': (_q, body, caller) => {
-      if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
-      // Body is pre-validated by index.ts via MemoryReadRequest schema.
-      const { path } = body as MemoryReadRequestT
-      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
-      try {
-        const content = deps.memory.read(path)
-        return { status: 200, body: content === null ? { exists: false } : { exists: true, content } }
-      } catch (err) {
-        return { status: 200, body: { error: errMsg(err) } }
-      }
-    },
-    'POST /v1/memory/write': (_q, body, caller) => {
-      if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
-      // Body is pre-validated by index.ts via MemoryWriteRequest schema.
-      const { path, content } = body as MemoryWriteRequestT
-      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
-      if (curatedMemoryDenied(path, caller)) return CURATED_READONLY
-      try {
-        // 同日失忆(2026-10-01):CC 写 <chat>/profile.md 时,新冒出来的行进今天的草稿,别的会话马上看得到。
-        const draftChat = caller?.origin === 'session' ? chatOfProfilePath(path) : null
-        const before = draftChat ? deps.memory.read(path) : null
-        deps.memory.write(path, content)
-        if (draftChat) {
-          try { recordProfileWrite(deps.memory, draftChat, before, content) }
-          catch (err) { deps.log?.('MEMORY', `today-draft append failed: ${errMsg(err)}`) }
-        }
-        return { status: 200, body: { ok: true } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'GET /v1/memory/list': (q, _body, caller) => {
-      if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
-      let dir = q.get('dir')
-      // The system prompt's default recall flow ("回复前: memory_list + 读相关
-      // .md") calls this with no `dir` at all. For a scoped (non-admin
-      // session) caller that used to fail scope-denial on the root — every
-      // trusted/guest chat's default recall silently 403'd. The correct
-      // meaning of "list my memory" for a scoped caller IS its own subtree,
-      // so default to that instead of evaluating the root. Explicit `dir`
-      // still goes through the normal scope check below (own subtree ok,
-      // others 403); unscoped callers (file token / admin) are unaffected.
-      if (dir === null && caller?.origin === 'session' && caller.tier !== 'admin' && caller.chatId) {
-        dir = caller.chatId
-      }
-      if (memoryScopeDenied(dir ?? '', caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
-      try {
-        return { status: 200, body: { files: deps.memory.list(dir ?? undefined) } }
-      } catch (err) {
-        return { status: 200, body: { error: errMsg(err) } }
-      }
-    },
-    'POST /v1/memory/delete': async (_q, body, caller) => {
-      if (!deps.memory) return { status: 503, body: { error: 'memory_fs_not_wired' } }
-      if (!deps.db) return { status: 503, body: { error: 'db_not_wired' } }
-      // Body is pre-validated by index.ts via MemoryDeleteRequest schema.
-      const { chat_id, path, reason } = body as MemoryDeleteRequestT
-      if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
-      if (curatedMemoryDenied(path, caller)) return CURATED_READONLY
-      try {
-        const tombstone = deps.memory.softDelete(path)
-        if (tombstone === null) {
-          return { status: 200, body: { ok: true, existed: false } }
-        }
-        // Per-chat audit log. Constructed per-call — prepared-statement
-        // cache lives on db, not store, so this is cheap.
-        // 会话来的:审计记到它自己的 chat(路径已被 memoryScopeDenied 限在那里),
-        // 不信模型填的 chat_id —— 否则能往别人的事件流里写一条伪造的「删了记忆」。
-        const auditChat = caller?.origin === 'session' && caller.chatId ? caller.chatId : chat_id
-        await makeEventsStore(deps.db, auditChat).append({
-          kind: 'memory_deleted',
-          trigger: 'mcp_tool_call',
-          reasoning: reason,
-          memory_path: tombstone,
-        })
-        return { status: 200, body: { ok: true, existed: true, tombstone } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
+    // ── memory (RFC 03 P1.B B2):读 / 写 / 列 / 删四条归记忆功能(src/features/memory/fs-routes.ts),模块自己挂 ──
 
     // ── projects (RFC 03 P1.B B3) ───────────────────────────────────────
     'GET /v1/projects/list': () => {
@@ -435,9 +211,13 @@ const onlineStickerCursor = new Map<string, number>()
       const fresh = q.get('fresh') === '1'
       const report = fresh ? await deps.llmHealth.dial(q.get('scope') === 'current' ? 'current' : undefined) : deps.llmHealth.cached()
       const registered = deps.llmRegistered?.() ?? []
+      // names(收敛清单 ⑥):六家内置 + 已注册的(含自定义 ACP)都给正式名字和设置里的写法;桌面不存名字表,
+      // 没注册的也给(「连接其他 AI 服务」的选项、旧对话里的执行者)。老 daemon 不带 ⇒ 桌面退回 id。
+      const names = deps.llmNames ? Object.fromEntries([...new Set([...PROVIDER_IDS, ...registered])].map(id => { const n = deps.llmNames!(id); return [id, { displayName: n.name, settingsLabel: n.settings }] })) : undefined
       return { status: 200, body: {
         ok: true,
         registered,
+        ...(names ? { names } : {}),
         unconfigured: unconfiguredHints(registered),
         ...(report ?? { checked_at: null, default_provider: null, results: [] }),
       } }
@@ -492,64 +272,12 @@ const onlineStickerCursor = new Map<string, number>()
       }
     },
 
-    // ── voice config (RFC 03 P1.B B4) ───────────────────────────────────
-    'GET /v1/voice/status': () => {
-      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-      // configStatus is sync, never throws — direct return.
-      return { status: 200, body: deps.voice.configStatus() }
-    },
-    // ── companion proactive tick (RFC 03 P1.B B6) ───────────────────────
-    'GET /v1/companion/status': () => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      return { status: 200, body: deps.companion.status() }
-    },
-    'POST /v1/companion/enable': async () => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      try {
-        const r = await deps.companion.enable()
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/companion/disable': async () => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      try {
-        const r = await deps.companion.disable()
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/companion/snooze': async (_q, body) => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      // Body is pre-validated by index.ts via CompanionSnoozeRequest schema.
-      const { minutes } = body as CompanionSnoozeRequestT
-      try {
-        const r = await deps.companion.snooze(minutes)
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/companion/import-local': async (_q, body) => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      // Body is pre-validated by index.ts via CompanionImportLocalRequest schema.
-      const { enabled } = body as CompanionImportLocalRequestT
-      try {
-        const r = await deps.companion.setImportLocal(enabled)
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-
     // ── ilink-bound message family (RFC 03 P1.B B1) ─────────────────────
     // The reply / reply_voice / send_file / edit_message / broadcast tools
     // detected by both providers' replyToolCalled flag. After B1 these are
     // exposed by the stdio `wechat` server (renamed from `wechat_ipc`),
     // which is what claude-agent-provider's REPLY_TOOL_NAMES set and
-    // codex-agent-provider's WECHAT_MCP_SERVER='wechat' check match against.
+    // the codex chat provider's WECHAT_MCP_SERVER='wechat' check match against.
     'POST /v1/wechat/reply': async (_q, body) => {
       if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
       // Body is pre-validated by index.ts via WechatReplyRequest schema.
@@ -561,9 +289,6 @@ const onlineStickerCursor = new Map<string, number>()
       if (!text.trim()) {
         return { status: 200, body: { ok: false, error: 'empty_text: nothing was sent (text was empty or whitespace only); the user saw nothing, so do not apologize for it' } }
       }
-      // 回复交付 shadow(spec 2026-10-03 §5.1 第 3 项):legacy 实际交付的每一条都交一份去比对。
-      // 放在接收器截流之前 —— app 这一轮被截走的也是 legacy 交付的结果。没开 shadow 轮 ⇒ 无操作。
-      deps.replyDelivery?.observeLegacy(chat_id, text)
       // App-conversation-channel, Stage 0: when a reply sink is open for
       // this chat, capture the RAW text (whole, pre-split, pre-prefix — the
       // app shows the whole reply) instead of ilink-sending it.
@@ -605,22 +330,6 @@ const onlineStickerCursor = new Map<string, number>()
       } catch (err) {
         if (sentCount > 0) deps.log?.('WECHAT_REPLY', `split partial failure chat=${chat_id} sent=${sentCount}/${chunks.length} err=${errMsg(err)}`)
         return { status: 200, body: { ok: false, error: errMsg(err), ...(sentCount > 0 ? { sent: sentCount } : {}) } }
-      }
-    },
-    'POST /v1/wechat/reply_voice': async (_q, body) => {
-      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-      // Body is pre-validated by index.ts via WechatReplyVoiceRequest schema.
-      const { chat_id, text } = body as WechatReplyVoiceRequestT
-      // Business rule: enforce 500-char cap with structured reason, not schema validation.
-      // Schema is structural (shape), not business (value range).
-      if (text.length > 500) {
-        return { status: 200, body: { ok: false, reason: 'too_long', limit: 500 } }
-      }
-      try {
-        const r = await deps.voice.replyVoice(chat_id, text)
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
       }
     },
     'POST /v1/wechat/send_file': async (_q, body) => {
@@ -742,11 +451,17 @@ const onlineStickerCursor = new Map<string, number>()
         chatroom: 'chatroom',
       }
       const humanName = kindNames[mode.kind] ?? String(mode.kind)
+      // 切到一家「问不了就放行」的执行者:照实说一句(稿 2026-10-22-policy-compile §6)。provider_switch(quiet)
+      // 由 agent 转告主人,所以放进回执;控制台那条直接接在回执后面。
+      // 主人自己的对话按 admin 档说(codex 在那里逐条问 ⇒ 不提醒);别的对话 / 读不到 access ⇒ 不分档,宁可多提醒
+      // (访客本来就切不过去,派发时就拒)。
+      const tierOf = (): UserTier | undefined => { try { return resolveTier(chatId, loadAccess()) === 'admin' ? 'admin' : undefined } catch { return undefined } }
+      const notice = mode.kind === 'solo' && 'provider' in mode ? noAskNotice(mode.provider, tierOf()) : null
       // Best-effort wechat reply — never fail the route if send fails.
       // `quiet`: an agent (wechat-mcp provider_switch) is the caller and will
       // tell the user itself — a second「来自控制台」line would be noise.
       if (deps.ilink && !quiet) {
-        deps.ilink.sendReply(chatId, `🎛 已切换到 ${humanName}（来自控制台）`).catch(err => {
+        deps.ilink.sendReply(chatId, `已切换到 ${humanName}（来自控制台）${notice ? `\n${notice}` : ''}`).catch(err => {
           deps.log?.('SET_MODE', `wechat reply failed: ${errMsg(err)}`)
         })
       }
@@ -755,7 +470,7 @@ const onlineStickerCursor = new Map<string, number>()
         chatId,
         mode,
       })
-      return { status: 200, body: { ok: true } }
+      return { status: 200, body: { ok: true, ...(notice ? { notice } : {}) } }
     },
 
     // ── companion converse (app-conversation-channel, voice arc Stage 0) ──
@@ -796,100 +511,6 @@ const onlineStickerCursor = new Map<string, number>()
       }
     },
 
-    // ── companion speak (app-conversation-channel, voice arc Stage 1) ──
-    // Synthesizes reply audio for arbitrary text via the daemon's voice
-    // config and hands the bytes back to the caller (base64) instead of
-    // ilink-sending — reuses deps.voice.synthesizeSpeech, which mirrors
-    // replyVoice's synth step exactly, minus the wechat upload/send.
-    'POST /v1/companion/speak': async (_q, body) => {
-      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-      const { text } = body as { text?: unknown }
-      if (typeof text !== 'string' || text.trim().length === 0) {
-        return { status: 400, body: { error: 'text required' } }
-      }
-      if (text.length > 5000) {
-        return { status: 400, body: { error: 'text too long' } }
-      }
-      try {
-        const { audio, mime } = await deps.voice.synthesizeSpeech(text)
-        return { status: 200, body: { ok: true, audio_b64: audio.toString('base64'), mime } }
-      } catch (err) {
-        const m = errMsg(err)
-        if (/no.?voice.?config|not configured/i.test(m)) {
-          return { status: 422, body: { ok: false, error: 'no_voice_config' } }
-        }
-        return { status: 500, body: { ok: false, error: m } }
-      }
-    },
-
-    // ── companion transcribe (app-conversation-channel, voice arc Stage 2) ──
-    // Inbound audio (base64) → gateway STT → text. Mirror of /speak.
-    'POST /v1/companion/transcribe': async (_q, body) => {
-      if (!deps.voice?.transcribe) return { status: 503, body: { error: 'voice_not_wired' } }
-      const { audio_b64, mime } = (body ?? {}) as { audio_b64?: unknown; mime?: unknown }
-      if (typeof audio_b64 !== 'string' || audio_b64.length === 0) {
-        return { status: 400, body: { error: 'audio_b64 required' } }
-      }
-      let audio: Buffer
-      try {
-        audio = Buffer.from(audio_b64, 'base64')
-      } catch {
-        return { status: 400, body: { error: 'audio_b64 must be valid base64' } }
-      }
-      if (audio.length === 0) return { status: 400, body: { error: 'audio_b64 decoded to empty' } }
-      if (audio.length > 25 * 1024 * 1024) return { status: 413, body: { error: 'audio too large (max 25MB)' } }
-      try {
-        const { text } = await deps.voice.transcribe(audio, typeof mime === 'string' && mime ? mime : 'audio/wav')
-        return { status: 200, body: { ok: true, text } }
-      } catch (err) {
-        const m = errMsg(err)
-        if (/no.?stt.?config/i.test(m)) return { status: 422, body: { ok: false, error: 'no_stt_config' } }
-        return { status: 500, body: { ok: false, error: m } }
-      }
-    },
-
-    'POST /v1/stt/save_config': async (_q, body) => {
-      if (!deps.voice?.saveSTTConfig) return { status: 503, body: { error: 'voice_not_wired' } }
-      const { base_url, model, api_key } = (body ?? {}) as { base_url?: unknown; model?: unknown; api_key?: unknown }
-      try {
-        const r = await deps.voice.saveSTTConfig({
-          ...(typeof base_url === 'string' ? { base_url } : {}),
-          ...(typeof model === 'string' ? { model } : {}),
-          ...(typeof api_key === 'string' ? { api_key } : {}),
-        })
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
-      }
-    },
-
-    'GET /v1/stt/status': () => {
-      if (!deps.voice?.sttStatus) return { status: 503, body: { error: 'voice_not_wired' } }
-      return { status: 200, body: deps.voice.sttStatus() }
-    },
-
-    'POST /v1/voice/save_config': async (_q, body) => {
-      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-      // Body is pre-validated by index.ts via VoiceSaveConfigRequest schema.
-      const { provider, base_url, model, api_key, default_voice } = body as VoiceSaveConfigRequestT
-      // saveConfig handles its own validation + test-synth; surface its
-      // ok-true / ok-false-reason verbatim. Catch transport-level
-      // unexpected errors and shape them into the same {ok:false,reason}
-      // contract so the agent sees a structured failure.
-      try {
-        const r = await deps.voice.saveConfig({
-          provider,
-          ...(base_url !== undefined ? { base_url } : {}),
-          ...(model !== undefined ? { model } : {}),
-          ...(api_key !== undefined ? { api_key } : {}),
-          ...(default_voice !== undefined ? { default_voice } : {}),
-        })
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
-      }
-    },
-
     // ── chat prefs (主动关心档位 / 拆分偏好) ───────────────────────────────
     // INLINE-validated deliberately (no REQUEST_SCHEMAS entry) — keeps the
     // schema-table route count untouched. Backs the set_chat_pref MCP tool:
@@ -917,165 +538,22 @@ const onlineStickerCursor = new Map<string, number>()
       return { status: 200, body: { ok: true, prefs } }
     },
 
-    // ── stickers (image-stickers plan) ─────────────────────────────────
-    // INLINE-validated deliberately (no REQUEST_SCHEMAS entry) — mirrors
-    // the /v1/chat-prefs pattern above. Backs the send_sticker MCP tool
-    // plus the curated-lib save/list surface used to seed it.
-    'POST /v1/wechat/send_sticker': async (_q, body) => {
-      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-      const b = (body ?? {}) as { chat_id?: unknown; tag?: unknown }
-      if (typeof b.chat_id !== 'string' || b.chat_id.trim() === '') {
-        return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
-      }
-      if (typeof b.tag !== 'string' || b.tag.trim() === '') {
-        return { status: 400, body: { error: 'tag required (non-empty string)' } }
-      }
-      const path = deps.stickers.resolve(b.tag, b.chat_id)
-      if (path === null) {
-        return { status: 200, body: { ok: false, reason: 'no_sticker_for_tag', tags: deps.stickers.allTags() } }
-      }
-      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
-      try {
-        await deps.ilink.sendFile(b.chat_id, path)
-        deps.stickerFeedback?.remember(b.chat_id, basename(path))
-        return { status: 200, body: { ok: true, file: basename(path) } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/wechat/search_online_sticker': async (_q, body) => {
-      if (!deps.stickerSource) return { status: 503, body: { error: 'sticker_source_not_wired' } }
-      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-      const b = (body ?? {}) as { chat_id?: unknown; mood?: unknown; query?: unknown }
-      if (typeof b.chat_id !== 'string' || !b.chat_id.trim()) return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
-      if (typeof b.mood !== 'string' || !b.mood.trim()) return { status: 400, body: { error: 'mood required (non-empty string)' } }
-      if (typeof b.query !== 'string' || !b.query.trim()) return { status: 400, body: { error: 'query required (non-empty string)' } }
-      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
-      const chatId = b.chat_id.trim(), mood = b.mood.trim(), query = b.query.trim()
-      if (countForTag(deps.stickers.list(), mood) >= ONLINE_STICKER_K) {
-        const local = deps.stickers.resolve(mood)
-        if (local) try {
-          await deps.ilink.sendFile(chatId, local)
-          return { status: 200, body: { ok: true, source: 'local', file: basename(local) } }
-        } catch (err) { return { status: 200, body: { ok: false, error: errMsg(err) } } }
-      }
-      if (!onlineStickerCooldown.ready(chatId, Date.now())) return { status: 200, body: { ok: false, reason: 'throttled' } }
-      let scratch: string | undefined
-      let onlineSent = false
-      try {
-        const hits = await deps.stickerSource.search(query, { limit: 8 })
-        if (hits.length === 0) return { status: 200, body: { ok: false, reason: 'no_online_result' } }
-        const cursor = onlineStickerCursor.get(chatId) ?? 0
-        const hit = hits[cursor % hits.length]!
-        onlineStickerCursor.set(chatId, cursor + 1)
-        const download = await deps.stickerSource.download(hit.url)
-        if (!download) return { status: 200, body: { ok: false, reason: 'no_online_result' } }
-        scratch = mkdtempSync(join(tmpdir(), 'online-sticker-'))
-        const path = join(scratch, `${hit.id}.${download.ext}`)
-        writeFileSync(path, download.bytes)
-        await deps.ilink.sendFile(chatId, path)
-        onlineSent = true
-        const saved = deps.stickers.save(path, [mood], `CC 联网找的「${mood}」表情`)
-        deps.stickerFeedback?.remember(chatId, saved.file)
-        return { status: 200, body: { ok: true, source: 'online', file: saved.file } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      } finally {
-        if (!onlineSent) onlineStickerCooldown.reset(chatId)
-        if (scratch) rmSync(scratch, { recursive: true, force: true })
-      }
-    },
-    'POST /v1/wechat/search_online_sticker_candidates': async (_q, body) => {
-      if (!deps.stickerSource) return { status: 503, body: { error: 'sticker_source_not_wired' } }
-      const b = (body ?? {}) as { query?: unknown }
-      if (typeof b.query !== 'string' || !b.query.trim()) return { status: 400, body: { error: 'query required (non-empty string)' } }
-      const hits = await deps.stickerSource.search(b.query.trim(), { limit: 8 })
-      return { status: 200, body: { ok: true, candidates: hits.slice(0, 8) } }
-    },
-    'POST /v1/wechat/sticker_feedback': async (_q, body) => {
-      if (!deps.stickerFeedback) return { status: 503, body: { error: 'sticker_feedback_not_wired' } }
-      const b = (body ?? {}) as { chat_id?: unknown; signal?: unknown; file?: unknown }
-      if (typeof b.chat_id !== 'string' || !b.chat_id.trim()) return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
-      if (b.signal !== 'positive' && b.signal !== 'negative') return { status: 400, body: { error: 'signal must be positive or negative' } }
-      const file = deps.stickerFeedback.rate(b.chat_id.trim(), b.signal, typeof b.file === 'string' ? b.file : undefined)
-      return { status: 200, body: { ok: Boolean(file), file } }
-    },
-    'POST /v1/wechat/send_online_sticker_candidate': async (_q, body) => {
-      if (!deps.stickerSource || !deps.stickers) return { status: 503, body: { error: 'sticker_source_not_wired' } }
-      const b = (body ?? {}) as { chat_id?: unknown; mood?: unknown; url?: unknown; id?: unknown }
-      if (typeof b.chat_id !== 'string' || !b.chat_id.trim()) return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
-      if (typeof b.mood !== 'string' || !b.mood.trim()) return { status: 400, body: { error: 'mood required (non-empty string)' } }
-      if (typeof b.url !== 'string' || !b.url.trim()) return { status: 400, body: { error: 'url required (non-empty string)' } }
-      try {
-        const host = new URL(b.url).hostname.toLowerCase()
-        if (!host.endsWith('.giphy.com') && host !== 'giphy.com') return { status: 400, body: { error: 'candidate url must be a GIPHY URL' } }
-      } catch { return { status: 400, body: { error: 'candidate url must be valid' } } }
-      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
-      try {
-        const download = await deps.stickerSource.download(b.url)
-        if (!download) return { status: 200, body: { ok: false, reason: 'candidate_unavailable' } }
-        const scratch = mkdtempSync(join(tmpdir(), 'online-sticker-candidate-'))
-        try {
-          const path = join(scratch, `${typeof b.id === 'string' && b.id ? b.id : 'candidate'}.${download.ext}`)
-          writeFileSync(path, download.bytes)
-          await deps.ilink.sendFile(b.chat_id.trim(), path)
-          const saved = deps.stickers.save(path, [b.mood.trim()], `CC 联网筛选的「${b.mood.trim()}」表情`)
-          deps.stickerFeedback?.remember(b.chat_id.trim(), saved.file)
-          return { status: 200, body: { ok: true, source: 'online', file: saved.file } }
-        } finally { rmSync(scratch, { recursive: true, force: true }) }
-      } catch (err) { return { status: 200, body: { ok: false, error: errMsg(err) } } }
-    },
-    'POST /v1/stickers': (_q, body) => {
-      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-      const b = (body ?? {}) as { path?: unknown; tags?: unknown; desc?: unknown }
-      if (typeof b.path !== 'string' || b.path.trim() === '') {
-        return { status: 400, body: { error: 'path required (non-empty string)' } }
-      }
-      if (
-        !Array.isArray(b.tags) ||
-        b.tags.length === 0 ||
-        !b.tags.every((t) => typeof t === 'string' && t.trim() !== '')
-      ) {
-        return { status: 400, body: { error: 'tags required (non-empty array of non-empty strings)' } }
-      }
-      if (b.desc !== undefined && typeof b.desc !== 'string') {
-        return { status: 400, body: { error: 'desc must be a string' } }
-      }
-      try {
-        const saved = deps.stickers.save(b.path, b.tags as string[], b.desc as string | undefined)
-        return { status: 200, body: { ok: true, file: saved.file, tags: saved.tags } }
-      } catch (err) {
-        return { status: 400, body: { error: errMsg(err) } }
-      }
-    },
-    'GET /v1/stickers': () => {
-      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-      return { status: 200, body: { ok: true, stickers: deps.stickers.list(), tags: deps.stickers.allTags() } }
-    },
-
     // ── a2a (send / test / dashboard CRUD) + daemon-control (sessions / model
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
-    ...journalRoutes(deps),
-    ...thoughtRoutes(deps),
     ...presenceRoutes(deps),
     ...petRoutes(deps),
     ...permissionRoutes(deps),
     ...selfChangeRoutes(deps),
-    ...cliEventRoutes(deps),
     ...knowledgeRoutes(deps),
     ...configRoutes(deps),
     ...pairRoutes(deps),
-    ...memoryRoutes(deps),
-    ...memoryReviewRoutes(deps),
-    ...penpalRoutes(deps),
+    // 笔友信箱 /v1/penpal/* 归社交模块自己挂(src/features/social)。
     ...healthRoutes(deps),
-    ...remindersRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),
-    ...customerReviewRoutes(deps),
     ...federationRoutes(deps),
     ...fileRoutes(),
   }

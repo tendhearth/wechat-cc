@@ -1,0 +1,701 @@
+import type { TierProfile } from '../domain/user-tier'
+import type { PermissionMode } from '../domain/permission-mode'
+import type { ProviderId } from '../domain/conversation'
+import { isAuthFail } from '../domain/auth-fail'
+import type { CallTarget } from '../lib/call-classifier'
+import { makeTurnTextCollector } from '../domain/turn-reply'
+
+// Re-export so existing imports `import type { PermissionMode } from
+// './agent-provider'` keep working.
+export type { PermissionMode }
+
+export interface AgentProject {
+  alias: string
+  path: string
+}
+
+/** Null omits a task override; it does not reset retained native settings. */
+export interface AgentExecutionChoice {
+  defaults: 'provider' | 'native'
+  model: string | null
+  reasoningEffort: string | null
+}
+export interface AgentExecutionModel {
+  id: string
+  displayName: string
+  description?: string
+  reasoningEfforts: string[]
+  defaultReasoningEffort?: string
+  inputModalities?: string[]
+}
+export interface AgentModelCatalog {
+  models: AgentExecutionModel[]
+  defaultModel?: string
+  source: 'native'
+}
+export interface AgentExecutionObservation {
+  model: string
+  reasoningEffort?: string
+  sessionId?: string
+  source: 'native_response' | 'native_message' | 'native_reroute'
+}
+
+/**
+ * The provider-agnostic event a session yields on a dispatch turn.
+ *
+ * Variant semantics:
+ *   text      — assistant produced visible text (one event per SDK
+ *               assistant block; can occur multiple times per turn).
+ *   tool_call — assistant invoked a tool. `server` is set when the SDK
+ *               distinguishes MCP server (Codex always; Claude after
+ *               parsing the `mcp__SERVER__TOOL` name pattern). For
+ *               built-in tools (Read, Bash, etc.) `server` is omitted.
+ *   init      — session initialised; emitted once per dispatch by Codex
+ *               (thread.started) and by Claude on first dispatch only
+ *               (system{init} message). Consumers can ignore.
+ *   result    — turn completed cleanly. Always followed by iterator
+ *               close; one per dispatch.
+ *   error     — turn failed at the SDK semantic layer (turn.failed,
+ *               result.subtype !== 'success'). Iterator continues to
+ *               close normally — true exceptions throw instead.
+ */
+/** Public execution activity, never raw model reasoning or unrestricted tool input. */
+export interface AgentActivity {
+  id: string
+  type: 'command' | 'read' | 'edit' | 'search' | 'tool' | 'agent'
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  label: string
+  detail?: string
+  /** Intentionally public child reply, not tool output or hidden reasoning. */
+  output?: string
+  parentId?: string
+  agentIds?: string[]
+}
+
+export type AgentEvent =
+  /**
+   * `ownSegment`:这条文字是一条**独立的**助理消息,自成一段(回复交付「最后的话」的分段,core/turn-reply.ts)——
+   * 哪怕和上一条之间没有 tool_call。Codex 的 agent_message 就是这样:一轮里的每条都是完整消息,spec §4.2 的定义是
+   * 「turn.completed 之前最后一条 agent_message」。不设 ⇒ 同一段里的多条文字用空行拼(Claude 一条消息的多个文字块)。
+   */
+  | { kind: 'text'; text: string; itemId?: string; textMode?: 'append' | 'replace'; ownSegment?: true }
+  | { kind: 'tool_call'; server?: string; tool: string; activity?: AgentActivity }
+  | { kind: 'init'; sessionId: string }
+  /**
+   * `finalText`:provider 自己对「这一轮最后的话」的定义(Claude Agent SDK 的 `result.result`)。只在这一轮
+   * **成功**(没有 SDK 错误标注、`is_error` 不为真)时才带 —— 出错轮的 `result.result` 就是错误原文(#190)。
+   * 只用来**核对**分段算出来的最后的话(collectTurn → TurnSummary.providerFinalText,协调器记
+   * `[REPLY_FINAL_CHECK]`),交付永远用分段的结果(回复交付第 5 步定案,spec 修订记录)。
+   */
+  | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number; finalText?: string
+      /** 这一轮执行者自己报的用量(core/turn-usage.ts);不报 ⇒ 不带。不估。 */
+      usage?: import('../domain/turn-usage').TurnUsage }
+  /** `code`:provider 边界产的结构化码 —— lib/provider-error-code 的闭集(另有
+   *  collectTurn 自己的 `turn_timeout`)。下游有码就只看码;`message` 只给人/日志看,
+   *  **永远不当回复发出去**。 */
+  | { kind: 'error'; message: string; code?: string }
+
+/** Validated task-owned immutable material; image/PDF data is exact base64 bytes. */
+export interface AgentAttachment {
+  name: string
+  mime: string
+  path: string
+  sha256: string
+  data?: string
+}
+
+/** Observations, not an assertion that native notification queues are drained. */
+export interface AgentRuntimeSnapshot {
+  retained: boolean
+  foreground: 'running' | 'idle' | 'unknown'
+  backgroundCount: number
+  input: 'steer' | 'send' | 'queue'
+}
+
+/** Workbench-only stream: parent results are milestones, not runtime closure. */
+export interface AgentWorkbenchRuntime {
+  /** One consumer, installed before start; ends only on safe no-background completion or close/failure. */
+  events: AsyncIterable<AgentEvent>
+  /** Exactly one initial request per owned runtime epoch. */
+  start(text: string, attachments?: readonly AgentAttachment[]): void
+  /** Same epoch. Resolves only on native acceptance evidence; local enqueue is insufficient. */
+  submit(requestId: string, text: string, attachments?: readonly AgentAttachment[]): Promise<void>
+  /** Synchronous, non-throwing copy; retained is sticky after observed background work. */
+  snapshot(): AgentRuntimeSnapshot
+}
+
+export interface AgentSession {
+  /**
+   * 这条会话是不是接着上一次的历史起来的(续接成功)。provider 知道才填;不填 ⇒ 协调器按能力表的 supportsResume 猜。
+   * 冷启动近况块据它决定加不加:续上了就不必再贴一遍最近的对话(B2,2026-10-25:OpenAI 兼容对话开始能续接)。
+   */
+  resumedHistory?: boolean
+  /** Optional owned lifetime capability; legacy dispatch remains unchanged. */
+  workbenchRuntime?: AgentWorkbenchRuntime
+  /** Native acknowledgement of supplemental input to the current turn only. */
+  steer?(text: string, attachments?: readonly AgentAttachment[]): Promise<void>
+  /**
+   * Send `text` to the agent and yield events as they arrive. The
+   * iterator closes after the first `result` (or `error`) event.
+   *
+   * Concurrency: providers are NOT required to support overlapping
+   * dispatches. Claude provider serialises (one in-flight per session);
+   * Codex provider runs each turn as a separate runStreamed.
+   */
+  dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent>
+  /**
+   * Interrupt the in-flight dispatch (if any) without closing the
+   * session — future dispatches still work. Wired into the chatroom
+   * loop's `/stop` and the "new dispatch preempts prior" paths.
+   *
+   * Optional because not every provider may have a per-turn interrupt
+   * mechanism. Coordinators should treat a missing implementation as
+   * "best effort" — the abort signal still propagates at round entry,
+   * mid-stream cancellation just isn't available.
+   */
+  cancel?(): Promise<void>
+  close(): Promise<void>
+  /**
+   * 守护(评审 #193 P1-1):这条会话每一轮**真正**连到哪里 —— 起来那一刻定下的端点 + 模型
+   * (Claude 子进程拿到的 ANTHROPIC_BASE_URL、openai-compatible 的 base URL、cursor-agent 报上来的
+   * 当前模型……),不是此刻配置里写的。null / 未实现 ⇒ 拿不准 ⇒ 网络闸门按需要保护(fail closed)。
+   */
+  callTarget?(): CallTarget | null
+  /**
+   * 网络守护「暂停在跑的任务」(主人 2026-10-03):冻住 / 放开这条会话的整棵进程树,连同会话
+   * 自己的计时器。只有在沙盒里验证过「冻住期间流被掐断、放开后能自己重试接上」的执行者才实现它;
+   * 没实现 ⇒ 守护退回原来的停法。见 docs/reference/network-guard.md「暂停在跑的任务」。
+   */
+  suspension?: AgentSessionSuspension
+  /**
+   * 这条会话拥有的进程组(POSIX 组号 = 组长 pid;2026-10-06)。工作台关不掉它(writer_not_closed)时落库,
+   * 之后 —— 包括 daemon 重启后 —— 凭「这些组还在不在」判断执行程序到底退没退,有退出证据才解除文件夹占用。
+   * 未实现 / 空 ⇒ 没有证据可查,占用只能等进程内确认或主人手动确认。
+   */
+  processGroups?(): readonly number[]
+}
+
+export interface AgentSessionSuspension {
+  /** SIGSTOP 整棵进程树 + 暂停会话自己的计时器。false = 做不到(进程没了 / 平台不支持),调用方改用停。 */
+  suspend(): boolean
+  /** SIGCONT + 计时器接着走。幂等。 */
+  resume(): void
+  /**
+   * 冻住期间要停(主人取消 / 暂停到顶 / daemon 关):直接 SIGKILL 冻住的树,**不先放开**
+   * (放开那一下它就会接着用不受保护的网络)。之后的 close() 不能再指望进程配合收尾。
+   */
+  terminate(): void
+}
+
+/** `AgentProvider.callTarget` 问的是哪一种调用。 */
+export type CallTargetKind =
+  /** 起会话本身。缺省 = 'session'(多数执行者起会话就定下了端点和模型)。ACP 起会话不发模型请求,报 purpose:'setup'。 */
+  | 'spawn'
+  /** 按这份 SpawnContext 起出来的会话,每一轮会连到哪里(还没起来时的预测)。 */
+  | 'session'
+  | 'cheapEval'
+  | 'strongEval'
+
+/**
+ * One-shot LLM eval used for routing / observation / decision flows that
+ * don't need a full session (no tools, no memory, no chat history).
+ *
+ * Each provider implements with its cheapest practical model + reasoning
+ * effort. Latency target ≤ 5 s for ~500-token prompts; cost target
+ * ≪ $0.01 per call. Replaces the prior hardcoded `claude-haiku-4-5`
+ * callsites in chatroom moderator + companion introspect.
+ */
+export type CheapEval = (prompt: string) => Promise<string>
+
+export interface AgentUserQuestion {
+  id: string
+  header: string
+  question: string
+  options: Array<{label:string;description:string}>
+  multiSelect?: boolean
+  allowOther?: boolean
+}
+export interface AgentUserInputRequest { questions: AgentUserQuestion[] }
+export type AgentUserInputAnswers = Record<string, string[]>
+
+/**
+ * Per-spawn context passed to every `AgentProvider.spawn`. RFC 05 — the
+ * uniform shape lets providers (Claude / Codex / Cursor / future
+ * gemini-cli) translate daemon-owned policy (tierProfile +
+ * permissionMode) into their own SDK options without the daemon having
+ * to know provider-specific SDK shapes.
+ *
+ * **`permissionMode`** is the daemon-wide flag (`--dangerously` ⇒
+ * `'dangerously'`; otherwise `'strict'`). Providers MUST honor this —
+ * dangerously means "operator opted into full bypass, regardless of
+ * what tier this chat is in".
+ *
+ * Why this lives next to `tierProfile`: pre-RFC-05, providers tried to
+ * infer "is this a dangerously spawn" from `tierProfile.relay.size === 0
+ * && tierProfile.deny.size === 0` (admin tier shape) — that conflated
+ * "this user is admin" with "operator launched --dangerously", and
+ * broke silently when admin tier policy changed (C4) or when the
+ * dangerously flag changed without bumping tier (C5). The fix is to
+ * thread `permissionMode` explicitly.
+ */
+/**
+ * 一组按会话起来的 MCP 工具(OpenAI 兼容这条自己跑工具循环的路用)。`serverOf` 给出真正所属的 server(wechat / delegate /
+ * 插件名),判档位按 `mcp__<server>__<tool>`,不许把别家的同名工具当成 wechat 的。只给对话用(工作台和 Claude / Codex 一样不给 MCP)。
+ */
+export interface AgentMcpTools {
+  tools: { name: string; description: string; parameters: Record<string, unknown> }[]
+  call(name: string, input: unknown): Promise<string>
+  close(): Promise<void>
+  serverOf(name: string): string | undefined
+}
+
+export interface SpawnContext {
+  /** Workbench-only ordered activity updates. Normal chat consumers keep legacy events. */
+  workbenchTimeline?: boolean
+  /** Enable retained native background execution only for the workbench consumer. */
+  workbenchLifecycle?: boolean
+  tierProfile: TierProfile
+  permissionMode: PermissionMode
+  /** Bound at spawn time so per-session canUseTool closures resolve the
+   *  right chat's tier under concurrent dispatch (no `lastActiveChatId`
+   *  process-wide reads). */
+  chatId: string
+  /** When set, the provider should resume an existing session (claude
+   *  jsonl, codex thread id, cursor agent id) instead of cold-starting. */
+  resumeSessionId?: string
+  /** Per-spawn env overlay the provider merges into every stdio MCP child's
+   *  env (via mergeEnvIntoMcpServers). Computed once by the daemon
+   *  (session-manager) from the session's resolved tier + minted token —
+   *  carries `WECHAT_SESSION_TOKEN` (the env-only bearer secret) and
+   *  `WECHAT_SESSION_TIER` (non-secret; the wechat child gates admin tools on
+   *  it) so route calls carry the caller's tier. The provider stays oblivious
+   *  to the var names — it just merges. Absent in embeddings/tests that don't
+   *  wire the registry (nothing to inject). See
+   *  docs/superpowers/specs/2026-06-21-internal-api-tier-authz-design.md. */
+  mcpEnv?: Record<string, string>
+  /**
+   * The per-session system prompt, assembled ONCE by the daemon
+   * (session-manager, via an injected `buildInstructions` thunk) from this
+   * spawn's provider + resolved tier — the single provider-agnostic source
+   * (`buildSystemPrompt`). Each provider injects it through its own transport
+   * (claude → SDK `systemPrompt.append`; codex → first-message prepend; cursor
+   * → its slot once wired) and stays oblivious to the content, exactly like
+   * `mcpEnv`. Absent in tests/embeddings that don't wire the thunk — providers
+   * then fall back to whatever prompt their construction opts carried (or none).
+   */
+  appendInstructions?: string
+  /**
+   * The pinned model id for this spawn, read per-spawn by the daemon
+   * (session-manager via `currentModelFor`) from agent-config — so an operator's
+   * `/model` switch takes effect on the NEXT session without a daemon restart.
+   * Undefined ⇒ the provider falls back to its construction-time model (or SDK
+   * default). Mirrors the `mcpEnv` / `appendInstructions` seam: the provider
+   * just injects it. (Claude has an equivalent per-spawn reader of its own.)
+   */
+  model?: string
+  execution?: AgentExecutionChoice
+  reportExecution?(value: AgentExecutionObservation): void
+  /** A task-local approval bridge. It is bound to one active run and fails
+   * closed after that run is cancelled, completed, or restarted. */
+  requestPermission?: (
+    /** command / paths / cwd:放行规则要的原文(2026-10-19),执行者拿得到就给,拿不到就不给。 */
+    request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string },
+    signal?: AbortSignal,
+  ) => Promise<boolean>
+  requestUserInput?: (request: AgentUserInputRequest, signal?: AbortSignal) => Promise<AgentUserInputAnswers | null>
+  /** Public native-capability notice for the active task journal only, never
+   * assistant text or an instruction injected into the executor. */
+  reportNotice?: (message: string) => void
+}
+
+/**
+ * Merge `extra` env into EVERY stdio MCP child's `env`, returning a fresh map
+ * (inputs untouched). The per-spawn seam that carries a session's
+ * `WECHAT_SESSION_TOKEN`/`_TIER` into MCP children — codex's and cursor's MCP
+ * specs are fixed at provider construction, so each provider applies this at
+ * spawn. Generic over the server shape so both providers' spec types flow
+ * through; child env wins over `extra` only where keys don't collide (extra is
+ * spread last, so the injected auth env takes precedence by design).
+ */
+/**
+ * MCP servers that legitimately consume the per-session internal-api auth env
+ * (`WECHAT_SESSION_TOKEN`/`_TIER`). ONLY these get it — third-party plugins
+ * (any other server name) must never receive the daemon's bearer token, or
+ * enabled plugin code could impersonate the agent against the loopback API.
+ */
+export const CORE_MCP_SERVER_NAMES: ReadonlySet<string> = new Set(['wechat', 'delegate'])
+
+export function mergeEnvIntoMcpServers<T extends { env?: Record<string, string> }>(
+  servers: Record<string, T>,
+  extra: Record<string, string>,
+  onlyNames?: ReadonlySet<string>,
+): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(servers).map(([name, srv]) =>
+      onlyNames && !onlyNames.has(name)
+        ? [name, srv]                                              // e.g. plugin — no auth env
+        : [name, { ...srv, env: { ...(srv.env ?? {}), ...extra } }],
+    ),
+  ) as Record<string, T>
+}
+
+/**
+ * SDK-level sandbox granularity. Codex maps these directly; Cursor only
+ * supports a coarse subset; Claude has none (relies on per-tool callback).
+ * Used by capability-matrix derivation to decide what tier→sandbox
+ * translations are realisable for each provider.
+ */
+export type SandboxLevel = 'none' | 'read-only' | 'workspace-write' | 'full'
+
+/**
+ * Per-provider static capability declaration (RFC 05 Phase 2). Each
+ * provider exports a constant of this shape; capability-matrix derives
+ * the (mode × provider × permissionMode) row from it without a 24-row
+ * hand-written constant.
+ *
+ * Adding a new provider (gemini-cli, etc.) means filling these fields,
+ * not authoring 8 new matrix rows or editing per-provider branches in
+ * bootstrap (peer pairing / delegate availability derive from here).
+ */
+// 四件事各靠什么收住、访客能不能用:纯规则,在 domain(架构终态 E1);这里转出给老的 import。
+export { guestSafe, type Confinement, type ToolSurfaceConfinement } from '../domain/confinement'
+import type { ToolSurfaceConfinement } from '../domain/confinement'
+
+export interface ProviderCapabilities {
+  /**
+   * In `primary_tool` mode this provider delegates to `delegate_<peer>`;
+   * the single source for provider pairing (replaces the old 2-provider
+   * `=== 'codex' ? 'claude' : 'codex'` ternary in bootstrap). Undefined ⇒
+   * no default delegation peer. NOTE: orthogonal to `supportsDelegation`,
+   * which is whether this provider can be a delegate TARGET.
+   */
+  defaultPeer?: ProviderId
+  /**
+   * User-facing notice shown (throttled) when this provider's credentials go
+   * stale mid-turn — the login/credential fix differs per provider (claude/codex
+   * `login`, cursor an API key), so the copy lives with the provider rather than
+   * in a coordinator ternary. Falls back to a generic message when omitted.
+   */
+  authFailHint?: string
+  /**
+   * SDK supports per-tool callback (Claude's `canUseTool`). Decides:
+   *   - whether `askUser='per-tool'` is realisable in strict mode
+   *   - whether `runtime.buildCanUseTool` gets called at spawn
+   */
+  perToolCallback: boolean
+  /**
+   * Can this provider's MCP child session ever be granted admin tier, so
+   * that `SESSION_IS_ADMIN`-gated tool registration (daemon self-diag,
+   * file_locate, knowledge_search, the social-tools family, …) actually
+   * runs? False ⇒ the provider's MCP config pins `WECHAT_SESSION_TIER`
+   * to a static value (agy/cursor: `'trusted'`, one token for every
+   * session — see `agy-mcp-config.ts` / `cursor-mcp-config.ts`), so
+   * `SESSION_IS_ADMIN` is always false there regardless of who is
+   * chatting, and admin-only tools never register for this provider.
+   * True ⇒ the MCP env is threaded per-session (claude/codex/gemini/
+   * openai), so an owner/admin chat does reach admin tier.
+   */
+  adminMcpTools: boolean
+  /**
+   * Sandbox levels the SDK exposes. Decides which tier→sandbox
+   * translations are realisable. Empty set ⇒ no SDK sandbox (Claude).
+   */
+  sandboxLevels: ReadonlySet<SandboxLevel>
+  /**
+   * Can act as a `delegate_<peer>` target in primary_tool mode. Cursor
+   * is false in v1 (SDK has no sub-agent surface — see RFC 05 §7 #3);
+   * flip when it lands.
+   */
+  supportsDelegation: boolean
+  /** Can resume an existing session id across daemon restarts. */
+  supportsResume: boolean
+  /**
+   * provider 自带的工具面(不是 wechat MCP —— 那个按会话档位注册)在四件事上怎么被档位收住(3c Policy 第 4 步,2026-10-22):
+   * 'per_tool' = 每次调用按档位判(daemon 权限桥 / 自己的工具闸);'sandbox' = SDK 沙箱粗粒度收住;'none' = 收不住。
+   * **没核实过的一律写 'none'**(按做不到算,不替它说好话)。访客能不能用由这张表推出来(`guestSafe(cap)`):
+   * 有一件收不住就不行。以前是手写一个 guestSafe 布尔,理由只在注释里。
+   */
+  confines: ToolSurfaceConfinement
+  /**
+   * 哪些文字算回复(2026-10-03 修订):'last_segment'(缺省,编码型执行者 —— Claude Code / Codex / Cursor,
+   * 之前的段是长任务旁白)或 'all_segments'(聊天型模型 —— openai 兼容、agy:本轮所有文字段按顺序都交付)。
+   * 读它用 capability-matrix 的 `replyTextStrategyFor`。
+   */
+  replyText?: import('../domain/turn-reply').ReplyTextStrategy
+}
+
+export interface AgentProvider {
+  /** Discovery owns one bounded native deadline and subprocess cleanup; no model turn is sent. */
+  modelCatalog?(project: AgentProject): Promise<AgentModelCatalog>
+  /**
+   * Spawn a session. See `SpawnContext` for the per-spawn shape;
+   * provider-construction opts (model, mcpServers, claude binary,
+   * etc.) come from the factory call.
+   *
+   * Concurrency: providers are NOT required to support overlapping
+   * spawns or dispatches on the same session. Coordinators serialise
+   * per-chat.
+   */
+  spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession>
+  /**
+   * Optional one-shot eval. Coordinators that need cheap routing /
+   * decision LLM calls should resolve via `ProviderRegistry.getCheapEval()`
+   * instead of calling this directly — the registry picks the cheapest
+   * available provider's implementation. Missing implementation means
+   * the provider doesn't have a lightweight one-shot path; callers
+   * should fall back gracefully (skip the eval-driven feature).
+   */
+  cheapEval?: CheapEval
+  /**
+   * 一次 `cheapEval` 调用的**预期上限**(毫秒)。缺省 ⇒ in-process 一档。
+   *
+   * WHY(2026-09-01,真机实测):agy 的 cheapEval(订阅版 Gemini,每次一个
+   * CLI 冷启动)单次 10.3–14.3s;in-process 的 claude/openai 约 1s。披露
+   * 闸门 `GATE_TIMEOUT_MS` 写死 12s,于是派心愿**时灵时不灵**地报
+   * `checker_unavailable` —— 看起来像随机故障,其实是闸门的常数低于
+   * provider 的下限。一个常数服务不了差一个数量级的两档。
+   *
+   * 声明的是「慢到什么程度还算正常」,不是「保证多快」。延迟敏感的调用方
+   * 通过 `ProviderRegistry.getCheapEvalBudgetMs()` 拿到汇总值来定自己的
+   * 超时,而不是各自拍一个常数。
+   */
+  cheapEvalBudgetMs?: number
+  /**
+   * Optional one-shot eval on the provider's STRONG (main) model — same
+   * no-tools/no-session shape as cheapEval but a more capable model. Used
+   * for the /chat verdict, where synthesis quality matters more than cost.
+   * Resolve via `ProviderRegistry.getStrongEval(providerId)` for the DEFAULT
+   * provider specifically (unlike getCheapEval, which picks the cheapest).
+   * Missing → caller falls back to cheapEval.
+   */
+  strongEval?: CheapEval
+  /**
+   * 守护(评审 #193 P1-1):这一次调用会**真正**连到哪里 —— 用的是和 spawn / cheapEval 自己完全
+   * 同一份已解析的参数(构造时定下的 base URL、构造时的默认模型、ctx 里钉的模型……),不读此刻的配置。
+   * 网络闸门就按它判。null / 未实现 ⇒ 拿不准 ⇒ 按需要保护(fail closed)。
+   */
+  callTarget?(kind: CallTargetKind, ctx?: Partial<SpawnContext>): CallTarget | null
+}
+
+/**
+ * Shared sentinel detector for the Claude binary's "not logged in" /
+ * Codex's auth-failure markers when surfaced as the response text of a
+ * cheapEval call. Lifted out of bootstrap/haiku-eval so all callers
+ * (chatroom moderator + companion introspect) handle auth_failed
+ * consistently — throw, let the caller decide on fallback.
+ * See auth-fail.ts for the regex definitions and rationale.
+ */
+
+export function assertNotAuthFailed(text: string, log: (tag: string, line: string) => void, source: string): void {
+  if (isAuthFail('assistant-text', text)) {
+    log('AUTH_FAILED', `${source} credentials stale: ${text.slice(0, 160)}`)
+    throw new Error(`auth_failed: ${text.slice(0, 120)}`)
+  }
+}
+
+/**
+ * Reply-tool detection — moved out of the providers so the wechat-channel
+ * concept doesn't leak into the provider interface. Coordinator and any
+ * other consumer derives "did the agent call a reply tool this turn?" by
+ * walking events and checking each `tool_call` event with this helper.
+ */
+const REPLY_TOOLS = new Set(['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate', 'sticker_feedback'])
+
+/** 我们的 wechat MCP 服务器的规范名 —— 进程内 SDK(claude / codex /
+ *  cursor-SDK / gemini)都按这个键注册,工具名因此是 `mcp__wechat__reply`。 */
+export const WECHAT_MCP_SERVER = 'wechat'
+
+/**
+ * 外部 CLI(agy)不吃我们传的 mcpServers:它只读自己的
+ * **全局** 配置文件,我们的条目必须带命名空间前缀才不会撞上主人自己装的
+ * 服务器 —— 于是它回报的 `ServerName` 是那个命名空间键,不是 `wechat`。
+ * 这个常量是 bootstrap 的 agy-mcp-config 与这里共用的唯一事实源
+ * (那个文件从这里 re-export)。
+ *
+ * WHY 这条是承重的(真机 2026-09-08):`isReplyToolCall` 用 server 名判定
+ * 「这一轮 agent 自己发消息了吗」。agy 的 `wechat-cc-wechat` 没折回规范名,
+ * 于是每个 agy 回合都 replyToolCalled=false,协调器的 FALLBACK_REPLY 在
+ * agent 已经把正文发出去之后,又把模型的旁白(「已回复用户的问候。」)当
+ * 成回复发了一遍 —— 主人每问一句收到两条。
+ */
+export const AGY_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc-wechat'
+
+const WECHAT_MCP_SERVER_ALIASES: ReadonlySet<string> = new Set([
+  WECHAT_MCP_SERVER,
+  AGY_WECHAT_MCP_NAMESPACE_ID,
+])
+
+/**
+ * 把外部 CLI 报上来的命名空间键折回规范名;其他服务器名原样返回。
+ * Provider 在 **发事件之前** 调用它(见 agy-agent-provider),这样下游
+ * 所有消费者(reply 判定、TURN 日志的 tools=、桌宠活动信号)看到的都是
+ * 同一个 `wechat`。`isReplyToolCall` 内部也过一道,是纵深防御:将来新加
+ * 的 provider 忘了折,回复判定也不会再静默失效。
+ */
+export function normalizeWechatMcpServer(server: string | undefined): string | undefined {
+  return server !== undefined && WECHAT_MCP_SERVER_ALIASES.has(server) ? WECHAT_MCP_SERVER : server
+}
+
+export function isReplyToolCall(ev: AgentEvent): boolean {
+  return ev.kind === 'tool_call'
+    && normalizeWechatMcpServer(ev.server) === WECHAT_MCP_SERVER
+    && REPLY_TOOLS.has(ev.tool)
+}
+
+/**
+ * Same wechat reply-tool check but against a raw SDK tool name
+ * (`mcp__wechat__reply`) — used by the permission relay to DENY the reply
+ * tool during chatroom beats (the coordinator forwards each agent's plain
+ * text prefixed; a direct reply-tool call would escape that framing). Matches
+ * the `mcp__<server>__<tool>` shape only.
+ */
+export function isReplyToolName(name: string): boolean {
+  const parts = name.split('__') // mcp__<server>__<tool>
+  return parts[0] === 'mcp' && parts[1] === 'wechat' && REPLY_TOOLS.has(parts.slice(2).join('__'))
+}
+
+/**
+ * One-turn aggregation: drain an event stream and return the summary the
+ * coordinator needs. Mirrors the shape consumers used to get from the old
+ * dispatch return value, plus optional `result` / `error` for diagnostics.
+ */
+export interface TurnSummary {
+  assistantText: string[]
+  replyToolCalled: boolean
+  /**
+   * 这一轮调过的工具名,按发生顺序。**只有名字,不含参数** —— 参数里是
+   * 搜索词、文件路径、消息正文这类隐私。
+   *
+   * WHY(2026-09-02):owner 问「今天有什么新闻」,bot 答得有名有姓,而
+   * channel.log 里只有 `chunks=3 dur=39190ms` —— **看不出这答案是查来的
+   * 还是模型编的**,而那恰恰是最该能判断的事。事件流里 `tool_call` 一直
+   * 在发(agy 的解析器解得好好的),只是没有任何人记它。
+   */
+  toolCalls: string[]
+  result?: { sessionId: string; numTurns: number; durationMs: number }
+  error?: string
+  /** Provider-emitted error code (lib/provider-error-code, e.g. 'auth_failed' /
+   *  'auth_rejected' / 'network') — lets the coordinator branch on failure
+   *  category without string-matching the message. */
+  errorCode?: string
+  /**
+   * 「最后的话」(回复交付 spec §4.1,core/turn-reply.ts):以 tool_call 为界分段,最后一段非空文字。
+   * 只有 outcome === 'completed' 的轮才可以交付它;error 事件的文案从不进来。可选只是为了让手写的
+   * TurnSummary(测试、spawn 失败路径)不必补;collectTurn 总是填。
+   */
+  finalText?: string
+  /** 最后的话之前的各段文字(旁白)。 */
+  narration?: string[]
+  /** result 事件带的 provider 自己的「最后的话」(只有 Claude 的成功轮有),只用于核对,不交付。 */
+  providerFinalText?: string
+}
+
+/** Sentinel error code stamped on a TurnSummary when the per-turn watchdog
+ *  fires (the stream went silent past `timeoutMs`). Coordinators branch on
+ *  this to discard the wedged session and self-heal — see [[handleTurnTimeout]]
+ *  in conversation-coordinator. */
+export const TURN_TIMEOUT_CODE = 'turn_timeout'
+
+export interface CollectTurnOpts {
+  /**
+   * Per-turn watchdog (ms). When set, `collectTurn` stops waiting if no
+   * event arrives within this window, calls the stream's `return()` to
+   * unwind the producer, and resolves with `errorCode: 'turn_timeout'`
+   * instead of hanging forever. Omit to drain with no bound (legacy
+   * behaviour — used by callers that already bound the turn elsewhere).
+   *
+   * The watchdog is idle-based: it resets on every event, so a turn that
+   * keeps streaming (long tool runs that emit progress) is not killed —
+   * only a genuinely silent stall is.
+   */
+  timeoutMs?: number
+  /**
+   * Per-event observer, called once per event just before it is folded
+   * into the summary — on BOTH consumption paths (plain drain and the
+   * watchdog loop). Purely for outside-the-turn bookkeeping (the desktop
+   * pet's "what is it doing right now" signals); a throw is swallowed, so
+   * an observer can never break or alter a turn.
+   */
+  onEvent?: (ev: AgentEvent) => void
+}
+
+export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: CollectTurnOpts): Promise<TurnSummary> {
+  const texts: string[] = []
+  let replyToolCalled = false
+  let result: TurnSummary['result']
+  let error: string | undefined
+  let errorCode: string | undefined
+  const toolCalls: string[] = []
+  const segments = makeTurnTextCollector()
+  let providerFinalText: string | undefined
+  const extra = (): Pick<TurnSummary, 'providerFinalText'> => (providerFinalText !== undefined ? { providerFinalText } : {})
+
+  const apply = (ev: AgentEvent): void => {
+    segments.push(ev)
+    if (ev.kind === 'text') {
+      // **空的不是一条消息。** 这里是所有路径的共用收口:solo 会为每个
+      // chunk 发一次(空的注定失败)、chatroom/parallel 会 join,而
+      // `chunks=`/`preview=` 也是从这里数出来的。内容**不 trim** ——
+      // 缩进和代码块里的空白是有意义的,只丢「整条都是空白」的那种。
+      if (ev.text.trim() !== '') texts.push(ev.text)
+    } else if (ev.kind === 'tool_call') {
+      toolCalls.push(ev.server ? `${ev.server}/${ev.tool}` : ev.tool)
+      if (isReplyToolCall(ev)) replyToolCalled = true
+    } else if (ev.kind === 'result') {
+      result = { sessionId: ev.sessionId, numTurns: ev.numTurns, durationMs: ev.durationMs }
+      if (typeof ev.finalText === 'string') providerFinalText = ev.finalText
+    } else if (ev.kind === 'error') {
+      error = ev.message
+      if (ev.code) errorCode = ev.code
+    }
+  }
+
+  /** 观察者不许影响回合:抛错就地吞掉。 */
+  const observe = (ev: AgentEvent): void => {
+    try { opts?.onEvent?.(ev) } catch { /* ignore */ }
+  }
+
+  const timeoutMs = opts?.timeoutMs
+  if (!timeoutMs || timeoutMs <= 0) {
+    for await (const ev of events) { observe(ev); apply(ev) }
+    return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts(), ...extra() }
+  }
+
+  // Watchdog path: race each `next()` against an idle timer that resets per
+  // event. On timeout, unwind the producer via `return()` so its generator
+  // `finally` (and any provider cleanup) runs, then surface a timeout summary.
+  const it = events[Symbol.asyncIterator]()
+  const TIMEOUT = Symbol('timeout')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const armTimeout = (): Promise<typeof TIMEOUT> =>
+    new Promise(resolve => { timer = setTimeout(() => resolve(TIMEOUT), timeoutMs) })
+  try {
+    for (;;) {
+      const step = await Promise.race([it.next(), armTimeout()])
+      if (timer) { clearTimeout(timer); timer = undefined }
+      if (step === TIMEOUT) {
+        // Best-effort unwind — do NOT await. A genuinely wedged producer
+        // (generator stuck on an unresolved `await`) never completes its
+        // `return()`, so awaiting it would re-introduce the very hang the
+        // watchdog exists to break. The real provider's queue iterator
+        // (AsyncQueue) resolves `return()` synchronously, closing the queue.
+        void Promise.resolve(it.return?.()).catch(() => {})
+        return {
+          assistantText: texts,
+          toolCalls,
+          replyToolCalled,
+          result,
+          error: `turn timed out after ${timeoutMs}ms with no activity`,
+          errorCode: TURN_TIMEOUT_CODE,
+          ...segments.parts(),
+        }
+      }
+      if (step.done) break
+      observe(step.value)
+      apply(step.value)
+    }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts(), ...extra() }
+}

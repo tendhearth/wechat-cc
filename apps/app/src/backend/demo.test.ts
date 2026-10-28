@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter, MatterDetail, SessionContinue, PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
+import { FeedEvent, Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter, MatterDetail, SessionContinue, PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
@@ -71,12 +71,17 @@ describe('演示后端', () => {
   it('演示独立工作区:合回 / 删除 / 重开会翻任务页上的状态(2026-10-08)', async () => {
     const b = makeDemoBackend()
     expect((await b.matter('e5f6a7b8', 'en')).task?.worktree).toMatchObject({ branch: 'cc/notes001', removed: false, projectId: 'portfolio' })
+    expect((await b.matter('e5f6a7b8', 'en')).task?.until).toMatchObject({ command: 'bun run test', status: 'passed', rounds: 2, maxRounds: 3 })
     await b.worktree({ id: 'e5f6a7b8', action: 'merge' })
     expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.merged).toBe(true)
     await b.worktree({ id: 'e5f6a7b8', action: 'remove' })
     expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.removed).toBe(true)
     await b.worktree({ id: 'e5f6a7b8', action: 'reopen' })
     expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.removed).toBe(false)
+    // 工作区脚本(2026-10-20):演示里运行 / 停下只翻状态
+    expect((await b.worktreeScript({ id: 'e5f6a7b8', action: 'run' })).run).toBe('running')
+    expect((await b.matter('e5f6a7b8', 'en')).task?.worktree).toMatchObject({ run: 'running', approved: true, port: 47100 })
+    expect((await b.worktreeScript({ id: 'e5f6a7b8', action: 'stop' })).run).toBe('idle')
   })
   it('演示会话按标题/项目过滤,读取明确反映recent/start并限制近期20条', async () => {
     const b = makeDemoBackend()
@@ -106,6 +111,50 @@ describe('演示后端', () => {
     await b.decide({ id: 'a1b2c3d4', runId: 'x', requestId: 'perm-demo-1', decision: 'deny' })
     b.reset()
     expect((await b.matter('a1b2c3d4', 'en')).permissions.length).toBe(1)
+  })
+  it('撤掉这一轮(回退切片 4):作品集那件能撤;预览过协议;token 不对 ⇒ rewind_stale;撤了之后改动面板空了、时间线多一句;reset 还原', async () => {
+    const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')
+    const b = makeDemoBackend()
+    const turn = (await b.changes('a1b2c3d4'))!
+    expect(turn.rewindable).toBe(true)
+    const p = await b.rewindPreview({ id: 'a1b2c3d4', artifactId: turn.artifactId! })
+    PHONE_API_SCHEMAS['GET /m/api/matter/rewind']!.parse({ ok: true, preview: p })
+    expect(p.files.count).toBe(2)
+    await expect(b.rewind({ id: 'a1b2c3d4', artifactId: turn.artifactId!, token: '0'.repeat(64) })).rejects.toMatchObject({ code: 'rewind_stale' })
+    await b.rewind({ id: 'a1b2c3d4', artifactId: turn.artifactId!, token: p.token })
+    expect(await b.changes('a1b2c3d4')).toBeNull()
+    expect((await b.matter('a1b2c3d4', 'zh-Hans')).events.at(-1)?.text).toContain('round 1 was undone')
+    await expect(b.rewindPreview({ id: 'a1b2c3d4', artifactId: turn.artifactId! })).rejects.toMatchObject({ code: 'rewind_stale' })
+    b.reset()
+    expect((await b.changes('a1b2c3d4'))?.rewindable).toBe(true)
+  })
+  it('行评论(切片 4):每个文件一块、块对得上;存草稿幂等、同 id 不同内容 ⇒ comment_conflict;发出之后标已发出、删不了;reset 清掉', async () => {
+    const { PhoneChangesTurn } = await import('@wechat-cc/protocol')
+    const { fileHunks } = await import('../view/review-comments')
+    const b = makeDemoBackend()
+    const turn = (await b.changes('a1b2c3d4'))!
+    const f = turn.files[0]!
+    const piece = fileHunks(f)![0]!
+    const p = { id: 'a1b2c3d4', commentId: '11111111-1111-4111-8111-111111111111', artifactId: turn.artifactId!, path: f.path, hunk: 0, hunkSha256: piece.sha256, body: '留白再多一点' }
+    await b.reviewComment(p); await b.reviewComment(p)
+    await expect(b.reviewComment({ ...p, body: '别的' })).rejects.toMatchObject({ code: 'comment_conflict' })
+    await expect(b.reviewComment({ ...p, commentId: '22222222-2222-4222-8222-222222222222', hunkSha256: '0'.repeat(64) })).rejects.toMatchObject({ code: 'hunk_stale' })
+    const after = (await b.changes('a1b2c3d4'))!
+    expect(after.pendingComments).toBe(1)
+    expect(after.files[0]!.comments).toEqual([{ id: p.commentId, hunk: 0, body: '留白再多一点', state: 'draft' }])
+    expect(() => PhoneChangesTurn.parse(after)).not.toThrow()
+    expect(await b.reviewCommentsSend({ id: 'a1b2c3d4', requestId: '33333333-3333-4333-8333-333333333333' })).toEqual({ sent: 1, remaining: 0, skippedDiscarded: 0 })
+    const sent = (await b.changes('a1b2c3d4'))!
+    expect(sent.pendingComments).toBeUndefined()
+    expect(sent.files[0]!.comments![0]).toMatchObject({ state: 'sent', sentAt: expect.any(Number) })
+    await expect(b.reviewCommentDelete({ id: 'a1b2c3d4', commentId: p.commentId })).rejects.toMatchObject({ code: 'comment_sent' })
+    await expect(b.reviewCommentsSend({ id: 'a1b2c3d4', requestId: '44444444-4444-4444-8444-444444444444' })).rejects.toMatchObject({ code: 'not_found' })
+    b.reset()
+    expect((await b.changes('a1b2c3d4'))!.files[0]!.comments).toBeUndefined()
+  })
+  it('用了多少额度:作品集那件带合计;没报的项是 null(不是 0)', async () => {
+    const b = makeDemoBackend()
+    expect((await b.matter('a1b2c3d4', 'en')).task?.usage).toMatchObject({ turns: 3, input: 48_210, output: 6_120, cacheRead: null })
   })
   it('所有返回都符合协议包的 schema', async () => {
     const { MatterDetail, Matter, ApprovalsTopic, AgentsTopic, HomeTopic, MatterTopic, EntryOptions, DeviceRow, PhoneChangesTurn, ApprovalExplanation, ProgressSummary } = await import('@wechat-cc/protocol')
@@ -191,6 +240,16 @@ describe('演示后端', () => {
     const b = makeDemoBackend()
     await expect(b.registerPush('apns_sandbox', 'a1'.repeat(32))).resolves.toBeUndefined()
     expect(await b.testPush()).toEqual({ ok: false, code: 'demo' })
+  })
+  it('按住说话(演示):配好了;回一句写好的话(按语言),不进对话、不发;空的 / 太大的拒', async () => {
+    const b = makeDemoBackend({ lang: 'zh-Hans' })
+    expect(await b.transcribeStatus()).toEqual({ configured: true })
+    const before = (await b.chat({})).messages.length
+    expect(await b.transcribe({ mime: 'audio/mp4', audioBase64: 'QUFBQQ==' })).toBe('明天上午提醒我把周报发出去。')
+    expect((await b.chat({})).messages.length).toBe(before)
+    await expect(b.transcribe({ mime: 'audio/mp4', audioBase64: '' })).rejects.toMatchObject({ code: 'invalid' })
+    await expect(b.transcribe({ mime: 'audio/mp4', audioBase64: 'A'.repeat(300_000) })).rejects.toMatchObject({ code: 'too_large' })
+    expect(await makeDemoBackend({ lang: 'en' }).transcribe({ mime: 'audio/mp4', audioBase64: 'QUFBQQ==' })).toMatch(/weekly report/)
   })
   it('演示聊天:说一句 ⇒ pending;几秒后主题唤醒、历史里多了一问一答;同一 requestId 不重复', async () => {
     vi.useFakeTimers()
@@ -331,7 +390,7 @@ describe('演示后端 · 额度用完交给另一位(spec continue-sessions §7
   it('种子里那件:Claude Code 额度用完、可交给 Codex;详情过协议 schema', async () => {
     const d = await makeDemoBackend().matter('f3a4b5c6', 'zh-Hans')
     expect(MatterDetail.parse(d).quotaHandoff).toMatchObject({ state: 'offer', from: 'claude', to: 'codex', kind: 'quota' })
-    expect(d.events.map(e => e.text)).toContain('Claude Code 的额度用完了，这一轮没做完。')
+    expect(d.events.map(e => e.text)).toContain('Claude 的额度用完了，这一轮没做完。')
   })
   it('交出去 ⇒ 新一件(Codex、同一文件夹、第一句说清接替谁、正在做,2 秒后回复);原来那件变 handed;同 requestId / 另一个 requestId 都回同一件', async () => {
     vi.useFakeTimers()
@@ -341,7 +400,7 @@ describe('演示后端 · 额度用完交给另一位(spec continue-sessions §7
       const made = await b.matter(matterId, 'zh-Hans')
       expect(made.task).toMatchObject({ providerId: 'codex', path: '~/Projects/notes', phase: 'working' })
       expect(made.matter.originMatterId).toBe('f3a4b5c6')
-      expect(made.events[0]?.text).toBe('接替 Claude Code（额度用完）继续这件事：把周报整理成一页')
+      expect(made.events[0]?.text).toBe('接替 Claude（额度用完）继续这件事：把周报整理成一页')
       expect((await b.matter('f3a4b5c6', 'en')).quotaHandoff).toEqual({ state: 'handed', from: 'claude', to: 'codex', matterId })
       expect(await b.handoff({ id: 'f3a4b5c6', requestId: REQ, providerId: 'codex' })).toEqual({ matterId })
       expect(await b.handoff({ id: 'f3a4b5c6', requestId: 'other', providerId: 'codex' })).toEqual({ matterId })
@@ -371,15 +430,41 @@ describe('演示后端:终端里的会话(2026-10-14)', () => {
       await b.cliPermission({ sessionId: w.session_id, hash: w.pending!.hash!, decision: 'allow' })
       expect((await b.cliSessions()).find(s => s.session_id === w.session_id)!.status).toBe('running')
       await expect(b.cliPermission({ sessionId: w.session_id, decision: 'allow' })).rejects.toMatchObject({ code: 'stale' })
-      await expect(b.cliSay(w.session_id, 'x')).rejects.toMatchObject({ code: 'busy' })
       await vi.advanceTimersByTimeAsync(2000)
       const done = (await b.cliSessions()).find(s => s.session_id === w.session_id)!
       expect(done.status).toBe('idle')
-      await b.cliSay(w.session_id, 'next')
-      expect((await b.cliSessions()).find(s => s.session_id === w.session_id)!.status).toBe('running')
+      const api = list[2]!
+      expect(await b.cliSay(api.session_id, 'next')).toEqual({ sayId: null })
+      expect((await b.cliSessions()).find(s => s.session_id === api.session_id)!.status).toBe('running')
       await expect(b.cliSay('nope', 'x')).rejects.toMatchObject({ code: 'not_found' })
       b.reset()
       expect((await b.cliSessions())[0]!.status).toBe('waiting')
+    } finally { vi.useRealTimers() }
+  })
+})
+
+describe('演示后端:送进开着的窗口(2026-10-20)', () => {
+  it('等批准那条开在窗口里:等批准时不能说;拍完在跑也能说 ⇒ 回 say_id,先在送、一会儿送到;再说一句 ⇒ 新 id 盖掉旧的', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend()
+      const w = (await b.cliSessions())[0]!
+      expect(w.live_window).toBe(true)
+      await expect(b.cliSay(w.session_id, 'x')).rejects.toMatchObject({ code: 'busy' })
+      await b.cliPermission({ sessionId: w.session_id, hash: w.pending!.hash!, decision: 'allow' })
+      const { sayId } = await b.cliSay(w.session_id, '顺手把标题也改了')
+      expect(sayId).toBeTruthy()
+      const row = async () => (await b.cliSessions()).find(s => s.session_id === w.session_id)!
+      expect((await row()).last_say).toMatchObject({ id: sayId, state: 'sending' })
+      const list = await b.cliSessions()
+      expect(PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.safeParse({ ok: true, sessions: list }).success).toBe(true)
+      await vi.advanceTimersByTimeAsync(1500)
+      expect((await row()).last_say).toMatchObject({ id: sayId, state: 'sent' })
+      const again = await b.cliSay(w.session_id, '再一句')
+      expect(again.sayId).not.toBe(sayId)
+      expect((await row()).last_say).toMatchObject({ id: again.sayId, state: 'sending' })
+      b.reset()
+      expect((await b.cliSessions())[0]!.last_say).toBeUndefined()
     } finally { vi.useRealTimers() }
   })
 })
@@ -394,5 +479,72 @@ describe('演示后端:今天(2026-10-14)', () => {
     expect(today.running.some(r => r.source === 'terminal' && r.project === 'docs')).toBe(true)
     expect(today.counts).toEqual({ needsYou: today.needsYou.length, done: today.done.length, running: today.running.length, stuck: today.stuck.length })
     expect(today.unavailable).toEqual([])
+  })
+})
+
+describe('演示:此刻页的伙伴', () => {
+  it('带回来一篇没看过的打猎;看过之后主题未读归零、首屏也不再算新的', async () => {
+    const b = makeDemoBackend()
+    const home: any[] = []
+    b.subscribe('home', d => home.push(d))
+    const h = await b.home('zh-Hans')
+    for (const e of h.events) expect(() => FeedEvent.parse(e)).not.toThrow()
+    expect(h.events).toHaveLength(1)
+    expect(h.events[0]).toMatchObject({ kind: 'hunt', title: '一篇讲手机排版留白的文章' })
+    expect(h.events[0]!.ref?.url).toMatch(/^https:\/\//)
+    expect(h.seenUntil).toBeNull()
+    expect(h.unread).toBe(1)
+    expect(h.presence?.activity.kind).toBe('idle')
+    expect(home.at(-1)).toMatchObject({ unread: 1, presenceState: { activity: 'idle' } })
+    expect((await b.home('en')).events[0]!.title).toBe('An essay on whitespace in mobile typography')
+    const until = await b.markSeen(h.events[0]!.ts)
+    expect(until).toBe(h.events[0]!.ts)
+    await Promise.resolve()
+    expect(home.at(-1)).toMatchObject({ unread: 0 })
+    expect((await b.home('en')).unread).toBe(0)
+    // 只前进不后退;不是时间 ⇒ invalid
+    expect(await b.markSeen('2020-01-01T00:00:00.000Z')).toBe(until)
+    await expect(b.markSeen('nope')).rejects.toMatchObject({ code: 'invalid' })
+    b.reset()
+    expect((await b.home('en')).unread).toBe(1)
+  })
+  it('有执行者正在写 ⇒ activity working(演示不演别的状态)', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend()
+      await b.decide({ id: 'a1b2c3d4', runId: (await b.matter('a1b2c3d4', 'en')).runId!, requestId: 'perm-demo-1', decision: 'allow' })
+      expect((await b.home('en')).presence?.activity.kind).toBe('working')
+      await vi.advanceTimersByTimeAsync(2000)
+      expect((await b.home('en')).presence?.activity.kind).toBe('idle')
+    } finally { vi.useRealTimers() }
+  })
+})
+
+describe('演示:待办与 CC 画的你(收敛清单 ④)', () => {
+  it('三条在办、一条最近了结;画像过协议包的 state schema', async () => {
+    const b = makeDemoBackend({ lang: 'zh-Hans' })
+    await b.memory()
+    const p = await b.pocket()
+    expect(p.todos.active.map(r => r.id)).toEqual([101, 102, 103])
+    expect(p.todos.settled.map(r => r.id)).toEqual([104])
+    expect(Buffer.from(p.portraitPng!, 'base64').subarray(1, 4).toString()).toBe('PNG')
+    const parsed = PHONE_API_SCHEMAS['GET /m/api/state']!.safeParse({ ok: true, name: 'CC', ...p, portrait: null, stickers: [] })
+    expect(parsed.success).toBe(true)
+  })
+  it('完成 ⇒ 挪到最近了结(最新的在前);捞回 ⇒ 回到在办;不在的 ⇒ not_found;reset 还原', async () => {
+    let t = 1_760_000_000_000
+    const b = makeDemoBackend({ now: () => t })
+    t += 1000
+    await b.setTodo(102, 'resolved')
+    let p = await b.pocket()
+    expect(p.todos.active.map(r => r.id)).toEqual([101, 103])
+    expect(p.todos.settled.map(r => r.id)).toEqual([102, 104])
+    await b.setTodo(104, 'active')
+    p = await b.pocket()
+    expect(p.todos.active.map(r => r.id)).toEqual([101, 103, 104])
+    await expect(b.setTodo(999, 'resolved')).rejects.toMatchObject({ code: 'not_found' })
+    b.reset()
+    p = await b.pocket()
+    expect(p.todos.active.map(r => r.id)).toEqual([101, 102, 103])
   })
 })

@@ -1,4 +1,3 @@
-import { icon } from "./icons.js"
 // @ts-check
 /// <reference lib="dom" />
 //
@@ -13,10 +12,12 @@ import { icon } from "./icons.js"
 // the read-only 对话 pane already covers full transcript history) plus a
 // compose row. Same vanilla-JS module shape as dialogue-page.js / logs.js.
 
+import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
 import { renderWorkbenchMarkdown, renderWorkbenchUserText } from "./workbench-markdown.js"
 import { paintConversation, syncConversationLatest, showConversationLatest, conversationInteractionActive } from "./converse-reading.js"
+import { V1, v1 } from '../daemon-client.js'
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
@@ -74,6 +75,7 @@ let transcribing = false
 let requestingMic = false
 let discardRecording = false
 let recordingStarted = 0
+/** @type {ReturnType<typeof setInterval> | null} */
 let recordingTimer = null
 
 // ── skeleton ───────────────────────────────────────────────────────────
@@ -391,7 +393,7 @@ async function toggleMic(deps) {
   discardRecording = false
   recordedChunks = []
   try { mediaRecorder = md.makeRecorder(stream) } catch {
-    stream.getTracks().forEach(t => t.stop())
+    stream.getTracks().forEach((/** @type {MediaStreamTrack} */ t) => t.stop())
     reflectMic()
     messages.push({ id: nextId++, role: "error", text: "无法启动录音，请检查设备后重试" })
     renderMessages()
@@ -402,9 +404,9 @@ async function toggleMic(deps) {
     if (e.data && e.data.size > 0) recordedChunks.push(e.data)
   })
   mediaRecorder.addEventListener("stop", async () => {
-    stream.getTracks().forEach(t => t.stop())
+    stream.getTracks().forEach((/** @type {MediaStreamTrack} */ t) => t.stop())
     recording = false
-    clearInterval(recordingTimer)
+    clearInterval(/** @type {ReturnType<typeof setInterval>} */ (recordingTimer))
     if (discardRecording) { recordedChunks = []; reflectMic(); return }
     const type = mediaRecorder?.mimeType || "audio/webm"
     const blob = new Blob(recordedChunks, { type })
@@ -437,7 +439,7 @@ async function toggleMic(deps) {
     }
   })
   try { mediaRecorder.start() } catch {
-    stream.getTracks().forEach(t => t.stop())
+    stream.getTracks().forEach((/** @type {MediaStreamTrack} */ t) => t.stop())
     reflectMic()
     messages.push({ id: nextId++, role: "error", text: "无法启动录音，请重试" })
     renderMessages()
@@ -484,7 +486,7 @@ function emptyStateHtml() {
 async function loadSharedHistory(deps) {
   if (!deps.invokeWorkbenchApi || messages.length) return
   try {
-    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string}>}|null} */ (await deps.invokeWorkbenchApi("GET", "/v1/matter/owner-chat"))
+    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string}>}|null} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChat))
     const events = (detail?.events ?? []).filter(e => e.kind === "user" || e.kind === "text")
     if (!events.length || messages.length) return
     for (const e of events) messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text, at: e.createdAt, source: e.source })
@@ -698,7 +700,7 @@ async function runSearch(deps, q) {
   host.hidden = false
   host.innerHTML = '<p class="converse-search-note">正在搜…</p>'
   try {
-    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string}>}} */ (await deps.invokeWorkbenchApi("GET", `/v1/matter/owner-chat/search?q=${encodeURIComponent(query)}&limit=30`))
+    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string}>}} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChatSearch, { query: { q: query, limit: 30 } }))
     if (seq !== searchSeq) return
     const hits = r?.hits ?? []
     host.innerHTML = hits.length

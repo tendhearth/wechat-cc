@@ -38,6 +38,8 @@ export const PROVIDER_ERROR_CODES = [
   'invalid_request',
   /** provider 明确标了这是一次 API 失败,但没说是哪类。 */
   'provider_error',
+  /** 账号在当前网络出口所在地区用不了(agy:「not currently available in your location」)。不是登录问题,也不是瞬时。 */
+  'region_unavailable',
 ] as const
 
 export type ProviderErrorCode = typeof PROVIDER_ERROR_CODES[number]

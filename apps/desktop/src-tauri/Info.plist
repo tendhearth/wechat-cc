@@ -34,6 +34,19 @@
   -->
   <key>NSMicrophoneUsageDescription</key>
   <string>Tendhearth CC 需要使用麦克风,才能把你的「语音输入」转成文字。只在你点语音输入时录音。</string>
+  <!--
+    读日历和提醒(2026-10-20,对标 #8,随 1.7.8):daemon 子进程 osascript 经 EventKit 只读;授权记在本 app 名下。
+    macOS 14+ 认 *FullAccess*;旧键留着给老系统。配套 entitlement:personal-information.calendars。
+    daemon 读这份 Info.plist 看用途说明在不在,不在就不去请求(src/daemon/calendar/calendar.ts)。
+  -->
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Tendhearth CC 只读你的日历(标题、时间、日历名),把今天的安排放进早报、回答你的日程问题。不会新建、修改或删除任何事件。</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Tendhearth CC 只读你的日历(标题、时间、日历名),把今天的安排放进早报、回答你的日程问题。不会新建、修改或删除任何事件。</string>
+  <key>NSRemindersFullAccessUsageDescription</key>
+  <string>Tendhearth CC 只读你的提醒事项(标题、到期时间),把今天到期的事放进早报。不会新建、修改或完成任何提醒。</string>
+  <key>NSRemindersUsageDescription</key>
+  <string>Tendhearth CC 只读你的提醒事项(标题、到期时间),把今天到期的事放进早报。不会新建、修改或完成任何提醒。</string>
   <!-- 微信本地数据库(客户回顾 / wxvault)在「完全磁盘访问」之下,那个不能用弹框申请,
        只能在系统设置里手动勾;app 里的「文件访问」检查会带你过去。 -->
 </dict>

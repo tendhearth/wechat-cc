@@ -1,12 +1,12 @@
 /**
- * 网络守护的 daemon 侧接线(守护 v2,2026-10-02):一个 Ref 装调度器(guard 生命周期起来后
- * 才有)、一个网络闸门(分类 + 信号)、一个 /v1/health 快照、一个给后台任务用的包装。
+ * 网络守护的 daemon 侧接线(守护 v2,2026-10-02):一个网络闸门(分类 + 信号)、一个 /v1/health 快照、
+ * 一个给后台任务用的包装。
  *
- * main.ts 在最前面建它(早于 internal-api / bootstrap),因为 provider registry、
- * SessionManager、协调器都在 bootstrap 里建,而 guard 生命周期在很后面才 start。
+ * 它是模块容器里最早的一个(`network-gate`,早于 ilink / internal-api / bootstrap),因为 provider registry、
+ * SessionManager、协调器都接它;而调度器(guard 模块)、在用的执行者(bootstrap)、被冻住的任务(工作台)都更晚才有
+ * ⇒ 三样都经构造参数的读口现取(容器的 `ctx.late`),还没有就当没有。
  * 闸门在调度器还没起来时会自己读 bx / 等第一次探测(见 gate.ts),所以这段空窗不会放行。
  */
-import { Ref } from '../../lib/lifecycle'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { isNetworkUnprotectedError, type NetworkGate, type NetworkGateVerdict } from '../../lib/network-gate'
 import type { CallClass, CallTarget } from '../../lib/call-classifier'
@@ -21,13 +21,8 @@ import { makeResolveTarget, type ProviderInUse } from './targets'
 import type { GuardHealth } from '../internal-api/types'
 
 export interface GuardRuntime {
-  ref: Ref<GuardLifecycle>
   gate: NetworkGate & { classify(t: CallTarget): CallClass }
   health(): GuardHealth
-  /** main.ts 在 bootstrap 之后接上:此刻配置 / 在用的 provider(health、后台任务判断用)。 */
-  setProvidersInUse(fn: () => ProviderInUse[]): void
-  /** main.ts 在工作台起来之后接上:此刻被网络守护冻住的任务(health / `guard status`)。 */
-  setSuspendedTasks(fn: () => SuspendedTask[]): void
   /** 已配置 / 在用的 provider 各自的分类。 */
   classifyInUse(): Array<ProviderInUse & { cls: CallClass }>
   /**
@@ -39,7 +34,7 @@ export interface GuardRuntime {
    *   - 任务里冒出来的「网络未受保护」不当成失败:同一段不安全期同一个任务只记一行日志。
    *   - 评审 #193 P2-3:这层只兜底**逃出来的**拒绝。任务内部被拒的那一次调用必须由任务自己按「这一拍
    *     跳过」处理 —— 不打勾、不登记、不前移时间戳(isNetworkUnprotectedError / NETWORK_UNPROTECTED_REASON
-   *     是那个专门的结果类型;见 tick-bodies、introspect、sticker-artist、atelier-runtime、wire-visit、
+   *     是那个专门的结果类型;见 tick-bodies、introspect、sticker-artist、features/atelier/runtime、wire-visit、
    *     social-judge、memory/nightly)。
    * 不抛、不重试。
    */
@@ -61,10 +56,16 @@ export interface GuardRuntimeDeps {
   agentConfig?: () => AgentConfig | null
   env?: NodeJS.ProcessEnv
   firstProbeWaitMs?: number
+  /** 调度器(guard 模块);还没起 / 没起来 ⇒ null,闸门自己读 bx / 等探测。 */
+  lifecycle?: () => GuardLifecycle | null
+  /** 此刻配置 / 在用的 provider(health、后台任务判断用);bootstrap 之前是空。 */
+  providersInUse?: () => ProviderInUse[]
+  /** 此刻被网络守护冻住的任务(health / `guard status`);工作台之前是空。 */
+  suspendedTasks?: () => SuspendedTask[]
 }
 
 export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
-  const ref = new Ref<GuardLifecycle>('guard')
+  const lifecycle = deps.lifecycle ?? (() => null)
   const config = deps.config ?? (() => loadGuardConfig(deps.stateDir))
   const isEnabled = deps.isEnabled ?? (() => config().enabled)
   // guard.json signal_source='probe' ⇒ 装着 bx 也改用探测(「装了 bx 但在用别的 VPN」)。
@@ -77,8 +78,8 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
   })()
   const gate = createNetworkGate({
     isEnabled,
-    current: () => ref.current?.current() ?? null,
-    pokeNow: () => ref.current?.pokeNow() ?? null,
+    current: () => lifecycle()?.current() ?? null,
+    pokeNow: () => lifecycle()?.pokeNow() ?? null,
     findBx: find,
     readBx: (bin) => read(bin),
     // 单测进程里绝不真探 google(没注入就当没结果 → 按失败算)。
@@ -88,8 +89,8 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
     resolveTarget: makeResolveTarget(agentConfig, deps.env ?? process.env),
     log: deps.log,
   })
-  let providersInUse: () => ProviderInUse[] = () => []
-  let suspendedTasks: () => SuspendedTask[] = () => []
+  const providersInUse = deps.providersInUse ?? (() => [])
+  const suspendedTasks = deps.suspendedTasks ?? (() => [])
   const skipLogged = new Set<string>()
 
   function classifyInUse(): Array<ProviderInUse & { cls: CallClass }> {
@@ -103,7 +104,7 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
     try { cfg = config() } catch { cfg = null }
     let enabled = true
     try { enabled = isEnabled() } catch { /* 读不出配置按开着算 */ }
-    const s = ref.current?.current() ?? null
+    const s = lifecycle()?.current() ?? null
     const last: NetworkGateVerdict | null = gate.lastVerdict()
     const inUse = classifyInUse()
     const providers = inUse.map(p => ({ id: p.id, model: p.model ?? null, host: p.cls.host, protected: p.cls.protected, kind: p.cls.kind, label: p.cls.label, reason: p.cls.reason }))
@@ -146,11 +147,8 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
   }
 
   return {
-    ref,
     gate: { check: () => gate.check(), classify: (t) => gate.classify(t) },
     health,
-    setProvidersInUse(fn) { providersInUse = fn },
-    setSuspendedTasks(fn) { suspendedTasks = fn },
     classifyInUse,
     skipWhenUnsafe,
   }

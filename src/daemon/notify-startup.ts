@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { writeFileAtomic } from '../lib/json-file'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { isProactiveWindowClosed } from './ilink/outbound-health'
 import { readJsonFile } from '../lib/read-json-file'
@@ -31,7 +32,7 @@ const UNPLANNED_HISTORY_FILE = 'unplanned-restarts.json'
 /** 老版本的「补发」队列。新规矩不补发,开机见到就删。 */
 const LEGACY_PENDING_FILE = 'pending-notify.json'
 
-export const WARM_FIRST_STARTUP_TEXT = '我上线啦 👋 直接跟我说话就行;想看我能干嘛,发 /help。'
+export const WARM_FIRST_STARTUP_TEXT = '我上线啦。直接跟我说话就行;想看我能干嘛,发 /help。'
 
 export interface RestartNoticeSettings {
   /** false ⇒ 意外重启也不说(首次问候不受影响)。 */
@@ -148,7 +149,7 @@ function recordUnplanned(stateDir: string, now: number, windowMs: number): numbe
   } catch { /* 第一次或坏了 */ }
   list = list.filter(t => now - t >= 0 && now - t <= 24 * 3600_000)
   list.push(now)
-  try { writeFileSync(path, JSON.stringify({ ts: list.slice(-50) }) + '\n', { mode: 0o600 }) } catch { /* best effort */ }
+  try { writeFileAtomic(path, JSON.stringify({ ts: list.slice(-50) }) + '\n', { mode: 0o600 }) } catch { /* best effort */ }
   return list.filter(t => now - t <= windowMs).length
 }
 
@@ -162,7 +163,7 @@ export async function notifyStartup(deps: StartupNotifyDeps, ctx: StartupContext
   const prevStartTs = readTs(lastFile)
   try {
     mkdirSync(deps.stateDir, { recursive: true, mode: 0o700 })
-    writeFileSync(lastFile, JSON.stringify({ ts: now, pid: ctx.pid }) + '\n', { mode: 0o600 })
+    writeFileAtomic(lastFile, JSON.stringify({ ts: now, pid: ctx.pid }) + '\n', { mode: 0o600 })
   } catch (err) {
     deps.log('NOTIFY', `failed to write ${FILE}: ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -250,7 +251,7 @@ export async function notifyStartup(deps: StartupNotifyDeps, ctx: StartupContext
     return { ...base, notified: false, reason: 'send-failed-all', recipients }
   }
   try {
-    writeFileSync(notifiedMarkerPath, JSON.stringify({ ts: now }) + '\n', { mode: 0o600 })
+    writeFileAtomic(notifiedMarkerPath, JSON.stringify({ ts: now }) + '\n', { mode: 0o600 })
   } catch (err) {
     deps.log('NOTIFY', `failed to write ${NOTIFIED_MARKER_FILE}: ${err instanceof Error ? err.message : String(err)}`)
   }

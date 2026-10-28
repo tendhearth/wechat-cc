@@ -5,8 +5,8 @@ import {execFileSync} from 'node:child_process'
 import {chmod,mkdir,mkdtemp,readFile,realpath,rm,writeFile} from 'node:fs/promises'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
-import {discoverCodexModels} from '../src/core/workbench/codex-model-catalog'
-import {discoverClaudeModels} from '../src/core/workbench/claude-model-catalog'
+import {discoverCodexModels} from '../src/adapters/executors/codex/codex-model-catalog'
+import {discoverClaudeModels} from '../src/adapters/executors/claude/claude-model-catalog'
 import {findCodexBinary} from '../src/lib/find-codex-binary'
 
 if(!process.argv.includes('--run')){console.log('Use --run for owned native catalog timeout fixtures.');process.exit(0)}

@@ -1,6 +1,16 @@
+// @ts-check
+/// <reference lib="dom" />
 // Pure view-model functions. No DOM, no IPC, no globals — easy to unit-test
 // from Bun (see view.test.ts) without spinning up a browser.
 
+// `wechat-cc doctor --json` 的输出(形状见 src/cli/schema 的 DoctorOutputT)。这里故意放宽成 any:
+// 这些纯函数会按 provider 名动态取 `checks[id]`,测试与老 daemon 也只给部分字段。
+/** @typedef {any} DoctorReportLike */
+/** @typedef {import('../../../src/cli/schema').DoctorOutputT} DoctorOutput */
+/** @typedef {Partial<DoctorOutput['checks']['daemon']>} DaemonLike */
+/** @typedef {Partial<DoctorOutput['checks']['service']>} ServiceLike */
+
+/** @param {DoctorReportLike} report */
 export function doctorRows(report) {
   // Re-pack the wrapper objects (accounts/access/provider) with their
   // human-friendly path while preserving severity + fix from doctor.ts.
@@ -47,6 +57,7 @@ export function doctorRows(report) {
 // accountId" was identical for first-scan, re-scan, redundant, and account-
 // switch, which made re-scanning feel like a fresh binding every time.
 // See docs/specs/2026-05-10-rescan-feedback.md.
+/** @type {Record<string, { title: string, message: string }> & { first: { title: string, message: string } }} */
 export const SCAN_SCENARIO_COPY = {
   first:       { title: "连接成功",     message: "可以开始用了。" },
   reconnect:   { title: "重新连接成功", message: "之前的记忆和对话都还在，可以接着用。" },
@@ -57,6 +68,7 @@ export const SCAN_SCENARIO_COPY = {
 // Compute the next QR-screen UI state from an incoming setup-poll result.
 // Returns the patch to apply to UI + state. `prev.currentBaseUrl` may be
 // updated by the redirect branch; the caller writes it back.
+/** @param {unknown} prev @param {any} result `setup-poll --json` 的一条结果 */
 export function pollAdvance(prev, result) {
   if (result.status === "scaned") {
     return { stopTimer: false, qrTitle: "手机确认", qrMessage: "在微信里确认登录。", continueEnabled: false }
@@ -90,39 +102,50 @@ export function pollAdvance(prev, result) {
 
 // Format the daemon health line shown in the wizard sidebar status strip
 // + the dashboard rail-foot. Not running = not connected = red; never default green.
+/** @param {DaemonLike} daemon */
 export function daemonStatusLine(daemon) {
   return daemon.alive ? { cls: "ok", text: "CC 在家 · 运行中" } : { cls: "bad", text: "CC 没在运行" }
+}
+
+// 网络守护开关显不显示(主人 2026-10-18):装了 bx 或守护已经开着才显示。没装 bx 的新用户先用起来,
+// 不用一上来弄懂 bx 是什么;已经开着的人照常看得到、关得掉。`r` = `guard status --json`。
+/** @param {{ enabled?: boolean, bx_installed?: boolean } | null | undefined} r */
+export function guardRowVisible(r) {
+  return !!r && (r.enabled === true || r.bx_installed === true)
 }
 
 // 网络守护一行(2026-10-02,守护 v2 按调用判):/v1/health.guard 或 `guard status --json` 的
 // {enabled, source, safe, detail, protected_in_use?, providers?}。
 // 守护关着 / 老 daemon 没这个字段 → null(不显示,不制造假警报)。不安全时:有需要保护的接口在用 → 红;
 // 明确没有(protected_in_use === false)→ 中性一行,不报警;字段缺失(老 daemon)按有算,不默认绿。
+/** @param {any} guard */
 export function guardLine(guard) {
   if (!guard || guard.enabled === false || !guard.source || guard.source === "off") return null
   const detail = typeof guard.detail === "string" ? guard.detail : ""
   if (guard.safe !== true) {
     if (guard.protected_in_use === false) return { state: "idle", text: "当前没有用到需要保护的接口", detail }
-    const first = Array.isArray(guard.providers) ? guard.providers.find(p => p && p.protected) : null
+    const first = Array.isArray(guard.providers) ? guard.providers.find(/** @param {any} p */ p => p && p.protected) : null
     const label = first && typeof first.label === "string" && first.label ? first.label : "Claude"
     return { state: "down", text: `⚠ 网络未受保护：用到 ${label} 等的调用暂停`, detail }
   }
-  if (guard.source === "bx") return { state: "ok", text: "bx 保护中", detail }
+  if (guard.source === "bx") return { state: "ok", text: "网络已保护", detail }
   return { state: "ok", text: "网络守护 · 探测可达", detail }
 }
 
-export function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, ch => ({
+export function escapeHtml(/** @type {unknown} */ value) {
+  return String(value).replace(/[&<>"']/g, ch => /** @type {string} */ (/** @type {Record<string, string>} */ ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
-  }[ch]))
+  })[ch]))
 }
 
 /** All installed executors and an already configured API can satisfy setup. */
+/** @param {DoctorReportLike} report */
 export function hasUsableProvider(report) {
   return !!(report?.checks?.provider?.ok || ['claude','codex','cursor','gemini','agy'].some(id => report?.checks?.[id]?.ok))
 }
+/** @param {DoctorReportLike} report @param {string | undefined} id */
 export function providerReady(report, id) {
-  return !!(report?.checks?.[id]?.ok || (report?.checks?.provider?.provider === id && report.checks.provider.ok))
+  return !!(report?.checks?.[/** @type {string} */ (id)]?.ok || (report?.checks?.provider?.provider === id && report.checks.provider.ok))
 }
 
 // ─── dashboard / mode-routing helpers ─────────────────────────────────
@@ -135,6 +158,7 @@ export function providerReady(report, id) {
 // fail (e.g. Windows schtasks access-denied) lands BACK in the wizard at
 // the service step instead of being silently dropped on a dashboard with
 // a stopped daemon and no obvious way forward.
+/** @param {DoctorReportLike} report */
 export function initialMode(report) {
   const hasAccount = report.checks.accounts.count > 0
   const serviceInstalled = !!report.checks.service?.installed
@@ -160,6 +184,7 @@ export function initialMode(report) {
 // initialMode's "everything installed → dashboard" rule, extended to the
 // re-scan path (a returning user who re-scans on an already-configured
 // machine shouldn't be parked on the install screen again).
+/** @param {DoctorReportLike} report */
 export function afterScanTarget(report) {
   const installed = !!report?.checks?.service?.installed
   const providerOk = !!report?.checks?.provider?.ok
@@ -179,6 +204,7 @@ export function afterScanTarget(report) {
 //                           service is registered (foreground source-mode
 //                           daemon). Restart would either no-op (no unit)
 //                           or, post-install, collide with the PID lock.
+/** @param {DaemonLike | null | undefined} daemon @param {ServiceLike | null | undefined} service */
 export function restartButtonState(daemon, service) {
   const installed = !!(service && service.installed)
   if (installed) {
@@ -212,7 +238,7 @@ export function restartButtonState(daemon, service) {
  * See docs/plans/dashboard-reconnect-diagnose.md — Step 1.
  *
  * @param {{
- *   report: import('../src/cli/doctor.ts').DoctorReport,
+ *   report: DoctorReportLike,
  *   healthOk: boolean | null,   // null = health-probe not yet wired (Step 1 stub); code 7 never fires
  *   lastError: unknown | null,
  *   lastRestart?: { pidUnchanged: boolean } | null,
@@ -374,6 +400,7 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
 //   taken_over  — terminal: another device rebound the bot (errcode=-14);
 //                 needs a re-scan to reclaim, does NOT self-heal.
 // Inputs come from the doctor report + the last probe result (if any).
+/** @param {{ daemonAlive?: boolean, accountCount: number, expiredCount?: number, lastProbe?: { state?: string } | null }} input */
 export function dashboardHero({ daemonAlive, accountCount, expiredCount = 0, lastProbe = null }) {
   if (lastProbe?.state === 'taken_over' || expiredCount > 0) {
     return { state: 'taken_over', tone: 'warn', headline: '本机未连接', meta: '连接在其他设备 · 重新扫码可接管' }
@@ -392,6 +419,7 @@ export function dashboardHero({ daemonAlive, accountCount, expiredCount = 0, las
 // Choose post-account-delete confirmation copy. When the service is not
 // installed there's no daemon-managed restart to suggest — direct the user
 // to wizard step instead. Mirrors restartButtonState's branching.
+/** @param {string} name @param {ServiceLike | null | undefined} service */
 export function deleteAccountConfirmCopy(name, service) {
   const installed = !!(service && service.installed)
   if (installed) return `已删除 ${name} · 重启 daemon 生效`
@@ -409,10 +437,18 @@ export function deleteAccountConfirmCopy(name, service) {
 // admins — list of wechat userIds from access.json admins[]. Rows whose
 // userId is in admins[] get isAdmin:true and sort to the front of the list
 // (stable within each group, so relative order of non-admin rows is preserved).
+/**
+ * @param {any} items doctor 的 `checks.accounts.items`(放宽成 any:返回行的形状由这里推出,调用方按需取字段)
+ * @param {Record<string, string>} [userNames]
+ * @param {DoctorOutput['expiredBots']} [expiredBots]
+ * @param {string[]} [admins]
+ * @param {number} [now]
+ */
 export function accountRows(items, userNames = {}, expiredBots = [], admins = [], now = Date.now()) {
+  /** @type {Record<string, { botId: string, firstSeenExpiredAt: string }>} */
   const expiredById = Object.create(null)
   for (const b of expiredBots) expiredById[b.botId] = b
-  const rows = items.map(item => {
+  const rows = items.map(/** @param {any} item */ item => {
     const friendly = userNames[item.userId]
     const shortId = (item.id || "").replace(/-im-bot$/, "")
     const expired = expiredById[item.id]
@@ -429,7 +465,7 @@ export function accountRows(items, userNames = {}, expiredBots = [], admins = []
     }
   })
   // Stable sort: admin rows first, then non-admin rows in original order.
-  return rows.sort((a, b) => (b.isAdmin ? 1 : 0) - (a.isAdmin ? 1 : 0))
+  return rows.sort(/** @param {any} a @param {any} b */ (a, b) => (b.isAdmin ? 1 : 0) - (a.isAdmin ? 1 : 0))
 }
 
 // Map a Mode discriminated-union (RFC 03) to a short user-facing badge.
@@ -440,6 +476,7 @@ export function accountRows(items, userNames = {}, expiredBots = [], admins = []
 // Defensive against partial/legacy shapes — older conversations.json
 // entries written before P2 may have mode={kind:'solo'} without a
 // provider field. Falls back to "—".
+/** @param {any} mode RFC 03 的 Mode(老数据可能缺字段) */
 export function modeBadge(mode) {
   if (!mode || typeof mode !== "object") return { label: "—", detail: "", tone: "solo" }
   if (mode.kind === "solo") {
@@ -468,9 +505,10 @@ export function modeBadge(mode) {
 //   sourced from conversationStore.getIdentity; the table renders those
 //   as primary columns so chatId can drop to a row tooltip.
 // Returns an array sorted by `tone` then chat_id (deterministic for tests).
+/** @param {unknown} items */
 export function conversationRows(items) {
   if (!Array.isArray(items)) return []
-  return items.map(it => {
+  return items.map(/** @param {any} it */ it => {
     const badge = modeBadge(it.mode)
     return {
       chatId: it.chat_id,
@@ -486,6 +524,7 @@ export function conversationRows(items) {
   })
 }
 
+/** @param {string} iso @param {number} [now] */
 export function formatRelativeTime(iso, now = Date.now()) {
   const t = Date.parse(iso)
   if (!Number.isFinite(t)) return ""
@@ -520,6 +559,8 @@ export function formatRelativeTime(iso, now = Date.now()) {
 //
 // `body(details)` reads optional structured details from the result; static
 // strings are wrapped in a constant arrow to keep the row shape uniform.
+/** @typedef {{ dirtyFiles?: string[], stderr?: string } | null | undefined} UpdateReasonDetails */
+/** @type {Record<string, { severity: string, label: string, body: (details?: UpdateReasonDetails) => string }>} */
 export const UPDATE_REASON_COPY = {
   not_a_git_repo: {
     severity: "hide",
@@ -582,6 +623,7 @@ export const UPDATE_REASON_COPY = {
 // reasons with copy that's tighter than the apply phrasing (网络/git 不可用
 // rather than "检查失败 · git fetch 失败"); everything else falls through
 // the generic header `检查失败 · <label>`.
+/** @param {string} reason @param {string | undefined} fallbackMessage @param {UpdateReasonDetails} details */
 function frameProbe(reason, fallbackMessage, details) {
   const row = UPDATE_REASON_COPY[reason]
   if (!row) return { tone: "bad", headline: "检查失败", body: fallbackMessage || reason || "未知错误" }
@@ -593,6 +635,7 @@ function frameProbe(reason, fallbackMessage, details) {
 
 // Frame a copy entry as an apply-mode line. `severity:'warn'` reasons are
 // soft-rejects (升级被拒); `severity:'bad'` are hard failures (升级失败).
+/** @param {string} reason @param {string | undefined} fallbackMessage @param {UpdateReasonDetails} details */
 function frameApply(reason, fallbackMessage, details) {
   const row = UPDATE_REASON_COPY[reason]
   if (!row) return { tone: "bad", headline: "升级失败", body: fallbackMessage || reason || "未知错误" }
@@ -605,6 +648,7 @@ function frameApply(reason, fallbackMessage, details) {
 // {tone, headline, body} card render. Probe failures route through
 // `frameProbe`; happy-path probe.dirty / diverged / updateAvailable cases
 // stay inline because they read probe.* fields directly (not result.reason).
+/** @param {any} probe */
 export function updateProbeLine(probe) {
   if (!probe || typeof probe !== "object") {
     return { tone: "warn", headline: "未检查", body: "点检查更新" }
@@ -628,6 +672,7 @@ export function updateProbeLine(probe) {
 // Map an UpdateResult (apply mode) to a {tone, headline, body}. Success
 // branches (ok=true) build their own copy from fromCommit/toCommit/
 // daemonAction; rejection branches delegate to `frameApply`.
+/** @param {any} result */
 export function updateApplyLine(result) {
   if (!result || typeof result !== "object") {
     return { tone: "bad", headline: "升级失败", body: "未收到结果" }
@@ -680,6 +725,6 @@ export function showToast(msg) {
   }
   el.textContent = msg
   el.classList.add("show")
-  clearTimeout(/** @type {{ _t?: number }} */ (el)._t)
-  ;/** @type {{ _t?: number }} */ (el)._t = setTimeout(() => el.classList.remove("show"), 2600)
+  clearTimeout(/** @type {{ _t?: ReturnType<typeof setTimeout> }} */ (el)._t)
+  ;/** @type {{ _t?: ReturnType<typeof setTimeout> }} */ (el)._t = setTimeout(() => el.classList.remove("show"), 2600)
 }

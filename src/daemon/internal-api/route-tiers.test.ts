@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { tierMeets, minTierFor, ROUTE_MIN_TIER } from './route-tiers'
+import { tierMeets, minTierFor, moduleFor, ROUTE_MIN_TIER } from './route-tiers'
+import { memoryReviewRoutes } from '../../features/memory/review-routes'
 import { makeRoutes } from './routes'
 import type { InternalApiDeps } from './types'
 
@@ -97,13 +98,17 @@ describe('route-tiers', () => {
 
   it('memory LLM 路由 trusted', () => {
     expect(minTierFor('POST /v1/memory/synthesize')).toBe('trusted')
+    // 记忆编辑改的是主人自己的记忆:trusted 那把 file token 别人对话的会话也有 ⇒ admin(经 operator)
+    expect(minTierFor('POST /v1/memory/edit')).toBe('admin')
+    expect(minTierFor('POST /v1/memory/view')).toBe('admin')
     expect(minTierFor('POST /v1/memory/profile/generate')).toBe('trusted')
   })
 
-  it('reviewed memory sources require trusted and are registered in the actual dispatcher', () => {
-    const routes = makeRoutes({ deps: { stateDir: '/tmp', daemonPid: 1 }, getDelegate: () => null, maybePrefix: (_c, t) => t })
+  it('reviewed memory sources require trusted and are mounted by the memory module (src/features/memory)', () => {
+    const routes = memoryReviewRoutes({ stateDir: '/tmp', fences: () => { throw new Error('not used') } })
     for (const route of ['GET /v1/memory/source', 'POST /v1/memory/source/review']) {
       expect(minTierFor(route)).toBe('trusted')
+      expect(moduleFor(route)).toBe('memory')
       expect(routes[route]).toBeTypeOf('function')
     }
   })

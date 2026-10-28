@@ -3,7 +3,9 @@ import type { SessionContinueT } from '../backend/types'
 import { CONTINUE_RECHECK, continueBlock, continueConfirmLabel, continueErrorDot, continueErrorText, continueSheetLines, nativeStartLines, providerName } from './continue'
 
 // spec 2026-10-01-tendhearth-continue-sessions §4.4 / §4.5 / §5
-const P = (o: Partial<SessionContinueT> = {}): SessionContinueT => ({ state: 'ready', provider: 'claude', project: 'portfolio', mode: 'native_resume', matterId: null, ...o })
+// 名字是 daemon 下发的(收敛清单 ⑥):测试里扮 daemon 给上
+const NAMES = { claude: 'Claude', codex: 'Codex' }
+const P = (o: Partial<SessionContinueT> = {}): SessionContinueT => { const p = { state: 'ready' as const, provider: 'claude' as const, project: 'portfolio', mode: 'native_resume' as const, matterId: null, ...o }; return { displayName: NAMES[p.provider], ...p } }
 
 describe('continueBlock:会话读页底部那一块', () => {
   it('还在问 ⇒ 不画(不先画一个可能用不了的按钮);问不到 ⇒ 灰字 + 再试', () => {
@@ -18,7 +20,7 @@ describe('continueBlock:会话读页底部那一块', () => {
   it.each([
     ['busy_session', '这个会话正在电脑上跑，停下后才能接着做'],
     ['busy_folder', 'CC 正在这个文件夹里做别的事，做完后才能接着做'],
-    ['provider_missing', '电脑上没装 Claude Code'],
+    ['provider_missing', '电脑上没装 Claude'],
     ['folder_missing', '电脑上找不到这个会话的文件夹了'],
     ['quota', '这个执行者的额度已用完。等额度恢复后再试。'],
     ['empty', '这个会话里没有能带过来的内容'],
@@ -31,12 +33,12 @@ describe('continueBlock:会话读页底部那一块', () => {
 })
 
 describe('continueSheetLines / continueConfirmLabel:确认卡(spec D3)', () => {
-  it('Claude Code 恢复原会话:在哪、用谁、记得之前的话、会用额度、先让原来那个停下(CC 看不见终端里的它)', () => {
+  it('Claude 恢复原会话:在哪、用谁、记得之前的话、会用额度、先让原来那个停下(CC 看不见终端里的它)', () => {
     expect(continueSheetLines(P(), 'zh-Hans')).toEqual([
-      '会在你的电脑上用 Claude Code 接着做，文件夹是 portfolio。',
+      '会在你的电脑上用 Claude 接着做，文件夹是 portfolio。',
       '接着原来的会话，它记得之前说过的话。',
-      '会用掉 Claude Code 的额度。',
-      '先让电脑上原来那个 Claude Code 停下。CC 没法替你确认它停了。',
+      '会用掉 Claude 的额度。',
+      '先让电脑上原来那个 Claude 停下。CC 没法替你确认它停了。',
     ])
     expect(continueConfirmLabel(P(), 'zh-Hans')).toBe('已经停了，接着做')
     expect(continueConfirmLabel(P(), 'en')).toBe('It’s stopped — continue')
@@ -51,7 +53,7 @@ describe('continueSheetLines / continueConfirmLabel:确认卡(spec D3)', () => {
     expect(continueConfirmLabel(P({ provider: 'codex' }), 'zh-Hans')).toBe('接着做')
   })
   it('没有目录名 ⇒ 写「未知」,不留空', () => {
-    expect(continueSheetLines(P({ project: null }), 'zh-Hans')[0]).toBe('会在你的电脑上用 Claude Code 接着做，文件夹是 （未知）。')
+    expect(continueSheetLines(P({ project: null }), 'zh-Hans')[0]).toBe('会在你的电脑上用 Claude 接着做，文件夹是 （未知）。')
   })
 })
 
@@ -65,12 +67,12 @@ describe('continueErrorText / continueErrorDot / CONTINUE_RECHECK:提交失败',
     ['session_changed', '这个会话刚有新动静，再看一眼再接。', 'warn'],
     ['session_empty', '这个会话里没有能接着做的内容。', 'bad'],
     ['uncertain', '不确定电脑收到没有。再点一次不会重复。', 'unknown'],
-    ['revoked', '这台手机已不再配对', 'bad'],
+    ['revoked', '这台手机已经不能连了，在电脑上重新配对', 'bad'],
     ['offline', '没有送到电脑上，请稍后再试。', 'bad'],
     ['unavailable', '没有送到电脑上，请稍后再试。', 'bad'],
     ['unknown', '这次没能接上，请再试一次。', 'bad'],
   ])('%s ⇒ 「%s」,点 %s', (code, text, dot) => {
-    expect(continueErrorText(code, 'codex', 'zh-Hans')).toBe(text)
+    expect(continueErrorText(code, 'codex', 'zh-Hans', NAMES)).toBe(text)
     expect(continueErrorDot(code)).toBe(dot)
   })
   it('电脑那边答了的失败不说「没送到」(裁决 R5)', () => {
@@ -88,16 +90,16 @@ describe('continueErrorText / continueErrorDot / CONTINUE_RECHECK:提交失败',
 })
 
 describe('nativeStartLines / providerName', () => {
-  it('第一句会怎样 + 先让原来那个停下(Claude Code 照 D3 说 CC 没法确认;Codex 说没看到在跑)', () => {
-    expect(nativeStartLines({ mode: 'native_resume', providerId: 'claude' }, 'zh-Hans')).toEqual(['你发的第一句会接着电脑上原来的 Claude Code 会话。', '先让电脑上原来那个 Claude Code 停下。CC 没法替你确认它停了。'])
-    expect(nativeStartLines({ mode: 'native_resume', providerId: 'codex' }, 'zh-Hans')).toEqual(['你发的第一句会接着电脑上原来的 Codex 会话。', '接手时 CC 没看到原来那个 Codex 在跑；要是你在别处开着它，先让它停下。'])
+  it('第一句会怎样 + 先让原来那个停下(Claude 照 D3 说 CC 没法确认;Codex 说没看到在跑)', () => {
+    expect(nativeStartLines({ mode: 'native_resume', providerId: 'claude' }, 'zh-Hans', NAMES)).toEqual(['你发的第一句会接着电脑上原来的 Claude 会话。', '先让电脑上原来那个 Claude 停下。CC 没法替你确认它停了。'])
+    expect(nativeStartLines({ mode: 'native_resume', providerId: 'codex' }, 'zh-Hans', NAMES)).toEqual(['你发的第一句会接着电脑上原来的 Codex 会话。', '接手时 CC 没看到原来那个 Codex 在跑；要是你在别处开着它，先让它停下。'])
     // 那是接手那一刻的检查,不是现在:用过去时(final fix M3)
-    expect(nativeStartLines({ mode: 'native_resume', providerId: 'codex' }, 'en')[1]).toBe('When this was picked up, CC didn’t see the original Codex running. If you have it open somewhere, stop it first.')
-    expect(nativeStartLines({ mode: 'fresh_context', providerId: 'claude' }, 'en')[0]).toBe('Your first message starts a new round with the earlier conversation attached.')
+    expect(nativeStartLines({ mode: 'native_resume', providerId: 'codex' }, 'en', NAMES)[1]).toBe('When this was picked up, CC didn’t see the original Codex running. If you have it open somewhere, stop it first.')
+    expect(nativeStartLines({ mode: 'fresh_context', providerId: 'claude' }, 'en', NAMES)[0]).toBe('Your first message starts a new round with the earlier conversation attached.')
   })
-  it('只认 claude / codex,别的原样', () => {
-    expect(providerName('claude', 'en')).toBe('Claude Code')
-    expect(providerName('codex', 'zh-Hans')).toBe('Codex')
-    expect(providerName('cursor', 'en')).toBe('cursor')
+  it('名字只读 daemon 给的,没给 ⇒ id', () => {
+    expect(providerName('claude', { claude: 'Claude' })).toBe('Claude')
+    expect(providerName('codex', { claude: 'Claude' })).toBe('codex')
+    expect(providerName('cursor')).toBe('cursor')
   })
 })

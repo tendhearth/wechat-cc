@@ -1,10 +1,12 @@
+import { makeProjects } from './projects'
 import { describe, it, expect, vi } from 'vitest'
 import { makeIlinkAdapter, loadAllAccounts, type Account } from './ilink-glue'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../lib/db'
-import { makeConversationStore, type ConversationStore } from '../core/conversation-store'
+import { makeConversationStore } from '../adapters/store/conversation-store'
+import type { ConversationStore } from '../ports/conversation-store'
 
 // Test factory: every makeIlinkAdapter call now requires a conversationStore
 // (PR5 Task 21 — nameStore deprecation). We co-locate db + store creation
@@ -80,14 +82,15 @@ describe('makeIlinkAdapter (composed)', () => {
     expect(typeof a.resurfacePage).toBe('function')
     expect(typeof a.setUserName).toBe('function')
     expect(typeof a.askUser).toBe('function')
-    expect(typeof a.loadProjects).toBe('function')
     expect(typeof a.lastActiveChatId).toBe('function')
     expect(typeof a.flush).toBe('function')
     expect(typeof a.handlePermissionReply).toBe('function')
     expect(typeof a.markChatActive).toBe('function')
     expect(typeof a.captureContextToken).toBe('function')
     expect(typeof a.resolveUserName).toBe('function')
-    expect(a.projects).toBeDefined()
+    // 项目登记不在 ilink 上了(架构终态 A6,src/daemon/projects.ts)
+    expect('projects' in a).toBe(false)
+    expect('loadProjects' in a).toBe(false)
   })
 
   it('setUserName persists through conversationStore (PR5 Task 21)', async () => {
@@ -147,9 +150,8 @@ describe('makeIlinkAdapter (composed)', () => {
     }
   })
 
-  it('loadProjects returns {projects: {}, current: null} when projects.json missing', () => {
-    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
-    const snap = a.loadProjects()
+  it('projects.load() returns {projects: {}, current: null} when projects.json missing', () => {
+    const snap = makeProjects(newStateDir()).load()
     expect(snap.projects).toEqual({})
     expect(snap.current).toBeNull()
   })
@@ -179,6 +181,23 @@ describe('makeIlinkAdapter (composed)', () => {
     expect(consumed).toBe(true)
     const decision = await p
     expect(decision).toBe('allow')
+    await a.flush()
+  })
+
+  it('权限卡经 CC 开口那道门记一行账(permission_ask,只记账不拦);门没接上 / 记账抛错 ⇒ 卡照样登记、照样能批', async () => {
+    const asks: Array<[string, string]> = []
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps(), speech: () => ({ ask: (req: { kind: string; chatId: string }) => { asks.push([req.kind, req.chatId]); return { allow: true as const, channel: 'wechat' as const } } }) })
+    const p = a.askUser('chat-1', 'test prompt', 'ab124', 60_000)
+    expect(asks).toEqual([['permission_ask', 'chat-1']])
+    expect(a.handlePermissionReply('y ab124', 'chat-1')).toBe(true)
+    expect(await p).toBe('allow')
+    for (const speech of [() => null, () => ({ ask: () => { throw new Error('ledger down') } })]) {
+      const b = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps(), speech })
+      const q = b.askUser('chat-1', 'test prompt', 'ab125', 60_000)
+      expect(b.handlePermissionReply('y ab125', 'chat-1')).toBe(true)
+      expect(await q).toBe('allow')
+      await b.flush()
+    }
     await a.flush()
   })
 
@@ -246,8 +265,7 @@ describe('makeIlinkAdapter (composed)', () => {
   })
 
   it('projects.list() returns empty array when projects.json missing', () => {
-    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
-    expect(a.projects.list()).toEqual([])
+    expect(makeProjects(newStateDir()).list()).toEqual([])
   })
 
   it('voice.configStatus returns configured:false when voice-config.json absent', () => {
@@ -257,7 +275,7 @@ describe('makeIlinkAdapter (composed)', () => {
 
   it('voice.configStatus reflects saved config (http_tts, no api_key leak)', async () => {
     const stateDir = newStateDir()
-    const { saveVoiceConfig } = await import('./tts/voice-config')
+    const { saveVoiceConfig } = await import('../features/voice/voice-config')
     await saveVoiceConfig(stateDir, {
       provider: 'http_tts',
       base_url: 'http://mac:8000/v1/audio/speech',
@@ -299,7 +317,7 @@ describe('makeIlinkAdapter (composed)', () => {
   it('voice.replyVoice rejects unknown chat_id with actionable error (no TTS spent)', async () => {
     // Set up voice config so the not_configured branch doesn't short-circuit.
     const stateDir = newStateDir()
-    const { saveVoiceConfig } = await import('./tts/voice-config')
+    const { saveVoiceConfig } = await import('../features/voice/voice-config')
     await saveVoiceConfig(stateDir, {
       provider: 'http_tts',
       base_url: 'http://invalid.local/v1',

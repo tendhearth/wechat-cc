@@ -1,7 +1,8 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
+import { writeFileAtomic as atomicWrite } from '../../lib/json-file'
 import { defineCommand } from 'citty'
 import { join } from 'node:path'
-import { writeFileSync, mkdirSync, rmSync, readFileSync, existsSync, renameSync, chmodSync } from 'node:fs'
+import { mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { homedir, userInfo } from 'node:os'
 import { SOURCE_REPO_ROOT } from '../repo-root'
@@ -101,13 +102,7 @@ export const serviceCmd = defineCommand({
         ],
         readFile,
         exists: existsSync,
-        writeFileAtomic: (p, content, mode) => {
-          mkdirSync(dirname(p), { recursive: true })
-          const tmp = `${p}.tmp-${process.pid}`
-          writeFileSync(tmp, content)
-          if (mode !== undefined) chmodSync(tmp, mode)
-          renameSync(tmp, p)
-        },
+        writeFileAtomic: (p, content, mode) => { atomicWrite(p, content, mode !== undefined ? { mode } : {}) },
         hookStatus,
         installHook: (file, source, sidecar) => { installHooks(file, source, hookCommandLine({ execPath: sidecar, compiled: true, cliEntry: '', source })) },
         reloadLaunchAgent: () => {
@@ -148,7 +143,7 @@ export const serviceCmd = defineCommand({
         onProgress: (e) => {
           try {
             mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
-            writeFileSync(progressPath, JSON.stringify({ ...e, ts: Date.now() }))
+            atomicWrite(progressPath, JSON.stringify({ ...e, ts: Date.now() }))
           } catch { /* progress is best-effort — never break install */ }
         },
       })

@@ -21,25 +21,37 @@
  * + interface types live in ./types.ts. The split is purely organisational
  * — no behaviour change vs the pre-split monolithic internal-api.ts.
  */
+import { writeFileAtomic } from '../../lib/json-file'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { makeTokenRegistry, type TokenInfo } from './token-registry'
-import { minTierFor, tierMeets } from './route-tiers'
-import type { UserTier } from '../../core/user-tier'
+import { minTierFor, moduleFor, tierMeets } from './route-tiers'
+import { MODULE_UNAVAILABLE_CODE } from '@wechat-cc/protocol/routes'
+import type { UserTier } from '../../domain/user-tier'
 import type { AddressInfo } from 'node:net'
 import {
   errMsg,
+  LATE_KEYS,
   type InternalApi,
   type InternalApiDeps,
-  type InternalApiDelegateDep,
+  type RouteTable,
 } from './types'
 import { makeMaybePrefix, makeRoutes } from './routes'
+import { UNDER_TEST_RUNNER } from '../../lib/config'
+import { RESPONSE_SCHEMAS } from '@wechat-cc/protocol/desktop-api'
+
+/** 回包对不上响应契约 ⇒ 抛(只在测试里调)。没有契约的路由不核。 */
+export function assertResponseContract(routeKey: string, body: unknown): void {
+  const schema = RESPONSE_SCHEMAS[routeKey]
+  if (!schema) return
+  const r = schema.safeParse(body)
+  if (!r.success) throw new Error(`response_contract ${routeKey}: ${JSON.stringify(r.error.issues).slice(0, 600)}`)
+}
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
 import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
-import { replyDeliveryFor } from '../../core/capability-matrix'
 
 export type {
   InternalApi,
@@ -47,6 +59,8 @@ export type {
   InternalApiDelegateDep,
   InternalApiIlinkDep,
   InternalApiPrefixDeps,
+  LateDeps,
+  LateKey,
 } from './types'
 
 const TOKEN_FILE = 'internal-token'
@@ -64,8 +78,6 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
   let server: Server | null = null
   let boundPort: number | null = null
   let token: Buffer | null = null
-  // RFC 03 P4 late binding — main.ts wires this in after bootstrap returns.
-  let lateDelegate: InternalApiDelegateDep | null = deps.delegate ?? null
   // Late binding for conversation controller — wired after buildBootstrap() returns.
   // Routes access deps.conversation at request time; we update the same deps object.
   // (deps is passed by reference to makeRoutes which closes over it, so mutations
@@ -111,10 +123,16 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
   }
 
   const maybePrefix = makeMaybePrefix(deps)
+  /**
+   * 功能模块自己挂上来的路由(架构终态 A3):路由表里标了 `module: X` 的那几条,由模块 X 在它的 init 里 `mount`。
+   * 模块关着 / 坏了 ⇒ 下面的模块门回 module_off / module_degraded;开着但还没挂上(开机途中)⇒ module_starting。
+   */
+  const MOUNTED: RouteTable = {}
   const ROUTES = makeRoutes({
     deps,
-    getDelegate: () => lateDelegate,
+    getDelegate: () => deps.delegate ?? null,
     maybePrefix,
+    mounted: MOUNTED,
   })
 
   async function readJsonBody(req: IncomingMessage,maxBytes?:number): Promise<unknown> {
@@ -195,9 +213,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     const rawUrl = req.url ?? '/'
     const url = new URL(rawUrl, 'http://internal')
     const routeKey = `${method} ${url.pathname}`
-    const route = ROUTES[routeKey]
+    const route = ROUTES[routeKey] ?? MOUNTED[routeKey]
 
-    if (!route) {
+    if (!route && !moduleFor(routeKey)) {
       return send(res, 404, { error: 'not_found', method, url: rawUrl }, origin)
     }
 
@@ -222,6 +240,27 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       })
       return send(res, 403, { error: 'route_not_allowed' }, origin)
     }
+
+    // Module gate(第三批 3b,设计稿 2026-10-22-daemon-module-design):表里标了 module 的路由,那个模块此刻
+    // 不是 ok ⇒ 统一 503,处理器里不用再写分支。放在鉴权两道门**之后**:没权限的照旧 401 / 403,
+    // 不让「模块关着」变成探测装了什么功能的口子。主人关的 ⇒ module_off;开着却没起来 ⇒ module_degraded
+    // 带原因 —— 别把坏了说成关了。subsystems 里找不到这个模块(测试 / 还没登记)⇒ 放给处理器,它自己的兜底照旧。
+    const mod = moduleFor(routeKey)
+    // 搬家前客户端就认得的「没准备好」码(MODULE_UNAVAILABLE_CODE,现在只有工作台的 workbench_not_wired):
+    // 这个模块不是 ok 或还没挂上 ⇒ 原样回 503 { error: 那个码 },跟搬家前处理器里写的一字不差。
+    const legacy = mod ? MODULE_UNAVAILABLE_CODE[mod] : undefined
+    if (mod) {
+      const st = deps.subsystems?.().find(s => s.name === mod)
+      if (st && st.state !== 'ok') {
+        const code = st.state === 'off' ? 'module_off' : 'module_degraded'
+        deps.log?.('INTERNAL_API', `503 ${routeKey} ${code} module=${mod}`, { event: code, path: routeKey, module: mod })
+        if (legacy) return send(res, 503, { error: legacy }, origin)
+        return send(res, 503, { error: code, module: mod, ...(st.state !== 'off' && st.error ? { detail: st.error } : {}) }, origin)
+      }
+    }
+
+    // 表里有、模块也没说关着 / 坏了,只是处理器还没挂上来:开机途中(模块还没 init 到)。
+    if (!route) return send(res, 503, legacy ? { error: legacy } : { error: 'module_starting', module: mod }, origin)
 
     let body: unknown = null
     if (method === 'POST') {
@@ -269,11 +308,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     const callerChatId = caller.origin === 'session' && caller.sessionKey
       ? caller.sessionKey.split('/').slice(2).join('/')
       : undefined
-    // 共享令牌按本轮绑定(回复交付第 2 步):agy 走 daemon 交付时,`agy-static` 的「自己的 chat」就是此刻
-    // 正在跑的那一轮 agy 的聊天 —— 附件路由与发送类的 chat 范围门用它。其它路由(记忆 / 提醒……)照旧
-    // 只看令牌里读出来的 chatId(agy-static 没有)。
+    // 共享令牌按本轮绑定(回复交付第 2 步):`agy-static` 的「自己的 chat」就是此刻正在跑的那一轮 agy 的
+    // 聊天 —— 附件路由与发送类的 chat 范围门用它。其它路由(记忆 / 提醒……)照旧只看令牌里读出来的
+    // chatId(agy-static 没有)。
     const sharedTurn = sharedTokenTurn(caller, {
-      agyDaemon: replyDeliveryFor('agy') === 'daemon',
       turnChatFor: deps.replyDelivery ? (p) => deps.replyDelivery!.turnChatFor(p) : undefined,
     })
     const turnChatId = sharedTurn?.kind === 'bound' ? sharedTurn.chatId : undefined
@@ -292,7 +330,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     if (sendTarget) {
       const target = sendTarget(body)
       const decision = sendScopeDecision(target, sharedTurn
-        ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey, sharedTokenBound: true }
+        ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey }
         : { ...callerInfo, sessionKey: caller.sessionKey }, routeKey)
       const targetLabel = target === ALL_CHATS ? '*' : target
       if (decision.kind === 'deny') {
@@ -321,9 +359,40 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       ? (() => { try { return deps.holdBusy?.(`api:${routeKey}`) } catch { return undefined } })()
       : undefined
     try {
-      const out = await route(url.searchParams, body, callerInfo)
-      send(res, out.status, out.body, origin)
+      // 调用方断开(MCP 子进程死了 / 工具调用被客户端放弃)⇒ signal 中止。只有长轮询的路由(GET /v1/cli/say)读它:
+      // 挂着的等待不能当成「还有人在等」(terminal_say 评审 #2a,2026-10-24)。
+      // Bun 的 node:http 客户端断开时不发 res 'close'(10-24 实测),只发 req 'aborted' 与 socket 'close';node 三个都发。
+      // onSent:回包真写出去了('finish';socket 已断时不发,Bun 与 node 都是,10-24 实测)才调 —— terminal_say 据此才算
+      // 「回话被领走」;没写出去就留给它自己的兜底(告诉主人),评审 #662 二轮 #1。
+      const ac = new AbortController()
+      const sock = req.socket
+      const gone = () => { if (!res.writableFinished) ac.abort() }
+      req.on('aborted', gone)
+      res.on('close', gone)
+      sock?.on('close', gone)
+      // 登记前就已经断了(比如在读 body / 校验那段时间里断的)⇒ 那些事件不会再来,直接算断开(评审 #662 二轮 #2)
+      if (sock?.destroyed || req.destroyed) gone()
+      const onSent: Array<() => void> = []
+      try {
+        const out = await route(url.searchParams, body, callerInfo, { signal: ac.signal, onSent: (cb) => { onSent.push(cb) } })
+        // 契约(架构终态 F1):测试里每个 2xx 回包都对着响应契约核一遍 —— 契约写错了、处理器回的形状变了,测试当场红;
+        // 生产里不核(不为契约多花一次 parse,也不因契约漏写一个可选字段就让主人的请求失败)。
+        if (UNDER_TEST_RUNNER && out.status >= 200 && out.status < 300) assertResponseContract(routeKey, out.body)
+        if (onSent.length && !ac.signal.aborted) res.once('finish', () => { for (const cb of onSent) { try { cb() } catch { /* 回调出错不影响已回的包 */ } } })
+        send(res, out.status, out.body, origin)
+      } finally {
+        // keep-alive 的同一条连接上会来很多请求:这一个请求一结束(回完 / 断开 / 抛错)就摘掉,不在 socket 上越挂越多
+        sock?.off('close', gone)
+      }
     } catch (err) {
+      // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
+      // 不是 500,daemon 也不退。
+      const code = (err as { code?: unknown })?.code
+      if (code === 'config_unreadable' || code === 'config_busy') {
+        deps.log?.('INTERNAL_API', `409 ${method} ${rawUrl}: ${errMsg(err)}`, { event: 'config_write_refused', method, url: rawUrl, error: errMsg(err) })
+        send(res, 409, { error: code, detail: errMsg(err) }, origin)
+        return
+      }
       deps.log?.('INTERNAL_API', `500 ${method} ${rawUrl}: ${errMsg(err)}`, {
         event: 'route_threw',
         method,
@@ -346,12 +415,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       // Register the daemon-wide file token as `trusted` — it's shell-readable,
       // so it can't grant more than the least-trusted process that reads it.
       registry.registerFileToken(tokenHex)
-      // Write atomically — token consumers may already be reading on rotate.
-      const tmp = `${tokenPath}.tmp-${process.pid}-${Date.now()}`
-      writeFileSync(tmp, tokenHex + '\n', { mode: 0o600 })
-      // Use rename for atomic swap. node:fs renameSync is fine on linux/mac.
-      const { renameSync } = await import('node:fs')
-      renameSync(tmp, tokenPath)
+      // Write atomically — token consumers may already be reading on rotate(lib/json-file:独立 tmp + fsync + rename,
+      // Windows 上 rename 被占用会短重试)。
+      writeFileAtomic(tokenPath, tokenHex + '\n', { mode: 0o600 })
 
       // Separate admin-tier operator token (option B) — a distinct random
       // secret, registered `admin`, written to its own 0600 file. See
@@ -362,9 +428,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       // trusted file token above.
       const opTokenHex = randomBytes(32).toString('hex')
       registry.registerOperatorToken(opTokenHex)
-      const opTmp = `${operatorTokenPath}.tmp-${process.pid}-${Date.now()}`
-      writeFileSync(opTmp, opTokenHex + '\n', { mode: 0o600 })
-      renameSync(opTmp, operatorTokenPath)
+      writeFileAtomic(operatorTokenPath, opTokenHex + '\n', { mode: 0o600 })
 
       server = createServer(handleRequest)
       // Catch listener errors so we surface bind failures to start()'s caller.
@@ -411,86 +475,23 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       return tokenPath
     },
 
-    setDelegate(d) {
-      lateDelegate = d
+    mount(module, table) {
+      for (const [key, handler] of Object.entries(table)) {
+        if (moduleFor(key) !== module) throw new Error(`internal-api: ${module} mounted '${key}' but the route table does not mark it module: '${module}'`)
+        if (ROUTES[key] || MOUNTED[key]) throw new Error(`internal-api: '${key}' is already registered`)
+        MOUNTED[key] = handler
+      }
     },
 
-    setWorkbench(service) {
-      deps.workbench = service
-    },
-    setMatters(service) {
-      deps.matters = service
-    },
-
-    setConversation(c) {
-      deps.conversation = c
-    },
-
-    setCompanionConverse(fn) {
-      deps.companionConverse = fn
-    },
-
-    setPetTurn(fn) {
-      deps.petTurn = fn
-    },
-
-    setCliEvents(hub) {
-      deps.cliEvents = hub
-    },
-
-    setCliPermissions(relay) {
-      deps.cliPermissions = relay
-    },
-
-    setOverseerToday(fn) {
-      deps.overseerToday = fn
-    },
-
-    setCliHooks(svc) {
-      deps.cliHooks = svc
+    provide(patch) {
+      for (const k of LATE_KEYS) {
+        const v = patch[k]
+        if (v !== undefined) (deps as unknown as Record<string, unknown>)[k] = v
+      }
     },
 
     getPresence() {
       return computePresence(deps)
-    },
-
-    setCustomerReview(service) {
-      deps.customerReview = service
-    },
-
-    setA2A(a2a) {
-      deps.a2a = a2a
-    },
-    setSocial(social) {
-      deps.social = social
-    },
-    setKnowledge(knowledge) {
-      deps.knowledge = knowledge
-    },
-    setPairing(pairing) {
-      deps.pairing = pairing
-    },
-    setMemory(memory) {
-      deps.memoryLlm = memory
-    },
-    setIncidents(incidents) {
-      deps.incidents = incidents
-    },
-    setLlmHealth(h, registered, endpoints) {
-      deps.llmHealth = h
-      if (registered) deps.llmRegistered = registered
-      if (endpoints) deps.llmEndpoints = endpoints
-    },
-    setSettingsLink(fn) {
-      deps.settingsLink = fn
-    },
-    setConnections(fn) { deps.connections = fn },
-    setPhoneConnect(p) { deps.phoneConnect = p },
-    setMemoryNightly(r) {
-      deps.memoryNightly = r
-    },
-    setCliUpgrade(u) {
-      deps.cliUpgrade = u
     },
     mintSessionToken,
     invalidateSession(sessionKey: string) {

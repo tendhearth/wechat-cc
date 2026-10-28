@@ -1,11 +1,15 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonObject, writeJsonAtomic } from './json-file'
+import { stripBom } from './read-json-file'
+import { log } from './log'
 // zod v4: `import { z } from 'zod'` resolves to undefined under vitest's
 // bundler; use the default export instead (both forms are equivalent at
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 
 import { PROVIDER_IDS, isKnownProviderId, type KnownProviderId } from './provider-ids'
+import { EXECUTOR_FACTS } from './executor-facts'
 export type AgentProviderKind = KnownProviderId
 
 export interface AgentConfig {
@@ -38,11 +42,12 @@ export interface AgentConfig {
   cursorAgentBin?: string
   /** 自定义 ACP 执行者(2026-10-07):任何会说 ACP 的 CLI 接进一起做。见 core/acp/agents.ts。 */
   acp_agents?: Array<{ id: string; name: string; command: string; args?: string[]; auth_method?: string }>
-  /** 随身 CC 远程隧道开关(2026-08-26):true 则 daemon 拨中继,手机出门
-   *  可访问。默认关。`remote_relay_url` 可覆盖默认 relay。 */
+  /** 随身 CC 远程隧道开关(2026-08-26):true 且设了 `relay_v2_url` 则 daemon 拨中继,手机出门
+   *  可访问。默认关。 */
   remote_tunnel?: boolean
+  /** 老 VPS 中继的地址。2026-10-25 随协议 v1 退休:还读进来(老配置文件不报错),但 daemon 不再用它。 */
   remote_relay_url?: string
-  /** 官方中继 v2 的地址(wss 源,不带路径)。**不设(或空串)⇒ v2 关**,只连老中继;没有隐式缺省。
+  /** 官方中继 v2 的地址(wss 源,不带路径)。**不设(或空串)⇒ 远程关**(老中继已退休);没有隐式缺省。
    *  上线步骤:生产中继 /healthz 正常后设 `"relay_v2_url": "wss://relay.tendhearth.com"`(docs/maintainer/relay.md)。 */
   relay_v2_url?: string
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
@@ -51,13 +56,6 @@ export interface AgentConfig {
   /** 非管理员对话可以切到哪些 provider(core/provider-policy.ts)。缺省 =
    *  全部已注册。guest 对共享钥匙的 provider(agy/cursor)无论如何都拒。 */
   trusted_providers?: string[]
-  /**
-   * 回复交付的运行时回滚开关(spec 2026-10-03-reply-delivery):按 provider 覆盖能力表里的
-   * `replyDelivery` 默认值,`{ "openai": "legacy" }` 就把 openai 退回 reply 工具。daemon 开机时读一次
-   * (MCP 工具表、提示词、协调器都按它走),改完重启 daemon 生效。非法值逐项丢掉。
-   * 见 docs/maintainer/reply-delivery.md。
-   */
-  reply_delivery?: Record<string, 'legacy' | 'shadow' | 'daemon'>
   /**
    * 外部 agent CLI 自动升级(主人 2026-10-04:默认开)。缺省 = 全开、每天本地 4 点之后查一次;
    * `per_cli.<claude|codex|cursor|agy>.enabled: false` 逐个关。只停「自动」,`wechat-cc cli upgrade` 照样能用。
@@ -147,7 +145,7 @@ export interface AgentConfig {
   // when absent. Mirrors `openaiBaseUrl?`'s optional-string shape.
   knowledge_source_dir?: string
   // Knowledge Kernel T7' — embedding model id passed to the in-process
-  // indexer (src/core/knowledge/indexer.ts) and, via embed-runner.ts, to the
+  // indexer (src/app/knowledge/indexer.ts) and, via embed-runner.ts, to the
   // Python embed subprocess (`--model-id`) as the provenance tag every
   // semantic.db row is stamped with. Optional — defaults to
   // 'bge-small-zh-v1.5' (wxsearch's existing default embedding model, see
@@ -186,7 +184,7 @@ export interface AgentConfig {
   day_tz_offset_minutes?: number | null
   /** 免审执行者(UNATTENDED_CAPABILITIES,如 agy/cursor 的 --dangerously-skip-permissions
    *  旁路)的一次性确认时间戳(ms)。缺省 ⇒ 未确认,工作台 service 拒绝派给免审执行者的
-   *  create(见 core/workbench/service.ts requireInput 的 unattended_ack_required)。 */
+   *  create(见 features/workbench/service.ts requireInput 的 unattended_ack_required)。 */
   workbench_unattended_ack_at?: number
   /** 工作台的保留会话空闲自动收工:安静下来而**没人等这个文件夹**时等多久关掉会话、让出文件夹
    *  (ms;缺省 600000 = 10 分钟)。0 = 立刻关;很大的数会被封顶到约 24.8 天(setTimeout 的
@@ -326,7 +324,6 @@ const AgentConfigSchema = z.object({
   relay_v2_url: z.string().optional(),
   cheapEvalProvider: z.string().optional(),
   trusted_providers: z.array(z.string()).optional(),
-  reply_delivery: z.record(z.string(), z.enum(['legacy', 'shadow', 'daemon'])).optional(),
   cli_auto_upgrade: CliAutoUpgradeSettings.optional(),
   delegateOpenai: z.boolean().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
@@ -383,7 +380,7 @@ const CONFIG_FILE = 'agent-config.json'
 
 export function loadAgentConfig(stateDir: string): AgentConfig {
   try {
-    const raw = readFileSync(join(stateDir, CONFIG_FILE), 'utf8')
+    const raw = stripBom(readFileSync(join(stateDir, CONFIG_FILE), 'utf8'))
     const parsed = JSON.parse(raw) as Partial<AgentConfig> & { keepAlive?: boolean }
     const dangerouslySkipPermissions = parsed.dangerouslySkipPermissions ?? true
     const autoStart = parsed.autoStart ?? true
@@ -424,11 +421,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       if (result.success) selfChange = result.data
       else console.warn(`[agent-config] self_change 配置不合格,整块忽略:${result.error.issues.map(i => `${i.path.join('.') || '(根)'}: ${i.message}`).join('; ')}`)
     }
-    // 回复交付开关:逐项校验,坏一项丢一项(这是回滚开关,不能因为一处笔误整块作废)。
-    const replyDelivery = typeof parsed.reply_delivery === 'object' && parsed.reply_delivery !== null && !Array.isArray(parsed.reply_delivery)
-      ? Object.fromEntries(Object.entries(parsed.reply_delivery as Record<string, unknown>)
-          .filter((e): e is [string, 'legacy' | 'shadow' | 'daemon'] => e[1] === 'legacy' || e[1] === 'shadow' || e[1] === 'daemon'))
-      : undefined
+    // `reply_delivery`(回复交付的回滚开关)D3 起退休:旧盘里还写着也照常开机 —— 和别的不认识的键一样,
+    // 这里只挑认识的字段,它被安静地丢掉(下次 saveAgentConfig 也不会再写回去)。
     // CLI 自动升级:坏一项不该把整块(尤其 enabled)作废 —— 逐项挑合法的留下,其余由 core 侧补缺省。
     const cliAutoUpgrade = typeof parsed.cli_auto_upgrade === 'object' && parsed.cli_auto_upgrade !== null && !Array.isArray(parsed.cli_auto_upgrade)
       ? CliAutoUpgradeSettings.safeParse(parsed.cli_auto_upgrade).data ?? (() => {
@@ -469,7 +463,6 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.relay_v2_url === 'string' ? { relay_v2_url: parsed.relay_v2_url } : {}),
       ...(typeof parsed.cheapEvalProvider === 'string' ? { cheapEvalProvider: parsed.cheapEvalProvider } : {}),
       ...(Array.isArray(parsed.trusted_providers) ? { trusted_providers: parsed.trusted_providers } : {}),
-      ...(replyDelivery && Object.keys(replyDelivery).length > 0 ? { reply_delivery: replyDelivery } : {}),
       ...(cliAutoUpgrade ? { cli_auto_upgrade: cliAutoUpgrade } : {}),
       ...(typeof parsed.delegateOpenai === 'boolean' ? { delegateOpenai: parsed.delegateOpenai } : {}),
       dangerouslySkipPermissions,
@@ -500,7 +493,10 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(selfChange ? { self_change: selfChange } : {}),
       ...(restartNotice && Object.keys(restartNotice).length > 0 ? { restart_notice: restartNotice } : {}),
     }
-  } catch {
+  } catch (err) {
+    // 文件不在 = 新装,照常用缺省;文件在但读不出来 = 被写坏了 —— 以前这里一声不吭地退回缺省,主人只看到「配置怎么
+    // 全没了」。现在记一行(3e,2026-10-22);saveAgentConfig 也会拒绝拿缺省覆盖这个坏文件(见下)。
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') log('CONFIG', `agent-config.json 读不出来,这次按缺省跑(文件没动):${err instanceof Error ? err.message : String(err)}`)
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
   }
 }
@@ -551,12 +547,14 @@ export function makeMtimeCachedConfigReader(
   }
 }
 
+/**
+ * 整份写回(调用方都是 load → 改 → save)。旧文件存在但读不出来 ⇒ 抛 UnreadableJsonError、不写:loadAgentConfig 在那种
+ * 情况下给的是缺省值,写回去就把主人整份配置换成了缺省(3e,2026-10-22)。写法统一走 lib/json-file。
+ */
 export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 })
   const file = join(stateDir, CONFIG_FILE)
-  const tmp = `${file}.tmp`
-  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, file)
+  if (existsSync(file)) readJsonObject(file)
+  writeJsonAtomic(file, config, { mode: 0o600 })
 }
 
 // The pinned model lives in a provider-specific field: cursor reads
@@ -566,20 +564,18 @@ export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
 // model` at each read/write — writing the wrong field is a silent no-op with
 // a falsely-confirming read-back.
 
+// The global-provider pair is just the per-provider pair below asked about `config.provider` — ONE place knows which
+// field each provider reads. (10-21: these used to be a second if-chain that had no agy branch, so /v1/model on an agy
+// owner wrote `model`, which agy never reads, and read it back as success.)
+
 /** The model id the configured provider actually reads (undefined if unset). */
 export function activeModel(config: AgentConfig): string | undefined {
-  if (config.provider === 'cursor') return config.cursorModel
-  if (config.provider === 'openai') return config.openaiModel
-  if (config.provider === 'gemini') return config.geminiModel
-  return config.model
+  return modelForProvider(config, config.provider)
 }
 
 /** A copy of `config` with the provider's active model field set to `model`. */
 export function withActiveModel(config: AgentConfig, model: string): AgentConfig {
-  if (config.provider === 'cursor') return { ...config, cursorModel: model }
-  if (config.provider === 'openai') return { ...config, openaiModel: model }
-  if (config.provider === 'gemini') return { ...config, geminiModel: model }
-  return { ...config, model }
+  return withModelForProvider(config, config.provider, model)
 }
 
 // activeModel/withActiveModel above answer "the GLOBAL default provider's
@@ -594,20 +590,15 @@ export function withActiveModel(config: AgentConfig, model: string): AgentConfig
 
 /** The model id `providerId` should use, resolved per-provider (undefined if unset). */
 export function modelForProvider(config: AgentConfig, providerId: string): string | undefined {
-  if (providerId === 'openai') return config.openaiModel
-  if (providerId === 'cursor') return config.cursorModel
-  if (providerId === 'gemini') return config.geminiModel
-  if (providerId === 'agy') return config.agyModel
+  const field = isKnownProviderId(providerId) ? EXECUTOR_FACTS[providerId].modelField : 'model'
+  if (field !== 'model') return config[field]
   return config.provider === providerId ? config.model : undefined
 }
 
 /** A copy of `config` with `providerId`'s own model field set — regardless of the global default provider. */
 export function withModelForProvider(config: AgentConfig, providerId: string, model: string): AgentConfig {
-  if (providerId === 'openai') return { ...config, openaiModel: model }
-  if (providerId === 'cursor') return { ...config, cursorModel: model }
-  if (providerId === 'gemini') return { ...config, geminiModel: model }
-  if (providerId === 'agy') return { ...config, agyModel: model }
-  return { ...config, model }
+  const field = isKnownProviderId(providerId) ? EXECUTOR_FACTS[providerId].modelField : 'model'
+  return { ...config, [field]: model }
 }
 
 /** Sub-project C default: 30 forwards/hour per upstream sender. Applied by

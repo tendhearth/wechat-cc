@@ -11,6 +11,7 @@
  */
 import { invokeApi } from '../api.js'
 import { armConfirm, showToast } from '../view.js'
+import { V1, v1 } from '../daemon-client.js'
 
 // TODO: replace with the real Lemon Squeezy checkout link once the store exists.
 const UPGRADE_URL = 'https://tendhearth.lemonsqueezy.com'
@@ -28,7 +29,7 @@ export async function refreshLicense() {
   if (!el) return
   const deact = document.getElementById('license-deactivate-btn')
   try {
-    const s = /** @type {Record<string, any>} */ (await invokeApi('GET', '/v1/license/status'))
+    const s = /** @type {Record<string, any>} */ (await v1(invokeApi, V1.license.status))
     if (s?.pro) {
       el.innerHTML = `★ <strong>Pro</strong>${s.expires_at ? ` · 有效期至 ${escapeHtml(String(s.expires_at))}` : ''}`
       el.className = 'license-status pro'
@@ -39,7 +40,7 @@ export async function refreshLicense() {
       if (deact) deact.hidden = true
     }
   } catch {
-    el.textContent = '状态未知（daemon 未启动？）'
+    el.textContent = '现在看不到（CC 可能没在运行）'
     el.className = 'license-status'
   }
 }
@@ -51,7 +52,7 @@ async function onActivate() {
   const btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('license-activate-btn'))
   if (btn) { btn.disabled = true; btn.textContent = '激活中…' }
   try {
-    const r = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/license/activate', { key }))
+    const r = /** @type {Record<string, any>} */ (await v1(invokeApi, V1.license.activate, { body: { key } }))
     if (r?.ok) {
       if (input) input.value = ''
       await refreshLicense()
@@ -69,7 +70,7 @@ async function onActivate() {
 async function onDeactivate() {
   if (!armConfirm(document.getElementById('license-deactivate-btn'), '再点一次，确认移除')) return
   try {
-    await invokeApi('POST', '/v1/license/deactivate')
+    await v1(invokeApi, V1.license.deactivate)
     await refreshLicense()
   } catch (err) {
     showToast(`移除失败：${err instanceof Error ? err.message : String(err)}`)

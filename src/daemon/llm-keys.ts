@@ -7,17 +7,19 @@
  * 只写 key 会「保存成功」却重启后没接上 —— 假成功。按「本次带的 或 之前
  * 已存的」算有效值,缺任一就拒、不写 key。
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { upsertEnvFile } from '../lib/env-file'
 import { loadAgentConfig } from '../lib/agent-config'
 import { writeConfigKey } from './config-surface'
+import { EXECUTOR_FACTS } from '../lib/executor-facts'
+import { writeFileAtomic } from '../lib/json-file'
 
 export type LlmKeyProvider = 'openai' | 'gemini'
 
 export const LLM_KEY_ENV: Record<LlmKeyProvider, string> = {
-  openai: 'WECHAT_OPENAI_API_KEY',
-  gemini: 'GEMINI_API_KEY',
+  openai: EXECUTOR_FACTS.openai.credentialEnv![0]!,
+  gemini: EXECUTOR_FACTS.gemini.credentialEnv![0]!,
 }
 
 export type SaveLlmKeyResult =
@@ -44,9 +46,7 @@ export async function saveLlmKey(
   const envName = LLM_KEY_ENV[provider]
   const envPath = join(stateDir, 'daemon.env')
   const current = existsSync(envPath) ? readFileSync(envPath, 'utf8') : ''
-  const tmp = `${envPath}.tmp`
-  writeFileSync(tmp, upsertEnvFile(current, { [envName]: key }), { mode: 0o600 })
-  renameSync(tmp, envPath)
+  writeFileAtomic(envPath, upsertEnvFile(current, { [envName]: key }), { mode: 0o600 })
   // 伴随字段走带校验的 config surface。
   if (provider === 'openai') {
     if (reqBase) await writeConfigKey(stateDir, 'openaiBaseUrl', reqBase)

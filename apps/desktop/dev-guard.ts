@@ -125,7 +125,7 @@ export const READONLY_CLI_COMMANDS: readonly ReadonlyCliCommand[] = [
   // daemon api-info is how the desktop learns the daemon's port + token.
   // No --operator: that flag was removed (see cli.ts) so the admin credential
   // is never obtainable through the CLI. Owner-only workspaces go through the
-  // host's customer_review_api command instead.
+  // host's daemon_request command instead.
   { path: ['daemon', 'api-info'] },
   { path: ['update'], requireFlag: '--check' },
 ]

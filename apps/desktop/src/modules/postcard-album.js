@@ -1,18 +1,28 @@
+// @ts-check
+/// <reference lib="dom" />
 import { invokeApi } from '../api.js'
 import { showToast } from '../view.js'
 import {createRecordReader} from './record-reader.js'
 import {saveRecordDocument} from './record-export.js'
+import { V1, v1 } from '../daemon-client.js'
 
-const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
-const imageUrl = svg => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-const dateLabel = ts => {
+/** 一张明信片(`GET /v1/journal/postcards` 的一行)。
+ * @typedef {{ id: string, title?: string | null, note?: string | null, ts: string, image_svg?: string | null, favorite?: number | boolean | null }} Postcard */
+/** daemon 传输(`invokeApi` 或测试注入的假函数)。 @typedef {(method: any, path: string, body?: any, opts?: any) => Promise<unknown>} DaemonCall */
+/** 相册挂载点:真 DOM 元素,测试里是只带这几样的假对象。
+ * @typedef {{ innerHTML: string, querySelectorAll: (selector: string) => Iterable<Element>, querySelector?: (selector: string) => Element | null, contains?: (node: Node | null) => boolean, addEventListener: (type: 'click', listener: (event: MouseEvent) => void) => void }} AlbumHost */
+
+const esc = (/** @type {unknown} */ value) => String(value ?? '').replace(/[&<>"']/g, c => /** @type {string} */ (/** @type {Record<string, string>} */ ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]))
+const imageUrl = (/** @type {string} */ svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+const dateLabel = (/** @type {string} */ ts) => {
   const d = new Date(ts)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('zh-CN', {year:'numeric',month:'long',day:'numeric'})
 }
-const picture = card => card.image_svg
+const picture = (/** @type {Postcard} */ card) => card.image_svg
   ? `<img src="${esc(imageUrl(card.image_svg))}" alt="${esc(card.title || '串门明信片')}" loading="lazy">`
   : '<span class="pc-image-missing">这张图片暂时无法显示，文字仍在。</span>'
 
+/** @param {Postcard} card */
 export function postcardMarkup(card) {
   return `<article class="pc-card">
     <button class="pc-cover" type="button" data-pc-action="open" data-pc-id="${esc(card.id)}" aria-label="查看明信片：${esc(card.title)}">${picture(card)}</button>
@@ -22,19 +32,22 @@ export function postcardMarkup(card) {
   </article>`
 }
 
+/** @param {Postcard} card */
 export function postcardDocument(card) {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(card.title || 'CC 明信片')}</title>
   <style>body{max-width:760px;margin:40px auto;padding:24px;background:#faf7f2;color:#2a2622;font:16px/1.6 Georgia,"Songti SC",serif}img{display:block;width:100%;height:auto;border-radius:12px}p{white-space:pre-wrap;overflow-wrap:anywhere}time{color:#746d62;font-size:14px}h1{font-size:22px;font-weight:400}</style>
   <h1>${esc(card.title || '串门明信片')}</h1><time>${esc(dateLabel(card.ts))}</time>${picture(card)}<p>${esc(card.note)}</p></html>`
 }
 
+/** @param {Postcard} card @param {DaemonCall} [call] */
 export async function changePostcardFavorite(card, call = invokeApi) {
   const favorite = !card.favorite
-  const result = await call('POST', '/v1/journal/favorite', {id:card.id, favorite})
+  const result = /** @type {{ ok?: boolean } | null | undefined} */ (await v1(call, V1.journal.favorite, { body: {id:card.id, favorite} }))
   if (!result?.ok) throw new Error('favorite_not_saved')
   return favorite
 }
 
+/** @param {Postcard} card */
 export async function savePostcard(card) {
   const content = postcardDocument(card)
   const filename = `CC-明信片-${String(card.ts).slice(0,10).replace(/[^0-9-]/g,'')}-${Date.now()}.html`
@@ -46,16 +59,26 @@ export async function savePostcard(card) {
 }
 
 /** Isolated state per mounted album; dependency injection also serves the fixture preview. */
+/**
+ * @param {AlbumHost} host
+ * @param {{ call?: DaemonCall, toast?: (msg: string) => void, save?: (card: Postcard) => Promise<void> | void }} [deps]
+ */
 export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save=savePostcard} = {}) {
-  let items=[], total=0, favorites=false, generation=0, busy=false, failed=false
-  let modal=null, selected=null, opener=null, openerId=null
+  /** @type {Postcard[]} */
+  let items=[]
+  let total=0, favorites=false, generation=0, busy=false, failed=false
+  /** @type {HTMLDialogElement|null} */ let modal=null
+  /** @type {Postcard|null} */ let selected=null
+  /** @type {Element|null} */ let opener=null
+  /** @type {string|null} */ let openerId=null
+  /** @type {Set<string>} */
   const pending=new Set()
   const reader=createRecordReader({onClose(){modal=null;selected=null},focusFallback(){
-    const entries=[...host.querySelectorAll('[data-pc-action="open"]')]
-    return entries.find(b=>b.dataset.pcId===openerId&&b.className===opener?.className)||entries.find(b=>b.dataset.pcId===openerId)||host.querySelector('[data-pc-action="all"]')
+    const entries=/** @type {HTMLElement[]} */ ([...host.querySelectorAll('[data-pc-action="open"]')])
+    return entries.find(b=>b.dataset.pcId===openerId&&b.className===opener?.className)||entries.find(b=>b.dataset.pcId===openerId)||/** @type {NonNullable<AlbumHost['querySelector']>} */ (host.querySelector)('[data-pc-action="all"]')
   }})
   function render() {
-    const focused=typeof document!=='undefined'&&host.contains?.(document.activeElement)?document.activeElement:null
+    const focused=/** @type {HTMLElement|null} */ (typeof document!=='undefined'&&host.contains?.(document.activeElement)?document.activeElement:null)
     const identity=focused?.dataset.pcAction?{action:focused.dataset.pcAction,id:focused.dataset.pcId,className:focused.className}:null
     host.innerHTML=`<div class="pc-toolbar" role="group" aria-label="明信片筛选">
       <button type="button" data-pc-action="all" aria-pressed="${!favorites}">全部</button>
@@ -66,7 +89,7 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
       <div class="pc-grid">${items.map(postcardMarkup).join('')}</div>
       ${items.length<total ? `<button class="pc-more" type="button" data-pc-action="more" ${busy ? 'disabled' : ''}>${busy ? '正在读取…' : '再翻一些'}</button>` : ''}`
     if(identity){
-      const replacement=[...host.querySelectorAll('[data-pc-action]')].find(b=>b.dataset.pcAction===identity.action&&b.dataset.pcId===identity.id&&b.className===identity.className)
+      const replacement=/** @type {HTMLElement[]} */ ([...host.querySelectorAll('[data-pc-action]')]).find(b=>b.dataset.pcAction===identity.action&&b.dataset.pcId===identity.id&&b.className===identity.className)
       replacement?.focus({preventScroll:true})
     }
   }
@@ -76,11 +99,12 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
     if (!append) {items=[];total=0}
     render()
     try {
-      const result=await call('GET',`/v1/journal/postcards?limit=24&offset=${offset}&favorites=${favorites}`)
+      const result=/** @type {{ items?: Postcard[], total?: number } | null | undefined} */ (await v1(call, V1.journal.postcards, { query: { limit: 24, offset, favorites: String(favorites) } }))
       if(ticket!==generation)return
       if(!Array.isArray(result?.items) || !Number.isFinite(result?.total))throw new Error('invalid_album')
-      const merged=append ? [...items,...result.items] : result.items
-      items=[...new Map(merged.map(row=>[row.id,row])).values()];total=result.total
+      const ok=/** @type {{ items: Postcard[], total: number }} */ (result)
+      const merged=append ? [...items,...ok.items] : ok.items
+      items=[...new Map(merged.map(row=>[row.id,row])).values()];total=ok.total
     } catch {
       if(ticket!==generation)return
       failed=true
@@ -91,12 +115,13 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
   function closeModal() {
     reader.close()
   }
+  /** @param {Postcard} card @param {HTMLElement} button */
   function open(card,button) {
     closeModal();opener=button;openerId=card.id;selected=card
     modal=reader.open({label:'明信片',trigger:button,html:`<div class="pc-detail">
       <time>${esc(dateLabel(card.ts))}</time><h2 id="pc-detail-title">${esc(card.title)}</h2>${picture(card)}<p class="pc-detail-note">${esc(card.note)}</p>
       <div class="pc-detail-actions"><button type="button" data-pc-action="favorite" aria-pressed="${!!card.favorite}"${pending.has(card.id)?' disabled':''}>${card.favorite?'已收藏':'收藏'}</button><button class="is-primary" type="button" data-pc-action="save">保存图和话</button></div><small>保存为可离线打开的网页，图片已包含在文件里。</small></div>`,onAction:async event=>{
-      const button=event.target.closest?.('[data-pc-action]')
+      const button=/** @type {HTMLButtonElement} */ (/** @type {Element} */ (event.target).closest?.('[data-pc-action]'))
       const action=button?.dataset.pcAction
       if(action==='favorite')await favorite(card,button)
       else if(action==='save') {
@@ -105,6 +130,7 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
       }
     }})
   }
+  /** @param {Postcard} card @param {HTMLButtonElement} button */
   async function favorite(card,button) {
     if(pending.has(card.id))return
     pending.add(card.id);button.disabled=true
@@ -112,7 +138,7 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
       const value=await changePostcardFavorite(card,call)
       card.favorite=value?1:0
       toast(value?'已收藏，会为你保留':'已取消收藏')
-      if(modal && selected?.id===card.id){const b=modal.querySelector('[data-pc-action="favorite"]');b.textContent=value?'已收藏':'收藏';b.setAttribute('aria-pressed',String(value))}
+      if(modal && selected?.id===card.id){const b=/** @type {HTMLButtonElement} */ (modal.querySelector('[data-pc-action="favorite"]'));b.textContent=value?'已收藏':'收藏';b.setAttribute('aria-pressed',String(value))}
       items=items.map(row=>row.id===card.id ? {...row,favorite:card.favorite} : row)
       if(favorites && !value && items.some(row=>row.id===card.id)) {
         items=items.filter(row=>row.id!==card.id);total=Math.max(0,total-1)
@@ -122,11 +148,11 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
     } catch {toast('收藏状态没有保存成功，请重试。')}
     finally {
       pending.delete(card.id);button.disabled=false;render()
-      if(modal&&selected?.id===card.id)modal.querySelector('[data-pc-action="favorite"]').disabled=false
+      if(modal&&selected?.id===card.id)/** @type {HTMLButtonElement} */ (modal.querySelector('[data-pc-action="favorite"]')).disabled=false
     }
   }
   host.addEventListener('click',async event=>{
-    const b=event.target.closest?.('[data-pc-action]');if(!b)return
+    const b=/** @type {HTMLButtonElement|null|undefined} */ (/** @type {Element} */ (event.target).closest?.('[data-pc-action]'));if(!b)return
     const action=b.dataset.pcAction
     if(action==='all'||action==='collected'){favorites=action==='collected';await refresh();return}
     if(action==='retry'){await refresh();return}
@@ -138,6 +164,7 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
   return {refresh}
 }
 
+/** @type {{ refresh: (append?: boolean) => Promise<void> } | undefined} */
 let album
 export function initPostcardAlbum() {
   const host=document.getElementById('postcard-album')

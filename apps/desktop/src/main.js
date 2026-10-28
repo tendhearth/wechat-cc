@@ -16,7 +16,8 @@
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
-import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine, hasUsableProvider, providerReady } from "./view.js"
+import { V1, v1 } from "./daemon-client.js"
+import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine, guardRowVisible, hasUsableProvider, providerReady } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createPresencePoller } from "./presence-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
@@ -30,8 +31,9 @@ import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js
 import { mountOnboardTerminal } from "./modules/terminal-hooks.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkGuardOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { executorName, haveExecutorNames, loadExecutorNames } from "./modules/executor-names.js"
 import { renderConversations } from "./modules/conversations.js"
-import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
+import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, loadMemoryRetractions, restoreMemoryRetraction, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
@@ -172,7 +174,7 @@ presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
 // 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
 const nowConnectionsHost = document.getElementById('now-connections')
-const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path, body) => invokeWorkbenchApi(method, path, body), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) } }) : null
+const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path, body) => invokeWorkbenchApi(method, path, body), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) }, openPlace: openCapabilityPlace }) : null
 {
   const details = /** @type {HTMLDetailsElement|null} */ (document.querySelector('.cc-home-details'))
   /** @type {ReturnType<typeof setInterval>|null} */ let timer = null
@@ -201,7 +203,7 @@ async function loadLifeCategory(category) {
   else await lifeArchive?.load(category)
 }
 
-const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
+const conversationsPoller = createConversationsPoller({ call: (method, path) => invokeWorkbenchApi(method, path), intervalMs: 10000 })
 
 // 等你的事:全局只读一份(GET /v1/workbench/attention)。列表只在「此刻」(N 件事等你)与一起做的「等你处理」;
 // 别的页面只在主导航「此刻」旁边写个数 —— 不再有顶部横条(2026-10-05,同一件事只出现一次)。
@@ -364,6 +366,10 @@ async function refreshGuardStatus() {
   for (const el of statusEls) el.textContent = "查询中…"
   try {
     const r = /** @type {GuardStatus} */ (await invoke("wechat_cli_json", { args: ["guard", "status", "--json"] }))
+    for (const id of ["guard-row", "screen-guard-row"]) {
+      const row = document.getElementById(id)
+      if (row) row.hidden = !guardRowVisible(r)
+    }
     for (const toggle of toggleEls) {
       if (r.enabled) toggle.classList.add("on")
       else toggle.classList.remove("on")
@@ -396,6 +402,19 @@ async function refreshGuardStatus() {
 
 // ─── mode router ──────────────────────────────────────────────────────
 let wizardNavigation = 0
+
+/**
+ * 「CC 现在怎么样」里一行的动作 ⇒ 带到桌面上做这件事的地方(2026-10-17,上手门槛)。认不出 ⇒ false,那一行照旧只写提示。
+ * @param {string} id @param {string} where
+ */
+function openCapabilityPlace(id, where) {
+  /** @type {HTMLDetailsElement|null} */ const details = document.querySelector('.cc-home-details')
+  const go = (/** @type {() => void} */ fn) => { if (details) details.open = false; fn(); return true }
+  if (id === 'wechat') return go(() => deps.routeToWizardBind())
+  if (id === 'phone') { const b = document.getElementById('open-phone-settings'); return b ? go(() => b.click()) : false }
+  if (where === 'settings' || id === 'guard') return go(() => openSettingsDrawer())
+  return false
+}
 
 /** @param {string} mode */
 function setMode(mode) {
@@ -469,8 +488,16 @@ function wireDoctorSubscribers() {
   doctorPoller.subscribe(() => checkFsAccessOnPoll({ ...deps, ipcInvoke: invoke }))
   doctorPoller.subscribe(() => checkGuardOnPoll(deps))
   doctorPoller.subscribe(() => checkBrainHealthOnPoll(deps))
+  // 执行者叫什么由 daemon 定(收敛清单 ⑥):没拿到过就随 doctor 节拍要一次(daemon 还没起来 ⇒ 下一拍再要)。
+  // 老 daemon 不带 names ⇒ 一分钟才再问一次,不跟着 5 秒的节拍刷。
+  let namesTriedAt = 0
+  doctorPoller.subscribe(() => {
+    if (haveExecutorNames() || Date.now() - namesTriedAt < 60_000) return
+    namesTriedAt = Date.now()
+    loadExecutorNames(deps.invokeApi)
+  })
   conversationsPoller.subscribe(report => {
-    if (state.mode === "dashboard") renderConversations(report, { invoke })
+    if (state.mode === "dashboard") renderConversations(report, { invokeApi })
   })
 }
 
@@ -800,7 +827,7 @@ function wireEvents() {
         box.hidden = false
         box.innerHTML = '<div class="brain-setup-title">选择已有账号，查看连接步骤</div>'
           + '<div class="nb-cli-row">'
-          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+({claude:'Claude',codex:'Codex',cursor:'Cursor'}[pv])+'</button>' }).join('')
+          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+escapeHtml(executorName(pv))+'</button>' }).join('')
           + '</div>'
       }
       return
@@ -936,7 +963,8 @@ function wireEvents() {
   })
 
   wireSettingsDrawer({
-    deps: { invoke },
+    deps: { invokeWorkbenchApi },
+    onOpen: () => { void refreshGuardStatus() },
     onToggleChange: async (id, on) => {
       // 返回 false → 持久化失败,让 settings-drawer 回滚开关(别让 UI 撒谎)。
       if (id === "unattended-toggle") {
@@ -1109,6 +1137,22 @@ function wireEvents() {
       body.hidden = wasOpen
     })
   }
+
+  // 收回的话(架构终态 G6):展开时读;点「恢复」经 daemon 放回去
+  document.getElementById("memory-retractions-toggle")?.addEventListener("click", () => {
+    const toggle = document.getElementById("memory-retractions-toggle")
+    const body = document.getElementById("memory-retractions-body")
+    if (!toggle || !body) return
+    const wasOpen = toggle.getAttribute("aria-expanded") === "true"
+    toggle.setAttribute("aria-expanded", wasOpen ? "false" : "true")
+    body.hidden = wasOpen
+    if (!wasOpen) loadMemoryRetractions(deps).catch(err => console.error("retractions load failed", err))
+  })
+  document.getElementById("memory-retractions")?.addEventListener("click", (e) => {
+    const btn = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target.closest("[data-action='restore-retraction']") : null)
+    const key = btn?.getAttribute("data-key")
+    if (key) restoreMemoryRetraction(deps, key).catch(err => console.error("restore failed", err))
+  })
 
   // Local-project-memory fold: lazy-load on first expand (it's a CLI read of
   // ~/.claude/projects, not needed until the user looks).
@@ -1408,12 +1452,12 @@ async function openAvatarModal(deps, key) {
   const lb = document.getElementById("lightbox")
   const body = document.getElementById("lightbox-body")
   if (!lb || !body) return
-  const titleSubject = key === "claude" ? "Claude" : (extractContactNameFromOpenChat() || "联系人")
+  const titleSubject = key === "claude" ? executorName(key) : (extractContactNameFromOpenChat() || "联系人")
   // Look up current avatar (if any) for the preview slot.
   /** @type {AvatarInfo | null} */
   let info = null
   try {
-    info = /** @type {AvatarInfo} */ (await deps.invoke("wechat_cli_json", { args: ["avatar", "info", key, "--json"] }))
+    info = /** @type {AvatarInfo} */ (await v1(deps.invokeWorkbenchApi, V1.avatar.info, { query: { key: key ?? "" } }))
   } catch { /* ignore — preview falls back */ }
   const previewHtml = info?.exists
     ? `<img src="/attachment?path=${encodeURIComponent(info.path)}&v=${Date.now()}"/>`
@@ -1456,7 +1500,7 @@ async function openAvatarModal(deps, key) {
   body.querySelector("#avatar-modal-cancel")?.addEventListener("click", closeLightbox)
   body.querySelector("#avatar-modal-remove")?.addEventListener("click", async () => {
     try {
-      /** @type {AvatarRemove} */ (await deps.invoke("wechat_cli_json", { args: ["avatar", "remove", key, "--json"] }))
+      /** @type {AvatarRemove} */ (await v1(deps.invokeWorkbenchApi, V1.avatar.remove, { body: { key } }))
       closeLightbox()
       reopenCurrentSession(deps)
     } catch (err) {
@@ -1483,7 +1527,7 @@ async function handleAvatarFile(deps, key, file, previewEl) {
   }
   try {
     const base64 = await imageToResizedPngBase64(file, 80)
-    const _avatarSetResult = /** @type {AvatarSet} */ (await deps.invoke("wechat_cli_json", { args: ["avatar", "set", key, "--base64", base64, "--json"] }))
+    const _avatarSetResult = /** @type {AvatarSet} */ (await v1(deps.invokeWorkbenchApi, V1.avatar.set, { body: { key, base64 } }))
     void _avatarSetResult
     closeLightbox()
     reopenCurrentSession(deps)

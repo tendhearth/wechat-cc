@@ -9,8 +9,7 @@ exports[`makeModeCommands > /help for admin tier is byte-identical to the pre-ti
 /agy 是订阅 CLI:所有对话共用一把钥匙,guest 不可用。/cursor 同为订阅 CLI,按对话分权限,但它在工作区内的文件编辑不经过权限卡,guest 同样不可用。
 /api list — 看网关上有哪些模型;/api <别名|模型> 切换(只对本对话);/api alias ds=DeepSeek 起短名
 /cc + codex — Claude 主答，Codex 当工具 (primary_tool)
-/both [p1 p2 …] — 并行回复（裸=全部 provider）
-/chat [p1 p2 …] — 圆桌讨论
+多模型讨论(并行 / 圆桌)在桌面上开
 /solo /stop /mode — 回到默认 / 退出 / 显示当前模式
 /set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎);/set cheap 后台评估用哪家、/set providers 非管理员能用哪些(管理员)
 改配置直接说就行 — 例如"换成 gemini flash"、"把知识内核打开"(管理员)
@@ -34,7 +33,9 @@ exports[`makeModeCommands > /help for admin tier is byte-identical to the pre-ti
 /hearth help — vault 治理（hearth 子命令）
 清理 <bot> / 清理 all-expired — 清理过期 bot
 整理记忆 / 看记忆 — 重新整理 / 查看 CC 对你的理解
-让<名字>执行 <任务> — 派活给已配对的「手」电脑（一个大脑多手）"
+让<名字>执行 <任务> — 派活给已配对的「手」电脑（一个大脑多手）
+「终端」·「日报」·「看 码」·「@码 话」— 终端里的会话（Claude Code / Codex / Cursor）：列会话 / 今天的情况 / 看最近的对话 / 接着说一句
+「给我写封信」— CC 给你写一封信，排成信纸寄到微信"
 `;
 
 exports[`makeModeCommands > /help for trusted tier (non-admin) is byte-identical to the pre-tiering output, and matches admin's output minus the admin section 1`] = `
@@ -46,8 +47,7 @@ exports[`makeModeCommands > /help for trusted tier (non-admin) is byte-identical
 /agy 是订阅 CLI:所有对话共用一把钥匙,guest 不可用。/cursor 同为订阅 CLI,按对话分权限,但它在工作区内的文件编辑不经过权限卡,guest 同样不可用。
 /api list — 看网关上有哪些模型;/api <别名|模型> 切换(只对本对话);/api alias ds=DeepSeek 起短名
 /cc + codex — Claude 主答，Codex 当工具 (primary_tool)
-/both [p1 p2 …] — 并行回复（裸=全部 provider）
-/chat [p1 p2 …] — 圆桌讨论
+多模型讨论(并行 / 圆桌)在桌面上开
 /solo /stop /mode — 回到默认 / 退出 / 显示当前模式
 /set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎);/set cheap 后台评估用哪家、/set providers 非管理员能用哪些(管理员)
 改配置直接说就行 — 例如"换成 gemini flash"、"把知识内核打开"(管理员)

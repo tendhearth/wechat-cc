@@ -1,29 +1,55 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, OverseerTodayT, TodayItemT,
+  FeedEvent, Presence,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, MemoryRetractionsSuccess, ChatSearchHit, PhoneJobT as ProtocolPhoneJobT, PhoneRewindPreviewT, PhoneActivityItemT, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
 // 协议包已导出这个类型,不再重推一份(裁决 R12)
-export type { SessionContinueT, CliSessionRowT, OverseerTodayT, TodayItemT }
+export type { SessionContinueT, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT }
 export type MatterT = z.infer<typeof Matter>
 export type MatterDetailT = z.infer<typeof MatterDetail>
 export type ApprovalExplanationT = z.infer<typeof ApprovalExplanation>
 export type ProgressSummaryT = z.infer<typeof ProgressSummary>
 export type PhoneChangesTurnT = z.infer<typeof PhoneChangesTurn>
+/** 撤掉这一轮的预览(GET /m/api/matter/rewind,回退切片 4)。 */
+export type RewindPreviewT = PhoneRewindPreviewT
 export type EntryOptionsT = z.infer<typeof EntryOptions>
 export type ChatPageT = z.infer<typeof ChatPage>
 export type ChatJobT = z.infer<typeof ChatJob>
 export type ChatMessageT = z.infer<typeof ChatMessage>
 export type ChatAttachmentT = z.infer<typeof ChatAttachment>
+/** 「CC 的信」里的一封(2026-10-18):寄出去了的;pages=0 ⇒ 按文字寄的,全文在 text。 */
+export type LetterSummaryT = z.infer<typeof LetterSummary>
+/** 电脑上一份文件的一块(chat/file 与 letters/page 同一个形状):size + sha256 是整份的,拼完核对。 */
+export type FileChunkT = { name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }
 export type EntryModelCatalogT = z.infer<typeof EntryModelCatalog>
 /** 交办时指定的模型 / 思考强度;不给 ⇒ 用执行者自己的默认。 */
 export type EntryExecution = { model?: string; reasoningEffort?: string }
 export type MemoryViewT = Omit<z.infer<typeof MemorySuccess>, 'ok'>
+/** 收回的话里的一条(架构终态 G6):主人说过「不对 / 过时 / 不用记」的那句。 */
+export type MemoryRetractionT = z.infer<typeof MemoryRetractionsSuccess>['items'][number]
 /** 主人对话用哪个后端 / 模型(2026-10-06);model=null ⇒ 用这个后端的全局设置 globalModel。 */
 export type ChatModelViewT = Omit<z.infer<typeof ChatModelView>, 'ok'>
 export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
+/** 一条定时;recap = 周报(PR 431 的 daemon 才给,协议包还没有这个字段 ⇒ App 这边先按可选认,老 daemon 不带)。 */
+export type PhoneJobT = ProtocolPhoneJobT & { recap?: boolean }
+/** 「CC 做过的事」的一条(GET /m/api/activity,B9):title 是电脑写好的一句(含成没成),ref 指向能点开的那件。 */
+export type ActivityItemT = PhoneActivityItemT
+/** 一页时间线:next = 再早一点的游标;degraded = 这次读不到的来源名(其余照出)。 */
+export type ActivityPageT = { items: ActivityItemT[]; next: string | null; degraded: string[] }
+/** 定时列表(GET /m/api/jobs,2026-10-20):executor=null ⇒ 这台电脑上没有能跑定时的执行者。 */
+export type JobsViewT = { timezone: string; executor: string | null; jobs: PhoneJobT[] }
+export type JobsAction = 'pause' | 'resume' | 'remove'
+/** 一条待办(GET /m/api/state 的 todos 里一行,协议包 TodoRow 校验):value = 要做的事,display = 跟谁(联系人显示名),
+ *  time_ref = 聊天里说的时间(「周五」),可能没有;updated_at = 秒。 */
+export type TodoRowT = { id: number; contact: string; predicate: string; value: string; time_ref: string | null; updated_at: number; display: string }
+/** 「待办」与「CC 画的你」(收敛清单 ④,2026-10-21,从手机网页搬来):settled = 最近七天了结的(最多 20 条);
+ *  portraitPng = 电脑画好的 base64 PNG(原生端没有 SVG 渲染);没画过 / 电脑不是 macOS / 老 daemon ⇒ null。 */
+export type PocketT = { todos: { active: TodoRowT[]; settled: TodoRowT[] }; portraitPng: string | null }
+/** 完成 = resolved;捞回 = active。 */
+export type TodoStatus = 'resolved' | 'active'
 export type ChatSearchHitT = z.infer<typeof ChatSearchHit>
 /** 一句话 / 一件新事带的材料:同一个草稿 id 下先传好的几份(2026-10-06)。 */
 export type PhoneMaterials = { draftId: string; attachmentIds: string[] }
@@ -34,6 +60,10 @@ export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
 export type MatterInputT = MatterDetailT['inputs'][number]
 export type MatterSayResultT = z.infer<typeof MatterSayResult>
+export type FeedEventT = z.infer<typeof FeedEvent>
+export type PresenceT = z.infer<typeof Presence>
+/** 随身 CC 首屏(GET /m/api/home)里此刻页用得到的几样:CC 在干什么、伙伴最近的动态(新的在前)、主人看到哪了(与桌面觅食台同一个水位)。 */
+export type CompanionHomeT = { presence: PresenceT | null; seenUntil: string | null; unread: number; events: FeedEventT[] }
 export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT, DeviceRowT } from '@wechat-cc/protocol'
 
 export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
@@ -48,6 +78,14 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'too_large' | 'no_voice'
   | 'images_gone' | 'images_unsupported'
   | 'cli_not_actionable' | 'cli_ended' | 'cli_remote'
+  | 'stt_not_configured' | 'stt_blocked' | 'stt_failed' | 'no_speech'
+  | 'until_invalid' | 'until_requires_worktree' | 'until_unattended'
+  // 撤掉这一轮(回退切片 4):工作区刚变过 / 停住等电脑上处理 / 共用文件夹 / 已合回 / 会盖掉被忽略的文件 / 这件事回不了 / 没东西可撤 / 切换失败
+  | 'rewind_stale' | 'rewind_needs_owner' | 'rewind_shared' | 'rewind_merged' | 'rewind_ignored' | 'rewind_unavailable' | 'rewind_noop' | 'rewind_failed'
+  // 行评论(切片 4):这一块已经变了 / 评论已发出(不能删)/ 同一个 id 内容不同 / 草稿满了
+  | 'hunk_stale' | 'comment_sent' | 'comment_conflict' | 'comment_limit'
+  // 工作区脚本(2026-10-20):这份脚本还没在电脑上确认 / 已经在运行 / setup 在跑、跑完接着运行 / 没有 run 脚本
+  | 'scripts_unapproved' | 'script_running' | 'script_queued' | 'no_scripts'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -59,13 +97,28 @@ export interface Backend {
   matter(id: string, lang: Lang): Promise<MatterDetailT>
   insight(id: string, lang: Lang): Promise<{ explanations: Record<string, ApprovalExplanationT>; progress: ProgressSummaryT | null }>
   changes(id: string): Promise<PhoneChangesTurnT | null>
+  /** 逐文件审阅(2026-10-17):这一份没问题 / 退回给执行者(comment 必填,走续接)。artifactId = changes 那一轮的。 */
+  reviewMark(p: { id: string; artifactId: string; path: string }): Promise<void>
+  reviewReturn(p: { id: string; artifactId: string; paths: string[]; comment: string }): Promise<void>
+  /** 行评论(切片 4):整块评论存成草稿。commentId 由手机生成(UUID),同一条重试幂等;hunkSha256 来自 changes 的 hunks。 */
+  reviewComment(p: { id: string; commentId: string; artifactId: string; path: string; hunk: number; hunkSha256: string; body: string }): Promise<void>
+  /** 删一条草稿(已发出的删不了 ⇒ comment_sent)。 */
+  reviewCommentDelete(p: { id: string; commentId: string }): Promise<void>
+  /** 把这件事所有草稿一起发给执行者;requestId 同一批重点沿用。不自动重发:超时 ⇒ 不确定。 */
+  reviewCommentsSend(p: { id: string; requestId: string; summary?: string }): Promise<{ sent: number; remaining: number; skippedDiscarded: number }>
   decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
+  /** 撤掉这一轮的预览(GET /m/api/matter/rewind,回退切片 4):固定回到最新那一轮开始之前;artifactId = changes 那一轮的。只给配过对的手机。 */
+  rewindPreview(p: { id: string; artifactId: string }): Promise<RewindPreviewT>
+  /** 带预览给的 token 撤掉(POST /m/api/matter/rewind)。工作区之后又变了 ⇒ BackendError('rewind_stale'),要重拉预览。 */
+  rewind(p: { id: string; artifactId: string; token: string }): Promise<void>
   /** 停下正在跑的这一轮(POST /m/api/matter/stop,2026-10-06)。runId = 手机看到的那一轮;已经换了一轮 ⇒ BackendError('input_stale')。 */
   stop(p: { id: string; runId: string }): Promise<void>
   /** 独立工作区:提交到分支 / 删除工作区(2026-10-07)/ 合回项目(10-08,只快进;快进不了 ⇒ BackendError('merge_manual'),回电脑上合)。 */
   worktree(p: { id: string; action: 'commit' | 'remove' | 'merge' | 'reopen' }): Promise<{ branch: string; committed?: boolean; removed?: boolean; merged?: boolean; reopened?: boolean }>
+  /** 工作区脚本的运行 / 停下(同一个 POST /m/api/matter/worktree,2026-10-20)。批准只在电脑上:没批 ⇒ BackendError('scripts_unapproved')。只给配过对的手机。 */
+  worktreeScript(p: { id: string; action: 'run' | 'stop' }): Promise<{ branch: string; port?: number; setup?: string; run?: string; approved?: boolean }>
   /** 一件事的成果按块读(GET /m/api/matter/artifact,每块 128 KiB);sha256 对不上 ⇒ 电脑上那份已经换了。 */
   artifactChunk(p: { id: string; artifactId: string; sha256: string; offset: number }): Promise<{ offset: number; nextOffset: number; size: number; contentBase64: string }>
   /** 工作台补充携带首次提交的 runId;重发时 requestId / runId / text 保持同一份快照。缺省仍兼容聊天与首次接续。 */
@@ -75,7 +128,7 @@ export interface Backend {
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
   /** isolation:在这个项目的独立工作区(git worktree)里做,同一项目可以并行(2026-10-07)。 */
-  create(p: { requestId: string; text: string; projectId?: string; providerId?: string; execution?: EntryExecution; isolation?: boolean; /** 独立工作区从哪个本地分支开始(10-08) */ base?: string } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
+  create(p: { requestId: string; text: string; projectId?: string; providerId?: string; execution?: EntryExecution; isolation?: boolean; /** 独立工作区从哪个本地分支开始(10-08) */ base?: string; /** 做到这条命令通过为止(10-20);只随独立工作区带 */ until?: { command: string; maxRounds: number } } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
   /** 交办时可选的模型(GET /m/api/entry/models,2026-10-06);执行者不带模型目录 ⇒ BackendError。 */
   entryModels(providerId: string, projectId?: string): Promise<EntryModelCatalogT>
   /** 材料分块上传(POST /m/api/attachment/chunk,2026-10-06 起手机 app 也用):每块 128 KiB、按 offset 续传;最后一块后 status=ready。 */
@@ -99,22 +152,46 @@ export interface Backend {
   memory(): Promise<MemoryViewT>
   /** 逐条纠错(POST /m/api/memory/correct,2026-10-06):立刻拿掉,CC 记下这次纠正、当晚整理不写回。不在了 ⇒ BackendError('not_found')。 */
   correctMemory(id: string, verdict: MemoryVerdict): Promise<void>
+  /** 收回的话(GET /m/api/memory/retractions,架构终态 G6):最新的在后。 */
+  memoryRetractions(): Promise<MemoryRetractionT[]>
+  /** 恢复一条(POST /m/api/memory/restore):那一行回到记忆里;note 是给主人看的那句(随之删掉的笔记行不会回来)。不在了 ⇒ BackendError('not_found')。 */
+  restoreMemory(key: string): Promise<{ restored: string[]; note: string }>
+  /** 待办与 CC 画的你(GET /m/api/state;同一条里还有名字、表情库,App 不读)。 */
+  pocket(): Promise<PocketT>
+  /** 完成 / 捞回一条待办(POST /m/api/todo,正文恰好 { id, status })。电脑没接待办 ⇒ BackendError('unavailable')。 */
+  setTodo(id: number, status: TodoStatus): Promise<void>
   /** 在主人那条对话里搜(GET /m/api/chat/search,2026-10-06):新的在前,最多 30 条、每条最多 600 字。 */
   chatSearch(q: string): Promise<ChatSearchHitT[]>
   /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */
   chatVoice(messageId: string, index: number): Promise<{ mime: string; data: string }>
+  /** 按住说话(2026-10-18):电脑上配没配语音转文字(GET /m/api/chat/transcribe)。 */
+  transcribeStatus(): Promise<{ configured: boolean }>
+  /** 一段录音转成字(POST /m/api/chat/transcribe);只回字,不发。没配 ⇒ 'stt_not_configured';太大 ⇒ 'too_large'(手机上就拦);
+   *  没听出字 ⇒ 'no_speech';网络守护拦下 ⇒ 'stt_blocked';电脑上的服务失败 / 太慢 ⇒ 'stt_failed'。 */
+  transcribe(p: { mime: string; audioBase64: string }): Promise<string>
   /** 回复里第 index 个附件(必须是文件)按块读(GET /m/api/chat/file,2026-10-06);不在了 ⇒ not_found,太大 ⇒ too_large。 */
   /** 主人对话的后端 / 模型(GET /m/api/chat/model)。 */
   chatModel(): Promise<ChatModelViewT>
   /** 钉这条对话的后端 / 模型(只影响主人这条对话,下一句生效);model=null ⇒ 用全局设置。 */
   setChatModel(provider: string, model: string | null): Promise<ChatModelViewT>
-  chatFileChunk(p: { messageId: string; index: number; offset: number }): Promise<{ name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }>
+  chatFileChunk(p: { messageId: string; index: number; offset: number }): Promise<FileChunkT>
+  /** 定时(GET /m/api/jobs,2026-10-20):只看与停 / 开 / 删,新建仍在微信「定时」里说。只给配过对的手机。 */
+  jobs(): Promise<JobsViewT>
+  /** 停 / 开 / 删一条定时(POST /m/api/jobs/action);不在了 ⇒ BackendError('not_found')。 */
+  jobsAction(id: string, action: JobsAction): Promise<void>
+  /** CC 做过的事(GET /m/api/activity,B9):新的在前,最多两周;cursor ⇒ 接着上一页往下翻。只给配过对的手机。 */
+  activity(p?: { cursor?: string | null }): Promise<ActivityPageT>
+  /** CC 的信(GET /m/api/letters,2026-10-18):寄出去了的信,新的在前。只给配过对的手机(链接令牌 403 ⇒ BackendError)。 */
+  letters(): Promise<LetterSummaryT[]>
+  /** 一封信的第 page 页(1 起)按块读(GET /m/api/letters/page);不在了 ⇒ BackendError('not_found')。 */
+  letterPageChunk(p: { id: string; page: number; offset: number }): Promise<FileChunkT>
   /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */
   sticker(file: string): Promise<{ mime: string; data: string }>
   /** CC 的连接快照(手机版,没有 detail)。 */
   connections(): Promise<ConnectionsT>
   /** 电脑上的原生会话(只读);cursor = 上一页的 nextCursor。 */
-  sessions(provider: 'claude' | 'codex', cursor?: string, q?: string): Promise<{ items: NativeSessionRowT[]; nextCursor: string | null }>
+  /** names:两个分段的执行者正式名字(daemon 下发,收敛清单 ⑥);老 daemon 不带。 */
+  sessions(provider: 'claude' | 'codex', cursor?: string, q?: string): Promise<{ items: NativeSessionRowT[]; nextCursor: string | null; names?: Record<string, string> }>
   /** 一个原生会话的一页消息;读不了 ⇒ BackendError('not_found')。 */
   session(key: string, cursor?: string, window?: 'recent' | 'start'): Promise<NativeSessionPageT>
   /** 这个电脑上的会话能不能在手机上接着做(不缓存,每次问电脑)。读不了 ⇒ BackendError('not_found')。 */
@@ -128,10 +205,17 @@ export interface Backend {
   cliSessions(): Promise<CliSessionRowT[]>
   /** 拍板终端会话等批准的那一项(同微信「y/n 码」)。码已失效 ⇒ 'stale';终端自己在问(主人在电脑前)⇒ 'cli_not_actionable'。 */
   cliPermission(p: { sessionId: string; hash?: string; decision: 'allow' | 'deny' }): Promise<void>
-  /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 */
-  cliSay(sessionId: string, text: string): Promise<void>
+  /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 
+   *  sayId:送进开着的窗口时 daemon 给的,对上会话行 last_say.id 才知道送没送到;不开窗口的那条路 / 老 daemon ⇒ null。 */
+  cliSay(sessionId: string, text: string): Promise<{ sayId: string | null }>
+  /** 看着它跑(GET /m/api/cli/activity,2026-10-17):最近几步,旧 → 新。在别的电脑上 ⇒ 'cli_session_remote';没有记录 ⇒ 'no_transcript';老电脑 ⇒ 'not_found' 之类。 */
+  cliActivity(sessionId: string): Promise<CliActivityItemT[]>
   /** 「今天」(GET /m/api/today,2026-10-14):终端 + 一起做,过去 24 小时 —— 等你 / 做完 / 在跑 / 可能卡住。与微信「日报」同一份。 */
   today(): Promise<OverseerTodayT>
+  /** 随身 CC 首屏(GET /m/api/home?limit=20):CC 此刻在干什么 + 最近的动态 + 看到哪了。lang 只给演示用。 */
+  home(lang: Lang): Promise<CompanionHomeT>
+  /** 看到这里了(POST /m/api/seen):电脑把水位夹到现在、只前进不后退;回生效后的水位。 */
+  markSeen(until: string): Promise<string>
   /** 解除本机配对(daemon 撤掉本机令牌)。失败抛 BackendError;调用方无论成败都清本地令牌。 */
   unpair(): Promise<void>
   /** 前台 true / 后台 false:false 关连接;true 立刻新握手、订阅全部重挂。演示后端空操作。 */

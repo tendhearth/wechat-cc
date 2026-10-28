@@ -21,6 +21,9 @@
  * (same pattern as summarizer-runtime), so the CLI wires the admin's provider
  * (claude/codex) and tests pass a mock.
  */
+import { dropCorrectedLines, dropCorrectedValues } from './memory-corrections'
+import { feedsSynthesis } from './memory-artifacts'
+import { renderOwnerOverviewSection, stripOwnerOverviewSection, type OwnerDoc } from './memory-owner'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -40,7 +43,7 @@ export interface LifeStoresReader {
 }
 export interface LifeSourceRecord { id: string; body: string }
 import { readMemoryProfileFile, writeMemoryFile, writeMemoryProfileFile } from './memory'
-import { beginDerivedGeneration, commitDerivedMemory, isDerivedMemoryStale, readDerivedRevision } from './memory-derived-state'
+import type { DerivedFence } from './derived-fence'
 import { surveyFiles, formatFileSurvey, type SurveyResult } from './file-survey'
 
 /** Default root for Claude Code's per-project memory dirs. */
@@ -218,25 +221,25 @@ export function formatSynthesisPrompt(projects: ProjectMemory[], life?: LifeCont
   const catCount = 2 + (hasSurvey ? 1 : 0) + (hasSocial ? 1 : 0)   // A work + B life always described; +C survey +D social
   const header = [
     `你是这台电脑主人(下称「管理员」)的个人助理。下面是关于管理员的记忆,分${catCount}类:`,
-    'A) 工作侧 —— 他在本机各项目里积累的记忆/笔记;',
+    'A) 工作侧 —— 主人在本机各项目里积累的记忆/笔记;',
     hasLife
-      ? 'B) 生活侧 —— 你(bot)在微信里观察到的他这个人、在意的人和事、偏好、近况。'
+      ? 'B) 生活侧 —— 你(bot)在微信里观察到的 ta 这个人、在意的人和事、偏好、近况。'
       : '(本次没有生活侧数据。)',
     hasSurvey
-      ? 'C) 文件侧 —— 他电脑常用目录里的文件夹结构与文件名概览(只有结构,没有内容)。'
+      ? 'C) 文件侧 —— 主人电脑常用目录里的文件夹结构与文件名概览(只有结构,没有内容)。'
       : '(本次没有文件侧数据。)',
-    ...(hasSocial ? ['D) 社交侧 —— 从他的微信全量历史算出来的关系与未了义务(客观数据,非你的主观印象)。'] : []),
+    ...(hasSocial ? ['D) 社交侧 —— 从主人的微信全量历史算出来的关系与未了义务(客观数据,非你的主观印象)。'] : []),
     hasSurvey
-      ? '请综合成一份「总体记忆」——让你整体「懂这个人」的精炼画像。工作、生活、电脑里在忙的东西不要分开看,他是一个完整的人。'
-      : '请综合成一份「总体记忆」——让你整体「懂这个人」的精炼画像。工作和生活不要分开看,他是一个完整的人。',
+      ? '请综合成一份「总体记忆」——让你整体「懂这个人」的精炼画像。工作、生活、电脑里在忙的东西不要分开看,ta 是一个完整的人。'
+      : '请综合成一份「总体记忆」——让你整体「懂这个人」的精炼画像。工作和生活不要分开看,ta 是一个完整的人。',
     '',
     '要求:',
     '1. 用中文输出一份 markdown,直接作为记忆内容,不要寒暄、不要解释你在做什么。',
     '2. 开头「整体理解」:这个人是谁、在做什么、在意什么、偏好 —— 工作和生活揉在一起写。',
     '3. 一节「## 项目地图」,每个工作项目一行: `- 项目名 — 一句话概述`(项目名用易读的名字)。',
-    hasLife ? '4. 一节「## 生活与关系」:他在意的人/事、近况、性格偏好(只写生活侧有依据的)。' : '4. (无生活侧,跳过生活与关系一节。)',
+    hasLife ? '4. 一节「## 生活与关系」:ta 在意的人/事、近况、性格偏好(只写生活侧有依据的)。' : '4. (无生活侧,跳过生活与关系一节。)',
     ...(hasSocial ? ['4b. 把社交侧算出来的关系和未了义务揉进「生活与关系」一节,注明哪些值得跟进(尤其义务);它是客观数据,和你的主观印象分清。'] : []),
-    hasSurvey ? '5. 把文件侧也算进「他在做什么」——从文件夹和文件名推断他最近在忙什么,提炼信号,别逐个罗列文件。' : '5. (无文件侧,忽略。)',
+    hasSurvey ? '5. 把文件侧也算进「ta 在做什么」——从文件夹和文件名推断 ta 最近在忙什么,提炼信号,别逐个罗列文件。' : '5. (无文件侧,忽略。)',
     '6. 简洁,总长 ~600 字内。只写有依据的,别编造。',
     '',
     `工作侧:共 ${projects.length} 个项目`,
@@ -355,7 +358,7 @@ function lifeIsEmpty(life: LifeContext | null): boolean {
  * missing table / file degrades to empty rather than failing the synthesis.
  * Excludes `_overview.md` (our own output — never feed it back in).
  */
-export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null; stateDir: string; adminChatId: string }): Promise<LifeContext> {
+export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null; stateDir: string; adminChatId: string; memoryMd?: () => string | null }): Promise<LifeContext> {
   const { stores, stateDir, adminChatId } = opts
   const memoryRoot = join(stateDir, 'memory')
   const out: LifeContext = { observations: [], milestones: [], memoryNotes: [] }
@@ -373,14 +376,35 @@ export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null
   try {
     const dir = join(memoryRoot, adminChatId)
     for (const rel of listMd(dir)) {
-      if (rel === OVERVIEW_FILENAME) continue  // don't feed our own output back
+      // 只吃源(lib/memory-artifacts,3e 记忆第 3 步):生成物不喂生成物 —— 以前只排除了 _overview.md 自己,knowledge.md
+      // 被读两遍(下面 readOwnerKnowledge 单独读了一份)、today-draft 和 profile.md 重复;corrections.md 复述被纠正的原话,也不喂。
+      if (!feedsSynthesis(rel)) continue
+      // memory.md 从主库的表来(架构终态 G6,由记忆功能给);没给(老调用方)⇒ 不喂,不再直接读文件
+      if (rel === 'memory.md') { const md = opts.memoryMd?.(); if (md !== null && md !== undefined) out.memoryNotes.push({ name: rel, content: md }); continue }
       try { out.memoryNotes.push({ name: rel, content: readFileSync(join(dir, rel), 'utf8') }) } catch { /* skip */ }
     }
   } catch { /* best-effort */ }
   return out
 }
 
+/**
+ * 合成要的那几样主人记忆,都在主库的表里,由记忆功能给(src/features/memory 的 MemoryWriter);lib 不认表。
+ *  - `retractedTexts` / `redacted`:收回的话与出口过滤的命中记账(架构终态 G5;以前解析 corrections.md、记 memory-redactions.json);
+ *  - `ownerDoc`:总览最前面「## 你写的」那一节的主人原话(G6;以前读 owner.md);
+ *  - `memoryMd`:每晚整理的长期记忆(G6;以前生活侧素材里直接读 memory.md 文件)。没有 ⇒ null。
+ */
+export interface SynthesisMemory {
+  retractedTexts(): ReadonlySet<string>
+  redacted(kind: 'overview' | 'profile', hits: readonly string[]): void
+  ownerDoc(): OwnerDoc
+  memoryMd(): string | null
+  /** 这个对话生成物的过期围栏(架构终态 G8,在主库;以前是 .derived-state.json)。 */
+  fence: DerivedFence
+}
+
 export interface SynthesizeDeps {
+  /** 必给:总览 / 画像会进串门人设,收回的话一定要在写盘前挡掉。 */
+  memory: SynthesisMemory
   stateDir: string
   /** Admin's chat_id (== userId); the overview is written under its memory dir. */
   adminChatId: string
@@ -436,7 +460,7 @@ async function buildOverviewSource(deps: SynthesizeDeps) {
   const projectsRoot = deps.projectsRoot ?? defaultClaudeProjectsRoot()
   const projects = discoverProjectMemory(projectsRoot)
   const filesScanned = projects.reduce((n, p) => n + (p.index ? 1 : 0) + p.files.length, 0)
-  const life = deps.lifeStores ? await gatherLifeContext({ stores: deps.lifeStores, stateDir: deps.stateDir, adminChatId: deps.adminChatId }) : null
+  const life = deps.lifeStores ? await gatherLifeContext({ stores: deps.lifeStores, stateDir: deps.stateDir, adminChatId: deps.adminChatId, memoryMd: () => deps.memory.memoryMd() }) : null
   const survey = deps.includeFileSurvey
     ? gatherFileSurvey({ stateDir: deps.stateDir, adminChatId: deps.adminChatId, roots: deps.surveyRoots })
     : null
@@ -450,7 +474,7 @@ async function buildOverviewSource(deps: SynthesizeDeps) {
 
 export async function synthesizeOverview(deps: SynthesizeDeps): Promise<SynthesizeResult> {
   const memoryRoot = join(deps.stateDir, 'memory', deps.adminChatId)
-  const revision = deps.dryRun ? readDerivedRevision(memoryRoot) : beginDerivedGeneration(memoryRoot)
+  const revision = deps.memory.fence.revision()
   const { projects, filesScanned, life, survey, prompt } = await buildOverviewSource(deps)
   const base: SynthesizeResult = {
     projectsFound: projects.length,
@@ -470,12 +494,19 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   if (overview.length === 0) return base
   if (sourceFingerprint((await buildOverviewSource(deps)).prompt) !== sourceFingerprint(prompt)) return base
 
-  const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${overview}\n`
+  // 卡出口(3b):含主人更正过的话的行一律丢掉、记数 —— 串门拿到的总览一定过这一层。逐字比对,换说法会漏(见 lib/memory-corrections)。
+  const redacted = dropCorrectedLines(overview, deps.memory.retractedTexts())
+  if (redacted.hits.length) deps.memory.redacted('overview', redacted.hits)
+  // 主人原话(记忆编辑第 3 步):由代码逐字插在最前面一节,不过出口过滤 —— 那是主人说的;模型自己写出的同名一节先去掉。
+  const ownerSection = renderOwnerOverviewSection(deps.memory.ownerDoc())
+  const body = stripOwnerOverviewSection(redacted.text).trim()
+  const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${ownerSection ? `${ownerSection}\n\n` : ''}${body}\n`
   let bytesWritten = 0
-  const committed = commitDerivedMemory(memoryRoot, 'overview', revision, () => {
-    bytesWritten = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped).bytesWritten
+  // 总览是生成物:写它不让源过期(fence 给 null);缓存进主库(memory_derived,架构终态 G8),磁盘上那份是导出
+  const committed = deps.memory.fence.commit('overview', revision, stamped, () => {
+    bytesWritten = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped, null).bytesWritten
   })
-  return committed ? { ...base, overview, written: { path: OVERVIEW_FILENAME, bytesWritten } } : base
+  return committed ? { ...base, overview: body, written: { path: OVERVIEW_FILENAME, bytesWritten } } : base
 }
 
 export interface MemoryProfileCard {
@@ -662,6 +693,7 @@ function parseProfileJson(raw: string, chatId: string, catalog: Map<string, Memo
     .trim()
     .replace(/^他(?=是|在|会|希望|更|长期|曾|明确|近期|已经|对|把|也)/, '你')
     .replace(/^她(?=是|在|会|希望|更|长期|曾|明确|近期|已经|对|把|也)/, '你')
+    .replace(/^ta ?(?=是|在|会|希望|更|长期|曾|明确|近期|已经|对|把|也)/i, '你')
     .replace(/这个用户/g, '你')
   const cards = (value: unknown): MemoryProfileCard[] => Array.isArray(value)
     ? value.map(item => {
@@ -733,9 +765,9 @@ function daysSince(iso: string): number | null {
   return Math.floor((Date.now() - t) / 86_400_000)
 }
 
-function readExistingProfile(stateDir: string, chatId: string): MemoryProfileDoc | null {
+function readExistingProfile(stateDir: string, chatId: string, fence: DerivedFence): MemoryProfileDoc | null {
   try {
-    const raw = readMemoryProfileFile(stateDir, chatId)
+    const raw = readMemoryProfileFile(stateDir, chatId, fence)
     const parsed = JSON.parse(raw)
     return parsed && typeof parsed === 'object' ? parsed as MemoryProfileDoc : null
   } catch {
@@ -744,6 +776,8 @@ function readExistingProfile(stateDir: string, chatId: string): MemoryProfileDoc
 }
 
 async function buildProfileSource(opts: {
+  /** memory.md 从表来(G6);画像的指纹要和合成时用的是同一份。 */
+  memory: Pick<SynthesisMemory, 'memoryMd' | 'fence'>
   stateDir: string
   adminChatId: string
   projectsRoot?: string
@@ -764,7 +798,7 @@ async function buildProfileSource(opts: {
   const projectsRoot = opts.projectsRoot ?? defaultClaudeProjectsRoot()
   const projects = discoverProjectMemory(projectsRoot)
   const filesScanned = projects.reduce((n, p) => n + (p.index ? 1 : 0) + p.files.length, 0)
-  const life = opts.lifeStores ? await gatherLifeContext({ stores: opts.lifeStores, stateDir: opts.stateDir, adminChatId: opts.adminChatId }) : null
+  const life = opts.lifeStores ? await gatherLifeContext({ stores: opts.lifeStores, stateDir: opts.stateDir, adminChatId: opts.adminChatId, memoryMd: () => opts.memory.memoryMd() }) : null
   const survey = opts.includeFileSurvey
     ? gatherFileSurvey({ stateDir: opts.stateDir, adminChatId: opts.adminChatId, roots: opts.surveyRoots })
     : null
@@ -785,7 +819,7 @@ async function buildProfileSource(opts: {
 
 export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<SynthesizeProfileResult> {
   const memoryRoot = join(deps.stateDir, 'memory', deps.adminChatId)
-  const revision = deps.dryRun ? readDerivedRevision(memoryRoot) : beginDerivedGeneration(memoryRoot)
+  const revision = deps.memory.fence.revision()
   const source = await buildProfileSource(deps)
   const base: SynthesizeProfileResult = {
     projectsFound: source.stats.projectsFound,
@@ -808,15 +842,20 @@ export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<Sy
   profile.sourceStats = source.stats
   profile.sourceFingerprint = source.fingerprint
   profile.minRefreshAfter = addDays(profile.generatedAt, AUTO_REFRESH_DAYS) ?? undefined
-  const body = `${JSON.stringify(profile, null, 2)}\n`
+  // 卡出口(3b):画像里命中被更正之话的字符串去掉 / 置空、记数。
+  const redactedProfile = dropCorrectedValues(profile, deps.memory.retractedTexts())
+  if (redactedProfile.hits.length) deps.memory.redacted('profile', redactedProfile.hits)
+  const body = `${JSON.stringify(redactedProfile.value, null, 2)}\n`
   let bytesWritten = 0
-  const committed = commitDerivedMemory(memoryRoot, 'profile', revision, () => {
+  const committed = deps.memory.fence.commit('profile', revision, body, () => {
     bytesWritten = writeMemoryProfileFile(deps.stateDir, deps.adminChatId, body).bytesWritten
   })
-  return committed ? { ...base, profile, written: { path: PROFILE_FILENAME, bytesWritten } } : base
+  return committed ? { ...base, profile: redactedProfile.value, written: { path: PROFILE_FILENAME, bytesWritten } } : base
 }
 
 export async function getMemoryProfileStatus(opts: {
+  /** memory.md 从表来(G6);画像的指纹要和合成时用的是同一份。 */
+  memory: Pick<SynthesisMemory, 'memoryMd' | 'fence'>
   stateDir: string
   adminChatId: string
   projectsRoot?: string
@@ -825,12 +864,12 @@ export async function getMemoryProfileStatus(opts: {
   surveyRoots?: string[]
 }): Promise<MemoryProfileStatusResult> {
   const source = await buildProfileSource(opts)
-  const existing = readExistingProfile(opts.stateDir, opts.adminChatId)
+  const existing = readExistingProfile(opts.stateDir, opts.adminChatId, opts.memory.fence)
   const enough = hasEnoughProfileSource(source.stats)
   const generatedAt = existing?.generatedAt ?? null
   const minRefreshAfter = existing?.minRefreshAfter ?? (generatedAt ? addDays(generatedAt, AUTO_REFRESH_DAYS) : null)
   const previousSourceFingerprint = existing?.sourceFingerprint ?? null
-  const needsRefresh = isDerivedMemoryStale(join(opts.stateDir, 'memory', opts.adminChatId), 'profile')
+  const needsRefresh = opts.memory.fence.isStale('profile')
   const changed = needsRefresh || (previousSourceFingerprint ? previousSourceFingerprint !== source.fingerprint : false)
   const days = generatedAt ? daysSince(generatedAt) : null
   const oldEnough = days === null ? false : days >= AUTO_REFRESH_DAYS

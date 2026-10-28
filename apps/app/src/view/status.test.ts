@@ -6,14 +6,14 @@ describe('statusOf', () => {
     expect(statusOf({ status: 'running', phase: 'working' }, 1)).toBe('waiting')
     expect(statusOf({ status: 'failed' }, 2)).toBe('waiting')
   })
-  it('failed / interrupted(status 或 phase)⇒ failed', () => {
+  it('failed(status 或 phase)⇒ failed', () => {
     expect(statusOf({ status: 'failed' }, 0)).toBe('failed')
     expect(statusOf({ status: 'running', phase: 'failed' }, 0)).toBe('failed')
-    expect(statusOf({ status: 'interrupted' }, 0)).toBe('failed')
-    expect(statusOf({ status: 'running', phase: 'interrupted' }, 0)).toBe('failed')
   })
-  it('cancelled ⇒ stopped', () => {
+  it('cancelled / interrupted ⇒ stopped(用词表:停下了)', () => {
     expect(statusOf({ status: 'cancelled' }, 0)).toBe('stopped')
+    expect(statusOf({ status: 'interrupted' }, 0)).toBe('stopped')
+    expect(statusOf({ status: 'running', phase: 'interrupted' }, 0)).toBe('stopped')
   })
   it('phase replied ⇒ replied(即使 completed)', () => {
     expect(statusOf({ status: 'running', phase: 'replied' }, 0)).toBe('replied')

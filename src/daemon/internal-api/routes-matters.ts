@@ -1,4 +1,4 @@
-import type {ListMatters,MatterKind,MatterStatus,MatterSurface} from '../../core/matters/store'
+import type { ListMatters, MatterKind, MatterStatus, MatterSurface } from '../../ports/matters'
 import type {InternalApiDeps,RouteTable} from './types'
 
 /**
@@ -27,7 +27,7 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       }
       // 网络守护冻住的那几件(2026-10-03):手机显示「已暂停(网络未受保护)」。matter 与工作台任务同 id。
       let frozen=new Set<string>()
-      try{frozen=new Set((deps.workbench?.networkSuspended?.()??[]).map(t=>t.taskId))}catch{/* 只是少一个标记 */}
+      try{frozen=new Set((deps.workbenchSuspended?.()??[]).map(t=>t.taskId))}catch{/* 只是少一个标记 */}
       return {status:200,body:{matters:deps.matters.list(filter).map(m=>frozen.has(m.id)?{...m,networkSuspended:true}:m)}}
     },
     'GET /v1/matter/owner-chat': async () => {

@@ -43,8 +43,21 @@ class PresenterTest {
 
   @Test fun channelsByKind() {
     fun ch(kind: String) = PushMessage(1.0, kind, "t", "b", null, null).channel
-    assertEquals(listOf("decide", "decide", "updates", "updates", "updates"),
-      listOf("permission", "question", "task_done", "task_failed", "test").map(::ch))
+    assertEquals(listOf("decide", "decide", "updates", "updates", "updates", "updates"),
+      listOf("permission", "question", "task_done", "task_failed", "test", "companion").map(::ch))
+  }
+
+  @Test fun companionFromVectors() {
+    val cases = loadJson("packages/protocol/vectors/push.json").getJSONArray("cases")
+    val c = (0 until cases.length()).map { cases.getJSONObject(it) }.first { it.getString("name") == "ok-companion" }
+    val m = PushMessage.parse(c.getJSONObject("payload"))!!
+    val zh = PushPresenter.display(m, "zh-Hans", strings)
+    assertEquals("CC", zh.title)
+    assertEquals(m.body, zh.body)
+    assertEquals("updates", zh.channel)
+    assertEquals("tendhearth://push-open?kind=companion", zh.deepLink)
+    assertEquals("companion".hashCode(), zh.notificationId)
+    assertEquals("CC", PushPresenter.display(m, "en", strings).title)
   }
 
   @Test fun languagePick() {

@@ -66,9 +66,18 @@ describe('onPeopleClick', () => {
     expect(showToast).toHaveBeenCalledWith(expect.stringContaining('出门了'))
   })
   it('社交没开 → 说清楚', async () => {
-    invokeApi.mockResolvedValueOnce({ error: 'social_not_wired' })
+    invokeApi.mockResolvedValueOnce({ error: 'module_off' })
     await onPeopleClick({ target: { closest: () => btn({ 'data-pp-action': 'visit', 'data-pp-target': 'ayou' }) } })
     expect(showToast).toHaveBeenCalledWith('社交还没开')
+  })
+  // invokeApi 遇到非 2xx 是**抛** Error(码),不是回 body(第三批 3b:路由门回 503 module_off)
+  it('路由门回 503 module_off(抛出)→ 社交还没开;module_degraded → 说开着但没起来,不劝去开启', async () => {
+    invokeApi.mockRejectedValueOnce(new Error('module_off'))
+    await onPeopleClick({ target: { closest: () => btn({ 'data-pp-action': 'visit', 'data-pp-target': 'ayou' }) } })
+    expect(showToast).toHaveBeenLastCalledWith('社交还没开')
+    invokeApi.mockRejectedValueOnce(new Error('module_degraded'))
+    await onPeopleClick({ target: { closest: () => btn({ 'data-pp-action': 'visit', 'data-pp-target': 'ayou' }) } })
+    expect(showToast).toHaveBeenLastCalledWith(expect.stringContaining('没起来'))
   })
 })
 
@@ -91,7 +100,7 @@ describe('联系人读取的恢复和生命周期',()=>{
  it('失败给原地重试入口，明确未开启才给启用动作',()=>{
   renderPeople({relationships:null} as never)
   expect(host().innerHTML).toContain('data-pp-action="retry"');expect(host().innerHTML).not.toContain('data-action="social-enable"')
-  renderPeople({relationships:null,error:'social_not_wired'} as never)
+  renderPeople({relationships:null,error:'module_off'} as never)
   expect(host().innerHTML).toContain('data-action="social-enable"')
  })
  it('上次聊到的完整文字不依赖单行省略显示',()=>{

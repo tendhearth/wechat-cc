@@ -16,19 +16,16 @@
  * the pre-extraction closure — only the dependency edges are now explicit.
  */
 import { randomBytes } from 'node:crypto'
-import type { InboundMsg } from '../../core/prompt-format'
-import { parseLetterCommand } from '../../core/penpal-letter-command'
-import { parseVisitCommand } from '../../core/visit-command'
-import { parsePairCommand } from '../../core/pair-command'
-import { parseSeekCommand } from '../../core/seek-command'
-import { parseGuestCommand } from '../../core/guest-command'
-import { parseIntroCommand } from '../../core/intro-command'
+import type { InboundMsg } from '../../domain/prompt-format'
+import { parseLetterCommand, parseVisitCommand, parseSeekCommand, parseIntroCommand, type WishService, type IntroService } from '../../features/social'
+import { parsePairCommand } from '../../domain/pair-command'
+import { parseGuestCommand } from '../../domain/guest-command'
+import { socialUnavailableLine, type SocialState } from '../social-state'
 import { previewText } from '../inbound/mw-access'
+import type { WechatCommand } from '../commands/registry'
 import { GUEST_REQUEST_TTL_MS } from '../guest-requests'
 import type { GuestRequestStore } from '../guest-requests'
-import type { PairingEngine } from '../../core/pairing'
-import type { WishService } from '../bootstrap/wire-wish'
-import type { IntroService } from '../bootstrap/wire-intro'
+import type { PairingEngine } from '../../app/pairing'
 
 export interface CommandRouterDeps {
   isAdmin: (chatId: string) => boolean
@@ -48,6 +45,12 @@ export interface CommandRouterDeps {
   }
   /** 回信 — present only when the pen-pal channel is wired. */
   penpal?: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
+  /**
+   * 社交没接上时它现在是关着还是坏了(第三批 3b 第 3 步 3-2)。有它 ⇒ 主人发了一句社交命令(串门 / 派 / 认识 / 回信)
+   * 而社交不在,**明说**(关着:去设置里打开;坏了:没起来、去哪看原因),不再悄悄落成一轮普通对话。
+   * 只在那句话确实是社交命令时才调(probe 每条消息都过,读配置要省着)。缺省 ⇒ 老行为。
+   */
+  socialState?: () => SocialState
   /** 配对 — present only when mailbox_relays is configured. */
   pairing?: PairingEngine
   /** Guest path (允许/拒绝/邀请码/待批准) — always constructed, gated by admins-list. */
@@ -63,22 +66,54 @@ export interface CommandRouterDeps {
 }
 
 export interface CommandRouter {
+  /** 只读:这条消息是不是我会处理的控制命令(与 tryHandle 的闸门逐条一致,不发消息、不改状态)。重构第二批步 2。 */
+  probe(msg: InboundMsg): boolean
   /** True iff the message was a control command this router handled. */
   tryHandle(msg: InboundMsg): Promise<boolean>
 }
 
-export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
+/**
+ * 控制命令,一条一行(第三批 3d:微信命令一种写法)。以前这里是一个大入口(probe / tryHandle 里串着七段);
+ * 现在每条命令在命令表里是自己的一行,id 是 `control.<名字>`,group 都是 'control'(trace / consumedBy 读的不变)。
+ * 每行的 probe 就是它 handle 里那道闸的只读版,handle 是原来那一段原样搬过来的。**行的顺序就是原来那七段的顺序。**
+ */
+export function makeControlCommands(deps: CommandRouterDeps): WechatCommand[] {
   const now = deps.now ?? (() => Date.now())
   const say = (chatId: string, text: string) => { void deps.sendAssistantText?.(chatId, text) }
 
-  return {
-    async tryHandle(msg: InboundMsg): Promise<boolean> {
+  /** 是社交命令,而社交此刻不在 ⇒ 关着 / 坏了 / 刚打开;否则 null(包括不是社交命令、社交好好的、没接 socialState)。 */
+  const socialAbsentFor = (t: string): Exclude<SocialState, 'ok'> | null => {
+    if ((deps.social && deps.penpal) || !deps.socialState) return null
+    // 「同意 <ref>」除外:「同意」也是权限卡的放行词(pending-permissions 的 ALLOW_WORDS),码是两位数(「同意 07」);
+    // 社交不在时根本不会有待回的介绍,这句只可能是在批权限,别回它「社交关着」
+    const intro = parseIntroCommand(t)
+    const isSocialCmd = (!deps.social && (parseVisitCommand(t) || parseSeekCommand(t) || (intro && intro.kind !== 'accept')))
+      || (!deps.penpal && parseLetterCommand(t))
+    if (!isSocialCmd) return null
+    const s = deps.socialState()
+    return s === 'ok' ? null : s
+  }
+  const row = (name: string, probe: (m: InboundMsg) => boolean, handle: (msg: InboundMsg) => Promise<boolean>, extra: Pick<WechatCommand, 'ownsSlash'> = {}): WechatCommand =>
+    ({ id: `control.${name}`, group: 'control', probe, handle, ...extra })
+  // /visit 是串门的斜杠写法。认它的行要排在 mode 的兜底(「不认识 /xx」)之前 —— 社交不在时也一样,
+  // 所以 social-off 那行也认 /visit,不然社交关着时 /visit 会被兜底说成「不认识」(e2e 路由快照抓到的)
+  const ownsVisitSlash = (m: InboundMsg): boolean => /^\s*\/visit\b/i.test(m.text ?? '')
+
+  return [
+    // 社交命令,但社交不在:明说,不落成普通对话(关着 ≠ 坏了,两句话不一样)
+    row('social-off', (m) => deps.isAdmin(m.chatId) && !!socialAbsentFor(m.text), async (msg) => {
+      const absent = socialAbsentFor(msg.text)
+      if (!absent) return false
+      say(msg.chatId, socialUnavailableLine(absent))
+      return true
+    }, { ownsSlash: ownsVisitSlash }),
+    row('visit', (m) => deps.isAdmin(m.chatId) && !!deps.social && !!parseVisitCommand(m.text), async (msg) => {
       // 串门(2026-09-03 实验)—— 主人说「串门」,伙伴挑一个开着的笔友信道过去
       // 聊几句,回来讲给主人听。见 core/visit.ts 顶部的 WHY。
       if (deps.social && deps.isAdmin(msg.chatId)) {
         const v = parseVisitCommand(msg.text)
         if (v) {
-          say(msg.chatId, '🚶 出门了,聊完回来跟你说。')
+          say(msg.chatId, '出门了,聊完回来跟你说。')
           const r = await deps.social.penpal.startVisit(v.channel)
           if (!r.ok) {
             say(msg.chatId, r.reason === 'unknown_channel'
@@ -88,6 +123,9 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           return true
         }
       }
+      return false
+    }, { ownsSlash: ownsVisitSlash }),
+    row('letter', (m) => deps.isAdmin(m.chatId) && !!deps.penpal && !!parseLetterCommand(m.text), async (msg) => {
       // Pen-pal outbound reply (Task 10) — the owner's "回信 <channel>
       // <text>" WeChat reply sends a letter on that open channel instead
       // of dispatching a normal agent turn. Guarded on boot.penpal being
@@ -102,6 +140,9 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           return true
         }
       }
+      return false
+    }),
+    row('pair', (m) => deps.isAdmin(m.chatId) && !!deps.pairing && !!parsePairCommand(m.text), async (msg) => {
       // 配对 (spec §7) — admin-gated, deterministic parse, mirrors 串门/回信.
       // Inert (falls through to a normal turn) until boot.pairing is wired
       // (Task 6, i.e. mailbox_relays configured). start()/accept() are
@@ -135,6 +176,9 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           return true
         }
       }
+      return false
+    }),
+    row('wish', (m) => deps.isAdmin(m.chatId) && !!deps.social && !!parseSeekCommand(m.text), async (msg) => {
       // 派 / 取消 心愿 (spec 2026-09-04-wish-postcard) — admin-gated send/cancel
       // of a drafted wish, mirrors the 串门/配对 blocks above (renders every
       // outcome itself, no engine notify). `派` is ALREADY the delegate
@@ -176,6 +220,9 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           return true
         }
       }
+      return false
+    }),
+    row('intro', (m) => deps.isAdmin(m.chatId) && !!deps.social && !!parseIntroCommand(m.text), async (msg) => {
       // 认识 / 同意 / 不了 (spec 2026-09-04-introduction) — admin-gated,
       // deterministic parse, same posture as 派/取消 above: the router
       // renders EVERY outcome itself. `认识` asks the introducer to forward
@@ -205,6 +252,9 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           return true
         }
       }
+      return false
+    }),
+    row('guest', (m) => !!deps.loadAccess().admins?.length && deps.isAdmin(m.chatId) && !!parseGuestCommand(m.text), async (msg) => {
       // 允许/拒绝/邀请码/待批准 (guest path spec §3) — admin-gated,
       // deterministic parse, mirrors 串门/回信/配对 above. Unlike those,
       // this block is NOT gated behind an optional boot.X wire —
@@ -230,11 +280,11 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           if (guestCmd.kind === 'allow') {
             const request = deps.guestRequests.resolve(guestCmd.code, 'allowed')
             if (!request) {
-              say(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
+              say(msg.chatId, '码不对或已过期(发「待批准」看当前请求)')
               return true
             }
             deps.appendAllowFrom(request.chatId)
-            say(msg.chatId, `✅ 已允许 ${request.chatId}`)
+            say(msg.chatId, `已允许 ${request.chatId}`)
             // Hydrate BEFORE sending the guest welcome (fix round 1,
             // Important #3 — spec §3 calls for hydrate here too, same
             // as mw-access's own fresh/invite-accept paths): the
@@ -271,7 +321,7 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           if (guestCmd.kind === 'deny') {
             const request = deps.guestRequests.resolve(guestCmd.code, 'denied')
             if (!request) {
-              say(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
+              say(msg.chatId, '码不对或已过期(发「待批准」看当前请求)')
               return true
             }
             // The guest gets NOTHING — spec §3: "不替 owner 说难听话;
@@ -297,6 +347,22 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           return true
         }
       }
+      return false
+    }),
+  ]
+}
+
+/**
+ * 老形状(probe / tryHandle):同一组行串起来。命令表直接用 makeControlCommands 的行;这个留给单测和别的老调用方,
+ * 也顺带证明拆成行以后行为没变(command-router.test 一条没改)。
+ */
+export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
+  const rows = makeControlCommands(deps)
+  const claims = (c: WechatCommand, m: InboundMsg): boolean => { try { return c.probe(m) } catch { return false } }
+  return {
+    probe: (msg) => rows.some(r => claims(r, msg)),
+    async tryHandle(msg) {
+      for (const r of rows) if (claims(r, msg) && await r.handle(msg)) return true
       return false
     },
   }

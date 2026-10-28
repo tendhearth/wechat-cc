@@ -46,3 +46,24 @@ describe('macOS 麦克风权限(桌面「语音输入」)', () => {
     expect(conf.bundle.macOS.entitlements).toBe('entitlements.plist')
   })
 })
+
+// 读日历和提醒(2026-10-20,对标 #8,随 1.7.8):授权记在 app 主二进制(--daemon)名下,daemon 子进程 osascript
+// 走 EventKit;缺 entitlement 或用途说明 ⇒ 系统静默拒绝。daemon 读 Info.plist 看这两条在不在,不在就不去请求。
+describe('macOS 日历 / 提醒权限(只读,读日历)', () => {
+  const KEYS = ['NSCalendarsFullAccessUsageDescription', 'NSRemindersFullAccessUsageDescription', 'NSCalendarsUsageDescription', 'NSRemindersUsageDescription']
+  it('entitlements.plist 带 com.apple.security.personal-information.calendars = true', () => {
+    expect(plistValue(read('entitlements.plist'), 'com.apple.security.personal-information.calendars')).toBe('<true/>')
+  })
+  it('Info.plist 四条用途说明都在,中文、用产品名、写明只读', () => {
+    for (const k of KEYS) {
+      const s = plistValue(read('Info.plist'), k)
+      expect(s, k).toBeTruthy()
+      expect(s, k).toContain('Tendhearth CC')
+      expect(s, k).toContain('只读')
+    }
+  })
+  it('英文 / 简中 InfoPlist.strings 都有', () => {
+    for (const lang of ['en', 'zh-Hans']) for (const k of KEYS) expect(read(`lproj/${lang}.lproj/InfoPlist.strings`), `${lang} ${k}`).toMatch(new RegExp(`"${k}"\\s*=\\s*"[^"]*Tendhearth CC[^"]*";`))
+    expect(read('lproj/en.lproj/InfoPlist.strings')).toContain('read-only')
+  })
+})

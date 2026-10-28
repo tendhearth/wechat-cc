@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { createYiHub } from '../core/yi-hub'
+import { createYiHub } from '../app/yi-hub'
 import { createYiWsServer } from './yi-ws-server'
-import { buildResponse, parseMessage } from '../core/yi-protocol'
+import { buildResponse, parseMessage } from '../domain/yi-protocol'
 
 let stop: (() => void) | null = null
 afterEach(() => { stop?.(); stop = null })

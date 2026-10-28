@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
+import { makeCommandRegistry, type WechatCommand } from '../commands/registry'
+import { makeTaskCommand, type TaskCommandDeps } from '../commands/task-command'
 import { buildInboundPipeline, type InboundPipelineDeps } from './build'
 import type { InboundCtx } from './types'
 
@@ -28,10 +30,8 @@ function fakeDeps(over: Partial<{
     },
     capture: { markChatActive: () => {}, captureContextToken: () => {} },
     typing: { sendTyping: async () => {} },
-    admin: { adminHandler: { handle: async () => over.adminConsumes ?? false } },
-    mode: { modeHandler: { handle: async () => over.modeConsumes ?? false } },
-    onboarding: { onboardingHandler: { handle: async () => over.onboardingConsumes ?? false } },
-    permissionReply: { handlePermissionReply: () => over.permConsumes ?? false, log },
+    // 3b:admin / mode / onboarding / permission-reply 是命令表里的条目(group 沿用老的 consumedBy 标签)
+    commands: { registry: makeCommandRegistry(baseCommands(over)), log },
     attachments: { materializeAttachments: async () => {}, inboxDir: '/tmp', log },
     transcribeVoice: { log },
     messages: { append: async () => 1, log },
@@ -50,6 +50,20 @@ function fakeDeps(over: Partial<{
   return { deps, spy: { dispatch, activity, milestone, welcome } }
 }
 
+function baseCommands(over: Partial<{ adminConsumes: boolean; modeConsumes: boolean; onboardingConsumes: boolean; permConsumes: boolean }> = {}): WechatCommand[] {
+  return [
+    { id: 'admin', group: 'admin', probe: () => !!over.adminConsumes, handle: async () => over.adminConsumes ?? false },
+    { id: 'mode', group: 'mode', slashCatchAll: true, probe: () => !!over.modeConsumes, handle: async () => over.modeConsumes ?? false },
+    { id: 'onboarding', group: 'onboarding', probe: () => !!over.onboardingConsumes, handle: async () => over.onboardingConsumes ?? false },
+    { id: 'permission-reply', group: 'permission-reply', probe: () => !!over.permConsumes, handle: async () => over.permConsumes ?? false },
+  ]
+}
+
+/** 步 4:「任务 …」是命令表第一条(以前是 deps.workbench + 单独的 task-command intent)。 */
+function withWorkbench(deps: InboundPipelineDeps, wb: TaskCommandDeps) {
+  deps.commands = { registry: makeCommandRegistry([makeTaskCommand(wb), ...baseCommands()]), log: () => {} }
+}
+
 const mkCtx = (): InboundCtx => ({
   msg: { chatId: 'c1', accountId: 'a1', text: 'hi' } as InboundCtx['msg'],
   receivedAtMs: 0,
@@ -59,14 +73,14 @@ const mkCtx = (): InboundCtx => ({
 describe('inbound pipeline (integration)', () => {
   it('consumes an accepted workbench file delivery without a duplicate text reply or companion dispatch',async()=>{
     const {deps,spy}=fakeDeps(),send=vi.fn(async()=>{})
-    deps.workbench={handleWechat:async()=>({kind:'artifact_delivered',receiptId:'saved-delivery'}),sendMessage:send}
+    withWorkbench(deps,{handleWechat:async()=>({kind:'artifact_delivered',receiptId:'saved-delivery'}),sendMessage:send})
     const ctx=mkCtx();ctx.msg.text='任务 deadbeef 文件 12345678-1234-4234-8234-123456789012'
     await buildInboundPipeline(deps)(ctx)
     expect(ctx.consumedBy).toBe('workbench');expect(send).not.toHaveBeenCalled();expect(spy.dispatch).not.toHaveBeenCalled()
   })
   it('handles an authorized task before personal recall and unrelated companion LLM health',async()=>{
     const {deps,spy}=fakeDeps(),replies:string[]=[],recall=vi.fn(async()=>[])
-    deps.workbench={handleWechat:async(_chat,text)=>text.startsWith('任务')?'任务结果':null,sendMessage:async(_chat,text)=>{replies.push(text)}}
+    withWorkbench(deps,{handleWechat:async(_chat,text)=>text.startsWith('任务')?'任务结果':null,sendMessage:async(_chat,text)=>{replies.push(text)}})
     deps.recall={isAdmin:()=>true,recall,log:()=>{}}
     deps.llmHealth.health.shouldSuspend=()=>true
     const ctx=mkCtx();ctx.msg.text='任务 deadbeef'
@@ -77,7 +91,7 @@ describe('inbound pipeline (integration)', () => {
 
   it('keeps access control ahead of phone task handling and leaves plain chat on its original path',async()=>{
     const {deps,spy}=fakeDeps(),handle=vi.fn(async()=>null),send=vi.fn(async()=>{})
-    deps.workbench={handleWechat:handle,sendMessage:send}
+    withWorkbench(deps,{handleWechat:handle,sendMessage:send})
     const denied=mkCtx();denied.msg.chatId='stranger';denied.msg.text='任务 deadbeef'
     await buildInboundPipeline(deps)(denied)
     expect(handle).not.toHaveBeenCalled();expect(send).not.toHaveBeenCalled()
@@ -87,7 +101,7 @@ describe('inbound pipeline (integration)', () => {
 
   it('does not route an allowlisted non-owner task command into ordinary conversation',async()=>{
     const {deps,spy}=fakeDeps(),send=vi.fn(async()=>{})
-    deps.workbench={handleWechat:async()=>null,sendMessage:send}
+    withWorkbench(deps,{handleWechat:async()=>null,sendMessage:send})
     const ctx=mkCtx();ctx.msg.text='任务 deadbeef 允许 stale'
     await buildInboundPipeline(deps)(ctx)
     expect(ctx.consumedBy).toBe('workbench');expect(spy.dispatch).not.toHaveBeenCalled()
@@ -98,7 +112,7 @@ describe('inbound pipeline (integration)', () => {
     const {deps,spy}=fakeDeps(),handled:string[]=[],replies:string[]=[],records:string[]=[]
     let fail=true
     deps.messages.append=async rec=>{records.push(rec.id);return 1}
-    deps.workbench={handleWechat:async(_chat,text)=>{handled.push(text);return 'received'},sendMessage:async(_chat,text)=>{if(fail){fail=false;return{error:'send failed'}}replies.push(text);return{msgId:'sent'}}}
+    withWorkbench(deps,{handleWechat:async(_chat,text)=>{handled.push(text);return 'received'},sendMessage:async(_chat,text)=>{if(fail){fail=false;return{error:'send failed'}}replies.push(text);return{msgId:'sent'}}})
     const ctx=(text:string)=>({...mkCtx(),msg:{...mkCtx().msg,userId:'c1',createTimeMs:123,text}})
     const pipeline=buildInboundPipeline(deps)
     await pipeline(ctx('任务 deadbeef 补充 one'))
@@ -184,58 +198,59 @@ describe('inbound pipeline (integration)', () => {
   })
 })
 
-describe('意图路由(第二步:消费者按 intent 早退)', () => {
-  it('路由判成 mode 后,admin 的 handle 再想吃也轮不到;判成 chat 时所有消费者都不碰,直接进对话', async () => {
-    const { deps, spy } = fakeDeps({ adminConsumes: true, modeConsumes: true })
+/** 命令表 + 路由探针(3b / 步 4):只剩 command / task-reference 两种 intent;「任务 …」是命令表第一条。 */
+function withCommands(deps: InboundPipelineDeps, cmds: Parameters<typeof makeCommandRegistry>[0]) {
+  const registry = makeCommandRegistry(cmds)
+  deps.commands = { registry, log: () => {} }
+  deps.route = { probes: { command: ctx => registry.probe(ctx.msg) }, log: () => {} }
+  return registry
+}
+
+describe('意图路由(第二步:消费者按 intent 早退;3b 起命令都在命令表里)', () => {
+  it('命令表里 mode 那条认了 ⇒ consumedBy=mode,admin 那条连 handle 都不调;都不认 ⇒ chat,直接进对话', async () => {
+    const { deps, spy } = fakeDeps()
     const adminHandle = vi.fn(async () => true)
-    deps.admin = { adminHandler: { handle: adminHandle } }
-    deps.route = { probes: { admin: () => false, mode: () => true, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    withCommands(deps, [
+      { id: 'admin', group: 'admin', probe: m => m.text === '/health', handle: adminHandle },
+      { id: 'mode', group: 'mode', slashCatchAll: true, probe: m => m.text.startsWith('/'), handle: async () => true },
+    ])
     const ctx = mkCtx(); ctx.msg.text = '/cc'
     await buildInboundPipeline(deps)(ctx)
-    expect(ctx.intent?.kind).toBe('mode'); expect(ctx.consumedBy).toBe('mode'); expect(adminHandle).not.toHaveBeenCalled()
-    deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    expect(ctx.intent?.kind).toBe('command'); expect(ctx.consumedBy).toBe('mode'); expect(adminHandle).not.toHaveBeenCalled()
     const chat = mkCtx(); chat.msg.text = 'hi'; chat.msg.msgId = 'm2' as never
     await buildInboundPipeline(deps)(chat)
-    // 进了对话:没有消费者标记 consumedBy,coordinator.dispatch 被调(trace 行里显示为 consumed=dispatched)
     expect(chat.intent?.kind).toBe('chat'); expect(chat.consumedBy).toBeUndefined(); expect(adminHandle).not.toHaveBeenCalled(); expect(spy.dispatch).toHaveBeenCalledOnce()
   })
   it('开了路由却漏了某个在场消费者的探针 ⇒ 组装时就报错,不让它上线后永远轮不到', () => {
     const { deps } = fakeDeps()
-    deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false }, log: () => {} }
-    expect(() => buildInboundPipeline(deps)).toThrow('probe missing for permission-reply')
-    deps.cliReply = { handle: async () => false, log: () => {} }
-    deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
-    expect(() => buildInboundPipeline(deps)).toThrow('probe missing for cli-reply')
-    // 工作台和管家的探针由 build 自己接,不用外面给
-    deps.cliReply = undefined
-    deps.workbench = { handleWechat: async () => null, sendMessage: async () => ({}) }
+    deps.route = { probes: {}, log: () => {} }
+    expect(() => buildInboundPipeline(deps)).toThrow('probe missing for command')
+    // 管家的探针由 build 自己接,不用外面给;「任务 …」(步 4)在命令表里,跟着 command 的探针走
+    deps.commands = undefined
     expect(() => buildInboundPipeline(deps)).not.toThrow()
   })
 })
 
 describe('意图路由(第三步:一站消费 + 语音先转文字再路由)', () => {
-  it('语音消息:转出来的文字先到路由,再由对应的消费者吃掉(4b 曾让它永远判成 chat)', async () => {
+  it('语音消息:转出来的文字先到路由,再由命令表吃掉(4b 曾让它永远判成 chat)', async () => {
     const { deps, spy } = fakeDeps()
     const modeHandle = vi.fn(async (msg: InboundCtx['msg']) => msg.text === '[语音] /帮助')
-    deps.mode = { modeHandler: { handle: modeHandle } }
+    withCommands(deps, [{ id: 'mode', group: 'mode', slashCatchAll: true, probe: m => m.text === '[语音] /帮助', handle: modeHandle }])
     deps.transcribeVoice = { transcribeVoice: async () => ({ text: '/帮助' }), readFile: async () => Buffer.from('amr'), log: () => {} }
-    deps.route = { probes: { admin: () => false, mode: ctx => ctx.msg.text === '[语音] /帮助', onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
     const ctx = mkCtx(); ctx.msg.text = '(non-text message)'; ctx.msg.attachments = [{ kind: 'voice', path: '/inbox/v.amr' } as never]
     await buildInboundPipeline(deps)(ctx)
-    expect(ctx.msg.text).toBe('[语音] /帮助'); expect(ctx.intent?.kind).toBe('mode'); expect(ctx.consumedBy).toBe('mode'); expect(spy.dispatch).not.toHaveBeenCalled()
+    expect(ctx.msg.text).toBe('[语音] /帮助'); expect(ctx.intent?.kind).toBe('command'); expect(ctx.consumedBy).toBe('mode'); expect(spy.dispatch).not.toHaveBeenCalled()
   })
   it('网络未受保护时:管理 / 模式命令、权限回话照常执行(入站不拦,守护 v2)', async () => {
     const adminHandle = vi.fn(async () => true)
     const { deps: a } = fakeDeps()
-    a.admin = { adminHandler: { handle: adminHandle } }
-    a.route = { probes: { admin: () => true, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    withCommands(a, [{ id: 'admin', group: 'admin', probe: m => m.text === '/health', handle: adminHandle }])
     const ctx = mkCtx(); ctx.msg.text = '/health'
     await buildInboundPipeline(a)(ctx)
     expect(ctx.consumedBy).toBe('admin'); expect(adminHandle).toHaveBeenCalledOnce()
-    const perm = vi.fn(() => true)
+    const perm = vi.fn(async () => true)
     const { deps: b } = fakeDeps()
-    b.permissionReply = { handlePermissionReply: perm, log: () => {} }
-    b.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => true }, log: () => {} }
+    withCommands(b, [{ id: 'permission-reply', group: 'permission-reply', probe: m => m.text === 'y', handle: perm }])
     const y = mkCtx(); y.msg.text = 'y'
     await buildInboundPipeline(b)(y)
     expect(y.consumedBy).toBe('permission-reply'); expect(perm).toHaveBeenCalledOnce()
@@ -244,8 +259,7 @@ describe('意图路由(第三步:一站消费 + 语音先转文字再路由)', (
     const typing = vi.fn(async () => {})
     const { deps } = fakeDeps()
     deps.typing = { sendTyping: typing }
-    deps.workbench = { handleWechat: async () => 'ok', sendMessage: async () => ({}) }
-    deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    withCommands(deps, [makeTaskCommand({ handleWechat: async () => 'ok', sendMessage: async () => ({}) })])
     const cmd = mkCtx(); cmd.msg.text = '任务 列表'
     await buildInboundPipeline(deps)(cmd)
     expect(cmd.consumedBy).toBe('workbench'); expect(typing).not.toHaveBeenCalled()
@@ -256,17 +270,30 @@ describe('意图路由(第三步:一站消费 + 语音先转文字再路由)', (
 })
 
 describe('意图路由(第四步:App 一轮走同一张表)', () => {
-  it('appTurn 只过 route + consume:命中消费者 ⇒ consumed=true 且不进对话;闲聊 ⇒ consumed=false,由调用方自己进对话', async () => {
+  it('appTurn 只过 route + consume:命中命令 ⇒ consumed=true 且不进对话;闲聊 ⇒ consumed=false,由调用方自己进对话', async () => {
     const { deps, spy } = fakeDeps()
     const modeHandle = vi.fn(async (msg: InboundCtx['msg']) => msg.text === '/帮助')
-    deps.mode = { modeHandler: { handle: modeHandle } }
-    deps.route = { probes: { admin: () => false, mode: ctx => ctx.msg.text === '/帮助', onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    withCommands(deps, [{ id: 'mode', group: 'mode', slashCatchAll: true, probe: m => m.text === '/帮助', handle: modeHandle }])
     const pipeline = buildInboundPipeline(deps)
     const help = mkCtx(); help.msg.text = '/帮助'
     expect(await pipeline.appTurn(help)).toEqual({ consumed: true })
-    expect(help.intent?.kind).toBe('mode'); expect(help.consumedBy).toBe('mode'); expect(modeHandle).toHaveBeenCalledOnce()
+    expect(help.intent?.kind).toBe('command'); expect(help.consumedBy).toBe('mode'); expect(modeHandle).toHaveBeenCalledOnce()
     const chat = mkCtx(); chat.msg.text = 'hi'
     expect(await pipeline.appTurn(chat)).toEqual({ consumed: false })
     expect(chat.intent?.kind).toBe('chat'); expect(spy.dispatch).not.toHaveBeenCalled()
+  })
+  it('步 4:App 一轮里的「任务 …」由命令表第一条吃掉,出生地(origin)原样交给 handleWechat;回话照常走 sendMessage', async () => {
+    const { deps, spy } = fakeDeps()
+    const handleWechat = vi.fn(async () => '任务结果'), sendMessage = vi.fn(async () => ({}))
+    withCommands(deps, [makeTaskCommand({ handleWechat, sendMessage }), ...baseCommands()])
+    const pipeline = buildInboundPipeline(deps)
+    const task: InboundCtx = { ...mkCtx(), origin: 'desktop' }; task.msg.text = '任务 列表'
+    expect(await pipeline.appTurn(task)).toEqual({ consumed: true })
+    expect(task.intent?.kind).toBe('command'); expect(task.consumedBy).toBe('workbench')
+    expect(handleWechat).toHaveBeenCalledWith('c1', '任务 列表', expect.objectContaining({ origin: 'desktop', text: '任务 列表' }))
+    expect(sendMessage).toHaveBeenCalledWith('c1', '任务结果'); expect(spy.dispatch).not.toHaveBeenCalled()
+    const unknown: InboundCtx = { ...mkCtx(), origin: null }; unknown.msg.text = '任务 列表'
+    expect(await pipeline.appTurn(unknown)).toEqual({ consumed: true })
+    expect((handleWechat.mock.calls.at(-1) as unknown[])[2]).toMatchObject({ origin: null })
   })
 })

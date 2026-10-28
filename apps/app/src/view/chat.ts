@@ -145,3 +145,15 @@ export function audioExt(mime: string): string {
   if (m.includes('mp4') || m.includes('m4a') || m.includes('aac')) return 'm4a'
   return 'mp3'
 }
+
+/**
+ * CC 发来的图(2026-10-18:微信上发给主人的图、信纸也记进对话):这几种在对话里直接画成图,别的文件仍是一个可点的名字。
+ * 画成图的只读到 INLINE_IMAGE_MAX_BYTES(信纸一页几百 KB);更大的照旧点开再看,不在列表里悄悄下好几 MB。
+ */
+export const INLINE_IMAGE_MAX_BYTES = 4 * 1024 * 1024
+const INLINE_IMAGE = /\.(png|jpe?g|gif|webp)$/i
+export function isInlineImage(name: string): boolean { return INLINE_IMAGE.test(name) }
+export function inlineImageMime(name: string): string {
+  const ext = (/\.([A-Za-z0-9]+)$/.exec(name)?.[1] ?? '').toLowerCase()
+  return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/png'
+}

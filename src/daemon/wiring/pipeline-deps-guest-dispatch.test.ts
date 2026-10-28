@@ -1,36 +1,32 @@
-import { describe, it, expect, vi, afterAll } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { inboundTurn } from './test-inbound-turn'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
 // Guest path (spec docs/superpowers/specs/2026-08-18-guest-path-design.md
 // §3) — the `dispatch.coordinator.dispatch` seam in pipeline-deps.ts
 // intercepts the owner's WeChat "允许/拒绝/邀请码/待批准" replies before
 // they reach a normal agent turn. Mirrors
 // pipeline-deps-pairing-dispatch.test.ts's harness: `isAdmin`/`appendAllowFrom`
-// read/write access.json off the module-level STATE_DIR (src/lib/config.ts),
-// which is NOT one of buildPipelineDeps's injectable opts — so STATE_DIR is
-// redirected to a temp dir via vi.mock BEFORE anything imports
-// access.ts/config.ts, and pipeline-deps is loaded dynamically afterward so
-// it (transitively) picks up the mock.
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-guest-dispatch-access-test-'))
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+// read/write access.json.
+// access.json lives in the state dir, which is NOT one of buildPipelineDeps's
+// injectable opts; access.ts resolves it per call from WECHAT_STATE_DIR, so
+// useTempStateDir points that at a temp dir (no vi.mock of lib/config —
+// see src/test-support/state-dir.ts).
+const ACCESS_STATE_DIR = useTempStateDir('pipeline-deps-guest-dispatch-access-test-')
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 const { _clearCache, _resetSnapshotForTest } = await import('../../lib/access')
 
 import type { Bootstrap } from '../bootstrap/index'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { CareLedger } from '../../features/companion/care-ledger'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 import type { PipelineRun } from '../inbound/types'
 
 const fakeHealth = {
@@ -44,8 +40,6 @@ function writeAccess(admins: string[]): void {
 function readAllowFrom(): string[] {
   return (JSON.parse(readFileSync(ACCESS_FILE, 'utf8')) as { allowFrom: string[] }).allowFrom
 }
-
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
 function setup(admins: string[] = ['admin_chat']) {
   writeAccess(admins)
@@ -86,18 +80,17 @@ function setup(admins: string[] = ['admin_chat']) {
     routeChatToAccount,
     captureContextToken,
     markChatActive: vi.fn(),
-  } as unknown as IlinkAdapter
+  } as unknown as PipelineWechat
 
   const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
   const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
   const replySinks = makeReplySinks()
   const pipelineRun = vi.fn(async (_ctx: Parameters<PipelineRun>[0]) => {})
-  const pipelineRef = new Ref<PipelineRun>('pipeline')
-  pipelineRef.set(pipelineRun)
+  const pipelineRef = { current: pipelineRun as PipelineRun }
 
   const { pipelineDeps } = buildPipelineDeps(
     { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-    { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: pipelineRef, ingestNudge: new Ref('ingestNudge') },
+    { polling: () => null, pipeline: () => pipelineRef.current, ingestNudge: () => null },
   )
   return {
     pipelineDeps, coordinatorDispatch, sendAssistantText, sendMessage, routeChatToAccount, captureContextToken,
@@ -122,7 +115,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
   it('a non-admin sending "允许 123456" is never consumed — falls through to a normal turn', async () => {
     const { pipelineDeps, coordinatorDispatch, stateDir } = setup(['admin_chat'])
     try {
-      await pipelineDeps.dispatch.coordinator.dispatch({
+      await inboundTurn(pipelineDeps, {
         chatId: 'stranger', userId: 'stranger', text: '允许 123456', msgType: 'text', createTimeMs: 1, accountId: 'acct1',
       })
       expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
@@ -144,7 +137,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
       writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['legacy_chat'], admins: [] }, null, 2))
       _clearCache(); _resetSnapshotForTest()
 
-      await pipelineDeps.dispatch.coordinator.dispatch({
+      await inboundTurn(pipelineDeps, {
         chatId: 'legacy_chat', userId: 'legacy_chat', text: '邀请码', msgType: 'text', createTimeMs: 1, accountId: 'acct1',
       })
       // Falls through to a normal turn — the guest command parse never ran.
@@ -156,7 +149,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
   it('a non-command admin message falls through to a normal turn', async () => {
     const { pipelineDeps, coordinatorDispatch, stateDir } = setup()
     try {
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg('今天天气不错'))
+      await inboundTurn(pipelineDeps, adminMsg('今天天气不错'))
       expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
     } finally { teardown(stateDir) }
   })
@@ -168,10 +161,10 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
         chatId: 'guest_chat', firstMsg: guestFirstMsg, contextToken: 'ctx-tok', accountId: 'acct1',
       })
 
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg(`允许 ${request.code}`))
+      await inboundTurn(pipelineDeps, adminMsg(`允许 ${request.code}`))
 
       expect(readAllowFrom()).toContain('guest_chat')
-      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '✅ 已允许 guest_chat')
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '已允许 guest_chat')
       expect(sendMessage).toHaveBeenCalledWith('guest_chat', '主人同意啦!')
       expect(pipelineRun).toHaveBeenCalledTimes(1)
       const [ctx] = pipelineRun.mock.calls[0]!
@@ -193,7 +186,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
       captureContextToken.mockImplementation(() => { callOrder.push('capture') })
       sendMessage.mockImplementation(async () => { callOrder.push('send'); return { msgId: 'sent:1' } })
 
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg(`允许 ${request.code}`))
+      await inboundTurn(pipelineDeps, adminMsg(`允许 ${request.code}`))
 
       expect(routeChatToAccount).toHaveBeenCalledWith('guest_chat', 'acct-stored')
       expect(captureContextToken).toHaveBeenCalledWith('guest_chat', 'stored-tok')
@@ -203,7 +196,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
     } finally { teardown(stateDir) }
   })
 
-  it('允许 <valid code>: a failed guest-welcome send is logged (owner already got their ✅, but the failure is not swallowed)', async () => {
+  it('允许 <valid code>: a failed guest-welcome send is logged (owner already got their , but the failure is not swallowed)', async () => {
     const logLines: string[] = []
     writeAccess(['admin_chat'])
     _clearCache(); _resetSnapshotForTest()
@@ -237,23 +230,22 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
       routeChatToAccount: vi.fn(),
       captureContextToken: vi.fn(),
       markChatActive: vi.fn(),
-    } as unknown as IlinkAdapter
+    } as unknown as PipelineWechat
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
     const replySinks = makeReplySinks()
-    const pipelineRef = new Ref<PipelineRun>('pipeline')
-    pipelineRef.set(vi.fn(async () => {}))
+    const pipelineRef = { current: vi.fn(async () => {}) as PipelineRun }
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: (tag, line) => { logLines.push(`${tag} ${line}`) }, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: pipelineRef, ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => pipelineRef.current, ingestNudge: () => null },
     )
     try {
       const guestRequests = pipelineDeps.access.guestRequests!
       const { request } = guestRequests.upsertRequest({
         chatId: 'guest_chat', firstMsg: guestFirstMsg, contextToken: 'ctx-tok', accountId: 'acct1',
       })
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg(`允许 ${request.code}`))
-      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '✅ 已允许 guest_chat')   // owner still told
+      await inboundTurn(pipelineDeps, adminMsg(`允许 ${request.code}`))
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '已允许 guest_chat')   // owner still told
       expect(logLines.some(l => l.includes('session_timeout'))).toBe(true)   // but the failure is on record
     } finally { teardown(stateDir) }
   })
@@ -261,9 +253,9 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
   it('允许 <wrong/expired code>: "码不对或已过期", no allowFrom write, no redispatch', async () => {
     const { pipelineDeps, sendAssistantText, pipelineRun, stateDir } = setup()
     try {
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg('允许 999999'))
+      await inboundTurn(pipelineDeps, adminMsg('允许 999999'))
       expect(readAllowFrom()).not.toContain('guest_chat')
-      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '❌ 码不对或已过期(发「待批准」看当前请求)')
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '码不对或已过期(发「待批准」看当前请求)')
       expect(pipelineRun).not.toHaveBeenCalled()
     } finally { teardown(stateDir) }
   })
@@ -275,7 +267,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
         chatId: 'guest_chat', firstMsg: guestFirstMsg, contextToken: 'ctx-tok', accountId: 'acct1',
       })
 
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg(`拒绝 ${request.code}`))
+      await inboundTurn(pipelineDeps, adminMsg(`拒绝 ${request.code}`))
 
       expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '已拒绝,ta 不会再打扰你。')
       expect(sendMessage).not.toHaveBeenCalled()   // guest chat gets nothing
@@ -287,15 +279,15 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
   it('拒绝 <wrong/expired code>: same "码不对或已过期" reply as 允许', async () => {
     const { pipelineDeps, sendAssistantText, stateDir } = setup()
     try {
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg('拒绝 999999'))
-      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '❌ 码不对或已过期(发「待批准」看当前请求)')
+      await inboundTurn(pipelineDeps, adminMsg('拒绝 999999'))
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '码不对或已过期(发「待批准」看当前请求)')
     } finally { teardown(stateDir) }
   })
 
   it('邀请码: creates a real single-use invite and echoes its exact copy', async () => {
     const { pipelineDeps, sendAssistantText, stateDir, guestRequests } = setup()
     try {
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg('邀请码'))
+      await inboundTurn(pipelineDeps, adminMsg('邀请码'))
       expect(sendAssistantText).toHaveBeenCalledTimes(1)
       const [chatId, text] = sendAssistantText.mock.calls[0]!
       expect(chatId).toBe('admin_chat')
@@ -311,7 +303,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
   it('待批准 with nothing pending: exact empty-state copy', async () => {
     const { pipelineDeps, sendAssistantText, stateDir } = setup()
     try {
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg('待批准'))
+      await inboundTurn(pipelineDeps, adminMsg('待批准'))
       expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '目前没有待批准的请求。')
     } finally { teardown(stateDir) }
   })
@@ -326,7 +318,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
         accountId: 'acct1',
       })
 
-      await pipelineDeps.dispatch.coordinator.dispatch(adminMsg('待批准'))
+      await inboundTurn(pipelineDeps, adminMsg('待批准'))
 
       expect(sendAssistantText).toHaveBeenCalledTimes(1)
       const [chatId, text] = sendAssistantText.mock.calls[0]!

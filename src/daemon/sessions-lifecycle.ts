@@ -1,7 +1,7 @@
 import type { Lifecycle } from '../lib/lifecycle'
-import type { SessionManager } from '../core/session-manager'
-import type { SessionStore } from '../core/session-store'
-import type { ConversationStore } from '../core/conversation-store'
+import type { SessionManager } from '../app/session-manager'
+import type { SessionStore } from '../ports/session-store'
+import type { ConversationStore } from '../ports/conversation-store'
 
 export interface SessionsLifecycleDeps {
   sessionManager: Pick<SessionManager, 'shutdown'>

@@ -24,7 +24,7 @@
  */
 import { randomInt } from 'node:crypto'
 import { join } from 'node:path'
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 import { makeStateStore, type StateStore } from './state-store'
 
 export type GuestRequestStatus = 'pending' | 'denied'

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeCommandRouter, type CommandRouterDeps } from './command-router'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
+import { COMMAND_EXAMPLES, CHAT } from '../inbound/command-corpus'
 
 function msg(text: string, chatId = 'owner@im.wechat'): InboundMsg {
   return { chatId, userId: chatId, text, msgType: 'text', createTimeMs: 0, accountId: 'acct' }
@@ -194,5 +195,113 @@ describe('command-router — 认识 / 同意 / 不了', () => {
     const deps = baseDeps({ social: undefined as never })
     expect(await makeCommandRouter(deps).tryHandle(msg('认识 ab12'))).toBe(false)
     expect(intro.request).not.toHaveBeenCalled()
+  })
+})
+
+// 重构第二批步 2:router 进 CommandRegistry,要一个只读的 probe —— 它认领的必须恰好是 tryHandle 会处理的。
+describe('command-router · probe(只读,与 tryHandle 一致)', () => {
+  const ok = () => vi.fn(async () => ({ ok: true, id: 'x', channel: 'c', sentTo: 1, status: 'cancelled', code: '123456', expiresAt: 0, peer: { name: 'p' } }))
+  const social = { wish: { send: ok(), cancel: vi.fn(() => ({ ok: true, status: 'cancelled' })), resolveRef: vi.fn(() => ({ ok: true, id: 'w' })) }, penpal: { startVisit: ok() }, intro: { request: ok(), accept: ok(), decline: ok() } } as never
+  const cases = ['串门', '派 a1b2c3', '取消 a1b2c3', '认识 ab12', '回信 ch1 你好', '配对', '配对 123456', '允许 123456', '邀请码', '待批准', '今天天气不错', '同意你的看法']
+  it('with every feature wired: probe(msg) === (tryHandle handled it), and probe has no side effects', async () => {
+    const deps = baseDeps({ social, penpal: { sendLetter: vi.fn(async () => ({ ok: true })) }, pairing: new Proxy({}, { get: () => ok() }) as never })
+    const r = makeCommandRouter(deps)
+    for (const t of cases) {
+      const claimed = r.probe(msg(t))
+      expect(deps.sendAssistantText, `probe(${t}) 不许说话`).not.toHaveBeenCalled()
+      expect(claimed, t).toBe(await makeCommandRouter(baseDeps({ social, penpal: { sendLetter: vi.fn(async () => ({ ok: true })) }, pairing: new Proxy({}, { get: () => ok() }) as never })).tryHandle(msg(t)))
+    }
+  })
+  it('unwired features and non-admins: probe is false exactly when tryHandle falls through', async () => {
+    for (const over of [{}, { isAdmin: () => false }, { loadAccess: () => ({ admins: [] }) }] as Partial<CommandRouterDeps>[]) {
+      for (const t of cases) expect(makeCommandRouter(baseDeps(over)).probe(msg(t)), `${JSON.stringify(Object.keys(over))} ${t}`).toBe(await makeCommandRouter(baseDeps(over)).tryHandle(msg(t)))
+    }
+  })
+})
+
+// 评审 #472:probe 与 tryHandle 的闸门是手抄成一致的,漂了就会「probe 说不认、tryHandle 本来会认」⇒ 这句话进了模型,没人报错。
+// 用整份命令语料 × 几种接线组合过一遍:probe 为 false 时 tryHandle 一定也是 false(反过来也要一致)。
+describe('command-router · probe / tryHandle 不漂(整份语料)', () => {
+  it('for every corpus sentence and wiring combo, probe === tryHandle', async () => {
+    const ok = () => vi.fn(async () => ({ ok: true, id: 'x', channel: 'c', sentTo: 1, status: 'cancelled', code: '123456', expiresAt: 0, peer: { name: 'p' } }))
+    const wired = () => ({ social: { wish: { send: ok(), cancel: vi.fn(() => ({ ok: true, status: 'cancelled' })), resolveRef: vi.fn(() => ({ ok: true, id: 'w' })) }, penpal: { startVisit: ok() }, intro: { request: ok(), accept: ok(), decline: ok() } } as never, penpal: { sendLetter: ok() } as never, pairing: new Proxy({}, { get: () => ok() }) as never })
+    const combos: Array<() => Partial<CommandRouterDeps>> = [() => ({}), () => wired(), () => ({ ...wired(), isAdmin: () => false }), () => ({ ...wired(), loadAccess: () => ({ admins: [] }) })]
+    for (const combo of combos) for (const t of [...COMMAND_EXAMPLES, ...CHAT]) {
+      const claimed = makeCommandRouter(baseDeps(combo())).probe(msg(t))
+      expect(claimed, `${t}`).toBe(await makeCommandRouter(baseDeps(combo())).tryHandle(msg(t)))
+    }
+  })
+})
+
+describe('社交不在时明说(第三批 3b 第 3 步 3-2):不再悄悄落成普通对话', () => {
+  const said = (d: CommandRouterDeps) => (d.sendAssistantText as ReturnType<typeof vi.fn>).mock.calls.map(c => c[1])
+  it('关着 ⇒ 「社交现在关着,去设置里打开」;串门 / 派 / 认识 / 回信 都是', async () => {
+    // 命令的写法取自 inbound/command-corpus.ts(真实例句)
+    // 派 / 取消 的心愿引用只认十六进制(parseSeekCommand 的字符集,挡住「派 家里 跑 …」这种委派命令)
+    for (const t of ['串门', '/visit', '派 ab12', '取消 ab12', '认识 ab12', '不了 ab12', '回信 ch1 你好']) {
+      const d = baseDeps({ socialState: () => 'off' })
+      const r = makeCommandRouter(d)
+      expect(r.probe(msg(t))).toBe(true)
+      expect(await r.tryHandle(msg(t))).toBe(true)
+      expect(said(d)).toEqual(['社交现在关着,去设置里打开。'])
+    }
+  })
+  it('**开着却没起来 ⇒ 说没起来、去哪看原因,不劝他去开**(坏了 ≠ 关了)', async () => {
+    const d = baseDeps({ socialState: () => 'degraded' })
+    expect(await makeCommandRouter(d).tryHandle(msg('串门'))).toBe(true)
+    expect(said(d)).toEqual(['社交开着,但现在没起来,原因在「CC 现在怎么样」里。'])
+  })
+  it('刚打开、还没重启 ⇒ 说重启后才生效(不说「没起来」)', async () => {
+    const d = baseDeps({ socialState: () => 'pending' })
+    expect(await makeCommandRouter(d).tryHandle(msg('串门'))).toBe(true)
+    expect(said(d)).toEqual(['社交刚打开,重启 CC 后才生效。'])
+  })
+  it('不是社交命令 ⇒ 不拦,也不去读社交状态(probe 每条消息都过)', async () => {
+    const socialState = vi.fn(() => 'off' as const)
+    const r = makeCommandRouter(baseDeps({ socialState }))
+    // 普通句子,包括提到串门的(command-corpus 里「不该当命令」的那几句)
+    for (const t of ['今天天气怎么样', '串门好玩吗', '配对成功了吗', '派 家里 跑 拉日志']) expect(r.probe(msg(t))).toBe(false)
+    expect(socialState).not.toHaveBeenCalled()
+  })
+  it('**「同意 07」不拦**:「同意」也是权限卡的放行词;社交不在时不会有待回的介绍,这句只可能是在批权限', () => {
+    const r = makeCommandRouter(baseDeps({ socialState: () => 'off' }))
+    expect(r.probe(msg('同意 07'))).toBe(false)
+    expect(r.probe(msg('同意 ab12'))).toBe(false)
+  })
+  it('不是主人 ⇒ 不拦', () => {
+    expect(makeCommandRouter(baseDeps({ isAdmin: () => false, socialState: () => 'off' })).probe(msg('串门'))).toBe(false)
+  })
+  it('没接 socialState ⇒ 老行为(落成普通对话)', () => {
+    expect(makeCommandRouter(baseDeps()).probe(msg('串门'))).toBe(false)
+  })
+})
+
+describe('控制命令一条一行(第三批 3d):任何一句话最多一行认领 —— 先后顺序因此无关紧要', () => {
+  const social = { wish: { send: vi.fn(), cancel: vi.fn(), resolveRef: vi.fn() }, penpal: { startVisit: vi.fn() }, intro: { request: vi.fn(), accept: vi.fn(), decline: vi.fn() } } as unknown as CommandRouterDeps['social']
+  const penpal = { sendLetter: vi.fn() } as unknown as CommandRouterDeps['penpal']
+  const pairing = { start: vi.fn(), accept: vi.fn() } as unknown as CommandRouterDeps['pairing']
+  const setups: Array<[string, Partial<CommandRouterDeps>]> = [
+    ['社交开着', { social, penpal, pairing, socialState: () => 'ok' }],
+    ['社交关着', { pairing, socialState: () => 'off' }],
+    ['社交坏了', { socialState: () => 'degraded' }],
+    ['什么都没接', {}],
+  ]
+  it('语料里的每一句,在每种状态下,认领它的控制命令行不超过一行(以后加一行跟别的抢同一句话,这里红)', async () => {
+    const { makeControlCommands } = await import('./command-router')
+    const overlaps: string[] = []
+    for (const [label, over] of setups) {
+      const rows = makeControlCommands(baseDeps(over))
+      for (const text of [...COMMAND_EXAMPLES, ...CHAT]) {
+        const claimed = rows.filter(r => { try { return r.probe(msg(text)) } catch { return false } }).map(r => r.id)
+        if (claimed.length > 1) overlaps.push(`${label}:「${text}」 ⇒ ${claimed.join(', ')}`)
+      }
+    }
+    expect(overlaps).toEqual([])
+  })
+  it('id 都是 control.*、group 都是 control(trace / consumedBy 读的不变)', async () => {
+    const { makeControlCommands } = await import('./command-router')
+    const rows = makeControlCommands(baseDeps())
+    expect(rows.map(r => r.id)).toEqual(['control.social-off', 'control.visit', 'control.letter', 'control.pair', 'control.wish', 'control.intro', 'control.guest'])
+    expect(new Set(rows.map(r => r.group))).toEqual(new Set(['control']))
   })
 })

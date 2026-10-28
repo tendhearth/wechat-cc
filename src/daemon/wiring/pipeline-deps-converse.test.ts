@@ -3,31 +3,31 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, statSync }
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPipelineDeps, resolveOwnerSessionKey } from './pipeline-deps'
-import { Ref } from '../../lib/lifecycle'
 import { openTestDb, type Db } from '../../lib/db'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { Bootstrap } from '../bootstrap/index'
 import { makeReplySinks, type ReplySinks } from '../reply-sinks'
-import { makeChatMutex } from '../../core/async-mutex'
+import { makeChatMutex } from '../../lib/async-mutex'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
-import { makeWorkbenchStore } from '../../core/workbench/store'
-import { makeWorkbenchService, type WorkbenchService } from '../../core/workbench/service'
-import { createProviderRegistry } from '../../core/provider-registry'
-import {makeMwWorkbench} from '../inbound/mw-workbench'
+import type { CareLedger } from '../../features/companion/care-ledger'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
+import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
+import { makeWorkbenchService, type WorkbenchService } from '../../features/workbench/service'
+import { createProviderRegistry } from '../../app/provider-registry'
+import {makeMwCommand} from '../inbound/mw-command'
 import type { AppTurn } from '../inbound/build'
 import { scopedReply } from '../inbound/reply-scope'
 import { makeMessagesStore } from '../../lib/messages-store'
-import type { StickerLib } from '../stickers'
+import type { StickerLib } from '../../features/stickers'
+import { withPhoneClient } from '../../features/phone/phone-client'
 
 // Task 2 HIGH-severity fix (app-conversation-channel spec §3): companionConverse
 // must refuse to start an app turn while a WeChat turn is already in flight on
 // the owner's session — otherwise both dispatch concurrently on one
 // AgentSession. This file covers (a) the pure key-resolution helper the guard
 // is built on, (b) an end-to-end exercise of the companionConverse closure
-// itself against a minimally-faked Bootstrap/IlinkAdapter, and (c) the
+// itself against a minimally-faked Bootstrap/PipelineWechat, and (c) the
 // session-serialization follow-up (Task 2 of that plan): the app turn now
 // holds the per-chat lock across the ENTIRE sink open→dispatchInner→close
 // lifetime, so a same-chat WeChat/tick turn queued behind it cannot start —
@@ -86,7 +86,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean; workbench?: WorkbenchService; appTurn?: Ref<AppTurn>; stickers?: StickerLib }) {
+  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean; workbench?: WorkbenchService; appTurn?: AppTurn; stickers?: StickerLib }) {
     // `dispatch` (the LOCKING entry point) must never be called by
     // companionConverse — calling it from inside runExclusive would
     // self-deadlock (see pipeline-deps.ts). Failing loudly here catches a
@@ -122,20 +122,18 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
       setUserName: vi.fn(async () => {}),
       resolveUserName: vi.fn(() => undefined),
       resolveAccountId: vi.fn(() => 'acct1'),
-      projects: {} as IlinkAdapter['projects'],
-      voice: {} as IlinkAdapter['voice'],
-      companion: {} as IlinkAdapter['companion'],
+      voice: {} as PipelineWechat['voice'],
+      companion: {} as unknown,
       askUser: vi.fn(async () => 'timeout' as const),
-      loadProjects: vi.fn(() => ({ projects: {}, current: null })),
       lastActiveChatId: vi.fn(() => null),
       markChatActive: vi.fn(),
       captureContextToken: vi.fn(),
       sendTyping: vi.fn(async () => {}),
       getUpdatesForLoop: vi.fn(async () => ({})),
       handlePermissionReply: vi.fn(() => false),
-      sessionState: {} as IlinkAdapter['sessionState'],
+      sessionState: {} as PipelineWechat['sessionState'],
       flush: vi.fn(async () => {}),
-    } as unknown as IlinkAdapter
+    } as unknown as PipelineWechat
 
     const boot = {
       sessionManager: { isInFlight } as unknown as Bootstrap['sessionManager'],
@@ -181,16 +179,23 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
         ...(opts.stickers ? { stickers: opts.stickers } : {}),
       },
       {
-        polling: new Ref('polling'),
-        guard: new Ref('guard'),
-        pipeline: new Ref('pipeline'),
-        ingestNudge: new Ref('ingestNudge'),
-        ...(opts.appTurn ? { appTurn: opts.appTurn } : {}),
+        polling: () => null,
+        pipeline: () => null,
+        ingestNudge: () => null,
+        ...(opts.appTurn ? { appTurn: () => opts.appTurn! } : {}),
       },
     )
 
-    return { companionConverse, pipelineDeps, ilink, dispatch, dispatchInner, runExclusive, isInFlight, replySinksOpen, markInboundActivity }
+    return { companionConverse, pipelineDeps, ilink, dispatch, dispatchInner, runExclusive, isInFlight, replySinksOpen, markInboundActivity, careLedger }
   }
+
+  // 2026-10-18:CC 主动找你可以落到 App,主人在 App(或桌面)里回话也算「回了」—— 清掉伙伴的无回复计数,
+  // 不然学到的暂停(连着 2 条没回 ⇒ 安静)会把在 App 里聊着的主人当成不理人。
+  it('主人在 App 里说话 ⇒ 清掉主人 chat 的无回复计数(与微信入站同一个记账)', async () => {
+    const { companionConverse, careLedger } = setup({ inFlight: false })
+    await companionConverse('还在面试呢', 'phone')
+    expect(careLedger.resetNoReply).toHaveBeenCalledWith('owner_chat')
+  })
 
   // 回复交付(spec 2026-10-03 §4.10「app 接收器」):daemon 模式的 provider 把整个 TurnReply 交给接收器;
   // 附件与旁白随回复一起交还给桌面 / 手机(不再漏到微信)。旧路径没有 extras ⇒ 返回值形状不变。
@@ -266,23 +271,30 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     const workbench=makeWorkbenchService({store,registry:createProviderRegistry(),stateDir,ownerChatId:()=> 'owner_chat'})
     const {pipelineDeps,dispatch,dispatchInner,ilink}=setup({inFlight:false,workbench})
     const msg={chatId:'owner_chat',text:`任务 ${task.id}`,userId:'owner_chat',accountId:'account',createTimeMs:1,msgType:'text'}
-    await makeMwWorkbench(pipelineDeps.workbench!)({msg,receivedAtMs:1,requestId:'request'},()=>pipelineDeps.dispatch.coordinator.dispatch(msg))
+    await makeMwCommand(pipelineDeps.commands!)({msg,receivedAtMs:1,requestId:'request'},()=>pipelineDeps.dispatch.coordinator.dispatch(msg))
     expect(ilink.sendMessage).toHaveBeenCalledWith('owner_chat',expect.stringContaining('合计为 500'),{source:'workbench'})
+    // 步 4:「任务 …」是命令表第一条(只有接了工作台才有)
+    expect(pipelineDeps.commands!.registry.ids[0]).toBe('task-command')
+    expect(setup({inFlight:false}).pipelineDeps.commands!.registry.ids).not.toContain('task-command')
     expect(dispatch).not.toHaveBeenCalled()
     expect(dispatchInner).not.toHaveBeenCalled()
     await workbench.shutdown()
   })
 
   it('第四步(d):App 说的话先过消费表 —— 消费者吃了就把截住的回话交还 App,不进会话、不开 sink', async () => {
-    const appTurn = new Ref<AppTurn>('appTurn')
     const seen: string[] = []
-    appTurn.set(async (ctx) => { seen.push(ctx.msg.text); if (ctx.msg.text === '/帮助') { scopedReply()!.push('这里是帮助'); scopedReply()!.push('第二段'); ctx.consumedBy = 'mode'; return { consumed: true } } return { consumed: false } })
+    const origins: unknown[] = []
+    const appTurn: AppTurn = async (ctx) => { seen.push(ctx.msg.text); origins.push(ctx.origin); if (ctx.msg.text === '/帮助') { scopedReply()!.push('这里是帮助'); scopedReply()!.push('第二段'); ctx.consumedBy = 'mode'; return { consumed: true } } return { consumed: false } }
     const { companionConverse, dispatchInner, replySinksOpen, ilink } = setup({ inFlight: false, appTurn })
     await expect(companionConverse('/帮助', 'phone')).resolves.toEqual({ reply: '这里是帮助\n第二段' })
     expect(dispatchInner).not.toHaveBeenCalled(); expect(replySinksOpen).not.toHaveBeenCalled(); expect(ilink.sendMessage).not.toHaveBeenCalled()
     // 没人吃 ⇒ 照常进会话
     await expect(companionConverse('how are you')).resolves.toEqual({ reply: 'reply text' })
     expect(dispatchInner).toHaveBeenCalledTimes(1); expect(seen).toEqual(['/帮助', 'how are you'])
+    // App 一轮带出生地(这一轮里「任务」命令建的事不是微信来的):桌面 = desktop;手机在面板请求之外 ⇒ 分不清 = null
+    expect(origins).toEqual([null, 'desktop'])
+    await withPhoneClient('app', () => companionConverse('/帮助', 'phone'))
+    expect(origins.at(-1)).toBe('app')
   })
 
   it('refuses the app turn (reply_sink_busy) when the owner session is already in flight (e.g. a WeChat turn), WITHOUT dispatching, locking, or opening a reply sink', async () => {
@@ -483,20 +495,18 @@ describe('companionConverse lock spans the sink lifetime (real mutex + real repl
       setUserName: vi.fn(async () => {}),
       resolveUserName: vi.fn(() => undefined),
       resolveAccountId: vi.fn(() => 'acct1'),
-      projects: {} as IlinkAdapter['projects'],
-      voice: {} as IlinkAdapter['voice'],
-      companion: {} as IlinkAdapter['companion'],
+      voice: {} as PipelineWechat['voice'],
+      companion: {} as unknown,
       askUser: vi.fn(async () => 'timeout' as const),
-      loadProjects: vi.fn(() => ({ projects: {}, current: null })),
       lastActiveChatId: vi.fn(() => null),
       markChatActive: vi.fn(),
       captureContextToken: vi.fn(),
       sendTyping: vi.fn(async () => {}),
       getUpdatesForLoop: vi.fn(async () => ({})),
       handlePermissionReply: vi.fn(() => false),
-      sessionState: {} as IlinkAdapter['sessionState'],
+      sessionState: {} as PipelineWechat['sessionState'],
       flush: vi.fn(async () => {}),
-    } as unknown as IlinkAdapter
+    } as unknown as PipelineWechat
 
     const boot = {
       sessionManager: { isInFlight: () => false } as unknown as Bootstrap['sessionManager'],
@@ -522,7 +532,7 @@ describe('companionConverse lock spans the sink lifetime (real mutex + real repl
 
     const { companionConverse } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
 
     const result = await companionConverse('how are you')

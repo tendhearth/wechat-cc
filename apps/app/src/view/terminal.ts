@@ -1,5 +1,5 @@
 import type { CliSessionRowT } from '../backend/types'
-import { t, type Lang, type MessageKey } from '../i18n'
+import { hasMessage, t, type Lang, type MessageKey } from '../i18n'
 import type { Dot } from './connections'
 import { formatSynced } from './connection'
 
@@ -11,7 +11,10 @@ export type TerminalStatus = CliSessionRowT['status']
 export type TerminalRow = {
   id: string
   project: string
+  /** 执行者正式名字(daemon 给的 displayName,收敛清单 ⑥;老 daemon 不带 ⇒ id):只给读屏和详情页,行里画头像。 */
   source: string
+  /** 执行者 id(claude / codex / cursor),画头像用。 */
+  agent: string
   status: TerminalStatus
   stale: boolean
   summary: string | null
@@ -21,6 +24,16 @@ export type TerminalRow = {
   /** 中继在微信里开了码(主人不在电脑前)⇒ 手机上能拍;终端自己在问 ⇒ false。 */
   actionable: boolean
   hash: string | null
+  /** 在跑的会话此刻那一步(按界面语言拼好);没有 ⇒ null。 */
+  nowText: string | null
+  /** 开在电脑的终端窗口里:说的话直接送进那个窗口,在跑时也能说。 */
+  live: boolean
+}
+
+/** 一步的说法:daemon 给了 verb + target 就按界面语言拼;认不出的 verb(更新的电脑)/ 没有 verb(模型自己写的说明)⇒ 用 daemon 的 text。 */
+export function stepLabel(it: { text: string; verb?: string; target?: string }, lang: Lang): string {
+  const key = `terminal.verb.${it.verb ?? ''}`
+  return it.verb && hasMessage(lang, key) ? t(lang, key, { target: it.target ?? '' }) : it.text
 }
 
 export const TERMINAL_DOT: Record<TerminalStatus, Dot> = { waiting: 'warn', running: 'unknown', idle: 'ok', ended: 'unknown' }
@@ -39,7 +52,8 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
   return {
     id: s.session_id,
     project: s.project,
-    source: t(lang, s.source === 'codex' ? 'sessions.codex' : s.source === 'cursor' ? 'sessions.cursor' : 'sessions.claude'),
+    source: s.displayName || s.source,
+    agent: s.source === 'codex' || s.source === 'cursor' ? s.source : 'claude',
     status: s.status,
     stale: s.stale,
     summary: s.last_summary,
@@ -48,6 +62,8 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
     // 老 daemon 不带 actionable ⇒ 当作不可拍
     actionable: s.status === 'waiting' && p?.actionable === true && typeof p.hash === 'string',
     hash: p?.hash ?? null,
+    nowText: s.status === 'running' && s.now ? stepLabel(s.now, lang) : null,
+    live: s.live_window === true,
   }
 }
 
@@ -65,9 +81,13 @@ export function terminalNeedsYou(sessions: CliSessionRowT[] | undefined, known: 
   return (sessions ?? []).filter(s => s.status === 'waiting' && s.pending?.actionable === true && typeof s.pending.hash === 'string')
 }
 
-/** 能不能接着说一句:只有歇着的能(在跑 / 在等批准 ⇒ 这一轮还没完;结束了 ⇒ 接不上)。 */
-export function canSayTo(status: TerminalStatus | undefined): boolean {
-  return status === 'idle'
+/**
+ * 能不能接着说一句:歇着的能;开在电脑窗口里的(live)在跑时也能 —— 话送进那个窗口,它下一步就读到。
+ * 在等批准 ⇒ 先拍板;结束了且窗口没开 ⇒ 接不上。
+ */
+export function canSayTo(status: TerminalStatus | undefined, live = false): boolean {
+  if (status === 'idle') return true
+  return live && status !== 'waiting' && status !== undefined
 }
 
 /** 提交失败的一句话。 */

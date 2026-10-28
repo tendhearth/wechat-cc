@@ -6,6 +6,7 @@
  * 两条都是 admin,经原生宿主的 operator 凭据(invokeWorkbenchApi),渲染进程拿不到令牌。设备名是用户内容,一律 textContent。
  */
 import { phoneCopy as c } from './phone-connect-copy.js'
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {'ready'|'starting'|'remote_off'|'relay_not_configured'|'relay_unavailable'|'no_owner'} LinkState */
 /** @typedef {{ ok: true, state: 'ready', url: string, expires_at: number, check_code?: string } | { ok: false, state: Exclude<LinkState, 'ready'> }} LinkResult */
@@ -66,7 +67,7 @@ export function makePhoneLinkFlow(deps) {
   /** @returns {Promise<Device[] | null>} */
   const devices = async () => {
     try {
-      const r = /** @type {{ ok?: boolean, devices?: Device[] }} */ (await deps.call('GET', '/v1/phone/devices'))
+      const r = /** @type {{ ok?: boolean, devices?: Device[] }} */ (await v1(deps.call, V1.phone.devices))
       return r && r.ok && Array.isArray(r.devices) ? r.devices : null
     } catch { return null }
   }
@@ -91,7 +92,7 @@ export function makePhoneLinkFlow(deps) {
       try {
         const body = firstPost ? { enable_remote: true } : {}
         firstPost = false
-        r = /** @type {LinkResult} */ (await deps.call('POST', '/v1/phone/link', body))
+        r = /** @type {LinkResult} */ (await v1(deps.call, V1.phone.link, { body }))
       } catch (err) {
         if (!sawStarting) { show({ kind: 'error', text: c.error.replace('{why}', why(err)) }); return }
         r = { ok: false, state: 'starting' }   // daemon 正在重启:连不上是预期的(Review Focus 2)

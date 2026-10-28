@@ -14,7 +14,7 @@ import { promises as fsp } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
-import { makeSidecarRenderer, type SpawnFn } from '../src/daemon/sidecar-renderer'
+import { makeSidecarRenderer, type SpawnFn } from '../src/features/atelier'
 
 const sdCliPath = process.env.SD_CLI ?? ''
 const modelPath = process.env.SD_MODEL ?? ''

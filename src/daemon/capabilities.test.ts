@@ -57,6 +57,14 @@ describe('buildCapabilities (2026-10-06)', () => {
     expect(row).toMatchObject({ state: 'fallback', code: 'background.failing', params: { n: 5 }, detail: 'invalid model selection' })
     expect(row!.reason).not.toContain('invalid model')
   })
+  // 2026-10-23:注册上了、--version 也过了,真回合里却被拒着(agy 地区不可用)⇒ 照实说,不说「在用」
+  it('a registered brain that real turns say is region-refused needs the owner, with an honest reason', () => {
+    const row = buildCapabilities(base({ brain: { provider: 'agy', name: 'Antigravity', registered: true, retrying: false, refused: { code: 'region_unavailable', since: '2026-10-23T05:00:00.000Z' } } })).find(r => r.id === 'brain')
+    expect(row).toMatchObject({ state: 'needs_you', code: 'brain.region_unavailable', params: { name: 'Antigravity' }, action: { where: 'settings' } })
+    expect(row!.reason).toMatch(/地区/)
+    expect(row!.reason).not.toMatch(/登录(失效|过期)/)
+    expect(buildCapabilities(base({ brain: { provider: 'agy', name: 'Antigravity', registered: true, retrying: false, refused: null } })).find(r => r.id === 'brain')).toMatchObject({ state: 'ok' })
+  })
   it('an unregistered brain with no retry needs the owner', () => {
     expect(buildCapabilities(base({ brain: { provider: 'cursor', name: 'Cursor', registered: false, retrying: false } })).find(r => r.id === 'brain')).toMatchObject({ state: 'needs_you', action: { where: 'settings' } })
   })
@@ -89,5 +97,17 @@ describe('终端里的 Claude Code / Codex(2026-10-14)', () => {
     expect(term([{ source: 'claude', health: 'ok' }, { source: 'codex', health: 'ok' }, { source: 'cursor', health: 'missing' }], 3))
       .toMatchObject({ name: '终端里的 Claude Code / Codex / Cursor', state: 'ok', code: 'terminal.partial', params: { n: 3, names: 'Cursor' }, action: { label: '接上', run: 'cli_hooks_install' } })
     expect(term([{ source: 'cursor', health: 'stale' }])).toMatchObject({ name: '终端里的 Cursor', state: 'needs_you', code: 'terminal.stale', params: { names: 'Cursor' } })
+  })
+})
+
+describe('手机:老中继退休(F4)', () => {
+  const base = { wechat: { outbound: 'ok' as const, expired: 0 }, brain: { provider: 'claude', name: 'Claude', registered: true, retrying: false }, guard: null, fullDiskAccess: null, knowledge: null, memory: null, subsystems: [] }
+  it('配置里只有老中继(没有 relay_v2_url)⇒ needs_you,一句「换新中继、重新配对」,指向连接手机', () => {
+    const phone = buildCapabilities({ ...base, phone: { relay: false, devices: 2, legacyRelay: true } }).find(c => c.id === 'phone')!
+    expect(phone).toMatchObject({ state: 'needs_you', code: 'phone.relay_retired', reason: '手机连接要换新中继，在「连接手机」里重新配对。', action: { where: 'desktop' } })
+  })
+  it('没有老配置 ⇒ 照旧「没开手机连接」;设了 relay_v2_url ⇒ 老配置不算', () => {
+    expect(buildCapabilities({ ...base, phone: { relay: false, devices: 0 } }).find(c => c.id === 'phone')).toMatchObject({ state: 'off', code: 'phone.relay_off' })
+    expect(buildCapabilities({ ...base, phone: { relay: true, devices: 1, legacyRelay: false } }).find(c => c.id === 'phone')).toMatchObject({ state: 'ok' })
   })
 })

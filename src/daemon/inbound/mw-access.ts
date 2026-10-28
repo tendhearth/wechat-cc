@@ -66,10 +66,10 @@
  * (src/daemon/wiring/pipeline-deps.ts) supplies all six together.
  */
 import type { Middleware } from './types'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 import type { Access } from '../../lib/access'
 import type { GuestRequestStore } from '../guest-requests'
-import type { ForwardBudget } from '../../core/forward-budget'
+import type { ForwardBudget } from '../../domain/forward-budget'
 import { inboundMessageId, inboundFallbackMessageId } from '../../lib/messages-store'
 
 const INVITE_CODE_RE = /^\d{6}$/
@@ -101,7 +101,7 @@ export function previewText(text: string): string {
 }
 
 function ownerNotifyText(chatId: string, code: string, preview: string): string {
-  return `👋 ${chatId} 想和我聊天,ta 说:"${preview}"\n回「允许 ${code}」或「拒绝 ${code}」(48 小时内有效)`
+  return `${chatId} 想和我聊天,ta 说:"${preview}"\n回「允许 ${code}」或「拒绝 ${code}」(48 小时内有效)`
 }
 
 export interface AccessMwDeps {

@@ -2,15 +2,15 @@ import { describe, expect, it, vi } from 'vitest'
 import { createConversationsPoller } from './conversations-poller.js'
 
 describe('createConversationsPoller', () => {
-  it('refresh() invokes "conversations list --json" once and notifies subscribers', async () => {
+  it('refresh() calls GET /v1/conversations/list once and notifies subscribers', async () => {
     const payload = { ok: true, conversations: [{ chat_id: 'c1', user_name: 'A', mode: { kind: 'solo', provider: 'claude' } }] }
     const invoke = vi.fn().mockResolvedValue(payload)
-    const p = createConversationsPoller({ invoke, intervalMs: 60_000 })
+    const p = createConversationsPoller({ call: invoke, intervalMs: 60_000 })
     const sub = vi.fn()
     p.subscribe(sub)
     await p.refresh()
     expect(invoke).toHaveBeenCalledOnce()
-    expect(invoke).toHaveBeenCalledWith('wechat_cli_json', { args: ['conversations', 'list', '--json'] })
+    expect(invoke).toHaveBeenCalledWith('GET', '/v1/conversations/list')
     expect(sub).toHaveBeenCalledWith(payload)
     expect(p.current).toEqual(payload)
     expect(p.lastError).toBe(null)
@@ -20,8 +20,8 @@ describe('createConversationsPoller', () => {
     const good = { ok: true, conversations: [] }
     const invoke = vi.fn()
       .mockResolvedValueOnce(good)
-      .mockRejectedValueOnce(new Error('cli down'))
-    const p = createConversationsPoller({ invoke, intervalMs: 60_000 })
+      .mockRejectedValueOnce(new Error('daemon down'))
+    const p = createConversationsPoller({ call: invoke, intervalMs: 60_000 })
     const sub = vi.fn()
     p.subscribe(sub)
     await p.refresh()  // good
@@ -35,7 +35,7 @@ describe('createConversationsPoller', () => {
   it('concurrent refresh() calls dedupe to one inflight invoke', async () => {
     let resolveInner: (v: unknown) => void = () => {}
     const invoke = vi.fn(() => new Promise(r => { resolveInner = r }))
-    const p = createConversationsPoller({ invoke, intervalMs: 60_000 })
+    const p = createConversationsPoller({ call: invoke, intervalMs: 60_000 })
     const a = p.refresh()
     const b = p.refresh()
     expect(a).toBe(b)
@@ -46,7 +46,7 @@ describe('createConversationsPoller', () => {
 
   it('start() schedules ticks; stop() cancels them', () => {
     const invoke = vi.fn().mockResolvedValue({ ok: true, conversations: [] })
-    const p = createConversationsPoller({ invoke, intervalMs: 60_000 })
+    const p = createConversationsPoller({ call: invoke, intervalMs: 60_000 })
     p.start()
     expect(invoke).toHaveBeenCalledOnce()  // immediate first tick
     p.stop()

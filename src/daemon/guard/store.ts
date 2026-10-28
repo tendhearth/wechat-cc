@@ -3,9 +3,10 @@
  * IP, last reachable result, last probe timestamp) is kept in-memory by
  * the scheduler — no point persisting it; daemon restart re-probes.
  */
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export interface GuardConfig {
   enabled: boolean
@@ -76,7 +77,5 @@ export function loadGuardConfig(stateDir: string): GuardConfig {
 export function saveGuardConfig(stateDir: string, cfg: GuardConfig): void {
   const p = configPath(stateDir)
   mkdirSync(dirname(p), { recursive: true })
-  const tmp = `${p}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o600 })
-  renameSync(tmp, p)
+  writeFileAtomic(p, JSON.stringify(cfg, null, 2), { mode: 0o600 })
 }

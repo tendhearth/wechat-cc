@@ -1,0 +1,69 @@
+/**
+ * cli-reply.ts — 主人在微信里对某条终端会话说话(spec 2026-09-09-cli-hook-push §6.4)。
+ *
+ *   看 a1b2c3          → 把那条会话的尾巴渲染成页面发链接
+ *   @a1b2c3 改成 X     → `claude -p --resume` / `codex exec resume` / `cursor-agent --resume -p` 接着原来的对话跑,结果回微信
+ *
+ * 纯逻辑:解析 + 组命令行。跑与回都在 features/terminal/reply-handler.ts。
+ */
+import type { CliSource } from '../../app/cli-events'
+
+export type CliReply =
+  | { kind: 'list' }
+  | { kind: 'today' }
+  | { kind: 'view'; code: string }
+  | { kind: 'say'; code: string; text: string }
+
+// 会话码 = 会话 id 的前 6 位(cli-session-store.ts),只有 0-9a-f。只认十六进制:「@codex …」「@claude …」「看 README」
+// 都是日常说法,不是会话码(重构第二批步 3a,§1.5 bug 3;以前 [a-z0-9] 一律认,回「没见过会话码」)。
+// 码 = 会话 id 前 6 位,查找按前缀(cli-events lookup),所以 4–5 位前缀也算 —— 但短的必须带一个数字:
+// 「看 face」「@dead 你说…」「@beef 帮我…」这种全是 a-f 的英文词不是会话码(评审 #473)。
+const CODE = '(?:[0-9a-f]{6,12}|(?=[a-f]*[0-9])[0-9a-f]{4,5})'
+const VIEW_RE = new RegExp(`^看\\s*(${CODE})\\s*$`, 'i')
+const SAY_RE = new RegExp(`^@(${CODE})\\s+([\\s\\S]+)$`, 'i')
+/**
+ * 「终端」—— 列出终端里的会话(2026-10-14)。整句匹配,只认这几种说法:
+ * 终端 / 终端会话 / 终端列表 / 看终端 / 看看终端 / 会话列表 / /cli,可带问号。
+ * 不认单独的「会话」:日常聊天里太容易整句说出来。说法更散的(「我终端里那几个在干嘛」)
+ * 交给模型,它有只读工具 terminal_sessions。
+ */
+const LIST_RE = /^(?:看看?)?(?:终端(?:会话|列表)?|会话列表|\/cli)\s*[?？]?$/i
+
+/**
+ * 「日报」—— 过去 24 小时终端 + 一起做的一眼看完(2026-10-14,core/overseer-today.ts)。整句匹配:
+ * 日报 / 今日日报 / 今天日报 / 看日报 / 看看日报 / /today,可带问号。
+ * 不认「今天」「今天怎么样」:前者是 CC 问「什么时候」时最常见的整句回答,后者是日常寒暄,
+ * 而且句尾的「怎么样」本来就归管家(mw-task-reference 的 STATUS_VERB)。
+ */
+const TODAY_RE = /^(?:(?:看看?)?(?:今[天日])?日报|\/today)\s*[?？]?$/i
+
+export function parseCliReply(text: string): CliReply | null {
+  const t = text.trim()
+  if (LIST_RE.test(t)) return { kind: 'list' }
+  if (TODAY_RE.test(t)) return { kind: 'today' }
+  const v = VIEW_RE.exec(t)
+  if (v) return { kind: 'view', code: v[1]!.toLowerCase() }
+  const s = SAY_RE.exec(t)
+  if (s) return { kind: 'say', code: s[1]!.toLowerCase(), text: s[2]!.trim() }
+  return null
+}
+
+/**
+ * 接着原来的对话再说一句。两家都是「新进程 + 原会话 id」:Claude 写回同一份 transcript,
+ * Codex 写回同一份 rollout。daemon 的 --dangerously 姿态原样带过去 —— 非交互模式下
+ * 没人能在终端里点「允许」。
+ * 话术与会话 id 前面一律加 `--`:以 `-` 开头的话(如「--help」)不能被当成 CLI 选项(评审 10-15 #4)。
+ * Cursor:`cursor-agent --resume=<chatId> -p --trust`(id 用 `=` 粘住:`--resume [chatId]` 的参数可选,
+ * 分开写时以 `-` 开头的 id 会被当成选项);`--trust` 是因为 -p 下没人能点「信任这个文件夹」,而这正是主人
+ * 自己开过这条会话的文件夹;dangerously 对应 `--force`(命令除非明确拒绝一律放行)。
+ */
+/** bins:daemon 启动时解析出的可执行文件(launchd 起的 daemon PATH 里没有 ~/.local/bin,裸名字起不来)。 */
+export function resumeCommand(source: CliSource, sessionId: string, text: string, dangerously: boolean, bins: { claude?: string } = {}): { cmd: string; args: string[] } {
+  if (source === 'claude') {
+    return { cmd: bins.claude ?? 'claude', args: ['-p', '--resume', sessionId, ...(dangerously ? ['--dangerously-skip-permissions'] : []), '--', text] }
+  }
+  if (source === 'cursor') {
+    return { cmd: 'cursor-agent', args: [`--resume=${sessionId}`, '-p', '--trust', ...(dangerously ? ['--force'] : []), '--', text] }
+  }
+  return { cmd: 'codex', args: ['exec', '--skip-git-repo-check', ...(dangerously ? ['--dangerously-bypass-approvals-and-sandbox'] : []), 'resume', '--', sessionId, text] }
+}

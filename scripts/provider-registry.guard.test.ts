@@ -7,13 +7,14 @@
  *
  * 这些断言不测逻辑,测的是「这几份名单还对得上同一组 id」。
  */
+import { EXECUTOR_FACTS } from '../src/lib/executor-facts'
+import { executorNames } from '../src/domain/provider-display-names'
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROVIDER_IDS } from '../src/lib/provider-ids'
-import { capabilitiesFor } from '../src/core/capability-matrix'
-import { providerDisplayName } from '../src/core/provider-display-names'
+import { capabilitiesFor } from '../src/domain/capability-matrix'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8')
@@ -24,32 +25,26 @@ describe('provider 名单都以 provider-ids.ts 为准', () => {
     for (const id of PROVIDER_IDS) expect(() => capabilitiesFor(id)).not.toThrow()
   })
 
-  it('展示名表 KNOWN_NAMES 的键集合 = provider-ids(不靠首字母大写兜底)', () => {
-    const src = read('src', 'core', 'provider-display-names.ts')
-    const m = /const KNOWN_NAMES[^=]*=\s*Object\.freeze\(\{([^}]+)\}/.exec(src)
-    expect(m, 'provider-display-names.ts 里找不到 KNOWN_NAMES').toBeTruthy()
-    const keys = [...m![1]!.matchAll(/(\w+)\s*:/g)].map(x => x[1]!).sort()
-    expect(keys).toEqual(IDS)
-    for (const id of PROVIDER_IDS) expect(providerDisplayName(id).length).toBeGreaterThan(0)
+  it('每家都有自己的名字(lib/executor-facts 的 names;不靠首字母大写兜底)—— 收敛清单 ⑥', () => {
+    for (const id of PROVIDER_IDS) {
+      const n = EXECUTOR_FACTS[id].names
+      expect(n.name.length * n.short.length * n.settings.length, id).toBeGreaterThan(0)
+      expect(executorNames(id), id).toEqual(n)
+    }
   })
 
-  it('桌面 dashboard.js 的 PROVIDER_LABELS 键集合 = provider-ids', () => {
-    const src = read('apps', 'desktop', 'src', 'modules', 'dashboard.js')
-    const m = /const PROVIDER_LABELS = \{([^}]+)\}/.exec(src)
-    expect(m, 'dashboard.js 里找不到 PROVIDER_LABELS').toBeTruthy()
-    const keys = [...m![1]!.matchAll(/(\w+)\s*:/g)].map(x => x[1]!).sort()
-    expect(keys).toEqual(IDS)
-  })
+  // 桌面 view.js 的 PROVIDER_LABELS 已删(收敛清单 ⑥):三端不存名字表,见 executor-display-names.guard.test.ts。
 
-  it('mode-commands.ts 的 KNOWN_SLASH_COMMANDS 首行(isProviderCommand)= provider-ids 的斜杠形式', () => {
+  // 第三批 3d 起 mode-commands 认的 /词从行表推出来,provider 那行直接取 PROVIDER_SLASH(以前是手写的 KNOWN_SLASH_COMMANDS 首行)。
+  // 守卫的意思不变:微信里切 provider 的斜杠词 = provider-ids 的斜杠形式。
+  it('mode-commands.ts 的 provider 那行取自 PROVIDER_SLASH(不手写),而 PROVIDER_SLASH = provider-ids 的斜杠形式', async () => {
     const src = read('src', 'daemon', 'mode-commands.ts')
-    const m = /const KNOWN_SLASH_COMMANDS = new Set\(\[\s*([^\n]+)\/\/ isProviderCommand/.exec(src)
-    expect(m, '找不到 KNOWN_SLASH_COMMANDS 的 isProviderCommand 行').toBeTruthy()
-    const slashes = [...m![1]!.matchAll(/'(\w+)'/g)].map(x => x[1]!).sort()
+    expect(src, 'mode-commands 的 provider 行不再取 PROVIDER_SLASH —— 别回到手写的斜杠词表').toMatch(/\{ id: 'provider', words: Object\.values\(PROVIDER_SLASH\)/)
+    const { PROVIDER_SLASH } = await import('../src/domain/provider-policy')
     // 两个历史命名:claude 的斜杠是 /cc,openai 的是 /api;其余同名
     const SLASH_OF: Record<string, string> = { claude: 'cc', openai: 'api' }
     const expected = IDS.map(id => SLASH_OF[id] ?? id).sort()
-    expect(slashes).toEqual(expected)
+    expect(Object.values(PROVIDER_SLASH).sort()).toEqual(expected)
   })
 
   it('桌面「选择已有账号」芯片只列订阅 CLI 三家,且都是真 id', () => {

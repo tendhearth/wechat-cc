@@ -13,7 +13,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
 import {openDb} from ${JSON.stringify(join(repository,'src/lib/db'))}
-import {makeWorkbenchStore} from ${JSON.stringify(join(repository,'src/core/workbench/store'))}
+import {makeWorkbenchStore} from ${JSON.stringify(join(repository,'src/adapters/store/workbench/store'))}
 const root=realpathSync(mkdtempSync(join(tmpdir(),'attachment-compiled-'))),project=join(root,'project');mkdirSync(project)
 const db=openDb({path:join(root,'state.db')}),store=makeWorkbenchStore(db)
 try{

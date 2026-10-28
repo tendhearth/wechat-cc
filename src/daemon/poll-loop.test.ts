@@ -339,7 +339,7 @@ describe('startLongPollLoops', () => {
       .mockImplementation(async () => { await new Promise(r => setTimeout(r, 50)); return { updates: [], sync_buf: 'buf2' } })
 
     const seen: string[] = []
-    const onInbound = async (m: import('../core/prompt-format').InboundMsg) => {
+    const onInbound = async (m: import('../domain/prompt-format').InboundMsg) => {
       seen.push(m.text)
     }
 
@@ -823,5 +823,433 @@ describe('startLongPollLoops — recordHeartbeat', () => {
     await handle.stop()
 
     expect(recordHeartbeat).not.toHaveBeenCalled()
+  })
+})
+
+// 快车道(2026-10-26):一轮卡在等主人拍板时,主人在同一个微信对话里回的「y」要当场放开它;快车道只消费回答、
+// 从不内联跑一轮(没消费的照普通消息排队);普通消息照旧一条接一条、按到达顺序;游标照旧在处理完之后才落盘。
+describe('startLongPollLoops — fastLane (permission answers while a turn awaits approval)', () => {
+  const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: 'buf0' }
+  const text = (from: string, t: string, at = 1000): RawUpdate => ({ from_user_id: from, create_time_ms: at, message_type: 1, message_state: 2, item_list: [{ type: 1, text_item: { text: t } }] })
+  /** 每次 getUpdates 按顺序给一批;给完以后空轮询(10ms 一次)。 */
+  const batches = (list: Array<{ updates: RawUpdate[]; sync_buf: string }>) => {
+    let i = 0
+    return vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      if (i < list.length) return list[i++]!
+      await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+      return { updates: [], sync_buf: sb }
+    })
+  }
+  /** 一张待批卡:fastLane 只在它还开着时消费「y」(和 daemon/permission-answer.ts 一样:没消费 ⇒ false)。 */
+  const pendingCard = () => {
+    let answer!: (v: string) => void
+    const answered = new Promise<string>(r => { answer = r })
+    let open = true
+    return {
+      answered,
+      resolveElsewhere: () => { open = false; answer('desktop') },
+      fastLane: (m: { text: string }) => { if (m.text !== 'y' || !open) return false; open = false; answer('allow'); return true },
+    }
+  }
+
+  it('a "y" that arrives while a turn is blocked waiting for it is consumed at once, unblocks the turn, and never enters the pipeline', async () => {
+    const card = pendingCard()
+    const events: string[] = []
+    const getUpdates = batches([
+      { updates: [text('owner', '删掉 build')], sync_buf: 'buf1' },
+      { updates: [text('owner', 'y', 2000)], sync_buf: 'buf2' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: card.fastLane,
+      onInbound: async (m) => {
+        events.push(`pipeline ${m.text}`)
+        events.push(`turn got ${await card.answered}`)   // 这一轮在等主人拍板
+      },
+    })
+    await waitFor(() => events.includes('turn got allow'))
+    await new Promise(r => setTimeout(r, 30))
+    expect(events).toEqual(['pipeline 删掉 build', 'turn got allow'])   // 「y」没进流水线
+    await handle.stop()
+  })
+
+  it('stale pending (resolved elsewhere between arrival and handling): the "y" is NOT run in the fast lane — it queues behind T1 in arrival order', async () => {
+    const card = pendingCard()
+    const seen: string[] = []
+    let releaseT1!: () => void
+    const t1 = new Promise<void>(r => { releaseT1 = r })
+    const getUpdates = batches([
+      { updates: [text('owner', 'T1')], sync_buf: 'b1' },
+      { updates: [text('owner', 'y', 2000)], sync_buf: 'b2' },
+    ])
+    // 「y」到之前,桌面已经把这张卡拍掉了。
+    card.resolveElsewhere()
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: card.fastLane,
+      onInbound: async (m) => { seen.push(`start ${m.text}`); if (m.text === 'T1') await t1; seen.push(`end ${m.text}`) },
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 3)
+    await new Promise(r => setTimeout(r, 30))
+    expect(seen).toEqual(['start T1'])   // 「y」没在快车道里内联跑,排在 T1 后面
+    releaseT1()
+    await waitFor(() => seen.includes('end y'))
+    expect(seen).toEqual(['start T1', 'end T1', 'start y', 'end y'])
+    await handle.stop()
+  })
+
+  it('normal messages stay strictly ordered behind the running turn; only consumed answers jump ahead', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const seen: string[] = []
+    const consumed: string[] = []
+    const getUpdates = batches([
+      { updates: [text('c1', 'first')], sync_buf: 'b1' },
+      { updates: [text('c1', 'second'), text('c2', 'other')], sync_buf: 'b2' },
+      { updates: [text('c1', 'y')], sync_buf: 'b3' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: (m) => { if (m.text !== 'y') return false; consumed.push('y'); return true },
+      onInbound: async (m) => { seen.push(`start ${m.text}`); if (m.text === 'first') await gate; seen.push(`end ${m.text}`) },
+    })
+    await waitFor(() => consumed.length === 1)
+    expect(seen).toEqual(['start first'])   // second / other 排在 first 后面,没开始
+    release()
+    await waitFor(() => seen.includes('end other'))
+    expect(seen).toEqual(['start first', 'end first', 'start second', 'end second', 'start other', 'end other'])
+    await handle.stop()
+  })
+
+  it('a batch cursor is persisted only after every normal message up to it has been handled', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const order: string[] = []
+    const getUpdates = batches([
+      { updates: [text('c1', 'slow')], sync_buf: 'b1' },
+      { updates: [text('c1', 'y')], sync_buf: 'b2' },
+      { updates: [text('c1', 'next')], sync_buf: 'b3' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: (m) => { if (m.text !== 'y') return false; order.push('consumed y'); return true },
+      onInbound: async (m) => { if (m.text === 'slow') await gate; order.push(`handled ${m.text}`) },
+      onSyncBuf: (_id, buf) => { order.push(`persist ${buf}`) },
+    })
+    await waitFor(() => order.includes('consumed y') && getUpdates.mock.calls.length >= 4)
+    expect(order).toEqual(['consumed y'])   // 「slow」还没处理完 ⇒ 一个游标都不落盘(崩溃了 slow / y / next 都重放)
+    release()
+    await waitFor(() => order.includes('persist b3'))
+    expect(order).toEqual(['consumed y', 'handled slow', 'persist b1', 'persist b2', 'handled next', 'persist b3'])
+    await handle.stop()
+  })
+
+  it('the loop keeps polling (and stamping the heartbeat) while a turn runs; read-ahead is bounded', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    let cycles = 0
+    const flood = Array.from({ length: 60 }, (_, i) => ({ updates: [text('c1', `m${i}`)], sync_buf: `b${i + 1}` }))
+    const getUpdates = batches(flood)
+    const handled: string[] = []
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: () => false,
+      onPollCycle: () => { cycles++ },
+      onInbound: async (m) => { if (m.text === 'm0') await gate; handled.push(m.text) },
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 50)
+    await new Promise(r => setTimeout(r, 50))
+    // 第一条卡着:loop 照样在拉、在盖心跳,但最多攒 READ_AHEAD_MAX 条就停下等。
+    expect(getUpdates.mock.calls.length).toBe(50)
+    expect(cycles).toBeGreaterThanOrEqual(50)
+    expect(handled).toEqual([])
+    release()
+    await waitFor(() => handled.length === 60)
+    expect(handled).toEqual(flood.map((_, i) => `m${i}`))
+    await handle.stop()
+  })
+
+  it('stop(): waits for the running turn, skips not-yet-started messages and never persists past them', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const handled: string[] = []
+    const persisted: string[] = []
+    const getUpdates = batches([
+      { updates: [text('c1', 'running')], sync_buf: 'b1' },
+      { updates: [text('c1', 'waiting')], sync_buf: 'b2' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: () => false, stopGraceMs: 5_000,
+      onInbound: async (m) => { if (m.text === 'running') await gate; handled.push(m.text) },
+      onSyncBuf: (_id, buf) => { persisted.push(buf) },
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 3)
+    const stopped = handle.stop()
+    setTimeout(release, 20)
+    await stopped
+    expect(handled).toEqual(['running'])
+    expect(persisted).toEqual(['b1'])   // running 那一批落盘;waiting 没处理 ⇒ 游标停在它之前,重启后重放
+  })
+
+  it('stopAccountAndWait(): resolves only after the running message settles; queued ones and answers after abort are skipped', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const handled: string[] = []
+    const consumed: string[] = []
+    const persisted: string[] = []
+    const getUpdates = batches([
+      { updates: [text('c1', 'running')], sync_buf: 'b1' },
+      { updates: [text('c1', 'queued')], sync_buf: 'b2' },
+    ])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: (m) => { consumed.push(m.text); return false },
+      onInbound: async (m) => { if (m.text === 'running') await gate; handled.push(m.text) },
+      onSyncBuf: (_id, buf) => { persisted.push(buf) },
+    })
+    await waitFor(() => getUpdates.mock.calls.length >= 3)
+    let settled = false
+    const waiting = handle.stopAccountAndWait('A1').then(() => { settled = true })
+    await new Promise(r => setTimeout(r, 30))
+    expect(settled).toBe(false)   // 还在等跑着的那一条
+    release()
+    await waiting
+    expect(handled).toEqual(['running'])
+    expect(persisted).toEqual(['b1'])
+    expect(handle.running()).toEqual([])
+  })
+
+  it('getUpdates failures back off exponentially in fast-lane mode too, then delivery resumes', async () => {
+    const delays: number[] = []
+    const handled: string[] = []
+    let calls = 0
+    const handle = startLongPollLoops({
+      accounts: [acct], parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: () => false,
+      ilink: {
+        getUpdates: async () => {
+          calls += 1
+          if (calls <= 4) throw new Error('unknown certificate verification error')
+          if (calls === 5) return { sync_buf: 'x', updates: [text('c1', 'after')] }
+          await new Promise(r => setTimeout(r, 200))
+          return { sync_buf: 'x', updates: [] }
+        },
+      },
+      sleepFn: async (ms: number) => { delays.push(ms); await new Promise(r => setTimeout(r, 0)) },
+      onInbound: async (m) => { handled.push(m.text) },
+    })
+    await waitFor(() => handled.length === 1)
+    await handle.stop()
+    expect(delays).toHaveLength(4)
+    expect(delays[0]).toBeLessThan(delays[3]!)
+    expect(handled).toEqual(['after'])
+  })
+
+  it('a throwing fastLane handler counts as not consumed: the message goes to the normal queue', async () => {
+    const seen: string[] = []
+    const getUpdates = batches([{ updates: [text('c1', 'hi')], sync_buf: 'b1' }])
+    const handle = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      fastLane: () => { throw new Error('boom') },
+      onInbound: async (m) => { seen.push(m.text) },
+    })
+    await waitFor(() => seen.length === 1)
+    expect(seen).toEqual(['hi'])
+    await handle.stop()
+  })
+})
+
+// 2026-10 变异测试第二轮:parseUpdates 的语音 / 文件 / 视频三类、消息 id、状态过滤在基线里一条都没跑到(NoCoverage),
+// loop 的过期停、单账号停 / 加、快车道消费后盖心跳、失败日志折叠也没有测试在乎。
+describe('parseUpdates — 语音 / 文件 / 视频与消息 id(变异测试第二轮)', () => {
+  const one = (u: Partial<RawUpdate>) => parseUpdates([{ from_user_id: 'u1', message_type: 1, ...u }], { accountId: 'A', resolveUserName: () => undefined })
+  const media = { encrypt_query_param: 'q', aes_key: 'k' }
+  it('语音带转写 ⇒ 当文字([语音] 前缀),类型 voice,不带附件', () => {
+    const [m] = one({ item_list: [{ type: 3, voice_item: { text: '明天见', media } }] })
+    expect(m).toMatchObject({ text: '[语音] 明天见', msgType: 'voice' })
+    expect(m!.attachments).toBeUndefined()
+  })
+  it('语音没转写、有媒体 ⇒ 语音附件', () => {
+    const [m] = one({ item_list: [{ type: 3, voice_item: { media } }] })
+    expect(m).toMatchObject({ text: '(non-text message)', msgType: 'voice', attachments: [{ kind: 'voice', path: '<pending-cdn-ref>', caption: JSON.stringify(media) }] })
+  })
+  it('语音什么都没有 ⇒ 不算语音,也没附件', () => {
+    const [m] = one({ item_list: [{ type: 3, voice_item: {} }] })
+    expect(m).toMatchObject({ msgType: 'unknown' })
+    expect(m!.attachments).toBeUndefined()
+  })
+  it('文件:带媒体和文件名;只有文件名也收(媒体记成 {});没名字记 file.bin;两样都没有 ⇒ 跳过', () => {
+    expect(one({ item_list: [{ type: 4, file_item: { media, file_name: 'a.pdf' } }] })[0]).toMatchObject({
+      msgType: 'file', attachments: [{ kind: 'file', path: '<pending-cdn-ref>', caption: JSON.stringify({ media, file_name: 'a.pdf' }) }],
+    })
+    expect(one({ item_list: [{ type: 4, file_item: { file_name: 'b.txt' } }] })[0]!.attachments![0]!.caption).toBe(JSON.stringify({ media: {}, file_name: 'b.txt' }))
+    expect(one({ item_list: [{ type: 4, file_item: { media } }] })[0]!.attachments![0]!.caption).toBe(JSON.stringify({ media, file_name: 'file.bin' }))
+    const [skipped] = one({ item_list: [{ type: 4, file_item: {} }] })
+    expect(skipped).toMatchObject({ msgType: 'unknown' })
+    expect(skipped!.attachments).toBeUndefined()
+  })
+  it('视频 ⇒ 当文件附件、类型 video;没有媒体 ⇒ 跳过', () => {
+    expect(one({ item_list: [{ type: 5, video_item: { media } }] })[0]).toMatchObject({
+      msgType: 'video', attachments: [{ kind: 'file', path: '<pending-cdn-ref>', caption: JSON.stringify(media) }],
+    })
+    expect(one({ item_list: [{ type: 5, video_item: {} }] })[0]!.attachments).toBeUndefined()
+  })
+  it('图片只有 aeskey 也收;媒体和 aeskey 都没有 ⇒ 跳过', () => {
+    expect(one({ item_list: [{ type: 2, image_item: { aeskey: 'x' } }] })[0]).toMatchObject({ msgType: 'image', attachments: [{ kind: 'image', caption: '{}' }] })
+    expect(one({ item_list: [{ type: 2, image_item: {} }] })[0]!.attachments).toBeUndefined()
+  })
+  it('类型取第一样:先文字后图片 ⇒ text;先图片后文字 ⇒ image', () => {
+    const t = { type: 1, text_item: { text: '看' } }, i = { type: 2, image_item: { media } }
+    expect(one({ item_list: [t, i] })[0]!.msgType).toBe('text')
+    expect(one({ item_list: [i, t] })[0]!.msgType).toBe('image')
+    expect(one({ item_list: [{ type: 3, voice_item: { text: '嗯' } }, t] })[0]!.msgType).toBe('voice')
+    expect(one({ item_list: [{ type: 4, file_item: { file_name: 'a' } }, t] })[0]!.msgType).toBe('file')
+    expect(one({ item_list: [{ type: 5, video_item: { media } }, t] })[0]!.msgType).toBe('video')
+  })
+  it('引用的类型标签:voice / file / video', () => {
+    for (const [type, label] of [[3, 'voice'], [4, 'file'], [5, 'video']] as const) {
+      expect(one({ item_list: [{ type: 1, text_item: { text: '这个' }, ref_msg: { message_item: { type } } }] })[0]!.quote).toEqual({ type: label, text: '' })
+    }
+  })
+  it('消息 id:message_id 优先;没有就取 item 上第一个 msg_id;都没有 ⇒ 不带', () => {
+    expect(one({ message_id: 0, item_list: [{ type: 1, text_item: { text: 'a' }, msg_id: 'i1' }] })[0]!.msgId).toBe('0')
+    expect(one({ item_list: [{ type: 1, text_item: { text: 'a' } }, { type: 1, text_item: { text: 'b' }, msg_id: 'i2' }] })[0]!.msgId).toBe('i2')
+    expect('msgId' in one({ item_list: [{ type: 1, text_item: { text: 'a' } }] })[0]!).toBe(false)
+  })
+  it('没有 message_state ⇒ 照收;没有 from_user_id ⇒ 跳过;没有 quote / 附件 ⇒ 不带这两个键', () => {
+    const [m] = one({ item_list: [{ type: 1, text_item: { text: 'a' } }] })
+    expect(m!.text).toBe('a')
+    expect('quote' in m!).toBe(false)
+    expect('attachments' in m!).toBe(false)
+    expect(parseUpdates([{ message_type: 1, item_list: [{ type: 1, text_item: { text: 'a' } }] }], { accountId: 'A', resolveUserName: () => undefined })).toEqual([])
+  })
+})
+
+describe('startLongPollLoops — 账号与收尾(变异测试第二轮)', () => {
+  // 空轮询之间让出一个宏任务(只回微任务的 getUpdates 会把 loop 变成死循环,waitFor 的计时器永远轮不到)
+  const pause = (signal?: AbortSignal) => new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+  const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: 'buf0' }
+  const idle = () => vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+    await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+    return { updates: [], sync_buf: sb }
+  })
+  it('过期 ⇒ 这个账号的 loop 自己停下(不再拉),记 SESSION_EXPIRED;交给别的设备 ⇒ SESSION_STANDBY', async () => {
+    for (const [resp, tag] of [[{ expired: true }, 'SESSION_EXPIRED'], [{ expired: true, standby: true }, 'SESSION_STANDBY']] as const) {
+      const getUpdates = vi.fn().mockResolvedValue(resp)
+      const logs: string[] = []
+      const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], log: (t) => logs.push(t) })
+      await waitFor(() => h.running().length === 0)
+      expect(getUpdates).toHaveBeenCalledTimes(1)
+      expect(logs).toContain(tag)
+      expect(logs).not.toContain(tag === 'SESSION_EXPIRED' ? 'SESSION_STANDBY' : 'SESSION_EXPIRED')
+      await h.stop()
+    }
+  })
+  it('addAccount 同一个 id 两次 ⇒ 只有一个 loop;stopAccount ⇒ 停下且能再加回来;停一个不存在的 ⇒ 没事', async () => {
+    const getUpdates = idle()
+    const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [] })
+    h.addAccount(acct)
+    expect(h.running()).toEqual(['A1'])
+    await waitFor(() => getUpdates.mock.calls.length >= 2)
+    const before = new Set(getUpdates.mock.calls.map(c => c[4]))
+    expect(before.size).toBe(1) // 只有一个 loop 在拉(同一个 AbortSignal)
+    expect(() => h.stopAccount('nope')).not.toThrow()
+    h.stopAccount('A1')
+    await waitFor(() => h.running().length === 0)
+    h.addAccount(acct)
+    expect(h.running()).toEqual(['A1'])
+    await h.stop()
+  })
+  it('快车道吃掉一条回答 ⇒ 当场盖一次心跳(不等普通队列)', async () => {
+    let gate!: () => void
+    const blocked = new Promise<void>(r => { gate = r })
+    let i = 0
+    const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      if (i++ === 0) return { updates: [
+        { from_user_id: 'o', message_type: 1, item_list: [{ type: 1, text_item: { text: '长活' } }] },
+        { from_user_id: 'o', message_type: 1, item_list: [{ type: 1, text_item: { text: 'y' } }] },
+      ], sync_buf: 'b1' }
+      await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+      return { updates: [], sync_buf: sb }
+    })
+    const stamps: string[] = []
+    const h = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      onInbound: async () => { await blocked },
+      fastLane: m => { if (m.text === 'y') { stamps.push('consumed'); return true } return false },
+      onPollCycle: () => stamps.push('stamp'),
+    })
+    await waitFor(() => stamps.includes('consumed'))
+    // 长活还卡着(普通队列没处理完),快车道那条已经盖过心跳:consumed 之后紧跟一次 stamp
+    expect(stamps.slice(stamps.indexOf('consumed'), stamps.indexOf('consumed') + 2)).toEqual(['consumed', 'stamp'])
+    gate()
+    await h.stop()
+  })
+  it('响应里没有 sync_buf ⇒ 不落盘(快车道与普通两种模式)', async () => {
+    for (const fast of [false, true]) {
+      let i = 0
+      const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, _sb: string, signal?: AbortSignal) => {
+        if (i++ === 0) return { updates: [] }
+        await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+        return { updates: [] }
+      })
+      const saved: string[] = []
+      const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], onSyncBuf: (_id, b) => saved.push(b), ...(fast ? { fastLane: () => false } : {}) })
+      await waitFor(() => getUpdates.mock.calls.length >= 3)
+      await h.stop()
+      expect(saved).toEqual([])
+      expect(getUpdates.mock.calls.every(c => c[3] === 'buf0')).toBe(true)
+    }
+  })
+  it('连续失败:前 3 次逐条记 ERROR,之后每 20 次一条;恢复时记一句 recovered', async () => {
+    let n = 0
+    const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      n++
+      if (n <= 25) throw new Error(`boom${n}`)
+      if (n > 26) await pause(signal)
+      return { updates: [], sync_buf: sb }
+    })
+    const logs: string[] = []
+    const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], log: (t, l) => logs.push(`${t} ${l}`), sleepFn: async () => {} })
+    await waitFor(() => logs.some(l => l.includes('recovered')))
+    await h.stop()
+    expect(logs.filter(l => l.startsWith('ERROR')).map(l => l.match(/\((\d+)x\)/)![1])).toEqual(['1', '2', '3', '21'])
+    expect(logs).toContain('POLL recovered for A1 after 25 consecutive failures')
+  })
+  it(`僵尸长轮询:第 ${ZOMBIE_TIMEOUT_STREAK} 次报一次,之后每 20 次再报;回来时说一声`, async () => {
+    let n = 0
+    const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      n++
+      if (n <= 41) return { timed_out: true }
+      if (n > 42) await pause(signal)
+      return { updates: [], sync_buf: sb }
+    })
+    const logs: string[] = []
+    const failures: string[] = []
+    const h = startLongPollLoops({
+      accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], log: (t, l) => logs.push(`${t} ${l}`),
+      health: { recordFailure: (_s: string, e: unknown) => failures.push(String(e)), recordSuccess: () => {} } as never,
+    })
+    await waitFor(() => logs.some(l => l.includes('answering again')))
+    await h.stop()
+    expect(failures.map(f => f.match(/x(\d+)/)![1])).toEqual(['5', '20', '40'])
+    expect(logs).toContain('POLL long-poll answering again for A1 after 41 timed-out round(s)')
+  })
+  it('超时不到 5 次就答上了 ⇒ 不说「answering again」', async () => {
+    let n = 0
+    const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      n++
+      if (n <= 2) return { timed_out: true }
+      if (n === 3) return { updates: [], sync_buf: sb }
+      await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+      return { updates: [], sync_buf: sb }
+    })
+    const logs: string[] = []
+    const beats: string[] = []
+    const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], log: (t, l) => logs.push(`${t} ${l}`), recordHeartbeat: (id) => beats.push(id) })
+    await waitFor(() => beats.length >= 1)
+    await h.stop()
+    expect(logs.some(l => l.includes('answering again'))).toBe(false)
   })
 })

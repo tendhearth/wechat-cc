@@ -17,10 +17,10 @@
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
-import { createA2ARegistry } from '../core/a2a-registry'
-import { createA2AClient } from '../core/a2a-client'
+import { createA2ARegistry } from '../adapters/a2a/a2a-registry'
+import { createA2AClient } from '../adapters/a2a/a2a-client'
 import { decodeInvite, pairUrl, slugifyHandName } from '../lib/a2a-pairing'
-import { isAdvertisableUrl } from '../core/pairing'
+import { isAdvertisableUrl } from '../app/pairing'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 const MIN_TOKEN = 16

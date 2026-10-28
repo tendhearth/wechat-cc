@@ -10,6 +10,68 @@ wechat-cc ci triage --wait --rerun
 
 退出码 0 绿 / 1 真红(`unknown` 也算)/ 2 这个 SHA 上没有运行、`gh` 出错、或开关写错了 / 3 是 `src/cli/ci-flakes.json` 里登记过的 flake。给了 `--rerun` 的话已知 flake 会自动重跑一次,**第二次仍红一律改判真红**。细则、退出码全表、怎么往登记表里加一条,见 [ci-and-flakes.md](ci-and-flakes.md)。
 
+## 测试只增不减
+
+AI 写代码有两个老毛病(Kent Beck 说过):为了变绿把测试删掉、跳过、改松;事后补一条「没有修复也会过」的测试。前一个在 diff 里看得见,只是评审时没人去数 —— 所以让机器数(2026-10-27 主人定)。
+
+`scripts/test-shrink-check.ts` 比 PR 头和它跟 base 的 merge-base,逐个测试文件看(判法写在 `scripts/test-shrink-lib.ts` 开头):
+
+- 用例少了(按标题配对,**跨文件**配:搬家、拆文件、git 认出或没认出的改名都不算;只改标题的在同一文件里按顺序配上);
+- 配上的用例 expect 少了(含 `expect.soft` / `expect.poll` / `assert.*`),或精确断言(`toBe` / `toEqual` / `toHaveLength` / 快照 …)少了 —— `toBe(3)` 改成 `toBeDefined()` 就是这一条;
+- `skip` / `skipIf` / `runIf` / `todo` / `fails` 变多;任何地方新出现 `.only`;
+- `.snap` 少了条目;`vitest*.config.*` 的 `exclude` 多了项(Windows 排除清单就是这么长出来的)。
+
+报了不等于错:功能删了、测试跟着删是正常的。规矩是**说出来**:PR 描述里写一节 `## 删掉/放松的测试`,每个被点名的文件一行(全路径或文件名)加理由,CI 才放行。只看 TS / JS 测试和快照;Rust / Swift / Kotlin 不管,`it.each` 表格少几行也看不出来 —— 这些靠评审。把断言挪进 helper 会被当成 expect 变少,写一句理由即可。
+
+本机先看一眼:`bun scripts/test-shrink-check.ts`(只报告、退出 0;`--base <ref>` 换基线)。整合者按某个 PR 判、跟 CI 同一个结论:`bun scripts/test-shrink-check.ts --pr <N>`。
+
+## 红/绿
+
+**修 bug 的 PR,描述里要有 `## 红/绿`**:贴出那条命令,证明新加/改过的测试在**撤掉修复时红、带上修复时绿**。只「带上修复时绿」证明不了测试抓得住这个 bug。做法:
+
+```bash
+git stash push -- <被修的源文件>        # 或 git checkout origin/dev -- <源文件>,只撤修复、留着测试
+bun x vitest run <测试文件>            # 红:贴失败的那一行
+git stash pop
+bun x vitest run <测试文件>            # 绿
+```
+
+写不了测试的修复(纯配置、只有真机能复现)也写这一节,说为什么、怎么验的。CI 怎么认「修 bug」:分支以 `fix/` 开头,或标题以 `fix` / 「修」开头(「修改」「修订」不算;自改的标题是「自改 #…」,不在内)。
+
+两条都在 `ci.yml` 的 **pr · 测试只增不减 + 红/绿** 作业里查,只在 PR 上跑、只改 Markdown 时跳过。它读的是触发那一刻的 PR 描述:红了改完描述,**重跑作业没用**,推一次或 `gh pr close <N> && gh pr reopen <N>`。自改流水线的 PR 也查:自改删了测试就停在 CI 红,交给人看。
+
+## 跨模块的行为至少一条走真实接线(沙盒)的测试
+
+**mock 只许替身系统边界**(微信 ilink、模型 SDK、外网、外部进程);daemon 自己的模块不许 mock。单测里 mock 内部模块测的是「我以为它们怎么接」,
+接错了照样绿 —— 2026-10-26 #729 在 boot-api 里多取了一样没登记的东西,单测和 CI 全绿,真机开机三连败、自动回滚。
+
+- 真实形状沙盒:`bun run test:sandbox`(`src/daemon/__e2e__/real-shaped.ts`)起整台照主人真机配置的 daemon —— 知识库、社交、配对、手机中继、
+  网络守护都开着 —— 从开机走到收发、拍板卡、记忆导入、关机再开机。`bun run verify` 每次都跑它(本机几秒),CI 在三个平台的 build 里跑。
+- 改到跨模块的行为(开机顺序、可选子系统、两个模块之间的口子),至少一条测试走沙盒或 `__e2e__/` 的真接线。
+- 加新的可选子系统 / 配置开关:在沙盒里照真机把它开上;开不了的写进 `src/daemon/__e2e__/README.md` 的「没开的」,说清为什么。
+
+这条由 `scripts/mock-internal.guard.test.ts` 按文件数(判法在 `scripts/mock-internal-lib.ts`):`vi.mock` / `vi.doMock` / `mock.module`
+的目标解析进仓库自己的模块就算一处;node 内置、npm 包、`src/adapters/**`、`src/test-support/**` 和 `BOUNDARY_FILES` 里写了理由的几个真边界放行。
+没登记的文件出现内部 mock 就红,登记过的只许降。清一处的换法三选一:用真模块;经参数 / 端口注入假实现;
+或者把要测的行为搬进沙盒 / `__e2e__/` 的场景。只验「mock 被这样调了」的测试,沙盒或 e2e 已经覆盖那个行为的,直接删,
+在 PR 描述的 `## 删掉/放松的测试` 里逐个列出。清完把守卫里 `BASELINE` 的数字调下来(降到 0 的行删掉)—— 少了不调,守卫也红。
+
+## 推之前跑过 verify,由机器查
+
+`bun run verify` 一开始记下它检查的那份内容(工作区原样的 git 树),全绿才记进这个 worktree 的 git 目录;`git push` 时
+`scripts/git-hooks/pre-push` 看每个要推的提交的树在不在记录里,不在就拦下(先 verify 再 commit 也认,树一样)。只改 Markdown、删分支不查。
+判法和测试:`scripts/verify-stamp.ts`。装一次就行(主仓库的配置,所有 worktree 共用):`git config core.hooksPath scripts/git-hooks`。
+真要绕过:`git push --no-verify`,并在 PR 里写为什么。这条管的是「agent 说跑了 verify」—— 以前只写在提示词里。
+
+## 评审只报影响正确性的
+
+评审(人、整合者、派出去的评审 agent)只报**会让结果错**的问题:行为错、数据丢、权限放宽、边界条件漏、该有的测试没有。**跳过风格**,
+**不要求给不可能发生的情况补测试**。叫评审者找问题,它总能找到点什么;每条都修,最后多出几层抽象、一堆测不到真东西的测试 ——
+测试越写越多、越写越像实现细节,一部分就是这么来的。派评审时提示词里写明「只报正确性,跳过风格」。
+
+动开机 / 关机顺序、数据迁移、权限判定的 PR,合进去之前再要一道**没看过写代码过程**的评审:新开一个子 agent(Claude Code 的 `/code-review`),
+只给它 diff 和设计稿,不给对话。整合者自己写过或审过的,看 diff 时带着写的时候的推理,容易顺着它读过去。
+
 ## 两种用法
 
 ```bash
@@ -79,6 +141,24 @@ POST /v1/workbench/cancel        { id }
 POST /v1/workbench/archive       { id, archived: true }
 POST /v1/workbench/attachment    { id, draftId, name, mime, base64 }
 ```
+
+## 变异测试(定期传感器,不进 verify / 每个 PR 的 CI)
+
+测试绿只说明「没写错的地方没红」,说明不了「写错了会不会红」。变异测试把被测代码一处一处改坏(`===` 换 `!==`、`&&` 换 `||`、条件换成 `true`、字符串清空……),每改一处跑一遍覆盖到它的测试:有测试红 = 这处被护住(killed);全绿 = **没有任何测试在乎这一处**(survived)。
+
+```bash
+bun run test:mutation                      # 先 uptime:load 过 20 别跑(主人在用这台机器)
+bun run test:mutation -- --concurrency 6   # 机器空着时
+bun run test:mutation -- --force           # 不用增量,全量重测
+```
+
+- **什么时候跑**:发版前、大重构之后(权限 / 红线 / 记忆 / 迁移 runner 动过),或者想删一批测试之前看看删的是不是在干活的那批。不是每个 PR 都跑。
+- **范围**:`stryker.config.mjs` 的 `mutate`,只放最要紧的纯逻辑(authorize 与它组合的几层、放行规则、记忆渲染 / 收回);迁移 runner `src/lib/db.ts` 单独一份 `stryker.db.config.mjs`,只用库层测试(`vitest.mutation-db.config.ts`)—— 放进主配置会牵出 5000 多条测试、跑一个半小时(原因见那份配置的注释)。`src/lib/db/migrations/` 下的冻结迁移**不变异**(一字不许改)。加文件就往 `mutate` 里加。工作台生命周期 / 协调器 / 回复交付 / 拉消息快车道在第三份 `stryker.areas.config.mjs`(牵连的测试和权限那批几乎不重合)。
+- **跑在 Node 上**(Stryker 进程里直接起 vitest,用 `vitest.node.config.ts`,跟 CI 的 node 作业同一份);只跑 import 图上牵连到被变异文件的测试(`vitest.related`)。沙箱在 `.stryker-tmp/`,自己 `git init` 一个根(有测试断言 cwd 是仓库根);Bun 专属的测试不在这里面。
+- **依赖在 `tools/mutation/`**(独立 `package.json` + `bun.lock`,不进根 workspace,`bun run test:mutation` 第一步自己 `bun install`):Stryker 10 带 `@babel/core` 8,装进根 lockfile 会把 bun 隔离安装的兜底目录里的 `@babel/core` 从 7 换成 8,手机 app 的 Expo / Metro 可能靠它解析。根 lockfile、CI、三平台都不受影响。
+- **耗时**:主配置 2448 个变异,首轮(不变异)约 4 分钟,空闲机器 4 个 worker 全部跑完约 15–20 分钟(默认 2 个 worker,再翻倍);迁移 runner 那份 3 分钟。**增量**:结果存在 `reports/mutation/stryker-incremental.json`(db 那份在 `reports/mutation/db/`),下次只重测改过的源码 / 测试;中途 Ctrl-C 也会存一份。报告:`reports/mutation/index.html`、`reports/mutation/db/index.html`(看哪一行哪个变异活下来)和同目录的 `mutation.json`。
+- **主人用机时**:load 高会把正常变异判成 Timeout(算「护住」,虚高)。结果里 Timeout 突然变多,就删掉增量文件里 `"status": "Timeout"` 的那几条,机器空了重跑。
+- **怎么读**:活下来的变异不全是测试的错 —— 有的是等价变异(改了也没区别,比如永远走不到的分支)。基线和逐条解读见 [mutation-baseline-2026-10.md](mutation-baseline-2026-10.md)。补测试时先在报告里确认那个变异活着,补完再跑一次看它死了(红 / 绿),别凭感觉补。**补完用增量复跑之前,先把增量文件里 `Survived` / `NoCoverage` 的条目删掉**(或 `--force`):增量看不出新加的测试能不能杀一个原来活着的变异,会原样沿用「存活」(2026-10-27 第二轮踩过)。数「哪个测试文件一个独有的都没杀」:`--disableBail` 跑,再 `bun tools/mutation/unique-kills.ts <报告>...`。
 
 ## 必须主人在场的检查清单
 

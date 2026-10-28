@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, buildOpenaiMcpSpecs } from './mcp-specs'
 import * as runtimeInfo from '../../lib/runtime-info'
-import * as capabilityMatrix from '../../core/capability-matrix'
 
 const deps = {
   baseUrl: 'http://127.0.0.1:54321',
@@ -36,16 +35,12 @@ describe('wechatStdioMcpSpec', () => {
     expect(spec.env!.WECHAT_PARTICIPANT_TAG).toBeUndefined()
   })
 
-  // 回复交付(spec 2026-10-03):replyDelivery = daemon 的 provider,它的 wechat MCP 不注册 reply 族工具。
-  it('provider 的 replyDelivery 是 daemon ⇒ env 带 WECHAT_REPLY_DELIVERY=daemon', () => {
-    vi.spyOn(capabilityMatrix, 'replyDeliveryFor').mockImplementation((p) => p === 'openai' ? 'daemon' : 'legacy')
-    expect(wechatStdioMcpSpec(deps, 'openai').env!.WECHAT_REPLY_DELIVERY).toBe('daemon')
-    expect(wechatStdioMcpSpec(deps, 'claude').env!.WECHAT_REPLY_DELIVERY).toBeUndefined()
-  })
-
-  it('shadow / legacy ⇒ 不带(照旧注册 reply 工具)', () => {
-    vi.spyOn(capabilityMatrix, 'replyDeliveryFor').mockReturnValue('shadow')
-    expect(wechatStdioMcpSpec(deps, 'openai').env!.WECHAT_REPLY_DELIVERY).toBeUndefined()
+  // 回复交付(spec 2026-10-03):以前按 provider 的开关带 WECHAT_REPLY_DELIVERY=daemon 切工具表;D3 起只有一套
+  // 工具表(没有 reply 族),这个变量不再出现。
+  it('env 不再带 WECHAT_REPLY_DELIVERY(只有一套工具表)', () => {
+    for (const p of ['openai', 'claude', 'codex', 'cursor', 'gemini', 'agy'] as const) {
+      expect(wechatStdioMcpSpec(deps, p).env!.WECHAT_REPLY_DELIVERY, p).toBeUndefined()
+    }
   })
 
   it('always sets WECHAT_INTERNAL_API + WECHAT_INTERNAL_TOKEN_FILE', () => {

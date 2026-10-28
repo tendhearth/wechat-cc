@@ -1,4 +1,3 @@
-import { ccPageArt } from "../cc-page-art.js"
 // @ts-check
 /// <reference lib="dom" />
 /** @typedef {import('../../../../src/cli/schema').MemoryListOutputT} MemoryList */
@@ -11,24 +10,29 @@ import { ccPageArt } from "../cc-page-art.js"
 /** @typedef {import('../../../../src/cli/schema').MilestonesListOutputT} MilestonesList */
 /** @typedef {import('../../../../src/cli/schema').EventsListOutputT} EventsList */
 /**
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, invokeApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<unknown>, formatInvokeError: (err: unknown) => string, doctorPoller: { current: { userNames?: Record<string, string> } | null } }} Deps
+ * invokeWorkbenchApi:宿主代理(daemon_request),记忆页读写主人所有对话的记忆、观察 / 里程碑 / 决策都走它(admin,架构终态 F6 起不再起 CLI)。
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, invokeApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<unknown>, invokeWorkbenchApi: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, formatInvokeError: (err: unknown) => string, doctorPoller: { current: { userNames?: Record<string, string> } | null } }} Deps
  */
 
 // Memory pane module. Lists Companion v2 memory files (per-user grouping),
 // renders selected .md files with the shared safe markdown renderer (vendor/markdown.js), and lets
-// the user edit + save them in-place via `wechat-cc memory write`.
+// the user edit + save them in-place via POST /v1/memory/file/write (以前是 `wechat-cc memory write`,形状一样).
 //
 // Owns: #memory-sidebar, #memory-rendered, #memory-meta, #memory-count,
 //       #memory-content-head, #memory-content-path, #memory-content-mtime,
 //       #memory-edit-btn, #memory-cancel-btn, #memory-save-btn,
-//       #memory-editor (textarea), #memory-status (save feedback)
+//       #memory-editor (textarea), #memory-line-editor (主人那一份的逐行编辑,
+//       见 memory-line-edit.js), #memory-status (save feedback)
 
+import { ccPageArt } from "../cc-page-art.js"
 import { escapeHtml, formatRelativeTime } from "../view.js"
 import { renderMarkdown } from "../vendor/markdown.js"
 import { observationRow, milestoneCard } from "./observations.js"
 import { decisionRow } from "./decisions.js"
 import { icon } from "./icons.js"
 import { mountMemoryEvidenceDialog, normalizeMemorySourceRefs } from "./memory-evidence.js"
+import { bulkGate, collectLines, editOutcome, isDerivedMemoryPath, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditBody, memoryEditFailure, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
+import { V1, v1 } from '../daemon-client.js'
 
 // `selected` doubles as the edit-target identity (userId + path) AND the
 // "we have a file open" flag for the edit button visibility. `editing`
@@ -43,7 +47,7 @@ const reviewedProfiles=new Map()
 /** @typedef {'observation'|'milestone'|'file'|'overview'} EmbryoSourceKind */
 /** @typedef {{ kind: EmbryoSourceKind, text: string, ts: string, label: string, obsId?: string, userId?: string, path?: string }} EmbryoSourceItem */
 const MEMORY_EMBRYO_STORAGE_KEY = "wechat-cc:memory-embryo-enabled"
-/** @type {{ users: MemoryList, observations: ObservationsList["observations"], milestones: MilestonesList["milestones"], selected: { userId: string, path: string } | null, marked: { parse: (s: string) => string } | null, editing: boolean, pristine: string, dirtySwitchPending: string | null, overview: OverviewModel | null, profile: MemoryProfileDocument | null, profileStatus: Extract<MemoryProfileStatusOutput, { ok: true }> | null, portrait: { svg: string | null, generated_at?: string | null } | null }} */
+/** @type {{ users: MemoryList, observations: ObservationsList["observations"], milestones: MilestonesList["milestones"], selected: { userId: string, path: string } | null, marked: { parse: (s: string) => string } | null, editing: boolean, pristine: string, dirtySwitchPending: string | null, overview: OverviewModel | null, profile: MemoryProfileDocument | null, profileStatus: Extract<MemoryProfileStatusOutput, { ok: true }> | null, portrait: { svg: string | null, generated_at?: string | null } | null, lineView: import('./memory-line-edit.js').MemoryView | null, bulkConfirmFor: string | null }} */
 const memoryState = {
   users: [],
   observations: [],
@@ -64,6 +68,12 @@ const memoryState = {
   // tried to switch to while editing. Second click on the same file
   // within 3s commits the switch (§1.3 #8 绝不弹窗).
   dirtySwitchPending: null,
+  // 主人自己的 _overview.md / memory.md / owner.md:`memory view` 给的带键底稿(记忆改了就算数)。
+  // 有它 ⇒ 编辑是一行一个输入框、保存走 `memory edit`;别人对话的记忆照旧 null,整份 `memory write`。
+  lineView: null,
+  // 一次删 / 改超过 5 条:第一次保存只提示,并记下当时交的那组行;再点「保存」时行完全一样才带 --confirm-bulk
+  // (同 dirtySwitch 一样不弹窗)。中间又改了 ⇒ 当成新的第一次,按新的条数重新提示 —— 不替主人确认他没看过的那组。
+  bulkConfirmFor: null,
 }
 
 /** @returns {boolean} */
@@ -101,7 +111,7 @@ async function loadMarked() {
 
 /** @param {Deps} deps */
 export async function loadMemoryPane(deps) {
-  const result = /** @type {MemoryList} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "list", "--json"] }))
+  const result = /** @type {MemoryList} */ (await v1(deps.invokeWorkbenchApi, V1.memory.files))
   memoryState.users = Array.isArray(result) ? result : []
   renderMemorySidebar(deps)
   const totalFiles = memoryState.users.reduce((s, u) => s + u.fileCount, 0)
@@ -200,7 +210,7 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
   if (rendered) rendered.innerHTML = `<p class="empty-state">读取中…</p>`
   let result
   try {
-    result = /** @type {MemoryRead} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "read", userId, relPath, "--json"] }))
+    result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.file, { query: { user_id: userId, path: relPath } }))
   } catch (err) {
     if (rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
     return
@@ -210,12 +220,31 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
     return
   }
   const marked = await loadMarked()
-  if (rendered) rendered.innerHTML = marked.parse(result.content)
+  memoryState.lineView = isLineEditablePath(relPath) ? await loadLineView(deps, userId, relPath) : null
+  memoryState.bulkConfirmFor = null
+  if (rendered) rendered.innerHTML = (memoryState.lineView ? renderOwnerBlock(memoryState.lineView) : "") + marked.parse(result.content)
   memoryState.selected = { userId, path: relPath }
   memoryState.pristine = result.content
   // Show the edit button now that there's content to edit.
   const editBtn = document.getElementById("memory-edit-btn")
-  if (editBtn) editBtn.hidden = false
+  if (editBtn) editBtn.hidden = !canEditOpenFile()
+}
+
+// 生成物(总览、画像)只由机器写:主人自己的经逐行编辑改,别人对话里的不给编辑按钮(整份写会被拒)。
+function canEditOpenFile() {
+  if (!memoryState.selected) return false
+  return memoryState.lineView !== null || !isDerivedMemoryPath(memoryState.selected.path)
+}
+
+/**
+ * 主人那一份才有底稿;view 失败(daemon 没起 / 旧 daemon 不认)就退回整份编辑,不挡主人看。
+ * @param {Deps} deps
+ * @param {string} userId
+ * @param {string} relPath
+ */
+async function loadLineView(deps, userId, relPath) {
+  try { return lineViewFor(await v1(deps.invokeWorkbenchApi, V1.memory.view, { body: { path: relPath } }), userId) }
+  catch { return null }
 }
 
 // Toggle textarea ↔ rendered. `editing=true` swaps in the textarea
@@ -229,8 +258,15 @@ function setEditMode(editing) {
   const editBtn = document.getElementById("memory-edit-btn")
   const saveBtn = document.getElementById("memory-save-btn")
   const cancelBtn = document.getElementById("memory-cancel-btn")
+  const lineEditor = document.getElementById("memory-line-editor")
+  if (!editing) memoryState.bulkConfirmFor = null
+  if (editing && memoryState.lineView && lineEditor) {
+    renderLineEditor(lineEditor, memoryState.lineView)
+    lineEditor.hidden = false
+    if (editor) editor.hidden = true
+  } else if (lineEditor) lineEditor.hidden = true
   if (editing) {
-    if (editor) { editor.value = memoryState.pristine; editor.hidden = false; editor.focus() }
+    if (editor && !(memoryState.lineView && lineEditor)) { editor.value = memoryState.pristine; editor.hidden = false; editor.focus() }
     if (rendered) rendered.hidden = true
     if (editBtn) editBtn.hidden = true
     if (saveBtn) saveBtn.hidden = false
@@ -238,7 +274,7 @@ function setEditMode(editing) {
   } else {
     if (editor) editor.hidden = true
     if (rendered) rendered.hidden = false
-    if (editBtn) editBtn.hidden = !memoryState.selected  // keep hidden if nothing open
+    if (editBtn) editBtn.hidden = !canEditOpenFile()  // keep hidden if nothing open / derived file of another chat
     if (saveBtn) saveBtn.hidden = true
     if (cancelBtn) cancelBtn.hidden = true
   }
@@ -260,20 +296,12 @@ function setStatus(message, tone) {
 /** @param {Deps} deps */
 async function saveCurrent(deps) {
   if (!memoryState.selected || !memoryState.editing) return
+  if (memoryState.lineView) return saveLines(deps, memoryState.lineView)
   const editor = /** @type {HTMLTextAreaElement | null} */ (document.getElementById("memory-editor"))
   const content = editor ? editor.value : ""
   if (content === memoryState.pristine) {
     setStatus("内容未改动", "info")
     setEditMode(false)
-    return
-  }
-  // Encode for shell-safe arg passing. The btoa(unescape(encodeURIComponent))
-  // dance handles UTF-8 chars (btoa alone fails on multibyte).
-  let bodyB64
-  try {
-    bodyB64 = btoa(unescape(encodeURIComponent(content)))
-  } catch (err) {
-    setStatus(`编码失败：${err}`, "bad")
     return
   }
   setStatus("保存中…", "info")
@@ -283,8 +311,8 @@ async function saveCurrent(deps) {
   if (cancelBtn) cancelBtn.disabled = true
   let result
   try {
-    result = /** @type {MemoryWrite} */ (await deps.invoke("wechat_cli_json", {
-      args: ["memory", "write", memoryState.selected.userId, memoryState.selected.path, "--body-base64", bodyB64, "--json"],
+    result = /** @type {MemoryWrite} */ (await v1(deps.invokeWorkbenchApi, V1.memory.fileWrite, {
+      body: { userId: memoryState.selected.userId, path: memoryState.selected.path, content },
     }))
   } catch (err) {
     if (saveBtn) saveBtn.disabled = false
@@ -307,6 +335,51 @@ async function saveCurrent(deps) {
   setEditMode(false)
   setStatus(`已保存 (${result.bytesWritten}B)`, "ok")
   setTimeout(() => setStatus(null), 2500)
+  await loadMemoryPane(deps).catch(() => {})
+}
+
+/**
+ * 主人那一份:带键的行交回 `memory edit`。view 之后被改过 ⇒ 重新打开(主人再改一次);删太多 ⇒ 先说清楚,再点一次才发。
+ * @param {Deps} deps
+ * @param {import('./memory-line-edit.js').MemoryView} view
+ */
+async function saveLines(deps, view) {
+  const root = document.getElementById("memory-line-editor")
+  if (!root || !memoryState.selected) return
+  const lines = collectLines(root)
+  if (linesUnchanged(lines, view)) {
+    setStatus("内容未改动", "info")
+    setEditMode(false)
+    return
+  }
+  const { snapshot, confirmBulk } = bulkGate(memoryState.bulkConfirmFor, lines)
+  const saveBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("memory-save-btn"))
+  const cancelBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("memory-cancel-btn"))
+  setStatus("保存中…", "info")
+  if (saveBtn) saveBtn.disabled = true
+  if (cancelBtn) cancelBtn.disabled = true
+  let result
+  try {
+    result = await v1(deps.invokeWorkbenchApi, V1.memory.edit, { body: memoryEditBody(view.path, view.baseHash, lines, confirmBulk) })
+  } catch (err) {
+    result = memoryEditFailure(err)
+  } finally {
+    if (saveBtn) saveBtn.disabled = false
+    if (cancelBtn) cancelBtn.disabled = false
+  }
+  const outcome = editOutcome(result)
+  if (outcome.status === "confirm") {
+    memoryState.bulkConfirmFor = snapshot
+    setStatus(outcome.message, "info")
+    return
+  }
+  memoryState.bulkConfirmFor = null
+  if (outcome.status === "bad") { setStatus(outcome.message, "bad"); return }
+  const { userId, path } = memoryState.selected
+  setEditMode(false)
+  await openMemoryFile(deps, userId, path, new Date().toISOString())
+  setStatus(outcome.message, outcome.status === "saved" ? "ok" : "info")
+  if (outcome.status === "saved") setTimeout(() => setStatus(null), 4000)
   await loadMemoryPane(deps).catch(() => {})
 }
 
@@ -351,7 +424,7 @@ export async function synthesizeMemory(deps) {
   let result
   try {
     result = /** @type {{ ok?: boolean, error?: string, projectsFound?: number, projectNames?: string[], written?: { bytesWritten: number } }} */ (
-      await deps.invokeApi("POST", "/v1/memory/synthesize", undefined, { timeoutMs: 60_000 })
+      await v1(deps.invokeApi, V1.memory.synthesize, undefined, { timeoutMs: 60_000 })
     )
   } catch (err) {
     const message = daemonRequiredMessage(err, "更新项目地图")
@@ -401,9 +474,7 @@ export async function refreshMemoryProfileStatus(deps) {
     return null
   }
   try {
-    const result = /** @type {MemoryProfileStatusOutput} */ (await deps.invoke("wechat_cli_json", {
-      args: ["memory", "profile", "status", "--chat-id", chatId, "--json"],
-    }))
+    const result = /** @type {MemoryProfileStatusOutput} */ (await v1(deps.invokeWorkbenchApi, V1.memory.profileStatus, { query: { chat_id: chatId } }))
     memoryState.profileStatus = result && result.ok ? result : null
   } catch {
     memoryState.profileStatus = null
@@ -429,7 +500,7 @@ export async function generateMemoryProfile(deps) {
   let result
   try {
     result = /** @type {MemoryProfileOutput} */ (
-      await deps.invokeApi("POST", "/v1/memory/profile/generate", { chat_id: chatId })
+      await v1(deps.invokeApi, V1.memory.profileGenerate, { body: { chat_id: chatId } })
     )
   } catch (err) {
     const message = daemonRequiredMessage(err, "刷新画像")
@@ -443,7 +514,7 @@ export async function generateMemoryProfile(deps) {
   // 顺手让 CC 重画小像 — non-fatal: a refused/unsafe drawing just keeps the
   // previous portrait (or the empty state), the profile refresh still lands.
   try {
-    await deps.invokeApi("POST", "/v1/memory/portrait/generate", {}, { timeoutMs: 120_000 })
+    await v1(deps.invokeApi, V1.memory.portraitGenerate, { body: {} }, { timeoutMs: 120_000 })
   } catch { /* portrait is a bonus, never block the profile flow */ }
   await loadMemoryPane(deps).catch(() => {})
   await loadMemoryTopZone(deps).catch(() => {})
@@ -515,7 +586,7 @@ function parseOverview(md) {
 /** @param {Deps} deps @param {string} chatId */
 async function loadOverview(deps, chatId) {
   try {
-    const result = /** @type {MemoryRead} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "read", chatId, OVERVIEW_PATH, "--json"] }))
+    const result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.file, { query: { user_id: chatId, path: OVERVIEW_PATH } }))
     memoryState.overview = (result && result.ok && typeof result.content === "string")
       ? parseOverview(result.content)
       : null
@@ -562,7 +633,7 @@ function normalizeProfile(value) {
 /** @param {Deps} deps @param {string} chatId */
 async function loadProfile(deps, chatId) {
   try {
-    const result = /** @type {MemoryRead} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "profile-read", chatId, "--json"] }))
+    const result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.profile, { query: { chat_id: chatId } }))
     if (result && result.ok && typeof result.content === "string") {
       memoryState.profile = normalizeProfile(JSON.parse(result.content))
       if(memoryState.profile){
@@ -691,7 +762,7 @@ export function renderMemoryProfileOverview(deps) {
     const trigger=/** @type {HTMLElement} */(element)
     trigger.addEventListener('click',()=>{
       const [kind,rawIndex]=(trigger.dataset.memoryEvidence||'').split(':'),index=Number(rawIndex)
-      const card=(kind==='trait'?profile.traits:kind==='preference'?profile.preferences:profile.snippets)[index]
+      const card=/** @type {ProfileCard | undefined} */ ((kind==='trait'?profile.traits:kind==='preference'?profile.preferences:profile.snippets)[index])
       const generated=memoryState.profile
       if(!card?.generated||!generated)return
       if(!memoryEvidenceDialog)memoryEvidenceDialog=mountMemoryEvidenceDialog({call:deps.invokeApi,onReviewed:({chatId,action})=>{
@@ -729,7 +800,7 @@ export function summaryParagraphs(summary) {
 async function loadPortrait(deps) {
   try {
     const r = /** @type {{ ok?: boolean, svg?: string | null, generated_at?: string | null }} */ (
-      await deps.invokeApi("GET", "/v1/memory/portrait")
+      await v1(deps.invokeApi, V1.memory.portrait)
     )
     memoryState.portrait = r && r.ok ? { svg: r.svg ?? null, generated_at: r.generated_at ?? null } : null
   } catch {
@@ -1117,8 +1188,8 @@ export async function loadMemoryTopZone(deps) {
 
   try {
     const [obsResp, msResp] = /** @type {[ObservationsList, MilestonesList]} */ (await Promise.all([
-      deps.invoke("wechat_cli_json", { args: ["observations", "list", chatId, "--json"] }),
-      deps.invoke("wechat_cli_json", { args: ["milestones", "list", chatId, "--json"] }),
+      v1(deps.invokeWorkbenchApi, V1.observations.list, { query: { chat_id: chatId } }),
+      v1(deps.invokeWorkbenchApi, V1.milestones.list, { query: { chat_id: chatId } }),
     ]))
     const observations = (obsResp.observations || []).slice(0, 3)
     memoryState.observations = obsResp.observations || []
@@ -1158,9 +1229,7 @@ export async function loadMemoryDecisions(deps) {
   if (!box) return
 
   try {
-    const resp = /** @type {EventsList} */ (await deps.invoke("wechat_cli_json", {
-      args: ["events", "list", chatId, "--json", "--limit", "30"],
-    }))
+    const resp = /** @type {EventsList} */ (await v1(deps.invokeWorkbenchApi, V1.events.list, { query: { chat_id: chatId, limit: 30 } }))
     const events = (resp.events || []).reverse() // newest first
     if (events.length === 0) {
       box.innerHTML = `<p class="empty-state">还没记录到决策。</p>`
@@ -1174,7 +1243,7 @@ export async function loadMemoryDecisions(deps) {
 
 // Read-only view of the admin's local Claude per-project memory — the raw
 // source the synthesized overview is distilled from. Lazy-loaded on first
-// fold expand. Content comes inline from `memory projects --json` (the dirs
+// fold expand. Content comes inline from GET /v1/memory/projects (the dirs
 // are local + small), so no per-file read round-trips. No editing here: this
 // memory belongs to Claude Code, not wechat-cc.
 /** @param {Deps} deps */
@@ -1185,7 +1254,7 @@ export async function loadProjectMemory(deps) {
   let resp
   try {
     resp = /** @type {{ ok?: boolean, projects?: Array<{ name: string, index: string | null, files: Array<{ path: string, content: string }> }> }} */ (
-      await deps.invoke("wechat_cli_json", { args: ["memory", "projects", "--json"] })
+      await v1(deps.invokeWorkbenchApi, V1.memory.projects)
     )
   } catch (err) {
     box.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
@@ -1217,6 +1286,44 @@ export async function loadProjectMemory(deps) {
 }
 
 /**
+ * 收回的话(架构终态 G6,主人 10-26 第 2 / 3 条):以前记忆页上是 corrections.md 那个文件,现在是这张列表;每条能「恢复」——
+ * 那一行回到记忆里,当初随之从笔记里删掉的行不会回来(daemon 回的 note 原样显示)。最新的在上面。
+ * @param {Deps} deps
+ */
+export async function loadMemoryRetractions(deps) {
+  const box = document.getElementById("memory-retractions")
+  if (!box) return
+  /** @type {{ ok?: boolean, items?: Array<{ key: string, section: string | null, text: string, day: string | null }> }} */
+  let resp
+  try { resp = /** @type {any} */ (await v1(deps.invokeWorkbenchApi, V1.memory.retractions)) }
+  catch (err) { box.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`; return }
+  const items = [...((resp && resp.items) || [])].reverse()
+  if (items.length === 0) { box.innerHTML = `<p class="empty-state">还没有收回过什么。</p>`; return }
+  box.innerHTML = items.map(r => `
+    <div class="memory-retraction" data-key="${escapeHtml(r.key)}">
+      <span class="memory-retraction-text">${escapeHtml(r.text)}</span>
+      <span class="meta">${escapeHtml([r.section, r.day].filter(Boolean).join(" · "))}</span>
+      <button class="btn ghost" type="button" data-action="restore-retraction" data-key="${escapeHtml(r.key)}">恢复</button>
+    </div>`).join("")
+}
+
+/**
+ * @param {Deps} deps
+ * @param {string} key
+ */
+export async function restoreMemoryRetraction(deps, key) {
+  const note = document.getElementById("memory-retractions-note")
+  if (note) note.textContent = "恢复中…"
+  try {
+    const resp = /** @type {{ ok?: boolean, note?: string }} */ (await v1(deps.invokeWorkbenchApi, V1.memory.restore, { body: { key } }))
+    if (note) note.textContent = resp && resp.note ? resp.note : "已恢复。"
+  } catch (err) {
+    if (note) note.textContent = `没恢复成：${deps.formatInvokeError(err)}`
+  }
+  await loadMemoryRetractions(deps)
+}
+
+/**
  * @param {Deps} deps
  * @param {string} obsId
  */
@@ -1224,9 +1331,7 @@ export async function archiveObservation(deps, obsId) {
   const chatId = await currentChatId(deps)
   if (!chatId) return
   try {
-    await deps.invoke("wechat_cli_json", {
-      args: ["observations", "archive", chatId, obsId, "--json"],
-    })
+    await v1(deps.invokeWorkbenchApi, V1.observations.archive, { body: { chat_id: chatId, id: obsId } })
     await loadMemoryTopZone(deps)
   } catch (err) {
     console.error("archive observation failed", err)
@@ -1235,7 +1340,7 @@ export async function archiveObservation(deps, obsId) {
 
 // Resolve the chat to query — must be in chat_id format (e.g.
 // `<hash>@im.wechat`), the same key the daemon uses for memory/<chat_id>/.
-// memoryState.users is populated by loadMemoryPane (`memory list --json`)
+// memoryState.users is populated by loadMemoryPane (GET /v1/memory/files)
 // and each user.userId is already a chat_id, so reuse it. v0.4 single-chat
 // owner assumption: the first user IS the chat. v0.5 surfaces a picker.
 //

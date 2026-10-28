@@ -1,38 +1,29 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { inboundTurn } from './test-inbound-turn'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
 // The `dispatch.coordinator.dispatch` seam in pipeline-deps.ts intercepts an
 // owner control command ("回信 <ch> <text>" / "派 <ref>" / "取消 <ref>") before
 // it reaches a normal agent turn. `isAdmin` (src/lib/access.ts) reads
-// access.json from the module-level STATE_DIR (src/lib/config.ts), which is
-// NOT one of buildPipelineDeps's injectable opts — so, mirroring
-// src/lib/access.test.ts, STATE_DIR is redirected to a temp dir via
-// vi.mock BEFORE anything imports access.ts/config.ts, and pipeline-deps is
-// loaded dynamically afterward so it (transitively) picks up the mock.
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-social-access-test-'))
-// importOriginal + spread (fix round 2, hardening) — same rationale as
-// pipeline-deps-pairing-dispatch.test.ts: a plain-object factory would
-// silently drop UNDER_TEST_RUNNER (and any other config.ts export) in this
-// module graph, defeating agy-mcp-config.ts's/providers.ts's test-runner
-// guards (fix round 1) should this graph ever boot providers.
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+// access.json.
+// access.json lives in the state dir, which is NOT one of buildPipelineDeps's
+// injectable opts; access.ts resolves it per call from WECHAT_STATE_DIR, so
+// useTempStateDir points that at a temp dir (no vi.mock of lib/config —
+// see src/test-support/state-dir.ts).
+const ACCESS_STATE_DIR = useTempStateDir('pipeline-deps-social-access-test-')
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 
 import type { Bootstrap } from '../bootstrap/index'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { CareLedger } from '../../features/companion/care-ledger'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 
 // Connection-health (Task 9) — buildPipelineDeps dereferences boot.health.health
 // unconditionally (llmHealth mw dep), so every `boot` fixture needs a minimal
@@ -49,8 +40,6 @@ function writeAccess(admins: string[]): void {
 // Shared cleanup for ACCESS_STATE_DIR — a single top-level afterAll (not
 // nested in either describe below) so it fires once, after every test in
 // this file has run, regardless of which describe block runs last.
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
-
 // Task 10 — the owner's WeChat "回信 <channel> <text>" reply sends an
 // outbound letter on that pen-pal channel instead of dispatching a normal
 // agent turn. boot.penpal is optional and the seam guards on it (Task 11
@@ -85,13 +74,13 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
       health: fakeHealth,
     } as unknown as Bootstrap
 
-    const ilink = {} as unknown as IlinkAdapter
+    const ilink = {} as unknown as PipelineWechat
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
     const replySinks = makeReplySinks()
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
     return { pipelineDeps, coordinatorDispatch, sendAssistantText }
   }
@@ -105,7 +94,7 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
   it('a "回信 <channel> <text>" from the admin chat calls sendLetter and is NOT dispatched as a normal turn', async () => {
     const penpal = fakePenpal(true)
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(penpal)
-    await pipelineDeps.dispatch.coordinator.dispatch(letterMsg)
+    await inboundTurn(pipelineDeps, letterMsg)
     expect(penpal!.sendLetter).toHaveBeenCalledWith('c1', '你好啊')
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(sendAssistantText).not.toHaveBeenCalled()
@@ -114,7 +103,7 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
   it('a "回信" from a NON-admin chat is never consumed', async () => {
     const penpal = fakePenpal(true)
     const { pipelineDeps, coordinatorDispatch } = setup(penpal)
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...letterMsg, chatId: 'someone_else', userId: 'someone_else' })
+    await inboundTurn(pipelineDeps, { ...letterMsg, chatId: 'someone_else', userId: 'someone_else' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
     expect(penpal!.sendLetter).not.toHaveBeenCalled()
   })
@@ -122,7 +111,7 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
   it('replies with a gentle failure message when sendLetter returns { ok: false }', async () => {
     const penpal = fakePenpal(false)
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(penpal)
-    await pipelineDeps.dispatch.coordinator.dispatch(letterMsg)
+    await inboundTurn(pipelineDeps, letterMsg)
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [chatId, text] = sendAssistantText.mock.calls[0]!
@@ -130,16 +119,18 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
     expect(text).toMatch(/没找到这条笔友通道|发送失败/)
   })
 
-  it('no boot.penpal → always a normal turn, even for a well-formed 回信', async () => {
-    const { pipelineDeps, coordinatorDispatch } = setup(undefined)
-    await pipelineDeps.dispatch.coordinator.dispatch(letterMsg)
-    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+  // 第三批 3b 第 3 步 3-2 起:社交不在时,一句合法的社交命令不再悄悄落成普通对话,而是明说(这里没开 social_enabled ⇒ 关着)
+  it('no boot.penpal (social off) → a well-formed 回信 is NOT a normal turn; the owner is told social is off', async () => {
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(undefined)
+    await inboundTurn(pipelineDeps, letterMsg)
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText.mock.calls.map(c => c[1])).toEqual(['社交现在关着,去设置里打开。'])
   })
 
   it('a non-command message falls through to a normal turn', async () => {
     const penpal = fakePenpal(true)
     const { pipelineDeps, coordinatorDispatch } = setup(penpal)
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...letterMsg, text: '今天几点见面?' })
+    await inboundTurn(pipelineDeps, { ...letterMsg, text: '今天几点见面?' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
     expect(penpal!.sendLetter).not.toHaveBeenCalled()
   })
@@ -199,13 +190,13 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
       health: fakeHealth,
     } as unknown as Bootstrap
 
-    const ilink = {} as unknown as IlinkAdapter
+    const ilink = {} as unknown as PipelineWechat
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
     const replySinks = makeReplySinks()
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
     return { pipelineDeps, coordinatorDispatch, sendAssistantText }
   }
@@ -215,7 +206,7 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
   it('admin 派 <prefix> → wish.resolveRef among draft then wish.send(fullId), no coordinator dispatch', async () => {
     const { social, resolveRef, send } = socialWithWish()
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(social)
-    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 3f9a2b'))
+    await inboundTurn(pipelineDeps, msg('派 3f9a2b'))
     expect(resolveRef).toHaveBeenCalledWith('3f9a2b', ['draft'])
     expect(send).toHaveBeenCalledWith('3f9a2bcccc')
     expect(coordinatorDispatch).not.toHaveBeenCalled()
@@ -228,7 +219,7 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
   it('取消 <ref> → wish.resolveRef among draft+open then wish.cancel(fullId)', async () => {
     const { social, resolveRef, cancel } = socialWithWish()
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(social)
-    await pipelineDeps.dispatch.coordinator.dispatch(msg('取消 3f9a2bcccc'))
+    await inboundTurn(pipelineDeps, msg('取消 3f9a2bcccc'))
     expect(resolveRef).toHaveBeenCalledWith('3f9a2bcccc', ['draft', 'open'])
     expect(cancel).toHaveBeenCalledWith('3f9a2bcccc')
     expect(coordinatorDispatch).not.toHaveBeenCalled()
@@ -238,7 +229,7 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
   it('派 <unknown> → no send, reply 这条心愿不存在或已处理', async () => {
     const { social, send } = socialWithWish()
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(social)
-    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 deadbeef'))
+    await inboundTurn(pipelineDeps, msg('派 deadbeef'))
     expect(send).not.toHaveBeenCalled()
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(String(sendAssistantText.mock.calls[0]![1])).toContain('这条心愿不存在或已处理')
@@ -247,15 +238,16 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
   it('non-admin 派 … falls through to boot.coordinator.dispatch (no wish action)', async () => {
     const { social, send } = socialWithWish()
     const { pipelineDeps, coordinatorDispatch } = setup(social)
-    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 3f9a2b', 'someone_else'))
+    await inboundTurn(pipelineDeps, msg('派 3f9a2b', 'someone_else'))
     expect(send).not.toHaveBeenCalled()
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
   })
 
-  it('no boot.social → always a normal turn, even for a well-formed 派', async () => {
-    const { pipelineDeps, coordinatorDispatch } = setup(undefined)
-    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 3f9a2b'))
-    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+  it('no boot.social (social off) → a well-formed 派 is NOT a normal turn; the owner is told social is off', async () => {
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(undefined)
+    await inboundTurn(pipelineDeps, msg('派 3f9a2b'))
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText.mock.calls.map(c => c[1])).toEqual(['社交现在关着,去设置里打开。'])
   })
 
   // Mandatory regression (I2 delegate-collision guard) — an admin delegate
@@ -267,7 +259,7 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
   it('delegate coexistence: admin 派 家里 跑 拉日志 does NOT hit the wish; falls through to dispatch', async () => {
     const { social, resolveRef, send, cancel } = socialWithWish()
     const { pipelineDeps, coordinatorDispatch } = setup(social)
-    await pipelineDeps.dispatch.coordinator.dispatch(msg('派 家里 跑 拉日志'))
+    await inboundTurn(pipelineDeps, msg('派 家里 跑 拉日志'))
     expect(resolveRef).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
     expect(cancel).not.toHaveBeenCalled()
@@ -279,7 +271,7 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
   it('串门 reaches social.penpal.startVisit through the same wire', async () => {
     const { social, startVisit } = socialWithWish()
     const { pipelineDeps, coordinatorDispatch } = setup(social)
-    await pipelineDeps.dispatch.coordinator.dispatch(msg('串门'))
+    await inboundTurn(pipelineDeps, msg('串门'))
     expect(startVisit).toHaveBeenCalled()
     expect(coordinatorDispatch).not.toHaveBeenCalled()
   })

@@ -6,29 +6,30 @@ export default defineConfig({
     // second copy of the suite concurrently and makes every ephemeral-port
     // test contend with its duplicate.
     exclude: [
-      '**/node_modules/**', '**/.claude/worktrees/**', 'apps/relay/**', 'apps/app/**', '**/__e2e__/**', '**/playwright/**', '**/eval/**',
+      // .stryker-tmp:变异测试(bun run test:mutation)跑着或中途被打断时留下的整仓沙箱副本。
+      '**/node_modules/**', '**/.claude/worktrees/**', '**/.stryker-tmp/**', 'apps/relay/**', 'apps/app/**', '**/__e2e__/**', '**/playwright/**', '**/eval/**',
       // win32 上不跑的(2026-09-16 起工作台的文件层已是纯 JS,大部分工作台测试在 Windows 也跑):
       // - Codex 执行者 / Claude 保留会话 / Codex 原生历史在 win32 明确抛错(进程树清理未验证),
       //   这些测试在 Windows 上测的只是"平台不支持"这个事实;
       // - 用到 mkfifo 的夹具(Windows 没有 FIFO);
       // - git-review 在 Windows 上另有一堆路径 / CRLF 差异,单独一件事。
       ...(process.platform === 'win32' ? [
-        'src/core/workbench/codex-app-server.test.ts',
+        'src/adapters/executors/codex/codex-app-server.test.ts',
         // ACP 执行者(cursor-agent acp)同样在 win32 第一行就拒绝,套件在 Windows 上只会等 spawn 超时。
-        'src/core/acp-workbench-provider.test.ts',
-        'src/core/acp-agent-provider.test.ts',
-        'src/core/workbench/codex-history-rpc.test.ts',
-        'src/core/claude-workbench-runtime.test.ts',
+        'src/adapters/executors/acp/acp-workbench-provider.test.ts',
+        'src/adapters/executors/acp/acp-agent-provider.test.ts',
+        'src/adapters/executors/codex/codex-history-rpc.test.ts',
+        'src/adapters/executors/claude/claude-workbench-runtime.test.ts',
         // 「一个文件夹一个活会话」的不变式测试:用 Claude 保留会话那套夹具(同上),
         // 而且用真 git 临时仓库截差异快照(同 git-review.test.ts 的路径 / CRLF 理由),win32 上不跑。
-        'src/core/workbench/service-one-session.test.ts',
-        'src/core/workbench/artifacts.test.ts',
-        'src/core/workbench/api-files.test.ts',
-        'src/core/workbench/git-review.test.ts',
+        'src/features/workbench/service-one-session.test.ts',
+        'src/adapters/workbench/artifacts.test.ts',
+        'src/adapters/executors/openai/api-files.test.ts',
+        'src/features/workbench/git-review.test.ts',
         // 原生历史读取器的夹具是 POSIX 路径('/fixture'),win32 上 path.join 写成反斜杠,测的不再是同一件事。
-        'src/core/workbench/native-claude-history.test.ts',
-        'src/core/workbench/native-codex-history.test.ts',
-        'src/core/workbench/native-history.test.ts',
+        'src/adapters/executors/claude/native-claude-history.test.ts',
+        'src/adapters/executors/codex/native-codex-history.test.ts',
+        'src/adapters/workbench/native-history.test.ts',
       ] : []),
     ],
     // Tests should never touch the operator's real ~/.claude/channels/wechat

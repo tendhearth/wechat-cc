@@ -17,7 +17,7 @@
  * per spawn (mtime-cached readers), knowledge/social wiring happens at boot.
  */
 import { loadAgentConfig, saveAgentConfig, type AgentConfig } from '../lib/agent-config'
-import { loadCompanionConfig, saveCompanionConfig, type CompanionConfig } from './companion/config'
+import { loadCompanionConfig, saveCompanionConfig, type CompanionConfig } from '../lib/companion-config'
 import { NICKNAME_RE } from './nickname'
 
 export type ConfigEffect = 'immediate' | 'daemon-restart' | 'next-tick' | 'reinstall'
@@ -110,6 +110,9 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
     type: 'string', writable: true, effect: 'next-tick',
     description: '每晚整理的时间点(主人时区,HH:MM,默认 04:00)',
     validate: (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v) },
+  { key: 'companion.letters_enabled', store: 'companion', field: 'letters_enabled',
+    type: 'boolean', writable: true, effect: 'next-tick',
+    description: 'CC 不定期给主人写一封信(信纸图片寄到微信;大约一个月一封、哪天随机;默认关)' },
   { key: 'companion.atelier_mode', store: 'companion', field: 'atelier_mode',
     type: 'enum', values: ['off', 'private', 'share'], writable: true, effect: 'next-tick',
     description: 'CC 画室模式：off 关闭；private 只保存在本机；share 允许后续分享（默认 off）' },

@@ -19,14 +19,16 @@
  * 置 WECHAT_CC_DAEMON_CHILD=1(daemon/main.ts);hook 看到就直接退出,不然 daemon 的每个
  * 回合都会被推回微信。
  */
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { writeFileAtomic } from '../lib/json-file'
+import { toolInputFacts } from '../domain/permission-rules/facts'
+import { existsSync, readFileSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'
 import { readJsonFile } from '../lib/read-json-file'
 import { machineIdleSeconds } from '../lib/machine-idle'
-import type { CliEvent, CliSource } from '../core/cli-events'
-import { lastAssistantText } from '../core/cli-transcript'
-import type { CliPermissionRequest, CliPermissionStatus } from '../core/cli-permission-relay'
+import type { CliEvent, CliSource } from '../app/cli-events'
+import { lastAssistantText } from '../domain/cli-transcript'
+import type { CliPermissionRequest, CliPermissionStatus } from '../app/cli-permission-relay'
 
 export type HookSource = CliSource
 
@@ -122,8 +124,14 @@ export function parsePermissionRequest(source: HookSource, raw: unknown): CliPer
   const tool_name = str(r['tool_name'])
   if (!session_id || !cwd || !tool_name) return null
   const summary = summarizeToolInput(r['tool_input'])
-  return summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+  const req: CliPermissionRequest = summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+  // 放行规则(2026-10-19)要原文:命令不压缩(截 2000),文件路径单列。拿不到就不给,daemon 那头不猜。
+  const facts = toolInputFacts(r['tool_input'])
+  if (facts.command) req.command = facts.command
+  if (facts.paths.length) req.paths = facts.paths
+  return req
 }
+
 
 // ── 1b. Cursor ────────────────────────────────────────────────────────────────
 
@@ -422,9 +430,8 @@ function readHooksFile(file: string): HooksFile {
 
 function writeHooksFile(file: string, cfg: HooksFile): void {
   mkdirSync(dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n')
-  renameSync(tmp, file)
+  // 主人家目录里的配置:常被 stow / chezmoi 链到 dotfiles,写到链接指向的真文件,别把链接换掉。
+  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n', { followSymlink: true })
 }
 
 /** 去掉自家条目;返回删掉的 handler 数。空组、空事件键一并收掉。 */

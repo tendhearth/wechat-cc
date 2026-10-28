@@ -3,15 +3,17 @@
  * Pure field mapping, no business logic.
  */
 import type { Db } from '../../lib/db'
-import type { IlinkAdapter, IlinkAccount } from '../ilink-glue'
+import type { IlinkAccount } from '../ilink-glue'
+import { makePermissionAnswer } from '../permission-answer'
+import type { WechatContacts, WechatPermissions, WechatPolling } from '../../ports/wechat'
 import type { Bootstrap } from '../bootstrap'
-import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../companion/lifecycle'
+import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../../features/companion'
 import type { SchedulerDeps } from '../guard/scheduler'
 import type { SessionsLifecycleDeps } from '../sessions-lifecycle'
 import type { IlinkLifecycleDeps } from '../ilink-lifecycle'
 import type { PollingDeps } from '../polling-lifecycle'
 import type { StartupSweepDeps } from '../startup-sweeps'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { loadGuardConfig } from '../guard/store'
 import { findBx } from '../guard/bx'
 import { makeNetworkSuspendController } from '../guard/pause-policy'
@@ -19,21 +21,22 @@ import { classifyWith } from '../../lib/network-gate'
 import { parseUpdates } from '../poll-loop'
 import { writeHeartbeat, HEARTBEAT_FILE } from '../single-instance'
 import { join } from 'node:path'
-import { makeHeartbeatStore } from '../../core/connection-heartbeat'
-import { makeSessionStateStore } from '../../core/session-state'
+import { makeHeartbeatStore } from '../../adapters/store/connection-heartbeat'
+import { makeSessionStateStore } from '../../adapters/store/session-state'
 import type { TickBodies } from './tick-bodies'
 
 export interface LifecycleDepsOpts {
   stateDir: string
   db: Db
-  ilink: IlinkAdapter
+  /** 拉消息与关机冲盘(polling / ilink 两个生命周期)、拉消息时给对方起名字。 */
+  ilink: WechatPolling & Pick<WechatContacts, 'resolveUserName'> & Pick<WechatPermissions, 'handlePermissionReply'>
   accounts: IlinkAccount[]
   boot: Bootstrap
   dangerously: boolean
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /** 网络守护运行时(2026-10-02):后台 tick 不安全就跳过;probe 来源连续两次不安全时暂停需要保护的工作台执行者。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
-  workbench?: Pick<import('../../core/workbench/service').WorkbenchService, 'suspendForNetwork' | 'resumeFromNetwork' | 'stopSuspendedForNetwork'>
+  workbench?: Pick<import('../../features/workbench').WorkbenchService, 'suspendForNetwork' | 'resumeFromNetwork' | 'stopSuspendedForNetwork'>
   /**
    * Optional override for both push + introspect scheduler intervals.
    * When set, both schedulers use this value instead of their defaults.
@@ -43,7 +46,7 @@ export interface LifecycleDepsOpts {
   schedulerIntervalMs?: number
 }
 
-export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): {
+export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, speech?: import('../speech/policy').SpeechPolicy): {
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   companionIngestDeps: CompanionIngestDeps
@@ -152,6 +155,9 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       },
       parse: parseUpdates,
       resolveUserName: (cid) => ilink.resolveUserName(cid),
+      // 主人对拍板卡的「y / n」一到就消费(和命令表里 permission-reply 那一条同一个函数),不排在等拍板的那一轮后面;
+      // 没消费(待批已经没了)⇒ 回 false,poll loop 把它当普通消息排队。
+      consumePermissionAnswer: makePermissionAnswer({ ilink, log }),
       log,
       // Daemon-health heartbeat: each successful poll round-trip stamps the
       // file the instance lock reads, so a wedged/half-started daemon (poll
@@ -169,10 +175,11 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       },
     },
     startupDeps: {
-      stateDir, db, ilink, log,
+      stateDir, db, log,
       accountCount: accounts.length,
       dangerously,
       runIntrospectOnce: ticks.introspectTick,
+      ...(speech ? { speech } : {}),
     },
   }
 }

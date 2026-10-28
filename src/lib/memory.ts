@@ -2,14 +2,17 @@
  * Memory inspector — read-only view of Companion v2's per-user .md store at
  *   ~/.claude/channels/wechat/memory/<userId>/...
  *
- * Why a separate top-level module (vs reusing src/daemon/memory/fs-api.ts):
- * fs-api is per-user — it gets a single `rootDir` and serves Claude through
+ * Why a separate top-level module (vs reusing src/adapters/store/memory-fs.ts):
+ * memory-fs is per-user — it gets a single `rootDir` and serves Claude through
  * MCP. The desktop GUI / CLI need to enumerate ACROSS users, so this layer
- * sits one level up. Path-traversal protection mirrors fs-api's logic.
+ * sits one level up. Path-traversal protection mirrors memory-fs's logic.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import type { DerivedFence, InvalidationReason } from './derived-fence'
+import { memoryArtifactKind } from './memory-artifacts'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { writeFileAtomic } from './json-file'
 import { dirname, join, relative, resolve } from 'node:path'
-import { isDerivedMemoryStale } from './memory-derived-state'
+import { OWNER_FILENAME } from './memory-owner'
 
 export interface MemoryFileEntry {
   name: string
@@ -56,41 +59,50 @@ export function readMemoryFile(stateDir: string, userId: string, relPath: string
   return readFileSync(target, 'utf8')
 }
 
-const MAX_BYTES = 100 * 1024  // matches src/daemon/memory/fs-api.ts MemoryFS
+const MAX_BYTES = 100 * 1024  // matches src/adapters/store/memory-fs.ts MemoryFS
 const PROFILE_FILENAME = '_profile.json'
 
 // Atomic write of a memory file. Body must be UTF-8 string (callers
-// decode base64 etc upstream). Mirrors the sandboxing of fs-api.ts:
+// decode base64 etc upstream). Mirrors the sandboxing of memory-fs.ts:
 // .md only, ≤100KB, path-traversal blocked, parent dirs auto-created
-// inside the user root, atomic rename via .tmp-<pid>-<ts>.
+// inside the user root, atomic via lib/json-file(tmp 名以 . 开头,下面的列目录会跳过)。
 //
-// Why this lives at top level (vs fs-api): the per-user MemoryFS in
-// src/daemon/memory/fs-api.ts is bound to a single rootDir at construction
+// Why this lives at top level (vs memory-fs): the per-user MemoryFS in
+// src/adapters/store/memory-fs.ts is bound to a single rootDir at construction
 // and is what Claude's MCP tools call. The CLI / GUI need to write any
 // user's file by id, so this top-level helper composes resolveSafe +
 // MemoryFS-equivalent atomic write logic without instantiating one
 // MemoryFS per user.
-export function writeMemoryFile(stateDir: string, userId: string, relPath: string, body: string): { bytesWritten: number; created: boolean } {
+/** `fence`:这个对话生成物的过期围栏(架构终态 G8,在主库)。写源要给;只写生成物(合成写回总览)可以给 null。 */
+export function writeMemoryFile(stateDir: string, userId: string, relPath: string, body: string, fence: DerivedFence | null, opts: { reason?: InvalidationReason } = {}): { bytesWritten: number; created: boolean } {
   const target = resolveSafe(stateDir, userId, relPath)
+  // 主人原话只经记忆编辑写(lib/memory-owner),整份覆盖会绕过「删 = 更正、加 = 原话」那一步。
+  if (relative(resolve(join(stateDir, 'memory', userId)), target).split('\\').join('/').toLowerCase() === OWNER_FILENAME) {
+    throw new Error('owner.md 是主人亲手写的原话,只能经记忆编辑改')
+  }
+  // 写的是源 ⇒ 先让这个对话的生成物过期(3e 记忆第 2 步)。主人在桌面编辑可能是删改 ⇒ 缺省 'retracted';
+  // 合成写回 _overview.md 是生成物,不触发。
+  if (memoryArtifactKind(relPath) === 'source') {
+    if (!fence) throw new Error('writing a memory source needs the derived fence')
+    fence.invalidate(opts.reason ?? 'retracted')
+  }
   const bytes = Buffer.byteLength(body, 'utf8')
   if (bytes > MAX_BYTES) {
     throw new Error(`body too large: ${bytes}B exceeds ${MAX_BYTES}B`)
   }
   const created = !existsSync(target)
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, body, { mode: 0o600 })
-  renameSync(tmp, target)
+  writeFileAtomic(target, body, { mode: 0o600 })
   return { bytesWritten: bytes, created }
 }
 
-export function readMemoryProfileFile(stateDir: string, userId: string): string {
+export function readMemoryProfileFile(stateDir: string, userId: string, fence: DerivedFence): string {
   const target = resolveProfileSafe(stateDir, userId)
   if (!existsSync(target)) {
     throw new Error(`file not found: ${userId}/${PROFILE_FILENAME}`)
   }
   const content = readFileSync(target, 'utf8')
-  if (!isDerivedMemoryStale(dirname(target), 'profile')) return content
+  if (!fence.isStale('profile')) return content
   return JSON.stringify({ ...JSON.parse(content), needsRefresh: true })
 }
 
@@ -102,9 +114,7 @@ export function writeMemoryProfileFile(stateDir: string, userId: string, body: s
   }
   const created = !existsSync(target)
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, body, { mode: 0o600 })
-  renameSync(tmp, target)
+  writeFileAtomic(target, body, { mode: 0o600 })
   return { bytesWritten: bytes, created }
 }
 

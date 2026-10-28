@@ -1,21 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { memoryFactsFor } from '../features/memory'
+import { socialRoutes as socialFeatureRoutes } from '../features/social/routes'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
+import { voiceRoutes } from '../features/voice/routes'
+import { companionRoutes } from '../features/companion/routes'
 import { makeReplySinks } from './reply-sinks'
-import { makeMemoryFS } from './memory/fs-api'
+import { makeMemoryFS, type MemoryFS } from '../adapters/store/memory-fs'
 import { makeEventsStore } from './events/store'
-import { openTestDb } from '../lib/db'
-import { makeTurnRecordStore } from '../core/turn-record-store'
-import type { TurnRecord } from '../core/conversation-coordinator'
+import { openTestDb, type Db } from '../lib/db'
+import { makeTurnRecordStore } from '../adapters/store/turn-record-store'
+import type { TurnRecord } from '../app/conversation-coordinator'
 import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
-import type { A2ARegistry } from '../core/a2a-registry'
-import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
-import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
-import { openKnowledge } from '../core/knowledge/store'
-import { semanticSearch } from '../core/knowledge/search'
+import type { A2ARegistry, A2AClient, SendResult, AgentCard } from '../ports/a2a'
+import type { A2AEventsStore, EventRow, AppendInput } from '../adapters/store/a2a-events-store'
+import { openKnowledge } from '../adapters/knowledge/store'
+import { semanticSearch } from '../domain/knowledge/search'
 import { serve } from '../lib/runtime/http'
+import { terminalRoutes, type TerminalRoutesDeps } from '../features/terminal/routes'
+import { memoryFsRoutes } from '../features/memory/fs-routes'
+import { testFences } from '../test-support/memory-fences'
+// G8:生成物围栏在主库;这个文件一份内存主库
+const TEST_FENCES = testFences()
+
+// 记忆文件的四条路由归记忆功能(src/features/memory,路由表标 module: 'memory'),daemon 里由 memory 模块挂;测试照样挂上去。
+function withMemoryRoutes(api: InternalApi, memory: MemoryFS, db?: Db, facts?: Parameters<typeof memoryFsRoutes>[0]['facts']): InternalApi {
+  api.mount('memory', memoryFsRoutes({ memory, ...(db ? { db } : {}), ...(facts ? { facts } : {}) }))
+  return api
+}
 
 describe('internal-api', () => {
   let stateDir: string
@@ -165,7 +179,7 @@ describe('internal-api', () => {
 
   describe('cli hook events route (spec 2026-09-09-cli-hook-push)', () => {
     const body = { source: 'claude', kind: 'stop', session_id: 'abc-123', cwd: '/w/p', text: 'done' }
-    it('FILE token(trusted)POST /v1/cli/event → 转给 hub;没接线 503;坏 body 400', async () => {
+    it('FILE token(trusted)POST /v1/cli/event → 转给 hub;terminal 模块没挂上 503 module_starting;坏 body 400', async () => {
       const ingest = vi.fn(() => 'scheduled' as const)
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
@@ -175,9 +189,10 @@ describe('internal-api', () => {
       })
       const off = await post(body)
       expect(off.status).toBe(503)
-      expect(await off.json()).toEqual({ error: 'cli_events_not_wired' })
+      expect(await off.json()).toEqual({ error: 'module_starting', module: 'terminal' })
 
-      api.setCliEvents({ ingest })
+      // 路由由 terminal 模块自己挂(架构终态 A5,src/features/terminal)
+      api.mount('terminal', terminalRoutes({ cliEvents: { ingest } } as unknown as TerminalRoutesDeps))
       const on = await post(body)
       expect(on.status).toBe(200)
       expect(await on.json()).toEqual({ ok: true, action: 'scheduled' })
@@ -193,8 +208,9 @@ describe('internal-api', () => {
     let memoryRoot: string
     async function startWithMemory(): Promise<{ port: number; token: string }> {
       memoryRoot = join(stateDir, 'memory')
-      const memory = makeMemoryFS({ rootDir: memoryRoot })
-      api = createInternalApi({ stateDir, daemonPid: 999, memory })
+      const memory = makeMemoryFS({ rootDir: memoryRoot, layout: 'all-chats', fences: TEST_FENCES })
+      // G6:memory.md 经导出器读;表是空的 ⇒ 走「没搬进表」那条路,读的就是这里的文件
+      api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999 }), memory, undefined, memoryFactsFor(openTestDb(), stateDir))
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
       return { port, token }
@@ -292,23 +308,23 @@ describe('internal-api', () => {
       expect(body.files.sort()).toEqual(['sub/x.md', 'sub/y.md'])
     })
 
-    it('memory routes return 503 when memory dep is not wired', async () => {
-      api = createInternalApi({ stateDir, daemonPid: 1 })  // no memory
+    it('memory routes answer 503 module_starting until the memory module mounts them', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })  // 没挂记忆的路由(daemon 里是 memory 模块开机时挂)
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
       const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/list`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'memory_fs_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_starting', module: 'memory' })
     })
 
     describe('POST /v1/memory/delete (soft-delete + audit)', () => {
       async function startWithMemoryAndDb(): Promise<{ port: number; token: string; db: ReturnType<typeof openTestDb> }> {
         memoryRoot = join(stateDir, 'memory')
-        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        const memory = makeMemoryFS({ rootDir: memoryRoot, fences: TEST_FENCES })
         const db = openTestDb()
-        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999, db }), memory, db)
         const { port, tokenFilePath } = await api.start()
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         return { port, token, db }
@@ -404,6 +420,16 @@ describe('internal-api', () => {
           body: JSON.stringify({ path, content: 'x' }),
         })
 
+      // 3e 记忆第 2 步:CC 会话自己记笔记 ⇒ 生成物只是不全(added);文件令牌那一路(主人 / 工具)⇒ 缺省 retracted。
+      it('a session write marks that chat\'s derived memory "added"; a file-token write marks it "retracted"', async () => {
+        const { port, token } = await startWithMemory()
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        expect((await write(port, tok, 'chat-1/notes.md')).status).toBe(200)
+        expect(TEST_FENCES('chat-1').status('overview')).toBe('added')
+        expect((await write(port, token, 'chat-1/notes.md')).status).toBe(200)
+        expect(TEST_FENCES('chat-1').status('overview')).toBe('retracted')
+      })
+
       it('trusted session token can write/read within its OWN chat subtree', async () => {
         const { port } = await startWithMemory()
         const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
@@ -452,9 +478,9 @@ describe('internal-api', () => {
 
       it('today-draft.md is daemon-only too: a session (even admin) cannot write or delete it; the CLI/operator path still can', async () => {
         memoryRoot = join(stateDir, 'memory')
-        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        const memory = makeMemoryFS({ rootDir: memoryRoot, fences: TEST_FENCES })
         const db = openTestDb()
-        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999, db }), memory, db)
         const { port, tokenFilePath } = await api.start()
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const admin = api.mintSessionToken('admin', 'claude/a/ownerchat')
@@ -508,9 +534,9 @@ describe('internal-api', () => {
 
       it('delete guard also survives path normalization: plain, ./, and trailing-slash spellings of ownerchat/memory.md', async () => {
         memoryRoot = join(stateDir, 'memory')
-        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        const memory = makeMemoryFS({ rootDir: memoryRoot, fences: TEST_FENCES })
         const db = openTestDb()
-        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999, db }), memory, db)
         const { port } = await api.start()
         const admin = api.mintSessionToken('admin', 'claude/a/ownerchat')
         for (const p of ['ownerchat/memory.md', './ownerchat/memory.md', 'ownerchat/memory.md/']) {
@@ -549,8 +575,8 @@ describe('internal-api', () => {
       // 403 route_not_allowed before the chat-scope check even runs.
       it('operator token is 403 route_not_allowed on /v1/memory/write (route-scoped to converse-only)', async () => {
         memoryRoot = join(stateDir, 'memory')
-        const memory = makeMemoryFS({ rootDir: memoryRoot })
-        api = createInternalApi({ stateDir, daemonPid: 999, memory })
+        const memory = makeMemoryFS({ rootDir: memoryRoot, fences: TEST_FENCES })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999 }), memory)
         const { port, operatorTokenFilePath } = await api.start()
         const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
         const w = await write(port, opToken, 'ownerchat/persona.md')
@@ -610,9 +636,9 @@ describe('internal-api', () => {
 
       it('memory/delete is scoped: foreign path 403, own path succeeds', async () => {
         memoryRoot = join(stateDir, 'memory')
-        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        const memory = makeMemoryFS({ rootDir: memoryRoot, fences: TEST_FENCES })
         const db = openTestDb()
-        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999, db }), memory, db)
         const { port, tokenFilePath } = await api.start()
         const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
         for (const p of ['chat-1/a.md', 'ownerchat/persona.md']) await write(port, fileToken, p)
@@ -637,8 +663,8 @@ describe('internal-api', () => {
   })
 
   it('returns 400 on malformed JSON body', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 1, memory })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 1 }), memory)
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
@@ -881,7 +907,9 @@ describe('internal-api', () => {
         configStatus: voiceParts.configStatus,
         synthesizeSpeech: voiceParts.synthesizeSpeech ?? stubSynthesizeSpeech,
       }
-      api = createInternalApi({ stateDir, daemonPid: 1, voice })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      // 语音路由归 voice 模块(src/features/voice),模块 init 时自己挂上来。
+      api.mount('voice', voiceRoutes({ voice }))
       return api.start().then(({ port, tokenFilePath }) => ({
         port,
         token: readFileSync(tokenFilePath, 'utf8').trim(),
@@ -1012,7 +1040,8 @@ describe('internal-api', () => {
       expect(body.detail).toContain('disk full')
     })
 
-    it('returns 503 when voice dep not wired', async () => {
+    // 语音模块还没挂上路由(开机途中)⇒ 路由层统一回 module_starting(以前是处理器自己的 voice_not_wired)。
+    it('returns 503 when the voice module has not mounted its routes', async () => {
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
@@ -1020,7 +1049,7 @@ describe('internal-api', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'voice_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_starting', module: 'voice' })
     })
   })
 
@@ -1221,7 +1250,9 @@ describe('internal-api', () => {
     }
 
     function startWithCompanion(companion: MockCompanion): Promise<{ port: number; token: string }> {
-      api = createInternalApi({ stateDir, daemonPid: 1, companion })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      // 陪伴的路由由 companion 模块自己挂(src/features/companion,A5);这里照它的样子挂上。
+      api.mount('companion', companionRoutes({ stateDir, companion }))
       return api.start().then(({ port, tokenFilePath }) => ({
         port, token: readFileSync(tokenFilePath, 'utf8').trim(),
       }))
@@ -1409,7 +1440,8 @@ describe('internal-api', () => {
       expect(body.error).toContain('config write failed')
     })
 
-    it('returns 503 when companion dep not wired', async () => {
+    it('returns 503 module_starting until the companion module mounts its routes', async () => {
+      // 搬家前是处理器自己的 companion_not_wired;A5 起路由层统一回 module_starting(同语音 / 记忆)。
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
@@ -1417,7 +1449,7 @@ describe('internal-api', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'companion_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_starting', module: 'companion' })
     })
   })
 
@@ -1640,28 +1672,28 @@ describe('internal-api', () => {
     })
   })
 
-  // Route-contract tests against a MOCKED deps.voice.synthesizeSpeech —
+  // Route-contract tests against a MOCKED voice.synthesizeSpeech (voice 模块挂的路由) —
   // reuses the same synth-extraction as replyVoice (see ilink/voice.ts),
   // but hands audio bytes back instead of ilink-sending (voice arc Stage 1).
   describe('POST /v1/companion/speak', () => {
     async function startWithSynth(
       synthesizeSpeech: (text: string) => Promise<{ audio: Buffer; mime: string }>,
     ): Promise<{ port: number; token: string }> {
-      api = createInternalApi({
-        stateDir, daemonPid: 1,
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      api.mount('voice', voiceRoutes({
         voice: {
           replyVoice: async () => ({ ok: false, reason: 'unused_in_speak_tests' }),
           saveConfig: async () => ({ ok: false, reason: 'unused_in_speak_tests' }),
           configStatus: () => ({ configured: false }),
           synthesizeSpeech,
         },
-      })
+      }))
       const { port } = await api.start()
       const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
       return { port, token }
     }
 
-    it('503 when deps.voice is not wired', async () => {
+    it('503 when the voice module has not mounted its routes', async () => {
       api = createInternalApi({ stateDir, daemonPid: 1 })
       await api.start()
       const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
@@ -1672,7 +1704,7 @@ describe('internal-api', () => {
         body: JSON.stringify({ text: 'hi' }),
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'voice_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_starting', module: 'voice' })
     })
 
     it('400 when text is empty/whitespace', async () => {
@@ -1746,15 +1778,15 @@ describe('internal-api', () => {
     // alongside converse (see token-registry.ts), so it reaches this route.
     it('the operator token reaches the route (not 403)', async () => {
       const synthesizeSpeech = async () => ({ audio: Buffer.from([1, 2, 3]), mime: 'audio/wav' })
-      api = createInternalApi({
-        stateDir, daemonPid: 1,
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      api.mount('voice', voiceRoutes({
         voice: {
           replyVoice: async () => ({ ok: false, reason: 'unused' }),
           saveConfig: async () => ({ ok: false, reason: 'unused' }),
           configStatus: () => ({ configured: false }),
           synthesizeSpeech,
         },
-      })
+      }))
       const { port, operatorTokenFilePath } = await api.start()
       const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
       const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
@@ -1856,262 +1888,6 @@ describe('internal-api', () => {
     })
   })
 
-  // ─── stickers (send_sticker / save / list) ─────────────────────────────
-
-  interface MockStickers {
-    resolve: (tag: string) => string | null
-    save: (sourcePath: string, tags: string[], desc?: string) => { file: string; tags: string[] }
-    list: () => { file: string; tags: string[]; desc?: string }[]
-    allTags: () => string[]
-  }
-
-  describe('POST /v1/wechat/send_sticker', () => {
-    it('503 when stickers dep not wired', async () => {
-      api = createInternalApi({ stateDir, daemonPid: 1 })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
-      })
-      expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
-    })
-
-    it('400 on missing chat_id / missing tag', async () => {
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => null),
-        save: vi.fn(),
-        list: vi.fn(() => []),
-        allTags: vi.fn(() => []),
-      }
-      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-
-      const missingChatId = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ tag: 'happy' }),
-      })
-      expect(missingChatId.status).toBe(400)
-
-      const missingTag = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: 'c@bot' }),
-      })
-      expect(missingTag.status).toBe(400)
-
-      expect(stickers.resolve).not.toHaveBeenCalled()
-    })
-
-    it('no matching sticker ⇒ ok:false with available tags', async () => {
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => null),
-        save: vi.fn(),
-        list: vi.fn(() => []),
-        allTags: vi.fn(() => ['happy', 'sad']),
-      }
-      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: 'c@bot', tag: 'angry' }),
-      })
-      expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({ ok: false, reason: 'no_sticker_for_tag', tags: ['happy', 'sad'] })
-    })
-
-    it('ilink not wired ⇒ 503 when tag resolves', async () => {
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => '/state/stickers/happy.png'),
-        save: vi.fn(),
-        list: vi.fn(() => []),
-        allTags: vi.fn(() => []),
-      }
-      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
-      })
-      expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'ilink_not_wired' })
-    })
-
-    it('happy path calls ilink.sendFile(chat_id, resolvedPath) and returns basename', async () => {
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => '/state/stickers/happy.png'),
-        save: vi.fn(),
-        list: vi.fn(() => []),
-        allTags: vi.fn(() => []),
-      }
-      const sendFile = vi.fn(async () => {})
-      api = createInternalApi({
-        stateDir, daemonPid: 1, stickers,
-        ilink: { sendReply: async () => ({ msgId: 'm' }), sendFile, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
-      })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
-      })
-      expect(resp.status).toBe(200)
-      expect(sendFile).toHaveBeenCalledWith('c@bot', '/state/stickers/happy.png')
-      expect(await resp.json()).toEqual({ ok: true, file: 'happy.png' })
-    })
-
-    it('ilink.sendFile throws ⇒ ok:false+error', async () => {
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => '/state/stickers/happy.png'),
-        save: vi.fn(),
-        list: vi.fn(() => []),
-        allTags: vi.fn(() => []),
-      }
-      const sendFile = vi.fn(async () => { throw new Error('boom') })
-      api = createInternalApi({
-        stateDir, daemonPid: 1, stickers,
-        ilink: { sendReply: async () => ({ msgId: 'm' }), sendFile, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
-      })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/send_sticker`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: 'c@bot', tag: 'happy' }),
-      })
-      expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({ ok: false, error: 'boom' })
-    })
-  })
-
-  describe('POST /v1/stickers', () => {
-    it('503 when stickers dep not wired', async () => {
-      api = createInternalApi({ stateDir, daemonPid: 1 })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy'] }),
-      })
-      expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
-    })
-
-    it('400 on missing path / empty tags array', async () => {
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => null),
-        save: vi.fn(),
-        list: vi.fn(() => []),
-        allTags: vi.fn(() => []),
-      }
-      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-
-      const missingPath = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ tags: ['happy'] }),
-      })
-      expect(missingPath.status).toBe(400)
-
-      const emptyTags = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ path: '/tmp/x.png', tags: [] }),
-      })
-      expect(emptyTags.status).toBe(400)
-
-      const badTagType = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy', ''] }),
-      })
-      expect(badTagType.status).toBe(400)
-
-      expect(stickers.save).not.toHaveBeenCalled()
-    })
-
-    it('lib throws invalid_extension ⇒ 400 with that message', async () => {
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => null),
-        save: vi.fn(() => { throw new Error('invalid_extension') }),
-        list: vi.fn(() => []),
-        allTags: vi.fn(() => []),
-      }
-      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ path: '/tmp/x.txt', tags: ['happy'] }),
-      })
-      expect(resp.status).toBe(400)
-      expect(await resp.json()).toEqual({ error: 'invalid_extension' })
-    })
-
-    it('happy path calls save(path, tags, desc) and returns ok+file+tags', async () => {
-      const save = vi.fn(() => ({ file: 'x.png', tags: ['happy'] }))
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => null),
-        save,
-        list: vi.fn(() => []),
-        allTags: vi.fn(() => []),
-      }
-      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ path: '/tmp/x.png', tags: ['happy'], desc: 'a happy face' }),
-      })
-      expect(resp.status).toBe(200)
-      expect(save).toHaveBeenCalledWith('/tmp/x.png', ['happy'], 'a happy face')
-      expect(await resp.json()).toEqual({ ok: true, file: 'x.png', tags: ['happy'] })
-    })
-  })
-
-  describe('GET /v1/stickers', () => {
-    it('503 when stickers dep not wired', async () => {
-      api = createInternalApi({ stateDir, daemonPid: 1 })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'stickers_not_wired' })
-    })
-
-    it('happy path returns stickers list + tags', async () => {
-      const stickers: MockStickers = {
-        resolve: vi.fn(() => null),
-        save: vi.fn(),
-        list: vi.fn(() => [{ file: 'x.png', tags: ['happy'], desc: 'a happy face' }]),
-        allTags: vi.fn(() => ['happy']),
-      }
-      api = createInternalApi({ stateDir, daemonPid: 1, stickers })
-      const { port, tokenFilePath } = await api.start()
-      const token = readFileSync(tokenFilePath, 'utf8').trim()
-      const resp = await fetch(`http://127.0.0.1:${port}/v1/stickers`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({
-        ok: true,
-        stickers: [{ file: 'x.png', tags: ['happy'], desc: 'a happy face' }],
-        tags: ['happy'],
-      })
-    })
-  })
-
   // ─── ilink-bound message family routes (RFC 03 P1.B B1) ──────────────
 
   describe('ilink message routes', () => {
@@ -2137,8 +1913,9 @@ describe('internal-api', () => {
       api = createInternalApi({
         stateDir, daemonPid: 1,
         ...(opts.ilink ? { ilink: opts.ilink } : {}),
-        ...(voice ? { voice } : {}),
       })
+      // reply_voice 归 voice 模块(src/features/voice),模块自己挂上来。
+      if (voice) api.mount('voice', voiceRoutes({ voice }))
       return api.start().then(({ port, tokenFilePath }) => ({
         port, token: readFileSync(tokenFilePath, 'utf8').trim(),
       }))
@@ -2571,7 +2348,7 @@ describe('internal-api', () => {
         }))
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({ dispatchOneShot, knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot, knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2592,7 +2369,7 @@ describe('internal-api', () => {
         }))
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({ dispatchOneShot, knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot, knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2612,7 +2389,7 @@ describe('internal-api', () => {
       it('returns 400 on missing peer/prompt', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({ dispatchOneShot: async () => ({ ok: true, response: '', duration_ms: 0 }), knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot: async () => ({ ok: true, response: '', duration_ms: 0 }), knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
 
         const r1 = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
@@ -2636,10 +2413,10 @@ describe('internal-api', () => {
       it('returns 400 on unknown peer with allowed list', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({
+        api.provide({ delegate: {
           dispatchOneShot: async () => ({ ok: true, response: '', duration_ms: 0 }),
           knownPeers: () => ['claude', 'codex'],
-        })
+        } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2655,10 +2432,10 @@ describe('internal-api', () => {
       it('passes ok:false from dispatchOneShot through verbatim', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({
+        api.provide({ delegate: {
           dispatchOneShot: async () => ({ ok: false, reason: 'codex CLI not authenticated' }),
           knownPeers: () => ['claude', 'codex'],
-        })
+        } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2673,7 +2450,7 @@ describe('internal-api', () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
         const dispatchOneShot = vi.fn(async () => ({ ok: true as const, response: 'should not be called', duration_ms: 0 }))
-        api.setDelegate({ dispatchOneShot, knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot, knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2694,7 +2471,7 @@ describe('internal-api', () => {
         const dispatchOneShot = vi.fn(async (_peer: string, _prompt: string, _cwd?: string) => ({
           ok: true as const, response: 'ok', duration_ms: 0,
         }))
-        api.setDelegate({ dispatchOneShot, knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot, knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2707,10 +2484,10 @@ describe('internal-api', () => {
       it('rejects non-absolute cwd as 400 — RFC 03 review #10 path safety', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({
+        api.provide({ delegate: {
           dispatchOneShot: async () => ({ ok: true, response: 'x', duration_ms: 0 }),
           knownPeers: () => ['claude', 'codex'],
-        })
+        } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2725,10 +2502,10 @@ describe('internal-api', () => {
       it('catches dispatchOneShot throw and returns ok:false', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({
+        api.provide({ delegate: {
           dispatchOneShot: async () => { throw new Error('SDK exploded') },
           knownPeers: () => ['claude', 'codex'],
-        })
+        } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2943,7 +2720,7 @@ describe('internal-api', () => {
       try {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port } = await api.start()
-        api.setKnowledge({ store, search: semanticSearch })
+        api.provide({ knowledge: { store, search: semanticSearch } })
         const token = api.mintSessionToken('admin', 'claude/a/knowledge-test')
         const resp = await fetch(`http://127.0.0.1:${port}/v1/knowledge/semantic/status`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -2978,20 +2755,22 @@ describe('internal-api', () => {
         cancel?: (id: string) => any
       } | null = null,
     ): Promise<{ port: number; token: string }> {
+      // 心愿路由由社交模块自己挂(src/features/social);没给 opts = 社交没起 ⇒ subsystems 里 social 是 off,模块门回 module_off。
       api = createInternalApi({
         stateDir, daemonPid: 1,
-        ...(opts ? {
-          social: {
-            wish: {
-              propose: opts.propose ?? (async (t: string) => ({ ok: true as const, id: 'new-id', preview: t })),
-              send: opts.send ?? (async () => ({ ok: true as const, sentTo: 0 })),
-              cancel: opts.cancel ?? (() => ({ ok: true as const, status: 'cancelled' as const })),
-              list: () => opts.wishes ?? [],
-              resolveRef: () => ({ ok: false as const, reason: 'not_found' as const }),
-            },
-          },
-        } : {}),
+        ...(opts ? {} : { subsystems: () => [{ name: 'social', state: 'off' as const, sinceIso: 't' }] }),
       })
+      if (opts) {
+        api.mount('social', socialFeatureRoutes({ peerName: () => undefined, social: {
+          wish: {
+            propose: opts.propose ?? (async (t: string) => ({ ok: true as const, id: 'new-id', preview: t })),
+            send: opts.send ?? (async () => ({ ok: true as const, sentTo: 0 })),
+            cancel: opts.cancel ?? (() => ({ ok: true as const, status: 'cancelled' as const })),
+            list: () => opts.wishes ?? [],
+            resolveRef: () => ({ ok: false as const, reason: 'not_found' as const }),
+          },
+        } as never }))
+      }
       const { port } = await api.start()
       const token = api.mintSessionToken('admin', 'test')
       return { port, token }
@@ -3014,7 +2793,7 @@ describe('internal-api', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'social_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_off', module: 'social' })
     })
 
     it('POST /v1/social/wish drives propose(text) and returns the outcome verbatim', async () => {
@@ -3231,8 +3010,8 @@ describe('internal-api request validation', () => {
   })
 
   it('POST with missing required field returns 400 + invalid_request', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 1, memory })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 1 }), memory)
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
@@ -3247,8 +3026,8 @@ describe('internal-api request validation', () => {
   })
 
   it('POST with valid body has handler receive parsed data (memory read round-trip)', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 1, memory })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 1 }), memory)
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
@@ -3263,6 +3042,9 @@ describe('internal-api request validation', () => {
 
   it('POST to route with no registered schema skips body validation', async () => {
     api = createInternalApi({ stateDir, daemonPid: 1 })
+    // 陪伴的路由由 companion 模块自己挂(A5);挂一个只认 enable 的替身,看校验有没有拦它。
+    const enable = vi.fn(async () => ({ ok: true as const, already_configured: true as const }))
+    api.mount('companion', companionRoutes({ stateDir, companion: { enable } as unknown as Parameters<typeof companionRoutes>[0]['companion'] }))
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     // POST /v1/companion/enable has no body schema — any body should pass through
@@ -3271,14 +3053,14 @@ describe('internal-api request validation', () => {
       headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: '{}',
     })
-    // No companion wired — returns 503, not 400; validation did not block it
-    expect(resp.status).toBe(503)
-    expect(await resp.json()).toMatchObject({ error: 'companion_not_wired' })
+    // 处理器跑到了(200),不是 400:校验没有拦它
+    expect(resp.status).toBe(200)
+    expect(enable).toHaveBeenCalledTimes(1)
   })
 
   it('GET with valid query string proceeds normally', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 1, memory })
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory'), fences: TEST_FENCES })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 1 }), memory)
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/list?dir=sub`, {
@@ -3706,7 +3488,7 @@ describe('internal-api request validation', () => {
         const baseUrl = `http://127.0.0.1:${fake.port}`
         const a2aDeps = buildA2ADeps({ cardResult: card })
         // Use a custom client that actually hits the fake server
-        const { createA2AClient } = await import('../core/a2a-client')
+        const { createA2AClient } = await import('../adapters/a2a/a2a-client')
         const realClient = createA2AClient({ timeoutMs: 2000 })
         a2aDeps.client.fetchAgentCard = (url: string) => realClient.fetchAgentCard(url)
 

@@ -1,41 +1,30 @@
-import { describe, it, expect, vi, afterAll } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { describe, it, expect, vi } from 'vitest'
+import { inboundTurn } from './test-inbound-turn'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { useTempStateDir } from '../../test-support/state-dir'
 
 // Pairing-code (spec §7) — the `dispatch.coordinator.dispatch` seam in
 // pipeline-deps.ts intercepts the owner's WeChat "配对" / "配对 <code>" reply
 // before it reaches a normal agent turn. Mirrors
 // pipeline-deps-social-dispatch.test.ts's harness (揭晓/回信): `isAdmin`
-// reads access.json from the module-level STATE_DIR (src/lib/config.ts),
-// which is NOT one of buildPipelineDeps's injectable opts — so STATE_DIR is
-// redirected to a temp dir via vi.mock BEFORE anything imports
-// access.ts/config.ts, and pipeline-deps is loaded dynamically afterward so
-// it (transitively) picks up the mock.
-const ACCESS_STATE_DIR = mkdtempSync(join(tmpdir(), 'pipeline-deps-pairing-access-test-'))
-// importOriginal + spread (fix round 2, hardening): a plain-object factory
-// here would silently drop every OTHER config.ts export in this module
-// graph — including UNDER_TEST_RUNNER, which agy-mcp-config.ts's and
-// providers.ts's test-runner guards (fix round 1) depend on to refuse
-// defaulting to the operator's real ~/.gemini/config. Spreading the real
-// module keeps every export (including future ones) real except the one
-// this test actually needs to redirect.
-vi.mock('../../lib/config.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/config')>()
-  return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
-})
-
+// reads access.json.
+// access.json lives in the state dir, which is NOT one of buildPipelineDeps's
+// injectable opts; access.ts resolves it per call from WECHAT_STATE_DIR, so
+// useTempStateDir points that at a temp dir (no vi.mock of lib/config —
+// see src/test-support/state-dir.ts).
+const ACCESS_STATE_DIR = useTempStateDir('pipeline-deps-pairing-access-test-')
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 
 import type { Bootstrap } from '../bootstrap/index'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { CareLedger } from '../../features/companion/care-ledger'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 
 // Connection-health (Task 9) — buildPipelineDeps dereferences boot.health.health
 // unconditionally (llmHealth mw dep), so the `boot` fixture needs a minimal
@@ -48,8 +37,6 @@ const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 function writeAccess(admins: string[]): void {
   writeFileSync(ACCESS_FILE, JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], admins }, null, 2))
 }
-
-afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
 describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   function setup(pairing: Bootstrap['pairing'], admins: string[] = ['op_chat']) {
@@ -81,13 +68,13 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
       health: fakeHealth,
     } as unknown as Bootstrap
 
-    const ilink = {} as unknown as IlinkAdapter
+    const ilink = {} as unknown as PipelineWechat
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
     const replySinks = makeReplySinks()
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
     return { pipelineDeps, coordinatorDispatch, sendAssistantText }
   }
@@ -107,7 +94,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('admin "配对" → start(), replies with the code, no normal turn', async () => {
     const pairing = fakePairing()
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(startMsg)
+    await inboundTurn(pipelineDeps, startMsg)
     expect(pairing!.start).toHaveBeenCalled()
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
@@ -119,7 +106,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('admin "配对 <code>" → accept(code), success reply names the peer', async () => {
     const pairing = fakePairing()
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(pairing!.accept).toHaveBeenCalledWith('483921')
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
@@ -131,7 +118,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('accept() self_pair failure gets the "own code" reply', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'self_pair' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('自己的码')
@@ -140,7 +127,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('accept() id_conflict failure gets the upgrade-identity reply (single message — engine no longer double-notifies)', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'id_conflict' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('撞名')
@@ -149,7 +136,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('accept() expired_or_wrong failure gets the "wrong or expired" reply', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'expired_or_wrong' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('码不对或已过期')
@@ -164,7 +151,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('accept() relay_drop_failed failure gets its OWN distinct reply (not folded into "expired")', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'relay_drop_failed' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('没能投到中继')
@@ -177,7 +164,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('start() relay_drop_failed renders its own honest failure reply (single message)', async () => {
     const pairing = fakePairing({ start: vi.fn(async () => ({ ok: false, reason: 'relay_drop_failed' })) })
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(startMsg)
+    await inboundTurn(pipelineDeps, startMsg)
     expect(pairing!.start).toHaveBeenCalled()
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
@@ -189,21 +176,21 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('a non-command message falls through to a normal turn', async () => {
     const pairing = fakePairing()
     const { pipelineDeps, coordinatorDispatch } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...startMsg, text: '今天几点见面?' })
+    await inboundTurn(pipelineDeps, { ...startMsg, text: '今天几点见面?' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
     expect(pairing!.start).not.toHaveBeenCalled()
   })
 
   it('no boot.pairing → always a normal turn, even for a well-formed 配对', async () => {
     const { pipelineDeps, coordinatorDispatch } = setup(undefined)
-    await pipelineDeps.dispatch.coordinator.dispatch(startMsg)
+    await inboundTurn(pipelineDeps, startMsg)
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
   })
 
   it('a 配对 from a NON-admin chat is never consumed', async () => {
     const pairing = fakePairing()
     const { pipelineDeps, coordinatorDispatch } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...startMsg, chatId: 'someone_else', userId: 'someone_else' })
+    await inboundTurn(pipelineDeps, { ...startMsg, chatId: 'someone_else', userId: 'someone_else' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
     expect(pairing!.start).not.toHaveBeenCalled()
   })

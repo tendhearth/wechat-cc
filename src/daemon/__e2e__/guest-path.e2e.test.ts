@@ -36,7 +36,7 @@ function toAdmin(msgs: readonly OutboundMsg[]): OutboundMsg[] {
 }
 
 function ownerNotifyCount(msgs: readonly OutboundMsg[]): number {
-  return toAdmin(msgs).filter(m => (m.text ?? '').includes('👋')).length
+  return toAdmin(msgs).filter(m => (m.text ?? '').includes('想和我聊天')).length
 }
 
 function outboundCount(msgs: readonly OutboundMsg[], chatId: string): number {
@@ -123,10 +123,10 @@ describe('e2e: guest path — request/approve/deny/invite', () => {
       // the (fake) provider ─────────────────────────────────────────────
       daemon.sendText('testadmin', `允许 ${code1}`, { createTimeMs: nextTs() })
       const approveAck = await daemon.waitForOutbound(
-        msgs => toAdmin(msgs).some(m => (m.text ?? '') === '✅ 已允许 stranger1'),
+        msgs => toAdmin(msgs).some(m => (m.text ?? '') === '已允许 stranger1'),
         8000,
       )
-      expect(toAdmin(approveAck).some(m => m.text === '✅ 已允许 stranger1')).toBe(true)
+      expect(toAdmin(approveAck).some(m => m.text === '已允许 stranger1')).toBe(true)
 
       const greet1 = await daemon.waitForOutbound(
         msgs => msgs.some(m => m.chatId === 'stranger1' && (m.text ?? '').includes('称呼你')),

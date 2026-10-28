@@ -1,6 +1,6 @@
 # Tendhearth CC 现行 roadmap
 
-> 2026-10-13 状态核对 · **这份只说「往哪走 / 卡在哪」。**
+> 2026-10-19 状态核对(版本号一节;其余各节日期见节内) · **这份只说「往哪走 / 卡在哪」。**
 > 「定了什么 / 为什么这样定」在 [全景导图](全景导图.md);「某件事的文档在哪」在 [文档索引](INDEX.md);
 > `docs/rfc/02-post-v1.1-roadmap.md` 是 2026-04 的历史版本(v1.2 时代),已被本文取代。
 
@@ -8,17 +8,17 @@
 
 命名已统一为 **Tendhearth CC**，角色称呼为 **CC**；技术兼容边界见[产品命名规范](reference/product-naming.md)。手机端的实现、真机验收和商店发布是不同交付状态，以 [apps/app](../apps/app/README.md) 及各批验证记录为准。
 
-## 现状:最新公开版本 1.7.5
+## 现状:最新公开版本 1.7.7
 
 | 事实 | 怎么看(别写死数字,每次改这页先跑) |
 |---|---|
-| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-05:`desktop-v1.7.5`;[发版说明](releases/desktop-v1.7.5.md);1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
-| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-05:1.7.5,与 GitHub 一致) |
+| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-16:`desktop-v1.7.7`;[发版说明](releases/desktop-v1.7.7.md);1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
+| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-19:1.7.7,与 GitHub 一致) |
 | `dev` 领先 master | `git rev-list --count origin/master..origin/dev`(簿记合并之后是真实差值) |
 
 1.7.0 是发版链 09-03 改造后第一次真跑,一路踩到五个「加进去后没在真 tag 上跑过」的坑,全部修在 dev 并有守卫/手册条目:dev→master 簿记合并(#121)、e2e 作业装浏览器(#122)、sd.cpp 子模块(#119)、公证变量空串(#123)、R2 令牌失效还报绿(#125)。**发版从此全自动**:合 PR、打 tag、两道 `release-signing` 审批(助手用主人 gh 凭据经 API)、Publish、核对更新源,主人不用点;细则 [maintainer/release.md](maintainer/release.md)。
 
-版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),此后四处 + `Cargo.toml` 随发版保持同号(当前 **1.7.5**),由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
+版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),此后四处 + `Cargo.toml` 随发版保持同号(当前 **1.7.7**),由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
 
 **⇒ 发版节奏的教训:三周不发、发版链改了不真跑,代价是一天修五个坑。** 之后每合一批就发一版 patch。
 
@@ -46,11 +46,18 @@
 
 CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),不取代 Codex / Claude Code 这些 agent 本身。据此的优先级:
 ① 并行独立工作区 —— **已做**,三端齐(#253–#256、#261、#263–#267,见下);② 能接的 agent 更多 —— **已做**通用 ACP 槽位(#257–#259);
-③ 多端真正到手(TestFlight / 安卓 / Windows 工作台)—— 卡主人凭据与 win-test 真机;④ 语音先靠系统听写。终端 / 编辑器 / PR 管理继续不做。
+③ 多端真正到手(TestFlight / 安卓 / Windows 工作台)—— TestFlight 10-17 已上传(见下);安卓、Windows 工作台仍卡;④ 语音先靠系统听写。终端 / 编辑器 / PR 管理继续不做。
 
-## dev 上等 1.7.6 的(2026-10-06 核对,均已合 dev 并 `self deploy` 到主人机器)
+**10-17 对标 Paseo / OpenAI dots 的一轮(已合 dev、已 `self deploy`)**:
+- **看着它跑**:手机网页 / App 展开一条终端会话(Claude Code / Codex / Cursor),每 4 秒看最近几步 —— 跑了什么、改了哪个文件、说了什么,在跑的那步标「正在」;有内容的一步可点开看 diff 或命令输出尾巴,报错标「没成」(#372–#375,`GET /m/api/cli/activity`,解析在 `src/features/terminal/cli-activity.ts`)。App 英文界面按 verb + target 显示英文。
+- **一起做的活在手机上跟得上**:事件投影带工具那一步的 `activity{type,status,label}`;手机网页在跑时 1.2 秒一拉 +「正在 · …」;App 主题节流到 1 秒、进展 / 改动只在阶段变时拉(#376)。
+- **微信「看 码」**:对话之后补「这一轮做了什么」(只列说法,不放 diff / 输出,#377)。
+- **TestFlight**:App Store Connect 记录 `Tendhearth CC · Personal AI`(app 6824007352)已建;1.0.0 (1) 已上传、处理完、内部测试组已建;daemon `relay_v2_url` 切到生产 `wss://relay.tendhearth.com`,`selftest phone --relay v2` 通过。**待主人**:在 TestFlight 页回答一次出口合规(本 app 有自己的端到端加密,不照搬 leni/rici 的 false),之后装包、重新配对一次。出包要点见 [maintainer/release.md](maintainer/release.md) 与 apps/app README。
+- 与 dots 的差异与不做的:dots 那种「给目标后台一直推进」碰「无人值守自动外呼」红线,等主人定(同定时交办草案)。
 
-桌面界面与 iPhone app 的改动要随 **1.7.6 发版 / 装新包**才到用户手里(`self deploy` 只换 sidecar);daemon 侧已在主人机器上跑。发版待主人点头。
+## 1.7.6 / 1.7.7 里交付的(10-14 / 10-16 已发)
+
+> 这一节原名「dev 上等 1.7.6 的」;下列桌面改动已随 1.7.6(#349)/ 1.7.7(#360)发出。iPhone app 的改动仍要装新包(TestFlight)才到手。
 
 - **桌面**:此刻 / 一起做层级(#225、#227);此刻里拖图 / 贴图 / 拖文档进对话(#229、#234);WKWebView 静默失败四处修复 —— 弹窗、外链、下载、拖放(#230);搜对话(#235);一起做任务回复了 / 停下了弹系统通知(#245);「改动」面板逐文件撤销(#246);「没确认退出」按进程组判退出 + 旧记录「我确认它已经结束」(#228、#242)。
 - **iPhone app**(装新包才有):发图(#232)、停一轮(#233)、搜对话(#235)、看成果(#236)、补一句带图(#237)、交办选模型(#238)、「CC 记得你」与逐条纠错(#239、#240)、打开 CC 回复里的文件(#241)、换「跟 CC 说」的后端 / 模型(#244)。
@@ -127,15 +134,84 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
   7. iOS 加密备份恢复到另一台 ⇒ 配对仍在、启动核验通过;电脑上撤掉后再恢复 ⇒ 回欢迎页「这台手机和电脑的配对已经失效了。」。
   8. pset 中继壳 401 → /m 404(主人事项 8)。
 
+## 对标三类产品挖出的任务(2026-10-20)
+
+三路调研:① 聊天软件里的常驻个人 agent(OpenClaw、Hermes Agent、Poke、Manus、Lindy、OpenAI dots、Meta Muse、ChatGPT / Claude / Gemini 的定时与 Dispatch);② 编码 agent 的编排与遥控(Paseo、Orca、Conductor、Vibe Kanban、Claude Squad、Sculptor、Claude Code agent view / `/goal` / Routines、Codex Automations、Cursor、Agent HQ、Jules、Devin);③ 主动 / 记忆 / 陪伴(ChatGPT Dreaming 与定时、Claude 记忆、Gemini Daily Brief、Muse、Bee / Plaud、Screenpipe、Tolan / Sesame、元宝 / 豆包 / Kimi)。已核对代码:下列都是 dev 上**还没有**的;已有的(STT 网关、看着它跑、额度交接、权限卡多端、记忆纠错)不列。
+
+**先做(不用主人拍板,不碰红线)**
+
+| # | 任务 | 谁有 | 为什么 | 归属 |
+|---|---|---|---|---|
+| 1 | 🟡 #406 #409 #410 + 手机这片(PR-C,在审)**独立工作区的 setup / run 脚本 + 每区一个端口**(仓库里主人提交的脚本,每仓库首次跑前问一次;输出进事件流;桌面 / 手机一个「跑起来」) | Conductor、Paseo、Jules、Vibe Kanban | 并行工作区开出来没装依赖、起不来服务 = 定位第 ① 条只做了一半 | wechat-cc-2a |
+| 2 | ✅ #428 #433 #439 #444 **回到某一轮**(复用 v62 的每轮快照 sha,重置工作区、截掉后面的轮) | Conductor checkpoints、Claude Code rewind | 手机上撤一轮坏改动,不用整个丢工作区 | wechat-cc-2a |
+| 3 | ✅ #449 #450 #453 #456 **diff 行评论送回执行者 + 按块接受**(审阅面板从「整文件退回」细到行) | Orca、Vibe Kanban、Nimbalyst | 已在逐文件审阅的后续里 | wechat-cc-2a |
+| 4 | **记忆带出处 + 过期改写**(#405)(每晚整理时给每条记上来源对话 / 消息;带日期的记忆过期后改成过去时或归档;手机「CC 从哪知道的」) | Claude、ChatGPT Dreaming、Plaud | 信任与纠错;「下周去日本」一直挂着显得傻 | 我 |
+| 5 | **「CC 可以主动聊的话题」开关**(#404)(健康 / 家人 / 钱…,`/set` 里改,便宜模型闸门读它) | ChatGPT | 主动消息不越界;Google 自己承认 Gemini 过度个性化 | 我 |
+
+**接着做(我按授权定了边界,先只读)**
+
+| # | 任务 | 谁有 | 边界 |
+|---|---|---|---|
+| 6 | ✅ #408 #411 **主人亲手写的定时任务**(PR 见修订记录 10-20;微信「定时 每周一 9:00 看一下 X 告诉我」/ CLI;没事就不说话;10-08 草案的扩展:先只读——对话侧只读工具 + 一起做只读执行) | ChatGPT 定时、Gemini、OpenClaw heartbeat、Hermes、Paseo、Codex Automations、Claude Routines | 只能主人建;网络守护不安全就跳过、不补跑、不重试;每天合计上限;写文件的定时等放行规则真机跑一段再开。归属:我(设计 → 实现) |
+| 7 | ✅ #414 **早上一张卡**(「定时 早报 8:00」,设计 specs/2026-10-20-morning-brief-design.md)(记忆 + 到期提醒 + 昨天各执行者做了什么 + 没收尾的事;👍/👎 调第二天的挑选;**取代**而不是叠加零散问候) | Gemini Daily Brief、ChatGPT Pulse→定时、Lindy、Muse | 走现有频率闸门与无回复暂停;依赖 #6 的调度 |
+| 8 | 🟡 #425(包改动随 1.7.8,装上才能真机验)**读本机日历 / 提醒事项**(EventKit,macOS 隐私授权;只读,不接云 OAuth) | Poke、Lindy、Muse | 给 #7 和「日程冲突」用;从不代主人发东西 |
+| 9 | ✅ #419 #420 **做到条件成立为止**(任务带一个检查命令或条件,每轮后判,不满足就「继续」;轮数封顶、额度与断网即停) | Claude Code `/goal`、Devin | 依赖放行规则,否则每轮都要人点 |
+
+**记下、暂不做**:~~一次派给 N 个执行者再挑最好的(Orca、Codex best-of-N,额度翻倍,等主人要)~~ ⟨10-20 已做两家版 #451 #452:只在主人发「对比 @a @b」时才跑两份,不自动、不默认,额度主人自己决定;原来写的是「等主人要」,这里偏离了那句,主人不要就删掉这条命令⟩;CC 自己写技能文件(Hermes、OpenClaw ClawHub;只能主人批准安装);浏览器代操作(Manus、Claude in Chrome,红线边,至少等放行规则跑稳);入站 webhook(OpenClaw;新攻击面);PR / CI 状态一键(Conductor Checks;定位说不做 PR 管理,最多一个「推上去开 PR」按钮);全双工语音(Sesame、Tolan;STT 本地化之后再说);一键「记住屏幕」(豆包;分享扩展已覆盖大半)。
+
+## 第二轮对标(2026-10-20 下午,主人 `/loop`「还有很多功能没实现,可以参考同类产品」)
+
+都已合进 dev 并部署(最近一次 ad82b627,user_version=83),除标注外。
+
+| 做了什么 | 对标 | PR |
+|---|---|---|
+| 读本机日历 / 提醒(只读)+ 对话工具 `calendar_agenda` | Poke、Lindy、Muse | #425 #430(包改动随 1.7.8) |
+| 「CC 做过的事」时间线(手机)+ 微信「做过的事」 | Meta Muse | #429 #432 |
+| 周报(「定时 周报 周日 20:00」)+ 各执行者这周用了多少 | Gemini、ChatGPT Pulse | #431 #442 |
+| 免打扰时段(`/set 免打扰 23:00-8:00`,只挡 CC 主动找的) | alfred_ | #438 |
+| 额度恢复后接着做(回「等恢复」,只试一次) | Claude Code | #435 |
+| 逐回合用量(v82;Claude / Codex / openai 兼容) | Claude Code、Codex | #437 #445 |
+| 导入记忆(从别的助手贴回来,点头的才记;注入防护) | Claude import memory | #440 |
+| 项目经验(微信 / 手机 / 「任务 N 记成经验」;哪家执行者来都照着做) | Devin Knowledge | #443 #447 #454 |
+| 从 GitHub issue 开工(gh 只读;外部材料围栏;不走便宜模型初审、不给免审) | Devin、Codex | #446 |
+| 两家对比 + 并排看改动 | Codex best-of-N、Orca | #451 #452 |
+| 回到某一轮(wechat-cc-2a) | Conductor checkpoints、Claude Code rewind | #427(设计)#428 #433 #439 #444 |
+| 行评论 + 按块撤回(wechat-cc-2a) | Codex iOS、Orca、Vibe Kanban | #448(设计)#449 #450 #453,手机那片在做 |
+
+还没做、留给以后:打回时顺手记成经验(wechat-cc-2a 在做)、换一家来审改动(要给微信开受管工作区的建法)、录音 → 笔记(STT 本地化 / 隐私要主人定)、Siri / 快捷指令(App)。
+
+## 手机端界面:对标别家(2026-10-20,主人「整体手机端的界面设计别忘了,借鉴下其他家产品」)
+
+对标:ChatGPT(对话内语音、Scheduled、Pulse)、Claude(Remote Control 机器卡、Dispatch)、Gemini Daily Brief、GitHub Mobile Copilot(Live Activities 单一状态词)、Cursor 手机 diff、Codex iOS(行评论、Mac 睡着显示暂停)、Happy / Omnara / Paseo(四类推送、Ready to review / Working / Done)、Linear 收件箱、Things「今晚」。不照搬的:彩色状态徽章、图片卡流、语音光球动画、滑动铺色 —— 都违反「一个强调色、页面不变色」。
+
+**用词表** [reference/phone-wording.md](reference/phone-wording.md)(App 与网页共用):允许这一步 / 先不做(先不做在左)、等你决定 / 在做 / 这一轮做完了 / 完成 / 没做成 / 停下了、家里的电脑暂时连不上。三组(等你 / 在做 / 做完)用在「一起做」列表上;「此刻」照 10-05「每样东西只有一个家」只放「等你」。
+
+| # | 做什么 | 借鉴 | 归属 |
+|---|---|---|---|
+| A | ✅ #412 网页端不一致收口:CC 只在真连着时亮(之前 800ms 后无条件点亮,违反规矩 9)、拍板与状态按用词表、去 emoji、强调色不上状态字、断线文案 | 现状盘点 | 我(本 PR) |
+| B1 | 「一起做」列表分三组 等你 / 在做 / 做完 | Paseo、GitHub Live | wechat-cc-2a |
+| B2 | 通知上直接「允许这一步 / 先不做」+ 锁屏一行 Live Activity | Happy、Claude Remote Control、GitHub | wechat-cc-2a(要新 build + 真机) |
+| B3 | Mac 睡着 / 中继不在 ⇒「电脑歇了,事情先停着」,CC 变暗,不用红 | Codex iOS、Dispatch | wechat-cc-2a |
+| B4 | ✅ #414(先是一条普通消息)早报放在此刻顶部,结尾「就这些」 | Gemini Daily Brief、Pulse | 我(对标 #7) |
+| B5 | ✅ #456(手机整块评论)diff 点一行写意见送回执行者 | Codex iOS | wechat-cc-2a(对标 3) |
+| B6 | ✅ #415 #416 diff / 拍板里标出有风险的文件(鉴权、删测试、迁移):一个强调色「注意」,不用红黄绿 | Cursor 评测里被要的 | 我,之后 |
+| B7 | ✅ #417 #418 设置里的列表;对话小签暂不做 —— 定时在 App 里看得见:对话里一个小签 + 设置里一张列表 | ChatGPT Tasks、Gemini | 我,之后 |
+| B8 | 对话里说话、实时出字 | ChatGPT、Paseo | 等 STT 本地化 |
+| B9 | ✅ #429 #432 「CC 做过的事」时间线 | Meta Muse | 之后 |
+
+记下未做:风险原因、定时的时间 label 与上次结果、until 的停下原因是 daemon 给的中文,英文界面会中英混排(要做就让 daemon 给结构化的码);网页没带自己的衬线字体(装进页面会顶到中继 512KB 帧预算)、几处 1.5px 边框与 12.5px 这类不在 token 里的尺寸、网页额度接手还用 `window.confirm`(三份测试按同步 confirm 写,单独改)。
+
 ## 已定未做(按价值排)
 
-- **持续执行发版节奏** —— 09-27 后已恢复公开 patch 发版，当前到 1.7.5；每批整合、验收后按[发版手册](maintainer/release.md)交付。09 月积压三周的教训保留在上文，不能再当作当前停发状态。
+- **架构收到终态**(2026-10-25 主人「不希望是补丁,希望是清晰的」)—— 六条结构决定 + 阶段 A–G,见[架构终态与升级计划](architecture-end-state-2026-10-25.md)。正在做阶段 A(组装有根)。
+
+- **持续执行发版节奏** —— 09-27 后已恢复公开 patch 发版，当前到 1.7.7；每批整合、验收后按[发版手册](maintainer/release.md)交付。09 月积压三周的教训保留在上文，不能再当作当前停发状态。
 - 安卓凭据恢复走 Google Block Store(配对体验 7a 之后)。
 - ~~iCloud 钥匙串同步(`kSecAttrSynchronizable`)~~ ⟨2026-10-01 主人定:不同步。换机重扫一次码,守住「一个码只配一台」⟩
 - ~~**e2e 只在 master 相关的分支跑**~~ 口径过时:09-18 起 dev 推送动了 `apps/desktop/**` 就跑 desktop-e2e(`changes` 作业);只剩重型 `e2e` 作业按 base_ref 限 master,这是有意的成本取舍。
 - ~~**自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。~~ **2026-10-01 完成**:`wechat-cc self change --abandon <id>` 把一条记成 `abandoned`(第三种不可恢复的终局,`--resume` 拒绝)并当场删它的工作树,正在跑的那条拒绝(锁里新记了 runId);`--list` 每条标出在跑 / 被杀 / 可 --resume / 已收场 / 已作废和盘上的树路径。微信「自改」没加作废口(理由见 [maintainer/self-change.md](maintainer/self-change.md) 已知限制)。
 - ~~**设备 token 进 token-registry、http 默认 loopback**(梳理第 6 步)~~ **2026-09-29 完成(#149)**:链接 / 设备令牌进内部 API 同一个注册表(origin `link` / `device` + routeAllow `PHONE_ROUTES`),按台撤销,只允局域网的操作收成 `LAN_ONLY_OPS`,`serve()` 缺省 127.0.0.1。**没做的范围 B**:`/m/api/*` 并进内部 API dispatcher。现状见 [reference/internal-api-auth.md](reference/internal-api-auth.md)。
-- ~~**拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。~~ **2026-09-28 三件全部完成**:`cli.ts` 4332→157(#128)、`bootstrap/index.ts` 1321→460(#131)、`core/workbench/service.ts` 1965→179 行 / 内函数 68→3(PR #132–#141 + PR 10,十个域进 `service/<domain>.ts`,棘轮守卫 `scripts/workbench-service-ratchet.guard.test.ts` 只降不升;19 份旧测试一行没改)。
+- ~~**拆三个大文件**(梳理第 7 步)—— `features/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。~~ **2026-09-28 三件全部完成**:`cli.ts` 4332→157(#128)、`bootstrap/index.ts` 1321→460(#131)、`features/workbench/service.ts` 1965→179 行 / 内函数 68→3(PR #132–#141 + PR 10,十个域进 `service/<domain>.ts`,棘轮守卫 `scripts/workbench-service-ratchet.guard.test.ts` 只降不升;19 份旧测试一行没改)。
 - **错误通道结构化**(arch backlog #4)—— 2026-10-01 主人定开工,两条红线不变(Claude 只在双哨兵上报「登录过期」;agy 歧义句按瞬时)。第 1 步「采真实形状」2026-10-02 完成([reference/provider-error-shapes.md](reference/provider-error-shapes.md),56 条样本钉成 fixture);**第 2 步「边界产码」2026-10-02 做完**:第一片 Claude 会话(#190),余下部分(主人当天批准)codex / openai 兼容(含工作台 API 与 gemini)/ cursor(ACP + print)/ agy / Claude 一次性评估与工作台运行时都在边界产 `lib/provider-error-code.ts` 的码,下游(health 通知、cheapEval 冷却、桌面「测试连接」、微信回话、工作台任务失败)只读码;codex 与 openai 兼容有了边界超时,断网不再沉默。剩下的:真机跑一段确认码覆盖够了,再删文本回退(`AUTH_FAIL_SDK_ERROR` 宽集、`looksLikeAuthFailure`);Cursor ACP 上 `-32603` 的假 key / 死代理有意不区分;要不要压 Claude 的默认重试(假 key 约 90s 才出错)另议。见该文档 §7。
 - ~~**纯 JS 的锚定文件访问**(评审 #3)—— 去 ffi 之后没有 `openat`,逐级 lstat 是多个时刻的观察;两条路(写清威胁模型 + 目录替换回归测试,或 macOS/Linux 恢复原生 openat),安全边界取舍等 owner。~~ **2026-10-01 owner 选 (a)**:保留纯 JS,威胁模型写进 [reference/workbench-file-guard.md](reference/workbench-file-guard.md)(防失误与项目内路径把戏,不防并发换目录的恶意本机进程),`anchored-fs.threat-model.test.ts` 钉住;顺手修了附件落盘从深层路径开文件、`mkdirAnchored` 逐级只 lstat 叶子两个洞。
 - **动态 provider 注册** —— 等 openai-compatible 这条路被外部集成者真用起来、暴露出覆盖不了的需求再做。
@@ -155,6 +231,14 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 
 以下是各批当时的证据与取舍，当前默认值和下一步以上文及权威手册为准。
 
+- 2026-10-20(傍晚):**行为变化**——手机路由按一条规矩收口:会把话 / 批准 / 新任务送到执行者那里、或会丢改动的写操作只给配过对的设备,/set 链接(10 分钟、能转发)不能再补充、批准、回答、交办、接着做、交给另一位、提交 / 删工作区,也不能跟 CC 说话(主人那条 CC 是 admin + dangerously)。网页在链接会话里换成一句「配对过的手机才能…」,旁边就是「把 CC 带在身上」。每条 POST 必须在 LINK_EXCLUDED 或带理由的 LINK_WRITE_OK 里(测试守着)。与 wechat-cc-2a 一起定。
+- 2026-10-20(下午):第二轮对标一批合入并部署(表见上文「第二轮对标」)。两条取舍记在这:两家对比偏离了原来「等主人要」那句,做成只在主人发命令时才跑;issue 开工的两道闸(初审不审、免审不收)来自 wechat-cc-2a 的评审,标记靠包装时写的随机围栏,不加迁移。
+- 2026-10-19:版本号一节同步到 1.7.7(GitHub 与更新源一致);「dev 上等 1.7.6 的」改为已发。同日两路协作:评审 #385–#393 修 7 条(#395、#396);来源标记 #398;放行规则设计稿 #397 三问主人交我定(初审做、默认关;写文件只限独立工作区;只进日报),v1 实现(规则表 + 红线 + 初审 + 留痕 v78 + 日报一行 + `wechat-cc rules`)#402 已合 dev,默认关;微信改规则 / 卡片「以后不用问」/ 学 在下一个 PR。评审 #6 定:中继离线时 App 不算送得到(#401)。
+- 2026-10-20:早报(对标 #7):「定时 早报 [工作日] HH:MM」+「早报 少点 / 多点 / 偏好」;素材本机拼(日报、今天到期提醒、agenda、口味),发出去记一次主动消息,取代当天问候。
+- 2026-10-20:加「手机端界面:对标别家」一节与用词表 reference/phone-wording.md;网页端不一致收口(CC 只在真连着时亮等)。
+- 2026-10-20:对标批次落地 —— #6 定时(#408 #411)、#7 早报(#414)、#9 做到条件成立为止(#419 #420)、B6 风险标记(#415 #416)、B7 定时在 App(#417 #418)已合;#8 读日历 #425 在审(Info.plist / entitlements 随 1.7.8);真机 device-e2e 六步全过(#421 修了手机对终端说话从没送到过:launchd 的 PATH 里没有 claude)。
+- 2026-10-20:加「对标三类产品挖出的任务」一节(三路调研;先做 5 项、接着做 4 项、记下暂不做 7 项,标了归属);#4 记忆出处 = #405、#5 别主动聊 = #404。
+- 2026-10-20:定时任务(只读版)实现:微信「定时」/ `wechat-cc jobs`、独立只读会话 `job:<id>`、每天合计 5 次、错过不补、连 3 次失败自动停;设计 `docs/superpowers/specs/2026-10-20-scheduled-jobs-design.md`。
 - 2026-10-05:同步 GitHub / updater 1.7.5、macOS 改名已发布状态；合并重复手机进展，移出已修欠账，分开既有 iPhone 自动化、待补真机项与 TestFlight 生产条件。
 - 2026-10-05:1.7.5 发版(版本号 + `docs/releases/desktop-v1.7.5.md`):macOS 改名 Tendhearth CC.app + 进程名、桌面字体、产物预览。
 - 2026-10-04:1.7.4 发版(版本号 + `docs/releases/desktop-v1.7.4.md`):桌面显示名 Tendhearth CC、重启通知按证据、后台不再触发「访问其他 App 数据」、桌面麦克风权限。
@@ -166,8 +250,8 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 - 2026-10-04:外部 CLI provider 的开机探测不再一次定生死。真机事故:self deploy 后那次开机 `agy: binary not found … or --version probe failed`,终端里 `agy --version` 0.13s,两分钟后普通重启就好了;主人的 cheapEval 钉在 agy,期间后台判断静默落到别家。同一次开机 cursor-agent 的探测也撞了 3s 硬顶掉线(被 `CURSOR_API_KEY not set` 盖住)。根因:知识库回填 + js 嵌入预热(`knowledge_embed_runtime=js`,编译包里 dlopen 本来就失败)在 registerProviders 之前用 `setTimeout(0)` 排上,同步活把事件循环卡了 ~12s,墙钟计时的探测一醒来就判超时(失败的三次开机里 agy 那行都紧跟 `[KNOWLEDGE] embed runtime 'js' unavailable`)。为什么只在 self deploy 之后(03:14、03:34 两次,普通 kickstart 从没出过):seal 重签了 .app,daemon(app 主二进制 `--daemon`)换了代码身份,重签后第一次启动 Gatekeeper / syspolicyd 要重新评估,它起的子进程 exec 也要排队等评估(`log show` syspolicyd:03:14 那次 20 秒里 206 次 `GK evaluateScanResult`,普通重启 22 秒里 5 次;公证查询 `Error checking with notarization daemon: 3` 同步飙高)⇒ 子进程起得慢:claude/codex 的同步版本探测 4.75s(普通重启 0.06s),cursor-agent 撞 3s 硬顶,agy 再叠上知识库那段卡顿就过了 5s 窗口。环境 / PATH 两种重启一样(都是 launchctl kickstart 同一个 LaunchAgent),健康门 / 插件门只轮询 HTTP,不起子进程。修:新 `bootstrap/provider-probe.ts` —— 超时按循环醒着的时间累计 + 宽限,失败带原因;失败后 2s/4s/8s/16s/32s/60s 再每 10 分钟重探(一次一个、计时器 unref、关停时清掉),通过即注册、补一次能力矩阵检查;codex / cursor-agent 的探测从 spawnSync 3s 改成同一个异步探测。`provider-registry.getCheapEval()` 在钉死的 provider 未注册时返回按调用现取的派发器,晚注册后缓存住的函数(coordinator / social 闸门 …)自动回到它;social 闸门超时也改为每次现取预算。可见:`/v1/health.provider_probes`(原因给 trusted 以上)、`wechat-cc status`、`guard status`(含 `--json`)。与 #210 CLI 自动升级接上:升级后自检遇到「这家没注册」时先问重探名单 —— 正在重探的立刻重探一次,通过就照常自检,没好就 `deferred`(以前是 `skipped`,会把没验过的新版本永久接受)。没做:知识库开机活本身不让路(另议,探测已不受它影响);codex 晚注册时 delegate 的 `codexPathOverride` 仍是开机快照;claude 注册不依赖探测,不在重探范围。
 - 2026-10-04:外部 agent CLI 自动升级(主人拍板:**全自动、默认开**,人会忘;不兼容要自动发现)。`src/core/cli-upgrade/`(引擎,副作用全注入)+ `src/daemon/cli-upgrade/`(接线、自检)+ `wechat-cc cli status|upgrade|rollback` + `/v1/health` 的 `cli_upgrade` 块 + `agent-config.json` 的 `cli_auto_upgrade`(`enabled` 缺省 true、`check_hour` 缺省 4、`per_cli` 逐个关)。发现:每天一次(查最新走官方发布元数据:npm dist-tags、Cursor 官方安装脚本;agy 没有只读来源 ⇒ 直接跑它的升级器)+ 报错触发(只看错误通道:codex 真机采到的「requires a newer version of Codex」/「not supported when using Codex with a ChatGPT account」、工作台码 `execution_model_unsupported`、cursor 整块「Check your settings to continue」;claude / agy 的句式是猜的,只多触发一次检查)+ CLI 自己在后台换了版本 ⇒ 补自检。升级:只在空闲时(无在途回合、这家无活会话、busy 登记处除自己外没人)、只用官方升级器(`claude update` / `codex update` / `cursor-agent update` / `agy update`)、同一时刻一件、期间持 busy token。升级后自检 = `selftest chat --resume` 同款 + 协议烟测(我们的解析器产出的事件种类里 text / result / tool_call 都在)+ 工作台执行者再跑 `selftest workbench --resume`;网络守护不安全或供应商侧失败(额度 / 限流 / 认证 / 网络 / 5xx)⇒「未验证」稍后重试,**不退回**。不过 ⇒ 自动退回(Claude 改 `versions/` 链接,本机没有再用官方 `claude install <v>`;Codex 改 standalone 的 `current`;cursor 两个链接一起改;agy 退不回 ⇒ 给手动步骤)、重跑自检、记坏版本(更新的出来前不再升)、微信 + 桌面通知一次;成功一句「Codex 已自动升级到 0.160.0，自检通过」。查最新 / 升级器失败指数退避(1h→24h)。测试全用临时目录里的假 CLI,不碰真装的。手册 `maintainer/cli-auto-upgrade.md`。
 
-- 2026-10-03:回复交付第 5 步(Claude)—— daemon 路径接好,**Claude 翻 `daemon`,迁移序列五家全部是 daemon**(只剩 deprecated 的 gemini 在 legacy)。provider:事件按内容块顺序发(以前先 tool_call 后文字,开场会和结论粘成一段)、子 agent(`parent_tool_use_id`)的文字不进回复、只有 `is_error` 没有 SDK 标注的结果补 `provider_error` 码;SDK `result.result` 改为只核对(只在成功轮带出,对不上记 `[REPLY_FINAL_CHECK]`;spec 原写「以它为准」,出错轮它就是错误原文)。扇出里 `canUseTool` 也拒 `message`;`sessions/searcher.ts` 改认入站信封 `<wechat chat_id=`;`reply-tool-bridge.e2e` 改成「最后的话 → 恰好一条」+ 回滚开关下的两条旧契约。闸门:剧本臂(新 `src/core/claude-scripted.ts` 注入 `queryImpl`;recorded / bundled / drift 插件 MCP 名 / tool_error 四种条件)legacy 双发 6、旁白外泄 4、reply 失败 3/3 吞话、私聊 `NO_REPLY` 原样外发,daemon 全 0、九个场景除 g 相对条件外全过;真模型小批(沙盒 HOME,登录只读只经环境变量给 access token,每轮查 bx,25 回合,上限 40)daemon 适用场景全过,`result.result` 与分段 22/22 一致,非回复工具 10.0 vs 13.0(legacy 每轮先 ToolSearch 找 reply),录到的七轮进 `src/core/fixtures/claude-sdk-2026-10-03.jsonl` 回放。spec §5.7 补了观察期(≥14 天、每家 ≥20 个完成应答轮、六项每日指标)与第 6 步删除清单;本步不删 legacy。欠:真机 `selftest chat --provider claude`、`e2e:device`、主人试聊。数据见 `reference/reply-once-experiment.md`「第 5 步」。
-- 2026-10-03:回复交付第 4 步(Codex)—— daemon 路径接好,**Codex 翻 `daemon`**(编码型,只交付最后一条非空 agent_message;旁白不进微信、120 秒一句进度)。provider 要改(spec §4.2 原写不用):不是消息 / 思考 / 非致命 error 的 item 都产 tool_call(以前 shell / 改文件 / 搜索不产,旁白和结论会粘成一段;SDK 不认识的新 item 类型也算),text 事件加 `ownSegment`(每条 agent_message 自成一段),`turn.completed` 之后 exec 非零退出不再补 error。工具表随 `wechatStdioMcpSpec('codex')` 的开关走(集成测试:spawn 的 config → 起子进程 → 无 reply 族、admin 有 `message`)。闸门两部分:剧本臂(新 `src/core/codex-scripted.ts` 注入 `codexFactory`,生产 provider / 协调器 / 交付运行时;形状照 SDK / CLI 比 SDK 新换了 item 类型 / strict 拒 MCP 三种条件)legacy 旁白外泄 7、strict 3/3 一个字都没收到、私聊 `NO_REPLY` 原样外发,daemon 全 0、适用场景全过;真模型小批(沙盒 CODEX_HOME 只复制登录、read-only、每轮查 bx,35 次调用,上限 40)daemon 适用场景全过、非回复工具 11.0 vs 14.0,并真机复现 legacy 的 strict 吞话(录到的流进 `src/core/fixtures/codex-exec-2026-10-03.jsonl` 回放)。欠:strict 下 codex 拒所有 MCP ⇒ daemon 附件调不成(要给 wechat MCP 配 approve,属重评 bypass,未做);真机 `selftest chat --provider codex`;主人默认 `gpt-6.1-sol` 在 CLI 0.153.4 下被服务端 400(版本耦合,另记)。数据见 `reference/reply-once-experiment.md`「第 4 步」。
+- 2026-10-03:回复交付第 5 步(Claude)—— daemon 路径接好,**Claude 翻 `daemon`,迁移序列五家全部是 daemon**(只剩 deprecated 的 gemini 在 legacy)。provider:事件按内容块顺序发(以前先 tool_call 后文字,开场会和结论粘成一段)、子 agent(`parent_tool_use_id`)的文字不进回复、只有 `is_error` 没有 SDK 标注的结果补 `provider_error` 码;SDK `result.result` 改为只核对(只在成功轮带出,对不上记 `[REPLY_FINAL_CHECK]`;spec 原写「以它为准」,出错轮它就是错误原文)。扇出里 `canUseTool` 也拒 `message`;`sessions/searcher.ts` 改认入站信封 `<wechat chat_id=`;`reply-tool-bridge.e2e` 改成「最后的话 → 恰好一条」+ 回滚开关下的两条旧契约。闸门:剧本臂(新 `src/core/claude-scripted.ts` 注入 `queryImpl`;recorded / bundled / drift 插件 MCP 名 / tool_error 四种条件)legacy 双发 6、旁白外泄 4、reply 失败 3/3 吞话、私聊 `NO_REPLY` 原样外发,daemon 全 0、九个场景除 g 相对条件外全过;真模型小批(沙盒 HOME,登录只读只经环境变量给 access token,每轮查 bx,25 回合,上限 40)daemon 适用场景全过,`result.result` 与分段 22/22 一致,非回复工具 10.0 vs 13.0(legacy 每轮先 ToolSearch 找 reply),录到的七轮进 `src/test-support/fixtures/claude-sdk-2026-10-03.jsonl` 回放。spec §5.7 补了观察期(≥14 天、每家 ≥20 个完成应答轮、六项每日指标)与第 6 步删除清单;本步不删 legacy。欠:真机 `selftest chat --provider claude`、`e2e:device`、主人试聊。数据见 `reference/reply-once-experiment.md`「第 5 步」。
+- 2026-10-03:回复交付第 4 步(Codex)—— daemon 路径接好,**Codex 翻 `daemon`**(编码型,只交付最后一条非空 agent_message;旁白不进微信、120 秒一句进度)。provider 要改(spec §4.2 原写不用):不是消息 / 思考 / 非致命 error 的 item 都产 tool_call(以前 shell / 改文件 / 搜索不产,旁白和结论会粘成一段;SDK 不认识的新 item 类型也算),text 事件加 `ownSegment`(每条 agent_message 自成一段),`turn.completed` 之后 exec 非零退出不再补 error。工具表随 `wechatStdioMcpSpec('codex')` 的开关走(集成测试:spawn 的 config → 起子进程 → 无 reply 族、admin 有 `message`)。闸门两部分:剧本臂(新 `src/core/codex-scripted.ts` 注入 `codexFactory`,生产 provider / 协调器 / 交付运行时;形状照 SDK / CLI 比 SDK 新换了 item 类型 / strict 拒 MCP 三种条件)legacy 旁白外泄 7、strict 3/3 一个字都没收到、私聊 `NO_REPLY` 原样外发,daemon 全 0、适用场景全过;真模型小批(沙盒 CODEX_HOME 只复制登录、read-only、每轮查 bx,35 次调用,上限 40)daemon 适用场景全过、非回复工具 11.0 vs 14.0,并真机复现 legacy 的 strict 吞话(录到的流进 `src/test-support/fixtures/codex-exec-2026-10-03.jsonl` 回放)。欠:strict 下 codex 拒所有 MCP ⇒ daemon 附件调不成(要给 wechat MCP 配 approve,属重评 bypass,未做);真机 `selftest chat --provider codex`;主人默认 `gpt-6.1-sol` 在 CLI 0.153.4 下被服务端 400(版本耦合,另记)。数据见 `reference/reply-once-experiment.md`「第 4 步」。
 - 2026-10-03:Cursor 的带内报错不再当回复发出(#206 发现)。cursor-agent acp 一轮出错时不回 JSON-RPC 错误,而是在 `processPrompt` 的 catch 里把报错写成**一整块** `agent_message_chunk`(`\n\n` 开头)、照常 `end_turn` —— 协议字段(stopReason / `_meta` / update 种类 / 退出码)里没有任何错误信号。ACP 边界(`cursor-errors.cursorAcpInbandError` + `acp/events` 翻译器)只认这一种结构:本轮**最后一个可见 update** 是一整块、整句等于 cursor-agent 的固定句(`Please sign in to continue` ⇒ `auth_failed`、`Upgrade your plan` / `Add a payment method` ⇒ `quota`、`Check your settings` ⇒ `provider_error`、`Error: [unauthenticated] Backend rejected …` ⇒ `auth_rejected`)或 `Error: ${String(e)}` 模板(按 connect code 分 `rate_limited` / `network` / `server_error` / `invalid_request`,其余含 Agent Looping Detected ⇒ `provider_error`);认得出的块先扣住,后面还有文字 / 工具调用就原样放行。对话侧与工作台两条路都以带码 error 收尾,daemon 交付只发通知;正文里提到 looping 照常交付。测试全用脚本化 ACP 流 + 原样回放真机 c4both,没有真 Cursor 调用。细节与残留(legacy 下报错之前的文字仍 FALLBACK)见 `reference/provider-error-shapes.md` §8。
 - 2026-10-03:回复交付第 3 步(Cursor)—— daemon 路径接好,**Cursor 翻 `daemon`**(编码型,只交付最后一段;旁白不进微信、120 秒一句进度)。Cursor 的 wechat MCP 逐会话注入,`wechatStdioMcpSpec('cursor')` 按开关带 `WECHAT_REPLY_DELIVERY=daemon`(集成测试用会话 env 起子进程核对:无 reply 族、有附件工具、admin 有 `message`)。闸门不连模型(Cursor 真 API 没法沙盒、主人额度用完,一次真调用都没做):新 `src/core/acp/scripted-agent.ts` 照 2026-09-17 真机报文演假 `cursor-agent acp`,生产的 ACP 客户端 / 协调器 / 交付运行时跑同一个模型行为的两套词汇,三种外部条件(身份照真机 / CLI 不带身份 / strict)。legacy:身份照真机时没坏;不带身份 ⇒ 双发 5、旁白外泄 3;strict ⇒ reply 被拒仍算「回过」、3/3 轮一个字都没收到;私聊 `NO_REPLY` 原样外发。daemon:全 0,适用场景全过(b 不适用;g 只差相对基线)。闸门本身是测试(`cursor-fixture.test.ts`);双发结构性消失由 `conversation-coordinator.cursor-delivery.test.ts` 证明(含回放真机 c1)。欠:真模型补 a / d / h(结论是否写在最后一段)、真机 `selftest chat --provider cursor`;Cursor 把「Agent Looping Detected」写进助理消息会被当回复发出(两条路都有,另做)。数据见 `reference/reply-once-experiment.md`「第 3 步」。
 - 2026-10-03:回复交付第 2 步(agy)—— daemon 路径接好,**闸门两臂打平,agy 先 `shadow`**。接好的:agy 的静态全局 MCP 配置按开关换工具表(daemon 模式条目带 `WECHAT_REPLY_DELIVERY=daemon`,开机改写;集成测试用写出的 env 起子进程核对);共享令牌 `agy-static` 的附件绑到 agy 正在跑的那一轮(`ReplyDeliveryRuntime.turnChatFor`),daemon 模式下 #199 的跨 chat 豁免取消(只许本轮聊天;无轮 / 并发 ⇒ 拒,`ambiguous_turn`);双发旁白在 daemon 下结构性消失(协调器测试用没登记的命名空间证明)。harness 加 agy 臂:工作区自定义 agent(`inheritCustomizations` + `inheritMcp` 都关)+ 插件起生产 wechat MCP + 假 internal API,每轮前查 bx;真 agy 56 轮闸门 a–i 两臂都过(g 只差相对基线那条),daemon 非回复工具 10.3 vs 15.0,双发两臂都是 0 ⇒ 不是「明显更好」,按约定不翻。翻只改 `AGY_CAPABILITIES.replyDelivery` 一行。数据见 `reference/reply-once-experiment.md`「第 2 步」。

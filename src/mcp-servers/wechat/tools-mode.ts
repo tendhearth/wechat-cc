@@ -20,7 +20,8 @@ export function registerModeTools(server: McpServer, client: InternalApiClient):
       description:
         '把**这个对话**切到另一家后端(可顺带钉模型),只影响本对话。主人说「换成 DeepSeek / 用 Gemini / 切回 Claude」时用。'
         + 'provider 取值:claude(Claude 订阅)、agy(Gemini 订阅)、cursor、codex、openai(主人自配的 OpenAI 兼容 API —— DeepSeek/Kimi/Qwen 这类都走它,model 填网关上的模型名如 DeepSeek)。'
-        + '同家换版本(opus 4.8 → opus 5)不用这个,用 model_set。切完由你自己告诉主人,不要再复述系统回执。',
+        + '同家换版本(opus 4.8 → opus 5)不用这个,用 model_set。切完由你自己告诉主人,不要再复述系统回执;'
+        + '回执里有 notice 的(这家不会逐条问主人),把 notice 原话告诉主人,不要省掉。',
       inputSchema: {
         chat_id: z.string(),
         provider: z.enum(PROVIDER_IDS),

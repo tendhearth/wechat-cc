@@ -38,6 +38,21 @@ final class PresenterTests: XCTestCase {
     XCTAssertEqual(p, PushDisplay(title: "CC", body: "CC has news", category: nil, thread: nil, route: nil))
   }
 
+  func testCompanionKindFromVectorsLocalisedTitleBodyPassesThroughRoutesWithoutTask() throws {
+    let s = try strings()
+    let v = try loadJSON("packages/protocol/vectors/push.json")
+    let c = (v["cases"] as! [[String: Any]]).first { $0["name"] as? String == "ok-companion" }!
+    let m = try XCTUnwrap(PushMessage.parse(c["payload"] as! [String: Any]))
+    XCTAssertEqual(m.kind, .companion)
+    let zh = PushPresenter.display(m, lang: "zh-Hans", strings: s)
+    XCTAssertEqual(zh.title, "CC")
+    XCTAssertEqual(zh.body, m.body)
+    XCTAssertEqual(zh.category, "th.companion")
+    XCTAssertEqual(zh.thread, "companion")
+    XCTAssertEqual(zh.route, ["kind": "companion"])
+    XCTAssertEqual(PushPresenter.display(m, lang: "en", strings: s).title, "CC")
+  }
+
   func testLanguagePick() {
     XCTAssertEqual(PushPresenter.lang(record: "zh-Hans", preferred: ["en-GB"]), "zh-Hans")
     XCTAssertEqual(PushPresenter.lang(record: nil, preferred: ["zh-Hant-TW", "en"]), "zh-Hans")
@@ -46,7 +61,7 @@ final class PresenterTests: XCTestCase {
   }
 
   func testCategoriesPerKind() {
-    let k: [PushMessage.Kind: String] = [.permission: "th.approval", .question: "th.question", .task_done: "th.done", .task_failed: "th.failed", .test: "th.test"]
+    let k: [PushMessage.Kind: String] = [.permission: "th.approval", .question: "th.question", .task_done: "th.done", .task_failed: "th.failed", .test: "th.test", .companion: "th.companion"]
     for (kind, cat) in k { XCTAssertEqual(PushMessage(ts: 1, kind: kind, title: "", body: "", taskId: nil, requestId: nil).category, cat) }
   }
 

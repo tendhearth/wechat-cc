@@ -1,9 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeSelfChangeGlue, type SelfChangeGlueDeps } from './self-change-glue'
+import { makeSpeechPolicy } from './speech/policy'
 
 type Resolver = (d: 'allow' | 'deny' | 'timeout' | 'undelivered') => void
 
-function harness(over: Partial<SelfChangeGlueDeps> = {}) {
+type SendMessage = (chatId: string, text: string) => Promise<unknown>
+/** glue 经 CC 开口那道门发(第三批 3a);这里给一个照常放行的真门,微信那头就是 sendMessage。 */
+function harness(o: Partial<SelfChangeGlueDeps> & { sendMessage?: SendMessage; care?: 'off' | 'low'; quiet?: boolean } = {}) {
+  const { sendMessage: sendOverride, care, quiet, ...over } = o
   let now = 1_000
   const sent: Array<[string, string]> = []
   const registered: Array<{ hash: string; timeoutMs: number; chatId: string; prompt: string }> = []
@@ -14,7 +18,7 @@ function harness(over: Partial<SelfChangeGlueDeps> = {}) {
   let n = 0
   const deps: SelfChangeGlueDeps = {
     ownerChatId: () => 'owner@chat',
-    sendMessage: async (c, t) => { sent.push([c, t]); return { msgId: 'm1' } },
+    speech: () => speech,
     registerPending: (hash, timeoutMs, meta) => {
       registered.push({ hash, timeoutMs, ...meta })
       // 照 PendingPermissions.register 的顺序:落表是同步的,所以码在返回 promise 前就有了。
@@ -28,6 +32,12 @@ function harness(over: Partial<SelfChangeGlueDeps> = {}) {
     log: (l) => { logs.push(l) },
     ...over,
   }
+  const send: SendMessage = sendOverride ?? (async (c, t) => { sent.push([c, t]); return { msgId: 'm1' } })
+  const speech = makeSpeechPolicy({
+    care: () => care ?? 'low', quietEndsAt: (_c, n) => (quiet ? n + 3600_000 : null), log: () => {},
+    outbound: { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async (c, t) => (await send(c, t)) as { msgId: string; error?: string }, channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) },
+  })
   return {
     glue: makeSelfChangeGlue(deps),
     sent, registered, resolvers, sweeps, logs,
@@ -87,7 +97,7 @@ describe('self-change glue', () => {
     for (const bad of [
       async () => ({ msgId: '', error: 'ilink/sendmessage errcode=-2: prepare failed' }),
       async () => { throw new Error('socket hang up') },
-    ] as Array<SelfChangeGlueDeps['sendMessage']>) {
+    ] as Array<SendMessage>) {
       const h = harness({ sendMessage: bad })
       const r = await h.glue.ask('拍板卡', 600_000)
       expect(r).toEqual({ ok: true, hash: 'h1', code: '01', delivered: false })
@@ -155,5 +165,21 @@ describe('self-change glue', () => {
     expect(r.ok).toBe(true)
     await Promise.resolve(); await Promise.resolve()
     expect(h.glue.decision('h1')).toBe('undelivered')
+  })
+})
+
+describe('自改走 CC 开口那道门(第三批 3a)', () => {
+  it('免打扰里:进展推后(没说出去 ⇒ send_failed,门的待说队列会接住);拍板卡照发(blocking)', async () => {
+    const h = harness({ quiet: true })
+    expect(await h.glue.notice('第 3 步跑完了')).toEqual({ ok: false, error: 'send_failed' })
+    const r = await h.glue.ask('要不要把这版合进 dev?', 600_000)
+    expect(r).toMatchObject({ ok: true, delivered: true })
+    expect(h.sent.map(([, t]) => t.split('\n')[0])).toEqual(['要不要把这版合进 dev?'])
+  })
+  it('门还没接上 ⇒ 进展回 send_failed、卡片 delivered:false(条目照样在登记处)', async () => {
+    const h = harness({ speech: () => null })
+    expect(await h.glue.notice('x')).toEqual({ ok: false, error: 'send_failed' })
+    expect(await h.glue.ask('卡', 600_000)).toMatchObject({ ok: true, delivered: false })
+    expect(h.registered).toHaveLength(1)
   })
 })

@@ -1,6 +1,6 @@
 /**
  * 回复交付(spec docs/superpowers/specs/2026-10-03-reply-delivery-design.md §4.5 / §4.6)的两条路由。
- * 只有 `replyDelivery = daemon` 的 provider 用得到(它们的 wechat MCP 不再注册 reply 族工具)。
+ * 执行者的 wechat MCP 没有 reply 族工具(回复是最后写下的文字),附件和往别处发就走这两条。
  *
  * POST /v1/turn/attach —— 语音 / 表情 / 文件是**这一轮回复的附件**:工具调用时只登记,daemon 在交付时
  *   (文字之后、按调用顺序)才真的发。**不收 chat_id**:目标永远是会话令牌里的那个 chat —— 顺带关掉
@@ -15,8 +15,9 @@
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { PendingAttachment } from '../reply-delivery'
-import type { StickerRef, TurnAttachment } from '../../core/turn-reply'
-import { errMsg, type InternalApiDeps, type RouteTable } from './types'
+import type { StickerRef, TurnAttachment } from '../../domain/turn-reply'
+import { errMsg, type InternalApiDeps, type RouteHandler, type RouteTable } from './types'
+import { countForTag } from '../../domain/sticker-tag'
 import { tierMeets } from './route-tiers'
 
 const VOICE_LIMIT = 500
@@ -34,9 +35,13 @@ function okOf(r: { status: number; body: unknown }): { ok: boolean; error?: stri
   return { ok: false, error: String(b.error ?? b.reason ?? `status_${r.status}`) }
 }
 
-export function turnRoutes(deps: InternalApiDeps, table: () => RouteTable): RouteTable {
+/**
+ * `route(key)`:按路由键找处理器 —— internal-api 自己那张表,加上功能模块挂上来的(表情那几条归 stickers 模块,
+ * src/features/stickers;语音的 reply_voice 归 voice 模块,src/features/voice)。交付时才找,所以模块晚于 internal-api 挂上也接得住。
+ */
+export function turnRoutes(deps: InternalApiDeps, route: (key: string) => RouteHandler | undefined): RouteTable {
   const viaRoute = (key: string, body: Record<string, unknown>) => async (): Promise<{ ok: boolean; error?: string }> => {
-    const h = table()[key]
+    const h = route(key)
     if (!h) return { ok: false, error: `${key} not wired` }
     try { return okOf(await h(new URLSearchParams(), body, undefined)) } catch (err) { return { ok: false, error: errMsg(err) } }
   }
@@ -58,20 +63,22 @@ export function turnRoutes(deps: InternalApiDeps, table: () => RouteTable): Rout
         const text = str(b.text)
         if (!text) return { status: 400, body: { ok: false, error: 'text required (non-empty string)' } }
         if (text.length > VOICE_LIMIT) return { status: 200, body: { ok: false, reason: 'too_long', limit: VOICE_LIMIT } }
-        if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-        const voice = deps.voice
+        // 语音归语音功能(src/features/voice,模块自己挂 reply_voice):和表情一样,交付时经路由表复用那条老路由。
+        // 模块关着 / 坏了 / 还没挂上 ⇒ 表里没有这条 ⇒ 跟以前「没接语音」一样当场 503,不登记。
+        if (!route('POST /v1/wechat/reply_voice')) return { status: 503, body: { error: 'voice_not_wired' } }
         attachment = { kind: 'voice', text }
-        send = async () => {
-          const r = await voice.replyVoice(chatId, text)
-          return r.ok ? { ok: true } : { ok: false, error: r.reason }
-        }
+        send = viaRoute('POST /v1/wechat/reply_voice', { chat_id: chatId, text })
       } else if (b.kind === 'sticker') {
         const tag = str(b.tag), mood = str(b.mood), url = str(b.url), query = str(b.query), id = str(b.id)
         let ref: StickerRef
         if (tag) {
-          if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-          if (deps.stickers.resolve(tag, chatId) === null) {
-            return { status: 200, body: { ok: false, reason: 'no_sticker_for_tag', tags: deps.stickers.allTags() } }
+          // 表情库归 stickers 模块:先经它挂上的 GET /v1/stickers 看库里有没有这个 tag(countForTag 与 resolve 同一种比法:
+          // trim + 不分大小写)。模块没挂上 ⇒ 跟以前没接表情库一样回 503 stickers_not_wired。
+          const lib = route('GET /v1/stickers')
+          if (!lib) return { status: 503, body: { error: 'stickers_not_wired' } }
+          const listed = ((await lib(new URLSearchParams(), undefined, undefined)).body ?? {}) as { stickers?: Array<{ tags: string[] }>; tags?: string[] }
+          if (countForTag(listed.stickers ?? [], tag) === 0) {
+            return { status: 200, body: { ok: false, reason: 'no_sticker_for_tag', tags: listed.tags ?? [] } }
           }
           ref = { tag }
           send = viaRoute('POST /v1/wechat/send_sticker', { chat_id: chatId, tag })

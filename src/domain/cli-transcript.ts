@@ -1,0 +1,129 @@
+/**
+ * cli-transcript.ts — 把两家的会话记录尾巴渲染成一页 markdown(「看 码」)。
+ *
+ * Claude:`~/.claude/projects/<dir>/<session>.jsonl`,行 = { type: user|assistant, message: { content } }。
+ * Codex:`~/.codex/sessions/.../rollout-*.jsonl`,行 = { type: response_item, payload: { type: message, role, content } }。
+ * Cursor:`~/.cursor/projects/<dir>/agent-transcripts/<id>/<id>.jsonl`,行 = { role: user|assistant, message: { content } };
+ *   user 的文字包在 `<timestamp>…</timestamp>\n<user_query>…</user_query>` 里,只留 user_query;`{ type: turn_ended }` 跳过。
+ * 两边都只取文字,工具调用、思考、harness 塞的东西(system-reminder / task-notification /
+ * environment_context)全部跳过 —— 主人要看的是对话,不是机器的自言自语。
+ */
+import type { CliSource } from '../app/cli-events'
+
+export interface TranscriptTurn { role: 'user' | 'assistant'; text: string }
+
+export const TRANSCRIPT_TAIL_TURNS = 8
+const TURN_MAX = 4000
+
+function isHarnessText(t: string): boolean {
+  const s = t.trimStart()
+  return s.startsWith('<system-reminder>') || s.startsWith('<task-notification>') || s.startsWith('<command-message>')
+    || s.startsWith('<environment_context>') || s.startsWith('<permissions instructions>') || s.startsWith('<local-command')
+    // Claude Code 的 `!` 命令及其输出(2026-10-10):`! env` / `! cat .env` 的内容不该进「看 码」的公开页面
+    || s.startsWith('<bash-')
+}
+
+/**
+ * 「看 码」的页面不用登录 —— 明显的密钥形状一律打码(2026-10-10)。宁可多遮:这里只是给主人在手机上瞄一眼进度。
+ * 覆盖:OpenAI / Anthropic 风格的 sk-…、GitHub ghp_ / gho_ / github_pat_、AWS AKIA…、Slack xox?-,
+ * 以及 `XXX_KEY / SECRET / TOKEN / PASSWORD = 值`、`api_key: "值"` 这类赋值的值。
+ */
+const SECRET_PATTERNS: RegExp[] = [
+  /\bsk-[A-Za-z0-9_-]{16,}/g,
+  /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g,
+]
+const SECRET_ASSIGN = /\b([A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD)[A-Za-z0-9_]*)(\s*[=:]\s*)(["']?)([^\s"',;]{4,})\3/gi
+/**
+ * 命令行里常见的口令写法(2026-10-28 补,重启作废卡的那句话要进库、进微信):保留前面那截,只遮口令本身。
+ * 只认明确是口令的位置,别的不碰:`mkdir -p`、`ssh -p 2222` 这种不在里面。
+ */
+const SECRET_INLINE: Array<[RegExp, string]> = [
+  [/\b(Authorization:\s*(?:Bearer|Basic|Token)\s+)[^\s"',;]+/gi, '$1[已打码]'],   // 请求头:不管令牌长什么样
+  [/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1[已打码]'],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"']+:)[^\s@/"']+@/gi, '$1[已打码]@'],          // https://user:pass@host
+  [/(\bsshpass\s+-p\s*)\S+/g, '$1[已打码]'],
+  [/(\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n|;&]*?\s-p)(?!\s)\S+/g, '$1[已打码]'],   // mysql -pSECRET(连写)
+  [/(\s(?:-u|--user)[\s=]+[^\s:]+:)[^\s"']+/g, '$1[已打码]'],                       // curl -u user:pass
+]
+export function redactSecrets(text: string): string {
+  let out = text
+  for (const re of SECRET_PATTERNS) out = out.replace(re, '[已打码]')
+  for (const [re, to] of SECRET_INLINE) out = out.replace(re, to)
+  return out.replace(SECRET_ASSIGN, (_m, k: string, sep: string, q: string) => `${k}${sep}${q}[已打码]${q}`)
+}
+
+function textOf(content: unknown, kinds: string[]): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((x): x is { type: string; text?: string } => !!x && typeof x === 'object' && kinds.includes((x as { type?: string }).type ?? ''))
+    .map(x => x.text ?? '')
+    .join('\n')
+}
+
+/** Cursor 把主人那句包成 `<timestamp>…</timestamp>\n<user_query>…</user_query>`:只留 user_query 里面的。 */
+function cursorUserText(t: string): string {
+  const q = /<user_query>([\s\S]*?)<\/user_query>/.exec(t)
+  return q ? q[1]! : t.replace(/^\s*<timestamp>[\s\S]*?<\/timestamp>\s*/, '')
+}
+
+/** 最后一句助手的话(Cursor 的 stop hook 不带 last_assistant_message,只能从 transcript 尾巴读)。 */
+export function lastAssistantText(jsonl: string, source: CliSource): string | undefined {
+  const turns = parseTranscript(jsonl, source)
+  const last = turns[turns.length - 1]
+  return last && last.role === 'assistant' ? last.text : undefined
+}
+
+export function parseTranscript(jsonl: string, source: CliSource): TranscriptTurn[] {
+  const turns: TranscriptTurn[] = []
+  for (const line of jsonl.split('\n')) {
+    if (!line.trim()) continue
+    let d: Record<string, unknown>
+    try { d = JSON.parse(line) as Record<string, unknown> } catch { continue }
+    let role: 'user' | 'assistant' | null = null
+    let text = ''
+    if (source === 'claude') {
+      if (d['isMeta']) continue
+      if (d['type'] !== 'user' && d['type'] !== 'assistant') continue
+      role = d['type'] as 'user' | 'assistant'
+      const m = d['message'] as { content?: unknown } | undefined
+      text = textOf(m?.content, ['text'])
+    } else if (source === 'cursor') {
+      if (d['role'] !== 'user' && d['role'] !== 'assistant') continue
+      role = d['role'] as 'user' | 'assistant'
+      const m = d['message'] as { content?: unknown } | undefined
+      text = textOf(m?.content, ['text'])
+      if (role === 'user') text = cursorUserText(text)
+    } else {
+      if (d['type'] !== 'response_item') continue
+      const p = d['payload'] as { type?: string; role?: string; content?: unknown } | undefined
+      if (!p || p.type !== 'message' || (p.role !== 'user' && p.role !== 'assistant')) continue
+      role = p.role
+      text = textOf(p.content, ['input_text', 'output_text'])
+        .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+        .replace(/<\/?(function|parameter)[^>]*>/g, '')
+    }
+    text = text.trim()
+    if (!text || isHarnessText(text)) continue
+    text = redactSecrets(text)
+    if (text.length > TURN_MAX) text = text.slice(0, TURN_MAX - 1) + '…'
+    turns.push({ role, text })
+  }
+  return turns
+}
+
+export function renderTranscriptTail(jsonl: string, source: CliSource, opts: { turns?: number; title?: string } = {}): string {
+  const all = parseTranscript(jsonl, source)
+  const tail = all.slice(-(opts.turns ?? TRANSCRIPT_TAIL_TURNS))
+  const lines: string[] = []
+  if (opts.title) lines.push(`# ${opts.title}`, '')
+  if (all.length > tail.length) lines.push(`_(共 ${all.length} 段,只显示最后 ${tail.length} 段)_`, '')
+  if (tail.length === 0) lines.push('_(这条会话还没有对话文字)_')
+  for (const t of tail) {
+    lines.push(t.role === 'user' ? '**你**:' : `**${source}**:`, '', t.text, '', '---', '')
+  }
+  return lines.join('\n').trim() + '\n'
+}

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
-import type { CliSessionRowT } from '../backend/types'
+import type { CliActivityItemT, CliSessionRowT } from '../backend/types'
 import { useBackendCtx } from './BackendProvider'
 import { useConnection, useQuery } from './hooks'
 
@@ -12,20 +12,43 @@ import { useConnection, useQuery } from './hooks'
 export const TERMINAL_POLL_MS = 15_000
 const NONE: CliSessionRowT[] = []
 
-export function useTerminalSessions(opts: { poll?: boolean } = {}) {
+export function useTerminalSessions(opts: { poll?: boolean; fastMs?: number } = {}) {
   const { backend } = useBackendCtx()
   const conn = useConnection()
   const online = backend.mode === 'demo' || conn.state === 'online'
   const q = useQuery<CliSessionRowT[]>('cli:sessions', () => backend.cliSessions())
   const { refresh } = q
   const poll = opts.poll !== false
+  // fastMs:刚说的一句还在送进窗口时,页面临时要快拉(有上限,由页面收)
+  const every = opts.fastMs ?? TERMINAL_POLL_MS
   useFocusEffect(useCallback(() => {
     if (!poll || !online) return
     void refresh()
-    const h = setInterval(() => { void refresh() }, TERMINAL_POLL_MS)
+    const h = setInterval(() => { void refresh() }, every)
     return () => clearInterval(h)
-  }, [poll, online, refresh]))
+  }, [poll, online, refresh, every]))
   return { sessions: q.data ?? NONE, loaded: q.data !== undefined, error: q.error, refresh, online }
+}
+
+/**
+ * 看着它跑(2026-10-17):一条终端会话最近几步。页面看得见、够得着电脑时每 TERMINAL_ACTIVITY_POLL_MS 拉一次。
+ * 读不了(老电脑没有这条路由、会话在别的电脑上)⇒ items 为空、error 带码,页面退回「最后一句」。
+ */
+export const TERMINAL_ACTIVITY_POLL_MS = 4_000
+const NO_ITEMS: CliActivityItemT[] = []
+export function useTerminalActivity(sessionId: string) {
+  const { backend } = useBackendCtx()
+  const conn = useConnection()
+  const online = backend.mode === 'demo' || conn.state === 'online'
+  const q = useQuery<CliActivityItemT[]>(`cli:activity:${sessionId}`, () => backend.cliActivity(sessionId))
+  const { refresh } = q
+  useFocusEffect(useCallback(() => {
+    if (!online || !sessionId) return
+    void refresh()
+    const h = setInterval(() => { void refresh() }, TERMINAL_ACTIVITY_POLL_MS)
+    return () => clearInterval(h)
+  }, [online, sessionId, refresh]))
+  return { items: q.data ?? NO_ITEMS, error: q.error }
 }
 
 /**
@@ -47,6 +70,11 @@ export function useTerminalActions() {
     pending,
     decide: (s: Pick<CliSessionRowT, 'session_id' | 'pending'>, decision: 'allow' | 'deny') =>
       run(`cli:decide:${s.session_id}`, () => backend.cliPermission({ sessionId: s.session_id, ...(s.pending?.hash ? { hash: s.pending.hash } : {}), decision })),
-    say: (sessionId: string, text: string) => run(`cli:say:${sessionId}`, () => backend.cliSay(sessionId, text)),
+    /** 说一句:error 同上;sayId 只在送进开着的窗口时有(对上会话行的 last_say 才知道送没送到)。 */
+    say: async (sessionId: string, text: string): Promise<{ error: string | null; sayId: string | null }> => {
+      let sayId: string | null = null
+      const error = await run(`cli:say:${sessionId}`, async () => { sayId = (await backend.cliSay(sessionId, text)).sayId })
+      return { error, sayId: error === null ? sayId : null }
+    },
   }
 }
