@@ -61,7 +61,7 @@ export default function Memory() {
   const [restoreNote, setRestoreNote] = useState<string | null>(null)
   const restore = async (key: string) => {
     if (restoring || !online) return
-    setRestoring(key); setRestoreNote(null)
+    setRestoring(key); setRestoreNote(null); setNote(null)
     try {
       const r = await backend.restoreMemory(key)
       setRestoreNote(r.note)
@@ -104,7 +104,7 @@ export default function Memory() {
 
   const correct = async (id: string, verdict: MemoryVerdict) => {
     if (busy || !online) return
-    setBusy(true); setNote(null)
+    setBusy(true); setNote(null); setRestoreNote(null)
     try {
       await backend.correctMemory(id, verdict)
       setOpen(null)

@@ -38,11 +38,21 @@ describe('memory correction and withdrawal recovery', () => {
     await act(async () => { release(); await pending }); await flush()
     expect(ui.byId('memory-item-a1b2c3')).toBeNull()
     expect(ui.byId('memory-retractions-toggle')).not.toBeNull()
+    expect(ui.byId('memory-note').textContent).toContain('拿掉了')
     await ui.click('memory-retractions-toggle')
     expect(ui.byId('memory-retraction-c:~1').textContent).toContain('回复喜欢直接')
+    const restore = backend.restoreMemory
+    let releaseRestore!: () => void
+    const restoring = new Promise<void>(resolve => { releaseRestore = resolve })
+    backend.restoreMemory = async key => { await restoring; return restore(key) }
     await ui.click('memory-restore-c:~1')
+    expect(ui.byId('memory-note')).toBeNull()
+    expect(ui.byId('memory-restore-note')).toBeNull()
+    expect((ui.byId('memory-restore-c:~1') as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => { releaseRestore(); await restoring }); await flush()
     expect(ui.byId('memory-item-a1b2c3').textContent).toContain('回复喜欢直接')
     expect(ui.byId('memory-restore-note').textContent).toContain('已经放回记忆')
+    expect(ui.byId('memory-note')).toBeNull()
   })
 
   it('keeps the original factual record and failure feedback when correction is rejected', async () => {
@@ -96,5 +106,33 @@ describe('memory correction and withdrawal recovery', () => {
     await act(async () => { release(oldFacts); await pending }); await flush()
     expect(ui.byId('memory-item-a1b2c3').textContent).toContain('回复喜欢直接')
     expect(ui.byId('memory-retractions-toggle')).toBeNull()
+  })
+
+  it.each(['success', 'failure'])('clears restored feedback while the next correction is pending and keeps only its %s result', async outcome => {
+    const backend = makeDemoBackend({ lang: 'zh-Hans' })
+    const correct = backend.correctMemory
+    await correct('a1b2c3', 'wrong')
+    const ui = await screen(backend)
+    await ui.click('memory-retractions-toggle')
+    await ui.click('memory-restore-c:~1')
+    expect(ui.byId('memory-restore-note').textContent).toContain('已经放回记忆')
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    backend.correctMemory = async (id, verdict) => {
+      await pending
+      if (outcome === 'failure') throw new BackendError('offline')
+      await correct(id, verdict)
+    }
+    await ui.click('memory-item-a1b2c3')
+    await ui.click('memory-fix-delete')
+    expect(ui.byId('memory-restore-note')).toBeNull()
+    expect(ui.byId('memory-note')).toBeNull()
+    expect(ui.byId('memory-item-a1b2c3').textContent).toContain('回复喜欢直接')
+    expect((ui.byId('memory-fix-delete') as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => { release(); await pending }); await flush()
+    expect(ui.byId('memory-restore-note')).toBeNull()
+    expect(ui.byId('memory-note').textContent).toContain(outcome === 'success' ? '拿掉了' : '没改成')
+    if (outcome === 'success') expect(ui.byId('memory-item-a1b2c3')).toBeNull()
+    else expect(ui.byId('memory-item-a1b2c3').textContent).toContain('回复喜欢直接')
   })
 })
