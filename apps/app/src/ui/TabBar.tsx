@@ -5,8 +5,7 @@ import { space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
-// 底部两个标签「此刻 / 一起做」:不画色块,选中只把字变成墨色(未选中 inkSoft)。
-// 「此刻」后面跟一个灰色数字 = 几件事等你(没有就不写);不用红点、不用色块。
+// 底部只保留两个文字标签,当前项用短线和强调色表示。待回应数留在读屏标签,不重复堆在底栏。
 export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const { c } = useTheme()
   const insets = useSafeAreaInsets()

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Animated, Easing, Pressable, View } from 'react-native'
 import { Icon } from './Icon'
 import { useMotionEnabled } from './motion'
-import { radius, space } from './tokens'
+import { space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
@@ -52,24 +52,24 @@ export function Expansion({ open, children, onClosed }: { open: boolean; childre
   </Animated.View>
 }
 
-// 可展开区块:标题一行,点开看内容。单层:纸色 + 细线,里面不再套卡。
+// 可展开区块:标题一行,点开看内容;沿用页面纸色与留白,不再画一层卡片。
 export function Sheet({ title, children, defaultOpen = false, testID }: { title: string; children: ReactNode; defaultOpen?: boolean; testID?: string }) {
   const { c } = useTheme()
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <View style={{ borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper, overflow: 'hidden' }}>
+    <View style={{ backgroundColor: c.paper, overflow: 'hidden' }}>
       <Pressable
         accessibilityRole="button"
         testID={testID}
         accessibilityState={{ expanded: open }}
         accessibilityLabel={title}
         onPress={() => setOpen((v) => !v)}
-        style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.l }}
+        style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
       >
         <Txt role="bubble" style={{ flex: 1 }}>{title}</Txt>
         <Icon name={open ? 'chevronDown' : 'chevronRight'} color={c.inkSoft} />
       </Pressable>
-      <Expansion open={open}><View style={{ padding: space.l, paddingTop: 0 }}>{children}</View></Expansion>
+      <Expansion open={open}><View style={{ paddingVertical: space.l }}>{children}</View></Expansion>
     </View>
   )
 }

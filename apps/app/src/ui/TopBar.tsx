@@ -13,7 +13,7 @@ import { IconButton } from './IconButton'
 import { useTheme } from './useTheme'
 
 // 状态行只在两个标签页(此刻 / 一起做,传 showStatus)出现;有返回键的详情页不显示,连接问题由 ConnectionNotice 说。
-// 左:返回 / 标题(不截断);右:「● 家里的电脑 · 在线」(演示:「● 演示 · 没有连电脑」灰点)(传了 onConnection 就是 CC 的连接入口)+ 头像(进设置)。
+// 左:返回 / 标题;右:电脑图标与真实状态点、页面动作和可选设置齿轮。完整连接说明进读屏标签与连接页。
 export function TopBar({ title, onBack, showStatus = false, onAvatar, onConnection, connectionTestID, actions }: {
   title?: string; onBack?: () => void; showStatus?: boolean; onAvatar?: () => void; onConnection?: () => void; connectionTestID?: string; actions?: ReactNode
 }) {

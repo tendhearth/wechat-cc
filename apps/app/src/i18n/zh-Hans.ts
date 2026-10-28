@@ -1,6 +1,9 @@
 import type en from './en'
 
 const zh: Record<keyof typeof en, string> = {
+  'minimal.more': '更多',
+  'minimal.history': '做完的事',
+  'minimal.partial': '部分记录',
   'feedback.status': '状态',
   'feedback.details': '查看详情',
   'feedback.connection': '连接状态',
@@ -37,7 +40,7 @@ const zh: Record<keyof typeof en, string> = {
   'common.computerHome': '家里的电脑',
   'common.demoStatus': '演示 · 没有连电脑',
   'common.computerOnline': '在线',
-  'common.wordmark': 'tendhearth',
+  'common.wordmark': 'CC',
   'common.comingSoon': '这一页还在做。',
   'cc.label': 'CC',
   'cc.labelMood': 'CC，{mood}',

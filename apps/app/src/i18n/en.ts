@@ -1,4 +1,7 @@
 const en = {
+  'minimal.more': 'More',
+  'minimal.history': 'Done recently',
+  'minimal.partial': 'Partial records',
   'feedback.status': 'Status',
   'feedback.details': 'Details',
   'feedback.connection': 'Connection',
@@ -35,7 +38,7 @@ const en = {
   'common.computerHome': 'Home computer',
   'common.demoStatus': 'Demo · no computer',
   'common.computerOnline': 'online',
-  'common.wordmark': 'tendhearth',
+  'common.wordmark': 'CC',
   'common.comingSoon': 'This page is on its way.',
   'cc.label': 'CC',
   'cc.labelMood': 'CC, {mood}',

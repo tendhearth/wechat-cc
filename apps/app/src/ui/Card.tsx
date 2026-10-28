@@ -3,7 +3,7 @@ import { View, type StyleProp, type ViewStyle } from 'react-native'
 import { space } from './tokens'
 import { useTheme } from './useTheme'
 
-// 一层卡片就够:纸色底 + 细线,无阴影。卡里不再放卡(style.guard 钉住)。
+// 单层内容容器:以留白分组,不重复画卡片边框。卡里不再放卡(style.guard 钉住)。
 export function Card({ children, style, testID }: { children: ReactNode; style?: StyleProp<ViewStyle>; testID?: string }) {
   const { c } = useTheme()
   return (

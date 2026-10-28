@@ -4,9 +4,9 @@ import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 import { Icon, type IconName } from './Icon'
 
-// 列表行:不画色块,行间一条细线。
+// 列表行:留白分隔,不画色块或重复分隔线。
 
-// 单选的一行:不画色块。字一律墨色(没选中不能读成「不可用」);选中 = 行尾一个墨色 ✓(强调色只给动作,终审 M7)。行间一条细线。
+// 单选的一行:字一律墨色;选中由行尾的勾号表示。
 export function ChoiceRow({ label, on, onPress, testID, content = 'ui' }: { label: string; on: boolean; onPress: () => void; testID?: string; content?: 'ui' | 'user' }) {
   return (
     <Pressable

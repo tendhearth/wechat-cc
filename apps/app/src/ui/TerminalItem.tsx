@@ -29,7 +29,7 @@ export function TerminalItem({ row, onOpen }: { row: TerminalRow; onOpen: () => 
   const status = t(lang, `terminal.status.${row.status}`)
   const review = row.status === 'waiting' && row.actionable
   return (
-    <View testID={`terminal-item-${row.id}`} style={{ borderBottomWidth: 1, borderBottomColor: c.hair, paddingVertical: space.l, gap: space.s }}>
+    <View testID={`terminal-item-${row.id}`} style={{ paddingVertical: space.l, gap: space.s }}>
       <Pressable
         testID={`terminal-open-${row.id}`}
         accessibilityRole="button"

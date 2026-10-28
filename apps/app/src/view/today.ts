@@ -12,6 +12,8 @@ export type TodayView = {
   title: string
   /** 「5 件做完 · 1 件在做 · 1 件可能卡住」;是 0 的不写。等你的不在这里数 —— 下面「N 件事等你」已经列着,同一个数不出现两次。 */
   counts: string
+  /** Number behind the compact history entry; uses exactly the same range as title and rows. */
+  doneCount: number
   /** 最近做完的前 3 件。 */
   done: TodayRow[]
   /** 有一路(终端 / 一起做)读不到 ⇒ 数字不全。 */
@@ -55,5 +57,5 @@ export function todayView(today: OverseerTodayT | undefined, now: number, lang: 
     ...(c.running ? [t(lang, 'today.running', { n: c.running })] : []),
     ...(c.stuck ? [t(lang, 'today.stuck', { n: c.stuck })] : []),
   ]
-  return { title, counts: parts.join(' · '), done: done.slice(0, TODAY_DONE_ROWS).map(i => todayRow(i, now, lang)), partial }
+  return { title, counts: parts.join(' · '), doneCount: sinceAway.length || c.done, done: done.slice(0, TODAY_DONE_ROWS).map(i => todayRow(i, now, lang)), partial }
 }
