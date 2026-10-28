@@ -28,7 +28,7 @@
 - Input help disclosures and metadata folds survive repaint without destroying typed text, model settings or focused review editors.
 - Low-height/narrow layouts keep actual requests, supplement, stop/close, recovery and review actions reachable.
 
-### Task1: Compact review summary interface
+### Task 1: Compact review summary interface
 
 **Files:** `apps/desktop/src/modules/workbench-review-panel.js`, related review tests; optional unique browser test. No workbench.js or shared CSS edits.
 
@@ -38,7 +38,7 @@
 - [ ] Implement opt-in compact summary without touching default output or hidden safety content.
 - [ ] Run focused review/rewind/comment checks, commit the interface, report hash so Task2 can consume it.
 
-### Task2: State-led task detail and composer
+### Task 2: State-led task detail and composer
 
 **Files:** `apps/desktop/src/modules/workbench.js`, optional pure `workbench-task-detail.js`, `apps/desktop/src/styles/workbench.css`, focused task/runtime tests and a dedicated `playwright/task-detail-minimal.spec.ts`. Do not edit review-panel source/tests or shared index/styles.
 
@@ -49,7 +49,7 @@
 - [ ] Promote actual saved outcomes and make first-load results discoverable while respecting explicit disclosure choices, active reading anchors and selected artifact/preview instances; enable compact review option after Task1 integration.
 - [ ] Verify drafts, run/request ownership, focus, streaming/result transitions, failed submissions and wide/narrow/low-height interaction; inspect screenshots and commit.
 
-### Task3: Integration and final acceptance
+### Task 3: Integration and final acceptance
 
 - [ ] Review each task independently and fix important findings with targeted RED/GREEN checks.
 - [ ] Serially integrate reviewed commits; run project verify against pinned dev baseline plus affected existing and new desktop browser flows.
