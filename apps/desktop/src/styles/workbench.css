@@ -75,7 +75,7 @@
 /* 被打断 = 停下来等人(琥珀),与操作行的 interrupted 同色;只有真的失败才红(终审 M4) */
 .wb-status[data-status=queued]::before,.wb-status[data-status=cancelling]::before,.wb-status[data-status=interrupted]::before,.wb-status[data-status=paused]::before { background:var(--th-warn); }
 .wb-status[data-status=failed]::before { background:var(--th-bad); }
-.wb-task-attention { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--th-ink); font-size:var(--th-size-caption); white-space:nowrap; }
+.wb-task-attention { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--th-ink-soft); font-size:var(--th-size-caption); white-space:nowrap; }
 .wb-task-attention::before { content:''; flex:none; width:6px; height:6px; border-radius:50%; background:var(--th-warn); }
 
 /* The composer occupies a separate row and cannot float over replies. */
@@ -84,7 +84,8 @@
 .wb-task-head>div { min-width:0; }
 .wb-task-head h2 { display:-webkit-box; overflow:hidden; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin:5px 0 0; color:var(--wb-text); font-size:var(--th-size-title); line-height:1.4; font-weight:500; }
 .wb-task-progress { display:flex; align-items:center; flex-wrap:wrap; gap:6px 14px; margin-top:8px; color:var(--wb-muted); font-size:12px; line-height:1.5; }
-.wb-task-progress .wb-decision-jump { padding:2px 0; color:var(--wb-accent); font-size:12px; }
+.wb-task-progress .wb-decision-jump { display:inline-flex; align-items:center; gap:5px; min-height:28px; padding:2px 4px; color:var(--wb-secondary); font-size:12px; }
+.wb-task-progress .wb-decision-jump:hover,.wb-task-progress .wb-decision-jump:focus-visible { color:var(--wb-accent); }
 .wb-task-context { overflow:hidden; margin:0; color:var(--wb-muted); font-size:11px; line-height:1.5; text-overflow:ellipsis; white-space:nowrap; }
 .wb-task-unattended { margin:5px 0 0; color:var(--th-ink-soft); font-size:11px; line-height:1.5; }
 .wb-task-head-actions { display:flex; flex:none; align-items:center; gap:18px; }
