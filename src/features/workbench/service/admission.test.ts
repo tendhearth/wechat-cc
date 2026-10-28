@@ -32,7 +32,7 @@ function setup(over: { ack?: ServiceDeps['unattendedAck']; canResume?: boolean; 
   const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(over.ack ? { unattendedAck: over.ack } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   const domain = makeAdmissionDomain(ctx, { quota: { quotaExhausted: () => over.quotaExhausted ? { kind: 'quota', since: 0, resetAt: Date.now() + 1000, message: '满了' } : null } })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
-  return { store, domain, task, project }
+  return { store, domain, task, project, state }
 }
 
 describe('makeAdmissionDomain · 准入', () => {
@@ -95,5 +95,48 @@ describe('makeAdmissionDomain · 续接判定', () => {
   it('modelCatalog:执行者没这功能 ⇒ model_catalog_unavailable', async () => {
     const { domain, project } = setup()
     await expect(domain.modelCatalog('claude', project)).rejects.toThrow('model_catalog_unavailable')
+  })
+})
+
+// 2026-10 变异测试第二轮:续接判定里「执行者不在了 ⇒ 不能续」「导入的会话换了路径写法 ⇒ 不续原会话」「外部会话没确认关掉 ⇒ 先确认」
+// 「停机中 ⇒ 不接」这几道,改掉都没有测试红。
+describe('makeAdmissionDomain · 续接判定的几道闸(变异测试第二轮)', () => {
+  const imported = (s: ReturnType<typeof setup>, cwd: string) => s.store.importSource({
+    title: '导入', ownerChatId: 'owner', path: s.project, cwd, providerId: 'claude', nativeId: 'native-1',
+    snapshotSha256: 'x', observedFingerprint: 'y', truncated: false, snapshotJson: '{}', pagesJson: '[]',
+    messages: [{ role: 'user', text: '原来那句' }],
+  } as never)
+  it('canResume:任务的执行者已经不在登记表里 ⇒ false(不往外抛)', () => {
+    const { domain, store } = setup()
+    const orphan = store.create({ title: '旧', path: '/x', providerId: 'nope', ownerChatId: 'owner' })
+    store.session(orphan.id, 'sess-1')
+    expect(domain.canResume(store.get(orphan.id))).toBe(false)
+  })
+  it('canResume:导入了还没发第一句、原会话记的 cwd ≠ 真目录 ⇒ false;同一个目录 ⇒ 照常能续;发过第一句以后不再看 cwd', () => {
+    const a = setup()
+    const { task } = imported(a, '/via/symlink')
+    expect(a.domain.canResume(a.store.get(task.id))).toBe(false)
+    a.store.markSourceDispatched(task.id)
+    expect(a.domain.canResume(a.store.get(task.id))).toBe(true)
+    const b = setup()
+    const same = imported(b, b.project).task
+    expect(b.domain.canResume(b.store.get(same.id))).toBe(true)
+  })
+  it('continuation:只有系统事件(没有主人的话、也没有回答)⇒ new', () => {
+    const { domain, task, store } = setup()
+    store.addEvent(task.id, 'system', '已创建')
+    store.session(task.id, 'sess-1')
+    expect(domain.continuation(store.get(task.id))).toEqual({ mode: 'new' })
+    store.addEvent(task.id, 'user', '做点事')
+    expect(domain.continuation(store.get(task.id))).toEqual({ mode: 'resume' })
+  })
+  it('prepareContinuation:导入后还没发过第一句 ⇒ external_close_confirmation_required;停机中 ⇒ workbench_stopping', () => {
+    const s = setup()
+    const { task } = imported(s, s.project)
+    expect(() => s.domain.prepareContinuation(task.id)).toThrow('external_close_confirmation_required')
+    const t = setup()
+    t.store.update(t.task.id, 'completed')
+    t.state.stopping = true
+    expect(() => t.domain.prepareContinuation(t.task.id)).toThrow('workbench_stopping')
   })
 })

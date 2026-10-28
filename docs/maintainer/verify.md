@@ -153,12 +153,12 @@ bun run test:mutation -- --force           # 不用增量,全量重测
 ```
 
 - **什么时候跑**:发版前、大重构之后(权限 / 红线 / 记忆 / 迁移 runner 动过),或者想删一批测试之前看看删的是不是在干活的那批。不是每个 PR 都跑。
-- **范围**:`stryker.config.mjs` 的 `mutate`,只放最要紧的纯逻辑(authorize 与它组合的几层、放行规则、记忆渲染 / 收回);迁移 runner `src/lib/db.ts` 单独一份 `stryker.db.config.mjs`,只用库层测试(`vitest.mutation-db.config.ts`)—— 放进主配置会牵出 5000 多条测试、跑一个半小时(原因见那份配置的注释)。`src/lib/db/migrations/` 下的冻结迁移**不变异**(一字不许改)。加文件就往 `mutate` 里加。
+- **范围**:`stryker.config.mjs` 的 `mutate`,只放最要紧的纯逻辑(authorize 与它组合的几层、放行规则、记忆渲染 / 收回);迁移 runner `src/lib/db.ts` 单独一份 `stryker.db.config.mjs`,只用库层测试(`vitest.mutation-db.config.ts`)—— 放进主配置会牵出 5000 多条测试、跑一个半小时(原因见那份配置的注释)。`src/lib/db/migrations/` 下的冻结迁移**不变异**(一字不许改)。加文件就往 `mutate` 里加。工作台生命周期 / 协调器 / 回复交付 / 拉消息快车道在第三份 `stryker.areas.config.mjs`(牵连的测试和权限那批几乎不重合)。
 - **跑在 Node 上**(Stryker 进程里直接起 vitest,用 `vitest.node.config.ts`,跟 CI 的 node 作业同一份);只跑 import 图上牵连到被变异文件的测试(`vitest.related`)。沙箱在 `.stryker-tmp/`,自己 `git init` 一个根(有测试断言 cwd 是仓库根);Bun 专属的测试不在这里面。
 - **依赖在 `tools/mutation/`**(独立 `package.json` + `bun.lock`,不进根 workspace,`bun run test:mutation` 第一步自己 `bun install`):Stryker 10 带 `@babel/core` 8,装进根 lockfile 会把 bun 隔离安装的兜底目录里的 `@babel/core` 从 7 换成 8,手机 app 的 Expo / Metro 可能靠它解析。根 lockfile、CI、三平台都不受影响。
 - **耗时**:主配置 2448 个变异,首轮(不变异)约 4 分钟,空闲机器 4 个 worker 全部跑完约 15–20 分钟(默认 2 个 worker,再翻倍);迁移 runner 那份 3 分钟。**增量**:结果存在 `reports/mutation/stryker-incremental.json`(db 那份在 `reports/mutation/db/`),下次只重测改过的源码 / 测试;中途 Ctrl-C 也会存一份。报告:`reports/mutation/index.html`、`reports/mutation/db/index.html`(看哪一行哪个变异活下来)和同目录的 `mutation.json`。
 - **主人用机时**:load 高会把正常变异判成 Timeout(算「护住」,虚高)。结果里 Timeout 突然变多,就删掉增量文件里 `"status": "Timeout"` 的那几条,机器空了重跑。
-- **怎么读**:活下来的变异不全是测试的错 —— 有的是等价变异(改了也没区别,比如永远走不到的分支)。基线和逐条解读见 [mutation-baseline-2026-10.md](mutation-baseline-2026-10.md)。补测试时先在报告里确认那个变异活着,补完再跑一次看它死了(红 / 绿),别凭感觉补。
+- **怎么读**:活下来的变异不全是测试的错 —— 有的是等价变异(改了也没区别,比如永远走不到的分支)。基线和逐条解读见 [mutation-baseline-2026-10.md](mutation-baseline-2026-10.md)。补测试时先在报告里确认那个变异活着,补完再跑一次看它死了(红 / 绿),别凭感觉补。**补完用增量复跑之前,先把增量文件里 `Survived` / `NoCoverage` 的条目删掉**(或 `--force`):增量看不出新加的测试能不能杀一个原来活着的变异,会原样沿用「存活」(2026-10-27 第二轮踩过)。数「哪个测试文件一个独有的都没杀」:`--disableBail` 跑,再 `bun tools/mutation/unique-kills.ts <报告>...`。
 
 ## 必须主人在场的检查清单
 

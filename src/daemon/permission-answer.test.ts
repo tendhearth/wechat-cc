@@ -15,6 +15,7 @@ describe('makePermissionAnswer — the one consumer of a WeChat answer to a pend
     expect(lines).toEqual(['PERMISSION consumed reply from chat=owner'])
     expect(consume({ chatId: 'owner', text: 'y' })).toBe(false)   // 已经没有待批了(桌面拍过 / 过期)
     expect(consume({ chatId: 'owner' })).toBe(false)
+    expect(calls[2]).toEqual(['', 'owner', undefined]) // 没有文字(图片 / 语音)⇒ 按空串问,不编一句出来
     expect(lines).toHaveLength(1)
   })
 })

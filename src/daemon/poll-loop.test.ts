@@ -1059,3 +1059,197 @@ describe('startLongPollLoops — fastLane (permission answers while a turn await
     await handle.stop()
   })
 })
+
+// 2026-10 变异测试第二轮:parseUpdates 的语音 / 文件 / 视频三类、消息 id、状态过滤在基线里一条都没跑到(NoCoverage),
+// loop 的过期停、单账号停 / 加、快车道消费后盖心跳、失败日志折叠也没有测试在乎。
+describe('parseUpdates — 语音 / 文件 / 视频与消息 id(变异测试第二轮)', () => {
+  const one = (u: Partial<RawUpdate>) => parseUpdates([{ from_user_id: 'u1', message_type: 1, ...u }], { accountId: 'A', resolveUserName: () => undefined })
+  const media = { encrypt_query_param: 'q', aes_key: 'k' }
+  it('语音带转写 ⇒ 当文字([语音] 前缀),类型 voice,不带附件', () => {
+    const [m] = one({ item_list: [{ type: 3, voice_item: { text: '明天见', media } }] })
+    expect(m).toMatchObject({ text: '[语音] 明天见', msgType: 'voice' })
+    expect(m!.attachments).toBeUndefined()
+  })
+  it('语音没转写、有媒体 ⇒ 语音附件', () => {
+    const [m] = one({ item_list: [{ type: 3, voice_item: { media } }] })
+    expect(m).toMatchObject({ text: '(non-text message)', msgType: 'voice', attachments: [{ kind: 'voice', path: '<pending-cdn-ref>', caption: JSON.stringify(media) }] })
+  })
+  it('语音什么都没有 ⇒ 不算语音,也没附件', () => {
+    const [m] = one({ item_list: [{ type: 3, voice_item: {} }] })
+    expect(m).toMatchObject({ msgType: 'unknown' })
+    expect(m!.attachments).toBeUndefined()
+  })
+  it('文件:带媒体和文件名;只有文件名也收(媒体记成 {});没名字记 file.bin;两样都没有 ⇒ 跳过', () => {
+    expect(one({ item_list: [{ type: 4, file_item: { media, file_name: 'a.pdf' } }] })[0]).toMatchObject({
+      msgType: 'file', attachments: [{ kind: 'file', path: '<pending-cdn-ref>', caption: JSON.stringify({ media, file_name: 'a.pdf' }) }],
+    })
+    expect(one({ item_list: [{ type: 4, file_item: { file_name: 'b.txt' } }] })[0]!.attachments![0]!.caption).toBe(JSON.stringify({ media: {}, file_name: 'b.txt' }))
+    expect(one({ item_list: [{ type: 4, file_item: { media } }] })[0]!.attachments![0]!.caption).toBe(JSON.stringify({ media, file_name: 'file.bin' }))
+    const [skipped] = one({ item_list: [{ type: 4, file_item: {} }] })
+    expect(skipped).toMatchObject({ msgType: 'unknown' })
+    expect(skipped!.attachments).toBeUndefined()
+  })
+  it('视频 ⇒ 当文件附件、类型 video;没有媒体 ⇒ 跳过', () => {
+    expect(one({ item_list: [{ type: 5, video_item: { media } }] })[0]).toMatchObject({
+      msgType: 'video', attachments: [{ kind: 'file', path: '<pending-cdn-ref>', caption: JSON.stringify(media) }],
+    })
+    expect(one({ item_list: [{ type: 5, video_item: {} }] })[0]!.attachments).toBeUndefined()
+  })
+  it('图片只有 aeskey 也收;媒体和 aeskey 都没有 ⇒ 跳过', () => {
+    expect(one({ item_list: [{ type: 2, image_item: { aeskey: 'x' } }] })[0]).toMatchObject({ msgType: 'image', attachments: [{ kind: 'image', caption: '{}' }] })
+    expect(one({ item_list: [{ type: 2, image_item: {} }] })[0]!.attachments).toBeUndefined()
+  })
+  it('类型取第一样:先文字后图片 ⇒ text;先图片后文字 ⇒ image', () => {
+    const t = { type: 1, text_item: { text: '看' } }, i = { type: 2, image_item: { media } }
+    expect(one({ item_list: [t, i] })[0]!.msgType).toBe('text')
+    expect(one({ item_list: [i, t] })[0]!.msgType).toBe('image')
+    expect(one({ item_list: [{ type: 3, voice_item: { text: '嗯' } }, t] })[0]!.msgType).toBe('voice')
+    expect(one({ item_list: [{ type: 4, file_item: { file_name: 'a' } }, t] })[0]!.msgType).toBe('file')
+    expect(one({ item_list: [{ type: 5, video_item: { media } }, t] })[0]!.msgType).toBe('video')
+  })
+  it('引用的类型标签:voice / file / video', () => {
+    for (const [type, label] of [[3, 'voice'], [4, 'file'], [5, 'video']] as const) {
+      expect(one({ item_list: [{ type: 1, text_item: { text: '这个' }, ref_msg: { message_item: { type } } }] })[0]!.quote).toEqual({ type: label, text: '' })
+    }
+  })
+  it('消息 id:message_id 优先;没有就取 item 上第一个 msg_id;都没有 ⇒ 不带', () => {
+    expect(one({ message_id: 0, item_list: [{ type: 1, text_item: { text: 'a' }, msg_id: 'i1' }] })[0]!.msgId).toBe('0')
+    expect(one({ item_list: [{ type: 1, text_item: { text: 'a' } }, { type: 1, text_item: { text: 'b' }, msg_id: 'i2' }] })[0]!.msgId).toBe('i2')
+    expect('msgId' in one({ item_list: [{ type: 1, text_item: { text: 'a' } }] })[0]!).toBe(false)
+  })
+  it('没有 message_state ⇒ 照收;没有 from_user_id ⇒ 跳过;没有 quote / 附件 ⇒ 不带这两个键', () => {
+    const [m] = one({ item_list: [{ type: 1, text_item: { text: 'a' } }] })
+    expect(m!.text).toBe('a')
+    expect('quote' in m!).toBe(false)
+    expect('attachments' in m!).toBe(false)
+    expect(parseUpdates([{ message_type: 1, item_list: [{ type: 1, text_item: { text: 'a' } }] }], { accountId: 'A', resolveUserName: () => undefined })).toEqual([])
+  })
+})
+
+describe('startLongPollLoops — 账号与收尾(变异测试第二轮)', () => {
+  // 空轮询之间让出一个宏任务(只回微任务的 getUpdates 会把 loop 变成死循环,waitFor 的计时器永远轮不到)
+  const pause = (signal?: AbortSignal) => new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+  const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: 'buf0' }
+  const idle = () => vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+    await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+    return { updates: [], sync_buf: sb }
+  })
+  it('过期 ⇒ 这个账号的 loop 自己停下(不再拉),记 SESSION_EXPIRED;交给别的设备 ⇒ SESSION_STANDBY', async () => {
+    for (const [resp, tag] of [[{ expired: true }, 'SESSION_EXPIRED'], [{ expired: true, standby: true }, 'SESSION_STANDBY']] as const) {
+      const getUpdates = vi.fn().mockResolvedValue(resp)
+      const logs: string[] = []
+      const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], log: (t) => logs.push(t) })
+      await waitFor(() => h.running().length === 0)
+      expect(getUpdates).toHaveBeenCalledTimes(1)
+      expect(logs).toContain(tag)
+      expect(logs).not.toContain(tag === 'SESSION_EXPIRED' ? 'SESSION_STANDBY' : 'SESSION_EXPIRED')
+      await h.stop()
+    }
+  })
+  it('addAccount 同一个 id 两次 ⇒ 只有一个 loop;stopAccount ⇒ 停下且能再加回来;停一个不存在的 ⇒ 没事', async () => {
+    const getUpdates = idle()
+    const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [] })
+    h.addAccount(acct)
+    expect(h.running()).toEqual(['A1'])
+    await waitFor(() => getUpdates.mock.calls.length >= 2)
+    const before = new Set(getUpdates.mock.calls.map(c => c[4]))
+    expect(before.size).toBe(1) // 只有一个 loop 在拉(同一个 AbortSignal)
+    expect(() => h.stopAccount('nope')).not.toThrow()
+    h.stopAccount('A1')
+    await waitFor(() => h.running().length === 0)
+    h.addAccount(acct)
+    expect(h.running()).toEqual(['A1'])
+    await h.stop()
+  })
+  it('快车道吃掉一条回答 ⇒ 当场盖一次心跳(不等普通队列)', async () => {
+    let gate!: () => void
+    const blocked = new Promise<void>(r => { gate = r })
+    let i = 0
+    const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      if (i++ === 0) return { updates: [
+        { from_user_id: 'o', message_type: 1, item_list: [{ type: 1, text_item: { text: '长活' } }] },
+        { from_user_id: 'o', message_type: 1, item_list: [{ type: 1, text_item: { text: 'y' } }] },
+      ], sync_buf: 'b1' }
+      await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+      return { updates: [], sync_buf: sb }
+    })
+    const stamps: string[] = []
+    const h = startLongPollLoops({
+      accounts: [acct], ilink: { getUpdates }, parse: (us, d) => parseUpdates(us, d), resolveUserName: () => undefined,
+      onInbound: async () => { await blocked },
+      fastLane: m => { if (m.text === 'y') { stamps.push('consumed'); return true } return false },
+      onPollCycle: () => stamps.push('stamp'),
+    })
+    await waitFor(() => stamps.includes('consumed'))
+    // 长活还卡着(普通队列没处理完),快车道那条已经盖过心跳:consumed 之后紧跟一次 stamp
+    expect(stamps.slice(stamps.indexOf('consumed'), stamps.indexOf('consumed') + 2)).toEqual(['consumed', 'stamp'])
+    gate()
+    await h.stop()
+  })
+  it('响应里没有 sync_buf ⇒ 不落盘(快车道与普通两种模式)', async () => {
+    for (const fast of [false, true]) {
+      let i = 0
+      const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, _sb: string, signal?: AbortSignal) => {
+        if (i++ === 0) return { updates: [] }
+        await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+        return { updates: [] }
+      })
+      const saved: string[] = []
+      const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], onSyncBuf: (_id, b) => saved.push(b), ...(fast ? { fastLane: () => false } : {}) })
+      await waitFor(() => getUpdates.mock.calls.length >= 3)
+      await h.stop()
+      expect(saved).toEqual([])
+      expect(getUpdates.mock.calls.every(c => c[3] === 'buf0')).toBe(true)
+    }
+  })
+  it('连续失败:前 3 次逐条记 ERROR,之后每 20 次一条;恢复时记一句 recovered', async () => {
+    let n = 0
+    const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      n++
+      if (n <= 25) throw new Error(`boom${n}`)
+      if (n > 26) await pause(signal)
+      return { updates: [], sync_buf: sb }
+    })
+    const logs: string[] = []
+    const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], log: (t, l) => logs.push(`${t} ${l}`), sleepFn: async () => {} })
+    await waitFor(() => logs.some(l => l.includes('recovered')))
+    await h.stop()
+    expect(logs.filter(l => l.startsWith('ERROR')).map(l => l.match(/\((\d+)x\)/)![1])).toEqual(['1', '2', '3', '21'])
+    expect(logs).toContain('POLL recovered for A1 after 25 consecutive failures')
+  })
+  it(`僵尸长轮询:第 ${ZOMBIE_TIMEOUT_STREAK} 次报一次,之后每 20 次再报;回来时说一声`, async () => {
+    let n = 0
+    const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      n++
+      if (n <= 41) return { timed_out: true }
+      if (n > 42) await pause(signal)
+      return { updates: [], sync_buf: sb }
+    })
+    const logs: string[] = []
+    const failures: string[] = []
+    const h = startLongPollLoops({
+      accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], log: (t, l) => logs.push(`${t} ${l}`),
+      health: { recordFailure: (_s: string, e: unknown) => failures.push(String(e)), recordSuccess: () => {} } as never,
+    })
+    await waitFor(() => logs.some(l => l.includes('answering again')))
+    await h.stop()
+    expect(failures.map(f => f.match(/x(\d+)/)![1])).toEqual(['5', '20', '40'])
+    expect(logs).toContain('POLL long-poll answering again for A1 after 41 timed-out round(s)')
+  })
+  it('超时不到 5 次就答上了 ⇒ 不说「answering again」', async () => {
+    let n = 0
+    const getUpdates = vi.fn(async (_a: string, _b: string, _t: string, sb: string, signal?: AbortSignal) => {
+      n++
+      if (n <= 2) return { timed_out: true }
+      if (n === 3) return { updates: [], sync_buf: sb }
+      await new Promise<void>(r => { const t = setTimeout(r, 10); signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
+      return { updates: [], sync_buf: sb }
+    })
+    const logs: string[] = []
+    const beats: string[] = []
+    const h = startLongPollLoops({ accounts: [acct], onInbound: async () => {}, ilink: { getUpdates }, parse: () => [], log: (t, l) => logs.push(`${t} ${l}`), recordHeartbeat: (id) => beats.push(id) })
+    await waitFor(() => beats.length >= 1)
+    await h.stop()
+    expect(logs.some(l => l.includes('answering again'))).toBe(false)
+  })
+})

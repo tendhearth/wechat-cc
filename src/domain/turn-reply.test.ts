@@ -184,3 +184,105 @@ describe('all_segments:只有标点 / 空白的段不是一句话', () => {
     expect(b.reply.segments).toEqual(['晚安'])
   })
 })
+
+// 2026-10 变异测试第二轮:取「最后的话」的段边界、改写(replace)、自成一段,以及 NO_REPLY 令牌的边界,逐条成表。
+describe('makeTurnTextCollector — 段的边界(变异测试第二轮)', () => {
+  const parts = (evs: Array<Record<string, unknown>>) => extractTurnReply(evs as never)
+  it('非 text 事件带着文字也不进任何一段(error 不许当回复发,#190)', () => {
+    expect(parts([{ kind: 'text', text: '在查' }, { kind: 'error', text: '炸了' }, { kind: 'result', text: 'x' }]))
+      .toEqual({ finalText: '在查', narration: [] })
+  })
+  it('text 事件没有字符串 text ⇒ 忽略', () => {
+    expect(parts([{ kind: 'text', text: '好' }, { kind: 'text' }])).toEqual({ finalText: '好', narration: [] })
+  })
+  it('空白的 text 不占一段、不拼进去', () => {
+    expect(parts([{ kind: 'text', text: 'a' }, { kind: 'text', text: '  \n' }, { kind: 'text', text: 'b' }]))
+      .toEqual({ finalText: 'a\n\nb', narration: [] })
+  })
+  it('tool_call 前没有字 ⇒ 不起空段;连着两个 tool_call 也只隔一段', () => {
+    expect(parts([{ kind: 'tool_call' }, { kind: 'text', text: 'a' }, { kind: 'tool_call' }, { kind: 'tool_call' }, { kind: 'text', text: 'b' }]))
+      .toEqual({ finalText: 'b', narration: ['a'] })
+  })
+  it('同一 itemId 的 replace ⇒ 原地改写那一条;append(不带 replace)⇒ 另起一条', () => {
+    expect(parts([{ kind: 'text', text: '草稿', itemId: 'm1' }, { kind: 'text', text: '定稿', itemId: 'm1', textMode: 'replace' }]))
+      .toEqual({ finalText: '定稿', narration: [] })
+    expect(parts([{ kind: 'text', text: '一', itemId: 'm1' }, { kind: 'text', text: '二', itemId: 'm1' }]))
+      .toEqual({ finalText: '一\n\n二', narration: [] })
+  })
+  it('replace 只认本段见过的 itemId:隔了一个 tool_call 再来 ⇒ 是新的一条,不改写上一段', () => {
+    expect(parts([{ kind: 'text', text: '前', itemId: 'm1' }, { kind: 'tool_call' }, { kind: 'text', text: '后', itemId: 'm1', textMode: 'replace' }]))
+      .toEqual({ finalText: '后', narration: ['前'] })
+  })
+  it('隔了 tool_call 的新段里已经有一条了,再来上一段的 itemId replace ⇒ 追加,不覆盖新段那一条', () => {
+    expect(parts([{ kind: 'text', text: '前', itemId: 'm1' }, { kind: 'tool_call' }, { kind: 'text', text: '新' }, { kind: 'text', text: '后', itemId: 'm1', textMode: 'replace' }]))
+      .toEqual({ finalText: '新\n\n后', narration: ['前'] })
+  })
+  it('没见过的 itemId 来 replace ⇒ 当新的一条追加', () => {
+    expect(parts([{ kind: 'text', text: 'a', itemId: 'x' }, { kind: 'text', text: 'b', itemId: 'y', textMode: 'replace' }]))
+      .toEqual({ finalText: 'a\n\nb', narration: [] })
+  })
+  it('ownSegment(Codex 的 agent_message)自成一段;本段还空着时不多起一段;之后同 itemId 的 replace 改的是新段', () => {
+    expect(parts([
+      { kind: 'text', text: '先看看', itemId: 'a', ownSegment: true },
+      { kind: 'text', text: '结论', itemId: 'b', ownSegment: true },
+      { kind: 'text', text: '最终结论', itemId: 'b', textMode: 'replace' },
+    ])).toEqual({ finalText: '最终结论', narration: ['先看看'] })
+    // 进了新段以后,上一段的 itemId 不再认:replace 'a' 是新的一条
+    expect(parts([
+      { kind: 'text', text: '一', itemId: 'a', ownSegment: true },
+      { kind: 'text', text: '二', itemId: 'b', ownSegment: true },
+      { kind: 'text', text: '三', itemId: 'a', textMode: 'replace' },
+    ])).toEqual({ finalText: '二\n\n三', narration: ['一'] })
+  })
+})
+
+describe('parseSilence — 令牌边界(变异测试第二轮)', () => {
+  it.each([
+    // [原文, 期望]
+    ['no_reply', { text: '', silent: true, mixed: false }],
+    ['NO_REPLYING', { text: 'NO_REPLYING', silent: false, mixed: false }],
+    ['这件事 NO_REPLYING', { text: '这件事 NO_REPLYING', silent: false, mixed: false }],
+    ['代码里用 NO_REPLY 这个令牌表示不回', { text: '代码里用 NO_REPLY 这个令牌表示不回', silent: false, mixed: false }],
+    ['NO_REPLY，好的', { text: '好的', silent: false, mixed: true }],
+    ['好的\nNO_REPLY', { text: '好的', silent: false, mixed: true }],
+    ['NO_REPLY\n  no_reply  ', { text: '', silent: true, mixed: false }],
+    ['NO_REPLY\n\nNO_REPLY', { text: '', silent: true, mixed: false }],
+    ['收到 NO_REPLY', { text: '收到', silent: false, mixed: true }],
+    ['先说一句\nNO_REPLY\n再说一句', { text: '先说一句\n再说一句', silent: false, mixed: true }],
+  ] as const)('%j', (raw, want) => {
+    expect(parseSilence(raw)).toEqual(want)
+  })
+})
+
+describe('buildTurnReply — 静默与旁白(变异测试第二轮)', () => {
+  it('last_segment:旁白里的令牌段整段去掉、空白段去掉,其余原样', () => {
+    const r = buildTurnReply({ finalText: '结论', narration: ['NO_REPLY', '  ', '先看看 NO_REPLY'] }, [], 'dm')
+    expect(r.reply.narration).toEqual(['先看看'])
+  })
+  it('不传策略 ⇒ last_segment:前面的段只当旁白', () => {
+    const r = buildTurnReply({ finalText: '二', narration: ['一'] }, [], 'dm')
+    expect(r.reply).toEqual({ text: '二', silent: false, attachments: [], narration: ['一'] })
+  })
+  it('all_segments:最后一段 NO_REPLY + 允许静默 ⇒ 整轮不发,附件照带', () => {
+    const att = [{ kind: 'file', path: '/a' }] as const
+    const r = buildTurnReply({ finalText: 'NO_REPLY', narration: ['我先看看'] }, att, 'tick', 'all_segments')
+    expect(r).toEqual({ reply: { text: '', silent: true, attachments: [{ kind: 'file', path: '/a' }], narration: [], segments: [] }, silentInDm: false, mixed: false })
+  })
+  it('all_segments:私聊里最后一段 NO_REPLY ⇒ 前面说过的照发,不算静默,记 silentInDm', () => {
+    const r = buildTurnReply({ finalText: 'NO_REPLY', narration: ['我先看看'] }, [], 'dm', 'all_segments')
+    expect(r).toEqual({ reply: { text: '我先看看', silent: false, attachments: [], narration: [], segments: ['我先看看'] }, silentInDm: true, mixed: false })
+  })
+  it('all_segments:私聊里只有 NO_REPLY ⇒ silent(不显示),记 silentInDm', () => {
+    const r = buildTurnReply({ finalText: 'NO_REPLY', narration: [] }, [], 'dm', 'all_segments')
+    expect(r.reply).toMatchObject({ text: '', silent: true, segments: [] })
+    expect(r.silentInDm).toBe(true)
+  })
+  it('all_segments:有话照发时附件也带上', () => {
+    const r = buildTurnReply({ finalText: '图在这', narration: [] }, [{ kind: 'file', path: '/a.png' }], 'dm', 'all_segments')
+    expect(r.reply.attachments).toEqual([{ kind: 'file', path: '/a.png' }])
+  })
+  it('all_segments:中间一段 NO_REPLY 不算决定(最后一段不是)⇒ 不静默、不记 silentInDm;空白段丢掉', () => {
+    const r = buildTurnReply({ finalText: '结论', narration: ['NO_REPLY', '   '] }, [], 'dm', 'all_segments')
+    expect(r).toEqual({ reply: { text: '结论', silent: false, attachments: [], narration: [], segments: ['结论'] }, silentInDm: false, mixed: false })
+  })
+})
