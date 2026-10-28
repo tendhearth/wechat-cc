@@ -179,3 +179,45 @@ for(const status of ['completed','running'])for(const result of ['none','review-
  await page.screenshot({path:testInfo.outputPath('first-entry.png')})
  await page.evaluate(()=>(window as any).qa.stop())
 })
+
+for(const result of ['deliverable','none'])test(`cold restored answered task with ${result} distinguishes loading from saved reading`,async({page},testInfo)=>{
+ await page.setViewportSize({width:1400,height:850})
+ await page.addInitScript(()=>{
+  sessionStorage.setItem('cc.workbench.window.v1:view',JSON.stringify({scope:'task:bbbb2222',query:{q:'',archived:'exclude'},search:''}))
+  sessionStorage.setItem('cc.workbench.window.v1:draft:task:bbbb2222',JSON.stringify({path:'/synthetic/project',text:'',title:'',providerId:'codex',followup:'恢复后保留的补充草稿'}))
+ })
+ // Valid persisted task IDs exercise the real loadWorkbenchView path before module import.
+ const setup=`task.id='aaaa1111';other.id='bbbb2222';details.aaaa1111=details.A;details.bbbb2222=details.B;
+ for(const detail of [details.A,details.B]){for(const event of detail.events)event.taskId=detail.task.id;for(const artifact of detail.artifacts)artifact.taskId=detail.task.id}
+ ${result==='none'?'details.B.artifacts=[];':''}`
+ const restoredFixture=fixture.replace('const controller=initWorkbenchPage',setup+'\nconst controller=initWorkbenchPage')
+ await page.route('http://127.0.0.1:4211/**',async route=>{
+  const path=new URL(route.request().url()).pathname
+  if(path==='/'){await route.fulfill({contentType:'text/html',body:restoredFixture});return}
+  try{await route.fulfill({body:await readFile(source+path),contentType:/\.m?js$/.test(path)?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream'})}
+  catch{await route.fulfill({status:404,body:'missing fixture asset'})}
+ })
+ await page.goto('http://127.0.0.1:4211')
+ await expect(page.locator('.wb-task-head h2')).toHaveText('已保存的访谈记录')
+ await expect.poll(()=>page.evaluate(()=>(window as any).qa.controller.state.reviewsLoaded)).toBe(true)
+ await expect(page.locator('#wb-followup-text')).toHaveValue('恢复后保留的补充草稿')
+ if(result==='deliverable'){
+  await expect(page.locator('#wb-artifacts')).toHaveAttribute('open','')
+  await expect(page.locator('#wb-artifacts .wb-artifact')).toBeInViewport()
+  expect(await page.locator('.wb-content').evaluate(el=>el.scrollTop)).toBe(0)
+ }else{
+  await expect(page.locator('.wb-message').last()).toBeInViewport()
+  expect(await page.locator('.wb-content').evaluate(el=>el.scrollTop)).toBeGreaterThan(500)
+ }
+ await page.screenshot({path:testInfo.outputPath('cold-restored.png')})
+ if(result==='deliverable')await page.locator('#wb-artifacts>summary').click()
+ // A position actually read after loading must still survive leaving and returning.
+ await page.locator('.wb-content').evaluate(el=>{el.scrollTop=420})
+ await page.evaluate(()=>(window as any).qa.paint())
+ await page.locator('[data-task-id="aaaa1111"]').click()
+ await page.locator('[data-task-id="bbbb2222"]').click()
+ expect(await page.locator('.wb-content').evaluate(el=>el.scrollTop)).toBe(420)
+ if(result==='deliverable')await expect(page.locator('#wb-artifacts')).not.toHaveAttribute('open','')
+ await expect(page.locator('#wb-followup-text')).toHaveValue('恢复后保留的补充草稿')
+ await page.evaluate(()=>(window as any).qa.stop())
+})

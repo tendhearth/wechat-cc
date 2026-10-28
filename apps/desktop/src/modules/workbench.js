@@ -911,7 +911,8 @@ export function initWorkbenchPage(deps) {
     nextReading.signature = signature
     reading.set(nextScope, nextReading)
     const sidebarScroll = root.querySelector('.wb-sidebar')?.scrollTop ?? 0
-    scrollPositions.set(renderedScope, contentScroll)
+    // A restored scope can exist before its first content; loading is not saved reading.
+    if (hasPainted && oldContent) scrollPositions.set(renderedScope, contentScroll)
     const currentPermissionScroll = root.querySelector('.wb-permissions')?.scrollTop
     const currentPermissionState = permissionScrollPositions.get(renderedScope)
     if (currentPermissionScroll !== undefined && currentPermissionState) currentPermissionState.scrollTop = currentPermissionScroll
