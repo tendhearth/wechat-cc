@@ -29,7 +29,7 @@ export default function Memory() {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
-  const { backend } = useBackendCtx()
+  const { backend, store } = useBackendCtx()
   const online = canSubmit(useConnection())
   const memory = useQuery('memory', () => backend.memory(), { refreshOnMount: true })
   const [tab, setTab] = useState<'facts' | 'todos'>('facts')
@@ -49,6 +49,14 @@ export default function Memory() {
   const todoInFlight = useRef(false)
   // 收回的话(架构终态 G6,主人 10-26 第 2 / 3 条):主人收回过的那几句,每条能恢复;恢复后显示电脑回的那句(随之删掉的笔记行不会回来)
   const retractions = useQuery('memory-retractions', () => backend.memoryRetractions(), { refreshOnMount: true })
+  const revalidateMemory = () => {
+    // A read issued before a confirmed mutation may still be in flight; wait it out, then read the new state.
+    const since = store.clock()
+    return Promise.all([
+      store.query('memory', () => backend.memory()).revalidate(since),
+      store.query('memory-retractions', () => backend.memoryRetractions()).revalidate(since),
+    ])
+  }
   const [restoring, setRestoring] = useState<string | null>(null)
   const [restoreNote, setRestoreNote] = useState<string | null>(null)
   const restore = async (key: string) => {
@@ -57,7 +65,7 @@ export default function Memory() {
     try {
       const r = await backend.restoreMemory(key)
       setRestoreNote(r.note)
-      await Promise.all([retractions.refresh().catch(() => {}), memory.refresh().catch(() => {})])
+      await revalidateMemory()
     } catch (e) { setRestoreNote(t(lang, e instanceof BackendError && e.code === 'not_found' ? 'memory.gone' : 'memory.retractions.failed')) }
     finally { setRestoring(null) }
   }
@@ -100,7 +108,7 @@ export default function Memory() {
     try {
       await backend.correctMemory(id, verdict)
       setOpen(null)
-      await Promise.all([memory.refresh(), retractions.refresh()])
+      await revalidateMemory()
       setNote(t(lang, 'memory.done'))
     }
     catch (e) { setNote(t(lang, e instanceof BackendError && e.code === 'not_found' ? 'memory.gone' : 'memory.failed')) }
