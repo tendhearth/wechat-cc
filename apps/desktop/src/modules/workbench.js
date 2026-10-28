@@ -756,8 +756,8 @@ export function initWorkbenchPage(deps) {
   const artifactDisclosureChoices = new Map()
   // A first completed-task visit waits for review provenance before discovering results.
   // User interaction cancels this one-time positioning; streaming transitions never enter it.
-  /** @type {Set<string>} */
-  const pendingOutcomeDiscovery = new Set()
+  /** Default reading position while provenance is pending. @type {Map<string,number>} */
+  const pendingOutcomeDiscovery = new Map()
   let renderedSidebarSearch = false
   /** @type {Map<string, number>} */
   const scrollPositions = new Map()
@@ -920,7 +920,7 @@ export function initWorkbenchPage(deps) {
     const nextPermissionSignature = permissionSignatureFor(state)
     const sameScope = renderedScope === scopeFor(state)
     if (!sameScope) { releaseHostedPreview(); attachmentPreviewRequest++; attachmentPreviewCleanup?.() }
-    const discoverOutcome = sameScope && pendingOutcomeDiscovery.has(nextScope) && contentScroll === 0 && !focused && !focusedDisclosure && !hasLiveTimelineInteraction(root)
+    const discoverOutcome = sameScope && pendingOutcomeDiscovery.has(nextScope) && contentScroll === pendingOutcomeDiscovery.get(nextScope) && !focused && !focusedDisclosure && !hasLiveTimelineInteraction(root)
     const timelineReading = sameScope ? captureTimelineReading(root) : null
     const questionPanelScroll = root.querySelector('.wb-questions')?.scrollTop ?? 0
     const nextDraft=pageDrafts.get(nextScope),providerId=state.detail?.task.providerId??nextDraft.providerId??state.defaultProvider??'',path=state.detail?.task.path??nextDraft.path
@@ -951,13 +951,16 @@ export function initWorkbenchPage(deps) {
     restoreTimelineReading(root,timelineReading)
     const content = root.querySelector('.wb-content')
     if (content) {
-      const firstOutcome = !!root.querySelector('[data-task-focus="outcome"]') && !hasStoredScroll
-      const discoveredOutcome = discoverOutcome && !!root.querySelector('#wb-artifacts.is-outcome[open]')
-      if (firstOutcome && state.reviewsLoaded === false) pendingOutcomeDiscovery.add(nextScope)
-      if (state.reviewsLoaded || state.reviewsError) pendingOutcomeDiscovery.delete(nextScope)
-      const showOutcome = firstOutcome || discoveredOutcome
-      const follow = !showOutcome && nextScope.startsWith('task:') && nextReading.following && (newActivity || !sameScope)
+      const resultReady = !!root.querySelector('#wb-artifacts.is-outcome[open]')
+      const firstOutcome = resultReady && !hasStoredScroll
+      const resolvedDiscovery = discoverOutcome && (state.reviewsLoaded || state.reviewsError)
+      const showOutcome = firstOutcome || resolvedDiscovery && resultReady
+      const follow = !showOutcome && nextScope.startsWith('task:') && nextReading.following && (newActivity || !sameScope || resolvedDiscovery)
       content.scrollTop = showOutcome ? 0 : follow ? content.scrollHeight : hasStoredScroll ? (scrollPositions.get(nextScope) ?? 0) : nextScope.startsWith('task:') ? content.scrollHeight : 0
+      // Until provenance arrives, an answered task still opens at its latest reply.
+      // Remember that default position so a real scroll cancels later result discovery.
+      if (!hasStoredScroll && state.reviewsLoaded === false && state.detail?.artifacts.length && root.querySelector('[data-task-focus="outcome"]')) pendingOutcomeDiscovery.set(nextScope, content.scrollTop)
+      if (state.reviewsLoaded || state.reviewsError) pendingOutcomeDiscovery.delete(nextScope)
       if (follow) nextReading.unread = false
       else if (!showOutcome && !nextReading.following) {
         restoreWorkbenchTimelineAnchor(root, content, readingAnchors.get(nextScope))
@@ -1865,7 +1868,7 @@ export function initWorkbenchPage(deps) {
   const onScroll = (/** @type {Event} */ event) => {
     const content = root.querySelector('.wb-content')
     if (event.target !== content || !content) return
-    if (content.scrollTop !== 0) pendingOutcomeDiscovery.delete(renderedScope)
+    if (content.scrollTop !== pendingOutcomeDiscovery.get(renderedScope)) pendingOutcomeDiscovery.delete(renderedScope)
     scrollPositions.set(renderedScope, content.scrollTop)
     const current = reading.get(renderedScope)
     if(current){current.following=atEnd(content)&&!browsingResults();if(current.following){current.unread=false;showReadingNotice()}}

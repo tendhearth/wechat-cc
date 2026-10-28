@@ -11,17 +11,17 @@ const task={id:'A',title:'整理访谈，准备交付',path:'/synthetic/project'
 const other={...task,id:'B',title:'已保存的访谈记录',status:'completed',phase:'replied'}
 const file=id=>({id,taskId:id==='saved-A'?'A':'B',name:'访谈记录.md',mime:'text/plain',size:25,sha256:'a'.repeat(64),createdAt:1,approvedAt:null})
 const details={A:{task,version:1,runId:'run-A',inputMode:'steer',events:Array.from({length:18},(_,i)=>({id:'e'+i,taskId:'A',kind:'text',text:'第 '+i+' 段访谈的整理记录。保留这段正在阅读的文字。\\n\\n[查看原文](https://example.test/read)',createdAt:i})),artifacts:[file('saved-A')],permissions:[],questions:[]},B:{task:other,events:Array.from({length:18},(_,i)=>({id:'b'+i,taskId:'B',kind:'text',text:'访谈记录已整理并保存，可以继续补充。',createdAt:i})),artifacts:[file('saved-B')],continuation:{mode:'continue'}}}
-const posts=[];let rejectPost,delayReviews=false,releaseReviews
+const reviewsByTask={};const posts=[];let rejectPost,delayReviews=false,releaseReviews
 const invokeWorkbenchApi=async(method,path,body)=>{
  if(method==='POST'){posts.push({path,body});return new Promise((_resolve,reject)=>rejectPost=reject)}
  if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):details[new URL(path,location.origin).searchParams.get('id')]
- if(path.startsWith('/v1/workbench/review?'))return delayReviews?new Promise(resolve=>releaseReviews=()=>resolve({reviews:[]})):{reviews:[]}
+ if(path.startsWith('/v1/workbench/review?')){const reviews=reviewsByTask[new URL(path,location.origin).searchParams.get('id')]??[];return delayReviews?new Promise(resolve=>releaseReviews=()=>resolve({reviews})):{reviews}}
  if(path.startsWith('/v1/workbench/artifact?'))return{name:'访谈记录.md',mime:'text/plain',size:25,sha256:'a'.repeat(64),contentBase64:btoa('saved result')}
  if(path.startsWith('/v1/matters?'))return{matters:[]}
  return{tasks:[task,other],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}
 }
 const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60000})
-window.qa={controller,details,posts,holdReviews:()=>delayReviews=true,releaseReviews:()=>releaseReviews?.(),stop:stopWorkbenchPolling,reject:()=>rejectPost?.(Error('synthetic request rejected')),paint:()=>controller.paint(true),answer:()=>{details.A.task.phase='replied';controller.paint(true)},waiting:()=>{details.A.permissions=[{id:'p',taskId:'A',tool:'Bash',description:'bun run verify\\ncwd: /synthetic/project\\n仅允许本次请求',createdAt:1},{id:'foreign',taskId:'B',tool:'Bash',description:'foreign action',createdAt:1}];details.A.questions=[{id:'q',taskId:'A',createdAt:1,questions:[{id:'choice',header:'选择',question:'保留哪一份访谈？',options:[]}]}];controller.paint(true)},recover:()=>{details.A.permissions=[];details.A.questions=[];details.A.task.status='interrupted';details.A.task.phase='interrupted';details.A.continuation={mode:'restart_required',restart:{token:'restart-token',context:'用户原要求与已保存的访谈。',eventCount:20,includedEventCount:10,truncated:true}};controller.paint(true)}}
+window.qa={controller,details,posts,reviewsByTask,holdReviews:()=>delayReviews=true,releaseReviews:()=>releaseReviews?.(),stop:stopWorkbenchPolling,reject:()=>rejectPost?.(Error('synthetic request rejected')),paint:()=>controller.paint(true),answer:()=>{details.A.task.phase='replied';controller.paint(true)},waiting:()=>{details.A.permissions=[{id:'p',taskId:'A',tool:'Bash',description:'bun run verify\\ncwd: /synthetic/project\\n仅允许本次请求',createdAt:1},{id:'foreign',taskId:'B',tool:'Bash',description:'foreign action',createdAt:1}];details.A.questions=[{id:'q',taskId:'A',createdAt:1,questions:[{id:'choice',header:'选择',question:'保留哪一份访谈？',options:[]}]}];controller.paint(true)},recover:()=>{details.A.permissions=[];details.A.questions=[];details.A.task.status='interrupted';details.A.task.phase='interrupted';details.A.continuation={mode:'restart_required',restart:{token:'restart-token',context:'用户原要求与已保存的访谈。',eventCount:20,includedEventCount:10,truncated:true}};controller.paint(true)}}
 </script></body></html>`
 
 for(const size of [{width:1400,height:850},{width:900,height:650},{width:390,height:700},{width:700,height:450},{width:760,height:280}])test(`task detail state and interaction at ${size.width}x${size.height}`,async({page},testInfo)=>{
@@ -142,5 +142,40 @@ test('delayed review discovery respects active reading and explicit result folds
  await page.locator('#wb-artifacts>summary').click()
  await page.evaluate(()=>{const qa=(window as any).qa;qa.details.B.task.status='running';qa.details.B.task.phase='working';qa.paint();qa.details.B.task.phase='replied';qa.paint()})
  await expect(page.locator('#wb-artifacts')).not.toHaveAttribute('open','')
+ await page.evaluate(()=>(window as any).qa.stop())
+})
+
+for(const status of ['completed','running'])for(const result of ['none','review-only','deliverable'])test(`first ${status} entry with ${result} honors result provenance`,async({page},testInfo)=>{
+ await page.setViewportSize({width:1400,height:850})
+ await page.route('http://127.0.0.1:4211/**',async route=>{
+  const path=new URL(route.request().url()).pathname
+  if(path==='/'){await route.fulfill({contentType:'text/html',body:fixture});return}
+  try{await route.fulfill({body:await readFile(source+path),contentType:/\.m?js$/.test(path)?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream'})}
+  catch{await route.fulfill({status:404,body:'missing fixture asset'})}
+ })
+ await page.goto('http://127.0.0.1:4211')
+ await expect(page.locator('#wb-followup-text')).toBeVisible()
+ await page.evaluate(({status,result})=>{
+  const qa=(window as any).qa;qa.holdReviews();qa.details.B.task.status=status
+  if(result==='none')qa.details.B.artifacts=[]
+  if(result==='review-only')qa.reviewsByTask.B=[{artifactId:'saved-B',sha256:'a'.repeat(64),name:'changes.json',createdAt:1,status:'complete',headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:[]}]
+ },{status,result})
+ await page.locator('[data-task-id="B"]').click()
+ await expect(page.locator('.wb-task-head h2')).toHaveText('已保存的访谈记录')
+ // Unclassified saved files are not a reason to jump back to the oldest message.
+ await expect(page.locator('.wb-message').last()).toBeInViewport()
+ expect(await page.locator('.wb-content').evaluate(el=>el.scrollTop)).toBeGreaterThan(500)
+ await page.evaluate(()=>(window as any).qa.releaseReviews())
+ await expect.poll(()=>page.evaluate(()=>(window as any).qa.controller.state.reviewsLoaded)).toBe(true)
+ if(result==='deliverable'){
+  await expect(page.locator('#wb-artifacts .wb-artifact')).toBeInViewport()
+  expect(await page.locator('.wb-content').evaluate(el=>el.scrollTop)).toBe(0)
+ }else{
+  await expect(page.locator('.wb-message').last()).toBeInViewport()
+  expect(await page.locator('.wb-content').evaluate(el=>el.scrollTop)).toBeGreaterThan(500)
+  await expect(page.locator('#wb-artifacts.is-outcome')).toHaveCount(0)
+  if(result==='review-only')await expect(page.locator('#wb-review>summary')).toBeInViewport()
+ }
+ await page.screenshot({path:testInfo.outputPath('first-entry.png')})
  await page.evaluate(()=>(window as any).qa.stop())
 })
