@@ -64,10 +64,14 @@ Files: 其余 `apps/app/src/app` 页面：memory/settings/connections/devices/jo
 
 ## Task 5: 整合与验收（根执行者）
 
-- [ ] 串行 cherry-pick 已完成页面提交，合并新文案模块；检查所有路由与入口、状态说明和测试。
-- [ ] 跑 App 全套测试，`bun run verify`、iOS/Android 静态导出及隔离演示 UI 验收。
-- [ ] 全分支独立评审，修复实质问题并验证，提交，更新本文完成记录并交付分支与限制。
+- [x] 串行 cherry-pick 已完成页面提交，合并新文案模块；检查所有路由与入口、状态说明和测试。
+- [x] 跑 App 全套测试，`bun run verify`、iOS/Android 静态导出及隔离演示 UI 验收。
+- [x] 全分支独立评审，修复实质问题并验证，提交，更新本文完成记录并交付分支与限制。
 
 ## 分工基线
 
 基线 `origin/dev` = `d3691340`，前轮轻动效已由 `6a5fc89a` 合入。根工作区 `phone-minimal-integration` / `codex/phone-minimal-ui`。用户已明确要求按确认稿接入；本计划直接执行，不重复请求视觉批准或执行方式选择。
+
+## 完成记录
+
+产品代码0808d5ff；App1221/1221、最终verify、iOS/Android导出、独立原生模拟器验收均通过。完整记录见 `docs/superpowers/reports/2026-10-28-phone-minimal-acceptance.md`。未合入／部署共享dev，保留功能分支供指定整合者复核。
