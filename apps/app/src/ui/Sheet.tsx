@@ -6,8 +6,8 @@ import { space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
-/** Keep closing content mounted only for the short visual transition; hide it from assistive technology immediately. */
-export function Expansion({ open, children, onClosed }: { open: boolean; children: ReactNode; onClosed?: () => void }) {
+/** Mount lazily; optionally retain stateful editors after closing, while immediately hiding their controls. */
+export function Expansion({ open, children, onClosed, keepMounted = false }: { open: boolean; children: ReactNode; onClosed?: () => void; keepMounted?: boolean }) {
   const enabled = useMotionEnabled()
   const [rendered, setRendered] = useState(open)
   const [measured, setMeasured] = useState(0)
@@ -28,7 +28,7 @@ export function Expansion({ open, children, onClosed }: { open: boolean; childre
     const current = ++generation.current
     const finishClose = () => {
       if (current !== generation.current || isOpen.current) return
-      setRendered(false)
+      if (!keepMounted) setRendered(false)
       if (pendingClose.current) { pendingClose.current = false; onClosedRef.current?.() }
     }
     if (open) setRendered(true)
@@ -44,7 +44,7 @@ export function Expansion({ open, children, onClosed }: { open: boolean; childre
     ])
     animation.start(({ finished }) => { if (finished) finishClose() })
     return () => { generation.current += 1; animation.stop() }
-  }, [open, enabled, measured, height, opacity])
+  }, [open, enabled, measured, height, opacity, keepMounted])
   if (!rendered) return null
   return <Animated.View pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
     style={{ overflow: 'hidden', height: enabled && interacted.current ? height : open ? undefined : 0, opacity }}>

@@ -397,7 +397,7 @@ export default function Matter() {
 
         {inputReceipts.length ? <InputReceipts rows={inputReceipts} onRestore={restoreInput} /> : null}
         {inputNotice ? <Txt role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{inputNotice}</Txt> : null}
-        <DetailSection testID="progress-changes" title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
+        <DetailSection key={`changes:${id}:${turn?.artifactId ?? ''}`} keepMounted testID="progress-changes" title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
           {gone.discarded ? <Txt testID="progress-changes-discarded" role="meta" tone="inkSoft">{gone.discarded}</Txt> : null}
           {gone.after ? <Txt testID="progress-changes-discarded-after" role="small" tone="inkSoft">{gone.after}</Txt> : null}
           {canOfferRewind(turn, !!rewindBlocked) ? (
@@ -478,8 +478,10 @@ export default function Matter() {
           onSettled={o => { setRewindOpen(false); setRewindNote(o.text); void refreshChanges(); void refreshDetail() }} />
       ) : null}
       <Modal visible={sheet} transparent animationType="slide" onRequestClose={() => setSheet(false)}>
+        <View style={{ flex: 1 }}>
         <Pressable accessibilityLabel={t(lang, 'handoff.later')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setSheet(false)} />
-        <View testID="handoff-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+        <SafeAreaView testID="handoff-sheet" edges={['bottom']} style={{ backgroundColor: c.paper, maxHeight: '90%', borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+          <ScrollView testID="handoff-sheet-scroll" style={{ flexShrink: 1 }} contentContainerStyle={{ padding: space.xl, gap: space.m }}>
           {d.quotaHandoff?.state === 'offer' ? (
             <>
               <Txt role="item" accessibilityRole="header">{t(lang, 'handoff.title', { to: providerName(d.quotaHandoff.to, d.matter.agentNames) })}</Txt>
@@ -492,14 +494,16 @@ export default function Matter() {
             <>{failureRow ?? <Txt testID="handoff-sheet-note" role="bubble" tone="inkSoft">{t(lang, 'handoff.changed')}</Txt>}</>
           )}
           <Button kind="secondary" testID="handoff-cancel" label={t(lang, 'handoff.later')} onPress={() => setSheet(false)} />
+          </ScrollView>
+        </SafeAreaView>
         </View>
       </Modal>
     </SafeAreaView>
   )
 }
 
-/** Quiet disclosure rows share the existing expansion motion and preserve mounted state while closing. */
-function DetailSection({ title, testID, children }: { title: string; testID: string; children: ReactNode }) {
+/** Stateful review editors survive collapsing; a new matter or change artifact starts fresh. */
+function DetailSection({ title, testID, children, keepMounted = false }: { title: string; testID: string; children: ReactNode; keepMounted?: boolean }) {
   const { c } = useTheme()
   const [open, setOpen] = useState(false)
   return <View>
@@ -508,6 +512,6 @@ function DetailSection({ title, testID, children }: { title: string; testID: str
       <Txt role="meta" tone="inkSoft" style={{ flex: 1 }}>{title}</Txt>
       <Icon name={open ? 'chevronDown' : 'chevronRight'} color={c.inkSoft} />
     </Pressable>
-    <Expansion open={open}><View style={{ paddingVertical: space.m, gap: space.l }}>{children}</View></Expansion>
+    <Expansion open={open} keepMounted={keepMounted}><View style={{ paddingVertical: space.m, gap: space.l }}>{children}</View></Expansion>
   </View>
 }
