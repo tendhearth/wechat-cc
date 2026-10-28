@@ -3,6 +3,12 @@ export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 /** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
 export interface PendingPermissionMeta { chatId: string; prompt: string }
 
+/** 登记处的留痕口(构造参数):开卡写一行、了结删一行 —— 实现在 pending-cards.ts(v91 pending_cards)。 */
+export interface PendingCardJournal {
+  opened(hash: string, meta: PendingPermissionMeta, createdAt: number, expiresAt: number): void
+  settled(hash: string): void
+}
+
 /** Row shape returned by PendingPermissions.list(). */
 /** `code` 是主人在微信里回的两位数(01–99,滚动分配);`hash` 是调用方的原 id,桌面卡片与 hook 轮询仍用它。 */
 export interface PendingPermissionView { hash: string; code: string; chatId: string; prompt: string; since: string; expires_at: string }
@@ -21,20 +27,37 @@ export class PendingPermissions {
   // 主人对着旧卡片回「y 01」就批错了。滚动 99 条才回头,手机上也只用数字键盘。
   private nextCode = 1
 
+  /**
+   * journal:开卡 / 了结各记一笔(pending-cards.ts,v91)—— 登记处只在内存里,重启后靠它告诉主人「重启前那张卡作废了」。
+   * 不给(单测、最小嵌入)⇒ 不记。
+   */
+  constructor(private readonly journal?: PendingCardJournal) {}
+
+  /** 一条从登记处拿掉了(批 / 拒 / 过期 / 没送到 / 被同 id 顶掉)。 */
+  private settle(hash: string, entry: Entry, decision: PermissionDecision): void {
+    this.entries.delete(hash)
+    this.journal?.settled(hash)
+    entry.resolve(decision)
+  }
+
   register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta): Promise<PermissionDecision> {
     // 同一个 id 还挂着就又来一条(gemini 重开会话后 seq 从 1 重来;Claude 缺 toolUseID 时都落到同一个 id):
     // 先把旧的按超时了结 —— 原先直接覆盖,旧 promise 永远不 resolve,主人回的「y」也落到新的那条上(2026-10-10)。
     const prev = this.entries.get(hash)
-    if (prev) { this.entries.delete(hash); prev.resolve('timeout') }
-    return new Promise<PermissionDecision>((resolve) => {
+    if (prev) this.settle(hash, prev, 'timeout')
+    const now = Date.now()
+    const expiresAt = now + timeoutMs
+    const promise = new Promise<PermissionDecision>((resolve) => {
       this.entries.set(hash, {
         resolve,
-        expiresAt: Date.now() + timeoutMs,
-        registeredAt: Date.now(),
+        expiresAt,
+        registeredAt: now,
         meta: meta ?? null,
         code: this.allocateCode(),
       })
     })
+    if (meta) this.journal?.opened(hash, meta, now, expiresAt)
+    return promise
   }
 
   private allocateCode(): string {
@@ -111,8 +134,7 @@ export class PendingPermissions {
   consume(hash: string, decision: 'allow' | 'deny'): boolean {
     const entry = this.entries.get(hash)
     if (!entry) return false
-    this.entries.delete(hash)
-    entry.resolve(decision)
+    this.settle(hash, entry, decision)
     return true
   }
 
@@ -125,18 +147,14 @@ export class PendingPermissions {
   fail(hash: string): boolean {
     const entry = this.entries.get(hash)
     if (!entry) return false
-    this.entries.delete(hash)
-    entry.resolve('undelivered')
+    this.settle(hash, entry, 'undelivered')
     return true
   }
 
   sweep(): void {
     const now = Date.now()
     for (const [hash, entry] of Array.from(this.entries.entries())) {
-      if (entry.expiresAt <= now) {
-        this.entries.delete(hash)
-        entry.resolve('timeout')
-      }
+      if (entry.expiresAt <= now) this.settle(hash, entry, 'timeout')
     }
   }
 

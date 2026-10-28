@@ -31,6 +31,7 @@ import { makeCareLedger } from '../features/companion'
 import { makeProviderRefusals } from './provider-refusals'
 import { SubsystemSupervisor } from './subsystems'
 import { makeProjects } from './projects'
+import { makePendingCardsStore, takeVoidedCards } from './pending-cards'
 
 export async function openFoundation(opts: { stateDir: string }, undo: Array<() => void>) {
   const { stateDir } = opts
@@ -100,6 +101,8 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
   if (accounts.length === 0) throw new Error('[wechat-cc] no accounts bound. Run `wechat-cc setup` first.')
   const db: Db = openDb({ path: join(stateDir, 'wechat-cc.db') })
   undo.push(() => db.close())
+  // 上一个进程留下的拍板卡(pending-cards.ts):在任何模块开新卡之前取,开机走完由 main.ts 告诉主人「作废了」。
+  const voidedCards = takeVoidedCards(makePendingCardsStore(db), Date.now(), (t, l) => log(t, l))
 
   // ConversationStore must be constructed BEFORE the ilink adapter — the
   // adapter's setUserName/resolveUserName go through it. Legacy
@@ -125,6 +128,7 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     accounts,
     db,
     bootAtIso: new Date().toISOString(),
+    voidedCards,
     // Per-turn observability store — written by the coordinator's recordTurn
     // (via bootstrap onTurnRecord) and read by internal-api GET /v1/turns.
     turnRecordStore: makeTurnRecordStore(db),

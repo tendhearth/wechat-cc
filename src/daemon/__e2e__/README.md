@@ -27,7 +27,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 放行规则 | 开机前就有的 `permission-rules.json`:`ls` 不弹卡直接放,回复后面单独一行「按规则「列目录不用问」放行了 ls」;有规则放 git,`git push` 是红线照旧弹卡,主人回 `n` ⇒ codex 收到 decline |
 | 微信里派活 | 主人发「任务 项目」⇒ 列出 projects.json 里的 git 项目;「任务 新建 <项目> 用 @codex …」⇒ 执行者在项目里写了文件、桌面看到 `phase: replied`、回报发件箱(`matter_report_outbox`)里有带答复正文的「已答复」;「任务 <编号> 改动」列出 NOTE.md(新建),`GET /v1/workbench/review` 的快照里也有它 |
 | 陌生人加进来 | 不在名单里的人说话 ⇒ 对方收到中性回复、主人收到带码的请求;主人回「允许 <码>」⇒ 对方被问称呼、之后的话到了 CC;访客的会话工具全关(Bash / Write / Edit / Read / WebFetch / Task),提示词里没有主人的长期记忆和原话 |
-| 卡还挂着就重启 | Codex 一张卡在等主人时关机 ⇒ 关机收尾把这条审批按「拒」答回给 codex;再开机后登记处是空的,主人迟到的「y」当普通的一句话交给 CC(有回、没出新卡、没放行任何东西) |
+| 卡还挂着就重启 | Codex 一张卡在等主人时关机 ⇒ 关机收尾把这条审批按「拒」答回给 codex;再开机后主人在那个对话里收到一次「重启前那张「Codex 想执行命令:rm -rf dist」的卡作废了，还要的话再说一次。」(`pending_cards` 清空,下一次开机不再说);登记处是空的,主人迟到的「y」当普通的一句话交给 CC(有回、没出新卡、没放行任何东西) |
 | 关机再开机 | 正常关机没有哪一步停失败;同一个 stateDir 再开机:不重复导入、照样健康、没有模块坏、对话模式留住了、照样收发 |
 | 开机时一样起不来 | 再开机时 A2A 端口被别的程序占了 ⇒ 照样开起来;`/v1/health` 里只有 `a2a-server=degraded`,其余专门开上的都 ok;主人收到一句「这次开机有几样没起来：CC 之间的往来。其它功能照常。」;照样收发 |
 
@@ -46,6 +46,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | `features/workbench/wire.ts` 工作台不读 projects.json(`registeredProjects: () => []`) | 微信里派活(「任务 项目」里没有那个项目) |
 | `domain/user-tier.ts` 名单里的人都当 admin(补回注释里明说不要的 allowFrom 兜底) | 陌生人加进来(访客会话的工具没关) |
 | `daemon/ilink-glue.ts` 没有待批时的「y」也当成拍板吞掉 | 卡还挂着就重启(迟到的「y」没人回) |
+| `daemon/pending-cards.ts` 开机不说作废(或登记处不落 `pending_cards`) | 卡还挂着就重启(等不到那一句作废) |
 | `daemon/runtime/boot-report.ts` 降级汇总不发 | 开机时一样起不来(主人没收到那一句) |
 
 ### 开了什么

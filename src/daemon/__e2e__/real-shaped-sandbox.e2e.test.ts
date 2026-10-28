@@ -276,7 +276,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(prompt).not.toContain('周三晚上固定打羽毛球')
   })
 
-  it('restart while a card is pending: the card dies with the daemon — nothing approves it after the reboot, and the owner\'s late "y" is ordinary chat', async () => {
+  it('restart while a card is pending: the card dies with the daemon — after the reboot the owner is told once that it is void, and the late "y" approves nothing (ordinary chat)', async () => {
     d.sendText(d.owner, '再清一次 dist')
     await d.waitForOutbound(m => texts(m, d.owner).some(t => isCard(t) && t.includes('rm -rf dist')), 15_000)
     const stateDir = d.stateDir
@@ -289,12 +289,19 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
 
     d = await boot({ stateDir })
     expect(await d.moduleProblems()).toEqual([])
+    // 重启后告诉主人一次:重启前那张卡作废了(卡上那一句话说要做什么),在发卡的那个对话里
+    const VOID = '重启前那张「Codex 想执行命令:rm -rf dist」的卡作废了，还要的话再说一次。'
+    await d.waitForOutbound(m => texts(m, d.owner).includes(VOID), 15_000)
     // 待批登记处只在内存里:重启后那张卡不在了,主人回的「y」不是拍板,当普通的一句话交给 CC(有回、没出新卡、没放行任何东西)
     d.sendText(d.owner, 'y')
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
     expect(decisions.has('rm -rf dist')).toBe(false)
-    expect(texts(d.ilink.outbox(), d.owner).some(isCard)).toBe(false)
+    // 卡 = 带「怎么回」那一行的;作废通知里有卡上那句话,但没有码、批不了
+    expect(texts(d.ilink.outbox(), d.owner).some(t => isCard(t) && t.includes('放行、'))).toBe(false)
     expect(d.log().some(l => /\[PERMISSION\] consumed reply/.test(l))).toBe(false)
+    // 只说一次:作废通知恰好一条;说完表里清掉了,下次开机不再说
+    expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes('作废了'))).toEqual([VOID])
+    expect(d.query<{ n: number }>('SELECT COUNT(*) AS n FROM pending_cards')[0]!.n).toBe(0)
   })
 
   it('graceful stop, then reboot on the same state dir: no re-import, still healthy, no module failures', async () => {
@@ -316,6 +323,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     d.sendText(d.owner, '还在吗')
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
     expect(unexpectedOutbound(d.fence.blocked())).toEqual([])
+    // 上一次重启已经说过作废了,这次没有挂着的卡 ⇒ 不再说
+    expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes('作废了'))).toEqual([])
     // 记忆页删掉的那句,重启以后也没回来(手改核对没把它当成「磁盘上多出来的」)
     expect(readFileSync(join(stateDir, 'memory', d.owner, 'memory.md'), 'utf8')).not.toContain(RETRACTED)
   })
