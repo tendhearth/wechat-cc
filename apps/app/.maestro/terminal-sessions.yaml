@@ -1,4 +1,4 @@
-# 终端里的会话 + 今天(2026-10-15,演示模式;10-16 改):此刻页「N 件事等你」在上、「过去 24 小时」在下(不再重复等你的数),
+# 终端里的会话 + 完成记录(演示模式):此刻直接呈现待回应行,完成记录收在数量入口里,
 # 终端那条等批准算进去(点进详情能拍)→ 一起做「终端里的会话」三行(等你批准 / 在跑 / 歇着),每行只有一个动作
 # (等批准那行是「看清楚 ›」)→ 在跑那条的详情:说一句是灰的 → 歇着那条的详情:说一句 → 收下
 # → 回到一起做,点「看清楚 ›」进详情「允许」→ 那条转成在跑。每一步截图。
@@ -9,14 +9,20 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: now-today
+      id: now-look-then-decide
     timeout: 10000
-- assertVisible:
-    id: now-waiting-title
+- scrollUntilVisible:
+    element:
+      id: now-today-counts
+    direction: DOWN
+    centerElement: true
 - takeScreenshot: t01-now-today
-# 终端那条等批准排在「N 件事等你」里;点进去是终端会话详情,能拍
-# iOS 把滚动区下沿被裁掉的行也报成可见 ⇒ scrollUntilVisible 不滚;先实打实滚一下,免得点到下面「跟 CC 说一句」
-- scroll
+# 完成记录在待回应行之后;回到具体终端批准行,点进详情再拍板。
+- scrollUntilVisible:
+    element:
+      id: now-terminal-demo-cli-blog
+    direction: UP
+    centerElement: true
 - assertVisible:
     id: now-terminal-demo-cli-blog
 - takeScreenshot: t01b-now-waiting-terminal
@@ -60,7 +66,7 @@ appId: com.tendhearth.app
     id: terminal-open-demo-cli-docs
 - extendedWaitUntil:
     visible:
-      id: terminal-detail-summary
+      id: terminal-activity
     timeout: 5000
 - assertVisible:
     id: terminal-say-busy

@@ -1,5 +1,5 @@
-# 设置 → 电脑上的会话 → 正在跑的那条只有灰字、没有按钮 → Codex 那条:确认卡如实说「没看到在跑」,按钮只写「接着做」
-# → Claude Code 那条:确认卡(先让原来那个停下),按钮写「已经停了，接着做」
+# 一起做的菜单 → 电脑会话 → 正在跑的那条只有灰字、没有按钮 → Codex 那条:确认卡如实说「没看到在跑」,按钮只写「接着做」
+# → Claude 那条:确认卡(先让原来那个停下),按钮写「已经停了，接着做」
 # → 进这件事、说一句页输入框已聚焦(直接打字,不点输入框)→ 发出 → 回到这件事,话在对话里,「第一句」说明消失。演示模式。
 appId: com.tendhearth.app
 ---
@@ -11,12 +11,11 @@ appId: com.tendhearth.app
       id: now-connections
     timeout: 10000
 - tapOn:
-    id: topbar-settings
-- scrollUntilVisible:
-    element:
-      id: settings-sessions
+    id: tab-together
 - tapOn:
-    id: settings-sessions
+    id: together-more
+- tapOn:
+    id: together-sessions
 - extendedWaitUntil:
     visible:
       id: sessions-row-demo-claude-1
@@ -58,8 +57,8 @@ appId: com.tendhearth.app
     id: continue-cancel
 - tapOn:
     id: topbar-back
-# Claude Code
-- tapOn: "Claude Code"
+# Claude
+- tapOn: "Claude"
 - extendedWaitUntil:
     visible:
       id: sessions-row-demo-claude-2
@@ -103,8 +102,18 @@ appId: com.tendhearth.app
     id: compose-send
 - extendedWaitUntil:
     visible:
-      id: progress-conversation
+      id: progress-process
     timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: progress-process
+    direction: DOWN
+- tapOn:
+    id: progress-process
+- extendedWaitUntil:
+    visible:
+      id: progress-conversation
+    timeout: 5000
 - scrollUntilVisible:
     element:
       text: ".*finish the homepage.*"

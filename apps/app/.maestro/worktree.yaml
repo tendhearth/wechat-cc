@@ -25,6 +25,12 @@ appId: com.tendhearth.app
     id: together-item-e5f6a7b8
 - scrollUntilVisible:
     element:
+      id: progress-process
+    direction: DOWN
+- tapOn:
+    id: progress-process
+- scrollUntilVisible:
+    element:
       id: progress-worktree
 - assertVisible: ".*cc/notes001.*"
 - tapOn:
@@ -61,8 +67,19 @@ appId: com.tendhearth.app
     id: progress-wt-fork
 - extendedWaitUntil:
     visible:
-      id: compose-isolation
+      id: compose-adjust
+      enabled: true
     timeout: 10000
+- tapOn:
+    id: compose-adjust
+- extendedWaitUntil:
+    visible:
+      id: compose-adjust-sheet
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: compose-isolation
+    direction: DOWN
 - assertVisible:
     id: compose-base
 - takeScreenshot: worktree-fork-compose
