@@ -257,7 +257,7 @@
 - `plan.ts` 剩下 10 个:`primary_tool` 两条的 `logs: []`、守护那句日志的结构化字段、`registry.get` 为空时传不传模型 —— 不影响计划本身。
 - `db.ts` 剩下 15 个同上一节:日志文案、Node 上的外键默认值、`openSqlite` 默认建库、`FORK_POINT` 边界。
 
-- `lifecycle`:Stryker 还在跑(不 bail 约五小时),跑完补这一条。
+- `lifecycle`:Stryker 还在跑(只要分数,用默认 bail),跑完补这一条。
 
 ### 唯一杀为 0 的测试文件
 
@@ -273,9 +273,67 @@ node tools/mutation/node_modules/@stryker-mutator/core/bin/stryker.js run stryke
 bun tools/mutation/unique-kills.ts reports/mutation/inc/perm-*.json
 ```
 
-#### 权限这一块(authorize + permission-rules 五份)
+#### 权限这一块(authorize + permission-rules 五份;当前测试,含上一轮 #749 补的)
 
-还在跑(`--disableBail`,一次一个文件),跑完补。
+分数(不 bail 重跑,和基线 / 上一轮比):authorize 95.5、chat 80.2、decide 79.3、paths 95.1、floor 83.2(499 个变异,#750 改过红线以后多了)、rules-file 78.2 —— 与上一轮持平,没有回退。
+
+```
+bun tools/mutation/unique-kills.ts reports/mutation/inc/perm-{authorize,chat,decide,paths,floor,rulesfile}.json
+```
+
+前十(唯一杀 / 能杀 / 覆盖):
+
+```
+  259   418   424  src/adapters/permission-rules/floor.test.ts
+   86   317   406  src/adapters/permission-rules/rules-file.test.ts
+   55   302   582  src/adapters/permission-rules/decide.test.ts
+   29   378   711  src/adapters/permission-rules/chat.test.ts
+   27   148   340  src/adapters/permission-rules/paths.test.ts
+   22   162   175  src/domain/authorize.test.ts
+   14   186   326  src/domain/authorize.parity.test.ts
+    7   358   701  src/daemon/chat-owner-rules.test.ts
+    3   338   736  src/daemon/permission-gate.test.ts
+    1    64   136  src/daemon/bootstrap/wire-model-options.test.ts
+```
+
+唯一杀为 0、但跑到过目标代码的测试文件(35 个;另有 115 个被牵连进来、一行目标代码都没跑到,不列):
+- src/adapters/executors/codex/codex-chat-gate.test.ts(能杀 237,覆盖 511)
+- src/cli/rules.test.ts(能杀 96,覆盖 177)
+- src/domain/enforcement-matrix.test.ts(能杀 45,覆盖 89)
+- src/adapters/executors/claude/permission-relay.test.ts(能杀 44,覆盖 107)
+- src/adapters/executors/gemini/gemini-agent-provider.test.ts(能杀 40,覆盖 105)
+- src/adapters/executors/openai/openai-gate.test.ts(能杀 39,覆盖 98)
+- src/adapters/workbench/permissions.test.ts(能杀 35,覆盖 52)
+- src/domain/enforcement-matrix.proof.test.ts(能杀 34,覆盖 88)
+- src/adapters/executors/claude/claude-agent-provider.test.ts(能杀 31,覆盖 86)
+- src/adapters/executors/openai-integration.test.ts(能杀 26,覆盖 70)
+- src/domain/review-profile.test.ts(能杀 25,覆盖 58)
+- src/adapters/executors/openai/openai-agent-provider.test.ts(能杀 24,覆盖 67)
+- src/daemon/bootstrap.test.ts(能杀 14,覆盖 77)
+- src/daemon/mode-commands.test.ts(能杀 8,覆盖 89)
+- src/daemon/reply-delivery.test.ts(能杀 8,覆盖 8)
+- src/daemon/internal-api/routes-daemon-control.test.ts(能杀 7,覆盖 87)
+- src/features/workbench/wire.test.ts(能杀 7,覆盖 34)
+- src/daemon/internal-api/send-scope.test.ts(能杀 6,覆盖 82)
+- src/daemon/bootstrap/openai-plugin-stall.test.ts(能杀 5,覆盖 37)
+- src/features/reminders/reminders.e2e.test.ts(能杀 2,覆盖 170)
+- src/features/phone/tunnel-client.test.ts(能杀 0,覆盖 158)
+- src/mcp-servers/wechat/integration.test.ts(能杀 0,覆盖 108)
+- src/features/phone/phone-api-schema.test.ts(能杀 0,覆盖 28)
+- src/features/phone/phone-e2e.test.ts(能杀 0,覆盖 28)
+- src/features/phone/settings-panel-workbench.test.ts(能杀 0,覆盖 28)
+- src/features/workbench/api-task.integration.test.ts(能杀 0,覆盖 28)
+- src/features/workbench/service-background.test.ts(能杀 0,覆盖 28)
+- src/features/workbench/service-network-suspend.test.ts(能杀 0,覆盖 28)
+- src/features/workbench/service-one-session.test.ts(能杀 0,覆盖 28)
+- src/features/workbench/service.test.ts(能杀 0,覆盖 28)
+- src/features/workbench/wechat-control.test.ts(能杀 0,覆盖 28)
+- src/features/workbench/wechat-task-notifications.test.ts(能杀 0,覆盖 28)
+- src/features/workbench/wire-notifications.test.ts(能杀 0,覆盖 28)
+- src/domain/capability-matrix.test.ts(能杀 0,覆盖 5)
+- src/ports/agent-provider.test.ts(能杀 0,覆盖 5)
+
+读法:执行者闸门(codex-chat-gate / permission-relay / openai-gate / gemini)、enforcement-matrix 两份、`cli/rules.test.ts` 能杀的很多,但全是同目录单测也杀得了的;工作台 / 手机那十几份集成测试各覆盖 28 个(authorize 的同一条路径),一个都杀不了。最该先看的是后者。
 
 #### 协调器(plan.ts)
 
@@ -399,5 +457,5 @@ bun tools/mutation/unique-kills.ts reports/mutation/inc/adm-after.json reports/m
 ### 跑的时候撞到的
 
 1. **补完测试后用增量重跑,原来活着的变异会被原样沿用**。`reply-delivery` 那份补了 21 条用例,增量重跑出来 110 个活变异一个没少(手工改坏其中一处,新用例当场红);`turn-reply` 的 7 个模块级正则(静态变异)同样。增量判断「要不要重测」看的是覆盖它的旧测试改没改,新加的测试杀不杀得了一个原来活着的变异,它看不见。**补测试后的复跑:先把增量文件里 `Survived` / `NoCoverage` 的条目删掉**(只加了测试,被杀的不会变活),或者 `--force`。
-2. 工作台三份(`admission` / `inputs` / `lifecycle`)不 bail 很慢:每个变异要把牵连到的 900 多条工作台测试里覆盖它的全跑完,`admission` 121 个变异 57 分钟,`lifecycle` 638 个预计五个小时。
+2. 工作台三份(`admission` / `inputs` / `lifecycle`)不 bail 很慢:每个变异要把牵连到的 900 多条工作台测试里覆盖它的全跑完,`admission` 121 个变异 57 分钟,`lifecycle` 638 个预计五个小时 —— 所以 `lifecycle` 只量分数(默认 bail),唯一杀的清单只数了 `admission` + `inputs` 两份(牵连的是同一批工作台测试)。
 3. `lifecycle` 第一次跑到 37% 时主人开始用机器(CPU 空闲掉到 11%),超时从 19 / 78 涨到 85 / 210 —— 机器忙把正常变异判成 Timeout(算「护住」,虚高)。中断后删掉增量里的 Timeout 条目,等空闲再接着跑。`vm.loadavg` 在这台机器上读数乱跳(同一秒 4 和 900),等空闲改看 `iostat` 的 CPU 空闲。
