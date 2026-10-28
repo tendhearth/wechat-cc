@@ -2,7 +2,7 @@
  * `bun tools/mutation/unique-kills.ts <mutation.json>... [--only <源文件前缀>]... [--md]`
  *
  * 读一份或几份**不 bail**(`--disableBail`)的 Stryker 报告,按测试文件数「唯一杀」:一个被杀的变异,如果杀死它的测试
- * 全在同一个测试文件里,就算那个文件的唯一杀。打印每个测试文件的 唯一杀 / 能杀 / 覆盖,再单列「唯一杀为 0」的
+ * 全在同一个测试文件里,就算那个文件的唯一杀。打印每个跑到过目标代码的测试文件的 唯一杀 / 能杀 / 覆盖,再单列其中「唯一杀为 0」的
  * 测试文件 —— 删 / 并测试的候选清单(删之前仍要看它断言了什么,见 mutation-baseline-2026-10.md「怎么用这份基线」)。
  *
  * 几份报告(`--mutate` 一次一个文件跑出来的)可以一起给:测试 id 是每份报告各自编的,按报告分别换成测试文件再合计。
@@ -48,13 +48,15 @@ for (const path of paths) {
 if (killed > 0 && multi === 0) console.error('警告:没有一个变异被多于一条测试杀死 —— 这份报告多半是默认 bail 跑的,唯一杀不可信。')
 
 const sorted = [...rows].sort((a, b) => b[1].unique - a[1].unique || b[1].kills - a[1].kills || b[1].covered - a[1].covered || a[0].localeCompare(b[0]))
-const zero = sorted.filter(([, r]) => r.unique === 0)
+// 唯一杀为 0 只列真跑到过目标代码的(覆盖 > 0);牵连进来(vitest --related)但一行都没跑到的只报个数。
+const zero = sorted.filter(([, r]) => r.unique === 0 && r.covered > 0)
+const idle = sorted.filter(([, r]) => r.covered === 0).length
 if (md) {
   console.log('| 测试文件 | 唯一杀 | 能杀 | 覆盖 |\n|---|---:|---:|---:|')
-  for (const [f, r] of sorted) console.log(`| \`${f}\` | ${r.unique} | ${r.kills} | ${r.covered} |`)
+  for (const [f, r] of sorted) if (r.covered > 0) console.log(`| \`${f}\` | ${r.unique} | ${r.kills} | ${r.covered} |`)
 } else {
   console.log(`被杀的变异 ${killed} 个(其中 ${multi} 个被多于一条测试杀死)`)
-  for (const [f, r] of sorted) console.log(`${String(r.unique).padStart(5)} ${String(r.kills).padStart(5)} ${String(r.covered).padStart(5)}  ${f}`)
+  for (const [f, r] of sorted) if (r.covered > 0) console.log(`${String(r.unique).padStart(5)} ${String(r.kills).padStart(5)} ${String(r.covered).padStart(5)}  ${f}`)
 }
-console.log(`\n唯一杀为 0 的测试文件(${zero.length} 个;覆盖 0 = 牵连进来但一行目标代码都没跑到):`)
+console.log(`\n唯一杀为 0、但跑到过目标代码的测试文件(${zero.length} 个;另有 ${idle} 个被牵连进来、一行目标代码都没跑到,不列):`)
 for (const [f, r] of zero) console.log(`- ${f}(能杀 ${r.kills},覆盖 ${r.covered})`)
