@@ -31,6 +31,31 @@ describe('cardSummary — 卡上一句话说要做什么', () => {
   })
 })
 
+describe('cardSummary 打码:卡上那句话进库、进微信,常见的密钥写法都遮掉', () => {
+  const cases: Array<[string, string, string]> = [
+    ['sshpass -p', 'sshpass -p hunter2 ssh me@host', 'hunter2'],
+    ['mysql -p 连写', 'mysql -uroot -pSECRETpw db', 'SECRETpw'],
+    ['mysql --password=', 'mysql --password=SECRETpw db', 'SECRETpw'],
+    ['curl -u', 'curl -u alice:s3cretpw https://x.example', 's3cretpw'],
+    ['curl --user', 'curl --user alice:s3cretpw https://x.example', 's3cretpw'],
+    ['URL 里的账号密码', 'git clone https://alice:s3cretpw@git.example/r', 's3cretpw'],
+    ['Bearer 不透明令牌', 'curl -H "Authorization: Bearer abcDEF123456xyz" x', 'abcDEF123456xyz'],
+    ['Basic', 'curl -H "Authorization: Basic YWxpY2U6czNjcmV0" x', 'YWxpY2U6czNjcmV0'],
+  ]
+  for (const [name, cmd, secret] of cases) {
+    it(name, () => {
+      const s = cardSummary(cmd)
+      expect(s).not.toContain(secret)
+      expect(s).toContain('[已打码]')
+    })
+  }
+  it('不误伤:mkdir -p、ssh -p 端口、普通网址照原样', () => {
+    expect(cardSummary('mkdir -p dist && ls')).toBe('mkdir -p dist && ls')
+    expect(cardSummary('ssh -p 2222 me@host')).toBe('ssh -p 2222 me@host')
+    expect(cardSummary('curl https://example.com/a')).toBe('curl https://example.com/a')
+  })
+})
+
 describe('voidedCardsNotice — 给主人的那一句', () => {
   it('一张', () => {
     expect(voidedCardsNotice(['Codex 想执行命令:rm -rf dist'])).toBe('重启前那张「Codex 想执行命令:rm -rf dist」的卡作废了，还要的话再说一次。')
@@ -82,8 +107,7 @@ describe('重启:上一个进程留下的卡作废,告诉主人一次', () => {
     const fresh = makePendingCardsStore(db)
     fresh.add({ hash: 'zzzzz', chatId: OWNER, summary: '这一轮的', createdAt: bootAt, expiresAt: bootAt + 600_000 })
     const { said, speech } = fakeSpeech()
-    reportVoidedCards({ voided, now: bootAt, speech, log: noLog })
-    await Promise.resolve()
+    await reportVoidedCards({ voided, now: bootAt, speech, log: noLog })
     expect(said).toEqual([
       { kind: 'restart_voided_cards', chatId: OWNER, text: '重启前有 2 张卡作废了：\n「Codex 想执行命令:rm -rf dist」\n「Codex 想改文件:src/a.ts」\n还要的话再说一次。' },
       { kind: 'restart_voided_cards', chatId: OTHER, text: '重启前那张「Codex 想执行命令:npm publish」的卡作废了，还要的话再说一次。' },
@@ -94,15 +118,35 @@ describe('重启:上一个进程留下的卡作废,告诉主人一次', () => {
     expect(after.consume('aaaaa', 'allow')).toBe(false)
     // 再开机一次:不再说
     const again = fakeSpeech()
-    reportVoidedCards({ voided: takeVoidedCards(makePendingCardsStore(db), bootAt, noLog), now: bootAt, speech: again.speech, log: noLog })
+    await reportVoidedCards({ voided: takeVoidedCards(makePendingCardsStore(db), bootAt, noLog), now: bootAt, speech: again.speech, log: noLog })
     expect(again.said).toEqual([])
   })
 
-  it('停机久到卡本来就过期了 ⇒ 不提,照样清掉', () => {
+  it('门抛了(没交出去)⇒ 那个 chat 的行留着,下次开机再说;回来了(说出去 / 进了待说队列)的 chat 才清', async () => {
+    const db = openTestDb()
+    const store = makePendingCardsStore(db)
+    store.add({ hash: 'aaaaa', chatId: OWNER, summary: '给主人的', createdAt: 1_000, expiresAt: 900_000 })
+    store.add({ hash: 'bbbbb', chatId: OTHER, summary: '给另一个的', createdAt: 1_000, expiresAt: 900_000 })
+    const speech = {
+      async tell(_k: 'restart_voided_cards', chatId: string) {
+        if (chatId === OTHER) throw new Error('outbound.open threw')
+        return false   // 推后了:门已经放进落盘的待说队列
+      },
+    }
+    await reportVoidedCards({ voided: takeVoidedCards(store, 10_000, noLog), now: 10_000, speech, log: noLog })
+    expect(rows(db).map(r => r.hash)).toEqual(['bbbbb'])
+    // 下次开机:再说一次,这回交出去了 ⇒ 清掉
+    const next = fakeSpeech()
+    await reportVoidedCards({ voided: takeVoidedCards(store, 20_000, noLog), now: 20_000, speech: next.speech, log: noLog })
+    expect(next.said.map(s => s.chatId)).toEqual([OTHER])
+    expect(rows(db)).toEqual([])
+  })
+
+  it('停机久到卡本来就过期了 ⇒ 不提,照样清掉', async () => {
     const db = openTestDb()
     makePendingCardsStore(db).add({ hash: 'aaaaa', chatId: OWNER, summary: 'old', createdAt: 1_000, expiresAt: 2_000 })
     const { said, speech } = fakeSpeech()
-    reportVoidedCards({ voided: takeVoidedCards(makePendingCardsStore(db), 10_000, noLog), now: 10_000, speech, log: noLog })
+    await reportVoidedCards({ voided: takeVoidedCards(makePendingCardsStore(db), 10_000, noLog), now: 10_000, speech, log: noLog })
     expect(said).toEqual([])
     expect(rows(db)).toEqual([])
   })

@@ -50,8 +50,11 @@ export function makePendingCardsStore(db: Db) {
     before(ts: number): PendingCardRow[] {
       return db.query<PendingCardRow, [number]>('SELECT hash,chat_id AS chatId,summary,created_at AS createdAt,expires_at AS expiresAt FROM pending_cards WHERE created_at<? ORDER BY created_at,hash').all(ts)
     },
-    clearBefore(ts: number): number {
-      return db.query('DELETE FROM pending_cards WHERE created_at<?').run(ts).changes
+    /** 只删这几张、而且是这一刻之前开的(开机后同一个 hash 又开了一张新的,那张不动)。 */
+    removeBefore(hashes: readonly string[], ts: number): number {
+      let n = 0
+      for (const h of hashes) n += db.query('DELETE FROM pending_cards WHERE hash=? AND created_at<?').run(h, ts).changes
+      return n
     },
   }
 }
@@ -73,10 +76,10 @@ export function makePendingCardJournal(store: PendingCardsStore, log: (tag: stri
   }
 }
 
-/** 地基开机时取一次:上一个进程留下的卡,以及说完以后怎么清。 */
+/** 地基开机时取一次:上一个进程留下的卡,以及说完以后怎么清(只清交出去了的那几张)。 */
 export interface VoidedCards {
   cards: PendingCardRow[]
-  clear(): void
+  clear(hashes: readonly string[]): void
 }
 
 export function takeVoidedCards(store: PendingCardsStore, bootAt: number, log: (tag: string, line: string) => void): VoidedCards {
@@ -84,31 +87,37 @@ export function takeVoidedCards(store: PendingCardsStore, bootAt: number, log: (
   try { cards = store.before(bootAt) } catch (e) { log('PERMISSION', `voided cards read failed: ${e instanceof Error ? e.message : String(e)}`) }
   return {
     cards,
-    clear() { try { store.clearBefore(bootAt) } catch (e) { log('PERMISSION', `voided cards clear failed: ${e instanceof Error ? e.message : String(e)}`) } },
+    clear(hashes) { try { store.removeBefore(hashes, bootAt) } catch (e) { log('PERMISSION', `voided cards clear failed: ${e instanceof Error ? e.message : String(e)}`) } },
   }
 }
 
 /**
- * 开机走完后说一次:每个 chat 一条。已经过了有效期的卡不提(不重启它也已经过期了)。
- * 交给 CC 开口那道门(restart_voided_cards,report):发不出去 / 被推后由门的待说队列接住,这里不重试。
- * 交出去就清表 —— 下次开机不再说第二遍。
+ * 开机走完后说一次:每个 chat 一条。已经过了有效期的卡不提(不重启它也已经过期了),直接清掉。
+ * 交给 CC 开口那道门(restart_voided_cards,report):tell 回来了(true = 说出去了;false = 被推后 / 发失败,
+ * 门已经把它放进落盘的待说队列)⇒ 这个 chat 的几行才删,下次开机不说第二遍。tell 抛了(门自己出错)
+ * 或者进程在交出去之前没了 ⇒ 行留着,下次开机再说。这里不重试。
  */
-export function reportVoidedCards(d: {
+export async function reportVoidedCards(d: {
   voided: VoidedCards
   now: number
   speech: { tell(kind: 'restart_voided_cards', chatId: string, text: string): Promise<boolean> }
   log: (tag: string, line: string) => void
-}): void {
-  const byChat = new Map<string, string[]>()
+}): Promise<void> {
+  const byChat = new Map<string, PendingCardRow[]>()
+  const expired: string[] = []
   for (const c of d.voided.cards) {
-    if (c.expiresAt <= d.now) continue
-    byChat.set(c.chatId, [...(byChat.get(c.chatId) ?? []), c.summary])
+    if (c.expiresAt <= d.now) { expired.push(c.hash); continue }
+    byChat.set(c.chatId, [...(byChat.get(c.chatId) ?? []), c])
   }
-  d.voided.clear()
+  if (expired.length) d.voided.clear(expired)
   if (d.voided.cards.length) d.log('PERMISSION', `voided ${d.voided.cards.length} card(s) from before the restart; telling ${byChat.size} chat(s)`)
-  for (const [chatId, summaries] of byChat) {
-    void d.speech.tell('restart_voided_cards', chatId, voidedCardsNotice(summaries))
-      .then(sent => { if (!sent) d.log('PERMISSION', `voided-cards notice to ${chatId} not sent now (deferred or send failed)`) })
-      .catch(err => d.log('PERMISSION', `voided-cards notice to ${chatId} failed: ${err instanceof Error ? err.message : String(err)}`))
-  }
+  await Promise.all([...byChat].map(async ([chatId, cards]) => {
+    try {
+      const sent = await d.speech.tell('restart_voided_cards', chatId, voidedCardsNotice(cards.map(c => c.summary)))
+      d.voided.clear(cards.map(c => c.hash))
+      if (!sent) d.log('PERMISSION', `voided-cards notice to ${chatId} not sent now (kept by the speech queue)`)
+    } catch (err) {
+      d.log('PERMISSION', `voided-cards notice to ${chatId} failed, kept for next boot: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }))
 }

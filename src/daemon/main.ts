@@ -93,7 +93,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   }
   reportBoot({ stateDir, dangerously, accounts: base.accounts.length, degraded: f.sup.degraded(), speech: wired.speech })
   // 重启前挂着的拍板卡:不管这次重启是不是计划内的,主人都丢了那张卡 ⇒ 说一次(和上面「几样没起来」是两件事,各说各的)
-  reportVoidedCards({ voided: base.voidedCards, now: Date.now(), speech: wired.speech, log: (t, l) => log(t, l) })
+  void reportVoidedCards({ voided: base.voidedCards, now: Date.now(), speech: wired.speech, log: (t, l) => log(t, l) })
 
   const polling = modules.provided<LifecycleHolder<PollingLifecycle>>('polling')?.current() ?? null
   return {
