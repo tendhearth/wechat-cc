@@ -97,7 +97,12 @@ export default function Memory() {
   const correct = async (id: string, verdict: MemoryVerdict) => {
     if (busy || !online) return
     setBusy(true); setNote(null)
-    try { await backend.correctMemory(id, verdict); setOpen(null); await memory.refresh(); setNote(t(lang, 'memory.done')) }
+    try {
+      await backend.correctMemory(id, verdict)
+      setOpen(null)
+      await Promise.all([memory.refresh(), retractions.refresh()])
+      setNote(t(lang, 'memory.done'))
+    }
     catch (e) { setNote(t(lang, e instanceof BackendError && e.code === 'not_found' ? 'memory.gone' : 'memory.failed')) }
     finally { setBusy(false) }
   }
