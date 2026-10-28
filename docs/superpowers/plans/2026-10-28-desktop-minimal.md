@@ -34,9 +34,9 @@
 
 **Interfaces:** Consume existing attention/terminal data and `icons.js`. Preserve task identity and terminal repair actions; normal request rows show the request plus a small icon/arrow, rather than repeating “N 件事等你” and “看清楚／回答”. Keep section accessibility and compact unknown/partial explanation. Do not modify `index.html`, shared icons or workbench code.
 
-- [ ] Add behavioral assertions for request identity, accessible purpose, stale/partial and terminal states; demonstrate the missing behavior.
-- [ ] Implement flat rows and remove redundant visible summary/action words while preserving existing data contracts or adding a presentation adapter.
-- [ ] Run focused unit/browser checks and capture a truthful demo screenshot; commit only owned files.
+- [x] Add behavioral assertions for request identity, accessible purpose, stale/partial and terminal states; demonstrate the missing behavior.
+- [x] Implement flat rows and remove redundant visible summary/action words while preserving existing data contracts or adding a presentation adapter.
+- [x] Run focused unit/browser checks and capture a truthful demo screenshot; commit only owned files.
 
 ### Task 2: 一起做 one clear decision state
 
@@ -44,9 +44,9 @@
 
 **Interfaces:** Consume current task/detail/permission/question state and existing icons; preserve action hooks, search, project folds, raw commands, cwd, exact-scope decisions, draft capture and result preview. Use quiet visual markers in list/top navigation; concrete operation and primary decision remain the focus of the decision area. Do not alter now-page, shared icons, index markup or backend code.
 
-- [ ] Add a rendered-page regression asserting one main visible decision instruction and correct accessible count/navigation, with approval scope preserved.
-- [ ] Reduce repeated waiting/count copy at list/top/detail layers; keep distinct blocked/failed/unknown/completed states.
-- [ ] Verify task switching, drafts, permission focus, wide/narrow layout and result access; commit owned changes.
+- [x] Add a rendered-page regression asserting one main visible decision instruction and correct accessible count/navigation, with approval scope preserved.
+- [x] Reduce repeated waiting/count copy at list/top/detail layers; keep distinct blocked/failed/unknown/completed states.
+- [x] Verify task switching, drafts, permission focus, wide/narrow layout and result access; commit owned changes.
 
 ### Task 3: Secondary entries and honest feedback
 
@@ -54,14 +54,14 @@
 
 **Interfaces:** Reuse existing disclosures and icons. Shorten secondary titles; move explanations into expanded details while distinguishing rereading from generation. Keep required privacy/scope disclosures. Settings success becomes a brief accessible check; saving and failure remain visible. Memory restore gets a synchronous pending lock and view ownership protection.
 
-- [ ] Reproduce duplicate restore request/false failure with a delayed system boundary, and settings feedback persistence with controlled time; add regressions before fixes.
-- [ ] Implement recovery lock and stale-response ownership, then verify success, failure and retry.
-- [ ] Compact memory and connection entry hierarchy without merging semantically different actions; keep every destination reachable.
-- [ ] Check disclosure/confirmation height and scroll behavior at low height/200% zoom, and fix only reproduced problems; commit.
+- [x] Reproduce duplicate restore request/false failure with a delayed system boundary, and settings feedback persistence with controlled time; add regressions before fixes.
+- [x] Implement recovery lock and stale-response ownership, then verify success, failure and retry.
+- [x] Compact memory and connection entry hierarchy without merging semantically different actions; keep every destination reachable.
+- [x] Check disclosure/confirmation height and scroll behavior at low height/200% zoom, and fix only reproduced problems; commit.
 
 ### Task 4: Integration and verification
 
-- [ ] Review each task's diff against the approved specs; serially integrate into root's branch.
+- [x] Review each task's diff against the approved specs; serially integrate into root's branch.
 - [ ] Run focused impacted checks, `bun run verify --base origin/dev`, and affected desktop Playwright flows using a unique dry-run port/state directory.
 - [ ] Inspect actual wide/narrow screenshots with seeded working task data; do not present unimplemented mock endpoints as product state.
 - [ ] Obtain a fresh whole-branch correctness review; resolve important findings and repeat only affected checks.
