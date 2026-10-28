@@ -27,3 +27,10 @@ it('does not show a nonfunctional settings control on detail pages and keeps sup
   expect(ui.byId('topbar-settings')).toBeNull()
   expect(ui.byId('detail-action')).not.toBeNull()
 })
+
+it('keeps the compact connection entry at least 44pt without relying on hit slop', async () => {
+  const ui=await mount(withProviders(createElement(TopBar,{title:'CC',showStatus:true,onConnection:()=>{},connectionTestID:'connect'}),{backend:makeDemoBackend({lang:'en'}),lang:'en'}))
+  expect(ui.style('connect').minWidth).toBeGreaterThanOrEqual(44)
+  expect(ui.style('connect').minHeight).toBeGreaterThanOrEqual(44)
+  expect(ui.style('connect').flexShrink).toBe(0)
+})

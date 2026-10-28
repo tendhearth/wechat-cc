@@ -32,35 +32,35 @@ Files: `apps/app/src/ui/{Icon,IconButton,TopBar,TabBar,Rows,Card,StatusPill}.tsx
 
 Interfaces: `Icon` 增加 back/settings/monitor/plus/search/more/shield/book/mail/folder 等本地图标；`IconButton({name,label,onPress,testID?,disabled?,busy?})`；`TopBar` 保留旧参数并增加可选 `actions: ReactNode`；无 `onAvatar` 时不画设置入口。`LinkRow` 旧接口不变，可选 icon/detail。保持其他 API 兼容，子任务不改这些文件。
 
-- [ ] 对新的图标按钮标签、触控区及无多余设置按钮行为先写测试并观察失败。
-- [ ] 实现本地图标、边界、纯文字底栏、平面行与单层容器。
-- [ ] 跑对应 UI 测试、App typecheck，提交可供子任务复用的基础提交。
+- [x] 对新的图标按钮标签、触控区及无多余设置按钮行为先写测试并观察失败。
+- [x] 实现本地图标、边界、纯文字底栏、平面行与单层容器。
+- [x] 跑对应 UI 测试、App typecheck，提交可供子任务复用的基础提交。
 
 ## Task 2: 此刻与一起做（根执行者）
 
 Files: `apps/app/src/app/(tabs)/*`、必要 `ui` 小组件、`state/home-motion.test.ts`、`state/quiet-lists.test.ts` 及对应页面测试。
 
-- [ ] 先测试紧凑完成入口的真实数据范围、未知／部分数据、菜单导航与不同完成结果。
-- [ ] 按已批准的最简稿调整首页、直接分组列表、菜单、完成详情；保留动效与终端入口。
-- [ ] 跑此刻／列表／动效测试及 typecheck，提交。
+- [x] 先测试紧凑完成入口的真实数据范围、未知／部分数据、菜单导航与不同完成结果。
+- [x] 按已批准的最简稿调整首页、直接分组列表、菜单、完成详情；保留动效与终端入口。
+- [x] 跑此刻／列表／动效测试及 typecheck，提交。
 
 ## Task 3: 聊天、事项和授权（独立 worktree 实现者）
 
 Files: `apps/app/src/app/{chat,chat-model,chat-search,compose}.tsx`、`matter/[id].tsx`、`approval/[id].tsx`、`terminal/[id].tsx`、专属 view/state 测试。可改 `ui/Artifacts.tsx`、`ui/ReplyExtras.tsx`，不可改 Task 1 共用文件或共享 i18n 表。
 
-- [ ] 在独立工作区检查现有测试，行为变化先加回归测试。
-- [ ] 图标化熟悉操作、精简重复提示、事项成果和请求优先，折叠执行信息；所有真实授权、草稿、回执和终端边界不变。
-- [ ] 如需新字符串写到独立 `i18n/minimal-conversation.ts`（同时 en / zh-Hans），根执行者整合共享表；不得写死可见文案。
-- [ ] 跑拥有的测试与 typecheck，提交并返回基线、提交号、结果。
+- [x] 在独立工作区检查现有测试，行为变化先加回归测试。
+- [x] 图标化熟悉操作、精简重复提示、事项成果和请求优先，折叠执行信息；所有真实授权、草稿、回执和终端边界不变。
+- [x] 如需新字符串写到独立 `i18n/minimal-conversation.ts`（同时 en / zh-Hans），根执行者整合共享表；不得写死可见文案。
+- [x] 跑拥有的测试与 typecheck，提交并返回基线、提交号、结果。
 
 ## Task 4: 记忆、设置与次级页面（独立 worktree 实现者）
 
 Files: 其余 `apps/app/src/app` 页面：memory/settings/connections/devices/jobs/activity/letters/sessions/inputs/share/welcome/pair/licences；专属测试。不可改 Task 1、2、3 文件或共享 i18n 表。
 
-- [ ] 检查当前语义，导航或折叠行为变化先补测试。
-- [ ] 事实先于推测，入口短标签，统一行、标题和低层级操作；保留导入出处、待办捞回、收回记忆、设备限制、删除确认与隐私全文。
-- [ ] 新字符串如必要写独立 `i18n/minimal-secondary.ts` 双语模块，交根执行者整合。
-- [ ] 跑专属测试与 typecheck，提交交付。
+- [x] 检查当前语义，导航或折叠行为变化先补测试。
+- [x] 事实先于推测，入口短标签，统一行、标题和低层级操作；保留导入出处、待办捞回、收回记忆、设备限制、删除确认与隐私全文。
+- [x] 新字符串如必要写独立 `i18n/minimal-secondary.ts` 双语模块，交根执行者整合。
+- [x] 跑专属测试与 typecheck，提交交付。
 
 ## Task 5: 整合与验收（根执行者）
 

@@ -46,7 +46,7 @@ export function TopBar({ title, onBack, showStatus = false, onAvatar, onConnecti
       <Txt role="wordmark" numberOfLines={1} style={{ flexShrink: title === t(lang, 'common.wordmark') ? 0 : 1 }}>{title ?? ''}</Txt>
       <View style={{ flex: 1 }} />
       {showStatus ? (onConnection ? (
-        <Pressable testID={connectionTestID} accessibilityRole="button" accessibilityLabel={`${t(lang, 'common.openConnections')}, ${s.label}`} onPress={onConnection} hitSlop={8} style={{ minHeight: 44, justifyContent: 'center', flexShrink: 1 }}>{status}</Pressable>
+        <Pressable testID={connectionTestID} accessibilityRole="button" accessibilityLabel={`${t(lang, 'common.openConnections')}, ${s.label}`} onPress={onConnection} style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{status}</Pressable>
       ) : status) : null}
       {actions}
       {onAvatar ? <IconButton name="settings" testID="topbar-settings" label={t(lang, 'settings.title')} onPress={onAvatar} /> : null}
