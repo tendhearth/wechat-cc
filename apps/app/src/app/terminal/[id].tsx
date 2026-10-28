@@ -1,9 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
+import { useBackendCtx } from '../../state/BackendProvider'
+import { pairingGen } from '../../state/drafts'
 import { useTerminalActions, useTerminalActivity, useTerminalSessions } from '../../state/useTerminal'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
@@ -31,9 +33,17 @@ export default function TerminalSession() {
   const router = useRouter()
   const { id: raw } = useLocalSearchParams<{ id: string }>()
   const id = decodeURIComponent(String(raw ?? ''))
+  const { store } = useBackendCtx()
+  // A late result belongs to the session and backend that submitted it, even if navigation returns here.
+  const view = useRef({ id, store })
+  if (view.current.id !== id || view.current.store !== store) view.current = { id, store }
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const actions = useTerminalActions()
   const activity = useTerminalActivity(id)
-  const [text, setText] = useState('')
+  const [text, setTextState] = useState('')
+  const draftRevision = useRef(0)
+  const setText = (value: string) => { draftRevision.current++; setTextState(value) }
   const [note, setNote] = useState<string | null>(null)
   // 刚说的那一句:发出时记下,之后随列表与时钟往前走(定下就不再改)
   const [track, setTrack] = useState<SayTrack | null>(null)
@@ -73,13 +83,17 @@ export default function TerminalSession() {
   const send = async () => {
     const body = text.trim()
     if (!body || body.length > SAY_MAX || !sayOpen || sending) return
+    const owner = view.current, atGen = pairingGen(), revision = draftRevision.current
     setNote(null); setTrack(null); setSaid(null)
     const prevId = s?.last_say?.id ?? null
     const live = !!row?.live
     const sentAt = Date.now()
     const { error: err, sayId } = await actions.say(id, body)
-    if (err === null) { setText(''); setTrack({ sayId, live, sentAt, prevId }) }
-    else if (err !== 'busy') setNote(t(lang, terminalErrorKey(err)))
+    if (!alive.current || view.current !== owner || pairingGen() !== atGen) return
+    if (err === null) {
+      if (draftRevision.current === revision) setText('')
+      setTrack({ sayId, live, sentAt, prevId })
+    } else if (err !== 'busy') setNote(t(lang, terminalErrorKey(err)))
   }
 
   return (
