@@ -233,8 +233,10 @@ export default function SessionReader() {
       )}
 
       <Modal visible={sheet} transparent animationType="slide" onRequestClose={() => setSheet(false)}>
+        <View style={{ flex: 1 }}>
         <Pressable accessibilityLabel={t(lang, 'common.cancel')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setSheet(false)} />
-        <View testID="continue-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+        <SafeAreaView testID="continue-sheet" edges={['bottom']} style={{ backgroundColor: c.paper, maxHeight: '90%', borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+        <ScrollView testID="continue-sheet-scroll" style={{ flexShrink: 1 }} contentContainerStyle={{ padding: space.xl, gap: space.m }}>
           <Txt role="item" accessibilityRole="header">{t(lang, 'continue.title')}</Txt>
           {typeof cont === 'object' && cont.state === 'ready' ? (
             <>
@@ -257,6 +259,8 @@ export default function SessionReader() {
             </>
           ) : null}
           <Button kind="secondary" testID="continue-cancel" label={t(lang, 'common.cancel')} onPress={() => setSheet(false)} />
+        </ScrollView>
+        </SafeAreaView>
         </View>
       </Modal>
     </SafeAreaView>
