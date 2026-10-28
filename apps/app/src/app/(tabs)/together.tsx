@@ -23,6 +23,7 @@ import { togetherGroups, togetherView } from '../../view/together'
 import { terminalRows } from '../../view/terminal'
 import { Icon } from '../../ui/Icon'
 import { IconButton } from '../../ui/IconButton'
+import { WaitingTitle } from '../../ui/WaitingTitle'
 
 // 「一起做」:交给 CC 的事(全部没归档的),分三组:等你 / 在做 / 做完(手机端用词表)。每组一个衬线小标题,只有「等你」上强调色。
 // 每行标题 + 状态词 + 副标题,点进进展页。三组只在这里,「此刻」只列等你的那几件(同一件东西只有一个家)。
@@ -95,7 +96,7 @@ export default function Together() {
             style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 64, paddingVertical: space.m, opacity: pressed ? 0.7 : 1 })}>
             {item.status === 'working' ? <View style={{ width: 18 }} /> : <Icon name={item.status === 'waiting' ? 'shield' : item.status === 'done' ? 'done' : item.status === 'failed' ? 'alert' : item.status === 'replied' ? 'message' : 'pause'} color={item.status === 'waiting' ? c.accent : c.inkSoft} />}
             <View style={{ flex: 1, gap: space.xs }}>
-              <Txt role="item" content="user" numberOfLines={2}>{title}</Txt>
+              {pending ? <WaitingTitle taskId={item.id} requestId={pending.id} fallback={title} /> : <Txt role="item" content="user" numberOfLines={2}>{title}</Txt>}
               {pending && title !== item.title ? <Txt role="caption" tone="inkSoft" content="user" numberOfLines={1}>{item.title}</Txt> : null}
               {outcome ? <Txt role="caption" tone="inkSoft">{t(lang, `status.${item.status}`)}</Txt> : null}
             </View>

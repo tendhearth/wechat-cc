@@ -48,7 +48,8 @@ export function Expansion({ open, children, onClosed }: { open: boolean; childre
   if (!rendered) return null
   return <Animated.View pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
     style={{ overflow: 'hidden', height: enabled && interacted.current ? height : open ? undefined : 0, opacity }}>
-    <View onLayout={e => setMeasured(e.nativeEvent.layout.height)}>{children}</View>
+    <View style={enabled && interacted.current ? { position: 'absolute', top: 0, left: 0, right: 0 } : undefined}
+      onLayout={e => setMeasured(e.nativeEvent.layout.height)}>{children}</View>
   </Animated.View>
 }
 

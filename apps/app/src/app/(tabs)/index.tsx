@@ -32,15 +32,9 @@ import { todayView } from '../../view/today'
 import { Icon } from '../../ui/Icon'
 import { StatusHint } from '../../ui/StatusHint'
 import { LinkRow } from '../../ui/Rows'
+import { WaitingTitle } from '../../ui/WaitingTitle'
 
 // 等你的事那一行的标题:只有第一行会主动请求说明(可能触发电脑上的便宜模型),其余只读已缓存的;优先用后端给的说明标题(按任务缓存),没有就退回原始概括。
-function WaitingTitle({ taskId, requestId, fallback, fetch }: { taskId: string; requestId: string; fallback: string; fetch: boolean }) {
-  const { backend } = useBackendCtx()
-  const insight = useQuery(`insight:${taskId}`, l => backend.insight(taskId, l), { enabled: fetch })
-  const title = insight.data?.explanations[requestId]?.title
-  return <Txt role="item" content="user" numberOfLines={2}>{title || fallback}</Txt>
-}
-
 // 已批准的极简稿:居中 CC 与最近一句真话、具体的待回应行、紧凑完成入口、底部说一句。
 // 一起做的完整列表不在这里重复;真实带回来的内容保留低层级入口。
 export default function Now() {
