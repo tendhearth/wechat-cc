@@ -105,7 +105,7 @@ export default function Approval() {
   }
 
   const header = (
-    <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} onAvatar={() => router.push('/settings')} />
+    <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} />
   )
   const shell = (body: ReactNode, footer?: ReactNode) => (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -158,9 +158,8 @@ export default function Approval() {
   if (v.kind === 'choose') {
     return shell(
       <>
-        <Eyebrow title={matterTitle} eyebrow={t(lang, 'approval.eyebrow')} />
+        <MatterContext title={matterTitle} />
         <Txt role="title" accessibilityRole="header">{t(lang, 'approval.chooseTitle')}</Txt>
-        <Txt role="bubble" tone="inkSoft">{t(lang, 'approval.chooseOne')}</Txt>
         {v.items.map(item => (
           <Pressable
             key={item.requestId}
@@ -168,6 +167,7 @@ export default function Approval() {
             accessibilityRole="button"
             accessibilityLabel={`${item.kind === 'permission' ? t(lang, 'approval.kindPermission') : t(lang, 'approval.kindQuestion')}: ${item.summary}`}
             onPress={() => router.push(`/approval/${encodeURIComponent(id)}?request=${encodeURIComponent(item.requestId)}`)}
+            style={({ pressed }) => ({ minHeight: 56, paddingVertical: space.s, opacity: pressed ? 0.7 : 1 })}
           >
             <Card style={{ gap: space.s }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
@@ -256,21 +256,15 @@ function Notice({ text, testID }: { text: string; testID?: string }) {
   )
 }
 
-function Eyebrow({ eyebrow, title, eventKey }: { eyebrow: string; title: string; eventKey?: string }) {
+function MatterContext({ title, eventKey }: { title: string; eventKey?: string }) {
   const conn = useConnection()
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, paddingTop: space.s }}>
-      <CCFigure size={44} presence={ccPresence(conn)} behavior={eventKey ? 'wait' : 'idle'} eventKey={eventKey} />
-      <View style={{ flex: 1, gap: 2 }}>
-        <Txt role="caption" tone="inkSoft">{eyebrow}</Txt>
-        <Txt role="meta" content="user" numberOfLines={2}>{title}</Txt>
-      </View>
-    </View>
-  )
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, paddingTop: space.m }}>
+    <CCFigure size={36} presence={ccPresence(conn)} behavior={eventKey ? 'wait' : 'idle'} eventKey={eventKey} />
+    <Txt role="meta" tone="inkSoft" content="user" style={{ flex: 1 }}>{title}</Txt>
+  </View>
 }
 
 function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }) {
-  const { c } = useTheme()
   const lang = useLang()
   // 没有模型说明时 what 就是原始命令:等宽、最多 4 行,完整内容在「查看具体操作」里。
   const rows: Array<[string, string, boolean]> = [
@@ -281,7 +275,7 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
   const shown = rows.filter(([, body]) => body.trim() !== '')
   return (
     <>
-      <Eyebrow eyebrow={t(lang, 'approval.eyebrow')} title={matterTitle} eventKey={v.requestId} />
+      <MatterContext title={matterTitle} eventKey={v.requestId} />
       <View style={{ gap: space.s }}>
         <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         {v.aiSummary ? (
@@ -292,10 +286,21 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
         ) : null}
       </View>
 
+      {/* 模型写的说明可能不准:原始命令首行与工作目录直接摆出来,不折叠。 */}
+      {v.showRawInline ? (
+        <View testID="approval-raw-inline" style={{ gap: space.s, paddingVertical: space.m }}>
+          <Txt role="caption" tone="inkSoft">{t(lang, 'approval.rawCommand')}</Txt>
+          <Txt selectable role="code">{v.rawFirstLine}{v.rawFirstLineCut ? '…' : ''}</Txt>
+          {v.rawMoreLines > 0 ? <Txt testID="approval-raw-more" role="caption" tone="inkSoft">{tCount(lang, 'approval.moreLines', v.rawMoreLines)}</Txt> : null}
+          <Txt role="caption" tone="inkSoft">{t(lang, 'approval.workingDir')}</Txt>
+          <Txt selectable role="code">{v.workingDir || '—'}</Txt>
+        </View>
+      ) : null}
+
       {shown.length > 0 ? (
         <Card style={{ gap: 0, paddingVertical: space.s }}>
-          {shown.map(([label, body, raw], i) => (
-            <View key={label} style={{ paddingVertical: space.m, gap: space.xs, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: c.hair }}>
+          {shown.map(([label, body, raw]) => (
+            <View key={label} style={{ paddingVertical: space.m, gap: space.xs }}>
               <Txt role="meta" tone="inkSoft">{label}</Txt>
               {raw ? (
                 <Txt role="code" numberOfLines={4}>{body}</Txt>
@@ -305,17 +310,6 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
             </View>
           ))}
         </Card>
-      ) : null}
-
-      {/* 模型写的说明可能不准:原始命令首行与工作目录直接摆出来,不折叠。 */}
-      {v.showRawInline ? (
-        <View testID="approval-raw-inline" style={{ gap: space.s, padding: space.l, borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair }}>
-          <Txt role="caption" tone="inkSoft">{t(lang, 'approval.rawCommand')}</Txt>
-          <Txt selectable role="code">{v.rawFirstLine}{v.rawFirstLineCut ? '…' : ''}</Txt>
-          {v.rawMoreLines > 0 ? <Txt testID="approval-raw-more" role="caption" tone="inkSoft">{tCount(lang, 'approval.moreLines', v.rawMoreLines)}</Txt> : null}
-          <Txt role="caption" tone="inkSoft">{t(lang, 'approval.workingDir')}</Txt>
-          <Txt selectable role="code">{v.workingDir || '—'}</Txt>
-        </View>
       ) : null}
 
       <Sheet testID="approval-view-exact" title={t(lang, 'approval.viewExact')}>
@@ -366,7 +360,7 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
 
   return shell(
     <>
-      <Eyebrow eyebrow={t(lang, 'approval.questionEyebrow')} title={matterTitle} eventKey={v.requestId} />
+      <MatterContext title={matterTitle} eventKey={v.requestId} />
       {v.items.map(item => {
         const cur = picked[item.id] ?? []
         const full = multiLimitReached(item.multiSelect, cur)
@@ -375,7 +369,7 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
             {item.header ? <Txt role="small" tone="inkSoft" content="user">{item.header}</Txt> : null}
             <Txt role="title" content="user" accessibilityRole="header">{item.question}</Txt>
             {item.multiSelect ? <Txt role="small" tone="inkSoft">{t(lang, 'approval.multiHint')}</Txt> : null}
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
+            <View style={{ gap: space.xs }}>
               {item.options.map((o, i) => {
                 const on = cur.includes(o.label)
                 const blocked = locked || (full && !on) // 选满 8 项:没选的不能再点
@@ -389,14 +383,17 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
                     disabled={blocked}
                     onPress={() => toggle(item.id, o.label, item.multiSelect)}
                     style={{
-                      minHeight: 44, justifyContent: 'center', paddingHorizontal: space.l, paddingVertical: space.s,
-                      borderRadius: radius.control, borderWidth: 1,
-                      borderColor: on ? c.accent : c.hair, backgroundColor: c.paper,
+                      minHeight: 52, justifyContent: 'center', paddingVertical: space.m,
                       opacity: blocked ? 0.55 : 1,
                     }}
                   >
-                    <Txt role="bubble" content="user" tone={on ? 'accent' : 'ink'}>{on ? '✓ ' : ''}{o.label}</Txt>
-                    {o.description ? <Txt role="caption" tone="inkSoft" content="user">{o.description}</Txt> : null}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m }}>
+                      <View style={{ flex: 1, gap: space.xs }}>
+                        <Txt role="bubble" content="user">{o.label}</Txt>
+                        {o.description ? <Txt role="caption" tone="inkSoft" content="user">{o.description}</Txt> : null}
+                      </View>
+                      {on ? <Icon name="check" color={c.inkSoft} /> : null}
+                    </View>
                   </Pressable>
                 )
               })}

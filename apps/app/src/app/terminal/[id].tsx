@@ -13,7 +13,8 @@ import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
-import { AgentAvatars } from '../../ui/AgentAvatars'
+import { Icon } from '../../ui/Icon'
+import { IconButton } from '../../ui/IconButton'
 import { canSayTo, relAgo, stepLabel, terminalErrorKey, terminalRow } from '../../view/terminal'
 import { nextSayView, sayNote, SAY_FAST_POLL_MS, type SayTrack, type SayView } from '../../view/terminal-say'
 
@@ -83,7 +84,7 @@ export default function TerminalSession() {
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={row?.project ?? t(lang, 'terminal.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/together'))} onAvatar={() => router.push('/settings')} />
+      <TopBar title={row?.project ?? t(lang, 'terminal.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/together'))} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
@@ -96,7 +97,7 @@ export default function TerminalSession() {
               <View style={{ gap: space.s }}>
                 <TerminalStatusPill status={row.status} testID="terminal-detail-status" />
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
-                  <AgentAvatars ids={[row.agent]} names={{ [row.agent]: row.source }} size={20} testID="terminal-detail-agent" />
+                  <Icon name="terminal" color={c.inkSoft} testID="terminal-detail-agent" />
                   <Txt role="small" tone="inkSoft" style={{ flex: 1 }}>{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : fresher ? relAgo(newest, Date.now(), lang) : row.ago}`}</Txt>
                 </View>
               </View>
@@ -118,7 +119,7 @@ export default function TerminalSession() {
               {activity.items.length > 0 ? (
                 <View testID="terminal-activity" style={{ gap: space.m }}>
                   <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'terminal.activity')}</Txt>
-                  <View style={{ gap: space.m, borderLeftWidth: 1, borderLeftColor: c.hair, paddingLeft: space.l }}>
+                  <View style={{ gap: space.l }}>
                     {activity.items.map((it, i) => {
                       const now = row.status === 'running' && (!row.stale || fresher) && i === activity.items.length - 1 && it.kind === 'step'
                       const when = it.at === null ? '' : ` · ${relAgo(it.at, Date.now(), lang)}`
@@ -130,9 +131,9 @@ export default function TerminalSession() {
                       const k = `${it.at}|${it.text}`, isDiff = /^(改|写|删) /.test(it.text)
                       return (
                         <View key={i} style={{ gap: space.s }}>
-                          <Pressable testID={`terminal-step-${i}`} accessibilityRole="button" accessibilityState={{ expanded: !!open[k] }} onPress={() => setOpen(o => ({ ...o, [k]: !o[k] }))}>{line}</Pressable>
+                          <Pressable testID={`terminal-step-${i}`} accessibilityRole="button" accessibilityState={{ expanded: !!open[k] }} accessibilityLabel={label} style={{ minHeight: 44, justifyContent: 'center' }} onPress={() => setOpen(o => ({ ...o, [k]: !o[k] }))}>{line}</Pressable>
                           {open[k] ? (
-                            <View testID={`terminal-step-detail-${i}`} style={{ padding: space.m, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, backgroundColor: c.paper }}>
+                            <View testID={`terminal-step-detail-${i}`} style={{ paddingVertical: space.s, gap: space.xs }}>
                               {it.detail.split('\n').map((l, j) => (
                                 <Txt key={j} role="code" content="user" style={isDiff && l.startsWith('+ ') ? { color: c.accent } : isDiff && l.startsWith('- ') ? { color: c.bad } : undefined}>{l || ' '}</Txt>
                               ))}
@@ -159,6 +160,7 @@ export default function TerminalSession() {
           <View style={{ paddingHorizontal: space.xl, paddingTop: space.m, paddingBottom: space.m, gap: space.s }}>
             {row.live ? <Txt testID="terminal-say-live" role="meta" tone="inkSoft">{t(lang, 'terminal.liveWindow')}</Txt> : null}
             {!canSayTo(row.status, row.live) ? <Txt testID="terminal-say-busy" role="meta" tone="inkSoft">{t(lang, row.status === 'waiting' ? 'terminal.sayWaiting' : 'terminal.sayBusy')}</Txt> : null}
+            <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.s }}>
             <TextField
               testID="terminal-say-input"
               accessibilityLabel={t(lang, 'terminal.sayPlaceholder')}
@@ -168,9 +170,10 @@ export default function TerminalSession() {
               editable={sayOpen}
               multiline
               maxLength={SAY_MAX}
-              style={{ minHeight: 48, maxHeight: 160, paddingHorizontal: space.l, paddingVertical: space.m, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, opacity: sayOpen ? 1 : 0.55 }}
+              style={{ flex: 1, minHeight: 48, maxHeight: 160, paddingHorizontal: space.l, paddingVertical: space.m, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, opacity: sayOpen ? 1 : 0.55 }}
             />
-            <Button kind="primary" testID="terminal-say-send" label={t(lang, 'terminal.send')} busy={sending} disabled={!sayOpen || !text.trim()} onPress={() => void send()} />
+            <IconButton name="arrowUp" testID="terminal-say-send" label={t(lang, 'terminal.send')} busy={sending} disabled={!sayOpen || !text.trim()} onPress={() => void send()} />
+            </View>
           </View>
         ) : null}
       </KeyboardAvoidingView>
