@@ -228,7 +228,7 @@
 | `src/daemon/permission-answer.ts` | 12 | 91.7 | **100** | 新量:快车道消费拍板回答 |
 | `src/features/workbench/service/admission.ts` | 121 | 92.6 | **98.3** | 新量:准入与续接 |
 | `src/features/workbench/service/inputs.ts` | 263 | 75.7 | **87.1** | 新量:补充 |
-| `src/features/workbench/service/lifecycle.ts` | 638 | — | 测量中 | 新量:租约 / 收工 / 派发泵 / 取消(见下「跑的时候撞到的」第 3 条) |
+| `src/features/workbench/service/lifecycle.ts` | 590 | — | **71.2** | 新量:租约 / 收工 / 派发泵 / 取消(见下「跑的时候撞到的」第 3 条) |
 
 ### 补了什么(全是输入 → 结果的行为用例,放在被测代码旁边;没删测试、没改被测代码)
 
@@ -257,7 +257,7 @@
 - `plan.ts` 剩下 10 个:`primary_tool` 两条的 `logs: []`、守护那句日志的结构化字段、`registry.get` 为空时传不传模型 —— 不影响计划本身。
 - `db.ts` 剩下 15 个同上一节:日志文案、Node 上的外键默认值、`openSqlite` 默认建库、`FORK_POINT` 边界。
 
-- `lifecycle`:Stryker 还在跑(只要分数,用默认 bail),跑完补这一条。
+- `lifecycle`:71.2(590 个,活 168、超时 8、没覆盖 16;默认 bail)。168 个活的这一轮没逐个分类,下一轮从这份开始。
 
 ### 唯一杀为 0 的测试文件
 
