@@ -1,6 +1,6 @@
 # Desktop Task Detail Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Complete the task detail hierarchy across running, response-needed and answered outcomes using the approved minimal phone logic.
 
@@ -34,9 +34,9 @@
 
 **Interface:** Extend ReviewPanelOptions with `compactSummary?: boolean` (default false). When true, use a short summary (改动 + meaningful count) and put existing complete statistics in the expanded body. Preserve existing default HTML compatibility, warnings, editors and all actions; no new outer disclosure.
 
-- [ ] Add meaningful compact-mode assertions for statistics availability, coverage warnings and active return/comment controls; observe RED.
-- [ ] Implement opt-in compact summary without touching default output or hidden safety content.
-- [ ] Run focused review/rewind/comment checks, commit the interface, report hash so Task2 can consume it.
+- [x] Add meaningful compact-mode assertions for statistics availability, coverage warnings and active return/comment controls; observe RED.
+- [x] Implement opt-in compact summary without touching default output or hidden safety content.
+- [x] Run focused review/rewind/comment checks, commit the interface, report hash so Task2 can consume it.
 
 ### Task 2: State-led task detail and composer
 
@@ -44,14 +44,14 @@
 
 **Interfaces:** Consume existing detail/runtime/pending inputs and Task1's compactSummary option after its commit is available. Keep review/preview renderer APIs, action IDs and request fields. Derive presentation once rather than inventing a second state machine.
 
-- [ ] Add state-matrix and real rendered interaction regressions before changes: running modes, scoped mixed decisions, paused/recovery/imported, answered output vs review-only, and archived.
-- [ ] Simplify task header/metadata and composer. Preserve visible essential limitations and opt-in help state per task.
-- [ ] Promote actual saved outcomes and make first-load results discoverable while respecting explicit disclosure choices, active reading anchors and selected artifact/preview instances; enable compact review option after Task1 integration.
-- [ ] Verify drafts, run/request ownership, focus, streaming/result transitions, failed submissions and wide/narrow/low-height interaction; inspect screenshots and commit.
+- [x] Add state-matrix and real rendered interaction regressions before changes: running modes, scoped mixed decisions, paused/recovery/imported, answered output vs review-only, and archived.
+- [x] Simplify task header/metadata and composer. Preserve visible essential limitations and opt-in help state per task.
+- [x] Promote actual saved outcomes and make first-load results discoverable while respecting explicit disclosure choices, active reading anchors and selected artifact/preview instances; enable compact review option after Task1 integration.
+- [x] Verify drafts, run/request ownership, focus, streaming/result transitions, failed submissions and wide/narrow/low-height interaction; inspect screenshots and commit.
 
 ### Task 3: Integration and final acceptance
 
-- [ ] Review each task independently and fix important findings with targeted RED/GREEN checks.
-- [ ] Serially integrate reviewed commits; run project verify against pinned dev baseline plus affected existing and new desktop browser flows.
-- [ ] Inspect actual running, decision, answered and recovery screenshots; resolve visual omissions against the stated hierarchy rather than counting list changes as detail completion.
-- [ ] Obtain a fresh whole-branch correctness review, preserve acceptance evidence/rulings, stop owned fixtures and leave a clean committed branch.
+- [x] Review each task independently and fix important findings with targeted RED/GREEN checks.
+- [x] Serially integrate reviewed commits; run project verify against pinned dev baseline plus affected existing and new desktop browser flows.
+- [x] Inspect actual running, decision, answered and recovery screenshots; resolve visual omissions against the stated hierarchy rather than counting list changes as detail completion.
+- [x] Obtain a fresh whole-branch correctness review, preserve acceptance evidence/rulings, stop owned fixtures and leave a clean committed branch.
