@@ -50,7 +50,7 @@
 
 ### Task 3: Secondary entries and honest feedback
 
-**Files:** `apps/desktop/src/index.html`, `styles.css`, `modules/settings-drawer.js`, `modules/memory.js`, related focused tests and desktop browser regressions. Root owns this task.
+**Files:** `apps/desktop/src/index.html`, `styles.css`, `modules/settings-drawer.js`, `modules/memory.js`, related focused tests and desktop browser regressions. A dedicated secondary-page implementer owns these files; root integrates and verifies.
 
 **Interfaces:** Reuse existing disclosures and icons. Shorten secondary titles; move explanations into expanded details while distinguishing rereading from generation. Keep required privacy/scope disclosures. Settings success becomes a brief accessible check; saving and failure remain visible. Memory restore gets a synchronous pending lock and view ownership protection.
 
