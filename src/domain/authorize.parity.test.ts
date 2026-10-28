@@ -3,9 +3,12 @@
  * 对照(legacy*,只改了函数名;判定规则那一处 effectivePolicy / decideTool 用 C1 之前的四行原文 legacyDecideTool),
  * 新旧两份在同一组格子上跑,结果、问主人的那一下(谁、什么话、哪个码、多久)、日志、通道调用都要一位不差。
  *
- * 格子:面(对话 Claude / Gemini / OpenAI 兼容、定时任务只读档、一起做的 Claude、一起做的放行规则、终端会话)×
+ * 格子:面(对话 Claude / Gemini、定时任务只读档、一起做的 Claude、一起做的放行规则、终端会话)×
  * 档位 × 权限模式 × 对话模式 × 能力表 askUser × 工具(每个类别至少一个,外加每个 wechat MCP 名、别家 MCP、未知工具、
  * 坏名字)× 有没有 admin × 主人怎么答 × 取消 × 登记表 × 放行规则的每一种裁决。
+ *
+ * OpenAI 兼容闸门那一面的对照 2026-10-28 删了:openai-gate.ts 删前删后变异分数都是 100,authorize / 放行规则那几份上
+ * 一个独有的都没杀(docs/maintainer/mutation-baseline-2026-10.md「第三轮:删测试」)。其余几面删了分数会掉,留着。
  */
 import { describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
@@ -23,7 +26,6 @@ import { authorize, OWNER_RULE_SURFACES } from './authorize'
 import { isReplyToolName, type SpawnContext } from '../ports/agent-provider'
 import { makeCanUseTool, type PermissionRelayDeps } from '../adapters/executors/claude/permission-relay'
 import { makeGeminiToolGate, type GeminiGateDeps, type ToolGate } from '../adapters/executors/gemini/gemini-agent-provider'
-import { gateTool } from '../adapters/executors/openai/openai-gate'
 import { makeWorkbenchClaudeCanUseTool } from '../adapters/executors/claude/claude-agent-provider'
 import { isCompanionMcp, nativeMcpInputPreview } from '../adapters/executors/claude/claude-native-config'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TIMEOUT_MS, WORKBENCH_PERMISSION_TOOL_MAX, makeRunPermissions, type PermissionDecide, type PermissionFacts, type PermissionOutcome, type WorkbenchPermissionAudit } from '../adapters/workbench/permissions'
@@ -183,40 +185,6 @@ function legacyGeminiGate(deps: GeminiGateDeps): (ctx: SpawnContext) => ToolGate
   }
 }
 
-
-// openai-gate.ts gateTool
-type GateDecision = 'allow' | 'deny'
-function legacyOpenaiGate(args: {
-  toolName: string
-  /**
-   * The REAL MCP server that owns this tool call (from
-   * `McpToolBridge.serverOf`), or `undefined` for a built-in tool. Must be
-   * the actual owning server — never assume `wechat` for every MCP tool,
-   * or a same-named tool from another server (a plugin, `delegate`, …)
-   * gets misclassified as the wechat tool of that name, which can
-   * escalate a guest-denied tool into a guest-allowed one.
-   */
-  mcpServer?: string
-  input: Record<string, unknown>
-  tierProfile: TierProfile
-  permissionMode: PermissionMode
-}): GateDecision {
-  const policy = compilePolicy('openai', args.tierProfile, args.permissionMode)
-  if (policy.bypass) return 'allow'
-
-  // classifyToolUse recognizes wechat MCP tools by their SDK-prefixed name
-  // (`mcp__wechat__<name>`); built-in tools (Read/Write/Edit/Bash/...) pass
-  // through unchanged. Other MCP servers get their own `mcp__<server>__<name>`
-  // prefix, which classifyToolUse does NOT special-case — it falls through to
-  // the fail-safe default ('subagent'), never the wechat tool's kind.
-  const sdkName = args.mcpServer ? `mcp__${args.mcpServer}__${args.toolName}` : args.toolName
-  const kind = classifyToolUse(sdkName, args.input)
-
-  // 判定在 ./tool-decision.ts(三家共用);openai 不看能力表(它没有 per-tool 的那一档)。
-  // v1: relay collapses to deny in strict mode — mid-turn WeChat confirmation round-trip is deferred.
-  const verdict = legacyDecideTool(args.tierProfile, kind)
-  return verdict === 'relay' ? policy.relayAs : verdict
-}
 
 // wire-model-options.ts profileGate
 function legacyJobGate(tp: TierProfile, scope: { root: string; stateDir: string }): NonNullable<Options['canUseTool']> {
@@ -562,23 +530,6 @@ describe('authorize 逐格对照:对话 · Gemini 闸门', () => {
         if (tn !== 'admin') expect(counter.decide, `${tn} 对话不许问规则`).toBe(0)
         cells += BARE.length
       }
-  })
-})
-
-describe('authorize 逐格对照:对话 · OpenAI 兼容闸门', () => {
-  const CALLS: { toolName: string; mcpServer?: string; input: Record<string, unknown> }[] = [
-    ...BUILTINS.map(([toolName, input]) => ({ toolName, input })),
-    ...WECHAT_SUBS.map(toolName => ({ toolName, mcpServer: 'wechat', input: {} })),
-    ...['get_messages', 'search_messages', 'reply', 'run'].flatMap(toolName => ['wxvault', 'delegate', 'catalog'].map(mcpServer => ({ toolName, mcpServer, input: {} }))),
-  ]
-  it('档位(含定时 / 审查档)× 权限模式 × 工具(带真实的 MCP server)', async () => {
-    for (const [tn, tierProfile] of ALL_PROFILES) for (const permissionMode of PERMISSION_MODES) for (const c of CALLS) {
-      const counter = { decide: 0 }
-      const ownerRules = wiredRules(tn === 'admin', counter)
-      expect((await gateTool({ ...c, tierProfile, permissionMode, chatId: 'chat', ownerRules })).decision, `${tn}/${permissionMode}/${c.mcpServer ?? ''}/${c.toolName}`).toBe(legacyOpenaiGate({ ...c, tierProfile, permissionMode }))
-      if (tn !== 'admin') expect(counter.decide, `${tn} 对话不许问规则`).toBe(0)
-      cells++
-    }
   })
 })
 
