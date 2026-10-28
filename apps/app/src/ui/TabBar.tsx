@@ -19,9 +19,7 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
         paddingHorizontal: space.xl,
         paddingTop: space.s,
         paddingBottom: Math.max(insets.bottom, space.s),
-        backgroundColor: c.rail,
-        borderTopWidth: 1,
-        borderTopColor: c.hair,
+        backgroundColor: c.paper,
       }}
     >
       {state.routes.map((route, i) => {
@@ -42,12 +40,13 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
             }}
             style={{
               flex: 1,
-              minHeight: 44,
+              minHeight: 48,
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
-            <Txt role="body" tone={focused ? 'ink' : 'inkSoft'}>{label}{badge ? <Txt testID={`${options.tabBarButtonTestID}-count`} role="body" tone="inkSoft">{`  ${badge}`}</Txt> : null}</Txt>
+            <Txt role="meta" tone={focused ? 'accent' : 'inkSoft'}>{label}</Txt>
+            {focused ? <View testID={`${options.tabBarButtonTestID}-selected`} style={{ position: 'absolute', bottom: 0, width: 16, height: 2, backgroundColor: c.accent }} /> : null}
           </Pressable>
         )
       })}
