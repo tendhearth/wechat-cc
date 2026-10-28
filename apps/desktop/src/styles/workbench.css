@@ -528,3 +528,27 @@
 .wb-worktree-badge { margin-left: 6px; padding: 0 5px; border: 1px solid var(--th-hair); border-radius: 4px; font-size: 11px; color: var(--th-ink-soft); }
 .wb-worktree { margin: 6px 0 0; font-size: var(--th-size-small, 13px); color: var(--th-ink-soft); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .wb-worktree code { font-size: 12px; }
+
+/* Task detail: title and actual state lead; execution settings live in task info. */
+.wb-task-info-body .wb-task-agents { margin:0 0 14px; }
+.wb-task-info-body .wb-worktree { line-height:1.8; }
+.wb-task-head .wb-scripts,.wb-task-head .wb-until { margin:6px 0 0; }
+.wb-artifacts.is-outcome { margin-top:20px; margin-bottom:20px; }
+.wb-artifacts.is-outcome>summary { color:var(--wb-text); font-size:15px; }
+.wb-input-help { flex:1 1 80px; min-width:0; color:var(--wb-muted); font-size:11px; }
+.wb-input-help>summary { display:flex; align-items:center; gap:5px; width:fit-content; cursor:pointer; list-style:none; min-height:28px; }
+.wb-input-help>small { display:block; max-width:420px; margin:4px 0; line-height:1.6; }
+.wb-input-help>summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:2px; border-radius:3px; }
+.wb-input-warning { flex:1 1 220px; }
+.wb-followup-live .wb-control-actions { gap:8px; }
+@media(max-height:600px) {
+  .wb-task-head { padding-top:10px; padding-bottom:10px; }
+  .wb-task-head h2 { -webkit-line-clamp:1; }
+  .wb-controls { padding-top:8px; padding-bottom:10px; }
+}
+.wb-followup-live .wb-control-actions>.wb-btn { display:inline-flex; align-items:center; gap:5px; }
+.wb-followup.wb-followup-live { gap:6px; }
+@media(max-height:360px) {
+  .wb-controls { max-height:40%; }
+  .wb-artifacts.is-outcome { margin-top:8px; margin-bottom:8px; }
+}

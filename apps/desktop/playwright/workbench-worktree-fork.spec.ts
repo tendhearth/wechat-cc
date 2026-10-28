@@ -33,6 +33,7 @@ test('fork a worktree task to another executor: same request, same project, new 
  })
  await page.goto('http://localhost:4199')
  await page.evaluate(()=>(window as any).qa.controller.selectTask('aaaa1111'))
+ await page.locator('#wb-task-info>summary').click()
  const picker=page.locator('#wb-fork-provider')
  await expect(picker).toBeVisible()
  await expect(picker.locator('option')).toHaveText(['Claude'])
