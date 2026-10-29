@@ -6,8 +6,10 @@
  * `<STATE_DIR>/eval/runs/<时间>/report.json + report.md`,并和上一次比出「上次过、这次不过」。
  * 判法、报告样子都是纯规则(src/domain/output-eval.ts);这里只做 I/O。依赖注入,测试不碰真 daemon、真 STATE_DIR。
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from '../lib/read-json-file'
+import { writeFileAtomic, writeJsonAtomic } from '../lib/json-file'
 import {
   checkRule, diffRuns, effectiveRules, judgePrompt, parseJudgeAnswer, parseSample, renderReportMd, sampleStatus, summarize,
   type EvalOutput, type EvalSample, type RunDiff, type RunReport, type SampleResult,
@@ -75,7 +77,7 @@ function loadSamples(evalDir: string): Loaded[] {
   return readdirSync(dir).filter(f => f.endsWith('.json')).sort().map((f): Loaded => {
     const fileId = f.slice(0, -'.json'.length)
     let raw: unknown
-    try { raw = JSON.parse(readFileSync(join(dir, f), 'utf8')) } catch (e) { return { fileId, error: `样本文件读不了:${errMsg(e)}` } }
+    try { raw = readJsonFile(join(dir, f)) } catch (e) { return { fileId, error: `样本文件读不了:${errMsg(e)}` } }
     const p = parseSample(raw, fileId)
     return p.ok ? { fileId, sample: p.sample } : { fileId, error: `样本写错了:${p.error}` }
   })
@@ -135,7 +137,7 @@ function newRunId(evalDir: string, nowMs: number): string {
 }
 
 function readReport(evalDir: string, runId: string): RunReport | null {
-  try { return JSON.parse(readFileSync(join(runsDir(evalDir), runId, 'report.json'), 'utf8')) as RunReport } catch { return null }
+  try { return readJsonFile<RunReport>(join(runsDir(evalDir), runId, 'report.json')) } catch { return null }
 }
 
 /** 读得出 report.json 的那些运行,老的在前。 */
@@ -170,8 +172,8 @@ export async function runEval(deps: EvalCliDeps, opts: { only?: string[]; provid
   const diff = diffRuns(prevId ? readReport(deps.evalDir, prevId) : null, report)
   const dir = join(runsDir(deps.evalDir), runId)
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'report.json'), JSON.stringify(report, null, 2) + '\n')
-  writeFileSync(join(dir, 'report.md'), renderReportMd(report, diff))
+  writeJsonAtomic(join(dir, 'report.json'), report)
+  writeFileAtomic(join(dir, 'report.md'), renderReportMd(report, diff))
   return { report, diff, dir }
 }
 

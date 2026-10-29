@@ -1,3 +1,4 @@
+// @repo-guard 仓库里的示例样本(eval/output/examples/)要一直读得通
 import { afterEach, beforeEach, describe, it, expect } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

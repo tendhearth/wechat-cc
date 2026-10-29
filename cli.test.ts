@@ -71,6 +71,7 @@ describe('citty migrated commands', () => {
       'demo',
       'dialogue',
       'doctor',
+      'eval',
       'events',
       'federated-source',
       'guard',

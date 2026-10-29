@@ -132,6 +132,8 @@ describe('token-registry', () => {
       'GET /v1/dialogue/thread',
       'GET /v1/dialogue/search',
       'POST /v1/dialogue/unlock',
+      // AI 输出回归评测(2026-10-29):`wechat-cc eval run`
+      'POST /v1/eval/run',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
