@@ -4,7 +4,7 @@
  * 先过 route + consume(与微信同一张命令表),落库进同一条消息流。
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type { Bootstrap } from '../bootstrap'
 import type { WechatAccounts } from '../../ports/wechat'
 import type { CareLedger } from '../../features/companion'
@@ -57,10 +57,11 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
     const images = atts.filter(a => a.kind === 'image').length, files = atts.length - images
     return [text.trim(), images ? `[图片 ×${images}]` : '', files ? `[文件 ×${files}]` : ''].filter(Boolean).join('\n')
   }
-  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null) => {
+  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null, uploads?: ConverseImage[]) => {
     const ts = new Date().toISOString()
     const ownerChatId = synthetic.chatId
-    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? attachmentRecordText(text, synthetic.attachments) : text, source: origin }).catch(() => {})
+    const incoming=synthetic.attachments?.length?encodeExtras({attachments:synthetic.attachments.map((a,i)=>({kind:'file',path:a.path,name:basename(uploads?.[i]?.name||a.path)})),narration:[]}):undefined
+    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? attachmentRecordText(text, synthetic.attachments) : text, source: origin, ...(incoming?{extras:incoming}:{}) }).catch(() => {})
     const encoded = encodeExtras(extras)
     if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
   }
@@ -166,7 +167,7 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
       log('APP_INBOUND', `origin=${origin} intent=${ctx.intent?.kind ?? '-'} consumed=${front.result.consumed ? (ctx.consumedBy ?? 'yes') : 'dispatched'}`)
       if (front.result.consumed) {
         const reply = front.replies.join('\n')
-        persistAppTurn(origin, synthetic, text, reply)
+        persistAppTurn(origin, synthetic, text, reply, undefined, images)
         return { reply }
       }
     }
@@ -191,7 +192,7 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
       })
       // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),
       // 三个入口看到的是同一段对话。落库失败不影响这一轮。
-      persistAppTurn(origin, synthetic, text, captured.reply, captured.extras)
+      persistAppTurn(origin, synthetic, text, captured.reply, captured.extras, images)
       const x = captured.extras
       if (!hasExtras(x)) return { reply: captured.reply }
       return {

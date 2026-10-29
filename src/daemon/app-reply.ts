@@ -1,3 +1,4 @@
+import type {MessageRecord} from '../lib/messages-store'
 /**
  * app-reply — 桌面 / 手机那一轮回复的附件与旁白,给 app 看的形状(回复交付 2026-10-04)。
  *
@@ -7,13 +8,13 @@
  *   voice    { text }                   —— 要读出来的那句。桌面经 agent_speak、手机经 GET /m/api/chat/voice 按需合成。
  *   sticker  { label, file? }           —— 本地表情:file 是表情库里的文件名(解析一次、落库,桌面与手机看到同一张);
  *                                          联网表情(情绪 + 网址 / 搜索词)只有 label —— daemon 不替 app 去外网取图。
- *   file     { name, path }             —— path 只留在 daemon 与桌面的 Rust 层(在访达里显示);手机线上只给 name,
- *                                          不为它开取文件的路由。
+ *   file     { name, path }             —— path 留在 daemon(此刻的桌面回复可用于在访达里显示);历史线上只给 name,
+ *                                          按已存消息身份与附件序号读取,不接受客户端路径。
  *
  * 落库在 messages.extras(v72,回复那一行),手机从消息库拉对话时随行带出。
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, resolve, isAbsolute } from 'node:path'
 import { CHAT_NARRATION_MAX, CHAT_TEXT_MAX, type ChatAttachmentT } from '@wechat-cc/protocol'
 import type { TurnAttachment } from '../domain/turn-reply'
 
@@ -154,4 +155,20 @@ export function withStickerImages(atts: readonly AppAttachment[], image: (file: 
     const uri = image(a.file)
     return uri ? { ...a, image: uri } : a
   })
+}
+
+/** Only explicit refs written by the validated app-upload path can authorize incoming media reads.
+ * A legacy count marker or a conveniently named inbox file is never evidence. All entries retain their indices. */
+export function incomingUploadAttachments(row: MessageRecord, inboxDir?:string): Array<Extract<AppAttachment,{kind:'file'}>> {
+  if(!inboxDir||row.direction!=='in'||!['desktop','phone'].includes(row.source))return []
+  const match=new RegExp(`^app:${row.source}:(\\d+):in$`).exec(row.id)
+  if(!match)return []
+  const attachments=parseExtras(row.extras)?.attachments??[]
+  if(!attachments.length||attachments.length>4)return []
+  // parseExtras tolerates corrupt outgoing entries; incoming indices must never shift.
+  try { if(JSON.parse(row.extras!).attachments.length!==attachments.length)return [] } catch { return [] }
+  for(const a of attachments){
+    if(a.kind!=='file'||!isAbsolute(a.path)||resolve(dirname(a.path))!==resolve(inboxDir)||!new RegExp(`^app-${row.source}-${match[1]}-[1-4](?:-|\\.)`).test(basename(a.path)))return []
+  }
+  return attachments as Array<Extract<AppAttachment,{kind:'file'}>>
 }

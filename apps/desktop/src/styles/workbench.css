@@ -552,3 +552,23 @@
   .wb-controls { max-height:40%; }
   .wb-artifacts.is-outcome { margin-top:8px; margin-bottom:8px; }
 }
+
+/* Shared full-content readers: keep columns and source lines readable at narrow widths. */
+.wb-markdown { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.wb-markdown :is(h1,h2,h3,h4,h5,h6) { font-size:1em; font-weight:500; line-height:1.5; margin:1.15em 0 .5em; }
+.wb-markdown h1 { font-size:1.2em; }
+.wb-markdown h2 { font-size:1.1em; }
+.wb-markdown pre,#wb-preview .wb-preview-content>pre,.wb-input-preview-body pre { max-width:100%; overflow:auto; white-space:pre; overflow-wrap:normal; word-break:normal; }
+.wb-markdown pre code { white-space:inherit; overflow-wrap:inherit; word-break:inherit; }
+.wb-markdown table { max-width:100%; overflow:auto; overflow-wrap:normal; word-break:normal; }
+.wb-markdown :is(th,td),.cc-readable-markdown.wb-markdown :is(th,td) { min-width:10rem; }
+.wb-markdown-target code { white-space:normal; overflow-wrap:anywhere; }
+.wb-history-message-body.cc-readable-markdown { font-size:var(--th-size-body); }
+#wb-preview .wb-preview-content>pre,.wb-input-preview-body>pre { font:13px/1.7 var(--mono); padding:12px; }
+.converse-legacy-media {display:block;max-width:70ch;color:var(--th-ink-soft);font-size:12px;line-height:1.6}
+.wb-input-preview-body.is-zoomed img {max-width:none;max-height:none;width:200%;height:auto}
+.wb-input-preview>footer {display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px}
+.wb-input-preview>footer [role=status] {flex-basis:100%;text-align:left;font-size:13px}
+.wb-input-preview>footer [role=status]:empty {display:none}
+.converse-user-image {border:0;padding:0;background:transparent;cursor:zoom-in}
+.converse-user-image img {display:block}

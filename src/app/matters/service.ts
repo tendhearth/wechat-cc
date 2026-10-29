@@ -14,12 +14,12 @@ import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts
  */
 export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
 // activity(2026-10-17):工具那一步在跑还是做完了 —— 手机看着它跑要知道「正在」哪一步。只给 type/status/label,不给命令输出。
-export interface MatterEvent {kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string;activity?:{type:string;status:string;label:string}}
+export interface MatterEvent {messageId?:string;replyExtras?:{attachments?:import('@wechat-cc/protocol').ChatAttachmentT[];narration?:string[]};kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string;activity?:{type:string;status:string;label:string}}
 export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>&Partial<Pick<LiveInput,'error'>>
 // 只投影显示材料所需的五个字段；不能把内部存储路径、owner 或草稿身份带到手机。
 const publicMaterials=(attachments?:readonly Attachment[])=>attachments?.length?{attachments:attachments.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))}:{}
 const publicInput=({id,taskId,runId,text,status,attachments}:MatterInput):MatterInput=>({id,taskId,runId,text,status,...publicMaterials(attachments)})
-const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic,activity}:MatterEvent):MatterEvent=>({kind,text,createdAt,...(source!==undefined?{source}:{}),...(kind==='tool_call'&&activity&&typeof activity.status==='string'?{activity:{type:String(activity.type),status:activity.status,label:String(activity.label??'').slice(0,200)}}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
+const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic,activity,messageId,replyExtras}:MatterEvent):MatterEvent=>({kind,text,createdAt,...(messageId?{messageId}:{}),...(replyExtras?{replyExtras}:{}),...(source!==undefined?{source}:{}),...(kind==='tool_call'&&activity&&typeof activity.status==='string'?{activity:{type:String(activity.type),status:activity.status,label:String(activity.label??'').slice(0,200)}}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
 export interface MatterTaskControls {
   runId?:string;inputMode?:'steer'|'send'|'queue'
   permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];artifacts:Artifact[];inputs:MatterInput[]
@@ -71,7 +71,7 @@ export interface MattersServiceDeps {
     rewind?(id:string,input:{artifactId:string;to:'start'|'end';token:string}):Promise<{discarded:string[]}>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
-  chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
+  chat?:{file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
   /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
   sayReceipts?:SayReceipts
   /** 主人对话要是在这里首建,出生地记成什么(daemon 按鉴权来源算:桌面 = desktop,手机 = App / 浏览器)。没接 ⇒ 桌面记 desktop,手机不知道就不写。 */
@@ -85,6 +85,7 @@ export interface MattersService {
   inputReceipt(id:string,requestId:string):MatterInput|null
   /** 主人那条对话(没有就建),并记下是从哪个表面看的;没配主人 → null。 */
   ownerChat(surface:'desktop'|'phone'):Promise<MatterDetail|null>
+  ownerChatFile(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>
   say(id:string,text:string,surface?:'desktop'|'phone',input?:MatterSayInput):Promise<{kind:'task';task:MatterTaskView;input?:MatterInput}|{kind:'chat';reply:string}>
   permission(id:string,runId:string,requestId:string,decision:PermissionDecision):void
   answer(id:string,runId:string,requestId:string,answers:unknown):void
@@ -204,6 +205,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       const named=namesFor([...(agents??[]),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
       return {matter:{...matter,...(agents?.length?{agents}:{}),...named},bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
+    async ownerChatFile(input){return deps.chat?.file ? deps.chat.file(input) : {status:503,body:{error:'chat_not_wired'}}},
     async ownerChat(surface){
       const owner=deps.chat?.ownerChatId();if(!owner)return null
       const origin=deps.originOf?deps.originOf(surface):surface==='desktop'?'desktop':null

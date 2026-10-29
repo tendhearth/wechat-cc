@@ -33,6 +33,26 @@ export function renderMarkdown(value: string): string {
   return markdown.parse(String(value ?? ''), { async: false })
 }
 
+/** Reading-only presentation: never fetch an image or turn a local target into a capability. */
+const readingMarkdown = new Marked({ gfm: true, breaks: true, renderer: {
+  ...renderer,
+  link({ href, title, tokens }) {
+    const label = this.parser.parseInline(tokens), url = safeMarkdownUrl(href)
+    if (url) return `<a href="${escapeMarkdownHtml(url)}"${title ? ` title="${escapeMarkdownHtml(title)}"` : ''} target="_blank" rel="noopener noreferrer">${label}</a>`
+    return `<span class="wb-markdown-target">${label} <code>${escapeMarkdownHtml(href)}</code></span>`
+  },
+  image({ href, text }) {
+    const label = escapeMarkdownHtml(text || '图片'), url = safeMarkdownUrl(href)
+    return url
+      ? `<span class="wb-markdown-image">${label} · <a href="${escapeMarkdownHtml(url)}" target="_blank" rel="noopener noreferrer">打开图片</a></span>`
+      : `<span class="wb-markdown-image wb-markdown-target">${label} <code>${escapeMarkdownHtml(href)}</code></span>`
+  },
+} })
+
+export function renderReadingMarkdown(value: string): string {
+  return readingMarkdown.parse(String(value ?? ''), { async: false })
+}
+
 /** Native clients render these tokens with native views, never a WebView. */
 export function parseMarkdown(value: string): Token[] {
   return markdown.lexer(String(value ?? ''))

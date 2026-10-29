@@ -19,7 +19,7 @@ import {createQuotaHandoffAttempts,mountQuotaHandoffDialog,renderQuotaHandoff} f
 import { mountHistoryDialog } from './workbench-history.js'
 import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
 import { isScriptApprovalRequired, mountScriptsApproveDialog, scriptErrorMessage, worktreeScriptsHtml } from './workbench-scripts-approve.js'
-import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText } from './workbench-markdown.js'
+import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText, renderReadingFile } from './workbench-markdown.js'
 export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import { renderReviewPanel, returnLessonText, reviewsSignature } from './workbench-review-panel.js'
@@ -161,11 +161,7 @@ const pageInputAttempts = new Map()
 /** @param {string} name @param {string} mime @param {string} text */
 export function renderWorkbenchArtifactText(name, mime, text) {
   if (mime === WORKBENCH_CODE_REVIEW_MIME) return renderWorkbenchCodeReview(text)
-  const source = `<pre>${escapeWorkbenchHtml(text)}</pre>`
-  if (mime.split(';')[0] === 'text/markdown' || /\.(md|markdown)$/i.test(name)) {
-    return `<article class="wb-document wb-markdown">${renderWorkbenchMarkdown(text)}</article><details id="wb-artifact-source" class="wb-disclosure"><summary>查看原文</summary>${source}</details>`
-  }
-  return source
+  return renderReadingFile(name,mime,text)
 }
 
 /** @param {number} value */
@@ -327,7 +323,7 @@ export function renderMessageFor({ detail, helper, handoffs, actionable, lastRep
     const body=event.kind==='user'?renderWorkbenchUserText(text,`task:${event.taskId}:${event.id}`):event.kind==='text'?renderWorkbenchMarkdown(text):escapeWorkbenchHtml(text)
     return `<article class="wb-message" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escapeWorkbenchHtml(event.kind)}">
     <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
-    <div class="wb-message-body${event.kind==='text'?' wb-markdown':''}">${body}${handoff?`<button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoff.id)}">查看随附的交接内容</button>`:''}</div>
+    <div class="wb-message-body${event.kind==='text'?' cc-readable-markdown wb-markdown':''}">${body}${handoff?`<button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoff.id)}">查看随附的交接内容</button>`:''}</div>
     ${renderMessageAttachments(detail?.task.id??'',event.attachments)}
     ${event.kind==='text'&&detail?renderImageArtifacts(detail.task.id,(detail.artifacts??[]).filter(a=>detail.events.filter(message=>message.kind==='text'&&message.createdAt<=a.createdAt).at(-1)?.id===event.id)):''}
     ${actionable&&event.kind==='text'&&(origin||(event===lastReply&&otherProvider))?`<button type="button" class="wb-new wb-handoff-action" data-action="${origin?'handoff-revision':'handoff-review'}" data-event-id="${event.id}">${origin?'选择意见，交回原任务':`交给 ${escapeWorkbenchHtml(otherProvider?.displayName)} 检查`}</button>`:''}
@@ -1253,12 +1249,13 @@ export function initWorkbenchPage(deps) {
         if(action==='download-input-attachment'){await download(target);setTimeout(()=>URL.revokeObjectURL(url),1000);return}
         attachmentPreviewCleanup?.()
         const dialog=document.createElement('dialog');dialog.className='wb-history-dialog wb-input-preview';dialog.setAttribute('aria-label',a.name)
-        const body=a.mime.startsWith('image/')?`<img src="${url}" alt="${escapeWorkbenchHtml(a.name)}">`:a.mime==='application/pdf'?renderPdfReader(`attachment:${a.id}`,a.name):a.mime.startsWith('text/')||a.mime==='application/json'?`<pre>${escapeWorkbenchHtml(new TextDecoder().decode(bytes))}</pre>`:'<p>下载后可在本机应用中查看。</p>'
-        dialog.innerHTML=`<header><h2>${escapeWorkbenchHtml(a.name)}</h2><button type="button" class="wb-new" data-close-attachment>关闭</button></header><div class="wb-input-preview-body">${body}</div><footer><button type="button" class="wb-btn" data-download-attachment>下载</button><span role="status" aria-live="polite" data-download-status></span></footer>`
+        const body=a.mime.startsWith('image/')?`<img src="${url}" alt="${escapeWorkbenchHtml(a.name)}">`:a.mime==='application/pdf'?renderPdfReader(`attachment:${a.id}`,a.name):a.mime.startsWith('text/')||a.mime==='application/json'?renderWorkbenchArtifactText(a.name,a.mime,new TextDecoder().decode(bytes)):'<p>下载后可在本机应用中查看。</p>'
+        dialog.innerHTML=`<header><h2>${escapeWorkbenchHtml(a.name)}</h2><button type="button" class="wb-new" data-close-attachment>关闭</button></header><div class="wb-input-preview-body">${body}</div><footer>${a.mime.startsWith('image/')?'<button type="button" class="wb-btn" data-zoom-attachment>放大图片</button>':''}<button type="button" class="wb-btn" data-download-attachment>下载</button><span role="status" aria-live="polite" data-download-status></span></footer>`
         let readerCleanup = /** @type {(()=>void)|null} */ (null)
         let closed = false
         const cleanup=()=>{if(closed)return;closed=true;readerCleanup?.();URL.revokeObjectURL(url);dialog.remove();if(attachmentPreviewCleanup===cleanup)attachmentPreviewCleanup=null}
         attachmentPreviewCleanup=cleanup;dialog.addEventListener('close',()=>{attachmentPreviewRequest++;cleanup()},{once:true});dialog.querySelector('[data-close-attachment]')?.addEventListener('click',()=>dialog.close());const downloadButton=dialog.querySelector('[data-download-attachment]');downloadButton?.addEventListener('click',()=>{void download(downloadButton,dialog.querySelector('[data-download-status]'))})
+        dialog.querySelector('[data-zoom-attachment]')?.addEventListener('click',event=>{const zoomed=dialog.querySelector('.wb-input-preview-body')?.classList.toggle('is-zoomed');if(event.target instanceof HTMLElement)event.target.textContent=zoomed?'适合窗口':'放大图片'})
         document.body.append(dialog);dialog.showModal()
         const reader = /** @type {HTMLElement|null} */ (dialog.querySelector('.cc-pdf-reader'))
         if (reader) readerCleanup = mountPdfReader(reader,bytes,a.name)
