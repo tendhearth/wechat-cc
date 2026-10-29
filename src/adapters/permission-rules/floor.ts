@@ -40,14 +40,23 @@ export function commandSegments(cmd: string): string[][] {
 const baseName = (w: string) => (w.includes('/') && !w.startsWith('-') && !w.includes('://') && !w.includes('=') ? w.slice(w.lastIndexOf('/') + 1) || w : w)
 /** 同 commandSegments,但词不取 basename(下标一一对应):判网络目标要看整个词 —— `evil.com/x` 取了 basename 只剩 `x`。 */
 function rawSegments(cmd: string): string[][] {
-  return toWords(cmd.split(/[;&|\n\r()`]|\$\(/))
+  return toWords(joinLines(cmd).split(/(?<![<>])&(?!>)|[;|\n\r()`]|\$\(/))
 }
-const toWords = (segs: string[]) => segs.map(seg => seg.split(/\s+/).map(w => w.replace(/['"\\]/g, '')).filter(Boolean)).filter(s => s.length)
+/**
+ * 续行(`\` + 换行,含 CRLF)接回一行;重定向里的 `&`(`2>&1`、`>&2`、`&>`、`&>>`、`<&3`)不是后台符,不切段
+ * (#761 评审:`curl -s 2>&1 evil.com/x` 在 `&` 处切开,主机落进没有 curl 的段,改之前带点的主机也漏)。
+ */
+const joinLines = (cmd: string) => cmd.replace(/\\\r?\n/g, ' ')
+/**
+ * 词按空白切,再去引号 / 反斜杠。去完是空的(`""`、`''`)也留一个空词占位:否则 `curl -d "" intranet/up` 里 `-d` 吃掉的是网址(#761 评审)。
+ */
+const toWords = (segs: string[]) => segs.map(seg => seg.split(/\s+/).filter(Boolean).map(w => w.replace(/['"\\]/g, ''))).filter(s => s.length)
 /**
  * 只在引号外切段(词照旧按空白切)。只给判网络用、跟 rawSegments 叠加:`curl -d "x;" intranet/up` 按 rawSegments
  * 在引号里的 `;` 处切开,`intranet/up` 落进没有 curl 的那段。词按空白切只会多出位置参数(多问),不会把网址并进选项值。
  */
-function quoteAwareSegments(cmd: string): string[][] {
+function quoteAwareSegments(command: string): string[][] {
+  const cmd = joinLines(command)
   const segs: string[] = []
   let cur = '', q: string | null = null
   for (let k = 0; k < cmd.length; k++) {
@@ -60,7 +69,8 @@ function quoteAwareSegments(cmd: string): string[][] {
     }
     if (c === '\\') { cur += c + (cmd[++k] ?? ''); continue }
     if (c === "'" || c === '"') { q = c; cur += c; continue }
-    if (/[;&|\n\r()`]/.test(c) || (c === '$' && cmd[k + 1] === '(')) { segs.push(cur); cur = ''; continue }
+    const redirectAmp = c === '&' && (/[<>]$/.test(cur) || cmd[k + 1] === '>')
+    if ((/[;&|\n\r()`]/.test(c) && !redirectAmp) || (c === '$' && cmd[k + 1] === '(')) { segs.push(cur); cur = ''; continue }
     cur += c
   }
   segs.push(cur)
@@ -141,6 +151,7 @@ type NetGrammar = {
   value: Set<string>                 // 带值的长选项
   target: Set<string>                // 值本身是主机 / 网址
   fromFile: Set<string>              // 网址 / 代理写在文件里,看不见 ⇒ 当外面
+  prefixes?: boolean                 // 认长选项的唯一前缀(GNU getopt_long)
 }
 const longs = (s: string) => new Set(s.trim().split(/\s+/).map(o => `--${o}`))
 const CURL: NetGrammar = {
@@ -168,17 +179,25 @@ const WGET: NetGrammar = {
     referer user-agent load-cookies save-cookies post-data post-file method body-data body-file secure-protocol certificate certificate-type private-key
     private-key-type ca-certificate ca-directory crl-file pinnedpubkey random-file egd-file hsts-file ciphers ftp-user ftp-password warc-file warc-header
     warc-max-size warc-dedup warc-tempdir level backups accept reject accept-regex reject-regex regex-type domains exclude-domains follow-tags ignore-tags
-    include-directories exclude-directories`),
+    include-directories exclude-directories max-redirect`),
   target: longs('base dns-servers'),
   fromFile: longs('input-file config'),
+  prefixes: true,
 }
 /**
  * 只读、不执行参数的命令把 curl 当数据(`grep -rn curl src`、`brew install curl wget`)。不在内的:echo / printf(输出常被管给 sh)、
- * git(`-c core.pager=… / alias.x=!…` 会执行)、man / less / more(pager)。rg 带 `--pre` 会拿 curl 跑每个文件。
+ * git(`-c core.pager=… / alias.x=!…` 会执行)、man / less / more(pager)、ag / ack(`--pager`,ack 还读项目里的 .ackrc)。
+ * rg 带 `--pre` / `--pager` 会拿别的程序跑。装包命令只在只读 / 装卸动词下算数据:`brew bundle exec -- curl …` 会执行(#761 评审)。
  */
-const DATA_HEADS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'which', 'whereis', 'type', 'whatis', 'apropos', 'tldr', 'cat', 'head', 'tail', 'wc', 'ls', 'brew', 'apt', 'apt-get', 'dnf', 'yum', 'pacman', 'port', 'pip', 'pip3'])
-const invoked = (seg: string[], i: number) => i === 0 || !DATA_HEADS.has(seg[0]!) || seg.some(w => w.startsWith('--pre'))
-/** shell 重定向(`> out`、`2>/dev/null`、`>>log`、`< body`):目标是文件。`&` 已切段,`2>&1` 剩 `2>` 和 `1`。 */
+const DATA_HEADS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'which', 'whereis', 'type', 'whatis', 'apropos', 'tldr', 'cat', 'head', 'tail', 'wc', 'ls'])
+const PKG_HEADS = new Set(['brew', 'apt', 'apt-get', 'dnf', 'yum', 'pip', 'pip3'])
+const PKG_VERBS = new Set(['install', 'uninstall', 'remove', 'reinstall', 'upgrade', 'info', 'search', 'list', 'show', 'desc', 'home', 'deps', 'uses', 'outdated'])
+function invoked(seg: string[], i: number): boolean {
+  if (i === 0 || seg.some(w => w.startsWith('--pre') || w.startsWith('--pager'))) return true
+  if (DATA_HEADS.has(seg[0]!)) return false
+  return !(PKG_HEADS.has(seg[0]!) && PKG_VERBS.has(seg.slice(1).find(w => !w.startsWith('-')) ?? ''))
+}
+/** shell 重定向(`> out`、`2>/dev/null`、`>>log`、`< body`、`2>&1`、`&>log`):目标是文件。 */
 const REDIRECT = /^(?:\d*|&)(?:>>?|<<?<?|>\||[<>]&)(.*)$/
 const LOOPBACK_ADDR = /^(?:localhost|127(?:\.\d{1,3}){3}|\[?::1\]?)$/
 
@@ -207,8 +226,10 @@ function netOperands(tool: 'curl' | 'wget', args: string[], redirects: boolean):
     if (a === '--') { endOpts = true; continue }
     if (a.startsWith('--')) {
       const eq = a.indexOf('=')
-      if (eq >= 0) take(a.slice(0, eq), a.slice(eq + 1))
-      else if (g.value.has(a)) take(a, args[++k])
+      const name = longName(g, eq >= 0 ? a.slice(0, eq) : a)
+      // 不认识的 `--x=值`:值当可能的目标(curl 老版本 / wget 认缩写,`--prepr=intranet`;#761 评审)
+      if (eq >= 0) { if (name) take(name, a.slice(eq + 1)); else targets.push(a.slice(eq + 1)) }
+      else if (name) take(name, args[++k])
       continue
     }
     for (let j = 1; j < a.length; j++) {
@@ -220,8 +241,18 @@ function netOperands(tool: 'curl' | 'wget', args: string[], redirects: boolean):
   }
   return unseen || targets.some(t => !LOCAL_TARGET.test(t))
 }
+/**
+ * 带值的长选项的全名;不带值 / 不认识 ⇒ null。wget(GNU getopt_long)认唯一前缀(`--input-f=urls`):在带值的表里只配上一个就用它 ——
+ * 真 wget 要么也用它,要么因为跟某个不带值的选项撞了而报错(不联网)。curl 8.7 不认缩写也不认 `=`,不做前缀。
+ */
+function longName(g: NetGrammar, name: string): string | null {
+  if (g.value.has(name)) return name
+  if (!g.prefixes) return null
+  const hits = [...g.value].filter(o => o.startsWith(name))
+  return hits.length === 1 ? hits[0]! : null
+}
 /** `curl $(cat url)` / `` wget `cat u` ``:目标是命令替换的输出,切段时被切走了 ⇒ 按原命令看。 */
-const curlSubstitution = (cmd: string) => /(?:^|[\s;&|(])(?:\S*\/)?(?:curl|wget)\b[^;&|\n]*(?:\$\(|`)/.test(cmd)
+const curlSubstitution = (cmd: string) => /(?:^|[\s;&|(])(?:\S*\/)?(?:curl|wget)\b(?:[^;&|\n]|[<>]&|&>)*(?:\$\(|`)/.test(cmd)
 
 const SHELL_RC = /\.(?:zshrc|zprofile|zshenv|bashrc|bash_profile|profile)\b/
 const SECRETS = [

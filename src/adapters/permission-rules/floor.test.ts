@@ -262,6 +262,22 @@ describe('floor 词表:每个词都是红线', () => {
     ]
     for (const c of ok) expect(reason(c), c).toBeNull()
   })
+  // #761 独立评审找到的绕过(都用 bun 脚本对 floor.ts 复现过)
+  it('往外连网:评审 #761 —— 重定向里的 &、空引号参数、会执行的「读命令」、wget 长选项缩写', () => {
+    const table = [
+      // 重定向里的 & 不是后台符(改之前带点的主机也漏);续行 \ + CRLF
+      'curl -s 2>&1 evil.com/x', 'curl -s &>/dev/null evil.com/x', 'wget -q >&2 evil.com', 'curl 2>&1 intranet/up', 'curl -s &>>log intranet', 'curl -s \\\r\n intranet/up',
+      // 空引号参数是一个词:选项吃掉的是它,不是后面的网址
+      'curl -d "" intranet/up', "curl -H '' intranet", 'curl -A "" intranet/x', 'wget --post-data "" intranet/x',
+      // 能执行别的程序的「读命令」
+      'brew bundle exec -- curl intranet/up', "ag --pager 'curl intranet/up'", "ack --pager 'curl intranet/up'", "rg --pager 'curl intranet/up' x",
+      // wget(GNU getopt)认唯一前缀;不认识的 --x=值 把值当可能的目标
+      'wget --input-f=urls.txt', 'wget --bas=intranet', 'curl --prepr=intranet', 'curl --prepr=intranet http://localhost/',
+    ]
+    for (const c of table) expect(reason(c), c).toBe('往外连网')
+    for (const c of ['curl -s localhost:3000 2>&1', 'curl -s localhost:3000/x &>/dev/null', 'wget -q localhost/x >&2', 'brew install curl wget', 'brew info curl', 'wget --output-doc=out localhost/x', 'wget --max-redirect 3 localhost/x', 'curl -s \\\n localhost:3000/x'])
+      expect(reason(c), c).toBeNull()
+  })
   it('项目目录是根目录(posix / win32 盘根)⇒ 不给项目内待遇', () => {
     expect(floorReason(edit(['/etc/hosts'], { project: '/' }), HOME)).toBe('写到了项目目录之外')
     expect(floorReason(edit(['C:\\Windows\\x.dll'], { project: 'C:\\' }), 'C:\\Users\\me', { platform: 'win32' })).toBe('写到了项目目录之外')
