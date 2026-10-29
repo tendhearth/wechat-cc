@@ -490,3 +490,71 @@ bun tools/mutation/unique-kills.ts reports/mutation/inc/adm-after.json reports/m
 ### 下一步
 
 三面对照想删,得先在 permission-relay / wire-model-options / 一起做的 canUseTool 旁边补直接的表(按上面那几十个会变活的变异补,红 → 绿),补完再删、再量。这是加测试的活,不在这一批。
+
+## 2026-10-28 第四轮:补表,删掉剩下三面对照
+
+接第三轮的「下一步」。对话 Claude、定时任务只读档、一起做 Claude 这三面对照,是 permission-relay、定时任务只读闸门、一起做 canUseTool 的主力:先在这三份源文件旁边补直接的表,补完再删、再量。
+
+### 删前:哪些变异只有对照杀得了
+
+三份各跑一次不 bail(`--disableBail`,2 worker,nice),读 `killedBy`,数「杀死它的测试全在 `authorize.parity.test.ts` 里」的:
+
+| 源文件 | 删前分数 | 只有对照杀得了 | 大致是什么 |
+|---|---:|---:|---|
+| `src/adapters/executors/claude/permission-relay.ts` | 83.9 | 30 | 拒的那几句话、日志行、等 10 分钟、5 位码(补 0 / 取后 5 位 / 哈希的加减)、「Claude wants to run …」里参数的截法 |
+| `src/daemon/bootstrap/wire-model-options.ts` | 76.0 | 23 | 定时任务拒的几种理由各自那句话、绝对路径的 glob 当路径、读文件 / 记忆 / 观察三类都算「读过本机」 |
+| `src/adapters/executors/claude/claude-agent-provider.ts:80-172`(一起做的 canUseTool) | 74.2 | 25 | 没登记的 MCP 那句话和前缀判法、取消、提问 / MCP / 内置三条路各自那句拒、名字只有前缀、问的通道抛错 |
+
+### 补的表(放在被测代码旁边,只替身注进来的回调,不 mock 内部模块)
+
+- `src/adapters/executors/claude/permission-relay.table.test.ts`:扇出里拒 reply 族 / message(不读档位、不问);档位拒的确切话和日志;要问主人时给谁、什么话、哪个码、等多久(码按 toolUseID 列成表,含补 0 和取后 5 位);主人四种答法;主人自己的对话里规则放 / 拒 / 没拿主意;不是主人的对话规则一次都不问。
+- `src/daemon/bootstrap/wire-model-options.job-gate.test.ts`:定时 / 审查两档 × 每种调用的确切结果;红线带理由;MCP 读文件没路径;每种调用之后还能不能上网(污点);Claude 用哪个模型。真临时目录、真红线判定。
+- `src/adapters/executors/claude/workbench-can-use-tool.table.test.ts`:登记表;取消;AskUserQuestion 的好 / 坏输入表;MCP 放进来 × 问的通道;名字 160 / 161、预览长度边界;内置工具要问时交出去的那份请求(上下文先后、命令原文);细节装不下。
+
+### 删后
+
+三面对照和它们的旧实现(`legacyClaudeChatGate`、`legacyJobGate`、`legacyWorkbenchGateInner` 等)一起删:`authorize.parity.test.ts` 693 → 362 行,留下 Gemini、一起做放行规则、终端会话三面(格子数下限 150_000 → 45_000)。三份表共 562 行,测试净 +231 行。
+
+三份主文件删后重跑(不 bail):
+
+| 源文件 | 删前 | 删后 | 删前死、删后活 |
+|---|---:|---:|---:|
+| `permission-relay.ts` | 83.9 | **92.7** | 0 |
+| `wire-model-options.ts` | 76.0 | **86.0** | 0 |
+| `claude-agent-provider.ts:80-172` | 74.2 | **84.4** | 0 |
+
+按变异逐个比对两份报告:删前只有对照杀得了的 78 个,删后全由新表杀掉;删后多杀的是对照也没杀的(日志里的 owner-rule 两行、MCP 读文件没路径那一支、`currentClaudeModel` 等)。
+
+### 被删的测试真正跑过的其余源文件
+
+第三轮的教训:要量删掉的测试**真正跑过的每一份**。三面对照还跑过 authorize、对话侧规则、红线、路径、事实抽取、档位分类、能力表、policy、提问校验、参数预览、陪伴 MCP 判定、一起做的 SDK 选项、reply 族判名。逐份全量不 bail 太慢(主人在用机器,能力表一份 45 分钟、提问校验估 2 小时),换了一个等价的量法:
+
+1. 把删掉的三面原样放进一个临时测试文件,用只含它的 vitest 配置跑 Stryker(`related: false`),得到**这三面能杀的变异集合 F**;
+2. 删后的树上(三面已删、表已加)只变异 F 所在的行,看 F 里每一个是不是还被杀。
+
+F 全被杀 ⇒ 删前被杀的(别的测试 ∪ 三面 ∪ 留下的对照)删后都还被杀,分数只会持平或升。临时文件和配置没提交。
+
+| 源文件 | 三面能杀(F) | 删后 F 里还活着的 | 删后分数 |
+|---|---:|---:|---|
+| `src/domain/authorize.ts` | 81 | 0 | 95.5(全量,= 第三轮删前) |
+| `src/domain/permission-rules/facts.ts` | 10 | 0 | 85.0(全量) |
+| `src/domain/capability-matrix.ts` | 7 | 0 | 91.0(全量) |
+| `src/domain/workbench/native-tools.ts` | 8 | 0 | 只量 F 所在行 |
+| `src/features/workbench/wire.ts:41-74` | 5 | 0 | 只量 F 所在行 |
+| `src/adapters/permission-rules/chat.ts` | 12 | 0 | 只量 F 所在行 |
+| `src/adapters/permission-rules/paths.ts` | 3 | 0 | 只量 F 所在行 |
+| `src/adapters/permission-rules/floor.ts` | 1 | 0 | 只量 F 所在行 |
+| `src/domain/policy.ts` | 5 | 没量完 | 见下 |
+| `src/domain/user-tier.ts` | 48 | 没量完 | 见下 |
+| `src/adapters/workbench/user-input.ts` | 0 | — | — |
+| `src/domain/workbench/tool-input-preview.ts` | 0 | — | — |
+| `src/ports/agent-provider.ts:500-556`(reply 族) | 0 | — | — |
+
+`policy.ts` / `user-tier.ts` 的 F 没量完:两份的 F 几乎全是模块加载时的静态变异(把 `ALL_KINDS`、档位表、`TIER_PROFILES` 清空 / 某个类别名改成空串,`compilePolicy` / `tierProfileToClaudeSdkOpts` 整个函数体清空、内置工具映射表清空),每个都要把牵连的几千条测试全跑一遍;这一晚 load 在 100–500 之间,policy 一份估 50 分钟(中断前测完的 26 / 69 个全被杀)、tier 更久,中断了。这类变异会让 user-tier / policy 自己的表(`user-tier.test.ts` 的「wechat 工具 × 三档」、`policy.test.ts`)和上面三份新表成片红,删掉三面不会让它们活回来,但这一条是推断,不是量出来的 —— 下次机器空的时候补跑 `--mutate src/domain/user-tier.ts:51-56,…`(F 所在行,不 bail 也行)确认。
+
+提问校验、参数预览、reply 族判名这几份三面一个都杀不了:对照的新旧两份调的是同一个 helper,改坏 helper 两边一起变,对照看不出来 —— 「逐格对照」只护得住新旧不同的那一层。
+
+### 跑的时候撞到的
+
+- 主人这台机器这一晚 load 多次冲到 100–600,run 之间按 1 分钟 load < 20 等;authorize 那一份全量在高 load 下跑出 6 个 Timeout(按惯例算杀死;没有逐个在空机器上复核)。
+- 用 `mergeConfig` 继承 vitest 配置时 `include` 是**拼接**的,只想跑一个文件得直接覆盖 `test.include`,不然首轮会跑整个仓库。
