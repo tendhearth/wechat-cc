@@ -1,7 +1,6 @@
-import { realpathSync } from 'node:fs'
-import { isAbsolute, resolve, join } from 'node:path'
+import { join } from 'node:path'
 import type { MessageRecord } from '../../lib/messages-store'
-import { parseExtras, phoneExtrasFields, incomingUploadAttachments } from '../app-reply'
+import { parseExtras, phoneExtrasFields, incomingUploadAttachments, recordedFileCanonical } from '../app-reply'
 
 /** Project only durable, public metadata; never expose stored paths or invent upload references. */
 export function ownerChatReadingEvent(row: MessageRecord, inboxDir?:string) {
@@ -24,13 +23,8 @@ export function makeOwnerChatFileReader(deps:{ownerChatId():string|null;stickerD
     const path=attachment.kind==='file'?attachment.path:attachment.kind==='sticker'&&attachment.file&&deps.stickerDir?join(deps.stickerDir,attachment.file):null
     const name=attachment.kind==='file'?attachment.name:attachment.kind==='sticker'?attachment.file??'': ''
     if(!path)return fail(404,'not_found')
-    // A recorded path is authority for that file, not a symlink to a replacement elsewhere.
-    try {
-      const resolved=resolve(path),canonical=realpathSync(path)
-      const systemAlias=process.platform==='darwin'?resolved.replace(/^\/(var|tmp)(?=\/)/, '/private/$1'):resolved
-      if(!isAbsolute(path)||(canonical!==resolved&&canonical!==systemAlias))return fail(404,'not_found')
-    }
-    catch { return fail(404,'not_found') }
+    // A recorded path is authority for that file (symlinked parent directories included), not a symlink to a replacement elsewhere.
+    if(!recordedFileCanonical(path))return fail(404,'not_found')
     const response=deps.readChunk(path,name,input.offset)
     const body=await response.json() as Record<string,unknown>
     if(response.ok&&((input.sha256!==undefined&&body.sha256!==input.sha256)||(input.size!==undefined&&body.size!==input.size)))return fail(409,'file_changed')

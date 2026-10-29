@@ -140,6 +140,9 @@ export async function loadMemoryPane(deps) {
 let memoryFileRevision = 0
 let memoryFileScopeKey = ''
 /** @type {MutationObserver|null} */ let memoryPaneObserver = null
+// The file whose header is on screen but whose read has not committed yet. Leaving the pane drops that
+// read; coming back re-issues it, so header, body, selection and the edit button never disagree.
+/** @type {{userId:string,relPath:string,mtime:string}|null} */ let memoryFileOpening = null
 
 // Stored facts lead; the inferred profile and raw management keep their own folds.
 /** @type {{userId:string,path:string,mtime:string,lines:string[]|null,content:string}|null} */
@@ -297,6 +300,7 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
     memoryState.dirtySwitchPending = null
     setEditMode(false)
   }
+  memoryFileOpening = { userId, relPath, mtime }
   document.querySelectorAll(".mem-file").forEach(el => {
     const btn = /** @type {HTMLElement} */ (el)
     el.classList.toggle("active", btn.dataset.user === userId && btn.dataset.path === relPath)
@@ -318,11 +322,14 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
   try {
     result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.file, { query: { user_id: userId, path: relPath } }))
   } catch (err) {
-    if (ownsReader() && rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
+    if (!ownsReader()) return false
+    memoryFileOpening = null
+    if (rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
     return false
   }
   if (!ownsReader()) return false
   if (!result.ok) {
+    memoryFileOpening = null
     if (rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(result.error || "unknown")}</p>`
     return false
   }
@@ -333,6 +340,7 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
   const html = (lineView ? renderOwnerBlock(lineView) : "") + marked.parse(result.content)
   // One synchronous commit after every async boundary: no late request may
   // replace selected/path, line baseline, pristine text or the active draft.
+  memoryFileOpening = null
   memoryState.lineView = lineView
   memoryState.bulkConfirmFor = null
   memoryState.selected = { userId, path: relPath }
@@ -643,7 +651,11 @@ export function wireMemoryButtons(deps) {
     memoryPaneObserver = new MutationObserver(changes => {
       // Any hidden transition invalidates old work, including leaving and
       // re-entering before the pending response arrives.
-      if (changes.some(change => change.attributeName === 'hidden')) memoryFileRevision++
+      if (!changes.some(change => change.attributeName === 'hidden')) return
+      memoryFileRevision++
+      // Back on the pane with a file read that was dropped: read the file the header shows again.
+      const opening = memoryFileOpening
+      if (opening && !pane.hasAttribute('hidden')) void openMemoryFile(deps, opening.userId, opening.relPath, opening.mtime)
     })
     memoryPaneObserver.observe(pane, { attributes: true, attributeFilter: ['hidden'] })
   }

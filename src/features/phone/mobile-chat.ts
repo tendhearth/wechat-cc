@@ -1,4 +1,4 @@
-import {join,basename,resolve} from 'node:path'
+import {join,basename} from 'node:path'
 import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES } from '@wechat-cc/protocol'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { MessageRecord } from '../../lib/messages-store'
@@ -6,7 +6,7 @@ import type { MatterOrigin, MatterStore } from '../../ports/matters'
 import type { ChatJob, PhoneChat } from './phone-chat'
 import { framedTooLarge } from './mobile-matter-response'
 import { ownsMethod, sharedRoute, type PhoneRouteTable } from './phone-route-table'
-import { parseExtras, phoneExtrasFields, incomingUploadAttachments } from '../../daemon/app-reply'
+import { parseExtras, phoneExtrasFields, incomingUploadAttachments, recordedFileCanonical } from '../../daemon/app-reply'
 import { createHash } from 'node:crypto'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs'
 
@@ -253,7 +253,8 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
       try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
       const att = row && row.chatId===owner.chatId && row.id===id ? (row.direction === 'out' ? parseExtras(row.extras)?.attachments : incomingUploadAttachments(row,deps.inboxDir))?.[Number(rawIdx)] : undefined
       if (!att || att.kind !== 'file') return err('not_found', 404)
-      if(row?.direction==='in'){try{const canonical=realpathSync(att.path),resolved=resolve(att.path),systemAlias=process.platform==='darwin'?resolved.replace(/^\/(var|tmp)(?=\/)/,'/private/$1'):resolved;if((canonical!==resolved&&canonical!==systemAlias)||canonical!==join(realpathSync(deps.inboxDir!),basename(att.path)))return err('not_found',404)}catch{return err('not_found',404)}}
+      // An app upload must still be the file directly in the inbox, compared canonically on both sides; symlinked parents are fine, a symlinked upload is not.
+      if(row?.direction==='in'){try{const canonical=recordedFileCanonical(att.path);if(!canonical||canonical!==join(realpathSync(deps.inboxDir!),basename(att.path)))return err('not_found',404)}catch{return err('not_found',404)}}
       return fileChunkResponse(att.path, att.name, Number(rawOffset))
     }),
     'GET /m/api/chat/voice': ownsMethod(async (url: URL, req: Request) => {

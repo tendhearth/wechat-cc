@@ -10,8 +10,26 @@ export function framedTooLarge(body:string):boolean {
   const framed=JSON.stringify({rid:'r'.repeat(64),status:200,body})
   return Buffer.byteLength(framed,'utf8')>MAX_MOBILE_DETAIL_BYTES
 }
+/** Reply narration (up to 20 × 4000 chars per owner-chat row, device tokens only) is the one optional bulk in a detail.
+ * When the frame would overflow, drop it from the oldest replies first; text, attachments and decisions stay whole. */
+function withoutOldNarration(detail:unknown):string {
+  let body=JSON.stringify({ok:true,...detail as object})
+  const events=(detail as {events?:unknown}|null)?.events
+  if(!framedTooLarge(body)||!Array.isArray(events))return body
+  const copy=[...events] as unknown[]
+  const narrated=copy.map((e,i)=>({e:e as {createdAt?:unknown,replyExtras?:{narration?:unknown}}|null,i}))
+    .filter(({e})=>!!e&&typeof e==='object'&&!!e.replyExtras&&typeof e.replyExtras==='object'&&e.replyExtras.narration!==undefined)
+    .sort((a,b)=>(typeof a.e!.createdAt==='number'&&typeof b.e!.createdAt==='number'?a.e!.createdAt-b.e!.createdAt:0)||a.i-b.i)
+  for(const {e,i} of narrated){
+    const {narration:_dropped,...replyExtras}=e!.replyExtras!
+    copy[i]={...e,replyExtras}
+    body=JSON.stringify({ok:true,...detail as object,events:copy})
+    if(!framedTooLarge(body))break
+  }
+  return body
+}
 export function mobileMatterDetailResponse(detail:unknown):Response {
-  const body=JSON.stringify({ok:true,...detail as object})
+  const body=withoutOldNarration(detail)
   const tooLarge=framedTooLarge(body)
   return new Response(tooLarge?JSON.stringify({ok:false,error:'detail_too_large'}):body,{
     status:tooLarge?413:200,
