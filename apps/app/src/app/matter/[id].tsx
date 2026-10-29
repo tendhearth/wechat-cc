@@ -31,7 +31,7 @@ import { matterOrigin, originKey } from '../../view/origin'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { isOwnerChatMatter } from '../../view/chat'
-import { conversationView } from '../../view/conversation'
+import { conversationView, type ConvItem } from '../../view/conversation'
 import { nativeStartLines, providerName } from '../../view/continue'
 import { canSubmit } from '../../view/connection'
 import { HANDOFF_RECHECK, handoffBlock, handoffErrorDot, handoffErrorText, handoffSheetLines } from '../../view/handoff'
@@ -157,6 +157,14 @@ export default function Matter() {
   const files = changes.data?.files ?? []
   const sendRow = sendBlock(turn, lang)
   const conv = conversationView(d.events)
+  // Events from older daemons have no run identity. This is the latest conversation,
+  // never a manufactured completion summary; earlier replies stay behind their own fold.
+  const latestUser = conv.findLastIndex(e => e.kind === 'me')
+  const recent = conv.slice(Math.max(0, latestUser))
+  const earlier = conv.slice(0, Math.max(0, latestUser)).filter(e => e.kind === 'me' || e.kind === 'cc')
+  const latest = conv.at(-1)
+  const activity = canStop(d) && latest?.kind === 'steps' && latest.running ? latest : null
+  const currentError = latest?.kind === 'error' ? latest : null
   const hb = handoffBlock(d.quotaHandoff, lang, Date.now(), d.matter.agentNames)
   const online = canSubmit(conn)
   const stop = async () => {
@@ -278,9 +286,18 @@ export default function Matter() {
             <Icon name="chevronRight" color={c.inkSoft} />
           </Pressable>
         )) : null}
+        <View testID="progress-latest-conversation" style={{ gap: space.l }}>
+          {recent.filter(e => e.kind === 'me' || e.kind === 'cc').map((e, i) => <ConversationMessage key={i} event={e} />)}
+        </View>
+        {activity ? <Txt testID="progress-activity-now" role="meta" tone="inkSoft" selectable>{t(lang, 'progress.stepNow')} · {activity.text}</Txt> : null}
+        {currentError ? <Txt testID="progress-current-error" role="body" tone="inkSoft" selectable>{currentError.text}</Txt> : null}
         {d.artifacts.length ? <Artifacts matterId={id} artifacts={d.artifacts} backend={backend} lang={lang} online={online} /> : null}
 
-        <DetailSection testID="progress-summary-toggle" title={conversationText(lang, 'summary')}>
+        {earlier.length ? <DetailSection key={`earlier:${id}`} testID="progress-earlier" title={conversationText(lang, 'earlier')}>
+          <View testID="progress-earlier-conversation" style={{ gap: space.l }}>{earlier.map((e, i) => <ConversationMessage key={i} event={e} />)}</View>
+        </DetailSection> : null}
+
+        <DetailSection key={`summary:${id}`} testID="progress-summary-toggle" title={conversationText(lang, 'summary')}>
           <View style={{ gap: space.m }}>
             {v.summaryState === 'failed' ? (
               <Pressable testID="progress-summary" accessibilityRole="button" accessibilityLabel={t(lang, 'progress.summaryUnavailable')} onPress={() => void insight.refresh()}>
@@ -310,7 +327,7 @@ export default function Matter() {
           </View>
         </DetailSection>
 
-        <DetailSection testID="progress-process" title={conversationText(lang, 'process')}>
+        <DetailSection key={`process:${id}`} testID="progress-process" title={conversationText(lang, 'process')}>
           <View testID="progress-conversation" style={{ gap: space.m }}>
             <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'progress.conversation')}</Txt>
             {conv.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noEvents')}</Txt> : null}
@@ -332,15 +349,7 @@ export default function Matter() {
                     </> : null}
                   </View>
                 </View>
-              ) : (
-                <View key={i} style={{ alignItems: e.kind === 'me' ? 'flex-end' : 'flex-start' }}>
-                  {/* 「我」靠右、CC 靠左;说话人独立一行,原文按钮和链接各自可访问 */}
-                  <View style={{ maxWidth: '88%', gap: space.xs }}>
-                    <Txt role="caption" tone="inkSoft" style={{ textAlign: e.kind === 'me' ? 'right' : 'left' }}>{t(lang, e.kind === 'me' ? 'chat.me' : 'cc.label')}</Txt>
-                    <MessageText role={e.kind === 'me' ? 'user' : 'assistant'} text={e.text} typeRole="bubble" userAlign="right" />
-                  </View>
-                </View>
-              ),
+              ) : null,
             )}
           </View>
           <View testID="progress-execution-details" style={{ gap: space.m }}>
@@ -513,5 +522,14 @@ function DetailSection({ title, testID, children, keepMounted = false }: { title
       <Icon name={open ? 'chevronDown' : 'chevronRight'} color={c.inkSoft} />
     </Pressable>
     <Expansion open={open} keepMounted={keepMounted}><View style={{ paddingVertical: space.m, gap: space.l }}>{children}</View></Expansion>
+  </View>
+}
+
+
+function ConversationMessage({ event }: { event: ConvItem }) {
+  const lang = useLang()
+  return <View style={{ gap: space.xs, alignSelf: event.kind === 'me' ? 'flex-end' : 'stretch', maxWidth: '100%' }}>
+    <Txt role="caption" tone="inkSoft" style={{ textAlign: event.kind === 'me' ? 'right' : 'left' }}>{t(lang, event.kind === 'me' ? 'chat.me' : 'cc.label')}</Txt>
+    <MessageText role={event.kind === 'me' ? 'user' : 'assistant'} text={event.text} userAlign="right" />
   </View>
 }

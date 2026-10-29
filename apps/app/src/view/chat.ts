@@ -57,7 +57,7 @@ function landed(msgs: ChatMessageT[], accepted: Accepted): boolean {
 export function chatBubbles(msgs: ChatMessageT[], page: JobState, accepted: Accepted | readonly Accepted[] | null, now: number): Bubble[] {
   const out: Bubble[] = msgs.map(m => ({
     key: m.id, side: m.role, text: m.text, at: m.at, source: m.source, state: 'sent', truncated: m.truncated,
-    ...(m.role === 'cc' && m.attachments?.length ? { attachments: m.attachments } : {}),
+    ...(m.attachments?.length ? { attachments: m.attachments } : {}),
     ...(m.role === 'cc' && m.narration?.length ? { narration: m.narration } : {}),
   }))
   const { pending, failed } = page

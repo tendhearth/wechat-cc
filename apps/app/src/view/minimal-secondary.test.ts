@@ -144,6 +144,8 @@ it('welcome keeps the preview unlit and offers pairing or an explicit preview ch
   const node = createElement(SessionProvider, { store, push: { clear: async () => {} }, children: withProviders(createElement(Welcome), { backend }) })
   const ui = await mount(node); await flush()
   expect(ui.style('cc-lit').opacity).toBe(0)
+  expect(ui.byId('welcome-scroll')?.contains(ui.byId('welcome-pair'))).toBe(true)
+  expect(ui.byId('welcome-scroll')?.contains(ui.byId('welcome-look-first'))).toBe(true)
   await act(() => ui.byId('welcome-pair').click())
   expect(route.push).toHaveBeenCalledWith('/pair')
   await act(() => ui.byId('welcome-look-first').click())

@@ -2,6 +2,7 @@
 import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeDemoBackend } from '../backend/demo'
+import type { MatterDetailT } from '../backend/types'
 import Matter from '../app/matter/[id]'
 import { withProviders } from '../state/providers.test-support'
 import { cleanup, mount } from '../ui/native-motion.test-support'
@@ -16,7 +17,7 @@ vi.mock('react-native', async () => {
   const ScrollView = ({ children, ...props }: any) => createElement('div', { 'data-scroll': true }, createElement(native.View, props, children))
   return { ...native, ScrollView, TextInput, ActivityIndicator: () => null, Linking: { openURL: vi.fn() } }
 })
-vi.mock('react-native-safe-area-context', async () => ({ SafeAreaView: (await import('../ui/native-motion.test-support')).View }))
+vi.mock('react-native-safe-area-context', async () => ({ SafeAreaProvider: ({ children }: any) => children, SafeAreaView: (await import('../ui/native-motion.test-support')).View }))
 vi.mock('expo-router', async () => ({
   ...await (await import('../ui/native-motion.test-support')).routerBoundary(),
   useLocalSearchParams: () => ({ id: route.id }),
@@ -95,4 +96,61 @@ it('keeps every handoff precaution and both actions in a bounded scrollable conf
   await ui.click('handoff-cancel')
   expect(ui.byId('handoff-sheet')).toBeNull()
   expect(handoff).not.toHaveBeenCalled()
+})
+
+
+async function outcomeScreen(events: MatterDetailT['events'], phase = 'answered', withFile = false) {
+  route.id = 'e5f6a7b8'
+  const backend = makeDemoBackend({ lang: 'en' })
+  const detail = await backend.matter(route.id, 'en')
+  detail.events = events
+  detail.task = { ...detail.task!, phase, status: phase === 'working' ? 'running' : 'done' }
+  if (phase === 'working' || phase === 'waiting') detail.runId = 'current-run'
+  detail.artifacts = withFile ? [{ id: 'output', taskId: route.id, name: 'result.md', mime: 'text/markdown', size: 3, sha256: 'a'.repeat(64), createdAt: 2, approvedAt: null }] : []
+  backend.matter = async () => detail
+  const ui = await mount(withProviders(createElement(Matter), { backend, lang: 'en' }))
+  await flush()
+  return { ...ui, backend, detail }
+}
+const event = (kind: string, text: string, createdAt: number) => ({ kind, text, createdAt })
+describe('actual matter outcome before technical process', () => {
+  for (const phase of ['answered', 'replied']) for (const withFile of [false, true]) it(`shows the ${phase} reply with process closed (${withFile ? 'with' : 'no'} file)`, async () => {
+    const ui = await outcomeScreen([event('user', 'Please check the draft', 1), event('text', 'The draft is ready to read.', 2)], phase, withFile)
+    expect(ui.byId('progress-process').getAttribute('aria-expanded')).toBe('false')
+    expect(ui.byId('progress-latest-conversation')?.textContent).toContain('The draft is ready to read.')
+    expect(ui.byId('progress-latest-conversation')?.textContent).toContain('Please check the draft')
+    expect(ui.byId('progress-execution-details')).toBeNull()
+    expect(!!ui.byId('artifact-0')).toBe(withFile)
+  })
+  it('keeps the pending decision directly actionable with the current explanation and process closed', async () => {
+    const ui = await screen('a1b2c3d4')
+    expect(ui.byId('progress-request-0')).not.toBeNull()
+    expect(ui.byId('progress-request-0').getAttribute('aria-label')).toBeTruthy()
+    expect(ui.byId('progress-latest-conversation')).not.toBeNull()
+    expect(ui.byId('progress-process').getAttribute('aria-expanded')).toBe('false')
+  })
+  it('does not promote the previous reply as a response to a new request', async () => {
+    const ui = await outcomeScreen([event('user', 'First request', 1), event('text', 'Old answer', 2), event('user', 'A new request', 3)], 'working')
+    expect(ui.byId('progress-latest-conversation')?.textContent).toContain('A new request')
+    expect(ui.container.textContent).not.toContain('Old answer')
+    await act(() => ui.byId('progress-earlier').click()); await flush()
+    expect(ui.byId('progress-earlier-conversation')?.textContent).toContain('Old answer')
+    expect(ui.byId('progress-process').getAttribute('aria-expanded')).toBe('false')
+  })
+  it('keeps actual current tool activity visible while technical details stay closed', async () => {
+    const tool = { ...event('tool_call', 'Checking the new draft', 3), activity: { type: 'command', status: 'running', label: 'Checking the new draft' } }
+    const ui = await outcomeScreen([event('user', 'Please check', 1), event('text', 'I will check the references.', 2), tool], 'working')
+    expect(ui.byId('progress-activity-now')?.textContent).toContain('Checking the new draft')
+    expect(ui.byId('progress-latest-conversation')?.textContent).toContain('I will check the references.')
+    expect(ui.byId('progress-execution-details')).toBeNull()
+  })
+  it('never claims an old running tool is current after the round is answered', async () => {
+    const ui = await outcomeScreen([{ ...event('tool_call', 'Old running event', 1), activity: { type: 'command', status: 'running', label: 'Old running event' } }])
+    expect(ui.byId('progress-activity-now')).toBeNull()
+  })
+  it('shows a failed round’s real explanation without exposing raw diagnostics automatically', async () => {
+    const ui = await outcomeScreen([{ ...event('error', 'This model is unavailable', 1), diagnostic: 'raw-account-error' }], 'failed')
+    expect(ui.byId('progress-current-error')?.textContent).toBe('This model is unavailable')
+    expect(ui.container.textContent).not.toContain('raw-account-error')
+  })
 })

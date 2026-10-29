@@ -207,7 +207,7 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkErro
         <MessageText role={me ? 'user' : 'assistant'} text={b.text} />
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
       </View> : null}
-      {!me && b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
+      {b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
       {!me && b.narration?.length ? <ReplyProcess lines={b.narration} lang={lang} testID="chat-process" /> : null}
       <Txt role="caption" tone="inkSoft">{from} · {hhmm(b.at)}</Txt>
       {b.state === 'failed' && b.failedKind ? (

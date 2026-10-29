@@ -45,7 +45,7 @@ vi.mock('react-native', async () => {
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')
-  return { SafeAreaView: ({ children }: any) => createElement('main', null, children) }
+  return { SafeAreaProvider: ({ children }: any) => children, SafeAreaView: ({ children }: any) => createElement('main', null, children) }
 })
 vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useLocalSearchParams: () => host.params, useRouter: () => ({ canGoBack: () => true, back: host.back, push: host.push, replace: host.replace, dismissTo: host.dismissTo }), Redirect: () => null }))
 vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null, inputScope: matterInputState.recovery().scope }) }))

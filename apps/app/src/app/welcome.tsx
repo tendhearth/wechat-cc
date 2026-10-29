@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router'
-import { Pressable, View } from 'react-native'
+import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -24,7 +24,8 @@ export default function Welcome() {
   const { markWelcomeSeen, staleNotice } = useSession()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.paper }}>
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: space.xl, gap: space.l }}>
+      <ScrollView testID="welcome-scroll" contentContainerStyle={{ flexGrow: 1 }}>
+      <View style={{ flexGrow: 1, paddingVertical: space.xl, justifyContent: 'center', alignItems: 'center', paddingHorizontal: space.xl, gap: space.l }}>
         <CCFigure size={144} presence={ccPresence(conn, { demo })} />
         <Txt role="display" accessibilityRole="header" style={{ textAlign: 'center' }}>{st(lang, 'welcome')}</Txt>
         <Txt role="body" tone="inkSoft" style={{ textAlign: 'center' }}>{st(lang, 'welcomeBody')}</Txt>
@@ -38,6 +39,7 @@ export default function Welcome() {
           <Txt role="body" tone="inkSoft">{t(lang, 'welcome.lookFirst')}</Txt>
         </Pressable>
       </View>
+      </ScrollView>
     </SafeAreaView>
   )
 }

@@ -125,7 +125,7 @@ function StickerImage({ file, label, lang }: { file: string; label: string; lang
 function InlineImage({ messageId, index, name, lang }: { messageId: string; index: number; name: string; lang: Lang }) {
   const { backend } = useBackendCtx()
   const { c } = useTheme()
-  const opener = useFileOpener(lang)
+  const opener = useFileOpener(lang, `${messageId}:${index}`)
   const [img, setImg] = useState<{ bytes: Uint8Array; uri: string } | null>(null)
   const [ratio, setRatio] = useState(3 / 4)
   const [missing, setMissing] = useState(false)
@@ -151,6 +151,7 @@ function InlineImage({ messageId, index, name, lang }: { messageId: string; inde
         style={{ width: '100%', aspectRatio: ratio, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
         {img ? <Image source={{ uri: img.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : <ActivityIndicator size="small" color={c.inkSoft} accessibilityLabel={t(lang, 'progress.loading')} />}
       </Pressable>
+      {opener.note ? <Txt testID="chat-att-image-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{opener.note}</Txt> : null}
       {opener.viewer}
     </View>
   )
@@ -159,7 +160,7 @@ function InlineImage({ messageId, index, name, lang }: { messageId: string; inde
 /** CC 回复里的文件(2026-10-06):点一下按块读下来,在手机上打开(图片 / 文字在 app 里看,其它交给系统)。 */
 function FileChip({ messageId, index, name, lang }: { messageId: string; index: number; name: string; lang: Lang }) {
   const { backend } = useBackendCtx()
-  const opener = useFileOpener(lang)
+  const opener = useFileOpener(lang, `${messageId}:${index}`)
   const id = `${messageId}:${index}`
   const mime = guessMime(name)
   return (

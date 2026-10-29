@@ -204,3 +204,11 @@ describe('chat 视图', () => {
     })
   })
 })
+
+
+it('retains validated inbound attachments by identity without changing text, source, ids or receipts', () => {
+  const input = { ...msg('incoming', 1, 'me', '原始输入 [文件×1]', 'phone'), attachments: [{ kind: 'file' as const, name: 'source.txt' }] }
+  const [bubble] = chatBubbles([input], { pending: null, failed: null }, null, 2)
+  expect(bubble).toMatchObject({ key: 'incoming', side: 'me', text: input.text, source: 'phone', state: 'sent' })
+  expect(bubble?.attachments).toBe(input.attachments)
+})

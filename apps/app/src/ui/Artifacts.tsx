@@ -14,7 +14,7 @@ import { useTheme } from './useTheme'
  */
 export function Artifacts({ matterId, artifacts, backend, lang, online }: { matterId: string; artifacts: readonly ArtifactRef[]; backend: Pick<Backend, 'artifactChunk'>; lang: Lang; online: boolean }) {
   const { c } = useTheme()
-  const opener = useFileOpener(lang)
+  const opener = useFileOpener(lang, matterId)
   if (!artifacts.length) return null
   return (
     <View testID="progress-artifacts" style={{ gap: space.m }}>
