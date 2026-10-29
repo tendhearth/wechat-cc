@@ -3,7 +3,7 @@
  * facts.db 是合成的(夹具 src/test-support/fixtures/memory/facts.json 的那几行)。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -40,7 +40,8 @@ function legacyFactsDb(opts: { oldShape?: boolean } = {}) {
   f.exec("INSERT INTO judge_state(key, fingerprint, judged_at) VALUES ('settle:wxid_fx_mom', '2|7,9', 1760850001)")
   return f
 }
-const run = () => importFactsDb({ store, knowledgeRoot: root, now: () => now, log: () => {} })
+const archiveDir = () => join(root, 'archive')
+const run = (log: (tag: string, line: string) => void = () => {}) => importFactsDb({ store, knowledgeRoot: root, archiveDir: archiveDir(), now: () => now, log })
 
 describe('importFactsDb', () => {
   it('copies every row with the same id, status and timestamps; rejected / superseded get their events', () => {
@@ -68,11 +69,31 @@ describe('importFactsDb', () => {
     expect(run()).toEqual({ outcome: 'unchanged' })
     expect(store.events('').length).toBe(n)
     expect(readFileSync(join(root, 'facts.db')).equals(before)).toBe(true)
-    const copy = join(root, `facts.db.imported-${new Date(now).toISOString().slice(0, 10)}`)
+    const day = new Date(now).toISOString().slice(0, 10)
+    const copy = join(archiveDir(), `facts.db.imported-${day}`)
     expect(existsSync(copy)).toBe(true)
+    expect(existsSync(join(root, `facts.db.imported-${day}`))).toBe(false)
     const c = openSqlite(copy, { readonly: true })
     expect((c.query('SELECT COUNT(*) AS n FROM facts').get() as { n: number }).n).toBe(fixture.facts.length)
     c.close()
+  })
+
+  it('a copy a 1.7.8 boot left in knowledge/ is moved into the archive dir (never deleted), even when facts.db is unchanged; a name already there is left alone', () => {
+    legacyFactsDb().close()
+    run()
+    writeFileSync(join(root, 'facts.db.imported-2026-10-27'), 'old copy')
+    writeFileSync(join(root, 'facts.db.imported-2026-10-26'), 'older copy')
+    writeFileSync(join(archiveDir(), 'facts.db.imported-2026-10-26'), 'already archived')
+    writeFileSync(join(root, 'semantic.db.imported-2026-10-27'), 'not ours')
+    const lines: string[] = []
+    expect(run((_t, l) => lines.push(l))).toEqual({ outcome: 'unchanged' })
+    expect(readFileSync(join(archiveDir(), 'facts.db.imported-2026-10-27'), 'utf8')).toBe('old copy')
+    expect(existsSync(join(root, 'facts.db.imported-2026-10-27'))).toBe(false)
+    expect(readFileSync(join(root, 'facts.db.imported-2026-10-26'), 'utf8')).toBe('older copy')
+    expect(readFileSync(join(archiveDir(), 'facts.db.imported-2026-10-26'), 'utf8')).toBe('already archived')
+    expect(lines.some(l => l.includes('facts.db.imported-2026-10-26') && l.includes('left both'))).toBe(true)
+    expect(existsSync(join(root, 'semantic.db.imported-2026-10-27'))).toBe(true)
+    expect(existsSync(join(root, 'facts.db'))).toBe(true)
   })
 
   it('an old-shape facts.db (before temporal validity) imports with valid_from = created_at', () => {
@@ -116,7 +137,7 @@ describe('importFactsDb', () => {
     rawInsert(f, { ...base, id: 33, contact: 'wxid_fx_lin', predicate: '答应小林', value: '借他相机', created_at: null, updated_at: 1761200000, confidence: null, status: null })
     f.close()
     const lines: string[] = []
-    expect(importFactsDb({ store, knowledgeRoot: root, now: () => now, log: (_t, l) => lines.push(l) })).toMatchObject({ outcome: 'imported', skipped: 2, inserted: fixture.facts.length + 1 })
+    expect(run((_t, l) => lines.push(l))).toMatchObject({ outcome: 'imported', skipped: 2, inserted: fixture.facts.length + 1 })
     expect(store.contactFacts.factById(31)).toBeNull()
     expect(store.contactFacts.factById(32)).toBeNull()
     expect(store.contactFacts.factById(33)).toMatchObject({ status: 'active', confidence: 'med', created_at: 1761200000, updated_at: 1761200000 })
@@ -182,7 +203,7 @@ describe('importFactsDb', () => {
     rawInsert(f, { ...base, id: 8, contact: 'wxid_fx_mom', predicate: '答应妈妈', value: '国庆回家', created_at: 1761400000, updated_at: 1761400000, valid_from: 1761400000 })
     f.close()
     const lines: string[] = []
-    expect(importFactsDb({ store, knowledgeRoot: root, now: () => now, log: (_t, l) => lines.push(l) })).toMatchObject({ outcome: 'imported', reassigned: 1 })
+    expect(run((_t, l) => lines.push(l))).toMatchObject({ outcome: 'imported', reassigned: 1 })
     expect(store.contactFacts.factById(8)).toMatchObject({ contact: 'wxid_fx_lin', value: '周五一起吃饭' })   // 没被盖掉
     const theirs = store.contactFactByText('wxid_fx_mom', '答应妈妈', '国庆回家')!
     expect(theirs.id).toBeGreaterThan(8)
