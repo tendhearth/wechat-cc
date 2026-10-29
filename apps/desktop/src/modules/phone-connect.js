@@ -179,6 +179,14 @@ export function mountPhoneConnect(deps) {
     const mine = ++seq
     const body = /** @type {HTMLElement} */ (modal.querySelector('#phone-connect-body'))
     const closeBtn = /** @type {HTMLElement} */ (modal.querySelector('#phone-connect-close'))
+    /** @param {...Node} children */
+    const replaceBody = (...children) => {
+      const removesFocus = body.contains(doc.activeElement)
+      body.replaceChildren(...children)
+      // Removing a focused child does not emit focusin in Chromium/WebKit.
+      // Keep a valid modal focus; do not move an unaffected close control.
+      if (removesFocus && modal && !modal.contains(doc.activeElement)) focusClose()
+    }
     closeBtn.textContent = v.kind === 'paired' ? c.done : c.close
     if (v.kind === 'qr') {
       let svg
@@ -191,18 +199,18 @@ export function mountPhoneConnect(deps) {
         try { await (deps.writeClipboard ?? (t => navigator.clipboard.writeText(t)))(v.url); copy.textContent = c.copied } catch { /* 复制不了就不改字 */ }
       })
       const check = v.checkCode ? [el(doc, 'p', { class: 'qr-check', id: 'phone-connect-check' }, c.checkCode.replace('{code}', v.checkCode))] : []
-      body.replaceChildren(qr, ...check, el(doc, 'p', { class: 'qr-note', id: 'phone-connect-note' }, c.readyNote), el(doc, 'p', { class: 'qr-sub' }, c.readySub), copy)
+      replaceBody(qr, ...check, el(doc, 'p', { class: 'qr-note', id: 'phone-connect-note' }, c.readyNote), el(doc, 'p', { class: 'qr-sub' }, c.readySub), copy)
       return
     }
-    if (v.kind === 'loading') body.replaceChildren(el(doc, 'p', { class: 'qr-note' }, c.loading))
-    else if (v.kind === 'starting') body.replaceChildren(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-starting' }, c.starting))
-    else if (v.kind === 'notice') body.replaceChildren(el(doc, 'p', { class: 'qr-notice', id: 'phone-connect-notice' }, v.title), ...(v.body ? [el(doc, 'p', { class: 'qr-note' }, v.body)] : []))
-    else if (v.kind === 'error') body.replaceChildren(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-error' }, v.text))
-    else if (v.kind === 'paired') body.replaceChildren(el(doc, 'p', { class: 'qr-paired', id: 'phone-connect-paired' }, v.line))
+    if (v.kind === 'loading') replaceBody(el(doc, 'p', { class: 'qr-note' }, c.loading))
+    else if (v.kind === 'starting') replaceBody(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-starting' }, c.starting))
+    else if (v.kind === 'notice') replaceBody(el(doc, 'p', { class: 'qr-notice', id: 'phone-connect-notice' }, v.title), ...(v.body ? [el(doc, 'p', { class: 'qr-note' }, v.body)] : []))
+    else if (v.kind === 'error') replaceBody(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-error' }, v.text))
+    else if (v.kind === 'paired') replaceBody(el(doc, 'p', { class: 'qr-paired', id: 'phone-connect-paired' }, v.line))
     else if (v.kind === 'expired') {
       const renew = el(doc, 'button', { type: 'button', class: 'btn ghost', id: 'phone-connect-renew' }, c.renew)
       renew.addEventListener('click', () => { void flow?.start() })
-      body.replaceChildren(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-expired' }, c.expired), renew)
+      replaceBody(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-expired' }, c.expired), renew)
     }
   }
   return {

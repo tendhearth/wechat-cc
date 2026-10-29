@@ -643,7 +643,7 @@ function openProviderMenu(menu, anchor) {
   focus(buttons()[0])
   _providerMenuKeyHandler = ev => {
     if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); closeProviderMenu(true); return }
-    if (ev.key === 'Tab') { closeProviderMenu(); return }
+    if (ev.key === 'Tab') { closeProviderMenu(true); return }
     const actions = buttons()
     const index = actions.indexOf(/** @type {HTMLButtonElement} */ (document.activeElement))
     let next
@@ -697,7 +697,7 @@ export async function toggleProviderMenu(deps, report) {
       const name = btn.dataset.provider
       if (!name) return
       if (name === currentProvider) {
-        closeProviderMenu()
+        closeProviderMenu(true)
         return
       }
       // Disable further clicks while switching
@@ -767,7 +767,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
       const name = btn.dataset.provider
       if (!name) return
       if (name === currentProvider) {
-        closeProviderMenu()
+        closeProviderMenu(true)
         return
       }
       if (noChat) {

@@ -114,7 +114,10 @@ export async function loadMemoryPane(deps) {
   let result
   try { result = /** @type {MemoryList} */ (await v1(deps.invokeWorkbenchApi, V1.memory.files)) }
   catch (err) { showStoredFactsError(); throw err }
-  memoryState.users = Array.isArray(result) ? result : []
+  const users = Array.isArray(result) ? result : []
+  const scopeKey = JSON.stringify(users.map(user => [user.userId, user.files.map(file => file.path)]))
+  if (scopeKey !== memoryFileScopeKey) { memoryFileScopeKey = scopeKey; memoryFileRevision++ }
+  memoryState.users = users
   renderMemorySidebar(deps)
   const totalFiles = memoryState.users.reduce((s, u) => s + u.fileCount, 0)
   const metaEl = document.getElementById("memory-meta")
@@ -133,6 +136,11 @@ export async function loadMemoryPane(deps) {
   // here guarded on observations being loaded.
 }
 
+// File reads commit only while their request, page and enumerated scope still own the reader.
+let memoryFileRevision = 0
+let memoryFileScopeKey = ''
+/** @type {MutationObserver|null} */ let memoryPaneObserver = null
+
 // Stored facts lead; the inferred profile and raw management keep their own folds.
 /** @type {{userId:string,path:string,mtime:string,lines:string[]|null,content:string}|null} */
 let storedFacts = null
@@ -142,7 +150,7 @@ let storedFactsReviewPending = false
 function showStoredFactsError() {
   storedFactsFailed = true
   const records = document.getElementById('memory-facts-records')
-  if (records) records.innerHTML = '<p role="status">暂时无法读取记下的事。可以展开记忆库重新读取。<span lang="en"> Memories could not be loaded. Retry in the library.</span></p>'
+  if (records) records.innerHTML = '<p role="status">暂时无法读取记下的事。可以展开记忆库重新读取。</p>'
   const edit = /** @type {HTMLButtonElement|null} */ (document.getElementById('memory-facts-edit'))
   if (edit) edit.disabled = true
 }
@@ -152,14 +160,14 @@ function paintStoredFacts() {
   if (storedFactsFailed) { showStoredFactsError(); return }
   const search = /** @type {HTMLInputElement|null} */ (document.getElementById('memory-facts-search'))
   const query = (search?.value || '').trim().toLocaleLowerCase()
-  if (!storedFacts) { records.innerHTML = '<p>还没有记下的内容。聊过以后，会留在这里。<span lang="en"> Memories will appear here after you talk.</span></p>'; return }
+  if (!storedFacts) { records.innerHTML = '<p>还没有记下的内容。聊过以后，会留在这里。</p>'; return }
   if (storedFacts.lines) {
     const lines = storedFacts.lines.filter(line => !query || line.toLocaleLowerCase().includes(query))
-    records.innerHTML = lines.length ? `<ul class="memory-facts-list">${lines.map(text => `<li>${escapeHtml(text)}</li>`).join('')}</ul>` : '<p>没有匹配的记忆。<span lang="en"> No matching memories.</span></p>'
+    records.innerHTML = lines.length ? `<ul class="memory-facts-list">${lines.map(text => `<li>${escapeHtml(text)}</li>`).join('')}</ul>` : '<p>没有匹配的记忆。</p>'
   } else {
     records.innerHTML = !query || storedFacts.content.toLocaleLowerCase().includes(query)
       ? `<div class="memory-rendered memory-facts-file">${renderMemoryMarkdown(storedFacts.content)}</div>`
-      : '<p>没有匹配的记忆。<span lang="en"> No matching memories.</span></p>'
+      : '<p>没有匹配的记忆。</p>'
   }
 }
 /** @param {Deps} deps */
@@ -261,6 +269,10 @@ function renderMemorySidebar(deps) {
  * @param {string} mtime
  */
 async function openMemoryFile(deps, userId, relPath, mtime) {
+  const mine = ++memoryFileRevision
+  const scopeKey = memoryFileScopeKey
+  const pane = document.getElementById('memory-profile-overview')?.closest('article')
+  const ownsReader = () => mine === memoryFileRevision && scopeKey === memoryFileScopeKey && !pane?.hasAttribute('hidden')
   // Bail out cleanly if user clicks a different file mid-edit. We don't
   // discard their text silently — surface the choice.
   if (memoryState.editing) {
@@ -298,27 +310,35 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
   if (pathEl) pathEl.textContent = `${friendly} / ${relPath}`
   if (mtimeEl) mtimeEl.textContent = `updated ${formatRelativeTime(mtime)}`
   if (head) head.hidden = false
+  const editBtn = document.getElementById("memory-edit-btn")
+  if (editBtn) editBtn.hidden = true
   setStatus(null)
   if (rendered) rendered.innerHTML = `<p class="empty-state">读取中…</p>`
   let result
   try {
     result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.file, { query: { user_id: userId, path: relPath } }))
   } catch (err) {
-    if (rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
+    if (ownsReader() && rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
     return false
   }
+  if (!ownsReader()) return false
   if (!result.ok) {
     if (rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(result.error || "unknown")}</p>`
     return false
   }
   const marked = await loadMarked()
-  memoryState.lineView = isLineEditablePath(relPath) ? await loadLineView(deps, userId, relPath) : null
+  if (!ownsReader()) return false
+  const lineView = isLineEditablePath(relPath) ? await loadLineView(deps, userId, relPath) : null
+  if (!ownsReader()) return false
+  const html = (lineView ? renderOwnerBlock(lineView) : "") + marked.parse(result.content)
+  // One synchronous commit after every async boundary: no late request may
+  // replace selected/path, line baseline, pristine text or the active draft.
+  memoryState.lineView = lineView
   memoryState.bulkConfirmFor = null
-  if (rendered) rendered.innerHTML = (memoryState.lineView ? renderOwnerBlock(memoryState.lineView) : "") + marked.parse(result.content)
   memoryState.selected = { userId, path: relPath }
   memoryState.pristine = result.content
+  if (rendered) rendered.innerHTML = html
   // Show the edit button now that there's content to edit.
-  const editBtn = document.getElementById("memory-edit-btn")
   if (editBtn) editBtn.hidden = !canEditOpenFile()
   return true
 }
@@ -345,6 +365,7 @@ async function loadLineView(deps, userId, relPath) {
 // markdown. Save/cancel button visibility is gated on `editing`.
 /** @param {boolean} editing */
 function setEditMode(editing) {
+  if (editing) memoryFileRevision++
   memoryState.editing = editing
   const rendered = document.getElementById("memory-rendered")
   const editor = /** @type {HTMLTextAreaElement | null} */ (document.getElementById("memory-editor"))
@@ -617,6 +638,15 @@ export async function generateMemoryProfile(deps) {
 // Wire edit/save/cancel buttons. main.js calls this once at boot.
 /** @param {Deps} deps */
 export function wireMemoryButtons(deps) {
+  const pane = document.querySelector?.('article[data-pane="memory"]')
+  if (pane && !memoryPaneObserver && typeof MutationObserver !== 'undefined') {
+    memoryPaneObserver = new MutationObserver(changes => {
+      // Any hidden transition invalidates old work, including leaving and
+      // re-entering before the pending response arrives.
+      if (changes.some(change => change.attributeName === 'hidden')) memoryFileRevision++
+    })
+    memoryPaneObserver.observe(pane, { attributes: true, attributeFilter: ['hidden'] })
+  }
   document.getElementById('memory-facts-search')?.addEventListener('input', paintStoredFacts)
   document.getElementById('memory-facts-edit')?.addEventListener('click', () => { void reviewStoredFacts(deps) })
   document.getElementById("memory-edit-btn")?.addEventListener("click", () => {

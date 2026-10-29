@@ -133,3 +133,6 @@
 .memory-profile-overview > .memory-library-trigger { align-self: flex-start; margin: 0; padding: 12px 0; border: 0; border-radius: 0; font-size: var(--th-size-body); }
 .memory-profile-overview > .memory-sources-panel { order: 2; position: static; box-sizing: border-box; width: 100%; max-height: none; padding: 24px 0; border: 0; border-top: 1px solid var(--th-hair); border-radius: 0; }
 .memory-profile-overview > .memory-profile-disclosure { order: 3; }
+[data-pane="plugins"] .plugins-install-details { margin: 0 0 24px; font-size: var(--th-size-meta); line-height: var(--th-lh-meta); color: var(--th-ink-soft); }
+[data-pane="plugins"] .plugins-install-details summary { cursor: pointer; }
+[data-pane="plugins"] .plugins-install-details p { margin: 12px 0 0; overflow-wrap: anywhere; }

@@ -493,9 +493,8 @@
           <article class="dash-pane" data-pane="memory" hidden>
             <section class="memory-profile-overview" id="memory-profile-overview">
               <section class="memory-facts" id="memory-facts" aria-labelledby="memory-facts-title">
-                <header class="memory-facts-head"><div><h1 id="memory-facts-title">记忆</h1><p>CC 记下的事，可以查找，也可以纠正。<span lang="en"> Stored memories, yours to correct.</span></p></div><button id="memory-facts-edit" class="btn" type="button" disabled>查看与纠正 · Review</button></header>
-                <label class="memory-facts-search-label" for="memory-facts-search">查找记忆 · Search memories</label>
-                <input id="memory-facts-search" type="search" placeholder="查找记下的内容" autocomplete="off" />
+                <header class="memory-facts-head"><h1 id="memory-facts-title">记忆</h1><button id="memory-facts-edit" class="btn" type="button" aria-label="查看并纠正记忆" disabled>纠正</button></header>
+                <input id="memory-facts-search" type="search" aria-label="查找记忆" placeholder="查找记忆" autocomplete="off" />
                 <p id="memory-facts-source" class="memory-facts-source"></p>
                 <div id="memory-facts-records" aria-live="polite"><p role="status">正在读取记下的事…</p></div>
               </section>
@@ -505,7 +504,7 @@
                 <span class="chev">▾</span>
               </button>
               <details class="memory-profile-disclosure">
-                <summary>CC 眼中的你 · 推测画像 <span lang="en">Inferred profile</span></summary>
+                <summary>CC 眼中的你 · 推测画像</summary>
                 <div id="memory-profile-content">
                   <p class="empty-state">正在整理 CC 眼中的你…</p>
                 </div>
@@ -798,11 +797,11 @@
               </div>
             </div>
             <div class="a2a-agents-body">
-              <div class="plugins-hint">
-                插件给 agent 加能力（MCP 工具）。放进
-                <code>~/.claude/channels/wechat/plugins/</code> 的插件默认<strong>停用</strong>——
-                启用后<strong>重启 daemon</strong> 生效。
-              </div>
+              <p class="plugins-hint">启用或停用后，重启 CC 生效。</p>
+              <details class="plugins-install-details">
+                <summary>手动添加插件</summary>
+                <p>把插件放进 <code>~/.claude/channels/wechat/plugins/</code> 后刷新。新插件默认停用，启用后需重启 CC。</p>
+              </details>
               <div id="plugins-note" class="plugins-note" hidden></div>
               <ul id="plugins-list" class="a2a-agents-list"></ul>
 
