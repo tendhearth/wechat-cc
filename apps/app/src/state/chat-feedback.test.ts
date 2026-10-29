@@ -37,10 +37,10 @@ const empty = (): ChatPageT => ({ matterId: 'owner', title: 'CC', messages: [], 
 const byId = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
 async function flush() { await act(async () => { await new Promise(r => setTimeout(r, 0)) }) }
 async function click(id: string) { await act(() => byId(id).click()); await flush() }
-async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = false) {
+async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = false, lang: 'en' | 'zh-Hans' = 'zh-Hans') {
   const read = vi.fn(async () => { if (fail) throw new BackendError('offline'); return page })
-  const backend = { ...makeDemoBackend({ lang: 'zh-Hans' }), chat: read, chatSay: say }
-  await act(() => root.render(withProviders(createElement(Chat), { backend }))); await flush()
+  const backend = { ...makeDemoBackend({ lang }), chat: read, chatSay: say }
+  await act(() => root.render(withProviders(createElement(Chat), { backend, lang }))); await flush()
   return { read, say, backend }
 }
 beforeEach(() => { clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
@@ -126,6 +126,16 @@ it('never fabricates an attachment for legacy inbound text whose original metada
   page.messages = [{ id: 'legacy', role: 'me', kind: 'text', text: '以前的图片 [图片×2]', at: 1, source: 'wechat', truncated: false }]
   await mount(page)
   expect(byId('chat-bubble-me')?.textContent).toContain('以前的图片 [图片×2]')
+  expect(byId('chat-att-file')).toBeNull()
+  expect(byId('chat-att-image')).toBeNull()
+})
+
+for (const lang of ['en', 'zh-Hans'] as const) it(`explains unavailable originals on persisted count-only input without changing its text (${lang})`, async () => {
+  const page = empty(), text = '以前的图片\n[图片 ×2]'
+  page.messages = [{ id: 'legacy-note', role: 'me', kind: 'text', text, at: 1, source: 'phone', truncated: false }]
+  await mount(page, vi.fn(), false, lang)
+  expect(byId('chat-bubble-me')?.textContent).toContain(text)
+  expect(byId('chat-original-unavailable')?.textContent).toBe(lang === 'en' ? 'This record kept only text. The original attachment is not available to open.' : '这条记录只保留了文字，无法打开原附件。')
   expect(byId('chat-att-file')).toBeNull()
   expect(byId('chat-att-image')).toBeNull()
 })

@@ -148,8 +148,8 @@ function InlineImage({ messageId, index, name, lang }: { messageId: string; inde
     <View style={{ width: 240, maxWidth: '100%' }}>
       <Pressable testID="chat-att-image" accessibilityRole="imagebutton" accessibilityLabel={t(lang, 'chat.image', { name })} disabled={!img}
         onPress={() => { if (img) void opener.open({ id: `${messageId}:${index}`, name, mime }, async () => img.bytes) }}
-        style={{ width: '100%', aspectRatio: ratio, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
-        {img ? <Image source={{ uri: img.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : <ActivityIndicator size="small" color={c.inkSoft} accessibilityLabel={t(lang, 'progress.loading')} />}
+        style={{ width: '100%', minHeight: 44, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+        {img ? <Image testID="chat-att-image-content" source={{ uri: img.uri }} style={{ width: '100%', aspectRatio: ratio }} resizeMode="contain" /> : <ActivityIndicator size="small" color={c.inkSoft} accessibilityLabel={t(lang, 'progress.loading')} />}
       </Pressable>
       {opener.note ? <Txt testID="chat-att-image-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{opener.note}</Txt> : null}
       {opener.viewer}

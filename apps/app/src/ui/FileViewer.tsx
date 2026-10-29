@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Image, Modal, Platform, Pressable, ScrollView, Share, View } from 'react-native'
+import { Image, Modal, Platform, Pressable, ScrollView, Share, View, useWindowDimensions } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError } from '../backend/types'
 import { t, type Lang } from '../i18n'
@@ -94,7 +94,7 @@ export function useFileOpener(lang: Lang, owner = ''): { open(ref: FileRef, load
         <ScrollView contentContainerStyle={{ padding: space.l, gap: space.l }} maximumZoomScale={opened?.kind === 'image' ? 4 : 1} minimumZoomScale={1}>
           <Txt role="item" content="user" selectable accessibilityRole="header">{opened?.ref.name ?? ''}</Txt>
           {viewerNote ? <Txt testID="artifact-viewer-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{viewerNote}</Txt> : null}
-          {opened?.kind === 'image' ? <Image testID="artifact-image" source={{ uri: opened.uri }} accessibilityLabel={opened.ref.name} resizeMode="contain"
+          {opened?.kind === 'image' ? Platform.OS === 'android' ? <AndroidImage key={opened.ref.id} uri={opened.uri} name={opened.ref.name} ratio={opened.ratio} lang={lang} onError={() => setViewerNote(t(lang, 'artifacts.failed'))} /> : <Image testID="artifact-image" source={{ uri: opened.uri }} accessibilityLabel={opened.ref.name} resizeMode="contain"
             onError={() => setViewerNote(t(lang, 'artifacts.failed'))} style={{ width: '100%', aspectRatio: opened.ratio }} /> : null}
           {opened?.kind === 'text' ? opened.markdown ? <View testID="artifact-markdown"><MessageText role="assistant" text={opened.text} /></View>
             : <ScrollView horizontal nestedScrollEnabled style={{ maxWidth: '100%' }}><Txt testID="artifact-plain-text" role="code" content="user" selectable>{opened.text}</Txt></ScrollView> : null}
@@ -104,4 +104,30 @@ export function useFileOpener(lang: Lang, owner = ''): { open(ref: FileRef, load
     </Modal>
   )
   return { open, busyId, note, viewer }
+}
+
+
+/** Android ScrollView has no native zoom. Scale a real image canvas, then pan
+ * horizontally here and vertically in the reader's existing outer ScrollView. */
+function AndroidImage({ uri, name, ratio, lang, onError }: { uri: string; name: string; ratio: number; lang: Lang; onError(): void }) {
+  const { width: windowWidth } = useWindowDimensions()
+  const [viewportWidth, setViewportWidth] = useState(0)
+  const [scale, setScale] = useState(1)
+  const width = (viewportWidth || Math.max(1, windowWidth - 2 * space.l)) * scale
+  const control = { minHeight: 44, justifyContent: 'center' as const, paddingHorizontal: space.m }
+  return <View testID="artifact-image-viewport" style={{ width: '100%', gap: space.s }}
+    onLayout={event => { const width = event.nativeEvent.layout.width; if (width > 0) setViewportWidth(width) }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.s }}>
+      <Pressable testID="artifact-zoom-out" accessibilityRole="button" accessibilityLabel={t(lang, 'artifacts.zoomOut')} disabled={scale === 1} onPress={() => setScale(value => Math.max(1, value - 1))} style={control}>
+        <Txt role="meta" tone={scale === 1 ? 'inkSoft' : 'accent'}>{t(lang, 'artifacts.zoomOut')}</Txt>
+      </Pressable>
+      <Txt testID="artifact-zoom-level" role="meta" accessibilityLiveRegion="polite">{scale * 100}%</Txt>
+      <Pressable testID="artifact-zoom-in" accessibilityRole="button" accessibilityLabel={t(lang, 'artifacts.zoomIn')} disabled={scale === 4} onPress={() => setScale(value => Math.min(4, value + 1))} style={control}>
+        <Txt role="meta" tone={scale === 4 ? 'inkSoft' : 'accent'}>{t(lang, 'artifacts.zoomIn')}</Txt>
+      </Pressable>
+    </View>
+    <ScrollView testID="artifact-image-pan" horizontal nestedScrollEnabled style={{ maxWidth: '100%', flexGrow: 0 }}>
+      <Image testID="artifact-image" source={{ uri }} accessibilityLabel={name} resizeMode="contain" onError={onError} style={{ width, height: width / ratio, aspectRatio: ratio }} />
+    </ScrollView>
+  </View>
 }
