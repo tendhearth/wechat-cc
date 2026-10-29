@@ -203,6 +203,7 @@ const ROUTE_TABLE = {
   'GET /v1/workbench': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 「一件事」(2026-09-16):任务指令、聊天都是主人的私事。
   // 桌面(原 lib.rs 注释):「一件事」的 matter 列表与会话面、此刻里搜主人那条对话。只走 tauri:dev 代理经 test-shim 另一条路。
+  'GET /v1/matter/owner-chat/file': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   'GET /v1/matter': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   'GET /v1/matter/owner-chat': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },

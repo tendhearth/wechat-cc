@@ -1,3 +1,4 @@
+import { makeOwnerChatFileReader, ownerChatReadingEvent } from './owner-chat-reading'
 /**
  * Pipeline dep builder — admin/mode/onboarding handler construction +
  * 13-mw deps assembly into InboundPipelineDeps.
@@ -58,7 +59,7 @@ import type { YiHub, YiDispatch } from '../../app/yi-hub'
 import type { ExecResult } from '../../ports/a2a'
 import { makeMattersService } from '../../app/matters/service'
 import { makeSayReceipts } from '../../adapters/store/say-receipts'
-import { surfaceOrigin } from '../../features/phone'
+import { surfaceOrigin, fileChunkResponse } from '../../features/phone'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -455,8 +456,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     chat: {
       ownerChatId,
       say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
-      // 只有附件的行(媒体镜像 / 只发了表情的回复,text 为空)在「一件事」的文字时间线里没东西可显示 —— 跳过;App 对话页另读整行。
-      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).filter(r => r.text.trim() !== '').map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
+      // Retain stored reply extras, including attachment-only rows; paths stay in the daemon.
+      file: makeOwnerChatFileReader({ownerChatId,inboxDir:join(stateDir,'inbox'),readChunk:fileChunkResponse,stickerDir:join(stateDir,'stickers'),message:(chatId,id)=>messagesStore.get(chatId,id)}),
+      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(row=>ownerChatReadingEvent(row,join(stateDir,'inbox'))).filter(r => r.text.trim() !== '' || r.replyExtras),
       search: async (chatId: string, query: string, limit: number) => (await messagesStore.search(chatId, query, limit)).map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
     // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。

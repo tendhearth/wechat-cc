@@ -35,6 +35,15 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       try{const d=await deps.matters.ownerChat('desktop');return d?{status:200,body:d}:{status:404,body:{error:'owner_chat_not_configured'}}}
       catch(error){const message=error instanceof Error?error.message:'internal';return known(message)?{status:400,body:{error:message}}:{status:500,body:{error:'internal'}}}
     },
+    'GET /v1/matter/owner-chat/file': async query => {
+      const allowed=['id','i','offset','sha256','size']
+      if([...query.keys()].some(k=>!allowed.includes(k)||query.getAll(k).length!==1))return invalid()
+      const id=query.get('id'),i=query.get('i'),offset=query.get('offset')??'0',sha256=query.get('sha256'),size=query.get('size')
+      if(!id||id.length>200||/[\x00-\x1f]/.test(id)||i===null||!/^\d{1,2}$/.test(i)||!/^\d{1,9}$/.test(offset)||(sha256!==null&&!/^[a-f0-9]{64}$/.test(sha256))||(size!==null&&(!/^\d{1,9}$/.test(size)||Number(size)>20*1024*1024)))return invalid()
+      if(!deps.matters)return {status:503,body:{error:'matters_not_wired'}}
+      try{return await deps.matters.ownerChatFile({id,i:Number(i),offset:Number(offset),...(sha256?{sha256}:{}),...(size!==null?{size:Number(size)}:{})})}
+      catch{return {status:503,body:{error:'unavailable'}}}
+    },
     // 在主人那条对话里搜(2026-10-06):q 1–200 字,limit ≤ 50,新的在前。
     'GET /v1/matter/owner-chat/search': async query => {
       const q=query.get('q')??'',limit=Number(query.get('limit')??'30')

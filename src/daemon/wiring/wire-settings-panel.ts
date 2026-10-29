@@ -125,6 +125,7 @@ return makeSettingsPanel({
   ],
   ...(phoneOwner && phoneChat ? { chat: {
     owner: () => phoneOwner.peek(),
+    inboxDir: join(stateDir,'inbox'),
     history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),
     chat: phoneChat,
     message: (chatId: string, id: string) => messagesStore.get(chatId, id),

@@ -1,3 +1,4 @@
+import {join,basename,resolve} from 'node:path'
 import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES } from '@wechat-cc/protocol'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { MessageRecord } from '../../lib/messages-store'
@@ -5,9 +6,9 @@ import type { MatterOrigin, MatterStore } from '../../ports/matters'
 import type { ChatJob, PhoneChat } from './phone-chat'
 import { framedTooLarge } from './mobile-matter-response'
 import { ownsMethod, sharedRoute, type PhoneRouteTable } from './phone-route-table'
-import { parseExtras, phoneExtrasFields } from '../../daemon/app-reply'
+import { parseExtras, phoneExtrasFields, incomingUploadAttachments } from '../../daemon/app-reply'
 import { createHash } from 'node:crypto'
-import { closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs'
 
 /** CC 回复里的文件在手机上读(2026-10-06):每块 128 KiB,整份 ≤ 20MB;只读普通文件,不跟符号链接。 */
 export const CHAT_FILE_CHUNK_BYTES = 128 * 1024
@@ -18,27 +19,27 @@ const MIME_BY_EXT: Record<string, string> = { pdf: 'application/pdf', png: 'imag
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', zip: 'application/zip' }
 const mimeOf = (name: string) => MIME_BY_EXT[(/\.([A-Za-z0-9]+)$/.exec(name)?.[1] ?? '').toLowerCase()] ?? 'application/octet-stream'
 /** 整份读出来再切(≤20MB):sha256 让手机核对拼起来的是同一份;读的时候文件被换了 ⇒ 长度 / 哈希对不上,手机会报「刚换了」。
- *  一份文件分很多块来读:按「路径 + 大小 + 修改时间」缓存最近一份,60 秒内同一份不重读不重算(换了文件自然失效)。 */
+ *  一份文件分很多块来读:按「规范路径 + 文件身份 + 大小 + 修改/变更时间」缓存最近一份,60 秒内同一份不重读不重算(换了文件自然失效)。 */
 let fileCache: { key: string; at: number; bytes: Buffer; sha256: string } | null = null
 function readChatFile(path: string, now = Date.now()): { bytes: Buffer; sha256: string } {
-  const st = lstatSync(path)
-  if (!st.isFile()) throw new Error('not_a_file')
-  if (st.size > CHAT_FILE_MAX_BYTES) throw new Error('too_large')
-  const key = `${path}\u0000${st.size}\u0000${st.mtimeMs}`
-  if (fileCache && fileCache.key === key && now - fileCache.at < 60_000) return fileCache
-  const bytes = readWholeFile(path)
-  fileCache = { key, at: now, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
-  return fileCache
-}
-function readWholeFile(path: string): Buffer {
-  const fd = openSync(path, 'r')
+  // Canonicalize once, then verify both identity and path after opening and reading.
+  // System aliases such as macOS /var remain usable; the final component may not be a symlink.
+  const before = lstatSync(path), canonical = realpathSync(path)
+  if (!before.isFile()) throw new Error('not_a_file')
+  const fd = openSync(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
   try {
-    const size = fstatSync(fd).size
-    if (size > CHAT_FILE_MAX_BYTES) throw new Error('too_large')
-    const buf = Buffer.alloc(size)
+    const opened = fstatSync(fd)
+    const same = (a: typeof opened, b: typeof opened) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs
+    if (!opened.isFile() || !same(before, opened) || realpathSync(path) !== canonical || !same(lstatSync(path), opened)) throw new Error('not_a_file')
+    if (opened.size > CHAT_FILE_MAX_BYTES) throw new Error('too_large')
+    const key = `${canonical}\u0000${opened.dev}:${opened.ino}:${opened.size}:${opened.mtimeMs}:${opened.ctimeMs}`
+    if (fileCache && fileCache.key === key && now - fileCache.at < 60_000) return fileCache
+    const bytes = Buffer.alloc(opened.size)
     let at = 0
-    while (at < size) { const n = readSync(fd, buf, at, size - at, at); if (!n) break; at += n }
-    return buf.subarray(0, at)
+    while (at < bytes.length) { const n = readSync(fd, bytes, at, bytes.length - at, at); if (!n) break; at += n }
+    if (at !== bytes.length || !same(opened, fstatSync(fd)) || realpathSync(path) !== canonical || !same(opened, lstatSync(path))) throw new Error('not_a_file')
+    fileCache = {key, at:now, bytes, sha256:createHash('sha256').update(bytes).digest('hex')}
+    return fileCache
   } finally { closeSync(fd) }
 }
 
@@ -71,6 +72,7 @@ export function fileChunkResponse(path: string, name: string, offset: number): R
  *   不是一个「给什么字都念」的口子。
  */
 export interface MobileChatDeps {
+  inboxDir?:string
   /** 只读:主人的 chat matter;没有就 null(⇒ 404 no_owner_chat)。 */
   owner(): { matterId: string; chatId: string; title: string } | null
   /** 升序;有 beforeTs 时是「严格早于它的最后 limit 条」。 */
@@ -160,11 +162,11 @@ const err = (error: string, status: number) => json({ ok: false, error }, status
 /** 线上的 job 不带 matterId(外层已有)。 */
 const wireJob = ({ requestId, text, status, since, error }: ChatJob) => ({ requestId, text, status, since, ...(error ? { error } : {}) })
 const sourceOf = (s: string): 'wechat' | 'desktop' | 'phone' => (s === 'desktop' || s === 'phone' ? s : 'wechat')
-const message = (r: MessageRecord) => ({
+const message = (r: MessageRecord, inboxDir?:string) => ({
   id: r.id, role: r.direction === 'in' ? 'me' as const : 'cc' as const, kind: r.kind,
   text: r.text.length > CHAT_TEXT_MAX ? r.text.slice(0, CHAT_TEXT_MAX) : r.text, truncated: r.text.length > CHAT_TEXT_MAX,
   at: Date.parse(r.ts), source: sourceOf(r.source),
-  ...(r.direction === 'out' ? phoneExtrasFields(r.extras) : {}),
+  ...(r.direction === 'out' ? phoneExtrasFields(r.extras) : incomingUploadAttachments(r,inboxDir).length ? {attachments:incomingUploadAttachments(r,inboxDir).map(({name})=>({kind:'file' as const,name}))} : {}),
 })
 
 export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTable {
@@ -187,7 +189,7 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
       let page = hasMore ? rows.slice(rows.length - limit) : rows   // rows 升序:多出来的是最旧那条
       const st = deps.chat.state()
       const build = () => JSON.stringify({
-        ok: true, matterId: owner!.matterId, title: owner!.title, messages: page.map(message), hasMore,
+        ok: true, matterId: owner!.matterId, title: owner!.title, messages: page.map(row=>message(row,deps.inboxDir)), hasMore,
         // 原始 ts 字符串,不重新格式化 —— 下一页原样当 before 传回来。
         nextBefore: hasMore && page.length ? page[0]!.ts : null,
         pending: st.pending ? wireJob(st.pending) : null, failed: st.failed ? wireJob(st.failed) : null,
@@ -249,8 +251,9 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
       if (!owner) return err('no_owner_chat', 404)
       let row: MessageRecord | null
       try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
-      const att = row && row.direction === 'out' ? parseExtras(row.extras)?.attachments[Number(rawIdx)] : undefined
+      const att = row && row.chatId===owner.chatId && row.id===id ? (row.direction === 'out' ? parseExtras(row.extras)?.attachments : incomingUploadAttachments(row,deps.inboxDir))?.[Number(rawIdx)] : undefined
       if (!att || att.kind !== 'file') return err('not_found', 404)
+      if(row?.direction==='in'){try{const canonical=realpathSync(att.path),resolved=resolve(att.path),systemAlias=process.platform==='darwin'?resolved.replace(/^\/(var|tmp)(?=\/)/,'/private/$1'):resolved;if((canonical!==resolved&&canonical!==systemAlias)||canonical!==join(realpathSync(deps.inboxDir!),basename(att.path)))return err('not_found',404)}catch{return err('not_found',404)}}
       return fileChunkResponse(att.path, att.name, Number(rawOffset))
     }),
     'GET /m/api/chat/voice': ownsMethod(async (url: URL, req: Request) => {
