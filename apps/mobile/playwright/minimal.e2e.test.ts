@@ -54,6 +54,8 @@ test('normal 390px status shell, pairing, flat list and keyboard stop', async ({
   await page.locator('[data-mid]').click(); await expect(page.locator('#m-title')).not.toContainText('**'); await fits(page); await targets(page); await shot(page, info, 'status-390')
   const stop = page.locator('[data-stop]'); await stop.focus(); await page.keyboard.press('Enter'); await expect(stop).toBeFocused(); expect(h.posts.filter(p => p.path.includes('/stop'))).toHaveLength(0)
   await page.keyboard.press('Enter'); await expect(page.locator('#m-notice')).toHaveText('已经请电脑停下这一轮。'); expect(h.posts.filter(p => p.path.includes('/stop'))).toEqual([{ path: '/m/api/matter/stop', body: { id, runId: run } }])
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await expect(page).toHaveURL(/\/set\?/); await expect(page.locator('#f-name')).toHaveValue('Nate')
+  await page.getByRole('link', { name: '返回 CC →' }).click(); await expect(page).toHaveURL(/\/m\?/); await expect(page.locator('#pres-txt')).toHaveText('在帮你整理出行安排')
   expect(h.errors).toEqual([])
 })
 
