@@ -38,7 +38,8 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 
 **不发微信、不写对话库**:会话 chatId 用 `eval-<uuid>`(不能带 `/`:记忆那一层把 chatId 当目录名),不走 replyDelivery / speech;
 跑完 close + 作废令牌 + 删掉组装提示词时建的空 `memory/eval-<uuid>/`。
-`reply` 的 tier 跟样本走(`admin` / `trusted`),缺省 admin(主人的对话)。权限一律不批:要动手的样本不在这一版范围里。
+`reply` 的 tier 跟样本走(`admin` / `trusted`),缺省 admin(主人的对话)。
+提示词是给这个一次性 chatId 组装的 ⇒ 不带主人那条对话的人设 / 核心记忆:评测钉的是提示词和模型,主人的记忆变了不该算回归。权限一律不批:要动手的样本不在这一版范围里。
 「只读档」具体是:**提示词**按样本的档位组装,**会话**按 `JOB_PROFILE` 起、strict、不给 `requestPermission` —— 它的 relay 是空的,
 不在 allow 里的工具一律拒、不弹拍板卡(Claude 走 profileGate;Codex 是 read-only 沙箱、无应答者 ⇒ 审批拒);会话令牌按 guest 铸、
 只放行 `GET /v1/health`(同 selftest),wechat MCP 里发消息 / 写记忆的工具够不着 daemon。模型按 `currentModelFor`(同 session-manager),样本可用 `input.model` 改。

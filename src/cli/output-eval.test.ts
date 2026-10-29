@@ -116,6 +116,13 @@ describe('runEval', () => {
     expect(r.report.results.map(x => [x.id, x.status])).toEqual([['a', 'pass'], ['b', 'pass']])
   })
 
+  it('样本 input 里写了 kind 也盖不掉样本自己的 kind(Codex 评审:reply 样本偷跑成 judge、空回复照样过)', async () => {
+    sample('a', { kind: 'reply', input: { text: '早', kind: 'judge', prompt: '回 1' } })
+    const d = deps(() => turn('早呀'))
+    await runEval(d, {})
+    expect(d.calls[0]!.body.kind).toBe('reply')
+  })
+
   it('daemon 没在跑 ⇒ 抛 daemon_not_running(CLI 退 2),不写报告', async () => {
     sample('a', { kind: 'reply', input: { text: '早' } })
     await expect(runEval(deps(() => turn('好'), { info: false }), {})).rejects.toThrow('daemon_not_running')

@@ -103,7 +103,8 @@ function toOutput(kind: EvalSample['kind'], body: any): EvalOutput {
 async function runSample(deps: EvalCliDeps, api: { baseUrl: string; operatorToken: string }, s: EvalSample, providerId: string | undefined): Promise<SampleResult> {
   const startedAt = deps.now()
   const base = { id: s.id, kind: s.kind, ...(s.note !== undefined ? { note: s.note } : {}) }
-  const body = { kind: s.kind, ...s.input, ...(providerId && s.kind !== 'reference' ? { providerId } : {}) }
+  // kind 放在展开之后:样本 input 里写的 kind 不能把这一条换成别的操作(Codex 评审)
+  const body = { ...s.input, kind: s.kind, ...(providerId && s.kind !== 'reference' ? { providerId } : {}) }
   const turnMs = typeof s.input.timeoutMs === 'number' ? s.input.timeoutMs : TURN_DEFAULT_MS
   const r = await post(deps, api, body, turnMs + FETCH_MARGIN_MS)
   const ran = typeof r.json?.providerId === 'string' ? { providerId: r.json.providerId as string } : {}
