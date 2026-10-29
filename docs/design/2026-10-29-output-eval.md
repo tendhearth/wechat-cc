@@ -36,8 +36,12 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 | `reference` 指称 | `resolveTaskReference({...样本, judge: makeCheapJudge(registry.getCheapEval())})` | 指称顺序 + 裁判提示词 + 生产的便宜模型 |
 | (判分) | `registry.getCheapEval()(评分提示词)` | 生产的便宜模型 |
 
-**不发微信、不写对话库**:会话 chatId 用 `eval/<uuid>`,不走 replyDelivery / speech;跑完 close + 忘掉会话。
+**不发微信、不写对话库**:会话 chatId 用 `eval-<uuid>`(不能带 `/`:记忆那一层把 chatId 当目录名),不走 replyDelivery / speech;
+跑完 close + 作废令牌 + 删掉组装提示词时建的空 `memory/eval-<uuid>/`。
 `reply` 的 tier 跟样本走(`admin` / `trusted`),缺省 admin(主人的对话)。权限一律不批:要动手的样本不在这一版范围里。
+「只读档」具体是:**提示词**按样本的档位组装,**会话**按 `JOB_PROFILE` 起、strict、不给 `requestPermission` —— 它的 relay 是空的,
+不在 allow 里的工具一律拒、不弹拍板卡(Claude 走 profileGate;Codex 是 read-only 沙箱、无应答者 ⇒ 审批拒);会话令牌按 guest 铸、
+只放行 `GET /v1/health`(同 selftest),wechat MCP 里发消息 / 写记忆的工具够不着 daemon。模型按 `currentModelFor`(同 session-manager),样本可用 `input.model` 改。
 
 ## 样本格式
 
@@ -87,3 +91,4 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 | 日期 | 做了什么 |
 |---|---|
 | 10-29 | 本稿 |
+| 10-29 | 落地:纯规则 `src/domain/output-eval.ts`;daemon `src/features/output-eval/`(模块 `output-eval`,`POST /v1/eval/run`,`kind: reply / brief / reference / judge`;码 `eval_invalid_request` / `eval_unknown_provider` / `eval_no_cheap_model`);CLI `src/cli/output-eval.ts` + `wechat-cc eval run / diff`;示例样本 `eval/output/examples/`(复制到 `<STATE_DIR>/eval/samples/`);沙盒场景「输出评测」。与稿不同:chatId 用 `eval-<uuid>`(见上);judge 走同一条路由的 `kind: 'judge'` |
