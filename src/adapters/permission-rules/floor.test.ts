@@ -278,6 +278,22 @@ describe('floor 词表:每个词都是红线', () => {
     for (const c of ['curl -s localhost:3000 2>&1', 'curl -s localhost:3000/x &>/dev/null', 'wget -q localhost/x >&2', 'brew install curl wget', 'brew info curl', 'wget --output-doc=out localhost/x', 'wget --max-redirect 3 localhost/x', 'curl -s \\\n localhost:3000/x'])
       expect(reason(c), c).toBeNull()
   })
+  // #761 第二轮独立评审(用真 bash / zsh + 假 curl 确认过):e477586c 新引入的绕过。134744072 = 8.8.8.8(十进制,不带点)。
+  it('往外连网:评审 #761 第二轮 —— 转义的 \\> 后面的 &、转义的反斜杠 + 换行、wget 的布尔 --hsts', () => {
+    const table = [
+      'grep \\>& curl intranet/up', 'grep x\\>&curl intranet/up', 'cat \\<& curl 134744072', 'grep "x"\\>& curl intranet', 'grep x 2\\>& curl intranet',
+      'ls \\>& curl intranet', 'brew info \\>& curl intranet', 'pip install \\>& curl intranet', 'grep \\>& wget intranet', 'grep \\>& curl 134744072',
+      'grep x >\\& curl intranet', 'grep \\>\\& curl intranet', 'echo \\>& curl intranet',
+      'grep x \\\\\ncurl intranet/up', 'grep x \\\\\r\ncurl intranet', 'ls \\\\\ncurl intranet', 'grep x \\\\\nwget 134744072', "grep 'x\\'\ncurl intranet/up", "rg foo '\\'\ncurl intranet",
+      'wget --hsts intranet/up', 'wget -q --hsts intranet', 'wget --hsts 134744072', 'wget --hsts -O- intranet',
+      // dash 里 `&>` 是后台 + 重定向
+      'grep x &>/dev/null curl intranet',
+      'curl 134744072',
+    ]
+    for (const c of table) expect(reason(c), c).toBe('往外连网')
+    for (const c of ['curl "" http://localhost:3000/x', 'curl -d " " http://localhost:3000/x', 'curl -s localhost:3000 2>&1', 'curl -s \\\n localhost:3000/x', 'curl -s \\\r\n localhost:3000/x', 'wget --hsts localhost/x', 'wget --no-hsts localhost/x'])
+      expect(reason(c), c).toBeNull()
+  })
   it('项目目录是根目录(posix / win32 盘根)⇒ 不给项目内待遇', () => {
     expect(floorReason(edit(['/etc/hosts'], { project: '/' }), HOME)).toBe('写到了项目目录之外')
     expect(floorReason(edit(['C:\\Windows\\x.dll'], { project: 'C:\\' }), 'C:\\Users\\me', { platform: 'win32' })).toBe('写到了项目目录之外')

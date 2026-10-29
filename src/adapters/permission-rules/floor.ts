@@ -40,38 +40,39 @@ export function commandSegments(cmd: string): string[][] {
 const baseName = (w: string) => (w.includes('/') && !w.startsWith('-') && !w.includes('://') && !w.includes('=') ? w.slice(w.lastIndexOf('/') + 1) || w : w)
 /** 同 commandSegments,但词不取 basename(下标一一对应):判网络目标要看整个词 —— `evil.com/x` 取了 basename 只剩 `x`。 */
 function rawSegments(cmd: string): string[][] {
-  return toWords(joinLines(cmd).split(/(?<![<>])&(?!>)|[;|\n\r()`]|\$\(/))
+  return toWords(cmd.split(/[;&|\n\r()`]|\$\(/))
 }
-/**
- * 续行(`\` + 换行,含 CRLF)接回一行;重定向里的 `&`(`2>&1`、`>&2`、`&>`、`&>>`、`<&3`)不是后台符,不切段
- * (#761 评审:`curl -s 2>&1 evil.com/x` 在 `&` 处切开,主机落进没有 curl 的段,改之前带点的主机也漏)。
- */
-const joinLines = (cmd: string) => cmd.replace(/\\\r?\n/g, ' ')
 /**
  * 词按空白切,再去引号 / 反斜杠。去完是空的(`""`、`''`)也留一个空词占位:否则 `curl -d "" intranet/up` 里 `-d` 吃掉的是网址(#761 评审)。
  */
 const toWords = (segs: string[]) => segs.map(seg => seg.split(/\s+/).filter(Boolean).map(w => w.replace(/['"\\]/g, ''))).filter(s => s.length)
 /**
- * 只在引号外切段(词照旧按空白切)。只给判网络用、跟 rawSegments 叠加:`curl -d "x;" intranet/up` 按 rawSegments
- * 在引号里的 `;` 处切开,`intranet/up` 落进没有 curl 的那段。词按空白切只会多出位置参数(多问),不会把网址并进选项值。
+ * 判网络用的第二种切段,跟 rawSegments **叠加**(两种都判,任一命中就算):rawSegments 遇到 `;&|`、换行一律切 —— 这是底线,
+ * 新加的切法再怎么判错,也藏不掉 rawSegments 看得见的段(#761 第二轮评审:`grep \>& curl intranet` 曾因为只按新切法判而漏)。
+ * 这一种按 shell 的样子切,补 rawSegments 切错的地方,一遍扫完、认引号和反斜杠:
+ *  - 引号里的 `;` `|` 不切(`curl -d "x;" intranet/up`);
+ *  - 重定向里的 `&` 不切(`curl -s 2>&1 evil.com/x`、`&>/dev/null`):前一个字符是引号外、没被转义的 `<` `>`,或后面紧跟 `>`;
+ *  - 续行接回一行:引号外 / 双引号里、没被转义的 `\` 后面紧跟换行(含 CRLF)。`\\` + 换行是转义的反斜杠 + 真换行,照切。
+ * 词仍按空白切:只会多出位置参数(多问),不会把网址并进选项值。
  */
-function quoteAwareSegments(command: string): string[][] {
-  const cmd = joinLines(command)
+function shellSegments(cmd: string): string[][] {
   const segs: string[] = []
-  let cur = '', q: string | null = null
+  let cur = '', q: string | null = null, angle = false
   for (let k = 0; k < cmd.length; k++) {
     const c = cmd[k]!
-    if (q) {
-      if (c === q) q = null
-      else if (c === '\\' && q === '"') { cur += c + (cmd[++k] ?? ''); continue }
-      cur += c
+    if (q === "'") { if (c === q) q = null; cur += c; angle = false; continue }
+    if (c === '\\') {
+      const n = cmd[k + 1] ?? ''
+      if (n === '\n') { cur += ' '; k++ } else if (n === '\r' && cmd[k + 2] === '\n') { cur += ' '; k += 2 } else { cur += c + n; k++ }
+      angle = false
       continue
     }
-    if (c === '\\') { cur += c + (cmd[++k] ?? ''); continue }
-    if (c === "'" || c === '"') { q = c; cur += c; continue }
-    const redirectAmp = c === '&' && (/[<>]$/.test(cur) || cmd[k + 1] === '>')
-    if ((/[;&|\n\r()`]/.test(c) && !redirectAmp) || (c === '$' && cmd[k + 1] === '(')) { segs.push(cur); cur = ''; continue }
+    if (q) { if (c === q) q = null; cur += c; angle = false; continue }
+    if (c === "'" || c === '"') { q = c; cur += c; angle = false; continue }
+    const redirectAmp = c === '&' && (angle || cmd[k + 1] === '>')
+    if ((/[;&|\n\r()`]/.test(c) && !redirectAmp) || (c === '$' && cmd[k + 1] === '(')) { segs.push(cur); cur = ''; angle = false; continue }
     cur += c
+    angle = c === '<' || c === '>'
   }
   segs.push(cur)
   return toWords(segs)
@@ -151,7 +152,7 @@ type NetGrammar = {
   value: Set<string>                 // 带值的长选项
   target: Set<string>                // 值本身是主机 / 网址
   fromFile: Set<string>              // 网址 / 代理写在文件里,看不见 ⇒ 当外面
-  prefixes?: boolean                 // 认长选项的唯一前缀(GNU getopt_long)
+  flags?: Set<string>                // 不带值的长选项;给了就按 GNU getopt_long 认唯一前缀
 }
 const longs = (s: string) => new Set(s.trim().split(/\s+/).map(o => `--${o}`))
 const CURL: NetGrammar = {
@@ -182,7 +183,14 @@ const WGET: NetGrammar = {
     include-directories exclude-directories max-redirect`),
   target: longs('base dns-servers'),
   fromFile: longs('input-file config'),
-  prefixes: true,
+  // wget 1.25 `--help` 里不带 `=…` 的长选项(布尔开关;`--no-xxx` 形式 getopt 也认)
+  flags: longs(`adjust-extension ask-password auth-no-challenge background backup-converted content-disposition content-on-error continue convert-file-only
+    convert-links debug delete-after follow-ftp force-directories force-html ftps-clear-data-connection ftps-fallback-to-ftp ftps-implicit ftps-resume-ssl help hsts
+    https-only ignore-case ignore-length inet4-only inet6-only keep-session-cookies mirror no-cache no-check-certificate no-clobber no-config no-cookies
+    no-directories no-dns-cache no-glob no-host-directories no-hsts no-http-keep-alive no-if-modified-since no-iri no-netrc no-parent no-passive-ftp no-proxy
+    no-remove-listing no-use-server-timestamps no-verbose no-warc-compression no-warc-digests no-warc-keep-log page-requisites preserve-permissions
+    protocol-directories quiet random-wait recursive relative retr-symlinks retry-connrefused retry-on-host-error save-headers server-response show-progress
+    span-hosts spider strict-comments timestamping trust-server-names unlink verbose version warc-cdx xattr iri`),
 }
 /**
  * 只读、不执行参数的命令把 curl 当数据(`grep -rn curl src`、`brew install curl wget`)。不在内的:echo / printf(输出常被管给 sh)、
@@ -222,7 +230,8 @@ function netOperands(tool: 'curl' | 'wget', args: string[], redirects: boolean):
     const a = args[k]!
     const redir = redirects ? REDIRECT.exec(a) : null
     if (redir) { if (!redir[1]) k++; continue }
-    if (endOpts || a === '-' || !a.startsWith('-')) { targets.push(a); continue }
+    // 空词(`""`)当位置参数没有目标:curl 拿到空网址只会报错
+    if (endOpts || a === '-' || !a.startsWith('-')) { if (a) targets.push(a); continue }
     if (a === '--') { endOpts = true; continue }
     if (a.startsWith('--')) {
       const eq = a.indexOf('=')
@@ -242,14 +251,16 @@ function netOperands(tool: 'curl' | 'wget', args: string[], redirects: boolean):
   return unseen || targets.some(t => !LOCAL_TARGET.test(t))
 }
 /**
- * 带值的长选项的全名;不带值 / 不认识 ⇒ null。wget(GNU getopt_long)认唯一前缀(`--input-f=urls`):在带值的表里只配上一个就用它 ——
- * 真 wget 要么也用它,要么因为跟某个不带值的选项撞了而报错(不联网)。curl 8.7 不认缩写也不认 `=`,不做前缀。
+ * 带值的长选项的全名;不带值 / 不认识 ⇒ null。wget(GNU getopt_long)认唯一前缀(`--input-f=urls`),跟 getopt 一样配:
+ * 先看全名完全相同的(带值、不带值的都算 —— `--hsts` 是布尔,不是 `--hsts-file` 的缩写;#761 第二轮评审),
+ * 再在全部长选项里找前缀,只配上一个且它带值才用。配上多个 = wget 报错;按不认识处理(下一个词照位置参数判,多问)。
+ * curl 8.7 不认缩写也不认 `=`,不做前缀。
  */
 function longName(g: NetGrammar, name: string): string | null {
   if (g.value.has(name)) return name
-  if (!g.prefixes) return null
-  const hits = [...g.value].filter(o => o.startsWith(name))
-  return hits.length === 1 ? hits[0]! : null
+  if (!g.flags || g.flags.has(name)) return null
+  const hits = [...g.value, ...g.flags].filter(o => o.startsWith(name))
+  return hits.length === 1 && g.value.has(hits[0]!) ? hits[0]! : null
 }
 /** `curl $(cat url)` / `` wget `cat u` ``:目标是命令替换的输出,切段时被切走了 ⇒ 按原命令看。 */
 const curlSubstitution = (cmd: string) => /(?:^|[\s;&|(])(?:\S*\/)?(?:curl|wget)\b(?:[^;&|\n]|[<>]&|&>)*(?:\$\(|`)/.test(cmd)
@@ -297,8 +308,8 @@ export function floorReason(ask: PermissionAsk, home: string = homedir(), extra:
     const raws = rawSegments(cmd)
     const redirects = !hasLiteralAngle(cmd)
     if (curlSubstitution(cmd) || segs.some((s, k) => outbound(s, raws[k]!, redirects))) return '往外连网'
-    // 同一套判法在「只在引号外切段」的段上再跑一遍(叠加,不替换):`curl -d "x;" intranet/up`
-    if (quoteAwareSegments(cmd).some(r => outbound(r.map(baseName), r, redirects))) return '往外连网'
+    // 同一套判法在按 shell 样子切的段上再跑一遍(叠加,不替换):`curl -d "x;" intranet/up`、`curl -s 2>&1 evil.com/x`
+    if (shellSegments(cmd).some(r => outbound(r.map(baseName), r, redirects))) return '往外连网'
   }
   return null
 }
