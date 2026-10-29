@@ -12,7 +12,7 @@
 // `boot-api failed at init (required): … called ctx.late('wired') but 'wired' is not in its lazy`,就是 #729 在真机上的样子。
 // 后加的几条各自的红 / 绿写在 README 的场景表下面。
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -346,5 +346,28 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     } finally {
       blocker.stop(true)
     }
+  })
+
+  it('output eval: POST /v1/eval/run runs one turn on the production prompt in a read-only session — no WeChat message, no messages row', async () => {
+    const outboxBefore = d.ilink.outbox().length
+    const rowsBefore = d.query<{ n: number }>('SELECT COUNT(*) AS n FROM messages')[0]!.n
+    const spawnsBefore = spawnOptions.length
+    const res = await desktop<Record<string, unknown>>('POST', '/v1/eval/run', { kind: 'reply', text: '早', providerId: 'claude' })
+    expect(res.status).toBe(200)
+    expect(res.body, JSON.stringify(res.body)).toMatchObject({ ok: true, kind: 'reply', providerId: 'claude', finalText: '好的。', bubbles: ['好的。'], silent: false })
+    // 起的是一条新会话:提示词是生产那一份(回复交付那段在),不是 selftest 的「自检对话」;只读档(Claude 的写文件 / 命令被禁)
+    expect(spawnOptions.length).toBe(spawnsBefore + 1)
+    const opts = spawnOptions.at(-1)! as { systemPrompt?: { append?: string }; permissionMode?: string; disallowedTools?: string[] }
+    expect(opts.systemPrompt?.append).toContain('最后写下的那段话就是发给对方的回复')
+    expect(opts.systemPrompt?.append).not.toContain('自检对话')
+    expect(opts.permissionMode).toBe('default')
+    expect(opts.disallowedTools).toEqual(expect.arrayContaining(['Write', 'Edit', 'Bash']))
+    // 不发微信、不写对话库
+    expect(d.ilink.outbox().length).toBe(outboxBefore)
+    expect(d.query<{ n: number }>('SELECT COUNT(*) AS n FROM messages')[0]!.n).toBe(rowsBefore)
+    // 一次性会话的 chatId 不在 STATE_DIR 里留下记忆目录(组装提示词读记忆时建的空目录,跑完收掉)
+    expect(readdirSync(join(d.stateDir, 'memory')).filter(n => n.startsWith('eval-'))).toEqual([])
+    // 请求不成立 ⇒ 400 + 码表里的码
+    expect(await desktop('POST', '/v1/eval/run', { kind: 'reply' })).toMatchObject({ status: 400, body: { error: 'eval_invalid_request' } })
   })
 })

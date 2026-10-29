@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench', 'companion', 'console'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench', 'companion', 'console', 'output-eval'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 /**
@@ -411,6 +411,9 @@ const ROUTE_TABLE = {
   // 白嫖 daemon 去开一整条真会话,不该比 daemon-control 的其它成员松。
   'POST /v1/selftest/converse': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin —— 换主人电脑上的软件版本(外部 agent CLI 自动升级,2026-10-04);`wechat-cc cli` 用 operator 凭据调。
+  // admin — AI 输出回归评测(2026-10-29,docs/design/2026-10-29-output-eval.md):`wechat-cc eval run` 用 operator 凭据调。
+  // 跟 selftest/converse 一样会在 daemon 里起一整条真会话(只读档、不批权限、不发微信),所以同档。
+  'POST /v1/eval/run': { module: 'output-eval', desktop: { tier: 'admin', tokens: ['operator'] } },
   'POST /v1/cli/upgrade': { desktop: { tier: 'admin', tokens: ['operator'] } },
   'POST /v1/cli/rollback': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — on-demand file locate over the owner's computer (file_locate)

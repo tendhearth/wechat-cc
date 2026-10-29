@@ -155,6 +155,22 @@ POST /v1/workbench/archive       { id, archived: true }
 POST /v1/workbench/attachment    { id, draftId, name, mime, base64 }
 ```
 
+## AI 输出回归评测(手动,不进 verify / CI)
+
+单测钉的是代码;**模型 + 提示词**这一对靠它:改了 `src/domain/prompt-builder.ts`、早报信封(`src/features/jobs/brief.ts`)、
+指称裁判提示词(`task-reference.ts`),或换了默认模型 / 便宜模型 ⇒ 合 dev 之前跑一次,PR 里贴 `eval diff` 的结果
+(有回归就写为什么可以接受)。设计与样本格式见 [输出评测设计稿](../design/2026-10-29-output-eval.md)。
+
+```bash
+mkdir -p ~/.claude/channels/wechat/eval/samples
+cp eval/output/examples/*.json ~/.claude/channels/wechat/eval/samples/   # 编出来的示例;真样本从 messages 表挑,不进仓库
+wechat-cc eval run [--only <id,…>] [--provider <id>] [--json]   # daemon 需在跑;退出码 0 全过 / 1 有不过 / 2 daemon 没在跑
+wechat-cc eval diff [<runA> <runB>]                              # 缺省最近两次:列出「上次过、这次不过」的
+```
+
+被测的那一下在 daemon 里跑(`POST /v1/eval/run`,operator 令牌):生产的提示词、模型、便宜模型;会话只读、不批权限、
+不发微信、不写对话库。报告在 `<STATE_DIR>/eval/runs/<时间>/report.md`。要真模型、要花钱、要 bx,所以不进 CI。
+
 ## 变异测试(定期传感器,不进 verify / 每个 PR 的 CI)
 
 测试绿只说明「没写错的地方没红」,说明不了「写错了会不会红」。变异测试把被测代码一处一处改坏(`===` 换 `!==`、`&&` 换 `||`、条件换成 `true`、字符串清空……),每改一处跑一遍覆盖到它的测试:有测试红 = 这处被护住(killed);全绿 = **没有任何测试在乎这一处**(survived)。

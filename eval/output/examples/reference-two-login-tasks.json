@@ -1,0 +1,15 @@
+{
+  "id": "reference-two-login-tasks",
+  "kind": "reference",
+  "note": "示例(编的):两件任务名字都带「登录」,主人说的是接口那件 —— 名字撞了要问便宜模型",
+  "input": {
+    "text": "登录接口那件现在怎么样了",
+    "candidates": [
+      { "id": "aaaa1111", "title": "修登录页样式", "project": "demo-web", "providerId": "claude", "phase": "running", "updatedAt": 0 },
+      { "id": "bbbb2222", "title": "登录接口加限流", "project": "demo-api", "providerId": "codex", "phase": "replied", "updatedAt": 0 }
+    ]
+  },
+  "rules": [
+    { "resolves": { "kind": "task", "taskId": "bbbb2222" } }
+  ]
+}

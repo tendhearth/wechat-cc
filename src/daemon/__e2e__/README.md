@@ -30,6 +30,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 卡还挂着就重启 | Codex 一张卡在等主人时关机 ⇒ 关机收尾把这条审批按「拒」答回给 codex;再开机后主人在那个对话里收到一次「重启前那张「Codex 想执行命令:rm -rf dist」的卡作废了，还要的话再说一次。」(`pending_cards` 清空,下一次开机不再说);登记处是空的,主人迟到的「y」当普通的一句话交给 CC(有回、没出新卡、没放行任何东西) |
 | 关机再开机 | 正常关机没有哪一步停失败;同一个 stateDir 再开机:不重复导入、照样健康、没有模块坏、对话模式留住了、照样收发 |
 | 开机时一样起不来 | 再开机时 A2A 端口被别的程序占了 ⇒ 照样开起来;`/v1/health` 里只有 `a2a-server=degraded`,其余专门开上的都 ok;主人收到一句「这次开机有几样没起来：CC 之间的往来。其它功能照常。」;照样收发 |
+| 输出评测 | `POST /v1/eval/run`(operator 令牌)跑一条 reply 样本:回 200、最后的话和气泡对;起的那条会话带生产的提示词(回复交付那段在,不是自检对话)、按只读档起(Write / Edit / Bash 被禁);微信外发箱和 `messages` 表都没多东西;`memory/` 下没留 `eval-*` 目录;缺字段回 400 `eval_invalid_request` |
 
 这些场景是**一条时间线**,共用一台 daemon(中途重启三次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。
 
@@ -48,6 +49,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | `daemon/ilink-glue.ts` 没有待批时的「y」也当成拍板吞掉 | 卡还挂着就重启(迟到的「y」没人回) |
 | `daemon/pending-cards.ts` 开机不说作废(或登记处不落 `pending_cards`) | 卡还挂着就重启(等不到那一句作废) |
 | `daemon/runtime/boot-report.ts` 降级汇总不发 | 开机时一样起不来(主人没收到那一句) |
+| `features/output-eval/module.ts` 不收一次性 chatId 留下的记忆目录(去掉 `forgetChat`);或 runner 的 chatId 带 `/`(`eval/<uuid>`) | 输出评测(`memory/` 下多一个 `eval-*` 空目录;带 `/` 的那版直接 `ok:false`:`memory-export: bad chat id`) |
 
 ### 开了什么
 

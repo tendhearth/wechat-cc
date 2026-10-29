@@ -37,6 +37,7 @@ import { reportOutboxModule, reportsModule } from '../features/reports/module'
 import { workbenchModule, workbenchNotificationsModule, workbenchArtifactsModule } from '../features/workbench/module'
 import { lettersModule } from '../features/letters/module'
 import { remindersModule } from '../features/reminders/module'
+import { outputEvalModule } from '../features/output-eval/module'
 
 export function daemonModules(f: Foundation): DaemonModule[] {
   return [
@@ -69,6 +70,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     ownerCommandsModule(f),
     reportOutboxModule(f),           // 工作台入队要它,所以排在工作台前面;投递那一拍在下面 `reports`
     workbenchModule(f),
+    outputEvalModule(f),             // 输出评测(只有整合者手动跑):要 bootstrap 的提示词组装 / registry,可选
 
     // —— wireMain 和入站管道 ——
     wiredModule(f),

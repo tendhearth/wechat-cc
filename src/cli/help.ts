@@ -125,6 +125,13 @@ Usage:
                         自维护:daemon 在跑的前提下做一次真机闭环自检并给出
                         机器可读的结论。--keep 保留 scratch 项目目录。
                         见 docs/maintainer/verify.md。
+  wechat-cc eval run [--only <id,…>] [--provider <id>] [--json]
+  wechat-cc eval diff [<runA> <runB>]
+                        AI 输出回归评测:读 <STATE_DIR>/eval/samples/*.json,
+                        daemon 用生产的提示词 / 模型跑(只读、不发微信),硬规则
+                        + 便宜模型打分,报告写 eval/runs/<时间>/;diff 列出「上次
+                        过、这次不过」的。退出码 0 全过 / 1 有不过 / 2 daemon 没
+                        在跑。见 docs/design/2026-10-29-output-eval.md。
   wechat-cc ci triage [--sha <sha|HEAD>] [--branch <b>] [--wait] [--rerun]
                         [--max-reruns N] [--timeout-min N] [--json]
                         看 CI:这个 SHA 绿了吗?红的是自己的锅,还是
