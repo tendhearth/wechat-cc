@@ -41,13 +41,13 @@ export default function Letters() {
         ) : rows.length === 0 ? (
           <Txt testID="letters-empty" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'letters.empty')}</Txt>
         ) : (
-          <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+          <View style={{ gap: space.s }}>
             {rows.map(r => (
               <Pressable key={r.id} testID={`letters-row-${r.id}`} accessibilityRole="button" accessibilityLabel={`${r.date} ${r.opening}`}
                 onPress={() => router.push({ pathname: '/letters/[id]', params: { id: r.id } })}
-                style={({ pressed }) => ({ paddingVertical: space.m, gap: space.xs, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+                style={({ pressed }) => ({ minHeight: 64, paddingVertical: space.m, gap: space.xs, opacity: pressed ? 0.7 : 1 })}>
+                <Txt role="body" content="user" numberOfLines={2}>{r.opening}</Txt>
                 <Txt role="meta" tone="inkSoft">{r.date}</Txt>
-                <Txt role="bubble" content="user" numberOfLines={2}>{r.opening}</Txt>
               </Pressable>
             ))}
           </View>

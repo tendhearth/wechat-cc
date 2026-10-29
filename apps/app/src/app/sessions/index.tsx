@@ -5,10 +5,13 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import type { NativeSessionRowT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
+import { secondaryText as st } from '../../i18n/minimal-secondary'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
+import { Icon } from '../../ui/Icon'
+import { IconButton } from '../../ui/IconButton'
 import { Dot } from '../../ui/Dot'
 import { BusyIndicator } from '../../ui/motion'
 import { StatusHint } from '../../ui/StatusHint'
@@ -92,7 +95,7 @@ export default function Sessions() {
         accessibilityRole="tab"
         accessibilityState={{ selected: on }}
         onPress={() => setProvider(p)}
-        style={{ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 1, borderBottomColor: on ? c.ink : c.hair }}
+        style={{ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderBottomWidth: on ? 1 : 0, borderBottomColor: c.ink }}
       >
         <Txt role="bubble" tone={on ? 'ink' : 'inkSoft'}>{agentName(p, names)}</Txt>
       </Pressable>
@@ -101,11 +104,13 @@ export default function Sessions() {
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} onAvatar={() => router.push('/settings')} />
+      <TopBar title={st(lang, 'sessions')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <View style={{ paddingHorizontal: space.xl, paddingVertical: space.m, gap: space.s }}>
-        <TextField testID="sessions-search-input" value={search} onChangeText={setSearch} maxLength={200} accessibilityLabel={t(lang, 'sessions.searchPlaceholder')} placeholder={t(lang, 'sessions.searchPlaceholder')} returnKeyType="search" onSubmitEditing={applySearch} />
-        <Button kind="secondary" testID="sessions-search" label={t(lang, 'sessions.search')} onPress={applySearch} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+          <TextField testID="sessions-search-input" value={search} onChangeText={setSearch} maxLength={200} accessibilityLabel={t(lang, 'sessions.searchPlaceholder')} placeholder={t(lang, 'sessions.searchPlaceholder')} returnKeyType="search" onSubmitEditing={applySearch} style={{ flex: 1, minHeight: 44 }} />
+          <IconButton name="search" testID="sessions-search" label={t(lang, 'sessions.search')} onPress={applySearch} />
+        </View>
         {invalidSearch ? <Txt testID="sessions-search-error" role="meta" tone="inkSoft">{t(lang, 'sessions.searchLimit')}</Txt> : null}
       </View>
       <View accessibilityRole="tablist" style={{ flexDirection: 'row', paddingHorizontal: space.xl, paddingBottom: space.s }}>{(['claude', 'codex'] as const).map(tab)}</View>
@@ -133,7 +138,7 @@ export default function Sessions() {
               accessibilityRole="button"
               accessibilityLabel={`${r.title}, ${r.meta}${r.active ? `, ${activeText}` : ''}`}
               onPress={() => router.push(`/sessions/${encodeURIComponent(r.key)}`)}
-              style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: space.m, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}
+              style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: space.m, opacity: pressed ? 0.7 : 1 })}
             >
               <View style={{ flex: 1, gap: 2 }}>
                 <Txt role="body" content="user" numberOfLines={2}>{r.title}</Txt>
@@ -145,7 +150,7 @@ export default function Sessions() {
                   </View>
                 ) : null}
               </View>
-              <Txt role="title" tone="inkSoft">›</Txt>
+              <Icon name="chevronRight" size={16} color={c.inkSoft} />
             </Pressable>
           ))
         )}

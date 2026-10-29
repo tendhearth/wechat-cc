@@ -3,6 +3,7 @@ import { ScrollView } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { secondaryText as st } from '../i18n/minimal-secondary'
 import { ICON_LICENCE_TEXT } from '../ui/icon-licence'
 import { OFL_TEXT } from '../ui/ofl-text'
 import { LUCIDE_LICENCE_TEXT } from '../ui/lucide-licence'
@@ -20,7 +21,7 @@ export default function Licences() {
   const router = useRouter()
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={t(lang, 'settings.fontLicences')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} onAvatar={() => router.push('/settings')} />
+      <TopBar title={st(lang, 'licences')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} />
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xxl, gap: space.l }}>
         <Txt testID="licences-intro" role="meta" tone="inkSoft">{t(lang, 'licences.intro')}</Txt>
         <Txt testID="licences-text" role="small" selectable>{reflowLicence(OFL_TEXT)}</Txt>

@@ -10,7 +10,7 @@ import { downloadLetterPage } from '../../state/artifact-download'
 import { bytesToBase64 } from '../../state/image-upload'
 import { sha256Hex } from '../../ui/FileViewer'
 import { MessageText } from '../../ui/Markdown'
-import { radius, space } from '../../ui/tokens'
+import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
@@ -37,7 +37,7 @@ export default function Letter() {
         ) : letter.pages > 0 ? (
           letterPages(letter).map(p => <LetterPage key={p} id={letter.id} page={p} lang={lang} />)
         ) : (
-          <View testID="letter-text" style={{ paddingVertical: space.l, paddingHorizontal: space.l, borderWidth: 1, borderColor: c.hair, borderRadius: radius.bubble }}>
+          <View testID="letter-text" style={{ paddingVertical: space.l }}>
             <MessageText role="assistant" text={letter.text ?? letter.opening} />
           </View>
         )}
@@ -69,7 +69,7 @@ function LetterPage({ id, page, lang }: { id: string; page: number; lang: Lang }
   if (failed) return <Txt testID="letter-page-failed" role="meta" tone="inkSoft">{label} · {t(lang, 'letters.pageFailed')}</Txt>
   return (
     <View testID="letter-page" accessible accessibilityRole="image" accessibilityLabel={label}
-      style={{ width: '100%', aspectRatio: ratio, borderWidth: 1, borderColor: c.hair, borderRadius: radius.bubble, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+      style={{ width: '100%', aspectRatio: ratio, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
       {uri ? <Image source={{ uri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" /> : <ActivityIndicator size="small" color={c.inkSoft} accessibilityLabel={t(lang, 'progress.loading')} />}
     </View>
   )
