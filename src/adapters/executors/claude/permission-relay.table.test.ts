@@ -137,11 +137,15 @@ describe('要问主人:给谁、什么话、哪个码、等多久', () => {
     expect(g.logs).toEqual(logs)
   })
 
-  it('能力表那一行按这一刻的对话模式取:扇出里的毁坏性命令照样问', async () => {
+  // 三档档案把每类工具都写满了,能力表那一行(按模式 / 权限模式取)在 Claude 这条路上看不出差别 ——
+  // 这里钉的是「不管哪种模式、--dangerously 与否,毁坏性命令都照样问主人」,不是「按模式取到了哪一行」。
+  it('四种对话模式 × strict/dangerously:毁坏性命令都照样问主人', async () => {
     for (const mode of ['solo', 'primary_tool', 'parallel', 'chatroom'] as const) {
-      const g = gate({ mode })
-      expect(await g.call('Bash', DESTRUCTIVE, { toolUseID: 't1' }), mode).toEqual({ behavior: 'allow' })
-      expect(g.asks, mode).toHaveLength(1)
+      for (const permissionMode of ['strict', 'dangerously'] as const) {
+        const g = gate({ mode, permissionMode })
+        expect(await g.call('Bash', DESTRUCTIVE, { toolUseID: 't1' }), `${mode}/${permissionMode}`).toEqual({ behavior: 'allow' })
+        expect(g.asks, `${mode}/${permissionMode}`).toHaveLength(1)
+      }
     }
   })
 })
