@@ -165,10 +165,13 @@ export function wireSettingsDrawer(opts) {
   document.addEventListener("click", (e) => {
     const drawer = document.getElementById("settings-drawer")
     if (!drawer || !drawer.classList.contains("is-open")) return
+    // A renewal/close action can replace its own DOM before this bubble phase.
+    // The original event path still identifies the nested phone dialog.
+    if (e.composedPath().some(node => node instanceof HTMLElement && node.id === 'phone-settings-modal')) return
     const target = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target : null)
     if (!target) return
     if (drawer.contains(target)) return
-    if (target.closest("#settings-open, #provider-menu")) return
+    if (target.closest("#settings-open, #provider-menu, #phone-settings-modal")) return
     closeSettingsDrawer()
   })
 

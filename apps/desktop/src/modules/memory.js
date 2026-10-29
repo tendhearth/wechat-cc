@@ -111,7 +111,9 @@ async function loadMarked() {
 
 /** @param {Deps} deps */
 export async function loadMemoryPane(deps) {
-  const result = /** @type {MemoryList} */ (await v1(deps.invokeWorkbenchApi, V1.memory.files))
+  let result
+  try { result = /** @type {MemoryList} */ (await v1(deps.invokeWorkbenchApi, V1.memory.files)) }
+  catch (err) { showStoredFactsError(); throw err }
   memoryState.users = Array.isArray(result) ? result : []
   renderMemorySidebar(deps)
   const totalFiles = memoryState.users.reduce((s, u) => s + u.fileCount, 0)
@@ -119,6 +121,7 @@ export async function loadMemoryPane(deps) {
   if (metaEl) metaEl.textContent = `${memoryState.users.length} 个用户 · ${totalFiles} 文件`
   const navCount = document.getElementById("memory-count")
   if (navCount) navCount.textContent = totalFiles > 0 ? String(totalFiles) : ""
+  await loadStoredFacts(deps)
   // NOTE: profile-overview render intentionally lives in loadMemoryTopZone,
   // which runs after observations are loaded. Rendering here too would race:
   // loadMemoryPane + loadMemoryTopZone fire concurrently on pane switch, and a
@@ -128,6 +131,86 @@ export async function loadMemoryPane(deps) {
   // memory-refresh; currentChatId also backfills users first). If this is ever
   // changed so loadMemoryPane runs without loadMemoryTopZone, restore a render
   // here guarded on observations being loaded.
+}
+
+// Stored facts lead; the inferred profile and raw management keep their own folds.
+/** @type {{userId:string,path:string,mtime:string,lines:string[]|null,content:string}|null} */
+let storedFacts = null
+let storedFactsGeneration = 0
+let storedFactsFailed = false
+function showStoredFactsError() {
+  storedFactsFailed = true
+  const records = document.getElementById('memory-facts-records')
+  if (records) records.innerHTML = '<p role="status">暂时无法读取记下的事。可以展开记忆库重新读取。<span lang="en"> Memories could not be loaded. Retry in the library.</span></p>'
+  const edit = /** @type {HTMLButtonElement|null} */ (document.getElementById('memory-facts-edit'))
+  if (edit) edit.disabled = true
+}
+function paintStoredFacts() {
+  const records = document.getElementById('memory-facts-records')
+  if (!records) return
+  if (storedFactsFailed) { showStoredFactsError(); return }
+  const search = /** @type {HTMLInputElement|null} */ (document.getElementById('memory-facts-search'))
+  const query = (search?.value || '').trim().toLocaleLowerCase()
+  if (!storedFacts) { records.innerHTML = '<p>还没有记下的内容。聊过以后，会留在这里。<span lang="en"> Memories will appear here after you talk.</span></p>'; return }
+  if (storedFacts.lines) {
+    const lines = storedFacts.lines.filter(line => !query || line.toLocaleLowerCase().includes(query))
+    records.innerHTML = lines.length ? `<ul class="memory-facts-list">${lines.map(text => `<li>${escapeHtml(text)}</li>`).join('')}</ul>` : '<p>没有匹配的记忆。<span lang="en"> No matching memories.</span></p>'
+  } else {
+    records.innerHTML = !query || storedFacts.content.toLocaleLowerCase().includes(query)
+      ? `<div class="memory-rendered memory-facts-file">${renderMemoryMarkdown(storedFacts.content)}</div>`
+      : '<p>没有匹配的记忆。<span lang="en"> No matching memories.</span></p>'
+  }
+}
+/** @param {Deps} deps */
+async function loadStoredFacts(deps) {
+  if (!document.getElementById('memory-facts-records')) return
+  const mine = ++storedFactsGeneration
+  const user = memoryState.users[0]
+  const file = user?.files.find(f => f.path === 'memory.md') || user?.files.find(f => f.path === 'owner.md') || user?.files.find(f => !isDerivedMemoryPath(f.path))
+  const edit = /** @type {HTMLButtonElement|null} */ (document.getElementById('memory-facts-edit'))
+  const source = document.getElementById('memory-facts-source')
+  if (!user || !file) {
+    storedFactsFailed = false; storedFacts = null; paintStoredFacts()
+    if (edit) edit.disabled = true
+    if (source) source.textContent = ''
+    return
+  }
+  try {
+    const view = isLineEditablePath(file.path) ? await loadLineView(deps, user.userId, file.path) : null
+    let content = ''
+    if (!view) {
+      const read = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.file, { query: { user_id: user.userId, path: file.path } }))
+      if (!read.ok || typeof read.content !== 'string') throw Error('memory_unavailable')
+      content = read.content
+    }
+    if (mine !== storedFactsGeneration) return
+    storedFactsFailed = false
+    storedFacts = { userId: user.userId, path: file.path, mtime: file.mtime, lines: view ? view.lines.map(line => line.text) : null, content }
+    if (source) source.textContent = file.path
+    if (edit) edit.disabled = false
+    paintStoredFacts()
+  } catch { if (mine === storedFactsGeneration) showStoredFactsError() }
+}
+/** Open the existing editor, preserving its draft and exact user/path identity. @param {Deps} deps */
+async function reviewStoredFacts(deps) {
+  const facts = storedFacts
+  if (!facts) return
+  document.getElementById('memory-sources-toggle')?.setAttribute('aria-expanded', 'true')
+  document.getElementById('memory-archive-toggle')?.setAttribute('aria-expanded', 'true')
+  for (const id of ['memory-sources-panel', 'memory-archive-body']) {
+    const node = document.getElementById(id); if (node) node.hidden = false
+  }
+  const same = () => memoryState.selected?.userId === facts.userId && memoryState.selected?.path === facts.path
+  if (!(same() && memoryState.editing)) {
+    const opened = await openMemoryFile(deps, facts.userId, facts.path, facts.mtime)
+    if (!opened) return
+    if (same() && canEditOpenFile() && !memoryState.editing) setEditMode(true)
+  }
+  document.getElementById('memory-content-head')?.scrollIntoView?.({ block: 'nearest' })
+  if (same() && memoryState.editing) {
+    const input = document.querySelector('#memory-line-editor:not([hidden]) input, #memory-editor:not([hidden])')
+    ;/** @type {HTMLElement|null} */ (input)?.focus?.({ preventScroll: true })
+  }
 }
 
 /** @param {Deps} deps */
@@ -187,7 +270,7 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
           setStatus(null)
         }
       }, 3000)
-      return
+      return false
     }
     // Confirmed.
     memoryState.dirtySwitchPending = null
@@ -213,11 +296,11 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
     result = /** @type {MemoryRead} */ (await v1(deps.invokeWorkbenchApi, V1.memory.file, { query: { user_id: userId, path: relPath } }))
   } catch (err) {
     if (rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
-    return
+    return false
   }
   if (!result.ok) {
     if (rendered) rendered.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(result.error || "unknown")}</p>`
-    return
+    return false
   }
   const marked = await loadMarked()
   memoryState.lineView = isLineEditablePath(relPath) ? await loadLineView(deps, userId, relPath) : null
@@ -228,6 +311,7 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
   // Show the edit button now that there's content to edit.
   const editBtn = document.getElementById("memory-edit-btn")
   if (editBtn) editBtn.hidden = !canEditOpenFile()
+  return true
 }
 
 // 生成物(总览、画像)只由机器写:主人自己的经逐行编辑改,别人对话里的不给编辑按钮(整份写会被拒)。
@@ -524,6 +608,8 @@ export async function generateMemoryProfile(deps) {
 // Wire edit/save/cancel buttons. main.js calls this once at boot.
 /** @param {Deps} deps */
 export function wireMemoryButtons(deps) {
+  document.getElementById('memory-facts-search')?.addEventListener('input', paintStoredFacts)
+  document.getElementById('memory-facts-edit')?.addEventListener('click', () => { void reviewStoredFacts(deps) })
   document.getElementById("memory-edit-btn")?.addEventListener("click", () => {
     if (!memoryState.selected) return
     setEditMode(true)
@@ -1175,18 +1261,18 @@ function clamp(n, min, max) {
 // in HTML (Task 9). Refresh on pane switch + manual button.
 /** @param {Deps} deps */
 export async function loadMemoryTopZone(deps) {
-  const chatId = await currentChatId(deps)
-  if (!chatId) {
-    const root = document.getElementById("memory-profile-content")
-    if (root) root.innerHTML = '<div class="cc-page-status"><h2>还没有可用的会话</h2><p>先在首页连接微信，与 CC 聊几句，再回来查看记忆。</p></div>'
-    return
-  }
-
-  const obsBox = document.getElementById("memory-observations")
-  const msBox = document.getElementById("memory-milestones")
-  if (!obsBox || !msBox) return
-
   try {
+    const chatId = await currentChatId(deps, true)
+    if (!chatId) {
+      const root = document.getElementById("memory-profile-content")
+      if (root) root.innerHTML = '<div class="cc-page-status"><h2>还没有可用的会话</h2><p>先在首页连接微信，与 CC 聊几句，再回来查看记忆。</p></div>'
+      return
+    }
+
+    const obsBox = document.getElementById("memory-observations")
+    const msBox = document.getElementById("memory-milestones")
+    if (!obsBox || !msBox) return
+
     const [obsResp, msResp] = /** @type {[ObservationsList, MilestonesList]} */ (await Promise.all([
       v1(deps.invokeWorkbenchApi, V1.observations.list, { query: { chat_id: chatId } }),
       v1(deps.invokeWorkbenchApi, V1.milestones.list, { query: { chat_id: chatId } }),
@@ -1406,11 +1492,12 @@ export async function archiveObservation(deps, obsId) {
 // once if the pane was queried before loadMemoryPane completed.
 /**
  * @param {Deps} deps
+ * @param {boolean} [strict] A failed initial read is unknown, not an empty memory.
  * @returns {Promise<string | null>}
  */
-async function currentChatId(deps) {
+async function currentChatId(deps, strict = false) {
   if (memoryState.users.length === 0) {
-    try { await loadMemoryPane(deps) } catch { /* fall through */ }
+    try { await loadMemoryPane(deps) } catch (err) { if (strict) throw err }
   }
   return memoryState.users[0]?.userId ?? null
 }

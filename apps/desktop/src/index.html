@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="./cc-life.css" />
     <link rel="stylesheet" href="./styles/converse.css" />
     <link rel="stylesheet" href="./cc-now.css" />
+    <link rel="stylesheet" href="./styles/secondary-minimal.css" />
     <link rel="stylesheet" href="./styles/workbench.css" />
     <link rel="stylesheet" href="./styles/pdf-reader.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
@@ -491,14 +492,24 @@
           <!-- ── pane: memory ───────────────────────────────────────── -->
           <article class="dash-pane" data-pane="memory" hidden>
             <section class="memory-profile-overview" id="memory-profile-overview">
+              <section class="memory-facts" id="memory-facts" aria-labelledby="memory-facts-title">
+                <header class="memory-facts-head"><div><h1 id="memory-facts-title">记忆</h1><p>CC 记下的事，可以查找，也可以纠正。<span lang="en"> Stored memories, yours to correct.</span></p></div><button id="memory-facts-edit" class="btn" type="button" disabled>查看与纠正 · Review</button></header>
+                <label class="memory-facts-search-label" for="memory-facts-search">查找记忆 · Search memories</label>
+                <input id="memory-facts-search" type="search" placeholder="查找记下的内容" autocomplete="off" />
+                <p id="memory-facts-source" class="memory-facts-source"></p>
+                <div id="memory-facts-records" aria-live="polite"><p role="status">正在读取记下的事…</p></div>
+              </section>
               <button class="memory-library-trigger" id="memory-sources-toggle" aria-expanded="false">
                 <span>记忆库</span>
                 <span class="meta" id="memory-meta">—</span>
                 <span class="chev">▾</span>
               </button>
-              <div id="memory-profile-content">
-                <p class="empty-state">正在整理 CC 眼中的你…</p>
-              </div>
+              <details class="memory-profile-disclosure">
+                <summary>CC 眼中的你 · 推测画像 <span lang="en">Inferred profile</span></summary>
+                <div id="memory-profile-content">
+                  <p class="empty-state">正在整理 CC 眼中的你…</p>
+                </div>
+              </details>
 
               <aside class="memory-sources-panel" id="memory-sources-panel" hidden>
                 <div class="memory-sources-head">
