@@ -48,6 +48,10 @@ describe('wirePermissions', () => {
       const { res } = await ask('visitor', 'mcp__wxvault__get_messages', { chat: 'x' })
       expect(res.behavior).toBe('deny')
     })
+    it('访客自己的 reply 照旧放行(不是一律拒)', async () => {
+      const { res } = await ask('visitor', 'mcp__wechat__reply', { text: 'hi' })
+      expect(res.behavior).toBe('allow')
+    })
     it('trusted 在 --dangerously 下照旧按 admin', async () => {
       const { res, askUser } = await ask('friend', 'mcp__wxvault__get_messages', { chat: 'x' })
       expect(res.behavior).toBe('allow')
