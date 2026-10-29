@@ -107,6 +107,28 @@ describe('openDb', () => {
       removeTempDir(dir)
     }
   })
+
+  // 上一条的弱引用有个缝(2026-10-28,Windows CI native-continue「Hook timed out」那次查出来的):
+  // GC 已经把语句收走、FinalizationRegistry 已经把它从登记里拿掉,原生那头却要等 JSC 懒清扫才
+  // sqlite3_finalize —— 这时 close() 两头都够不着它,连接照样变僵尸。工作台跑过一轮的测试几乎条条中。
+  // 这里造垃圾逼出几次小 GC、让出一拍让登记的回调跑完,正好卡在那个缝里。修之前本机 20 次里十几次抛
+  // database is locked;GC 时机因机器而异,所以按次数判、留两次余量,没修时远远超过。
+  it('close() still releases the file when GC already dropped statements whose native side is not finalized yet', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'db-test-close-gc-'))
+    try {
+      let locked = 0
+      for (let run = 0; run < 20; run++) {
+        const db = openSqlite(join(dir, `gc-${run}.db`), { create: true })
+        ;(() => { for (let i = 0; i < 200; i++) db.query(`SELECT ${i} AS n`).get() })()
+        ;(() => { const junk: { i: number }[] = []; for (let i = 0; i < 200_000; i++) junk.push({ i }); return junk.length })()
+        await new Promise(resolve => setTimeout(resolve, 10))
+        try { db.close(true) } catch { locked++; db.close() }
+      }
+      expect(locked).toBeLessThanOrEqual(2)
+    } finally {
+      removeTempDir(dir)
+    }
+  })
 })
 
 describe('renameMigrated', () => {
