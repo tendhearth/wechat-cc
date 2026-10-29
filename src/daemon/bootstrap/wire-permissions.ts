@@ -11,7 +11,7 @@ import { makeCanUseTool } from '../../adapters/executors/claude/permission-relay
 import type { PermissionMode } from '../../domain/capability-matrix'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
 import type { ConversationStore } from '../../ports/conversation-store'
-import { resolveTier } from '../../domain/user-tier'
+import { resolveEffectiveTier } from '../../domain/user-tier'
 import { loadAccess } from '../../lib/access'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
@@ -82,17 +82,12 @@ export function wirePermissions(
     // where a guest who could trigger a tool call could also click 'allow'
     // on their own request.
     adminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(ctx.stateDir), chatId),
-    // Task 13 — tier resolution rules:
-    //   - dangerouslySkipPermissions=true  → every chat is admin tier
-    //     (global override; old default-allow path's new spelling).
-    //   - otherwise → access.json-derived tier for THIS session's chatId
-    //     (admin/trusted/guest). chatId is captured at spawn time so the
-    //     resolution stays stable regardless of any concurrent inbound
-    //     activity on other chats.
-    resolveTier: () => {
-      if (deps.dangerouslySkipPermissions) return 'admin'
-      return resolveTier(chatId, loadAccess())
-    },
+    // Task 13 — tier resolution: access.json-derived tier for THIS session's
+    // chatId (admin/trusted/guest), captured at spawn so concurrent inbound on
+    // other chats can't flip it. --dangerously lifts admin/trusted to admin but
+    // 访客永不提权(2026-10-10):以前这里对谁都回 admin,访客会话 SDK 是 strict、canUseTool 照样触发,
+    // 却按 admin 放行插件 MCP(wxvault = 主人的微信记录)—— 和别处一样走 resolveEffectiveTier。
+    resolveTier: () => resolveEffectiveTier(chatId, loadAccess(), permissionMode),
     log: ctx.log,
     // Per-dispatch mode lookup: read THIS session's current mode from
     // the conversation store at the moment the tool call arrives.
@@ -101,7 +96,7 @@ export function wirePermissions(
     mode: () => conversationStore.get(chatId)?.mode.kind ?? 'solo',
     provider: 'claude',
     permissionMode,
-    // 主人自己的对话走放行规则(2026-10-25)。主人与否不看上面的 resolveTier(--dangerously 下它对谁都说 admin),
+    // 主人自己的对话走放行规则(2026-10-25)。主人与否不看上面的 resolveTier(--dangerously 下 trusted 也是 admin),
     // 由 chatOwnerRules.isOwnerChat 按 access.json 的 admins 现算。
     ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
   })
