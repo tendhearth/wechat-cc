@@ -8,10 +8,10 @@
 // splitting — that's a WeChat-channel concern, not this one).
 //
 // Deliberately minimal, matching the "keep desktop UI simple" convention:
-// an in-memory message list (not persisted, not paged from the daemon —
-// the read-only 对话 pane already covers full transcript history) plus a
+// a recent owner-history projection plus a current-session message list and a
 // compose row. Same vanilla-JS module shape as dialogue-page.js / logs.js.
 
+import {openOwnerChatFile,openConversationImage,openLocalConversationFile} from "./converse-media.js"
 import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
@@ -23,11 +23,11 @@ import { V1, v1 } from '../daemon-client.js'
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onSend?: () => void }} Deps
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[] }} ConverseMsg
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[] }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
-// In-memory only — reset on app reload, preserved across pane switches
+// Current-session messages are preserved across pane switches; reload reads owner history.
 // (the DOM isn't torn down, just hidden; see initConversePage's
 // dataset.ready guard, mirroring dialogue-page.js / a2a-agents.js).
 /** @type {ConverseMsg[]} */
@@ -183,10 +183,11 @@ function attachmentsHtml(m) {
     if (a.kind === "sticker") {
       return a.image
         ? `<img class="converse-att-sticker" src="${escapeHtml(a.image)}" alt="表情:${escapeHtml(a.label)}" title="${escapeHtml(a.label)}" />`
-        : `<div class="converse-att converse-att-sticker-label">${icon("smile")}<span>表情 · ${escapeHtml(a.label)}</span></div>`
+        : `<div class="converse-att converse-att-sticker-label">${icon("smile")}<span>表情 · ${escapeHtml(a.label)}</span>${m.messageId && a.file ? `<button class="converse-history-file" type="button" data-msg-id="${m.id}" data-att="${i}">打开图片</button>` : ""}</div>`
     }
     return `<div class="converse-att converse-att-file">
       ${icon("attachment")}<span class="converse-att-name">${escapeHtml(a.name)}</span>
+      ${m.messageId ? `<button class="converse-history-file" type="button" data-msg-id="${m.id}" data-att="${i}">打开文件</button>` : ""}
       ${a.ref ? `<button class="converse-att-reveal" type="button" data-file-ref="${escapeHtml(a.ref)}">在访达中显示</button>` : ""}
     </div>`
   })
@@ -210,19 +211,20 @@ function messageHtml(m) {
     : ""
   const markdown = m.role === "cc" && !m.pending
   const bubble = `<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
-  // 主人发的图:缩略图跟在自己那条气泡上(只是本页的预览,刷新后历史里是「[图片 ×N]」)。
+  // Current-session upload previews are blob URLs, never recovered as durable history references.
   const userImages = m.role === "user" && (m.images?.length || m.files?.length)
-    ? `<div class="converse-user-images">${(m.images ?? []).map(src => `<img src="${escapeHtml(src)}" alt="你发的图片" />`).join("")}${(m.files ?? []).map(name => `<span class="converse-file-chip">${escapeHtml(name)}</span>`).join("")}</div>`
+    ? `<div class="converse-user-images">${(m.images ?? []).map((src,i) => `<button type="button" class="converse-user-image" data-msg-id="${m.id}" data-image="${i}" aria-label="打开你发的图片"><img src="${escapeHtml(src)}" alt="你发的图片" /></button>`).join("")}${(m.files ?? []).map((name,i) => m.uploadedFiles?.[i] ? `<button type="button" class="converse-file-chip" data-local-file="${i}" data-msg-id="${m.id}">${escapeHtml(name)}</button>` : `<span class="converse-file-chip">${escapeHtml(name)}</span>`).join("")}</div>`
     : ""
-  const extras = m.role === "cc" && ((m.attachments?.length ?? 0) > 0 || (m.narration?.length ?? 0) > 0)
+  const extras = ((m.attachments?.length ?? 0) > 0 || (m.narration?.length ?? 0) > 0)
   // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
   // 朗读按钮永远贴着正文最后一行(带附件时放进正文那一行里),不随附件块漂。
   const body = extras
-    ? `<div class="converse-cc-body">${narrationHtml(m)}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m)}</div>`
+    ? `<div class="converse-cc-body">${m.role === "cc" ? narrationHtml(m) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m)}</div>`
     : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}">
     ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
     ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
+    ${m.legacyMedia ? '<small class="converse-legacy-media">这条记录只保存了附件数量，原附件未保存在对话中。</small>' : ""}
     ${extras || !m.text.trim() ? "" : replayBtn}
   </div>`
 }
@@ -486,10 +488,13 @@ function emptyStateHtml() {
 async function loadSharedHistory(deps) {
   if (!deps.invokeWorkbenchApi || messages.length) return
   try {
-    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string}>}|null} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChat))
+    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string,messageId?:string,replyExtras?:unknown}>}|null} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChat))
     const events = (detail?.events ?? []).filter(e => e.kind === "user" || e.kind === "text")
     if (!events.length || messages.length) return
-    for (const e of events) messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text, at: e.createdAt, source: e.source })
+    for (const e of events) {
+      const extras = normalizeConverseReply(e.replyExtras)
+      messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text, at: e.createdAt, source: e.source, ...(typeof e.messageId === "string" ? {messageId:e.messageId} : {}), ...extras, legacyMedia:e.kind === "user" && !extras.attachments.length && /\[(?:图片|文件) ×\d+\]/.test(e.text) })
+    }
     renderMessages()
   } catch { /* 没有登记处或读不到:桌面照旧从空白开始 */ }
 }
@@ -531,7 +536,7 @@ async function sendMessage(deps) {
   deps.onSend?.()
 
   const pics = images.filter(i => i.mime.startsWith("image/")), docs = images.filter(i => !i.mime.startsWith("image/"))
-  messages.push({ id: nextId++, role: "user", text, at: Date.now(), ...(pics.length ? { images: pics.map(i => i.url) } : {}), ...(docs.length ? { files: docs.map(i => i.name) } : {}) })
+  messages.push({ id: nextId++, role: "user", text, at: Date.now(), ...(pics.length ? { images: pics.map(i => i.url) } : {}), ...(docs.length ? { files: docs.map(i => i.name), uploadedFiles:docs.map(({name,mime,data_b64})=>({name,mime,data_b64})) } : {}) })
   pendingImages = []
   renderPendingImages()
   const pendingId = nextId++
@@ -700,7 +705,7 @@ async function runSearch(deps, q) {
   host.hidden = false
   host.innerHTML = '<p class="converse-search-note">正在搜…</p>'
   try {
-    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string}>}} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChatSearch, { query: { q: query, limit: 30 } }))
+    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string,messageId?:string,replyExtras?:unknown}>}} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChatSearch, { query: { q: query, limit: 30 } }))
     if (seq !== searchSeq) return
     const hits = r?.hits ?? []
     host.innerHTML = hits.length
@@ -808,6 +813,10 @@ function wireEvents(root, deps) {
       }
       return
     }
+    const localFile=target.closest('[data-local-file]');if(localFile instanceof HTMLElement){const file=messages.find(m=>m.id===Number(localFile.dataset.msgId))?.uploadedFiles?.[Number(localFile.dataset.localFile)];if(file)openLocalConversationFile(deps,file);return}
+    const image=target.closest('.converse-user-image');if(image instanceof HTMLElement){const src=messages.find(m=>m.id===Number(image.dataset.msgId))?.images?.[Number(image.dataset.image)];if(src)openConversationImage(src);return}
+    const historyFile = target.closest('.converse-history-file')
+    if(historyFile instanceof HTMLElement){const m=messages.find(m=>m.id===Number(historyFile.dataset.msgId)),i=Number(historyFile.dataset.att),a=m?.attachments?.[i];if(m?.messageId&&a&&(a.kind==='file'||a.kind==='sticker'))openOwnerChatFile(deps,m.messageId,i,a.kind==='file'?a.name:a.label);return}
     const play = target.closest(".converse-att-play")
     if (play instanceof HTMLElement) {
       const msg = messages.find(m => m.id === Number(play.dataset.msgId))

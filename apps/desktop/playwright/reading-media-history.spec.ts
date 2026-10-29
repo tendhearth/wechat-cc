@@ -1,0 +1,42 @@
+import {fileChunkResponse} from '../../../src/features/phone/mobile-chat'
+import {test,expect} from '@playwright/test'
+import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {fileURLToPath} from 'node:url'
+import {makeOwnerChatFileReader,ownerChatReadingEvent} from '../../../src/daemon/wiring/owner-chat-reading'
+import {mattersRoutes} from '../../../src/daemon/internal-api/routes-matters'
+const source=fileURLToPath(new URL('../src/',import.meta.url))
+const png='iVBORw0KGgoAAAANSUhEUgAAAPAAAAB4CAIAAABD1OhwAAACHklEQVR4nO3cQQ2AQBAEwXV4QtCJDQxgAgU870FTyQiobPq9s461afd1bhoz89vmi2hmZkEz/8IsaOaUWdDMKbOgmVNmQTOnzIJmTpkFzZwyC5o5ZRY0c8osaOaUWdDMKbOgmVNmQTOnzIJmTpkFzZwyC5o5ZRY0c8osaOaUWdDMKbOgmVNmQTOnzIJmTpkFzZwyC5o5ZRY0c8osaOaUWdDMKbOgmVPmcQ7mklnQzCmzoJlTZkEzp8yCZk6ZBc2cMguaOWUWNHPKLGjmlFnQzCmzoJlTZkEzp8yCZk6ZBc2cMguaOWUWNHPKLGjmlFnQzCmzoJlTZkEzp8yCZk6ZBc2cMguaOWUWNHPKLGjmlFnQzCmzoJlTZkEzp8yCZk6ZBc2cMnuny5wyC5o5ZRY0c8osaOaUWdDMKbOgmVNmQTOnzIJmTpkFzZwyC5o5ZRY0c8osaOaUWdDMKbOgmVNmQTOnzIJmTpkFzZwyC5o5ZRY0c8osaOaUWdDMKbOgmVNmQTOnzIJmTpkFzZwyC5o5ZRY0c8osaOaUWdDMKbOgmVNm73SZU2ZBM6fMgmZOmQXNnDILmjllFjRzyixo5pRZ0Mwps6CZU2ZBM6fMgmZOmQXNnDILmjllFjRzyixo5pRZ0Mwps6CZU2ZBM6fMgmZOmQXNnDILmjllFjRzyixo5pRZ0Mwps6CZU2ZBM6fMgmZOmQXNnDILmjllFjRzyvwAjCP5iNqoGXkAAAAASUVORK5CYII='
+const documentText='# 已存 Markdown\r\n\r\n###### 小标题\r\n\r\n正文 **重点**\r\n\r\n![远程图片](https://example.com/image.png)\r\n'
+const shell=(events:unknown)=>`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/styles/workbench.css"><style>html,body{height:100%;margin:0}#converse-root{height:100%;display:flex;flex-direction:column;overflow:hidden}</style><div id="converse-root"></div><script type="module">
+import {initConversePage} from '/modules/converse.js';window.saves=0;window.failSave=true;window.__TAURI__={core:{invoke(){}}};
+initConversePage({invoke:async(cmd,args)=>{if(cmd==='save_file'){window.saves++;if(window.failSave)throw Error('disk');return '/Downloads/'+args.filename}return ''},invokeWorkbenchApi:async(method,path)=>{if(path.includes('/owner-chat/file')){const r=await fetch('/fixture-file'+new URL(path,location.origin).search),body=await r.json();if(!r.ok)throw Error(body.error);return body}return {events:${JSON.stringify(events)}}}});
+</script>`
+for(const size of [{width:1400,height:900},{width:760,height:700},{width:390,height:700}])test(`persisted media reload, retry and precise file reader ${size.width}`,async({page},info)=>{
+ const dir=await mkdtemp(join(tmpdir(),'cc-desktop-media-'))
+ try{
+  const file=join(dir,'notes.md'),image=join(dir,'photo.png'),raw=join(dir,'raw.txt');await writeFile(file,documentText);await writeFile(image,Buffer.from(png,'base64'));await writeFile(raw,documentText)
+  const record={id:'saved',chatId:'owner',ts:new Date().toISOString(),direction:'out' as const,kind:'text',text:'正文与附件一起保存',source:'desktop',extras:JSON.stringify({attachments:[{kind:'file',name:'notes.md',path:file},{kind:'file',name:'photo.png',path:image},{kind:'voice',text:'已经完成'},{kind:'sticker',label:'开心'},{kind:'unknown',path:'/private/secret'},{kind:'file',name:'raw.txt',path:raw}],narration:['核对了资料']})}
+  const incomingPath=join(dir,'app-desktop-123-1-upload.png');await writeFile(incomingPath,Buffer.from(png,'base64'))
+  const incoming={...record,id:'app:desktop:123:in',direction:'in' as const,text:'新上传\n[图片 ×1]',extras:JSON.stringify({attachments:[{kind:'file',name:'upload.png',path:incomingPath}],narration:[]})}
+  const events=[{kind:'user',text:'旧上传\n[图片 ×1]',createdAt:1},ownerChatReadingEvent(incoming,dir),ownerChatReadingEvent(record)]
+  const reader=makeOwnerChatFileReader({readChunk:fileChunkResponse,ownerChatId:()=> 'owner',inboxDir:dir,message:async(_owner,id)=>id==='saved'?record:id===incoming.id?incoming:null});const handler=mattersRoutes({matters:{ownerChatFile:reader}} as any)['GET /v1/matter/owner-chat/file']!;let failRead=true,reads=0
+  await page.setViewportSize(size);await page.route('http://127.0.0.1:4271/**',async route=>{const u=new URL(route.request().url()),p=u.pathname
+   if(p==='/fixture-file'){reads++;const result=failRead?{status:404,body:{error:'not_found'}}:await handler(u.searchParams,null);await route.fulfill({status:result.status,json:result.body});return}
+   try{await route.fulfill({contentType:p==='/'?'text/html':/\.m?js$/.test(p)?'text/javascript':p.endsWith('.css')?'text/css':'application/octet-stream',body:p==='/'?shell(events):await readFile(source+p)})}catch{await route.fulfill({status:404,body:''})}})
+  await page.goto('http://127.0.0.1:4271');await expect(page.locator('.converse-history-file')).toHaveCount(4);expect(reads).toBe(0)
+  await expect(page.locator('.converse-legacy-media')).toContainText('原附件未保存在对话中');await expect(page.locator('.converse-att-voice')).toContainText('已经完成');await expect(page.locator('.converse-att-sticker-label')).toContainText('开心')
+  await page.reload();await expect(page.locator('.converse-history-file')).toHaveCount(4);expect(reads).toBe(0)
+  await page.locator('.converse-msg-user .converse-history-file').click();failRead=false;await page.getByRole('button',{name:'重试',exact:true}).click();await expect(page.locator('dialog img')).toBeVisible();await page.keyboard.press('Escape');failRead=true
+  await page.locator('#converse-input').fill('保留正在写的内容');await page.locator('.converse-msg-cc .converse-history-file').first().click();await expect(page.locator('dialog [role=status]')).toContainText('无法读取');failRead=false;await page.getByRole('button',{name:'重试',exact:true}).click()
+  await expect(page.locator('dialog h6')).toHaveText('小标题');await page.locator('dialog details summary').click();expect(await page.locator('dialog details pre').textContent()).toBe(documentText)
+  await page.getByRole('button',{name:'下载',exact:true}).click();await expect(page.locator('dialog [role=status]')).toHaveText('下载失败，请重试。');await page.evaluate(()=>(window as any).failSave=false);await page.getByRole('button',{name:'下载',exact:true}).click();await expect(page.locator('dialog [role=status]')).toHaveText('已下载')
+  await page.getByRole('button',{name:'关闭',exact:true}).click();await expect(page.locator('.converse-msg-cc .converse-history-file').first()).toBeFocused();await expect(page.locator('#converse-input')).toHaveValue('保留正在写的内容')
+  await page.locator('.converse-msg-cc .converse-history-file').nth(1).click();await expect(page.locator('dialog img')).toBeVisible();expect(await page.locator('dialog img').evaluate((img:HTMLImageElement)=>[img.naturalWidth,img.naturalHeight])).toEqual([240,120]);const fittedWidth=await page.locator('dialog img').evaluate(img=>img.getBoundingClientRect().width);await page.getByRole('button',{name:'放大图片'}).click();expect(await page.locator('dialog img').evaluate(img=>img.getBoundingClientRect().width)).toBeGreaterThan(fittedWidth*1.9);await expect(page.locator('.wb-input-preview-body')).toHaveClass(/is-zoomed/);await page.getByRole('button',{name:'适合窗口'}).click();await page.screenshot({path:info.outputPath('persisted-image.png')});await page.keyboard.press('Escape')
+  await page.locator('.converse-msg-cc .converse-history-file').nth(2).click();await expect(page.locator('dialog h1')).toHaveCount(0);await expect(page.locator('dialog pre')).toHaveText(documentText);await page.keyboard.press('Escape')
+  await page.evaluate(({text,png})=>{const dt=new DataTransfer();dt.items.add(new File([text],'live.md',{type:'text/markdown'}));dt.items.add(new File([Uint8Array.from(atob(png),c=>c.charCodeAt(0))],'live.png',{type:'image/png'}));document.querySelector('#converse-root')!.dispatchEvent(new DragEvent('drop',{dataTransfer:dt,bubbles:true,cancelable:true}))},{text:documentText,png})
+  await expect(page.locator('#converse-images .converse-image-chip')).toHaveCount(2);await page.locator('#converse-send').click();await page.locator('[data-local-file]').click();await expect(page.locator('dialog h6')).toHaveText('小标题');await page.keyboard.press('Escape');await page.locator('.converse-user-image').click();await expect(page.locator('dialog img')).toBeVisible();await page.keyboard.press('Escape')
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+ }finally{await rm(dir,{recursive:true,force:true})}
+})
