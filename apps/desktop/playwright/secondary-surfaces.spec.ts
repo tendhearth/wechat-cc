@@ -381,3 +381,42 @@ test('pair code, manual preview/success and wish introductions retain their actu
   await shot(page, 'manual-success-760')
   await page.keyboard.press('Escape')
 })
+
+test('memory correction serializes the initial read so a repeated entry cannot replace its edit baseline', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: owner })
+  await secondaryFixtures(page)
+  await boot(page, shimUrl)
+  await clickNav(page, 'memory')
+  await expect(page.locator('#memory-facts-edit')).toBeEnabled()
+  const reads: import('@playwright/test').Route[] = []
+  await page.route('**/v1/memory/file?**', route => {
+    if (new URL(route.request().url()).searchParams.get('path') === 'memory.md') reads.push(route)
+    else void route.fallback()
+  })
+  await page.locator('#memory-facts-edit').dblclick()
+  await expect(page.locator('#memory-facts-edit')).toBeDisabled()
+  expect(reads).toHaveLength(1)
+  await reads[0].fallback()
+  await expect(page.locator('.memory-line-input').first()).toBeFocused()
+  await expect(page.locator('#memory-facts-edit')).toBeEnabled()
+})
+
+test('a late memory correction read cannot start editing after leaving the page', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: owner })
+  await secondaryFixtures(page)
+  await boot(page, shimUrl)
+  await clickNav(page, 'memory')
+  await expect(page.locator('#memory-facts-edit')).toBeEnabled()
+  let pending: import('@playwright/test').Route | undefined
+  await page.route('**/v1/memory/file?**', route => {
+    if (new URL(route.request().url()).searchParams.get('path') === 'memory.md') pending = route
+    else void route.fallback()
+  })
+  await page.locator('#memory-facts-edit').click()
+  await expect(page.locator('#memory-facts-edit')).toBeDisabled()
+  await clickNav(page, 'todos')
+  await pending!.fallback()
+  await expect(page.locator('#memory-facts-edit')).toBeEnabled()
+  await expect(page.locator('#memory-line-editor')).toHaveAttribute('hidden', '')
+  await expect(page.locator('#todos-root')).toBeVisible()
+})

@@ -138,6 +138,7 @@ export async function loadMemoryPane(deps) {
 let storedFacts = null
 let storedFactsGeneration = 0
 let storedFactsFailed = false
+let storedFactsReviewPending = false
 function showStoredFactsError() {
   storedFactsFailed = true
   const records = document.getElementById('memory-facts-records')
@@ -194,22 +195,30 @@ async function loadStoredFacts(deps) {
 /** Open the existing editor, preserving its draft and exact user/path identity. @param {Deps} deps */
 async function reviewStoredFacts(deps) {
   const facts = storedFacts
-  if (!facts) return
-  document.getElementById('memory-sources-toggle')?.setAttribute('aria-expanded', 'true')
-  document.getElementById('memory-archive-toggle')?.setAttribute('aria-expanded', 'true')
-  for (const id of ['memory-sources-panel', 'memory-archive-body']) {
-    const node = document.getElementById(id); if (node) node.hidden = false
-  }
-  const same = () => memoryState.selected?.userId === facts.userId && memoryState.selected?.path === facts.path
-  if (!(same() && memoryState.editing)) {
-    const opened = await openMemoryFile(deps, facts.userId, facts.path, facts.mtime)
-    if (!opened) return
-    if (same() && canEditOpenFile() && !memoryState.editing) setEditMode(true)
-  }
-  document.getElementById('memory-content-head')?.scrollIntoView?.({ block: 'nearest' })
-  if (same() && memoryState.editing) {
-    const input = document.querySelector('#memory-line-editor:not([hidden]) input, #memory-editor:not([hidden])')
-    ;/** @type {HTMLElement|null} */ (input)?.focus?.({ preventScroll: true })
+  if (!facts || storedFactsReviewPending) return
+  const edit = /** @type {HTMLButtonElement|null} */ (document.getElementById('memory-facts-edit'))
+  storedFactsReviewPending = true
+  if (edit) { edit.disabled = true; edit.setAttribute('aria-busy', 'true') }
+  try {
+    document.getElementById('memory-sources-toggle')?.setAttribute('aria-expanded', 'true')
+    document.getElementById('memory-archive-toggle')?.setAttribute('aria-expanded', 'true')
+    for (const id of ['memory-sources-panel', 'memory-archive-body']) {
+      const node = document.getElementById(id); if (node) node.hidden = false
+    }
+    const same = () => memoryState.selected?.userId === facts.userId && memoryState.selected?.path === facts.path
+    if (!(same() && memoryState.editing)) {
+      const opened = await openMemoryFile(deps, facts.userId, facts.path, facts.mtime)
+      if (!opened || storedFacts !== facts || document.getElementById('memory-facts')?.closest('[hidden]')) return
+      if (same() && canEditOpenFile() && !memoryState.editing) setEditMode(true)
+    }
+    document.getElementById('memory-content-head')?.scrollIntoView?.({ block: 'nearest' })
+    if (same() && memoryState.editing) {
+      const input = document.querySelector('#memory-line-editor:not([hidden]) input, #memory-editor:not([hidden])')
+      ;/** @type {HTMLElement|null} */ (input)?.focus?.({ preventScroll: true })
+    }
+  } finally {
+    storedFactsReviewPending = false
+    if (edit) { edit.disabled = storedFactsFailed || !storedFacts; edit.removeAttribute('aria-busy') }
   }
 }
 
