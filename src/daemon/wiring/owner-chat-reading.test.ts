@@ -43,3 +43,16 @@ it('incoming reads require actual app-upload identity and a stored reference ins
  record={...good,extras:JSON.stringify({attachments:[{kind:'unknown'}, {kind:'file',name:'photo.png',path}],narration:[]})};expect((await read(input)).status).toBe(404)
  record=good;expect(ownerChatReadingEvent(record,inbox).replyExtras?.attachments).toEqual([{kind:'file',name:'photo.png'}])
 })
+
+it('a symlinked parent directory on the recorded path still reads; a symlinked final component never does',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'cc-owner-parent-link-'));dirs.push(dir);const real=join(dir,'real');mkdirSync(real);writeFileSync(join(real,'photo.png'),'via parent link')
+ const alias=join(dir,'alias');symlinkSync(real,alias);symlinkSync(join(real,'photo.png'),join(real,'swapped.png'))
+ let record=row(join(alias,'photo.png'));const read=makeOwnerChatFileReader({readChunk:fileChunkResponse,ownerChatId:()=> 'owner',message:async()=>record}),input={id:'out',i:0,offset:0}
+ const ok=await read(input);expect(ok.status).toBe(200);expect(ok.body.contentBase64).toBe(Buffer.from('via parent link').toString('base64'))
+ record=row(join(alias,'swapped.png'));expect((await read(input)).status).toBe(404)
+ const inbox=join(alias,'inbox');mkdirSync(inbox);const up=join(inbox,'app-desktop-9-1.png');writeFileSync(up,'upload')
+ record={...row(up),id:'app:desktop:9:in',direction:'in',source:'desktop'}
+ const readIn=makeOwnerChatFileReader({readChunk:fileChunkResponse,ownerChatId:()=> 'owner',message:async()=>record,inboxDir:inbox}),inInput={id:'app:desktop:9:in',i:0,offset:0}
+ expect((await readIn(inInput)).status).toBe(200)
+ rmSync(up);symlinkSync(join(real,'photo.png'),up);expect((await readIn(inInput)).status).toBe(404)
+})

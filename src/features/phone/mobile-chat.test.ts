@@ -347,3 +347,17 @@ it('restores only validated app uploads from the owner inbox in both history and
     row={...good,extras:undefined};expect((await call(d,get())).body.messages[0].attachments).toBeUndefined();expect((await call(d,get(url))).status).toBe(404)
   }finally{rmSync(dir,{recursive:true,force:true})}
 })
+
+it('an app upload whose inbox sits under a symlinked directory still reads; a symlinked upload file never does',async()=>{
+  const {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync}=await import('node:fs'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+  const dir=mkdtempSync(join(tmpdir(),'phone-incoming-parent-link-'))
+  try{
+    mkdirSync(join(dir,'real','inbox'),{recursive:true});symlinkSync(join(dir,'real'),join(dir,'alias'))
+    const inbox=join(dir,'alias','inbox'),path=join(inbox,'app-desktop-123-1.png');writeFileSync(path,'image bytes')
+    const row=rec(2,{id:'app:desktop:123:in',source:'desktop',direction:'in',text:'',extras:JSON.stringify({attachments:[{kind:'file',name:'original.png',path}],narration:[]})})
+    const d=deps({inboxDir:inbox,message:async()=>row}),url='/file?id=app%3Adesktop%3A123%3Ain&i=0'
+    expect((await call(d,get(url))).status).toBe(200)
+    const target=join(dir,'outside.png');writeFileSync(target,'private');rmSync(path);symlinkSync(target,path)
+    expect((await call(d,get(url))).status).toBe(404)
+  }finally{rmSync(dir,{recursive:true,force:true})}
+})

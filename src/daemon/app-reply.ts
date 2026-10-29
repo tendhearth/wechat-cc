@@ -13,7 +13,7 @@ import type {MessageRecord} from '../lib/messages-store'
  *
  * 落库在 messages.extras(v72,回复那一行),手机从消息库拉对话时随行带出。
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve, isAbsolute } from 'node:path'
 import { CHAT_NARRATION_MAX, CHAT_TEXT_MAX, type ChatAttachmentT } from '@wechat-cc/protocol'
 import type { TurnAttachment } from '../domain/turn-reply'
@@ -155,6 +155,17 @@ export function withStickerImages(atts: readonly AppAttachment[], image: (file: 
     const uri = image(a.file)
     return uri ? { ...a, image: uri } : a
   })
+}
+
+/** A recorded file path is authority for that file: directories on the way may be symlinks (the kernel follows them),
+ * but the final component may not be one — a link swapped in there would point the read somewhere else.
+ * Returns the canonical path, or null when the path is relative, missing, or ends in a symlink. */
+export function recordedFileCanonical(path: string): string | null {
+  try {
+    if (!isAbsolute(path) || lstatSync(path).isSymbolicLink()) return null
+    const canonical = realpathSync(path)
+    return canonical === join(realpathSync(dirname(path)), basename(path)) ? canonical : null
+  } catch { return null }
 }
 
 /** Only explicit refs written by the validated app-upload path can authorize incoming media reads.

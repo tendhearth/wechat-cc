@@ -299,16 +299,36 @@ $("f-default-provider").addEventListener("change", async function (e) {
   if (!ok) reloadModels()
 })
 
+// 读到一半抛错时,已经填好的「随身 CC」(忘掉设备)照常可用;别的段落没读全,先收起来,免得把空值写回去。
+var remoteReady = false
 function settingsUnavailable() {
   const status = $("settings-status")
   if (!status) return // 401 已经换成过期说明。
-  status.hidden = false; status.textContent = "设置暂时没读到，请检查连接后重试。"
-  $("settings-fields").hidden = true; $("settings-fields").disabled = true
+  status.hidden = false
+  if (remoteReady) {
+    status.textContent = "有些设置没读到，请检查连接后重试。已配对设备照样可以忘掉。"
+    for (const sec of $("settings-fields").querySelectorAll("section")) if (sec.id !== "sec-remote" && !sec.hidden) { sec.hidden = true; sec.dataset.unloaded = "1" }
+    $("settings-fields").hidden = false; $("settings-fields").disabled = false
+  } else {
+    status.textContent = "设置暂时没读到，请检查连接后重试。"
+    $("settings-fields").hidden = true; $("settings-fields").disabled = true
+  }
   $("settings-retry").hidden = false
 }
 async function load() {
+  remoteReady = false
   const s = await sapi("/set/api/state")
   if (!s.ok) { settingsUnavailable(); return }
+  if (s.remote && s.remote.available) {
+    $("sec-remote").hidden = false
+    $("f-remote").checked = s.remote.enabled === true
+    if (window.__CC_SHELL__ || preferTunnel) {
+      $("f-remote").disabled = true
+      $("remote-hint").textContent = "出门在外不能动这个开关 — 回家(和电脑同一网络)再改"
+    }
+    renderDevices(Array.isArray(s.remote.devices) ? s.remote.devices : [])
+    remoteReady = true
+  }
   renderModels(s.models)
   $("f-name").value = s.name || ""
   $("f-botname").value = s.config.bot_name || ""
@@ -319,21 +339,13 @@ async function load() {
   $("f-knowledge").checked = s.config.knowledge_enabled === true
   $("f-social").checked = s.config.social_enabled === true
   $("f-autostart").checked = s.config.autoStart === true
-  if (s.remote && s.remote.available) {
-    $("sec-remote").hidden = false
-    $("f-remote").checked = s.remote.enabled === true
-    if (window.__CC_SHELL__ || preferTunnel) {
-      $("f-remote").disabled = true
-      $("remote-hint").textContent = "出门在外不能动这个开关 — 回家(和电脑同一网络)再改"
-    }
-    renderDevices(Array.isArray(s.remote.devices) ? s.remote.devices : [])
-  }
   const care = s.prefs.care || "low"
   for (const b of $("f-care").querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === care)
   const am = s.config["companion.atelier_mode"]
   $("f-atelier").checked = am === "private" || am === "share"
   const ast = s.atelier && s.atelier.model_status; showAtelier(ast)
   const ar = atelierLabel(ast); if ($("f-atelier").checked && !ar.done && !ar.failed) startAtelierPoll()
+  for (const sec of $("settings-fields").querySelectorAll("section[data-unloaded]")) { sec.hidden = false; delete sec.dataset.unloaded }
   $("settings-fields").disabled = false; $("settings-fields").hidden = false
   $("settings-status").hidden = true; $("settings-retry").hidden = true
 }
