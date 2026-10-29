@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { ActivityIndicator, FlatList, Pressable, View } from 'react-native'
+import { FlatList, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { ChatSearchHitT } from '../backend/types'
 import { t } from '../i18n'
@@ -11,6 +11,7 @@ import { canSubmit } from '../view/connection'
 import { searchSegments } from '../view/chat-search'
 import { TextField } from '../ui/TextField'
 import { TopBar } from '../ui/TopBar'
+import { IconButton } from '../ui/IconButton'
 import { radius, space } from '../ui/tokens'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
@@ -43,10 +44,7 @@ export default function ChatSearch() {
         <TextField testID="chat-search-input" accessibilityLabel={t(lang, 'chatSearch.placeholder')} value={q} onChangeText={setQ} placeholder={t(lang, 'chatSearch.placeholder')}
           returnKeyType="search" onSubmitEditing={() => void run()} autoFocus maxLength={200}
           style={{ flex: 1, minHeight: 44, paddingHorizontal: space.l, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }} />
-        <Pressable testID="chat-search-go" accessibilityRole="button" accessibilityLabel={t(lang, 'chatSearch.go')} disabled={!q.trim() || busy || !online} onPress={() => void run()}
-          style={({ pressed }) => ({ minHeight: 44, justifyContent: 'center', paddingHorizontal: space.l, borderRadius: radius.control, backgroundColor: c.accent, opacity: !q.trim() || busy || !online ? 0.55 : pressed ? 0.8 : 1 })}>
-          {busy ? <ActivityIndicator color={c.onAccent} /> : <Txt role="body" tone="onAccent">{t(lang, 'chatSearch.go')}</Txt>}
-        </Pressable>
+        <IconButton name="search" label={t(lang, 'chatSearch.go')} testID="chat-search-go" disabled={!q.trim() || !online} busy={busy} onPress={() => void run()} />
       </View>
       <FlatList
         testID="chat-search-list"
@@ -56,7 +54,7 @@ export default function ChatSearch() {
         ListHeaderComponent={failed ? <Txt testID="chat-search-failed" role="meta" tone="inkSoft">{t(lang, 'chatSearch.failed')}</Txt>
           : hits ? <Txt testID="chat-search-count" role="meta" tone="inkSoft">{hits.length ? t(lang, 'chatSearch.count', { n: hits.length }) : t(lang, 'chatSearch.none')}</Txt> : null}
         renderItem={({ item }) => (
-          <View testID="chat-search-hit" style={{ gap: space.xs, paddingBottom: space.m, borderBottomWidth: 1, borderBottomColor: c.hair }}>
+          <View testID="chat-search-hit" style={{ gap: space.s, paddingVertical: space.m }}>
             <Txt role="caption" tone="inkSoft">{t(lang, item.role === 'me' ? 'chat.me' : 'cc.label')} · {when(item.at)}{item.source === 'wechat' || item.source === 'desktop' || item.source === 'phone' ? ` · ${t(lang, `chat.from.${item.source}`)}` : ''}</Txt>
             <Txt role="bubble" content="user" selectable>
               {searchSegments(item.text, asked).map((s, i) => s.hit

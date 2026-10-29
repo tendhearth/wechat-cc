@@ -19,8 +19,28 @@ appId: com.tendhearth.app
 - tapOn:
     id: compose-input
 - inputText: "Maestro demo task"
-# 点一下说明文字收起键盘(iOS 没有标准收键盘动作),交给 CC 按钮才露出来。
-- tapOn: "CC will open a task.*|CC 会在电脑上.*"
+# 项目与执行方式不改默认值;关掉面板后发送,不依赖已删掉的说明文字收键盘。
+- extendedWaitUntil:
+    visible:
+      id: compose-adjust
+      enabled: true
+    timeout: 5000
+- tapOn:
+    id: compose-adjust
+- extendedWaitUntil:
+    visible:
+      id: compose-adjust-sheet
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      text: "完成|Done"
+    direction: DOWN
+- tapOn:
+    text: "完成|Done"
+- extendedWaitUntil:
+    notVisible:
+      id: compose-adjust-sheet
+    timeout: 5000
 - waitForAnimationToEnd
 - tapOn:
     id: compose-send

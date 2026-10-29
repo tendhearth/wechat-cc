@@ -1,4 +1,4 @@
-# 此刻 → CC 的连接(红 / 琥珀都有文字)→ 返回 → 设置 → 电脑上的会话 → 读一条
+# 此刻 → 连接(红 / 琥珀都有文字)→ 返回 → 一起做的菜单 → 电脑会话 → 读一条 → 设置里的连接
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -28,12 +28,11 @@ appId: com.tendhearth.app
 - tapOn:
     id: topbar-back
 - tapOn:
-    id: topbar-settings
-- scrollUntilVisible:
-    element:
-      id: settings-sessions
+    id: tab-together
 - tapOn:
-    id: settings-sessions
+    id: together-more
+- tapOn:
+    id: together-sessions
 - extendedWaitUntil:
     visible:
       id: sessions-row-demo-claude-1
@@ -44,11 +43,15 @@ appId: com.tendhearth.app
     visible:
       id: session-message-0
     timeout: 5000
-# 设置里也能直接进「CC 的连接」(会话读页 → 列表 → 设置)
+# 设置里也能直接进连接(会话读页 → 列表 → 一起做 → 此刻 → 设置)
 - tapOn:
     id: topbar-back
 - tapOn:
     id: topbar-back
+- tapOn:
+    id: tab-now
+- tapOn:
+    id: topbar-settings
 - scrollUntilVisible:
     element:
       id: settings-connections

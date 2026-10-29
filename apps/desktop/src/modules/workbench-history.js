@@ -24,7 +24,7 @@ const nameOf=(state,id)=>state.names?.[id]??id
 function renderHistoryMessage(message,providerId,author,text=message.text,scope='preview'){
   const user=message.role==='user'
   const body=user?renderWorkbenchUserText(text,`history:${providerId}:${scope}:${message.id}`):renderWorkbenchMarkdown(text)
-  return `<article class="wb-history-message${user?' wb-history-message-user':''}"><div class="wb-history-message-author">${user?'你':escape(author)}</div><div class="wb-history-message-body ${user?'':'wb-markdown'}">${body}</div>${message.truncated?'<small>这段内容已截断。</small>':''}</article>`
+  return `<article class="wb-history-message${user?' wb-history-message-user':''}"><div class="wb-history-message-author">${user?'你':escape(author)}</div><div class="wb-history-message-body ${user?'':'cc-readable-markdown wb-markdown'}">${body}</div>${message.truncated?'<small>这段内容已截断。</small>':''}</article>`
 }
 /** @param {Invoke} invoke @param {()=>void} paint @param {string[]} providers @param {Record<string,string>} [names] */
 export function createHistoryController(invoke,paint,providers,names={}){

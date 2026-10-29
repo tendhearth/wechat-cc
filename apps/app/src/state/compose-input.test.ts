@@ -14,11 +14,12 @@ import { makeInputJournal } from './input-journal'
 import { matterInputState, matterInputs } from '../state/matter-inputs'
 import Compose from '../app/compose'
 import Matter from '../app/matter/[id]'
+import Approval from '../app/approval/[id]'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
 const roots: Root[] = []
-const host = vi.hoisted(() => ({ backend: null as unknown as Backend, params: {} as Record<string, string>, back: vi.fn(), push: vi.fn(), replace: vi.fn(), sources: [] as { text: unknown; selectable?: boolean; id?: string }[] }))
+const host = vi.hoisted(() => ({ backend: null as unknown as Backend, params: {} as Record<string, string>, back: vi.fn(), push: vi.fn(), replace: vi.fn(), dismissTo: vi.fn(), sources: [] as { text: unknown; selectable?: boolean; id?: string }[] }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 // 只替换原生宿主、路由与会话(钥匙串那层);真 BackendProvider、真实请求、缓存、订阅、文本与回执组件一起执行。
@@ -44,9 +45,9 @@ vi.mock('react-native', async () => {
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')
-  return { SafeAreaView: ({ children }: any) => createElement('main', null, children) }
+  return { SafeAreaProvider: ({ children }: any) => children, SafeAreaView: ({ children }: any) => createElement('main', null, children) }
 })
-vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useLocalSearchParams: () => host.params, useRouter: () => ({ canGoBack: () => true, back: host.back, push: host.push, replace: host.replace }), Redirect: () => null }))
+vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useLocalSearchParams: () => host.params, useRouter: () => ({ canGoBack: () => true, back: host.back, push: host.push, replace: host.replace, dismissTo: host.dismissTo }), Redirect: () => null }))
 vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null, inputScope: matterInputState.recovery().scope }) }))
 
 type Reply = { status: number; json: unknown } | Error
@@ -60,6 +61,8 @@ function harness() {
     return ok({ ok: true, result: { kind: 'task', task: WB_TASK, input } })
   }
   let create: (request: Request) => Reply | Promise<Reply> = () => ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202)
+  let permission: () => Reply | Promise<Reply> = () => ok({ ok: true })
+  let insight: any = { explanations: {}, progress: null }
   let read: (() => Reply | Promise<Reply>) | undefined
   const requests: Request[] = []
   const clients: Array<{ opts: ClientOpts; subs: Map<string, (d: unknown) => void> }> = []
@@ -81,7 +84,8 @@ function harness() {
         else if (path === '/m/api/matter/say') reply = await say(request)
         else if (path === '/m/api/matter/create') reply = await create(request)
         else if (path === '/m/api/entry/options') reply = ok({ ok: true, ...OPTIONS })
-        else if (path === '/m/api/matter/insight') reply = ok({ ok: true, explanations: {}, progress: null })
+        else if (path === '/m/api/matter/insight') reply = ok({ ok: true, ...insight })
+        else if (path === '/m/api/matter/permission') reply = await permission()
         else if (path === '/m/api/matter/changes') reply = ok({ ok: true, turn: null })
         else throw new Error(`unexpected route ${path}`)
         if (reply instanceof Error) throw reply
@@ -108,11 +112,13 @@ function harness() {
     setSay: (next: typeof say) => { say = next },
     setCreate: (next: typeof create) => { create = next },
     setRead: (next: typeof read) => { read = next },
+    setInsight: (next: typeof insight) => { insight = next },
+    setPermission: (next: typeof permission) => { permission = next },
     version: (version: number) => clients.at(-1)!.subs.get(`matter/${ID}`)?.({ found: true, kind: 'task', version, phase: 'working' }),
   }
 }
 beforeEach(async () => {
-  clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.sources.length = 0
+  clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.dismissTo.mockClear(); host.sources.length = 0
   const disk = new Map<string,string>()
   matterInputState.configure(makeInputJournal({ getItemAsync: async k => disk.get(k) ?? null, setItemAsync: async (k,v) => { disk.set(k,v) }, deleteItemAsync: async k => { disk.delete(k) } }, async s => createHash('sha256').update(s).digest('hex')))
   await matterInputState.activate({ v: 1, relayHost: 'test', relayUrl: 'wss://test', daemonId: 'test', deviceId: 'test', deviceToken: 'private-test-token', pairedAt: 1 })
@@ -354,6 +360,63 @@ describe('real LiveBackend + native compose inputs', () => {
 })
 
 
+describe('work-first matter details', () => {
+  it('keeps a model explanation beside the original operation and waits for the decision result before leaving', async () => {
+    const h = harness(), result = gate<Reply>(), requestId = h.detail().permissions[0].id
+    h.detail().permissions[0].description = 'npm test\nsecond command'
+    h.setInsight({ progress: null, explanations: { [requestId]: { title: '检查项目', what: '模型的说明', scope: '当前项目', effect: '运行检查', source: 'model' } } })
+    h.setPermission(() => result.promise)
+    const ui = await mount(Approval)
+    expect(ui.byId('approval-raw-inline').textContent).toContain('npm test')
+    expect(ui.byId('approval-raw-inline').textContent).toContain('/p')
+    expect(ui.container.textContent).toContain('只对这一次请求')
+    expect(ui.container.textContent).toContain('当前项目')
+    await ui.click('approval-allow')
+    await ui.click('approval-deny')
+    const decisions = h.requests.filter(r => r.path === '/m/api/matter/permission')
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.body).toEqual({ id: ID, runId: RUN, requestId, decision: 'allow' })
+    expect(ui.byId<HTMLButtonElement>('approval-allow').disabled).toBe(true)
+    expect(ui.byId<HTMLButtonElement>('approval-deny').disabled).toBe(true)
+    expect(host.dismissTo).not.toHaveBeenCalled()
+    h.detail().permissions = []
+    await act(() => result.resolve(ok({ ok: true }))); await flush()
+    expect(host.dismissTo).toHaveBeenCalledWith(`/matter/${ID}`)
+    await ui.leave()
+    const matter = await mount(Matter)
+    expect(matter.byId('progress-status').textContent).toContain('在做')
+    expect(matter.byId('progress-request-0')).toBeNull()
+  })
+
+  it('opens the concrete pending request without a write and keeps executor controls behind details', async () => {
+    const h = harness(), ui = await mount(Matter)
+    expect(ui.byId('progress-execution-details')).toBeNull()
+    const request = ui.byId('progress-request-0')
+    expect(request.textContent).toContain('npm test')
+    await ui.click('progress-request-0')
+    expect(host.push).toHaveBeenCalledWith(`/approval/${ID}?request=${DETAIL.permissions[0]!.id}`)
+    expect(h.requests.filter(r => r.method === 'POST')).toHaveLength(0)
+    await ui.click('progress-process')
+    expect(ui.byId('progress-execution-details').textContent).toContain('/p')
+    expect(h.requests.filter(r => r.method === 'POST')).toHaveLength(0)
+    expect(ui.byId('progress-status').textContent).not.toContain('完成')
+  })
+
+  it('shows real outputs before summary and process, and opening the summary only reads', async () => {
+    const h = harness()
+    h.detail().artifacts = [{ id: 'out-1', taskId: ID, name: 'preview.html', mime: 'text/html', size: 12, sha256: 'a'.repeat(64), createdAt: 3, approvedAt: null }]
+    const ui = await mount(Matter)
+    expect(ui.byId('artifact-0')?.textContent).toContain('preview.html')
+    expect(ui.byId('progress-summary')).toBeNull()
+    const controls = [...ui.container.querySelectorAll('[data-testid]')].map(x => x.getAttribute('data-testid'))
+    expect(controls.indexOf('progress-request-0')).toBeLessThan(controls.indexOf('artifact-0'))
+    expect(controls.indexOf('artifact-0')).toBeLessThan(controls.indexOf('progress-summary-toggle'))
+    await ui.click('progress-summary-toggle')
+    expect(ui.byId('progress-summary')).not.toBeNull()
+    expect(h.requests.filter(r => r.method === 'POST')).toHaveLength(0)
+  })
+})
+
 describe('real Compose durable send boundary', () => {
   const rec = { v: 1 as const, relayHost: 'test', relayUrl: 'wss://test', daemonId: 'test', deviceId: 'test', deviceToken: 'private-test-token', pairedAt: 1 }
   const hash = async (text: string) => createHash('sha256').update(text).digest('hex')
@@ -398,6 +461,7 @@ describe('real Compose durable send boundary', () => {
     const ui = await mount(Matter)
     expect(ui.byId('progress-model-guidance').textContent).toContain('账号可用的模型')
     expect(ui.byId('progress-error-raw-0')).toBeNull()
+    await ui.click('progress-process')
     await ui.click('progress-error-raw-toggle-0')
     expect(ui.byId('progress-error-raw-0').textContent).toBe(diagnostic)
     expect(ui.byId('progress-error-raw-0').querySelector('a,strong')).toBeNull()

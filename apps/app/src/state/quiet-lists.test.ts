@@ -102,6 +102,13 @@ describe('matter list loading evidence', () => {
 })
 
 describe('shared list loading feedback', () => {
+  it('keeps secondary Together routes behind the more action without removing their destinations', async () => {
+    await mount(backendWithMatters(async () => []), createElement(Together))
+    expect(el('together-sessions')).toBeNull()
+    await act(() => { el('together-more')?.click() }); await flush()
+    expect(el('together-sessions')).not.toBeNull()
+    expect(el('together-saved-inputs')).not.toBeNull()
+  })
   it('letters marks a previously read empty list stale after a later read fails', async () => {
     let fail = false
     const backend = { ...makeDemoBackend({ lang: 'en' }), letters: async () => {

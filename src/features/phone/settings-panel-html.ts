@@ -15,62 +15,85 @@ export function safeSvgFile(path: string): string | null {
   try { return safeSvg(readFileSync(path, 'utf8')) } catch { return null }
 }
 
-export const EXPIRED_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CC</title>
+export const EXPIRED_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>CC</title>
 <style>${MOBILE_TOKENS_CSS}
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--paper);color:var(--ink);font-family:var(--font)}
-.box{text-align:center;max-width:300px;padding:24px}.box img{width:72px;height:72px;opacity:.9}
+body{margin:0;min-height:100svh;display:grid;place-items:center;background:var(--paper);color:var(--ink);font-family:var(--font)}
+.box{box-sizing:border-box;text-align:center;width:100%;max-width:360px;padding:calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom))}.box img{width:72px;height:72px;opacity:.9}
 .hand{font-family:var(--hand);color:var(--hand-ink);font-size:17px;margin:12px 0 4px}.msg{color:var(--soft);font-size:14px;line-height:1.7;margin:0}
 </style><body><div class="box"><img src="/m/icon.png" alt="CC"><p class="hand">这个链接已经用过或过期了，回微信跟 CC 再要一个</p><p class="msg">在微信里跟 CC 说「/set」就行</p></div></body>`
 
 /** The settings page — fully self-contained (WeChat's browser, no CDN). */
 export function pageHtml(token: string): string {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>CC 的设置</title>
 <style>
 ${MOBILE_TOKENS_CSS}
   * { box-sizing:border-box }
-  body { margin:0 auto; max-width:680px; font-family:var(--font); background:var(--paper); color:var(--ink); padding:28px 20px 56px; line-height:1.6 }
-  h1 { font-size:22px; font-weight:500; letter-spacing:-.02em; margin:0 0 2px; display:flex; align-items:center; gap:8px }
-  .sub { color:var(--soft); font-size:12.5px; margin-bottom:22px }
-  section { background:var(--card); border:1px solid var(--line); border-radius:var(--r-l); padding:18px 16px 14px; margin-bottom:14px }
-  section h2 { font-size:15px; font-weight:600; margin:0 0 2px; color:var(--ink) }
+  body { margin:0 auto; max-width:680px; font-family:var(--font); background:var(--paper); color:var(--ink); padding:24px 22px calc(40px + env(safe-area-inset-bottom)); line-height:1.6 }
+  h1 { font-size:26px; font-weight:500; letter-spacing:-.02em; margin:0 0 2px; display:flex; align-items:center; gap:8px }
+  .sub { color:var(--soft); font-size:12.5px; margin-bottom:18px }
+  section { background:none; border:0; border-radius:0; padding:24px 0; margin:0; border-top:1px solid var(--line-soft) }
+  section h2 { font-size:20px; font-weight:500; margin:0 0 2px; color:var(--ink) }
   .hint { font-size:12px; color:var(--soft); margin:0 0 10px }
-  label.row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-top:1px solid var(--line-soft) }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:60px; padding:14px 0; border-top:0 }
   label.row:first-of-type { border-top:0 }
   .row b { font-size:14px; font-weight:500 }
   .row small { display:block; color:var(--soft); font-weight:400; font-size:12px; margin-top:2px }
-  input[type=text], input[type=password], textarea, select { font:inherit; font-size:14px; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:var(--r-s); padding:8px 10px }
+  input[type=text], input[type=password], textarea, select { font:inherit; font-size:14px; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:var(--r-s); padding:9px 10px; min-height:44px; min-width:0 }
   input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
   input[type=text] { width:150px }
-  label.row > span:first-child { flex:1; min-width:0; overflow-wrap:anywhere }
-  label.row > input[type=text], label.row > input[type=password], label.row > select { max-width:48%; flex-shrink:0 }
+  .row > span:first-child { flex:1; min-width:0; overflow-wrap:anywhere }
+  .row > input[type=text], .row > input[type=password], .row > select { max-width:48%; flex-shrink:0 }
   textarea { width:100%; min-height:110px; resize:vertical; margin-top:8px }
-  .switch { appearance:none; width:44px; height:26px; border-radius:var(--r-pill); background:var(--line-soft); box-shadow:inset 0 0 0 1px var(--faint); position:relative; cursor:pointer; transition:.15s; flex-shrink:0 }
+  .switch { appearance:none; width:44px; height:26px; border-radius:var(--r-pill); background:var(--line-soft); box-shadow:inset 0 0 0 1px var(--faint); position:relative; cursor:pointer; transition:.15s; flex-shrink:0; margin:0 }
   .switch:checked { background:var(--accent); box-shadow:none }
   .switch:disabled { opacity:.45; cursor:not-allowed }
   .switch::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--card); border:1px solid var(--line); box-sizing:border-box; box-shadow:0 1px 2px rgba(72,63,53,.2); transition:.15s }
   .switch:checked::after { left:21px }
   .seg { display:flex; gap:6px }
-  .seg button { font:inherit; font-size:13px; padding:5px 12px; border:1px solid var(--line); background:var(--card); border-radius:var(--r-pill); color:var(--soft); cursor:pointer }
+  .seg button { font:inherit; font-size:13px; min-height:44px; padding:8px 12px; border:1px solid var(--line); background:var(--card); border-radius:var(--r-pill); color:var(--soft); cursor:pointer }
   .seg button.on { background:var(--accent); border-color:var(--accent); color:var(--card) }
-  details { margin-top:2px } summary { color:var(--soft); font-size:13.5px; cursor:pointer; padding:6px 0 }
-  .say { font-size:12.5px; color:var(--soft); background:var(--wash); border-radius:var(--r-s); padding:9px 12px; margin-top:12px }
-  #toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:var(--ink); color:var(--paper); padding:8px 18px; border-radius:var(--r-pill); font-size:13px; opacity:0; transition:.25s; pointer-events:none }
+  details { margin-top:2px } summary { color:var(--soft); font-size:13.5px; cursor:pointer; padding:10px 0; min-height:44px }
+  .say { font-size:12.5px; color:var(--soft); background:none; border-radius:0; padding:0; margin-top:12px; line-height:1.8 }
+  #toast { position:fixed; left:50%; bottom:calc(24px + env(safe-area-inset-bottom)); max-width:calc(100% - 40px); width:max-content; text-align:center; z-index:10; transform:translateX(-50%); background:var(--ink); color:var(--paper); padding:8px 18px; border-radius:var(--r-pill); font-size:13px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
-  .save { font:inherit; font-size:14px; padding:8px 18px; border:0; border-radius:var(--r-pill); background:var(--accent); color:var(--card); margin-top:10px; cursor:pointer }
+  .save { font:inherit; font-size:14px; min-height:44px; padding:10px 18px; border:0; border-radius:var(--r-s); background:var(--accent); color:var(--card); margin-top:10px; cursor:pointer }
+  b, strong, h1, h2, h3, h4 { font-weight:500 }
+  button { min-width:44px; min-height:44px; max-width:100%; overflow-wrap:anywhere }
+  a { display:inline-flex; align-items:center; min-height:44px; color:var(--accent) }
+  .sub a { margin-left:6px }
+  fieldset { border:0; margin:0; padding:0; min-width:0 }
+  #settings-status { font-size:14px; color:var(--soft); margin:28px 0 8px; line-height:1.8 }
+  [hidden] { display:none!important }
+  .switch { height:44px; background:none; box-shadow:none }
+  .switch:checked { background:none }
+  .switch::before { content:""; position:absolute; top:9px; left:0; width:44px; height:26px; border-radius:var(--r-pill); background:var(--line-soft); box-shadow:inset 0 0 0 1px var(--faint) }
+  .switch:checked::before { background:var(--accent); box-shadow:none }
+  .switch::after { top:12px; box-shadow:none }
+  #atelier-status { font:inherit; font-size:13px; color:var(--soft); border:0; background:none; text-align:left; padding:8px 0; cursor:pointer }
+  #atelier-status:disabled { cursor:default }
+  #tp-list label { min-height:44px; padding:6px 0 }
+  #tp-list input { width:20px; height:20px }
+  .row > button { flex-shrink:0; white-space:nowrap }
+  .row, .hint, .say, summary { overflow-wrap:anywhere }
+  @media(max-width:420px) { body { padding-left:22px; padding-right:22px } .seg { gap:2px } .seg button { padding:8px } .row { gap:10px } }
+  @media(prefers-reduced-motion:reduce) { .switch, .switch::after, #toast { transition:none } }
 </style></head><body>
-<h1><img src="/m/icon.png" alt="" width="28" height="28">CC 的设置</h1>
-<div class="sub">改完立即生效 · 链接 10 分钟内有效 · <a href="javascript:void(0)" onclick="ccNav('/m')" style="color:var(--accent)">随身 CC →</a></div>
+<h1><img src="/m/icon.png" alt="" width="28" height="28">设置</h1>
+<div class="sub">设置保存在你的电脑 · 链接 10 分钟内有效 · <a href="javascript:void(0)" onclick="ccNav('/m')" style="color:var(--accent)">返回 CC →</a></div>
 
+<p id="settings-status" role="status" aria-live="polite">正在读取设置…</p>
+<button type="button" id="settings-retry" class="save" hidden>重试</button>
+<fieldset id="settings-fields" disabled hidden>
 <section id="sec-persona">
-  <h2>人格与称呼</h2>
+  <h2>称呼与性格</h2>
   <p class="hint">CC 是谁、该怎么叫你</p>
   <label class="row"><span><b>CC 怎么称呼你</b><small>只填称呼本身,比如「大人」</small></span><input type="text" id="f-name"></label>
   <label class="row"><span><b>CC 叫什么名字</b></span><input type="text" id="f-botname"></label>
   <div class="row" style="display:block;border-top:1px solid var(--line-soft);padding-top:10px">
     <b>CC 的性格</b><small style="color:var(--soft)">写给 CC 的性格说明,每次聊天都会带上</small>
-    <textarea id="f-persona" placeholder="比如:说话温柔,偶尔损我一句,别太啰嗦…"></textarea>
+    <textarea id="f-persona" aria-label="CC 的性格" placeholder="比如:说话温柔,偶尔损我一句,别太啰嗦…"></textarea>
     <button class="save" id="save-persona">保存性格</button>
   </div>
   <div class="say">也可以直接跟 CC 说:「以后叫我大人」「说话毒舌一点」</div>
@@ -87,13 +110,13 @@ ${MOBILE_TOKENS_CSS}
   <label class="row"><span><b>表情包</b></span><input type="checkbox" class="switch" id="f-stickers"></label>
   <label class="row"><span><b>每日打猎</b><small>早上主动分享它发现的东西</small></span><input type="checkbox" class="switch" id="f-hunt"></label>
   <label class="row"><span><b>让 CC 自己画画</b><small>CC 有感觉时用你的电脑画画,只存在本机。首次需下载约 5GB</small></span><input type="checkbox" class="switch" id="f-atelier"></label>
-  <div class="say" id="atelier-status" hidden></div>
+  <button type="button" class="say" id="atelier-status" hidden></button>
   <div class="say">也可以直接说:「别拆分回复了」「关心档位调低点」</div>
 </section>
 
 <section id="sec-remote" hidden>
   <h2>随身 CC</h2>
-  <p class="hint">开启后,手机加到主屏,出门也能看待办和 CC 画的你</p>
+  <p class="hint">出门也能查看 CC 和事情的状态。可把网页加到手机主屏。</p>
   <label class="row"><span><b>出门也能用</b><small>经加密中继回家,数据只在你自己电脑上,中间人看不到</small></span><input type="checkbox" class="switch" id="f-remote"></label>
   <div class="say" id="remote-hint">开启需要重启一下 CC(约十几秒),之后在同一 Wi-Fi 下打开随身 CC,点「把 CC 带在身上」即可</div>
   <label class="row" id="row-devices" hidden><span><b>已配对设备</b><small id="devices-count"></small></span><button type="button" id="forget-devices" style="font:inherit;font-size:12.5px;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent);cursor:pointer">全部忘掉</button></label>
@@ -101,7 +124,7 @@ ${MOBILE_TOKENS_CSS}
 </section>
 
 <section id="sec-models">
-  <h2>模型与后端</h2>
+  <h2>AI 服务</h2>
   <p class="hint">CC 有哪些大脑、各自通不通。这里改的是全局默认;单个对话换脑子在微信里发 /api /agy /cc</p>
   <div id="models-table"></div>
   <label class="row"><span><b>默认大脑</b><small>没在微信里单独切过的对话、还有 CC 主动找你时,用这家。改完 CC 会自己重启(十几秒)</small></span><select id="f-default-provider"></select></label>
@@ -114,7 +137,7 @@ ${MOBILE_TOKENS_CSS}
     <div style="border-top:1px solid var(--line-soft);padding-top:10px;margin-top:10px">
       <b>短名</b><small style="color:var(--soft);display:block">起了短名,微信里 /api ds 就切;网关上的原名照样能用</small>
       <div id="alias-list" style="margin:6px 0"></div>
-      <div style="display:flex;gap:6px;align-items:center"><input type="text" id="f-alias-name" style="width:70px" placeholder="ds"><span>→</span><input type="text" id="f-alias-model" style="width:120px" placeholder="DeepSeek"><button type="button" class="seg-btn" id="add-alias" style="font:inherit;font-size:13px;padding:6px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent)">加</button></div>
+      <div style="display:flex;gap:6px;align-items:center"><input type="text" id="f-alias-name" aria-label="模型短名" style="width:70px" placeholder="ds"><span>→</span><input type="text" id="f-alias-model" aria-label="短名对应的模型" style="width:120px" placeholder="DeepSeek"><button type="button" class="seg-btn" id="add-alias" style="font:inherit;font-size:13px;padding:6px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent)">加</button></div>
     </div>
   </div>
   <label class="row"><span><b>后台评估用</b><small>记忆整理 / 辩论主持 / introspect 这些幕后活儿走哪家;auto = 偏好序</small></span><select id="f-cheap"></select></label>
@@ -133,6 +156,7 @@ ${MOBILE_TOKENS_CSS}
   </details>
 </section>
 
+</fieldset>
 <div id="toast"></div>
 <script>
 var T = ${JSON.stringify(token)};
@@ -180,7 +204,7 @@ function showAtelier(st) {
   atelierStatus = st || null
   var el = $("atelier-status"), r = atelierLabel(st)
   if (!r.label) { el.hidden = true; return }
-  el.hidden = false; el.textContent = r.label; el.style.cursor = r.failed ? "pointer" : ""
+  el.hidden = false; el.textContent = r.label; el.disabled = !r.failed; el.style.cursor = r.failed ? "pointer" : ""
 }
 async function pollAtelier() {
   var s = await sapi("/set/api/state"); if (!s.ok) return
@@ -275,9 +299,16 @@ $("f-default-provider").addEventListener("change", async function (e) {
   if (!ok) reloadModels()
 })
 
+function settingsUnavailable() {
+  const status = $("settings-status")
+  if (!status) return // 401 已经换成过期说明。
+  status.hidden = false; status.textContent = "设置暂时没读到，请检查连接后重试。"
+  $("settings-fields").hidden = true; $("settings-fields").disabled = true
+  $("settings-retry").hidden = false
+}
 async function load() {
   const s = await sapi("/set/api/state")
-  if (!s.ok) { toast("读取失败"); return }
+  if (!s.ok) { settingsUnavailable(); return }
   renderModels(s.models)
   $("f-name").value = s.name || ""
   $("f-botname").value = s.config.bot_name || ""
@@ -303,6 +334,8 @@ async function load() {
   $("f-atelier").checked = am === "private" || am === "share"
   const ast = s.atelier && s.atelier.model_status; showAtelier(ast)
   const ar = atelierLabel(ast); if ($("f-atelier").checked && !ar.done && !ar.failed) startAtelierPoll()
+  $("settings-fields").disabled = false; $("settings-fields").hidden = false
+  $("settings-status").hidden = true; $("settings-retry").hidden = true
 }
 $("f-atelier").addEventListener("change", async e => {
   const on = e.target.checked
@@ -376,7 +409,12 @@ $("f-remote").addEventListener("change", async e => {
   catch (err) { h.textContent = "没连上 — 待在家里再试"; e.target.checked = !on; return }
   if (!r.ok) { h.textContent = "没改成:" + (r.error || ""); e.target.checked = !on }
 })
-load().catch(() => {})
+$("settings-retry").addEventListener("click", () => {
+  $("settings-retry").hidden = true
+  $("settings-status").textContent = "正在读取设置…"
+  load().catch(settingsUnavailable)
+})
+load().catch(settingsUnavailable)
 </script></body></html>`
 }
 

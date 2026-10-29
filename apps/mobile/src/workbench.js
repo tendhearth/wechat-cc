@@ -93,7 +93,15 @@ function mRenderStatus(d) {
     var armed=mStopArmed&&mStopArmed.task===d.matter.id&&mStopArmed.run===d.runId
     html+='<button type="button" class="more" data-stop="1" data-task="'+esc(d.matter.id)+'" data-run="'+esc(d.runId)+'">'+(armed?'再点一次，确认停止':'停止这一轮')+'</button>'
   }
-  if(root.innerHTML!==html)root.innerHTML=html
+  if(root.innerHTML!==html){
+    // 确认文字 / 轮询状态变化不能把键盘用户从「停下」上丢掉。
+    var focused=document.activeElement
+    var restore=focused&&root.contains(focused)&&focused.hasAttribute('data-stop')
+    var task=restore?focused.getAttribute('data-task'):null,run=restore?focused.getAttribute('data-run'):null
+    root.innerHTML=html
+    var next=restore?root.querySelector('button[data-stop]'):null
+    if(next&&next.getAttribute('data-task')===task&&next.getAttribute('data-run')===run)/** @type {HTMLButtonElement} */ (next).focus({preventScroll:true})
+  }
 }
 var mStopArmed=null,mStopTimer=null
 async function mStop(task,run) {

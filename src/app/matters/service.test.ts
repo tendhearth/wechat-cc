@@ -205,3 +205,13 @@ describe('工作区脚本到手机(2026-10-20)',()=>{
     await expect(service.worktreeScript('deadbeef','run')).rejects.toThrow('workbench_not_wired')
   })
 })
+
+
+it('owner history preserves durable attachment-only replies through the public service projection',async()=>{
+  const event={kind:'text',text:'',createdAt:1,messageId:'saved',replyExtras:{attachments:[{kind:'file' as const,name:'photo.png'}],narration:['checked']}}
+  const file=vi.fn(async()=>({status:200,body:{ok:true}}))
+  const service=makeMattersService({store,chat:{ownerChatId:()=>'owner',say:async()=>({reply:''}),recent:async()=>[event],file}})
+  expect((await service.ownerChat('desktop'))?.events).toEqual([event])
+  expect(await service.ownerChatFile({id:'saved',i:0,offset:0})).toEqual({status:200,body:{ok:true}})
+  expect(file).toHaveBeenCalledWith({id:'saved',i:0,offset:0})
+})

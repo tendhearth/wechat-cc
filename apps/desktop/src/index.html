@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="./cc-life.css" />
     <link rel="stylesheet" href="./styles/converse.css" />
     <link rel="stylesheet" href="./cc-now.css" />
+    <link rel="stylesheet" href="./styles/secondary-minimal.css" />
     <link rel="stylesheet" href="./styles/workbench.css" />
     <link rel="stylesheet" href="./styles/pdf-reader.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
@@ -278,8 +279,11 @@
             </button>
             <button id="dash-refresh" class="btn ghost" hidden>刷新</button>
             <button id="dash-test-conn" class="btn ghost">测试本机连接</button>
-            <button id="brain-selfcheck" class="btn ghost" type="button" title="网络 + 大脑逐项检查(只在你点的时候测)">状态自检</button>
             <button id="dash-rebind" class="btn" hidden>重新扫码绑定</button>
+            <details class="connection-options connection-checks">
+              <summary>连接检查</summary>
+              <button id="brain-selfcheck" class="btn ghost" type="button" title="网络 + 大脑逐项检查(只在你点的时候测)">状态自检</button>
+            </details>
           </div>
           <aside class="moment-side" aria-label="连接状态">
           <section class="moment-users" aria-label="用户连接状态">
@@ -488,43 +492,53 @@
           <!-- ── pane: memory ───────────────────────────────────────── -->
           <article class="dash-pane" data-pane="memory" hidden>
             <section class="memory-profile-overview" id="memory-profile-overview">
+              <section class="memory-facts" id="memory-facts" aria-labelledby="memory-facts-title">
+                <header class="memory-facts-head"><h1 id="memory-facts-title">记忆</h1><button id="memory-facts-edit" class="btn" type="button" aria-label="查看并纠正记忆" disabled>纠正</button></header>
+                <input id="memory-facts-search" type="search" aria-label="查找记忆" placeholder="查找记忆" autocomplete="off" />
+                <p id="memory-facts-source" class="memory-facts-source"></p>
+                <div id="memory-facts-records" aria-live="polite"><p role="status">正在读取记下的事…</p></div>
+              </section>
               <button class="memory-library-trigger" id="memory-sources-toggle" aria-expanded="false">
                 <span>记忆库</span>
                 <span class="meta" id="memory-meta">—</span>
                 <span class="chev">▾</span>
               </button>
-              <div id="memory-profile-content">
-                <p class="empty-state">正在整理 CC 眼中的你…</p>
-              </div>
+              <details class="memory-profile-disclosure">
+                <summary>CC 眼中的你 · 推测画像</summary>
+                <div id="memory-profile-content">
+                  <p class="empty-state">正在整理 CC 眼中的你…</p>
+                </div>
+              </details>
 
               <aside class="memory-sources-panel" id="memory-sources-panel" hidden>
                 <div class="memory-sources-head">
                   <span>记忆来源</span>
                   <span id="memory-profile-status" class="memory-profile-status" role="status">检查中</span>
                 </div>
-                <!-- 三个维护动作各说一句它做什么(2026-09-29,取代 Codex #116 的一半):按钮文字与 id 不动。 -->
+                <!-- Rereading and AI generation remain separate, with scope beside the action. -->
                 <div class="memory-maintenance">
                   <div class="memory-maintenance-item">
-                    <button id="memory-refresh" class="btn" type="button">
+                    <button id="memory-refresh" class="btn" type="button" title="重新读取已有记录" aria-describedby="memory-refresh-description">
                       <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
-                      刷新
+                      读取记录
                     </button>
-                    <p>重新读取已有记录,不生成新内容。</p>
+                    <p id="memory-refresh-description">重新读取已有记录，不生成新内容。</p>
                   </div>
                   <div class="memory-maintenance-item">
-                    <button id="memory-profile-generate-btn" class="btn" type="button" title="根据长期记忆刷新用户画像">
+                    <button id="memory-profile-generate-btn" class="btn" type="button" title="根据长期记忆生成画像" aria-describedby="memory-profile-description memory-generation-note">
                       <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
-                      刷新画像
+                      更新画像
                     </button>
-                    <p>根据已有的长期记忆,更新 CC 对你的理解。</p>
+                    <p id="memory-profile-description">用长期记忆重新生成画像，并尝试重画小像。</p>
                   </div>
                   <div class="memory-maintenance-item">
-                    <button id="memory-synthesize-btn" class="btn" type="button" title="读本机 Claude 各项目的记忆，重新生成项目地图（不动每晚整理的长期记忆）">
+                    <button id="memory-synthesize-btn" class="btn" type="button" title="从本机项目记忆生成项目地图" aria-describedby="memory-map-description memory-generation-note">
                       <span class="ic" data-hg-icon="star" data-hg-size="16"></span>
-                      更新项目地图
+                      生成项目地图
                     </button>
-                    <p>从本机 Claude 各项目的记忆重新生成项目地图,要花一些时间。</p>
+                    <p id="memory-map-description">读取本机 Claude 项目记忆，不改每晚整理的长期记忆。</p>
                   </div>
+                  <p class="memory-generation-note" id="memory-generation-note">生成会调用已配置的 AI，需要一些时间，可能产生费用。</p>
                 </div>
 
                 <section class="memory-fold">
@@ -543,11 +557,12 @@
                 </section>
 
                 <section class="memory-fold">
-                  <button class="memory-fold-toggle" id="memory-retractions-toggle" aria-expanded="false">
-                    <span>收回的话（你说过不对 / 过时 / 不用记的）</span>
+                  <button class="memory-fold-toggle" id="memory-retractions-toggle" aria-expanded="false" aria-controls="memory-retractions-body">
+                    <span>收回的话</span>
                     <span class="chev">▾</span>
                   </button>
                   <div class="memory-fold-body" id="memory-retractions-body" hidden>
+                    <p class="memory-fold-description">你说过不对、过时或不用记的话。恢复后，当初从笔记中删掉的行不会回来。</p>
                     <div class="memory-retractions" id="memory-retractions">
                       <p class="empty-state">展开后读取…</p>
                     </div>
@@ -556,11 +571,12 @@
                 </section>
 
                 <section class="memory-fold">
-                  <button class="memory-fold-toggle" id="memory-projects-toggle" aria-expanded="false">
-                    <span>本机项目记忆（只读 · 总体记忆的来源）</span>
+                  <button class="memory-fold-toggle" id="memory-projects-toggle" aria-expanded="false" aria-controls="memory-projects-body">
+                    <span>本机项目记忆</span>
                     <span class="chev">▾</span>
                   </button>
                   <div class="memory-fold-body" id="memory-projects-body" hidden>
+                    <p class="memory-fold-description">只读 · 来自本机 Claude 项目，是项目地图的来源。</p>
                     <div class="memory-projects" id="memory-projects">
                       <p class="empty-state">展开后读取本机 Claude 各项目的记忆…</p>
                     </div>
@@ -568,11 +584,12 @@
                 </section>
 
                 <section class="memory-fold">
-                  <button class="memory-fold-toggle" id="memory-archive-toggle" aria-expanded="false">
-                    <span>查看 / 编辑原始记忆文件</span>
+                  <button class="memory-fold-toggle" id="memory-archive-toggle" aria-expanded="false" aria-controls="memory-archive-body">
+                    <span>原始记忆</span>
                     <span class="chev">▾</span>
                   </button>
                   <div class="memory-fold-body" id="memory-archive-body" hidden>
+                    <p class="memory-fold-description">查看和编辑原始记忆文件。画像与项目地图由生成操作更新。</p>
                     <div class="mem">
                       <aside class="mem-list" id="memory-sidebar"></aside>
                       <section class="mem-doc">
@@ -780,11 +797,11 @@
               </div>
             </div>
             <div class="a2a-agents-body">
-              <div class="plugins-hint">
-                插件给 agent 加能力（MCP 工具）。放进
-                <code>~/.claude/channels/wechat/plugins/</code> 的插件默认<strong>停用</strong>——
-                启用后<strong>重启 daemon</strong> 生效。
-              </div>
+              <p class="plugins-hint">启用或停用后，重启 CC 生效。</p>
+              <details class="plugins-install-details">
+                <summary>手动添加插件</summary>
+                <p>把插件放进 <code>~/.claude/channels/wechat/plugins/</code> 后刷新。新插件默认停用，启用后需重启 CC。</p>
+              </details>
               <div id="plugins-note" class="plugins-note" hidden></div>
               <ul id="plugins-list" class="a2a-agents-list"></ul>
 

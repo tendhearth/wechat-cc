@@ -248,6 +248,8 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 
 ## 硬要求(改界面前先对一遍)
 
+2026-10-28：主人确认极简手机稿并要求接入，视觉层级以[极简接入设计](../../docs/superpowers/specs/2026-10-28-phone-minimal-design.md)为准：此刻居中 CC 与真实近况、具体待回应行、勾号与数量的完成入口；一起做留白分组；纯文字底栏；齿轮进入设置。原始操作、工作目录、授权范围、发送回执、旧数据、失败与推测边界仍按下列安全与事实要求保留。旧条目中的“头像进设置”、逐行重复状态词与所有状态必须常显文字，已由新设计中的可访问图标与按需详情替代。
+
 - **批准页**:说明来自模型(`source === 'model'`)时,原始命令第一行与工作目录**不折叠、直接可见**(`approval-raw-inline`,Maestro 断言它);完整原始命令在「查看具体操作」里;提交中锁定按钮;以返回结果为准,不做乐观成功;超时 ⇒ 当「不确定」并重新拉详情。
 - **进展页**:状态标签在「CC 的进展」概括之上。
 - **状态词**按手机端用词表(`docs/reference/phone-wording.md`):在做 / 等你决定 / 这一轮做完了 / 完成 / 没做成 / 停下了(Working / Waiting on you / Done for this round / Done / Didn't finish / Stopped),不显示百分比。「一起做」按等你 / 在做 / 做完分组,只有「等你」的小标题上强调色。

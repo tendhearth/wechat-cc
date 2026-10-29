@@ -8,6 +8,8 @@ export type Bubble = {
   failedKind?: 'busy' | 'unavailable' | 'notConfigured' | 'maybeLost' | 'notConfirmed'; requestId?: string; truncated: boolean
   /** CC 回复里的语音 / 表情 / 文件(回复交付,2026-10-04);语音按 (key = 消息 id, 下标) 向电脑要声音。 */
   attachments?: ChatAttachmentT[]
+  /** Stored incoming count-only text has no attachment reference to open. */
+  originalUnavailable?: true
   /** 最后的话之前的过程话(没发到微信):灰、默认收起。 */
   narration?: string[]
 }
@@ -55,17 +57,24 @@ function landed(msgs: ChatMessageT[], accepted: Accepted): boolean {
  * daemon 的 failed 那句若其实已落进对话(超时后回复才到,终审 I2)⇒ 不画失败气泡,免得主人点重试。
  */
 export function chatBubbles(msgs: ChatMessageT[], page: JobState, accepted: Accepted | readonly Accepted[] | null, now: number): Bubble[] {
+  const { pending, failed } = page
+  const mine: readonly Accepted[] = accepted === null ? [] : Array.isArray(accepted) ? accepted : [accepted as Accepted]
+  // The persisted count suffix is not an attachment reference. Only annotate stored
+  // rows, never local pending/receipt bubbles or an upload still being processed.
+  const countOnly = (m: ChatMessageT) => m.role === 'me' && !m.attachments?.length
+    && /\[(?:图片|文件)\s*×\s*[1-9]\d*\]\s*$/.test(m.text)
+    && !(pending && landed([m], { requestId: pending.requestId, text: pending.text, at: pending.since }))
+    && !mine.some(a => landed([m], a))
   const out: Bubble[] = msgs.map(m => ({
     key: m.id, side: m.role, text: m.text, at: m.at, source: m.source, state: 'sent', truncated: m.truncated,
-    ...(m.role === 'cc' && m.attachments?.length ? { attachments: m.attachments } : {}),
+    ...(m.attachments?.length ? { attachments: m.attachments } : {}),
+    ...(countOnly(m) ? { originalUnavailable: true as const } : {}),
     ...(m.role === 'cc' && m.narration?.length ? { narration: m.narration } : {}),
   }))
-  const { pending, failed } = page
   if (!pending && failed && !landed(msgs, { requestId: failed.requestId, text: failed.text, at: failed.since })) {
     const failedKind = failed.error === 'busy' ? 'busy' : failed.error === 'not_configured' ? 'notConfigured' : 'unavailable'
     out.push({ key: `f:${failed.requestId}`, side: 'me', text: failed.text, at: failed.since, source: 'phone', state: 'failed', failedKind, requestId: failed.requestId, truncated: false })
   }
-  const mine: readonly Accepted[] = accepted === null ? [] : Array.isArray(accepted) ? accepted : [accepted as Accepted]
   for (const a of mine) {
     if (pending?.requestId === a.requestId || failed?.requestId === a.requestId || landed(msgs, a)) continue
     out.push({ key: `l:${a.requestId}`, side: 'me', text: a.text, at: a.at, source: 'phone', state: 'failed', failedKind: now - a.at > ACCEPTED_TTL_MS ? 'notConfirmed' : 'maybeLost', requestId: a.requestId, truncated: false })

@@ -16,6 +16,34 @@ const turn = (/** @type {Record<string,unknown>} */ overrides = {}) => ({
 })
 
 describe('改动面板', () => {
+  it('紧凑摘要只列文件数量,完整统计留在同一个展开区里', () => {
+    const reviews = [
+      turn({ files: [file({ mark: { mark: 'accepted', comment: '', createdAt: 5 } }), file({ path: 'b.ts' })] }),
+      turn({ artifactId: 'ART-0', sha256: 'b'.repeat(64), files: [file({ mark: { mark: 'returned', comment: '重做', createdAt: 4 } })] }),
+    ]
+    const html = renderReviewPanel(reviews, options({ compactSummary: true }))
+    expect(html).toMatch(/^<details id="wb-review"[^>]*><summary><span>改动<\/span><small>3 个文件<\/small><\/summary>/)
+    expect(html).toContain('</summary><p class="wb-review-note">2 轮 · 3 个文件 · 已接受 1 · 已打回 1</p>')
+    expect(html.match(/id="wb-review"/g)).toHaveLength(1)
+    // 默认调用与显式关闭保持兼容,不会把统计移走。
+    const legacy = renderReviewPanel(reviews, options())
+    expect(renderReviewPanel(reviews, options({ compactSummary: false }))).toBe(legacy)
+    expect(legacy).toContain('<summary><span>改动</span><small>2 轮 · 3 个文件 · 已接受 1 · 已打回 1</small></summary>')
+  })
+
+  it('紧凑模式保留部分、不可用、来源、未审文件及限量截断提示', () => {
+    const reviews = [
+      turn({ status: 'partial', preexistingPaths: ['src/app.ts'], notes: ['差异已截断'], files: [file({ preexisting: true }), file({ path: 'big.bin', kind: 'not_reviewed', diff: undefined, reason: '二进制文件未展开' })] }),
+      turn({ artifactId: 'ART-0', sha256: 'b'.repeat(64), status: 'unavailable', files: [], notes: ['本轮无法读取 Git'] }),
+    ]
+    const html = renderReviewPanel(reviews, options({ compactSummary: true, error: true, budget: { limited: true } }))
+    expect(html).toContain('<small>2 个文件</small></summary>')
+    for (const notice of ['部分', '不可用', '改动记录暂时读不到', '不都是这一轮做的', '开始时已有修改', '差异已截断', '二进制文件未展开', '本轮无法读取 Git', '预览已限量显示']) expect(html).toContain(notice)
+    const unavailable = renderReviewPanel([], options({ compactSummary: true, error: true }))
+    expect(unavailable).toContain('改动记录暂时读不到')
+    expect(unavailable).not.toContain('<small>0 个文件</small>')
+  })
+
   it('按回合汇总轮数、文件数与标记数', () => {
     const reviews = [
       turn({ artifactId: 'ART-2', sha256: 'b'.repeat(64), files: [file({ path: 'a.ts', mark: { mark: 'accepted', comment: '', createdAt: 5 } }), file({ path: 'b.ts' })] }),
@@ -197,6 +225,24 @@ describe('行评论 + 按块撤回', () => {
   const lineFile = (/** @type {Record<string,unknown>} */ o = {}) => file({ diff: DIFF, hunks: hunks(), ...o })
   const real = (/** @type {Record<string,unknown>} */ extra = {}) => { const budget = createReviewDiffBudget(); return options({ budget, renderDiff: (/** @type {any} */ f, /** @type {any} */ l) => renderReviewFileDiff(f, escapeHtml, budget, l), lines: {}, ...extra }) }
   const draft = (/** @type {Record<string,unknown>} */ o = {}) => ({ id: 'c0ffee00-0000-4000-8000-000000000001', hunk: 0, rowStart: 1, rowEnd: 2, side: 'new', lineStart: 2, lineEnd: 2, body: '这里改成常量', state: 'draft', ...o })
+
+  it('紧凑摘要下的接受、打回、经验、行评论、发出与撤回控件仍保留', () => {
+    const reviews = [turn({ rewindable: { start: true, end: true }, files: [lineFile({ comments: [draft()] })] })]
+    const extra = {
+      lesson: true,
+      returnOpen: { artifactId: 'ART-1', paths: ['src/app.ts'], comment: '保留打回草稿', asLesson: true },
+      lines: { compose: { artifactId: 'ART-1', path: 'src/app.ts', hunk: 1, commentId: 'new', body: '保留行评论草稿' }, send: { summary: '保留整体意见', notice: '执行者还在写' } },
+    }
+    const html = renderReviewPanel(reviews, real({ ...extra, compactSummary: true }))
+    expect(html).toContain('<small>1 个文件</small></summary>')
+    for (const action of ['review-accept', 'review-return', 'review-return-submit', 'review-revert', 'line-comment-save', 'line-comment-edit', 'line-comments-send', 'review-hunk']) expect(html).toContain(`data-action="${action}"`)
+    for (const text of ['保留打回草稿', '保留行评论草稿', '保留整体意见', '执行者还在写', '撤掉这一轮']) expect(html).toContain(text)
+    expect(html).toContain('name="paths" value="src/app.ts" checked')
+    expect(html).toContain('name="asLesson" checked')
+    // 除摘要与新增的统计正文以外,真实审阅内容及动作逐字节相同。
+    const body = (/** @type {string} */ value) => value.slice(value.indexOf('</summary>') + '</summary>'.length)
+    expect(body(html).replace(/^<p class="wb-review-note">1 轮 · 1 个文件 · 已接受 0 · 已打回 0<\/p>/, '')).toBe(body(renderReviewPanel(reviews, real(extra))))
+  })
 
   it('块清单对得上 ⇒ 每块一个块头 + 两个按钮,行带 data-hunk / data-row', () => {
     const html = renderReviewPanel([turn({ files: [lineFile()] })], real())

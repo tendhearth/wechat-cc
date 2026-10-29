@@ -75,7 +75,7 @@
 /* 被打断 = 停下来等人(琥珀),与操作行的 interrupted 同色;只有真的失败才红(终审 M4) */
 .wb-status[data-status=queued]::before,.wb-status[data-status=cancelling]::before,.wb-status[data-status=interrupted]::before,.wb-status[data-status=paused]::before { background:var(--th-warn); }
 .wb-status[data-status=failed]::before { background:var(--th-bad); }
-.wb-task-attention { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--th-ink); font-size:var(--th-size-caption); white-space:nowrap; }
+.wb-task-attention { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--th-ink-soft); font-size:var(--th-size-caption); white-space:nowrap; }
 .wb-task-attention::before { content:''; flex:none; width:6px; height:6px; border-radius:50%; background:var(--th-warn); }
 
 /* The composer occupies a separate row and cannot float over replies. */
@@ -84,7 +84,8 @@
 .wb-task-head>div { min-width:0; }
 .wb-task-head h2 { display:-webkit-box; overflow:hidden; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin:5px 0 0; color:var(--wb-text); font-size:var(--th-size-title); line-height:1.4; font-weight:500; }
 .wb-task-progress { display:flex; align-items:center; flex-wrap:wrap; gap:6px 14px; margin-top:8px; color:var(--wb-muted); font-size:12px; line-height:1.5; }
-.wb-task-progress .wb-decision-jump { padding:2px 0; color:var(--wb-accent); font-size:12px; }
+.wb-task-progress .wb-decision-jump { display:inline-flex; align-items:center; gap:5px; min-height:28px; padding:2px 4px; color:var(--wb-secondary); font-size:12px; }
+.wb-task-progress .wb-decision-jump:hover,.wb-task-progress .wb-decision-jump:focus-visible { color:var(--wb-accent); }
 .wb-task-context { overflow:hidden; margin:0; color:var(--wb-muted); font-size:11px; line-height:1.5; text-overflow:ellipsis; white-space:nowrap; }
 .wb-task-unattended { margin:5px 0 0; color:var(--th-ink-soft); font-size:11px; line-height:1.5; }
 .wb-task-head-actions { display:flex; flex:none; align-items:center; gap:18px; }
@@ -527,3 +528,47 @@
 .wb-worktree-badge { margin-left: 6px; padding: 0 5px; border: 1px solid var(--th-hair); border-radius: 4px; font-size: 11px; color: var(--th-ink-soft); }
 .wb-worktree { margin: 6px 0 0; font-size: var(--th-size-small, 13px); color: var(--th-ink-soft); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .wb-worktree code { font-size: 12px; }
+
+/* Task detail: title and actual state lead; execution settings live in task info. */
+.wb-task-info-body .wb-task-agents { margin:0 0 14px; }
+.wb-task-info-body .wb-worktree { line-height:1.8; }
+.wb-task-head .wb-scripts,.wb-task-head .wb-until { margin:6px 0 0; }
+.wb-artifacts.is-outcome { margin-top:20px; margin-bottom:20px; }
+.wb-artifacts.is-outcome>summary { color:var(--wb-text); font-size:15px; }
+.wb-input-help { flex:1 1 80px; min-width:0; color:var(--wb-muted); font-size:11px; }
+.wb-input-help>summary { display:flex; align-items:center; gap:5px; width:fit-content; cursor:pointer; list-style:none; min-height:28px; }
+.wb-input-help>small { display:block; max-width:420px; margin:4px 0; line-height:1.6; }
+.wb-input-help>summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:2px; border-radius:3px; }
+.wb-input-warning { flex:1 1 220px; }
+.wb-followup-live .wb-control-actions { gap:8px; }
+@media(max-height:600px) {
+  .wb-task-head { padding-top:10px; padding-bottom:10px; }
+  .wb-task-head h2 { -webkit-line-clamp:1; }
+  .wb-controls { padding-top:8px; padding-bottom:10px; }
+}
+.wb-followup-live .wb-control-actions>.wb-btn { display:inline-flex; align-items:center; gap:5px; }
+.wb-followup.wb-followup-live { gap:6px; }
+@media(max-height:360px) {
+  .wb-controls { max-height:40%; }
+  .wb-artifacts.is-outcome { margin-top:8px; margin-bottom:8px; }
+}
+
+/* Shared full-content readers: keep columns and source lines readable at narrow widths. */
+.wb-markdown { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.wb-markdown :is(h1,h2,h3,h4,h5,h6) { font-size:1em; font-weight:500; line-height:1.5; margin:1.15em 0 .5em; }
+.wb-markdown h1 { font-size:1.2em; }
+.wb-markdown h2 { font-size:1.1em; }
+.wb-markdown pre,#wb-preview .wb-preview-content>pre,.wb-input-preview-body pre { max-width:100%; overflow:auto; white-space:pre; overflow-wrap:normal; word-break:normal; }
+.wb-markdown pre code { white-space:inherit; overflow-wrap:inherit; word-break:inherit; }
+.wb-markdown table { max-width:100%; overflow:auto; overflow-wrap:normal; word-break:normal; }
+.wb-markdown :is(th,td),.cc-readable-markdown.wb-markdown :is(th,td) { min-width:10rem; }
+.wb-markdown-target code { white-space:normal; overflow-wrap:anywhere; }
+.wb-history-message-body.cc-readable-markdown { font-size:var(--th-size-body); }
+#wb-preview .wb-preview-content>pre,.wb-input-preview-body>pre { font:13px/1.7 var(--mono); padding:12px; }
+.converse-legacy-media {display:block;max-width:70ch;color:var(--th-ink-soft);font-size:12px;line-height:1.6}
+.wb-input-preview-body.is-zoomed img {max-width:none;max-height:none;width:200%;height:auto}
+.wb-input-preview>footer {display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px}
+.wb-input-preview>footer [role=status] {flex-basis:100%;text-align:left;font-size:13px}
+.wb-input-preview>footer [role=status]:empty {display:none}
+.converse-user-image {border:0;padding:0;background:transparent;cursor:zoom-in}
+.converse-user-image img {display:block}

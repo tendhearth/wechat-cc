@@ -14,7 +14,7 @@ const render = createRequire(import.meta.url)('react-dom/server').renderToStatic
 type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
 const roots: Root[] = []
-const native = vi.hoisted(() => ({ lang: 'zh-Hans' as 'zh-Hans' | 'en', presses: [] as (() => void)[], textStyles: [] as Record<string, unknown>[], texts: [] as { value: unknown; selectable: boolean; id?: string }[], scrolls: [] as Record<string, unknown>[], formatChecks: [] as string[], openURL: vi.fn(async () => {}) }))
+const native = vi.hoisted(() => ({ fontScale: 1, views: [] as Record<string, unknown>[], lang: 'zh-Hans' as 'zh-Hans' | 'en', presses: [] as (() => void)[], textStyles: [] as Record<string, unknown>[], texts: [] as { value: unknown; selectable: boolean; id?: string }[], scrolls: [] as Record<string, unknown>[], formatChecks: [] as string[], openURL: vi.fn(async () => {}) }))
 const upstream = vi.hoisted(() => ({ page: undefined as any, chatSay: vi.fn(async (text: string, requestId: string) => ({ text, requestId, status: 'replied' as const, since: 1 })) }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -22,7 +22,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 vi.mock('react-native', async () => {
   const { createElement } = await import('react')
   const flatten = (style: unknown): Record<string, unknown> => Object.assign({}, ...(Array.isArray(style) ? style : [style]))
-  const View = ({ children }: any) => createElement('div', null, children)
+  const View = ({ children, style }: any) => { native.views.push(flatten(style)); return createElement('div', null, children) }
   const Text = ({ children, onPress, style, accessibilityRole, testID, selectable }: any) => {
     native.textStyles.push(flatten(style))
     native.texts.push({ value: children, selectable, id: testID })
@@ -35,7 +35,7 @@ vi.mock('react-native', async () => {
     native.scrolls.push({ horizontal, nestedScrollEnabled, style: flatten(style) })
     return createElement('div', { 'data-horizontal': horizontal ? 'yes' : undefined }, children)
   }
-  return { Text, View, Pressable, ScrollView, Linking: { openURL: native.openURL }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { select: (options: any) => options.ios ?? options.default } }
+  return { useWindowDimensions: () => ({ fontScale: native.fontScale }), Text, View, Pressable, ScrollView, Linking: { openURL: native.openURL }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { select: (options: any) => options.ios ?? options.default } }
 })
 // 语言走真 useLang:系统语言(设备边界)按 native.lang 报。
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: native.lang === 'en' ? 'en-US' : 'zh-Hans-CN' }] }))
@@ -45,6 +45,7 @@ vi.mock('@wechat-cc/markdown', async importOriginal => {
 })
 
 beforeEach(() => {
+  native.fontScale = 1; native.views.length = 0
   native.lang = 'zh-Hans'
   native.presses.length = 0; native.textStyles.length = 0; native.texts.length = 0; native.scrolls.length = 0; native.formatChecks.length = 0
   native.openURL.mockClear()
@@ -71,7 +72,8 @@ describe('native Markdown reader', () => {
     expect(html).toContain('现有功能说明')
     expect(html).toContain('1.')
     expect(html).toContain('2.')
-    expect(html).not.toMatch(/\*\*|##|\/Users\/owner|\[现有功能说明\]/)
+    expect(html).not.toMatch(/\*\*|##|\[现有功能说明\]/)
+    expect(html).toContain('/Users/owner/docs/cc-workbench.md:13')
     expect(native.textStyles).toContainEqual(expect.objectContaining({ fontSize: 20, fontFamily: 'NotoSerifSC-Regular' }))
     expect(native.textStyles).toContainEqual(expect.objectContaining({ color: palette.ink, backgroundColor: palette.hair }))
     expect(native.textStyles.every(s => s.fontFamily !== undefined)).toBe(true)
@@ -86,16 +88,22 @@ describe('native Markdown reader', () => {
     expect(native.openURL.mock.calls).toEqual([['https://example.com/docs'], ['http://example.org/']])
     expect(html).toContain('本地')
     expect(html).toContain('应用')
-    expect(html).not.toMatch(/\/Users\/owner|codex:\/\/|javascript:evil|evil.example|\.\/a.md/)
+    expect(html).toContain('/Users/owner/a.md')
+    expect(html).toContain('./a.md')
+    expect(html).not.toMatch(/codex:\/\/|javascript:evil|evil.example/)
   })
 
-  it('keeps raw HTML inert and images as alt text, with no remote fetch or native action', () => {
+  it('keeps raw HTML inert and opens an HTTP image only after the explicit image action', async () => {
     const html = render(createElement(Markdown, { text: '<script>alert("x")</script>\n\n![示意图](https://example.com/track.png)\n\n<img src="https://example.com/other.png" onerror="evil()">' }))
     expect(html).toContain('&lt;script&gt;')
     expect(html).toContain('示意图')
     expect(html).not.toContain('<img')
-    expect(native.presses).toHaveLength(0)
     expect(native.openURL).not.toHaveBeenCalled()
+    const ui = await mount(createElement(Markdown, { text: '![示意图](https://example.com/track.png)' }))
+    const open = ui.container.querySelector<HTMLButtonElement>('[data-testid="markdown-image-open"]')
+    expect(open?.getAttribute('aria-label')).toContain('示意图')
+    await act(() => open!.click())
+    expect(native.openURL).toHaveBeenCalledExactlyOnceWith('https://example.com/track.png')
   })
 
   it('renders formatted user input with the same safe reading format as assistant messages', () => {
@@ -103,7 +111,8 @@ describe('native Markdown reader', () => {
     const html = render(createElement(MessageText, { role: 'user', text }))
     expect(html).toContain('这是原文')
     expect(html).toContain('资料')
-    expect(html).not.toMatch(/\*\*|\/Users\/owner\/a.md/)
+    expect(html).not.toMatch(/\*\*/)
+    expect(html).toContain('/Users/owner/a.md')
     expect(html).toContain('&lt;script&gt;never()&lt;/script&gt;')
     expect(html).toContain('查看原文')
     expect(html).not.toContain('message-source-text')
@@ -220,4 +229,28 @@ describe('native Markdown reader', () => {
     expect(html).not.toMatch(/\[x\]|\[ \]|\*\*done\*\*/)
     expect(native.textStyles).toContainEqual(expect.objectContaining({ color: palette.ink, backgroundColor: palette.hair }))
   })
+})
+
+
+it('preserves local image targets as selectable inert text and never invents a local opener', () => {
+  const html = render(createElement(Markdown, { text: '![Local](./diagrams/plan.png) ![Absolute](/Users/owner/p.png) ![Bad](javascript:evil)' }))
+  expect(html).toContain('./diagrams/plan.png')
+  expect(html).toContain('/Users/owner/p.png')
+  expect(html).not.toContain('markdown-image-open')
+  expect(html).not.toContain('javascript:evil')
+  expect(native.presses).toHaveLength(0)
+  expect(native.openURL).not.toHaveBeenCalled()
+  expect(native.texts.some(row => row.selectable === true)).toBe(true)
+})
+
+it('keeps all six heading levels at a readable size', () => {
+  render(createElement(Markdown, { text: Array.from({ length: 6 }, (_, i) => '#'.repeat(i + 1) + ' Heading ' + (i + 1)).join('\n\n') }))
+  expect(native.textStyles.every(style => Number(style.fontSize) >= 16)).toBe(true)
+})
+
+
+it('grows table columns with the system font scale instead of crushing enlarged text into narrow columns', () => {
+  native.fontScale = 3.1
+  render(createElement(Markdown, { text: '| Task | Result |\n|---|---|\n| Read the full answer | Ready to review |' }))
+  expect(native.views.filter(style => style.width === 160 * 3.1)).toHaveLength(4)
 })

@@ -8,6 +8,7 @@ import { getDraft, setDraft } from '../state/drafts'
 import { inputNeedsChecking, matterInputState, type InputSnapshot } from '../state/matter-inputs'
 import { useSession } from '../state/session'
 import { useAllMatterInputs, useInputRecovery } from '../state/useMatterInputs'
+import { LinkRow } from '../ui/Rows'
 import { Button } from '../ui/Button'
 import { InputReceipts } from '../ui/InputReceipts'
 import { space } from '../ui/tokens'
@@ -28,7 +29,7 @@ export default function SavedInputs() {
     router.push(`/compose?matter=${encodeURIComponent(row.taskId)}`)
   }
   return <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-    <TopBar title={t(lang, 'input.savedTitle')} onBack={() => router.back()} onAvatar={() => router.push('/settings')} />
+    <TopBar title={t(lang, 'input.savedTitle')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/together'))} />
     <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.l }}>
       <Txt role="meta" tone="inkSoft">{t(lang, 'input.savedHint')}</Txt>
       {recovery.phase !== 'ready' ? <View style={{ gap: space.s }}>
@@ -38,7 +39,7 @@ export default function SavedInputs() {
       {rows.length === 0 && recovery.phase === 'ready' ? <Txt role="bubble" tone="inkSoft">{t(lang, 'input.savedEmpty')}</Txt> : null}
       {rows.map(row => <View key={`${row.taskId}:${row.requestId}`} style={{ gap: space.s }}>
         <InputReceipts rows={[row]} onRestore={r => open(r, true)} />
-        <Button kind="secondary" label={t(lang, 'input.openTask')} onPress={() => open(row, false)} />
+        <LinkRow icon="folder" testID={`inputs-open-${row.requestId}`} label={t(lang, 'input.openTask')} onPress={() => open(row, false)} />
       </View>)}
       {notice ? <Txt role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{notice}</Txt> : null}
     </ScrollView>

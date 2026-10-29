@@ -65,6 +65,10 @@ appId: com.tendhearth.app
     timeout: 5000
 - waitForAnimationToEnd
 - takeScreenshot: p07-compose-adjust
+- scrollUntilVisible:
+    element:
+      text: "完成|Done"
+    direction: DOWN
 - tapOn:
     text: "完成|Done"
 - waitForAnimationToEnd
@@ -110,18 +114,35 @@ appId: com.tendhearth.app
     id: together-item-a1b2c3d4
 - extendedWaitUntil:
     visible:
+      id: approval-allow
+      enabled: true
+    timeout: 10000
+- tapOn:
+    id: approval-allow
+- extendedWaitUntil:
+    visible:
       id: progress-status
     timeout: 10000
 - waitForAnimationToEnd
 - takeScreenshot: p10-matter
 - tapOn:
+    id: topbar-back
+- tapOn:
+    id: tab-now
+- tapOn:
     id: topbar-settings
 - extendedWaitUntil:
     visible:
-      id: settings-language
+      id: settings-memory
     timeout: 5000
 - waitForAnimationToEnd
 - takeScreenshot: p11-settings
+- scrollUntilVisible:
+    element:
+      id: settings-about-toggle
+    direction: DOWN
+- tapOn:
+    id: settings-about-toggle
 - scrollUntilVisible:
     element:
       id: settings-font-licences

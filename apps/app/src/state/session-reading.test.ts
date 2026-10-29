@@ -289,8 +289,10 @@ describe('session reading with real LiveBackend and native UI', () => {
     expect(ui.container.textContent).not.toContain('不属于这页的记录')
     expect(ui.container.textContent).toContain('另一台电脑的记录')
   })
-  it('puts a plain sessions entry at the end of Together, with no pinned chat and 交办 as its bottom action', async () => {
+  it('keeps sessions in Together’s more menu, with no pinned chat and a separate delegation action', async () => {
     const h = harness(), ui = await mount(Together)
+    expect(ui.byId('together-sessions')).toBeNull()
+    await ui.click('together-more')
     expect(ui.byId('together-sessions').textContent).toContain('电脑上的会话')
     await ui.click('together-sessions')
     expect(host.push).toHaveBeenCalledWith('/sessions')

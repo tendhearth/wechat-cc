@@ -1,0 +1,138 @@
+/* Secondary pages share the established paper, typography and restrained controls.
+   Keep these rules scoped: primary dialogue/code/table reading has its own owner. */
+#phone-settings-modal { padding: 12px; box-sizing: border-box; }
+#phone-settings-modal .qr-card {
+  width: min(360px, 100%); max-height: calc(100dvh - 24px);
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+  flex-shrink: 1; gap: 16px;
+}
+#phone-settings-modal .qr-card > * { flex-shrink: 0; }
+#phone-connect-body { width: 100%; min-width: 0; }
+#phone-connect-body .qr-svg { display: flex; justify-content: center; }
+#phone-settings-modal .qr-card svg { flex: none; max-width: 100%; }
+#phone-connect-body :is(.qr-check, .qr-note, .qr-sub) { margin: 12px 0; }
+#phone-connect-close { min-height: 36px; }
+#phone-settings-modal button:focus-visible, #provider-menu button:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
+#provider-menu { box-sizing: border-box; width: 236px; max-width: calc(100vw - 16px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+#provider-menu button { min-height: 40px; flex-wrap: wrap; overflow-wrap: anywhere; }
+#provider-menu button small { width: 100%; margin-left: 18px; }
+@media (max-height: 420px) {
+  #phone-settings-modal .qr-card { padding: 16px 20px; gap: 12px; }
+}
+
+/* Let retained content lead. Navigation, refresh and diagnostics share one scale. */
+:is(.cc-recollections, .atelier-pane, .todos-page) :is(h1, h2),
+[data-pane="plugins"] > .topbar > .crumb,
+[data-pane="logs"] > .topbar > .crumb { font-family: var(--th-font-serif); font-weight: 400; }
+:is(.cc-recollections, .atelier-pane) > :is(header, .atelier-pane-head) p { max-width: 44em; }
+:is(.cc-recollections, .atelier-pane, .todos-page, .fd-wrap, .memory-profile-overview) { min-width: 0; }
+:is(.cc-recollections, .atelier-pane, .todos-page, .fd-wrap, .memory-sources-panel) :is(button, summary, input, select, textarea):focus-visible {
+  outline: 2px solid var(--th-accent); outline-offset: 3px;
+}
+:is(.atelier-empty, .cc-page-status, .fd-empty) { box-shadow: none; }
+.cc-record-toolbar > span { min-width: 0; overflow-wrap: anywhere; }
+.cc-record-toolbar > button { flex: none; }
+.cc-record-content :is(.atelier-share-panel, .hb-detail, .pc-detail) { min-width: 0; }
+
+/* Raw-memory management is a supporting disclosure, at the same scale as its facts. */
+.memory-sources-panel :is(.memory-line-hint, .memory-line-was, .memory-owned-tag, .memory-owner-block h3) {
+  font-size: var(--th-size-meta); line-height: var(--th-lh-meta);
+}
+.memory-sources-panel .memory-line-input { min-width: 0; font-size: var(--th-size-body); line-height: var(--th-lh-body); }
+.memory-sources-panel .memory-line-editor { margin: var(--th-space-l) 0; }
+.memory-sources-panel .memory-line { grid-template-columns: minmax(0, 1fr) auto auto; }
+.memory-sources-panel .memory-owner-block { padding: var(--th-space-l) 0; border: 0; border-bottom: 1px solid var(--th-hair); border-radius: 0; }
+.memory-sources-panel :is(.milestone-card, .mem-proj-grp) { background: transparent; border: 0; border-radius: 0; }
+.memory-sources-panel .mem-proj-head { background: transparent; padding-inline: 0; }
+.memory-sources-panel .memory-retraction { flex-wrap: wrap; font-size: var(--th-size-body); line-height: var(--th-lh-body); }
+.memory-sources-panel .memory-retraction-text { min-width: 0; overflow-wrap: anywhere; }
+.memory-sources-panel .memory-retraction .meta { font-size: var(--th-size-meta); }
+.memory-evidence-dialog :focus-visible { outline-color: var(--th-accent); }
+
+/* Backstage: installed abilities and real log lines, without another card system. */
+[data-pane="plugins"] > .a2a-agents-body { box-sizing: border-box; width: 100%; max-width: 960px; margin: 0 auto; padding: 24px clamp(24px, 4vw, 48px) 48px; }
+[data-pane="plugins"] .plugins-hint { margin: 0 0 24px; padding: 0; background: transparent; border: 0; border-radius: 0; font-size: var(--th-size-meta); line-height: var(--th-lh-meta); }
+[data-pane="plugins"] .plugins-hint code { font-size: inherit; background: transparent; padding: 0; overflow-wrap: anywhere; }
+[data-pane="plugins"] .a2a-agents-list { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+[data-pane="plugins"] .a2a-agent-card { min-width: 0; padding: 24px 0; border: 0; border-bottom: 1px solid var(--th-hair); border-radius: 0; background: transparent; box-shadow: none; opacity: 1; }
+[data-pane="plugins"] .a2a-card-head { flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+[data-pane="plugins"] .a2a-card-head strong { font-size: var(--th-size-item); line-height: var(--th-lh-item); font-weight: 400; overflow-wrap: anywhere; }
+[data-pane="plugins"] .a2a-card-url { margin-top: 12px; font-size: var(--th-size-body); line-height: var(--th-lh-body); color: var(--th-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+[data-pane="plugins"] :is(.plugin-name, .plugin-ver, .plugin-source, .plugin-tools, .plugin-warn, .plugins-note) { font-size: var(--th-size-meta); line-height: var(--th-lh-meta); overflow-wrap: anywhere; }
+[data-pane="plugins"] :is(.plugin-ver, .plugin-source) { padding: 0; border: 0; border-radius: 0; background: transparent; }
+[data-pane="plugins"] .plugin-warn { padding: 12px 0; background: transparent; border-radius: 0; }
+[data-pane="plugins"] .plugins-subhead { margin-top: 36px; font-size: var(--th-size-item); line-height: var(--th-lh-item); font-weight: 400; }
+[data-pane="plugins"] .a2a-card-actions { flex-wrap: wrap; margin-top: 16px; gap: 12px; }
+[data-pane="plugins"] .btn { height: auto; min-height: 40px; font-size: var(--th-size-meta); line-height: var(--th-lh-meta); }
+[data-pane="plugins"] :is(.empty, .empty-state) { font-size: var(--th-size-body); line-height: var(--th-lh-body); text-align: left; padding: 24px 0; }
+[data-pane="logs"] > .topbar { flex-wrap: wrap; gap: 16px; }
+[data-pane="logs"] .actions { flex-wrap: wrap; gap: 12px; }
+[data-pane="logs"] .logs-select { min-width: 0; max-width: 100%; min-height: 36px; font-size: var(--th-size-meta); }
+[data-pane="logs"] .logs-body { min-width: 0; padding: 16px 24px 40px; }
+[data-pane="logs"] .logs-row { grid-template-columns: 84px 130px minmax(0, 1fr); font-size: var(--th-size-small); line-height: 1.65; }
+[data-pane="logs"] .logs-row :is(.tag, .msg) { min-width: 0; overflow-wrap: anywhere; }
+
+/* Settings and setup retain all consequences beside their action. */
+.settings-drawer :is(.drawer-section-help, .plugins-note, .toggle-feedback) { line-height: var(--th-lh-meta); overflow-wrap: anywhere; }
+.settings-drawer .drawer-section { min-width: 0; }
+.settings-drawer :is(.user-copy, .project-admin-alias, .brain-label) { min-width: 0; overflow-wrap: anywhere; }
+.settings-drawer :is(.license-actions, .brain-actions, .hooks-buttons, .service-plan-actions) { flex-wrap: wrap; }
+#screen-service > .card { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+#screen-service .card-h { padding-inline: 0; font-family: var(--th-font-serif); font-size: var(--th-size-title); font-weight: 400; }
+#screen-service :is(.bg-body, .bg-actions) { min-width: 0; }
+#screen-service .bg-actions { flex-wrap: wrap; }
+#screen-service :is(pre, code, .details-body) { max-width: 100%; overflow-x: auto; }
+.a2a-drawer { max-height: 100dvh; overflow-y: auto; overscroll-behavior: contain; }
+@media (max-width: 800px) {
+  .memory-sources-panel .mem { grid-template-columns: minmax(0, 1fr); }
+  .memory-sources-panel .mem-list { border-right: 0; border-bottom: 1px solid var(--th-hair); max-height: 180px; }
+  .memory-sources-panel .mem-doc { max-height: none; }
+  .memory-sources-panel .memory-line { grid-template-columns: minmax(0, 1fr) auto; }
+  .memory-sources-panel .memory-owned-tag { grid-column: 1; grid-row: 2; justify-self: start; }
+  .memory-sources-panel .memory-line-remove { grid-column: 2; grid-row: 1; }
+  [data-pane="logs"] .logs-row { grid-template-columns: 72px minmax(0, 1fr); gap: 4px 12px; }
+  [data-pane="logs"] .logs-row .msg { grid-column: 1 / -1; padding-bottom: 12px; }
+  [data-pane="logs"] .topbar .actions { width: 100%; }
+  [data-pane="logs"] #logs-filter { flex: 1 1 160px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.settings-drawer, .memory-sources-panel, #phone-settings-modal, #provider-menu) * { scroll-behavior: auto; }
+}
+
+/* The separate floating window keeps its transparent stage and canonical art. */
+.pet-shell { color: var(--th-ink); }
+.pet-shell .pet-controls { gap: 4px; }
+.pet-shell .pet-controls button { width: 32px; height: 32px; line-height: 32px; border-radius: var(--th-radius-nav); background: color-mix(in srgb, var(--th-paper) 92%, transparent); color: var(--th-ink); }
+.pet-shell :is(.pet-hint, .pet-card-host) { background: color-mix(in srgb, var(--th-paper) 96%, transparent); color: var(--th-ink); box-shadow: none; }
+.pet-shell .pet-card-host { border: 1px solid var(--th-hair); border-radius: var(--th-radius-sheet); font-size: var(--th-size-small); line-height: var(--th-lh-small); }
+.pet-shell .pet-card-prompt { background: var(--th-rail); color: var(--th-ink); overflow-wrap: anywhere; word-break: normal; }
+.pet-shell .pet-card-actions button { min-height: 32px; }
+.pet-shell .pet-card-allow { background: var(--th-accent); color: var(--th-on-accent); }
+.pet-shell .pet-card-deny { background: var(--th-rail); color: var(--th-ink); }
+.pet-shell .pet-card-note { color: var(--th-ink-soft); }
+.pet-shell button:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
+
+/* Stored records and correction lead the memory page; inference is explicit. */
+.memory-facts { margin: 0 0 36px; color: var(--th-ink); font-size: var(--th-size-body); line-height: var(--th-lh-body); }
+.memory-facts-head { display: flex; justify-content: space-between; align-items: start; gap: 24px; margin-bottom: 24px; }
+.memory-facts-head h1 { margin: 0 0 8px; font: 400 var(--th-size-title)/var(--th-lh-title) var(--th-font-serif); }
+.memory-facts-head p { margin: 0; color: var(--th-ink-soft); font-size: var(--th-size-meta); }
+.memory-facts-head button { flex: none; min-height: 40px; font-size: var(--th-size-meta); }
+.memory-facts-search-label { display: block; margin-bottom: 8px; color: var(--th-ink-soft); font-size: var(--th-size-meta); }
+#memory-facts-search { box-sizing: border-box; width: min(440px, 100%); min-height: 40px; padding: 8px 12px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-nav); background: transparent; color: var(--th-ink); font: inherit; }
+.memory-facts-source { margin: 12px 0; color: var(--th-ink-soft); font-size: var(--th-size-meta); overflow-wrap: anywhere; }
+.memory-facts-list { list-style: none; margin: 0; padding: 0; }
+.memory-facts-list li { padding: 18px 0; border-bottom: 1px solid var(--th-hair); white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-facts-file { font-size: var(--th-size-body); }
+.memory-profile-disclosure { margin: 20px 0; border-top: 1px solid var(--th-hair); }
+.memory-profile-disclosure > summary { padding: 18px 0; color: var(--th-ink-soft); font-size: var(--th-size-body); cursor: pointer; }
+.memory-profile-disclosure > summary > span { font-size: var(--th-size-meta); }
+.memory-profile-disclosure[open] > summary { color: var(--th-ink); }
+.memory-profile-disclosure #memory-profile-content { padding-top: 20px; }
+@media(max-width:800px) { .memory-facts-head { flex-wrap: wrap; gap: 16px; } }
+.memory-profile-overview > .memory-library-trigger { align-self: flex-start; margin: 0; padding: 12px 0; border: 0; border-radius: 0; font-size: var(--th-size-body); }
+.memory-profile-overview > .memory-sources-panel { order: 2; position: static; box-sizing: border-box; width: 100%; max-height: none; padding: 24px 0; border: 0; border-top: 1px solid var(--th-hair); border-radius: 0; }
+.memory-profile-overview > .memory-profile-disclosure { order: 3; }
+[data-pane="plugins"] .plugins-install-details { margin: 0 0 24px; font-size: var(--th-size-meta); line-height: var(--th-lh-meta); color: var(--th-ink-soft); }
+[data-pane="plugins"] .plugins-install-details summary { cursor: pointer; }
+[data-pane="plugins"] .plugins-install-details p { margin: 12px 0 0; overflow-wrap: anywhere; }

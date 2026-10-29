@@ -1,4 +1,4 @@
-# 额度用完 ⇒ 交给另一位继续(spec continue-sessions §7-3):一起做 → 周报那件(Claude Code 额度用完)→ 灰字说谁用完、约几分钟恢复
+# 额度用完 ⇒ 交给另一位继续(spec continue-sessions §7-3):一起做 → 周报那件(Claude 额度用完)→ 灰字说谁用完、约几分钟恢复
 # → 「交给 Codex 继续」→ 确认卡如实说(同一文件夹新开一件、原来那件不动、Codex 看不到之前的对话、会用 Codex 的额度)
 # → 交出去 → 进新那件(第一句说清接替谁)→ 返回 → 原来那件说「已经交给 Codex 继续」、按钮换成「打开那件事」。演示模式。
 appId: com.tendhearth.app
@@ -28,7 +28,7 @@ appId: com.tendhearth.app
     visible:
       id: progress-handoff-note
     timeout: 10000
-- assertVisible: ".*(Claude Code 的额度已用完|Claude Code is out of quota).*"
+- assertVisible: ".*(Claude 的额度已用完|Claude is out of quota).*"
 - tapOn:
     id: progress-handoff-action
 - extendedWaitUntil:
@@ -36,7 +36,7 @@ appId: com.tendhearth.app
       id: handoff-sheet
     timeout: 5000
 - assertVisible: ".*(同一个文件夹|same folder).*"
-- assertVisible: ".*(看不到 Claude Code 之前的对话|can.t see Claude Code.s earlier conversation).*"
+- assertVisible: ".*(看不到 Claude 之前的对话|can.t see Claude.s earlier conversation).*"
 - assertVisible:
     id: handoff-confirm
     text: "交给 Codex 继续|Hand to Codex"
@@ -44,9 +44,19 @@ appId: com.tendhearth.app
     id: handoff-confirm
 - extendedWaitUntil:
     visible:
-      id: progress-conversation
+      id: progress-status
     timeout: 10000
-- assertVisible: ".*(接替 Claude Code|Taking over from Claude Code).*"
+- scrollUntilVisible:
+    element:
+      id: progress-process
+    direction: DOWN
+- tapOn:
+    id: progress-process
+- extendedWaitUntil:
+    visible:
+      id: progress-conversation
+    timeout: 5000
+- assertVisible: ".*(接替 Claude|Taking over from Claude).*"
 - assertNotVisible:
     id: progress-handoff
 - tapOn:

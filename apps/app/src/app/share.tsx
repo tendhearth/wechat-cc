@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router'
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { ScrollView, View } from 'react-native'
+import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -9,7 +9,6 @@ import type { ImageCheck, PickedImage } from '../state/image-upload'
 import { useSession } from '../state/session'
 import { clearShare, getShare, subscribeShare } from '../state/share-inbox'
 import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
 import { ImageTray } from '../ui/ImageTray'
 import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
@@ -73,9 +72,9 @@ export default function Share() {
         ) : (
           <>
             {draft.text.trim() ? (
-              <Card testID="share-text">
+              <View testID="share-text" style={{ paddingVertical: space.m }}>
                 <Txt role="bubble" content="user" numberOfLines={12} selectable>{draft.text}</Txt>
-              </Card>
+              </View>
             ) : null}
             <ImageTray testID="share-images" images={images} lang={lang} onRemove={id => setImages(cur => cur.filter(i => i.id !== id))} />
             {reading ? <Txt testID="share-reading" role="meta" tone="inkSoft">{t(lang, 'progress.loading')}</Txt> : null}
@@ -96,7 +95,9 @@ export default function Share() {
             <Button kind="secondary" testID="share-to-matter" label={t(lang, 'share.toMatter')} onPress={() => choose('matter')} disabled={!usable} />
           </View>
         ) : null}
-        <Button kind="secondary" testID="share-dismiss" label={t(lang, 'share.dismiss')} onPress={dismiss} />
+        <Pressable testID="share-dismiss" accessibilityRole="button" accessibilityLabel={t(lang, 'share.dismiss')} onPress={dismiss} style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+          <Txt role="body" tone="inkSoft">{t(lang, 'share.dismiss')}</Txt>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   )

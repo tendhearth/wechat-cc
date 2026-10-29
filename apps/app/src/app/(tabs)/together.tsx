@@ -12,12 +12,8 @@ import { Button } from '../../ui/Button'
 import { BusyIndicator } from '../../ui/motion'
 import { StatusHint } from '../../ui/StatusHint'
 import { LinkRow } from '../../ui/Rows'
-import { SayBar } from '../../ui/SayBar'
-import { StatusPill } from '../../ui/StatusPill'
 import { TerminalItem } from '../../ui/TerminalItem'
-import { AgentAvatars } from '../../ui/AgentAvatars'
 import { agentsLabel } from '../../view/agents'
-import { OriginMark } from '../../ui/OriginMark'
 import { originKey } from '../../view/origin'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
@@ -25,6 +21,9 @@ import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { togetherGroups, togetherView } from '../../view/together'
 import { terminalRows } from '../../view/terminal'
+import { Icon } from '../../ui/Icon'
+import { IconButton } from '../../ui/IconButton'
+import { WaitingTitle } from '../../ui/WaitingTitle'
 
 // 「一起做」:交给 CC 的事(全部没归档的),分三组:等你 / 在做 / 做完(手机端用词表)。每组一个衬线小标题,只有「等你」上强调色。
 // 每行标题 + 状态词 + 副标题,点进进展页。三组只在这里,「此刻」只列等你的那几件(同一件东西只有一个家)。
@@ -45,7 +44,7 @@ export default function Together() {
   const terminalSection = termRows.length > 0 ? (
     <View testID="together-terminal" style={{ paddingTop: space.xl }}>
       <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginBottom: space.s }}>{t(lang, 'terminal.title')}</Txt>
-      <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+      <View>
         {termRows.map(r => (
           <TerminalItem key={r.id} row={r} onOpen={() => router.push(`/terminal/${encodeURIComponent(r.id)}`)} />
         ))}
@@ -55,23 +54,23 @@ export default function Together() {
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar
-        title={t(lang, 'together.title')}
-        showStatus
-        onAvatar={() => router.push('/settings')}
-      />
+      <TopBar title={t(lang, 'together.title')} actions={<View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <IconButton name="plus" testID="together-delegate" label={t(lang, 'together.delegate')} onPress={() => router.push('/compose')} />
+        <StatusHint testID="together-more" icon="more" value={saved || undefined} label={`${t(lang, 'minimal.more')}${saved ? `, ${t(lang, 'input.savedTitle')} ${saved}` : ''}`} description="">
+          {close => <View>
+            <LinkRow testID="together-saved-inputs" icon="restore" label={`${t(lang, 'input.savedTitle')}${saved ? ` · ${saved}` : ''}`} detail={recovery.phase !== 'ready' ? t(lang, 'feedback.stale') : undefined} onPress={() => { close(); router.push('/inputs') }} />
+            <LinkRow testID="together-sessions" icon="terminal" label={t(lang, 'sessions.title')} onPress={() => { close(); router.push('/sessions') }} />
+          </View>}
+        </StatusHint>
+      </View>} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <SectionList
         sections={sections}
         keyExtractor={(r) => r.id}
         stickySectionHeadersEnabled={false}
-        renderSectionHeader={({ section }) => (
-          <View style={{ paddingTop: space.xl, paddingBottom: space.s, borderBottomWidth: 1, borderBottomColor: c.hair }}>
-            <Txt testID={`together-group-${section.key}`} role="meta" tone={section.key === 'waiting' ? 'accent' : 'inkSoft'} accessibilityRole="header">
-              {t(lang, `together.group.${section.key}`)}
-            </Txt>
-          </View>
-        )}
+        renderSectionHeader={({ section }) => <View style={{ paddingTop: space.xl, paddingBottom: space.s }}>
+          <Txt testID={`together-group-${section.key}`} role="caption" tone={section.key === 'waiting' ? 'accent' : 'inkSoft'} accessibilityRole="header">{t(lang, `together.group.${section.key}`)}</Txt>
+        </View>}
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, flexGrow: 1 }}
         ListHeaderComponent={<>
           {!mattersKnown && mattersError ? <View style={{ paddingVertical: space.m, gap: space.s }}>
@@ -82,47 +81,29 @@ export default function Together() {
               <Button kind="secondary" testID="together-retry" label={t(lang, 'common.retry')} busy={mattersLoading} onPress={() => void refreshMatters()} />
             </StatusHint>
           ) : null}
-          {saved || recovery.phase !== 'ready' ? <LinkRow testID="together-saved-inputs" label={`${t(lang, 'input.savedTitle')}${saved ? ` · ${saved}` : ''}`} onPress={() => router.push('/inputs')} /> : null}
         </>}
-        ListFooterComponent={<>{terminalSection}<LinkRow testID="together-sessions" label={t(lang, 'sessions.title')} onPress={() => router.push('/sessions')} /></>}
-        ListEmptyComponent={
-          mattersKnown ? <View style={{ flex: 1, justifyContent: 'center', paddingVertical: space.xxl }}>
-            <Txt testID="together-empty" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>
-              {t(lang, 'together.empty')}
-            </Txt>
-          </View> : null
-        }
-        renderItem={({ item }) => (
-          <Pressable
-            testID={`together-item-${item.id}`}
-            accessibilityRole="button"
-            accessibilityLabel={`${item.title}, ${t(lang, `status.${item.status}`)}${item.agents.length ? `, ${agentsLabel(item.agents, item.agentNames)}` : ''}${item.origin ? `, ${t(lang, originKey(item.origin))}` : ''}`}
-            onPress={() => router.push(`/matter/${encodeURIComponent(item.id)}`)}
-            style={({ pressed }) => ({
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: space.m,
-              paddingVertical: space.l,
-              borderBottomWidth: 1,
-              borderBottomColor: c.hair,
-              opacity: pressed ? 0.7 : 1,
-            })}
-          >
-            <View style={{ flex: 1, gap: space.s }}>
-              <Txt role="item" content="user" numberOfLines={2}>{item.title}</Txt>
-              <StatusPill status={item.status} />
-              {item.subtitle ? <Txt role="small" tone="inkSoft" content="user" numberOfLines={1}>{item.subtitle}</Txt> : null}
+        ListFooterComponent={terminalSection}
+        ListEmptyComponent={mattersKnown ? <View style={{ flex: 1, justifyContent: 'center', paddingVertical: space.xxl }}>
+          <Txt testID="together-empty" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'together.empty')}</Txt>
+        </View> : null}
+        renderItem={({ item }) => {
+          const pending=approvals.find(a => a.taskId === item.id)
+          const title=pending?.summary || item.title
+          const outcome=['failed','stopped','replied'].includes(item.status)
+          return <Pressable testID={`together-item-${item.id}`} accessibilityRole="button"
+            accessibilityLabel={`${title}, ${t(lang, `status.${item.status}`)}${item.agents.length ? `, ${agentsLabel(item.agents, item.agentNames)}` : ''}${item.origin ? `, ${t(lang, originKey(item.origin))}` : ''}`}
+            onPress={() => router.push(pending ? `/approval/${encodeURIComponent(item.id)}` : `/matter/${encodeURIComponent(item.id)}`)}
+            style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 64, paddingVertical: space.m, opacity: pressed ? 0.7 : 1 })}>
+            {item.status === 'working' ? <View style={{ width: 18 }} /> : <Icon name={item.status === 'waiting' ? 'shield' : item.status === 'done' ? 'done' : item.status === 'failed' ? 'alert' : item.status === 'replied' ? 'message' : 'pause'} color={item.status === 'waiting' ? c.accent : c.inkSoft} />}
+            <View style={{ flex: 1, gap: space.xs }}>
+              {pending ? <WaitingTitle taskId={item.id} requestId={pending.id} fallback={title} /> : <Txt role="item" content="user" numberOfLines={2}>{title}</Txt>}
+              {pending && title !== item.title ? <Txt role="caption" tone="inkSoft" content="user" numberOfLines={1}>{item.title}</Txt> : null}
+              {outcome ? <Txt role="caption" tone="inkSoft">{t(lang, `status.${item.status}`)}</Txt> : null}
             </View>
-            {/* 出生地(2026-10-19):头像组旁边一个小字形,只画出生地;不知道就不画 */}
-            <OriginMark origin={item.origin} testID={`together-origin-${item.id}`} />
-            <AgentAvatars ids={item.agents} names={item.agentNames} testID={`together-agents-${item.id}`} />
-            <Txt role="title" tone="inkSoft">›</Txt>
+            <Icon name="chevronRight" size={16} color={c.inkSoft} />
           </Pressable>
-        )}
+        }}
       />
-      <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
-        <SayBar testID="together-delegate" placeholder={t(lang, 'together.delegate')} onPress={() => router.push('/compose')} />
-      </View>
     </SafeAreaView>
   )
 }

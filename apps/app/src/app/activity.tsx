@@ -5,9 +5,12 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import type { ActivityItemT } from '../backend/types'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { secondaryText as st } from '../i18n/minimal-secondary'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useQuery } from '../state/hooks'
 import { Button } from '../ui/Button'
+import { Icon } from '../ui/Icon'
+import { IconButton } from '../ui/IconButton'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { BusyIndicator } from '../ui/motion'
 import { StatusHint } from '../ui/StatusHint'
@@ -63,10 +66,10 @@ export default function Activity() {
       <>
         <Txt role="meta" tone="inkSoft" style={{ width: 48 }}>{r.time}</Txt>
         <Txt role="bubble" content="user" style={{ flex: 1 }}>{r.title}</Txt>
-        {r.href ? <Txt role="title" tone="inkSoft">›</Txt> : null}
+        {r.href ? <Icon name="chevronRight" size={16} color={c.inkSoft} /> : null}
       </>
     )
-    const style = { flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: space.m, paddingVertical: space.m, borderBottomWidth: 1, borderBottomColor: c.hair }
+    const style = { flexDirection: 'row' as const, alignItems: 'flex-start' as const, minHeight: 56, gap: space.m, paddingVertical: space.m }
     const href = r.href
     return href ? (
       <Pressable key={r.id} testID={`activity-row-${r.id}`} accessibilityRole="button" accessibilityLabel={`${r.time} ${r.title}`}
@@ -80,7 +83,7 @@ export default function Activity() {
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={t(lang, 'activity.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+      <TopBar title={st(lang, 'activity')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} actions={<IconButton name="refresh" testID="activity-refresh" label={t(lang, 'sessions.refreshRecords')} busy={q.loading} onPress={() => void q.refresh()} />} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         {!view && q.error ? (
@@ -96,8 +99,8 @@ export default function Activity() {
             {view.empty ? <Txt testID="activity-empty" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{view.empty}</Txt> : (
               view.groups.map(g => (
                 <View key={g.key} testID={`activity-day-${g.key}`} style={{ gap: space.xs }}>
-                  <Txt role="item" accessibilityRole="header" style={{ paddingTop: space.m }}>{g.label}</Txt>
-                  <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>{g.rows.map(row)}</View>
+                  <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ paddingTop: space.m }}>{g.label}</Txt>
+                  <View style={{ gap: space.s }}>{g.rows.map(row)}</View>
                 </View>
               ))
             )}

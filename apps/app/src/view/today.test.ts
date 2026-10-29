@@ -19,6 +19,13 @@ const today = (over: Partial<OverseerTodayT> = {}): OverseerTodayT => {
 }
 
 describe('今天(手机视图)', () => {
+  it('compact completion count uses the same actual time window and preserves partial evidence', () => {
+    const data=today({done:[item({at:NOW-30*60_000}),item({at:NOW-5*3_600_000})],counts:{needsYou:0,done:2,running:0,stuck:0}})
+    expect(todayView(data,NOW,'en')!.doneCount).toBe(2)
+    expect(todayView(data,NOW,'en',NOW-3*3_600_000)!.doneCount).toBe(1)
+    expect(todayView({...data,unavailable:['terminal']},NOW,'en')!.partial).toBe(true)
+    expect(todayView(undefined,NOW,'en')).toBeNull()
+  })
   it('夹具过真 schema', () => {
     expect(PHONE_API_SCHEMAS['GET /m/api/today']!.safeParse({ ok: true, today: today() }).success).toBe(true)
   })

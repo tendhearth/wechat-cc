@@ -83,3 +83,11 @@ describe('downloadReplyFile maxBytes / downloadLetterPage', () => {
     expect(c.letterPageChunk.mock.calls.map(x => x[0])).toEqual([{ id: '2026-10-16-abc123', page: 2, offset: 0 }, { id: '2026-10-16-abc123', page: 2, offset: 131072 }])
   })
 })
+
+
+it('recognizes Markdown long extensions and typed text/image MIME parameters without executing HTML', () => {
+  expect(previewKind('application/octet-stream', 'notes.MARKDOWN')).toBe('text')
+  expect(previewKind('text/markdown; charset=utf-8', 'notes')).toBe('text')
+  expect(previewKind('image/png; charset=binary', 'picture')).toBe('image')
+  expect(previewKind('text/html; charset=utf-8', 'website')).toBe('file')
+})

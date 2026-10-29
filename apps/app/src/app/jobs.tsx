@@ -5,13 +5,15 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import type { JobsAction } from '../backend/types'
 import { t, type MessageKey } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { secondaryText as st } from '../i18n/minimal-secondary'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection, useQuery, useSubmit } from '../state/hooks'
 import { Button } from '../ui/Button'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
+import { Icon } from '../ui/Icon'
 import { BusyIndicator } from '../ui/motion'
 import { StatusHint } from '../ui/StatusHint'
-import { radius, space } from '../ui/tokens'
+import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
@@ -28,6 +30,7 @@ export default function Jobs() {
   const online = canSubmit(useConnection())
   const submit = useSubmit()
   const q = useQuery('jobs', () => backend.jobs(), { refreshOnMount: true })
+  const [open, setOpen] = useState<string | null>(null)
   const [armed, setArmed] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   // 同一帧连点两下:state 还没更新,靠 ref 挡住第二下(定时页评审 10-20)
@@ -53,14 +56,14 @@ export default function Jobs() {
   }
   const pill = (testID: string, key: MessageKey, onPress: () => void, off: boolean) => (
     <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled: off }} disabled={off} onPress={onPress}
-      style={({ pressed }) => ({ minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: off ? 0.55 : pressed ? 0.7 : 1 })}>
+      style={({ pressed }) => ({ minHeight: 44, justifyContent: 'center', paddingHorizontal: space.m, opacity: off ? 0.55 : pressed ? 0.7 : 1 })}>
       <Txt role="meta">{t(lang, key)}</Txt>
     </Pressable>
   )
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={t(lang, 'jobs.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+      <TopBar title={st(lang, 'jobs')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         {!page && q.error ? (
@@ -74,18 +77,25 @@ export default function Jobs() {
           <>
             {page.notice ? <Txt testID="jobs-no-executor" role="bubble" tone="inkSoft" style={{ paddingTop: space.l }}>{page.notice}</Txt> : null}
             {page.empty ? <Txt testID="jobs-empty" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{page.empty}</Txt> : (
-              <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+              <View style={{ gap: space.s }}>
                 {page.rows.map(r => {
                   const off = !online || busy !== null
                   return (
-                    <View key={r.id} testID={`jobs-row-${r.id}`} style={{ paddingVertical: space.m, gap: space.xs, borderBottomWidth: 1, borderBottomColor: c.hair }}>
-                      <Txt role="item" accessibilityRole="header">{r.title}</Txt>
-                      <Txt role="bubble" content="user" numberOfLines={3}>{r.body}</Txt>
+                    <View key={r.id} testID={`jobs-row-${r.id}`} style={{ paddingVertical: space.m, gap: space.xs }}>
+                      <Pressable testID={`jobs-details-${r.id}`} accessibilityRole="button" accessibilityLabel={`${r.body}, ${r.title}`} accessibilityState={{ expanded: open === r.id }}
+                        onPress={() => { setOpen(open === r.id ? null : r.id); setArmed(null) }} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: space.m }}>
+                        <Icon name="calendar" color={c.inkSoft} />
+                        <View style={{ flex: 1, gap: space.xs }}>
+                          <Txt role="body" content="user">{r.body}</Txt>
+                          <Txt role="meta" tone="inkSoft">{r.title}</Txt>
+                        </View>
+                        <Icon name={open === r.id ? 'chevronDown' : 'chevronRight'} size={16} color={c.inkSoft} />
+                      </Pressable>
                       <Txt testID={`jobs-last-${r.id}`} role="meta" tone="inkSoft">{r.paused ? `${r.paused} · ${r.last}` : r.last}</Txt>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s, marginTop: space.xs }}>
+                      {open === r.id ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s, marginTop: space.xs }}>
                         {pill(`jobs-${r.toggle}-${r.id}`, r.toggle === 'pause' ? 'jobs.pause' : 'jobs.resume', () => void act(r.id, r.toggle), off)}
                         {pill(`jobs-remove-${r.id}`, armed === r.id ? 'jobs.removeConfirm' : 'jobs.remove', () => void act(r.id, 'remove'), off)}
-                      </View>
+                      </View> : null}
                     </View>
                   )
                 })}

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type Lang } from '../i18n'
+import { conversationText } from '../i18n/minimal-conversation'
 import { useLang } from '../i18n/useLang'
 import { dropDraftImages, getDraft, peekDraftImages, setDraft } from '../state/drafts'
 import { useBackendCtx } from '../state/BackendProvider'
@@ -11,12 +12,13 @@ import { useChat, type ChatSendOutcome } from '../state/useChat'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Button } from '../ui/Button'
 import { Icon } from '../ui/Icon'
+import { IconButton } from '../ui/IconButton'
 import { BusyIndicator } from '../ui/motion'
 import { StatusHint } from '../ui/StatusHint'
 import { MessageText } from '../ui/Markdown'
 import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
 import { TextField } from '../ui/TextField'
-import { AddImageButton, ImageTray } from '../ui/ImageTray'
+import { ImageTray } from '../ui/ImageTray'
 import { SendTalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
 import { mergeTranscript } from '../view/hold-to-talk'
 import type { PickedImage } from '../state/image-upload'
@@ -104,7 +106,7 @@ export default function Chat() {
       <TopBar
         title={t(lang, 'chat.title')}
         onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-        onAvatar={() => router.push('/settings')}
+        actions={<IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />}
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -150,25 +152,19 @@ export default function Chat() {
               {outcome === 'uncertain' ? <ChatCheck lang={lang} online={online} loading={chat.loading} error={chat.error} onCheck={chat.refresh} /> : null}
             </StatusHint></View>
           ) : null}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
-            <Pressable
-              testID="chat-handoff"
-              accessibilityRole="button"
-              accessibilityLabel={t(lang, 'chat.handoff')}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+            <IconButton name="plus" label={t(lang, 'images.add')} testID="chat-add-image" disabled={sending || images.length >= CHAT_MAX_IMAGES} onPress={() => { void addImages() }} />
+            <Pressable testID="chat-model-open" accessibilityRole="button" accessibilityLabel={`${t(lang, 'chatModel.title')}${chatModelLabel(chatModel.data) ? `: ${chatModelLabel(chatModel.data)}` : ''}`}
+              onPress={() => router.push('/chat-model')}
+              style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 44, gap: space.xs, flexShrink: 1, opacity: pressed ? 0.7 : 1 })}>
+              <Txt role="meta" tone="inkSoft" numberOfLines={1} style={{ flexShrink: 1 }}>{chatModelLabel(chatModel.data) ?? t(lang, 'chatModel.open')}</Txt>
+              <Icon name="chevronDown" color={c.inkSoft} size={14} />
+            </Pressable>
+            <View style={{ flex: 1 }} />
+            <Pressable testID="chat-handoff" accessibilityRole="button" accessibilityLabel={t(lang, 'chat.handoff')}
               onPress={() => router.push('/compose')}
-              hitSlop={6}
-              style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}
-            >
-              <Txt role="meta">{t(lang, 'chat.handoff')} ›</Txt>
-            </Pressable>
-            <AddImageButton testID="chat-add-image" lang={lang} disabled={sending || images.length >= CHAT_MAX_IMAGES} onPress={() => { void addImages() }} />
-            <Pressable testID="chat-model-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatModel.title')} onPress={() => router.push('/chat-model')} hitSlop={6}
-              style={({ pressed }) => ({ alignSelf: 'flex-start', maxWidth: '100%', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
-              <Txt role="meta" numberOfLines={1}>{chatModelLabel(chatModel.data) ?? t(lang, 'chatModel.open')}</Txt>
-            </Pressable>
-            <Pressable testID="chat-search-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatSearch.title')} onPress={() => router.push('/chat-search')} hitSlop={6}
-              style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
-              <Txt role="meta">{t(lang, 'chatSearch.open')}</Txt>
+              style={({ pressed }) => ({ minHeight: 44, justifyContent: 'center', paddingHorizontal: space.s, opacity: pressed ? 0.7 : 1 })}>
+              <Txt role="meta" tone="accent">{conversationText(lang, 'handoff')}</Txt>
             </Pressable>
           </View>
           <ImageTray testID="chat-images" images={images} lang={lang} onRemove={id => { setImages(cur => cur.filter(i => i.id !== id)); setImageNote(null) }} />
@@ -192,26 +188,18 @@ export default function Chat() {
   )
 }
 
-// 气泡照稿(此刻页 CC 那句):纸色 + 细线,说话人那一侧的下角收成小尾巴;「我」与 CC 只靠左右与尾巴区分,不上色块。
-const bubbleShape = (me: boolean) => ({
-  borderTopLeftRadius: radius.bubble, borderTopRightRadius: radius.bubble,
-  borderBottomLeftRadius: me ? radius.bubble : 4, borderBottomRightRadius: me ? 4 : radius.bubble,
-})
-
+// 对话用左右与留白区分说话人,文件先于可展开的执行过程。
 function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
-  const { c } = useTheme()
   const me = b.side === 'me'
   if (b.state === 'thinking') return <Thinking lang={lang} />
   const from = t(lang, `chat.from.${b.source}`)
-  // CC 的回复:过程(灰、默认收起)在上,附件在下;只有附件的回复不画空的文字气泡。
+  // 只有附件的回复不画空文字区;过程仍可展开查看。
   return (
     <View style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
-      {!me && b.narration?.length ? <ReplyProcess lines={b.narration} lang={lang} testID="chat-process" /> : null}
       {hasBubbleText(b) ? <View
         testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
         style={{
-          maxWidth: '85%', paddingHorizontal: space.l, paddingVertical: space.m, gap: space.xs, ...bubbleShape(me),
-          backgroundColor: c.paper, borderWidth: 1, borderColor: c.hair,
+          maxWidth: '88%', paddingVertical: space.m, gap: space.s,
           opacity: b.state === 'failed' ? 0.8 : 1,
         }}
       >
@@ -219,7 +207,9 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkErro
         <MessageText role={me ? 'user' : 'assistant'} text={b.text} />
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
       </View> : null}
-      {!me && b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
+      {b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
+      {b.originalUnavailable ? <Txt testID="chat-original-unavailable" role="meta" tone="inkSoft" style={{ maxWidth: '88%' }}>{t(lang, 'chat.originalUnavailable')}</Txt> : null}
+      {!me && b.narration?.length ? <ReplyProcess lines={b.narration} lang={lang} testID="chat-process" /> : null}
       <Txt role="caption" tone="inkSoft">{from} · {hhmm(b.at)}</Txt>
       {b.state === 'failed' && b.failedKind ? (
         <StatusHint testID={`chat-failed-${b.failedKind}`}

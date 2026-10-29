@@ -1,4 +1,4 @@
-# 执行者头像(2026-10-19)验收出图:「一起做」列表行尾的头像叠 + 一件事详情页标题下那一组。演示模式,不进 CI。
+# 执行者归属验收出图:一起做与终端列表突出事情,执行者名称留在读屏标签与详情;事项里的执行者收在展开的过程与执行信息里。演示模式,不进 CI。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -29,6 +29,23 @@ appId: com.tendhearth.app
     id: together-item-a1b2c3d4
 - extendedWaitUntil:
     visible:
-      id: progress-agents
+      id: approval-allow
+      enabled: true
     timeout: 5000
+- tapOn:
+    id: approval-allow
+- extendedWaitUntil:
+    visible:
+      id: progress-status
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: progress-process
+    direction: DOWN
+- tapOn:
+    id: progress-process
+- scrollUntilVisible:
+    element:
+      id: progress-agents
+    direction: DOWN
 - takeScreenshot: a03-detail

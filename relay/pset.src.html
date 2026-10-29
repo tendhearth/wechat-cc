@@ -1,5 +1,5 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>CC</title>
 <!--
   pset — 公网引导壳 (2026-08-26)。部署在中继 VPS 的静态目录,解决
@@ -23,13 +23,13 @@
 -->
 <style>
   /* 色值与 apps/mobile/src/tokens.css 保持一致(壳页单独部署,不能引用它;src/daemon/design-tokens.test.ts 守着) */
-  body { margin:0; font-family:"TH Serif 4","Noto Serif SC","Songti SC","STSong","Noto Serif CJK SC","Source Han Serif SC","SimSun",Georgia,serif; background:#faf7f2; color:#2a2622; display:grid; place-items:center; min-height:100vh }
-  .box { text-align:center; padding:24px; max-width:300px }
-  .box .b { width:64px; height:64px; margin:0 auto 14px; border-radius:50%; background:radial-gradient(circle at 45% 40%,#faf7f2 0%,#efeae2 70%); box-shadow:0 0 36px 10px rgba(255,214,150,0.55) }
+  body { margin:0; font-family:"TH Serif 4","Noto Serif SC","Songti SC","STSong","Noto Serif CJK SC","Source Han Serif SC","SimSun",Georgia,serif; background:#faf7f2; color:#2a2622; display:grid; place-items:center; min-height:100svh }
+  .box { box-sizing:border-box; text-align:center; padding:calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom)); width:100%; max-width:360px; overflow-wrap:anywhere }
+  .box .b { color:#4f6b4f; font-size:26px; font-weight:500; margin:0 auto 14px }
   .box .hand { color:#70665d; font-size:15px; margin:0 0 6px }
   .box p { color:#70665d; font-size:14px; line-height:1.7; margin:0 }
 </style></head><body>
-<div class="box"><div class="b" aria-hidden="true"></div><p class="hand">随身 CC</p><p id="msg">正在找回家的路…</p></div>
+<div class="box"><div class="b" aria-hidden="true">CC</div><p class="hand">随身 CC</p><p id="msg">正在找回家的路…</p></div>
 <script>
 /*@@CCP@@*/
 var P = {}

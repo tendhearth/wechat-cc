@@ -165,10 +165,13 @@ export function wireSettingsDrawer(opts) {
   document.addEventListener("click", (e) => {
     const drawer = document.getElementById("settings-drawer")
     if (!drawer || !drawer.classList.contains("is-open")) return
+    // A renewal/close action can replace its own DOM before this bubble phase.
+    // The original event path still identifies the nested phone dialog.
+    if (e.composedPath().some(node => node instanceof HTMLElement && node.id === 'phone-settings-modal')) return
     const target = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target : null)
     if (!target) return
     if (drawer.contains(target)) return
-    if (target.closest("#settings-open, #provider-menu")) return
+    if (target.closest("#settings-open, #provider-menu, #phone-settings-modal")) return
     closeSettingsDrawer()
   })
 
@@ -176,9 +179,15 @@ export function wireSettingsDrawer(opts) {
   // notify caller for persistence side effects. 持久化失败(onToggleChange
   // 返回 false / 抛错)就回滚开关,别让 UI 撒谎——和手机设置页同一姿态。
   document.querySelectorAll("#settings-drawer [data-toggle]").forEach((el) => {
+    let feedbackGeneration = 0
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    let savedTimer = null
     el.addEventListener("click", async () => {
       // 保存期间再点不重复提交(2026-09-29,取代 Codex #116 的一半);反馈写进 `<id>-feedback`(没有就不写)。
       if (el.getAttribute("aria-busy") === "true") return
+      const generation = ++feedbackGeneration
+      if (savedTimer !== null) clearTimeout(savedTimer)
+      savedTimer = null
       el.setAttribute("aria-busy", "true")
       el.setAttribute("disabled", "")
       const feedback = document.getElementById(`${el.id}-feedback`)
@@ -194,6 +203,12 @@ export function wireSettingsDrawer(opts) {
         const ok = await opts.onToggleChange(el.id, next)
         if (ok === false) throw new Error("persist_failed")
         say("已保存", "saved")
+        savedTimer = setTimeout(() => {
+          if (generation !== feedbackGeneration || !feedback || document.getElementById(`${el.id}-feedback`) !== feedback) return
+          feedback.textContent = ""
+          delete feedback.dataset.state
+          savedTimer = null
+        }, 1600)
       } catch {
         el.setAttribute("aria-pressed", String(pressed))
         el.classList.toggle("on", pressed)

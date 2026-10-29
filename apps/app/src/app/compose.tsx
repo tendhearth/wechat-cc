@@ -4,9 +4,11 @@ import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } fr
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t, type Lang } from '../i18n'
+import { conversationText } from '../i18n/minimal-conversation'
 import { useLang } from '../i18n/useLang'
 import { deleteDraft, dropDraftImages, getDraft, materialDraftId, pairingGen, peekDraftImages, requestIdFor, setDraft } from '../state/drafts'
-import { AddImageButton, ImageTray } from '../ui/ImageTray'
+import { ImageTray } from '../ui/ImageTray'
+import { Icon } from '../ui/Icon'
 import { bytesToBase64, uploadImages, type PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as MAX_IMAGES } from '@wechat-cc/protocol'
 import { useConnection, useQuery, useSubmit, useTopic } from '../state/hooks'
@@ -247,13 +249,12 @@ export default function Compose() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar
         onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-        onAvatar={() => router.push('/settings')}
+        title={matter ? t(lang, 'compose.continueHint') : conversationText(lang, 'handoff')}
       />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
           {matter ? (
             <>
-              <Txt role="caption" tone="inkSoft">{t(lang, 'compose.continueHint')}</Txt>
               {inputHint ? <Txt role="meta" tone="inkSoft">{inputHint}</Txt> : null}
               {nativeStart ? (
                 <View testID="compose-native-start" style={{ gap: space.xs }}>
@@ -261,13 +262,7 @@ export default function Compose() {
                 </View>
               ) : null}
             </>
-          ) : (
-            <>
-              <Txt role="title" accessibilityRole="header">{t(lang, 'compose.handoffTitle')}</Txt>
-              <Txt role="bubble" tone="inkSoft">{t(lang, 'compose.handoffHint')}</Txt>
-            </>
-          )}
-          <Card>
+          ) : null}
             <TextField
               testID="compose-input"
               autoFocus={focus}
@@ -277,25 +272,25 @@ export default function Compose() {
               multiline
               placeholder={t(lang, 'compose.placeholder')}
               role="item"
-              style={{ minHeight: 140, textAlignVertical: 'top' }}
+              style={{ minHeight: matter ? 140 : 220, textAlignVertical: 'top' }}
             />
-          </Card>
-          {(
-            <View style={{ gap: space.s }}>
+          <View style={{ gap: space.s }}>
               <ImageTray testID="compose-images" images={images} lang={lang} onRemove={id => { setImages(cur => cur.filter(i => i.id !== id)); setImageNote(null) }} />
               {imageNote ? <Txt testID="compose-image-note" role="meta" tone="inkSoft">{imageNote}</Txt> : null}
-              <AddImageButton testID="compose-add-image" lang={lang} disabled={busy || images.length >= MAX_IMAGES} onPress={() => { void addImages() }} />
-            </View>
-          )}
-          {matter ? null : (
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.m }}>
-              <Txt role="meta" tone="inkSoft" numberOfLines={2} style={{ flex: 1 }}>
-                {t(lang, 'compose.usingContext')}{project?.name ?? '…'} · {provider?.displayName ?? t(lang, 'compose.ccArranges')}{model ? ` · ${model.displayName}${effort ? ` · ${effortLabel(effort, lang)}` : ''}` : ''}
-              </Txt>
-              <Pressable accessibilityRole="button" testID="compose-adjust" onPress={() => setAdjust(true)} style={{ minHeight: 44, justifyContent: 'center' }} disabled={!opt}>
-                <Txt role="meta" tone="accent">{t(lang, 'compose.adjust')}</Txt>
+              <Pressable testID="compose-add-image" accessibilityRole="button" accessibilityLabel={t(lang, 'images.add')}
+                disabled={busy || images.length >= MAX_IMAGES} onPress={() => { void addImages() }}
+                style={({ pressed }) => ({ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.s, opacity: busy || images.length >= MAX_IMAGES ? 0.55 : pressed ? 0.7 : 1 })}>
+                <Icon name="plus" color={c.inkSoft} />
+                <Txt role="meta" tone="inkSoft">{t(lang, 'images.add')}</Txt>
               </Pressable>
-            </View>
+          </View>
+          {matter ? null : (
+            <Pressable accessibilityRole="button" testID="compose-adjust" accessibilityLabel={conversationText(lang, 'options')}
+              onPress={() => setAdjust(true)} disabled={!opt}
+              style={({ pressed }) => ({ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.s, opacity: !opt ? 0.55 : pressed ? 0.7 : 1 })}>
+              <Txt role="meta" tone="inkSoft" style={{ flex: 1 }}>{conversationText(lang, 'options')}</Txt>
+              <Icon name="chevronDown" color={c.inkSoft} />
+            </Pressable>
           )}
           {untilConfirm ? (
             // 提交前把要无人值守跑的命令整条摆出来:等宽、不截断、不限行数(安全 6)
@@ -332,7 +327,7 @@ export default function Compose() {
           {matter && rows.length ? <Button kind="secondary" testID="compose-progress" label={t(lang, 'input.viewProgress')} onPress={() => router.canGoBack() ? router.back() : router.replace(`/matter/${encodeURIComponent(matter)}`)} /> : null}
           <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Txt>
           {matter ? null : (
-            <Pressable accessibilityRole="button" onPress={() => setText(text.trim() ? `${text}\n${t(lang, 'compose.placeholder')}` : t(lang, 'compose.placeholder'))}>
+            <Pressable accessibilityRole="button" style={{ minHeight: 44, justifyContent: 'center' }} onPress={() => setText(text.trim() ? `${text}\n${t(lang, 'compose.placeholder')}` : t(lang, 'compose.placeholder'))}>
               <Txt role="small" tone="inkSoft" style={{ textAlign: 'center', textDecorationLine: 'underline' }}>{t(lang, 'compose.orSay')}</Txt>
             </Pressable>
           )}
@@ -345,6 +340,9 @@ export default function Compose() {
         <View testID="compose-adjust-sheet" style={{ backgroundColor: c.paper, maxHeight: '85%', borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.s }}>
           <Txt role="item" accessibilityRole="header">{t(lang, 'compose.adjustTitle')}</Txt>
+          <Txt role="meta" tone="inkSoft" testID="compose-current-context">
+            {t(lang, 'compose.usingContext')}{project?.name ?? '…'} · {provider?.displayName ?? t(lang, 'compose.ccArranges')}{model ? ` · ${model.displayName}${effort ? ` · ${effortLabel(effort, lang)}` : ''}` : ''}
+          </Txt>
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.project')}</Txt>
           {opt?.projects.map((p) => <ChoiceRow key={p.id} label={p.name} content="user" on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
           {project ? <ChoiceRow testID="compose-isolation" label={t(lang, 'compose.isolation')} on={isolated} onPress={() => setIsolated(v => !v)} /> : null}

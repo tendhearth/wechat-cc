@@ -28,7 +28,7 @@ vi.mock('react-native', async () => {
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('expo-audio', () => ({ createAudioPlayer: () => ({}), setAudioModeAsync: async () => {} }))
 vi.mock('expo-file-system', () => ({ File: class {}, Paths: {} }))
-vi.mock('react-native-safe-area-context', async () => { const { createElement } = await import('react'); return { SafeAreaView: ({ children }: any) => createElement('main', null, children) } })
+vi.mock('react-native-safe-area-context', async () => { const { createElement } = await import('react'); return { SafeAreaProvider: ({ children }: any) => children, SafeAreaView: ({ children }: any) => createElement('main', null, children) } })
 // 真的 HoldToTalk / SendTalkButton;录音器、系统设置是设备边界(守卫的 BOUNDARY_FILES 里登记过)。
 vi.mock('../ui/talk-recorder', () => ({ TALK_MIME: 'audio/mp4', useTalkRecorder: () => ({ permission: async () => 'granted', start: async () => {}, stop: async () => null }) }))
 vi.mock('../push/native', () => ({ openSystemSettings() {} }))
@@ -37,11 +37,11 @@ const empty = (): ChatPageT => ({ matterId: 'owner', title: 'CC', messages: [], 
 const byId = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
 async function flush() { await act(async () => { await new Promise(r => setTimeout(r, 0)) }) }
 async function click(id: string) { await act(() => byId(id).click()); await flush() }
-async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = false) {
+async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = false, lang: 'en' | 'zh-Hans' = 'zh-Hans') {
   const read = vi.fn(async () => { if (fail) throw new BackendError('offline'); return page })
-  const backend = { ...makeDemoBackend({ lang: 'zh-Hans' }), chat: read, chatSay: say }
-  await act(() => root.render(withProviders(createElement(Chat), { backend }))); await flush()
-  return { read, say }
+  const backend = { ...makeDemoBackend({ lang }), chat: read, chatSay: say }
+  await act(() => root.render(withProviders(createElement(Chat), { backend, lang }))); await flush()
+  return { read, say, backend }
 }
 beforeEach(() => { clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
 afterEach(async () => { await act(() => root.unmount()); container.remove() })
@@ -104,4 +104,38 @@ describe('native chat feedback', () => {
     expect(say).toHaveBeenCalledOnce()
     expect(container.querySelector('[role="dialog"]')).toBeNull()
   })
+})
+
+
+it('keeps validated inbound file metadata discoverable with the original message/index and truthful failed-open feedback', async () => {
+  const page = empty()
+  const text = '原始输入 [文件×1]'
+  page.messages = [{ id: 'incoming-1', role: 'me', kind: 'text', text, at: 1, source: 'phone', truncated: false, attachments: [{ kind: 'file', name: 'source.txt' }] }]
+  const h = await mount(page)
+  expect(byId('chat-att-file')?.textContent).toContain('source.txt')
+  expect(byId('chat-bubble-me')?.textContent).toContain(text)
+  const load = vi.fn(async () => { throw new BackendError('not_found') }); h.backend.chatFileChunk = load
+  await click('chat-att-file')
+  expect(load).toHaveBeenCalledWith({ messageId: 'incoming-1', index: 0, offset: 0 })
+  expect(byId('chat-att-file-note')?.textContent).toContain('没打开，稍后再试。')
+  expect(byId('chat-bubble-me')?.textContent).toContain(text)
+})
+
+it('never fabricates an attachment for legacy inbound text whose original metadata is absent', async () => {
+  const page = empty()
+  page.messages = [{ id: 'legacy', role: 'me', kind: 'text', text: '以前的图片 [图片×2]', at: 1, source: 'wechat', truncated: false }]
+  await mount(page)
+  expect(byId('chat-bubble-me')?.textContent).toContain('以前的图片 [图片×2]')
+  expect(byId('chat-att-file')).toBeNull()
+  expect(byId('chat-att-image')).toBeNull()
+})
+
+for (const lang of ['en', 'zh-Hans'] as const) it(`explains unavailable originals on persisted count-only input without changing its text (${lang})`, async () => {
+  const page = empty(), text = '以前的图片\n[图片 ×2]'
+  page.messages = [{ id: 'legacy-note', role: 'me', kind: 'text', text, at: 1, source: 'phone', truncated: false }]
+  await mount(page, vi.fn(), false, lang)
+  expect(byId('chat-bubble-me')?.textContent).toContain(text)
+  expect(byId('chat-original-unavailable')?.textContent).toBe(lang === 'en' ? 'This record kept only text. The original attachment is not available to open.' : '这条记录只保留了文字，无法打开原附件。')
+  expect(byId('chat-att-file')).toBeNull()
+  expect(byId('chat-att-image')).toBeNull()
 })

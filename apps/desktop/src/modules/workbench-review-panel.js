@@ -18,7 +18,7 @@
  * @typedef {{artifactId:string,path:string,hunk:number,hunkSha256?:string,rowStart?:number,rowEnd?:number,commentId:string,body:string,edit?:boolean,notice?:string}} LineCompose
  * @typedef {{summary?:string,notice?:string,result?:string,restartToken?:string}} CommentsSend
  * @typedef {{select?:LineSelect|null,compose?:LineCompose|null,send?:CommentsSend|null}} ReviewLineOptions */
-/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile,lines?:import('./workbench-code-review.js').LineView)=>string,returnOpen?:ReviewReturnOpen|null,returnResult?:ReviewReturnResult|null,lesson?:boolean,error?:boolean,budget?:{limited:boolean},rewind?:ReviewRewindOptions,lines?:ReviewLineOptions,track?:{composePlaced:boolean}}} ReviewPanelOptions */
+/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile,lines?:import('./workbench-code-review.js').LineView)=>string,compactSummary?:boolean,returnOpen?:ReviewReturnOpen|null,returnResult?:ReviewReturnResult|null,lesson?:boolean,error?:boolean,budget?:{limited:boolean},rewind?:ReviewRewindOptions,lines?:ReviewLineOptions,track?:{composePlaced:boolean}}} ReviewPanelOptions */
 
 import { renderRewindConfirm, rewindButtonHtml, rewindUndoHtml } from './workbench-rewind.js'
 import { splitDiffHunks } from './workbench-code-review.js'
@@ -211,5 +211,9 @@ export function renderReviewPanel(reviews, options) {
   // 额度是渲染时才知道有没有用完的,所以这句只能在所有回合都渲完之后问,而且只说一次。
   const limited = options.budget?.limited ? '<p class="wb-review-limit">预览已限量显示，请在「成果」里打开这份变更记录看完整差异。</p>' : ''
   const send = renderSendBar(list, options.lines?.send, options.escapeHtml)
-  return `<details id="wb-review" class="wb-disclosure wb-review" data-review-disclosure><summary><span>改动</span><small>${counts.turns} 轮 · ${counts.files} 个文件 · 已接受 ${counts.accepted} · 已打回 ${counts.returned}</small></summary>${unavailable}${undo}${turns}${orphan}${send}${limited}</details>`
+  const statistics = `${counts.turns} 轮 · ${counts.files} 个文件 · 已接受 ${counts.accepted} · 已打回 ${counts.returned}`
+  // 默认调用保留原来的 HTML;紧凑调用只移入统计,不再套一层展开区。读不到时不把零文件当作结论。
+  const summary = options.compactSummary ? (counts.files ? `<small>${counts.files} 个文件</small>` : '') : `<small>${statistics}</small>`
+  const statisticsBody = options.compactSummary ? `<p class="wb-review-note">${statistics}</p>` : ''
+  return `<details id="wb-review" class="wb-disclosure wb-review" data-review-disclosure><summary><span>改动</span>${summary}</summary>${statisticsBody}${unavailable}${undo}${turns}${orphan}${send}${limited}</details>`
 }

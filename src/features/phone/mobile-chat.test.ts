@@ -330,3 +330,20 @@ describe('/m/api/chat/transcribe 按住说话(2026-10-18)', () => {
     expect((await call(d, new Request('http://x/m/api/chat/transcribe', { method: 'PUT' }))).status).toBe(405)
   })
 })
+
+
+it('restores only validated app uploads from the owner inbox in both history and the existing file reader',async()=>{
+  const {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync}=await import('node:fs'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+  const dir=mkdtempSync(join(tmpdir(),'phone-incoming-')),inbox=join(dir,'inbox');mkdirSync(inbox)
+  try{
+    const path=join(inbox,'app-desktop-123-1.png');writeFileSync(path,'image bytes')
+    let row=rec(2,{id:'app:desktop:123:in',source:'desktop',direction:'in',text:'text\n[图片 ×1]',extras:JSON.stringify({attachments:[{kind:'file',name:'original.png',path}],narration:[]})})
+    const d=deps({inboxDir:inbox,history:async()=>[row],message:async()=>row}),url='/file?id=app%3Adesktop%3A123%3Ain&i=0'
+    expect((await call(d,get())).body.messages[0].attachments).toEqual([{kind:'file',name:'original.png'}])
+    expect((await call(d,get(url))).status).toBe(200)
+    const good={...row}
+    for(const changes of [{source:'live'},{id:'forged'},{chatId:'foreign'},{extras:JSON.stringify({attachments:[{kind:'file',name:'other',path:join(dir,'outside.png')}],narration:[]})}]){row={...good,...changes};expect((await call(d,get(url))).status).toBe(404)}
+    row=good;const target=join(dir,'outside.png');writeFileSync(target,'private');rmSync(path);symlinkSync(target,path);expect((await call(d,get(url))).status).toBe(404)
+    row={...good,extras:undefined};expect((await call(d,get())).body.messages[0].attachments).toBeUndefined();expect((await call(d,get(url))).status).toBe(404)
+  }finally{rmSync(dir,{recursive:true,force:true})}
+})

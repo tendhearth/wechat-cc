@@ -52,6 +52,46 @@ describe('mountNowPage', () => {
     expect(row.querySelector('.d')!.textContent).toBe('作品集')
     expect(row.querySelector('.go')!.textContent).toBe('回答 ›')
   })
+  it('compact rows keep each request purpose and task identity reachable through the native button', () => {
+    const root = dom(); const open = vi.fn()
+    const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: open })
+    page.setAttention({ stale: false, tasks: [
+      { id: 'trip', title: '出差安排', pendingPermissionCount: 0, pendingQuestionCount: 1, first: { kind: 'question', text: '选哪一天？' } },
+      { id: 'portfolio', title: '作品集', pendingPermissionCount: 1, pendingQuestionCount: 1, first: { kind: 'permission', text: 'Bash: npm install sharp' } },
+    ] })
+    const rows = [...root.querySelectorAll<HTMLButtonElement>('.now-waiting-row')]
+    expect(rows[0]!.title).toBe('回答：选哪一天？ · 出差安排')
+    expect(rows[1]!.title).toBe('看清楚：Bash: npm install sharp · 作品集 · 共 2 项')
+    expect(rows[0]!.querySelector('.go .now-sr')!.textContent).toBe('回答 ›')
+    expect(rows[1]!.querySelector('.go .now-sr')!.textContent).toBe('看清楚 ›')
+    expect(rows[0]!.querySelector('.go svg')!.getAttribute('aria-hidden')).toBe('true')
+    rows[1]!.focus()
+    expect(document.activeElement).toBe(rows[1])
+    rows[1]!.querySelector('.go svg')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(open).toHaveBeenCalledExactlyOnceWith('portfolio')
+    expect(root.querySelector('#now-waiting')!.getAttribute('aria-labelledby')).toBe('now-waiting-title')
+    expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(true)
+  })
+  it('partial reads disclose uncertainty while keeping terminal requests available, then recover to quiet known state', () => {
+    const root = dom()
+    const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn(async () => true) })
+    page.setAttention({ stale: true, tasks: [{ id: 'old', title: '旧任务', pendingPermissionCount: 1, pendingQuestionCount: 0 }] })
+    expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(false)
+    page.setTerminal([{ id: 'terminal', title: '想运行 ls', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'ls' }])
+    expect((root.querySelector('#now-waiting') as HTMLElement).dataset.state).toBe('partial')
+    expect(root.querySelector('#now-waiting-title')!.textContent).toContain('一起做那边暂时读不到')
+    expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(false)
+    expect(root.querySelector('[data-task-id="old"]')).toBeNull()
+    const row = root.querySelector<HTMLButtonElement>('.now-terminal button')!
+    expect(row.title).toBe('看清楚：想运行 ls · wechat-cc · Claude Code')
+    expect(row.querySelector('.go .now-sr')!.textContent).toBe('看清楚 ›')
+    row.click()
+    expect(document.querySelector('.now-terminal-command')!.textContent).toBe('ls')
+    page.setAttention({ stale: false, tasks: [] })
+    expect((root.querySelector('#now-waiting') as HTMLElement).dataset.state).toBeUndefined()
+    expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(true)
+    page.destroy()
+  })
   it('终端里等批准的会话接在工作台行后面;开了码的行只给「看清楚 ›」,点开小窗看清命令再允许 / 拒绝,不打开任务', async () => {
     const root = dom(); const open = vi.fn()
     let settle!: (v: boolean) => void

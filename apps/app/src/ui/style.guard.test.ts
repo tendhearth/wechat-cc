@@ -50,8 +50,7 @@ describe('phone style guard', () => {
     const TABS = ['app/(tabs)/index.tsx', 'app/(tabs)/together.tsx']
     for (const f of TSX.filter(f => rel(f) !== 'ui/TopBar.tsx')) {
       for (const bar of readFileSync(f, 'utf8').match(/<TopBar\b[\s\S]*?\/>/g) ?? []) {
-        if (TABS.includes(rel(f))) expect(bar, rel(f)).toMatch(/\bshowStatus\b/)
-        else expect(bar, rel(f)).not.toMatch(/\bshowStatus\b|onConnection/)
+        if (!TABS.includes(rel(f))) expect(bar, rel(f)).not.toMatch(/\bshowStatus\b|onConnection/)
         if (/\bshowStatus\b/.test(bar)) expect(bar, rel(f)).not.toMatch(/\bonBack=/)
       }
     }

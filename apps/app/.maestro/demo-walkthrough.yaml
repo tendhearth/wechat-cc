@@ -1,4 +1,4 @@
-# 演示走一遍:首次打开 → 先看看 → 此刻 → 一起做 → 某件事(作品集)→ 展开改动 → 设置 → 切换语言 → 退出演示。
+# 演示走一遍:首次打开 → 先看看 → 此刻 → 一起做 → 批准作品集这一步 → 事项 → 展开改动 → 设置 → 切换语言 → 退出演示。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -6,7 +6,7 @@ appId: com.tendhearth.app
     id: welcome-pair
 - tapOn:
     id: welcome-look-first
-# 此刻:CC(带它最近一句真话)+ 它打猎带回来的一张卡 +「2 件事等你」两行(作品集的批准 + 出差的问题);没有「慢慢来」一类的填充话。
+# 此刻:CC、具体待回应行和低层级的带回内容;不再重复「N 件事等你」标题,没有填充话。
 # 演示里没有执行者在写 ⇒ CC 下面不说它在干什么(没信号不说话)。
 - extendedWaitUntil:
     visible:
@@ -14,12 +14,16 @@ appId: com.tendhearth.app
     timeout: 10000
 - assertVisible:
     id: now-cc
-- assertVisible:
-    id: now-companion-card
 - assertNotVisible:
     id: now-cc-status
 - assertVisible:
-    id: now-waiting-title
+    id: now-needs-you-card
+- scrollUntilVisible:
+    element:
+      id: now-companion-card
+    direction: DOWN
+- assertVisible:
+    id: now-companion-card
 - assertNotVisible: ".*(慢慢来|take it slow).*"
 - assertVisible:
     id: now-say
@@ -41,15 +45,28 @@ appId: com.tendhearth.app
     id: together-item-c9d0e1f2
 - tapOn:
     id: together-item-a1b2c3d4
-# 进展页:状态标签在概括之上,有「去看待批准」。
+# 待回应行直接打开具体批准;只允许这一步,成功后进入事项,概括按需展开。
+- extendedWaitUntil:
+    visible:
+      id: approval-allow
+      enabled: true
+    timeout: 10000
+- assertVisible:
+    id: approval-raw-inline
+- tapOn:
+    id: approval-allow
 - extendedWaitUntil:
     visible:
       id: progress-status
     timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: progress-summary-toggle
+    direction: DOWN
+- tapOn:
+    id: progress-summary-toggle
 - assertVisible:
     id: progress-summary
-- assertVisible:
-    id: progress-view-approval
 - scrollUntilVisible:
     element:
       id: progress-changes
@@ -65,25 +82,42 @@ appId: com.tendhearth.app
 - scrollUntilVisible:
     element:
       id: progress-process
-    direction: DOWN
+    direction: UP
     centerElement: true
 - tapOn:
     id: progress-process
 - scrollUntilVisible:
     element: ".*Projects/portfolio"
     direction: DOWN
+# 详情页只有返回;回到此刻再进设置。
+- tapOn:
+    id: topbar-back
+- tapOn:
+    id: tab-now
 - tapOn:
     id: topbar-settings
 - extendedWaitUntil:
     visible:
-      id: settings-language
+      id: settings-memory
     timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: settings-language-toggle
+    direction: DOWN
+- tapOn:
+    id: settings-language-toggle
 - tapOn:
     id: settings-language-en
 - assertVisible: "Settings"
 - tapOn:
     id: settings-language-zh-Hans
 - assertVisible: "设置"
+- scrollUntilVisible:
+    element:
+      id: settings-privacy-toggle
+    direction: DOWN
+- tapOn:
+    id: settings-privacy-toggle
 - assertVisible:
     id: settings-privacy
 - scrollUntilVisible:

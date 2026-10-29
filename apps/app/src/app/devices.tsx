@@ -4,10 +4,12 @@ import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { secondaryText as st } from '../i18n/minimal-secondary'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection, useQuery, useSubmit } from '../state/hooks'
 import { Button } from '../ui/Button'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
+import { Icon } from '../ui/Icon'
 import { TextField } from '../ui/TextField'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
@@ -26,10 +28,15 @@ export default function Devices() {
   const q = useQuery('devices', () => backend.devices(), { refreshOnMount: true })
   const v = q.data ? devicesView(q.data, Date.now(), lang) : null
   const [name, setName] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [savedLabel, setSavedLabel] = useState<string | null>(null)
   const [msg, setMsg] = useState<null | 'saved' | 'failed'>(null)
   const [busy, setBusy] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   useEffect(() => { if (name === null && v?.me) setName(v.me.label) }, [name, v?.me])
+  // The confirmed write remains the displayed name if its follow-up read fails.
+  // A later successful read becomes authoritative again.
+  useEffect(() => { setSavedLabel(null) }, [q.syncedAt])
   const online = conn.state === 'online'
   const save = async () => {
     const label = (name ?? '').trim()
@@ -38,23 +45,31 @@ export default function Devices() {
     const r = await submit('device:rename', () => backend.renameDevice(label))
     setBusy(false)
     setMsg(r === 'ok' ? 'saved' : 'failed')
-    if (r === 'ok') void q.refresh()
+    if (r === 'ok') { setSavedLabel(label); setEditing(false); void q.refresh() }
   }
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={t(lang, 'devices.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} />
+      <TopBar title={st(lang, 'devices')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <ConnectionNotice />
         {!v ? (
           q.error ? (
-            <Pressable testID="devices-load-failed" accessibilityRole="button" onPress={() => void q.refresh()}>
+            <Pressable testID="devices-load-failed" accessibilityRole="button" onPress={() => void q.refresh()} style={{ minHeight: 44, justifyContent: 'center' }}>
               <Txt role="bubble" tone="bad">{t(lang, 'devices.loadFailed')}</Txt>
             </Pressable>
           ) : <Txt role="bubble" tone="inkSoft">{t(lang, 'progress.loading')}</Txt>
         ) : (
           <View testID="devices-list" style={{ gap: space.l }}>
-            <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'devices.thisPhone')}</Txt>
-            <View style={{ gap: space.s }}>
+            <Pressable testID="devices-edit" accessibilityRole="button" accessibilityLabel={st(lang, 'rename')} accessibilityState={{ expanded: editing }} onPress={() => setEditing(!editing)}
+              style={{ minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: space.m }}>
+              <Icon name="device" color={c.inkSoft} />
+              <View testID="devices-local" style={{ flex: 1, gap: space.xs }}>
+                <Txt role="body" content="user">{savedLabel ?? (v.me?.label || t(lang, 'devices.thisPhone'))}</Txt>
+                <Txt role="meta" tone="inkSoft">{t(lang, 'devices.thisPhone')}</Txt>
+              </View>
+              <Icon name="edit" color={c.inkSoft} />
+            </Pressable>
+            {editing ? <View style={{ gap: space.s }}>
               <Txt role="small" tone="inkSoft">{t(lang, 'devices.nameLabel')}</Txt>
               <TextField
                 testID="devices-name-input"
@@ -64,15 +79,15 @@ export default function Devices() {
                 style={{ minHeight: 48, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, paddingHorizontal: space.l, backgroundColor: c.paper }}
               />
               <Button kind="primary" testID="devices-save" label={t(lang, 'devices.save')} busy={busy} disabled={!online || !(name ?? '').trim()} onPress={() => void save()} />
-              {msg ? <Txt role="meta" tone={msg === 'saved' ? 'inkSoft' : 'bad'} accessibilityLiveRegion="polite">{t(lang, msg === 'saved' ? 'devices.saved' : 'devices.saveFailed')}</Txt> : null}
-            </View>
+            </View> : null}
+            {msg ? <Txt role="meta" tone={msg === 'saved' ? 'inkSoft' : 'bad'} accessibilityLiveRegion="polite">{t(lang, msg === 'saved' ? 'devices.saved' : 'devices.saveFailed')}</Txt> : null}
             {v.others.length > 0 ? (
               <>
                 <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.m }}>{t(lang, 'devices.others')}</Txt>
-                <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+                <View style={{ gap: space.s }}>
                   {v.others.map(o => (
                     <Pressable key={o.id} testID={`devices-other-${o.id}`} accessibilityRole="button" accessibilityLabel={o.label} onPress={() => setHint(o.id)}
-                      style={{ gap: 2, paddingVertical: space.m, borderBottomWidth: 1, borderBottomColor: c.hair }}>
+                      style={{ gap: space.xs, paddingVertical: space.m, minHeight: 56 }}>
                       <Txt role="body" content="user">{o.label}</Txt>
                       {o.lastSeen ? <Txt role="small" tone="inkSoft">{o.lastSeen}</Txt> : null}
                       {hint === o.id ? <Txt testID="devices-other-hint" role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ marginTop: space.xs }}>{t(lang, 'devices.otherHint')}</Txt> : null}

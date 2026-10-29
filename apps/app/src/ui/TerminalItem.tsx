@@ -2,8 +2,8 @@ import { Pressable, View } from 'react-native'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { TERMINAL_DOT, type TerminalRow, type TerminalStatus } from '../view/terminal'
-import { AgentAvatars } from './AgentAvatars'
 import { Dot } from './Dot'
+import { Icon } from './Icon'
 import { space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
@@ -20,42 +20,40 @@ export function TerminalStatusPill({ status, testID }: { status: TerminalStatus;
 }
 
 /**
- * 「一起做」里终端会话的一行:项目、状态、最后一句、多久前,行尾一个圆头像说是哪家(名字只进读屏标签)。整行只有一个动作:点进详情。
- * 等你批准且手机拍得了 ⇒ 右边写「看清楚 ›」,允许这一步 / 先不做只在详情里(看清楚了再拍);终端自己在问 ⇒ 说一句「回电脑上答」。
+ * 终端会话与事情用同样的平面行:具体操作优先,项目与状态放小字;执行者和批准入口含义保留在读屏标签。
+ * 整行只打开详情,不在这里批准。终端自己在问时仍明说「回电脑上答」;旧快照不把上次那一步说成正在做。
  */
 export function TerminalItem({ row, onOpen }: { row: TerminalRow; onOpen: () => void }) {
   const { c } = useTheme()
   const lang = useLang()
   const status = t(lang, `terminal.status.${row.status}`)
   const review = row.status === 'waiting' && row.actionable
+  const local = row.status === 'waiting' && !row.actionable ? t(lang, 'terminal.askedLocally') : null
+  const stale = row.stale ? t(lang, 'terminal.stale.hint') : null
+  const title = row.pendingText || row.project
+  const detail = !row.pendingText && !row.stale ? row.nowText || row.summary : null
+  const caption = [row.pendingText ? row.project : null, stale || status, row.ago].filter(Boolean).join(' · ')
+  const label = [title, row.pendingText ? row.project : null, row.source, status, stale, row.ago, detail, review ? t(lang, 'terminal.review') : null, local].filter(Boolean).join(', ')
   return (
-    <View testID={`terminal-item-${row.id}`} style={{ borderBottomWidth: 1, borderBottomColor: c.hair, paddingVertical: space.l, gap: space.s }}>
+    <View testID={`terminal-item-${row.id}`}>
       <Pressable
         testID={`terminal-open-${row.id}`}
         accessibilityRole="button"
-        accessibilityLabel={`${row.project}, ${row.source}, ${status}${review ? `. ${t(lang, 'terminal.review')}` : ''}`}
+        accessibilityLabel={label}
         onPress={onOpen}
-        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, opacity: pressed ? 0.7 : 1 })}
+        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: space.m, gap: space.m, opacity: pressed ? 0.7 : 1 })}
       >
-        <View style={{ flex: 1, gap: space.s }}>
-          <Txt role="item" content="user" numberOfLines={1}>{row.project}</Txt>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s, flexWrap: 'wrap' }}>
-            <TerminalStatusPill status={row.status} testID={`terminal-status-${row.id}`} />
-            <Txt role="small" tone="inkSoft" numberOfLines={1}>{`· ${row.stale ? t(lang, 'terminal.stale.hint') : row.ago}`}</Txt>
-          </View>
-          {row.pendingText ? <Txt role="small" content="user" numberOfLines={2}>{row.pendingText}</Txt> : null}
-          {row.nowText && !row.pendingText
-            ? <Txt testID={`terminal-now-${row.id}`} role="small" content="user" numberOfLines={2}>{`${t(lang, 'progress.stepNow')} · ${row.nowText}`}</Txt>
-            : row.summary && !row.pendingText ? <Txt role="small" tone="inkSoft" content="user" numberOfLines={2}>{row.summary}</Txt> : null}
+        <Icon name={review ? 'shield' : 'terminal'} color={c.inkSoft} />
+        <View style={{ flex: 1, gap: space.xs }}>
+          <Txt role="item" content="user" numberOfLines={2}>{title}</Txt>
+          <Txt testID={`terminal-status-${row.id}`} role="meta" tone="inkSoft">{caption}</Txt>
+          {detail ? <Txt testID={row.nowText ? `terminal-now-${row.id}` : undefined} role="small" tone="inkSoft" content="user" numberOfLines={1}>{detail}</Txt> : null}
+          {local ? <Txt testID={`terminal-local-${row.id}`} role="meta" tone="inkSoft">{local}</Txt> : null}
         </View>
-        <AgentAvatars ids={[row.agent]} names={{ [row.agent]: row.source }} testID={`terminal-agent-${row.id}`} />
-        {review
-          ? <Txt testID={`terminal-review-${row.id}`} role="bubble" tone="inkSoft">{`${t(lang, 'terminal.review')} ›`}</Txt>
-          : <Txt role="title" tone="inkSoft">›</Txt>}
+        <View testID={review ? `terminal-review-${row.id}` : undefined} accessible={false} style={{ width: 18, height: 18 }}>
+          <Icon name="chevronRight" size={18} color={c.inkSoft} />
+        </View>
       </Pressable>
-      {row.status === 'waiting' && !row.actionable ? (
-        <Txt testID={`terminal-local-${row.id}`} role="meta" tone="inkSoft">{t(lang, 'terminal.askedLocally')}</Txt>
-      ) : null}
     </View>
   )
 }
