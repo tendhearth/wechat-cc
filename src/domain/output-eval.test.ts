@@ -16,6 +16,8 @@ describe('parseSample', () => {
   it('id 缺省用文件名;id 和文件名都得是安全的名字', () => {
     expect(parseSample({ kind: 'reply', input: { text: '早' } }, 'from-file')).toMatchObject({ ok: true, sample: { id: 'from-file' } })
     expect(parseSample({ id: '../x', kind: 'reply', input: { text: '早' } }, 'f')).toEqual({ ok: false, error: 'id 只能是字母、数字、- 和 _' })
+    // 回归比较按 id 对:两份文件写了同一个 id,上一次的结果会被合成一条、回归丢掉(Codex 评审)。id 跟文件名走 ⇒ 天然不重
+    expect(parseSample({ id: 'a', kind: 'reply', input: { text: '早' } }, 'a-copy')).toEqual({ ok: false, error: 'id 要和文件名一致(a-copy)' })
   })
   it('kind 不认得、input 不对 ⇒ 拒并说明', () => {
     expect(parseSample({ id: 'a', kind: 'chat', input: {} }, 'a')).toEqual({ ok: false, error: 'kind 只能是 reply / brief / reference' })

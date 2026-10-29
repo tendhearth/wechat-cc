@@ -149,6 +149,8 @@ export function parseSample(raw: unknown, fileId: string): { ok: true; sample: E
   if (!isObj(raw)) return { ok: false, error: '样本要是一个 JSON 对象' }
   const id = raw.id === undefined ? fileId : raw.id
   if (typeof id !== 'string' || !SAFE_ID.test(id)) return { ok: false, error: 'id 只能是字母、数字、- 和 _' }
+  // 回归比较按 id 对,id 必须唯一:跟文件名走(同一目录里文件名不会重)
+  if (id !== fileId) return { ok: false, error: `id 要和文件名一致(${fileId})` }
   if (typeof raw.kind !== 'string' || !(EVAL_KINDS as readonly string[]).includes(raw.kind)) return { ok: false, error: 'kind 只能是 reply / brief / reference' }
   const kind = raw.kind as EvalKind
   if (!isObj(raw.input)) return { ok: false, error: 'input 要是对象' }
