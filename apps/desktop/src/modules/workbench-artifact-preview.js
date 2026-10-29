@@ -55,9 +55,12 @@ export function renderArtifactPanel(artifacts, selected, preview) {
   const content = current ? source ? `<pre>${escape(current.source ?? '')}</pre>` : current.html : '<p class="wb-preview-hint" role="status">正在打开成果…</p>'
   return `<aside class="wb-artifact-panel" aria-label="成果预览"><header><label for="wb-artifact-choice">成果</label><select id="wb-artifact-choice" aria-label="选择成果">${artifacts.map(artifact => `<option value="${escape(artifact.id)}"${artifact.id === selected.id ? ' selected' : ''}>${escape(artifactDisplayName(artifact.name))}</option>`).join('')}</select><button type="button" class="wb-new" data-action="back-to-dialogue" aria-label="关闭成果预览">关闭</button></header>
   ${current?.source !== undefined || current?.kind === 'web' ? `<nav class="wb-preview-tools" aria-label="预览工具">${current.source !== undefined ? `<button type="button" class="wb-new" data-action="artifact-preview-mode" aria-pressed="${!source}">预览</button><button type="button" class="wb-new" data-action="artifact-source-mode" aria-pressed="${!!source}">源码</button>` : ''}${!source ? `<button type="button" class="wb-new" data-action="artifact-width" aria-pressed="${!!current.narrow}">窄屏</button>` : ''}${current.kind === 'web' ? '<button type="button" class="wb-new" data-action="refresh-artifact">刷新</button><button type="button" class="wb-new" data-action="open-preview-browser">浏览器打开</button>' : ''}</nav>` : ''}
-  <div id="wb-preview" class="wb-preview${current?.narrow && !source ? ' is-narrow' : ''}"><div class="wb-preview-content">${content}</div></div>
+  <div id="wb-preview" class="wb-preview${current?.narrow && !source ? ' is-narrow' : ''}"><div class="wb-preview-content"${current ? ` data-preview-document="${escape(selected.id)}:${source ? 'source' : 'preview'}"` : ''}>${content}</div></div>
   <footer><small>${current?.kind === 'web' ? '运行中的网页 · 内容随项目更新' : liveFile ? '网页预览' : '已保存的成果版本'}</small>${current?.kind === 'web' || liveFile ? '' : `<div><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selected.approvedAt ? '<span class="wb-approved">已确认此版本</span>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}</div>`}</footer></aside>`
 }
+
+/** @type {WeakMap<HTMLElement,{node:Element,key:string|null,html:string}>} */
+const readingDocuments=new WeakMap()
 
 /** Keep the browsing context connected while task data and preview controls update.
  * Moving an iframe out of the document destroys its form and JavaScript state.
@@ -66,13 +69,16 @@ export function paintWorkbenchWithPreview(root, html) {
   const panel = root.querySelector('.wb-artifact-panel')
   const frame = panel?.querySelector('#wb-preview-frame, .cc-pdf-reader[data-preview-key]')
   const shell = root.querySelector('.workbench-shell')
-  if (panel && frame && shell) {
+  const reading=panel?.querySelector('.wb-preview-content[data-preview-document]'),saved=readingDocuments.get(root)
+  if (panel && (frame || reading) && shell) {
     const template = document.createElement('template')
     template.innerHTML = html
     const nextShell = template.content?.querySelector('.workbench-shell')
     const nextPanel = nextShell?.querySelector('.wb-artifact-panel')
     const nextFrame = nextPanel?.querySelector('#wb-preview-frame, .cc-pdf-reader[data-preview-key]')
-    if (nextShell && nextPanel && nextFrame && frame.getAttribute('data-preview-key') === nextFrame.getAttribute('data-preview-key')) {
+    const nextReading=nextPanel?.querySelector('.wb-preview-content[data-preview-document]')
+    const sameDocument=reading&&nextReading&&saved?.node===reading&&saved.key===nextReading.getAttribute('data-preview-document')&&saved.html===nextReading.innerHTML
+    if (nextShell && nextPanel && ((frame && nextFrame && frame.getAttribute('data-preview-key') === nextFrame.getAttribute('data-preview-key')) || sameDocument)) {
       shell.className = nextShell.className
       for (const child of Array.from(shell.children)) if (child !== panel) child.remove()
       for (const child of Array.from(nextShell.children)) if (child !== nextPanel) shell.insertBefore(child, panel)
@@ -87,4 +93,7 @@ export function paintWorkbenchWithPreview(root, html) {
     }
   }
   root.innerHTML = html
+  const nextReading=root.querySelector('.wb-preview-content[data-preview-document]')
+  if(nextReading)readingDocuments.set(root,{node:nextReading,key:nextReading.getAttribute('data-preview-document'),html:nextReading.innerHTML})
+  else readingDocuments.delete(root)
 }

@@ -118,8 +118,11 @@ it('keeps unsafe assistant content inert and leaves error and system lines as pl
   expect(html).toContain('&lt;script&gt;')
   expect(html).not.toContain('<script>')
   expect(html).not.toContain('href="javascript:')
-  expect(html).not.toContain('https://example.test/image.png')
-  expect(html).not.toContain('/Users/private/doc.md')
+  expect(html).toContain('href="https://example.test/image.png"')
+  expect(html).not.toContain('src="https://example.test/image.png"')
+  expect(html).toContain('rel="noopener noreferrer"')
+  expect(html).toContain('<code>/Users/private/doc.md</code>')
+  expect(html).not.toContain('href="/Users/private/doc.md"')
   invoke.mockRejectedValue(Error('**原样错误** <script>'))
   els['converse-input']!.value = '再次检查'
   els['converse-send']!.handlers.click!()

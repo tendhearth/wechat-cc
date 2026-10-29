@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decodeMarkdownEntities, hasMarkdownFormatting, markdownPlainText, parseMarkdown, renderMarkdown, safeMarkdownUrl } from './index'
+import { decodeMarkdownEntities, hasMarkdownFormatting, markdownPlainText, parseMarkdown, renderMarkdown, renderReadingMarkdown, safeMarkdownUrl } from './index'
 
 describe('transcript Markdown across reading surfaces', () => {
   it('offers source inspection for formatted messages and leaves plain messages uncluttered', () => {
@@ -42,5 +42,26 @@ describe('transcript Markdown across reading surfaces', () => {
   it('decodes valid prose entities and leaves invalid Unicode references intact', () => {
     expect(decodeMarkdownEntities('&amp; &#x4e2d; &#65; &quot;')).toBe('& 中 A "')
     expect(decodeMarkdownEntities('&#0; &#xD800; &#x110000;')).toBe('&#0; &#xD800; &#x110000;')
+  })
+})
+
+
+describe('explicit reading destinations', () => {
+  it('offers an explicit image link without fetching it and preserves inert targets', () => {
+    const html = renderReadingMarkdown('![远程图](https://example.com/a.png) ![本地图](../a.png) [原文](/Users/me/a.md:12) [危险](javascript:alert%281%29)')
+    expect(html).toContain('href="https://example.com/a.png"')
+    expect(html).toContain('打开图片')
+    expect(html).toContain('../a.png')
+    expect(html).toContain('/Users/me/a.md:12')
+    expect(html).not.toMatch(/<(?:img|script)\b|href="(?:javascript|file|data):/)
+    expect(html).toContain('rel="noopener noreferrer"')
+  })
+  it('escapes target text and preserves default renderer and native tokens', () => {
+    const source = '![图](../photo.png) [文档](./notes.md)'
+    expect(renderMarkdown(source)).not.toContain('../photo.png')
+    expect(renderReadingMarkdown(source)).toContain('../photo.png')
+    expect(parseMarkdown(source)[0]!.type).toBe('paragraph')
+    expect(renderReadingMarkdown('[字](<./a"b>)')).toContain('&quot;')
+    expect(renderReadingMarkdown('<img src=x onerror=alert(1)>')).not.toContain('<img')
   })
 })
