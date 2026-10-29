@@ -225,7 +225,7 @@ test('secondary loading surfaces show pending reads and then actual content', as
   await shim.invoke('demo.seed', { chat_id: owner })
   await secondaryFixtures(page)
   const pending: import('@playwright/test').Route[] = []
-  await page.route(url => ['/v1/atelier/works', '/v1/journal/postcards', '/v1/plugins/list', '/v1/knowledge/facts/find_facts'].includes(url.pathname), route => { pending.push(route) })
+  await page.route(url => ['/v1/atelier/works', '/v1/journal/postcards', '/v1/plugins/list', '/v1/knowledge/facts/find_facts', '/v1/memory/files'].includes(url.pathname), route => { pending.push(route) })
   await boot(page, shimUrl)
   await clickNav(page, 'recollections')
   await expect(page.locator('#postcard-album')).toContainText(/翻开|加载/)
@@ -236,6 +236,9 @@ test('secondary loading surfaces show pending reads and then actual content', as
   await clickNav(page, 'todos')
   await expect(page.locator('#todos-root')).toContainText(/读取|加载/)
   await shot(page, 'todos-loading')
+  await clickNav(page, 'memory')
+  await expect(page.locator('#memory-facts-records')).toContainText('正在读取记下的事')
+  await shot(page, 'memory-loading')
   await backstage(page, 'plugins')
   await expect(page.locator('#plugins-list')).toContainText('加载中')
   await shot(page, 'plugins-loading')
