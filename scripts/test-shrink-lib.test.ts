@@ -152,6 +152,15 @@ describe('PR 描述', () => {
     expect(judge([], { title: '修:x', body: `${body}bun x vitest run a.test.ts:撤掉修复红 1 条,带上修复绿\n`, headRef: 'claude/x' }).ok).toBe(true)
     expect(judge([], { title: '加功能', body: '', headRef: 'claude/x' })).toEqual({ ok: true, messages: [] })
   })
+
+  it('dev → master 的发版 PR 不查(dev 上每个 PR 都查过);别的分支进 master、进 dev 照查', () => {
+    const findings = [{ file: 'src/a.test.ts', what: '删掉了用例「x」' }]
+    expect(judge(findings, { title: '发版 desktop v9.9.9', body: '', headRef: 'dev', baseRef: 'master' }).ok).toBe(true)
+    expect(judge(findings, { title: '发版 desktop v9.9.9', body: '', headRef: 'dev', baseRef: 'dev' }).ok).toBe(false)
+    expect(judge(findings, { title: 'hotfix', body: '', headRef: 'claude/x', baseRef: 'master' }).ok).toBe(false)
+    expect(judge([], { title: '修:x', body: '', headRef: 'fix/x', baseRef: 'master' }).ok).toBe(false)
+    expect(judge(findings, { title: 't', body: '', headRef: 'claude/x' }).ok).toBe(false)
+  })
 })
 
 // ───────────────────────── CLI:临时 git 仓库里按 CI 的样子跑 ─────────────────────────
