@@ -19,3 +19,14 @@ describe('pageHtml 的设备列表', () => {
     expect(js).toContain('textContent')
   })
 })
+
+describe('网页设置的入口说明', () => {
+  it('只承诺当前网页能看的状态,保留中继、下载和局域网限制说明', () => {
+    const html = pageHtml('token')
+    expect(html).toContain('出门也能查看 CC 和事情的状态')
+    expect(html).toContain('首次需下载约 5GB')
+    expect(html).toContain('经加密中继回家')
+    expect(html).toContain('和电脑同一网络')
+    expect(html).not.toContain('出门也能看待办和 CC 画的你')
+  })
+})
