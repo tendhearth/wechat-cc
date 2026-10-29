@@ -37,6 +37,7 @@ import { installProgressCmd } from './src/cli/commands/install-progress'
 import { replyCmd } from './src/cli/commands/reply'
 import { updateCmd } from './src/cli/commands/update'
 import { selftestCmd } from './src/cli/commands/selftest'
+import { evalCmd } from './src/cli/commands/eval'
 import { ciCmd } from './src/cli/commands/ci'
 import { modeCmd } from './src/cli/commands/mode'
 import { mcpServerCmd, federatedSourceCmd } from './src/cli/commands/mcp-server'
@@ -104,6 +105,8 @@ const SUBCOMMANDS = {
   self: selfCmd,
   // 自维护三件套 Task 2 — `selftest workbench|chat` (spec 2026-09-18-self-maintenance §2).
   selftest: selftestCmd,
+  // AI 输出回归评测 — `eval run|diff`(设计稿 docs/design/2026-10-29-output-eval.md)。
+  eval: evalCmd,
   // CI 信号面 — `ci triage` (spec 2026-09-18-ci-triage §3);「看 CI」不再是人的判断。
   ci: ciCmd,
   'install-progress': installProgressCmd,
