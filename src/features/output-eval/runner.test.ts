@@ -173,3 +173,36 @@ describe('judge:生产的便宜模型原样回答', () => {
     expect(await harness({ cheap: async () => { throw new Error('down') } }).runner.judge('Q')).toEqual({ ok: false, kind: 'judge', error: 'down', durationMs: 0 })
   })
 })
+
+describe('整轮上限(Codex 评审:看门狗只管「没动静」,一直在说的一轮要有总上限,CLI 的 HTTP 时限才对得上)', () => {
+  it('一直有事件、超过 timeoutMs ⇒ cancel 那一轮、记 turn_deadline、照样收尾', async () => {
+    let cancelled = false
+    let closed = false
+    const registry: EvalRunnerDeps['registry'] = {
+      get: () => ({
+        provider: {
+          async spawn(): Promise<AgentSession> {
+            return {
+              async *dispatch() { while (!cancelled) { yield text('…'); await new Promise(r => setTimeout(r, 5)) } },
+              async cancel() { cancelled = true },
+              async close() { closed = true },
+            } as unknown as AgentSession
+          },
+        },
+        opts: { displayName: 'claude', canResume: () => true },
+      }) as never,
+      getCheapEval: () => null,
+      getCheapEvalBudgetMs: () => 5_000,
+    }
+    const invalidateSession = vi.fn()
+    const runner = makeEvalRunner({
+      registry, defaultProviderId: () => 'claude', buildInstructions: () => 'P', mintSessionToken: () => 'tok', invalidateSession,
+      log: vi.fn(), projectDir: join(root, 'project'), uuid: () => 'u-2',
+    })
+    const r = await runner.reply({ text: '早', timeoutMs: 60 })
+    expect(r).toMatchObject({ ok: false, kind: 'reply', errorCode: 'turn_deadline', finalText: '' })
+    expect(cancelled).toBe(true)
+    expect(closed).toBe(true)
+    expect(invalidateSession).toHaveBeenCalledWith('claude/eval/eval-u-2')
+  })
+})

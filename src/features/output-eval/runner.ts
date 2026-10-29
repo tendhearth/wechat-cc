@@ -139,7 +139,18 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
           ...(a.model !== undefined ? { model: a.model } : {}),
         },
       )
-      const summary: TurnSummary = await collectTurn(session.dispatch(a.text), { timeoutMs: a.timeoutMs ?? DEFAULT_TIMEOUT_MS })
+      // collectTurn 的看门狗只管「多久没动静」;一直在说的一轮也要有总上限(同 runJobTurn 的 JOB_TURN_MAX_MS),
+      // 不然 CLI 那头按 timeoutMs + 余量挂断了,这边还在跑(Codex 评审)。到点 cancel 那一轮,finally 照样 close。
+      const limitMs = a.timeoutMs ?? DEFAULT_TIMEOUT_MS
+      let deadline: ReturnType<typeof setTimeout> | undefined
+      const overrun = new Promise<'overrun'>((resolve) => {
+        deadline = setTimeout(() => { void session?.cancel?.().catch(() => {}); resolve('overrun') }, limitMs)
+      })
+      const collected = await Promise.race([collectTurn(session.dispatch(a.text), { timeoutMs: limitMs }), overrun]).finally(() => clearTimeout(deadline))
+      if (collected === 'overrun') {
+        return { ok: false, ...base, ...empty, error: `turn exceeded ${limitMs}ms`, errorCode: 'turn_deadline', durationMs: now() - startedAt }
+      }
+      const summary: TurnSummary = collected
       const raw = summary.finalText ?? ''
       let finalRaw = raw
       if (a.transformFinal) { try { finalRaw = a.transformFinal(raw) } catch (e) { deps.log('EVAL', `transformFinal threw: ${errMsg(e)}`) } }
