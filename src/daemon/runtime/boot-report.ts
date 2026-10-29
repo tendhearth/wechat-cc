@@ -15,9 +15,9 @@ export function reportBoot(d: {
   speech: Pick<SpeechPolicy, 'tell'>
 }): void {
   // 外部集成反馈 #6:这个 flag 的语义像"跳过工具确认",实际是全局提权
-  // (resolveEffectiveTier 对每个 allowlist 会话都返回 admin)。日志明说,让 operator 看清 blast radius。
+  // (resolveEffectiveTier 对 admin / trusted 会话都返回 admin;访客不提权)。日志明说,让 operator 看清 blast radius。
   const modeStr = d.dangerously
-    ? 'mode=dangerouslySkipPermissions=true — 注意:此模式下所有 allowlist 会话均按 admin 处理(全局提权),不只是跳过确认'
+    ? 'mode=dangerouslySkipPermissions=true — 注意:此模式下 admin / trusted 会话均按 admin 处理(全局提权),不只是跳过确认;访客仍按访客档'
     : 'mode=strict (Phase 1 permission relay active)'
   log('DAEMON', `started pid=${process.pid} accounts=${d.accounts} ${modeStr}`)
   if (d.dangerously) log('DAEMON', 'warning: Claude will still confirm destructive ops via natural-language reply, but no permission prompts will appear.')

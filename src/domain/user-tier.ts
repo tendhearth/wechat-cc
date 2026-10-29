@@ -190,9 +190,7 @@ export function resolveTier(chatId: string, access: Access): UserTier {
 /**
  * Effective tier, honoring the daemon-wide `--dangerously` flag. When the
  * operator launched with `--dangerously` (`permissionMode === 'dangerously'`)
- * every chat is treated as admin — matching the pre-v0.6 behavior where
- * the dangerously flag uniformly bypassed sandbox / approval / canUseTool
- * for ALL chats. Without this override the per-tier sandbox/approval
+ * admin and trusted chats are treated as admin — guests are not (see below). Without this override the per-tier sandbox/approval
  * derivation (codex guest → read-only + untrusted; claude trusted →
  * default+canUseTool) silently overrode the operator's intent on every
  * non-admin chat.
