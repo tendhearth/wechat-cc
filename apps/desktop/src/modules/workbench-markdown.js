@@ -1,6 +1,6 @@
 // @ts-check
 // Parsing is shared with the native app and phone page; desktop reading controls live here.
-import { escapeMarkdownHtml, renderReadingMarkdown, hasMarkdownFormatting } from '../vendor/markdown.js'
+import { escapeMarkdownHtml, renderMarkdown, renderReadingMarkdown, hasMarkdownFormatting } from '../vendor/markdown.js'
 export {
   escapeMarkdownHtml as escapeWorkbenchHtml,
   renderReadingMarkdown as renderWorkbenchMarkdown,
@@ -14,7 +14,7 @@ export function renderWorkbenchUserText(value, key) {
   const text=String(value??''),source=escapeMarkdownHtml(text).replace(/\r/g,'&#13;')
   if(!hasMarkdownFormatting(text))return `<div class="cc-user-reading"><div class="cc-user-plain">${source}</div></div>`
   const id='cc-user-source-'+Array.from(String(key)).map(c=>c.codePointAt(0)?.toString(16)).join('-')
-  return `<div class="cc-user-reading"><div class="cc-readable-markdown wb-markdown">${renderReadingMarkdown(text)}</div><details id="${id}" class="cc-message-source" data-user-source><summary>查看原文</summary><pre><code>${source}</code></pre></details></div>`
+  return `<div class="cc-user-reading"><div class="cc-readable-markdown wb-markdown">${renderMarkdown(text)}</div><details id="${id}" class="cc-message-source" data-user-source><summary>查看原文</summary><pre><code>${source}</code></pre></details></div>`
 }
 
 /** @typedef {{querySelectorAll?:(selector:string)=>ArrayLike<{id:string,toggleAttribute:(name:string,force?:boolean)=>boolean}>}} SourceRoot */
