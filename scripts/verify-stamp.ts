@@ -10,7 +10,7 @@
  * 装钩子:`git config core.hooksPath scripts/git-hooks`(主仓库配一次,所有 worktree 共用)。
  */
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -32,7 +32,10 @@ export function workingTree(cwd: string): string {
   try {
     const index = join(dir, 'index')
     const real = resolve(cwd, git(['rev-parse', '--git-path', 'index'], cwd))
-    if (existsSync(real)) copyFileSync(real, index)
+    // 拷过来的 index 要带上原来的修改时间:git 拿 index 自己的 mtime 判断哪些条目「可能刚改过、要重新算内容」(racy-git)。
+    // 拷贝得到一个新的 mtime ⇒ 和 index 同一秒里改过、长度没变的文件被当成没改,`add -A` 跳过它,算出的树和真提交对不上
+    // (CI 慢机上 1.7.8 后 #759 撞到;本机等到下一秒再拷,40/40 复现)。
+    if (existsSync(real)) { copyFileSync(real, index); const st = statSync(real); utimesSync(index, st.atime, st.mtime) }
     const env = { GIT_INDEX_FILE: index }
     git(['add', '-A', '--', '.'], cwd, env)
     return git(['write-tree'], cwd, env)

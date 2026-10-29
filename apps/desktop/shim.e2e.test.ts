@@ -19,10 +19,20 @@
 //     belong to a heavier test suite. Tier 1 scope is structural smoke.
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 let shim: ChildProcess
+
+// `update --check` 第一步是 `git fetch origin`。原来真连 GitHub:发版 PR(dev → master)的 CI 里要拉两周的历史,
+// 10–21s、偶尔过 30s 超时(1.7.8 两次)。这里把 origin 的地址改写到一个不存在的本地路径:fetch 当场失败、不碰网络、
+// 也不写任何 ref(改写到真仓库会把本地分支 fetch 进 refs/remotes/origin/*,污染开发者的远程跟踪分支,试过)。
+// 成功那条形状由 src/cli/update.test.ts(注入 git)和 update.e2e.test.ts(真 git、本地裸仓库)钉住。
+const originUrl = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: __dirname, encoding: 'utf8' }).stdout?.trim() || null
+const gitNoNetwork: Record<string, string> = originUrl
+  ? { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${join(tmpdir(), 'wechat-cc-shim-no-such-remote')}.insteadOf`, GIT_CONFIG_VALUE_0: originUrl }
+  : {}
 const PORT = 4179  // dedicated port to avoid collision with `bun run shim` (4174)
 const BASE = `http://localhost:${PORT}`
 
@@ -35,6 +45,7 @@ beforeAll(async () => {
         ...process.env,
         WECHAT_CC_DRY_RUN: '1',
         WECHAT_CC_SHIM_PORT: String(PORT),
+        ...gitNoNetwork,
         // NOTE: the valve stays ON here. An earlier version set
         // WECHAT_CC_DEV_ALLOW_MUTATIONS=1 so one case could exercise `memory
         // write`'s rejection path — but this harness inherits the real
@@ -235,11 +246,9 @@ describe('apps/desktop shim — CLI invoke contracts', () => {
     } else {
       expect(r.reason).toMatch(/not_a_git_repo|fetch_failed|detached_head/)
     }
-    // Generous timeout: this command shells out to `git fetch origin` against
-    // the live remote. Healthy network finishes in <1s; under contention
-    // (CI parallel fetches, slow link, or other vitest workers) it can spike
-    // to 10s+. We're testing that the JSON SHAPE is right, not network speed.
-  }, 30_000)
+    // 有 origin 就一定走到 fetch 失败那条(地址被改写到不存在的路径,见文件头 gitNoNetwork)。
+    if (originUrl) expect(r).toMatchObject({ ok: false, reason: 'fetch_failed' })
+  })
 
   it('memory list --json returns an array', async () => {
     const r = await invoke('wechat_cli_json', ['memory', 'list', '--json'])

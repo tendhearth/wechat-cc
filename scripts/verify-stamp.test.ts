@@ -34,6 +34,13 @@ describe('推之前跑过 verify(scripts/verify-stamp.ts)', () => {
     recordVerified(dir, workingTree(dir))
     expect(push(commit('change'))).toEqual([])
   })
+  it('和上一次 commit 同一秒里改了、长度没变,过了一秒才算树 ⇒ 照样算进去(拷来的 index 带原来的 mtime,racy-git)', () => {
+    writeFileSync(join(dir, 'a.ts'), 'export const a = 2\n') // 和 base 里那份一样长
+    const s = Math.floor(Date.now() / 1000)
+    while (Math.floor(Date.now() / 1000) === s) { /* 等到下一秒:CI 慢机上自然会这样 */ }
+    recordVerified(dir, workingTree(dir))
+    expect(push(commit('change'))).toEqual([])
+  })
   it('verify 之后又改了 ⇒ 拦下', () => {
     writeFileSync(join(dir, 'a.ts'), 'export const a = 2\n')
     recordVerified(dir, workingTree(dir))

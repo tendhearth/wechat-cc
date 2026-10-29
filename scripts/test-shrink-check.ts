@@ -22,13 +22,13 @@ const prNumber = opt('--pr')
 let pr: PrInfo | null = null
 let baseRef = opt('--base') ?? 'origin/dev'
 if (inPrCi) {
-  pr = { title: process.env.PR_TITLE ?? '', body: process.env.PR_BODY ?? '', headRef: process.env.GITHUB_HEAD_REF ?? '' }
+  pr = { title: process.env.PR_TITLE ?? '', body: process.env.PR_BODY ?? '', headRef: process.env.GITHUB_HEAD_REF ?? '', baseRef: process.env.GITHUB_BASE_REF }
   if (process.env.GITHUB_BASE_REF) baseRef = `origin/${process.env.GITHUB_BASE_REF}`
 } else if (prNumber) {
   const r = spawnSync('gh', ['pr', 'view', prNumber, '--json', 'title,body,headRefName,baseRefName'], { encoding: 'utf8' })
   if (r.status !== 0) { console.error(`✗ gh pr view ${prNumber} 失败:${r.stderr.trim()}`); process.exit(2) }
   const j = JSON.parse(r.stdout) as { title: string; body: string; headRefName: string; baseRefName: string }
-  pr = { title: j.title, body: j.body, headRef: j.headRefName }
+  pr = { title: j.title, body: j.body, headRef: j.headRefName, baseRef: j.baseRefName }
   if (!opt('--base')) baseRef = `origin/${j.baseRefName}`
 }
 

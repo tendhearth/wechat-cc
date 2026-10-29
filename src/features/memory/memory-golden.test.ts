@@ -89,7 +89,7 @@ async function produce(): Promise<Record<string, string>> {
   // knowledge.md:从 facts + graph 蒸馏(tick-ingest 写进主人对话的 memory 目录,注入时再读回来)
   // G7:联系人事实经开机导入进主库,知识库从主库读 —— knowledge.md 必须和 G0 一字不差
   const mainStore = makeMemoryFactsStore(openTestDb())
-  importFactsDb({ store: mainStore, knowledgeRoot, now: () => 1_761_400_000_000, log: () => {} })
+  importFactsDb({ store: mainStore, knowledgeRoot, archiveDir: join(stateDir, 'memory-archive', 'knowledge'), now: () => 1_761_400_000_000, log: () => {} })
   const store = openKnowledge(knowledgeRoot, { facts: mainStore.contactFacts })
   const knowledge = await distillOwnerKnowledge({ facts: makeFactsApi(store), graph: makeGraphQueryApi(store) })
   out['knowledge.md'] = knowledge
