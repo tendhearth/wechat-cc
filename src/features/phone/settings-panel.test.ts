@@ -744,6 +744,17 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect(JSON.stringify(await r.json())).not.toContain('客人的私事')
     expect(matters.seenOnPhone).not.toHaveBeenCalled()
   })
+  it('链接令牌拿不到回复附带的旁白 / 附件名(replyExtras、messageId 只给已配对设备)', async () => {
+    const withExtras = () => ({ matter: MATTER, bindings: [], sessions: [], task: null, events: [{ kind: 'text', text: '好了', createdAt: 3, messageId: 'm1', replyExtras: { narration: ['CC 在想的过程'], attachments: [{ kind: 'file', name: '私密.pdf' }] } }] })
+    matters.detail.mockReturnValueOnce(withExtras() as never).mockReturnValueOnce(withExtras() as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, d = await deviceOf(panel, base), t = panel.issueToken()
+    const viaLink = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { events: Array<Record<string, unknown>> }
+    expect(viaLink.events[0]).toEqual({ kind: 'text', text: '好了', createdAt: 3 })
+    expect(JSON.stringify(viaLink)).not.toContain('私密.pdf')
+    const viaDevice = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${d}`)).json() as { events: Array<Record<string, unknown>> }
+    expect(viaDevice.events[0]).toMatchObject({ messageId: 'm1', replyExtras: { attachments: [{ kind: 'file', name: '私密.pdf' }] } })
+  })
   it('is 503 when the matter registry is not wired, and maps not-found / busy', async () => {
     panel = make(false)
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()

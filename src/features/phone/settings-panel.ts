@@ -274,6 +274,17 @@ export function phoneMayOpenMatter(matter: unknown, owner: string | null): boole
   return m.kind !== 'chat' || (owner !== null && m.ownerChatId === owner)
 }
 
+/** 回复附带的旁白 / 语音文字 / 附件名和消息 id 只给已配对设备(和信、chat/file 一样);10 分钟的链接令牌只看正文。 */
+function withoutReplyExtras<T>(detail: T): T {
+  const events = (detail as { events?: unknown } | null)?.events
+  if (!Array.isArray(events)) return detail
+  return { ...detail, events: events.map(e => {
+    if (!e || typeof e !== 'object') return e
+    const { replyExtras: _x, messageId: _m, ...rest } = e as Record<string, unknown>
+    return rest
+  }) }
+}
+
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
   let server: Server | null = null
@@ -836,7 +847,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
       return json({ ok: true, matters })
     },
-    'GET /m/api/matter': async (url) => {
+    'GET /m/api/matter': async (url, _req, { caller }) => {
       if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
       const id = url.searchParams.get('id')
       if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
@@ -845,7 +856,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         // 跟列表同一条规矩:别人的聊天按 id 也打不开,回得跟「没有这件」一样(不让人拿 id 试探)
         if (!phoneMayOpenMatter((detail as { matter?: unknown } | null)?.matter, deps.ownerChatId())) return json({ ok: false, error: 'matter_not_found' }, 404)
         try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ }
-        return mobileMatterDetailResponse(detail)
+        return mobileMatterDetailResponse(caller.origin === 'device' ? detail : withoutReplyExtras(detail))
       }
       catch (e) { const msg = e instanceof Error ? e.message : 'internal'; return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500) }
     },
