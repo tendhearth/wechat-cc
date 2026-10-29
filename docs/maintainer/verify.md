@@ -69,8 +69,21 @@ bun x vitest run <测试文件>            # 绿
 **不要求给不可能发生的情况补测试**。叫评审者找问题,它总能找到点什么;每条都修,最后多出几层抽象、一堆测不到真东西的测试 ——
 测试越写越多、越写越像实现细节,一部分就是这么来的。派评审时提示词里写明「只报正确性,跳过风格」。
 
-动开机 / 关机顺序、数据迁移、权限判定的 PR,合进去之前再要一道**没看过写代码过程**的评审:新开一个子 agent(Claude Code 的 `/code-review`),
-只给它 diff 和设计稿,不给对话。整合者自己写过或审过的,看 diff 时带着写的时候的推理,容易顺着它读过去。
+动开机 / 关机顺序、数据迁移、权限判定的 PR,合进去之前再要一道**没看过写代码过程**的评审,由 **Codex** 来做(2026-10-29 主人定;
+写代码和日常评审多是 Claude,换一家模型看,盲区不重合)。在分支的 worktree 里跑:
+
+```bash
+codex exec --ignore-user-config --disable plugins --disable browser_use --disable computer_use \
+  --disable apps --disable hooks -s read-only \
+  review --base dev
+```
+
+`--base` 不能再带自定义提示词(codex-cli 0.165 直接报错退出),用它内置的评审提示:按 P0–P3 列问题,本身就偏正确性;
+照上一节只处理会让结果错的,风格类的不改。它只拿到 diff 和仓库,不拿对话,也不拿设计稿 —— 设计稿里定下的取舍它可能当成问题报,对着稿判。
+一次约半分钟到几分钟。整合者自己写过或审过的,看 diff 时带着写的时候的推理,容易顺着它读过去。
+前面那串 `--ignore-user-config --disable …` 不能省:本机 Codex 配了能操作电脑和浏览器的 MCP,只读沙箱管不住它们
+(同 `src/cli/self-change/runner.ts` 的 `CODEX_REVIEW_LOCKDOWN`)。api.openai.com 要走 bx,先看 `wechat-cc guard status`。
+Codex 用不了(额度、登录)时退回 Claude Code 的 `/code-review` 子 agent,PR 里写一句。
 
 ## 两种用法
 
