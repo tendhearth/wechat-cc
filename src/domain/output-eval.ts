@@ -60,7 +60,7 @@ export interface SampleResult {
   durationMs: number
 }
 
-export interface RunSummary { total: number; pass: number; fail: number; error: number; judgeUnclear: number }
+export interface RunSummary { total: number; pass: number; fail: number; error: number; judgeUnclear: number; /** 裁判没跑成(没有便宜模型、超时、抛错):硬规则照判,但这几条的语义没核 —— 要写出来,不然看着像全过。 */ judgeError: number }
 
 export interface RunReport {
   runId: string
@@ -283,6 +283,7 @@ export function summarize(results: readonly SampleResult[]): RunSummary {
     fail: results.filter(r => r.status === 'fail').length,
     error: results.filter(r => r.status === 'error').length,
     judgeUnclear: results.filter(r => r.judge?.verdict === 'unclear').length,
+    judgeError: results.filter(r => r.judge?.verdict === 'error').length,
   }
 }
 
@@ -354,6 +355,12 @@ export function renderReportMd(report: RunReport, diff: RunDiff): string {
   if (unclear.length) {
     out.push(`## 裁判拿不准(judge_unclear):${unclear.length}`, '', '不算过也不算不过;去看原文。', '')
     for (const r of unclear) out.push(`- ${r.id} — 「${r.judge!.answer ?? ''}」`)
+    out.push('')
+  }
+  const judgeFailed = report.results.filter(r => r.judge?.verdict === 'error')
+  if (judgeFailed.length) {
+    out.push(`## 裁判没跑成:${judgeFailed.length}`, '', '硬规则照判;这几条的语义没核。', '')
+    for (const r of judgeFailed) out.push(`- ${r.id} — ${r.judge!.error ?? ''}`)
     out.push('')
   }
   return out.join('\n')

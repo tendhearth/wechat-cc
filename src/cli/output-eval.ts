@@ -203,11 +203,11 @@ const MARK: Record<SampleResult['status'], string> = { pass: '✓', fail: '✗',
 export function formatRunSummary(r: EvalRunResult): string {
   const lines = r.report.results.map(x => {
     const why = x.error ?? x.rules.find(y => !y.ok)?.rule ?? (x.judge?.verdict === 'fail' ? `裁判 0:${x.judge.criterion}` : '')
-    const unclear = x.judge?.verdict === 'unclear' ? '(裁判拿不准)' : ''
+    const unclear = x.judge?.verdict === 'unclear' ? '(裁判拿不准)' : x.judge?.verdict === 'error' ? '(裁判没跑成)' : ''
     return `${MARK[x.status]} ${x.id}${why ? ` — ${why}` : ''}${unclear}`
   })
   const s = r.report.summary
-  lines.push('', `${s.pass} 过 / ${s.fail} 不过 / ${s.error} 出错(共 ${s.total} 条)${s.judgeUnclear ? `;裁判拿不准 ${s.judgeUnclear} 条` : ''}`)
+  lines.push('', `${s.pass} 过 / ${s.fail} 不过 / ${s.error} 出错(共 ${s.total} 条)${s.judgeUnclear ? `;裁判拿不准 ${s.judgeUnclear} 条` : ''}${s.judgeError ? `;裁判没跑成 ${s.judgeError} 条` : ''}`)
   lines.push(formatDiff(r.diff))
   lines.push(`报告:${join(r.dir, 'report.md')}`)
   return lines.join('\n')

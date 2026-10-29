@@ -50,7 +50,7 @@ describe('runEval', () => {
     expect(r.report.results[1]!.rules[0]).toMatchObject({ rule: 'noThink', ok: false })
     expect(r.diff.from).toBeNull()
     const saved = JSON.parse(readFileSync(join(r.dir, 'report.json'), 'utf8')) as RunReport
-    expect(saved.summary).toEqual({ total: 2, pass: 1, fail: 1, error: 0, judgeUnclear: 0 })
+    expect(saved.summary).toEqual({ total: 2, pass: 1, fail: 1, error: 0, judgeUnclear: 0, judgeError: 0 })
     expect(readFileSync(join(r.dir, 'report.md'), 'utf8')).toContain('第一次跑,这次是基线')
     expect(exitCodeFor(r.report)).toBe(EVAL_EXIT.failed)
   })
@@ -144,6 +144,16 @@ describe('formatRunSummary / exitCodeFor', () => {
     expect(text).toContain('✓ a')
     expect(text).toContain('1 过 / 0 不过 / 0 出错')
     expect(text).toContain(join(r.dir, 'report.md'))
+  })
+})
+
+describe('formatRunSummary:裁判没跑成', () => {
+  it('人读版那一条和总结行都写出来', async () => {
+    sample('a', { kind: 'reply', input: { text: '早' }, judge: '像熟人' })
+    const r = await runEval(deps((_p, b) => (b.kind === 'judge' ? { status: 503, json: { ok: false, error: 'eval_no_cheap_model' } } : turn('好'))), {})
+    const text = formatRunSummary(r)
+    expect(text).toContain('(裁判没跑成)')
+    expect(text).toContain('裁判没跑成 1 条')
   })
 })
 

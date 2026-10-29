@@ -137,7 +137,7 @@ const run = (runId: string, results: SampleResult[]): RunReport => ({ runId, sta
 describe('summarize', () => {
   it('数 pass / fail / error,judge unclear 单列', () => {
     expect(summarize([result('a', 'pass', { judge: { criterion: 'c', verdict: 'unclear', answer: '嗯' } }), result('b', 'fail'), result('c', 'error')]))
-      .toEqual({ total: 3, pass: 1, fail: 1, error: 1, judgeUnclear: 1 })
+      .toEqual({ total: 3, pass: 1, fail: 1, error: 1, judgeUnclear: 1, judgeError: 0 })
   })
 })
 
@@ -169,6 +169,13 @@ describe('renderReportMd', () => {
     expect(md).toContain('## 裁判拿不准(judge_unclear):1')
     expect(md).toContain('- b — 「不好说」')
     expect(md).toContain('turn_timeout')
+  })
+  it('裁判没跑成(没有便宜模型 / 超时)单列,不能看着像全过(Codex 评审)', () => {
+    const cur = run('r1', [result('a', 'pass', { judge: { criterion: '像熟人', verdict: 'error', error: 'eval_no_cheap_model' } })])
+    expect(summarize(cur.results).judgeError).toBe(1)
+    const md = renderReportMd({ ...cur, summary: summarize(cur.results) }, diffRuns(null, cur))
+    expect(md).toContain('## 裁判没跑成:1')
+    expect(md).toContain('- a — eval_no_cheap_model')
   })
   it('第一次跑:写「基线」', () => {
     const cur = run('r1', [result('a', 'pass')])
