@@ -210,6 +210,11 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   terminal_say_ended: {desktop: 409},
   terminal_say_turn_open: {desktop: 409},
   terminal_say_pending: {desktop: 409},
+  // ── 输出评测(2026-10-29,features/output-eval/routes.ts 的 POST /v1/eval/run,调用方只有 `wechat-cc eval run`)。
+  // 跑了没跑好(超时、模型报错)是 200 + ok:false;下面是请求本身不成立:字段不对(带 detail)/ 执行者没注册 / 没有便宜模型可打分。
+  eval_invalid_request: {desktop: 400},
+  eval_unknown_provider: {desktop: 404},
+  eval_no_cheap_model: {desktop: 503},
   // ── 只在微信(features/workbench/wechat-control)
   artifact_delivery_conflict: {wechat: '这条文件请求与已记录的内容不一致，没有再次发送。请重新查看任务成果。'},
   artifact_transport_unavailable: {wechat: '文件发送暂不可用，已保存的成果仍可在桌面工作台查看。'},
