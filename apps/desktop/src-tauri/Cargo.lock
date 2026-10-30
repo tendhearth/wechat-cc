@@ -5624,6 +5624,8 @@ version = "1.7.8"
 dependencies = [
  "base64 0.22.1",
  "libc",
+ "objc2-app-kit",
+ "objc2-foundation",
  "qrcode",
  "reqwest 0.12.28",
  "serde",

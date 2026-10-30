@@ -56,6 +56,31 @@ describe('isolated native motion QA', () => {
     expect(calls).toEqual(['reset_companion_position'])
   })
 
+  it('preserves the native drag origin and forwards only scoped movement and finish controls', async () => {
+    const moved: unknown[] = []
+    const invoke = createQAInvoke(async (command: string, args: unknown) => {
+      if (command === 'start_companion_drag') return { x: 1000, y: 500 }
+      moved.push([command, args]); return null
+    })
+    expect(await invoke('start_companion_drag')).toEqual({ x: 1000, y: 500 })
+    await invoke('move_companion_window', { x: 920, y: 460 })
+    await invoke('finish_companion_drag')
+    expect(moved).toEqual([['move_companion_window', { x: 920, y: 460 }], ['finish_companion_drag', {}]])
+    await expect(invoke('wechat_cli_json', {})).rejects.toThrow('blocked')
+  })
+
+  it('records a native acknowledgement only after the real command settles', async () => {
+    let complete!: (value: unknown) => void
+    const receipts: unknown[] = []
+    const invoke = createQAInvoke(() => new Promise(resolve => { complete = resolve }), () => {}, value => { receipts.push(value) })
+    const pending = invoke('finish_companion_drag')
+    expect(receipts).toEqual([])
+    complete(null); await pending
+    expect(receipts).toEqual([{ command: 'finish_companion_drag', ok: true }])
+    await expect(invoke('wechat_cli_json')).rejects.toThrow('blocked')
+    expect(receipts).toHaveLength(1)
+  })
+
   it('stages real UI code with isolated boundaries and excludes private boards and unfinished art', () => {
     const temporary = mkdtempSync(join(tmpdir(), 'cc-motion-native-qa-'))
     const source = join(temporary, 'source'), destination = join(temporary, 'dist')

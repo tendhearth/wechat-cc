@@ -35,6 +35,7 @@ if (qaQuietControl) new MutationObserver(() => reportQAState()).observe(qaQuietC
 document.addEventListener('cc-motion-qa-refresh', () => {
   if (!document.hidden) Promise.all([poller.refresh(), petPoller.refresh()]).then(() => reportQAState())
 })
+window.__ccMotionQAReady = true
 `)
   writeFileSync(join(output, 'api.js'), `import { createQAApi, createQAClock } from './qa-bridge.mjs'
 const qaClock = createQAClock(Date.now)
@@ -53,7 +54,12 @@ window.__TAURI__.event.listen('cc-motion-qa-scenario', ({payload}) => {
 `)
   writeFileSync(join(output, 'ipc.js'), `import { createQAInvoke } from './qa-bridge.mjs'
 import { qaApi } from './api.js'
-export const invoke = createQAInvoke((command,args) => window.__TAURI__.core.invoke(command,args), () => qaApi.setScenario('idle'))
+window.__ccMotionQACalls = []
+let sequence = 0
+export const invoke = createQAInvoke((command,args) => window.__TAURI__.core.invoke(command,args), () => qaApi.setScenario('idle'), receipt => {
+  window.__ccMotionQACalls.push({ sequence: ++sequence, ...receipt })
+  if (window.__ccMotionQACalls.length > 128) window.__ccMotionQACalls.shift()
+})
 `)
   return output
 }

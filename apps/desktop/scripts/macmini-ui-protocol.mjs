@@ -2,7 +2,7 @@
 import { posix } from 'node:path'
 
 const QA_APPS = new Set(['com.tendhearth.cc-motion-qa-20261029', 'com.tendhearth.cc-native-control-20261030'])
-const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit', 'full', 'capture', 'embedded', 'affected'])
+const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit', 'full', 'full-platform', 'capture', 'embedded', 'embedded-build', 'production-build', 'affected'])
 
 export function assertMiniIdentity({ computerName, homeDir, platformName }) {
   if (computerName !== 'Home’s Mac mini' || homeDir !== '/Users/home' || platformName !== 'darwin') {

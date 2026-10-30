@@ -24,6 +24,24 @@ afterEach(() => {
 })
 
 describe('companion placement recovery control', () => {
+  it('routes stage movement to native positions and commits the released endpoint', async () => {
+    let position = { x: 1000, y: 500 }
+    const saved: unknown[] = []
+    invoke.mockImplementation(async (command: unknown, args: any) => {
+      if (command === 'start_companion_drag') return { ...position } as any
+      if (command === 'move_companion_window') position = { ...args }
+      if (command === 'finish_companion_drag') saved.push({ ...position })
+    })
+    await mount(true)
+    const stage = document.getElementById('pet-stage')!
+    stage.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, screenX: 100, screenY: 100 }))
+    window.dispatchEvent(new MouseEvent('mousemove', { buttons: 1, screenX: 20, screenY: 60 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, screenX: 20, screenY: 60 }))
+    await vi.waitFor(() => expect(position).toEqual({ x: 920, y: 460 }))
+    await vi.waitFor(() => expect(saved).toEqual([{ x: 920, y: 460 }]))
+    window.dispatchEvent(new MouseEvent('mousemove', { buttons: 0, screenX: 900, screenY: 900 }))
+    expect(position).toEqual({ x: 920, y: 460 })
+  })
   it('provides one settings action that targets the trusted native companion', async () => {
     const button = await mount(true)
     expect(button?.textContent).toBe('回到屏幕边缘')

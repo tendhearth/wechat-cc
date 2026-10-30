@@ -19,3 +19,7 @@ pub(crate) fn validate_process(identifier: &str) -> Result<(), String> {
 #[cfg(test)]
 #[path = "qa_webdriver_tests.rs"]
 mod tests;
+
+#[cfg(all(feature = "qa-webdriver", target_os = "macos"))]
+#[path = "qa_webdriver_native.rs"]
+pub(crate) mod native;

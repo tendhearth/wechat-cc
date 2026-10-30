@@ -13,6 +13,7 @@ compile_error!("The embedded QA driver must never be included in a release appli
 pub mod daemon_mode;
 mod daemon_info;
 mod companion_placement;
+mod companion_drag;
 mod html_preview;
 mod nav_guard;
 #[cfg(any(test, feature = "qa-webdriver"))]
@@ -277,6 +278,8 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     .visible(false)
     // CC is a window-drag surface; file uploads belong to the main workspace.
     .disable_drag_drop_handler()
+    // The first press must reach CC even while another application is active.
+    .accept_first_mouse(true)
     .transparent(true)
     .decorations(false)
     .always_on_top(true)
@@ -379,13 +382,41 @@ fn close_companion_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn start_companion_drag(app: AppHandle) -> Result<(), String> {
+fn start_companion_drag(app: AppHandle) -> Result<Option<companion_drag::Point>, String> {
     let window = app
         .get_webview_window("companion")
         .ok_or_else(|| "companion window is not open".to_string())?;
-    window
-        .start_dragging()
-        .map_err(|err| format!("start companion drag: {err}"))
+    #[cfg(target_os = "macos")]
+    {
+        let position = window.outer_position().map_err(|err| format!("read companion drag origin: {err}"))?;
+        let scale = window.scale_factor().map_err(|err| format!("read companion drag scale: {err}"))?;
+        companion_drag::Point::from_physical(f64::from(position.x), f64::from(position.y), scale).map(Some)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.start_dragging().map_err(|err| format!("start companion drag: {err}"))?;
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+async fn move_companion_window(app: AppHandle, x: f64, y: f64) -> Result<(), String> {
+    let requested = companion_drag::Point::new(x, y)?;
+    let window = app.get_webview_window("companion").ok_or("companion window is not open")?;
+    window.set_position(tauri::LogicalPosition::new(requested.x, requested.y))
+        .map_err(|err| format!("position companion window: {err}"))?;
+    for _ in 0..25 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        if companion_layout(&window).is_some_and(|layout| requested.matches_physical(layout.x, layout.y, layout.scale)) { return Ok(()); }
+    }
+    Err("companion drag position did not settle before timeout".into())
+}
+
+#[tauri::command]
+fn finish_companion_drag(app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("companion").ok_or("companion window is not open")?;
+    remember_companion_placement(&window);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1609,6 +1640,9 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "qa-webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(4199));
+    #[cfg(all(feature = "qa-webdriver", target_os = "macos"))]
+    let builder = builder.plugin(tauri::plugin::Builder::<tauri::Wry>::new("cc-motion-qa-native-observation")
+        .setup(|app, _| { qa_webdriver::native::install(app); Ok(()) }).build());
     #[cfg(target_os = "macos")]
     let builder = builder.menu(app_menu);
     builder
@@ -1639,6 +1673,8 @@ pub fn run() {
             open_companion_window,
             close_companion_window,
             start_companion_drag,
+            move_companion_window,
+            finish_companion_drag,
             resize_companion_window,
             reset_companion_position,
             show_main_window,

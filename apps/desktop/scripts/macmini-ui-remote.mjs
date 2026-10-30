@@ -103,6 +103,7 @@ async function unit() {
   const qaConfig = await readFile(join(project, 'apps/desktop/art/cc-v1/native-motion-qa/tauri.qa.json'), 'utf8')
   return [
     await command('protocol', '/Users/home/.bun/bin/bun', ['--bun', 'vitest', 'run', 'apps/desktop/scripts/macmini-ui-protocol.test.mjs']),
+    await command('companion-gesture', '/Users/home/.bun/bin/bun', ['--bun', 'vitest', 'run', 'apps/desktop/src/companion-drag.test.ts', 'apps/desktop/src/companion-window.test.ts', 'apps/desktop/scripts/prepare-cc-motion-native-qa.test.ts']),
     await command('test-environment', '/Users/home/.bun/bin/bun', ['--bun', 'vitest', 'run', 'src/lib/config.test.ts', 'apps/desktop/shim.e2e.test.ts']),
     await command('native-library', join(root, 'toolchain/bin/cargo'), ['test', '--offline', '--locked', '--lib'], {
       cwd: join(project, 'apps/desktop/src-tauri'), extraEnv: { TAURI_CONFIG: qaConfig },
@@ -169,7 +170,21 @@ try {
     case 'embedded': result = await command('embedded-webkit', '/opt/homebrew/bin/node', ['apps/desktop/scripts/macmini-embedded-ui.mjs'], {
       extraEnv: { CC_UI_ARTIFACT_DIR: run },
     }); break
+    case 'embedded-build': result = await command('embedded-qa-build', '/Users/home/.bun/bin/bun', ['run', '--cwd', 'apps/desktop', 'tauri', 'build',
+      '--debug', '--features', 'qa-webdriver', '--bundles', 'app', '--no-sign', '--config', 'art/cc-v1/native-motion-qa/tauri.qa.json'], { extraEnv: { CI: 'true' } }); break
+    // Build only: never launch this production-identity application on the mini.
+    // Developer ID keys remain on the primary; updater/release signing is off.
+    case 'production-build': result = await command('production-app-build', '/Users/home/.bun/bin/bun', ['run', '--cwd', 'apps/desktop', 'tauri', 'build',
+      '--bundles', 'app', '--no-sign', '--config', JSON.stringify({ bundle: { createUpdaterArtifacts: false } }), '--', '--locked'], {
+      extraEnv: { CI: 'true', WECHAT_CC_ATELIER_SD_CLI: join(root, 'public-inputs/sd-cli') },
+    }); break
     case 'full': result = [await command('verify-full', '/Users/home/.bun/bin/bun', ['run', 'verify', '--full']), ...await unit(), await browser()]; break
+    // Standard repository regression needs platform-entitled /bin/ps, which
+    // macOS refuses under ANY Seatbelt profile, including allow-default.
+    // This separate role keeps sanitized env/empty state/test fakes and the
+    // serial lock. It does not claim OS-enforced offline coverage. UI tests
+    // and QA builds above always retain their outbound-deny profile.
+    case 'full-platform': result = await command('verify-full-platform', '/Users/home/.bun/bin/bun', ['run', 'verify', '--full'], { offline: false }); break
     case 'native-smoke': case 'capture': result = await native(); break
   }
   await writeFile(join(run, 'result.json'), JSON.stringify({ ok: true, command: request.command, result }, null, 2))

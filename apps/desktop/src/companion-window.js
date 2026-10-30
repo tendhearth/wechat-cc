@@ -10,6 +10,7 @@ import { invokeApi } from './api.js'
 import { invoke } from './ipc.js'
 import { createCompanionPreferences } from './companion-preferences.js'
 import { formatCompanionStatus } from './companion-status.js'
+import { createCompanionDrag } from './companion-drag.js'
 
 const $ = (/** @type {string} */ id) => document.getElementById(id)
 // 浏览器预览(没有 Tauri 运行时)里窗口命令无处可去 —— 用它决定要不要发。
@@ -98,33 +99,55 @@ if (!document.hidden) { poller.start(); petPoller.start() }
 // start() 自己会先拉一次,这里不用再补 refresh()。
 // 窗口不可见 → 两个都停(spec §5.3);回来时 start() 会各自补一拍。
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { pet.setPaused(true); poller.stop(); petPoller.stop(); return }
+  if (document.hidden) { drag.cancel(); pet.setPaused(true); poller.stop(); petPoller.stop(); return }
   preferences.refresh()
   bridge.resume()
   pet.setPaused(false)
   poller.start(); petPoller.start()
 })
 
-// 拖动:按下进 drag,交给系统拖窗口。系统拖动结束后不一定有事件回来,所以回落靠
-// mouseup / blur 兜底,再加一条 mousemove(按键已松开)的事件型安全网 —— 不用计时器。
-stage?.addEventListener('mousedown', (event) => {
-  if (!(event instanceof MouseEvent) || event.button !== 0) return
-  event.preventDefault()
-  pet.beginDrag()
-  if (!mock) invoke('start_companion_drag').catch(console.warn)
+const drag = createCompanionDrag({
+  start: () => mock ? Promise.resolve(null) : invoke('start_companion_drag'),
+  move: position => invoke('move_companion_window', position),
+  finish: () => invoke('finish_companion_drag'),
+  onBegin: () => pet.beginDrag(), onEnd: () => pet.endDrag(),
+  onError: error => console.warn('companion drag failed', error),
 })
-const endDrag = () => pet.endDrag()
+/** @type {number | null} */ let capturedPointer = null
+const clearPointerCapture = () => {
+  const pointer = capturedPointer; capturedPointer = null
+  if (pointer !== null && stage?.hasPointerCapture?.(pointer)) stage.releasePointerCapture(pointer)
+}
+stage?.addEventListener('pointerdown', event => {
+  if (typeof PointerEvent !== 'function' || !(event instanceof PointerEvent) || event.button !== 0 || !event.isPrimary) return
+  try { stage.setPointerCapture(event.pointerId); capturedPointer = event.pointerId } catch { /* synthetic input has no active OS pointer */ }
+})
+stage?.addEventListener('mousedown', (event) => {
+  if (event instanceof MouseEvent && drag.press(event)) event.preventDefault()
+})
+/** @param {Event} event */
+const endDrag = event => {
+  if (!(event instanceof MouseEvent) || event.button !== 0) return
+  drag.release(event); clearPointerCapture()
+}
+const cancelDrag = () => { drag.cancel(); clearPointerCapture() }
 window.addEventListener('mouseup', endDrag)
-window.addEventListener('blur', endDrag)
-window.addEventListener('mousemove', (event) => { if (event instanceof MouseEvent && event.buttons === 0) endDrag() })
+window.addEventListener('pointerup', endDrag)
+window.addEventListener('blur', cancelDrag)
+window.addEventListener('pagehide', cancelDrag)
+stage?.addEventListener('pointercancel', cancelDrag)
+stage?.addEventListener('lostpointercapture', cancelDrag)
+window.addEventListener('mousemove', event => { if (event instanceof MouseEvent) drag.move(event) })
 
 $('pet-open-main')?.addEventListener('click', async () => {
+  await drag.cancel()
   if (mock) { location.assign('./index.html'); return }
   try { await invoke('show_main_window', { page: 'overview' }) }
   catch (err) { console.warn('show_main_window failed', err); pet.setHint('没能打开 CC，请再试一次') }
 })
 
 $('pet-reset-position')?.addEventListener('click', async () => {
+  await drag.cancel()
   if (mock) { pet.setHint('请在桌面应用中调整位置'); return }
   const button = /** @type {HTMLButtonElement | null} */ ($('pet-reset-position'))
   if (button) button.disabled = true
@@ -133,10 +156,11 @@ $('pet-reset-position')?.addEventListener('click', async () => {
   finally { if (button) button.disabled = false }
 })
 
-$('companion-window-close')?.addEventListener('click', () => {
+$('companion-window-close')?.addEventListener('click', async () => {
+  await drag.cancel()
   if (mock) { window.close(); return }
   invoke('close_companion_window').catch(() => window.close())
 })
-$('pet-zoom-out')?.addEventListener('click', () => { if (!mock) invoke('resize_companion_window', { direction: 'out' }).catch(console.warn) })
-$('pet-zoom-in')?.addEventListener('click', () => { if (!mock) invoke('resize_companion_window', { direction: 'in' }).catch(console.warn) })
+$('pet-zoom-out')?.addEventListener('click', async () => { await drag.cancel(); if (!mock) invoke('resize_companion_window', { direction: 'out' }).catch(console.warn) })
+$('pet-zoom-in')?.addEventListener('click', async () => { await drag.cancel(); if (!mock) invoke('resize_companion_window', { direction: 'in' }).catch(console.warn) })
 window.addEventListener('keydown', (event) => { if (event.key === 'Escape') $('companion-window-close')?.click() })

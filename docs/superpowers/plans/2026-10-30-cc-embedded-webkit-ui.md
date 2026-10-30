@@ -14,7 +14,7 @@
 
 - No primary Mac GUI automation, screenshots, focus changes, test windows, heavy builds or tests. Only lightweight source editing/SSH/transfer and eventual protected signing/deployment there.
 - All runtime/build/test work on `homes-mac-mini`, inside `/Users/home/cc-ui-lab/cc-motion-drag-20261030`.
-- No real CC daemon, model/WeChat accounts, credentials, databases, production plugins or signing keys on mini. Public dependency preparation may download tools; actual tests use existing outbound-deny/loopback-only process profile.
+- No real CC daemon, model/WeChat accounts, credentials, databases, production plugins or signing keys on mini. UI tests/builds use the outbound-deny/loopback-only process profile. A separately labeled standard repository regression may run with normal platform process access, sanitized environment, empty state and test substitutes: macOS refuses its privileged `ps` under any Seatbelt profile. It cannot be described as OS-enforced offline coverage.
 - No system-authentication bypass or security setting changes. Existing Appium path remains blocked and unused.
 - Embedded server only in explicit QA debug builds, QA identifier and dedicated mini checked before registration; loopback port fixed4199. No server in default/release builds.
 - Root is sole writer/integrator in owned `codex/cc-macmini-ui-drag-fix` workspace. Other workspaces read-only until assigned serial integration.
@@ -47,10 +47,10 @@
 
 **Interfaces:** preserve ordinary click/double-click/control behavior; movement measured in native frame points, persistence read after settled position; no dependence on a different app's mouse event.
 
-- [ ] Record baseline stage mouse sequence, native frame and current drag-command outcome; reproduce reported no-move behavior with the application test.
-- [ ] Select smallest repair after tracing the failing boundary. Add failing behavioral tests before implementation.
-- [ ] Verify multiple displacement samples, unchanged dimensions, release/blur/cancel, pending-command ordering, no movement from click/double-click, reachable controls and close/reopen position.
-- [ ] Run affected browser/native checks on mini and get independent correctness review. Record the limits of synthetic versus hardware input.
+- [x] Record baseline stage mouse sequence, native frame and current drag-command outcome; reproduce reported no-move behavior with the application test.
+- [x] Select smallest repair after tracing the failing boundary. Add failing behavioral tests before implementation.
+- [x] Verify multiple displacement samples, unchanged dimensions, release/blur/cancel, pending-command ordering, no movement from click/double-click, reachable controls and close/reopen position.
+- [x] Run affected browser/native checks on mini and get independent correctness review. Record the limits of synthetic versus hardware input.
 
 ### Task 3: Integration and protected daily deployment
 
