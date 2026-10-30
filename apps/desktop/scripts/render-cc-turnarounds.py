@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cc_turnaround_study import derive_render_pair, guard_output, orbit, sample_is_complete, validate_bootstrap, views
+from cc_turnaround_study import baseline_pixels, derive_render_pair, guard_output, orbit, sample_is_complete, validate_bootstrap, views
 
 if sys.platform != 'darwin' or Path.home() != Path('/Users/home'):
     raise RuntimeError('CC study execution requires the dedicated Mac mini')
@@ -145,14 +145,62 @@ try:
             if sample_is_complete(output, record['views'].get(name), view, paths):
                 print('CC_STUDY_SKIP', name, flush=True); continue
             position(view, scale)
-            visible_eyes = min(view['yaw'], 360-view['yaw']) <= 45
-            rendered, entity = render('000', mask_name=name, motion_clip=name, visible_eyes_required=visible_eyes)
-            pixels = rendered['unlit']
+            # Raw control vertices and the evaluated/antialiased foot silhouette
+            # can differ by a pixel. Register the actual rendered coverage using
+            # camera translation only; keep the common scale and all assertions.
             np = context['np']
+            def registration_probe():
+                for obj in context['parts']: obj.data.materials[0] = context['eye_matte_black']
+                for obj in context['eyes']: obj.data.materials[0] = context['eye_matte_white']
+                transform = scene.view_settings.view_transform
+                scene.view_settings.view_transform = 'Standard'
+                path = Path(temporary)/'foot-registration.png'
+                try:
+                    pixels = context['read_render'](path)
+                    return context['bbox'](np.rint(np.clip(pixels[:, :, 3], 0, 1)*255).astype(np.uint8))
+                finally:
+                    scene.view_settings.view_transform = transform
+                    path.unlink(missing_ok=True)
+            before = registration_probe()
+            needed = baseline_pixels(before)
+            shift, after = 0, before
+            if needed:
+                up = study.rotation_euler.to_matrix() @ Vector((0, 1, 0))
+                origin = study.location.copy()
+                sign = 1 if needed > 0 else -1
+                low, high, step = 0, 2, abs(needed)/2
+                # AA/filter quantization need not advance exactly one occupied
+                # row per pixel. Bisect camera position, never edit raster data.
+                for _ in range(8):
+                    shift = sign*step
+                    study.location = origin+up*(shift*scale/512)
+                    bpy.context.view_layer.update()
+                    after = registration_probe()
+                    if after[3] == 470: break
+                    if (470-after[3])*sign > 0: low = step
+                    else: high = step
+                    step = (low+high)/2
+            print('CC_STUDY_REGISTRATION', name, before, 'cameraShiftPixels', shift, 'after', after, flush=True)
+            if after[3] != 470 or after[0] < 80 or after[1] < 28 or after[2] > 432:
+                raise ValueError('Rendered foot registration cannot fit the unchanged safe bounds')
+            visible_eyes = min(view['yaw'], 360-view['yaw']) <= 45
+            try:
+                rendered, entity = render('000', mask_name=name, motion_clip=name, visible_eyes_required=visible_eyes)
+            except AssertionError as error:
+                frame = error.__traceback__
+                while frame:
+                    if frame.tb_frame.f_code.co_name == 'render_pair' and 'entity' in frame.tb_frame.f_locals:
+                        coverage = frame.tb_frame.f_locals['entity']
+                        print('CC_STUDY_ASSERT_DIAGNOSTIC', name, 'entityBBox', context['bbox'](coverage),
+                              'lastRows', [int(coverage[y].max()) for y in range(467, 472)], flush=True)
+                    frame = frame.tb_next
+                raise
+            pixels = rendered['unlit']
             white = int(np.count_nonzero(np.all(pixels[:, :, :3] == 255, axis=2) & (entity == 255)))
             record['views'][name] = {'parameters': view, 'paths': paths, 'files': {p: sha(output/p) for p in paths},
                                      'cameraLocation': list(study.location), 'cameraRotation': list(study.rotation_euler),
                                      'entityBbox': context['bbox'](entity), 'whiteEyePixels': white,
+                                     'footRegistration': {'before': before, 'cameraShiftPixels': shift, 'after': after},
                                      'visibleEyesRequired': visible_eyes}
             record['complete'] = set(record['views']) == {v['id'] for v in recipe}
             record['updatedAt'] = datetime.now(timezone.utc).isoformat()

@@ -7,11 +7,18 @@ import unittest
 
 from cc_turnaround_study import (
     derive_render_pair, guard_output, orbit, sample_is_complete,
-    validate_bootstrap, views,
+    validate_bootstrap, views, baseline_pixels,
 )
 
 
 class Recipes(unittest.TestCase):
+    def test_raster_foot_registration_is_bounded_and_never_rescales(self):
+        self.assertEqual(baseline_pixels([106,112,406,470]), 0)
+        self.assertEqual(baseline_pixels([106,112,406,469]), 1)
+        self.assertEqual(baseline_pixels([106,112,406,471]), -1)
+        for box in ([106,112,406,466], [106,112,406,473], [106,112,406,math.nan], []):
+            with self.assertRaises(ValueError): baseline_pixels(box)
+
     def test_twenty_unique_views_have_sixteen_even_horizontal_angles(self):
         recipe = views()
         self.assertEqual(len(recipe), 20)

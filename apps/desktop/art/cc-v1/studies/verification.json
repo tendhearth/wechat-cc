@@ -1,0 +1,48 @@
+{
+  "offline": true,
+  "headless": true,
+  "osInput": false,
+  "geometry": [
+    {
+      "size": 48,
+      "propCount": 6,
+      "maxErrorPx": 0.010937499999997158
+    },
+    {
+      "size": 96,
+      "propCount": 6,
+      "maxErrorPx": 0.015000000000000568
+    },
+    {
+      "size": 128,
+      "propCount": 6,
+      "maxErrorPx": 0.012187499999996021
+    },
+    {
+      "size": 256,
+      "propCount": 6,
+      "maxErrorPx": 0.013750000000001705
+    }
+  ],
+  "viewers": [
+    {
+      "folder": "turnarounds-r2-review",
+      "cards": 1,
+      "decoded": true,
+      "playPauseReplay": true,
+      "reducedMotionPause": true,
+      "syntheticVisibilityPause": true
+    },
+    {
+      "folder": "compositions-r2",
+      "cards": 5,
+      "decoded": true,
+      "playPauseReplay": true,
+      "reducedMotionPause": true,
+      "syntheticVisibilityPause": true
+    }
+  ],
+  "pageErrors": [],
+  "externalRequests": [],
+  "ok": true
+}

@@ -27,6 +27,15 @@ def orbit(yaw, pitch, scale):
     return {'location': [target[i]+10.5*direction[i] for i in range(3)], 'target': target, 'scale': scale}
 
 
+def baseline_pixels(box):
+    """Register rendered foot coverage, with at most two pixels of camera motion."""
+    if not isinstance(box, (list, tuple)) or len(box) != 4 or not all(type(v) is int for v in box):
+        raise ValueError('Invalid raster registration bounds')
+    shift = 470-box[3]
+    if abs(shift) > 2: raise ValueError('Raster foot correction exceeds two pixels')
+    return shift
+
+
 def _inside(root, path):
     try: path.relative_to(root); return True
     except ValueError: return False

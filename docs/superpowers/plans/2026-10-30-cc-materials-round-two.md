@@ -1,6 +1,6 @@
 # CC Materials Round Two Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Produce twenty paired frozen-model views and five motion/prop composition studies, with offline review artifacts and unchanged production art.
 
@@ -36,7 +36,7 @@
 - [x] Implement pure recipe and fail-closed adapter: only wrap the named white-eye assertion with per-view requirement and zero the original fixed `shadow` assignment. Require exactly one match each; copy function AST, never edit the frozen file.
 - [x] Implement wrapper with original object/data camera snapshot, cloned camera, common-scale projection fit, existing foot registration, fresh temporary raw output and digest-protected resume. Validate protected bytes in `finally`.
 - [x] Provision public Blender, run pilot front/right/rear/raised-front at24 samples in a separate ignored folder; inspect registration, eyes and materials. Fix evidence-backed issues before full rendering.
-- [ ] Render all20 pairs at96 samples/threads2 under Mini offline profile. Expect40 character PNGs+20 masks, finite metadata and unchanged protected inputs. Commit source and candidate data.
+- [x] Render all20 pairs at96 samples/threads2 under Mini offline profile. Expect40 character PNGs+20 masks, finite metadata and unchanged protected inputs. Commit source and candidate data.
 
 ### Task 2: Directional validation and review artifacts
 
@@ -44,9 +44,9 @@
 
 **Interfaces:** validator consumes study index+asset root and returns per-pair metrics/digests; builder consumes fully validated index and explicit empty/new output. Outputs four-size sheets, a portable offline HTML with embedded images, and summary.json. Original canonical bytes are labeled references and excluded from new-view counts.
 
-- [ ] Run RED fixtures for unsafe paths/output overlap, malformed/corrupt PNG, mismatched masks, exterior Dark haze, overwritten opaque entity, invalid baseline and count/metadata mismatch.
-- [ ] Implement strict decode and alpha/bounds checks, fresh-output guard, contact sheets and standalone viewer; horizontal orbit plays only on request, pauses on hidden/reduced motion, no network requests.
-- [ ] Verify fixtures GREEN and actual20-pair pack. Run offline browser checks for playback/pause/replay, both forms and no external requests. Inspect sheets at48/96/128/256 on both backgrounds and record findings. Commit.
+- [x] Run RED fixtures for unsafe paths/output overlap, malformed/corrupt PNG, mismatched masks, exterior Dark haze, overwritten opaque entity, invalid baseline and count/metadata mismatch.
+- [x] Implement strict decode and alpha/bounds checks, fresh-output guard, contact sheets and standalone viewer; horizontal orbit plays only on request, pauses on hidden/reduced motion, no network requests.
+- [x] Verify fixtures GREEN and actual20-pair pack. Run offline browser checks for playback/pause/replay, both forms and no external requests. Inspect sheets at48/96/128/256 on both backgrounds and record findings. Commit.
 
 ### Task 3: Continuous motion with approved props
 
@@ -54,7 +54,11 @@
 
 **Interfaces:** five declared scenes consume existing catalog clips, approved prop PNGs, `SLOTS`/`PROP_SLOTS` and anchor. Outputs full-sequence four-size contact sheets, paired replayable samples and source/slot digests, not runtime sprites or a modified manifest.
 
-- [ ] Establish rendering coordinates from the real prop CSS/constants; test against actual DOM geometry at all4 sizes on Mini. Test strict missing/bad assets, safe output and mask-independent scene alpha accounting.
-- [ ] Build five complete scenes with original frame timing and 0 unread badges. Validate no prop opaque coverage over Dark white-eye pixels, source bytes preserved, no fabricated task state in preview.
-- [ ] Run meaningful sample timing/offline browser and original asset-kit guards, plus affected verification on Mini. Expect five scenes, full timelines, valid pixel outputs and protected-source checks green.
-- [ ] Get one fresh-context correctness/artifact review of the branch. Fix material findings with reproductions; keep new studies candidate. Commit and deliver saved review paths; do not replace daily app art as part of this batch.
+- [x] Establish rendering coordinates from the real prop CSS/constants; test against actual DOM geometry at all4 sizes on Mini. Test strict missing/bad assets, safe output and mask-independent scene alpha accounting.
+- [x] Build five complete scenes with original frame timing and 0 unread badges. Validate no prop opaque coverage over Dark white-eye pixels, source bytes preserved, no fabricated task state in preview.
+- [x] Run meaningful sample timing/offline browser and original asset-kit guards, plus affected verification on Mini. Expect five scenes, full timelines, valid pixel outputs and protected-source checks green.
+- [x] Get one fresh-context correctness/artifact review of the branch. Fix material findings with reproductions; keep new studies candidate. Commit and deliver saved review paths; do not replace daily app art as part of this batch.
+
+## Completion evidence
+
+See [verification report](../reports/2026-10-30-cc-materials-round-two.md). Final fresh full render:20 pairs/96 samples/CPU2, all protected bytes unchanged. Mini affected verification and independent artifact review passed. New candidate data stays on the isolated branch; daily CC is unchanged.
