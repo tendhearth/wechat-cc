@@ -27,6 +27,7 @@ mod native_io_tests;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
@@ -229,7 +230,36 @@ fn remember_companion_placement(window: &WebviewWindow) {
     if let Some(layout) = companion_layout(window) { remember_companion_layout(window, &layout); }
 }
 
+// 拖动 / 拉边改大小只发 Moved/Resized,以前只在 CloseRequested 才存;Cmd+Q、更新后重启、
+// 崩溃都不走 CloseRequested ⇒ 拖到的位置丢了。停手 500ms 后存一次(代数去抖)。
+// 恢复期间不存:恢复的结果可能是「原显示器拔了」的退路位置,存了会覆盖用户真正放的地方。
+static COMPANION_PLACING: AtomicBool = AtomicBool::new(false);
+static COMPANION_MOVE_GEN: AtomicU64 = AtomicU64::new(0);
+// 两次 open 挤在一起时,第二次会在第一次「从磁盘恢复」还没完时抓默认位置并提前 show,
+// 谁赢看时序;串行化整个 open。
+static COMPANION_OPENING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn remember_companion_placement_soon(window: &WebviewWindow) {
+    if COMPANION_PLACING.load(Ordering::SeqCst) { return; }
+    let generation = COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let window = window.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if COMPANION_MOVE_GEN.load(Ordering::SeqCst) == generation && !COMPANION_PLACING.load(Ordering::SeqCst) {
+            remember_companion_placement(&window);
+        }
+    });
+}
+
 async fn restore_companion_placement(window: &WebviewWindow, from_disk: bool) {
+    COMPANION_PLACING.store(true, Ordering::SeqCst);
+    restore_companion_placement_inner(window, from_disk).await;
+    // 恢复本身触发的 Moved 已经排了去抖,换代让它们作废。
+    COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
+    COMPANION_PLACING.store(false, Ordering::SeqCst);
+}
+
+async fn restore_companion_placement_inner(window: &WebviewWindow, from_disk: bool) {
     let (screens, preferred) = companion_screens(window);
     let saved = if from_disk {
         companion_placement_path(window).and_then(|path| companion_placement::load(&path))
@@ -255,6 +285,7 @@ async fn restore_companion_placement(window: &WebviewWindow, from_disk: bool) {
 // recommended fix. macOS never deadlocked here; behavior there is unchanged.
 #[tauri::command]
 async fn open_companion_window(app: AppHandle) -> Result<(), String> {
+    let _opening = COMPANION_OPENING.lock().await;
     if let Some(window) = app.get_webview_window("companion") {
         let _ = window.unminimize();
         restore_companion_placement(&window, false).await;
@@ -302,8 +333,10 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     restore_companion_placement(&window, true).await;
     let on_close = window.clone();
     window.on_window_event(move |event| {
-        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-            remember_companion_placement(&on_close);
+        match event {
+            tauri::WindowEvent::CloseRequested { .. } => remember_companion_placement(&on_close),
+            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => remember_companion_placement_soon(&on_close),
+            _ => {}
         }
     });
     window.show().map_err(|err| format!("show companion window: {err}"))?;
@@ -1704,6 +1737,10 @@ pub fn run() {
             // explicit main-window focus it can look as though the dashboard
             // never opened. Keep the companion running, but bring the real app
             // window back whenever the user re-enters WeChat-cc.
+            // 退出(Cmd+Q、更新后重启)不发浮窗的 CloseRequested;去抖还没到点的位置在这里补存。
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) && !COMPANION_PLACING.load(Ordering::SeqCst) {
+                if let Some(companion) = app.get_webview_window("companion") { remember_companion_placement(&companion); }
+            }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
                 if let Some(main) = app.get_webview_window("main") {
