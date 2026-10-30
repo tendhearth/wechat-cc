@@ -42,3 +42,10 @@ wechat-cc self change "<需求>"                                  # 让 CC 自�
 ```
 
 细节:部署见 `docs/maintainer/deploy.md`,验证见 `verify.md`,CI 与 flake 见 `ci-and-flakes.md`,迁移见 `migrations.md`,自改见 `self-change.md`,真机规矩见 `rules-from-real-machines.md`。
+
+## 双 Mac 测试分工（主人 2026-10-30 指定）
+
+- 当前主工作 Mac 不得被自动测试接管鼠标、键盘、焦点或窗口；也不在这里跑重型测试和构建。后续无界面浏览器回归、原生 UI 交互与截图验收均放到专用 Mac mini。
+- Mac mini 通过既有 SSH 别名 `homes-mac-mini` 使用独立测试工作区和图形会话。只运行离线测试包、本地模拟接口及测试驱动；不启动真实 CC daemon，不调用真实模型或微信，不复制模型凭据、微信登录、私人数据库或生产插件。
+- 原生控制程序必须实际在 mini 执行，不能把本机电脑控制或本机屏幕共享操作当作远端验收。测试服务只监听 mini 回环地址，通过 SSH 访问，不启用不安全脚本执行或绕过系统授权。
+- 真实外网联调、签名和最终日常部署留在已有网络保护的主机，由整合者串行执行。UI 验收必须先在 mini 通过，日常应用有完整整包回滚备份后再更新。

@@ -100,6 +100,42 @@ fn launcher_reports_immediate_nonzero_exit() {
     assert!(error.starts_with("open exited "), "{error}");
 }
 
+// WNOWAIT observes child state without letting the assertion reap it. A zombie
+// is still waitable; ECHILD proves the launcher's background task consumed it.
+// Unlike the platform's privileged ps binary, waitid works in the offline lab.
+#[cfg(unix)]
+fn child_has_been_reaped(pid: u32) -> bool {
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+    let result = unsafe {
+        libc::waitid(libc::P_PID, pid as libc::id_t, info.as_mut_ptr(),
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+    };
+    if result == 0 { return false; }
+    let error = std::io::Error::last_os_error();
+    assert_eq!(error.raw_os_error(), Some(libc::ECHILD), "waitid failed: {error}");
+    true
+}
+
+#[cfg(unix)]
+#[test]
+fn reaped_probe_distinguishes_running_and_unreaped_children() {
+    let mut running = std::process::Command::new("/bin/sleep").arg("5").spawn().unwrap();
+    assert!(!child_has_been_reaped(running.id()));
+    running.kill().unwrap();
+    running.wait().unwrap();
+    assert!(child_has_been_reaped(running.id()));
+
+    let mut exited = std::process::Command::new("/bin/sh").args(["-c", "exit 0"]).spawn().unwrap();
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+    assert_eq!(unsafe {
+        libc::waitid(libc::P_PID, exited.id() as libc::id_t, info.as_mut_ptr(), libc::WEXITED | libc::WNOWAIT)
+    }, 0);
+    assert!(!child_has_been_reaped(exited.id()));
+    assert!(!child_has_been_reaped(exited.id()), "the probe must not reap the child");
+    exited.wait().unwrap();
+    assert!(child_has_been_reaped(exited.id()));
+}
+
 #[cfg(unix)]
 #[test]
 fn long_running_launcher_returns_before_exit_and_is_reaped() {
@@ -119,9 +155,8 @@ fn long_running_launcher_returns_before_exit_and_is_reaped() {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 if completed.exists() {
-                    let pid = std::fs::read_to_string(&pid_file).unwrap();
-                    let output = std::process::Command::new("ps").args(["-p", pid.trim(), "-o", "stat="]).output().unwrap();
-                    if output.stdout.is_empty() { break }
+                    let pid = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+                    if child_has_been_reaped(pid) { break }
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
