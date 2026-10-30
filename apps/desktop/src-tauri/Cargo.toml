@@ -25,7 +25,7 @@ tauri-plugin-notification = "2"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # System URL launches await their initial status without blocking the webview.
 # The debug-only dev-hot-reload sidecar path also uses Tokio process support.
-tokio = { version = "1", features = ["process", "io-util", "time"] }
+tokio = { version = "1", features = ["process", "io-util", "time", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
