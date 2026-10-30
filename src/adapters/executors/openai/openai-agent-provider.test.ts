@@ -225,6 +225,24 @@ describe('openai provider loop(对话这一份用途)', () => {
     expect(calledWith).toEqual(['deepseek-x', undefined])
   })
 
+  it('evalModel(现取):后台评估 / 它的闸门目标走它;没设 ⇒ 默认模型;对话不受影响', async () => {
+    let evalModel: string | undefined = 'DeepSeek'
+    const calledWith: Array<string | undefined> = []
+    const makeChatModel = (model?: string) => { calledWith.push(model); return scriptedOpenAiModel([{ text: 'x' }], { generate: () => 'ok' }).model }
+    const provider = createOpenAiAgentProvider({ makeChatModel, evalModel: () => evalModel, endpoint: { baseUrl: 'https://gw/v1', model: 'Qwen3.8' }, makeMcpBridge: async () => replyBridge().bridge })
+    await provider.cheapEval!('ping')
+    await provider.strongEval!('ping')
+    expect(provider.callTarget!('cheapEval')).toMatchObject({ model: 'DeepSeek' })
+    const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
+    await collectTurn(session.dispatch('hi'))
+    await session.close()
+    expect(provider.callTarget!('spawn')).toMatchObject({ model: 'Qwen3.8' })
+    evalModel = undefined
+    await provider.cheapEval!('ping')
+    expect(calledWith).toEqual(['DeepSeek', 'DeepSeek', undefined, undefined])
+    expect(provider.callTarget!('cheapEval')).toMatchObject({ model: 'Qwen3.8' })
+  })
+
   it('a tool the model invented (not on any surface) gets an error result instead of crashing the loop', async () => {
     const m = scriptedOpenAiModel([{ calls: [{ name: 'Shell', input: { command: 'touch x' } }] }, { text: 'sorry' }])
     const provider = createOpenAiAgentProvider({ makeChatModel: () => m.model, makeMcpBridge: async () => replyBridge().bridge })
