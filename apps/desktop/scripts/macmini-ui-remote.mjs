@@ -165,6 +165,10 @@ try {
     case 'doctor': result = await command('doctor', '/opt/homebrew/bin/node', [join(runtime, 'node_modules/appium/build/lib/main.js'), 'driver', 'doctor', 'mac2'], { offline: false }); break
     case 'unit': result = await unit(); break
     case 'browser': result = await browser(); break
+    case 'affected': result = await command('verify-affected', '/Users/home/.bun/bin/bun', ['run', 'verify', '--base', 'a4b8b2547d96e0f8301709e90370469d9408571d']); break
+    case 'embedded': result = await command('embedded-webkit', '/opt/homebrew/bin/node', ['apps/desktop/scripts/macmini-embedded-ui.mjs'], {
+      extraEnv: { CC_UI_ARTIFACT_DIR: run },
+    }); break
     case 'full': result = [await command('verify-full', '/Users/home/.bun/bin/bun', ['run', 'verify', '--full']), ...await unit(), await browser()]; break
     case 'native-smoke': case 'capture': result = await native(); break
   }

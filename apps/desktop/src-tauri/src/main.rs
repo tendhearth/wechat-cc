@@ -5,6 +5,10 @@ fn main() {
     // responsible process is this signed app binary (TCC identity), not bun
     // and not an ad-hoc-signed helper. See daemon_mode.rs.
     let argv: Vec<String> = std::env::args().collect();
+    if cfg!(feature = "qa-webdriver") && argv.len() != 1 {
+        eprintln!("The embedded UI QA application accepts no CLI or daemon arguments");
+        std::process::exit(2);
+    }
     if let Some(rest) = wechat_cc_desktop_lib::daemon_mode::parse(&argv) {
         wechat_cc_desktop_lib::daemon_mode::run(rest);
     }

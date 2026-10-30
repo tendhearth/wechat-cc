@@ -8,11 +8,15 @@
 // the .app/.exe/.deb bundle and is resolved by tauri-plugin-shell.
 
 pub mod bundle_migrate;
+#[cfg(all(feature = "qa-webdriver", not(debug_assertions)))]
+compile_error!("The embedded QA driver must never be included in a release application");
 pub mod daemon_mode;
 mod daemon_info;
 mod companion_placement;
 mod html_preview;
 mod nav_guard;
+#[cfg(any(test, feature = "qa-webdriver"))]
+mod qa_webdriver;
 
 #[cfg(test)]
 mod workbench_folder_tests;
@@ -443,6 +447,9 @@ fn bundled_plugins_dir(app: &AppHandle) -> Option<PathBuf> {
 }
 
 async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, String> {
+    if cfg!(feature = "qa-webdriver") {
+        return Err("CLI and daemon execution are disabled in the embedded UI QA application".into());
+    }
     #[cfg(debug_assertions)]
     if let Some(root) = resolve_dev_repo_root() {
         return run_dev_bun(&root, args).await;
@@ -1596,7 +1603,12 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 }
 
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(feature = "qa-webdriver")]
+    qa_webdriver::validate_process(&context.config().identifier).expect("embedded UI QA gate refused launch");
     let builder = tauri::Builder::default();
+    #[cfg(feature = "qa-webdriver")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(4199));
     #[cfg(target_os = "macos")]
     let builder = builder.menu(app_menu);
     builder
@@ -1648,7 +1660,7 @@ pub fn run() {
             prepare_workbench_site_preview,
             release_workbench_html_preview
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building wechat-cc desktop")
         .run(|app, event| {
             // On macOS, clicking the Dock icon (or opening the app again) emits

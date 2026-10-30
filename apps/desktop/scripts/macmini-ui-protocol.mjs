@@ -2,7 +2,7 @@
 import { posix } from 'node:path'
 
 const QA_APPS = new Set(['com.tendhearth.cc-motion-qa-20261029', 'com.tendhearth.cc-native-control-20261030'])
-const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit', 'full', 'capture'])
+const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit', 'full', 'capture', 'embedded', 'affected'])
 
 export function assertMiniIdentity({ computerName, homeDir, platformName }) {
   if (computerName !== 'Home’s Mac mini' || homeDir !== '/Users/home' || platformName !== 'darwin') {
@@ -11,12 +11,20 @@ export function assertMiniIdentity({ computerName, homeDir, platformName }) {
 }
 
 export function assertLoopbackEndpoint(value) {
+  return loopbackEndpoint(value, 4723)
+}
+
+function loopbackEndpoint(value, port) {
   let url
   try { url = new URL(value) } catch { throw Error('UI API must use the dedicated loopback endpoint') }
-  if (url.origin !== 'http://127.0.0.1:4723' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+  if (url.origin !== `http://127.0.0.1:${port}` || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
     throw Error('UI API must use the dedicated loopback endpoint')
   }
   return url.origin
+}
+
+export function assertEmbeddedEndpoint(value) {
+  return loopbackEndpoint(value, 4199)
 }
 
 function labPath(value) {

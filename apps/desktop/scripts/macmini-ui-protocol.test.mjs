@@ -1,9 +1,24 @@
 import { test, expect } from 'vitest'
-import { assertMiniIdentity, assertLoopbackEndpoint, createOfflineSession, sshInvocation } from './macmini-ui-protocol.mjs'
+import { assertMiniIdentity, assertLoopbackEndpoint, assertEmbeddedEndpoint, createOfflineSession, sshInvocation } from './macmini-ui-protocol.mjs'
 
 const lab = '/Users/home/cc-ui-lab/cc-motion-drag-20261030'
 const fixture = () => ({ bundleId: 'com.tendhearth.cc-motion-qa-20261029',
   appPath: `${lab}/native-target/debug/bundle/macos/Tendhearth CC Motion QA.app`, stateRoot: `${lab}/state/run-1` })
+
+test('embedded WebKit requests stay on the dedicated loopback service', () => {
+  expect(assertEmbeddedEndpoint('http://127.0.0.1:4199')).toBe('http://127.0.0.1:4199')
+  for (const endpoint of ['http://0.0.0.0:4199', 'http://example.com:4199', 'http://127.0.0.1:4723',
+    'http://user:secret@127.0.0.1:4199', 'http://127.0.0.1:4199/other', 'http://127.0.0.1:4199?token=secret']) {
+    expect(() => assertEmbeddedEndpoint(endpoint)).toThrow(/loopback/)
+  }
+})
+
+test('embedded requests use the same SSH-only executor', () => {
+  const request = sshInvocation('embedded')
+  expect(request.file).toBe('ssh')
+  expect(JSON.parse(request.input)).toEqual({ command: 'embedded' })
+  expect(request.args).toContain('ForwardAgent=no')
+})
 
 test('only the configured mini identity may execute desktop commands', () => {
   expect(() => assertMiniIdentity({ computerName: 'Home’s Mac mini', homeDir: '/Users/home', platformName: 'darwin' })).not.toThrow()

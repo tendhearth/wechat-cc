@@ -16,7 +16,9 @@
 node apps/desktop/scripts/macmini-ui.mjs status
 node apps/desktop/scripts/macmini-ui.mjs doctor
 node apps/desktop/scripts/macmini-ui.mjs unit
+node apps/desktop/scripts/macmini-ui.mjs affected
 node apps/desktop/scripts/macmini-ui.mjs browser
+node apps/desktop/scripts/macmini-ui.mjs embedded
 node apps/desktop/scripts/macmini-ui.mjs full
 ```
 
@@ -30,7 +32,15 @@ node apps/desktop/scripts/macmini-ui.mjs full
 
 原生 QA 页面使用现有的合成 API/受限 IPC 包装与独立空状态目录；Appium 不是 CC daemon，不需要模型账号。上述进程网络限制的实测范围是无界面测试子进程，不能据此宣称 Appium 冷启动的任意 GUI 程序都处于同一个网络限制中。原生入口只允许两个已知 QA 包。
 
-## 原生控制仍缺系统授权
+## Tauri 应用内测试已跑通
+
+主人后续指定优先应用内驱动。`embedded` 只运行 mini 上的独立 QA 包，使用已发布的 `tauri-plugin-wdio-webdriver =1.5.1`，通过标准 HTTP 协议直接驱动，无需 npm 测试客户端。显式 Cargo feature `qa-webdriver` 只允许 debug、专属 QA identifier、`/Users/home` 与 `Home’s Mac mini` 的组合；发布构建启用该 feature 会编译报错。普通构建不注册驱动，测试服务固定监听 `127.0.0.1:4199`。QA 模式同时拒绝 CLI/daemon 参数和 native CLI 执行。
+
+2026-10-30 在 mini 锁屏状态下，已实际验证真实 WebKit 页面、改变后的非空 PNG 截图、原生后台命令拒绝，以及真实浮窗 240×300 → 269×336 → 240×300 的尺寸变化。截图来自 `WKWebView.takeSnapshot`，不是桌面截屏；像素解码证明存在多种颜色，界面变化后像素摘要不同。整个进程树使用现有离线限制和独立空状态目录，没有系统鼠标输入或 XCTest 授权。
+
+应用内驱动的鼠标事件是 `isTrusted=false` 的 DOM 事件，不产生 AppKit 原始鼠标事件。驱动返回成功不能证明原生窗口拖动；拖动回归必须独立读取实际窗口几何，并记录硬件输入覆盖范围。当前记录仅证明应用内测试路径跑通，尚不表示拖动修复或日常部署完成。
+
+## 外部桌面控制仍缺系统授权
 
 2026-10-30：Appium 服务与 WDA 构建成功，但实际 XCTest 会话被 macOS 的 **Enable UI Automation** 系统身份确认阻止；系统同时报告 mini 的图形会话锁定。开机、SSH 在线、屏幕共享服务在线，都不能证明桌面已解锁或输入自动化已获准。主人目前不会远程桌面过去或手动确认，因此真实鼠标测试仍受阻。
 
