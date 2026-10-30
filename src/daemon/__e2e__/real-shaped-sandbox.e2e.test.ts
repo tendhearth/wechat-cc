@@ -340,8 +340,15 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       for (const m of MUST_BE_ON.filter(n => n !== 'a2a-server')) expect(h.subsystems.find(s => s.name === m)?.state, m).toBe('ok')
       await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('没起来')), 15_000)
       expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes('没起来'))).toEqual(['这次开机有几样没起来：CC 之间的往来。其它功能照常。'])
+      const previousTurns = new Set(d.query<{ id: string }>('SELECT id FROM turn_records WHERE chat_id = ?', d.owner).map(t => t.id))
       d.sendText(d.owner, '还在吗')
       await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('Codex 在。')), 15_000)
+      // Fake ilink exposes a reply before its HTTP response returns and the
+      // canonical message is saved. Completed turns are recorded AFTER delivery;
+      // drain this turn before the following eval snapshots exact message counts.
+      await expect.poll(() => d.query<{ id: string }>(
+        "SELECT id FROM turn_records WHERE chat_id = ? AND provider = 'codex' AND outcome = 'completed'", d.owner,
+      ).some(t => !previousTurns.has(t.id)), { timeout: 15_000 }).toBe(true)
       expect(existsSync(join(stateDir, 'wechat-cc.db'))).toBe(true)
     } finally {
       blocker.stop(true)
