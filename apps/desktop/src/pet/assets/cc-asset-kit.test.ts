@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { resolve, join } from 'node:path'
+import { resolve, join, relative, sep } from 'node:path'
 import { createHash } from 'node:crypto'
 import { inflateSync, deflateSync } from 'node:zlib'
 import { normalizeManifest } from './manifest-loader.js'
@@ -42,9 +42,19 @@ function withPngKit(run: (target: string, next: any, add: (path: string, bytes: 
   const dir = mkdtempSync(join(tmpdir(), 'cc-entity-mask-'))
   try {
     const target = join(dir, 'cc-v1')
-    cpSync(root, target, { recursive: true })
+    // Mutation fixtures exercise one pixel/metadata rule. Use the registered
+    // historical kit here; the complete active motion kit is validated below.
+    cpSync(root, target, { recursive: true, filter: path => {
+      const name = relative(root, path).split(sep).join('/')
+      return name !== 'motion' && !name.startsWith('motion/') && name !== 'masks/motion' && !name.startsWith('masks/motion/')
+    } })
     cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
     const next = structuredClone(raw)
+    if (next.motion?.staticStates) {
+      for (const form of ['lit', 'unlit']) Object.assign(next.forms[form].states, next.motion.staticStates[form])
+      for (const path of Object.keys(next.assets)) if (path.startsWith('motion/') || path.startsWith('masks/motion/')) delete next.assets[path]
+      delete next.motion
+    }
     const add = (path: string, bytes: Buffer, extra = next.assets[path]) => {
       writeFileSync(join(target, path), bytes)
       next.assets[path] = { ...extra, sha256: createHash('sha256').update(bytes).digest('hex') }
@@ -337,11 +347,12 @@ describe('CC Asset Kit v1.0-alpha', () => {
 })
 
 
-describe('second-batch authored performances', () => {
+describe('preserved second-batch authored performances', () => {
   const poses = { thinking: 'listening', working: 'listening', done: 'happy', receive: 'happy', permission: 'confused', error: 'excited', look: 'front', drag: 'excited' }
-  it('delivers every behavior in both forms without rest placeholders', () => {
+  it('retains prior authored behavior frames for deliberate rollback, without rest placeholders', () => {
     for (const form of ['lit', 'unlit']) {
-      const states = raw.forms[form].states
+      expect(raw.motion.active).toBe(true)
+      const states = { ...raw.forms[form].states, ...raw.motion.staticStates[form] }
       expect(Object.keys(states)).toHaveLength(13)
       for (const [behavior, pose] of Object.entries(poses)) {
         const path = `sprites/${form}/${behavior}.png`
@@ -435,12 +446,15 @@ it('rejects standalone prop dimensions and missing registration independently of
   })
 }, 30_000)
 
-it('records native owner acceptance without promoting SVG placeholders', () => {
-  expect(raw.artStatus).toBe('reviewed-production')
-  for (const form of Object.values(raw.forms) as any[]) for (const state of Object.values(form.states) as any[]) expect(state.artStatus).toBe('reviewed-production')
+it('preserves prior owner acceptance while keeping all new motion as candidates and SVGs as placeholders', () => {
+  expect(raw.artStatus).toBe('production-candidate')
+  for (const [name, form] of Object.entries(raw.forms) as [string, any][]) {
+    for (const [behavior, state] of Object.entries(form.states) as [string, any][]) expect(state.artStatus).toBe(raw.motion.staticStates[name][behavior] ? 'production-candidate' : 'reviewed-production')
+    for (const state of Object.values(raw.motion.staticStates[name]) as any[]) expect(state.artStatus).toBe('reviewed-production')
+  }
   for (const [path, asset] of Object.entries(raw.assets) as [string, any][]) {
     if (path.endsWith('.svg')) expect(asset.artStatus).toBe('normative-placeholder')
-    else expect(asset.artStatus).toBe((path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
+    else expect(asset.artStatus).toBe((path.startsWith('motion/') || path.startsWith('masks/motion/') || path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
   }
 })
 

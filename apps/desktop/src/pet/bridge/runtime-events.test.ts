@@ -13,6 +13,12 @@ describe('mergeIntent', () => {
     const r = mergeIntent({ presence: presenceIdle, turn: null, state: initialBridgeState(), nowMs: T0 })
     expect(r.intent).toEqual(presenceIdle); expect(r.permission).toBeNull(); expect(r.state.initialized).toBe(false)
   })
+  it('first readable null completion establishes baseline; the next done plays exactly once', () => {
+    const initial = mergeIntent({ presence: presenceIdle, turn: turn(), state: initialBridgeState(), nowMs: T0 })
+    const next = mergeIntent({ presence: presenceIdle, turn: turn({ last_done_at: iso(T0 + 1000) }), state: initial.state, nowMs: T0 + 2000 })
+    expect(next.intent.oneShots).toEqual(['done'])
+    expect(mergeIntent({ presence: presenceIdle, turn: turn({ last_done_at: iso(T0 + 1000) }), state: next.state, nowMs: T0 + 3000 }).intent.oneShots).toEqual([])
+  })
   it('明暗只看 presence(够得着 = lit),不看多久没说话:20 分钟以上没联系照样亮', () => {
     const r = mergeIntent({ presence: presenceIdle, turn: turn({ owner_last_contact_at: iso(T0 - 3 * RECENT_CONTACT_MS) }), state: initialBridgeState(), nowMs: T0 })
     expect(r.intent.form).toBe('lit')

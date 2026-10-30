@@ -20,7 +20,16 @@ export const CROSSFADE_MS = 160
 export function createSpriteRenderer(deps) {
   const schedule = deps.schedule ?? ((fn, ms) => setTimeout(fn, ms))
   const cancel = deps.cancel ?? ((h) => clearTimeout(/** @type {any} */ (h)))
-  const reduced = deps.reducedMotion === true
+  let reduced = deps.reducedMotion === true
+  let paused = false
+  let breathing = false
+  /** @type {{ animation: Animation, onEnd?: () => void } | null} */
+  let active = null
+  // Fade completion belongs to the visual transition, even when its target loops
+  // or a short nonloop target has already ended during fade-in.
+  /** @type {{ animation: Animation, onEnd?: () => void } | null} */
+  let fading = null
+  const finishFade = () => { const f = fading; fading = null; f?.onEnd?.() }
   const fadeMs = deps.fadeMs ?? DEFAULT_FADE_MS
   const preload = deps.preload ?? ((url) => { try { const i = new Image(); i.src = url } catch { /* 非浏览器环境 */ } })
   /** @type {Set<string>} */
@@ -32,13 +41,12 @@ export function createSpriteRenderer(deps) {
   /** @type {unknown} */ let ghostTimer = null
   let ghostFlip = false
 
-  // 交叉淡化(spec §4「小动作用变换,不变形」的补充):每个行为只有一张静态帧,working → thinking
-  // 这种切换 C 会一帧跳过去。把上一帧放到 ghost 上淡出 160ms,两帧实体 mask 相同、只有 C 不同,
-  // 看起来就是柔和的形变。只在**新动画开始**时做,不在序列内逐帧做(眨眼 8fps 不该糊成一团)。
+  // 行为切换时把上一帧放到 ghost 上淡出 160ms，让不同 C 姿态柔和衔接。
+  // 只在**新动画开始**时做，不在连续序列内逐帧做（眨眼和新动作都不该糊成一团）。
   // 两个类名交替使用:同名 animation 不会重启,换名字才会。reduced motion 下不做(硬切)。
   const crossfade = (/** @type {string} */ prev) => {
     const g = deps.ghost
-    if (!g || reduced) return
+    if (!g || reduced || paused) return
     if (ghostTimer !== null) { cancel(ghostTimer); ghostTimer = null }
     g.src = prev
     ghostFlip = !ghostFlip
@@ -52,6 +60,16 @@ export function createSpriteRenderer(deps) {
   // 真浏览器里坏帧走 img 的 error 事件;测试桩没有 addEventListener,就手动调 reportFrameError。
   deps.img.addEventListener?.('error', () => { reportFrameError(deps.img.src ?? '') })
 
+  const clearGhost = () => {
+    if (ghostTimer !== null) { cancel(ghostTimer); ghostTimer = null }
+    deps.ghost?.classList.remove('pet-ghost-out-a'); deps.ghost?.classList.remove('pet-ghost-out-b')
+  }
+  const syncBreathing = () => {
+    if (reduced) deps.stage.classList.add('pet-motion-reduced'); else deps.stage.classList.remove('pet-motion-reduced')
+    if (paused) deps.stage.classList.add('pet-paused'); else deps.stage.classList.remove('pet-paused')
+    if (breathing && !reduced && !paused) deps.stage.classList.add('pet-breathing')
+    else deps.stage.classList.remove('pet-breathing')
+  }
   const clear = () => { if (timer !== null) { cancel(timer); timer = null } if (fadeIn !== null) { cancel(fadeIn); fadeIn = null } deps.img.classList.remove('pet-fading') }
   /** @param {string} url */
   const show = (url) => { frame = url; deps.img.src = url }
@@ -61,6 +79,7 @@ export function createSpriteRenderer(deps) {
    * @param {(() => void) | undefined} onEnd
    */
   function run(a, onEnd) {
+    active = { animation: a, onEnd }
     clear()
     const gen = ++generation
     for (const f of a.frames) if (!preloaded.has(f)) { preloaded.add(f); preload(f) }
@@ -70,17 +89,17 @@ export function createSpriteRenderer(deps) {
     const prev = frame
     if (prev && prev !== frames[0]) crossfade(prev)
     show(/** @type {string} */ (frames[0]))
-    if (frames.length === 1 && a.loop) return
+    if (paused || (reduced && a.loop) || (frames.length === 1 && a.loop)) return
     // reduced motion:一次性多帧动画只显示首末两帧(硬切,不做 cross-fade),时长不变
     if (reduced && !a.loop && frames.length > 1) {
-      timer = schedule(() => { if (gen !== generation) return; timer = null; show(/** @type {string} */ (frames[frames.length - 1])); onEnd?.() }, stepMs * frames.length)
+      timer = schedule(() => { if (gen !== generation) return; timer = null; show(/** @type {string} */ (frames[frames.length - 1])); active = null; onEnd?.() }, stepMs * frames.length)
       return
     }
     const step = () => {
       if (gen !== generation) return
       i += 1
       if (i >= frames.length) {
-        if (a.loop) { i = 0 } else { timer = null; onEnd?.(); return }
+        if (a.loop) { i = 0 } else { timer = null; active = null; onEnd?.(); return }
       }
       show(/** @type {string} */ (frames[i]))
       timer = schedule(step, stepMs)
@@ -97,9 +116,12 @@ export function createSpriteRenderer(deps) {
       deps.stage.style.setProperty('--pet-anchor-y', String(anchor[1]))
     },
     /** @param {Animation} a @param {{ onEnd?: () => void }} [opts] */
-    play(a, opts = {}) { run(a, opts.onEnd) },
+    play(a, opts = {}) { fading = null; run(a, opts.onEnd) },
     /** @param {Animation} a @param {{ onEnd?: () => void }} [opts] */
     fadeTo(a, opts = {}) {
+      fading = { animation: a, onEnd: opts.onEnd }
+      if (paused || reduced) { run(a, undefined); if (!paused) finishFade(); return }
+      active = { animation: a }
       clear()
       const gen = ++generation
       deps.img.classList.add('pet-fading')
@@ -109,17 +131,34 @@ export function createSpriteRenderer(deps) {
         frame = null                      // 淡出已经把画面清空,新帧不该再跟一张 ghost 交叉
         run(a, undefined)                 // run() 会 clear(),所以 fadeIn 必须在它之后再排
         const gen2 = generation
-        fadeIn = schedule(() => { if (gen2 !== generation) return; fadeIn = null; opts.onEnd?.() }, fadeMs)
+        fadeIn = schedule(() => { if (gen2 !== generation) return; fadeIn = null; finishFade() }, fadeMs)
       }, fadeMs)
     },
     /** @param {boolean} on */
     setBreathing(on) {
-      if (on && !reduced) deps.stage.classList.add('pet-breathing')
-      else deps.stage.classList.remove('pet-breathing')
+      breathing = on
+      syncBreathing()
+    },
+    /** @param {boolean} on */
+    setReducedMotion(on) {
+      if (reduced === on) return
+      reduced = on; clearGhost(); syncBreathing()
+      if (paused) return
+      const f = fading, a = active
+      if (f) { run(f.animation, undefined); finishFade() }
+      else if (a) run(a.animation, a.onEnd)
+    },
+    /** @param {boolean} on */
+    setPaused(on) {
+      if (paused === on) return
+      paused = on; generation += 1; clear(); clearGhost(); syncBreathing()
+      const f = fading, a = active
+      if (!on && f) { run(f.animation, undefined); finishFade() }
+      else if (!on && a) run(a.animation, a.onEnd)
     },
     /** @param {string} url */
     reportFrameError(url) { reportFrameError(url) },
-    stop() { generation += 1; clear(); if (ghostTimer !== null) { cancel(ghostTimer); ghostTimer = null } },
+    stop() { fading = null; active = null; generation += 1; clear(); clearGhost(); breathing = false; syncBreathing() },
     currentFrame() { return frame },
   }
 }

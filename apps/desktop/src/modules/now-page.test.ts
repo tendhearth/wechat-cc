@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, vi } from 'vitest'
-import { mountNowPage } from './now-page.js'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { mountNowPage as mount } from './now-page.js'
+import { readFileSync } from 'node:fs'
+const manifest = readFileSync(`${__dirname}/../assets/pet/cc-v1/manifest.json`, 'utf8')
+const mounted: ReturnType<typeof mount>[] = []
+function mountNowPage(opts: Parameters<typeof mount>[0]) { const page = mount(opts); mounted.push(page); return page }
+beforeEach(() => vi.stubGlobal('fetch', async () => new Response(manifest)))
+afterEach(() => { for (const page of mounted.splice(0)) page.destroy(); vi.unstubAllGlobals() })
 
 function dom() {
   document.body.innerHTML = `<article class="cc-now-pane" data-now="home" data-cc="away">
@@ -195,6 +201,24 @@ describe('mountNowPage', () => {
     expect(document.getElementById('now-cc-bubble')!.getAttribute('aria-label')).toContain('查看完整回复')
     page.setLatestLine({ text: '在呢。', at: null })
     expect((document.querySelector('.now-bubble-more') as HTMLElement).hidden).toBe(true)
+  })
+  it('feeds real presence, permission and local conversation snapshots to the home character without replacing its navigation button', async () => {
+    const root = dom(); const pp = poller()
+    const page = mountNowPage({ root, presencePoller: pp, onOpenTask: vi.fn() })
+    const button = document.getElementById('now-cc')!
+    pp.push({ presence: 'ok', news: { unread: 0 } })
+    await vi.waitFor(() => expect(root.querySelector('.now-pet-stage')?.getAttribute('data-form')).toBe('lit'))
+    page.setConversationSnapshot([{ id: 1, role: 'cc', text: '…', pending: true }])
+    expect(root.querySelector('.now-pet-stage')?.getAttribute('data-behavior')).toBe('thinking')
+    page.setTerminal([{ id: 's', title: 'permission', detail: '', agent: 'codex', source: 'Codex', hash: 'p', tool: '', command: '' }])
+    expect(root.querySelector('.now-pet-stage')?.getAttribute('data-behavior')).toBe('permission')
+    page.setConversationSnapshot([{ id: 2, role: 'cc', text: '回复了' }])
+    expect(root.querySelector('.now-pet-stage')?.getAttribute('data-behavior')).toBe('permission')
+    expect(document.getElementById('now-cc')).toBe(button)
+    button.click(); expect(root.dataset.now).toBe('chat')
+    pp.push({ presence: 'down' })
+    expect(root.dataset.cc).toBe('away')
+    expect(root.querySelector('.now-pet-stage')?.getAttribute('data-form')).toBe('unlit')
   })
   it('greeting follows the clock: recomputed on presence ticks and on mode change', () => {
     const root = dom(); const pp = poller(); let h = 9

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'self'; base-uri 'none'; object-src 'none'">
+  <title>Tendhearth CC · 动作审阅</title>
+  <link rel="stylesheet" href="../../../src/tokens.css">
+  <link rel="stylesheet" href="../../../src/fonts.css">
+  <link rel="stylesheet" href="review.css">
+  <script type="module" src="review.js"></script>
+</head>
+<body data-state="loading" data-playing="false" data-frame="0">
+  <main>
+    <header>
+      <p class="eyebrow">Tendhearth CC <span>动作审阅</span></p>
+      <h1>同一个 CC，两种在场状态。</h1>
+      <p class="intro">在身边时，透出温柔的内光。暂时没连上时，安静地等着。<br>两种形态共用动作、尺寸和播放进度。</p>
+      <p class="candidate">素材候选 <span>production-candidate · 尚未通过主人美术验收</span></p>
+    </header>
+    <section aria-label="动作预览">
+      <div class="selection">
+        <label for="clip">动作 <select id="clip" disabled><option>正在载入目录…</option></select></label>
+        <span id="clip-info"></span>
+      </div>
+      <div id="pair" data-background="paper" aria-busy="true">
+        <article class="form-card" aria-labelledby="lit-title">
+          <div class="image-space"><img id="lit-frame" width="256" height="256" alt="Light CC 动作帧" hidden></div>
+          <h2 id="lit-title">Light CC <span>在身边</span></h2>
+          <p>柔软瓷感 · 内光</p>
+        </article>
+        <article class="form-card" aria-labelledby="unlit-title">
+          <div class="image-space"><img id="unlit-frame" width="256" height="256" alt="Dark CC 动作帧" hidden></div>
+          <h2 id="unlit-title">Dark CC <span>暂时没连上</span></h2>
+          <p>炭黑哑光 · 白眼</p>
+        </article>
+      </div>
+      <p id="status" role="status" aria-live="polite">正在载入动作目录…</p>
+      <div class="timeline">
+        <button id="play" class="primary" disabled>播放</button>
+        <button id="previous" aria-label="上一帧" title="上一帧" disabled>←</button>
+        <input id="scrubber" type="range" min="0" max="0" value="0" aria-label="动作帧" disabled>
+        <button id="next" aria-label="下一帧" title="下一帧" disabled>→</button>
+        <output id="frame-info" for="scrubber" aria-live="off">—</output>
+      </div>
+      <div class="options">
+        <label for="size">显示尺寸 <select id="size"><option value="48">48 px</option><option value="96">96 px</option><option value="128">128 px</option><option value="256" selected>256 px</option></select></label>
+        <label for="background">对比检查 <select id="background"><option value="paper">暖纸</option><option value="slate">灰板 · QA</option></select></label>
+        <label class="check"><input id="reduce-motion" type="checkbox">减少动态</label>
+      </div>
+      <p id="motion-note" class="note">一次性动作播放后停在末帧；再次点击才重播。</p>
+    </section>
+    <footer>
+      <p>素材预览 · 无实时连接。Light / Dark 对应真实连接状态，与页面背景无关；此页不报告任务、权限或完成事件。</p>
+      <details><summary>素材来源</summary><p id="source-info">目录尚未载入。</p></details>
+    </footer>
+    <noscript>需要 JavaScript 才能载入动作；没有播放任何素材。</noscript>
+  </main>
+</body>
+</html>

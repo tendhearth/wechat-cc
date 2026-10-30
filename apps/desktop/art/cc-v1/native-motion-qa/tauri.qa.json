@@ -1,0 +1,9 @@
+{
+  "productName": "Tendhearth CC Motion QA",
+  "identifier": "com.tendhearth.cc-motion-qa-20261029",
+  "build": { "beforeBuildCommand": "bun scripts/prepare-cc-motion-native-qa.mjs", "frontendDist": "../art/cc-v1/native-motion-qa/dist" },
+  "app": { "windows": [{ "label": "main", "title": "CC 动作与位置验收 · 独立测试", "url": "index.html", "width": 1040, "height": 800 }],
+    "security": { "capabilities": [{ "identifier": "cc-motion-native-qa", "windows": ["main","companion"], "permissions": ["core:event:default","core:path:default","core:window:allow-get-all-windows","core:window:allow-inner-size","core:window:allow-outer-position","core:window:allow-scale-factor","core:window:allow-is-visible","core:window:allow-is-minimized"] }] }
+  },
+  "bundle": { "externalBin": [], "resources": [], "createUpdaterArtifacts": false }
+}

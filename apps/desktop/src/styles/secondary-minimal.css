@@ -103,6 +103,13 @@
 .pet-shell { color: var(--th-ink); }
 .pet-shell .pet-controls { gap: 4px; }
 .pet-shell .pet-controls button { width: 32px; height: 32px; line-height: 32px; border-radius: var(--th-radius-nav); background: color-mix(in srgb, var(--th-paper) 92%, transparent); color: var(--th-ink); }
+.pet-shell .pet-controls .pet-open-main { width: auto; white-space: nowrap; flex: none; }
+@media (max-width: 219px) {
+  .pet-shell .pet-controls { right: 4px; gap: 2px; }
+  .pet-shell .pet-controls button { width: 28px; height: 28px; line-height: 28px; }
+  .pet-shell .pet-controls .pet-open-main { padding-inline: 6px; }
+  .pet-shell .pet-settings summary { padding-inline: 4px; }
+}
 .pet-shell :is(.pet-hint, .pet-card-host) { background: color-mix(in srgb, var(--th-paper) 96%, transparent); color: var(--th-ink); box-shadow: none; }
 .pet-shell .pet-card-host { border: 1px solid var(--th-hair); border-radius: var(--th-radius-sheet); font-size: var(--th-size-small); line-height: var(--th-lh-small); }
 .pet-shell .pet-card-prompt { background: var(--th-rail); color: var(--th-ink); overflow-wrap: anywhere; word-break: normal; }

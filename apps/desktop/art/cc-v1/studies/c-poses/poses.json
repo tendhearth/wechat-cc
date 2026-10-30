@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "artStatus": "production-candidate",
+  "usage": "design study only; not a new runtime behavior or mood inference",
+  "source": {
+    "sha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+    "rendererSha256": "26d33158d4ce0b0b90c57cf99ad4cce36829435788bb218ef1d2760c87bbc1a4",
+    "geometrySha256": "d26db56b5699b524db792b12187747f1451128dca019ea188d1e64053992e17d",
+    "studyScriptSha256": "b6cc4941793119390c9a472b1d0915c8f1789d49fef828e7f87db2f35e9bd874",
+    "blender": "5.2.1 LTS",
+    "samples": 96,
+    "seed": 11
+  },
+  "canvas": {
+    "width": 512,
+    "height": 512,
+    "anchor": [
+      0.5,
+      0.91796875
+    ],
+    "safeBboxPx": [
+      80,
+      28,
+      432,
+      470
+    ]
+  },
+  "poses": [
+    {
+      "id": "default",
+      "label": "默认",
+      "frames": {
+        "lit": "motion/lit/default/000.png",
+        "unlit": "motion/unlit/default/000.png"
+      },
+      "geometryMask": "masks/default.png",
+      "sha256": {
+        "motion/lit/default/000.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "motion/unlit/default/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/default.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      }
+    },
+    {
+      "id": "listening",
+      "label": "倾听",
+      "frames": {
+        "lit": "motion/lit/listening/000.png",
+        "unlit": "motion/unlit/listening/000.png"
+      },
+      "geometryMask": "masks/listening.png",
+      "sha256": {
+        "motion/lit/listening/000.png": "efa4c2114862d2c075992405efd8662c5a72aa639b00d23925cbe19f8a66f24a",
+        "motion/unlit/listening/000.png": "df26d01e8eec0ed45ccc05d15ccced4fbae5d2b95a37a56ce7a7f04d3a9573ef",
+        "masks/listening.png": "fa9929ef6c3d0a49c604be79690dd9630216d3dced62d14d2caf531fb8316449"
+      }
+    },
+    {
+      "id": "happy",
+      "label": "开心",
+      "frames": {
+        "lit": "motion/lit/happy/000.png",
+        "unlit": "motion/unlit/happy/000.png"
+      },
+      "geometryMask": "masks/happy.png",
+      "sha256": {
+        "motion/lit/happy/000.png": "b22e8b8137207d7e1dbd2eef80b5a891746680c721404dab6916a826c5440c6f",
+        "motion/unlit/happy/000.png": "f85ea78abfa4cd9516f3c6aac89017ffe660b34280fcd7dfd0f61f7191a08598",
+        "masks/happy.png": "a2843dfd463314ffb37ac3f7b5e8a6ff649206768039043f87b54b008b786660"
+      }
+    },
+    {
+      "id": "confused",
+      "label": "疑惑",
+      "frames": {
+        "lit": "motion/lit/confused/000.png",
+        "unlit": "motion/unlit/confused/000.png"
+      },
+      "geometryMask": "masks/confused.png",
+      "sha256": {
+        "motion/lit/confused/000.png": "bbc8a8d2690c26a6fee64ba06e1f64b7131a06b5e2aa7d1d684f83a4035eba61",
+        "motion/unlit/confused/000.png": "9cbb56d3bed5339635a824f2bc40d059410abf4d62a12b0a93528e8e5502b8df",
+        "masks/confused.png": "01df6c8840b38659a8ba040bfb4fe4669d1a3c0b240ce50f514a40cdf7a22202"
+      }
+    },
+    {
+      "id": "thinking",
+      "label": "思考",
+      "frames": {
+        "lit": "motion/lit/thinking/000.png",
+        "unlit": "motion/unlit/thinking/000.png"
+      },
+      "geometryMask": "masks/thinking.png",
+      "sha256": {
+        "motion/lit/thinking/000.png": "d29beff08b387967377b1f3cbbecfc5bd5a01092c277bd157a89c663d03d02fc",
+        "motion/unlit/thinking/000.png": "462da25b274581809d951d8fb837ea870e537f113a3d0fa2e6183684b8857cc0",
+        "masks/thinking.png": "78cfe68b84d6a261c69ea250c0ec20d24c9b6cfcd497c946aa9d8ef1e152d5d4"
+      }
+    },
+    {
+      "id": "low",
+      "label": "低落",
+      "frames": {
+        "lit": "motion/lit/low/000.png",
+        "unlit": "motion/unlit/low/000.png"
+      },
+      "geometryMask": "masks/low.png",
+      "sha256": {
+        "motion/lit/low/000.png": "dac2106e12b2f80e41c1b7d0880cd6a43fc674c07e60fb8f72e384a81022da0f",
+        "motion/unlit/low/000.png": "43388465543014a217c2cde5699d22427466d0d179f78973292ce99b7051581b",
+        "masks/low.png": "0e77e4d1e266466e2ba955a8a59d1e4ec854390e9edf974f90b179992824e0e6"
+      }
+    },
+    {
+      "id": "angry",
+      "label": "生气",
+      "frames": {
+        "lit": "motion/lit/angry/000.png",
+        "unlit": "motion/unlit/angry/000.png"
+      },
+      "geometryMask": "masks/angry.png",
+      "sha256": {
+        "motion/lit/angry/000.png": "d003650a21cb7f6779e592bc4154dc6c0886e64bb3fcd8cbd846cc1f510f6387",
+        "motion/unlit/angry/000.png": "5e24d37f0afa543ea5a9e5dc27c49cdda70e4f76ea20a6aedf8000b9a9e5514e",
+        "masks/angry.png": "c11998800625e1b74e52ecd1319551a7758e5772f79fd15b74bc98c4298bf172"
+      }
+    },
+    {
+      "id": "excited",
+      "label": "兴奋",
+      "frames": {
+        "lit": "motion/lit/excited/000.png",
+        "unlit": "motion/unlit/excited/000.png"
+      },
+      "geometryMask": "masks/excited.png",
+      "sha256": {
+        "motion/lit/excited/000.png": "d6e508f65b29f11719001e68960914a48ea2580ee24e127dfcc61760ccd8f73a",
+        "motion/unlit/excited/000.png": "072ab6834e69f2123a2d22b84133fb86a83f5bbb74b224b161708fbaa14107c2",
+        "masks/excited.png": "4e9d645c85571c13427be72ad8f98fd09489aa7abeed21edd495c1776b98f5ae"
+      }
+    }
+  ]
+}

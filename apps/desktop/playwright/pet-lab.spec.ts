@@ -24,7 +24,7 @@ const BEHAVIORS = ['idle', 'blink', 'look', 'receive', 'working', 'thinking', 'p
 // reduced motion 下一次性多帧动画只显示首末两帧(渲染器有意为之),要看完整帧序列的用例关掉它。
 async function openLab(page: Page, shimUrl: string, opts: { reduced?: boolean } = {}) {
   await page.goto(new URL(opts.reduced === false ? 'pet-lab.html' : 'pet-lab.html?reduced', shimUrl).href)
-  await page.waitForFunction(() => Boolean((window as any).__pet), { timeout: 15_000 })
+  await page.waitForFunction(() => Boolean((window as any).__pet), undefined, { timeout: 15_000 })
   // 每次换 src 都记下来:一次性行为 250ms 就回落,事后查记录比抓瞬间可靠。
   await page.evaluate(() => {
     const img = document.getElementById('pet-sprite') as HTMLImageElement
@@ -35,6 +35,7 @@ async function openLab(page: Page, shimUrl: string, opts: { reduced?: boolean } 
 }
 
 const basename = (p: string) => p.split('/').pop() ?? p
+const kitRelative = (p: string) => new URL(p, 'https://fixture.test').pathname.split('/assets/pet/cc-v1/')[1] ?? p
 const snapshot = (page: Page) => page.evaluate((): Snapshot => (window as any).__pet.machine.snapshot())
 const settleForm = (page: Page, form: 'lit' | 'unlit') => page.waitForFunction((f) => { const s = (window as any).__pet.machine.snapshot(); return s.form === f && s.transition === null }, form, { timeout: 5_000 })
 const warnings = (page: Page) => page.evaluate((): string[] => (window as any).__pet.warnings)
@@ -111,21 +112,21 @@ shimTest.describe('CC 桌宠(真浏览器)', () => {
     const manifest = (await (await request.get(new URL('assets/pet/cc-v1/manifest.json', shimUrl).href)).json()) as Manifest
     for (const form of ['lit', 'unlit'] as const) {
       // 换形态会先播转场(或淡入淡出),等它落地再逐个试行为,否则记录里是转场帧。
-      await page.evaluate((f) => { const pet = (window as any).__pet; pet.setState('idle'); pet.setForm(f) }, form)
+      await page.evaluate((f) => { const pet = (window as any).__pet; pet.endDrag(); pet.setState('idle'); pet.machine.notifyAnimationEnded(); pet.setForm(f) }, form)
       await settleForm(page, form)
       for (const behavior of BEHAVIORS) {
         // 状态机有优先级:睡着时不接一次性行为等等。每个行为都从 idle 起跳,测的是资产不是优先级。
-        await page.evaluate(() => (window as any).__pet.setState('idle'))
+        await page.evaluate(() => { const pet = (window as any).__pet; pet.endDrag(); pet.setState('idle'); pet.machine.notifyAnimationEnded() })
         await page.waitForTimeout(50)
         await resetSeen(page)
         // drag 只经 beginDrag/endDrag 进出,setState('drag') 会被状态机忽略——这是设计,不是 bug。
         await page.evaluate((b) => { const pet = (window as any).__pet; if (b === 'drag') pet.beginDrag(); else pet.setState(b) }, behavior)
-        // 4fps 的一次性行为 250ms 后回落;等它把帧换过一轮再看记录。
+        // 采样真实 PNG；下一个用例会显式收束更长的一次性动作，不假设它只有 250ms。
         await page.waitForTimeout(450)
         if (behavior === 'drag') { await page.evaluate(() => (window as any).__pet.endDrag()); await page.waitForTimeout(100) }
-        const declared = manifest.forms[form].states[behavior]?.frames.map(basename) ?? []
+        const declared = manifest.forms[form].states[behavior]?.frames ?? []
         expect(declared.length, `${form}/${behavior} 在 manifest 里没有帧`).toBeGreaterThan(0)
-        const seen = (await seenSrc(page)).map(basename)
+        const seen = (await seenSrc(page)).map(kitRelative)
         const hit = seen.filter((s) => declared.includes(s))
         expect(hit.length, `${form}/${behavior}: 看到的是 ${seen.join(',')},声明的是 ${declared.join(',')}`).toBeGreaterThan(0)
         for (const s of await seenSrc(page)) {
@@ -156,12 +157,14 @@ shimTest.describe('CC 桌宠(真浏览器)', () => {
     expect(await snapshot(page)).toMatchObject({ form: 'lit', behavior: 'idle', transition: null })
   })
 
-  shimTest('某帧 404:回退到同形态 idle、记 frame_missing,逻辑状态不丢', async ({ page, shimUrl }) => {
-    await page.route('**/sprites/unlit/working.png', (route) => route.fulfill({ status: 404, body: 'gone' }))
+  shimTest('整个工作序列 404:回退到同形态 idle、记 frame_missing,逻辑状态不丢', async ({ page, shimUrl, request }) => {
+    const manifest = (await (await request.get(new URL('assets/pet/cc-v1/manifest.json', shimUrl).href)).json()) as Manifest
+    const broken = new Set(manifest.forms.unlit.states.working.frames)
+    await page.route('**/assets/pet/cc-v1/**', route => broken.has(kitRelative(route.request().url())) ? route.fulfill({ status: 404, body: 'gone' }) : route.continue())
     await openLab(page, shimUrl)
     await page.evaluate(() => { const pet = (window as any).__pet; pet.setForm('unlit'); pet.setState('working') })
-    await page.waitForFunction(() => (window as any).__pet.warnings.some((w: string) => w.startsWith('frame_missing:')), { timeout: 5_000 })
-    await page.waitForTimeout(300)
+    await page.waitForFunction(() => (window as any).__pet.warnings.some((w: string) => w.startsWith('frame_missing:')), undefined, { timeout: 5_000 })
+    await expect(page.locator('#pet-sprite')).toHaveAttribute('src', /canonical\/unlit\/front\.png$/)
     const src = await page.evaluate(() => (document.getElementById('pet-sprite') as HTMLImageElement).src)
     expect(basename(src)).toBe('front.png')
     expect(src).toContain('/canonical/unlit/')

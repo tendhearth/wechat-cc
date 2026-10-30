@@ -190,22 +190,38 @@ describe('createPet(组装)', () => {
 
 describe('CC v1 kit runtime and terminal fallback', () => {
   const raw = readFileSync(join(__dirname, '../assets/pet/cc-v1/manifest.json'), 'utf8')
+  const kit = JSON.parse(raw)
+  const frameUrl = (path: string) => './assets/pet/cc-v1/' + path
+  const duration = (animation: { frames: string[], fps: number }) => Math.ceil(1000 / animation.fps) * animation.frames.length + 1
   const kitFetch = (async () => new Response(raw)) as unknown as typeof fetch
   const bootKit = () => boot(kitFetch, true, './assets/pet/cc-v1/manifest.json')
   it('uses Dark working directly, transitions to Light and preserves real resting behavior', async () => {
     const { c, root, pet } = await bootKit()
     pet.setState('working')
-    expect(root.img.src).toBe('./assets/pet/cc-v1/sprites/unlit/working.png')
+    expect(root.img.src).toBe(frameUrl(kit.forms.unlit.states.working.frames[0]))
     pet.setForm('lit'); c.tick(1001)
-    expect(root.img.src).toBe('./assets/pet/cc-v1/sprites/lit/working.png')
-    pet.setState('done'); c.tick(251)
+    expect(root.img.src).toBe(frameUrl(kit.forms.lit.states.working.frames[0]))
+    pet.setState('done'); c.tick(duration(kit.forms.lit.states.done))
     expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', behavior: 'working' })
     pet.destroy(); expect(c.pending()).toBe(0)
   })
-  it('broken working, idle and master reach same-form inline geometry without losing working', async () => {
+  it('destroy is terminal: a late frame failure cannot change the detached image or restart timers', async () => {
+    const { root, pet, c } = await boot(kitFetch, false, './assets/pet/cc-v1/manifest.json')
+    pet.setState('working')
+    const before = root.img.src
+    const warnings = [...pet.warnings]
+    pet.destroy(); expect(c.pending()).toBe(0)
+    pet.reportFrameError(before)
+    expect(c.pending()).toBe(0)
+    expect(root.img.src).toBe(before)
+    expect(pet.warnings).toEqual(warnings)
+    c.tick(60_000)
+    expect(c.pending()).toBe(0)
+  })
+  it('all broken working frames, idle and master reach same-form inline geometry without losing working', async () => {
     const { root, pet, c } = await bootKit()
     pet.setState('working')
-    pet.reportFrameError('https://example.test/assets/pet/cc-v1/sprites/unlit/working.png')
+    for (const path of kit.forms.unlit.states.working.frames) pet.reportFrameError('https://example.test/assets/pet/cc-v1/' + path)
     expect(root.img.src).toBe('./assets/pet/cc-v1/canonical/unlit/front.png')
     pet.reportFrameError('https://example.test/assets/pet/cc-v1/canonical/unlit/front.png')
     expect(root.img.src).toBe(fallbackFrame('unlit'))
@@ -213,6 +229,21 @@ describe('CC v1 kit runtime and terminal fallback', () => {
     const count = pet.warnings.length
     pet.reportFrameError('https://example.test/assets/pet/cc-v1/canonical/unlit/front.png')
     expect(pet.warnings).toHaveLength(count)
+    pet.destroy(); expect(c.pending()).toBe(0)
+  })
+  it('holds the final drag pose until release, then crossfades back to the resting frame', async () => {
+    const { root, pet, c } = await boot(kitFetch, false, './assets/pet/cc-v1/manifest.json')
+    const drag = kit.forms.unlit.states.drag
+    pet.beginDrag(); c.tick(duration(drag))
+    expect(pet.machine.snapshot().behavior).toBe('drag')
+    expect(root.img.src).toBe(frameUrl(drag.frames.at(-1)))
+    pet.endDrag()
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+    expect(root.img.src).toBe(frameUrl(kit.forms.unlit.states.idle.frames[0]))
+    const ghost = root.stage.children.find((node: any) => node.classList.contains('pet-ghost'))
+    expect(ghost.classList.contains('pet-ghost-out-a') || ghost.classList.contains('pet-ghost-out-b')).toBe(true)
+    c.tick(161)
+    expect(ghost.classList.contains('pet-ghost-out-a') || ghost.classList.contains('pet-ghost-out-b')).toBe(false)
     pet.destroy(); expect(c.pending()).toBe(0)
   })
   it('entire missing transition falls back to fade and resolves form exactly once', async () => {
@@ -261,7 +292,7 @@ describe('交叉淡化(ghost)', () => {
     expect(ghost.src).toBe(thinking)
     expect(ghost.classList.contains('pet-ghost-out-b')).toBe(true) // 交替类名,让 animation 重启
     c.tick(200)
-    pet.setState('blink'); const first = root.img.src; c.tick(130)  // 8fps 序列走一帧
+    pet.setState('idle'); pet.setState('blink'); const first = root.img.src; c.tick(130)  // 8fps 序列走一帧
     expect(root.img.src).not.toBe(first)
     expect(ghost.src).not.toBe(first)                              // 序列内换帧不进 ghost
   })
@@ -275,3 +306,97 @@ describe('交叉淡化(ghost)', () => {
   })
 })
 
+
+describe('held permission events', () => {
+  it('holds lower priority events without recursion, then shows the real error after permission clears', async () => {
+    const { c, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    pet.applyIntent({ form: 'lit', behavior: 'permission', props: [], badge: 0, hint: null, oneShots: ['error', 'receive'] })
+    expect(pet.machine.snapshot().behavior).toBe('permission')
+    c.tick(1000)
+    expect(pet.machine.snapshot().behavior).toBe('permission')
+    pet.applyIntent({ form: 'lit', behavior: 'idle', props: [], badge: 0, hint: null, oneShots: [] })
+    expect(pet.machine.snapshot().behavior).toBe('error')
+    c.tick(500)
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+  })
+})
+
+describe('live motion and visibility controls', () => {
+  const intent = (behavior = 'idle', oneShots: string[] = [], form = 'lit') => ({ form, behavior, props: ['envelope'], badge: 2, hint: null, oneShots }) as any
+  it('switches reduced motion live, cancels decoration, and re-arms fresh idle delays', async () => {
+    const { c, pet, root } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    pet.setReducedMotion(true)
+    expect(root.stage.classList.contains('pet-breathing')).toBe(false)
+    c.tick(60_000)
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+    expect(c.pending()).toBe(0)
+    pet.setReducedMotion(false)
+    c.tick(6000)
+    expect(pet.machine.snapshot().behavior).toBe('blink')
+  })
+  it('quiet clears held celebrations; permissions, errors, badge and both forms still arrive', async () => {
+    const { c, pet, root } = await boot()
+    pet.applyIntent(intent('idle', ['done'])) // held by the form transition
+    pet.setQuiet(true)
+    pet.applyIntent(intent('permission', ['receive', 'done', 'error']))
+    expect(pet.machine.snapshot().behavior).toBe('permission')
+    expect(pet.machine.snapshot().badge).toBe(2)
+    pet.applyIntent(intent())
+    expect(pet.machine.snapshot().behavior).toBe('error')
+    c.tick(500)
+    pet.applyIntent(intent('sleep', ['done'], 'unlit'))
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'unlit', behavior: 'sleep', transition: null })
+    expect(root.stage.classList.contains('pet-breathing')).toBe(false)
+    pet.setQuiet(false)
+    c.tick(1000)
+    expect(pet.machine.snapshot().behavior).toBe('sleep')
+  })
+  it('hidden pauses every picture timer, consumes one-shots and resumes the latest factual form', async () => {
+    const { c, pet, root } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    pet.applyIntent(intent('idle', ['done']))
+    pet.setPaused(true)
+    expect(c.pending()).toBe(0)
+    pet.applyIntent(intent('sleep', ['done'], 'unlit'))
+    c.tick(60_000)
+    expect(c.pending()).toBe(0)
+    expect(root.stage.classList.contains('pet-breathing')).toBe(false)
+    pet.setPaused(false)
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'unlit', behavior: 'sleep', transition: null })
+    expect(root.img.src).toContain('master-unlit')
+    c.tick(1000)
+    expect(pet.machine.snapshot().behavior).toBe('sleep')
+  })
+})
+
+it('reducing motion during an idle move consumes it and leaves no idle timer', async () => {
+  const { c, pet } = await boot()
+  pet.setForm('lit'); c.tick(7100)
+  expect(pet.machine.snapshot().behavior).toBe('blink')
+  pet.setReducedMotion(true)
+  expect(pet.machine.snapshot().behavior).toBe('idle')
+  expect(c.pending()).toBe(0)
+})
+
+it('unreachable Dark sleep never breathes, including after motion controls change', async () => {
+  const { c, pet, root } = await boot()
+  pet.applyIntent({ form: 'unlit', behavior: 'sleep', props: [], badge: 0, hint: null, oneShots: [] })
+  expect(root.stage.classList.contains('pet-breathing')).toBe(false)
+  pet.setQuiet(true); pet.setQuiet(false); pet.setReducedMotion(true); pet.setReducedMotion(false)
+  expect(root.stage.classList.contains('pet-breathing')).toBe(false)
+  c.tick(60_000)
+  expect(c.pending()).toBe(0)
+})
+
+it('quiet consumes decorative micro-light while retaining factual envelope/permission props', async () => {
+  const { pet } = await boot()
+  pet.setProps(['micro-light', 'envelope', 'exclamation'], 3)
+  pet.setQuiet(true)
+  expect(pet.machine.snapshot()).toMatchObject({ props: ['envelope', 'exclamation'], badge: 3 })
+  pet.applyIntent({ form: 'lit', behavior: 'permission', props: ['micro-light', 'envelope', 'exclamation'], badge: 4, hint: null, oneShots: ['done'] })
+  expect(pet.machine.snapshot()).toMatchObject({ props: ['envelope', 'exclamation'], badge: 4 })
+  pet.setQuiet(false)
+  expect(pet.machine.snapshot().props).toEqual(['envelope', 'exclamation'])
+})

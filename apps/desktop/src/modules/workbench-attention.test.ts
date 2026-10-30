@@ -179,6 +179,23 @@ describe('global workbench attention polling', () => {
     attention.destroy()
   })
 
+  it('forwards progress and observed round transitions from the same request without changing native notice priority', async () => {
+    const { createWorkbenchAttentionPoller } = await import('./workbench-attention.js')
+    let phase = 'working', tasks: ReturnType<typeof attentionTask>[] = []
+    const onChange = vi.fn(), invoke = vi.fn(async () => undefined)
+    const api = vi.fn(async () => ({ tasks, progress: [{ id: 'A', phase }] }))
+    const poller = createWorkbenchAttentionPoller({ invokeWorkbenchApi: api, invoke, onChange })
+    await poller.refresh()
+    expect(onChange).toHaveBeenLastCalledWith({ tasks: [], stale: false, progress: new Map([['A', 'working']]), moved: { replied: [], stopped: [] } })
+    phase = 'replied'; tasks = [attentionTask('B', ['request'])]
+    await poller.refresh()
+    expect(onChange).toHaveBeenLastCalledWith({ tasks, stale: false, progress: new Map([['A', 'replied']]), moved: { replied: ['A'], stopped: [] } })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('notify_user', { title: '一起做需要你回应', body: '有新的问题或权限请求。打开 CC 查看待处理事项。' })
+    expect(api).toHaveBeenCalledTimes(2)
+    poller.destroy()
+  })
+
   it('an older daemon without progress never notifies about replies', async () => {
     const { progressTransitions, parseProgress } = await import('./workbench-attention.js')
     expect(parseProgress({ tasks: [] })).toBeNull()

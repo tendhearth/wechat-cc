@@ -1,0 +1,1115 @@
+{
+  "schemaVersion": 1,
+  "artStatus": "production-candidate",
+  "forms": [
+    "lit",
+    "unlit"
+  ],
+  "source": "apps/desktop/art/cc-v1/cc-v1.blend",
+  "canvas": {
+    "width": 512,
+    "height": 512,
+    "anchor": [
+      0.5,
+      0.91796875
+    ],
+    "safeBboxPx": [
+      80,
+      28,
+      432,
+      470
+    ]
+  },
+  "clips": [
+    {
+      "id": "thinking",
+      "title": "想一想",
+      "fps": 6,
+      "loop": true,
+      "frames": [
+        {
+          "pose": {
+            "listening": 0.94
+          },
+          "eyeScale": 0.18,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.95319
+          },
+          "eyeScale": 0.16681,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.979402
+          },
+          "eyeScale": 0.140598,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.998603
+          },
+          "eyeScale": 0.121397,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.989542
+          },
+          "eyeScale": 0.130458,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.950472
+          },
+          "eyeScale": 0.169528,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.905724
+          },
+          "eyeScale": 0.214276,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.880532
+          },
+          "eyeScale": 0.239468,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.887482
+          },
+          "eyeScale": 0.232518,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.908248
+          },
+          "eyeScale": 0.211752,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.929959
+          },
+          "eyeScale": 0.190041,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.94
+          },
+          "eyeScale": 0.18,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "working",
+      "title": "正在做",
+      "fps": 8,
+      "loop": true,
+      "frames": [
+        {
+          "pose": {
+            "listening": 0.9
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.917541
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.954993
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.9896
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.998623
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.973669
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.940938
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.928519
+          },
+          "eyeScale": 0.934815,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.911481
+          },
+          "eyeScale": 0.185185,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.905
+          },
+          "eyeScale": 0.56,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.902058
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.934979
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.96
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.944444
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.915556
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "listening": 0.9
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "permission",
+      "title": "等你决定",
+      "fps": 4,
+      "loop": true,
+      "frames": [
+        {
+          "pose": {
+            "confused": 0.93
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.937416
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.955048
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.975969
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.993255
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.999986
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.994406
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.981336
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.964566
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.947892
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.935105
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "confused": 0.93
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "receive",
+      "title": "收到你的话",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.255447
+          },
+          "eyeScale": 1.045079,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.694816
+          },
+          "eyeScale": 1.122615,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.853494
+          },
+          "eyeScale": 1.15,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.914801
+          },
+          "eyeScale": 1.15,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.986927
+          },
+          "eyeScale": 1.15,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.965139
+          },
+          "eyeScale": 1.141285,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.772802
+          },
+          "eyeScale": 1.093201,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.609316
+          },
+          "eyeScale": 1.052329,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.490458
+          },
+          "eyeScale": 1.040872,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.180316
+          },
+          "eyeScale": 1.015026,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "done",
+      "title": "做好了",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.197846
+          },
+          "eyeScale": 1,
+          "crescent": 0.175863,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.591034
+          },
+          "eyeScale": 1,
+          "crescent": 0.525364,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.879038
+          },
+          "eyeScale": 1,
+          "crescent": 0.781367,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.916679
+          },
+          "eyeScale": 1,
+          "crescent": 0.833359,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.969009
+          },
+          "eyeScale": 1,
+          "crescent": 0.938018,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 1
+          },
+          "eyeScale": 1,
+          "crescent": 1,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.981139
+          },
+          "eyeScale": 1,
+          "crescent": 1,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.941701
+          },
+          "eyeScale": 1,
+          "crescent": 1,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.907407
+          },
+          "eyeScale": 1,
+          "crescent": 1,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.885917
+          },
+          "eyeScale": 1,
+          "crescent": 0.984352,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.749886
+          },
+          "eyeScale": 1,
+          "crescent": 0.833206,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.524691
+          },
+          "eyeScale": 1,
+          "crescent": 0.58299,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.278921
+          },
+          "eyeScale": 1,
+          "crescent": 0.309912,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "happy": 0.081161
+          },
+          "eyeScale": 1,
+          "crescent": 0.090179,
+          "gaze": 0
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "look",
+      "title": "轻轻张望",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.012279
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.038495
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.06272
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.07
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.07
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.07
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.048951
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.004009
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.03752
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.05
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.05
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.05
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.037037
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.012963
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "sleep",
+      "title": "安静歇着",
+      "fps": 4,
+      "loop": true,
+      "frames": [
+        {
+          "pose": {
+            "low": 1
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.996514
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.987979
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.97728
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.967303
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.960932
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.960932
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.967303
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.97728
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.987979
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.996514
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 1
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "wake",
+      "title": "回到身边",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {
+            "low": 1
+          },
+          "eyeScale": 0.12,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.949796
+          },
+          "eyeScale": 0.15849,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.841238
+          },
+          "eyeScale": 0.241717,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.737412
+          },
+          "eyeScale": 0.321317,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.697782
+          },
+          "eyeScale": 0.351996,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.592817
+          },
+          "eyeScale": 0.446465,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.406368
+          },
+          "eyeScale": 0.614268,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.243576
+          },
+          "eyeScale": 0.760781,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.195342
+          },
+          "eyeScale": 0.804658,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.131341
+          },
+          "eyeScale": 0.868659,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "low": 0.043966
+          },
+          "eyeScale": 0.956034,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "error",
+      "title": "这一步没成",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.300526
+          },
+          "eyeScale": 1.045079,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.817431
+          },
+          "eyeScale": 1.122615,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.997671
+          },
+          "eyeScale": 1.15,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.956799
+          },
+          "eyeScale": 1.15,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.908715
+          },
+          "eyeScale": 1.15,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.865139
+          },
+          "eyeScale": 1.136927,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.672802
+          },
+          "eyeScale": 1.064801,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.509316
+          },
+          "eyeScale": 1.003494,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.408715
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.150263
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    },
+    {
+      "id": "drag",
+      "title": "被轻轻挪动",
+      "fps": 8,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {
+            "excited": 0.75
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.804957
+          },
+          "eyeScale": 1.110991,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.914176
+          },
+          "eyeScale": 1.132835,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.994177
+          },
+          "eyeScale": 1.148835,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.986927
+          },
+          "eyeScale": 1.145642,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.938089
+          },
+          "eyeScale": 1.129363,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.882155
+          },
+          "eyeScale": 1.110718,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.850665
+          },
+          "eyeScale": 1.100222,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.837529
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.802921
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.766735
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0
+        },
+        {
+          "pose": {
+            "excited": 0.75
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0
+        }
+      ]
+    }
+  ]
+}

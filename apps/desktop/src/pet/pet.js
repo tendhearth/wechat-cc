@@ -13,7 +13,7 @@ import { emergencyManifest, fallbackFrame } from '../assets/pet/cc-v1/placeholde
 /** @typedef {import('./domain/types.js').PetForm} PetForm */
 /** @typedef {import('./assets/manifest-loader.js').Animation} Animation */
 
-const BREATHING_BEHAVIORS = new Set(['idle', 'working', 'thinking', 'permission', 'companion', 'sleep'])
+const BREATHING_BEHAVIORS = new Set(['idle', 'working', 'thinking', 'permission', 'companion'])
 /** 一次性行为在没有专属帧的形态下(v1 的 unlit)露多久就回落。 */
 const ONE_SHOT_FALLBACK_MS = 600
 /** 空闲小动作的随机区间(spec §4):blink 6–12 s、look 25–60 s。 */
@@ -33,6 +33,12 @@ export async function createPet(root, opts) {
   const schedule = opts.schedule ?? ((/** @type {() => void} */ fn, /** @type {number} */ ms) => setTimeout(fn, ms))
   const cancel = opts.cancel ?? ((/** @type {unknown} */ h) => clearTimeout(/** @type {any} */ (h)))
   const random = opts.random ?? Math.random
+  let reducedMotion = opts.reducedMotion === true
+  let quiet = false
+  let paused = false
+  let disposed = false
+  const suppressDecoration = () => reducedMotion || quiet || paused
+  const decorative = new Set(['blink', 'look', 'receive', 'done', 'wake'])
   /** @type {unknown} */ let oneShotTimer = null
   /** @type {unknown} */ let blinkTimer = null
   /** @type {unknown} */ let lookTimer = null
@@ -79,8 +85,10 @@ export async function createPet(root, opts) {
     const propsKey = `${s.badge}|${s.props.join(',')}`
     if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; renderProps(root.props, s.props, s.badge, manifest, makeEl) }
     const key = s.transition ? `t:${s.transition}` : `b:${s.form}/${s.behavior}`
+    if (paused) return
     if (key === lastKey) return
     lastKey = key
+    renderer.setReducedMotion(reducedMotion || quiet || s.behavior === 'sleep')
     // 画的东西换了:上一个一次性行为的兜底回落不再有意义(它只对 lastKey 那次有效)
     if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null }
     if (s.transition && s.targetForm) {
@@ -120,6 +128,8 @@ export async function createPet(root, opts) {
     }
   }
   const reportFrameError = (/** @type {string} */ url) => {
+    // A pending image may fail after its owner removed the stage and stopped the pet.
+    if (disposed) return
     if (typeof url !== 'string' || !url || badFrames.has(url)) return
     badFrames.add(url)
     dropFrame(manifest.forms.unlit.states, url)
@@ -144,7 +154,7 @@ export async function createPet(root, opts) {
     if (lookTimer !== null) { cancel(lookTimer); lookTimer = null }
   }
   const armIdleMoves = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
-    if (opts.reducedMotion) return
+    if (suppressDecoration()) { cancelIdleMoves(); return }
     if (s.transition !== null || !CALM_BEHAVIORS.has(s.behavior)) {
       // 正在播的是我们自己排的 blink / look:另一个的倒计时照走。否则 6–12 s 的眨眼
       // 每次都把 25–60 s 的张望清零,look 永远轮不到(实测 10 分钟 62 次眨眼、0 次张望)。
@@ -159,9 +169,12 @@ export async function createPet(root, opts) {
 
   /** 一次性行为:进不去就记下来,等画面闲下来补播 —— 丢掉就等于「出了错但没人告诉你」。 */
   const requestOneShot = (/** @type {string} */ b) => {
+    if ((quiet || paused) && decorative.has(b)) return
     if (machine.setState(b) === 'ignored' && !heldOneShots.includes(b)) heldOneShots.push(b)
   }
   const onSnapshot = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
+    if (quiet && s.props.includes('micro-light')) { machine.setProps(s.props.filter(p => p !== 'micro-light'), s.badge); return }
+    if ((quiet || paused) && (s.transition || decorative.has(s.behavior))) { machine.notifyAnimationEnded(); return }
     render(s)
     armIdleMoves(s)
     // 闲下来了(没转场、没在拖、没在播别的一次性行为):把欠的补播回来。
@@ -173,8 +186,31 @@ export async function createPet(root, opts) {
   const off = machine.subscribe(onSnapshot)
   onSnapshot(machine.snapshot())
 
+  // A control change consumes decoration immediately; it never creates a deferred celebration.
+  const syncMotion = () => {
+    renderer.setReducedMotion(reducedMotion || quiet)
+    renderer.setPaused(paused)
+    if (suppressDecoration()) cancelIdleMoves()
+    if (quiet || paused) {
+      for (let i = heldOneShots.length - 1; i >= 0; i--) if (decorative.has(heldOneShots[i] ?? '')) heldOneShots.splice(i, 1)
+      if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null }
+      const s = machine.snapshot()
+      if (s.transition || decorative.has(s.behavior)) machine.notifyAnimationEnded()
+    }
+    if (reducedMotion && IDLE_MOVES.has(machine.snapshot().behavior)) machine.notifyAnimationEnded()
+    if (paused) { renderer.stop(); return }
+    lastKey = ''
+    onSnapshot(machine.snapshot())
+  }
+
   return {
     machine, warnings,
+    /** @param {boolean} on */
+    setReducedMotion(on) { if (reducedMotion !== on) { reducedMotion = on; syncMotion() } },
+    /** @param {boolean} on */
+    setQuiet(on) { if (quiet !== on) { quiet = on; syncMotion() } },
+    /** @param {boolean} on */
+    setPaused(on) { if (paused !== on) { paused = on; syncMotion() } },
     setState: machine.setState,
     setForm: machine.setForm,
     setProps: machine.setProps,
@@ -191,6 +227,6 @@ export async function createPet(root, opts) {
     endDrag: machine.endDrag,
     /** 某一帧图片加载失败(renderer 的 img error 会自动喂进来,也可以手动报)。 */
     reportFrameError,
-    destroy() { off(); renderer.stop(); heldOneShots.length = 0; cancelIdleMoves(); if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null } },
+    destroy() { disposed = true; off(); renderer.stop(); heldOneShots.length = 0; cancelIdleMoves(); if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null } },
   }
 }

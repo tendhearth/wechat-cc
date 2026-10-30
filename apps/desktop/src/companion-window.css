@@ -52,8 +52,26 @@ button { font: inherit; }
 .pet-card-view { background: transparent; text-decoration: underline; }
 .pet-card-actions button:focus-visible { outline: 2px solid #d9773b; outline-offset: 1px; }
 .pet-card-note { margin: 0; color: #7b6b5c; }
-.pet-controls { position: absolute; right: 6px; top: 6px; display: flex; gap: 2px; opacity: 0; transition: opacity .2s ease; }
+.pet-controls { z-index: 2; position: absolute; right: 6px; top: 6px; display: flex; gap: 2px; opacity: 1; transition: opacity .2s ease; }
 .pet-shell:hover .pet-controls, .pet-controls:focus-within { opacity: 1; }
 .pet-controls button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: rgba(255, 253, 247, .8); color: rgba(111, 78, 49, .8); cursor: pointer; font-size: 14px; line-height: 22px; }
 .pet-controls button:focus-visible { outline: 2px solid #d9773b; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .pet-breathing .pet-sprite { animation: none; } .pet-sprite { transition: opacity 400ms ease; } .pet-ghost { animation: none !important; opacity: 0; } }
+
+/* The primary entry is a separate button: the character remains a drag surface. */
+.pet-controls .pet-open-main { width: auto; padding: 0 8px; font-size: 11px; font-weight: 500; }
+.pet-settings { position: static; font-size: 11px; }
+.pet-settings summary { list-style: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; background: var(--th-paper); color: var(--th-ink-soft); }
+.pet-settings summary::-webkit-details-marker { display: none; }
+.pet-settings summary:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 1px; }
+.pet-settings-panel { position: absolute; top: calc(100% + 4px); right: 0; width: 162px; padding: 10px; border-radius: 10px; background: var(--th-paper); color: var(--th-ink-soft); }
+.pet-settings-panel p { margin: 0 0 10px; line-height: 1.5; }
+.pet-settings-panel label { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; cursor: pointer; }
+.pet-settings-panel input { margin: 0; accent-color: var(--th-accent); }
+.pet-settings-panel #pet-system-motion { margin-top: -4px; font-size: 10px; }
+.pet-settings-panel #pet-quiet, .pet-settings-panel #pet-reset-position { width: 100%; height: auto; padding: 6px; color: var(--th-ink); background: var(--th-rail); font-size: 11px; line-height: 1.4; }
+
+.pet-settings-panel #pet-reset-position { margin-top: 6px; color: var(--th-ink-soft); background: transparent; }
+
+/* Live controls also stop a CSS fade already in progress. */
+.pet-motion-reduced .pet-sprite, .pet-paused .pet-sprite { transition: none; animation: none !important; }

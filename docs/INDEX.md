@@ -54,7 +54,7 @@
 | 每晚整理记忆 / 记忆视图 | [reference/architecture-companion-2026-07.md §2.4](reference/architecture-companion-2026-07.md) | `superpowers/specs/2026-09-25-memory-nightly-design.md` + `2026-09-26-memory-view-design.md` |
 | 记忆一个源(主库事实表、一种收回、知识库进迁移框架;架构终态 G,**设计稿**) | [架构终态](architecture-end-state-2026-10-25.md) 第 7 条 | `superpowers/specs/2026-10-25-memory-single-source-design.md`(上承 `2026-10-23-memory-{source-vs-derived,edits-stick}-design.md`) |
 | 网页设计统一(手机 `tokens.css` 唯一色板) | [../apps/mobile/README.md](../apps/mobile/README.md) | `superpowers/specs/2026-09-26-web-design-unify.md` |
-| 桌宠 CC / 美术资产 | — | `superpowers/specs/2026-09-05-cc-desktop-pet-design.md` + `2026-09-08-cc-asset-production-brief.md` + `2026-09-01-cc-atelier-design.md` |
+| 桌宠 CC / 美术资产 | [双态素材、陪伴功能与验证边界（功能分支候选）](superpowers/reports/2026-10-29-cc-motion-verification.md)；[素材合同与当前包](../apps/desktop/src/assets/pet/cc-v1/README.md) | [双态连续动作与陪伴控制](superpowers/specs/2026-10-29-cc-motion-expansion-design.md)；原始依据 `2026-09-05-cc-desktop-pet-design.md` + `2026-09-08-cc-asset-production-brief.md` + `2026-09-01-cc-atelier-design.md` |
 | 社交层(信封 / 关系 / 觅食台 / 串门 / 明信片 / 介绍) | — | `superpowers/specs/2026-09-04-social-architecture-rethink.md`(重构定案)+ `2026-09-04-{wish-postcard,introduction}-design.md` |
 | 伙伴状态与日程判断 | — | `superpowers/specs/2026-09-03-companion-presence-design.md` + `2026-09-05-companion-plan-design.md` |
 | 手机协议 v2 与协议包 | [../packages/protocol/README.md](../packages/protocol/README.md) | `superpowers/specs/2026-09-29-phone-protocol-v2-design.md` + `superpowers/plans/2026-09-29-phone-protocol-v2.md` |
@@ -104,6 +104,7 @@
 
 ## 修订记录
 
+- 2026-10-29：桌宠主题增加双态动作与陪伴功能的候选交付记录、素材合同和当前设计入口；功能分支、主人美术验收与原生检查分别记录。
 - 2026-10-05:回复交付从「设计已定」改为现行手册入口，标明默认 daemon 已交付与观察期收尾边界。
 - 2026-10-02:新增 `reference/network-guard.md`(网络守护:bx 优先、全入口拦截、威胁模型与验证),入主题表与 reference 目录说明。
 - 2026-10-02:`reference/network-guard.md` 改写为守护 v2(按调用判;主人收窄的决定原样记录)。

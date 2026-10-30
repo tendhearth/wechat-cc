@@ -145,3 +145,73 @@ describe('交叉淡化 ghost(renderer 层)', () => {
   })
 })
 
+
+describe('live renderer controls', () => {
+  it('reduced motion freezes an active loop and cancels breathing/crossfade; restoring resumes', () => {
+    const c = clock(), img = el(), stage = el(), ghost = el()
+    const r = createSpriteRenderer({ img, stage, ghost, schedule: c.schedule, cancel: c.cancel, preload: () => {} })
+    r.play(anim(['a', 'b', 'c'], 8, true)); r.setBreathing(true)
+    c.tick(125)
+    r.setReducedMotion(true)
+    expect(stage.classList.contains('pet-breathing')).toBe(false)
+    expect(c.pending()).toBe(0)
+    const frozen = img.src; c.tick(1000); expect(img.src).toBe(frozen)
+    r.setReducedMotion(false); c.tick(125)
+    expect(stage.classList.contains('pet-breathing')).toBe(true)
+    expect(img.src).toBe('b')
+  })
+  it('pause cancels timers and hides ghosts; new animations stay still until resumed', () => {
+    const c = clock(), img = el(), stage = el(), ghost = el()
+    const r = createSpriteRenderer({ img, stage, ghost, schedule: c.schedule, cancel: c.cancel, preload: () => {} })
+    r.play(anim(['a', 'b'], 8, true)); r.play(anim(['c', 'd'], 8, true))
+    r.setPaused(true)
+    expect(c.pending()).toBe(0)
+    expect(ghost.classList.contains('pet-ghost-out-a')).toBe(false)
+    r.play(anim(['e', 'f'], 8, true)); expect(c.pending()).toBe(0)
+    c.tick(1000); expect(img.src).toBe('e')
+    r.setPaused(false); c.tick(125); expect(img.src).toBe('f')
+  })
+})
+
+
+describe('fade completion survives motion controls independently of animation completion', () => {
+  it.each([[0, true], [250, true], [400, true], [0, false], [250, false], [400, false]])('pause at %sms (loop %s) retains fade completion until resume without timers or frame writes', (elapsed, loop) => {
+    const c = clock(), img = el(), end = vi.fn()
+    const r = createSpriteRenderer({ img, stage: el(), schedule: c.schedule, cancel: c.cancel, preload: () => {} })
+    r.play(anim(['old'], 8, true))
+    // Nonloop target ends before fade-in: its completion must not own the fade callback.
+    r.fadeTo(anim(['new'], 8, loop as boolean), { onEnd: end }); c.tick(elapsed as number)
+    r.setPaused(true); const frozen = img.src
+    expect(c.pending()).toBe(0); c.tick(1000); expect(img.src).toBe(frozen); expect(end).not.toHaveBeenCalled()
+    r.setReducedMotion(true); r.setReducedMotion(false)
+    expect(img.src).toBe(frozen); expect(c.pending()).toBe(0)
+    r.setPaused(false); c.tick(1000)
+    expect(img.src).toBe('new'); expect(end).toHaveBeenCalledTimes(1)
+    r.setPaused(true); r.setPaused(false); r.setReducedMotion(true); c.tick(1000)
+    expect(end).toHaveBeenCalledTimes(1)
+  })
+  it.each([[0, true], [250, true], [400, true], [0, false], [250, false], [400, false]])('reduction at %sms (loop %s) completes a fade once, including after fade-in starts', (elapsed, loop) => {
+    const c = clock(), img = el(), end = vi.fn()
+    const r = createSpriteRenderer({ img, stage: el(), schedule: c.schedule, cancel: c.cancel, preload: () => {} })
+    r.play(anim(['old'], 8, true)); r.fadeTo(anim(['new'], 8, loop as boolean), { onEnd: end }); c.tick(elapsed as number)
+    r.setReducedMotion(true); expect(end).toHaveBeenCalledTimes(1); c.tick(1000); expect(c.pending()).toBe(0)
+    r.setReducedMotion(false); c.tick(1000); r.setReducedMotion(true)
+    expect(end).toHaveBeenCalledTimes(1)
+  })
+  it('fadeTo while initially paused retains completion for resume and cancellation never resurrects it', () => {
+    const c = clock(), img = el(), end = vi.fn()
+    const r = createSpriteRenderer({ img, stage: el(), schedule: c.schedule, cancel: c.cancel, preload: () => {} })
+    r.setPaused(true); r.fadeTo(anim(['new'], 8, true), { onEnd: end })
+    expect(c.pending()).toBe(0); expect(end).not.toHaveBeenCalled()
+    r.setPaused(false); c.tick(1000); expect(end).toHaveBeenCalledTimes(1)
+    for (const cancel of ['stop', 'play', 'fadeTo']) {
+      const cancelled = vi.fn(); r.fadeTo(anim(['cancelled'], 8, true), { onEnd: cancelled }); c.tick(250); r.setPaused(true)
+      if (cancel === 'stop') r.stop()
+      if (cancel === 'play') r.play(anim(['replacement'], 8, true))
+      if (cancel === 'fadeTo') r.fadeTo(anim(['replacement'], 8, true))
+      r.setPaused(false); r.setReducedMotion(true); r.setReducedMotion(false); c.tick(1000)
+      expect(cancelled).not.toHaveBeenCalled()
+    }
+    r.stop(); expect(c.pending()).toBe(0)
+  })
+})

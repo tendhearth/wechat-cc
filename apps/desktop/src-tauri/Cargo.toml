@@ -18,7 +18,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The companion window uses transparent pixels around the hand-painted tank.
 # Tauri exposes that native macOS capability behind this opt-in feature.
-tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
+# Wry 0.57.1+ fixes macOS file-reference drags without legacy pasteboard paths (#1844).
+tauri = { version = "2.12.5", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
@@ -30,4 +31,4 @@ tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 
 [dev-dependencies]
-tauri = { version = "2", features = ["test"] }
+tauri = { version = "2.12.5", features = ["test"] }

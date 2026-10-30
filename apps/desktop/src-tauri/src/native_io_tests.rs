@@ -70,7 +70,7 @@ fn save_file_ipc_requires_data_b64_in_camel_case_before_decoding() {
         cmd: "save_file".into(),
         callback: tauri::ipc::CallbackFn(0),
         error: tauri::ipc::CallbackFn(1),
-        url: "http://tauri.localhost".parse().unwrap(),
+        url: webview.url().unwrap(),
         body: tauri::ipc::InvokeBody::Json(body),
         headers: Default::default(),
         invoke_key: INVOKE_KEY.into(),
@@ -79,7 +79,8 @@ fn save_file_ipc_requires_data_b64_in_camel_case_before_decoding() {
         serde_json::json!({ "filename": "unused.bin" }),
         serde_json::json!({ "filename": "unused.bin", "data_b64": "%%%" }),
     ] {
-        assert!(invoke(body).contains("missing required key dataB64"));
+        let error = invoke(body);
+        assert!(error.contains("missing required key dataB64"), "{error}");
     }
     // Reaching our decoder proves the command received dataB64. Invalid data
     // deliberately stops before home discovery or writing the owner's files.

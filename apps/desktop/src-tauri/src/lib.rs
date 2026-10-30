@@ -10,6 +10,7 @@
 pub mod bundle_migrate;
 pub mod daemon_mode;
 mod daemon_info;
+mod companion_placement;
 mod html_preview;
 mod nav_guard;
 
@@ -21,7 +22,7 @@ mod native_io_tests;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -145,6 +146,98 @@ fn render_qr_svg(text: String) -> Result<String, String> {
         .build())
 }
 
+fn companion_screen(monitor: &tauri::Monitor) -> companion_placement::Screen {
+    let area = monitor.work_area();
+    companion_placement::Screen {
+        name: monitor.name().cloned(),
+        x: f64::from(area.position.x), y: f64::from(area.position.y),
+        width: f64::from(area.size.width), height: f64::from(area.size.height),
+        scale: monitor.scale_factor(),
+    }
+}
+
+// Use current work areas (excluding menu bars/taskbars), never cached display
+// dimensions. Monitor APIs are fallible during a display configuration change.
+fn companion_screens(window: &WebviewWindow) -> (Vec<companion_placement::Screen>, usize) {
+    let preferred = window.current_monitor().ok().flatten()
+        .or_else(|| window.primary_monitor().ok().flatten()).map(|m| companion_screen(&m));
+    let mut screens: Vec<_> = window.available_monitors().unwrap_or_default().iter().map(companion_screen).collect();
+    let index = preferred.map(|screen| {
+        screens.iter().position(|s| s == &screen).unwrap_or_else(|| { screens.push(screen); screens.len() - 1 })
+    }).unwrap_or(0);
+    (screens, index)
+}
+
+fn companion_layout(window: &WebviewWindow) -> Option<companion_placement::Layout> {
+    let scale = window.scale_factor().ok()?;
+    if !scale.is_finite() || scale <= 0.0 { return None; }
+    let size = window.inner_size().ok()?.to_logical::<f64>(scale);
+    let origin = window.outer_position().ok()?;
+    Some(companion_placement::Layout { scale, x: f64::from(origin.x), y: f64::from(origin.y), width: size.width, height: size.height })
+}
+
+fn apply_companion_layout(window: &WebviewWindow, layout: &companion_placement::Layout) -> Result<(), String> {
+    window.set_size(LogicalSize::new(layout.width, layout.height))
+        .map_err(|err| format!("resize companion window: {err}"))?;
+    let position: tauri::Position = match companion_placement::native_position(layout, cfg!(target_os = "macos")) {
+        companion_placement::NativePosition::Logical(x, y) => tauri::LogicalPosition::new(x, y).into(),
+        companion_placement::NativePosition::Physical(x, y) => tauri::PhysicalPosition::new(x, y).into(),
+    };
+    window.set_position(position).map_err(|err| format!("position companion window: {err}"))
+}
+
+struct CompanionPlacementAdapter<'a>(&'a WebviewWindow);
+impl companion_placement::PlacementAdapter for CompanionPlacementAdapter<'_> {
+    fn apply(&mut self, desired: &companion_placement::Layout) -> Result<(), String> {
+        apply_companion_layout(self.0, desired)
+    }
+    fn observed(&mut self) -> Option<companion_placement::Layout> { companion_layout(self.0) }
+    fn persist(&mut self, observed: &companion_placement::Layout) {
+        remember_companion_layout(self.0, observed);
+    }
+}
+
+async fn apply_companion_confirmed(window: &WebviewWindow, desired: &companion_placement::Layout, persist: bool) -> Result<(), String> {
+    companion_placement::apply_confirmed(
+        &mut CompanionPlacementAdapter(window), desired, cfg!(target_os = "macos"), persist,
+        || tokio::time::sleep(std::time::Duration::from_millis(20)),
+    ).await
+}
+
+fn companion_placement_path(window: &WebviewWindow) -> Option<PathBuf> {
+    window.app_handle().path().app_data_dir().ok().map(|dir| dir.join("ui").join(companion_placement::FILE_NAME))
+}
+
+fn remember_companion_layout(window: &WebviewWindow, layout: &companion_placement::Layout) {
+    let placement = (|| {
+        let visible = window.is_visible().ok()?;
+        let minimized = window.is_minimized().ok()?;
+        let monitor = window.current_monitor().ok().flatten()?;
+        companion_placement::capture(&companion_screen(&monitor), layout, visible, minimized)
+    })();
+    if let (Some(path), Some(placement)) = (companion_placement_path(window), placement) {
+        let _ = companion_placement::save(&path, &placement);
+    }
+}
+
+fn remember_companion_placement(window: &WebviewWindow) {
+    if let Some(layout) = companion_layout(window) { remember_companion_layout(window, &layout); }
+}
+
+async fn restore_companion_placement(window: &WebviewWindow, from_disk: bool) {
+    let (screens, preferred) = companion_screens(window);
+    let saved = if from_disk {
+        companion_placement_path(window).and_then(|path| companion_placement::load(&path))
+    } else {
+        // Existing hidden windows retain their current bounds, while also
+        // recovering from a disconnected display before they become visible.
+        companion_layout(window).and_then(|layout| screens.get(preferred).and_then(|screen| companion_placement::capture(screen, &layout, true, false)))
+    };
+    if let Some(layout) = companion_placement::restore(saved.as_ref(), &screens, preferred, cfg!(target_os = "macos")) {
+        let _ = apply_companion_confirmed(window, &layout, false).await;
+    }
+}
+
 // Opens the companion as its own transparent desktop window. The aquarium
 // itself remains a regular webview page, so it can reuse the same Canvas scene
 // and assets as the dashboard rather than keeping a second animation engine in
@@ -158,6 +251,8 @@ fn render_qr_svg(text: String) -> Result<String, String> {
 #[tauri::command]
 async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("companion") {
+        let _ = window.unminimize();
+        restore_companion_placement(&window, false).await;
         window.show().map_err(|err| format!("show companion window: {err}"))?;
         window.set_focus().map_err(|err| format!("focus companion window: {err}"))?;
         return Ok(());
@@ -174,6 +269,10 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     // expand it at any time with the in-window + control.
     .inner_size(240.0, 300.0)
     .min_inner_size(200.0, 250.0)
+    .max_inner_size(600.0, 750.0)
+    .visible(false)
+    // CC is a window-drag surface; file uploads belong to the main workspace.
+    .disable_drag_drop_handler()
     .transparent(true)
     .decorations(false)
     .always_on_top(true)
@@ -188,9 +287,19 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let builder = builder.shadow(false);
 
-    builder
+    let window = builder
         .build()
         .map_err(|err| format!("create companion window: {err}"))?;
+    // Restore before showing. Corrupt/unwritable UI preferences cannot block
+    // opening; persistence is deliberately independent of daemon config.
+    restore_companion_placement(&window, true).await;
+    let on_close = window.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            remember_companion_placement(&on_close);
+        }
+    });
+    window.show().map_err(|err| format!("show companion window: {err}"))?;
 
     Ok(())
 }
@@ -276,27 +385,33 @@ fn start_companion_drag(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), String> {
-    let window = app
-        .get_webview_window("companion")
+async fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), String> {
+    let window = app.get_webview_window("companion")
         .ok_or_else(|| "companion window is not open".to_string())?;
     let factor = match direction.as_str() {
         "in" => 1.12,
         "out" => 1.0 / 1.12,
         _ => return Err("invalid companion resize direction".to_string()),
     };
-    let scale_factor = window
-        .scale_factor()
-        .map_err(|err| format!("read companion scale factor: {err}"))?;
-    let current = window
-        .inner_size()
-        .map_err(|err| format!("read companion size: {err}"))?
-        .to_logical::<f64>(scale_factor);
-    let width = (current.width * factor).clamp(200.0, 600.0);
-    let height = (current.height * factor).clamp(250.0, 750.0);
-    window
-        .set_size(LogicalSize::new(width, height))
-        .map_err(|err| format!("resize companion window: {err}"))
+    let current = companion_layout(&window).ok_or_else(|| "cannot read companion layout".to_string())?;
+    let (screens, preferred) = companion_screens(&window);
+    let desired = screens.get(preferred).and_then(|screen| companion_placement::zoom(screen, &current, factor, cfg!(target_os = "macos")))
+        .ok_or_else(|| "cannot resolve companion monitor".to_string())?;
+    // Derive the requested size before queuing native setters. An immediate
+    // read can still be the old geometry on macOS and must not undo the zoom.
+    apply_companion_confirmed(&window, &desired, true).await
+}
+
+#[tauri::command]
+async fn reset_companion_position(app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("companion")
+        .ok_or_else(|| "companion window is not open".to_string())?;
+    let (screens, preferred) = companion_screens(&window);
+    let size = companion_layout(&window);
+    let (width, height) = size.map(|layout| (layout.width, layout.height)).unwrap_or((240.0, 300.0));
+    let layout = companion_placement::edge(&screens, preferred, width, height, cfg!(target_os = "macos"))
+        .ok_or_else(|| "cannot resolve companion monitor".to_string())?;
+    apply_companion_confirmed(&window, &layout, true).await
 }
 
 // Spawn the bundled sidecar and collect its stdout. Stderr is forwarded as
@@ -1513,6 +1628,7 @@ pub fn run() {
             close_companion_window,
             start_companion_drag,
             resize_companion_window,
+            reset_companion_position,
             show_main_window,
             take_pending_navigate,
             wechat_daemon_pid,

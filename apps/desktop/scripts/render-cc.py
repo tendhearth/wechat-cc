@@ -14,6 +14,8 @@ import bpy
 import numpy as np
 from mathutils import Vector
 from bpy_extras.object_utils import world_to_camera_view
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cc_motion_geometry import morph_eye, eye_width
 
 ROOT = Path(__file__).resolve().parents[1]
 KIT = ROOT / 'src/assets/pet/cc-v1'
@@ -23,9 +25,44 @@ parser.add_argument('--samples', type=int, default=96)
 parser.add_argument('--calibrate-camera', action='store_true')
 parser.add_argument('--expressions-only', action='store_true')
 parser.add_argument('--behavior', choices=['thinking','working','done','receive','permission','error','look','drag'])
+parser.add_argument('--motion-plan', type=Path, help='Render new paired motion paths from the frozen scene')
+parser.add_argument('--clip', help='Render one clip from the motion plan')
+parser.add_argument('--motion-frame', type=int, help='Render a single zero-based sample')
+parser.add_argument('--resume-motion', action='store_true', help='Skip only samples with matching provenance and file digests')
+parser.add_argument('--threads', type=int, default=4)
 args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
+if args.motion_plan:
+    args.expressions_only = True
 assert not (args.expressions_only and args.calibrate_camera)
 assert not args.behavior or args.expressions_only
+assert 1 <= args.samples <= 512 and 1 <= args.threads <= 32
+assert not (args.motion_plan and args.behavior)
+assert args.motion_plan or not (args.clip or args.motion_frame is not None or args.resume_motion)
+
+motion_plan = None
+if args.motion_plan:
+    motion_plan = json.loads(args.motion_plan.read_text())
+    assert motion_plan.get('schemaVersion') == 1 and motion_plan.get('forms') == ['lit','unlit'], 'CC motion schema'
+    assert motion_plan.get('artStatus') == 'production-candidate', 'CC motion must remain candidate'
+    allowed = {'thinking','working','permission','receive','done','look','sleep','wake','error','drag'}
+    seen = set()
+    for clip in motion_plan.get('clips', []):
+        name = clip.get('id')
+        assert name in allowed and name not in seen, 'Invalid or duplicate CC motion clip'
+        seen.add(name)
+        assert isinstance(clip.get('fps'), (int,float)) and 1 <= clip['fps'] <= 24, 'Invalid CC motion fps'
+        assert isinstance(clip.get('loop'), bool) and 2 <= len(clip.get('frames', [])) <= 64, 'Invalid CC motion frames'
+        for sample in clip['frames']:
+            assert set(sample) == {'pose','eyeScale','crescent','gaze'}, 'Invalid CC motion parameters'
+            weights = sample['pose']
+            assert isinstance(weights, dict) and set(weights) <= {'listening','happy','confused','thinking','low','angry','excited'}, 'Invalid C pose'
+            values = [*weights.values(), sample['eyeScale'], sample['crescent'], sample['gaze']]
+            assert all(isinstance(v,(int,float)) and math.isfinite(v) for v in values), 'Nonfinite CC motion parameter'
+            assert all(0 <= v <= 1 for v in weights.values()) and sum(weights.values()) <= 1.000001, 'C pose exceeds frozen envelope'
+            assert .12 <= sample['eyeScale'] <= 1.15 and 0 <= sample['crescent'] <= 1 and abs(sample['gaze']) <= .07, 'Invalid eye motion'
+    assert seen and (not args.clip or args.clip in seen), 'Unknown CC motion clip'
+    if args.motion_frame is not None:
+        assert args.clip and 0 <= args.motion_frame < len(next(c for c in motion_plan['clips'] if c['id'] == args.clip)['frames']), 'Invalid CC motion sample'
 
 
 def linear(hex_color):
@@ -56,6 +93,8 @@ scene.render.engine = 'CYCLES'
 scene.cycles.samples = args.samples
 scene.cycles.use_denoising = True
 scene.cycles.seed = 11
+scene.render.threads_mode = 'FIXED'
+scene.render.threads = args.threads
 scene.render.resolution_x = scene.render.resolution_y = 512
 scene.render.resolution_percentage = 100
 scene.render.film_transparent = True
@@ -279,7 +318,7 @@ for pose in C_POSES:
 def set_pose(pose):
     for key in c_obj.data.shape_keys.key_blocks:
         if key.name != 'Basis':
-            key.value = float(key.name == pose)
+            key.value = pose.get(key.name, 0) if isinstance(pose, dict) else float(key.name == pose)
     bpy.context.view_layer.update()
 
 
@@ -457,9 +496,14 @@ if args.expressions_only:
     freeze = json.loads((SOURCE/'design-freeze.json').read_text())
     source_key = 'apps/desktop/art/cc-v1/cc-v1.blend'
     assert hashlib.sha256((SOURCE/'cc-v1.blend').read_bytes()).hexdigest() == freeze['sha256'][source_key], 'Frozen scene changed'
+    if motion_plan:
+        for path, digest in freeze['sha256'].items():
+            assert hashlib.sha256((ROOT.parents[1]/path).read_bytes()).hexdigest() == digest, 'Frozen input changed: '+path
     bpy.ops.wm.open_mainfile(filepath=str(SOURCE/'cc-v1.blend'))
     scene = bpy.context.scene
     scene.cycles.samples = args.samples
+    scene.render.threads_mode = 'FIXED'
+    scene.render.threads = args.threads
     camera = scene.camera
     parts = [bpy.data.objects[n] for n in ['Body','Foot.L','Foot.R','C']]
     c_obj = bpy.data.objects['C']
@@ -478,27 +522,32 @@ else:
 
 base_eyes = [(eye.location.copy(), [v.co.copy() for v in eye.data.vertices]) for eye in eyes]
 
-def set_eyes(kind, scale):
+def set_eyes(kind, scale, crescent=0, gaze=0):
     for eye, (location, vertices) in zip(eyes, base_eyes):
         eye.location = location.copy()
         eye.scale = (1, .65, scale)
-        eye.scale.x = 1.18 if scale < .2 else 1
+        eye.scale.x = eye_width(scale) if motion_plan else 1.18 if scale < .2 else 1
+        if kind == 'default' and scale > 1:
+            eye.scale.x = scale
         for vertex, original in zip(eye.data.vertices, vertices):
             vertex.co = original
+            amount = 1 if kind == 'crescent' else crescent
             if kind == 'crescent':
-                vertex.co.x = original.z
-                vertex.co.z = .045*(1-(original.z/.136)**2)+original.x*.35
+                vertex.co.x = original.x*(1-amount)+original.z*amount
+                vertex.co.z = original.z*(1-amount)+(.045*(1-(original.z/.136)**2)+original.x*.35)*amount
+            elif amount:
+                vertex.co.x, vertex.co.z = morph_eye(original.x, original.z, amount)
         if kind == 'large':
             eye.scale.x = eye.scale.z = 1.15
-        elif kind == 'look':
-            eye.location.x += .07
+        if kind == 'look' or gaze:
+            eye.location.x += .07 if kind == 'look' else gaze
             x, _, z = eye.location
             eye.location.y = -.94*math.sqrt(1-(x/1.12)**2-((z-.742)/.93)**2)-.013
         eye.data.update()
 
-def render_pair(expression, pose='default', eye_scale=1, shared_entity=None, eye_kind='default', mask_name=None):
+def render_pair(expression, pose='default', eye_scale=1, shared_entity=None, eye_kind='default', mask_name=None, motion_clip=None, crescent=0, gaze=0):
     set_pose(pose)
-    set_eyes(eye_kind, eye_scale)
+    set_eyes(eye_kind, eye_scale, crescent, gaze)
     bpy.context.view_layer.update()
     results = {}
     renders = {}
@@ -607,7 +656,7 @@ def render_pair(expression, pose='default', eye_scale=1, shared_entity=None, eye
         if form == 'unlit':
             assert np.array_equal(alpha,entity), 'Dark must have no exterior haze'
             assert np.any(np.all(rgba[:,:,:3]==255,axis=2)&(entity==255)), 'Dark eyes must reach display white'
-        destination = KIT/'canonical'/form/'front.png' if expression == 'idle' else KIT/'sprites'/form/(expression+'.png')
+        destination = KIT/'motion'/form/motion_clip/(expression+'.png') if motion_clip else KIT/'canonical'/form/'front.png' if expression == 'idle' else KIT/'sprites'/form/(expression+'.png')
         png(destination,rgba)
         results[form] = rgba
     mask = np.full((512,512,4),255,dtype=np.uint8)
@@ -621,7 +670,71 @@ def render_pair(expression, pose='default', eye_scale=1, shared_entity=None, eye
     return results, entity
 
 
-if args.expressions_only:
+if motion_plan:
+    # Each completed pair has its own digest checkpoint. A half-written pair is
+    # rendered again; existence alone never makes --resume-motion trust a frame.
+    output = SOURCE/'motion'
+    output.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = output/'render-progress.json'
+    identity = {
+        'planSha256': hashlib.sha256(args.motion_plan.read_bytes()).hexdigest(),
+        'sourceSha256': hashlib.sha256((SOURCE/'cc-v1.blend').read_bytes()).hexdigest(),
+        'rendererSha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        'geometrySha256': hashlib.sha256(Path(__file__).with_name('cc_motion_geometry.py').read_bytes()).hexdigest(),
+        'blender': bpy.app.version_string, 'samples': args.samples, 'seed': 11,
+    }
+    checkpoint = {'identity': identity, 'samples': {}}
+    if args.resume_motion and checkpoint_path.exists():
+        previous = json.loads(checkpoint_path.read_text())
+        assert previous.get('identity') == identity, 'Motion resume provenance changed; use a fresh render'
+        checkpoint = previous
+    rendered_samples = {}
+    for key, entry in checkpoint['samples'].items():
+        if entry.get('parameters'):
+            rendered_samples[json.dumps(entry['parameters'], sort_keys=True)] = entry
+    for clip in motion_plan['clips']:
+        if args.clip and clip['id'] != args.clip:
+            continue
+        for index, sample in enumerate(clip['frames']):
+            if args.motion_frame is not None and index != args.motion_frame:
+                continue
+            name = f'{index:03}'
+            sample_key = clip['id']+'/'+name
+            paths = [KIT/'motion'/form/clip['id']/(name+'.png') for form in ['lit','unlit']]
+            paths.append(KIT/'masks/motion'/clip['id']/(name+'.png'))
+            previous = checkpoint['samples'].get(sample_key, {})
+            if args.resume_motion and previous and all(p.exists() and hashlib.sha256(p.read_bytes()).hexdigest() == previous.get('files', {}).get(str(p.relative_to(KIT))) for p in paths):
+                print('CC_MOTION_SKIP', sample_key, flush=True)
+                continue
+            parameter_key = json.dumps(sample, sort_keys=True)
+            cached = rendered_samples.get(parameter_key)
+            exact_rest = not sample['pose'] and sample['eyeScale'] == 1 and sample['crescent'] == 0 and sample['gaze'] == 0
+            if exact_rest:
+                sources = [KIT/'canonical'/form/'front.png' for form in ['lit','unlit']]+[KIT/'masks/front.png']
+            elif cached and all((KIT/p).exists() and hashlib.sha256((KIT/p).read_bytes()).hexdigest() == digest for p, digest in cached['files'].items()):
+                sources = [KIT/cached['paths'][i] for i in range(3)]
+            else:
+                sources = None
+            if sources:
+                for source, destination in zip(sources, paths):
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(source.read_bytes())
+                print('CC_MOTION_REUSE', sample_key, 'exact resting endpoint' if exact_rest else 'identical numeric performance', flush=True)
+            else:
+                render_pair(name, sample['pose'], sample['eyeScale'], mask_name='motion/'+sample_key,
+                            motion_clip=clip['id'], crescent=sample['crescent'], gaze=sample['gaze'])
+            entry = {'parameters': sample, 'paths': [str(p.relative_to(KIT)) for p in paths],
+                     'files': {str(p.relative_to(KIT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}}
+            checkpoint['samples'][sample_key] = entry
+            rendered_samples[parameter_key] = entry
+            temporary = checkpoint_path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(checkpoint, indent=2)+'\n')
+            temporary.replace(checkpoint_path)
+            print('CC_MOTION_PAIR', sample_key, flush=True)
+    for path, digest in freeze['sha256'].items():
+        assert hashlib.sha256((ROOT.parents[1]/path).read_bytes()).hexdigest() == digest, 'Frozen source modified: '+path
+    print('CC_MOTION_FINISHED', len(checkpoint['samples']), 'paired samples; frozen files unchanged', flush=True)
+elif args.expressions_only:
     def existing_mask(name):
         img = bpy.data.images.load(str(KIT/'masks'/(name+'.png')), check_existing=False)
         alpha = np.array(img.pixels[:],dtype=np.float32).reshape(512,512,4)[::-1,:,3]

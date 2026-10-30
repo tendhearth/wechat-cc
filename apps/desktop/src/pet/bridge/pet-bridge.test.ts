@@ -77,3 +77,27 @@ describe('createPetBridge', () => {
     expect(b.tick(turnAt('idle', [], new Date(1_000).toISOString())).intent.form).toBe('lit')
   })
 })
+
+it('resume observes fresh facts without replaying hidden contact/completion, regardless of poll order', () => {
+  for (const presenceFirst of [true, false]) {
+    const b = createPetBridge({ now: () => 1000 })
+    b.notePresence(presence(0)); b.tick(turnAt())
+    b.resume()
+    const fresh = { ...turnAt('idle', [], new Date(2000).toISOString()), last_done_at: new Date(2000).toISOString() }
+    if (presenceFirst) { b.notePresence(presence(2)); expect(b.tick(turnAt(), { freshTurn: false }).intent.oneShots).toEqual([]) }
+    expect(b.tick(fresh).intent.oneShots).toEqual([])
+    if (!presenceFirst) { b.notePresence(presence(2)); expect(b.tick(fresh, { freshTurn: false }).intent.oneShots).toEqual([]) }
+    const next = { ...fresh, last_done_at: new Date(3000).toISOString() }
+    expect(b.tick(next).intent.oneShots).toEqual(['done'])
+  }
+})
+
+it('reconnection baselines unseen completion/contact, then celebrates the next real completion', () => {
+  const b = createPetBridge({ now: () => 1000 })
+  b.notePresence(presence(0)); b.tick(turnAt())
+  b.notePresence({ presence: 'down', news: { unread: 0 } } as any); b.tick(null)
+  b.notePresence(presence(2))
+  const recovered = { ...turnAt('idle', [], new Date(2000).toISOString()), last_done_at: new Date(2000).toISOString() }
+  expect(b.tick(recovered).intent.oneShots).toEqual([])
+  expect(b.tick({ ...recovered, last_done_at: new Date(3000).toISOString() }).intent.oneShots).toEqual(['done'])
+})

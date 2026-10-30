@@ -1,5 +1,6 @@
 // @ts-check
 /// <reference lib="dom" />
+import { mainDestination } from './main-navigation.js'
 /** @typedef {import('../../../src/cli/schema').GuardStatusOutputT} GuardStatus */
 /** @typedef {import('../../../src/cli/schema').ProviderShowOutputT} ProviderConfig */
 /** @typedef {import('../../../src/cli/schema').GuardEnableOutputT} GuardEnable */
@@ -158,6 +159,12 @@ const nowPage = nowRoot ? mountNowPage({
   },
   onModeChange: m => {
     setConverseMode(m)
+    if (m === 'home') {
+      // Read the authoritative local client after returning: pending now proves
+      // a future reply is new; an already arrived reply only aligns the baseline.
+      const off = subscribeConverse(msgs => nowPage?.setConversationSnapshot(msgs))
+      off()
+    }
     if (m === 'chat') document.getElementById('converse-input')?.focus()
   },
 }) : null
@@ -185,7 +192,7 @@ const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConne
     timer = setInterval(() => { void nowConnections.refresh() }, 30_000)
   })
 }
-subscribeConverse(msgs => nowPage?.setLatestLine(latestCCLine(msgs)))
+subscribeConverse(msgs => { nowPage?.setLatestLine(latestCCLine(msgs)); nowPage?.setConversationSnapshot(msgs) })
 window.addEventListener('pagehide', () => careSheet.close())
 window.addEventListener('pagehide',()=>{closeRecordReader({restoreFocus:false});deactivateAtelierGallery();deactivateTodosPage();deactivateHuntBag();deactivatePeople();deactivateWishes();deactivateA2AAgentsTab()})
 const memoryRecordsHost = document.getElementById("cc-memory-records")
@@ -1647,7 +1654,7 @@ async function boot() {
   // 浮窗点道具 → Rust show_main_window 发来的导航事件(spec 2026-09-03 §3.4)。
   // 只认白名单里的 pane,事件 payload / 命令返回值一律不可信。
   /** @param {unknown} page */
-  const navigateTo = (page) => { if (page === "a2a-agents") switchPane(page) }
+  const navigateTo = (page) => { const destination = mainDestination(page); if (destination) switchPane(destination) }
   const tauriEvent = /** @type {any} */ (window).__TAURI__?.event
   if (tauriEvent?.listen) {
     tauriEvent.listen("wechat-cc:navigate", (/** @type {{ payload?: { page?: string } }} */ ev) => {

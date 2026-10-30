@@ -7,6 +7,21 @@ manifest 的 `reference` / `designSheets` 只保留 sha256 作来源凭证;valid
 需要对照设计做审图时,把两张图临时拷进 `cc-v1/`(.gitignore 已挡住,不会被提交)。
 本目录下全部资产的许可见仓库根 `ASSETS-LICENSE.md`,不随代码的 MIT 走。
 
+## 2026-10-29：双态连续动作候选已启用
+
+当前功能分支为 Light / Dark 各启用 10 组连续动作：thinking、working、permission、receive、done、look、sleep、wake、error、drag，共 132 对样本、264 张角色 PNG 与 132 张共享实体 mask。两态仍各有 13 个行为；idle、blink、companion、canonical 与已冻结的转场保持原样。旧独立表情与 wake 帧仍在原路径，原状态表保存在 `motion.staticStates`，用于有意回退；运行时坏帧仍沿同形态 idle / master / 规范占位链处理。
+
+新运行时包与全部新增帧标为 `production-candidate`，没有借用旧美术的主人验收记录。已验收 canonical、旧表情、道具和规范 SVG 的各自状态仍保留。冻结场景、相机、材质、canonical 和转场逐文件摘要未变。
+
+完整像素检查、严格 PNG 解码与 40 张实际帧联系表已完成；独立视觉检查覆盖全部动作、48/96/128/256px、暖纸与 QA 灰板上的两态。drag 在按住时保留末姿态，释放后由状态机回到原持续态并交叉淡化；它不在仍被拖动时自行装作已经松手。此处的实施检查不能代替主人美术验收。
+
+- [动作目录、联系表与双态逐帧预览](../../../../art/cc-v1/motion/README.md)
+- [可独立打开的双态动画样本](../../../../art/cc-v1/motion/samples/index.html)
+- [原定八种 C 姿态的双态研究](../../../../art/cc-v1/studies/c-poses/README.md)（不新增运行时情绪）
+- [隔离原生验收应用](../../../../art/cc-v1/native-motion-qa/README.md)
+
+下面按日期保留早期批次与验收证据；其中的当时数量和待办不代表本次候选动作的当前状态。
+
 ## 2026-09-09：基础设计冻结，第二批表情候选
 
 Owner 已验收 `a6b28e2a` 的基础几何、相机、Light/Dark 材质与灯光；canonical 正身标为 `reviewed-production`。第二批以该 `.blend` 为只读源，用 `render-cc.py -- --expressions-only` 生成；不覆盖源文件、正身、blink/sleep 或八帧转场。
@@ -100,7 +115,7 @@ bun --bun vitest run apps/desktop/src/pet src/domain/pet-turn.test.ts src/domain
 ## TODO：仍缺的正式美术
 
 1. 经人工确认的 Light/Dark 同构四视图透明成品，以及真实侧/背面遮挡规范。
-2. 所有状态的最终高质量 sprite（包含本版已有占位眨眼/睡眠/张望）；thinking/working/receive/done/permission/error 等专属动作表演与连续帧。
+2. 10 组连续动作候选的最终主人验收；原定其他视角与当前规范占位仍须分别完成正式美术，不能因新动作已生成而视作全部通过。
 3. Dark→Light 最终光影转场及 Light→Dark 正式转场；保持首末注册点与 canonical 连续。
 4. 软瓷/磨砂半透、intrinsic glow、环境 rim、contact-shadow 的生产分层与合成规范。Dark 禁止自发光。
 5. 48/96/128/256px、深/浅背景、真实 Tauri 窗口上的视觉验收，以及现有道具与新身形的美术适配。
@@ -110,7 +125,7 @@ bun --bun vitest run apps/desktop/src/pet src/domain/pet-turn.test.ts src/domain
 1. 保留母版原图与来源摘要。以母版和最新硬约束建同一几何/rig，再分别渲染 Light/Dark 材料；不得独立生成两只不一致的角色。
 2. 导出透明 **512×512 RGBA PNG（color type 6）**，统一 `(256,470)` anchor、baseline470、safe bbox。不要在运行时修尺寸或落脚点。将同视角/状态共用的几何 mask 放到 `masks/`，记录来源。
 3. 将成品放到 `sprites/` 或 `canonical/` 新文件名，只改 `manifest.forms[form].states[state].frames`、fps/loop/next 和相应 `canonical`/`turnarounds` 引用。持续状态保持 loop；一次性状态保持非 loop，回落目标由状态机管理。新增转场放到 `transitions`，不要改 presence/pet-turn 来匹配美术。
-4. 为每个替换帧写 `assets[path]`：`sha256`（实际文件摘要）、`view`、`expression`、`artStatus: reviewed-production`、`geometryMask`（包内路径）、`visualReview: { reviewer, reviewedAt, referenceSha256 }`。把 mask 本身也纳入 `assets` 与摘要校验。对应 Light/Dark PNG 必须引用同一路径的实体 mask，成品 alpha 按上面的覆盖规则校验；人工验证 mask 来自不透明 Dark 几何且不含效果。待验收帧先标 `production-candidate`，确认后才标 `reviewed-production`。混合交付期间顶层 `artStatus` 仍保持 `normative-placeholder`，直到所有必须资产都审核完成才改为 `reviewed-production`。
+4. 为每个替换帧写 `assets[path]`：`sha256`（实际文件摘要）、`view`、`expression`、`artStatus`、`geometryMask`（包内路径）、`visualReview: { reviewer, reviewedAt, referenceSha256 }`。把 mask 本身也纳入 `assets` 与摘要校验。对应 Light/Dark PNG 必须引用同一路径的实体 mask，成品 alpha 按上面的覆盖规则校验；人工验证 mask 来自不透明 Dark 几何且不含效果。待验收帧先标 `production-candidate`，确认后才标 `reviewed-production`。顶层反映当前运行时包：仍依赖必需规范占位时为 `normative-placeholder`，启用真实但未验收帧时为 `production-candidate`，必须的运行时美术全部审核完成后才为 `reviewed-production`；遗留非运行时 SVG 不随之升级。
 5. 更新 `forms.*.geometryId` 时两态必须一起变更。保留 `character` 硬约束。删掉已替换帧的专属 TODO，只在真实验收后记录美术完成。
 6. 跑 validator 与定向测试（素材数量/占位源断言是 alpha 快照，替换时应改为新成品验证，不可只删除测试以求通过）。逐帧人工审查部件、Light/Dark 对齐、透明边缘、C 比例、落脚点及闭眼/遮挡；在 pet-lab 和 Tauri 验证请求状态、坏图回退及 reduced motion。
 7. **不要再运行 `build-cc-asset-kit.mjs` 覆盖手工修改的 manifest**：该命令仅重建本版规范占位。生产包整包升级时保留 `placeholder.js`，以便所有外部资产失败时仍有安全占位。

@@ -21,15 +21,21 @@ export function createPetBridge({ now = () => Date.now() } = {}) {
   let state = initialBridgeState()
   // 有没有 tick 过 —— 开窗后的第一拍要跳过转场,不管那一拍是谁触发的(见 tick 的注释)。
   let ticked = false
+  let reobservingTurn = false
+  let reobservingPresence = false
   /** @type {Presence | null} */
   let prev = null
   /** @type {PetIntent} */
   let presenceIntent = presenceToPet(null, null)
 
   return {
+    // Hidden time is observation time, never a queue of performances.
+    resume() { reobservingTurn = true; reobservingPresence = true },
     /** @param {Presence | null} p */
     notePresence(p) {
-      presenceIntent = presenceToPet(p, prev)
+      presenceIntent = presenceToPet(p, reobservingPresence ? null : prev)
+      if (presenceIntent.behavior === 'sleep') { reobservingTurn = true; reobservingPresence = true }
+      else reobservingPresence = false
       if (p && p.presence !== 'down') prev = p
     },
     /**
@@ -40,20 +46,22 @@ export function createPetBridge({ now = () => Date.now() } = {}) {
      *    这一拍通常不再改 form)。
      * 之后每一拍都是 false —— 那时候的变化是真变化,该演就演。
      * @param {PetTurn | null} turn
+     * @param {{ freshTurn?: boolean }} [opts]
      * @returns {{ intent: PetIntent, permission: PetTurn['pending_permissions'][number] | null, permissionCount: number, fast: boolean, first: boolean }}
      */
-    tick(turn) {
+    tick(turn, { freshTurn = true } = {}) {
       const wasInitialized = state.initialized
       const wasTicked = ticked
       ticked = true
       const nowMs = now()
-      const r = mergeIntent({ presence: presenceIntent, turn, state, nowMs })
+      const reobserving = reobservingTurn || reobservingPresence
+      const r = mergeIntent({ presence: presenceIntent, turn, state: reobservingTurn ? { ...state, initialized: false } : state, nowMs })
+      if (reobserving) r.intent = { ...r.intent, oneShots: r.intent.oneShots.filter(b => b === 'error') }
+      if (freshTurn && turn && presenceIntent.behavior !== 'sleep') reobservingTurn = false
       state = r.state
       presenceIntent = { ...presenceIntent, oneShots: [] }
       const fast = recentContact(state, nowMs) || (turn?.turn?.phase ?? 'idle') !== 'idle' || r.permissionCount > 0
-      // 今天 bridge 不会重置 state;若将来加了重置(reset),同样应当在重置后的
-      // 第一拍再报一次 first。
-      const first = !wasTicked || (!wasInitialized && state.initialized)
+      const first = reobserving || !wasTicked || (!wasInitialized && state.initialized)
       return { intent: r.intent, permission: r.permission, permissionCount: r.permissionCount, fast, first }
     },
   }

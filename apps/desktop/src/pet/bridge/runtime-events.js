@@ -46,7 +46,7 @@ export function mergeIntent({ presence, turn, state, nowMs }) {
     if (contactMs !== null && (state.lastContactMs === null || contactMs > state.lastContactMs)) {
       oneShots.push('receive'); if (!props.includes('micro-light')) props.push('micro-light')
     }
-    if (state.lastDoneMs !== null && doneMs !== null && doneMs > state.lastDoneMs) oneShots.push('done')
+    if (doneMs !== null && (state.lastDoneMs === null || doneMs > state.lastDoneMs)) oneShots.push('done')
   }
 
   /** @type {PetIntent['behavior']} */

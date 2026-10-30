@@ -76,3 +76,8 @@ apps/relay/.wrangler/
 # 变异测试(bun run test:mutation)的沙箱与报告
 .stryker-tmp/
 reports/mutation/
+
+# Local task ledgers, review evidence and Python render caches
+.superpowers/
+__pycache__/
+apps/desktop/art/cc-v1/native-motion-qa/dist/

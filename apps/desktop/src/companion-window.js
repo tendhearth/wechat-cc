@@ -8,15 +8,41 @@ import { createPermissionCard } from './pet/permission/permission-card.js'
 import { createPresencePoller } from './presence-poller.js'
 import { invokeApi } from './api.js'
 import { invoke } from './ipc.js'
+import { createCompanionPreferences } from './companion-preferences.js'
+import { formatCompanionStatus } from './companion-status.js'
 
 const $ = (/** @type {string} */ id) => document.getElementById(id)
 // 浏览器预览(没有 Tauri 运行时)里窗口命令无处可去 —— 用它决定要不要发。
 const mock = !(/** @type {any} */ (window).__TAURI__?.core?.invoke)
 const stage = $('pet-stage'), img = $('pet-sprite'), props = $('pet-props'), hint = $('pet-hint')
-const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+const motionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null
+/** @type {Storage | null} */ let storage = null
+try { storage = window.localStorage } catch { /* controls still work without persistence */ }
 
-const pet = await createPet({ stage, img, props, hint }, { manifestUrl: './assets/pet/cc-v1/manifest.json', reducedMotion })
+const pet = await createPet({ stage, img, props, hint }, { manifestUrl: './assets/pet/cc-v1/manifest.json', reducedMotion: motionQuery?.matches === true })
 if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
+
+let quiet = false, reducedMotion = false
+const reobserve = new Set()
+/** @param {import('./companion-preferences.js').MotionPreferences} s */
+const applyPreferences = s => {
+  if ((quiet && !s.quiet) || (reducedMotion && !s.reducedMotion)) { reobserve.add('presence'); reobserve.add('turn') }
+  quiet = s.quiet; reducedMotion = s.reducedMotion
+  pet.setReducedMotion(s.reducedMotion)
+  pet.setQuiet(s.quiet)
+  const checkbox = /** @type {HTMLInputElement | null} */ ($('pet-reduced-motion'))
+  if (checkbox) { checkbox.checked = s.reducedMotion; checkbox.disabled = s.systemReduced }
+  const systemNote = $('pet-system-motion')
+  if (systemNote) systemNote.hidden = !s.systemReduced
+  const quietButton = $('pet-quiet')
+  if (quietButton) { quietButton.textContent = s.quiet ? '恢复动作' : '安静一小时'; quietButton.setAttribute('aria-pressed', String(s.quiet)) }
+}
+const preferences = createCompanionPreferences({ storage, systemReduced: motionQuery?.matches, onChange: applyPreferences })
+applyPreferences(preferences.snapshot())
+const systemMotionChanged = () => preferences.setSystemReduced(motionQuery?.matches === true)
+motionQuery?.addEventListener('change', systemMotionChanged)
+$('pet-reduced-motion')?.addEventListener('change', event => preferences.setUserReduced(/** @type {HTMLInputElement} */ (event.target).checked))
+$('pet-quiet')?.addEventListener('click', () => preferences.setQuiet(!preferences.snapshot().quiet))
 
 // presence(处境)+ pet 端点(在做什么)→ 一个意图(spec §5)。两个轮询各拉各的,
 // 谁回来都重算一次 —— 有状态的合并在 pet-bridge.js 里(那儿有测试),这里只做接线。
@@ -40,9 +66,19 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
 })
 
 const bridge = createPetBridge()
-const apply = () => {
-  const r = bridge.tick(petPoller.current())
-  pet.applyIntent(r.intent)
+const apply = (freshTurn = false) => {
+  const stream = freshTurn ? 'turn' : 'presence'
+  const turn = petPoller.current()
+  const r = bridge.tick(turn, { freshTurn })
+  // A presence response only observes the cached turn. The next fresh turn
+  // still has to consume its own suppressed completion/contact baseline.
+  if (reobserve.has(stream)) r.intent = { ...r.intent, props: r.intent.props.filter(p => p !== 'micro-light'), oneShots: r.intent.oneShots.filter(b => b === 'error') }
+  // Current facts remain readable when motion is reduced or quiet. Dark hides stale activity.
+  const activity = formatCompanionStatus(r.intent, r.permissionCount)
+  if (stage && stage.getAttribute('aria-label') !== activity.ariaLabel) stage.setAttribute('aria-label', activity.ariaLabel)
+  const status = $('pet-connection')
+  if (status && status.textContent !== activity.text) status.textContent = activity.text
+  pet.applyIntent({ ...r.intent, hint: r.intent.hint === 'daemon 没起' ? '暂时联系不上 CC' : r.intent.hint })
   // 初次观察不播转场(spec §5.2):开窗时 CC 本来就亮着,那是既成事实,不是「主人
   // 刚到」。applyIntent 已经按事实把 form 设过去了,这里立刻把转场判为播完,
   // 状态机直接落到目标形态 —— 省掉那 8 帧点火,而不用改 Phase A 的接口。
@@ -50,15 +86,22 @@ const apply = () => {
   if (r.first && pet.machine.snapshot().transition) pet.machine.notifyAnimationEnded()
   if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
   petPoller.setFast(r.fast)
+  // Consume this snapshot under the previous quiet flag before wake-time expiry
+  // enables motion; completion during suspend must not become a celebration.
+  preferences.refresh()
+  if (!freshTurn || turn) reobserve.delete(stream)
 }
 poller.subscribe(p => { bridge.notePresence(p); apply() })
-petPoller.subscribe(() => apply())
-poller.start()
-petPoller.start()
+petPoller.subscribe(() => apply(true))
+pet.setPaused(document.hidden)
+if (!document.hidden) { poller.start(); petPoller.start() }
 // start() 自己会先拉一次,这里不用再补 refresh()。
 // 窗口不可见 → 两个都停(spec §5.3);回来时 start() 会各自补一拍。
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { poller.stop(); petPoller.stop(); return }
+  if (document.hidden) { pet.setPaused(true); poller.stop(); petPoller.stop(); return }
+  preferences.refresh()
+  bridge.resume()
+  pet.setPaused(false)
   poller.start(); petPoller.start()
 })
 
@@ -74,6 +117,21 @@ const endDrag = () => pet.endDrag()
 window.addEventListener('mouseup', endDrag)
 window.addEventListener('blur', endDrag)
 window.addEventListener('mousemove', (event) => { if (event instanceof MouseEvent && event.buttons === 0) endDrag() })
+
+$('pet-open-main')?.addEventListener('click', async () => {
+  if (mock) { location.assign('./index.html'); return }
+  try { await invoke('show_main_window', { page: 'overview' }) }
+  catch (err) { console.warn('show_main_window failed', err); pet.setHint('没能打开 CC，请再试一次') }
+})
+
+$('pet-reset-position')?.addEventListener('click', async () => {
+  if (mock) { pet.setHint('请在桌面应用中调整位置'); return }
+  const button = /** @type {HTMLButtonElement | null} */ ($('pet-reset-position'))
+  if (button) button.disabled = true
+  try { await invoke('reset_companion_position') }
+  catch (err) { console.warn('reset_companion_position failed', err); pet.setHint('没能调整位置，请再试一次') }
+  finally { if (button) button.disabled = false }
+})
 
 $('companion-window-close')?.addEventListener('click', () => {
   if (mock) { window.close(); return }

@@ -3,7 +3,7 @@
 import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{id:string,title:string,providerId:string,pendingPermissionCount:number,pendingQuestionCount:number,attentionKey:string,first?:{kind:'permission'|'question',text:string}|null}} AttentionTask */
-/** @typedef {{tasks:AttentionTask[],stale:boolean}} AttentionState */
+/** @typedef {{tasks:AttentionTask[],stale:boolean,progress?:Map<string,string>,moved?:{replied:string[],stopped:string[]}}} AttentionState */
 /** @typedef {{invokeWorkbenchApi:(method:'GET',path:string)=>Promise<unknown>,invoke:(command:string,args:Record<string,unknown>)=>Promise<unknown>,onChange?:(state:AttentionState)=>void,getContext?:()=>{taskId:string|null,focused:boolean},intervalMs?:number,maxBackoffMs?:number,requestTimeoutMs?:number}} PollerOptions */
 
 /**
@@ -113,7 +113,7 @@ export function createWorkbenchAttentionPoller(options) {
         initialized = true
         retryMs = intervalMs
         tasks = entries.map(({ task }) => task)
-        options.onChange?.({ tasks, stale: false })
+        options.onChange?.({ tasks, stale: false, ...(progress ? { progress: new Map(progress), moved } : {}) })
         // 回复 / 停下:窗口在前面就不弹(你正看着 CC);待处理那条优先,一次轮询最多一条通知。
         const finishNotice = !shouldNotify && !context.focused
           ? moved.stopped.length ? { title: '一起做有任务停下了', body: '打开 CC 看看发生了什么。' }

@@ -1,6 +1,7 @@
 // @ts-check
 // now-page.js — 「此刻」页(spec 2026-10-01 §6.3):问候、CC(明暗来自 presence)、最近一句真话的气泡、等你的事、home/chat 两态。
 import { greetingFor, ccPresence, waitingRows, waitingHeader, ccBubblePreview } from './now-home.js'
+import { mountNowHero } from './now-hero.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { icon } from './icons.js'
 
@@ -32,7 +33,8 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
   // 问候随钟点变:挂载、presence 每一拍、切 home/chat 都重算(textContent 同值不动 DOM)。
   const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el.textContent !== g) el.textContent = g }
   greet()
-  const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); greet() })
+  const hero = mountNowHero({ root, button: $('now-cc') })
+  const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); hero.setPresence(p); greet() })
   /** @param {'home'|'chat'} m */
   function setMode(m) { root.dataset.now = m; $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
   const toChat = () => setMode('chat')
@@ -184,15 +186,18 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
       time.textContent = line.at === null ? '' : when(line.at, now())
     },
     /** @param {any} state */
-    setAttention(state) { attention = state; renderWaiting() },
+    setAttention(state) { attention = state; hero.setAttention(state); renderWaiting() },
+    /** @param {import('./converse.js').ConverseMsg[]} msgs */
+    setConversationSnapshot(msgs) { hero.setConverse(msgs) },
     /** 终端里等批准的会话(terminal-waiting.js 的行),接在工作台的等你行后面。 @param {import('./terminal-waiting.js').TerminalRow[]} rows */
     setTerminal(rows) {
       terminal = rows
+      hero.setTerminal(rows)
       for (const h of [...decided.keys()]) if (!rows.some(r => r.hash === h)) decided.delete(h)
       // 小窗开着时那一项已经不在(微信 / 桌宠刚拍过)⇒ 关掉,别留一个按了也白按的窗。
       if (decideView && !rows.some(r => r.hash === decideView?.hash)) decideView.dialog.close()
       renderWaiting()
     },
-    destroy() { unsub(); decideView?.dialog.close() },
+    destroy() { unsub(); hero.destroy(); decideView?.dialog.close() },
   }
 }

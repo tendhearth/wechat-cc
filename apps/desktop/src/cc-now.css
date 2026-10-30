@@ -131,8 +131,41 @@ div.now-terminal-row:hover .t { color: var(--th-ink); }
   .now-bubble::after { left: 50%; top: auto; bottom: -6px; margin-top: 0; margin-left: -5px; border-left: 0; border-right: 1px solid var(--th-hair); }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .cc-now-pane[data-cc="here"] .now-figure img { animation: now-breathe 6s ease-in-out infinite; transform-origin: 50% 90%; }
+  .cc-now-pane[data-cc="here"] .now-figure:not([data-runtime="ready"]):not([data-motion="reduced"]) > img { animation: now-breathe 6s ease-in-out infinite; transform-origin: 50% 90%; }
   @keyframes now-breathe { 50% { transform: scaleY(1.015) translateY(-1px); } }
 }
 
 .now-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Shared pet renderer, scoped to the home button. Keep the full square and anchor;
+   importing the transparent companion window stylesheet would alter the whole app. */
+.now-figure[data-runtime="ready"] > .now-cc-light,
+.now-figure[data-runtime="ready"] > .now-cc-dark { display: none; }
+.now-figure .now-pet-stage { position: absolute; inset: 0; display: block; container-type: size; pointer-events: none;
+  --pet-side: min(100cqw, 100cqh); --pet-box-x: calc((100cqw - var(--pet-side)) / 2); --pet-box-y: calc((100cqh - var(--pet-side)) / 2);
+  --pet-origin-x: calc(var(--pet-box-x) + var(--pet-anchor-x, .5) * var(--pet-side)); --pet-origin-y: calc(var(--pet-box-y) + var(--pet-anchor-y, .92) * var(--pet-side)); }
+.now-figure .now-pet-stage[hidden] { display: none; }
+.now-figure .now-pet-stage .pet-sprite { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: var(--pet-origin-x) var(--pet-origin-y); pointer-events: none; user-select: none; transition: opacity 240ms ease; }
+.now-figure .pet-sprite.pet-fading { opacity: 0; }
+.now-figure .pet-ghost { opacity: 0; transition: none; }
+.now-figure .pet-ghost-out-a { animation: now-pet-ghost-a 160ms ease-out forwards; }
+.now-figure .pet-ghost-out-b { animation: now-pet-ghost-b 160ms ease-out forwards; }
+@keyframes now-pet-ghost-a { from { opacity: 1; } to { opacity: 0; } }
+@keyframes now-pet-ghost-b { from { opacity: 1; } to { opacity: 0; } }
+.now-figure .now-pet-props { position: absolute; inset: 0; pointer-events: none; }
+.now-figure .pet-prop { position: absolute; left: calc(var(--pet-origin-x) + var(--slot-dx, 0) * var(--pet-side)); top: calc(var(--pet-origin-y) + var(--slot-dy, 0) * var(--pet-side)); width: calc(var(--slot-scale, .34) * var(--pet-side)); aspect-ratio: 1; transform: translate(-50%, -50%); }
+.now-figure .pet-prop img { width: 100%; height: 100%; object-fit: contain; }
+.now-figure .pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; padding: 0 5px; border-radius: var(--th-radius-control); background: var(--th-accent); color: var(--th-paper); font-size: var(--th-size-caption); line-height: 18px; text-align: center; }
+@media (prefers-reduced-motion: no-preference) {
+  .now-figure .pet-breathing .pet-sprite:not(.pet-ghost) { animation: now-pet-breathe 6s ease-in-out infinite; }
+  .now-figure .pet-breathing .pet-ghost-out-a { animation: now-pet-breathe 6s ease-in-out infinite, now-pet-ghost-a 160ms ease-out forwards; }
+  .now-figure .pet-breathing .pet-ghost-out-b { animation: now-pet-breathe 6s ease-in-out infinite, now-pet-ghost-b 160ms ease-out forwards; }
+  @keyframes now-pet-breathe { 50% { transform: scaleY(1.015) translateY(-1px); } }
+}
+.now-figure .pet-motion-reduced .pet-sprite, .now-figure .pet-paused .pet-sprite { animation: none; transition: none; }
+.now-figure .pet-motion-reduced .pet-ghost, .now-figure .pet-paused .pet-ghost { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .now-figure .pet-sprite { animation: none; transition: none; }
+  .now-figure .pet-ghost { opacity: 0; }
+  .now-figure::before { transition: none; }
+}

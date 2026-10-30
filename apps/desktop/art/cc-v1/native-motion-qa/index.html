@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CC 动作与位置验收</title>
+  <link rel="stylesheet" href="./tokens.css"><link rel="stylesheet" href="./fonts.css">
+  <link rel="stylesheet" href="./companion-window.css"><link rel="stylesheet" href="./native-qa.css">
+  <script type="module" src="./native-qa.js"></script>
+</head>
+<body>
+  <main>
+    <h1>CC · 双态与窗口验收</h1>
+    <p>独立测试应用。仅使用本地演示数据，不连接日常后台；动作素材仍待美术验收。</p>
+    <section class="native-actions" aria-label="原生窗口">
+      <button id="open">打开浮窗</button><button id="zoom-in">放大</button><button id="zoom-out">缩小</button>
+      <button id="reset">回到屏幕边缘</button><button id="close">关闭浮窗</button><button id="snapshot">读取位置</button>
+      <label>浮窗演示 <select id="scenario"><option value="idle">已连接</option><option value="away">暂时没连上</option><option value="working">正在做</option><option value="thinking">想一想</option><option value="permission">权限卡</option><option value="completed">完成事件 · 演示</option></select></label>
+      <button id="advance-quiet" title="仅推进当前测试浮窗内部的墙钟，不改系统时间；重新打开浮窗可复位">模拟过两小时</button>
+    </section>
+    <pre id="native-state" aria-live="polite">原生窗口尚未打开。</pre>
+    <section aria-label="原生素材">
+      <div class="art-actions"><label>动作 <select id="behavior"></select></label><label>尺寸 <select id="size"><option>48</option><option>96</option><option>128</option><option selected>256</option></select></label><label>对比底板 <select id="backdrop"><option value="paper">暖纸</option><option value="slate">灰板 · QA</option></select></label><label><input id="reduce" type="checkbox">减少动作</label><button id="replay">重播动作</button></div>
+      <div class="pair" id="pair"><article><div class="pet-stage"><img class="pet-sprite" alt="Light CC"><div class="pet-props"></div></div><h2>Light CC · 在身边</h2></article><article><div class="pet-stage"><img class="pet-sprite" alt="Dark CC"><div class="pet-props"></div></div><h2>Dark CC · 暂时没连上</h2></article></div>
+      <p id="asset-state" aria-live="polite">正在载入同一份素材包。</p>
+    </section>
+  </main>
+</body>
+</html>
