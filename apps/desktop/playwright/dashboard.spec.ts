@@ -532,7 +532,8 @@ test('此刻 home → chat via the CC, draft survives a workbench round-trip, on
   await expect(pane).toHaveAttribute('data-now', 'home')
   // shim 默认 presence ok ⇒ 够得着 ⇒ 亮着的 CC。
   await expect(pane).toHaveAttribute('data-cc', 'here')
-  await expect(page.locator('.now-cc-light')).toBeVisible()
+  // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
+  await expect(page.locator('#now-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
   await expect(page.locator('.now-cc-dark')).toBeHidden()
   await expect(page.locator('#converse-scroll')).toBeHidden()
   await page.locator('#converse-input').fill('草稿不丢')
@@ -585,6 +586,7 @@ test('CC is lit and the status line is green when presence answers', async ({ pa
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
-  await expect(page.locator('.now-cc-light')).toBeVisible()
+  // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
+  await expect(page.locator('#now-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
   await expect(page.locator('#dash-rail-dot')).toHaveClass(/ok/, { timeout: 15_000 })
 })
