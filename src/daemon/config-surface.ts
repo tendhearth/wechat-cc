@@ -60,6 +60,8 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
     effect: 'immediate', description: 'Claude 模型 id', validate: (v) => MODEL_RE.test(v) },
   { key: 'openaiModel', store: 'agent', field: 'openaiModel', type: 'string', writable: true,
     effect: 'immediate', description: 'OpenAI 兼容后端的模型 id', validate: (v) => MODEL_RE.test(v) },
+  { key: 'openaiEvalModel', store: 'agent', field: 'openaiEvalModel', type: 'string', writable: true, nullable: true,
+    effect: 'immediate', description: 'OpenAI 兼容后端做后台评估(记忆整理/指称判断)用的模型 id;留空 = 跟 openaiModel', validate: (v) => MODEL_RE.test(v) },
   { key: 'geminiModel', store: 'agent', field: 'geminiModel', type: 'string', writable: true,
     effect: 'immediate', description: 'Gemini 模型 id', validate: (v) => MODEL_RE.test(v) },
   { key: 'cursorModel', store: 'agent', field: 'cursorModel', type: 'string', writable: true,
