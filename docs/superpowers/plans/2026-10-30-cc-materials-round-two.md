@@ -32,10 +32,10 @@
 
 **Interfaces:** pure study module defines `views()`, `orbit(yaw,pitch,scale)`, `derive_render_pair(source,context)`, output/provenance checks. Wrapper accepts `--output`, `--samples`, `--threads`, `--views`, `--resume`; records per-view parameters, three file digests and complete/partial status. Original cached bootstrap must match all existing motion samples and original renderer identity before execution.
 
-- [ ] Write stdlib tests for front/right/rear orbit, twenty unique valid views, invalid/singular angles, protected/overlapping outputs, damaged resume records and adapter changes preserving all unrelated assertions; run RED on Mini.
-- [ ] Implement pure recipe and fail-closed adapter: only wrap the named white-eye assertion with per-view requirement and zero the original fixed `shadow` assignment. Require exactly one match each; copy function AST, never edit the frozen file.
-- [ ] Implement wrapper with original object/data camera snapshot, cloned camera, common-scale projection fit, existing foot registration, fresh temporary raw output and digest-protected resume. Validate protected bytes in `finally`.
-- [ ] Provision public Blender, run pilot front/right/rear at24 samples in a separate ignored folder; inspect registration, eyes and materials. Fix evidence-backed issues before full rendering.
+- [x] Write stdlib tests for front/right/rear orbit, twenty unique valid views, invalid/singular angles, protected/overlapping outputs, damaged resume records and adapter changes preserving all unrelated assertions; run RED on Mini.
+- [x] Implement pure recipe and fail-closed adapter: only wrap the named white-eye assertion with per-view requirement and zero the original fixed `shadow` assignment. Require exactly one match each; copy function AST, never edit the frozen file.
+- [x] Implement wrapper with original object/data camera snapshot, cloned camera, common-scale projection fit, existing foot registration, fresh temporary raw output and digest-protected resume. Validate protected bytes in `finally`.
+- [x] Provision public Blender, run pilot front/right/rear/raised-front at24 samples in a separate ignored folder; inspect registration, eyes and materials. Fix evidence-backed issues before full rendering.
 - [ ] Render all20 pairs at96 samples/threads2 under Mini offline profile. Expect40 character PNGs+20 masks, finite metadata and unchanged protected inputs. Commit source and candidate data.
 
 ### Task 2: Directional validation and review artifacts
