@@ -174,7 +174,11 @@ test('an existing pet snapshot ends suspended quiet after consuming its completi
     Date.now = () => wallNow() + (window as any).__quietWallOffset
   })
   let complete = false, reads = 0
-  await page.route('**/v1/companion/pet', route => {
+  // 拨钟和换成「已完成」之间要是溜进一次 working 的拉取,安静已结束、基线成了 working,
+  // 下一拍的完成就是真·新完成(该播)—— 测的不是这个场景。拨钟期间扣住拉取。
+  let gate: Promise<void> | null = null
+  await page.route('**/v1/companion/pet', async route => {
+    if (gate) await gate
     reads++
     return route.fulfill({ json: {
       owner_last_contact_at: null, last_done_at: complete ? '2026-10-29T11:00:00Z' : null,
@@ -185,6 +189,10 @@ test('an existing pet snapshot ends suspended quiet after consuming its completi
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('working')
   await page.getByText('陪伴设置', { exact: true }).click()
   await page.getByRole('button', { name: '安静一小时' }).click()
+  let release!: () => void
+  gate = new Promise(r => { release = r })
+  // 已经发出去、还没处理完的那一拍先落地(它仍在安静里,不算数)。
+  await page.waitForTimeout(300)
   await page.evaluate(() => {
     ;(window as any).__quietBehaviors = []
     ;(window as any).__pet.machine.subscribe((s: any) => (window as any).__quietBehaviors.push(s.behavior))
@@ -192,6 +200,7 @@ test('an existing pet snapshot ends suspended quiet after consuming its completi
     ;(window as any).__quietWallOffset = 3_600_001
   })
   const before = reads; complete = true
+  gate = null; release()
   await expect.poll(() => reads).toBeGreaterThan(before)
   await expect(page.getByRole('button', { name: '安静一小时' })).toBeVisible()
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('idle')
