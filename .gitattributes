@@ -3,6 +3,10 @@
 apps/desktop/src/assets/pet/** -text
 apps/desktop/art/** -text
 
+# 微光生成凭证按源码字节记录摘要;Windows checkout 也必须保留生成时的 LF。
+apps/desktop/scripts/render-cc-props.py text eol=lf
+apps/desktop/scripts/cc_prop_glow.py text eol=lf
+
 # 手机页源码与生成物:apps/mobile/build.test.ts 按整份文本比对「源码 → 生成物」,
 # autocrlf 把两边行尾改成 CRLF 后比对必红(windows-latest)。服务出去的字节本来就该是 LF。
 apps/mobile/src/** text eol=lf

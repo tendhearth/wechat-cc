@@ -3,6 +3,7 @@ import { readFileSync, mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { resolve, join, relative, sep } from 'node:path'
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { inflateSync, deflateSync } from 'node:zlib'
 import { normalizeManifest } from './manifest-loader.js'
 import { resolveAnimation, resolveTransition } from './animation-resolver.js'
@@ -449,6 +450,18 @@ it('pins the old accepted micro-light bytes and never transfers that owner revie
   expect(asset.generation.adapterSha256).toBe(digest(readFileSync(resolve(__dirname,'../../../scripts/cc_prop_glow.py'))))
   expect(proof).toMatchObject({ok:true,afterFarAlphaPixels:0,opaqueCoreUnchanged:true,frozenFiles:14,otherPropsUnchanged:6})
   expect(proof.beforeFarAlphaPixels).toBeGreaterThan(0);expect(proof.nearExteriorPixels).toBeGreaterThan(0)
+})
+
+it('keeps generation script bytes portable under Windows checkout line-ending filters', () => {
+  const generation=raw.assets['../props/micro-light.png'].generation,repo=resolve(__dirname,'../../../../..')
+  for(const [file,key] of [['render-cc-props.py','scriptSha256'],['cc_prop_glow.py','adapterSha256']] as const){
+    const path=`apps/desktop/scripts/${file}`
+    // Use current source, including a valid newly generated uncommitted revision.
+    // Content-addressed objects do not alter the index or working tree.
+    const object=execFileSync('git',['hash-object','-w','--stdin'],{cwd:repo,input:readFileSync(join(repo,path)),encoding:'utf8',windowsHide:true}).trim()
+    const bytes=execFileSync('git',['-c','core.autocrlf=true','cat-file','--filters',`--path=${path}`,object],{cwd:repo,windowsHide:true})
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(generation[key])
+  }
 })
 
 it('rejects standalone prop dimensions and missing registration independently of character masks', () => {
