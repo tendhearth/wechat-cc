@@ -35,6 +35,7 @@ if (qaQuietControl) new MutationObserver(() => reportQAState()).observe(qaQuietC
 document.addEventListener('cc-motion-qa-refresh', () => {
   if (!document.hidden) Promise.all([poller.refresh(), petPoller.refresh()]).then(() => reportQAState())
 })
+window.__ccMotionQAControl = { pet, stopPolling: () => { poller.stop(); petPoller.stop() } }
 window.__ccMotionQAReady = true
 `)
   writeFileSync(join(output, 'api.js'), `import { createQAApi, createQAClock } from './qa-bridge.mjs'

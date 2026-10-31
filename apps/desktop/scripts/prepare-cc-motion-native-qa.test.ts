@@ -109,6 +109,8 @@ describe('isolated native motion QA', () => {
       expect(readFileSync(join(destination, 'api.js'), 'utf8')).not.toContain('visibilitychange')
       expect(readFileSync(join(destination, 'api.js'), 'utf8')).toContain('cc-motion-qa-refresh')
       expect(readFileSync(join(destination, 'companion-window.js'), 'utf8')).toContain('Promise.all([poller.refresh(), petPoller.refresh()])')
+      expect(readFileSync(join(destination, 'companion-window.js'), 'utf8')).toContain('window.__ccMotionQAControl = { pet, stopPolling:')
+      expect(readFileSync(join(source, 'companion-window.js'), 'utf8')).not.toContain('__ccMotionQAControl')
       expect(readFileSync(join(destination, 'api.js'), 'utf8')).toContain('Date.now = qaClock.now')
       expect(readFileSync(join(source, 'companion-window.js'), 'utf8')).not.toContain('qaClock')
       expect(readFileSync(join(destination, 'ipc.js'), 'utf8')).not.toContain('unsafe original')

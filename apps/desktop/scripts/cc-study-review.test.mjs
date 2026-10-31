@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm, symlink, realpath, readFile, access } fr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { freshOutput, previewHtml } from './cc-study-review.mjs'
-import { propRect, SCENES, buildCompositionStudies } from './build-cc-composition-studies.mjs'
+import { propRect, SCENES, buildCompositionStudies, isCompositionPropSource } from './build-cc-composition-studies.mjs'
 
 test('review outputs reject both overlap directions, symlink aliases and occupied folders',async()=>{
   const root=await mkdtemp(join(tmpdir(),'cc-review-'))
@@ -45,4 +45,10 @@ test('portable preview embeds frames, escapes text and exposes motion lifecycle 
   expect(html).toContain('visibilitychange');expect(html).toContain('prefers-reduced-motion')
   expect(html).toContain('requestAnimationFrame');expect(html).toContain('data-frame=')
   expect(html).not.toMatch(/src="https?:|fetch\(|WebSocket/)
+})
+test('only the provenance-backed micro-light revision can join reviewed source props as a candidate',()=>{
+  const digest='a'.repeat(64),entry={kind:'prop',artStatus:'production-candidate',sha256:digest,generation:{schemaVersion:1,artStatus:'production-candidate',pngSha256:digest,glowRadius:28,samples:96,seed:11,bodySha256:'b'.repeat(64),scriptSha256:'c'.repeat(64),adapterSha256:'d'.repeat(64)},previousVersions:[{sha256:'e'.repeat(64),kind:'prop',artStatus:'reviewed-production'}]}
+  expect(isCompositionPropSource('../props/micro-light.png',entry)).toBe(true)
+  expect(isCompositionPropSource('../props/mug.png',{kind:'prop',artStatus:'reviewed-production'})).toBe(true)
+  for(const [path,mutate] of [['../props/mug.png',e=>{}],['../props/micro-light.png',e=>{delete e.generation}],['../props/micro-light.png',e=>{e.generation.pngSha256='f'.repeat(64)}],['../props/micro-light.png',e=>{e.previousVersions=[]}],['../props/micro-light.png',e=>{e.generation.glowRadius=80}]]){const bad=structuredClone(entry);mutate(bad);expect(isCompositionPropSource(path,bad)).toBe(false)}
 })

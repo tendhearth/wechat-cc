@@ -31,8 +31,8 @@
 **Files:** `src/pet/renderer/prop-layer.js` and tests; `src/pet/pet.js` and tests; both desktopCSS files; bridge stale comment/test title only.
 **Interfaces:** `composeProps(behavior, facts, {decorative})`; `createPropRenderer({container,manifest,makeEl,schedule,cancel})` with render/setMotionSuppressed/destroy. Existing renderProps API remains immediate.
 
-- [ ] Add failing tests for recipes/slot priorities, keyed entry/exit/reentry, badge identity, suppress/destroy and actual bridge→pet state priority; run RED on Mini.
-- [ ] Implement recipe projection and keyed renderer; bind actual snapshots and all motion controls; add consistent opacity CSS to both surfaces. Keep old assertions, strengthen changed assumptions.
+- [x] Add failing tests for recipes/slot priorities, keyed entry/exit/reentry, badge identity, suppress/destroy and actual bridge→pet state priority; run RED on Mini.
+- [x] Implement recipe projection and keyed renderer; bind actual snapshots and all motion controls; add consistent opacity CSS to both surfaces. Keep old assertions, strengthen changed assumptions.
 - [ ] Run GREEN/unit + real browser checks with actual CSS, nodes, assets and mid/final opacity. Add Tauri embedded flow assertions.
 
 ### Task 2: Source-driven micro-light correction
@@ -40,15 +40,15 @@
 **Files:** new `scripts/cc_prop_glow.py` + tests; `render-cc-props.py`; micro-lightPNG + its manifest metadata; standalone QA artifacts.
 **Interfaces:** numeric pure support/composite functions using supplied arrays; renderer explicit safe output/art/TMP destinations and onlyselected micro-light.
 
-- [ ] Run RED constant weakHDR with central alpha: distant sample must zero, near exterior nonzero, core unchanged, transparency/border correct.
-- [ ] Implement finite smooth contour-distance support and isolated generation; render on Mini, decode/measure/inspect both grounds and4sizes. Preserve original/rawbody/source hashes and all protected files.
-- [ ] Register only newmicro-light hash/candidate proof with old review history; run original489asset guard and affected verify. Commit implementation/artifacts.
+- [x] Run RED constant weakHDR with central alpha: distant sample must zero, near exterior nonzero, core unchanged, transparency/border correct.
+- [x] Implement finite smooth contour-distance support and isolated generation; render on Mini, decode/measure/inspect both grounds and4sizes. Preserve original/rawbody/source hashes and all protected files.
+- [x] Register only newmicro-light hash/candidate proof with old review history; run original489asset guard and affected verify. Commit implementation/artifacts.
 
 ### Task 3: Integration, release verification and daily deployment
 
 **Files:** final report/spec/plan; new ignored rollout receipts/operators based on known templates, rootowned integration workspace.
 
-- [ ] Fresh independent correctness review; fix reproduced findings, commit clean feature branch.
+- [x] Fresh independent correctness review; fix reproduced findings, commit clean feature branch.
 - [ ] Confirm sole integration/locks/clean dev; merge todev, align exact Mini commit/tree. Run verify --full, browser, embedded-build→embedded, production-build with correct offline/platform scopes.
 - [ ] Push dev, wait sameSHA CI green; transfer verified completeapp, fresh whole currentapp backup, valid DevID/team/designated requirements, no QA payload. Swap onlyafterall gates; guarded self ship --skip-build, inspect newhead/6plugins/FDA/guard; rollback wholeapp if failure.
 - [ ] Save actual receipts/limits, update report/plan and deliver outcome. No new user question unless a truly nonrecoverable boundary prevents authorized completion.

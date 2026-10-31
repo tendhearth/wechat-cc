@@ -6,7 +6,7 @@ import { resolveAnimation, resolveTransition } from './assets/animation-resolver
 import { createPetStateMachine } from './domain/state-machine.js'
 import { ONE_SHOT } from './domain/types.js'
 import { createSpriteRenderer } from './renderer/sprite-renderer.js'
-import { renderProps } from './renderer/prop-layer.js'
+import { composeProps, createPropRenderer } from './renderer/prop-layer.js'
 import { emergencyManifest, fallbackFrame } from '../assets/pet/cc-v1/placeholder.js'
 
 /** @typedef {import('./bridge/presence-map.js').PetIntent} PetIntent */
@@ -76,14 +76,17 @@ export async function createPet(root, opts) {
   const manifest = structuredClone(loaded.ok ? loaded.manifest : emergencyManifest())
   warn(...manifest.warnings)
   renderer.applyAnchor(manifest.canvas.anchor)
+  const propRenderer = createPropRenderer({ container: root.props, manifest, makeEl, schedule, cancel })
+  propRenderer.setMotionSuppressed(suppressDecoration())
   setHint(null)
 
   /** 上一次画的是什么,避免同一快照重复 play / 重建道具 */
   let lastKey = ''
   let lastPropsKey = ''
   const render = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
-    const propsKey = `${s.badge}|${s.props.join(',')}`
-    if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; renderProps(root.props, s.props, s.badge, manifest, makeEl) }
+    const visibleProps = composeProps(s.transition ? 'idle' : s.behavior, s.props, { decorative: !suppressDecoration() })
+    const propsKey = `${s.badge}|${visibleProps.join(',')}`
+    if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; propRenderer.render(visibleProps, s.badge) }
     const key = s.transition ? `t:${s.transition}` : `b:${s.form}/${s.behavior}`
     if (paused) return
     if (key === lastKey) return
@@ -173,7 +176,7 @@ export async function createPet(root, opts) {
     if (machine.setState(b) === 'ignored' && !heldOneShots.includes(b)) heldOneShots.push(b)
   }
   const onSnapshot = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
-    if (quiet && s.props.includes('micro-light')) { machine.setProps(s.props.filter(p => p !== 'micro-light'), s.badge); return }
+    if (suppressDecoration() && s.props.includes('micro-light')) { machine.setProps(s.props.filter(p => p !== 'micro-light'), s.badge); return }
     if ((quiet || paused) && (s.transition || decorative.has(s.behavior))) { machine.notifyAnimationEnded(); return }
     render(s)
     armIdleMoves(s)
@@ -188,6 +191,10 @@ export async function createPet(root, opts) {
 
   // A control change consumes decoration immediately; it never creates a deferred celebration.
   const syncMotion = () => {
+    propRenderer.setMotionSuppressed(suppressDecoration())
+    lastPropsKey = ''
+    const current = machine.snapshot()
+    if (suppressDecoration() && current.props.includes('micro-light')) machine.setProps(current.props.filter(p => p !== 'micro-light'), current.badge)
     renderer.setReducedMotion(reducedMotion || quiet)
     renderer.setPaused(paused)
     if (suppressDecoration()) cancelIdleMoves()
@@ -198,7 +205,7 @@ export async function createPet(root, opts) {
       if (s.transition || decorative.has(s.behavior)) machine.notifyAnimationEnded()
     }
     if (reducedMotion && IDLE_MOVES.has(machine.snapshot().behavior)) machine.notifyAnimationEnded()
-    if (paused) { renderer.stop(); return }
+    if (paused) { renderer.stop(); render(machine.snapshot()); return }
     lastKey = ''
     onSnapshot(machine.snapshot())
   }
@@ -227,6 +234,6 @@ export async function createPet(root, opts) {
     endDrag: machine.endDrag,
     /** 某一帧图片加载失败(renderer 的 img error 会自动喂进来,也可以手动报)。 */
     reportFrameError,
-    destroy() { disposed = true; off(); renderer.stop(); heldOneShots.length = 0; cancelIdleMoves(); if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null } },
+    destroy() { disposed = true; off(); renderer.stop(); propRenderer.destroy(); heldOneShots.length = 0; cancelIdleMoves(); if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null } },
   }
 }

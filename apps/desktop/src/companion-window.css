@@ -33,7 +33,10 @@ button { font: inherit; }
 /* 道具:相对 anchor 点的比例偏移(prop-layer.js 的槽位表),以舞台边长为 1。 */
 .pet-props { position: absolute; inset: 0; pointer-events: none; }
 .pet-prop { position: absolute; left: calc(var(--pet-origin-x) + var(--slot-dx, 0) * var(--pet-side)); top: calc(var(--pet-origin-y) + var(--slot-dy, 0) * var(--pet-side)); width: calc(var(--slot-scale, .34) * var(--pet-side)); aspect-ratio: 1 / 1; transform: translate(-50%, -50%); }
-.pet-prop img { width: 100%; height: 100%; object-fit: contain; }
+.pet-prop img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.pet-prop.pet-prop-motion { transition: opacity 160ms ease; }
+.pet-motion-reduced .pet-prop, .pet-paused .pet-prop { transition: none; }
+@media (prefers-reduced-motion: reduce) { .pet-prop.pet-prop-motion { transition: none; } }
 .pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #d9773b; color: #fff; font-size: 11px; font-weight: 500; line-height: 18px; text-align: center; }
 .pet-hint { margin: 4px 0 0; padding: 4px 8px; border-radius: 999px; background: rgba(255, 253, 247, .86); color: #7b6b5c; font-size: 11px; text-align: center; justify-self: center; }
 /* 权限卡片(spec §6)。限高必须是确定长度:百分比对着 auto 的网格行解不出来,prompt 会被压成一条缝。

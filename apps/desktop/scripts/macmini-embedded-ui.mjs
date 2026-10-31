@@ -262,6 +262,31 @@ try {
   assert.equal(reset.width, draggedRect.width); assert.equal(reset.height, draggedRect.height)
   assert(!sameFrame(reset, draggedRect), 'Reset did not return the dragged window to the screen edge')
   report.checks.push('reset restores edge placement without changing size')
+  // Exercise production pet/prop code inside actual WebKit. This handle exists
+  // only in the isolated staged QA source; normal app assets never export it.
+  await execute('const {pet,stopPolling}=window.__ccMotionQAControl;stopPolling();pet.setQuiet(false);pet.setReducedMotion(false);pet.setPaused(false);pet.machine.notifyAnimationEnded();pet.applyIntent({form:"lit",behavior:"working",props:[],badge:0,hint:null,oneShots:[]})')
+  const activeProps = () => execute('return [...document.querySelectorAll("#pet-props [data-prop-leaving=false]")].map(node=>node.getAttribute("data-prop"))')
+  await until('Native working laptop', async () => JSON.stringify(await activeProps()) === '["laptop"]')
+  await execute('window.__ccMotionQAControl.pet.setState("thinking")')
+  await until('Native thinking props', async () => {
+    const names=await activeProps();return names.includes('thought-bubble')&&names.includes('mug')&&!names.includes('laptop')
+  })
+  await execute('window.__ccMotionQAControl.pet.applyIntent({form:"lit",behavior:"permission",props:["envelope"],badge:5,hint:null,oneShots:[]})')
+  await until('Native factual badge and permission prop', async () => JSON.stringify(await activeProps()) === '["envelope","exclamation"]')
+  assert.equal(await execute('return document.querySelector("#pet-props .pet-badge").textContent'),'5')
+  assert.equal(await execute('window.__savedQAEnvelope=document.querySelector("#pet-props [data-prop=envelope]");window.__ccMotionQAControl.pet.setProps(["envelope"],6);return window.__savedQAEnvelope===document.querySelector("#pet-props [data-prop=envelope]")&&window.__savedQAEnvelope.querySelector(".pet-badge").textContent==="6"'),true)
+  await execute('const pet=window.__ccMotionQAControl.pet;pet.setProps([],0);pet.setState("idle");pet.setState("receive");pet.setState("working")')
+  assert.equal(await execute('return window.__ccMotionQAControl.pet.machine.snapshot().behavior'),'receive')
+  assert(!(await activeProps()).includes('laptop'),'Queued working laptop appeared before receive finished')
+  await until('Native queued working resolved',async()=>JSON.stringify(await activeProps())==='["laptop"]')
+  for(const control of ['setPaused','setReducedMotion']){
+    const restored=await execute('const pet=window.__ccMotionQAControl.pet,key=arguments[0];pet.setProps(["micro-light","envelope"],2);pet[key](true);pet.setProps(["micro-light","envelope"],7);pet[key](false);return {props:pet.machine.snapshot().props,badge:pet.machine.snapshot().badge,light:document.querySelectorAll("#pet-props [data-prop=micro-light]").length}',[control])
+    assert.deepEqual(restored,{props:['envelope'],badge:7,light:0},`Native old light survived ${control}`)
+  }
+  await execute('const pet=window.__ccMotionQAControl.pet;pet.setReducedMotion(true);pet.setProps([],0);pet.setState("thinking")')
+  assert.equal(await execute('return document.querySelectorAll("#pet-props [data-prop-leaving=true]").length'),0)
+  assert.equal(await execute('return getComputedStyle(document.querySelector("#pet-props [data-prop=mug]")).transitionDuration'),'0s')
+  report.checks.push('actual WebKit prop recipes, queued behavior, stable unread badge and reduced-motion convergence')
   await click('#companion-window-close')
   await until('Companion close control', async () => !(await command('/window/handles')).includes('companion'))
   report.ok = true

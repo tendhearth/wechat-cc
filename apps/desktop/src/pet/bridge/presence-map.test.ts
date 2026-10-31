@@ -23,7 +23,7 @@ describe('presenceToPet', () => {
     const again = presenceToPet(P({ presence: 'degraded' }), P({ presence: 'degraded' }))
     expect(again.oneShots).toEqual([])
   })
-  it('companion / working 的映射;working 不叠 laptop(帧自带)', () => {
+  it('companion / working 的映射;桥仅提供事实道具,行为组合由实际显示状态决定', () => {
     for (const k of ['hosting_human', 'visiting', 'hosting_peer']) expect(presenceToPet(P({ activity: { kind: k, label: '', since: null } }), null).behavior).toBe('companion')
     for (const k of ['foraging', 'working']) expect(presenceToPet(P({ activity: { kind: k, label: '', since: null } }), null)).toMatchObject({ behavior: 'working', props: [] })
     expect(presenceToPet(P(), null)).toMatchObject({ behavior: 'idle', props: [], hint: null })

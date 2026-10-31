@@ -1,19 +1,30 @@
 """Seven standalone CC prop candidates. Never opens or modifies the frozen character scene."""
 from pathlib import Path
-import argparse, math, struct, sys, zlib
+import argparse, hashlib, json, math, struct, sys, tempfile, zlib
 import bpy
 import numpy as np
 from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cc_prop_glow import composite_glow
 OUT = ROOT/'src/assets/pet/props'
 ART = ROOT/'art/cc-v1/props'
-ART.mkdir(parents=True, exist_ok=True)
 SIZE = 384
 NAMES = ['micro-light','laptop','envelope','speech-bubble','thought-bubble','exclamation','mug']
 parser=argparse.ArgumentParser()
 parser.add_argument('--props', nargs='+', choices=NAMES, default=NAMES)
-selected=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []).props
+parser.add_argument('--output', type=Path, default=OUT)
+parser.add_argument('--art-output', type=Path, default=ART)
+options=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+selected=options.props
+OUT=options.output.resolve(); ART=options.art_output.resolve()
+protected=[ROOT/'art/cc-v1/cc-v1.blend', ROOT/'src/assets/pet/cc-v1']
+for output in [OUT, ART]:
+    for original in protected:
+        original=original.resolve()
+        if output==original or original in output.parents or output in original.parents: raise ValueError('Prop output overlaps frozen character inputs')
+    output.mkdir(parents=True, exist_ok=True)
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.object.delete(use_global=False)
 scene = bpy.context.scene
@@ -167,7 +178,7 @@ def rgba_png(path,rgba):
     rows=b''.join(b'\0'+row.tobytes() for row in rgba)
     path.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',SIZE,SIZE,8,6,0,0,0))+chunk(b'sRGB',b'\0')+chunk(b'IDAT',zlib.compress(rows,9))+chunk(b'IEND',b''))
 
-def star_bloom():
+def star_bloom(temporary):
     # Export the actual HDR Fog Glow separately; transparent film must not erase it.
     group=bpy.data.node_groups.new('Micro light HDR bloom','CompositorNodeTree')
     group.interface.new_socket(name='Image',in_out='OUTPUT',socket_type='NodeSocketColor')
@@ -183,35 +194,38 @@ def star_bloom():
     group.links.new(opaque.outputs['Image'],output.inputs['Image'])
     scene.compositing_node_group=group
     scene.render.image_settings.file_format='OPEN_EXR';scene.render.image_settings.color_depth='32'
-    scene.render.filepath='/tmp/cc-prop-micro-light-bloom.exr'
+    scene.render.filepath=str(temporary/'micro-light-bloom.exr')
     bpy.ops.render.render(write_still=True)
     img=bpy.data.images.load(scene.render.filepath,check_existing=False)
     hdr=np.array(img.pixels[:],dtype=np.float32).reshape(SIZE,SIZE,4)[::-1].copy()
     bpy.data.images.remove(img)
     scene.compositing_node_group=None
     scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_depth='8'
-    # Smoothly fade the measured bloom before the contractual clear border.
-    yy,xx=np.indices((SIZE,SIZE))
-    margin=np.minimum.reduce([xx,yy,SIZE-1-xx,SIZE-1-yy])
-    fade=np.clip((margin-12)/18,0,1);fade=fade*fade*(3-2*fade)
-    return np.minimum(.48,1-np.exp(-hdr[:,:,:3].mean(axis=2)*24))*fade
+    return hdr[:,:,:3]
 
-for name in selected:
-    for o in list(objects):bpy.data.objects.remove(o,do_unlink=True)
-    objects.clear();build(name)
-    scene.render.filepath=str(OUT/(name+'.png'));bpy.ops.render.render(write_still=True)
-    img=bpy.data.images.load(scene.render.filepath,check_existing=False)
-    pixels=np.array(img.pixels[:],dtype=np.float32).reshape(SIZE,SIZE,4)[::-1].copy();bpy.data.images.remove(img)
-    if name=='micro-light':
-        halo=star_bloom()
-        body=pixels[:,:,3].copy()
-        alpha=body+halo*(1-body)
-        # Straight-alpha union of rendered surface and warm HDR-driven light.
-        pixels[:,:,:3]=(pixels[:,:,:3]*body[:,:,None]+np.array([1,.68,.22])*((1-body)*halo)[:,:,None])/np.maximum(alpha[:,:,None],1e-8)
-        pixels[:,:,3]=alpha
-    # Keep Blender's display RGB and real coverage; normalize transparent RGB.
-    rgba=np.rint(np.clip(pixels,0,1)*255).astype(np.uint8);rgba[rgba[:,:,3]==0]=0
-    yy,xx=np.where(rgba[:,:,3]>0)
-    assert len(xx) and xx.min()>=12 and yy.min()>=12 and xx.max()<SIZE-12 and yy.max()<SIZE-12,(name,xx.min(),yy.min(),xx.max(),yy.max())
-    rgba_png(OUT/(name+'.png'),rgba)
-    print('CC_PROP',name,[int(xx.min()),int(yy.min()),int(xx.max()+1),int(yy.max()+1)])
+with tempfile.TemporaryDirectory(prefix='cc-prop-render-') as directory:
+    temporary=Path(directory)
+    for name in selected:
+        for o in list(objects):bpy.data.objects.remove(o,do_unlink=True)
+        objects.clear();build(name)
+        scene.render.filepath=str(temporary/(name+'-surface.png'));bpy.ops.render.render(write_still=True)
+        img=bpy.data.images.load(scene.render.filepath,check_existing=False)
+        pixels=np.array(img.pixels[:],dtype=np.float32).reshape(SIZE,SIZE,4)[::-1].copy();bpy.data.images.remove(img)
+        if name=='micro-light':
+            body=np.rint(np.clip(pixels,0,1)*255).astype(np.uint8);body[body[:,:,3]==0]=0
+            rgba_png(ART/'micro-light-body.png',body)
+            hdr=star_bloom(temporary)
+            pixels=composite_glow(pixels,hdr)
+        rgba=np.rint(np.clip(pixels,0,1)*255).astype(np.uint8);rgba[rgba[:,:,3]==0]=0
+        yy,xx=np.where(rgba[:,:,3]>0)
+        assert len(xx) and xx.min()>=12 and yy.min()>=12 and xx.max()<SIZE-12 and yy.max()<SIZE-12,(name,xx.min(),yy.min(),xx.max(),yy.max())
+        staged=OUT/(name+'.tmp');rgba_png(staged,rgba);staged.replace(OUT/(name+'.png'))
+        if name=='micro-light':
+            receipt={'schemaVersion':1,'artStatus':'production-candidate','blender':bpy.app.version_string,'samples':96,'seed':11,'glowRadius':28,
+                     'scriptSha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                     'adapterSha256':hashlib.sha256(Path(__file__).with_name('cc_prop_glow.py').read_bytes()).hexdigest(),
+                     'bodySha256':hashlib.sha256((ART/'micro-light-body.png').read_bytes()).hexdigest(),
+                     'pngSha256':hashlib.sha256((OUT/(name+'.png')).read_bytes()).hexdigest(),
+                     'hdrSha256':hashlib.sha256(hdr.tobytes()).hexdigest()}
+            (ART/'micro-light-falloff.json').write_text(json.dumps(receipt,indent=2)+'\n')
+        print('CC_PROP',name,[int(xx.min()),int(yy.min()),int(xx.max()+1),int(yy.max()+1)],flush=True)

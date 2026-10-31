@@ -19,6 +19,17 @@ export function propRect(name,size){
   return {left:size*(.5+slot.dx-slot.scale/2),top:size*(470/512+slot.dy-slot.scale/2),width:size*slot.scale,height:size*slot.scale}
 }
 const desktop=fileURLToPath(new URL('../',import.meta.url)),padding=64,canvas=640
+export function isCompositionPropSource(path, entry){
+  if(entry?.kind!=='prop')return false
+  if(entry.artStatus==='reviewed-production')return true
+  const generation=entry.generation,digest=/^[a-f0-9]{64}$/
+  return path==='../props/micro-light.png'&&entry.artStatus==='production-candidate'
+    &&generation?.schemaVersion===1&&generation.artStatus==='production-candidate'
+    &&generation.pngSha256===entry.sha256&&digest.test(entry.sha256)
+    &&generation.glowRadius===28&&generation.samples===96&&generation.seed===11
+    &&['bodySha256','scriptSha256','adapterSha256'].every(key=>digest.test(generation[key]))
+    &&Array.isArray(entry.previousVersions)&&entry.previousVersions.some(old=>old.kind==='prop'&&old.artStatus==='reviewed-production'&&digest.test(old.sha256)&&old.sha256!==entry.sha256)
+}
 export async function buildCompositionStudies({catalogPath=join(desktop,'art/cc-v1/motion/catalog.json'),kitPath=join(desktop,'src/assets/pet/cc-v1'),outputPath}={}){
   const kit=await realpath(kitPath),propsRoot=await realpath(join(kit,'../props')),catalogFile=await realpath(catalogPath)
   const out=await freshOutput(outputPath,[kit,propsRoot,catalogFile,join(desktop,'art/cc-v1/cc-v1.blend')])
@@ -35,7 +46,7 @@ export async function buildCompositionStudies({catalogPath=join(desktop,'art/cc-
     if(size===384&&!/^\.\.\/props\/[a-z-]+\.png$/.test(name))throw Error('unsafe prop path')
     const bytes=await readFile(full),entry=manifest.assets[name]
     if(!entry||sha256(bytes)!==entry.sha256)throw Error(`asset manifest digest mismatch: ${name}`)
-    if(size===384&&(entry.kind!=='prop'||entry.artStatus!=='reviewed-production'))throw Error(`unreviewed source prop: ${name}`)
+    if(size===384&&!isCompositionPropSource(name,entry))throw Error(`unreviewed or unattested source prop: ${name}`)
     const decoded=decodeStudyPng(bytes,size)
     if(!decoded.alpha.some(a=>a))throw Error(`empty PNG: ${name}`)
     const asset={bytes,...decoded};assets.set(name,asset);inputs.set(full,sha256(bytes));return asset

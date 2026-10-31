@@ -37,9 +37,11 @@ thinking 已改用前倾抬起的 listening 姿势与 mask；旧 thinking mask �
 - 验证记录：`apps/desktop/art/cc-v1/VALIDATION.md`。
 - 原生 `revision-v3` 截图为历史材质，不能代表当前字节；真实桌面透窗目测仍待 owner 完成。
 
-## 七张道具候选
+## 七张独立道具
 
-`../props/` 下七个既有路径已换成 384×384 透明 Blender 渲染，软瓷/哑光材质，至少 12px 透明边距。感叹号使用饱和暖橙色；micro-light 由 HDR Fog Glow 生成柔和金色光晕。metadata 标注 `kind: prop` 和候选状态，独立校验尺寸与摘要，不使用角色的实体 mask 契约。sprout 不在 manifest 或当前 lab 中；旧文件保留作历史兼容。
+`../props/` 下七个既有路径使用384×384透明Blender渲染，软瓷/哑光材质，至少12px透明边距。六张保留已有验收；micro-light的轮廓距离光晕修正为本次候选，旧图摘要与主人验收保留在`previousVersions`，不套用到新字节。感叹号使用饱和暖橙色；micro-light由HDR Fog Glow生成柔和金色光晕，并消除矩形远场支撑。metadata标注`kind: prop`，独立校验尺寸与摘要，不使用角色的实体mask契约。sprout不在manifest或当前lab中；旧文件保留作历史兼容。
+
+运行时在优先级处理后的实际行为上组合道具；事实信封/异常信号优先占槽。显隐160ms、徽章原位更新，减少动态/安静/暂停立即收敛并消费旧微光。来源与前后对照见[道具收尾](../../../../art/cc-v1/studies/prop-polish-r2/README.md)。
 
 ## 当前实体 mask 与美术状态契约
 

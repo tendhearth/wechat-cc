@@ -417,17 +417,38 @@ it('renders two readable crescent/squint eyes, enlarged eyes and a shifted gaze'
   }
 })
 
-it('registers seven owner-reviewed standalone props as padded 384px RGBA, without sprout', () => {
+it('preserves seven prior prop reviews and registers the micro-light revision as candidate padded RGBA', () => {
   expect(Object.keys(raw.props).sort()).toEqual(['envelope','exclamation','laptop','micro-light','mug','speech-bubble','thought-bubble'])
   for (const path of Object.values(raw.props) as string[]) {
     expect(raw.assets[path]?.kind).toBe('prop')
-    expect(raw.assets[path]?.artStatus).toBe('reviewed-production')
-    expect(raw.assets[path]?.visualReview).toMatchObject({owner: 'ggshr9', reviewedAt: '2026-09-09', method: 'native transparent window on real wallpaper'})
+    const accepted = path === '../props/micro-light.png' ? raw.assets[path].previousVersions[0] : raw.assets[path]
+    expect(accepted.artStatus).toBe('reviewed-production')
+    expect(accepted.visualReview).toMatchObject({owner: 'ggshr9', reviewedAt: '2026-09-09', method: 'native transparent window on real wallpaper'})
+    expect(raw.assets[path].artStatus).toBe(path === '../props/micro-light.png' ? 'production-candidate' : 'reviewed-production')
     const { alpha, width, height } = readRGBA(readFileSync(join(root, path)), 384)
     expect([width, height]).toEqual([384,384])
     expect(alpha.some(a => a > 0)).toBe(true)
     expect(alpha.every((a, i) => !a || (i % 384 >= 12 && i % 384 < 372 && Math.floor(i / 384) >= 12 && Math.floor(i / 384) < 372))).toBe(true)
   }
+})
+
+it('pins the old accepted micro-light bytes and never transfers that owner review to revised glow', () => {
+  const asset=raw.assets['../props/micro-light.png'],art=resolve(__dirname,'../../../art/cc-v1/studies/prop-polish-r2')
+  const digest=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex')
+  expect(asset.previousVersions).toHaveLength(1)
+  expect(asset.previousVersions[0].sha256).toBe('25bcc10287a275b1c492aa531a60ee6022b0ae82dcf56d2a2b228a90237a8613')
+  expect(digest(readFileSync(join(art,'before.png')))).toBe(asset.previousVersions[0].sha256)
+  expect(asset.artStatus).toBe('production-candidate');expect(asset.visualReview.owner).toBeUndefined()
+  expect(asset.sha256).not.toBe(asset.previousVersions[0].sha256)
+  expect(digest(readFileSync(join(root,'../props/micro-light.png')))).toBe(asset.sha256)
+  expect(asset.generation.pngSha256).toBe(asset.sha256)
+  const proof=JSON.parse(readFileSync(join(art,'pixel-check.json'),'utf8'))
+  expect(proof.afterSha256).toBe(asset.sha256);expect(digest(readFileSync(join(art,'source/micro-light.png')))).toBe(asset.sha256)
+  expect(asset.generation.bodySha256).toBe(digest(readFileSync(join(art,'source/micro-light-body.png'))))
+  expect(asset.generation.scriptSha256).toBe(digest(readFileSync(resolve(__dirname,'../../../scripts/render-cc-props.py'))))
+  expect(asset.generation.adapterSha256).toBe(digest(readFileSync(resolve(__dirname,'../../../scripts/cc_prop_glow.py'))))
+  expect(proof).toMatchObject({ok:true,afterFarAlphaPixels:0,opaqueCoreUnchanged:true,frozenFiles:14,otherPropsUnchanged:6})
+  expect(proof.beforeFarAlphaPixels).toBeGreaterThan(0);expect(proof.nearExteriorPixels).toBeGreaterThan(0)
 })
 
 it('rejects standalone prop dimensions and missing registration independently of character masks', () => {
@@ -454,7 +475,7 @@ it('preserves prior owner acceptance while keeping all new motion as candidates 
   }
   for (const [path, asset] of Object.entries(raw.assets) as [string, any][]) {
     if (path.endsWith('.svg')) expect(asset.artStatus).toBe('normative-placeholder')
-    else expect(asset.artStatus).toBe((path.startsWith('motion/') || path.startsWith('masks/motion/') || path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
+    else expect(asset.artStatus).toBe((path === '../props/micro-light.png' || path.startsWith('motion/') || path.startsWith('masks/motion/') || path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
   }
 })
 

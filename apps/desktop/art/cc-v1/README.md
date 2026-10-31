@@ -10,8 +10,9 @@ Thinking uses the existing raised listening C with squint eyes, separated from
 low-C sleep without changing the frozen scene. See thinking-vs-sleep.png.
 Seven standalone 384px props are in the sibling runtime props folder; reproducible
 source is render-cc-props.py, review/evidence in props/. The current manifest
-registers those seven source props as reviewed-production; the new composition
-studies remain candidates.
+keeps six source props as reviewed-production. The micro-light falloff revision
+is a candidate with its previous acceptance retained in history; see
+[prop polish](studies/prop-polish-r2/README.md). Composition studies remain candidates.
 
 ## Owner-frozen base and second-batch expressions
 

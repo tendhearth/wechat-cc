@@ -10,8 +10,10 @@ Micro-light adds a true HDR Fog Glow pass with a smooth fade before the clear
 border. Other props have no exterior bloom; none adds a ground shadow layer. Seven existing filenames
 and renderer slots are preserved; no per-form prop variants or character masks.
 
-The current manifest registers all seven source props with their hashes,
-kind=prop, visual review and reviewed-production status. New motion/prop
+The current manifest registers all seven source props with their hashes and
+kind=prop. Six retain reviewed-production status. The revised micro-light
+falloff is a production-candidate with the earlier accepted bytes and review in
+previousVersions; see `../studies/prop-polish-r2/`. New motion/prop
 composition studies in `../studies/` remain production-candidate. The validator
 uses a separate 384px/padding contract; a prop cannot substitute
 for a 512px character frame. The deprecated sprout is absent from manifest and lab;
