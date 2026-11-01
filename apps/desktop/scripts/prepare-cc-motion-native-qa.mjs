@@ -34,7 +34,9 @@ pet.machine.subscribe(reportQAState)
 const qaQuietControl = document.getElementById('pet-quiet')
 if (qaQuietControl) new MutationObserver(() => reportQAState()).observe(qaQuietControl, { attributes: true, attributeFilter: ['aria-pressed'] })
 document.addEventListener('cc-motion-qa-refresh', () => {
-  if (!document.hidden) Promise.all([poller.refresh(), petPoller.refresh()]).then(() => reportQAState())
+  // Explicit QA fixture observations also run in a locked/hidden WebKit.
+  // Production visibility/polling stays unchanged; this is not a wake test.
+  Promise.all([poller.refresh(), petPoller.refresh()]).then(() => reportQAState())
 })
 window.__ccMotionQAControl = { pet, stopPolling: () => { poller.stop(); petPoller.stop() } }
 window.__ccMotionQAReady = true
