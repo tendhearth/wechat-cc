@@ -24,6 +24,42 @@ afterEach(() => {
 })
 
 describe('companion placement recovery control', () => {
+  it('a stationary character click opens the existing conversation without moving the window', async () => {
+    invoke.mockImplementation(async (command: unknown) => command === 'start_companion_drag' ? { x: 1000, y: 500 } as any : undefined)
+    await mount(true)
+    const stage = document.getElementById('pet-stage')!
+    expect(stage.getAttribute('role')).toBe('button')
+    expect(stage.tabIndex).toBe(0)
+    stage.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, screenX: 100, screenY: 100 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, screenX: 100, screenY: 100 }))
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('show_main_window', { page: 'converse' }))
+    expect(invoke.mock.calls.some(([command]) => command === 'move_companion_window')).toBe(false)
+    expect(invoke.mock.calls.filter(([command]) => command === 'show_main_window')).toHaveLength(1)
+  })
+  it.each(['Enter', ' '])('the focused character activates on %s without repeat or modified-key activation', async key => {
+    await mount(true)
+    const stage = document.getElementById('pet-stage')!
+    stage.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, repeat: true }))
+    stage.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ctrlKey: true }))
+    expect(invoke).not.toHaveBeenCalled()
+    stage.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('show_main_window', { page: 'converse' }))
+    expect(invoke.mock.calls.filter(([command]) => command === 'show_main_window')).toHaveLength(1)
+  })
+  it('dragging and losing focus cannot accidentally open a conversation', async () => {
+    invoke.mockImplementation(async (command: unknown) => command === 'start_companion_drag' ? { x: 1000, y: 500 } as any : undefined)
+    await mount(true)
+    const stage = document.getElementById('pet-stage')!
+    stage.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, screenX: 100, screenY: 100 }))
+    window.dispatchEvent(new MouseEvent('mousemove', { buttons: 1, screenX: 120, screenY: 100 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, screenX: 120, screenY: 100 }))
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('move_companion_window', { x: 1020, y: 500 }))
+    stage.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, screenX: 100, screenY: 100 }))
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, screenX: 100, screenY: 100 }))
+    await Promise.resolve()
+    expect(invoke.mock.calls.some(([command]) => command === 'show_main_window')).toBe(false)
+  })
   it('routes stage movement to native positions and commits the released endpoint', async () => {
     let position = { x: 1000, y: 500 }
     const saved: unknown[] = []

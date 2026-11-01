@@ -1,6 +1,7 @@
 pub(crate) fn validate(debug: bool, identifier: &str, home: &str, computer: &str) -> Result<(), String> {
-    if debug && identifier == "com.tendhearth.cc-motion-qa-20261029"
-        && home == "/Users/home" && computer == "Home’s Mac mini" {
+    let allowed_mini = (home == "/Users/home" && computer == "Home’s Mac mini")
+        || (home == "/Users/homebot" && computer == "Homebot’s Mac mini");
+    if debug && identifier == "com.tendhearth.cc-motion-qa-20261029" && allowed_mini {
         Ok(())
     } else {
         Err("Embedded UI tests require the dedicated Mac mini and the isolated debug QA application".into())

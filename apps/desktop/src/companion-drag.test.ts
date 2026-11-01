@@ -8,17 +8,52 @@ function deferred<T>() {
   return { promise, resolve }
 }
 function fixture(start?: () => Promise<{ x: number; y: number } | null>, move?: (value: { x: number; y: number }) => Promise<void>) {
-  let position = { x: 1000, y: 500 }, animating = false, starts = 0
+  let position = { x: 1000, y: 500 }, animating = false, starts = 0, clicks = 0
   const saved: { x: number; y: number }[] = [], errors: unknown[] = []
   const control = createCompanionDrag({
     start: async () => { starts++; return start ? start() : { ...position } },
     move: async (value: { x: number; y: number }) => { await move?.(value); position = { ...value } },
     finish: async () => { saved.push({ ...position }) },
     onBegin: () => { animating = true }, onEnd: () => { animating = false },
+    onClick: () => { clicks++ },
     onError: (error: unknown) => { errors.push(error) },
   })
-  return { control, saved, errors, position: () => position, animating: () => animating, starts: () => starts }
+  return { control, saved, errors, position: () => position, animating: () => animating, starts: () => starts, clicks: () => clicks }
 }
+
+test('an explicit primary release activates a stationary character once despite duplicate up events', async () => {
+  const f = fixture()
+  f.control.press(point(100, 100)); f.control.move(point(101, 101))
+  await f.control.release(point(101, 101, 0))
+  await f.control.release(point(101, 101, 0))
+  expect(f.clicks()).toBe(1)
+  expect(f.saved).toEqual([])
+  expect(f.position()).toEqual({ x: 1000, y: 500 })
+})
+
+test('the three-point threshold and a drag returning to its origin never activate chat', async () => {
+  const f = fixture()
+  f.control.press(point(100, 100)); await f.control.release(point(103, 100, 0))
+  f.control.press(point(100, 100)); f.control.move(point(140, 100)); await f.control.release(point(100, 100, 0))
+  expect(f.clicks()).toBe(0)
+})
+
+test('cancellation and a missing up event never turn a press into activation', async () => {
+  const f = fixture()
+  f.control.press(point(100, 100)); await f.control.cancel()
+  await f.control.release(point(100, 100, 0))
+  f.control.press(point(100, 100)); await f.control.move(point(100, 100, 0))
+  await f.control.release(point(100, 100, 0))
+  expect(f.clicks()).toBe(0)
+})
+
+test('a secondary release cannot activate or terminate a primary click candidate', async () => {
+  const f = fixture()
+  f.control.press(point(100, 100)); await f.control.release(point(100, 100, 0, 2))
+  expect(f.clicks()).toBe(0)
+  await f.control.release(point(100, 100, 0))
+  expect(f.clicks()).toBe(1)
+})
 
 test('moves from the native origin using absolute screen displacement and saves after release', async () => {
   const f = fixture()

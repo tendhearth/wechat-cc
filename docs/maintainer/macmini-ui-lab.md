@@ -1,6 +1,22 @@
 # Mac mini 离线 UI 测试
 
-主人日常使用的 Mac 不运行图形测试，不接管鼠标、键盘、焦点或窗口，也不运行重型测试与构建。所有测试在 SSH 别名 `homes-mac-mini` 对应的 `Home’s Mac mini` 上执行。根目录 `AGENTS.md` 是协作规则入口。
+主人日常使用的 Mac 不运行图形测试，不接管鼠标、键盘、焦点或窗口，也不运行重型测试与构建。所有测试在下述明确登记的 Mac mini 上执行，默认仍为 `homes-mac-mini` 对应的 `Home’s Mac mini`，没有本机回退。根目录 `AGENTS.md` 是协作规则入口。
+
+## 次级 Mini 的隔离入口（2026-11-01）
+
+Home’s Mini 网络不可达时，可显式选择已信任的家族检查机 `Homebot’s Mac mini`。只接受 `/Users/homebot` 与该机器名的精确组合；不能交换两台机器的用户名，也不接受主人的 Mac。新环境限定为 `/Users/homebot/ci/cc-ui-lab/cc-pet-feel-20261101`，与其他项目分开。
+
+```sh
+node apps/desktop/scripts/macmini-ui.mjs status homebot
+node apps/desktop/scripts/macmini-ui.mjs embedded-build homebot
+node apps/desktop/scripts/macmini-ui.mjs embedded homebot
+```
+
+该目标使用 `homebot-mac-mini` SSH 别名；实际地址与私钥不进仓库。需要任务自己的 SSH 配置时，可通过 `CC_UI_SSH_CONFIG` 指向主机上的绝对文件路径，仍强制已知主机校验、关闭代理和 X11 转发。未指定目标时保持原来的 Home’s 入口，不自动切换机器。
+
+次级入口同时持有自己的 `.execution-lock` 和家族 `/Users/homebot/ci/lock`。已有检查锁时不开始测试；结束时核对自己写入的拥有权内容，只释放本次锁。公开 Bun/Cargo/浏览器依赖放在新 lab；安装阶段可以下载公开依赖，测试与 UI 构建仍使用拒绝外连的限制和空状态。原 Home’s lab、全局检查配置、家庭数据、relay 与其他项目不修改。
+
+两台机器使用相同的 QA identifier、debug/production 编译限制与回环4199驱动；新增测试机不放宽生产应用或后台执行限制。具体新环境的安装、离线探针和验收状态以每批回执为准，入口存在本身不代表原生验收通过。
 
 ## 已准备的环境
 
@@ -39,7 +55,7 @@ node apps/desktop/scripts/macmini-ui.mjs production-build
 
 ## Tauri 应用内测试已跑通
 
-主人后续指定优先应用内驱动。`embedded` 只运行 mini 上的独立 QA 包，使用已发布的 `tauri-plugin-wdio-webdriver =1.5.1`，通过标准 HTTP 协议直接驱动，无需 npm 测试客户端。显式 Cargo feature `qa-webdriver` 只允许 debug、专属 QA identifier、`/Users/home` 与 `Home’s Mac mini` 的组合；发布构建启用该 feature 会编译报错。普通构建不注册驱动，测试服务固定监听 `127.0.0.1:4199`。QA 模式同时拒绝 CLI/daemon 参数和 native CLI 执行。
+主人后续指定优先应用内驱动。`embedded` 只运行 mini 上的独立 QA 包，使用已发布的 `tauri-plugin-wdio-webdriver =1.5.1`，通过标准 HTTP 协议直接驱动，无需 npm 测试客户端。显式 Cargo feature `qa-webdriver` 只允许 debug、专属 QA identifier，以及 `/Users/home` + `Home’s Mac mini` 或 `/Users/homebot` + `Homebot’s Mac mini` 两对精确身份；发布构建启用该 feature 会编译报错。普通构建不注册驱动，测试服务固定监听 `127.0.0.1:4199`。QA 模式同时拒绝 CLI/daemon 参数和 native CLI 执行。
 
 2026-10-30 在 mini 锁屏状态下，已实际验证真实 WebKit 页面、改变后的非空 PNG 截图、原生后台命令拒绝，以及真实浮窗 240×300 → 269×336 → 240×300 的尺寸变化。截图来自 `WKWebView.takeSnapshot`，不是桌面截屏；像素解码证明存在多种颜色，界面变化后像素摘要不同。整个进程树使用现有离线限制和独立空状态目录，没有系统鼠标输入或 XCTest 授权。
 

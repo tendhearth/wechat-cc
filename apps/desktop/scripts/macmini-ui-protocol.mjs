@@ -4,11 +4,24 @@ import { posix } from 'node:path'
 const QA_APPS = new Set(['com.tendhearth.cc-motion-qa-20261029', 'com.tendhearth.cc-native-control-20261030'])
 const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit', 'full', 'full-platform', 'capture', 'embedded', 'embedded-build', 'production-build', 'affected'])
 
-export function assertMiniIdentity({ computerName, homeDir, platformName }) {
-  if (computerName !== 'Home’s Mac mini' || homeDir !== '/Users/home' || platformName !== 'darwin') {
-    throw Error('UI execution requires the dedicated Mac mini; no local desktop fallback is allowed')
-  }
+const MINIS = Object.freeze({
+  home: { computerName: 'Home’s Mac mini', homeDir: '/Users/home', labHome: '/Users/home/cc-ui-lab',
+    root: '/Users/home/cc-ui-lab/cc-motion-drag-20261030', host: 'homes-mac-mini', sharedLock: null,
+    bun: '/Users/home/.bun/bin/bun', cargo: '/Users/home/cc-ui-lab/cc-motion-drag-20261030/toolchain/bin/cargo' },
+  homebot: { computerName: 'Homebot’s Mac mini', homeDir: '/Users/homebot', labHome: '/Users/homebot/ci/cc-ui-lab',
+    root: '/Users/homebot/ci/cc-ui-lab/cc-pet-feel-20261101', host: 'homebot-mac-mini', sharedLock: '/Users/homebot/ci/lock',
+    bun: '/Users/homebot/ci/cc-ui-lab/cc-pet-feel-20261101/toolchain/bin/bun',
+    cargo: '/Users/homebot/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo',
+    rustc: '/Users/homebot/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc' },
+})
+
+export function miniConfiguration({ computerName, homeDir, platformName }) {
+  const mini = platformName === 'darwin' && Object.values(MINIS).find(value => value.computerName === computerName && value.homeDir === homeDir)
+  if (!mini) throw Error('UI execution requires a configured Mac mini; no local desktop fallback is allowed')
+  return { ...mini }
 }
+
+export function assertMiniIdentity(identity) { miniConfiguration(identity) }
 
 export function assertLoopbackEndpoint(value) {
   return loopbackEndpoint(value, 4723)
@@ -28,15 +41,16 @@ export function assertEmbeddedEndpoint(value) {
 }
 
 function labPath(value) {
-  if (typeof value !== 'string' || !value.startsWith('/Users/home/cc-ui-lab/') || value.includes('\0') || posix.normalize(value) !== value) {
+  const mini = typeof value === 'string' && Object.values(MINIS).find(mini => value.startsWith(mini.labHome + '/'))
+  if (!mini || value.includes('\0') || posix.normalize(value) !== value) {
     throw Error('QA paths must remain inside the dedicated UI lab')
   }
-  return value
+  return mini.labHome
 }
 
 export function createOfflineSession({ bundleId, appPath, stateRoot }) {
   if (!QA_APPS.has(bundleId)) throw Error('Only isolated QA applications may be controlled')
-  labPath(appPath); labPath(stateRoot)
+  if (labPath(appPath) !== labPath(stateRoot)) throw Error('QA app and state must use the same Mini lab')
   if (!appPath.endsWith('.app')) throw Error('QA application path must name an app bundle')
   return { capabilities: { alwaysMatch: {
     platformName: 'mac', 'appium:automationName': 'mac2', 'appium:bundleId': bundleId, 'appium:appPath': appPath,
@@ -49,10 +63,13 @@ export function createOfflineSession({ bundleId, appPath, stateRoot }) {
   } } }
 }
 
-export function sshInvocation(command) {
+export function sshInvocation(command, target = 'home', sshConfig) {
   if (!COMMANDS.has(command)) throw Error('Unsupported UI lab command')
-  return { file: 'ssh', args: ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
+  if (!Object.hasOwn(MINIS, target)) throw Error('Unsupported UI lab target')
+  if (sshConfig !== undefined && (typeof sshConfig !== 'string' || !posix.isAbsolute(sshConfig) || sshConfig.includes('\0'))) throw Error('SSH config must be an absolute local path')
+  const mini = MINIS[target]
+  return { file: 'ssh', args: [...(sshConfig ? ['-F', sshConfig] : []), '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
     '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
-    'homes-mac-mini', 'env PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node /Users/home/cc-ui-lab/run.mjs'],
+    mini.host, `env PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/run.mjs`],
   input: JSON.stringify({ command }) + '\n' }
 }

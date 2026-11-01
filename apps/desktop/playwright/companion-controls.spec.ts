@@ -6,10 +6,63 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/__dev_reload.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
 })
 
+async function toggleSettings(page: import('@playwright/test').Page) {
+  // Approach the pet before using its intentionally tucked-away controls.
+  if (await page.locator('.pet-settings').getAttribute('open') === null) await page.locator('#pet-stage').hover()
+  await page.getByText('陪伴设置', { exact: true }).click()
+}
+
 async function openCompanion(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(new URL('companion-window.html?lab', shimUrl).href)
   await page.waitForFunction(() => Boolean((window as any).__pet))
 }
+
+test('idle controls stop intercepting clicks and return on nearby hover, keyboard focus and an open menu', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 240, height: 300 })
+  await openCompanion(page, shimUrl)
+  const controls = page.locator('.pet-controls')
+  await page.mouse.move(-10, -10)
+  await expect(controls).toHaveCSS('opacity', '0')
+  expect(await page.locator('#pet-open-main').evaluate(button => {
+    const r = button.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
+    return Boolean(hit?.closest('.pet-controls'))
+  })).toBe(false)
+  await page.locator('#pet-stage').hover()
+  await expect(controls).toHaveCSS('opacity', '1')
+  await toggleSettings(page)
+  await page.mouse.move(-10, -10)
+  await expect(controls).toHaveCSS('opacity', '1')
+  await expect(page.getByRole('checkbox', { name: '减少动作' })).toBeVisible()
+  await toggleSettings(page)
+  await page.locator('#pet-stage').focus()
+  await page.mouse.move(-10, -10)
+  await expect(controls).toHaveCSS('opacity', '1')
+})
+
+test('the character activates the same chat route by click and keyboard while a drag only moves', async ({ page, shimUrl }) => {
+  await page.addInitScript(() => {
+    ;(window as any).__commands = []
+    ;(window as any).__TAURI__ = { core: { invoke: async (cmd: string, args: any) => {
+      ;(window as any).__commands.push({ cmd, args })
+      return cmd === 'start_companion_drag' ? { x: 1000, y: 500 } : cmd === 'wechat_cli_json' ? { ok: false } : undefined
+    } } }
+  })
+  await openCompanion(page, shimUrl)
+  const stage = page.locator('#pet-stage')
+  await stage.click()
+  await expect.poll(() => page.evaluate(() => (window as any).__commands.filter((c: any) => c.cmd === 'show_main_window').length)).toBe(1)
+  await stage.focus(); await page.keyboard.press('Enter')
+  await expect.poll(() => page.evaluate(() => (window as any).__commands.filter((c: any) => c.cmd === 'show_main_window').length)).toBe(2)
+  await page.evaluate(() => {
+    document.getElementById('pet-stage')!.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, bubbles: true, screenX: 100, screenY: 100 }))
+    window.dispatchEvent(new MouseEvent('mousemove', { buttons: 1, screenX: 120, screenY: 130 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0, buttons: 0, screenX: 120, screenY: 130 }))
+  })
+  await expect.poll(() => page.evaluate(() => (window as any).__commands.filter((c: any) => c.cmd === 'move_companion_window').length)).toBe(1)
+  expect(await page.evaluate(() => (window as any).__commands.filter((c: any) => c.cmd === 'show_main_window'))).toEqual([
+    { cmd: 'show_main_window', args: { page: 'converse' } }, { cmd: 'show_main_window', args: { page: 'converse' } },
+  ])
+})
 
 for (const width of [200, 240]) test(`companion controls fit without wrapping at ${width}px`, async ({ page, shimUrl }) => {
   await page.setViewportSize({ width, height: 300 })
@@ -32,7 +85,7 @@ for (const width of [200, 240]) test(`companion controls fit without wrapping at
 for (const width of [200, 240]) test(`opened companion settings remain reachable at ${width}px`, async ({ page, shimUrl }) => {
   await page.setViewportSize({ width, height: 250 })
   await openCompanion(page, shimUrl)
-  await page.getByText('陪伴设置', { exact: true }).click()
+  await toggleSettings(page)
   const bounds = await page.locator('.pet-settings-panel').evaluate(panel => {
     const { left, top, right, bottom } = panel.getBoundingClientRect()
     return { left, top, right, bottom, width: innerWidth, height: innerHeight }
@@ -66,13 +119,13 @@ test('motion controls follow system live, persist user choices, and retain Light
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await openCompanion(page, shimUrl)
   await expect(page.locator('#pet-stage')).toHaveAttribute('aria-label', 'CC，已连接')
-  await page.getByText('陪伴设置', { exact: true }).click()
+  await toggleSettings(page)
   const reduced = page.getByRole('checkbox', { name: '减少动作' })
   await reduced.check()
   await expect(page.locator('#pet-stage')).not.toHaveClass(/pet-breathing/)
   await expect(page.locator('#pet-sprite')).toHaveCSS('transition-duration', '0s')
   await page.reload()
-  await page.getByText('陪伴设置', { exact: true }).click()
+  await toggleSettings(page)
   await expect(reduced).toBeChecked()
   await reduced.uncheck()
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -87,7 +140,7 @@ test('motion controls follow system live, persist user choices, and retain Light
   await expect(page.locator('#pet-stage')).toHaveAttribute('aria-label', 'CC，暂时联系不上')
   await expect(page.locator('#pet-stage')).not.toHaveClass(/pet-breathing/)
   await expect(page.locator('#pet-hint')).toHaveText('暂时联系不上 CC')
-  await page.getByText('陪伴设置', { exact: true }).click()
+  await toggleSettings(page)
   await expect(page.getByRole('button', { name: '恢复动作' })).toBeVisible()
   await page.getByRole('button', { name: '恢复动作' }).click()
   await expect(page.locator('#pet-stage')).not.toHaveClass(/pet-breathing/)
@@ -103,7 +156,7 @@ test('main entry works with keyboard in browser preview and stays outside the dr
   await expect(page).toHaveURL(/\/index\.html$/)
 })
 
-test('native main entry sends only the explicit overview destination', async ({ page, shimUrl }) => {
+test('native main entry sends only the explicit conversation destination', async ({ page, shimUrl }) => {
   await page.addInitScript(() => {
     ;(window as any).__commands = []
     ;(window as any).__TAURI__ = { core: { invoke: async (cmd: string, args: any) => {
@@ -115,7 +168,7 @@ test('native main entry sends only the explicit overview destination', async ({ 
   await openCompanion(page, shimUrl)
   const button = page.getByRole('button', { name: '找 CC', exact: true })
   await button.focus(); await page.keyboard.press('Space')
-  await expect.poll(() => page.evaluate(() => (window as any).__commands.filter((c: any) => c.cmd === 'show_main_window'))).toEqual([{ cmd: 'show_main_window', args: { page: 'overview' } }])
+  await expect.poll(() => page.evaluate(() => (window as any).__commands.filter((c: any) => c.cmd === 'show_main_window'))).toEqual([{ cmd: 'show_main_window', args: { page: 'converse' } }])
   expect(await page.evaluate(() => (window as any).__commands.some((c: any) => c.cmd === 'start_companion_drag'))).toBe(false)
 })
 
@@ -151,9 +204,9 @@ test('quiet keeps permission controls usable in a small companion window', async
   } }))
   await openCompanion(page, shimUrl)
   await expect(page.getByRole('button', { name: '允许', exact: true })).toBeVisible()
-  await page.getByText('陪伴设置', { exact: true }).click()
+  await toggleSettings(page)
   await page.getByRole('button', { name: '安静一小时' }).click()
-  await page.getByText('陪伴设置', { exact: true }).click()
+  await toggleSettings(page)
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('permission')
   await page.getByRole('button', { name: '查看', exact: true }).click()
   await expect(page.locator('.pet-card-prompt')).toHaveText('确认这次本地操作')
@@ -187,7 +240,7 @@ test('an existing pet snapshot ends suspended quiet after consuming its completi
   })
   await openCompanion(page, shimUrl)
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('working')
-  await page.getByText('陪伴设置', { exact: true }).click()
+  await toggleSettings(page)
   await page.getByRole('button', { name: '安静一小时' }).click()
   let release!: () => void
   gate = new Promise(r => { release = r })
@@ -231,7 +284,7 @@ for (const recovery of ['quiet', 'user', 'system']) test(`${recovery} ends befor
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await openCompanion(page, shimUrl)
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('working')
-  await page.getByText('陪伴设置', { exact: true }).click()
+  await toggleSettings(page)
   if (recovery === 'quiet') await page.getByRole('button', { name: '安静一小时' }).click()
   else if (recovery === 'user') await page.getByRole('checkbox', { name: '减少动作' }).check()
   else await page.emulateMedia({ reducedMotion: 'reduce' })

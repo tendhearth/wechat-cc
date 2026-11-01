@@ -4,8 +4,8 @@
 /** @typedef {{ x: number, y: number }} Position */
 /** @typedef {{ screenX: number, screenY: number, buttons?: number, button?: number }} DragPoint */
 /** @typedef {{ pressed: DragPoint, pending: Position | null, dragged: boolean, moved: boolean, ended: boolean, cancelled: boolean, wake: (() => void) | null, done: Promise<void> }} Gesture */
-/** @param {{ start: () => Promise<Position | null | undefined>, move: (position: Position) => Promise<unknown>, finish: () => Promise<unknown>, onBegin: () => void, onEnd: () => void, onError: (error: unknown) => void }} callbacks */
-export function createCompanionDrag({ start, move: moveNative, finish, onBegin, onEnd, onError }) {
+/** @param {{ start: () => Promise<Position | null | undefined>, move: (position: Position) => Promise<unknown>, finish: () => Promise<unknown>, onBegin: () => void, onEnd: () => void, onClick?: () => void, onError: (error: unknown) => void }} callbacks */
+export function createCompanionDrag({ start, move: moveNative, finish, onBegin, onEnd, onClick, onError }) {
   /** @type {Gesture | null} */
   let active = null
   let tail = Promise.resolve()
@@ -27,6 +27,11 @@ export function createCompanionDrag({ start, move: moveNative, finish, onBegin, 
     if (point && point.button !== undefined && point.button !== 0) return Promise.resolve()
     if (point) update(gesture, point)
     active = null; gesture.ended = true; onEnd(); wake(gesture)
+    // Only an observed primary up can activate. Cancellation and buttons=0
+    // recovery finish the gesture without inventing a click.
+    if (point && !gesture.dragged && !gesture.cancelled) {
+      try { onClick?.() } catch (error) { onError(error) }
+    }
     return gesture.done
   }
   function cancel() {

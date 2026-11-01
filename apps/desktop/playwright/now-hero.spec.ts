@@ -3,7 +3,7 @@ import { test, expect, clickNav } from './fixtures'
 const shots = join(process.cwd(), '../../.superpowers/now-hero-shots')
 const pane = '.cc-now-pane', stage = '#now-cc .now-pet-stage', sprite = '#now-cc .now-pet-sprite'
 async function openHome(page: import('@playwright/test').Page, url: string) {
-  await page.goto(url)
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('main.dashboard')).toBeVisible()
   await expect(page.locator('#now-cc')).toHaveAttribute('data-runtime', 'ready')
   await expect(page.locator(stage)).toHaveAttribute('data-form', 'lit')

@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest'
 import { assertMiniIdentity, assertLoopbackEndpoint, assertEmbeddedEndpoint, createOfflineSession, sshInvocation } from './macmini-ui-protocol.mjs'
+import * as protocol from './macmini-ui-protocol.mjs'
 
 const lab = '/Users/home/cc-ui-lab/cc-motion-drag-20261030'
 const fixture = () => ({ bundleId: 'com.tendhearth.cc-motion-qa-20261029',
@@ -27,6 +28,45 @@ test('only the configured mini identity may execute desktop commands', () => {
     { computerName: 'Home’s Mac mini', homeDir: '/Users/home', platformName: 'linux' },
     { computerName: 'Home’s Mac mini', homeDir: '/Users/another', platformName: 'darwin' },
   ]) expect(() => assertMiniIdentity(identity)).toThrow(/Mac mini/)
+})
+
+test('the secondary test Mini is allowed only with its exact machine and user pair', () => {
+  expect(() => assertMiniIdentity({ computerName: 'Homebot’s Mac mini', homeDir: '/Users/homebot', platformName: 'darwin' })).not.toThrow()
+  for (const identity of [
+    { computerName: 'Homebot’s Mac mini', homeDir: '/Users/home', platformName: 'darwin' },
+    { computerName: 'Home’s Mac mini', homeDir: '/Users/homebot', platformName: 'darwin' },
+    { computerName: 'Homebot’s Mac mini', homeDir: '/Users/homebot', platformName: 'linux' },
+  ]) expect(() => assertMiniIdentity(identity)).toThrow(/Mac mini/)
+})
+
+test('each allowed Mini has a fixed isolated lab configuration', () => {
+  expect(protocol.miniConfiguration({ computerName: 'Homebot’s Mac mini', homeDir: '/Users/homebot', platformName: 'darwin' })).toMatchObject({
+    labHome: '/Users/homebot/ci/cc-ui-lab', root: '/Users/homebot/ci/cc-ui-lab/cc-pet-feel-20261101',
+    sharedLock: '/Users/homebot/ci/lock',
+  })
+  expect(protocol.miniConfiguration({ computerName: 'Home’s Mac mini', homeDir: '/Users/home', platformName: 'darwin' })).toMatchObject({
+    labHome: '/Users/home/cc-ui-lab', root: '/Users/home/cc-ui-lab/cc-motion-drag-20261030',
+  })
+})
+
+test('secondary sessions remain inside their own QA lab without crossing machine roots', () => {
+  const secondary = '/Users/homebot/ci/cc-ui-lab/cc-pet-feel-20261101'
+  const input = { ...fixture(), appPath: `${secondary}/QA.app`, stateRoot: `${secondary}/artifacts/test/state` }
+  expect(createOfflineSession(input).capabilities.alwaysMatch['appium:environment'].WECHAT_STATE_DIR).toBe(`${input.stateRoot}/daemon`)
+  for (const invalid of [
+    { ...input, stateRoot: `${lab}/state` },
+    { ...input, appPath: '/Users/homebot/ci/other/QA.app' },
+    { ...input, stateRoot: `${secondary}/../../outside` },
+  ]) expect(() => createOfflineSession(invalid)).toThrow(/QA|lab/)
+})
+
+test('secondary SSH execution requires an explicit known target and never falls back locally', () => {
+  const request = sshInvocation('embedded', 'homebot')
+  expect(request.file).toBe('ssh')
+  expect(request.args).toContain('homebot-mac-mini')
+  expect(request.args.at(-1)).toContain('/Users/homebot/ci/cc-ui-lab/run.mjs')
+  expect(request.args).toContain('StrictHostKeyChecking=yes')
+  for (const target of ['localhost', 'primary', 'unknown', 'homebot; touch /tmp/unsafe']) expect(() => sshInvocation('embedded', target)).toThrow(/target/)
 })
 
 test('the UI API cannot be redirected to a LAN/public host, credentials or another endpoint', () => {

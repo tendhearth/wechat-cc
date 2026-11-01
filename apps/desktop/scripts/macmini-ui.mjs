@@ -2,7 +2,7 @@
 import { spawnSync } from 'node:child_process'
 import { sshInvocation } from './macmini-ui-protocol.mjs'
 
-const request = sshInvocation(process.argv[2] ?? 'status')
+const request = sshInvocation(process.argv[2] ?? 'status', process.argv[3] ?? 'home', process.env.CC_UI_SSH_CONFIG)
 const env = {}
 for (const key of ['HOME', 'USER', 'LOGNAME', 'PATH', 'TMPDIR', 'SHELL', 'LANG', 'LC_ALL', 'SSH_AUTH_SOCK']) {
   if (process.env[key]) env[key] = process.env[key]

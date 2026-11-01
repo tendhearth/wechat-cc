@@ -3,6 +3,16 @@ import { formatCompanionStatus } from './companion-status.js'
 import { presenceToPet } from './pet/bridge/presence-map.js'
 
 describe('companion current activity text', () => {
+  it('orders current permission, connection trouble and unread content before working', () => {
+    const fact = { form: 'lit', behavior: 'working', props: ['exclamation', 'envelope'], badge: 3 }
+    expect(formatCompanionStatus(fact, 1).text).toBe('已连接 · 等你决定')
+    expect(formatCompanionStatus(fact, 0).text).toBe('已连接 · 有连接异常')
+    expect(formatCompanionStatus({ ...fact, props: ['envelope'] }, 0).text).toBe('已连接 · 有新内容')
+    expect(formatCompanionStatus({ ...fact, props: [], badge: 0 }, 0).text).toBe('已连接 · 正在做')
+  })
+  it.each([-1, NaN, Infinity, '2', 0.5])('does not invent new content from malformed badge %j', badge => {
+    expect(formatCompanionStatus({ form: 'lit', behavior: 'idle', props: ['envelope'], badge }, 0).text).toBe('已连接')
+  })
   it('preserves the existing connected idle status and image label', () => {
     expect(formatCompanionStatus({ form: 'lit', behavior: 'idle' }, 0)).toEqual({ text: '已连接', ariaLabel: 'CC，已连接' })
   })
