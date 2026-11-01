@@ -10,7 +10,7 @@ vi.mock('react-native-safe-area-context', async () => { const { createElement } 
 vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useRouter: () => ({ push() {} }) }))
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('expo-secure-store', () => ({ getItemAsync: async () => null, setItemAsync: async () => {} }))
-const { default: Now } = await import('../app/(tabs)/index')
+const { HomeScreen: Now } = await import('../ui/HomeScreen')
 beforeEach(() => { resetHost(); vi.useFakeTimers() })
 afterEach(cleanup)
 

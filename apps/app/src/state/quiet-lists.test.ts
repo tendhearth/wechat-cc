@@ -6,7 +6,8 @@ import '../ui/native-motion.test-support'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type MatterT } from '../backend/types'
 import { t } from '../i18n'
-import Together from '../app/(tabs)/together'
+import All from '../app/all'
+import { HomeScreen as Home } from '../ui/HomeScreen'
 import Activity from '../app/activity'
 import Jobs from '../app/jobs'
 import Letters from '../app/letters'
@@ -20,6 +21,7 @@ const roots: Root[] = []
 const host = { ctx: null as unknown as TestCtx, work: null as unknown as ReturnType<typeof useWork> }
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
+vi.mock('expo-secure-store', () => ({ getItemAsync: async () => null, setItemAsync: async () => {} }))
 vi.mock('react-native', async () => {
   const { createElement } = await import('react')
   const View = ({ children, testID, accessibilityLabel }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel }, children)
@@ -69,20 +71,20 @@ describe('matter list loading evidence', () => {
     expect(host.work).toMatchObject({ matters: [], mattersLoading: false, mattersKnown: true })
   })
 
-  it('together shows loading before the first read and offers a read-only retry after failure', async () => {
+  it('the full list shows loading before the first read and offers a read-only retry after failure', async () => {
     let reject!: (reason: Error) => void
     let succeed = false
     const backend = backendWithMatters(() => succeed ? Promise.resolve([]) : new Promise((_, no) => { reject = no }))
-    await mount(backend, createElement(Together))
-    expect(el('together-empty')).toBeNull()
-    expect(el('together-loading')?.getAttribute('aria-label')).toBeTruthy()
+    await mount(backend, createElement(All))
+    expect(el('all-empty')).toBeNull()
+    expect(el('all-loading')?.getAttribute('aria-label')).toBeTruthy()
     await act(async () => { reject(new BackendError('offline')) }); await flush()
-    expect(el('together-empty')).toBeNull()
-    expect(el('together-unavailable')).not.toBeNull()
+    expect(el('all-empty')).toBeNull()
+    expect(el('all-unavailable')).not.toBeNull()
     succeed = true
-    await act(async () => { el('together-retry')?.click() }); await flush()
-    expect(el('together-unavailable')).toBeNull()
-    expect(el('together-empty')).not.toBeNull()
+    await act(async () => { el('all-retry')?.click() }); await flush()
+    expect(el('all-unavailable')).toBeNull()
+    expect(el('all-empty')).not.toBeNull()
   })
 
   it('retains known rows and marks them stale when a later read fails', async () => {
@@ -91,23 +93,23 @@ describe('matter list loading evidence', () => {
     await mount(backendWithMatters(async () => {
       if (fail) throw new BackendError('offline')
       return [matter]
-    }), createElement(Together))
-    expect(el('together-item-a1b2c3d4')?.textContent).toContain('Keep this task')
+    }), createElement(All))
+    expect(el('row-matter-a1b2c3d4')?.textContent).toContain('Keep this task')
     fail = true
     await act(async () => { host.ctx.store.revalidateAll() }); await flush()
-    expect(el('together-stale')).not.toBeNull()
-    expect(el('together-unavailable')).toBeNull()
-    expect(el('together-item-a1b2c3d4')?.textContent).toContain('Keep this task')
+    expect(el('all-stale')).not.toBeNull()
+    expect(el('all-unavailable')).toBeNull()
+    expect(el('row-matter-a1b2c3d4')?.textContent).toContain('Keep this task')
   })
 })
 
 describe('shared list loading feedback', () => {
-  it('keeps secondary Together routes behind the more action without removing their destinations', async () => {
-    await mount(backendWithMatters(async () => []), createElement(Together))
-    expect(el('together-sessions')).toBeNull()
-    await act(() => { el('together-more')?.click() }); await flush()
-    expect(el('together-sessions')).not.toBeNull()
-    expect(el('together-saved-inputs')).not.toBeNull()
+  it('keeps secondary routes behind the home more action without removing their destinations', async () => {
+    await mount(backendWithMatters(async () => []), createElement(Home))
+    expect(el('home-sessions')).toBeNull()
+    await act(() => { el('home-more')?.click() }); await flush()
+    expect(el('home-sessions')).not.toBeNull()
+    expect(el('home-saved-inputs')).not.toBeNull()
   })
   it('letters marks a previously read empty list stale after a later read fails', async () => {
     let fail = false

@@ -29,7 +29,7 @@ export default function SavedInputs() {
     router.push(`/compose?matter=${encodeURIComponent(row.taskId)}`)
   }
   return <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-    <TopBar title={t(lang, 'input.savedTitle')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/together'))} />
+    <TopBar title={t(lang, 'input.savedTitle')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
     <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.l }}>
       <Txt role="meta" tone="inkSoft">{t(lang, 'input.savedHint')}</Txt>
       {recovery.phase !== 'ready' ? <View style={{ gap: space.s }}>

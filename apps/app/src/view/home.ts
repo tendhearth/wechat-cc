@@ -20,6 +20,8 @@ export type HomeInput = {
   lang: Lang
   /** 上次把 App 放到后台的时间;离开 ≥ 1 小时 ⇒ 带回来的那组改叫「你不在的这 N 小时」。 */
   away?: number | null
+  /** 带回来的只收多久以内;null ⇒ 不限(「全部」页)。默认 24 小时。 */
+  backWindowMs?: number | null
 }
 
 export type HomeRow = {
@@ -122,7 +124,8 @@ export function homeView(input: HomeInput): HomeView {
     let rows = all.filter(r => STATUS_TABLE[r.status].group === key)
     if (key !== 'waiting') rows = rows.sort(byRecent)
     if (key === 'back') {
-      const recent = rows.filter(r => r.updatedAt >= now - BACK_WINDOW_MS)
+      const windowMs = input.backWindowMs === undefined ? BACK_WINDOW_MS : input.backWindowMs
+      const recent = windowMs === null ? rows : rows.filter(r => r.updatedAt >= now - windowMs)
       moreCount = rows.length - recent.length
       rows = recent
     }

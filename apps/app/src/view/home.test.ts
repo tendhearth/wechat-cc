@@ -62,6 +62,11 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     expect(ids(v, 'back')).toEqual(['new'])
     expect(v.moreCount).toBe(1)
   })
+  it('「全部」页不限 24 小时(backWindowMs: null)', () => {
+    const v = homeView(input({ matters: [m('new', NOW - 2 * H, 'done'), m('old', NOW - 30 * H, 'done')], backWindowMs: null }))
+    expect(ids(v, 'back')).toEqual(['new', 'old'])
+    expect(v.moreCount).toBe(0)
+  })
   it('离开一小时以上、这期间有带回来的 ⇒ 组名换成「你不在的这 N 小时」', () => {
     const v = homeView(input({ matters: [m('a', NOW - H, 'done')], away: NOW - 3 * H }))
     expect(v.groups.find(g => g.key === 'back')!.title).toBe(t('zh-Hans', 'today.whileAway', { n: 3 }))

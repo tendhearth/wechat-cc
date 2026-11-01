@@ -1,11 +1,10 @@
 import type { CliSessionRowT } from '../backend/types'
 import { hasMessage, t, type Lang, type MessageKey } from '../i18n'
-import type { Dot } from './connections'
 import { formatSynced } from './connection'
 
 /**
  * 终端里的会话(2026-10-14):主人在 CC 外面开的 Claude Code / Codex。CC 是所有执行者的总管 ——
- * 这些会话和 CC 自己的事并排出现在「一起做」,等你批准的也算进「此刻」那个数。
+ * 这些会话和 CC 自己的事同在主页那份列表里(设计稿 2026-10-31 U)。
  */
 export type TerminalStatus = CliSessionRowT['status']
 export type TerminalRow = {
@@ -36,7 +35,6 @@ export function stepLabel(it: { text: string; verb?: string; target?: string }, 
   return it.verb && hasMessage(lang, key) ? t(lang, key, { target: it.target ?? '' }) : it.text
 }
 
-export const TERMINAL_DOT: Record<TerminalStatus, Dot> = { waiting: 'warn', running: 'unknown', idle: 'ok', ended: 'unknown' }
 
 /** 「刚刚 / 5 分钟前 / 3 小时前」,一天以上退回日期。 */
 export function relAgo(ts: number, now: number, lang: Lang): string {
@@ -65,14 +63,6 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
     nowText: s.status === 'running' && s.now ? stepLabel(s.now, lang) : null,
     live: s.live_window === true,
   }
-}
-
-/** 「一起做」那一段:等你批准的在前,其余按最近动静(daemon 已排好,这里只防老数据乱序);结束了的不占位置。 */
-export function terminalRows(sessions: CliSessionRowT[] | undefined, now: number, lang: Lang): TerminalRow[] {
-  return (sessions ?? [])
-    .filter(s => s.status !== 'ended')
-    .sort((a, b) => (Number(b.status === 'waiting') - Number(a.status === 'waiting')) || b.last_event_at - a.last_event_at)
-    .map(s => terminalRow(s, now, lang))
 }
 
 /** 等你、而且手机上拍得了的那几条(「此刻」的数与行)。够不着电脑时这份是旧的 ⇒ 0。 */

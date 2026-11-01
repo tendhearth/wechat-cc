@@ -125,7 +125,7 @@ export default function Matter() {
 
   const header = (
     <>
-      <TopBar title={t(lang, 'together.title')} onBack={() => router.back()} />
+      <TopBar title={t(lang, 'home.matter')} onBack={() => router.back()} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
     </>
   )
