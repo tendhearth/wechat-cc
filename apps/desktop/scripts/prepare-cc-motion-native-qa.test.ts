@@ -117,3 +117,19 @@ describe('isolated native motion QA', () => {
     } finally { rmSync(temporary, { recursive: true, force: true }) }
   })
 })
+
+it('provides only synthetic task targets and retains them while disconnected for stale-target checks',async()=>{
+ const api=createQAApi();api.setScenario('tasks')
+ const body=await api.invokeApi('GET','/v1/companion/pet')
+ expect(body.activities).toMatchObject([{taskId:'deadbeef',phase:'needs_input'},{taskId:'bbbb2222',phase:'working'}])
+ api.setScenario('tasks-away');expect((await api.invokeApi('GET','/v1/companion/presence')).presence).toBe('down')
+ expect((await api.invokeApi('GET','/v1/companion/pet')).activities).toEqual(body.activities)
+ await expect(api.invokeApi('POST','/v1/workbench/deadbeef/reply')).rejects.toThrow('blocked')
+})
+it('native acknowledgements keep only validated complete task destinations',async()=>{
+ const receipts:unknown[]=[];const invoke=createQAInvoke(async()=>null,()=>{},receipt=>receipts.push(receipt))
+ await invoke('show_main_window',{page:'workbench',taskId:'deadbeef'})
+ expect(receipts).toEqual([{command:'show_main_window',ok:true,destination:{page:'workbench',taskId:'deadbeef'}}])
+ await invoke('show_main_window',{page:'workbench',taskId:'../secret',token:'private'})
+ expect(receipts.at(-1)).toEqual({command:'show_main_window',ok:true})
+})

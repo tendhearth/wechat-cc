@@ -2106,6 +2106,13 @@ const PetPendingPermissionShape = z.object({
   since: z.string(),
   expires_at: z.string(),
 })
+const PetTaskActivityShape = z.object({
+  taskId:z.string().regex(/^[a-f0-9]{8}$/),
+  title:z.string().max(80),
+  phase:z.enum(['needs_input','failed','interrupted','paused','replied','working','queued','stopping']),
+  detail:z.string().max(120).nullable(),
+  updatedAt:z.number().finite().nonnegative(),
+})
 export const PetTurnResponse = z.object({
   owner_last_contact_at: z.string().nullable(),
   turn: z.object({
@@ -2114,6 +2121,7 @@ export const PetTurnResponse = z.object({
   }),
   last_done_at: z.string().nullable(),
   pending_permissions: z.array(PetPendingPermissionShape),
+  activities:z.array(PetTaskActivityShape).max(8).optional(),
 })
 export type PetTurnResponseT = z.infer<typeof PetTurnResponse>
 

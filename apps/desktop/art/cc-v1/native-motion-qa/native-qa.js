@@ -1,4 +1,5 @@
 import { createPet } from './pet/pet.js'
+import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
 const $ = id => document.getElementById(id)
 const tauri = window.__TAURI__
 const invoke = tauri.core.invoke
@@ -39,12 +40,21 @@ $('advance-quiet').onclick = async () => {
   await snapshot('仅模拟测试浮窗经过两小时，系统时间不变')
 }
 window.__ccQANavigations = []
-await tauri.event.listen('wechat-cc:navigate', ({ payload }) => {
-  window.__ccQANavigations.push(payload?.page)
-  if (window.__ccQANavigations.length > 16) window.__ccQANavigations.shift()
-  snapshot('Find CC returned to isolated main window')
+window.__ccQANavigationWaiting = true
+const gateKey='cc-motion-qa-navigation-gate'
+if(localStorage.getItem(gateKey)==='hold')await new Promise(resolve=>{
+  const release=()=>{if(localStorage.getItem(gateKey)!=='hold'){window.removeEventListener('storage',release);resolve()}}
+  window.addEventListener('storage',release);release()
 })
-await invoke('take_pending_navigate',{}).catch(()=>null)
+const navigation=createMainNavigation(target=>{
+  window.__ccQANavigations.push(target)
+  if(window.__ccQANavigations.length>16)window.__ccQANavigations.shift()
+  void snapshot('Exact target received by isolated native main')
+})
+navigation.setReady(true)
+const connect=createNativeNavigation({navigation,listen:(name,callback)=>tauri.event.listen(name,callback),takePending:()=>invoke('take_pending_navigate',{})})
+await connect()
+window.__ccQANavigationWaiting = false
 const pets = []
 const manifest = await (await fetch('./assets/pet/cc-v1/manifest.json')).json()
 $('asset-state').textContent = `包状态 ${manifest.artStatus} · 与当前分支相同素材 · 不代表实时任务`

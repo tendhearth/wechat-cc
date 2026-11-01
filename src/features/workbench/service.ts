@@ -284,6 +284,7 @@ export function makeWorkbenchService(opts: Options) {
     projects:viewDomain.projects,
     createWechat:executeDomain.createWechat,
     attention:viewDomain.attention,
+    petActivities:viewDomain.petActivities,
     resolveAnswer:inputsDomain.resolveAnswer,
     withdrawInput:inputsDomain.withdrawInput,
     submitInput:inputsDomain.submitInput,inputReceipt:inputsDomain.inputReceipt,

@@ -27,6 +27,7 @@ import type { PendingWorkbenchPermission, PendingUserInput } from '../../../port
 import type { QuotaHandoffView } from './types'
 import type { AdmissionDomain } from './admission'
 import type { QuotaDomain } from './quota'
+import type { PetTaskActivity } from '../../../domain/pet-turn'
 
 export interface ViewDomains {
   admission: Pick<AdmissionDomain,'provider'|'continuation'>
@@ -122,6 +123,36 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
       .map(task=>({id:task.id,phase:phaseOf(task,state.runsByTask.get(task.id))}))
     return{tasks,progress}
   }
+  /** A bounded owner-only summary; never runs detail's scripts, git or touch path. */
+  function petActivities():PetTaskActivity[] {
+    const owner=ctx.deps.ownerChatId()
+    if(!owner)return[]
+    const tasks=new Map(store.listOwned(owner,20).map(task=>[task.id,task]))
+    // A live decision can be older than the recent page. Authorize its stored
+    // owner before consulting any pending text from the run.
+    for(const id of state.runsByTask.keys()) {
+      try {const task=store.get(id);if(task.ownerChatId===owner&&task.archivedAt===null)tasks.set(id,task)}catch{/* Run removed concurrently. */}
+    }
+    const recent=ctx.now()-10*60_000
+    const bounded=(text:string,max:number)=>{const t=text.replace(/\s+/g,' ').trim();return t.length>max?t.slice(0,max-1)+'…':t}
+    const activities:PetTaskActivity[]=[]
+    for(const task of tasks.values()) {
+      if(task.status==='cancelled'||task.archivedAt!==null)continue
+      const run=state.runsByTask.get(task.id)
+      let phase:PetTaskActivity['phase'],detail:string|null=null
+      if(task.status==='cancelling'||run?.cancelled)phase='stopping'
+      else if(run?.networkSuspended)phase='paused'
+      else {
+        const permissions=run?.permissions.pending()??[],questions=run?.questions.pending()??[]
+        if(permissions.length||questions.length){phase='needs_input';detail=firstPending(permissions,questions)?.text??null}
+        else {const fact=phaseOf(task,run);if(fact==='cancelled')continue;phase=fact}
+      }
+      if(phase==='replied'&&task.updatedAt<recent)continue
+      activities.push({taskId:task.id,title:bounded(task.title,80),phase,detail,updatedAt:task.updatedAt})
+    }
+    const rank:Record<PetTaskActivity['phase'],number>={needs_input:0,failed:1,interrupted:1,paused:1,replied:2,working:3,stopping:3,queued:4}
+    return activities.sort((a,b)=>rank[a.phase]-rank[b.phase]||b.updatedAt-a.updatedAt||a.taskId.localeCompare(b.taskId)).slice(0,8)
+  }
   function projects(){
     const ownerChatId=ctx.deps.ownerChatId();if(!ownerChatId)return[]
     const providers=ctx.deps.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(ctx.deps.registry.get(id)?.opts.workbench))
@@ -184,6 +215,6 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
     return result
   }
 
-  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,taskView,attention,projects,addProject,list,detail }
+  return { held,waitingFor,runtimeSnapshot,inputMode,isReplied,phaseOf,taskView,attention,petActivities,projects,addProject,list,detail }
 }
 export type ViewDomain = ReturnType<typeof makeViewDomain>

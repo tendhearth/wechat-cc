@@ -26,6 +26,7 @@ export function prepareMotionNativeQA({ source = join(desktop, 'src'), destinati
     return true
   } })
   for (const [from, to] of [['index.html', 'index.html'], ['native-qa.js', 'native-qa.js'], ['native-qa.css', 'native-qa.css'], ['qa-bridge.mjs', 'qa-bridge.mjs']]) cpSync(join(qa, from), join(output, to))
+  writeFileSync(join(output, 'qa-bridge.mjs'), readFileSync(join(qa, 'qa-bridge.mjs'), 'utf8').replace("'../../../src/main-navigation.js'", "'./main-navigation.js'"))
   writeFileSync(join(output, 'companion-window.js'), `import { captureQAObservation } from './qa-bridge.mjs'\n` + companion.replace(storageAnchor, 'storage = null /* QA: memory-only motion preferences */') + `
 // QA-only refresh: a live fact change must not pretend the document resumed.
 const reportQAState = (snapshot = pet.machine.snapshot()) => window.__TAURI__.event.emit('cc-motion-qa-observation', captureQAObservation(snapshot, preferences.snapshot().quiet, document.getElementById('pet-quiet')))

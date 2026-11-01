@@ -8,7 +8,7 @@
 // 新的,不额外触发一次立即刷新。
 import { V1, v1 } from '../../daemon-client.js'
 
-/** @typedef {{ owner_last_contact_at: string|null, turn: { phase: 'idle'|'thinking'|'working'|'permission', since: string|null }, last_done_at: string|null, pending_permissions: Array<{ hash: string, prompt: string, since: string, expires_at: string }> }} PetTurn */
+/** @typedef {{ owner_last_contact_at: string|null, turn: { phase: 'idle'|'thinking'|'working'|'permission', since: string|null }, last_done_at: string|null, pending_permissions: Array<{ hash: string, prompt: string, since: string, expires_at: string }>, activities?:import('../../pet-activities.js').PetTaskActivity[] }} PetTurn */
 
 /**
  * @param {{ invokeApi: (method: 'GET' | 'POST', path: string, body?: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<unknown>, fastMs?: number, slowMs?: number }} opts

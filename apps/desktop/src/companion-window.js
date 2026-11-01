@@ -11,6 +11,7 @@ import { invoke } from './ipc.js'
 import { createCompanionPreferences } from './companion-preferences.js'
 import { formatCompanionStatus } from './companion-status.js'
 import { createCompanionDrag } from './companion-drag.js'
+import { mountPetActivities, normalizePetActivities } from './pet-activities.js'
 
 const $ = (/** @type {string} */ id) => document.getElementById(id)
 // 浏览器预览(没有 Tauri 运行时)里窗口命令无处可去 —— 用它决定要不要发。
@@ -66,6 +67,10 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
   },
 })
 
+const tasksHost=$('pet-tasks'),taskPrimary=$('pet-task-primary'),taskToggle=$('pet-task-toggle'),taskList=$('pet-task-list')
+const taskView=tasksHost&&taskPrimary&&taskToggle&&taskList?mountPetActivities({host:tasksHost,primary:taskPrimary,toggle:taskToggle,list:taskList,onOpen:target=>openDestination(target),onExpand:()=>closeSettings()}):null
+const closeSettings=()=>{const settings=document.querySelector('.pet-settings');if(settings instanceof HTMLDetailsElement)settings.open=false}
+document.querySelector('.pet-settings')?.addEventListener('toggle',event=>{if(event.target instanceof HTMLDetailsElement&&event.target.open)taskView?.closeList()})
 const bridge = createPetBridge()
 const apply = (freshTurn = false) => {
   const stream = freshTurn ? 'turn' : 'presence'
@@ -75,7 +80,13 @@ const apply = (freshTurn = false) => {
   // still has to consume its own suppressed completion/contact baseline.
   if (reobserve.has(stream)) r.intent = { ...r.intent, props: r.intent.props.filter(p => p !== 'micro-light'), oneShots: r.intent.oneShots.filter(b => b === 'error') }
   // Current facts remain readable when motion is reduced or quiet. Dark hides stale activity.
+  const taskRows=normalizePetActivities(turn?.activities)
+  const tasksAvailable=r.intent.form==='lit'&&!r.intent.hint&&!r.permission&&r.permissionCount===0&&!r.intent.props.includes('exclamation')
+  taskView?.update(taskRows,tasksAvailable)
+  const selected=tasksAvailable?taskRows[0]:null
+  if(selected)r.intent={...r.intent,behavior:selected.phase==='needs_input'?'permission':selected.phase==='working'?'working':'idle'}
   const activity = formatCompanionStatus(r.intent, r.permissionCount)
+  if(selected)activity.ariaLabel=`CC，${taskPrimary?.getAttribute('aria-label')??selected.title}，打开任务`
   if (stage && stage.getAttribute('aria-label') !== activity.ariaLabel) stage.setAttribute('aria-label', activity.ariaLabel)
   const status = $('pet-connection')
   if (status && status.textContent !== activity.text) status.textContent = activity.text
@@ -83,7 +94,7 @@ const apply = (freshTurn = false) => {
   if (activityLabel) {
     if (activityLabel.textContent !== activity.text) activityLabel.textContent = activity.text
     // Permission and connection hints already have their own readable surface.
-    activityLabel.hidden = Boolean(r.permission || r.intent.hint) || activity.text === '已连接' || activity.text === '已连接 · 陪伴中'
+    activityLabel.hidden = Boolean(selected || r.permission || r.intent.hint) || activity.text === '已连接' || activity.text === '已连接 · 陪伴中'
   }
   pet.applyIntent({ ...r.intent, hint: r.intent.hint === 'daemon 没起' ? '暂时联系不上 CC' : r.intent.hint })
   // 初次观察不播转场(spec §5.2):开窗时 CC 本来就亮着,那是既成事实,不是「主人
@@ -92,7 +103,7 @@ const apply = (freshTurn = false) => {
   // 哪一拍算「初次」由 bridge 说(开窗第一拍 + 第一次拿到端点回答那拍,见 pet-bridge.js)。
   if (r.first && pet.machine.snapshot().transition) pet.machine.notifyAnimationEnded()
   if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
-  petPoller.setFast(r.fast)
+  petPoller.setFast(r.fast||(tasksAvailable&&taskRows.some(row=>['needs_input','working','queued','paused','stopping'].includes(row.phase))))
   // Consume this snapshot under the previous quiet flag before wake-time expiry
   // enables motion; completion during suspend must not become a celebration.
   preferences.refresh()
@@ -117,7 +128,7 @@ const drag = createCompanionDrag({
   move: position => invoke('move_companion_window', position),
   finish: () => invoke('finish_companion_drag'),
   onBegin: () => pet.beginDrag(), onEnd: () => pet.endDrag(),
-  onClick: () => { void openConversation() },
+  onClick: () => { void openCharacter() },
   onError: error => console.warn('companion drag failed', error),
 })
 /** @type {number | null} */ let capturedPointer = null
@@ -146,21 +157,40 @@ stage?.addEventListener('pointercancel', cancelDrag)
 stage?.addEventListener('lostpointercapture', cancelDrag)
 window.addEventListener('mousemove', event => { if (event instanceof MouseEvent) drag.move(event) })
 
-async function openConversation() {
-  await drag.cancel()
-  if (mock) { location.assign('./index.html'); return }
-  try { await invoke('show_main_window', { page: 'converse' }) }
-  catch (err) { console.warn('show_main_window failed', err); pet.setHint('没能打开 CC，请再试一次') }
+/** @type {Map<string,Promise<void>>} */ const opening=new Map()
+/** @param {{page:'converse'}|import('./pet-activities.js').TaskDestination} target */
+function openDestination(target) {
+  const key=JSON.stringify(target),existing=opening.get(key)
+  if(existing)return existing
+  const action=(async()=>{
+    await drag.cancel()
+    if(mock){location.assign('./index.html');return}
+    try {await invoke('show_main_window',target)}
+    catch(err){console.warn('show_main_window failed',err);pet.setHint('没能打开 CC，请再试一次')}
+  })().finally(()=>opening.delete(key))
+  opening.set(key,action);return action
 }
+function openConversation(){return openDestination({page:'converse'})}
+function openCharacter(){return openDestination(taskView?.current()??{page:'converse'})}
 $('pet-open-main')?.addEventListener('click', openConversation)
 stage?.addEventListener('keydown', event => {
   if (!(event instanceof KeyboardEvent) || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
   if (event.key !== 'Enter' && event.key !== ' ') return
   event.preventDefault()
-  void openConversation()
+  void openCharacter()
 })
-stage?.addEventListener('pointerenter', () => pet.acknowledgeAttention())
-stage?.addEventListener('focus', () => pet.acknowledgeAttention())
+// Real mouse clicks were already handled by the release/drag discriminator.
+// Accessibility Press and HTMLElement.click carry detail=0 without mouse down/up.
+stage?.addEventListener('click', event => {
+  if (event instanceof MouseEvent && event.detail === 0) void openCharacter()
+})
+let pointerNear = false, keyboardNear = false
+const releaseNearby = () => { if (!pointerNear && !keyboardNear) pet.releaseAttention() }
+stage?.addEventListener('pointerenter', () => { pointerNear = true; pet.acknowledgeAttention() })
+stage?.addEventListener('pointerleave', () => { pointerNear = false; releaseNearby() })
+stage?.addEventListener('focus', () => { keyboardNear = true; pet.acknowledgeAttention() })
+stage?.addEventListener('blur', () => { keyboardNear = false; releaseNearby() })
+window.addEventListener('blur', () => { pointerNear = false; keyboardNear = false; pet.releaseAttention(); taskView?.closeList(); closeSettings() })
 
 $('pet-reset-position')?.addEventListener('click', async () => {
   await drag.cancel()
@@ -179,4 +209,10 @@ $('companion-window-close')?.addEventListener('click', async () => {
 })
 $('pet-zoom-out')?.addEventListener('click', async () => { await drag.cancel(); if (!mock) invoke('resize_companion_window', { direction: 'out' }).catch(console.warn) })
 $('pet-zoom-in')?.addEventListener('click', async () => { await drag.cancel(); if (!mock) invoke('resize_companion_window', { direction: 'in' }).catch(console.warn) })
-window.addEventListener('keydown', (event) => { if (event.key === 'Escape') $('companion-window-close')?.click() })
+window.addEventListener('keydown', event => {
+  if(event.key!=='Escape'||event.defaultPrevented)return
+  if(taskView?.closeList(true)){event.preventDefault();return}
+  const settings=document.querySelector('.pet-settings')
+  if(settings instanceof HTMLDetailsElement&&settings.open){settings.open=false;event.preventDefault();settings.querySelector('summary')?.focus();return}
+  $('companion-window-close')?.click()
+})

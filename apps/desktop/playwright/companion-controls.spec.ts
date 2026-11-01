@@ -34,9 +34,24 @@ test('idle controls stop intercepting clicks and return on nearby hover, keyboar
   await expect(controls).toHaveCSS('opacity', '1')
   await expect(page.getByRole('checkbox', { name: '减少动作' })).toBeVisible()
   await toggleSettings(page)
+  await page.keyboard.press('Tab')
   await page.locator('#pet-stage').focus()
   await page.mouse.move(-10, -10)
   await expect(controls).toHaveCSS('opacity', '1')
+})
+
+test('pointer-used controls tuck away on leave while keyboard users retain visible controls', async ({ page, shimUrl }) => {
+  await page.setViewportSize({ width: 240, height: 300 })
+  await page.addInitScript(() => {
+    ;(window as any).__TAURI__ = { core: { invoke: async () => null } }
+  })
+  await openCompanion(page, shimUrl)
+  await page.locator('#pet-stage').hover()
+  await page.locator('#pet-zoom-in').click()
+  await page.mouse.move(-10, -10)
+  await expect(page.locator('.pet-controls')).toHaveCSS('opacity', '0')
+  await page.keyboard.press('Tab')
+  await expect(page.locator('.pet-controls')).toHaveCSS('opacity', '1')
 })
 
 test('the character activates the same chat route by click and keyboard while a drag only moves', async ({ page, shimUrl }) => {
@@ -320,4 +335,53 @@ for (const recovery of ['quiet', 'user', 'system']) test(`${recovery} ends befor
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('idle')
   expect(await page.evaluate(() => (window as any).__quietBehaviors.filter((b: string) => b === 'done').length)).toBe(1)
   expect(await page.evaluate(() => (window as any).__quietBehaviors.filter((b: string) => b === 'receive').length)).toBe(1)
+})
+
+for (const width of [200,240]) test(`factual task chooser opens exact tasks and preserves keyboard access at ${width}px`,async({page,shimUrl,shim})=>{
+ await shim.invoke('demo.seed',{})
+ await page.setViewportSize({width,height:250})
+ await page.addInitScript(()=>{
+  ;(window as any).__commands=[]
+  ;(window as any).__TAURI__={core:{invoke:async(command:string,args:any)=>{
+   ;(window as any).__commands.push({cmd:command,args})
+   if(command==='show_main_window'||command==='close_companion_window')return null
+   const response=await fetch('/__invoke',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({command,args})})
+   const value=await response.json();if(value.error)throw Error(value.error);return value.result
+  }}}
+ })
+ const activities=[{taskId:'deadbeef',title:'修好本地排版',phase:'needs_input',detail:'需要确认本地检查',updatedAt:1},{taskId:'bbbb2222',title:'<img src=x onerror=alert(1)>',phase:'working',detail:null,updatedAt:2}]
+ await page.route('**/v1/companion/presence',route=>route.fulfill({json:{presence:'ok',activity:{kind:'idle',label:'',since:null},news:{unread:0,latest_kind:null,latest_title:null}}}))
+ await page.route('**/v1/companion/pet',route=>route.fulfill({json:{owner_last_contact_at:null,last_done_at:null,turn:{phase:width===200?'working':'thinking',since:null},pending_permissions:[],activities}}))
+ await openCompanion(page,shimUrl)
+ const host=page.locator('#pet-tasks'),primary=page.locator('#pet-task-primary'),toggle=page.locator('#pet-task-toggle')
+ await expect(primary).toContainText('修好本地排版');await expect(primary).toContainText('等你决定')
+ await expect.poll(()=>page.evaluate(()=>(window as any).__pet.machine.snapshot().behavior)).toBe('permission')
+ await page.locator('#pet-stage').evaluate(el=>(el as HTMLElement).click())
+ await expect.poll(()=>page.evaluate(()=>(window as any).__commands.filter((c:any)=>c.cmd==='show_main_window'))).toEqual([{cmd:'show_main_window',args:{page:'workbench',taskId:'deadbeef'}}])
+ await toggle.click();const second=page.locator('#pet-task-list [data-task-id="bbbb2222"]')
+ await expect(second).toHaveText(/<img src=x onerror=alert\(1\)>/);expect(await host.locator('img').count()).toBe(0)
+ await second.focus();await page.keyboard.press('Escape');await expect(page.locator('#pet-task-list')).toBeHidden();await expect(toggle).toBeFocused()
+ expect(await page.evaluate(()=>(window as any).__commands.some((c:any)=>c.cmd==='close_companion_window'))).toBe(false)
+ await toggle.click();await second.click()
+ await expect.poll(()=>page.evaluate(()=>(window as any).__commands.filter((c:any)=>c.cmd==='show_main_window').at(-1))).toEqual({cmd:'show_main_window',args:{page:'workbench',taskId:'bbbb2222'}})
+ const bounds=await host.evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,bottom:r.bottom,height:innerHeight,width:innerWidth}})
+ expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(bounds.width);expect(bounds.bottom).toBeLessThanOrEqual(bounds.height)
+ await page.screenshot({path:`.superpowers/companion-tasks-${width}.png`})
+})
+
+test('a focused task choice survives factual reordering and falls back to a visible entry when removed',async({page,shimUrl,shim})=>{
+ await shim.invoke('demo.seed',{});await attachShim(page)
+ let activities=[{taskId:'deadbeef',title:'排版检查',phase:'working',detail:null,updatedAt:2},{taskId:'bbbb2222',title:'动作素材',phase:'working',detail:null,updatedAt:1}]
+ await page.route('**/v1/companion/presence',route=>route.fulfill({json:{presence:'ok',activity:{kind:'idle',label:'',since:null},news:{unread:0,latest_kind:null,latest_title:null}}}))
+ await page.route('**/v1/companion/pet',route=>route.fulfill({json:{owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities}}))
+ await openCompanion(page,shimUrl)
+ await page.locator('#pet-task-toggle').click()
+ const focused=page.locator('#pet-task-list [data-task-id="bbbb2222"]');await focused.focus()
+ activities=[{...activities[1]!,updatedAt:3},activities[0]!]
+ await expect(page.locator('#pet-task-list button').first()).toHaveAttribute('data-task-id','bbbb2222')
+ await expect(focused).toBeFocused()
+ activities=[activities[1]!]
+ await expect(page.locator('#pet-task-toggle')).toBeHidden()
+ await expect(page.locator('#pet-task-primary')).toBeFocused()
+ await expect(page.locator('#pet-task-list')).toBeHidden()
 })

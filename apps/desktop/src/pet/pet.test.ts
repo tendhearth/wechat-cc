@@ -32,6 +32,31 @@ const boot = async (fetchImpl = fetchReal, reducedMotion = false, manifestUrl = 
 }
 
 describe('createPet(组装)', () => {
+
+  it('leaving local attention returns to the latest resting state without changing facts or cooldown', async () => {
+    const { c, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100); pet.setState('companion'); pet.setProps(['envelope'], 4)
+    expect(pet.acknowledgeAttention()).toBe(true)
+    c.tick(100)
+    expect(pet.releaseAttention()).toBe(true)
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', behavior: 'companion', props: ['envelope'], badge: 4 })
+    expect(pet.acknowledgeAttention()).toBe(false)
+    c.tick(1000)
+    expect(pet.machine.snapshot().behavior).toBe('companion')
+  })
+  it('leaving attention never ends a newer permission, transition, or unrelated look', async () => {
+    const { c, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    pet.acknowledgeAttention(); pet.setState('permission')
+    expect(pet.releaseAttention()).toBe(false)
+    expect(pet.machine.snapshot().behavior).toBe('permission')
+    pet.setState('idle'); pet.setState('look')
+    expect(pet.releaseAttention()).toBe(false)
+    expect(pet.machine.snapshot().behavior).toBe('look')
+    pet.setForm('unlit')
+    expect(pet.releaseAttention()).toBe(false)
+    expect(pet.machine.snapshot().transition).toBe('lit-to-unlit')
+  })
   it('acknowledges nearby attention with one existing look, a cooldown and unchanged facts', async () => {
     const { c, pet } = await boot()
     pet.setForm('lit'); c.tick(1100); pet.setProps(['envelope'], 2)
