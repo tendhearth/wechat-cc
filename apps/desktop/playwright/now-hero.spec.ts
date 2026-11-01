@@ -60,6 +60,12 @@ test('real attention snapshots express a round reply once, preserve permission p
   })
   await openHome(page, shimUrl)
   await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'working')
+  // Startup may show cached working facts before the first visible attention
+  // baseline. Observe two fresh, visible states before ending this live round.
+  waiting = true
+  await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'permission', { timeout: 6000 })
+  waiting = false
+  await expect(page.locator(stage)).toHaveAttribute('data-behavior', 'working', { timeout: 6000 })
   await page.locator(stage).evaluate(el => {
     ;(window as any).__nowBehaviors = []
     new MutationObserver(records => { for (const r of records) (window as any).__nowBehaviors.push(r.oldValue, el.getAttribute('data-behavior')) }).observe(el, { attributes: true, attributeFilter: ['data-behavior'], attributeOldValue: true })
