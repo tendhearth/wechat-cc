@@ -33,4 +33,8 @@ declare var CCP: {
     handshakeTimeoutMs?: number
     onProtocolError?: (reason: string, detail?: unknown) => void
   }): CCPClient
+  /** 状态表与中文词(packages/protocol/src/status-table.ts,设计稿 2026-10-31 U5)。 */
+  STATUS_TABLE: Record<'working' | 'waiting' | 'replied' | 'done' | 'failed' | 'stopped', { word: string; icon: string | null; tone: 'accent' | 'inkSoft'; group: 'waiting' | 'working' | 'back' }>
+  STATUS_WORDS: Record<'working' | 'waiting' | 'replied' | 'done' | 'failed' | 'stopped', string>
+  HOME_GROUP_WORDS: Record<'waiting' | 'working' | 'back', string>
 }
