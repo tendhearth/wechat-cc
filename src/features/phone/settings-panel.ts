@@ -845,7 +845,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         .filter(m => phoneMayOpenMatter(m, owner))
         .slice(0, 50)
       for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
-      return json({ ok: true, matters })
+      return json({ ok: true, matters: await withTaskState(deps.matters, matters) })
     },
     'GET /m/api/matter': async (url, _req, { caller }) => {
       if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
@@ -1027,4 +1027,26 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   }
 
   return panel
+}
+
+/**
+ * 一个主页(设计稿 2026-10-31 U5):列表里每件任务带上任务真正的状态 —— matter 的 open / done 说不清
+ * 「停下了」(重启打断的仍是 open)、「没做成」(失败也记 done)和「等你」。跟此刻页的 mobileHomeFocus 一样逐件读本机详情,
+ * 一次 8 件;读不到的那件不带(网页退回 matter 自己的状态),不让整张列表失败。
+ */
+async function withTaskState(source: { detail(id: string): unknown }, rows: unknown[]): Promise<unknown[]> {
+  const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+  const out: unknown[] = []
+  for (let start = 0; start < rows.length; start += 8) {
+    out.push(...await Promise.all(rows.slice(start, start + 8).map(async row => {
+      if (!obj(row) || row.kind !== 'task' || typeof row.id !== 'string') return row
+      try {
+        const d = await source.detail(row.id)
+        if (!obj(d) || !obj(d.task) || typeof d.task.status !== 'string') return row
+        const own = (key: string) => Array.isArray(d[key]) ? (d[key] as unknown[]).filter(r => obj(r) && r.taskId === row.id).length : 0
+        return { ...row, taskState: { status: d.task.status, ...(typeof d.task.phase === 'string' ? { phase: d.task.phase } : {}), pending: own('permissions') + own('questions') } }
+      } catch { return row }
+    })))
+  }
+  return out
 }

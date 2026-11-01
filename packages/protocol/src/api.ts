@@ -86,6 +86,11 @@ export const Matter = z.object({
    * 老 daemon 不带、老的事不知道 ⇒ 省略,界面就不画。认不出的新值当没有(不让整行解析失败)。
    */
   origin: z.enum(MATTER_ORIGINS).optional().catch(undefined),
+  /**
+   * 任务真正的状态(2026-11-01,设计稿 U5):只有 GET /m/api/matters 的任务行带。matter.status 说不清停下了 / 没做成 / 等你,
+   * 手机网页拿它跟 App 的 statusOf 同样折成状态表里的词。读不到那件的详情 ⇒ 不带,网页退回 matter.status。
+   */
+  taskState: z.object({ status: z.string(), phase: z.string().optional(), pending: z.number() }).optional(),
 })
 
 export const MatterBinding = z.object({

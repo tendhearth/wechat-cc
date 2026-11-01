@@ -41,7 +41,8 @@ beforeEach(async()=>{
   })
 })
 afterEach(async()=>{await page?.close()})
-async function open(){await page.goto('http://localhost/m');await page.locator('nav [data-p="matters"]').click();await page.locator('[data-mid="'+TASK+'"]').click()}
+// 一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,没有底部标签
+async function open(){await page.goto('http://localhost/m');await page.locator('[data-mid="'+TASK+'"]').click()}
 
 describe('phone web page: a matter is status only',()=>{
   it('shows title, executor and where it is; no dialogue, artifacts, say box or decision controls',async()=>{
@@ -96,13 +97,14 @@ describe('phone web page: a matter is status only',()=>{
     expect(await page.locator('#home-focus button button, #home-focus [data-control]').count()).toBe(0)
     await card.click()
     await expect.poll(()=>page.locator('#m-title').textContent()).toBe('原任务')
-    expect(await page.locator('#p-matters').isVisible()).toBe(true)
+    expect(await page.locator('#m-detail').isVisible()).toBe(true)
+    expect(await page.locator('#m-home').isVisible()).toBe(false)
     expect(paths.filter(p=>p.startsWith('POST '))).toEqual([])
   })
 
   it('a /set link session reads only the routes still open to link tokens',async()=>{
     await page.goto('http://localhost/m?t=tLINK')
-    await page.locator('nav [data-p="matters"]').click();await page.locator('[data-mid="'+TASK+'"]').click()
+    await page.locator('[data-mid="'+TASK+'"]').click()
     await expect.poll(()=>page.locator('#m-status .m-state').textContent()).toBe('在做')
     expect(await page.locator('#pairbar').isVisible()).toBe(true)
     const api=[...new Set(paths.filter(p=>p.includes('/api/')))].sort()

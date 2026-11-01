@@ -2,7 +2,7 @@
 
 这是浏览器/PWA 入口；原生 Expo app 在 [apps/app](../app/README.md)。产品名与技术标识遵守[命名规范](../../docs/reference/product-naming.md)。
 
-daemon 在 `/m` 服务的 PWA。2026-10-21 收敛(5b)后只剩:配对、此刻(CC + 一行状态 + 连不上提示 + 只看的「等你」卡)、一起做(列表 + 只看状态的详情 +「停下」)、右上角「设置」。对话、成果、交办、拍板、记忆、待办、画像都在手机 App([apps/app](../app/README.md))和桌面上。
+daemon 在 `/m` 服务的 PWA。2026-10-21 收敛(5b)后只剩:配对、此刻、右上角「设置」。2026-11-01 起此刻与一起做合成一页(设计稿 `docs/superpowers/specs/2026-10-31-one-companion-one-skeleton-design.md` U5,没有底部标签):CC + 一行状态 + 连不上提示 + 只看的「等你」卡,下面是「在做」「带回来的」两组(带回来的只收 24 小时内,更早的点「全部」);点开一件事,只看状态的详情 +「停下」在原地。组名和状态词来自协议包的 `CCP.STATUS_WORDS` / `CCP.HOME_GROUP_WORDS`(源头 `packages/protocol/src/status-table.ts`,跟 App、桌面同一张)。对话、成果、交办、拍板、记忆、待办、画像都在手机 App([apps/app](../app/README.md))和桌面上。
 
 源码在 `src/`,构建期组装成 `src/features/phone/mobile-page.generated.json`(提交进仓库),daemon 只读这份生成物。
 
