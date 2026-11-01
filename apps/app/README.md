@@ -52,14 +52,14 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 
 | 流程 | 走什么 |
 |---|---|
-| `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮做完了」 |
-| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 回复位置加载指示 → 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
+| `.maestro/approve.yaml` | 先看看 → 主页「等你」组那件事 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮做完了」 |
+| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 回复位置加载指示 → 演示回复出现 |
 | `.maestro/chat-extras.yaml` | 跟 CC 说 → 发一句 → 演示回复带「过程 · 2 段」(默认收起)、语音、本地表情(图)、联网表情(只写情绪)→ 展开过程看到「没有发到微信」→ 点语音不报错(2026-10-04) |
 | `.maestro/connections.yaml` | 设置 → CC 的连接卡(演示数据)→ 各项状态词 → 电脑上的会话列表(只读) |
-| `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它(交办不再是默认动作) |
-| `.maestro/worktree.yaml` | 一起做 → 整理笔记那件(独立分支 cc/notes001)→ 提交到分支 → 合回项目(点两下)→「已合回」→ 删除工作区(点两下)→ 重新打开 →「交给另一位另做一份」进交办页:项目、独立工作区、从分支开始都在,执行者换成另一位(2026-10-08) |
-| `.maestro/quota-handoff.yaml` | 一起做 → 周报那件(Claude Code 额度用完)→ 灰字 +「交给 Codex 继续」→ 确认卡如实说(同一文件夹新开一件、原来那件不动、Codex 看不到之前的对话、会用 Codex 的额度)→ 交出去 → 进新那件 → 返回,原来那件说「已经交给 Codex 继续」 |
-| `.maestro/demo-walkthrough.yaml` | 欢迎 → 先看看 → 此刻 → 一起做 → 某件事 → 展开改动 / 过程 → 设置 → 切语言 → 退出演示回欢迎页 |
+| `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「全部」里出现它(交办不再是默认动作) |
+| `.maestro/worktree.yaml` | 主页「全部 →」→ 整理笔记那件(独立分支 cc/notes001)→ 提交到分支 → 合回项目(点两下)→「已合回」→ 删除工作区(点两下)→ 重新打开 →「交给另一位另做一份」进交办页:项目、独立工作区、从分支开始都在,执行者换成另一位(2026-10-08) |
+| `.maestro/quota-handoff.yaml` | 主页「全部 →」→ 周报那件(Claude Code 额度用完)→ 灰字 +「交给 Codex 继续」→ 确认卡如实说(同一文件夹新开一件、原来那件不动、Codex 看不到之前的对话、会用 Codex 的额度)→ 交出去 → 进新那件 → 返回,原来那件说「已经交给 Codex 继续」 |
+| `.maestro/demo-walkthrough.yaml` | 欢迎 → 先看看 → 主页 → 全部 → 某件事 → 展开改动 / 过程 → 设置 → 切语言 → 退出演示回欢迎页 |
 | `.maestro/pair-invalid.yaml` | 欢迎 → 配对 → 粘贴无效链接 / 局域网链接 → 各自的提示(不联网;真配对是主人真机验收) |
 | `.maestro/pair-link.yaml` | 开发构建用自定义 scheme 打开配对链接 ⇒ 确认卡出现、显示中继主机与核对码、没有自动配对;再开一个锚点丢了的链接 ⇒ 「没带全」提示 |
 | `.maestro/subflows/_start.yaml` | 共用开头:`clearState` 启动、收掉开发构建偶尔弹的系统框「Open in "Tendhearth"?」、等欢迎页 |
@@ -105,12 +105,13 @@ bun scripts/device-e2e.ts --only chat,push   # 只跑部分(配对与收尾总�
 ## 目录
 
 ```
-src/app/          expo-router 页面:(tabs)/ 此刻 index + 一起做 together;welcome、pair、compose、settings、
-                  matter/[id](进展页)、approval/[id](批准页 + 问答表单)
+src/app/          expo-router 页面:index 主页「此刻」(没有标签栏,2026-11-01)、all「全部」、together(旧链接 ⇒ all);
+                  welcome、pair、compose、settings、matter/[id]/index(一件事)、matter/[id]/decide(批准 + 问答,
+                  旧的 approval/[id] 只剩重定向)
 src/backend/      Backend 接口(types.ts)与演示后端(demo.ts + demo-data.ts 的中英文案)
 src/net/          真连接:connection.ts(连接状态机)、errors.ts(错误映射)、link.ts / pairing.ts(配对链接与配对)、credentials.ts(钥匙串)、ws-socket.ts / rn-connect.ts(RN 传输)、uuid / utf8 / polyfills
 src/state/        BackendProvider、会话(语言覆盖、已看过欢迎页;配对记录与偏好落钥匙串 `tendhearth.pairing.v1` / `tendhearth.prefs.v1`)、订阅 store、查询 hooks、草稿
-src/view/         纯函数视图模型(此刻 / 一起做 / 进展 / 批准 / 状态词),vitest 覆盖
+src/view/         纯函数视图模型(主页 home / 进展 / 批准 / 状态词),vitest 覆盖;状态 ⇒ 图标 / 词条只认协议包 status-table
 src/i18n/         en 与 zh-Hans 文案表(两份键一致有测试)+ useLang(设置覆盖 ?? 系统)
 src/ui/           组件与色板(tokens.ts,复用共享 design-tokens;固定暖纸,CC 明暗由真实信号决定)
 src/push/         推送:key-store(钥匙串里的推送密钥记录)、target / route(点通知去哪)、register(登记生命周期)、PushProvider / PushRouter、前台横幅、开发用 dev-token
@@ -134,7 +135,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 - 错误映射只在 `src/net/errors.ts` 一处:`permission_stale / question_stale / input_stale` ⇒ `stale`;`auth_failed` 或 HTTP 401 ⇒ `revoked`;`timeout` ⇒ `timeout`(界面当「不确定」);`unreachable / daemon_offline / closed / stream_unknown / rate_limited / quota_exceeded / too_many_streams` 及未知传输错误 ⇒ `offline`(例外:请求在飞时是本机自己关的连接——进后台 / dispose / 撤销——`live.ts` 报 `timeout`,撤销了则报 `revoked`:那一条可能已经送到);`matter_not_found` ⇒ `not_found`;`invalid` 与 `invalid_*`(含 `invalid_answer`)⇒ `invalid`;其余 ⇒ `unknown`。
 - 说一句与交办的 `requestId` 按草稿稳定(`state/drafts.ts` `requestIdFor`:同一份草稿、同样正文重发用同一个,正文改了才换,发成功删草稿时一起丢)。daemon 两条说一句都按它去重:工作台任务走工作台输入回执;微信聊天那件事走 `matter_say_receipts`(2026-10-01,v70)——同 id 同文重发拿回原来的回复(在跑就跟上同一轮),同 id 异文 ⇒ 409 `input_conflict`,那一轮失败不留回执(重发 = 重试),daemon 重启打断的那句当已收下、不再说。
 - 上限:回答 `JSON.stringify(answers).length > 20_000`、说一句正文 `> 20_000` 字,在手机上就拦下,不发(协议包常量 `PHONE_ANSWER_MAX_JSON` / `PHONE_SAY_MAX_CHARS`)。
-- **跟 CC 说走 `/m/api/chat*`,收下即回**:`/m/api/chat/say` 立刻返回(走 companion 路径,与微信同一个主人会话),回复靠 `matter/<聊天>` 主题唤醒后拉取;一次只等一句(上一句在等 ⇒ 409 `chat_busy`,草稿留着),10 分钟超时。`requestId` 用 `requestIdFor('chat', 正文)`。老网页壳 `/m/api/matter/say` 的同步语义不动。主人的对话在「一起做」里置顶;访客的聊天不出现在手机上。
+- **跟 CC 说走 `/m/api/chat*`,收下即回**:`/m/api/chat/say` 立刻返回(走 companion 路径,与微信同一个主人会话),回复靠 `matter/<聊天>` 主题唤醒后拉取;一次只等一句(上一句在等 ⇒ 409 `chat_busy`,草稿留着),10 分钟超时。`requestId` 用 `requestIdFor('chat', 正文)`。老网页壳 `/m/api/matter/say` 的同步语义不动。主人的对话从主页的 CC 进;访客的聊天不出现在手机上。
 - **「可能没送到」**:本机收过回执,但 daemon 那边既不 pending 也没历史 ⇒ 显示未确认气泡(可重试、可忽略);重试用同一个 `requestId`,daemon 去重,所以即使其实已落在历史别页也安全。原因:任务表只在内存,daemon 重启会丢正在等的那句。不自动重发(不重试风暴)。
 - **连接卡与会话页拿到的都是 admin 以下的投影:没有路径**(无插件目录、无 cwd / nativeId)。连接卡「不知道」永不显示成绿;知识库没开不是故障(不显示红),开了没建起来才红;知识库陈旧按最近一次同步判,微信聊天记录的日期按 wxvault 解密时间。会话列表查询只读、只给目录名；#166 另提供确认后「接着做」的写入入口，查询投影与续接授权分别验收。
 - **额度用完交给另一位**(spec continue-sessions §7-3):详情的 `quotaHandoff`(daemon 算:`offer` / `none` / `handed`)⇒ 进展页底部一块;确认卡确认后 `POST /m/api/matter/handoff {id, requestId, providerId}`,`requestId` 每次点开卡换一个、卡里重试沿用,daemon 按它幂等、一件事也只交一次。`quota_handoff_*` ⇒ `handoff_changed`(重读详情,不说「没送到」)。与微信「交给 X 继续？」同一个信号、同一个动作。
@@ -252,10 +253,10 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 
 - **批准页**:说明来自模型(`source === 'model'`)时,原始命令第一行与工作目录**不折叠、直接可见**(`approval-raw-inline`,Maestro 断言它);完整原始命令在「查看具体操作」里;提交中锁定按钮;以返回结果为准,不做乐观成功;超时 ⇒ 当「不确定」并重新拉详情。
 - **进展页**:状态标签在「CC 的进展」概括之上。
-- **状态词**按手机端用词表(`docs/reference/phone-wording.md`):在做 / 等你决定 / 这一轮做完了 / 完成 / 没做成 / 停下了(Working / Waiting on you / Done for this round / Done / Didn't finish / Stopped),不显示百分比。「一起做」按等你 / 在做 / 做完分组,只有「等你」的小标题上强调色。
+- **状态词**按手机端用词表(`docs/reference/phone-wording.md`):在做 / 等你决定 / 这一轮做完了 / 完成 / 没做成 / 停下了(Working / Waiting on you / Done for this round / Done / Didn't finish / Stopped),不显示百分比。主页按等你 / 在做 / 带回来的分组,只有「等你」的小标题上强调色。
 - **电脑够不着**(合盖 / 中继不在)是「电脑歇了,事情先停着」:CC 变暗、灰点,不上红;只有撤销是红点。
 - **主动作是跟 CC 说**,交办是显式选项(此刻页入口、发送框默认都是说一句,不是建任务;一次一句,等回复时发送锁住并保留草稿)。
-- **导航**:底部「此刻 / 一起做」;右上角头像进设置,旁边是「家里的电脑」状态点;说一句的入口随处可见。
+- **导航**(2026-11-01 一个主页):没有底部标签。主页 = CC + 一份列表(等你 → 在做 → 带回来的)+「全部 →」;右上角 + 交办、… 里是保存的输入与电脑上的会话、齿轮进设置;说一句在主页底部。
 - **语言**:`en` 与 `zh-Hans`,跟随系统、设置里可改;所有面向用户的字符串进文案表。
 - **隐私页**要说明:打开此刻、进展或批准页时,待批准的命令文本和任务的进展事件会从主人自己的电脑发给那里配置的便宜模型服务商;其余只在手机与电脑之间加密传输(`i18n.test.ts` 钉住)。
 - 系统「减少动态效果」时关掉 CC 动作;所有状态都有文字。
