@@ -1,0 +1,113 @@
+{
+  "status": 200,
+  "body": {
+    "handoffs": [],
+    "task": {
+      "id": "<task:question>",
+      "title": "改文档",
+      "path": "<tmp>/projects/question",
+      "providerId": "claude",
+      "status": "running",
+      "error": null,
+      "createdAt": 1793412720000,
+      "updatedAt": 1793412720000,
+      "archivedAt": null,
+      "workspaceKind": "project",
+      "phase": "working",
+      "canArchive": false,
+      "waitingFor": null,
+      "pendingPermissionCount": 0,
+      "pendingQuestionCount": 1,
+      "agents": [
+        "claude"
+      ]
+    },
+    "events": [
+      {
+        "id": 13,
+        "taskId": "<task:question>",
+        "kind": "user",
+        "text": "把安装说明改一下",
+        "createdAt": 1793412720000,
+        "sourceId": null,
+        "runId": "<uuid:8>"
+      },
+      {
+        "id": 14,
+        "taskId": "<task:question>",
+        "kind": "text",
+        "text": "动手之前先问一句。",
+        "createdAt": 1793412720000,
+        "sourceId": null,
+        "runId": "<uuid:8>"
+      },
+      {
+        "id": 15,
+        "taskId": "<task:question>",
+        "kind": "system",
+        "text": "执行者提问：{\"questions\":[{\"id\":\"q-scope\",\"header\":\"范围\",\"question\":\"只改 README,还是连 docs 一起?\",\"options\":[{\"label\":\"只改 README\",\"description\":\"改动最小\"},{\"label\":\"连 docs 一起\",\"description\":\"一次改齐\"}],\"multiSelect\":false,\"allowOther\":true}],\"id\":\"<uuid:9>\",\"taskId\":\"<task:question>\",\"createdAt\":1793412720000}",
+        "createdAt": 1793412720000,
+        "sourceId": null,
+        "runId": "<uuid:8>"
+      }
+    ],
+    "artifacts": [],
+    "version": 7,
+    "wechatNotifications": {
+      "enabled": false,
+      "notices": []
+    },
+    "quotaHandoff": null,
+    "execution": {
+      "defaults": "provider",
+      "model": null,
+      "reasoningEffort": null
+    },
+    "lastExecution": {
+      "taskId": "<task:question>",
+      "runId": "<uuid:8>",
+      "createdAt": 1793412720000,
+      "observedAt": null,
+      "choice": {
+        "defaults": "provider",
+        "model": null,
+        "reasoningEffort": null
+      },
+      "effective": null
+    },
+    "attachments": [],
+    "agentNames": {
+      "claude": "Claude"
+    },
+    "inputs": [],
+    "questions": [
+      {
+        "questions": [
+          {
+            "id": "q-scope",
+            "header": "范围",
+            "question": "只改 README,还是连 docs 一起?",
+            "options": [
+              {
+                "label": "只改 README",
+                "description": "改动最小"
+              },
+              {
+                "label": "连 docs 一起",
+                "description": "一次改齐"
+              }
+            ],
+            "multiSelect": false,
+            "allowOther": true
+          }
+        ],
+        "id": "<uuid:9>",
+        "taskId": "<task:question>",
+        "createdAt": 1793412720000
+      }
+    ],
+    "runId": "<uuid:8>",
+    "inputMode": "queue",
+    "permissions": []
+  }
+}

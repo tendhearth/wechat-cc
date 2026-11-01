@@ -1,0 +1,53 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "items": [
+      {
+        "kind": "you",
+        "text": "登录页报 500,修一下",
+        "at": 1793413800000
+      },
+      {
+        "kind": "said",
+        "text": "先看日志。",
+        "at": 1793413803000
+      },
+      {
+        "kind": "step",
+        "text": "看服务端日志",
+        "at": 1793413803000,
+        "detail": "TypeError: user is undefined\n    at login (src/auth.ts:42)"
+      },
+      {
+        "kind": "step",
+        "text": "读 auth.ts",
+        "at": 1793413808000,
+        "verb": "read",
+        "target": "auth.ts"
+      },
+      {
+        "kind": "step",
+        "text": "改 auth.ts",
+        "at": 1793413812000,
+        "detail": "- const name = user.name\n+ const name = user?.name ?? ''",
+        "verb": "edit",
+        "target": "auth.ts"
+      },
+      {
+        "kind": "step",
+        "text": "运行 bun test src/auth.test.ts",
+        "at": 1793413815000,
+        "verb": "run",
+        "target": "bun test src/auth.test.ts",
+        "error": true,
+        "detail": "1 fail\nexpected 200, got 401"
+      },
+      {
+        "kind": "said",
+        "text": "500 修好了;还有一个 401 的测试没过,要接着看吗?",
+        "at": 1793413825000
+      }
+    ]
+  }
+}

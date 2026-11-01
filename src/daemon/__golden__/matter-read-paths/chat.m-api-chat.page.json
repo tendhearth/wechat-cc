@@ -1,0 +1,46 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "matterId": "<chat>",
+    "title": "聊天",
+    "messages": [
+      {
+        "id": "m-03",
+        "role": "me",
+        "kind": "text",
+        "text": "报告发我一份",
+        "truncated": false,
+        "at": 1793413260000,
+        "source": "phone"
+      },
+      {
+        "id": "m-04",
+        "role": "cc",
+        "kind": "text",
+        "text": "发了,在附件里。",
+        "truncated": false,
+        "at": 1793413272000,
+        "source": "phone",
+        "attachments": [
+          {
+            "kind": "file",
+            "name": "report.md"
+          },
+          {
+            "kind": "voice",
+            "text": "报告发你了"
+          }
+        ],
+        "narration": [
+          "找到报告",
+          "打包"
+        ]
+      }
+    ],
+    "hasMore": true,
+    "nextBefore": "2026-10-31T02:21:00.000Z",
+    "pending": null,
+    "failed": null
+  }
+}
