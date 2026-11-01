@@ -226,7 +226,7 @@ export function wireWorkbench(opts: {
   registerCustomAcpExecutors(registry,agentConfig.acp_agents,{log:opts.log})
   follow('agy')
   opts.boot.registry.onRegister(id=>{ follow(id); if(registry.has(id))opts.log('WORKBENCH',`${id}: 晚到的执行者已进工作台`) })
-  const store=makeWorkbenchStore(opts.db)
+  const store=makeWorkbenchStore(opts.db,{matters:opts.matters})
   // 回报投递(task-3,2026-09-23):两样都要有才接得上——没有 matters 就没法建/追出生地,
   // 没有 ReportSink 就没地方写;任一个缺,整条功能不存在(降级路径,同 matters 的老接线约定)。
   const reports=opts.matters?opts.reports:undefined

@@ -14,7 +14,6 @@ import { makeInputsDomain } from './inputs'
 import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
 import { makePendingInputs } from './pending-inputs'
-import { makeMatterStore } from '../../../adapters/store/matters-store'
 import { randomUUID } from 'node:crypto'
 
 const dbs: Db[] = []; const dirs: string[] = []
@@ -139,21 +138,20 @@ describe('makeInputsDomain · 持有、排空与结算', () => {
 // 2026-10 变异测试第二轮:回执只认本人本任务、排空时文件夹换了不投、补充的幂等 / 冲突、投递中不叠、守护放行、10 条上限、
 // steer 那条路的三种结局 —— 这些分支改掉没有测试红。
 describe('makeInputsDomain · 回执(变异测试第二轮)', () => {
-  const link = (s: ReturnType<typeof setup>) => { const m = makeMatterStore(s.db); m.create({ id: s.task.id, kind: 'task', title: s.task.title, ownerChatId: 'owner' } as never); m.linkTask(s.task.id) }
   it('id 必须恰好 8 位小写十六进制', () => {
     const { domain } = setup()
     for (const bad of ['abcdef1', 'abcdef123', 'xabcdef12', 'abcdef12x', 'ABCDEF12']) expect(() => domain.inputReceipt(bad, REQ), bad).toThrow('invalid_matter_id')
   })
   it('本人本任务的回执 ⇒ 给;没有主人 / 任务不存在 / 没挂 matter / 回执属于别的任务 ⇒ null', () => {
-    const s = setup(); link(s); s.pending()
+    const s = setup(); s.pending()
     expect(s.domain.inputReceipt(s.task.id, REQ)).toMatchObject({ id: REQ, taskId: s.task.id })
     expect(s.domain.inputReceipt('00000000', REQ)).toBeNull()
     const other = s.store.create({ title: '别的', path: s.project, providerId: 'claude', ownerChatId: 'owner' })
-    const m = makeMatterStore(s.db); m.create({ id: other.id, kind: 'task', title: '别的', ownerChatId: 'owner' } as never); m.linkTask(other.id)
     expect(s.domain.inputReceipt(other.id, REQ)).toBeNull()       // REQ 是第一个任务的
-    const unlinked = setup(); unlinked.pending()
+    // 建任务就建了它的那件事;没挂上的只剩手改过的库 ⇒ 造一个
+    const unlinked = setup(); unlinked.db.query('UPDATE workbench_tasks SET matter_id=NULL WHERE id=?').run(unlinked.task.id); unlinked.pending()
     expect(unlinked.domain.inputReceipt(unlinked.task.id, REQ)).toBeNull()
-    const noOwner = setup({ owner: null }); link(noOwner); noOwner.pending()
+    const noOwner = setup({ owner: null }); noOwner.pending()
     expect(noOwner.domain.inputReceipt(noOwner.task.id, REQ)).toBeNull()
   })
 })

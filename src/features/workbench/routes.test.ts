@@ -97,7 +97,6 @@ describe('Workbench internal HTTP API', () => {
     let owner='configured-owner'
     const own=crypto.randomUUID(),foreign=crypto.randomUUID(),db=openDb({path:join(stateDir,'entry-receipts.sqlite')}),store=makeWorkbenchStore(db)
     const task=store.create({title:'Private',path:stateDir,ownerChatId:owner,providerId:'codex'}),runId=crypto.randomUUID()
-    db.query("INSERT INTO matters(id,kind,title,status,owner_chat_id,created_at,updated_at) VALUES(?,'task','Private','open',?,1,1)").run(task.id,owner)
     store.entryRequests.reserve({ownerKey:owner,requestId:own,canonicalRequestHash:'a'.repeat(64),target:{kind:'project',projectId:'p-'+'a'.repeat(20)},workspaceId:null,resolvedPath:stateDir,directoryIdentity:'1:1',providerId:'codex',execution:{defaults:'provider',model:null,reasoningEffort:null},materialSnapshot:[]})
     store.entryRequests.accept(owner,own,{taskId:task.id,matterId:task.id,runId,acceptedAt:1,resolvedPath:stateDir,directoryIdentity:'1:1'})
     const actual=makeWorkbenchService({store,registry:createProviderRegistry(),stateDir,ownerChatId:()=>owner}),entryReceipt=vi.spyOn(actual,'entryReceipt')

@@ -36,7 +36,6 @@ afterEach(async()=>{vi.restoreAllMocks();await panel?.stop();await workbench?.sh
 
 function task(taskOwner='owner'){
   const t=store.create({title:'原来的任务',path:root,providerId:'claude',ownerChatId:taskOwner})
-  matters.create({id:t.id,kind:'task',title:t.title,ownerChatId:taskOwner});matters.linkTask(t.id)
   return t
 }
 function receipt(taskId:string,text='原始要求\r\n  不改空格'){

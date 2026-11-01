@@ -55,8 +55,8 @@ function setup(withMatters = false) {
   const handoff = makeQuotaHandoffDomain(ctx, { execute, quota })
   shutdowns.push(lifecycle.shutdown)
   /** 一件不在跑、因额度失败的 claude 任务(主人的)。 */
-  const failed = (owner: string | null = 'owner') => {
-    const t = store.create({ title: '修登录页', path: project, providerId: 'claude', ownerChatId: owner })
+  const failed = (owner: string | null = 'owner', origin?: 'web') => {
+    const t = store.create({ title: '修登录页', path: project, providerId: 'claude', ownerChatId: owner, ...(origin ? { origin: { surface: origin } } : {}) })
     return t
   }
   const exhaust = (id = 'claude') => quota.quota.note(id, QUOTA_TEXT)
@@ -106,12 +106,10 @@ describe('handOff:在同一个文件夹交给另一位新开一件(幂等)', () 
   })
   it('出生地(2026-10-19)跟着原来那件走 —— 是同一件事换人接着做;原来那件不知道 ⇒ 新那件也不写', () => {
     const { handoff, failed, exhaust, matters } = setup(true)
-    const t = failed(); exhaust()
-    matters.create({ id: t.id, kind: 'task', title: t.title, origin: 'web' }); matters.linkTask(t.id)
+    const t = failed('owner', 'web'); exhaust()
     const r = handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })
     expect(matters.get(r.taskId)?.origin).toBe('web')
     const u = failed()
-    matters.create({ id: u.id, kind: 'task', title: u.title }); matters.linkTask(u.id)
     const r2 = handoff.handOff(u.id, { requestId: REQ2, providerId: 'codex' })
     expect(matters.get(r2.taskId)).not.toHaveProperty('origin')
   })

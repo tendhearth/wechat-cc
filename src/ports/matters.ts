@@ -48,8 +48,6 @@ export interface MatterStore {
   findChat(chatId:string):Matter|null
   /** 一个微信 chat 对应一条 kind='chat' 的 matter:有就刷新露面时间,没有就建(origin 只在这次建行时写)。 */
   ensureChat(chatId:string,title?:string,origin?:MatterOrigin|null):Matter
-  /** 工作台任务与 matter 一对一、id 相同:把 workbench_tasks.matter_id 补上(新任务;存量靠 v60 回填)。 */
-  linkTask(taskId:string):void
   /** 每件事有哪些执行者参与过(2026-10-19 头像叠):任务本身的执行者在前,再按最近的审阅 / 返工交接、会话。没有的 id 不出现。 */
   agents(ids:string[]):Map<string,string[]>
   /** 一页里每件事的出生地(工作台列表一次查完);不知道的 id 不出现。 */

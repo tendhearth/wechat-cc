@@ -106,7 +106,6 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
       }
       return out
     },
-    linkTask(taskId){require(taskId);db.query('UPDATE workbench_tasks SET matter_id=? WHERE id=? AND matter_id IS NULL').run(taskId,taskId)},
     findChat,
     ensureChat(chatId,title,origin){
       const matter=findChat(chatId)??create({kind:'chat',title:title??'聊天',ownerChatId:chatId,origin:origin??null})
