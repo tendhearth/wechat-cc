@@ -21,10 +21,15 @@
  */
 import { b64uEncode, b64uDecode } from './b64u'
 import { makeProtocolClient } from './client'
+import { HOME_GROUP_WORDS, STATUS_TABLE, STATUS_WORDS } from './status-table'
 
 const CCP = {
   b64u: { encode: b64uEncode, decode: b64uDecode },
   makeProtocolClient,
+  // 一件事的状态怎么说、主页分组叫什么(设计稿 2026-10-31 U5):手机网页跟 App、桌面同一张表,网页只用中文。
+  STATUS_TABLE,
+  STATUS_WORDS: STATUS_WORDS['zh-Hans'],
+  HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'],
 }
 
 ;(globalThis as unknown as { CCP: typeof CCP }).CCP = CCP

@@ -6,7 +6,10 @@ var mAgents
 var M_STATUS = { open: "在做", replied: "这一轮做完了", done: "完成", archived: "已归档" }
 var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
 var M_PHASE = { queued: "在做", working: "在做", replied: "这一轮做完了", failed: "没做成", cancelled: "停下了", interrupted: "停下了" }
-var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = false, mBusy = {}
+var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = true, mBusy = {}
+// 一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,分「在做」「带回来的」两组(等你那一件是此刻页上那张卡);
+// 带回来的只收 24 小时内,更早的点「全部」。组名、状态词来自协议包那一张(CCP,App / 桌面同一张)。
+var M_BACK_WINDOW_MS = 24 * 3600 * 1000, mAll = false, mMatters = null
 var mDetailFresh = false, mConnectionEpoch = 0, mOffline = false
 /** 最后一次真正联系上 daemon 的时刻。断网时它会停住变旧 —— 这正是"你看到的是几点的样子"要报的那个数。 */
 var mLastOkAt = null
@@ -47,11 +50,33 @@ function mApi(path,opts,sender) {
 function mSetButtons() {
   document.querySelectorAll('#m-status [data-stop]').forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||mOffline||!!mBusy[mCurrent+':stop']})
 }
-function loadMatters() {
-  mApi("/m/api/matters?status=open,replied,done").then(function(r){
-    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(ccPlain(m.title))+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents,{nameOf:mNameOf(m.agentNames)})+'</button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
-  }).catch(function(e){document.getElementById("m-list").textContent=mError(e.message)})
+function mRow(m, back) {
+  var caption = m.networkSuspended ? "已暂停(网络未受保护)" : back ? CCP.STATUS_WORDS[m.status === "done" ? "done" : "replied"] : ""
+  return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(ccPlain(m.title))+'</b>'+(caption?'<small>'+esc(caption)+'</small>':'')+'</span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents,{nameOf:mNameOf(m.agentNames)})+'</button>'
 }
+function renderMatters() {
+  var list = document.getElementById("m-list"), all = document.getElementById("m-all")
+  if (!mMatters) return
+  // 此刻页那张卡(等你决定 / 带回了成果)上的那一件不再重复;对话、陪伴不算「一件事」(同 App 的主页)
+  var focusId = typeof homeCardId !== "undefined" ? homeCardId : null
+  var rows = mMatters.filter(function(m){ return m.kind === "task" && m.id !== focusId }).sort(function(a, b){ return (b.updatedAt || 0) - (a.updatedAt || 0) })
+  var working = rows.filter(function(m){ return m.status === "open" })
+  var backAll = rows.filter(function(m){ return m.status === "replied" || m.status === "done" })
+  var cutoff = Date.now() - M_BACK_WINDOW_MS
+  var back = mAll ? backAll : backAll.filter(function(m){ return (m.updatedAt || 0) >= cutoff })
+  var more = backAll.length - back.length
+  var html = ""
+  if (working.length) html += '<div class="grp">'+esc(CCP.HOME_GROUP_WORDS.working)+'</div>' + working.map(function(m){ return mRow(m, false) }).join("")
+  if (back.length) html += '<div class="grp">'+esc(CCP.HOME_GROUP_WORDS.back)+'</div>' + back.map(function(m){ return mRow(m, true) }).join("")
+  list.innerHTML = html || (more ? "" : '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>')
+  all.hidden = more === 0
+  all.textContent = more ? "全部 · 还有 " + more + " 件更早的 →" : "全部 →"
+}
+function loadMatters() {
+  mApi("/m/api/matters?status=open,replied,done").then(function(r){ mMatters = r.matters; renderMatters() })
+    .catch(function(e){ if (!mMatters) document.getElementById("m-list").textContent = mError(e.message) })
+}
+document.getElementById("m-all").addEventListener("click", function(){ mAll = true; renderMatters() })
 /** 执行者叫什么只读 daemon 给的 matter.agentNames(收敛清单 ⑥),网页不存名字表;老 daemon 不带 ⇒ id。 */
 function mNameOf(names) { return function(id) { return names&&typeof names[id]==='string'&&names[id]?names[id]:id } }
 var M_ID = /^[a-z][a-z0-9._-]{0,63}$/
@@ -148,20 +173,21 @@ function openMatter(id) {
   mDetailFresh=false
   if(mCurrent!==id){mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
   mCurrent=id;mActive=true
-  document.getElementById("m-list").hidden=true;document.getElementById("m-detail").hidden=false
+  document.getElementById("m-home").hidden=true;document.getElementById("m-detail").hidden=false
   return mRefresh()
 }
-/** 此刻页那张「等你」的卡点进来:切到「一起做」,直接看这件事的状态。 */
+/** 此刻页那张「等你」的卡点进来:原地看这件事的状态。 */
 function ccShowMatter(id) {
-  ccSelectMobilePane('matters')
   openMatter(id)
 }
 document.getElementById("m-list").addEventListener("click",function(ev){var c=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(c)openMatter(c.dataset.mid)})
-document.getElementById("m-back").addEventListener("click",function(){mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-list").hidden=false;loadMatters()})
-document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ b){b.addEventListener('click',function(){mActive=b.dataset.p==='matters';clearTimeout(mPoll);if(mActive){if(mCurrent)mRefresh();else loadMatters()}})})
+document.getElementById("m-back").addEventListener("click",function(){mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-home").hidden=false;loadMatters()})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。
 document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
 window.addEventListener('offline',function(){clearTimeout(mPoll);mOffline=true;mSeq++;mConnectionEpoch++;mDetailFresh=false;mMisses=M_STALE_MISSES;mConn();mSetButtons()})
 window.addEventListener('online',function(){mOffline=false;if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
 window.addEventListener('pagehide',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons()})
 window.addEventListener('pageshow',function(){if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
+// 列表跟此刻页一起:一载入就拉,看着的时候 15 秒刷一次(同 home.js)。
+setInterval(function(){ if (!document.hidden && !mCurrent) loadMatters() }, 15000)
+loadMatters()

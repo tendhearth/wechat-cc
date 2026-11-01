@@ -385,12 +385,13 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     }])
   })
 
-  it('/m 首屏是「此刻」;收敛 5b 后只有此刻与一起做,回忆和口袋三块去了 App', async () => {
+  it('/m 首屏是「此刻」;一个主页(U5)后只剩这一页,列表在它上面,回忆和口袋三块去了 App', async () => {
     const { port } = await panel.start(0)
     const t = panel.issueToken()
     const html = await (await fetch(`http://127.0.0.1:${port}/m?t=${t}`)).text()
     expect(html).toContain('id="p-today"')
-    expect(html).toContain('id="p-matters"')
+    expect(html).toContain('id="m-list"')
+    expect(html).not.toContain('id="p-matters"')
     expect(html).toContain('/m/api/home')
     expect(html).toContain('cc.home.v2:')
     for (const id of ['id="p-pocket"', 'id="p-memory"', 'id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).not.toContain(id)

@@ -42,16 +42,18 @@ async function fixture(page, opts = {}) {
 async function fits(page) { expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true) }
 async function targets(page) { expect(await page.locator('button:visible').evaluateAll(buttons => buttons.every(b => b.getBoundingClientRect().height >= 44))).toBe(true) }
 async function shot(page, info, name) { await page.screenshot({ path: info.outputPath(name + '.png'), fullPage: true }) }
-async function openStatus(page) { await page.locator('nav [data-p="matters"]').click(); await page.locator('[data-mid="' + id + '"]').click(); await expect(page.locator('.m-state')).toHaveText('在做') }
+// 一个主页(设计稿 2026-10-31 U5):等你那一件是此刻页上的卡,点它原地看状态;列表里不重复它。
+async function openStatus(page) { await page.locator('.home-action').click(); await expect(page.locator('.m-state')).toHaveText('在做') }
 
 test('normal 390px status shell, pairing, flat list and keyboard stop', async ({ page }, info) => {
   const h = await fixture(page, { link: true })
   await page.goto(HOST + '/m'); await expect(page.locator('.home-arrived')).toBeVisible()
   await expect(page.locator('#pres-txt')).toHaveText('在帮你整理出行安排'); await fits(page); await shot(page, info, 'home-390')
   await page.locator('#pairbtn').click(); await expect(page.locator('#pairbar')).toBeHidden(); expect(h.posts.filter(p => p.path === '/set/api/pair')).toHaveLength(1)
-  await page.locator('nav [data-p="matters"]').click(); await expect(page.locator('[data-mid]')).toHaveCount(1); await fits(page); await shot(page, info, 'list-390')
-  await expect(page.locator('nav [data-p="matters"]')).toHaveAttribute('aria-current', 'page')
-  await page.locator('[data-mid]').click(); await expect(page.locator('#m-title')).not.toContainText('**'); await fits(page); await targets(page); await shot(page, info, 'status-390')
+  await expect(page.locator('nav')).toHaveCount(0); await expect(page.locator('#m-list [data-mid]')).toHaveCount(0); await expect(page.locator('.home-action')).toBeVisible()
+  h.home.work.focus = null; await page.locator('#refresh').click(); await expect(page.locator('.home-action')).toHaveCount(0)
+  await expect(page.locator('#m-list [data-mid]')).toHaveCount(1); await expect(page.locator('#m-list .grp')).toHaveText('在做'); await fits(page); await shot(page, info, 'list-390')
+  await page.locator('[data-mid]').click(); await expect(page.locator('#m-home')).toBeHidden(); await expect(page.locator('#m-title')).not.toContainText('**'); await fits(page); await targets(page); await shot(page, info, 'status-390')
   const stop = page.locator('[data-stop]'); await stop.focus(); await page.keyboard.press('Enter'); await expect(stop).toBeFocused(); expect(h.posts.filter(p => p.path.includes('/stop'))).toHaveLength(0)
   await page.keyboard.press('Enter'); await expect(page.locator('#m-notice')).toHaveText('已经请电脑停下这一轮。'); expect(h.posts.filter(p => p.path.includes('/stop'))).toEqual([{ path: '/m/api/matter/stop', body: { id, runId: run } }])
   await page.getByRole('button', { name: '设置', exact: true }).click(); await expect(page).toHaveURL(/\/set\?/); await expect(page.locator('#f-name')).toHaveValue('Nate')
@@ -66,9 +68,9 @@ test('low height: status controls reachable, unknown/offline, waiting and empty 
   await page.waitForTimeout(3100); await expect(stop).toHaveText('停止这一轮'); await expect(stop).toBeFocused()
   h.detail.permissions = [{ id: 'p1', taskId: id, tool: 'Bash', description: 'private command', createdAt: 1 }]; h.detail.task.phase = 'replied'; h.detail.events = []
   await page.evaluate(() => mRefresh()); await expect(page.locator('.m-state')).toHaveText('等你决定'); await expect(stop).toHaveCount(0); await shot(page, info, 'waiting-low')
-  h.home.presence = null; await page.locator('nav [data-p="today"]').click(); await page.locator('#refresh').click(); await expect(page.locator('#pres-txt')).toHaveText('不知道'); await expect(page.locator('.home-arrived')).toHaveCount(0)
+  h.home.presence = null; await page.locator('#m-back').click(); await expect(page.locator('#m-home')).toBeVisible(); await page.locator('#refresh').click(); await expect(page.locator('#pres-txt')).toHaveText('不知道'); await expect(page.locator('.home-arrived')).toHaveCount(0)
   h.down(); await page.locator('#refresh').click(); await expect(page.locator('#banner')).toContainText('家里的电脑暂时连不上'); await shot(page, info, 'offline-low')
-  await page.evaluate(() => window.dispatchEvent(new Event('offline'))); await page.locator('nav [data-p="matters"]').click(); await expect(page.locator('#m-conn')).toBeVisible(); await expect(page.locator('[data-stop]:enabled')).toHaveCount(0)
+  await page.evaluate(() => window.dispatchEvent(new Event('offline'))); await expect(page.locator('#m-conn')).toBeVisible(); await expect(page.locator('[data-stop]:enabled')).toHaveCount(0)
   await fits(page); expect(h.errors).toEqual([])
 })
 
@@ -86,7 +88,7 @@ test('settings normal data, long device name, keyboard, rejected switch rollback
 })
 
 test('empty list, bootstrap, expired and relay incomplete-link recovery surfaces', async ({ page }, info) => {
-  const h = await fixture(page); h.empty(); await page.goto(HOST + '/m'); await page.locator('nav [data-p="matters"]').click(); await expect(page.locator('#m-list')).toContainText('还没有事'); await shot(page, info, 'empty-list')
+  const h = await fixture(page); h.empty(); await page.goto(HOST + '/m'); await expect(page.locator('#m-list')).toContainText('还没有事'); await shot(page, info, 'empty-list')
   await page.evaluate(() => localStorage.clear()); await page.setViewportSize({ width: 390, height: 280 })
   for (const [path, text] of [['bootstrap', '还没配对过'], ['expired', '已经用过或过期'], ['relay', '链接不完整']]) {
     await page.goto(HOST + '/' + path); await expect(page.locator('body')).toContainText(text); await fits(page); await shot(page, info, path + '-low')

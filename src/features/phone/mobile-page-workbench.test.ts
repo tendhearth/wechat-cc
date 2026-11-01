@@ -15,8 +15,9 @@ import { MOBILE_WORKBENCH_JS } from './mobile-page'
 import { phoneHtml } from './settings-panel-html'
 import { assembleMobilePage } from '../../../apps/mobile/assemble'
 import { readMobileSource } from '../../../apps/mobile/sources'
+import { HOME_GROUP_WORDS, STATUS_WORDS } from '../../../packages/protocol/src/status-table'
 
-const IDS = ['m-list', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
+const IDS = ['m-home', 'm-list', 'm-all', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
 
 type Handler = (ev: unknown) => void
 interface FakeEl {
@@ -41,7 +42,8 @@ function fakeEl(id: string): FakeEl {
   }
 }
 
-function harness(source = MOBILE_WORKBENCH_JS) {
+type ListMatter = { id: string; title: string; kind: string; status: string; updatedAt?: number; networkSuspended?: unknown }
+function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; focus?: { id: string; kind: string } | null } = {}) {
   const els = new Map(IDS.map((id) => [id, fakeEl(id)]))
   // 照真页面来:连接提示那行平时不在(<div id="m-conn" hidden>),详情栏也是先藏着。
   els.get('m-conn')!.hidden = true
@@ -77,7 +79,7 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     calls.push({ path, ...(opts ? { opts } : {}) })
     if (mode === 'down') return Promise.reject(new Error('network down'))
     const body = path.startsWith('/m/api/matters')
-      ? { ok: true, matters: [{ id: 'm1', title: '首页调整', kind: 'task', status: 'open' }] }
+      ? { ok: true, matters: fx.matters ?? [{ id: 'm1', title: '首页调整', kind: 'task', status: 'open' }] }
       : path.startsWith('/m/api/matter?') ? detail : { ok: true }
     const response = { status: 200, json: () => Promise.resolve(body) }
     if (deferNext && path.startsWith('/m/api/matter?')) {
@@ -94,12 +96,13 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true }) })
   }
   const ccPlain = new Function(`${readMobileSource('boot.js').slice(readMobileSource('boot.js').indexOf('function ccPlain'))}\nreturn ccPlain`)()
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'ccPlain', 'ccSelectMobilePane', source)
+  const CCP = { STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'] }
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'ccPlain', 'CCP', 'homeCardId', source)
   boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
     removeItem: (k: string) => { store.delete(k) },
-  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), fetchStub, (p: string) => p, () => Promise.reject(new Error('no tunnel')), false, ccPlain, () => {})
+  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), fetchStub, (p: string) => p, () => Promise.reject(new Error('no tunnel')), false, ccPlain, CCP, fx.focus?.id ?? null)
 
   return {
     els, doc, calls, navButton, docHandlers, winHandlers,
@@ -111,8 +114,8 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     down() { mode = 'down' },
     up() { mode = 'ok' },
     setDetail(next: Partial<typeof detail>) { detail = { ...detail, ...next } as typeof detail },
-    /** 进「事」这一栏 → 拉列表。 */
-    async enterPane() { navButton.fire('click'); await vi.advanceTimersByTimeAsync(0) },
+    /** 列表就在此刻页上:脚本一载入就拉一次,这里等它落地。 */
+    async enterPane() { await vi.advanceTimersByTimeAsync(0) },
     /** 点开列表里的那件事。 */
     async openMatter() {
       const list = els.get('m-list')!
@@ -264,3 +267,47 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     expect(page.slice(page.indexOf('<script'), page.indexOf('<script') + 8)).toBe('<script>')
   })
 })
+
+describe('一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,等你 → 在做 → 带回来的', () => {
+  const NOW = new Date('2026-09-23T14:05:00+08:00').getTime()
+  it('在做 / 带回来的两组,组名和状态词来自协议包那一张;对话、陪伴不进;等你那一件(此刻的卡)不重复', async () => {
+    const h = harness(MOBILE_WORKBENCH_JS, { focus: { id: 'w1', kind: 'decision' }, matters: [
+      { id: 'o1', title: '首页调整', kind: 'task', status: 'open', updatedAt: NOW - 60_000 },
+      { id: 'r1', title: '日报', kind: 'task', status: 'replied', updatedAt: NOW - 3_600_000 },
+      { id: 'd1', title: '发布', kind: 'task', status: 'done', updatedAt: NOW - 7_200_000 },
+      { id: 'c1', title: '聊天', kind: 'chat', status: 'open', updatedAt: NOW },
+      { id: 'p1', title: '陪伴', kind: 'companion', status: 'open', updatedAt: NOW },
+      { id: 'w1', title: '等你那件', kind: 'task', status: 'open', updatedAt: NOW },
+    ] })
+    await h.enterPane()
+    const html = h.els.get('m-list')!.innerHTML
+    expect(html.indexOf('>在做<')).toBeLessThan(html.indexOf('>带回来的<'))
+    for (const id of ['o1', 'r1', 'd1']) expect(html).toContain(`data-mid="${id}"`)
+    for (const id of ['c1', 'p1', 'w1']) expect(html).not.toContain(`data-mid="${id}"`)
+    expect(html).toContain('这一轮做完了')
+    expect(html).toContain('>完成<')
+    expect(h.els.get('m-all')!.hidden).toBe(true)
+  })
+  it('带回来的只收 24 小时内;更早的点「全部」才出来', async () => {
+    const h = harness(MOBILE_WORKBENCH_JS, { matters: [{ id: 'old', title: '上周的事', kind: 'task', status: 'done', updatedAt: NOW - 25 * 3_600_000 }] })
+    await h.enterPane()
+    expect(h.els.get('m-list')!.innerHTML).not.toContain('data-mid="old"')
+    const all = h.els.get('m-all')!
+    expect(all.hidden).toBe(false)
+    expect(all.textContent).toBe('全部 · 还有 1 件更早的 →')
+    all.fire('click')
+    expect(h.els.get('m-list')!.innerHTML).toContain('data-mid="old"')
+    expect(all.hidden).toBe(true)
+  })
+  it('点开一件事:此刻那一屏收起,详情在原地;「← 此刻」回来', async () => {
+    const h = harness()
+    await h.enterPane()
+    await h.openMatter()
+    expect(h.els.get('m-home')!.hidden).toBe(true)
+    expect(h.els.get('m-detail')!.hidden).toBe(false)
+    h.els.get('m-back')!.fire('click')
+    expect(h.els.get('m-home')!.hidden).toBe(false)
+    expect(h.els.get('m-detail')!.hidden).toBe(true)
+  })
+})
+
