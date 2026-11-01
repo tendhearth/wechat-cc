@@ -1,0 +1,97 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "matter": {
+      "id": "<task:permission>",
+      "kind": "task",
+      "title": "跑迁移",
+      "projectPath": "<tmp>/projects/permission",
+      "status": "open",
+      "ownerChatId": "o9golden-owner@im.wechat",
+      "originMatterId": null,
+      "originMessageId": null,
+      "createdAt": 1793412600000,
+      "updatedAt": 1793412600000,
+      "agents": [
+        "claude"
+      ],
+      "agentNames": {
+        "claude": "Claude"
+      }
+    },
+    "bindings": [
+      {
+        "matterId": "<task:permission>",
+        "surface": "wechat",
+        "surfaceKey": "o9golden-owner@im.wechat",
+        "lastSeenAt": 1793412600000
+      }
+    ],
+    "sessions": [
+      {
+        "matterId": "<task:permission>",
+        "providerId": "claude",
+        "sessionId": "native-permission",
+        "role": "main",
+        "createdAt": 1793412600000
+      }
+    ],
+    "task": {
+      "id": "<task:permission>",
+      "title": "跑迁移",
+      "path": "<tmp>/projects/permission",
+      "providerId": "claude",
+      "status": "running",
+      "error": null,
+      "createdAt": 1793412600000,
+      "updatedAt": 1793412600000,
+      "archivedAt": null,
+      "workspaceKind": "project",
+      "phase": "working",
+      "canArchive": false,
+      "waitingFor": null,
+      "pendingPermissionCount": 1,
+      "pendingQuestionCount": 0,
+      "agents": [
+        "claude"
+      ]
+    },
+    "events": [
+      {
+        "kind": "user",
+        "text": "跑一下数据库迁移",
+        "createdAt": 1793412600000
+      },
+      {
+        "kind": "tool_call",
+        "text": "package.json",
+        "createdAt": 1793412600000,
+        "activity": {
+          "type": "read",
+          "status": "completed",
+          "label": "package.json"
+        }
+      },
+      {
+        "kind": "system",
+        "text": "权限请求：Bash · Run the migration against the local db · <uuid:7>",
+        "createdAt": 1793412600000
+      }
+    ],
+    "runId": "<uuid:6>",
+    "inputMode": "queue",
+    "permissions": [
+      {
+        "id": "<uuid:7>",
+        "taskId": "<task:permission>",
+        "tool": "Bash",
+        "description": "Run the migration against the local db",
+        "createdAt": 1793412600000
+      }
+    ],
+    "questions": [],
+    "artifacts": [],
+    "inputs": []
+  }
+}

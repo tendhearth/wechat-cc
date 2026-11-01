@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "body": {
+    "epoch": "<uuid:5>",
+    "seq": 4,
+    "data": {
+      "found": true,
+      "kind": "chat",
+      "version": 1793413325000,
+      "phase": "open"
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "matterId": "<chat>",
+    "title": "聊天",
+    "messages": [
+      {
+        "id": "m-01",
+        "role": "me",
+        "kind": "text",
+        "text": "早,今天帮我盯一下迁移",
+        "truncated": false,
+        "at": 1793413200000,
+        "source": "wechat"
+      },
+      {
+        "id": "m-02",
+        "role": "cc",
+        "kind": "text",
+        "text": "早。迁移那件我在看,有卡住的地方叫你。",
+        "truncated": false,
+        "at": 1793413208000,
+        "source": "wechat"
+      },
+      {
+        "id": "m-03",
+        "role": "me",
+        "kind": "text",
+        "text": "报告发我一份",
+        "truncated": false,
+        "at": 1793413260000,
+        "source": "phone"
+      },
+      {
+        "id": "m-04",
+        "role": "cc",
+        "kind": "text",
+        "text": "发了,在附件里。",
+        "truncated": false,
+        "at": 1793413272000,
+        "source": "phone",
+        "attachments": [
+          {
+            "kind": "file",
+            "name": "report.md"
+          },
+          {
+            "kind": "voice",
+            "text": "报告发你了"
+          }
+        ],
+        "narration": [
+          "找到报告",
+          "打包"
+        ]
+      },
+      {
+        "id": "m-05",
+        "role": "me",
+        "kind": "text",
+        "text": "收到,谢谢",
+        "truncated": false,
+        "at": 1793413320000,
+        "source": "desktop"
+      },
+      {
+        "id": "m-06",
+        "role": "cc",
+        "kind": "text",
+        "text": "",
+        "truncated": false,
+        "at": 1793413325000,
+        "source": "desktop"
+      }
+    ],
+    "hasMore": false,
+    "nextBefore": null,
+    "pending": null,
+    "failed": null
+  }
+}

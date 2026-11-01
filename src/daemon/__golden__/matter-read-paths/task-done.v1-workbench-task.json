@@ -1,0 +1,176 @@
+{
+  "status": 200,
+  "body": {
+    "handoffs": [],
+    "task": {
+      "id": "<task:done>",
+      "title": "修好测试并写报告",
+      "path": "<tmp>/projects/done",
+      "providerId": "claude",
+      "status": "completed",
+      "error": null,
+      "createdAt": 1793412060000,
+      "updatedAt": 1793412300000,
+      "archivedAt": null,
+      "workspaceKind": "project",
+      "phase": "replied",
+      "canArchive": true,
+      "usage": {
+        "turns": 2,
+        "input": 3600,
+        "output": 900,
+        "cacheRead": 1600,
+        "cacheWrite": null,
+        "reasoning": null,
+        "costUsd": null
+      },
+      "waitingFor": null,
+      "pendingPermissionCount": 0,
+      "pendingQuestionCount": 0,
+      "agents": [
+        "claude"
+      ]
+    },
+    "events": [
+      {
+        "id": 1,
+        "taskId": "<task:done>",
+        "kind": "user",
+        "text": "把测试修好,写一份报告",
+        "createdAt": 1793412060000,
+        "sourceId": null,
+        "runId": "<uuid:1>"
+      },
+      {
+        "id": 2,
+        "taskId": "<task:done>",
+        "kind": "text",
+        "text": "先跑一遍测试。",
+        "createdAt": 1793412060000,
+        "sourceId": null,
+        "runId": "<uuid:1>"
+      },
+      {
+        "id": 3,
+        "taskId": "<task:done>",
+        "kind": "tool_call",
+        "text": "bun test",
+        "createdAt": 1793412060000,
+        "sourceId": null,
+        "runId": "<uuid:1>",
+        "activity": {
+          "id": "call-1",
+          "type": "command",
+          "status": "completed",
+          "label": "bun test",
+          "detail": "12 pass"
+        }
+      },
+      {
+        "id": 4,
+        "taskId": "<task:done>",
+        "kind": "system",
+        "text": "权限请求：Bash · Delete scratch.txt · <uuid:2>",
+        "createdAt": 1793412060000,
+        "sourceId": null,
+        "runId": "<uuid:1>"
+      },
+      {
+        "id": 5,
+        "taskId": "<task:done>",
+        "kind": "system",
+        "text": "权限结果：Bash · allow · <uuid:2>",
+        "createdAt": 1793412120000,
+        "sourceId": null,
+        "runId": "<uuid:1>"
+      },
+      {
+        "id": 6,
+        "taskId": "<task:done>",
+        "kind": "tool_call",
+        "text": "rm scratch.txt",
+        "createdAt": 1793412120000,
+        "sourceId": null,
+        "runId": "<uuid:1>",
+        "activity": {
+          "id": "call-2",
+          "type": "command",
+          "status": "completed",
+          "label": "rm scratch.txt"
+        }
+      },
+      {
+        "id": 7,
+        "taskId": "<task:done>",
+        "kind": "text",
+        "text": "测试全过,报告写好了。",
+        "createdAt": 1793412180000,
+        "sourceId": null,
+        "runId": "<uuid:1>"
+      },
+      {
+        "id": 8,
+        "taskId": "<task:done>",
+        "kind": "user",
+        "text": "再确认一次",
+        "createdAt": 1793412300000,
+        "sourceId": null,
+        "runId": "<uuid:3>"
+      },
+      {
+        "id": 9,
+        "taskId": "<task:done>",
+        "kind": "text",
+        "text": "第 2 轮:再确认一次 —— 确认过了。",
+        "createdAt": 1793412300000,
+        "sourceId": null,
+        "runId": "<uuid:3>"
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "<uuid:4>",
+        "taskId": "<task:done>",
+        "name": "report.md",
+        "mime": "text/markdown",
+        "size": 38,
+        "sha256": "915286aeee2deb03419985f1c6648a879bdf22a5618162dec6dd9bf7aed633b6",
+        "createdAt": 1793412180000,
+        "approvedAt": null
+      }
+    ],
+    "version": 29,
+    "wechatNotifications": {
+      "enabled": false,
+      "notices": []
+    },
+    "quotaHandoff": null,
+    "execution": {
+      "defaults": "provider",
+      "model": null,
+      "reasoningEffort": null
+    },
+    "lastExecution": {
+      "taskId": "<task:done>",
+      "runId": "<uuid:3>",
+      "createdAt": 1793412300000,
+      "observedAt": null,
+      "choice": {
+        "defaults": "provider",
+        "model": null,
+        "reasoningEffort": null
+      },
+      "effective": null
+    },
+    "attachments": [],
+    "agentNames": {
+      "claude": "Claude"
+    },
+    "inputs": [],
+    "questions": [],
+    "permissions": [],
+    "continuation": {
+      "mode": "resume"
+    }
+  }
+}
