@@ -8,25 +8,29 @@ appId: com.tendhearth.app
     visible:
       id: now-cc
     timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: home-all
+    direction: DOWN
 - tapOn:
-    id: tab-together
+    id: home-all
 - extendedWaitUntil:
     visible:
-      id: together-item-a1b2c3d4
+      id: row-matter-a1b2c3d4
     timeout: 5000
 - waitForAnimationToEnd
 - takeScreenshot: a01-together
 - scrollUntilVisible:
     element:
-      id: together-terminal
+      id: row-terminal-demo-cli-api
     direction: DOWN
 - takeScreenshot: a02-terminal
 - scrollUntilVisible:
     element:
-      id: together-item-a1b2c3d4
+      id: row-matter-a1b2c3d4
     direction: UP
 - tapOn:
-    id: together-item-a1b2c3d4
+    id: row-matter-a1b2c3d4
 - extendedWaitUntil:
     visible:
       id: approval-allow

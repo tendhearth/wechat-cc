@@ -10,14 +10,14 @@ appId: com.tendhearth.app
 # 演示里没有执行者在写 ⇒ CC 下面不说它在干什么(没信号不说话)。
 - extendedWaitUntil:
     visible:
-      id: now-needs-you-card
+      id: home-group-waiting
     timeout: 10000
 - assertVisible:
     id: now-cc
 - assertNotVisible:
     id: now-cc-status
 - assertVisible:
-    id: now-needs-you-card
+    id: home-group-waiting
 - scrollUntilVisible:
     element:
       id: now-companion-card
@@ -30,21 +30,22 @@ appId: com.tendhearth.app
 - assertVisible:
     id: now-connections
 # 欢迎页 replace 回此刻的转场里,第一下点标签偶尔没生效(可能是被原生栈吞掉;真机手点不会这么快);没切过去就再点一次。
-- retry:
-    maxRetries: 2
-    commands:
-      - tapOn:
-          id: tab-together
-      - extendedWaitUntil:
-          visible:
-            id: together-item-a1b2c3d4
-          timeout: 3000
-- assertVisible:
-    id: together-item-e5f6a7b8
-- assertVisible:
-    id: together-item-c9d0e1f2
+- scrollUntilVisible:
+    element:
+      id: home-all
+    direction: DOWN
 - tapOn:
-    id: together-item-a1b2c3d4
+    id: home-all
+- extendedWaitUntil:
+    visible:
+      id: row-matter-a1b2c3d4
+    timeout: 5000
+- assertVisible:
+    id: row-matter-e5f6a7b8
+- assertVisible:
+    id: row-matter-c9d0e1f2
+- tapOn:
+    id: row-matter-a1b2c3d4
 # 待回应行直接打开具体批准;只允许这一步,成功后进入事项,概括按需展开。
 - extendedWaitUntil:
     visible:
@@ -93,7 +94,7 @@ appId: com.tendhearth.app
 - tapOn:
     id: topbar-back
 - tapOn:
-    id: tab-now
+    id: topbar-back
 - tapOn:
     id: topbar-settings
 - extendedWaitUntil:

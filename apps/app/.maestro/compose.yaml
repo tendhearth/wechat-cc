@@ -63,13 +63,14 @@ appId: com.tendhearth.app
 - tapOn:
     id: topbar-back
 # 行的无障碍标签 = 「标题, 状态词」。点标签同 demo-walkthrough:没切过去就再点一次。
-- retry:
-    maxRetries: 2
-    commands:
-      - tapOn:
-          id: tab-together
-      - extendedWaitUntil:
-          visible:
-            id: together-item-demo0001
-          timeout: 3000
+- scrollUntilVisible:
+    element:
+      id: home-all
+    direction: DOWN
+- tapOn:
+    id: home-all
+- extendedWaitUntil:
+    visible:
+      id: row-matter-demo0001
+    timeout: 5000
 - assertVisible: "Maestro demo task, (这一轮做完了|Done for this round)"

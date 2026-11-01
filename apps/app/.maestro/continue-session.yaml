@@ -11,11 +11,9 @@ appId: com.tendhearth.app
       id: now-connections
     timeout: 10000
 - tapOn:
-    id: tab-together
+    id: home-more
 - tapOn:
-    id: together-more
-- tapOn:
-    id: together-sessions
+    id: home-sessions
 - extendedWaitUntil:
     visible:
       id: sessions-row-demo-claude-1

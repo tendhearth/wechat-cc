@@ -9,25 +9,25 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: now-look-then-decide
+      id: home-group-waiting
     timeout: 10000
 - scrollUntilVisible:
     element:
-      id: now-today-counts
+      id: home-group-back
     direction: DOWN
     centerElement: true
-- takeScreenshot: t01-now-today
+- takeScreenshot: t01-home-back
 # 完成记录在待回应行之后;回到具体终端批准行,点进详情再拍板。
 - scrollUntilVisible:
     element:
-      id: now-terminal-demo-cli-blog
+      id: row-terminal-demo-cli-blog
     direction: UP
     centerElement: true
 - assertVisible:
-    id: now-terminal-demo-cli-blog
+    id: row-terminal-demo-cli-blog
 - takeScreenshot: t01b-now-waiting-terminal
 - tapOn:
-    id: now-terminal-demo-cli-blog
+    id: row-terminal-demo-cli-blog
 - extendedWaitUntil:
     visible:
       id: terminal-detail-allow
@@ -39,31 +39,29 @@ appId: com.tendhearth.app
 - takeScreenshot: t01c-terminal-waiting
 - tapOn:
     id: topbar-back
-- retry:
-    maxRetries: 2
-    commands:
-      - tapOn:
-          id: tab-together
-      - extendedWaitUntil:
-          visible:
-            id: together-item-a1b2c3d4
-          timeout: 3000
 - scrollUntilVisible:
     element:
-      id: together-terminal
+      id: home-all
+    direction: DOWN
+- tapOn:
+    id: home-all
+- extendedWaitUntil:
+    visible:
+      id: row-matter-a1b2c3d4
+    timeout: 5000
 - scrollUntilVisible:
     element:
-      id: terminal-item-demo-cli-api
+      id: row-terminal-demo-cli-api
 - assertVisible:
-    id: terminal-review-demo-cli-blog
+    id: row-terminal-demo-cli-blog
 - assertNotVisible:
     id: terminal-allow-demo-cli-blog
 - assertVisible:
-    id: terminal-item-demo-cli-docs
-- takeScreenshot: t02-together-terminal
+    id: row-terminal-demo-cli-docs
+- takeScreenshot: t02-all-terminal
 # 在跑那条:说一句的框是灰的,并说明为什么
 - tapOn:
-    id: terminal-open-demo-cli-docs
+    id: row-terminal-demo-cli-docs
 - extendedWaitUntil:
     visible:
       id: terminal-activity
@@ -79,9 +77,9 @@ appId: com.tendhearth.app
 # 歇着那条:接着说一句
 - scrollUntilVisible:
     element:
-      id: terminal-open-demo-cli-api
+      id: row-terminal-demo-cli-api
 - tapOn:
-    id: terminal-open-demo-cli-api
+    id: row-terminal-demo-cli-api
 - extendedWaitUntil:
     visible:
       id: terminal-detail-summary
@@ -106,9 +104,9 @@ appId: com.tendhearth.app
 # 看清楚 › 进详情再允许:等批准那条转成在跑
 - scrollUntilVisible:
     element:
-      id: terminal-review-demo-cli-blog
+      id: row-terminal-demo-cli-blog
 - tapOn:
-    id: terminal-open-demo-cli-blog
+    id: row-terminal-demo-cli-blog
 - extendedWaitUntil:
     visible:
       id: terminal-detail-allow
@@ -123,7 +121,7 @@ appId: com.tendhearth.app
 - tapOn:
     id: topbar-back
 - extendedWaitUntil:
-    notVisible:
-      id: terminal-review-demo-cli-blog
+    visible:
+      id: all-group-working
     timeout: 5000
-- takeScreenshot: t06-together-allowed
+- takeScreenshot: t06-all-allowed
