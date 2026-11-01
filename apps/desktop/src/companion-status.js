@@ -6,11 +6,13 @@
  * @returns {{ text: string, ariaLabel: string }}
  */
 export function formatCompanionStatus(intent, permissionCount = 0) {
-  const fact = intent && typeof intent === 'object' ? /** @type {{ form?: unknown, behavior?: unknown }} */ (intent) : null
+  const fact = intent && typeof intent === 'object' ? /** @type {{ form?: unknown, behavior?: unknown, props?: unknown, badge?: unknown }} */ (intent) : null
   if (fact?.form !== 'lit') return { text: '暂时联系不上', ariaLabel: 'CC，暂时联系不上' }
 
   let activity = ''
-  if (typeof permissionCount === 'number' && Number.isSafeInteger(permissionCount) && permissionCount > 0) activity = '等你决定'
+  if ((typeof permissionCount === 'number' && Number.isSafeInteger(permissionCount) && permissionCount > 0) || fact.behavior === 'permission') activity = '等你决定'
+  else if (Array.isArray(fact.props) && fact.props.includes('exclamation')) activity = '有连接异常'
+  else if (Array.isArray(fact.props) && fact.props.includes('envelope') && typeof fact.badge === 'number' && Number.isSafeInteger(fact.badge) && fact.badge > 0) activity = '有新内容'
   else switch (fact.behavior) {
     case 'thinking': activity = '想一想'; break
     case 'working': activity = '正在做'; break

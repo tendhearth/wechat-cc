@@ -22,16 +22,55 @@ function clock() {
   return { schedule: (fn: () => void, ms: number) => { const id = ++seq; q.push({ at: now + ms, id, fn }); return id },
     cancel: (id: unknown) => { const i = q.findIndex(x => x.id === id); if (i >= 0) q.splice(i, 1) },
     tick(ms: number) { const until = now + ms; while (true) { q.sort((a, b) => a.at - b.at); const n = q[0]; if (!n || n.at > until) break; q.shift(); now = n.at; n.fn() } now = until },
-    pending: () => q.length }
+    pending: () => q.length, now: () => now }
 }
 const boot = async (fetchImpl = fetchReal, reducedMotion = false, manifestUrl = './assets/pet/manifest.json') => {
   const c = clock(); const root = { stage: el(), img: el('img'), props: el(), hint: el('p') }
   // random: () => 0 —— 随机小动作取区间下界,时间线就是确定的(blink 6000ms、look 25000ms)。
-  const pet = await createPet(root, { manifestUrl, fetchImpl, reducedMotion, makeEl: el, schedule: c.schedule, cancel: c.cancel, preload: () => {}, random: () => 0 })
+  const pet = await createPet(root, { manifestUrl, fetchImpl, reducedMotion, makeEl: el, schedule: c.schedule, cancel: c.cancel, preload: () => {}, random: () => 0, now: c.now })
   return { c, root, pet }
 }
 
 describe('createPet(组装)', () => {
+  it('acknowledges nearby attention with one existing look, a cooldown and unchanged facts', async () => {
+    const { c, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100); pet.setProps(['envelope'], 2)
+    expect(pet.acknowledgeAttention()).toBe(true)
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', behavior: 'look', resting: 'idle', props: ['envelope'], badge: 2 })
+    c.tick(300)
+    expect(pet.acknowledgeAttention()).toBe(false)
+    c.tick(11700)
+    expect(pet.acknowledgeAttention()).toBe(true)
+    pet.destroy()
+  })
+  it.each(['working', 'thinking', 'permission'] as const)('attention cannot interrupt real %s or queue a later greeting', async behavior => {
+    const { c, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100); pet.setState(behavior)
+    expect(pet.acknowledgeAttention()).toBe(false)
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'lit', behavior })
+    c.tick(1000)
+    expect(pet.machine.snapshot().behavior).toBe(behavior)
+    pet.destroy()
+  })
+  it.each(['setQuiet', 'setReducedMotion', 'setPaused'] as const)('%s consumes hover without replay or cooldown when restored', async control => {
+    const { c, pet } = await boot()
+    pet.setForm('lit'); c.tick(1100)
+    pet[control](true)
+    expect(pet.acknowledgeAttention()).toBe(false)
+    pet[control](false)
+    expect(pet.machine.snapshot().behavior).toBe('idle')
+    expect(pet.acknowledgeAttention()).toBe(true)
+    pet.destroy()
+  })
+  it('attention with no matching pose, during a form transition or after destruction does nothing', async () => {
+    const { c, pet } = await boot()
+    expect(pet.acknowledgeAttention()).toBe(false)
+    pet.setForm('lit')
+    expect(pet.acknowledgeAttention()).toBe(false)
+    c.tick(1100); pet.destroy()
+    expect(pet.acknowledgeAttention()).toBe(false)
+    expect(c.pending()).toBe(0)
+  })
   it('加载真 manifest:初始 unlit idle 显示 master-unlit;anchor 写到舞台;呼吸开着', async () => {
     const { root, pet } = await boot()
     expect(root.img.src).toBe('./assets/pet/reference/master-unlit.png')
@@ -195,6 +234,21 @@ describe('CC v1 kit runtime and terminal fallback', () => {
   const duration = (animation: { frames: string[], fps: number }) => Math.ceil(1000 / animation.fps) * animation.frames.length + 1
   const kitFetch = (async () => new Response(raw)) as unknown as typeof fetch
   const bootKit = () => boot(kitFetch, true, './assets/pet/cc-v1/manifest.json')
+  it.each(['working', 'thinking'] as const)('continuous work %s rests its pose while preserving actual activity and props', async behavior => {
+    const { c, root, pet } = await boot(kitFetch, false, './assets/pet/cc-v1/manifest.json')
+    pet.setProps(['envelope'], 2)
+    pet.setState(behavior)
+    const a = kit.forms.unlit.states[behavior]
+    const step = Math.round(1000 / a.fps)
+    c.tick(step * a.frames.length)
+    expect(root.img.src).toBe(frameUrl(a.frames[0]))
+    c.tick(step)
+    expect(root.img.src).toBe(frameUrl(a.frames[0]))
+    expect(pet.machine.snapshot()).toMatchObject({ form: 'unlit', behavior, props: ['envelope'], badge: 2 })
+    c.tick(behavior === 'working' ? 6000 : 9000)
+    expect(root.img.src).toBe(frameUrl(a.frames[1]))
+    pet.destroy()
+  })
   it('uses Dark working directly, transitions to Light and preserves real resting behavior', async () => {
     const { c, root, pet } = await bootKit()
     pet.setState('working')

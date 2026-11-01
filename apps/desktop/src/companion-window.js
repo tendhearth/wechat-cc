@@ -79,6 +79,12 @@ const apply = (freshTurn = false) => {
   if (stage && stage.getAttribute('aria-label') !== activity.ariaLabel) stage.setAttribute('aria-label', activity.ariaLabel)
   const status = $('pet-connection')
   if (status && status.textContent !== activity.text) status.textContent = activity.text
+  const activityLabel = $('pet-activity')
+  if (activityLabel) {
+    if (activityLabel.textContent !== activity.text) activityLabel.textContent = activity.text
+    // Permission and connection hints already have their own readable surface.
+    activityLabel.hidden = Boolean(r.permission || r.intent.hint) || activity.text === '已连接' || activity.text === '已连接 · 陪伴中'
+  }
   pet.applyIntent({ ...r.intent, hint: r.intent.hint === 'daemon 没起' ? '暂时联系不上 CC' : r.intent.hint })
   // 初次观察不播转场(spec §5.2):开窗时 CC 本来就亮着,那是既成事实,不是「主人
   // 刚到」。applyIntent 已经按事实把 form 设过去了,这里立刻把转场判为播完,
@@ -111,6 +117,7 @@ const drag = createCompanionDrag({
   move: position => invoke('move_companion_window', position),
   finish: () => invoke('finish_companion_drag'),
   onBegin: () => pet.beginDrag(), onEnd: () => pet.endDrag(),
+  onClick: () => { void openConversation() },
   onError: error => console.warn('companion drag failed', error),
 })
 /** @type {number | null} */ let capturedPointer = null
@@ -139,12 +146,21 @@ stage?.addEventListener('pointercancel', cancelDrag)
 stage?.addEventListener('lostpointercapture', cancelDrag)
 window.addEventListener('mousemove', event => { if (event instanceof MouseEvent) drag.move(event) })
 
-$('pet-open-main')?.addEventListener('click', async () => {
+async function openConversation() {
   await drag.cancel()
   if (mock) { location.assign('./index.html'); return }
-  try { await invoke('show_main_window', { page: 'overview' }) }
+  try { await invoke('show_main_window', { page: 'converse' }) }
   catch (err) { console.warn('show_main_window failed', err); pet.setHint('没能打开 CC，请再试一次') }
+}
+$('pet-open-main')?.addEventListener('click', openConversation)
+stage?.addEventListener('keydown', event => {
+  if (!(event instanceof KeyboardEvent) || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  void openConversation()
 })
+stage?.addEventListener('pointerenter', () => pet.acknowledgeAttention())
+stage?.addEventListener('focus', () => pet.acknowledgeAttention())
 
 $('pet-reset-position')?.addEventListener('click', async () => {
   await drag.cancel()

@@ -5,12 +5,12 @@ import { mkdir, readFile, writeFile, realpath } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { assertMiniIdentity, assertEmbeddedEndpoint, createOfflineSession } from './macmini-ui-protocol.mjs'
+import { miniConfiguration, assertEmbeddedEndpoint, createOfflineSession } from './macmini-ui-protocol.mjs'
 
-assertMiniIdentity({ computerName: execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8' }).trim(),
+const mini = miniConfiguration({ computerName: execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8' }).trim(),
   homeDir: homedir(), platformName: process.platform })
 const endpoint = assertEmbeddedEndpoint('http://127.0.0.1:4199')
-const lab = '/Users/home/cc-ui-lab/cc-motion-drag-20261030'
+const lab = mini.root
 const output = await realpath(process.env.CC_UI_ARTIFACT_DIR)
 assert(output.startsWith(lab + '/artifacts/'))
 const app = await realpath(join(lab, 'native-target/debug/bundle/macos/Tendhearth CC Motion QA.app'))
@@ -128,6 +128,12 @@ try {
   await until('Initial placement reset returned', () => execute('return !document.getElementById("reset").disabled'))
   await switchWindow('companion')
   await ready('companion')
+  await execute('document.activeElement?.blur();return true')
+  await until('Idle native toolbar hidden', async () => await execute('return getComputedStyle(document.querySelector(".pet-controls")).opacity') === '0')
+  await execute('document.getElementById("pet-stage").focus();return true')
+  await until('Keyboard native toolbar revealed', async () => await execute('return getComputedStyle(document.querySelector(".pet-controls")).opacity') === '1')
+  assert.equal(await execute('return document.getElementById("pet-stage").getAttribute("role")'),'button')
+  report.checks.push('actual WebKit idle toolbar hides and keyboard focus reveals controls')
   const before = await command('/window/rect')
   await nativeClick('#pet-zoom-in', 'resize_companion_window')
   const enlarged = await until('Native resize', async () => {
@@ -165,6 +171,8 @@ try {
   }
   const nativeBefore = await nativeRead()
   const dragSequence = await nativeSequence()
+  const navigationCount = () => execute('return window.__ccMotionQACalls.filter(value=>value.command==="show_main_window").length')
+  const beforeDragNavigation = await navigationCount()
   let start
   const beginGesture = async () => {
     const center = await execute('const r=document.getElementById("pet-stage").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}')
@@ -191,6 +199,7 @@ try {
   }, 5000)
   assert.equal(report.drag.after.frame.width, nativeBefore.frame.width)
   assert.equal(report.drag.after.frame.height, nativeBefore.frame.height)
+  assert.equal(await navigationCount(), beforeDragNavigation, 'A drag opened the conversation')
   report.checks.push('WebKit gesture moves the actual AppKit window without resizing')
   const sameFrame = (actual, expected) => ['x', 'y', 'width', 'height'].every(key => Math.abs(actual[key] - expected[key]) <= 1)
   const settled = report.drag.after.frame
@@ -206,10 +215,18 @@ try {
     const sequence = await nativeSequence()
     await input('mousedown', 0, 0, 1); await input('mouseup', 0, 0, 0)
     await nativeSettled('start_companion_drag', sequence)
+    await nativeSettled('show_main_window', sequence)
   }
   await execute('document.getElementById("pet-stage").dispatchEvent(new MouseEvent("dblclick",{bubbles:true,button:0,detail:2}));return true')
   assert(sameFrame((await nativeRead()).frame, settled), 'Stationary clicks changed native geometry')
   report.checks.push('stationary WebKit click and double-click keep native geometry')
+  await switchWindow('main')
+  await until('Actual native conversation navigation', async () => await execute('return window.__ccQANavigations?.at(-1)') === 'converse')
+  await switchWindow('companion')
+  const keyboardSequence = await nativeSequence()
+  await execute('const stage=document.getElementById("pet-stage");stage.focus();stage.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return true')
+  await nativeSettled('show_main_window', keyboardSequence)
+  report.checks.push('stationary clicks and keyboard activation request the existing conversation route')
 
   await beginGesture()
   let sequence = await nativeSequence()
@@ -287,6 +304,54 @@ try {
   assert.equal(await execute('return document.querySelectorAll("#pet-props [data-prop-leaving=true]").length'),0)
   assert.equal(await execute('return getComputedStyle(document.querySelector("#pet-props [data-prop=mug]")).transitionDuration'),'0s')
   report.checks.push('actual WebKit prop recipes, queued behavior, stable unread badge and reduced-motion convergence')
+  await execute('const pet=window.__ccMotionQAControl.pet;pet.setReducedMotion(false);pet.setQuiet(false);pet.setPaused(false);pet.setProps([],0);pet.setState("idle");pet.machine.notifyAnimationEnded()')
+  const attentionForm = await execute('return window.__ccMotionQAControl.pet.machine.snapshot().form')
+  await until('Native nearby attention after cooldown', () => execute('return window.__ccMotionQAControl.pet.acknowledgeAttention()'))
+  assert.equal(await execute('return window.__ccMotionQAControl.pet.machine.snapshot().behavior'),'look')
+  assert.equal(await execute('return window.__ccMotionQAControl.pet.machine.snapshot().form'),attentionForm)
+  assert.equal(await execute('return window.__ccMotionQAControl.pet.acknowledgeAttention()'),false)
+  await until('Native attention naturally settles', async () => await execute('return window.__ccMotionQAControl.pet.machine.snapshot().behavior') === 'idle')
+  await execute('window.__ccMotionQAControl.pet.setQuiet(true)')
+  assert.equal(await execute('return window.__ccMotionQAControl.pet.acknowledgeAttention()'),false)
+  await execute('window.__ccMotionQAControl.pet.setQuiet(false)')
+  assert.equal(await execute('return window.__ccMotionQAControl.pet.machine.snapshot().behavior'),'idle')
+  report.checks.push('nearby attention preserves connection, observes cooldown and never replays after quiet')
+  report.cadence = []
+  for (const behavior of ['working','thinking']) {
+    const initial = await execute('const pet=window.__ccMotionQAControl.pet;pet.setState(arguments[0]);window.__ccQAFrameChanges=0;window.__ccQAFrameObserver?.disconnect();window.__ccQAFrameObserver=new MutationObserver(records=>window.__ccQAFrameChanges+=records.length);window.__ccQAFrameObserver.observe(document.getElementById("pet-sprite"),{attributes:true,attributeFilter:["src"]});return document.getElementById("pet-sprite").src',[behavior])
+    await until('Native work pose advances', async () => await execute('return document.getElementById("pet-sprite").src') !== initial)
+    await new Promise(resolve=>setTimeout(resolve,2200))
+    const hold = await execute('return {frame:document.getElementById("pet-sprite").src,behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior,changes:window.__ccQAFrameChanges}')
+    assert.equal(hold.frame,initial);assert.equal(hold.behavior,behavior)
+    await new Promise(resolve=>setTimeout(resolve,500))
+    assert.equal(await execute('return document.getElementById("pet-sprite").src'),initial)
+    assert.equal(await execute('return window.__ccQAFrameChanges'),hold.changes)
+    report.cadence.push({behavior,changesPerCycle:hold.changes,holdSampleMs:500,frameUpdatesDuringHold:0})
+  }
+  await execute('window.__ccQAFrameObserver?.disconnect();window.__ccMotionQAControl.pet.setReducedMotion(true)')
+  report.checks.push('actual WebKit work cycles hold a stable pose without changing activity or advancing sprite frames')
+  report.cadenceResource = await command('/execute/async', {
+    script: `const done=arguments[arguments.length-1];(async()=>{
+      const pet=window.__ccMotionQAControl.pet;pet.setPaused(true);
+      const {createSpriteRenderer}=await import(new URL('./pet/renderer/sprite-renderer.js',location.href).href);
+      const manifest=await(await fetch('./assets/pet/cc-v1/manifest.json')).json();
+      const a=manifest.forms.lit.states.working;
+      const animation={...a,frames:a.frames.map(path=>new URL('./assets/pet/cc-v1/'+path,location.href).href)};
+      const stage=document.createElement('div'),img=document.createElement('img');
+      stage.style.cssText='position:absolute;width:48px;height:48px;visibility:hidden;pointer-events:none';stage.append(img);document.body.append(stage);
+      const renderer=createSpriteRenderer({stage,img});let changes=0;
+      const observer=new MutationObserver(records=>changes+=records.length);observer.observe(img,{attributes:true,attributeFilter:['src']});
+      const samples=[];
+      try{for(const restMs of [0,6000]){changes=0;renderer.play(animation,{restMs});await new Promise(resolve=>setTimeout(resolve,6000));renderer.stop();samples.push({restMs,durationMs:6000,frameUpdates:changes})}}
+      finally{renderer.stop();observer.disconnect();stage.remove();pet.setPaused(false)}
+      return {metric:'sprite src mutations in the same real WebKit, not whole-app CPU or energy',samples};
+    })().then(value=>done({ok:true,value})).catch(error=>done({ok:false,error:String(error)}));`, args: [],
+  })
+  assert.equal(report.cadenceResource.ok,true,report.cadenceResource.error)
+  const [continuous, paced] = report.cadenceResource.value.samples
+  assert(continuous.frameUpdates > paced.frameUpdates * 2, 'Work cadence did not reduce repeated frame updates')
+  report.checks.push('same-WebKit comparison reduces sprite frame updates against continuous playback')
+  report.transparentInput = { enabled: false, coverage: 'Cross-application hardware hit delivery is not covered by synthetic DOM events; production input routing remains unchanged' }
   await click('#companion-window-close')
   await until('Companion close control', async () => !(await command('/window/handles')).includes('companion'))
   report.ok = true

@@ -26,13 +26,15 @@ const IDLE_MOVES = new Set(['blink', 'look'])
 
 /**
  * @param {{ stage: any, img: any, props: any, hint?: any }} root
- * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number }} opts
+ * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number, now?: () => number }} opts
  */
 export async function createPet(root, opts) {
   const makeEl = opts.makeEl ?? ((/** @type {string} */ tag) => document.createElement(tag))
   const schedule = opts.schedule ?? ((/** @type {() => void} */ fn, /** @type {number} */ ms) => setTimeout(fn, ms))
   const cancel = opts.cancel ?? ((/** @type {unknown} */ h) => clearTimeout(/** @type {any} */ (h)))
   const random = opts.random ?? Math.random
+  const now = opts.now ?? Date.now
+  let lastAttention = -Infinity
   let reducedMotion = opts.reducedMotion === true
   let quiet = false
   let paused = false
@@ -113,7 +115,8 @@ export async function createPet(root, opts) {
       oneShotTimer = schedule(() => { oneShotTimer = null; machine.notifyAnimationEnded() }, ONE_SHOT_FALLBACK_MS)
       return
     }
-    renderer.play(r.animation, { onEnd: oneShot || !r.animation.loop ? () => machine.notifyAnimationEnded() : undefined })
+    const restMs = s.behavior === 'working' ? 6000 : s.behavior === 'thinking' ? 9000 : 0
+    renderer.play(r.animation, { restMs, onEnd: oneShot || !r.animation.loop ? () => machine.notifyAnimationEnded() : undefined })
   }
 
   // ── 帧加载失败(404 / 坏文件):把那一帧从 manifest 里摘掉,重画(spec §3「跳过该帧」)。
@@ -212,6 +215,17 @@ export async function createPet(root, opts) {
 
   return {
     machine, warnings,
+    acknowledgeAttention() {
+      if (disposed || suppressDecoration()) return false
+      const current = machine.snapshot()
+      if (current.transition || !CALM_BEHAVIORS.has(current.behavior) || !manifest.forms[current.form]?.states.look) return false
+      const time = now()
+      if (!Number.isFinite(time) || time - lastAttention < 12_000) return false
+      // Local attention is disposable decoration; never enqueue it as a fact.
+      if (machine.setState('look') !== 'applied') return false
+      lastAttention = time
+      return true
+    },
     /** @param {boolean} on */
     setReducedMotion(on) { if (reducedMotion !== on) { reducedMotion = on; syncMotion() } },
     /** @param {boolean} on */

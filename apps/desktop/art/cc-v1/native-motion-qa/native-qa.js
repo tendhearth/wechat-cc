@@ -38,7 +38,12 @@ $('advance-quiet').onclick = async () => {
   await tauri.event.emit('cc-motion-qa-wall-jump', 2 * 60 * 60_000)
   await snapshot('仅模拟测试浮窗经过两小时，系统时间不变')
 }
-await tauri.event.listen('wechat-cc:navigate', () => snapshot('Find CC returned to isolated main window'))
+window.__ccQANavigations = []
+await tauri.event.listen('wechat-cc:navigate', ({ payload }) => {
+  window.__ccQANavigations.push(payload?.page)
+  if (window.__ccQANavigations.length > 16) window.__ccQANavigations.shift()
+  snapshot('Find CC returned to isolated main window')
+})
 await invoke('take_pending_navigate',{}).catch(()=>null)
 const pets = []
 const manifest = await (await fetch('./assets/pet/cc-v1/manifest.json')).json()

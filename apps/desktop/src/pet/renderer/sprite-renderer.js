@@ -23,7 +23,7 @@ export function createSpriteRenderer(deps) {
   let reduced = deps.reducedMotion === true
   let paused = false
   let breathing = false
-  /** @type {{ animation: Animation, onEnd?: () => void } | null} */
+  /** @type {{ animation: Animation, onEnd?: () => void, restMs?: number } | null} */
   let active = null
   // Fade completion belongs to the visual transition, even when its target loops
   // or a short nonloop target has already ended during fade-in.
@@ -77,9 +77,10 @@ export function createSpriteRenderer(deps) {
   /**
    * @param {Animation} a
    * @param {(() => void) | undefined} onEnd
+   * @param {number} [restMs]
    */
-  function run(a, onEnd) {
-    active = { animation: a, onEnd }
+  function run(a, onEnd, restMs = 0) {
+    active = { animation: a, onEnd, restMs }
     clear()
     const gen = ++generation
     for (const f of a.frames) if (!preloaded.has(f)) { preloaded.add(f); preload(f) }
@@ -98,11 +99,12 @@ export function createSpriteRenderer(deps) {
     const step = () => {
       if (gen !== generation) return
       i += 1
+      let delay = stepMs
       if (i >= frames.length) {
-        if (a.loop) { i = 0 } else { timer = null; active = null; onEnd?.(); return }
+        if (a.loop) { i = 0; delay += restMs } else { timer = null; active = null; onEnd?.(); return }
       }
       show(/** @type {string} */ (frames[i]))
-      timer = schedule(step, stepMs)
+      timer = schedule(step, delay)
     }
     timer = schedule(step, stepMs)
   }
@@ -115,8 +117,12 @@ export function createSpriteRenderer(deps) {
       deps.stage.style.setProperty('--pet-anchor-x', String(anchor[0]))
       deps.stage.style.setProperty('--pet-anchor-y', String(anchor[1]))
     },
-    /** @param {Animation} a @param {{ onEnd?: () => void }} [opts] */
-    play(a, opts = {}) { fading = null; run(a, opts.onEnd) },
+    /** @param {Animation} a @param {{ onEnd?: () => void, restMs?: number }} [opts] */
+    play(a, opts = {}) {
+      fading = null
+      const restMs = typeof opts.restMs === 'number' && Number.isFinite(opts.restMs) && opts.restMs > 0 ? opts.restMs : 0
+      run(a, opts.onEnd, restMs)
+    },
     /** @param {Animation} a @param {{ onEnd?: () => void }} [opts] */
     fadeTo(a, opts = {}) {
       fading = { animation: a, onEnd: opts.onEnd }
@@ -146,7 +152,7 @@ export function createSpriteRenderer(deps) {
       if (paused) return
       const f = fading, a = active
       if (f) { run(f.animation, undefined); finishFade() }
-      else if (a) run(a.animation, a.onEnd)
+      else if (a) run(a.animation, a.onEnd, a.restMs)
     },
     /** @param {boolean} on */
     setPaused(on) {
@@ -154,7 +160,7 @@ export function createSpriteRenderer(deps) {
       paused = on; generation += 1; clear(); clearGhost(); syncBreathing()
       const f = fading, a = active
       if (!on && f) { run(f.animation, undefined); finishFade() }
-      else if (!on && a) run(a.animation, a.onEnd)
+      else if (!on && a) run(a.animation, a.onEnd, a.restMs)
     },
     /** @param {string} url */
     reportFrameError(url) { reportFrameError(url) },

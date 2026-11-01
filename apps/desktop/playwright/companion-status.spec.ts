@@ -27,6 +27,7 @@ test('quiet and reduced motion retain current activity and pending permission wi
   const stage = page.locator('#pet-stage')
   const status = page.locator('#pet-connection')
   await expect(stage).toHaveAttribute('aria-label', 'CC，已连接，想一想')
+  await stage.hover()
   await page.getByText('陪伴设置', { exact: true }).click()
   await expect(status).toHaveText('已连接 · 想一想')
   await page.getByRole('button', { name: '安静一小时' }).click()
