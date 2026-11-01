@@ -22,6 +22,8 @@ export type HomeInput = {
   away?: number | null
   /** 带回来的只收多久以内;null ⇒ 不限(「全部」页)。默认 24 小时。 */
   backWindowMs?: number | null
+  /** 够不着电脑时留着上次看到的等你那几件(「全部」页:找得到那件事);主页不留,只说「暂时不知道」。 */
+  keepStaleWaiting?: boolean
 }
 
 export type HomeRow = {
@@ -47,8 +49,8 @@ export type HomeRow = {
 export type HomeView = {
   waitingUnknown: boolean
   groups: Array<{ key: HomeGroupKey; title: string; rows: HomeRow[] }>
-  /** 等你、而且手机上拍得了的件数(终端自己在问的不算)。 */
-  waitingCount: number
+  /** 等你、而且手机上拍得了的那几条(`matter:<id>:<请求>` / `terminal:<会话>:<码>`),给 CC 的「等」动作;终端自己在问的不算。够不着电脑 ⇒ 空。 */
+  actionableWaiting: string[]
   /** 24 小时以前带回来的,只在「全部」里。 */
   moreCount: number
 }
@@ -62,7 +64,23 @@ function matterRows(input: HomeInput): HomeRow[] {
   const first = new Map<string, ApprovalItemT>()
   for (const a of approvals) if (!first.has(a.taskId)) first.set(a.taskId, a)
   const pendingN = (id: string) => approvals.filter(a => a.taskId === id).length
-  return matters
+  // 批准到了、列表还没跟上(新事 / 超出列表上限 / 还没拉到)⇒ 照样一行等你:标题用请求概括,去处是那一步
+  const listed = new Set(matters.map(m => m.id))
+  const orphans: HomeRow[] = [...first.values()].filter(a => !listed.has(a.taskId)).map(a => ({
+    id: a.taskId,
+    source: 'matter' as const,
+    href: `/matter/${encodeURIComponent(a.taskId)}/decide?request=${encodeURIComponent(a.id)}`,
+    title: a.summary,
+    caption: null,
+    detail: null,
+    note: null,
+    status: 'waiting' as const,
+    pendingRequestId: a.id,
+    agents: [],
+    origin: null,
+    updatedAt: input.now,
+  }))
+  return [...orphans, ...matters
     .filter(m => m.status !== 'archived' && m.kind !== 'chat')
     .map(m => {
       const task = agents.tasks.find(x => x.id === m.id)
@@ -84,7 +102,7 @@ function matterRows(input: HomeInput): HomeRow[] {
         origin: matterOrigin(m.origin),
         updatedAt: m.updatedAt,
       }
-    })
+    })]
 }
 
 function terminalHomeRows(input: HomeInput): HomeRow[] {
@@ -118,7 +136,7 @@ export function homeView(input: HomeInput): HomeView {
   const byRecent = (a: HomeRow, b: HomeRow) => b.updatedAt - a.updatedAt
   // 等你组里一件事在前、终端在后(和原来的此刻一致);各自按最近动静
   // 够不着电脑:等你的那几件读到的是旧的 ⇒ 整行不出(不把它误标成「在做」),页面说「暂时不知道」
-  const all = [...matterRows(input).sort(byRecent), ...terminalHomeRows(input).sort(byRecent)].filter(r => input.known || r.status !== 'waiting')
+  const all = [...matterRows(input).sort(byRecent), ...terminalHomeRows(input).sort(byRecent)].filter(r => input.known || input.keepStaleWaiting || r.status !== 'waiting')
   let moreCount = 0
   const groups = GROUP_ORDER.map(key => {
     let rows = all.filter(r => STATUS_TABLE[r.status].group === key)
@@ -134,8 +152,11 @@ export function homeView(input: HomeInput): HomeView {
     const title = whileAway ? t(lang, 'today.whileAway', { n: Math.round((now - away!) / 3_600_000) }) : t(lang, `home.group.${key}`)
     return { key, title, rows }
   }).filter(g => g.rows.length > 0)
-  const waitingCount = input.known
-    ? new Set(input.approvals.map(a => a.taskId)).size + terminalNeedsYou(input.terminal, true).length
-    : 0
-  return { waitingUnknown: !input.known, groups, waitingCount, moreCount }
+  const actionableWaiting = input.known
+    ? [
+        ...all.filter(r => r.source === 'matter' && r.status === 'waiting' && r.pendingRequestId).map(r => `matter:${r.id}:${r.pendingRequestId}`),
+        ...terminalNeedsYou(input.terminal, true).map(s => `terminal:${s.session_id}:${s.pending?.hash ?? ''}`),
+      ]
+    : []
+  return { waitingUnknown: !input.known, groups, actionableWaiting, moreCount }
 }

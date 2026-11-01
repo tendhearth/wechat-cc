@@ -21,7 +21,7 @@ export default function All() {
   const conn = useConnection()
   const { approvals, agents, matters, mattersKnown, mattersLoading, mattersError, refreshMatters, demo } = useWork()
   const terminal = useTerminalSessions()
-  const view = homeView({ matters, approvals, agents, terminal: terminal.sessions ?? [], known: demo || conn.state === 'online', now: Date.now(), lang, backWindowMs: null })
+  const view = homeView({ matters, approvals, agents, terminal: terminal.sessions ?? [], known: demo || conn.state === 'online', now: Date.now(), lang, backWindowMs: null, keepStaleWaiting: true })
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'home.all')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />

@@ -54,8 +54,11 @@ async function mount(backend: Backend, node: ReactNode) {
 }
 function WorkProbe() { host.work = useWork(); return null }
 // 终端会话这一路给空(此前是把 useTerminal 整个 mock 成空;现在走真 hook,空列表放在后端边界上)。
-function backendWithMatters(load: () => Promise<MatterT[]>): Backend {
-  return { ...makeDemoBackend({ lang: 'en' }), cliSessions: async () => [], matters: load }
+function backendWithMatters(load: () => Promise<MatterT[]>, opts: { approvals?: boolean } = {}): Backend {
+  const demo = makeDemoBackend({ lang: 'en' })
+  // approvals: false ⇒ 「等你」这一路是空的(否则演示的批准会在列表里出行,列表就不「空」了)
+  const subscribe: Backend['subscribe'] = (name, cb) => opts.approvals === false && name === 'approvals' ? (cb([] as never), () => {}) : demo.subscribe(name, cb)
+  return { ...demo, cliSessions: async () => [], matters: load, subscribe }
 }
 afterEach(async () => {
   await act(() => { for (const root of roots.splice(0)) root.unmount() })
@@ -74,7 +77,7 @@ describe('matter list loading evidence', () => {
   it('the full list shows loading before the first read and offers a read-only retry after failure', async () => {
     let reject!: (reason: Error) => void
     let succeed = false
-    const backend = backendWithMatters(() => succeed ? Promise.resolve([]) : new Promise((_, no) => { reject = no }))
+    const backend = backendWithMatters(() => succeed ? Promise.resolve([]) : new Promise((_, no) => { reject = no }), { approvals: false })
     await mount(backend, createElement(All))
     expect(el('all-empty')).toBeNull()
     expect(el('all-loading')?.getAttribute('aria-label')).toBeTruthy()

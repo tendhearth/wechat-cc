@@ -69,7 +69,7 @@ export function HomeScreen() {
     active: presence === 'here' && motionEnabled,
     received: chat.data ? (line ? [{ id: line.id, at: line.at }] : []) : undefined,
     done: mattersKnown ? rowsOf('back').map(r => ({ id: `${r.source}:${r.id}`, at: r.updatedAt })) : undefined,
-    waiting: view.waitingUnknown ? undefined : rowsOf('waiting').map(r => `${r.source}:${r.id}:${r.pendingRequestId ?? ''}`),
+    waiting: view.waitingUnknown ? undefined : view.actionableWaiting,
   })
   useEffect(() => {
     const current = JSON.parse(snapshot)

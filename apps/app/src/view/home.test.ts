@@ -27,14 +27,14 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     const v = homeView(input({ known: false, matters: [m('w', NOW), m('r', NOW)], approvals: [{ taskId: 'w', kind: 'permission', id: 'p1', summary: 's' }] as any }))
     expect(v.waitingUnknown).toBe(true)
     expect(v.groups.map(g => g.key)).not.toContain('waiting')
-    expect(v.waitingCount).toBe(0)
+    expect(v.actionableWaiting).toEqual([])
   })
   it('同一件事两条批准 ⇒ 等你组一行,带第一条请求;去处带 ?request=', () => {
     const v = homeView(input({ matters: [m('w', NOW)], approvals: [{ taskId: 'w', kind: 'question', id: 'q1', summary: 'a' }, { taskId: 'w', kind: 'permission', id: 'p2', summary: 'b' }] as any }))
     const rows = v.groups[0]!.rows
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ id: 'w', status: 'waiting', pendingRequestId: 'q1', title: 'a', href: '/matter/w/decide?request=q1', caption: 'tw' })
-    expect(v.waitingCount).toBe(1)
+    expect(v.actionableWaiting).toHaveLength(1)
   })
   it('主人对话、访客对话、归档的不进列表', () => {
     const v = homeView(input({ matters: [m('a', NOW), m('c', NOW, 'open', { kind: 'chat' }), m('x', NOW, 'archived')] }))
@@ -49,7 +49,7 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     expect(w.map(r => r.id).sort()).toEqual(['L', 'P'])
     expect(w.find(r => r.id === 'L')).toMatchObject({ source: 'terminal', note: t('zh-Hans', 'terminal.askedLocally'), href: '/terminal/L', title: 'Bash: rm' })
     expect(w.find(r => r.id === 'P')!.note).toBeNull()
-    expect(v.waitingCount).toBe(1)
+    expect(v.actionableWaiting).toHaveLength(1)
     expect(v.groups.flatMap(g => g.rows.map(r => r.id))).not.toContain('E')
   })
   it('终端在跑 ⇒ 在做组;歇着 ⇒ 带回来的(这一轮做完了)', () => {
@@ -83,5 +83,24 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     const v = homeView(input({ matters: [m('f', NOW, 'open'), m('r', NOW)], agents: { running: 1, waiting: 0, tasks: [{ id: 'f', status: 'running', phase: 'failed' }] } as any }))
     expect(v.groups.find(g => g.key === 'back')!.rows[0]).toMatchObject({ id: 'f', status: 'failed', caption: t('zh-Hans', 'status.failed') })
     expect(v.groups.find(g => g.key === 'working')!.rows[0]!.caption).toBeNull()
+  })
+  it('批准到了、一件事列表还没跟上(新事 / 超出 50 条 / 还没拉到)⇒ 照样出等你的行,去处是那一步', () => {
+    const v = homeView(input({ matters: [], approvals: [{ taskId: 'new1', kind: 'permission', id: 'p9', summary: 'Bash: npm i' }] as any }))
+    const w = v.groups.find(g => g.key === 'waiting')!.rows
+    expect(w).toHaveLength(1)
+    expect(w[0]).toMatchObject({ id: 'new1', source: 'matter', status: 'waiting', title: 'Bash: npm i', caption: null, pendingRequestId: 'p9', href: '/matter/new1/decide?request=p9' })
+  })
+  it('「全部」页够不着电脑时留着上次看到的等你那几件(keepStaleWaiting),主页不留', () => {
+    const base = { known: false, matters: [m('w', NOW)], approvals: [{ taskId: 'w', kind: 'permission', id: 'p1', summary: 's' }] as any }
+    expect(homeView(input(base)).groups.flatMap(g => g.rows.map(r => r.id))).toEqual([])
+    const all = homeView(input({ ...base, keepStaleWaiting: true }))
+    expect(all.waitingUnknown).toBe(true)
+    expect(all.groups.find(g => g.key === 'waiting')!.rows.map(r => r.id)).toEqual(['w'])
+  })
+  it('能在手机上拍板的等你(给 CC 的「等」动作用):终端自己在问的不算', () => {
+    const local = term({ session_id: 'L', status: 'waiting', pending: { tool: 'Bash', summary: 'rm', since: NOW, hash: null, actionable: false } })
+    const phone = term({ session_id: 'P', status: 'waiting', pending: { tool: 'Bash', summary: 'x', since: NOW, hash: 'h', actionable: true } })
+    const v = homeView(input({ matters: [m('w', NOW)], approvals: [{ taskId: 'w', kind: 'permission', id: 'p1', summary: 's' }] as any, terminal: [local, phone] }))
+    expect(v.actionableWaiting).toEqual(['matter:w:p1', 'terminal:P:h'])
   })
 })
