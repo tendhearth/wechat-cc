@@ -168,7 +168,7 @@ describe('adoptNativeSession:接成一件事',()=>{
 describe('幂等与无副作用(补充)',()=>{
   it('预览不写库:前后各表行数不变',async()=>{
     const f=fixture()
-    const count=()=>['workbench_tasks','workbench_sources','workbench_events','workbench_projects','matters','matter_bindings'].map(t=>db.query<{n:number},[]>(`SELECT COUNT(*) AS n FROM ${t}`).get()!.n)
+    const count=()=>['workbench_tasks','workbench_sources','matter_items','workbench_projects','matters','matter_bindings'].map(t=>db.query<{n:number},[]>(`SELECT COUNT(*) AS n FROM ${t}`).get()!.n)
     const before=count()
     await service!.previewNativeContinue(f.item.key)
     f.resumable(false);await service!.previewNativeContinue(f.item.key)

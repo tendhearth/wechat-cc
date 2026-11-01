@@ -98,6 +98,12 @@ describe('步',()=>{
     expect(log.items('0000000a',{afterCursor:b.cursor}).map(i=>i.id)).toEqual([a.id])
     expect(log.items('0000000a').map(i=>i.seq)).toEqual([1,2])
   })
+  it('按 key 取一步;没有 ⇒ null(同一把 key 在别的事里不算)',()=>{
+    const a=log.writeItem({matterId:'0000000a',kind:'tool_call',status:'started',key:'k',payload:{label:'x'}})
+    expect(log.item('0000000a','k')).toEqual(a)
+    expect(log.item('0000000b','k')).toBeNull()
+    expect(log.item('0000000a','nope')).toBeNull()
+  })
   it('拒绝:轮不属于这件事、同一把 key 换了 kind、陌生的 kind / status',()=>{
     const t=log.startTurn({matterId:'0000000a',executor:'claude'})
     expect(()=>log.writeItem({matterId:'0000000b',turnId:t.id,kind:'system',status:'completed'})).toThrow('turn_not_in_matter')

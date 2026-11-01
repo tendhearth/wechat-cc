@@ -109,6 +109,7 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     writeItem:input=>writeItem(input),
     setState:(matterId,state)=>setState(matterId,state),
     state(matterId){const m=matterRow(matterId);return m?{state:m.state,archivedAt:m.archived_at}:null},
+    item(matterId,key){const r=db.query<ItemRow,[string,string]>('SELECT * FROM matter_items WHERE matter_id=? AND item_key=?').get(matterId,key);return r?toItem(r):null},
     turns:matterId=>db.query<TurnRow,[string]>('SELECT * FROM matter_turns WHERE matter_id=? ORDER BY seq').all(matterId).map(toTurn),
     items:(matterId,opts={})=>(opts.afterCursor===undefined
       ?db.query<ItemRow,[string]>('SELECT * FROM matter_items WHERE matter_id=? ORDER BY seq').all(matterId)

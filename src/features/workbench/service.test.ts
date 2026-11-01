@@ -686,10 +686,10 @@ describe('persistent workbench', () => {
       db.query(`UPDATE workbench_tasks SET ${column}=? WHERE id=?`).run(original!,task.id)
     }
     const sourceEvent=before.events.find(e=>e.kind==='text')!
-    db.query('UPDATE workbench_events SET text=? WHERE id=?').run('edited answer',sourceEvent.id)
+    db.query("UPDATE matter_items SET payload_json=json_set(payload_json,'$.text',?) WHERE id=?").run('edited answer',sourceEvent.id)
     expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
-    db.query('UPDATE workbench_events SET text=? WHERE id=?').run(sourceEvent.text,sourceEvent.id)
-    db.query('DELETE FROM workbench_events WHERE id=?').run(sourceEvent.id)
+    db.query("UPDATE matter_items SET payload_json=json_set(payload_json,'$.text',?) WHERE id=?").run(sourceEvent.text,sourceEvent.id)
+    db.query('DELETE FROM matter_items WHERE id=?').run(sourceEvent.id)
     makeWorkbenchStore(db).addEvent(task.id,'text',sourceEvent.text)
     expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
     makeWorkbenchStore(db).addEvent(task.id,'text','new history')

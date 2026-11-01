@@ -51,7 +51,7 @@ describe('store seq(每个写点都让 version 递增)', () => {
     expect(d.events.length).toBeGreaterThan(0)
     // events 本身不对外报 seq(公开字段里没有它),直接查库核对——这条钉的是「读的先后顺序」这个
     // 不变量:哪怕并发写夹在两次读之间,version 也绝不能抢先报出比已读到的行更新的进度。
-    const maxEventSeq = db.query<{ maxSeq: number }, [string]>('SELECT MAX(seq) AS maxSeq FROM workbench_events WHERE task_id=?').get(id)!.maxSeq
+    const maxEventSeq = db.query<{ maxSeq: number }, [string]>("SELECT MAX(json_extract(payload_json,'$.v')) AS maxSeq FROM matter_items WHERE matter_id=?").get(id)!.maxSeq
     expect(d.version).toBeLessThanOrEqual(maxEventSeq)
   })
   it('recordHandoffNative/recordHandoffEvent 同时唤醒 source 与 target 两边的实时视图（handoffs() 在两边 detail() 里都会出现）', () => {
