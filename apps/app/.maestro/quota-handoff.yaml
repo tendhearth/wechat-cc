@@ -10,20 +10,21 @@ appId: com.tendhearth.app
     visible:
       id: now-connections
     timeout: 10000
-- retry:
-    maxRetries: 2
-    commands:
-      - tapOn:
-          id: tab-together
-      - extendedWaitUntil:
-          visible:
-            id: together-item-a1b2c3d4
-          timeout: 3000
 - scrollUntilVisible:
     element:
-      id: together-item-f3a4b5c6
+      id: home-all
+    direction: DOWN
 - tapOn:
-    id: together-item-f3a4b5c6
+    id: home-all
+- extendedWaitUntil:
+    visible:
+      id: row-matter-a1b2c3d4
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: row-matter-f3a4b5c6
+- tapOn:
+    id: row-matter-f3a4b5c6
 - extendedWaitUntil:
     visible:
       id: progress-handoff-note

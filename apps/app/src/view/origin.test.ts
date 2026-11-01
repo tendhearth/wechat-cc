@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { Matter, MATTER_ORIGINS as PROTOCOL_ORIGINS } from '@wechat-cc/protocol'
 import { t } from '../i18n'
 import { MATTER_ORIGINS, matterOrigin, originKey } from './origin'
-import { togetherView } from './together'
+import { homeView } from './home'
 
 const matter = (id: string, extra: Record<string, unknown> = {}) => ({ id, kind: 'task', title: 'T ' + id, projectPath: null, status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1, ...extra })
 
@@ -26,9 +26,10 @@ describe('出生地(2026-10-19)', () => {
     expect(Matter.parse(matter('c', { origin: 'smart-fridge' })).origin).toBeUndefined()
   })
 
-  it('「一起做」每行带出生地;老的事是 null(不画)', () => {
-    const rows = togetherView([Matter.parse(matter('a', { origin: 'cli' })), Matter.parse(matter('b'))] as never, [], { tasks: [] } as never)
-    expect(rows.map(r => [r.id, r.origin])).toEqual([['a', 'cli'], ['b', null]])
+  it('主页每行带出生地;老的事是 null(不画)', () => {
+    const v = homeView({ matters: [Matter.parse(matter('a', { origin: 'cli' })), Matter.parse(matter('b'))] as never, approvals: [], agents: { tasks: [] } as never, terminal: [], known: true, now: 0, lang: 'zh-Hans', backWindowMs: null })
+    const rows = v.groups.flatMap(g => g.rows)
+    expect(Object.fromEntries(rows.map(r => [r.id, r.origin]))).toEqual({ a: 'cli', b: null })
   })
 
   it('每个字形都有 1x/2x/3x,画法组件认全了每一种(没有原生依赖,按 ink 着色)', () => {

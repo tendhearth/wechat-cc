@@ -9,7 +9,7 @@ import type { Backend, NativeSessionPageT, NativeSessionRowT, SessionContinueT }
 import { withProviders } from './providers.test-support'
 import Sessions from '../app/sessions/index'
 import SessionReader from '../app/sessions/[key]'
-import Together from '../app/(tabs)/together'
+import { HomeScreen as Home } from '../ui/HomeScreen'
 import { palette } from '../ui/tokens'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
@@ -18,6 +18,7 @@ const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
 const roots: Root[] = []
 const host = vi.hoisted(() => ({ backend: null as unknown as Backend, params: { key: 'k1' }, focused: true, focusEntries: new Set<FocusEntry>(), back: vi.fn(), push: vi.fn(), replace: vi.fn(), dotColours: [] as string[] }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+vi.mock('expo-secure-store', () => ({ getItemAsync: async () => null, setItemAsync: async () => {} }))
 vi.mock('react-native', async () => {
   const native = (await import('../ui/native-motion.test-support')).nativeBoundary()
   const { createElement, forwardRef } = await import('react')
@@ -289,15 +290,14 @@ describe('session reading with real LiveBackend and native UI', () => {
     expect(ui.container.textContent).not.toContain('不属于这页的记录')
     expect(ui.container.textContent).toContain('另一台电脑的记录')
   })
-  it('keeps sessions in Together’s more menu, with no pinned chat and a separate delegation action', async () => {
-    const h = harness(), ui = await mount(Together)
-    expect(ui.byId('together-sessions')).toBeNull()
-    await ui.click('together-more')
-    expect(ui.byId('together-sessions').textContent).toContain('电脑上的会话')
-    await ui.click('together-sessions')
+  it('keeps sessions in the home more menu, with a separate delegation action', async () => {
+    const h = harness(), ui = await mount(Home)
+    expect(ui.byId('home-sessions')).toBeNull()
+    await ui.click('home-more')
+    expect(ui.byId('home-sessions').textContent).toContain('电脑上的会话')
+    await ui.click('home-sessions')
     expect(host.push).toHaveBeenCalledWith('/sessions')
-    expect(ui.byId('together-pinned-chat')).toBeNull()
-    await ui.click('together-delegate')
+    await ui.click('home-delegate')
     expect(host.push).toHaveBeenCalledWith('/compose')
     expect(h.posts()).toHaveLength(0)
   })

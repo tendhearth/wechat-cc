@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import type { CliSessionRowT } from '../backend/types'
-import { canSayTo, relAgo, terminalErrorKey, terminalNeedsYou, terminalRow, terminalRows } from './terminal'
+import { canSayTo, relAgo, terminalErrorKey, terminalNeedsYou, terminalRow } from './terminal'
 import { mapPhoneError } from '../net/errors'
 
 const NOW = 10_000_000
@@ -26,11 +26,6 @@ describe('终端里的会话(手机视图)', () => {
     expect(terminalRow(waiting(false), NOW, 'en').actionable).toBe(false)
     // 老 daemon:pending 不带 hash / actionable ⇒ 不可拍
     expect(terminalRow(row({ status: 'waiting', pending: { tool: 'Bash', summary: null, since: 1 } }), NOW, 'en')).toMatchObject({ pendingText: 'Bash', actionable: false })
-  })
-  it('列表:结束了的不列;等你批准的在前,其余按最近动静', () => {
-    const v = terminalRows([row({ session_id: 'old', last_event_at: 1 }), row({ session_id: 'end', status: 'ended' }), waiting(false, { session_id: 'w', last_event_at: 0 }), row({ session_id: 'new', last_event_at: NOW })], NOW, 'en')
-    expect(v.map(r => r.id)).toEqual(['w', 'new', 'old'])
-    expect(terminalRows(undefined, NOW, 'en')).toEqual([])
   })
   it('「此刻」的数:只算手机拍得了的;够不着电脑 ⇒ 0', () => {
     const list = [waiting(true, { session_id: 'a' }), waiting(false, { session_id: 'b' }), row({ session_id: 'c' })]

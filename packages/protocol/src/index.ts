@@ -40,3 +40,5 @@ export type { WorkbenchErrorSpec, WorkbenchErrorOut, WorkbenchErrorSurface } fro
 export type { PhoneApiKey, PhoneApiResponse, PhoneApiOk } from './api'
 export type { PhoneApi, PhoneCallSpec, PhoneCallArgs, PhoneCallFn, PhoneCallRequest, PhoneTransport } from './phone-calls'
 export { PHONE_CALLS, makePhoneApi, phoneCallRequest, toProtocolRequest } from './phone-calls'
+export { STATUS_KEYS, STATUS_TABLE } from './status-table'
+export type { StatusKey, HomeGroupKey, StatusIcon, StatusSpec } from './status-table'

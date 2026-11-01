@@ -7,11 +7,10 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: now-needs-you-card
+      id: home-group-waiting
     timeout: 10000
 - tapOn:
-    id: now-look-then-decide
-    index: 0
+    id: row-matter-a1b2c3d4
 - extendedWaitUntil:
     visible:
       id: approval-title

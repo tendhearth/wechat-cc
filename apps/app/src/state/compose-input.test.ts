@@ -13,8 +13,8 @@ import { withProviders, type TestCtx } from './providers.test-support'
 import { makeInputJournal } from './input-journal'
 import { matterInputState, matterInputs } from '../state/matter-inputs'
 import Compose from '../app/compose'
-import Matter from '../app/matter/[id]'
-import Approval from '../app/approval/[id]'
+import Matter from '../app/matter/[id]/index'
+import Approval from '../app/matter/[id]/decide'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
@@ -394,7 +394,7 @@ describe('work-first matter details', () => {
     const request = ui.byId('progress-request-0')
     expect(request.textContent).toContain('npm test')
     await ui.click('progress-request-0')
-    expect(host.push).toHaveBeenCalledWith(`/approval/${ID}?request=${DETAIL.permissions[0]!.id}`)
+    expect(host.push).toHaveBeenCalledWith(`/matter/${ID}/decide?request=${DETAIL.permissions[0]!.id}`)
     expect(h.requests.filter(r => r.method === 'POST')).toHaveLength(0)
     await ui.click('progress-process')
     expect(ui.byId('progress-execution-details').textContent).toContain('/p')

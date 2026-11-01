@@ -28,11 +28,9 @@ appId: com.tendhearth.app
 - tapOn:
     id: topbar-back
 - tapOn:
-    id: tab-together
+    id: home-more
 - tapOn:
-    id: together-more
-- tapOn:
-    id: together-sessions
+    id: home-sessions
 - extendedWaitUntil:
     visible:
       id: sessions-row-demo-claude-1
@@ -48,8 +46,6 @@ appId: com.tendhearth.app
     id: topbar-back
 - tapOn:
     id: topbar-back
-- tapOn:
-    id: tab-now
 - tapOn:
     id: topbar-settings
 - scrollUntilVisible:

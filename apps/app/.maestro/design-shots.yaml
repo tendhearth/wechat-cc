@@ -85,8 +85,7 @@ appId: com.tendhearth.app
       id: now-cc
     timeout: 5000
 - tapOn:
-    id: now-look-then-decide
-    index: 0
+    id: row-matter-a1b2c3d4
 - extendedWaitUntil:
     visible:
       id: approval-title
@@ -100,18 +99,19 @@ appId: com.tendhearth.app
       id: now-cc
     timeout: 5000
 # 同 demo-walkthrough:第一下点标签偶尔没生效,没切过去就再点一次
-- retry:
-    maxRetries: 2
-    commands:
-      - tapOn:
-          id: tab-together
-      - extendedWaitUntil:
-          visible:
-            id: together-item-a1b2c3d4
-          timeout: 3000
-- takeScreenshot: p09-together
+- scrollUntilVisible:
+    element:
+      id: home-all
+    direction: DOWN
 - tapOn:
-    id: together-item-a1b2c3d4
+    id: home-all
+- extendedWaitUntil:
+    visible:
+      id: row-matter-a1b2c3d4
+    timeout: 5000
+- takeScreenshot: p09-home-all
+- tapOn:
+    id: row-matter-a1b2c3d4
 - extendedWaitUntil:
     visible:
       id: approval-allow
@@ -128,7 +128,7 @@ appId: com.tendhearth.app
 - tapOn:
     id: topbar-back
 - tapOn:
-    id: tab-now
+    id: topbar-back
 - tapOn:
     id: topbar-settings
 - extendedWaitUntil:

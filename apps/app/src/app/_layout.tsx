@@ -21,7 +21,7 @@ import { palette } from '../ui/tokens'
 import { fontGate } from '../ui/type'
 
 // 根布局:语言 = 设置覆盖 ?? 系统(SessionProvider + useLang);页面永远同一张暖纸(spec 2026-10-01 §1.8),不跟系统深浅;本地衬线字体加载完(或出错退回系统字)才画页面;
-// 有配对 ⇒ 真后端,否则演示后端,包住全部页面;推送登记(PushProvider)跟着后端走;点通知 / 前台横幅(PushRouter)叠在页面之上;钥匙串读完之前只画底色。首次打开跳 /welcome 的判断在 (tabs)/_layout 里做。
+// 有配对 ⇒ 真后端,否则演示后端,包住全部页面;推送登记(PushProvider)跟着后端走;点通知 / 前台横幅(PushRouter)叠在页面之上;钥匙串读完之前只画底色。首次打开跳 /welcome 的判断在主页 index.tsx 里做。
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
@@ -45,7 +45,7 @@ function Themed() {
         <ThemeProvider value={theme}>
           <StatusBar style="dark" />
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.paper } }}>
-            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="index" />
             <Stack.Screen name="welcome" options={{ gestureEnabled: false }} />
             <Stack.Screen name="push-open" options={{ gestureEnabled: false }} />
             <Stack.Screen name="share" options={{ gestureEnabled: false }} />
