@@ -10,6 +10,10 @@ import type { Migration } from './types'
 // workbench_events 本身留着、不再写 —— self deploy 回滚到上一版时它还要读;M2c 再删。
 // 可重放:只搬还没搬过的(matter_items 里没有同 id 的),外键已经改过就不再重建。
 export const migration: Migration = (db) => {
+    // 「同 id 已经在 matter_items 里」只在它就是这条事件搬过去的那一步时才算搬过(重放);属于别的事 ⇒ 两边的 id 撞了,
+    // 悄悄跳过会让交接记的请求指到一条无关的步上 —— 直接报错,整条回滚(Codex 评审 P1;v92 发布的版本里没人写步,真机不会撞)。
+    const clash = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM workbench_events e JOIN matter_items i ON i.id=e.id WHERE i.matter_id<>e.task_id').get()!.n
+    if (clash) throw new Error(`v93: ${clash} workbench_events ids collide with matter_items of other matters`)
     db.exec(`
       INSERT INTO matters(id,kind,initiator,title,project_path,state,archived_at,status,owner_chat_id,created_at,updated_at)
         SELECT t.id,'task','owner',t.title,t.path,

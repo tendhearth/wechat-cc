@@ -1159,4 +1159,13 @@ describe('v93 — 一起做的时间线搬进 matter_items(M2)', () => {
     expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('workbench_handoffs_source','workbench_handoffs_target','workbench_events') ORDER BY name").all())
       .toEqual([{ name: 'workbench_events' }, { name: 'workbench_handoffs_source' }, { name: 'workbench_handoffs_target' }])
   })
+  it('搬之前已有同 id、属于别的事的步 ⇒ 整条迁移报错,不悄悄跳过(Codex 评审 P1)', () => {
+    const db = migratedTo(92)
+    db.query("INSERT INTO matters(id,kind,title,status,created_at,updated_at) VALUES('0000000a','task','a','open',1,1),('0000000c','chat','c','open',1,1)").run()
+    db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id) VALUES('0000000a','a','/w','claude','completed',1,1,'0000000a')").run()
+    db.query("INSERT INTO workbench_events(id,task_id,kind,text,created_at,seq) VALUES(1,'0000000a','user','x',1,1)").run()
+    db.query("INSERT INTO matter_items(id,matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES(1,'0000000c',1,'system','completed','{}',1,1,1)").run()
+    expect(() => runMigrations(db, migrations)).toThrow(/v93/)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 92 })
+  })
 })

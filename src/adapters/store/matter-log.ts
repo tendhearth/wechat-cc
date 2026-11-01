@@ -27,13 +27,19 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
   const itemRow=(id:number)=>db.query<ItemRow,[number]>('SELECT * FROM matter_items WHERE id=?').get(id)!
   const running=(matterId:string)=>db.query<{n:number},[string]>("SELECT COUNT(*) AS n FROM matter_turns WHERE matter_id=? AND status='running'").get(matterId)!.n
   /**
-   * 统一状态只在这里推:开着的权限卡 / 提问 ⇒ waiting;否则有轮在跑 ⇒ working;否则 working / waiting 落回 `settled`
-   * (轮结束时给的结局,默认 open),其余结局保持。每次写都刷新 updated_at —— 这件事最后一次有动静的时间。
+   * 统一状态只在这里推:开着的权限卡 / 提问 ⇒ waiting;否则有轮在跑 ⇒ working;否则(只在轮开始 / 结束时,`turnEdge`)
+   * working / waiting 落回 `settled`(轮结束时给的结局,默认 open),其余结局保持。普通的一步不把 working 落回去 ——
+   * 轮还没开始记的那段(一起做 M2b 之前)working 由旧路径维护,写一步不能把正在跑的事改成 open(Codex 评审 P2)。
+   * 每次写都刷新 updated_at —— 这件事最后一次有动静的时间。
    */
-  const settle=(matterId:string,settled:MatterOutcome='open')=>{
+  const settle=(matterId:string,settled:MatterOutcome='open',turnEdge=true)=>{
     const waiting=db.query<{n:number},[string]>("SELECT COUNT(*) AS n FROM matter_items WHERE matter_id=? AND kind IN ('permission','question') AND status='started'").get(matterId)!.n
     const current=requireMatter(matterId).state
-    const next:MatterState=waiting?'waiting':running(matterId)?'working':current==='working'||current==='waiting'?settled:current
+    const next:MatterState=waiting?'waiting'
+      :running(matterId)?'working'
+      :current==='waiting'?(turnEdge?settled:'working')
+      :current==='working'&&turnEdge?settled
+      :current
     db.query('UPDATE matters SET state=?,updated_at=? WHERE id=?').run(next,now(),matterId)
   }
 
@@ -92,7 +98,7 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
       id=Number(db.query('INSERT INTO matter_items(matter_id,turn_id,seq,kind,status,item_key,message_id,payload_json,created_at,updated_at,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
         .run(input.matterId,input.turnId??null,seq,input.kind,status,key,input.messageId??null,JSON.stringify(payload),ts,ts,nextCursor()).lastInsertRowid)
     }
-    settle(input.matterId)
+    settle(input.matterId,'open',false)
     return toItem(itemRow(id))
   })
 

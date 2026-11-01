@@ -148,6 +148,16 @@ describe('统一状态从轮与「等你」的步推出来',()=>{
     expect(state('0000000a')).toBe('open')
     expect(log.writeItem({matterId:'0000000a',turnId:t.id,kind:'tool_call',status:'completed',key:'c-late'}).status).toBe('completed')
   })
+  it('普通的步不动状态:还没有轮记录的 working(工作台在 M2b 之前)写一步也还是 working(Codex 评审 P2)',()=>{
+    db.query("UPDATE matters SET state='working' WHERE id='0000000a'").run()
+    log.writeItem({matterId:'0000000a',kind:'tool_call',status:'started',key:'c'})
+    log.writeItem({matterId:'0000000a',kind:'agent_message',status:'completed'})
+    expect(state('0000000a')).toBe('working')
+    log.writeItem({matterId:'0000000a',kind:'question',status:'started',key:'q'})
+    expect(state('0000000a')).toBe('waiting')
+    log.writeItem({matterId:'0000000a',kind:'question',status:'completed',key:'q'})
+    expect(state('0000000a')).toBe('working')
+  })
   it('显式结局:还有轮在跑时不许直接判;做完的事再开一轮就回到 working',()=>{
     const t=log.startTurn({matterId:'0000000a',executor:'claude'})
     expect(()=>log.setState('0000000a','done')).toThrow('matter_has_running_turn')
