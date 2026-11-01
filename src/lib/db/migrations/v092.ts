@@ -21,9 +21,9 @@ export const migration: Migration = Object.assign((db: Parameters<Migration>[0])
       CREATE TABLE matters_v92 (
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK(kind IN ('chat','task','terminal','act')),
-        initiator TEXT NOT NULL CHECK(initiator IN ('owner','cc','peer')),
+        initiator TEXT NOT NULL DEFAULT 'owner' CHECK(initiator IN ('owner','cc','peer')),
         title TEXT NOT NULL, project_path TEXT,
-        state TEXT NOT NULL CHECK(state IN ('open','working','waiting','done','failed','cancelled')),
+        state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','working','waiting','done','failed','cancelled')),
         archived_at INTEGER,
         status TEXT NOT NULL CHECK(status IN ('open','replied','done','archived')),
         owner_chat_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
