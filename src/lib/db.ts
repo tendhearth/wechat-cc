@@ -171,12 +171,24 @@ export function runMigrations(db: Database, list: readonly Migration[]): void {
   const current = list === migrations ? repairBranchRenumberedSchema(db, stored) : stored
   for (let i = current; i < list.length; i++) {
     const next = list[i]!
-    db.transaction(() => {
-      next(db)
-      // PRAGMA user_version doesn't accept bound params; safe — value is
-      // a literal integer index from our own array, not user input.
-      db.exec(`PRAGMA user_version = ${i + 1};`)
-    })()
+    const rebuilt = next.withoutForeignKeys ?? []
+    // PRAGMA foreign_keys 在事务里改不了 ⇒ 只能在事务外关、事务外恢复(见 Migration.withoutForeignKeys)。
+    const fkBefore = rebuilt.length ? (db.query('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys : null
+    if (rebuilt.length) db.exec('PRAGMA foreign_keys = OFF;')
+    try {
+      db.transaction(() => {
+        next(db)
+        if (rebuilt.length) {
+          const dangling = (db.query('PRAGMA foreign_key_check').all() as { table: string; parent: string }[]).filter(r => rebuilt.includes(r.parent))
+          if (dangling.length) throw new Error(`migration ${i + 1}: foreign_key_check failed (${dangling.map(r => `${r.table}->${r.parent}`).join(', ')})`)
+        }
+        // PRAGMA user_version doesn't accept bound params; safe — value is
+        // a literal integer index from our own array, not user input.
+        db.exec(`PRAGMA user_version = ${i + 1};`)
+      })()
+    } finally {
+      if (fkBefore !== null) db.exec(`PRAGMA foreign_keys = ${fkBefore ? 'ON' : 'OFF'};`)
+    }
   }
 }
 

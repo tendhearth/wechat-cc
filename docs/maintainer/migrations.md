@@ -48,6 +48,20 @@ CI 作业 `migrations · frozen`(`scripts/migration-frozen.ts`)守这一条:只�
 
 **真要改老迁移**(比如一个会让新装崩掉的错):PR 标题带 `[migration-edit]`,描述里写清楚为什么、以及**已经跑过旧版的库怎么办**(通常答案是:老的照旧放着,再追加一个迁移去修存量库)。CI 会放行并列出改了哪几个文件。
 
+## 重建被外键指着的表:`withoutForeignKeys`
+
+SQLite 改不了 CHECK,只能建新表、搬行、`DROP` 旧表、换名。可 `openDb` 开着外键:旧表被别的表指着时,`DROP` 会先隐式删行、撞上子表,整条迁移失败;`PRAGMA foreign_keys` 又在事务里改不了。v92 重建 `matters`(被五张表指着)时加了这条路:
+
+```ts
+export const migration: Migration = Object.assign((db: Parameters<Migration>[0]) => {
+  // 建 x_vNN、INSERT … SELECT、DROP TABLE x、ALTER TABLE x_vNN RENAME TO x、补回索引和触发器
+}, { withoutForeignKeys: ['x'] as const })
+```
+
+runner 照 SQLite 官方的十二步:事务外关外键,事务里跑完后对 `foreign_key_check` 里**指向这几张表**的行核一遍,有悬空的就整条回滚、版本不动;最后把外键恢复成原来的开关。别的表本来就有的悬空引用不拦(那不是这一条造成的)。
+
+别忘了:旧表上的索引、触发器跟着 `DROP` 一起没了,要在新表上重建(v77 的 `matters_origin_surface_once` 就是例子);迁移还要能重放(#79 的修复会从 v19 再跑一遍)——判断「已经重建过」就跳过重建。
+
 ## 只修存量库的迁移:指纹守卫看不见
 
 `migration-order.test.ts` 比的是「**新建库**跑完迁移得到的 schema」。一个只修存量库的迁移(比如「表已经被旧版本建出来了,缺一列,补上」)在新建库上是空操作,指纹**完全不变** —— 守卫抓不到它写错了。

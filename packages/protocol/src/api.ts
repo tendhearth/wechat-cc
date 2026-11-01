@@ -63,9 +63,16 @@ export const Attachment = z.object({
 export const MATTER_ORIGINS = ['wechat', 'desktop', 'app', 'web', 'cli', 'companion'] as const
 export type MatterOriginT = typeof MATTER_ORIGINS[number]
 
+/**
+ * 一件事是什么(v92,设计稿 §3.1):chat = 对话,task = 一起做,terminal = 终端会话,act = CC 自己做的事。
+ * terminal / act 要到 M4 / M5 才会真的发出来;先进协议,好让那之前装上的 App 认得(App 不能强制升级)。
+ */
+export const MATTER_KINDS = ['chat', 'task', 'terminal', 'act'] as const
+export type MatterKindT = typeof MATTER_KINDS[number]
+
 export const Matter = z.object({
   id: z.string(),
-  kind: z.enum(['chat', 'task', 'companion']),
+  kind: z.enum(MATTER_KINDS),
   title: z.string(),
   projectPath: z.string().nullable(),
   status: z.enum(['open', 'replied', 'done', 'archived']),

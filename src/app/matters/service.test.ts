@@ -47,7 +47,7 @@ describe('matters service',()=>{
     await expect(service.say('00000001','  ')).rejects.toThrow('invalid_text')
     await expect(service.say('00000001','x')).rejects.toThrow('workbench_not_wired')
     const chat=store.ensureChat('c');await expect(service.say(chat.id,'x')).rejects.toThrow('chat_not_wired')
-    store.create({id:'00000002',kind:'companion',title:'心愿'})
+    store.create({id:'00000002',kind:'act',initiator:'cc',title:'心愿'})
     await expect(service.say('00000002','x')).rejects.toThrow('matter_say_unsupported')
   })
 
