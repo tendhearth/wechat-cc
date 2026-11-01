@@ -4,10 +4,17 @@ import CoreGraphics
 import ImageIO
 import CryptoKit
 
+let labRoots = [
+  "/Users/home": "/Users/home/cc-ui-lab/",
+  "/Users/homebot": "/Users/homebot/ci/cc-ui-lab/",
+]
+guard let labRoot = labRoots[NSHomeDirectory()] else {
+  preconditionFailure("QA image decoding requires a configured mini account")
+}
 var results: [[String: Any]] = []
 for argument in CommandLine.arguments.dropFirst() {
-  let file = URL(fileURLWithPath: argument).standardizedFileURL
-  precondition(file.path.hasPrefix("/Users/home/cc-ui-lab/"), "QA image must stay inside the mini lab")
+  let file = URL(fileURLWithPath: argument).standardizedFileURL.resolvingSymlinksInPath()
+  precondition(file.path.hasPrefix(labRoot), "QA image must stay inside the mini lab")
   let source = CGImageSourceCreateWithURL(file as CFURL, nil)!
   let image = CGImageSourceCreateImageAtIndex(source, 0, nil)!
   let width = image.width, height = image.height
