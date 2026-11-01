@@ -30,3 +30,18 @@ export const STATUS_TABLE: Readonly<Record<StatusKey, StatusSpec>> = {
   failed: { word: 'status.failed', icon: 'alert', tone: 'inkSoft', group: 'back' },
   stopped: { word: 'status.stopped', icon: 'pause', tone: 'inkSoft', group: 'back' },
 }
+
+/** 主页三组的顺序。 */
+export const HOME_GROUP_ORDER: readonly HomeGroupKey[] = ['waiting', 'working', 'back']
+
+/** 状态词(两种语言)。App 的词条 status.<key> 从这里取;桌面的生成物(scripts/gen-routes.ts)也从这里写。 */
+export const STATUS_WORDS: Readonly<Record<'zh-Hans' | 'en', Readonly<Record<StatusKey, string>>>> = {
+  'zh-Hans': { working: '在做', waiting: '等你决定', replied: '这一轮做完了', done: '完成', failed: '没做成', stopped: '停下了' },
+  en: { working: 'Working', waiting: 'Waiting on you', replied: 'Done for this round', done: 'Done', failed: 'Didn’t finish', stopped: 'Stopped' },
+}
+
+/** 主页分组的名字(两种语言)。 */
+export const HOME_GROUP_WORDS: Readonly<Record<'zh-Hans' | 'en', Readonly<Record<HomeGroupKey, string>>>> = {
+  'zh-Hans': { waiting: '等你', working: '在做', back: '带回来的' },
+  en: { waiting: 'Waiting on you', working: 'Working', back: 'Brought back' },
+}

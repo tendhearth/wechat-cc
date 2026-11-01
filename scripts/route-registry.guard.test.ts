@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '../packages/protocol/src/routes'
-import { DAEMON_CALLS_JS, renderDaemonCalls, renderWorkbenchRoutes, WORKBENCH_ROUTES_JSON } from './gen-routes'
+import { DAEMON_CALLS_JS, renderDaemonCalls, renderStatusTable, renderWorkbenchRoutes, STATUS_TABLE_JS, WORKBENCH_ROUTES_JSON } from './gen-routes'
 import { makeTokenRegistry } from '../src/daemon/internal-api/token-registry'
 import { ROUTE_MIN_TIER, TIER_RANK } from '../src/daemon/internal-api/route-tiers'
 
@@ -55,6 +55,9 @@ describe('桌面白名单生成物与路由表一致', () => {
   })
   it('apps/desktop/src/generated/daemon-calls.js 是最新的(否则跑 bun run gen:routes)', () => {
     expect(readFileSync(DAEMON_CALLS_JS, 'utf8').replace(/\r\n/g, '\n'), '跑 bun run gen:routes 再提交').toBe(renderDaemonCalls())
+  })
+  it('apps/desktop/src/generated/status-table.js 是最新的(状态表 + 中文词,否则跑 bun run gen:routes)', () => {
+    expect(readFileSync(STATUS_TABLE_JS, 'utf8').replace(/\r\n/g, '\n'), '跑 bun run gen:routes 再提交').toBe(renderStatusTable())
   })
   it('CRLF 检出下也算一致(Windows 的 git autocrlf 会把生成物改成 CRLF)', () => {
     const crlf = GENERATED.replace(/\r?\n/g, '\r\n')

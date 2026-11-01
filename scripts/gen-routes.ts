@@ -24,10 +24,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '../packages/protocol/src/routes'
 import { DESKTOP_CALLS } from '../packages/protocol/src/desktop-calls'
+import { HOME_GROUP_ORDER, HOME_GROUP_WORDS, STATUS_TABLE, STATUS_WORDS } from '../packages/protocol/src/status-table'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const WORKBENCH_ROUTES_JSON = join(ROOT, 'apps', 'desktop', 'src-tauri', 'generated', 'workbench-routes.json')
 export const DAEMON_CALLS_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'daemon-calls.js')
+export const STATUS_TABLE_JS = join(ROOT, 'apps', 'desktop', 'src', 'generated', 'status-table.js')
 
 export interface WorkbenchRoutesFile {
   _comment: string
@@ -80,7 +82,28 @@ export function renderDaemonCalls(): string {
   ].join('\n')
 }
 
-/** 写盘(内容没变就不碰文件);返回是否改了。两份生成物一起写。 */
+/** 状态表(设计稿 2026-10-31 §4 U):桌面引不到协议包,把表和中文词写成纯数据的 ES 模块。纯函数,守卫测试也用它。 */
+export function renderStatusTable(): string {
+  return [
+    '// @ts-check',
+    '// 生成物,别手改:改 packages/protocol/src/status-table.ts 后跑 bun run gen:routes',
+    '// 一件事的状态 ⇒ 怎么说、画什么、上不上强调色、归哪一组。三端(App / 桌面 / 手机网页)只认这一张。',
+    '',
+    `export const STATUS_TABLE = /** @type {const} */ (${JSON.stringify(STATUS_TABLE, null, 2)})`,
+    '',
+    `export const HOME_GROUP_ORDER = /** @type {const} */ (${JSON.stringify(HOME_GROUP_ORDER)})`,
+    '',
+    `export const STATUS_WORDS = /** @type {const} */ (${JSON.stringify(STATUS_WORDS['zh-Hans'], null, 2)})`,
+    '',
+    `export const HOME_GROUP_WORDS = /** @type {const} */ (${JSON.stringify(HOME_GROUP_WORDS['zh-Hans'], null, 2)})`,
+    '',
+    '/** @typedef {keyof typeof STATUS_TABLE} StatusKey */',
+    '/** @typedef {typeof HOME_GROUP_ORDER[number]} HomeGroupKey */',
+    '',
+  ].join('\n')
+}
+
+/** 写盘(内容没变就不碰文件);返回是否改了。三份生成物一起写。 */
 export function writeWorkbenchRoutes(path = WORKBENCH_ROUTES_JSON): boolean {
   const previous = existsSync(path) ? readFileSync(path, 'utf8') : undefined
   const next = renderWorkbenchRoutes(previous)
@@ -98,6 +121,9 @@ export function writeWorkbenchRoutes(path = WORKBENCH_ROUTES_JSON): boolean {
       writeFileSync(DAEMON_CALLS_JS, calls)
       changed = true
     }
+    const prevStatus = existsSync(STATUS_TABLE_JS) ? readFileSync(STATUS_TABLE_JS, 'utf8') : undefined
+    const status = renderStatusTable()
+    if (status !== prevStatus) { writeFileSync(STATUS_TABLE_JS, status); changed = true }
   }
   return changed
 }
@@ -106,7 +132,8 @@ if (import.meta.main) {
   if (process.argv.includes('--check')) {
     const previous = existsSync(WORKBENCH_ROUTES_JSON) ? readFileSync(WORKBENCH_ROUTES_JSON, 'utf8') : undefined
     const calls = existsSync(DAEMON_CALLS_JS) ? readFileSync(DAEMON_CALLS_JS, 'utf8') : undefined
-    if (renderWorkbenchRoutes(previous) !== previous || renderDaemonCalls() !== calls) {
+    const status = existsSync(STATUS_TABLE_JS) ? readFileSync(STATUS_TABLE_JS, 'utf8') : undefined
+    if (renderWorkbenchRoutes(previous) !== previous || renderDaemonCalls() !== calls || renderStatusTable() !== status) {
       console.error(`${WORKBENCH_ROUTES_JSON} / ${DAEMON_CALLS_JS} 和路由表不一致:跑 bun run gen:routes`)
       process.exit(1)
     }
