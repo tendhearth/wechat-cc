@@ -7,7 +7,7 @@ import type {CreateMatter,ListMatters,Matter,MatterBinding,MatterKind,MatterOrig
  *
  * 主人心里的一件事:一个工作台任务、一段闲聊、一次陪伴事件。它跨表面(微信 / 桌面 /
  * 手机 / 终端,`matter_bindings`)、跨供应商会话(`matter_sessions`)。事件本身仍在各自的
- * 表里(workbench_events / messages),这里只是把它们归到同一件事名下。
+ * 表里(一起做的时间线在 matter_items,经 MatterLog 写;对话正文在 messages),这里只是把它们归到同一件事名下。
  * 设计:docs/cc-workbench.md「一件事」(2026-09-16);迁移 v60。
  */
 export const MATTER_ORIGINS:readonly MatterOrigin[]=Object.freeze(['wechat','desktop','app','web','cli','companion'])

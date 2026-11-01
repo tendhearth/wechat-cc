@@ -1113,3 +1113,59 @@ describe('v92 — 一件事 → 一轮 → 一步(M1)', () => {
     expect(db.query('SELECT value FROM matter_log_cursor').all()).toEqual([{ value: 0 }])
   })
 })
+
+describe('v93 — 一起做的时间线搬进 matter_items(M2)', () => {
+  const upgraded = () => {
+    const db = migratedTo(92)
+    const task = db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id,seq) VALUES(?,?,'/w','claude',?,1,1,?,?)")
+    db.query("INSERT INTO matters(id,kind,title,status,created_at,updated_at) VALUES('0000000a','task','有 matter 的','open',1,1)").run()
+    task.run('0000000a', '有 matter 的', 'running', '0000000a', 9)
+    task.run('0000000b', '没挂 matter 的老任务', 'completed', null, 2)
+    db.query("INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES('src-1','0000000a','claude','n1','/w',1,'s','f',1,0,'{}','[]')").run()
+    const ev = db.query('INSERT INTO workbench_events(id,task_id,kind,text,created_at,source_id,run_id,event_key,activity_json,attachments_json,seq) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    ev.run(3, '0000000a', 'user', '帮我修登录', 100, 'src-1', null, null, null, '[]', 1)
+    ev.run(5, '0000000a', 'tool_call', '读 a.ts', 101, null, 'run-1', '["tool_call","c1"]', '{"id":"c1","type":"read","status":"running","label":"读 a.ts"}', '[]', 4)
+    ev.run(6, '0000000a', 'text', '好了', 102, null, 'run-1', '["text","m1"]', null, '[{"id":"a1","name":"x.png"}]', 5)
+    ev.run(7, '0000000a', 'tool_call', '跑测试', 103, null, 'run-1', '["tool_call","c2"]', '{"id":"c2","type":"exec","status":"cancelled","label":"跑测试"}', '[]', 6)
+    ev.run(8, '0000000b', 'system', '旧的', 50, null, null, null, null, '[]', 2)
+    db.query("INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,created_at,request_event_id,packet_json,token_hash) VALUES('h1','0000000a','0000000b','review','看看','p','[]',1,6,'{}','t1')").run()
+    runMigrations(db, migrations)
+    return db
+  }
+  it('每条事件搬成一步:id 不变、每件事里按 id 排 seq、payload 只存有的字段、步的状态跟着工具调用走', () => {
+    const db = upgraded()
+    expect(db.query('SELECT id,matter_id,turn_id,seq,kind,status,item_key,message_id,payload_json,created_at,updated_at FROM matter_items ORDER BY id').all()).toEqual([
+      { id: 3, matter_id: '0000000a', turn_id: null, seq: 1, kind: 'user_message', status: 'completed', item_key: null, message_id: null, payload_json: '{"text":"帮我修登录","v":1,"sourceId":"src-1"}', created_at: 100, updated_at: 100 },
+      { id: 5, matter_id: '0000000a', turn_id: null, seq: 2, kind: 'tool_call', status: 'started', item_key: '["run-1","[\\"tool_call\\",\\"c1\\"]"]', message_id: null, payload_json: '{"text":"读 a.ts","v":4,"runId":"run-1","activity":{"id":"c1","type":"read","status":"running","label":"读 a.ts"}}', created_at: 101, updated_at: 101 },
+      { id: 6, matter_id: '0000000a', turn_id: null, seq: 3, kind: 'agent_message', status: 'completed', item_key: '["run-1","[\\"text\\",\\"m1\\"]"]', message_id: null, payload_json: '{"text":"好了","v":5,"runId":"run-1","attachments":[{"id":"a1","name":"x.png"}]}', created_at: 102, updated_at: 102 },
+      { id: 7, matter_id: '0000000a', turn_id: null, seq: 4, kind: 'tool_call', status: 'failed', item_key: '["run-1","[\\"tool_call\\",\\"c2\\"]"]', message_id: null, payload_json: '{"text":"跑测试","v":6,"runId":"run-1","activity":{"id":"c2","type":"exec","status":"cancelled","label":"跑测试"}}', created_at: 103, updated_at: 103 },
+      { id: 8, matter_id: '0000000b', turn_id: null, seq: 1, kind: 'system', status: 'completed', item_key: null, message_id: null, payload_json: '{"text":"旧的","v":2}', created_at: 50, updated_at: 50 },
+    ])
+  })
+  it('没挂 matter 的老任务先补一件事;游标接着搬过来的最后一个往下数', () => {
+    const db = upgraded()
+    expect(db.query("SELECT id,kind,state,status FROM matters WHERE id='0000000b'").get()).toEqual({ id: '0000000b', kind: 'task', state: 'done', status: 'done' })
+    expect(db.query("SELECT matter_id FROM workbench_tasks WHERE id='0000000b'").get()).toEqual({ matter_id: '0000000b' })
+    const cursors = (db.query('SELECT cursor FROM matter_items ORDER BY id').all() as { cursor: number }[]).map(r => r.cursor)
+    expect(cursors).toEqual([1, 2, 3, 4, 5])
+    expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 5 })
+  })
+  it('交接记的那条请求指向搬过来的步(外键改指 matter_items);旧表留着到 M2c 才删', () => {
+    const db = upgraded()
+    expect(db.query("SELECT request_event_id FROM workbench_handoffs WHERE id='h1'").get()).toEqual({ request_event_id: 6 })
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(() => db.query("UPDATE workbench_handoffs SET request_event_id=999 WHERE id='h1'").run()).toThrow()
+    expect(db.query("SELECT sql FROM sqlite_master WHERE name='workbench_handoffs'").get()).toEqual({ sql: expect.stringContaining('REFERENCES matter_items(id)') })
+    expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('workbench_handoffs_source','workbench_handoffs_target','workbench_events') ORDER BY name").all())
+      .toEqual([{ name: 'workbench_events' }, { name: 'workbench_handoffs_source' }, { name: 'workbench_handoffs_target' }])
+  })
+  it('搬之前已有同 id、属于别的事的步 ⇒ 整条迁移报错,不悄悄跳过(Codex 评审 P1)', () => {
+    const db = migratedTo(92)
+    db.query("INSERT INTO matters(id,kind,title,status,created_at,updated_at) VALUES('0000000a','task','a','open',1,1),('0000000c','chat','c','open',1,1)").run()
+    db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id) VALUES('0000000a','a','/w','claude','completed',1,1,'0000000a')").run()
+    db.query("INSERT INTO workbench_events(id,task_id,kind,text,created_at,seq) VALUES(1,'0000000a','user','x',1,1)").run()
+    db.query("INSERT INTO matter_items(id,matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES(1,'0000000c',1,'system','completed','{}',1,1,1)").run()
+    expect(() => runMigrations(db, migrations)).toThrow(/v93/)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 92 })
+  })
+})

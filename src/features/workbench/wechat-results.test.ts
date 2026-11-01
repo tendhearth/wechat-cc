@@ -65,7 +65,7 @@ describe('immutable WeChat result pages',()=>{
 
   it('rejects a token when streaming changes the same event content',()=>{
     const row=task(),text='流式正文'.repeat(1200),eventId=store.addEvent(row.id,'text',text),token=resultToken({id:eventId,text})
-    db.query('UPDATE workbench_events SET text=? WHERE id=?').run(text+'更新',eventId)
+    db.query("UPDATE matter_items SET payload_json=json_set(payload_json,'$.text',?) WHERE id=?").run(text+'更新',eventId)
     expect(wechatResultPage({taskId:row.id,events:store.events(row.id),token,page:1})).toContain('内容已经更新')
   })
 

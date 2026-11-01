@@ -109,6 +109,8 @@ export interface MatterLog {
   setState(matterId:string,state:MatterOutcome):void
   state(matterId:string):{state:MatterState;archivedAt:number|null}|null
   turns(matterId:string):MatterTurn[]
+  /** 同一把 key 的那一步(逐字流拼接前要先看上一段)。 */
+  item(matterId:string,key:string):MatterItem|null
   /** 按 seq;给了 afterCursor 只要这之后写过的。 */
   items(matterId:string,opts?:{afterCursor?:number}):MatterItem[]
 }
