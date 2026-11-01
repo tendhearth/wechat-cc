@@ -38,3 +38,13 @@ it('a newer live destination wins over an older asynchronous pending result', as
   expect(nav.request('converse')).toBe(true)
   expect(seen).toEqual(['a2a-agents', 'converse'])
 })
+
+it.each([false, true])('live navigation accepted before the pending query wins, ready=%s', async ready => {
+  const seen: string[] = []
+  const nav = navigation.createMainNavigation((page: string) => seen.push(page))
+  nav.setReady(ready)
+  nav.request('converse')
+  await nav.restore(Promise.resolve('a2a-agents'))
+  nav.setReady(true)
+  expect(seen).toEqual(['converse'])
+})

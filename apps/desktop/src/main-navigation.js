@@ -29,8 +29,7 @@ export function createMainNavigation(navigate) {
      * @param {Promise<unknown>} pending
      */
     restore(pending) {
-      const observed = generation
-      return pending.then(page => generation === observed ? request(page) : false).catch(() => false)
+      return pending.then(page => generation === 0 ? request(page) : false).catch(() => false)
     },
   }
 }

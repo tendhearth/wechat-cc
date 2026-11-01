@@ -7,7 +7,7 @@ test.beforeEach(async ({ page, shim }) => {
   await shim.invoke('mock.doctor', { report: REPORTS.allGreen })
 })
 
-async function nativeEntry(page: import('@playwright/test').Page, options: { doctor?: boolean, pending?: boolean, config?: boolean, destination?: string | null }) {
+async function nativeEntry(page: import('@playwright/test').Page, options: { doctor?: boolean, pending?: boolean, config?: boolean, destination?: string | null, duringListen?: string }) {
   await page.addInitScript(options => {
     const listeners = new Map<string, (event: any) => void>()
     let releaseDoctor!: () => void, releasePending!: () => void, releaseConfig!: () => void
@@ -20,7 +20,11 @@ async function nativeEntry(page: import('@playwright/test').Page, options: { doc
     }
     ;(window as any).__entryFixture = fixture
     ;(window as any).__TAURI__ = { event: {
-      listen: async (name: string, fn: (event: any) => void) => { listeners.set(name, fn); return () => listeners.delete(name) },
+      listen: async (name: string, fn: (event: any) => void) => {
+        listeners.set(name, fn)
+        if (name === 'wechat-cc:navigate' && options.duringListen) fn({ payload: { page: options.duringListen } })
+        return () => listeners.delete(name)
+      },
     }, window: { getCurrentWindow: () => ({ startDragging: async () => {} }) }, core: {
       invoke: async (command: string, args: any = {}) => {
         if (command === 'take_pending_navigate') {
@@ -88,5 +92,11 @@ test('a running main window uses the same focused conversation entry', async ({ 
   await page.goto(shimUrl, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('main.dashboard')).toBeVisible()
   expect(await page.evaluate(() => (window as any).__entryFixture.emit('converse'))).toBe(true)
+  await expectConversation(page)
+})
+
+test('a live destination during registration wins over a previous pending destination', async ({ page, shimUrl }) => {
+  await nativeEntry(page, { duringListen: 'converse', destination: 'a2a-agents' })
+  await page.goto(shimUrl, { waitUntil: 'domcontentloaded' })
   await expectConversation(page)
 })
