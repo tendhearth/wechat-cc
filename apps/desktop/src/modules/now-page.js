@@ -4,6 +4,7 @@ import { greetingFor, ccPresence, waitingRows, waitingHeader, ccBubblePreview } 
 import { mountNowHero } from './now-hero.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { icon } from './icons.js'
+import { HOME_GROUP_WORDS, STATUS_TABLE } from '../generated/status-table.js'
 
 const AGENTS = createAgentAvatars()
 
@@ -14,6 +15,10 @@ function when(at, now) {
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
   return d.toDateString() === now.toDateString() ? hm : `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
 }
+
+// 状态表的图标名 ⇒ 桌面这套图标里最接近的那个;在做不画(同 App,行里留空位)。
+/** @type {Record<string,string>} */
+const STATUS_ICON = { shield: 'square-lock-01', done: 'checkmark-circle-02', alert: 'alert-02', message: 'mail-01', pause: 'stop' }
 
 // 动作文字保留在按钮的可访问名称中;视觉上只留本地箭头,让请求原文本身成为重点。
 /** @param {HTMLElement} go @param {string} label */
@@ -26,9 +31,10 @@ function requestArrow(go, label) {
 /**
  * onResolveTerminal:终端里等批准的那一行点开小窗后按了「允许 / 拒绝」(2026-10-14)。缺席 ⇒ 行不能点。
  * 返回 true = 拍板了;false = 那一项已经不在(微信 / 桌宠刚拍过、过期);抛错 = 没送出去。
- * @param {{root:HTMLElement,presencePoller:{subscribe:(cb:(p:any)=>void)=>()=>void},onOpenTask:(id:string)=>unknown,onResolveTerminal?:(hash:string,decision:'allow'|'deny')=>Promise<boolean>,onModeChange?:(m:'home'|'chat')=>void,now?:()=>Date}} o
+ * onOpenAll:「全部 →」(一起做那一页成了「全部」:按项目列出所有的事 + 详情,设计稿 2026-10-31 U4)。
+ * @param {{root:HTMLElement,presencePoller:{subscribe:(cb:(p:any)=>void)=>()=>void},onOpenTask:(id:string)=>unknown,onOpenAll?:()=>void,onResolveTerminal?:(hash:string,decision:'allow'|'deny')=>Promise<boolean>,onModeChange?:(m:'home'|'chat')=>void,now?:()=>Date}} o
  */
-export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTerminal, onModeChange, now = () => new Date() }) {
+export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onResolveTerminal, onModeChange, now = () => new Date() }) {
   const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (root.querySelector(`#${id}`))
   // 问候随钟点变:挂载、presence 每一拍、切 home/chat 都重算(textContent 同值不动 DOM)。
   const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el.textContent !== g) el.textContent = g }
@@ -42,6 +48,15 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
   $('now-cc').addEventListener('click', toChat)
   $('now-back').addEventListener('click', () => setMode('home'))
   const list = $('now-waiting-list')
+  // 在做 / 带回来的(home-list.js 算好的行):一件事的行整行打开它;终端会话只看不点。
+  for (const key of /** @type {const} */ (['working', 'back'])) {
+    root.querySelector(`#now-group-${key}-list`)?.addEventListener('click', e => {
+      const row = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (e.target).closest('button.now-row[data-task-id]'))
+      if (row?.dataset.taskId) void onOpenTask(row.dataset.taskId)
+    })
+  }
+  const allLink = /** @type {HTMLButtonElement|null} */ (root.querySelector('#now-all'))
+  if (allLink) { allLink.textContent = '全部 →'; allLink.addEventListener('click', () => onOpenAll?.()) }
   /** @type {any} */ let attention = null
   /** @type {import('./terminal-waiting.js').TerminalRow[]} */ let terminal = []
   // 按下去之后到下一拍列表把它收走之前,别让 3 秒一次的重绘把「看清楚」又放出来(hash → 行上那句话;'' = 正在送)。
@@ -169,8 +184,43 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
       btn.append(text, go); li.append(btn); return li
     }), ...terminal.map(terminalItem))
   }
+  /** @param {import('./home-list.js').HomeRow} r */
+  function homeItem(r) {
+    const li = document.createElement('li')
+    const box = document.createElement(r.source === 'task' ? 'button' : 'div')
+    box.className = 'now-row'
+    box.dataset.status = r.status
+    if (r.source === 'task') { /** @type {HTMLButtonElement} */ (box).type = 'button'; box.dataset.taskId = r.id }
+    else box.dataset.sessionId = r.id
+    const text = document.createElement('div')
+    const t = document.createElement('p'); t.className = 't'; t.textContent = r.title; text.append(t)
+    if (r.caption) { const d = document.createElement('p'); d.className = 'd'; d.textContent = r.caption; text.append(d) }
+    if (r.detail) { const x = document.createElement('p'); x.className = 'x'; x.textContent = r.detail; text.append(x) }
+    const mark = document.createElement('span'); mark.className = 'now-row-status'
+    const glyph = STATUS_TABLE[r.status].icon
+    if (glyph) mark.innerHTML = icon(STATUS_ICON[glyph], { size: 16 })
+    const who = document.createElement('span'); who.className = 'now-row-agents'
+    who.innerHTML = AGENTS.agentAvatarsHtml(r.agents, { cls: 'now-agents', nameOf: id => r.agentNames?.[id] })
+    box.append(mark, text, who); li.append(box)
+    return li
+  }
+  /** @param {'working'|'back'} key @param {import('./home-list.js').HomeRow[]} rows */
+  function renderGroup(key, rows) {
+    const box = /** @type {HTMLElement|null} */ (root.querySelector(`#now-group-${key}`))
+    if (!box) return
+    box.hidden = rows.length === 0
+    box.setAttribute('aria-labelledby', `now-group-${key}-title`)
+    $(`now-group-${key}-title`).textContent = HOME_GROUP_WORDS[key]
+    $(`now-group-${key}-list`).replaceChildren(...rows.map(homeItem))
+  }
   return {
     setMode,
+    /** 在做 / 带回来的两组(home-list.js 的 homeGroups)。 @param {{working:import('./home-list.js').HomeRow[],back:import('./home-list.js').HomeRow[],moreCount:number}} g */
+    setHome(g) {
+      renderGroup('working', g.working)
+      renderGroup('back', g.back)
+      if (allLink) allLink.textContent = g.moreCount > 0 ? `全部 · 还有 ${g.moreCount} 件更早的 →` : '全部 →'
+    },
     /** @param {{text:string,at:number|null}|null} line */
     setLatestLine(line) {
       const b = $('now-cc-bubble')

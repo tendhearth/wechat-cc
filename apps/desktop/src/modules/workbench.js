@@ -1,6 +1,7 @@
 // @ts-check
 
 import {workbenchRuntimePresentation} from './workbench-runtime.js'
+import { STATUS_WORDS } from '../generated/status-table.js'
 import {icon} from './icons.js'
 /** @typedef {import('./workbench-runtime.js').RuntimeSnapshot} RuntimeSnapshot */
 
@@ -173,7 +174,8 @@ function time(value) {
 function statusLabel(status, runtime, phase, networkSuspended) {
   const observed = workbenchRuntimePresentation(status, runtime, phase, networkSuspended)
   if (observed) return observed.label
-  return ({ queued: '等待中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', cancelled: '已停止', interrupted: '已中断' })[status] ?? status
+  // 能对上状态表的都用同一个词(设计稿 2026-10-31 U4:主页、全部、详情同一套说法);排队 / 正在停止是更细的一步,照写。
+  return ({ queued: '等待中', running: STATUS_WORDS.working, cancelling: '正在停止', completed: STATUS_WORDS.done, failed: STATUS_WORDS.failed, cancelled: STATUS_WORDS.stopped, interrupted: STATUS_WORDS.stopped })[status] ?? status
 }
 
 /** @param {Task} task */

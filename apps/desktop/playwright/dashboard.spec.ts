@@ -30,7 +30,8 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // 顶层导航项(2026-08-24 导航重构后):待办升到一级,日志/插件收进后厨
 // —— 它们仍有 pane,但不再有顶层导航按钮,所以分成两张表校验。
-const NAV_PANES = ['overview', 'workbench', 'recollections', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
+// 「一起做」不再是导航项(设计稿 2026-10-31 U4):它的 pane 还在,从此刻的「全部 →」进,见下面那条。
+const NAV_PANES = ['overview', 'recollections', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
 /** 有 pane、但入口在后厨标签页里(见 logs.spec.ts 的 bootAndOpenLogs)。 */
 const BACKSTAGE_PANES = ['logs', 'plugins'] as const
 
@@ -42,6 +43,9 @@ test('dashboard renders nav + panes (all attached)', async ({ page, shimUrl, shi
     await expect(page.locator(`button.dash-nav-link[data-pane="${pane}"]`)).toBeAttached()
     await expect(page.locator(`article.dash-pane[data-pane="${pane}"]`)).toBeAttached()
   }
+  await expect(page.locator('button.dash-nav-link[data-pane="workbench"]')).toHaveCount(0)
+  await expect(page.locator('article.dash-pane[data-pane="workbench"]')).toBeAttached()
+  await expect(page.locator('#now-all')).toBeVisible()
   for (const pane of BACKSTAGE_PANES) {
     await expect(page.locator(`article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="${pane}"]`)).toBeAttached()
   }
@@ -525,7 +529,7 @@ test('presence shell keeps one home composer and its draft through navigation', 
   expect(rail!.height).toBeGreaterThan(500)
 })
 
-test('此刻 home → chat via the CC, draft survives a workbench round-trip, one converse root', async ({ page, shimUrl, shim }) => {
+test('此刻 home → chat via the CC, draft survives a pane round-trip, one converse root', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   const pane = page.locator('.cc-now-pane')
@@ -540,7 +544,8 @@ test('此刻 home → chat via the CC, draft survives a workbench round-trip, on
   await page.locator('#now-cc').click()
   await expect(pane).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('#converse-scroll')).toBeVisible()
-  await clickNav(page, 'workbench')
+  // 一起做不再是导航项(设计稿 2026-10-31 U4,从主页的「全部 →」进,聊天态里不露):换一个别的页来回。
+  await clickNav(page, 'recollections')
   await clickNav(page, 'overview')
   await expect(pane).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('#converse-input')).toHaveValue('草稿不丢')

@@ -14,6 +14,9 @@ function dom() {
     <button id="now-cc-bubble" hidden><span class="now-bubble-text"></span><small class="now-bubble-time"></small><span class="now-bubble-more" hidden></span></button>
     <button id="now-cc"></button>
     <section id="now-waiting" hidden><h2 id="now-waiting-title"></h2><ul id="now-waiting-list"></ul></section>
+    <section id="now-group-working" hidden><h2 id="now-group-working-title"></h2><ul id="now-group-working-list"></ul></section>
+    <section id="now-group-back" hidden><h2 id="now-group-back-title"></h2><ul id="now-group-back-list"></ul></section>
+    <button id="now-all" type="button"></button>
     <div id="converse-root"></div></article>`
   return document.querySelector('.cc-now-pane') as HTMLElement
 }
@@ -227,5 +230,51 @@ describe('mountNowPage', () => {
     expect(g()).toBe('早上好')
     h = 14; pp.push({ presence: 'ok' }); expect(g()).toBe('下午好')
     h = 20; page.setMode('chat'); expect(g()).toBe('晚上好')
+  })
+})
+
+describe('一个主页(设计稿 2026-10-31 U4):等你 → 在做 → 带回来的,同一种行', () => {
+  const row = (over: Record<string, unknown>) => ({ id: 't1', source: 'task', title: '作品集', caption: null, detail: null, status: 'working', agents: ['claude'], updatedAt: 1, ...over })
+  it('在做 / 带回来的:组名来自状态表的分组词;空组藏起来', () => {
+    const root = dom(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn() })
+    page.setHome({ working: [row({})], back: [], moreCount: 0 } as any)
+    expect(document.getElementById('now-group-working')!.hidden).toBe(false)
+    expect(document.getElementById('now-group-working-title')!.textContent).toBe('在做')
+    expect(document.getElementById('now-group-back')!.hidden).toBe(true)
+    page.setHome({ working: [], back: [row({ status: 'done', caption: '完成' })], moreCount: 0 } as any)
+    expect(document.getElementById('now-group-working')!.hidden).toBe(true)
+    expect(document.getElementById('now-group-back-title')!.textContent).toBe('带回来的')
+  })
+  it('一件事的行整行打开这件事;标题 / 小字 / 第三行照写(转义),状态进 data-status', () => {
+    const root = dom(); const open = vi.fn(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: open })
+    page.setHome({ working: [], back: [row({ id: 'd1', title: '<b>日报</b>', caption: '完成', detail: '写好了', status: 'done' })], moreCount: 0 } as any)
+    const btn = root.querySelector('#now-group-back-list button.now-row') as HTMLButtonElement
+    expect(btn.dataset.status).toBe('done')
+    expect(btn.querySelector('.t')!.textContent).toBe('<b>日报</b>')
+    expect(btn.querySelector('b')).toBeNull()
+    expect(btn.querySelector('.d')!.textContent).toBe('完成')
+    expect(btn.querySelector('.x')!.textContent).toBe('写好了')
+    btn.click()
+    expect(open).toHaveBeenCalledExactlyOnceWith('d1')
+  })
+  it('终端会话的行只看不点(桌面没有终端详情页);没有的那一行字不画', () => {
+    const root = dom(); const open = vi.fn(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: open })
+    page.setHome({ working: [row({ id: 's1', source: 'terminal', title: 'wechat-cc', agents: ['codex'] })], back: [], moreCount: 0 } as any)
+    const el = root.querySelector('#now-group-working-list .now-row') as HTMLElement
+    expect(el.tagName).toBe('DIV')
+    expect(el.dataset.sessionId).toBe('s1')
+    expect(el.querySelector('.d')).toBeNull()
+    expect(el.querySelector('.x')).toBeNull()
+    el.click()
+    expect(open).not.toHaveBeenCalled()
+  })
+  it('「全部 →」一直在,点了交给 onOpenAll;有更早带回来的 ⇒ 写出还有几件', () => {
+    const root = dom(); const all = vi.fn(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onOpenAll: all })
+    const link = document.getElementById('now-all') as HTMLButtonElement
+    expect(link.textContent).toBe('全部 →')
+    page.setHome({ working: [], back: [], moreCount: 3 } as any)
+    expect(link.textContent).toBe('全部 · 还有 3 件更早的 →')
+    link.click()
+    expect(all).toHaveBeenCalledOnce()
   })
 })

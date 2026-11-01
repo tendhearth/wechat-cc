@@ -572,3 +572,6 @@
 .wb-input-preview>footer [role=status]:empty {display:none}
 .converse-user-image {border:0;padding:0;background:transparent;cursor:zoom-in}
 .converse-user-image img {display:block}
+/* 一起做不再是导航项(设计稿 2026-10-31 U4):从主页的行或「全部 →」进来,左上角回此刻。 */
+.workbench-pane .workbench-home { appearance:none; border:0; background:transparent; padding:2px 4px; font:inherit; font-size:var(--th-size-meta); color:var(--th-ink-soft); cursor:pointer; }
+.workbench-pane .workbench-home:hover, .workbench-pane .workbench-home:focus-visible { color:var(--th-ink); }

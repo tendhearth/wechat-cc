@@ -70,34 +70,11 @@
 [data-platform=macos] .workbench-pane>.cc-life-topline{padding-left:84px}
 .cc-life-topline{flex:none;height:67px;display:flex;align-items:center;justify-content:space-between;padding:0 32px;font-size:12px;color:var(--th-ink)}
 .cc-life-topline>span:last-child{font-size:10px;color:var(--th-ink-soft)}
-.cc-care-sheet{box-sizing:border-box;width:min(460px,calc(100vw - 32px));max-height:calc(100vh - 32px);margin:16px 16px 16px auto;padding:26px;border:1px solid var(--th-hair);border-radius:20px;background:var(--th-paper);color:var(--th-ink);box-shadow:0 20px 70px color-mix(in srgb,var(--th-ink) 12%,transparent);font-family:var(--sans,sans-serif)}
-.cc-care-sheet::backdrop{background:var(--th-scrim)}
-.cc-care-sheet[open]{display:flex;flex-direction:column}
-.cc-care-sheet header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex:none}
-.cc-care-sheet h2{font-size:21px;line-height:1.4;margin:8px 0}
-.cc-care-sheet button{font:inherit;color:inherit;cursor:pointer}
-.cc-care-sheet [data-care-close]{border:0;background:transparent;width:36px;height:36px;font-size:24px;border-radius:8px}
-.cc-care-presence{font-size:13px;color:var(--th-ink-soft);line-height:1.6;margin:8px 0 22px}
-.cc-care-body{min-height:80px;overflow:auto;overscroll-behavior:contain}
-.cc-care-body section{margin-bottom:24px}
-.cc-care-body h3{font-size:12px;font-weight:500;color:var(--th-ink-soft);margin:0 0 8px}
-.cc-care-body h3 span{margin-left:6px;color:var(--th-ink-soft)}
-.cc-care-task{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--th-hair);background:transparent;padding:14px 4px}
-.cc-care-task:hover{background:var(--th-ground)}
-.cc-care-task-title{display:block;font-size:14px;line-height:1.6;overflow-wrap:anywhere}
-.cc-care-task-meta{display:block;font-size:11px;color:var(--th-ink-soft);line-height:1.7;margin-top:5px;overflow-wrap:anywhere}
-.cc-care-note,.cc-care-error{font-size:12px;line-height:1.8;color:var(--th-ink-soft)}
-.cc-care-error:empty{display:none}
-.cc-care-note button{border:0;background:transparent;text-decoration:underline;font-size:12px;margin-left:8px}
-.cc-care-sheet footer{display:flex;flex:none;flex-wrap:wrap;gap:12px;padding-top:18px;border-top:1px solid var(--th-hair)}
-.cc-care-sheet footer button{border:1px solid var(--th-hair);background:var(--th-paper);border-radius:9px;padding:9px 12px;font-size:12px}
-.cc-care-sheet :focus-visible{outline:2px solid var(--th-accent);outline-offset:2px}
 .converse-delegate-btn{border:1px solid var(--th-hair)!important;background:transparent!important;color:var(--th-ink)!important;border-radius:var(--th-radius-control);font:inherit;white-space:nowrap;cursor:pointer}
 .converse-delegate-btn:disabled{opacity:.5;cursor:default}
 .wb-entry-dialog .wb-entry-form{display:flex;flex-direction:column;gap:14px}
 .wb-entry-dialog .wb-history-head{padding:20px 26px 0}
 .wb-entry-dialog select{width:100%;font:inherit;padding:12px;border:1px solid var(--th-hair);border-radius:10px;background:var(--th-paper);color:var(--th-ink)}
-@media(max-width:740px){.cc-care-sheet{padding:20px}}
 .dashboard .cc-recollections{padding:45px clamp(24px,5vw,72px);overflow:auto}
 .cc-recollections>header,.cc-memory-tabs,#cc-memory-postcards,#cc-memory-records,.cc-recollections>footer{width:100%;max-width:1010px;margin-left:auto;margin-right:auto}
 .dashboard button:focus-visible,.dashboard summary:focus-visible{outline:2px solid var(--th-accent);outline-offset:3px}

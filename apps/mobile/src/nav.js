@@ -13,14 +13,4 @@ document.getElementById("pairbtn").addEventListener("click", function() {
     } else toast("没配上:" + (r.error || ""))
   }).catch(function(){ toast("没配上,网络不通") })
 })
-// 两页:此刻 / 一起做。workbench.js 也挂在同一组按钮上(进「一起做」才拉列表)。
-function ccSelectMobilePane(name) {
-  document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ button){button.classList.toggle('on',button.dataset.p===name);if(button.dataset.p===name)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current')})
-  document.querySelectorAll('.pane').forEach(function(pane){pane.classList.toggle('on',pane.id==='p-'+name)})
-}
-document.querySelectorAll("nav button[data-p]").forEach(function(/** @type {HTMLButtonElement} */ b) {
-  b.addEventListener("click", function() {
-    ccSelectMobilePane(b.dataset.p)
-  })
-})
 document.getElementById("nav-set").addEventListener("click", function(){ ccNav("/set") })

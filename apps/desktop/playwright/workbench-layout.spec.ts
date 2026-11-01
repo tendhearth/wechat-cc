@@ -46,7 +46,7 @@ async function setup(page:any, shimUrl:string, shim:any) {
   await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
   await clickNav(page,'workbench')
-  await expect(page.locator('[data-task-id="deadbeef"]')).toBeVisible()
+  await expect(page.locator('.workbench-pane [data-task-id="deadbeef"]')).toBeVisible()
   await expect(page.locator('.wb-task-head h2')).toHaveText('完善作品集在手机上的排版')
 }
 
@@ -54,7 +54,7 @@ test('workbench prioritizes decisions, keeps project folds across navigation, an
   await page.setViewportSize({width:1440,height:900})
   await setup(page,shimUrl,shim)
   await expect(page.locator('.wb-attention-list [data-task-id="deadbeef"]')).toHaveCount(1)
-  await expect(page.locator('[data-task-id="deadbeef"]')).toHaveCount(1)
+  await expect(page.locator('.workbench-pane [data-task-id="deadbeef"]')).toHaveCount(1)
   await expect(page.locator('[data-action="add-project"]')).toBeHidden()
   await page.locator('#wb-list-more summary').click()
   await expect(page.locator('[data-action="add-project"]')).toBeVisible()
@@ -68,10 +68,10 @@ test('workbench prioritizes decisions, keeps project folds across navigation, an
   await page.locator('[data-action="clear-search"]').click()
   await expect(report).not.toHaveAttribute('open')
   await report.locator('summary').click()
-  await page.locator('[data-task-id="f00dbeef"]').click()
+  await page.locator('.workbench-pane [data-task-id="f00dbeef"]').click()
   await expect(page.locator('.wb-task-head h2')).toHaveText('补充作品集说明文案')
   await expect(report).toHaveAttribute('open','')
-  await page.locator('[data-task-id="deadbeef"]').click()
+  await page.locator('.workbench-pane [data-task-id="deadbeef"]').click()
   await page.locator('[data-action="show-decisions"]').click()
   await expect(page.locator('[data-action="deny-permission"]')).toBeFocused()
   const screenshotDir = process.env.WECHAT_CC_DESIGN_SHOTS
@@ -105,21 +105,26 @@ test('workbench stays readable at a narrow desktop width with no horizontal over
   if(screenshotDir) { await page.waitForTimeout(700); await page.screenshot({path:join(screenshotDir,'workbench-narrow.png')}) }
 })
 
-test('一起做 sits under the global nav: wide keeps the rail, narrow folds it behind the wordmark',async({page,shimUrl,shim})=>{
+test('全部(原一起做)sits under the global nav: wide keeps the rail, narrow folds it behind the wordmark',async({page,shimUrl,shim})=>{
   await page.setViewportSize({width:1440,height:900})
   await setup(page,shimUrl,shim)
   await expect(page.locator('#dash-global-rail')).toBeVisible()
-  await expect(page.locator('button.dash-nav-link[data-pane="workbench"]')).toHaveClass(/active/)
+  // 「全部」从此刻进,导航里亮的是此刻(宽窗口点它回去);窄窗口主导航收起,左上角「‹ 此刻」回去。
+  await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toHaveClass(/active/)
   await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
   await expect(page.locator('.wb-chats')).toHaveCount(0)
   await page.setViewportSize({width:1000,height:900})
   await expect(page.locator('#workbench-nav-toggle')).toBeVisible()
+  await expect(page.locator('#workbench-home')).toBeVisible()
   await expect(page.locator('#dash-global-rail')).toHaveAttribute('aria-hidden','true')
   await page.locator('#workbench-nav-toggle').click()
   await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
   await page.setViewportSize({width:1440,height:900})
   await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
   await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
+  await page.setViewportSize({width:1000,height:900})
+  await page.locator('#workbench-home').click()
+  await expect(page.locator('article.dash-pane[data-pane="overview"]')).toBeVisible()
 })
 
 test('the waiting count lives next to 此刻 in the rail, not in a banner',async({page,shimUrl,shim})=>{

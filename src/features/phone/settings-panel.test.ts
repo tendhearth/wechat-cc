@@ -385,12 +385,13 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     }])
   })
 
-  it('/m 首屏是「此刻」;收敛 5b 后只有此刻与一起做,回忆和口袋三块去了 App', async () => {
+  it('/m 首屏是「此刻」;一个主页(U5)后只剩这一页,列表在它上面,回忆和口袋三块去了 App', async () => {
     const { port } = await panel.start(0)
     const t = panel.issueToken()
     const html = await (await fetch(`http://127.0.0.1:${port}/m?t=${t}`)).text()
     expect(html).toContain('id="p-today"')
-    expect(html).toContain('id="p-matters"')
+    expect(html).toContain('id="m-list"')
+    expect(html).not.toContain('id="p-matters"')
     expect(html).toContain('/m/api/home')
     expect(html).toContain('cc.home.v2:')
     for (const id of ['id="p-pocket"', 'id="p-memory"', 'id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).not.toContain(id)
@@ -709,6 +710,25 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${base}/m/api/matter?id=nope&t=${t}`)).status).toBe(400)
     expect((await fetch(`${base}/m/api/matter/say?t=${d}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
     expect((await fetch(`${base}/m/api/matters`)).status).toBe(401)
+  })
+  it('一件事带上任务真正的状态(一个主页 U5):status / phase / 等你几项 —— matter 的 open/done 说不清停下了、没做成、等你', async () => {
+    const waiting = { ...MATTER, id: 'aaaa0001', status: 'open' }, stopped = { ...MATTER, id: 'aaaa0002', status: 'open' }, chat = { ...MATTER, id: 'aaaa0003', kind: 'chat' }
+    matters.list.mockReturnValueOnce([waiting, stopped, chat] as never)
+    const original = matters.detail.getMockImplementation()!
+    matters.detail.mockImplementation(((id: string) => id === 'aaaa0001'
+      ? { matter: waiting, task: { id, status: 'running', phase: 'working' }, runId: 'r1', permissions: [{ taskId: id }], questions: [{ taskId: id }, { taskId: 'other' }] }
+      : id === 'aaaa0002' ? { matter: stopped, task: { id, status: 'interrupted', phase: 'interrupted' }, permissions: [], questions: [] }
+      : { matter: chat, task: null }) as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const r = await (await fetch(`${base}/m/api/matters?t=${t}`)).json() as { matters: Array<{ id: string; taskState?: unknown }> }
+    expect(r.matters.map(m => [m.id, m.taskState])).toEqual([
+      ['aaaa0001', { status: 'running', phase: 'working', pending: 2 }],
+      ['aaaa0002', { status: 'interrupted', phase: 'interrupted', pending: 0 }],
+      ['aaaa0003', undefined],
+    ])
+    expect(matters.detail).not.toHaveBeenCalledWith('aaaa0003')
+    matters.detail.mockImplementation(original)
   })
   it('不带 status ⇒ 默认只要 open / replied / done(归档的自检噪声不占前 50)', async () => {
     panel = make(true)

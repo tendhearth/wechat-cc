@@ -62,4 +62,23 @@ describe('createTerminalWaitingPoller', () => {
     await vi.advanceTimersByTimeAsync(5000)
     expect(call).toHaveBeenCalledTimes(3)
   })
+
+  it('onSessions:整份会话(不只是等批准的)也交出去,给主页的在做 / 带回来的;只在变化时通知,读不到 ⇒ 空', async () => {
+    vi.useFakeTimers()
+    let reply: unknown = { ok: true, sessions: [s(), { ...s(), session_id: 'run', status: 'running', pending: null }] }
+    const call = vi.fn(async () => { if (reply instanceof Error) throw reply; return reply })
+    const onSessions = vi.fn()
+    const p = createTerminalWaitingPoller({ call, onChange: vi.fn(), onSessions, intervalMs: 1000 })
+    p.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(onSessions).toHaveBeenCalledTimes(1)
+    expect(onSessions.mock.calls[0]![0].map((x: any) => x.session_id)).toEqual(['ab12c3-full', 'run'])
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(onSessions).toHaveBeenCalledTimes(1)
+    reply = new Error('403')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(onSessions).toHaveBeenLastCalledWith([])
+    p.stop()
+  })
 })
+

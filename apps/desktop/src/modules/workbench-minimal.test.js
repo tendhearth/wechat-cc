@@ -32,7 +32,7 @@ describe('workbench decision hierarchy in the rendered page',()=>{
  })
 
  it.each([
-  ['failed',{},'未完成'],['completed',{},'已完成'],['running',{importedOnly:true},'尚未执行'],
+  ['failed',{},'没做成'],['completed',{},'完成'],['running',{importedOnly:true},'尚未执行'],
   ['queued',{waitingFor:{taskId:'B',title:'前项',reason:'writer_not_closed'}},'等待执行程序退出确认'],
   ['unknown',{},'unknown'],
  ])('preserves the distinct %s list state when there are no pending requests',(status,extra,label)=>{
