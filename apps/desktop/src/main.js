@@ -215,7 +215,7 @@ const conversationsPoller = createConversationsPoller({ call: (method, path) => 
 /** @type {ReturnType<typeof createWorkbenchAttentionPoller>|null} */
 let workbenchAttention = null
 const nowCount = document.getElementById('now-count')
-/** @type {{stale:boolean,tasks:unknown[]}|null} */ let lastAttention = null
+/** @type {{stale:boolean,tasks:Array<{id:string}>}|null} */ let lastAttention = null
 let terminalWaitingCount = 0
 function renderNowCount() {
   if (!nowCount) return
