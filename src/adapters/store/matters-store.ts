@@ -13,7 +13,7 @@ import type {CreateMatter,ListMatters,Matter,MatterBinding,MatterKind,MatterOrig
 export const MATTER_ORIGINS:readonly MatterOrigin[]=Object.freeze(['wechat','desktop','app','web','cli','companion'])
 
 const ORIGINS=new Set<string>(MATTER_ORIGINS)
-const KINDS=new Set<string>(['chat','task','companion']),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli']),ROLES=new Set<string>(['main','review','handoff'])
+const KINDS=new Set<string>(['chat','task','terminal','act']),INITIATORS=new Set<string>(['owner','cc','peer']),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli']),ROLES=new Set<string>(['main','review','handoff'])
 const ID=/^[a-f0-9]{8}$/
 type Row={id:string;kind:MatterKind;title:string;project_path:string|null;status:MatterStatus;owner_chat_id:string|null;origin_matter_id:string|null;origin_message_id:string|null;origin_surface:string|null;created_at:number;updated_at:number}
 const SELECT='SELECT id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,origin_surface,created_at,updated_at FROM matters'
@@ -30,8 +30,10 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     if(typeof input.title!=='string')throw new Error('invalid_matter_title')
     const id=input.id??randomBytes(4).toString('hex');if(!ID.test(id))throw new Error('invalid_matter_id')
     const origin=input.origin??null;if(origin!==null&&!ORIGINS.has(origin))throw new Error('invalid_matter_origin')
+    const initiator=input.initiator??'owner';if(!INITIATORS.has(initiator))throw new Error('invalid_matter_initiator')
     const ts=now()
-    db.query('INSERT INTO matters(id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,origin_surface,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,input.kind,input.title,input.projectPath??null,status,input.ownerChatId??null,input.originMatterId??null,input.originMessageId??null,origin,ts,ts)
+    db.query('INSERT INTO matters(id,kind,initiator,title,project_path,state,archived_at,status,owner_chat_id,origin_matter_id,origin_message_id,origin_surface,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id,input.kind,initiator,input.title,input.projectPath??null,status==='done'?'done':'open',status==='archived'?ts:null,status,input.ownerChatId??null,input.originMatterId??null,input.originMessageId??null,origin,ts,ts)
     return require(id)
   }
   function list(filter:ListMatters={}):Matter[] {
@@ -50,7 +52,18 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
   const bump=(id:string)=>db.query('UPDATE matters SET updated_at=? WHERE id=?').run(now(),id)
   return {
     create,get,list,
-    setStatus(id,status){if(!STATUSES.has(status))throw new Error('invalid_matter_status');require(id);db.query('UPDATE matters SET status=?,updated_at=? WHERE id=?').run(status,now(),id)},
+    setStatus(id,status){
+      if(!STATUSES.has(status))throw new Error('invalid_matter_status');require(id)
+      const ts=now()
+      // 归档 ⇒ 记一次归档时间(已归档的不挪);其余 ⇒ 取消归档。做完 ⇒ 统一状态 done(没做成 / 停下了不改写);
+      // 重新打开 ⇒ 结局清回 open。working / waiting 只有 MatterLog 知道,这里不碰。
+      db.query(`UPDATE matters SET status=?1,updated_at=?2,
+        archived_at=CASE WHEN ?1='archived' THEN COALESCE(archived_at,?2) ELSE NULL END,
+        state=CASE WHEN ?1='done' AND state NOT IN ('failed','cancelled') THEN 'done'
+                   WHEN ?1 IN ('open','replied') AND state IN ('done','failed','cancelled') THEN 'open'
+                   ELSE state END
+        WHERE id=?3`).run(status,ts,id)
+    },
     rename(id,title){require(id);db.query('UPDATE matters SET title=?,updated_at=? WHERE id=?').run(title,now(),id)},
     touch(id){require(id);bump(id)},
     bind(id,surface,surfaceKey){
