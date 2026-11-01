@@ -9,7 +9,8 @@ import { pairingGen } from '../../state/drafts'
 import { useTerminalActions, useTerminalActivity, useTerminalSessions } from '../../state/useTerminal'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
-import { TerminalStatusPill } from '../../ui/TerminalItem'
+import { StatusWord } from '../../ui/MatterRow'
+import { terminalStatusKey } from '../../view/status'
 import { TextField } from '../../ui/TextField'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
@@ -109,7 +110,7 @@ export default function TerminalSession() {
           ) : (
             <>
               <View style={{ gap: space.s }}>
-                <TerminalStatusPill status={row.status} testID="terminal-detail-status" />
+                <StatusWord status={terminalStatusKey(row.status)} testID="terminal-detail-status" />
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
                   <Icon name="terminal" color={c.inkSoft} testID="terminal-detail-agent" />
                   <Txt role="small" tone="inkSoft" style={{ flex: 1 }}>{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : fresher ? relAgo(newest, Date.now(), lang) : row.ago}`}</Txt>
