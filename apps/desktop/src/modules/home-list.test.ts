@@ -76,4 +76,11 @@ describe('homeGroups:主页的「在做」「带回来的」两组(等你那一�
     const g = homeGroups({ ...base, tasks: null, sessions: [session({})] } as never)
     expect(g.working.map(r => r.source)).toEqual(['terminal'])
   })
+  it('「还有 N 件更早的」只数「全部」里找得到的(一件件事);24 小时前的终端会话不列也不数', () => {
+    const g = homeGroups({ ...base, tasks: [task({ id: 'old', status: 'completed', updatedAt: NOW - BACK_WINDOW_MS - 1 })],
+      sessions: [session({ session_id: 'idle-old', status: 'idle', last_event_at: NOW - BACK_WINDOW_MS - 1 })] } as never)
+    expect(g.back).toEqual([])
+    expect(g.moreCount).toBe(1)
+  })
 })
+

@@ -88,7 +88,7 @@ test('settings normal data, long device name, keyboard, rejected switch rollback
 })
 
 test('empty list, bootstrap, expired and relay incomplete-link recovery surfaces', async ({ page }, info) => {
-  const h = await fixture(page); h.empty(); await page.goto(HOST + '/m'); await expect(page.locator('#m-list')).toContainText('还没有事'); await shot(page, info, 'empty-list')
+  const h = await fixture(page); h.empty(); h.home.work.focus = null; await page.goto(HOST + '/m'); await expect(page.locator('#m-list')).toContainText('还没有事'); await shot(page, info, 'empty-list')
   await page.evaluate(() => localStorage.clear()); await page.setViewportSize({ width: 390, height: 280 })
   for (const [path, text] of [['bootstrap', '还没配对过'], ['expired', '已经用过或过期'], ['relay', '链接不完整']]) {
     await page.goto(HOST + '/' + path); await expect(page.locator('body')).toContainText(text); await fits(page); await shot(page, info, path + '-low')

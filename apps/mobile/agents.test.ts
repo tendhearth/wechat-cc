@@ -2,7 +2,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest'
 import {Window} from 'happy-dom'
 import {assembleMobilePage} from './assemble'
 import {readMobileSource} from './sources'
-import {HOME_GROUP_WORDS,STATUS_WORDS} from '../../packages/protocol/src/status-table'
+import {HOME_GROUP_WORDS,STATUS_TABLE,STATUS_WORDS} from '../../packages/protocol/src/status-table'
 
 // 执行者头像(2026-10-19,同手机 app):「一起做」每件事行尾一组圆头像,详情标题下头像 + 名字。
 // 图形与画法跟桌面共用 apps/desktop/src/shared/agent-avatars.{js,css},sources.ts 在 workbench.js 顶上内联。
@@ -16,7 +16,7 @@ function load(matters:unknown[]){
   const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
   const api=vi.fn(async(path:string)=>({ok:true,status:200,json:async()=>path.startsWith('/m/api/matters')?{ok:true,matters}:{ok:false,error:'not_found'}}))
   const env={document,window,api,fetch:api,tunnel:vi.fn(),q:(p:string)=>p,localStorage:window.localStorage,REMOTE:{id:'t'},AbortController,setTimeout,clearTimeout,crypto,URL:{revokeObjectURL:()=>{}},
-    ccPlain:(s:string)=>s,CCP:{STATUS_WORDS:STATUS_WORDS['zh-Hans'],HOME_GROUP_WORDS:HOME_GROUP_WORDS['zh-Hans']},
+    ccPlain:(s:string)=>s,CCP:{STATUS_TABLE,STATUS_WORDS:STATUS_WORDS['zh-Hans'],HOME_GROUP_WORDS:HOME_GROUP_WORDS['zh-Hans']},
     esc:(text:unknown)=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!)}
   const fns=new Function(...Object.keys(env),'var preferTunnel=false;\n'+readMobileSource('workbench.js')+'\nreturn {loadMatters,renderMatter}')(...Object.values(env)) as {loadMatters:()=>void,renderMatter:(d:unknown)=>void}
   return {...fns,document}

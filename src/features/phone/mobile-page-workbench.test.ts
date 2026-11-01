@@ -15,9 +15,9 @@ import { MOBILE_WORKBENCH_JS } from './mobile-page'
 import { phoneHtml } from './settings-panel-html'
 import { assembleMobilePage } from '../../../apps/mobile/assemble'
 import { readMobileSource } from '../../../apps/mobile/sources'
-import { HOME_GROUP_WORDS, STATUS_WORDS } from '../../../packages/protocol/src/status-table'
+import { HOME_GROUP_WORDS, STATUS_TABLE, STATUS_WORDS } from '../../../packages/protocol/src/status-table'
 
-const IDS = ['m-home', 'm-list', 'm-all', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
+const IDS = ['refresh', 'm-home', 'm-list', 'm-all', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
 
 type Handler = (ev: unknown) => void
 interface FakeEl {
@@ -42,7 +42,7 @@ function fakeEl(id: string): FakeEl {
   }
 }
 
-type ListMatter = { id: string; title: string; kind: string; status: string; updatedAt?: number; networkSuspended?: unknown }
+type ListMatter = { id: string; title: string; kind: string; status: string; updatedAt?: number; networkSuspended?: unknown; taskState?: { status: string; phase?: string; pending: number } }
 function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; focus?: { id: string; kind: string } | null } = {}) {
   const els = new Map(IDS.map((id) => [id, fakeEl(id)]))
   // 照真页面来:连接提示那行平时不在(<div id="m-conn" hidden>),详情栏也是先藏着。
@@ -96,7 +96,7 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
     return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true }) })
   }
   const ccPlain = new Function(`${readMobileSource('boot.js').slice(readMobileSource('boot.js').indexOf('function ccPlain'))}\nreturn ccPlain`)()
-  const CCP = { STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'] }
+  const CCP = { STATUS_TABLE, STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'] }
   const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'ccPlain', 'CCP', 'homeCardId', source)
   boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
@@ -308,6 +308,35 @@ describe('一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,等你 
     h.els.get('m-back')!.fire('click')
     expect(h.els.get('m-home')!.hidden).toBe(false)
     expect(h.els.get('m-detail')!.hidden).toBe(true)
+  })
+  it('任务真正的状态(taskState)照 App 的 statusOf 折:打断的 ⇒ 停下了、失败的 ⇒ 没做成,都进带回来的;还在等你的 ⇒ 等你那一组(卡上那件除外)', async () => {
+    const h = harness(MOBILE_WORKBENCH_JS, { focus: { id: 'w0', kind: 'decision' }, matters: [
+      { id: 'w0', title: '卡上那件', kind: 'task', status: 'open', updatedAt: NOW, taskState: { status: 'running', phase: 'working', pending: 1 } },
+      { id: 'w1', title: '另一件等你', kind: 'task', status: 'open', updatedAt: NOW, taskState: { status: 'running', phase: 'working', pending: 2 } },
+      { id: 'i1', title: '重启打断', kind: 'task', status: 'open', updatedAt: NOW - 60_000, taskState: { status: 'interrupted', phase: 'interrupted', pending: 0 } },
+      { id: 'f1', title: '失败', kind: 'task', status: 'done', updatedAt: NOW - 120_000, taskState: { status: 'failed', phase: 'failed', pending: 0 } },
+      { id: 'o1', title: '老 daemon', kind: 'task', status: 'open', updatedAt: NOW - 180_000 },
+    ] })
+    await h.enterPane()
+    const html = h.els.get('m-list')!.innerHTML
+    const at = (s: string) => html.indexOf(s)
+    expect(at('>等你<')).toBeGreaterThanOrEqual(0)
+    expect(at('>等你<')).toBeLessThan(at('data-mid="w1"'))
+    expect(at('data-mid="w1"')).toBeLessThan(at('>在做<'))
+    expect(html).not.toContain('data-mid="w0"')
+    expect(at('>在做<')).toBeLessThan(at('data-mid="o1"'))
+    expect(at('>带回来的<')).toBeLessThan(at('data-mid="i1"'))
+    expect(html).toMatch(/data-mid="i1"[^]*?<small>停下了<\/small>/)
+    expect(html).toMatch(/data-mid="f1"[^]*?<small>没做成<\/small>/)
+    expect(html).toMatch(/data-mid="w1"[^]*?<small>等你决定<\/small>/)
+  })
+  it('「刷新」也重拉列表(列表就在此刻页上)', async () => {
+    const h = harness()
+    await h.enterPane()
+    const before = h.listCalls()
+    h.els.get('refresh')!.fire('click')
+    await h.tick(0)
+    expect(h.listCalls()).toBe(before + 1)
   })
 })
 

@@ -81,5 +81,6 @@ export function homeGroups(input) {
   const backAll = rows.filter(r => back(r.status))
   const windowMs = input.backWindowMs === undefined ? BACK_WINDOW_MS : input.backWindowMs
   const backRecent = windowMs === null ? backAll : backAll.filter(r => r.updatedAt >= now - windowMs)
-  return { working: rows.filter(r => r.status === 'working'), back: backRecent, moreCount: backAll.length - backRecent.length }
+  return { working: rows.filter(r => r.status === 'working'), back: backRecent, // 「全部」(一起做那一页)只列一件件事:窗口外的终端会话不列也不数,免得许诺一个找不到的数
+  moreCount: backAll.filter(r => r.source === 'task').length - backRecent.filter(r => r.source === 'task').length }
 }

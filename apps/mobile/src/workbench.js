@@ -50,8 +50,19 @@ function mApi(path,opts,sender) {
 function mSetButtons() {
   document.querySelectorAll('#m-status [data-stop]').forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||mOffline||!!mBusy[mCurrent+':stop']})
 }
-function mRow(m, back) {
-  var caption = m.networkSuspended ? "已暂停(网络未受保护)" : back ? CCP.STATUS_WORDS[m.status === "done" ? "done" : "replied"] : ""
+/** 一件事的状态折成状态表的键:有 taskState(任务真正的状态)就跟 App 的 statusOf 一样折;老 daemon 不带 ⇒ 退回 matter.status。 */
+function mStatusKey(m) {
+  var s = m.taskState
+  if (!s) return m.status === "open" ? "working" : m.status === "replied" ? "replied" : "done"
+  if (s.pending > 0) return "waiting"
+  if (s.phase === "failed" || s.status === "failed") return "failed"
+  if (s.status === "cancelled" || s.phase === "cancelled" || s.status === "interrupted" || s.phase === "interrupted") return "stopped"
+  if (s.phase === "replied") return "replied"
+  if (s.status === "completed" || s.phase === "completed" || s.phase === "done") return "done"
+  return "working"
+}
+function mRow(m, key) {
+  var caption = m.networkSuspended ? "已暂停(网络未受保护)" : key === "working" ? "" : CCP.STATUS_WORDS[key]
   return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(ccPlain(m.title))+'</b>'+(caption?'<small>'+esc(caption)+'</small>':'')+'</span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents,{nameOf:mNameOf(m.agentNames)})+'</button>'
 }
 function renderMatters() {
@@ -60,15 +71,16 @@ function renderMatters() {
   // 此刻页那张卡(等你决定 / 带回了成果)上的那一件不再重复;对话、陪伴不算「一件事」(同 App 的主页)
   var focusId = typeof homeCardId !== "undefined" ? homeCardId : null
   var rows = mMatters.filter(function(m){ return m.kind === "task" && m.id !== focusId }).sort(function(a, b){ return (b.updatedAt || 0) - (a.updatedAt || 0) })
-  var working = rows.filter(function(m){ return m.status === "open" })
-  var backAll = rows.filter(function(m){ return m.status === "replied" || m.status === "done" })
+  var keyed = rows.map(function(m){ return { m: m, key: mStatusKey(m) } })
+  var inGroup = function(g){ return keyed.filter(function(r){ return CCP.STATUS_TABLE[r.key].group === g }) }
   var cutoff = Date.now() - M_BACK_WINDOW_MS
-  var back = mAll ? backAll : backAll.filter(function(m){ return (m.updatedAt || 0) >= cutoff })
+  var backAll = inGroup("back")
+  var back = mAll ? backAll : backAll.filter(function(r){ return (r.m.updatedAt || 0) >= cutoff })
   var more = backAll.length - back.length
-  var html = ""
-  if (working.length) html += '<div class="grp">'+esc(CCP.HOME_GROUP_WORDS.working)+'</div>' + working.map(function(m){ return mRow(m, false) }).join("")
-  if (back.length) html += '<div class="grp">'+esc(CCP.HOME_GROUP_WORDS.back)+'</div>' + back.map(function(m){ return mRow(m, true) }).join("")
-  list.innerHTML = html || (more ? "" : '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>')
+  var groups = [["waiting", inGroup("waiting")], ["working", inGroup("working")], ["back", back]]
+  var html = groups.map(function(g){ return g[1].length ? '<div class="grp">'+esc(CCP.HOME_GROUP_WORDS[g[0]])+'</div>' + g[1].map(function(r){ return mRow(r.m, r.key) }).join("") : "" }).join("")
+  // 卡上已经有一件、列表里没别的 ⇒ 不说「还没有事」
+  list.innerHTML = html || (more || focusId ? "" : '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>')
   all.hidden = more === 0
   all.textContent = more ? "全部 · 还有 " + more + " 件更早的 →" : "全部 →"
 }
@@ -77,6 +89,8 @@ function loadMatters() {
     .catch(function(e){ if (!mMatters) document.getElementById("m-list").textContent = mError(e.message) })
 }
 document.getElementById("m-all").addEventListener("click", function(){ mAll = true; renderMatters() })
+// 「刷新」(home.js 也挂着它)顺带重拉列表:列表就在此刻页上
+document.getElementById("refresh").addEventListener("click", function(){ if (!mCurrent) loadMatters() })
 /** 执行者叫什么只读 daemon 给的 matter.agentNames(收敛清单 ⑥),网页不存名字表;老 daemon 不带 ⇒ id。 */
 function mNameOf(names) { return function(id) { return names&&typeof names[id]==='string'&&names[id]?names[id]:id } }
 var M_ID = /^[a-z][a-z0-9._-]{0,63}$/
