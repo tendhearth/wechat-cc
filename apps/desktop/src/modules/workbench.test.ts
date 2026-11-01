@@ -174,7 +174,7 @@ describe('workbench rendering', () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task = (id:string,pendingPermissionCount?:number) => ({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount})
     const html=renderWorkbench({tasks:[task('WAITING',2),task('ZERO',0),task('ABSENT')],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
-    expect(html).toMatch(/data-task-id="WAITING"[\s\S]*?aria-label="[^"]*进行中[^"]*2 项权限请求等你确认[^"]*"[\s\S]*?等你确认[\s\S]*?<\/button>/)
+    expect(html).toMatch(/data-task-id="WAITING"[\s\S]*?aria-label="[^"]*在做[^"]*2 项权限请求等你确认[^"]*"[\s\S]*?等你确认[\s\S]*?<\/button>/)
     expect(html.match(/class="wb-task-attention"/g)).toHaveLength(1)
   })
 
@@ -182,7 +182,7 @@ describe('workbench rendering', () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task={id:'TASK',title:'A complete task title',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
     const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
-    expect(html).toMatch(/data-task-id="TASK"[^>]*aria-label="[^"]*A complete task title[^"]*Codex[^"]*进行中[^"]*更新于[^"]*"/)
+    expect(html).toMatch(/data-task-id="TASK"[^>]*aria-label="[^"]*A complete task title[^"]*Codex[^"]*在做[^"]*更新于[^"]*"/)
     expect(html).toMatch(/class="wb-task-title"[^>]*title="A complete task title"/)
     // 执行者不再写成文字:状态在前,行尾一组圆头像(2026-10-19),名字只在读屏标签 / title
     expect(html).toMatch(/class="wb-task-meta"[\s\S]*class="wb-status"[\s\S]*class="th-agents"[^>]*aria-label="Codex"[\s\S]*<\/span>\s*<\/button>/)
@@ -296,8 +296,8 @@ describe('workbench rendering', () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task=(id:string,count:number)=>({id,title:id,path:`/${id}`,providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:count})
     const html=renderWorkbench({tasks:[task('A',1),task('B',2)],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
-    expect(html).toContain('aria-label="进行中，1 项权限请求等你确认"')
-    expect(html).toContain('aria-label="进行中，2 项权限请求等你确认"')
+    expect(html).toContain('aria-label="在做，1 项权限请求等你确认"')
+    expect(html).toContain('aria-label="在做，2 项权限请求等你确认"')
     expect(html.match(/class="wb-task-attention"/g)).toHaveLength(2)
   })
 

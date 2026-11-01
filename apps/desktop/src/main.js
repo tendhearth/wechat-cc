@@ -57,7 +57,8 @@ import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery, deactivateAtelierGallery } from "./modules/atelier-gallery.js"
 import {closeRecordReader} from './modules/record-reader.js'
 import { createLifeArchive } from "./modules/cc-life.js"
-import { mountCareSheet } from "./modules/cc-care.js"
+import { createTaskListReader } from "./modules/task-list-reader.js"
+import { homeGroups } from "./modules/home-list.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
@@ -143,16 +144,13 @@ const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 // CC 的处境(GET /v1/companion/presence):「此刻」的明暗与状态行都看它(spec 2026-10-01 §4)。
 const presencePoller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
 presencePoller.start()
-const careSheet = mountCareSheet({
-  call: invokeWorkbenchApi, presencePoller, navigate: switchPane,
-  openWorkbench: () => switchPane('workbench'),
-  openTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
-})
-// 「此刻」(spec 2026-10-01 §6.3):CC 的气泡就是对话入口,careSheet 不再从这里打开(只喂 attention)。
+// 「此刻」(spec 2026-10-01 §6.3):CC 的气泡就是对话入口。
+// 一个主页(设计稿 2026-10-31 U4):等你 → 在做 → 带回来的;「一起做」不再是导航项,成了「全部 →」(按项目列出 + 详情)。
 const nowRoot = /** @type {HTMLElement|null} */ (document.querySelector('.cc-now-pane'))
 const nowPage = nowRoot ? mountNowPage({
   root: nowRoot, presencePoller,
   onOpenTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+  onOpenAll: () => switchPane('workbench'),
   // 终端里等批准的会话:与桌宠权限卡、微信「y 码」同一条拍板路(POST /v1/permissions/resolve,凭据在原生宿主)。
   onResolveTerminal: async (hash, decision) => {
     try { return (await invoke('pet_permission_resolve', { hash, decision })) === true }
@@ -194,7 +192,6 @@ const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConne
   })
 }
 subscribeConverse(msgs => { nowPage?.setLatestLine(latestCCLine(msgs)); nowPage?.setConversationSnapshot(msgs) })
-window.addEventListener('pagehide', () => careSheet.close())
 window.addEventListener('pagehide',()=>{closeRecordReader({restoreFocus:false});deactivateAtelierGallery();deactivateTodosPage();deactivateHuntBag();deactivatePeople();deactivateWishes();deactivateA2AAgentsTab()})
 const memoryRecordsHost = document.getElementById("cc-memory-records")
 const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
@@ -225,10 +222,26 @@ function renderNowCount() {
   const n = (lastAttention && !lastAttention.stale ? lastAttention.tasks.length : 0) + terminalWaitingCount
   nowCount.textContent = n ? String(n) : ''
 }
+// 主页的「在做」「带回来的」:一件件事(GET /v1/workbench,只在此刻开着时读)+ 终端会话(下面那个轮询顺带交出整份)。
+/** @type {{tasks:any[]|null,agentNames?:Record<string,string>,sessions:any[]}} */
+const home = { tasks: null, sessions: [] }
+function renderHome() {
+  nowPage?.setHome(homeGroups({ tasks: home.tasks, attention: lastAttention, sessions: home.sessions, now: Date.now(), ...(home.agentNames ? { agentNames: home.agentNames } : {}) }))
+}
+const homeTasks = createTaskListReader({
+  call: invokeWorkbenchApi,
+  onChange: next => {
+    // 读不到(stale)⇒ 留着上一份(列表里本来就只有在做 / 做完的,不冒充等你);一份都没有 ⇒ 只剩终端的。
+    if (next.data) { home.tasks = next.data.tasks ?? []; home.agentNames = next.data.agentNames }
+    renderHome()
+  },
+})
+window.addEventListener('pagehide', () => homeTasks.stop())
 // 终端里等批准的 Claude Code / Codex(GET /v1/cli/sessions,admin,走原生宿主):接在「N 件事等你」后面,不另开一页。
 const terminalWaiting = createTerminalWaitingPoller({
   call: (method, path) => invokeWorkbenchApi(method, path),
   onChange: rows => { terminalWaitingCount = rows.length; nowPage?.setTerminal(rows); renderNowCount() },
+  onSessions: sessions => { home.sessions = sessions; renderHome() },
 })
 terminalWaiting.start()
 window.addEventListener('pagehide', () => terminalWaiting.stop())
@@ -238,8 +251,8 @@ function startWorkbenchAttention() {
   workbenchAttention = createWorkbenchAttentionPoller({
     invokeWorkbenchApi, invoke,
     onChange: snapshot => {
-      careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot)
-      lastAttention = snapshot; renderNowCount()
+      nowPage?.setAttention(snapshot)
+      lastAttention = snapshot; renderNowCount(); renderHome()
     },
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
@@ -449,6 +462,9 @@ function setMode(mode) {
     conversationsPoller.stop()
   }
   mainNavigation.setReady(mode === 'dashboard')
+  // 主页的一件件事只在此刻开着时读。
+  if (mode === 'dashboard' && document.querySelector('.dash-pane[data-pane="overview"]:not([hidden])')) void homeTasks.start()
+  else homeTasks.stop()
 }
 
 // 引导页最后一步的码(spec 2026-10-01-tendhearth-pairing-ux §5):在 #screen-service 且 daemon 活着才要码。
@@ -686,7 +702,7 @@ function switchPane(name) {
     const htmlEl = /** @type {HTMLElement} */ (el)
     const hit = htmlEl.dataset.backstageEntry === "true"
       ? backstagePanes.has(name)
-      : htmlEl.dataset.pane === name
+      : htmlEl.dataset.pane === name || (name === "workbench" && htmlEl.dataset.pane === "overview")
     htmlEl.classList.toggle("active", hit && !htmlEl.classList.contains("disabled"))
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
@@ -720,7 +736,8 @@ function switchPane(name) {
   if (name === "recollections") void loadLifeCategory(lifeCategory)
   else lifeArchive?.cancel()
   if (name === "atelier") void loadAtelierGallery({ invokeApi })
-  if (name === "overview") void presencePoller.refresh()
+  if (name === "overview") { void presencePoller.refresh(); void homeTasks.start() }
+  else homeTasks.stop()
   if (name === "todos") {
     initTodosPage(deps)
   }

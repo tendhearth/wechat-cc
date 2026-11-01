@@ -393,7 +393,6 @@
 
           <nav class="dash-nav" aria-label="主导航">
             <button class="dash-nav-link active" data-pane="overview">此刻<span class="count" id="now-count"></span></button>
-            <button class="dash-nav-link" data-pane="workbench">一起做</button>
             <button class="dash-nav-link" data-pane="recollections">回忆</button>
           </nav>
 
@@ -439,6 +438,15 @@
               <h2 id="now-waiting-title"></h2>
               <ul id="now-waiting-list"></ul>
             </section>
+            <section id="now-group-working" class="now-group" aria-labelledby="now-group-working-title" hidden>
+              <h2 id="now-group-working-title">在做</h2>
+              <ul id="now-group-working-list"></ul>
+            </section>
+            <section id="now-group-back" class="now-group" aria-labelledby="now-group-back-title" hidden>
+              <h2 id="now-group-back-title">带回来的</h2>
+              <ul id="now-group-back-list"></ul>
+            </section>
+            <button id="now-all" class="now-all" type="button">全部 →</button>
           </article>
 
           <!-- Hidden shim: keeps the IDs that JS modules
@@ -673,7 +681,7 @@
 
           <!-- ── pane: workbench ───────────────────────────────────── -->
           <article class="dash-pane workbench-pane" data-pane="workbench" hidden>
-            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开导航" title="打开导航" aria-controls="dash-global-rail" aria-expanded="false"><span class="dash-wordmark">tendhearth</span></button></span></header>
+            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-home" class="workbench-home" type="button" data-life-pane="overview">‹ 此刻</button><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开导航" title="打开导航" aria-controls="dash-global-rail" aria-expanded="false"><span class="dash-wordmark">tendhearth</span></button></span></header>
             <div id="workbench-root" class="workbench-root"><p class="empty-state">正在打开工作台…</p></div>
           </article>
 

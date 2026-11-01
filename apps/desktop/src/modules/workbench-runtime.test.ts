@@ -20,7 +20,7 @@ describe('network-guard suspension (2026-10-03)',()=>{
       detail:{task,runtime:task.runtime,runId:'epoch',inputMode:'send',events:[],artifacts:[]}})
     expect(html.match(/已暂停\(网络未受保护\)/g)?.length).toBeGreaterThanOrEqual(2)
     expect(html).toContain('data-status="paused"')
-    expect(html).not.toContain('>进行中<')
+    expect(html).not.toContain('>在做<')
   })
 })
 
@@ -69,7 +69,7 @@ describe('phase from the daemon (评审 2026-09-16)', () => {
   it('renders a replied task as 已答复 even when the runtime snapshot is missing', () => {
     const task={id:'A',title:'Replied',path:'/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,phase:'replied'}
     const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,selectedArtifactId:null,error:'',preview:null,detail:null})
-    expect(html).toContain('data-status="retained">已答复')
+    expect(html).toContain('data-status="retained">这一轮做完了')
   })
   it('keeps the runtime inference for tasks without a phase', () => {
     const task={id:'A',title:'Old daemon',path:'/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,runtime}

@@ -66,12 +66,13 @@ export function terminalWaitingRows(sessions) {
 
 /**
  * 轮询终端会话登记处。读不到 ⇒ 发空列表(不留上一拍的行冒充现在;工作台那份 attention 管「暂时不知道」)。
- * @param {{call:(method:'GET',path:string)=>Promise<unknown>,onChange:(rows:TerminalRow[])=>void,intervalMs?:number}} o
+ * onSessions:整份会话(在跑 / 歇着的也在),给主页的「在做」「带回来的」(设计稿 2026-10-31 U4);同样只在变化时通知。
+ * @param {{call:(method:'GET',path:string)=>Promise<unknown>,onChange:(rows:TerminalRow[])=>void,onSessions?:(sessions:CliSession[])=>void,intervalMs?:number}} o
  */
-export function createTerminalWaitingPoller({ call, onChange, intervalMs = 10_000 }) {
+export function createTerminalWaitingPoller({ call, onChange, onSessions, intervalMs = 10_000 }) {
   /** @type {ReturnType<typeof setTimeout>|null} */ let timer = null
   let stopped = true, ticket = 0
-  let last = '[]'
+  let last = '[]', lastSessions = '[]'
   /** @param {TerminalRow[]} rows */
   function publish(rows) {
     const key = JSON.stringify(rows)
@@ -82,12 +83,16 @@ export function createTerminalWaitingPoller({ call, onChange, intervalMs = 10_00
   async function refresh() {
     const mine = ++ticket
     /** @type {TerminalRow[]} */ let rows = []
+    /** @type {CliSession[]} */ let sessions = []
     try {
       const r = /** @type {{sessions?:unknown}} */ (await v1(call, V1.cli.sessions, { query: { limit: 20 } }))
       rows = terminalWaitingRows(r?.sessions)
-    } catch { rows = [] }
+      sessions = Array.isArray(r?.sessions) ? /** @type {CliSession[]} */ (r.sessions.filter(x => x && typeof x.session_id === 'string')) : []
+    } catch { rows = []; sessions = [] }
     if (mine !== ticket) return
     publish(rows)
+    const key = JSON.stringify(sessions)
+    if (onSessions && key !== lastSessions) { lastSessions = key; onSessions(sessions) }
   }
   function loop() {
     if (stopped) return

@@ -31,6 +31,6 @@ it('uses the replied phase in the task header as well as the task list',()=>{
  const task={id:'deadbeef',title:'A',path:'/A',providerId:'codex',status:'completed',phase:'replied',createdAt:1,updatedAt:1,error:null}
  const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:task.id,detail:{task,events:[],permissions:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
  const header=html.slice(html.indexOf('<header class="wb-task-head">'),html.indexOf('<div class="wb-content">'))
- expect(header).toContain('已答复')
- expect(header).not.toContain('已完成')
+ expect(header).toContain('这一轮做完了')
+ expect(header).not.toContain('>完成<')
 })
