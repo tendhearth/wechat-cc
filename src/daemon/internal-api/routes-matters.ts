@@ -1,4 +1,5 @@
 import type { ListMatters, MatterKind, MatterStatus, MatterSurface } from '../../ports/matters'
+import {MATTER_KINDS} from '@wechat-cc/protocol'
 import type {InternalApiDeps,RouteTable} from './types'
 
 /**
@@ -7,7 +8,7 @@ import type {InternalApiDeps,RouteTable} from './types'
  * operator 凭据放行(token-registry)。查询参数风格沿用 workbench:`?id=`,不走路径参数。
  */
 const ID=/^[a-f0-9]{8}$/
-const KINDS=new Set<string>(['chat','task','companion']),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli'])
+const KINDS=new Set<string>(MATTER_KINDS),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli'])
 const invalid=()=>({status:400,body:{error:'invalid_request'}})
 const known=(message:string)=>/^(invalid_|matter_|workbench_|chat_)/.test(message)
 

@@ -47,7 +47,7 @@ import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobi
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../../app/matters/service'
-import { pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
+import { MATTER_KINDS, type MatterKindT, pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../../domain/companion-presence'
 import type { CatchRow } from '../../adapters/store/journal-store'
 import type { PlanLogEntry } from '../../domain/companion-plan'
@@ -124,7 +124,7 @@ export interface SettingsPanelDeps {
   }
   /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
   matters?: MobileMatterActions & {
-    list(filter: { kind?: 'chat' | 'task' | 'companion'; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
+    list(filter: { kind?: MatterKindT; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
     detail(id: string): Promise<unknown> | unknown
     say(id: string, text: string, input?:MatterSayInput): Promise<unknown>
     seenOnPhone(id: string): void
@@ -836,12 +836,12 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     'GET /m/api/matters': async (url) => {
       if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
       const kind = url.searchParams.get('kind'), status = url.searchParams.get('status')
-      if ((kind !== null && !['chat', 'task', 'companion'].includes(kind)) || (status !== null && status.split(',').some(s => !['open', 'replied', 'done', 'archived'].includes(s)))) return json({ ok: false, error: 'invalid' }, 400)
+      if ((kind !== null && !(MATTER_KINDS as readonly string[]).includes(kind)) || (status !== null && status.split(',').some(s => !['open', 'replied', 'done', 'archived'].includes(s)))) return json({ ok: false, error: 'invalid' }, 400)
       // 不带 status ⇒ 不含归档(真机 2026-09-30:前 50 条里 49 条是归档的自检任务,「一起做」只剩一条)。
       const statuses = (status ? status.split(',') : ['open', 'replied', 'done']) as Array<'open' | 'replied' | 'done' | 'archived'>
       // 多取一些再筛:别人的聊天 matter(updated_at 现在会被微信入站推高)不给手机,也不挤掉任务。
       const owner = deps.ownerChatId()
-      const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), statuses, limit: 200 })
+      const matters = deps.matters.list({ ...(kind ? { kind: kind as MatterKindT } : {}), statuses, limit: 200 })
         .filter(m => phoneMayOpenMatter(m, owner))
         .slice(0, 50)
       for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }

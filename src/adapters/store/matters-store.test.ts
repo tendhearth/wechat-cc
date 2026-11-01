@@ -174,3 +174,37 @@ describe('matter origin (v77, 2026-10-19)',()=>{
     }finally{legacy.close()}
   })
 })
+
+describe('v92 的新列:发起方、统一状态、归档时间(读出口照旧不带)',()=>{
+  const row=(id:string)=>db.query('SELECT kind,initiator,state,archived_at,status FROM matters WHERE id=?').get(id)
+  it('四种 kind 与协议同一组;陌生的(包括从没建过的 companion)在边界拒掉',async()=>{
+    const {MATTER_KINDS}=await import('@wechat-cc/protocol')
+    MATTER_KINDS.forEach((kind,i)=>store.create({id:`0000000${i}`,kind,title:kind}))
+    expect(()=>store.create({kind:'companion' as never,title:'x'})).toThrow('invalid_matter_kind')
+  })
+  it('发起方默认是主人;CC 自己做的事记 cc;陌生值拒掉',()=>{
+    store.create({id:'0000000a',kind:'task',title:'t'})
+    store.create({id:'0000000b',kind:'act',initiator:'cc',title:'写信'})
+    expect(row('0000000a')).toMatchObject({initiator:'owner',state:'open',archived_at:null})
+    expect(row('0000000b')).toMatchObject({kind:'act',initiator:'cc'})
+    expect(()=>store.create({kind:'act',initiator:'stranger' as never,title:'x'})).toThrow('invalid_matter_initiator')
+    expect(store.get('0000000b')).not.toHaveProperty('initiator')
+  })
+  it('旧 setStatus 顺手跟上归档时间与做完 / 重开;没做成不被「做完」盖掉',()=>{
+    store.create({id:'0000000a',kind:'task',title:'t'})
+    clock=2_000;store.setStatus('0000000a','archived')
+    expect(row('0000000a')).toEqual({kind:'task',initiator:'owner',state:'open',archived_at:2_000,status:'archived'})
+    clock=3_000;store.setStatus('0000000a','archived')
+    expect(row('0000000a')).toMatchObject({archived_at:2_000})
+    store.setStatus('0000000a','done')
+    expect(row('0000000a')).toMatchObject({state:'done',archived_at:null})
+    store.setStatus('0000000a','replied')
+    expect(row('0000000a')).toMatchObject({state:'open'})
+    db.query("UPDATE matters SET state='failed' WHERE id='0000000a'").run()
+    store.setStatus('0000000a','done')
+    expect(row('0000000a')).toMatchObject({state:'failed',status:'done'})
+    db.query("UPDATE matters SET state='working' WHERE id='0000000a'").run()
+    store.setStatus('0000000a','replied')
+    expect(row('0000000a')).toMatchObject({state:'working'})
+  })
+})

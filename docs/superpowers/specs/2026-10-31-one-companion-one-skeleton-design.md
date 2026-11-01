@@ -121,6 +121,8 @@ matter   一件事:谁发起(initiator)、从哪来(origin_surface)、是什么(
 | M5 | CC 自己做的事:信、早报、记忆整理、打猎、画室、贴纸各自起一件 `act`(initiator = cc),过程写 item | 每个发起方都有 matter;删掉各自的「做过了」标记文件里能由 item 推出的部分 |
 | M6 | 读这一侧收口:`MatterEvent` / `TaskEvent` / `CliActivityItem` 删掉,`detail()` 只读 item;状态只从 matter 推 | 三种形状不在 src |
 
+**M 线进度(11-01)**:M0 → PR #778(金样 19 份)。M1 → v92:`matters` 重建(kind = chat / task / terminal / act,从没建过的 companion 并进 act;加 `initiator`、统一状态 `state` 与正交的 `archived_at`,存量按工作台状态 / 旧状态推);新表 `matter_turns`、`matter_items`、`matter_log_cursor`;写口 `MatterLog`(`src/adapters/store/matter-log.ts`,守卫 `scripts/matter-log-single-writer.guard.test.ts`)。旧 `status` 列与它的出口到 M6 才退;working / waiting 只由 `MatterLog` 推,旧 `setStatus` 只跟上归档时间与做完 / 重开。迁移 runner 加了 `withoutForeignKeys`(重建被外键指着的表,见 `docs/maintainer/migrations.md`)。
+
 ### S:在场一个调度
 
 | # | 内容 | 做完怎么算 |
