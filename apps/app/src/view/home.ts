@@ -72,7 +72,7 @@ function matterRows(input: HomeInput): HomeRow[] {
       return {
         id: m.id,
         source: 'matter' as const,
-        href: `/matter/${encodeURIComponent(m.id)}${p ? `?request=${encodeURIComponent(p.id)}` : ''}`,
+        href: `/matter/${encodeURIComponent(m.id)}${p ? `/decide?request=${encodeURIComponent(p.id)}` : ''}`,
         title: p ? p.summary : m.title,
         caption,
         detail: null,

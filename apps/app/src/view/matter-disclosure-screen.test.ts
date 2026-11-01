@@ -3,7 +3,7 @@ import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeDemoBackend } from '../backend/demo'
 import type { MatterDetailT } from '../backend/types'
-import Matter from '../app/matter/[id]'
+import Matter from '../app/matter/[id]/index'
 import { withProviders } from '../state/providers.test-support'
 import { cleanup, mount } from '../ui/native-motion.test-support'
 

@@ -82,8 +82,8 @@ describe('终端会话的推送(taskId = cli:<会话>,daemon features/terminal/a
 
 describe('href', () => {
   it('hrefFor', () => {
-    expect(hrefFor({ kind: 'approval', id: 'ab12cd34', request: 'perm 1' })).toBe('/approval/ab12cd34?request=perm%201')
-    expect(hrefFor({ kind: 'approval', id: 'ab12cd34' })).toBe('/approval/ab12cd34')
+    expect(hrefFor({ kind: 'approval', id: 'ab12cd34', request: 'perm 1' })).toBe('/matter/ab12cd34/decide?request=perm%201')
+    expect(hrefFor({ kind: 'approval', id: 'ab12cd34' })).toBe('/matter/ab12cd34/decide')
     expect(hrefFor({ kind: 'matter', id: 'ab12cd34' })).toBe('/matter/ab12cd34')
     expect(hrefFor({ kind: 'home' })).toBe('/')
     expect(hrefFor({ kind: 'gone' })).toBe('/')

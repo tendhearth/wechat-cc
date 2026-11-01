@@ -33,7 +33,7 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     const v = homeView(input({ matters: [m('w', NOW)], approvals: [{ taskId: 'w', kind: 'question', id: 'q1', summary: 'a' }, { taskId: 'w', kind: 'permission', id: 'p2', summary: 'b' }] as any }))
     const rows = v.groups[0]!.rows
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ id: 'w', status: 'waiting', pendingRequestId: 'q1', title: 'a', href: '/matter/w?request=q1', caption: 'tw' })
+    expect(rows[0]).toMatchObject({ id: 'w', status: 'waiting', pendingRequestId: 'q1', title: 'a', href: '/matter/w/decide?request=q1', caption: 'tw' })
     expect(v.waitingCount).toBe(1)
   })
   it('主人对话、访客对话、归档的不进列表', () => {

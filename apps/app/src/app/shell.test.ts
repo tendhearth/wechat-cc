@@ -20,4 +20,14 @@ describe('一个主页', () => {
     }
     expect(readFileSync(join(__dirname, '../ui/WorkList.tsx'), 'utf8')).toContain('MatterRow')
   })
+  it('批准是一件事的一步:/approval 只剩重定向到 /matter/<id>/decide', () => {
+    const src = readFileSync(join(__dirname, 'approval/[id].tsx'), 'utf8')
+    expect(src).toContain('<Redirect')
+    expect(src).toContain('/decide')
+    expect(src).not.toMatch(/useSubmit|backend\.decide|backend\.answer/)
+    const decide = readFileSync(join(__dirname, 'matter/[id]/decide.tsx'), 'utf8')
+    expect(decide).toContain('answersTooLong')
+    expect(decide).toContain('!detail.fresh')
+    expect(decide).not.toMatch(/`\/approval\//)
+  })
 })

@@ -36,7 +36,7 @@ export async function resolvePushRoute(t: PushTarget | null, fetchDetail: (id: s
 }
 
 export function hrefFor(r: PushRoute): string {
-  if (r.kind === 'approval') return `/approval/${encodeURIComponent(r.id)}${r.request ? `?request=${encodeURIComponent(r.request)}` : ''}`
+  if (r.kind === 'approval') return `/matter/${encodeURIComponent(r.id)}/decide${r.request ? `?request=${encodeURIComponent(r.request)}` : ''}`
   if (r.kind === 'matter') return `/matter/${encodeURIComponent(r.id)}`
   if (r.kind === 'terminal') return r.id ? `/terminal/${encodeURIComponent(r.id)}` : '/all'
   if (r.kind === 'chat') return '/chat'
