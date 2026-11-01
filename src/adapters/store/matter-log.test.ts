@@ -134,6 +134,14 @@ describe('统一状态从轮与「等你」的步推出来',()=>{
     expect(items.filter(i=>i.key!=='c2').every(i=>i.cursor>before)).toBe(true)
     expect(state('0000000a')).toBe('cancelled')
   })
+  it('轮结束后迟到的 started(卡 / 提问 / 工具)记成 failed:不把这件事拉回「等你」(Codex 评审 P2)',()=>{
+    const t=log.startTurn({matterId:'0000000a',executor:'claude'})
+    log.finishTurn(t.id,{status:'completed'})
+    const late=log.writeItem({matterId:'0000000a',turnId:t.id,kind:'permission',status:'started',key:'p-late'})
+    expect(late.status).toBe('failed')
+    expect(state('0000000a')).toBe('open')
+    expect(log.writeItem({matterId:'0000000a',turnId:t.id,kind:'tool_call',status:'completed',key:'c-late'}).status).toBe('completed')
+  })
   it('显式结局:还有轮在跑时不许直接判;做完的事再开一轮就回到 working',()=>{
     const t=log.startTurn({matterId:'0000000a',executor:'claude'})
     expect(()=>log.setState('0000000a','done')).toThrow('matter_has_running_turn')

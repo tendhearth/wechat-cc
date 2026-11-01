@@ -69,23 +69,28 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     if(!ITEM_KINDS.has(input.kind))throw new Error('invalid_item_kind')
     if(!ITEM_STATUSES.has(input.status))throw new Error('invalid_item_status')
     requireMatter(input.matterId)
-    if(input.turnId!=null){const turn=turnRow(input.turnId);if(!turn||turn.matter_id!==input.matterId)throw new Error('turn_not_in_matter')}
+    let status=input.status
+    if(input.turnId!=null){
+      const turn=turnRow(input.turnId);if(!turn||turn.matter_id!==input.matterId)throw new Error('turn_not_in_matter')
+      // 轮已经结束 ⇒ 迟到的 started 记成 failed(和 finishTurn 收尾时一样),别让一张过期的卡把这件事拉回「等你」。
+      if(turn.status!=='running'&&status==='started')status='failed'
+    }
     const key=input.key??null,ts=now()
     const previous=key===null?null:db.query<ItemRow,[string,string]>('SELECT * FROM matter_items WHERE matter_id=? AND item_key=?').get(input.matterId,key)
     if(previous&&previous.kind!==input.kind)throw new Error('item_kind_mismatch')
     // 做完 / 失败的步不会被迟到的 started 倒回去(重复的开始事件可能在完成之后才到)。
-    if(previous&&previous.status!=='started'&&input.status==='started')return toItem(previous)
+    if(previous&&previous.status!=='started'&&status==='started')return toItem(previous)
     const base=input.payload??(previous?JSON.parse(previous.payload_json) as Record<string,unknown>:{})
     const payload=input.appendText===undefined?base:{...base,text:(String(base.text??'')+input.appendText).slice(0,TEXT_MAX)}
     let id:number
     if(previous){
       db.query('UPDATE matter_items SET status=?,turn_id=COALESCE(?,turn_id),message_id=COALESCE(?,message_id),payload_json=?,updated_at=?,cursor=? WHERE id=?')
-        .run(input.status,input.turnId??null,input.messageId??null,JSON.stringify(payload),ts,nextCursor(),previous.id)
+        .run(status,input.turnId??null,input.messageId??null,JSON.stringify(payload),ts,nextCursor(),previous.id)
       id=previous.id
     } else {
       const seq=db.query<{n:number},[string]>('SELECT COALESCE(MAX(seq),0)+1 AS n FROM matter_items WHERE matter_id=?').get(input.matterId)!.n
       id=Number(db.query('INSERT INTO matter_items(matter_id,turn_id,seq,kind,status,item_key,message_id,payload_json,created_at,updated_at,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .run(input.matterId,input.turnId??null,seq,input.kind,input.status,key,input.messageId??null,JSON.stringify(payload),ts,ts,nextCursor()).lastInsertRowid)
+        .run(input.matterId,input.turnId??null,seq,input.kind,status,key,input.messageId??null,JSON.stringify(payload),ts,ts,nextCursor()).lastInsertRowid)
     }
     settle(input.matterId)
     return toItem(itemRow(id))
