@@ -258,6 +258,9 @@ try {
     await until('Exact native task destination',async()=>JSON.stringify(await execute('return window.__ccQANavigations?.at(-1)'))===JSON.stringify(target))
     await switchWindow('companion')
   }
+  report.taskObservation = { ...await execute('return {documentHidden:document.hidden,visibilityState:document.visibilityState,nativeDocumentFocused:document.hasFocus()}'),
+    explicitSyntheticFixtureRefresh: true,
+    coverage: 'Explicit offline fixture observation in real WebKit; production visibility/wake is covered separately in browser, not by a locked console' }
   await scenario('tasks')
   await until('Factual native task entry',()=>execute('return !document.getElementById("pet-tasks").hidden && document.getElementById("pet-task-primary").textContent.includes("修好本地排版")'))
   let taskSequence=await nativeSequence()
