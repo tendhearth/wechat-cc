@@ -24,6 +24,34 @@ afterEach(() => {
 })
 
 describe('companion placement recovery control', () => {
+  it('an auxiliary virtual click activates the semantic character button once', async () => {
+    await mount(true)
+    document.getElementById('pet-stage')!.click()
+    await vi.waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === 'show_main_window')).toEqual([['show_main_window', { page: 'converse' }]]))
+  })
+  it('a browser click after an observed mouse release does not duplicate activation, or activate after drag', async () => {
+    invoke.mockImplementation(async (cmd: unknown) => cmd === 'start_companion_drag' ? { x: 1000, y: 500 } as any : undefined)
+    await mount(true)
+    const stage = document.getElementById('pet-stage')!
+    stage.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, screenX: 100, screenY: 100 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0, screenX: 100, screenY: 100 }))
+    stage.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    await vi.waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === 'show_main_window')).toHaveLength(1))
+    stage.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, screenX: 100, screenY: 100 }))
+    window.dispatchEvent(new MouseEvent('mousemove', { buttons: 1, screenX: 120, screenY: 100 }))
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0, screenX: 120, screenY: 100 }))
+    stage.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    await vi.waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === 'finish_companion_drag')).toHaveLength(1))
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'show_main_window')).toHaveLength(1)
+  })
+
+  it('coalesces a semantic key action and its accompanying virtual click while opening',async()=>{
+    await mount(true)
+    const stage=document.getElementById('pet-stage')!
+    stage.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))
+    stage.click()
+    await vi.waitFor(()=>expect(invoke.mock.calls.filter(([cmd])=>cmd==='show_main_window')).toHaveLength(1))
+  })
   it('a stationary character click opens the existing conversation without moving the window', async () => {
     invoke.mockImplementation(async (command: unknown) => command === 'start_companion_drag' ? { x: 1000, y: 500 } as any : undefined)
     await mount(true)

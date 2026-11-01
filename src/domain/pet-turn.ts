@@ -9,6 +9,14 @@ export const LIT_DIM_MS = 20 * 60_000
 
 export type PetPhase = 'idle' | 'thinking' | 'working' | 'permission'
 
+export interface PetTaskActivity {
+  taskId: string
+  title: string
+  phase: 'needs_input' | 'failed' | 'interrupted' | 'paused' | 'replied' | 'working' | 'queued' | 'stopping'
+  detail: string | null
+  updatedAt: number
+}
+
 export interface PendingPermissionItem {
   hash: string
   prompt: string
@@ -31,6 +39,7 @@ export interface PetTurnPayload {
   turn: { phase: PetPhase; since: string | null }
   last_done_at: string | null
   pending_permissions: PendingPermissionItem[]
+  activities?: PetTaskActivity[]
 }
 
 const iso = (ms: number | null): string | null =>

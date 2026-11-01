@@ -246,6 +246,67 @@ try {
   await nativeSettled('show_main_window', keyboardSequence)
   report.checks.push('stationary clicks and keyboard activation request the existing conversation route')
 
+  // Task UI is production renderer; this QA main proves real Rust/WebKit
+  // transport. Production workbench selection/drafts/no-send are browser coverage.
+  const scenario=async value=>{
+    const receipt=await command('/execute/async',{script:'const done=arguments[arguments.length-1];window.__TAURI__.event.emit("cc-motion-qa-scenario",arguments[0]).then(()=>done(true)).catch(error=>done({error:String(error)}))',args:[value]})
+    assert.equal(receipt,true)
+  }
+  const taskTarget={page:'workbench',taskId:'deadbeef'},otherTarget={page:'workbench',taskId:'bbbb2222'}
+  const assertMainTarget=async target=>{
+    await switchWindow('main')
+    await until('Exact native task destination',async()=>JSON.stringify(await execute('return window.__ccQANavigations?.at(-1)'))===JSON.stringify(target))
+    await switchWindow('companion')
+  }
+  await scenario('tasks')
+  await until('Factual native task entry',()=>execute('return !document.getElementById("pet-tasks").hidden && document.getElementById("pet-task-primary").textContent.includes("修好本地排版")'))
+  let taskSequence=await nativeSequence()
+  await click('#pet-stage')
+  assert.deepEqual((await nativeSettled('show_main_window',taskSequence)).destination,taskTarget)
+  await assertMainTarget(taskTarget)
+  taskSequence=await nativeSequence();await click('#pet-task-primary')
+  assert.deepEqual((await nativeSettled('show_main_window',taskSequence)).destination,taskTarget)
+  await assertMainTarget(taskTarget)
+  await click('#pet-task-toggle')
+  taskSequence=await nativeSequence();await click('#pet-task-list [data-task-id="bbbb2222"]')
+  assert.deepEqual((await nativeSettled('show_main_window',taskSequence)).destination,otherTarget)
+  await assertMainTarget(otherTarget)
+  await screenshot('companion-tasks')
+  report.checks.push('production task entry, virtual click and chooser carry exact IDs through real native transport')
+  await scenario('tasks-away')
+  await until('Disconnected task targets cleared',()=>execute('return document.getElementById("pet-tasks").hidden'))
+  const hiddenCount=await navigationCount()
+  await click('#pet-task-primary')
+  assert.equal(await navigationCount(),hiddenCount,'Hidden stale task dispatched a target')
+  await scenario('tasks')
+  await until('Task targets restored from current facts',()=>execute('return !document.getElementById("pet-tasks").hidden'))
+  report.checks.push('disconnect clears task targets without inventing unread or completion')
+
+  // Hold the new renderer before listen; the native inbox must retain B whole.
+  await execute('localStorage.setItem("cc-motion-qa-navigation-gate","hold");return true')
+  const closeMain=await command('/execute/async',{script:'const done=arguments[arguments.length-1];window.__TAURI__.window.Window.getByLabel("main").then(main=>main.close()).then(()=>done(true)).catch(error=>done({error:String(error)}))',args:[]})
+  assert.equal(closeMain,true)
+  await until('QA main destroyed',async()=>!(await command('/window/handles')).includes('main'))
+  let requested=await invoke('show_main_window',taskTarget);assert.equal(requested.ok,true,requested.error)
+  await until('QA main recreated',async()=>(await command('/window/handles')).includes('main'))
+  await switchWindow('main')
+  await until('Cold renderer waits before listener',()=>execute('return window.__ccQANavigationWaiting===true'))
+  await switchWindow('companion')
+  requested=await invoke('show_main_window',otherTarget);assert.equal(requested.ok,true,requested.error)
+  await execute('localStorage.removeItem("cc-motion-qa-navigation-gate");return true')
+  await assertMainTarget(otherTarget)
+  await switchWindow('main')
+  report.taskNavigation={cold:await execute('return window.__ccQANavigations'),coverage:'real WebKit and Rust native target transport; production workbench route separately covered in browser'}
+  assert.deepEqual(report.taskNavigation.cold,[otherTarget])
+  await switchWindow('companion');requested=await invoke('show_main_window',taskTarget);assert.equal(requested.ok,true,requested.error)
+  await assertMainTarget(taskTarget)
+  await switchWindow('main');report.taskNavigation.warm=await execute('return window.__ccQANavigations')
+  assert.deepEqual(report.taskNavigation.warm,[otherTarget,taskTarget])
+  await switchWindow('companion')
+  report.checks.push('cold-created main keeps newest complete task until listener ready; warm navigation is not replayed')
+  await scenario('idle')
+  await until('Native task entry hidden after tasks finish',()=>execute('return document.getElementById("pet-tasks").hidden'))
+
   await beginGesture()
   let sequence = await nativeSequence()
   await input('mousedown', 0, 0, 1); await input('mousemove', 20, 10, 1)

@@ -28,11 +28,11 @@
 
 投影不调用 detail()、git、脚本探测、不 touch 或创建 matter、不记录阅读/批准。task与matter同ID，但不把任意chat/companion matter当task。
 
-扩展现有 `/v1/companion/pet` 为可选 `activities`；旧 payload、旧客户端仍可用。沿用2/10秒轮询。新的活动驱动文字、目标和相应的持续姿态（等决定/工作/安静维持），不伪造完成、收到或错误一次性事件，不改变 Light/Dark。主人聊天权限、连接提示优先。
+扩展现有 `/v1/companion/pet` 为可选 `activities`；旧 payload、旧客户端仍可用。沿用2/10秒轮询。集成后状态文案复用 dev 新增的 generated/status-table.js，暂停/排队/停止中的细分照实说明。新的活动驱动文字、目标和相应的持续姿态（等决定/工作/安静维持），不伪造完成、收到或错误一次性事件，不改变 Light/Dark。主人聊天权限、连接提示优先。
 
 ## 导航
 
-兼容既有 page字符串/事件，新增 `{page:'workbench',taskId}`。Rust热事件、冷pending、JS就绪队列保存同一个完整目标；两端都校验，不分别存ID。较新实时请求继续胜过旧pending，冷主窗可见后才分派；具体任务调用现有 openWorkbenchTask。无额外全局变量或URL路由。
+兼容既有 page字符串/事件，新增 `{page:'workbench',taskId}`。Rust热事件、冷pending、JS就绪队列保存同一个完整目标；两端都校验，不分别存ID。Rust 以现有 take_pending_navigate 作为监听器已注册的握手；窗口已创建但监听尚未就绪时仍覆盖缓冲最新目标，热窗口发送的目标不遗留到下次打开。主窗创建串行去重。较新实时请求继续胜过旧pending，冷主窗可见后才分派；具体任务调用现有 openWorkbenchTask。无额外全局变量或URL路由。
 
 ## 验证与部署
 

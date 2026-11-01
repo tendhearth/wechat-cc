@@ -58,7 +58,7 @@ button { font: inherit; }
 .pet-card-actions button:focus-visible { outline: 2px solid #d9773b; outline-offset: 1px; }
 .pet-card-note { margin: 0; color: #7b6b5c; }
 .pet-controls { z-index: 2; position: absolute; right: 6px; top: 6px; display: flex; gap: 2px; opacity: 0; pointer-events: none; transition: opacity 160ms ease; }
-.pet-shell:hover .pet-controls, .pet-shell:focus-within .pet-controls, .pet-shell:has(.pet-settings[open]) .pet-controls { opacity: 1; pointer-events: auto; }
+.pet-shell:hover .pet-controls, .pet-shell:has(:focus-visible) .pet-controls, .pet-shell:has(.pet-settings[open]) .pet-controls { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .pet-controls { opacity: 1; pointer-events: auto; } }
 @media (prefers-reduced-motion: reduce) { .pet-controls { transition: none; } }
 .pet-controls button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: rgba(255, 253, 247, .8); color: rgba(111, 78, 49, .8); cursor: pointer; font-size: 14px; line-height: 22px; }
@@ -82,3 +82,16 @@ button { font: inherit; }
 
 /* Live controls also stop a CSS fade already in progress. */
 .pet-motion-reduced .pet-sprite, .pet-paused .pet-sprite { transition: none; animation: none !important; }
+
+.pet-tasks { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0; margin-top: 4px; z-index: 1; }
+.pet-task-primary { max-height: 96px; overflow: hidden; width: 100%; padding: 6px 9px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--th-paper) 94%, transparent); color: var(--th-ink); font-size: 11px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; text-align: left; cursor: pointer; }
+.pet-task-toggle { padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--th-ink-soft); font-size: 10px; cursor: pointer; }
+.pet-task-list { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; max-height: 50vh; padding: 4px; overflow: auto; border-radius: 10px; background: var(--th-paper); box-shadow: 0 6px 20px color-mix(in srgb, var(--th-ink) 14%, transparent); }
+.pet-task-list button { display: block; width: 100%; padding: 7px; border: 0; border-radius: 6px; background: transparent; color: var(--th-ink); font-size: 11px; line-height: 1.5; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.pet-task-list button:hover { background: var(--th-rail); }
+.pet-tasks button:focus-visible { outline: 2px solid var(--th-accent); outline-offset: -2px; }
+
+.pet-task-phase { display: block; color: var(--th-ink-soft); font-size: 10px; line-height: 1.4; }
+.pet-task-title, .pet-task-detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.pet-task-title { font-weight: 500; }
+.pet-task-detail { color: var(--th-ink-soft); font-size: 10px; line-height: 1.4; }

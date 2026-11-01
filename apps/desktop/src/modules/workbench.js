@@ -476,6 +476,8 @@ export function createWorkbenchController(deps) {
   let loadedPages = 1
   /** @type {string|null} */
   let desiredId = null
+  /** A failed explicit target must not become permission to open another task. @type {string|null} */
+  let failedTarget = null
   let composingNewTask = deps.initialScope === 'new' || !!deps.initialScope?.startsWith('new:')
   let preferredInitialId = deps.initialScope?.startsWith('task:') ? deps.initialScope.slice(5) : null
   let alive = true
@@ -530,7 +532,7 @@ export function createWorkbenchController(deps) {
   /** 长轮询回来的详情:结构没变就逐条补丁,补不上才整页重画。
    * @param {Detail} detail */
   const applyLiveDetail = detail => {
-    if (!alive || !state.detail || !detail?.task || detail.task.id !== state.selectedId || desiredId) return
+    if (!alive || !state.detail || !detail?.task || detail.task.id !== state.selectedId || desiredId || failedTarget) return
     const reconnected = state.detailDisconnected
     state.detailDisconnected = false
     const previousVersion = state.version
@@ -582,13 +584,13 @@ export function createWorkbenchController(deps) {
   const dedupe = tasks => [...new Map(tasks.map(task => [task.id, task])).values()]
   return {
     state,
-    getTargetTaskId() { return desiredId ?? state.selectedId },
+    getTargetTaskId() { return desiredId ?? failedTarget ?? state.selectedId },
     /** @param {{force?:boolean}} [options] */
     async refresh({ force = false } = {}) {
       if (!alive) return
       if (force) state.loadingMore = false
       if (state.loadingMore) {
-        if (state.selectedId && !desiredId && (force || !livePoll.active)) await this.selectTask(state.selectedId)
+        if (state.selectedId && !desiredId && !failedTarget && (force || !livePoll.active)) await this.selectTask(state.selectedId)
         return
       }
       const request = ++listRequest
@@ -609,6 +611,11 @@ export function createWorkbenchController(deps) {
       if (!alive || request !== listRequest) return
       loadedPages = pages
       Object.assign(state, result, { tasks: dedupe(result.tasks), page: result.page, projectProviders: result.projectProviders ?? {} })
+      if (failedTarget) {
+        if (force) await this.selectTask(failedTarget)
+        else paint()
+        return
+      }
       state.error = ''
       if (desiredId) paint()
       // 选中任务的详情归长轮询管;列表这条腿只管列表,免得每 3 秒把流打断一次。
@@ -634,7 +641,7 @@ export function createWorkbenchController(deps) {
         state.page = result.page
         state.projectProviders = { ...state.projectProviders, ...result.projectProviders }
         state.agentNames = { ...state.agentNames, ...result.agentNames }
-        state.error = ''
+        if (!failedTarget) state.error = ''
         loadedPages++
       } catch (error) { if (!alive || request !== listRequest) return; throw error }
       finally { if (alive && request === listRequest) { state.loadingMore = false; paint() } }
@@ -656,6 +663,7 @@ export function createWorkbenchController(deps) {
       if (state.selectedId !== id) forgetReviews()
       livePoll.stop()
       desiredId = id
+      failedTarget = null
       composingNewTask = false
       const request = ++detailRequest
       if (!state.detail) { state.loadingId = id; paint() }
@@ -665,6 +673,7 @@ export function createWorkbenchController(deps) {
       catch (error) {
         if (!alive || request !== detailRequest || desiredId !== id) return
         desiredId = null
+        failedTarget = id
         state.loadingId = null
         throw error
       }
@@ -688,12 +697,12 @@ export function createWorkbenchController(deps) {
       if (liveVersioned) livePoll.start(id, state.version)
     },
     /** @param {string} [path] */
-    newTask(path) { detailRequest++; livePoll.stop(); forgetReviews(); desiredId = null; composingNewTask = true; state.newScope = path ? `new:${path}` : 'new'; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; state.previewOpen = false; state.preview = null; paint() },
+    newTask(path) { detailRequest++; livePoll.stop(); forgetReviews(); desiredId = null; failedTarget = null; state.error = ''; composingNewTask = true; state.newScope = path ? `new:${path}` : 'new'; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; state.previewOpen = false; state.preview = null; paint() },
     destroy() { alive = false; livePoll.stop(); detailRequest++; listRequest++ },
     /** 面板被藏起来时停掉这条长连接,重新露面再接上。 */
     liveActive: () => livePoll.active,
     stopLive: () => livePoll.stop(),
-    resumeLive: () => { if (alive && liveVersioned && state.selectedId && !desiredId && !livePoll.active) livePoll.start(state.selectedId, state.version ?? 0) },
+    resumeLive: () => { if (alive && liveVersioned && state.selectedId && !desiredId && !failedTarget && !livePoll.active) livePoll.start(state.selectedId, state.version ?? 0) },
     paint,
   }
 }

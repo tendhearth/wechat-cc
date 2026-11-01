@@ -101,11 +101,11 @@ const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch'> = {}) 
 })
 
 /** 桌面 / CLI 那一侧:operator 令牌(工作台、记忆页那一串路由走它)。 */
-async function desktop<T = Record<string, unknown>>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<{ status: number; body: T }> {
-  const info = JSON.parse(readFileSync(join(d.stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string; operatorTokenFilePath: string }
+async function desktop<T = Record<string, unknown>>(method: 'GET' | 'POST', path: string, body?: unknown, credential:'operator'|'trusted'='operator'): Promise<{ status: number; body: T }> {
+  const info = JSON.parse(readFileSync(join(d.stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string; operatorTokenFilePath: string; tokenFilePath:string }
   const r = await fetch(`${info.baseUrl}${path}`, {
     method,
-    headers: { authorization: `Bearer ${readFileSync(info.operatorTokenFilePath, 'utf8').trim()}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${readFileSync(credential==='trusted'?info.tokenFilePath:info.operatorTokenFilePath, 'utf8').trim()}`, 'content-type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
   return { status: r.status, body: await r.json() as T }
@@ -232,6 +232,12 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 这一轮答完了:桌面看到的任务是「已答复」(Codex 的会话留着,等主人接着说),执行者真的把文件写进了项目
     await expect.poll(async () => (await desktop<{ task: { phase: string } }>('GET', `/v1/workbench/task?id=${taskId}`)).body.task.phase, { timeout: 30_000 }).toBe('replied')
     expect(readFileSync(join(project, 'NOTE.md'), 'utf8')).toBe('第一行\n第二行\n')
+    // Same real daemon wiring as the desktop pet; selecting it remains read-only.
+    expect((await desktop('GET','/v1/companion/pet')).status).toBe(403) // operator scope intentionally excludes this trusted read
+    const pet = await desktop<{activities:Array<{taskId:string;title:string;phase:string}>}>('GET','/v1/companion/pet',undefined,'trusted')
+    expect(pet.status).toBe(200)
+    expect(pet.body.activities).toEqual(expect.arrayContaining([expect.objectContaining({taskId,phase:'replied'})]))
+    expect(pet.body.activities.find(item=>item.taskId===taskId)?.title).toContain('写一份笔记')
     // 给主人的回报(微信里派的活,回报回到微信):进了回报发件箱,带着答复正文。主人刚在这件事上说过话,回报故意晚一分钟再发
     // (report.ts 的 shouldDisturb),所以这里看发件箱那一行,不等它真发出去
     await expect.poll(() => d.query<{ text: string }>('SELECT text FROM matter_report_outbox WHERE matter_id = ?', taskId!).map(r => r.text), { timeout: 15_000 })

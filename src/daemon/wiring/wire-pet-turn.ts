@@ -3,6 +3,7 @@
  * 这里只把 daemon 里已经存在的信号收齐。
  */
 import { derivePetTurn } from '../../domain/pet-turn'
+import type { PetTaskActivity } from '../../domain/pet-turn'
 import type { PetTurnDep } from '../internal-api/types'
 import type { WechatPermissions } from '../../ports/wechat'
 import type { Bootstrap } from '../bootstrap'
@@ -17,6 +18,7 @@ export interface WirePetTurnDeps {
   petSignals?: PetSignals
   boot: Pick<Bootstrap, 'resolve' | 'coordinator' | 'sessionManager' | 'defaultProviderId'>
   messagesStore: Pick<ReturnType<typeof makeMessagesStore>, 'latestInboundTs'>
+  activities?: () => PetTaskActivity[]
 }
 
 export function wirePetTurn(d: WirePetTurnDeps): PetTurnDep {
@@ -71,5 +73,12 @@ export function wirePetTurn(d: WirePetTurnDeps): PetTurnDep {
       pending,
     })
   }
-  return petTurn
+  if(!d.activities)return petTurn
+  return async()=>{
+    const payload=await petTurn()
+    // Clear stale task targets on projection failure without losing chat facts.
+    let activities:PetTaskActivity[]=[]
+    try{activities=d.activities?.()??[]}catch{/* next existing poll can recover */}
+    return {...payload,activities}
+  }
 }

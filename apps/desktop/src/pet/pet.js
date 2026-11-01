@@ -35,6 +35,7 @@ export async function createPet(root, opts) {
   const random = opts.random ?? Math.random
   const now = opts.now ?? Date.now
   let lastAttention = -Infinity
+  let ownsAttention = false
   let reducedMotion = opts.reducedMotion === true
   let quiet = false
   let paused = false
@@ -179,6 +180,7 @@ export async function createPet(root, opts) {
     if (machine.setState(b) === 'ignored' && !heldOneShots.includes(b)) heldOneShots.push(b)
   }
   const onSnapshot = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
+    if (s.transition || s.behavior !== 'look') ownsAttention = false
     if (suppressDecoration() && s.props.includes('micro-light')) { machine.setProps(s.props.filter(p => p !== 'micro-light'), s.badge); return }
     if ((quiet || paused) && (s.transition || decorative.has(s.behavior))) { machine.notifyAnimationEnded(); return }
     render(s)
@@ -224,6 +226,14 @@ export async function createPet(root, opts) {
       // Local attention is disposable decoration; never enqueue it as a fact.
       if (machine.setState('look') !== 'applied') return false
       lastAttention = time
+      ownsAttention = true
+      return true
+    },
+    releaseAttention() {
+      const current = machine.snapshot()
+      if (!ownsAttention || current.transition || current.behavior !== 'look') { ownsAttention = false; return false }
+      ownsAttention = false
+      machine.notifyAnimationEnded()
       return true
     },
     /** @param {boolean} on */
@@ -232,7 +242,10 @@ export async function createPet(root, opts) {
     setQuiet(on) { if (quiet !== on) { quiet = on; syncMotion() } },
     /** @param {boolean} on */
     setPaused(on) { if (paused !== on) { paused = on; syncMotion() } },
-    setState: machine.setState,
+    /** Explicit behavior requests supersede a local attention pose, including another look.
+     * @param {string} behavior
+     */
+    setState(behavior) { ownsAttention = false; return machine.setState(behavior) },
     setForm: machine.setForm,
     setProps: machine.setProps,
     /** @param {PetIntent} intent */

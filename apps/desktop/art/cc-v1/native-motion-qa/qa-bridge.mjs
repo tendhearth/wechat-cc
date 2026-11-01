@@ -1,7 +1,8 @@
 // QA-only boundaries: synthetic facts; native commands target this test app's CC.
+import { mainDestination } from '../../../src/main-navigation.js'
 export function createQAApi() {
   let scenario = 'idle'
-  const allowed = new Set(['idle', 'working', 'thinking', 'permission', 'away', 'completed'])
+  const allowed = new Set(['idle', 'working', 'thinking', 'permission', 'away', 'completed', 'tasks', 'tasks-away'])
   const since = new Date().toISOString()
   let lastDone = null
   return {
@@ -14,7 +15,7 @@ export function createQAApi() {
     async invokeApi(method, path) {
       if (method !== 'GET') throw Error('Backend request blocked by isolated native QA')
       if (path === '/v1/companion/presence') return {
-        presence: scenario === 'away' ? 'down' : 'ok',
+        presence: scenario === 'away' || scenario === 'tasks-away' ? 'down' : 'ok',
         activity: { kind: scenario === 'working' ? 'working' : 'idle', label: '', since: null },
         news: { unread: 0, latest_kind: null, latest_title: null },
       }
@@ -22,6 +23,10 @@ export function createQAApi() {
         owner_last_contact_at: null, last_done_at: lastDone,
         turn: { phase: ['thinking', 'working', 'permission'].includes(scenario) ? scenario : 'idle', since },
         pending_permissions: scenario === 'permission' ? [{ hash: 'qa-only', prompt: '演示权限卡，不会执行操作。', since, expires_at: new Date(Date.now() + 3_600_000).toISOString() }] : [],
+        ...(['tasks','tasks-away'].includes(scenario)?{activities:[
+          {taskId:'deadbeef',title:'修好本地排版',phase:'needs_input',detail:'确认本地检查方式',updatedAt:1},
+          {taskId:'bbbb2222',title:'整理动作素材',phase:'working',detail:null,updatedAt:2},
+        ]}:{}),
       }
       throw Error('Backend request blocked by isolated native QA')
     },
@@ -56,7 +61,7 @@ export function captureQAObservation(state, quiet, control) {
 /**
  * @param {(command: string, args: Record<string, unknown>) => Promise<unknown>} nativeInvoke
  * @param {() => void} [clearPermission]
- * @param {(value: {command: string, ok: boolean, error?: string}) => void} [onSettled]
+ * @param {(value: {command: string, ok: boolean, error?: string,destination?:unknown}) => void} [onSettled]
  */
 export function createQAInvoke(nativeInvoke, clearPermission = () => {}, onSettled = () => {}) {
   const controls = new Set(['open_companion_window', 'close_companion_window', 'start_companion_drag', 'move_companion_window', 'finish_companion_drag', 'resize_companion_window', 'reset_companion_position', 'show_main_window', 'take_pending_navigate'])
@@ -66,7 +71,8 @@ export function createQAInvoke(nativeInvoke, clearPermission = () => {}, onSettl
     let result
     try { result = await nativeInvoke(command, args) }
     catch (error) { onSettled({ command, ok: false, error: String(error) }); throw error }
-    onSettled({ command, ok: true })
+    const destination=command==='show_main_window'?mainDestination(args):null
+    onSettled({ command, ok: true,...(destination?{destination}: {}) })
     return result
   }
 }
