@@ -34,10 +34,11 @@ export function MatterRow({ row, onOpen, fetchTitle = false }: { row: HomeRow; o
   const { c } = useTheme()
   const lang = useLang()
   const spec = STATUS_TABLE[row.status]
+  const word = t(lang, spec.word)
   const label = [
     row.title,
-    t(lang, spec.word),
-    row.caption,
+    word,
+    row.caption === word ? null : row.caption,
     row.detail,
     row.note,
     row.agents.length ? agentsLabel(row.agents, row.agentNames) : null,

@@ -59,7 +59,7 @@ describe('daemon 推送 → app 解开', () => {
     const fetched: string[] = []
     const route = await resolvePushRoute(target, async id => { fetched.push(id); return {} })
     expect(route).toEqual({ kind: 'approval', id: 'ab12cd34', request: 'perm-1' })
-    expect(hrefFor(route)).toBe('/approval/ab12cd34?request=perm-1')
+    expect(hrefFor(route)).toBe('/matter/ab12cd34/decide?request=perm-1')
     expect(fetched).toEqual(['ab12cd34'])
     expect(targetFromParams(Object.fromEntries(new URLSearchParams(pushOpenHref(target!).split('?')[1])))).toEqual(target)
 

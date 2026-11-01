@@ -43,6 +43,13 @@ describe.each(['en', 'zh-Hans'] as const)('一种行 MatterRow(%s)', lang => {
     expect(ui.byId('row-terminal-x1').getAttribute('aria-label')).toContain(note)
   })
 
+  it('做完类的 caption 就是状态词 ⇒ 读屏只念一次', async () => {
+    const word = t(lang, 'status.replied')
+    const ui = await render(row({ source: 'matter', status: 'replied', caption: word }))
+    const label = ui.byId('row-matter-x1').getAttribute('aria-label')!
+    expect(label.split(word).length - 1).toBe(1)
+  })
+
   it('没有 caption / detail / note ⇒ 不画空行', async () => {
     const ui = await render(row({ source: 'matter', status: 'working', caption: null }))
     expect(ui.byId('row-matter-x1')).not.toBeNull()
