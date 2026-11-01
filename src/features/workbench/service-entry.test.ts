@@ -203,7 +203,7 @@ it('recovers an accepted commit without activation as interrupted, never creatin
     workspaceId:null,resolvedPath:project,directoryIdentity:'fixture:identity',providerId:'claude',execution:{defaults:'provider',model:null,reasoningEffort:null},materialSnapshot:[]})
   const receipt=store.atomic(()=>{
     const task=store.create({path:project,title:'committed',providerId:'claude',ownerChatId:'owner'}),matters=makeMatterStore(db)
-    matters.create({id:task.id,kind:'task',title:task.title,ownerChatId:'owner'});matters.linkTask(task.id);matters.bind(task.id,'desktop','owner')
+    matters.bind(task.id,'desktop','owner')
     store.execution.accept(task.id,runId,reservation.execution);store.addEvent(task.id,'user',request.text,null,runId)
     return store.entryRequests.accept('owner',request.requestId,{taskId:task.id,matterId:task.id,runId,acceptedAt:Date.now(),resolvedPath:project,directoryIdentity:'fixture:identity'})
   })

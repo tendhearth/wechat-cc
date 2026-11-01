@@ -552,18 +552,23 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
       entry?.beforeCreate()
-      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'})
+      const create={title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'}
+      let task:StoredTask
       if(entry){
         const m=ctx.deps.matters;if(!m)throw Error('entry_not_wired')
         // 出生地:从鉴权来源来的(桌面 operator / 手机 v2 帧或浏览器),不认请求里自报的;不知道 ⇒ null,不画。
-        const origin=entryOrigin(entry.context)
-        const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey,undefined,origin):null
+        const surface=entryOrigin(entry.context)
+        const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey,undefined,surface):null
         if(chat&&chat.ownerChatId!==entry.context.ownerKey)throw Error('invalid_entry_owner')
-        m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:entry.context.ownerKey,originMatterId:chat?.id??null,originMessageId:null,origin})
-        m.linkTask(task.id)
+        // 建任务就建了这件事(store.create,同 id),出生地在这一次写进去。
+        task=store.create({...create,origin:{matterId:chat?.id??null,messageId:null,surface}})
         if(store.taskMatterId(task.id)!==task.id)throw Error('entry_matter_link_failed')
         m.bind(task.id,entry.context.surface,entry.context.ownerKey)
-      }else matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null,origin:input.origin??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
+      }else{
+        task=store.create({...create,origin:{matterId:origin?.matterId??null,messageId:origin?.messageId??null,surface:input.origin??null}})
+        const owner=task.ownerChatId
+        if(owner)matterSync(m=>m.bind(task.id,'wechat',owner))
+      }
       return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
         persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},scope:entry?.context,
       })

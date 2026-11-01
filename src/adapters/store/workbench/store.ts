@@ -21,6 +21,8 @@ import {makeReviewMarkStore} from './review-marks'
 import {makeRewindStore} from './rewind-store'
 import {makeReviewCommentStore} from './review-comments'
 import {makeReviewHunkLog} from './review-hunk-log'
+import {makeMatterStore} from '../matters-store'
+import type {MatterOrigin,MatterStore} from '../../../ports/matters'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
@@ -97,7 +99,9 @@ function listFilters(query:WorkbenchListQuery) {
   return {q,archived,limit,filterHash,cursor}
 }
 
-export function makeWorkbenchStore(db: Db) {
+/** `matters`:接线时交进来的那一个(同一个时钟、同一个实例);不给 ⇒ 就地开一个(单测、只读的报表)。 */
+export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {}) {
+  const matterStore=opts.matters??makeMatterStore(db)
   const addProject=(input:{path:string;name?:string;providerId:string}):WorkbenchProject=>{
     db.query('INSERT OR IGNORE INTO workbench_projects(id,path,name,provider_id,created_at) VALUES(?,?,?,?,?)').run('p-'+randomUUID(),input.path,input.name?.trim()||basename(input.path)||input.path,input.providerId,Date.now())
     return projectName(db.query<WorkbenchProject,[string]>(PROJECT_SELECT+' WHERE path=?').get(input.path)!)
@@ -187,7 +191,7 @@ export function makeWorkbenchStore(db: Db) {
       return db.transaction(()=>{
         const existing=sourceByIdentity(input.providerId,input.nativeId)
         if(existing)return{task:get(existing.taskId),source:publicSource(existing),created:false}
-        const task=this.create({title:input.title,path:input.path,providerId:input.providerId,ownerChatId:input.ownerChatId}),id=randomUUID(),now=Date.now()
+        const task=this.create({title:input.title,path:input.path,providerId:input.providerId,ownerChatId:input.ownerChatId,origin:{surface:'cli'}}),id=randomUUID(),now=Date.now()
         db.query('UPDATE workbench_tasks SET execution_choice_json=? WHERE id=?').run(JSON.stringify(NATIVE_EXECUTION_CHOICE),task.id)
         db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,task.id,input.providerId,input.nativeId,input.cwd,now,input.snapshotSha256,input.observedFingerprint,input.messages.length,input.truncated?1:0,input.snapshotJson,input.pagesJson)
         for(const message of input.messages)addEvent(task.id,message.role==='user'?'user':'text',message.text,id)
@@ -353,13 +357,20 @@ export function makeWorkbenchStore(db: Db) {
       return db.query<{id:string;title:string;path:string;groups:string|null},[]>("SELECT id,title,path,writer_groups AS groups FROM workbench_tasks WHERE error='writer_not_closed'").all()
         .map(row=>({id:row.id,title:row.title,path:row.path,...parseGroups(row.groups)}))
     },
-    create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean }): StoredTask {
-      let id: string
-      do { id = randomBytes(4).toString('hex') } while (db.query('SELECT 1 FROM workbench_tasks WHERE id=?').get(id))
-      const now = Date.now()
-      if(input.registerProject!==false)addProject(input)
-      db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at,workspace_kind) VALUES(?,?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now,input.workspaceKind??'project')
-      return get(id)
+    /**
+     * 建任务 = 建这件事(M2):同一个事务里先建 matter(同 id、kind=task),再建任务指着它。出生地只在这一次写(v77 之后改不了),
+     * 所以由调用方在这里给,不再事后补。
+     */
+    create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean;origin?:{matterId?:string|null;messageId?:string|null;surface?:MatterOrigin|null} }): StoredTask {
+      return db.transaction(()=>{
+        let id: string
+        do { id = randomBytes(4).toString('hex') } while (db.query('SELECT 1 FROM workbench_tasks WHERE id=?1 UNION ALL SELECT 1 FROM matters WHERE id=?1').get(id))
+        const now = Date.now()
+        if(input.registerProject!==false)addProject(input)
+        matterStore.create({id,kind:'task',title:input.title,projectPath:input.path,ownerChatId:input.ownerChatId,originMatterId:input.origin?.matterId??null,originMessageId:input.origin?.messageId??null,origin:input.origin?.surface??null})
+        db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at,workspace_kind,matter_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now,input.workspaceKind??'project',id)
+        return get(id)
+      })()
     },
     update(id: string, status: TaskStatus, error: string | null = null) {
       db.transaction(()=>{
