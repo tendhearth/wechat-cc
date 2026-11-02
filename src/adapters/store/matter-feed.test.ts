@@ -46,6 +46,17 @@ describe('matter-feed',()=>{
     log.touch('0000000a');await tick()
     expect(heard).toEqual([])
   })
+  it('先提交一笔、紧接着回滚一笔(同一段同步代码):提交的那笔照样通知、叫醒等的人(Codex 评审 P2)',async()=>{
+    const heard:Array<[string,number]>=[]
+    feed.onChange((id,c)=>heard.push([id,c]))
+    const before=feed.cursor('0000000a')
+    const waiting=feed.wait('0000000a',before,5000)
+    const committed=log.touch('0000000a')
+    expect(()=>db.transaction(()=>{log.touch('0000000a');throw new Error('boom')})()).toThrow('boom')
+    await tick()
+    expect(heard).toEqual([['0000000a',committed]])
+    await expect(waiting).resolves.toBe(committed)
+  })
   it('同一个 Db 上另开的 MatterLog 写,也从同一份 feed 发',async()=>{
     expect(matterFeed(db)).toBe(feed)
     const heard:string[]=[]

@@ -41,7 +41,8 @@ function makeFeed(db:Db,maxWaiters=8):MatterFeed {
     for(const [id,wanted] of batch){
       let now:number
       try{now=persisted(id)}catch{continue}
-      // 没落库(外层事务回滚)⇒ 不发;已经发过这个数 ⇒ 不重复发。
+      // 这一批里最早的那笔都没落库(全回滚了)⇒ 不发;已经发过这个数 ⇒ 不重复发。按最早那笔比:先提交一笔、再回滚一笔时,
+      // 库里停在提交的那个数,它照样要发(Codex 评审 P2)。游标计数器本身也在同一笔里回滚,落了库的数永远不会被跳过去。
       if(now<wanted||now<=(announced.get(id)??0))continue
       announced.set(id,now)
       const list=waiters.get(id)
@@ -52,7 +53,7 @@ function makeFeed(db:Db,maxWaiters=8):MatterFeed {
   return {
     cursor:id=>persisted(id),
     noted(id,cursor){
-      pending.set(id,Math.max(pending.get(id)??0,cursor))
+      pending.set(id,Math.min(pending.get(id)??Infinity,cursor))
       if(!scheduled){scheduled=true;queueMicrotask(flush)}
     },
     wait(id,since,maxMs){
