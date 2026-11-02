@@ -22,6 +22,11 @@ describe('agyErrorCode —— 每条真机样本的码与 fixture 一致', () =>
     expect(agyErrorCode('error: Eligibility check failed: Your current account is not eligible for Antigravity, because it is not currently available in your location.')).toBe('region_unavailable')
     expect(agyErrorCode('error: Eligibility check failed: Your current account is not eligible for Antigravity, because it does not have an active subscription.')).not.toBe('region_unavailable')
   })
+  it('agy 1.4.8 起走 API 时的说法(FAILED_PRECONDITION)也是地区;别的 FAILED_PRECONDITION 不是', () => {
+    // 2026-10-27 → 11-01 真机升级自检原话。认不出 ⇒ 自检把地区拒绝当成 CLI 坏了,1.4.8–1.4.12 全被记成坏版本。
+    expect(agyErrorCode('agy result status=ERROR: FAILED_PRECONDITION (code 400): User location is not supported for the API use.')).toBe('region_unavailable')
+    expect(agyErrorCode('agy result status=ERROR: FAILED_PRECONDITION (code 400): Precondition check failed.')).not.toBe('region_unavailable')
+  })
   it('红线 B:歧义句固定是 network,永远不是认证码', () => {
     expect(agyErrorCode(AMBIGUOUS.message)).toBe('network')
   })
