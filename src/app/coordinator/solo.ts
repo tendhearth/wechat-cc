@@ -141,7 +141,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       const d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId, textStrategy })
       delivery = d
       summary = await runner.run({
-        chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn',
+        chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn', startedAt,
         observe: (ev) => live.push(ev),
         ...(textStrategy === 'last_segment' ? { progress: () => { void d.progress(live.latestSegment() ?? LONG_TURN_PROGRESS).catch(() => {}) } } : {}),
       })

@@ -248,7 +248,7 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
         })
         unlink = runner.linkAbort(signal, () => { void handle.cancel?.() })
         delivery = deps.replyDelivery.begin(msg.chatId, { context: 'chatroom', providerId, participantLabel: dn, textStrategy: ctx.textStrategyFor(providerId) })
-        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), budget: 'beat' })
+        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), budget: 'beat', startedAt })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       } finally {

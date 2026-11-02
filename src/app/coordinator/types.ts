@@ -68,6 +68,11 @@ export interface ConversationCoordinatorDeps {
    * ring buffer surfaced on internal-api for diagnosis/self-healing.
    */
   recordTurn?: (record: TurnRecord) => void
+  /**
+   * 对话的每一轮进这件对话的 MatterLog(M3a,设计稿 2026-11-02-m3-chat-turns-design.md):runner.run 开这一轮、工具调用写成步,
+   * runner.record 收这一轮。可选;写不上不挡回复(实现自己吞错)。
+   */
+  chatTurns?: ChatTurnLog
   format: (msg: InboundMsg) => string
   /**
    * 换 provider 交接 (provider-handoff.ts):最近 N 条干净对话,注入切换后
@@ -199,3 +204,6 @@ export interface ConversationCoordinator {
    */
   cancel(chatId: string): boolean
 }
+
+export type { ChatTurnHandle, ChatTurnLog } from '../../ports/chat-turns'
+import type { ChatTurnLog } from '../../ports/chat-turns'

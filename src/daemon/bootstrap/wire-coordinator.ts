@@ -6,6 +6,9 @@
  * conversationStore / registry / defaultProviderId / readAgentConfig / permissionMode /
  * turnTimeoutMs / health 走 parts.*。anomalyNotes 随块搬进来,index 用它拼 providerNotes。
  */
+import { makeChatTurnLog } from '../../adapters/store/chat-turns'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../app/conversation-coordinator'
 import type { ConversationStore } from '../../ports/conversation-store'
 import type { ProviderRegistry } from '../../app/provider-registry'
@@ -102,6 +105,9 @@ export function wireCoordinator(
   // main.ts to the SQLite turn_records store) makes it *queryable* on
   // internal-api and survives the restart a hang/crash triggers — the
   // AI-legible answer to "why did this chat stop replying", post-mortem-safe.
+  // 对话的每一轮进这件对话的 MatterLog(M3a):和 turn_records 并行写,读的人 M3b 再切过来。开机先把上一次进程里没收的轮记中断。
+  const chatTurns = makeChatTurnLog({ db: ctx.db, log: makeMatterLog(ctx.db), matters: makeMatterStore(ctx.db) })
+  try { chatTurns.interruptAll() } catch { /* 只少几轮的结局 */ }
   const recordTurn = (record: TurnRecord): void => {
     // tools=… 只列**名字**,不含参数(参数里是搜索词、文件路径、消息正文)。
     // 有了这一栏,回头看一条回答时能一眼分清「查来的」和「想出来的」——
@@ -165,6 +171,7 @@ export function wireCoordinator(
     permissionMode: parts.permissionMode,
     turnTimeoutMs: parts.turnTimeoutMs,
     recordTurn,
+    chatTurns,
     // 桌宠「在干活」的证据(spec §5.1):只认 tool_call —— 起飞由
     // sessionManager.isInFlight 判定,起飞时刻由 pipeline-deps 的入站分发处
     // noteTurnStart 记(见 pet-signals.ts 的头注释)。钩子抛错不影响回合:

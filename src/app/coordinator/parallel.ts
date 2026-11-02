@@ -58,7 +58,7 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     try {
       settled = await Promise.allSettled(acquired.map(a =>
         a.status === 'fulfilled'
-          ? runner.run({ chatId: msg.chatId, alias: proj.alias, providerId: a.value.providerId, handle: a.value, prompt: text, budget: 'turn' })
+          ? runner.run({ chatId: msg.chatId, alias: proj.alias, providerId: a.value.providerId, handle: a.value, prompt: text, budget: 'turn', startedAt })
           : Promise.reject(a.reason),
       ))
     } finally {
