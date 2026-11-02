@@ -31,7 +31,7 @@ function setup() {
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   // 注入的是转发到 fakes 的薄包装:测试在建好域之后才 stub(),没 stub 就调到 ⇒ 当场报错
   let fakes: Fakes | null = null
   const use = (): Fakes => { if (!fakes) throw new Error('not_stubbed'); return fakes }

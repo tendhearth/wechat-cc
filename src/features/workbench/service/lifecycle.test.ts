@@ -24,7 +24,7 @@ function setup(deps: Partial<ServiceDeps> = {}, over: Partial<Pick<ViewDomain, '
   const db = openTestDb(); dbs.push(db)
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const state = makeRuntimeState()
-  const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
+  const hub = { bumped: vi.fn(), dispose: vi.fn() }
   const log = vi.fn()
   const spies = {
     execute: vi.fn(async (_task: Active['task'], _text: string, _running: Active) => {}), hasUndeliveredInput: vi.fn(() => false), holdInputs: vi.fn(), collect: vi.fn(async () => {}), collectTurnArtifacts: vi.fn(), captureCodeChanges: vi.fn(async () => {}),
@@ -328,9 +328,10 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
   it('cancelRun:session.cancel 同步就抛 ⇒ 时间线留一句「正在等待执行程序退出」,取消照样生效', () => {
     const s = setup()
     const r = holding(s, { session: { cancel: () => { throw new Error('sync boom') } } as never })
+    const before = s.store.feed.cursor(s.task.id)
     s.domain.cancelRun(r)
     expect(r.cancelled).toBe(true); expect(s.store.events(s.task.id).at(-1)).toMatchObject({ kind: 'system', text: '已请求停止，正在等待执行程序退出。' })
-    expect(s.hub.touched).toHaveBeenLastCalledWith(s.task.id)
+    expect(s.store.feed.cursor(s.task.id)).toBeGreaterThan(before)
   })
 
   it('cancelRun 在跑的:收掉提问、权限卡按 cancelled 拒、优雅取消(没冻住的树不走 terminate)', () => {
@@ -411,12 +412,13 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
     ] as const)('重启后核对:%s', (_name, groups, withBoot, alive, held) => {
       const s = setup({ writerGroupAlive: g => (alive as readonly number[]).includes(g), bootTimeMs: () => BOOT })
       stuck(s, [...groups], withBoot ? BOOT : undefined)
+      const before = s.store.feed.cursor(s.task.id)
       s.domain.adoptWriters()
       expect(s.state.writerOrphans.has(s.task.id)).toBe(held)
       expect(s.store.get(s.task.id).error).toBe(held ? 'writer_not_closed' : null)
       if (!held) {
         expect(s.store.events(s.task.id).at(-1)).toMatchObject({ kind: 'system', text: '重启后核对：当时没确认退出的执行程序已经不在了，这条占用随之解除。' })
-        expect(s.hub.touched).toHaveBeenCalledWith(s.task.id)
+        expect(s.store.feed.cursor(s.task.id)).toBeGreaterThan(before)
       }
     })
 
@@ -434,9 +436,10 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       const w = s.running({ identity: 'w', taskId: 'w', state: 'queued', order: 2 }); s.state.queue.push(w); s.state.runningText.set('w', '等着')
       s.domain.pump(); expect(w.state).toBe('queued')
       alive.clear()
+      const before = s.store.feed.cursor(s.task.id)
       await s.domain.confirmWriterExited(s.task.id); await vi.advanceTimersByTimeAsync(0)
       expect(s.spies.execute).toHaveBeenCalledWith(w.task, '等着', w)
-      expect(s.hub.touched).toHaveBeenCalledWith(s.task.id)
+      expect(s.store.feed.cursor(s.task.id)).toBeGreaterThan(before)
     })
 
     it('本进程里关不掉的:旁边有正常在跑的任务也照样守望;组没了 ⇒ 收成果、解除、留一句;没交出进程组的那条不动', async () => {
@@ -447,11 +450,12 @@ describe('makeLifecycleDomain · 活变异逐条分类后补的', () => {
       const u = withGroups(s, [7])
       s.domain.markUncertain(u)
       expect(s.state.writerWatch).toBeDefined()
+      const before = s.store.feed.cursor(s.task.id)
       alive.clear(); await vi.advanceTimersByTimeAsync(20)
       expect(u.uncertain).toBe(false); expect(s.state.reservations.has(u.identity)).toBe(false)
       expect(s.spies.collect).toHaveBeenCalledTimes(1); expect(s.spies.collect).toHaveBeenCalledWith(u)
       expect(s.store.events(s.task.id).at(-1)).toMatchObject({ kind: 'system', text: '执行程序已经退出，这条占用随之解除。' })
-      expect(s.hub.touched).toHaveBeenCalledWith(s.task.id)
+      expect(s.store.feed.cursor(s.task.id)).toBeGreaterThan(before)
       expect(blind.uncertain).toBe(true); expect(s.state.reservations.get('v')).toBe(blind)
     })
 

@@ -24,7 +24,7 @@ function setup(owner: string | null = 'owner', permissionTimeoutMs?: number) {
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const state = makeRuntimeState()
   const noticeWake = vi.fn(async () => {}); state.noticeWake = noticeWake
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => owner, registry: createProviderRegistry(), ...(permissionTimeoutMs !== undefined ? { permissionTimeoutMs } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => owner, registry: createProviderRegistry(), ...(permissionTimeoutMs !== undefined ? { permissionTimeoutMs } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   const domain = makeNoticesDomain(ctx, { quota: { fallbackExecutor: () => 'claude' }, artifacts: { artifact: () => ({ name: 'a.txt', mime: 'text/plain', size: 1, sha256: 'f'.repeat(64), contentBase64: 'YQ==' }) } })
   const task = store.create({ title: '写周报', path: project, providerId: 'codex', ownerChatId: owner })
   /** 假的 Active:只给 notices 用得到的字段。 */

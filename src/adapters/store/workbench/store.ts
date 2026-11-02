@@ -12,6 +12,7 @@ import {makeTaskAttachmentStore} from '../../workbench/attachments'
 import {createAttachmentUploads} from '../../workbench/attachment-uploads'
 import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
 import {makeMatterLog} from '../matter-log'
+import {matterFeed} from '../matter-feed'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeCreationReceiptStore} from './creation-receipts'
 import {createEntryStore} from './entry-store'
@@ -119,6 +120,8 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
   const bump=(id:string):number=>{
     const row=db.query<{seq:number},[number,string]>('UPDATE workbench_tasks SET seq=seq+1,updated_at=? WHERE id=? RETURNING seq').get(Date.now(),id)
     if(!row)throw new Error('not_found')
+    // 版本号(seq)照旧是详情的 version / 事件的 v;「变了」的信号从 P1a 起只认这件事的游标 —— 同一笔写里推进它(任务与它的那件事同 id)。
+    matterLog.touch(id)
     return row.seq
   }
   const version=(id:string)=>db.query<{seq:number},[string]>('SELECT seq FROM workbench_tasks WHERE id=?').get(id)?.seq??0
@@ -134,6 +137,8 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     return{...h,artifacts:JSON.parse(artifactRefsJson),quote:quoteJson?JSON.parse(quoteJson):null,sourceTitle:a.title,targetTitle:b.title,sourceProviderId:a.providerId,targetProviderId:b.providerId,sourceStatus:a.status,targetStatus:b.status}
   })
   return {
+    /** 这件事「变了」的信号(P1a):只有 MatterLog 发;长轮询与订阅从这里等。 */
+    feed:matterFeed(db),
     addProject,
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
     /** 还有没归档任务的文件夹 —— 这些项目即使文件夹没了也要留在列表里(任务行挂在它下面)。 */

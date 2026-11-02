@@ -54,7 +54,7 @@ export function makeUntilDomain(ctx: ServiceCtx, domains: UntilDomains, opts: Un
   const recheck = new Map<string, Active>()
 
   function note(id: string, text: string) {
-    try { store.addEvent(id, 'system', text); ctx.hub.touched(id) } catch { /* 记不上不影响检查 */ }
+    try { store.addEvent(id, 'system', text); } catch { /* 记不上不影响检查 */ }
   }
   function stop(id: string, reason: string) {
     // 在跑的检查一起停(评审 #419 ②):不然它在主人停了 / 工作区要删的时候还跑最长 10 分钟,还挂着 busy 挡自重启
@@ -96,7 +96,6 @@ export function makeUntilDomain(ctx: ServiceCtx, domains: UntilDomains, opts: Un
     const record = (status: 'running' | 'completed' | 'failed' | 'cancelled', tail: string) => {
       try {
         store.recordAgentEvent(id, running.identity, { kind: 'tool_call', tool: 'tendhearth-check', activity: { id: eventId, type: 'command', status, label: `检查 · 第 ${round} 轮`, ...(tail ? { output: redactSecrets(tail) } : {}) } })
-        ctx.hub.touched(id)
       } catch { /* 下一次输出再写 */ }
     }
     const wt = store.worktrees.get(id)!

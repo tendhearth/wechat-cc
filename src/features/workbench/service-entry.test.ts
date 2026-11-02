@@ -10,7 +10,6 @@ import {makeMatterStore} from '../../adapters/store/matters-store'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES,UNATTENDED_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
-import {makeTaskChangeHub} from './task-changes'
 import {canonicalEntryHash,type EntryInput} from '../../adapters/workbench/task-entry'
 import {validateApiTaskInput} from '../../adapters/executors/openai/openai-workbench-provider'
 
@@ -21,7 +20,7 @@ vi.mock('node:fs',async importOriginal=>{
 })
 
 let area:string,stateDir:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
-let owner:string|null,spawnCount:number,mintCount:number,seen:string[],hub:ReturnType<typeof makeTaskChangeHub>
+let owner:string|null,spawnCount:number,mintCount:number,seen:string[]
 const context={ownerKey:'owner',surface:'desktop' as const}
 const input=(changes:Partial<EntryInput>={}):EntryInput=>({requestId:randomUUID(),text:'整理一份周报',target:{kind:'managed'},...changes})
 function setup(defaultProvider='claude',ids=['claude','codex']){
@@ -29,9 +28,9 @@ function setup(defaultProvider='claude',ids=['claude','codex']){
   for(const id of ids)registry.register(id,{async spawn(){spawnCount++;return{
     async *dispatch(text){seen.push(text);yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){},
   }}},{displayName:id,canResume:()=>true,workbench:id==='unattended'?UNATTENDED_CAPABILITIES:MANAGED_NATIVE_CAPABILITIES,...(id==='openai'?{validateWorkbenchInput:validateApiTaskInput}:{})})
-  store=makeWorkbenchStore(db);hub=makeTaskChangeHub()
+  store=makeWorkbenchStore(db)
   service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider,
-    registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:hub,mintSessionToken:()=>{mintCount++;return'test-token'}})
+    registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>{mintCount++;return'test-token'}})
 }
 beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-entry-service-')));stateDir=join(area,'state');project=join(area,'project');mkdirSync(stateDir);mkdirSync(project)
@@ -80,7 +79,7 @@ it('rejects changed text, excerpts, execution settings and ordered materials for
 })
 
 it.each(['matter','binding','receipt','outer-commit'])('rolls back %s failure with no spawn, token, notification or consumed material',async(point)=>{
-  const material=staged(),request=input({draftId:material.draftId,attachmentIds:material.attachmentIds}),published=vi.spyOn(hub,'publish')
+  const material=staged(),request=input({draftId:material.draftId,attachmentIds:material.attachmentIds}),published=vi.fn(),unsubscribe=store.feed.onChange(published)
   if(point==='matter')db.exec("CREATE TRIGGER entry_fault BEFORE INSERT ON matters BEGIN SELECT RAISE(ABORT,'entry_fault'); END")
   if(point==='binding')db.exec("CREATE TRIGGER entry_fault BEFORE INSERT ON matter_bindings BEGIN SELECT RAISE(ABORT,'entry_fault'); END")
   if(point==='receipt')db.exec("CREATE TRIGGER entry_fault BEFORE UPDATE OF phase ON workbench_entry_requests BEGIN SELECT RAISE(ABORT,'entry_fault'); END")
@@ -93,6 +92,7 @@ it.each(['matter','binding','receipt','outer-commit'])('rolls back %s failure wi
   for(const table of ['workbench_tasks','matters','matter_items','matter_turns','matter_bindings'])expect(db.query(`SELECT * FROM ${table}`).all()).toEqual([])
   expect(store.attachments.select(material.attachmentIds,undefined,material.draftId,{ownerKey:'owner'})).toEqual([material.attachment])
   expect(store.entryRequests.get('owner',request.requestId)?.phase).toBe('reserved')
+  unsubscribe()
   if(point!=='outer-commit')db.exec('DROP TRIGGER entry_fault');else vi.restoreAllMocks()
   const retried=service.createEntry(request,context);await settle(retried.receipt.taskId);expect(spawnCount).toBe(1)
 })
@@ -314,7 +314,7 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   // 会话号按工作区分:两件并行的事共用 'native' 时,一件留着的会话会让另一件续做撞 native_session_busy(Windows 收尾慢时偶发);同一件续做仍是同一个号
   registry.register('claude',{async spawn(p){spawnCount++;const sid=`native:${p.path}`;return{async *dispatch(){await gate.promise;writeFileSync(join(p.path,'out.txt'),'done\n');yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:sid,numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   await service.shutdown();store=makeWorkbenchStore(db)
-  service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t'})
+  service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t'})
   const projectId=service.projects()[0]!.id
   // 从分支开始(10-08):分支不在 ⇒ 预约前就拒,不留半截预约
   const before=db.query<{n:number},[]>('SELECT count(*) AS n FROM workbench_entry_requests').get()!.n
@@ -388,7 +388,7 @@ it('until (v80): check fails ⇒ CC continues with the wrapped output; next turn
   registry.register('claude',{async spawn(p){return{async *dispatch(text:string){prompts.push(text);if(prompts.length>=2)writeFileSync(join(p.path,'done.txt'),'ok\n');yield{kind:'text' as const,text:'改好了'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   registry.register('agy',{async spawn(){return{async *dispatch(){yield{kind:'result' as const,sessionId:'n',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'agy',canResume:()=>true,workbench:UNATTENDED_CAPABILITIES})
   await service.shutdown();store=makeWorkbenchStore(db)
-  service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',unattendedAck:{get:()=>1,set:()=>{}}})
+  service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t',unattendedAck:{get:()=>1,set:()=>{}}})
   const projectId=service.projects()[0]!.id
   expect(()=>service.createEntry(input({providerId:'agy',target:{kind:'project',projectId,isolation:'worktree'},until:{command:'true'}} as never),context)).toThrow('until_unattended_unsupported')
   const r=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'},until:{command:'test -f done.txt && echo PASSED',maxRounds:3}} as never),context)
@@ -452,7 +452,7 @@ it.skipIf(process.platform==='win32')('worktree scripts (2026-10-20): desktop an
   const registry=createProviderRegistry()
   registry.register('claude',{async spawn(){return{async *dispatch(){yield{kind:'result' as const,sessionId:'n',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   await service.shutdown();store=makeWorkbenchStore(db)
-  service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',scripts:{shell:'/bin/sh',probe:async()=>true}})
+  service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t',scripts:{shell:'/bin/sh',probe:async()=>true}})
   const projectId=service.projects()[0]!.id
   const one=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context).receipt.taskId
   const viaWechat=service.createWechat({ownerChatId:'owner',accountId:'acc',requestId:randomUUID(),commandHash:'a'.repeat(64),projectId,text:'并行整理',isolation:true}).taskId

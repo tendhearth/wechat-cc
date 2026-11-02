@@ -11,7 +11,6 @@ import {makeMatterStore} from '../../adapters/store/matters-store'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
-import {makeTaskChangeHub} from './task-changes'
 import {readArtifactSnapshot} from '../../adapters/workbench/artifacts'
 import {parseGitReviewSnapshot} from './review'
 import type {EntryInput} from '../../adapters/workbench/task-entry'
@@ -31,7 +30,7 @@ beforeEach(()=>{
   write=path=>writeFileSync(join(path,'out.txt'),'done\n')
   const registry=createProviderRegistry()
   registry.register('claude',{async spawn(p){return{async *dispatch(){write(p.path);yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-  service=makeWorkbenchService({checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000,store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t'})
+  service=makeWorkbenchService({checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000,store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t'})
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 const create=(isolation?:'worktree')=>service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,...(isolation?{isolation}:{})}} as EntryInput,context).receipt.taskId

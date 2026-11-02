@@ -74,7 +74,7 @@ export function makeReviewLines(ctx: ServiceCtx, deps: ReviewLineDeps) {
       if ('delete' in input) {
         if (input.delete !== true) throw new Error('invalid_review_reference')
         // 幂等:已经不在了(删过一次、回包丢了)⇒ 照样回 deleted,什么都不动
-        if (store.reviewComments.remove(id, commentId)) ctx.hub.touched(id)
+        store.reviewComments.remove(id, commentId)
         return { deleted: commentId }
       }
       const body = deps.text(input.body, true)
@@ -83,7 +83,6 @@ export function makeReviewLines(ctx: ServiceCtx, deps: ReviewLineDeps) {
         if (!row || row.taskId !== id) throw new Error('review_comment_not_found')
         if (store.rewinds.discarded(id).has(row.artifactId)) throw new Error('review_round_discarded')
         const next = store.reviewComments.edit(id, commentId, body)
-        ctx.hub.touched(id)
         return { comment: commentView(next) }
       }
       const { artifact, review } = deps.reviewTarget(id, input.artifactId)
@@ -103,7 +102,6 @@ export function makeReviewLines(ctx: ServiceCtx, deps: ReviewLineDeps) {
         ...(input.rowStart !== undefined ? { rowStart: input.rowStart } : {}), ...(input.rowEnd !== undefined ? { rowEnd: input.rowEnd } : {}),
         side: anchor.side, lineStart: anchor.lineStart, lineEnd: anchor.lineEnd, quote: anchor.quote, body,
       })
-      ctx.hub.touched(id)
       return { comment: commentView(row) }
     },
 
@@ -152,7 +150,6 @@ export function makeReviewLines(ctx: ServiceCtx, deps: ReviewLineDeps) {
           store.reviewHunks.markNotified(id, told.map(r => { const [artifactSha256, path, index] = r.key.split('\0'); return { artifactSha256: artifactSha256!, path: path!, hunkIndex: Number(index) } }))
           store.addEvent(id, 'system', `已把 ${chosen.length} 条行评论发给执行者。`)
         })
-        ctx.hub.touched(id)
       }
       const result = deps.deliver(id, composed.text, { ...(given ? { given } : {}), derive, ...(input.restartToken !== undefined ? { restartToken: input.restartToken } : {}) }, done)
       return result instanceof Promise ? result.then(receipt => ({ input: receipt, ...counts })) : { task: result, ...counts }
@@ -211,7 +208,6 @@ export function makeReviewLines(ctx: ServiceCtx, deps: ReviewLineDeps) {
         ? (hunk.oldCount ? `原第 ${span(hunk.oldStart, hunk.oldCount)} 行` : `原第 ${hunk.oldStart} 行之后新加的内容`)
         : (hunk.newCount ? `第 ${span(hunk.newStart, hunk.newCount)} 行` : `又删掉原第 ${span(hunk.oldStart, hunk.oldCount)} 行`)
       store.addEvent(id, 'system', `${input.action === 'revert' ? '已撤回' : '已恢复'} ${file.path} 的第 ${h + 1} 块改动(${where})。${merged ? `${MERGED_NOTE}。` : ''}`)
-      ctx.hub.touched(id)
       return { path: file.path, hunk: h, state }
     },
     /** 整文件撤销后:这个文件的每块都记成 reverted。 */

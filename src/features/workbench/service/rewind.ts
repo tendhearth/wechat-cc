@@ -87,7 +87,7 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: RewindDomains, opts: 
   let ready: Promise<void> = Promise.resolve()
   let timers: Array<ReturnType<typeof setTimeout>> = []
 
-  function note(id: string, text: string) { try { store.addEvent(id, 'system', text); ctx.hub.touched(id) } catch { /* 记不上不影响回退本身 */ } }
+  function note(id: string, text: string) { try { store.addEvent(id, 'system', text); } catch { /* 记不上不影响回退本身 */ } }
   function readReview(a: { mime: string; storagePath: string; sha256: string }): GitReview | null {
     if (a.mime !== GIT_REVIEW_MIME) return null
     try { return parseGitReviewSnapshot(readArtifactSnapshot(a.storagePath, ctx.stateDir, a.sha256)) } catch { return null }
@@ -470,7 +470,7 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: RewindDomains, opts: 
       const where = target ? pointText(target.n, row.targetPoint) : '之前的一个点'
       return { ids, text: `【工作区已被主人回到${where}】${ns.length ? rangeText(ns) : '之后'}的文件改动已撤销${parent ? `、分支回到 ${parent}` : ''};那几轮你做过的改动都不在了,以磁盘现状为准,先重新查看再继续。被撤掉的那几轮的做法,除非主人要求,别重做。` }
     },
-    markNoticed(id: string, ids: readonly string[]) { try { store.rewinds.markNoticed(id, ids); ctx.hub.touched(id) } catch { /* 下次再带一遍 */ } },
+    markNoticed(id: string, ids: readonly string[]) { try { store.rewinds.markNoticed(id, ids); } catch { /* 下次再带一遍 */ } },
     /**
      * 主人拍板停住的那件事(评审 #433-4;切片 3 接桌面):keep = 工作区就按现在的样子接着做;
      * restore_backup = 先把现状再备份一次,然后回到那次回退之前(备份 B、分支回旧 HEAD)。拍板后告知照样送到执行者。

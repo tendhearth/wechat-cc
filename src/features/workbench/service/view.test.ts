@@ -26,7 +26,7 @@ function setup(over: { defaultProvider?: string; owner?: string | null } = {}) {
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => over.owner === undefined ? 'owner' : over.owner, registry, nativeHistory: { claude: {} as never }, ...(over.defaultProvider ? { defaultProvider: over.defaultProvider } : {}) }, ensureAccepting: () => {}, now: Date.now }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => over.owner === undefined ? 'owner' : over.owner, registry, nativeHistory: { claude: {} as never }, ...(over.defaultProvider ? { defaultProvider: over.defaultProvider } : {}) }, ensureAccepting: () => {}, now: Date.now }
   const domain = makeViewDomain(ctx, { admission: { provider: id => { const p = registry.get(id); if (!p) throw new Error('unavailable_provider'); return p as never }, continuation: () => ({ mode: 'new' }) }, quota: { quotaExhausted: () => null } })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const snapshot = (over: Partial<AgentRuntimeSnapshot> = {}): AgentRuntimeSnapshot => ({ retained: true, foreground: 'idle', backgroundCount: 0, input: 'send', ...over })
@@ -139,7 +139,7 @@ describe('pet owner activity projection',()=>{
   expect(result[0]).toEqual({taskId:task.id,title:'事',phase:'needs_input',detail:'Bash: 运行本地检查',updatedAt:store.get(task.id).updatedAt})
   expect(result.some((a:any)=>a.taskId===foreign.id||a.taskId===archived.id||a.title==='他人的私事')).toBe(false)
   expect(db.query<{n:number},[]>('SELECT total_changes() AS n').get()!.n).toBe(before)
-  expect(hub.touched).not.toHaveBeenCalled()
+  expect(hub.bumped).not.toHaveBeenCalled()
  })
  it('without a trusted owner returns no task summaries even if active runs exist',()=>{
   const {domain,state,running,task}=setup({owner:null});state.runsByTask.set(task.id,running())

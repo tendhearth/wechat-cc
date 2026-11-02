@@ -56,7 +56,7 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, domains: QuotaResumeDomai
     catch (err) { ctx.log?.('WORKBENCH_QUOTA_RESUME', `write failed: ${err instanceof Error ? err.message : err}`) }
   }
   const drop = (id: string) => { const all = read(); if (all[id]) { delete all[id]; write(all) } timers.get(id)?.cancel(); timers.delete(id) }
-  const note = (id: string, text: string) => { try { store.addEvent(id, 'system', text); ctx.hub.touched(id) } catch { /* 记不上不影响 */ } }
+  const note = (id: string, text: string) => { try { store.addEvent(id, 'system', text); } catch { /* 记不上不影响 */ } }
   const hhmm = (t: number) => new Date(t).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 
   /** 主人期间没动过、还是那个额度失败、没有在跑、没归档。 */

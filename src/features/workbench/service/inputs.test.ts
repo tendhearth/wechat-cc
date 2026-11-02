@@ -31,7 +31,7 @@ function setup(over: { owner?: string | null; networkGate?: ServiceCtx['deps']['
   const registry = createProviderRegistry()
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
-  const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
+  const hub = { bumped: vi.fn(), dispose: vi.fn() }
   const spies = { armIdleClose: vi.fn(), cancelIdleClose: vi.fn(), settleAfterDecision: vi.fn(), start: vi.fn(), continuation: vi.fn(() => ({ mode: 'new' } as never)), inputMode: vi.fn(() => 'queue' as 'steer' | 'send' | 'queue'), requireInput: vi.fn() }
   const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => (over.owner === undefined ? 'owner' : over.owner), registry, ...(over.networkGate ? { networkGate: over.networkGate } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   const domain = makeInputsDomain(ctx, {
@@ -123,15 +123,15 @@ describe('makeInputsDomain · 持有、排空与结算', () => {
     again.domain.drainInputs(again.task.id, directoryIdentity(again.project), again.spies.start)
     expect(again.spies.start).toHaveBeenCalledTimes(1); expect(again.store.liveInputs.get(REQ)!.status).toBe('sending')
   })
-  it('settleRuntimeInput:shutdownComplete ⇒ 只删本地登记;error ⇒ sending→held 带错误信息;成功 ⇒ delivered + user 事件 + touched', () => {
+  it('settleRuntimeInput:shutdownComplete ⇒ 只删本地登记;error ⇒ sending→held 带错误信息;成功 ⇒ delivered + user 事件 + 游标前进', () => {
     const { domain, task, state, store, hub, pending, running } = setup()
     const saved = pending(); store.liveInputs.set(REQ, 'sending')
     const r = running({ runtimeInputs: new Map([[REQ, saved]]) } as never)
     state.shutdownComplete = true; domain.settleRuntimeInput(r, saved); expect(r.runtimeInputs!.size).toBe(0); expect(store.liveInputs.get(REQ)!.status).toBe('sending')
     state.shutdownComplete = false; r.runtimeInputs!.set(REQ, saved)
     domain.settleRuntimeInput(r, saved, new Error('boom')); expect(store.liveInputs.get(REQ)!.status).toBe('held'); expect(hub.bumped).toHaveBeenCalledWith(task.id)
-    r.runtimeInputs!.set(REQ, saved); domain.settleRuntimeInput(r, saved)
-    expect(store.liveInputs.get(REQ)!.status).toBe('delivered'); expect(store.events(task.id).some(e => e.kind === 'user' && e.text === '补一句')).toBe(true); expect(hub.touched).toHaveBeenCalledWith(task.id)
+    r.runtimeInputs!.set(REQ, saved); const before = store.feed.cursor(task.id); domain.settleRuntimeInput(r, saved)
+    expect(store.liveInputs.get(REQ)!.status).toBe('delivered'); expect(store.events(task.id).some(e => e.kind === 'user' && e.text === '补一句')).toBe(true); expect(store.feed.cursor(task.id)).toBeGreaterThan(before)
   })
 })
 

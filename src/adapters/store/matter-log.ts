@@ -1,6 +1,7 @@
 import {randomBytes} from 'node:crypto'
 import type {Db} from '../../lib/db'
 import type {TurnUsage} from '../../domain/turn-usage'
+import {matterFeed} from './matter-feed'
 import type {FinishTurn,MatterItem,MatterItemKind,MatterItemStatus,MatterLog,MatterOutcome,MatterState,MatterTurn,MatterTurnStatus,StartTurn,WriteItem} from '../../ports/matters'
 
 /**
@@ -20,7 +21,17 @@ const toTurn=(r:TurnRow):MatterTurn=>({id:r.id,matterId:r.matter_id,seq:r.seq,ru
 const toItem=(r:ItemRow):MatterItem=>({id:r.id,matterId:r.matter_id,turnId:r.turn_id,seq:r.seq,kind:r.kind,status:r.status,key:r.item_key,messageId:r.message_id,payload:JSON.parse(r.payload_json) as Record<string,unknown>,createdAt:r.created_at,updatedAt:r.updated_at,cursor:r.cursor})
 
 export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
-  const nextCursor=()=>(db.query<{value:number},[]>('UPDATE matter_log_cursor SET value=value+1 WHERE id=1 RETURNING value').get()!).value
+  const feed=matterFeed(db)
+  /**
+   * 取下一个全库游标,同时记成这件事最后一次有动静的游标(matters.cursor,v96),交给变化通知(P1a)。
+   * 通知要等调用方的同步代码跑完、确认真落了库才发(matter-feed.ts),所以在外层事务里调也安全。
+   */
+  const nextCursor=(matterId:string)=>{
+    const value=(db.query<{value:number},[]>('UPDATE matter_log_cursor SET value=value+1 WHERE id=1 RETURNING value').get()!).value
+    db.query('UPDATE matters SET cursor=MAX(cursor,?) WHERE id=?').run(value,matterId)
+    feed.noted(matterId,value)
+    return value
+  }
   const matterRow=(id:string)=>db.query<{state:MatterState;archived_at:number|null},[string]>('SELECT state,archived_at FROM matters WHERE id=?').get(id)
   const requireMatter=(id:string)=>{const m=matterRow(id);if(!m)throw new Error('matter_not_found');return m}
   const turnRow=(id:string)=>db.query<TurnRow,[string]>('SELECT * FROM matter_turns WHERE id=?').get(id)
@@ -49,7 +60,7 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     const id=randomBytes(8).toString('hex')
     const seq=db.query<{n:number},[string]>('SELECT COALESCE(MAX(seq),0)+1 AS n FROM matter_turns WHERE matter_id=?').get(input.matterId)!.n
     db.query('INSERT INTO matter_turns(id,matter_id,seq,run_id,executor,model,native_session_id,status,policy_json,started_at,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-      .run(id,input.matterId,seq,input.runId??null,input.executor,input.model??null,input.nativeSessionId??null,'running',input.policy?JSON.stringify(input.policy):null,now(),nextCursor())
+      .run(id,input.matterId,seq,input.runId??null,input.executor,input.model??null,input.nativeSessionId??null,'running',input.policy?JSON.stringify(input.policy):null,now(),nextCursor(input.matterId))
     settle(input.matterId)
     return toTurn(turnRow(id)!)
   })
@@ -62,9 +73,9 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     const ts=now()
     // 轮结束时还开着的步(转圈的工具、没人答的卡)一律记失败:不留僵尸,也不让一张过期的卡把这件事一直挂在「等你」。
     for(const open of db.query<{id:number},[string]>("SELECT id FROM matter_items WHERE turn_id=? AND status='started' ORDER BY seq").all(turnId))
-      db.query("UPDATE matter_items SET status='failed',updated_at=?,cursor=? WHERE id=?").run(ts,nextCursor(),open.id)
+      db.query("UPDATE matter_items SET status='failed',updated_at=?,cursor=? WHERE id=?").run(ts,nextCursor(turn.matter_id),open.id)
     db.query('UPDATE matter_turns SET status=?,error_code=?,usage_json=?,native_session_id=COALESCE(?,native_session_id),ended_at=?,cursor=? WHERE id=?')
-      .run(input.status,input.errorCode??null,input.usage?JSON.stringify(input.usage):null,input.nativeSessionId??null,ts,nextCursor(),turnId)
+      .run(input.status,input.errorCode??null,input.usage?JSON.stringify(input.usage):null,input.nativeSessionId??null,ts,nextCursor(turn.matter_id),turnId)
     settle(turn.matter_id,input.matterState)
     // 还有别的轮在跑 ⇒ 上面 settle 留在 working / waiting,matterState 不生效;没有 ⇒ 结局按 matterState 落定。
     if(!running(turn.matter_id)&&input.matterState)db.query('UPDATE matters SET state=? WHERE id=?').run(input.matterState,turn.matter_id)
@@ -75,7 +86,7 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     const turn=turnRow(turnId);if(!turn)throw new Error('turn_not_found')
     const model=patch.model===undefined?turn.model:patch.model
     const policy=patch.policy===undefined?turn.policy_json:patch.policy?JSON.stringify(patch.policy):null
-    db.query('UPDATE matter_turns SET model=?,policy_json=?,cursor=? WHERE id=?').run(model,policy,nextCursor(),turnId)
+    db.query('UPDATE matter_turns SET model=?,policy_json=?,cursor=? WHERE id=?').run(model,policy,nextCursor(turn.matter_id),turnId)
     return toTurn(turnRow(turnId)!)
   })
 
@@ -99,12 +110,12 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     let id:number
     if(previous){
       db.query('UPDATE matter_items SET status=?,turn_id=COALESCE(?,turn_id),message_id=COALESCE(?,message_id),payload_json=?,updated_at=?,cursor=? WHERE id=?')
-        .run(status,input.turnId??null,input.messageId??null,JSON.stringify(payload),ts,nextCursor(),previous.id)
+        .run(status,input.turnId??null,input.messageId??null,JSON.stringify(payload),ts,nextCursor(input.matterId),previous.id)
       id=previous.id
     } else {
       const seq=db.query<{n:number},[string]>('SELECT COALESCE(MAX(seq),0)+1 AS n FROM matter_items WHERE matter_id=?').get(input.matterId)!.n
       id=Number(db.query('INSERT INTO matter_items(matter_id,turn_id,seq,kind,status,item_key,message_id,payload_json,created_at,updated_at,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .run(input.matterId,input.turnId??null,seq,input.kind,status,key,input.messageId??null,JSON.stringify(payload),ts,ts,nextCursor()).lastInsertRowid)
+        .run(input.matterId,input.turnId??null,seq,input.kind,status,key,input.messageId??null,JSON.stringify(payload),ts,ts,nextCursor(input.matterId)).lastInsertRowid)
     }
     settle(input.matterId,'open',false)
     return toItem(itemRow(id))
@@ -117,10 +128,13 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     db.query('UPDATE matters SET state=?,updated_at=? WHERE id=?').run(state,now(),matterId)
   })
 
+  const touch=db.transaction((matterId:string):number=>{requireMatter(matterId);return nextCursor(matterId)})
+
   return {
     startTurn:input=>startTurn(input),
     finishTurn:(turnId,input)=>finishTurn(turnId,input),
     updateTurn:(turnId,patch)=>updateTurn(turnId,patch),
+    touch:matterId=>touch(matterId),
     writeItem:input=>writeItem(input),
     setState:(matterId,state)=>setState(matterId,state),
     state(matterId){const m=matterRow(matterId);return m?{state:m.state,archivedAt:m.archived_at}:null},

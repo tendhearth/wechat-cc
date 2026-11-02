@@ -11,7 +11,6 @@ import {makeMatterStore} from '../../adapters/store/matters-store'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
-import {makeTaskChangeHub} from './task-changes'
 import {REWIND_GOAL_REASON,REWIND_RETAIN_MS,type RewindOptions} from './service/rewind'
 import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime} from '../../ports/agent-provider'
 import type {EntryInput} from '../../adapters/workbench/task-entry'
@@ -34,7 +33,7 @@ const registry=()=>{
   return r
 }
 let current=''
-const make=(rewind?:RewindOptions,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={})=>makeWorkbenchService({store,registry:registry(),stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000,...(rewind?{rewind}:{}),...extra})
+const make=(rewind?:RewindOptions,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={})=>makeWorkbenchService({store,registry:registry(),stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t',checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000,...(rewind?{rewind}:{}),...extra})
 beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-rewind-service-')));stateDir=join(area,'state');repo=join(area,'repo');project=join(repo,'pkg')
   mkdirSync(stateDir);mkdirSync(project,{recursive:true})
@@ -369,7 +368,7 @@ describe('自己那条安静的保留会话', () => {
     const session:AgentSession={workbenchRuntime:runtime,async *dispatch(){},close:async()=>{ended=true;wake()}}
     const r=createProviderRegistry()
     r.register('claude',{async spawn(){return session}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-    service=makeWorkbenchService({store,registry:r,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',retainedIdleCloseMs:()=>9e9,checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000})
+    service=makeWorkbenchService({store,registry:r,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t',retainedIdleCloseMs:()=>9e9,checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000})
     const id=service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,isolation:'worktree'}} as EntryInput,context).receipt.taskId
     current=service.detail(id).task.path
     await expect.poll(()=>service.detail(id).task.phase,{timeout:20_000}).toBe('replied')

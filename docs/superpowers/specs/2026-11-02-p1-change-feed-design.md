@@ -34,7 +34,8 @@
 - 换接线:长轮询路由、`matter-activity`、`phone-events` 的戳改订这个 feed。
   - 长轮询仍按 `since=<version>` 答,出口一字不变;它只是改成等 feed。
   - 服务里的 `touched / bumped` 只剩「落库」那一半,通知交给 MatterLog。
-- **删 `TaskChangeHub`**,外加 `ctx.hub` 和「读详情时重发一次 seq」那行(`view.ts:214`,纠偏用的,没有幻影就不用纠)。
+- **删 `TaskChangeHub`**,外加 `ctx.hub.touched` 的 55 处调用和「读详情时重发一次 seq」那行(`view.ts:214`,纠偏用的,没有幻影就不用纠)。`ctx.hub` 只剩 `bumped`(它本身是一次落库)和关机时的 `dispose`。
+- **进度(11-02)**:P1a 已做,PR 见 git log「P1a」。
 - 做完怎么算:`task-changes.ts` 不在 src;M0 金样不变;守卫「`matters.cursor` 只有 matter-log.ts 写」。
 
 ### P1b 出口带上 cursor(只加字段)

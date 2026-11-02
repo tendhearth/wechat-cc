@@ -1238,3 +1238,18 @@ describe('v95 — 删掉一起做搬家前的三张表(M2c)', () => {
     expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
   })
 })
+
+describe('v96 — 一件事最后一次有动静的游标(P1a)', () => {
+  it('新列默认 0;存量按这件事已有轮 / 步里最大的游标补;重跑只往大里补', () => {
+    const db = migratedTo(95)
+    const m = db.query("INSERT INTO matters(id,kind,title,state,status,created_at,updated_at) VALUES(?,'task','t','open','open',1,1)")
+    m.run('0000000a'); m.run('0000000b'); m.run('0000000c')
+    db.query("INSERT INTO matter_items(matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES('0000000a',1,'system','completed','{}',1,1,3),('0000000a',2,'system','completed','{}',1,1,7)").run()
+    db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES('t1','0000000b',1,'claude','completed',1,9)").run()
+    runMigrations(db, migrations)
+    expect(db.query('SELECT id,cursor FROM matters ORDER BY id').all()).toEqual([{ id: '0000000a', cursor: 7 }, { id: '0000000b', cursor: 9 }, { id: '0000000c', cursor: 0 }])
+    db.exec("UPDATE matters SET cursor=20 WHERE id='0000000a'; PRAGMA user_version = 95")
+    runMigrations(db, migrations)
+    expect(db.query("SELECT cursor FROM matters WHERE id='0000000a'").get()).toEqual({ cursor: 20 })
+  })
+})
