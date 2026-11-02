@@ -150,7 +150,7 @@ export function makeExecutionSettingsStore(db:Db,log:MatterLog=makeMatterLog(db)
   return {
     choice,run,
     last:(taskId:string):RunExecution|null=>publicRun(taskId,db.query<TurnRow,[string]>(SELECT+' AND matter_id=? ORDER BY seq DESC LIMIT 1').get(taskId)),
-    /** 接受一条 run = 开它的第一轮;返回这一轮的 id。同一个 runId 重放 ⇒ 不再开,返回 null(选择不同 ⇒ 冲突)。 */
+    /** 接受一条 run = 开它的第一轮;返回这一轮的 id。同一个 runId 重放 ⇒ 不再开,还回它开着的那一轮(都收了 ⇒ null;选择不同 ⇒ 冲突)。 */
     accept(taskId:string,runId:string,input:AgentExecutionChoice):string|null {
       if(!identifier(runId,200))throw Error('invalid_execution')
       const accepted=normalizeExecutionChoice(input,PROVIDER_EXECUTION_CHOICE)
@@ -159,8 +159,9 @@ export function makeExecutionSettingsStore(db:Db,log:MatterLog=makeMatterLog(db)
         const prior=db.query<TurnRow&{matterId:string},[string]>(SELECT.replace('SELECT id,','SELECT id,matter_id AS matterId,')+' AND run_id=? ORDER BY seq DESC LIMIT 1').get(runId)
         if(prior){
           if(prior.matterId!==taskId||!sameExecutionChoice(normalizeExecutionChoice(policyOf(prior).choice,PROVIDER_EXECUTION_CHOICE),accepted))throw Error('execution_conflict')
-          // An old receipt replay must not rewind the choice retained by a newer run.
-          return null
+          // An old receipt replay must not rewind the choice retained by a newer run. 这条 run 还开着的那一轮还回去:
+          // 丢了它,服务会在第一个事件上另开一轮,原来那轮一直挂到 run 收尾,常驻会话答完也停在 working(Codex 评审 P2)。
+          return running(taskId,runId).at(-1)?.id??null
         }
         const executor=db.query<{p:string},[string]>('SELECT provider_id AS p FROM workbench_tasks WHERE id=?').get(taskId)!.p
         const turn=log.startTurn({matterId:taskId,runId,executor,model:accepted.model,policy:{choice:accepted}})

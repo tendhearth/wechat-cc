@@ -78,3 +78,12 @@ it('常驻会话答完还开着(轮已收)时重启:没有开着的轮,这件事
   store.recover()
   expect(state(t.id)).toBe('open')
 })
+it('同一条 run 重放接受:还回它开着的那一轮,不丢、不另开(Codex 评审 P2)',()=>{
+  const t=store.create({title:'t',path:project,providerId:'claude',ownerChatId:'owner'})
+  const choice={defaults:'provider',model:null,reasoningEffort:null} as const
+  const first=store.execution.accept(t.id,'r1',choice)
+  expect(store.execution.accept(t.id,'r1',choice)).toBe(first)
+  store.execution.endTurn(first!)
+  expect(store.execution.accept(t.id,'r1',choice)).toBeNull()
+  expect(state(t.id)).toBe('open')
+})
