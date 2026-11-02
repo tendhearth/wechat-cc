@@ -32,6 +32,27 @@ describe('service 实时流面', () => {
     const full = await service.detail(id); expect(full.version).toBe(2); expect(full.events).toHaveLength(2)
     const part = await service.detail(id, { since: 1 }); expect(part.events.map(e => e.text)).toEqual(['你']); expect(part.version).toBe(2)
   })
+  it('detail 带 cursor;sinceCursor 只回这之后写过的步 —— 改过的步(工具调用做完)也再来一次(P1b)', async () => {
+    const { store, service, id } = setup()
+    store.addEvent(id, 'user', '要求')
+    store.recordAgentEvent(id, 'r1', { kind: 'tool_call', itemId: 'c1', text: '跑测试', activity: { id: 'c1', type: 'exec', status: 'running', label: '跑测试' } } as never)
+    const first = await service.detail(id)
+    expect(first.cursor).toBeGreaterThan(0)
+    expect((await service.detail(id, { sinceCursor: first.cursor })).events).toEqual([])
+    store.recordAgentEvent(id, 'r1', { kind: 'tool_call', itemId: 'c1', text: '跑测试', activity: { id: 'c1', type: 'exec', status: 'completed', label: '跑测试' } } as never)
+    const next = await service.detail(id, { sinceCursor: first.cursor })
+    expect(next.events.map(e => [e.kind, e.activity?.status])).toEqual([['tool_call', 'completed']])
+    expect(next.cursor).toBeGreaterThan(first.cursor)
+    // 只动了非步的状态(比如回执、状态):游标前进、事件为空 —— 桌面照样整份换掉非事件那部分
+    store.update(id, 'running')
+    const third = await service.detail(id, { sinceCursor: next.cursor })
+    expect(third.events).toEqual([]); expect(third.cursor).toBeGreaterThan(next.cursor)
+    // 按游标等:已经超过 ⇒ 马上回;没有 ⇒ 等到下一笔
+    await expect(service.changes.waitCursor(id, next.cursor, 1000)).resolves.toBe(third.cursor)
+    const p = service.changes.waitCursor(id, third.cursor, 5000)
+    store.addEvent(id, 'system', 'x')
+    await expect(p).resolves.toBeGreaterThan(third.cursor)
+  })
   it('changes.wait:store 直接写不经 service 也叫醒(信号来自 MatterLog,P1a);已经超过 since 的马上返回', async () => {
     const { store, service, id } = setup()
     store.addEvent(id, 'user', '要求')             // version 1

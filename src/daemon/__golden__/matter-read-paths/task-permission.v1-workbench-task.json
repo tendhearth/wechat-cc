@@ -59,6 +59,7 @@
     ],
     "artifacts": [],
     "version": 7,
+    "cursor": 53,
     "wechatNotifications": {
       "enabled": false,
       "notices": []

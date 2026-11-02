@@ -42,7 +42,8 @@ function publicEvent(item:MatterItem):TaskEvent|null {
 }
 
 export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
-  const events=(id:string,since?:number)=>log.items(id)
+  /** since:按版本号(事件的 v)筛;sinceCursor(P1b):按这一步最后一次写的全库游标筛 —— 改过的步(工具调用做完)也会再来一次。 */
+  const events=(id:string,since?:number,sinceCursor?:number)=>(sinceCursor===undefined?log.items(id):log.items(id,{afterCursor:sinceCursor}))
     .filter(item=>since===undefined||(item.payload as Payload).v>since)
     .map(publicEvent).filter((e):e is TaskEvent=>e!==null)
   const addEvent=(id:string,kind:EventKind,text:string,sourceId:string|null=null,runId:string|null=null,attachments:readonly Attachment[]=[],seq:number)=>

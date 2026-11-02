@@ -155,6 +155,23 @@ describe('createLongPoll', () => {
     return { calls, onDetail, onError, poll, current: () => pending }
   }
 
+  it('后台回了 cursor ⇒ 之后按 since_cursor 问(P1b);出错重试也带着它;后台不再回 cursor ⇒ 退回 version', async () => {
+    vi.useFakeTimers()
+    const seen = []
+    let pending = deferred()
+    const fetchDetail = vi.fn((id, since, waitMs, cursor) => { seen.push([since, cursor]); pending = deferred(); return pending.promise })
+    const poll = createLongPoll({ fetchDetail, onDetail: vi.fn(), onError: vi.fn(), backoff: [100] })
+    poll.start('t', 3)
+    expect(seen).toEqual([[3, undefined]])
+    pending.resolve({ version: 5, cursor: 40, events: [] }); await vi.advanceTimersByTimeAsync(0)
+    expect(seen.at(-1)).toEqual([5, 40])
+    pending.reject(new Error('net')); await vi.advanceTimersByTimeAsync(100)
+    expect(seen.at(-1)).toEqual([5, 40])
+    pending.resolve({ version: 6, events: [] }); await vi.advanceTimersByTimeAsync(0)
+    expect(seen.at(-1)).toEqual([6, undefined])
+    poll.stop(); vi.useRealTimers()
+  })
+
   it('循环拉取、since 跟着 version 走、stop 后不再回调', async () => {
     vi.useFakeTimers()
     const { calls, onDetail, poll, current } = harness()

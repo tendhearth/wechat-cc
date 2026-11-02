@@ -979,6 +979,8 @@ export const WorkbenchTaskDetailResponse = z.object({
   artifacts: z.array(WorkbenchTaskArtifact),
 }).extend(z.object({
   version: z.number(),
+  /** 这件事最后一次有动静时的全库游标(P1b);长轮询带 since_cursor 回来。旧后台没有。 */
+  cursor: z.number().optional(),
   handoffs: z.array(WorkbenchHandoffView),
   source: WorkbenchNativeSource.optional(),
   wechatNotifications: z.object({

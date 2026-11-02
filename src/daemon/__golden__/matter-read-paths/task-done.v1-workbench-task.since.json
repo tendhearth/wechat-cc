@@ -97,6 +97,7 @@
       }
     ],
     "version": 29,
+    "cursor": 42,
     "wechatNotifications": {
       "enabled": false,
       "notices": []

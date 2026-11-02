@@ -350,6 +350,8 @@ export function makeWorkbenchService(opts: Options) {
         await feed.wait(id, cursor, maxMs)
         return store.version(id)
       },
+      /** 长轮询按游标(P1b):这件事的游标超过 since 就返回;否则等它前进,最多 maxMs。 */
+      waitCursor: (id: string, since: number, maxMs: number): Promise<number> => feed.wait(id, since, maxMs),
     },
   }
   const wechatControl=makeWechatWorkbenchControl({

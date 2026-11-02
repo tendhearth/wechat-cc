@@ -561,7 +561,7 @@ export function createWorkbenchController(deps) {
     syncPaintSnapshot()
   }
   const livePoll = createLongPoll({
-    fetchDetail: (id, since, waitMs) => v1(deps.invokeWorkbenchApi, V1.workbench.task, { query: { id: id, since: since, wait_ms: waitMs } }),
+    fetchDetail: (id, since, waitMs, cursor) => v1(deps.invokeWorkbenchApi, V1.workbench.task, { query: cursor === undefined ? { id: id, since: since, wait_ms: waitMs } : { id: id, since_cursor: cursor, wait_ms: waitMs } }),
     onDetail: detail => applyLiveDetail(/** @type {Detail} */ (detail)),
     // A healthy list says nothing about whether this task is still updating.
     onError: () => {
