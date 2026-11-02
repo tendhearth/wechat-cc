@@ -17,7 +17,7 @@ function setup(usage?: ServiceDeps['usage']) {
   registry.register('openai', provider, { displayName: 'OpenAI', canResume: () => true, workbench: MANAGED_API_CAPABILITIES })   // background:'disabled'
   registry.register('kimi', provider, { displayName: 'Kimi', canResume: () => true })                                             // 没有 workbench 能力
   const state = makeRuntimeState()
-  const ctx: ServiceCtx = { store: {} as never, stateDir: '/nowhere', state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(usage ? { usage } : {}) }, ensureAccepting: () => {}, now: Date.now }
+  const ctx: ServiceCtx = { store: {} as never, stateDir: '/nowhere', state, hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(usage ? { usage } : {}) }, ensureAccepting: () => {}, now: Date.now }
   return { domain: makeQuotaDomain(ctx), registry }
 }
 

@@ -15,11 +15,10 @@ import type { ReportSink } from '../../../domain/matters/report'
 import type { RecollectSink } from '../../../domain/matters/recollection'
 
 export interface ServiceHub {
-  /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */
-  touched(id:string,seq?:number):void
-  /** 非 store 状态变化:先落库拿新 seq 再唤醒。 */
+  /** 非 store 状态变化(补充回执、权限卡、脚本运行态…):落库推进版本号与这件事的游标 —— 订阅的人靠游标知道变了(P1a,MatterLog 发通知)。
+   *  store 自己的写方法本来就在同一笔里推进,不用再调这个。 */
   bumped(id:string):void
-  /** 长轮询中心收尾:叫醒所有 waiter、清缓存(shutdown 最后一步)。 */
+  /** 收尾:叫醒所有挂着的长轮询、退掉经 service 订的回调(shutdown 最后一步)。 */
   dispose():void
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */

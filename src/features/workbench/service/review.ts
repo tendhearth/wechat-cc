@@ -189,7 +189,6 @@ export function makeReviewDomain(ctx:ServiceCtx,domains:ReviewDomains):ReviewDom
       const {artifact,review}=reviewTarget(id,input.artifactId)
       const file=markableFile(review,input.path)
       const mark=store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:input.mark,comment})
-      ctx.hub.touched(id)
       return mark
     },
     /**
@@ -218,7 +217,6 @@ export function makeReviewDomain(ctx:ServiceCtx,domains:ReviewDomains):ReviewDom
       let lesson:ReturnLesson|undefined
       const marks=()=>{
         for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
-        ctx.hub.touched(id)
         if(input.asLesson===true)lesson=recordLesson(id,comment)
       }
       // 回合中间打回 = 抢跑 ⇒ workbench_busy;请求 id 没给就从这笔打回本身派生(带上 run 的 identity:
@@ -281,7 +279,6 @@ export function makeReviewDomain(ctx:ServiceCtx,domains:ReviewDomains):ReviewDom
       }
       if(hunks)lines.logAllReverted(id,artifact.sha256,file.path,hunks)
       store.addEvent(id,'system',(file.kind==='added'?`已撤销 ${file.path}：这一轮新建的文件已删除。`:`已撤销 ${file.path} 的改动，恢复成这一轮开始前的内容。`)+(merged?`${MERGED_NOTE}。`:''))
-      ctx.hub.touched(id)
       return {path:file.path,restored:file.kind==='added'?'removed' as const:'content' as const}
     },
     reviewComment:lines.reviewComment,

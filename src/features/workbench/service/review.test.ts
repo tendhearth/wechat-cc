@@ -32,7 +32,7 @@ function setup() {
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const task = store.create({ title: '做点事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const state = makeRuntimeState()
-  const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
+  const hub = { bumped: vi.fn(), dispose: vi.fn() }
   const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   const gates = { busy: false, checking: false }
   // 注入给 review 的是转发到 fakes 的薄包装:测试在建好域之后才 stub(),没 stub 就调到 ⇒ 当场报错
@@ -70,11 +70,12 @@ describe('makeReviewDomain', () => {
     expect(list[1]!.files[0]).not.toHaveProperty('risk')
   })
 
-  it('markReviewFile:落标记并 touched;not_reviewed 拒绝;超长意见拒绝', () => {
+  it('markReviewFile:落标记、这件事的游标前进;not_reviewed 拒绝;超长意见拒绝', () => {
     const { domain, task, good, hub, store } = setup()
+    const before = store.feed.cursor(task.id)
     const mark = domain.markReviewFile(task.id, { artifactId: good, path: 'src/a.ts', mark: 'accepted' })
     expect(mark).toMatchObject({ taskId: task.id, path: 'src/a.ts', mark: 'accepted', comment: '' })
-    expect(hub.touched).toHaveBeenCalledWith(task.id)
+    expect(store.feed.cursor(task.id)).toBeGreaterThan(before); expect(hub.bumped).not.toHaveBeenCalled()
     expect(store.reviewMarks.list(task.id)).toHaveLength(1)
     expect(() => domain.markReviewFile(task.id, { artifactId: good, path: 'src/big.bin', mark: 'accepted' })).toThrow('review_file_unmarkable')
     expect(() => domain.markReviewFile(task.id, { artifactId: good, path: 'src/a.ts', mark: 'returned', comment: 'x'.repeat(2001) })).toThrow('invalid_review_reference')

@@ -40,7 +40,7 @@ function setup(over: { defaultProvider?: string; managedRoot?: string } = {}) {
   const registry = createProviderRegistry()
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(over.defaultProvider ? { defaultProvider: over.defaultProvider } : {}), ...(over.managedRoot ? { managedWorkspaceRoot: over.managedRoot } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(over.defaultProvider ? { defaultProvider: over.defaultProvider } : {}), ...(over.managedRoot ? { managedWorkspaceRoot: over.managedRoot } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   const attachments = makeAttachmentsDomain(ctx), quota = makeQuotaDomain(ctx), artifacts = makeArtifactsDomain(ctx), pending = makePendingInputs(ctx)
   const admission = makeAdmissionDomain(ctx, { quota }), notices = makeNoticesDomain(ctx, { quota, artifacts })
   const view = makeViewDomain(ctx, { admission, quota }), native = makeNativeCheck(ctx, { admission })

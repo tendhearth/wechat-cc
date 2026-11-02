@@ -204,7 +204,7 @@ describe('workbench scripts recover (after a crash)', () => {
     const task = store.create({ title: '事', path: '/w', providerId: 'claude', ownerChatId: 'owner' })
     store.worktrees.record({ taskId: task.id, projectPath: '/p', repoRoot: '/p', root: '/w', branch: 'cc/x' })
     store.worktrees.setScriptGroups(task.id, row.groups, row.boot, row.starts)
-    const ctx: ServiceCtx = { store, stateDir: '/s', state: makeRuntimeState(), hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), bootTimeMs: () => 1_000_000, ...deps }, ensureAccepting: () => {}, now: Date.now }
+    const ctx: ServiceCtx = { store, stateDir: '/s', state: makeRuntimeState(), hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), bootTimeMs: () => 1_000_000, ...deps }, ensureAccepting: () => {}, now: Date.now }
     makeScriptsDomain(ctx, opts).recover()
     return { store, task, notes: store.detail(task.id).events.filter(e => e.kind === 'system').map(e => e.text) }
   }

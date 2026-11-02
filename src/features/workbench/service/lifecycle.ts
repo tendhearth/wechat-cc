@@ -110,7 +110,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     const text=next
       ? `空闲 ${seconds} 秒后自动收工，文件夹让给「${next.title.replace(/[\r\n]+/g,' ')}」；要接着说直接发下一句，会按原会话恢复。`
       : `空闲 ${seconds} 秒后自动收工，释放文件夹；要接着说直接发下一句，会按原会话恢复。`
-    try { store.addEvent(running.taskId,'system',text);ctx.hub.touched(running.taskId) } catch { /* 收工照走 */ }
+    try { store.addEvent(running.taskId,'system',text);} catch { /* 收工照走 */ }
     running.closedWhileReplied=true
     try { cancelRun(running) } catch { /* 已经在收尾的路上,留给 execute 的 finally */ }
   }
@@ -248,7 +248,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
   }
   function releaseWriter(id:string,note:string) {
     state.writerOrphans.delete(id)
-    try { store.clearWriterError(id); store.addEvent(id,'system',note); ctx.hub.touched(id) } catch { /* next check retries */ }
+    try { store.clearWriterError(id); store.addEvent(id,'system',note); } catch { /* next check retries */ }
   }
   /** 守望:有要等退出证据的(重启前留下的,或本进程里关不掉的)就每隔一会儿查一次进程组,没有就停。 */
   function watchWriters() {
@@ -266,7 +266,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     for (const running of [...state.reservations.values()]) {
       if (running.uncertain && !confirming.has(running) && writerGone(writerGroupsOf(running))) {
         confirming.add(running)
-        void confirmLateClose(running,true).then(() => { try { store.addEvent(running.taskId,'system','执行程序已经退出，这条占用随之解除。'); ctx.hub.touched(running.taskId) } catch { /* status already cleared */ } })
+        void confirmLateClose(running,true).then(() => { try { store.addEvent(running.taskId,'system','执行程序已经退出，这条占用随之解除。'); } catch { /* status already cleared */ } })
           .finally(() => confirming.delete(running))
       }
     }
@@ -328,7 +328,6 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       state.runningText.delete(running.identity)
       try {
         store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};store.update(running.taskId,'cancelled');stageFinishedNotice(running,'cancelled')})
-        ctx.hub.touched(running.taskId)
         matterSync(m=>m.setStatus(running.taskId,'done'))
         publishFinishedNotices()
       } catch { /* in-memory cancellation still must settle */ }
@@ -349,9 +348,9 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
         try { running.permissions.resume() } catch { /* 下面 rejectAll 照样收掉 */ }
       }
       running.permissions.rejectAll('cancelled'); ctx.hub.bumped(running.taskId); revokeCredentials(running); running.signalStop()
-      try { store.update(running.taskId,'cancelling'); ctx.hub.touched(running.taskId) } catch { /* stop the writer even when persistence is unavailable */ }
+      try { store.update(running.taskId,'cancelling'); } catch { /* stop the writer even when persistence is unavailable */ }
       try { if (running.session?.cancel) void running.session.cancel().catch(() => {}) }
-      catch { try { store.addEvent(running.taskId,'system','已请求停止，正在等待执行程序退出。');ctx.hub.touched(running.taskId) } catch { /* cancellation remains active */ } }
+      catch { try { store.addEvent(running.taskId,'system','已请求停止，正在等待执行程序退出。');} catch { /* cancellation remains active */ } }
     }
   }
   /**
@@ -378,13 +377,13 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
         cancelIdleClose(running)
         try { running.permissions.pause() } catch { /* 期限照走也只是拒掉那一张卡 */ }
         const text=`${NETWORK_SUSPENDED_LABEL}：${message}恢复后自动继续。`
-        try { store.addEvent(running.taskId,'system',text,null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 冻住照样生效 */ }
+        try { store.addEvent(running.taskId,'system',text,null,running.identity); } catch { /* 冻住照样生效 */ }
         try { enqueueNotice(running.task,running.identity,'interrupted',`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${NETWORK_SUSPENDED_LABEL}\n\n${message}恢复后自动继续。\n\n查看：任务 ${running.taskId}`,`network-suspend-${running.networkSuspended.since}`) } catch { /* 提醒失败不影响暂停 */ }
         ctx.hub.bumped(running.taskId)
         suspended++
         continue
       }
-      try { store.addEvent(running.taskId,'system',`网络未受保护：${message}这个执行者暂停不了，已停止本轮，恢复后可以继续。`); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
+      try { store.addEvent(running.taskId,'system',`网络未受保护：${message}这个执行者暂停不了，已停止本轮，恢复后可以继续。`); } catch { /* 停仍然要停 */ }
       try { cancelRun(running); stopped++ } catch { /* 下一个照停 */ }
     }
     return {suspended,stopped}
@@ -399,7 +398,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       // 回合看门狗从放开这一刻重新算(collectWorkbenchTurn 看的是 max(起点, interactionAt))。
       running.interactionAt=Date.now()
       try { running.permissions.resume() } catch { /* best effort */ }
-      try { store.addEvent(running.taskId,'system','网络恢复，已继续。',null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 放开照样生效 */ }
+      try { store.addEvent(running.taskId,'system','网络恢复，已继续。',null,running.identity); } catch { /* 放开照样生效 */ }
       ctx.hub.bumped(running.taskId)
       settleAfterDecision(running)
       n++
@@ -413,7 +412,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       if (!running.networkSuspended) continue
       running.stopNotice=message
       try { untilStop(running.taskId,'网络一直没恢复,任务停了') } catch { /* 停照停 */ }
-      try { store.addEvent(running.taskId,'system',message,null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
+      try { store.addEvent(running.taskId,'system',message,null,running.identity); } catch { /* 停仍然要停 */ }
       try { cancelRun(running); n++ } catch { /* 下一个照停 */ }
     }
     return n

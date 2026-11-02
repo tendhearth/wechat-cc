@@ -12,7 +12,9 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const WRITER = 'src/adapters/store/matter-log.ts'
 const WRITE = /\b(INSERT\s+(OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+matter_(turns|items|log_cursor)\b/i
-export const writesMatterLog = (src: string) => src.split('\n').some(l => !/^\s*(\/\/|\/\*|\*)/.test(l) && WRITE.test(l))
+// 这件事的游标(v96,P1a)也只有写口推进:订阅只认它,别处改了就会有人漏看或白醒。
+const CURSOR = /\bUPDATE\s+matters\s+SET\b[^'"`]*\bcursor\s*=/i
+export const writesMatterLog = (src: string) => src.split('\n').some(l => !/^\s*(\/\/|\/\*|\*)/.test(l) && (WRITE.test(l) || CURSOR.test(l)))
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -37,5 +39,7 @@ describe('轮与步只经 MatterLog 写(M1,基线 0)', () => {
     expect(writesMatterLog("db.query('DELETE FROM matter_items WHERE id=?')")).toBe(true)
     expect(writesMatterLog("db.query('SELECT * FROM matter_items')")).toBe(false)
     expect(writesMatterLog("// UPDATE matter_items SET x")).toBe(false)
+    expect(writesMatterLog("db.query('UPDATE matters SET cursor=MAX(cursor,?) WHERE id=?')")).toBe(true)
+    expect(writesMatterLog("db.query('UPDATE matters SET state=?,updated_at=? WHERE id=?')")).toBe(false)
   })
 })

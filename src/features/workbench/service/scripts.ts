@@ -71,13 +71,12 @@ export function makeScriptsDomain(ctx: ServiceCtx, opts: ScriptsOptions = {}) {
   const approved = (wt: WorktreeRecord, hash: string) => store.scriptApprovals.has(repoKeyOf(wt.repoRoot), hash)
   const liveOf = (id: string, kind: ScriptKind) => live.get(id)?.get(kind)
   function note(id: string, text: string) {
-    try { store.addEvent(id, 'system', text); ctx.hub.touched(id) } catch { /* 说不上这句不影响脚本 */ }
+    try { store.addEvent(id, 'system', text); } catch { /* 说不上这句不影响脚本 */ }
   }
   function record(id: string, l: Live, status: 'running' | 'completed' | 'failed' | 'cancelled', tail: string) {
     // 标签不带路径(时间线会到手机);输出先打码再落库
     try {
       store.recordAgentEvent(id, l.eventId, { kind: 'tool_call', tool: 'tendhearth-script', activity: { id: l.eventId, type: 'command', status, label: l.kind, ...(tail ? { output: redactSecrets(tail) } : {}) } })
-      ctx.hub.touched(id)
     } catch { /* 任务没了 / 库忙:下一次输出再写 */ }
   }
   function persistGroups(id: string) {

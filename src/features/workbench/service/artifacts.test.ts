@@ -22,21 +22,22 @@ function setup() {
   const db = openTestDb(); dbs.push(db)
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const state = makeRuntimeState()
-  const touched = vi.fn()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched, bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => {}, now: Date.now }
+  // 「变了」的信号(P1a):这件事的游标前进了(MatterLog 推进,订阅的人靠它)。
+  const cursor = () => store.feed.cursor(task.id)
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => {}, now: Date.now }
   const domain = makeArtifactsDomain(ctx)
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1abcdef', taskId: task.id, title: task.title, task, path: project, directoryIdentity: directoryIdentity(project), cancelled: false, finishing: false, uncertain: false, artifactsCollected: false, ...over } as unknown as Active)
   const systemEvents = () => store.events(task.id).filter(e => e.kind === 'system').map(e => e.text)
-  return { store, state, domain, task, project, stateDir, touched, running, systemEvents }
+  return { store, state, domain, task, project, stateDir, cursor, running, systemEvents }
 }
 
 describe('makeArtifactsDomain · 成果收集', () => {
-  it('noteWarnings:同一条只记一次 system 事件、touched 一次', () => {
-    const { domain, running, systemEvents, touched } = setup()
-    const r = running()
+  it('noteWarnings:同一条只记一次 system 事件,这件事的游标前进', () => {
+    const { domain, running, systemEvents, cursor } = setup()
+    const r = running(), before = cursor()
     domain.noteWarnings(r, ['a', 'a', 'b']); domain.noteWarnings(r, ['b'])
-    expect(systemEvents()).toEqual(['a', 'b']); expect(touched).toHaveBeenCalledTimes(2)
+    expect(systemEvents()).toEqual(['a', 'b']); expect(cursor()).toBeGreaterThan(before)
   })
   it('captureTaskArtifacts:成果目录里的文件进成果列表', () => {
     const { domain, running, task, project, store } = setup()
@@ -98,14 +99,15 @@ describe('makeArtifactsDomain · 结算与回合', () => {
 })
 
 describe('makeArtifactsDomain · 成果读取与批准', () => {
-  it('artifact:返回名字/mime/大小/sha/base64;approve 后 touched;不存在 ⇒ not_found', () => {
-    const { domain, task, store, stateDir, touched } = setup()
+  it('artifact:返回名字/mime/大小/sha/base64;approve 后这件事的游标前进;不存在 ⇒ not_found', () => {
+    const { domain, task, store, stateDir, cursor } = setup()
     saveArtifactSnapshot(store, task.id, { name: 'a.txt', mime: 'text/plain', bytes: Buffer.from('hi') }, stateDir)
     const id = store.artifacts(task.id)[0]!.id
     const a = domain.artifact(task.id, id)
     expect(a).toMatchObject({ name: 'a.txt', mime: 'text/plain', size: 2, contentBase64: Buffer.from('hi').toString('base64') })
+    const before = cursor()
     domain.approve(task.id, id, a.sha256)
-    expect(touched).toHaveBeenCalledWith(task.id)
+    expect(cursor()).toBeGreaterThan(before)
     expect(() => domain.artifact(task.id, 'nope')).toThrow('not_found')
   })
 })

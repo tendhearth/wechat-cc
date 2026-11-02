@@ -55,7 +55,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
       wakeNotices()
     }catch{
       // A notification failure must not deny a valid permission or terminate execution.
-      try{store.addEvent(task.id,'system','微信提醒未能保存；任务仍可在工作台查看。',null,runId);ctx.hub.touched(task.id)}catch{}
+      try{store.addEvent(task.id,'system','微信提醒未能保存；任务仍可在工作台查看。',null,runId);}catch{}
     }
   }
   function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){

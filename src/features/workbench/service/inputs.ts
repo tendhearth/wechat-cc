@@ -182,7 +182,7 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
       await running.session.steer(text,material)
       running.interactionAt=Date.now()
       store.liveInputs.set(saved.id,'delivered');ctx.hub.bumped(id)
-      store.addEvent(id,'user',text,null,running.identity,attachments);ctx.hub.touched(id)
+      store.addEvent(id,'user',text,null,running.identity,attachments);
     }catch(error){store.liveInputs.set(saved.id,'held',`未确认执行者收到，请检查当前对话后再决定是否重发。${error instanceof Error?' '+error.message:''}`);ctx.hub.bumped(id)}
     finally{running.delivering=false}
     return store.liveInputs.get(saved.id)!

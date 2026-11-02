@@ -154,7 +154,6 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     catch(error){
       if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setStatus(record.targetTaskId,'done'))}
       store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
-      ctx.hub.touched(record.targetTaskId)
       throw error
     }
     return{task,handoffId:record.id,sourceTaskId:source.id}
@@ -279,7 +278,6 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     if(redispatch){
       store.liveInputs.set(redispatch,'sending')
       store.addEvent(id,'system','CC 重启后按同一请求重发了一次。')
-      ctx.hub.touched(id)
     }
     return view
   }

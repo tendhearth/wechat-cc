@@ -105,6 +105,8 @@ export interface MatterLog {
   finishTurn(turnId:string,input:FinishTurn):MatterTurn
   /** 轮开始以后才知道的:执行者自报的实际模型、策略摘要里补的一项(一起做 M2b)。给了 policy 就整个换掉;不碰状态。 */
   updateTurn(turnId:string,patch:{model?:string|null;policy?:Record<string,unknown>|null}):MatterTurn
+  /** 非步的变化(状态、权限卡、成果批准、补充回执…)也推进这件事的游标,订阅的人才看得见(P1a);不写行、不碰状态。返回新游标。 */
+  touch(matterId:string):number
   /** 同一把 key 已经做完 / 失败 ⇒ 迟到的 started 原样返回,不倒回;所属的轮已经结束 ⇒ started 记成 failed。 */
   writeItem(input:WriteItem):MatterItem
   /** 显式结局;还有轮在跑 ⇒ 拒(matter_has_running_turn)。 */

@@ -29,7 +29,7 @@ function setup(over: { ack?: ServiceDeps['unattendedAck']; canResume?: boolean; 
   registry.register('agy', provider, { displayName: 'Agy', canResume: () => false, workbench: UNATTENDED_CAPABILITIES })
   registry.register('kimi', provider, { displayName: 'Kimi', canResume: () => false })   // 没有 workbench 能力
   const state = makeRuntimeState()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(over.ack ? { unattendedAck: over.ack } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(over.ack ? { unattendedAck: over.ack } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   const domain = makeAdmissionDomain(ctx, { quota: { quotaExhausted: () => over.quotaExhausted ? { kind: 'quota', since: 0, resetAt: Date.now() + 1000, message: '满了' } : null } })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   return { store, domain, task, project, state }

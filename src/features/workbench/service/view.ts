@@ -211,7 +211,6 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
       // 回到某一轮(切片 3):只给独立工作区;能撤销的那一次 / 停住等拍板的那一行,都没有就不带。
       ...(()=>{if(!view.worktree)return{};const r=rewindOf(id);return r?{rewind:r}:{}})(),
       permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
-    ctx.hub.touched(id,detail.version)
     return result
   }
 
