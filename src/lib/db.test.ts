@@ -12,6 +12,9 @@ import { removeTempDir } from './test-temp'
  * 以前这几条测试手写一个「声称自己在 v9 / v26」的假库,表和真 v9 / v26 不一样 —— 迁移体里那批「表在不在」的守卫就是为
  * 这些假库加的。改从真迁移起步以后,测的就是用户真正走的那条升级路。
  */
+/** M2c(v95)删了一起做的三张旧表;测更早那几条迁移、要看那几张表的,只迁到 v94。 */
+const THROUGH_V94 = migrations.slice(0, 94)
+
 function migratedTo(n: number): Db {
   const db = openSqlite(':memory:') as unknown as Db
   db.exec('PRAGMA foreign_keys = ON;')
@@ -631,7 +634,8 @@ it('upgrades a real v46 database retaining task history, native identity and app
       const upgraded=openDb({path})
       try {
         expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})
-        expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null,attachments_json:'[]',seq:0})))
+        // 时间线 v93 搬进了 matter_items,v95 删了旧表:历史还在,在新家里(M2c)。
+        expect(upgraded.query("SELECT matter_id,kind,status,json_extract(payload_json,'$.text') AS text,created_at FROM matter_items").all()).toEqual(oldEvents.map(row=>{const e=row as {task_id:string;text:string;created_at:number};return{matter_id:e.task_id,kind:'user_message',status:'completed',text:e.text,created_at:e.created_at}}))
         expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
       } finally {upgraded.close()}
     }
@@ -648,9 +652,9 @@ it('upgrades v51 with separate durable control receipts while preserving task hi
     db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original input',3,'run-original')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','delivered',4)
     const tasks=db.query('SELECT * FROM workbench_tasks').all(),events=db.query('SELECT * FROM workbench_events').all(),inputs=db.query('SELECT * FROM workbench_live_inputs').all()
-    runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94)
     db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
-    runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94)
     expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})))
     expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events.map(row=>({...row as object,attachments_json:'[]',seq:0})))
     expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs.map(row=>({...row as object,attachments_json:'[]',execution_json:null})))
@@ -666,7 +670,7 @@ it('upgrades v52 with staged attachments and empty refs on existing messages and
     db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('deadbeef','task','/project','claude','completed',1,2)
     db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original',3,'run-original')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','held',4)
-    runMigrations(db, migrations);runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94);runMigrations(db, THROUGH_V94)
     expect(db.query('SELECT attachments_json FROM workbench_events').get()).toEqual({attachments_json:'[]'})
     expect(db.query('SELECT attachments_json FROM workbench_live_inputs').get()).toEqual({attachments_json:'[]'})
     expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_attachments'").get()).toEqual({name:'workbench_attachments'})
@@ -711,7 +715,7 @@ it('upgrades v53 with provider defaults, native import defaults and nullable que
     db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('source','feedbeef','claude','native-original','/project',3,'sha','fingerprint',0,0,'{}','[]')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input','deadbeef','run','queued','held',4)
     const oldTasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
-    runMigrations(db, migrations);runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94);runMigrations(db, THROUGH_V94)
     const tasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
     expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null}),seq:0,workspace_kind:'project',writer_groups:null})))
     expect(db.query('SELECT execution_json FROM workbench_live_inputs').get()).toEqual({execution_json:null})
@@ -740,7 +744,7 @@ it('upgrades v67 without assigning staged legacy attachments to a new owner',()=
 })
 
 it('v61: workbench_tasks / workbench_events 都有 seq 列,事件表有 (task_id, seq) 索引', () => {
-  const db = openTestDb()
+  const db = migratedTo(94)
   const cols = (t: string) => db.query<{ name: string }, []>(`PRAGMA table_info(${t})`).all().map(c => c.name)
   expect(cols('workbench_tasks')).toContain('seq')
   expect(cols('workbench_events')).toContain('seq')
@@ -1129,7 +1133,7 @@ describe('v93 — 一起做的时间线搬进 matter_items(M2)', () => {
     ev.run(7, '0000000a', 'tool_call', '跑测试', 103, null, 'run-1', '["tool_call","c2"]', '{"id":"c2","type":"exec","status":"cancelled","label":"跑测试"}', '[]', 6)
     ev.run(8, '0000000b', 'system', '旧的', 50, null, null, null, null, '[]', 2)
     db.query("INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,created_at,request_event_id,packet_json,token_hash) VALUES('h1','0000000a','0000000b','review','看看','p','[]',1,6,'{}','t1')").run()
-    runMigrations(db, migrations)
+    runMigrations(db, migrations.slice(0, 93))
     return db
   }
   it('每条事件搬成一步:id 不变、每件事里按 id 排 seq、payload 只存有的字段、步的状态跟着工具调用走', () => {
@@ -1150,7 +1154,7 @@ describe('v93 — 一起做的时间线搬进 matter_items(M2)', () => {
     expect(cursors).toEqual([1, 2, 3, 4, 5])
     expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 5 })
   })
-  it('交接记的那条请求指向搬过来的步(外键改指 matter_items);旧表留着到 M2c 才删', () => {
+  it('交接记的那条请求指向搬过来的步(外键改指 matter_items);旧表这一版还留着(M2c 才删)', () => {
     const db = upgraded()
     expect(db.query("SELECT request_event_id FROM workbench_handoffs WHERE id='h1'").get()).toEqual({ request_event_id: 6 })
     expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
@@ -1165,7 +1169,7 @@ describe('v93 — 一起做的时间线搬进 matter_items(M2)', () => {
     db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id) VALUES('0000000a','a','/w','claude','completed',1,1,'0000000a')").run()
     db.query("INSERT INTO workbench_events(id,task_id,kind,text,created_at,seq) VALUES(1,'0000000a','user','x',1,1)").run()
     db.query("INSERT INTO matter_items(id,matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES(1,'0000000c',1,'system','completed','{}',1,1,1)").run()
-    expect(() => runMigrations(db, migrations)).toThrow(/v93/)
+    expect(() => runMigrations(db, migrations.slice(0, 93))).toThrow(/v93/)
     expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 92 })
   })
 })
@@ -1186,7 +1190,7 @@ describe('v94 — 一起做的执行设置与用量搬进 matter_turns(M2b)', ()
     usage.run('0000000a', 'run-1', 1, 'claude', 100, 20, null, null, null, null, 30, 130)
     usage.run('0000000a', 'run-1', 2, 'claude', 50, 5, 300, null, null, null, 10, 200)
     usage.run('0000000a', 'run-2', 1, 'claude', 7, 1, null, null, null, 0.5, null, 320)
-    runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94)
     return db
   }
   it('每行用量一轮(做完);run 没有用量 ⇒ 补一轮,最后一条跟着任务的状态;设置抄进 policy;模型取实际的', () => {
@@ -1203,12 +1207,34 @@ describe('v94 — 一起做的执行设置与用量搬进 matter_turns(M2b)', ()
     ])
     expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 4 })
   })
-  it('重放不重复搬;旧表留着到 M2c', () => {
+  it('重放不重复搬;旧表这一版还留着(M2c 才删)', () => {
     const db = upgraded()
     db.exec('PRAGMA user_version=93')
-    runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94)
     expect(db.query('SELECT COUNT(*) AS n FROM matter_turns').get()).toEqual({ n: 4 })
     expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('workbench_run_execution','workbench_turn_usage') ORDER BY name").all())
       .toEqual([{ name: 'workbench_run_execution' }, { name: 'workbench_turn_usage' }])
+  })
+})
+
+describe('v95 — 删掉一起做搬家前的三张表(M2c)', () => {
+  const OLD = ['workbench_events', 'workbench_run_execution', 'workbench_turn_usage']
+  const left = (db: Db) => db.query(`SELECT name FROM sqlite_master WHERE name IN (${OLD.map(() => '?').join(',')})`).all(...OLD)
+  it('三张表与它们的索引都没了;搬过来的步和轮还在;外键完好', () => {
+    const db = migratedTo(94)
+    db.query("INSERT INTO matters(id,kind,title,state,status,created_at,updated_at) VALUES('0000000a','task','t','done','done',1,1)").run()
+    db.query("INSERT INTO matter_items(matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES('0000000a',1,'system','completed','{}',1,1,1)").run()
+    runMigrations(db, migrations)
+    expect(left(db)).toEqual([])
+    expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'workbench_events%' OR name LIKE 'workbench_run_execution%' OR name LIKE 'workbench_turn_usage%'").all()).toEqual([])
+    expect(db.query('SELECT COUNT(*) AS n FROM matter_items').get()).toEqual({ n: 1 })
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  })
+  it('重跑一次不报错(删过的表 IF EXISTS)', () => {
+    const db = migratedTo(migrations.length)
+    db.exec('PRAGMA user_version = 94')
+    runMigrations(db, migrations)
+    expect(left(db)).toEqual([])
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
   })
 })
