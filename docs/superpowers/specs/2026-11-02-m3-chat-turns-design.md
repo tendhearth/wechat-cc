@@ -68,5 +68,10 @@
 - **每轮多写十几行**(工具调用多的轮):对话量远小于一起做。
 - **parallel / chatroom 的状态**:一件事里几轮同时跑,最后一轮结束才落 open。MatterLog 的 settle 本来就这么推。
 
+## 进度
+- M3a(11-02):runner 开 / 收这一轮,工具调用、送达、出错写成步,用量和原生会话记在轮上,开机把没收的对话轮记中断。和设计的两处差别:
+  - 这件对话的 id 由实现按 `findChat(chatId)` 自己找,没有经 `InboundMsg` 往下传。runner 手里本来就有 chatId,这样少改一条链。
+  - 主人那句 / CC 的回复这两步要引 `messages` 的 id,这个 id 还没传到协调器,挪到 M3b 和读切换一起做。
+
 ## 顺序
 M3a → (真机跑一天,新旧对账)→ M3b → soak → M3c。每步只动 daemon,`self deploy` 就生效。

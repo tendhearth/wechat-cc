@@ -76,10 +76,12 @@ export type MatterItemStatus='started'|'completed'|'failed'
 export type MatterOutcome='open'|'done'|'failed'|'cancelled'
 export interface MatterTurn {id:string;matterId:string;seq:number;runId:string|null;executor:string;model:string|null;nativeSessionId:string|null;status:MatterTurnStatus;errorCode:string|null;usage:TurnUsage|null;policy:Record<string,unknown>|null;startedAt:number;endedAt:number|null;cursor:number}
 export interface MatterItem {id:number;matterId:string;turnId:string|null;seq:number;kind:MatterItemKind;status:MatterItemStatus;key:string|null;messageId:string|null;payload:Record<string,unknown>;createdAt:number;updatedAt:number;cursor:number}
-export interface StartTurn {matterId:string;executor:string;model?:string|null;nativeSessionId?:string|null;runId?:string|null;/** 编译好的策略摘要(放行档、模型选择…),原样存。 */policy?:Record<string,unknown>|null}
+export interface StartTurn {matterId:string;executor:string;model?:string|null;nativeSessionId?:string|null;runId?:string|null;/** 这一轮真正开始的时刻(调用方记的,比如排在会话锁后面之前);不给 ⇒ 现在。 */startedAt?:number;/** 编译好的策略摘要(放行档、模型选择…),原样存。 */policy?:Record<string,unknown>|null}
 export interface FinishTurn {
   status:Exclude<MatterTurnStatus,'running'>
   usage?:TurnUsage|null;errorCode?:string|null;nativeSessionId?:string|null
+  /** 这一轮真正结束的时刻;不给 ⇒ 现在。只管 ended_at,这件事的 updated_at 照旧是写的那一刻。 */
+  endedAt?:number
   /** 这一轮结束后这件事落到哪。不给 ⇒ open(球回到主人手里)。还有别的轮在跑 ⇒ 不生效。 */
   matterState?:MatterOutcome
 }

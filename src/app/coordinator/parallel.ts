@@ -39,6 +39,7 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     )
     const text = deps.format(msg)
     const startedAt = nowMs()
+    const turns = acquired.map(() => ({}))  // 每位参与者这一轮的身份(runner 靠它把 run 和 record 对上,M3a)
     // 回复交付:这家参与者的最后的话经端口送达(前缀 [名字] 由 daemon 加);开轮在 dispatch 之前,
     // 附件才登记得上。
     const deliveries = acquired.map((a, i) => {
@@ -56,9 +57,9 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     )
     let settled: PromiseSettledResult<TurnSummary>[]
     try {
-      settled = await Promise.allSettled(acquired.map(a =>
+      settled = await Promise.allSettled(acquired.map((a, i) =>
         a.status === 'fulfilled'
-          ? runner.run({ chatId: msg.chatId, alias: proj.alias, providerId: a.value.providerId, handle: a.value, prompt: text, budget: 'turn' })
+          ? runner.run({ chatId: msg.chatId, alias: proj.alias, providerId: a.value.providerId, handle: a.value, prompt: text, budget: 'turn', startedAt, turn: turns[i]! })
           : Promise.reject(a.reason),
       ))
     } finally {
@@ -111,7 +112,7 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
         if (!said.silent && said.text.trim()) answers.push({ speaker: providerId, text: said.text.trim() })
       } finally {
         runner.record({
-          chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'parallel', startedAt, endedAt,
+          chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'parallel', startedAt, endedAt, turn: turns[i]!,
           outcome: recOutcome, summary: recSummary,
           error: r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : undefined,
           report,
