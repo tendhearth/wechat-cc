@@ -1,5 +1,8 @@
 import type {Db} from '../../../lib/db'
 import type {AgentExecutionChoice,AgentExecutionObservation} from '../../../ports/agent-provider'
+import type {MatterLog,MatterOutcome} from '../../../ports/matters'
+import type {TurnUsage} from '../../../domain/turn-usage'
+import {makeMatterLog} from '../matter-log'
 
 export const PROVIDER_EXECUTION_CHOICE:Readonly<AgentExecutionChoice>={defaults:'provider',model:null,reasoningEffort:null}
 export const NATIVE_EXECUTION_CHOICE:Readonly<AgentExecutionChoice>={defaults:'native',model:null,reasoningEffort:null}
@@ -109,12 +112,21 @@ export interface RunExecution {
   taskId:string;runId:string;choice:AgentExecutionChoice;effective:AgentExecutionObservation|null
   createdAt:number;observedAt:number|null
 }
-interface RunRow {taskId:string;runId:string;choiceJson:string;effectiveJson:string|null;createdAt:number;observedAt:number|null}
-const SELECT='SELECT task_id AS taskId,run_id AS runId,choice_json AS choiceJson,effective_json AS effectiveJson,created_at AS createdAt,observed_at AS observedAt FROM workbench_run_execution'
-const publicRun=(row:RunRow|null):RunExecution|null=>{
+/** 一条 run 的执行设置存在它每一轮的 policy 里(M2b,v94 起;以前在 workbench_run_execution):接受时的选择、执行者自报的实际值。 */
+type RunPolicy={choice:AgentExecutionChoice;effective?:AgentExecutionObservation;observedAt?:number}
+type RunStatus='completed'|'failed'|'cancelled'|'interrupted'
+/** 任务这一次 run 的结局 → 这件事的结局。没确认退出(interrupted)故事没完 ⇒ 球回到主人手里(open),和 setStatus 那边一致。 */
+const RUN_OUTCOME:Record<RunStatus,MatterOutcome>={completed:'done',failed:'failed',cancelled:'cancelled',interrupted:'open'}
+interface TurnRow {id:string;runId:string;executor:string;model:string|null;policyJson:string;createdAt:number}
+// 一条 run 的最新一轮(seq 最大):effective 跟着它走;createdAt 是这条 run 第一轮开始的时刻(= 接受的时刻)。
+const SELECT=`SELECT id,run_id AS runId,executor,model,policy_json AS policyJson,
+  (SELECT MIN(f.started_at) FROM matter_turns f WHERE f.matter_id=t.matter_id AND f.run_id=t.run_id) AS createdAt
+  FROM matter_turns t WHERE policy_json IS NOT NULL AND run_id IS NOT NULL`
+const policyOf=(row:TurnRow):RunPolicy=>JSON.parse(row.policyJson) as RunPolicy
+const publicRun=(taskId:string,row:TurnRow|null):RunExecution|null=>{
   if(!row)return null
-  const {choiceJson,effectiveJson,...run}=row
-  return {...run,choice:normalizeExecutionChoice(JSON.parse(choiceJson),PROVIDER_EXECUTION_CHOICE),effective:effectiveJson?JSON.parse(effectiveJson) as AgentExecutionObservation:null}
+  const policy=policyOf(row)
+  return {taskId,runId:row.runId,createdAt:row.createdAt,observedAt:policy.observedAt??null,choice:normalizeExecutionChoice(policy.choice,PROVIDER_EXECUTION_CHOICE),effective:policy.effective??null}
 }
 function observation(value:AgentExecutionObservation):AgentExecutionObservation {
   if(!object(value)||Object.keys(value).some(key=>!['model','reasoningEffort','sessionId','source'].includes(key))||!identifier(value.model,200)||!['native_response','native_message','native_reroute'].includes(value.source)||
@@ -122,38 +134,76 @@ function observation(value:AgentExecutionObservation):AgentExecutionObservation 
   return {model:value.model,source:value.source,...(value.reasoningEffort!==undefined?{reasoningEffort:value.reasoningEffort}:{}),...(value.sessionId!==undefined?{sessionId:value.sessionId}:{})}
 }
 
-export function makeExecutionSettingsStore(db:Db){
+/**
+ * 一起做的执行设置与轮(M2b):一条 run 接受时开它的第一轮(这件事 = 这个任务,同 id);执行者的一个回应(result)收一轮;
+ * 之后再有动静就接着开下一轮,继承这条 run 的执行者 / 模型 / 设置。写只经 MatterLog。
+ */
+export function makeExecutionSettingsStore(db:Db,log:MatterLog=makeMatterLog(db),now:()=>number=()=>Date.now()){
   const choice=(taskId:string):AgentExecutionChoice=>{
     const row=db.query<{choiceJson:string},[string]>('SELECT execution_choice_json AS choiceJson FROM workbench_tasks WHERE id=?').get(taskId)
     if(!row)throw Error('not_found')
     return normalizeExecutionChoice(JSON.parse(row.choiceJson),PROVIDER_EXECUTION_CHOICE)
   }
-  const run=(taskId:string,runId:string):RunExecution|null=>publicRun(db.query<RunRow,[string,string]>(SELECT+' WHERE task_id=? AND run_id=?').get(taskId,runId))
+  const latest=(taskId:string,runId:string)=>db.query<TurnRow,[string,string]>(SELECT+' AND matter_id=? AND run_id=? ORDER BY seq DESC LIMIT 1').get(taskId,runId)
+  const run=(taskId:string,runId:string):RunExecution|null=>publicRun(taskId,latest(taskId,runId))
+  const running=(taskId:string,runId:string)=>db.query<{id:string},[string,string]>("SELECT id FROM matter_turns WHERE matter_id=? AND run_id=? AND status='running' ORDER BY seq").all(taskId,runId)
   return {
     choice,run,
-    last:(taskId:string):RunExecution|null=>publicRun(db.query<RunRow,[string]>(SELECT+' WHERE task_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(taskId)),
-    accept(taskId:string,runId:string,input:AgentExecutionChoice):void {
+    last:(taskId:string):RunExecution|null=>publicRun(taskId,db.query<TurnRow,[string]>(SELECT+' AND matter_id=? ORDER BY seq DESC LIMIT 1').get(taskId)),
+    /** 接受一条 run = 开它的第一轮;返回这一轮的 id。同一个 runId 重放 ⇒ 不再开,返回 null(选择不同 ⇒ 冲突)。 */
+    accept(taskId:string,runId:string,input:AgentExecutionChoice):string|null {
       if(!identifier(runId,200))throw Error('invalid_execution')
       const accepted=normalizeExecutionChoice(input,PROVIDER_EXECUTION_CHOICE)
-      db.transaction(()=>{
+      return db.transaction(()=>{
         choice(taskId)
-        const prior=publicRun(db.query<RunRow,[string]>(SELECT+' WHERE run_id=?').get(runId))
+        const prior=db.query<TurnRow&{matterId:string},[string]>(SELECT.replace('SELECT id,','SELECT id,matter_id AS matterId,')+' AND run_id=? ORDER BY seq DESC LIMIT 1').get(runId)
         if(prior){
-          if(prior.taskId!==taskId||!sameExecutionChoice(prior.choice,accepted))throw Error('execution_conflict')
+          if(prior.matterId!==taskId||!sameExecutionChoice(normalizeExecutionChoice(policyOf(prior).choice,PROVIDER_EXECUTION_CHOICE),accepted))throw Error('execution_conflict')
           // An old receipt replay must not rewind the choice retained by a newer run.
-          return
+          return null
         }
-        const json=JSON.stringify(accepted)
-        db.query('INSERT INTO workbench_run_execution(run_id,task_id,choice_json,created_at) VALUES(?,?,?,?)').run(runId,taskId,json,Date.now())
-        db.query('UPDATE workbench_tasks SET execution_choice_json=? WHERE id=?').run(json,taskId)
+        const executor=db.query<{p:string},[string]>('SELECT provider_id AS p FROM workbench_tasks WHERE id=?').get(taskId)!.p
+        const turn=log.startTurn({matterId:taskId,runId,executor,model:accepted.model,policy:{choice:accepted}})
+        db.query('UPDATE workbench_tasks SET execution_choice_json=? WHERE id=?').run(JSON.stringify(accepted),taskId)
+        return turn.id
       })()
     },
     observe(taskId:string,runId:string,value:AgentExecutionObservation):void {
-      const json=JSON.stringify(observation(value))
-      const prior=run(taskId,runId)
-      if(!prior)throw Error('not_found')
-      if(JSON.stringify(prior.effective)===json)return
-      db.query('UPDATE workbench_run_execution SET effective_json=?,observed_at=? WHERE task_id=? AND run_id=?').run(json,Date.now(),taskId,runId)
+      const effective=observation(value)
+      const row=latest(taskId,runId)
+      if(!row)throw Error('not_found')
+      const policy=policyOf(row)
+      if(JSON.stringify(policy.effective??null)===JSON.stringify(effective))return
+      log.updateTurn(row.id,{model:effective.model,policy:{...policy,effective,observedAt:now()}})
+    },
+    /** 这条 run 的下一轮:执行者 / 模型 / 设置照这条 run 最新的一轮。run 没接受过 ⇒ not_found。 */
+    nextTurn(taskId:string,runId:string):string {
+      const row=latest(taskId,runId)
+      if(!row)throw Error('not_found')
+      return log.startTurn({matterId:taskId,runId,executor:row.executor,model:row.model,policy:{...policyOf(row)}}).id
+    },
+    /** 执行者回应了(result):收这一轮,带它自己报的用量。这件事回到主人手里(open),run 本身可能还开着(常驻会话)。 */
+    endTurn(turnId:string,input:{usage?:TurnUsage|null;nativeSessionId?:string|null}={}):void {
+      log.finishTurn(turnId,{status:'completed',usage:input.usage??null,nativeSessionId:input.nativeSessionId??null})
+    },
+    /** 这条 run 收尾:还开着的轮按 run 的结局关掉,这件事落到对应的结局;没有开着的轮 ⇒ 直接落结局。幂等。 */
+    endRun(taskId:string,runId:string,status:RunStatus,errorCode:string|null=null):void {
+      db.transaction(()=>{
+        const open=running(taskId,runId)
+        for(const turn of open)log.finishTurn(turn.id,{status,errorCode,matterState:RUN_OUTCOME[status]})
+        if(!open.length&&log.state(taskId)&&!db.query<{n:number},[string]>("SELECT COUNT(*) AS n FROM matter_turns WHERE matter_id=? AND status='running'").get(taskId)!.n)log.setState(taskId,RUN_OUTCOME[status])
+      })()
+    },
+    /**
+     * 开机:上一次进程里没收尾的一起做的轮一律记中断;被 recover 记成中断的任务(`taskIds`)这件事回到主人手里(open)——
+     * 常驻会话答完了还开着时轮已经收了,只按轮推的话它会一直停在上一次的状态。
+     */
+    interruptAll(taskIds:readonly string[]=[]):void {
+      db.transaction(()=>{
+        for(const turn of db.query<{id:string},[]>("SELECT t.id FROM matter_turns t JOIN matters m ON m.id=t.matter_id WHERE m.kind='task' AND t.status='running' ORDER BY t.cursor").all())
+          log.finishTurn(turn.id,{status:'interrupted',errorCode:'daemon_restarted',matterState:'open'})
+        for(const id of taskIds)if(log.state(id))log.setState(id,'open')
+      })()
     },
   }
 }

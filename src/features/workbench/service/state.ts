@@ -63,6 +63,9 @@ export interface Active extends PathReservation {
    *  「又动起来了」时(自己醒来,尽力而为——没有比快照更早的信号)各加一次。不是幂等锁
    *  ——同一轮里两条路径都触发也只是多加了一次,不影响「序号变了就该再报」这个判据。 */
   turnSeq: number
+  /** 这件事里正在记的那一轮(matter_turns,M2b)。和 `turnSeq` 不是一回事:turnSeq 只管回报去重、可能多加;
+   *  这里一轮 = 从有动静到执行者回应(result)或静下来,接受时开第一轮。`open=false` ⇒ 下一次有动静再开新的。 */
+  turn?: {id:string;open:boolean}
   /** 已经报过、且报的是第几轮(`turnSeq` 的快照)。`-1` = 还没报过。`reportOnce` 只在
    *  `turnSeq!==reportedTurn` 时才入队,不依赖「有没有观察到静下来又动起来」这件事本身
    *  ——那件事会被漏看(见 reportOnce 的注释)。 */

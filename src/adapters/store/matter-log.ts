@@ -71,6 +71,14 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     return toTurn(turnRow(turnId)!)
   })
 
+  const updateTurn=db.transaction((turnId:string,patch:{model?:string|null;policy?:Record<string,unknown>|null}):MatterTurn=>{
+    const turn=turnRow(turnId);if(!turn)throw new Error('turn_not_found')
+    const model=patch.model===undefined?turn.model:patch.model
+    const policy=patch.policy===undefined?turn.policy_json:patch.policy?JSON.stringify(patch.policy):null
+    db.query('UPDATE matter_turns SET model=?,policy_json=?,cursor=? WHERE id=?').run(model,policy,nextCursor(),turnId)
+    return toTurn(turnRow(turnId)!)
+  })
+
   const writeItem=db.transaction((input:WriteItem):MatterItem=>{
     if(!ITEM_KINDS.has(input.kind))throw new Error('invalid_item_kind')
     if(!ITEM_STATUSES.has(input.status))throw new Error('invalid_item_status')
@@ -112,6 +120,7 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
   return {
     startTurn:input=>startTurn(input),
     finishTurn:(turnId,input)=>finishTurn(turnId,input),
+    updateTurn:(turnId,patch)=>updateTurn(turnId,patch),
     writeItem:input=>writeItem(input),
     setState:(matterId,state)=>setState(matterId,state),
     state(matterId){const m=matterRow(matterId);return m?{state:m.state,archivedAt:m.archived_at}:null},

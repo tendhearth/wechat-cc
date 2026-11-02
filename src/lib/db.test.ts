@@ -1169,3 +1169,46 @@ describe('v93 — 一起做的时间线搬进 matter_items(M2)', () => {
     expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 92 })
   })
 })
+
+describe('v94 — 一起做的执行设置与用量搬进 matter_turns(M2b)', () => {
+  const choice = '{"defaults":"provider","model":"opus","reasoningEffort":null}'
+  const upgraded = () => {
+    const db = migratedTo(93)
+    const matter = db.query("INSERT INTO matters(id,kind,title,state,status,created_at,updated_at) VALUES(?,'task',?,?,'open',1,1)")
+    const task = db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id) VALUES(?,?,'/w',?,?,1,?,?)")
+    matter.run('0000000a', '做完的', 'done'); task.run('0000000a', '做完的', 'claude', 'completed', 900, '0000000a')
+    matter.run('0000000b', '还在跑的', 'working'); task.run('0000000b', '还在跑的', 'cursor', 'running', 950, '0000000b')
+    const run = db.query('INSERT INTO workbench_run_execution(run_id,task_id,choice_json,effective_json,created_at,observed_at) VALUES(?,?,?,?,?,?)')
+    run.run('run-1', '0000000a', choice, '{"model":"claude-opus-4","source":"native_response"}', 100, 105)
+    run.run('run-2', '0000000a', choice, null, 300, null)
+    run.run('run-3', '0000000b', '{"defaults":"native","model":null,"reasoningEffort":null}', null, 500, null)
+    const usage = db.query('INSERT INTO workbench_turn_usage(task_id,run_id,turn_seq,provider_id,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_usd,duration_ms,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+    usage.run('0000000a', 'run-1', 1, 'claude', 100, 20, null, null, null, null, 30, 130)
+    usage.run('0000000a', 'run-1', 2, 'claude', 50, 5, 300, null, null, null, 10, 200)
+    usage.run('0000000a', 'run-2', 1, 'claude', 7, 1, null, null, null, 0.5, null, 320)
+    runMigrations(db, migrations)
+    return db
+  }
+  it('每行用量一轮(做完);run 没有用量 ⇒ 补一轮,最后一条跟着任务的状态;设置抄进 policy;模型取实际的', () => {
+    const db = upgraded()
+    expect(db.query('SELECT id,matter_id,seq,run_id,executor,model,status,usage_json,policy_json,started_at,ended_at FROM matter_turns ORDER BY cursor').all()).toEqual([
+      { id: 'v94:run-1:1', matter_id: '0000000a', seq: 1, run_id: 'run-1', executor: 'claude', model: 'claude-opus-4', status: 'completed', usage_json: '{"input":100,"output":20}',
+        policy_json: `{"choice":${choice},"effective":{"model":"claude-opus-4","source":"native_response"},"observedAt":105}`, started_at: 100, ended_at: 130 },
+      { id: 'v94:run-1:2', matter_id: '0000000a', seq: 2, run_id: 'run-1', executor: 'claude', model: 'claude-opus-4', status: 'completed', usage_json: '{"input":50,"output":5,"cacheRead":300}',
+        policy_json: `{"choice":${choice},"effective":{"model":"claude-opus-4","source":"native_response"},"observedAt":105}`, started_at: 190, ended_at: 200 },
+      { id: 'v94:run-2:1', matter_id: '0000000a', seq: 3, run_id: 'run-2', executor: 'claude', model: 'opus', status: 'completed', usage_json: '{"input":7,"output":1,"costUsd":0.5}',
+        policy_json: `{"choice":${choice}}`, started_at: 300, ended_at: 320 },
+      { id: 'v94:run-3:0', matter_id: '0000000b', seq: 1, run_id: 'run-3', executor: 'cursor', model: null, status: 'interrupted', usage_json: null,
+        policy_json: '{"choice":{"defaults":"native","model":null,"reasoningEffort":null}}', started_at: 500, ended_at: 950 },
+    ])
+    expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 4 })
+  })
+  it('重放不重复搬;旧表留着到 M2c', () => {
+    const db = upgraded()
+    db.exec('PRAGMA user_version=93')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM matter_turns').get()).toEqual({ n: 4 })
+    expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('workbench_run_execution','workbench_turn_usage') ORDER BY name").all())
+      .toEqual([{ name: 'workbench_run_execution' }, { name: 'workbench_turn_usage' }])
+  })
+})

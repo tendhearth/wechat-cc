@@ -11,6 +11,7 @@ import {makeLiveInputStore} from './live-inputs'
 import {makeTaskAttachmentStore} from '../../workbench/attachments'
 import {createAttachmentUploads} from '../../workbench/attachment-uploads'
 import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
+import {makeMatterLog} from '../matter-log'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeCreationReceiptStore} from './creation-receipts'
 import {createEntryStore} from './entry-store'
@@ -112,7 +113,9 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     return task
   }
   const artifacts = (id: string) => db.query<StoredArtifact, [string]>(`${ART_SELECT} WHERE task_id=? ORDER BY created_at DESC,rowid DESC`).all(id)
-  const {events,addEvent:insertEvent,recordAgentEvent:upsertAgentEvent,finishRunActivities:finishActivities}=makeTimelineEvents(db)
+  const matterLog=makeMatterLog(db)
+  const execution=makeExecutionSettingsStore(db,matterLog)
+  const {events,addEvent:insertEvent,recordAgentEvent:upsertAgentEvent,finishRunActivities:finishActivities}=makeTimelineEvents(db,matterLog)
   const bump=(id:string):number=>{
     const row=db.query<{seq:number},[number,string]>('UPDATE workbench_tasks SET seq=seq+1,updated_at=? WHERE id=? RETURNING seq').get(Date.now(),id)
     if(!row)throw new Error('not_found')
@@ -139,7 +142,7 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     attachments:makeTaskAttachmentStore(db),
     uploadRequestExists:(id:string)=>!!db.query('SELECT id FROM workbench_attachment_uploads WHERE id=?').get(id),
     attachmentUploads:(options:Omit<Parameters<typeof createAttachmentUploads>[0],'db'|'attachments'>)=>createAttachmentUploads({...options,db,attachments:makeTaskAttachmentStore(db)}),
-    execution:makeExecutionSettingsStore(db),
+    execution,
     liveInputs:makeLiveInputStore(db),
     controlReceipts:makeControlReceiptStore(db),
     creationReceipts:makeCreationReceiptStore(db),
@@ -298,20 +301,15 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
         return db.query<{taskId:string;repoRoot:string;branch:string;archivedAt:number|null},[]>('SELECT w.task_id AS taskId,w.repo_root AS repoRoot,w.branch,t.archived_at AS archivedAt FROM workbench_worktrees w JOIN workbench_tasks t ON t.id=w.task_id').all()
       },
     },
-    /** 每件事花了多少额度(v82):执行者自己报的,一轮一行;重放不重复。 */
+    /** 每件事花了多少额度(v82 起;M2b 起记在这件事的轮上):执行者自己在一轮结束时报的,一轮一份;不报的轮不算。 */
     usage: {
-      record(r:{taskId:string;runId:string;turnSeq:number;providerId:string;usage:TurnUsage;durationMs?:number}) {
-        const u=r.usage
-        db.query('INSERT OR IGNORE INTO workbench_turn_usage(task_id,run_id,turn_seq,provider_id,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_usd,duration_ms,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-          .run(r.taskId,r.runId,r.turnSeq,r.providerId,u.input??null,u.output??null,u.cacheRead??null,u.cacheWrite??null,u.reasoning??null,u.costUsd??null,r.durationMs??null,Date.now())
-      },
       totals(taskId:string):UsageTotals {
-        const rows=db.query<{i:number|null;o:number|null;cr:number|null;cw:number|null;r:number|null;c:number|null},[string]>('SELECT input_tokens AS i,output_tokens AS o,cache_read_tokens AS cr,cache_write_tokens AS cw,reasoning_tokens AS r,cost_usd AS c FROM workbench_turn_usage WHERE task_id=?').all(taskId)
-        return sumUsage(rows.map(x=>({...(x.i!==null?{input:x.i}:{}),...(x.o!==null?{output:x.o}:{}),...(x.cr!==null?{cacheRead:x.cr}:{}),...(x.cw!==null?{cacheWrite:x.cw}:{}),...(x.r!==null?{reasoning:x.r}:{}),...(x.c!==null?{costUsd:x.c}:{})})))
+        return sumUsage(db.query<{u:string},[string]>('SELECT usage_json AS u FROM matter_turns WHERE matter_id=? AND usage_json IS NOT NULL ORDER BY seq').all(taskId).map(x=>JSON.parse(x.u) as TurnUsage))
       },
-      /** 某个时刻以来各执行者用了多少(周报用)。 */
+      /** 某个时刻以来各执行者在一起做里用了多少(周报用)。 */
       sinceByProvider(at:number):Array<{providerId:string;turns:number;input:number|null;output:number|null}> {
-        return db.query<{providerId:string;turns:number;input:number|null;output:number|null},[number]>('SELECT provider_id AS providerId,COUNT(*) AS turns,SUM(input_tokens) AS input,SUM(output_tokens) AS output FROM workbench_turn_usage WHERE at>=? GROUP BY provider_id ORDER BY provider_id').all(at)
+        return db.query<{providerId:string;turns:number;input:number|null;output:number|null},[number]>(`SELECT t.executor AS providerId,COUNT(*) AS turns,SUM(json_extract(t.usage_json,'$.input')) AS input,SUM(json_extract(t.usage_json,'$.output')) AS output
+          FROM matter_turns t JOIN matters m ON m.id=t.matter_id WHERE m.kind='task' AND t.usage_json IS NOT NULL AND t.ended_at>=? GROUP BY t.executor ORDER BY t.executor`).all(at)
       },
     },
     /** 做到条件成立为止(v80):命令只在建任务时写一次 —— 这里没有、也不许有改命令的方法。 */
@@ -382,6 +380,8 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     recover() {
       const rows = db.query<{ id: string; path: string; status: TaskStatus }, []>("SELECT id,path,status FROM workbench_tasks WHERE status IN ('queued','running','cancelling')").all()
       db.transaction(() => {
+        // 轮记不上不挡开机对账(任务自己的中断照记)。
+        try{execution.interruptAll(rows.map(row=>row.id))}catch{/* 只少几轮的结局 */}
         for (const { id,path,status } of rows) {
           finishRunActivities(id,null,'interrupted')
           db.query("UPDATE workbench_tasks SET status='interrupted',error='daemon_restarted',updated_at=? WHERE id=?").run(Date.now(),id)
