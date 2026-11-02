@@ -20,6 +20,17 @@ afterEach(()=>db.close())
 const state=(id:string)=>log.state(id)?.state
 
 describe('轮',()=>{
+  it('updateTurn:补实际模型 / 换掉策略摘要,游标前进,不碰状态;没给的不动;结束了的轮也能补',()=>{
+    const t=log.startTurn({matterId:'0000000a',executor:'codex',model:null,policy:{choice:'auto'}})
+    const u=log.updateTurn(t.id,{model:'gpt-5.5'})
+    expect(u).toMatchObject({model:'gpt-5.5',policy:{choice:'auto'},status:'running'})
+    expect(u.cursor).toBeGreaterThan(t.cursor)
+    expect(state('0000000a')).toBe('working')
+    log.finishTurn(t.id,{status:'completed'})
+    expect(log.updateTurn(t.id,{policy:{choice:'auto',effective:'gpt-5.5'}})).toMatchObject({model:'gpt-5.5',policy:{choice:'auto',effective:'gpt-5.5'},status:'completed'})
+    expect(state('0000000a')).toBe('open')
+    expect(()=>log.updateTurn('nope',{model:'x'})).toThrow('turn_not_found')
+  })
   it('开一轮 ⇒ 每件事从 1 数、带执行者与 run;这件事进 working、updated_at 跟着动',()=>{
     clock=2_000
     const t1=log.startTurn({matterId:'0000000a',executor:'codex',model:'gpt-5.5',runId:'run-1',policy:{mode:'review'}})

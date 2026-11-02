@@ -52,7 +52,7 @@ it('creates one task, matter, first user event and run across desktop/phone retr
   expect(service.createEntry(request,{...context,surface:'phone'}).receipt).toEqual(first.receipt)
   expect(first.task.workspaceKind).toBe('managed');expect(first.receipt.taskId).toBe(first.receipt.matterId)
   expect(service.entryReceipt(request.requestId,context)?.receipt).toEqual(first.receipt)
-  const counts=['workbench_tasks','matters','matter_items','workbench_run_execution'].map(table=>db.query<{n:number},[]>(`SELECT count(*) AS n FROM ${table}`).get()!.n)
+  const counts=['workbench_tasks','matters','matter_items','matter_turns'].map(table=>db.query<{n:number},[]>(`SELECT count(*) AS n FROM ${table}`).get()!.n)
   expect(counts).toEqual([1,1,1,1]);expect(store.projects()).toEqual([])
   expect(makeMatterStore(db).bindings(first.receipt.matterId)).toEqual([expect.objectContaining({surface:'desktop',surfaceKey:'owner'})])
   await settle(first.receipt.taskId);expect(spawnCount).toBe(1)
@@ -90,7 +90,7 @@ it.each(['matter','binding','receipt','outer-commit'])('rolls back %s failure wi
   }
   expect(()=>service.createEntry(request,context)).toThrow('entry_fault')
   await Promise.resolve();expect(spawnCount).toBe(0);expect(mintCount).toBe(0);expect(published).not.toHaveBeenCalled()
-  for(const table of ['workbench_tasks','matters','matter_items','workbench_run_execution','matter_bindings'])expect(db.query(`SELECT * FROM ${table}`).all()).toEqual([])
+  for(const table of ['workbench_tasks','matters','matter_items','matter_turns','matter_bindings'])expect(db.query(`SELECT * FROM ${table}`).all()).toEqual([])
   expect(store.attachments.select(material.attachmentIds,undefined,material.draftId,{ownerKey:'owner'})).toEqual([material.attachment])
   expect(store.entryRequests.get('owner',request.requestId)?.phase).toBe('reserved')
   if(point!=='outer-commit')db.exec('DROP TRIGGER entry_fault');else vi.restoreAllMocks()
@@ -192,7 +192,7 @@ it.each(['allocation','first material check'])('reuses the winner when another c
     else vi.spyOn(store.attachments,'prepareAcceptance').mockImplementationOnce((...args)=>{winner=other.createEntry(request,{...context,surface:'phone'});return verify(...args)})
     const result=service.createEntry(request,context)
     expect(result.receipt).toEqual(winner!.receipt)
-    for(const table of ['workbench_tasks','matters','matter_items','workbench_run_execution'])expect(db.query(`SELECT * FROM ${table}`).all()).toHaveLength(1)
+    for(const table of ['workbench_tasks','matters','matter_items','matter_turns'])expect(db.query(`SELECT * FROM ${table}`).all()).toHaveLength(1)
     await expect.poll(()=>other.detail(result.receipt.taskId).task.status).toBe('completed');expect(spawnCount).toBe(1)
   }finally{await other.shutdown();secondDb.close()}
 })

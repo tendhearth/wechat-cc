@@ -327,7 +327,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       const index=state.queue.indexOf(running); if (index>=0) state.queue.splice(index,1)
       state.runningText.delete(running.identity)
       try {
-        store.atomic(()=>{store.update(running.taskId,'cancelled');stageFinishedNotice(running,'cancelled')})
+        store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};store.update(running.taskId,'cancelled');stageFinishedNotice(running,'cancelled')})
         ctx.hub.touched(running.taskId)
         matterSync(m=>m.setStatus(running.taskId,'done'))
         publishFinishedNotices()

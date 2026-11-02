@@ -15,6 +15,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../../ports/agent-provider'
 import type { MatterOrigin, MatterStore } from '../../../ports/matters'
 import { classifyProviderError } from '../../../domain/provider-quota'
+import type { TurnUsage } from '../../../domain/turn-usage'
 import { decideCall, isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { providerCallTarget } from '../../../app/provider-registry'
 import { liveRunTarget } from './call-target'
@@ -119,8 +120,24 @@ export interface ExecuteDomains {
 }
 
 export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
-  /** 每条 run 里第几个带用量的 result(v82 主键的第二段)。 */
-  const usageSeq=new WeakMap<Active,number>()
+  /**
+   * 一起做的轮(M2b):result 收这一轮(带用量);收了以后再有动静就开下一轮;静下来(常驻会话后台活干完、没有 result)
+   * 也收。记不上只少一轮的记录,不打断任务。
+   */
+  const noteTurn=(running:Active,ev:{kind:string;usage?:TurnUsage;sessionId?:string})=>{
+    try {
+      if(ev.kind==='result'){
+        const id=running.turn?.open?running.turn.id:store.execution.nextTurn(running.taskId,running.identity)
+        running.turn={id,open:false}
+        store.execution.endTurn(id,{usage:ev.usage??null,nativeSessionId:ev.sessionId??null})
+      } else if(!running.turn?.open)running.turn={id:store.execution.nextTurn(running.taskId,running.identity),open:true}
+    } catch { /* 记不上只少一轮 */ }
+  }
+  const quietTurn=(running:Active)=>{
+    if(!running.turn?.open)return
+    running.turn.open=false
+    try{store.execution.endTurn(running.turn.id)}catch{/* 记不上只少一轮 */}
+  }
   const { store, state } = ctx
   const {runsByTask,queue,runningText}=state
   const {requireInput,canResume,continuation,provider}=domains.admission
@@ -278,7 +295,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 静下来就交给 settleQuiet 判:它自己会因为「还在等主人拍板」而只收成果、不起计时。
         // 这里若因为有待决请求而跳过,这一次转移就被吃掉了 —— 之后 wasQuiet 一直是 true,
         // 再没有人回来收尾(评审 2026-09-21 #6 续:后台问题活过了父回合的答复)。
-        if (nowQuiet&&!wasQuiet) { settleQuiet(running); return }
+        if (nowQuiet&&!wasQuiet) { quietTurn(running); settleQuiet(running); return }
         // 又动起来了(自己被后台通知唤醒也算):不再安静就不再计时。文件夹本来就是它的,
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
@@ -308,8 +325,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             // 任何一个成功回合(result)即视为这家恢复。
             if (ev.kind==='error') quota.note(task.providerId,ev.message,ev.code)
             if (ev.kind==='result') quota.clear(task.providerId)
-            // 每件事花了多少额度(v82):执行者报了用量就落一行;一条 run 里按 result 数编号(常驻会话自己醒来也算一轮)。
-            if (ev.kind==='result'&&ev.usage){const seq=(usageSeq.get(running)??0)+1;usageSeq.set(running,seq);try{store.usage.record({taskId:task.id,runId:running.identity,turnSeq:seq,providerId:task.providerId,usage:ev.usage,durationMs:ev.durationMs})}catch{/* 记不上只少一行用量 */}}
+            // 这件事的轮(M2b):result 收一轮、带执行者报的用量(每件事花了多少额度从这里加);别的动静接着开下一轮。
+            noteTurn(running,ev)
             if (ev.kind==='result') settleQuiet(running)
             // observe 是**故意**会往外抛的(身份不符那条),所以探测器自己抛出会把整轮带走。
             // 落定漏一次会被下一个事件补上,抛出去却不可逆 —— 吞掉,只记一次(终审 M5)。
@@ -406,6 +423,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         const body=willReport?terminalReportBody(running):undefined
         store.atomic(()=>{
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
+          // 这件事的轮记不上(比如这件事的行没了)不能挡任务自己的终态 —— 外层 catch 会把写者一直锁着。
+          try{store.execution.endRun(task.id,running.identity,status,finalError)}catch{/* 只少一轮的结局 */}
           store.update(task.id,status,finalError)
           stageFinishedNotice(running,status,finalError,willReport)
         })
@@ -474,8 +493,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     // 一路卡到超时才被 store.version 兜底纠正(纠正见下面 changes.wait);直接调 store.addEvent
     // 就不会发布这个未提交的信号,提交后的 ctx.hub.touched(task.id)(atomic 块外)会把真实 seq 发出去。
     const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);ctx.hub.touched(task.id);return id}
+    let firstTurn=null as string|null
     const handoffPeer=store.atomic(()=>{
-      store.execution.accept(task.id,runId,execution)
+      firstTurn=store.execution.accept(task.id,runId,execution)
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
@@ -521,6 +541,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
+      ...(firstTurn?{turn:{id:firstTurn,open:true}}:{}),
     }
     const activate=()=>{if(handoffPeer)ctx.hub.touched(handoffPeer.sourceTaskId);ctx.hub.touched(task.id);runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()
