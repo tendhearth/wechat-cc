@@ -213,12 +213,21 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
     'GET /v1/workbench/task': async (query) => {
       const id = query.get('id')
       if (!id || !TASK_ID.test(id)) return invalid()
-      if (query.getAll('since').length > 1 || query.getAll('wait_ms').length > 1) return invalid()
-      const sinceRaw = query.get('since'), waitRaw = query.get('wait_ms')
+      if (query.getAll('since').length > 1 || query.getAll('since_cursor').length > 1 || query.getAll('wait_ms').length > 1) return invalid()
+      const sinceRaw = query.get('since'), cursorRaw = query.get('since_cursor'), waitRaw = query.get('wait_ms')
+      if (sinceRaw !== null && cursorRaw !== null) return invalid()
       const since = sinceRaw === null ? undefined : nonNegInt(sinceRaw)
+      const sinceCursor = cursorRaw === null ? undefined : nonNegInt(cursorRaw)
       const waitMs = waitRaw === null ? 0 : nonNegInt(waitRaw)
-      if (since === null || waitMs === null) return invalid()
+      if (since === null || sinceCursor === null || waitMs === null) return invalid()
       try {
+        // 按游标(P1b,桌面新版):这件事的游标超过 since_cursor 就回;不然挂着等它前进。
+        if (sinceCursor !== undefined) {
+          const first = await deps.workbench.detail(id, { sinceCursor })
+          if (first.cursor > sinceCursor || waitMs === 0) return { status: 200, body: first }
+          await deps.workbench.changes.waitCursor(id, sinceCursor, Math.min(waitMs, WAIT_MAX_MS))
+          return { status: 200, body: await deps.workbench.detail(id, { sinceCursor }) }
+        }
         if (since !== undefined && waitMs > 0) {
           // 先探一次:数据已经比 since 新(或任务压根不存在,detail 直接抛 not_found)就地返回,
           // 不然一个已下线的 id 会在 wait 里空耗满 20 秒才等到 detail 去报 404。

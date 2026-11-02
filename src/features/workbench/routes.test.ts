@@ -960,6 +960,36 @@ describe('Workbench internal HTTP API', () => {
       expect((await response.json()).version).toBe(6)
     })
 
+    it('since_cursor(P1b):游标没超过就挂在 waitCursor 上,醒了按同一个 since_cursor 再取一次;已经超过 / 不等 ⇒ 直接回', async () => {
+      let detailCalls = 0
+      let resolveWait: (v: number) => void = () => {}
+      const waitDone = new Promise<number>(resolve => { resolveWait = resolve })
+      const detail = vi.fn((_id: string, _opts?: { sinceCursor?: number }) => { detailCalls++; return { task: TASK, events: [], artifacts: [], version: 1, cursor: detailCalls === 1 ? 10 : 12 } })
+      const waitCursor = vi.fn(async () => waitDone)
+      const svc = service({ detail, changes: { wait: vi.fn(), waitCursor } })
+      const { request } = await start(svc)
+      const responsePromise = request('/v1/workbench/task?id=deadbeef&since_cursor=10&wait_ms=99999')
+      await vi.waitFor(() => expect(waitCursor).toHaveBeenCalled(), { timeout: 5_000 })
+      expect(waitCursor).toHaveBeenCalledWith('deadbeef', 10, 20000)
+      resolveWait(12)
+      const response = await responsePromise
+      expect(detail).toHaveBeenNthCalledWith(1, 'deadbeef', { sinceCursor: 10 })
+      expect(detail).toHaveBeenNthCalledWith(2, 'deadbeef', { sinceCursor: 10 })
+      expect((await response.json()).cursor).toBe(12)
+      detailCalls = 0
+      expect((await (await request('/v1/workbench/task?id=deadbeef&since_cursor=3&wait_ms=99999')).json()).cursor).toBe(10)
+      detailCalls = 1
+      expect((await request('/v1/workbench/task?id=deadbeef&since_cursor=12')).status).toBe(200)
+      expect(waitCursor).toHaveBeenCalledTimes(1)
+    })
+
+    it('since 和 since_cursor 不能一起给;since_cursor 不是非负整数 / 给了两次 ⇒ 400', async () => {
+      const svc = service({ detail: vi.fn(() => ({ task: TASK, events: [], artifacts: [], version: 1, cursor: 1 })), changes: { wait: vi.fn(), waitCursor: vi.fn() } })
+      const { request } = await start(svc)
+      for (const q of ['since=1&since_cursor=1', 'since_cursor=-1', 'since_cursor=x', 'since_cursor=1&since_cursor=2'])
+        expect((await request(`/v1/workbench/task?id=deadbeef&${q}`)).status).toBe(400)
+    })
+
     it('未知 id 带 since+wait_ms ⇒ 404,不等 20 秒(detail 探测就抛 not_found,wait 不被调用)', async () => {
       const detail = vi.fn(() => { throw new Error('not_found') })
       const wait = vi.fn(async () => 0)

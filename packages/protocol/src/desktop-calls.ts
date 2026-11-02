@@ -205,7 +205,7 @@ export const DESKTOP_CALLS = {
     scriptApprove: call('POST /v1/workbench/script-approve', body()),
     session: call('GET /v1/workbench/session', { query: t<URLSearchParams>() }),
     sessions: call('GET /v1/workbench/sessions', { query: t<URLSearchParams>() }),
-    task: call('GET /v1/workbench/task', { query: t<{ id: string; since?: number; wait_ms?: number }>() }),
+    task: call('GET /v1/workbench/task', { query: t<{ id: string; since?: number; since_cursor?: number; wait_ms?: number }>() }),
     unattendedAck: call('POST /v1/workbench/unattended-ack'),
     withdrawInput: call('POST /v1/workbench/withdraw-input', body()),
     worktree: call('POST /v1/workbench/worktree', body()),

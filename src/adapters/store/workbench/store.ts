@@ -424,12 +424,13 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
         bump(taskId)
       })()
     },
-    detail(id: string, opts: { since?: number } = {}) {
+    detail(id: string, opts: { since?: number; sinceCursor?: number } = {}) {
       // version 必须先读、events 后读:并发写夹在两次读之间时,宁可让这次的 version 落后于
       // 已经读到的 events(下一轮轮询用同一个 since 会重复看到那几行,按 id 去重即可),
       // 也不要反过来让 version 抢先报出「已追上」而漏掉刚落库、还没读到的那几行。
-      const v=version(id),origin=source(id)
-      return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id,opts.since), artifacts: artifacts(id).map(publicArtifact), version: v }
+      // cursor(P1b)同理:先读。下一轮带 since_cursor 回来,夹在中间写的那几步会再来一次(按 id 合并),不会漏。
+      const v=version(id),cursor=matterFeed(db).cursor(id),origin=source(id)
+      return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id,opts.since,opts.sinceCursor), artifacts: artifacts(id).map(publicArtifact), version: v, cursor }
     },
   }
 }
