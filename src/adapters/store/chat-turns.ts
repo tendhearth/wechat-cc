@@ -6,7 +6,7 @@ import type { Db } from '../../lib/db'
 
 /**
  * chat-turns.ts —— 对话的一轮 → 这件对话的 matter_turns / matter_items(M3a)。只经 MatterLog 写。
- * 一轮:executor = provider,policy 记 alias(开的时候)和 mode(收的时候);结局 completed → completed,其余(超时 / 认证 / 出错)→ failed。
+ * 一轮:起止用协调器给的时刻(和 turn_records 同一对数,Codex 评审);executor = provider,policy 记 alias(开的时候)和 mode(收的时候);结局 completed → completed,其余(超时 / 认证 / 出错)→ failed。
  * 步:每个工具调用一步(同一个 activity id 的 started → completed 合成一行;没有 activity 的只记名字);送达一步;出错一步。
  * 主人那句、CC 的回复这两步要引 messages 的 id,id 还没传到协调器,M3b 补。
  */
@@ -20,10 +20,10 @@ const activityPayload = (a: AgentActivity) => ({
 export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<MatterStore, 'findChat'> }): ChatTurnLog {
   const { db, log, matters } = deps
   return {
-    begin({ chatId, provider, alias }) {
+    begin({ chatId, provider, alias, startedAt }) {
       const matter = matters.findChat(chatId)
       if (!matter) return null
-      const turn = log.startTurn({ matterId: matter.id, executor: provider, policy: { alias } })
+      const turn = log.startTurn({ matterId: matter.id, executor: provider, policy: { alias }, startedAt })
       let usage: TurnUsage | null = null, sessionId: string | null = null, ended = false, plain = 0
       const handle: ChatTurnHandle = {
         event(ev) {
@@ -43,7 +43,7 @@ export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<Ma
           log.updateTurn(turn.id, { policy: { alias, mode: r.mode } })
           if (r.report) log.writeItem({ matterId: matter.id, turnId: turn.id, kind: 'delivery', status: 'completed', payload: { delivery: r.report.delivery, bubbles: r.report.bubbles, attachments: r.report.attachmentsSent } })
           if (r.outcome !== 'completed' && (r.error || r.errorCode)) log.writeItem({ matterId: matter.id, turnId: turn.id, kind: 'error', status: 'completed', payload: { text: (r.error ?? '').slice(0, ERROR_MAX), ...(r.errorCode ? { code: r.errorCode } : {}), outcome: r.outcome } })
-          log.finishTurn(turn.id, { status: r.outcome === 'completed' ? 'completed' : 'failed', errorCode: r.outcome === 'completed' ? null : (r.errorCode ?? r.outcome), usage, nativeSessionId: sessionId })
+          log.finishTurn(turn.id, { status: r.outcome === 'completed' ? 'completed' : 'failed', errorCode: r.outcome === 'completed' ? null : (r.errorCode ?? r.outcome), usage, nativeSessionId: sessionId, ...(r.endedAt !== undefined ? { endedAt: r.endedAt } : {}) })
         },
       }
       return handle

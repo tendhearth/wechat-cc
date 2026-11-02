@@ -45,6 +45,11 @@ describe('chat-turns', () => {
     expect(items()).toEqual([{ kind: 'delivery', status: 'completed', payload: { delivery: 'daemon', bubbles: 2, attachments: 0 } }])
     expect(log.state(chatMatter)?.state).toBe('open')
   })
+  it('这一轮的起止用协调器给的时刻(和 turn_records 那行一样),不是写库那一刻(Codex 评审 P2)', () => {
+    const h = turns.begin({ chatId: 'owner@im.wechat', provider: 'claude', alias: '_default', startedAt: 1_000 })!
+    h.end({ mode: 'solo', outcome: 'error', error: 'spawn failed', endedAt: 4_500 })
+    expect(log.turns(chatMatter)).toMatchObject([{ startedAt: 1_000, endedAt: 4_500 }])
+  })
   it('超时 / 出错 ⇒ 这一轮 failed,错误码给不出就用结局;写一步错误', () => {
     const h = begin()
     h.end({ mode: 'parallel', outcome: 'timeout', error: 'turn timed out' })

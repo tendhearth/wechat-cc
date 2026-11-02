@@ -213,7 +213,7 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
       const key = turnKey(r.chatId, r.alias, r.provider, r.startedAt)
       const handle = openTurns.get(key) ?? beginTurn(r.chatId, r.provider, r.alias, r.startedAt)
       openTurns.delete(key)
-      try { handle?.end({ mode: r.mode, outcome: r.outcome, ...(r.summary?.errorCode ? { errorCode: r.summary.errorCode } : {}), ...((r.summary?.error ?? r.error) ? { error: r.summary?.error ?? r.error } : {}), ...(r.report ? { report: r.report } : {}) }) } catch { /* 只少一轮 */ }
+      try { handle?.end({ mode: r.mode, outcome: r.outcome, endedAt: r.endedAt, ...(r.summary?.errorCode ? { errorCode: r.summary.errorCode } : {}), ...((r.summary?.error ?? r.error) ? { error: r.summary?.error ?? r.error } : {}), ...(r.report ? { report: r.report } : {}) }) } catch { /* 只少一轮 */ }
       deps.recordTurn?.({
         chatId: r.chatId,
         provider: r.provider,

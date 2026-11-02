@@ -31,13 +31,13 @@ describe('runner · 对话的轮(M3a)', () => {
     runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 100, endedAt: 200, outcome: 'completed', summary })
     expect(opened).toHaveLength(1)
     expect(opened[0]!.events).toEqual([tool, RESULT])
-    expect(opened[0]!.ends).toEqual([{ mode: 'solo', outcome: 'completed' }])
+    expect(opened[0]!.ends).toEqual([{ mode: 'solo', outcome: 'completed', endedAt: 200 }])
     expect(recordTurn).toHaveBeenCalledTimes(1)
   })
   it('没走到 run(会话起不来)⇒ record 补开一轮当场收,带上错误', () => {
     const { runner, opened } = harness()
     runner.record({ chatId: 'c', provider: 'codex', alias: 'a', mode: 'solo', startedAt: 5, endedAt: 6, outcome: 'error', summary: undefined, error: 'spawn failed' })
-    expect(opened).toMatchObject([{ provider: 'codex', startedAt: 5, events: [], ends: [{ mode: 'solo', outcome: 'error', error: 'spawn failed' }] }])
+    expect(opened).toMatchObject([{ provider: 'codex', startedAt: 5, events: [], ends: [{ mode: 'solo', outcome: 'error', error: 'spawn failed', endedAt: 6 }] }])
   })
   it('同一时刻几位执行者(/both):各自一轮,各收各的', async () => {
     const { runner, opened, handle } = harness()
@@ -48,8 +48,8 @@ describe('runner · 对话的轮(M3a)', () => {
     runner.record({ chatId: 'c', provider: 'codex', alias: 'a', mode: 'parallel', startedAt: 7, endedAt: 8, outcome: 'completed', summary: b })
     runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'parallel', startedAt: 7, endedAt: 9, outcome: 'timeout', summary: a })
     expect(opened.map(o => [o.provider, o.ends])).toEqual([
-      ['claude', [{ mode: 'parallel', outcome: 'timeout' }]],
-      ['codex', [{ mode: 'parallel', outcome: 'completed' }]],
+      ['claude', [{ mode: 'parallel', outcome: 'timeout', endedAt: 9 }]],
+      ['codex', [{ mode: 'parallel', outcome: 'completed', endedAt: 8 }]],
     ])
   })
   it('记轮的实现抛错不影响回合与 turn_records', async () => {

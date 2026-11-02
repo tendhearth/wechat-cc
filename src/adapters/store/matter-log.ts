@@ -60,7 +60,7 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     const id=randomBytes(8).toString('hex')
     const seq=db.query<{n:number},[string]>('SELECT COALESCE(MAX(seq),0)+1 AS n FROM matter_turns WHERE matter_id=?').get(input.matterId)!.n
     db.query('INSERT INTO matter_turns(id,matter_id,seq,run_id,executor,model,native_session_id,status,policy_json,started_at,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-      .run(id,input.matterId,seq,input.runId??null,input.executor,input.model??null,input.nativeSessionId??null,'running',input.policy?JSON.stringify(input.policy):null,now(),nextCursor(input.matterId))
+      .run(id,input.matterId,seq,input.runId??null,input.executor,input.model??null,input.nativeSessionId??null,'running',input.policy?JSON.stringify(input.policy):null,input.startedAt??now(),nextCursor(input.matterId))
     settle(input.matterId)
     return toTurn(turnRow(id)!)
   })
@@ -75,7 +75,7 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
     for(const open of db.query<{id:number},[string]>("SELECT id FROM matter_items WHERE turn_id=? AND status='started' ORDER BY seq").all(turnId))
       db.query("UPDATE matter_items SET status='failed',updated_at=?,cursor=? WHERE id=?").run(ts,nextCursor(turn.matter_id),open.id)
     db.query('UPDATE matter_turns SET status=?,error_code=?,usage_json=?,native_session_id=COALESCE(?,native_session_id),ended_at=?,cursor=? WHERE id=?')
-      .run(input.status,input.errorCode??null,input.usage?JSON.stringify(input.usage):null,input.nativeSessionId??null,ts,nextCursor(turn.matter_id),turnId)
+      .run(input.status,input.errorCode??null,input.usage?JSON.stringify(input.usage):null,input.nativeSessionId??null,input.endedAt??ts,nextCursor(turn.matter_id),turnId)
     settle(turn.matter_id,input.matterState)
     // 还有别的轮在跑 ⇒ 上面 settle 留在 working / waiting,matterState 不生效;没有 ⇒ 结局按 matterState 落定。
     if(!running(turn.matter_id)&&input.matterState)db.query('UPDATE matters SET state=? WHERE id=?').run(input.matterState,turn.matter_id)
