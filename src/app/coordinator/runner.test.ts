@@ -4,7 +4,7 @@ import type { CoordinatorCtx } from './ctx'
 import type { AgentEvent } from '../../ports/agent-provider'
 import type { ChatTurnHandle, ChatTurnLog } from '../../ports/chat-turns'
 
-/** runner 把对话的一轮记进这件对话(M3a):run 开、record 收,两边按 startedAt 对上;没走到 run 的也记一轮。 */
+/** runner 把对话的一轮记进这件对话(M3a):run 开、record 收,两边按调用方给的 turn 对象对上;没走到 run 的也记一轮。 */
 function harness() {
   const opened: Array<{ provider: string; startedAt: number; events: AgentEvent[]; ends: unknown[] }> = []
   const chatTurns: ChatTurnLog = {
@@ -24,15 +24,27 @@ function harness() {
 const RESULT: AgentEvent = { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }
 
 describe('runner · 对话的轮(M3a)', () => {
-  it('run 开一轮、事件都给它;record 按 startedAt 收同一轮,只收一次', async () => {
+  it('run 开一轮、事件都给它;record 按同一个 turn 标记收同一轮,只收一次', async () => {
     const { runner, opened, recordTurn, handle } = harness()
     const tool: AgentEvent = { kind: 'tool_call', tool: 'Bash' }
-    const summary = await runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: handle([tool, RESULT]), prompt: 'hi', budget: 'turn', startedAt: 100 })
-    runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 100, endedAt: 200, outcome: 'completed', summary })
+    const turn = {}
+    const summary = await runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: handle([tool, RESULT]), prompt: 'hi', budget: 'turn', startedAt: 100, turn })
+    runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 100, endedAt: 200, outcome: 'completed', summary, turn })
     expect(opened).toHaveLength(1)
     expect(opened[0]!.events).toEqual([tool, RESULT])
     expect(opened[0]!.ends).toEqual([{ mode: 'solo', outcome: 'completed', endedAt: 200 }])
     expect(recordTurn).toHaveBeenCalledTimes(1)
+  })
+  it('同一个对话同一家同一毫秒开两轮:按各自的 turn 标记对上,不互相覆盖(Codex 评审 P2)', async () => {
+    const { runner, opened, handle } = harness()
+    const first = {}, second = {}
+    const [a, b] = await Promise.all([
+      runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: handle([RESULT]), prompt: 'x', budget: 'turn', startedAt: 7, turn: first }),
+      runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: handle([RESULT]), prompt: 'y', budget: 'turn', startedAt: 7, turn: second }),
+    ])
+    runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 7, endedAt: 8, outcome: 'completed', summary: a, turn: first })
+    runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 7, endedAt: 9, outcome: 'error', summary: b, turn: second })
+    expect(opened.map(o => o.ends)).toEqual([[{ mode: 'solo', outcome: 'completed', endedAt: 8 }], [{ mode: 'solo', outcome: 'error', endedAt: 9 }]])
   })
   it('没走到 run(会话起不来)⇒ record 补开一轮当场收,带上错误', () => {
     const { runner, opened } = harness()
@@ -41,12 +53,13 @@ describe('runner · 对话的轮(M3a)', () => {
   })
   it('同一时刻几位执行者(/both):各自一轮,各收各的', async () => {
     const { runner, opened, handle } = harness()
+    const ta = {}, tb = {}
     const [a, b] = await Promise.all([
-      runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: handle([RESULT]), prompt: 'x', budget: 'turn', startedAt: 7 }),
-      runner.run({ chatId: 'c', alias: 'a', providerId: 'codex', handle: handle([RESULT]), prompt: 'x', budget: 'turn', startedAt: 7 }),
+      runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: handle([RESULT]), prompt: 'x', budget: 'turn', startedAt: 7, turn: ta }),
+      runner.run({ chatId: 'c', alias: 'a', providerId: 'codex', handle: handle([RESULT]), prompt: 'x', budget: 'turn', startedAt: 7, turn: tb }),
     ])
-    runner.record({ chatId: 'c', provider: 'codex', alias: 'a', mode: 'parallel', startedAt: 7, endedAt: 8, outcome: 'completed', summary: b })
-    runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'parallel', startedAt: 7, endedAt: 9, outcome: 'timeout', summary: a })
+    runner.record({ chatId: 'c', provider: 'codex', alias: 'a', mode: 'parallel', startedAt: 7, endedAt: 8, outcome: 'completed', summary: b, turn: tb })
+    runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'parallel', startedAt: 7, endedAt: 9, outcome: 'timeout', summary: a, turn: ta })
     expect(opened.map(o => [o.provider, o.ends])).toEqual([
       ['claude', [{ mode: 'parallel', outcome: 'timeout', endedAt: 9 }]],
       ['codex', [{ mode: 'parallel', outcome: 'completed', endedAt: 8 }]],
@@ -55,7 +68,7 @@ describe('runner · 对话的轮(M3a)', () => {
   it('记轮的实现抛错不影响回合与 turn_records', async () => {
     const recordTurn = vi.fn()
     const runner = createTurnRunner({ deps: { recordTurn, chatTurns: { begin: () => { throw new Error('db gone') }, interruptAll: () => {} } }, nowMs: () => 0 } as unknown as CoordinatorCtx)
-    const summary = await runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: { dispatch: () => (async function* () { yield RESULT })() }, prompt: 'x', budget: 'turn', startedAt: 1 })
+    const summary = await runner.run({ chatId: 'c', alias: 'a', providerId: 'claude', handle: { dispatch: () => (async function* () { yield RESULT })() }, prompt: 'x', budget: 'turn', startedAt: 1, turn: {} })
     expect(summary.result?.sessionId).toBe('s')
     runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 1, endedAt: 2, outcome: 'completed', summary })
     expect(recordTurn).toHaveBeenCalledTimes(1)

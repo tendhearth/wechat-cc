@@ -233,6 +233,7 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
   ): Promise<BeatResult[]> {
     const results = await Promise.all(participants.map(async (providerId): Promise<BeatResult | null> => {
       const startedAt = nowMs()
+    const turn = {}  // 这一轮的身份(runner 靠它把 run 和 record 对上,M3a)
       let summary: TurnSummary | undefined
       let err: string | undefined
       const dn = namesIn(deps.registry, providerId).short
@@ -248,7 +249,7 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
         })
         unlink = runner.linkAbort(signal, () => { void handle.cancel?.() })
         delivery = deps.replyDelivery.begin(msg.chatId, { context: 'chatroom', providerId, participantLabel: dn, textStrategy: ctx.textStrategyFor(providerId) })
-        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), budget: 'beat', startedAt })
+        summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), budget: 'beat', startedAt, turn })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       } finally {
@@ -286,7 +287,7 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
         if (!text) return null
         return { speaker: providerId, text, ranking: countRank ? (ranks[ranks.length - 1] ?? []) : [] }
       } finally {
-        runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'chatroom', startedAt, endedAt, outcome, summary, error: err, report })
+        runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'chatroom', startedAt, endedAt, outcome, summary, error: err, report, turn })
       }
     }))
     return results.filter((r): r is BeatResult => r !== null)

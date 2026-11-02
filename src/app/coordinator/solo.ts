@@ -66,6 +66,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
     // below — exactly once, on every path (completed / timeout / auth /
     // unexpected throw).
     const startedAt = nowMs()
+    const turn = {}  // 这一轮的身份(runner 靠它把 run 和 record 对上,M3a)
     let outcome: TurnRecord['outcome'] = 'error'
     let summary: TurnSummary | undefined
     let unregisterCancel: (() => void) | undefined
@@ -141,7 +142,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       const d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId, textStrategy })
       delivery = d
       summary = await runner.run({
-        chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn', startedAt,
+        chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn', startedAt, turn,
         observe: (ev) => live.push(ev),
         ...(textStrategy === 'last_segment' ? { progress: () => { void d.progress(live.latestSegment() ?? LONG_TURN_PROGRESS).catch(() => {}) } } : {}),
       })
@@ -194,7 +195,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
     } finally {
       unregisterCancel?.()
       if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }
-      runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: recordMode, startedAt, endedAt: nowMs(), outcome, summary, report })
+      runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: recordMode, startedAt, endedAt: nowMs(), outcome, summary, report, turn })
     }
   }
 
