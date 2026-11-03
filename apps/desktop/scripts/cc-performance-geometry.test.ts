@@ -58,3 +58,38 @@ print(json.dumps(result))
   expect(result.repeat).toBe(true)
   expect(result.base).toEqual([.2,-.918,.8])
 })
+
+it('tilts the C around its embedded root without scaling, detaching or accumulating transforms',()=>{
+  const file=new URL('./cc_performance_geometry.py',import.meta.url)
+  const result=JSON.parse(execFileSync(process.platform==='win32'?'python':'python3',['-c',`
+import json,sys,math
+sys.path.insert(0,sys.argv[1])
+import cc_performance_geometry as geometry
+f=getattr(geometry,'crest_point',None)
+r={'available':f is not None}
+if f:
+ root=(-.12+.44*math.cos(math.radians(265)),.015,1.88+.49*math.sin(math.radians(265)))
+ point=(root[0],root[1],root[2]+1)
+ neutral=f(point,root,0);p=f(point,root,.18);q=f(point,root,-.18)
+ eps=1e-5;columns=[]
+ for axis in range(3):
+  moved=list(point);moved[axis]+=eps
+  columns.append([(b-a)/eps for a,b in zip(p,f(moved,root,.18))])
+ a,b,c=columns
+ det=a[0]*(b[1]*c[2]-b[2]*c[1])-b[0]*(a[1]*c[2]-a[2]*c[1])+c[0]*(a[1]*b[2]-a[2]*b[1])
+ rejected=[]
+ for tilt in [.181,-.181,float('nan'),float('inf')]:
+  try:f(point,root,tilt);rejected.append(False)
+  except ValueError:rejected.append(True)
+ r.update(neutral=neutral,point=point,rootFixed=all(math.dist(f(root,root,t),root)<1e-12 for t in [-.18,0,.18]),left=p,right=q,root=root,distance=math.dist(p,root),det=det,rejected=rejected,repeat=f(point,root,.18)==p)
+print(json.dumps(r))
+`,fileURLToPath(new URL('.',file))],{encoding:'utf8'}))
+  expect(result.available,'a root-preserving C transform exists').toBe(true)
+  expect(result.neutral).toEqual(result.point)
+  expect(result.rootFixed).toBe(true)
+  expect(result.left[1]).toBe(result.root[1]);expect(result.right[1]).toBe(result.root[1])
+  expect(result.left[0]-result.root[0]).toBeGreaterThan(.17)
+  expect(result.right[0]-result.root[0]).toBeLessThan(-.17)
+  expect(result.distance).toBeCloseTo(1,10);expect(result.det).toBeCloseTo(1,5)
+  expect(result.repeat).toBe(true);expect(result.rejected).toEqual([true,true,true,true])
+})

@@ -63,12 +63,24 @@ celebrate 12@16, work 12@8 loop. Add peek-left 14@12 and curiosity 36@12,
 for nine clips and 134 paired samples. Holds are authored as repeated numerical
 poses, rather than continuous motion everywhere.
 
-Use performance plan schema **3**, with finite `gazeUp` in **[-0.04, 0.14]**
+Use performance plan schema **4**, with finite `gazeUp` in **[-0.04, 0.14]**
 model units. Re-seat each translated eye on the existing face surface. Zero gaze
 keeps the exact resting path. Existing C shape keys provide the delayed C motion;
 no new C topology, free endpoint, body turn, limb or mouth is introduced. Draft
-visual review rejected the strong confused blend's pointed C; curiosity uses the
-soft happy stretch instead, retaining a rounded hook.
+visual review rejected the strong confused blend's pointed C; curiosity keeps
+the soft happy stretch and rounded hook.
+
+A fresh neutral-title review of the first96-sample candidate still inferred
+generic idle behavior rather than the C causing a reaction. Add one finite
+`crestTilt` in[-0.18,0.18] radians, nonzero only in curiosity. Rotate the C in its
+local XZ plane about its existing embedded `ROOT_C`, before the saved C matrix
+and common body affine. This makes the rounded curl visibly move independently;
+the eyes follow its second movement one beat later. The root stays inside the
+head, topology/shape-key data stay unchanged, and all other gestures keep zero.
+The zero branch retains the previous multiplication path exactly. Canonical-rest
+reuse additionally requires zero tilt. Actual rendered C matrices must retain
+the root and unit determinant; registration checks the recorded root error and
+determinant as well as existing body/foot evidence.
 
 Preserve the frozen blend, source geometry, camera, materials, lighting, canonical
 images, fixed-body motion clips and transition bytes. Body/foot envelopes remain
@@ -121,6 +133,8 @@ CC. Each gesture becomes still after its idea lands.
 Run at least two visual passes: draft critique/refinement, then complete96-sample
 playback and independent final visual review. Technical green alone does not close
 the goal. Owner aesthetic acceptance remains pending their eventual trial.
+Every further draft story also needs a neutral-title review before another final
+render; the title may not supply a cause or payoff missing from the visible action.
 
 ## Validation and delivery
 

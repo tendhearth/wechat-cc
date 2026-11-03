@@ -3,8 +3,8 @@ import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const sole = () => ({ lift:0, stride:0, roll:0 })
-const frame = ({pose={},eyeScale=1,crescent=0,gaze=0,gazeUp=0,lean=0,squash=1,rise=0,shift=0,left={},right={}}={}) => ({
-  pose,eyeScale,crescent,gaze,gazeUp,body:{lean,squash,rise,shift},
+const frame = ({pose={},eyeScale=1,crescent=0,gaze=0,gazeUp=0,crestTilt=0,lean=0,squash=1,rise=0,shift=0,left={},right={}}={}) => ({
+  pose,eyeScale,crescent,gaze,gazeUp,crestTilt,body:{lean,squash,rise,shift},
   feet:{left:{...sole(),...left},right:{...sole(),...right}},
 })
 const hop = (rise, rest={}) => frame({...rest,rise,left:{lift:rise},right:{lift:rise}})
@@ -59,13 +59,14 @@ const clips = [
   ]},
   {id:'peek-left',title:'发现左边，停一拍再探身',fps:12,count:14,loop:false,knots:peek(-1)},
   {id:'curiosity',title:'自己的 C，好像悄悄动了一下',fps:12,count:36,loop:false,knots:[
-    [0,frame()],[.08,frame({pose:{happy:.65}})],[.14,frame({pose:{happy:.9}})],
-    [.2,frame({gaze:.04,gazeUp:.14,pose:{happy:.9},eyeScale:.12})],
-    [.25,frame({gaze:.04,gazeUp:.14,pose:{happy:.85},eyeScale:1.15,lean:-.05,shift:-.02,squash:.97})],
-    [.36,frame({gaze:.04,gazeUp:.14,pose:{happy:.85},eyeScale:1.15,lean:-.05,shift:-.02,squash:.97})],
-    [.45,frame({gaze:.04,gazeUp:.14,pose:{happy:.7},eyeScale:1.1,lean:-.03,shift:-.01})],
-    [.56,frame({gaze:.04,gazeUp:.14,eyeScale:1.08})],
-    [.64,frame({gaze:.04,gazeUp:.14,eyeScale:1.08})],
+    [0,frame()],[.08,frame({pose:{happy:.65},crestTilt:.18})],[.14,frame({pose:{happy:.9},crestTilt:.18})],
+    [.2,frame({gaze:.07,gazeUp:.14,pose:{happy:.9},crestTilt:.18,eyeScale:.12})],
+    [.25,frame({gaze:.07,gazeUp:.14,pose:{happy:.85},crestTilt:.18,eyeScale:1.15,lean:-.05,shift:-.02,squash:.97})],
+    [.36,frame({gaze:.07,gazeUp:.14,pose:{happy:.85},crestTilt:.18,eyeScale:1.15,lean:-.05,shift:-.02,squash:.97})],
+    [.43,frame({gaze:.07,gazeUp:.14,pose:{happy:.4},crestTilt:-.18,eyeScale:1.15,lean:-.05,shift:-.02,squash:.97})],
+    [.49,frame({gaze:-.07,gazeUp:.14,pose:{happy:.4},crestTilt:-.18,eyeScale:1.1,lean:-.03,shift:-.01})],
+    [.56,frame({gaze:-.04,gazeUp:.14,eyeScale:1.08})],
+    [.64,frame({gaze:-.04,gazeUp:.14,eyeScale:1.08})],
     [.72,frame({gaze:.03,eyeScale:.9})],
     [.78,frame({shift:.03})],
     [.84,frame({shift:.03,left:{lift:.045,stride:-.035,roll:-.06}})],
@@ -92,7 +93,7 @@ export function samplePerformance(id,time) {
 }
 
 export function buildPerformancePlan() {
-  return {schemaVersion:3,artStatus:'production-candidate',forms:['lit','unlit'],
+  return {schemaVersion:4,artStatus:'production-candidate',forms:['lit','unlit'],
     source:'apps/desktop/art/cc-v1/cc-v1.blend',
     canvas:{width:512,height:512,anchor:[.5,.91796875],safeBboxPx:[80,28,432,470]},
     clips:clips.map(({id,title,fps,count,loop})=>({id,title,fps,loop,

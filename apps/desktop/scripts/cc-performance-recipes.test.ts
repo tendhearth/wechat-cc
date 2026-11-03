@@ -10,7 +10,7 @@ async function plan() {
 describe('coordinated CC performances', () => {
   it('closes loops and returns gestures to the accepted resting pose', async () => {
     const p = await plan()
-    expect(p.schemaVersion).toBe(3)
+    expect(p.schemaVersion).toBe(4)
     expect(p.clips.map((c:any) => c.id).sort()).toEqual(['celebrate','curiosity','land','lift','peek','peek-left','stretch','walk','work'])
     expect(p.clips.reduce((n:number,c:any)=>n+c.frames.length,0)).toBe(134)
     const rest = p.clips.find((c:any) => c.id === 'peek').frames[0]
@@ -85,6 +85,18 @@ describe('coordinated CC performances', () => {
     const caught=c.frames.filter((f:any)=>Object.keys(f.pose).length===0&&f.gazeUp>.09&&f.body.lean===0&&f.body.shift===0)
     expect(caught.length,'the C returns to normal before CC drops its gaze').toBeGreaterThanOrEqual(2)
   })
+  it('lets the rooted C move independently before a delayed eye reaction, without changing other gestures',async()=>{
+    const {samplePerformance}=await import(modulePath.href),p=await plan()
+    const c=p.clips.find((clip:any)=>clip.id==='curiosity')
+    for(const f of c.frames)expect(typeof f.crestTilt,'the C has its own bounded rooted control').toBe('number')
+    const cause=c.frames.filter((f:any)=>f.crestTilt>=.16&&f.gaze===0&&f.gazeUp===0&&f.eyeScale===1&&f.body.lean===0&&f.body.shift===0)
+    expect(cause.length,'the C visibly moves while CC has not noticed').toBeGreaterThanOrEqual(2)
+    expect(c.frames.some((f:any)=>f.crestTilt<=-.16)).toBe(true)
+    expect(samplePerformance('curiosity',.43).gaze).toBeGreaterThan(.04)
+    expect(samplePerformance('curiosity',.43).crestTilt).toBeLessThan(-.16)
+    expect(samplePerformance('curiosity',.49).gaze).toBeLessThan(-.04)
+    for(const clip of p.clips.filter((clip:any)=>clip.id!=='curiosity'))for(const f of clip.frames)expect(f.crestTilt).toBe(0)
+  })
   it('plants a support foot while the other takes a visible step', async () => {
     const walk = (await plan()).clips.find((c:any) => c.id === 'walk')
     expect(walk.frames.some((f:any) => f.feet.left.lift > .06 && f.feet.right.lift === 0)).toBe(true)
@@ -122,6 +134,8 @@ describe('coordinated CC performances', () => {
       expect(typeof f.gazeUp,'vertical attention has a numeric control').toBe('number')
       expect(f.gazeUp).toBeGreaterThanOrEqual(-.04)
       expect(f.gazeUp).toBeLessThanOrEqual(.14)
+      expect(typeof f.crestTilt,'rooted C tilt has a numeric control').toBe('number')
+      expect(Math.abs(f.crestTilt)).toBeLessThanOrEqual(.18)
       for(const foot of Object.values(f.feet) as any[]) {
         expect(foot.lift).toBeGreaterThanOrEqual(0)
         expect(foot.lift).toBeLessThanOrEqual(.16)
