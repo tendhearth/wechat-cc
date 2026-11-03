@@ -19,11 +19,31 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => manifest })))
 })
 afterEach(() => {
+  delete (window as any).__pet; window.history.replaceState({}, '', '/')
   delete (window as any).__TAURI__; document.body.replaceChildren()
   vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks()
 })
 
 describe('companion placement recovery control', () => {
+  it.each([true,false])('keeps planted-foot artwork in place and retains native travel only for fallback (authored:%s)',async authored=>{
+    const kit=structuredClone(manifest)
+    if(!authored)for(const form of ['lit','unlit'])delete kit.forms[form].states['life-walk']
+    vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,json:async()=>kit})))
+    vi.spyOn(Math,'random').mockReturnValue(.999)
+    invoke.mockImplementation(async(cmd:unknown)=>cmd==='companion_motion_context'?{token:1,minOffset:-48,maxOffset:48} as any:undefined)
+    window.history.replaceState({},'','/?lab')
+    await mount(true) // Start hidden so production pollers remain stopped.
+    vi.spyOn(document,'hidden','get').mockReturnValue(false)
+    const pet=(window as any).__pet
+    pet.setPaused(false);pet.setForm('lit');pet.machine.notifyAnimationEnded();pet.setLifeAvailable(true)
+    await vi.advanceTimersByTimeAsync(40_500)
+    expect(document.getElementById('pet-body')!.dataset.petAction).toBe('walk')
+    expect(document.getElementById('pet-body')!.dataset.petPerformance).toBe(String(authored))
+    const movement=invoke.mock.calls.filter(([command])=>command==='companion_motion_context'||command==='step_companion_motion')
+    if(authored)expect(movement).toEqual([])
+    else expect(movement.some(([command])=>command==='step_companion_motion')).toBe(true)
+    pet.destroy();await vi.advanceTimersByTimeAsync(0)
+  })
   it('an auxiliary virtual click activates the semantic character button once', async () => {
     await mount(true)
     document.getElementById('pet-stage')!.click()

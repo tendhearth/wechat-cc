@@ -23,12 +23,34 @@ async function calm(page:Page){
   await page.route('**/v1/companion/pet',r=>r.fulfill({json:{owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities:[]}}))
 }
 
-test('idle CC visibly peeks, stops for nearby controls and wakes from a calm doze',async({page,shimUrl,shim})=>{
+for(const authored of [true,false])test(`idle CC visibly peeks, stops for nearby controls and wakes from a calm doze (${authored?'authored':'fallback'})`,async({page,shimUrl,shim})=>{
+  if(!authored)await page.route('**/assets/pet/cc-v1/manifest.json',async route=>{
+    const response=await route.fetch(),kit=await response.json()
+    for(const form of ['lit','unlit'])for(const name of Object.keys(kit.forms[form].states))if(name.startsWith('life-'))delete kit.forms[form].states[name]
+    delete kit.performance
+    await route.fulfill({response,json:kit})
+  })
   await shim.invoke('demo.seed',{});await calm(page);await page.clock.install();await entry(page,shimUrl)
   const stage=page.locator('#pet-stage'),body=page.locator('#pet-body')
   await expect(stage).toHaveAttribute('data-pet-action','still')
   await page.clock.runFor(20_100);await expect(stage).toHaveAttribute('data-pet-action','peek')
-  await expect(body).not.toHaveCSS('transform','none')
+  if(authored){
+    await expect(body).toHaveAttribute('data-pet-performance','true')
+    await expect(body).toHaveCSS('transform','none')
+    await expect(body).toHaveCSS('animation-name','none')
+    const img=page.locator('#pet-sprite')
+    await expect(img).toHaveAttribute('src',/\/performance\/lit\/peek\//)
+    await expect(img).toHaveJSProperty('complete',true)
+    await expect(img).toHaveJSProperty('naturalWidth',512)
+    const before=await img.screenshot(),first=await img.getAttribute('src')
+    await page.clock.runFor(250)
+    await expect(img).not.toHaveAttribute('src',first!)
+    await expect(img).toHaveJSProperty('complete',true)
+    expect(before.equals(await img.screenshot())).toBe(false)
+  }else{
+    await expect(body).toHaveAttribute('data-pet-performance','false')
+    await expect(body).not.toHaveCSS('transform','none')
+  }
   await page.screenshot({path:'.superpowers/cc-life-peek.png'})
   await page.locator('.pet-controls').dispatchEvent('pointerenter')
   await expect(stage).toHaveAttribute('data-pet-action','still')

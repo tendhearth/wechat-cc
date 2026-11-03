@@ -34,6 +34,18 @@ test('WebP delays preserve sample count and nearest cumulative catalog timestamp
   for (const [n, fps] of [[0, 8], [3.5, 8], [3, 0], [3, Infinity], [601, 8], [3, 61]]) assert.throws(() => webpDelays(n, fps), /timing/)
 })
 
+rasterTest('exports paired coordinated performances through the same validated preview pipeline',async()=>fixture(async({c,options})=>{
+  for(const form of ['lit','unlit'])for(let i=0;i<c.clips[0].frames[form].length;i++){
+    const previous=c.clips[0].frames[form][i],next=previous.replace(/^motion\//,'performance/')
+    await mkdir(join(options.kitPath,next,'..'),{recursive:true})
+    await writeFile(join(options.kitPath,next),await readFile(join(options.kitPath,previous)))
+    c.clips[0].frames[form][i]=next
+  }
+  await writeFile(options.catalogPath,JSON.stringify(c))
+  await buildMotionSamples(options)
+  assert((await readFile(join(options.outputPath,'gesture.webp'))).length>0)
+}))
+
 for (const [name, mutate, pattern] of [
   ['wrong timing', c => { c.clips[0].fps = 0 }, /fps/],
   ['pair count mismatch', c => { c.clips[0].frames.unlit.pop() }, /paired/],

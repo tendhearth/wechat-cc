@@ -29,6 +29,9 @@
 @keyframes cc-celebrate { 0%,100% { transform: none; } 15% { transform: scale(1.06,.94); } 40% { transform: translateY(-9px) rotate(-3deg) scale(.97,1.04); } 65% { transform: scale(1.05,.95); } 82% { transform: translateY(-3px) rotate(2deg); } }
 @keyframes cc-laptop-in { from { transform: translate(-30%,-35%) rotate(12deg) scale(.4); opacity: 0; } to { transform: translate(-50%,-50%); opacity: 1; } }
 @keyframes cc-laptop-out { from { transform: translate(-50%,-50%); } to { transform: translate(-30%,-35%) rotate(12deg) scale(.4); opacity: 0; } }
+/* Authored body/feet acting replaces whole-image squash; laptop timing stays local. */
+.pet-body[data-pet-performance="true"] { animation: none; transform: none; transition: none; }
+.pet-body[data-pet-performance="true"][data-pet-action="lift"] { transform-origin: 50% 32%; transform: rotate(calc(var(--pet-swing) * 5deg)); }
 .pet-motion-reduced .pet-body, .pet-paused .pet-body { animation: none !important; transform: none !important; transition: none !important; }
 .pet-motion-reduced .pet-prop, .pet-paused .pet-prop { animation: none !important; }
 @media (prefers-reduced-motion: reduce) { .pet-body, .pet-props .pet-prop { animation: none !important; transition: none; } .pet-body { transform: none; } }

@@ -469,13 +469,59 @@ try {
   await execute('window.__ccMotionQAControl.pet.setQuiet(false)')
   assert.equal(await execute('return window.__ccMotionQAControl.pet.machine.snapshot().behavior'),'idle')
   report.checks.push('nearby attention preserves connection, observes cooldown and never replays after quiet')
-  report.cadence = []
   const cadenceKit=JSON.parse(await readFile(join(process.cwd(),'apps/desktop/src/assets/pet/cc-v1/manifest.json'),'utf8'))
+  assert.equal(cadenceKit.performance?.active,true,'The coordinated performance profile must actually be installed')
+  const authoredPose=()=>execute('const body=document.getElementById("pet-body"),img=document.getElementById("pet-sprite");return {src:img.src,loaded:img.complete&&img.naturalWidth===512&&img.naturalHeight===512,authored:body.dataset.petPerformance,animation:getComputedStyle(body).animationName,breathing:document.getElementById("pet-stage").classList.contains("pet-breathing"),behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior}')
+  const assertAuthored=pose=>{assert.equal(pose.authored,'true');assert.equal(pose.animation,'none');assert.equal(pose.breathing,false)}
+  await execute('window.__ccMotionQAControl.pet.applyIntent({form:"lit",behavior:"working",props:[],badge:0,hint:null,oneShots:[]})')
+  report.performances={work:await until('Native authored work body',async()=>{const p=await authoredPose();return p.loaded&&p.src.includes("/performance/lit/work/")?p:null})}
+  assertAuthored(report.performances.work)
+  await execute('window.__ccMotionQAControl.pet.beginDrag()')
+  report.performances.lift=await until('Native authored carried feet',async()=>{const p=await authoredPose();return p.loaded&&p.src.includes('/performance/lit/lift/')?p:null})
+  assertAuthored(report.performances.lift);assert.equal(report.performances.lift.behavior,'drag');await screenshot('performance-lift')
+  await execute('const pet=window.__ccMotionQAControl.pet;pet.endDrag();pet.land()')
+  report.performances.land=await until('Native authored landing',async()=>{const p=await authoredPose();return p.loaded&&p.src.includes('/performance/lit/land/')?p:null})
+  assertAuthored(report.performances.land)
+  await screenshot('performance-land')
+  await until('Native landing settles into actual work',async()=>{const p=await authoredPose();return p.src.includes('/performance/lit/work/')&&p.behavior==='working'})
+  const exitAction=await execute(`const pet=window.__ccMotionQAControl.pet,img=document.getElementById('pet-sprite');
+    window.__ccQAPerformanceSources=[];window.__ccQADoneToIdle=0;
+    let previous=pet.machine.snapshot().behavior;
+    window.__ccQAPerformanceUnsubscribe=pet.machine.subscribe(next=>{if(previous==='done'&&next.behavior==='idle')window.__ccQADoneToIdle++;previous=next.behavior});
+    window.__ccQAPerformanceObserver=new MutationObserver(records=>{
+      for(let i=0;i<records.length;i++){
+        const value=i+1<records.length?records[i+1].oldValue:img.getAttribute('src');
+        if(value!==null)window.__ccQAPerformanceSources.push(new URL(value,location.href).href);
+      }
+    });
+    window.__ccQAPerformanceObserver.observe(img,{attributes:true,attributeFilter:['src'],attributeOldValue:true});
+    pet.applyIntent({form:'lit',behavior:'idle',props:[],badge:0,hint:null,oneShots:['done']});
+    return document.getElementById('pet-body').dataset.petAction`)
+  assert.equal(exitAction,'work-exit')
+  report.performances.celebrate=await until('Native authored completion flight',async()=>{const p=await authoredPose();return p.loaded&&/\/performance\/lit\/celebrate\/00[3-6]\.png$/.test(p.src)?p:null})
+  assertAuthored(report.performances.celebrate)
+  await screenshot('performance-celebrate')
+  await until('Native authored completion and director both settle',()=>execute('return window.__ccMotionQAControl.pet.machine.snapshot().behavior==="idle" && document.getElementById("pet-body").dataset.petAction==="still"'))
+  await new Promise(resolve=>setTimeout(resolve,1000))
+  const completion=await execute('window.__ccQAPerformanceObserver.disconnect();window.__ccQAPerformanceUnsubscribe();return {sources:window.__ccQAPerformanceSources,doneToIdle:window.__ccQADoneToIdle,behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior}')
+  const completionSources=completion.sources
+  assert.equal(completion.doneToIdle,1);assert.equal(completion.behavior,'idle')
+  assert.equal(completionSources.filter(src=>src.endsWith('/performance/lit/celebrate/000.png')).length,1)
+  assert(!completionSources.some(src=>src.includes('/motion/lit/done/')),'An old completion clip replayed after the authored gesture')
+  report.performances.completion={starts:1,doneToIdle:completion.doneToIdle,oldDoneReplay:false,observedFrames:completionSources.length,postSettleObservationMs:1000}
+  await execute('const pet=window.__ccMotionQAControl.pet;pet.setState("done");pet.applyIntent({form:"lit",behavior:"permission",props:[],badge:0,hint:null,oneShots:[]})')
+  assert.equal((await authoredPose()).authored,'false');assert.equal((await authoredPose()).behavior,'permission')
+  await execute('window.__ccMotionQAControl.pet.applyIntent({form:"lit",behavior:"idle",props:[],badge:0,hint:null,oneShots:[]})')
+  report.checks.push('actual WebKit plays coordinated work/lift/land/completion PNGs, suppresses duplicate CSS and consumes completion once under its real timer cadence')
+  report.cadence = []
   for (const behavior of ['working','thinking']) {
     const form=await execute('return window.__ccMotionQAControl.pet.machine.snapshot().form')
-    const frames=cadenceKit.forms[form].states[behavior].frames
-    const initial = await execute('const pet=window.__ccMotionQAControl.pet;pet.setState(arguments[0]);window.__ccQAFrameChanges=0;window.__ccQASawLastFrame=false;const last=new URL("./assets/pet/cc-v1/"+arguments[2],location.href).href;window.__ccQAFrameObserver?.disconnect();window.__ccQAFrameObserver=new MutationObserver(records=>{window.__ccQAFrameChanges+=records.length;if(document.getElementById("pet-sprite").src===last)window.__ccQASawLastFrame=true});window.__ccQAFrameObserver.observe(document.getElementById("pet-sprite"),{attributes:true,attributeFilter:["src"]});return new URL("./assets/pet/cc-v1/"+arguments[1],location.href).href',[behavior,frames[0],frames.at(-1)])
-    await until('Native work pose advances', async () => await execute('return document.getElementById("pet-sprite").src') !== initial)
+    const visual=behavior==='working'?'life-work':behavior
+    const frames=cadenceKit.forms[form].states[visual].frames
+    const initial = await execute('window.__ccMotionQAControl.pet.setState(arguments[0]);return new URL("./assets/pet/cc-v1/"+arguments[1],location.href).href',[behavior,frames[0]])
+    await until('Native selected work pose loads',()=>execute('const img=document.getElementById("pet-sprite");return img.src===arguments[0]&&img.complete&&img.naturalWidth===512&&img.naturalHeight===512',[initial]))
+    await execute('window.__ccQAFrameChanges=0;window.__ccQASawLastFrame=false;const last=new URL("./assets/pet/cc-v1/"+arguments[0],location.href).href;window.__ccQAFrameObserver?.disconnect();window.__ccQAFrameObserver=new MutationObserver(records=>{window.__ccQAFrameChanges+=records.length;if(document.getElementById("pet-sprite").src===last)window.__ccQASawLastFrame=true});window.__ccQAFrameObserver.observe(document.getElementById("pet-sprite"),{attributes:true,attributeFilter:["src"]})',[frames.at(-1)])
+    await until('Native selected work pose advances',()=>execute('const img=document.getElementById("pet-sprite");return img.src!==arguments[0]&&img.src.startsWith(arguments[1])&&img.complete&&img.naturalWidth===512',[initial,initial.slice(0,initial.lastIndexOf('/')+1)]))
     // Locked consoles may throttle WebKit timers. Observe a completed cycle
     // rather than assuming wall time equals the nominal frame duration.
     // Preparation may restart the sprite at 350ms. That is not a completed
@@ -495,7 +541,7 @@ try {
       const pet=window.__ccMotionQAControl.pet;pet.setPaused(true);
       const {createSpriteRenderer}=await import(new URL('./pet/renderer/sprite-renderer.js',location.href).href);
       const manifest=await(await fetch('./assets/pet/cc-v1/manifest.json')).json();
-      const a=manifest.forms.lit.states.working;
+      const a=manifest.forms.lit.states['life-work'];
       const animation={...a,frames:a.frames.map(path=>new URL('./assets/pet/cc-v1/'+path,location.href).href)};
       const samples=[],cleanups=[];const started=performance.now();
       for(const restMs of [0,6000]){

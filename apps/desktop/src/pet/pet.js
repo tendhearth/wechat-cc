@@ -10,6 +10,7 @@ import { composeProps, createPropRenderer } from './renderer/prop-layer.js'
 import { emergencyManifest, fallbackFrame } from '../assets/pet/cc-v1/placeholder.js'
 import { createLifeDirector } from './life/life-director.js'
 import { createBodyMotion } from './life/body-motion.js'
+import { resolvePerformance } from './life/performance.js'
 
 /** @typedef {import('./bridge/presence-map.js').PetIntent} PetIntent */
 /** @typedef {import('./domain/types.js').PetForm} PetForm */
@@ -89,6 +90,7 @@ export async function createPet(root, opts) {
   let lastKey = ''
   let lastPropsKey = ''
   const bodyMotion=opts.life?createBodyMotion(root):null
+  let renderedPerformance=false
   /** @type {ReturnType<typeof createLifeDirector>|null} */ let life=null
   const render = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
     const action=life?.current().action??'still'
@@ -96,8 +98,11 @@ export async function createPet(root, opts) {
     if(action==='work-exit'&&!visibleProps.includes('laptop'))visibleProps.push('laptop')
     const propsKey = `${s.badge}|${visibleProps.join(',')}`
     if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; propRenderer.render(visibleProps, s.badge) }
+    const performance=opts.life&&!s.transition&&!suppressDecoration()?resolvePerformance(manifest,s.form,action,s.behavior):null
+    renderedPerformance=Boolean(performance)
+    bodyMotion?.setAuthored(renderedPerformance)
     const visual=action==='doze'?'sleep':action==='peek'?'look':action==='wake'?'wake':s.behavior
-    const key = s.transition ? `t:${s.transition}` : `b:${s.form}/${visual}/${action}`
+    const key = s.transition ? `t:${s.transition}` : performance ? `p:${s.form}/${performance.id}/${performance.hold}` : `b:${s.form}/${visual}/${action}`
     if (paused) return
     if (key === lastKey) return
     lastKey = key
@@ -110,6 +115,14 @@ export async function createPet(root, opts) {
       warn(...t.warnings)
       if (t.kind === 'frames') renderer.play(t.animation, { onEnd: () => machine.notifyAnimationEnded() })
       else renderer.fadeTo(t.to, { onEnd: () => machine.notifyAnimationEnded() })
+      return
+    }
+    if(performance){
+      renderer.setBreathing(false)
+      renderer.play(performance.animation,{restMs:performance.id==='work'?6000:0,
+        onEnd:performance.id==='celebrate'&&s.behavior==='done'?()=>{
+          if(machine.snapshot().behavior==='done')machine.notifyAnimationEnded()
+        }:undefined})
       return
     }
     const r = resolveAnimation(manifest, s.form, visual)
@@ -200,7 +213,7 @@ export async function createPet(root, opts) {
     }
   }
   if(opts.life){
-    life=createLifeDirector({schedule,cancel,random,onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.(pose)}})
+    life=createLifeDirector({schedule,cancel,random,onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.({...pose,authored:renderedPerformance})}})
     bodyMotion?.render(life.current())
     life.setSuppressed(suppressDecoration())
   }

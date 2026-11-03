@@ -2,7 +2,7 @@
 const fail = message => { throw new Error(`Motion catalog: ${message}`) }
 const text = (value, name) => { if (typeof value !== 'string' || !value.trim() || value.length > 500) fail(name); return value }
 export function assetPath(value) {
-  if (typeof value !== 'string' || !/^(?:motion|canonical|masks)\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)*\.png$/.test(value) || value.split('/').some(p => p === '.' || p === '..')) fail(`unsafe PNG path: ${value}`)
+  if (typeof value !== 'string' || !/^(?:motion|performance|canonical|masks)\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)*\.png$/.test(value) || value.split('/').some(p => p === '.' || p === '..')) fail(`unsafe PNG path: ${value}`)
   return value
 }
 export function validateCatalog(catalog) {
