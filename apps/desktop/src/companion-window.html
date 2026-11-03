@@ -7,13 +7,16 @@
     <link rel="stylesheet" href="./tokens.css" />
     <link rel="stylesheet" href="./fonts.css" />
     <link rel="stylesheet" href="./companion-window.css" />
+    <link rel="stylesheet" href="./pet/life/body-motion.css" />
     <link rel="stylesheet" href="./styles/secondary-minimal.css" />
   </head>
   <body>
     <main class="pet-shell">
       <section class="pet-stage" id="pet-stage" role="button" tabindex="0" aria-label="CC" title="点一下交办，拖动移动">
-        <img class="pet-sprite" id="pet-sprite" alt="" draggable="false" />
-        <div class="pet-props" id="pet-props" aria-hidden="true"></div>
+        <div class="pet-body" id="pet-body">
+          <img class="pet-sprite" id="pet-sprite" alt="" draggable="false" />
+          <div class="pet-props" id="pet-props" aria-hidden="true"></div>
+        </div>
         <p class="pet-activity" id="pet-activity" aria-hidden="true" hidden></p>
       </section>
       <div class="pet-tasks" id="pet-tasks" hidden>

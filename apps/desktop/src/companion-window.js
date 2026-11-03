@@ -11,6 +11,7 @@ import { invoke } from './ipc.js'
 import { createCompanionPreferences } from './companion-preferences.js'
 import { formatCompanionStatus } from './companion-status.js'
 import { createCompanionDrag } from './companion-drag.js'
+import { createCompanionMotion } from './companion-motion.js'
 import { mountPetActivities, normalizePetActivities } from './pet-activities.js'
 
 const $ = (/** @type {string} */ id) => document.getElementById(id)
@@ -21,10 +22,25 @@ const motionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-redu
 /** @type {Storage | null} */ let storage = null
 try { storage = window.localStorage } catch { /* controls still work without persistence */ }
 
-const pet = await createPet({ stage, img, props, hint }, { manifestUrl: './assets/pet/cc-v1/manifest.json', reducedMotion: motionQuery?.matches === true })
+let lifeFactsAvailable=false,pointerInShell=false,focusInShell=false,holding=false,walking=false
+const motion=mock?null:createCompanionMotion({context:()=>invoke('companion_motion_context'),step:p=>invoke('step_companion_motion',p),stop:()=>invoke('stop_companion_motion'),onError:e=>console.warn('companion motion stopped',e)})
+const pet = await createPet({ stage, img, props, hint, body:$('pet-body') }, { manifestUrl: './assets/pet/cc-v1/manifest.json', reducedMotion: motionQuery?.matches === true,life:true,
+  onLifeAction:pose=>{if(pose.action==='walk'&&!document.hidden)void motion?.play(pose.direction);else if(walking)void motion?.stop();walking=pose.action==='walk'},
+})
 if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
 
 let quiet = false, reducedMotion = false
+function syncLifeAvailability(){
+  const settings=document.querySelector('.pet-settings')
+  const available=lifeFactsAvailable&&!pointerInShell&&!focusInShell&&!holding&&!quiet&&!reducedMotion&&!document.hidden&&!(settings instanceof HTMLDetailsElement&&settings.open)
+  pet.setLifeAvailable(available)
+  if(!available&&walking){walking=false;void motion?.stop()}
+}
+const shell=document.querySelector('.pet-shell')
+shell?.addEventListener('pointerenter',()=>{pointerInShell=true;syncLifeAvailability()})
+shell?.addEventListener('pointerleave',()=>{pointerInShell=false;syncLifeAvailability()})
+shell?.addEventListener('focusin',()=>{focusInShell=true;syncLifeAvailability()})
+shell?.addEventListener('focusout',()=>queueMicrotask(()=>{focusInShell=Boolean(shell?.contains(document.activeElement));syncLifeAvailability()}))
 const reobserve = new Set()
 /** @param {import('./companion-preferences.js').MotionPreferences} s */
 const applyPreferences = s => {
@@ -32,6 +48,7 @@ const applyPreferences = s => {
   quiet = s.quiet; reducedMotion = s.reducedMotion
   pet.setReducedMotion(s.reducedMotion)
   pet.setQuiet(s.quiet)
+  syncLifeAvailability()
   const checkbox = /** @type {HTMLInputElement | null} */ ($('pet-reduced-motion'))
   if (checkbox) { checkbox.checked = s.reducedMotion; checkbox.disabled = s.systemReduced }
   const systemNote = $('pet-system-motion')
@@ -70,7 +87,7 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
 const tasksHost=$('pet-tasks'),taskPrimary=$('pet-task-primary'),taskToggle=$('pet-task-toggle'),taskList=$('pet-task-list')
 const taskView=tasksHost&&taskPrimary&&taskToggle&&taskList?mountPetActivities({host:tasksHost,primary:taskPrimary,toggle:taskToggle,list:taskList,onOpen:target=>openDestination(target),onExpand:()=>closeSettings()}):null
 const closeSettings=()=>{const settings=document.querySelector('.pet-settings');if(settings instanceof HTMLDetailsElement)settings.open=false}
-document.querySelector('.pet-settings')?.addEventListener('toggle',event=>{if(event.target instanceof HTMLDetailsElement&&event.target.open)taskView?.closeList()})
+document.querySelector('.pet-settings')?.addEventListener('toggle',event=>{if(event.target instanceof HTMLDetailsElement&&event.target.open)taskView?.closeList();syncLifeAvailability()})
 const bridge = createPetBridge()
 const apply = (freshTurn = false) => {
   const stream = freshTurn ? 'turn' : 'presence'
@@ -85,6 +102,10 @@ const apply = (freshTurn = false) => {
   taskView?.update(taskRows,tasksAvailable)
   const selected=tasksAvailable?taskRows[0]:null
   if(selected)r.intent={...r.intent,behavior:selected.phase==='needs_input'?'permission':selected.phase==='working'?'working':'idle'}
+  // A different completed task must never celebrate over current work.
+  if(taskRows.some(row=>row.phase==='working')||['working','thinking'].includes(r.intent.behavior))r.intent={...r.intent,oneShots:r.intent.oneShots.filter(b=>b!=='done')}
+  lifeFactsAvailable=tasksAvailable&&taskRows.length===0&&['idle','companion'].includes(r.intent.behavior)&&r.intent.badge===0
+  syncLifeAvailability()
   const activity = formatCompanionStatus(r.intent, r.permissionCount)
   if(selected)activity.ariaLabel=`CC，${taskPrimary?.getAttribute('aria-label')??selected.title}，打开任务`
   if (stage && stage.getAttribute('aria-label') !== activity.ariaLabel) stage.setAttribute('aria-label', activity.ariaLabel)
@@ -116,18 +137,20 @@ if (!document.hidden) { poller.start(); petPoller.start() }
 // start() 自己会先拉一次,这里不用再补 refresh()。
 // 窗口不可见 → 两个都停(spec §5.3);回来时 start() 会各自补一拍。
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { drag.cancel(); pet.setPaused(true); poller.stop(); petPoller.stop(); return }
+  if (document.hidden) { drag.cancel(); pet.setLifeAvailable(false);void motion?.stop();pet.setPaused(true); poller.stop(); petPoller.stop(); return }
   preferences.refresh()
   bridge.resume()
   pet.setPaused(false)
+  syncLifeAvailability()
   poller.start(); petPoller.start()
 })
 
 const drag = createCompanionDrag({
-  start: () => mock ? Promise.resolve(null) : invoke('start_companion_drag'),
+  start: async () => {await motion?.stop();return mock?null:invoke('start_companion_drag')},
   move: position => invoke('move_companion_window', position),
   finish: () => invoke('finish_companion_drag'),
-  onBegin: () => pet.beginDrag(), onEnd: () => pet.endDrag(),
+  onBegin: () => {holding=true;syncLifeAvailability();pet.beginDrag()}, onEnd: () => {holding=false;pet.endDrag();syncLifeAvailability()},
+  onVelocity:speed=>pet.setDragVelocity(speed),onLanding:()=>pet.land(),
   onClick: () => { void openCharacter() },
   onError: error => console.warn('companion drag failed', error),
 })
@@ -163,6 +186,7 @@ function openDestination(target) {
   const key=JSON.stringify(target),existing=opening.get(key)
   if(existing)return existing
   const action=(async()=>{
+    pet.setLifeAvailable(false);await motion?.stop()
     await drag.cancel()
     if(mock){location.assign('./index.html');return}
     try {await invoke('show_main_window',target)}
@@ -190,9 +214,11 @@ stage?.addEventListener('pointerenter', () => { pointerNear = true; pet.acknowle
 stage?.addEventListener('pointerleave', () => { pointerNear = false; releaseNearby() })
 stage?.addEventListener('focus', () => { keyboardNear = true; pet.acknowledgeAttention() })
 stage?.addEventListener('blur', () => { keyboardNear = false; releaseNearby() })
-window.addEventListener('blur', () => { pointerNear = false; keyboardNear = false; pet.releaseAttention(); taskView?.closeList(); closeSettings() })
+window.addEventListener('blur', () => { pointerNear = false; keyboardNear = false;pointerInShell=false;focusInShell=false;pet.setLifeAvailable(false);void motion?.stop();syncLifeAvailability();pet.releaseAttention(); taskView?.closeList(); closeSettings() })
+window.addEventListener('pagehide',()=>{pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();poller.stop();petPoller.stop();preferences.destroy()})
 
 $('pet-reset-position')?.addEventListener('click', async () => {
+  await motion?.stop()
   await drag.cancel()
   if (mock) { pet.setHint('请在桌面应用中调整位置'); return }
   const button = /** @type {HTMLButtonElement | null} */ ($('pet-reset-position'))
@@ -203,12 +229,13 @@ $('pet-reset-position')?.addEventListener('click', async () => {
 })
 
 $('companion-window-close')?.addEventListener('click', async () => {
+  await motion?.stop()
   await drag.cancel()
   if (mock) { window.close(); return }
   invoke('close_companion_window').catch(() => window.close())
 })
-$('pet-zoom-out')?.addEventListener('click', async () => { await drag.cancel(); if (!mock) invoke('resize_companion_window', { direction: 'out' }).catch(console.warn) })
-$('pet-zoom-in')?.addEventListener('click', async () => { await drag.cancel(); if (!mock) invoke('resize_companion_window', { direction: 'in' }).catch(console.warn) })
+$('pet-zoom-out')?.addEventListener('click', async () => { await motion?.stop();await drag.cancel(); if (!mock) invoke('resize_companion_window', { direction: 'out' }).catch(console.warn) })
+$('pet-zoom-in')?.addEventListener('click', async () => { await motion?.stop();await drag.cancel(); if (!mock) invoke('resize_companion_window', { direction: 'in' }).catch(console.warn) })
 window.addEventListener('keydown', event => {
   if(event.key!=='Escape'||event.defaultPrevented)return
   if(taskView?.closeList(true)){event.preventDefault();return}

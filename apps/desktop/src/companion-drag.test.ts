@@ -2,6 +2,33 @@ import { expect, test } from 'vitest'
 import { createCompanionDrag } from './companion-drag.js'
 
 const point = (screenX: number, screenY: number, buttons = 1, button = 0) => ({ screenX, screenY, buttons, button })
+
+test('landing waits for confirmed movement and an observed release; a later lift supersedes it',async()=>{
+  const moving=deferred<void>(),finish=deferred<void>(),events:string[]=[]
+  const control=createCompanionDrag({start:async()=>({x:0,y:0}),move:async()=>{events.push('move');moving.resolve()},finish:async()=>{await finish.promise;events.push('saved')},onBegin:()=>events.push('lift'),onEnd:()=>events.push('release'),onLanding:()=>events.push('land'),onError:()=>{}} as any)
+  control.press(point(0,0));control.move(point(20,0));await moving.promise
+  const completed=control.release(point(20,0,0));await Promise.resolve()
+  expect(events).not.toContain('land')
+  finish.resolve();await completed
+  expect(events.slice(-2)).toEqual(['saved','land'])
+
+  const gate=deferred<void>(),started=deferred<void>();let count=0
+  const next=createCompanionDrag({start:async()=>({x:0,y:0}),move:async()=>{started.resolve();await gate.promise},finish:async()=>{},onBegin:()=>{},onEnd:()=>{},onLanding:()=>count++,onError:()=>{}} as any)
+  next.press(point(0,0));next.move(point(20,0));await started.promise
+  const old=next.release(point(20,0,0));next.press(point(40,0));gate.resolve();await old
+  expect(count).toBe(0);await next.cancel()
+})
+
+test('drag velocity is bounded; clicks, cancelled moves and missing releases never land',async()=>{
+  const speeds:number[]=[],landings:number[]=[]
+  const control=createCompanionDrag({start:async()=>({x:0,y:0}),move:async()=>{},finish:async()=>{},onBegin:()=>{},onEnd:()=>{},onVelocity:(v:number)=>speeds.push(v),onLanding:()=>landings.push(1),onError:()=>{}} as any)
+  control.press({...point(0,0),timeStamp:0});control.move({...point(100,0),timeStamp:10})
+  await control.cancel()
+  expect(speeds.length).toBeGreaterThan(0);expect(speeds.every(v=>Number.isFinite(v)&&Math.abs(v)<=1)).toBe(true)
+  control.press(point(0,0));await control.release(point(0,0,0))
+  control.press(point(0,0));control.move(point(30,0));await control.release()
+  expect(landings).toEqual([])
+})
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>(yes => { resolve = yes })

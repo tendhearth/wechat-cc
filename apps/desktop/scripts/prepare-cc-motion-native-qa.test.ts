@@ -5,6 +5,16 @@ import { join } from 'node:path'
 import { prepareMotionNativeQA } from './prepare-cc-motion-native-qa.mjs'
 import { createQAApi, createQAInvoke, createQAClock, captureQAObservation } from '../art/cc-v1/native-motion-qa/qa-bridge.mjs'
 
+it('forwards bounded companion motion controls but never arbitrary window or backend commands',async()=>{
+ const calls:unknown[]=[]
+ const invoke=createQAInvoke(async(command:string,args:unknown)=>{calls.push({command,args});return command==='companion_motion_context'?{token:7,minOffset:-48,maxOffset:48}:null})
+ expect(await invoke('companion_motion_context')).toEqual({token:7,minOffset:-48,maxOffset:48})
+ await invoke('step_companion_motion',{token:7,offset:-24});await invoke('stop_companion_motion')
+ expect(calls).toHaveLength(3)
+ for(const name of ['move_other_window','wechat_cli_json','daemon_request'])await expect(invoke(name)).rejects.toThrow(/blocked/)
+ expect(calls).toHaveLength(3)
+})
+
 describe('isolated native motion QA', () => {
   it('serves only synthetic presence/pet facts and rejects every other backend request', async () => {
     const api = createQAApi()

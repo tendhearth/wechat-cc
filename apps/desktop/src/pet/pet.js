@@ -8,6 +8,8 @@ import { ONE_SHOT } from './domain/types.js'
 import { createSpriteRenderer } from './renderer/sprite-renderer.js'
 import { composeProps, createPropRenderer } from './renderer/prop-layer.js'
 import { emergencyManifest, fallbackFrame } from '../assets/pet/cc-v1/placeholder.js'
+import { createLifeDirector } from './life/life-director.js'
+import { createBodyMotion } from './life/body-motion.js'
 
 /** @typedef {import('./bridge/presence-map.js').PetIntent} PetIntent */
 /** @typedef {import('./domain/types.js').PetForm} PetForm */
@@ -25,8 +27,8 @@ const CALM_BEHAVIORS = new Set(['idle', 'companion'])
 const IDLE_MOVES = new Set(['blink', 'look'])
 
 /**
- * @param {{ stage: any, img: any, props: any, hint?: any }} root
- * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number, now?: () => number }} opts
+ * @param {{ stage: any, img: any, props: any, hint?: any, body?:any }} root
+ * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number, now?: () => number, life?:boolean,onLifeAction?:(pose:import('./life/life-director.js').Action)=>void }} opts
  */
 export async function createPet(root, opts) {
   const makeEl = opts.makeEl ?? ((/** @type {string} */ tag) => document.createElement(tag))
@@ -56,7 +58,7 @@ export async function createPet(root, opts) {
   const ghost = makeEl('img')
   ghost.classList.add('pet-sprite'); ghost.classList.add('pet-ghost')
   ghost.setAttribute('alt', ''); ghost.setAttribute('aria-hidden', 'true'); ghost.setAttribute('draggable', 'false')
-  root.stage.insertBefore?.(ghost, root.img)
+  ;(root.body??root.stage).insertBefore?.(ghost, root.img)
   const renderer = createSpriteRenderer({ img: root.img, stage: root.stage, ghost, schedule, cancel, preload: opts.preload, reducedMotion: opts.reducedMotion, onFrameError: (url) => onFrameError(url) })
   const machine = createPetStateMachine()
   /** @type {string[]} */
@@ -86,11 +88,16 @@ export async function createPet(root, opts) {
   /** 上一次画的是什么,避免同一快照重复 play / 重建道具 */
   let lastKey = ''
   let lastPropsKey = ''
+  const bodyMotion=opts.life?createBodyMotion(root):null
+  /** @type {ReturnType<typeof createLifeDirector>|null} */ let life=null
   const render = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
+    const action=life?.current().action??'still'
     const visibleProps = composeProps(s.transition ? 'idle' : s.behavior, s.props, { decorative: !suppressDecoration() })
+    if(action==='work-exit'&&!visibleProps.includes('laptop'))visibleProps.push('laptop')
     const propsKey = `${s.badge}|${visibleProps.join(',')}`
     if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; propRenderer.render(visibleProps, s.badge) }
-    const key = s.transition ? `t:${s.transition}` : `b:${s.form}/${s.behavior}`
+    const visual=action==='doze'?'sleep':action==='peek'?'look':action==='wake'?'wake':s.behavior
+    const key = s.transition ? `t:${s.transition}` : `b:${s.form}/${visual}/${action}`
     if (paused) return
     if (key === lastKey) return
     lastKey = key
@@ -105,9 +112,9 @@ export async function createPet(root, opts) {
       else renderer.fadeTo(t.to, { onEnd: () => machine.notifyAnimationEnded() })
       return
     }
-    const r = resolveAnimation(manifest, s.form, s.behavior)
+    const r = resolveAnimation(manifest, s.form, visual)
     warn(...r.warnings)
-    renderer.setBreathing(BREATHING_BEHAVIORS.has(s.behavior))
+    renderer.setBreathing(BREATHING_BEHAVIORS.has(s.behavior)&&!['doze','lift','land','stretch','walk-start','walk','walk-stop'].includes(action))
     const oneShot = ONE_SHOT.has(s.behavior)
     if (oneShot && r.animation.loop) {
       // 一次性行为被 fallback 成了 loop 动画(unlit 下只有 master):renderer 永远不会 onEnd,
@@ -117,7 +124,7 @@ export async function createPet(root, opts) {
       return
     }
     const restMs = s.behavior === 'working' ? 6000 : s.behavior === 'thinking' ? 9000 : 0
-    renderer.play(r.animation, { restMs, onEnd: oneShot || !r.animation.loop ? () => machine.notifyAnimationEnded() : undefined })
+    renderer.play(r.animation, { restMs, onEnd: visual===s.behavior&&(oneShot || !r.animation.loop) ? () => machine.notifyAnimationEnded() : undefined })
   }
 
   // ── 帧加载失败(404 / 坏文件):把那一帧从 manifest 里摘掉,重画(spec §3「跳过该帧」)。
@@ -161,7 +168,7 @@ export async function createPet(root, opts) {
     if (lookTimer !== null) { cancel(lookTimer); lookTimer = null }
   }
   const armIdleMoves = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
-    if (suppressDecoration()) { cancelIdleMoves(); return }
+    if (suppressDecoration()||(life&&life.current().action!=='still')) { cancelIdleMoves(); return }
     if (s.transition !== null || !CALM_BEHAVIORS.has(s.behavior)) {
       // 正在播的是我们自己排的 blink / look:另一个的倒计时照走。否则 6–12 s 的眨眼
       // 每次都把 25–60 s 的张望清零,look 永远轮不到(实测 10 分钟 62 次眨眼、0 次张望)。
@@ -180,6 +187,7 @@ export async function createPet(root, opts) {
     if (machine.setState(b) === 'ignored' && !heldOneShots.includes(b)) heldOneShots.push(b)
   }
   const onSnapshot = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
+    life?.observe(s)
     if (s.transition || s.behavior !== 'look') ownsAttention = false
     if (suppressDecoration() && s.props.includes('micro-light')) { machine.setProps(s.props.filter(p => p !== 'micro-light'), s.badge); return }
     if ((quiet || paused) && (s.transition || decorative.has(s.behavior))) { machine.notifyAnimationEnded(); return }
@@ -191,11 +199,17 @@ export async function createPet(root, opts) {
       for (const b of heldOneShots.splice(0, heldOneShots.length)) requestOneShot(b)
     }
   }
+  if(opts.life){
+    life=createLifeDirector({schedule,cancel,random,onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.(pose)}})
+    bodyMotion?.render(life.current())
+    life.setSuppressed(suppressDecoration())
+  }
   const off = machine.subscribe(onSnapshot)
   onSnapshot(machine.snapshot())
 
   // A control change consumes decoration immediately; it never creates a deferred celebration.
   const syncMotion = () => {
+    life?.setSuppressed(suppressDecoration())
     propRenderer.setMotionSuppressed(suppressDecoration())
     lastPropsKey = ''
     const current = machine.snapshot()
@@ -217,6 +231,11 @@ export async function createPet(root, opts) {
 
   return {
     machine, warnings,
+    /** @param {boolean} on */
+    setLifeAvailable(on){life?.setAvailable(on)},
+    /** @param {number} speed */
+    setDragVelocity(speed){bodyMotion?.velocity(speed)},
+    land(){life?.land()},
     acknowledgeAttention() {
       if (disposed || suppressDecoration()) return false
       const current = machine.snapshot()
@@ -250,6 +269,10 @@ export async function createPet(root, opts) {
     setProps: machine.setProps,
     /** @param {PetIntent} intent */
     applyIntent(intent) {
+      if(['working','thinking'].includes(intent.behavior)){
+        for(let i=heldOneShots.length-1;i>=0;i--)if(heldOneShots[i]==='done')heldOneShots.splice(i,1)
+        if(machine.snapshot().behavior==='done')machine.notifyAnimationEnded()
+      }
       machine.setForm(intent.form)
       machine.setProps(intent.props, intent.badge)
       machine.setState(intent.behavior)
@@ -261,6 +284,6 @@ export async function createPet(root, opts) {
     endDrag: machine.endDrag,
     /** 某一帧图片加载失败(renderer 的 img error 会自动喂进来,也可以手动报)。 */
     reportFrameError,
-    destroy() { disposed = true; off(); renderer.stop(); propRenderer.destroy(); heldOneShots.length = 0; cancelIdleMoves(); if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null } },
+    destroy() { disposed = true; off(); life?.destroy(); renderer.stop(); propRenderer.destroy(); heldOneShots.length = 0; cancelIdleMoves(); if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null } },
   }
 }
