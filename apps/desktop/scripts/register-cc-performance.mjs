@@ -20,7 +20,7 @@ export function buildPerformanceCatalog(plan,source,generatedAt) {
   for(const c of plan.clips){
     if(!ids.includes(c.id)||seen.has(c.id)||!Array.isArray(c.frames)||c.frames.length<8||c.frames.length>64||!Number.isFinite(c.fps)||c.fps<1||c.fps>24||typeof c.loop!=='boolean')throw Error('Invalid performance clip')
     if(c.frames.some(s=>!s||typeof s.gazeUp!=='number'||!Number.isFinite(s.gazeUp)||s.gazeUp<-.04||s.gazeUp>.14))throw Error('Invalid performance eye placement')
-    if(c.frames.some(s=>typeof s.crestTilt!=='number'||!Number.isFinite(s.crestTilt)||Math.abs(s.crestTilt)>.18||(c.id!=='curiosity'&&s.crestTilt!==0)))throw Error('Invalid performance crest placement')
+    if(c.frames.some(s=>typeof s.crestTilt!=='number'||!Number.isFinite(s.crestTilt)||Math.abs(s.crestTilt)>.42||(c.id!=='curiosity'&&s.crestTilt!==0)))throw Error('Invalid performance crest placement')
     seen.add(c.id)
   }
   if(seen.size!==ids.length)throw Error('Performance profile must be complete')

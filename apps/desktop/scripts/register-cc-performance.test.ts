@@ -31,12 +31,19 @@ it('rejects old eye schemas and nonfinite or out-of-face vertical attention befo
 })
 it('rejects invalid rooted C controls and keeps their independent motion exclusive to curiosity',async()=>{
   const {buildPerformanceCatalog}=await registration(),plan=buildPerformancePlan()
-  for(const crestTilt of [undefined,NaN,Infinity,.181,-.181]){
+  for(const crestTilt of [undefined,NaN,Infinity,.421,-.421]){
     const bad:any=structuredClone(plan);bad.clips.find((c:any)=>c.id==='curiosity').frames[4].crestTilt=crestTilt
     expect(()=>buildPerformanceCatalog(bad,{},'')).toThrow('crest')
   }
   const bad:any=structuredClone(plan);bad.clips.find((c:any)=>c.id==='walk').frames[4].crestTilt=.1
   expect(()=>buildPerformanceCatalog(bad,{},'')).toThrow('crest')
+})
+it('accepts the visually justified maximum curl sweep only for curiosity',async()=>{
+  const {buildPerformanceCatalog}=await registration(),plan=buildPerformancePlan()
+  for(const crestTilt of [-.42,.42]){
+    const candidate:any=structuredClone(plan);candidate.clips.find((c:any)=>c.id==='curiosity').frames[4].crestTilt=crestTilt
+    expect(()=>buildPerformanceCatalog(candidate,{},'')).not.toThrow()
+  }
 })
 it('rejects an incomplete render before publishing any manifest or catalog',async()=>{
   const {preparePerformanceKit}=await registration()

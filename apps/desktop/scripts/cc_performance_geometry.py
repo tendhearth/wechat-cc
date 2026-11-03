@@ -7,7 +7,7 @@ def crest_point(point, pivot, tilt):
     if (len(point) != 3 or len(pivot) != 3 or type(tilt) not in (int, float)
             or not all(math.isfinite(v) for v in [*point, *pivot, tilt])):
         raise ValueError('Crest placement must be finite')
-    if abs(tilt) > .18:
+    if abs(tilt) > .42:
         raise ValueError('Crest placement exceeds the rooted envelope')
     if tilt == 0:
         return tuple(point)

@@ -72,7 +72,7 @@ the soft happy stretch and rounded hook.
 
 A fresh neutral-title review of the first96-sample candidate still inferred
 generic idle behavior rather than the C causing a reaction. Add one finite
-`crestTilt` in[-0.18,0.18] radians, nonzero only in curiosity. Rotate the C in its
+`crestTilt` in[-0.42,0.42] radians, nonzero only in curiosity. Rotate the C in its
 local XZ plane about its existing embedded `ROOT_C`, before the saved C matrix
 and common body affine. This makes the rounded curl visibly move independently;
 the eyes follow its second movement one beat later. The root stays inside the
@@ -81,6 +81,10 @@ The zero branch retains the previous multiplication path exactly. Canonical-rest
 reuse additionally requires zero tilt. Actual rendered C matrices must retain
 the root and unit determinant; registration checks the recorded root error and
 determinant as well as existing body/foot evidence.
+The initial±0.18 draft still looked like generic idle in a neutral-title review.
+The larger bounded sweep must visibly initiate the scene. Hold an open-eyed
+upward target for three samples before blinking; then hold a deeper asymmetric
+inspection within the original body envelope. Geometry tolerances stay strict.
 
 Preserve the frozen blend, source geometry, camera, materials, lighting, canonical
 images, fixed-body motion clips and transition bytes. Body/foot envelopes remain
