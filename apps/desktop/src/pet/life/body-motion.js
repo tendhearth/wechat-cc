@@ -4,6 +4,8 @@
 export function createBodyMotion(root){
   const body=root.body??root.stage
   return {
+    /** @param {boolean} on */
+    setAuthored(on){body.setAttribute('data-pet-performance',String(on))},
     /** @param {{action:string,direction:number}} pose */
     render(pose){
       root.stage.setAttribute('data-pet-action',pose.action)

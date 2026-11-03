@@ -119,7 +119,7 @@ export async function buildMotionSamples({ catalogPath = join(desktop, 'art/cc-v
     if (privateContent.test(clip.title)) throw Error('Motion title is not shareable')
     for (let i = 0; i < clip.frames.lit.length; i++) {
       const light = clip.frames.lit[i], dark = clip.frames.unlit[i]
-      if (!/^(motion|canonical)\/lit\//.test(light) || dark !== light.replace('/lit/', '/unlit/') || basename(clip.masks[i]) !== basename(light)) throw Error(`Motion pair paths do not match at ${clip.id}/${i}`)
+      if (!/^(motion|performance|canonical)\/lit\//.test(light) || dark !== light.replace('/lit/', '/unlit/') || basename(clip.masks[i]) !== basename(light)) throw Error(`Motion pair paths do not match at ${clip.id}/${i}`)
     }
   }
   let sharp
