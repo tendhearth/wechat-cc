@@ -8,8 +8,8 @@ const frame = ({pose={},eyeScale=1,crescent=0,gaze=0,gazeUp=0,lean=0,squash=1,ri
   feet:{left:{...sole(),...left},right:{...sole(),...right}},
 })
 const hop = (rise, rest={}) => frame({...rest,rise,left:{lift:rise},right:{lift:rise}})
-const carried = (lean=0, phase=1) => frame({pose:{confused:.3},eyeScale:1.08,gazeUp:-.035,squash:1.015,rise:.11,lean,
-  left:{lift:.035+.005*phase,stride:.02*phase,roll:.11*phase},right:{lift:.055-.005*phase,stride:-.02*phase,roll:-.1*phase}})
+const carried = (lean=0, phase=1) => frame({pose:{happy:.12},eyeScale:1.08,gazeUp:-.035,squash:1.015,rise:.18,lean,
+  left:{lift:.06+.005*phase,stride:.02*phase,roll:.11*phase},right:{lift:.11-.005*phase,stride:-.02*phase,roll:-.1*phase}})
 const peek = sign => [
   [0,frame()],[.1,frame({gaze:.07*sign})],[.2,frame({gaze:.07*sign})],
   [.4,frame({gaze:.07*sign,lean:.055*sign,shift:.045*sign,pose:{confused:.28}})],
@@ -60,10 +60,10 @@ const clips = [
   {id:'peek-left',title:'发现左边，停一拍再探身',fps:12,count:14,loop:false,knots:peek(-1)},
   {id:'curiosity',title:'自己的 C，好像悄悄动了一下',fps:12,count:36,loop:false,knots:[
     [0,frame()],[.08,frame({gaze:.04,gazeUp:.12})],[.14,frame({gaze:.04,gazeUp:.12})],
-    [.24,frame({gaze:.04,gazeUp:.14,pose:{confused:.3}})],
-    [.38,frame({gaze:.04,gazeUp:.14,lean:.04,shift:.03,pose:{confused:.55}})],
-    [.54,frame({gaze:.04,gazeUp:.14,lean:.04,shift:.03,pose:{confused:.55},eyeScale:.9})],
-    [.64,frame({gaze:.03,gazeUp:.11,lean:.015,shift:.02,pose:{happy:.25,low:.25}})],
+    [.24,frame({gaze:.04,gazeUp:.14,pose:{happy:.2}})],
+    [.38,frame({gaze:.04,gazeUp:.14,lean:.04,shift:.03,pose:{happy:.55}})],
+    [.54,frame({gaze:.04,gazeUp:.14,lean:.04,shift:.03,pose:{happy:.55},eyeScale:.9})],
+    [.64,frame({gaze:.03,gazeUp:.11,lean:.015,shift:.02,pose:{happy:.25}})],
     [.72,frame({pose:{happy:.15}})],
     [.78,frame({shift:.03})],
     [.84,frame({shift:.03,left:{lift:.045,stride:-.035,roll:-.06}})],

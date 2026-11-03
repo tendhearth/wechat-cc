@@ -29,7 +29,7 @@ const IDLE_MOVES = new Set(['blink', 'look'])
 
 /**
  * @param {{ stage: any, img: any, props: any, hint?: any, body?:any }} root
- * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number, now?: () => number, life?:boolean,onLifeAction?:(pose:import('./life/life-director.js').Action)=>void }} opts
+ * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number, now?: () => number, monotonicNow?:()=>number,life?:boolean,onLifeAction?:(pose:import('./life/life-director.js').Action)=>void }} opts
  */
 export async function createPet(root, opts) {
   const makeEl = opts.makeEl ?? ((/** @type {string} */ tag) => document.createElement(tag))
@@ -93,12 +93,12 @@ export async function createPet(root, opts) {
   let renderedPerformance=false
   /** @type {ReturnType<typeof createLifeDirector>|null} */ let life=null
   const render = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
-    const action=life?.current().action??'still'
+    const pose=life?.current(),action=pose?.action??'still'
     const visibleProps = composeProps(s.transition ? 'idle' : s.behavior, s.props, { decorative: !suppressDecoration() })
     if(action==='work-exit'&&!visibleProps.includes('laptop'))visibleProps.push('laptop')
     const propsKey = `${s.badge}|${visibleProps.join(',')}`
     if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; propRenderer.render(visibleProps, s.badge) }
-    const performance=opts.life&&!s.transition&&!suppressDecoration()?resolvePerformance(manifest,s.form,action,s.behavior):null
+    const performance=opts.life&&!s.transition&&!suppressDecoration()?resolvePerformance(manifest,s.form,action,s.behavior,pose?.direction):null
     renderedPerformance=Boolean(performance)
     bodyMotion?.setAuthored(renderedPerformance)
     const visual=action==='doze'?'sleep':action==='peek'?'look':action==='wake'?'wake':s.behavior
@@ -120,7 +120,9 @@ export async function createPet(root, opts) {
     if(performance){
       renderer.setBreathing(false)
       renderer.play(performance.animation,{restMs:performance.id==='work'?6000:0,
-        onEnd:performance.id==='celebrate'&&s.behavior==='done'?()=>{
+        onEnd:performance.id==='curiosity'?()=>{
+          if(typeof pose?.token==='number'&&life?.finishCuriosity(pose.token)&&IDLE_MOVES.has(machine.snapshot().behavior))machine.notifyAnimationEnded()
+        }:performance.id==='celebrate'&&s.behavior==='done'?()=>{
           if(machine.snapshot().behavior==='done')machine.notifyAnimationEnded()
         }:undefined})
       return
@@ -167,6 +169,7 @@ export async function createPet(root, opts) {
     for (const form of /** @type {const} */ (['unlit', 'lit'])) {
       if (isFrame(manifest.forms[form].master, url)) manifest.forms[form].master = fallbackFrame(form)
     }
+    life?.setCuriosityAvailable(Boolean(resolvePerformance(manifest,'lit','curiosity','idle')))
     warn(`frame_missing:${url}`)
     lastKey = ''                        // 帧表变了,同一个状态也得重画
     render(machine.snapshot())
@@ -213,7 +216,8 @@ export async function createPet(root, opts) {
     }
   }
   if(opts.life){
-    life=createLifeDirector({schedule,cancel,random,onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.({...pose,authored:renderedPerformance})}})
+    life=createLifeDirector({schedule,cancel,random,now:opts.monotonicNow??opts.now??(()=>performance.now()),onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.({...pose,authored:renderedPerformance})}})
+    life.setCuriosityAvailable(Boolean(resolvePerformance(manifest,'lit','curiosity','idle')))
     bodyMotion?.render(life.current())
     life.setSuppressed(suppressDecoration())
   }

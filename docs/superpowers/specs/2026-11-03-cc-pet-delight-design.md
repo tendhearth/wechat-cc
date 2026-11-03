@@ -63,11 +63,17 @@ poses, rather than continuous motion everywhere.
 Use performance plan schema **3**, with finite `gazeUp` in **[-0.04, 0.14]**
 model units. Re-seat each translated eye on the existing face surface. Zero gaze
 keeps the exact resting path. Existing C shape keys provide the delayed C motion;
-no new C topology, free endpoint, body turn, limb or mouth is introduced.
+no new C topology, free endpoint, body turn, limb or mouth is introduced. Draft
+visual review rejected the strong confused blend's pointed C; curiosity uses the
+soft happy stretch instead, retaining a rounded hook.
 
 Preserve the frozen blend, source geometry, camera, materials, lighting, canonical
 images, fixed-body motion clips and transition bytes. Body/foot envelopes remain
-the existing ones. Canvas512², anchor[0.5,0.91796875], safe bounds[80,28,432,470),
+the existing ones except a **carry-only rise ceiling of0.20**: the original0.13
+could not make the body clearly suspended while both feet were already airborne.
+Other clips remain≤0.13. Carried feet stay≥0.05 above the virtual floor, retain
+visible body overlap, and are re-reviewed for detachment/clipping. Canvas512²,
+anchor[0.5,0.91796875], safe bounds[80,28,432,470),
 shared Light/Dark geometry masks and all alpha contracts remain unchanged. Current
 seven performance PNGs are mutable candidates; all previous receipts and the
 installed1c324a13 full app remain preserved as the baseline.

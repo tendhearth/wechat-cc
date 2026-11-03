@@ -58,7 +58,10 @@ describe('coordinated CC performances', () => {
       expect(Object.values(settled.pose).reduce((n:number,v:any)=>n+v,0)).toBeGreaterThan(.03)
     }
     for(const f of p.clips.find((c:any)=>c.id==='lift').frames)
-      for(const foot of Object.values(f.feet) as any[])expect(f.body.rise-foot.lift).toBeGreaterThan(.03)
+      for(const foot of Object.values(f.feet) as any[]){
+        expect(f.body.rise-foot.lift).toBeGreaterThan(.03)
+        expect(foot.lift,'both feet are suspended rather than resting on the floor').toBeGreaterThanOrEqual(.05)
+      }
   })
   it('authors a quiet curiosity story with an upward thought before its body follows', async()=>{
     const c=(await plan()).clips.find((c:any)=>c.id==='curiosity')
@@ -103,7 +106,7 @@ describe('coordinated CC performances', () => {
       expect(f.body.squash).toBeGreaterThanOrEqual(.88)
       expect(f.body.squash).toBeLessThanOrEqual(1.07)
       expect(f.body.rise).toBeGreaterThanOrEqual(0)
-      expect(f.body.rise).toBeLessThanOrEqual(.13)
+      expect(f.body.rise).toBeLessThanOrEqual(c.id === 'lift' ? .20 : .13)
       expect(Math.abs(f.body.shift)).toBeLessThanOrEqual(.05)
       expect(typeof f.gazeUp,'vertical attention has a numeric control').toBe('number')
       expect(f.gazeUp).toBeGreaterThanOrEqual(-.04)

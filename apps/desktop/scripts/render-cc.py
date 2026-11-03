@@ -73,7 +73,10 @@ if args.motion_plan:
                 body, feet = sample['body'], sample['feet']
                 assert isinstance(body, dict) and set(body) == {'lean','squash','rise','shift'}, 'Invalid body controls'
                 assert all(type(v) in (int,float) and math.isfinite(v) for v in body.values()), 'Nonfinite body controls'
-                assert abs(body['lean']) <= .06 and .88 <= body['squash'] <= 1.07 and 0 <= body['rise'] <= .13 and abs(body['shift']) <= .05, 'Body exceeds performance envelope'
+                # Carrying needs the body above already-airborne feet; every
+                # other gesture keeps its original smaller rise envelope.
+                max_rise = .20 if name == 'lift' else .13
+                assert abs(body['lean']) <= .06 and .88 <= body['squash'] <= 1.07 and 0 <= body['rise'] <= max_rise and abs(body['shift']) <= .05, 'Body exceeds performance envelope'
                 assert isinstance(feet, dict) and set(feet) == {'left','right'}, 'Invalid feet controls'
                 for foot in feet.values():
                     assert isinstance(foot, dict) and set(foot) == {'lift','stride','roll'}, 'Invalid foot controls'
