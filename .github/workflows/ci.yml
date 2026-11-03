@@ -63,6 +63,7 @@ jobs:
             app_native:
               - 'apps/app/native/**'
               - 'packages/protocol/**'
+              - '.github/workflows/ci.yml'
             migrations:
               - 'src/lib/db/migrations/**'
               - 'src/adapters/knowledge/migrations/**'
@@ -290,13 +291,14 @@ jobs:
         working-directory: apps/app
         run: bun run export:check
 
-  # 推送解密的原生两端跑协议包的同一份向量(spec §9.3)。只在 apps/app/native/** 或协议包动过时跑。
-  # macOS runner 自带 Swift / Xcode;Kotlin 走 JVM(test.sh 用 PATH 上的 gradle 与 JAVA_HOME)。
+  # 推送解密的原生两端跑协议包的同一份向量(spec §9.3),原生代码、协议包或本 CI 定义变化时跑。
+  # CryptoKit / Kotlin 向量不依赖 CPU 架构;用标准 Intel 跑器避开 ARM 容量不足导致的排队取消。
+  # macOS 自带 Swift / Xcode;Kotlin 走 JVM(test.sh 用 PATH 上的 gradle 与 JAVA_HOME)。
   app-native:
     name: app · native push vectors
     needs: changes
     if: needs.changes.outputs.app_native == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - name: Swift (CryptoKit)
