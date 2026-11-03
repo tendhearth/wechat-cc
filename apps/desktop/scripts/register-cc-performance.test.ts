@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest'
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -11,7 +10,7 @@ const desktop=resolve(__dirname,'..')
 const digest=(data:Buffer|string)=>createHash('sha256').update(data).digest('hex')
 async function registration(){
   expect(existsSync(file),'validated performance registration is available').toBe(true)
-  return import(fileURLToPath(file))
+  return import(file.href)
 }
 it('requires the complete paired profile and refuses duplicate or unsafe clip identities',async()=>{
   const {buildPerformanceCatalog}=await registration(), plan=buildPerformancePlan()

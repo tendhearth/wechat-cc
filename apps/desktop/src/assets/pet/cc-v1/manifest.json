@@ -290,6 +290,146 @@
           "loop": false,
           "next": "idle",
           "artStatus": "production-candidate"
+        },
+        "life-peek": {
+          "frames": [
+            "performance/lit/peek/000.png",
+            "performance/lit/peek/001.png",
+            "performance/lit/peek/002.png",
+            "performance/lit/peek/003.png",
+            "performance/lit/peek/004.png",
+            "performance/lit/peek/005.png",
+            "performance/lit/peek/006.png",
+            "performance/lit/peek/007.png",
+            "performance/lit/peek/008.png",
+            "performance/lit/peek/009.png",
+            "performance/lit/peek/010.png",
+            "performance/lit/peek/011.png",
+            "performance/lit/peek/012.png",
+            "performance/lit/peek/013.png"
+          ],
+          "fps": 12,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "life-stretch": {
+          "frames": [
+            "performance/lit/stretch/000.png",
+            "performance/lit/stretch/001.png",
+            "performance/lit/stretch/002.png",
+            "performance/lit/stretch/003.png",
+            "performance/lit/stretch/004.png",
+            "performance/lit/stretch/005.png",
+            "performance/lit/stretch/006.png",
+            "performance/lit/stretch/007.png",
+            "performance/lit/stretch/008.png",
+            "performance/lit/stretch/009.png",
+            "performance/lit/stretch/010.png",
+            "performance/lit/stretch/011.png",
+            "performance/lit/stretch/012.png",
+            "performance/lit/stretch/013.png"
+          ],
+          "fps": 12,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "life-walk": {
+          "frames": [
+            "performance/lit/walk/000.png",
+            "performance/lit/walk/001.png",
+            "performance/lit/walk/002.png",
+            "performance/lit/walk/003.png",
+            "performance/lit/walk/004.png",
+            "performance/lit/walk/005.png",
+            "performance/lit/walk/006.png",
+            "performance/lit/walk/007.png",
+            "performance/lit/walk/008.png",
+            "performance/lit/walk/009.png",
+            "performance/lit/walk/010.png",
+            "performance/lit/walk/011.png"
+          ],
+          "fps": 10,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "life-lift": {
+          "frames": [
+            "performance/lit/lift/000.png",
+            "performance/lit/lift/001.png",
+            "performance/lit/lift/002.png",
+            "performance/lit/lift/003.png",
+            "performance/lit/lift/004.png",
+            "performance/lit/lift/005.png",
+            "performance/lit/lift/006.png",
+            "performance/lit/lift/007.png",
+            "performance/lit/lift/008.png",
+            "performance/lit/lift/009.png",
+            "performance/lit/lift/010.png",
+            "performance/lit/lift/011.png"
+          ],
+          "fps": 12,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "life-land": {
+          "frames": [
+            "performance/lit/land/000.png",
+            "performance/lit/land/001.png",
+            "performance/lit/land/002.png",
+            "performance/lit/land/003.png",
+            "performance/lit/land/004.png",
+            "performance/lit/land/005.png",
+            "performance/lit/land/006.png",
+            "performance/lit/land/007.png"
+          ],
+          "fps": 16,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "life-celebrate": {
+          "frames": [
+            "performance/lit/celebrate/000.png",
+            "performance/lit/celebrate/001.png",
+            "performance/lit/celebrate/002.png",
+            "performance/lit/celebrate/003.png",
+            "performance/lit/celebrate/004.png",
+            "performance/lit/celebrate/005.png",
+            "performance/lit/celebrate/006.png",
+            "performance/lit/celebrate/007.png",
+            "performance/lit/celebrate/008.png",
+            "performance/lit/celebrate/009.png",
+            "performance/lit/celebrate/010.png",
+            "performance/lit/celebrate/011.png"
+          ],
+          "fps": 16,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "life-work": {
+          "frames": [
+            "performance/lit/work/000.png",
+            "performance/lit/work/001.png",
+            "performance/lit/work/002.png",
+            "performance/lit/work/003.png",
+            "performance/lit/work/004.png",
+            "performance/lit/work/005.png",
+            "performance/lit/work/006.png",
+            "performance/lit/work/007.png",
+            "performance/lit/work/008.png",
+            "performance/lit/work/009.png",
+            "performance/lit/work/010.png",
+            "performance/lit/work/011.png"
+          ],
+          "fps": 8,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
         }
       }
     },
@@ -545,6 +685,146 @@
           "loop": true,
           "next": null,
           "artStatus": "reviewed-production"
+        },
+        "life-peek": {
+          "frames": [
+            "performance/unlit/peek/000.png",
+            "performance/unlit/peek/001.png",
+            "performance/unlit/peek/002.png",
+            "performance/unlit/peek/003.png",
+            "performance/unlit/peek/004.png",
+            "performance/unlit/peek/005.png",
+            "performance/unlit/peek/006.png",
+            "performance/unlit/peek/007.png",
+            "performance/unlit/peek/008.png",
+            "performance/unlit/peek/009.png",
+            "performance/unlit/peek/010.png",
+            "performance/unlit/peek/011.png",
+            "performance/unlit/peek/012.png",
+            "performance/unlit/peek/013.png"
+          ],
+          "fps": 12,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "life-stretch": {
+          "frames": [
+            "performance/unlit/stretch/000.png",
+            "performance/unlit/stretch/001.png",
+            "performance/unlit/stretch/002.png",
+            "performance/unlit/stretch/003.png",
+            "performance/unlit/stretch/004.png",
+            "performance/unlit/stretch/005.png",
+            "performance/unlit/stretch/006.png",
+            "performance/unlit/stretch/007.png",
+            "performance/unlit/stretch/008.png",
+            "performance/unlit/stretch/009.png",
+            "performance/unlit/stretch/010.png",
+            "performance/unlit/stretch/011.png",
+            "performance/unlit/stretch/012.png",
+            "performance/unlit/stretch/013.png"
+          ],
+          "fps": 12,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "life-walk": {
+          "frames": [
+            "performance/unlit/walk/000.png",
+            "performance/unlit/walk/001.png",
+            "performance/unlit/walk/002.png",
+            "performance/unlit/walk/003.png",
+            "performance/unlit/walk/004.png",
+            "performance/unlit/walk/005.png",
+            "performance/unlit/walk/006.png",
+            "performance/unlit/walk/007.png",
+            "performance/unlit/walk/008.png",
+            "performance/unlit/walk/009.png",
+            "performance/unlit/walk/010.png",
+            "performance/unlit/walk/011.png"
+          ],
+          "fps": 10,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "life-lift": {
+          "frames": [
+            "performance/unlit/lift/000.png",
+            "performance/unlit/lift/001.png",
+            "performance/unlit/lift/002.png",
+            "performance/unlit/lift/003.png",
+            "performance/unlit/lift/004.png",
+            "performance/unlit/lift/005.png",
+            "performance/unlit/lift/006.png",
+            "performance/unlit/lift/007.png",
+            "performance/unlit/lift/008.png",
+            "performance/unlit/lift/009.png",
+            "performance/unlit/lift/010.png",
+            "performance/unlit/lift/011.png"
+          ],
+          "fps": 12,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
+        },
+        "life-land": {
+          "frames": [
+            "performance/unlit/land/000.png",
+            "performance/unlit/land/001.png",
+            "performance/unlit/land/002.png",
+            "performance/unlit/land/003.png",
+            "performance/unlit/land/004.png",
+            "performance/unlit/land/005.png",
+            "performance/unlit/land/006.png",
+            "performance/unlit/land/007.png"
+          ],
+          "fps": 16,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "life-celebrate": {
+          "frames": [
+            "performance/unlit/celebrate/000.png",
+            "performance/unlit/celebrate/001.png",
+            "performance/unlit/celebrate/002.png",
+            "performance/unlit/celebrate/003.png",
+            "performance/unlit/celebrate/004.png",
+            "performance/unlit/celebrate/005.png",
+            "performance/unlit/celebrate/006.png",
+            "performance/unlit/celebrate/007.png",
+            "performance/unlit/celebrate/008.png",
+            "performance/unlit/celebrate/009.png",
+            "performance/unlit/celebrate/010.png",
+            "performance/unlit/celebrate/011.png"
+          ],
+          "fps": 16,
+          "loop": false,
+          "next": "idle",
+          "artStatus": "production-candidate"
+        },
+        "life-work": {
+          "frames": [
+            "performance/unlit/work/000.png",
+            "performance/unlit/work/001.png",
+            "performance/unlit/work/002.png",
+            "performance/unlit/work/003.png",
+            "performance/unlit/work/004.png",
+            "performance/unlit/work/005.png",
+            "performance/unlit/work/006.png",
+            "performance/unlit/work/007.png",
+            "performance/unlit/work/008.png",
+            "performance/unlit/work/009.png",
+            "performance/unlit/work/010.png",
+            "performance/unlit/work/011.png"
+          ],
+          "fps": 8,
+          "loop": true,
+          "next": null,
+          "artStatus": "production-candidate"
         }
       }
     }
@@ -7422,6 +7702,3702 @@
         "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
         "method": "paired contact sheets and pixel-contract checks"
       }
+    },
+    "performance/lit/peek/000.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/000.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/000.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/001.png": {
+      "sha256": "ecdfb26cd98432e674806115a254144dab5e71688d0dd17aa096b9769818e303",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/001.png": {
+      "sha256": "99954dcdf16582a5201bf87192c70f0377b0867d90d75e186b4bba504ded1a21",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/001.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/002.png": {
+      "sha256": "a89d5494de06b0a0bd4f4aa73bbec2cc600329079801ccf3cdebfc03e42a853a",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/002.png": {
+      "sha256": "f03e5055e5eaec655c1bb894a7c2c0c7ae7663be1544d218cdac8ed384b72488",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/002.png": {
+      "sha256": "3c0fd249079b37a5dbe8b59b6fadd8468c91c059135963da0eae8158c0b9c961",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/003.png": {
+      "sha256": "fe5737d9ccdd241edae81613fcf3fdb9abc436b27c6da5c53723eecf5878f0a9",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/003.png": {
+      "sha256": "3c0cc61bf6723ad45ea4bc14fedca0b27c6e50b7c5a9614cda3d164f0affa003",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/003.png": {
+      "sha256": "1f99a9a31ae46d6c1388f2faaca6fbdc6746e44f0601e48f2f009ef3639c8ca0",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/004.png": {
+      "sha256": "802549bc62a78d17511ff459bc5ee8eef9baa8dc1770e52a35216fb6d77b3fa0",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/004.png": {
+      "sha256": "c38ab65bffb373ff9ea18df64aa5847057df02f846641b1a3b3ad294d7e4b296",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/004.png": {
+      "sha256": "9d59e996a2e9d808fb5802235095f89dadd4f976294db49a5ec6897b9a702170",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/005.png": {
+      "sha256": "ec0a828c79f264547584cc1463fc4cd79e15825439baec8efe517f59ca14841a",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/005.png": {
+      "sha256": "9b0eb33d72390945cc474d05113c60552c473397c6bbe3be2197eb6e1ce95db9",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/005.png": {
+      "sha256": "3659005f6897841f314076cec16f5e3c87a9b4ba00b765af2198eae32f95120f",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/006.png": {
+      "sha256": "6d62540ed5b6b6262e7bb548f995273ccb3abc7413dea97749906fbbf7c38956",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/006.png": {
+      "sha256": "a7e0c185956510f996311ea39548751cfa4830ed1d2c3b5debfa348186263ce2",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/006.png": {
+      "sha256": "7adb43316f2676a8175c11e0990453705d375356744e74aff866e3ce39334ede",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/007.png": {
+      "sha256": "a27f0307bb1361dcec0570049145b201a19c30469480ba9cd7230f80f075a391",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/007.png": {
+      "sha256": "7e2cef85fb45e63c2f1ff31bd147f2f8c86f1522e3223ddc9bf645919b90a415",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/007.png": {
+      "sha256": "dd7314ce9d4c194dcbbeb2e4eb0b79c7d6a3e9867119fac42ba134c2b5c013d7",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/008.png": {
+      "sha256": "99da45aa586a5029792b0300611af2980a0f1633b37d0dcd2be4b01a28aef47d",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/008.png": {
+      "sha256": "c4c1f6eea3e66d87d5f0dd1315d4e085af336fcbb741a2a261825dc69847e7c5",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/008.png": {
+      "sha256": "bbe06fcf2d2f82d0a1d907bfc418c83399e96e194257f08d556df2f35a44b258",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/009.png": {
+      "sha256": "3b9e9261a3a203b2cc28fc531c6a55ccb00760ee65c81dd02dd115f4b47601e5",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/009.png": {
+      "sha256": "2c63811ac7825269c838e24b0da02cfeb3280a5af6d82269d2b359469bc1a8b9",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/009.png": {
+      "sha256": "2618d3f3ebb197bddc2b130c086aca809f76029954a7a6f4457e3ced38fd1dc4",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/010.png": {
+      "sha256": "db0bb62485b89a7c10715ee9c02b88b431c95c474aec1b845e9e3b5d816493bb",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/010.png": {
+      "sha256": "4374af892af6493283295fbccd1e937dd00a952dcc7b856fc9037615147e4f15",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/010.png": {
+      "sha256": "29b7e260c55c625fb5d085ec959a737e1b00bc9a1d6d1874fa46027649dffc49",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/011.png": {
+      "sha256": "d8fa11ee5686f81d5fc901720cc9a2fbaee97a4e5c357fc72098b7175e638775",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/011.png": {
+      "sha256": "dd0ec908a5fb24e13f4321c0825270220aff222fd4c5231ec7cd884f28b129e2",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/011.png": {
+      "sha256": "c7c24003ca28b40f2ca118df0b80c1fd7f5b2a03c6ebef18be99a78da10abbd1",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/012.png": {
+      "sha256": "2a867bab92db1f515e35171b4473998507f5e461ffe0b59a5001d2780b211503",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/012.png",
+      "motionSample": 12,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/012.png": {
+      "sha256": "c41a90696f3fc66ead7dfaa77658ba06bf0c220d947a76e202cce54f6cacfcde",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/012.png",
+      "motionSample": 12,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/012.png": {
+      "sha256": "dc04fe8acfa7417e0629358ba7993be3360688fc3e6bf38bcfd53649c9cfaa70",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 12,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/peek/013.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/013.png",
+      "motionSample": 13,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/peek/013.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/peek/013.png",
+      "motionSample": 13,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/peek/013.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-peek",
+      "artStatus": "production-candidate",
+      "motionSample": 13,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/000.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/000.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/000.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/001.png": {
+      "sha256": "acb8ada34f860f25f43ebfa8ee6351cff3371aca97e50a89ca26ac3c67125d28",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/001.png": {
+      "sha256": "ea25464bed065afa295dfaa563ef622aacb0fc1e948842198776914f47688212",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/001.png": {
+      "sha256": "e31c4f268ea65c6a8a13b414d41c66ea6651ff4c033bc7bcbfdc3a4a3f163615",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/002.png": {
+      "sha256": "4590c0d0f0e5a6197973a12b5876abc0d8a9006359a7d575403cb0c6d13d44a8",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/002.png": {
+      "sha256": "f7931efd726d4e72643baf278cc8205f81451fa44bfe98395259877b8f22f690",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/002.png": {
+      "sha256": "5d87499a09dcc7fcbe5b6c4b65e14e24025e33c551cf956facad5dc07e614d14",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/003.png": {
+      "sha256": "300a21a8f3df084b6f27d1bf65bacf5fef608092ebabb1508e4c0795b8e93cd5",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/003.png": {
+      "sha256": "704aa20892bf430a6b8f3a3cc51e6ea90377d5c04ad8fe7fa4ed979a39158540",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/003.png": {
+      "sha256": "a5876b67904f3739db93bfd0c258ec2bb3e221e67d62522ce2f5a5cd31963087",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/004.png": {
+      "sha256": "d2fb2f5ffd5e0ece2fbd739da8f01803f2cc87e0f3ed478436961fcbf959a1fa",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/004.png": {
+      "sha256": "c288e2059741ee635b48a1c3d5456fd4065036f45c25853b3b19e039228795ce",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/004.png": {
+      "sha256": "6aa3f490cbc79f3061d5973ce90811003b418d24f97aba55f3d9ce1829294588",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/005.png": {
+      "sha256": "02bbe7880a674546153966d210e21c85153d169173d9130ee3d3347ce8dc57ad",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/005.png": {
+      "sha256": "9ac49563a91d7e00a20457e27fa2507bd12d2514247a19d7bc361fe60ad35e86",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/005.png": {
+      "sha256": "53d35ce6de7bcf53bb883cb08354fd00bdee6e4ee7f68f88042c328496291e9e",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/006.png": {
+      "sha256": "02612b9742f98b2f484ac76cca29d17554506975af37bc165532f6efd6b0aed5",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/006.png": {
+      "sha256": "a8aa29aa3e1b14d1d7c13a04e4a9d5bb0771abdac36c0333fb3f35ed4ba127b9",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/006.png": {
+      "sha256": "173bd9200c2d44fe106584d5b510b0b9c295b2c95756153b2c4899cca3d9ca19",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/007.png": {
+      "sha256": "0ae62d070d077d1350955b5a4482ae0bcec8b843ecff4e6a69ef200a2046bdfc",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/007.png": {
+      "sha256": "f1175d02d488de42fab9b2df51208a02b3eacf22d781fe221aef233b9888d91e",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/007.png": {
+      "sha256": "669abc54ba2598eff426de3d0a2322bc8bf09bc4683d4ebfb548d0ffd6de922f",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/008.png": {
+      "sha256": "abf813a03ebe6da3c630b37080a390404e343fe0eb590985152bba1d15e6b883",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/008.png": {
+      "sha256": "082b9d074bd78d2f3ffd81848c77aa3cd4c30001c718a98af751d511f0e7b275",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/008.png": {
+      "sha256": "818637a3e37f91849fd87657f316945297ea5b2c5174e71334ff301866ed5721",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/009.png": {
+      "sha256": "3793b64dc38fabf8580985baffeea67cfc0cd7d1adfc23aff106c42f3de9ebf8",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/009.png": {
+      "sha256": "9b2cf64c299587a7c7bbef05706592fd010dc1d3366f326661be198a44866929",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/009.png": {
+      "sha256": "de1fe2133f37ea8da3bc3a017dfc3cf5231a5eef2cec58e6157ae156c3e7c6c1",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/010.png": {
+      "sha256": "3d9dcc53f9f928c187e592007bcfbbeb469abc6173d1d80947951b836a2e6c32",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/010.png": {
+      "sha256": "e3055f59830d27e150bc1c7d7f7910b388d6d8e90e0ffbbef2d4b8d5ba02898e",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/010.png": {
+      "sha256": "c18e2e0e93b417498ba13989c4f46a620d8de81afa26a8cf7c16125754ade6fa",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/011.png": {
+      "sha256": "c130091d89fef48c9bd7e76ebb23d780213f2acdf1524503d79a92723a70e250",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/011.png": {
+      "sha256": "18fe39755de924aa574a24fc50b82fe81adbb8e92dbb091daed1c71a0c2d092a",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/011.png": {
+      "sha256": "f3c851ff907d060b5e827ae37a13100b1e769307c533e72b3f51451b1954ce79",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/012.png": {
+      "sha256": "feb3addc641e0493319b54a1c1d286ec940a779cba5038b2ab51dd110f5dbfde",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/012.png",
+      "motionSample": 12,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/012.png": {
+      "sha256": "c775a04316cfcbd16431401161fd039116d7e7bebda4c8eca324081b312dcf0e",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/012.png",
+      "motionSample": 12,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/012.png": {
+      "sha256": "9c28deb6bde4383088a340ea6772de5f8ebf5af31a3ac0295ae54ecad490f00d",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 12,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/stretch/013.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/013.png",
+      "motionSample": 13,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/stretch/013.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/stretch/013.png",
+      "motionSample": 13,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/stretch/013.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-stretch",
+      "artStatus": "production-candidate",
+      "motionSample": 13,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/000.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/000.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/000.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/001.png": {
+      "sha256": "be729bef9bbc97d0f0fad3570771614ea394cb4b8512501f203d6b581d4142ae",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/001.png": {
+      "sha256": "8c24f5271db0c9698d0b7ff54b0ebc42b4eb83a2cfe1d29d72ada444403cbbee",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/001.png": {
+      "sha256": "72a8dd4ed8e80487f43065e149cd6529cf06b9cff60af9ea23736c054db21657",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/002.png": {
+      "sha256": "e2cfc788417e28c17e5e4a1d74a3bf9b3cfd2cfb38e4e9658691ea4779df193a",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/002.png": {
+      "sha256": "1f9e174682419e726651870643508698b9719212004347b690a291deb04d4625",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/002.png": {
+      "sha256": "632b39114494ca718230a42dd1f011c134dcfc429c83980880fe55b066c1b6ee",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/003.png": {
+      "sha256": "39acc7fefbec72bdeae9eba7b3c2d03809e9ee4e0d4d28564638b18f41efdf34",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/003.png": {
+      "sha256": "7ca95163f9bc880aea6daf5228874b2d2b4f4a6e43fc6bedc18a880cc3e78e68",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/003.png": {
+      "sha256": "7213a3fec4af09d73a84aa988ce95fae7a5fbbdd9a9c1a72bea4053324c0760d",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/004.png": {
+      "sha256": "bded9e8229ba18f8f2feb73d77d59cb69e41f167dce5050a317cd14823f3a302",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/004.png": {
+      "sha256": "72c5942c042b0bc49d9dd0e25dd3193d608682cd79235651b5e5e750466912f1",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/004.png": {
+      "sha256": "b66367921a7909e29e47302405fc21a1babb1848c9d1d5503a5725f436e2c228",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/005.png": {
+      "sha256": "212aee3e9f55eaf9d56a7487c306700fd9675f14bddb3621d9aa17561912353a",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/005.png": {
+      "sha256": "98fb573c1a79cc7208c47c7864e4e29d86e1d5a1c6c44e10ecb1744166f16352",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/005.png": {
+      "sha256": "a64d1aeafa694f1848743b8f10759302604093ffc3dd44982afa6329d417634c",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/006.png": {
+      "sha256": "0405753f39de0d10b2ff4f1f051aa08a170cec3472d77679963e7dfc60242322",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/006.png": {
+      "sha256": "57e84714b2962d6b82c21391f1a3186873b783c9cf7e399285b142f224a49fa6",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/006.png": {
+      "sha256": "e053845e0e14dfa1e3319a0736674e44062a146ce80c0f89f8454b76a70c8948",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/007.png": {
+      "sha256": "bcc7d02e859d431aeb76d3f7c5c3779278c6a75113bbdf4d150c892f42eab331",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/007.png": {
+      "sha256": "eafd24cdb968ca8ead8069bf7b5363e4534d4b07203e1ee40d383ddd8a4cd487",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/007.png": {
+      "sha256": "6551e4a2e4d52512d140e153b6456fd9a3192d9e08aa7b3de1d4e9555b182c43",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/008.png": {
+      "sha256": "6909ef310b6a4b0c56684aeb96df7cc1b9cac9bfb763fea5e993b4c832e3bec1",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/008.png": {
+      "sha256": "d916e690b3ea91979d77dac5fa033a110c93bc88235a366a2e449ba4f1c6dba9",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/008.png": {
+      "sha256": "0e86dd45a6783453c27b2a8ea07308a26b239b3cc5b6f39b278a57adfcdd6742",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/009.png": {
+      "sha256": "aedbbea15d6045b6f139c42eb0f24b4048d8d2e3e4aedd992e6408d20a758d6f",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/009.png": {
+      "sha256": "7a2419c64748df0f4f8de82728c2529f704536ff94635a071dbef0d8850fae68",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/009.png": {
+      "sha256": "61c44f54c3dc45fc7209d56155d60dc1d13fb924f34f0ec4454763bbc3033137",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/010.png": {
+      "sha256": "827d49ae811adf6aa9a41232f1ec497e186ce45560e1e4847d5ad10cc8926a8a",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/010.png": {
+      "sha256": "faa6bbe81a74eef84d04a2db4b3059211fb30de89f0b55c37ef04b29ab8170f3",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/010.png": {
+      "sha256": "8353cf771785657bdea8e22565501893a49e5fceb45d4c6af859f808bad4375b",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/walk/011.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/walk/011.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/walk/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/walk/011.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-walk",
+      "artStatus": "production-candidate",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/000.png": {
+      "sha256": "87127ae239f4fe0449eda67f7fe003baf0d635251b346d4cc2ec8edccdb38511",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/000.png": {
+      "sha256": "169176e85df6cbf59a615624367b7be29d33098c4fb5793a21a76cccf897dadb",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/000.png": {
+      "sha256": "981b2e189623e0a593e56e48e73403f20fd03331a9a74cc1a2b80dd3cab35b14",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/001.png": {
+      "sha256": "ceb1da2fb05f2a4ca91b1621cd1d3fe773e978d822b88782773aa69ebd31e630",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/001.png": {
+      "sha256": "0f9f9a33f01b66793c875d7e6d28717586e899444b175a6a69356e25442a72f4",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/001.png": {
+      "sha256": "0505d76b164c1ec39b8c0c5ac7627a39c708829cd75190eda63d27e464c5ba92",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/002.png": {
+      "sha256": "89e91f67b790787db7240562e3837664061645dd512c01cb64e599182011f868",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/002.png": {
+      "sha256": "8da05697c92479410267c3e5f9cf7f7b079acb248afcb97fcffe166544bab320",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/002.png": {
+      "sha256": "a86cb7181ee6159e982ca5a80c5ec8e9fb04975a25f83ccf1af0f721552590c9",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/003.png": {
+      "sha256": "c882264b71c83059fee6cc38b84ad9db8156a2449eadbe34680046bb06bdf6df",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/003.png": {
+      "sha256": "8d9b965c212731d88fb7a34b9bdaed87cc639feeec74003e5bd9f48a609fa557",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/003.png": {
+      "sha256": "775d7fa3ffe9a733abe9620c864727db235dcf6383d485a789e9bc44b18d572a",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/004.png": {
+      "sha256": "cd8bca0a9543a05653528f212f7019b592db49eeb9ea6b39100490d44753ad4f",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/004.png": {
+      "sha256": "ba079b2574a76061db13f5042cee414d78bace768c7197fa770aa6b975b60236",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/004.png": {
+      "sha256": "50e383db49cc468526ea487afc1a808bbd6ded43392b7e9873dbefacb1182011",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/005.png": {
+      "sha256": "cc95488304ff5aea8dc71f79f23b4b3572ba28691ac79496908d5a6ae7fafa36",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/005.png": {
+      "sha256": "1412ff31af09dc589a59ea7d4967ec6ef0e936eacf9750dc20488923c54bb2a0",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/005.png": {
+      "sha256": "346204b4180b8b43531201797a5c9158fa5671d6038a7788e0d0a5b3aa08249f",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/006.png": {
+      "sha256": "cc95488304ff5aea8dc71f79f23b4b3572ba28691ac79496908d5a6ae7fafa36",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/006.png": {
+      "sha256": "1412ff31af09dc589a59ea7d4967ec6ef0e936eacf9750dc20488923c54bb2a0",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/006.png": {
+      "sha256": "346204b4180b8b43531201797a5c9158fa5671d6038a7788e0d0a5b3aa08249f",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/007.png": {
+      "sha256": "cd8bca0a9543a05653528f212f7019b592db49eeb9ea6b39100490d44753ad4f",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/007.png": {
+      "sha256": "ba079b2574a76061db13f5042cee414d78bace768c7197fa770aa6b975b60236",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/007.png": {
+      "sha256": "50e383db49cc468526ea487afc1a808bbd6ded43392b7e9873dbefacb1182011",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/008.png": {
+      "sha256": "c882264b71c83059fee6cc38b84ad9db8156a2449eadbe34680046bb06bdf6df",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/008.png": {
+      "sha256": "8d9b965c212731d88fb7a34b9bdaed87cc639feeec74003e5bd9f48a609fa557",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/008.png": {
+      "sha256": "775d7fa3ffe9a733abe9620c864727db235dcf6383d485a789e9bc44b18d572a",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/009.png": {
+      "sha256": "89e91f67b790787db7240562e3837664061645dd512c01cb64e599182011f868",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/009.png": {
+      "sha256": "8da05697c92479410267c3e5f9cf7f7b079acb248afcb97fcffe166544bab320",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/009.png": {
+      "sha256": "a86cb7181ee6159e982ca5a80c5ec8e9fb04975a25f83ccf1af0f721552590c9",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/010.png": {
+      "sha256": "ceb1da2fb05f2a4ca91b1621cd1d3fe773e978d822b88782773aa69ebd31e630",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/010.png": {
+      "sha256": "0f9f9a33f01b66793c875d7e6d28717586e899444b175a6a69356e25442a72f4",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/010.png": {
+      "sha256": "0505d76b164c1ec39b8c0c5ac7627a39c708829cd75190eda63d27e464c5ba92",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/lift/011.png": {
+      "sha256": "87127ae239f4fe0449eda67f7fe003baf0d635251b346d4cc2ec8edccdb38511",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/lift/011.png": {
+      "sha256": "169176e85df6cbf59a615624367b7be29d33098c4fb5793a21a76cccf897dadb",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/lift/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/lift/011.png": {
+      "sha256": "981b2e189623e0a593e56e48e73403f20fd03331a9a74cc1a2b80dd3cab35b14",
+      "view": "three-quarter",
+      "expression": "life-lift",
+      "artStatus": "production-candidate",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/land/000.png": {
+      "sha256": "1cb0a6516b29bc720824f654eaa2244724dcbe0469451308297c90064a9d020a",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/land/000.png": {
+      "sha256": "26de87779ddabb42f3ea55db25dfc081a1360b0bc2e273125abb764a14be469c",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/land/000.png": {
+      "sha256": "1bf3bc9a10e648d64ac37adc1e75e58a521e44dc718e66c89c24fcbfccd14fa1",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/land/001.png": {
+      "sha256": "ba7dbcc1b0d352b09471c2091898226595f0ffbc16da8c6a15f17da8f929260d",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/land/001.png": {
+      "sha256": "6aa364f8641b684e09e56a9f395585285d5007e9831a3bc28ee281309a0a614b",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/land/001.png": {
+      "sha256": "a24dd611fa09df02585d25195f87f9a7beb3903a263cc8a6239aa359d68c38b9",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/land/002.png": {
+      "sha256": "a833bc4ccf3866ea066d49cbc492bf6f1641ca8ee873ed754e3c8e47cb1d0473",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/land/002.png": {
+      "sha256": "fbfdafc48725bfba16b8492cd87e6803919afc2975bd92e92e61afb0f5b378b2",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/land/002.png": {
+      "sha256": "e05fe04699998fd882df469a8db4f9c103d1c5a926d539b74ae91b39418ac4fe",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/land/003.png": {
+      "sha256": "04445e982dc57a289420ed66acbe32c260ce5ae8fd6ddd93c35af02070111663",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/land/003.png": {
+      "sha256": "6e9bbf8bd42d5d48176f3a3f2691263e770db8d7ec32236d7d741fd5cf984f6c",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/land/003.png": {
+      "sha256": "e890b2547af20e3a8c963eb9dd151a1b66e507842f0b1fcf9f8b092ac7bc4745",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/land/004.png": {
+      "sha256": "e65b0378e023fd27be4eab0ffa244e71877a106058bb153c185bd1613ffbc1b6",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/land/004.png": {
+      "sha256": "07720da823eb2a0beef99a64bcbf2e177fb95f6cb76d8e53fa925fbf0189510b",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/land/004.png": {
+      "sha256": "fc3dfaf44fba2bc1f44807c7c377203b6ff27fd1e1baf737bf3800c3cad4f67b",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/land/005.png": {
+      "sha256": "e719438fe5fe8f9d3f7ecaccb83b499278d5ba29a8e2785a4baa36634d67b75f",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/land/005.png": {
+      "sha256": "27bbd274238a5d2d5ff14b3f6b4f78fe7290b6b69e50ef62acb8c2be359ef2a5",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/land/005.png": {
+      "sha256": "482109fb2109b77b6f1427addaea3ec42747e2a17dff11164eba8a31e185caa7",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/land/006.png": {
+      "sha256": "481403c4841944331f6ad2c076a21ef31e41f0bdb269b3043511ddc6989768d1",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/land/006.png": {
+      "sha256": "555e2a4324adddcd77acae68957bda01de4cf85a7ba8e32ba4a1b14fac0638a2",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/land/006.png": {
+      "sha256": "59f19d760d5e6c79fd3edbfcb8d8a275145782c9c14d5e9c8d872edd6f177a9c",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/land/007.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/land/007.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/land/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/land/007.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-land",
+      "artStatus": "production-candidate",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/000.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/000.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/000.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/001.png": {
+      "sha256": "0c1661e2cfc907bbdcc47e4e8cb14913d7d76b33e7b16a7fa118010dc2c77aed",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/001.png": {
+      "sha256": "93cf1a652545b65518ddd080e23fce2baf7c2930c6a1cd908375c1d864531dcf",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/001.png": {
+      "sha256": "f974c7567c266013937a956cfd934c5e2fd7547981cd60c29e983d91305792c1",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/002.png": {
+      "sha256": "92e507995bbce032e30bdf0d445533990783758f81b03e0634707f48a5e517c0",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/002.png": {
+      "sha256": "db127391b69ec129aa3d6df479b839d92b1fbac9ce579a234f34403c742fca46",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/002.png": {
+      "sha256": "ac7498220ef58c503bb124f228115e065fd831439391414e120a051e6c797c07",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/003.png": {
+      "sha256": "bf3fdeaadf2dea996ca1a9b9ad2a3d05394d00ef9686d7feae4fd863ab5158f1",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/003.png": {
+      "sha256": "8e474dc852dc7bd24fa4fcce33a5fc8bb305b154bf7639326420a52706484961",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/003.png": {
+      "sha256": "659c25933c1592b852cc6f8be52fa92bb3efa230238d3fa11b9c2caa285f2881",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/004.png": {
+      "sha256": "c5dd9c3b8e039839430051b26b1cd63bf7dd402789f1c4380c1667d8fd997637",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/004.png": {
+      "sha256": "9c133a7b184582010ca510288c2d329ee5810b0bb1e30e8f49ea60c43a98c9f0",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/004.png": {
+      "sha256": "d076ec0f8fa9c9767cab7d606ca57773ccf625530c1ab8b1d23de7a2d2e5dc88",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/005.png": {
+      "sha256": "596d74011a0541840b0f301a9af08c1a0fc367c264a0023691dba6e799a32917",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/005.png": {
+      "sha256": "53742478eecb23177ea2d35499d367a6f1b1535f3c21ec3827afeda415533c8e",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/005.png": {
+      "sha256": "3ec566235db99e78937f78ab8a5b58868656fa9fd6d69ae8879f1bbb090e809e",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/006.png": {
+      "sha256": "7bdcc6115e3d5030440f4776209d37740d602e28dea2c29bfc6959e8d47a1429",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/006.png": {
+      "sha256": "a0097702ac08572048597f41d19261fd83dd0540d4016297a9d764a208ab89b6",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/006.png": {
+      "sha256": "6457647f5429352ebaa1d811543d556c72b7d0468297bc86e76152f27299f691",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/007.png": {
+      "sha256": "fec7119399a38a74428ee33e0640df36b73255436de47f99fa59d46be1639619",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/007.png": {
+      "sha256": "b08d50b270ed301f6750778f5fab7fa9c0b646cfb7d5678e071eae70bbb58753",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/007.png": {
+      "sha256": "e15a9829915fba81936d9e9d3a7a8d009fcfb8a90657e09b0df7c0f349741a65",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/008.png": {
+      "sha256": "57f6ec6f16da7ae3f4fc3e7bae576333aa6152f72c90a1c77f2bbe0daf32bfaf",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/008.png": {
+      "sha256": "f56a5e95a872016a98f51147dc364cd737f5a9e8e92ef7867f664880a0095a49",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/008.png": {
+      "sha256": "15197ab31be4b6a5a975a25b729b84a3ca13d7921052a1f68a1fc364344ee039",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/009.png": {
+      "sha256": "51b1f25e5deb3511b4274d96d0a64a951b56916d6a90f3a42b67825927fdd61c",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/009.png": {
+      "sha256": "1a82166957ea69fc1e950e8aa9457b0821641f037889076c65c60aec95fe87af",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/009.png": {
+      "sha256": "25357957d9b2fd9e1f67228c9b6870704fa4be3d5aeec2b0f973d65bb435c83f",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/010.png": {
+      "sha256": "75936ef67afd6b67f6bea1619d9a7d6a4979ea2bdcd4fb30718e372d2d4f4aae",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/010.png": {
+      "sha256": "d9686960feec4e240e89400714307a7ccc034ffea3e022e9b1af398e9df61f11",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/010.png": {
+      "sha256": "62dfb2206a7418a0e6e86a2c575a9a0e819d42a0d2f72b0ab4a064fc05b28a1e",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/celebrate/011.png": {
+      "sha256": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/celebrate/011.png": {
+      "sha256": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/celebrate/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/celebrate/011.png": {
+      "sha256": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c",
+      "view": "three-quarter",
+      "expression": "life-celebrate",
+      "artStatus": "production-candidate",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/000.png": {
+      "sha256": "b1ff5a105b8dd7bb9f52ebe9e2da6748a2486156e4bf3db84105fcf14be77ba4",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/000.png": {
+      "sha256": "8435f9f0b4045cfca44339e2d04eb2e4e6daf865500bbeecea603192a2c4b758",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/000.png",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/000.png": {
+      "sha256": "765e09bc13a63fd9a156a78bf0b9c29b50d94b371e6abe470af0d5ef1d317ab6",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 0,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/001.png": {
+      "sha256": "0ea71a7ba1e9605938bd8ba4c34c6df00b2940e60b7ab166b12692f4e8cfb074",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/001.png": {
+      "sha256": "6210e676548b8bdda5b870dfff8453e531493a49af4ee43343205436863d62b3",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/001.png",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/001.png": {
+      "sha256": "fe0a1214cdee87fcea15670cb2bd87acf65e298f10b40cf7157d62cf5fdcc1bd",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 1,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/002.png": {
+      "sha256": "0b9afc9b59c05376e21e8aa67270877679c66f13eb8293f7b7d76fd18ea44728",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/002.png": {
+      "sha256": "e4dbb04b43f8c91b09af0821e32221692920c755cfed7d2a78b683a4080e1ca9",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/002.png",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/002.png": {
+      "sha256": "72c766b80f43e003c55be0c4958d2f7dab74b1e99c4784800606e8df38e5d8cc",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 2,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/003.png": {
+      "sha256": "9f904e87dff3ea6a58c610d02127983164f5442f682a16df25cd76cb22dd103c",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/003.png": {
+      "sha256": "0012f39c14fdb406aa755e28ed60078512cc8ded3544c115961cadde0b16cb2b",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/003.png",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/003.png": {
+      "sha256": "06c6aa6c80389ce9bcd7be330239e14e5daa89cacfb84e140b65f7b180978ad0",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 3,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/004.png": {
+      "sha256": "0c6a24761b1b38eff397ddc40ca0f5d3f4388b7b7bd6dbc75f4bd0d769e688ea",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/004.png": {
+      "sha256": "99ef30a9e2b97cc93ca55427e4176f5e27746d46bc64826cd680542589688062",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/004.png",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/004.png": {
+      "sha256": "62fb7412a49aecd4b3bdb7b42fc803c66d5786fb8f880f9f6e23fcfdb63130cf",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 4,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/005.png": {
+      "sha256": "ac27661341c6411975c97d9ddecd748d31cf33f0b3d032340fe5e5936972f86e",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/005.png": {
+      "sha256": "2965057b2812047d20b536c44803998625bb9e6b6d5f6d85722e3819defdc918",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/005.png",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/005.png": {
+      "sha256": "1575a81229c2145f3328a01b89c585c2d5fcfb0993b5f8458efb13830efa0eae",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 5,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/006.png": {
+      "sha256": "8bb92b8afa1e7f1d699a55761f49977f435500dbd8a8580f32b2e2be9a032a9f",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/006.png": {
+      "sha256": "de69fb7780a6b6a800a7bfa2f70323684071af779fb9ea8ce6d2fb8e3bb8fb75",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/006.png",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/006.png": {
+      "sha256": "9b8f74d036f6b28aced769b920066a5a3a91416cd9a2f6cfb5124cab1c5831b0",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 6,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/007.png": {
+      "sha256": "5380acd711989bb07fbd29f47d98107a3f315710a46ea28bc57e04dad94a741a",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/007.png": {
+      "sha256": "0fb65ba72f13ea3ab5ab247bbd087e297903d7dafdb016f2cd9202c68970d75c",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/007.png",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/007.png": {
+      "sha256": "b4294da8f99a8127a01422983186f5402c7e38c2868daec93d22a2f259eaf214",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 7,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/008.png": {
+      "sha256": "54eb33488ac44ba8c01ca2b7003e426892ef17471470d6e025a8fdf592019d30",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/008.png": {
+      "sha256": "cb02bdf4981038b6db4859077aaf705360c622677fca68979c1ca769c6f61843",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/008.png",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/008.png": {
+      "sha256": "b6a9d03a3172d77eb04f7f7f2c6c91a74263105d359f01d0b5081b261775471c",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 8,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/009.png": {
+      "sha256": "fe6f94f8398a7cb86757ce2a9bdc160fc56ee1bea32f9d0008da4311cc01b54a",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/009.png": {
+      "sha256": "bda27fc7699ede448f509584f0d587551a5e08f82e56506af67f97c556052e9e",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/009.png",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/009.png": {
+      "sha256": "3e11681181364edeba33d3200ee8bd8a7279ab9275d591db645edae92d574c25",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 9,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/010.png": {
+      "sha256": "bea9db269f5dd3e918055594577dd6085942549d81867b326ae4881df817a8ac",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/010.png": {
+      "sha256": "aac6bf22223f917b415c08a9b49a69c61822c1eaeadba2c43d9745d73df76fd7",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/010.png",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/010.png": {
+      "sha256": "607a7a03c1e30679795e89805840974f562b113d62365685f89ef8b66b0b75ac",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 10,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/lit/work/011.png": {
+      "sha256": "b1ff5a105b8dd7bb9f52ebe9e2da6748a2486156e4bf3db84105fcf14be77ba4",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "performance/unlit/work/011.png": {
+      "sha256": "8435f9f0b4045cfca44339e2d04eb2e4e6daf865500bbeecea603192a2c4b758",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "geometryMask": "masks/performance/work/011.png",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
+    },
+    "masks/performance/work/011.png": {
+      "sha256": "765e09bc13a63fd9a156a78bf0b9c29b50d94b371e6abe470af0d5ef1d317ab6",
+      "view": "three-quarter",
+      "expression": "life-work",
+      "artStatus": "production-candidate",
+      "motionSample": 11,
+      "source": "frozen-blender-coordinated-rig",
+      "visualReview": {
+        "reviewer": "Implementation visual QA — owner review pending",
+        "reviewedAt": "2026-11-03T10:31:32.980Z",
+        "referenceSha256": "2de9c2a97edbb6451b6acf644b39850906ecebaa58efc065bac58d4a92d4d072",
+        "method": "paired motion review and pixel-contract checks"
+      }
     }
   },
   "designSheets": [
@@ -7647,5 +11623,20 @@
       }
     },
     "catalog": "art/cc-v1/motion/catalog.json"
+  },
+  "performance": {
+    "active": true,
+    "source": {
+      "planSha256": "6b637fc62fbd8b275bcaab3b46e591855466b997ff7f396e7f8715243374a37f",
+      "sourceSha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+      "rendererSha256": "6e00bb960cec139b7ca2feb4c8bf9a9623b8064dd87354c362adcc9dadffeaab",
+      "geometrySha256": "d26db56b5699b524db792b12187747f1451128dca019ea188d1e64053992e17d",
+      "performanceGeometrySha256": "3414995fde73b05753654a8de07fe02736fd486ba4e47cb03a32d8f9836db0a5",
+      "sha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+      "blender": "5.2.1 LTS",
+      "samples": 96,
+      "seed": 11
+    },
+    "catalog": "art/cc-v1/performance/catalog.json"
   }
 }

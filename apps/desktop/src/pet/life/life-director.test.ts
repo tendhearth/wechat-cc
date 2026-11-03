@@ -23,6 +23,9 @@ function clock(minimumDelay=0) {
 async function boot(authored=false,minimumDelay=0,life=true) {
   const c=clock(minimumDelay),root={stage:node(),img:node(),props:node(),body:node()}
   const raw=JSON.parse(readFileSync(new URL('../../assets/pet/cc-v1/manifest.json',import.meta.url),'utf8'))
+  // Keep the original fallback cases meaningful after production gains optional
+  // art. The native Mini suite exercises the actual installed performances.
+  if(!authored)for(const form of ['lit','unlit'])for(const name of Object.keys(raw.forms[form].states))if(name.startsWith('life-'))delete raw.forms[form].states[name]
   if(authored) for(const form of ['lit','unlit']) for(const action of ['peek','stretch','walk','lift','land','celebrate','work']) {
     raw.forms[form].states[`life-${action}`]={frames:Array.from({length:12},(_,i)=>`performance/${form}/${action}/${i}.png`),fps:16,loop:['walk','lift','work'].includes(action),next:'idle',artStatus:'production-candidate'}
   }

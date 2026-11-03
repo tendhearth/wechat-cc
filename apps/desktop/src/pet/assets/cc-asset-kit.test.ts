@@ -47,7 +47,7 @@ function withPngKit(run: (target: string, next: any, add: (path: string, bytes: 
     // historical kit here; the complete active motion kit is validated below.
     cpSync(root, target, { recursive: true, filter: path => {
       const name = relative(root, path).split(sep).join('/')
-      return name !== 'motion' && !name.startsWith('motion/') && name !== 'masks/motion' && !name.startsWith('masks/motion/')
+      return !['motion','masks/motion','performance','masks/performance'].some(prefix=>name===prefix||name.startsWith(prefix+'/'))
     } })
     cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
     const next = structuredClone(raw)
@@ -55,6 +55,13 @@ function withPngKit(run: (target: string, next: any, add: (path: string, bytes: 
       for (const form of ['lit', 'unlit']) Object.assign(next.forms[form].states, next.motion.staticStates[form])
       for (const path of Object.keys(next.assets)) if (path.startsWith('motion/') || path.startsWith('masks/motion/')) delete next.assets[path]
       delete next.motion
+    }
+    // Keep one-pixel mutation fixtures focused on the historical kit. Both
+    // complete active profiles are independently validated against all bytes.
+    if(next.performance){
+      for(const form of ['lit','unlit']) for(const name of Object.keys(next.forms[form].states)) if(name.startsWith('life-'))delete next.forms[form].states[name]
+      for(const path of Object.keys(next.assets))if(path.startsWith('performance/')||path.startsWith('masks/performance/'))delete next.assets[path]
+      delete next.performance
     }
     const add = (path: string, bytes: Buffer, extra = next.assets[path]) => {
       writeFileSync(join(target, path), bytes)
@@ -354,7 +361,7 @@ describe('preserved second-batch authored performances', () => {
     for (const form of ['lit', 'unlit']) {
       expect(raw.motion.active).toBe(true)
       const states = { ...raw.forms[form].states, ...raw.motion.staticStates[form] }
-      expect(Object.keys(states)).toHaveLength(13)
+      expect(Object.keys(states)).toHaveLength(20)
       for (const [behavior, pose] of Object.entries(poses)) {
         const path = `sprites/${form}/${behavior}.png`
         expect(states[behavior].frames).toEqual([path])
@@ -483,12 +490,12 @@ it('rejects standalone prop dimensions and missing registration independently of
 it('preserves prior owner acceptance while keeping all new motion as candidates and SVGs as placeholders', () => {
   expect(raw.artStatus).toBe('production-candidate')
   for (const [name, form] of Object.entries(raw.forms) as [string, any][]) {
-    for (const [behavior, state] of Object.entries(form.states) as [string, any][]) expect(state.artStatus).toBe(raw.motion.staticStates[name][behavior] ? 'production-candidate' : 'reviewed-production')
+    for (const [behavior, state] of Object.entries(form.states) as [string, any][]) expect(state.artStatus).toBe(raw.motion.staticStates[name][behavior]||behavior.startsWith('life-') ? 'production-candidate' : 'reviewed-production')
     for (const state of Object.values(raw.motion.staticStates[name]) as any[]) expect(state.artStatus).toBe('reviewed-production')
   }
   for (const [path, asset] of Object.entries(raw.assets) as [string, any][]) {
     if (path.endsWith('.svg')) expect(asset.artStatus).toBe('normative-placeholder')
-    else expect(asset.artStatus).toBe((path === '../props/micro-light.png' || path.startsWith('motion/') || path.startsWith('masks/motion/') || path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
+    else expect(asset.artStatus).toBe((path === '../props/micro-light.png' || path.startsWith('motion/') || path.startsWith('masks/motion/') || path.startsWith('performance/') || path.startsWith('masks/performance/') || path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
   }
 })
 

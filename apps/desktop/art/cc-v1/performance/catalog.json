@@ -1,0 +1,400 @@
+{
+  "schemaVersion": 1,
+  "artStatus": "production-candidate",
+  "generatedAt": "2026-11-03T10:31:32.980Z",
+  "source": {
+    "planSha256": "6b637fc62fbd8b275bcaab3b46e591855466b997ff7f396e7f8715243374a37f",
+    "sourceSha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+    "rendererSha256": "6e00bb960cec139b7ca2feb4c8bf9a9623b8064dd87354c362adcc9dadffeaab",
+    "geometrySha256": "d26db56b5699b524db792b12187747f1451128dca019ea188d1e64053992e17d",
+    "performanceGeometrySha256": "3414995fde73b05753654a8de07fe02736fd486ba4e47cb03a32d8f9836db0a5",
+    "sha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+    "blender": "5.2.1 LTS",
+    "samples": 96,
+    "seed": 11
+  },
+  "baseUrl": "../../../src/assets/pet/cc-v1/",
+  "forms": [
+    {
+      "id": "lit",
+      "label": "Light CC",
+      "description": "在身边"
+    },
+    {
+      "id": "unlit",
+      "label": "Dark CC",
+      "description": "安静的炭黑哑光"
+    }
+  ],
+  "clips": [
+    {
+      "id": "peek",
+      "title": "先看一眼，再探身",
+      "fps": 12,
+      "loop": false,
+      "artStatus": "production-candidate",
+      "frames": {
+        "lit": [
+          "performance/lit/peek/000.png",
+          "performance/lit/peek/001.png",
+          "performance/lit/peek/002.png",
+          "performance/lit/peek/003.png",
+          "performance/lit/peek/004.png",
+          "performance/lit/peek/005.png",
+          "performance/lit/peek/006.png",
+          "performance/lit/peek/007.png",
+          "performance/lit/peek/008.png",
+          "performance/lit/peek/009.png",
+          "performance/lit/peek/010.png",
+          "performance/lit/peek/011.png",
+          "performance/lit/peek/012.png",
+          "performance/lit/peek/013.png"
+        ],
+        "unlit": [
+          "performance/unlit/peek/000.png",
+          "performance/unlit/peek/001.png",
+          "performance/unlit/peek/002.png",
+          "performance/unlit/peek/003.png",
+          "performance/unlit/peek/004.png",
+          "performance/unlit/peek/005.png",
+          "performance/unlit/peek/006.png",
+          "performance/unlit/peek/007.png",
+          "performance/unlit/peek/008.png",
+          "performance/unlit/peek/009.png",
+          "performance/unlit/peek/010.png",
+          "performance/unlit/peek/011.png",
+          "performance/unlit/peek/012.png",
+          "performance/unlit/peek/013.png"
+        ]
+      },
+      "masks": [
+        "masks/performance/peek/000.png",
+        "masks/performance/peek/001.png",
+        "masks/performance/peek/002.png",
+        "masks/performance/peek/003.png",
+        "masks/performance/peek/004.png",
+        "masks/performance/peek/005.png",
+        "masks/performance/peek/006.png",
+        "masks/performance/peek/007.png",
+        "masks/performance/peek/008.png",
+        "masks/performance/peek/009.png",
+        "masks/performance/peek/010.png",
+        "masks/performance/peek/011.png",
+        "masks/performance/peek/012.png",
+        "masks/performance/peek/013.png"
+      ],
+      "posterIndex": 7
+    },
+    {
+      "id": "stretch",
+      "title": "压低，再伸个懒腰",
+      "fps": 12,
+      "loop": false,
+      "artStatus": "production-candidate",
+      "frames": {
+        "lit": [
+          "performance/lit/stretch/000.png",
+          "performance/lit/stretch/001.png",
+          "performance/lit/stretch/002.png",
+          "performance/lit/stretch/003.png",
+          "performance/lit/stretch/004.png",
+          "performance/lit/stretch/005.png",
+          "performance/lit/stretch/006.png",
+          "performance/lit/stretch/007.png",
+          "performance/lit/stretch/008.png",
+          "performance/lit/stretch/009.png",
+          "performance/lit/stretch/010.png",
+          "performance/lit/stretch/011.png",
+          "performance/lit/stretch/012.png",
+          "performance/lit/stretch/013.png"
+        ],
+        "unlit": [
+          "performance/unlit/stretch/000.png",
+          "performance/unlit/stretch/001.png",
+          "performance/unlit/stretch/002.png",
+          "performance/unlit/stretch/003.png",
+          "performance/unlit/stretch/004.png",
+          "performance/unlit/stretch/005.png",
+          "performance/unlit/stretch/006.png",
+          "performance/unlit/stretch/007.png",
+          "performance/unlit/stretch/008.png",
+          "performance/unlit/stretch/009.png",
+          "performance/unlit/stretch/010.png",
+          "performance/unlit/stretch/011.png",
+          "performance/unlit/stretch/012.png",
+          "performance/unlit/stretch/013.png"
+        ]
+      },
+      "masks": [
+        "masks/performance/stretch/000.png",
+        "masks/performance/stretch/001.png",
+        "masks/performance/stretch/002.png",
+        "masks/performance/stretch/003.png",
+        "masks/performance/stretch/004.png",
+        "masks/performance/stretch/005.png",
+        "masks/performance/stretch/006.png",
+        "masks/performance/stretch/007.png",
+        "masks/performance/stretch/008.png",
+        "masks/performance/stretch/009.png",
+        "masks/performance/stretch/010.png",
+        "masks/performance/stretch/011.png",
+        "masks/performance/stretch/012.png",
+        "masks/performance/stretch/013.png"
+      ],
+      "posterIndex": 7
+    },
+    {
+      "id": "walk",
+      "title": "交替抬脚的小步",
+      "fps": 10,
+      "loop": true,
+      "artStatus": "production-candidate",
+      "frames": {
+        "lit": [
+          "performance/lit/walk/000.png",
+          "performance/lit/walk/001.png",
+          "performance/lit/walk/002.png",
+          "performance/lit/walk/003.png",
+          "performance/lit/walk/004.png",
+          "performance/lit/walk/005.png",
+          "performance/lit/walk/006.png",
+          "performance/lit/walk/007.png",
+          "performance/lit/walk/008.png",
+          "performance/lit/walk/009.png",
+          "performance/lit/walk/010.png",
+          "performance/lit/walk/011.png"
+        ],
+        "unlit": [
+          "performance/unlit/walk/000.png",
+          "performance/unlit/walk/001.png",
+          "performance/unlit/walk/002.png",
+          "performance/unlit/walk/003.png",
+          "performance/unlit/walk/004.png",
+          "performance/unlit/walk/005.png",
+          "performance/unlit/walk/006.png",
+          "performance/unlit/walk/007.png",
+          "performance/unlit/walk/008.png",
+          "performance/unlit/walk/009.png",
+          "performance/unlit/walk/010.png",
+          "performance/unlit/walk/011.png"
+        ]
+      },
+      "masks": [
+        "masks/performance/walk/000.png",
+        "masks/performance/walk/001.png",
+        "masks/performance/walk/002.png",
+        "masks/performance/walk/003.png",
+        "masks/performance/walk/004.png",
+        "masks/performance/walk/005.png",
+        "masks/performance/walk/006.png",
+        "masks/performance/walk/007.png",
+        "masks/performance/walk/008.png",
+        "masks/performance/walk/009.png",
+        "masks/performance/walk/010.png",
+        "masks/performance/walk/011.png"
+      ],
+      "posterIndex": 6
+    },
+    {
+      "id": "lift",
+      "title": "悬起后双脚轻垂",
+      "fps": 12,
+      "loop": true,
+      "artStatus": "production-candidate",
+      "frames": {
+        "lit": [
+          "performance/lit/lift/000.png",
+          "performance/lit/lift/001.png",
+          "performance/lit/lift/002.png",
+          "performance/lit/lift/003.png",
+          "performance/lit/lift/004.png",
+          "performance/lit/lift/005.png",
+          "performance/lit/lift/006.png",
+          "performance/lit/lift/007.png",
+          "performance/lit/lift/008.png",
+          "performance/lit/lift/009.png",
+          "performance/lit/lift/010.png",
+          "performance/lit/lift/011.png"
+        ],
+        "unlit": [
+          "performance/unlit/lift/000.png",
+          "performance/unlit/lift/001.png",
+          "performance/unlit/lift/002.png",
+          "performance/unlit/lift/003.png",
+          "performance/unlit/lift/004.png",
+          "performance/unlit/lift/005.png",
+          "performance/unlit/lift/006.png",
+          "performance/unlit/lift/007.png",
+          "performance/unlit/lift/008.png",
+          "performance/unlit/lift/009.png",
+          "performance/unlit/lift/010.png",
+          "performance/unlit/lift/011.png"
+        ]
+      },
+      "masks": [
+        "masks/performance/lift/000.png",
+        "masks/performance/lift/001.png",
+        "masks/performance/lift/002.png",
+        "masks/performance/lift/003.png",
+        "masks/performance/lift/004.png",
+        "masks/performance/lift/005.png",
+        "masks/performance/lift/006.png",
+        "masks/performance/lift/007.png",
+        "masks/performance/lift/008.png",
+        "masks/performance/lift/009.png",
+        "masks/performance/lift/010.png",
+        "masks/performance/lift/011.png"
+      ],
+      "posterIndex": 6
+    },
+    {
+      "id": "land",
+      "title": "落地，回弹，站稳",
+      "fps": 16,
+      "loop": false,
+      "artStatus": "production-candidate",
+      "frames": {
+        "lit": [
+          "performance/lit/land/000.png",
+          "performance/lit/land/001.png",
+          "performance/lit/land/002.png",
+          "performance/lit/land/003.png",
+          "performance/lit/land/004.png",
+          "performance/lit/land/005.png",
+          "performance/lit/land/006.png",
+          "performance/lit/land/007.png"
+        ],
+        "unlit": [
+          "performance/unlit/land/000.png",
+          "performance/unlit/land/001.png",
+          "performance/unlit/land/002.png",
+          "performance/unlit/land/003.png",
+          "performance/unlit/land/004.png",
+          "performance/unlit/land/005.png",
+          "performance/unlit/land/006.png",
+          "performance/unlit/land/007.png"
+        ]
+      },
+      "masks": [
+        "masks/performance/land/000.png",
+        "masks/performance/land/001.png",
+        "masks/performance/land/002.png",
+        "masks/performance/land/003.png",
+        "masks/performance/land/004.png",
+        "masks/performance/land/005.png",
+        "masks/performance/land/006.png",
+        "masks/performance/land/007.png"
+      ],
+      "posterIndex": 4
+    },
+    {
+      "id": "celebrate",
+      "title": "做好后轻轻一跃",
+      "fps": 16,
+      "loop": false,
+      "artStatus": "production-candidate",
+      "frames": {
+        "lit": [
+          "performance/lit/celebrate/000.png",
+          "performance/lit/celebrate/001.png",
+          "performance/lit/celebrate/002.png",
+          "performance/lit/celebrate/003.png",
+          "performance/lit/celebrate/004.png",
+          "performance/lit/celebrate/005.png",
+          "performance/lit/celebrate/006.png",
+          "performance/lit/celebrate/007.png",
+          "performance/lit/celebrate/008.png",
+          "performance/lit/celebrate/009.png",
+          "performance/lit/celebrate/010.png",
+          "performance/lit/celebrate/011.png"
+        ],
+        "unlit": [
+          "performance/unlit/celebrate/000.png",
+          "performance/unlit/celebrate/001.png",
+          "performance/unlit/celebrate/002.png",
+          "performance/unlit/celebrate/003.png",
+          "performance/unlit/celebrate/004.png",
+          "performance/unlit/celebrate/005.png",
+          "performance/unlit/celebrate/006.png",
+          "performance/unlit/celebrate/007.png",
+          "performance/unlit/celebrate/008.png",
+          "performance/unlit/celebrate/009.png",
+          "performance/unlit/celebrate/010.png",
+          "performance/unlit/celebrate/011.png"
+        ]
+      },
+      "masks": [
+        "masks/performance/celebrate/000.png",
+        "masks/performance/celebrate/001.png",
+        "masks/performance/celebrate/002.png",
+        "masks/performance/celebrate/003.png",
+        "masks/performance/celebrate/004.png",
+        "masks/performance/celebrate/005.png",
+        "masks/performance/celebrate/006.png",
+        "masks/performance/celebrate/007.png",
+        "masks/performance/celebrate/008.png",
+        "masks/performance/celebrate/009.png",
+        "masks/performance/celebrate/010.png",
+        "masks/performance/celebrate/011.png"
+      ],
+      "posterIndex": 6
+    },
+    {
+      "id": "work",
+      "title": "专注，轻换重心",
+      "fps": 8,
+      "loop": true,
+      "artStatus": "production-candidate",
+      "frames": {
+        "lit": [
+          "performance/lit/work/000.png",
+          "performance/lit/work/001.png",
+          "performance/lit/work/002.png",
+          "performance/lit/work/003.png",
+          "performance/lit/work/004.png",
+          "performance/lit/work/005.png",
+          "performance/lit/work/006.png",
+          "performance/lit/work/007.png",
+          "performance/lit/work/008.png",
+          "performance/lit/work/009.png",
+          "performance/lit/work/010.png",
+          "performance/lit/work/011.png"
+        ],
+        "unlit": [
+          "performance/unlit/work/000.png",
+          "performance/unlit/work/001.png",
+          "performance/unlit/work/002.png",
+          "performance/unlit/work/003.png",
+          "performance/unlit/work/004.png",
+          "performance/unlit/work/005.png",
+          "performance/unlit/work/006.png",
+          "performance/unlit/work/007.png",
+          "performance/unlit/work/008.png",
+          "performance/unlit/work/009.png",
+          "performance/unlit/work/010.png",
+          "performance/unlit/work/011.png"
+        ]
+      },
+      "masks": [
+        "masks/performance/work/000.png",
+        "masks/performance/work/001.png",
+        "masks/performance/work/002.png",
+        "masks/performance/work/003.png",
+        "masks/performance/work/004.png",
+        "masks/performance/work/005.png",
+        "masks/performance/work/006.png",
+        "masks/performance/work/007.png",
+        "masks/performance/work/008.png",
+        "masks/performance/work/009.png",
+        "masks/performance/work/010.png",
+        "masks/performance/work/011.png"
+      ],
+      "posterIndex": 6
+    }
+  ],
+  "summary": {
+    "clips": 7,
+    "pairedSamples": 84,
+    "bytes": 16595280
+  }
+}

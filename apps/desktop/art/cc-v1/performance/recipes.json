@@ -1,0 +1,2237 @@
+{
+  "schemaVersion": 2,
+  "artStatus": "production-candidate",
+  "forms": [
+    "lit",
+    "unlit"
+  ],
+  "source": "apps/desktop/art/cc-v1/cc-v1.blend",
+  "canvas": {
+    "width": 512,
+    "height": 512,
+    "anchor": [
+      0.5,
+      0.91796875
+    ],
+    "safeBboxPx": [
+      80,
+      28,
+      432,
+      470
+    ]
+  },
+  "clips": [
+    {
+      "id": "peek",
+      "title": "先看一眼，再探身",
+      "fps": 12,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.036346,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "confused": 0.000218
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.07,
+          "body": {
+            "lean": 0.000049,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.00003
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "confused": 0.069929
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.07,
+          "body": {
+            "lean": 0.01554,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.009712
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "confused": 0.166157
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.07,
+          "body": {
+            "lean": 0.036924,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.023077
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "confused": 0.157124
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.054749,
+          "body": {
+            "lean": 0.037458,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.023094
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "confused": 0.061373
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.009085,
+          "body": {
+            "lean": 0.026819,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.015114
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "confused": 0.000032
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.049979,
+          "body": {
+            "lean": 0.020004,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.010003
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.05,
+          "body": {
+            "lean": 0.006767,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.001178
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.05,
+          "body": {
+            "lean": -0.016677,
+            "squash": 1,
+            "rise": 0,
+            "shift": -0.014451
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.049158,
+          "body": {
+            "lean": -0.024579,
+            "squash": 1,
+            "rise": 0,
+            "shift": -0.019663
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.0335,
+          "body": {
+            "lean": -0.01675,
+            "squash": 1,
+            "rise": 0,
+            "shift": -0.0134
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": -0.011288,
+          "body": {
+            "lean": -0.005644,
+            "squash": 1,
+            "rise": 0,
+            "shift": -0.004515
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "压低，再伸个懒腰",
+      "fps": 12,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "low": 0.039599
+          },
+          "eyeScale": 0.868002,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.9769,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "low": 0.103778
+          },
+          "eyeScale": 0.654074,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.939463,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "low": 0.116472,
+            "happy": 0.01323
+          },
+          "eyeScale": 0.60735,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.933822,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "low": 0.084711,
+            "happy": 0.132332
+          },
+          "eyeScale": 0.673518,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.968229,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "low": 0.039599,
+            "happy": 0.301502
+          },
+          "eyeScale": 0.767501,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1.017101,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "low": 0.005411,
+            "happy": 0.429707
+          },
+          "eyeScale": 0.838726,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1.054138,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.432248
+          },
+          "eyeScale": 0.858876,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1.055266,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.325189
+          },
+          "eyeScale": 0.912405,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1.026717,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.200417
+          },
+          "eyeScale": 0.974791,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.993445,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.149351
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.980086,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.105889
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.985881,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.03635
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.995153,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "walk",
+      "title": "交替抬脚的小步",
+      "fps": 10,
+      "loop": true,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.036063
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.007513,
+            "squash": 1.003005,
+            "rise": 0,
+            "shift": 0.010518
+          },
+          "feet": {
+            "left": {
+              "lift": 0.030053,
+              "stride": 0.030053,
+              "roll": 0.036063
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.098092
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.020436,
+            "squash": 1.008174,
+            "rise": 0,
+            "shift": 0.02861
+          },
+          "feet": {
+            "left": {
+              "lift": 0.081743,
+              "stride": 0.081743,
+              "roll": 0.098092
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.117205
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.024418,
+            "squash": 1.009767,
+            "rise": 0,
+            "shift": 0.034185
+          },
+          "feet": {
+            "left": {
+              "lift": 0.097671,
+              "stride": 0.097671,
+              "roll": 0.117205
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.068159
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.0142,
+            "squash": 1.00568,
+            "rise": 0,
+            "shift": 0.01988
+          },
+          "feet": {
+            "left": {
+              "lift": 0.056799,
+              "stride": 0.056799,
+              "roll": 0.068159
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.010458
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.002179,
+            "squash": 1.000872,
+            "rise": 0,
+            "shift": 0.00305
+          },
+          "feet": {
+            "left": {
+              "lift": 0.008715,
+              "stride": 0.008715,
+              "roll": 0.010458
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.010458
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.002179,
+            "squash": 1.000872,
+            "rise": 0,
+            "shift": -0.00305
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.008715,
+              "stride": -0.008715,
+              "roll": -0.010458
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.068159
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.0142,
+            "squash": 1.00568,
+            "rise": 0,
+            "shift": -0.01988
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.056799,
+              "stride": -0.056799,
+              "roll": -0.068159
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.117205
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.024418,
+            "squash": 1.009767,
+            "rise": 0,
+            "shift": -0.034185
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.097671,
+              "stride": -0.097671,
+              "roll": -0.117205
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.098092
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.020436,
+            "squash": 1.008174,
+            "rise": 0,
+            "shift": -0.02861
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.081743,
+              "stride": -0.081743,
+              "roll": -0.098092
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.036063
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.007513,
+            "squash": 1.003005,
+            "rise": 0,
+            "shift": -0.010518
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.030053,
+              "stride": -0.030053,
+              "roll": -0.036063
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "lift",
+      "title": "悬起后双脚轻垂",
+      "fps": 12,
+      "loop": true,
+      "frames": [
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.012,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": 0.015,
+              "roll": 0.12
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": -0.015,
+              "roll": -0.1
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.009908,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": 0.012385,
+              "roll": 0.099083
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": -0.012385,
+              "roll": -0.082569
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.004787,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": 0.005984,
+              "roll": 0.047874
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": -0.005984,
+              "roll": -0.039895
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.001632,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": -0.00204,
+              "roll": -0.016319
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": 0.00204,
+              "roll": 0.013599
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.007618,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": -0.009523,
+              "roll": -0.076183
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": 0.009523,
+              "roll": 0.063486
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.011441,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": -0.014301,
+              "roll": -0.11441
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": 0.014301,
+              "roll": 0.095342
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.011441,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": -0.014301,
+              "roll": -0.11441
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": 0.014301,
+              "roll": 0.095342
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.007618,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": -0.009523,
+              "roll": -0.076183
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": 0.009523,
+              "roll": 0.063486
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.001632,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": -0.00204,
+              "roll": -0.016319
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": 0.00204,
+              "roll": 0.013599
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.004787,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": 0.005984,
+              "roll": 0.047874
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": -0.005984,
+              "roll": -0.039895
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.009908,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": 0.012385,
+              "roll": 0.099083
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": -0.012385,
+              "roll": -0.082569
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.3
+          },
+          "eyeScale": 1.1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": -0.012,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.12,
+              "stride": 0.015,
+              "roll": 0.12
+            },
+            "right": {
+              "lift": 0.13,
+              "stride": -0.015,
+              "roll": -0.1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "land",
+      "title": "落地，回弹，站稳",
+      "fps": 16,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {
+            "excited": 0.2
+          },
+          "eyeScale": 1.05,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1.025,
+            "rise": 0.08,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.08,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.08,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.107137,
+            "low": 0.07429
+          },
+          "eyeScale": 0.841059,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.962318,
+            "rise": 0.042855,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.042855,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.042855,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "excited": 0.001317,
+            "low": 0.158946
+          },
+          "eyeScale": 0.602964,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.890889,
+            "rise": 0.000527,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.000527,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.000527,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "low": 0.089774
+          },
+          "eyeScale": 0.775565,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.949253,
+            "rise": 0.010534,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.010534,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.010534,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "low": 0.000441
+          },
+          "eyeScale": 0.998898,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1.024628,
+            "rise": 0.023934,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.023934,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.023934,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1.001445,
+            "rise": 0.009867,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.009867,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.009867,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.986653,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "celebrate",
+      "title": "做好后轻轻一跃",
+      "fps": 16,
+      "loop": false,
+      "frames": [
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.093974
+          },
+          "eyeScale": 0.80422,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.921688,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.164718
+          },
+          "eyeScale": 0.771093,
+          "crescent": 0.084373,
+          "gaze": 0,
+          "body": {
+            "lean": -0.002109,
+            "squash": 0.91139,
+            "rise": 0.010125,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.010125,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.010125,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.37877
+          },
+          "eyeScale": 0.872061,
+          "crescent": 0.488245,
+          "gaze": 0,
+          "body": {
+            "lean": -0.012206,
+            "squash": 0.965913,
+            "rise": 0.058589,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.058589,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.058589,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.59772
+          },
+          "eyeScale": 0.97534,
+          "crescent": 0.901359,
+          "gaze": 0,
+          "body": {
+            "lean": -0.022534,
+            "squash": 1.021683,
+            "rise": 0.108163,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.108163,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.108163,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.640066
+          },
+          "eyeScale": 1,
+          "crescent": 0.990066,
+          "gaze": 0,
+          "body": {
+            "lean": -0.023344,
+            "squash": 1.027384,
+            "rise": 0.112053,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.112053,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.112053,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.559298
+          },
+          "eyeScale": 1,
+          "crescent": 0.909298,
+          "gaze": 0,
+          "body": {
+            "lean": -0.009883,
+            "squash": 0.965462,
+            "rise": 0.047439,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.047439,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.047439,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.500122
+          },
+          "eyeScale": 1,
+          "crescent": 0.850122,
+          "gaze": 0,
+          "body": {
+            "lean": -0.00002,
+            "squash": 0.920093,
+            "rise": 0.000097,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.000097,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.000097,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.356816
+          },
+          "eyeScale": 1,
+          "crescent": 0.587496,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.958182,
+            "rise": 0.011932,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.011932,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.011932,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.200091
+          },
+          "eyeScale": 1,
+          "crescent": 0.300167,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 0.999976,
+            "rise": 0.024992,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.024992,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.024992,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "happy": 0.101515
+          },
+          "eyeScale": 1,
+          "crescent": 0.152273,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0.012689,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0.012689,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0.012689,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {},
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "work",
+      "title": "专注，轻换重心",
+      "fps": 8,
+      "loop": true,
+      "frames": [
+        {
+          "pose": {
+            "listening": 0.9
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.924779
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.004956,
+          "body": {
+            "lean": -0.00446,
+            "squash": 1,
+            "rise": 0,
+            "shift": -0.003717
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.971736
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.014347,
+          "body": {
+            "lean": -0.012913,
+            "squash": 1,
+            "rise": 0,
+            "shift": -0.01076
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.999801
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0.01996,
+          "body": {
+            "lean": -0.017964,
+            "squash": 1,
+            "rise": 0,
+            "shift": -0.01497
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.983816
+          },
+          "eyeScale": 0.715153,
+          "crescent": 0,
+          "gaze": 0.013526,
+          "body": {
+            "lean": -0.012174,
+            "squash": 0.998382,
+            "rise": 0,
+            "shift": -0.010145
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.955521
+          },
+          "eyeScale": 0.217174,
+          "crescent": 0,
+          "gaze": 0.002209,
+          "body": {
+            "lean": -0.001988,
+            "squash": 0.995552,
+            "rise": 0,
+            "shift": -0.001656
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.945227
+          },
+          "eyeScale": 0.260008,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.001909,
+            "squash": 0.995796,
+            "rise": 0,
+            "shift": 0.001909
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.924434
+          },
+          "eyeScale": 0.869923,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.010226,
+            "squash": 0.999261,
+            "rise": 0,
+            "shift": 0.010226
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.91882
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.011292,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.011292
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.912033
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.00722,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.00722
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.903925
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0.002355,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0.002355
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        },
+        {
+          "pose": {
+            "listening": 0.9
+          },
+          "eyeScale": 1,
+          "crescent": 0,
+          "gaze": 0,
+          "body": {
+            "lean": 0,
+            "squash": 1,
+            "rise": 0,
+            "shift": 0
+          },
+          "feet": {
+            "left": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            },
+            "right": {
+              "lift": 0,
+              "stride": 0,
+              "roll": 0
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

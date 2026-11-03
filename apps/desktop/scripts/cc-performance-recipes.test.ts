@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 
 const modulePath = new URL('./cc-performance-recipes.mjs', import.meta.url)
 async function plan() {
   expect(existsSync(modulePath), 'coordinated performance authoring is available').toBe(true)
-  return (await import(fileURLToPath(modulePath))).buildPerformancePlan()
+  return (await import(modulePath.href)).buildPerformancePlan()
 }
 
 describe('coordinated CC performances', () => {

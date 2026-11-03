@@ -32,11 +32,11 @@
 
 **Interfaces:** `buildPerformancePlan()` → schema2 paired plan; each sample supplies existing eye/C fields plus bounded body/foot controls. `body_point(point, controls)` and `foot_point(point, pivot, controls)` supply pure geometry math; Blender adapter uses equivalent matrices and saved base matrices.
 
-- [ ] Write tests for closed loops, canonical endpoints, anticipation/recovery, alternate foot support, finite bounded inputs, rooted-body/eye correspondence and positive deformation determinant.
-- [ ] Run new tests on Mini and record expected missing-feature RED.
-- [ ] Implement seven recipes and reset-safe transient rig, separate output/checkpoint namespace and exact frozen-source checks.
-- [ ] Run tests GREEN, render representative poses on Mini, inspect contact sheets before full render.
-- [ ] Commit recipe/rig source after Mini verification.
+- [x] Write tests for closed loops, canonical endpoints, anticipation/recovery, alternate foot support, finite bounded inputs, rooted-body/eye correspondence and positive deformation determinant.
+- [x] Run new tests on Mini and record expected missing-feature RED.
+- [x] Implement seven recipes and reset-safe transient rig, separate output/checkpoint namespace and exact frozen-source checks.
+- [x] Run tests GREEN, render representative poses on Mini, inspect contact sheets before full render.
+- [x] Commit recipe/rig source after Mini verification.
 
 ### Task 2: Validated assets and runtime selection
 
@@ -44,8 +44,8 @@
 
 **Interfaces:** registration accepts only complete provenance-matched seven-clip pairs. `resolvePerformance(manifest, form, action)` returns an optional animation. Existing normalized form states carry `life-*` entries, so existing bad-frame removal applies.
 
-- [ ] Write runtime RED tests for authored selection, CSS suppression, interruption, missing-frame fallback and one actual completion.
-- [ ] Implement selection without changing factual state; suppress duplicated body effects only while authored frames play.
+- [x] Write runtime RED tests for authored selection, CSS suppression, interruption, missing-frame fallback and one actual completion.
+- [x] Implement selection without changing factual state; suppress duplicated body effects only while authored frames play.
 - [ ] Render all pairs on Mini; register only after digest, shared mask, bounds, alpha, ground/contact and frozen-byte verification.
 - [ ] Inspect playback/contact sheets and 48/96/128px samples. Run existing and new affected tests GREEN on Mini.
 - [ ] Commit verified runtime and assets.
