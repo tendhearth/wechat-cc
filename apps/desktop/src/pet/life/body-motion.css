@@ -1,0 +1,34 @@
+/* A soft luminous C: weight and stretch, rather than borrowed limbs or sprites. */
+.pet-body { position: absolute; inset: 0; pointer-events: none; transform-origin: var(--pet-origin-x) var(--pet-origin-y); --pet-direction: 1; --pet-swing: 0; }
+.pet-body[data-pet-action="peek"] { animation: cc-peek 1200ms ease-in-out both; }
+.pet-body[data-pet-action="stretch"] { animation: cc-stretch 1200ms ease-in-out both; }
+.pet-body[data-pet-action="doze"] { transform: translateY(3px) scale(1.025,.94); transition: transform 700ms ease; }
+.pet-body[data-pet-action="wake"] { animation: cc-wake 800ms ease-in-out both; }
+.pet-body[data-pet-action="walk-start"] { animation: cc-step-in 300ms ease-in both; }
+.pet-body[data-pet-action="walk"] { animation: cc-step 400ms ease-in-out infinite; }
+.pet-body[data-pet-action="walk-stop"] { animation: cc-step-out 300ms ease-out both; }
+.pet-body[data-pet-action="lift"] { animation: cc-lift 160ms ease-out both; }
+.pet-body[data-pet-action="land"] { animation: cc-land 550ms ease-out both; }
+.pet-body[data-pet-action="work-enter"] { animation: cc-work-in 350ms ease-in-out both; }
+.pet-body[data-pet-action="work"] { animation: cc-typing 1600ms ease-in-out infinite; }
+.pet-body[data-pet-action="work-exit"] { animation: cc-work-out 300ms ease-out both; }
+.pet-body[data-pet-action="celebrate"] { animation: cc-celebrate 800ms ease-in-out both; }
+.pet-props[data-pet-action="work-enter"] .pet-prop[data-prop="laptop"] { animation: cc-laptop-in 350ms ease-out both; }
+.pet-props[data-pet-action="work-exit"] .pet-prop[data-prop="laptop"] { animation: cc-laptop-out 300ms ease-in both; }
+@keyframes cc-peek { 0%,100% { transform: none; } 35%,65% { transform: translateX(calc(var(--pet-direction) * 5px)) rotate(calc(var(--pet-direction) * 5deg)) scale(.98,1.025); } }
+@keyframes cc-stretch { 0%,100% { transform: none; } 20% { transform: scale(1.06,.92); } 58% { transform: translateY(-3px) scale(.92,1.09); } 80% { transform: scale(1.025,.98); } }
+@keyframes cc-wake { 0% { transform: translateY(3px) scale(1.025,.94); } 55% { transform: translateY(-2px) scale(.96,1.05); } 100% { transform: none; } }
+@keyframes cc-step-in { from { transform: none; } to { transform: rotate(calc(var(--pet-direction) * -3deg)) scale(1.035,.97); } }
+@keyframes cc-step { 0%,100% { transform: rotate(calc(var(--pet-direction) * -3deg)) scale(1.035,.97); } 50% { transform: translateY(-5px) rotate(calc(var(--pet-direction) * 2deg)) scale(.975,1.025); } }
+@keyframes cc-step-out { 0% { transform: rotate(calc(var(--pet-direction) * -3deg)) scale(1.035,.97); } 50% { transform: scale(1.045,.955); } 100% { transform: none; } }
+@keyframes cc-lift { from { transform: none; } to { transform: translateY(-4px) rotate(calc(var(--pet-swing) * 9deg)) scale(.955,1.045); } }
+@keyframes cc-land { 0% { transform: translateY(-7px) scale(.96,1.04); } 35% { transform: scale(1.09,.88); } 65% { transform: translateY(-3px) scale(.97,1.035); } 85% { transform: scale(1.02,.98); } 100% { transform: none; } }
+@keyframes cc-work-in { 0% { transform: none; } 45% { transform: translateY(-2px) rotate(-3deg); } 100% { transform: scale(1.015,.99); } }
+@keyframes cc-typing { 0%,42%,58%,100% { transform: none; } 47%,53% { transform: translateY(1px) rotate(.7deg) scale(1.005,.995); } }
+@keyframes cc-work-out { 0% { transform: none; } 55% { transform: rotate(2deg) scale(1.015,.98); } 100% { transform: none; } }
+@keyframes cc-celebrate { 0%,100% { transform: none; } 15% { transform: scale(1.06,.94); } 40% { transform: translateY(-9px) rotate(-3deg) scale(.97,1.04); } 65% { transform: scale(1.05,.95); } 82% { transform: translateY(-3px) rotate(2deg); } }
+@keyframes cc-laptop-in { from { transform: translate(-30%,-35%) rotate(12deg) scale(.4); opacity: 0; } to { transform: translate(-50%,-50%); opacity: 1; } }
+@keyframes cc-laptop-out { from { transform: translate(-50%,-50%); } to { transform: translate(-30%,-35%) rotate(12deg) scale(.4); opacity: 0; } }
+.pet-motion-reduced .pet-body, .pet-paused .pet-body { animation: none !important; transform: none !important; transition: none !important; }
+.pet-motion-reduced .pet-prop, .pet-paused .pet-prop { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { .pet-body, .pet-props .pet-prop { animation: none !important; transform: none; transition: none; } }
