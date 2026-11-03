@@ -46,6 +46,22 @@ export function createQAClock(now = Date.now) {
   }
 }
 
+// Eligibility can be accelerated after the first real-time native scene. Sprite
+// timers, the host monotonic clock and production preferences are never replaced.
+export function createQALifeClock(now = () => performance.now()) {
+  let offset = 0
+  return {
+    now: () => now() + offset,
+    random: () => 0,
+    offset: () => offset,
+    /** @param {unknown} value */
+    setOffset(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < offset || value > 4 * 60 * 60_000) throw Error('Invalid QA life clock offset')
+      offset = value
+    },
+  }
+}
+
 /**
  * @param {{behavior: string}} state
  * @param {boolean} quiet
