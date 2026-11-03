@@ -13,6 +13,7 @@ compile_error!("The embedded QA driver must never be included in a release appli
 pub mod daemon_mode;
 mod daemon_info;
 mod companion_placement;
+mod companion_motion;
 mod companion_drag;
 mod html_preview;
 mod nav_guard;
@@ -216,6 +217,8 @@ fn companion_placement_path(window: &WebviewWindow) -> Option<PathBuf> {
 }
 
 fn remember_companion_layout(window: &WebviewWindow, layout: &companion_placement::Layout) {
+    // All entry points (debounce, close, quit and explicit controls) share this guard.
+    if companion_motion_state().lock().map(|s| s.temporary()).unwrap_or(true) { return; }
     let placement = (|| {
         let visible = window.is_visible().ok()?;
         let minimized = window.is_minimized().ok()?;
@@ -236,12 +239,29 @@ fn remember_companion_placement(window: &WebviewWindow) {
 // 恢复期间不存:恢复的结果可能是「原显示器拔了」的退路位置,存了会覆盖用户真正放的地方。
 static COMPANION_PLACING: AtomicBool = AtomicBool::new(false);
 static COMPANION_MOVE_GEN: AtomicU64 = AtomicU64::new(0);
+fn companion_motion_state() -> &'static Mutex<companion_motion::MotionSession> {
+    static MOTION: std::sync::OnceLock<Mutex<companion_motion::MotionSession>> = std::sync::OnceLock::new();
+    MOTION.get_or_init(|| Mutex::new(companion_motion::MotionSession::default()))
+}
+fn stop_companion_idle_motion() {
+    if let Ok(mut state) = companion_motion_state().lock() { state.stop(); }
+    COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
+}
+fn companion_user_layout(window: &WebviewWindow) -> Option<companion_placement::Layout> {
+    stop_companion_idle_motion();
+    companion_motion_state().lock().ok().and_then(|s| s.anchor().cloned()).or_else(|| companion_layout(window))
+}
+fn adopt_companion_layout(window: &WebviewWindow, persist: bool) {
+    if let Ok(mut state) = companion_motion_state().lock() { state.adopt(); }
+    COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
+    if persist { remember_companion_placement(window); }
+}
 // 两次 open 挤在一起时,第二次会在第一次「从磁盘恢复」还没完时抓默认位置并提前 show,
 // 谁赢看时序;串行化整个 open。
 static COMPANION_OPENING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn remember_companion_placement_soon(window: &WebviewWindow) {
-    if COMPANION_PLACING.load(Ordering::SeqCst) { return; }
+    if COMPANION_PLACING.load(Ordering::SeqCst) || companion_motion_state().lock().map(|s|s.temporary()).unwrap_or(true) { return; }
     let generation = COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     let window = window.clone();
     tauri::async_runtime::spawn(async move {
@@ -253,16 +273,20 @@ fn remember_companion_placement_soon(window: &WebviewWindow) {
 }
 
 async fn restore_companion_placement(window: &WebviewWindow, from_disk: bool) {
+    stop_companion_idle_motion();
     COMPANION_PLACING.store(true, Ordering::SeqCst);
-    restore_companion_placement_inner(window, from_disk).await;
+    if restore_companion_placement_inner(window, from_disk).await {
+        if let Ok(mut state) = companion_motion_state().lock() { state.adopt(); }
+    }
     // 恢复本身触发的 Moved 已经排了去抖,换代让它们作废。
     COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
     COMPANION_PLACING.store(false, Ordering::SeqCst);
 }
 
-async fn restore_companion_placement_inner(window: &WebviewWindow, from_disk: bool) {
+async fn restore_companion_placement_inner(window: &WebviewWindow, from_disk: bool) -> bool {
     let (screens, preferred) = companion_screens(window);
-    let saved = if from_disk {
+    let transient=companion_motion_state().lock().ok().and_then(|s|s.saved());
+    let saved = if transient.is_some() { transient } else if from_disk {
         companion_placement_path(window).and_then(|path| companion_placement::load(&path))
     } else {
         // Existing hidden windows retain their current bounds, while also
@@ -270,8 +294,9 @@ async fn restore_companion_placement_inner(window: &WebviewWindow, from_disk: bo
         companion_layout(window).and_then(|layout| screens.get(preferred).and_then(|screen| companion_placement::capture(screen, &layout, true, false)))
     };
     if let Some(layout) = companion_placement::restore(saved.as_ref(), &screens, preferred, cfg!(target_os = "macos")) {
-        let _ = apply_companion_confirmed(window, &layout, false).await;
+        return apply_companion_confirmed(window, &layout, false).await.is_ok();
     }
+    false
 }
 
 // Opens the companion as its own transparent desktop window. The aquarium
@@ -403,6 +428,9 @@ fn close_companion_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn start_companion_drag(app: AppHandle) -> Result<Option<companion_drag::Point>, String> {
+    // A press stops autonomous movement but is not adoption: a click must not
+    // save a temporary location. Only a confirmed manual move adopts it.
+    stop_companion_idle_motion();
     let window = app
         .get_webview_window("companion")
         .ok_or_else(|| "companion window is not open".to_string())?;
@@ -427,7 +455,7 @@ async fn move_companion_window(app: AppHandle, x: f64, y: f64) -> Result<(), Str
         .map_err(|err| format!("position companion window: {err}"))?;
     for _ in 0..25 {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        if companion_layout(&window).is_some_and(|layout| requested.matches_physical(layout.x, layout.y, layout.scale)) { return Ok(()); }
+        if companion_layout(&window).is_some_and(|layout| requested.matches_physical(layout.x, layout.y, layout.scale)) { adopt_companion_layout(&window,false); return Ok(()); }
     }
     Err("companion drag position did not settle before timeout".into())
 }
@@ -440,6 +468,39 @@ fn finish_companion_drag(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn companion_motion_context(app: AppHandle) -> Result<Option<companion_motion::MotionContext>, String> {
+    // Other platforms retain their established native-managed drag/placement.
+    if !cfg!(target_os="macos") { return Ok(None); }
+    let window=app.get_webview_window("companion").ok_or("companion window is not open")?;
+    if COMPANION_PLACING.load(Ordering::SeqCst)||!window.is_visible().unwrap_or(false)||window.is_minimized().unwrap_or(true){return Ok(None)}
+    let (screens,preferred)=companion_screens(&window);
+    let Some(screen)=screens.get(preferred) else {return Ok(None)};
+    let mut state=companion_motion_state().lock().map_err(|_|"companion motion unavailable")?;
+    let Some(origin)=state.anchor().cloned().or_else(||companion_layout(&window)) else {return Ok(None)};
+    COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
+    Ok(state.begin(screen,&origin))
+}
+
+#[tauri::command]
+async fn step_companion_motion(app: AppHandle, token:u64, offset:f64) -> Result<(), String> {
+    let window=app.get_webview_window("companion").ok_or("companion window is not open")?;
+    let (screens,preferred)=companion_screens(&window);
+    let screen=screens.get(preferred).ok_or("companion display unavailable")?;
+    let visible=window.is_visible().unwrap_or(false)&&!window.is_minimized().unwrap_or(true)
+        &&window.scale_factor().is_ok_and(|scale|(scale-screen.scale).abs()<1e-6);
+    let mut state=companion_motion_state().lock().map_err(|_|"companion motion unavailable")?;
+    let layout=state.step(token,offset,screen,visible).ok_or("companion motion expired or outside bounds")?;
+    let position:tauri::Position=match companion_placement::native_position(&layout,cfg!(target_os="macos")) {
+        companion_placement::NativePosition::Logical(x,y)=>tauri::LogicalPosition::new(x,y).into(),
+        companion_placement::NativePosition::Physical(x,y)=>tauri::PhysicalPosition::new(x,y).into(),
+    };
+    window.set_position(position).map_err(|e|format!("move companion: {e}"))
+}
+
+#[tauri::command]
+fn stop_companion_motion() { stop_companion_idle_motion(); }
+
+#[tauri::command]
 async fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), String> {
     let window = app.get_webview_window("companion")
         .ok_or_else(|| "companion window is not open".to_string())?;
@@ -448,13 +509,14 @@ async fn resize_companion_window(app: AppHandle, direction: String) -> Result<()
         "out" => 1.0 / 1.12,
         _ => return Err("invalid companion resize direction".to_string()),
     };
-    let current = companion_layout(&window).ok_or_else(|| "cannot read companion layout".to_string())?;
+    let current = companion_user_layout(&window).ok_or_else(|| "cannot read companion layout".to_string())?;
     let (screens, preferred) = companion_screens(&window);
     let desired = screens.get(preferred).and_then(|screen| companion_placement::zoom(screen, &current, factor, cfg!(target_os = "macos")))
         .ok_or_else(|| "cannot resolve companion monitor".to_string())?;
     // Derive the requested size before queuing native setters. An immediate
     // read can still be the old geometry on macOS and must not undo the zoom.
-    apply_companion_confirmed(&window, &desired, true).await
+    apply_companion_confirmed(&window, &desired, false).await?;
+    adopt_companion_layout(&window,true); Ok(())
 }
 
 #[tauri::command]
@@ -462,11 +524,12 @@ async fn reset_companion_position(app: AppHandle) -> Result<(), String> {
     let window = app.get_webview_window("companion")
         .ok_or_else(|| "companion window is not open".to_string())?;
     let (screens, preferred) = companion_screens(&window);
-    let size = companion_layout(&window);
+    let size = companion_user_layout(&window);
     let (width, height) = size.map(|layout| (layout.width, layout.height)).unwrap_or((240.0, 300.0));
     let layout = companion_placement::edge(&screens, preferred, width, height, cfg!(target_os = "macos"))
         .ok_or_else(|| "cannot resolve companion monitor".to_string())?;
-    apply_companion_confirmed(&window, &layout, true).await
+    apply_companion_confirmed(&window, &layout, false).await?;
+    adopt_companion_layout(&window,true); Ok(())
 }
 
 // Spawn the bundled sidecar and collect its stdout. Stderr is forwarded as
@@ -1693,6 +1756,9 @@ pub fn run() {
             open_companion_window,
             close_companion_window,
             start_companion_drag,
+            companion_motion_context,
+            step_companion_motion,
+            stop_companion_motion,
             move_companion_window,
             finish_companion_drag,
             resize_companion_window,
