@@ -1,5 +1,46 @@
 import {test,expect} from './fixtures'
-import type {Page} from '@playwright/test'
+import type {Page,Request} from '@playwright/test'
+
+// Screenshots use real time, while the idle director uses page timers. Keep
+// that clock paused between steps, and let real HTTP polling settle before
+// advancing again; one 3-minute jump can outrun its asynchronous responses.
+async function idleClock(page:Page){
+  const pending=new Set<Request>(),failed:string[]=[]
+  const isPoll=(request:Request)=>['/v1/companion/presence','/v1/companion/pet'].includes(new URL(request.url()).pathname)
+  page.on('request',request=>{if(isPoll(request))pending.add(request)})
+  page.on('requestfinished',request=>pending.delete(request))
+  page.on('requestfailed',request=>{if(isPoll(request)){pending.delete(request);failed.push(`${request.url()}: ${request.failure()?.errorText}`)}})
+  const anchor=Date.parse('2026-11-03T00:00:00Z')
+  await page.clock.install({time:new Date(anchor-60_000)})
+  await page.clock.pauseAt(anchor)
+  await page.addInitScript(()=>{
+    const trace:any[]=[];(window as any).__idleTrace=trace
+    const note=(event:string,detail:unknown)=>{trace.push({at:Date.now(),event,detail,hidden:document.hidden,snapshot:(window as any).__pet?.machine.snapshot()});if(trace.length>300)trace.shift()}
+    document.addEventListener('DOMContentLoaded',()=>{
+      const stage=document.getElementById('pet-stage')
+      if(stage)new MutationObserver(records=>{for(const record of records)note(record.attributeName!,{before:record.oldValue,after:stage.getAttribute(record.attributeName!)})}).observe(stage,{attributes:true,attributeOldValue:true,attributeFilter:['data-pet-action','aria-label']})
+      for(const event of ['pointerenter','pointerleave','focusin','focusout','visibilitychange'])document.addEventListener(event,e=>note(event,(e.target as Element)?.className),true)
+      window.addEventListener('blur',()=>note('window-blur',null))
+    })
+  })
+  return async(ms:number)=>{
+    for(let left=ms;left>0;){
+      const step=Math.min(1000,left)
+      await page.clock.runFor(step)
+      await expect.poll(()=>pending.size,{message:'Idle polling must settle before the next clock step'}).toBe(0)
+      expect(failed,'Idle fixture polling must remain connected').toEqual([])
+      await page.evaluate(async()=>{await Promise.resolve();await Promise.resolve()})
+      left-=step
+    }
+  }
+}
+
+test.afterEach(async({page},info)=>{
+  if(info.status!==info.expectedStatus){
+    const trace=await page.evaluate(()=>(window as any).__idleTrace??[]).catch(()=>[])
+    await info.attach('idle-timeline',{body:JSON.stringify(trace,null,2),contentType:'application/json'})
+  }
+})
 
 async function entry(page:Page,shimUrl:string){
   await page.route('**/__dev_reload.js',r=>r.fulfill({contentType:'application/javascript',body:''}))
@@ -30,10 +71,10 @@ for(const authored of [true,false])test(`idle CC visibly peeks, stops for nearby
     delete kit.performance
     await route.fulfill({response,json:kit})
   })
-  await shim.invoke('demo.seed',{});await calm(page);await page.clock.install();await entry(page,shimUrl)
+  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl)
   const stage=page.locator('#pet-stage'),body=page.locator('#pet-body')
   await expect(stage).toHaveAttribute('data-pet-action','still')
-  await page.clock.runFor(20_100);await expect(stage).toHaveAttribute('data-pet-action','peek')
+  await advance(20_100);await expect(stage).toHaveAttribute('data-pet-action','peek')
   if(authored){
     await expect(body).toHaveAttribute('data-pet-performance','true')
     await expect(body).toHaveCSS('transform','none')
@@ -43,7 +84,7 @@ for(const authored of [true,false])test(`idle CC visibly peeks, stops for nearby
     await expect(img).toHaveJSProperty('complete',true)
     await expect(img).toHaveJSProperty('naturalWidth',512)
     const before=await img.screenshot(),first=await img.getAttribute('src')
-    await page.clock.runFor(250)
+    await advance(250)
     await expect(img).not.toHaveAttribute('src',first!)
     await expect(img).toHaveJSProperty('complete',true)
     expect(before.equals(await img.screenshot())).toBe(false)
@@ -55,12 +96,12 @@ for(const authored of [true,false])test(`idle CC visibly peeks, stops for nearby
   await page.locator('.pet-controls').dispatchEvent('pointerenter')
   await expect(stage).toHaveAttribute('data-pet-action','still')
   await page.locator('.pet-shell').dispatchEvent('pointerleave')
-  await page.clock.runFor(180_000);await expect(stage).toHaveAttribute('data-pet-action','doze')
+  await advance(180_000);await expect(stage).toHaveAttribute('data-pet-action','doze')
   expect(await page.evaluate(()=>(window as any).__pet.machine.snapshot().form)).toBe('lit')
   await page.screenshot({path:'.superpowers/cc-life-doze.png'})
   await page.locator('.pet-shell').dispatchEvent('pointerenter')
   await expect(stage).toHaveAttribute('data-pet-action','wake')
-  await page.clock.runFor(801);await expect(stage).toHaveAttribute('data-pet-action','still')
+  await advance(801);await expect(stage).toHaveAttribute('data-pet-action','still')
 })
 
 test('the original CC visibly prepares work, puts it away, and immediately yields celebration to permission',async({page,shimUrl,shim})=>{
