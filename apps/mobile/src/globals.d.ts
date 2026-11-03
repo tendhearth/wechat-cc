@@ -37,4 +37,7 @@ declare var CCP: {
   STATUS_TABLE: Record<'working' | 'waiting' | 'replied' | 'done' | 'failed' | 'stopped', { word: string; icon: string | null; tone: 'accent' | 'inkSoft'; group: 'waiting' | 'working' | 'back' }>
   STATUS_WORDS: Record<'working' | 'waiting' | 'replied' | 'done' | 'failed' | 'stopped', string>
   HOME_GROUP_WORDS: Record<'waiting' | 'working' | 'back', string>
+  /** 「在做」却这么久没动静 ⇒ 提示可能卡住(ms)。 */
+  QUIET_AFTER_MS: number
+  ROW_HINT_WORDS: { quiet: string; pendingTotal: string }
 }

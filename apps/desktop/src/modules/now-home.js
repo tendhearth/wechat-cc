@@ -1,6 +1,7 @@
 // @ts-check
 // now-home.js — 「此刻」页的纯函数(spec 2026-10-01 §6.3)。无 DOM。
 import { markdownPlainText } from './workbench-markdown.js'
+import { ROW_HINT_WORDS } from '../generated/status-table.js'
 
 /** @param {number} hour */
 export function greetingFor(hour) {
@@ -68,7 +69,7 @@ export function waitingRows(state) {
     if (first) return {
       id: t.id,
       title: first.text.trim(),
-      detail: [t.title, total > 1 ? `共 ${total} 项` : ''].filter(Boolean).join(' · '),
+      detail: [t.title, total > 1 ? ROW_HINT_WORDS.pendingTotal.replace('{n}', String(total)) : ''].filter(Boolean).join(' · '),
       go: /** @type {'看清楚'|'回答'} */ (first.kind === 'permission' ? '看清楚' : '回答'),
     }
     return {

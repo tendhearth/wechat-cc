@@ -21,7 +21,7 @@
  */
 import { b64uEncode, b64uDecode } from './b64u'
 import { makeProtocolClient } from './client'
-import { HOME_GROUP_WORDS, STATUS_TABLE, STATUS_WORDS } from './status-table'
+import { HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from './status-table'
 
 const CCP = {
   b64u: { encode: b64uEncode, decode: b64uDecode },
@@ -30,6 +30,8 @@ const CCP = {
   STATUS_TABLE,
   STATUS_WORDS: STATUS_WORDS['zh-Hans'],
   HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'],
+  QUIET_AFTER_MS,
+  ROW_HINT_WORDS: ROW_HINT_WORDS['zh-Hans'],
 }
 
 ;(globalThis as unknown as { CCP: typeof CCP }).CCP = CCP

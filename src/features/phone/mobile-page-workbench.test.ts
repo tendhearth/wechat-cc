@@ -15,7 +15,7 @@ import { MOBILE_WORKBENCH_JS } from './mobile-page'
 import { phoneHtml } from './settings-panel-html'
 import { assembleMobilePage } from '../../../apps/mobile/assemble'
 import { readMobileSource } from '../../../apps/mobile/sources'
-import { HOME_GROUP_WORDS, STATUS_TABLE, STATUS_WORDS } from '../../../packages/protocol/src/status-table'
+import { HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from '../../../packages/protocol/src/status-table'
 
 const IDS = ['refresh', 'm-home', 'm-list', 'm-all', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
 
@@ -96,7 +96,7 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
     return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true }) })
   }
   const ccPlain = new Function(`${readMobileSource('boot.js').slice(readMobileSource('boot.js').indexOf('function ccPlain'))}\nreturn ccPlain`)()
-  const CCP = { STATUS_TABLE, STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'] }
+  const CCP = { STATUS_TABLE, STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'], QUIET_AFTER_MS, ROW_HINT_WORDS: ROW_HINT_WORDS['zh-Hans'] }
   const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'ccPlain', 'CCP', 'homeCardId', source)
   boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
@@ -316,6 +316,7 @@ describe('一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,等你 
       { id: 'i1', title: '重启打断', kind: 'task', status: 'open', updatedAt: NOW - 60_000, taskState: { status: 'interrupted', phase: 'interrupted', pending: 0 } },
       { id: 'f1', title: '失败', kind: 'task', status: 'done', updatedAt: NOW - 120_000, taskState: { status: 'failed', phase: 'failed', pending: 0 } },
       { id: 'o1', title: '老 daemon', kind: 'task', status: 'open', updatedAt: NOW - 180_000 },
+      { id: 'q1', title: '半小时没动静', kind: 'task', status: 'open', updatedAt: NOW - 31 * 60_000, taskState: { status: 'running', phase: 'working', pending: 0 } },
     ] })
     await h.enterPane()
     const html = h.els.get('m-list')!.innerHTML
@@ -328,7 +329,9 @@ describe('一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,等你 
     expect(at('>带回来的<')).toBeLessThan(at('data-mid="i1"'))
     expect(html).toMatch(/data-mid="i1"[^]*?<small>停下了<\/small>/)
     expect(html).toMatch(/data-mid="f1"[^]*?<small>没做成<\/small>/)
-    expect(html).toMatch(/data-mid="w1"[^]*?<small>等你决定<\/small>/)
+    expect(html).toMatch(/data-mid="w1"[^]*?<small>等你决定 · 共 2 项<\/small>/)
+    expect(html).toMatch(/data-mid="q1"[^]*?<small>可能卡住<\/small>/)   // 在做却 30 分钟没动静(三端同一句)
+    expect(html).not.toMatch(/data-mid="o1"[^<]*<span class="tx"><b>[^<]*<\/b><small>/)   // 刚有动静的不说   // 等你好几项 ⇒ 共 N 项(三端同一句)
   })
   it('「刷新」也重拉列表(列表就在此刻页上)', async () => {
     const h = harness()

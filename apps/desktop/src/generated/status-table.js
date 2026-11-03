@@ -58,5 +58,12 @@ export const HOME_GROUP_WORDS = /** @type {const} */ ({
   "back": "带回来的"
 })
 
+export const QUIET_AFTER_MS = 1800000
+
+export const ROW_HINT_WORDS = /** @type {const} */ ({
+  "quiet": "可能卡住",
+  "pendingTotal": "共 {n} 项"
+})
+
 /** @typedef {keyof typeof STATUS_TABLE} StatusKey */
 /** @typedef {typeof HOME_GROUP_ORDER[number]} HomeGroupKey */

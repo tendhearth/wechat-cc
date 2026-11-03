@@ -45,3 +45,15 @@ export const HOME_GROUP_WORDS: Readonly<Record<'zh-Hans' | 'en', Readonly<Record
   'zh-Hans': { waiting: '等你', working: '在做', back: '带回来的' },
   en: { waiting: 'Waiting on you', working: 'Working', back: 'Brought back' },
 }
+
+/**
+ * 「在做」却这么久没动静 ⇒ 行里提示「可能卡住」(2026-11-03 主人:产品统一的缺口)。和微信日报里的「可能卡住」
+ * (src/domain/overseer-today.ts 的 TODAY_QUIET_MS)是同一条线、同一个数。
+ */
+export const QUIET_AFTER_MS = 30 * 60_000
+
+/** 行里的两句提示(两种语言):`quiet` 可能卡住;`pendingTotal` 一件事同时等你好几项 ⇒ 共 N 项({n} 是占位)。三端同一句。 */
+export const ROW_HINT_WORDS: Readonly<Record<'zh-Hans' | 'en', Readonly<{ quiet: string; pendingTotal: string }>>> = {
+  'zh-Hans': { quiet: '可能卡住', pendingTotal: '共 {n} 项' },
+  en: { quiet: 'May be stuck', pendingTotal: '{n} in total' },
+}

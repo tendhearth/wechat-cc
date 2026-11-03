@@ -62,7 +62,12 @@ function mStatusKey(m) {
   return "working"
 }
 function mRow(m, key) {
-  var caption = m.networkSuspended ? "已暂停(网络未受保护)" : key === "working" ? "" : CCP.STATUS_WORDS[key]
+  // 三端同一句(状态表):等你好几项 ⇒「共 N 项」;在做却 30 分钟没动静 ⇒「可能卡住」
+  var pending = (m.taskState && m.taskState.pending) || 0
+  var caption = m.networkSuspended ? "已暂停(网络未受保护)"
+    : key === "working" ? (Date.now() - (m.updatedAt || Date.now()) > CCP.QUIET_AFTER_MS ? CCP.ROW_HINT_WORDS.quiet : "")
+    : key === "waiting" && pending > 1 ? CCP.STATUS_WORDS[key] + " · " + CCP.ROW_HINT_WORDS.pendingTotal.replace("{n}", String(pending))
+    : CCP.STATUS_WORDS[key]
   return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(ccPlain(m.title))+'</b>'+(caption?'<small>'+esc(caption)+'</small>':'')+'</span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents,{nameOf:mNameOf(m.agentNames)})+'</button>'
 }
 function renderMatters() {
