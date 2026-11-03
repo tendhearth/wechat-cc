@@ -29,6 +29,10 @@ describe('homeGroups:主页的「在做」「带回来的」两组(等你那一�
     expect(g.working.map(r => [r.id, r.title, r.caption])).toEqual([['w', '作品集', null]])
     expect(g.back.map(r => [r.id, r.title, r.caption, r.status])).toEqual([['d', '日报', STATUS_WORDS.done, 'done']])
   })
+  it('在做却 30 分钟没动静 ⇒ 小字「可能卡住」(三端同一句,状态表里;和微信日报同一条线)', () => {
+    const g = homeGroups({ ...base, tasks: [task({ id: 'q', updatedAt: NOW - 31 * 60_000 }), task({ id: 'f', updatedAt: NOW - 60_000 })] } as never)
+    expect(g.working.map(r => [r.id, r.caption])).toEqual([['f', null], ['q', '可能卡住']])
+  })
   it('等你的事不进这两组(不论 attention 读到没有):不把它误标成在做', () => {
     const t = task({ id: 'p', pendingPermissionCount: 1 })
     expect(homeGroups({ ...base, attention: null, tasks: [t] } as never).working).toEqual([])

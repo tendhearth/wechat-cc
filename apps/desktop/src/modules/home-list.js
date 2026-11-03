@@ -3,7 +3,7 @@
 // 此刻与一起做合成一个主页:一件事、终端会话都是同一种行,分组与状态词只认生成物 status-table.js
 // (源头在 packages/protocol/src/status-table.ts,App 与手机网页用同一张)。「等你」那一组由 now-page.js 自己画
 // (行上写请求本身、终端的可以就地拍板),这里不出等你的行,也不把等你的事误标成在做。
-import { STATUS_TABLE, STATUS_WORDS } from '../generated/status-table.js'
+import { QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from '../generated/status-table.js'
 import { formatRelativeTime } from '../view.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 
@@ -51,7 +51,8 @@ export function homeGroups(input) {
     const status = t.importedOnly ? 'stopped' : taskStatusKey(t)
     rows.push({
       id: t.id, source: 'task', title: t.title || '未命名任务',
-      caption: t.importedOnly ? '还没开始做' : back(status) ? STATUS_WORDS[status] : null,
+      // 在做却 30 分钟没动静 ⇒「可能卡住」(三端同一句,状态表里;和微信日报同一条线)
+      caption: t.importedOnly ? '还没开始做' : back(status) ? STATUS_WORDS[status] : status === 'working' && now - t.updatedAt > QUIET_AFTER_MS ? ROW_HINT_WORDS.quiet : null,
       detail: null, status,
       agents: AGENTS.matterAgents(t.providerId, t.agents),
       ...(input.agentNames ? { agentNames: input.agentNames } : {}),

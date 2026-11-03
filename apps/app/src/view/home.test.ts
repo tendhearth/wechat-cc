@@ -29,12 +29,23 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     expect(v.groups.map(g => g.key)).not.toContain('waiting')
     expect(v.actionableWaiting).toEqual([])
   })
-  it('同一件事两条批准 ⇒ 等你组一行,带第一条请求;去处带 ?request=', () => {
+  it('同一件事两条批准 ⇒ 等你组一行,带第一条请求、说「共 2 项」(三端同一句);去处带 ?request=', () => {
     const v = homeView(input({ matters: [m('w', NOW)], approvals: [{ taskId: 'w', kind: 'question', id: 'q1', summary: 'a' }, { taskId: 'w', kind: 'permission', id: 'p2', summary: 'b' }] as any }))
     const rows = v.groups[0]!.rows
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ id: 'w', status: 'waiting', pendingRequestId: 'q1', title: 'a', href: '/matter/w/decide?request=q1', caption: 'tw' })
+    expect(rows[0]).toMatchObject({ id: 'w', status: 'waiting', pendingRequestId: 'q1', title: 'a', href: '/matter/w/decide?request=q1', caption: 'tw · 共 2 项' })
     expect(v.actionableWaiting).toHaveLength(1)
+  })
+  it('在做却 30 分钟没动静 ⇒ 小字说「可能卡住」(和微信日报同一条线);刚有动静的不说;英文同一张表', () => {
+    const v = homeView(input({ matters: [m('q', NOW - 31 * 60_000), m('f', NOW - 5 * 60_000)] }))
+    const rows = v.groups.find(g => g.key === 'working')!.rows
+    expect(rows.map(r => [r.id, r.caption])).toEqual([['f', null], ['q', '可能卡住']])
+    const en = homeView(input({ lang: 'en', matters: [m('q', NOW - 31 * 60_000)] }))
+    expect(en.groups[0]!.rows[0]!.caption).toBe('May be stuck')
+  })
+  it('批准到了、列表还没跟上的那件事:同样说「共 N 项」', () => {
+    const v = homeView(input({ matters: [], approvals: [{ taskId: 'n', kind: 'permission', id: 'p1', summary: 'a' }, { taskId: 'n', kind: 'permission', id: 'p2', summary: 'b' }] as any }))
+    expect(v.groups[0]!.rows[0]).toMatchObject({ id: 'n', caption: '共 2 项' })
   })
   it('主人对话、访客对话、归档的不进列表', () => {
     const v = homeView(input({ matters: [m('a', NOW), m('c', NOW, 'open', { kind: 'chat' }), m('x', NOW, 'archived')] }))

@@ -1,4 +1,4 @@
-import { STATUS_TABLE, type HomeGroupKey } from '@wechat-cc/protocol'
+import { QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, type HomeGroupKey } from '@wechat-cc/protocol'
 import type { AgentsTopicT, ApprovalItemT, CliSessionRowT, MatterT } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import { matterOrigin, type MatterOrigin } from './origin'
@@ -64,6 +64,9 @@ function matterRows(input: HomeInput): HomeRow[] {
   const first = new Map<string, ApprovalItemT>()
   for (const a of approvals) if (!first.has(a.taskId)) first.set(a.taskId, a)
   const pendingN = (id: string) => approvals.filter(a => a.taskId === id).length
+  // 三端同一句(协议包的状态表):一件事同时等你好几项 ⇒「共 N 项」;在做却 30 分钟没动静 ⇒「可能卡住」(和微信日报同一条线)
+  const hints = ROW_HINT_WORDS[lang]
+  const total = (id: string) => { const n = pendingN(id); return n > 1 ? hints.pendingTotal.replace('{n}', String(n)) : null }
   // 批准到了、列表还没跟上(新事 / 超出列表上限 / 还没拉到)⇒ 照样一行等你:标题用请求概括,去处是那一步
   const listed = new Set(matters.map(m => m.id))
   const orphans: HomeRow[] = [...first.values()].filter(a => !listed.has(a.taskId)).map(a => ({
@@ -71,7 +74,7 @@ function matterRows(input: HomeInput): HomeRow[] {
     source: 'matter' as const,
     href: `/matter/${encodeURIComponent(a.taskId)}/decide?request=${encodeURIComponent(a.id)}`,
     title: a.summary,
-    caption: null,
+    caption: total(a.taskId),
     detail: null,
     note: null,
     status: 'waiting' as const,
@@ -86,7 +89,8 @@ function matterRows(input: HomeInput): HomeRow[] {
       const task = agents.tasks.find(x => x.id === m.id)
       const status = statusOfMatter(m, task ? { status: 'running', phase: task.phase } : null, pendingN(m.id))
       const p = status === 'waiting' ? first.get(m.id) ?? null : null
-      const caption = p ? m.title : STATUS_TABLE[status].group === 'back' ? t(lang, STATUS_TABLE[status].word) : null
+      const quiet = status === 'working' && input.now - m.updatedAt > QUIET_AFTER_MS
+      const caption = p ? [m.title, total(m.id)].filter(Boolean).join(' · ') : STATUS_TABLE[status].group === 'back' ? t(lang, STATUS_TABLE[status].word) : quiet ? hints.quiet : null
       return {
         id: m.id,
         source: 'matter' as const,
