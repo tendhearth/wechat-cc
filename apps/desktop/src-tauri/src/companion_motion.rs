@@ -15,7 +15,7 @@ impl MotionSession {
     pub fn begin(&mut self,screen:&Screen,layout:&Layout)->Option<MotionContext> {
         self.stop();
         let placement=companion_placement::capture(screen,layout,true,false)?;
-        if (screen.scale-layout.scale).abs()>1e-6 {return None}
+        if !layout.scale.is_finite()||(screen.scale-layout.scale).abs()>1e-6 {return None}
         let gap=(screen.y+screen.height-layout.y-layout.height*screen.scale)/screen.scale;
         let left=(layout.x-screen.x)/screen.scale;
         let right=screen.width/screen.scale-layout.width-left;
@@ -35,6 +35,17 @@ impl MotionSession {
     pub fn temporary(&self)->bool {self.temporary}
     pub fn anchor(&self)->Option<&Layout> {self.anchor.as_ref()}
     pub fn saved(&self)->Option<Placement> {companion_placement::capture(self.screen.as_ref()?,self.anchor.as_ref()?,true,false)}
+    /// Native size changes are user intent, while the walk offset is not.
+    /// Keep the original anchor (clamped for the new size), not the temporary x.
+    pub fn resize_anchor(&mut self,screen:&Screen,observed:&Layout,macos:bool)->Option<Layout> {
+        let anchor=self.anchor.as_ref()?;
+        if !self.temporary||self.screen.as_ref()!=Some(screen)
+            ||(anchor.width-observed.width).abs()<0.5&&(anchor.height-observed.height).abs()<0.5 {return None}
+        let updated=Layout {width:observed.width,height:observed.height,..anchor.clone()};
+        let saved=companion_placement::capture(screen,&updated,true,false)?;
+        let updated=companion_placement::restore(Some(&saved),&[screen.clone()],0,macos)?;
+        self.stop();self.anchor=Some(updated.clone());Some(updated)
+    }
     pub fn adopt(&mut self){self.stop();self.temporary=false;self.anchor=None;self.screen=None;self.bounds=None}
 }
 
@@ -73,5 +84,20 @@ mod tests {
         assert!(session.step(c.token,5.0,&Screen { scale:1.0,..screen() },true).is_none());
         assert!(session.begin(&screen(),&Layout { y:300.0,..layout() }).is_none());
         assert!(session.begin(&Screen { width:100.0,..screen() },&layout()).is_none());
+    }
+    #[test]
+    fn native_resize_after_or_during_a_stroll_retains_size_without_adopting_its_offset() {
+        for stop_first in [false,true] {
+            let mut s=MotionSession::default();let c=s.begin(&screen(),&layout()).unwrap();
+            let mut observed=s.step(c.token,-24.0,&screen(),true).unwrap();
+            if stop_first {s.stop()}
+            observed.width=260.0;observed.height=325.0;
+            let updated=s.resize_anchor(&screen(),&observed,true).unwrap();
+            assert_eq!(updated.x,layout().x);assert_eq!((updated.width,updated.height),(260.0,325.0));
+            assert!(updated.y+updated.height*updated.scale<=screen().y+screen().height);
+            assert!(s.step(c.token,0.0,&screen(),true).is_none());assert!(s.temporary());
+            assert_eq!(s.saved().unwrap().width,260.0);
+            assert!(s.resize_anchor(&screen(),&updated,true).is_none());
+        }
     }
 }

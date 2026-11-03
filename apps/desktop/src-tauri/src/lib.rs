@@ -219,6 +219,11 @@ fn companion_placement_path(window: &WebviewWindow) -> Option<PathBuf> {
 fn remember_companion_layout(window: &WebviewWindow, layout: &companion_placement::Layout) {
     // All entry points (debounce, close, quit and explicit controls) share this guard.
     if companion_motion_state().lock().map(|s| s.temporary()).unwrap_or(true) { return; }
+    persist_companion_user_layout(window,layout);
+}
+
+// Only confirmed user geometry or a validated user-resized original anchor.
+fn persist_companion_user_layout(window: &WebviewWindow, layout: &companion_placement::Layout) {
     let placement = (|| {
         let visible = window.is_visible().ok()?;
         let minimized = window.is_minimized().ok()?;
@@ -232,6 +237,18 @@ fn remember_companion_layout(window: &WebviewWindow, layout: &companion_placemen
 
 fn remember_companion_placement(window: &WebviewWindow) {
     if let Some(layout) = companion_layout(window) { remember_companion_layout(window, &layout); }
+}
+
+fn remember_companion_resize(window: &WebviewWindow) {
+    if COMPANION_PLACING.load(Ordering::SeqCst) {return}
+    let (screens,preferred)=companion_screens(window);
+    let resized=companion_layout(window).and_then(|observed|screens.get(preferred).and_then(|screen| {
+        companion_motion_state().lock().ok()?.resize_anchor(screen,&observed,cfg!(target_os="macos"))
+    }));
+    if let Some(anchor)=resized {
+        COMPANION_MOVE_GEN.fetch_add(1,Ordering::SeqCst);
+        persist_companion_user_layout(window,&anchor);
+    } else {remember_companion_placement_soon(window)}
 }
 
 // 拖动 / 拉边改大小只发 Moved/Resized,以前只在 CloseRequested 才存;Cmd+Q、更新后重启、
@@ -361,7 +378,8 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     window.on_window_event(move |event| {
         match event {
             tauri::WindowEvent::CloseRequested { .. } => remember_companion_placement(&on_close),
-            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => remember_companion_placement_soon(&on_close),
+            tauri::WindowEvent::Moved(_) => remember_companion_placement_soon(&on_close),
+            tauri::WindowEvent::Resized(_) => remember_companion_resize(&on_close),
             _ => {}
         }
     });
@@ -490,6 +508,9 @@ async fn step_companion_motion(app: AppHandle, token:u64, offset:f64) -> Result<
         &&window.scale_factor().is_ok_and(|scale|(scale-screen.scale).abs()<1e-6);
     let mut state=companion_motion_state().lock().map_err(|_|"companion motion unavailable")?;
     let layout=state.step(token,offset,screen,visible).ok_or("companion motion expired or outside bounds")?;
+    // Native event delivery may reenter placement capture; never hold its lock
+    // across a window setter.
+    drop(state);
     let position:tauri::Position=match companion_placement::native_position(&layout,cfg!(target_os="macos")) {
         companion_placement::NativePosition::Logical(x,y)=>tauri::LogicalPosition::new(x,y).into(),
         companion_placement::NativePosition::Physical(x,y)=>tauri::PhysicalPosition::new(x,y).into(),

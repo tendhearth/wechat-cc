@@ -64,7 +64,7 @@ export function captureQAObservation(state, quiet, control) {
  * @param {(value: {command: string, ok: boolean, error?: string,destination?:unknown}) => void} [onSettled]
  */
 export function createQAInvoke(nativeInvoke, clearPermission = () => {}, onSettled = () => {}) {
-  const controls = new Set(['open_companion_window', 'close_companion_window', 'start_companion_drag', 'move_companion_window', 'finish_companion_drag', 'resize_companion_window', 'reset_companion_position', 'show_main_window', 'take_pending_navigate'])
+  const controls = new Set(['open_companion_window', 'close_companion_window', 'start_companion_drag', 'move_companion_window', 'finish_companion_drag', 'companion_motion_context', 'step_companion_motion', 'stop_companion_motion', 'resize_companion_window', 'reset_companion_position', 'show_main_window', 'take_pending_navigate'])
   return async (command, args = {}) => {
     if (command === 'pet_permission_resolve') { clearPermission(); return false }
     if (!controls.has(command)) throw Error('Native/backend command blocked by isolated native QA')

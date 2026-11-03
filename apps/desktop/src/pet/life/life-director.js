@@ -5,7 +5,9 @@
 /** @param {{schedule:(fn:()=>void,ms:number)=>unknown,cancel:(h:unknown)=>void,random:()=>number,onAction:(a:Action)=>void}} deps */
 export function createLifeDirector({schedule,cancel,random,onAction}) {
   /** @type {Snapshot|null} */ let facts=null
-  /** @type {unknown} */ let idea=null,nap=null,ending=null
+  /** @type {unknown} */ let idea=null
+  /** @type {unknown} */ let nap=null
+  /** @type {unknown} */ let ending=null
   let available=false,suppressed=false,disposed=false,calmClock=false,lastIdea='',action='still',direction=1
   const clear=(/** @type {unknown} */ h)=>{if(h!==null)cancel(h)}
   const emit=(/** @type {string} */ name)=>{if(action===name)return;action=name;onAction({action,direction})}
@@ -59,8 +61,10 @@ export function createLifeDirector({schedule,cancel,random,onAction}) {
         });return
       }
       if(next.behavior==='done'&&previous?.behavior!=='done'){
+        if(action==='work-exit')return
         cancelIdle();timed('celebrate',800,()=>{emit(base());syncIdle()});return
       }
+      if(action==='work-exit'&&next.behavior==='receive')return
       if(!calm()&&next.behavior!=='done'){cancelIdle();clearEnd();emit('still')}
       // Blink/look are our own decoration; their snapshots don't restart calm time.
       syncIdle()

@@ -30,6 +30,30 @@ async function boot() {
 }
 
 describe('CC local life over real pet runtime',()=>{
+  it.each([{oneShots:['done']},{oneShots:['receive','done']}])('real intent $oneShots puts work away before celebrating',async({oneShots})=>{
+    const {c,root,pet,action}=await boot()
+    pet.applyIntent({form:'lit',behavior:'working',props:[],badge:0,hint:null,oneShots:[]});c.tick(350)
+    pet.applyIntent({form:'lit',behavior:'idle',props:[],badge:0,hint:null,oneShots})
+    expect(action()).toBe('work-exit')
+    expect(root.props.children.some((n:any)=>n.attrs['data-prop']==='laptop'&&n.attrs['data-prop-leaving']==='false')).toBe(true)
+    c.tick(299);expect(action()).toBe('work-exit')
+    c.tick(1);expect(action()).toBe('celebrate')
+    pet.setState('permission');expect(action()).toBe('still');c.tick(1000);expect(action()).toBe('still')
+    pet.destroy()
+  })
+  it('new actual work consumes an old completion, including one held while lifted',async()=>{
+    const {c,pet,action}=await boot()
+    const work={form:'lit',behavior:'working',props:[],badge:0,hint:null,oneShots:[]}
+    pet.setState('working');c.tick(350);pet.setState('done');c.tick(300)
+    expect(action()).toBe('celebrate')
+    pet.applyIntent(work)
+    expect(pet.machine.snapshot().behavior).toBe('working')
+    expect(action()).toBe('work-enter');c.tick(3000);expect(action()).toBe('work')
+    pet.beginDrag();pet.applyIntent({...work,behavior:'idle',oneShots:['done']})
+    pet.applyIntent(work);pet.endDrag();c.tick(3000)
+    expect(pet.machine.snapshot().behavior).toBe('working');expect(action()).toBe('work')
+    pet.destroy()
+  })
   it('has spaced, non-repeating idle ideas without changing factual state',async()=>{
     const {c,pet,action}=await boot()
     c.tick(19_999);expect(action()).toBe('still')

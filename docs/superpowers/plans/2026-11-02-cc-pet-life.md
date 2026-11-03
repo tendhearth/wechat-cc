@@ -34,9 +34,9 @@
 
 **Interfaces:** director consumes factual snapshot + suppression/near/blocked flags and injected clock/random; emits `{action, direction}`. Drag feedback accepts finite velocity and explicit moved release. The state machine remains the factual authority.
 
-- [ ] Write tests for idle probe/stretch/doze/wake, work-enter/work-exit/real done chain, priority interruption and timer destruction; run Mini RED before production code.
-- [ ] Implement director with 20–40s idle gaps and 180s doze, 350ms prepare and 300ms put-away; add bounded body pose renderer preserving feet and facts.
-- [ ] Mini GREEN plus existing pet/renderer/props tests; record and commit.
+- [x] Write tests for idle probe/stretch/doze/wake, work-enter/work-exit/real done chain, priority interruption and timer destruction; run Mini RED before production code.
+- [x] Implement director with 20–40s idle gaps and 180s doze, 350ms prepare and 300ms put-away; add bounded body pose renderer preserving feet and facts.
+- [x] Mini GREEN plus existing pet/renderer/props tests; record and commit.
 
 ### Task 2: Bounded native walk and drag feedback
 
@@ -44,9 +44,9 @@
 
 **Interfaces:** `companion_motion_context` returns logical origin/bounds plus generation token; `step_companion_motion(token,offset)` validates current display/visibility and ±48 bounds; `stop_companion_motion` invalidates without accepting temporary placement. Manual movement explicitly adopts a new position only after actual drag movement. Motion scheduler owns at most one request in flight and fresh post-stop delays.
 
-- [ ] Write geometry/temporary-placement/token and async late-response tests, including click/cancel without landing; Mini RED.
-- [ ] Implement pure bounds/session state and fixed companion-only commands; all persistence paths honor temporary position, explicit drag/resize/reset invalidate old movement. Add velocity and confirmed moved-release callbacks without changing activation semantics.
-- [ ] Mini GREEN including Rust unit tests, drag and existing placement tests; record and commit.
+- [x] Write geometry/temporary-placement/token and async late-response tests, including click/cancel without landing; Mini RED.
+- [x] Implement pure bounds/session state and fixed companion-only commands; all persistence paths honor temporary position, explicit drag/resize/reset invalidate old movement. Add velocity and confirmed moved-release callbacks without changing activation semantics.
+- [x] Mini GREEN including Rust unit tests, drag and existing placement tests; record and commit.
 
 ### Task 3: Live integration and visible/native proof
 
@@ -54,8 +54,8 @@
 
 **Interfaces:** window feeds latest task/connection/preferences and whole-shell pointer/focus/visibility controls to local life and motion. Native QA uses actual commands and geometry; fixtures remain isolated and synthetic input is identified as such.
 
-- [ ] Add meaningful visible sequence and cancellation regressions; Mini RED before corresponding wiring changes.
-- [ ] Wire body/director/short-walk/drag velocity, explicit stop before window controls, and cleanup. Extend QA only within existing debug/Mini boundary.
+- [x] Add meaningful visible sequence and cancellation regressions; Mini RED before corresponding wiring changes.
+- [x] Wire body/director/short-walk/drag velocity, explicit stop before window controls, and cleanup. Extend QA only within existing debug/Mini boundary.
 - [ ] Mini affected/typecheck/depcheck/guards, full-platform, browser and native suites; inspect actual screenshots/phase geometry; commit after GREEN.
 - [ ] One fresh whole-branch review, one tested fix pass for material findings. Fetch dev, integrate in root-owned integration worktree; rerun exact-head full/browser/native and production build on Mini.
 - [ ] Verify CI, sign exact Mini app on primary, retain full old bundle and consistent data backup, serialize protected deploy and actual selftests. Record receipts and final outcome without primary GUI input.

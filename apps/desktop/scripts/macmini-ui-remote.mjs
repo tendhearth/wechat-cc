@@ -134,7 +134,7 @@ async function unit() {
   await command('qa-stage', '/opt/homebrew/bin/node', ['apps/desktop/scripts/prepare-cc-motion-native-qa.mjs'])
   return [
     await command('protocol', mini.bun, ['--bun', 'vitest', 'run', 'apps/desktop/scripts/macmini-ui-protocol.test.mjs']),
-    await command('companion-gesture', mini.bun, ['--bun', 'vitest', 'run', '--maxWorkers=2', 'src/features/workbench/service/view.test.ts', 'src/daemon/wiring/wire-pet-activities.test.ts', 'packages/protocol/src/desktop-api-pet.test.ts', 'apps/desktop/src/pet-activities.test.ts', 'apps/desktop/src/companion-drag.test.ts', 'apps/desktop/src/companion-window.test.ts', 'apps/desktop/src/companion-status.test.ts', 'apps/desktop/src/main-navigation.test.ts', 'apps/desktop/src/pet/pet.test.ts', 'apps/desktop/src/pet/renderer/sprite-renderer.test.ts', 'apps/desktop/scripts/prepare-cc-motion-native-qa.test.ts']),
+    await command('companion-gesture', mini.bun, ['--bun', 'vitest', 'run', '--maxWorkers=2', 'src/features/workbench/service/view.test.ts', 'src/daemon/wiring/wire-pet-activities.test.ts', 'packages/protocol/src/desktop-api-pet.test.ts', 'apps/desktop/src/pet-activities.test.ts', 'apps/desktop/src/companion-drag.test.ts', 'apps/desktop/src/companion-motion.test.ts', 'apps/desktop/src/companion-window.test.ts', 'apps/desktop/src/companion-status.test.ts', 'apps/desktop/src/main-navigation.test.ts', 'apps/desktop/src/pet/pet.test.ts', 'apps/desktop/src/pet/life/life-director.test.ts', 'apps/desktop/src/pet/renderer/sprite-renderer.test.ts', 'apps/desktop/scripts/prepare-cc-motion-native-qa.test.ts']),
     await command('test-environment', mini.bun, ['--bun', 'vitest', 'run', 'src/lib/config.test.ts', 'apps/desktop/shim.e2e.test.ts']),
     await command('native-library', mini.cargo, ['test', '--offline', '--locked', '--lib'], {
       cwd: join(project, 'apps/desktop/src-tauri'), extraEnv: { TAURI_CONFIG: qaConfig },
@@ -144,7 +144,7 @@ async function unit() {
 
 async function browser() {
   return command('browser', mini.bun, ['x', '--no-install', 'playwright', 'test', '-c', '.superpowers/macmini.config.ts',
-    'companion-controls.spec.ts', 'companion-entry.spec.ts', 'now-hero.spec.ts', 'companion-status.spec.ts', 'pet-lab.spec.ts'], {
+    'companion-controls.spec.ts', 'companion-entry.spec.ts', 'companion-life.spec.ts', 'now-hero.spec.ts', 'companion-status.spec.ts', 'pet-lab.spec.ts'], {
       cwd: join(project, 'apps/desktop'), extraEnv: { WECHAT_CC_INJECT_CSP: '1' },
     })
 }

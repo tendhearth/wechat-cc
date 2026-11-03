@@ -31,4 +31,4 @@
 @keyframes cc-laptop-out { from { transform: translate(-50%,-50%); } to { transform: translate(-30%,-35%) rotate(12deg) scale(.4); opacity: 0; } }
 .pet-motion-reduced .pet-body, .pet-paused .pet-body { animation: none !important; transform: none !important; transition: none !important; }
 .pet-motion-reduced .pet-prop, .pet-paused .pet-prop { animation: none !important; }
-@media (prefers-reduced-motion: reduce) { .pet-body, .pet-props .pet-prop { animation: none !important; transform: none; transition: none; } }
+@media (prefers-reduced-motion: reduce) { .pet-body, .pet-props .pet-prop { animation: none !important; transition: none; } .pet-body { transform: none; } }

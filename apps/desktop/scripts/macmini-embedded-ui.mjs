@@ -361,6 +361,77 @@ try {
   assert.equal(reset.width, draggedRect.width); assert.equal(reset.height, draggedRect.height)
   assert(!sameFrame(reset, draggedRect), 'Reset did not return the dragged window to the screen edge')
   report.checks.push('reset restores edge placement without changing size')
+  // Direct IPC + independent AppKit reads. No hardware input or visibility override.
+  await execute('const q=window.__ccMotionQAControl;q.stopPolling();q.pet.setLifeAvailable(false);return true')
+  let motionResult=await invoke('stop_companion_motion')
+  assert.equal(motionResult.ok,true,motionResult.error)
+  const motionAnchor=(await nativeRead()).frame
+  const motionSavedText=await readFile(placementPath,'utf8')
+  const motionContextResult=await invoke('companion_motion_context')
+  assert.equal(motionContextResult.ok,true,motionContextResult.error)
+  const motionContext=motionContextResult.value
+  assert(motionContext,'Reset bottom-edge placement did not permit native motion')
+  assert(motionContext.minOffset<=-24&&motionContext.maxOffset>=-24)
+  motionResult=await invoke('step_companion_motion',{token:motionContext.token,offset:-24})
+  assert.equal(motionResult.ok,true,motionResult.error)
+  const motionMoved=await until('Actual AppKit temporary displacement',async()=>{
+    const frame=(await nativeRead()).frame
+    return sameFrame(frame,{...motionAnchor,x:motionAnchor.x-24})?frame:null
+  },5000)
+  motionResult=await invoke('stop_companion_motion')
+  assert.equal(motionResult.ok,true,motionResult.error)
+  const motionLate=await invoke('step_companion_motion',{token:motionContext.token,offset:0})
+  assert.equal(motionLate.ok,false,'Stopped motion accepted an expired token')
+  assert.match(motionLate.error,/expired|outside bounds/)
+  await new Promise(resolve=>setTimeout(resolve,700))
+  assert(sameFrame((await nativeRead()).frame,motionMoved),'Expired motion changed the AppKit frame')
+  assert.equal(await readFile(placementPath,'utf8'),motionSavedText,'Temporary motion overwrote user anchor')
+  await switchWindow('main');await click('#close')
+  await until('Temporary-motion companion closed',async()=>!(await command('/window/handles')).includes('companion'))
+  assert.equal(await readFile(placementPath,'utf8'),motionSavedText,'Closing at a temporary position overwrote user anchor')
+  await click('#open')
+  await until('Temporary-motion companion reopened',async()=>(await command('/window/handles')).includes('companion'))
+  await until('Motion reopen command returned',()=>execute('return !document.getElementById("open").disabled'))
+  await switchWindow('companion');await ready('companion')
+  const motionReopened=await until('Original AppKit anchor restored',async()=>{
+    const frame=(await nativeRead()).frame;return sameFrame(frame,motionAnchor)?frame:null
+  },5000)
+  assert.equal(await readFile(placementPath,'utf8'),motionSavedText)
+  report.motion={anchor:motionAnchor,context:motionContext,moved:motionMoved,expiredTokenRejected:true,
+    persistenceWaitMs:700,placementUnchangedAfterStopAndClose:true,reopened:motionReopened,
+    coverage:'Direct native IPC and actual AppKit geometry; idle scheduling/interaction gates covered separately in browser'}
+  report.checks.push('bounded native motion changes AppKit position, rejects expired tokens, preserves saved placement and restores user anchor')
+  // Native SetWindowRect exercises Resized events, not our explicit zoom IPC.
+  // A user resize during a stroll accepts the size, never the temporary offset.
+  const resizeBase=await command('/window/rect')
+  const resizeSaved=JSON.parse(await readFile(placementPath,'utf8'))
+  const resizeContext=await invoke('companion_motion_context')
+  assert.equal(resizeContext.ok,true,resizeContext.error);assert(resizeContext.value)
+  const edgeMoved=await invoke('step_companion_motion',{token:resizeContext.value.token,offset:-24})
+  assert.equal(edgeMoved.ok,true,edgeMoved.error)
+  await until('Temporary position before native resize',async()=>sameFrame((await nativeRead()).frame,{...motionAnchor,x:motionAnchor.x-24}))
+  await command('/window/rect',{...await command('/window/rect'),width:resizeBase.width+20,height:resizeBase.height+25})
+  await until('Native edge size observed',async()=>{
+    const frame=(await nativeRead()).frame;return frame.width===resizeBase.width+20&&frame.height===resizeBase.height+25
+  })
+  const lateResizeMove=await invoke('step_companion_motion',{token:resizeContext.value.token,offset:0})
+  assert.equal(lateResizeMove.ok,false,'Native resize did not invalidate an active stroll')
+  const resizedPreference=await until('Native edge size persisted',async()=>{
+    const saved=JSON.parse(await readFile(placementPath,'utf8'))
+    return saved.width===resizeBase.width+20&&saved.height===resizeBase.height+25?saved:null
+  })
+  assert.equal(resizedPreference.left,Math.min(resizeSaved.left,resizeSaved.screen.width/resizeSaved.screen.scale-resizedPreference.width))
+  assert.equal(resizedPreference.top,Math.min(resizeSaved.top,resizeSaved.screen.height/resizeSaved.screen.scale-resizedPreference.height))
+  await switchWindow('main');await click('#close')
+  await until('Edge-resized companion closed',async()=>!(await command('/window/handles')).includes('companion'))
+  await click('#open');await until('Edge-resized companion reopened',async()=>(await command('/window/handles')).includes('companion'))
+  await until('Edge resize reopen command returned',()=>execute('return !document.getElementById("open").disabled'))
+  await switchWindow('companion');await ready('companion')
+  const resizedReopened=await until('User edge size restored',async()=>{
+    const frame=(await nativeRead()).frame;return frame.width===resizedPreference.width&&frame.height===resizedPreference.height?frame:null
+  })
+  report.edgeResize={expiredTokenRejected:true,saved:resizedPreference,reopened:resizedReopened,temporaryOffsetNotSaved:true}
+  report.checks.push('native edge resize invalidates a stroll, saves user size without temporary offset and survives reopening')
   // Exercise production pet/prop code inside actual WebKit. This handle exists
   // only in the isolated staged QA source; normal app assets never export it.
   await execute('const {pet,stopPolling}=window.__ccMotionQAControl;stopPolling();pet.setQuiet(false);pet.setReducedMotion(false);pet.setPaused(false);pet.machine.notifyAnimationEnded();pet.applyIntent({form:"lit",behavior:"working",props:[],badge:0,hint:null,oneShots:[]})')
@@ -399,12 +470,17 @@ try {
   assert.equal(await execute('return window.__ccMotionQAControl.pet.machine.snapshot().behavior'),'idle')
   report.checks.push('nearby attention preserves connection, observes cooldown and never replays after quiet')
   report.cadence = []
+  const cadenceKit=JSON.parse(await readFile(join(process.cwd(),'apps/desktop/src/assets/pet/cc-v1/manifest.json'),'utf8'))
   for (const behavior of ['working','thinking']) {
-    const initial = await execute('const pet=window.__ccMotionQAControl.pet;pet.setState(arguments[0]);window.__ccQAFrameChanges=0;window.__ccQAFrameObserver?.disconnect();window.__ccQAFrameObserver=new MutationObserver(records=>window.__ccQAFrameChanges+=records.length);window.__ccQAFrameObserver.observe(document.getElementById("pet-sprite"),{attributes:true,attributeFilter:["src"]});return document.getElementById("pet-sprite").src',[behavior])
+    const form=await execute('return window.__ccMotionQAControl.pet.machine.snapshot().form')
+    const frames=cadenceKit.forms[form].states[behavior].frames
+    const initial = await execute('const pet=window.__ccMotionQAControl.pet;pet.setState(arguments[0]);window.__ccQAFrameChanges=0;window.__ccQASawLastFrame=false;const last=new URL("./assets/pet/cc-v1/"+arguments[2],location.href).href;window.__ccQAFrameObserver?.disconnect();window.__ccQAFrameObserver=new MutationObserver(records=>{window.__ccQAFrameChanges+=records.length;if(document.getElementById("pet-sprite").src===last)window.__ccQASawLastFrame=true});window.__ccQAFrameObserver.observe(document.getElementById("pet-sprite"),{attributes:true,attributeFilter:["src"]});return new URL("./assets/pet/cc-v1/"+arguments[1],location.href).href',[behavior,frames[0],frames.at(-1)])
     await until('Native work pose advances', async () => await execute('return document.getElementById("pet-sprite").src') !== initial)
     // Locked consoles may throttle WebKit timers. Observe a completed cycle
     // rather than assuming wall time equals the nominal frame duration.
-    await until('Native work cycle returns to its resting first frame', () => execute('return document.getElementById("pet-sprite").src===arguments[0] && window.__ccQAFrameChanges>1',[initial]))
+    // Preparation may restart the sprite at 350ms. That is not a completed
+    // cycle: require the manifest's actual last frame before the resting first.
+    await until('Native work cycle returns to its resting first frame', () => execute('return document.getElementById("pet-sprite").src===arguments[0] && window.__ccQAFrameChanges>1 && window.__ccQASawLastFrame',[initial]))
     const hold = await execute('return {frame:document.getElementById("pet-sprite").src,behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior,changes:window.__ccQAFrameChanges}')
     assert.equal(hold.frame,initial);assert.equal(hold.behavior,behavior)
     await new Promise(resolve=>setTimeout(resolve,500))

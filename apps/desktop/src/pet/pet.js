@@ -28,7 +28,7 @@ const IDLE_MOVES = new Set(['blink', 'look'])
 
 /**
  * @param {{ stage: any, img: any, props: any, hint?: any, body?:any }} root
- * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number, now?: () => number, life?:boolean }} opts
+ * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number, now?: () => number, life?:boolean,onLifeAction?:(pose:import('./life/life-director.js').Action)=>void }} opts
  */
 export async function createPet(root, opts) {
   const makeEl = opts.makeEl ?? ((/** @type {string} */ tag) => document.createElement(tag))
@@ -200,7 +200,7 @@ export async function createPet(root, opts) {
     }
   }
   if(opts.life){
-    life=createLifeDirector({schedule,cancel,random,onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot())}})
+    life=createLifeDirector({schedule,cancel,random,onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.(pose)}})
     bodyMotion?.render(life.current())
     life.setSuppressed(suppressDecoration())
   }
@@ -269,6 +269,10 @@ export async function createPet(root, opts) {
     setProps: machine.setProps,
     /** @param {PetIntent} intent */
     applyIntent(intent) {
+      if(['working','thinking'].includes(intent.behavior)){
+        for(let i=heldOneShots.length-1;i>=0;i--)if(heldOneShots[i]==='done')heldOneShots.splice(i,1)
+        if(machine.snapshot().behavior==='done')machine.notifyAnimationEnded()
+      }
       machine.setForm(intent.form)
       machine.setProps(intent.props, intent.badge)
       machine.setState(intent.behavior)
