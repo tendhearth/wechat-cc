@@ -47,6 +47,7 @@ export function huntAction(deps: HuntActionDeps, { dispatchToChat }: Pick<TickDi
         return await dispatchToChat(chatId, {
           claim: () => { const ticket = deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
           buildText: (style) => buildHuntText({ nowIso, avoid: prefs.avoid }, style),
+          nowIso,
         })
       } finally {
         try { releaseHunt?.() } catch { /* release 永不抛 */ }

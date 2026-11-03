@@ -132,3 +132,40 @@ describe('发送原语只在登记过的地方出现,次数只许降', () => {
     expect(drift).toEqual([])
   })
 })
+
+/**
+ * 回复交付也是发送(S1,设计稿 2026-10-31 §4 S):`replyDelivery.begin(` 开的一轮会把话送出去。
+ *  - 回答主人刚发来的那一句(协调器的 solo / parallel / chatroom)是 'reply',照常;
+ *  - **主动开口的那一轮(`context: 'tick'`)只能用门开出来的 `outbound`**(policy.say 交给生产者的那一轮):
+ *    写成可选(`...(outbound ? { outbound } : {})`)或不带,就是绕过门自己开口 —— 红。
+ */
+const REPLY_BEGIN_ALLOWED = new Set(['src/app/coordinator/solo.ts', 'src/app/coordinator/parallel.ts', 'src/app/coordinator/chatroom.ts'])
+export function tickBeginsWithoutGate(src: string): number {
+  let bad = 0
+  for (const m of src.matchAll(/replyDelivery\.begin\(([^\n]*)/g)) {
+    const line = m[1]!
+    if (!/context:\s*'tick'/.test(line)) continue
+    if (/\.\.\.\(\s*outbound\s*\?/.test(line) || !/\boutbound\b/.test(line)) bad++
+  }
+  return bad
+}
+describe('回复交付也算开口:主动的那一轮只能从门里开(S1)', () => {
+  it('识别得出', () => {
+    expect(tickBeginsWithoutGate("deps.replyDelivery.begin(chatId, { context: 'tick', providerId, outbound })")).toBe(0)
+    expect(tickBeginsWithoutGate("deps.replyDelivery.begin(chatId, { context: 'tick', providerId, ...(outbound ? { outbound } : {}) })")).toBe(1)
+    expect(tickBeginsWithoutGate("deps.replyDelivery.begin(chatId, { context: 'tick', providerId })")).toBe(1)
+    expect(tickBeginsWithoutGate("deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId })")).toBe(0)
+  })
+  it('src 里主动的那一轮都带着门开的 outbound;非主动的 begin 只出现在协调器回答主人那几处', () => {
+    const offenders: string[] = [], replies: string[] = []
+    for (const d of ['src/daemon', 'src/features', 'src/app']) {
+      for (const f of walk(join(ROOT, d))) {
+        const src = readFileSync(f, 'utf8'), rel = relative(ROOT, f).split('\\').join('/')
+        if (tickBeginsWithoutGate(src)) offenders.push(rel)
+        for (const m of src.matchAll(/replyDelivery\.begin\(([^\n]*)/g)) if (!/context:\s*'tick'/.test(m[1]!) && !REPLY_BEGIN_ALLOWED.has(rel)) replies.push(rel)
+      }
+    }
+    expect(offenders, '主动开口走 policy.say,用它交给生产者的那一轮当 outbound').toEqual([])
+    expect(replies, '回复交付只用来回答主人刚说的那一句;主动开口走 policy.say').toEqual([])
+  })
+})

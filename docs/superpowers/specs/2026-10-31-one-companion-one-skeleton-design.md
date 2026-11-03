@@ -133,6 +133,8 @@ matter   一件事:谁发起(initiator)、从哪来(origin_surface)、是什么(
 | S4 | 全局预算 + 统一挑选:「上次主动开口」从 `speech_log` 推;各发起方的定时器只产提议,initiative 提议交便宜模型一起挑 | `lastProactiveAtIso` 删掉;各功能里不再有直接发送 |
 | S5 | 桌宠订阅在场层与 `presence` topic,不再轮询 | `/v1/companion/pet` 轮询删掉 |
 
+**S 线进度(11-03)**:S1 做了。伙伴的推送(日程 / 问候 / 打猎,`dispatchToChat`)改成经 `speech.say` 开那一轮,账进 `speech_log`(kind = `companion`)。`tick-push` 里手判的免打扰 / 关心档换成问门(`policy.peek`:只判不记账),判法只剩门里那一份,而且照旧在调便宜模型挑候选之前问。发言守卫加了一条:主动的那一轮(`context: 'tick'`)开回复交付必须带门开的 `outbound`。S2–S5 未做。
+
 ### P:一套协议(在 M2 之后)
 
 | # | 内容 | 做完怎么算 |

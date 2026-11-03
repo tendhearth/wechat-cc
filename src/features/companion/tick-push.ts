@@ -3,7 +3,6 @@
  * 日程判断在哪些事里挑,由登记进来的候选决定(ports/companion-contributions.ts,登记表在 daemon/wiring/tick-bodies.ts);这里不认识任何一个。
  */
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
-import { inQuietHours } from '../../domain/quiet-hours'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { loadAgentConfig } from '../../lib/agent-config'
@@ -50,11 +49,14 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
     // 一拍一次:care 档、打猎 / 串门开关都从同一份 prefs 读(store 可能是磁盘)。
     const prefs = deps.chatPrefs.get(chatId)
     const level = careLevel(chatId, prefs, defaultChatId)
-    if (level === 'off') return // care off = master proactive kill-switch: no agenda/gap/hunt sends (別烦我 silences everything); hunt's own pref only gates hunt within a care-enabled chat
-    // 免打扰时段(第二轮对标 #5):主人设的这段时间 CC 不主动找他(agenda / 问候 / 打猎 / 串门 / 记忆都等到之后)。
-    // 在任何登记之前拦 —— 到期的 agenda 不打勾,时段过了照常发。
-    if (inQuietHours(prefs.quiet, Date.parse(nowIso), loadCompanionConfig(deps.stateDir).timezone ?? 'Asia/Shanghai')) {
-      deps.log('CARE', `skip chat=${chatId} reason=quiet_hours`)
+    // 能不能开口只有门说了算(S1):关心档关着(别烦我)/ 免打扰时段里 ⇒ 这一拍什么都不做 —— 在任何登记、任何模型调用之前问
+    // (到期的 agenda 不打勾,时段过了照常发)。只问不记账;真发的那一下(dispatchToChat)经 say,那一次才记。
+    // 门里的「送不到」不在这里挡:串门不走微信,送不送得到由下面的预判闸按候选分。没接门 ⇒ 不开口(同 dispatchToChat)。
+    const gate = deps.speech?.peek({ kind: 'companion', chatId, nowMs: Date.parse(nowIso) })
+    if (!gate) { deps.log('CARE', `skip chat=${chatId} reason=speech_not_wired`); return }
+    if ('drop' in gate || ('defer' in gate && gate.reason !== 'undeliverable')) {
+      // 关心档关着(别的对话没设过就是关)一拍一拍都会走到这里 ⇒ 不记日志,和以前一样静默;免打扰照旧记一行。
+      if (gate.reason !== 'care_off') deps.log('CARE', `skip chat=${chatId} reason=${gate.reason}`)
       return
     }
 
@@ -92,6 +94,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
           }
         },
         buildText: (style) => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body, avoid: prefs.avoid }, style),
+        nowIso,
       })
       return
     }

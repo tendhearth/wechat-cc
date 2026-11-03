@@ -82,7 +82,7 @@ export function makeTickDispatch(deps: TickDeps) {
    */
   async function dispatchToChat(
     chatId: string,
-    args: { claim: () => (() => void) | void; buildText: (style: TickTextStyle) => string },
+    args: { claim: () => (() => void) | void; buildText: (style: TickTextStyle) => string; /** 这一拍的时刻(免打扰按它判、账按它记);缺省 = 时钟。 */ nowIso?: string },
   ): Promise<boolean> {
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') {
@@ -113,6 +113,12 @@ export function makeTickDispatch(deps: TickDeps) {
     // SessionManager handle directly), so this can never re-enter the
     // mutex and self-deadlock. See docs/superpowers/specs/2026-07-10-
     // session-serialization-design.md.
+    // 能不能开口交给 SpeechPolicy(S1,设计稿 2026-10-31 §4 S):伙伴的推送(日程 / 问候 / 打猎)是 initiative —— 关心档关了不说、
+    // 免打扰推后、送不到推后;每一次判定都记进 speech_log。调用方(tick-push)已经按每种话的冷却问过 shouldSpeak,这里不重复。
+    // 没接门 ⇒ 不开口(不退回直接发,同 tick-job)。
+    if (!deps.speech) { deps.log('COMPANION', `chat=${chatId} skipped: speech policy not wired`); return false }
+    const nowMs = args.nowIso ? Date.parse(args.nowIso) : NaN
+    const said = await deps.speech.say({ kind: 'companion', chatId, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
     await deps.boot.coordinator.runExclusive(chatId, async () => {
       const handle = await deps.boot.sessionManager.acquire({
         alias: proj.alias,
@@ -134,9 +140,8 @@ export function makeTickDispatch(deps: TickDeps) {
       // 回复交付(spec 2026-10-03,已定 ③):推送也是一轮,最后的话就是推送,`NO_REPLY` = 这次不发(撤回登记)。
       const allSegments = replyTextStrategyFor(providerId) === 'all_segments'
       const tickText = args.buildText({ allSegments })
-      // 往哪儿送(微信能用走微信,不能用 / 发失败落到 App)由 proactive-channel 定,一轮粘住一条路。
-      const outbound = deps.proactive?.open(chatId)
-      const turn = deps.replyDelivery.begin(chatId, { context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), ...(outbound ? { outbound } : {}) })
+      // 往哪儿送(微信能用走微信,不能用 / 发失败落到 App)由门开的那一轮(proactive-channel)定,一轮粘住一条路。
+      const turn = deps.replyDelivery.begin(chatId, { context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
       try {
         const summary = await collectTurn(handle.dispatch(tickText))
         if (summary.error) {
@@ -150,8 +155,8 @@ export function makeTickDispatch(deps: TickDeps) {
             try { deps.activityLog?.append({ kind: 'proactive', status: said ? 'sent' : 'deferred' }) } catch { /* 记不上不影响发 */ }
           }
           // 落在 App ⇒ 整轮一条 companion 推送;落在微信 ⇒ 什么都不做(App 对话页已经看得见那一行)。
-          outbound?.finish()
-          if (outbound?.channel() === 'app') deps.log('COMPANION', `chat=${chatId} tick delivered to the app (wechat not usable)`)
+          outbound.finish()
+          if (outbound.channel() === 'app') deps.log('COMPANION', `chat=${chatId} tick delivered to the app (wechat not usable)`)
           if (report.failures.length > 0 && report.bubbles === 0 && report.attachmentsSent === 0) {
             // 发了但没发出去(断线 / 风控):登记保留,不在下一拍重跑模型再发一次(2026-10-10)。
             // 「失败」也可能其实送到了(超时之后服务端已收),重发就是重复;断线时每拍一轮模型也违背「断线时停掉外发与模型轮次」。
@@ -173,6 +178,8 @@ export function makeTickDispatch(deps: TickDeps) {
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
       }
     })
+    })
+    if (!('allow' in said)) { deps.log('CARE', `skip chat=${chatId} kind=companion reason=${'reason' in said ? said.reason : 'deferred'}`); return false }
     return true
   }
 

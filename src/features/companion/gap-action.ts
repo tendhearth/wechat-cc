@@ -21,6 +21,7 @@ export function gapAction(deps: Pick<TickDeps, 'careLedger'>, { dispatchToChat }
       return await dispatchToChat(chatId, {
         claim: () => { const ticket = deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
         buildText: (style) => buildGapCheckinText({ nowIso, chatId, daysSinceContact, avoid: prefs.avoid }, style),
+        nowIso,
       })
     },
   }
