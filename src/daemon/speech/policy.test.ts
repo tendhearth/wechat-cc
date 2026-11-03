@@ -231,3 +231,15 @@ describe('policy.ask —— 只问门、不开一轮(App 原生推送)', () => {
     expect(s.policy.ask({ kind: 'matter_report', chatId: OWNER }, { channel: 'app', deliverable: false })).toMatchObject({ defer: true, reason: 'undeliverable' })
   })
 })
+
+describe('policy.peek —— 只判不记账、不开一轮(S1:花钱之前先问一声)', () => {
+  it('和 say 同一套判法:关心档关 ⇒ drop;免打扰 ⇒ defer;送不到 ⇒ defer;都好 ⇒ allow。一行账都不记、一轮都不开', () => {
+    expect(setup({ care: 'off' }).policy.peek({ kind: 'companion', chatId: OWNER })).toEqual({ drop: true, reason: 'care_off' })
+    expect(setup({ quietEnds: Date.parse('2026-10-21T22:00:00.000Z') }).policy.peek({ kind: 'companion', chatId: OWNER })).toEqual({ defer: true, until: '2026-10-21T22:00:00.000Z', reason: 'quiet_hours' })
+    expect(setup({ deliverable: false }).policy.peek({ kind: 'companion', chatId: OWNER })).toEqual({ defer: true, reason: 'undeliverable' })
+    const s = setup()
+    expect(s.policy.peek({ kind: 'companion', chatId: OWNER })).toEqual({ allow: true })
+    expect(s.ledger).toEqual([])
+    expect(s.out.open).not.toHaveBeenCalled()
+  })
+})

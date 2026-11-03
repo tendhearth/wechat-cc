@@ -706,6 +706,20 @@ describe('buildTickBodies / pushTick — multi-chat care sweep (Task 6)', () => 
     expect(s.careLedgerEntries['chat-2']?.lastProactiveAtIso).toBe('2026-05-16T10:00:00.000Z')
   })
 
+  it('伙伴的推送过主动开口的门(S1):放行的那一拍在 speech_log 记一行 companion / allowed,不记正文', async () => {
+    // 账只留最近一段(ledger-store 写时顺手清旧的):这一拍放在「现在」附近,不然刚记的行当场就被清掉
+    const nowIso = new Date(Math.floor(Date.now() / 60_000) * 60_000).toISOString()
+    const db = openTestDb()
+    const ms = makeMessagesStore(db)
+    await ms.append({ id: 'm1', chatId: 'chat-2', ts: new Date(Date.parse(nowIso) - 3 * 86_400_000).toISOString(), direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    const s = setupDeps({ defaultChatId: null, inFlight: false, db, chatPrefsEntries: { 'chat-2': { care: 'high' } } })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    expect(db.query("SELECT kind,origin,chat_id AS chatId,outcome,at FROM speech_log").all()).toEqual([{ kind: 'companion', origin: 'initiative', chatId: 'chat-2', outcome: 'allowed', at: Date.parse(nowIso) }])
+  })
+
   it('(c) same chat with noReplyCount:2 is NOT dispatched, log contains paused_no_reply', async () => {
     const db = openTestDb()
     const ms = makeMessagesStore(db)
@@ -1943,7 +1957,8 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     cleanup.push(s.stateDir)
     const d = withDelivery(s, [{ kind: 'text', text: '我看看记忆' }, { kind: 'tool_call', server: 'wechat', tool: 'memory_read' }, { kind: 'text', text: '项目最近顺利吗?' }, { kind: 'result', sessionId: 's', numTurns: 2, durationMs: 1 }])
     await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
-    expect(d.begun).toEqual([{ chatId: 'chat-1', context: 'tick', providerId: 'claude', textStrategy: 'last_segment' }])
+    // 这一轮经主动开口的门开(S1):交付拿到的是门开的那一轮(outbound),不再自己开
+    expect(d.begun).toEqual([{ chatId: 'chat-1', context: 'tick', providerId: 'claude', textStrategy: 'last_segment', outbound: expect.objectContaining({ channel: expect.any(Function), finish: expect.any(Function) }) }])
     expect(d.delivered).toEqual([{ finalText: '项目最近顺利吗?', narration: ['我看看记忆'] }])
     const text = (s.dispatch.mock.calls[0] as unknown[])[0] as string
     expect(text).toContain('NO_REPLY')
@@ -2022,7 +2037,9 @@ describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
       sendWechat, app: () => app, log: (t, l) => { s.logs.push(`${t}|${l}`) },
     })
     const replyDelivery = makeReplyDeliveryRuntime({ sendText: sendWechat, sleep: async () => {}, log: (t, l) => { s.logs.push(`${t}|${l}`) } })
-    const deps: TickDeps = { ...s.deps, health: { shouldSuspend: () => o.degraded }, proactive, replyDelivery }
+    // 主动开口的门用同一份通道(生产里 pipeline-deps 也是同一个对象,S1):伙伴推送经门开那一轮
+    const speech = wireSpeech({ stateDir: s.stateDir, db: s.db, chatPrefs: s.deps.chatPrefs, log: (t, l) => { s.logs.push(`${t}|${l}`) }, proactive })
+    const deps: TickDeps = { ...s.deps, health: { shouldSuspend: () => o.degraded }, proactive, replyDelivery, speech }
     return { deps, sendWechat, app }
   }
   const agenda = '- [ ] due:2026-05-13 check in on project'

@@ -59,6 +59,11 @@ export interface SpeechPolicy {
    * 账上的 allowed 记的是**门的判定**,不是送达:放行以后推到 0 台(没配对 / 都离线)账上照样是 allowed,送达与否看推送自己的日志(#536 评审)。
    */
   ask(req: SpeechRequest, o: { channel: ProactiveChannel; deliverable: boolean }): SpeechOutcome
+  /**
+   * 只判、不记账、不开一轮(S1):要先花钱(调便宜模型挑候选)的发起方用它在花钱之前问一声「这一拍门会不会放」——
+   * 免打扰 / 关心档关着就别挑了。判法和 say 同一份(decideSpeech);真要说的时候照样走 say(那一次才记账)。
+   */
+  peek(req: SpeechRequest): SpeechDecision
 }
 
 export function makeSpeechPolicy(deps: {
@@ -113,6 +118,17 @@ export function makeSpeechPolicy(deps: {
     return { decision, base }
   }
   const policy: SpeechPolicy = {
+    peek(req) {
+      const nowMs = req.nowMs ?? now()
+      const ends = deps.quietEndsAt(req.chatId, nowMs)
+      return decideSpeech(req.kind, {
+        care: deps.care(req.chatId),
+        quiet: ends === null ? null : { endsIso: new Date(ends).toISOString() },
+        deliverable: deps.outbound.canDeliver(req.chatId),
+        ...(req.perKind ? { perKind: req.perKind } : {}),
+        ...(req.scheduled ? { scheduled: true } : {}),
+      })
+    },
     ask(req, o) {
       const { decision, base } = judge(req, o.deliverable)
       if (!('allow' in decision)) return decision
