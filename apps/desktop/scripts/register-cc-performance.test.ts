@@ -15,11 +15,19 @@ async function registration(){
 it('requires the complete paired profile and refuses duplicate or unsafe clip identities',async()=>{
   const {buildPerformanceCatalog}=await registration(), plan=buildPerformancePlan()
   const catalog=buildPerformanceCatalog(plan,{},'2026-11-03T00:00:00Z')
-  expect(catalog.clips).toHaveLength(7)
+  expect(catalog.clips).toHaveLength(9)
   expect(catalog.clips.find((c:any)=>c.id==='land').frames.unlit[7]).toBe('performance/unlit/land/007.png')
   expect(()=>buildPerformanceCatalog({...plan,clips:plan.clips.slice(1)}, {}, '')).toThrow('complete')
   expect(()=>buildPerformanceCatalog({...plan,clips:[...plan.clips,plan.clips[0]]}, {}, '')).toThrow('clip')
   expect(()=>buildPerformanceCatalog({...plan,clips:[{...plan.clips[0],id:'../escape'},...plan.clips.slice(1)]}, {}, '')).toThrow('clip')
+})
+it('rejects old eye schemas and nonfinite or out-of-face vertical attention before publishing',async()=>{
+  const {buildPerformanceCatalog}=await registration(),plan=buildPerformancePlan()
+  expect(()=>buildPerformanceCatalog({...plan,schemaVersion:2},{},'')).toThrow('plan')
+  for(const gazeUp of [NaN,Infinity,.141,-.041,undefined]){
+    const bad:any=structuredClone(plan);bad.clips[0].frames[1].gazeUp=gazeUp
+    expect(()=>buildPerformanceCatalog(bad,{},'')).toThrow('eye')
+  }
 })
 it('rejects an incomplete render before publishing any manifest or catalog',async()=>{
   const {preparePerformanceKit}=await registration()

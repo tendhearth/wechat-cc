@@ -2,6 +2,21 @@
 import math
 
 
+def eye_surface_point(location, gaze, gaze_up=0):
+    """Move an existing eye over the face; neutral never changes its saved point."""
+    if len(location) != 3 or not all(math.isfinite(v) for v in [*location, gaze, gaze_up]):
+        raise ValueError('Eye placement must be finite')
+    if abs(gaze) > .07 or not -.04 <= gaze_up <= .14:
+        raise ValueError('Eye placement exceeds the face envelope')
+    if gaze == 0 and gaze_up == 0:
+        return tuple(location)
+    x, z = location[0] + gaze, location[2] + gaze_up
+    inside = 1 - (x / 1.12) ** 2 - ((z - .742) / .93) ** 2
+    if inside <= 0:
+        raise ValueError('Eye placement leaves the face surface')
+    return (x, -.94 * math.sqrt(inside) - .013, z)
+
+
 def body_point(point, controls):
     x, y, z = point
     squash = controls['squash']

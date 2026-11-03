@@ -16,7 +16,7 @@ from mathutils import Vector, Matrix
 from bpy_extras.object_utils import world_to_camera_view
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cc_motion_geometry import morph_eye, eye_width
-from cc_performance_geometry import body_point, foot_point
+from cc_performance_geometry import body_point, foot_point, eye_surface_point
 
 ROOT = Path(__file__).resolve().parents[1]
 KIT = ROOT / 'src/assets/pet/cc-v1'
@@ -48,11 +48,11 @@ assert args.motion_plan or not (args.clip or args.motion_frame is not None or ar
 motion_plan = None
 if args.motion_plan:
     motion_plan = json.loads(args.motion_plan.read_text())
-    assert motion_plan.get('schemaVersion') == (2 if performance_mode else 1) and motion_plan.get('forms') == ['lit','unlit'], 'CC motion schema'
+    assert motion_plan.get('schemaVersion') == (3 if performance_mode else 1) and motion_plan.get('forms') == ['lit','unlit'], 'CC motion schema'
     assert motion_plan.get('artStatus') == 'production-candidate', 'CC motion must remain candidate'
     allowed = {'thinking','working','permission','receive','done','look','sleep','wake','error','drag'}
     if performance_mode:
-        allowed = {'peek','stretch','walk','lift','land','celebrate','work'}
+        allowed = {'peek','peek-left','stretch','walk','lift','land','celebrate','work','curiosity'}
     seen = set()
     for clip in motion_plan.get('clips', []):
         name = clip.get('id')
@@ -61,7 +61,7 @@ if args.motion_plan:
         assert isinstance(clip.get('fps'), (int,float)) and 1 <= clip['fps'] <= 24, 'Invalid CC motion fps'
         assert isinstance(clip.get('loop'), bool) and 2 <= len(clip.get('frames', [])) <= 64, 'Invalid CC motion frames'
         for sample in clip['frames']:
-            assert set(sample) == ({'pose','eyeScale','crescent','gaze','body','feet'} if performance_mode else {'pose','eyeScale','crescent','gaze'}), 'Invalid CC motion parameters'
+            assert set(sample) == ({'pose','eyeScale','crescent','gaze','gazeUp','body','feet'} if performance_mode else {'pose','eyeScale','crescent','gaze'}), 'Invalid CC motion parameters'
             weights = sample['pose']
             assert isinstance(weights, dict) and set(weights) <= {'listening','happy','confused','thinking','low','angry','excited'}, 'Invalid C pose'
             values = [*weights.values(), sample['eyeScale'], sample['crescent'], sample['gaze']]
@@ -69,6 +69,7 @@ if args.motion_plan:
             assert all(0 <= v <= 1 for v in weights.values()) and sum(weights.values()) <= 1.000001, 'C pose exceeds frozen envelope'
             assert .12 <= sample['eyeScale'] <= 1.15 and 0 <= sample['crescent'] <= 1 and abs(sample['gaze']) <= .07, 'Invalid eye motion'
             if performance_mode:
+                assert type(sample['gazeUp']) in (int,float) and math.isfinite(sample['gazeUp']) and -.04 <= sample['gazeUp'] <= .14, 'Invalid vertical eye motion'
                 body, feet = sample['body'], sample['feet']
                 assert isinstance(body, dict) and set(body) == {'lean','squash','rise','shift'}, 'Invalid body controls'
                 assert all(type(v) in (int,float) and math.isfinite(v) for v in body.values()), 'Nonfinite body controls'
@@ -557,7 +558,7 @@ def apply_performance(sample):
         step = affine_from_points(lambda point: foot_point(point, (x,-.52,0), sample['feet'][side]))
         obj.matrix_world = step @ base_matrices[name]
 
-def set_eyes(kind, scale, crescent=0, gaze=0):
+def set_eyes(kind, scale, crescent=0, gaze=0, gaze_up=0):
     for eye, (location, vertices) in zip(eyes, base_eyes):
         eye.location = location.copy()
         eye.scale = (1, .65, scale)
@@ -574,10 +575,14 @@ def set_eyes(kind, scale, crescent=0, gaze=0):
                 vertex.co.x, vertex.co.z = morph_eye(original.x, original.z, amount)
         if kind == 'large':
             eye.scale.x = eye.scale.z = 1.15
-        if kind == 'look' or gaze:
-            eye.location.x += .07 if kind == 'look' else gaze
-            x, _, z = eye.location
-            eye.location.y = -.94*math.sqrt(1-(x/1.12)**2-((z-.742)/.93)**2)-.013
+        if kind == 'look' or gaze or gaze_up:
+            if performance_mode:
+                eye.location = Vector(eye_surface_point(location, .07 if kind == 'look' else gaze, gaze_up))
+            else:
+                # Preserve the established fixed-body authoring path exactly.
+                eye.location.x += .07 if kind == 'look' else gaze
+                x, _, z = eye.location
+                eye.location.y = -.94*math.sqrt(1-(x/1.12)**2-((z-.742)/.93)**2)-.013
         eye.data.update()
 
 def render_pair(expression, pose='default', eye_scale=1, shared_entity=None, eye_kind='default', mask_name=None, motion_clip=None, crescent=0, gaze=0, performance=None):
@@ -585,7 +590,7 @@ def render_pair(expression, pose='default', eye_scale=1, shared_entity=None, eye
         for obj in parts + eyes:
             obj.matrix_world = base_matrices[obj.name].copy()
     set_pose(pose)
-    set_eyes(eye_kind, eye_scale, crescent, gaze)
+    set_eyes(eye_kind, eye_scale, crescent, gaze, performance['gazeUp'] if performance is not None else 0)
     bpy.context.view_layer.update()
     if performance is not None:
         apply_performance(performance)
@@ -759,7 +764,7 @@ if motion_plan:
             cached = rendered_samples.get(parameter_key)
             exact_rest = not sample['pose'] and sample['eyeScale'] == 1 and sample['crescent'] == 0 and sample['gaze'] == 0
             if performance_mode:
-                exact_rest = exact_rest and sample['body'] == {'lean':0,'squash':1,'rise':0,'shift':0} and all(all(v == 0 for v in foot.values()) for foot in sample['feet'].values())
+                exact_rest = exact_rest and sample['gazeUp'] == 0 and sample['body'] == {'lean':0,'squash':1,'rise':0,'shift':0} and all(all(v == 0 for v in foot.values()) for foot in sample['feet'].values())
             if exact_rest:
                 sources = [KIT/'canonical'/form/'front.png' for form in ['lit','unlit']]+[KIT/'masks/front.png']
             elif cached and all((KIT/p).exists() and hashlib.sha256((KIT/p).read_bytes()).hexdigest() == digest for p, digest in cached['files'].items()):
