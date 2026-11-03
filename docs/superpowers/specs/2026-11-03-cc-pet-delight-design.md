@@ -48,12 +48,12 @@ the next Mini previews are viewed.
   and a C that composes itself one beat later. Keep the factual completion rules.
 - **Work:** an intentional downward glance toward the laptop, followed by still
   concentration. Keep the six-second rest and restrained movement.
-- **Private curiosity:** the C perks first while CC is still. CC catches it with
-  a blink, a small recoil and a held wide-eyed inspection. The C returns to normal
-  before CC drops its gaze; CC composes itself and finishes with one tiny toe
-  adjustment. Full draft review rejected the earlier gentle stretch because its
-  cause and reaction were unreadable. No extra object, speech, sound, badge or
-  claimed task event.
+- **Private curiosity:** the C dips first while CC is still. CC looks up and
+  holds an open-eyed inspection before one small startled hop. A held asymmetric
+  look follows the landing; the C returns to normal before CC drops its gaze.
+  CC finishes with a late blink and quiet rest. Early blinking masked recognition
+  in fresh neutral review, so the blink moves to the ending and the extra toe
+  flourish is omitted. No extra object, speech, sound, badge or claimed task event.
 
 ## Authoring contract
 
@@ -72,7 +72,7 @@ the soft happy stretch and rounded hook.
 
 A fresh neutral-title review of the first96-sample candidate still inferred
 generic idle behavior rather than the C causing a reaction. Add one finite
-`crestTilt` in[-0.42,0.42] radians, nonzero only in curiosity. Rotate the C in its
+`crestTilt` in[-0.42,0.8] radians, nonzero only in curiosity. Rotate the C in its
 local XZ plane about its existing embedded `ROOT_C`, before the saved C matrix
 and common body affine. This makes the rounded curl visibly move independently;
 the eyes follow its second movement one beat later. The root stays inside the
@@ -82,9 +82,13 @@ reuse additionally requires zero tilt. Actual rendered C matrices must retain
 the root and unit determinant; registration checks the recorded root error and
 determinant as well as existing body/foot evidence.
 The initial±0.18 draft still looked like generic idle in a neutral-title review.
-The larger bounded sweep must visibly initiate the scene. Hold an open-eyed
-upward target for three samples before blinking; then hold a deeper asymmetric
-inspection within the original body envelope. Geometry tolerances stay strict.
+The subsequent±0.42 final candidate passed craft checks but a fresh critic still
+read an idle flourish. The new forward-only ceiling supports a deeper initiating
+dip; the backward bound stays unchanged. Hold an open-eyed upward target before
+one0.11-rise hop with both attached feet, then a grounded asymmetric inspection.
+Keep the blink late and the ending still. Body/foot bounds and geometry tolerances
+stay strict. A new neutral draft must prove recognizable curl space at48px and
+clear cause/reaction before a fresh final render.
 
 Preserve the frozen blend, source geometry, camera, materials, lighting, canonical
 images, fixed-body motion clips and transition bytes. Body/foot envelopes remain

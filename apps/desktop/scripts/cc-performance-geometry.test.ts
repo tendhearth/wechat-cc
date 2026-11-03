@@ -78,7 +78,7 @@ if f:
  a,b,c=columns
  det=a[0]*(b[1]*c[2]-b[2]*c[1])-b[0]*(a[1]*c[2]-a[2]*c[1])+c[0]*(a[1]*b[2]-a[2]*b[1])
  rejected=[]
- for tilt in [.421,-.421,float('nan'),float('inf')]:
+ for tilt in [.801,-.421,float('nan'),float('inf')]:
   try:f(point,root,tilt);rejected.append(False)
   except ValueError:rejected.append(True)
  r.update(neutral=neutral,point=point,rootFixed=all(math.dist(f(root,root,t),root)<1e-12 for t in [-.18,0,.18]),left=p,right=q,root=root,distance=math.dist(p,root),det=det,rejected=rejected,repeat=f(point,root,.18)==p)
@@ -112,4 +112,23 @@ print(json.dumps(r))
   expect(result.maximumAccepted,'the approved larger curl sweep is supported').toBe(true)
   expect(result.rootFixed).toBe(true);expect(result.distance).toBeCloseTo(1,10)
   expect(result.sweep).toBeGreaterThan(.8)
+})
+
+it('allows a forward curl dip without extending the backward envelope or changing its root and volume',()=>{
+  const file=new URL('./cc_performance_geometry.py',import.meta.url)
+  const result=JSON.parse(execFileSync(process.platform==='win32'?'python':'python3',['-c',`
+import json,sys,math
+sys.path.insert(0,sys.argv[1])
+import cc_performance_geometry as geometry
+root=(-.1583485268,.015,1.3918645979);point=(root[0],root[1],root[2]+1)
+r={'forwardAccepted':False}
+try:
+ p=geometry.crest_point(point,root,.8)
+ r.update(forwardAccepted=True,rootFixed=math.dist(geometry.crest_point(root,root,.8),root)<1e-12,distance=math.dist(p,root),sweep=p[0]-root[0])
+except ValueError:pass
+print(json.dumps(r))
+`,fileURLToPath(new URL('.',file))],{encoding:'utf8'}))
+  expect(result.forwardAccepted,'a forward dip can supply a visible cause').toBe(true)
+  expect(result.rootFixed).toBe(true);expect(result.distance).toBeCloseTo(1,10)
+  expect(result.sweep).toBeGreaterThan(.7)
 })

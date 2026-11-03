@@ -70,7 +70,7 @@ if args.motion_plan:
             assert .12 <= sample['eyeScale'] <= 1.15 and 0 <= sample['crescent'] <= 1 and abs(sample['gaze']) <= .07, 'Invalid eye motion'
             if performance_mode:
                 assert type(sample['gazeUp']) in (int,float) and math.isfinite(sample['gazeUp']) and -.04 <= sample['gazeUp'] <= .14, 'Invalid vertical eye motion'
-                assert type(sample['crestTilt']) in (int,float) and math.isfinite(sample['crestTilt']) and abs(sample['crestTilt']) <= .42, 'Invalid rooted C tilt'
+                assert type(sample['crestTilt']) in (int,float) and math.isfinite(sample['crestTilt']) and -.42 <= sample['crestTilt'] <= .8, 'Invalid rooted C tilt'
                 assert name == 'curiosity' or sample['crestTilt'] == 0, 'Independent C tilt is exclusive to curiosity'
                 body, feet = sample['body'], sample['feet']
                 assert isinstance(body, dict) and set(body) == {'lean','squash','rise','shift'}, 'Invalid body controls'
