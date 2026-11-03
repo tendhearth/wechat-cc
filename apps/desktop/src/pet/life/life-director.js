@@ -1,7 +1,7 @@
 // @ts-check
 // Decorative actions have their own clock. They never write task or pet facts.
 /** @typedef {import('../domain/state-machine.js').PetSnapshot} Snapshot */
-/** @typedef {{action:string,direction:number}} Action */
+/** @typedef {{action:string,direction:number,authored?:boolean}} Action */
 /** @param {{schedule:(fn:()=>void,ms:number)=>unknown,cancel:(h:unknown)=>void,random:()=>number,onAction:(a:Action)=>void}} deps */
 export function createLifeDirector({schedule,cancel,random,onAction}) {
   /** @type {Snapshot|null} */ let facts=null

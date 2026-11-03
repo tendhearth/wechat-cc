@@ -25,7 +25,9 @@ try { storage = window.localStorage } catch { /* controls still work without per
 let lifeFactsAvailable=false,pointerInShell=false,focusInShell=false,holding=false,walking=false
 const motion=mock?null:createCompanionMotion({context:()=>invoke('companion_motion_context'),step:p=>invoke('step_companion_motion',p),stop:()=>invoke('stop_companion_motion'),onError:e=>console.warn('companion motion stopped',e)})
 const pet = await createPet({ stage, img, props, hint, body:$('pet-body') }, { manifestUrl: './assets/pet/cc-v1/manifest.json', reducedMotion: motionQuery?.matches === true,life:true,
-  onLifeAction:pose=>{if(pose.action==='walk'&&!document.hidden)void motion?.play(pose.direction);else if(walking)void motion?.stop();walking=pose.action==='walk'},
+  // Planted-foot artwork steps in place. Translating its canvas would skate the
+  // support foot; keep the previous native stroll only for fallback choreography.
+  onLifeAction:pose=>{const travel=pose.action==='walk'&&pose.authored!==true&&!document.hidden;if(travel)void motion?.play(pose.direction);else if(walking)void motion?.stop();walking=travel},
 })
 if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
 

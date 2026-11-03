@@ -9,7 +9,10 @@ import { readRGBA } from './cc-png.mjs'
 const desktop=resolve(dirname(fileURLToPath(import.meta.url)),'..')
 const ids=['peek','stretch','walk','lift','land','celebrate','work']
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
-const json=path=>JSON.parse(readFileSync(path,'utf8').replace(/^\uFEFF/,''))
+const json=path=>{
+  const text=readFileSync(path,'utf8')
+  return JSON.parse(text.replace(/^\uFEFF/,''))
+}
 
 export function buildPerformanceCatalog(plan,source,generatedAt) {
   if(plan?.schemaVersion!==2||plan.artStatus!=='production-candidate'||!isDeepStrictEqual(plan.forms,['lit','unlit'])||!Array.isArray(plan.clips))throw Error('Invalid performance plan')

@@ -90,6 +90,7 @@ export async function createPet(root, opts) {
   let lastKey = ''
   let lastPropsKey = ''
   const bodyMotion=opts.life?createBodyMotion(root):null
+  let renderedPerformance=false
   /** @type {ReturnType<typeof createLifeDirector>|null} */ let life=null
   const render = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
     const action=life?.current().action??'still'
@@ -98,7 +99,8 @@ export async function createPet(root, opts) {
     const propsKey = `${s.badge}|${visibleProps.join(',')}`
     if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; propRenderer.render(visibleProps, s.badge) }
     const performance=opts.life&&!s.transition&&!suppressDecoration()?resolvePerformance(manifest,s.form,action,s.behavior):null
-    bodyMotion?.setAuthored(Boolean(performance))
+    renderedPerformance=Boolean(performance)
+    bodyMotion?.setAuthored(renderedPerformance)
     const visual=action==='doze'?'sleep':action==='peek'?'look':action==='wake'?'wake':s.behavior
     const key = s.transition ? `t:${s.transition}` : performance ? `p:${s.form}/${performance.id}/${performance.hold}` : `b:${s.form}/${visual}/${action}`
     if (paused) return
@@ -211,7 +213,7 @@ export async function createPet(root, opts) {
     }
   }
   if(opts.life){
-    life=createLifeDirector({schedule,cancel,random,onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.(pose)}})
+    life=createLifeDirector({schedule,cancel,random,onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.({...pose,authored:renderedPerformance})}})
     bodyMotion?.render(life.current())
     life.setSuppressed(suppressDecoration())
   }

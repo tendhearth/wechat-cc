@@ -15,6 +15,7 @@ Considered approaches: additional CSS transforms are cheap but cannot separate t
 - Render Body, eyes and C through the same body transform; pivot feet independently at their soles. Always reset the saved matrices before each frame. Never save the modified Blender scene over the source.
 - Fixed 512×512 canvas, anchor [0.5, 0.91796875], safe bounds [80,28,432,470]. The anchor describes the ground plane; airborne frames may leave it. Light and Dark share one per-frame geometry mask. Preserve current alpha, glow and matte-Dark contracts.
 - Seven clips: peek, stretch, walk, lift, land, celebrate, work. Nonloop performances start/end at exact canonical rest, except landing starts suspended. Walk/lift/work loops close. No per-frame fitting or cropping.
+- Authored walk takes in-place steps at the user's anchor. Native travel remains for fallback choreography; moving the full canvas independently would skate the planted foot. This refinement follows the whole-branch integration review.
 - Actual task facts, permission/error priority, reduced motion, quiet mode, cancellation, hidden state and drag confirmation remain authoritative. Authored performance suppresses duplicate CSS body motion, while retaining a small pointer-velocity swing during carrying. Missing performance frames fall back safely.
 - All renders, tests, builds and graphical validation run on the registered Mini. No primary-machine input, focus or heavy workloads. No production accounts, models, daemon or private data on Mini.
 

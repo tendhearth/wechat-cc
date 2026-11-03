@@ -46,15 +46,15 @@
 
 - [x] Write runtime RED tests for authored selection, CSS suppression, interruption, missing-frame fallback and one actual completion.
 - [x] Implement selection without changing factual state; suppress duplicated body effects only while authored frames play.
-- [ ] Render all pairs on Mini; register only after digest, shared mask, bounds, alpha, ground/contact and frozen-byte verification.
-- [ ] Inspect playback/contact sheets and 48/96/128px samples. Run existing and new affected tests GREEN on Mini.
-- [ ] Commit verified runtime and assets.
+- [x] Render all pairs on Mini; register only after digest, shared mask, bounds, alpha, ground/contact and frozen-byte verification.
+- [x] Inspect playback/contact sheets and 48/96/128px samples. Run existing and new affected tests GREEN on Mini.
+- [x] Commit verified runtime and assets.
 
 ### Task 3: Review, integrate and deliver
 
 **Files:** test/lab integration lists only if needed, art documentation and evidence index.
 
-- [ ] Fresh independent whole-branch review. Fix important findings with actual Mini RED→GREEN; preserve evidence.
+- [x] Fresh independent whole-branch review. Fix important findings with actual Mini RED→GREEN; preserve evidence.
 - [ ] Merge in root-owned integration worktree from fresh dev, then Mini full verification, browser/native QA and production build on exact merged source.
 - [ ] Push dev and verify exact-head CI. Back up daily full signed app/state, sign Mini artifact on primary, deploy serially through existing guards/selftests and retain compatible rollback.
 - [ ] Report the actual delivered revision, visual preview and material coverage limits.

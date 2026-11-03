@@ -9,7 +9,7 @@ saved over `cc-v1.blend`. All new artwork remains `production-candidate`.
 | --- | --- | --- |
 | peek | Eyes lead; weight follows; C settles | 14 frames / 12 fps |
 | stretch | Compress, lengthen, release | 14 / 12 |
-| walk | Alternating lifted foot and stationary support foot | 12 / 10, loop |
+| walk | In-place steps with alternating lifted/support feet | 12 / 10, loop |
 | lift | Feet hang independently, with a small opposing swing | 12 / 12, loop |
 | land | Suspended pose, compression, small rebound, stable rest | 8 / 16 |
 | celebrate | Anticipation, one short hop, landing, recovery | 12 / 16 |
@@ -21,6 +21,9 @@ clip until its actual final callback, including when WebKit slows timers. A new
 task, permission or error still interrupts it. Other surfaces keep their original
 behavior artwork unless `life` is explicitly enabled. Missing optional frames
 fall back through the existing bad-frame handler and CSS choreography.
+The authored walk stays at the user's window anchor: whole-window travel would
+slide its planted support foot. Existing native strolls remain available to the
+fallback choreography; the new artwork does not start those independent clocks.
 
 ## Authoring and registration
 
