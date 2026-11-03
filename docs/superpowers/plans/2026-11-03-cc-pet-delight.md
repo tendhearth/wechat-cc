@@ -46,6 +46,7 @@
 - [x] Run targeted recipe/geometry/registration/catalog checks and typecheck on Mini; resolve actual failures without loosening previous checks.
 - [ ] Create an isolated Mini draft project from an explicit source/frozen-file manifest. Render representative extrema and complete peek/curiosity/celebrate/carry drafts at24samples, separate paths/progress from the real kit.
 - [ ] Capture actual draft playback samples with timestamps on paper/slate at48/96/128/256. Review preparation/action/recovery, eye target, delayed C, supported weight and connected feet. Independent visual critic rejects weak poses; revise and repeat the affected draft before final rendering. Do not claim continuous playback watched when evidence is sampled frames.
+- [ ] Curiosity revision after complete draft critique: observe new Mini RED for C-before-eyes cause, blink→held wide-eyed recoil, and C-rest-before-gaze-drop. Keep36frames/12fps and existing limits; freeze a separate rev3 identity, review extrema then the whole story again.
 - [ ] Commit authoring code/tests and record exact frozen render inputs. No mutable source changes during a render job.
 
 ### Task 2: Optional private curiosity and direction-aware peek

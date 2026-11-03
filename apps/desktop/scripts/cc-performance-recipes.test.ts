@@ -74,6 +74,17 @@ describe('coordinated CC performances', () => {
     const work=(await plan()).clips.find((c:any)=>c.id==='work')
     expect(work.frames.filter((f:any)=>f.gazeUp<-.02).length).toBeGreaterThanOrEqual(4)
   })
+  it('gives curiosity a visible cause, startled reaction and composed recovery instead of a generic stretch',async()=>{
+    const c=(await plan()).clips.find((c:any)=>c.id==='curiosity')
+    const earlyCause=c.frames.filter((f:any)=>f.pose.happy>=.55&&f.gaze===0&&f.gazeUp===0&&f.eyeScale===1&&f.body.lean===0&&f.body.shift===0)
+    expect(earlyCause.length,'the rounded C perks before CC notices').toBeGreaterThanOrEqual(2)
+    const blink=c.frames.findIndex((f:any)=>f.eyeScale<.2)
+    expect(blink,'a readable catch of surprise precedes the reaction').toBeGreaterThan(0)
+    const heldReaction=c.frames.slice(blink+1).filter((f:any)=>f.eyeScale>=1.14&&f.gazeUp>.1&&f.body.lean<-.035)
+    expect(heldReaction.length,'wide eyes and a small recoil hold for at least three samples').toBeGreaterThanOrEqual(3)
+    const caught=c.frames.filter((f:any)=>Object.keys(f.pose).length===0&&f.gazeUp>.09&&f.body.lean===0&&f.body.shift===0)
+    expect(caught.length,'the C returns to normal before CC drops its gaze').toBeGreaterThanOrEqual(2)
+  })
   it('plants a support foot while the other takes a visible step', async () => {
     const walk = (await plan()).clips.find((c:any) => c.id === 'walk')
     expect(walk.frames.some((f:any) => f.feet.left.lift > .06 && f.feet.right.lift === 0)).toBe(true)

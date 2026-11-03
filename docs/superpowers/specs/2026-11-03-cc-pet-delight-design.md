@@ -48,9 +48,12 @@ the next Mini previews are viewed.
   and a C that composes itself one beat later. Keep the factual completion rules.
 - **Work:** an intentional downward glance toward the laptop, followed by still
   concentration. Keep the six-second rest and restrained movement.
-- **Private curiosity:** eyes notice the C above; C perks; CC cautiously inspects
-  it; the C shifts again; CC pauses and returns to its ordinary pose with one tiny
-  toe adjustment. No extra object, speech, sound, badge or claimed task event.
+- **Private curiosity:** the C perks first while CC is still. CC catches it with
+  a blink, a small recoil and a held wide-eyed inspection. The C returns to normal
+  before CC drops its gaze; CC composes itself and finishes with one tiny toe
+  adjustment. Full draft review rejected the earlier gentle stretch because its
+  cause and reaction were unreadable. No extra object, speech, sound, badge or
+  claimed task event.
 
 ## Authoring contract
 
