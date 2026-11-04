@@ -15,7 +15,7 @@ afterEach(()=>db.close())
 describe('matters',()=>{
   it('creates a task matter with the task id and reads it back',()=>{
     const m=store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'})
-    expect(m).toEqual({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',status:'open',ownerChatId:'owner',originMatterId:null,originMessageId:null,createdAt:1_000,updatedAt:1_000})
+    expect(m).toEqual({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',status:'open',state:'open',archivedAt:null,ownerChatId:'owner',originMatterId:null,originMessageId:null,createdAt:1_000,updatedAt:1_000})
     expect(store.get('deadbeef')).toEqual(m)
     expect(store.get('nope')).toBeNull()
   })
@@ -206,5 +206,44 @@ describe('v92 的新列:发起方、统一状态、归档时间(读出口照旧�
     db.query("UPDATE matters SET state='working' WHERE id='0000000a'").run()
     store.setStatus('0000000a','replied')
     expect(row('0000000a')).toMatchObject({state:'working'})
+  })
+})
+
+describe('旧 status 现算(M6b):get 与列表筛选同一个式子',()=>{
+  it('每一格:get 给的 status = legacyStatus;statuses 筛选(SQL 版本)挑出的正好是这些',async()=>{
+    const {legacyStatus}=await import('../../domain/matters/legacy-status')
+    const STATES=['open','working','waiting','done','failed','cancelled'] as const
+    const TURNS=[null,'running','completed','failed','cancelled','interrupted'] as const
+    const TASKS=[null,'queued','running','cancelling','completed','failed','cancelled','interrupted'] as const
+    const want=new Map<string,{kind:string;status:string}>();let n=0,cursor=0
+    for(const kind of ['chat','task','terminal','act'] as const)for(const state of STATES)for(const archived of [false,true])for(const turn of TURNS)for(const task of kind==='task'?TASKS:[null]){
+      const id=(++n).toString(16).padStart(8,'0')
+      db.query("INSERT INTO matters(id,kind,title,state,archived_at,status,created_at,updated_at) VALUES(?,?,?,?,?,'open',1,?)").run(id,kind,'t',state,archived?9:null,n)
+      if(turn){
+        // 更早的一轮放相反的状态:只认 seq 最大的那一轮
+        db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES(?,?,1,'x',?,1,?)").run(id+'a',id,turn==='completed'?'failed':'completed',++cursor)
+        db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES(?,?,2,'x',?,1,?)").run(id+'b',id,turn,++cursor)
+      }
+      if(task)db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,'t','/w','claude',?,1,1)").run(id,task)
+      want.set(id,{kind,status:legacyStatus({kind,state,archivedAt:archived?9:null,latestTurn:turn,taskStatus:task})})
+    }
+    for(const [id,w] of want)expect([id,store.get(id)?.status]).toEqual([id,w.status])
+    for(const kind of ['chat','task','terminal','act'] as const)for(const status of ['open','replied','done','archived'] as const){
+      const got=store.list({kind,statuses:[status],limit:500}).map(m=>m.id).sort()
+      const exp=[...want].filter(([,w])=>w.status===status&&w.kind===kind).map(([id])=>id).sort()
+      expect(got.length).toBeLessThan(500)
+      expect([kind,status,got]).toEqual([kind,status,exp])
+    }
+    // 四种都出现过(这张格子没漏掉哪一种)
+    expect(new Set([...want.values()].map(w=>w.status))).toEqual(new Set(['open','replied','done','archived']))
+  })
+  it('筛选不再看列:列写着 replied、算出来 open 的不进 replied;state / archivedAt 上线',()=>{
+    const m=store.create({id:'0000abcd',kind:'task',title:'t'})
+    db.query("UPDATE matters SET status='replied' WHERE id=?").run(m.id)
+    expect(store.list({statuses:['replied']})).toEqual([])
+    expect(store.get(m.id)).toMatchObject({status:'open',state:'open',archivedAt:null})
+    clock=7_000;store.setStatus(m.id,'archived')
+    expect(store.list({statuses:['archived']}).map(x=>[x.id,x.status,x.archivedAt])).toEqual([[m.id,'archived',7_000]])
+    expect(store.list({statuses:['open','replied','done']})).toEqual([])
   })
 })

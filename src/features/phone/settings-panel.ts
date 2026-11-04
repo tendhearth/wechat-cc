@@ -216,6 +216,8 @@ export interface SettingsPanel {
   activeLinkToken(): string | null
   /** 已配对设备的令牌 —— 隧道握手要逐个试(替代裸读 settings-devices.json)。 */
   deviceTokens(): string[]
+  /** 隧道握手报的 App 构建号(M6b):是已配对设备的令牌才记(链接令牌不记),落在 settings-devices.json 那一台上。 */
+  noteDeviceBuild(token: string, build: string): void
   /** `currentToken`:调用者自己的令牌,用来在设备列表里标「这台」。 */
   state(currentToken?: string | null): object
   apply(op: unknown): Promise<{ ok: boolean; error?: string; restart?: 'requested' | 'required' }>
@@ -260,7 +262,7 @@ export { lanIp } from '../../lib/local-address'
 import { lanIp } from '../../lib/local-address'
 import { serve, type Server } from '../../lib/runtime/http'
 import { makeTokenRegistry, type PanelTokens } from '../../daemon/internal-api/token-registry'
-import { makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device-store'
+import { deviceIdOf, makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device-store'
 import { normalizeLang } from './phone-insight-llm'
 import { latestChanges } from './phone-changes'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
@@ -474,6 +476,10 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
 
     deviceTokens() {
       return devices.tokens()
+    },
+
+    noteDeviceBuild(token, build) {
+      if (devices.tokens().includes(token)) devices.noteBuild(deviceIdOf(token), build)
     },
 
     validToken(t) {

@@ -1,6 +1,7 @@
 import {randomBytes} from 'node:crypto'
 import type {Db} from '../../lib/db'
-import type {CreateMatter,ListMatters,Matter,MatterBinding,MatterKind,MatterOrigin,MatterSession,MatterSessionRole,MatterStatus,MatterStore,MatterSurface} from '../../ports/matters'
+import type {CreateMatter,ListMatters,Matter,MatterBinding,MatterKind,MatterOrigin,MatterSession,MatterSessionRole,MatterState,MatterStore,MatterSurface,MatterTurnStatus} from '../../ports/matters'
+import {legacyStatus,type LegacyTaskStatus} from '../../domain/matters/legacy-status'
 
 /**
  * matters/store.ts — "一件事"(matter)的存储面。
@@ -15,11 +16,25 @@ export const MATTER_ORIGINS:readonly MatterOrigin[]=Object.freeze(['wechat','des
 const ORIGINS=new Set<string>(MATTER_ORIGINS)
 const KINDS=new Set<string>(['chat','task','terminal','act']),INITIATORS=new Set<string>(['owner','cc','peer']),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli']),ROLES=new Set<string>(['main','review','handoff'])
 const ID=/^[a-f0-9]{8}$/
-type Row={id:string;kind:MatterKind;title:string;project_path:string|null;status:MatterStatus;owner_chat_id:string|null;origin_matter_id:string|null;origin_message_id:string|null;origin_surface:string|null;created_at:number;updated_at:number}
-const SELECT='SELECT id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,origin_surface,created_at,updated_at FROM matters'
+type Row={id:string;kind:MatterKind;title:string;project_path:string|null;state:MatterState;archived_at:number|null;latest_turn:MatterTurnStatus|null;task_status:LegacyTaskStatus|null;owner_chat_id:string|null;origin_matter_id:string|null;origin_message_id:string|null;origin_surface:string|null;created_at:number;updated_at:number}
+/**
+ * 读这一侧(M6b):旧 status 列不再读,线上的 status 由 legacyStatus 从统一状态 + 归档 + 最近一轮(+ 任务自己的状态)现算。
+ * 列表的 `statuses` 筛选要在 SQL 里做(LIMIT 之前),所以同一个式子这里有一份 SQL 版本 —— matters-store.test.ts 逐格对过 legacyStatus。
+ */
+const DERIVED=`SELECT m.*,
+  (SELECT t.status FROM matter_turns t WHERE t.matter_id=m.id ORDER BY t.seq DESC LIMIT 1) AS latest_turn,
+  (SELECT w.status FROM workbench_tasks w WHERE w.id=m.id) AS task_status FROM matters m`
+export const LEGACY_STATUS_SQL=`CASE WHEN archived_at IS NOT NULL THEN 'archived'
+  WHEN kind<>'task' THEN 'open'
+  WHEN task_status IS NULL THEN CASE WHEN state IN ('done','failed','cancelled') THEN 'done' WHEN state='open' AND latest_turn='completed' THEN 'replied' ELSE 'open' END
+  WHEN task_status='interrupted' THEN 'open'
+  WHEN task_status IN ('completed','failed','cancelled') THEN 'done'
+  WHEN task_status='running' AND state='open' AND latest_turn='completed' THEN 'replied'
+  ELSE 'open' END`
+const SELECT=`SELECT id,kind,title,project_path,state,archived_at,latest_turn,task_status,owner_chat_id,origin_matter_id,origin_message_id,origin_surface,created_at,updated_at FROM (SELECT d.*,${LEGACY_STATUS_SQL} AS legacy_status FROM (${DERIVED}) d)`
 /** 库里读出来的出生地也要在册才认(手改过库 / 未来的新值 ⇒ 当没有,不画)。 */
 export const matterOrigin=(value:unknown):MatterOrigin|null=>typeof value==='string'&&ORIGINS.has(value)?value as MatterOrigin:null
-const toMatter=(r:Row):Matter=>{const origin=matterOrigin(r.origin_surface);return {id:r.id,kind:r.kind,title:r.title,projectPath:r.project_path,status:r.status,ownerChatId:r.owner_chat_id,originMatterId:r.origin_matter_id,originMessageId:r.origin_message_id,createdAt:r.created_at,updatedAt:r.updated_at,...(origin?{origin}:{})}}
+const toMatter=(r:Row):Matter=>{const origin=matterOrigin(r.origin_surface);return {id:r.id,kind:r.kind,title:r.title,projectPath:r.project_path,status:legacyStatus({kind:r.kind,state:r.state,archivedAt:r.archived_at,latestTurn:r.latest_turn,taskStatus:r.task_status}),state:r.state,archivedAt:r.archived_at,ownerChatId:r.owner_chat_id,originMatterId:r.origin_matter_id,originMessageId:r.origin_message_id,createdAt:r.created_at,updatedAt:r.updated_at,...(origin?{origin}:{})}}
 
 export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore {
   const require=(id:string):Matter=>{const m=get(id);if(!m)throw new Error('matter_not_found');return m}
@@ -39,7 +54,7 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
   function list(filter:ListMatters={}):Matter[] {
     const where:string[]=[],params:(string|number)[]=[]
     if(filter.kind){if(!KINDS.has(filter.kind))throw new Error('invalid_matter_kind');where.push('kind=?');params.push(filter.kind)}
-    if(filter.statuses?.length){for(const s of filter.statuses)if(!STATUSES.has(s))throw new Error('invalid_matter_status');where.push(`status IN (${filter.statuses.map(()=>'?').join(',')})`);params.push(...filter.statuses)}
+    if(filter.statuses?.length){for(const s of filter.statuses)if(!STATUSES.has(s))throw new Error('invalid_matter_status');where.push(`legacy_status IN (${filter.statuses.map(()=>'?').join(',')})`);params.push(...filter.statuses)}
     if(filter.since!==undefined){where.push('updated_at>=?');params.push(filter.since)}
     if(filter.surface){if(!SURFACES.has(filter.surface))throw new Error('invalid_matter_surface');where.push('id IN (SELECT matter_id FROM matter_bindings WHERE surface=?)');params.push(filter.surface)}
     const limit=Math.min(Math.max(1,filter.limit??100),500)

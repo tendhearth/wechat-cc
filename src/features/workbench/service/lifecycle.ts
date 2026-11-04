@@ -12,7 +12,8 @@
  * quiet 是 isReplied 的别名(原文 `const quiet=isReplied`)。
  */
 import { findPathBlocker } from '../../../adapters/workbench/scheduler'
-import { publicTask, TERMINAL_TASK_STATUSES } from '../../../adapters/store/workbench/store'
+import { publicTask } from '../../../adapters/store/workbench/store'
+import { legacyTaskStatus } from '../../../domain/matters/legacy-status'
 import type { Active } from './state'
 import type { WorkbenchTaskView } from './types'
 import type { ServiceCtx } from './ctx'
@@ -428,7 +429,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     const view=taskView(publicTask(store.setArchived(id,archived)))
     // store.setArchived 是裸 UPDATE,不像别的写点那样自带 bump —— archivedAt 在 detail 里能看见,补一下。
     ctx.hub.bumped(id)
-    matterSync(m=>m.setStatus(id,archived?'archived':view.status==='interrupted'?'open':TERMINAL_TASK_STATUSES.includes(view.status)?'done':view.phase==='replied'?'replied':'open'))
+    matterSync(m=>m.setStatus(id,legacyTaskStatus({archived,status:view.status,replied:view.phase==='replied'})))
     return view
   }
   async function cancel(id:string,expectedRunId?:string):Promise<WorkbenchTaskView> {

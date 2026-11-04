@@ -81,6 +81,7 @@ export function makePhoneTopicSources(deps: PhoneTopicSourceDeps): TopicSource[]
         const version = Math.max(m.updatedAt, latest !== null && Number.isFinite(latest) ? latest : 0)
         return { found: true, kind: m.kind, version, phase: deps.chat.pendingMatter() === id ? 'working' : m.status }
       }
+      // 非任务的 phase = 旧 status,M6b 起由 store 现算(domain/matters/legacy-status.ts),不再读列;冻结字段见 wire-compat.ts。
       return { found: true, kind: m.kind, version: m.updatedAt, phase: m.status }
     },
   }

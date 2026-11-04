@@ -198,6 +198,21 @@ describe('握手协商', () => {
     const { c } = client(daemon, { client: 'web' })
     await c.request({ method: 'GET', path: '/m/api/home' })
     expect(daemon.d.conns[0]!.hellos[0]).toMatchObject({ v: [2], client: 'web' })
+    expect(daemon.d.conns[0]!.hellos[0]).not.toHaveProperty('build')
+    c.close()
+  })
+
+  it('App 填 build ⇒ 握手带上(M6b);ClientHello 认它,老形状照样过', async () => {
+    const { ClientHello } = await import('./messages')
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c } = client(daemon, { build: '3' })
+    await c.request({ method: 'GET', path: '/m/api/home' })
+    const hello = daemon.d.conns[0]!.hellos[0]
+    expect(hello).toMatchObject({ v: [2], build: '3' })
+    expect(hello).not.toHaveProperty('client')
+    expect(ClientHello.parse(hello)).toMatchObject({ build: '3' })
+    expect(ClientHello.safeParse({ hs: 'x', v: [2] }).success).toBe(true)
+    expect(ClientHello.safeParse({ hs: 'x', v: [2], build: '' }).success).toBe(false)
     c.close()
   })
 })

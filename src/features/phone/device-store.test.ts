@@ -55,6 +55,24 @@ describe('makeDeviceStore', () => {
     expect(JSON.parse(readFileSync(file(d), 'utf8'))[a.token].last_seen_at).toBe(new Date(now).toISOString())
   })
 
+  it('noteBuild(M6b):记下这台握手报的构建号;同一个号一天内不重写,换了号立刻写;不存在的 id 不动', () => {
+    let now = Date.parse('2026-11-05T00:00:00Z')
+    const d = stateDir(), s = makeDeviceStore(d, () => now)
+    const a = s.pair()!
+    expect(s.list()[0]).not.toHaveProperty('build')
+    s.noteBuild(a.id, '2')
+    expect(s.list()[0]).toMatchObject({ build: '2', build_seen_at: new Date(now).toISOString() })
+    const first = new Date(now).toISOString()
+    now += 60 * 60_000; s.noteBuild(a.id, '2')
+    expect(JSON.parse(readFileSync(file(d), 'utf8'))[a.token].build_seen_at).toBe(first)
+    now += 60_000; s.noteBuild(a.id, '3')
+    expect(s.list()[0]).toMatchObject({ build: '3', build_seen_at: new Date(now).toISOString() })
+    now += 25 * 60 * 60_000; s.noteBuild(a.id, '3')
+    expect(s.list()[0]!.build_seen_at).toBe(new Date(now).toISOString())
+    s.noteBuild('ffffffff', '9')
+    expect(s.list().map(r => r.build)).toEqual(['3'])
+  })
+
   it('label:去控制字符、首尾空白,最多 24 字;空串删标签;不存在的 id ⇒ false', () => {
     const s = makeDeviceStore(stateDir()), a = s.pair()!
     expect(s.label(a.id, '  我的\u0007手机  ')).toBe(true)

@@ -70,6 +70,8 @@ export interface TunnelClientDeps {
   onControl?: (msg: Record<string, unknown>) => void
   /** v2 登录成功(每次重连后都会再来一次)。 */
   onLogin?: () => void
+  /** 一条流认出了令牌、握手里带了构建号(M6b):记到那台设备上(链接令牌由接收方自己忽略)。 */
+  onDeviceBuild?: (token: string, build: string) => void
 }
 
 /** Does this handshake ask for v2? (`v` is an array containing 2; anything else is a retired v1 client.) */
@@ -81,6 +83,12 @@ function wantsV2(frame: unknown): boolean {
 /** 浏览器 /m 页在握手里自报 `client:'web'`(packages/protocol ClientOpts.client);不带 ⇒ 原生 App。 */
 function handshakeClient(frame: unknown): 'app' | 'web' {
   return (frame as { client?: unknown }).client === 'web' ? 'web' : 'app'
+}
+
+/** App 在握手里自报的构建号(M6b,ClientHello.build):短的、只含构建号常见字符才认,否则当没报。 */
+export function handshakeBuild(frame: unknown): string | undefined {
+  const b = (frame as { build?: unknown }).build
+  return typeof b === 'string' && /^[\w.+-]{1,32}$/.test(b) ? b : undefined
 }
 
 /** Read a plaintext handshake control frame → the peer's pubkey b64, or null. */
@@ -118,7 +126,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   // Per-stream ephemeral state: the raw ECDH shared secret, who the handshake said it was
   // (app / web), and — once the first sealed frame identifies the device — that device
   // token + its V2Stream.
-  type StreamState = { shared: Uint8Array; client: 'app' | 'web'; device?: string; v2s?: V2Stream }
+  type StreamState = { shared: Uint8Array; client: 'app' | 'web'; build?: string; device?: string; v2s?: V2Stream }
   const streams = new Map<string, StreamState>()
   // One promise chain per stream for the ordering-sensitive work (handshake, identification
   // + open). req handling is dispatched off it.
@@ -231,7 +239,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       let shared: Uint8Array
       try { shared = x25519Shared(kp.priv, b64uDecode(hsPub)) }
       catch { log('TUNNEL', `bad handshake pubkey on ${stream}`); return }
-      streams.set(stream, { shared, client: handshakeClient(frame) })
+      const build = handshakeBuild(frame)
+      streams.set(stream, { shared, client: handshakeClient(frame), ...(build ? { build } : {}) })
       sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2 })
       return
     }
@@ -257,6 +266,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     }
     const token = hit.token
     st.device = token
+    // 认出是哪台之后才记它报的构建号(握手那一刻还不知道是谁);记不下来不挡这条流。
+    if (st.build && deps.onDeviceBuild) { try { deps.onDeviceBuild(token, st.build) } catch { /* 只少一次记录 */ } }
     st.v2s = makeV2Stream({
       stream, channel: hit.channel, token, client: st.client,
       send: (f) => { if (streams.get(stream) === st) sendToStream(stream, f) },

@@ -19,9 +19,11 @@ const DEVICES_FILE = 'settings-devices.json'
 const MAX_DEVICES = 20
 const TOUCH_WRITE_INTERVAL_MS = 5 * 60_000
 const MAX_LABEL = 24
+const BUILD_REWRITE_MS = 24 * 60 * 60_000
 
-export interface DeviceRow { id: string; created_at: string; last_seen_at: string; label?: string }
-type Stored = { id?: string; created_at: string; last_seen_at?: string; label?: string }
+/** `build`:这台最近一次握手报的 App 构建号(M6b,握手 `ClientHello.build`);兼容表(packages/protocol/src/wire-compat.ts)按它判退休。没报过 ⇒ 没有。 */
+export interface DeviceRow { id: string; created_at: string; last_seen_at: string; label?: string; build?: string; build_seen_at?: string }
+type Stored = { id?: string; created_at: string; last_seen_at?: string; label?: string; build?: string; build_seen_at?: string }
 
 export interface DeviceStore {
   list(): DeviceRow[]
@@ -32,6 +34,8 @@ export interface DeviceStore {
   /** 返回被删的全部 token。 */
   forgetAll(): string[]
   touch(id: string): void
+  /** 记下这台握手报的构建号:变了才写盘;同一个号每天最多补写一次时间(和 touch 一样别每次连上都重写文件)。 */
+  noteBuild(id: string, build: string): void
   label(id: string, text: string): boolean
   idOf(token: string): string | null
 }
@@ -69,6 +73,7 @@ export function makeDeviceStore(stateDir: string, now: () => number = () => Date
   const toRow = (r: Stored): DeviceRow => {
     const row: DeviceRow = { id: r.id!, created_at: r.created_at, last_seen_at: r.last_seen_at! }
     if (r.label) row.label = r.label
+    if (r.build) { row.build = r.build; if (r.build_seen_at) row.build_seen_at = r.build_seen_at }
     return row
   }
   const tokenFor = (rows: Record<string, Stored>, id: string) => Object.keys(rows).find(t => rows[t]!.id === id) ?? null
@@ -112,6 +117,16 @@ export function makeDeviceStore(stateDir: string, now: () => number = () => Date
       write(rows)
       lastWrite.set(id, at)
     },
+    noteBuild(id, build) {
+      const rows = read()
+      const tok = tokenFor(rows, id)
+      if (!tok) return
+      const row = rows[tok]!, at = now()
+      if (row.build === build && row.build_seen_at && at - Date.parse(row.build_seen_at) < BUILD_REWRITE_MS) return
+      row.build = build
+      row.build_seen_at = new Date(at).toISOString()
+      write(rows)
+    },
     label(id, text) {
       const rows = read()
       const tok = tokenFor(rows, id)
@@ -134,6 +149,7 @@ export interface DeviceCredentials {
   revoke(id: string): boolean
   forgetAll(): void
   touch(id: string): void
+  noteBuild(id: string, build: string): void
   label(id: string, text: string): boolean
   list(): DeviceRow[]
   tokens(): string[]
@@ -172,6 +188,7 @@ export function makeDeviceCredentials(deps: { store: DeviceStore; tokens: PanelT
       for (const key of keys) tokens.invalidateSession(key)
     },
     touch: (id) => store.touch(id),
+    noteBuild: (id, build) => store.noteBuild(id, build),
     label: (id, text) => store.label(id, text),
     list: () => store.list(),
     tokens: () => store.tokens(),
