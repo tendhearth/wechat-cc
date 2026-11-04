@@ -88,6 +88,29 @@ describe('presence 主题的桌面那头(S5,替掉 pet-poller 的 2 / 10 秒轮�
     expect(d.calls.length).toBe(before + 1)
   })
 
+  it('挂满 wait_ms 原样回来(cursor 没变)不再发一遍;重新 start / 断线恢复后那一份照发', async () => {
+    let n = 0
+    const invokeApi = vi.fn(async (_m: string, path: string) => {
+      n++
+      if (n === 4) throw new Error('ECONNRESET')
+      if (path.includes('since=7') && n > 5) return new Promise(() => {})
+      return { cursor: 7, presence, pet: pet() }
+    })
+    const feed = createPresenceFeed({ invokeApi, backoff: [1000] })
+    const got: unknown[] = []
+    feed.subscribe(f => got.push(f))
+    feed.start(); await vi.advanceTimersByTimeAsync(10)
+    // 第 1 份发;第 2、3 份 cursor 一样(心跳)不发;第 4 次断了发 DOWN
+    expect(got).toEqual([{ presence, pet: pet() }, DOWN_FACTS])
+    await vi.advanceTimersByTimeAsync(1_010)
+    // 恢复后的第一份即使 cursor 一样也发(它推翻了刚才的 DOWN)
+    expect(got.at(-1)).toEqual({ presence, pet: pet() })
+    expect(got).toHaveLength(3)
+    feed.stop(); feed.start(); await vi.advanceTimersByTimeAsync(10)
+    expect(got).toHaveLength(4)
+    feed.stop()
+  })
+
   it('stop 之后挂着的那条回来也不发(窗口看不见时不画)', async () => {
     const d = fakeDaemon()
     const feed = createPresenceFeed({ invokeApi: d.invokeApi })

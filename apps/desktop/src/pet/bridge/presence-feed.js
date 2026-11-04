@@ -9,7 +9,7 @@
 // 红线照旧(不撒谎):拉不到 ⇒ presence 发 DOWN_PRESENCE、pet 发 null(上层按「联系不上」画),不保留上一次的好状态;
 // 某一半 daemon 算不出来(journal 没接 / 桌宠闭包没接)⇒ 那一半同样是 DOWN / null。
 // 兜底:start() 先要一份现成的(窗口重新可见 = 醒来);断了按 1 / 2 / 5 / 10 秒重连,连上第一份马上回;
-// 每次长轮询最多挂 wait_ms 就回一份当前内容 —— 等于一个 20 秒的慢心跳。
+// 每次长轮询最多挂 wait_ms 就回一份当前内容 —— 等于一个 20 秒的慢心跳(连接还活着);cursor 没变就不再发一遍。
 import { V1, v1 } from '../../daemon-client.js'
 import { DOWN_PRESENCE } from '../../presence-poller.js'
 import { createLongPoll } from '../../modules/workbench-live.js'
@@ -46,6 +46,9 @@ export function createPresenceFeed({ invokeApi, waitMs = 20_000, backoff }) {
   /** @type {Set<(f: PresenceFacts) => void>} */
   const subscribers = new Set()
   let running = false
+  // 上一份发出去的 cursor。长轮询挂满 wait_ms 原样回来(cursor 没变)= daemon 那边什么都没变 ⇒ 不发:
+  // 不然每 20 秒一次的心跳会把画面按旧事实重画一遍,盖掉中间本地已经开始的动作。
+  /** @type {number | null} */ let lastCursor = null
 
   /** @param {PresenceFacts} f */
   function publish(f) {
@@ -62,8 +65,8 @@ export function createPresenceFeed({ invokeApi, waitMs = 20_000, backoff }) {
   const poll = createLongPoll({
     // createLongPoll 按 version 接着问:这里 version 就是主题的 cursor。
     fetchDetail: async (_id, since, wait) => { const r = await fetchTopic(since, wait); return { ...r, version: r.cursor } },
-    onDetail: detail => publish({ presence: detail.presence, pet: detail.pet }),
-    onError: () => publish(DOWN_FACTS),
+    onDetail: detail => { if (detail.cursor === lastCursor) return; lastCursor = detail.cursor; publish({ presence: detail.presence, pet: detail.pet }) },
+    onError: () => { lastCursor = null; publish(DOWN_FACTS) },
     waitMs,
     ...(backoff ? { backoff } : {}),
   })
@@ -73,6 +76,7 @@ export function createPresenceFeed({ invokeApi, waitMs = 20_000, backoff }) {
     start() {
       if (running) return
       running = true
+      lastCursor = null   // 醒来那一份一定要观察一次,哪怕停订期间什么都没变
       poll.start(TOPIC, 0)
     },
     stop() {
@@ -88,6 +92,8 @@ export function createPresenceFeed({ invokeApi, waitMs = 20_000, backoff }) {
       /** @type {PresenceFacts} */ let facts = DOWN_FACTS
       /** @type {number | undefined} */ let cursor
       try { const r = await fetchTopic(undefined, 0); facts = { presence: r.presence, pet: r.pet }; cursor = r.cursor } catch { /* 拉不到就是拉不到 */ }
+      // 主动要的这一份总要观察一次(拍板之后、安静刚结束那一拍靠它消化),内容没变也发。
+      lastCursor = cursor ?? null
       publish(facts)
       if (running) poll.start(TOPIC, cursor ?? 0)
       return facts

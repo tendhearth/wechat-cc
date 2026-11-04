@@ -5,11 +5,12 @@ import {routePresenceTopic,PRESENCE_OK} from './presence-topic'
 // Screenshots use real time, while the idle director uses page timers. Keep
 // that clock paused between steps, and let real HTTP polling settle before
 // advancing again; one 3-minute jump can outrun its asynchronous responses.
-// The presence subscription answers within 300ms (presence-topic.ts) and re-asks on a page timer,
-// so with the clock paused there is at most one request per step.
+// The presence subscription is a long poll: a request that already holds a cursor waits for a
+// change (presence-topic.ts) and is not polling, so only the immediate snapshots (start / refresh,
+// no cursor yet) have to land before the next step. calm() facts never change.
 async function idleClock(page:Page){
   const pending=new Set<Request>(),failed:string[]=[]
-  const isPoll=(request:Request)=>new URL(request.url()).pathname==='/v1/subscribe/presence'
+  const isPoll=(request:Request)=>{const url=new URL(request.url());return url.pathname==='/v1/subscribe/presence'&&['0',null].includes(url.searchParams.get('since'))}
   page.on('request',request=>{if(isPoll(request))pending.add(request)})
   page.on('requestfinished',request=>pending.delete(request))
   page.on('requestfailed',request=>{if(isPoll(request)){pending.delete(request);failed.push(`${request.url()}: ${request.failure()?.errorText}`)}})
