@@ -7,17 +7,19 @@
 .workbench-pane .workbench-nav-toggle .dash-wordmark { font-size:18px; }
 .dashboard .workbench-root { flex:1; height:auto; min-height:0; }
 .workbench-shell {
-  --wb-surface:var(--th-paper); --wb-sidebar:var(--th-rail); --wb-text:var(--th-ink); --wb-secondary:var(--th-ink-soft);
+  --wb-surface:var(--th-paper); --wb-sidebar:var(--th-paper); --wb-text:var(--th-ink); --wb-secondary:var(--th-ink-soft);
   --wb-muted:var(--th-ink-soft); --wb-line:var(--th-hair); --wb-accent:var(--th-accent); --wb-gutter:clamp(24px,4vw,64px);
-  display:grid; grid-template-columns:280px minmax(0,1fr); height:100%; min-height:0;
+  display:grid; grid-template-columns:320px minmax(0,1fr); height:100%; min-height:0;
   background:var(--wb-surface); color:var(--wb-text); font-size:14px;
 }
 .wb-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .wb-sidebar { min-width:0; overflow:auto; border-right:1px solid var(--wb-line); background:var(--wb-sidebar); }
 .wb-sidebar>header { position:sticky; z-index:2; top:0; display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:58px; padding:15px 19px; background:inherit; }
-.wb-sidebar>header h2 { margin:0; font-size:var(--th-size-title); font-weight:500; }
-.wb-sidebar>header .wb-delegate { padding:7px 17px; border-radius:var(--th-radius-control); font-size:var(--th-size-small); }
-.wb-kicker { margin:0; color:var(--wb-muted); font-size:12px; font-weight:500; line-height:1.4; letter-spacing:0; }
+.wb-sidebar>header h2 { margin:0; font-size:var(--th-size-title); line-height:var(--th-lh-title); font-weight:400; }
+/* 「＋ 交办」和此刻的「浮到桌面」同一种次要按钮:细线胶囊,指上去才上强调色。 */
+.wb-sidebar>header .wb-delegate { display:inline-flex; align-items:center; gap:4px; padding:5px 12px 5px 9px; border:1px solid var(--th-hair); border-radius:var(--th-radius-control); background:transparent; color:var(--th-ink); font:inherit; font-size:var(--th-size-small); cursor:pointer; }
+.wb-sidebar>header .wb-delegate:hover { border-color:var(--th-accent); color:var(--th-accent); }
+.wb-kicker { margin:0; color:var(--wb-muted); font-size:var(--th-size-meta); font-weight:500; line-height:var(--th-lh-meta); letter-spacing:var(--th-tracking-meta); }
 .wb-new { border:0; border-radius:6px; padding:5px 7px; background:transparent; color:var(--wb-secondary); font-size:12px; cursor:pointer; }
 .wb-new:hover { background:var(--th-ground); color:var(--wb-text); }
 .wb-task-list { display:grid; gap:16px; padding:8px 12px 22px; }
@@ -45,13 +47,13 @@
 .wb-project>details>summary h3 { min-width:0; }
 .wb-project-tasks { display:grid; gap:3px; padding-top:5px; }
 .wb-project-empty { display:flex; align-items:center; min-height:36px; padding:0 64px 0 14px; }
-.wb-other-projects>summary { padding:6px 8px; color:var(--wb-muted); font-size:12px; cursor:pointer; list-style:none; }
+.wb-other-projects>summary { padding:6px 8px; color:var(--wb-muted); font-size:var(--th-size-meta); letter-spacing:var(--th-tracking-meta); cursor:pointer; list-style:none; }
 .wb-other-projects>summary::before { content:'›'; display:inline-block; margin-right:8px; }
 .wb-other-projects[open]>summary::before { transform:rotate(90deg); }
 .wb-other-projects>summary small { margin-left:8px; font-size:11px; }
 .wb-other-projects>div { padding-top:6px; }
 .wb-attention-list>header { display:flex; justify-content:space-between; align-items:center; padding:4px 10px 8px; }
-.wb-attention-list h3 { margin:0; font-size:14px; font-weight:500; }
+.wb-attention-list h3 { margin:0; color:var(--wb-muted); font-size:var(--th-size-meta); font-weight:500; letter-spacing:var(--th-tracking-meta); }
 .wb-attention-list>header small { color:var(--wb-muted); font-size:11px; }
 .wb-attention-list .wb-task { margin-bottom:3px; }
 .wb-project>header { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:0 4px 6px 10px; }
@@ -59,37 +61,42 @@
 /* 每个项目一个「＋ 交办」常驻会排成一列噪音(2026-10-05):只在指到 / 键盘落到这个项目时出现;顶上的「交办」一直在。 */
 .wb-project>.wb-project-new { opacity:0; transition:opacity .12s; }
 .wb-project:hover>.wb-project-new, .wb-project:focus-within>.wb-project-new { opacity:1; }
-.wb-project h3 { margin:0; overflow:hidden; color:var(--wb-secondary); font-size:13px; line-height:1.5; font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
+.wb-project h3 { margin:0; overflow:hidden; color:var(--wb-secondary); font-size:var(--th-size-meta); line-height:var(--th-lh-meta); font-weight:500; letter-spacing:var(--th-tracking-meta); text-overflow:ellipsis; white-space:nowrap; }
 .wb-project>div { display:grid; gap:2px; }
-.wb-task { min-width:0; width:100%; border:1px solid transparent; border-radius:7px; padding:9px 10px; background:transparent; color:inherit; text-align:left; cursor:pointer; }
-.wb-task:hover { background:var(--th-ground); }
+.wb-task { min-width:0; width:100%; border:1px solid transparent; border-radius:var(--th-radius-nav); padding:10px 8px; background:transparent; color:inherit; text-align:left; cursor:pointer; }
+/* 一种行(设计稿 2026-10-31 U4):格子、字号、悬停都和此刻的 .now-row 一样(cc-now.css);这里只补「选中」与侧栏里的窄宽。 */
+.wb-task.now-row { display:grid; grid-template-columns:16px minmax(0,1fr) auto; align-items:center; gap:10px; }
+/* 详情页、单独挂载的工作台测试页不一定带 cc-now.css:记号的颜色在这里再写一次(同一组 token)。 */
+.workbench-shell .now-row-status { display:inline-flex; color:var(--th-ink-soft); }
+.workbench-shell .now-row-status[data-tone="accent"] { color:var(--th-accent); }
+.wb-task .now-row-agents { display:inline-flex; }
+.wb-task:hover .wb-task-title, .wb-task:focus-visible .wb-task-title { color:var(--th-accent); }
 .wb-task.is-selected { border-color:var(--th-hair); background:var(--th-ground); }
-.wb-task-title { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; font-size:14px; line-height:1.5; font-weight:400; overflow-wrap:anywhere; }
-.wb-task-meta { display:flex; align-items:center; justify-content:flex-start; gap:8px; margin-top:5px; color:var(--wb-muted); font-size:11px; line-height:1.4; }
+.wb-task-text { display:block; min-width:0; }
+.wb-task-title { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; font-size:var(--th-size-item); line-height:var(--th-lh-item); font-weight:400; overflow-wrap:anywhere; }
+.wb-task-meta { display:flex; flex-wrap:wrap; align-items:baseline; gap:0 6px; margin:2px 0 0; color:var(--wb-muted); font-size:var(--th-size-meta); line-height:var(--th-lh-meta); }
+.wb-task-meta>span+span::before { content:'·'; margin-right:6px; }
 .wb-task-provider { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wb-task-waiting { max-width:60%; overflow:hidden; color:var(--th-ink-soft); text-overflow:ellipsis; white-space:nowrap; }
-.wb-status { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--wb-muted); font-size:var(--th-size-caption); line-height:1.5; font-weight:400; white-space:nowrap; }
-.wb-status::before { content:''; flex:none; width:6px; height:6px; border-radius:50%; background:var(--th-unknown); }
-.wb-status[data-status=running]::before,.wb-status[data-status=completed]::before { background:var(--th-ok); }
+/* 状态是「记号 + 词」(记号来自状态表,画在行首 / 标题下;matter-status.js):词本身只用墨灰,不再带红黄绿圆点。 */
+.wb-status { display:inline-flex; align-items:center; flex:none; color:var(--wb-muted); font-size:inherit; line-height:inherit; font-weight:400; white-space:nowrap; }
 .wb-runtime-note { margin:0 0 8px; color:var(--wb-secondary); font-size:12px; line-height:1.6; }
-/* 被打断 = 停下来等人(琥珀),与操作行的 interrupted 同色;只有真的失败才红(终审 M4) */
-.wb-status[data-status=queued]::before,.wb-status[data-status=cancelling]::before,.wb-status[data-status=interrupted]::before,.wb-status[data-status=paused]::before { background:var(--th-warn); }
-.wb-status[data-status=failed]::before { background:var(--th-bad); }
-.wb-task-attention { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--th-ink-soft); font-size:var(--th-size-caption); white-space:nowrap; }
-.wb-task-attention::before { content:''; flex:none; width:6px; height:6px; border-radius:50%; background:var(--th-warn); }
+.wb-task-attention { display:inline-flex; align-items:center; flex:none; color:var(--th-ink-soft); font-size:inherit; white-space:nowrap; }
 
 /* The composer occupies a separate row and cannot float over replies. */
 .wb-main { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; background:var(--wb-surface); }
 .wb-task-head { position:relative; z-index:4; flex:none; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:17px var(--wb-gutter); border-bottom:1px solid var(--wb-line); }
 .wb-task-head>div { min-width:0; }
-.wb-task-head h2 { display:-webkit-box; overflow:hidden; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin:5px 0 0; color:var(--wb-text); font-size:var(--th-size-title); line-height:1.4; font-weight:500; }
-.wb-task-progress { display:flex; align-items:center; flex-wrap:wrap; gap:6px 14px; margin-top:8px; color:var(--wb-muted); font-size:12px; line-height:1.5; }
+.wb-task-head h2 { display:-webkit-box; overflow:hidden; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin:5px 0 0; color:var(--wb-text); font-size:var(--th-size-title); line-height:var(--th-lh-title); font-weight:400; }
+.wb-task-progress { display:flex; align-items:center; flex-wrap:wrap; gap:6px 14px; margin-top:8px; color:var(--wb-muted); font-size:var(--th-size-meta); line-height:var(--th-lh-meta); }
+.wb-task-progress>.now-row-status { margin-right:-8px; }
+.wb-task-progress>.now-row-status:empty { display:none; }
 .wb-task-progress .wb-decision-jump { display:inline-flex; align-items:center; gap:5px; min-height:28px; padding:2px 4px; color:var(--wb-secondary); font-size:12px; }
 .wb-task-progress .wb-decision-jump:hover,.wb-task-progress .wb-decision-jump:focus-visible { color:var(--wb-accent); }
-.wb-task-context { overflow:hidden; margin:0; color:var(--wb-muted); font-size:11px; line-height:1.5; text-overflow:ellipsis; white-space:nowrap; }
+.wb-task-context { overflow:hidden; margin:0; color:var(--wb-muted); font-size:var(--th-size-meta); line-height:var(--th-lh-meta); letter-spacing:var(--th-tracking-meta); text-overflow:ellipsis; white-space:nowrap; }
 .wb-task-unattended { margin:5px 0 0; color:var(--th-ink-soft); font-size:11px; line-height:1.5; }
 .wb-task-head-actions { display:flex; flex:none; align-items:center; gap:18px; }
-.wb-task-info>summary { cursor:pointer; color:var(--wb-muted); font-size:11px; list-style:none; white-space:nowrap; }
+.wb-task-info>summary { cursor:pointer; color:var(--wb-muted); font-size:var(--th-size-small); list-style:none; white-space:nowrap; }
 .wb-task-info>summary::after { content:'⌄'; margin-left:5px; }
 .wb-task-info[open]>summary { color:var(--wb-text); }
 .wb-task-info-body { position:absolute; right:var(--wb-gutter); top:calc(100% - 4px); width:min(360px,calc(100% - 32px)); max-height:min(400px,60vh); overflow:auto; border:1px solid var(--th-hair); border-radius:10px; padding:18px; background:var(--th-paper); }
@@ -127,10 +134,10 @@
 .wb-markdown table { display:block; width:100%; overflow:auto; border-collapse:collapse; font-size:13px; }
 .wb-markdown th,.wb-markdown td { border-bottom:1px solid var(--wb-line); padding:7px 12px; text-align:left; }
 .wb-disclosure { border:0; border-top:1px solid var(--wb-line); padding:12px 0; color:var(--wb-secondary); }
-.wb-disclosure>summary,.wb-options>summary { display:flex; align-items:center; gap:8px; cursor:pointer; list-style:none; font-size:12px; }
+.wb-disclosure>summary,.wb-options>summary { display:flex; align-items:center; gap:8px; cursor:pointer; list-style:none; font-size:var(--th-size-small); }
 .wb-disclosure>summary::before,.wb-options>summary::before { content:'›'; font-size:16px; line-height:1; }
 .wb-disclosure[open]>summary::before,.wb-options[open]>summary::before { transform:rotate(90deg); }
-.wb-disclosure>summary small { margin-left:auto; color:var(--wb-muted); font-size:11px; }
+.wb-disclosure>summary small { margin-left:auto; color:var(--wb-muted); font-size:var(--th-size-caption); }
 .wb-operation-group { min-width:0; }
 .wb-operation-group.wb-disclosure { padding:9px 0; border-top:0; }
 .wb-operation-list { display:grid; gap:7px; }
@@ -182,8 +189,8 @@
 .wb-preview-content { width:100%; }
 .wb-preview pre { width:100%; max-height:55vh; overflow:auto; border:1px solid var(--wb-line); border-radius:7px; padding:14px; background:var(--th-paper); color:var(--wb-text); white-space:pre-wrap; word-break:break-word; font:12px/1.7 var(--mono); }
 .wb-preview img,.wb-preview iframe { width:100%; min-height:360px; border:1px solid var(--wb-line); border-radius:7px; background:var(--th-paper); object-fit:contain; }
-.wb-preview-hint,.wb-empty-copy { padding:10px 0; color:var(--wb-muted); font-size:13px; line-height:1.7; }
-.workbench-shell.has-preview { grid-template-columns:240px minmax(300px,1fr) minmax(360px,1.15fr); }
+.wb-preview-hint,.wb-empty-copy { padding:10px 0; color:var(--wb-muted); font-size:var(--th-size-meta); line-height:1.7; }
+.workbench-shell.has-preview { grid-template-columns:260px minmax(300px,1fr) minmax(360px,1.15fr); }
 .wb-artifact-panel { min-width:0; min-height:0; display:flex; flex-direction:column; border-left:1px solid var(--wb-line); background:var(--wb-surface); }
 .wb-artifact-panel>header { display:flex; align-items:center; gap:12px; padding:17px 20px; border-bottom:1px solid var(--wb-line); }
 .wb-artifact-panel>header label { flex:none; font-size:var(--th-size-body); }
@@ -333,15 +340,15 @@
 .wb-recovery p { margin:5px 0; }
 .wb-recovery summary { cursor:pointer; color:var(--th-ink-soft); }
 .wb-recovery pre { white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.65 var(--mono); }
-.wb-btn { width:fit-content; flex:none; border:1px solid var(--th-hair); border-radius:7px; padding:8px 12px; background:var(--th-paper); color:var(--wb-text); font-size:12px; font-weight:500; line-height:1.3; white-space:nowrap; cursor:pointer; }
+.wb-btn { width:fit-content; flex:none; border:1px solid var(--th-hair); border-radius:var(--th-radius-control); padding:8px 14px; background:var(--th-paper); color:var(--wb-text); font-size:var(--th-size-small); font-weight:500; line-height:1.3; white-space:nowrap; cursor:pointer; }
 .wb-btn:hover { background:var(--th-rail); }
 .wb-btn-primary:hover { background:var(--th-accent); opacity:.9; }
 .wb-btn-primary { border-color:var(--th-accent); background:var(--th-accent); color:var(--th-on-accent); }
 .wb-btn-danger { color:var(--th-ink); border-color:var(--th-hair); }
 .wb-btn:disabled { cursor:default; opacity:.5; }
 .wb-welcome { max-width:600px; margin-right:auto; margin-left:auto; padding-top:clamp(32px,9vh,90px); padding-bottom:24px; }
-.wb-welcome h1 { margin:10px 0; color:var(--wb-text); font-size:24px; line-height:1.5; font-weight:500; letter-spacing:-.025em; }
-.wb-welcome>p:not(.wb-kicker) { margin:0; color:var(--wb-secondary); font-size:13px; line-height:1.8; }
+.wb-welcome h1 { margin:10px 0; color:var(--wb-text); font-size:calc(var(--th-size-title) + 4px); line-height:var(--th-lh-title); font-weight:400; letter-spacing:0; }
+.wb-welcome>p:not(.wb-kicker) { margin:0; color:var(--wb-secondary); font-size:var(--th-size-bubble); line-height:var(--th-lh-bubble); }
 .wb-create-form { display:grid; gap:22px; margin-top:28px; }
 .wb-create-form label { display:grid; gap:8px; color:var(--wb-secondary); font-size:12px; font-weight:500; }
 .wb-create-form input,.wb-create-form textarea,.wb-create-form select { width:100%; border:1px solid var(--th-hair); border-radius:7px; padding:11px 12px; background:var(--th-paper); color:var(--wb-text); font:inherit; resize:vertical; }
@@ -352,19 +359,19 @@
 .wb-options { padding:5px 0; color:var(--wb-secondary); font-size:11px; }
 .wb-options>summary span { margin-left:auto; color:var(--wb-muted); font-size:11px; }
 .wb-options>label { margin-top:16px; }
-.wb-provider-missing,.wb-error { border-left:2px solid var(--th-bad); padding:6px 13px; color:var(--th-bad); font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.wb-provider-missing,.wb-error { border-left:2px solid var(--th-bad); padding:6px 13px; color:var(--th-ink); font-size:var(--th-size-small); line-height:1.6; overflow-wrap:anywhere; }
 .wb-provider-missing { margin:0; }
 .wb-error { margin-top:16px; margin-bottom:16px; }
 .workbench-shell :is(button,summary,input,select):focus-visible { outline:2px solid var(--th-accent); outline-offset:3px; }
 .workbench-shell summary::-webkit-details-marker { display:none; }
 @media(max-width:1000px) {
-  .workbench-shell { grid-template-columns:240px minmax(0,1fr); --wb-gutter:26px; }
+  .workbench-shell { grid-template-columns:280px minmax(0,1fr); --wb-gutter:26px; }
   .wb-task-head-actions { gap:12px; }
 }
 @media(max-width:700px) {
   .wb-followup.wb-followup-restart { grid-template-columns:minmax(0,1fr); }
   .wb-followup.wb-followup-restart>.wb-btn { grid-column:1; grid-row:auto; }
-  .workbench-shell { grid-template-columns:220px minmax(0,1fr); --wb-gutter:18px; }
+  .workbench-shell { grid-template-columns:240px minmax(0,1fr); --wb-gutter:18px; }
   .wb-task-head { align-items:flex-start; gap:10px; }
   .wb-task-head-actions { align-items:flex-end; flex-direction:column; gap:5px; }
   .wb-task-head h2 { font-size:18px; }
@@ -525,7 +532,7 @@
 /* 窗口够宽时主导航一直在(2026-10-05):叫出主导航的按钮那一行只在窄窗口收起主导航时出现。 */
 .dash-window:not(.is-workbench-focused) .workbench-pane>.cc-life-topline{display:none}
 /* 独立工作区(2026-10-07) */
-.wb-worktree-badge { margin-left: 6px; padding: 0 5px; border: 1px solid var(--th-hair); border-radius: 4px; font-size: 11px; color: var(--th-ink-soft); }
+.wb-worktree-badge { color: var(--th-ink-soft); }
 .wb-worktree { margin: 6px 0 0; font-size: var(--th-size-small, 13px); color: var(--th-ink-soft); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .wb-worktree code { font-size: 12px; }
 
@@ -572,6 +579,6 @@
 .wb-input-preview>footer [role=status]:empty {display:none}
 .converse-user-image {border:0;padding:0;background:transparent;cursor:zoom-in}
 .converse-user-image img {display:block}
-/* 一起做不再是导航项(设计稿 2026-10-31 U4):从主页的行或「全部 →」进来,左上角回此刻。 */
+/* 「全部」不是导航项(设计稿 2026-10-31 U4):从主页的行或「全部 →」进来,左上角回此刻。 */
 .workbench-pane .workbench-home { appearance:none; border:0; background:transparent; padding:2px 4px; font:inherit; font-size:var(--th-size-meta); color:var(--th-ink-soft); cursor:pointer; }
 .workbench-pane .workbench-home:hover, .workbench-pane .workbench-home:focus-visible { color:var(--th-ink); }

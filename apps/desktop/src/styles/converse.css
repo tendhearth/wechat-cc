@@ -56,7 +56,7 @@
 .converse-att-sticker { display:block; max-width:140px; max-height:140px; object-fit:contain; border-radius:var(--th-radius-bubble); }
 .converse-att-sticker-label { color:var(--th-ink-soft); }
 
-/* 输入:一条胶囊,输入 + 工具条。「一起做」之外只有此刻的聊天页会用到;此刻页再按 data-now 收放。 */
+/* 输入:一条胶囊,输入 + 工具条。一件事的详情之外只有此刻的聊天页会用到;此刻页再按 data-now 收放。 */
 .converse-compose { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: center; box-sizing: border-box; flex: none; width: min(780px, calc(100% - 48px)); margin: 12px auto 24px; padding: 8px 8px 8px 22px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: var(--th-paper); }
 .converse-compose:focus-within { border-color: var(--th-accent); }
 .converse-compose [hidden] { display: none !important; }

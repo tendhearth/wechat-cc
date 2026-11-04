@@ -11,7 +11,7 @@ const render=value=>{document.body.innerHTML=renderWorkbench(value);return docum
 describe('workbench decision hierarchy in the rendered page',()=>{
  it('keeps the decision instruction in its action area and counts both permission and question requests quietly elsewhere',()=>{
   const root=render(state),row=root.querySelector('[data-task-id="A"]'),marker=row.querySelector('.wb-task-attention'),jump=root.querySelector('[data-action="show-decisions"]')
-  expect(marker.textContent.trim()).toBe('3')
+  expect(marker.textContent.trim()).toBe('等你决定 · 共 3 项')
   expect(marker.getAttribute('aria-label')).toContain('2 项权限请求等你确认')
   expect(marker.getAttribute('aria-label')).toContain('1 项问题等你回答')
   expect(marker.title).toContain('2 项权限请求等你确认')

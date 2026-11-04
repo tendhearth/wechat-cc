@@ -167,15 +167,20 @@ describe('global workbench attention polling', () => {
     progress = [{ id: 'A', phase: 'replied' }, { id: 'B', phase: 'cancelled' }, { id: 'C', phase: 'working' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
     expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '一起做有回复了', body: '有一件事回复了。打开 CC 查看。' })
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '有一件事回复了', body: '打开 CC 查看。' })
     progress = [{ id: 'A', phase: 'replied' }, { id: 'C', phase: 'interrupted' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
-    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '一起做有任务停下了', body: '打开 CC 看看发生了什么。' })
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '有一件事停下了', body: '打开 CC 看看发生了什么。' })
     // 窗口在前面:不弹
     progress = [{ id: 'D', phase: 'working' }]; await attention.refresh()
     focused = true; progress = [{ id: 'D', phase: 'replied' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
     expect(invoke).toHaveBeenCalledTimes(2)
+    // 一次回来好几件:标题写件数,不再提「一起做」(U4:桌面没有单独的一起做了)
+    focused = false; progress = [{ id: 'E', phase: 'working' }, { id: 'F', phase: 'working' }]; await attention.refresh()
+    progress = [{ id: 'E', phase: 'replied' }, { id: 'F', phase: 'replied' }]
+    await attention.refresh(); await Promise.resolve(); await Promise.resolve()
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '2 件事回复了', body: '打开 CC 查看。' })
     attention.destroy()
   })
 
@@ -191,7 +196,7 @@ describe('global workbench attention polling', () => {
     await poller.refresh()
     expect(onChange).toHaveBeenLastCalledWith({ tasks, stale: false, progress: new Map([['A', 'replied']]), moved: { replied: ['A'], stopped: [] } })
     expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke).toHaveBeenCalledWith('notify_user', { title: '一起做需要你回应', body: '有新的问题或权限请求。打开 CC 查看待处理事项。' })
+    expect(invoke).toHaveBeenCalledWith('notify_user', { title: '有一件事等你决定', body: '有新的问题或权限请求。打开 CC 看看。' })
     expect(api).toHaveBeenCalledTimes(2)
     poller.destroy()
   })

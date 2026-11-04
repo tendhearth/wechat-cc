@@ -51,7 +51,7 @@ for (const width of [1440, 760]) {
     await clickNav(page, 'overview')
     unreadable = true
     await expect(page.locator('#now-waiting')).toHaveAttribute('data-state', 'partial', { timeout: 12_000 })
-    await expect(page.locator('#now-waiting-title')).toHaveText('1 件事等你 · 一起做那边暂时读不到')
+    await expect(page.locator('#now-waiting-title')).toHaveText('1 件事等你 · 其余的暂时读不到')
     await expect(page.locator('#now-waiting-title')).toHaveCSS('position', 'static')
     await expect(row).toHaveCount(0)
     const terminalRow = page.locator('.now-terminal button')

@@ -116,8 +116,8 @@ export function createWorkbenchAttentionPoller(options) {
         options.onChange?.({ tasks, stale: false, ...(progress ? { progress: new Map(progress), moved } : {}) })
         // 回复 / 停下:窗口在前面就不弹(你正看着 CC);待处理那条优先,一次轮询最多一条通知。
         const finishNotice = !shouldNotify && !context.focused
-          ? moved.stopped.length ? { title: '一起做有任务停下了', body: '打开 CC 看看发生了什么。' }
-            : moved.replied.length ? { title: '一起做有回复了', body: moved.replied.length > 1 ? `${moved.replied.length} 件事回复了。打开 CC 查看。` : '有一件事回复了。打开 CC 查看。' }
+          ? moved.stopped.length ? { title: '有一件事停下了', body: '打开 CC 看看发生了什么。' }
+            : moved.replied.length ? { title: moved.replied.length > 1 ? `${moved.replied.length} 件事回复了` : '有一件事回复了', body: '打开 CC 查看。' }
             : null
           : null
         if (finishNotice && !destroyed) void Promise.resolve().then(() => options.invoke('notify_user', finishNotice)).catch(() => {})
@@ -125,8 +125,8 @@ export function createWorkbenchAttentionPoller(options) {
           // No task title, prompt, command, path, or request ID crosses into OS
           // notifications. Denied or uncertain delivery is intentionally final.
           void Promise.resolve().then(() => options.invoke('notify_user', {
-            title: '一起做需要你回应',
-            body: '有新的问题或权限请求。打开 CC 查看待处理事项。',
+            title: '有一件事等你决定',
+            body: '有新的问题或权限请求。打开 CC 看看。',
           })).catch(() => {})
         }
         return tasks
