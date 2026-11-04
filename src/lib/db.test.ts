@@ -1286,13 +1286,17 @@ describe('v100 — cli_sessions 收成指针(M4d 第 2 步)', () => {
     expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
     db.close()
   })
-  it('还没有那件事的老会话:按列补建 —— ended ⇒ done;其余 ⇒ open、不开轮不挂卡;有最近一句 ⇒ 一步 agent_message;已经有的不动', () => {
+  it('还没有那件事的老会话:按列补建 —— ended ⇒ done;其余 ⇒ open、不开轮不挂卡;有最近一句 ⇒ 一步 agent_message;已经有的不另建', () => {
     const db = migratedTo(99)
     db.exec(`INSERT INTO matters(id,kind,title,state,status,origin_surface,created_at,updated_at) VALUES('0000000a','terminal','have','working','open','cli',1,1);
       INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('0000000a','cli','HAVE',1);
+      INSERT INTO matters(id,kind,title,state,status,origin_surface,created_at,updated_at) VALUES('0000000b','terminal','said','open','open','cli',1,1);
+      INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('0000000b','cli','SAID',1);
+      INSERT INTO matter_items(matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES('0000000a',1,'user_message','completed','{}',1,1,1),('0000000b',1,'agent_message','completed','{"text":"步里那句"}',1,1,2);
       UPDATE matter_log_cursor SET value = 41 WHERE id = 1;`)
     const ins = db.query(`INSERT INTO cli_sessions(session_id,source,cwd,status,last_event_at,last_summary,pending_tool,pending_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)`)
-    ins.run('HAVE', 'claude', '/w/have', 'running', 10, null, null, null, 1)
+    ins.run('HAVE', 'claude', '/w/have', 'running', 10, '列里那句', null, null, 1)
+    ins.run('SAID', 'claude', '/w/said', 'idle', 11, '列里旧的', null, null, 1)
     ins.run('E', 'claude', '/Users/me/blog', 'ended', 20, '收尾了', null, null, 2)
     ins.run('I', 'codex', 'C:\\w\\proj', 'idle', 30, '**改好了**', null, null, 3)
     ins.run('W', 'claude', '', 'waiting', 40, null, 'Bash', 40, 4)
@@ -1308,8 +1312,11 @@ describe('v100 — cli_sessions 收成指针(M4d 第 2 步)', () => {
     expect(items('I').map(i => JSON.parse(i.payload_json))).toEqual([{ text: '**改好了**' }])
     expect(items('W')).toEqual([])
     expect(of('E').cursor).toBe(42)
+    // 已经有那件事、还没有一步最后一句 ⇒ 列里那句排在最后记一步(第 1 步读时 COALESCE 的那一句);已经有的不加
+    expect(items('HAVE').map(i => [i.seq, i.kind, i.payload_json, i.cursor])).toEqual([[1, 'user_message', '{}', 1], [2, 'agent_message', JSON.stringify({ text: '列里那句' }), 44]])
+    expect(items('SAID').map(i => i.payload_json)).toEqual([JSON.stringify({ text: '步里那句' })])
     expect(db.query('SELECT COUNT(*) AS n FROM matter_turns').get()).toEqual({ n: 0 })
-    expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 43 })
+    expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 44 })
     expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
     db.close()
   })
