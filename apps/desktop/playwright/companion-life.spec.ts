@@ -78,14 +78,33 @@ async function traceCuriosity(page:Page){
   })
 }
 
+async function awaitCuriosity(page:Page,advance:(ms:number)=>Promise<void>,calmSince:number){
+  // Availability can restart a calm episode. Observe its first admission;
+  // an exact 84-second sample can precede or miss the three-second clip.
+  const earliest=calmSince+75_000,deadline=calmSince+120_000
+  const initial=await page.evaluate(()=>performance.now())
+  if(initial<earliest)await advance(earliest-initial)
+  for(;;){
+    const {now,first}=await page.evaluate(()=>({now:performance.now(),first:(window as any).__curiosityTrace.find((p:any)=>p.kind==='action'&&p.value==='curiosity')}))
+    if(first){
+      expect(first.at-calmSince).toBeGreaterThanOrEqual(75_000)
+      expect(first.at-calmSince).toBeLessThanOrEqual(120_000)
+      await expect(page.locator('#pet-stage')).toHaveAttribute('data-pet-action','curiosity')
+      return
+    }
+    expect(now,'Curiosity must start within the 120-second calm admission limit').toBeLessThan(deadline)
+    await advance(Math.min(250,deadline-now))
+  }
+}
+
 test('CC completes its private curiosity through the real last image without inventing task activity',async({page,shimUrl,shim})=>{
   await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl)
   await traceCuriosity(page)
   const stage=page.locator('#pet-stage'),body=page.locator('#pet-body'),img=page.locator('#pet-sprite')
+  const calmSince=await page.evaluate(()=>performance.now())
   await advance(74_999)
   expect(await page.evaluate(()=>(window as any).__curiosityTrace.some((p:any)=>p.value==='curiosity'))).toBe(false)
-  await advance(9_001)
-  await expect(stage).toHaveAttribute('data-pet-action','curiosity')
+  await awaitCuriosity(page,advance,calmSince)
   await expect(body).toHaveAttribute('data-pet-performance','true')
   await expect(body).toHaveCSS('transform','none');await expect(body).toHaveCSS('animation-name','none')
   await expect(stage).not.toHaveClass(/pet-breathing/)
@@ -109,7 +128,7 @@ for(const reason of ['controls','working','permission','quiet','reduced','hidden
 test(`curiosity yields to ${reason} without a stale callback or replay`,async({page,shimUrl,shim})=>{
   await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
   const stage=page.locator('#pet-stage')
-  await advance(84_000);await expect(stage).toHaveAttribute('data-pet-action','curiosity')
+  await awaitCuriosity(page,advance,await page.evaluate(()=>performance.now()))
   if(reason==='controls')await page.locator('.pet-controls').dispatchEvent('pointerenter')
   if(reason==='working'||reason==='permission')await page.evaluate(value=>(window as any).__pet.setState(value),reason)
   if(reason==='quiet')await page.locator('#pet-quiet').dispatchEvent('click')
@@ -126,6 +145,22 @@ test(`curiosity yields to ${reason} without a stale callback or replay`,async({p
   if(reason==='hidden')await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:false});document.dispatchEvent(new Event('visibilitychange'))})
   if(reason==='settings')await page.locator('.pet-settings').evaluate((node:HTMLDetailsElement)=>{node.open=false})
   await advance(84_000)
+  expect(await page.evaluate(()=>(window as any).__curiosityTrace.filter((p:any)=>p.kind==='action'&&p.value==='curiosity').length)).toBe(1)
+})
+
+test('curiosity waits for the restarted calm episode and yields to work',async({page,shimUrl,shim})=>{
+  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  await advance(1_000)
+  expect(await page.evaluate(()=>(window as any).__curiosityTrace.some((p:any)=>p.value==='curiosity'))).toBe(false)
+  await page.evaluate(()=>window.dispatchEvent(new Event('blur')))
+  await awaitCuriosity(page,advance,await page.evaluate(()=>performance.now()))
+  const stage=page.locator('#pet-stage')
+  await page.evaluate(()=>(window as any).__pet.setState('working'))
+  await expect(stage).not.toHaveAttribute('data-pet-action','curiosity')
+  await advance(4_000)
+  expect(await page.evaluate(()=>(window as any).__pet.machine.snapshot().behavior)).toBe('working')
+  await page.evaluate(()=>(window as any).__pet.setState('idle'))
+  await advance(120_000)
   expect(await page.evaluate(()=>(window as any).__curiosityTrace.filter((p:any)=>p.kind==='action'&&p.value==='curiosity').length)).toBe(1)
 })
 
