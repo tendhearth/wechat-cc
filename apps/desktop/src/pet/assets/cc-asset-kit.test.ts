@@ -288,15 +288,9 @@ describe('CC Asset Kit v1.0-alpha', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   }, 30_000)
   it('accepts a reviewed PNG replacement with one shared PNG mask; rejects changed coverage and distinct paths', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cc-kit-png-'))
-    try {
-      const target = join(dir, 'cc-v1')
-      cpSync(root, target, { recursive: true })
-      cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
-      const next = structuredClone(raw)
+    withPngKit((target, next, register) => {
       const add = (path: string, bytes: Buffer, extra = {}) => {
-        writeFileSync(join(target, path), bytes)
-        next.assets[path] = { artStatus: 'reviewed-production', ...extra, sha256: createHash('sha256').update(bytes).digest('hex') }
+        register(path, bytes, { artStatus: 'reviewed-production', ...extra })
       }
       // Fixtures are rasterizations of the controlled placeholder, not approved art.
       // Coverage includes the shared shadow as well as the opaque silhouette.
@@ -314,8 +308,9 @@ describe('CC Asset Kit v1.0-alpha', () => {
         next.turnarounds[form].front = path
       }
       writeFileSync(join(target, 'manifest.json'), JSON.stringify(next))
-      expect(validateAssetKit(target).errors).toEqual([])
-      expect(validateAssetKit(target).warnings).toContain('bitmap_geometry_attestation_only:front')
+      const reviewed = validateAssetKit(target)
+      expect(reviewed.errors).toEqual([])
+      expect(reviewed.warnings).toContain('bitmap_geometry_attestation_only:front')
       // Preserve a valid PNG and update its digest, but shift its actual coverage.
       // This catches validators that only compare mask filenames or attestations.
       const path = 'canonical/lit/front.png'
@@ -350,8 +345,8 @@ describe('CC Asset Kit v1.0-alpha', () => {
       next.assets['canonical/unlit/front.png'].geometryMask = 'masks/b.png'
       writeFileSync(join(target, 'manifest.json'), JSON.stringify(next))
       expect(validateAssetKit(target).errors).toContain('pair_geometry_mask:front')
-    } finally { rmSync(dir, { recursive: true, force: true }) }
-  }, 60_000) // 四份改过的整套各校验一遍(每遍解约 50 张 PNG);负载下 30s 不够(10-21)
+    })
+  }, 60_000) // 正反例校验历史夹具;上面的整包检查仍覆盖全部已注册动画。
 })
 
 
