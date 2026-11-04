@@ -187,9 +187,11 @@ describe('M4d 第 1 步:有那件 terminal 的事 ⇒ 状态 / 最近一句 / �
     h.permissionSettled(SID, 'allow')
     expect(h.list()[0]).toMatchObject({ status: 'running', pending: null })
     clock += 1000
+    clock += 500
+    h.ingest(ev())
     h.ingest(ev({ kind: 'stop', text: '**改好了**\n\n三处 `a.ts`' }))
     expect(h.list()[0]).toMatchObject({ status: 'idle', last_summary: '改好了 三处 a.ts' })
-    const asked = clock - 2000
+    const asked = clock
     clock += 1000
     h.ingest(ev({ automated: true }))
     expect(h.list()[0]).toMatchObject({ status: 'running', last_prompt_at: asked })

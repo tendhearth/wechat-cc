@@ -15,7 +15,7 @@
  * 自己答了权限,hook 都不会再报一声。
  *
  * M4d 第 1 步(设计稿 docs/superpowers/specs/2026-11-04-m4-terminal-matter-design.md):有那件 kind='terminal' 的事
- * (matter_bindings surface='cli')⇒ 状态、最近一句、最近一次发问、等你那一项**从这件事推**,不读下面这几列;
+ * (matter_bindings surface='cli')⇒ 状态、最近一句、等你那一项**从这件事推**(最近一次发问是钩子报的事实,照旧读列),不读下面这几列;
  * 没有(M4a 之前的老会话)⇒ 照旧读列。列照旧写(回退用),第 2 步(soak 之后)删列、只留指针。
  *   这件事 done                    → ended
  *   有一张开着的权限卡(started)    → waiting(那张卡的 tool / summary / 时间)
@@ -36,17 +36,15 @@ const PRUNE_EVERY = 50
 
 const COLS = 'session_id,source,cwd,machine,transcript_path,origin_agent,status,last_event_at,last_prompt_at,last_summary,pending_tool,pending_summary,pending_at,created_at'
 
-/** 那件事里开着的权限卡 / 最后一句 / 主人最近一次发问的那一轮(harness 自己塞的不算)。 */
+/** 那件事里开着的权限卡 / 最后一句。最近一次发问照旧读列:一轮里可能发问好几次,轮的开始时间不是最近那一次(Codex 评审)。 */
 const CARD = "SELECT %s FROM matter_items i WHERE i.matter_id = b.matter_id AND i.kind = 'permission' AND i.status = 'started' ORDER BY i.seq DESC LIMIT 1"
 const SAID = "SELECT json_extract(i.payload_json, '$.text') FROM matter_items i WHERE i.matter_id = b.matter_id AND i.kind = 'agent_message' AND json_extract(i.payload_json, '$.text') IS NOT NULL ORDER BY i.seq DESC LIMIT 1"
-const ASKED = "SELECT max(t.started_at) FROM matter_turns t WHERE t.matter_id = b.matter_id AND json_extract(t.policy_json, '$.automated') IS NULL"
-const DERIVED = `SELECT c.session_id, c.source, c.cwd, c.machine, c.transcript_path, c.origin_agent, c.last_event_at, c.created_at,
+const DERIVED = `SELECT c.session_id, c.source, c.cwd, c.machine, c.transcript_path, c.origin_agent, c.last_event_at, c.created_at, c.last_prompt_at,
     CASE WHEN m.id IS NULL THEN c.status
          WHEN m.state = 'done' THEN 'ended'
          WHEN EXISTS (${CARD.replace('%s', '1')}) THEN 'waiting'
          WHEN EXISTS (SELECT 1 FROM matter_turns t WHERE t.matter_id = b.matter_id AND t.status = 'running') THEN 'running'
          ELSE 'idle' END AS status,
-    CASE WHEN m.id IS NULL THEN c.last_prompt_at ELSE COALESCE((${ASKED}), c.last_prompt_at) END AS last_prompt_at,
     CASE WHEN m.id IS NULL THEN c.last_summary ELSE COALESCE((${SAID}), c.last_summary) END AS last_summary,
     CASE WHEN m.id IS NULL THEN c.pending_tool ELSE (${CARD.replace('%s', "json_extract(i.payload_json, '$.tool')")}) END AS pending_tool,
     CASE WHEN m.id IS NULL THEN c.pending_summary ELSE (${CARD.replace('%s', "json_extract(i.payload_json, '$.summary')")}) END AS pending_summary,
