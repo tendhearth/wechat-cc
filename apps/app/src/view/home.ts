@@ -121,7 +121,8 @@ function terminalHomeRows(input: HomeInput): HomeRow[] {
       return {
         id: r.id,
         source: 'terminal' as const,
-        href: `/terminal/${encodeURIComponent(r.id)}`,
+        // 有那件事 ⇒ 点进同一个详情页(M4c);老 daemon 不带 matter_id ⇒ 旧地址
+        href: s.matter_id ? `/matter/${encodeURIComponent(s.matter_id)}` : `/terminal/${encodeURIComponent(r.id)}`,
         title: r.pendingText || r.project,
         caption: [r.pendingText ? r.project : null, word, r.ago].filter(Boolean).join(' · ') || null,
         detail: !r.pendingText && !r.stale ? r.nowText || r.summary : null,

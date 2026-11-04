@@ -63,6 +63,12 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     expect(v.actionableWaiting).toHaveLength(1)
     expect(v.groups.flatMap(g => g.rows.map(r => r.id))).not.toContain('E')
   })
+  it('终端行有那件事(matter_id,M4c)⇒ 点进 /matter/<id>;没有 ⇒ 旧地址', () => {
+    const v = homeView(input({ terminal: [term({ session_id: 'R', status: 'running', matter_id: 'deadbeef' }), term({ session_id: 'O', status: 'running' })] }))
+    const rows = v.groups.find(g => g.key === 'working')!.rows
+    expect(rows.find(r => r.id === 'R')!.href).toBe('/matter/deadbeef')
+    expect(rows.find(r => r.id === 'O')!.href).toBe('/terminal/O')
+  })
   it('终端在跑 ⇒ 在做组;歇着 ⇒ 带回来的(这一轮做完了)', () => {
     const v = homeView(input({ terminal: [term({ session_id: 'R', status: 'running' }), term({ session_id: 'I', status: 'idle' })] }))
     expect(ids(v, 'working')).toEqual(['R'])
