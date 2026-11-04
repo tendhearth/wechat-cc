@@ -88,3 +88,48 @@ describe('matter/<聊天> 主题', () => {
     MatterTopic.parse(await src({ latestAt: async () => 7, pendingMatter: () => 'c0ffee01' }).snapshot('matter/c0ffee01'))
   })
 })
+
+describe('变化驱动的主题(P2)', () => {
+  const kinds: Record<string, string> = { aaaa0001: 'task', aaaa0002: 'task', bbbb0001: 'terminal', cccc0001: 'chat' }
+  const rig = () => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    let listener: ((id: string, cursor: number) => void) | null = null
+    const workbench = {
+      list: () => ({ tasks: [] }), attention: () => ({ tasks: [] }),
+      detail: (id: string) => { calls.push(id); return { version: 1, task: { phase: 'working' }, permissions: [], questions: [] } },
+    } as unknown as PhoneWorkbench
+    const matters = { get: (id: string) => (kinds[id] ? { id, kind: kinds[id], status: 'open', updatedAt: 1, ownerChatId: null } : null) }
+    const wiring = makePhoneEventsWiring({
+      workbench, matters: matters as never, pollMs: 2000,
+      home: async () => { calls.push('home'); return { unread: 0, presence: null, next_cursor: null } as never },
+      changes: { onChange: (cb) => { listener = cb; return () => { listener = null } } },
+    })
+    return { wiring, calls, change: (id: string) => listener!(id, 1) }
+  }
+  afterEach(() => vi.useRealTimers())
+
+  it('任务 / 终端的 matter 主题平时不轮询,只每 30 秒兜一次底;聊天、home 照旧每 2 秒', async () => {
+    const { wiring, calls } = rig()
+    for (const t of ['matter/aaaa0001', 'matter/bbbb0001', 'matter/cccc0001', 'home']) wiring.events.subscribe(t, undefined, () => {})
+    await vi.advanceTimersByTimeAsync(0)
+    calls.length = 0
+    await vi.advanceTimersByTimeAsync(2000 * 5)
+    expect(calls.filter(c => c === 'aaaa0001')).toHaveLength(0)
+    expect(calls.filter(c => c === 'home')).toHaveLength(5)
+    await vi.advanceTimersByTimeAsync(2000 * 10)
+    expect(calls.filter(c => c === 'aaaa0001')).toHaveLength(1)
+    wiring.dispose()
+  })
+
+  it('一件事变了 ⇒ 只算那件事的主题 + 不分事的主题,别的 matter/<id> 不算', async () => {
+    const { wiring, calls, change } = rig()
+    for (const t of ['matter/aaaa0001', 'matter/aaaa0002', 'home']) wiring.events.subscribe(t, undefined, () => {})
+    await vi.advanceTimersByTimeAsync(0)
+    calls.length = 0
+    change('aaaa0001')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls.sort()).toEqual(['aaaa0001', 'home'])
+    wiring.dispose()
+  })
+})
