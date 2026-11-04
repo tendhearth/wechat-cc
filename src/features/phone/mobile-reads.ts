@@ -49,6 +49,7 @@ export function phoneCliSession(v: CliSessionView, pendingHash?: (sessionId: str
     project: v.project, machine: v.machine, last_summary: v.last_summary,
     last_event_at: v.last_event_at, last_prompt_at: v.last_prompt_at, created_at: v.created_at,
     pending: v.pending ? { ...v.pending, hash, actionable: hash !== null } : null,
+    ...(v.matter_id ? { matter_id: v.matter_id } : {}),
   }
 }
 /** 同 CliEventRequest:1–200 字的串;再挡掉控制字符。 */

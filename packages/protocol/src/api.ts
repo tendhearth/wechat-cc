@@ -566,6 +566,8 @@ export const CliSessionRow = z.object({
   live_window: z.boolean().optional(),
   // last_say(2026-10-20):最近一句送进窗口的结果 —— 送进窗口是后台的,手机发出后看这里改说法(sending → sent / failed)。老 daemon 不带。
   last_say: z.object({ id: z.string(), state: z.enum(['sending', 'sent', 'failed']), error: z.string().optional(), at: z.number() }).optional(),
+  // matter_id(M4c,2026-11-04):这条会话的那件事(kind='terminal');App 的终端行点进 /matter/<id>。老 daemon / 还没有那件事 不带。
+  matter_id: z.string().optional(),
 })
 export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>

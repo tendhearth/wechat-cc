@@ -26,6 +26,7 @@ vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('expo-router', async () => ({
   ...(await (await import('../ui/native-motion.test-support')).routerBoundary()),
   useLocalSearchParams: () => ({ id: host.id }),
+  Redirect: ({ href }: { href: string }) => createElement('a', { 'data-testid': 'redirect', href }),
   useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }),
 }))
 
@@ -117,5 +118,17 @@ describe('terminal async send draft ownership', () => {
     await act(() => h.reply.resolve({ sayId: null })); await flush()
     expect(input().value).toBe('new pairing draft')
     expect(container.querySelector('[data-testid="terminal-detail-note"]')).toBeNull()
+  })
+})
+
+describe('旧地址 /terminal/<会话>(M4c)', () => {
+  it('这条会话有那件事(行里带 matter_id)⇒ 跳到 /matter/<id>;老 daemon 不带 ⇒ 就地画终端详情', async () => {
+    const withMatter: Backend = { ...makeDemoBackend({ lang: 'en' }), cliSessions: async () => [{ ...session('terminal-a'), matter_id: 'deadbeef' }], cliActivity: async () => [] }
+    await show(withMatter)
+    expect(container.querySelector('[data-testid="redirect"]')?.getAttribute('href')).toBe('/matter/deadbeef')
+    expect(container.querySelector('[data-testid="terminal-say-input"]')).toBeNull()
+    await show(delayedBackend().backend)
+    expect(container.querySelector('[data-testid="redirect"]')).toBeNull()
+    expect(input()).not.toBeNull()
   })
 })

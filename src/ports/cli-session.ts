@@ -44,6 +44,8 @@ export interface CliSessionView {
   created_at: number
   /** 等批准的那一项;只在 status='waiting' 时有。 */
   pending: { tool: string; summary: string | null; since: number } | null
+  /** 这条会话的那件事(kind='terminal',M4a 起);还没有 ⇒ 不带。App 的终端行点进 /matter/<id>(M4c)。 */
+  matter_id?: string
 }
 
 export interface CliSessionIdentity {
