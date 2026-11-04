@@ -143,6 +143,8 @@ matter   一件事:谁发起(initiator)、从哪来(origin_surface)、是什么(
 | P2 | App / 网页的 topic 从 item 通知推,不再 2 秒比快照 | `phone-topic-sources` 的快照比对删掉 |
 | P3 | 路由一族:同一份数据一条路径,按令牌范围放行;`/m/api` 旧路径进别名表 | 新代码里没有 `/m/api` 字面量;别名表只许少 |
 
+**P 线进度(11-05)**:P3 设计稿 [2026-11-05-p3-one-route-family-design.md](2026-11-05-p3-one-route-family-design.md)(盘点:61 条 `/m/api` 里 35 条与 `/v1` 重复;分 P3a–P3h),未做。
+
 ### U:界面一个主页(主人 11-01 定:合成一个,不看草图,直接做)
 
 问题(核过 App 源码):同一种「一件事」在手机上有四种行 —— 此刻「等你」(`(tabs)/index.tsx`)、此刻里整段抄的「终端等你」、一起做的行(`(tabs)/together.tsx`,高度、图标映射都在页面里手写)、此刻「今天做完的」`LinkRow`;点进去三个详情页 `/approval/[id]`、`/matter/[id]`、`/terminal/[id]`;两页各算一份看法(`view/now.ts` 与 `view/together.ts`)。桌面更甚:此刻是 `now-*`,一起做是 `workbench-*` 三栏,进去像换了一个 app。这是 2.1 那四套模型在界面上的倒影 —— 10-05 定了「每样东西只有一个家」(东西放哪),没定「同一样东西长什么样」。
