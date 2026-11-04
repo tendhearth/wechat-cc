@@ -56,6 +56,25 @@ describe('terminal-turns', () => {
     ])
     turns.permissionSettled('sess-unknown', 'allow')
   })
+  it('没挂在轮上的卡(重启后先来的权限请求)在终端里答了:之后发问 / 答完 / 结束 / 开机都把它收掉,不一直挂「等你」(Codex 评审 P2)', () => {
+    const open = () => log.items(matterId()).filter(i => i.kind === 'permission' && i.status === 'started').length
+    turns.permissionAsked({ source: 'claude', session_id: 'sess-1', cwd: '/w', tool_name: 'Bash', summary: 'ls' }, 1_000)
+    expect(log.state(matterId())?.state).toBe('waiting')
+    turns.event(ev('stop', { text: '好了' }), 2_000)
+    expect(open()).toBe(0); expect(log.state(matterId())?.state).toBe('open')
+    turns.permissionAsked({ source: 'claude', session_id: 'sess-1', cwd: '/w', tool_name: 'Bash', summary: 'ls' }, 3_000)
+    turns.event(ev('prompt'), 4_000)
+    expect(open()).toBe(0); expect(log.state(matterId())?.state).toBe('working')
+    turns.event(ev('stop'), 4_500)
+    turns.permissionAsked({ source: 'claude', session_id: 'sess-1', cwd: '/w', tool_name: 'Bash', summary: 'ls' }, 5_000)
+    turns.event(ev('session_end'), 6_000)
+    expect(open()).toBe(0); expect(log.state(matterId())?.state).toBe('done')
+    turns.permissionAsked({ source: 'claude', session_id: 'sess-9', cwd: '/w', tool_name: 'Bash', summary: 'ls' }, 7_000)
+    turns.interruptAll()
+    const nine = matters.findBySurface('cli', 'sess-9')!.id
+    expect(log.items(nine).map(i => [i.status, i.payload.outcome])).toEqual([['failed', 'daemon_restarted']])
+    expect(log.state(nine)?.state).not.toBe('waiting')
+  })
   it('会话结束 ⇒ 还开着的轮记中断、这件事 done;没轮也 done', () => {
     turns.event(ev('prompt'), 1_000)
     turns.event(ev('session_end'), 2_000)
