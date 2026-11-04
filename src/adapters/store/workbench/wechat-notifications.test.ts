@@ -122,39 +122,47 @@ describe('wechat notification worker',()=>{
     await worker.wake();expect(sent).toHaveLength(7);expect(yields).toBe(3);expect(store.pending()).toEqual([]);await worker.close()
   })
 
-  it('keeps deferred work pending with bounded backoff and does not spin',async()=>{
+  it('keeps deferred work pending with the shared backoff (1min doubling, S2a) and does not spin',async()=>{
     vi.useFakeTimers();vi.setSystemTime(100)
     const {store}=subscribed(),notice=store.enqueue(input());let calls=0
-    const worker=makeWechatNotificationWorker({store,eligible:()=>true,send:async()=>{calls++;return{status:'deferred',reason:'window_closed'}},deferBaseMs:1000,deferMaxMs:8000})
+    const worker=makeWechatNotificationWorker({store,eligible:()=>true,send:async()=>{calls++;return{status:'deferred',reason:'window_closed'}}})
     await worker.wake();expect(calls).toBe(1);expect(store.list('task-1')[0]).toMatchObject({status:'pending',reason:'window_closed'})
     await worker.wake();expect(calls).toBe(1)
-    await vi.advanceTimersByTimeAsync(1000);await worker.wake();expect(calls).toBe(2)
-    await vi.advanceTimersByTimeAsync(1000);expect(calls).toBe(2)
-    await vi.advanceTimersByTimeAsync(1000);expect(calls).toBe(3)
+    await vi.advanceTimersByTimeAsync(1000);await worker.wake();expect(calls).toBe(1)   // 以前 1 秒后就重发
+    await vi.advanceTimersByTimeAsync(59_000);expect(calls).toBe(2)
+    await vi.advanceTimersByTimeAsync(60_000);expect(calls).toBe(2)
+    await vi.advanceTimersByTimeAsync(60_000);expect(calls).toBe(3)
     expect(store.list('task-1')[0]!.id).toBe(notice.id);await worker.close()
+  })
+
+  it('defer delays follow lib/delivery-backoff backoffMs: 1, 2, 4 … minutes, capped at 60',()=>{
+    const {store}=subscribed(),notice=store.enqueue(input()),delays:number[]=[]
+    let t=100
+    for(let i=0;i<9;i++){store.claim(notice.id,t);store.defer(notice.id,'closed',t);const due=store.nextDue(t)!;delays.push(due-t);t=due}
+    expect(delays).toEqual([60_000,120_000,240_000,480_000,960_000,1_920_000,3_600_000,3_600_000,3_600_000])
   })
 
   it('arms persisted deferred work after restart and a context wake releases its delay',async()=>{
     vi.useFakeTimers();vi.setSystemTime(100)
-    const {store}=subscribed(),notice=store.enqueue(input());store.claim(notice.id,100);store.defer(notice.id,'closed',100,1000,8000)
+    const {store}=subscribed(),notice=store.enqueue(input());store.claim(notice.id,100);store.defer(notice.id,'closed',100)
     let calls=0
     const worker=makeWechatNotificationWorker({store,eligible:()=>true,send:async()=>{calls++;return{status:'accepted'}}})
-    await vi.advanceTimersByTimeAsync(999);expect(calls).toBe(0)
+    await vi.advanceTimersByTimeAsync(59_999);expect(calls).toBe(0)
     await worker.wake({contextAvailable:{ownerChatId:'owner-1',accountId:'account-1'}});expect(calls).toBe(1);await worker.close()
   })
 
   it('retries persisted deferred work when its timer expires without an incoming wake',async()=>{
     vi.useFakeTimers();vi.setSystemTime(100)
-    const {store}=subscribed(),notice=store.enqueue(input());store.claim(notice.id,100);store.defer(notice.id,'closed',100,1000,8000)
+    const {store}=subscribed(),notice=store.enqueue(input());store.claim(notice.id,100);store.defer(notice.id,'closed',100)
     let calls=0;const worker=makeWechatNotificationWorker({store,eligible:()=>true,send:async()=>{calls++;return{status:'accepted'}}})
-    await vi.advanceTimersByTimeAsync(999);expect(calls).toBe(0);await vi.advanceTimersByTimeAsync(1);expect(calls).toBe(1);await worker.close()
+    await vi.advanceTimersByTimeAsync(59_999);expect(calls).toBe(0);await vi.advanceTimersByTimeAsync(1);expect(calls).toBe(1);await worker.close()
   })
 
   it('releases deferred work only for the exact context binding',async()=>{
     vi.useFakeTimers();vi.setSystemTime(100)
     const {store}=subscribed();store.watch('task-2','owner-2','account-2',true)
     const one=store.enqueue(input()),two=store.enqueue(input({taskId:'task-2',ownerChatId:'owner-2',accountId:'account-2'}))
-    store.claim(one.id,100);store.defer(one.id,'closed',100,10_000,10_000);store.claim(two.id,100);store.defer(two.id,'closed',100,10_000,10_000)
+    store.claim(one.id,100);store.defer(one.id,'closed',100);store.claim(two.id,100);store.defer(two.id,'closed',100)
     const sent:string[]=[];const worker=makeWechatNotificationWorker({store,eligible:()=>true,send:async n=>{sent.push(n.taskId);return{status:'accepted'}}})
     await worker.wake({contextAvailable:{ownerChatId:'owner-2',accountId:'account-2'}})
     expect(sent).toEqual(['task-2']);expect(store.list('task-1')[0]?.status).toBe('pending');await worker.close()
@@ -220,11 +228,11 @@ describe('wechat notification worker',()=>{
 
   it('contains a timer-triggered status failure and remains available for other pending work',async()=>{
     vi.useFakeTimers();vi.setSystemTime(100)
-    const {store}=subscribed(),first=store.enqueue(input());store.claim(first.id,100);store.defer(first.id,'closed',100,1000,8000)
+    const {store}=subscribed(),first=store.enqueue(input());store.claim(first.id,100);store.defer(first.id,'closed',100)
     let fail=true,sends=0
     const wrapped={...store,complete(...args:Parameters<typeof store.complete>){if(fail){fail=false;throw Error('disk-failed')}return store.complete(...args)}}
     const worker=makeWechatNotificationWorker({store:wrapped,eligible:()=>true,send:async()=>{sends++;return{status:'accepted'}}})
-    await vi.advanceTimersByTimeAsync(1000);expect(sends).toBe(1);expect(store.list('task-1')[0]?.status).toBe('sending')
+    await vi.advanceTimersByTimeAsync(60_000);expect(sends).toBe(1);expect(store.list('task-1')[0]?.status).toBe('sending')
     store.enqueue(input({runId:'run-2'}));await worker.wake();expect(sends).toBe(2);expect(store.list('task-1').find(n=>n.runId==='run-2')?.status).toBe('accepted');await worker.close()
   })
 
@@ -232,9 +240,9 @@ describe('wechat notification worker',()=>{
     vi.useFakeTimers();vi.setSystemTime(100)
     const {store}=subscribed();store.enqueue(input({runId:'run-1'}));store.enqueue(input({runId:'run-2'}));let fail=true,sends=0
     const wrapped={...store,complete(...args:Parameters<typeof store.complete>){if(fail){fail=false;throw Error('disk-failed')}return store.complete(...args)}}
-    const worker=makeWechatNotificationWorker({store:wrapped,eligible:()=>true,send:async()=>{sends++;return{status:'accepted'}},deferBaseMs:1000})
+    const worker=makeWechatNotificationWorker({store:wrapped,eligible:()=>true,send:async()=>{sends++;return{status:'accepted'}}})
     await expect(worker.wake()).rejects.toThrow('disk-failed');expect(sends).toBe(1);expect(store.list('task-1').map(n=>n.status).sort()).toEqual(['pending','sending'])
-    await vi.advanceTimersByTimeAsync(999);expect(sends).toBe(1);await vi.advanceTimersByTimeAsync(1);expect(sends).toBe(2)
+    await vi.advanceTimersByTimeAsync(59_999);expect(sends).toBe(1);await vi.advanceTimersByTimeAsync(1);expect(sends).toBe(2)
     expect(store.list('task-1').map(n=>n.status).sort()).toEqual(['accepted','sending']);await worker.close()
   })
 

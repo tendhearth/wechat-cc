@@ -45,6 +45,8 @@ export interface FakeIlinkHandle {
   failSendMessage(opts?: { errcode?: number; errmsg?: string }): void
   /** Restore sendmessage to success (also cleared by reset()). */
   succeedSendMessage(): void
+  /** 被 failSendMessage 拦下的那几次 sendmessage(对话 + 正文):看断线时有没有在撞墙(no-retry-storm)。 */
+  failedSends(): ReadonlyArray<{ chatId: string; text: string | undefined }>
   /** Stop server, free port. */
   stop(): Promise<void>
 }
@@ -53,6 +55,7 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
   const queue: RawUpdate[] = []
   const captured: OutboundMsg[] = []
   let sendMessageFailure: { errcode: number; errmsg: string } | null = null
+  const failed: Array<{ chatId: string; text: string | undefined }> = []
 
   const server = serve({
     port: 0,  // random
@@ -87,6 +90,7 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
       const itemList = msg.item_list as Array<{ text_item?: { text?: string } }> | undefined
       if (url.pathname === '/ilink/bot/sendmessage') {
         if (sendMessageFailure) {
+          failed.push({ chatId: String(msg.to_user_id ?? ''), text: typeof msg.text === 'string' ? msg.text : itemList?.[0]?.text_item?.text })
           return Response.json({ errcode: sendMessageFailure.errcode, errmsg: sendMessageFailure.errmsg })
         }
         captured.push({
@@ -133,6 +137,7 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
     reset() { queue.length = 0; captured.length = 0; sendMessageFailure = null },
     failSendMessage(opts) { sendMessageFailure = { errcode: opts?.errcode ?? -6, errmsg: opts?.errmsg ?? 'auth failed' } },
     succeedSendMessage() { sendMessageFailure = null },
+    failedSends() { return [...failed] },
     async waitForOutbound(predicate, timeoutMs = 5000) {
       const start = Date.now()
       while (Date.now() - start < timeoutMs) {

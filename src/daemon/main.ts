@@ -40,6 +40,8 @@ export interface BootDaemonOpts {
    * so the engine drives ticks with fireTick(). Production callers (cli `run`, signal handlers) never set this.
    */
   schedulerIntervalMs?: number
+  /** 测试缝:「待说」补说那一拍的间隔(缺省 PENDING_FLUSH_MS = 5 分钟)。沙盒拿它在几秒里看补说 / 退避;生产调用方不设。 */
+  speechFlushIntervalMs?: number
 }
 export interface DaemonHandle {
   shutdown(): Promise<void>
@@ -62,7 +64,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   const { stateDir, dangerously } = opts
   const base = await openFoundation({ stateDir }, undo)
   const requestRestart = makeRequestRestart(stateDir, () => shutdown())
-  const f: Foundation = { ...base, dangerously, ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), requestRestart }
+  const f: Foundation = { ...base, dangerously, ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), requestRestart }
   const modules = createModules(daemonModules(f), { log: (t, l) => log(t, l) })
   // 状态进 /v1/health.subsystems(和 bootstrap 的可选接线块一起)
   f.sup.adopt(modules)

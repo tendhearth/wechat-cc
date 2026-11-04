@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto'
 import type {SqlDatabase as Database} from '../../../lib/runtime/sqlite'
+import {backoffMs} from '../../../lib/delivery-backoff'
 
 export type WechatNoticeStatus='pending'|'sending'|'accepted'|'unknown'|'suppressed'
 export type WechatNoticeKind='permission'|'question'|'completed'|'failed'|'interrupted'|'cancelled'
@@ -174,11 +175,15 @@ export function makeWechatNotificationStore(db:Database){
         :db.query("UPDATE workbench_wechat_notices SET status=?,reason=?,updated_at=?,next_attempt_at=NULL WHERE id=? AND status='sending'").run(status,reason,now,id)
       return result.changes===1?publicNotice(readNotice(id)!):null
     },
-    defer(id:string,reason:string|null='deferred',now=Date.now(),baseMs=1000,maxMs=60_000):WechatNotificationNotice|null {
-      if(!ids(id)||baseMs<1||maxMs<baseMs||(reason!==null&&(typeof reason!=='string'||reason.length>1000)))throw Error('invalid_notification')
+    /**
+     * 发了没成(网络抖 / 发送口说没发出去):回到 pending,按共用退避 lib/delivery-backoff 的 backoffMs 再试
+     * (1 分钟起翻倍、封顶 60 分钟;S2a —— 以前 1 秒起、封顶 60 秒,真机断线时就是在撞墙)。
+     */
+    defer(id:string,reason:string|null='deferred',now=Date.now()):WechatNotificationNotice|null {
+      if(!ids(id)||(reason!==null&&(typeof reason!=='string'||reason.length>1000)))throw Error('invalid_notification')
       return db.transaction(()=>{
         const row=readNotice(id);if(!row||row.status!=='sending')return null
-        const delay=Math.min(maxMs,baseMs*2**Math.min(row.deferCount,30))
+        const delay=backoffMs(Math.min(row.deferCount,30)+1)
         const result=db.query("UPDATE workbench_wechat_notices SET status='pending',reason=?,updated_at=?,next_attempt_at=?,defer_count=defer_count+1 WHERE id=? AND status='sending'").run(reason,now,now+delay,id)
         return result.changes===1?publicNotice(readNotice(id)!):null
       })()
@@ -210,6 +215,8 @@ export function makeWechatNotificationStore(db:Database){
 export type WechatNotificationStore=ReturnType<typeof makeWechatNotificationStore>
 /** setTimeout 的上限(约 24.8 天);超过会被当成 1ms 立刻触发。门推后到的时刻再远也只睡这么久,醒来再看。 */
 const MAX_TIMER_MS=2**31-1
+/** 一拍存储出错后多久再醒一次:跟退避第一档一样(1 分钟),不另起一套节奏。 */
+const RECOVERY_MS=backoffMs(1)
 export type WechatNoticeSendResult={status:'accepted'|'deferred'|'unknown'|'blocked';reason?:string}|{status:'postponed';reason:string;until:number}
 export interface WechatNotificationWorkerOptions {
   store:WechatNotificationStore
@@ -220,13 +227,11 @@ export interface WechatNotificationWorkerOptions {
   setTimer?:(callback:()=>void,delay:number)=>unknown
   clearTimer?:(timer:unknown)=>void
   batchSize?:number
-  deferBaseMs?:number
-  deferMaxMs?:number
   yieldControl?:()=>Promise<void>
 }
 
 export function makeWechatNotificationWorker(options:WechatNotificationWorkerOptions){
-  const now=options.now??Date.now,batchSize=options.batchSize??50,deferBaseMs=Math.max(1,options.deferBaseMs??1000),deferMaxMs=Math.max(deferBaseMs,options.deferMaxMs??60_000)
+  const now=options.now??Date.now,batchSize=options.batchSize??50
   const schedule=options.setTimer??((callback,delay)=>setTimeout(callback,delay))
   const unschedule=options.clearTimer??(timer=>clearTimeout(timer as ReturnType<typeof setTimeout>))
   const yieldControl=options.yieldControl??(()=>new Promise<void>(resolve=>setTimeout(resolve,0)))
@@ -235,7 +240,7 @@ export function makeWechatNotificationWorker(options:WechatNotificationWorkerOpt
   const arm=(delay:number)=>{
     if(closing||closed)return
     if(timer!==null)unschedule(timer)
-    timer=schedule(()=>{timer=null;void wake().catch(()=>arm(deferBaseMs))},Math.min(delay,MAX_TIMER_MS))
+    timer=schedule(()=>{timer=null;void wake().catch(()=>arm(RECOVERY_MS))},Math.min(delay,MAX_TIMER_MS))
   }
   const armNextDue=()=>{const due=options.store.nextDue(now());if(due!==null)arm(Math.max(0,due-now()))}
   const drain=async()=>{
@@ -262,7 +267,7 @@ export function makeWechatNotificationWorker(options:WechatNotificationWorkerOpt
           let result:WechatNoticeSendResult
           try{result=await options.send(notice,controller.signal)}catch(error){result={status:'unknown',reason:error instanceof Error?error.message:'send_failed'}}finally{controller=null}
           if(result.status==='postponed')options.store.postpone(notice.id,result.reason,result.until,now())
-          else if(result.status==='deferred')options.store.defer(notice.id,result.reason??'deferred',now(),deferBaseMs,deferMaxMs)
+          else if(result.status==='deferred')options.store.defer(notice.id,result.reason??'deferred',now())
           else options.store.complete(notice.id,result.status==='blocked'?'suppressed':result.status,result.reason??null,now())
           if(closing)break
         }
@@ -275,7 +280,7 @@ export function makeWechatNotificationWorker(options:WechatNotificationWorkerOpt
     if(closing||closed)return Promise.resolve()
     if(wakeOptions?.contextAvailable)options.store.releaseDeferred(wakeOptions.contextAvailable.ownerChatId,wakeOptions.contextAvailable.accountId,now())
     if(running){rerun=true;return running}
-    running=drain().then(()=>{if(!closing)armNextDue()},error=>{if(!closing)arm(deferBaseMs);throw error}).finally(()=>{running=null})
+    running=drain().then(()=>{if(!closing)armNextDue()},error=>{if(!closing)arm(RECOVERY_MS);throw error}).finally(()=>{running=null})
     return running
   }
   armNextDue()

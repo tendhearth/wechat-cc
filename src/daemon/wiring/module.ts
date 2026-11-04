@@ -111,7 +111,7 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
       ctx.own('phone', () => wired.stopPhone())
       // 推后了的 report / blocking 补说的那一拍(speech/pending-notices.ts):门这一层唯一的触发点
       let flush: Lifecycle | null = null
-      ctx.onStart('speech-pending-flush', () => { flush = startPendingFlush(wired.speech, (t, l) => log(t, l)) })
+      ctx.onStart('speech-pending-flush', () => { flush = startPendingFlush(wired.speech, (t, l) => log(t, l), f.speechFlushIntervalMs) })
       ctx.own('speech-pending-flush', () => flush?.stop())
       return wired
     },

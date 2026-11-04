@@ -172,6 +172,8 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
 export type Foundation = Awaited<ReturnType<typeof openFoundation>> & {
   dangerously: boolean
   schedulerIntervalMs?: number
+  /** 测试缝:「待说」补说那一拍的间隔(main.ts BootDaemonOpts.speechFlushIntervalMs)。 */
+  speechFlushIntervalMs?: number
   /** daemon 自己要求的优雅重启(运维 POST /v1/daemon/restart、空闲加载新代码 ……)。 */
   requestRestart(reason: string): void
 }

@@ -92,7 +92,7 @@ const codexScript: FakeSdkScript = {
     return { toolCalls: [], finalText: 'Codex 在。' }
   },
 }
-const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch'> = {}) => startRealShapedDaemon({
+const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
   recordClaudeSpawnOptions: (o) => { spawnOptions.push(o) },
@@ -384,5 +384,31 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(readdirSync(join(d.stateDir, 'memory')).filter(n => n.startsWith('eval-'))).toEqual([])
     // 请求不成立 ⇒ 400 + 码表里的码
     expect(await desktop('POST', '/v1/eval/run', { kind: 'reply' })).toMatchObject({ status: 400, body: { error: 'eval_invalid_request' } })
+  })
+
+  // S2(待发队列一个、退避一套;设计稿 docs/superpowers/specs/2026-11-04-s2-one-pending-queue-design.md)。从这里起「待说」那一拍
+  // 改成 200ms 一拍(生产 5 分钟),几秒里就能看见补说 / 退避;别的照旧。
+  it('offline: WeChat is down ⇒ a report that cannot go out is kept to say later, and the pending flush backs off on the shared backoff (first retry after 1 min) instead of hitting the link every tick', async () => {
+    const stateDir = d.stateDir
+    await d.stop({ keepState: true })
+    d = await boot({ stateDir, speechFlushIntervalMs: 200 })
+    expect(await d.moduleProblems()).toEqual([])
+    d.ilink.failSendMessage({ errcode: -1, errmsg: 'network unreachable' })
+    try {
+      const NOTE = '自改进展:断线的时候说的这一句'
+      const attempts = () => d.ilink.failedSends().filter(m => m.chatId === d.owner && m.text === NOTE).length
+      // 门放行、发失败 ⇒ 这一次照实回「没送到」,话进待说队列
+      expect(await desktop('POST', '/v1/self-change/notice', { text: NOTE })).toMatchObject({ status: 502, body: { error: 'send_failed' } })
+      await expect.poll(() => d.log().some(l => /self_change_progress chat=\S+ kept to say later/.test(l)), { timeout: 15_000 }).toBe(true)
+      expect(attempts()).toBeGreaterThan(0)
+      // 下一拍补说:要么送不到被门推后,要么又试了一次、失败、进退避 —— 二者之一出现过
+      await expect.poll(() => d.log().some(l => /pending notices chat=\S+ send failed \(try 1\)|self_change_progress chat=\S+ deferred: undeliverable/.test(l)), { timeout: 15_000 }).toBe(true)
+      const settled = attempts()
+      expect(settled).toBeLessThanOrEqual(6)   // 当场那一次 + 至多一次补说,每次线上那一层 1 秒 × 3(不动)
+      await new Promise(r => setTimeout(r, 3_000))   // 刻意等「什么都没发生」:15 拍左右,退避第一档是 1 分钟
+      expect(attempts()).toBe(settled)
+    } finally {
+      d.ilink.succeedSendMessage()
+    }
   })
 })
