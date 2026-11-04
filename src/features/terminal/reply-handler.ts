@@ -15,7 +15,8 @@ import { wrapForProcessTree } from '../../lib/jobspawn'
 import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { parseCliReply, resumeCommand } from './cli-reply'
 import { renderTranscriptTail } from '../../domain/cli-transcript'
-import { renderTurnSteps } from './cli-activity'
+import { renderTurnSteps, VIEW_STEPS_READ } from './cli-activity'
+import type { TerminalSteps } from './terminal-steps'
 import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../../app/cli-events'
 import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../../domain/cli-session-digest'
 import { formatOverseerToday, type OverseerToday } from '../../domain/overseer-today'
@@ -91,6 +92,11 @@ export interface CliReplyCoreDeps {
   }
   /** Claude 的 resume 要在会话开始时的文件夹里起(从记录开头读);缺席 / 读不到 ⇒ 用登记处的 cwd。 */
   startCwd?: (s: CliSessionInfo) => string | null
+  /**
+   * 这件事的步(M6d):「看 码」页面末尾「这一轮做了什么」从这里读(还没有那件事 ⇒ 当场建、导入一次),不再整段重解析记录。
+   * 缺席(老测试)⇒ 页面不带这一段。
+   */
+  steps?: Pick<TerminalSteps, 'view'>
 }
 
 export interface CliReplyHandlerDeps extends CliReplyCoreDeps {
@@ -149,8 +155,8 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       if (!s.transcript_path) return { ok: false, error: '没报过记录路径,看不了' }
       try {
         const jsonl = readFile(s.transcript_path)
-        // 对话之后补一段这一轮做过的步骤(看码 2026-10-17)。
-        const steps = renderTurnSteps(jsonl, s.source)
+        // 对话之后补一段这一轮做过的步骤(看码 2026-10-17;M6d 起读这件事的步)。对话原文照旧读记录:步里每句截在 600 字。
+        const steps = deps.steps && !s.origin_agent ? renderTurnSteps(deps.steps.view(s, VIEW_STEPS_READ)) : ''
         return { ok: true, markdown: renderTranscriptTail(jsonl, s.source, { title }) + (steps ? `\n${steps}` : '') }
       }
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }

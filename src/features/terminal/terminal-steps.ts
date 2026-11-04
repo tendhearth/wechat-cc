@@ -9,9 +9,9 @@
  * 不把几十 MB 的老记录整份导进来(钩子的回包有时限)。
  */
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
-import { STEP_KEY_PREFIX, type TerminalStepStore, type TerminalStepWrite } from '../../ports/terminal-steps'
+import { STEP_KEY_PREFIX, type TerminalStepPayload, type TerminalStepStore, type TerminalStepWrite } from '../../ports/terminal-steps'
 import type { TerminalEventIn, TerminalTurnLog } from '../../ports/terminal-turns'
-import { feedActivity, type CliActivityItem } from './cli-activity'
+import { feedActivity } from './cli-activity'
 
 export const STEPS_FIRST_READ = 256 * 1024
 export const STEPS_JUMP = 4 * 1024 * 1024
@@ -19,9 +19,17 @@ export const STEPS_JUMP = 4 * 1024 * 1024
 export interface TerminalSteps {
   /** 读新增的那一段进这件事。这个会话还没有那件事(钩子没来过)⇒ false。读不了文件 ⇒ 抛。 */
   ingest(sessionId: string, path: string, source: string): boolean
-  /** 先 ingest,再给最近 max 步(旧 → 新)。还没有那件事 ⇒ null(调用方退回直接解析)。 */
-  view(s: { session_id: string; transcript_path?: string | null; source: string }, max: number): CliActivityItem[] | null
+  /**
+   * 有人来看(手机「看着它跑」、列表那一步、微信「看 码」):先 ingest,再给最近 max 步(旧 → 新)。
+   * 还没有那件事(钩子没来过的老会话)⇒ 当场建、导入一次(同钩子那条路:turns.adopt(= ensure + 按登记处对齐状态)+ ingest;第一次读照旧从尾巴 256KB 起),
+   * 之后只读步(M6d)。只在看的这条路上建 —— 钩子的回包有时限,钩子里不导入整份。
+   * 调用方先挡掉那边(别的机器 / A2A)的会话:记录不在这台机器上。没报记录路径 ⇒ 空。读不了文件 ⇒ 抛。
+   */
+  view(s: TerminalSessionRef, max: number): TerminalStepPayload[]
 }
+
+/** 看的时候要的那几样(登记处的 CliSessionInfo 都有):建那件事要 source / cwd / 机器。 */
+export type TerminalSessionRef = { session_id: string; transcript_path?: string | null; source: string } & Partial<Pick<TerminalEventIn, 'cwd' | 'machine' | 'origin_agent'>>
 
 const readBytes = (path: string, from: number, to: number): Buffer => {
   const fd = openSync(path, 'r')
@@ -37,10 +45,16 @@ const wholeLine = (b: Buffer): boolean => {
   if (!t.startsWith('{') || !t.endsWith('}')) return false
   try { return typeof JSON.parse(t) === 'object' } catch { return false }
 }
-const KIND: Record<CliActivityItem['kind'], TerminalStepWrite['kind']> = { you: 'user_message', said: 'agent_message', step: 'tool_call' }
+const KIND: Record<TerminalStepPayload['kind'], TerminalStepWrite['kind']> = { you: 'user_message', said: 'agent_message', step: 'tool_call' }
 
-export function makeTerminalSteps(deps: { store: TerminalStepStore; size?: (path: string) => number; read?: (path: string, from: number, to: number) => Buffer }): TerminalSteps {
-  const { store } = deps
+export function makeTerminalSteps(deps: {
+  store: TerminalStepStore
+  /** 首见建那件事(= 钩子那条路的 turns.ensure,再按登记处那一行对齐状态)。 */
+  turns: Pick<TerminalTurnLog, 'adopt'>
+  size?: (path: string) => number
+  read?: (path: string, from: number, to: number) => Buffer
+}): TerminalSteps {
+  const { store, turns } = deps
   const sizeOf = deps.size ?? ((p: string) => statSync(p).size)
   const read = deps.read ?? readBytes
   const ingest = (sessionId: string, path: string, source: string): boolean => {
@@ -63,9 +77,9 @@ export function makeTerminalSteps(deps: { store: TerminalStepStore; size?: (path
     if (lastNl < buf.length - 1 && wholeLine(buf.subarray(lastNl + 1))) lastNl = buf.length
     const pending = fresh ? {} : { ...st!.pending }
     if (lastNl < 0) { if (fresh) store.apply(matterId, [], { path, offset: from, gen, pending }); return true }
-    const dirty = new Map<string, CliActivityItem>()
+    const dirty = new Map<string, TerminalStepPayload>()
     const l0 = store.last(matterId)
-    let last: { key: string; item: CliActivityItem } | null = l0 ? { key: l0.key, item: l0.payload as unknown as CliActivityItem } : null
+    let last: { key: string; item: TerminalStepPayload } | null = l0 ? { key: l0.key, item: l0.payload as unknown as TerminalStepPayload } : null
     feedActivity<string>(buf.subarray(0, lastNl).toString('utf8'), source as never, {
       last: () => (last ? { ref: last.key, item: last.item } : null),
       push(item, at) {
@@ -79,7 +93,7 @@ export function makeTerminalSteps(deps: { store: TerminalStepStore; size?: (path
         const p = pending[callId]
         if (!p) return null
         delete pending[callId]
-        const item = dirty.get(p[0]) ?? (last?.key === p[0] ? last.item : (store.item(matterId, p[0]) as unknown as CliActivityItem | null))
+        const item = dirty.get(p[0]) ?? (last?.key === p[0] ? last.item : (store.item(matterId, p[0]) as unknown as TerminalStepPayload | null))
         return item ? { ref: p[0], item, keepOutput: p[1] } : null
       },
     }, from)
@@ -90,10 +104,16 @@ export function makeTerminalSteps(deps: { store: TerminalStepStore; size?: (path
   return {
     ingest,
     view(s, max) {
-      if (!s.transcript_path) return null
-      if (!ingest(s.session_id, s.transcript_path, s.source)) return null
-      const id = store.matterOf(s.session_id)
-      return id ? store.recent(id, max) as unknown as CliActivityItem[] : null
+      if (!s.transcript_path) return []
+      let id = store.matterOf(s.session_id)
+      // 记录读不了(文件没了)⇒ 先抛,别为它建一件空的事
+      if (!id) sizeOf(s.transcript_path)
+      id ??= turns.adopt({
+        source: s.source, session_id: s.session_id, cwd: s.cwd ?? '',
+        ...(s.machine ? { machine: s.machine } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}),
+      })
+      ingest(s.session_id, s.transcript_path, s.source)
+      return store.recent(id, max) as unknown as TerminalStepPayload[]
     },
   }
 }

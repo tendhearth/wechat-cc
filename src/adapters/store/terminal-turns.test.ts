@@ -5,6 +5,7 @@ import { makeMatterLog } from './matter-log'
 import { makeTerminalTurnLog, TERMINAL_QUIET_MS } from './terminal-turns'
 import type { MatterLog, MatterStore } from '../../ports/matters'
 import type { TerminalTurnLog } from '../../ports/terminal-turns'
+import { makeCliSessionStore } from './cli-session-store'
 
 /** 终端会话 → 一件 kind='terminal' 的事(M4a)。 */
 let db: Db, matters: MatterStore, log: MatterLog, turns: TerminalTurnLog
@@ -20,6 +21,28 @@ const matterId = () => matters.findBySurface('cli', 'sess-1')!.id
 const items = () => log.items(matterId()).map(i => [i.kind, i.status, i.payload])
 
 describe('terminal-turns', () => {
+  it('看的那条路首见(adopt,M6d):建这件事并按登记处那一行对齐 —— 登记处列表里的状态 / 等你那一项一字不变;已经有了 ⇒ 不动', () => {
+    const now = 10_000_000
+    const store = makeCliSessionStore(db, () => now)
+    const at = now - 60_000
+    for (const id of ['E', 'R', 'W', 'I']) store.touch({ session_id: id, source: 'claude', cwd: '/w/blog', machine: 'mac' }, at)
+    store.setStatus('E', 'ended', at)
+    store.setStatus('R', 'running', at, { promptAt: at })
+    store.setStatus('W', 'waiting', at, { pending: { tool: 'Bash', summary: 'rm -rf ./tmp' } })
+    store.setStatus('I', 'idle', at, { summary: '好了' })
+    const view = () => store.list({ includeEnded: true }).map(r => ({ id: r.session_id, status: r.status, tool: r.pending_tool, summary: r.pending_summary, said: r.last_summary }))
+    // 等你那一项的时间(pending_at)从卡推 = 卡写进去的那一刻,不是列里的时间(钩子那条路 permissionAsked 也一样);这里不比
+    const before = view()
+    for (const id of ['E', 'R', 'W', 'I']) turns.adopt({ source: 'claude', session_id: id, cwd: '/w/blog', machine: 'mac' })
+    expect(['E', 'R', 'W', 'I'].every(id => matters.findBySurface('cli', id))).toBe(true)
+    expect(view()).toEqual(before)
+    const r = matters.findBySurface('cli', 'R')!.id
+    expect(turns.adopt({ source: 'claude', session_id: 'R', cwd: '/w/blog' })).toBe(r)
+    expect(log.turns(r)).toHaveLength(1)
+    // 登记处没有这一行(只知道 id 和记录)⇒ 只建,不开轮
+    turns.adopt({ source: 'claude', session_id: 'NEW', cwd: '/w/blog' })
+    expect(log.turns(matters.findBySurface('cli', 'NEW')!.id)).toEqual([])
+  })
   it('第一次看到一个会话 ⇒ 建一件 terminal 的事(标题 = 项目名、出生地 cli),绑 surface=cli;之后同一件', () => {
     turns.event(ev('prompt'), 1_000)
     turns.event(ev('prompt'), 2_000)
