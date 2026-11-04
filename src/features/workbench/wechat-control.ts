@@ -374,7 +374,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       if(/^正文(?:\s|$)/.test(suffix)){
         const page=/^正文\s+(r[1-9]\d*-[a-f0-9]{12})\s+([1-9]\d*)$/i.exec(suffix)
         if(!page)return resultCommandHelp(id)
-        return wechatResultPage({taskId:id,events:opts.actions.detail(id).events,token:page[1]!.toLowerCase(),page:Number(page[2])})
+        return wechatResultPage({taskId:id,steps:opts.store.steps(id),token:page[1]!.toLowerCase(),page:Number(page[2])})
       }
       if(suffix==='停止'){
         if(opts.store.liveInputs.get(requestId))throw Error('control_conflict')

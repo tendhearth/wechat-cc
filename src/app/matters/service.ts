@@ -5,6 +5,7 @@ import { normalizeInputRequestId } from '../../domain/workbench/input-request-id
 import { sayTextHash } from '../../lib/content-hash'
 import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts'
 import {legacyStatusOfTaskView} from '../../domain/matters/legacy-status'
+import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
 
 /**
  * matters/service.ts — 各表面共用的"一件事"读写面:列表、详情、往一件事说话。
@@ -15,12 +16,17 @@ import {legacyStatusOfTaskView} from '../../domain/matters/legacy-status'
  */
 export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
 // activity(2026-10-17):工具那一步在跑还是做完了 —— 手机看着它跑要知道「正在」哪一步。只给 type/status/label,不给命令输出。
-export interface MatterEvent {messageId?:string;replyExtras?:{attachments?:import('@wechat-cc/protocol').ChatAttachmentT[];narration?:string[]};kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string;activity?:{type:string;status:string;label:string}}
+/**
+ * 详情 events 的一条(线上旧形状,M6c 起 src 不再手写):任务 = 时间线的步投影成 WorkbenchTaskEvent 再收窄到这里;
+ * 对话 = messages 表(正文唯一来源,§8.4,daemon/wiring/owner-chat-reading.ts);终端 / act 是空的。
+ * 形状是协议包的 MatterEventT;对话那几条还多带 messageId / replyExtras(桌面 converse.js 读,App 的 zod 丢掉不认)。
+ */
+export type MatterDetailEvent=MatterEventT&{messageId?:string;replyExtras?:{attachments?:ChatAttachmentT[];narration?:string[]}}
 export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>&Partial<Pick<LiveInput,'error'>>
 // 只投影显示材料所需的五个字段；不能把内部存储路径、owner 或草稿身份带到手机。
 const publicMaterials=(attachments?:readonly Attachment[])=>attachments?.length?{attachments:attachments.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))}:{}
 const publicInput=({id,taskId,runId,text,status,attachments}:MatterInput):MatterInput=>({id,taskId,runId,text,status,...publicMaterials(attachments)})
-const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic,activity,messageId,replyExtras}:MatterEvent):MatterEvent=>({kind,text,createdAt,...(messageId?{messageId}:{}),...(replyExtras?{replyExtras}:{}),...(source!==undefined?{source}:{}),...(kind==='tool_call'&&activity&&typeof activity.status==='string'?{activity:{type:String(activity.type),status:activity.status,label:String(activity.label??'').slice(0,200)}}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
+const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic,activity,messageId,replyExtras}:MatterDetailEvent):MatterDetailEvent=>({kind,text,createdAt,...(messageId?{messageId}:{}),...(replyExtras?{replyExtras}:{}),...(source!==undefined?{source}:{}),...(kind==='tool_call'&&activity&&typeof activity.status==='string'?{activity:{type:String(activity.type),status:activity.status,label:String(activity.label??'').slice(0,200)}}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
 export interface MatterTaskControls {
   runId?:string;inputMode?:'steer'|'send'|'queue'
   permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];artifacts:Artifact[];inputs:MatterInput[]
@@ -32,7 +38,7 @@ export type MatterQuotaHandoff =
   | {state:'offer';from:string;to:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'none';from:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'handed';from:string;to:string;matterId:string}
-export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
+export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterDetailEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
 export interface MatterSayInput {requestId:string;runId?:string;draftId?:string;attachmentIds?:string[]}
 type MatterMaterials=Pick<MatterSayInput,'draftId'|'attachmentIds'>
 export interface MatterArtifactInput {artifactId:string;sha256:string;offset:number;length?:number}
@@ -45,7 +51,7 @@ export interface MattersServiceDeps {
   /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。没接 ⇒ 不带 agentNames,界面退回 id。 */
   executorName?:(id:string)=>string
   workbench?:{
-    detail(id:string):{task:MatterTaskView;events:MatterEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string};rewind?:{blocked:unknown}|null}
+    detail(id:string):{task:MatterTaskView;events:MatterDetailEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string};rewind?:{blocked:unknown}|null}
     /** 手机说第一句给「导入了、还没发过第一句」的任务(spec D5);没接 ⇒ 手机也走 continueTask(409)。 */
     continueImported?(id:string,text:string,options:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<MatterTaskView>
     continueTask(id:string,text:string,options?:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):MatterTaskView
@@ -72,7 +78,7 @@ export interface MattersServiceDeps {
     rewind?(id:string,input:{artifactId:string;to:'start'|'end';token:string}):Promise<{discarded:string[]}>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
-  chat?:{file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
+  chat?:{file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterDetailEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterDetailEvent&{id:string})[]>}
   /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
   sayReceipts?:SayReceipts
   /** 主人对话要是在这里首建,出生地记成什么(daemon 按鉴权来源算:桌面 = desktop,手机 = App / 浏览器)。没接 ⇒ 桌面记 desktop,手机不知道就不写。 */
@@ -104,7 +110,7 @@ export interface MattersService {
   worktreeScript(id:string,action:'run'|'stop'):Promise<{branch:string}&Omit<PhoneScripts,'lastLines'>>
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
   /** 在主人那条对话里搜(2026-10-06,对标 Orca 会话历史搜索):新的在前;没配主人 ⇒ null。 */
-  searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterEvent&{id:string})[]}|null>
+  searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterDetailEvent&{id:string})[]}|null>
   /** 额度用完 ⇒ 交给确认卡上那位继续(同一文件夹新开一件);从手机来的,新那件记手机露面。 */
   handoff(id:string,input:{requestId:string;providerId:string},surface?:'desktop'|'phone'):Promise<{matterId:string;created:boolean}>
   /** 手机「撤掉这一轮」的预览(切片 4):只认最新那一轮没撤的、只回到它开始之前;不是最新那轮 ⇒ rewind_not_latest。 */
@@ -226,7 +232,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     },
     async detail(id){
       const matter=require(id)
-      let task:MatterTaskView|null=null,events:MatterEvent[]=[]
+      let task:MatterTaskView|null=null,events:MatterDetailEvent[]=[]
       let controls:MatterTaskControls={permissions:[],questions:[],artifacts:[],inputs:[]}
       let nativeStart:MatterNativeStart|undefined
       let quotaHandoff:MatterQuotaHandoff|undefined

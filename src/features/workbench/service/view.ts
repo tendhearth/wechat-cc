@@ -15,7 +15,7 @@ import { writerAlive } from './writer-exit'
 import { GIT_REVIEW_MIME } from '../git-review'
 import { isRewindParkNote, rewindView } from '../../../adapters/store/workbench/rewind-store'
 import { findPathBlocker } from '../../../adapters/workbench/scheduler'
-import { TERMINAL_TASK_STATUSES, type Task, type WorkbenchListQuery } from '../../../adapters/store/workbench/store'
+import { stepPayload, TERMINAL_TASK_STATUSES, timelineKind, type Task, type WorkbenchListQuery } from '../../../adapters/store/workbench/store'
 import type { AgentRuntimeSnapshot } from '../../../ports/agent-provider'
 import type { TaskWaitingFor } from '../wechat-types'
 import type { WorkbenchPhase, WorkbenchTaskView } from './types'
@@ -193,7 +193,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
   }
   function rewindOf(id:string){
     const times=store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>a.createdAt)
-    return rewindView(store.rewinds,id,times,at=>store.events(id).filter(e=>e.kind==='system'&&e.createdAt>=at&&isRewindParkNote(e.text)).at(-1)?.text??null)
+    return rewindView(store.rewinds,id,times,at=>store.steps(id).map(step=>timelineKind(step)==='system'&&step.createdAt>=at?stepPayload(step).text:null).filter((text):text is string=>text!==null&&isRewindParkNote(text)).at(-1)??null)
   }
   function detail(id:string,options:{since?:number;sinceCursor?:number}={}) {
     const detail=store.detail(id,options),running=state.runsByTask.get(id)

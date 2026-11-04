@@ -3,16 +3,21 @@ import type {AgentActivity,AgentEvent} from '../../../ports/agent-provider'
 import type { Attachment } from '../../../ports/workbench'
 import type {MatterItem,MatterItemKind,MatterItemStatus,MatterLog} from '../../../ports/matters'
 import {makeMatterLog} from '../matter-log'
-
-export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:Attachment[]; errorCode?:'execution_model_unsupported'; diagnostic?:string }
+import type {WorkbenchTaskEventT} from '@wechat-cc/protocol/desktop-api'
 
 /**
- * 任务的时间线 = 这件事的步(M2,设计稿 2026-10-31 §3.1):一条 TaskEvent 是 matter_items 里的一步,只经 MatterLog 写。
+ * 任务的时间线 = 这件事的步(M2,设计稿 2026-10-31 §3.1):一步是 matter_items 里的一行,只经 MatterLog 写。
  * 任务与这件事同 id。payload 里存时间线自己的字段:text、v(写这一步时任务的版本号,`?since=` 用)、sourceId、runId、
- * activity、attachments —— 没有的就不存。读出来的形状、字段顺序与搬家前(workbench_events)一字不差(M0 金样钉着)。
+ * activity、attachments —— 没有的就不存。
+ * 这个文件只剩两件事(M6c):写口,和「步 → WorkbenchTaskEvent」这一个线上投影(桌面 `/v1/workbench/task`;
+ * 形状、字段顺序与搬家前的 workbench_events 一字不差,M0 金样钉着)。src 里读时间线一律读步(`timelineSteps` + `stepPayload`)。
  */
-type EventKind=TaskEvent['kind']
-type Payload={text:string;v:number;sourceId?:string;runId?:string;activity?:AgentActivity;attachments?:Attachment[]}
+/** 写口的种类 = 线上投影的 kind。 */
+export type TimelineKind=WorkbenchTaskEventT['kind']
+/** 时间线那一步的 payload。 */
+export type TimelinePayload={text:string;v:number;sourceId?:string;runId?:string;activity?:AgentActivity;attachments?:Attachment[]}
+type EventKind=TimelineKind
+type Payload=TimelinePayload
 type VisibleEvent=Extract<AgentEvent,{kind:'text'|'tool_call'|'error'}>
 const ITEM_KIND:Record<EventKind,MatterItemKind>={user:'user_message',text:'agent_message',tool_call:'tool_call',system:'system',error:'error'}
 const EVENT_KIND:Partial<Record<MatterItemKind,EventKind>>={user_message:'user',agent_message:'text',tool_call:'tool_call',system:'system',error:'error'}
@@ -34,18 +39,27 @@ export const timelineKey=(runId:string,kind:EventKind,nativeId:string)=>JSON.str
 const payloadOf=(p:{text:string;v:number;sourceId?:string|null;runId?:string|null;activity?:AgentActivity;attachments?:readonly Attachment[]}):Payload=>({text:p.text,v:p.v,
   ...(p.sourceId?{sourceId:p.sourceId}:{}),...(p.runId?{runId:p.runId}:{}),...(p.activity?{activity:p.activity}:{}),...(p.attachments?.length?{attachments:[...p.attachments]}:{})})
 
-function publicEvent(item:MatterItem):TaskEvent|null {
+/** 这一步是不是时间线上的(你说的 / 执行者说的 / 工具调用 / 系统 / 错误);是 ⇒ 投影里它的 kind。 */
+export const timelineKind=(item:MatterItem):TimelineKind|null=>EVENT_KIND[item.kind]??null
+export const stepPayload=(item:MatterItem):TimelinePayload=>item.payload as TimelinePayload
+/** 只留时间线上的步(权限卡、提问、成果、送达那几种不在这条时间线里)。 */
+export const timelineSteps=(items:readonly MatterItem[]):MatterItem[]=>items.filter(item=>EVENT_KIND[item.kind]!==undefined)
+
+/** 步 → 线上旧形状(WorkbenchTaskEvent)。只在出口用。 */
+export function workbenchTaskEvent(item:MatterItem):WorkbenchTaskEventT|null {
   const kind=EVENT_KIND[item.kind];if(!kind)return null
-  const p=item.payload as Payload
+  const p=stepPayload(item)
   return {id:item.id,taskId:item.matterId,kind,text:p.text,createdAt:item.createdAt,sourceId:p.sourceId??null,
     ...(p.runId?{runId:p.runId}:{}),...(p.activity?{activity:p.activity}:{}),...(p.attachments?.length?{attachments:p.attachments}:{})}
 }
 
 export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
-  /** since:按版本号(事件的 v)筛;sinceCursor(P1b):按这一步最后一次写的全库游标筛 —— 改过的步(工具调用做完)也会再来一次。 */
+  /** 这件事时间线上的步,按 seq。 */
+  const steps=(id:string)=>timelineSteps(log.items(id))
+  /** 线上投影。since:按版本号(事件的 v)筛;sinceCursor(P1b):按这一步最后一次写的全库游标筛 —— 改过的步(工具调用做完)也会再来一次。 */
   const events=(id:string,since?:number,sinceCursor?:number)=>(sinceCursor===undefined?log.items(id):log.items(id,{afterCursor:sinceCursor}))
     .filter(item=>since===undefined||(item.payload as Payload).v>since)
-    .map(publicEvent).filter((e):e is TaskEvent=>e!==null)
+    .map(workbenchTaskEvent).filter((e):e is WorkbenchTaskEventT=>e!==null)
   const addEvent=(id:string,kind:EventKind,text:string,sourceId:string|null=null,runId:string|null=null,attachments:readonly Attachment[]=[],seq:number)=>
     log.writeItem({matterId:id,kind:ITEM_KIND[kind],status:'completed',payload:payloadOf({text:text.slice(0,TEXT_MAX),v:seq,sourceId,runId,attachments})}).id
   const recordAgentEvent=(taskId:string,runId:string,event:VisibleEvent,seq:number)=>{
@@ -66,5 +80,5 @@ export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
       log.writeItem({matterId:taskId,kind:'tool_call',status:'failed',key:item.key,payload:{...p,v:seq,activity:{...p.activity,status}}})
     }
   }
-  return {events,addEvent,recordAgentEvent,finishRunActivities}
+  return {steps,events,addEvent,recordAgentEvent,finishRunActivities}
 }

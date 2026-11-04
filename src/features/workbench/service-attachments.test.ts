@@ -107,9 +107,9 @@ it('pins attachment identities in restart preview and resends only covered histo
   const received:AgentAttachment[][]=[]
   setup({async spawn(){return{async *dispatch(_text,files){received.push([...(files??[])]);yield result},async close(){}}}},false)
   const input=upload(),task=service.create({path:project,providerId:'claude',text:'read',...input});await settled(task.id)
-  const preview=restartPreview(store.get(task.id),store.events(task.id))
+  const preview=restartPreview(store.get(task.id),store.steps(task.id))
   expect(preview.attachments).toEqual([input.attachment])
-  const altered=store.events(task.id).map(e=>({...e,attachments:e.attachments?.map(a=>({...a,sha256:'f'.repeat(64)}))}))
+  const altered=store.steps(task.id).map(s=>{const p=s.payload as {attachments?:{sha256:string}[]};return {...s,payload:{...s.payload,attachments:p.attachments?.map(a=>({...a,sha256:'f'.repeat(64)}))}}})
   expect(restartPreview(store.get(task.id),altered).token).not.toBe(preview.token)
   service.continueTask(task.id,'continue',{restartToken:preview.token});await settled(task.id)
   expect(received[1]?.map(a=>a.sha256)).toEqual([input.attachment.sha256])
@@ -119,7 +119,7 @@ it('keeps first/second attachment ordering in a restart preview',async()=>{
   setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}},false)
   const first=upload('first.txt','first'),second=service.uploadAttachment({id:randomUUID(),draftId:first.draftId,name:'second.txt',mime:'text/plain',base64:Buffer.from('second').toString('base64')})
   const task=service.create({path:project,providerId:'claude',text:'compare the first and second',draftId:first.draftId,attachmentIds:[first.attachment.id,second.id]});await settled(task.id)
-  expect(restartPreview(store.get(task.id),store.events(task.id)).attachments?.map(a=>a.name)).toEqual(['first.txt','second.txt'])
+  expect(restartPreview(store.get(task.id),store.steps(task.id)).attachments?.map(a=>a.name)).toEqual(['first.txt','second.txt'])
 })
 
 it('rejects snapshot corruption after queueing before dispatching the affected input',async()=>{

@@ -961,6 +961,8 @@ const WorkbenchTaskEvent = z.object({
   errorCode: z.literal('execution_model_unsupported').optional(),
   diagnostic: z.string().optional(),
 })
+/** 桌面工作台详情时间线的一条(线上冻结的旧形状):daemon 由「步」现算(src/adapters/store/workbench/timeline-events.ts)。 */
+export type WorkbenchTaskEventT = z.infer<typeof WorkbenchTaskEvent>
 const WorkbenchTaskArtifact = z.object({
   id: z.string(), taskId: z.string(), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(),
   createdAt: z.number(), approvedAt: z.number().nullable(),
