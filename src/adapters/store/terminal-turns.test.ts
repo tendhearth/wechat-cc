@@ -36,6 +36,12 @@ describe('terminal-turns', () => {
     expect(items()).toEqual([['user_message', 'completed', {}], ['user_message', 'completed', {}], ['agent_message', 'completed', { text: '改好了,测试也过了' }]])
     expect(log.state(matterId())?.state).toBe('open')
   })
+  it('记录会读进步的会话(transcribed,M4b):发问 / 最后一句不在钩子这边写(从记录来,免得两份);轮照样开、照样收', () => {
+    turns.event(ev('prompt', { transcribed: true }), 1_000)
+    turns.event(ev('stop', { text: '改好了', transcribed: true }), 2_000)
+    expect(log.turns(matterId())).toMatchObject([{ status: 'completed', startedAt: 1_000, endedAt: 2_000 }])
+    expect(items()).toEqual([])
+  })
   it('harness 自己塞的 prompt 不开轮', () => {
     turns.event(ev('prompt', { automated: true }), 1_000)
     expect(log.turns(matterId())).toEqual([])

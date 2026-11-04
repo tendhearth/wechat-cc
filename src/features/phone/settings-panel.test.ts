@@ -711,6 +711,17 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${base}/m/api/matter/say?t=${d}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
     expect((await fetch(`${base}/m/api/matters`)).status).toBe(401)
   })
+  it('终端会话的那件事不进默认列表(App 主页另有终端行,两份就重了);点名 kind=terminal 才给', async () => {
+    const term = { ...MATTER, id: 'cccc0001', kind: 'terminal', status: 'open' }
+    matters.list.mockReturnValue([MATTER, term] as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const ids = async (q: string) => ((await (await fetch(`${base}/m/api/matters?${q}t=${t}`)).json()) as { matters: Array<{ id: string }> }).matters.map(m => m.id)
+    expect(await ids('')).toEqual(['deadbeef'])
+    expect(await ids('status=open,replied&')).toEqual(['deadbeef'])
+    expect(await ids('kind=terminal&')).toEqual(['deadbeef', 'cccc0001'])
+    matters.list.mockReset(); matters.list.mockImplementation(() => [MATTER])
+  })
   it('一件事带上任务真正的状态(一个主页 U5):status / phase / 等你几项 —— matter 的 open/done 说不清停下了、没做成、等你', async () => {
     const waiting = { ...MATTER, id: 'aaaa0001', status: 'open' }, stopped = { ...MATTER, id: 'aaaa0002', status: 'open' }, chat = { ...MATTER, id: 'aaaa0003', kind: 'chat' }
     matters.list.mockReturnValueOnce([waiting, stopped, chat] as never)

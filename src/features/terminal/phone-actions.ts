@@ -11,7 +11,8 @@ import { statSync } from 'node:fs'
 import type { CliEventHub, CliSessionInfo } from '../../app/cli-events'
 import type { CliSessionView } from '../../ports/cli-session'
 import { readTail, type CliReplyCore } from './reply-handler'
-import { parseActivity, type CliActivityItem } from './cli-activity'
+import { ACTIVITY_MAX_ITEMS, parseActivity, type CliActivityItem } from './cli-activity'
+import type { TerminalSteps } from './terminal-steps'
 
 /** 手机上说一句最多这么长(终端那头是一句 prompt,不是贴文件)。 */
 export const PHONE_CLI_SAY_MAX = 4000
@@ -76,6 +77,8 @@ export interface CliPhoneActionsDeps {
   readTail?: (path: string, max: number) => string
   /** 开着窗口的会话 id(live-window.ts liveSessionIds);缺席 ⇒ 空。 */
   liveIds?: () => Set<string>
+  /** 这件事的步(M4b):有就增量读进来再从步里拿;没接 / 这个会话还没有那件事 ⇒ 照旧直接解析记录尾巴。 */
+  steps?: Pick<TerminalSteps, 'view'>
 }
 
 export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions {
@@ -154,14 +157,14 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       if (s.origin_agent || (s.machine && deps.localMachine && s.machine !== deps.localMachine)) return { ok: false, error: 'cli_session_remote' }
       if (!s.transcript_path) return { ok: false, error: 'no_transcript' }
       let items: CliActivityItem[]
-      try { items = activityOfTranscript(s.transcript_path, s.source, PHONE_ACTIVITY_READ_MAX, undefined, deps.readTail ?? readTail) }
+      try { items = deps.steps?.view(s, ACTIVITY_MAX_ITEMS) ?? activityOfTranscript(s.transcript_path, s.source, PHONE_ACTIVITY_READ_MAX, undefined, deps.readTail ?? readTail) }
       catch { return { ok: false, error: 'no_transcript' } }
       return { ok: true, items }
     },
     currentStep(sessionId) {
       const s = deps.hub.lookup(sessionId)
       if (!s || s.session_id !== sessionId) return null
-      return currentStepOf(s, { localMachine: deps.localMachine, readTail: deps.readTail })
+      return currentStepOf(s, { localMachine: deps.localMachine, readTail: deps.readTail, steps: deps.steps })
     },
   }
 }
@@ -170,11 +173,11 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
  * 这条会话此刻在做的那一步(读记录尾巴 64KB)。手机列表与 CC 的 terminal_sessions(2026-10-24)共用这一份判法。
  * 那边的会话 / 没报记录路径 / 读不到 / 主人刚说完还没动手 ⇒ null。
  */
-export function currentStepOf(s: CliSessionInfo, opts: { localMachine?: string | undefined; readTail?: ((path: string, max: number) => string) | undefined } = {}): CliActivityItem | null {
+export function currentStepOf(s: CliSessionInfo, opts: { localMachine?: string | undefined; readTail?: ((path: string, max: number) => string) | undefined; steps?: Pick<TerminalSteps, 'view'> | undefined } = {}): CliActivityItem | null {
   if (!s.transcript_path) return null
   if (s.origin_agent || (s.machine && opts.localMachine && s.machine !== opts.localMachine)) return null
   try {
-    const items = activityOfTranscript(s.transcript_path, s.source, PHONE_NOW_READ_MAX, 20, opts.readTail ?? readTail)
+    const items = opts.steps?.view(s, 20) ?? activityOfTranscript(s.transcript_path, s.source, PHONE_NOW_READ_MAX, 20, opts.readTail ?? readTail)
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i]!
       if (it.kind === 'you') return null   // 主人刚说完、还没动手
