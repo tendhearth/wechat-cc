@@ -12,11 +12,12 @@
 // `boot-api failed at init (required): … called ctx.late('wired') but 'wired' is not in its lazy`,就是 #729 在真机上的样子。
 // 后加的几条各自的红 / 绿写在 README 的场景表下面。
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { removeTempDir } from '../../lib/test-temp'
+import { deviceIdOf } from '../../features/phone/device-store'
 import { startRealShapedDaemon, type RealShapedDaemon, type RealShapedOpts } from './real-shaped'
 import type { OutboundMsg } from './fake-ilink-server'
 import type { FakeSdkScript } from './fake-sdk'
@@ -62,6 +63,16 @@ const STRANGER = 'o9fixture-stranger@im.wechat'
 
 /** 入站给执行者的是 `<wechat …>原话</wechat>`(前面可能还有交接说明、近况);剧本按主人这一句的原话分路。 */
 const said = (text: string): string => [...text.matchAll(/<wechat [^>]*>\n([\s\S]*?)\n<\/wechat>/g)].at(-1)?.[1]?.trim() ?? text.trim()
+
+/** S2 那几条:配对过的一台手机、免打扰里压着的那一句、那件事的编号。 */
+const PHONE_TOKEN = 'sandbox-phone-device-token-0001'
+const PHONE_ID = deviceIdOf(PHONE_TOKEN)
+const QUIET_NOTE = '自改进展:免打扰里做完的那一步'
+let quietTaskId = ''
+/** 主人时区(Asia/Shanghai)的 HH:MM,给「/set 免打扰」用。 */
+const shanghaiHHMM = (ms: number): string => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms))
+/** 中继收到的、给那件事的 App 推送(collapseId = 任务编号)。 */
+const pushesFor = (taskId: string) => d.phoneRelay.controls().filter(c => (c.push as { collapseId?: string } | undefined)?.collapseId === taskId)
 
 const spawnOptions: Array<Record<string, unknown>> = []
 const codexThreads: Array<Record<string, unknown>> = []
@@ -388,9 +399,88 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
 
   // S2(待发队列一个、退避一套;设计稿 docs/superpowers/specs/2026-11-04-s2-one-pending-queue-design.md)。从这里起「待说」那一拍
   // 改成 200ms 一拍(生产 5 分钟),几秒里就能看见补说 / 退避;别的照旧。
+  it('quiet hours: a task finishes while the owner is in 免打扰 ⇒ its App push and a report for WeChat wait in speech_pending, nothing goes out', async () => {
+    // 主人配对过一台手机(推送登记在 phone-push.json,配对在 settings-devices.json),开机前就在
+    const stateDir = d.stateDir
+    await d.stop({ keepState: true })
+    writeFileSync(join(stateDir, 'settings-devices.json'), JSON.stringify({ [PHONE_TOKEN]: { created_at: '2026-11-01T00:00:00.000Z' } }), { mode: 0o600 })
+    writeFileSync(join(stateDir, 'phone-push.json'), JSON.stringify({ [PHONE_ID]: { platform: 'apns', token: 'a'.repeat(64), at: 0 } }), { mode: 0o600 })
+    d = await boot({ stateDir, speechFlushIntervalMs: 200 })
+    expect(await d.moduleProblems()).toEqual([])
+    await expect.poll(() => d.phoneRelay.controls().some(c => (c.push_reg as { device?: string } | undefined)?.device === PHONE_ID), { timeout: 15_000 }).toBe(true)
+
+    const now = Date.now()
+    d.sendText(d.owner, `/set 免打扰 ${shanghaiHHMM(now - 60_000)}-${shanghaiHHMM(now + 2 * 3600_000)}`)
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.startsWith('记下了:每天')), 15_000)
+
+    // 回报类的一句(自改进展):被推后 ⇒ 这一次照实回「没送到」,进待发队列
+    expect(await desktop('POST', '/v1/self-change/notice', { text: QUIET_NOTE })).toMatchObject({ status: 502, body: { error: 'send_failed' } })
+    // 微信里派的活做完了 ⇒ App 的「做完了」推送被门压着(report),落进待发队列
+    d.sendText(d.owner, '任务 项目')
+    const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)   // 每次开机是新的假 ilink,外发箱从这次开机算
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 再写一份笔记`)
+    const ack = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.startsWith('已接下这件事')), 15_000)
+    quietTaskId = texts(ack, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
+    await expect.poll(async () => (await desktop<{ task: { phase: string } }>('GET', `/v1/workbench/task?id=${quietTaskId}`)).body.task.phase, { timeout: 30_000 }).toBe('replied')
+    await expect.poll(() => d.query<{ kind: string }>("SELECT kind FROM speech_pending WHERE lane = 'push' AND ref LIKE ?", `task_done:%${quietTaskId}%`).map(r => r.kind), { timeout: 15_000 }).toEqual(['matter_report'])
+    expect(d.query("SELECT 1 FROM speech_pending WHERE lane = 'say' AND body = ?", QUIET_NOTE)).toHaveLength(1)
+    // 几拍过去:推送没发、那句话也没进微信
+    await new Promise(r => setTimeout(r, 1_000))
+    expect(pushesFor(quietTaskId)).toEqual([])
+    expect(texts(d.ilink.outbox(), d.owner).some(t => t.includes(QUIET_NOTE))).toBe(false)
+  })
+
+  it('restart with pending items: after a reboot the held push and the held report are still there; the owner turns 免打扰 off ⇒ both are delivered on the next tick, once', async () => {
+    const stateDir = d.stateDir
+    await d.stop({ keepState: true })
+    d = await boot({ stateDir, speechFlushIntervalMs: 200 })
+    expect(await d.moduleProblems()).toEqual([])
+    // 重启没丢(以前压着的推送只在内存里,重启就没了)
+    expect(d.query("SELECT 1 FROM speech_pending WHERE lane = 'push' AND ref LIKE ?", `task_done:%${quietTaskId}%`)).toHaveLength(1)
+    expect(d.query("SELECT 1 FROM speech_pending WHERE lane = 'say' AND body = ?", QUIET_NOTE)).toHaveLength(1)
+    await expect.poll(() => d.phoneRelay.controls().some(c => 'push_reg' in c), { timeout: 15_000 }).toBe(true)
+    expect(pushesFor(quietTaskId)).toEqual([])
+
+    d.sendText(d.owner, '/set 免打扰 关')
+    await d.waitForOutbound(m => texts(m, d.owner).includes('免打扰关了。'), 15_000)
+    await expect.poll(() => pushesFor(quietTaskId).length, { timeout: 15_000 }).toBe(1)
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes(QUIET_NOTE)), 15_000)
+    expect(d.query("SELECT 1 FROM speech_pending WHERE lane = 'push'")).toEqual([])
+    expect(d.query("SELECT 1 FROM speech_pending WHERE body = ?", QUIET_NOTE)).toEqual([])
+    expect(d.query<{ channel: string }>("SELECT channel FROM speech_log WHERE kind = 'matter_report' AND outcome = 'allowed' AND channel = 'app'").length).toBeGreaterThan(0)
+    // 只送一次
+    await new Promise(r => setTimeout(r, 1_000))
+    expect(pushesFor(quietTaskId)).toHaveLength(1)
+    expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes(QUIET_NOTE))).toHaveLength(1)
+  })
+
+  it('expired item: an old notice carried over from speech/pending-notices.json is past its 24h ⇒ logged as expired in speech_log, never sent; a fresh one from the same file is said', async () => {
+    const stateDir = d.stateDir
+    await d.stop({ keepState: true })
+    const STALE = '两天前的回报:定时 j9 停了', FRESH = '刚才的回报:定时 j8 停了'
+    mkdirSync(join(stateDir, 'speech'), { recursive: true })
+    writeFileSync(join(stateDir, 'speech', 'pending-notices.json'), JSON.stringify({
+      items: [
+        { id: 'legacy-stale', kind: 'job_notice', chatId: d.owner, text: STALE, at: new Date(Date.now() - 2 * 24 * 3600_000).toISOString() },
+        { id: 'legacy-fresh', kind: 'job_notice', chatId: d.owner, text: FRESH, at: new Date(Date.now() - 60_000).toISOString() },
+      ],
+      dropped: {},
+    }))
+    d = await boot({ stateDir, speechFlushIntervalMs: 200 })
+    expect(existsSync(join(stateDir, 'speech', 'pending-notices.json'))).toBe(false)
+    expect(existsSync(join(stateDir, 'speech', 'pending-notices.json.migrated'))).toBe(true)
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes(FRESH)), 15_000)
+    await expect.poll(() => d.query("SELECT 1 FROM speech_log WHERE kind = 'job_notice' AND outcome = 'dropped' AND reason = 'expired'").length, { timeout: 15_000 }).toBe(1)
+    expect(texts(d.ilink.outbox(), d.owner).some(t => t.includes(STALE))).toBe(false)
+    expect(d.query("SELECT 1 FROM speech_pending WHERE id IN ('legacy-stale', 'legacy-fresh')")).toEqual([])
+  })
+
   it('offline: WeChat is down ⇒ a report that cannot go out is kept to say later, and the pending flush backs off on the shared backoff (first retry after 1 min) instead of hitting the link every tick', async () => {
     const stateDir = d.stateDir
     await d.stop({ keepState: true })
+    // 手机配对撤掉:有能收的 App 时,微信发不出去会落到 App(那是另一条路);这里只看微信断了的时候
+    rmSync(join(stateDir, 'settings-devices.json'), { force: true }); rmSync(join(stateDir, 'phone-push.json'), { force: true })
     d = await boot({ stateDir, speechFlushIntervalMs: 200 })
     expect(await d.moduleProblems()).toEqual([])
     d.ilink.failSendMessage({ errcode: -1, errmsg: 'network unreachable' })
@@ -407,6 +497,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       expect(settled).toBeLessThanOrEqual(6)   // 当场那一次 + 至多一次补说,每次线上那一层 1 秒 × 3(不动)
       await new Promise(r => setTimeout(r, 3_000))   // 刻意等「什么都没发生」:15 拍左右,退避第一档是 1 分钟
       expect(attempts()).toBe(settled)
+      // 那句话在主库的待发队列里等着(S2b),没丢
+      expect(d.query<{ lane: string; kind: string }>("SELECT lane, kind FROM speech_pending WHERE body = ?", NOTE)).toEqual([{ lane: 'say', kind: 'self_change_progress' }])
     } finally {
       d.ilink.succeedSendMessage()
     }

@@ -31,7 +31,8 @@ export function wireSpeech(d: {
     ledger: (e) => ledger.append(e),
     log: d.log,
     // report / blocking 被推后不丢:落盘待说,startPendingFlush 那一拍补说(defer 不是不送)
-    pending: makePendingNotices({ stateDir: d.stateDir, log: d.log, ...(d.now ? { now: d.now } : {}) }),
+    // S2b 起在主库 speech_pending;旧的 speech/pending-notices.json 第一次开机时读进来(改名 .migrated)
+    pending: makePendingNotices({ db: d.db, stateDir: d.stateDir, log: d.log, ...(d.now ? { now: d.now } : {}) }),
     ...(d.now ? { now: d.now } : {}),
   })
 }

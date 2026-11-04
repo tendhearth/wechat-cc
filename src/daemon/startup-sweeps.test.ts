@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { openTestDb } from '../lib/db'
 import { restartNoticeSender } from './startup-sweeps'
 
 describe('重启通知经 CC 开口那道门(第三批 3a)', () => {
@@ -24,7 +25,7 @@ describe('重启通知按对话一个一个进门(整合者评审)', () => {
     const { makeSpeechPolicy } = await import('./speech/policy')
     const { makePendingNotices } = await import('./speech/pending-notices')
     const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
-    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'restart-')), log: () => {} })
+    const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
     const outbound = {
       appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
       open: (chatId: string) => ({ sendText: async () => (chatId === 'admin-b' ? { msgId: '', error: 'down' } : { msgId: 'm' }), channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),

@@ -3,19 +3,22 @@ import type { ProactiveOutbound } from '../companion/proactive-channel'
 import type { PushPayload } from '../../features/phone/phone-push'
 import { makeSpeechPolicy, type SpeechLedgerEntry } from './policy'
 import { makePushGate } from './push-gate'
+import { makeHeldPushes } from './held-pushes'
+import { openTestDb } from '../../lib/db'
 
 const OWNER = 'owner@im.wechat'
 const T0 = Date.parse('2026-10-21T15:00:00.000Z')
 const QUIET_END = Date.parse('2026-10-21T23:00:00.000Z')
 
-function setup(o: { care?: 'off' | 'low'; quiet?: boolean; owner?: string | null; wechatDown?: boolean } = {}) {
+function setup(o: { care?: 'off' | 'low'; quiet?: boolean; owner?: string | null; wechatDown?: boolean; db?: ReturnType<typeof openTestDb>; ready?: () => boolean; quietFn?: () => boolean } = {}) {
   let t = T0
+  const db = o.db ?? openTestDb()
   const ledger: SpeechLedgerEntry[] = []
   // 微信断了、App 也「送不到」—— 推送照样问得过门:推送送不送得到是推送自己的事
   const outbound: ProactiveOutbound = { appDeliverable: () => false, canDeliver: () => !o.wechatDown, open: vi.fn(), sendOnce: async () => ({ ok: true }) }
   const speech = makeSpeechPolicy({
     care: () => o.care ?? 'low',
-    quietEndsAt: (_c, now) => (o.quiet && now < QUIET_END ? QUIET_END : null),
+    quietEndsAt: (_c, now) => ((o.quietFn ? o.quietFn() : o.quiet) && now < QUIET_END ? QUIET_END : null),
     outbound, ledger: e => { ledger.push(e) }, log: () => {}, now: () => t,
   })
   const pushed: PushPayload[] = []
@@ -23,11 +26,12 @@ function setup(o: { care?: 'off' | 'low'; quiet?: boolean; owner?: string | null
   const gate = makePushGate({
     speech, ownerChatId: () => (o.owner === undefined ? OWNER : o.owner),
     push: (p) => { pushed.push(p); return { sent: 1, online: 0 } },
+    held: makeHeldPushes(db), ...(o.ready ? { ready: o.ready } : {}),
     log: () => {}, now: () => t,
     setTimer: (cb, ms) => { const h = { cb, ms }; timers.push(h); return h },
     clearTimer: (h) => { const i = timers.indexOf(h as never); if (i >= 0) timers.splice(i, 1) },
   })
-  return { gate, pushed, ledger, timers, advance: (ms: number) => { t += ms }, open: outbound.open }
+  return { gate, speech, pushed, ledger, timers, db, advance: (ms: number) => { t += ms }, open: outbound.open }
 }
 
 const perm: PushPayload = { kind: 'permission', title: '需要你批准', body: 'Bash: ls', taskId: 't1', requestId: 'p1' }
@@ -76,11 +80,85 @@ describe('App 原生推送也问 CC 开口那道门', () => {
     expect(s.ledger).toEqual([])
   })
 
-  it('停了 ⇒ 压着的丢掉、计时器清掉,再推回 null', () => {
+  it('停了 ⇒ 计时器清掉,再推回 null;**压着的留在表里**(S2b:重启不丢)', () => {
     const s = setup({ quiet: true })
     s.gate.push(done)
     s.gate.stop()
     expect(s.timers).toHaveLength(0)
     expect(s.gate.push(perm)).toBeNull()
+    expect(s.db.query("SELECT kind FROM speech_pending WHERE lane='push'").all()).toEqual([{ kind: 'matter_report' }])
+  })
+})
+
+describe('压着的推送落在主库 speech_pending(S2b,主人 11-04:重启不丢)', () => {
+  it('免打扰里压着一条「做完了」、daemon 重启 ⇒ 新的一份开机就按表里的到点时刻起计时器,时段结束照样推', () => {
+    const a = setup({ quiet: true })
+    a.gate.push(done)
+    a.gate.stop()                                   // 关机
+    const b = setup({ quiet: true, db: a.db })      // 同一个库再开机
+    expect(b.timers).toHaveLength(1)
+    expect(b.timers[0]!.ms).toBe(QUIET_END - T0)
+    b.advance(QUIET_END - T0)
+    b.timers.shift()!.cb()
+    expect(b.pushed).toEqual([done])
+    expect(b.db.query("SELECT COUNT(*) AS n FROM speech_pending WHERE lane='push'").get()).toEqual({ n: 0 })
+  })
+
+  it('同一件事只留最新那一条', () => {
+    const s = setup({ quiet: true })
+    s.gate.push(done)
+    s.gate.push({ ...done, body: '修登录(第二次)' })
+    s.advance(QUIET_END - T0)
+    s.timers.at(-1)!.cb()
+    expect(s.pushed.map(p => p.body)).toEqual(['修登录(第二次)'])
+  })
+
+  it('过期了(24 小时)⇒ 不推,记一行账「过期作废」', () => {
+    const s = setup({ quiet: true })
+    s.gate.push(done)
+    s.db.query("UPDATE speech_pending SET next_at = ?, expires_at = ? WHERE lane='push'").run(T0 + 25 * 3600_000, T0 + 24 * 3600_000)
+    s.advance(25 * 3600_000)
+    s.timers.at(-1)!.cb()
+    expect(s.pushed).toEqual([])
+    expect(s.ledger.at(-1)).toMatchObject({ kind: 'matter_report', outcome: 'dropped', reason: 'expired', channel: 'app' })
+    expect(s.db.query("SELECT COUNT(*) AS n FROM speech_pending WHERE lane='push'").get()).toEqual({ n: 0 })
+  })
+
+  it('到点了但中继还没连上(刚开机)⇒ 先不放,30 秒后再看;连上了再放', () => {
+    let ready = false
+    const s = setup({ quiet: true, ready: () => ready })
+    s.gate.push(done)
+    s.advance(QUIET_END - T0)
+    s.timers.shift()!.cb()
+    expect(s.pushed).toEqual([])
+    expect(s.timers.at(-1)!.ms).toBe(30_000)
+    ready = true
+    s.advance(30_000)
+    s.timers.shift()!.cb()
+    expect(s.pushed).toEqual([done])
+  })
+
+  it('一拍最多放 5 条,剩下的一秒后接着放(静音一结束不一口气响一串)', () => {
+    const s = setup({ quiet: true })
+    for (let i = 0; i < 7; i++) s.gate.push({ ...done, taskId: `t${i}` })
+    s.advance(QUIET_END - T0)
+    s.timers.shift()!.cb()
+    expect(s.pushed).toHaveLength(5)
+    expect(s.timers.at(-1)!.ms).toBe(1_000)
+    s.advance(1_000)
+    s.timers.shift()!.cb()
+    expect(s.pushed).toHaveLength(7)
+  })
+
+  it('主人提前关了免打扰 ⇒ 「待说」那一拍顺手再问一次门,压着的不必等到原来的时段结束', async () => {
+    let quiet = true
+    const s = setup({ quietFn: () => quiet })
+    s.gate.push(done)
+    s.advance(60_000)
+    await s.speech.flushPending()
+    expect(s.pushed).toEqual([])          // 还在免打扰里:照旧压着
+    quiet = false
+    await s.speech.flushPending()
+    expect(s.pushed).toEqual([done])
   })
 })

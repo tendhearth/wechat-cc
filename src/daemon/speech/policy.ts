@@ -13,8 +13,7 @@
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../domain/speech/decide'
 import { isExpiring, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
-import { backoffMs } from '../../lib/delivery-backoff'
-import { mergePending } from './pending-notices'
+import { MAX_FLUSH_CHATS_PER_TICK, mergePending } from './pending-notices'
 
 export interface SpeechRequest {
   kind: SpeechKind
@@ -62,6 +61,16 @@ export interface SpeechPolicy {
    * 免打扰 / 关心档关着就别挑了。判法和 say 同一份(decideSpeech);真要说的时候照样走 say(那一次才记账)。
    */
   peek(req: SpeechRequest): SpeechDecision
+  /**
+   * 压着的一样过期了、不再说(S2b):记一行账 outcome=dropped、reason=expired。待说队列自己在 flushPending 里记;
+   * 自己就是通道的(App 推送,push-gate)放压着的那几条时调它。
+   */
+  expired(e: { kind: SpeechKind; chatId: string; channel: ProactiveChannel | null }): void
+  /**
+   * 「待说」那一拍的尾巴上顺手跑一下(S2b):自己压着东西的通道(App 推送)借这一拍再问一次门 ——
+   * 主人提前关了免打扰,压着的推送不必等到原来的时段结束。抛错只记日志。
+   */
+  onFlush(cb: () => void): void
 }
 
 export function makeSpeechPolicy(deps: {
@@ -84,8 +93,6 @@ export function makeSpeechPolicy(deps: {
   const write = (e: SpeechLedgerEntry): void => {
     try { deps.ledger?.(e) } catch (err) { deps.log('SPEECH', `ledger write failed: ${err instanceof Error ? err.message : String(err)}`) }
   }
-  /** 补说发失败的对话:指数退避,共用 lib/delivery-backoff 那一份(1 分钟起翻倍、封顶 1 小时;S2a)。只在内存里:重启后从头算,无妨。 */
-  const flushBackoff = new Map<string, { fails: number; nextAt: number }>()
   /** 判一次;推后 / 被拒在这里记账(推后同理由一小时只记一次)。放行的那一行由调用方在发完后记。 */
   const judge = (req: SpeechRequest, deliverable: boolean): { decision: SpeechDecision; base: Omit<SpeechLedgerEntry, 'outcome' | 'reason' | 'channel'> } => {
     const nowMs = req.nowMs ?? now()
@@ -115,7 +122,12 @@ export function makeSpeechPolicy(deps: {
     }
     return { decision, base }
   }
+  const flushHooks: Array<() => void> = []
   const policy: SpeechPolicy = {
+    onFlush(cb) { flushHooks.push(cb) },
+    expired(e) {
+      write({ kind: e.kind, origin: originOf(e.kind), chatId: e.chatId, outcome: 'dropped', reason: 'expired', channel: e.channel, ts: new Date(now()).toISOString() })
+    },
     peek(req) {
       const nowMs = req.nowMs ?? now()
       const ends = deps.quietEndsAt(req.chatId, nowMs)
@@ -171,7 +183,14 @@ export function makeSpeechPolicy(deps: {
     flushPending() {
       // 一次只跑一拍:上一拍还在发(线上那一层 1 秒 × 3 次就要 2 秒多)时再起一份,就是两份叠着撞同一条断了的线,
       // 退避也要等第一份失败了才记得上(S2a 沙盒抓到的:200ms 一拍、断线,3 秒里撞了 21 次)
-      if (!flushing) flushing = flushOnce().finally(() => { flushing = null })
+      if (!flushing) {
+        flushing = flushOnce().finally(() => {
+          flushing = null
+          for (const cb of flushHooks) {
+            try { cb() } catch (err) { deps.log('SPEECH', `flush hook failed: ${err instanceof Error ? err.message : String(err)}`) }
+          }
+        })
+      }
       return flushing
     },
   }
@@ -179,23 +198,29 @@ export function makeSpeechPolicy(deps: {
   async function flushOnce(): Promise<void> {
     if (!deps.pending) return
     const t = now()
-    for (const g of deps.pending.groups()) {
-      const b = flushBackoff.get(g.chatId)
-      if (b && t < b.nextAt) continue   // 上次补说发失败了:按对话指数退避,不每拍都撞(no-retry-storm)
+    // 过期的先收掉:记一行账「过期作废」,不再说(S2b:每一行有过期时间)
+    for (const x of deps.pending.expire(t)) {
+      policy.expired({ kind: x.kind, chatId: x.chatId, channel: null })
+      deps.log('SPEECH', `${x.kind} chat=${x.chatId} pending notice expired — not said`)
+    }
+    // 还在退避的对话不在 groups 里(退避记在行上:共用 backoffMs,重启不归零;no-retry-storm)
+    let tried = 0
+    for (const g of deps.pending.groups(t)) {
+      if (tried >= MAX_FLUSH_CHATS_PER_TICK) break   // 每一拍有上限:静音一结束不一口气冒出一串
       // 有等主人拍板的就按 blocking 问(免打扰不拦);否则按第一条 report 问
       const kind = g.items.find(i => originOf(i.kind) === 'blocking')?.kind ?? g.items[0]!.kind
       let sent = false
       const o = await policy.say({ kind, chatId: g.chatId }, async (turn) => {
         try { sent = !(await turn.sendText(g.chatId, mergePending(g.items, g.dropped))).error } catch { sent = false }
       })
-      if ('allow' in o && sent) {
+      if (!('allow' in o)) continue
+      tried++
+      if (sent) {
         // 只删这次真说了的那几条(发送途中又进来的留着,下一拍说;整合者评审 #531 ②)
         deps.pending.remove(g.chatId, g.items.map(i => i.id), g.dropped)
-        flushBackoff.delete(g.chatId)
         deps.log('SPEECH', `told ${g.items.length} pending notice(s) chat=${g.chatId}`)
-      } else if ('allow' in o) {
-        const fails = (b?.fails ?? 0) + 1
-        flushBackoff.set(g.chatId, { fails, nextAt: t + backoffMs(fails) })
+      } else {
+        const fails = deps.pending.failed(g.chatId, g.items.map(i => i.id), t)
         deps.log('SPEECH', `pending notices chat=${g.chatId} send failed (try ${fails}) — backing off`)
       }
     }

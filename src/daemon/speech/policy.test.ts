@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { openTestDb } from '../../lib/db'
 import type { ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
 import { makeSpeechPolicy, type SpeechLedgerEntry } from './policy'
 
@@ -114,7 +115,7 @@ describe('tell / flushPending —— 推后的 report 落盘待说,补说走 say
       app: () => ({ deliverable: () => true, record: async (_c, t) => { recorded.push(t); return true }, push: () => {} }),
       log: () => {},
     })
-    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, n) => (quiet ? n + 3600_000 : null), outbound, log: () => {}, pending: makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} }) })
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, n) => (quiet ? n + 3600_000 : null), outbound, log: () => {}, pending: makePendingNotices({ db: openTestDb(), log: () => {} }) })
     expect(await policy.tell('job_notice', OWNER, '定时 j1 连续失败,先停了')).toBe(false)   // 免打扰 ⇒ 推后、入队
     quiet = false; degraded = true
     await policy.flushPending()
@@ -125,7 +126,7 @@ describe('tell / flushPending —— 推后的 report 落盘待说,补说走 say
   it('initiative 推后不入队;report 推后入队;放行 ⇒ true', async () => {
     const { makePendingNotices } = await import('./pending-notices')
     const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
-    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
     const ob = fakeOutbound()
     let quiet = true
     const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, n) => (quiet ? n + 3600_000 : null), outbound: ob.out, log: () => {}, pending })
@@ -145,7 +146,7 @@ describe('待说队列不丢话(整合者评审 #531)', () => {
     let now = Date.parse('2026-10-21T10:00:00.000Z')
     const outbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
       open: () => ({ sendText: async (_c: string, t: string) => { await o.onSend?.(); const e = o.sendErr(); if (e) return { msgId: '', error: e }; sent.push(t); return { msgId: 'm' } }, channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
-    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
     const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound, log: () => {}, pending, now: () => now })
     return { policy, pending, sent, advance: (ms: number) => { now += ms } }
   }
@@ -199,7 +200,7 @@ describe('补说一次只跑一拍(S2a,沙盒抓到的)', () => {
     const inFlight = new Promise<void>(r => { release = r })
     const outbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
       open: () => ({ sendText: async () => { sends++; await inFlight; return { msgId: '', error: 'down' } }, channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
-    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
     const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound, log: () => {}, pending })
     pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: 'x', at: 'x' })
     const first = policy.flushPending()
@@ -212,11 +213,60 @@ describe('补说一次只跑一拍(S2a,沙盒抓到的)', () => {
   })
 })
 
+describe('待说队列在主库(S2b):过期作废、每拍上限、退避重启不归零', () => {
+  const mk = async (o: { sendErr?: () => string | undefined; db?: ReturnType<typeof openTestDb>; start?: number } = {}) => {
+    const { makePendingNotices } = await import('./pending-notices')
+    const sent: Array<[string, string]> = []
+    const ledger: SpeechLedgerEntry[] = []
+    let now = o.start ?? Date.parse('2026-11-04T10:00:00.000Z')
+    let tries = 0
+    const outbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async (c: string, t: string) => { tries++; const e = o.sendErr?.(); if (e) return { msgId: '', error: e }; sent.push([c, t]); return { msgId: 'm' } }, channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
+    const db = o.db ?? openTestDb()
+    const pending = makePendingNotices({ db, log: () => {}, now: () => now })
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound, ledger: e => { ledger.push(e) }, log: () => {}, pending, now: () => now })
+    return { policy, pending, sent, ledger, db, tries: () => tries, now: () => now, advance: (ms: number) => { now += ms } }
+  }
+  it('过期了 ⇒ 不说,记一行账「过期作废」(outcome=dropped、reason=expired,不记正文)', async () => {
+    const t = await mk()
+    t.pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: '定时 j1 停了', expiresAt: t.now() + 1000 })
+    t.advance(1000)
+    await t.policy.flushPending()
+    expect(t.sent).toEqual([])
+    expect(t.ledger).toEqual([expect.objectContaining({ kind: 'job_notice', origin: 'report', chatId: OWNER, outcome: 'dropped', reason: 'expired', channel: null })])
+    expect(JSON.stringify(t.ledger)).not.toContain('定时 j1')
+    await t.policy.flushPending()
+    expect(t.ledger).toHaveLength(1)   // 只记一次
+  })
+  it('每一拍最多补说 3 条对话(每条对话合成一句),剩下的下一拍', async () => {
+    const t = await mk()
+    for (let i = 1; i <= 5; i++) t.pending.add({ id: `n${i}`, kind: 'social_mail', chatId: `chat-${i}`, text: `信 ${i}`, at: new Date(t.now() + i).toISOString() })
+    t.pending.add({ id: 'n1b', kind: 'social_result', chatId: 'chat-1', text: '介绍成了', at: new Date(t.now() + 9).toISOString() })
+    await t.policy.flushPending()
+    expect(t.sent.map(([c]) => c)).toEqual(['chat-1', 'chat-2', 'chat-3'])
+    expect(t.sent[0]![1]).toContain('刚才没顾上跟你说的几件事')
+    await t.policy.flushPending()
+    expect(t.sent.map(([c]) => c)).toEqual(['chat-1', 'chat-2', 'chat-3', 'chat-4', 'chat-5'])
+  })
+  it('补说失败的退避记在行上:daemon 重启以后(新的一份门)不会马上又撞一次', async () => {
+    const a = await mk({ sendErr: () => 'down' })
+    a.pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: 'x' })
+    await a.policy.flushPending()
+    expect(a.tries()).toBe(1)
+    const b = await mk({ sendErr: () => undefined, db: a.db, start: a.now() + 30_000 })   // 重启,半分钟后
+    await b.policy.flushPending()
+    expect(b.tries()).toBe(0)
+    b.advance(30_000)
+    await b.policy.flushPending()
+    expect(b.sent).toEqual([[OWNER, 'x']])
+  })
+})
+
 describe('带会过期码的卡不进待说队列(整合者评审 #533)', () => {
   it('permission_ask / self_change_ask 没送到 ⇒ 不入队;social_ask(介绍一直有效)照样入队', async () => {
     const { makePendingNotices } = await import('./pending-notices')
     const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
-    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
     const ob = fakeOutbound(false)   // 两条路都送不到 ⇒ 门推后
     const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound: ob.out, log: () => {}, pending })
     await policy.tell('permission_ask', OWNER, '要不要放行?回 y 07')
@@ -230,7 +280,7 @@ describe('tell 的自带 send 回 false ⇒ 算没说出去(sendAssistantText �
   it('回 false ⇒ tell 回 false、report 入队;回 true / 不回东西 ⇒ 算说了', async () => {
     const { makePendingNotices } = await import('./pending-notices')
     const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
-    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
     const ob = fakeOutbound()
     const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound: ob.out, log: () => {}, pending })
     expect(await policy.tell('social_mail', OWNER, '来信了', async () => false)).toBe(false)
