@@ -13,6 +13,8 @@ import type { InternalApi } from '../../daemon/internal-api/types'
 import { journalRoutes, type JournalRoutesDeps } from './routes'
 
 export type JournalFeatureDeps = JournalRoutesDeps
+// journalRoutes:测试把面板的假实现转交内部 API 时要(features/phone/test-panel-v1.ts);生产里只有本模块自己 mount。
+export { journalRoutes }
 
 export function journalFeature(o: { needs: readonly string[]; deps: (ctx: ModuleCtx) => JournalFeatureDeps }): DaemonModule<void> {
   return {

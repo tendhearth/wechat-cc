@@ -32,6 +32,8 @@ import type { MessageRecord } from '../../lib/messages-store'
 import { createInternalApi } from '../internal-api'
 import { voiceRoutes } from '../../features/voice/routes'
 import { terminalRoutes, type TerminalRoutesDeps } from '../../features/terminal/routes'
+import { memoryRoutes } from '../../features/memory/routes'
+import { journalRoutes } from '../../features/journal/routes'
 import { makeOwnerChatFileReader } from '../wiring/owner-chat-reading'
 import { fileChunkResponse } from '../../features/phone/mobile-chat'
 import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
@@ -107,6 +109,22 @@ function v1Reads() {
   }
 }
 
+/**
+ * P3c-3 起 `/m/api/memory/retractions`、`memory/restore`、`todo`、`seen` 是别名,翻到 `/v1/memory/retractions`、
+ * `/v1/memory/retractions/restore`、`/v1/knowledge/facts/set_fact_status`、`/v1/journal/seen`:剧本挂在内部 API 上
+ * (记忆模块、日志模块自己挂的路由 + bootApi 交的 knowledge),同生产。
+ */
+function v1Owner() {
+  return {
+    nightly: {
+      retractions: () => { check('retractions'); return [{ key: 'c:abc123', section: '喜好', text: '爱喝美式', day: '2026-11-01', verdict: 'outdated', note: '主人说过时了' }] },
+      restore: async (key: string) => (key === 'c:abc123' ? { restored: ['爱喝美式'] } : null),
+    },
+    knowledge: { facts: { setFactStatus: () => ({ ok: true }) } },
+    seen: { read: () => seenAt, write: (iso: string) => { seenAt = iso } },
+  }
+}
+
 function deps(): SettingsPanelDeps {
   const reportPath = join(root, 'files', 'report.md')
   mkdirSync(dirname(reportPath), { recursive: true })
@@ -173,10 +191,8 @@ function deps(): SettingsPanelDeps {
       chat: { say: () => chatJob, state: () => ({ pending: null, failed: null }), pendingMatter: () => null },
       message: async (_chatId, id) => (id === reply.id ? reply : null),
     },
-    memoryRetractions: () => { check('retractions'); return [{ key: 'c:abc123', section: '喜好', text: '爱喝美式', day: '2026-11-01', verdict: 'outdated', note: '主人说过时了' }] },
-    restoreMemory: async key => (key === 'c:abc123' ? { restored: ['爱喝美式'] } : null),
-    todos: { facts: { findFacts: () => ({ results: [] }), setFactStatus: () => ({ ok: true }) }, names: () => [] },
-    seen: { read: () => seenAt, write: iso => { seenAt = iso } },
+    todos: { facts: { findFacts: () => ({ results: [] }) }, names: () => [] },
+    seen: { read: () => seenAt },
     sessions: {
       list: async (provider, input) => ({ items: [{ key: `${provider}:s1`, providerId: provider, nativeId: 's1', title: `会话 ${input.q || '全部'}`, titleSource: 'first_prompt', cwd: '/w/app', updatedAt: T0 - 600_000, remote: false, observedState: 'active' }], nextCursor: null, coverage: 'native_supported_history' }),
       read: async key => ({ session: { key, providerId: 'claude', nativeId: 's1', title: '会话', titleSource: 'first_prompt', cwd: '/w/app', updatedAt: T0 - 600_000, remote: false, observedState: 'observed' }, messages: [{ id: 'u1', role: 'user', text: '修登录', truncated: false }, { id: 'a1', role: 'assistant', text: '好', truncated: false }], nextCursor: null, sourceFingerprint: 'fp', page: { limit: 20, cursor: null }, truncated: false }),
@@ -192,7 +208,10 @@ beforeAll(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-mapi-golden-')))
   const d = deps()
   const reads = v1Reads()
-  const api = createInternalApi({ stateDir: root, daemonPid: 1, matters: v1Service(d), connections: reads.connections }, { responseContracts: false })
+  const owner = v1Owner()
+  const api = createInternalApi({ stateDir: root, daemonPid: 1, matters: v1Service(d), connections: reads.connections, knowledge: owner.knowledge as never }, { responseContracts: false })
+  api.mount('memory', memoryRoutes({ stateDir: root, memoryLlm: () => null, memoryNightly: () => owner.nightly as never }))
+  api.mount('journal', journalRoutes({ stateDir: root, journal: {} as never, seen: owner.seen }))
   api.mount('terminal', terminalRoutes({ overseerToday: reads.overseerToday, phoneSessions: reads.phoneSessions } as Partial<TerminalRoutesDeps> as TerminalRoutesDeps))
   api.mount('voice', voiceRoutes({ voice: { transcribe: async () => { check('transcribe'); return { text: '  你好,帮我看看  ' } } } as never }))
   panel = makeSettingsPanel({ ...d, v1: api.panelDispatch })

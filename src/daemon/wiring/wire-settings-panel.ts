@@ -12,13 +12,13 @@ import type { WechatContacts, WechatVoice } from '../../ports/wechat'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../app/matters/service'
-import { retractOnFactStatus, type MemoryNightlyRuntime } from '../../features/memory'
+import type { MemoryNightlyRuntime } from '../../features/memory'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
 import { jobsView, jobsAction, mobileJobsRoutes } from '../../features/jobs'
 import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { pickJobExecutor, readPlanLogDays } from '../../features/companion'
-import { readJournalSeen, writeJournalSeen } from '../../adapters/store/journal-seen'
+import { readJournalSeen } from '../../adapters/store/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, cacheSessions, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer, currentPhoneClient } from '../../features/phone'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
@@ -103,8 +103,6 @@ return makeSettingsPanel({
   }}:{}),
   curatedMemory: () => memoryNightly.curatedView(),
   correctMemory: (id: string, verdict: import('../../features/memory').MemoryVerdict) => memoryNightly.correct(id, verdict),
-  memoryRetractions: () => memoryNightly.retractions(),
-  restoreMemory: (key: string) => memoryNightly.restore(key),
   ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), withActs: (rows) => mattersService.withActs(rows), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
   // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
   ...(opts.activity ? { activity: opts.activity } : {}),
@@ -154,14 +152,7 @@ return makeSettingsPanel({
     todos: {
       facts: {
         findFacts: (k, pr, q2, st, li) => boot.knowledge!.facts!.findFacts(k, pr, q2, st, li),
-        // 待办「不对」= 收回(架构终态 G5,主人 10-26 第 1 条):记忆、笔记、总览里同一句也一路收回
-        setFactStatus: retractOnFactStatus({ setFactStatus: (id: number, st: string, n: number) => boot.knowledge!.facts!.setFactStatus(id, st, n) }, {
-          factById: (id) => boot.knowledge!.store.factById(id),
-          retract: (text, verdict) => {
-            const owner = ownerChatId()
-            if (owner) void memoryNightly.retractText(owner, text, verdict, '待办').catch(err => log('MEMORY_NIGHTLY', `todo retract failed: ${err instanceof Error ? err.message : String(err)}`))
-          },
-        }).setFactStatus,
+        // 改状态(完成 / 捞回 / 不对)走 POST /v1/knowledge/facts/set_fact_status(P3c-3):「不对」一路收回的那一层在 bootstrap/module.ts。
       },
       names: () => {
         try { return (boot.knowledge?.graph?.topContacts('closeness', 500, 'person') ?? []) as Array<{ username: string; display: string }> } catch { return [] }
@@ -186,7 +177,8 @@ return makeSettingsPanel({
     },
   } : {}),
   ...(opts.presence ? { presence: opts.presence } : {}),
-  seen: { read: () => readJournalSeen(stateDir), write: (iso: string) => writeJournalSeen(stateDir, iso) },
+  // 推水位走 POST /v1/journal/seen(P3c-3,日志模块那一条);这里只读,首屏算未读。
+  seen: { read: () => readJournalSeen(stateDir) },
   // 「模型与后端」:注册表 + 体检缓存 + key 有无(只回 boolean)。
   llm: {
     registered: () => boot.registry.list(),

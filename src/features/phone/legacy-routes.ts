@@ -207,6 +207,65 @@ export function legacyRoutes(deps: LegacyRoutesDeps): PhoneRouteTable<Ctx> {
   // /v1 回的是裸快照(手机令牌已去掉 detail),手机那一份是 { ok: true, ...快照 }
   const phoneConnections = readAlias('/v1/connections', 'connections_not_wired', b => b)
 
+  // ── P3c-3 记忆、待办、看到哪了:数据由 /v1 那一个处理器给(待办的手机令牌只认三个状态、不认 now —— routes-knowledge.ts)。
+  // 别名只做:手机的参数规矩(多一个键就拒、先验再翻)、`{ ok }` 信封、手机那一列的码、不带 cache-control(settings-panel 的 json())。
+  /** /v1 回的是「没接上」:处理器自己的 not_wired 码,或模块门(module_*:模块此刻不是 ok / 还没挂上)。 */
+  const unwired = (out: V1Out, code: string) => out.status === 503 && (errorOf(out.body) === code || errorOf(out.body).startsWith('module_'))
+
+  // ── GET /m/api/memory/retractions → GET /v1/memory/retractions ────────
+  const phoneMemoryRetractions: PhoneHandler<Ctx> = async (_url, req, { caller }) => {
+    if (!deps.v1) return panelJson({ ok: false, error: 'memory_not_wired' }, 503)
+    const out = await v1(req, caller, 'GET', '/v1/memory/retractions', {})
+    if (out.status === 200 && obj(out.body) && Array.isArray(out.body.items)) return panelJson({ ok: true, items: out.body.items })
+    if (unwired(out, 'memory_nightly_not_wired')) return panelJson({ ok: false, error: 'memory_not_wired' }, 503)
+    return panelJson({ ok: false, error: 'unavailable' }, 500)
+  }
+
+  // ── POST /m/api/memory/restore → POST /v1/memory/retractions/restore ──
+  // 正文恰好 key;回应带 note(随之删掉的笔记行不会回来),手机原样显示。
+  const phoneMemoryRestore: PhoneHandler<Ctx> = ownsMethod(async (_url: URL, req: Request, { caller }: Ctx) => {
+    if (req.method !== 'POST') return panelJson({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.v1) return panelJson({ ok: false, error: 'memory_not_wired' }, 503)
+    let b: unknown
+    try { b = await req.json() } catch { return panelJson({ ok: false, error: 'invalid' }, 400) }
+    if (!obj(b) || Object.keys(b).some(k => k !== 'key') || typeof b.key !== 'string' || !/^c:[^\s]{1,80}$/.test(b.key)) return panelJson({ ok: false, error: 'invalid' }, 400)
+    const out = await v1(req, caller, 'POST', '/v1/memory/retractions/restore', {}, { key: b.key })
+    if (out.status === 200 && obj(out.body)) return panelJson({ ok: true, restored: out.body.restored, note: out.body.note })
+    if (out.status === 404) return panelJson({ ok: false, error: 'not_found' }, 404)
+    if (unwired(out, 'memory_nightly_not_wired')) return panelJson({ ok: false, error: 'memory_not_wired' }, 503)
+    return panelJson({ ok: false, error: 'unavailable' }, 500)
+  })
+
+  // ── POST /m/api/todo → POST /v1/knowledge/facts/set_fact_status ───────
+  // 先验参数再看接没接(同并之前);改不到那一条(id 不在)手机照旧回 ok —— 并之前就不看结果。
+  const phoneTodo: PhoneHandler<Ctx> = async (_url, req, { caller }) => {
+    let body: unknown
+    try { body = await req.json() } catch { return panelJson({ ok: false, error: 'bad_json' }, 400) }
+    const b = (body ?? {}) as { id?: unknown; status?: unknown }
+    if (typeof b.id !== 'number' || (b.status !== 'resolved' && b.status !== 'active' && b.status !== 'rejected')) return panelJson({ ok: false, error: 'invalid' }, 400)
+    if (!deps.v1) return panelJson({ ok: false, error: 'todos_not_wired' }, 503)
+    const out = await v1(req, caller, 'POST', '/v1/knowledge/facts/set_fact_status', {}, { id: b.id, status: b.status })
+    if (out.status === 200) return panelJson({ ok: true })
+    if (unwired(out, 'knowledge_not_wired')) return panelJson({ ok: false, error: 'todos_not_wired' }, 503)
+    if (out.status === 400) return panelJson({ ok: false, error: 'invalid' }, 400)
+    return panelJson({ ok: false, error: 'unavailable' }, 500)
+  }
+
+  // ── POST /m/api/seen → POST /v1/journal/seen ──────────────────────────
+  // 手机一定带 until(没带 / 不是时间 ⇒ 400,不会变成「推到现在」);夹到 now、只往后推在 /v1 那边。
+  const phoneSeen: PhoneHandler<Ctx> = async (_url, req, { caller }) => {
+    if (!deps.v1) return panelJson({ ok: false, error: 'seen_not_wired' }, 503)
+    let body: unknown
+    try { body = await req.json() } catch { return panelJson({ ok: false, error: 'bad_json' }, 400) }
+    const until = (body as { until?: unknown } | null)?.until
+    if (typeof until !== 'string' || !Number.isFinite(Date.parse(until))) return panelJson({ ok: false, error: 'invalid_until' }, 400)
+    const out = await v1(req, caller, 'POST', '/v1/journal/seen', {}, { until })
+    if (out.status === 200 && obj(out.body) && typeof out.body.seen_until === 'string') return panelJson({ ok: true, seen_until: out.body.seen_until })
+    if (unwired(out, 'seen_not_wired')) return panelJson({ ok: false, error: 'seen_not_wired' }, 503)
+    if (out.status === 400 && errorOf(out.body) === 'invalid_until') return panelJson({ ok: false, error: 'invalid_until' }, 400)
+    return panelJson({ ok: false, error: 'unavailable' }, 500)
+  }
+
   return {
     'GET /m/api/matters': phoneMatters,
     'GET /m/api/matter': phoneMatter,
@@ -217,5 +276,9 @@ export function legacyRoutes(deps: LegacyRoutesDeps): PhoneRouteTable<Ctx> {
     'GET /m/api/cli/sessions': phoneCliSessions,
     'GET /m/api/today': phoneToday,
     'GET /m/api/connections': phoneConnections,
+    'GET /m/api/memory/retractions': phoneMemoryRetractions,
+    'POST /m/api/memory/restore': phoneMemoryRestore,
+    'POST /m/api/todo': phoneTodo,
+    'POST /m/api/seen': phoneSeen,
   }
 }

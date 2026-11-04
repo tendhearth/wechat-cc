@@ -12,16 +12,22 @@
  */
 import { safeSvg } from '../../lib/svg-sanitize'
 import { CATCH_STATUSES, type CatchStatus } from '../../adapters/store/journal-store'
-import { writeJournalSeen } from '../../adapters/store/journal-seen'
+import { readJournalSeen, writeJournalSeen } from '../../adapters/store/journal-seen'
 import type { Journal } from '../../adapters/store/journal-store'
 import type { RouteTable } from '../../daemon/internal-api/types'
 
 export interface JournalRoutesDeps {
   stateDir: string
   journal: Journal
+  /** 「看到哪了」水位存哪。缺省 ⇒ `<stateDir>/companion/journal-seen.json`(生产;测试可换成内存里的一份)。 */
+  seen?: { read(): string | null; write(iso: string): void }
+  /** 缺省 Date.now(测试钉时钟)。 */
+  now?: () => number
 }
 
 export function journalRoutes(deps: JournalRoutesDeps): RouteTable {
+  const seen = deps.seen ?? { read: () => readJournalSeen(deps.stateDir), write: (iso: string) => writeJournalSeen(deps.stateDir, iso) }
+  const now = deps.now ?? Date.now
   return {
     'GET /v1/journal': async (q) => {
       const raw = Number(q.get('limit'))
@@ -64,10 +70,23 @@ export function journalRoutes(deps: JournalRoutesDeps): RouteTable {
 
     // 主人看到哪了(spec 2026-09-03-companion-presence §2.3):觅食台每次打开
     // 推一次;桌宠脚边的包袱在下一次轮询消失。不动 journal.status —— 那是「没试过」。
-    'POST /v1/journal/seen': async () => {
-      const seenUntil = new Date().toISOString()
-      writeJournalSeen(deps.stateDir, seenUntil)
-      return { status: 200, body: { ok: true, seen_until: seenUntil } }
+    // 不带 `until`(桌面)⇒ 推到现在。带 `until`(手机,P3c-3 并进来的原 /m/api/seen)⇒ 夹到 now(不许推到未来)、
+    // 只往后推(桌面与手机两边推,谁靠后算谁;没推动就回现在的水位)。
+    'POST /v1/journal/seen': async (_q, body) => {
+      const until = body && typeof body === 'object' && !Array.isArray(body) ? (body as { until?: unknown }).until : undefined
+      if (until === undefined) {
+        const seenUntil = new Date(now()).toISOString()
+        seen.write(seenUntil)
+        return { status: 200, body: { ok: true, seen_until: seenUntil } }
+      }
+      const ms = typeof until === 'string' ? Date.parse(until) : NaN
+      if (!Number.isFinite(ms)) return { status: 400, body: { error: 'invalid_until' } }
+      const clamped = new Date(Math.min(ms, now())).toISOString()
+      let cur: string | null = null
+      try { cur = seen.read() } catch { /* 读不出 ⇒ 当没有水位,同并之前手机那条 */ }
+      if (cur !== null && clamped <= cur) return { status: 200, body: { ok: true, seen_until: cur } }
+      seen.write(clamped)
+      return { status: 200, body: { ok: true, seen_until: clamped } }
     },
   }
 }
