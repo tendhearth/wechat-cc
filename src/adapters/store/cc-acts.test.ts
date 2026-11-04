@@ -52,6 +52,14 @@ describe('cc-acts', () => {
     db = openDb({ path: ':memory:' })
   })
 
+  it('步的 key 只在这一轮里认:下一轮用同一把 key 不会改掉上一轮的步(Codex 评审)', () => {
+    const acts = makeCcActs({ db, log, matters })
+    const a = acts.begin('letters'); a.step('delivery', { try: 1 }, { key: 'send', status: 'started' }); a.step('delivery', { try: 1, ok: true }, { key: 'send' }); a.finish('completed')
+    const b = acts.begin('letters'); b.step('delivery', { try: 2 }, { key: 'send' }); b.finish('completed')
+    const id = ccActMatterId('letters'), [t1, t2] = log.turns(id)
+    expect(log.items(id).map(i => [i.turnId, i.payload])).toEqual([[t1!.id, { try: 1, ok: true }], [t2!.id, { try: 2 }]])
+  })
+
   it('开机 interruptAll:没收的 act 轮记中断;别的种类不碰', () => {
     const acts = makeCcActs({ db, log, matters })
     acts.begin('stickers')

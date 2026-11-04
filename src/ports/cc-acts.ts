@@ -5,7 +5,7 @@
 export type CcActWho = 'letters' | 'brief' | 'memory' | 'hunt' | 'atelier' | 'stickers'
 export type CcActStepKind = 'agent_message' | 'artifact' | 'delivery' | 'system' | 'error'
 export interface CcActTurn {
-  /** 这一轮的一步(写不上 ⇒ 什么都不做)。给 key ⇒ 同一把 key 的再写一次就地改。 */
+  /** 这一轮的一步(写不上 ⇒ 什么都不做)。给 key ⇒ 这一轮里同一把 key 的再写一次就地改(别的轮用同一把 key 互不相干)。 */
   step(kind: CcActStepKind, payload: Record<string, unknown>, opts?: { status?: 'started' | 'completed' | 'failed'; key?: string }): void
   /** 收这一轮(只收一次;之后的 step 照样能写,挂在已收的轮上)。 */
   finish(status: 'completed' | 'failed', opts?: { endedAt?: number; errorCode?: string }): void

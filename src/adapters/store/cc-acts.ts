@@ -30,7 +30,8 @@ export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterS
       let finished = false
       return {
         step(kind, payload, o = {}) {
-          try { log.writeItem({ matterId, turnId, kind, status: o.status ?? 'completed', ...(o.key ? { key: o.key } : {}), payload }) } catch (err) { fail(`step ${who} ${kind}`, err) }
+          // key 只在这一轮里认(一个发起方所有的轮都在同一件事里,MatterLog 的 key 按整件事认 ⇒ 带上轮 id,别把上一轮的步改掉;Codex 评审)
+          try { log.writeItem({ matterId, turnId, kind, status: o.status ?? 'completed', ...(o.key ? { key: `${turnId}:${o.key}` } : {}), payload }) } catch (err) { fail(`step ${who} ${kind}`, err) }
         },
         finish(status, o = {}) {
           if (finished) return
