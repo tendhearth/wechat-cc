@@ -57,7 +57,19 @@ export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterS
   }
 }
 
-/** 各个发起方接线用的一份(同一个库;写不上记一行 CC_ACTS)。 */
+/** 各个发起方接线用的一份(同一个库;写不上记一行 CC_ACTS)。第一次用时才建:接线时库还没好(测试里的假库)也不掀翻接线。 */
 export function ccActsFor(db: Db, log: (tag: string, line: string) => void): CcActs {
-  return makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db), onError: (what, err) => log('CC_ACTS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) })
+  const onError = (what: string, err: unknown) => { try { log('CC_ACTS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) } catch { /* 日志也写不上 */ } }
+  let real: CcActs | null = null
+  const get = (): CcActs | null => {
+    if (real) return real
+    try { real = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db), onError }) } catch (err) { onError('open', err) }
+    return real
+  }
+  return {
+    begin: (who, o) => get()?.begin(who, o) ?? NOOP,
+    toTurn: (who, turnId, kind, payload, o) => { get()?.toTurn(who, turnId, kind, payload, o) },
+    matterIdOf: ccActMatterId,
+    interruptAll: () => { get()?.interruptAll() },
+  }
 }
