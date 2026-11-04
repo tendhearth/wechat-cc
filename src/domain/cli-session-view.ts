@@ -3,6 +3,13 @@
  * 对外的一条、排序。不碰库、不碰 node。
  */
 import type { CliSessionRow, CliSessionStatus, CliSessionView } from '../ports/cli-session'
+import { stripMarkdown, summarizeOneLine } from './one-line'
+
+/** 「最近一句」「等你那一项」压成一行的上限(M4d 起从这件事的步来,是原文;读时压,同以前写 cli_sessions 时)。 */
+export const CLI_SESSION_SUMMARY_MAX = 200
+const said = (text: string | null): string | null => (text ? summarizeOneLine(stripMarkdown(text), CLI_SESSION_SUMMARY_MAX) || null : null)
+/** 等你那一项多半是一条命令(`ls *.ts`):只压成一行,不当 markdown 去星号。 */
+const asked = (text: string | null): string | null => (text ? summarizeOneLine(text, CLI_SESSION_SUMMARY_MAX) || null : null)
 
 /** running / waiting 多久没事件就当 idle(读时判定,不跑定时器)。 */
 export const CLI_SESSION_STALE_MS = 30 * 60_000
@@ -25,11 +32,11 @@ export function toCliSessionView(row: CliSessionRow, now: number): CliSessionVie
     cwd: row.cwd,
     machine: row.machine,
     origin_agent: row.origin_agent,
-    last_summary: row.last_summary,
+    last_summary: said(row.last_summary),
     last_event_at: row.last_event_at,
     last_prompt_at: row.last_prompt_at,
     created_at: row.created_at,
-    pending: status === 'waiting' && row.pending_tool ? { tool: row.pending_tool, summary: row.pending_summary, since: row.pending_at ?? row.last_event_at } : null,
+    pending: status === 'waiting' && row.pending_tool ? { tool: row.pending_tool, summary: asked(row.pending_summary), since: row.pending_at ?? row.last_event_at } : null,
   }
 }
 
