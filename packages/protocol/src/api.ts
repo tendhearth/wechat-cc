@@ -70,6 +70,22 @@ export type MatterOriginT = typeof MATTER_ORIGINS[number]
 export const MATTER_KINDS = ['chat', 'task', 'terminal', 'act'] as const
 export type MatterKindT = typeof MATTER_KINDS[number]
 
+/**
+ * CC 自己做的事(kind='act',M5c):一轮 = CC 做了一次(写了一封信、整理了一次记忆…),步 = 这一轮的过程(草稿、送达、改了几条)。
+ * 状态 / 步的种类都用字符串不用枚举:以后多一种,老 App 当认不出、照样显示,不让整页解析失败。payload 只有数字、真假、短字符串。
+ */
+export const MatterActStep = z.object({
+  kind: z.string(), status: z.string(), at: z.number(),
+  payload: z.record(z.string(), z.unknown()).optional(),
+})
+export const MatterActTurn = z.object({
+  id: z.string(), status: z.string(), errorCode: z.string().nullable().optional(),
+  /** 记忆整理:schedule = 到点自己做的,owner = 主人当面叫的。 */
+  trigger: z.string().optional(),
+  startedAt: z.number(), endedAt: z.number().nullable(), steps: z.array(MatterActStep),
+})
+export type MatterActTurnT = z.infer<typeof MatterActTurn>
+
 export const Matter = z.object({
   id: z.string(),
   kind: z.enum(MATTER_KINDS),
@@ -98,6 +114,11 @@ export const Matter = z.object({
    * 手机网页拿它跟 App 的 statusOf 同样折成状态表里的词。读不到那件的详情 ⇒ 不带,网页退回 matter.status。
    */
   taskState: z.object({ status: z.string(), phase: z.string().optional(), pending: z.number() }).optional(),
+  /**
+   * CC 自己做的事(M5c):who = 发起方(letters / brief / memory / hunt / atelier / stickers)+ 最近那一轮。
+   * 只有点名 kind=act 的列表与 act 的详情带;老 daemon 不带。形状不对当没有(不让整行解析失败)。
+   */
+  act: z.object({ who: z.string().optional(), latest: MatterActTurn.optional() }).optional().catch(undefined),
 })
 
 export const MatterBinding = z.object({
@@ -194,6 +215,8 @@ export const MatterDetail = z.object({
   artifacts: z.array(MatterArtifact), inputs: z.array(MatterInput),
   nativeStart: MatterNativeStart.optional(),
   quotaHandoff: MatterQuotaHandoff.optional(),
+  /** CC 自己做的事(M5c):最近的轮(新的在前,至多 20 轮),每轮带自己的步。只有 act 带;老 daemon 不带。 */
+  actTurns: z.array(MatterActTurn).optional().catch(undefined),
 })
 
 // ── 交办入口(entry/create/create-receipt,mobile-workbench.ts)───────────

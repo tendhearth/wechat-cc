@@ -722,6 +722,29 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect(await ids('kind=terminal&')).toEqual(['deadbeef', 'cccc0001', 'dddd0001'])
     matters.list.mockReset(); matters.list.mockImplementation(() => [MATTER])
   })
+  it('点名 kind=act ⇒ 行带上发起方与最近那一轮(M5c「CC 最近在忙」);不点名 / 点别的种类不去读轮;没接 withActs ⇒ 原样(老接线)', async () => {
+    const act = { ...MATTER, id: 'dddd0001', kind: 'act', status: 'open' }
+    const latest = { id: 't1', status: 'completed', startedAt: 1, endedAt: 2, steps: [] }
+    const withActs = vi.fn((rows: Array<Record<string, unknown>>) => rows.map(m => m.kind === 'act' ? { ...m, act: { who: 'letters', latest } } : m))
+    matters.list.mockImplementation(() => [act] as never)
+    panel = makeSettingsPanel({
+      stateDir, ownerChatId: () => OWNER, matters: { ...matters, withActs },
+      chatPrefs: { get: () => ({}), set: (_c: string, patch: Record<string, unknown>) => patch }, getUserName: () => '大人', setUserName: async () => {}, log: () => {},
+    } as never)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const get = async (q: string) => ((await (await fetch(`${base}/m/api/matters?${q}t=${t}`)).json()) as { matters: Array<{ id: string; act?: unknown }> }).matters
+    expect(await get('kind=act&')).toEqual([{ ...act, act: { who: 'letters', latest } }])
+    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'act', statuses: ['open', 'replied', 'done'], limit: 200 })
+    expect(withActs).toHaveBeenCalledTimes(1)
+    await get('kind=task&'); await get('')
+    expect(withActs).toHaveBeenCalledTimes(1)
+    await panel.stop()
+    panel = make(true)
+    const p2 = await panel.start(0)
+    const plain = ((await (await fetch(`http://127.0.0.1:${p2.port}/m/api/matters?kind=act&t=${panel.issueToken()}`)).json()) as { matters: unknown[] }).matters
+    expect(plain).toEqual([act])
+    matters.list.mockReset(); matters.list.mockImplementation(() => [MATTER])
+  })
   it('一件事带上任务真正的状态(一个主页 U5):status / phase / 等你几项 —— matter 的 open/done 说不清停下了、没做成、等你', async () => {
     const waiting = { ...MATTER, id: 'aaaa0001', status: 'open' }, stopped = { ...MATTER, id: 'aaaa0002', status: 'open' }, chat = { ...MATTER, id: 'aaaa0003', kind: 'chat' }
     matters.list.mockReturnValueOnce([waiting, stopped, chat] as never)

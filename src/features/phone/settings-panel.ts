@@ -128,6 +128,8 @@ export interface SettingsPanelDeps {
     detail(id: string): Promise<unknown> | unknown
     say(id: string, text: string, input?:MatterSayInput): Promise<unknown>
     seenOnPhone(id: string): void
+    /** act 行带上发起方与最近那一轮(M5c);只在点名 kind=act 时调。缺省 ⇒ 原样。 */
+    withActs?(matters: never[]): unknown[]
   }
   /** 跟 CC 说(spec 2026-10-01):主人对话一页 + 说一句。缺省 ⇒ /m/api/chat* 503。 */
   chat?: MobileChatDeps
@@ -848,8 +850,10 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         // CC 自己做的事(act,M5)也一样:主人 10-31 定不混排,App 的「CC 最近在忙」点名 kind=act 来要。
         .filter(m => kind !== null || !['terminal', 'act'].includes(String((m as { kind?: unknown }).kind)))
         .slice(0, 50)
-      for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
-      return json({ ok: true, matters: await withTaskState(deps.matters, matters) })
+      // 「CC 最近在忙」(M5c):点名要 act 的才去读轮(一件一两次查询);主人的列表不点名,不碰轮
+      const rows = kind === 'act' && deps.matters.withActs ? deps.matters.withActs(matters as never[]) : matters
+      for (const m of rows) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
+      return json({ ok: true, matters: await withTaskState(deps.matters, rows) })
     },
     'GET /m/api/matter': async (url, _req, { caller }) => {
       if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)

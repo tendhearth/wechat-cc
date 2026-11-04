@@ -1,4 +1,4 @@
-import type { ListMatters, Matter, MatterBinding, MatterOrigin, MatterSession, MatterStore, SayReceipts } from '../../ports/matters'
+import type { ListMatters, Matter, MatterActStep, MatterActTurn, MatterBinding, MatterLog, MatterOrigin, MatterSession, MatterStore, MatterTurn, SayReceipts } from '../../ports/matters'
 import {randomUUID} from '../../lib/random'
 import type { PendingWorkbenchPermission, PermissionDecision, PendingUserInput, Artifact, LiveInput, Attachment } from '../../ports/workbench'
 import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
@@ -31,7 +31,7 @@ export type MatterQuotaHandoff =
   | {state:'offer';from:string;to:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'none';from:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'handed';from:string;to:string;matterId:string}
-export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff}
+export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
 export interface MatterSayInput {requestId:string;runId?:string;draftId?:string;attachmentIds?:string[]}
 type MatterMaterials=Pick<MatterSayInput,'draftId'|'attachmentIds'>
 export interface MatterArtifactInput {artifactId:string;sha256:string;offset:number;length?:number}
@@ -76,10 +76,16 @@ export interface MattersServiceDeps {
   sayReceipts?:SayReceipts
   /** 主人对话要是在这里首建,出生地记成什么(daemon 按鉴权来源算:桌面 = desktop,手机 = App / 浏览器)。没接 ⇒ 桌面记 desktop,手机不知道就不写。 */
   originOf?:(surface:'desktop'|'phone')=>MatterOrigin|null
+  /** 轮与步(只读;M5c 给 act 的列表行与详情用)。没接 ⇒ act 行不带 act、详情不带 actTurns。 */
+  log?:Pick<MatterLog,'turns'|'items'>
+  /** act 详情至多带几轮(默认 20)。 */
+  actTurnLimit?:number
   now?:()=>number
 }
 export interface MattersService {
   list(filter?:ListMatters):Matter[]
+  /** act 行带上发起方与最近那一轮(M5c,「CC 最近在忙」);别的行原样。没接 log / 读不到 ⇒ 原样。 */
+  withActs(matters:Matter[]):Matter[]
   detail(id:string):Promise<MatterDetail>
   /** One durable workbench input, including its delivery reason; never loads or mutates the detail. */
   inputReceipt(id:string,requestId:string):MatterInput|null
@@ -120,11 +126,51 @@ export interface PhoneRewindPreview {
 const PHONE_REWIND_PATHS=50
 const phonePaths=(l:{count:number;paths:Array<{status:string;path:string}>})=>({count:l.count,paths:l.paths.slice(0,PHONE_REWIND_PATHS).map(({status,path})=>({status,path}))})
 const ID=/^[a-f0-9]{8}$/
+/**
+ * act 步的 payload 到手机只留数字、真假、短字符串(≤120 字),外加一层全是数字的表(记忆整理改了几条);别的(数组、深一层的对象)不给。
+ * 各发起方写的本来就只是摘要(设计稿 M5:正文不进库),这里再收一道,免得以后哪个发起方顺手塞了大东西一路送到手机。
+ */
+const ACT_STR_MAX=120,ACT_KEYS_MAX=12
+function phoneActPayload(p:Record<string,unknown>):Record<string,unknown>|undefined{
+  const out:Record<string,unknown>={}
+  for(const [k,v] of Object.entries(p)){
+    if(Object.keys(out).length>=ACT_KEYS_MAX)break
+    if(typeof v==='number'&&Number.isFinite(v)||typeof v==='boolean')out[k]=v
+    else if(typeof v==='string')out[k]=v.slice(0,ACT_STR_MAX)
+    else if(v&&typeof v==='object'&&!Array.isArray(v)){const e=Object.entries(v as Record<string,unknown>);if(e.length<=ACT_KEYS_MAX&&e.every(([,n])=>typeof n==='number'&&Number.isFinite(n)))out[k]={...(v as Record<string,number>)}}
+  }
+  return Object.keys(out).length?out:undefined
+}
+function actTurnView(t:MatterTurn,steps:MatterActStep[]):MatterActTurn{
+  const trigger=t.policy?.trigger
+  return {id:t.id,status:t.status,errorCode:t.errorCode,...(typeof trigger==='string'?{trigger}:{}),startedAt:t.startedAt,endedAt:t.endedAt,steps}
+}
 
 export function makeMattersService(deps:MattersServiceDeps):MattersService {
   /** 同一 requestId 还在说的那一轮:重发直接跟上它,不起第二轮(回执表只管跨重启与已说完的)。 */
   const chatInFlight=new Map<string,Promise<{kind:'chat';reply:string}>>()
   const require=(id:string):Matter=>{if(!ID.test(id))throw new Error('invalid_matter_id');const m=deps.store.get(id);if(!m)throw new Error('matter_not_found');return m}
+  /** act 那件事最近的 n 轮(新的在前)+ 发起方(取自轮的 policy.who)。没接 log ⇒ null;读失败往外抛(调用方吞)。 */
+  const actTurns=(id:string,n:number):{who?:string;turns:MatterActTurn[]}|null=>{
+    if(!deps.log)return null
+    const all=deps.log.turns(id)
+    const who=all.map(t=>t.policy?.who).find((w):w is string=>typeof w==='string')
+    const picked=all.slice(-n).reverse()
+    if(!picked.length)return {...(who?{who}:{}),turns:[]}
+    const want=new Set(picked.map(t=>t.id)),steps=new Map<string,MatterActStep[]>()
+    for(const i of deps.log.items(id)){
+      if(!i.turnId||!want.has(i.turnId))continue
+      const payload=phoneActPayload(i.payload)
+      let l=steps.get(i.turnId);if(!l)steps.set(i.turnId,l=[])
+      l.push({kind:i.kind,status:i.status,at:i.updatedAt,...(payload?{payload}:{})})
+    }
+    return {...(who?{who}:{}),turns:picked.map(t=>actTurnView(t,steps.get(t.id)??[]))}
+  }
+  const actOf=(m:Matter,n=1):{matter:Matter;turns:MatterActTurn[]}|null=>{
+    if(m.kind!=='act')return null
+    try{const r=actTurns(m.id,n);if(!r)return null;const latest=r.turns[0];return {matter:{...m,act:{...(r.who?{who:r.who}:{}),...(latest?{latest}:{})}},turns:r.turns}}
+    catch{return null/* 读不到轮:这一行照旧,只是不带 act */}
+  }
   const taskDetail=(id:string)=>{
     if(require(id).kind!=='task')throw Error('matter_task_required')
     if(!deps.workbench)throw Error('workbench_not_wired')
@@ -166,6 +212,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       const matters=deps.store.list(filter),agents=deps.store.agents(matters.map(m=>m.id))
       return matters.map(m=>{const a=agents.get(m.id);return a?.length?{...m,agents:a,...namesFor(a)}:m})
     },
+    withActs(matters){return matters.map(m=>actOf(m)?.matter??m)},
     inputReceipt(id,requestId){
       if(!ID.test(id))throw Error('invalid_matter_id')
       const key=normalizeInputRequestId(requestId),matter=deps.store.get(id)
@@ -203,7 +250,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       // 详情页标题下那组头像:跟列表同一个出处
       const agents=deps.store.agents([matter.id]).get(matter.id)
       const named=namesFor([...(agents??[]),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
-      return {matter:{...matter,...(agents?.length?{agents}:{}),...named},bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
+      const act=actOf(matter,deps.actTurnLimit??20)
+      return {matter:{...(act?.matter??matter),...(agents?.length?{agents}:{}),...named},...(act?{actTurns:act.turns}:{}),bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
     async ownerChatFile(input){return deps.chat?.file ? deps.chat.file(input) : {status:503,body:{error:'chat_not_wired'}}},
     async ownerChat(surface){
