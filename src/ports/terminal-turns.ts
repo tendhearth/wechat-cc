@@ -27,9 +27,10 @@ export interface TerminalTurnLog {
   ensure(ev: Pick<TerminalEventIn, 'source' | 'session_id' | 'cwd' | 'machine' | 'origin_agent'>): string
   /**
    * 看的那条路首见(M6d:钩子没来过的老会话第一次被看):同 ensure 建这件事,再按登记处那一行对齐 ——
-   * ended ⇒ 这件事 done;running / waiting ⇒ 开一轮(waiting 再挂上那张卡)。已经有了 ⇒ 原样给出,不动。
+   * ended ⇒ 这件事 done;running / waiting 而且 30 分钟内有动静 ⇒ 开一轮(waiting 再挂上那张卡);更久没动静的当歇着(不开轮、不挂卡)。
+   * 已经有了 ⇒ 原样给出,不动。at:现在(测试注入)。
    */
-  adopt(ev: Pick<TerminalEventIn, 'source' | 'session_id' | 'cwd' | 'machine' | 'origin_agent'>): string
+  adopt(ev: Pick<TerminalEventIn, 'source' | 'session_id' | 'cwd' | 'machine' | 'origin_agent'>, at?: number): string
   /** 开机:上一次进程里没收、而且久没动静的终端轮记中断(还有动静的照旧在做:终端在 daemon 外面跑);开着的卡一律收(码只在内存里)。 */
   interruptAll(at?: number): void
 }

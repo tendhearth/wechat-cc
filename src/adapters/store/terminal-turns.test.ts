@@ -21,6 +21,27 @@ const matterId = () => matters.findBySurface('cli', 'sess-1')!.id
 const items = () => log.items(matterId()).map(i => [i.kind, i.status, i.payload])
 
 describe('terminal-turns', () => {
+  it('adopt:列说在跑 / 等你、可几天没动静(真库 10-28 那 12 行,终端早关了)⇒ 当歇着:不开轮、不挂卡,这件事不显示在做 / 等你;ended 照旧 done', () => {
+    const now = 10 * 24 * 3600_000
+    const store = makeCliSessionStore(db, () => now)
+    const old = now - 6 * 24 * 3600_000
+    for (const id of ['OR', 'OW', 'OE']) store.touch({ session_id: id, source: 'claude', cwd: '/w/blog', machine: 'mac' }, old)
+    store.setStatus('OR', 'running', old, { promptAt: old })
+    store.setStatus('OW', 'waiting', old, { pending: { tool: 'Bash', summary: 'rm -rf ./tmp' } })
+    store.setStatus('OE', 'ended', old)
+    for (const id of ['OR', 'OW', 'OE']) turns.adopt({ source: 'claude', session_id: id, cwd: '/w/blog', machine: 'mac' }, now)
+    for (const id of ['OR', 'OW']) {
+      const m = matters.findBySurface('cli', id)!.id
+      expect(log.turns(m)).toEqual([])
+      expect(log.items(m).filter(i => i.kind === 'permission')).toEqual([])
+      expect(log.state(m)?.state).toBe('open')
+    }
+    expect(log.state(matters.findBySurface('cli', 'OE')!.id)?.state).toBe('done')
+    // 刚好过了 30 分钟也算久:同 TERMINAL_QUIET_MS
+    store.touch({ session_id: 'EDGE', source: 'claude', cwd: '/w/blog' }, now - TERMINAL_QUIET_MS)
+    store.setStatus('EDGE', 'running', now - TERMINAL_QUIET_MS, { promptAt: now - TERMINAL_QUIET_MS })
+    expect(log.turns(turns.adopt({ source: 'claude', session_id: 'EDGE', cwd: '/w/blog' }, now))).toEqual([])
+  })
   it('看的那条路首见(adopt,M6d):建这件事并按登记处那一行对齐 —— 登记处列表里的状态 / 等你那一项一字不变;已经有了 ⇒ 不动', () => {
     const now = 10_000_000
     const store = makeCliSessionStore(db, () => now)
@@ -33,11 +54,11 @@ describe('terminal-turns', () => {
     const view = () => store.list({ includeEnded: true }).map(r => ({ id: r.session_id, status: r.status, tool: r.pending_tool, summary: r.pending_summary, said: r.last_summary }))
     // 等你那一项的时间(pending_at)从卡推 = 卡写进去的那一刻,不是列里的时间(钩子那条路 permissionAsked 也一样);这里不比
     const before = view()
-    for (const id of ['E', 'R', 'W', 'I']) turns.adopt({ source: 'claude', session_id: id, cwd: '/w/blog', machine: 'mac' })
+    for (const id of ['E', 'R', 'W', 'I']) turns.adopt({ source: 'claude', session_id: id, cwd: '/w/blog', machine: 'mac' }, now)
     expect(['E', 'R', 'W', 'I'].every(id => matters.findBySurface('cli', id))).toBe(true)
     expect(view()).toEqual(before)
     const r = matters.findBySurface('cli', 'R')!.id
-    expect(turns.adopt({ source: 'claude', session_id: 'R', cwd: '/w/blog' })).toBe(r)
+    expect(turns.adopt({ source: 'claude', session_id: 'R', cwd: '/w/blog' }, now)).toBe(r)
     expect(log.turns(r)).toHaveLength(1)
     // 登记处没有这一行(只知道 id 和记录)⇒ 只建,不开轮
     turns.adopt({ source: 'claude', session_id: 'NEW', cwd: '/w/blog' })

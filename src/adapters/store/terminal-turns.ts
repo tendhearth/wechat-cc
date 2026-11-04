@@ -41,7 +41,7 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
   }
   return {
     ensure: (ev) => matterOf(ev),
-    adopt(ev) {
+    adopt(ev, at = Date.now()) {
       const found = matters.findBySurface('cli', ev.session_id)
       if (found) return found.id
       const id = matterOf(ev)
@@ -49,7 +49,9 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
       const row = db.query<{ status: string; last_event_at: number; pending_tool: string | null; pending_summary: string | null; pending_at: number | null }, [string]>('SELECT status, last_event_at, pending_tool, pending_summary, pending_at FROM cli_sessions WHERE session_id=?').get(ev.session_id)
       if (!row) return id
       if (row.status === 'ended') log.setState(id, 'done')
-      else if (row.status === 'running' || row.status === 'waiting') {
+      // 列说在跑 / 等你、可已经 30 分钟没动静(真库里有好几天前的,终端早关了)⇒ 当歇着:不开轮、不挂卡,
+      // 不然这件事一直显示在做 / 等你,要等下一次开机 interruptAll 才收(登记处列表按 stale 规则早就折成歇着了)
+      else if ((row.status === 'running' || row.status === 'waiting') && at - row.last_event_at < TERMINAL_QUIET_MS) {
         log.startTurn({ matterId: id, executor: ev.source, startedAt: row.last_event_at, policy: { cwd: ev.cwd, ...(ev.machine ? { machine: ev.machine } : {}), ...(ev.origin_agent ? { originAgent: ev.origin_agent } : {}) } })
         if (row.status === 'waiting') ask(id, row.pending_tool ?? 'permission', row.pending_summary, row.pending_at ?? row.last_event_at)
       }
