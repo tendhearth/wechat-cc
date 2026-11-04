@@ -5,7 +5,7 @@ import { BackendError, type Backend, type CliSessionRowT, type Connection, type 
 import {
   copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, DEMO_REWIND_TOKEN, DEMO_HUNK_SHA, entryOptions,
   demoActivity, demoConnections, demoJobs, demoLetters, demoTodos, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
-  demoName, demoNames,
+  demoName, demoNames, demoCcActs,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -268,7 +268,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return () => { set!.delete(cb) }
     },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
-    async matter(id, l) { noteLang(l); return localize(get(id), l) },
+    // 「CC 最近在忙」(M5c):三件 act,点进去是它们的轮(和主人的事分开,不进 matters())
+    async ccActs(l) { noteLang(l); return demoCcActs(now()).map(d => d.matter) },
+    async matter(id, l) {
+      noteLang(l)
+      const act = demoCcActs(now()).find(d => d.matter.id === id)
+      return act ?? localize(get(id), l)
+    },
     async matterInputReceipt(id, requestId) { return get(id).detail.inputs.find(row => row.id === requestId) ?? null },
     async insight(id, l) {
       noteLang(l)

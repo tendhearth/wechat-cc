@@ -18,6 +18,7 @@ describe('PHONE_CALLS(类型化客户端的表)', () => {
   it('查询串与搬家前手写的逐字一致:按给的顺序、undefined 不带、字符串编码、数字原样', () => {
     const path = (r: PhoneCallRequest) => r.path
     expect(path(phoneCallRequest(PHONE_CALLS.matters.list))).toBe('/m/api/matters')
+    expect(path(phoneCallRequest(PHONE_CALLS.matters.list, { query: { kind: 'act' } }))).toBe('/m/api/matters?kind=act')
     expect(path(phoneCallRequest(PHONE_CALLS.matters.inputReceipt, { query: { id: 'a b', requestId: 'r/1' } })))
       .toBe(`/m/api/matter/input-receipt?id=${encodeURIComponent('a b')}&requestId=${encodeURIComponent('r/1')}`)
     expect(path(phoneCallRequest(PHONE_CALLS.chat.page, { query: { before: undefined, limit: undefined } }))).toBe('/m/api/chat')
@@ -38,7 +39,7 @@ describe('PHONE_CALLS(类型化客户端的表)', () => {
   it('makePhoneApi:每个命名空间.方法都接到同一个传输上', async () => {
     const seen: PhoneCallRequest[] = []
     const api = makePhoneApi(async req => { seen.push(req); return { ok: true, matters: [] } })
-    expect(await api.matters.list()).toEqual({ ok: true, matters: [] })
+    expect(await api.matters.list({ query: {} })).toEqual({ ok: true, matters: [] })
     await api.matters.get({ query: { id: 'x' } })
     expect(seen.map(s => `${s.key} ${s.path}`)).toEqual(['GET /m/api/matters /m/api/matters', 'GET /m/api/matter /m/api/matter?id=x'])
     for (const s of specs) {

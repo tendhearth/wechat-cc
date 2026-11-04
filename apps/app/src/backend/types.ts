@@ -94,6 +94,8 @@ export interface Backend {
   onConnection(cb: (c: Connection) => void): Unsubscribe
   subscribe<T>(topic: 'home' | 'approvals' | 'agents' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
   matters(lang: Lang): Promise<MatterT[]>
+  /** CC 自己做的事(M5c「CC 最近在忙」):点名 kind=act。老 daemon 不给 ⇒ 空。 */
+  ccActs(lang: Lang): Promise<MatterT[]>
   matter(id: string, lang: Lang): Promise<MatterDetailT>
   insight(id: string, lang: Lang): Promise<{ explanations: Record<string, ApprovalExplanationT>; progress: ProgressSummaryT | null }>
   changes(id: string): Promise<PhoneChangesTurnT | null>
