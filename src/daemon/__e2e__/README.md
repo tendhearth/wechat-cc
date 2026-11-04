@@ -31,8 +31,9 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 关机再开机 | 正常关机没有哪一步停失败;同一个 stateDir 再开机:不重复导入、照样健康、没有模块坏、对话模式留住了、照样收发 |
 | 开机时一样起不来 | 再开机时 A2A 端口被别的程序占了 ⇒ 照样开起来;`/v1/health` 里只有 `a2a-server=degraded`,其余专门开上的都 ok;主人收到一句「这次开机有几样没起来：CC 之间的往来。其它功能照常。」;照样收发 |
 | 输出评测 | `POST /v1/eval/run`(operator 令牌)跑一条 reply 样本:回 200、最后的话和气泡对;起的那条会话带生产的提示词(回复交付那段在,不是自检对话)、按只读档起(Write / Edit / Bash 被禁);微信外发箱和 `messages` 表都没多东西;`memory/` 下没留 `eval-*` 目录;缺字段回 400 `eval_invalid_request` |
+| 断线时的补说(S2a) | 再开机,「待说」那一拍改成 200ms(`speechFlushIntervalMs`,生产 5 分钟);微信发不出去(`failSendMessage`)时 `POST /v1/self-change/notice` ⇒ 回 502 `send_failed`、日志 `kept to say later`;之后 3 秒(约 15 拍)里这句话**一次外发尝试都不再有**(补说按共用退避等满 1 分钟,或被门判送不到) |
 
-这些场景是**一条时间线**,共用一台 daemon(中途重启三次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。
+这些场景是**一条时间线**,共用一台 daemon(中途重启四次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。
 
 **红 / 绿实证**:把 boot-api(当时在 `daemon-modules.ts`,现在 `bootstrap/module.ts`)的 `lazy: ['wired'],` 删掉,沙盒在 `beforeAll` 就红
 (`boot-api failed at init (required): modules: 'boot-api' called ctx.late('wired') but 'wired' is not in its lazy`),
@@ -50,6 +51,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | `daemon/pending-cards.ts` 开机不说作废(或登记处不落 `pending_cards`) | 卡还挂着就重启(等不到那一句作废) |
 | `daemon/runtime/boot-report.ts` 降级汇总不发 | 开机时一样起不来(主人没收到那一句) |
 | `features/output-eval/module.ts` 不收一次性 chatId 留下的记忆目录(去掉 `forgetChat`);或 runner 的 chatId 带 `/`(`eval/<uuid>`) | 输出评测(`memory/` 下多一个 `eval-*` 空目录;带 `/` 的那版直接 `ok:false`:`memory-export: bad chat id`) |
+| `daemon/speech/policy.ts` 补说失败不退避(`nextAt: t`) | 断线时的补说(3 秒里又撞了 4 次:`expected 10 to be 6`);去掉「一次只跑一拍」那个守卫则是 3 秒 21 次(`expected 21 to be less than or equal to 6`) |
 
 ### 开了什么
 

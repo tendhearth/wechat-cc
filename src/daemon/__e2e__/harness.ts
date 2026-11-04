@@ -83,6 +83,10 @@ export interface TestDaemonOpts {
    * this recorder fires on all cursor spawns.
    */
   recordCursorSpawnOptions?: (options: Record<string, unknown>) => void
+  /** 「待说」补说那一拍的间隔(ms;缺省生产的 5 分钟)。看补说 / 退避的场景设成几百毫秒。 */
+  speechFlushIntervalMs?: number
+  /** 开机前就让 sendmessage 失败(断线开机):开机那几句通知走的就是「发不出去」那条路。之后 `ilink.succeedSendMessage()` 恢复。 */
+  ilinkFailSendMessage?: { errcode?: number; errmsg?: string }
   /** preset companion config — default: disabled */
   companion?: { enabled?: boolean; default_chat_id?: string }
   /** preset bot accounts — default: 1 fake bot pointing at fake ilink */
@@ -157,6 +161,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // 1. Set up fake ilink + stateDir (fresh tmp by default, or caller-provided
   // for restart-persistence tests that need to share state across two boots).
   const ilink = await startFakeIlink()
+  if (opts.ilinkFailSendMessage) ilink.failSendMessage(opts.ilinkFailSendMessage)
   const stateDir = opts.stateDirOverride ?? mkdtempSync(join(tmpdir(), 'wechat-cc-e2e-'))
   const ownsStateDir = opts.stateDirOverride === undefined
   mkdirSync(join(stateDir, 'inbox'), { recursive: true })
@@ -293,7 +298,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // 7. Boot daemon via exported bootDaemon — no SIGTERM needed for shutdown.
   // NOTE: import is dynamic so vi.mock has time to register before SDK loads.
   const { bootDaemon } = await import('../main')
-  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false })
+  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}) })
 
   // Give polling loop a moment to spin up.
   await new Promise(r => setTimeout(r, 50))

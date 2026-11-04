@@ -175,15 +175,40 @@ describe('待说队列不丢话(整合者评审 #531)', () => {
     await t.policy.flushPending()
     expect(t.sent).toEqual(['第一条', '路上进来的'])
   })
-  it('补说一直失败 ⇒ 按对话指数退避(5 → 10 → 20 分钟 …),不每拍都撞', async () => {
+  it('补说一直失败 ⇒ 按对话指数退避,用的是共用那一份 backoffMs(1 → 2 → 4 分钟 …,封顶 60 分钟;S2a),不每拍都撞', async () => {
     let tries = 0
     const t = await mk({ sendErr: () => { tries++; return 'still down' } })
     t.pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: 'x', at: 'x' })
     await t.policy.flushPending(); expect(tries).toBe(1)
-    t.advance(4 * 60_000); await t.policy.flushPending(); expect(tries).toBe(1)   // 退避中
-    t.advance(2 * 60_000); await t.policy.flushPending(); expect(tries).toBe(2)   // 过了 5 分钟
-    t.advance(6 * 60_000); await t.policy.flushPending(); expect(tries).toBe(2)   // 第二次退避 10 分钟
-    t.advance(5 * 60_000); await t.policy.flushPending(); expect(tries).toBe(3)
+    t.advance(59_000); await t.policy.flushPending(); expect(tries).toBe(1)        // 退避中(1 分钟)
+    t.advance(1_000); await t.policy.flushPending(); expect(tries).toBe(2)         // 满 1 分钟
+    t.advance(119_000); await t.policy.flushPending(); expect(tries).toBe(2)       // 第二次退避 2 分钟
+    t.advance(1_000); await t.policy.flushPending(); expect(tries).toBe(3)
+    for (let i = 0; i < 10; i++) { t.advance(3_600_000); await t.policy.flushPending() }
+    expect(tries).toBe(13)                                                          // 封顶 60 分钟:每小时最多一次
+    t.advance(3_599_000); await t.policy.flushPending(); expect(tries).toBe(13)
+  })
+})
+
+describe('补说一次只跑一拍(S2a,沙盒抓到的)', () => {
+  it('上一拍的补说还在发(线上那一层 1 秒 × 3 次要 2 秒多)⇒ 这一拍不再起一份,不叠着撞线', async () => {
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    let sends = 0
+    let release!: () => void
+    const inFlight = new Promise<void>(r => { release = r })
+    const outbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async () => { sends++; await inFlight; return { msgId: '', error: 'down' } }, channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
+    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound, log: () => {}, pending })
+    pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: 'x', at: 'x' })
+    const first = policy.flushPending()
+    await vi.waitFor(() => expect(sends).toBe(1))
+    for (let i = 0; i < 5; i++) await Promise.race([policy.flushPending(), new Promise(r => setTimeout(r, 10))])
+    expect(sends).toBe(1)
+    release(); await first
+    await policy.flushPending()
+    expect(sends).toBe(1)   // 失败了 ⇒ 进退避,下一拍也不撞
   })
 })
 

@@ -86,7 +86,7 @@ describe('wireWorkbenchNotifications', () => {
     const one = f.notificationStore.enqueue(input())
     const two = f.notificationStore.enqueue(input({ taskId: 'task-2', runId: 'run-2', ownerChatId: 'owner-2', accountId: 'account-2' }))
     const now = Date.now()
-    for (const notice of [one, two]) { f.notificationStore.claim(notice.id, now); f.notificationStore.defer(notice.id, 'missing_context', now, 60_000, 60_000) }
+    for (const notice of [one, two]) { f.notificationStore.claim(notice.id, now); f.notificationStore.defer(notice.id, 'missing_context', now) }
     await f.wired.wake({ ownerChatId: 'owner-2', accountId: 'account-2' })
     expect(f.sendWorkbenchNotice.mock.calls.map(call => (call[0] as { taskId: string }).taskId)).toEqual(['task-2'])
     expect(f.notificationStore.list('task-1')[0]?.status).toBe('pending')
@@ -211,8 +211,8 @@ describe('工作台通知经 CC 开口那道门(第三批 3a)', () => {
     await f.wired.close()
     // 不算尝试:时段结束后第一次真发失败,退避从头算(defer_count 没因推后而涨)
     expect(f.notificationStore.claim(done.id, QUIET_END)).not.toBeNull()
-    f.notificationStore.defer(done.id, 'window_closed', QUIET_END, 1000, 60_000)
-    expect(f.notificationStore.nextDue(QUIET_END)).toBe(QUIET_END + 1000)
+    f.notificationStore.defer(done.id, 'window_closed', QUIET_END)
+    expect(f.notificationStore.nextDue(QUIET_END)).toBe(QUIET_END + 60_000)   // 共用退避的第一档(S2a)
   })
 
   it('微信降级 ⇒ 落到 App:记进主人对话,不另推(phone-notifier 已经推过原生通知),工作台发送口不碰', async () => {

@@ -13,10 +13,8 @@
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../domain/speech/decide'
 import { isExpiring, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
+import { backoffMs } from '../../lib/delivery-backoff'
 import { mergePending } from './pending-notices'
-
-const PENDING_RETRY_BASE_MS = 5 * 60_000
-const PENDING_RETRY_MAX_MS = 60 * 60_000
 
 export interface SpeechRequest {
   kind: SpeechKind
@@ -86,7 +84,7 @@ export function makeSpeechPolicy(deps: {
   const write = (e: SpeechLedgerEntry): void => {
     try { deps.ledger?.(e) } catch (err) { deps.log('SPEECH', `ledger write failed: ${err instanceof Error ? err.message : String(err)}`) }
   }
-  /** 补说发失败的对话:指数退避(5 分钟起,封顶 1 小时)。只在内存里:重启后从头算,无妨。 */
+  /** 补说发失败的对话:指数退避,共用 lib/delivery-backoff 那一份(1 分钟起翻倍、封顶 1 小时;S2a)。只在内存里:重启后从头算,无妨。 */
   const flushBackoff = new Map<string, { fails: number; nextAt: number }>()
   /** 判一次;推后 / 被拒在这里记账(推后同理由一小时只记一次)。放行的那一行由调用方在发完后记。 */
   const judge = (req: SpeechRequest, deliverable: boolean): { decision: SpeechDecision; base: Omit<SpeechLedgerEntry, 'outcome' | 'reason' | 'channel'> } => {
@@ -170,30 +168,37 @@ export function makeSpeechPolicy(deps: {
       }
       return sent
     },
-    async flushPending() {
-      if (!deps.pending) return
-      const t = now()
-      for (const g of deps.pending.groups()) {
-        const b = flushBackoff.get(g.chatId)
-        if (b && t < b.nextAt) continue   // 上次补说发失败了:按对话指数退避,不每拍都撞(no-retry-storm)
-        // 有等主人拍板的就按 blocking 问(免打扰不拦);否则按第一条 report 问
-        const kind = g.items.find(i => originOf(i.kind) === 'blocking')?.kind ?? g.items[0]!.kind
-        let sent = false
-        const o = await policy.say({ kind, chatId: g.chatId }, async (turn) => {
-          try { sent = !(await turn.sendText(g.chatId, mergePending(g.items, g.dropped))).error } catch { sent = false }
-        })
-        if ('allow' in o && sent) {
-          // 只删这次真说了的那几条(发送途中又进来的留着,下一拍说;整合者评审 #531 ②)
-          deps.pending.remove(g.chatId, g.items.map(i => i.id), g.dropped)
-          flushBackoff.delete(g.chatId)
-          deps.log('SPEECH', `told ${g.items.length} pending notice(s) chat=${g.chatId}`)
-        } else if ('allow' in o) {
-          const fails = (b?.fails ?? 0) + 1
-          flushBackoff.set(g.chatId, { fails, nextAt: t + Math.min(PENDING_RETRY_BASE_MS * 2 ** (fails - 1), PENDING_RETRY_MAX_MS) })
-          deps.log('SPEECH', `pending notices chat=${g.chatId} send failed (try ${fails}) — backing off`)
-        }
-      }
+    flushPending() {
+      // 一次只跑一拍:上一拍还在发(线上那一层 1 秒 × 3 次就要 2 秒多)时再起一份,就是两份叠着撞同一条断了的线,
+      // 退避也要等第一份失败了才记得上(S2a 沙盒抓到的:200ms 一拍、断线,3 秒里撞了 21 次)
+      if (!flushing) flushing = flushOnce().finally(() => { flushing = null })
+      return flushing
     },
+  }
+  let flushing: Promise<void> | null = null
+  async function flushOnce(): Promise<void> {
+    if (!deps.pending) return
+    const t = now()
+    for (const g of deps.pending.groups()) {
+      const b = flushBackoff.get(g.chatId)
+      if (b && t < b.nextAt) continue   // 上次补说发失败了:按对话指数退避,不每拍都撞(no-retry-storm)
+      // 有等主人拍板的就按 blocking 问(免打扰不拦);否则按第一条 report 问
+      const kind = g.items.find(i => originOf(i.kind) === 'blocking')?.kind ?? g.items[0]!.kind
+      let sent = false
+      const o = await policy.say({ kind, chatId: g.chatId }, async (turn) => {
+        try { sent = !(await turn.sendText(g.chatId, mergePending(g.items, g.dropped))).error } catch { sent = false }
+      })
+      if ('allow' in o && sent) {
+        // 只删这次真说了的那几条(发送途中又进来的留着,下一拍说;整合者评审 #531 ②)
+        deps.pending.remove(g.chatId, g.items.map(i => i.id), g.dropped)
+        flushBackoff.delete(g.chatId)
+        deps.log('SPEECH', `told ${g.items.length} pending notice(s) chat=${g.chatId}`)
+      } else if ('allow' in o) {
+        const fails = (b?.fails ?? 0) + 1
+        flushBackoff.set(g.chatId, { fails, nextAt: t + backoffMs(fails) })
+        deps.log('SPEECH', `pending notices chat=${g.chatId} send failed (try ${fails}) — backing off`)
+      }
+    }
   }
   return policy
 }
