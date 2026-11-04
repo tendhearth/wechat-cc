@@ -58,10 +58,12 @@ export interface TopicSource {
   match(topic: string): boolean
   snapshot(topic: string): Promise<unknown>
   /**
-   * 这个主题只随变化信号变(P2,2026-11-04):轮询只每 DRIVEN_SAFETY_TICKS 拍兜一次底,平时等 poke。
-   * 不给 / 回 false ⇒ 照旧每拍都算(聊天:消息不进变化信号)。
+   * 这个主题只随变化信号变(P2,2026-11-04):轮询只每 `safetyTicks`(缺省 DRIVEN_SAFETY_TICKS)拍兜一次底,平时等 poke。
+   * 不给 / 回 false ⇒ 照旧每拍都算。
    */
   driven?(topic: string): boolean
+  /** 变化驱动的主题多少拍兜一次底;缺省 DRIVEN_SAFETY_TICKS。有一部分输入没有写口可提示(在场随时间退)的来源给得短一些。 */
+  safetyTicks?: number
 }
 
 /** 变化驱动的主题,轮询多少拍兜一次底(2 秒一拍 ⇒ 30 秒):漏了一次信号也不会一直不对。 */
@@ -329,15 +331,17 @@ export function makePhoneEvents(opts: {
       }
     })
   }
-  /** 轮询一拍:变化驱动的主题只每 DRIVEN_SAFETY_TICKS 拍兜一次底(P2)。 */
+  /** 轮询一拍:变化驱动的主题只每 safetyTicks(缺省 DRIVEN_SAFETY_TICKS)拍兜一次底(P2)。 */
   let ticks = 0
   function onTick(): void {
     ticks++
-    const sweep = ticks % DRIVEN_SAFETY_TICKS === 0
-    if (sweep) { poke(); return }
     poke(topic => {
       const source = opts.sources.find(s => s.match(topic))
-      try { return !source?.driven?.(topic) } catch { return true }
+      let driven: boolean
+      try { driven = !!source?.driven?.(topic) } catch { return true }
+      if (!driven) return true
+      const every = source?.safetyTicks !== undefined && source.safetyTicks >= 1 ? Math.floor(source.safetyTicks) : DRIVEN_SAFETY_TICKS
+      return ticks % every === 0
     })
   }
 

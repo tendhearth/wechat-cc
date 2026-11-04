@@ -1,5 +1,6 @@
 import {randomBytes} from 'node:crypto'
 import type {Db} from '../../lib/db'
+import {hintWrite} from '../../lib/write-hints'
 import type {CreateMatter,ListMatters,Matter,MatterBinding,MatterKind,MatterOrigin,MatterSession,MatterSessionRole,MatterState,MatterStore,MatterSurface,MatterTurnStatus} from '../../ports/matters'
 import {legacyStatus,type LegacyTaskStatus} from '../../domain/matters/legacy-status'
 
@@ -50,6 +51,7 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     const ts=now()
     db.query('INSERT INTO matters(id,kind,initiator,title,project_path,state,archived_at,status,owner_chat_id,origin_matter_id,origin_message_id,origin_surface,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(id,input.kind,initiator,input.title,input.projectPath??null,status==='done'?'done':'open',status==='archived'?ts:null,status,input.ownerChatId??null,input.originMatterId??null,input.originMessageId??null,origin,ts,ts)
+    hinted(id)
     return require(id)
   }
   function list(filter:ListMatters={}):Matter[] {
@@ -65,7 +67,9 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     const r=db.query<Row,[string]>(`${SELECT} WHERE kind='chat' AND id IN (SELECT matter_id FROM matter_bindings WHERE surface='wechat' AND surface_key=?) ORDER BY updated_at DESC LIMIT 1`).get(chatId)
     return r?toMatter(r):null
   }
-  const bump=(id:string)=>db.query('UPDATE matters SET updated_at=? WHERE id=?').run(now(),id)
+  // matters 行自己的变化(状态 / 标题 / updated_at)不进 MatterLog 的游标:落笔后给手机主题一声提示(write-hints.ts)
+  const hinted=(id:string)=>hintWrite(db,{kind:'matter',matterId:id})
+  const bump=(id:string)=>{db.query('UPDATE matters SET updated_at=? WHERE id=?').run(now(),id);hinted(id)}
   return {
     create,get,list,
     setStatus(id,status){
@@ -79,8 +83,9 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
                    WHEN ?1 IN ('open','replied') AND state IN ('done','failed','cancelled') THEN 'open'
                    ELSE state END
         WHERE id=?3`).run(status,ts,id)
+      hinted(id)
     },
-    rename(id,title){require(id);db.query('UPDATE matters SET title=?,updated_at=? WHERE id=?').run(title,now(),id)},
+    rename(id,title){require(id);db.query('UPDATE matters SET title=?,updated_at=? WHERE id=?').run(title,now(),id);hinted(id)},
     touch(id){require(id);bump(id)},
     bind(id,surface,surfaceKey){
       if(!SURFACES.has(surface))throw new Error('invalid_matter_surface');require(id)

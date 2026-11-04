@@ -37,6 +37,8 @@ export function makePhoneChat(d: {
   /** 按主人校验并取出这一句引用的图(读出字节后暂存即删)。没接 ⇒ 带图的一句 409 不收。 */
   takeImages?(materials: PhoneChatMaterials): PhoneChatImage[]
   ownerMatterId(): string | null
+  /** 这一句开始等回复(pendingMatter 变成它):手机主题据此马上算出 working,不等兜底轮询。 */
+  onPending?(matterId: string): void
   onSettled?(matterId: string): void
   now?: () => number
   log?: (tag: string, line: string) => void
@@ -64,6 +66,7 @@ export function makePhoneChat(d: {
   }
   const run = (job: ChatJob) => {
     pending = job; failed = null
+    try { d.onPending?.(job.matterId) } catch { /* 唤醒失败不影响结果 */ }
     let done = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const finish = (e: unknown | null) => {

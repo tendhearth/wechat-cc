@@ -5,6 +5,7 @@
  */
 import { createHash } from 'node:crypto'
 import type { Db } from './db'
+import { hintWrite } from './write-hints'
 
 export type MessageDirection = 'in' | 'out'
 
@@ -157,7 +158,10 @@ export function makeMessagesStore(db: Db): MessagesStore {
       const result = rec.extras !== undefined
         ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, rec.extras)
         : stmtInsert.run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source)
-      return (result as unknown as { changes: number }).changes
+      const changes = (result as unknown as { changes: number }).changes
+      // 消息不进 MatterLog 的游标:新的一行给手机主题一声提示(聊天的 matter/<id>、home 的「在跟你聊」)
+      if (changes > 0) hintWrite(db, { kind: 'messages', chatId: rec.chatId })
+      return changes
     },
     async get(chatId, id) {
       const r = stmtGet.get(id, chatId)

@@ -27,6 +27,17 @@ describe('makePhoneChat', () => {
     expect(r.chat.state()).toEqual({ pending: null, failed: null })
     expect(r.settled).toEqual(['c0ffee01'])
   })
+  it('开始等回复 ⇒ onPending 一次(这时 pendingMatter 已经是它:手机主题马上算出 working);它抛错也照收', async () => {
+    const seen: Array<string | null> = []
+    let chat!: ReturnType<typeof makePhoneChat>
+    const r = rig({ onPending: id => { seen.push(id, chat.pendingMatter()); throw new Error('x') } })
+    chat = r.chat
+    expect(r.chat.say(RID(9), '你好')).toMatchObject({ status: 'pending' })
+    expect(seen).toEqual(['c0ffee01', 'c0ffee01'])
+    await tick()
+    r.calls[0]!.resolve({ reply: '在呢' }); await tick()
+    expect(seen).toHaveLength(2)
+  })
   it('同一 requestId 再发(在飞 / 已回复)⇒ 同一份结果,不起第二轮', async () => {
     const r = rig()
     r.chat.say(RID(1), '你好'); r.chat.say(RID(1), '你好')
