@@ -1,0 +1,15 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "ok": true,
+    "result": {
+      "accepted": true,
+      "matterId": "a1b2c3d4",
+      "chars": 5,
+      "requestId": "22222222-2222-4222-8222-222222222222"
+    }
+  }
+}

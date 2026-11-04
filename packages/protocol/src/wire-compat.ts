@@ -48,3 +48,114 @@ export const WIRE_COMPAT: readonly WireCompatRow[] = Object.freeze([
     retireWhen: '与 Matter.status 同一版(M6f)',
   },
 ] satisfies WireCompatRow[])
+
+/**
+ * 旧路由别名表(P3,设计稿 docs/superpowers/specs/2026-11-05-p3-one-route-family-design.md「定案 · 别名表一处」)。
+ *
+ * 一行 = 一条 `/m/api` 旧路径:老 App / 网页还在读它,目标是一份数据一条 `/v1` 路径、一个处理器。P3a 把 61 行全部登记上,
+ * 新键先按设计稿写好;还没并的标 `handler: 'own'`(面板里还是它自己的处理器,daemon 不读这张表)。并一条 ⇒ 那行改
+ * `handler: 'alias'`,daemon 那边只有 `src/features/phone/legacy-routes.ts` 认这张表(按 `transform` 翻回包)。退休同上面那张表:
+ * 按构建号,近 30 天连过的设备都 ≥ 改读新路径的那一版才删行。`scripts/wire-compat.guard.test.ts` 管两把棘轮:行数只许变少,
+ * 「还是自己处理器」的行只许变少。
+ */
+export type WireRouteStep = 'P3c-1' | 'P3c-2' | 'P3c-3' | 'P3c-4' | 'P3d' | 'P3e'
+export interface WireRouteAlias {
+  /** 旧键(`METHOD /m/api/...`,和 routes.ts 的键同一写法)。 */
+  from: string
+  /** 新键(`METHOD /v1/...`)。有 `/v1` 双胞胎的就是那条;手机独有的是 P3d 要起的新路径;P3e 是 `/v1/matter/<动词>`。 */
+  to: string
+  /** 别名的转换名(信封 / phone 错误码列 / 手机默认筛选 / 参数改名);纯改名写 null。实现在 legacy-routes.ts。 */
+  transform: string | null
+  /** 读的人(selftest = `wechat-cc selftest phone`,daemon 自己带,随改它的 PR 换)。 */
+  readers: readonly ('app' | 'web' | 'desktop' | 'selftest')[]
+  /** 链接令牌能不能走:照 P3a 那天 routes.ts 的 phone.link 冻结,新行照抄。 */
+  link: 'none' | 'read' | 'write'
+  /** own = 面板里还是自己的处理器;alias = 已经翻到新键、走同一个分发。 */
+  handler: 'own' | 'alias'
+  /** 哪一步并它(设计稿「分步」)。 */
+  step: WireRouteStep
+  /** 什么时候删这一行。 */
+  retireWhen: string
+}
+
+type Readers = WireRouteAlias['readers']
+const RETIRE: Record<Readers[number], string> = {
+  app: '近 30 天连过的设备都 ≥ 改读新路径的 App 构建(P3f)',
+  web: '网页改读新路径(P3g,随 self deploy 当场换)',
+  selftest: 'selftest 改调新路径(随 P3d 同一个 PR)',
+  desktop: '桌面 ≥ 改读新路径的那一版',
+}
+const alias = (from: string, to: string, step: WireRouteStep, transform: string | null, readers: Readers = ['app'], link: WireRouteAlias['link'] = 'none'): WireRouteAlias =>
+  ({ from, to, transform, readers, link, handler: 'own', step, retireWhen: readers.map(r => RETIRE[r]).join(';') })
+
+export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
+  // ── P3c-1 一件事与主人对话(和 /v1 同一个底层函数、两个处理器)
+  alias('GET /m/api/matters', 'GET /v1/matters', 'P3c-1', 'phoneMatters', ['app', 'web'], 'read'),
+  alias('GET /m/api/matter', 'GET /v1/matter', 'P3c-1', 'phoneMatter', ['app', 'web'], 'read'),
+  alias('POST /m/api/matter/say', 'POST /v1/matter/say', 'P3c-1', 'phoneMatterSay'),
+  alias('GET /m/api/chat/search', 'GET /v1/matter/owner-chat/search', 'P3c-1', 'phoneChatSearch'),
+  alias('GET /m/api/chat/file', 'GET /v1/matter/owner-chat/file', 'P3c-1', 'phoneChatFile'),
+  alias('POST /m/api/chat/transcribe', 'POST /v1/companion/transcribe', 'P3c-1', 'phoneChatTranscribe'),
+  // ── P3c-2 终端与总览
+  alias('GET /m/api/cli/sessions', 'GET /v1/cli/sessions', 'P3c-2', 'phoneCliSessions'),
+  alias('GET /m/api/today', 'GET /v1/overseer/today', 'P3c-2', 'phoneToday'),
+  alias('GET /m/api/connections', 'GET /v1/connections', 'P3c-2', 'phoneConnections'),
+  // ── P3c-3 记忆、待办、看到哪了
+  alias('GET /m/api/memory/retractions', 'GET /v1/memory/retractions', 'P3c-3', 'phoneMemoryRetractions'),
+  alias('POST /m/api/memory/restore', 'POST /v1/memory/retractions/restore', 'P3c-3', 'phoneMemoryRestore'),
+  alias('POST /m/api/todo', 'POST /v1/knowledge/facts/set_fact_status', 'P3c-3', 'phoneTodo'),
+  alias('POST /m/api/seen', 'POST /v1/journal/seen', 'P3c-3', 'phoneSeen'),
+  // ── P3c-4 交办选项与会话
+  alias('GET /m/api/entry/options', 'GET /v1/workbench/entry-options', 'P3c-4', 'phoneEntryOptions'),
+  alias('GET /m/api/entry/models', 'GET /v1/workbench/models', 'P3c-4', 'phoneEntryModels'),
+  alias('GET /m/api/attachment/upload', 'GET /v1/workbench/attachment', 'P3c-4', 'phoneAttachmentStatus'),
+  alias('POST /m/api/attachment/chunk', 'POST /v1/workbench/attachment', 'P3c-4', 'phoneAttachmentChunk'),
+  alias('POST /m/api/attachment/discard', 'POST /v1/workbench/discard-attachment', 'P3c-4', 'phoneAttachmentDiscard'),
+  alias('GET /m/api/sessions', 'GET /v1/workbench/sessions', 'P3c-4', 'phoneSessions'),
+  alias('GET /m/api/session', 'GET /v1/workbench/session', 'P3c-4', 'phoneSession'),
+  // ── P3d 手机独有的、相近的、撞名的:搬到新的 /v1 路径,纯改名(回包就是 /m/api 今天的回包)
+  alias('GET /m/api/state', 'GET /v1/phone/state', 'P3d', null),
+  alias('GET /m/api/art/presence', 'GET /v1/phone/art/presence', 'P3d', null, ['web'], 'read'),
+  alias('POST /m/api/push/register', 'POST /v1/phone/push/register', 'P3d', null, ['app', 'selftest']),
+  alias('POST /m/api/push/test', 'POST /v1/phone/push/test', 'P3d', null, ['app', 'selftest']),
+  alias('GET /m/api/matter/insight', 'GET /v1/matter/insight', 'P3d', null),
+  alias('GET /m/api/matter/input-receipt', 'GET /v1/matter/input-receipt', 'P3d', null),
+  alias('GET /m/api/home', 'GET /v1/home', 'P3d', null, ['app', 'web'], 'read'),
+  alias('GET /m/api/cli/activity', 'GET /v1/cli/activity', 'P3d', null),
+  alias('GET /m/api/activity', 'GET /v1/activity', 'P3d', null),
+  alias('GET /m/api/jobs', 'GET /v1/jobs', 'P3d', null),
+  alias('POST /m/api/jobs/action', 'POST /v1/jobs/action', 'P3d', null),
+  alias('GET /m/api/letters', 'GET /v1/letters/sent', 'P3d', null),
+  alias('GET /m/api/letters/page', 'GET /v1/letters/page', 'P3d', null),
+  alias('GET /m/api/chat', 'GET /v1/matter/owner-chat/page', 'P3d', null),
+  alias('POST /m/api/chat/say', 'POST /v1/matter/owner-chat/say', 'P3d', null),
+  alias('GET /m/api/chat/voice', 'GET /v1/matter/owner-chat/voice', 'P3d', null),
+  // 设计稿:「形状一样就并进 GET /v1/stt/status;不一样起 GET /v1/companion/transcribe」—— P3a 核过,不一样(设计稿「进度」)
+  alias('GET /m/api/chat/transcribe', 'GET /v1/companion/transcribe', 'P3d', null),
+  alias('GET /m/api/chat/model', 'GET /v1/matter/owner-chat/model', 'P3d', null),
+  alias('POST /m/api/chat/model', 'POST /v1/matter/owner-chat/model', 'P3d', null),
+  alias('GET /m/api/memory', 'GET /v1/memory/curated', 'P3d', null),
+  alias('POST /m/api/memory/correct', 'POST /v1/memory/correct', 'P3d', null),
+  alias('GET /m/api/sticker/', 'GET /v1/stickers/file/', 'P3d', null),
+  alias('GET /m/api/session/continue', 'GET /v1/workbench/session/continue', 'P3d', null),
+  alias('POST /m/api/session/continue', 'POST /v1/workbench/session/continue', 'P3d', null),
+  // 撞名不同义的两条起不撞的名字(cli/permission 并不并进 /v1/permissions/resolve:P3a 核过,见设计稿「进度」)
+  alias('POST /m/api/cli/permission', 'POST /v1/cli/decide', 'P3d', null),
+  alias('POST /m/api/cli/say', 'POST /v1/cli/session-say', 'P3d', null),
+  // ── P3e 一件事上的动作 + 交办:收进 /v1/matter/*(处理器是 MattersService 那一层)
+  alias('POST /m/api/matter/stop', 'POST /v1/matter/stop', 'P3e', 'phoneMatterStop', ['app', 'web'], 'write'),
+  alias('POST /m/api/matter/permission', 'POST /v1/matter/permission', 'P3e', 'phoneMatterPermission'),
+  alias('POST /m/api/matter/answer', 'POST /v1/matter/answer', 'P3e', 'phoneMatterAnswer'),
+  alias('GET /m/api/matter/artifact', 'GET /v1/matter/artifact', 'P3e', 'phoneMatterArtifact'),
+  alias('POST /m/api/matter/handoff', 'POST /v1/matter/handoff', 'P3e', 'phoneMatterHandoff'),
+  alias('POST /m/api/matter/worktree', 'POST /v1/matter/worktree', 'P3e', 'phoneMatterWorktree'),
+  alias('GET /m/api/matter/changes', 'GET /v1/matter/changes', 'P3e', 'phoneMatterChanges'),
+  alias('POST /m/api/matter/review-mark', 'POST /v1/matter/review-mark', 'P3e', 'phoneMatterReviewMark'),
+  alias('POST /m/api/matter/review-return', 'POST /v1/matter/review-return', 'P3e', 'phoneMatterReviewReturn'),
+  alias('POST /m/api/matter/review-comment', 'POST /v1/matter/review-comment', 'P3e', 'phoneMatterReviewComment'),
+  alias('POST /m/api/matter/review-comments-send', 'POST /v1/matter/review-comments-send', 'P3e', 'phoneMatterReviewCommentsSend'),
+  alias('GET /m/api/matter/rewind', 'GET /v1/matter/rewind', 'P3e', 'phoneMatterRewindPreview'),
+  alias('POST /m/api/matter/rewind', 'POST /v1/matter/rewind', 'P3e', 'phoneMatterRewind'),
+  alias('POST /m/api/matter/create', 'POST /v1/matter/create', 'P3e', 'phoneMatterCreate'),
+  alias('GET /m/api/matter/create-receipt', 'GET /v1/matter/create-receipt', 'P3e', 'phoneMatterCreateReceipt'),
+] satisfies WireRouteAlias[])

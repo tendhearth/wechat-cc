@@ -125,6 +125,22 @@
 ### P3h 删别名(一行一个 PR,按退休条件)
 - 拿 `device-store` 里近 30 天的构建号对一遍,到了的行删掉,两把棘轮的上限跟着调。`phone` 那一列错误码随最后一个用它的别名删。
 
+## 进度
+
+### P3a(金样 + 别名表 + 两把棘轮;生产代码零改动)
+- **金样**:`src/daemon/__golden__/m-api-routes.golden.test.ts`,80 份在 `m-api-routes/`。接缝是面板的 `handleRequest`(设备令牌 / 链接令牌各配一枚),deps 在面板注入口给照剧本回话的假实现 —— 钉的是面板这一层加的东西:`{ ok }` 信封、`phone` 那一列错误码、手机默认筛选、链接令牌少读的、响应头(`content-type` / `cache-control`)。35 条重复每条成功一份 + 一个错误码一份(`matters`、`matter`、`cli/sessions` 的真数据成功回包 M0 已经钉了,这里只补错误码);错误码尽量挑两列不一样的(`module_off` → `unavailable`、`script_approval_required` → `script_needs_computer`、`attachment_scope` 409、`unavailable_provider` 503、`unattended_ack_required` 422、`not_found` → `matter_not_found`)。链接令牌:`home`、`matters`、`matter`、`art/presence`、`matter/stop` 各一份(设备那份并排),外加 `matter/say` 的 403。`art/presence` 两张 PNG 256,790 字节,只钉长度 + sha256。`UPDATE_M_API_GOLDEN=1` 重录。
+- **别名表**:`WIRE_ROUTE_ALIASES` 61 行全登记、全部 `handler: 'own'`;`link` 照今天 `routes.ts` 冻结。`scripts/wire-compat.guard.test.ts` 加一节:行数 ≤ 61 且等于、own 行 ≤ 61 且等于;路由表里每条 `/m/api` 都在表里;P3c 的新键今天就在 `ROUTES`、P3d / P3e 的新键今天还不在;P3d 行 `transform` 为 null;已并的行旧键不在 `ROUTES`、转换名在 `legacy-routes.ts` 里有实现(现在 0 行,P3c 起生效)。
+- **字面量棘轮**:`scripts/no-m-api-literal.guard.test.ts`,按文件记行数(整行注释按行跳过,不用块注释正则)。
+
+### P3a 核过的几件(和本稿上文不一样的地方,后面几步照这里)
+- **基线不是 75**:75 是 `src` 里带引号 `/m/api` 的**出现次数,连注释**(74 行)。照「守卫」那条的口径(整行注释跳过、测试与生成物除外、三个目录)实际是:`src` 60 行 / 8 个文件、`apps/mobile/src` 5 / 3、`packages/protocol/src` 182 / 3(`routes.ts` 61、`api.ts` 61、`phone-calls.ts` 60),共 247。守卫按文件记这 14 个数。
+- **「P3d 做完降到两个文件之外为 0」只对 `src` 成立**:`phone-calls.ts` 是 App 的客户端表(P3f 才换新键,旧键还要留给没收到 `routes: 'v1'` 的情形)、`api.ts` 的 `PHONE_API_SCHEMAS` 跟着别名退(P3h)、网页那 5 处 P3g。P3d 的完成条件按「`src` 里只剩 `legacy-routes.ts`」算。
+- **`GET /m/api/chat/transcribe` 不并进 `GET /v1/stt/status`**:形状不一样 —— `/v1` 那条回裸的 `{ configured, provider, base_url, model, saved_at }`(trusted、voice 模块),手机那条只回 `{ ok, configured }`(地址和模型不给手机)。别名表里新键写 `GET /v1/companion/transcribe`。
+- **`POST /m/api/cli/permission` 不并进 `POST /v1/permissions/resolve`**:底下是同一个 `wxPerm.resolvePermission`(+ 记一次接触,`features/terminal/module.ts` 与 `internal-api/module.ts` 两处接线),但手机那条多三道收窄:只认终端中继开的码(`relay.owns`)、能按 `session_id` 找码且码要对得上、错误码 `not_found` / `cli_not_actionable` / `cli_permission_stale`(404 / 409);桌面那条认任何码(自改流水线、别的待批都能批),回 200 `{ ok: boolean }` / 400 `bad_request`。并进去等于让设备令牌能批自改流水线的待批。照本稿起 `/v1/cli/decide`。
+- **P3e 和「表从第一天只许变少」冲突**:P3e 要把桌面 15 条 `/v1/workbench/*` 双胞胎也登记进别名表(读的人 = desktop),行数会涨。P3e 时二选一:那个 PR 一次性把上限上调 15 并写明;或者桌面那 15 条另起一张表 / 一把棘轮。P3a 没登记它们(按本稿只登记 61 条 `/m/api`)。
+- **响应头今天就不齐**:`mobile-workbench` / `mobile-reads` / `mobile-chat` 的处理器和 `mobileMatterDetailResponse` 带 `cache-control: no-store`;`settings-panel.ts` 自己的 `json()`(列表、详情的错误、seen、todo、记忆、home、art/presence、审阅的成功回包、403 `route_not_allowed`)不带 —— 同一条 `review-comment` 成功不带、失败(走 `mobileMatterError`)带。金样把头一起钉了,并的时候按路由保持,要统一另开一步。
+- 61 条的分法核对过:35 条有 `/v1` 双胞胎(P3c 20 + P3e 15,新键都在今天的 `ROUTES` 里——P3e 的双胞胎是 `/v1/workbench/*`,新键 `/v1/matter/*` 还不存在),26 条 P3d(相近 10、撞名 2、手机独有 14)。读的人:App 读 60 条(除 `art/presence`),网页读 5 条,`selftest phone` 读 `push/register·test`。
+
 ## 不做 / 推后
 - **不改语义**:同步的 `/v1/companion/converse` 和收下即回的 `owner-chat/say` 各留一条(两个动作,不是一份数据两条路);「看 / 改记忆」两种读法照旧各一条。语义要合是另外的事。
 - **不并 `/m` 页面路径、`/set`、`/set/api/*`**:那是页面和配对,链接里带着,不是数据路由。

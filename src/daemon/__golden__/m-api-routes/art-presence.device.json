@@ -1,0 +1,8 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "bytes": 256790,
+  "sha256": "7ac3c05c4907793517b92f298092edd3732752750ab2161c62cdc6683bd5a92b"
+}

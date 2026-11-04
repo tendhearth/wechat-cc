@@ -1,0 +1,10 @@
+{
+  "status": 404,
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "ok": false,
+    "error": "not_found"
+  }
+}

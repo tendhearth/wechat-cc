@@ -1,0 +1,26 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "items": [
+      {
+        "key": "claude:s1",
+        "provider": "claude",
+        "title": "会话 登录",
+        "project": "app",
+        "updatedAt": 1793843400000,
+        "active": true,
+        "displayName": "Claude Code"
+      }
+    ],
+    "nextCursor": null,
+    "names": {
+      "claude": "Claude Code",
+      "codex": "Codex"
+    }
+  }
+}

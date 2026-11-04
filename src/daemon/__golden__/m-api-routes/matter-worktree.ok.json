@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "worktree": {
+      "taskId": "a1b2c3d4",
+      "action": "commit",
+      "branch": "cc/a1b2c3d4",
+      "state": "committed"
+    }
+  }
+}

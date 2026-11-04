@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "id": "66666666-6666-4666-8666-666666666666",
+    "draftId": "55555555-5555-4555-8555-555555555555",
+    "taskId": null,
+    "size": 4,
+    "sha256": "abababababababababababababababababababababababababababababababab",
+    "nextOffset": 4,
+    "status": "ready"
+  }
+}

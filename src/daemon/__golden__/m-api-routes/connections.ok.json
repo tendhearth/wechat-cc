@@ -1,0 +1,43 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "generatedAt": 1793844000000,
+    "sources": [
+      {
+        "id": "wechat",
+        "state": "ok",
+        "label": "微信"
+      }
+    ],
+    "computers": [
+      {
+        "id": "mac",
+        "label": "golden-mac",
+        "online": true,
+        "since": 1793840400000,
+        "version": "1.7.8"
+      }
+    ],
+    "recent": [
+      {
+        "matterId": "a1b2c3d4",
+        "title": "修好登录",
+        "phase": "done",
+        "at": 1793843940000
+      }
+    ],
+    "outputs": [],
+    "capabilities": [
+      {
+        "id": "voice",
+        "state": "off",
+        "label": "语音"
+      }
+    ]
+  }
+}
