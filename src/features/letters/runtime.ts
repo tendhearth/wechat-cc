@@ -72,6 +72,8 @@ export type WriteResult =
 
 export interface LetterDeps {
   stateDir: string
+  /** CC 自己做的事(M5b):写一封 / 续寄一次 = 「信」那件事的一轮;不给 ⇒ 不记。 */
+  acts?: Pick<import('../../ports/cc-acts').CcActs, 'begin'>
   enabled(): boolean
   timezone(): string
   ownerChatId(): string | null
@@ -277,6 +279,26 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     return 'sent'
   }
 
+  /** 「信」那件事的一轮(M5b):写信 / 续寄时开,寄的结果收。记不上不影响寄信。 */
+  const NO_TURN = { step() {}, finish() {} }
+  const actTurn = (policy: Record<string, unknown>) => { try { return d.acts?.begin('letters', { startedAt: d.now(), policy }) ?? NO_TURN } catch { return NO_TURN } }
+  type ActTurn = ReturnType<typeof actTurn>
+  const filed = (t: ActTurn, p: PendingLetter) => t.step('artifact', { letter: p.id, pages: p.pages.length, chars: p.text.length, opening: p.text.split('\n')[0]!.slice(0, 40) })
+  const noLetter = (t: ActTurn, r: { kind: 'skip' | 'failed'; reason: string }) => { t.step('system', { [r.kind === 'skip' ? 'skipped' : 'failed']: r.reason }); t.finish('failed', { endedAt: d.now(), errorCode: r.kind === 'skip' ? 'skipped' : 'compose_failed' }) }
+  /** 写 / 存档 / 排版中途抛了:这一轮收成 failed 再往外抛,别让它一直挂「在跑」(Codex 评审)。finish 只收一次。 */
+  const guarded = async <T>(t: ActTurn, fn: () => Promise<T>): Promise<T> => {
+    try { return await fn() } catch (e) { t.finish('failed', { endedAt: d.now(), errorCode: 'threw' }); throw e }
+  }
+  const deliverIn = async (t: ActTurn, p: PendingLetter): Promise<Awaited<ReturnType<typeof deliver>>> => {
+    let r: Awaited<ReturnType<typeof deliver>> = 'failed'
+    try { r = await deliver(p) } finally {
+      const via = r === 'sent' ? readRecords(d.stateDir).find(x => x.id === p.id)?.sent_via : undefined
+      t.step('delivery', { letter: p.id, result: r, ...(via ? { via } : {}) }, { status: r === 'sent' ? 'completed' : 'failed' })
+      t.finish(r === 'sent' ? 'completed' : 'failed', { endedAt: d.now(), ...(r === 'sent' ? {} : { errorCode: r }) })
+    }
+    return r
+  }
+
   // tick 与 writeNow 走同一条串行链:不会两封同时写,也不会同一封寄两次。
   let chain: Promise<unknown> = Promise.resolve()
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -292,7 +314,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       if (s.pending) {
         const pending = s.pending, owner = d.ownerChatId()
         if (!owner) return
-        const o = await d.speech.say({ kind: pending.requested ? 'letter_asked' : 'letter', chatId: owner, nowMs: d.now() }, async () => { await deliver(pending) })
+        const o = await d.speech.say({ kind: pending.requested ? 'letter_asked' : 'letter', chatId: owner, nowMs: d.now() }, async () => { await deliverIn(actTurn({ letter: pending.id, resume: true }), pending) })
         if ('drop' in o) { save({ pending: null }); d.log('LETTERS', `letter ${pending.id} not sent: ${o.reason} (kept in archive)`) }
         return
       }
@@ -310,16 +332,21 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       // 到点了:先问门,再写(写信要调模型,被拦下的那一拍一个 token 都不花)。免打扰 / 两条路都送不到 ⇒ 不写,还是到期,
       // 下一拍再问;别烦我 ⇒ 这一封不写了,排下一封。
       const o = await d.speech.say({ kind: 'letter', chatId: owner, nowMs }, async () => {
+        const t = actTurn({ trigger: 'schedule' })
+        await guarded(t, async () => {
         const r = await compose(owner, undefined)
         if (r.kind !== 'letter') {
+          noLetter(t, r)
           const retryDays = r.kind === 'skip' ? THIN_RETRY_DAYS : 1
           save({ dueAt: nowMs + retryDays * DAY_MS })
           d.log('LETTERS', `scheduled letter ${r.kind}: ${r.reason}; look again in ${retryDays}d`)
           return
         }
         const p = file(r.letter, false)
+        filed(t, p)
         save({ pending: p, dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
-        await deliver(p)
+        await deliverIn(t, p)
+        })
       })
       if ('drop' in o) {
         save({ dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
@@ -335,21 +362,29 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       if (s.pending) {
         const pending = s.pending
         let r = 'waiting' as Awaited<ReturnType<typeof deliver>>
-        await d.speech.say({ kind: 'letter_asked', chatId: owner, nowMs: d.now() }, async () => { r = await deliver(pending) })
+        await d.speech.say({ kind: 'letter_asked', chatId: owner, nowMs: d.now() }, async () => { r = await deliverIn(actTurn({ letter: pending.id, resume: true, trigger: 'owner' }), pending) })
         return r === 'sent' ? { status: 'sent', id: pending.id } : r === 'waiting' ? { status: 'waiting', id: pending.id } : { status: 'failed', reason: `previous_${r}` }
       }
+      const t = actTurn({ trigger: 'owner' })
+      return guarded(t, async (): Promise<WriteResult> => {
       const r = await compose(owner, request)
       if (r.kind !== 'letter') {
+        noLetter(t, r)
         d.log('LETTERS', `requested letter ${r.kind}: ${r.reason}`)
         // 主人当面要的,写不成要说一声(「出了错但没人告诉你」)
         await d.sendText(owner, r.kind === 'skip' ? '这封信我没写成 —— 能落笔的具体的事还太少。多跟我说说,过几天再给你写。' : '这封信我没写成(这会儿模型连不上)。晚点再跟我说一次。').catch(() => {})
         return { status: r.kind === 'skip' ? 'skipped' : 'failed', reason: r.reason }
       }
       const p = file(r.letter, true)
+      filed(t, p)
       save({ pending: p })
       let out = 'waiting' as Awaited<ReturnType<typeof deliver>>
-      await d.speech.say({ kind: 'letter_asked', chatId: owner, nowMs: d.now() }, async () => { out = await deliver(p) })
+      let delivered = false
+      await d.speech.say({ kind: 'letter_asked', chatId: owner, nowMs: d.now() }, async () => { delivered = true; out = await deliverIn(t, p) })
+      // 门没让寄(两条路都送不到):这一轮先收成「等着」,下次续寄再开一轮
+      if (!delivered) t.finish('failed', { endedAt: d.now(), errorCode: 'waiting' })
       return out === 'sent' || out === 'waiting' ? { status: out, id: p.id } : { status: 'failed', reason: out }
+      })
     }),
 
     preview: (request) => serial(async () => {

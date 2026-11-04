@@ -8,6 +8,9 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 import { startCompanionScheduler } from '../../daemon/companion/scheduler'
 import { memoryFactsFor, renderForPrompt } from '../memory'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
+import { makeCcActs } from '../../adapters/store/cc-acts'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeLetterRuntime, type LetterApp, type LetterRuntime } from './runtime'
 import type { AppChannel } from '../../daemon/companion/proactive-channel'
 import { rasterizeLetterPage } from './render'
@@ -62,6 +65,8 @@ export function wireLetters(d: WireLettersDeps): { runtime: LetterRuntime; start
   const facts = memoryFactsFor(d.db, d.stateDir)
   const base = makeLetterRuntime({
     stateDir: d.stateDir,
+    // CC 自己做的事(M5b):写一封 / 续寄一次 = 「信」那件事的一轮
+    acts: makeCcActs({ db: d.db, log: makeMatterLog(d.db), matters: makeMatterStore(d.db), onError: (what, err) => d.log('CC_ACTS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) }),
     enabled: () => loadCompanionConfig(d.stateDir).letters_enabled,
     timezone: () => loadCompanionConfig(d.stateDir).timezone,
     ownerChatId: owner,

@@ -237,6 +237,30 @@ describe('runtime', () => {
     expect(t.rt.status().letters[0]).toMatchObject({ requested: true })
   })
 
+  it('「信」那件事(M5b):写一封 = 一轮(稿子一步、寄出一步);被挡下先收成等着,续寄另开一轮;写不成也记一轮', async () => {
+    const turns: Array<{ policy: unknown; steps: Array<[string, Record<string, unknown>]>; end?: [string, string | undefined] }> = []
+    const acts = { begin: (_who: string, o?: { policy?: Record<string, unknown> }) => {
+      const t: (typeof turns)[number] = { policy: o?.policy, steps: [] }; turns.push(t)
+      return { step: (k: string, p: Record<string, unknown>) => { t.steps.push([k, p]) }, finish: (st: string, f?: { errorCode?: string }) => { t.end ??= [st, f?.errorCode] } }
+    } }
+    let refuse = true, inbound: number | null = null
+    const t = setup({ acts: acts as never, sendFile: async () => { if (refuse) throw new Error('ilink/sendmessage errcode=-2: prepare failed') }, lastInboundAt: async () => inbound })
+    await t.rt.writeNow('想要一封信')
+    expect(turns[0]).toMatchObject({ policy: { trigger: 'owner' }, end: ['failed', 'waiting'] })
+    expect(turns[0]!.steps.map(([k, p]) => [k, k === 'delivery' ? p.result : p.letter])).toEqual([['artifact', '2026-10-16-abc'], ['delivery', 'waiting']])
+    refuse = false; inbound = EVENING + 2 * 3_600_000; t.setNow(EVENING + 3 * 3_600_000)
+    await t.rt.tick()
+    expect(turns[1]).toMatchObject({ policy: { letter: '2026-10-16-abc', resume: true }, end: ['completed', undefined] })
+    expect(turns[1]!.steps).toEqual([['delivery', { letter: '2026-10-16-abc', result: 'sent', via: 'wechat' }]])
+    const none = setup({ acts: acts as never, evalText: () => null })
+    await none.rt.writeNow()
+    expect(turns[2]).toMatchObject({ steps: [['system', { failed: 'no_model' }]], end: ['failed', 'compose_failed'] })
+    // 写的时候抛了(读材料 / 存档出错):这一轮也收掉,不挂在「在跑」(Codex 评审)
+    const boom = setup({ acts: acts as never, chatSince: async () => { throw new Error('db gone') } })
+    await expect(boom.rt.writeNow()).rejects.toThrow('db gone')
+    expect(turns[3]).toMatchObject({ policy: { trigger: 'owner' }, end: ['failed', 'threw'] })
+  })
+
   it('gives up after three ordinary failures but keeps the letter in the archive', async () => {
     const t = setup({ sendFile: async () => { throw new Error('upload failed') } })
     await t.rt.writeNow()
