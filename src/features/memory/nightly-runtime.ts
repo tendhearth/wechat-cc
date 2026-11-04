@@ -99,8 +99,9 @@ export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps, on
   const outcome = await deps.speech.say({ kind: 'memory_notice', chatId: owner, nowMs, perKind: gate }, async (turn) => {
     deps.claim(owner, nowIso)   // 先登记再发:至多一次,不重试轰炸
     clear()
-    try { channel = turn.channel() ?? undefined } catch { channel = undefined }
     const r = await turn.sendText(owner, pending.text)
+    // 路是 sendText 里才定的(先微信、送不到退 App)⇒ 发完再问(Codex 评审)
+    try { channel = turn.channel() ?? undefined } catch { channel = undefined }
     if (r.error) { sendError = true; deps.log('MEMORY_NIGHTLY', `notice send failed (not retried): ${r.error}`) }
   })
   // 免打扰 / 两条路都送不到 ⇒ 往后推(通知留着);别烦我 / 无回复暂停 ⇒ 这一份不发了

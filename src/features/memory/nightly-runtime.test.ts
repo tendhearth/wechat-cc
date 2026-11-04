@@ -132,7 +132,8 @@ describe('memory nightly runtime', () => {
     now = Date.parse('2026-09-25T09:01:00Z')
     const viaApp = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, log: () => {}, now: () => now, outbound: {
       appDeliverable: () => true, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
-      open: () => ({ sendText: async () => ({ msgId: 'a1' }), channel: () => 'app', textOnly: () => true, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
+      // 跟生产一样:路在 sendText 里才定,之前是 null
+      open: () => { let ch: 'app' | null = null; return { sendText: async () => { ch = 'app'; return { msgId: 'a1' } }, channel: () => ch, textOnly: () => true, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} } },
     } })
     await makeMemoryNightlyRuntime({ ...deps({ speech: viaApp }), acts: acts as never }).tick()
     expect(got).toEqual([{ notice: 'sent', channel: 'app' }])
