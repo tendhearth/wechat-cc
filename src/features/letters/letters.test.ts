@@ -255,6 +255,10 @@ describe('runtime', () => {
     const none = setup({ acts: acts as never, evalText: () => null })
     await none.rt.writeNow()
     expect(turns[2]).toMatchObject({ steps: [['system', { failed: 'no_model' }]], end: ['failed', 'compose_failed'] })
+    // 写的时候抛了(读材料 / 存档出错):这一轮也收掉,不挂在「在跑」(Codex 评审)
+    const boom = setup({ acts: acts as never, chatSince: async () => { throw new Error('db gone') } })
+    await expect(boom.rt.writeNow()).rejects.toThrow('db gone')
+    expect(turns[3]).toMatchObject({ policy: { trigger: 'owner' }, end: ['failed', 'threw'] })
   })
 
   it('gives up after three ordinary failures but keeps the letter in the archive', async () => {

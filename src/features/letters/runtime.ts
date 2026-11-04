@@ -285,6 +285,10 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
   type ActTurn = ReturnType<typeof actTurn>
   const filed = (t: ActTurn, p: PendingLetter) => t.step('artifact', { letter: p.id, pages: p.pages.length, chars: p.text.length, opening: p.text.split('\n')[0]!.slice(0, 40) })
   const noLetter = (t: ActTurn, r: { kind: 'skip' | 'failed'; reason: string }) => { t.step('system', { [r.kind === 'skip' ? 'skipped' : 'failed']: r.reason }); t.finish('failed', { endedAt: d.now(), errorCode: r.kind === 'skip' ? 'skipped' : 'compose_failed' }) }
+  /** 写 / 存档 / 排版中途抛了:这一轮收成 failed 再往外抛,别让它一直挂「在跑」(Codex 评审)。finish 只收一次。 */
+  const guarded = async <T>(t: ActTurn, fn: () => Promise<T>): Promise<T> => {
+    try { return await fn() } catch (e) { t.finish('failed', { endedAt: d.now(), errorCode: 'threw' }); throw e }
+  }
   const deliverIn = async (t: ActTurn, p: PendingLetter): Promise<Awaited<ReturnType<typeof deliver>>> => {
     let r: Awaited<ReturnType<typeof deliver>> = 'failed'
     try { r = await deliver(p) } finally {
@@ -329,6 +333,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       // 下一拍再问;别烦我 ⇒ 这一封不写了,排下一封。
       const o = await d.speech.say({ kind: 'letter', chatId: owner, nowMs }, async () => {
         const t = actTurn({ trigger: 'schedule' })
+        await guarded(t, async () => {
         const r = await compose(owner, undefined)
         if (r.kind !== 'letter') {
           noLetter(t, r)
@@ -341,6 +346,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         filed(t, p)
         save({ pending: p, dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
         await deliverIn(t, p)
+        })
       })
       if ('drop' in o) {
         save({ dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
@@ -360,6 +366,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         return r === 'sent' ? { status: 'sent', id: pending.id } : r === 'waiting' ? { status: 'waiting', id: pending.id } : { status: 'failed', reason: `previous_${r}` }
       }
       const t = actTurn({ trigger: 'owner' })
+      return guarded(t, async (): Promise<WriteResult> => {
       const r = await compose(owner, request)
       if (r.kind !== 'letter') {
         noLetter(t, r)
@@ -377,6 +384,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       // 门没让寄(两条路都送不到):这一轮先收成「等着」,下次续寄再开一轮
       if (!delivered) t.finish('failed', { endedAt: d.now(), errorCode: 'waiting' })
       return out === 'sent' || out === 'waiting' ? { status: out, id: p.id } : { status: 'failed', reason: out }
+      })
     }),
 
     preview: (request) => serial(async () => {
