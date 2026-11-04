@@ -353,5 +353,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
     command, phoneActions, routes,
+    /** 这条终端会话的那件事(M4c:列表行带上,App 点进 /matter/<id>);还没有 ⇒ null。 */
+    terminalMatterOf: (sessionId: string): string | null => { try { return matterStore.findBySurface('cli', sessionId)?.id ?? null } catch { return null } },
   }
 }

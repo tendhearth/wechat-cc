@@ -217,6 +217,12 @@ describe('GET /m/api/cli/sessions(终端会话登记处,v76)', () => {
     const many = await run({ cliSessions: () => Array.from({ length: 80 }, (_, i) => ({ ...view, session_id: `s${i}` })) }, '/m/api/cli/sessions')
     expect(many!.body.sessions.length).toBe(50)
   })
+  it('有那件事 ⇒ 行里带 matter_id(App 点进 /matter/<id>,M4c)、过 schema;没有 ⇒ 不带', async () => {
+    const r = await run({ cliSessions: () => [{ ...view, matter_id: 'deadbeef' }, { ...view, session_id: 'other' }] }, '/m/api/cli/sessions')
+    PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r!.body)
+    expect(r!.body.sessions[0].matter_id).toBe('deadbeef')
+    expect('matter_id' in r!.body.sessions[1]).toBe(false)
+  })
 })
 
 describe('送进窗口的结果(10-20 真机)', () => {
