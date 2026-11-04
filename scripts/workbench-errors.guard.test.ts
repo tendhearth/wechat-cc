@@ -97,7 +97,8 @@ describe('桌面路由里直接写死的 {status, body:{error}} 与表一致(10-
     expect(MODULE_UNAVAILABLE_CODE.workbench).toBe('workbench_not_wired')
     expect(workbenchErrorHttp(MODULE_UNAVAILABLE_CODE.workbench!, 'desktop')).toEqual({ status: 503, error: 'workbench_not_wired' })
     const gate = readFileSync(join(ROOT, 'src', 'daemon', 'internal-api', 'index.ts'), 'utf8')
-    expect(gate).toMatch(/send\(res, 503, \{ error: legacy \}/)
+    // P3b 起模块门在共用的 dispatch 里,回 { status, body },由两个监听各自写出去
+    expect(gate).toMatch(/return \{ status: 503, body: \{ error: legacy \} \}/)
   })
 })
 

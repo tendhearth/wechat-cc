@@ -29,7 +29,7 @@ import { hasLlmKey } from '../llm-keys'
 
 export interface WireSettingsPanelDeps {
   /** 面板直接读的那几项 opts(只有这些)。 */
-  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'cliSessions' | 'journal' | 'llmHealth' | 'matters' | 'overseerToday' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
+  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'cliSessions' | 'journal' | 'llmHealth' | 'matters' | 'overseerToday' | 'panelDispatch' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
   connections: Parameters<typeof makeSettingsPanel>[0]['connections']
   stateDir: string
   db: Db
@@ -213,5 +213,7 @@ return makeSettingsPanel({
   log: (tag, line) => log(tag, line),
   // 内部 API 同一个 token-registry(梳理第 6 步);没接上(测试)⇒ 面板自建。
   ...(opts.panelTokens ? { tokens: opts.panelTokens } : {}),
+  // `/v1/*` 交给内部 API 同一个分发(P3b);没接上(测试)⇒ 面板上的 `/v1` 一律 404。
+  ...(opts.panelDispatch ? { v1: opts.panelDispatch } : {}),
 })
 }

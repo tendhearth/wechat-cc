@@ -49,6 +49,8 @@ export interface WireMainOpts {
   providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
   /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
+  /** 内部 API 的分发 → 手机设置面板收到的 `/v1/*`(P3b:一个分发、两个监听)。 */
+  panelDispatch?: import('../internal-api/types').PanelDispatch
   /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
   matters?: import('../../ports/matters').MatterStore
   stateDir: string

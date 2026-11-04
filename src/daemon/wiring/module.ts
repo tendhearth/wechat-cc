@@ -76,6 +76,7 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
         cliActions: cli.phoneActions,
         matters: f.matters, guardRuntime: guardRt, subsystems: () => f.sup.statuses(), providerRefusals: () => f.providerRefusals.all(),
         panelTokens: internalApi.panelTokens,
+        panelDispatch: internalApi.panelDispatch,
         commands: owner.commands,
         stickers: ctx.get<StickersFeature>('stickers').lib,
         requestRestart: (reason) => f.requestRestart(reason),

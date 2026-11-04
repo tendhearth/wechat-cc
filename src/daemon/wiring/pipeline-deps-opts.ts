@@ -38,6 +38,8 @@ export interface PipelineDepsOpts {
   providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
+  /** 内部 API 的分发 → 手机设置面板收到的 `/v1/*`(P3b:一个分发、两个监听)。 */
+  panelDispatch?: import('../internal-api/types').PanelDispatch
   matters?: import('../../ports/matters').MatterStore
   stateDir: string
   db: import('../../lib/db').Db
