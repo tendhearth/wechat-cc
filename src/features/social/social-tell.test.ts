@@ -75,13 +75,25 @@ describe('**report / blocking 推后不是不送**:门的「待说」队列接�
     await b.flush()
     expect(b.sent).toEqual(['介绍成了'])
   })
-  it('CC 自己的见闻(initiative)推后 ⇒ 不排队', async () => {
+  it('CC 自己的见闻(initiative)推后 ⇒ 也排队(S2c,24 小时),过了免打扰单独补说,不并进「刚才没顾上」那一句', async () => {
     let q = true
     const s = setup({ quiet: () => q })
     await s.tell('social_story', '去老王家串门了')
+    await s.tell('social_mail', '老王给你写信了')
     q = false
     await s.flush()
-    expect(s.sent).toEqual([])
+    expect(s.sent).toEqual(['老王给你写信了', '去老王家串门了'])
+  })
+  it('见闻一次补说最多一条:留最新的,更早的留在背包(不补说)', async () => {
+    let q = true
+    const s = setup({ quiet: () => q })
+    await s.tell('social_story', '去老王家串门了')
+    await s.tell('social_story', '又去小李家串门了')
+    q = false
+    await s.flush()
+    await s.flush()
+    expect(s.sent).toEqual(['又去小李家串门了'])
+    expect(s.db.query('SELECT COUNT(*) AS n FROM speech_pending').get()).toEqual({ n: 0 })   // 更早那条不留着等下一拍
   })
   it('超过 20 条 ⇒ 丢最老的、记日志;说的时候带一句「还有 N 件更早的」', async () => {
     let q = true

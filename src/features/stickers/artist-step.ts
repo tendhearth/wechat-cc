@@ -22,7 +22,8 @@ export interface StickerArtistStepDeps {
 /**
  * 新贴纸那一句(觅食式表情生长)改走 SpeechPolicy(第三批 3a):别烦我 / 免打扰 / 都送不到由门判;
  * 图跟字走同一条路(微信发文件、App 记表情引用)。图发不出去 ⇒ 什么都不说,**不退成一句光秃秃的文字**(整合者评审)。
- * 贴纸已经在库里了,以后照样会用到;这一句只是「我画了张新的」的小报告,不补发。
+ * 被推后(免打扰 / 都送不到)⇒ 交给门的「待说」队列,**6 小时内**过了免打扰再说(S2c,主人 11-04;kinds.ts 的 keepMs),
+ * 图和字一起补;过期了就不说了(贴纸已经在库里,照样会用到)。被拒(别烦我)⇒ 不说、不补。
  */
 export async function announceNewSticker(
   d: { speech?: SpeechPolicy; stickers: { resolve(tag: string): string | null }; log: (tag: string, line: string) => void },
@@ -33,14 +34,23 @@ export async function announceNewSticker(
   const path = d.stickers.resolve(mood)
   if (!path) { d.log('STICKERS', `new-sticker notice skipped: no file for mood=${mood}`); return 'skipped' }
   let sent = false
+  const text = newStickerLine(mood)
   const outcome = await d.speech.say({ kind: 'sticker', chatId: ownerChat }, async (turn) => {
     if (!(await turn.sendSticker(ownerChat, mood, path))) { d.log('STICKERS', `new-sticker notice not sent: sticker undeliverable (mood=${mood})`); return }
     sent = true
-    await turn.sendText(ownerChat, `我画了张新表情!以后想说「${mood}」的时候就用它~`)
+    await turn.sendText(ownerChat, text)
   })
-  if (!('allow' in outcome)) { d.log('STICKERS', `new-sticker notice ${'defer' in outcome ? 'deferred' : 'dropped'}: ${outcome.reason}`); return 'defer' in outcome ? 'deferred' : 'dropped' }
+  if ('defer' in outcome) {
+    const kept = d.speech.keep({ kind: 'sticker', chatId: ownerChat, text, attach: { sticker: { mood, path } } })
+    d.log('STICKERS', `new-sticker notice deferred: ${outcome.reason}${kept ? ' — kept to say later (6h)' : ''}`)
+    return 'deferred'
+  }
+  if (!('allow' in outcome)) { d.log('STICKERS', `new-sticker notice dropped: ${outcome.reason}`); return 'dropped' }
   return sent ? 'sent' : 'undeliverable'
 }
+
+/** 新贴纸那一句(当时说、补说都是这一句)。 */
+export const newStickerLine = (mood: string): string => `我画了张新表情!以后想说「${mood}」的时候就用它~`
 
 /**
  * 觅食式表情生长 (2026-08-25) — once a day CC draws itself a sticker for

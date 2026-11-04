@@ -188,7 +188,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     app: () => companionAppRef.current,
     log: (tag, line) => log(tag, line),
   })
-  const speech = wireSpeech({ stateDir, db, chatPrefs, proactive, log: (tag, line) => log(tag, line) })
+  const speech = wireSpeech({
+    stateDir, db, chatPrefs, proactive, log: (tag, line) => log(tag, line),
+    // 推后了的明信片补发(S2c):跟当时发一样走 ilink.sendFile —— 失败是抛错,折成 false
+    sendFile: async (chatId, path) => { try { await ilink.sendFile(chatId, path); return true } catch { return false } },
+  })
 
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
   // often tens of seconds to minutes. The shared a2aDeps.client's 10s timeout
