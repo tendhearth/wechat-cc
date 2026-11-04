@@ -2,6 +2,7 @@
  * 画室那一拍:反省那一拍(companion introspect)的最后一步调它(wiring/introspect-steps.ts 的 atelierStep)。
  * 以前写在 wiring/index.ts 里,搬进功能目录时原样挪过来,只把用到的 boot / opts 收成 `AtelierTickDeps`。
  */
+import { ccActsFor } from '../../adapters/store/cc-acts'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Db } from '../../lib/db'
@@ -19,6 +20,8 @@ export interface AtelierTickDeps {
   cheapEval: () => JsonAtelierPlannerDeps['evaluate'] | null
   log: (tag: string, line: string) => void
 }
+
+const ATELIER_RAN = new Set<string>(['created', 'render_failed', 'save_failed'])
 
 export function makeAtelierTick(opts: AtelierTickDeps): (o?: { nowIso?: string }) => Promise<void> {
   // Atelier is deliberately lazy and default-off. The callback is mounted
@@ -54,6 +57,7 @@ export function makeAtelierTick(opts: AtelierTickDeps): (o?: { nowIso?: string }
       } catch (err) { opts.log('ATELIER', `observations unavailable: ${String(err)}`) }
       try { persona = readFileSync(join(memoryRoot, chatId, 'persona.md'), 'utf8') } catch { /* persona is optional */ }
     }
+    const startedAt = Date.now()
     const result = await runAtelierCycle({
       stateDir: opts.stateDir,
       mode: cfg.atelier_mode,
@@ -68,6 +72,14 @@ export function makeAtelierTick(opts: AtelierTickDeps): (o?: { nowIso?: string }
       }),
       log: (tag, line) => opts.log(tag, line),
     })
+    // 「画室」那件事的一轮(M5b):真动了笔才记(画成了 / 渲染或保存失败);没冲动、节奏没到、隐私拦下的不记
+    if (opts.db && ATELIER_RAN.has(result.status)) {
+      try {
+        const t = ccActsFor(opts.db, opts.log).begin('atelier', { startedAt })
+        if (result.status === 'created') { t.step('artifact', { work: result.recordId, shared: result.shared }); t.finish('completed') }
+        else t.finish('failed', { errorCode: result.status })
+      } catch { /* 只少一轮记录 */ }
+    }
     opts.log('ATELIER', result.status === 'created'
       ? `cycle created record=${result.recordId} shared=${result.shared}`
       : `cycle ${result.status}`)

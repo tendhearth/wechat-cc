@@ -110,10 +110,12 @@ export interface StickerArtistDeps {
   lib: StickerLib
   cheapEval: (prompt: string) => Promise<string>
   /** Announce the new sticker to the owner (send sticker + a line of text). */
-  notify: (mood: string) => Promise<void>
+  notify: (mood: string) => Promise<string | void>
   log: (tag: string, line: string) => void
   rasterize?: (svg: string, workDir: string) => Promise<string | null>
   now?: () => number
+  /** CC 自己做的事(M5b):真画了一次 = 「贴纸」那件事的一轮;不给 ⇒ 不记。 */
+  acts?: Pick<import('../../ports/cc-acts').CcActs, 'begin'>
 }
 
 export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: string | null }> {
@@ -138,28 +140,40 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
 
   const workDir = join(d.stateDir, 'tmp-sticker-artist')
   mkdirSync(workDir, { recursive: true })
+  // 「贴纸」那件事的一轮(M5b):过了节奏门、真要画了才开;每条出口都收(finish 只收一次)
+  const NO_TURN = { id: null, step() {}, finish() {} }
+  let act: ReturnType<NonNullable<StickerArtistDeps['acts']>['begin']> = NO_TURN
+  try { act = d.acts?.begin('stickers', { startedAt: now(), policy: { mood } }) ?? NO_TURN } catch { act = NO_TURN }
+  const actFail = (errorCode: string) => act.finish('failed', { endedAt: now(), errorCode })
   try {
     const raw = await d.cheapEval(buildStickerPrompt(mood, { variation: target.variation }))
     const svg = composeCcInk(raw, 'sticker')
     if (!svg) {
+      actFail('unsafe_svg')
       d.log('STICKERS', `artist: unsafe/absent SVG for 「${mood}」 — retry tomorrow`)
       return { drawn: null }
     }
     const png = await (d.rasterize ?? rasterizeSvgDarwin)(svg, workDir)
     if (!png) {
+      actFail('render_failed')
       d.log('STICKERS', `artist: rasterize unavailable/failed for 「${mood}」`)
       return { drawn: null }
     }
     d.lib.save(png, [mood], `CC 自己画的「${mood}」表情${target.variation ? '(新版本)' : ''}`)
     d.log('STICKERS', `artist: drew 「${mood}」 (${png.split('/').pop()})`)
+    act.step('artifact', { mood, file: png.split('/').pop() ?? '', variation: !!target.variation })
+    let announced = 'failed'
     try {
-      await d.notify(mood)
+      announced = (await d.notify(mood)) ?? 'unknown'
     } catch (e) {
       d.log('STICKERS', `artist: notify failed (sticker kept): ${String(e)}`)
     }
+    act.step('delivery', { mood, result: announced }, { status: announced === 'sent' ? 'completed' : 'failed' })
+    act.finish('completed', { endedAt: now() })
     return { drawn: mood }
   } catch (e) {
     // 评审 #193 P2-3:被网络守护拒了 = 根本没试过(一个请求都没发),不吃掉这一期的机会。
+    actFail(isNetworkUnprotectedError(e) ? 'network_unprotected' : 'threw')
     if (isNetworkUnprotectedError(e)) {
       // 只撤这一次的标记(第二轮评审 #194):标记已经不是我们写的那一份(期间别人又写过)就不动。
       try {
