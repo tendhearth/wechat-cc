@@ -4,7 +4,8 @@ import { greetingFor, ccPresence, waitingRows, waitingHeader, ccBubblePreview } 
 import { mountNowHero } from './now-hero.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { icon } from './icons.js'
-import { HOME_GROUP_WORDS, STATUS_TABLE } from '../generated/status-table.js'
+import { HOME_GROUP_WORDS } from '../generated/status-table.js'
+import { statusGlyphHtml } from './matter-status.js'
 
 const AGENTS = createAgentAvatars()
 
@@ -16,9 +17,6 @@ function when(at, now) {
   return d.toDateString() === now.toDateString() ? hm : `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
 }
 
-// 状态表的图标名 ⇒ 桌面这套图标里最接近的那个;在做不画(同 App,行里留空位)。
-/** @type {Record<string,string>} */
-const STATUS_ICON = { shield: 'square-lock-01', done: 'checkmark-circle-02', alert: 'alert-02', message: 'mail-01', pause: 'stop' }
 
 // 动作文字保留在按钮的可访问名称中;视觉上只留本地箭头,让请求原文本身成为重点。
 /** @param {HTMLElement} go @param {string} label */
@@ -31,7 +29,7 @@ function requestArrow(go, label) {
 /**
  * onResolveTerminal:终端里等批准的那一行点开小窗后按了「允许 / 拒绝」(2026-10-14)。缺席 ⇒ 行不能点。
  * 返回 true = 拍板了;false = 那一项已经不在(微信 / 桌宠刚拍过、过期);抛错 = 没送出去。
- * onOpenAll:「全部 →」(一起做那一页成了「全部」:按项目列出所有的事 + 详情,设计稿 2026-10-31 U4)。
+ * onOpenAll:「全部 →」(原来的一起做那一页成了「全部」:按项目列出所有的事 + 详情,设计稿 2026-10-31 U4)。
  * @param {{root:HTMLElement,presencePoller:{subscribe:(cb:(p:any)=>void)=>()=>void},onOpenTask:(id:string)=>unknown,onOpenAll?:()=>void,onResolveTerminal?:(hash:string,decision:'allow'|'deny')=>Promise<boolean>,onModeChange?:(m:'home'|'chat')=>void,now?:()=>Date}} o
  */
 export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onResolveTerminal, onModeChange, now = () => new Date() }) {
@@ -196,12 +194,11 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     const t = document.createElement('p'); t.className = 't'; t.textContent = r.title; text.append(t)
     if (r.caption) { const d = document.createElement('p'); d.className = 'd'; d.textContent = r.caption; text.append(d) }
     if (r.detail) { const x = document.createElement('p'); x.className = 'x'; x.textContent = r.detail; text.append(x) }
-    const mark = document.createElement('span'); mark.className = 'now-row-status'
-    const glyph = STATUS_TABLE[r.status].icon
-    if (glyph) mark.innerHTML = icon(STATUS_ICON[glyph], { size: 16 })
+    // 记号与「全部」、详情同一个(matter-status.js):状态表的图标与色调。
+    box.insertAdjacentHTML('afterbegin', statusGlyphHtml(r.status))
     const who = document.createElement('span'); who.className = 'now-row-agents'
     who.innerHTML = AGENTS.agentAvatarsHtml(r.agents, { cls: 'now-agents', nameOf: id => r.agentNames?.[id] })
-    box.append(mark, text, who); li.append(box)
+    box.append(text, who); li.append(box)
     return li
   }
   /** @param {'working'|'back'} key @param {import('./home-list.js').HomeRow[]} rows */

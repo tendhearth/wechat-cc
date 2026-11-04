@@ -103,8 +103,8 @@ describe('waitingHeader(终审 M3:读不到不等于没有)', () => {
     expect(waitingHeader({ tasks: [task], stale: false }, 2)).toEqual({ hidden: false, unknown: false, title: '3 件事等你' })
     expect(waitingHeader(null, 1)).toEqual({ hidden: false, unknown: false, title: '1 件事等你' })
     expect(waitingHeader({ tasks: [], stale: false }, 0)).toEqual({ hidden: true, unknown: false, title: '' })
-    // 一起做那边读不到、终端有等你的 ⇒ 列终端的,标题说清楚另一半不知道(不是「暂时不知道」把终端的也藏掉)
-    expect(waitingHeader({ tasks: [task], stale: true }, 1)).toEqual({ hidden: false, unknown: false, title: '1 件事等你 · 一起做那边暂时读不到' })
+    // 交给 CC 的事读不到、终端有等你的 ⇒ 列终端的,标题说清楚另一半不知道(不是「暂时不知道」把终端的也藏掉)
+    expect(waitingHeader({ tasks: [task], stale: true }, 1)).toEqual({ hidden: false, unknown: false, title: '1 件事等你 · 其余的暂时读不到' })
   })
 })
 

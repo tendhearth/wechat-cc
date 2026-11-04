@@ -6,6 +6,7 @@
 import { QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from '../generated/status-table.js'
 import { formatRelativeTime } from '../view.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
+import { taskStatusKey } from './matter-status.js'
 
 const AGENTS = createAgentAvatars()
 export const BACK_WINDOW_MS = 24 * 3_600_000
@@ -16,19 +17,8 @@ const count = (/** @type {unknown} */ n) => typeof n === 'number' && Number.isSa
 /** @typedef {{session_id:string,source?:string,displayName?:string,status:string,stale?:boolean,project?:string,last_summary?:string|null,last_event_at?:number,now?:{text?:string}|null}} HomeSession */
 /** @typedef {{id:string,source:'task'|'terminal',title:string,caption:string|null,detail:string|null,status:StatusKey,agents:string[],agentNames?:Record<string,string>,updatedAt:number}} HomeRow */
 
-/**
- * 同 App 的 statusOf(apps/app/src/view/status.ts):等你另算,这里只看任务自己。
- * 多一条桌面才看得到的:老 daemon 不给 phase 时,会话留着、前台空着、后台也没活 ⇒ 这一轮做完了(同 workbench-runtime.js 的「会话保留中」)。
- * @param {{status:string,phase?:string,runtime?:{retained?:boolean,foreground?:string,backgroundCount?:number}}} task @returns {StatusKey}
- */
-export function taskStatusKey({ status, phase, runtime }) {
-  if (phase === 'failed' || status === 'failed') return 'failed'
-  if (status === 'cancelled' || phase === 'cancelled' || status === 'interrupted' || phase === 'interrupted') return 'stopped'
-  if (phase === 'replied') return 'replied'
-  if (status === 'completed' || phase === 'completed' || phase === 'done') return 'done'
-  if (!phase && status === 'running' && runtime?.retained && runtime.foreground === 'idle' && !count(runtime.backgroundCount)) return 'replied'
-  return 'working'
-}
+// 一件事自己的状态 ⇒ 状态表的哪一格:和「全部」、详情共用一份(matter-status.js)。
+export { taskStatusKey }
 
 /** 终端会话:在跑 ⇒ 在做,歇着 ⇒ 这一轮做完了(同 App 的 terminalStatusKey)。 @param {string} s @returns {StatusKey} */
 const sessionStatusKey = s => s === 'running' ? 'working' : s === 'idle' ? 'replied' : 'done'
@@ -82,6 +72,6 @@ export function homeGroups(input) {
   const backAll = rows.filter(r => back(r.status))
   const windowMs = input.backWindowMs === undefined ? BACK_WINDOW_MS : input.backWindowMs
   const backRecent = windowMs === null ? backAll : backAll.filter(r => r.updatedAt >= now - windowMs)
-  return { working: rows.filter(r => r.status === 'working'), back: backRecent, // 「全部」(一起做那一页)只列一件件事:窗口外的终端会话不列也不数,免得许诺一个找不到的数
+  return { working: rows.filter(r => r.status === 'working'), back: backRecent, // 「全部」只列一件件事:窗口外的终端会话不列也不数,免得许诺一个找不到的数
   moreCount: backAll.filter(r => r.source === 'task').length - backRecent.filter(r => r.source === 'task').length }
 }

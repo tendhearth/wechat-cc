@@ -96,6 +96,8 @@ button.now-row { cursor: pointer; }
 .now-row .d, .now-row .x { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; overflow-wrap: anywhere; }
 .now-row .x { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .now-row-status { display: inline-flex; color: var(--th-ink-soft); }
+/* 色调照状态表:只有「等你」上强调色(phone-wording.md);状态词本身不上。 */
+.now-row-status[data-tone="accent"] { color: var(--th-accent); }
 .now-row-agents { display: inline-flex; }
 button.now-row:hover .t, button.now-row:focus-visible .t { color: var(--th-accent); }
 button.now-row:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
@@ -111,7 +113,7 @@ div.now-terminal-row:hover .t { color: var(--th-ink); }
 .now-back[hidden] { display: none; }
 .now-back:hover, .now-back:focus-visible { color: var(--th-ink); }
 
-/* 输入框:一条胶囊,输入 + 圆形发送(稿里的 composer)。这一份 converse 也会被搬进「一起做」的会话面。 */
+/* 输入框:一条胶囊,输入 + 圆形发送(稿里的 composer)。 */
 .dashboard .cc-now-pane #converse-root { background: transparent; color: var(--th-ink); }
 .cc-now-pane .converse-compose { width: auto; margin: 0; }
 

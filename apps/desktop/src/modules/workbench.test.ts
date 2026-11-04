@@ -190,6 +190,26 @@ describe('workbench rendering', () => {
     expect(html).not.toMatch(/class="wb-task-meta"[\s\S]*?<time>/)
   })
 
+  it('「全部」uses the 此刻 row language: status-table glyph · title + one line · avatars, and never says 一起做 (U4, 2026-11-05)', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const t=(id:string,extra:Record<string,unknown>={})=>({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,...extra})
+    const html=renderWorkbench({tasks:[t('W',{pendingPermissionCount:1}),t('R',{phase:'replied'}),t('D',{status:'completed'}),t('X',{status:'failed'})],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    const row=(id:string)=>html.slice(html.indexOf(`data-task-id="${id}"`),html.indexOf('</button>',html.indexOf(`data-task-id="${id}"`)))
+    expect(html).toMatch(/<aside class="wb-sidebar"[^>]*><header><h2 id="wb-all-title">全部<\/h2>/)
+    expect(html).not.toContain('一起做')
+    // 等你的那一组标题与此刻同一个词(状态表的 HOME_GROUP_WORDS)
+    expect(html).toContain('<section class="wb-attention-list" aria-label="等你"><header><h3>等你</h3>')
+    for (const [id,key,tone] of [['W','waiting','accent'],['R','replied','inkSoft'],['D','done','inkSoft'],['X','failed','inkSoft']] as const) {
+      expect(html).toMatch(new RegExp(`class="wb-task now-row [^"]*" data-task-id="${id}"`))
+      expect(row(id)).toContain(`data-status-key="${key}"`)
+      expect(row(id)).toMatch(new RegExp(`<span class="now-row-status" data-tone="${tone}" aria-hidden="true"><svg `))
+    }
+    // 状态词照状态表;一项等你只写「等你决定」
+    expect(row('W')).toMatch(/class="wb-task-attention"[^>]*>等你决定<\/span>/)
+    expect(row('R')).toContain('>这一轮做完了</span>')
+    expect(row('X')).toContain('>没做成</span>')
+  })
+
   it('draws the agents who took part as an overlapping avatar stack, current one first, folding past four into +N', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task=(id:string,agents?:string[])=>({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null,...(agents?{agents}:{})})

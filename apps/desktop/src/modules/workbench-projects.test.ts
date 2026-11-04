@@ -17,7 +17,7 @@ it('starts a conversation inside the project without asking for its folder again
  expect(html).toContain('id="wb-create-form"')
  expect(html).toContain('id="wb-path" name="path" type="hidden" value="/work/site"')
  expect(html).not.toContain('data-action="choose-folder"')
- expect(html).toContain('新对话')
+ expect(html).toContain(' · 新的一件事')
 })
 
 it('groups managed tasks together without exposing their UUID folders as projects',()=>{

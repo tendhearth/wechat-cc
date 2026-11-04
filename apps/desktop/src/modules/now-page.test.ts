@@ -88,7 +88,7 @@ describe('mountNowPage', () => {
     expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(false)
     page.setTerminal([{ id: 'terminal', title: '想运行 ls', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'ls' }])
     expect((root.querySelector('#now-waiting') as HTMLElement).dataset.state).toBe('partial')
-    expect(root.querySelector('#now-waiting-title')!.textContent).toContain('一起做那边暂时读不到')
+    expect(root.querySelector('#now-waiting-title')!.textContent).toContain('其余的暂时读不到')
     expect(root.querySelector('#now-waiting-title')!.classList.contains('now-sr')).toBe(false)
     expect(root.querySelector('[data-task-id="old"]')).toBeNull()
     const row = root.querySelector<HTMLButtonElement>('.now-terminal button')!

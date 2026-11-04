@@ -36,7 +36,7 @@ for(const size of [{width:1400,height:850},{width:900,height:650},{width:390,hei
  const jump=page.getByRole('button',{name:'3 项等你处理，查看请求',exact:true})
  await expect(jump).toHaveText('3')
  const marker=page.locator('[data-task-id="A"] .wb-task-attention')
- await expect(marker).toHaveText('3')
+ await expect(marker).toHaveText('等你决定 · 共 3 项')
  await expect(marker).toHaveAttribute('title',/2 项权限请求等你确认，1 项问题等你回答/)
  await expect(page.locator('.wb-permissions h3')).toHaveText('需要你的决定')
  await expect(page.locator('.wb-task-head')).not.toContainText('等你处理')

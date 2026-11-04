@@ -18,7 +18,7 @@ export async function chooseWorkbenchProject(invokeWorkbenchApi) {
     dialog.className = 'wb-history-dialog wb-handoff-dialog wb-entry-dialog'
     dialog.setAttribute('aria-label', '交给 CC 做')
     dialog.innerHTML = `<form class="wb-entry-form">
-      <header class="wb-history-head"><div><h2>在哪个项目里做？</h2><p>选好后，可在一起做中检查要求并开始。</p></div></header>
+      <header class="wb-history-head"><div><h2>在哪个项目里做？</h2><p>选好后，可以再检查一遍要求，然后开始。</p></div></header>
       <div class="wb-handoff-body"><label for="wb-entry-project">项目</label>
         <select id="wb-entry-project" class="wb-select" autofocus>${projects.map((project, index) => `<option value="${index}">${escapeHtml(project.name)} · ${escapeHtml(project.path)}</option>`).join('')}</select>
       </div>
