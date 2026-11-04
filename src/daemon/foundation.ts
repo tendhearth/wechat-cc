@@ -18,6 +18,8 @@ import { consumePreviousRunEvidence, peekCleanShutdown } from '../lib/restart-ma
 import { makeMemoryFS } from '../adapters/store/memory-fs'
 import { makeConversationStore } from '../adapters/store/conversation-store'
 import { makeChatTurnRecords } from '../adapters/store/chat-turn-records'
+import { makeCcActs } from '../adapters/store/cc-acts'
+import { makeMatterLog } from '../adapters/store/matter-log'
 import { loadAllAccounts, type IlinkAccount } from './ilink-glue'
 import { makeMessagesStore } from '../lib/messages-store'
 import { makeJobsStore } from '../adapters/store/scheduled-jobs-store'
@@ -131,8 +133,14 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     voidedCards,
     // Per-turn observability store — written by the coordinator's recordTurn
     // (via bootstrap onTurnRecord) and read by internal-api GET /v1/turns.
-    // 对话的回合记录从这件对话的轮读(M3b);turn_records 不再写,表留着给回滚(M3c 删)
+    // 对话的回合记录从这件对话的轮读(M3b);turn_records 已删(M3c,v99)
     turnRecordStore: makeChatTurnRecords(db),
+    // CC 自己做的事(M5):每个发起方一件 act、每做一次一轮;开机先把上一次没收的轮记中断。发起方在 M5b 逐个接上。
+    ccActs: (() => {
+      const acts = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db), onError: (what, err) => log('CC_ACTS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) })
+      try { acts.interruptAll() } catch (err) { log('CC_ACTS', `interruptAll failed: ${err instanceof Error ? err.message : String(err)}`) }
+      return acts
+    })(),
     // 执行者「真被拒着」(地区不可用):只看真回合,一轮真完成才清(provider-refusals.ts)
     providerRefusals: makeProviderRefusals({ stateDir, log }),
     conversationStore,

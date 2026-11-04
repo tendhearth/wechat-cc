@@ -845,7 +845,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         .filter(m => phoneMayOpenMatter(m, owner))
         // 终端会话的那件事(M4a 起写)不进这份列表,除非点名要 kind=terminal:App 主页另有一排终端行(登记处),两份就重了
         // (11-04 真机:一个会话两行)。App 的终端详情并进 /matter(M4c)以后,由新版 App 自己点名来要。
-        .filter(m => kind !== null || (m as { kind?: unknown }).kind !== 'terminal')
+        // CC 自己做的事(act,M5)也一样:主人 10-31 定不混排,App 的「CC 最近在忙」点名 kind=act 来要。
+        .filter(m => kind !== null || !['terminal', 'act'].includes(String((m as { kind?: unknown }).kind)))
         .slice(0, 50)
       for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
       return json({ ok: true, matters: await withTaskState(deps.matters, matters) })
