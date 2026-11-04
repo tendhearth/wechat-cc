@@ -13,7 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { removeTempDir } from '../../lib/test-temp'
 import { createInternalApi, type InternalApi } from './index'
@@ -187,7 +187,7 @@ describe('原生会话:手机只见目录名、一页 30 / 20,不认 cwd / limit
     const r = await viaLocal('/v1/workbench/sessions?providerId=claude&limit=5&cwd=/Users/owner/secret/app', operator)
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual(PAGE)
-    expect(wb.listNativeHistory).toHaveBeenCalledExactlyOnceWith('claude', { q: '', limit: 5, cwd: resolve('/Users/owner/secret/app') })  // 路由按平台归一 cwd(Windows 上是 \Users\…)
+    expect(wb.listNativeHistory).toHaveBeenCalledExactlyOnceWith('claude', { q: '', limit: 5, cwd: normalize('/Users/owner/secret/app') })  // normalizeHistoryList 按平台 normalize(Windows 上是 \Users\…,不带盘符)
     const page = await viaLocal(`/v1/workbench/session?key=${KEY}&limit=7`, operator)
     expect(page.status).toBe(200)
     expect(await page.json()).toEqual(PREVIEW)
