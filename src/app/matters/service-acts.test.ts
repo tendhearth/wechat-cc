@@ -65,6 +65,15 @@ describe('matters service · CC 自己做的事',()=>{
     expect(parsed.success).toBe(true)
   })
 
+  it('M6e:「答完了、闲着」那一步(ready:<turnId>)不进轮视图;别的 system 步照旧在',async()=>{
+    const t=acts().begin('memory',{startedAt:10});t.step('system',{applied:{add:1}});t.finish('completed',{endedAt:20})
+    const id=ccActMatterId('memory')
+    log.writeItem({matterId:id,turnId:t.id!,kind:'system',status:'completed',key:`ready:${t.id}`,payload:{ready:true}})
+    const service=makeMattersService({store,log})
+    expect(service.withActs(store.list({kind:'act'}))[0]!.act?.latest?.steps).toEqual([{kind:'system',status:'completed',at:expect.any(Number),payload:{applied:{add:1}}}])
+    expect((await service.detail(id)).actTurns![0]!.steps.map(s=>s.payload)).toEqual([{applied:{add:1}}])
+  })
+
   it('不是 act 的详情不带 actTurns;读轮失败不掀翻详情',async()=>{
     store.create({id:'00000001',kind:'task',title:'t'})
     expect(await makeMattersService({store,log}).detail('00000001')).not.toHaveProperty('actTurns')

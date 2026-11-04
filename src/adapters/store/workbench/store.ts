@@ -12,6 +12,7 @@ import {makeTaskAttachmentStore} from '../../workbench/attachments'
 import {createAttachmentUploads} from '../../workbench/attachment-uploads'
 import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
 import {makeMatterLog} from '../matter-log'
+import {READY_STEP_PAYLOAD,readyStepKey} from '../../../domain/matters/ready-step'
 import {matterFeed} from '../matter-feed'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeCreationReceiptStore} from './creation-receipts'
@@ -168,6 +169,19 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     reviewHunks:makeReviewHunkLog(db,bump),
     /** 回退记录(v81):意图 / 已撤掉的轮 / 待告知执行者 / 撤销回退。 */
     rewinds:makeRewindStore(db,bump),
+    /**
+     * 「答完了、闲着」落成这件事上的一步(M6e 前半,domain/matters/ready-step.ts):最近一轮已经收了 ⇒ 在它上面写
+     * `system` / `ready:<turnId>` / `{ready:true}`;已经有了 ⇒ 什么都不写(不推进游标)。最近一轮还在跑 / 没收成 / 一轮都没有 ⇒ 不写。
+     * 不 bump 版本号:这一步主人看不见,详情的 version 与 `?since=` 不该因为它变。返回这次是不是新写的。
+     */
+    markReady:(id:string):boolean=>db.transaction(()=>{
+      const turn=db.query<{id:string;status:string},[string]>('SELECT id,status FROM matter_turns WHERE matter_id=? ORDER BY seq DESC LIMIT 1').get(id)
+      if(!turn||turn.status!=='completed')return false
+      const key=readyStepKey(turn.id)
+      if(matterLog.item(id,key))return false
+      matterLog.writeItem({matterId:id,turnId:turn.id,kind:'system',status:'completed',key,payload:{...READY_STEP_PAYLOAD}})
+      return true
+    })(),
     /** 时间线上的步(src 里读时间线读这个);`events` 是它的线上投影(WorkbenchTaskEvent),只给出口与测试。 */
     steps,
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,
