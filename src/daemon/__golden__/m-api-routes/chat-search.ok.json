@@ -1,0 +1,28 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "hits": [
+      {
+        "id": "m-in-1",
+        "role": "me",
+        "text": "发我报告",
+        "truncated": false,
+        "at": 1793843940000,
+        "source": "phone"
+      },
+      {
+        "id": "m-out-1",
+        "role": "cc",
+        "text": "报告在附件里。",
+        "truncated": false,
+        "at": 1793843940000,
+        "source": "phone"
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "ok": true,
+    "sent": 2,
+    "remaining": 0,
+    "skippedDiscarded": 1
+  }
+}

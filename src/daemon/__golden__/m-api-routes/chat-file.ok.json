@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "name": "report.md",
+    "mime": "text/markdown",
+    "size": 20,
+    "sha256": "689929ffa6cee40f11eb35705210a97389a2daccf55cea41bb0f37a817b55cba",
+    "offset": 0,
+    "nextOffset": 20,
+    "contentBase64": "IyDmiqXlkYoKCuWFqOi/h+OAggo="
+  }
+}

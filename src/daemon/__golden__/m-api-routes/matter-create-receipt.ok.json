@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "requestId": "22222222-2222-4222-8222-222222222222",
+    "taskId": "a1b2c3d4",
+    "created": false
+  }
+}

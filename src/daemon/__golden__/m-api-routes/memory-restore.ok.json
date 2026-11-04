@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "ok": true,
+    "restored": [
+      "爱喝美式"
+    ],
+    "note": "已经放回记忆里了。当初随这条一起从笔记里删掉的那几行不会回来。"
+  }
+}

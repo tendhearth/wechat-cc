@@ -1,0 +1,32 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "matter": {
+      "id": "c0ffee00",
+      "kind": "chat",
+      "title": "事 c0ffee00",
+      "status": "open",
+      "updatedAt": 1793843880000,
+      "ownerChatId": "o9golden-owner@im.wechat"
+    },
+    "events": [
+      {
+        "kind": "message",
+        "role": "owner",
+        "text": "发我报告",
+        "createdAt": 1793843910000
+      },
+      {
+        "kind": "message",
+        "role": "cc",
+        "text": "报告在附件里。",
+        "createdAt": 1793843940000
+      }
+    ]
+  }
+}
