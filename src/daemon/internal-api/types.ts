@@ -212,7 +212,7 @@ export interface InternalApiDeps {
    */
   petTurn?: PetTurnDep
   /**
-   * 在场变了的信号(S5):pet-signals、待决权限、一件事的 feed、入站消息落库这几个写口一动就回调。
+   * 在场变了的信号(S5):pet-signals、待决权限、一件事的 feed、write-hints(新消息、matters 行、觅食台、看到哪了)这几个写口一动就回调。
    * `presence` 主题(GET /v1/subscribe/presence)据此重算;不给 ⇒ 主题只靠到点和兜底重算。返回退订。
    */
   presenceChanged?: (cb: () => void) => () => void

@@ -5,12 +5,12 @@ import {routePresenceTopic,PRESENCE_OK} from './presence-topic'
 // Screenshots use real time, while the idle director uses page timers. Keep
 // that clock paused between steps, and let real HTTP polling settle before
 // advancing again; one 3-minute jump can outrun its asynchronous responses.
-// The presence subscription is a long poll: a request that already holds a cursor waits for a
-// change (presence-topic.ts) and is not polling, so only the immediate snapshots (start / refresh,
-// no cursor yet) have to land before the next step. calm() facts never change.
+// The presence subscription is a long poll. Under the paused page clock calm(page,0) answers
+// at once (no held request can outlive a clock step or hit its page-side timeout); the client
+// re-asks on a page timer and ignores unchanged cursors, so at most one request lands per step.
 async function idleClock(page:Page){
   const pending=new Set<Request>(),failed:string[]=[]
-  const isPoll=(request:Request)=>{const url=new URL(request.url());return url.pathname==='/v1/subscribe/presence'&&['0',null].includes(url.searchParams.get('since'))}
+  const isPoll=(request:Request)=>new URL(request.url()).pathname==='/v1/subscribe/presence'
   page.on('request',request=>{if(isPoll(request))pending.add(request)})
   page.on('requestfinished',request=>pending.delete(request))
   page.on('requestfailed',request=>{if(isPoll(request)){pending.delete(request);failed.push(`${request.url()}: ${request.failure()?.errorText}`)}})
@@ -63,8 +63,8 @@ async function entry(page:Page,shimUrl:string){
   await expect(page.locator('#pet-stage')).toHaveAttribute('aria-label','CC，已连接')
   await page.mouse.move(-10,-10)
 }
-async function calm(page:Page){
-  await routePresenceTopic(page,{presence:()=>PRESENCE_OK,pet:()=>({owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities:[]})})
+async function calm(page:Page,holdMs?:number){
+  await routePresenceTopic(page,{holdMs,presence:()=>PRESENCE_OK,pet:()=>({owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities:[]})})
 }
 
 async function traceCuriosity(page:Page){
@@ -101,7 +101,7 @@ async function awaitCuriosity(page:Page,advance:(ms:number)=>Promise<void>,calmS
 }
 
 test('CC completes its private curiosity through the real last image without inventing task activity',async({page,shimUrl,shim})=>{
-  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl)
+  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl)
   await traceCuriosity(page)
   const stage=page.locator('#pet-stage'),body=page.locator('#pet-body'),img=page.locator('#pet-sprite')
   const calmSince=await page.evaluate(()=>performance.now())
@@ -129,7 +129,7 @@ test('CC completes its private curiosity through the real last image without inv
 
 for(const reason of ['controls','working','permission','quiet','reduced','hidden','settings'] as const)
 test(`curiosity yields to ${reason} without a stale callback or replay`,async({page,shimUrl,shim})=>{
-  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
   const stage=page.locator('#pet-stage')
   await awaitCuriosity(page,advance,await page.evaluate(()=>performance.now()))
   if(reason==='controls')await page.locator('.pet-controls').dispatchEvent('pointerenter')
@@ -152,7 +152,7 @@ test(`curiosity yields to ${reason} without a stale callback or replay`,async({p
 })
 
 test('curiosity waits for the restarted calm episode and yields to work',async({page,shimUrl,shim})=>{
-  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
   await advance(1_000)
   expect(await page.evaluate(()=>(window as any).__curiosityTrace.some((p:any)=>p.value==='curiosity'))).toBe(false)
   await page.evaluate(()=>window.dispatchEvent(new Event('blur')))
@@ -173,7 +173,7 @@ test('older seven-performance kits retain authored peeking and the original doze
     for(const form of ['lit','unlit'])for(const name of ['life-peek-left','life-curiosity'])delete kit.forms[form].states[name]
     await route.fulfill({response,json:kit})
   })
-  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
   await advance(20_100)
   await expect(page.locator('#pet-sprite')).toHaveAttribute('src',/\/performance\/lit\/peek\//)
   await expect(page.locator('#pet-body')).toHaveAttribute('data-pet-performance','true')
@@ -189,7 +189,7 @@ for(const authored of [true,false])test(`idle CC visibly peeks, stops for nearby
     delete kit.performance
     await route.fulfill({response,json:kit})
   })
-  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl)
+  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl)
   const stage=page.locator('#pet-stage'),body=page.locator('#pet-body')
   await expect(stage).toHaveAttribute('data-pet-action','still')
   await advance(20_100);await expect(stage).toHaveAttribute('data-pet-action','peek')
