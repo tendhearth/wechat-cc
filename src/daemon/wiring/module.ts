@@ -67,10 +67,7 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
           ingestNudge: () => ingest()?.current()?.nudge ?? null,
         },
         workbench,
-        // 每行带上这条会话的那件事(M4c):App 的终端行点进 /matter/<id>
-        cliSessions: () => cli.cliEvents.list({ limit: 50 }).map(v => { const m = cli.terminalMatterOf(v.session_id); return m ? { ...v, matter_id: m } : v }),
         activity: ctx.get<Activity>('activity').activity, activityLog: ctx.get<Activity>('activity').activityLog,
-        overseerToday: cli.overseerToday,
         terminalHooks: cli.terminalHooks,
         // 手机拍板 / 说一句(终端会话那个功能造好的):拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
         cliActions: cli.phoneActions,

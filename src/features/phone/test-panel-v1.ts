@@ -23,7 +23,11 @@ export type LegacyChatFakes = MobileChatDeps & {
   search?(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
   transcribe?(audio: Buffer, mime: string): Promise<{ text: string }>
 }
-export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat'> & { chat?: LegacyChatFakes }
+/**
+ * `connections`(P3c-2 以前面板自己读;现在经 `/v1/connections` 读,生产里是 internalApi.provide({ connections }) 那一份):
+ * 老测试照旧交给面板这一层,这里转交内部 API。终端会话列表 / 「今天」是终端模块自己挂的路由,由测试经 `mounts` 交进来。
+ */
+export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat'> & { chat?: LegacyChatFakes; connections?: () => import('../../daemon/connections').ConnectionsSnapshot }
 
 /** 面板 deps(含老测试的假实现)→ 内部 API 要的 MattersService(照 pipeline-deps.ts 的 mattersService 接法)。 */
 export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersService | undefined {
@@ -57,7 +61,8 @@ export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersServi
  */
 export function withPanelV1(d: PanelDepsWithFakes, options: InternalApiOptions = {}, mounts: Partial<Record<ModuleName, RouteTable>> = {}): SettingsPanelDeps & { api: ReturnType<typeof createInternalApi> } {
   const matters = mattersServiceFromPanelDeps(d)
-  const api = createInternalApi({ stateDir: d.stateDir, daemonPid: 1, ...(matters ? { matters } : {}) }, options)
+  const api = createInternalApi({ stateDir: d.stateDir, daemonPid: 1, ...(matters ? { matters } : {}), ...(d.connections ? { connections: d.connections } : {}) }, options)
   for (const [name, table] of Object.entries(mounts)) if (table) api.mount(name as ModuleName, table)
-  return { ...(d as SettingsPanelDeps), v1: api.panelDispatch, api }
+  const { connections: _c, ...panel } = d
+  return { ...(panel as SettingsPanelDeps), v1: api.panelDispatch, api }
 }

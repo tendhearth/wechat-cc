@@ -29,8 +29,7 @@ import { hasLlmKey } from '../llm-keys'
 
 export interface WireSettingsPanelDeps {
   /** 面板直接读的那几项 opts(只有这些)。 */
-  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'cliSessions' | 'journal' | 'llmHealth' | 'matters' | 'overseerToday' | 'panelDispatch' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
-  connections: Parameters<typeof makeSettingsPanel>[0]['connections']
+  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'journal' | 'llmHealth' | 'matters' | 'panelDispatch' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
   stateDir: string
   db: Db
   boot: Bootstrap
@@ -53,17 +52,14 @@ export interface WireSettingsPanelDeps {
 }
 
 export function wireSettingsPanel(d: WireSettingsPanelDeps) {
-  const { opts, connections, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, mattersService, memoryNightly } = d
+  const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, mattersService, memoryNightly } = d
   const { remoteCfg, remoteTunnel, push: phonePush, owner: phoneOwner, chat: phoneChat } = d.phone
 // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
 const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
 return makeSettingsPanel({
-  connections,
   // 执行者叫什么(收敛清单 ⑥):唯一出处 registry;App 读行里的 displayName,不存名字表。
   executorName: (id: string) => boot.registry.namesOf(id).name,
-  ...(opts.cliSessions ? { cliSessions: opts.cliSessions } : {}),
   ...(opts.cliActions ? { cliActions: opts.cliActions } : {}),
-  ...(opts.overseerToday ? { overseerToday: opts.overseerToday } : {}),
   ...(phoneSessions ? { sessions: phoneSessions } : {}),
   // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
   ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),

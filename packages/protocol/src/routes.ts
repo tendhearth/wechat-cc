@@ -219,7 +219,8 @@ const ROUTE_TABLE = {
   'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
   'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
   // 「CC 的连接」:带插件目录与原因,只给 admin。
-  'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-2(手机原 /m/api/connections):手机令牌也走这一条,处理器按 caller 去掉 detail(routes-connections.ts);只给设备。
+  'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 桌面「连接手机」(plan 7a):铸 admin 链接令牌 / 打开远程隧道,只给 operator 凭据。
   // 桌面(原 lib.rs 注释):出码(必要时打开远程隧道)与轮询已配对设备。
   'POST /v1/phone/link': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
@@ -345,13 +346,16 @@ const ROUTE_TABLE = {
   // 终端会话登记处(v76):列出主人所有终端会话的路径、最后一句、等批准的命令 —— 主人的私事,admin。
   // 桌面(原 lib.rs / workbench-proxy.ts 注释):此刻「N 件事等你」里列出终端里等批准的 Claude Code / Codex,只读。
   // 拍板不走这里,走 pet_permission_resolve(POST /v1/permissions/resolve)。
-  'GET /v1/cli/sessions': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-2(手机原 /m/api/cli/sessions):手机令牌也走这一条,处理器按 caller 回手机那一份(只给目录名、不给 cwd,
+  // features/terminal/phone-sessions.ts);只给设备。
+  'GET /v1/cli/sessions': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):往主人终端里正在干活的会话里送话 —— admin,
   // 不给 operator(桌面 / CLI 没有这个入口;主人自己说走微信「@码」/ 手机)。路由里另外只认主人那条聊天的会话令牌。
   'POST /v1/cli/say': { module: 'terminal', desktop: { tier: 'admin' } },
   'GET /v1/cli/say': { module: 'terminal', desktop: { tier: 'admin' } },
   // 「今天」一眼看完(2026-10-14):同上一份登记处 + 一起做的标题与待批 —— 主人的私事,admin。
-  'GET /v1/overseer/today': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'] } },
+  // P3c-2(手机原 /m/api/today):手机令牌也走这一条,同一份(只有目录名);只给设备。
+  'GET /v1/overseer/today': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
   // 读日历(对标 #8):日程是主人的私事。
   'GET /v1/calendar/agenda': { module: 'calendar', desktop: { tier: 'admin' } },
   // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):改主人 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json,admin。
@@ -634,20 +638,14 @@ const ROUTE_TABLE = {
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
   'GET /m/api/chat/model': { phone: { link: 'none' } },
   'POST /m/api/chat/model': { phone: { link: 'none' } },
-  // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
-  'GET /m/api/connections': { phone: { link: 'none' } },
   // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
   'GET /m/api/sessions': { phone: { link: 'none' } },
   'GET /m/api/session': { phone: { link: 'none' } },
-  // 终端会话登记处(v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话 —— 谁在跑、谁在等批准
-  'GET /m/api/cli/sessions': { phone: { link: 'none' } },
   // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
   'POST /m/api/cli/permission': { phone: { link: 'none' } },
   'POST /m/api/cli/say': { phone: { link: 'none' } },
   // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
   'GET /m/api/cli/activity': { phone: { link: 'none' } },
-  // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;与微信「日报」同一份
-  'GET /m/api/today': { phone: { link: 'none' } },
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
   'GET /m/api/session/continue': { phone: { link: 'none' } },
   'POST /m/api/session/continue': { phone: { link: 'none' } },

@@ -13,7 +13,7 @@
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 import {
-  Attachment, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, MATTER_ORIGINS, Matter, MatterDetail, MatterEvent,
+  Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, MATTER_ORIGINS, Matter, MatterDetail, MatterEvent,
   MatterSayResult, OverseerToday, WorkbenchExecutorCapabilities,
 } from './api'
 
@@ -1356,7 +1356,12 @@ const CliSessionsRowShape = z.object({
   live_window: z.boolean().optional(),
   now_step: z.string().nullable().optional(),
 })
-export const CliSessionsResponse = z.object({ ok: z.literal(true), sessions: z.array(CliSessionsRowShape) })
+// 手机令牌(设备 / 链接,P3c-2)读这一条回的是手机那一份(api.ts 的 CliSessionRow:只给目录名、没有 cwd / origin_agent,
+// 带拍板的码、此刻那一步、displayName)—— 处理器按 caller 选,一次回包里只会是其中一种。
+export const CliSessionsResponse = z.union([
+  z.object({ ok: z.literal(true), sessions: z.array(CliSessionsRowShape) }),
+  z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }),
+])
 
 // ── POST /v1/cli/say ──
 // TerminalSayStart 的 ok:true 分支;ok:false 一律走 4xx(workbench-errors 表)。

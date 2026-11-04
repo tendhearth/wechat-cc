@@ -43,13 +43,12 @@ export interface WirePhoneDeps {
   companionConverse: CompanionConverse
   mattersService: MattersService | null
   memoryNightly: MemoryNightlyRuntime
-  connections: WireSettingsPanelDeps['connections']
   /** CC 开口那道门:工作台 / 终端会话的原生推送先问它(speech/push-gate.ts)。 */
   speech: Pick<import('../speech/policy').SpeechPolicy, 'ask'>
 }
 
 export function wirePhone(d: WirePhoneDeps) {
-  const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections, speech } = d
+  const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, speech } = d
   // 簇里晚到的那一样(面板要 phonePush 当值,phonePush 又要读面板):建好就填,读的地方判空。
   const late: { panel: ReturnType<typeof wireSettingsPanel> | null } = { panel: null }
 // 微信可点开的图形设置面板 (2026-08-25) — lazily-started LAN server, every
@@ -137,7 +136,7 @@ if (phoneOwner) {
 }
 // 设置面板:要 phonePush / 主人对话 / 手机对话当值;建好立刻填进 late,前面那几个闭包从此读得到。
 const settingsPanel = wireSettingsPanel({
-  opts, connections, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, mattersService, memoryNightly,
+  opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, mattersService, memoryNightly,
   phone: { remoteCfg, remoteTunnel, push: phonePush, owner: phoneOwner, chat: phoneChat },
 })
 late.panel = settingsPanel

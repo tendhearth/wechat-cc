@@ -31,14 +31,10 @@ export interface WireMainOpts {
   /** 比 wireMain 晚才有的几样(拉消息、入站管道、App 一轮、知识库催一下):调用时现取,模块容器的 ctx.late。 */
   late: PipelineDepsLate
   workbench?: import('../../features/workbench').WorkbenchService
-  /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
-  cliSessions?: () => import('../../ports/cli-session').CliSessionView[]
   /** 「CC 做过的事」(B9):透传给手机面板。 */
   activity?: import('../../features/phone').MobileActivityDeps
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../../features/terminal').CliPhoneActions
-  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
-  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
   terminalHooks?: Pick<import('../../features/terminal').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02,network-gate 模块建):闸门 + 健康快照 + 后台任务跳过包装。缺省 = 老行为。 */

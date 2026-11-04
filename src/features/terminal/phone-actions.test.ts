@@ -12,6 +12,7 @@ import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { mobileReadsRoutes } from '../phone/mobile-reads'
+import { phoneCliSessionRows } from './phone-sessions'
 import { routePhone } from '../phone/phone-route-table'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -222,8 +223,8 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W3', cwd: '/w/proj' })
     hub.ingest({ source: 'codex', kind: 'stop', session_id: 'W4', cwd: '/w/proj' })
     windows.set('W3', 'a'); windows.set('W4', 'b')
-    const r = await routePhone(mobileReadsRoutes({ cliSessions: () => hub.list(), cliActions: actions() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
-    const body = await r!.json()
+    // 手机那一份列表(P3c-2 起是 GET /v1/cli/sessions 按 caller 回的;旧路径 /m/api/cli/sessions 是它的别名)
+    const body = { ok: true, sessions: phoneCliSessionRows({ list: () => hub.list(), actions: actions() }) as any[] }
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(body)
     const by = (id: string) => body.sessions.find((s: { session_id: string }) => s.session_id === id)
     expect(by('W3').live_window).toBe(true)
@@ -233,8 +234,9 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
 
 describe('POST /m/api/cli/permission、/m/api/cli/say 与列表里的码', () => {
   const post = async (cliActions: ReturnType<typeof actions> | undefined, path: string, body: unknown, method = 'POST') => {
+    if (path === '/m/api/cli/sessions') return { status: 200, body: { ok: true, sessions: phoneCliSessionRows({ list: () => hub.list({ limit: 50 }), ...(cliActions ? { actions: cliActions } : {}) }) } as any }
     const url = 'http://x' + path
-    const r = await routePhone(mobileReadsRoutes({ ...(cliActions ? { cliActions } : {}), cliSessions: () => hub.list({ limit: 50 }) }), new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
+    const r = await routePhone(mobileReadsRoutes({ ...(cliActions ? { cliActions } : {}) }), new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
     return { status: r!.status, body: await r!.json() as any }
   }
   it('列表:开了码 ⇒ pending.hash + actionable;在场 ⇒ 不挂 pending;过 schema', async () => {
@@ -380,15 +382,14 @@ describe('列表一眼:在跑的会话带此刻那一步', () => {
       const a = actions()
       expect(a.currentStep('N1')).toMatchObject({ kind: 'step', text: '运行 npm test', verb: 'run', target: 'npm test' })
       expect(a.currentStep('N1')!.detail).toBeUndefined()
-      const r = await routePhone(mobileReadsRoutes({ cliActions: a, cliSessions: () => hub.list() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
-      const body = await r!.json()
+      const body = { ok: true, sessions: phoneCliSessionRows({ list: () => hub.list(), actions: a }) as any[] }
       PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(body)
       expect(body.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now.text).toBe('运行 npm test')
       writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '再来' } }))
       expect(a.currentStep('N1')).toBeNull()
       hub.ingest({ source: 'claude', kind: 'stop', session_id: 'N1', cwd: '/w/proj', machine: 'mac', text: '好了' })
       writeFileSync(path, tool('c', 'Bash', { command: 'ls' }))
-      const idle = await (await routePhone(mobileReadsRoutes({ cliActions: a, cliSessions: () => hub.list() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions')))!.json()
+      const idle = { sessions: phoneCliSessionRows({ list: () => hub.list(), actions: a }) as any[] }
       expect(idle.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now).toBeUndefined()
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })

@@ -151,6 +151,14 @@
 - **和并之前不一样的几处(都不在金样里,PR 里逐条写了)**:① `chat/file` 走 `/v1` 的读法,回复里的表情附件(sticker)手机也能按块读了(桌面本来就能;以前手机回 404);② 主人对话还没建(配了主人、那条 chat matter 还没有)时,`chat/search` 照搜(以前 404 `no_owner_chat`),`chat/file` 回 404 `not_found`(以前 `no_owner_chat`);③ 语音模块此刻不是 ok ⇒ `POST chat/transcribe` 回 503 `voice_not_wired`(以前不看模块,照转);④ `matters` 处理器抛了 ⇒ 500 `unavailable`(以前不回包,手机一直等);⑤ 「没接上」与「参数不对」先判哪个,个别路由换了先后(只在没接线的测试里看得到)。
 - **还没做**:`ServerHello.routes: 'v1'` 照本稿等这一组部署 soak 绿再开。
 
+### P3c-2(终端与总览三条并成 `/v1` 一个处理器;老路径是别名)
+- **并了哪三条**:`cli/sessions`、`today`、`connections` → `GET /v1/cli/sessions`、`GET /v1/overseer/today`、`GET /v1/connections`。三行 `/v1` 带上 `phone: { link: 'none' }`(照别名行冻结,只给设备);`routes.ts` 删掉三条 `/m/api` 行;`mobile-reads.ts` 的三个处理器删掉,面板 deps 的 `connections` / `cliSessions` / `overseerToday` 与 wiring 里那几处随之去掉(连接经 `internalApi.provide({ connections })` 那一份,终端两条是终端模块自己挂的路由)。
+- **按 caller 收**:`/v1/cli/sessions` 手机令牌回手机那一份 —— 拼行的规矩搬到 `src/features/terminal/phone-sessions.ts`(`phoneCliSessionRows`,原样:一个一个挑字段、**不给 `cwd` / `origin_agent`**、最多 50 条、等批准的带中继开的码、在跑的前 8 条带此刻那一步、`live_window` / `last_say` / `displayName` / `matter_id`),查询参数(`ended` / `detail` / `limit`)对手机令牌不起作用;`TerminalRoutesDeps` 多一个可选的 `phoneSessions`,没接 ⇒ 手机令牌 503 `cli_sessions_not_wired`(绝不退回桌面那一份)。`/v1/connections` 手机令牌回 `redactConnections`(去掉 detail)。`/v1/overseer/today` 不分 caller(并之前手机那条就是原样给同一个函数)。`/v1/cli/sessions` 的响应契约改成「桌面那一份 | 手机那一份」两种之一。
+- **别名**(`legacy-routes.ts` 的 `phoneCliSessions` / `phoneToday` / `phoneConnections`,一个 `readAlias`):方法不对 405、`{ ok }` 信封、带 `no-store`;`/v1` 回同一个「没接上」码或模块门的 `module_*` ⇒ 手机原来那个「没接上」码,别的错一律 503 `unavailable`(裁定 7)。
+- **棘轮**:`MAX_OWN_HANDLER_ROWS` 55 → 52(行数仍 61);`no-m-api-literal` 基线 `routes.ts` 55 → 52、`mobile-reads.ts` 8 → 5(合计 236 → 230)。
+- **金样**:`m-api-routes`、`matter-read-paths` 逐字节不变(金样文件没动;两份测试的接线改成把剧本 / 真登记处挂在内部 API 上)。
+- **和并之前不一样的几处**:① 终端模块此刻不是 ok(关了 / 坏了 / 开机还没挂上)⇒ `cli/sessions`、`today` 回 503 `cli_sessions_not_wired` / `today_not_wired`(以前面板不看模块门);② 连接那一份是 `internalApi.provide({ connections })` 交给内部 API 的(`wiring/module.ts` 里紧跟着建面板那一步、同步),在它之前到的请求回 503 `connections_not_wired` —— 面板的监听 / 隧道在那之后才起,实际碰不到;③ 设备令牌经新键碰上模块坏了,回包里带模块门的 `detail`(daemon 的错误串;别名不转给手机);④ 等批准那一项的 `pending` 改成逐个挑 `tool / summary / since`(今天字段一样,回包不变;以后登记处多字段手机不跟着多)。
+
 ## 不做 / 推后
 - **不改语义**:同步的 `/v1/companion/converse` 和收下即回的 `owner-chat/say` 各留一条(两个动作,不是一份数据两条路);「看 / 改记忆」两种读法照旧各一条。语义要合是另外的事。
 - **不并 `/m` 页面路径、`/set`、`/set/api/*`**:那是页面和配对,链接里带着,不是数据路由。

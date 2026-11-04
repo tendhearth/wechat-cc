@@ -93,6 +93,8 @@ const RETIRE: Record<Readers[number], string> = {
 export const MERGED_ALIAS_KEYS = [
   'GET /m/api/matters', 'GET /m/api/matter', 'POST /m/api/matter/say',
   'GET /m/api/chat/search', 'GET /m/api/chat/file', 'POST /m/api/chat/transcribe',
+  // P3c-2 终端与总览
+  'GET /m/api/cli/sessions', 'GET /m/api/today', 'GET /m/api/connections',
 ] as const
 export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
 const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)
@@ -107,7 +109,7 @@ export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   alias('GET /m/api/chat/search', 'GET /v1/matter/owner-chat/search', 'P3c-1', 'phoneChatSearch'),
   alias('GET /m/api/chat/file', 'GET /v1/matter/owner-chat/file', 'P3c-1', 'phoneChatFile'),
   alias('POST /m/api/chat/transcribe', 'POST /v1/companion/transcribe', 'P3c-1', 'phoneChatTranscribe'),
-  // ── P3c-2 终端与总览
+  // ── P3c-2 终端与总览:已并(MERGED_ALIAS_KEYS),一份数据一个 /v1 处理器
   alias('GET /m/api/cli/sessions', 'GET /v1/cli/sessions', 'P3c-2', 'phoneCliSessions'),
   alias('GET /m/api/today', 'GET /v1/overseer/today', 'P3c-2', 'phoneToday'),
   alias('GET /m/api/connections', 'GET /v1/connections', 'P3c-2', 'phoneConnections'),

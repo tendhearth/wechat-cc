@@ -11,7 +11,7 @@
  * 不在这里(M0 金样和各服务自己的测试管)。合并时 deps 的形状可以变,这里的字节不许变。
  *
  * P3c 起并成别名的那几条(wire-compat.ts 的 MERGED_ALIAS_KEYS)走内部 API 同一个分发:面板的 `v1` 接一个真的
- * createInternalApi(只用 panelDispatch,不起监听),它的 MattersService / 语音口是同一份剧本(`v1Service`、`voiceRoutes`)。
+ * createInternalApi(只用 panelDispatch,不起监听),它的 MattersService / 语音口 / 终端与连接是同一份剧本(`v1Service`、`voiceRoutes`、`v1Reads`)。
  * 剧本的形状故意只有几个字段,所以这里关掉响应契约的核对(`responseContracts: false`)—— 契约由别的测试管。
  *
  * 规整:临时目录 ⇒ `<tmp>`;别的都由剧本定死(Date 用假时钟钉住)。art/presence 两张 PNG ~257KB,只钉长度与 sha256。
@@ -31,6 +31,7 @@ import { makeSettingsPanel, type SettingsPanel, type SettingsPanelDeps } from '.
 import type { MessageRecord } from '../../lib/messages-store'
 import { createInternalApi } from '../internal-api'
 import { voiceRoutes } from '../../features/voice/routes'
+import { terminalRoutes, type TerminalRoutesDeps } from '../../features/terminal/routes'
 import { makeOwnerChatFileReader } from '../wiring/owner-chat-reading'
 import { fileChunkResponse } from '../../features/phone/mobile-chat'
 import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
@@ -85,6 +86,25 @@ function v1Service(panel: SettingsPanelDeps): MattersService {
     // pipeline-deps.ts 的 chat.file 那一行
     ownerChatFile: makeOwnerChatFileReader({ ownerChatId: () => OWNER, inboxDir: chat.inboxDir!, readChunk: fileChunkResponse, stickerDir: join(root, 'stickers'), message: (chatId, id) => chat.message!(chatId, id) }),
   } as Partial<MattersService> as MattersService
+}
+
+/**
+ * P3c-2 起 `/m/api/cli/sessions`、`today`、`connections` 是别名,翻到 `/v1/cli/sessions`、`/v1/overseer/today`、`/v1/connections`:
+ * 剧本挂在内部 API 上(终端模块的路由 + `connections`),同生产(features/terminal/index.ts 的 mount、wiring/module.ts 的 provide)。
+ */
+function v1Reads() {
+  return {
+    phoneSessions: () => { check('cliSessions'); return [] },
+    overseerToday: () => { check('today'); return { generatedAt: T0, since: T0 - 86_400_000, windowHours: 24, needsYou: [], done: [{ title: '修好登录' }], running: [], stuck: [], counts: { needsYou: 0, done: 1, running: 0, stuck: 0 }, unavailable: [], ccDecided: null, jobs: null } as never },
+    connections: () => {
+      check('connections')
+      return {
+        generatedAt: T0, sources: [{ id: 'wechat', state: 'ok', label: '微信', detail: '/Users/someone/plugins/wechat' }], computers: [{ id: 'mac', label: 'golden-mac', online: true, since: T0 - 3_600_000, version: '1.7.8' }],
+        recent: [{ matterId: TASK, title: '修好登录', phase: 'done', at: T0 - 60_000 }], outputs: [],
+        capabilities: [{ id: 'voice', state: 'off', label: '语音', detail: 'stt-config.json 不在' }],
+      } as never
+    },
+  }
 }
 
 function deps(): SettingsPanelDeps {
@@ -153,16 +173,6 @@ function deps(): SettingsPanelDeps {
       chat: { say: () => chatJob, state: () => ({ pending: null, failed: null }), pendingMatter: () => null },
       message: async (_chatId, id) => (id === reply.id ? reply : null),
     },
-    cliSessions: () => { check('cliSessions'); return [] },
-    overseerToday: () => { check('today'); return { generatedAt: T0, since: T0 - 86_400_000, windowHours: 24, needsYou: [], done: [{ title: '修好登录' }], running: [], stuck: [], counts: { needsYou: 0, done: 1, running: 0, stuck: 0 }, unavailable: [], ccDecided: null, jobs: null } as never },
-    connections: () => {
-      check('connections')
-      return {
-        generatedAt: T0, sources: [{ id: 'wechat', state: 'ok', label: '微信', detail: '/Users/someone/plugins/wechat' }], computers: [{ id: 'mac', label: 'golden-mac', online: true, since: T0 - 3_600_000, version: '1.7.8' }],
-        recent: [{ matterId: TASK, title: '修好登录', phase: 'done', at: T0 - 60_000 }], outputs: [],
-        capabilities: [{ id: 'voice', state: 'off', label: '语音', detail: 'stt-config.json 不在' }],
-      } as never
-    },
     memoryRetractions: () => { check('retractions'); return [{ key: 'c:abc123', section: '喜好', text: '爱喝美式', day: '2026-11-01', verdict: 'outdated', note: '主人说过时了' }] },
     restoreMemory: async key => (key === 'c:abc123' ? { restored: ['爱喝美式'] } : null),
     todos: { facts: { findFacts: () => ({ results: [] }), setFactStatus: () => ({ ok: true }) }, names: () => [] },
@@ -181,7 +191,9 @@ beforeAll(async () => {
   vi.setSystemTime(T0)
   root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-mapi-golden-')))
   const d = deps()
-  const api = createInternalApi({ stateDir: root, daemonPid: 1, matters: v1Service(d) }, { responseContracts: false })
+  const reads = v1Reads()
+  const api = createInternalApi({ stateDir: root, daemonPid: 1, matters: v1Service(d), connections: reads.connections }, { responseContracts: false })
+  api.mount('terminal', terminalRoutes({ overseerToday: reads.overseerToday, phoneSessions: reads.phoneSessions } as Partial<TerminalRoutesDeps> as TerminalRoutesDeps))
   api.mount('voice', voiceRoutes({ voice: { transcribe: async () => { check('transcribe'); return { text: '  你好,帮我看看  ' } } } as never }))
   panel = makeSettingsPanel({ ...d, v1: api.panelDispatch })
   const pairLink = panel.issueToken()

@@ -128,12 +128,12 @@ describe('两个监听各认各的令牌', () => {
   })
 })
 
-/** P3c-1 起路由表里带 phone 块的 /v1 行(一份数据一个处理器,手机的旧路径是别名);链接令牌只读其中两条。 */
-const P3C1_DEVICE = ['GET /v1/matter', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'POST /v1/companion/transcribe', 'POST /v1/matter/say']
+/** P3c-1 / P3c-2 起路由表里带 phone 块的 /v1 行(一份数据一个处理器,手机的旧路径是别名);链接令牌只读其中两条。 */
+const P3C1_DEVICE = ['GET /v1/cli/sessions', 'GET /v1/connections', 'GET /v1/matter', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/overseer/today', 'POST /v1/companion/transcribe', 'POST /v1/matter/say']
 const P3C1_LINK = ['GET /v1/matter', 'GET /v1/matters']
 
 describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不了', () => {
-  it('路由表里带 phone 块的 /v1 行只有 P3c-1 并的那几条;PHONE_ROUTES / LINK_ROUTES 里的 /v1 键就是它们', () => {
+  it('路由表里带 phone 块的 /v1 行只有 P3c-1 / P3c-2 并的那几条;PHONE_ROUTES / LINK_ROUTES 里的 /v1 键就是它们', () => {
     expect([...PANEL_V1_ROUTES.device].sort()).toEqual(P3C1_DEVICE)
     expect([...PANEL_V1_ROUTES.link].sort()).toEqual(P3C1_LINK)
     expect([...PHONE_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual(P3C1_DEVICE)

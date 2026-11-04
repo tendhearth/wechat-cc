@@ -3,7 +3,17 @@ import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
 import { mobileReadsRoutes, cacheSessions, SESSIONS_DONE_MAX, type MobileSessionsDeps } from './mobile-reads'
 import { routePhone } from './phone-route-table'
 import type { ConnectionsSnapshot } from '../../daemon/connections'
-import { buildOverseerToday } from '../../domain/overseer-today'
+import { buildOverseerToday, type OverseerToday } from '../../domain/overseer-today'
+import type { CliSessionView } from '../../ports/cli-session'
+import type { CliPhoneActions } from '../terminal'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { removeTempDir } from '../../lib/test-temp'
+import { makeSettingsPanel } from './settings-panel'
+import { withPanelV1 } from './test-panel-v1'
+import { terminalRoutes, type TerminalRoutesDeps } from '../terminal/routes'
+import { phoneCliSessionRows } from '../terminal/phone-sessions'
 
 const SNAP: ConnectionsSnapshot = {
   generatedAt: 1, computers: [{ id: 'home', label: 'Mac', online: true, since: 0, version: '1.7.1' }], recent: [], outputs: [],
@@ -14,9 +24,33 @@ const run = async (deps: Parameters<typeof mobileReadsRoutes>[0], path: string, 
   return r && { status: r.status, body: await r.json() as any }
 }
 
+/**
+ * P3c-2 起 /m/api/connections、/m/api/cli/sessions、/m/api/today 是别名:翻到 /v1/connections、/v1/cli/sessions、/v1/overseer/today,
+ * 手机那一份由 /v1 处理器按 caller 收。这里照生产拼:真面板 + 真内部 API(withPanelV1),连接经内部 API 的 deps,
+ * 终端会话列表 / 「今天」是终端模块挂的路由(同 features/terminal/wire.ts 的 phoneSessions);真配对一枚设备令牌去打旧路径。
+ */
+interface MergedFakes { connections?: () => ConnectionsSnapshot; cliSessions?: () => CliSessionView[]; cliActions?: CliPhoneActions; today?: () => OverseerToday; executorName?: (id: string) => string }
+const runV1 = async (f: MergedFakes, path: string, method = 'GET') => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'mobile-reads-v1-'))
+  const terminal = f.cliSessions || f.today ? terminalRoutes({
+    ...(f.today ? { overseerToday: f.today } : {}),
+    ...(f.cliSessions ? { phoneSessions: () => phoneCliSessionRows({ list: f.cliSessions!, ...(f.cliActions ? { actions: f.cliActions } : {}), ...(f.executorName ? { executorName: f.executorName } : {}) }) } : {}),
+  } as Partial<TerminalRoutesDeps> as TerminalRoutesDeps) : undefined
+  const panel = makeSettingsPanel(withPanelV1({
+    stateDir, ownerChatId: () => 'wx', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {},
+    ...(f.connections ? { connections: f.connections } : {}),
+  }, {}, terminal ? { terminal } : {}))
+  try {
+    const paired = await panel.handleRequest(new Request(`http://127.0.0.1/set/api/pair?t=${panel.issueToken()}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))
+    const device = ((await paired.json()) as { device_token: string }).device_token
+    const r = await panel.handleRequest(new Request(`http://127.0.0.1${path}?d=${encodeURIComponent(device)}`, { method }))
+    return { status: r.status, body: await r.json() as any }
+  } finally { await panel.stop(); removeTempDir(stateDir) }
+}
+
 describe('GET /m/api/connections', () => {
   it('去掉 detail,过 schema', async () => {
-    const r = await run({ connections: () => SNAP }, '/m/api/connections')
+    const r = await runV1({ connections: () => SNAP }, '/m/api/connections')
     expect(r!.status).toBe(200)
     const text = JSON.stringify(r!.body)
     expect(text).not.toContain('/Users')
@@ -24,12 +58,12 @@ describe('GET /m/api/connections', () => {
     PHONE_API_SCHEMAS['GET /m/api/connections']!.parse(r!.body)
   })
   it('没接 ⇒ 503;抛 ⇒ 503 unavailable(裁定 7);别的路径 ⇒ null;非 GET ⇒ 405', async () => {
-    expect((await run({}, '/m/api/connections'))!.status).toBe(503)
-    const thrown = await run({ connections: () => { throw new Error('x') } }, '/m/api/connections')
+    expect((await runV1({}, '/m/api/connections'))!.status).toBe(503)
+    const thrown = await runV1({ connections: () => { throw new Error('x') } }, '/m/api/connections')
     expect(thrown!.status).toBe(503)
     expect(thrown!.body).toEqual({ ok: false, error: 'unavailable' })
     expect(await run({}, '/m/api/matters')).toBeNull()
-    expect((await run({ connections: () => SNAP }, '/m/api/connections', 'POST'))!.status).toBe(405)
+    expect((await runV1({ connections: () => SNAP }, '/m/api/connections', 'POST'))!.status).toBe(405)
   })
 })
 
@@ -206,19 +240,19 @@ describe('GET /m/api/cli/sessions(终端会话登记处,v76)', () => {
     last_event_at: 5, last_prompt_at: 3, created_at: 1, pending: { tool: 'Bash', summary: 'rm -rf ./tmp', since: 5 },
   }
   it('只给目录名不给完整路径,过 schema;没接 ⇒ 503;抛 ⇒ 503;非 GET ⇒ 405;最多 50 条', async () => {
-    const r = await run({ cliSessions: () => [view] }, '/m/api/cli/sessions')
+    const r = await runV1({ cliSessions: () => [view] }, '/m/api/cli/sessions')
     expect(r!.status).toBe(200)
     expect(JSON.stringify(r!.body)).not.toContain('/Users')
     expect(r!.body.sessions[0]).toMatchObject({ code: 'abc123', project: 'wechat-cc', status: 'waiting', pending: { tool: 'Bash' } })
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r!.body)
-    expect((await run({}, '/m/api/cli/sessions'))!.status).toBe(503)
-    expect((await run({ cliSessions: () => { throw new Error('x') } }, '/m/api/cli/sessions'))!.body).toEqual({ ok: false, error: 'unavailable' })
-    expect((await run({ cliSessions: () => [view] }, '/m/api/cli/sessions', 'POST'))!.status).toBe(405)
-    const many = await run({ cliSessions: () => Array.from({ length: 80 }, (_, i) => ({ ...view, session_id: `s${i}` })) }, '/m/api/cli/sessions')
+    expect((await runV1({}, '/m/api/cli/sessions'))!.status).toBe(503)
+    expect((await runV1({ cliSessions: () => { throw new Error('x') } }, '/m/api/cli/sessions'))!.body).toEqual({ ok: false, error: 'unavailable' })
+    expect((await runV1({ cliSessions: () => [view] }, '/m/api/cli/sessions', 'POST'))!.status).toBe(405)
+    const many = await runV1({ cliSessions: () => Array.from({ length: 80 }, (_, i) => ({ ...view, session_id: `s${i}` })) }, '/m/api/cli/sessions')
     expect(many!.body.sessions.length).toBe(50)
   })
   it('有那件事 ⇒ 行里带 matter_id(App 点进 /matter/<id>,M4c)、过 schema;没有 ⇒ 不带', async () => {
-    const r = await run({ cliSessions: () => [{ ...view, matter_id: 'deadbeef' }, { ...view, session_id: 'other' }] }, '/m/api/cli/sessions')
+    const r = await runV1({ cliSessions: () => [{ ...view, matter_id: 'deadbeef' }, { ...view, session_id: 'other' }] }, '/m/api/cli/sessions')
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r!.body)
     expect(r!.body.sessions[0].matter_id).toBe('deadbeef')
     expect('matter_id' in r!.body.sessions[1]).toBe(false)
@@ -237,7 +271,7 @@ describe('送进窗口的结果(10-20 真机)', () => {
       lastSay: (id: string) => id === 'abc123-xyz' ? { id: 'a1b2c3d4e5f6', state: 'failed' as const, error: '没送进电脑上开着的窗口(x)', at: 9 } : null,
       say: () => ({ ok: true as const, say_id: 'a1b2c3d4e5f6' }),
     } as never
-    const r = await run({ cliSessions: () => [view, { ...view, session_id: 'other-1' }], cliActions }, '/m/api/cli/sessions')
+    const r = await runV1({ cliSessions: () => [view, { ...view, session_id: 'other-1' }], cliActions }, '/m/api/cli/sessions')
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r!.body)
     expect(r!.body.sessions[0].last_say).toEqual({ id: 'a1b2c3d4e5f6', state: 'failed', error: '没送进电脑上开着的窗口(x)', at: 9 })
     expect(r!.body.sessions[1].last_say).toBeUndefined()
@@ -257,14 +291,14 @@ describe('GET /m/api/today(「今天」一眼看完,2026-10-14)', () => {
       terminal: [{ session_id: 'abc123-xyz', code: 'abc123', source: 'claude', status: 'idle', stale: false, project: 'wechat-cc', cwd: '/Users/nate/work/wechat-cc', machine: 'mac', origin_agent: null, last_summary: '改好了', last_event_at: now - 60_000, last_prompt_at: null, created_at: 1, pending: null }],
       tasks: [{ id: 'a1b2c3d4', title: '修打包', path: '/Users/nate/work/melu', providerId: 'codex', phase: 'working', updatedAt: now - 1000, error: null, archivedAt: null }],
     })
-    const r = await run({ today: () => today }, '/m/api/today')
+    const r = await runV1({ today: () => today }, '/m/api/today')
     expect(r!.status).toBe(200)
     expect(JSON.stringify(r!.body)).not.toContain('/Users')
     expect(r!.body.today.counts).toEqual({ needsYou: 0, done: 1, running: 1, stuck: 0 })
     PHONE_API_SCHEMAS['GET /m/api/today']!.parse(r!.body)
-    expect((await run({}, '/m/api/today'))!.status).toBe(503)
-    expect((await run({ today: () => { throw new Error('x') } }, '/m/api/today'))!.body).toEqual({ ok: false, error: 'unavailable' })
-    expect((await run({ today: () => today }, '/m/api/today', 'POST'))!.status).toBe(405)
+    expect((await runV1({}, '/m/api/today'))!.status).toBe(503)
+    expect((await runV1({ today: () => { throw new Error('x') } }, '/m/api/today'))!.body).toEqual({ ok: false, error: 'unavailable' })
+    expect((await runV1({ today: () => today }, '/m/api/today', 'POST'))!.status).toBe(405)
   })
 })
 
@@ -277,7 +311,7 @@ describe('执行者名字由 daemon 下发(收敛清单 ⑥)', () => {
     last_event_at: 5, last_prompt_at: 3, created_at: 1, pending: null,
   }
   it('终端会话行、原生会话行 / 页都带 displayName;列表带两个分段的 names;都过 schema', async () => {
-    const cli = await run({ cliSessions: () => [view], executorName }, '/m/api/cli/sessions')
+    const cli = await runV1({ cliSessions: () => [view], executorName }, '/m/api/cli/sessions')
     expect(cli!.body.sessions[0].displayName).toBe('Codex')
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(cli!.body)
     const list = await run({ sessions: sessions(), executorName }, '/m/api/sessions?provider=claude')
@@ -289,7 +323,7 @@ describe('执行者名字由 daemon 下发(收敛清单 ⑥)', () => {
     PHONE_API_SCHEMAS['GET /m/api/session']!.parse(page!.body)
   })
   it('没接名字 ⇒ 都不带(App 退回 id)', async () => {
-    expect((await run({ cliSessions: () => [view] }, '/m/api/cli/sessions'))!.body.sessions[0].displayName).toBeUndefined()
+    expect((await runV1({ cliSessions: () => [view] }, '/m/api/cli/sessions'))!.body.sessions[0].displayName).toBeUndefined()
     const list = await run({ sessions: sessions() }, '/m/api/sessions?provider=claude')
     expect(list!.body.names).toBeUndefined()
     expect(list!.body.items[0].displayName).toBeUndefined()
