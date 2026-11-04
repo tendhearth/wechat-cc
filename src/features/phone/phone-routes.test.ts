@@ -32,7 +32,9 @@ describe('phoneRouteAllowed', () => {
       // P3c-1:并成别名的那几条的新键(/v1 那一行带 phone 块,link 同别名行)—— 送话给执行者、对话里的文件 / 搜索、语音转字都只给设备
       'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'POST /v1/companion/transcribe', 'POST /v1/matter/say',
       // P3c-2:终端会话列表、「今天」、CC 的连接的新键 —— 别名行都是 link: none,新键同
-      'GET /v1/cli/sessions', 'GET /v1/overseer/today', 'GET /v1/connections']
+      'GET /v1/cli/sessions', 'GET /v1/overseer/today', 'GET /v1/connections',
+      // P3c-3:收回的话 / 恢复、待办改状态、看到哪了的新键 —— 别名行都是 link: none,新键同
+      'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', 'POST /v1/knowledge/facts/set_fact_status', 'POST /v1/journal/seen']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     // 链接令牌剩下的就是链接页面会调的那几条:配对、设置页、此刻、一起做的看与停

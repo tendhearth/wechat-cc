@@ -120,7 +120,7 @@ describe('tunnel-client (daemon side)', () => {
       stateDir, ownerChatId: () => 'o', chatPrefs: { get: () => ({}), set: () => ({}) },
       getUserName: () => null, setUserName: async () => {},
       feed: { journal: { list: () => [] }, planLogDays: () => [], turnsRecent: () => [], timezone: () => 'UTC' },
-      seen: { read: () => null, write: () => {} },
+      seen: { read: () => null },
       log: () => {},
     })
     try {

@@ -95,6 +95,8 @@ export const MERGED_ALIAS_KEYS = [
   'GET /m/api/chat/search', 'GET /m/api/chat/file', 'POST /m/api/chat/transcribe',
   // P3c-2 终端与总览
   'GET /m/api/cli/sessions', 'GET /m/api/today', 'GET /m/api/connections',
+  // P3c-3 记忆、待办、看到哪了
+  'GET /m/api/memory/retractions', 'POST /m/api/memory/restore', 'POST /m/api/todo', 'POST /m/api/seen',
 ] as const
 export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
 const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)
@@ -113,7 +115,7 @@ export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   alias('GET /m/api/cli/sessions', 'GET /v1/cli/sessions', 'P3c-2', 'phoneCliSessions'),
   alias('GET /m/api/today', 'GET /v1/overseer/today', 'P3c-2', 'phoneToday'),
   alias('GET /m/api/connections', 'GET /v1/connections', 'P3c-2', 'phoneConnections'),
-  // ── P3c-3 记忆、待办、看到哪了
+  // ── P3c-3 记忆、待办、看到哪了:已并(MERGED_ALIAS_KEYS),一份数据一个 /v1 处理器
   alias('GET /m/api/memory/retractions', 'GET /v1/memory/retractions', 'P3c-3', 'phoneMemoryRetractions'),
   alias('POST /m/api/memory/restore', 'POST /v1/memory/retractions/restore', 'P3c-3', 'phoneMemoryRestore'),
   alias('POST /m/api/todo', 'POST /v1/knowledge/facts/set_fact_status', 'P3c-3', 'phoneTodo'),

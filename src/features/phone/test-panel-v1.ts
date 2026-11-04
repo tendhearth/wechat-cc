@@ -17,6 +17,8 @@ import type { ModuleName } from '@wechat-cc/protocol/routes'
 import { makeOwnerChatFileReader } from '../../daemon/wiring/owner-chat-reading'
 import { fileChunkResponse } from './mobile-chat'
 import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
+import { memoryRoutes } from '../memory'
+import { journalRoutes } from '../journal'
 
 /** 老测试给手机对话的假实现里还有这两样(P3c-1 以前面板自己用;现在经 /v1 用)。 */
 export type LegacyChatFakes = MobileChatDeps & {
@@ -27,7 +29,18 @@ export type LegacyChatFakes = MobileChatDeps & {
  * `connections`(P3c-2 以前面板自己读;现在经 `/v1/connections` 读,生产里是 internalApi.provide({ connections }) 那一份):
  * 老测试照旧交给面板这一层,这里转交内部 API。终端会话列表 / 「今天」是终端模块自己挂的路由,由测试经 `mounts` 交进来。
  */
-export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat'> & { chat?: LegacyChatFakes; connections?: () => import('../../daemon/connections').ConnectionsSnapshot }
+/**
+ * P3c-3 起记忆收回 / 恢复、待办改状态、推水位也经 `/v1` 走(生产里是记忆模块 / 日志模块挂的路由、bootApi 交的 knowledge):
+ * 老测试照旧把假实现交给面板这一层(`memoryRetractions` / `restoreMemory`、`todos.facts.setFactStatus`、`seen.write`),这里转交内部 API。
+ */
+export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'seen'> & {
+  chat?: LegacyChatFakes
+  connections?: () => import('../../daemon/connections').ConnectionsSnapshot
+  memoryRetractions?: () => Array<{ key: string; section: string | null; text: string; day: string | null; verdict: string | null; note: string }>
+  restoreMemory?: (key: string) => Promise<{ restored: string[] } | null>
+  todos?: { facts: NonNullable<SettingsPanelDeps['todos']>['facts'] & { setFactStatus?(id: number, status: string, now: number): object }; names: NonNullable<SettingsPanelDeps['todos']>['names'] }
+  seen?: { read: () => string | null; write?: (iso: string) => void }
+}
 
 /** 面板 deps(含老测试的假实现)→ 内部 API 要的 MattersService(照 pipeline-deps.ts 的 mattersService 接法)。 */
 export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersService | undefined {
@@ -61,8 +74,22 @@ export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersServi
  */
 export function withPanelV1(d: PanelDepsWithFakes, options: InternalApiOptions = {}, mounts: Partial<Record<ModuleName, RouteTable>> = {}): SettingsPanelDeps & { api: ReturnType<typeof createInternalApi> } {
   const matters = mattersServiceFromPanelDeps(d)
-  const api = createInternalApi({ stateDir: d.stateDir, daemonPid: 1, ...(matters ? { matters } : {}), ...(d.connections ? { connections: d.connections } : {}) }, options)
-  for (const [name, table] of Object.entries(mounts)) if (table) api.mount(name as ModuleName, table)
-  const { connections: _c, ...panel } = d
+  const setFactStatus = d.todos?.facts.setFactStatus
+  const api = createInternalApi({
+    stateDir: d.stateDir, daemonPid: 1, ...(matters ? { matters } : {}), ...(d.connections ? { connections: d.connections } : {}),
+    ...(setFactStatus ? { knowledge: { facts: { setFactStatus: (id: number, st: string, n: number) => setFactStatus(id, st, n) } } as never } : {}),
+  }, options)
+  const own: Partial<Record<ModuleName, RouteTable>> = {}
+  if (d.memoryRetractions || d.restoreMemory) {
+    const nightly = {
+      retractions: () => { if (!d.memoryRetractions) throw new Error('not in this test'); return d.memoryRetractions() },
+      restore: async (key: string) => { if (!d.restoreMemory) throw new Error('not in this test'); return await d.restoreMemory(key) },
+    }
+    own.memory = memoryRoutes({ stateDir: d.stateDir, memoryLlm: () => null, memoryNightly: () => nightly as never })
+  }
+  const seen = d.seen, write = seen?.write
+  if (seen && write) own.journal = journalRoutes({ stateDir: d.stateDir, journal: {} as never, seen: { read: () => seen.read(), write }, ...(d.now ? { now: d.now } : {}) })
+  for (const [name, table] of Object.entries({ ...own, ...mounts })) if (table) api.mount(name as ModuleName, table)
+  const { connections: _c, memoryRetractions: _r, restoreMemory: _m, ...panel } = d
   return { ...(panel as SettingsPanelDeps), v1: api.panelDispatch, api }
 }

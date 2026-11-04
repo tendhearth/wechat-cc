@@ -20,7 +20,6 @@
  *    pairing, restore, restart) are deliberately NOT here — they stay
  *    conversational where CC can confirm context.
  */
-import { RESTORE_NOTE } from '../memory'
 import { executorNames } from '../../domain/provider-display-names'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -86,11 +85,13 @@ export interface SettingsPanelDeps {
   }
   getUserName: (chatId: string) => string | null
   setUserName: (chatId: string, name: string) => Promise<void>
-  /** 随身 CC 数据面(待办) — 注入 facts + 联系人显示名。缺省 ⇒ 手机页无待办区。 */
+  /**
+   * 随身 CC 数据面(待办) — 注入 facts + 联系人显示名。缺省 ⇒ 手机页无待办区。
+   * 改状态(P3c-3 起)不经这里:`/m/api/todo` 是别名,翻到 `POST /v1/knowledge/facts/set_fact_status`。
+   */
   todos?: {
     facts: {
       findFacts(kind: string | null, predicate: string | null, query: string | null, status: string | null, limit: number | null): object
-      setFactStatus(id: number, status: string, now: number): object
     }
     names: () => Array<{ username: string; display: string }>
   }
@@ -150,8 +151,11 @@ export interface SettingsPanelDeps {
   sessionContinue?: MobileSessionContinueActions
   /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。缺省 ⇒ 会话行不带 displayName,App 退回 id。 */
   executorName?: (id: string) => string
-  /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
-  seen?: { read: () => string | null; write: (iso: string) => void }
+  /**
+   * 主人「看到哪了」的水位(首屏算未读),与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ 当没有水位。
+   * 推水位(P3c-3 起)不经这里:`/m/api/seen` 是别名,翻到 `POST /v1/journal/seen`。
+   */
+  seen?: { read: () => string | null }
   /** 推送(中继 v2,spec 2026-09-30 §5)。缺省 ⇒ /m/api/push/* 503。按设备 id,不是令牌。 */
   push?: {
     register(deviceId: string, platform: PushPlatformT, token: string): boolean
@@ -163,9 +167,6 @@ export interface SettingsPanelDeps {
   curatedMemory?: () => import('../memory').CuratedView
   /** 主人逐条纠错(2026-10-06):不对 / 过时 / 删掉。没接 ⇒ 503。 */
   correctMemory?: (id: string, verdict: import('../memory').MemoryVerdict) => Promise<{ text: string }>
-  /** 收回的话与恢复(架构终态 G6):列表、恢复一条(null = 不在了)。 */
-  memoryRetractions?: () => Array<{ key: string; section: string | null; text: string; day: string | null; verdict: string | null; note: string }>
-  restoreMemory?: (key: string) => Promise<{ restored: string[] } | null>
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
@@ -789,39 +790,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         return m === 'memory_entry_not_found' || m === 'memory_not_found' ? json({ ok: false, error: 'not_found' }, 404) : json({ ok: false, error: 'unavailable' }, 500)
       }
     }),
-    'GET /m/api/memory/retractions': async () => {
-      if (!deps.memoryRetractions) return json({ ok: false, error: 'memory_not_wired' }, 503)
-      try { return json({ ok: true, items: deps.memoryRetractions() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
-    },
-    // 恢复一条收回的话(主人 10-26 第 3 条):正文恰好 key;回应带 note(随之删掉的笔记行不会回来),手机原样显示。
-    'POST /m/api/memory/restore': ownsMethod(async (_url, req) => {
-      if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
-      if (!deps.restoreMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
-      let b: unknown
-      try { b = await req.json() } catch { return json({ ok: false, error: 'invalid' }, 400) }
-      const o = b as { key?: unknown } | null
-      if (!o || typeof o !== 'object' || Array.isArray(o) || Object.keys(o).some(k => k !== 'key') || typeof o.key !== 'string' || !/^c:[^\s]{1,80}$/.test(o.key)) return json({ ok: false, error: 'invalid' }, 400)
-      try {
-        const res = await deps.restoreMemory(o.key)
-        return res ? json({ ok: true, restored: res.restored, note: RESTORE_NOTE }) : json({ ok: false, error: 'not_found' }, 404)
-      } catch { return json({ ok: false, error: 'unavailable' }, 500) }
-    }),
     'GET /m/api/home': async (url) => {
       return json(await home(parseLimit(url)))
-    },
-    'POST /m/api/seen': async (_url, req) => {
-      if (!deps.seen) return json({ ok: false, error: 'seen_not_wired' }, 503)
-      let body: unknown
-      try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
-      const until = (body as { until?: unknown } | null)?.until
-      const ms = typeof until === 'string' ? Date.parse(until) : NaN
-      if (!Number.isFinite(ms)) return json({ ok: false, error: 'invalid_until' }, 400)
-      // 夹到 now(不许推到未来);单调(桌面与手机两边推,谁靠后算谁)。
-      const clamped = new Date(Math.min(ms, now())).toISOString()
-      const cur = readSeen()
-      if (cur !== null && clamped <= cur) return json({ ok: true, seen_until: cur })
-      deps.seen.write(clamped)
-      return json({ ok: true, seen_until: clamped })
     },
     'POST /m/api/push/register': pushRoute(false),
     'POST /m/api/push/test': pushRoute(true),
@@ -889,17 +859,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         const n = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0
         return json({ ok: true, sent: n(r?.sent), remaining: n(r?.remaining), skippedDiscarded: n(r?.skippedDiscarded) })
       } catch (e) { return mobileMatterError(e) }
-    },
-    'POST /m/api/todo': async (_url, req) => {
-      let body: unknown
-      try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
-      const b = (body ?? {}) as { id?: unknown; status?: unknown }
-      if (typeof b.id !== 'number' || (b.status !== 'resolved' && b.status !== 'active' && b.status !== 'rejected')) {
-        return json({ ok: false, error: 'invalid' }, 400)
-      }
-      if (!deps.todos) return json({ ok: false, error: 'todos_not_wired' }, 503)
-      deps.todos.facts.setFactStatus(b.id, b.status, Math.floor(now() / 1000))
-      return json({ ok: true })
     },
     'GET /m/api/sticker/': async (url) => {
       if (!deps.stickers) return json({ error: 'not_found' }, 404)

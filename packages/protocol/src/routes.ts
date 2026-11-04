@@ -454,7 +454,8 @@ const ROUTE_TABLE = {
   'GET /v1/journal/postcards': { module: 'journal', desktop: { tier: 'trusted' } },
   'POST /v1/journal/favorite': { module: 'journal', desktop: { tier: 'trusted' } },
   'POST /v1/journal/status': { module: 'journal', desktop: { tier: 'trusted' } },
-  'POST /v1/journal/seen': { module: 'journal', desktop: { tier: 'trusted' } },
+  // P3c-3(手机原 /m/api/seen):手机令牌也走这一条,正文可带 `until`(夹到 now、只往后推);只给设备。
+  'POST /v1/journal/seen': { module: 'journal', desktop: { tier: 'trusted' }, phone: { link: 'none' } },
   'POST /v1/journal/remove': { module: 'journal', desktop: { tier: 'trusted' } },
   // trusted — 配对码 (spec §7). Same trust class as a2a/send + social wish:
   // internal-api is 127.0.0.1 + 0600 file token; the CLI holds the FILE token
@@ -487,8 +488,9 @@ const ROUTE_TABLE = {
   'POST /v1/memory/view': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/memory/edit': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 收回的话(架构终态 G6):和记忆编辑同一档,桌面经宿主调。
-  'GET /v1/memory/retractions': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/memory/retractions/restore': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-3(手机原 /m/api/memory/retractions、/m/api/memory/restore):手机令牌也走这两条,同一份;只给设备。
+  'GET /v1/memory/retractions': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/retractions/restore': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 桌面不再起 CLI(架构终态 F6):主人私事,admin + operator,经宿主代理。理由见文件头 operator 那一段。
   'GET /v1/memory/files': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/memory/file': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
@@ -571,7 +573,8 @@ const ROUTE_TABLE = {
   'POST /v1/knowledge/facts/record_facts': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/facts/contact_facts': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/facts/find_facts': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
-  'POST /v1/knowledge/facts/set_fact_status': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
+  // P3c-3(手机原 /m/api/todo):手机令牌也走这一条,处理器按 caller 收 —— 只认 resolved / active / rejected、不认 `now`;只给设备。
+  'POST /v1/knowledge/facts/set_fact_status': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'GET /v1/knowledge/facts/extraction_status': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/person/brief': { desktop: { tier: 'admin' } },
   // Config surface (config_get/config_set MCP tools) — admin-only: reads and
@@ -604,11 +607,7 @@ const ROUTE_TABLE = {
   'GET /m/api/memory': { phone: { link: 'none' } },
   // 「CC 记得你」逐条纠错(2026-10-06)
   'POST /m/api/memory/correct': { phone: { link: 'none' } },
-  // 收回的话与恢复(架构终态 G6)
-  'GET /m/api/memory/retractions': { phone: { link: 'none' } },
-  'POST /m/api/memory/restore': { phone: { link: 'none' } },
   'GET /m/api/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
-  'POST /m/api/seen': { phone: { link: 'none' } },
   'GET /m/api/matter/input-receipt': { phone: { link: 'none' } },
   'GET /m/api/matter/insight': { phone: { link: 'none' } },
   'GET /m/api/matter/changes': { phone: { link: 'none' } },
@@ -649,7 +648,6 @@ const ROUTE_TABLE = {
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
   'GET /m/api/session/continue': { phone: { link: 'none' } },
   'POST /m/api/session/continue': { phone: { link: 'none' } },
-  'POST /m/api/todo': { phone: { link: 'none' } },
   'GET /m/api/sticker/': { phone: { link: 'none' } },
   // 交办与材料(mobile-workbench.ts,#129)
   // 交办时可选的模型(2026-10-06)

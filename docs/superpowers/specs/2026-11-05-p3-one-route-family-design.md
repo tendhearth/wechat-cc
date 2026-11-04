@@ -159,6 +159,14 @@
 - **金样**:`m-api-routes`、`matter-read-paths` 逐字节不变(金样文件没动;两份测试的接线改成把剧本 / 真登记处挂在内部 API 上)。
 - **和并之前不一样的几处**:① 终端模块此刻不是 ok(关了 / 坏了 / 开机还没挂上)⇒ `cli/sessions`、`today` 回 503 `cli_sessions_not_wired` / `today_not_wired`(以前面板不看模块门);② 连接那一份是 `internalApi.provide({ connections })` 交给内部 API 的(`wiring/module.ts` 里紧跟着建面板那一步、同步),在它之前到的请求回 503 `connections_not_wired` —— 面板的监听 / 隧道在那之后才起,实际碰不到;③ 设备令牌经新键碰上模块坏了,回包里带模块门的 `detail`(daemon 的错误串;别名不转给手机);④ 等批准那一项的 `pending` 改成逐个挑 `tool / summary / since`(今天字段一样,回包不变;以后登记处多字段手机不跟着多)。
 
+### P3c-3(记忆、待办、看到哪了四条并成 `/v1` 一个处理器;老路径是别名)
+- **并了哪四条**:`memory/retractions`、`memory/restore`、`todo`、`seen` → `GET /v1/memory/retractions`、`POST /v1/memory/retractions/restore`、`POST /v1/knowledge/facts/set_fact_status`、`POST /v1/journal/seen`。四行 `/v1` 带上 `phone: { link: 'none' }`(照别名行冻结,只给设备);`routes.ts` 删掉四条 `/m/api` 行;`settings-panel.ts` 的四个处理器删掉,面板 deps 的 `memoryRetractions` / `restoreMemory`、`todos.facts.setFactStatus`、`seen.write` 与 wiring 里那几处随之去掉(面板只留首屏要的 `todos.facts.findFacts`、`seen.read`)。待办「不对」一路收回的那一层只剩 `bootstrap/module.ts` 交给内部 API 的那一份(以前面板自己另包了一份)。
+- **按 caller 收**:`set_fact_status` 对手机令牌只认 `resolved / active / rejected`(别的 ⇒ 400 `invalid_args`,不改),时间戳由 daemon 定、不认正文里的 `now`(operator / MCP 照旧认任何状态、认 `now`)。`/v1/journal/seen` 收可选的 `until`:带了 ⇒ 夹到 now、只往后推(没推动回现在的水位)、不是时间 ⇒ 400 `invalid_until`;不带照旧推到现在 —— 谁带都一样(不分 caller)。收回 / 恢复两条不分 caller(并之前手机那条就是同一个 `memoryNightly.retractions / restore`,不按 chat 收)。`JournalRoutesDeps` 多两个可选的 `seen`(水位存哪,缺省是那个文件)、`now`(测试钉时钟)。
+- **别名**(`legacy-routes.ts` 的 `phoneMemoryRetractions` / `phoneMemoryRestore` / `phoneTodo` / `phoneSeen`):手机的参数规矩先验(恢复的正文恰好一个 `key`、待办 `id` 是数字且状态是那三个、seen 一定带能解析的 `until`),`{ ok }` 信封,不带 cache-control;`/v1` 回「没接上」(`memory_nightly_not_wired` / `knowledge_not_wired` / 模块门 `module_*`)⇒ 手机原来的 `memory_not_wired` / `todos_not_wired` / `seen_not_wired`,恢复 404 ⇒ `not_found`,别的 ⇒ 500 `unavailable`。待办照旧不看结果、一律回 `{ ok: true }`。
+- **棘轮**:`MAX_OWN_HANDLER_ROWS` 52 → 48(行数仍 61);`no-m-api-literal` 基线 `routes.ts` 52 → 48、`settings-panel.ts` 19 → 15(合计 230 → 222)。
+- **金样**:`m-api-routes`、`matter-read-paths` 逐字节不变(金样文件没动;测试的接线改成把剧本挂在内部 API 上:记忆 / 日志路由 + `knowledge`)。
+- **和并之前不一样的几处**:① 记忆 / 日志模块此刻不是 ok ⇒ 四条回各自的「没接上」503(以前面板不看模块门);② 改待办状态抛了 ⇒ 500 `unavailable`(以前处理器不接,手机经隧道一直等);③ 手机的三条写(恢复、待办、seen)现在经内部 API 的分发,跑的时候持一枚 `api:POST …` 忙碌登记(桌宠在场推导本来就滤掉 `api:*`);④ 设备令牌经新键:恢复的正文多出来的键被 schema 丢掉(别名照旧 400)、待办回的是真结果 `{ ok: boolean }`(别名照旧一律 `ok: true`)、seen 不带 `until` 就推到现在(效果同带一个未来的时间,夹到 now);⑤ `/v1/journal/seen` 对本机 file / session 调用方也认 `until`,只能推到「现在的水位 ~ now」之间,不比以前的「推到现在」多;⑥「没接上」与「参数不对」先判哪个,个别路由换了先后(只在没接线的测试里看得到)。
+
 ## 不做 / 推后
 - **不改语义**:同步的 `/v1/companion/converse` 和收下即回的 `owner-chat/say` 各留一条(两个动作,不是一份数据两条路);「看 / 改记忆」两种读法照旧各一条。语义要合是另外的事。
 - **不并 `/m` 页面路径、`/set`、`/set/api/*`**:那是页面和配对,链接里带着,不是数据路由。

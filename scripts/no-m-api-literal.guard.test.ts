@@ -32,13 +32,13 @@ const BASELINE: Record<string, number> = {
   'src/features/phone/mobile-chat.ts': 5,
   'src/features/phone/mobile-reads.ts': 5,
   'src/features/phone/mobile-workbench.ts': 16,
-  'src/features/phone/settings-panel.ts': 19,
+  'src/features/phone/settings-panel.ts': 15,
   'apps/mobile/src/home.js': 1,
   'apps/mobile/src/presence.js': 1,
   'apps/mobile/src/workbench.js': 3,
   'packages/protocol/src/api.ts': 61,
   'packages/protocol/src/phone-calls.ts': 60,
-  'packages/protocol/src/routes.ts': 52,
+  'packages/protocol/src/routes.ts': 48,
 }
 
 /** 一行是不是整行注释(按行判,不跨行)。 */

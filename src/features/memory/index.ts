@@ -36,7 +36,8 @@ export { makeMemoryLlmOps, resolveCheapEval, type MemoryLlmOps } from './llm-ops
 export { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './curated-doc'
 export { makeMemoryImportCommand } from './import-command'
 export { synthesisMemoryFor, memoryFactsFor, overviewForOthersFromTable } from './memory-export'
-export { RESTORE_NOTE } from './routes'
+// memoryRoutes:测试把面板的假实现转交内部 API 时要(features/phone/test-panel-v1.ts);生产里只有本模块自己 mount。
+export { RESTORE_NOTE, memoryRoutes } from './routes'
 export { retractOnFactStatus } from './fact-status'
 export { formatNightlyReply, type NightlyRunResult } from './nightly-notify'
 export { MEMORY_LOG_FILE, ownerMemoryRoot, readNightlyState } from './nightly'
