@@ -2,6 +2,7 @@
  * 贴纸交给陪伴自省那一拍的一步(「陪伴候选」贡献点 IntrospectStep,ports/companion-contributions.ts)——
  * 从 daemon/wiring/introspect-steps.ts 原样搬来(架构终态 A5);登记表仍在 daemon/wiring/tick-bodies.ts,排第一。
  */
+import { ccActsFor } from '../../adapters/store/cc-acts'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import type { IntrospectStep } from '../../ports/companion-contributions'
 import type { SpeechPolicy } from '../../daemon/speech/policy'
@@ -14,6 +15,8 @@ export interface StickerArtistStepDeps {
   stickers?: StickerLib
   speech?: SpeechPolicy
   log: (tag: string, line: string) => void
+  /** 有库 ⇒ 记「贴纸」那件事的轮(M5b,CC 自己做的事)。 */
+  db?: import('../../lib/db').Db
 }
 
 /**
@@ -25,15 +28,18 @@ export async function announceNewSticker(
   d: { speech?: SpeechPolicy; stickers: { resolve(tag: string): string | null }; log: (tag: string, line: string) => void },
   ownerChat: string,
   mood: string,
-): Promise<void> {
-  if (!d.speech) { d.log('STICKERS', 'new-sticker notice skipped: speech policy not wired'); return }
+): Promise<'sent' | 'undeliverable' | 'deferred' | 'dropped' | 'skipped'> {
+  if (!d.speech) { d.log('STICKERS', 'new-sticker notice skipped: speech policy not wired'); return 'skipped' }
   const path = d.stickers.resolve(mood)
-  if (!path) { d.log('STICKERS', `new-sticker notice skipped: no file for mood=${mood}`); return }
+  if (!path) { d.log('STICKERS', `new-sticker notice skipped: no file for mood=${mood}`); return 'skipped' }
+  let sent = false
   const outcome = await d.speech.say({ kind: 'sticker', chatId: ownerChat }, async (turn) => {
     if (!(await turn.sendSticker(ownerChat, mood, path))) { d.log('STICKERS', `new-sticker notice not sent: sticker undeliverable (mood=${mood})`); return }
+    sent = true
     await turn.sendText(ownerChat, `我画了张新表情!以后想说「${mood}」的时候就用它~`)
   })
-  if (!('allow' in outcome)) d.log('STICKERS', `new-sticker notice ${'defer' in outcome ? 'deferred' : 'dropped'}: ${outcome.reason}`)
+  if (!('allow' in outcome)) { d.log('STICKERS', `new-sticker notice ${'defer' in outcome ? 'deferred' : 'dropped'}: ${outcome.reason}`); return 'defer' in outcome ? 'deferred' : 'dropped' }
+  return sent ? 'sent' : 'undeliverable'
 }
 
 /**
@@ -54,7 +60,8 @@ export function stickerArtistStep(deps: StickerArtistStepDeps): IntrospectStep {
         lib: deps.stickers,
         cheapEval: sdkEval,
         log: (t, l) => deps.log(t, l),
-        notify: (mood) => ownerChat ? announceNewSticker({ speech: deps.speech, stickers: deps.stickers!, log: deps.log }, ownerChat, mood) : Promise.resolve(),
+        notify: (mood) => ownerChat ? announceNewSticker({ speech: deps.speech, stickers: deps.stickers!, log: deps.log }, ownerChat, mood) : Promise.resolve('skipped'),
+        ...(deps.db ? { acts: ccActsFor(deps.db, deps.log) } : {}),
       })
     },
   }
