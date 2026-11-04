@@ -226,9 +226,11 @@ export function makeSpeechPolicy(deps: {
     for (const g of deps.pending.groups(t)) {
       if (tried >= MAX_FLUSH_CHATS_PER_TICK) break   // 每一拍有上限:静音一结束不一口气冒出一串
       const told = g.items.filter(i => originOf(i.kind) !== 'initiative')
-      if (told.length > 0 || g.dropped > 0) {
+      // 只剩 CC 自己的那几样(被挤掉的计数也许不是 0)⇒ 不单独说一句「还有 N 件更早的」:那一句跟着下一次回报说;
+      // 单说那一句发失败了也没有行可记退避(Codex 评审 S2c P2)
+      if (told.length > 0) {
         // 有等主人拍板的就按 blocking 问(免打扰不拦);否则按第一条 report 问
-        const kind = told.find(i => originOf(i.kind) === 'blocking')?.kind ?? told[0]?.kind ?? g.items[0]!.kind
+        const kind = told.find(i => originOf(i.kind) === 'blocking')?.kind ?? told[0]!.kind
         let sent = false
         const o = await policy.say({ kind, chatId: g.chatId }, async (turn) => {
           try { sent = !(await turn.sendText(g.chatId, mergePending(told, g.dropped))).error } catch { sent = false }

@@ -310,6 +310,27 @@ describe('CC 自己的那几样推后也补(S2c):新贴纸 6 小时、见闻 24 
     expect(t.out).toEqual(['text:定时停了'])
     expect(t.db.query('SELECT COUNT(*) AS n FROM speech_pending').get()).toEqual({ n: 0 })
   })
+  it('一条对话只压着 CC 自己的那几样、而且挤掉过一些 ⇒ 不单说「还有 N 件更早的」;发失败也照样按行退避(Codex 评审)', async () => {
+    let fail = true
+    const { makePendingNotices } = await import('./pending-notices')
+    const db = openTestDb()
+    let now = Date.parse('2026-11-04T10:00:00.000Z')
+    let tries = 0
+    const outbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async () => { tries++; return fail ? { msgId: '', error: 'down' } : { msgId: 'm' } }, channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => true, finish: () => {} }) }
+    const pending = makePendingNotices({ db, log: () => {}, now: () => now })
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound, log: () => {}, pending, now: () => now })
+    for (let i = 0; i < 22; i++) policy.keep({ kind: 'sticker', chatId: OWNER, text: `新表情 ${i}` })
+    await policy.flushPending()
+    expect(tries).toBe(1)                     // 只试了第一样 CC 自己的,失败 ⇒ 这一拍停
+    now += 30_000
+    await policy.flushPending()
+    expect(tries).toBe(1)                     // 退避记在行上:不每拍都撞
+    fail = false
+    now += 30_000
+    await policy.flushPending()
+    expect(tries).toBe(4)                     // 每拍上限 3 句,没有单说「还有 N 件更早的」那一句
+  })
   it('明信片(只有图):补的时候走 sendFile;发不出去 ⇒ 作罢(背包里照样有)', async () => {
     const files: string[] = []
     const t = await mk({ sendFile: async (_c, p) => { files.push(p); return true } })
