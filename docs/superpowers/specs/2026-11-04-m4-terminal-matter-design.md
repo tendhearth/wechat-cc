@@ -43,6 +43,14 @@
 - `/m/api/cli/activity`、列表的「此刻那一步」、微信「看 码」、`terminal_say` 的上一句,都从步读。
   - `cli-activity.ts` 的逐次重解析删掉,解析器只在增量读那一处用。
 - 做完怎么算:`cli.m-api-cli-activity` 金样逐字节不变;`cli-activity.ts` 不再被出口直接调用。
+- 落地(11-04):
+  - 第一步 #796:解析结果按文件状态缓存。
+  - 第二步:`feedActivity` 一套解析口径,内存(parseActivity)和库(features/terminal/terminal-steps.ts)两种放法。
+    - 读到哪了存 `terminal_reads`(v98),带 gen:截短 / 换文件 / 一下子多出 4MB ⇒ 从头读、gen 加一,步的 key 撞不上旧的。
+    - 钩子 stop / session_end 先读再收轮;prompt 先开轮再读。读进步的会话,钩子不再写空的 user_message 和最后一句(免得两份)。
+    - 手机「看着它跑」、列表那一步、CC 的 terminal_sessions 从步读;还没有那件事的老会话退回直接解析。
+  - 和上面的出入:第一次见不整份导入,只从尾巴 256KB 起(同以前读的那一截)—— 几十 MB 的记录整份导进来会卡住钩子。
+  - 还没切的:微信「看 码」和 terminal_say 的上一句仍直接读记录(要的是整段对话文字,另做)。
 
 ### M4c App 一个详情页(U3 的终端一半)
 - 主页的终端行、推送深链、活动流都指向 `/matter/<id>`。`/terminal/[id]` 只剩重定向:按 session_id 找到这件事。

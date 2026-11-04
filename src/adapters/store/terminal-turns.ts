@@ -8,6 +8,7 @@ import type { TerminalEventIn, TerminalTurnLog } from '../../ports/terminal-turn
  * - 第一次看到一个 session_id ⇒ 建这件事(标题 = 项目名,出生地 cli)并绑 surface='cli'。
  * - prompt(主人敲的)⇒ 有轮在跑就记进那一轮,没有就开一轮(executor = source);写一步 user_message(原文 M4b 从 transcript 补)。
  * - stop ⇒ 一步 agent_message(最后一句)+ 收这一轮;permission ⇒ 一步 permission(started ⇒ 等你);session_end ⇒ 收尾、这件事 done。
+ * 记录会读进步的会话(ev.transcribed,M4b):发问 / 最后一句不在这里写,从记录来(features/terminal/terminal-steps.ts)。
  * 「在跑的那一轮」从库里查(不在内存记):重启后照样接得上。
  */
 const TEXT_MAX = 2000, SUMMARY_MAX = 300
@@ -45,12 +46,12 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
           if (ev.automated) return
           closeCards(matterId, 'completed', 'answered_in_terminal')
           const id = turnId ?? log.startTurn({ matterId, executor: ev.source, startedAt: at, policy: { cwd: ev.cwd, ...(ev.machine ? { machine: ev.machine } : {}), ...(ev.origin_agent ? { originAgent: ev.origin_agent } : {}) } }).id
-          log.writeItem({ matterId, turnId: id, kind: 'user_message', status: 'completed', payload: {} })
+          if (!ev.transcribed) log.writeItem({ matterId, turnId: id, kind: 'user_message', status: 'completed', payload: {} })
           return
         }
         case 'stop':
           closeCards(matterId, 'completed', 'answered_in_terminal')
-          if (ev.text) log.writeItem({ matterId, ...(turnId ? { turnId } : {}), kind: 'agent_message', status: 'completed', payload: { text: ev.text.slice(0, TEXT_MAX) } })
+          if (ev.text && !ev.transcribed) log.writeItem({ matterId, ...(turnId ? { turnId } : {}), kind: 'agent_message', status: 'completed', payload: { text: ev.text.slice(0, TEXT_MAX) } })
           if (turnId) log.finishTurn(turnId, { status: 'completed', endedAt: at })
           else log.setState(matterId, 'open')
           return

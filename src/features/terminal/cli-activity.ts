@@ -283,44 +283,83 @@ function resultsOf(d: Record<string, unknown>, source: CliSource): Array<{ callI
 }
 
 /**
- * 最近的几步,旧 → 新。文字走 parseTranscript(同一套过滤 harness / 打码),动作按行插在原位置。
- * 连续同一句动作(比如一串「读 x」)只留一条。
+ * 解析出来的步往哪放(M4b):parseActivity 放内存数组;增量读(terminal-steps.ts)放这件事的步。两边走同一个 feedActivity,
+ * 合并「一串读 x」、结果挂回调用那一步的口径只在这一处。ref 是放进去以后认得出它的东西(数组下标 / 步的 key)。
  */
-export function parseActivity(jsonl: string, source: CliSource, max = ACTIVITY_MAX_ITEMS): CliActivityItem[] {
-  const items: CliActivityItem[] = []
-  const byCall = new Map<string, { item: CliActivityItem; keepOutput: boolean }>()
+export interface ActivitySink<R> {
+  /** 最后放进去的那一条(合并连续同一句要看它)。 */
+  last(): { ref: R; item: CliActivityItem } | null
+  push(item: CliActivityItem, at: { line: number; index: number }): R
+  /** item 改过了(时间 / 报错 / 输出),存回去。 */
+  update(ref: R, item: CliActivityItem): void
+  /** 这一步在等结果(调用 id)。 */
+  claim(callId: string, ref: R, keepOutput: boolean): void
+  /** 结果到了:拿回等它的那一步(只拿一次)。 */
+  take(callId: string): { ref: R; item: CliActivityItem; keepOutput: boolean } | null
+}
+
+/**
+ * 一段完整的记录行喂进 sink。文字走 parseTranscript(同一套过滤 harness / 打码),动作按行插在原位置。
+ * 连续同一句动作(比如一串「读 x」)只留一条。lineBase:这段第一行的编号起点(增量读传字节位置,好让每条有稳定的 key)。
+ */
+export function feedActivity<R>(jsonl: string, source: CliSource, sink: ActivitySink<R>, lineBase = 0): void {
+  let pos = lineBase
   for (const line of jsonl.split('\n')) {
+    const here = pos
+    pos += Buffer.byteLength(line, 'utf8') + 1
     if (!line.trim()) continue
     let d: Record<string, unknown>
     try { d = JSON.parse(line) as Record<string, unknown> } catch { continue }
     const at = tsOf(d)
+    let index = 0
     // 文字:复用 parseTranscript 的一行口径(它会过滤 harness、打码)。
     for (const t of parseTranscript(line, source)) {
-      items.push({ kind: t.role === 'user' ? 'you' : 'said', text: clip(t.text, ACTIVITY_TEXT_MAX), at })
+      sink.push({ kind: t.role === 'user' ? 'you' : 'said', text: clip(t.text, ACTIVITY_TEXT_MAX), at }, { line: here, index: index++ })
     }
     for (const s of stepsOf(d, source)) {
       const text = clip(redactSecrets(s.text), STEP_MAX)
       const detail = s.detail ? headLines(redactSecrets(s.detail)) : undefined
-      const prev = items[items.length - 1]
+      const prev = sink.last()
       // 连续同一句、都没有可看的内容 ⇒ 合并成一条(一串「读 x」)。
-      let item: CliActivityItem
-      if (prev && prev.kind === 'step' && prev.text === text && !prev.detail && !detail) { prev.at = at ?? prev.at; item = prev }
-      else {
+      let ref: R
+      if (prev && prev.item.kind === 'step' && prev.item.text === text && !prev.item.detail && !detail) {
+        prev.item.at = at ?? prev.item.at
+        sink.update(prev.ref, prev.item)
+        ref = prev.ref
+      } else {
         const ph = s.free ? null : stepPhrase(text)
-        item = { kind: 'step', text, at, ...(detail ? { detail } : {}), ...(ph ? { verb: ph.verb, target: ph.target } : {}) }
-        items.push(item)
+        ref = sink.push({ kind: 'step', text, at, ...(detail ? { detail } : {}), ...(ph ? { verb: ph.verb, target: ph.target } : {}) }, { line: here, index: index++ })
       }
-      if (s.callId) byCall.set(s.callId, { item, keepOutput: s.keepOutput === true })
+      if (s.callId) sink.claim(s.callId, ref, s.keepOutput === true)
     }
     for (const r of resultsOf(d, source)) {
-      const hit = byCall.get(r.callId)
+      const hit = sink.take(r.callId)
       if (!hit) continue
-      byCall.delete(r.callId)
+      const before = JSON.stringify(hit.item)
       if (r.error) hit.item.error = true
       // diff 已经在了就不拿输出盖掉;只有值得看输出的工具(命令、搜索…)才挂输出。报错的一律挂上,好知道为什么。
       if (!hit.item.detail && (hit.keepOutput || r.error) && r.text.trim()) hit.item.detail = tailLines(redactSecrets(r.text))
+      if (JSON.stringify(hit.item) !== before) sink.update(hit.ref, hit.item)
     }
   }
+}
+
+/** 最近的几步,旧 → 新(整段记录在内存里解析一遍)。 */
+export function parseActivity(jsonl: string, source: CliSource, max = ACTIVITY_MAX_ITEMS): CliActivityItem[] {
+  const items: CliActivityItem[] = []
+  const byCall = new Map<string, { ref: number; keepOutput: boolean }>()
+  feedActivity<number>(jsonl, source, {
+    last: () => (items.length ? { ref: items.length - 1, item: items[items.length - 1]! } : null),
+    push: (item) => items.push(item) - 1,
+    update: () => { /* 同一个对象,改了就是改了 */ },
+    claim: (callId, ref, keepOutput) => { byCall.set(callId, { ref, keepOutput }) },
+    take: (callId) => {
+      const hit = byCall.get(callId)
+      if (!hit) return null
+      byCall.delete(callId)
+      return { ref: hit.ref, item: items[hit.ref]!, keepOutput: hit.keepOutput }
+    },
+  })
   return items.slice(-max)
 }
 
