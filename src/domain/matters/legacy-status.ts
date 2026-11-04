@@ -9,8 +9,10 @@ import type { MatterKind, MatterState, MatterStatus, MatterTurnStatus } from '..
  *   - 归档 ⇒ archived(和种类无关)。
  *   - 不是任务(对话 / 终端 / CC 自己做的事)⇒ open:它们的列从来没人改过,统一状态做完了(终端会话结束)列也还是 open。
  *   - 任务按任务自己的状态(写列的式子看的就是它):中断 ⇒ open;做完 / 没做成 / 停了 ⇒ done;
- *     还在跑(running)、这一轮已经收了、球在主人手里(state = open)⇒ replied —— 「最近一轮已收」是旧 phase 'replied'
- *     (常驻会话答完、闲着)落了库的那一半;其余 ⇒ open。
+ *     还在跑(running)、这一轮已经收了、球在主人手里(state = open)、**而且列记着 replied** ⇒ replied;其余 ⇒ open。
+ *     「答完了、闲着」(旧 phase 'replied')只有 settleQuiet 知道:执行者先交了结果、后台还在干活时,轮已经收了、
+ *     state 也回到 open,但它要等运行时真闲下来(没有后台、没有待拍板)才写 replied(Codex 评审 P2)。
+ *     这份「准备好了」除了列哪儿都没落库 ⇒ 这一位照旧读列(storedReplied);M6e 删列之前要先把它落成 matter 上的事实。
  *   - 读不到任务那一行(只有 matter 的库)⇒ 用统一状态:done / failed / cancelled ⇒ done。
  * 纯函数:不碰 db。列表筛选的 SQL 版本在 adapters/store/matters-store.ts(测试逐格对过这里)。
  */
@@ -43,12 +45,14 @@ export interface LegacyStatusInput {
   latestTurn: MatterTurnStatus | null
   /** kind = task 时任务那一行的状态;没有那一行 ⇒ null / 不给。 */
   taskStatus?: LegacyTaskStatus | null
+  /** 列里记的是不是 replied(settleQuiet 写的「答完了、闲着」):唯一还读列的一位,M6e 前换成 matter 上的事实。 */
+  storedReplied: boolean
 }
 
 export function legacyStatus(input: LegacyStatusInput): MatterStatus {
   if (input.archivedAt != null) return 'archived'
   if (input.kind !== 'task') return 'open'
-  const repliedNow = input.state === 'open' && input.latestTurn === 'completed'
+  const repliedNow = input.storedReplied && input.state === 'open' && input.latestTurn === 'completed'
   const status = input.taskStatus
   if (!status) return STATE_FINISHED.has(input.state) ? 'done' : repliedNow ? 'replied' : 'open'
   return legacyTaskStatus({ archived: false, status, replied: status === 'running' && repliedNow })

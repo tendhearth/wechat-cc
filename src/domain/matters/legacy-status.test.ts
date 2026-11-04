@@ -5,34 +5,42 @@ import { legacyStatus, legacyStatusOfTaskView, legacyTaskStatus } from './legacy
 describe('legacyStatus', () => {
   it('归档 ⇒ archived,不管种类和状态', () => {
     for (const kind of ['chat', 'task', 'terminal', 'act'] as const)
-      expect(legacyStatus({ kind, state: 'working', archivedAt: 5, latestTurn: 'running', taskStatus: kind === 'task' ? 'running' : null })).toBe('archived')
+      expect(legacyStatus({ storedReplied: true, kind, state: 'working', archivedAt: 5, latestTurn: 'running', taskStatus: kind === 'task' ? 'running' : null })).toBe('archived')
   })
   it('不是任务 ⇒ open:终端会话结束(state = done)、对话最近一轮已收,列都还是 open', () => {
-    expect(legacyStatus({ kind: 'terminal', state: 'done', archivedAt: null, latestTurn: 'interrupted' })).toBe('open')
-    expect(legacyStatus({ kind: 'chat', state: 'open', archivedAt: null, latestTurn: 'completed' })).toBe('open')
-    expect(legacyStatus({ kind: 'act', state: 'failed', archivedAt: null, latestTurn: 'failed' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'terminal', state: 'done', archivedAt: null, latestTurn: 'interrupted' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'chat', state: 'open', archivedAt: null, latestTurn: 'completed' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'act', state: 'failed', archivedAt: null, latestTurn: 'failed' })).toBe('open')
   })
   it('任务:中断 ⇒ open(哪怕 v92 把统一状态推成 failed、最近一轮已收)', () => {
-    expect(legacyStatus({ kind: 'task', state: 'failed', archivedAt: null, latestTurn: 'completed', taskStatus: 'interrupted' })).toBe('open')
-    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'interrupted' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'failed', archivedAt: null, latestTurn: 'completed', taskStatus: 'interrupted' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'interrupted' })).toBe('open')
   })
   it('任务:做完 / 没做成 / 停了 ⇒ done,按任务自己的状态(交接没启动的那件事统一状态还停在 open)', () => {
     for (const taskStatus of ['completed', 'failed', 'cancelled'] as const)
-      expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: null, taskStatus })).toBe('done')
+      expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'open', archivedAt: null, latestTurn: null, taskStatus })).toBe('done')
   })
-  it('任务:还在跑、最近一轮已收、球在主人手里 ⇒ replied;排队 / 在停 / 在跑这一轮 / 等你 ⇒ open', () => {
-    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'running' })).toBe('replied')
-    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'queued' })).toBe('open')
-    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'cancelling' })).toBe('open')
-    expect(legacyStatus({ kind: 'task', state: 'working', archivedAt: null, latestTurn: 'running', taskStatus: 'running' })).toBe('open')
-    expect(legacyStatus({ kind: 'task', state: 'waiting', archivedAt: null, latestTurn: 'running', taskStatus: 'running' })).toBe('open')
-    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'interrupted', taskStatus: 'running' })).toBe('open')
-    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: null, taskStatus: 'queued' })).toBe('open')
+  it('任务:还在跑、最近一轮已收、球在主人手里、列记着 replied ⇒ replied;排队 / 在停 / 在跑这一轮 / 等你 ⇒ open', () => {
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'running' })).toBe('replied')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'queued' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'cancelling' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'working', archivedAt: null, latestTurn: 'running', taskStatus: 'running' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'waiting', archivedAt: null, latestTurn: 'running', taskStatus: 'running' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'open', archivedAt: null, latestTurn: 'interrupted', taskStatus: 'running' })).toBe('open')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'open', archivedAt: null, latestTurn: null, taskStatus: 'queued' })).toBe('open')
+  })
+  it('replied 这一位照旧读列(Codex P2):执行者交了结果、后台还在干 ⇒ 轮已收、state 回 open,但 settleQuiet 没写 replied ⇒ open', () => {
+    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'running', storedReplied: false })).toBe('open')
+    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', storedReplied: false })).toBe('open')
+    // 列记着 replied 但这件事已经往前走了(新一轮在跑 / 中断 / 做完)⇒ 按现算的,不按过期的列
+    expect(legacyStatus({ kind: 'task', state: 'working', archivedAt: null, latestTurn: 'running', taskStatus: 'running', storedReplied: true })).toBe('open')
+    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed', taskStatus: 'interrupted', storedReplied: true })).toBe('open')
+    expect(legacyStatus({ kind: 'task', state: 'done', archivedAt: null, latestTurn: 'completed', taskStatus: 'completed', storedReplied: true })).toBe('done')
   })
   it('任务那一行读不到 ⇒ 用统一状态', () => {
-    for (const state of ['done', 'failed', 'cancelled'] as const) expect(legacyStatus({ kind: 'task', state, archivedAt: null, latestTurn: 'completed' })).toBe('done')
-    expect(legacyStatus({ kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed' })).toBe('replied')
-    expect(legacyStatus({ kind: 'task', state: 'working', archivedAt: null, latestTurn: 'running', taskStatus: null })).toBe('open')
+    for (const state of ['done', 'failed', 'cancelled'] as const) expect(legacyStatus({ storedReplied: true, kind: 'task', state, archivedAt: null, latestTurn: 'completed' })).toBe('done')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'open', archivedAt: null, latestTurn: 'completed' })).toBe('replied')
+    expect(legacyStatus({ storedReplied: true, kind: 'task', state: 'working', archivedAt: null, latestTurn: 'running', taskStatus: null })).toBe('open')
   })
 })
 
