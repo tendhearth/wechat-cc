@@ -105,14 +105,20 @@ export function makeTerminalSteps(deps: { store: TerminalStepStore; size?: (path
  * 发问原文多半在 UserPromptSubmit 之后才进记录 ⇒ 下一次读(答完时)进这一轮。权限请求不读(同步钩子,要快)。
  * 那边(别的机器 / 经 A2A 转来)的会话:记录不在这台机器上,不读。
  */
+/** 答完之后多久补读一次记录。 */
+export const STOP_SETTLE_MS = 3_000
+
 export function withTranscriptSteps(deps: {
   turns: TerminalTurnLog
   steps: Pick<TerminalSteps, 'ingest'>
   localMachine: string
   lookup: (sessionId: string) => { session_id: string; transcript_path?: string | null } | null
   log: (line: string) => void
+  /** 答完之后补读一次的定时(测试注入);默认 setTimeout + unref。 */
+  later?: (fn: () => void, ms: number) => void
 }): TerminalTurnLog {
   const { turns, steps, log } = deps
+  const later = deps.later ?? ((fn, ms) => { const t = setTimeout(fn, ms); (t as { unref?: () => void }).unref?.() })
   const err = (e: unknown) => (e instanceof Error ? e.message : String(e))
   const transcriptOf = (ev: TerminalEventIn): string | null => {
     if (ev.origin_agent || (ev.machine && ev.machine !== deps.localMachine)) return null
@@ -128,6 +134,11 @@ export function withTranscriptSteps(deps: {
       let ok = false
       try { turns.ensure(ev); ok = steps.ingest(ev.session_id, path, ev.source) } catch (e) { log(`steps ${ev.kind} ${ev.session_id.slice(0, 6)} failed: ${err(e)}`) }
       turns.event(ok ? { ...ev, transcribed: true } : ev, at)
+      // 答完那一刻最后一句往往和钩子同时才写进记录(真机 11-04:同一秒),这一次读不到 ⇒ 过一会儿再读一次,
+      // 不然「看着它跑」和「最近一句」(M4d 从步推)要等下一个钩子才有最后一句。读是增量 + 按位置定键的,多读不会重。
+      if (ok && ev.kind === 'stop') later(() => {
+        try { steps.ingest(ev.session_id, path, ev.source) } catch (e) { log(`steps settle ${ev.session_id.slice(0, 6)} failed: ${err(e)}`) }
+      }, STOP_SETTLE_MS)
     },
   }
 }

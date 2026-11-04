@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openDb, type Db } from '../../lib/db'
 import { makeMatterStore } from './matters-store'
 import { makeMatterLog } from './matter-log'
-import { makeTerminalTurnLog } from './terminal-turns'
+import { makeTerminalTurnLog, TERMINAL_QUIET_MS } from './terminal-turns'
 import type { MatterLog, MatterStore } from '../../ports/matters'
 import type { TerminalTurnLog } from '../../ports/terminal-turns'
 
@@ -42,9 +42,15 @@ describe('terminal-turns', () => {
     expect(log.turns(matterId())).toMatchObject([{ status: 'completed', startedAt: 1_000, endedAt: 2_000 }])
     expect(items()).toEqual([])
   })
-  it('harness 自己塞的 prompt 不开轮', () => {
+  it('harness 自己塞的 prompt:也开一轮(policy.automated,在做),但不写「主人说了一句」、不替主人收卡;在跑时再塞记进同一轮(M4d)', () => {
+    turns.permissionAsked({ source: 'claude', session_id: 'sess-1', cwd: '/w', tool_name: 'Bash', summary: 'ls' }, 500)
     turns.event(ev('prompt', { automated: true }), 1_000)
-    expect(log.turns(matterId())).toEqual([])
+    expect(log.turns(matterId())).toMatchObject([{ status: 'running', policy: { automated: true } }])
+    expect(items()).toEqual([['permission', 'started', { tool: 'Bash', summary: 'ls' }]])
+    turns.event(ev('prompt', { automated: true }), 1_500)
+    expect(log.turns(matterId())).toHaveLength(1)
+    turns.event(ev('stop', { text: '好了' }), 2_000)
+    expect(log.turns(matterId())).toMatchObject([{ status: 'completed' }])
   })
   it('要权限 ⇒ 一张卡(等你);同一件事已经有开着的卡不再加;放行 ⇒ 做完、回到在做;拒绝 ⇒ failed', () => {
     turns.event(ev('prompt'), 1_000)
@@ -97,12 +103,22 @@ describe('terminal-turns', () => {
     turns.event(ev('session_end', { session_id: 'sess-2' }), 4_000)
     expect(log.state(matters.findBySurface('cli', 'sess-2')!.id)?.state).toBe('done')
   })
-  it('开机 interruptAll:没收的终端轮记中断;别的种类不碰', () => {
+  it('开机 interruptAll:久没动静的终端轮记中断;别的种类不碰', () => {
     turns.event(ev('prompt'), 1_000)
     const task = matters.create({ kind: 'task', title: 't' })
     log.startTurn({ matterId: task.id, executor: 'codex' })
-    turns.interruptAll()
+    turns.interruptAll(Date.now() + TERMINAL_QUIET_MS + 60_000)
     expect(log.turns(matterId())).toMatchObject([{ status: 'interrupted', errorCode: 'daemon_restarted' }])
     expect(log.turns(task.id)).toMatchObject([{ status: 'running' }])
+  })
+  it('开机 interruptAll:最近还有动静的终端轮不收(终端在 daemon 外面跑,重启它照样在做),等它自己的 stop;开着的卡照样收(M4d)', () => {
+    turns.event(ev('prompt'), 1_000)
+    turns.permissionAsked({ source: 'claude', session_id: 'sess-1', cwd: '/w', tool_name: 'Bash', summary: 'ls' }, 1_500)
+    turns.interruptAll(Date.now())
+    expect(log.turns(matterId())).toMatchObject([{ status: 'running' }])
+    expect(log.items(matterId()).find(i => i.kind === 'permission')).toMatchObject({ status: 'failed', payload: { outcome: 'daemon_restarted' } })
+    expect(log.state(matterId())?.state).toBe('working')
+    turns.event(ev('stop', { text: '好了' }), 2_000)
+    expect(log.turns(matterId())).toMatchObject([{ status: 'completed' }])
   })
 })

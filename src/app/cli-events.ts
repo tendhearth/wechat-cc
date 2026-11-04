@@ -14,6 +14,7 @@
 
 import { cliSourceLabel } from '../domain/cli-session-digest'
 import { sortCliSessionViews, toCliSessionView } from '../domain/cli-session-view'
+import { stripMarkdown, summarizeOneLine as oneLine } from '../domain/one-line'
 import type { CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
 import type { TerminalTurnLog } from '../ports/terminal-turns'
 
@@ -469,32 +470,12 @@ function safeProjectName(fn: (cwd: string) => string, cwd: string): string {
   try { return fn(cwd) } catch { return basename(cwd) }
 }
 
-/** 压成一行、截到上限;空串原样。 */
+/** 压成一行、截到上限;空串原样(实现在 domain/one-line.ts)。 */
 export function summarizeOneLine(text: string, max = DESKTOP_BODY_MAX): string {
-  const one = text.replace(/\s+/g, ' ').trim()
-  if (one.length <= max) return one
-  return one.slice(0, max - 1) + '…'
+  return oneLine(text, max)
 }
 
-/**
- * 微信不认 markdown:去掉记号、留下结构。星号粗体、反引号、标题井号、列表点、链接。
- * 段落间最多留一个空行。
- */
-export function stripMarkdown(text: string): string {
-  return text
-    .replace(/```[a-zA-Z0-9_-]*\n?/g, '')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1$2')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
-    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-    .replace(/^\s*[-*+]\s+/gm, '· ')
-    .replace(/^\s*>\s?/gm, '')
-    .replace(/[ \t]+$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
+export { stripMarkdown }
 
 /** 标题行:哪家 · 干了什么 · 哪台机(非本机才写)· 项目 · 会话短码。 */
 export function formatCliHeader(ev: CliEvent, projectName: string, localMachine?: string): string {

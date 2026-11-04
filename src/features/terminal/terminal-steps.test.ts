@@ -5,7 +5,7 @@ import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
 import type { MatterLog, MatterStore } from '../../ports/matters'
 import { parseActivity } from './cli-activity'
-import { makeTerminalSteps, STEPS_FIRST_READ, withTranscriptSteps, type TerminalSteps } from './terminal-steps'
+import { makeTerminalSteps, STEPS_FIRST_READ, STOP_SETTLE_MS, withTranscriptSteps, type TerminalSteps } from './terminal-steps'
 import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 
 /** 终端会话记录增量读进这件事的步(M4b):不管分几次读、从哪儿断开,读出来的和整段解析一遍逐字段一样。 */
@@ -130,8 +130,8 @@ describe('terminal-steps', () => {
 describe('钩子事件 + 读记录(withTranscriptSteps)', () => {
   const hooked = (lookup: Record<string, string> = {}) => {
     const turns = makeTerminalTurnLog({ db, log, matters })
-    const logs: string[] = []
-    return { logs, turns: withTranscriptSteps({ turns, steps: makeSteps(), localMachine: 'mac', lookup: id => (lookup[id] ? { session_id: id, transcript_path: lookup[id] } : null), log: l => logs.push(l) }) }
+    const logs: string[] = [], timers: { fn: () => void; ms: number }[] = []
+    return { logs, timers, turns: withTranscriptSteps({ turns, steps: makeSteps(), localMachine: 'mac', lookup: id => (lookup[id] ? { session_id: id, transcript_path: lookup[id] } : null), log: l => logs.push(l), later: (fn, ms) => timers.push({ fn, ms }) }) }
   }
   const kinds = (sid: string) => log.items(matters.findBySurface('cli', sid)!.id).map(i => `${i.kind}:${String(i.payload.text ?? '')}`)
   const ev = (kind: 'prompt' | 'stop' | 'session_end', sid: string, over: Record<string, unknown> = {}) => ({ source: 'claude', kind, session_id: sid, cwd: '/w/blog', machine: 'mac', ...over })
@@ -143,6 +143,20 @@ describe('钩子事件 + 读记录(withTranscriptSteps)', () => {
     expect(kinds('S9')).toEqual(['user_message:修一下', 'agent_message:修好了'])
     makeSteps().view({ session_id: 'S9', transcript_path: '/t/S9.jsonl', source: 'claude' }, 40)
     expect(kinds('S9')).toEqual(['user_message:修一下', 'agent_message:修好了'])
+  })
+
+  it('答完那一刻最后一句还没写进记录(真机:和钩子同一秒)⇒ 过一会儿补读一次,最后一句进步;只补一次、不重(M4d)', () => {
+    file = Buffer.from(L({ type: 'user', timestamp: T, message: { content: '修一下' } }) + '\n')
+    const { turns, timers } = hooked()
+    turns.event(ev('prompt', 'S4', { transcript_path: '/t/S4.jsonl' }), 1_000)
+    expect(timers).toEqual([])
+    turns.event(ev('stop', 'S4', { text: '修好了', transcript_path: '/t/S4.jsonl' }), 2_000)
+    expect(kinds('S4')).toEqual(['user_message:修一下'])
+    expect(timers).toMatchObject([{ ms: STOP_SETTLE_MS }])
+    file = Buffer.concat([file, Buffer.from(L({ type: 'assistant', timestamp: T, message: { content: [{ type: 'text', text: '修好了' }] } }) + '\n')])
+    timers[0]!.fn()
+    timers[0]!.fn()
+    expect(kinds('S4')).toEqual(['user_message:修一下', 'agent_message:修好了'])
   })
 
   it('读不了记录 ⇒ 钩子照旧写发问那一步和最后一句(Codex 评审:别丢);记一行日志', () => {
