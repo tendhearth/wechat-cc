@@ -133,7 +133,9 @@ matter   一件事:谁发起(initiator)、从哪来(origin_surface)、是什么(
 | S4 | 全局预算 + 统一挑选:「上次主动开口」从 `speech_log` 推;各发起方的定时器只产提议,initiative 提议交便宜模型一起挑 | `lastProactiveAtIso` 删掉;各功能里不再有直接发送 |
 | S5 | 桌宠订阅在场层与 `presence` topic,不再轮询 | `/v1/companion/pet` 轮询删掉 |
 
-**S 线进度(11-03)**:S1 做了。伙伴的推送(日程 / 问候 / 打猎,`dispatchToChat`)改成经 `speech.say` 开那一轮,账进 `speech_log`(kind = `companion`)。`tick-push` 里手判的免打扰 / 关心档换成问门(`policy.peek`:只判不记账),判法只剩门里那一份,而且照旧在调便宜模型挑候选之前问。发言守卫加了一条:主动的那一轮(`context: 'tick'`)开回复交付必须带门开的 `outbound`。S2 设计稿 [2026-11-04-s2-one-pending-queue-design.md](2026-11-04-s2-one-pending-queue-design.md)(主人 11-04 点头):S2a 退避一套做了(三套退避里 A、B 并到 `lib/delivery-backoff.ts`);S2b 待发队列一张表做了(v101 `speech_pending`:待说 + App 推送,重启不丢、带过期);S2c 新贴纸那一句(6 小时)、见闻 / 明信片(24 小时、一次最多一条)推后也补,做了。S3–S5 未做。
+**S 线进度(11-03)**:S1 做了。伙伴的推送(日程 / 问候 / 打猎,`dispatchToChat`)改成经 `speech.say` 开那一轮,账进 `speech_log`(kind = `companion`)。`tick-push` 里手判的免打扰 / 关心档换成问门(`policy.peek`:只判不记账),判法只剩门里那一份,而且照旧在调便宜模型挑候选之前问。发言守卫加了一条:主动的那一轮(`context: 'tick'`)开回复交付必须带门开的 `outbound`。S2 设计稿 [2026-11-04-s2-one-pending-queue-design.md](2026-11-04-s2-one-pending-queue-design.md)(主人 11-04 点头):S2a 退避一套做了(三套退避里 A、B 并到 `lib/delivery-backoff.ts`);S2b 待发队列一张表做了(v101 `speech_pending`:待说 + App 推送,重启不丢、带过期);S2c 新贴纸那一句(6 小时)、见闻 / 明信片(24 小时、一次最多一条)推后也补,做了。S3、S4 未做。
+
+**S5(11-04)**:桌宠不再轮询。daemon 加了 `presence` 主题 `GET /v1/subscribe/presence?since=<cursor>&wait_ms=`(`src/daemon/internal-api/presence-topic.ts`):一份 = 处境(`computePresence`)+ 在做什么(`petTurn`),内容变了 cursor 才加一,cursor 从开机毫秒数起跳(重启后旧的一定对不上)。重算的时机:写口一戳就算(pet-signals 每记一笔、待决权限开 / 了结、MatterLog 的 feed、入站消息落库;合并 30ms);「在干活」到点(最后一次工具调用 + 5 秒)重算一次;有人在等时兜底,忙 2 秒、闲 10 秒(= 以前轮询的快慢两档,所以没戳到的变化也不比以前晚);没人等就一次都不算。桌面 `pet/bridge/presence-feed.js` 用一起做详情那条长轮询(`createLongPoll`)订它,替掉 `pet-poller.js`(2 / 10 秒)和陪伴窗里那份 `presence-poller`(20 秒);窗口重新可见 / 拍板之后 / 安静结束时马上要一份,断了 1–10 秒退避重连,长轮询最多挂 20 秒 = 慢心跳。`GET /v1/companion/pet` 留着(1.7.8 及以前的桌面还在拉,e2e 也读),桌面都升上来以后删;主窗口「此刻」页的 `presence-poller`(20 秒)不在这一步。
 
 ### P:一套协议(在 M2 之后)
 

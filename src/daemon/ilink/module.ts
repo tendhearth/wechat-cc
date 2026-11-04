@@ -26,7 +26,7 @@ export function ilinkAdapterModule(f: Foundation): DaemonModule<IlinkAdapter> {
     lazy: ['wired'],
     init(ctx): IlinkAdapter {
       const wired = ctx.late<WiredDeps>('wired')
-      return makeIlinkAdapter({ stateDir, accounts: f.accounts, db, conversationStore: f.conversationStore, networkGate: ctx.get<GuardRuntime>('network-gate').gate, speech: () => wired()?.speech ?? null })
+      return makeIlinkAdapter({ stateDir, accounts: f.accounts, db, conversationStore: f.conversationStore, networkGate: ctx.get<GuardRuntime>('network-gate').gate, speech: () => wired()?.speech ?? null, onPendingChange: () => f.presencePulse.poke() })
     },
     ports: ILINK_PORTS,
   } satisfies DaemonModule<IlinkAdapter>

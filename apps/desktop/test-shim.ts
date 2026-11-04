@@ -218,6 +218,9 @@ const __mockState: {
   revealCalls: string[]
 } = { converseCalls: [], revealCalls: [], chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over', phoneCalls: [], hookCalls: [], permissionResolves: [] }
 
+// presence 主题(S5)的演示 cursor:内容变了才加一。
+let presenceTopicCursor = 1, presenceTopicKey = ''
+
 // ─── A2A mock credentials ─────────────────────────────────────────────────────
 // The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
 // main shim (port 4174), avoiding cross-origin fetch restrictions in the
@@ -1463,6 +1466,25 @@ Bun.serve({
     if (dryRun && url.pathname === '/v1/companion/presence' && req.method === 'GET') {
       if (__mockState.presenceDown) return Response.json({ error: 'journal_not_wired' }, { status: 503 })
       return Response.json(__mockState.presence)
+    }
+    // 桌宠订的 presence 主题(S5):同一份 presence;演示模式没有「在做什么」⇒ pet 为 null(和以前 /v1/companion/pet 404 一样)。
+    // since 和现在的 cursor 一样就短挂一会儿(≤300ms)再回原样:像 daemon 那样不让客户端空转,又不把一个请求挂到
+    // 用假时钟的 spec 等不及(它们每走一步要等请求落地)。cursor 只在内容变了才加一。
+    if (dryRun && url.pathname === '/v1/subscribe/presence' && req.method === 'GET') {
+      const since = url.searchParams.get('since')
+      const hold = Math.min(Number(url.searchParams.get('wait_ms') ?? 0) || 0, 300)
+      const read = () => {
+        const body = { presence: __mockState.presenceDown ? null : __mockState.presence, pet: null }
+        const key = JSON.stringify(body)
+        if (key !== presenceTopicKey) { presenceTopicKey = key; presenceTopicCursor++ }
+        return { cursor: presenceTopicCursor, ...body }
+      }
+      let reply = read()
+      const deadline = Date.now() + hold
+      while (since !== null && Number(since) === reply.cursor && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 50)); reply = read()
+      }
+      return Response.json(reply)
     }
     // 切换后端的下拉菜单从这里拿「已配置的 AI 服务」(dashboard.js refreshServiceChoices,
     // 2026-08-26 起与「大脑」同源);演示模式给三家,和 doctor 报告里的 provider 对得上。

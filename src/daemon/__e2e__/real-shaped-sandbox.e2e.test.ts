@@ -281,6 +281,11 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(pet.status).toBe(200)
     expect(pet.body.activities).toEqual(expect.arrayContaining([expect.objectContaining({taskId,phase:'replied'})]))
     expect(pet.body.activities.find(item=>item.taskId===taskId)?.title).toContain('写一份笔记')
+    // 桌宠订的 presence 主题(S5)是同一份:处境 + 在做什么一起来;since 对不上(还没订过)⇒ 马上回
+    const topic = await desktop<{cursor:number;presence:{presence:string}|null;pet:{activities:Array<{taskId:string;phase:string}>}|null}>('GET','/v1/subscribe/presence?since=0&wait_ms=20000',undefined,'trusted')
+    expect(topic.status).toBe(200)
+    expect(topic.body.presence).not.toBeNull()
+    expect(topic.body.pet?.activities).toEqual(expect.arrayContaining([expect.objectContaining({taskId,phase:'replied'})]))
     // 给主人的回报(微信里派的活,回报回到微信):进了回报发件箱,带着答复正文。主人刚在这件事上说过话,回报故意晚一分钟再发
     // (report.ts 的 shouldDisturb),所以这里看发件箱那一行,不等它真发出去
     await expect.poll(() => d.query<{ text: string }>('SELECT text FROM matter_report_outbox WHERE matter_id = ?', taskId!).map(r => r.text), { timeout: 15_000 })

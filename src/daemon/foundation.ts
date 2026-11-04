@@ -27,6 +27,7 @@ import { makeMatterStore } from '../adapters/store/matters-store'
 import { makeChatPrefs } from './chat-prefs'
 import { makeOutboundTaps } from './outbound-taps'
 import { makePetSignals } from './pet-signals'
+import { makePresencePulse } from './presence-pulse'
 import { makeJournal } from '../adapters/store/journal-store'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from '../features/companion'
@@ -120,6 +121,8 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
   // A second instance would have a stale in-memory cache: the store's
   // write-through only protects its own writes, not cross-instance reads.
   const chatPrefs = makeChatPrefs(stateDir)
+  // 「在场变了」(S5):pet-signals 与待决权限登记处写了就戳,桌宠订的 presence 主题据此重算。
+  const presencePulse = makePresencePulse()
 
   return {
     stateDir,
@@ -160,7 +163,8 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     // 打猎战利品(2026-09-03):旁听而非改道,见 outbound-taps.ts。开 tap 的是打猎那一拍,往里写的是发送路径。
     outboundTaps: makeOutboundTaps(),
     // 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1):纯内存,重启就忘 —— 描述的本来就只是当下。
-    petSignals: makePetSignals(),
+    petSignals: makePetSignals(undefined, () => presencePulse.poke()),
+    presencePulse,
     // 伙伴日志(背包,v36 起):打猎、串门见闻、明信片、回忆都进这一张表;桌宠 / 手机首屏 / 设置面板 / 微信「背包」读它。
     // 读写路由归日志模块(src/features/journal)。
     journal: makeJournal(db),

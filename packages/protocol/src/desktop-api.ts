@@ -2136,6 +2136,18 @@ export const PetTurnResponse = z.object({
 })
 export type PetTurnResponseT = z.infer<typeof PetTurnResponse>
 
+// ── GET /v1/subscribe/presence ── 桌宠订的 presence 主题(S5):since=<cursor>&wait_ms= 长轮询
+// 两半各自算不出来就是 null:presence = 「联系不上」(journal 没接),pet = 「端点没接」。
+export const PresenceTopicQuery = z.object({
+  since: z.coerce.number().optional(),
+  wait_ms: z.coerce.number().int().min(0).max(60_000).optional(),
+})
+export const PresenceTopicResponse = z.object({
+  cursor: z.number(),
+  presence: PresenceResponse.nullable(),
+  pet: PetTurnResponse.nullable(),
+})
+
 // ── GET /v1/a2a/list ── 逐字段投影(不含密钥)
 const A2AListAgentShape = z.object({
   id: z.string(),
@@ -2449,6 +2461,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/cli/sessions': CliSessionsQuery,
   'POST /v1/cli/say': CliSayRequest,
   'GET /v1/cli/say': CliSayQuery,
+  'GET /v1/subscribe/presence': PresenceTopicQuery,
   'POST /v1/cli/hooks/install': CliHooksRequest,
   'POST /v1/cli/hooks/uninstall': CliHooksRequest,
 
@@ -2663,6 +2676,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/federation/mint': FederationMintResponse,
   // 桌宠 / A2A / 社交 / 权限 / 自改 / 手帐 / 配对 / 笔友
   'GET /v1/companion/pet': PetTurnResponse,
+  'GET /v1/subscribe/presence': PresenceTopicResponse,
   'GET /v1/a2a/list': A2AListResponse,
   'GET /v1/a2a/info': A2AInfoResponse,
   'GET /v1/a2a/activity': A2AActivityResponse,

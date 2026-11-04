@@ -1,11 +1,10 @@
 // @ts-check
-// companion-window.js — CC 桌宠窗的胶水:组装 pet,接 presence / pet 两个轮询与权限卡片,窗口拖动 / 缩放 / 关闭。
+// companion-window.js — CC 桌宠窗的胶水:组装 pet,接 presence 主题(订阅,S5)与权限卡片,窗口拖动 / 缩放 / 关闭。
 // 只调 pet 的语义接口;这里不出现任何帧文件名。
 import { createPet } from './pet/pet.js'
-import { createPetPoller } from './pet/bridge/pet-poller.js'
+import { createPresenceFeed } from './pet/bridge/presence-feed.js'
 import { createPetBridge } from './pet/bridge/pet-bridge.js'
 import { createPermissionCard } from './pet/permission/permission-card.js'
-import { createPresencePoller } from './presence-poller.js'
 import { invokeApi } from './api.js'
 import { invoke } from './ipc.js'
 import { createCompanionPreferences } from './companion-preferences.js'
@@ -46,7 +45,9 @@ shell?.addEventListener('focusout',()=>queueMicrotask(()=>{focusInShell=Boolean(
 const reobserve = new Set()
 /** @param {import('./companion-preferences.js').MotionPreferences} s */
 const applyPreferences = s => {
-  if ((quiet && !s.quiet) || (reducedMotion && !s.reducedMotion)) { reobserve.add('presence'); reobserve.add('turn') }
+  // 安静 / 减少动作刚结束:要观察一次「当下」把这段时间的变化吞掉(不补演)。以前靠下一次轮询;订阅只在有变化时才来,
+  // 所以这里主动要一份 —— 否则这两个标记会留到下一次真变化,把那次真的「做完了」也吞掉。
+  if ((quiet && !s.quiet) || (reducedMotion && !s.reducedMotion)) { reobserve.add('presence'); reobserve.add('turn'); queueMicrotask(observeNow) }
   quiet = s.quiet; reducedMotion = s.reducedMotion
   pet.setReducedMotion(s.reducedMotion)
   pet.setQuiet(s.quiet)
@@ -65,10 +66,12 @@ motionQuery?.addEventListener('change', systemMotionChanged)
 $('pet-reduced-motion')?.addEventListener('change', event => preferences.setUserReduced(/** @type {HTMLInputElement} */ (event.target).checked))
 $('pet-quiet')?.addEventListener('click', () => preferences.setQuiet(!preferences.snapshot().quiet))
 
-// presence(处境)+ pet 端点(在做什么)→ 一个意图(spec §5)。两个轮询各拉各的,
-// 谁回来都重算一次 —— 有状态的合并在 pet-bridge.js 里(那儿有测试),这里只做接线。
-const poller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
-const petPoller = createPetPoller({ invokeApi })
+// presence(处境)+ pet(在做什么)→ 一个意图(spec §5)。两样从同一个 presence 主题来(S5,daemon 那边变了才推);
+// 有状态的合并在 pet-bridge.js 里(那儿有测试),这里只做接线。
+const feed = createPresenceFeed({ invokeApi })
+/** @type {import('./pet/bridge/presence-feed.js').PetTurn | null} */ let petTurn = null
+// 窗口看不见时不观察(停订期间本来就不画);回来时 start() 会先要一份。
+function observeNow() { if (!document.hidden) void feed.refresh() }
 // 权限卡片:能不能真的按下去,看的是**有没有 Tauri 运行时**(operator token 只有它拿得到),
 // 不能看 invoke 的返回 —— 浏览器预览的 mockInvoke 对任何未知命令都回 {}。
 const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {string} */ t) => document.createElement(t) }, {
@@ -81,8 +84,8 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
       const r = /** @type {any} */ (await invoke('pet_permission_resolve', { hash, decision }))
       return r === true ? 'resolved' : 'gone'
     } catch (err) { console.warn('pet_permission_resolve failed', err); return 'failed' }
-    // 不管成没成:立刻重拉一次,让卡片的去留由 daemon 的列表说了算(微信那端也可能刚点过)。
-    finally { petPoller.refresh() }
+    // 不管成没成:立刻要一份,让卡片的去留由 daemon 的列表说了算(微信那端也可能刚点过)。
+    finally { void feed.refresh() }
   },
 })
 
@@ -93,7 +96,7 @@ document.querySelector('.pet-settings')?.addEventListener('toggle',event=>{if(ev
 const bridge = createPetBridge()
 const apply = (freshTurn = false) => {
   const stream = freshTurn ? 'turn' : 'presence'
-  const turn = petPoller.current()
+  const turn = petTurn
   const r = bridge.tick(turn, { freshTurn })
   // A presence response only observes the cached turn. The next fresh turn
   // still has to consume its own suppressed completion/contact baseline.
@@ -126,25 +129,27 @@ const apply = (freshTurn = false) => {
   // 哪一拍算「初次」由 bridge 说(开窗第一拍 + 第一次拿到端点回答那拍,见 pet-bridge.js)。
   if (r.first && pet.machine.snapshot().transition) pet.machine.notifyAnimationEnded()
   if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
-  petPoller.setFast(r.fast||(tasksAvailable&&taskRows.some(row=>['needs_input','working','queued','paused','stopping'].includes(row.phase))))
   // Consume this snapshot under the previous quiet flag before wake-time expiry
   // enables motion; completion during suspend must not become a celebration.
   preferences.refresh()
   if (!freshTurn || turn) reobserve.delete(stream)
 }
-poller.subscribe(p => { bridge.notePresence(p); apply() })
-petPoller.subscribe(() => apply(true))
+// 安静到点也可能是墙上时钟跳过去的(合盖睡了一觉,WebKit 的计时器跟着睡)。以前每 2 秒一次的轮询顺手在 apply 里
+// preferences.refresh() 就发现了;订阅只在有变化时才来,所以安静期间每秒看一眼本地时钟(不碰 daemon)。
+const quietWatch = setInterval(() => { if (quiet && !document.hidden) preferences.refresh() }, 1_000)
+// 每一份都按以前两个轮询的顺序观察:先是处境(拿着上一份的 turn),再是新的 turn。
+feed.subscribe(f => { bridge.notePresence(f.presence); apply(); petTurn = f.pet; apply(true) })
 pet.setPaused(document.hidden)
-if (!document.hidden) { poller.start(); petPoller.start() }
-// start() 自己会先拉一次,这里不用再补 refresh()。
-// 窗口不可见 → 两个都停(spec §5.3);回来时 start() 会各自补一拍。
+if (!document.hidden) feed.start()
+// start() 自己会先要一份,这里不用再补 refresh()。
+// 窗口不可见 → 停订(spec §5.3);回来时 start() 先补一份。
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { drag.cancel(); pet.setLifeAvailable(false);void motion?.stop();pet.setPaused(true); poller.stop(); petPoller.stop(); return }
+  if (document.hidden) { drag.cancel(); pet.setLifeAvailable(false);void motion?.stop();pet.setPaused(true); feed.stop(); return }
   preferences.refresh()
   bridge.resume()
   pet.setPaused(false)
   syncLifeAvailability()
-  poller.start(); petPoller.start()
+  feed.start()
 })
 
 const drag = createCompanionDrag({
@@ -217,7 +222,7 @@ stage?.addEventListener('pointerleave', () => { pointerNear = false; releaseNear
 stage?.addEventListener('focus', () => { keyboardNear = true; pet.acknowledgeAttention() })
 stage?.addEventListener('blur', () => { keyboardNear = false; releaseNearby() })
 window.addEventListener('blur', () => { pointerNear = false; keyboardNear = false;pointerInShell=false;focusInShell=false;pet.setLifeAvailable(false);void motion?.stop();syncLifeAvailability();pet.releaseAttention(); taskView?.closeList(); closeSettings() })
-window.addEventListener('pagehide',()=>{pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();poller.stop();petPoller.stop();preferences.destroy()})
+window.addEventListener('pagehide',()=>{pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
 
 $('pet-reset-position')?.addEventListener('click', async () => {
   await motion?.stop()

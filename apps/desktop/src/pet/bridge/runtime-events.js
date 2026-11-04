@@ -3,19 +3,15 @@
 // 纯函数;所有「变化」都靠传进来的 state 做边沿检测,不用任何计时器。
 //
 // 明暗(form)只来自 presence:够得着 daemon = lit(presence-map.js;主人 2026-10-01 拍板,
-// 与「此刻」页、手机同一个信号)。以前的「20 分钟没说话就退潮」已经删掉;联系时间只剩两个用处:
-// 联系前进时播一次 receive + micro-light,以及决定 pet 端点轮询的快慢档(recentContact)。
-export const RECENT_CONTACT_MS = 20 * 60_000
+// 与「此刻」页、手机同一个信号)。以前的「20 分钟没说话就退潮」已经删掉;联系时间只剩一个用处:
+// 联系前进时播一次 receive + micro-light。(以前还决定 pet 端点轮询的快慢档;S5 起订阅 presence 主题,没有快慢档了。)
 
 /** @typedef {import('./presence-map.js').PetIntent} PetIntent */
-/** @typedef {import('./pet-poller.js').PetTurn} PetTurn */
+/** @typedef {import('./presence-feed.js').PetTurn} PetTurn */
 /** @typedef {{ lastContactMs: number | null, lastDoneMs: number | null, initialized: boolean }} BridgeState */
 
 /** @returns {BridgeState} */
 export const initialBridgeState = () => ({ lastContactMs: null, lastDoneMs: null, initialized: false })
-
-/** 主人刚说过话(窗口内)。只给轮询快慢档用。 @param {BridgeState} state @param {number} nowMs */
-export const recentContact = (state, nowMs) => state.lastContactMs !== null && nowMs - state.lastContactMs <= RECENT_CONTACT_MS
 
 /** @param {string | null | undefined} iso */
 const ms = (iso) => { if (!iso) return null; const v = Date.parse(iso); return Number.isFinite(v) ? v : null }

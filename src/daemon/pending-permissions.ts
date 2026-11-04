@@ -31,13 +31,17 @@ export class PendingPermissions {
    * journal:开卡 / 了结各记一笔(pending-cards.ts,v91)—— 登记处只在内存里,重启后靠它告诉主人「重启前那张卡作废了」。
    * 不给(单测、最小嵌入)⇒ 不记。
    */
-  constructor(private readonly journal?: PendingCardJournal) {}
+  constructor(private readonly journal?: PendingCardJournal, private readonly onChange?: () => void) {}
+
+  /** onChange:开一条、了结一条都调一次(S5:桌宠订的 presence 主题据此重算待批卡)。 */
+  private changed(): void { try { this.onChange?.() } catch { /* 通知失败不影响登记处 */ } }
 
   /** 一条从登记处拿掉了(批 / 拒 / 过期 / 没送到 / 被同 id 顶掉)。 */
   private settle(hash: string, entry: Entry, decision: PermissionDecision): void {
     this.entries.delete(hash)
     this.journal?.settled(hash)
     entry.resolve(decision)
+    this.changed()
   }
 
   register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta): Promise<PermissionDecision> {
@@ -57,6 +61,7 @@ export class PendingPermissions {
       })
     })
     if (meta) this.journal?.opened(hash, meta, now, expiresAt)
+    this.changed()
     return promise
   }
 

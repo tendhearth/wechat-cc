@@ -320,6 +320,8 @@ const ROUTE_TABLE = {
   // presence 同一类:桌面的唯一凭据是 daemon 级 0600 FILE token(=trusted),
   // admin 会让每一次真机轮询 403 —— 觅食台 2026-07-22 就是这么静默坏的。
   'GET /v1/companion/pet': { desktop: { tier: 'trusted' } },
+  // 桌宠订的 presence 主题(S5,骨架设计稿 §3.3):处境 + 在做什么,since=<cursor> 长轮询。档位同上两条。
+  'GET /v1/subscribe/presence': { desktop: { tier: 'trusted' } },
   'POST /v1/conversation/set-mode': { desktop: { tier: 'trusted' } },
   'GET /v1/projects/list': { desktop: { tier: 'trusted' } },
   'POST /v1/projects/add': { desktop: { tier: 'trusted' } },

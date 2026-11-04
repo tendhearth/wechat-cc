@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures'
+import { routePresenceTopic } from './presence-topic'
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/__dev_reload.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
@@ -18,11 +19,11 @@ test('quiet and reduced motion retain current activity and pending permission wi
   })
   let phase = 'thinking'
   let pending = false
-  await page.route('**/v1/companion/pet', route => route.fulfill({ json: {
+  await routePresenceTopic(page, { pet: () => ({
     owner_last_contact_at: null, last_done_at: null,
     turn: { phase, since: '2026-10-29T10:00:00Z' },
     pending_permissions: pending ? [{ hash: 'test-permission', prompt: 'private prompt', since: '2026-10-29T10:00:00Z', expires_at: '2026-10-30T10:00:00Z' }] : [],
-  } }))
+  }) })
   await page.goto(new URL('companion-window.html?lab', shimUrl).href)
   const stage = page.locator('#pet-stage')
   const status = page.locator('#pet-connection')
@@ -43,7 +44,8 @@ test('quiet and reduced motion retain current activity and pending permission wi
     ;(window as any).__ariaMutations = 0
     new MutationObserver(records => { (window as any).__ariaMutations += records.length }).observe(document.getElementById('pet-stage')!, { attributes: true, attributeFilter: ['aria-label'] })
   })
-  const repeated = await page.waitForResponse('**/v1/companion/pet')
+  // 内容没变的那一份(订阅挂一会儿后原样回来)也要走一遍真的 bridge,DOM 不该有任何变动。
+  const repeated = await page.waitForResponse(r => new URL(r.url()).pathname === '/v1/subscribe/presence')
   await repeated.finished()
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   await expect.poll(() => page.evaluate(() => [(window as any).__statusMutations, (window as any).__ariaMutations])).toEqual([0, 0])
@@ -54,7 +56,7 @@ test('quiet and reduced motion retain current activity and pending permission wi
   await expect(page.getByRole('checkbox', { name: '减少动作' })).toBeChecked()
   await expect(page.getByRole('button', { name: '恢复动作' })).toBeVisible()
   await shim.invoke('demo.seed', { presenceDown: true })
-  // Resume uses the existing pollers to re-observe connection immediately.
+  // Resume re-subscribes and observes the current connection immediately.
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true })
     document.dispatchEvent(new Event('visibilitychange'))

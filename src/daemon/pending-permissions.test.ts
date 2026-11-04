@@ -5,6 +5,19 @@ describe('PendingPermissions', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
+  it('onChange:开一条、批 / 拒 / 过期 / 没送到 / 被同 id 顶掉都戳一次(S5:桌宠订的 presence 主题据此重算待批卡)', () => {
+    const onChange = vi.fn()
+    const reg = new PendingPermissions(undefined, onChange)
+    void reg.register('a', 10_000); expect(onChange).toHaveBeenCalledTimes(1)
+    void reg.register('a', 10_000); expect(onChange).toHaveBeenCalledTimes(3)   // 旧的按超时了结 + 新开一条
+    reg.consume('a', 'allow'); expect(onChange).toHaveBeenCalledTimes(4)
+    expect(reg.consume('a', 'allow')).toBe(false); expect(onChange).toHaveBeenCalledTimes(4)   // 不在了 ⇒ 不戳
+    void reg.register('b', 10); reg.fail('b'); expect(onChange).toHaveBeenCalledTimes(6)
+    void reg.register('c', 10); vi.advanceTimersByTime(20); reg.sweep(); expect(onChange).toHaveBeenCalledTimes(8)
+    const boom = new PendingPermissions(undefined, () => { throw new Error('x') })
+    expect(() => boom.register('d', 10)).not.toThrow()
+  })
+
   it('consume resolves register() promise with allow', async () => {
     const reg = new PendingPermissions()
     const p = reg.register('abc12', 10_000)

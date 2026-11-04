@@ -1,12 +1,15 @@
 import {test,expect} from './fixtures'
 import type {Page,Request} from '@playwright/test'
+import {routePresenceTopic,PRESENCE_OK} from './presence-topic'
 
 // Screenshots use real time, while the idle director uses page timers. Keep
 // that clock paused between steps, and let real HTTP polling settle before
 // advancing again; one 3-minute jump can outrun its asynchronous responses.
+// The presence subscription answers within 300ms (presence-topic.ts) and re-asks on a page timer,
+// so with the clock paused there is at most one request per step.
 async function idleClock(page:Page){
   const pending=new Set<Request>(),failed:string[]=[]
-  const isPoll=(request:Request)=>['/v1/companion/presence','/v1/companion/pet'].includes(new URL(request.url()).pathname)
+  const isPoll=(request:Request)=>new URL(request.url()).pathname==='/v1/subscribe/presence'
   page.on('request',request=>{if(isPoll(request))pending.add(request)})
   page.on('requestfinished',request=>pending.delete(request))
   page.on('requestfailed',request=>{if(isPoll(request)){pending.delete(request);failed.push(`${request.url()}: ${request.failure()?.errorText}`)}})
@@ -60,8 +63,7 @@ async function entry(page:Page,shimUrl:string){
   await page.mouse.move(-10,-10)
 }
 async function calm(page:Page){
-  await page.route('**/v1/companion/presence',r=>r.fulfill({json:{presence:'ok',activity:{kind:'idle',label:'',since:null},news:{unread:0,latest_kind:null,latest_title:null}}}))
-  await page.route('**/v1/companion/pet',r=>r.fulfill({json:{owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities:[]}}))
+  await routePresenceTopic(page,{presence:()=>PRESENCE_OK,pet:()=>({owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities:[]})})
 }
 
 async function traceCuriosity(page:Page){
@@ -242,8 +244,7 @@ test('the original CC visibly prepares work, puts it away, and immediately yield
 test('completion of another task never closes the computer or celebrates over the active task',async({page,shimUrl,shim})=>{
   await shim.invoke('demo.seed',{})
   let done:string|null=null
-  await page.route('**/v1/companion/presence',r=>r.fulfill({json:{presence:'ok',activity:{kind:'idle',label:'',since:null},news:{unread:0,latest_kind:null,latest_title:null}}}))
-  await page.route('**/v1/companion/pet',r=>r.fulfill({json:{owner_last_contact_at:null,last_done_at:done,turn:{phase:'idle',since:null},pending_permissions:[],activities:[{taskId:'deadbeef',title:'还在执行的任务',phase:'working',detail:null,updatedAt:1}]}}))
+  await routePresenceTopic(page,{presence:()=>PRESENCE_OK,pet:()=>({owner_last_contact_at:null,last_done_at:done,turn:{phase:'idle',since:null},pending_permissions:[],activities:[{taskId:'deadbeef',title:'还在执行的任务',phase:'working',detail:null,updatedAt:1}]})})
   // Unlike the calm fixture, this page has a concrete task label.
   await page.route('**/__dev_reload.js',r=>r.fulfill({contentType:'application/javascript',body:''}))
   await page.addInitScript(()=>{(window as any).__TAURI__={core:{invoke:async(command:string,args:any)=>{const r=await fetch('/__invoke',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({command,args})});return (await r.json()).result}}}})
@@ -252,7 +253,7 @@ test('completion of another task never closes the computer or celebrates over th
   await expect(page.locator('#pet-stage')).toHaveAttribute('data-pet-action','work')
   await page.evaluate(()=>{(window as any).__lifeObserved=[];new MutationObserver(()=>{(window as any).__lifeObserved.push(document.getElementById('pet-stage')!.getAttribute('data-pet-action'))}).observe(document.getElementById('pet-stage')!,{attributes:true,attributeFilter:['data-pet-action']})})
   done='2026-11-02T12:00:00Z'
-  await page.waitForResponse('**/v1/companion/pet')
+  await page.waitForResponse(r=>new URL(r.url()).pathname==='/v1/subscribe/presence')
   await expect(page.locator('#pet-stage')).toHaveAttribute('data-pet-action','work')
   expect(await page.evaluate(()=>(window as any).__lifeObserved)).not.toContain('celebrate')
   expect(await page.evaluate(()=>(window as any).__lifeObserved)).not.toContain('work-exit')

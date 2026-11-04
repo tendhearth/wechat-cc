@@ -212,6 +212,11 @@ export interface InternalApiDeps {
    */
   petTurn?: PetTurnDep
   /**
+   * 在场变了的信号(S5):pet-signals、待决权限、一件事的 feed、入站消息落库这几个写口一动就回调。
+   * `presence` 主题(GET /v1/subscribe/presence)据此重算;不给 ⇒ 主题只靠到点和兜底重算。返回退订。
+   */
+  presenceChanged?: (cb: () => void) => () => void
+  /**
    * 待决权限的两个面(spec §6)。list/resolve 都直接落到 ilink-glue 的
    * PendingPermissions —— 和微信「y/n <hash>」是同一个 consume(),所以桌面
    * 拍板之后微信那条提示也随之失效。main.ts 直接接线(不需要 late-bind:

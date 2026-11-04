@@ -13,7 +13,7 @@ describe('createPetBridge', () => {
     b.tick(null)
     b.notePresence(presence(1))
     expect(b.tick(turnAt()).intent.oneShots).toContain('receive')
-    // pet 端点每 2 秒来一拍;presence 还没换,不清 oneShots 的话这里会再播一次。
+    // 同一份内容接着按新 turn 再算一拍;presence 还没换,不清 oneShots 的话这里会再播一次。
     expect(b.tick(turnAt()).intent.oneShots).toEqual([])
     expect(b.tick(turnAt()).intent.badge).toBe(1)
   })
@@ -33,18 +33,13 @@ describe('createPetBridge', () => {
     b.notePresence({ presence: 'down', news: { unread: 0 } } as any)
     expect(b.tick(turnAt()).intent.form).toBe('unlit')
   })
-  it('快档:刚说过话 / 有轮次 / 有待决权限任一为真(亮着本身不算,不然够得着就一直 2 秒一拉)', () => {
+  it('待决权限:第一条上卡片,条数如实报', () => {
     const b = createPetBridge({ now: () => 1_000 })
     b.notePresence(presence(0))
-    expect(b.tick(turnAt()).fast).toBe(false)
-    expect(b.tick(turnAt('thinking')).fast).toBe(true)
     const item = { hash: 'h', prompt: 'p', since: 's', expires_at: 'e' }
     const withPerm = b.tick(turnAt('idle', [item]))
-    expect(withPerm.fast).toBe(true)
     expect(withPerm.permission).toEqual(item)
     expect(withPerm.permissionCount).toBe(1)
-    // 刚说过话 → lit,端点闲着也保持快档(等着看它动起来)。
-    expect(b.tick(turnAt('idle', [], new Date(1_000).toISOString())).fast).toBe(true)
   })
 
   it('初次观察都报 first:开窗第一拍(哪怕只有 presence)与第一次拿到端点回答那拍', () => {

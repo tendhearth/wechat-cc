@@ -13,12 +13,12 @@ import { describe, it, expect } from 'vitest'
 import { startTestDaemon } from './harness'
 import type { OutboundMsg } from './fake-ilink-server'
 
-/** 桌面那条口子:桌宠从 GET /v1/companion/pet 读待批(文件令牌),按 hash 走 POST /v1/permissions/resolve(operator 令牌),和桌面同一套。 */
+/** 桌面那条口子:桌宠从 presence 主题(GET /v1/subscribe/presence,S5)读待批(文件令牌),按 hash 走 POST /v1/permissions/resolve(operator 令牌),和桌面同一套。 */
 async function resolvePending(stateDir: string, decision: 'allow' | 'deny'): Promise<void> {
   const info = JSON.parse(readFileSync(join(stateDir, 'internal-api-info.json'), 'utf8')) as { baseUrl: string; tokenFilePath: string; operatorTokenFilePath: string }
   const bearer = (file: string) => ({ authorization: `Bearer ${readFileSync(file, 'utf8').trim()}` })
   const auth = bearer(info.operatorTokenFilePath)
-  const pet = await (await fetch(`${info.baseUrl}/v1/companion/pet`, { headers: bearer(info.tokenFilePath) })).json() as { pending_permissions?: Array<{ hash: string; prompt: string }> }
+  const pet = (await (await fetch(`${info.baseUrl}/v1/subscribe/presence`, { headers: bearer(info.tokenFilePath) })).json() as { pet: { pending_permissions?: Array<{ hash: string; prompt: string }> } }).pet
   const card = pet.pending_permissions?.find(i => i.prompt.includes('Codex 想'))
   expect(card, JSON.stringify(pet).slice(0, 500)).toBeTruthy()
   const r = await fetch(`${info.baseUrl}/v1/permissions/resolve`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ hash: card!.hash, decision }) })
