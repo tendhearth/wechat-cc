@@ -4,7 +4,7 @@ import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
 import type { MatterLog, MatterStore } from '../../ports/matters'
-import { parseActivity } from './cli-activity'
+import { parseAll } from './activity.fixture'
 import { makeTerminalSteps, STEPS_FIRST_READ, STOP_SETTLE_MS, withTranscriptSteps, type TerminalSteps } from './terminal-steps'
 import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 
@@ -15,6 +15,7 @@ let db: Db, matters: MatterStore, log: MatterLog
 let file: Buffer
 const makeSteps = (): TerminalSteps => makeTerminalSteps({
   store: makeTerminalStepStore({ db, log, matters }),
+  turns: makeTerminalTurnLog({ db, log, matters }),
   size: () => file.length,
   read: (_p, from, to) => file.subarray(from, to),
 })
@@ -45,14 +46,14 @@ const CLAUDE = [
 ].join('\n') + '\n'
 
 describe('terminal-steps', () => {
-  it('一次读完 ⇒ 和 parseActivity 整段解析逐字段一样(合并「一串读 x」、结果挂回调用、报错、打码)', () => {
+  it('一次读完 ⇒ 和 parseAll 整段解析逐字段一样(合并「一串读 x」、结果挂回调用、报错、打码)', () => {
     file = Buffer.from(CLAUDE)
-    expect(makeSteps().view(session, 40)).toEqual(parseActivity(CLAUDE, 'claude'))
+    expect(makeSteps().view(session, 40)).toEqual(parseAll(CLAUDE, 'claude'))
   })
 
   it('从每一个字节位置断开分两次读(包括断在一行中间、断在中文字中间)⇒ 结果都一样;第二次读换一个实例(重启后接得上)', () => {
     const whole = Buffer.from(CLAUDE)
-    const want = parseActivity(CLAUDE, 'claude')
+    const want = parseAll(CLAUDE, 'claude')
     for (let cut = 1; cut < whole.length; cut += 7) {
       db.close(); db = openDb({ path: ':memory:' }); matters = makeMatterStore(db); log = makeMatterLog(db)
       matters.bind(matters.create({ kind: 'terminal', title: 'blog', origin: 'cli' }).id, 'cli', 'S1')
@@ -74,7 +75,7 @@ describe('terminal-steps', () => {
       file = Buffer.from(acc)
       steps.ingest('S1', session.transcript_path, 'claude')
     }
-    expect(steps.view(session, 40)).toEqual(parseActivity(CLAUDE, 'claude'))
+    expect(steps.view(session, 40)).toEqual(parseAll(CLAUDE, 'claude'))
   })
 
   it('最后一行没换行但已经完整 ⇒ 也读进来;之后接着写(先补换行)不重复', () => {
@@ -83,7 +84,7 @@ describe('terminal-steps', () => {
     file = Buffer.from(lines.slice(0, 2).join('\n'))
     expect(steps.view(session, 40)!.map(i => i.text)).toEqual(['把测试修好', '先看看', '读 a.ts'])
     file = Buffer.from(CLAUDE)
-    expect(steps.view(session, 40)).toEqual(parseActivity(CLAUDE, 'claude'))
+    expect(steps.view(session, 40)).toEqual(parseAll(CLAUDE, 'claude'))
   })
 
   it('步的种类:你说的 = user_message、它说的 = agent_message、动作 = tool_call(报错 ⇒ failed);挂在跑着的那一轮上', () => {
@@ -102,10 +103,10 @@ describe('terminal-steps', () => {
     const big = filler.repeat(Math.ceil(STEPS_FIRST_READ / filler.length) + 5) + CLAUDE
     file = Buffer.from(big)
     const tail = big.slice(big.length - STEPS_FIRST_READ)
-    expect(makeSteps().view(session, 40)).toEqual(parseActivity(tail.slice(tail.indexOf('\n') + 1), 'claude'))
+    expect(makeSteps().view(session, 40)).toEqual(parseAll(tail.slice(tail.indexOf('\n') + 1), 'claude'))
   })
 
-  it('记录被截短了(比读到的位置还短)⇒ 从头重读;还没有那件事 ⇒ view 给 null(调用方退回直接解析)', () => {
+  it('记录被截短了(比读到的位置还短)⇒ 从头重读;没报记录路径 ⇒ view 给空', () => {
     file = Buffer.from(CLAUDE)
     const steps = makeSteps()
     steps.ingest('S1', session.transcript_path, 'claude')
@@ -113,8 +114,38 @@ describe('terminal-steps', () => {
     file = Buffer.from(L({ type: 'user', timestamp: T, message: { content: '重新来' } }) + '\n')
     expect(steps.view(session, 40)!.at(-1)).toMatchObject({ kind: 'you', text: '重新来' })
     expect(log.items(matterId()).length).toBe(n + 1)
-    expect(steps.view({ ...session, session_id: 'nobody' }, 40)).toBeNull()
-    expect(steps.view({ ...session, transcript_path: null }, 40)).toBeNull()
+    expect(steps.view({ ...session, transcript_path: null }, 40)).toEqual([])
+  })
+
+  it('第一次有人来看、还没有那件事(钩子没来过的老会话)⇒ 当场建那件事、导入一次;之后只读步(M6d)', () => {
+    file = Buffer.from(CLAUDE)
+    const steps = makeSteps()
+    const old = { session_id: 'OLD', transcript_path: '/t/OLD.jsonl', source: 'claude', cwd: '/w/blog', machine: 'mac' }
+    expect(matters.findBySurface('cli', 'OLD')).toBeNull()
+    expect(steps.view(old, 40)).toEqual(parseAll(CLAUDE, 'claude'))
+    const m = matters.findBySurface('cli', 'OLD')!
+    expect(m).toMatchObject({ kind: 'terminal', title: 'blog', origin: 'cli' })
+    // 导入一次:再看不重复写,也不再建第二件
+    const n = log.items(m.id).length
+    expect(steps.view(old, 40)).toEqual(parseAll(CLAUDE, 'claude'))
+    expect(log.items(m.id).length).toBe(n)
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM matters WHERE kind='terminal'").get()!.n).toBe(2)
+  })
+
+  it('第一次看、记录读不了 ⇒ 抛,不为它建一件空的事', () => {
+    const steps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log, matters }), turns: makeTerminalTurnLog({ db, log, matters }), size: () => { throw new Error('ENOENT') }, read: () => Buffer.alloc(0) })
+    expect(() => steps.view({ session_id: 'GONE', transcript_path: '/gone.jsonl', source: 'claude', cwd: '/w/x' }, 40)).toThrow('ENOENT')
+    expect(matters.findBySurface('cli', 'GONE')).toBeNull()
+  })
+
+  it('第一次看一个很大的记录(还没有那件事)⇒ 也只从尾巴 256KB 起', () => {
+    const filler = L({ type: 'assistant', message: { content: [{ type: 'text', text: 'x'.repeat(1000) }] } }) + '\n'
+    const big = filler.repeat(Math.ceil(STEPS_FIRST_READ / filler.length) + 5) + CLAUDE
+    file = Buffer.from(big)
+    const reads: Array<[number, number]> = []
+    const steps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log, matters }), turns: makeTerminalTurnLog({ db, log, matters }), size: () => file.length, read: (_p, from, to) => { reads.push([from, to]); return file.subarray(from, to) } })
+    steps.view({ session_id: 'BIG', transcript_path: '/t/BIG.jsonl', source: 'claude', cwd: '/w/blog' }, 40)
+    expect(reads).toEqual([[file.length - STEPS_FIRST_READ, file.length]])
   })
 
   it('没有新内容 ⇒ 不写库(游标不动)', () => {

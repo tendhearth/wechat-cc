@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { claudeStep, codexExecSteps, parseActivity, textDiff, DETAIL_MAX } from './cli-activity'
+import { claudeStep, codexExecSteps, textDiff, DETAIL_MAX } from './cli-activity'
+import { parseAll } from './activity.fixture'
 
 const L = (o: object) => JSON.stringify(o)
 const T = '2026-10-17T10:00:00.000Z'
 
-describe('parseActivity —— 看着它跑', () => {
+describe('feedActivity 整段解析 —— 看着它跑', () => {
   it('Claude:主人的话、它的话、每个工具一步,按记录顺序', () => {
     const jsonl = [
       L({ type: 'user', timestamp: T, message: { content: '把测试修好' } }),
@@ -13,7 +14,7 @@ describe('parseActivity —— 看着它跑', () => {
       L({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', input: { file_path: '/w/proj/src/main.ts' } }] } }),
       L({ type: 'user', message: { content: '<system-reminder>x</system-reminder>' } }),
     ].join('\n')
-    expect(parseActivity(jsonl, 'claude')).toEqual([
+    expect(parseAll(jsonl, 'claude')).toEqual([
       { kind: 'you', text: '把测试修好', at: Date.parse(T) },
       { kind: 'said', text: '先跑一遍', at: Date.parse(T) },
       { kind: 'step', text: '运行 npm test', at: Date.parse(T), verb: 'run', target: 'npm test' },
@@ -35,10 +36,10 @@ describe('parseActivity —— 看着它跑', () => {
   it('连续同一步只留一条;密钥打码;只留最后 max 条', () => {
     const read = L({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/x/a.ts' } }] } })
     const secret = L({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'curl -H "x" API_KEY=abcd1234efgh' } }] } })
-    const items = parseActivity([read, read, read, secret].join('\n'), 'claude')
+    const items = parseAll([read, read, read, secret].join('\n'), 'claude')
     expect(items.map(i => i.text)).toEqual(['读 a.ts', '运行 curl -H "x" API_KEY=[已打码]'])
     const many = Array.from({ length: 60 }, (_, i) => L({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: `/f${i}` } }] } })).join('\n')
-    const tail = parseActivity(many, 'claude', 10)
+    const tail = parseAll(many, 'claude', 10)
     expect(tail).toHaveLength(10)
     expect(tail[9]!.text).toBe('读 f59')
   })
@@ -53,7 +54,7 @@ describe('parseActivity —— 看着它跑', () => {
       L({ type: 'response_item', payload: { type: 'function_call', name: 'followup_task', arguments: '{}' } }),
       L({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '好了' }] } }),
     ].join('\n')
-    expect(parseActivity(jsonl, 'codex').map(i => `${i.kind}:${i.text}`)).toEqual([
+    expect(parseAll(jsonl, 'codex').map(i => `${i.kind}:${i.text}`)).toEqual([
       'you:修一下', 'step:运行 git status', 'step:运行 ls -la', 'step:运行 echo $(date) && rg "x"',
       'step:改 index.html', 'step:写 new.ts', 'step:用 exec', 'step:照看子任务', 'said:好了',
     ])
@@ -69,7 +70,7 @@ describe('parseActivity —— 看着它跑', () => {
       '{not json',
       L({ role: 'assistant', message: { content: [{ type: 'text', text: '改好了' }] } }),
     ].join('\n')
-    expect(parseActivity(jsonl, 'cursor').map(i => `${i.kind}:${i.text}`)).toEqual(['you:改个颜色', 'said:改好了'])
+    expect(parseAll(jsonl, 'cursor').map(i => `${i.kind}:${i.text}`)).toEqual(['you:改个颜色', 'said:改好了'])
   })
 
   it('点开一步:Claude 改文件 ⇒ diff;命令 ⇒ 输出尾巴;读文件不挂输出;报错 ⇒ error 且挂上原因', () => {
@@ -87,7 +88,7 @@ describe('parseActivity —— 看着它跑', () => {
         { type: 'tool_result', tool_use_id: 'b2', content: 'error: unused var TOKEN=abcd1234zz', is_error: true },
       ] } }),
     ].join('\n')
-    const [edit, test, read, lint] = parseActivity(jsonl, 'claude')
+    const [edit, test, read, lint] = parseAll(jsonl, 'claude')
     expect(edit).toMatchObject({ text: '改 a.ts', detail: '- const b = 2\n+ const b = 3' })
     expect(edit!.error).toBeUndefined()
     expect(test).toMatchObject({ text: '运行 npm test', detail: 'PASS a.test.ts\nTests 3 passed' })
@@ -101,7 +102,7 @@ describe('parseActivity —— 看着它跑', () => {
       L({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'x' } }, { type: 'tool_use', id: 'w', name: 'Write', input: { file_path: '/n.md', content: out } }] } }),
       L({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: out }] } }),
     ].join('\n')
-    const [bash, write] = parseActivity(jsonl, 'claude')
+    const [bash, write] = parseAll(jsonl, 'claude')
     expect(bash!.detail!.endsWith('line 199')).toBe(true)
     expect(bash!.detail!.startsWith('…(前面还有 160 行)')).toBe(true)
     expect(write!.detail!.startsWith('+ line 0')).toBe(true)
@@ -119,7 +120,7 @@ describe('parseActivity —— 看着它跑', () => {
       L({ type: 'response_item', payload: { type: 'function_call', call_id: 'c3', name: 'shell', arguments: JSON.stringify({ command: ['ls'] }) } }),
       L({ type: 'response_item', payload: { type: 'function_call_output', call_id: 'c3', output: 'a\nb' } }),
     ].join('\n')
-    const items = parseActivity(jsonl, 'codex')
+    const items = parseAll(jsonl, 'codex')
     expect(items).toEqual([
       { kind: 'step', text: '运行 cargo test', at: null, detail: 'test x ... FAILED', error: true, verb: 'run', target: 'cargo test' },
       { kind: 'step', text: '改 a.rs', at: null, detail: '- old\n+ new', verb: 'edit', target: 'a.rs' },
@@ -145,7 +146,7 @@ describe('verb + target(给按语言显示的端)', () => {
     expect(stepPhrase('派子任务:查 CI')).toEqual({ verb: 'subtask', target: '查 CI' })
     expect(stepPhrase('Check CI status')).toBeNull()
     const L = (o: object) => JSON.stringify(o)
-    const items = parseActivity([
+    const items = parseAll([
       L({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls', description: '运行 测试' } }, { type: 'tool_use', name: 'Edit', input: { file_path: '/a/b.ts', old_string: 'a', new_string: 'b' } }] } }),
     ].join('\n'), 'claude')
     expect(items[0]).toMatchObject({ text: '运行 测试' }); expect(items[0]!.verb).toBeUndefined()
@@ -165,12 +166,12 @@ describe('renderTurnSteps(「看 码」页面)', () => {
       tool('b', 'Bash', { command: 'npm test' }),
       L({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: '1 failed', is_error: true }] } }),
     ].join('\n')
-    const md = renderTurnSteps(jsonl, 'claude')
+    const md = renderTurnSteps(parseAll(jsonl, 'claude', 200))
     expect(md).toBe('## 这一轮做了什么\n\n- 改 a.ts\n- 运行 npm test(没成)\n')
     expect(md).not.toContain('SECRET_OLD'); expect(md).not.toContain('old.ts')
-    expect(renderTurnSteps(L({ type: 'user', message: { content: '在吗' } }), 'claude')).toBe('')
+    expect(renderTurnSteps(parseAll(L({ type: 'user', message: { content: '在吗' } }), 'claude', 200))).toBe('')
     const many = [L({ type: 'user', message: { content: 'go' } }), ...Array.from({ length: 20 }, (_, i) => tool(`t${i}`, 'Bash', { command: `step${i}` }))].join('\n')
-    const m = renderTurnSteps(many, 'claude')
+    const m = renderTurnSteps(parseAll(many, 'claude', 200))
     expect(m).toContain(`共 20 步,只列最后 ${VIEW_STEPS_MAX} 步`); expect(m).toContain('运行 step19'); expect(m).not.toContain('运行 step7\n')
   })
 })

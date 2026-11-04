@@ -2,6 +2,20 @@
  * 终端会话记录增量读进这件事的步(M4b,设计稿 docs/superpowers/specs/2026-11-04-m4-terminal-matter-design.md)。
  * 解析在 features/terminal(cli-activity.ts 的 feedActivity);这里只管存:读到哪了、还在等结果的调用、步本身(经 MatterLog)。
  */
+/** 一步是谁的:你说的 / 它说的 / 它做的动作。 */
+export type TerminalStepKind = 'you' | 'said' | 'step'
+/**
+ * 一步 = 动作 + 对象(2026-10-17):text 是拼好的中文(手机网页、微信用);verb + target 给要按语言显示的端(App 英文界面)。
+ * 每个 verb 对应 text 里固定的一种说法(features/terminal/cli-activity.ts 的 stepPhrase)。
+ */
+export type TerminalStepVerb = 'run' | 'edit' | 'write' | 'delete' | 'read' | 'search' | 'find' | 'subtask' | 'web' | 'websearch' | 'todo' | 'todos' | 'plan' | 'tend' | 'tool' | 'bgoutput'
+/**
+ * 步的 payload(读进来的那一步,matter_items.payload_json 存的就是它;M6d 起是 src 里唯一的这一份)。
+ * 线上 `/m/api/cli/activity` 的 items、`CliSessionRow.now`(packages/protocol/src/api.ts)与它同形,那一份是冻结的线上形状(wire-compat.ts)。
+ * detail(只在 step 上):点开这一步能看的 —— 改文件是 diff(`- 旧` / `+ 新`),跑命令是输出尾巴。
+ * error:这一步的工具报错了(命令非零退出 / 工具 is_error)。
+ */
+export interface TerminalStepPayload { kind: TerminalStepKind; text: string; at: number | null; detail?: string; error?: boolean; verb?: TerminalStepVerb; target?: string }
 export interface TerminalReadState {
   path: string
   /** 读到的字节位置(只到最后一个换行;读到一半的那一行留给下一次)。 */

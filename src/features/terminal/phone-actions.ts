@@ -7,44 +7,21 @@
  * last_summary(core 自己记 running → idle)。
  */
 import { randomBytes } from 'node:crypto'
-import { statSync } from 'node:fs'
 import type { CliEventHub, CliSessionInfo } from '../../app/cli-events'
 import type { CliSessionView } from '../../ports/cli-session'
-import { readTail, type CliReplyCore } from './reply-handler'
-import { ACTIVITY_MAX_ITEMS, parseActivity, type CliActivityItem } from './cli-activity'
+import type { TerminalStepPayload } from '../../ports/terminal-steps'
+import type { CliReplyCore } from './reply-handler'
+import { ACTIVITY_MAX_ITEMS } from './cli-activity'
 import type { TerminalSteps } from './terminal-steps'
 
 /** 手机上说一句最多这么长(终端那头是一句 prompt,不是贴文件)。 */
 export const PHONE_CLI_SAY_MAX = 4000
 
 export type CliPhonePermissionResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_not_actionable' | 'cli_permission_stale' }
-export type CliPhoneActivityResult = { ok: true; items: CliActivityItem[] } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' }
-/** 「现在在干什么」只读记录尾巴这么多(一屏 40 步用不了更多;每 4 秒读一次,别读几 MB)。 */
-export const PHONE_ACTIVITY_READ_MAX = 256 * 1024
-/** 列表里每条在跑的会话只读这么多尾巴(列表 15 秒一拉,一次可能好几条)。 */
-export const PHONE_NOW_READ_MAX = 64 * 1024
+export type CliPhoneActivityResult = { ok: true; items: TerminalStepPayload[] } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' }
+/** 列表里「此刻那一步」看最近这么多步。 */
+const NOW_STEPS = 20
 
-/**
- * 解析过的记录按(文件, 大小, 修改时间)缓存(M4b 第一步,设计稿 2026-11-04-m4-terminal-matter-design.md)。
- * App 详情每 4 秒拉一次、列表每 15 秒给每个在跑的会话各解析一遍 —— 绝大多数时候文件根本没变,以前每次都整段重读重解析。
- * 文件没变 ⇒ 直接给上次的结果(同一份数组,出口一字不差);变了 ⇒ 照旧读尾巴、解析一遍。stat 不了(测试里的假路径)⇒ 不缓存。
- */
-const ACTIVITY_CACHE_MAX = 64
-const activityCache = new Map<string, { stamp: string; items: CliActivityItem[] }>()
-export function activityOfTranscript(path: string, source: string, readMax: number, itemMax: number | undefined, read: (path: string, max: number) => string = readTail): CliActivityItem[] {
-  let stamp: string | null = null
-  try { const st = statSync(path); stamp = `${st.size}:${st.mtimeMs}` } catch { stamp = null }
-  const key = `${path}\u0000${source}\u0000${readMax}\u0000${itemMax ?? ''}`
-  if (stamp) { const hit = activityCache.get(key); if (hit && hit.stamp === stamp) return hit.items }
-  const items = itemMax === undefined ? parseActivity(read(path, readMax), source as never) : parseActivity(read(path, readMax), source as never, itemMax)
-  if (stamp) {
-    activityCache.delete(key); activityCache.set(key, { stamp, items })
-    if (activityCache.size > ACTIVITY_CACHE_MAX) activityCache.delete(activityCache.keys().next().value!)
-  }
-  return items
-}
-/** 测试用:清掉缓存。 */
-export function clearActivityCache(): void { activityCache.clear() }
 /** 送进开着的窗口那一句的结果(10-20 真机:手机先说「已送进」,其实 relay 在后台、失败了也没人告诉它)。只记每条会话最近一句。 */
 export interface CliPhoneSayState { id: string; state: 'sending' | 'sent' | 'failed'; error?: string; at: number }
 /** say_id 只在送进开着的窗口时给(那条路是后台的,要回头看结果);resume 那条路收下就是开跑了。 */
@@ -57,10 +34,10 @@ export interface CliPhoneActions {
   say(sessionId: string, text: string): CliPhoneSayResult
   /** 这条会话最近一句送进窗口的结果;没有 ⇒ null。 */
   lastSay?(sessionId: string): CliPhoneSayState | null
-  /** 最近几步(跑了什么、改了哪、说了什么)—— 从会话记录尾巴读,手机上看着它跑(2026-10-17)。 */
+  /** 最近几步(跑了什么、改了哪、说了什么)—— 从这件事的步读(M6d:第一次看时建那件事、导入一次),手机上看着它跑(2026-10-17)。 */
   activity(sessionId: string): CliPhoneActivityResult
-  /** 列表一眼(2026-10-17):在跑的会话此刻在做的那一步;读记录尾巴 64KB。读不到 / 没有步骤 ⇒ null。 */
-  currentStep(sessionId: string): CliActivityItem | null
+  /** 列表一眼(2026-10-17):在跑的会话此刻在做的那一步(从步读)。读不到 / 没有步骤 ⇒ null。 */
+  currentStep(sessionId: string): TerminalStepPayload | null
   /** 开在电脑窗口里的 Claude 会话 id(2026-10-18);没接 ⇒ 空。 */
   liveWindows(): Set<string>
 }
@@ -73,12 +50,10 @@ export interface CliPhoneActionsDeps {
   core: Pick<CliReplyCore, 'resume'> & Partial<Pick<CliReplyCore, 'live'>>
   localMachine?: string
   log: (tag: string, line: string) => void
-  /** 测试替身;默认读真文件尾巴。 */
-  readTail?: (path: string, max: number) => string
   /** 开着窗口的会话 id(live-window.ts liveSessionIds);缺席 ⇒ 空。 */
   liveIds?: () => Set<string>
-  /** 这件事的步(M4b):有就增量读进来再从步里拿;没接 / 这个会话还没有那件事 ⇒ 照旧直接解析记录尾巴。 */
-  steps?: Pick<TerminalSteps, 'view'>
+  /** 这件事的步(M4b):增量读进来再从步里拿;还没有那件事 ⇒ view 当场建、导入一次(M6d,不再直接解析记录)。 */
+  steps: Pick<TerminalSteps, 'view'>
 }
 
 export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions {
@@ -156,28 +131,28 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       // 那边的会话:记录在那台机器上,这里读不到(微信「看 码」会转过去;手机 v1 不转)。
       if (s.origin_agent || (s.machine && deps.localMachine && s.machine !== deps.localMachine)) return { ok: false, error: 'cli_session_remote' }
       if (!s.transcript_path) return { ok: false, error: 'no_transcript' }
-      let items: CliActivityItem[]
-      try { items = deps.steps?.view(s, ACTIVITY_MAX_ITEMS) ?? activityOfTranscript(s.transcript_path, s.source, PHONE_ACTIVITY_READ_MAX, undefined, deps.readTail ?? readTail) }
+      let items: TerminalStepPayload[]
+      try { items = deps.steps.view(s, ACTIVITY_MAX_ITEMS) }
       catch { return { ok: false, error: 'no_transcript' } }
       return { ok: true, items }
     },
     currentStep(sessionId) {
       const s = deps.hub.lookup(sessionId)
       if (!s || s.session_id !== sessionId) return null
-      return currentStepOf(s, { localMachine: deps.localMachine, readTail: deps.readTail, steps: deps.steps })
+      return currentStepOf(s, { localMachine: deps.localMachine, steps: deps.steps })
     },
   }
 }
 
 /**
- * 这条会话此刻在做的那一步(读记录尾巴 64KB)。手机列表与 CC 的 terminal_sessions(2026-10-24)共用这一份判法。
+ * 这条会话此刻在做的那一步(从这件事最近的步读)。手机列表与 CC 的 terminal_sessions(2026-10-24)共用这一份判法。
  * 那边的会话 / 没报记录路径 / 读不到 / 主人刚说完还没动手 ⇒ null。
  */
-export function currentStepOf(s: CliSessionInfo, opts: { localMachine?: string | undefined; readTail?: ((path: string, max: number) => string) | undefined; steps?: Pick<TerminalSteps, 'view'> | undefined } = {}): CliActivityItem | null {
+export function currentStepOf(s: CliSessionInfo, opts: { localMachine?: string | undefined; steps: Pick<TerminalSteps, 'view'> }): TerminalStepPayload | null {
   if (!s.transcript_path) return null
   if (s.origin_agent || (s.machine && opts.localMachine && s.machine !== opts.localMachine)) return null
   try {
-    const items = opts.steps?.view(s, 20) ?? activityOfTranscript(s.transcript_path, s.source, PHONE_NOW_READ_MAX, 20, opts.readTail ?? readTail)
+    const items = opts.steps.view(s, NOW_STEPS)
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i]!
       if (it.kind === 'you') return null   // 主人刚说完、还没动手

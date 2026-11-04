@@ -14,28 +14,22 @@
  */
 import type { CliSource } from '../../app/cli-events'
 import { parseTranscript, redactSecrets } from '../../domain/cli-transcript'
+import type { TerminalStepPayload, TerminalStepVerb } from '../../ports/terminal-steps'
 
-export type CliActivityKind = 'you' | 'said' | 'step'
-/**
- * detail(2026-10-17,只在 step 上):点开这一步能看的 —— 改文件是 diff(`- 旧` / `+ 新`),跑命令是输出尾巴。
- * error:这一步的工具报错了(命令非零退出 / 工具 is_error)。
- */
-export interface CliActivityItem { kind: CliActivityKind; text: string; at: number | null; detail?: string; error?: boolean; verb?: StepVerb; target?: string }
 /** free:这一句是模型自己写的(Claude 给命令写的说明),不是我们拼的固定说法 ⇒ 不拆 verb/target。 */
 interface Step { text: string; detail?: string; callId?: string; keepOutput?: boolean; free?: boolean }
 
 /**
- * 一步 = 动作 + 对象(2026-10-17):text 是拼好的中文(手机网页、微信用);verb + target 给要按语言显示的端(App 英文界面)。
- * 每个 verb 对应 text 里固定的一种说法,stepPhrase 从 text 反解 —— 说法只在 ZH 这一处定义。
+ * 一步 = 动作 + 对象(2026-10-17):text 是拼好的中文;verb + target 给要按语言显示的端。
+ * 每个 verb(ports/terminal-steps.ts 的 TerminalStepVerb)对应 text 里固定的一种说法,stepPhrase 从 text 反解 —— 说法只在 ZH 这一处定义。
  */
-export type StepVerb = 'run' | 'edit' | 'write' | 'delete' | 'read' | 'search' | 'find' | 'subtask' | 'web' | 'websearch' | 'todo' | 'todos' | 'plan' | 'tend' | 'tool' | 'bgoutput'
-const ZH: Array<[StepVerb, string, string]> = [
+const ZH: Array<[TerminalStepVerb, string, string]> = [
   // [verb, 前缀, 后缀]:target 在中间;前后缀都为空串以外的固定句(没有 target)写在前缀里、后缀放 '\0' 标记整句匹配。
   ['bgoutput', '看后台命令的输出', '\0'], ['todos', '更新清单', '\0'], ['plan', '更新计划', '\0'], ['tend', '照看子任务', '\0'],
   ['websearch', '上网搜「', '」'], ['search', '搜「', '」'], ['find', '找文件 ', ''], ['subtask', '派子任务:', ''], ['web', '看网页 ', ''],
   ['todo', '清单:', ''], ['run', '运行 ', ''], ['edit', '改 ', ''], ['write', '写 ', ''], ['delete', '删 ', ''], ['read', '读 ', ''], ['tool', '用 ', ''],
 ]
-export function stepPhrase(text: string): { verb: StepVerb; target: string } | null {
+export function stepPhrase(text: string): { verb: TerminalStepVerb; target: string } | null {
   for (const [verb, pre, post] of ZH) {
     if (post === '\0') { if (text === pre) return { verb, target: '' }; continue }
     if (text.startsWith(pre) && text.endsWith(post) && text.length > pre.length + post.length) return { verb, target: text.slice(pre.length, text.length - post.length) }
@@ -283,19 +277,19 @@ function resultsOf(d: Record<string, unknown>, source: CliSource): Array<{ callI
 }
 
 /**
- * 解析出来的步往哪放(M4b):parseActivity 放内存数组;增量读(terminal-steps.ts)放这件事的步。两边走同一个 feedActivity,
- * 合并「一串读 x」、结果挂回调用那一步的口径只在这一处。ref 是放进去以后认得出它的东西(数组下标 / 步的 key)。
+ * 解析出来的步往哪放(M4b):增量读(terminal-steps.ts)放这件事的步 —— 出口只从步读(M6d 起不再有整段重解析)。
+ * 合并「一串读 x」、结果挂回调用那一步的口径只在这一处。ref 是放进去以后认得出它的东西(步的 key)。
  */
 export interface ActivitySink<R> {
   /** 最后放进去的那一条(合并连续同一句要看它)。 */
-  last(): { ref: R; item: CliActivityItem } | null
-  push(item: CliActivityItem, at: { line: number; index: number }): R
+  last(): { ref: R; item: TerminalStepPayload } | null
+  push(item: TerminalStepPayload, at: { line: number; index: number }): R
   /** item 改过了(时间 / 报错 / 输出),存回去。 */
-  update(ref: R, item: CliActivityItem): void
+  update(ref: R, item: TerminalStepPayload): void
   /** 这一步在等结果(调用 id)。 */
   claim(callId: string, ref: R, keepOutput: boolean): void
   /** 结果到了:拿回等它的那一步(只拿一次)。 */
-  take(callId: string): { ref: R; item: CliActivityItem; keepOutput: boolean } | null
+  take(callId: string): { ref: R; item: TerminalStepPayload; keepOutput: boolean } | null
 }
 
 /**
@@ -344,34 +338,18 @@ export function feedActivity<R>(jsonl: string, source: CliSource, sink: Activity
   }
 }
 
-/** 最近的几步,旧 → 新(整段记录在内存里解析一遍)。 */
-export function parseActivity(jsonl: string, source: CliSource, max = ACTIVITY_MAX_ITEMS): CliActivityItem[] {
-  const items: CliActivityItem[] = []
-  const byCall = new Map<string, { ref: number; keepOutput: boolean }>()
-  feedActivity<number>(jsonl, source, {
-    last: () => (items.length ? { ref: items.length - 1, item: items[items.length - 1]! } : null),
-    push: (item) => items.push(item) - 1,
-    update: () => { /* 同一个对象,改了就是改了 */ },
-    claim: (callId, ref, keepOutput) => { byCall.set(callId, { ref, keepOutput }) },
-    take: (callId) => {
-      const hit = byCall.get(callId)
-      if (!hit) return null
-      byCall.delete(callId)
-      return { ref: hit.ref, item: items[hit.ref]!, keepOutput: hit.keepOutput }
-    },
-  })
-  return items.slice(-max)
-}
-
 /** 「看 码」页面上「这一轮做了什么」最多列这么多步(页面不用登录:只列说法,不放 diff / 输出)。 */
 export const VIEW_STEPS_MAX = 12
 
+/** 「看 码」从步里取最近这么多条,再从中找这一轮(同 M6d 以前整段解析留的那么多)。 */
+export const VIEW_STEPS_READ = 200
+
 /**
  * 「看 码」(2026-10-17):对话尾巴之外,补一段这一轮(主人最后一句之后)做过的步骤。
+ * items = 这件事最近的步(旧 → 新,M6d 起从步读,不再整段重解析记录);「这一轮」= 最后一条「你说的」之后的那些。
  * 页面是分享链接、不用登录 ⇒ 只放一句话的说法,不放 diff 和命令输出;报错的标「没成」。没有步骤 ⇒ 空串。
  */
-export function renderTurnSteps(jsonl: string, source: CliSource): string {
-  const items = parseActivity(jsonl, source, 200)
+export function renderTurnSteps(items: readonly TerminalStepPayload[]): string {
   let from = 0
   for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === 'you') { from = i + 1; break }
   const steps = items.slice(from).filter(i => i.kind === 'step')

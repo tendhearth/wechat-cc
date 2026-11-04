@@ -6,6 +6,11 @@ import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
 import { makeCliPermissionRelay, type CliPermissionRelay } from '../../app/cli-permission-relay'
 import { makeCliReplyCore, type RunResult } from './reply-handler'
 import { makeCliPhoneActions, PHONE_CLI_SAY_MAX } from './phone-actions'
+import { makeTerminalSteps } from './terminal-steps'
+import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
+import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { mobileReadsRoutes } from '../phone/mobile-reads'
 import { routePhone } from '../phone/phone-route-table'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
@@ -58,6 +63,9 @@ function actions(extra: Partial<Parameters<typeof makeCliPhoneActions>[0]> = {})
     },
     startCwd: () => '/w/start',
   })
+  // 生产的步(wire.ts 同款):这里的 hub 没接 turns ⇒ 每条会话都是「钩子没来过」,第一次看时当场建那件事、导入一次(M6d)
+  const log = makeMatterLog(db), matters = makeMatterStore(db)
+  const steps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log, matters }), turns: makeTerminalTurnLog({ db, log, matters }) })
   return makeCliPhoneActions({
     hub, relay, core, localMachine: 'mac', log: () => {}, liveIds: () => new Set(windows.keys()),
     // = ilink.resolvePermission:consume 一条待批(哪一种都行),回 true/false
@@ -67,6 +75,7 @@ function actions(extra: Partial<Parameters<typeof makeCliPhoneActions>[0]> = {})
       return other.delete(h)
     },
     ...extra,
+    steps: extra.steps ?? steps,
   })
 }
 
@@ -308,20 +317,55 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
   })
 })
 
-describe('看着它跑从这件事的步读(M4b)', () => {
-  it('接了步 ⇒ activity / currentStep 都从步拿(不读记录);这个会话还没有那件事(view 给 null)⇒ 退回直接解析记录', () => {
+describe('看着它跑只从这件事的步读(M6d)', () => {
+  it('activity / currentStep 都从步拿;步是空的 ⇒ 就是空,不退回直接解析记录', () => {
     const asked: Array<[string, number]> = []
     const fromSteps = [{ kind: 'you' as const, text: '跑', at: null }, { kind: 'step' as const, text: '运行 ls', at: null, detail: 'a', verb: 'run' as const, target: 'ls' }]
-    const a = actions({
-      steps: { view: (s, max) => { asked.push([s.session_id, max]); return s.session_id === 'M1' ? fromSteps : null } },
-      readTail: () => JSON.stringify({ type: 'user', message: { content: '记录里的' } }),
-    })
-    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'M1', cwd: '/w/proj', machine: 'mac', transcript_path: '/fake/m1.jsonl' })
-    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'M2', cwd: '/w/proj', machine: 'mac', transcript_path: '/fake/m2.jsonl' })
-    expect(a.activity('M1')).toEqual({ ok: true, items: fromSteps })
-    expect(a.currentStep('M1')).toEqual({ kind: 'step', text: '运行 ls', at: null, verb: 'run', target: 'ls' })
-    expect(a.activity('M2')).toEqual({ ok: true, items: [{ kind: 'you', text: '记录里的', at: null }] })
-    expect(asked).toEqual([['M1', 40], ['M1', 20], ['M2', 40]])
+    const dir = mkdtempSync(join(tmpdir(), 'cli-steps-only-'))
+    try {
+      // M2 的记录里有东西;步却是空的 —— 以前 view 给 null 会退回整段解析这份记录
+      const path = join(dir, 'm2.jsonl')
+      writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '记录里的' } }) + '\n')
+      const a = actions({ steps: { view: (s, max) => { asked.push([s.session_id, max]); return s.session_id === 'M1' ? fromSteps : [] } } })
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'M1', cwd: '/w/proj', machine: 'mac', transcript_path: '/fake/m1.jsonl' })
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'M2', cwd: '/w/proj', machine: 'mac', transcript_path: path })
+      expect(a.activity('M1')).toEqual({ ok: true, items: fromSteps })
+      expect(a.currentStep('M1')).toEqual({ kind: 'step', text: '运行 ls', at: null, verb: 'run', target: 'ls' })
+      expect(a.activity('M2')).toEqual({ ok: true, items: [] })
+      expect(a.currentStep('M2')).toBeNull()
+      expect(asked).toEqual([['M1', 40], ['M1', 20], ['M2', 40], ['M2', 20]])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('钩子没来过的会话第一次被看 ⇒ 当场建那件事、导入一次;记录再长了 ⇒ 只读新增的那一段', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-first-view-'))
+    try {
+      const path = join(dir, 's.jsonl')
+      writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '跑测试' } }) + '\n')
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'F1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
+      const matters = makeMatterStore(db), log = makeMatterLog(db)
+      expect(matters.findBySurface('cli', 'F1')).toBeNull()
+      const a = actions()
+      expect(a.activity('F1')).toEqual({ ok: true, items: [{ kind: 'you', text: '跑测试', at: null }] })
+      const m = matters.findBySurface('cli', 'F1')!
+      expect(m).toMatchObject({ kind: 'terminal', title: 'proj' })
+      expect(log.items(m.id).map(i => i.kind)).toEqual(['user_message'])
+      writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '跑测试' } }) + '\n' + JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } }) + '\n')
+      expect(a.currentStep('F1')).toMatchObject({ kind: 'step', text: '运行 bun test' })
+      expect(log.items(m.id).map(i => i.kind)).toEqual(['user_message', 'tool_call'])
+      expect(matters.findBySurface('cli', 'F1')!.id).toBe(m.id)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('那边的会话(别的机器 / A2A)⇒ 照旧回 remote,不建那件事、不读', () => {
+    const view = vi.fn(() => [])
+    const a = actions({ steps: { view } })
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'P1', cwd: '/w/proj', machine: 'pc', transcript_path: '/x.jsonl' })
+    hub.observe({ source: 'claude', kind: 'prompt', session_id: 'P2', cwd: '/w/proj', origin_agent: 'hand', transcript_path: '/x.jsonl' })
+    expect(a.activity('P1')).toEqual({ ok: false, error: 'cli_session_remote' })
+    expect(a.currentStep('P1')).toBeNull()
+    expect(a.activity('P2')).toEqual({ ok: false, error: 'cli_session_remote' })
+    expect(view).not.toHaveBeenCalled()
   })
 })
 

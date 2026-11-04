@@ -92,8 +92,9 @@ export function wireTerminal(d: WireTerminalDeps) {
   const matterLog = makeMatterLog(db), matterStore = makeMatterStore(db)
   const terminalTurns = makeTerminalTurnLog({ db, log: matterLog, matters: matterStore })
   try { terminalTurns.interruptAll() } catch (err) { log('CLI_TURNS', `interruptAll failed: ${err instanceof Error ? err.message : String(err)}`) }
-  // 记录增量读进这件事的步(M4b):钩子事件来了读新增的那一段;手机「看着它跑」、列表那一步也从这里拿。
-  const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters: matterStore }) })
+  // 记录增量读进这件事的步(M4b):钩子事件来了读新增的那一段;手机「看着它跑」、列表那一步、微信「看 码」只从这里拿(M6d)。
+  // 钩子没来过的老会话:第一次有人来看时当场建那件事、导入一次(turns.ensure + ingest,只在看的这条路上)。
+  const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters: matterStore }), turns: terminalTurns })
   let lookupSession: (id: string) => CliSessionInfo | null = () => null
   const turnsWithSteps = withTranscriptSteps({ turns: terminalTurns, steps: terminalSteps, localMachine: osHostname(), lookup: (id) => lookupSession(id), log: (l) => log('CLI_TURNS', l) })
   const cliEvents = makeCliEventHub({
@@ -262,7 +263,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     relay: (w: LiveWindow, text: string, o?: { header?: string; noBypass?: boolean }) => relayToWindow(w, text, { run: defaultRunner, cwd: stateDir, dangerously, ...(o?.noBypass ? { noBypass: true } : {}), ...(claudeCli ? { bin: claudeCli } : {}), ...(o?.header !== undefined ? { header: o.header } : {}) }),
   }
   const startCwd = (s: CliSessionInfo) => s.transcript_path ? transcriptStartCwd(readHead(s.transcript_path, 64 * 1024)) : null
-  const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: d.networkGate, liveWindow, startCwd })
+  const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: d.networkGate, liveWindow, startCwd, steps: terminalSteps })
   terminalSay = makeTerminalSay({
     hub: cliEvents, core: replyCore, holdBusy: (l) => boot.holdBusy(l), localMachine: osHostname(), log: (t, l) => log(t, l),
     // 没人领的终局(CC 那一轮早结束了,比如 resume 跑了好几分钟):经 CC 开口那道门告诉主人,同终端完成推送(cli_session,report)。
@@ -337,7 +338,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     log: (t, l) => log(t, l),
     dangerously,
     networkGate: d.networkGate,
-    liveWindow, startCwd,
+    liveWindow, startCwd, steps: terminalSteps,
     localMachine: osHostname(),
     listSessions: () => cliSessionViews({ limit: 50 }),
     today: overseerToday,

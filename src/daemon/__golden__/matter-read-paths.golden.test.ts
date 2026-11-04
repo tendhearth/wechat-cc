@@ -266,12 +266,12 @@ beforeAll(async () => {
   // features/terminal/wire.ts:终端那件事的轮(terminal-turns)+ 记录增量读进步(terminal-steps),hub 的 turns 是两者叠起来的那一份
   const matterLog = makeMatterLog(db)
   const terminalTurns = makeTerminalTurnLog({ db, log: matterLog, matters })
-  const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters }) })
+  const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters }), turns: terminalTurns })
   let lookupSession: (id: string) => ReturnType<CliEventHub['lookup']> = () => null
   const turnsWithSteps = withTranscriptSteps({ turns: terminalTurns, steps: terminalSteps, localMachine: MACHINE, lookup: id => lookupSession(id), log: () => {} })
   hub = makeCliEventHub({ send: async () => 'sent', projectName: c => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db), localMachine: MACHINE, turns: turnsWithSteps })
   lookupSession = id => hub.lookup(id)
-  // 手机看终端几步:wire.ts 的 phoneActions,带生产的 steps(先读步,没有那件事才退回直接解析记录)。
+  // 手机看终端几步:wire.ts 的 phoneActions,带生产的 steps(只读步;没有那件事 ⇒ 当场建、导入一次,M6d)。
   // 拍板 / 说一句的两样(relay / core)这里用不到,给空的;开着的窗口读本机 Claude 登记,不确定 ⇒ 给空集
   const cliActions = makeCliPhoneActions({
     hub, localMachine: MACHINE, log: () => {}, liveIds: () => new Set(), steps: terminalSteps,

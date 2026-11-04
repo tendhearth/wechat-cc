@@ -42,6 +42,12 @@
 - 「看 码」的 `renderTurnSteps` 改读最近一轮的步。
 - `CliActivityItem` 改名为 `ports/terminal-steps.ts` 里步的 payload 类型;`parseActivity`、`activityOfTranscript` 和缓存删,`feedActivity` 留着(增量读要它)。
 - 做完怎么算:三种形状都不在 src(骨架 M6 的门);终端金样一字不变。
+- 落地(11-05):
+  - 首见导入走 `TerminalSteps.view`(只在看的这条路上):还没有那件事 ⇒ `turns.adopt` 建那件事,再 ingest(第一次照旧从尾巴 256KB 起);记录读不了 ⇒ 先抛,不建空的事。
+    - `adopt` = `ensure` + 按登记处那一行对齐:M4d 起列表状态从这件事推,不对齐的话已结束的老会话被看一眼就成了「歇着」。ended ⇒ done;running / waiting 且 30 分钟内有动静 ⇒ 开一轮(waiting 再挂那张卡;卡的时间是写进去那一刻,同钩子那条路);更久没动静的(真库有 10-28 的 12 行)当歇着,不开轮、不挂卡。
+  - 「看 码」的「这一轮做了什么」= 这件事最近 200 步里最后一句「你说的」之后的那些(同以前整段解析 200 条的口径);对话原文照旧读记录(步里每句截在 600 字)。
+    - 同一份数据页面一字不差(`view-steps.test.ts` 拿以前的整段解析逐字对照)。会不一样的只有边角:以前每次读 512KB 尾巴,现在读的是从第一次看 / 第一个钩子起攒下的步(第一次从 256KB 起)——这一轮开头早于那 256KB 的,以前数得到、现在数不到;记录被截短重写过的,步里还留着旧的那一段。
+  - 那边(别的机器 / A2A)的会话照旧:调用方先挡,不建、不读。
 
 ### M6e 停写、删列(soak 之后)
 - **前提:「答完了、闲着」先落成 matter 上的事实,`legacyStatus` 改读它,再删列。** 提议:`settleQuiet` 在写 replied 的那一刻,往这件事最近那一轮(已收的那一轮)写一步 `system`,key = `ready:<turnId>`、payload `{ready:true}`(幂等,同一轮只一行)。`legacyStatus` 的 `storedReplied` 换成「最近一轮有这一步」;新一轮开始自然就不算了(最近一轮换了),不用撤。出口要把这一步从 `MatterEvent` / `WorkbenchTaskEvent` 的投影里滤掉(用户看不见),金样一字不变为门。换读法那一步先在真库副本上对一遍 replied(列 vs 步)再删列。
