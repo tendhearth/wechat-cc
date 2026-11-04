@@ -62,5 +62,8 @@
 - **transcript 读到一半的那一行**:增量读只消费到最后一个换行,不完整的行留到下一次。
 - **会话很多**:`cli_sessions` 今天会按时间修剪;这件事不删,超过 30 天没动静的归档。
 
+## 进度
+- M4a(11-04):`src/ports/terminal-turns.ts` + `src/adapters/store/terminal-turns.ts`,登记处(`makeCliEventHub` 的 record / permissionAsked / permissionSettled)同时写。和设计的一处差别:「这一轮」在跑时再发问,记进同一轮,不另开(Claude Code 会把排队的话并进当前这一轮)。
+
 ## 顺序
 M4a → M4b → M4c → soak → M4d。M4a / M4b 只动 daemon(`self deploy` 生效);M4c 动 App(随下一个 build)。
