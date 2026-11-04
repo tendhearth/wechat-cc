@@ -5,6 +5,7 @@
  * 要 wireMain 之后才有 ⇒ `startRunner()` 由 `scheduled-jobs` 模块在 start 段调(规矩:wireX 里不 await 还没就绪的东西)。
  * 只读轮(`runJobTurn`)与主动消息出口(`sendProactive`)是 main 给的闭包,调用时才取。
  */
+import { ccActsFor } from '../../adapters/store/cc-acts'
 import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { log } from '../../lib/log'
@@ -109,6 +110,7 @@ export function wireJobs(d: WireJobsDeps) {
   }
   const briefTurn = makeBriefTurn({
     runJobTurn: (a) => d.runJobTurn(a),
+    acts: ccActsFor(db, (t, l) => log(t, l)),
     ownerChatId: briefOwner,
     // 今天的日程和提醒事项:只在开着且授权时有;没授权 / 读失败 ⇒ 省略(不说成没安排)
     calendar: async () => { const a = await calendar.agenda(0); return a.ok && a.text ? a.text : null },
