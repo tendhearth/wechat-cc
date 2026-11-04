@@ -17,14 +17,14 @@
 - All tests, renders, builds and graphical checks on Mini; no primary input/focus/window control or heavy workloads. No real daemon/accounts/model credentials/private data on Mini.
 - Preserve frozen blend/geometry/camera/materials/lighting/canonical/transition/legacy fixed-body PNG bytes. Existing body/foot envelopes stay except the visually justified carry-only rise≤0.20 (all other rises≤0.13); carry feet≥0.05.512² canvas, anchor[0.5,0.91796875], safe bounds[80,28,432,470), shared masks and alpha contracts stay unchanged.
 - Schema4 `gazeUp` is finite and in[-0.04,0.14]; `crestTilt` finite in[-0.42,0.8], zero exceptcuriosity. Nine clips: seven existing counts/rates plus peek-left14@12 and curiosity36@12 =134 pairs. Final96samples/seed11/fourCPUthreads. Draft24samples remains isolated and unregistered.
-- Curiosity requires artwork,75s continuously eligible, once per calm episode,30min monotonic window-local cooldown. Opportunity consumed at start. Actual frame completion ends it; no factual state, background catch-up, scene replay or extended180s doze.
+- Curiosity requires artwork,75–120s continuously eligible at admission, once per calm episode,30min monotonic window-local cooldown. Opportunity consumed at start. Actual frame completion ends normal playback; original180s nap interrupts a severely throttled scene and rejects its old token. No factual state, background catch-up, scene replay or extended doze.
 - Genuine new-source validation and full compatible app backup precede serial dev integration/daily delivery. Preserve previous receipts, failed attempts and current data.
 - Operational validation, CI, signing, deployment and soak finish after source freeze. Their actual completion is recorded in this batch's local OPS receipts and ledger; retain this plan's frozen-source status rather than changing the verified/deployed commit just to tick later operational boxes.
 
 ## Review Focus
 
 - New work/permissions/nearby controls arrive during any curiosity phase: cancel now and reject its old callback; Task2.
-- Timers slow or optional frames fail: retain actual scene until its last frame, or settle safely when unavailable; Task2/3.
+- Timers slow or optional frames fail: retain actual scene until its last frame unless original180s nap or another explicit interruption takes precedence, or settle safely when unavailable; Task2/3.
 - Leftward attention could mirror CC's identity: use separate geometry poses, never flip the image; Task1/2.
 - Small foot/C/eye changes look neutral or disconnected despite valid math: actual48/96/128 playback samples and independent critique, Task1/3.
 - A renderer/schema mismatch could silently publish draft or wrong eye placement: strict schema/provenance/96sample registration and unchanged frozen hashes, Task1/3.
@@ -69,6 +69,7 @@
 - [x] Add actual `createPet` integration tests with authored and legacy manifests: direction chooses independent image paths without CSS mirroring; missing/all-bad curiosity frames settle safely;200ms timer clamping finishes only after the real last frame. Preserve all existing throttled factual-done and no-double-motion tests.
 - [x] Implement the optional controller path. Keep old peek/stretch/walk/factual clocks and native in-place travel guard unchanged. No generalized scene engine or prop layer.
 - [x] Run affected pet/sprite/mounted-companion tests, typecheck and all guards on Mini. Commit the verified runtime change.
+- [x] Final review fix: observe Mini assertion RED for late cooldown expiry, late idea delivery and returning art; admit curiosity only within75–120s calm. Keep an already-admitted scene after120s until its real completion or hard180s nap interruption, with stale-token rejection. Same47 tests GREEN plus affected checks; final clean merged full/native gates remain below. Native accelerated episodes age cooldown while unavailable, then advance only75s after fresh calm starts; their total30min offset and first real-time episode stay intact.
 
 ### Task 3: Production art and final visual gate
 

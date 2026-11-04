@@ -27,7 +27,9 @@ export function createLifeDirector({schedule,cancel,random,onAction,now=()=>perf
     idea=schedule(()=>{
       idea=null;if(!eligible())return
       if(action!=='still'){armIdea();return}
-      if(curiosityAvailable&&!curiosityPlayed&&calmSince!==null&&now()-calmSince>=75_000&&now()>=curiosityNotBefore){
+      const calmMs=calmSince===null?null:now()-calmSince
+      // Leave the final calm minute for settling; skip late catch-up stories.
+      if(curiosityAvailable&&!curiosityPlayed&&calmMs!==null&&calmMs>=75_000&&calmMs<=120_000&&now()>=curiosityNotBefore){
         // Consume the opportunity now, including interrupted or broken scenes.
         curiosityPlayed=true;curiosityNotBefore=now()+1_800_000
         clearEnd();emit('curiosity');return
@@ -41,6 +43,8 @@ export function createLifeDirector({schedule,cancel,random,onAction,now=()=>perf
   }
   const syncIdle=()=>{
     if(!eligible()){cancelIdle();return}
+    // This hard deadline also interrupts a severely throttled story. emit()
+    // invalidates its completion token, so it cannot wake or replay afterward.
     if(!calmClock){calmClock=true;calmSince=now();nap=schedule(()=>{nap=null;if(!eligible())return;clear(idea);idea=null;clearEnd();emit('doze')},180_000)}
     armIdea()
   }

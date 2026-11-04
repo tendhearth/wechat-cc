@@ -114,10 +114,12 @@ manifests without it use the ordinary peek; no CSS image mirroring.
 
 Curiosity is a decorative director action, never a `PetBehavior` or backend fact.
 It is enabled only when the optional nonloop artwork is available. It can begin
-at an ordinary idle-idea boundary after **75 seconds continuously eligible**, at
+at an ordinary idle-idea boundary between **75 and 120 seconds continuously eligible**, at
 most once per calm episode, with a **30-minute window-local monotonic cooldown**.
 Starting consumes the opportunity, even if interrupted. No persistence, rewards,
-scheduled catch-up or background scene queue is introduced.
+scheduled catch-up or background scene queue is introduced. Late cooldown expiry,
+returning artwork or delayed timer delivery skips the story, leaving the final
+calm minute for settling before the original nap deadline.
 
 The curiosity scene ends on its sprite player's actual final callback, not an
 independent three-second timeout. A generation token rejects stale callbacks.
@@ -126,7 +128,8 @@ nearby controls/focus, settings, hidden state, quiet and reduced motion interrup
 immediately and never replay the scene on return. Missing all curiosity frames
 disables the optional scene and settles to the existing factual presentation.
 Normal idle observations must not restart playback. The original 180-second calm
-doze clock is not extended by decoration.
+doze clock is not extended by decoration. That hard deadline interrupts any
+severely throttled scene still running and invalidates its completion token.
 
 ## Visual gate
 

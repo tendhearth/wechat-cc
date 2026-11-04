@@ -5,12 +5,13 @@ function clock(){
   let time=0,id=0
   const timers=new Map<number,{at:number,fn:()=>void}>()
   return {now:()=>time,schedule(fn:()=>void,ms:number){const key=++id;timers.set(key,{at:time+ms,fn});return key},cancel(key:unknown){timers.delete(Number(key))},
-    tick(ms:number){const end=time+ms;for(;;){const next=[...timers].sort((a,b)=>a[1].at-b[1].at)[0];if(!next||next[1].at>end)break;timers.delete(next[0]);time=next[1].at;next[1].fn()}time=end}}
+    tick(ms:number){const end=time+ms;for(;;){const next=[...timers].sort((a,b)=>a[1].at-b[1].at)[0];if(!next||next[1].at>end)break;timers.delete(next[0]);time=next[1].at;next[1].fn()}time=end},
+    deliverLate(ms:number){time+=ms;for(;;){const next=[...timers].sort((a,b)=>a[1].at-b[1].at)[0];if(!next||next[1].at>time)break;timers.delete(next[0]);next[1].fn()}}}
 }
 const idle=()=>({form:'lit',behavior:'idle',transition:null,targetForm:null,resting:'idle',props:[],badge:0})
-function boot(art=true){
+function boot(art=true,random=()=>0){
   const c=clock(),events:any[]=[]
-  const director:any=createLifeDirector({schedule:c.schedule,cancel:c.cancel,now:c.now,random:()=>0,onAction:(pose:any)=>events.push({...pose,at:c.now()})} as any)
+  const director:any=createLifeDirector({schedule:c.schedule,cancel:c.cancel,now:c.now,random,onAction:(pose:any)=>events.push({...pose,at:c.now()})} as any)
   expect(typeof director.setCuriosityAvailable,'optional curiosity art has an availability gate').toBe('function')
   expect(typeof director.finishCuriosity,'actual presentation can finish a scene').toBe('function')
   const facts=idle();director.observe(facts);director.setCuriosityAvailable(art);director.setAvailable(true)
@@ -46,6 +47,40 @@ describe('CC optional private curiosity',()=>{
     c.tick(3_000);director.finishCuriosity(token)
     c.tick(180_000-c.now());expect(action()).toBe('doze')
   })
+  it('skips a cooldown that expires just before the original doze deadline',()=>{
+    let call=0
+    // 34.84s idea intervals with 1.2s peeks/stretch: the fifth is at179s.
+    const {c,director,events,action}=boot(true,()=>[.742,0,0][call++%3]!)
+    c.tick(110_000)
+    const first=events.find(p=>p.action==='curiosity').at
+    director.setAvailable(false)
+    const resumedAt=first+1_800_000-179_000
+    c.tick(resumedAt-c.now());call=0;director.setAvailable(true)
+    c.tick(179_500)
+    expect(events.filter(p=>p.action==='curiosity')).toHaveLength(1)
+    c.tick(500);expect(action()).toBe('doze')
+  })
+  it('does not admit a late-delivered idea after the120s start cutoff',()=>{
+    const {c,events,action}=boot()
+    c.deliverLate(125_000)
+    expect(events.some(p=>p.action==='curiosity')).toBe(false)
+    c.tick(55_000);expect(action()).toBe('doze')
+  })
+  it('does not queue a late story when optional artwork returns after120s',()=>{
+    const {c,director,events,action}=boot(false)
+    c.tick(120_001);director.setCuriosityAvailable(true)
+    c.tick(59_999)
+    expect(events.some(p=>p.action==='curiosity')).toBe(false)
+    expect(action()).toBe('doze')
+  })
+  it('keeps an admitted slow story until completion or the hard nap interruption',()=>{
+    const {c,director,action,token,facts}=start()
+    c.tick(120_001-c.now());expect(action()).toBe('curiosity')
+    c.tick(180_000-c.now());expect(action()).toBe('doze')
+    expect(director.finishCuriosity(token)).toBe(false)
+    c.tick(1_000);expect(action()).toBe('doze')
+    expect(facts).toEqual(idle())
+  })
   it('does not start a story without optional artwork',()=>{
     const {c,events,action}=boot(false)
     c.tick(180_000)
@@ -56,11 +91,15 @@ describe('CC optional private curiosity',()=>{
     const {c,director,events,token}=start(),first=events.find(p=>p.action==='curiosity').at
     director.setAvailable(false)
     expect(director.finishCuriosity(token)).toBe(false)
-    c.tick(first+1_800_000-120_000-c.now())
+    const resumedAt=first+1_800_000-100_000
+    c.tick(resumedAt-c.now())
     director.setAvailable(true);c.tick(84_000)
     expect(events.filter(p=>p.action==='curiosity')).toHaveLength(1)
     c.tick(42_000)
     expect(events.filter(p=>p.action==='curiosity')).toHaveLength(2)
+    const second=events.filter(p=>p.action==='curiosity')[1]
+    expect(second.at-first).toBeGreaterThanOrEqual(1_800_000)
+    expect(second.at-resumedAt).toBeLessThanOrEqual(120_000)
   })
   it('requires another fresh calm episode after returning from a long absence',()=>{
     const {c,director,events}=start()

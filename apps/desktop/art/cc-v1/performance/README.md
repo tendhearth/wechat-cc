@@ -24,11 +24,13 @@ behavior artwork unless `life` is explicitly enabled. Missing optional frames
 fall back through the existing bad-frame handler and CSS choreography.
 The separately authored left glance never mirrors CC's asymmetric character.
 Older seven-clip kits retain their original peek and omit curiosity safely.
-Curiosity is optional decoration, never task activity: after 75s continuously
-eligible it can start at an ordinary idea boundary, once per calm episode and
+Curiosity is optional decoration, never task activity: between 75s and 120s
+continuously eligible it can start at an ordinary idea boundary, once per calm episode and
 no more than once per 30min window-local monotonic cooldown. It finishes through
 the actual last-frame callback. Interruption consumes the opportunity; it never
-queues a replay or extends the original 180s doze deadline.
+queues a replay or extends the original 180s doze deadline. Late opportunities
+are skipped; that hard nap deadline also interrupts a severely throttled scene
+and rejects its old callback.
 The authored walk stays at the user's window anchor: whole-window travel would
 slide its planted support foot. Existing native strolls remain available to the
 fallback choreography; the new artwork does not start those independent clocks.

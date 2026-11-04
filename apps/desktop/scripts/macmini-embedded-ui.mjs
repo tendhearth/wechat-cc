@@ -587,8 +587,11 @@ try {
     const q=window.__ccMotionQAControl,pet=q.pet;
     q.stopPolling();pet.setLifeAvailable(false);pet.setReducedMotion(false);pet.setQuiet(false);pet.setPaused(false);
     pet.applyIntent({form:'lit',behavior:'idle',props:[],badge:0,hint:null,oneShots:[]});pet.machine.notifyAnimationEnded();
+    // Age the cooldown before starting a fresh calm episode, then advance only
+    // its 75s eligibility. Keep the next real idea inside the admission window.
+    if(arguments[0])q.setLifeClockOffset(q.lifeClockOffset()+1_725_000);
     pet.setLifeAvailable(true);
-    if(arguments[0])q.setLifeClockOffset(q.lifeClockOffset()+1_800_000);
+    if(arguments[0])q.setLifeClockOffset(q.lifeClockOffset()+75_000);
     return {realAt:performance.now(),offset:q.lifeClockOffset()}`,[accelerated])
   const firstEpisode=await beginCuriosityEpisode(false)
   assert.equal(firstEpisode.offset,0)
