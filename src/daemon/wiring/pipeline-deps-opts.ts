@@ -20,14 +20,10 @@ export type PipelineWechat =
 
 export interface PipelineDepsOpts {
   workbench?: import('../../features/workbench').WorkbenchService
-  /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
-  cliSessions?: () => import('../../ports/cli-session').CliSessionView[]
   /** 「CC 做过的事」(B9):main 拼好来源,这里只透传给手机面板。 */
   activity?: import('../../features/phone').MobileActivityDeps
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../../features/terminal').CliPhoneActions
-  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
-  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
   terminalHooks?: Pick<import('../../features/terminal').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */

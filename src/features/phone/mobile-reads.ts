@@ -1,16 +1,13 @@
 import { basename } from 'node:path'
-import { redactConnections, type ConnectionsSnapshot } from '../../daemon/connections'
 import { framedTooLarge } from './mobile-matter-response'
 import { ownsMethod, type PhoneRouteTable } from './phone-route-table'
-import type { CliSessionView } from '../../ports/cli-session'
-import type { OverseerToday } from '../../domain/overseer-today'
 import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from '../terminal'
 import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../../adapters/workbench/native-history'
 
 /**
- * mobile-reads.ts — 手机只读路由(spec 2026-10-01 §3):CC 的连接、电脑上的原生会话。
- * 表里的键由 scripts/phone-routes.guard.test.ts 对着路由表核对。纵深防御:连接经 redactConnections,
- * 手机口径永远没有插件目录与未就绪原因(设备/链接令牌本身也是 admin 档)。
+ * mobile-reads.ts — 手机只读路由(spec 2026-10-01 §3):电脑上的原生会话、终端会话看着它跑 / 拍板 / 说一句。
+ * 表里的键由 scripts/phone-routes.guard.test.ts 对着路由表核对。CC 的连接、终端会话列表、「今天」P3c-2 并进了
+ * `/v1/connections`、`/v1/cli/sessions`、`/v1/overseer/today`(手机那一份由处理器按 caller 收;旧路径是 legacy-routes.ts 的别名)。
  */
 export const PHONE_SESSIONS_BUDGET_MS = 10_000
 export const PHONE_SESSION_RECENT_BUDGET_MS = 8_000
@@ -25,32 +22,9 @@ export interface MobileSessionsDeps {
   readRecent?(key: string, input: { limit: number }): Promise<NativeHistoryPreview>
 }
 export interface MobileReadsDeps {
-  connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps; cliSessions?: () => CliSessionView[]; cliActions?: CliPhoneActions
-  /** 「今天」一眼看完(core/overseer-today.ts)。结构里只有目录名、没有完整路径,手机口径原样给。 */
-  today?: () => OverseerToday
+  sessions?: MobileSessionsDeps; cliActions?: CliPhoneActions
   /** 执行者 id → 正式名字(收敛清单 ⑥)。缺省 ⇒ 行里不带 displayName,App 退回 id。 */
   executorName?: (id: string) => string
-}
-/** 手机上终端会话列表最多给这么多条。 */
-export const PHONE_CLI_SESSIONS_MAX = 50
-/** 列表里最多给这么多条在跑的会话读「此刻那一步」。 */
-export const PHONE_CLI_NOW_MAX = 8
-/**
- * 手机口径的终端会话:与上面原生会话同一条规矩 —— 项目只给目录名,不给完整路径。
- * 其余字段同 GET /v1/cli/sessions(状态已折算 stale、等你批准的在前)。
- */
-export function phoneCliSession(v: CliSessionView, pendingHash?: (sessionId: string) => string | null) {
-  // 等批准的那一项带上码:只有中继真开了码(主人不在、问到了微信)才能在手机上拍;
-  // 主人在场时留给终端自己问,没有码 ⇒ actionable:false,手机只显示「在终端里等你」。
-  let hash: string | null = null
-  if (v.pending && pendingHash) { try { hash = pendingHash(v.session_id) } catch { hash = null } }
-  return {
-    session_id: v.session_id, code: v.code, source: v.source, status: v.status, stale: v.stale,
-    project: v.project, machine: v.machine, last_summary: v.last_summary,
-    last_event_at: v.last_event_at, last_prompt_at: v.last_prompt_at, created_at: v.created_at,
-    pending: v.pending ? { ...v.pending, hash, actionable: hash !== null } : null,
-    ...(v.matter_id ? { matter_id: v.matter_id } : {}),
-  }
 }
 /** 同 CliEventRequest:1–200 字的串;再挡掉控制字符。 */
 const SESSION_ID_RE = /^[^\u0000-\u001f]{1,200}$/
@@ -126,39 +100,6 @@ export function mobileReadsRoutes(deps: MobileReadsDeps, opts: { budgetMs?: numb
   /** 行里带上执行者正式名字(收敛清单 ⑥);没接名字 ⇒ 原样(App 退回 id)。 */
   const named = <R extends { provider: string }>(r: R): R & { displayName?: string } => deps.executorName ? { ...r, displayName: deps.executorName(r.provider) } : r
   return {
-    'GET /m/api/connections': ownsMethod(async (url: URL, req: Request) => {
-      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-      if (!deps.connections) return json({ ok: false, error: 'connections_not_wired' }, 503)
-      // 裁定 7:内部失败一律 503(客户端当作离线/不可用),不是 500。
-      try { return json({ ok: true, ...redactConnections(deps.connections()) }) }
-      catch { return json({ ok: false, error: 'unavailable' }, 503) }
-    }),
-    'GET /m/api/cli/sessions': ownsMethod(async (url: URL, req: Request) => {
-      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-      if (!deps.cliSessions) return json({ ok: false, error: 'cli_sessions_not_wired' }, 503)
-      const ph = deps.cliActions ? (id: string) => deps.cliActions!.pendingHash(id) : undefined
-      try {
-        // 在跑的会话带上此刻那一步(列表一眼看到谁在做什么);最多前 PHONE_CLI_NOW_MAX 条,读不到就不带。
-        let budget = PHONE_CLI_NOW_MAX
-        // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
-        const live = deps.cliActions?.liveWindows?.() ?? new Set<string>()
-        const sessions = deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
-          const plain = phoneCliSession(v, ph)
-          const base = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
-          const lw = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
-          let said: ReturnType<NonNullable<CliPhoneActions['lastSay']>> = null
-          try { said = deps.cliActions?.lastSay?.(v.session_id) ?? null } catch { said = null }
-          const row = said ? { ...lw, last_say: said } : lw
-          if (v.status !== 'running' || v.stale || budget <= 0 || !deps.cliActions?.currentStep) return row
-          budget--
-          let now: ReturnType<CliPhoneActions['currentStep']> = null
-          try { now = deps.cliActions.currentStep(v.session_id) } catch { now = null }
-          return now ? { ...row, now } : row
-        })
-        return json({ ok: true, sessions })
-      }
-      catch { return json({ ok: false, error: 'unavailable' }, 503) }
-    }),
     // 看着它跑(2026-10-17):一条终端会话最近几步。手机展开那一行时每几秒拉一次;只读,和「看 码」同一份记录。
     'GET /m/api/cli/activity': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
@@ -172,13 +113,6 @@ export function mobileReadsRoutes(deps: MobileReadsDeps, opts: { budgetMs?: numb
         const cut = (t: string, max: number) => (t.length > max ? t.slice(0, max - 1) + '…' : t)
         return fitted(max => ({ ok: true, items: r.items.map(i => ({ ...i, text: cut(i.text, max), ...(i.detail ? { detail: cut(i.detail, max * 3) } : {}) })) }), 600)
       } catch { return json({ ok: false, error: 'unavailable' }, 503) }
-    }),
-    // 「今天」(2026-10-14):终端 + 一起做,过去 24 小时 —— 与微信「日报」同一份数据。
-    'GET /m/api/today': ownsMethod(async (url: URL, req: Request) => {
-      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-      if (!deps.today) return json({ ok: false, error: 'today_not_wired' }, 503)
-      try { return json({ ok: true, today: deps.today() }) }
-      catch { return json({ ok: false, error: 'unavailable' }, 503) }
     }),
     // 拍板终端会话等批准的那一项 —— 与微信「y/n 码」同一条路(features/terminal/phone-actions.ts)。
     'POST /m/api/cli/permission': ownsMethod(async (url: URL, req: Request) => {

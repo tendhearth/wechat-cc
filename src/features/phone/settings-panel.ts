@@ -142,19 +142,13 @@ export interface SettingsPanelDeps {
   featureRoutes?: ReadonlyArray<PhoneRouteTable<unknown>>
   /** 「CC 做过的事」(B9):只给设备令牌。 */
   activity?: import('./mobile-activity').MobileActivityDeps
-  /** 「CC 的连接」快照(spec 2026-10-01)。缺省 ⇒ /m/api/connections 503。 */
-  connections?: () => import('../../daemon/connections').ConnectionsSnapshot
   /** 电脑上的原生会话(只读)。缺省 ⇒ /m/api/sessions 503。 */
   sessions?: import('./mobile-reads').MobileSessionsDeps
-  /** 终端会话登记处(v76,只读)。缺省 ⇒ /m/api/cli/sessions 503。 */
-  cliSessions?: () => import('../../ports/cli-session').CliSessionView[]
-  /** 终端会话:拍板等批准的那一项、接着说一句(features/terminal/phone-actions.ts)。缺省 ⇒ /m/api/cli/permission、/m/api/cli/say 503,列表不带码。 */
+  /** 终端会话:拍板等批准的那一项、接着说一句、看着它跑(features/terminal/phone-actions.ts)。缺省 ⇒ 那几条 503。 */
   cliActions?: import('../terminal').CliPhoneActions
-  /** 「今天」一眼看完(core/overseer-today.ts,只读)。缺省 ⇒ /m/api/today 503。 */
-  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */
   sessionContinue?: MobileSessionContinueActions
-  /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。缺省 ⇒ 会话 / 终端行不带 displayName,App 退回 id。 */
+  /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。缺省 ⇒ 会话行不带 displayName,App 退回 id。 */
   executorName?: (id: string) => string
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
   seen?: { read: () => string | null; write: (iso: string) => void }
@@ -938,7 +932,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     ...(deps.featureRoutes ?? []),
     // CC 做过的事(B9):只读时间线。链接令牌不在册。
     mobileActivityRoutes(deps.activity),
-    mobileReadsRoutes({ ...(deps.connections ? { connections: deps.connections } : {}), ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliSessions ? { cliSessions: deps.cliSessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}), ...(deps.overseerToday ? { today: deps.overseerToday } : {}), ...(deps.executorName ? { executorName: deps.executorName } : {}) }),
+    mobileReadsRoutes({ ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}), ...(deps.executorName ? { executorName: deps.executorName } : {}) }),
   )
 
   /** 不带令牌也给的几样(不敏感):图标、PWA 清单、service worker。任何方法都回,同改造前。 */

@@ -40,7 +40,7 @@ describe('wire-compat 兼容表只许变少', () => {
 // @debt 还在线上的 /m/api 旧路径(别名表行数;按构建号逐行删,降到 0 = 手机只剩 /v1 一族)
 const MAX_WIRE_ROUTE_ALIASES = 61
 // @debt 别名表里还是面板自己处理器的行(P3c–P3e 每并一条降一;降到 0 = 每份数据只有一个处理器)
-const MAX_OWN_HANDLER_ROWS = 55
+const MAX_OWN_HANDLER_ROWS = 52
 
 const routeKeys = new Set(Object.keys(ROUTES))
 const LEGACY_ROUTES = join(ROOT, 'src', 'features', 'phone', 'legacy-routes.ts')

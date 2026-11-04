@@ -40,6 +40,7 @@ import { makeTerminalHooksService } from './hooks'
 import { findLiveWindow, liveSessionIds, relayToWindow, transcriptStartCwd, type LiveWindow } from './live-window'
 import { makeTerminalSay } from './terminal-say'
 import { currentStepOf, makeCliPhoneActions } from './phone-actions'
+import { phoneCliSessionRows } from './phone-sessions'
 import { makeRemoteReply } from './remote-reply'
 import type { TerminalRoutesDeps } from './routes'
 import { scopedSend } from '../../daemon/inbound/reply-scope'
@@ -349,12 +350,20 @@ export function wireTerminal(d: WireTerminalDeps) {
     hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(), steps: terminalSteps,
     resolve: (h, dec) => d.resolvePermission(h, dec),
   })
-  const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday }
+  /** 这条终端会话的那件事(M4c:列表行带上,App 点进 /matter/<id>);还没有 ⇒ null。 */
+  const terminalMatterOf = (sessionId: string): string | null => { try { return matterStore.findBySurface('cli', sessionId)?.id ?? null } catch { return null } }
+  // 手机令牌读 GET /v1/cli/sessions 的那一份(P3c-2,原 /m/api/cli/sessions 的处理器;接线原在 daemon/wiring/module.ts):
+  // 登记处 50 条 + 每行那件事,再按手机口径挑字段(phone-sessions.ts)。
+  const phoneSessions = () => phoneCliSessionRows({
+    list: () => cliEvents.list({ limit: 50 }).map(v => { const m = terminalMatterOf(v.session_id); return m ? { ...v, matter_id: m } : v }),
+    actions: phoneActions,
+    executorName: (id: string) => boot.registry.namesOf(id).name,
+  })
+  const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
     command, phoneActions, routes,
-    /** 这条终端会话的那件事(M4c:列表行带上,App 点进 /matter/<id>);还没有 ⇒ null。 */
-    terminalMatterOf: (sessionId: string): string | null => { try { return matterStore.findBySurface('cli', sessionId)?.id ?? null } catch { return null } },
+    terminalMatterOf,
   }
 }

@@ -469,7 +469,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     log: makeMatterLog(db),
   }) : null
   // 「CC 的连接」与「CC 现在怎么样」(重构第二批步 6c,wire-connections.ts)。
-  // 配对过的手机数从设置面板读,面板又要 connections 当值 —— 真环。显式的晚绑定:手机那一簇建好之后才填;
+  // 配对过的手机数从设置面板读,面板在 connections 之后才建(手机读连接 P3c-2 起走内部 API 的 /v1/connections)。显式的晚绑定:手机那一簇建好之后才填;
   // 没填 ⇒ 0(不靠 try/catch 吞 TDZ,catch 只留给真的读失败,#488 评审)。
   const phoneDevices: { current: (() => number) | null } = { current: null }
   const connections = wireConnections({
@@ -485,7 +485,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // 簇里的环在 wirePhone 里面解(显式的 late 对象);这里只拿结果。关机停它的那一项 main.ts 登记在 polling 之前。
   const phone = wirePhone({
     opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore,
-    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections, speech,
+    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, speech,
   })
   phoneDevices.current = () => phone.settingsPanel.phoneDevices().length
   const { appPush, companionApp, phoneChat, settingsPanel } = phone
