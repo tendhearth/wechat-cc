@@ -56,7 +56,7 @@
   - 读:`domain/matters/ready-step.ts`(`isReadyStep`、`latestTurnReady`)+ SQL 版本 `LATEST_TURN_READY_SQL`;旧 status 的式子改成 `legacyStatusSql(replied)`,现在照旧传 `stored_replied`(读列),删列 PR 换 `latest_ready`。
     - 为什么不在这一步换成「步,没有就退回列」:列还在双写,退回列的结果就是列本身,换了不多知道什么;而「有步就算」在主人重开 / 续接但新一轮还没开始的那段会和列不一样 —— 这种差别应该在删列 PR 里拿真库对账说清楚,不该夹在双写里。
   - 滤掉:`timelineKind` / `timelineSteps` / `workbenchTaskEvent`(⇒ `WorkbenchTaskEvent`、任务的 `MatterEvent`、`store.steps` 的所有消费方、`?since=` / `since_cursor`)、act 轮视图(`service.ts` 的 `actTurns`)。终端的步按自己的 key 前缀读、对话正文在 `messages`,碰不到它。
-  - 金样:19 份一字不变;另加一条在做完那件上写 ready 步、前后重读六条读路径(除游标与主题帧的 hub 计数外逐字节一样)。
+  - 金样:25 份一字不变;另加一条在做完那件上写 ready 步、前后重读六条读路径(除游标与主题帧的 hub 计数外逐字节一样)。
   - 对账:`scripts/m6e-replied-audit.ts <副本.db>` 只读打开副本,数列 replied / ready 步 / 两种算法的 replied、列出不一样的行。11-05 真库副本:270 件事,列 replied **0 行**,ready 步 0 行,不一样 0 行。
 - `setStatus` 改名只管归档 / 重开(写 `archived_at` 与 `state`);迁移删 `matters.status`(重建表,`withoutForeignKeys`,见 `docs/maintainer/migrations.md`);从此回不到之前的版本。
 - 手机网页改读 `state` / `archivedAt`(随 `self deploy`,和 daemon 同步到手)。
