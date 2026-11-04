@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "artStatus": "production-candidate",
-  "catalogSha256": "84c1eff1f68d25829524f01635be9bfa670c60777864cd475344e14ec9da12d4",
+  "catalogSha256": "9fc487b2818be064a5aae69974fc573fc11f1036c7dde7f2ef9e21871d6a3030",
   "sourceSha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
   "displaySize": 128,
   "width": 640,
@@ -10,7 +10,7 @@
   "clips": [
     {
       "id": "peek",
-      "title": "先看一眼，再探身",
+      "title": "发现右边，停一拍再探身",
       "artStatus": "production-candidate",
       "fps": 12,
       "loop": false,
@@ -36,7 +36,7 @@
       ],
       "webp": "peek.webp",
       "poster": "peek-poster.png",
-      "webpSha256": "696fdd4d1b86e468f5d0965c2f2946c325f2186c0c681c0fca225f5e6303705c"
+      "webpSha256": "4056d5d466c546cdf238799ff01444aec43e35582f74a83e97db1bebef695082"
     },
     {
       "id": "stretch",
@@ -66,7 +66,7 @@
       ],
       "webp": "stretch.webp",
       "poster": "stretch-poster.png",
-      "webpSha256": "15b8760f482f44cf5a298658da94882d9144238e77fd1a25b587118b7c9ef195"
+      "webpSha256": "9c1c488cc5384f2c7c8d40ef72734e1b00ca8a683cc8bf0db948d2dc68cb321a"
     },
     {
       "id": "walk",
@@ -94,7 +94,7 @@
       ],
       "webp": "walk.webp",
       "poster": "walk-poster.png",
-      "webpSha256": "c7a40628f37c7c24ff811bd3994e85747817eb7bb3ddee36391552dd3e0b8027"
+      "webpSha256": "b6d79d6385b6cc1cbc4ca3cb68509c33686feb20a842d70279b8a51e37e8df78"
     },
     {
       "id": "lift",
@@ -122,7 +122,7 @@
       ],
       "webp": "lift.webp",
       "poster": "lift-poster.png",
-      "webpSha256": "c89911e774b4087a78be23dee2e05fb4017f5407fdb36c76fdd877afa4564996"
+      "webpSha256": "b0fef34a28779d1b5506ebcfcec8f7ecc0499556e6bff962cbb8e6f45ebd7377"
     },
     {
       "id": "land",
@@ -146,7 +146,7 @@
       ],
       "webp": "land.webp",
       "poster": "land-poster.png",
-      "webpSha256": "5dd6122779fd9b0b83e87231d6b126025c797c01158603b6787b6753ef334692"
+      "webpSha256": "dde516236fa3c0dca64b19a76e09d027eb5d35a1e342c978041ad9c58407a8d1"
     },
     {
       "id": "celebrate",
@@ -174,7 +174,7 @@
       ],
       "webp": "celebrate.webp",
       "poster": "celebrate-poster.png",
-      "webpSha256": "9567d1764e51650e9ff8ed26ce687c9984d49617eceb9277f8da873e2a10d2ac"
+      "webpSha256": "f006f50c4cdacae87c97047359de2dc63c6a83e82ae806a92f7e56dc08499f65"
     },
     {
       "id": "work",
@@ -202,7 +202,89 @@
       ],
       "webp": "work.webp",
       "poster": "work-poster.png",
-      "webpSha256": "3cc812f9506304e1bfc72b1a2035413f5f8c1fc00626e0e5de1430d2776a1f9b"
+      "webpSha256": "3783259b5c8f5e41b4df186f7166b18bd5bcee398ac54f43fc9b1d5a1996d9c5"
+    },
+    {
+      "id": "peek-left",
+      "title": "发现左边，停一拍再探身",
+      "artStatus": "production-candidate",
+      "fps": 12,
+      "loop": false,
+      "frameCount": 14,
+      "posterIndex": 7,
+      "durationMs": 1166.6666666666667,
+      "webpDurationMs": 1167,
+      "webpDelaysMs": [
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84
+      ],
+      "webp": "peek-left.webp",
+      "poster": "peek-left-poster.png",
+      "webpSha256": "4ffd5d8277becb7e7ff84d837ce721ef4f48a6d38efdc2bcfc7fa18ebd0a93a8"
+    },
+    {
+      "id": "curiosity",
+      "title": "自己的 C，好像悄悄动了一下",
+      "artStatus": "production-candidate",
+      "fps": 12,
+      "loop": false,
+      "frameCount": 36,
+      "posterIndex": 18,
+      "durationMs": 3000,
+      "webpDurationMs": 3000,
+      "webpDelaysMs": [
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83,
+        83,
+        84,
+        83
+      ],
+      "webp": "curiosity.webp",
+      "poster": "curiosity-poster.png",
+      "webpSha256": "fafcaa28c57122301924ff5ef53fdfbb9b7a27ab5b61f010830b748c9517ff1c"
     }
   ]
 }

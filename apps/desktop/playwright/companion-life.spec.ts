@@ -64,6 +64,86 @@ async function calm(page:Page){
   await page.route('**/v1/companion/pet',r=>r.fulfill({json:{owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities:[]}}))
 }
 
+async function traceCuriosity(page:Page){
+  await page.evaluate(()=>{
+    const stage=document.getElementById('pet-stage')!,img=document.getElementById('pet-sprite')!
+    const trace:any[]=[];(window as any).__curiosityTrace=trace
+    new MutationObserver(records=>{for(const [i,record] of records.entries()){
+      if(record.target!==img&&record.target!==stage)continue
+      const kind=record.target===img?'src':'action'
+      const next=records.slice(i+1).find(item=>item.target===record.target&&item.attributeName===record.attributeName)
+      const value=next?next.oldValue:(record.target as Element).getAttribute(record.attributeName!)
+      trace.push({kind,value,at:performance.now(),behavior:(window as any).__pet.machine.snapshot().behavior})
+    }}).observe(stage,{subtree:true,attributes:true,attributeOldValue:true,attributeFilter:['src','data-pet-action']})
+  })
+}
+
+test('CC completes its private curiosity through the real last image without inventing task activity',async({page,shimUrl,shim})=>{
+  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl)
+  await traceCuriosity(page)
+  const stage=page.locator('#pet-stage'),body=page.locator('#pet-body'),img=page.locator('#pet-sprite')
+  await advance(74_999)
+  expect(await page.evaluate(()=>(window as any).__curiosityTrace.some((p:any)=>p.value==='curiosity'))).toBe(false)
+  await advance(9_001)
+  await expect(stage).toHaveAttribute('data-pet-action','curiosity')
+  await expect(body).toHaveAttribute('data-pet-performance','true')
+  await expect(body).toHaveCSS('transform','none');await expect(body).toHaveCSS('animation-name','none')
+  await expect(stage).not.toHaveClass(/pet-breathing/)
+  await expect(img).toHaveAttribute('src',/\/performance\/lit\/curiosity\//)
+  await expect(img).toHaveJSProperty('complete',true);await expect(img).toHaveJSProperty('naturalWidth',512)
+  await page.screenshot({path:'.superpowers/cc-life-curiosity.png'})
+  await advance(3_000)
+  await expect(stage).toHaveAttribute('data-pet-action','still')
+  const trace=await page.evaluate(()=>(window as any).__curiosityTrace)
+  const frames=trace.filter((p:any)=>p.kind==='src'&&/\/curiosity\/\d{3}\.png$/.test(p.value))
+  expect(frames.map((p:any)=>p.value.match(/(\d{3})\.png$/)[1])).toEqual(Array.from({length:36},(_,i)=>String(i).padStart(3,'0')))
+  const start=trace.find((p:any)=>p.kind==='action'&&p.value==='curiosity')
+  const finish=trace.find((p:any)=>p.kind==='action'&&p.value==='still'&&p.at>start.at)
+  expect(finish.at).toBeGreaterThan(frames.at(-1).at)
+  expect(finish.at-start.at).toBeGreaterThanOrEqual(2_988)
+  expect(frames.every((p:any)=>['idle','companion','blink','look'].includes(p.behavior))).toBe(true)
+  expect(await page.evaluate(()=>(window as any).__pet.machine.snapshot().resting)).toBe('idle')
+})
+
+for(const reason of ['controls','working','permission','quiet','reduced','hidden','settings'] as const)
+test(`curiosity yields to ${reason} without a stale callback or replay`,async({page,shimUrl,shim})=>{
+  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  const stage=page.locator('#pet-stage')
+  await advance(84_000);await expect(stage).toHaveAttribute('data-pet-action','curiosity')
+  if(reason==='controls')await page.locator('.pet-controls').dispatchEvent('pointerenter')
+  if(reason==='working'||reason==='permission')await page.evaluate(value=>(window as any).__pet.setState(value),reason)
+  if(reason==='quiet')await page.locator('#pet-quiet').dispatchEvent('click')
+  if(reason==='reduced')await page.emulateMedia({reducedMotion:'reduce'})
+  if(reason==='hidden')await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))})
+  if(reason==='settings')await page.locator('.pet-settings').evaluate((node:HTMLDetailsElement)=>{node.open=true})
+  await expect(stage).not.toHaveAttribute('data-pet-action','curiosity')
+  await advance(4_000)
+  if(reason==='working'||reason==='permission')expect(await page.evaluate(()=>(window as any).__pet.machine.snapshot().behavior)).toBe(reason)
+  if(reason==='controls')await page.locator('.pet-shell').dispatchEvent('pointerleave')
+  if(reason==='working'||reason==='permission')await page.evaluate(()=>(window as any).__pet.setState('idle'))
+  if(reason==='quiet')await page.locator('#pet-quiet').dispatchEvent('click')
+  if(reason==='reduced')await page.emulateMedia({reducedMotion:'no-preference'})
+  if(reason==='hidden')await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:false});document.dispatchEvent(new Event('visibilitychange'))})
+  if(reason==='settings')await page.locator('.pet-settings').evaluate((node:HTMLDetailsElement)=>{node.open=false})
+  await advance(84_000)
+  expect(await page.evaluate(()=>(window as any).__curiosityTrace.filter((p:any)=>p.kind==='action'&&p.value==='curiosity').length)).toBe(1)
+})
+
+test('older seven-performance kits retain authored peeking and the original doze deadline',async({page,shimUrl,shim})=>{
+  await page.route('**/assets/pet/cc-v1/manifest.json',async route=>{
+    const response=await route.fetch(),kit=await response.json()
+    for(const form of ['lit','unlit'])for(const name of ['life-peek-left','life-curiosity'])delete kit.forms[form].states[name]
+    await route.fulfill({response,json:kit})
+  })
+  await shim.invoke('demo.seed',{});await calm(page);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  await advance(20_100)
+  await expect(page.locator('#pet-sprite')).toHaveAttribute('src',/\/performance\/lit\/peek\//)
+  await expect(page.locator('#pet-body')).toHaveAttribute('data-pet-performance','true')
+  await advance(159_900)
+  await expect(page.locator('#pet-stage')).toHaveAttribute('data-pet-action','doze')
+  expect(await page.evaluate(()=>(window as any).__curiosityTrace.some((p:any)=>p.value==='curiosity'))).toBe(false)
+})
+
 for(const authored of [true,false])test(`idle CC visibly peeks, stops for nearby controls and wakes from a calm doze (${authored?'authored':'fallback'})`,async({page,shimUrl,shim})=>{
   if(!authored)await page.route('**/assets/pet/cc-v1/manifest.json',async route=>{
     const response=await route.fetch(),kit=await response.json()
@@ -80,7 +160,7 @@ for(const authored of [true,false])test(`idle CC visibly peeks, stops for nearby
     await expect(body).toHaveCSS('transform','none')
     await expect(body).toHaveCSS('animation-name','none')
     const img=page.locator('#pet-sprite')
-    await expect(img).toHaveAttribute('src',/\/performance\/lit\/peek\//)
+    await expect(img).toHaveAttribute('src',/\/performance\/lit\/peek-left\//)
     await expect(img).toHaveJSProperty('complete',true)
     await expect(img).toHaveJSProperty('naturalWidth',512)
     const before=await img.screenshot(),first=await img.getAttribute('src')

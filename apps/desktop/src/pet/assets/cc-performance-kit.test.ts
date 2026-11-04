@@ -3,19 +3,45 @@ import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { readRGBA } from '../../../scripts/cc-png.mjs'
+import { buildPerformancePlan } from '../../../scripts/cc-performance-recipes.mjs'
+import { preparePerformanceKit } from '../../../scripts/register-cc-performance.mjs'
 
 const root=resolve(__dirname,'../../assets/pet/cc-v1')
 const raw=JSON.parse(readFileSync(join(root,'manifest.json'),'utf8'))
-const ids=['peek','stretch','walk','lift','land','celebrate','work']
+const ids=['peek','stretch','walk','lift','land','celebrate','work','peek-left','curiosity']
 const bytes=(path:string)=>readFileSync(join(root,path))
 const hash=(path:string)=>createHash('sha256').update(bytes(path)).digest('hex')
+
+it('binds all 134 paired poses to the current schema4 authoring and final96 render provenance',()=>{
+  const desktop=resolve(__dirname,'../../..')
+  const plan=JSON.parse(readFileSync(join(desktop,'art/cc-v1/performance/recipes.json'),'utf8'))
+  expect(plan.schemaVersion).toBe(4)
+  expect(plan).toEqual(buildPerformancePlan())
+  expect(plan.clips.reduce((sum:number,clip:any)=>sum+clip.frames.length,0)).toBe(134)
+  const paths=plan.clips.flatMap((clip:any)=>clip.frames.flatMap((_:any,i:number)=>[
+    `performance/lit/${clip.id}/${String(i).padStart(3,'0')}.png`,
+    `performance/unlit/${clip.id}/${String(i).padStart(3,'0')}.png`,
+    `masks/performance/${clip.id}/${String(i).padStart(3,'0')}.png`,
+  ]))
+  expect(new Set(paths).size).toBe(402)
+  for(const path of paths)expect(raw.assets[path],`registered final image ${path}`).toBeDefined()
+  // Registration checks actual PNGs, parameters, renderer/helper digests,
+  // shared masks, safe bounds and foot geometry, rather than trusting labels.
+  const reviewedAt=raw.assets[raw.forms.lit.states['life-peek'].frames[0]].visualReview.reviewedAt
+  const prepared=preparePerformanceKit({desktopRoot:desktop,kitRoot:root,reviewedAt})
+  expect(prepared.catalog).toMatchObject({summary:{clips:9,pairedSamples:134}})
+  expect(prepared.catalog.source.samples).toBe(96)
+  expect(prepared.manifest).toEqual(raw)
+},60_000)
 
 it('ships coordinated performances separately from every preserved C/eye-only state',()=>{
   expect(raw.performance?.active,'coordinated candidate profile is registered').toBe(true)
   for(const form of ['lit','unlit'])expect(Object.keys(raw.forms[form].states).filter(name=>name.startsWith('life-')).sort()).toEqual(ids.map(id=>`life-${id}`).sort())
   for(const id of ids) {
     const a=raw.forms.lit.states[`life-${id}`],b=raw.forms.unlit.states[`life-${id}`]
-    expect(a.frames.length).toBeGreaterThanOrEqual(8)
+    const expected=buildPerformancePlan().clips.find((clip:any)=>clip.id===id)!
+    expect(a?.frames,`${id} has its complete final sequence`).toHaveLength(expected.frames.length)
+    expect(a.fps).toBe(expected.fps);expect(a.loop).toBe(expected.loop)
     expect(b.frames).toHaveLength(a.frames.length)
     expect(b.fps).toBe(a.fps);expect(b.loop).toBe(a.loop)
     expect(a.artStatus).toBe('production-candidate')
@@ -52,7 +78,7 @@ it('preserves paired matte/glow coverage and the fixed canvas while allowing aut
 
 it('settles gestures into exact accepted rest bytes without changing the canonical masters',()=>{
   expect(raw.performance?.active).toBe(true)
-  for(const form of ['lit','unlit']) for(const id of ['peek','stretch','land','celebrate']) {
+  for(const form of ['lit','unlit']) for(const id of ['peek','peek-left','stretch','land','celebrate','curiosity']) {
     const frames=raw.forms[form].states[`life-${id}`].frames
     expect(hash(frames.at(-1))).toBe(hash(`canonical/${form}/front.png`))
     if(id!=='land')expect(hash(frames[0])).toBe(hash(`canonical/${form}/front.png`))

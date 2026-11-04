@@ -20,14 +20,19 @@ function clock(minimumDelay=0) {
     tick(ms:number) { const end=time+ms;for(;;) { const next=[...pending].sort((a,b)=>a[1].at-b[1].at)[0];if(!next||next[1].at>end)break;pending.delete(next[0]);time=next[1].at;next[1].fn() }time=end },
   }
 }
-async function boot(authored=false,minimumDelay=0,life=true) {
+async function boot(authored=false,minimumDelay=0,life=true,delight=false) {
   const c=clock(minimumDelay),root={stage:node(),img:node(),props:node(),body:node()}
   const raw=JSON.parse(readFileSync(new URL('../../assets/pet/cc-v1/manifest.json',import.meta.url),'utf8'))
   // Keep the original fallback cases meaningful after production gains optional
   // art. The native Mini suite exercises the actual installed performances.
   if(!authored)for(const form of ['lit','unlit'])for(const name of Object.keys(raw.forms[form].states))if(name.startsWith('life-'))delete raw.forms[form].states[name]
+  if(!delight)for(const form of ['lit','unlit'])for(const name of ['life-curiosity','life-peek-left'])delete raw.forms[form].states[name]
   if(authored) for(const form of ['lit','unlit']) for(const action of ['peek','stretch','walk','lift','land','celebrate','work']) {
     raw.forms[form].states[`life-${action}`]={frames:Array.from({length:12},(_,i)=>`performance/${form}/${action}/${i}.png`),fps:16,loop:['walk','lift','work'].includes(action),next:'idle',artStatus:'production-candidate'}
+  }
+  if(authored&&delight)for(const form of ['lit','unlit']){
+    raw.forms[form].states['life-peek-left']={frames:Array.from({length:14},(_,i)=>`performance/${form}/peek-left/${i}.png`),fps:12,loop:false,next:'idle',artStatus:'production-candidate'}
+    raw.forms[form].states['life-curiosity']={frames:Array.from({length:36},(_,i)=>`performance/${form}/curiosity/${i}.png`),fps:12,loop:false,next:'idle',artStatus:'production-candidate'}
   }
   const manifest=JSON.stringify(raw)
   const pet:any=await createPet(root,{manifestUrl:'./assets/pet/cc-v1/manifest.json',fetchImpl:async()=>new Response(manifest),makeEl:node,schedule:c.schedule,cancel:c.cancel,now:c.now,random:()=>0,preload:()=>{},life} as any)
@@ -178,6 +183,59 @@ describe('CC local life over real pet runtime',()=>{
     pet.setState('working');expect(action()).toBe('work-enter')
     pet.applyIntent({form:'unlit',behavior:'sleep',props:[],badge:0,hint:'offline',oneShots:[]})
     expect(action()).toBe('still');c.tick(180_000);expect(action()).toBe('still')
+    pet.destroy()
+  })
+})
+
+describe('CC optional delight over the real sprite player',()=>{
+  it('uses an independently authored leftward peek and preserves the older optional-art fallback',async()=>{
+    const left=await boot(true,0,true,true)
+    left.c.tick(20_100)
+    expect(left.root.img.src).toContain('/performance/lit/peek-left/')
+    expect(left.root.body.attrs['data-pet-performance']).toBe('true')
+    left.pet.destroy()
+    const legacy=await boot(true)
+    legacy.c.tick(20_100)
+    expect(legacy.root.img.src).toContain('/performance/lit/peek/')
+    legacy.pet.destroy()
+  })
+  it('keeps a curiosity scene through throttled frames until the real final callback',async()=>{
+    const {c,root,pet,action}=await boot(true,200,true,true)
+    c.tick(84_000)
+    expect(action()).toBe('curiosity')
+    expect(root.img.src).toContain('/performance/lit/curiosity/')
+    const first=root.img.src
+    c.tick(3_000)
+    expect(action()).toBe('curiosity')
+    expect(root.img.src).not.toBe(first)
+    expect(pet.machine.snapshot().resting).toBe('idle')
+    expect(['idle','blink','look']).toContain(pet.machine.snapshot().behavior)
+    c.tick(5_000)
+    expect(action()).toBe('still')
+    expect(root.img.src).not.toContain('/curiosity/')
+    pet.destroy()
+  })
+  it('removes a broken optional curiosity without replaying it or changing facts',async()=>{
+    const {c,root,pet,action}=await boot(true,0,true,true)
+    c.tick(84_000);expect(action()).toBe('curiosity')
+    const directory=root.img.src.slice(0,root.img.src.lastIndexOf('/')+1)
+    for(let i=0;i<36;i++)pet.reportFrameError(`${directory}${i}.png`)
+    expect(action()).toBe('still')
+    expect(root.img.src).not.toContain('/curiosity/')
+    expect(pet.machine.snapshot().resting).toBe('idle')
+    c.tick(180_000-c.now());expect(action()).toBe('doze')
+    pet.destroy()
+  })
+  it('interrupts a live curiosity for real permission and never resumes it afterward',async()=>{
+    const {c,root,pet,action}=await boot(true,0,true,true)
+    c.tick(84_000);expect(action()).toBe('curiosity')
+    pet.setState('permission')
+    expect(action()).toBe('still')
+    expect(root.img.src).not.toContain('/curiosity/')
+    expect(pet.machine.snapshot().behavior).toBe('permission')
+    c.tick(10_000)
+    expect(pet.machine.snapshot().behavior).toBe('permission')
+    expect(action()).toBe('still')
     pet.destroy()
   })
 })

@@ -4,6 +4,34 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prepareMotionNativeQA } from './prepare-cc-motion-native-qa.mjs'
 import { createQAApi, createQAInvoke, createQAClock, captureQAObservation } from '../art/cc-v1/native-motion-qa/qa-bridge.mjs'
+import * as qaBridge from '../art/cc-v1/native-motion-qa/qa-bridge.mjs'
+
+function lifeClock(now:()=>number){
+  const create=(qaBridge as any).createQALifeClock
+  expect(typeof create,'native QA can advance eligibility while retaining real sprite timers').toBe('function')
+  return create(now)
+}
+
+it('advances only the isolated monotonic eligibility clock and keeps real frame clocks and randomness intact',()=>{
+  const host={performance:performance.now,wall:Date.now,random:Math.random,schedule:setTimeout,cancel:clearTimeout}
+  let time=123
+  const clock=lifeClock(()=>time)
+  expect(clock.now()).toBe(123);expect(clock.offset()).toBe(0)
+  expect([clock.random(),clock.random()]).toEqual([0,0])
+  time=456;expect(clock.now()).toBe(456)
+  clock.setOffset(75_000);expect(clock.now()).toBe(75_456)
+  expect({performance:performance.now,wall:Date.now,random:Math.random,schedule:setTimeout,cancel:clearTimeout}).toEqual(host)
+})
+
+it('rejects backwards, nonfinite and unbounded native eligibility offsets without changing the accepted value',()=>{
+  const clock=lifeClock(()=>1000)
+  clock.setOffset(75_000);clock.setOffset(75_000)
+  for(const value of [-1,74_999,NaN,Infinity,'1800000',14_400_001]){
+    expect(()=>clock.setOffset(value)).toThrow('clock')
+    expect(clock.offset()).toBe(75_000);expect(clock.now()).toBe(76_000)
+  }
+  clock.setOffset(14_400_000);expect(clock.now()).toBe(14_401_000)
+})
 
 it('forwards bounded companion motion controls but never arbitrary window or backend commands',async()=>{
  const calls:unknown[]=[]
@@ -96,12 +124,13 @@ describe('isolated native motion QA', () => {
     const source = join(temporary, 'source'), destination = join(temporary, 'dist')
     const put = (path: string, text: string) => { const parts = path.split('/'); parts.pop(); mkdirSync(join(source, ...parts), { recursive: true }); writeFileSync(join(source, path), text) }
     try {
-      put('companion-window.js', 'let storage = null; try { storage = window.localStorage } catch {}')
+      put('companion-window.js', 'let storage = null; try { storage = window.localStorage } catch {}\nconst pet=await createPet(root,{life:true,})')
       put('companion-window.html', '<main>real companion fixture</main>')
       put('ui.test.js', 'fixture test code')
       put('ui.test.mjs', 'fixture test code')
       put('api.js', 'unsafe original API boundary')
       put('ipc.js', 'unsafe original native boundary')
+      for(const path of ['pet/pet.js','pet/life/life-director.js','pet/renderer/sprite-renderer.js'])put(path,`unchanged player fixture: ${path}`)
       put('assets/pet/cc-v1/manifest.json', '\uFEFF' + JSON.stringify({ assets: { 'canonical/lit/front.png': {} } }))
       put('assets/pet/cc-v1/canonical/lit/front.png', 'accepted fixture bytes')
       put('assets/pet/cc-v1/motion/lit/unfinished.png', 'unfinished fixture bytes')
@@ -120,11 +149,28 @@ describe('isolated native motion QA', () => {
       expect(readFileSync(join(destination, 'api.js'), 'utf8')).toContain('cc-motion-qa-refresh')
       expect(readFileSync(join(destination, 'companion-window.js'), 'utf8')).toContain('Promise.all([poller.refresh(), petPoller.refresh()])')
       expect(readFileSync(join(destination, 'companion-window.js'), 'utf8')).toContain('window.__ccMotionQAControl = { pet, stopPolling:')
+      expect(readFileSync(join(destination,'companion-window.js'),'utf8')).toContain('life:true,random:qaLifeClock.random,monotonicNow:qaLifeClock.now,')
+      expect(readFileSync(join(destination,'companion-window.js'),'utf8')).toContain('setLifeClockOffset:qaLifeClock.setOffset')
+      expect(readFileSync(join(source,'companion-window.js'),'utf8')).not.toContain('qaLifeClock')
+      for(const path of ['pet/pet.js','pet/life/life-director.js','pet/renderer/sprite-renderer.js'])expect(readFileSync(join(destination,path))).toEqual(readFileSync(join(source,path)))
       expect(readFileSync(join(source, 'companion-window.js'), 'utf8')).not.toContain('__ccMotionQAControl')
       expect(readFileSync(join(destination, 'api.js'), 'utf8')).toContain('Date.now = qaClock.now')
       expect(readFileSync(join(source, 'companion-window.js'), 'utf8')).not.toContain('qaClock')
       expect(readFileSync(join(destination, 'ipc.js'), 'utf8')).not.toContain('unsafe original')
     } finally { rmSync(temporary, { recursive: true, force: true }) }
+  })
+
+  for(const count of [0,2])it(`preserves existing staged output if the native life options anchor appears ${count} times`,()=>{
+    const temporary=mkdtempSync(join(tmpdir(),'cc-motion-qa-anchor-'))
+    const source=join(temporary,'source'),destination=join(temporary,'dist')
+    try{
+      mkdirSync(join(source,'assets/pet/cc-v1'),{recursive:true});mkdirSync(destination)
+      writeFileSync(join(source,'assets/pet/cc-v1/manifest.json'),JSON.stringify({assets:{}}))
+      writeFileSync(join(source,'companion-window.js'),`storage = window.localStorage; ${'life:true,'.repeat(count)}`)
+      writeFileSync(join(destination,'keep.txt'),'preserve existing staged fixture')
+      expect(()=>prepareMotionNativeQA({source,destination})).toThrow('life options boundary')
+      expect(readFileSync(join(destination,'keep.txt'),'utf8')).toBe('preserve existing staged fixture')
+    }finally{rmSync(temporary,{recursive:true,force:true})}
   })
 })
 

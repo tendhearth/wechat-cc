@@ -16,6 +16,8 @@ export function prepareMotionNativeQA({ source = join(desktop, 'src'), destinati
   const companion = readFileSync(join(input, 'companion-window.js'), 'utf8')
   const storageAnchor = 'storage = window.localStorage'
   if (companion.split(storageAnchor).length !== 2) throw Error('Companion storage boundary changed; update isolated QA staging')
+  const lifeAnchor = 'life:true,'
+  if (companion.split(lifeAnchor).length !== 2) throw Error('Companion life options boundary changed; update isolated QA staging')
   rmSync(output, { recursive: true, force: true })
   mkdirSync(output, { recursive: true })
   cpSync(input, output, { recursive: true, filter: path => {
@@ -27,7 +29,7 @@ export function prepareMotionNativeQA({ source = join(desktop, 'src'), destinati
   } })
   for (const [from, to] of [['index.html', 'index.html'], ['native-qa.js', 'native-qa.js'], ['native-qa.css', 'native-qa.css'], ['qa-bridge.mjs', 'qa-bridge.mjs']]) cpSync(join(qa, from), join(output, to))
   writeFileSync(join(output, 'qa-bridge.mjs'), readFileSync(join(qa, 'qa-bridge.mjs'), 'utf8').replace("'../../../src/main-navigation.js'", "'./main-navigation.js'"))
-  writeFileSync(join(output, 'companion-window.js'), `import { captureQAObservation } from './qa-bridge.mjs'\n` + companion.replace(storageAnchor, 'storage = null /* QA: memory-only motion preferences */') + `
+  writeFileSync(join(output, 'companion-window.js'), `import { captureQAObservation, createQALifeClock } from './qa-bridge.mjs'\nconst qaLifeClock=createQALifeClock(()=>performance.now())\n` + companion.replace(storageAnchor, 'storage = null /* QA: memory-only motion preferences */').replace(lifeAnchor,'life:true,random:qaLifeClock.random,monotonicNow:qaLifeClock.now,') + `
 // QA-only refresh: a live fact change must not pretend the document resumed.
 const reportQAState = (snapshot = pet.machine.snapshot()) => window.__TAURI__.event.emit('cc-motion-qa-observation', captureQAObservation(snapshot, preferences.snapshot().quiet, document.getElementById('pet-quiet')))
 pet.machine.subscribe(reportQAState)
@@ -38,7 +40,7 @@ document.addEventListener('cc-motion-qa-refresh', () => {
   // Production visibility/polling stays unchanged; this is not a wake test.
   Promise.all([poller.refresh(), petPoller.refresh()]).then(() => reportQAState())
 })
-window.__ccMotionQAControl = { pet, stopPolling: () => { poller.stop(); petPoller.stop() } }
+window.__ccMotionQAControl = { pet, stopPolling: () => { poller.stop(); petPoller.stop() }, setLifeClockOffset:qaLifeClock.setOffset, lifeClockOffset:qaLifeClock.offset }
 window.__ccMotionQAReady = true
 `)
   writeFileSync(join(output, 'api.js'), `import { createQAApi, createQAClock } from './qa-bridge.mjs'

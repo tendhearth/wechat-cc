@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { readRGBA } from './cc-png.mjs'
 
 const desktop=resolve(dirname(fileURLToPath(import.meta.url)),'..')
-const ids=['peek','stretch','walk','lift','land','celebrate','work']
+const ids=['peek','stretch','walk','lift','land','celebrate','work','peek-left','curiosity']
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const json=path=>{
   const text=readFileSync(path,'utf8')
@@ -15,10 +15,12 @@ const json=path=>{
 }
 
 export function buildPerformanceCatalog(plan,source,generatedAt) {
-  if(plan?.schemaVersion!==2||plan.artStatus!=='production-candidate'||!isDeepStrictEqual(plan.forms,['lit','unlit'])||!Array.isArray(plan.clips))throw Error('Invalid performance plan')
+  if(plan?.schemaVersion!==4||plan.artStatus!=='production-candidate'||!isDeepStrictEqual(plan.forms,['lit','unlit'])||!Array.isArray(plan.clips))throw Error('Invalid performance plan')
   const seen=new Set()
   for(const c of plan.clips){
     if(!ids.includes(c.id)||seen.has(c.id)||!Array.isArray(c.frames)||c.frames.length<8||c.frames.length>64||!Number.isFinite(c.fps)||c.fps<1||c.fps>24||typeof c.loop!=='boolean')throw Error('Invalid performance clip')
+    if(c.frames.some(s=>!s||typeof s.gazeUp!=='number'||!Number.isFinite(s.gazeUp)||s.gazeUp<-.04||s.gazeUp>.14))throw Error('Invalid performance eye placement')
+    if(c.frames.some(s=>typeof s.crestTilt!=='number'||!Number.isFinite(s.crestTilt)||s.crestTilt<-.42||s.crestTilt>.8||(c.id!=='curiosity'&&s.crestTilt!==0)))throw Error('Invalid performance crest placement')
     seen.add(c.id)
   }
   if(seen.size!==ids.length)throw Error('Performance profile must be complete')
@@ -59,6 +61,8 @@ export function preparePerformanceKit({desktopRoot=desktop,kitRoot=join(desktopR
         return {path,digest,...readRGBA(data)}
       })
       if(!Number.isFinite(record.rig?.bodyDeterminant)||Math.abs(record.rig.bodyDeterminant-1)>.0001)throw Error(`Invalid performance rig: ${key}`)
+      if(!Number.isFinite(record.rig?.crestRootError)||record.rig.crestRootError<0||record.rig.crestRootError>.000001)throw Error(`Invalid performance crest root: ${key}`)
+      if(!Number.isFinite(record.rig?.crestDeterminant)||Math.abs(record.rig.crestDeterminant-1)>.0001)throw Error(`Invalid performance crest transform: ${key}`)
       for(const side of ['left','right']){
         const z=record.rig?.footLowestZ?.[side],lift=sample.feet?.[side]?.lift
         if(!Number.isFinite(z)||!Number.isFinite(lift)||z<lift-.00001||z>lift+.002)throw Error(`Invalid performance foot contact: ${key}/${side}`)

@@ -16,7 +16,7 @@ from mathutils import Vector, Matrix
 from bpy_extras.object_utils import world_to_camera_view
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cc_motion_geometry import morph_eye, eye_width
-from cc_performance_geometry import body_point, foot_point
+from cc_performance_geometry import body_point, foot_point, eye_surface_point, crest_point
 
 ROOT = Path(__file__).resolve().parents[1]
 KIT = ROOT / 'src/assets/pet/cc-v1'
@@ -48,11 +48,11 @@ assert args.motion_plan or not (args.clip or args.motion_frame is not None or ar
 motion_plan = None
 if args.motion_plan:
     motion_plan = json.loads(args.motion_plan.read_text())
-    assert motion_plan.get('schemaVersion') == (2 if performance_mode else 1) and motion_plan.get('forms') == ['lit','unlit'], 'CC motion schema'
+    assert motion_plan.get('schemaVersion') == (4 if performance_mode else 1) and motion_plan.get('forms') == ['lit','unlit'], 'CC motion schema'
     assert motion_plan.get('artStatus') == 'production-candidate', 'CC motion must remain candidate'
     allowed = {'thinking','working','permission','receive','done','look','sleep','wake','error','drag'}
     if performance_mode:
-        allowed = {'peek','stretch','walk','lift','land','celebrate','work'}
+        allowed = {'peek','peek-left','stretch','walk','lift','land','celebrate','work','curiosity'}
     seen = set()
     for clip in motion_plan.get('clips', []):
         name = clip.get('id')
@@ -61,7 +61,7 @@ if args.motion_plan:
         assert isinstance(clip.get('fps'), (int,float)) and 1 <= clip['fps'] <= 24, 'Invalid CC motion fps'
         assert isinstance(clip.get('loop'), bool) and 2 <= len(clip.get('frames', [])) <= 64, 'Invalid CC motion frames'
         for sample in clip['frames']:
-            assert set(sample) == ({'pose','eyeScale','crescent','gaze','body','feet'} if performance_mode else {'pose','eyeScale','crescent','gaze'}), 'Invalid CC motion parameters'
+            assert set(sample) == ({'pose','eyeScale','crescent','gaze','gazeUp','crestTilt','body','feet'} if performance_mode else {'pose','eyeScale','crescent','gaze'}), 'Invalid CC motion parameters'
             weights = sample['pose']
             assert isinstance(weights, dict) and set(weights) <= {'listening','happy','confused','thinking','low','angry','excited'}, 'Invalid C pose'
             values = [*weights.values(), sample['eyeScale'], sample['crescent'], sample['gaze']]
@@ -69,10 +69,16 @@ if args.motion_plan:
             assert all(0 <= v <= 1 for v in weights.values()) and sum(weights.values()) <= 1.000001, 'C pose exceeds frozen envelope'
             assert .12 <= sample['eyeScale'] <= 1.15 and 0 <= sample['crescent'] <= 1 and abs(sample['gaze']) <= .07, 'Invalid eye motion'
             if performance_mode:
+                assert type(sample['gazeUp']) in (int,float) and math.isfinite(sample['gazeUp']) and -.04 <= sample['gazeUp'] <= .14, 'Invalid vertical eye motion'
+                assert type(sample['crestTilt']) in (int,float) and math.isfinite(sample['crestTilt']) and -.42 <= sample['crestTilt'] <= .8, 'Invalid rooted C tilt'
+                assert name == 'curiosity' or sample['crestTilt'] == 0, 'Independent C tilt is exclusive to curiosity'
                 body, feet = sample['body'], sample['feet']
                 assert isinstance(body, dict) and set(body) == {'lean','squash','rise','shift'}, 'Invalid body controls'
                 assert all(type(v) in (int,float) and math.isfinite(v) for v in body.values()), 'Nonfinite body controls'
-                assert abs(body['lean']) <= .06 and .88 <= body['squash'] <= 1.07 and 0 <= body['rise'] <= .13 and abs(body['shift']) <= .05, 'Body exceeds performance envelope'
+                # Carrying needs the body above already-airborne feet; every
+                # other gesture keeps its original smaller rise envelope.
+                max_rise = .20 if name == 'lift' else .13
+                assert abs(body['lean']) <= .06 and .88 <= body['squash'] <= 1.07 and 0 <= body['rise'] <= max_rise and abs(body['shift']) <= .05, 'Body exceeds performance envelope'
                 assert isinstance(feet, dict) and set(feet) == {'left','right'}, 'Invalid feet controls'
                 for foot in feet.values():
                     assert isinstance(foot, dict) and set(foot) == {'lift','stride','roll'}, 'Invalid foot controls'
@@ -540,6 +546,7 @@ else:
 
 base_eyes = [(eye.location.copy(), [v.co.copy() for v in eye.data.vertices]) for eye in eyes]
 base_matrices = {obj.name: obj.matrix_world.copy() for obj in parts + eyes}
+crest_parent = None
 
 
 def affine_from_points(transform):
@@ -549,15 +556,42 @@ def affine_from_points(transform):
 
 
 def apply_performance(sample):
+    global crest_parent
     assembly = affine_from_points(lambda point: body_point(point, sample['body']))
+    # Shape keys are in C-local model coordinates. Tilt around the embedded
+    # anatomical root before its saved matrix and the common body transform.
+    # Zero retains the previous floating-point multiplication path exactly.
+    if sample['crestTilt'] != 0:
+        crest = affine_from_points(lambda point: crest_point(point, ROOT_C, sample['crestTilt']))
+        # A rotated curl under a squashed body has a sheared world matrix.
+        # Blender decomposes direct object assignments and loses that shear.
+        # A transient parent composes the two supported local transforms without
+        # moving the embedded root. It is never saved into the frozen source.
+        if crest_parent is None:
+            crest_parent = bpy.data.objects.new('CC / transient crest assembly', None)
+            scene.collection.objects.link(crest_parent)
+        crest_parent.matrix_world = assembly
+        c_obj.parent = crest_parent
+        c_obj.matrix_parent_inverse = Matrix.Identity(4)
+        c_obj.matrix_basis = base_matrices[c_obj.name] @ crest
     for obj in [bpy.data.objects['Body'], c_obj, *eyes]:
+        if obj == c_obj and sample['crestTilt'] != 0:
+            continue
         obj.matrix_world = assembly @ obj.matrix_world
     for side, name, x in [('left','Foot.L',-.64), ('right','Foot.R',.64)]:
         obj = bpy.data.objects[name]
         step = affine_from_points(lambda point: foot_point(point, (x,-.52,0), sample['feet'][side]))
         obj.matrix_world = step @ base_matrices[name]
 
-def set_eyes(kind, scale, crescent=0, gaze=0):
+
+def crest_rig_metrics(sample):
+    assembly = affine_from_points(lambda point: body_point(point, sample['body']))
+    expected_root = assembly @ base_matrices[c_obj.name] @ Vector(ROOT_C)
+    expected_det = assembly.to_3x3().determinant() * base_matrices[c_obj.name].to_3x3().determinant()
+    return {'crestRootError': (c_obj.matrix_world @ Vector(ROOT_C) - expected_root).length,
+            'crestDeterminant': c_obj.matrix_world.to_3x3().determinant()/expected_det}
+
+def set_eyes(kind, scale, crescent=0, gaze=0, gaze_up=0):
     for eye, (location, vertices) in zip(eyes, base_eyes):
         eye.location = location.copy()
         eye.scale = (1, .65, scale)
@@ -574,22 +608,36 @@ def set_eyes(kind, scale, crescent=0, gaze=0):
                 vertex.co.x, vertex.co.z = morph_eye(original.x, original.z, amount)
         if kind == 'large':
             eye.scale.x = eye.scale.z = 1.15
-        if kind == 'look' or gaze:
-            eye.location.x += .07 if kind == 'look' else gaze
-            x, _, z = eye.location
-            eye.location.y = -.94*math.sqrt(1-(x/1.12)**2-((z-.742)/.93)**2)-.013
+        if kind == 'look' or gaze or gaze_up:
+            if performance_mode:
+                eye.location = Vector(eye_surface_point(location, .07 if kind == 'look' else gaze, gaze_up))
+            else:
+                # Preserve the established fixed-body authoring path exactly.
+                eye.location.x += .07 if kind == 'look' else gaze
+                x, _, z = eye.location
+                eye.location.y = -.94*math.sqrt(1-(x/1.12)**2-((z-.742)/.93)**2)-.013
         eye.data.update()
 
-def render_pair(expression, pose='default', eye_scale=1, shared_entity=None, eye_kind='default', mask_name=None, motion_clip=None, crescent=0, gaze=0, performance=None):
+def pose_scene(pose, eye_kind, eye_scale, crescent, gaze, performance):
     if performance is not None:
+        if crest_parent is not None and c_obj.parent == crest_parent:
+            c_obj.parent = None
+            c_obj.matrix_parent_inverse = Matrix.Identity(4)
         for obj in parts + eyes:
             obj.matrix_world = base_matrices[obj.name].copy()
     set_pose(pose)
-    set_eyes(eye_kind, eye_scale, crescent, gaze)
+    set_eyes(eye_kind, eye_scale, crescent, gaze, performance['gazeUp'] if performance is not None else 0)
     bpy.context.view_layer.update()
     if performance is not None:
         apply_performance(performance)
         bpy.context.view_layer.update()
+        rig = crest_rig_metrics(performance)
+        assert rig['crestRootError'] <= .000001, 'Rendered C detached from its root: '+str(rig)
+        assert abs(rig['crestDeterminant'] - 1) <= .0001, 'Rendered C scaled or folded: '+str(rig)
+
+
+def render_pair(expression, pose='default', eye_scale=1, shared_entity=None, eye_kind='default', mask_name=None, motion_clip=None, crescent=0, gaze=0, performance=None):
+    pose_scene(pose, eye_kind, eye_scale, crescent, gaze, performance)
     results = {}
     renders = {}
     bloom = None
@@ -759,7 +807,7 @@ if motion_plan:
             cached = rendered_samples.get(parameter_key)
             exact_rest = not sample['pose'] and sample['eyeScale'] == 1 and sample['crescent'] == 0 and sample['gaze'] == 0
             if performance_mode:
-                exact_rest = exact_rest and sample['body'] == {'lean':0,'squash':1,'rise':0,'shift':0} and all(all(v == 0 for v in foot.values()) for foot in sample['feet'].values())
+                exact_rest = exact_rest and sample['gazeUp'] == 0 and sample['crestTilt'] == 0 and sample['body'] == {'lean':0,'squash':1,'rise':0,'shift':0} and all(all(v == 0 for v in foot.values()) for foot in sample['feet'].values())
             if exact_rest:
                 sources = [KIT/'canonical'/form/'front.png' for form in ['lit','unlit']]+[KIT/'masks/front.png']
             elif cached and all((KIT/p).exists() and hashlib.sha256((KIT/p).read_bytes()).hexdigest() == digest for p, digest in cached['files'].items()):
@@ -778,12 +826,17 @@ if motion_plan:
             entry = {'parameters': sample, 'paths': [str(p.relative_to(KIT)) for p in paths],
                      'files': {str(p.relative_to(KIT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}}
             if performance_mode:
+                if sources:
+                    # Reused bytes still get the actual scene-matrix checks;
+                    # never report the preceding sample's C pose as evidence.
+                    pose_scene(sample['pose'], 'default', sample['eyeScale'], sample['crescent'], sample['gaze'], sample)
                 lowest = {}
                 for side, name, x in [('left','Foot.L',-.64),('right','Foot.R',.64)]:
                     lowest[side] = min(foot_point(base_matrices[name] @ v.co, (x,-.52,0), sample['feet'][side])[2]
                                        for v in bpy.data.objects[name].data.vertices)
                 assembly = affine_from_points(lambda point: body_point(point, sample['body']))
-                entry['rig'] = {'footLowestZ': lowest, 'bodyDeterminant': assembly.to_3x3().determinant()}
+                entry['rig'] = {'footLowestZ': lowest, 'bodyDeterminant': assembly.to_3x3().determinant(),
+                                **crest_rig_metrics(sample)}
             checkpoint['samples'][sample_key] = entry
             rendered_samples[parameter_key] = entry
             temporary = checkpoint_path.with_suffix('.tmp')

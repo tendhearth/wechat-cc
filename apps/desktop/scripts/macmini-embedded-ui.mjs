@@ -471,11 +471,48 @@ try {
   report.checks.push('nearby attention preserves connection, observes cooldown and never replays after quiet')
   const cadenceKit=JSON.parse(await readFile(join(process.cwd(),'apps/desktop/src/assets/pet/cc-v1/manifest.json'),'utf8'))
   assert.equal(cadenceKit.performance?.active,true,'The coordinated performance profile must actually be installed')
-  const authoredPose=()=>execute('const body=document.getElementById("pet-body"),img=document.getElementById("pet-sprite");return {src:img.src,loaded:img.complete&&img.naturalWidth===512&&img.naturalHeight===512,authored:body.dataset.petPerformance,animation:getComputedStyle(body).animationName,breathing:document.getElementById("pet-stage").classList.contains("pet-breathing"),behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior}')
-  const assertAuthored=pose=>{assert.equal(pose.authored,'true');assert.equal(pose.animation,'none');assert.equal(pose.breathing,false)}
+  const authoredPose=()=>execute('const body=document.getElementById("pet-body"),img=document.getElementById("pet-sprite");return {src:img.src,loaded:img.complete&&img.naturalWidth===512&&img.naturalHeight===512,authored:body.dataset.petPerformance,animation:getComputedStyle(body).animationName,transform:getComputedStyle(body).transform,breathing:document.getElementById("pet-stage").classList.contains("pet-breathing"),behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior}')
+  const assertAuthored=pose=>{assert.equal(pose.authored,'true');assert.equal(pose.animation,'none');if(pose.behavior!=='drag')assert.equal(pose.transform,'none');assert.equal(pose.breathing,false)}
   await execute('window.__ccMotionQAControl.pet.applyIntent({form:"lit",behavior:"working",props:[],badge:0,hint:null,oneShots:[]})')
   report.performances={work:await until('Native authored work body',async()=>{const p=await authoredPose();return p.loaded&&p.src.includes("/performance/lit/work/")?p:null})}
   assertAuthored(report.performances.work)
+  report.performances.visuals={}
+  const paintState=()=>command('/execute/async',{
+    script:`const done=arguments[arguments.length-1],img=document.getElementById('pet-sprite'),source=img.currentSrc||img.src;
+      img.decode().then(()=>{
+        const layers=[];for(let el=img;el;el=el.parentElement){
+          const s=getComputedStyle(el),r=el.getBoundingClientRect();
+          layers.push({tag:el.tagName,id:el.id,className:el.className,opacity:s.opacity,display:s.display,
+            visibility:s.visibility,contentVisibility:s.contentVisibility,transform:s.transform,overflow:s.overflow,
+            bounds:{x:r.x,y:r.y,width:r.width,height:r.height},animations:el.getAnimations().map(a=>({
+              playState:a.playState,currentTime:a.currentTime,timing:a.effect?.getComputedTiming()}))});
+        }
+        done({src:img.currentSrc||img.src,decodeSourceStable:source===(img.currentSrc||img.src),
+          loaded:img.complete&&img.naturalWidth===512&&img.naturalHeight===512,
+          url:location.href,hidden:document.hidden,viewport:{width:innerWidth,height:innerHeight},layers});
+      }).catch(error=>done({loaded:false,src:img.src,error:String(error)}));`,args:[],
+  })
+  const performanceScreenshot=async(clip,phase)=>{
+    const visual={ok:false,attempts:[]};report.performances.visuals[clip]=visual
+    // Retry only read-only captures within the real played phase. Never replay,
+    // replace a sprite, finish an animation or change WebKit's frame timers.
+    for(let attempt=1;attempt<=3;attempt++){
+      const before=await paintState()
+      if(!before.loaded||!before.decodeSourceStable||!phase.test(before.src))break
+      const native=await nativeRead(),path=await screenshot(`performance-${clip}-attempt-${attempt}`)
+      const after=await paintState()
+      const proof=JSON.parse(execFileSync('/usr/bin/swift',[join(process.cwd(),'apps/desktop/scripts/fixtures/qa-image-proof.swift'),path],{encoding:'utf8',timeout:90000}))[0]
+      visual.attempts.push({before,after,native,proof})
+      if(proof.sampledColors>4&&after.loaded&&after.decodeSourceStable&&phase.test(after.src)){
+        await writeFile(join(output,`performance-${clip}.png`),await readFile(path))
+        Object.assign(visual,{ok:true,proof,sourceBefore:before.src,sourceAfter:after.src});return
+      }
+    }
+    visual.error=`Native ${clip} has no nonblank captured pixels within its real played phase`
+    // Keep the independent cancellation and geometry evidence even if capture
+    // fails. Both pixel gates are still mandatory before report.ok can be true.
+    return false
+  }
   await execute('window.__ccMotionQAControl.pet.beginDrag()')
   report.performances.lift=await until('Native authored carried feet',async()=>{const p=await authoredPose();return p.loaded&&p.src.includes('/performance/lit/lift/')?p:null})
   assertAuthored(report.performances.lift);assert.equal(report.performances.lift.behavior,'drag');await screenshot('performance-lift')
@@ -500,7 +537,7 @@ try {
   assert.equal(exitAction,'work-exit')
   report.performances.celebrate=await until('Native authored completion flight',async()=>{const p=await authoredPose();return p.loaded&&/\/performance\/lit\/celebrate\/00[3-6]\.png$/.test(p.src)?p:null})
   assertAuthored(report.performances.celebrate)
-  await screenshot('performance-celebrate')
+  await performanceScreenshot('celebrate',/\/celebrate\/00[3-9]\.png$/)
   await until('Native authored completion and director both settle',()=>execute('return window.__ccMotionQAControl.pet.machine.snapshot().behavior==="idle" && document.getElementById("pet-body").dataset.petAction==="still"'))
   await new Promise(resolve=>setTimeout(resolve,1000))
   const completion=await execute('window.__ccQAPerformanceObserver.disconnect();window.__ccQAPerformanceUnsubscribe();return {sources:window.__ccQAPerformanceSources,doneToIdle:window.__ccQADoneToIdle,behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior}')
@@ -513,6 +550,124 @@ try {
   assert.equal((await authoredPose()).authored,'false');assert.equal((await authoredPose()).behavior,'permission')
   await execute('window.__ccMotionQAControl.pet.applyIntent({form:"lit",behavior:"idle",props:[],badge:0,hint:null,oneShots:[]})')
   report.checks.push('actual WebKit plays coordinated work/lift/land/completion PNGs, suppresses duplicate CSS and consumes completion once under its real timer cadence')
+
+  // One unaccelerated eligible episode proves the production monotonic delay.
+  // Later cases advance ONLY the staged eligibility dependency. Every sprite
+  // frame and final callback still runs on this WebKit's real timers.
+  assert.equal(cadenceKit.forms.lit.states['life-curiosity']?.frames.length,36)
+  assert.equal(cadenceKit.forms.lit.states['life-peek-left']?.frames.length,14)
+  const decodedCuriosity=await command('/execute/async',{
+    script:`const done=arguments[arguments.length-1];Promise.all(arguments[0].map(async path=>{
+      const img=new Image();img.src=new URL('./assets/pet/cc-v1/'+path,location.href).href;await img.decode();
+      return img.naturalWidth===512&&img.naturalHeight===512;
+    })).then(values=>done({ok:true,decoded:values.length,valid:values.every(Boolean)})).catch(error=>done({ok:false,error:String(error)}));`,
+    args:[cadenceKit.forms.lit.states['life-curiosity'].frames],
+  })
+  assert.equal(decodedCuriosity.ok,true,decodedCuriosity.error);assert.equal(decodedCuriosity.valid,true);assert.equal(decodedCuriosity.decoded,36)
+  const curiosityAnchor=(await nativeRead()).frame
+  const curiosityHitArea=await execute('const r=document.getElementById("pet-stage").getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}')
+  await execute(`
+    const img=document.getElementById('pet-sprite'),stage=document.getElementById('pet-stage');
+    window.__ccQACuriosityTrace={frames:[],actions:[]};
+    window.__ccQACuriosityFrames=new MutationObserver(records=>{
+      for(let i=0;i<records.length;i++){
+        const src=i+1<records.length?records[i+1].oldValue:img.getAttribute('src');
+        window.__ccQACuriosityTrace.frames.push({src,at:performance.now()});
+      }
+    });
+    window.__ccQACuriosityFrames.observe(img,{attributes:true,attributeFilter:['src'],attributeOldValue:true});
+    window.__ccQACuriosityActions=new MutationObserver(records=>{
+      for(let i=0;i<records.length;i++){
+        const action=i+1<records.length?records[i+1].oldValue:stage.getAttribute('data-pet-action');
+        window.__ccQACuriosityTrace.actions.push({action,at:performance.now(),behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior});
+      }
+    });
+    window.__ccQACuriosityActions.observe(stage,{attributes:true,attributeFilter:['data-pet-action'],attributeOldValue:true});return true`)
+  const beginCuriosityEpisode=accelerated=>execute(`
+    const q=window.__ccMotionQAControl,pet=q.pet;
+    q.stopPolling();pet.setLifeAvailable(false);pet.setReducedMotion(false);pet.setQuiet(false);pet.setPaused(false);
+    pet.applyIntent({form:'lit',behavior:'idle',props:[],badge:0,hint:null,oneShots:[]});pet.machine.notifyAnimationEnded();
+    // Age the cooldown before starting a fresh calm episode, then advance only
+    // its 75s eligibility. Keep the next real idea inside the admission window.
+    if(arguments[0])q.setLifeClockOffset(q.lifeClockOffset()+1_725_000);
+    pet.setLifeAvailable(true);
+    if(arguments[0])q.setLifeClockOffset(q.lifeClockOffset()+75_000);
+    return {realAt:performance.now(),offset:q.lifeClockOffset()}`,[accelerated])
+  const firstEpisode=await beginCuriosityEpisode(false)
+  assert.equal(firstEpisode.offset,0)
+  report.performances.peekLeft=await until('Native independently authored left peek',async()=>{
+    const p=await authoredPose();return p.loaded&&p.src.includes('/performance/lit/peek-left/')?p:null
+  },45000)
+  assertAuthored(report.performances.peekLeft)
+  report.performances.curiosity=await until('Native real-time private curiosity',async()=>{
+    const p=await authoredPose();return p.loaded&&p.src.includes('/performance/lit/curiosity/')?p:null
+  },120000)
+  assertAuthored(report.performances.curiosity)
+  assert(['idle','companion','blink','look'].includes(report.performances.curiosity.behavior))
+  report.performances.curiositySample=await until('Native curiosity held forward curl',async()=>{
+    const p=await authoredPose();return p.loaded&&/\/curiosity\/(?:00[5-9]|01\d)\.png$/.test(p.src)?p:null
+  },90000)
+  assertAuthored(report.performances.curiositySample)
+  await performanceScreenshot('curiosity',/\/curiosity\/(?:00[5-9]|01\d)\.png$/)
+  await until('Native curiosity actual final callback',()=>execute(`
+    const q=window.__ccQACuriosityTrace;
+    return q.frames.some(p=>p.src?.endsWith('/curiosity/035.png'))&&document.getElementById('pet-stage').dataset.petAction==='still'`),90000)
+  const firstStory=await execute('return structuredClone(window.__ccQACuriosityTrace)')
+  const storyStart=firstStory.actions.find(p=>p.action==='curiosity')
+  const storyEnd=firstStory.actions.find(p=>p.action==='still'&&p.at>storyStart.at)
+  const storyFrames=firstStory.frames.filter(p=>/\/curiosity\/\d{3}\.png$/.test(p.src??''))
+  assert(storyStart.at-firstEpisode.realAt>=75000,'Curiosity started before real eligible time elapsed')
+  assert.deepEqual(storyFrames.map(p=>p.src.match(/(\d{3})\.png$/)[1]),Array.from({length:36},(_,i)=>String(i).padStart(3,'0')))
+  assert(storyEnd.at>=storyFrames.at(-1).at,'Scene settled before its last native frame')
+  report.performances.curiosityTiming={eligibility:'unaccelerated monotonic clock',eligibleMs:storyStart.at-firstEpisode.realAt,observedPlaybackMs:storyEnd.at-storyStart.at,frames:storyFrames.length,decodedFrames:decodedCuriosity.decoded,lastFrame:storyFrames.at(-1).src}
+  report.performances.curiosityInterruptions=[]
+  for(const reason of ['controls','working','permission','quiet','reduced','settings','paused','bad-frames']){
+    const episode=await beginCuriosityEpisode(true)
+    await until(`Native curiosity before ${reason}`,async()=>{
+      const p=await authoredPose();return p.loaded&&p.src.includes('/performance/lit/curiosity/')
+    },45000)
+    await execute(`
+      const pet=window.__ccMotionQAControl.pet,reason=arguments[0];
+      // Direct DOM dispatch does not synthesize the ancestor pointerenter.
+      if(reason==='controls')document.querySelector('.pet-shell').dispatchEvent(new PointerEvent('pointerenter'));
+      if(reason==='working'||reason==='permission')pet.applyIntent({form:'lit',behavior:reason,props:[],badge:0,hint:null,oneShots:[]});
+      if(reason==='quiet')document.getElementById('pet-quiet').click();
+      if(reason==='reduced'){const input=document.getElementById('pet-reduced-motion');input.checked=true;input.dispatchEvent(new Event('change'))}
+      if(reason==='settings')document.querySelector('.pet-settings').open=true;
+      if(reason==='paused')pet.setPaused(true);
+      if(reason==='bad-frames')for(const path of arguments[1])pet.reportFrameError(new URL('./assets/pet/cc-v1/'+path,location.href).href);
+      return true`,[reason,cadenceKit.forms.lit.states['life-curiosity'].frames])
+    await until(`Native ${reason} cancels curiosity`,()=>execute('return document.getElementById("pet-stage").dataset.petAction!=="curiosity"'))
+    const interruptedAt=await execute('return performance.now()')
+    await new Promise(resolve=>setTimeout(resolve,4000))
+    const after=await execute('return {action:document.getElementById("pet-stage").dataset.petAction,behavior:window.__ccMotionQAControl.pet.machine.snapshot().behavior}')
+    assert.notEqual(after.action,'curiosity')
+    if(reason==='working'||reason==='permission')assert.equal(after.behavior,reason)
+    if(reason==='bad-frames'){
+      const settled=await until('Native all-bad optional art falls back to a decoded calm pose',async()=>{
+        const p=await authoredPose();return p.loaded&&!p.src.includes('/curiosity/')?p:null
+      })
+      assert(['idle','companion','blink','look'].includes(settled.behavior))
+      report.performances.curiosityBadFrames={injectedErrorNotifications:36,fallback:settled,productionAssetBytesChanged:false}
+    }
+    await execute(`
+      const pet=window.__ccMotionQAControl.pet,reason=arguments[0];
+      if(reason==='controls')document.querySelector('.pet-shell').dispatchEvent(new PointerEvent('pointerleave'));
+      if(reason==='quiet')document.getElementById('pet-quiet').click();
+      if(reason==='reduced'){const input=document.getElementById('pet-reduced-motion');input.checked=false;input.dispatchEvent(new Event('change'))}
+      if(reason==='settings')document.querySelector('.pet-settings').open=false;
+      if(reason==='paused')pet.setPaused(false);
+      pet.applyIntent({form:'lit',behavior:'idle',props:[],badge:0,hint:null,oneShots:[]});return true`,[reason])
+    await new Promise(resolve=>setTimeout(resolve,1000))
+    const replayed=await execute('return window.__ccQACuriosityTrace.actions.some(p=>p.action==="curiosity"&&p.at>arguments[0])',[interruptedAt])
+    assert.equal(replayed,false,'Interrupted scene replayed on resume')
+    report.performances.curiosityInterruptions.push({reason,eligibility:'accelerated staged monotonic dependency',offset:episode.offset,spriteTimers:'real WebKit',postInterruptionMs:4000,postResumeMs:1000,replayed:false})
+  }
+  await execute('window.__ccQACuriosityFrames.disconnect();window.__ccQACuriosityActions.disconnect();window.__ccMotionQAControl.pet.setLifeAvailable(false);return true')
+  assert(sameFrame((await nativeRead()).frame,curiosityAnchor),'Decorative curiosity moved the native anchor')
+  assert.deepEqual(await execute('const r=document.getElementById("pet-stage").getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}'),curiosityHitArea)
+  report.performances.curiosityCoverage={hidden:'native paused semantic control; production hidden/visibility hook separately covered in browser',input:'synthetic app-local controls, no hardware pointer',anchorUnchanged:true,hitAreaUnchanged:true}
+  report.checks.push('real-time native curiosity observes all36 decoded frames before settling, preserves facts and geometry, cancels without replay through seven app-local controls and settles safely after all optional-frame error notifications')
   report.cadence = []
   for (const behavior of ['working','thinking']) {
     const form=await execute('return window.__ccMotionQAControl.pet.machine.snapshot().form')
@@ -568,6 +723,7 @@ try {
   report.transparentInput = { enabled: false, coverage: 'Cross-application hardware hit delivery is not covered by synthetic DOM events; production input routing remains unchanged' }
   await click('#companion-window-close')
   await until('Companion close control', async () => !(await command('/window/handles')).includes('companion'))
+  for(const clip of ['celebrate','curiosity'])assert.equal(report.performances.visuals[clip]?.ok,true,report.performances.visuals[clip]?.error)
   report.ok = true
 } catch (error) {
   report.ok = false; report.error = error.stack
