@@ -270,12 +270,18 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
             if (!op || !deps.sendFile) return
             const speech = deps.speech?.()
             if (!speech) { deps.log('SOCIAL', 'postcard not sent: speech policy not wired yet'); return }
-            // 明信片也问门(串门见闻那一类:别烦我 / 免打扰 ⇒ 这张不发微信,背包里照样有)
+            // 明信片也问门(串门见闻那一类):别烦我 ⇒ 这张不发微信,背包里照样有;
+            // 免打扰 / 都送不到 ⇒ 交给门的「待说」队列,24 小时内补发(S2c,主人 11-04;一次补说最多一条见闻)
             const sendFile = deps.sendFile
-            await speech.say({ kind: 'social_story', chatId: op }, async () => {
-              const png = await rasterizeSvgDarwin(svg, join(deps.stateDir, 'companion', 'postcards'))
+            const raster = () => rasterizeSvgDarwin(svg, join(deps.stateDir, 'companion', 'postcards'))
+            const o = await speech.say({ kind: 'social_story', chatId: op }, async () => {
+              const png = await raster()
               if (png) await sendFile(op, png)
             })
+            if ('defer' in o) {
+              const png = await raster()
+              if (png && speech.keep({ kind: 'social_story', chatId: op, text: '', attach: { file: png } })) deps.log('SOCIAL', `postcard deferred (${o.reason}) — kept to send later`)
+            }
           },
         },
         log: deps.log,

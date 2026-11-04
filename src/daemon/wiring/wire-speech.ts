@@ -21,6 +21,8 @@ export function wireSpeech(d: {
   chatPrefs: Pick<ChatPrefsStore, 'get'>
   proactive: ProactiveOutbound
   log: (tag: string, line: string) => void
+  /** 补说明信片(S2c):微信发文件,成了 ⇒ true。 */
+  sendFile?: (chatId: string, path: string) => Promise<boolean>
   now?: () => number
 }): SpeechPolicy {
   const ledger = makeSpeechLedgerStore(d.db, d.now ? { now: d.now } : {})
@@ -33,6 +35,7 @@ export function wireSpeech(d: {
     // report / blocking 被推后不丢:落盘待说,startPendingFlush 那一拍补说(defer 不是不送)
     // S2b 起在主库 speech_pending;旧的 speech/pending-notices.json 第一次开机时读进来(改名 .migrated)
     pending: makePendingNotices({ db: d.db, stateDir: d.stateDir, log: d.log, ...(d.now ? { now: d.now } : {}) }),
+    ...(d.sendFile ? { sendFile: d.sendFile } : {}),
     ...(d.now ? { now: d.now } : {}),
   })
 }

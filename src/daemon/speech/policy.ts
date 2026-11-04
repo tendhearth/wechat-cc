@@ -11,9 +11,9 @@
  * 第 1 步只加不接:还没有调用方,行为不变。
  */
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../domain/speech/decide'
-import { isExpiring, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
+import { keepForMs, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
-import { MAX_FLUSH_CHATS_PER_TICK, mergePending } from './pending-notices'
+import { MAX_FLUSH_CHATS_PER_TICK, mergePending, type PendingAttach, type PendingNotice } from './pending-notices'
 
 export interface SpeechRequest {
   kind: SpeechKind
@@ -44,10 +44,20 @@ export interface SpeechPolicy {
    * 一句话的主动开口(系统通知、社交通知 …):问门,放行就发。`send` 缺省 = 经 say 开的那一轮(微信能用走微信,
    * 降级落到 App);社交那几句要经 sendAssistantText 发 —— 它管 App 回话截获与旁听 —— 就把它传进来。
    * **report / blocking 被推后 ⇒ 进「待说」队列**(pending-notices.ts),flushPending 时补说 —— defer 不是不送。
+   * initiative 里声明了留多久的(新贴纸 6 小时、见闻 24 小时;kinds.ts keepForMs)同样进队列(S2c)。
    * 发出去了 ⇒ true;被推后 / 被拒 / 发失败 ⇒ false(调用方可以照旧走自己的兜底,比如桌面通知)。
    */
   tell(kind: SpeechKind, chatId: string, text: string, send?: (chatId: string, text: string) => Promise<unknown>): Promise<boolean>
-  /** 压着的几句再问一次门;放行 ⇒ 每条对话合成一句,经 say 开的那一轮发(降级时落到 App),说完清掉。 */
+  /**
+   * 自己经 say 开口、被推后了的(新贴纸那一句带图、明信片):交给「待说」队列,过了免打扰再说(S2c)。
+   * 只收 keepForMs 不是 null 的种类;留多久按种类。收下了 ⇒ true。
+   */
+  keep(item: { kind: SpeechKind; chatId: string; text: string; attach?: PendingAttach }): boolean
+  /**
+   * 压着的几句再问一次门;放行 ⇒ 每条对话合成一句,经 say 开的那一轮发(降级时落到 App),说完清掉。
+   * CC 自己的(新贴纸、见闻)不并进那一句:各按自己的种类问门、各自发(带图的先发图;图发不出去 ⇒ 这一样不说);
+   * 见闻一次最多一条(最新的那条),更早的留在背包里、不补说。
+   */
   flushPending(): Promise<void>
   /**
    * 只问门、不开一轮:给「自己就是通道」的发送口用 —— App 原生推送(speech/push-gate.ts)。判定、记账跟 say 一样;
@@ -83,6 +93,8 @@ export function makeSpeechPolicy(deps: {
   ledger?: (e: SpeechLedgerEntry) => void
   log: (tag: string, line: string) => void
   now?: () => number
+  /** 补说明信片那一类带文件的(S2c):走微信发文件;没接 / 发失败 ⇒ 那一样不补说(背包里照样有)。 */
+  sendFile?: (chatId: string, path: string) => Promise<boolean>
   /** 「待说」队列(没接 ⇒ 推后的 report 就是这一句不说,只用于测试 / 最小嵌入)。 */
   pending?: import('./pending-notices').PendingNotices
 }): SpeechPolicy {
@@ -173,12 +185,18 @@ export function makeSpeechPolicy(deps: {
       })
       // report / blocking 没说出去 —— 被推后,**或者放行了但发失败**(ilink 回 error / 网络抖)—— 都入队,之后补说(整合者评审 #531 ①)
       const notSaid = 'defer' in o || ('allow' in o && !sent)
-      // 带会过期码的卡不排队(isExpiring):晚补出去只会给一个失效的码
-      if (notSaid && originOf(kind) !== 'initiative' && !isExpiring(kind) && deps.pending) {
-        deps.pending.add({ kind, chatId, text, at: new Date(now()).toISOString() })
+      // 带会过期码的卡不排队(keepForMs = null):晚补出去只会给一个失效的码;initiative 只有声明了 keepMs 的才排(S2c)
+      if (notSaid && policy.keep({ kind, chatId, text })) {
         deps.log('SPEECH', `${kind} chat=${chatId} kept to say later (${'defer' in o ? o.reason : 'send failed'})`)
       }
       return sent
+    },
+    keep(item) {
+      const keepMs = keepForMs(item.kind)
+      if (keepMs === null || !deps.pending) return false
+      const t = now()
+      deps.pending.add({ kind: item.kind, chatId: item.chatId, text: item.text, at: new Date(t).toISOString(), expiresAt: t + keepMs, ...(item.attach ? { attach: item.attach } : {}) })
+      return true
     },
     flushPending() {
       // 一次只跑一拍:上一拍还在发(线上那一层 1 秒 × 3 次就要 2 秒多)时再起一份,就是两份叠着撞同一条断了的线,
@@ -207,23 +225,67 @@ export function makeSpeechPolicy(deps: {
     let tried = 0
     for (const g of deps.pending.groups(t)) {
       if (tried >= MAX_FLUSH_CHATS_PER_TICK) break   // 每一拍有上限:静音一结束不一口气冒出一串
-      // 有等主人拍板的就按 blocking 问(免打扰不拦);否则按第一条 report 问
-      const kind = g.items.find(i => originOf(i.kind) === 'blocking')?.kind ?? g.items[0]!.kind
-      let sent = false
-      const o = await policy.say({ kind, chatId: g.chatId }, async (turn) => {
-        try { sent = !(await turn.sendText(g.chatId, mergePending(g.items, g.dropped))).error } catch { sent = false }
+      const told = g.items.filter(i => originOf(i.kind) !== 'initiative')
+      // 只剩 CC 自己的那几样(被挤掉的计数也许不是 0)⇒ 不单独说一句「还有 N 件更早的」:那一句跟着下一次回报说;
+      // 单说那一句发失败了也没有行可记退避(Codex 评审 S2c P2)
+      if (told.length > 0) {
+        // 有等主人拍板的就按 blocking 问(免打扰不拦);否则按第一条 report 问
+        const kind = told.find(i => originOf(i.kind) === 'blocking')?.kind ?? told[0]!.kind
+        let sent = false
+        const o = await policy.say({ kind, chatId: g.chatId }, async (turn) => {
+          try { sent = !(await turn.sendText(g.chatId, mergePending(told, g.dropped))).error } catch { sent = false }
+        })
+        if ('allow' in o) {
+          tried++
+          if (sent) {
+            // 只删这次真说了的那几条(发送途中又进来的留着,下一拍说;整合者评审 #531 ②)
+            deps.pending.remove(g.chatId, told.map(i => i.id), g.dropped)
+            deps.log('SPEECH', `told ${told.length} pending notice(s) chat=${g.chatId}`)
+          } else {
+            const fails = deps.pending.failed(g.chatId, told.map(i => i.id), t)
+            deps.log('SPEECH', `pending notices chat=${g.chatId} send failed (try ${fails}) — backing off`)
+            continue   // 这条对话的线断了:CC 自己的那几样也别撞
+          }
+        }
+      }
+      tried += await flushOwn(g.chatId, g.items.filter(i => originOf(i.kind) === 'initiative'), t, MAX_FLUSH_CHATS_PER_TICK - tried)
+    }
+  }
+  /** CC 自己的那几样(新贴纸、见闻;S2c):各按自己的种类问门、各自发。回这一拍真开口试过几次。 */
+  async function flushOwn(chatId: string, own: PendingNotice[], t: number, budget: number): Promise<number> {
+    // 见闻一次最多一条:留最新的那条,更早的留在背包 / 觅食台里,不补说(主人 11-04)
+    const stories = own.filter(i => i.kind === 'social_story')
+    for (const s of stories.slice(0, -1)) {
+      deps.pending!.remove(chatId, [s.id], 0)
+      write({ kind: s.kind, origin: originOf(s.kind), chatId, outcome: 'dropped', reason: 'story_limit', channel: null, ts: new Date(t).toISOString() })
+      deps.log('SPEECH', `social_story chat=${chatId} older pending story left in the bag (one story per flush)`)
+    }
+    let tried = 0
+    for (const item of own.filter(i => i.kind !== 'social_story' || i === stories.at(-1))) {
+      if (tried >= budget) break
+      let sent = false, undeliverable = false
+      const o = await policy.say({ kind: item.kind, chatId }, async (turn) => {
+        try {
+          // 带图的先发图;图发不出去 ⇒ 这一样什么都不说,**不退成一句光秃秃的文字**(新贴纸那一句的老规矩)
+          const a = item.attach
+          if (a && 'sticker' in a && !(await turn.sendSticker(chatId, a.sticker.mood, a.sticker.path))) { undeliverable = true; return }
+          if (a && 'file' in a && !(deps.sendFile && await deps.sendFile(chatId, a.file))) { undeliverable = true; return }
+          sent = item.text ? !(await turn.sendText(chatId, item.text)).error : true
+        } catch { sent = false }
       })
-      if (!('allow' in o)) continue
+      if ('defer' in o) continue
+      if ('drop' in o) { deps.pending!.remove(chatId, [item.id], 0); continue }   // 别烦我 / 频率:账上已经记了 dropped
       tried++
-      if (sent) {
-        // 只删这次真说了的那几条(发送途中又进来的留着,下一拍说;整合者评审 #531 ②)
-        deps.pending.remove(g.chatId, g.items.map(i => i.id), g.dropped)
-        deps.log('SPEECH', `told ${g.items.length} pending notice(s) chat=${g.chatId}`)
+      if (sent || undeliverable) {
+        deps.pending!.remove(chatId, [item.id], 0)
+        deps.log('SPEECH', `${item.kind} chat=${chatId} pending ${undeliverable ? 'item not deliverable (image) — dropped, it stays in the library / bag' : 'item said'}`)
       } else {
-        const fails = deps.pending.failed(g.chatId, g.items.map(i => i.id), t)
-        deps.log('SPEECH', `pending notices chat=${g.chatId} send failed (try ${fails}) — backing off`)
+        const fails = deps.pending!.failed(chatId, [item.id], t)
+        deps.log('SPEECH', `${item.kind} chat=${chatId} pending send failed (try ${fails}) — backing off`)
+        break
       }
     }
+    return tried
   }
   return policy
 }
