@@ -25,7 +25,14 @@ export type MatterSessionRole='main'|'review'|'handoff'
  * 不知道 ⇒ 不写(null),界面就不画 —— 旧行一律 null,不回填、不猜。
  */
 export type MatterOrigin='wechat'|'desktop'|'app'|'web'|'cli'|'companion'
-export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 出生地(只在知道时带)。 */origin?:MatterOrigin;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[];/** 执行者 id → 正式名字(收敛清单 ⑥):服务层按 registry 填,三端不存名字表。 */agentNames?:Record<string,string>}
+export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 出生地(只在知道时带)。 */origin?:MatterOrigin;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[];/** 执行者 id → 正式名字(收敛清单 ⑥):服务层按 registry 填,三端不存名字表。 */agentNames?:Record<string,string>;/** CC 自己做的事(M5c):发起方 + 最近那一轮。 */act?:MatterAct}
+/**
+ * CC 自己做的事那一件(kind='act',M5c):手机「CC 最近在忙」那一组与详情页的时间线。只在点名 kind=act 的列表与 act 的详情里带。
+ * who = 发起方(letters / brief / memory / hunt / atelier / stickers,取自轮的 policy.who);步的 payload 只留数字、真假、短字符串。
+ */
+export interface MatterActStep {kind:string;status:string;at:number;payload?:Record<string,unknown>}
+export interface MatterActTurn {id:string;status:string;errorCode?:string|null;/** 记忆整理:schedule / owner(主人当面叫的)。 */trigger?:string;startedAt:number;endedAt:number|null;steps:MatterActStep[]}
+export interface MatterAct {who?:string;latest?:MatterActTurn}
 export interface MatterBinding {matterId:string;surface:MatterSurface;surfaceKey:string;lastSeenAt:number}
 export interface MatterSession {matterId:string;providerId:string;sessionId:string;role:MatterSessionRole;createdAt:number}
 export interface CreateMatter {id?:string;kind:MatterKind;/** 不给 ⇒ owner。 */initiator?:MatterInitiator;title:string;projectPath?:string|null;ownerChatId?:string|null;status?:MatterStatus;originMatterId?:string|null;originMessageId?:string|null;/** 出生地:只在建行时写这一次;不知道就别给(null)。 */origin?:MatterOrigin|null}

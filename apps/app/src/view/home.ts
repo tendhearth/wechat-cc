@@ -84,7 +84,8 @@ function matterRows(input: HomeInput): HomeRow[] {
     updatedAt: input.now,
   }))
   return [...orphans, ...matters
-    .filter(m => m.status !== 'archived' && m.kind !== 'chat')
+    // CC 自己做的事(act)不进这份列表(主人 10-31 定:不混排),只在「CC 最近在忙」那一组(view/cc-acts.ts);daemon 送来了也不放
+    .filter(m => m.status !== 'archived' && m.kind !== 'chat' && m.kind !== 'act')
     .map(m => {
       const task = agents.tasks.find(x => x.id === m.id)
       const status = statusOfMatter(m, task ? { status: 'running', phase: task.phase } : null, pendingN(m.id))

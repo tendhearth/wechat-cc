@@ -44,7 +44,8 @@ export const PHONE_CALLS = {
     restore: call('POST /m/api/memory/restore', { body: t<{ key: string }>() }),
   },
   matters: {
-    list: call('GET /m/api/matters'),
+    // kind 点名才给 terminal / act(M4a / M5c);不点名 = 主人的列表
+    list: call('GET /m/api/matters', { query: t<{ kind?: 'task' | 'chat' | 'terminal' | 'act' }>() }),
     get: call('GET /m/api/matter', { query: t<{ id: string }>() }),
     inputReceipt: call('GET /m/api/matter/input-receipt', { query: t<{ id: string; requestId: string }>() }),
     insight: call('GET /m/api/matter/insight', { query: t<{ id: string; lang: string }>() }),

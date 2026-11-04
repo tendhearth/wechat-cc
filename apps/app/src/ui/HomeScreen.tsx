@@ -13,6 +13,8 @@ import { inputNeedsChecking } from '../state/matter-inputs'
 import { useTerminalSessions } from '../state/useTerminal'
 import { useAwaySince } from '../state/useAway'
 import { useCompanion } from '../state/useCompanion'
+import { useCcActs } from '../state/useCcActs'
+import { CcActsGroup } from './CcActsGroup'
 import { CCFigure } from './CCFigure'
 import { useMotionEnabled } from './motion'
 import { makeCCMotionTracker, type CCMotionEvent } from '../view/cc-motion'
@@ -31,6 +33,7 @@ import { WorkList } from './WorkList'
 import { companionCard, companionStatus } from '../view/companion'
 import { formatSynced } from '../view/connection'
 import { homeView } from '../view/home'
+import { ccActsView } from '../view/cc-acts'
 import { latestCCLine } from '../view/now'
 import { ccPresence } from '../view/presence'
 
@@ -49,6 +52,8 @@ export function HomeScreen() {
   const away = useAwaySince()
   const now = Date.now()
   const view = homeView({ matters, approvals, agents, terminal: terminal.sessions ?? [], known, now, lang, away })
+  // CC 自己做的事另成一组、放最末、默认折叠(M5c,主人 10-31 定不混排)
+  const acts = ccActsView(useCcActs(), now, lang)
   const chat = useQuery('chat:latest', () => backend.chat({})) // 与 /chat 同一个键、同一份缓存
   useChatUpdates(chat.data?.matterId, chat.refresh)
   const line = latestCCLine(chat.data)
@@ -104,6 +109,7 @@ export function HomeScreen() {
         </View>
         <WorkList view={view} prefix="home" known={mattersKnown} loading={mattersLoading} error={mattersError} onRetry={() => void refreshMatters()} emptyText={null} />
         {view.groups.length > 0 || view.moreCount > 0 ? <LinkRow testID="home-all" label={t(lang, 'home.allLink')} onPress={() => router.push('/all')} /> : null}
+        <CcActsGroup view={acts} />
         <CompanionCard card={card} onSeen={companion.markSeen} />
       </ScrollView>
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}><SayBar testID="now-say" placeholder={t(lang, 'now.sayToCC')} onPress={openChat} /></View>

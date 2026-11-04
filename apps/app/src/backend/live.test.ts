@@ -85,6 +85,13 @@ describe('LiveBackend 读', () => {
     expect(await b.entryOptions('en')).toEqual(OPTIONS)
     expect(reqs.map(r => r.path)).toEqual(['/m/api/matters', `/m/api/matter?id=${ID}`, `/m/api/matter/insight?id=${ID}&lang=zh-Hans`, `/m/api/matter/changes?id=${ID}`, '/m/api/entry/options'])
   })
+  it('「CC 最近在忙」点名 kind=act;daemon 混进别的种类也只留 act;主人的列表不点名', async () => {
+    const act = { ...MATTER, id: 'acc0a001', kind: 'act', act: { who: 'letters' } }
+    const { b, reqs } = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [act, MATTER] }) })
+    expect((await b.ccActs('en')).map(m => m.id)).toEqual(['acc0a001'])
+    await b.matters('en')
+    expect(reqs.map(r => r.path)).toEqual(['/m/api/matters?kind=act', '/m/api/matters'])
+  })
   it('逐文件审阅:没问题 / 退回各走自己的路由,带 artifactId;忙 ⇒ busy', async () => {
     const { b, reqs } = harness({
       'POST /m/api/matter/review-mark': ok({ ok: true }),
