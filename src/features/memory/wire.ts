@@ -4,6 +4,9 @@
  * 它要 CC 开口那道门,门在 wired 里才造,所以由 wired(pipeline-deps)经 index.ts 调;
  * 欢迎时写一条观察不是记忆的事,留在 pipeline-deps 自己造。
  */
+import { makeCcActs } from '../../adapters/store/cc-acts'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { randomBytes } from 'node:crypto'
 import type { Db } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
@@ -47,6 +50,8 @@ export function wireMemory(d: WireMemoryDeps) {
   const nightlyOwner = (): string | null => memoryOwnerChatId(stateDir)
   const nightlyRuntime = makeMemoryNightlyRuntime({
     stateDir,
+    // CC 自己做的事(M5b):整理一次 = 「记忆整理」那件事的一轮;通知送出补在那一轮上
+    acts: makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db), onError: (what, err) => log('CC_ACTS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) }),
     ownerChatId: nightlyOwner,
     config: () => {
       const c = loadCompanionConfig(stateDir)

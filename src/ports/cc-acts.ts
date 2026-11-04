@@ -13,6 +13,8 @@ export interface CcActTurn {
 export interface CcActs {
   /** 开一轮;写不上 ⇒ 给一个什么都不做的把手(原来的事照做)。 */
   begin(who: CcActWho, opts?: { startedAt?: number; policy?: Record<string, unknown> }): CcActTurn
+  /** 往这个发起方最近的一轮上补一步(那一轮可能早收了:记忆整理的通知几小时后才送)。没有轮 ⇒ 什么都不做。 */
+  toLatest(who: CcActWho, kind: CcActStepKind, payload: Record<string, unknown>, opts?: { status?: 'started' | 'completed' | 'failed' }): void
   /** 这个发起方那件事的 id(没建过也给,同一个名字永远同一个 id)。 */
   matterIdOf(who: CcActWho): string
   /** 开机:上一次进程里没收的 act 轮记中断。 */

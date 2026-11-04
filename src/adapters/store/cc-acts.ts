@@ -40,6 +40,13 @@ export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterS
         },
       }
     },
+    toLatest(who, kind, payload, o = {}) {
+      try {
+        const matterId = ccActMatterId(who)
+        const turnId = db.query<{ id: string }, [string]>('SELECT id FROM matter_turns WHERE matter_id=? ORDER BY seq DESC LIMIT 1').get(matterId)?.id
+        if (turnId) log.writeItem({ matterId, turnId, kind, status: o.status ?? 'completed', payload })
+      } catch (err) { fail(`toLatest ${who} ${kind}`, err) }
+    },
     interruptAll() {
       for (const t of db.query<{ id: string }, []>("SELECT t.id FROM matter_turns t JOIN matters m ON m.id=t.matter_id WHERE m.kind='act' AND t.status='running' ORDER BY t.cursor").all())
         log.finishTurn(t.id, { status: 'interrupted', errorCode: 'daemon_restarted' })

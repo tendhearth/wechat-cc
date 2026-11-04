@@ -86,6 +86,26 @@ describe('memory nightly runtime', () => {
     expect(await deliverPendingNotice(deps())).toBe('expired')
     expect(sent).toEqual(['x'])
   })
+  it('「记忆整理」那件事(M5b):写进去了 = 一轮(改了几条);通知送出补在那一轮上;没到点的 tick 不记;主人叫的标 owner', async () => {
+    const log: string[] = []
+    const acts = {
+      begin: (_w: string, o?: { policy?: Record<string, unknown> }) => { log.push(`begin ${JSON.stringify(o?.policy)}`); return { step: (k: string, p: unknown) => { log.push(`${k} ${JSON.stringify(p)}`) }, finish: (st: string) => { log.push(`finish ${st}`) } } },
+      toLatest: (_w: string, k: string, p: unknown) => { log.push(`latest ${k} ${JSON.stringify(p)}`) },
+    }
+    const rt = makeMemoryNightlyRuntime({ ...deps(), acts: acts as never })
+    await rt.tick()
+    now = Date.parse('2026-09-25T09:01:00Z')
+    await rt.tick()
+    expect(log).toEqual([
+      'begin {"trigger":"schedule"}', 'system {"applied":{"add":1},"notice":true}', 'finish completed',
+      'latest delivery {"notice":"sent","channel":"wechat"}',
+    ])
+    log.length = 0
+    const failing = makeMemoryNightlyRuntime({ ...deps({ cheapEval: () => null, sources: { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => ['主人:新的一句'], projectMemory: () => '' } }), acts: acts as never })
+    await failing.runNow()
+    expect(log[0]).toBe('begin {"trigger":"owner"}')
+    expect(log.at(-1)).toBe('finish failed')
+  })
   it('readCurated shows the rendered memory with a header; curatedView marks last night changes and dues', async () => {
     const rt = makeMemoryNightlyRuntime(deps())
     expect(rt.readCurated()).toBeNull()

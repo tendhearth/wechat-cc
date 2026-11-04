@@ -120,7 +120,27 @@ function lastLog(root: string): { at: string; ops: AppliedOp[] } | null {
 
 const AGENDA_EVAL_TIMEOUT_MS = 60_000
 
-export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): MemoryNightlyRuntime {
+/** 「记忆整理」那件事的一轮(M5b):真动了手的才记 —— 写进去了 / 失败了 / 主人改过不敢写 / 网络没保护。 */
+const ACT_SKIPS_THAT_RAN = new Set(['owner_edited', 'network_unprotected'])
+function recordAct(acts: NightlyActs | undefined, r: NightlyRunResult, startedAt: number, endedAt: number, trigger: 'schedule' | 'owner'): void {
+  if (!acts) return
+  if (r.status === 'skipped' && !ACT_SKIPS_THAT_RAN.has(r.reason)) return
+  try {
+    const t = acts.begin('memory', { startedAt, policy: { trigger } })
+    if (r.status === 'written') {
+      const counts: Record<string, number> = {}
+      for (const op of r.applied) counts[op.kind] = (counts[op.kind] ?? 0) + 1
+      t.step('system', { applied: counts, notice: !!r.notice })
+      t.finish('completed', { endedAt })
+    } else {
+      t.step('system', { [r.status]: r.reason })
+      t.finish('failed', { endedAt, errorCode: r.reason })
+    }
+  } catch { /* 只少一轮记录 */ }
+}
+type NightlyActs = Pick<import('../../ports/cc-acts').CcActs, 'begin' | 'toLatest'>
+
+export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { acts?: NightlyActs }): MemoryNightlyRuntime {
   async function dropAgendaByModel(c: Done): Promise<void> {
     const items = openAgendaItems(c.root)
     if (items.length === 0) return
@@ -364,7 +384,9 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
   return {
     tick: () => serial(async () => {
       syncDiskSafely()
+      const startedAt = deps.now()
       const r = await runMemoryNightly(deps, { force: false })
+      recordAct(deps.acts, r, startedAt, deps.now(), 'schedule')
       if (r.status === 'skipped') {
         if (r.reason !== 'not_due' && r.reason !== lastSkipReason) deps.log('MEMORY_NIGHTLY', `tick: skipped (${r.reason})`)
         lastSkipReason = r.reason
@@ -372,9 +394,17 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         lastSkipReason = null
         deps.log('MEMORY_NIGHTLY', `tick: ${r.status}${r.status === 'written' ? '' : ` (${r.reason})`}`)
       }
-      await deliverPendingNotice(deps)
+      const notice = await deliverPendingNotice(deps)
+      // 通知送出去 / 作废 / 不发了:补在最近那一轮整理上(它可能几小时前就收了)
+      if (notice === 'sent' || notice === 'expired' || notice === 'dropped') { try { deps.acts?.toLatest('memory', 'delivery', { notice, channel: 'wechat' }, { status: notice === 'sent' ? 'completed' : 'failed' }) } catch { /* 只少一步 */ } }
     }),
-    runNow: () => serial(() => { syncDiskSafely(); return runMemoryNightly(deps, { force: true }) }),
+    runNow: () => serial(async () => {
+      syncDiskSafely()
+      const startedAt = deps.now()
+      const r = await runMemoryNightly(deps, { force: true })
+      recordAct(deps.acts, r, startedAt, deps.now(), 'owner')
+      return r
+    }),
     // 与每晚整理同一条串行链:不会和它同时改 memory.md
     correct: async (id, verdict) => {
       const done = await serial(async () => {
