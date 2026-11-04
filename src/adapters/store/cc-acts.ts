@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { makeMatterLog } from './matter-log'
+import { makeMatterStore } from './matters-store'
 import type { Db } from '../../lib/db'
 import type { MatterLog, MatterStore } from '../../ports/matters'
 import { CC_ACT_TITLES, type CcActs, type CcActTurn, type CcActWho } from '../../ports/cc-acts'
@@ -53,4 +55,9 @@ export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterS
         log.finishTurn(t.id, { status: 'interrupted', errorCode: 'daemon_restarted' })
     },
   }
+}
+
+/** 各个发起方接线用的一份(同一个库;写不上记一行 CC_ACTS)。 */
+export function ccActsFor(db: Db, log: (tag: string, line: string) => void): CcActs {
+  return makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db), onError: (what, err) => log('CC_ACTS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) })
 }

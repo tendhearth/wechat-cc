@@ -62,6 +62,23 @@ describe('runStickerArtist', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
+  it('「贴纸」那件事(M5b):画成了 = 一轮(画了什么一步、说了没有一步);被节奏门挡下不开轮;渲染失败也收掉', async () => {
+    const turns: Array<{ policy: unknown; steps: unknown[]; end?: unknown[] }> = []
+    const acts = { begin: (_w: string, o?: { policy?: unknown }) => { const t: (typeof turns)[number] = { policy: o?.policy, steps: [] }; turns.push(t); return { id: 't', step: (k: string, p: unknown) => { t.steps.push([k, p]) }, finish: (st: string, f?: { errorCode?: string }) => { t.end ??= [st, f?.errorCode] } } } }
+    const a = setup()
+    a.notify.mockResolvedValue('sent' as never)
+    await runStickerArtist({ ...a, acts: acts as never, log: () => {}, now: () => 1_000 })
+    await runStickerArtist({ ...a, acts: acts as never, log: () => {}, now: () => 2_000 })   // 节奏门
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({ policy: { mood: STICKER_MOOD_POOL[0] }, end: ['completed', undefined] })
+    expect(turns[0]!.steps.map(x => (x as unknown[])[0])).toEqual(['artifact', 'delivery'])
+    expect((turns[0]!.steps[1] as unknown[])[1]).toEqual({ mood: STICKER_MOOD_POOL[0], result: 'sent' })
+    const b = setup({ rasterOk: false })
+    await runStickerArtist({ ...b, acts: acts as never, log: () => {}, now: () => 1_000 })
+    expect(turns[1]).toMatchObject({ steps: [], end: ['failed', 'render_failed'] })
+    rmSync(a.stateDir, { recursive: true, force: true }); rmSync(b.stateDir, { recursive: true, force: true })
+  })
+
   it('both pools covered + no CC-drawn variations possible → no model call', async () => {
     const { stateDir, lib, cheapEval, rasterize, notify } = setup({
       tags: [...STICKER_MOOD_POOL, ...STICKER_MOOD_POOL_EXTENDED].map(m => [m]),
