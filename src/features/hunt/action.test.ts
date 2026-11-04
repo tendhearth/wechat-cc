@@ -24,6 +24,14 @@ describe('huntAction × CC 自己做的事', () => {
     expect(log.items(id).map(i => [i.kind, i.payload])).toEqual([['artifact', { messages: 2, caught: 2 }]])
     r.db.close()
   })
+  it('去了但什么都没发出去(沉默 / 出错 / 发不出去,旁听什么都没收到)⇒ 一轮 failed(nothing_sent),没有步(Codex 评审)', async () => {
+    const r = rig(true, [])
+    await r.run()
+    const log = makeMatterLog(r.db), id = ccActMatterId('hunt')
+    expect(log.turns(id)).toMatchObject([{ status: 'failed', errorCode: 'nothing_sent' }])
+    expect(log.items(id)).toEqual([])
+    r.db.close()
+  })
   it('没去成(false / refused)⇒ 不记', async () => {
     for (const went of [false, 'refused'] as const) {
       const r = rig(went, [])

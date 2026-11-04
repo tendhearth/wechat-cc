@@ -44,7 +44,7 @@ export function huntAction(deps: HuntActionDeps, { dispatchToChat }: Pick<TickDi
       // 测试夹具的 boot 没有 holdBusy。
       let releaseHunt: (() => void) | undefined
       try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
-      // 「打猎」那件事的一轮(M5b):真开了口才算去打了猎 —— 结果 true ⇒ 带回了什么记一步;false / refused ⇒ 没去成,不记。
+      // 「打猎」那件事的一轮(M5b):门放行了才算去了;真发出去了 ⇒ 带回了什么记一步,什么都没发出去 ⇒ failed;false / refused ⇒ 没去成,不记。
       // 打猎那次开口本身是主人那条对话的一轮(M3),这里只记「去打了猎、带回了什么」。
       const startedAt = Date.parse(nowIso) || Date.now()
       let went: boolean | 'refused' = false
@@ -67,11 +67,14 @@ export function huntAction(deps: HuntActionDeps, { dispatchToChat }: Pick<TickDi
             deps.log('HUNT', `chat=${chatId} 入库 ${n} 条`)
           } catch (err) { deps.log('HUNT', `入库失败(消息已发出): ${errMsg(err)}`) }
         }
+        // 门放行(went=true)不等于真说出去了:模型可能沉默 / 出错 / 发不出去(Codex 评审)。真发出去的话以旁听为准。
         if (went === true && deps.db) {
           try {
             const t = ccActsFor(deps.db, deps.log).begin('hunt', { startedAt })
-            t.step('artifact', { messages: shared.length, ...(caught !== null ? { caught } : {}) })
-            t.finish('completed')
+            if (shared.length > 0) {
+              t.step('artifact', { messages: shared.length, ...(caught !== null ? { caught } : {}) })
+              t.finish('completed')
+            } else t.finish('failed', { errorCode: 'nothing_sent' })
           } catch { /* 只少一轮记录 */ }
         }
       }
