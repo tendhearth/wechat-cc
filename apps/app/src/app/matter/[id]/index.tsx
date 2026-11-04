@@ -43,6 +43,7 @@ import { scriptOutcome, scriptsBlock } from '../../../view/worktree-scripts'
 import { usageLine } from '../../../view/usage'
 import { canOfferRewind, discardedLines, rewindBlockedNotice } from '../../../view/rewind'
 import { RewindSheet } from '../../../ui/RewindSheet'
+import { TerminalDetail } from '../../../ui/TerminalDetail'
 import { canComment, fileHunks, sendBlock } from '../../../view/review-comments'
 
 const NO_INPUTS: readonly MatterInputT[] = []
@@ -131,6 +132,9 @@ export default function Matter() {
   )
   const ownerChatId = ownerChat.data?.matterId ?? null
   if (detail.data && isOwnerChatMatter(detail.data.matter, ownerChatId)) return <Redirect href="/chat" />
+  // 终端会话的那件事(M4c):同一个详情页,按 kind 画终端那一份(最后一句 / 等批准 / 看着它跑 / 说一句,都按会话 id 走)
+  const cliSession = detail.data?.matter.kind === 'terminal' ? detail.data.bindings.find(b => b.surface === 'cli')?.surfaceKey : undefined
+  if (cliSession) return <TerminalDetail sessionId={cliSession} />
   // 聊天类但还不知道主人对话是哪件:等一下再决定改不改道(读失败 / 没主人 ⇒ 当普通的事显示)
   const decidingChat = isChat && ownerChatId === null && !ownerChat.error
   if (!detail.data || decidingChat) {
