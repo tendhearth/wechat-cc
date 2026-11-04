@@ -75,6 +75,13 @@ describe('terminal-turns', () => {
     expect(log.items(nine).map(i => [i.status, i.payload.outcome])).toEqual([['failed', 'daemon_restarted']])
     expect(log.state(nine)?.state).not.toBe('waiting')
   })
+  it('没挂在轮上的卡落定以后停在「在做」,又重启 ⇒ 开机把没有在跑的轮的「在做 / 等你」落回 open(Codex 评审第二轮)', () => {
+    turns.permissionAsked({ source: 'claude', session_id: 'sess-1', cwd: '/w', tool_name: 'Bash', summary: 'ls' }, 1_000)
+    turns.permissionSettled('sess-1', 'allow')
+    expect(log.state(matterId())?.state).toBe('working')
+    turns.interruptAll()
+    expect(log.state(matterId())?.state).toBe('open')
+  })
   it('会话结束 ⇒ 还开着的轮记中断、这件事 done;没轮也 done', () => {
     turns.event(ev('prompt'), 1_000)
     turns.event(ev('session_end'), 2_000)

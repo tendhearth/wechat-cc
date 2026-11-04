@@ -82,6 +82,10 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
         closeCards(m.id, 'failed', 'daemon_restarted')
         log.setState(m.id, 'open')
       }
+      // 没有在跑的轮却还显示「在做 / 等你」的(没挂在轮上的卡落定后停在在做,又重启了):落回 open(Codex 评审第二轮)。
+      // 上一次进程里在做的事,这一次谁也不知道它还在不在做 —— 下一个钩子事件会把它推回该在的地方。
+      for (const m of db.query<{ id: string }, []>("SELECT m.id FROM matters m WHERE m.kind='terminal' AND m.state IN ('working','waiting') AND NOT EXISTS (SELECT 1 FROM matter_turns t WHERE t.matter_id=m.id AND t.status='running')").all())
+        log.setState(m.id, 'open')
     },
   }
 }
