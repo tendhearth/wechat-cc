@@ -11,6 +11,8 @@
 import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeMatterStore } from '../../adapters/store/matters-store'
+import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
+import { makeTerminalSteps, withTranscriptSteps } from './terminal-steps'
 import { hostname as osHostname } from 'node:os'
 import { randomUUID as claimUuid } from 'node:crypto'
 import { log } from '../../lib/log'
@@ -87,8 +89,13 @@ export function wireTerminal(d: WireTerminalDeps) {
   const cliAppPush = (): AppPushOutlet | null => d.appPush()
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):replyCore 在下面才建,这里先占位
   let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
-  const terminalTurns = makeTerminalTurnLog({ db, log: makeMatterLog(db), matters: makeMatterStore(db) })
+  const matterLog = makeMatterLog(db), matterStore = makeMatterStore(db)
+  const terminalTurns = makeTerminalTurnLog({ db, log: matterLog, matters: matterStore })
   try { terminalTurns.interruptAll() } catch (err) { log('CLI_TURNS', `interruptAll failed: ${err instanceof Error ? err.message : String(err)}`) }
+  // 记录增量读进这件事的步(M4b):钩子事件来了读新增的那一段;手机「看着它跑」、列表那一步也从这里拿。
+  const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters: matterStore }) })
+  let lookupSession: (id: string) => CliSessionInfo | null = () => null
+  const turnsWithSteps = withTranscriptSteps({ turns: terminalTurns, steps: terminalSteps, localMachine: osHostname(), lookup: (id) => lookupSession(id), log: (l) => log('CLI_TURNS', l) })
   const cliEvents = makeCliEventHub({
     // 经 CC 开口那道门(cli_session,report;汇总里可能带 y/n 码 ⇒ expiring,不进待说队列),
     // 投递仍走 sendAssistantText;没说出去 ⇒ 'rejected',hub 照旧落到 App 推送 / 桌面通知。
@@ -121,8 +128,9 @@ export function wireTerminal(d: WireTerminalDeps) {
     // 终端会话登记处(v76):状态落库,重启后「看 码」「@码」照样认得;GET /v1/cli/sessions、手机都读它。
     store: makeCliSessionStore(db),
     // 终端会话成为一件事(M4a):钩子事件同时写进这件事的轮与步(和登记处并行;读的人 M4b 再切过来)
-    turns: terminalTurns,
+    turns: turnsWithSteps,
   })
+  lookupSession = (id) => cliEvents.lookup(id)
   // terminal_say 的票(下面才建)随登记处一起收:放掉还持着的 busy、叫醒还在等的(启停只许一种写法,不另登记一行)
   own('cli-events', async () => { terminalSay?.dispose(); cliEvents.dispose() })
   // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
@@ -219,7 +227,7 @@ export function wireTerminal(d: WireTerminalDeps) {
       const out: Record<string, { live_window: boolean; now_step: string | null }> = {}
       for (const id of ids) {
         const s = cliEvents.lookup(id)
-        const step = s && s.session_id === id ? currentStepOf(s, { localMachine: osHostname() }) : null
+        const step = s && s.session_id === id ? currentStepOf(s, { localMachine: osHostname(), steps: terminalSteps }) : null
         out[id] = { live_window: live.has(id), now_step: step?.text ?? null }
       }
       return out
@@ -337,7 +345,7 @@ export function wireTerminal(d: WireTerminalDeps) {
   })
   // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
   const phoneActions = makeCliPhoneActions({
-    hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(),
+    hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(), steps: terminalSteps,
     resolve: (h, dec) => d.resolvePermission(h, dec),
   })
   const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday }

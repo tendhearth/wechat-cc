@@ -47,7 +47,7 @@ let relayResult: { ok: true } | { ok: false; error: string }
 let busy: string[]
 beforeEach(() => { windows = new Map(); relayed = []; relayResult = { ok: true }; busy = [] })
 
-function actions() {
+function actions(extra: Partial<Parameters<typeof makeCliPhoneActions>[0]> = {}) {
   const core = makeCliReplyCore({
     hub, log: () => {}, dangerously: false,
     holdBusy: (l) => { busy.push(`+${l}`); return () => busy.push(`-${l}`) },
@@ -66,6 +66,7 @@ function actions() {
       if (w) { waiting.delete(h); w(d); return true }
       return other.delete(h)
     },
+    ...extra,
   })
 }
 
@@ -304,6 +305,23 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
     expect((await get('?session_id=nope')).status).toBe(404)
     expect((await get('?session_id=R1')).status).toBe(409)
     expect((await routePhone(mobileReadsRoutes({}), new URL('http://x/m/api/cli/activity?session_id=A'), new Request('http://x/m/api/cli/activity?session_id=A')))!.status).toBe(503)
+  })
+})
+
+describe('看着它跑从这件事的步读(M4b)', () => {
+  it('接了步 ⇒ activity / currentStep 都从步拿(不读记录);这个会话还没有那件事(view 给 null)⇒ 退回直接解析记录', () => {
+    const asked: Array<[string, number]> = []
+    const fromSteps = [{ kind: 'you' as const, text: '跑', at: null }, { kind: 'step' as const, text: '运行 ls', at: null, detail: 'a', verb: 'run' as const, target: 'ls' }]
+    const a = actions({
+      steps: { view: (s, max) => { asked.push([s.session_id, max]); return s.session_id === 'M1' ? fromSteps : null } },
+      readTail: () => JSON.stringify({ type: 'user', message: { content: '记录里的' } }),
+    })
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'M1', cwd: '/w/proj', machine: 'mac', transcript_path: '/fake/m1.jsonl' })
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'M2', cwd: '/w/proj', machine: 'mac', transcript_path: '/fake/m2.jsonl' })
+    expect(a.activity('M1')).toEqual({ ok: true, items: fromSteps })
+    expect(a.currentStep('M1')).toEqual({ kind: 'step', text: '运行 ls', at: null, verb: 'run', target: 'ls' })
+    expect(a.activity('M2')).toEqual({ ok: true, items: [{ kind: 'you', text: '记录里的', at: null }] })
+    expect(asked).toEqual([['M1', 40], ['M1', 20], ['M2', 40]])
   })
 })
 
