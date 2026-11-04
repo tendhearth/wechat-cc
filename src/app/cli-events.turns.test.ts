@@ -36,7 +36,7 @@ describe('cli-events × 终端的轮与步(M4a)', () => {
   })
   it('写轮抛错:登记处照写,只记一行日志', () => {
     const boom = () => { throw new Error('disk full') }
-    const r = rig({ event: boom, permissionAsked: boom, permissionSettled: boom, interruptAll: () => {} })
+    const r = rig({ event: boom, permissionAsked: boom, permissionSettled: boom, ensure: boom, interruptAll: () => {} })
     r.hub.observe({ ...base, kind: 'prompt' })
     expect(r.store.get('sess-1')?.status).toBe('running')
     expect(r.logs.some(l => l.startsWith('CLI_TURNS turn prompt'))).toBe(true)

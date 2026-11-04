@@ -12,8 +12,7 @@ import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
-import { makeTerminalSteps } from './terminal-steps'
-import type { TerminalEventIn, TerminalTurnLog } from '../../ports/terminal-turns'
+import { makeTerminalSteps, withTranscriptSteps } from './terminal-steps'
 import { hostname as osHostname } from 'node:os'
 import { randomUUID as claimUuid } from 'node:crypto'
 import { log } from '../../lib/log'
@@ -96,27 +95,7 @@ export function wireTerminal(d: WireTerminalDeps) {
   // 记录增量读进这件事的步(M4b):钩子事件来了读新增的那一段;手机「看着它跑」、列表那一步也从这里拿。
   const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters: matterStore }) })
   let lookupSession: (id: string) => CliSessionInfo | null = () => null
-  const transcriptOf = (ev: TerminalEventIn): string | null => {
-    if (ev.origin_agent || (ev.machine && ev.machine !== osHostname())) return null   // 那边的会话:记录不在这台机器上
-    if (ev.transcript_path) return ev.transcript_path
-    const s = lookupSession(ev.session_id)
-    return s && s.session_id === ev.session_id ? s.transcript_path ?? null : null
-  }
-  const ingestFor = (ev: TerminalEventIn, path: string): boolean => {
-    try { return terminalSteps.ingest(ev.session_id, path, ev.source) } catch (err) { log('CLI_TURNS', `steps ${ev.kind} ${ev.session_id.slice(0, 6)} failed: ${err instanceof Error ? err.message : String(err)}`); return false }
-  }
-  const turnsWithSteps: TerminalTurnLog = {
-    ...terminalTurns,
-    event(ev, at) {
-      const path = transcriptOf(ev)
-      if (!path) { terminalTurns.event(ev, at); return }
-      // 答完 / 结束:先把这一轮最后几步读进来(挂在还开着的那一轮上),再收轮;读不上 ⇒ 钩子照旧写最后一句。
-      if (ev.kind === 'stop' || ev.kind === 'session_end') { const ok = ingestFor(ev, path); terminalTurns.event({ ...ev, ...(ok ? { transcribed: true } : {}) }, at); return }
-      // 发问:先开轮(第一次见这个会话也在这里建这件事),再读 —— 发问原文进这一轮
-      terminalTurns.event({ ...ev, transcribed: true }, at)
-      ingestFor(ev, path)
-    },
-  }
+  const turnsWithSteps = withTranscriptSteps({ turns: terminalTurns, steps: terminalSteps, localMachine: osHostname(), lookup: (id) => lookupSession(id), log: (l) => log('CLI_TURNS', l) })
   const cliEvents = makeCliEventHub({
     // 经 CC 开口那道门(cli_session,report;汇总里可能带 y/n 码 ⇒ expiring,不进待说队列),
     // 投递仍走 sendAssistantText;没说出去 ⇒ 'rejected',hub 照旧落到 App 推送 / 桌面通知。

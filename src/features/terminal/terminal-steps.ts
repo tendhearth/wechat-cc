@@ -10,6 +10,7 @@
  */
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { STEP_KEY_PREFIX, type TerminalStepStore, type TerminalStepWrite } from '../../ports/terminal-steps'
+import type { TerminalEventIn, TerminalTurnLog } from '../../ports/terminal-turns'
 import { feedActivity, type CliActivityItem } from './cli-activity'
 
 export const STEPS_FIRST_READ = 256 * 1024
@@ -93,6 +94,40 @@ export function makeTerminalSteps(deps: { store: TerminalStepStore; size?: (path
       if (!ingest(s.session_id, s.transcript_path, s.source)) return null
       const id = store.matterOf(s.session_id)
       return id ? store.recent(id, max) as unknown as CliActivityItem[] : null
+    },
+  }
+}
+
+/**
+ * 钩子事件进这件事的轮 / 步,顺带把记录新增的那一段读进步(M4b)。
+ * 先确保有这件事(第一个钩子就是 stop 的老会话也一样),再读:答完 / 结束时最后几步挂在还开着的那一轮上。
+ * 读上了 ⇒ 发问原文 / 最后一句从记录来,钩子不再各写一步;读不上 ⇒ 钩子照旧写(Codex 评审:两种都别丢、别重)。
+ * 发问原文多半在 UserPromptSubmit 之后才进记录 ⇒ 下一次读(答完时)进这一轮。权限请求不读(同步钩子,要快)。
+ * 那边(别的机器 / 经 A2A 转来)的会话:记录不在这台机器上,不读。
+ */
+export function withTranscriptSteps(deps: {
+  turns: TerminalTurnLog
+  steps: Pick<TerminalSteps, 'ingest'>
+  localMachine: string
+  lookup: (sessionId: string) => { session_id: string; transcript_path?: string | null } | null
+  log: (line: string) => void
+}): TerminalTurnLog {
+  const { turns, steps, log } = deps
+  const err = (e: unknown) => (e instanceof Error ? e.message : String(e))
+  const transcriptOf = (ev: TerminalEventIn): string | null => {
+    if (ev.origin_agent || (ev.machine && ev.machine !== deps.localMachine)) return null
+    if (ev.transcript_path) return ev.transcript_path
+    const s = deps.lookup(ev.session_id)
+    return s && s.session_id === ev.session_id ? s.transcript_path ?? null : null
+  }
+  return {
+    ...turns,
+    event(ev, at) {
+      const path = transcriptOf(ev)
+      if (!path) { turns.event(ev, at); return }
+      let ok = false
+      try { turns.ensure(ev); ok = steps.ingest(ev.session_id, path, ev.source) } catch (e) { log(`steps ${ev.kind} ${ev.session_id.slice(0, 6)} failed: ${err(e)}`) }
+      turns.event(ok ? { ...ev, transcribed: true } : ev, at)
     },
   }
 }

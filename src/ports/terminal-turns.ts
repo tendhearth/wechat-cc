@@ -23,6 +23,8 @@ export interface TerminalTurnLog {
   permissionAsked(req: { source: string; session_id: string; cwd: string; tool_name: string; summary?: string | null; machine?: string }, at: number): void
   /** 那张卡落定:allow ⇒ 做完;其余(deny / timeout / undelivered / unknown)⇒ failed。 */
   permissionSettled(sessionId: string, status: string): void
+  /** 这个会话的那件事(没有就建,同 event 第一次见到时)。读记录进步之前先确保有(M4b,Codex 评审)。 */
+  ensure(ev: Pick<TerminalEventIn, 'source' | 'session_id' | 'cwd' | 'machine' | 'origin_agent'>): string
   /** 开机:上一次进程里没收的终端轮记中断。 */
   interruptAll(): void
 }

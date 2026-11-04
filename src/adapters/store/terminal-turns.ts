@@ -38,6 +38,7 @@ export function makeTerminalTurnLog(deps: { db: Db; log: MatterLog; matters: Pic
     log.writeItem({ matterId, ...(turnId ? { turnId } : {}), kind: 'permission', status: 'started', key: `perm:${at}`, payload: { tool, ...(summary ? { summary: summary.slice(0, SUMMARY_MAX) } : {}) } })
   }
   return {
+    ensure: (ev) => matterOf(ev),
     event(ev, at) {
       const matterId = matterOf(ev)
       const turnId = runningTurn(matterId)

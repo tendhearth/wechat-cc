@@ -5,7 +5,8 @@ import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
 import type { MatterLog, MatterStore } from '../../ports/matters'
 import { parseActivity } from './cli-activity'
-import { makeTerminalSteps, STEPS_FIRST_READ, type TerminalSteps } from './terminal-steps'
+import { makeTerminalSteps, STEPS_FIRST_READ, withTranscriptSteps, type TerminalSteps } from './terminal-steps'
+import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 
 /** 终端会话记录增量读进这件事的步(M4b):不管分几次读、从哪儿断开,读出来的和整段解析一遍逐字段一样。 */
 const L = (o: object) => JSON.stringify(o)
@@ -123,5 +124,56 @@ describe('terminal-steps', () => {
     const before = db.query<{ value: number }, []>('SELECT value FROM matter_log_cursor').get()!.value
     steps.view(session, 40)
     expect(db.query<{ value: number }, []>('SELECT value FROM matter_log_cursor').get()!.value).toBe(before)
+  })
+})
+
+describe('钩子事件 + 读记录(withTranscriptSteps)', () => {
+  const hooked = (lookup: Record<string, string> = {}) => {
+    const turns = makeTerminalTurnLog({ db, log, matters })
+    const logs: string[] = []
+    return { logs, turns: withTranscriptSteps({ turns, steps: makeSteps(), localMachine: 'mac', lookup: id => (lookup[id] ? { session_id: id, transcript_path: lookup[id] } : null), log: l => logs.push(l) }) }
+  }
+  const kinds = (sid: string) => log.items(matters.findBySurface('cli', sid)!.id).map(i => `${i.kind}:${String(i.payload.text ?? '')}`)
+  const ev = (kind: 'prompt' | 'stop' | 'session_end', sid: string, over: Record<string, unknown> = {}) => ({ source: 'claude', kind, session_id: sid, cwd: '/w/blog', machine: 'mac', ...over })
+
+  it('第一个钩子就是 stop(部署前就开着的会话)⇒ 先建这件事再读;最后一句只有记录里那一份,不重(Codex 评审)', () => {
+    file = Buffer.from(L({ type: 'user', timestamp: T, message: { content: '修一下' } }) + '\n' + L({ type: 'assistant', timestamp: T, message: { content: [{ type: 'text', text: '修好了' }] } }) + '\n')
+    const { turns } = hooked()
+    turns.event(ev('stop', 'S9', { text: '修好了', transcript_path: '/t/S9.jsonl' }), 1_000)
+    expect(kinds('S9')).toEqual(['user_message:修一下', 'agent_message:修好了'])
+    makeSteps().view({ session_id: 'S9', transcript_path: '/t/S9.jsonl', source: 'claude' }, 40)
+    expect(kinds('S9')).toEqual(['user_message:修一下', 'agent_message:修好了'])
+  })
+
+  it('读不了记录 ⇒ 钩子照旧写发问那一步和最后一句(Codex 评审:别丢);记一行日志', () => {
+    const turns0 = makeTerminalTurnLog({ db, log, matters })
+    const logs: string[] = []
+    const turns = withTranscriptSteps({ turns: turns0, steps: { ingest: () => { throw new Error('ENOENT') } }, localMachine: 'mac', lookup: () => null, log: l => logs.push(l) })
+    turns.event(ev('prompt', 'S8', { transcript_path: '/gone.jsonl' }), 1_000)
+    turns.event(ev('stop', 'S8', { text: '好了', transcript_path: '/gone.jsonl' }), 2_000)
+    expect(kinds('S8')).toEqual(['user_message:', 'agent_message:好了'])
+    expect(logs.length).toBe(2)
+  })
+
+  it('发问 → 答完:这一轮的步从记录来(发问原文、动作、最后一句),都挂在这一轮上;路径从登记处补', () => {
+    const { turns } = hooked({ S7: '/t/S7.jsonl' })
+    turns.event(ev('prompt', 'S7'), 1_000)
+    file = Buffer.from(CLAUDE)
+    turns.event(ev('stop', 'S7', { text: '有一个没过,我再改' }), 2_000)
+    const id = matters.findBySurface('cli', 'S7')!.id
+    const [turn] = log.turns(id)
+    expect(turn).toMatchObject({ status: 'completed', endedAt: 2_000 })
+    expect(log.items(id).map(i => i.turnId)).toEqual(log.items(id).map(() => turn!.id))
+    expect(kinds('S7')[0]).toBe('user_message:把测试修好')
+    expect(kinds('S7').filter(k => k.startsWith('agent_message'))).toEqual(['agent_message:先看看', 'agent_message:有一个没过,我再改'])
+  })
+
+  it('那边的会话(别的机器 / 经 A2A)⇒ 不读,钩子照旧写', () => {
+    const { turns } = hooked()
+    file = Buffer.from(CLAUDE)
+    turns.event(ev('stop', 'S6', { text: '那边的', machine: 'pc', transcript_path: '/t/x.jsonl' }), 1_000)
+    turns.event(ev('stop', 'S5', { text: '转来的', origin_agent: 'hand', transcript_path: '/t/x.jsonl' }), 1_000)
+    expect(kinds('S6')).toEqual(['agent_message:那边的'])
+    expect(kinds('S5')).toEqual(['agent_message:转来的'])
   })
 })
