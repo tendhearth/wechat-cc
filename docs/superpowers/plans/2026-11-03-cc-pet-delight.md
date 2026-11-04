@@ -68,7 +68,7 @@
 - [x] Add the full interruption matrix (work/thinking/permission/error/receive/drag/Dark/unavailable/settings-hidden/quiet/reduced/dispose) during the scene; no fake factual state and no replay on resume. Verify once-per-episode,30min cooldown consumed on interruption, unchanged180s doze, and no scene without artwork.
 - [x] Add actual `createPet` integration tests with authored and legacy manifests: direction chooses independent image paths without CSS mirroring; missing/all-bad curiosity frames settle safely;200ms timer clamping finishes only after the real last frame. Preserve all existing throttled factual-done and no-double-motion tests.
 - [x] Implement the optional controller path. Keep old peek/stretch/walk/factual clocks and native in-place travel guard unchanged. No generalized scene engine or prop layer.
-- [ ] Run affected pet/sprite/mounted-companion tests, typecheck and all guards on Mini. Commit the verified runtime change.
+- [x] Run affected pet/sprite/mounted-companion tests, typecheck and all guards on Mini. Commit the verified runtime change.
 
 ### Task 3: Production art and final visual gate
 
@@ -88,7 +88,7 @@
 - Extend `apps/desktop/playwright/companion-life.spec.ts`, `apps/desktop/scripts/macmini-embedded-ui.mjs` for actual curiosity playback/cancellation and optional-art fallback; preserve all prior checks.
 - New goal-specific operator scripts/receipts in ignored `.superpowers/sdd/2026-11-03-cc-pet-delight/` bind a fresh final head and daily baseline1c324a13. Prior delivery records remain immutable.
 
-- [ ] On Mini, verify actual decoded actor frames, no CSS double movement, ordinary and left peek, completed curiosity plus mid-scene interruption by controls/work/permission/quiet/reduced/hidden, no stale replay, unchanged hit area and bounded native geometry. Keep authoritative task facts readable.
+- [x] On Mini, verify actual decoded actor frames, no CSS double movement, ordinary and left peek, completed curiosity plus mid-scene interruption by controls/work/permission/quiet/reduced/hidden, no stale replay, unchanged hit area and bounded native geometry. Keep authoritative task facts readable.
 - [ ] Use one fresh whole-branch code review plus an independent final visual review. Fix important findings with actual RED/GREEN. Do not repeat whole review merely because the first pass was accepted.
 - [ ] Root alone integrates into its assigned integration workspace from the latest dev. Fast-forward the exact clean Mini checkout with source/ownership guards; run genuine merged `verify --full`, browser, Rust and native UI checks. Import only actual new-tree proof.
 - [ ] Freeze a compatible rollback fixture from exact daily1c324a13; test real current-schema write/reopen compatibility on Mini. Build/export the exact unsigned app only there, never launching production identity or copying credentials.
