@@ -143,7 +143,7 @@ matter   一件事:谁发起(initiator)、从哪来(origin_surface)、是什么(
 | P2 | App / 网页的 topic 从 item 通知推,不再 2 秒比快照 | `phone-topic-sources` 的快照比对删掉 |
 | P3 | 路由一族:同一份数据一条路径,按令牌范围放行;`/m/api` 旧路径进别名表 | 新代码里没有 `/m/api` 字面量;别名表只许少 |
 
-**P 线进度(11-05)**:P3 设计稿 [2026-11-05-p3-one-route-family-design.md](2026-11-05-p3-one-route-family-design.md)(盘点:61 条 `/m/api` 里 35 条与 `/v1` 重复;分 P3a–P3h),未做。
+**P 线进度(11-05)**:P1 做完(`TaskChangeHub` 已删)。P2 两步做完:四路主题(home / approvals / agents / `matter/<id>`)都改成等信号,不再 2 秒比快照。信号有两路:MatterLog 的变化信号,加上不进游标的那几样写口发的提示(`src/lib/write-hints.ts`)。快照比对没删:它还管去重和兜底那一轮。兜底轮询 matter 每 30 秒、home 每 10 秒,home 的「在场」有几样是内存状态或随时间变的,没有写口可接。细节见 [2026-11-02-p1-change-feed-design.md](2026-11-02-p1-change-feed-design.md) §P2。P3 设计稿 [2026-11-05-p3-one-route-family-design.md](2026-11-05-p3-one-route-family-design.md)(盘点:61 条 `/m/api` 里 35 条与 `/v1` 重复;分 P3a–P3h),未做。
 
 ### U:界面一个主页(主人 11-01 定:合成一个,不看草图,直接做)
 

@@ -9,6 +9,7 @@
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Db } from '../../lib/db'
+import { onWriteHint } from '../../lib/write-hints'
 import { loadAgentConfig } from '../../lib/agent-config'
 import type { Bootstrap } from '../bootstrap'
 import type { WechatSend } from '../../ports/wechat'
@@ -100,6 +101,7 @@ const phoneChat = phoneOwner ? makePhoneChat({
   // 手机带的图:材料暂存里按主人取(与交办同一套校验),读完即删,图落到对话 inbox(2026-10-06)。
   ...(opts.workbench ? { takeImages: (m: { draftId: string; attachmentIds: string[] }) => opts.workbench!.takeChatImages(m, { ownerKey: ownerChatId() ?? '', surface: 'phone' }) } : {}),
   ownerMatterId: () => phoneOwner.ensure(),
+  onPending: id => phoneEvents?.poke(topic => topic === `matter/${id}`),
   onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
   log: (tag, line) => log(tag, line),
 }) : null
@@ -154,6 +156,8 @@ if (relay) {
       latestAt: async (chatId: string) => { const ts = await messagesStore.latestTs(chatId); return ts ? Date.parse(ts) : null },
       pendingMatter: () => phoneChat.pendingMatter(),
     } } : {}),
+    // 不进 MatterLog 游标的写(消息、matters 行、觅食台;看到哪了、伙伴的念头两份文件):写口提示,P2 第二步
+    hints: (cb) => { const offs = [onWriteHint(db, cb), onWriteHint(stateDir, cb)]; return () => { for (const off of offs) off() } },
     log: (tag, line) => log(tag, line),
   })
   phoneEvents = phone.events
