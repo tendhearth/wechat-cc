@@ -70,7 +70,7 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
         },
         petSignals: f.petSignals,
         onTurnRecord: (r) => {
-          f.turnRecordStore.append(r)
+          // 回合记录本身由 runner 经 MatterLog 写进这件对话的轮(M3b);这里只剩它驱动的那几样
           f.providerRefusals.onTurn(r)
           // CLI 自动升级的报错触发(2026-10-04):错误通道像「CLI 太旧」⇒ 排一次版本检查。
           if (r.outcome !== 'completed') cliUpgrade()?.upgrader()?.onTurnError(r.provider, r.errorCode, r.error)
