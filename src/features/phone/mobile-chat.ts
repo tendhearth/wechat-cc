@@ -1,12 +1,10 @@
-import {join,basename} from 'node:path'
-import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES } from '@wechat-cc/protocol'
-import { isNetworkUnprotectedError } from '../../lib/network-gate'
+import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import type { MessageRecord } from '../../lib/messages-store'
 import type { MatterOrigin, MatterStore } from '../../ports/matters'
 import type { ChatJob, PhoneChat } from './phone-chat'
 import { framedTooLarge } from './mobile-matter-response'
 import { ownsMethod, sharedRoute, type PhoneRouteTable } from './phone-route-table'
-import { parseExtras, phoneExtrasFields, incomingUploadAttachments, recordedFileCanonical } from '../../daemon/app-reply'
+import { parseExtras, phoneExtrasFields, incomingUploadAttachments } from '../../daemon/app-reply'
 import { createHash } from 'node:crypto'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs'
 
@@ -80,12 +78,8 @@ export interface MobileChatDeps {
   chat: PhoneChat
   /** 主人对话里的一行(必须属于这个 chat);语音路由用它找那段要念的话。 */
   message?(chatId: string, id: string): Promise<MessageRecord | null>
-  /** 在主人对话里搜(2026-10-06);新的在前。没接 ⇒ 搜索路由 503。 */
-  search?(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
   /** 合成语音(与桌面 agent_speak 同一个 synthesizeSpeech)。没接 ⇒ 语音路由 503。 */
   speak?(text: string): Promise<{ audio: Buffer; mime: string }>
-  /** 按住说话(2026-10-18):与微信语音同一个语音转文字(stt-config.json)。没配抛 `no_stt_config`。没接 ⇒ 503。 */
-  transcribe?(audio: Buffer, mime: string): Promise<{ text: string }>
   /** 只读:电脑上配没配语音转文字(手机按钮先说清楚,不等录完才失败)。 */
   transcribeStatus?(): { configured: boolean }
   /** 主人对话用哪个后端 / 模型(2026-10-06,与微信 `/api <模型>` 同一处:按对话钉 Mode.solo)。没接 ⇒ 503。 */
@@ -152,10 +146,6 @@ export function makePhoneChatId(d: { ownerChatId(): string | null; converseChatI
   }
 }
 
-/** 手机这一口等不过协议客户端的 15 秒:电脑这边 12 秒没转完就如实说「太慢」,不让手机误报「没送到」。 */
-export const TRANSCRIBE_TIMEOUT_MS = 12_000
-const B64 = /^[A-Za-z0-9+/]*={0,2}$/
-const TRANSCRIBE_B64_MAX = Math.ceil(PHONE_TRANSCRIBE_MAX_BYTES / 3) * 4
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const json = (body: object, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 const err = (error: string, status: number) => json({ ok: false, error }, status)
@@ -227,36 +217,6 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
       try { deps.model.set(owner.chatId, b.provider, typeof b.model === 'string' ? b.model : null) } catch { return err('unavailable', 503) }
       return json({ ok: true, ...deps.model.current(owner.chatId) })
     })),
-    'GET /m/api/chat/search': ownsMethod(async (url: URL, req: Request) => {
-      if (req.method !== 'GET') return err('method_not_allowed', 405)
-      if (!deps?.search) return err('chat_not_wired', 503)
-      const q = url.searchParams.get('q') ?? ''
-      if (url.searchParams.getAll('q').length !== 1 || !q.trim() || q.length > 200) return err('invalid', 400)
-      let owner: ReturnType<MobileChatDeps['owner']>
-      try { owner = deps.owner() } catch { return err('unavailable', 503) }
-      if (!owner) return err('no_owner_chat', 404)
-      let rows: MessageRecord[]
-      try { rows = await deps.search(owner.chatId, q.trim(), 30) } catch { return err('unavailable', 503) }
-      const hits = rows.map(r => ({ id: r.id, role: r.direction === 'in' ? 'me' : 'cc', text: r.text.length > 600 ? r.text.slice(0, 600) : r.text, truncated: r.text.length > 600, at: Date.parse(r.ts), source: r.source ?? null }))
-      return json({ ok: true, hits })
-    }),
-    // CC 回复里的文件(2026-10-06):按消息 id + 第几个附件定位(手机不给路径),必须是这条主人对话里 CC 发的那一行。
-    'GET /m/api/chat/file': ownsMethod(async (url: URL, req: Request) => {
-      if (req.method !== 'GET') return err('method_not_allowed', 405)
-      if (!deps?.message) return err('chat_not_wired', 503)
-      const id = url.searchParams.get('id'), rawIdx = url.searchParams.get('i'), rawOffset = url.searchParams.get('offset') ?? '0'
-      if (!id || id.length > 200 || rawIdx === null || !/^\d{1,2}$/.test(rawIdx) || !/^\d{1,9}$/.test(rawOffset)) return err('invalid', 400)
-      let owner: ReturnType<MobileChatDeps['owner']>
-      try { owner = deps.owner() } catch { return err('unavailable', 503) }
-      if (!owner) return err('no_owner_chat', 404)
-      let row: MessageRecord | null
-      try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
-      const att = row && row.chatId===owner.chatId && row.id===id ? (row.direction === 'out' ? parseExtras(row.extras)?.attachments : incomingUploadAttachments(row,deps.inboxDir))?.[Number(rawIdx)] : undefined
-      if (!att || att.kind !== 'file') return err('not_found', 404)
-      // An app upload must still be the file directly in the inbox, compared canonically on both sides; symlinked parents are fine, a symlinked upload is not.
-      if(row?.direction==='in'){try{const canonical=recordedFileCanonical(att.path);if(!canonical||canonical!==join(realpathSync(deps.inboxDir!),basename(att.path)))return err('not_found',404)}catch{return err('not_found',404)}}
-      return fileChunkResponse(att.path, att.name, Number(rawOffset))
-    }),
     'GET /m/api/chat/voice': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return err('method_not_allowed', 405)
       if (!deps?.message || !deps.speak) return err('voice_not_wired', 503)
@@ -279,48 +239,13 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
       if (framedTooLarge(body)) return err('too_large', 413)
       return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
     }),
-    // 按住说话(2026-10-18):一段录音 → 电脑上配的语音转文字 → 字回手机,填进输入框、不自动发。
-    // GET 只问配没配;POST 至多 PHONE_TRANSCRIBE_MAX_BYTES(一帧装得下)。录音与转出来的字都不进日志、不落盘。
-    ...sharedRoute(['GET', 'POST'], '/m/api/chat/transcribe', ownsMethod(async (url: URL, req: Request) => {
-      if (req.method === 'GET') {
-        if (!deps?.transcribeStatus) return err('voice_not_wired', 503)
-        try { return json({ ok: true, configured: deps.transcribeStatus().configured === true }) } catch { return err('unavailable', 503) }
-      }
-      if (req.method !== 'POST') return err('method_not_allowed', 405)
-      if (!deps?.transcribe) return err('voice_not_wired', 503)
-      // 先量长度再解析:局域网直连没有中继那一帧的上限
-      let raw: string
-      try { raw = await req.text() } catch { return err('bad_json', 400) }
-      if (raw.length > TRANSCRIBE_B64_MAX + 1024) return err('audio_too_large', 413)
-      let body: unknown
-      try { body = JSON.parse(raw) } catch { return err('bad_json', 400) }
-      if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
-      const b = body as Record<string, unknown>
-      if (Object.keys(b).some(k => k !== 'mime' && k !== 'audioBase64')) return err('invalid', 400)
-      if (typeof b.mime !== 'string' || !(PHONE_TRANSCRIBE_MIMES as readonly string[]).includes(b.mime)) return err('invalid', 400)
-      if (typeof b.audioBase64 !== 'string' || !b.audioBase64 || b.audioBase64.length % 4 !== 0 || !B64.test(b.audioBase64)) return err('invalid', 400)
-      if (b.audioBase64.length > TRANSCRIBE_B64_MAX) return err('audio_too_large', 413)
-      const audio = Buffer.from(b.audioBase64, 'base64')
-      if (!audio.length) return err('invalid', 400)
-      if (audio.length > PHONE_TRANSCRIBE_MAX_BYTES) return err('audio_too_large', 413)
-      let text: string
-      let timer: ReturnType<typeof setTimeout> | undefined
-      try {
-        const r = await Promise.race([
-          deps.transcribe(audio, b.mime),
-          new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('stt_timeout')), TRANSCRIBE_TIMEOUT_MS) }),
-        ])
-        text = typeof r?.text === 'string' ? r.text.trim() : ''
-      } catch (e) {
-        const m = e instanceof Error ? e.message : ''
-        if (/no.?stt.?config/i.test(m)) return err('stt_not_configured', 422)
-        if (isNetworkUnprotectedError(e)) return err('stt_blocked', 503)
-        if (m === 'stt_timeout' || /timed out|timeout|aborted/i.test(m)) return err('stt_timeout', 504)
-        return err('stt_failed', 502)
-      } finally { if (timer) clearTimeout(timer) }
-      if (!text) return err('no_speech', 422)
-      return json({ ok: true, text: text.slice(0, PHONE_SAY_MAX_CHARS) })
-    })),
+    // 按住说话(2026-10-18):GET 只问电脑上配没配语音转文字(手机按钮先说清楚,不等录完才失败)。
+    // 录音转成字那一条(POST)P3c-1 并进了 POST /v1/companion/transcribe,旧路径是别名(legacy-routes.ts)。
+    'GET /m/api/chat/transcribe': ownsMethod(async (_url: URL, req: Request) => {
+      if (req.method !== 'GET') return err('method_not_allowed', 405)
+      if (!deps?.transcribeStatus) return err('voice_not_wired', 503)
+      try { return json({ ok: true, configured: deps.transcribeStatus().configured === true }) } catch { return err('unavailable', 503) }
+    }),
     'POST /m/api/chat/say': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'POST') return err('method_not_allowed', 405)
       if (!deps) return err('chat_not_wired', 503)

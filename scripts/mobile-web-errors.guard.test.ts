@@ -43,6 +43,7 @@ function slice({ file, from, to }: Slice): string {
 }
 
 const SP = 'src/features/phone/settings-panel.ts'
+const LEGACY = 'src/features/phone/legacy-routes.ts'
 /** 面板处理器表(F2)里一条的开头;下一条的开头就是这一条的结尾。 */
 const entry = (key: string) => `'${key}': `
 const NEXT_ROUTE = "\n    '"
@@ -54,15 +55,17 @@ const COMMON: { codes: string[]; slices: Slice[] } = {
 
 interface RouteCodes { direct: string[]; thrown?: string[]; slices: Slice[] }
 const ROUTE_CODES: Record<string, RouteCodes> = {
+  // P3c-1 起这两条是别名(legacy-routes.ts):数据在 GET /v1/matters / GET /v1/matter,手机看到的码由别名的转换定。
+  // 列表:/v1 那边别的错(处理器抛了)以前是不回包(手机一直等),现在回 unavailable。
   'GET /m/api/matters': {
-    direct: ['matters_not_wired', 'invalid'],
-    slices: [{ file: SP, from: entry('GET /m/api/matters'), to: NEXT_ROUTE }],
+    direct: ['matters_not_wired', 'invalid', 'unavailable'],
+    slices: [{ file: LEGACY, from: 'const phoneMatters: PhoneHandler<Ctx> =', to: '// ── GET /m/api/matter →' }],
   },
   'GET /m/api/matter': {
-    // catch 里是 `error: msg === 'matter_not_found' ? msg : 'unavailable'`(只有 matter_not_found 原样出去,其余一律 unavailable)
+    // 只有 matter_not_found 原样出去,其余一律 unavailable(同并之前)
     direct: ['matters_not_wired', 'invalid', 'matter_not_found', 'unavailable', 'detail_too_large'],
     slices: [
-      { file: SP, from: entry('GET /m/api/matter'), to: NEXT_ROUTE },
+      { file: LEGACY, from: 'const phoneMatter: PhoneHandler<Ctx> =', to: '// ── POST /m/api/matter/say →' },
       { file: 'src/features/phone/mobile-matter-response.ts', from: 'export function mobileMatterDetailResponse', to: '\n}\n' },
     ],
   },
@@ -97,7 +100,7 @@ const WEB_MAPS: Record<string, string[]> = {
 /** 有意按通用说法走的码(按路由)。路由多回了一个码 ⇒ 要么进网页的表,要么加进这里。 */
 const GENERIC: Record<string, string[]> = {
   // 「暂时没读到，请检查连接后再看。」
-  'GET /m/api/matters': ['route_not_allowed', 'matters_not_wired', 'invalid'],
+  'GET /m/api/matters': ['route_not_allowed', 'matters_not_wired', 'invalid', 'unavailable'],
   'GET /m/api/matter': ['route_not_allowed', 'matters_not_wired', 'invalid', 'unavailable'],
   // 「没停成，稍后再试。」
   'POST /m/api/matter/stop': ['unauthorized', 'route_not_allowed', 'method_not_allowed', 'invalid_request', 'invalid_matter_id', 'matter_not_found', 'matter_task_required', 'unavailable'],

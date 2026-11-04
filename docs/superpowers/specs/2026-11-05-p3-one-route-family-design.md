@@ -141,6 +141,16 @@
 - **响应头今天就不齐**:`mobile-workbench` / `mobile-reads` / `mobile-chat` 的处理器和 `mobileMatterDetailResponse` 带 `cache-control: no-store`;`settings-panel.ts` 自己的 `json()`(列表、详情的错误、seen、todo、记忆、home、art/presence、审阅的成功回包、403 `route_not_allowed`)不带 —— 同一条 `review-comment` 成功不带、失败(走 `mobileMatterError`)带。金样把头一起钉了,并的时候按路由保持,要统一另开一步。
 - 61 条的分法核对过:35 条有 `/v1` 双胞胎(P3c 20 + P3e 15,新键都在今天的 `ROUTES` 里——P3e 的双胞胎是 `/v1/workbench/*`,新键 `/v1/matter/*` 还不存在),26 条 P3d(相近 10、撞名 2、手机独有 14)。读的人:App 读 60 条(除 `art/presence`),网页读 5 条,`selftest phone` 读 `push/register·test`。
 
+### P3c-1(六条并成 `/v1` 一个处理器;老路径是别名)
+- **并了哪六条**:`matters`、`matter`、`matter/say`、`chat/search`、`chat/file`、`POST chat/transcribe` → `GET /v1/matters`、`GET /v1/matter`、`POST /v1/matter/say`、`GET /v1/matter/owner-chat/search`、`GET /v1/matter/owner-chat/file`、`POST /v1/companion/transcribe`。这六行 `/v1` 带上 `phone` 块(link 照别名行冻结:列表 / 详情 `read`,其余 `none`);`routes.ts` 里删掉六条 `/m/api` 行;手机处理器删掉(`settings-panel.ts` 三条、`mobile-chat.ts` 三条,`GET chat/transcribe` 留着 —— 它是 P3d)。
+- **别名**:`wire-compat.ts` 加 `MERGED_ALIAS_KEYS`(这六个键 ⇒ `handler: 'alias'`;`routes.ts` 的 `PanelRouteKey` 把它们并进来,App 的 `phone-calls.ts` 与 `PHONE_API_SCHEMAS` 照旧按旧键写)。`src/features/phone/legacy-routes.ts` 是 daemon 里唯一认它的地方:先按手机的规矩验参数、补手机默认(`status` 默认不含归档、`limit=50`、不点名 kind ⇒ `exclude=terminal,act`、`taskState=1`),翻到新键走同一个分发,再套 `{ ok }`、换 phone 那一列错误码、按路由保持响应头。`phone-routes.ts` 让设备 / 链接令牌的 routeAllow 自动带上别名键(理由抄新键那一行的)。
+- **按 caller 收**(`routes-matters.ts`,规矩在 `src/domain/matters/phone-scope.ts`,手机处理器原样搬来):device / link 只见 `phoneMayOpenMatter` 的(列表筛、按 id 打开回 404 `matter_not_found`);link 的详情去掉 `replyExtras` / `messageId`;带 `frameBudget` 的详情从最早的旁白起裁,装不下 413 `detail_too_large`;手机令牌读列表 / 详情记 `seenOnPhone`;说一句按 `surface: 'phone'`。operator 走这几条一字不变。`MattersService` 多两个方法 `phoneMayOpen`、`seenOnPhone`。`/v1/matters` 多两个可选参数 `exclude`、`taskState`(谁都能用),点名 `kind=act` 时行带 `act`;`POST /v1/matter/say` 收可选的 `requestId / runId / draftId / attachmentIds`。
+- **错误码怎么回到手机那一列**:`/v1` 回的是桌面那一列,有的码桌面列改了名(`attachment_scope` → 404 `not_found`),别名认不回来。处理器可以在回包上带 `cause`(原始码,只收码形状的字符串),内部 API 在面板分发的 `opts.cause` 时把它放进回包头 `x-cc-cause`;只有面板进程里的别名这样调,网上来的请求设不了 —— `/v1` 的正文与契约不变。`matter/say` 与 `companion/transcribe`(网络守护拦下 ⇒ `network_unprotected`)用它。
+- **棘轮**:`MAX_OWN_HANDLER_ROWS` 61 → 55(行数仍 61);`no-m-api-literal` 基线 `routes.ts` 61 → 55、`settings-panel.ts` 22 → 19、`mobile-chat.ts` 7 → 5(合计 247 → 236)。`routes-snapshot` 与 `link-routes-from-source` 两个守卫按「新键 ∪ 别名键」比:别名键照旧和快照 / 页面扫描比,新键另由一条核对「在不在、link、理由都同别名键」。
+- **金样**:`m-api-routes` 80 份、`matter-read-paths` 全部逐字节不变(文件没动)。两份金样的面板接上一个真的 `createInternalApi`(只用 `panelDispatch`);P3a 那份的服务是剧本,形状只有几个字段,所以那里用新加的测试开关 `responseContracts: false`。
+- **和并之前不一样的几处(都不在金样里,PR 里逐条写了)**:① `chat/file` 走 `/v1` 的读法,回复里的表情附件(sticker)手机也能按块读了(桌面本来就能;以前手机回 404);② 主人对话还没建(配了主人、那条 chat matter 还没有)时,`chat/search` 照搜(以前 404 `no_owner_chat`),`chat/file` 回 404 `not_found`(以前 `no_owner_chat`);③ 语音模块此刻不是 ok ⇒ `POST chat/transcribe` 回 503 `voice_not_wired`(以前不看模块,照转);④ `matters` 处理器抛了 ⇒ 500 `unavailable`(以前不回包,手机一直等);⑤ 「没接上」与「参数不对」先判哪个,个别路由换了先后(只在没接线的测试里看得到)。
+- **还没做**:`ServerHello.routes: 'v1'` 照本稿等这一组部署 soak 绿再开。
+
 ## 不做 / 推后
 - **不改语义**:同步的 `/v1/companion/converse` 和收下即回的 `owner-chat/say` 各留一条(两个动作,不是一份数据两条路);「看 / 改记忆」两种读法照旧各一条。语义要合是另外的事。
 - **不并 `/m` 页面路径、`/set`、`/set/api/*`**:那是页面和配对,链接里带着,不是数据路由。

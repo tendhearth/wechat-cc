@@ -1,4 +1,5 @@
-import { PHONE_TOPIC_NAMES, ROUTES } from '@wechat-cc/protocol/routes'
+import { PHONE_TOPIC_NAMES, ROUTES, type PanelSurface } from '@wechat-cc/protocol/routes'
+import { WIRE_ROUTE_ALIASES } from '@wechat-cc/protocol'
 
 /**
  * 手机设置面板(`/set`、`/m`)令牌能走的路由,与经隧道不许做的操作(梳理第 6 步,2026-09-29)。
@@ -13,10 +14,24 @@ import { PHONE_TOPIC_NAMES, ROUTES } from '@wechat-cc/protocol/routes'
  * 两条裁决见 docs/superpowers/plans/2026-09-29-device-token-registry.md。
  */
 
-const PANEL_ROWS = Object.entries(ROUTES).flatMap(([key, r]) => {
-  const panel = r.phone ?? r.set
-  return panel ? [{ key, panel }] : []
-})
+/**
+ * 已并成别名的旧路径(P3c 起,`wire-compat.ts` 的 WIRE_ROUTE_ALIASES 里 `handler: 'alias'` 的行):路由表里没有这一行了,
+ * 令牌照样能走 —— 面板把它翻到新键,走内部 API 同一个分发(`legacy-routes.ts`)。link 照别名表冻结的值,理由抄新键那一行的。
+ * 新键(`/v1` 那一行)自己也带 `phone` 块,所以两个键都在下面的集合里;守卫按「新键 ∪ 别名键」比集合不许变大。
+ */
+export const MERGED_ALIASES: ReadonlyArray<{ from: string; to: string; link: PanelSurface['link'] }> =
+  WIRE_ROUTE_ALIASES.filter(a => a.handler === 'alias').map(a => ({ from: a.from, to: a.to, link: a.link }))
+
+const PANEL_ROWS: Array<{ key: string; panel: PanelSurface }> = [
+  ...Object.entries(ROUTES).flatMap(([key, r]) => {
+    const panel = r.phone ?? r.set
+    return panel ? [{ key, panel }] : []
+  }),
+  ...MERGED_ALIASES.map(a => {
+    const reason = (ROUTES as Readonly<Record<string, { phone?: PanelSurface }>>)[a.to]?.phone?.reason
+    return { key: a.from, panel: { link: a.link, ...(reason !== undefined ? { reason } : {}) } }
+  }),
+]
 
 /** 设备令牌的 routeAllow:表里带 `phone` / `set` 的每一行(各行的注释在表里)。 */
 export const PHONE_ROUTES: ReadonlySet<string> = new Set(PANEL_ROWS.map(r => r.key))

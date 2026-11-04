@@ -1,0 +1,63 @@
+/**
+ * 测试用:给 makeSettingsPanel 的 deps 补上 `v1`(P3c-1 起并成别名的旧路径翻到 `/v1`,走内部 API 同一个分发)。
+ *
+ * 生产里面板的 `matters` 与内部 API 的 `matters` 是同一个 MattersService(wiring/pipeline-deps.ts 建一个,
+ * wire-settings-panel.ts 与 internalApi.provide 各拿一份)。老测试只给了面板那一份(手机那几样:list / detail / say /
+ * seenOnPhone / withActs)和手机对话的假实现(search / transcribe 等),这里照 pipeline-deps.ts 的接法把它们拼成
+ * 内部 API 要的那一份,再起一个真的 createInternalApi(不起监听,只用 panelDispatch)。处理器、分发、别名都是真的。
+ */
+import { join } from 'node:path'
+import type { SettingsPanelDeps } from './settings-panel'
+import type { MobileChatDeps } from './mobile-chat'
+import type { MessageRecord } from '../../lib/messages-store'
+import type { MattersService } from '../../app/matters/service'
+import { createInternalApi, type InternalApiOptions } from '../../daemon/internal-api'
+import type { RouteTable } from '../../daemon/internal-api/types'
+import type { ModuleName } from '@wechat-cc/protocol/routes'
+import { makeOwnerChatFileReader } from '../../daemon/wiring/owner-chat-reading'
+import { fileChunkResponse } from './mobile-chat'
+import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
+
+/** 老测试给手机对话的假实现里还有这两样(P3c-1 以前面板自己用;现在经 /v1 用)。 */
+export type LegacyChatFakes = MobileChatDeps & {
+  search?(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
+  transcribe?(audio: Buffer, mime: string): Promise<{ text: string }>
+}
+export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat'> & { chat?: LegacyChatFakes }
+
+/** 面板 deps(含老测试的假实现)→ 内部 API 要的 MattersService(照 pipeline-deps.ts 的 mattersService 接法)。 */
+export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersService | undefined {
+  const m = d.matters, chat = d.chat
+  if (!m && !chat) return undefined
+  const owner = () => chat?.owner()?.chatId ?? d.ownerChatId()
+  return {
+    list: f => (m ? m.list(f as never) : []) as never,
+    withActs: rows => (m?.withActs ? m.withActs(rows as never) : rows) as never,
+    detail: async id => { if (!m) throw new Error('matters_not_wired'); return await m.detail(id) as never },
+    phoneMayOpen: matter => phoneMayOpenMatter(matter, d.ownerChatId()),
+    seenOnPhone: id => m?.seenOnPhone(id),
+    say: async (id, text, _surface, input) => { if (!m) throw new Error('matters_not_wired'); return await (input ? m.say(id, text, input) : m.say(id, text)) as never },
+    searchOwnerChat: async (query, limit = 30) => {
+      const q = query.trim(); if (!q || q.length > 200) throw Error('invalid_query')
+      const chatId = chat?.owner()?.chatId ?? null
+      if (!chatId || !chat?.search) return null
+      // pipeline-deps.ts 的 chat.search 那一行
+      return { hits: (await chat.search(chatId, q, Math.max(1, Math.min(50, Math.trunc(limit))))).map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })) as never }
+    },
+    // pipeline-deps.ts 的 chat.file 那一行
+    ownerChatFile: chat?.message
+      ? makeOwnerChatFileReader({ ownerChatId: owner, ...(chat.inboxDir ? { inboxDir: chat.inboxDir } : {}), readChunk: fileChunkResponse, stickerDir: join(d.stateDir, 'stickers'), message: (chatId, id) => chat.message!(chatId, id) })
+      : async () => ({ status: 503, body: { error: 'chat_not_wired' } }),
+  } as Partial<MattersService> as MattersService
+}
+
+/**
+ * 补上 `v1`;`mounts` = 各模块自己挂的路由(如语音的 POST /v1/companion/transcribe —— 功能之间不互相 import,由测试交进来)。
+ * `api` 给要直接摸内部 API 的测试。
+ */
+export function withPanelV1(d: PanelDepsWithFakes, options: InternalApiOptions = {}, mounts: Partial<Record<ModuleName, RouteTable>> = {}): SettingsPanelDeps & { api: ReturnType<typeof createInternalApi> } {
+  const matters = mattersServiceFromPanelDeps(d)
+  const api = createInternalApi({ stateDir: d.stateDir, daemonPid: 1, ...(matters ? { matters } : {}) }, options)
+  for (const [name, table] of Object.entries(mounts)) if (table) api.mount(name as ModuleName, table)
+  return { ...(d as SettingsPanelDeps), v1: api.panelDispatch, api }
+}

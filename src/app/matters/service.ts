@@ -5,6 +5,7 @@ import { normalizeInputRequestId } from '../../domain/workbench/input-request-id
 import { sayTextHash } from '../../lib/content-hash'
 import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts'
 import {legacyStatusOfTaskView} from '../../domain/matters/legacy-status'
+import {phoneMayOpenMatter} from '../../domain/matters/phone-scope'
 import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
 
 /**
@@ -93,6 +94,10 @@ export interface MattersService {
   list(filter?:ListMatters):Matter[]
   /** act 行带上发起方与最近那一轮(M5c,「CC 最近在忙」);别的行原样。没接 log / 读不到 ⇒ 原样。 */
   withActs(matters:Matter[]):Matter[]
+  /** 手机令牌(设备 / 链接)能不能看这件:别人的聊天不给(domain/matters/phone-scope.ts;主人取 ownerChatId)。 */
+  phoneMayOpen(matter:unknown):boolean
+  /** 这件在手机上露过面(绑定 phone / pwa;手机令牌读列表、详情时记)。 */
+  seenOnPhone(id:string):void
   detail(id:string):Promise<MatterDetail>
   /** One durable workbench input, including its delivery reason; never loads or mutates the detail. */
   inputReceipt(id:string,requestId:string):MatterInput|null
@@ -220,6 +225,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       return matters.map(m=>{const a=agents.get(m.id);return a?.length?{...m,agents:a,...namesFor(a)}:m})
     },
     withActs(matters){return matters.map(m=>actOf(m)?.matter??m)},
+    phoneMayOpen(matter){return phoneMayOpenMatter(matter,(deps.ownerChatId??deps.chat?.ownerChatId)?.()??null)},
+    seenOnPhone(id){deps.store.bind(id,'phone','pwa')},
     inputReceipt(id,requestId){
       if(!ID.test(id))throw Error('invalid_matter_id')
       const key=normalizeInputRequestId(requestId),matter=deps.store.get(id)

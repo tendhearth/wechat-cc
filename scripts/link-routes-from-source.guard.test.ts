@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { LINK_ROUTES, PHONE_ROUTES } from '../src/features/phone/phone-routes'
+import { LINK_ROUTES, MERGED_ALIASES, PHONE_ROUTES } from '../src/features/phone/phone-routes'
 import { pageHtml } from '../src/features/phone/settings-panel-html'
 import { assembleMobilePage } from '../apps/mobile/assemble'
 import { readMobileSource } from '../apps/mobile/sources'
@@ -94,7 +94,10 @@ describe('链接令牌的范围 = 链接页面调用的路由(理念 2)', () => 
     for (const s of SOURCES) expect(calls.some(c => c.source === s.name), s.name).toBe(true)
   })
   it('LINK_ROUTES 与扫出来的集合相等', () => {
-    expect(compareLinkScope(scanAll(), LINK_ROUTES)).toEqual([])
+    // 已并成别名的(P3c 起):页面还调旧键(`/m/api/…`),链接令牌经新键(`/v1` 那一行)够得着的是同一份数据 ——
+    // 新键的 link 由 routes-snapshot 守卫「别名的新键」那一条核对(同别名键),这里只拿页面调的键比。P3g 网页改读新键时把这一条去掉。
+    const targets = new Set(MERGED_ALIASES.map(a => a.to))
+    expect(compareLinkScope(scanAll(), new Set([...LINK_ROUTES].filter(k => !targets.has(k))))).toEqual([])
   })
   it('现在的链接范围(看得见的一份;改了页面就会跟着动)', () => {
     const bySource = Object.fromEntries(SOURCES.map(s => [s.name, [...new Set(scanAll().filter(c => c.source === s.name && !c.deviceOnly).map(c => c.key))].sort()]))

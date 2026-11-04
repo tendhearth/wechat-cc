@@ -43,6 +43,9 @@
  * 这一批不合并命名空间(桌面 `/v1/matter/say` 与手机 `/m/api/matter/say` 仍是两行):手机 App 不能强制升级。
  */
 
+/** 已并成别名的旧手机键(P3c 起):路由表里没有这一行,老客户端照样按它调(wire-compat.ts 的 MERGED_ALIAS_KEYS)。 */
+import type { MergedAliasKey } from './wire-compat'
+
 export type RouteKey = `${string} /${string}`
 
 /** 内部 API(`/v1/*`)这一端。 */
@@ -203,12 +206,18 @@ const ROUTE_TABLE = {
   'GET /v1/workbench': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 「一件事」(2026-09-16):任务指令、聊天都是主人的私事。
   // 桌面(原 lib.rs 注释):「一件事」的 matter 列表与会话面、此刻里搜主人那条对话。只走 tauri:dev 代理经 test-shim 另一条路。
-  'GET /v1/matter/owner-chat/file': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
-  'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
-  'GET /v1/matter': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  // P3c-1(设计稿 2026-11-05-p3-one-route-family):下面带 `phone` 块的几行,设备 / 链接令牌也能从手机设置面板那一口走;
+  // 老 App / 网页读的 `/m/api/*` 旧路径是 wire-compat.ts 的别名,翻到这里(src/features/phone/legacy-routes.ts)。
+  // 手机看到的范围由处理器按 caller 收(routes-matters.ts:别人的聊天不给、链接令牌不读 replyExtras、按帧预算裁)。
+  // link 照别名行冻结的值抄;送话给执行者的(matter/say)只给设备。
+  // CC 回复里的文件按块读(2026-10-06;手机原 /m/api/chat/file)
+  'GET /v1/matter/owner-chat/file': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
+  'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'read', reason: '一起做的列表' } },
+  'GET /v1/matter': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'read', reason: '一件事的详情' } },
   'GET /v1/matter/owner-chat': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
-  'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
-  'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  // 搜主人那条对话(2026-10-06;手机原 /m/api/chat/search)
+  'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
+  'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
   // 「CC 的连接」:带插件目录与原因,只给 admin。
   'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 桌面「连接手机」(plan 7a):铸 admin 链接令牌 / 打开远程隧道,只给 operator 凭据。
@@ -397,7 +406,8 @@ const ROUTE_TABLE = {
   // reply audio for the owner's app-conversation-channel session.
   'POST /v1/companion/speak': { module: 'voice', desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — voice arc Stage 2: transcribes inbound app-channel audio to text.
-  'POST /v1/companion/transcribe': { module: 'voice', desktop: { tier: 'admin', tokens: ['operator'] } },
+  // 手机按住说话(2026-10-18;手机原 POST /m/api/chat/transcribe):只回字,不发、不执行。
+  'POST /v1/companion/transcribe': { module: 'voice', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': { desktop: { tier: 'admin' } },
   'GET /v1/sessions': { desktop: { tier: 'admin' } },
@@ -595,8 +605,6 @@ const ROUTE_TABLE = {
   'POST /m/api/memory/restore': { phone: { link: 'none' } },
   'GET /m/api/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
   'POST /m/api/seen': { phone: { link: 'none' } },
-  'GET /m/api/matters': { phone: { link: 'read', reason: '一起做的列表' } },
-  'GET /m/api/matter': { phone: { link: 'read', reason: '一件事的详情' } },
   'GET /m/api/matter/input-receipt': { phone: { link: 'none' } },
   'GET /m/api/matter/insight': { phone: { link: 'none' } },
   'GET /m/api/matter/changes': { phone: { link: 'none' } },
@@ -609,19 +617,13 @@ const ROUTE_TABLE = {
   // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(不在链接白名单里)
   'GET /m/api/matter/rewind': { phone: { link: 'none' } },
   'POST /m/api/matter/rewind': { phone: { link: 'none' } },
-  'POST /m/api/matter/say': { phone: { link: 'none' } },
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
   'GET /m/api/chat': { phone: { link: 'none' } },
   'POST /m/api/chat/say': { phone: { link: 'none' } },
-  // 搜主人那条对话(2026-10-06)
-  'GET /m/api/chat/search': { phone: { link: 'none' } },
   // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
   'GET /m/api/chat/voice': { phone: { link: 'none' } },
-  // 按住说话(2026-10-18):配没配语音转文字 + 一段录音转成字(只回字,不发、不执行)
+  // 按住说话(2026-10-18):配没配语音转文字(录音转成字那一条 P3c-1 并进了 POST /v1/companion/transcribe)
   'GET /m/api/chat/transcribe': { phone: { link: 'none' } },
-  'POST /m/api/chat/transcribe': { phone: { link: 'none' } },
-  // CC 回复里的文件按块读(2026-10-06)
-  'GET /m/api/chat/file': { phone: { link: 'none' } },
   // CC 的信(2026-10-18,mobile-letters.ts):寄出去了的信 + 一页 PNG 按块读。信是私事:链接令牌不在册(见 LINK_ROUTES)
   'GET /m/api/letters': { phone: { link: 'none' } },
   // 定时(对标 B7,2026-10-20):只给设备
@@ -683,7 +685,7 @@ export type DeclaredRouteKey = keyof typeof ROUTE_TABLE
  * (`src/features/phone/phone-route-table.ts` 的 `PhoneRouteTable`)和类型化客户端(`phone-calls.ts`)都只认这些键 ——
  * 路径只在这张表里写一次。
  */
-export type PanelRouteKey = Extract<DeclaredRouteKey, `${string} /m` | `${string} /m/${string}` | `${string} /set` | `${string} /set/${string}`>
+export type PanelRouteKey = Extract<DeclaredRouteKey, `${string} /m` | `${string} /m/${string}` | `${string} /set` | `${string} /set/${string}`> | MergedAliasKey
 
 /**
  * 手机能订阅的事件主题(phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾是前缀标记:

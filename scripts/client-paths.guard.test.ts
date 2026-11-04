@@ -18,12 +18,14 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '@wechat-cc/protocol/routes'
+import { MERGED_ALIAS_KEYS } from '../packages/protocol/src/wire-compat'
 import { DESKTOP_CALLS } from '../packages/protocol/src/desktop-calls'
 import { callRequest } from '../packages/protocol/src/calls'
 import { V1, v1, v1Request } from '../apps/desktop/src/daemon-client.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const PATHS = Object.keys(ROUTES).map(k => k.slice(k.indexOf(' ') + 1))
+// 已并成别名的旧手机路径(P3c 起,wire-compat.ts):路由表里没有这一行了,老客户端照样调,daemon 翻到 /v1 那一条
+const PATHS = [...Object.keys(ROUTES), ...MERGED_ALIAS_KEYS].map(k => k.slice(k.indexOf(' ') + 1))
 const known = (p: string) => PATHS.includes(p) || PATHS.some(q => q.startsWith(p))
 
 function walk(dir: string, exts: string[], out: string[] = [], skipDirs: string[] = []): string[] {

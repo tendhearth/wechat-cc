@@ -128,18 +128,22 @@ describe('两个监听各认各的令牌', () => {
   })
 })
 
+/** P3c-1 起路由表里带 phone 块的 /v1 行(一份数据一个处理器,手机的旧路径是别名);链接令牌只读其中两条。 */
+const P3C1_DEVICE = ['GET /v1/matter', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'POST /v1/companion/transcribe', 'POST /v1/matter/say']
+const P3C1_LINK = ['GET /v1/matter', 'GET /v1/matters']
+
 describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不了', () => {
-  it('今天路由表里没有一行 /v1 带 phone 块;PHONE_ROUTES / LINK_ROUTES 里没有 /v1 键', () => {
-    expect(PANEL_V1_ROUTES.device.size).toBe(0)
-    expect(PANEL_V1_ROUTES.link.size).toBe(0)
-    expect([...PHONE_ROUTES].filter(k => k.includes(' /v1/'))).toEqual([])
-    expect([...LINK_ROUTES].filter(k => k.includes(' /v1/'))).toEqual([])
+  it('路由表里带 phone 块的 /v1 行只有 P3c-1 并的那几条;PHONE_ROUTES / LINK_ROUTES 里的 /v1 键就是它们', () => {
+    expect([...PANEL_V1_ROUTES.device].sort()).toEqual(P3C1_DEVICE)
+    expect([...PANEL_V1_ROUTES.link].sort()).toEqual(P3C1_LINK)
+    expect([...PHONE_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual(P3C1_DEVICE)
+    expect([...LINK_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual(P3C1_LINK)
     // 链接令牌能写的(LINK_WRITE_OK)都还是 /m/api、/set/api 那几条
     expect(Object.keys(LINK_WRITE_OK).length).toBeGreaterThan(0)
     expect(Object.keys(LINK_WRITE_OK).filter(k => k.includes(' /v1/'))).toEqual([])
   })
 
-  it('真配对出来的设备令牌、真发的链接令牌:每一条 /v1 路由都 403 route_not_allowed,处理器不跑', async () => {
+  it('真配对出来的设备令牌、真发的链接令牌:没有 phone 块的每一条 /v1 路由都 403 route_not_allowed,处理器不跑;有的那几条照 link 放', async () => {
     await start()
     const device = await pairDevice()
     const link = panel!.issueToken()
@@ -148,6 +152,8 @@ describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不
       for (const key of V1_KEYS) {
         const [method, path] = key.split(' ') as [string, string]
         const r = await viaPanel(path, tok, method === 'POST' ? post({}) : {})
+        const open = tok === device ? P3C1_DEVICE.includes(key) : P3C1_LINK.includes(key)
+        if (open) { expect(r.status, `${tok[0]} ${key}`).not.toBe(403); continue }
         expect(r.status, `${tok[0]} ${key}`).toBe(403)
         expect(await r.json()).toEqual({ error: 'route_not_allowed' })
       }

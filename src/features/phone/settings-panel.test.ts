@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
+import { makeSettingsPanel as makePanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+/**
+ * P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。
+ * 这里的假实现只给几个字段(并之前面板也不核 /v1 的响应契约),所以不核契约;契约由 phone-api-schema / 真服务的测试管。
+ */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d, { responseContracts: false }))
 import { writeFileSync as wf } from 'node:fs'
 
 const OWNER = 'owner_chat@im.wechat'

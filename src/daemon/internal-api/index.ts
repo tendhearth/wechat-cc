@@ -34,6 +34,7 @@ import type { AddressInfo } from 'node:net'
 import {
   errMsg,
   LATE_KEYS,
+  PANEL_CAUSE_HEADER,
   type InternalApi,
   type InternalApiDeps,
   type RouteTable,
@@ -80,12 +81,17 @@ export function entryAccepts(entry: DispatchEntry, origin: TokenOrigin): boolean
 const PANEL_QUERY_KEYS = ['d', 't', '_via'] as const
 
 /** dispatch 的结果:回包 + 传输层要做的两件事(413 后关连接、回包写出去以后调的回调)。 */
-type DispatchResult = { status: number; body: unknown; closeConnection?: true; onSent?: Array<() => void> }
+type DispatchResult = { status: number; body: unknown; cause?: string; closeConnection?: true; onSent?: Array<() => void> }
 
 /** 面板那一口能走哪些 `/v1` 路由:默认从路由表推(`PANEL_V1_ROUTES`,带 `phone` 块的 `/v1` 行)。 */
 export interface InternalApiOptions {
   /** 测试用:替换「路由表里带 phone 块的 /v1 行」这份名单(P3b 时表里还没有这样的行,正向路径只能这样测)。 */
   panelRoutes?: { device: ReadonlySet<string>; link: ReadonlySet<string> }
+  /**
+   * 测试用:false ⇒ 2xx 回包不对着响应契约核。只给 `/m/api` 金样(P3a)用 —— 那份金样钉的是面板这一层,底下的服务给的是
+   * 照剧本回话的假实现(形状故意只有几个字段),核契约会把它们一律变成 500。别的测试别关。
+   */
+  responseContracts?: false
 }
 
 /** Fetch 的 Request 读 JSON 正文,带和 node 那边一样的上限语义(超了抛 request_body_too_large)。 */
@@ -390,8 +396,8 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
       const out = await route(url.searchParams, body, callerInfo, { signal, onSent: (cb) => { onSent.push(cb) } })
       // 契约(架构终态 F1):测试里每个 2xx 回包都对着响应契约核一遍 —— 契约写错了、处理器回的形状变了,测试当场红;
       // 生产里不核(不为契约多花一次 parse,也不因契约漏写一个可选字段就让主人的请求失败)。
-      if (UNDER_TEST_RUNNER && out.status >= 200 && out.status < 300) assertResponseContract(routeKey, out.body)
-      return { status: out.status, body: out.body, onSent }
+      if (UNDER_TEST_RUNNER && options.responseContracts !== false && out.status >= 200 && out.status < 300) assertResponseContract(routeKey, out.body)
+      return { status: out.status, body: out.body, onSent, ...(typeof out.cause === 'string' ? { cause: out.cause } : {}) }
     } catch (err) {
       // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
       // 不是 500,daemon 也不退。
@@ -515,7 +521,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
    * 查询串里的 `d` / `t`(令牌)与 `_via`(隧道标记)先剥掉:处理器读 searchParams、GET 的 schema 也按它校验。
    * onSent 在这一口不调:Response 交给 Bun.serve / 隧道以后写没写出去这里看不到,当没写出去(长轮询那条本来也不给手机)。
    */
-  async function panelDispatch(req: Request, caller: TokenInfo, opts: { frameBudget: number; client: 'app' | 'web' }): Promise<Response> {
+  async function panelDispatch(req: Request, caller: TokenInfo, opts: { frameBudget: number; client: 'app' | 'web'; cause?: true }): Promise<Response> {
     const url = new URL(req.url)
     for (const k of PANEL_QUERY_KEYS) url.searchParams.delete(k)
     const rawUrl = `${url.pathname}${url.search}`
@@ -523,12 +529,16 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     if (req.signal.aborted) ac.abort()
     else req.signal.addEventListener('abort', () => ac.abort(), { once: true })
     const out = await dispatch({
-      entry: 'panel', method: req.method, url, rawUrl, caller, panel: opts,
+      entry: 'panel', method: req.method, url, rawUrl, caller, panel: { frameBudget: opts.frameBudget, client: opts.client },
       io: { readBody: (maxBytes) => readFetchJsonBody(req, maxBytes), signal: () => ac.signal },
     })
     return new Response(JSON.stringify(out.body), {
       status: out.status,
-      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+      headers: {
+        'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
+        // 只给面板进程里的旧路由别名(opts.cause);它读完就丢,不写回手机
+        ...(opts.cause && out.cause ? { [PANEL_CAUSE_HEADER]: out.cause } : {}),
+      },
     })
   }
 

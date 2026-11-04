@@ -10,6 +10,10 @@
  * 加上去的东西:`{ ok }` 信封、phone 那一列错误码、手机默认筛选、链接令牌少读的、帧预算的裁剪、响应头。底下的服务怎么算
  * 不在这里(M0 金样和各服务自己的测试管)。合并时 deps 的形状可以变,这里的字节不许变。
  *
+ * P3c 起并成别名的那几条(wire-compat.ts 的 MERGED_ALIAS_KEYS)走内部 API 同一个分发:面板的 `v1` 接一个真的
+ * createInternalApi(只用 panelDispatch,不起监听),它的 MattersService / 语音口是同一份剧本(`v1Service`、`voiceRoutes`)。
+ * 剧本的形状故意只有几个字段,所以这里关掉响应契约的核对(`responseContracts: false`)—— 契约由别的测试管。
+ *
  * 规整:临时目录 ⇒ `<tmp>`;别的都由剧本定死(Date 用假时钟钉住)。art/presence 两张 PNG ~257KB,只钉长度与 sha256。
  * 每个文件存 { status, headers(content-type / cache-control), body }。
  *
@@ -25,6 +29,12 @@ import { fileURLToPath } from 'node:url'
 import { removeTempDir } from '../../lib/test-temp'
 import { makeSettingsPanel, type SettingsPanel, type SettingsPanelDeps } from '../../features/phone/settings-panel'
 import type { MessageRecord } from '../../lib/messages-store'
+import { createInternalApi } from '../internal-api'
+import { voiceRoutes } from '../../features/voice/routes'
+import { makeOwnerChatFileReader } from '../wiring/owner-chat-reading'
+import { fileChunkResponse } from '../../features/phone/mobile-chat'
+import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
+import type { MattersService } from '../../app/matters/service'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const GOLDEN = join(HERE, 'm-api-routes')
@@ -58,6 +68,24 @@ let seenAt: string | null = null
 
 const msg = (r: Partial<MessageRecord> & Pick<MessageRecord, 'id' | 'direction' | 'text'>): MessageRecord =>
   ({ chatId: OWNER, ts: new Date(T0 - 60_000).toISOString(), kind: 'text', source: 'phone', ...r } as MessageRecord)
+
+/** 照剧本回话的 MattersService(并成别名的那几条经 /v1 读它;形状同 pipeline-deps.ts 交给内部 API 的那一份)。 */
+function v1Service(panel: SettingsPanelDeps): MattersService {
+  const m = panel.matters!, chat = panel.chat!
+  const hits = [msg({ id: 'm-in-1', direction: 'in', text: '发我报告' }), msg({ id: 'm-out-1', direction: 'out', text: '报告在附件里。' })]
+  return {
+    list: f => m.list(f as never) as never,
+    withActs: rows => rows,
+    detail: id => m.detail(id) as never,
+    phoneMayOpen: matter => phoneMayOpenMatter(matter, OWNER),
+    seenOnPhone: id => m.seenOnPhone(id),
+    say: (id, text, _surface, input) => (input ? m.say(id, text, input) : m.say(id, text)) as never,
+    // pipeline-deps.ts 的 chat.search 那一行(messagesStore.search → 事件形状)
+    searchOwnerChat: async () => { check('search'); return { hits: hits.map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })) as never } },
+    // pipeline-deps.ts 的 chat.file 那一行
+    ownerChatFile: makeOwnerChatFileReader({ ownerChatId: () => OWNER, inboxDir: chat.inboxDir!, readChunk: fileChunkResponse, stickerDir: join(root, 'stickers'), message: (chatId, id) => chat.message!(chatId, id) }),
+  } as Partial<MattersService> as MattersService
+}
 
 function deps(): SettingsPanelDeps {
   const reportPath = join(root, 'files', 'report.md')
@@ -124,8 +152,6 @@ function deps(): SettingsPanelDeps {
       history: async () => [reply],
       chat: { say: () => chatJob, state: () => ({ pending: null, failed: null }), pendingMatter: () => null },
       message: async (_chatId, id) => (id === reply.id ? reply : null),
-      search: async () => { check('search'); return [msg({ id: 'm-in-1', direction: 'in', text: '发我报告' }), reply] },
-      transcribe: async () => { check('transcribe'); return { text: '  你好,帮我看看  ' } },
     },
     cliSessions: () => { check('cliSessions'); return [] },
     overseerToday: () => { check('today'); return { generatedAt: T0, since: T0 - 86_400_000, windowHours: 24, needsYou: [], done: [{ title: '修好登录' }], running: [], stuck: [], counts: { needsYou: 0, done: 1, running: 0, stuck: 0 }, unavailable: [], ccDecided: null, jobs: null } as never },
@@ -154,7 +180,10 @@ beforeAll(async () => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(T0)
   root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-mapi-golden-')))
-  panel = makeSettingsPanel(deps())
+  const d = deps()
+  const api = createInternalApi({ stateDir: root, daemonPid: 1, matters: v1Service(d) }, { responseContracts: false })
+  api.mount('voice', voiceRoutes({ voice: { transcribe: async () => { check('transcribe'); return { text: '  你好,帮我看看  ' } } } as never }))
+  panel = makeSettingsPanel({ ...d, v1: api.panelDispatch })
   const pairLink = panel.issueToken()
   deviceToken = ((await (await panel.handleRequest(new Request(`http://127.0.0.1/set/api/pair?t=${pairLink}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))).json()) as { device_token: string }).device_token
   linkToken = panel.issueToken()
