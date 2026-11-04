@@ -337,7 +337,7 @@ export interface InternalApiDeps {
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
    * minimal embeddings / tests, in which case the route returns 503.
    */
-  turns?: import('../../adapters/store/turn-record-store').TurnRecordStore
+  turns?: import('../../ports/turn-records').TurnRecordStore
   /**
    * Optional live-session lister — backs GET /v1/sessions and the
    * sessions_live count in GET /v1/health. A thunk (not the SessionManager

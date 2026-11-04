@@ -16,11 +16,11 @@
 
 | 现象 | 看哪里 |
 |---|---|
-| 主人收到了什么 | `[REPLY] … target= delivery= bubbles= attachments=`;`turn_records` 表的 delivery / bubbles / attachments 列 |
+| 主人收到了什么 | `[REPLY] … target= delivery= bubbles= attachments=`;`GET /v1/turns` 那一轮的 delivery / bubbles / attachments(M3c 起回合记录在这件对话的轮上,`matter_turns.policy_json`;`turn_records` 表已删) |
 | 模型写了 NO_REPLY | `[REPLY_SILENT] kind=tick`(推送,正常);`[REPLY_SILENT_IN_DM]`(私聊,异常,计入连击) |
 | 连着几轮什么都没交付 | `[PROVIDER_ANOMALY] … empty-reply streak=` |
 | 第一条就发失败 | `[REPLY_DELIVERY_FAIL] sent=n/m`(不会再调模型) |
-| /both、/chat 里每位参与者交付了什么 | 每位参与者一条 `turn_records`(`mode=parallel` / `chatroom`),daemon 模式的参与者和 solo 一样带 delivery / bubbles / attachments / narration_segments(2026-10-04 起;之前只有 solo 有);`[REPLY] … context=parallel` / `context=chatroom` |
+| /both、/chat 里每位参与者交付了什么 | 每位参与者一轮(`GET /v1/turns`)(`mode=parallel` / `chatroom`),daemon 模式的参与者和 solo 一样带 delivery / bubbles / attachments / narration_segments(2026-10-04 起;之前只有 solo 有);`[REPLY] … context=parallel` / `context=chatroom` |
 | 模型想「帮我告诉某人」却被 403 | 2026-10-04 起会话跨 chat 只能用 `message`(admin 专用);reply 族 / share / set-mode 一律只许本 chat。`[INTERNAL_API] 403 … chat_scope`(`chat_scope_denied`,`caller=admin` 就是这种);`message` 的跨 chat 记 `chat_scope_admin_cross`。规则见 `reference/internal-api-auth.md`「发送类路由的 chat 范围」 |
 
 ## /both 与 /chat(2026-10-04 补齐)
@@ -83,7 +83,7 @@ Cursor 走 ACP:每个会话一个常驻 `cursor-agent acp`,wechat MCP 是**逐�
 
 | 现象 | 看哪里 |
 |---|---|
-| 主人只收到过程话、没收到结论 | 模型把结论写在了中间、最后又补了一句 —— `[TURN]` 的 `delivery= bubbles=` 与 `turn_records.narration_segments`;桌面那一轮的旁白里能看到结论。真模型闸门还欠着(额度),见 `reference/reply-once-experiment.md`「第 3 步」残留 |
+| 主人只收到过程话、没收到结论 | 模型把结论写在了中间、最后又补了一句 —— `[TURN]` 的 `delivery= bubbles=` 与 `GET /v1/turns` 的 narrationSegments;桌面那一轮的旁白里能看到结论。真模型闸门还欠着(额度),见 `reference/reply-once-experiment.md`「第 3 步」残留 |
 | 一轮很长、主人收到一句进度 | `[REPLY_PROGRESS] … provider=cursor`(一轮最多一次,用最近一段旁白) |
 | 收到一句 Cursor 自己的报错(「Agent Looping Detected」之类) | 2026-10-03 起 ACP 边界认 cursor-agent 的固定写法(本轮最后一整块 `\n\n…`),带码当错误收尾,只发通知;TurnRecord 看 `error` / `error_code`。还收到原文 ⇒ cursor-agent 换了句式,按 `reference/provider-error-shapes.md` §8 的位置重新核对 |
 | 语音没发出去 | strict 权限下 ACP 的权限卡全拒 ⇒ 附件工具调不成(文字照常交付);`[REPLY] … attachments=0/0` |
@@ -100,7 +100,7 @@ Codex 对话侧每一轮是一次 `codex exec`(`@openai/codex-sdk` 的 `runStrea
 
 | 现象 | 看哪里 |
 |---|---|
-| 主人只收到一句「我查一下…」 | 不该发生(那是旁白)。看 `[TURN]` 的 `tools=` 有没有工具把它和结论隔开、`turn_records.narration_segments`;以前 shell 不产 tool_call 时就是这个形状 |
+| 主人只收到一句「我查一下…」 | 不该发生(那是旁白)。看 `[TURN]` 的 `tools=` 有没有工具把它和结论隔开、`GET /v1/turns` 的 narrationSegments;以前 shell 不产 tool_call 时就是这个形状 |
 | 语音 / 表情没发出去 | daemon 不是 `--dangerously`(strict)时 codex 拒掉所有 MCP 调用(「MCP tool call requires approval, but approval policy is never」),附件挂不上,文字照常交付;`[REPLY] … attachments=0/0` |
 | 私聊里一轮什么都没发 | codex 对「不用回」常写一条**空**消息 ⇒ `delivery=empty`,计入 `[PROVIDER_ANOMALY] … empty-reply streak=` |
 | 每轮都 400「model is not supported when using Codex with a ChatGPT account」 | 版本耦合,不是回复交付:CLI 太旧、拿不到配置的模型(2026-10-03 沙盒里 CLI 0.153.4 + `gpt-6.1-sol` 就是这样) |
@@ -117,7 +117,7 @@ Claude 对话侧是一个常驻的 Agent SDK `query()`(流式输入,一轮一条
 
 | 现象 | 看哪里 |
 |---|---|
-| 主人只收到「我先看看…」,没收到结论 | 不该发生。看 `[TURN]` 的 `tools=` 有没有把它和结论隔开、`turn_records.narration_segments`;有 `[REPLY_FINAL_CHECK] match=differs` ⇒ 分段和 SDK 自己的定义对不上,按 `reference/reply-once-experiment.md`「第 5 步」重新核对 SDK 的消息形状 |
+| 主人只收到「我先看看…」,没收到结论 | 不该发生。看 `[TURN]` 的 `tools=` 有没有把它和结论隔开、`GET /v1/turns` 的 narrationSegments;有 `[REPLY_FINAL_CHECK] match=differs` ⇒ 分段和 SDK 自己的定义对不上,按 `reference/reply-once-experiment.md`「第 5 步」重新核对 SDK 的消息形状 |
 | 收到子 agent 的过程话 | 不该发生(`parent_tool_use_id` 的文字不进回复)。`channel.log` 的 `CLAUDE_SUBAGENT_TEXT` 说明子 agent 说过话、被挡住了 |
-| 收到一句 API 报错原文 | 不该发生(#190 红线)。`CLAUDE_API_ERROR` 行;`turn_records.error_code` |
+| 收到一句 API 报错原文 | 不该发生(#190 红线)。`CLAUDE_API_ERROR` 行;`GET /v1/turns` 的 outcome / error |
 | 私聊里一轮什么都没发 | Claude 很少写 `NO_REPLY`(真跑「不用回」2/2 回了一句轻的);若写了 ⇒ `[REPLY_SILENT_IN_DM]`,计入连击 |

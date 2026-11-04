@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { openSqlite } from '../../lib/runtime/sqlite'
 import { migrations, runMigrations, type Db } from '../../lib/db'
-import { makeTurnRecordStore } from './turn-record-store'
+import { makeTurnRecordStore } from '../../test-support/legacy-turn-records'
 import { makeChatTurnRecords } from './chat-turn-records'
 import { makeMatterStore } from './matters-store'
 import { makeMatterLog } from './matter-log'

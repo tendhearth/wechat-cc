@@ -1,6 +1,6 @@
 import type { Db } from '../../lib/db'
 import type { TurnRecord } from '../../domain/turn-record'
-import type { StoredTurnRecord, TurnRecordStore } from './turn-record-store'
+import type { StoredTurnRecord, TurnRecordStore } from '../../ports/turn-records'
 
 /**
  * chat-turn-records.ts —— 对话的回合记录从这件对话的轮读(M3b,设计稿 2026-11-02-m3-chat-turns-design.md)。

@@ -1,4 +1,6 @@
 /**
+ * 只给测试用(M3c,v99 删了 turn_records):在迁到 v98 以前的库里按旧样子写回合,测 v97 搬家那几条。生产代码不再有这张表。
+ *
  * turn_records store — per-turn outcome log for daemon observability,
  * backed by the SQLite turn_records table (migration v15).
  *
@@ -12,8 +14,9 @@
  * Pure persistence; no control-flow side effects. internal-api's
  * `GET /v1/turns` reads via recentForChat / recent.
  */
-import type { Db } from '../../lib/db'
-import type { TurnRecord } from '../../domain/turn-record'
+import type { Db } from '../lib/db'
+import type { TurnRecord } from '../domain/turn-record'
+import type { StoredTurnRecord, TurnRecordStore } from '../ports/turn-records'
 
 /** Error strings are truncated to this many chars before persisting — a
  *  runaway error (stack dump, huge tool output) shouldn't bloat the row. */
@@ -23,22 +26,6 @@ const MAX_ERROR = 8192
  *  rows so the table stays bounded under a long-lived, chatty daemon while
  *  keeping enough history to diagnose a recent wedge. */
 export const TURN_RECORDS_MAX_PER_CHAT = 200
-
-/** A persisted TurnRecord — the coordinator's TurnRecord plus the row id. */
-export interface StoredTurnRecord extends TurnRecord {
-  /** 这一轮调过的工具名(去重)。v35 之前的老行恒为空数组 —— 那表示
-   *  「不知道」,不是「没调工具」。 */
-  toolCalls: string[]
-  id: string
-}
-
-export interface TurnRecordStore {
-  append(record: TurnRecord): void
-  /** Newest-first, capped at `limit`, for one chat. */
-  recentForChat(chatId: string, limit: number): readonly StoredTurnRecord[]
-  /** Newest-first across all chats, capped at `limit`. */
-  recent(limit: number): readonly StoredTurnRecord[]
-}
 
 interface Row {
   id: string
