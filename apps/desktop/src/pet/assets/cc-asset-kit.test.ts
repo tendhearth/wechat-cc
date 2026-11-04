@@ -361,7 +361,12 @@ describe('preserved second-batch authored performances', () => {
     for (const form of ['lit', 'unlit']) {
       expect(raw.motion.active).toBe(true)
       const states = { ...raw.forms[form].states, ...raw.motion.staticStates[form] }
-      expect(Object.keys(states)).toHaveLength(20)
+      expect(Object.keys(states).filter(name=>!name.startsWith('life-')).sort()).toEqual([
+        'blink','companion','done','drag','error','idle','look','permission','receive','sleep','thinking','wake','working',
+      ])
+      expect(Object.keys(states).filter(name=>name.startsWith('life-')).sort()).toEqual([
+        'celebrate','curiosity','land','lift','peek','peek-left','stretch','walk','work',
+      ].map(id=>`life-${id}`).sort())
       for (const [behavior, pose] of Object.entries(poses)) {
         const path = `sprites/${form}/${behavior}.png`
         expect(states[behavior].frames).toEqual([path])

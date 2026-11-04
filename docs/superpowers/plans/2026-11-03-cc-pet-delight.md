@@ -19,6 +19,7 @@
 - Schema4 `gazeUp` is finite and in[-0.04,0.14]; `crestTilt` finite in[-0.42,0.8], zero exceptcuriosity. Nine clips: seven existing counts/rates plus peek-left14@12 and curiosity36@12 =134 pairs. Final96samples/seed11/fourCPUthreads. Draft24samples remains isolated and unregistered.
 - Curiosity requires artwork,75s continuously eligible, once per calm episode,30min monotonic window-local cooldown. Opportunity consumed at start. Actual frame completion ends it; no factual state, background catch-up, scene replay or extended180s doze.
 - Genuine new-source validation and full compatible app backup precede serial dev integration/daily delivery. Preserve previous receipts, failed attempts and current data.
+- Operational validation, CI, signing, deployment and soak finish after source freeze. Their actual completion is recorded in this batch's local OPS receipts and ledger; retain this plan's frozen-source status rather than changing the verified/deployed commit just to tick later operational boxes.
 
 ## Review Focus
 
@@ -76,10 +77,10 @@
 - Update `manifest.json`, `apps/desktop/src/pet/assets/cc-performance-kit.test.ts`, performance README.
 
 - [x] First extend real asset-profile checks to schema3/nine IDs/134 paired frames and observe actual RED on the old kit. Retain all geometry/alpha/source/digest checks.
-- [ ] Freeze accepted authoring inputs. Render each full96sample clip as a separate Mini job with `--clip` and verified resume checkpoints; preserve old kit/progress before the first batch. Never mix draft24 frames into final provenance. Let other legitimate family jobs run between clips.
-- [ ] Prepare, do not activate, the complete catalog. Validate402PNGs against source/plan/renderer/helper/sample identities, shared masks, foot clearance, determinant, canvas and safe bounds; verify every frozen/legacy image byte remains unchanged.
-- [ ] Produce complete contacts, animated previews and actual HTML-player capture/timing evidence. Require a fresh visual pass after the draft round:96px intention,48px key-pose distinction, connected C/eyes/feet, deliberate contact, no skating/clipping, pleasing final settle and one specifically-CC beat. Revise affected clips if weak even when tests pass.
-- [ ] Activate only the accepted final candidate; copy exact bytes to root with a hash ledger. Run actual registered profile/preview tests on Mini. Update README without claiming owner aesthetic approval. Commit source/art and preserve review artifacts.
+- [x] Freeze accepted authoring inputs. Render each full96sample clip as a separate Mini job with `--clip` and verified resume checkpoints; preserve old kit/progress before the first batch. Never mix draft24 frames into final provenance. Let other legitimate family jobs run between clips.
+- [x] Prepare, do not activate, the complete catalog. Validate402PNGs against source/plan/renderer/helper/sample identities, shared masks, foot clearance, determinant, canvas and safe bounds; verify every frozen/legacy image byte remains unchanged.
+- [x] Produce complete contacts, animated previews and actual HTML-player capture/timing evidence. Require a fresh visual pass after the draft round:96px intention,48px key-pose distinction, connected C/eyes/feet, deliberate contact, no skating/clipping, pleasing final settle and one specifically-CC beat. Revise affected clips if weak even when tests pass.
+- [x] Activate only the accepted final candidate; copy exact bytes to root with a hash ledger. Run actual registered profile/preview tests on Mini. Update README without claiming owner aesthetic approval. Commit source/art and preserve review artifacts.
 
 ### Task 4: Native acceptance, independent review and daily delivery
 
