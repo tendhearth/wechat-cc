@@ -130,11 +130,18 @@ describe('路由表内的约束(原来四份名单之间的包含关系)', () =>
   })
   it('手机 / 设置页的行:路径归对端,link 为 read 必是 GET、write 必是 POST,且都带理由', () => {
     for (const [key, r] of Object.entries(ROUTES)) {
-      if (r.phone) expect(key, key).toMatch(/^(GET|POST) \/m(\/|$)/)
+      // P3b:`phone` 块也可以写在 `/v1` 行上(和 `desktop` 同一行:一份数据一条 /v1、令牌范围从这一行推);
+      // 不许是前缀键(以 `/` 结尾)—— 分发按精确键查,前缀在 `/v1` 上没有处理器。
+      const v1Phone = !!r.phone && /^(GET|POST) \/v1\//.test(key)
+      if (r.phone && !v1Phone) expect(key, key).toMatch(/^(GET|POST) \/m(\/|$)/)
+      if (v1Phone) {
+        expect(r.desktop, `${key}: /v1 行上的 phone 块必须和 desktop 同一行`).toBeDefined()
+        expect(key.endsWith('/'), `${key}: /v1 的 phone 行不许是前缀键`).toBe(false)
+      }
       if (r.set) expect(key, key).toMatch(/^(GET|POST) \/set(\/|$)/)
       const panel = r.phone ?? r.set
       if (!panel) continue
-      expect([r.desktop, r.phone, r.set].filter(Boolean).length, key).toBe(1)
+      expect([r.desktop, r.phone, r.set].filter(Boolean).length, key).toBe(v1Phone ? 2 : 1)
       if (panel.link === 'read') expect(key.startsWith('GET '), key).toBe(true)
       if (panel.link === 'write') expect(key.startsWith('POST '), key).toBe(true)
       if (panel.link !== 'none') expect((panel.reason ?? '').length, key).toBeGreaterThan(4)

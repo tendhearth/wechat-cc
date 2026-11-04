@@ -44,7 +44,7 @@ import { mobileActivityRoutes } from './mobile-activity'
 import { mobileReadsRoutes } from './mobile-reads'
 import { combinePhoneRoutes, ownsMethod, routePhone, type PhoneHandler, type PhoneRouteTable } from './phone-route-table'
 import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
-import {mobileMatterDetailResponse} from './mobile-matter-response'
+import {MAX_MOBILE_DETAIL_BYTES,mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../../app/matters/service'
 import { MATTER_KINDS, type MatterKindT, pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
@@ -207,6 +207,12 @@ export interface SettingsPanelDeps {
    * 带 origin / routeAllow,撤销走 invalidateSession。缺省 ⇒ 面板自建一个(测试用)。
    */
   tokens?: PanelTokens
+  /**
+   * 面板收到的 `/v1/*` 交给内部 API 同一个分发(P3b,设计稿 2026-11-05-p3-one-route-family):令牌面板先认(device / link)、
+   * routeAllow 先挡(`/v1` 那一行得有 `phone` 块才在 PHONE_ROUTES / LINK_ROUTES 里),分发那边再判一遍。缺省(测试)⇒ 404。
+   * `/m/api/*` 照旧走面板自己的处理器表。
+   */
+  v1?: import('../../daemon/internal-api/types').PanelDispatch
 }
 
 export interface SettingsPanel {
@@ -1035,6 +1041,12 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     }
     const deviceId = deviceIdOfSession(caller.sessionKey)
     if (caller.origin === 'device' && deviceId) devices.touch(deviceId)
+
+    // ── /v1/*:内部 API 同一个分发(P3b)。帧预算局域网直连和隧道都带(今天的手机处理器就是两边都裁);出生地看传输。
+    if (url.pathname.startsWith('/v1/')) {
+      if (!deps.v1) return json({ error: 'not_found' }, 404)
+      return await deps.v1(req, caller, { frameBudget: MAX_MOBILE_DETAIL_BYTES, client: phoneClientOf(req) })
+    }
 
     // ── token-gated:查表 ──────────────────────────────────────────
     return (await routePhone(routes, url, req, { t: t!, caller, deviceId })) ?? json({ error: 'not_found' }, 404)

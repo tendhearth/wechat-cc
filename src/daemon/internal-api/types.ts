@@ -580,7 +580,19 @@ export interface InternalApi {
   invalidateSession(sessionKey: string): void
   /** 手机设置面板的窄接口:同一个注册表,只能登记 / 查 / 撤 / 列 device 与 link 令牌(梳理第 6 步)。 */
   panelTokens: import('./token-registry').PanelTokens
+  /**
+   * 面板收到的 `/v1/*` 交给内部 API 同一个分发(P3b)。`caller` 是面板认过的 device / link 令牌;
+   * 别的 origin、令牌 routeAllow 里没有、或路由表那一行没有 `phone` 块 ⇒ 401 / 403,处理器不跑。
+   */
+  panelDispatch: PanelDispatch
 }
+
+/** 面板 → 内部 API 分发(P3b):帧预算与出生地由面板交进来(它知道传输)。 */
+export type PanelDispatch = (
+  req: Request,
+  caller: import('./token-registry').TokenInfo,
+  opts: { frameBudget: number; client: 'app' | 'web' },
+) => Promise<Response>
 
 /**
  * Each route handler receives the parsed query (always present) and the
@@ -607,6 +619,13 @@ export type RouteHandler = (
      */
     turnChatId?: string
     sharedTurn?: 'bound' | 'none' | 'ambiguous'
+    /**
+     * 只在从手机设置面板那一口进来时有(P3b;局域网直连和隧道都是):回包要裁的处理器按这个字节预算裁
+     * (`framedTooLarge` 那一套)。127.0.0.1 进来的不带 ⇒ 不裁。
+     */
+    frameBudget?: number
+    /** 同上,只在面板那一口有:原生 App 还是浏览器 /m(出生地,phone-client.ts 的判法)。operator ⇒ 桌面,不带这个字段。 */
+    client?: 'app' | 'web'
   },
   /**
    * signal:调用方断开时中止(长轮询的路由用;其余忽略)。
