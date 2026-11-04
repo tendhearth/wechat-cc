@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openDb, type Db } from '../../lib/db'
 import { makeCliEventHub, type CliEvent } from '../../app/cli-events'
 import { makeCliSessionStore, CLI_SESSION_ENDED_RETAIN_MS, CLI_SESSION_ABANDONED_RETAIN_MS, CLI_SESSION_MAX_ROWS } from './cli-session-store'
+import { makeMatterLog } from './matter-log'
+import { makeMatterStore } from './matters-store'
+import { makeTerminalTurnLog } from './terminal-turns'
 import { effectiveStatus, sortCliSessionViews, toCliSessionView, CLI_SESSION_STALE_MS } from '../../domain/cli-session-view'
 
 let db: Db
@@ -163,5 +166,53 @@ describe('终端会话登记处:状态从已有 hook 事件推导(v76)', () => {
     expect(v).toMatchObject({ code: 'abcdef', project: 'proj', pending: { tool: 'shell', summary: 'ls', since: 4 } })
     const a = { ...v, session_id: 'a', status: 'idle' as const, last_event_at: 100 }
     expect(sortCliSessionViews([a, v]).map(x => x.session_id)).toEqual(['abcdef123', 'a'])
+  })
+})
+
+describe('M4d 第 1 步:有那件 terminal 的事 ⇒ 状态 / 最近一句 / 等你那一项从这件事推', () => {
+  const live = () => {
+    const log = makeMatterLog(db), matters = makeMatterStore(db)
+    const turns = makeTerminalTurnLog({ db, log, matters })
+    const h = makeCliEventHub({ send: async () => 'sent', projectName: (c) => c, log: () => {}, now: () => clock, store: makeCliSessionStore(db, () => clock), turns })
+    return { h, turns, log, matters }
+  }
+  const cols = () => db.query<{ status: string; pending_tool: string | null }, [string]>('SELECT status, pending_tool FROM cli_sessions WHERE session_id=?').get(SID)
+  it('一串事件走下来,推出来的和以前列里记的一样;最近一句读时去 markdown、压成一行', () => {
+    const { h } = live()
+    h.ingest(ev())
+    expect(h.list()[0]).toMatchObject({ status: 'running', last_prompt_at: clock, pending: null })
+    clock += 1000
+    h.permissionAsked({ source: 'claude', session_id: SID, cwd: '/home/u/work/wechat-cc', tool_name: 'Bash', summary: 'ls  *.ts\n| head' })
+    expect(h.list()[0]).toMatchObject({ status: 'waiting', pending: { tool: 'Bash', summary: 'ls *.ts | head', since: expect.any(Number) } })
+    h.permissionSettled(SID, 'allow')
+    expect(h.list()[0]).toMatchObject({ status: 'running', pending: null })
+    clock += 1000
+    clock += 500
+    h.ingest(ev())
+    h.ingest(ev({ kind: 'stop', text: '**改好了**\n\n三处 `a.ts`' }))
+    expect(h.list()[0]).toMatchObject({ status: 'idle', last_summary: '改好了 三处 a.ts' })
+    const asked = clock
+    clock += 1000
+    h.ingest(ev({ automated: true }))
+    expect(h.list()[0]).toMatchObject({ status: 'running', last_prompt_at: asked })
+    clock += 1000
+    h.ingest(ev({ kind: 'session_end' }))
+    expect(h.list()).toEqual([])
+    expect(h.list({ includeEnded: true })[0]).toMatchObject({ status: 'ended' })
+    expect(h.lookup('a1b2')).toBeNull()
+  })
+  it('daemon 重启:还有动静的轮照旧在做;开着的卡作废了 ⇒ 不再显示等你(列里还记着 waiting)', () => {
+    const first = live()
+    first.h.ingest(ev())
+    first.h.permissionAsked({ source: 'claude', session_id: SID, cwd: '/home/u/work/wechat-cc', tool_name: 'Bash', summary: 'ls' })
+    const again = live()
+    again.turns.interruptAll(Date.now())
+    expect(cols()).toMatchObject({ status: 'waiting', pending_tool: 'Bash' })
+    expect(again.h.list()[0]).toMatchObject({ status: 'running', pending: null })
+  })
+  it('没有那件事的老会话(M4a 之前)⇒ 照旧读列', () => {
+    hub().ingest(ev({ kind: 'stop', text: '好了' }))
+    expect(db.query('SELECT count(*) n FROM matter_bindings').get()).toEqual({ n: 0 })
+    expect(hub().list()[0]).toMatchObject({ status: 'idle', last_summary: '好了' })
   })
 })

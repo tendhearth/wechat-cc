@@ -25,6 +25,6 @@ export interface TerminalTurnLog {
   permissionSettled(sessionId: string, status: string): void
   /** 这个会话的那件事(没有就建,同 event 第一次见到时)。读记录进步之前先确保有(M4b,Codex 评审)。 */
   ensure(ev: Pick<TerminalEventIn, 'source' | 'session_id' | 'cwd' | 'machine' | 'origin_agent'>): string
-  /** 开机:上一次进程里没收的终端轮记中断。 */
-  interruptAll(): void
+  /** 开机:上一次进程里没收、而且久没动静的终端轮记中断(还有动静的照旧在做:终端在 daemon 外面跑);开着的卡一律收(码只在内存里)。 */
+  interruptAll(at?: number): void
 }
