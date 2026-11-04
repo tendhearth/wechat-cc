@@ -61,6 +61,21 @@ describe('chat-turn-records(M3b):从这件对话的轮读回合记录', () => {
     // 不重复搬;那一轮当时没记的几项用 turn_records 那一行补上 ⇒ 读出来和旧读口一样
     expect(noId(makeChatTurnRecords(d2).recent(50))).toEqual([{ chatId: OWNER, provider: 'claude', alias: '_default', mode: 'solo', startedAt: 1_000, endedAt: 4_000, durationMs: 3_000, outcome: 'completed', replyToolCalled: false, textChunks: 1, toolCalls: [] }])
   })
+  it('同一个对话同一家同一毫秒的两轮(runner 支持):迁移一对一配对,各补各的,哪一行都不丢(Codex 评审 P2)', () => {
+    const db = openSqlite(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON;'); for (const m of migrations.slice(0, 96)) m(db); db.exec('PRAGMA user_version = 96;')
+    const ms = makeMatterStore(db); const mid = ms.ensureChat(OWNER).id
+    const log = makeMatterLog(db)
+    // M3a 那时并行写下的两轮(只有 alias / mode)+ turn_records 里对应的两行,外加一行没并行写过的
+    for (const end of [4_000, 6_000]) { const t = log.startTurn({ matterId: mid, executor: 'claude', startedAt: 1_000, policy: { alias: '_default', mode: 'solo' } }); log.finishTurn(t.id, { status: 'completed', endedAt: end }) }
+    const old = makeTurnRecordStore(db)
+    old.append(rec({ endedAt: 4_000, durationMs: 3_000, textChunks: 2, toolCalls: ['a'] }))
+    old.append(rec({ endedAt: 6_000, durationMs: 5_000, outcome: 'error', error: 'boom', textChunks: 0, toolCalls: ['b'] }))
+    old.append(rec({ startedAt: 1_000, endedAt: 8_000, durationMs: 7_000, textChunks: 4, toolCalls: ['c'] }))
+    const before = old.recent(50)
+    runMigrations(db, migrations)
+    expect(noId(makeChatTurnRecords(db).recent(50))).toEqual(noId(before))
+  })
   it('新写的轮(runner 经 chat-turns)读出来也是同一个形状;还在跑的不出现', () => {
     const db = openSqlite(':memory:') as unknown as Db
     db.exec('PRAGMA foreign_keys = ON;'); runMigrations(db, migrations)
