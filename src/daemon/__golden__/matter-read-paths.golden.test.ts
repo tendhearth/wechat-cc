@@ -9,7 +9,10 @@
  *   /v1/matter            桌面「一件事」详情    mattersRoutes(真 MattersService)
  *   /m/api/matter         手机「一件事」详情    makeSettingsPanel().handleRequest(设备令牌,同中继转进来的那一口)
  *   /m/api/chat           手机主人对话一页      同上
- *   /m/api/cli/activity   手机看终端会话几步    同上(cliActions = 真 makeCliPhoneActions + 真 CliEventHub)
+ *   /m/api/cli/activity   手机看终端会话几步    同上(cliActions = 真 makeCliPhoneActions + 真 CliEventHub + 真 steps,M6a)
+ *   /m/api/cli/sessions   手机终端会话列表      同上(带 matter_id 与在跑那条的 now)
+ *   /m/api/matters        手机「一件事」列表    同上(默认与 ?kind=act)
+ *   终端 / act 那件事     /v1/matter、/m/api/matter(终端会话那件事;信那件 act,经 makeCcActs 写)
  *   topic matter/<id>     App 订阅的快照        makePhoneEventsWiring(daemon 同一份接线)订阅后收到的第一帧
  *
  * 接缝:路由处理器(桌面)/ 面板的 handleRequest(手机)/ 事件集线器的 subscribe(App topic)——都在 M 线要重写的
@@ -19,7 +22,8 @@
  * 规整(只动真的不确定的):
  *   - 临时目录 ⇒ `<tmp>`;
  *   - 生成的 id:任务 / 一件事的 8 位 id ⇒ `<task:名字>` / `<chat>`;其余 UUID(runId、权限 / 提问 id、集线器 epoch……)
- *     按全局第一次出现的顺序 ⇒ `<uuid:N>`。
+ *     按全局第一次出现的顺序 ⇒ `<uuid:N>`;终端那件事 ⇒ `<terminal>`;轮的 16 位 id 按 cursor 顺序 ⇒ `<turn:N>`
+ *     (信那件 act 的 id 由名字定,本来就确定,不规整)。
  *   - 时间不规整:Date 用 vitest 假时钟钉死,每一步手动拨(见 at()),时间戳本身就是确定的。
  *
  * 红了先想是不是改到了客户端看得见的东西。确实要变(设计稿 §8 第 5 条:改它的那个 PR 里重录并逐行说明):
@@ -49,6 +53,11 @@ import { ownerChatReadingEvent } from '../wiring/owner-chat-reading'
 import { makeCliEventHub, type CliEventHub } from '../../app/cli-events'
 import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
 import { makeCliPhoneActions } from '../../features/terminal/phone-actions'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
+import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
+import { makeTerminalSteps, withTranscriptSteps } from '../../features/terminal/terminal-steps'
+import { makeCcActs } from '../../adapters/store/cc-acts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const GOLDEN = join(HERE, 'matter-read-paths')
@@ -69,7 +78,10 @@ let hub: CliEventHub
 let desktopMatters: RouteTable
 let desktopWorkbench: RouteTable
 let topics: ReturnType<typeof makePhoneEventsWiring>
-const ids: Record<'done' | 'permission' | 'question' | 'chat', string> = { done: '', permission: '', question: '', chat: '' }
+const ids: Record<'done' | 'permission' | 'question' | 'chat' | 'terminal', string> = { done: '', permission: '', question: '', chat: '', terminal: '' }
+/** 信那件事的 id 由发起方名字定(cc-acts.ts 的 ccActMatterId),本来就是确定的,不规整。 */
+let actId = ''
+let matterStore: ReturnType<typeof makeMatterStore>
 
 // ── 照剧本说话的假执行者 ─────────────────────────────────────────────
 /** 测试拿着的闸门:执行者走到 hold(name) 就停,直到测试 open(name)。 */
@@ -197,7 +209,25 @@ function seedCliSession(): string {
     L({ type: 'assistant', timestamp: T(25), message: { role: 'assistant', content: [{ type: 'text', text: '500 修好了;还有一个 401 的测试没过,要接着看吗?' }] } }),
   ].join('\n') + '\n')
   hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'cli-golden-1', cwd: '/w/app', machine: MACHINE, transcript_path: path })
+  // 钩子进来那一刻生产就建了这件事(terminal-turns 的 ensure)并把记录读进步(withTranscriptSteps)
+  ids.terminal = matterStore.findBySurface('cli', 'cli-golden-1')?.id ?? ''
+  if (!ids.terminal) throw new Error('terminal matter not created')
+  // 步真的读进来了 ⇒ steps.view 不会回 null,activity 走的是步而不是退路解析
+  const steps = db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM matter_items WHERE matter_id=? AND kind IN ('user_message','agent_message','tool_call')").get(ids.terminal)?.n ?? 0
+  if (steps !== 7) throw new Error(`terminal steps not imported: ${steps}`)
   return 'cli-golden-1'
+}
+
+function seedLetterAct(db: Db): void {
+  // (6) CC 自己做的一件事:信(M5b)。照 features/letters/wire.ts 建 makeCcActs,照 runtime.ts 的 actTurn / filed / deliverIn 写一轮
+  const acts = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db), onError: (what, err) => { throw new Error(`${what}: ${String(err)}`) } })
+  at(32)
+  const t = acts.begin('letters', { startedAt: Date.now(), policy: { trigger: 'owner' } })
+  t.step('artifact', { letter: 'letter-golden-1', pages: 2, chars: 480, opening: '大人:' })
+  at(33)
+  t.step('delivery', { letter: 'letter-golden-1', result: 'sent', via: 'wechat' }, { status: 'completed' })
+  t.finish('completed', { endedAt: Date.now() })
+  actId = acts.matterIdOf('letters')
 }
 
 // ── 组装(照 daemon/wiring 的 pipeline-deps / wire-phone / wire-settings-panel)────────────
@@ -207,6 +237,7 @@ beforeAll(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-golden-')))
   db = openTestDb()
   const matters = makeMatterStore(db)
+  matterStore = matters
   const messages = makeMessagesStore(db)
   const registry = createProviderRegistry()
   registerScriptedClaude(registry)
@@ -226,14 +257,24 @@ beforeAll(async () => {
       say: async () => ({ reply: '' }),
       recent: async (chatId: string, limit: number) => (await messages.listRange(chatId, { limit })).map(row => ownerChatReadingEvent(row, inboxDir)).filter(r => r.text.trim() !== '' || r.replyExtras),
     },
+    // CC 自己做的事(M5c):act 的列表行与详情读轮与步(pipeline-deps.ts 原样)
+    log: makeMatterLog(db),
   })
   // wire-phone.ts:主人对话(peek / ensure)+ 手机对话
   const phoneOwner = makePhoneOwner({ ownerChatId: () => OWNER, matters, origin: () => null })
   const phoneChat = makePhoneChat({ converse: async () => ({ reply: '' }), ownerMatterId: () => phoneOwner.ensure() })
-  hub = makeCliEventHub({ send: async () => 'sent', projectName: c => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db) })
-  // 手机看终端几步只用 activity(读 hub + 记录尾巴);拍板 / 说一句的两样(relay / core)这里用不到,给空的
+  // features/terminal/wire.ts:终端那件事的轮(terminal-turns)+ 记录增量读进步(terminal-steps),hub 的 turns 是两者叠起来的那一份
+  const matterLog = makeMatterLog(db)
+  const terminalTurns = makeTerminalTurnLog({ db, log: matterLog, matters })
+  const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters }) })
+  let lookupSession: (id: string) => ReturnType<CliEventHub['lookup']> = () => null
+  const turnsWithSteps = withTranscriptSteps({ turns: terminalTurns, steps: terminalSteps, localMachine: MACHINE, lookup: id => lookupSession(id), log: () => {} })
+  hub = makeCliEventHub({ send: async () => 'sent', projectName: c => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db), localMachine: MACHINE, turns: turnsWithSteps })
+  lookupSession = id => hub.lookup(id)
+  // 手机看终端几步:wire.ts 的 phoneActions,带生产的 steps(先读步,没有那件事才退回直接解析记录)。
+  // 拍板 / 说一句的两样(relay / core)这里用不到,给空的;开着的窗口读本机 Claude 登记,不确定 ⇒ 给空集
   const cliActions = makeCliPhoneActions({
-    hub, localMachine: MACHINE, log: () => {},
+    hub, localMachine: MACHINE, log: () => {}, liveIds: () => new Set(), steps: terminalSteps,
     relay: { pendingHash: () => null, owns: () => false },
     core: { resume: async () => { throw new Error('not used') } },
     resolve: () => false,
@@ -243,8 +284,10 @@ beforeAll(async () => {
     stateDir: root, ownerChatId: () => OWNER, log: () => {},
     chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {},
     executorName: (id: string) => registry.namesOf(id).name,
-    matters: { list: f => service.list(f), detail: id => service.detail(id), inputReceipt: service.inputReceipt, say: (id, text, input) => service.say(id, text, 'phone', input), permission: service.permission, answer: service.answer, stop: service.stop, worktree: service.worktree, rewindPreview: service.rewindPreview, rewind: service.rewind, artifactChunk: service.artifactChunk, handoff: service.handoff, seenOnPhone: id => matters.bind(id, 'phone', 'pwa') },
+    matters: { list: f => service.list(f), withActs: rows => service.withActs(rows), detail: id => service.detail(id), inputReceipt: service.inputReceipt, say: (id, text, input) => service.say(id, text, 'phone', input), permission: service.permission, answer: service.answer, stop: service.stop, worktree: service.worktree, rewindPreview: service.rewindPreview, rewind: service.rewind, artifactChunk: service.artifactChunk, handoff: service.handoff, seenOnPhone: id => matters.bind(id, 'phone', 'pwa') },
     chat: { owner: () => phoneOwner.peek(), inboxDir, history: (chatId, o) => messages.listRange(chatId, o), chat: phoneChat, message: (chatId, id) => messages.get(chatId, id) },
+    // daemon/wiring/module.ts:登记处列表每行带上这条会话的那件事
+    cliSessions: () => hub.list({ limit: 50 }).map(v => { const m = matters.findBySurface('cli', v.session_id)?.id; return m ? { ...v, matter_id: m } : v }),
     cliActions,
   })
   const link = panel.issueToken()
@@ -261,6 +304,7 @@ beforeAll(async () => {
   await seedTasks()
   await seedOwnerChat(messages, matters)
   seedCliSession()
+  seedLetterAct(db)
   at(40)
 }, 30_000)
 
@@ -294,7 +338,9 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 const uuidLabels = new Map<string, string>()
 function normalise(payload: string): string {
   let s = payload.split(root).join('<tmp>')
-  for (const [name, id] of Object.entries(ids)) if (id) s = s.split(id).join(name === 'chat' ? '<chat>' : `<task:${name}>`)
+  for (const [name, id] of Object.entries(ids)) if (id) s = s.split(id).join(name === 'chat' || name === 'terminal' ? `<${name}>` : `<task:${name}>`)
+  // matter_turns 的 id(16 位随机 hex,act / 终端详情里露出来):按轮的 cursor 顺序 ⇒ <turn:N>
+  db.query<{ id: string }, []>('SELECT id FROM matter_turns ORDER BY cursor').all().forEach((t, i) => { s = s.split(t.id).join(`<turn:${i + 1}>`) })
   return s.replace(UUID, m => {
     const k = m.toLowerCase()
     if (!uuidLabels.has(k)) uuidLabels.set(k, `<uuid:${uuidLabels.size + 1}>`)
@@ -342,7 +388,21 @@ describe.skipIf(process.platform === 'win32')('做事读路径金样(M0)', () =>
     pin('chat.m-api-chat.page.json', await phone('/m/api/chat?limit=2&before=' + encodeURIComponent(new Date(T0 + 22 * 60_000).toISOString())))
   })
 
-  it('终端会话:/m/api/cli/activity', async () => {
+  // M6a:activity 走生产的步(steps.view);字节和 M0 钉的「直接解析记录」那份一样 ⇒ 步和退路解析一样
+  it('终端会话:/m/api/cli/activity · /m/api/cli/sessions(带 now)· 那件事的 /v1/matter · /m/api/matter', async () => {
     pin('cli.m-api-cli-activity.json', await phone('/m/api/cli/activity?session_id=cli-golden-1'))
+    pin('cli.m-api-cli-sessions.json', await phone('/m/api/cli/sessions'))
+    pin('cli.v1-matter.json', await desktop(desktopMatters, 'GET /v1/matter', { id: ids.terminal }))
+    pin('cli.m-api-matter.json', await phone(`/m/api/matter?id=${ids.terminal}`))
+  })
+
+  it('CC 自己做的事(信):/m/api/matter', async () => {
+    pin('act-letters.m-api-matter.json', await phone(`/m/api/matter?id=${actId}`))
+  })
+
+  // 列表放最后:/m/api/matters 给每一行登记手机露面(matter_bindings 多一行),先读的详情才不受它影响
+  it('手机列表:/m/api/matters · ?kind=act', async () => {
+    pin('matters.m-api-matters.json', await phone('/m/api/matters'))
+    pin('matters.m-api-matters.kind-act.json', await phone('/m/api/matters?kind=act'))
   })
 })

@@ -1,0 +1,32 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "sessions": [
+      {
+        "session_id": "cli-golden-1",
+        "code": "cli-go",
+        "source": "claude",
+        "status": "running",
+        "stale": false,
+        "project": "app",
+        "machine": "golden-mac",
+        "last_summary": "500 修好了;还有一个 401 的测试没过,要接着看吗?",
+        "last_event_at": 1793413800000,
+        "last_prompt_at": 1793413800000,
+        "created_at": 1793413800000,
+        "pending": null,
+        "matter_id": "<terminal>",
+        "displayName": "Claude",
+        "now": {
+          "kind": "step",
+          "text": "运行 bun test src/auth.test.ts",
+          "at": 1793413815000,
+          "verb": "run",
+          "target": "bun test src/auth.test.ts",
+          "error": true
+        }
+      }
+    ]
+  }
+}
