@@ -13,6 +13,16 @@ describe('演示后端', () => {
     expect((await b.insight('a1b2c3d4', 'zh-Hans')).explanations['perm-demo-1']?.source).toBe('model')
     expect((await b.matter('c9d0e1f2', 'en')).questions.length).toBe(1)
   })
+  it('「CC 最近在忙」(M5c):三件 act 只从 ccActs 来、不混进 matters();点进去有轮,形状过协议', async () => {
+    const b = makeDemoBackend()
+    const acts = await b.ccActs('zh-Hans')
+    expect(acts.map(m => [m.kind, m.act?.who])).toEqual([['act', 'memory'], ['act', 'letters'], ['act', 'hunt']])
+    expect((await b.matters('zh-Hans')).some(m => m.kind === 'act')).toBe(false)
+    expect(PHONE_API_SCHEMAS['GET /m/api/matters']!.safeParse({ ok: true, matters: acts }).success).toBe(true)
+    const d = await b.matter(acts[1]!.id, 'zh-Hans')
+    expect(d.actTurns?.length).toBe(2)
+    expect(MatterDetail.safeParse(d).success).toBe(true)
+  })
   it('允许 ⇒ 立刻推「正在整理」,2 秒后「这一轮已回复」;四个主题都更新', async () => {
     vi.useFakeTimers()
     try {

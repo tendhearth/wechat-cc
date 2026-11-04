@@ -1,5 +1,5 @@
 import type { Lang } from '../i18n'
-import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT, PhoneJobT, ActivityItemT, TodoRowT } from './types'
+import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT, PhoneJobT, ActivityItemT, TodoRowT, MatterDetailT } from './types'
 
 /** 演示情境的文案(中英两份,照设计样稿 tendhearth-phone.html 的 tr('中','英'))。 */
 type Pair = readonly [zh: string, en: string]
@@ -303,4 +303,42 @@ export function demoTodos(lang: Lang, now: number): Array<TodoRowT & { settled: 
     id: r.id, contact: r.contact, predicate: 'obligation', value: pick(lang, r.value), time_ref: r.time_ref ? pick(lang, r.time_ref) : null,
     updated_at: Math.floor((now - r.ago) / 1000), display: pick(lang, r.display), settled: r.settled,
   }))
+}
+
+/**
+ * 演示的「CC 最近在忙」(M5c):信、记忆整理、打猎三件,形状同 daemon(点名 kind=act 的列表行 + 详情的 actTurns)。
+ * 标题是 daemon 那边的中文名(App 按发起方按语言换);步只放摘要,跟 daemon 一样不放信的正文。
+ */
+export const CC_ACT_IDS = { letters: 'acc0a001', memory: 'acc0a002', hunt: 'acc0a003' } as const
+type ActTurnT = NonNullable<MatterDetailT['actTurns']>[number]
+export function demoCcActs(now: number): MatterDetailT[] {
+  const base = { projectPath: null, status: 'open' as const, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: now - 30 * DAY, origin: 'companion' as const }
+  const detail = (id: string, title: string, who: string, turns: ActTurnT[]): MatterDetailT => ({
+    matter: { ...base, id, kind: 'act', title, updatedAt: turns[0]!.endedAt ?? turns[0]!.startedAt, act: { who, latest: turns[0]! } },
+    bindings: [], sessions: [], task: null, events: [], permissions: [], questions: [], artifacts: [], inputs: [], actTurns: turns,
+  })
+  const turn = (id: string, ago: number, steps: ActTurnT['steps'], over: Partial<ActTurnT> = {}): ActTurnT =>
+    ({ id, status: 'completed', errorCode: null, startedAt: now - ago - 60_000, endedAt: now - ago, steps, ...over })
+  return [
+    detail(CC_ACT_IDS.memory, '记忆整理', 'memory', [
+      turn('dm2', 3 * HOUR, [
+        { kind: 'system', status: 'completed', at: now - 3 * HOUR, payload: { applied: { add: 2, update: 1 }, notice: true } },
+        { kind: 'delivery', status: 'completed', at: now - 2 * HOUR, payload: { notice: 'sent', channel: 'wechat' } },
+      ], { trigger: 'schedule' }),
+      turn('dm1', DAY + 3 * HOUR, [{ kind: 'system', status: 'completed', at: now - DAY - 3 * HOUR, payload: { applied: { add: 1 } } }], { trigger: 'owner' }),
+    ]),
+    detail(CC_ACT_IDS.letters, '信', 'letters', [
+      turn('dl2', DAY + 2 * HOUR, [
+        { kind: 'artifact', status: 'completed', at: now - DAY - 2 * HOUR, payload: { letter: '2026-10-16-a1b2c3', pages: 2, chars: 420 } },
+        { kind: 'delivery', status: 'completed', at: now - DAY - 2 * HOUR, payload: { result: 'sent', via: 'image' } },
+      ]),
+      turn('dl1', 6 * DAY, [
+        { kind: 'artifact', status: 'completed', at: now - 6 * DAY, payload: { pages: 0, chars: 260 } },
+        { kind: 'delivery', status: 'failed', at: now - 6 * DAY, payload: { result: 'waiting' } },
+      ], { status: 'failed', errorCode: 'waiting' }),
+    ]),
+    detail(CC_ACT_IDS.hunt, '打猎', 'hunt', [
+      turn('dh1', 2 * DAY, [{ kind: 'artifact', status: 'completed', at: now - 2 * DAY, payload: { messages: 2, caught: 3 } }]),
+    ]),
+  ]
 }

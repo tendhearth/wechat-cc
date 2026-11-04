@@ -23,6 +23,13 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     expect(v.groups.map(g => g.key)).toEqual(['waiting', 'working', 'back'])
     expect(homeView(input({ matters: [m('r', NOW)] })).groups.map(g => g.key)).toEqual(['working'])
   })
+  it('CC 自己做的事(act)哪组都不进 —— 就算 daemon 送来了、在跑、做完了、还挂着一条批准(主人 10-31 定:不混排)', () => {
+    const acts = [m('a1', NOW, 'open', { kind: 'act' }), m('a2', NOW - H, 'done', { kind: 'act' }), m('a3', NOW, 'replied', { kind: 'act' })]
+    const v = homeView(input({ matters: [...acts, m('r', NOW)], approvals: [{ taskId: 'a1', kind: 'permission', id: 'p1', summary: 's' }] as any, agents: { running: 1, waiting: 0, tasks: [{ id: 'a3', phase: 'working' }] } as any }))
+    expect(v.groups.flatMap(g => g.rows.map(r => r.id))).toEqual(['r'])
+    expect(v.actionableWaiting).toEqual([])
+    expect(homeView(input({ matters: acts, backWindowMs: null, keepStaleWaiting: true })).groups).toEqual([])
+  })
   it('够不着电脑 ⇒ 不出等你组、说暂时不知道,其余组照常', () => {
     const v = homeView(input({ known: false, matters: [m('w', NOW), m('r', NOW)], approvals: [{ taskId: 'w', kind: 'permission', id: 'p1', summary: 's' }] as any }))
     expect(v.waitingUnknown).toBe(true)

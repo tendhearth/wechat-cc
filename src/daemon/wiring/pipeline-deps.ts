@@ -59,6 +59,7 @@ import type { YiHub, YiDispatch } from '../../app/yi-hub'
 import type { ExecResult } from '../../ports/a2a'
 import { makeMattersService } from '../../app/matters/service'
 import { makeSayReceipts } from '../../adapters/store/say-receipts'
+import { makeMatterLog } from '../../adapters/store/matter-log'
 import { surfaceOrigin, fileChunkResponse } from '../../features/phone'
 
 export interface DelegateDeps {
@@ -464,6 +465,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。
     sayReceipts: makeSayReceipts(db),
     originOf: surfaceOrigin,
+    // CC 自己做的事(M5c):act 的列表行与详情读轮与步(只读)
+    log: makeMatterLog(db),
   }) : null
   // 「CC 的连接」与「CC 现在怎么样」(重构第二批步 6c,wire-connections.ts)。
   // 配对过的手机数从设置面板读,面板又要 connections 当值 —— 真环。显式的晚绑定:手机那一簇建好之后才填;

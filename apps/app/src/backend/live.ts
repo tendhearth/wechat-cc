@@ -201,7 +201,10 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       }
     },
     async matters() {
-      return (await api.matters.list()).matters
+      return (await api.matters.list({ query: {} })).matters
+    },
+    async ccActs() {
+      return (await api.matters.list({ query: { kind: 'act' } })).matters.filter(m => m.kind === 'act')
     },
     async matter(id) {
       return strip(await api.matters.get({ query: { id } }))
