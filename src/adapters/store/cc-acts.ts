@@ -4,6 +4,10 @@ import { makeMatterStore } from './matters-store'
 import type { Db } from '../../lib/db'
 import type { MatterLog, MatterStore } from '../../ports/matters'
 import { CC_ACT_TITLES, type CcActRun, type CcActs, type CcActTurn, type CcActWho } from '../../ports/cc-acts'
+import { READY_STEP_PREFIX } from '../../domain/matters/ready-step'
+
+/** 「答完了、闲着」那一步(M6e,ready:<turnId>)是内部事实,不进 act 的轮 / 步视图(防御:今天只写在任务上)。 */
+const NOT_READY = `NOT (kind='system' AND COALESCE(item_key,'') LIKE '${READY_STEP_PREFIX}%')`
 
 /**
  * cc-acts.ts —— CC 自己做的事 → 每个发起方一件 kind='act' 的事(M5a)。只经 MatterLog 写。
@@ -59,7 +63,7 @@ export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterS
         const steps = new Map<string, CcActRun['steps'][number][]>()
         if (o.steps !== false) {
           for (const i of db.query<{ turnId: string; kind: string; status: string; payload: string; at: number }, typeof args>(
-            `SELECT turn_id AS turnId,kind,status,payload_json AS payload,created_at AS at FROM matter_items WHERE turn_id IN (${pick}) ORDER BY seq`).all(...args)) {
+            `SELECT turn_id AS turnId,kind,status,payload_json AS payload,created_at AS at FROM matter_items WHERE turn_id IN (${pick}) AND ${NOT_READY} ORDER BY seq`).all(...args)) {
             const list = steps.get(i.turnId) ?? []
             list.push({ kind: i.kind as CcActRun['steps'][number]['kind'], status: i.status as CcActRun['steps'][number]['status'], payload: parseObj(i.payload) ?? {}, at: i.at })
             steps.set(i.turnId, list)
@@ -73,7 +77,7 @@ export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterS
     stepsOf(who, kind) {
       try {
         return db.query<{ turnId: string; kind: string; status: string; payload: string; at: number }, [string, string]>(
-          'SELECT turn_id AS turnId,kind,status,payload_json AS payload,created_at AS at FROM matter_items WHERE matter_id=? AND kind=? AND turn_id IS NOT NULL ORDER BY seq DESC').all(ccActMatterId(who), kind)
+          `SELECT turn_id AS turnId,kind,status,payload_json AS payload,created_at AS at FROM matter_items WHERE matter_id=? AND kind=? AND turn_id IS NOT NULL AND ${NOT_READY} ORDER BY seq DESC`).all(ccActMatterId(who), kind)
           .map(i => ({ turnId: i.turnId, kind: i.kind as CcActRun['steps'][number]['kind'], status: i.status as CcActRun['steps'][number]['status'], payload: parseObj(i.payload) ?? {}, at: i.at }))
       } catch (err) { fail(`stepsOf ${who}`, err); return [] }
     },

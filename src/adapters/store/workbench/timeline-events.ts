@@ -3,6 +3,7 @@ import type {AgentActivity,AgentEvent} from '../../../ports/agent-provider'
 import type { Attachment } from '../../../ports/workbench'
 import type {MatterItem,MatterItemKind,MatterItemStatus,MatterLog} from '../../../ports/matters'
 import {makeMatterLog} from '../matter-log'
+import {isReadyStep} from '../../../domain/matters/ready-step'
 import type {WorkbenchTaskEventT} from '@wechat-cc/protocol/desktop-api'
 
 /**
@@ -39,15 +40,15 @@ export const timelineKey=(runId:string,kind:EventKind,nativeId:string)=>JSON.str
 const payloadOf=(p:{text:string;v:number;sourceId?:string|null;runId?:string|null;activity?:AgentActivity;attachments?:readonly Attachment[]}):Payload=>({text:p.text,v:p.v,
   ...(p.sourceId?{sourceId:p.sourceId}:{}),...(p.runId?{runId:p.runId}:{}),...(p.activity?{activity:p.activity}:{}),...(p.attachments?.length?{attachments:[...p.attachments]}:{})})
 
-/** 这一步是不是时间线上的(你说的 / 执行者说的 / 工具调用 / 系统 / 错误);是 ⇒ 投影里它的 kind。 */
-export const timelineKind=(item:MatterItem):TimelineKind|null=>EVENT_KIND[item.kind]??null
+/** 这一步是不是时间线上的(你说的 / 执行者说的 / 工具调用 / 系统 / 错误);是 ⇒ 投影里它的 kind。「答完了、闲着」那一步(M6e)是内部事实,不在时间线上。 */
+export const timelineKind=(item:MatterItem):TimelineKind|null=>isReadyStep(item)?null:EVENT_KIND[item.kind]??null
 export const stepPayload=(item:MatterItem):TimelinePayload=>item.payload as TimelinePayload
 /** 只留时间线上的步(权限卡、提问、成果、送达那几种不在这条时间线里)。 */
-export const timelineSteps=(items:readonly MatterItem[]):MatterItem[]=>items.filter(item=>EVENT_KIND[item.kind]!==undefined)
+export const timelineSteps=(items:readonly MatterItem[]):MatterItem[]=>items.filter(item=>timelineKind(item)!==null)
 
 /** 步 → 线上旧形状(WorkbenchTaskEvent)。只在出口用。 */
 export function workbenchTaskEvent(item:MatterItem):WorkbenchTaskEventT|null {
-  const kind=EVENT_KIND[item.kind];if(!kind)return null
+  const kind=timelineKind(item);if(!kind)return null
   const p=stepPayload(item)
   return {id:item.id,taskId:item.matterId,kind,text:p.text,createdAt:item.createdAt,sourceId:p.sourceId??null,
     ...(p.runId?{runId:p.runId}:{}),...(p.activity?{activity:p.activity}:{}),...(p.attachments?.length?{attachments:p.attachments}:{})}

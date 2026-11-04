@@ -6,6 +6,7 @@ import { sayTextHash } from '../../lib/content-hash'
 import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts'
 import {legacyStatusOfTaskView} from '../../domain/matters/legacy-status'
 import {phoneMayOpenMatter} from '../../domain/matters/phone-scope'
+import {isReadyStep} from '../../domain/matters/ready-step'
 import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
 
 /**
@@ -171,7 +172,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     if(!picked.length)return {...(who?{who}:{}),turns:[]}
     const want=new Set(picked.map(t=>t.id)),steps=new Map<string,MatterActStep[]>()
     for(const i of deps.log.items(id)){
-      if(!i.turnId||!want.has(i.turnId))continue
+      // 「答完了、闲着」那一步(M6e)是内部事实,不进给人看的轮视图
+      if(!i.turnId||!want.has(i.turnId)||isReadyStep(i))continue
       const payload=phoneActPayload(i.payload)
       let l=steps.get(i.turnId);if(!l)steps.set(i.turnId,l=[])
       l.push({kind:i.kind,status:i.status,at:i.updatedAt,...(payload?{payload}:{})})

@@ -100,6 +100,21 @@ describe('makeLifecycleDomain · 回报、回忆、落定', () => {
     spies.isReplied.mockReturnValueOnce(false); domain.settleQuiet(r); expect(spies.collectTurnArtifacts).toHaveBeenCalledTimes(1); expect(spies.matterSync).not.toHaveBeenCalled()
     domain.settleQuiet(r); expect(spies.matterSync).toHaveBeenCalledTimes(1); expect(spies.captureCodeChanges).toHaveBeenCalledTimes(1); expect(r.idleClose).toBeDefined(); expect(r.reportedTurn).toBe(0)
   })
+  it('settleQuiet 写 replied 的那一刻也在最近一轮上落一步 ready(M6e 双写):没安静不写;重复安静只一行;时间线、版本号不变', () => {
+    const { domain, running, state, spies, store, task } = setup()
+    const r = running(); state.reservations.set(r.identity, r); state.runsByTask.set(r.taskId, r)
+    store.execution.endTurn(store.execution.accept(task.id, 'run-1', { defaults: 'provider', model: null, reasoningEffort: null })!)
+    const before = { events: store.events(task.id), version: store.version(task.id) }
+    const ready = () => store.feed.cursor(task.id)
+    spies.isReplied.mockReturnValueOnce(false); const c0 = ready(); domain.settleQuiet(r)
+    expect(spies.matterSync).not.toHaveBeenCalled(); expect(ready()).toBe(c0) // 没安静:列没写、步也没写
+    domain.settleQuiet(r); const c1 = ready(); domain.settleQuiet(r)
+    expect(spies.matterSync).toHaveBeenCalledWith(task.id, 'replied')
+    expect(c1).toBeGreaterThan(c0); expect(ready()).toBe(c1) // 第二次安静:已经有了,不再写
+    expect(store.markReady(task.id)).toBe(false)
+    expect(store.events(task.id)).toEqual(before.events)
+    expect(store.version(task.id)).toBe(before.version)
+  })
   it('settleAfterDecision:已取消 / 在收尾 ⇒ 不动;否则先取消计时再重新落定', () => {
     const { domain, running, state } = setup()
     const r = running(); state.reservations.set(r.identity, r); state.runsByTask.set(r.taskId, r)

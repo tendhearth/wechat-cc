@@ -171,6 +171,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     collectTurnArtifacts(running)
     if (!quiet(running)) return
     matterSync(m=>m.setStatus(running.taskId,'replied'))
+    // M6e 双写:同一份「答完了、闲着」也落成这件事最近一轮上的一步(ready:<turnId>,幂等;主人看不见)。删列之后旧 status 读它。
+    try { store.markReady(running.taskId) } catch (err) { ctx.log?.('MATTER_READY',`markReady failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
     reportOnce(running)
     // 回忆(task-5,fix round 3,评审必判①):不在这里调 recollectOnce 了——
     // settleQuiet 每次安静都触发一次,而持久去重(journal.hasRecollection)

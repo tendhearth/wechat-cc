@@ -42,6 +42,13 @@ describe('cc-acts', () => {
     expect(log.items(id).map(i => i.kind)).toEqual(['delivery'])
   })
 
+  it('M6e:「答完了、闲着」那一步(ready:<turnId>)不进 runs / stepsOf;别的 system 步照旧', () => {
+    const acts = makeCcActs({ db, log, matters })
+    const t = acts.begin('memory', { startedAt: 10 }); t.step('system', { applied: { add: 1 } }); t.finish('completed', { endedAt: 20 })
+    log.writeItem({ matterId: ccActMatterId('memory'), turnId: t.id!, kind: 'system', status: 'completed', key: `ready:${t.id}`, payload: { ready: true } })
+    expect(acts.runs('memory')[0]!.steps.map(s => s.payload)).toEqual([{ applied: { add: 1 } }])
+    expect(acts.stepsOf('memory', 'system').map(s => s.payload)).toEqual([{ applied: { add: 1 } }])
+  })
   it('runs(M5d):新的在前、带步;按结局筛;steps:false 不读步;没建过 / 读不出 ⇒ []', () => {
     const errs: string[] = []
     const acts = makeCcActs({ db, log, matters, onError: (w) => errs.push(w) })

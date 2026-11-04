@@ -419,4 +419,35 @@ describe.skipIf(process.platform === 'win32')('做事读路径金样(M0)', () =>
     pin('matters.m-api-matters.json', await phone('/m/api/matters'))
     pin('matters.m-api-matters.kind-act.json', await phone('/m/api/matters?kind=act'))
   })
+
+  // M6e 前半:「答完了、闲着」那一步(ready:<turnId>)主人看不见。夹具里的执行者不保留会话、走不到 settleQuiet,
+  // 所以这里直接在做完那件的最近一轮上写一步,前后各读一遍它的读路径与列表:除了这件事的游标(任何一次写都推进它,
+  // 只是「变了」的信号)逐字节一样;桌面工作台详情两份另外对金样(它们不带手机露面,前面读过也不变)。
+  // 时间拨回这件事上一次的 updated_at —— 生产里这一步和列的 replied 同一刻写,updated_at 本来就是那一刻;
+  // 这里只证明这一步本身不改任何投影。放最后:它改了库。
+  it('M6e:ready 步写进去以后,任务读路径与列表除游标外一字不变', async () => {
+    const mask = (raw: Raw) => (JSON.stringify({ status: raw.status, body: JSON.parse(normalise(raw.payload)) }, null, 2) + '\n').replace(/"cursor": \d+/g, '"cursor": <cursor>')
+    const readAll = async () => [
+      await desktop(desktopWorkbench, 'GET /v1/workbench/task', { id: ids.done }),
+      await desktop(desktopWorkbench, 'GET /v1/workbench/task', { id: ids.done, since: '8' }),
+      await desktop(desktopMatters, 'GET /v1/matter', { id: ids.done }),
+      // 主题帧的 seq 是整个 hub 共用的计数,重新订阅一次就加一(和这一步无关),只比 epoch 与 data
+      await topic(`matter/${ids.done}`).then(r => ({ ...r, payload: JSON.stringify({ ...JSON.parse(r.payload), seq: 0 }) })),
+      await phone(`/m/api/matter?id=${ids.done}`),
+      await phone('/m/api/matters'),
+    ].map(mask)
+    const before = await readAll()
+    expect(await readAll()).toEqual(before) // 对照:不写什么,重读本身是确定的
+    const was = db.query<{ updated_at: number }, [string]>('SELECT updated_at FROM matters WHERE id=?').get(ids.done)!.updated_at
+    vi.setSystemTime(was)
+    expect(makeWorkbenchStore(db).markReady(ids.done)).toBe(true)
+    expect(makeWorkbenchStore(db).markReady(ids.permission)).toBe(false) // 最近一轮还在跑(卡在权限卡上)⇒ 不写
+    at(40)
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM matter_items WHERE item_key LIKE 'ready:%'").get()!.n).toBe(1)
+    const after = await readAll()
+    expect(after).toEqual(before)
+    const golden = (file: string) => readFileSync(join(GOLDEN, file), 'utf8').replace(/"cursor": \d+/g, '"cursor": <cursor>')
+    expect(after[0]).toBe(golden('task-done.v1-workbench-task.json'))
+    expect(after[1]).toBe(golden('task-done.v1-workbench-task.since.json'))
+  })
 })
