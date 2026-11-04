@@ -34,11 +34,11 @@ describe('cli-events × 终端的轮与步(M4a)', () => {
     expect(r.log.turns(id)).toMatchObject([{ status: 'completed' }])
     expect(r.log.items(id).map(i => [i.kind, i.status])).toEqual([['user_message', 'completed'], ['permission', 'completed'], ['agent_message', 'completed']])
   })
-  it('写轮抛错:登记处照写,只记一行日志', () => {
+  it('写轮抛错:登记处照写(指针与最近一次发问),只记一行日志;没建上那件事 ⇒ 读时当歇着(M4d 第 2 步,登记处没有状态列)', () => {
     const boom = () => { throw new Error('disk full') }
-    const r = rig({ event: boom, permissionAsked: boom, permissionSettled: boom, ensure: boom, adopt: boom, interruptAll: () => {} })
+    const r = rig({ event: boom, permissionAsked: boom, permissionSettled: boom, ensure: boom, interruptAll: () => {} })
     r.hub.observe({ ...base, kind: 'prompt' })
-    expect(r.store.get('sess-1')?.status).toBe('running')
+    expect(r.store.get('sess-1')).toMatchObject({ cwd: '/w/blog', last_event_at: 1_000, last_prompt_at: 1_000, status: 'idle', last_summary: null, pending_tool: null })
     expect(r.logs.some(l => l.startsWith('CLI_TURNS turn prompt'))).toBe(true)
   })
 })

@@ -67,6 +67,9 @@
   - harness 自己塞的 prompt(后台任务回报)以前不开轮 ⇒ 它干活时这件事显示没在做。改成也开一轮(`policy.automated`,不写「主人说了一句」、不算最近一次发问)。
   - 答完那一刻最后一句和钩子同一秒才写进记录,那一次读不到 ⇒ 过 3 秒补读一次。
   - 另:开机不再收还有动静的终端轮(终端在 daemon 外面跑,重启它照样在做),只收 30 分钟没动静的;开着的卡照样收(码只在内存里)。
+- **第 2 步(11-04,v100)已做**:`cli_sessions` 删掉 `status` / `last_summary` / `pending_tool` / `pending_summary` / `pending_at`,只留会话 id、来源、cwd、机器、记录路径、`origin_agent`、`last_event_at`、`last_prompt_at`、`created_at`;钩子那条路只写这几样(`touch` + `seen`)。
+  - 没有那件事的老会话:v100 删列前按列补建(ended ⇒ done、其余 ⇒ open 不开轮不挂卡、有最近一句 ⇒ 一步 `agent_message`)。真库副本(121 行,100 行没有那件事)补建后和删列前逐行对:只有 12 行几天前「在跑」的 `stale` 从 true 变 false(状态照旧是歇着,同第 1 步看一眼导入的结果)。
+  - 之后还会没有那件事的只剩写轮失败(`CLI_TURNS` 日志)那几条 ⇒ 读成歇着,照样列出来、「@码」认得,下一个钩子事件 / 看一眼就建上。看的那条路首见改走 `turns.ensure`,`TerminalTurnLog.adopt`(按列对齐)删了。
 
 ## 不做 / 推后
 - **权限码(hash)落库**:不做。它本来就只在 150 秒的等待里有效,重启后作废;M4a 的 permission 步只记事实,不记码。

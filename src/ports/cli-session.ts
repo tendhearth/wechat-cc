@@ -8,6 +8,7 @@ export type CliSessionStatus = 'running' | 'waiting' | 'idle' | 'ended'
 /** 同 cli-events.ts 的 CliSource;这里单写一份是为了不和 hub 互相 import(depcruise no-circular 连 type 也算)。 */
 type CliSource = 'claude' | 'codex' | 'cursor'
 
+/** 读出来的一行:status / last_summary / pending_* 是从那件事推的(M4d,表里没有这几列)。 */
 export interface CliSessionRow {
   session_id: string
   source: CliSource
@@ -58,9 +59,10 @@ export interface CliSessionIdentity {
 }
 
 export interface CliSessionStore {
-  /** 见到一条事件:没有就建(status=running),有就刷新身份字段与 last_event_at。 */
+  /** 见到一条事件:没有就建,有就刷新身份字段与 last_event_at。 */
   touch(id: CliSessionIdentity, at: number): void
-  setStatus(sessionId: string, status: CliSessionStatus, at: number, extra?: { summary?: string | null; promptAt?: number; pending?: { tool: string; summary: string | null } }): void
+  /** 刷新 last_event_at;主人发问(promptAt)⇒ 记最近一次发问。状态 / 最近一句 / 等你那一项不在这里写,从那件事推(M4d)。 */
+  seen(sessionId: string, at: number, extra?: { promptAt?: number }): void
   get(sessionId: string): CliSessionRow | null
   /** 按会话 id 前缀找(不分大小写),不含已结束的;多条命中取最近有事件的。 */
   findByPrefix(prefix: string): CliSessionRow | null
