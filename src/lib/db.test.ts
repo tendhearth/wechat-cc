@@ -14,6 +14,8 @@ import { removeTempDir } from './test-temp'
  */
 /** M2c(v95)删了一起做的三张旧表;测更早那几条迁移、要看那几张表的,只迁到 v94。 */
 const THROUGH_V94 = migrations.slice(0, 94)
+/** M3c(v99)删了 turn_records;测更早那几条迁移、要看这张表的,只迁到 v98。 */
+const THROUGH_V98 = migrations.slice(0, 98)
 
 function migratedTo(n: number): Db {
   const db = openSqlite(':memory:') as unknown as Db
@@ -588,15 +590,15 @@ describe('migration v41 — reminders back-fills columns the old June schema lac
 
 describe('migration v42 — heals the Atelier-branch v35 tool_calls collision', () => {
   it('adds tool_calls when user_version advanced past the skipped official v35', () => {
-    const db = openTestDb()
+    const db = migratedTo(98)
     db.exec('ALTER TABLE turn_records DROP COLUMN tool_calls; PRAGMA user_version = 41;')
 
-    expect(() => runMigrations(db, migrations)).not.toThrow()
+    expect(() => runMigrations(db, THROUGH_V98)).not.toThrow()
 
     const cols = db.query<{ name: string }, []>("PRAGMA table_info('turn_records')").all().map(c => c.name)
     expect(cols).toContain('tool_calls')
     const version = db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version
-    expect(version).toBe(migrations.length)
+    expect(version).toBe(98)
     db.close()
   })
 })
@@ -785,8 +787,17 @@ it('v70 creates the chat-matter say receipts table empty (phone requestId dedupe
   try{expect(db.query('SELECT * FROM matter_say_receipts').all()).toEqual([])}finally{db.close()}
 })
 
+it('v99 删掉 turn_records(M3c):迁到最新就没有这张表;重放不抛',()=>{
+  const db=migratedTo(98)
+  try{
+    runMigrations(db, migrations)
+    expect(db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='turn_records'").get()).toBeNull()
+    db.exec('PRAGMA user_version = 98'); expect(()=>runMigrations(db, migrations)).not.toThrow()
+  }finally{db.close()}
+})
+
 it('v71 adds the reply-delivery columns to turn_records (spec 2026-10-03 §4.10)',()=>{
-  const db=openTestDb()
+  const db=migratedTo(98)
   try{
     const cols=(db.query("PRAGMA table_info('turn_records')").all() as {name:string}[]).map(c=>c.name)
     expect(cols).toEqual(expect.arrayContaining(['delivery','bubbles','attachments','narration_segments']))

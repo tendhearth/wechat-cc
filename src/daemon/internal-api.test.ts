@@ -11,7 +11,17 @@ import { makeReplySinks } from './reply-sinks'
 import { makeMemoryFS, type MemoryFS } from '../adapters/store/memory-fs'
 import { makeEventsStore } from './events/store'
 import { openTestDb, type Db } from '../lib/db'
-import { makeTurnRecordStore } from '../adapters/store/turn-record-store'
+import type { StoredTurnRecord, TurnRecordStore } from '../ports/turn-records'
+/** 路由测试用的回合记录(M3c 删了 turn_records;真读口 chat-turn-records 有自己的测试):新的在前,同一时刻后写的在前。 */
+function memTurns(_db?: unknown): TurnRecordStore {
+  const rows: StoredTurnRecord[] = []
+  const newest = (rs: StoredTurnRecord[]) => rs.map((r, i) => [r, i] as const).sort((a, b) => b[0].endedAt - a[0].endedAt || b[1] - a[1]).map(([r]) => r)
+  return {
+    append(r) { rows.push({ ...r, toolCalls: r.toolCalls ?? [], id: `t${rows.length}` }) },
+    recentForChat: (chatId, limit) => newest(rows.filter(r => r.chatId === chatId)).slice(0, limit),
+    recent: (limit) => newest(rows).slice(0, limit),
+  }
+}
 import type { TurnRecord } from '../app/conversation-coordinator'
 import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
 import type { A2ARegistry, A2AClient, SendResult, AgentCard } from '../ports/a2a'
@@ -3762,7 +3772,7 @@ describe('internal-api request validation', () => {
 
     it('GET /v1/turns?chatId returns that chat\'s turns newest-first', async () => {
       const db = openTestDb()
-      const store = makeTurnRecordStore(db)
+      const store = memTurns(db)
       const base: TurnRecord = {
         chatId: 'chat-1', provider: 'claude', alias: 'a', mode: 'solo',
         startedAt: 0, endedAt: 0, durationMs: 0, outcome: 'completed',
@@ -3786,7 +3796,7 @@ describe('internal-api request validation', () => {
 
     it('GET /v1/turns without chatId returns recent turns across all chats', async () => {
       const db = openTestDb()
-      const store = makeTurnRecordStore(db)
+      const store = memTurns(db)
       const base: TurnRecord = {
         chatId: 'x', provider: 'codex', alias: 'a', mode: 'parallel',
         startedAt: 0, endedAt: 0, durationMs: 0, outcome: 'completed',
@@ -3807,7 +3817,7 @@ describe('internal-api request validation', () => {
 
     it('file token is trusted: 403 on an admin route, not-403 on a trusted route', async () => {
       const db = openTestDb()
-      api = createInternalApi({ stateDir, daemonPid: 1, turns: makeTurnRecordStore(db), listSessions: () => [] })
+      api = createInternalApi({ stateDir, daemonPid: 1, turns: memTurns(db), listSessions: () => [] })
       const { port, tokenFilePath } = await api.start()
       const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
       const r1 = await fetch(`http://127.0.0.1:${port}/v1/daemon/restart`, {
@@ -3863,7 +3873,7 @@ describe('internal-api request validation', () => {
 
     it('GET /v1/health reports ops fields (turns wired, live session count, heartbeat)', async () => {
       const db = openTestDb()
-      const store = makeTurnRecordStore(db)
+      const store = memTurns(db)
       api = createInternalApi({
         stateDir, daemonPid: 7, turns: store,
         listSessions: () => [{ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c', lastUsedAt: 1 }],

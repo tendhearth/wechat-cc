@@ -1,6 +1,6 @@
 /**
  * 一轮对话的结构化记录(协调器写,`turn_records` 表存,GET /v1/turns 与健康汇总读)。纯数据形状,放在 domain
- * (架构终态 E3):写它的是 app(协调器),存它的是 adapters(turn-record-store),两边都只引这一份。
+ * (架构终态 E3):写它的是 app(协调器),存它的是 adapters(chat-turn-records,从这件对话的轮读),两边都只引这一份。
  */
 import type { Mode, ProviderId } from './conversation'
 import type { DeliveryKind } from './turn-reply'
