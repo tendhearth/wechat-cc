@@ -5,6 +5,8 @@
 export type CcActWho = 'letters' | 'brief' | 'memory' | 'hunt' | 'atelier' | 'stickers'
 export type CcActStepKind = 'agent_message' | 'artifact' | 'delivery' | 'system' | 'error'
 export interface CcActTurn {
+  /** 这一轮的 id(写不上时是 null):要过几小时再补一步的(记忆整理的通知)记下它,用 toTurn 补。 */
+  readonly id: string | null
   /** 这一轮的一步(写不上 ⇒ 什么都不做)。给 key ⇒ 这一轮里同一把 key 的再写一次就地改(别的轮用同一把 key 互不相干)。 */
   step(kind: CcActStepKind, payload: Record<string, unknown>, opts?: { status?: 'started' | 'completed' | 'failed'; key?: string }): void
   /** 收这一轮(只收一次;之后的 step 照样能写,挂在已收的轮上)。 */
@@ -13,8 +15,8 @@ export interface CcActTurn {
 export interface CcActs {
   /** 开一轮;写不上 ⇒ 给一个什么都不做的把手(原来的事照做)。 */
   begin(who: CcActWho, opts?: { startedAt?: number; policy?: Record<string, unknown> }): CcActTurn
-  /** 往这个发起方最近的一轮上补一步(那一轮可能早收了:记忆整理的通知几小时后才送)。没有轮 ⇒ 什么都不做。 */
-  toLatest(who: CcActWho, kind: CcActStepKind, payload: Record<string, unknown>, opts?: { status?: 'started' | 'completed' | 'failed' }): void
+  /** 往这个发起方的某一轮上补一步(那一轮可能早收了:记忆整理的通知几小时后才送)。那一轮不在 ⇒ 什么都不做。 */
+  toTurn(who: CcActWho, turnId: string, kind: CcActStepKind, payload: Record<string, unknown>, opts?: { status?: 'started' | 'completed' | 'failed' }): void
   /** 这个发起方那件事的 id(没建过也给,同一个名字永远同一个 id)。 */
   matterIdOf(who: CcActWho): string
   /** 开机:上一次进程里没收的 act 轮记中断。 */

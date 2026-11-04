@@ -40,7 +40,8 @@ export interface NightlyState {
   firstRunDone: boolean
   /** 当天因连不上而推迟的次数与下次最早时间 —— 见 NET_RETRY_MAX。 */
   netRetry: { day: string; count: number; afterMs: number } | null
-  pendingNotice: { text: string; createdAtMs: number } | null
+  /** actTurn(M5b):这份通知来自「记忆整理」的哪一轮,送出时补在那一轮上。 */
+  pendingNotice: { text: string; createdAtMs: number; actTurn?: string } | null
 }
 export interface NightlyRunDeps {
   stateDir: string

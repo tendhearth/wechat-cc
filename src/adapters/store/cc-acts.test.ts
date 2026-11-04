@@ -60,13 +60,16 @@ describe('cc-acts', () => {
     expect(log.items(id).map(i => [i.turnId, i.payload])).toEqual([[t1!.id, { try: 1, ok: true }], [t2!.id, { try: 2 }]])
   })
 
-  it('toLatest:补在最近的一轮上(那一轮早收了也行);还没有轮 ⇒ 什么都不做', () => {
+  it('toTurn:补在指定的那一轮上(早收了也行,后面又开了新轮也不挪);不是这件事的轮 / 不存在 ⇒ 什么都不做', () => {
     const acts = makeCcActs({ db, log, matters })
-    acts.toLatest('memory', 'delivery', { x: 0 })
-    acts.begin('memory').finish('completed'); const t2 = acts.begin('memory'); t2.finish('completed')
-    acts.toLatest('memory', 'delivery', { channel: 'wechat' })
-    const id = ccActMatterId('memory'), turns = log.turns(id)
-    expect(log.items(id).map(i => [i.turnId, i.payload])).toEqual([[turns[1]!.id, { channel: 'wechat' }]])
+    const t1 = acts.begin('memory'); t1.finish('completed')
+    acts.begin('memory').finish('completed')
+    acts.toTurn('memory', t1.id!, 'delivery', { channel: 'wechat' })
+    acts.toTurn('memory', 'nope', 'delivery', { x: 1 })
+    const other = acts.begin('letters'); other.finish('completed')
+    acts.toTurn('memory', other.id!, 'delivery', { x: 2 })
+    const id = ccActMatterId('memory')
+    expect(log.items(id).map(i => [i.turnId, i.payload])).toEqual([[t1.id, { channel: 'wechat' }]])
   })
 
   it('开机 interruptAll:没收的 act 轮记中断;别的种类不碰', () => {
