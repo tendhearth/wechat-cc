@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator as createCoordinatorRaw, authFailNotice, turnPolicy, turnErrorNotice, type ConversationCoordinatorDeps } from './conversation-coordinator'
+import { spawnFailedNotice } from './coordinator/failures'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 import { createProviderRegistry } from './provider-registry'
@@ -2861,6 +2862,13 @@ describe('spawn failure carrying a provider code (arch backlog #4 第 2 步)', (
 })
 
 describe('turnErrorNotice / providerFailureReason — 按码说原因', () => {
+  it('连不上:错误原文里带着请求地址 ⇒ 说出是哪台服务(主人自己的网关不是「openai」),不带 ⇒ 照旧说 provider', () => {
+    // 2026-11-04 真机:网关 110 秒没回,主人收到「连不上 openai 的服务」,以为是 OpenAI 出了事
+    expect(turnErrorNotice('openai', '请求 110s 内没有拿到响应(连不上或对端没回):https://llm.youdamaster.cc/v1/chat/completions', 'network'))
+      .toBe('这条没接住:连不上 llm.youdamaster.cc(openai 用的那个服务;网络问题,不是你的消息有问题)。网络好了再发我一次就行。')
+    expect(turnErrorNotice('codex', 'socket hang up', 'network')).toMatch(/连不上 codex 的服务/)
+    expect(spawnFailedNotice('openai', 'connect ECONNREFUSED https://gw.example.com:8443/v1/models', 'network')).toMatch(/连不上 gw\.example\.com:8443\(openai 用的那个服务/)
+  })
   it('network / server_error / rate_limited / quota 各有一句老实话;无码保持通用说法', () => {
     expect(turnErrorNotice('codex', 'x', 'network')).toMatch(/连不上 codex 的服务/)
     expect(turnErrorNotice('openai', 'x', 'server_error')).toMatch(/服务那边出错/)
