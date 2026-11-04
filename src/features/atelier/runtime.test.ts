@@ -134,6 +134,23 @@ describe('atelier runtime', () => {
     expect(d.notify).toHaveBeenCalledWith('work-1')
   })
 
+  it('M5d:给了 successes(「画室」那件事的轮)⇒ 节奏按轮 + 旧标记的并集算,画成了不再写 successfulAt', async () => {
+    const turns: string[] = []
+    const at = (iso: string) => () => new Date(iso)
+    const d = deps({ successes: () => [...turns], evaluationIntervalMs: 0 })
+    // 旧标记里有一次(M5d 之前画的),轮里还没有:照样挡 30 小时
+    const { writeAtelierCadence } = await import('./runtime')
+    writeAtelierCadence(d.stateDir, { successfulAt: ['2026-09-01T00:00:00.000Z'] })
+    expect((await runAtelierCycle({ ...d, now: at('2026-09-01T12:00:00Z') })).status).toBe('skipped_cadence')
+    expect((await runAtelierCycle({ ...d, now: at('2026-09-02T12:00:00Z') })).status).toBe('created')
+    expect(readAtelierCadence(d.stateDir).successfulAt).toEqual(['2026-09-01T00:00:00.000Z'])   // 只读不写
+    turns.push('2026-09-02T12:00:00.000Z')   // 调用方把这一次记成一轮
+    expect((await runAtelierCycle({ ...d, now: at('2026-09-03T12:00:00Z') })).status).toBe('skipped_cadence')   // 30 小时没到(按轮)
+    // 一周两次:旧标记一次 + 轮里一次 ⇒ 满了
+    expect((await runAtelierCycle({ ...d, now: at('2026-09-05T12:00:00Z') })).status).toBe('skipped_cadence')
+    expect((await runAtelierCycle({ ...d, store: makeAtelierStore(d.stateDir, { makeId: () => 'work-2' }), now: at('2026-09-08T01:00:00Z') })).status).toBe('created')   // 旧的那次滑出 7 天
+  })
+
   it('persists the 30-hour and rolling two-per-week cadence', async () => {
     const d = deps()
     expect((await runAtelierCycle(d)).status).toBe('created')

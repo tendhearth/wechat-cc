@@ -22,7 +22,8 @@ import { readJournalSeen, writeJournalSeen } from '../../adapters/store/journal-
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, cacheSessions, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer, currentPhoneClient } from '../../features/phone'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
-import { letterPagePath, listLetters, mobileLettersRoutes } from '../../features/letters'
+import { letterDeliveries, letterPagePath, listLetters, mobileLettersRoutes } from '../../features/letters'
+import { ccActsFor } from '../../adapters/store/cc-acts'
 import { makeEventsStore } from '../events/store'
 import { hasLlmKey } from '../llm-keys'
 
@@ -113,7 +114,7 @@ return makeSettingsPanel({
   ...(opts.activity ? { activity: opts.activity } : {}),
   // 信、定时的手机处理器归它们自己的功能(features/letters、features/jobs 的 index.ts 导出),这里只填 deps 交给面板。
   featureRoutes: [
-    mobileLettersRoutes({ list: () => listLetters(stateDir), pagePath: (id: string, page: number) => letterPagePath(stateDir, id, page) }),
+    mobileLettersRoutes({ list: () => listLetters(stateDir, letterDeliveries(ccActsFor(db, log))), pagePath: (id: string, page: number) => letterPagePath(stateDir, letterDeliveries(ccActsFor(db, log)), id, page) }),
     // 定时在手机上看得见(对标 B7):与微信「定时」、runner 读写同一个 scheduled-jobs.json。
     mobileJobsRoutes((() => {
       const store = makeJobsStore(stateDir)

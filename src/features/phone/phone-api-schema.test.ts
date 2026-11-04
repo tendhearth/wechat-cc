@@ -405,7 +405,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
         names: () => [{ username: 'wx_f', display: '小飞' }],
       },
       stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(dir, 'stickers') },
-      featureRoutes: [mobileLettersRoutes({ list: () => listLetters(dir), pagePath: (id, page) => letterPagePath(dir, id, page) })],
+      featureRoutes: [mobileLettersRoutes({ list: () => listLetters(dir, new Map()), pagePath: (id, page) => letterPagePath(dir, new Map(), id, page) })],
       feed: {
         journal: { list: () => [{ id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: OWNER, title: '好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null, matter_id: null }] },
         planLogDays: () => [{ at: '2026-09-06T03:03:55.347Z', chatId: OWNER, candidates: ['visit'], decision: 'none', why: '没朋友,在家歇着。', source: 'model' }],

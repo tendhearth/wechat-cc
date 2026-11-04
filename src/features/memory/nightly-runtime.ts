@@ -129,24 +129,40 @@ const AGENDA_EVAL_TIMEOUT_MS = 60_000
 
 /** 「记忆整理」那件事的一轮(M5b):真动了手的才记 —— 写进去了 / 失败了 / 主人改过不敢写 / 网络没保护。 */
 const ACT_SKIPS_THAT_RAN = new Set(['owner_edited', 'network_unprotected'])
-function recordAct(acts: NightlyActs | undefined, r: NightlyRunResult, startedAt: number, endedAt: number, trigger: 'schedule' | 'owner'): string | null {
-  if (!acts) return null
-  if (r.status === 'skipped' && !ACT_SKIPS_THAT_RAN.has(r.reason)) return null
+/** id = 那一轮(通知送出时补在它上面);written = 写进去了的这一轮真收成了 completed(「上次写进去的时刻」从它推,M5d)。 */
+function recordAct(acts: NightlyActs | undefined, r: NightlyRunResult, startedAt: number, endedAt: number, trigger: 'schedule' | 'owner'): { id: string | null; written: boolean } {
+  const none = { id: null, written: false }
+  if (!acts) return none
+  if (r.status === 'skipped' && !ACT_SKIPS_THAT_RAN.has(r.reason)) return none
   try {
     const t = acts.begin('memory', { startedAt, policy: { trigger } })
+    let written = false
     if (r.status === 'written') {
       const counts: Record<string, number> = {}
       for (const op of r.applied) counts[op.kind] = (counts[op.kind] ?? 0) + 1
       t.step('system', { applied: counts, notice: !!r.notice })
-      t.finish('completed', { endedAt })
+      written = t.finish('completed', { endedAt }) === true
     } else {
       t.step('system', { [r.status]: r.reason })
       t.finish('failed', { endedAt, errorCode: r.reason })
     }
-    return t.id
-  } catch { return null /* 只少一轮记录 */ }
+    return { id: t.id, written }
+  } catch { return none /* 只少一轮记录 */ }
 }
-type NightlyActs = Pick<import('../../ports/cc-acts').CcActs, 'begin' | 'toTurn'>
+type NightlyActs = Pick<import('../../ports/cc-acts').CcActs, 'begin' | 'toTurn'> & Partial<Pick<import('../../ports/cc-acts').CcActs, 'runs'>>
+
+/**
+ * 上一次真写进去的时刻(M5d):「记忆整理」那件事最近 completed 的那一轮的 startedAt(= runMemoryNightly 的 nowMs),
+ * 和状态文件里的旧标记 lastRunIso(只读不写)取较新的 —— 真机上第一次写进去之前一轮都没有。
+ */
+function lastWrittenIso(acts: NightlyActs | undefined, legacy: string | null): string | null {
+  try {
+    const t = acts?.runs?.('memory', { status: 'completed', limit: 1, steps: false })[0]
+    const old = legacy ? Date.parse(legacy) : NaN
+    if (t && (!Number.isFinite(old) || t.startedAt > old)) return new Date(t.startedAt).toISOString()
+  } catch { /* 读不出轮 ⇒ 旧标记 */ }
+  return legacy
+}
 
 export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { acts?: NightlyActs }): MemoryNightlyRuntime {
   async function dropAgendaByModel(c: Done): Promise<void> {
@@ -397,6 +413,14 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { a
       if (st.pendingNotice && st.pendingNotice.text === r.notice && !st.pendingNotice.actTurn) writeNightlyState(deps.stateDir, { ...st, pendingNotice: { ...st.pendingNotice, actTurn } })
     } catch { /* 只是送出时少补一步 */ }
   }
+  // 写进去了、这一轮却没记上(没接 act / 库写不进):退回写旧标记 lastRunIso,别让下一晚的素材从更早处重读(M5d)
+  const settleRun = (r: NightlyRunResult, startedAt: number, act: { id: string | null; written: boolean }): string | null => {
+    if (r.status === 'written' && !act.written) {
+      try { writeNightlyState(deps.stateDir, { ...readNightlyState(deps.stateDir), lastRunIso: new Date(startedAt).toISOString() }) }
+      catch (e) { deps.log('MEMORY_NIGHTLY', `last-run mark not saved: ${e instanceof Error ? e.message : String(e)}`) }
+    }
+    return act.id
+  }
   // 走的哪条路照实记(微信 / App,Codex 评审);作废 / 不发了 ⇒ 没有路
   const noticeSettled = (r: 'sent' | 'send_failed' | 'expired' | 'dropped', actTurn: string | undefined, channel?: string) => {
     if (!actTurn) return
@@ -406,8 +430,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { a
     tick: () => serial(async () => {
       syncDiskSafely()
       const startedAt = deps.now()
-      const r = await runMemoryNightly(deps, { force: false })
-      stampNotice(r, recordAct(deps.acts, r, startedAt, deps.now(), 'schedule'))
+      const r = await runMemoryNightly(deps, { force: false, nowMs: startedAt, lastRunIso: lastWrittenIso(deps.acts, readNightlyState(deps.stateDir).lastRunIso) })
+      stampNotice(r, settleRun(r, startedAt, recordAct(deps.acts, r, startedAt, deps.now(), 'schedule')))
       if (r.status === 'skipped') {
         if (r.reason !== 'not_due' && r.reason !== lastSkipReason) deps.log('MEMORY_NIGHTLY', `tick: skipped (${r.reason})`)
         lastSkipReason = r.reason
@@ -421,8 +445,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { a
     runNow: () => serial(async () => {
       syncDiskSafely()
       const startedAt = deps.now()
-      const r = await runMemoryNightly(deps, { force: true })
-      stampNotice(r, recordAct(deps.acts, r, startedAt, deps.now(), 'owner'))
+      const r = await runMemoryNightly(deps, { force: true, nowMs: startedAt, lastRunIso: lastWrittenIso(deps.acts, readNightlyState(deps.stateDir).lastRunIso) })
+      stampNotice(r, settleRun(r, startedAt, recordAct(deps.acts, r, startedAt, deps.now(), 'owner')))
       return r
     }),
     // 与每晚整理同一条串行链:不会和它同时改 memory.md
@@ -542,7 +566,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { a
       const fresh = !!log && deps.now() - Date.parse(log.at) < CHANGED_WINDOW_MS
       return formatWeChatMemory({
         doc: got.doc,
-        whenLabel: state.lastRunIso ? spokenTime(Date.parse(state.lastRunIso), tz, deps.now()) : null,
+        whenLabel: (() => { const at = lastWrittenIso(deps.acts, state.lastRunIso); return at ? spokenTime(Date.parse(at), tz, deps.now()) : null })(),
         changes: fresh ? viewChanges(log!.ops) : [],
         failures: state.failures,
         today: localParts(deps.now(), tz).day,
@@ -560,9 +584,10 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { a
       const changes: ViewChange[] = fresh ? viewChanges(log!.ops) : []
       const changed = new Set(fresh ? log!.ops.filter(o => o.kind === 'add' || o.kind === 'update').map(o => o.id) : [])
       const src = readSources(got.root)
+      const lastRunIso = lastWrittenIso(deps.acts, state.lastRunIso)
       return {
-        updated_at: state.lastRunIso,
-        when_label: state.lastRunIso ? spokenTime(Date.parse(state.lastRunIso), tz, deps.now()) : null,
+        updated_at: lastRunIso,
+        when_label: lastRunIso ? spokenTime(Date.parse(lastRunIso), tz, deps.now()) : null,
         mood: changes.length ? 'changed' : 'steady',
         failures: state.failures,
         changes,

@@ -42,6 +42,37 @@ describe('cc-acts', () => {
     expect(log.items(id).map(i => i.kind)).toEqual(['delivery'])
   })
 
+  it('runs(M5d):新的在前、带步;按结局筛;steps:false 不读步;没建过 / 读不出 ⇒ []', () => {
+    const errs: string[] = []
+    const acts = makeCcActs({ db, log, matters, onError: (w) => errs.push(w) })
+    expect(acts.runs('letters')).toEqual([])
+    const a = acts.begin('letters', { startedAt: 1_000, policy: { trigger: 'owner' } })
+    a.step('artifact', { letter: 'x' }); a.step('delivery', { letter: 'x', result: 'sent' }); a.finish('completed', { endedAt: 1_500 })
+    acts.begin('letters', { startedAt: 2_000 }).finish('failed', { errorCode: 'waiting', endedAt: 2_100 })
+    acts.begin('memory', { startedAt: 3_000 }).finish('completed')
+    expect(acts.runs('letters')).toMatchObject([
+      { status: 'failed', errorCode: 'waiting', startedAt: 2_000, endedAt: 2_100, steps: [] },
+      { status: 'completed', startedAt: 1_000, policy: { who: 'letters', trigger: 'owner' }, steps: [{ kind: 'artifact', payload: { letter: 'x' } }, { kind: 'delivery', status: 'completed', payload: { letter: 'x', result: 'sent' } }] },
+    ])
+    expect(acts.runs('letters', { status: 'completed' }).map(t => t.startedAt)).toEqual([1_000])
+    expect(acts.runs('letters', { limit: 1 }).map(t => t.startedAt)).toEqual([2_000])
+    expect(acts.runs('letters', { status: 'completed', steps: false })[0]!.steps).toEqual([])
+    // 某一种步、不限轮数,新的在前
+    expect(acts.stepsOf('letters', 'delivery')).toMatchObject([{ turnId: acts.runs('letters', { status: 'completed' })[0]!.id, payload: { letter: 'x', result: 'sent' } }])
+    // step / finish 回「真写进去了没有」:再收 ⇒ false
+    const c = acts.begin('letters')
+    expect(c.step('system', {})).toBe(true)
+    expect(c.finish('completed')).toBe(true)
+    expect(c.finish('failed')).toBe(false)
+    const d = acts.begin('letters')
+    db.close()
+    expect(d.step('system', {})).toBe(false)
+    expect(acts.runs('letters')).toEqual([])
+    expect(acts.stepsOf('letters', 'delivery')).toEqual([])
+    expect(errs).toEqual(['step letters system', 'runs letters', 'stepsOf letters'])
+    db = openDb({ path: ':memory:' })
+  })
+
   it('写不上(库关了)⇒ 不抛,给一个什么都不做的把手;记一行', () => {
     const errs: string[] = []
     const acts = makeCcActs({ db, log, matters, onError: (w) => errs.push(w) })

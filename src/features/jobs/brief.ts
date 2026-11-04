@@ -140,7 +140,7 @@ export function makeBriefTurn(deps: BriefTurnDeps): (job: ScheduledJob, nowIso: 
     const st = { attached: false }
     const asks = picked.length ? { count: picked.length, base } : undefined
     // 「早报」那件事的一轮(M5b):真去写了才开(没有主人 ⇒ 上面就回了);结果收(sent ⇒ completed,其余 ⇒ failed,原因照写)
-    const NO_TURN = { id: null, step() {}, finish() {} }
+    const NO_TURN = { id: null, step: () => false, finish: () => false }
     let act: ReturnType<NonNullable<BriefTurnDeps['acts']>['begin']> = NO_TURN
     try { act = deps.acts?.begin('brief', { startedAt: Date.parse(nowIso) || Date.now(), policy: { job: job.id } }) ?? NO_TURN } catch { act = NO_TURN }
     let r: string

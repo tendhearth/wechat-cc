@@ -115,7 +115,18 @@ export interface StickerArtistDeps {
   rasterize?: (svg: string, workDir: string) => Promise<string | null>
   now?: () => number
   /** CC 自己做的事(M5b):真画了一次 = 「贴纸」那件事的一轮;不给 ⇒ 不记。 */
-  acts?: Pick<import('../../ports/cc-acts').CcActs, 'begin'>
+  acts?: Pick<import('../../ports/cc-acts').CcActs, 'begin'> & Partial<Pick<import('../../ports/cc-acts').CcActs, 'runs'>>
+}
+
+/**
+ * 上一次试着画的时刻(M5d):「贴纸」那件事最近一轮的 startedAt —— 每次过了节奏门都开一轮(成没成都算,同旧标记
+ * 「每次尝试都盖章」),只有被网络守护拒掉的那一轮不算(什么都没发出去,旧标记那时也撤回)。读不出 ⇒ null。
+ */
+function lastAttemptAt(acts: StickerArtistDeps['acts']): number | null {
+  try {
+    for (const t of acts?.runs?.('stickers', { limit: 500, steps: false }) ?? []) if (t.errorCode !== 'network_unprotected') return t.startedAt
+  } catch { /* 读不出轮 ⇒ 只看旧标记 */ }
+  return null
 }
 
 export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: string | null }> {
@@ -128,22 +139,26 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
   // Cadence gate (daily in phase 1, weekly after) — stamped on every ATTEMPT
   // (success or failure) so a broken model/renderer costs one try per
   // period, never a retry loop.
+  // M5d:「盖章」就是「贴纸」那件事开的那一轮(lastAttemptAt);旧标记 last_at 只读,两边取较新的。只有这一轮开不出来
+  // (没接 act / 库写不进)才退回写旧标记 —— 不然坏掉的库会让每一拍都去调一次模型。
+  const lastTurnAt = lastAttemptAt(d.acts)
+  if (lastTurnAt !== null && now() - lastTurnAt < target.intervalMs) return { drawn: null }
   let priorMarker: string | null = null
   try {
     priorMarker = readFileSync(markerPath, 'utf8')
     const marker = JSON.parse(priorMarker) as { last_at?: number }
     if (typeof marker.last_at === 'number' && now() - marker.last_at < target.intervalMs) return { drawn: null }
   } catch { /* no marker yet */ }
-  const stamped = JSON.stringify({ last_at: now() })
-  writeFileSync(markerPath, stamped)
   const mood = target.mood
+  // 「贴纸」那件事的一轮(M5b):过了节奏门、真要画了才开;每条出口都收(finish 只收一次)
+  const NO_TURN = { id: null, step: () => false, finish: () => false }
+  let act: ReturnType<NonNullable<StickerArtistDeps['acts']>['begin']> = NO_TURN
+  try { act = d.acts?.begin('stickers', { startedAt: now(), policy: { mood } }) ?? NO_TURN } catch { act = NO_TURN }
+  const stamped = act.id === null ? JSON.stringify({ last_at: now() }) : null
+  if (stamped !== null) writeFileSync(markerPath, stamped)
 
   const workDir = join(d.stateDir, 'tmp-sticker-artist')
   mkdirSync(workDir, { recursive: true })
-  // 「贴纸」那件事的一轮(M5b):过了节奏门、真要画了才开;每条出口都收(finish 只收一次)
-  const NO_TURN = { id: null, step() {}, finish() {} }
-  let act: ReturnType<NonNullable<StickerArtistDeps['acts']>['begin']> = NO_TURN
-  try { act = d.acts?.begin('stickers', { startedAt: now(), policy: { mood } }) ?? NO_TURN } catch { act = NO_TURN }
   const actFail = (errorCode: string) => act.finish('failed', { endedAt: now(), errorCode })
   try {
     const raw = await d.cheapEval(buildStickerPrompt(mood, { variation: target.variation }))
@@ -177,7 +192,7 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
     if (isNetworkUnprotectedError(e)) {
       // 只撤这一次的标记(第二轮评审 #194):标记已经不是我们写的那一份(期间别人又写过)就不动。
       try {
-        if (readFileSync(markerPath, 'utf8') === stamped) {
+        if (stamped !== null && readFileSync(markerPath, 'utf8') === stamped) {
           if (priorMarker === null) rmSync(markerPath, { force: true }); else writeFileSync(markerPath, priorMarker)
         }
       } catch { /* 恢复不了就等下一期 */ }
