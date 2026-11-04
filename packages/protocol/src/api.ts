@@ -69,6 +69,9 @@ export type MatterOriginT = typeof MATTER_ORIGINS[number]
  */
 export const MATTER_KINDS = ['chat', 'task', 'terminal', 'act'] as const
 export type MatterKindT = typeof MATTER_KINDS[number]
+/** 一件事的统一状态(v92):open → working ⇄ waiting(等你)→ done | failed | cancelled;归档是另一个字段(archivedAt)。 */
+export const MATTER_STATES = ['open', 'working', 'waiting', 'done', 'failed', 'cancelled'] as const
+export type MatterStateT = typeof MATTER_STATES[number]
 
 /**
  * CC 自己做的事(kind='act',M5c):一轮 = CC 做了一次(写了一封信、整理了一次记忆…),步 = 这一轮的过程(草稿、送达、改了几条)。
@@ -91,7 +94,12 @@ export const Matter = z.object({
   kind: z.enum(MATTER_KINDS),
   title: z.string(),
   projectPath: z.string().nullable(),
+  /** 旧状态:冻结的线上字段(老 App 必填),daemon 从 state + archivedAt 现算,退休条件见 wire-compat.ts。新客户端读下面两个。 */
   status: z.enum(['open', 'replied', 'done', 'archived']),
+  /** 统一状态(M6b 起):老 daemon 不带;认不出的新值当没有(不让整行解析失败)。 */
+  state: z.enum(MATTER_STATES).optional().catch(undefined),
+  /** 归档时间(毫秒);null = 没归档。老 daemon 不带。 */
+  archivedAt: z.number().nullable().optional(),
   ownerChatId: z.string().nullable(),
   originMatterId: z.string().nullable(),
   originMessageId: z.string().nullable(),

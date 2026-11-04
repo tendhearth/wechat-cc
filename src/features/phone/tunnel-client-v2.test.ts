@@ -42,10 +42,11 @@ async function settle(): Promise<void> { for (let i = 0; i < 20; i++) await new 
 type Inbound = { error: string } | V2ServerMessageT
 
 /** 一台 v2 手机:握手、发密封消息、按顺序拆收件箱。缺省扮老 App(握手 v:[1,2]);`web` ⇒ 网页的握手。 */
-async function v2Phone(sock: Sock, stream: string, token = DTOK, opts: { web?: boolean } = {}) {
+async function v2Phone(sock: Sock, stream: string, token = DTOK, opts: { web?: boolean; build?: unknown } = {}) {
   const kp = x25519KeyPair()
   const start = sock.sent.length
-  sock.emit({ stream, frame: opts.web ? { hs: b64uEncode(kp.pub), v: [2], client: 'web' } : { hs: b64uEncode(kp.pub), v: [1, 2] } })
+  const hs = opts.web ? { hs: b64uEncode(kp.pub), v: [2], client: 'web' } : { hs: b64uEncode(kp.pub), v: [1, 2] }
+  sock.emit({ stream, frame: opts.build !== undefined ? { ...hs, build: opts.build } : hs })
   await waitFor(() => sock.sent.slice(start).some(s => JSON.parse(s).stream === stream), 'hello')
   const idx = sock.sent.findIndex((s, i) => i >= start && JSON.parse(s).stream === stream)
   const hello = ServerHello.parse(JSON.parse(sock.sent[idx]!).frame)
@@ -169,6 +170,25 @@ describe('tunnel-client v2', () => {
     p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/home' })
     expect(await p.next()).toMatchObject({ t: 'res', rid: 'r1', status: 200 })
     expect(seenClient).toBe('web')
+  })
+
+  it('握手报的构建号(M6b):认出令牌之后交给 onDeviceBuild 一次;不像构建号 / 没报 ⇒ 不记', async () => {
+    const sock = fakeSocket()
+    const seen: Array<[string, string]> = []
+    client(sock, { onDeviceBuild: (token, build) => { seen.push([token, build]) } })
+    const p = await v2Phone(sock, 'sB', DTOK, { build: '7' })
+    expect(seen).toEqual([])   // 握手那一刻还不知道是哪台
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/home' })
+    await p.next()
+    p.send({ t: 'req', rid: 'r2', method: 'GET', path: '/m/api/home' })
+    await p.next()
+    expect(seen).toEqual([[DTOK, '7']])
+    for (const [stream, build] of [['sX', 'x'.repeat(33)], ['sY', '1 2'], ['sZ', 7], ['sN', undefined]] as const) {
+      const q = await v2Phone(sock, stream, DTOK, { build })
+      q.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/home' })
+      await q.next()
+    }
+    expect(seen).toEqual([[DTOK, '7']])
   })
 
   it('二进制(贴纸):image/png 响应 ⇒ base64;base64 请求正文按字节交给面板', async () => {

@@ -25,7 +25,9 @@
 - 做完怎么算:新旧金样都绿;生产代码零改动。
 
 ### M6b 状态从 matter 推(daemon;列照旧写)
-- 一个函数 `legacyStatus(state, archivedAt, 最近一轮)`:归档 ⇒ archived;done / failed / cancelled ⇒ done;任务开着且最近一轮已收 ⇒ replied;其余 open。`toMatter`、列表筛选(`?status=` 照收,翻成 `archived_at` / `state` 条件)、topic 的 `phase` 都改用它;工作台那两份「任务 → 旧状态」式子合成一份。
+- 一个函数 `legacyStatus(state, archivedAt, 最近一轮)`:归档 ⇒ archived;done / failed / cancelled ⇒ done;任务开着且最近一轮已收 ⇒ replied;其余 open。
+  - 实际落地(`src/domain/matters/legacy-status.ts`):非任务一律 open(终端会话结束 state = done,列也还是 open —— 真库 12 行);任务的 done / 中断看 `workbench_tasks.status`(写列的式子看的就是它)。
+  - **replied 这一位照旧读列**(`storedReplied`,Codex 评审 P2):执行者先交结果、后台还在干时,轮已收、state 回 open,但 `settleQuiet` 要等运行时真闲下来(没后台、没待拍板)才写 replied。这份「准备好了」除了列哪儿都没落库。所以 replied = 列记着 replied **且**任务在跑、state = open、最近一轮已收;其余照现算(列过期的 replied 不算)。`toMatter`、列表筛选(`?status=` 照收,翻成 `archived_at` / `state` 条件)、topic 的 `phase` 都改用它;工作台那两份「任务 → 旧状态」式子合成一份。
 - `Matter` 加 `state` / `archivedAt`;握手加 `build` 并记下来;`wire-compat.ts` 建表。
 - 拿真库副本对一遍(同 M4d 第 1 步):推出来的和列逐行一样才合;不一样的行在 PR 里逐条说明并补上。
 - 金样:所有详情只多两个字段,重录并逐行说明;`status` 一字不变。
@@ -42,6 +44,7 @@
 - 做完怎么算:三种形状都不在 src(骨架 M6 的门);终端金样一字不变。
 
 ### M6e 停写、删列(soak 之后)
+- **前提:「答完了、闲着」先落成 matter 上的事实,`legacyStatus` 改读它,再删列。** 提议:`settleQuiet` 在写 replied 的那一刻,往这件事最近那一轮(已收的那一轮)写一步 `system`,key = `ready:<turnId>`、payload `{ready:true}`(幂等,同一轮只一行)。`legacyStatus` 的 `storedReplied` 换成「最近一轮有这一步」;新一轮开始自然就不算了(最近一轮换了),不用撤。出口要把这一步从 `MatterEvent` / `WorkbenchTaskEvent` 的投影里滤掉(用户看不见),金样一字不变为门。换读法那一步先在真库副本上对一遍 replied(列 vs 步)再删列。
 - `setStatus` 改名只管归档 / 重开(写 `archived_at` 与 `state`);迁移删 `matters.status`(重建表,`withoutForeignKeys`,见 `docs/maintainer/migrations.md`);从此回不到之前的版本。
 - 手机网页改读 `state` / `archivedAt`(随 `self deploy`,和 daemon 同步到手)。
 - 做完怎么算:`status` 不在 `matters` 表与 `ports/matters.ts` 里;线上 `Matter.status` 只剩 `wire-compat.ts` 那一行在推。

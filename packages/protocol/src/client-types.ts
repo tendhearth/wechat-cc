@@ -61,6 +61,8 @@ export interface ClientOpts {
    * 重连,绝不降级。原来的 `requireV2` 开关随 v1 一起删了。)
    */
   client?: 'web'
+  /** App 的构建号(M6b):握手里带上,daemon 记在这台设备上,线上旧字段按它判退休(wire-compat.ts)。网页不填。 */
+  build?: string
   /** 时钟(毫秒),缺省 Date.now。用于判断连接是否稳定到可以清零退避。 */
   now?: () => number
   /** 丢弃了一条畸形/无法解密的线上消息,或 hello 畸形(只做记录)。 */

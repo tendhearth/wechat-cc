@@ -4,6 +4,7 @@ import type { PendingWorkbenchPermission, PermissionDecision, PendingUserInput, 
 import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
 import { sayTextHash } from '../../lib/content-hash'
 import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts'
+import {legacyStatusOfTaskView} from '../../domain/matters/legacy-status'
 
 /**
  * matters/service.ts — 各表面共用的"一件事"读写面:列表、详情、往一件事说话。
@@ -188,7 +189,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     // Receipt replay can refer to a finished or archived task. Derive its
     // actual current state, including a newly queued continuation, rather than
     // interpreting every successful request as a new running turn.
-    deps.store.setStatus(id,task.archivedAt!=null?'archived':task.status==='interrupted'?'open':['completed','failed','cancelled'].includes(task.status)?'done':task.phase==='replied'?'replied':'open')
+    deps.store.setStatus(id,legacyStatusOfTaskView(task))
     return task
   }
   /** 手机只撤最新那一轮(没撤掉的里最新的);换了一轮 / 已撤掉 ⇒ rewind_not_latest(页面重拉再看一眼)。 */

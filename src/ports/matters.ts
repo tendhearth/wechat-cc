@@ -11,10 +11,10 @@ export type MatterKind='chat'|'task'|'terminal'|'act'
 export type MatterInitiator='owner'|'cc'|'peer'
 /**
  * 统一状态(v92):open → working ⇄ waiting(等你)→ done | failed | cancelled;归档是另一列(archivedAt),和它正交。
- * 由 MatterLog 维护(轮开始 / 结束、等你的步出现 / 了结)。读这一侧到 M6 才切过来;在那之前出口照旧读 MatterStatus。
+ * 由 MatterLog 维护(轮开始 / 结束、等你的步出现 / 了结)。M6b 起出口的旧 status 从它推(domain/matters/legacy-status.ts)。
  */
 export type MatterState='open'|'working'|'waiting'|'done'|'failed'|'cancelled'
-/** 旧状态(v60):出口(/v1/matter、/m/api、App)照旧读它,M6 删。 */
+/** 旧状态(v60):线上照旧带(老 App 必填),M6b 起现算;列 M6e 删。 */
 export type MatterStatus='open'|'replied'|'done'|'archived'
 export type MatterSurface='wechat'|'desktop'|'phone'|'cli'
 export type MatterSessionRole='main'|'review'|'handoff'
@@ -25,7 +25,7 @@ export type MatterSessionRole='main'|'review'|'handoff'
  * 不知道 ⇒ 不写(null),界面就不画 —— 旧行一律 null,不回填、不猜。
  */
 export type MatterOrigin='wechat'|'desktop'|'app'|'web'|'cli'|'companion'
-export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 出生地(只在知道时带)。 */origin?:MatterOrigin;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[];/** 执行者 id → 正式名字(收敛清单 ⑥):服务层按 registry 填,三端不存名字表。 */agentNames?:Record<string,string>;/** CC 自己做的事(M5c):发起方 + 最近那一轮。 */act?:MatterAct}
+export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;/** 旧状态:M6b 起由 domain/matters/legacy-status.ts 现算(不再读列),线上冻结到 wire-compat.ts 那一行退休。 */status:MatterStatus;/** 统一状态(M6b 起上线);新客户端读它和 archivedAt。 */state?:MatterState;archivedAt?:number|null;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 出生地(只在知道时带)。 */origin?:MatterOrigin;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[];/** 执行者 id → 正式名字(收敛清单 ⑥):服务层按 registry 填,三端不存名字表。 */agentNames?:Record<string,string>;/** CC 自己做的事(M5c):发起方 + 最近那一轮。 */act?:MatterAct}
 /**
  * CC 自己做的事那一件(kind='act',M5c):手机「CC 最近在忙」那一组与详情页的时间线。只在点名 kind=act 的列表与 act 的详情里带。
  * who = 发起方(letters / brief / memory / hunt / atelier / stickers,取自轮的 policy.who);步的 payload 只留数字、真假、短字符串。

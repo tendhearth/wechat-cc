@@ -2,6 +2,7 @@ import {afterEach,beforeEach,describe,expect,it} from 'vitest'
 import {migrations,openDb,runMigrations,type Db} from '../../lib/db'
 import {openSqlite} from '../../lib/runtime/sqlite'
 import { makeMatterStore } from './matters-store'
+import { makeMatterLog } from './matter-log'
 import type { MatterStore } from '../../ports/matters'
 
 /**
@@ -15,7 +16,7 @@ afterEach(()=>db.close())
 describe('matters',()=>{
   it('creates a task matter with the task id and reads it back',()=>{
     const m=store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'})
-    expect(m).toEqual({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',status:'open',ownerChatId:'owner',originMatterId:null,originMessageId:null,createdAt:1_000,updatedAt:1_000})
+    expect(m).toEqual({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',status:'open',state:'open',archivedAt:null,ownerChatId:'owner',originMatterId:null,originMessageId:null,createdAt:1_000,updatedAt:1_000})
     expect(store.get('deadbeef')).toEqual(m)
     expect(store.get('nope')).toBeNull()
   })
@@ -206,5 +207,60 @@ describe('v92 的新列:发起方、统一状态、归档时间(读出口照旧�
     db.query("UPDATE matters SET state='working' WHERE id='0000000a'").run()
     store.setStatus('0000000a','replied')
     expect(row('0000000a')).toMatchObject({state:'working'})
+  })
+})
+
+describe('旧 status 现算(M6b):get 与列表筛选同一个式子',()=>{
+  it('每一格:get 给的 status = legacyStatus;statuses 筛选(SQL 版本)挑出的正好是这些',async()=>{
+    const {legacyStatus}=await import('../../domain/matters/legacy-status')
+    const STATES=['open','working','waiting','done','failed','cancelled'] as const
+    const TURNS=[null,'running','completed','failed','cancelled','interrupted'] as const
+    const TASKS=[null,'queued','running','cancelling','completed','failed','cancelled','interrupted'] as const
+    const want=new Map<string,{kind:string;status:string}>();let n=0,cursor=0
+    for(const kind of ['chat','task','terminal','act'] as const)for(const state of STATES)for(const archived of [false,true])for(const turn of TURNS)for(const task of kind==='task'?TASKS:[null])for(const storedReplied of [false,true]){
+      const id=(++n).toString(16).padStart(8,'0')
+      db.query("INSERT INTO matters(id,kind,title,state,archived_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?)").run(id,kind,'t',state,archived?9:null,storedReplied?'replied':'open',n)
+      if(turn){
+        // 更早的一轮放相反的状态:只认 seq 最大的那一轮
+        db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES(?,?,1,'x',?,1,?)").run(id+'a',id,turn==='completed'?'failed':'completed',++cursor)
+        db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES(?,?,2,'x',?,1,?)").run(id+'b',id,turn,++cursor)
+      }
+      if(task)db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,'t','/w','claude',?,1,1)").run(id,task)
+      want.set(id,{kind,status:legacyStatus({kind,state,archivedAt:archived?9:null,latestTurn:turn,taskStatus:task,storedReplied})})
+    }
+    for(const [id,w] of want)expect([id,store.get(id)?.status]).toEqual([id,w.status])
+    for(const kind of ['chat','task','terminal','act'] as const)for(const status of ['open','replied','done','archived'] as const){
+      // 一页最多 500:翻过的那页把 updated_at 取负(since:0 就不再给它),直到翻完;只动排序用的时间,不碰算 status 的输入
+      const got:string[]=[];let page:string[]
+      do{page=store.list({kind,statuses:[status],limit:500,since:0}).filter(m=>!got.includes(m.id)).map(m=>m.id);got.push(...page);if(page.length)db.query(`UPDATE matters SET updated_at=-updated_at WHERE id IN (${page.map(()=>'?').join(',')})`).run(...page)}while(page.length)
+      got.sort()
+      const exp=[...want].filter(([,w])=>w.status===status&&w.kind===kind).map(([id])=>id).sort()
+      expect([kind,status,got]).toEqual([kind,status,exp])
+    }
+    // 四种都出现过(这张格子没漏掉哪一种)
+    expect(new Set([...want.values()].map(w=>w.status))).toEqual(new Set(['open','replied','done','archived']))
+  })
+  it('Codex P2:常驻会话交了结果、后台还在干 ⇒ 轮已收、state 回 open,但没安静下来(列没写 replied)⇒ 列表与 get 都是 open;安静下来写了 replied ⇒ replied',()=>{
+    const log=makeMatterLog(db,()=>clock)
+    const m=store.create({id:'0000beef',kind:'task',title:'t'})
+    db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,'t','/w','claude','running',1,1)").run(m.id)
+    const turn=log.startTurn({matterId:m.id,executor:'claude'})
+    log.finishTurn(turn.id,{status:'completed'})           // execute.ts noteTurn:result 到了,轮收了
+    expect(log.state(m.id)?.state).toBe('open')
+    expect(store.get(m.id)?.status).toBe('open')
+    expect(store.list({statuses:['replied']})).toEqual([])
+    expect(store.list({statuses:['open']}).map(x=>x.id)).toEqual([m.id])
+    store.setStatus(m.id,'replied')                          // settleQuiet:运行时闲了、没后台、没待拍板
+    expect(store.get(m.id)?.status).toBe('replied')
+    expect(store.list({statuses:['replied']}).map(x=>x.id)).toEqual([m.id])
+  })
+  it('筛选不再看列:列写着 replied、算出来 open 的不进 replied;state / archivedAt 上线',()=>{
+    const m=store.create({id:'0000abcd',kind:'task',title:'t'})
+    db.query("UPDATE matters SET status='replied' WHERE id=?").run(m.id)
+    expect(store.list({statuses:['replied']})).toEqual([])
+    expect(store.get(m.id)).toMatchObject({status:'open',state:'open',archivedAt:null})
+    clock=7_000;store.setStatus(m.id,'archived')
+    expect(store.list({statuses:['archived']}).map(x=>[x.id,x.status,x.archivedAt])).toEqual([[m.id,'archived',7_000]])
+    expect(store.list({statuses:['open','replied','done']})).toEqual([])
   })
 })

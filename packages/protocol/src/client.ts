@@ -162,7 +162,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     c.hsTimer = setTimeout(() => { c.hsTimer = undefined; if (c.version === null) dropConn(c) }, hsTimeoutMs)
     sock.onOpen(() => {
       if (conn !== c) return
-      sendRaw(c, JSON.stringify(opts.client ? { hs: b64uEncode(kp.pub), v: [2], client: opts.client } : { hs: b64uEncode(kp.pub), v: [2] }))
+      sendRaw(c, JSON.stringify({ hs: b64uEncode(kp.pub), v: [2], ...(opts.client ? { client: opts.client } : {}), ...(opts.build ? { build: opts.build } : {}) }))
     })
     sock.onMessage(s => {
       if (conn !== c) return

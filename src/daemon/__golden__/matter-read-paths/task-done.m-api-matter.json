@@ -8,6 +8,8 @@
       "title": "修好测试并写报告",
       "projectPath": "<tmp>/projects/done",
       "status": "done",
+      "state": "done",
+      "archivedAt": null,
       "ownerChatId": "o9golden-owner@im.wechat",
       "originMatterId": null,
       "originMessageId": null,
