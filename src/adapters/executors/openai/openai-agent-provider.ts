@@ -19,7 +19,7 @@ import {
 } from '../../../ports/agent-provider'
 import { isAuthErrorCode, withProviderCode } from '../../../lib/provider-error-code'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
-import { systemMessage, userMessage, type APIModel, type ChatMessage, type ToolSpec } from './api-model'
+import { EvalOutputExhaustedError, systemMessage, userMessage, type APIModel, type ChatMessage, type ToolSpec } from './api-model'
 import { builtinTools, type BuiltinTool } from './openai-tools'
 import { gateTool } from './openai-gate'
 import type { ChatOwnerRules } from '../../permission-rules/chat'
@@ -231,6 +231,22 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
     return sessions.create(binding, initial)
   }
 
+  /**
+   * 单独设的评估模型把输出预算全花在思考上、一个字没答(EvalOutputExhaustedError)⇒ 换默认模型再答这一次。
+   * 2026-10-30 起真机:openaiEvalModel=DeepSeek,记忆整理的提示一长它就想满 4000 token,连败五晚。
+   * 只换一次、只在设了别的评估模型时换(同一个模型重试只会再想满一次);同一网关同一 base URL,网络闸门判定不变。
+   */
+  async function evalWithFallback(prompt: string, source: string): Promise<string> {
+    const chosen = evalModel()
+    try {
+      return await runEval(opts.makeChatModel(chosen), prompt, log, source)
+    } catch (err) {
+      if (!(err instanceof EvalOutputExhaustedError) || chosen === undefined || chosen === opts.endpoint?.model) throw err
+      log('EVAL_FALLBACK', `${source}: ${err.message} — retrying once with the default model`)
+      return runEval(opts.makeChatModel(undefined), prompt, log, source)
+    }
+  }
+
   return {
     // 会话 / 评估都用 makeChatModel(构造时的 base URL);模型:会话钉的 ?? 默认,评估用 evalModel ?? 默认。
     callTarget: (kind, ctx) => callTarget(kind === 'cheapEval' || kind === 'strongEval' ? evalModel() : ctx?.model),
@@ -268,12 +284,12 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
 
     async cheapEval(prompt: string): Promise<string> {
       // Background eval, no per-chat pin — the eval model if one is configured, else the default model.
-      return runEval(opts.makeChatModel(evalModel()), prompt, log, 'openai cheapEval')
+      return evalWithFallback(prompt, 'openai cheapEval')
     },
 
     async strongEval(prompt: string): Promise<string> {
       // v1: same model as cheapEval (DeepSeek is already the strong+cheap model).
-      return runEval(opts.makeChatModel(evalModel()), prompt, log, 'openai strongEval')
+      return evalWithFallback(prompt, 'openai strongEval')
     },
   }
 }
