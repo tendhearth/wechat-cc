@@ -57,6 +57,12 @@ export function makePhoneTopicSources(deps: PhoneTopicSourceDeps): TopicSource[]
 
   const matter: TopicSource = {
     match: t => t.startsWith('matter/'),
+    // 任务、终端会话的变化都经 MatterLog / store.bump 进变化信号(P1a),不用 2 秒比一次;聊天的消息不进 ⇒ 照旧轮询(P2)
+    driven(topic) {
+      const id = MATTER_TOPIC.exec(topic)?.[1]
+      const kind = id ? deps.matters?.get(id)?.kind : undefined
+      return kind === 'task' || kind === 'terminal'
+    },
     async snapshot(topic) {
       // 与 /m/api/matter 同一道门:id 形状不对 / 登记处没有 ⇒ 不存在。phoneTopicAllowed 已先挡过一轮。
       const id = MATTER_TOPIC.exec(topic)?.[1]
@@ -131,7 +137,8 @@ export function makePhoneEventsWiring(deps: PhoneTopicSourceDeps & {
     ...(deps.pollMs !== undefined ? { pollMs: deps.pollMs } : {}),
     ...(deps.log ? { log: deps.log } : {}),
   })
-  const off = deps.changes?.onChange(() => events.poke())
+  // 某一件事变了:只算那件事的主题 + 不分事的主题(home / approvals / agents),别把每个订着的 matter/<id> 都重算一遍(P2)
+  const off = deps.changes?.onChange((matterId) => events.poke(topic => topic === `matter/${matterId}` || !topic.startsWith('matter/')))
   return {
     events,
     dispose() { off?.(); events.dispose() },
