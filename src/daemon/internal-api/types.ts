@@ -587,12 +587,25 @@ export interface InternalApi {
   panelDispatch: PanelDispatch
 }
 
-/** 面板 → 内部 API 分发(P3b):帧预算与出生地由面板交进来(它知道传输)。 */
+/**
+ * 面板 → 内部 API 分发(P3b):帧预算与出生地由面板交进来(它知道传输)。
+ * `cause`(P3c-1):只有面板进程里的旧路由别名(legacy-routes.ts)这样调 —— 处理器报了原始错误码(`RouteResult.cause`)
+ * 就放进回包头 `x-cc-cause`,别名据此换成手机那一列的码。从网上来的请求设不了它(opts 由面板代码给),所以 `/v1` 的契约不变。
+ */
 export type PanelDispatch = (
   req: Request,
   caller: import('./token-registry').TokenInfo,
-  opts: { frameBudget: number; client: 'app' | 'web' },
+  opts: { frameBudget: number; client: 'app' | 'web'; cause?: true },
 ) => Promise<Response>
+
+/** 别名要的原始错误码放在这个回包头里(只在 `opts.cause` 时有;别名读完就丢,不出面板)。 */
+export const PANEL_CAUSE_HEADER = 'x-cc-cause'
+
+/**
+ * 处理器的回包。`cause`(可选,P3c-1):错误回包背后的原始码(抛出来的那个),不进正文、不上 127.0.0.1 的线 ——
+ * 只给面板里的旧路由别名换手机那一列的码用(`/v1` 回的是桌面那一列,有的码桌面列改了名,别名就认不回来)。
+ */
+export type RouteResult = { status: number; body: unknown; cause?: string }
 
 /**
  * Each route handler receives the parsed query (always present) and the
@@ -632,7 +645,7 @@ export type RouteHandler = (
    * onSent:回包真写出去之后再调(没写出去 / 调用方已断 ⇒ 不调)。
    */
   ctx?: { signal: AbortSignal; onSent(cb: () => void): void },
-) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
+) => Promise<RouteResult> | RouteResult
 
 export type RouteTable = Record<string, RouteHandler | undefined>
 

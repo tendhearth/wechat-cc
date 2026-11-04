@@ -130,10 +130,8 @@ return makeSettingsPanel({
     history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),
     chat: phoneChat,
     message: (chatId: string, id: string) => messagesStore.get(chatId, id),
-    search: (chatId: string, query: string, limit: number) => messagesStore.search(chatId, query, limit),
     speak: (text: string) => ilink.voice.synthesizeSpeech(text),
-    // 按住说话(2026-10-18):与微信语音同一个语音转文字(已过网络守护);没配抛 no_stt_config。
-    ...(ilink.voice?.transcribe ? { transcribe: (audio: Buffer, mime: string) => ilink.voice.transcribe!(audio, mime) } : {}),
+    // 按住说话(2026-10-18):这里只给「配没配」;录音转成字走 POST /v1/companion/transcribe(语音模块那一条,P3c-1)。
     ...(ilink.voice?.sttStatus ? { transcribeStatus: () => ({ configured: ilink.voice.sttStatus!().configured }) } : {}),
     // 与微信 `/api <模型>` 同一处:Mode.solo 按对话钉,下一句生效(同后端换模型时协调器自己释放旧会话)。
     model: {

@@ -13,7 +13,10 @@ import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from '../workbench/service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {saveArtifactSnapshot} from '../../adapters/workbench/artifacts'
-import {makeSettingsPanel,type SettingsPanel} from './settings-panel'
+import {makeSettingsPanel as makePanel,type SettingsPanel} from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+/** P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。 */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import {makeMemoryRelay} from './memory-relay.fixture'
 import {makeTunnelClient,type TunnelWS} from './tunnel-client'
 import {currentPhoneClient,markAppRequest} from './phone-client'

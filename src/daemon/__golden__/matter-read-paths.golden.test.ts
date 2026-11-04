@@ -48,6 +48,7 @@ import { makeSettingsPanel, type SettingsPanel } from '../../features/phone/sett
 import { makePhoneChat, makePhoneOwner } from '../../features/phone'
 import { makePhoneEventsWiring } from '../../features/phone/phone-topic-sources'
 import { mattersRoutes } from '../internal-api/routes-matters'
+import { createInternalApi } from '../internal-api'
 import type { InternalApiDeps, RouteTable } from '../internal-api/types'
 import { ownerChatReadingEvent } from '../wiring/owner-chat-reading'
 import { makeCliEventHub, type CliEventHub } from '../../app/cli-events'
@@ -279,8 +280,12 @@ beforeAll(async () => {
     core: { resume: async () => { throw new Error('not used') } },
     resolve: () => false,
   })
+  // P3c-1 起 /m/api/matters、/m/api/matter 是别名,翻到 /v1/matters、/v1/matter(内部 API 同一个分发,照 wiring/module.ts:
+  // internalApi.provide({ matters: mattersService }),面板的 v1 = panelDispatch)
+  const internalApi = createInternalApi({ stateDir: root, daemonPid: 1, matters: service })
   // wire-settings-panel.ts:matters 那一组、chat 那一组、cliActions
   panel = makeSettingsPanel({
+    v1: internalApi.panelDispatch,
     stateDir: root, ownerChatId: () => OWNER, log: () => {},
     chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {},
     executorName: (id: string) => registry.namesOf(id).name,

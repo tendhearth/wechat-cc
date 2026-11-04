@@ -42,6 +42,7 @@ import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-i
 import { mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
 import { mobileActivityRoutes } from './mobile-activity'
 import { mobileReadsRoutes } from './mobile-reads'
+import { legacyRoutes } from './legacy-routes'
 import { combinePhoneRoutes, ownsMethod, routePhone, type PhoneHandler, type PhoneRouteTable } from './phone-route-table'
 import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {MAX_MOBILE_DETAIL_BYTES,mobileMatterDetailResponse} from './mobile-matter-response'
@@ -275,25 +276,8 @@ import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './ph
 import { phoneClientOf, withPhoneClient } from './phone-client'
 import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 
-/**
- * 手机能不能看这件 matter:聊天 matter 只给主人自己的(别人的聊天 —— 访客、朋友 —— 不到手机)。
- * 列表筛选和按 id 打开(详情 / 解读)共用这一条,免得两条路漂开:列表藏住了,按 id 却能读出最近 50 条。
- */
-export function phoneMayOpenMatter(matter: unknown, owner: string | null): boolean {
-  const m = (matter ?? {}) as { kind?: unknown; ownerChatId?: unknown }
-  return m.kind !== 'chat' || (owner !== null && m.ownerChatId === owner)
-}
-
-/** 回复附带的旁白 / 语音文字 / 附件名和消息 id 只给已配对设备(和信、chat/file 一样);10 分钟的链接令牌只看正文。 */
-function withoutReplyExtras<T>(detail: T): T {
-  const events = (detail as { events?: unknown } | null)?.events
-  if (!Array.isArray(events)) return detail
-  return { ...detail, events: events.map(e => {
-    if (!e || typeof e !== 'object') return e
-    const { replyExtras: _x, messageId: _m, ...rest } = e as Record<string, unknown>
-    return rest
-  }) }
-}
+/** 手机能看哪几件(P3c-1 起规矩在 domain/matters/phone-scope.ts,`/v1/matters`、`/v1/matter` 按 caller 用它)。 */
+export { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
 
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
@@ -847,39 +831,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     },
     'POST /m/api/push/register': pushRoute(false),
     'POST /m/api/push/test': pushRoute(true),
-    'GET /m/api/matters': async (url) => {
-      if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
-      const kind = url.searchParams.get('kind'), status = url.searchParams.get('status')
-      if ((kind !== null && !(MATTER_KINDS as readonly string[]).includes(kind)) || (status !== null && status.split(',').some(s => !['open', 'replied', 'done', 'archived'].includes(s)))) return json({ ok: false, error: 'invalid' }, 400)
-      // 不带 status ⇒ 不含归档(真机 2026-09-30:前 50 条里 49 条是归档的自检任务,「一起做」只剩一条)。
-      const statuses = (status ? status.split(',') : ['open', 'replied', 'done']) as Array<'open' | 'replied' | 'done' | 'archived'>
-      // 多取一些再筛:别人的聊天 matter(updated_at 现在会被微信入站推高)不给手机,也不挤掉任务。
-      const owner = deps.ownerChatId()
-      const matters = deps.matters.list({ ...(kind ? { kind: kind as MatterKindT } : {}), statuses, limit: 200 })
-        .filter(m => phoneMayOpenMatter(m, owner))
-        // 终端会话的那件事(M4a 起写)不进这份列表,除非点名要 kind=terminal:App 主页另有一排终端行(登记处),两份就重了
-        // (11-04 真机:一个会话两行)。App 的终端详情并进 /matter(M4c)以后,由新版 App 自己点名来要。
-        // CC 自己做的事(act,M5)也一样:主人 10-31 定不混排,App 的「CC 最近在忙」点名 kind=act 来要。
-        .filter(m => kind !== null || !['terminal', 'act'].includes(String((m as { kind?: unknown }).kind)))
-        .slice(0, 50)
-      // 「CC 最近在忙」(M5c):点名要 act 的才去读轮(一件一两次查询);主人的列表不点名,不碰轮
-      const rows = kind === 'act' && deps.matters.withActs ? deps.matters.withActs(matters as never[]) : matters
-      for (const m of rows) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
-      return json({ ok: true, matters: await withTaskState(deps.matters, rows) })
-    },
-    'GET /m/api/matter': async (url, _req, { caller }) => {
-      if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
-      const id = url.searchParams.get('id')
-      if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
-      try {
-        const detail = await deps.matters.detail(id)
-        // 跟列表同一条规矩:别人的聊天按 id 也打不开,回得跟「没有这件」一样(不让人拿 id 试探)
-        if (!phoneMayOpenMatter((detail as { matter?: unknown } | null)?.matter, deps.ownerChatId())) return json({ ok: false, error: 'matter_not_found' }, 404)
-        try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ }
-        return mobileMatterDetailResponse(caller.origin === 'device' ? detail : withoutReplyExtras(detail))
-      }
-      catch (e) { const msg = e instanceof Error ? e.message : 'internal'; return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500) }
-    },
     'GET /m/api/matter/insight': async (url) => {
       if (!deps.insight) return json({ ok: false, error: 'insight_not_wired' }, 503)
       const id = url.searchParams.get('id')
@@ -945,17 +896,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         return json({ ok: true, sent: n(r?.sent), remaining: n(r?.remaining), skippedDiscarded: n(r?.skippedDiscarded) })
       } catch (e) { return mobileMatterError(e) }
     },
-    'POST /m/api/matter/say': async (_url, req) => {
-      if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
-      let body: unknown
-      try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
-      const b = (body ?? {}) as Record<string,unknown>
-      if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || (!b.text.trim()&&(!Array.isArray(b.attachmentIds)||!b.attachmentIds.length)) || b.text.length > PHONE_SAY_MAX_CHARS) return json({ ok: false, error: 'invalid' }, 400)
-      try { const input=mobileSayInput(b);return json({ ok: true, result: input?await deps.matters.say(b.id,b.text,input):await deps.matters.say(b.id,b.text) }) }
-      catch (e) {
-        return mobileMatterError(e)
-      }
-    },
     'POST /m/api/todo': async (_url, req) => {
       let body: unknown
       try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
@@ -987,6 +927,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   }
   const routes = combinePhoneRoutes<PanelCtx>(
     panelRoutes,
+    // 已并成别名的旧路径(P3c 起,wire-compat.ts 的 WIRE_ROUTE_ALIASES):翻到 /v1 那一条,走内部 API 同一个分发
+    legacyRoutes({ ...(deps.v1 ? { v1: deps.v1 } : {}) }),
     // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
     mobileWorkbenchRoutes(deps.matters, deps.entry, deps.uploads),
     mobileSessionContinueRoutes(deps.sessionContinue, id => deps.matters?.seenOnPhone(id), deps.executorName ? { executorName: deps.executorName } : {}),
@@ -1053,26 +995,4 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   }
 
   return panel
-}
-
-/**
- * 一个主页(设计稿 2026-10-31 U5):列表里每件任务带上任务真正的状态 —— matter 的 open / done 说不清
- * 「停下了」(重启打断的仍是 open)、「没做成」(失败也记 done)和「等你」。跟此刻页的 mobileHomeFocus 一样逐件读本机详情,
- * 一次 8 件;读不到的那件不带(网页退回 matter 自己的状态),不让整张列表失败。
- */
-async function withTaskState(source: { detail(id: string): unknown }, rows: unknown[]): Promise<unknown[]> {
-  const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
-  const out: unknown[] = []
-  for (let start = 0; start < rows.length; start += 8) {
-    out.push(...await Promise.all(rows.slice(start, start + 8).map(async row => {
-      if (!obj(row) || row.kind !== 'task' || typeof row.id !== 'string') return row
-      try {
-        const d = await source.detail(row.id)
-        if (!obj(d) || !obj(d.task) || typeof d.task.status !== 'string') return row
-        const own = (key: string) => Array.isArray(d[key]) ? (d[key] as unknown[]).filter(r => obj(r) && r.taskId === row.id).length : 0
-        return { ...row, taskState: { status: d.task.status, ...(typeof d.task.phase === 'string' ? { phase: d.task.phase } : {}), pending: own('permissions') + own('questions') } }
-      } catch { return row }
-    })))
-  }
-  return out
 }

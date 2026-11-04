@@ -85,11 +85,22 @@ const RETIRE: Record<Readers[number], string> = {
   selftest: 'selftest 改调新路径(随 P3d 同一个 PR)',
   desktop: '桌面 ≥ 改读新路径的那一版',
 }
+/**
+ * 已并的旧键(handler: 'alias'):面板里没有自己的处理器了,翻到新键走同一个分发(转换在 legacy-routes.ts)。
+ * 路由表里已经没有这几行;`routes.ts` 的 `PanelRouteKey` 把它们并进来,老 App 的类型化客户端(phone-calls.ts)和
+ * daemon 的别名表照样按键写。每并一条往这里加一个键,删一行别名就从这里删。
+ */
+export const MERGED_ALIAS_KEYS = [
+  'GET /m/api/matters', 'GET /m/api/matter', 'POST /m/api/matter/say',
+  'GET /m/api/chat/search', 'GET /m/api/chat/file', 'POST /m/api/chat/transcribe',
+] as const
+export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
+const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)
 const alias = (from: string, to: string, step: WireRouteStep, transform: string | null, readers: Readers = ['app'], link: WireRouteAlias['link'] = 'none'): WireRouteAlias =>
-  ({ from, to, transform, readers, link, handler: 'own', step, retireWhen: readers.map(r => RETIRE[r]).join(';') })
+  ({ from, to, transform, readers, link, handler: MERGED.has(from) ? 'alias' : 'own', step, retireWhen: readers.map(r => RETIRE[r]).join(';') })
 
 export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
-  // ── P3c-1 一件事与主人对话(和 /v1 同一个底层函数、两个处理器)
+  // ── P3c-1 一件事与主人对话:已并(MERGED_ALIAS_KEYS),一份数据一个 /v1 处理器
   alias('GET /m/api/matters', 'GET /v1/matters', 'P3c-1', 'phoneMatters', ['app', 'web'], 'read'),
   alias('GET /m/api/matter', 'GET /v1/matter', 'P3c-1', 'phoneMatter', ['app', 'web'], 'read'),
   alias('POST /m/api/matter/say', 'POST /v1/matter/say', 'P3c-1', 'phoneMatterSay'),

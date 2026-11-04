@@ -29,16 +29,16 @@ const BASELINE: Record<string, number> = {
   'src/features/jobs/mobile.ts': 2,
   'src/features/letters/mobile.ts': 2,
   'src/features/phone/mobile-activity.ts': 1,
-  'src/features/phone/mobile-chat.ts': 7,
+  'src/features/phone/mobile-chat.ts': 5,
   'src/features/phone/mobile-reads.ts': 8,
   'src/features/phone/mobile-workbench.ts': 16,
-  'src/features/phone/settings-panel.ts': 22,
+  'src/features/phone/settings-panel.ts': 19,
   'apps/mobile/src/home.js': 1,
   'apps/mobile/src/presence.js': 1,
   'apps/mobile/src/workbench.js': 3,
   'packages/protocol/src/api.ts': 61,
   'packages/protocol/src/phone-calls.ts': 60,
-  'packages/protocol/src/routes.ts': 61,
+  'packages/protocol/src/routes.ts': 55,
 }
 
 /** 一行是不是整行注释(按行判,不跨行)。 */

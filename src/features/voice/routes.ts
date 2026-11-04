@@ -13,6 +13,7 @@
 import { errMsg, type RouteTable } from '../../daemon/internal-api/types'
 import type { VoiceSaveConfigRequestT, WechatReplyVoiceRequestT } from '../../daemon/internal-api/schema'
 import type { WechatVoice } from '../../ports/wechat'
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
 
 export interface VoiceRoutesDeps {
   voice: WechatVoice
@@ -87,7 +88,8 @@ export function voiceRoutes(d: VoiceRoutesDeps): RouteTable {
       } catch (err) {
         const m = errMsg(err)
         if (/no.?stt.?config/i.test(m)) return { status: 422, body: { ok: false, error: 'no_stt_config' } }
-        return { status: 500, body: { ok: false, error: m } }
+        // cause:网络守护拦下的(手机别名据此回 stt_blocked,P3c-1);不进正文
+        return { status: 500, body: { ok: false, error: m }, ...(isNetworkUnprotectedError(err) ? { cause: 'network_unprotected' } : {}) }
       }
     },
 

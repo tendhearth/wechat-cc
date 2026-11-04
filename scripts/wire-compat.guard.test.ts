@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { WIRE_COMPAT, WIRE_ROUTE_ALIASES } from '../packages/protocol/src/wire-compat'
+import { MERGED_ALIAS_KEYS, WIRE_COMPAT, WIRE_ROUTE_ALIASES } from '../packages/protocol/src/wire-compat'
 import { ROUTES } from '../packages/protocol/src/routes'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -40,7 +40,7 @@ describe('wire-compat 兼容表只许变少', () => {
 // @debt 还在线上的 /m/api 旧路径(别名表行数;按构建号逐行删,降到 0 = 手机只剩 /v1 一族)
 const MAX_WIRE_ROUTE_ALIASES = 61
 // @debt 别名表里还是面板自己处理器的行(P3c–P3e 每并一条降一;降到 0 = 每份数据只有一个处理器)
-const MAX_OWN_HANDLER_ROWS = 61
+const MAX_OWN_HANDLER_ROWS = 55
 
 const routeKeys = new Set(Object.keys(ROUTES))
 const LEGACY_ROUTES = join(ROOT, 'src', 'features', 'phone', 'legacy-routes.ts')
@@ -89,6 +89,17 @@ describe('WIRE_ROUTE_ALIASES 别名表只许变少', () => {
       else expect(routeKeys.has(r.to), `${r.from} → ${r.to}:双胞胎不在路由表里`).toBe(true)
     }
     for (const r of WIRE_ROUTE_ALIASES.filter(x => x.handler === 'alias')) expect(routeKeys.has(r.to), `${r.from} 已并 ⇒ 新键 ${r.to} 要在路由表里`).toBe(true)
+  })
+
+  it('已并的行 = MERGED_ALIAS_KEYS(类型 PanelRouteKey 并进来的就是这几个);面板处理器表里有它、处理器在 legacy-routes.ts', () => {
+    expect(WIRE_ROUTE_ALIASES.filter(r => r.handler === 'alias').map(r => r.from).sort()).toEqual([...MERGED_ALIAS_KEYS].sort())
+    const src = readFileSync(LEGACY_ROUTES, 'utf8')
+    for (const k of MERGED_ALIAS_KEYS) expect(src.includes(`'${k}':`), `${k}:legacy-routes.ts 的表里没有它`).toBe(true)
+    // 新键那一行的 phone 块:link 照别名行冻结的值抄(链接令牌经新键也只够得着旧键今天够得着的)
+    for (const r of WIRE_ROUTE_ALIASES.filter(x => x.handler === 'alias')) {
+      const spec = (ROUTES as Record<string, { phone?: { link: string } }>)[r.to]
+      expect(spec?.phone?.link, `${r.to}:并了 ${r.from} ⇒ 这一行得有 phone 块,link 同别名行`).toBe(r.link)
+    }
   })
 
   it('P3d 是纯改名(transform null),双胞胎与 P3e 都有转换;已并的行转换在 legacy-routes.ts 里有实现', () => {

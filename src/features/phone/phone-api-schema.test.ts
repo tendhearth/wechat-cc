@@ -29,7 +29,10 @@ import { makeWorkbenchService, type WorkbenchService } from '../workbench/servic
 import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 import { saveArtifactSnapshot } from '../../adapters/workbench/artifacts'
 import { GIT_REVIEW_MIME, serializeGitReview, type GitReview } from '../workbench/git-review'
-import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
+import { makeSettingsPanel as makePanel, type SettingsPanel } from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+/** P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。 */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import { PHONE_ROUTES } from './phone-routes'
 import { makePhoneInsight } from './phone-insight'
 import { makeApprovalExplainer } from './phone-explain'
@@ -44,6 +47,8 @@ import { letterPagePath, listLetters, mobileLettersRoutes } from '../letters'
 describe('手机接口 schema 守卫', () => {
   it('PHONE_ROUTES 每条要么是 HTML(登记在 PHONE_HTML_ROUTES 并带理由)要么有 schema', () => {
     for (const route of PHONE_ROUTES) {
+      // `/v1` 行上的 phone 块(P3c 起):返回形状就是 /v1 那一份(desktop-api.ts 的 RESPONSE_SCHEMAS),不在手机这份里
+      if (/^(GET|POST) \/v1\//.test(route)) continue
       const isHtml = PHONE_HTML_ROUTES.has(route)
       const hasSchema = Object.hasOwn(PHONE_API_SCHEMAS, route)
       expect(isHtml || hasSchema, `${route} 既不在 PHONE_HTML_ROUTES 也没有 schema`).toBe(true)

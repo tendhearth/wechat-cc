@@ -2,13 +2,15 @@ import { describe, it, expect } from 'vitest'
 import { PHONE_CALLS, makePhoneApi, phoneCallRequest, toProtocolRequest, type PhoneCallRequest } from './phone-calls'
 import { PHONE_API_SCHEMAS } from './api'
 import { ROUTES } from './routes'
+import { MERGED_ALIAS_KEYS } from './wire-compat'
 
 const specs = Object.entries(PHONE_CALLS).flatMap(([ns, ms]) => Object.entries(ms).map(([m, s]) => ({ name: `${ns}.${m}`, key: s.key as string })))
 
 describe('PHONE_CALLS(类型化客户端的表)', () => {
-  it('每条都在路由表里、都有返回形状;一个键只登记一次', () => {
+  it('每条都在路由表里(或是已并成别名的旧键,P3c 起)、都有返回形状;一个键只登记一次', () => {
+    const merged: readonly string[] = MERGED_ALIAS_KEYS
     for (const s of specs) {
-      expect(ROUTES[s.key as keyof typeof ROUTES], s.name).toBeDefined()
+      expect(ROUTES[s.key as keyof typeof ROUTES] !== undefined || merged.includes(s.key), s.name).toBe(true)
       expect(PHONE_API_SCHEMAS[s.key], s.name).toBeDefined()
     }
     const keys = specs.map(s => s.key)

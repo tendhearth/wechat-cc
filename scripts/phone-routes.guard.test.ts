@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '@wechat-cc/protocol/routes'
-import { PHONE_ROUTES, PHONE_TOPICS, phoneTopicAllowed } from '../src/features/phone/phone-routes'
+import { MERGED_ALIASES, PHONE_ROUTES, PHONE_TOPICS, phoneTopicAllowed } from '../src/features/phone/phone-routes'
 import { makePhoneTopicSources } from '../src/features/phone/phone-topic-sources'
 import { makeSettingsPanel } from '../src/features/phone/settings-panel'
 import { mobileLettersRoutes } from '../src/features/letters'
@@ -36,8 +36,9 @@ describe('手机面板处理器表与路由表对得上', () => {
   it('真的拿到了东西(拿空 = 守卫沉默)', () => {
     expect(keys.size).toBeGreaterThanOrEqual(60)
   })
-  it('表里每个键都在路由表里,而且是面板路由', () => {
-    expect(diff(keys, new Set(Object.keys(ROUTES)))).toEqual([])
+  it('表里每个键都在路由表里(或是已并成别名的旧键),而且是面板路由', () => {
+    // 已并成别名的旧键(P3c 起):路由表里没有这一行了,处理器是 legacy-routes.ts 的转换
+    expect(diff(keys, new Set([...Object.keys(ROUTES), ...MERGED_ALIASES.map(a => a.from)]))).toEqual([])
     expect(diff(keys, PHONE_ROUTES)).toEqual([])
   })
   it('路由表里每条面板路由都有处理器(没有登记了却 404 的)', () => {
