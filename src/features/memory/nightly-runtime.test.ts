@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { makeCcActs } from '../../adapters/store/cc-acts'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeMemoryWriter } from './memory-export'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -105,6 +108,32 @@ describe('memory nightly runtime', () => {
     await failing.runNow()
     expect(log[0]).toBe('begin {"trigger":"owner"}')
     expect(log.at(-1)).toBe('finish failed')
+  })
+  it('M5d:上次写进去的时刻从「记忆整理」的轮推(不再写 lastRunIso);真机上还没有轮 ⇒ 读旧标记;记不上轮 ⇒ 退回写旧标记', async () => {
+    const db = openTestDb()
+    const acts = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db) })
+    const seen: Array<string | null> = []
+    const sources = (line: string) => ({ observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async (since: string | null) => { seen.push(since); return [line] }, projectMemory: () => '' })
+    // 旧标记(M5d 之前写的),还没有轮:素材从它之后读,看板也报它
+    writeNightlyState(stateDir, { ...readNightlyState(stateDir), lastRunDay: '2026-09-20', lastRunIso: '2026-09-20T04:05:00.000Z', firstRunDone: true })
+    writeFileSync(join(root, 'memory.md'), '# 记忆\n')
+    const rt = makeMemoryNightlyRuntime({ ...deps({ sources: sources('主人:周五前给 X 回话') }), acts })
+    expect(rt.curatedView().updated_at).toBe('2026-09-20T04:05:00.000Z')
+    await rt.tick()
+    expect(seen).toEqual(['2026-09-20T04:05:00.000Z'])
+    // 写进去了:这一轮 completed,startedAt 就是这一刻;状态文件里的旧标记不动
+    expect(readNightlyState(stateDir).lastRunIso).toBe('2026-09-20T04:05:00.000Z')
+    expect(acts.runs('memory')).toMatchObject([{ status: 'completed', startedAt: Date.parse('2026-09-25T04:05:00Z') }])
+    expect(rt.curatedView().updated_at).toBe('2026-09-25T04:05:00.000Z')
+    // 第二天:素材从上一轮之后读(轮比旧标记新)
+    now = Date.parse('2026-09-26T04:05:00Z')
+    await makeMemoryNightlyRuntime({ ...deps({ sources: sources('主人:又一句') }), acts }).tick()
+    expect(seen).toEqual(['2026-09-20T04:05:00.000Z', '2026-09-25T04:05:00.000Z'])
+    // 没接 act(或库写不进)⇒ 退回写旧标记,下一晚照样接得上
+    now = Date.parse('2026-09-27T04:05:00Z')
+    await makeMemoryNightlyRuntime(deps({ sources: sources('主人:第三句') })).tick()
+    expect(readNightlyState(stateDir).lastRunIso).toBe('2026-09-27T04:05:00.000Z')
+    db.close()
   })
   it('通知补在排下它的那一轮上,不是最近那一轮;发了没发出去 ⇒ 记 send_failed(Codex 评审)', async () => {
     const log: string[] = []

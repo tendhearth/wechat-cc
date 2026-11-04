@@ -58,7 +58,7 @@ describe('信:微信不通时寄到 App', () => {
     expect(chat).toBe(OWNER)
     expect(letter).toMatchObject({ id: '2026-10-16-abc123', pages: [join(t.stateDir, 'letters', '2026-10-16-abc123', 'page-1.png')] })
     expect(readLetterState(t.stateDir)).toMatchObject({ pending: null, lastSentAt: EVENING })
-    expect(listLetters(t.stateDir)[0]).toMatchObject({ id: '2026-10-16-abc123', via: 'app', pages: 1 })
+    expect(listLetters(t.stateDir, new Map())[0]).toMatchObject({ id: '2026-10-16-abc123', via: 'app', pages: 1 })
     expect(t.mirrored).toEqual([])   // 微信没寄成,不记「微信那一行」
   })
 
@@ -67,7 +67,7 @@ describe('信:微信不通时寄到 App', () => {
       const t = setup({ ...o, sendFile: async () => { throw new Error(WINDOW_CLOSED) } })
       expect(await t.rt.writeNow()).toEqual({ status: 'waiting', id: '2026-10-16-abc123' })
       expect(readLetterState(t.stateDir).pending?.blockedAt).toBe(EVENING)
-      expect(listLetters(t.stateDir)).toEqual([])   // 没寄出去的不进抽屉
+      expect(listLetters(t.stateDir, new Map())).toEqual([])   // 没寄出去的不进抽屉
     }
   })
 
@@ -99,7 +99,7 @@ describe('信:微信不通时寄到 App', () => {
     expect(t.wechat).toHaveLength(1)
     expect(t.mirrored).toEqual([t.wechat])
     expect(t.app.deliver).not.toHaveBeenCalled()
-    expect(listLetters(t.stateDir)[0]).toMatchObject({ via: 'wechat' })
+    expect(listLetters(t.stateDir, new Map())[0]).toMatchObject({ via: 'wechat' })
   })
 
   it('不改排期:寄到 App 也照常排下一封', async () => {
@@ -144,7 +144,7 @@ describe('别烦我(SpeechPolicy,第三批 3a):不定期的信是 initiative,当
     t.setNow(due + 60_000)
     await t.rt.tick()
     expect(t.wechat).toEqual([])
-    expect(listLetters(t.stateDir)).toEqual([])
+    expect(listLetters(t.stateDir, new Map())).toEqual([])
     expect(readLetterState(t.stateDir).dueAt).toBeGreaterThan(due)
     expect(t.logs.some(l => l.includes('not written: care_off'))).toBe(true)
   })
@@ -205,7 +205,7 @@ describe('存档(手机「CC 的信」读的)', () => {
     put3(a)
     mkdirSync(join(a.stateDir, 'letters', 'previews'), { recursive: true })
     mkdirSync(join(a.stateDir, 'letters', 'broken'), { recursive: true })
-    const list = listLetters(a.stateDir)
+    const list = listLetters(a.stateDir, new Map())
     expect(list.map(l => l.id)).toEqual(['2026-10-16-bbbbbb', '2026-09-10-aaaaaa'])
     expect(list[0]).toMatchObject({ pages: 2, via: 'app', requested: true, sentAt: Date.parse('2026-10-16T12:00:00Z') })
     expect(list[0]!.text).toBeUndefined()
@@ -213,21 +213,21 @@ describe('存档(手机「CC 的信」读的)', () => {
     expect([...list[0]!.opening].length).toBe(61)
     expect(list[1]).toMatchObject({ pages: 0, via: 'wechat' })
     expect(list[1]!.text).toContain('— CC')
-    expect(listLetters(join(a.stateDir, 'nope'))).toEqual([])
+    expect(listLetters(join(a.stateDir, 'nope'), new Map())).toEqual([])
   })
   it('取页:只认 id 形状 + 寄出去了的 + 存在的普通文件(符号链接不认)', () => {
     const a = archive()
     put3(a)
-    expect(letterPagePath(a.stateDir, '2026-10-16-bbbbbb', 2)).toBe(join(a.stateDir, 'letters', '2026-10-16-bbbbbb', 'page-2.png'))
-    expect(letterPagePath(a.stateDir, '2026-10-16-bbbbbb', 3)).toBeNull()
-    expect(letterPagePath(a.stateDir, '2026-10-16-bbbbbb', 0)).toBeNull()
-    expect(letterPagePath(a.stateDir, '2026-10-17-cccccc', 1)).toBeNull()   // 还没寄出
-    expect(letterPagePath(a.stateDir, '../2026-10-16-bbbbbb', 1)).toBeNull()
-    expect(letterPagePath(a.stateDir, 'previews', 1)).toBeNull()
+    expect(letterPagePath(a.stateDir, new Map(), '2026-10-16-bbbbbb', 2)).toBe(join(a.stateDir, 'letters', '2026-10-16-bbbbbb', 'page-2.png'))
+    expect(letterPagePath(a.stateDir, new Map(), '2026-10-16-bbbbbb', 3)).toBeNull()
+    expect(letterPagePath(a.stateDir, new Map(), '2026-10-16-bbbbbb', 0)).toBeNull()
+    expect(letterPagePath(a.stateDir, new Map(), '2026-10-17-cccccc', 1)).toBeNull()   // 还没寄出
+    expect(letterPagePath(a.stateDir, new Map(), '../2026-10-16-bbbbbb', 1)).toBeNull()
+    expect(letterPagePath(a.stateDir, new Map(), 'previews', 1)).toBeNull()
     if (process.platform !== 'win32') {
       a.put('2026-10-18-dddddd', { sent_at: '2026-10-18T12:00:00Z' }, 0)
       symlinkSync('/etc/hosts', join(a.stateDir, 'letters', '2026-10-18-dddddd', 'page-1.png'))
-      expect(letterPagePath(a.stateDir, '2026-10-18-dddddd', 1)).toBeNull()
+      expect(letterPagePath(a.stateDir, new Map(), '2026-10-18-dddddd', 1)).toBeNull()
     }
   })
   function put3(a: ReturnType<typeof archive>) {

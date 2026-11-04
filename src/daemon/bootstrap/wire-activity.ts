@@ -16,7 +16,8 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeActivityLog } from '../activity-log'
 import { makeActivityCommand } from '../activity/command'
 import { collectActivity } from '../cc-activity-source'
-import { listLetters } from '../../features/letters'
+import { letterDeliveries, listLetters } from '../../features/letters'
+import { ccActsFor } from '../../adapters/store/cc-acts'
 import { MEMORY_LOG_FILE, ownerMemoryRoot } from '../../features/memory'
 import type { makePermissionDecisionsStore } from '../permission-decisions-store'
 import type { WechatSend } from '../../ports/wechat'
@@ -48,7 +49,7 @@ export function wireActivity(d: WireActivityDeps) {
         decisions: () => permissionDecisions.since(since, 200),
         tasks: () => db.query<{ id: string; title: string; status: string; updatedAt: number; ownerChatId: string | null }, [number]>('SELECT id,title,status,updated_at AS updatedAt,owner_chat_id AS ownerChatId FROM workbench_tasks WHERE updated_at>=? ORDER BY updated_at DESC LIMIT 200').all(since),
         terminal: () => cliEvents.list({ includeEnded: true, limit: 200 }).filter(v => v.last_event_at >= since),
-        letters: () => listLetters(stateDir),
+        letters: () => listLetters(stateDir, letterDeliveries(ccActsFor(db, (t, l) => log(t, l)))),
         memoryLog: () => {
           const o = activityOwner(), root = o ? ownerMemoryRoot(stateDir, o) : null
           const f = root ? join(root, MEMORY_LOG_FILE) : null

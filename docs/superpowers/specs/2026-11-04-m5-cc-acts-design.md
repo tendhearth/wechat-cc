@@ -58,3 +58,15 @@
 
 ## 顺序
 M5a → M5b(一个发起方一个 PR,先信和记忆整理:真机上最常发生)→ soak → M5c(随 build)→ M5d。M5a / M5b 只动 daemon,`self deploy` 生效;界面上看不出变化。
+
+## 进度
+- M5a #803、M5b #804–#807、M5c #810 已合 dev。
+- **M5d(2026-11-04,分支 m5d-drop-markers)**:四个标记改从轮推,两个没删、proactive 没删(理由在下面)。
+  - 读法:`CcActs.runs(who, { status?, limit?, steps? })`(新的在前、带步)和 `stepsOf(who, kind)`(某一种步、不限轮数);`step` / `finish` 回「真写进去了没有」。真机库里到 11-04 还一件 act 都没有,所以**旧标记一律只读不写、和轮取较新的**;旧值会自己过期。推「上次」靠的那一步 / 那次收轮没写进去(没接库 / 库写不进)时才退回写旧标记,免得坏库让节奏门失效、寄出的信看不见。
+  - 信 `lastSentAt` / 每封 `sent_at`(连带 `sent_via`):delivery 那一步 `result='sent'` 加记 `sentAt` 和 `via`(= 以前写进标记的那一刻、那条路);`letterDeliveries` 推出每封的寄出时刻,抽屉、取页、`/v1/letters`、「做过的事」的信都读它,老信读存档的旧字段。
+  - 记忆整理 `lastRunIso`:最近 completed 那一轮的 startedAt(runtime 开轮的时刻同时交给 `runMemoryNightly` 当 nowMs,值和以前写的一样);素材起点、看板、微信「记忆」都读它。
+  - 画室 `successfulAt`:completed 轮的 startedAt(tick 把节奏的 now 钉成这一刻)和旧数组取并集。
+  - 贴纸 `last_at`:最近一轮的 startedAt(每次过了节奏门都开一轮,和旧标记「每次尝试都盖章」同义),网络守护拒掉的那一轮(`network_unprotected`)不算。
+  - **没删 早报 `lastRunAt` / `lastStatus`**:`scheduled-jobs-state.json` 是所有定时共用的一份,主人自己的定时照样要它;早报跳过的那几天(`skipped:missed / cap / busy / no_owner`)不开轮,`定时` 命令和手机上的「上次 · 跳过」推不出来。
+  - **没删 打猎 `lastHuntAtIso`**:它是出门前的登记(at-most-once,和 noReplyCount+1 同一次写,沉默 / 网络被拒时撤回),act 那一轮是事后才写、只在门放行时写;进程半路死掉时没有轮 ⇒ 重启后会再打一次猎。要删得先把打猎的轮挪到登记那一刻,另立。
+  - **没删 activity-log 的 proactive 那一类**:它记的是伙伴主动问候(「主动跟你说了一句」),问候按本稿「不做」不是 act,轮里没有;删了「CC 做过的事」里就少了这一行,是看得见的变化,要主人点头。记忆整理那一行也照旧读 `memory-log.jsonl`:那里还有导入(`source: 'import'`),轮里没有。

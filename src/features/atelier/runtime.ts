@@ -48,6 +48,10 @@ export function buildAtelierContext(input: {
 
 export interface AtelierCadenceState {
   lastEvaluatedAt?: string
+  /**
+   * 旧标记:画成了的那几次。给了 deps.successes(「画室」那件事的轮,M5d)⇒ 只读不写,和轮里的合起来算;
+   * 没给(没接库)⇒ 照旧在这里记。
+   */
   successfulAt: string[]
 }
 
@@ -67,6 +71,11 @@ export interface AtelierRuntimeDeps {
   canShare?: () => boolean
   notify?: (recordId: string) => Promise<void>
   log?: (tag: string, line: string) => void
+  /**
+   * 画成了的那几次(ISO),从「画室」那件事 completed 的轮推(M5d)。给了 ⇒ 节奏按它和旧标记 successfulAt 的并集算,
+   * 画成了也不再写 successfulAt(由调用方记那一轮);不给 ⇒ 照旧只看、只写 successfulAt。
+   */
+  successes?: () => string[]
 }
 
 export type AtelierRunResult =
@@ -115,8 +124,17 @@ export function writeAtelierCadence(stateDir: string, state: AtelierCadenceState
   writeFileAtomic(file, JSON.stringify(state, null, 2), { mode: 0o600 })
 }
 
-function recentSuccessful(state: AtelierCadenceState, nowMs: number, windowMs: number): string[] {
-  return state.successfulAt.filter(value => nowMs - Date.parse(value) < windowMs && nowMs >= Date.parse(value))
+function recentSuccessful(state: AtelierCadenceState, nowMs: number, windowMs: number, fromTurns: readonly string[] = []): string[] {
+  const all = [...new Set([...state.successfulAt, ...fromTurns.filter(value => typeof value === 'string' && Number.isFinite(Date.parse(value)))])]
+  // 新的在前(successful[0] 是最近一次,最短间隔按它算);旧标记本来就按这个顺序存
+  return all.filter(value => nowMs - Date.parse(value) < windowMs && nowMs >= Date.parse(value)).sort((a, b) => Date.parse(b) - Date.parse(a))
+}
+
+/** 画成了一次记进旧标记(没接库 / 这一轮记不上时的退路;M5d)。 */
+export function appendAtelierSuccess(stateDir: string, atIso: string, max = DEFAULT_MAX_SUCCESSES): void {
+  const cadence = readAtelierCadence(stateDir)
+  cadence.successfulAt = [...cadence.successfulAt, atIso].sort((a, b) => Date.parse(b) - Date.parse(a)).slice(0, max)
+  writeAtelierCadence(stateDir, cadence)
 }
 
 /**
@@ -140,7 +158,9 @@ export async function runAtelierCycle(d: AtelierRuntimeDeps): Promise<AtelierRun
   if (cadence.lastEvaluatedAt && nowMs - Date.parse(cadence.lastEvaluatedAt) < evaluationIntervalMs) {
     return { status: 'skipped_cadence' }
   }
-  const successful = recentSuccessful(cadence, nowMs, rollingWindowMs)
+  let fromTurns: string[] = []
+  try { fromTurns = d.successes?.() ?? [] } catch { fromTurns = [] }
+  const successful = recentSuccessful(cadence, nowMs, rollingWindowMs, fromTurns)
   if (successful.length >= maxSuccesses || (successful[0] && nowMs - Date.parse(successful[0]) < minSuccessIntervalMs)) {
     return { status: 'skipped_cadence' }
   }
@@ -205,10 +225,12 @@ export async function runAtelierCycle(d: AtelierRuntimeDeps): Promise<AtelierRun
     // clock, so a fixed injected `now` stays consistent across the gate and the
     // recorded success. Using record.createdAt (store clock) made cadence
     // date-dependent when the store had no injected clock.
-    cadence.successfulAt = [...successful, nowDate.toISOString()]
-      .sort((a, b) => Date.parse(b) - Date.parse(a))
-      .slice(0, maxSuccesses)
-    writeAtelierCadence(d.stateDir, cadence)
+    if (!d.successes) {
+      cadence.successfulAt = [...successful, nowDate.toISOString()]
+        .sort((a, b) => Date.parse(b) - Date.parse(a))
+        .slice(0, maxSuccesses)
+      writeAtelierCadence(d.stateDir, cadence)
+    }
     let shared = false
     if (pendingShare && d.notify) {
       try {

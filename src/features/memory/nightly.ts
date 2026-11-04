@@ -33,6 +33,10 @@ export interface NightlySources {
 export interface NightlyConfig { enabled: boolean; at: string; timezone: string }
 export interface NightlyState {
   lastRunDay: string | null
+  /**
+   * 旧标记(M5d 起只读不写):上一次真写进去的时刻。现在从「记忆整理」那件事的轮推(completed 那一轮的 startedAt),
+   * 由 runtime 两边取较新的、经 opts.lastRunIso 交进来;只有这一轮记不上时 runtime 才退回写它。
+   */
   lastRunIso: string | null
   fingerprint: string | null
   failures: number
@@ -80,7 +84,7 @@ export function writeNightlyState(stateDir: string, s: NightlyState): void {
 }
 
 /** Only the fields a run owns. pendingNotice is deliberately absent — see mergeRunState. */
-type RunOwnedFields = Partial<Pick<NightlyState, 'lastRunDay' | 'lastRunIso' | 'fingerprint' | 'failures' | 'lastFailDay' | 'firstRunDone' | 'netRetry'>>
+type RunOwnedFields = Partial<Pick<NightlyState, 'lastRunDay' | 'fingerprint' | 'failures' | 'lastFailDay' | 'firstRunDone' | 'netRetry'>>
 
 /**
  * Re-read the state right before writing and merge only this run's fields.
@@ -240,14 +244,18 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   })
 }
 
-export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: boolean }): Promise<NightlyRunResult> {
+/**
+ * opts.nowMs:这一次的时刻(runtime 传它开轮的那一刻,轮的 startedAt 就是「上次写进去的时刻」);不给 ⇒ deps.now()。
+ * opts.lastRunIso:上一次写进去的时刻(runtime 从轮 + 旧标记推);不给 ⇒ 状态文件里的旧标记。
+ */
+export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: boolean; nowMs?: number; lastRunIso?: string | null }): Promise<NightlyRunResult> {
   const owner = deps.ownerChatId()
   const root = owner ? ownerMemoryRoot(deps.stateDir, owner) : null
   if (!owner || !root) return { status: 'skipped', reason: 'no_owner' }
   const cfg = deps.config()
   if (!opts.force && !cfg.enabled) return { status: 'skipped', reason: 'disabled' }
   const state = readNightlyState(deps.stateDir)
-  const nowMs = deps.now()
+  const nowMs = opts.nowMs ?? deps.now()
   const { day } = localParts(nowMs, cfg.timezone)
   if (!opts.force) {
     if (!isDue({ nowMs, tz: cfg.timezone, at: cfg.at, lastRunDay: state.lastRunDay })) return { status: 'skipped', reason: 'not_due' }
@@ -261,7 +269,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   const current = deps.writer.memoryMd(owner)
   const firstRun = current === null
   const currentText = current ?? ''
-  const { text: rest, truncated, refs } = await gatherMaterial(root, deps.sources, state.lastRunIso, firstRun)
+  const { text: rest, truncated, refs } = await gatherMaterial(root, deps.sources, opts.lastRunIso !== undefined ? opts.lastRunIso : state.lastRunIso, firstRun)
   if (truncated) deps.log('MEMORY_NIGHTLY', `material over budget (${MATERIAL_BUDGET} chars) — lower-priority blocks dropped/truncated`)
   // 今天的草稿(同日失忆修复,2026-10-01):放最前面,不占素材预算(本身封顶 600 字)。它的每一行都
   // 来自 profile.md 的新增,profile 变了指纹自然会变 —— 所以指纹不算草稿,否则清掉草稿第二晚就会
@@ -366,7 +374,6 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   const notice = composeNotice(noticeItems(res.applied), !state.firstRunDone)
   mergeRunState(deps.stateDir, {
     lastRunDay: day,
-    lastRunIso: nowIso,
     fingerprint,
     failures: 0,
     lastFailDay: null,
