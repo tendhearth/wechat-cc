@@ -8,6 +8,9 @@
  * 两样晚到的东西:工作台与手机 App 推送出口(wireMain 里才造),都是调用时现取的读口(模块容器的 `ctx.late`)。
  * 要停的东西经 `own` 登记(模块容器的 `ctx.own`,关机逆序)。
  */
+import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { hostname as osHostname } from 'node:os'
 import { randomUUID as claimUuid } from 'node:crypto'
 import { log } from '../../lib/log'
@@ -84,6 +87,8 @@ export function wireTerminal(d: WireTerminalDeps) {
   const cliAppPush = (): AppPushOutlet | null => d.appPush()
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):replyCore 在下面才建,这里先占位
   let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
+  const terminalTurns = makeTerminalTurnLog({ db, log: makeMatterLog(db), matters: makeMatterStore(db) })
+  try { terminalTurns.interruptAll() } catch (err) { log('CLI_TURNS', `interruptAll failed: ${err instanceof Error ? err.message : String(err)}`) }
   const cliEvents = makeCliEventHub({
     // 经 CC 开口那道门(cli_session,report;汇总里可能带 y/n 码 ⇒ expiring,不进待说队列),
     // 投递仍走 sendAssistantText;没说出去 ⇒ 'rejected',hub 照旧落到 App 推送 / 桌面通知。
@@ -115,6 +120,8 @@ export function wireTerminal(d: WireTerminalDeps) {
     localMachine: osHostname(),
     // 终端会话登记处(v76):状态落库,重启后「看 码」「@码」照样认得;GET /v1/cli/sessions、手机都读它。
     store: makeCliSessionStore(db),
+    // 终端会话成为一件事(M4a):钩子事件同时写进这件事的轮与步(和登记处并行;读的人 M4b 再切过来)
+    turns: terminalTurns,
   })
   // terminal_say 的票(下面才建)随登记处一起收:放掉还持着的 busy、叫醒还在等的(启停只许一种写法,不另登记一行)
   own('cli-events', async () => { terminalSay?.dispose(); cliEvents.dispose() })

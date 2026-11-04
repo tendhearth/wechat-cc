@@ -15,6 +15,7 @@
 import { cliSourceLabel } from '../domain/cli-session-digest'
 import { sortCliSessionViews, toCliSessionView } from '../domain/cli-session-view'
 import type { CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
+import type { TerminalTurnLog } from '../ports/terminal-turns'
 
 export type CliSource = 'claude' | 'codex' | 'cursor'
 export type CliEventKind = 'stop' | 'prompt' | 'permission' | 'session_end'
@@ -109,6 +110,8 @@ export interface CliEventHubDeps {
    * daemon 重启也认得;缺席(老测试)⇒ 只用内存表,同改造前。
    */
   store?: CliSessionStore
+  /** 终端会话成为一件事(M4a):钩子事件同时写进这件事的轮与步(和登记处并行)。缺席 ⇒ 只写登记处。写不上只记日志。 */
+  turns?: TerminalTurnLog
 }
 
 /** 推给手机 app 的一条(结构化,措辞由 daemon 那头定;core 不碰推送协议)。 */
@@ -222,6 +225,13 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
           break
       }
     })
+    turnsDo(`turn ${ev.kind} ${short(ev.session_id)}`, (turns) => turns.event(ev, t))
+  }
+
+  /** 这件事的轮与步(M4a)写失败只记日志 —— 钩子的回包和推送那条路都不能因此断。 */
+  function turnsDo(what: string, fn: (turns: TerminalTurnLog) => void): void {
+    if (!deps.turns) return
+    try { fn(deps.turns) } catch (err) { deps.log('CLI_TURNS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) }
   }
 
   function isLocal(machine: string | undefined): boolean {
@@ -403,6 +413,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
         store.touch(req, t)
         store.setStatus(req.session_id, 'waiting', t, { pending: { tool: req.tool_name, summary: req.summary ? summarizeOneLine(req.summary, SESSION_SUMMARY_MAX) : null } })
       })
+      turnsDo(`turn permission ${short(req.session_id)}`, (turns) => turns.permissionAsked(req, t))
     },
     permissionSettled(sessionId, status) {
       // 任何结果都把 waiting 放回 running:timeout / undelivered 之后终端自己问,主人在终端前答,
@@ -411,6 +422,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
         // 只从 waiting 回到 running:中间已经 Stop / 结束的,不倒回去。
         if (store.get(sessionId)?.status === 'waiting') store.setStatus(sessionId, 'running', now())
       })
+      turnsDo(`turn permission settled ${short(sessionId)}`, (turns) => turns.permissionSettled(sessionId, status))
     },
     list(opts) {
       const t = now()

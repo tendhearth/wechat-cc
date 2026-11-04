@@ -17,7 +17,7 @@ import { loadAccess, AccessConfigCorruptError } from '../lib/access'
 import { consumePreviousRunEvidence, peekCleanShutdown } from '../lib/restart-markers'
 import { makeMemoryFS } from '../adapters/store/memory-fs'
 import { makeConversationStore } from '../adapters/store/conversation-store'
-import { makeTurnRecordStore } from '../adapters/store/turn-record-store'
+import { makeChatTurnRecords } from '../adapters/store/chat-turn-records'
 import { loadAllAccounts, type IlinkAccount } from './ilink-glue'
 import { makeMessagesStore } from '../lib/messages-store'
 import { makeJobsStore } from '../adapters/store/scheduled-jobs-store'
@@ -131,7 +131,8 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     voidedCards,
     // Per-turn observability store — written by the coordinator's recordTurn
     // (via bootstrap onTurnRecord) and read by internal-api GET /v1/turns.
-    turnRecordStore: makeTurnRecordStore(db),
+    // 对话的回合记录从这件对话的轮读(M3b);turn_records 不再写,表留着给回滚(M3c 删)
+    turnRecordStore: makeChatTurnRecords(db),
     // 执行者「真被拒着」(地区不可用):只看真回合,一轮真完成才清(provider-refusals.ts)
     providerRefusals: makeProviderRefusals({ stateDir, log }),
     conversationStore,

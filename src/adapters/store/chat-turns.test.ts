@@ -50,6 +50,18 @@ describe('chat-turns', () => {
     h.end({ mode: 'solo', outcome: 'error', error: 'spawn failed', endedAt: 4_500 })
     expect(log.turns(chatMatter)).toMatchObject([{ startedAt: 1_000, endedAt: 4_500 }])
   })
+  it('首字延迟:从开始跑到第一句话 / 第一个工具调用,记在这一轮的 policy;一个字都没来 ⇒ 不记', () => {
+    let clock = 10_000
+    const t2 = makeChatTurnLog({ db, log, matters, now: () => clock })
+    const h = t2.begin({ chatId: 'owner@im.wechat', provider: 'openai', alias: '_default', startedAt: 9_000 })!
+    clock = 10_500; h.event({ kind: 'init', sessionId: 's' })
+    clock = 12_300; h.event({ kind: 'text', text: '好' })
+    clock = 13_000; h.event({ kind: 'text', text: '的' })
+    h.end({ mode: 'solo', outcome: 'completed' })
+    const quiet = t2.begin({ chatId: 'owner@im.wechat', provider: 'openai', alias: '_default', startedAt: 20_000 })!
+    quiet.end({ mode: 'solo', outcome: 'error', error: 'timeout' })
+    expect(log.turns(chatMatter).map(t => t.policy?.ttftMs ?? null)).toEqual([2_300, null])
+  })
   it('超时 / 出错 ⇒ 这一轮 failed,错误码给不出就用结局;写一步错误', () => {
     const h = begin()
     h.end({ mode: 'parallel', outcome: 'timeout', error: 'turn timed out' })

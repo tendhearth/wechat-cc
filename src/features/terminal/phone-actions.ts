@@ -7,6 +7,7 @@
  * last_summary(core 自己记 running → idle)。
  */
 import { randomBytes } from 'node:crypto'
+import { statSync } from 'node:fs'
 import type { CliEventHub, CliSessionInfo } from '../../app/cli-events'
 import type { CliSessionView } from '../../ports/cli-session'
 import { readTail, type CliReplyCore } from './reply-handler'
@@ -21,6 +22,28 @@ export type CliPhoneActivityResult = { ok: true; items: CliActivityItem[] } | { 
 export const PHONE_ACTIVITY_READ_MAX = 256 * 1024
 /** 列表里每条在跑的会话只读这么多尾巴(列表 15 秒一拉,一次可能好几条)。 */
 export const PHONE_NOW_READ_MAX = 64 * 1024
+
+/**
+ * 解析过的记录按(文件, 大小, 修改时间)缓存(M4b 第一步,设计稿 2026-11-04-m4-terminal-matter-design.md)。
+ * App 详情每 4 秒拉一次、列表每 15 秒给每个在跑的会话各解析一遍 —— 绝大多数时候文件根本没变,以前每次都整段重读重解析。
+ * 文件没变 ⇒ 直接给上次的结果(同一份数组,出口一字不差);变了 ⇒ 照旧读尾巴、解析一遍。stat 不了(测试里的假路径)⇒ 不缓存。
+ */
+const ACTIVITY_CACHE_MAX = 64
+const activityCache = new Map<string, { stamp: string; items: CliActivityItem[] }>()
+export function activityOfTranscript(path: string, source: string, readMax: number, itemMax: number | undefined, read: (path: string, max: number) => string = readTail): CliActivityItem[] {
+  let stamp: string | null = null
+  try { const st = statSync(path); stamp = `${st.size}:${st.mtimeMs}` } catch { stamp = null }
+  const key = `${path}\u0000${source}\u0000${readMax}\u0000${itemMax ?? ''}`
+  if (stamp) { const hit = activityCache.get(key); if (hit && hit.stamp === stamp) return hit.items }
+  const items = itemMax === undefined ? parseActivity(read(path, readMax), source as never) : parseActivity(read(path, readMax), source as never, itemMax)
+  if (stamp) {
+    activityCache.delete(key); activityCache.set(key, { stamp, items })
+    if (activityCache.size > ACTIVITY_CACHE_MAX) activityCache.delete(activityCache.keys().next().value!)
+  }
+  return items
+}
+/** 测试用:清掉缓存。 */
+export function clearActivityCache(): void { activityCache.clear() }
 /** 送进开着的窗口那一句的结果(10-20 真机:手机先说「已送进」,其实 relay 在后台、失败了也没人告诉它)。只记每条会话最近一句。 */
 export interface CliPhoneSayState { id: string; state: 'sending' | 'sent' | 'failed'; error?: string; at: number }
 /** say_id 只在送进开着的窗口时给(那条路是后台的,要回头看结果);resume 那条路收下就是开跑了。 */
@@ -130,10 +153,10 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       // 那边的会话:记录在那台机器上,这里读不到(微信「看 码」会转过去;手机 v1 不转)。
       if (s.origin_agent || (s.machine && deps.localMachine && s.machine !== deps.localMachine)) return { ok: false, error: 'cli_session_remote' }
       if (!s.transcript_path) return { ok: false, error: 'no_transcript' }
-      let jsonl: string
-      try { jsonl = (deps.readTail ?? readTail)(s.transcript_path, PHONE_ACTIVITY_READ_MAX) }
+      let items: CliActivityItem[]
+      try { items = activityOfTranscript(s.transcript_path, s.source, PHONE_ACTIVITY_READ_MAX, undefined, deps.readTail ?? readTail) }
       catch { return { ok: false, error: 'no_transcript' } }
-      return { ok: true, items: parseActivity(jsonl, s.source) }
+      return { ok: true, items }
     },
     currentStep(sessionId) {
       const s = deps.hub.lookup(sessionId)
@@ -151,7 +174,7 @@ export function currentStepOf(s: CliSessionInfo, opts: { localMachine?: string |
   if (!s.transcript_path) return null
   if (s.origin_agent || (s.machine && opts.localMachine && s.machine !== opts.localMachine)) return null
   try {
-    const items = parseActivity((opts.readTail ?? readTail)(s.transcript_path, PHONE_NOW_READ_MAX), s.source, 20)
+    const items = activityOfTranscript(s.transcript_path, s.source, PHONE_NOW_READ_MAX, 20, opts.readTail ?? readTail)
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i]!
       if (it.kind === 'you') return null   // 主人刚说完、还没动手
