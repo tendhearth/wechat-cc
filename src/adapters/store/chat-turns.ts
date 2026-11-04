@@ -17,17 +17,23 @@ const activityPayload = (a: AgentActivity) => ({
   ...(a.detail ? { detail: a.detail.slice(0, DETAIL_MAX) } : {}), ...(a.parentId ? { parentId: a.parentId } : {}),
 })
 
-export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<MatterStore, 'findChat'> }): ChatTurnLog {
+export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<MatterStore, 'findChat'>; now?: () => number }): ChatTurnLog {
   const { db, log, matters } = deps
+  const now = deps.now ?? Date.now
   return {
     begin({ chatId, provider, alias, startedAt }) {
       const matter = matters.findChat(chatId)
       if (!matter) return null
       const turn = log.startTurn({ matterId: matter.id, executor: provider, policy: { alias }, startedAt })
       let usage: TurnUsage | null = null, sessionId: string | null = null, ended = false, plain = 0
+      // 首字延迟(2026-11-04,对标 Revolut「首字 3 秒内」):从这一轮开始跑(begin)到执行者第一句话 / 第一个工具调用。
+      // 先记数据,首字时限按主人网关的真实分布再定 —— 思考型模型首字本来就可能慢,拍脑袋压时限会误伤。
+      const runAt = now()
+      let firstAt: number | null = null
       const handle: ChatTurnHandle = {
         event(ev) {
           if (ended) return
+          if (firstAt === null && (ev.kind === 'text' || ev.kind === 'tool_call')) firstAt = now()
           if (ev.kind === 'tool_call') {
             const tool = ev.server ? `${ev.server}/${ev.tool}` : ev.tool
             if (ev.activity) log.writeItem({ matterId: matter.id, turnId: turn.id, kind: 'tool_call', status: statusOf(ev.activity), key: `${turn.id}:${ev.activity.id}`, payload: { tool, activity: activityPayload(ev.activity) } })
@@ -40,7 +46,7 @@ export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<Ma
         end(r) {
           if (ended) return
           ended = true
-          log.updateTurn(turn.id, { policy: { alias, mode: r.mode } })
+          log.updateTurn(turn.id, { policy: { alias, mode: r.mode, ...(firstAt !== null ? { ttftMs: firstAt - runAt } : {}) } })
           if (r.report) log.writeItem({ matterId: matter.id, turnId: turn.id, kind: 'delivery', status: 'completed', payload: { delivery: r.report.delivery, bubbles: r.report.bubbles, attachments: r.report.attachmentsSent } })
           if (r.outcome !== 'completed' && (r.error || r.errorCode)) log.writeItem({ matterId: matter.id, turnId: turn.id, kind: 'error', status: 'completed', payload: { text: (r.error ?? '').slice(0, ERROR_MAX), ...(r.errorCode ? { code: r.errorCode } : {}), outcome: r.outcome } })
           log.finishTurn(turn.id, { status: r.outcome === 'completed' ? 'completed' : 'failed', errorCode: r.outcome === 'completed' ? null : (r.errorCode ?? r.outcome), usage, nativeSessionId: sessionId, ...(r.endedAt !== undefined ? { endedAt: r.endedAt } : {}) })
