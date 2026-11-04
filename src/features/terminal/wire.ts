@@ -146,7 +146,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     // 主人第一次碰到的变化是「问得少了」—— 说一次为什么(整合者审 #615)。进待说队列,由 SpeechPolicy 挑时候说(免打扰 / 断线照规矩推后)
     const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
     if (owner) {
-      try { makePendingNotices({ stateDir, log }).add({ kind: 'rules_notice', chatId: owner, text: STARTER_NOTICE, at: new Date().toISOString() }) }
+      try { makePendingNotices({ db, log }).add({ kind: 'rules_notice', chatId: owner, text: STARTER_NOTICE, at: new Date().toISOString() }) }
       catch (err) { log('PERMISSION_RULES', `starter notice not queued: ${err instanceof Error ? err.message : String(err)}`) }
     }
   }

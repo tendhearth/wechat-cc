@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { openTestDb } from '../../lib/db'
 import { openSqlite, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
 import { initializeWechatNotificationSchema, makeWechatNotificationStore } from '../../adapters/store/workbench/wechat-notifications'
 import { wireWorkbenchNotifications } from './wire-notifications'
@@ -30,7 +31,7 @@ function speechHarness(o: { care?: 'off' | 'low'; quietEnds?: number | null; wec
   const dir = mkdtempSync(join(tmpdir(), 'wb-speech-')); tempDirs.push(dir)
   const sendWechat = vi.fn(async () => ({ msgId: 'plain' }))
   const outbound = makeProactiveOutbound({ wechatDegraded: () => o.wechatDegraded ?? false, wechatClosedSince: () => null, sendWechat, app: () => o.app ?? null, log: () => {} })
-  const pending = makePendingNotices({ stateDir: dir, log: () => {} })
+  const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
   const speech = makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: () => o.quietEnds ?? null, outbound, log: () => {}, pending })
   return { speech, pending, sendWechat }
 }

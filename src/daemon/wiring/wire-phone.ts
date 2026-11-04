@@ -20,6 +20,7 @@ import type { MemoryNightlyRuntime } from '../../features/memory'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { makePhoneChatId, makePhoneOwner, makePhoneChat, makePhoneEventsWiring, resolveRemoteRelay, makePhonePush, fanoutPush, makePhoneNotifier, deviceIdOf, currentPhoneClient, loadTunnelClient } from '../../features/phone'
 import { makePushGate } from '../speech/push-gate'
+import { makeHeldPushes } from '../speech/held-pushes'
 import { makeAppChannel } from '../companion/app-channel'
 import { makeMediaMirror } from '../companion/media-mirror'
 import type { makeMatterActivity } from '../matter-activity'
@@ -44,7 +45,7 @@ export interface WirePhoneDeps {
   mattersService: MattersService | null
   memoryNightly: MemoryNightlyRuntime
   /** CC 开口那道门:工作台 / 终端会话的原生推送先问它(speech/push-gate.ts)。 */
-  speech: Pick<import('../speech/policy').SpeechPolicy, 'ask'>
+  speech: Pick<import('../speech/policy').SpeechPolicy, 'ask' | 'expired' | 'onFlush'>
 }
 
 export function wirePhone(d: WirePhoneDeps) {
@@ -82,7 +83,8 @@ const onlineDevices = () => new Set([...(v2Tunnel?.subscribedDeviceTokens() ?? [
 //  - 工作台通知(phone-notifier)、终端会话(features/terminal/app-push 的 appPush):由状态变化直接触发 ⇒ 先过 pushGate 问门。
 const fanout = (p: import('../../features/phone').PushPayload) =>
   phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
-const pushGate = makePushGate({ speech, ownerChatId, push: fanout, log: (tag, line) => log(tag, line) })
+// 压着的推送在主库 speech_pending(lane='push',S2b):重启不丢;到点时中继还没连上就过一会儿再放
+const pushGate = makePushGate({ speech, ownerChatId, push: fanout, held: makeHeldPushes(db), ready: () => v2Tunnel?.connected() ?? false, log: (tag, line) => log(tag, line) })
 phoneLc.add('push-gate', () => pushGate.stop())
 // 终端会话的手机推送出口(features/terminal/app-push.ts):问过门再推(批准 = blocking 照推;完成了 = report,免打扰里先压着)。
 const appPush: import('../../features/terminal').AppPushOutlet = (p) => (phonePush ? pushGate.push(p) : null)

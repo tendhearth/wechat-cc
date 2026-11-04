@@ -130,12 +130,15 @@ export interface FakePhoneRelay {
   url: string
   /** 登录成功过几次(daemon 的隧道客户端连上并签了 challenge)。 */
   logins(): number
+  /** daemon 发上来的控制消息(登录 / ping 以外的:push_sync、push_reg、push …),按到达先后。看 App 推送真发出去没有。 */
+  controls(): ReadonlyArray<Record<string, unknown>>
   stop(): void
 }
 
 /** 手机中继 v2 的 daemon 侧。WebSocket 服务端只有 Bun.serve 有(同 yi-ws-server 的理由),这里是测试代码,直接用。 */
 export function startFakePhoneRelay(): FakePhoneRelay {
   let logins = 0
+  const controls: Array<Record<string, unknown>> = []
   const server = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
@@ -149,11 +152,14 @@ export function startFakePhoneRelay(): FakePhoneRelay {
         let msg: Record<string, unknown> = {}
         try { msg = JSON.parse(String(raw)) as Record<string, unknown> } catch { return }
         if (typeof msg.sig === 'string' && typeof msg.pub === 'string') { logins++; ws.send(JSON.stringify({ login_ok: true })); return }
-        if ('ping' in msg) ws.send(JSON.stringify({ pong: msg.ping }))
+        if ('ping' in msg) { ws.send(JSON.stringify({ pong: msg.ping })); return }
+        controls.push(msg)
+        const push = msg.push as { device?: unknown; ref?: unknown } | undefined
+        if (push && typeof push.ref === 'string') ws.send(JSON.stringify({ push_result: { device: push.device, ok: true, code: 'ok', ref: push.ref } }))
       },
     },
   })
-  return { url: `ws://127.0.0.1:${server.port}`, logins: () => logins, stop: () => server.stop(true) }
+  return { url: `ws://127.0.0.1:${server.port}`, logins: () => logins, controls: () => [...controls], stop: () => server.stop(true) }
 }
 
 /** 拿一个此刻空着的本机端口(A2A / 乙 hub 要配死端口,配置里不接受 0)。 */

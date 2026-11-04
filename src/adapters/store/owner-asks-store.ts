@@ -1,7 +1,7 @@
 /**
  * 要主人拍板的候选 —— 落盘(规矩与判法在 owner-asks.ts)。
  *
- * 一个 JSON 文件 `<stateDir>/owner-asks.json`(跟 speech/pending-notices.json 一样是小队列,不进 SQLite):
+ * 一个 JSON 文件 `<stateDir>/owner-asks.json`(小队列,不进 SQLite;「待说」队列以前也是这样,S2b 起搬进了主库 speech_pending):
  * CLI(`wechat-cc self ask`、`self plan --ask`)往里排,daemon(早报那一轮、微信回「2」)改状态 —— 两个进程都写,
  * 所以写一律走 updateJsonFile(读-改-写,中途被别人改了就重读一次)。读不出来 ⇒ 当没有、写入照拒(不把手改坏的冲掉)。
  * 路径由调用方给(写这份时的规矩是 core 不碰 node:path;core 已在架构终态 E3 拆掉)。
