@@ -11,7 +11,12 @@ export interface ChatTurnHandle {
   /** 这一轮的每个执行者事件:工具调用写成步;result 的用量 / 原生会话、error 记下,收的时候一起写。 */
   event(ev: AgentEvent): void
   /** 收这一轮:结局、模式、送达;幂等(第二次什么都不做)。 */
-  end(r: { mode: TurnRecord['mode']; outcome: TurnRecord['outcome']; errorCode?: string; error?: string; report?: DeliveryReport; /** 和 turn_records 同一个结束时刻;不给 ⇒ 现在。 */ endedAt?: number }): void
+  end(r: {
+    mode: TurnRecord['mode']; outcome: TurnRecord['outcome']; errorCode?: string; error?: string; report?: DeliveryReport
+    /** 和 turn_records 同一个结束时刻;不给 ⇒ 现在。 */ endedAt?: number
+    /** turn_records 那一行的其余几项(M3b:读口从这件事的轮拼回同一个形状)。 */
+    summary?: { replyToolCalled: boolean; toolCalls: string[]; textChunks: number; narrationSegments?: number }
+  }): void
 }
 export interface ChatTurnLog {
   /** 这个 chat 对应的那件对话里开一轮;找不到这件事 ⇒ null(那就不记)。 */

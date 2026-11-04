@@ -73,5 +73,7 @@
   - 这件对话的 id 由实现按 `findChat(chatId)` 自己找,没有经 `InboundMsg` 往下传。runner 手里本来就有 chatId,这样少改一条链。
   - 主人那句 / CC 的回复这两步要引 `messages` 的 id,这个 id 还没传到协调器,挪到 M3b 和读切换一起做。
 
+- M3b(11-04):M3a 在真机上对过账(11-04 三轮,开始 / 结束 / 耗时 / 结局逐项相同)。v97 把 turn_records 搬进这件对话的轮,那一行的各项记在 policy 上;`TurnRecordStore` 换成从轮读(`adapters/store/chat-turn-records.ts`),`/v1/turns` 与手机首页「聊天日」形状不变;turn_records 停写(表留着,M3c 删)。和设计的差别:工具名记在 policy 里,没有搬成一步步的 tool_call(读的人只要名字)。
+
 ## 顺序
 M3a → (真机跑一天,新旧对账)→ M3b → soak → M3c。每步只动 daemon,`self deploy` 就生效。

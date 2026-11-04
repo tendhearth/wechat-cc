@@ -32,7 +32,7 @@ describe('runner · 对话的轮(M3a)', () => {
     runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 100, endedAt: 200, outcome: 'completed', summary, turn })
     expect(opened).toHaveLength(1)
     expect(opened[0]!.events).toEqual([tool, RESULT])
-    expect(opened[0]!.ends).toEqual([{ mode: 'solo', outcome: 'completed', endedAt: 200 }])
+    expect(opened[0]!.ends).toEqual([expect.objectContaining({ mode: 'solo', outcome: 'completed', endedAt: 200, summary: { replyToolCalled: false, toolCalls: ['Bash'], textChunks: 0 } })])
     expect(recordTurn).toHaveBeenCalledTimes(1)
   })
   it('同一个对话同一家同一毫秒开两轮:按各自的 turn 标记对上,不互相覆盖(Codex 评审 P2)', async () => {
@@ -44,7 +44,7 @@ describe('runner · 对话的轮(M3a)', () => {
     ])
     runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 7, endedAt: 8, outcome: 'completed', summary: a, turn: first })
     runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'solo', startedAt: 7, endedAt: 9, outcome: 'error', summary: b, turn: second })
-    expect(opened.map(o => o.ends)).toEqual([[{ mode: 'solo', outcome: 'completed', endedAt: 8 }], [{ mode: 'solo', outcome: 'error', endedAt: 9 }]])
+    expect(opened.map(o => o.ends)).toEqual([[expect.objectContaining({ mode: 'solo', outcome: 'completed', endedAt: 8 })], [expect.objectContaining({ mode: 'solo', outcome: 'error', endedAt: 9 })]])
   })
   it('没走到 run(会话起不来)⇒ record 补开一轮当场收,带上错误', () => {
     const { runner, opened } = harness()
@@ -61,8 +61,8 @@ describe('runner · 对话的轮(M3a)', () => {
     runner.record({ chatId: 'c', provider: 'codex', alias: 'a', mode: 'parallel', startedAt: 7, endedAt: 8, outcome: 'completed', summary: b, turn: tb })
     runner.record({ chatId: 'c', provider: 'claude', alias: 'a', mode: 'parallel', startedAt: 7, endedAt: 9, outcome: 'timeout', summary: a, turn: ta })
     expect(opened.map(o => [o.provider, o.ends])).toEqual([
-      ['claude', [{ mode: 'parallel', outcome: 'timeout', endedAt: 9 }]],
-      ['codex', [{ mode: 'parallel', outcome: 'completed', endedAt: 8 }]],
+      ['claude', [expect.objectContaining({ mode: 'parallel', outcome: 'timeout', endedAt: 9 })]],
+      ['codex', [expect.objectContaining({ mode: 'parallel', outcome: 'completed', endedAt: 8 })]],
     ])
   })
   it('记轮的实现抛错不影响回合与 turn_records', async () => {
