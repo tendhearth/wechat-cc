@@ -81,7 +81,7 @@ export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
 
 const CHANGED_WINDOW_MS = 36 * 3_600_000
 
-export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps): Promise<'none' | 'sent' | 'waiting' | 'expired' | 'dropped'> {
+export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps, onSettled?: (r: 'sent' | 'send_failed' | 'expired' | 'dropped', actTurn: string | undefined, channel?: string) => void): Promise<'none' | 'sent' | 'send_failed' | 'waiting' | 'expired' | 'dropped'> {
   const state = readNightlyState(deps.stateDir)
   const pending = state.pendingNotice
   const owner = deps.ownerChatId()
@@ -89,26 +89,33 @@ export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps): P
   const nowMs = deps.now()
   const clear = () => writeNightlyState(deps.stateDir, { ...readNightlyState(deps.stateDir), pendingNotice: null })
   const timing = noticeTiming({ nowMs, tz: deps.config().timezone, createdAtMs: pending.createdAtMs })
-  if (timing === 'expire') { clear(); deps.log('MEMORY_NIGHTLY', 'notice expired unsent'); return 'expired' }
+  if (timing === 'expire') { clear(); deps.log('MEMORY_NIGHTLY', 'notice expired unsent'); onSettled?.('expired', pending.actTurn); return 'expired' }
   if (timing === 'wait') return 'waiting'
   const nowIso = new Date(nowMs).toISOString()
   const gate = deps.careGate(owner, nowIso)
   // 冷却没到 ⇒ 晚点再说(通知留着,24 小时过了自己作废);别的拒绝原因交给门,由它判 drop
   if (!gate.ok && gate.reason === 'memory_cooldown') return 'waiting'
+  let sendError = false, channel: string | undefined
   const outcome = await deps.speech.say({ kind: 'memory_notice', chatId: owner, nowMs, perKind: gate }, async (turn) => {
     deps.claim(owner, nowIso)   // 先登记再发:至多一次,不重试轰炸
     clear()
     const r = await turn.sendText(owner, pending.text)
-    if (r.error) deps.log('MEMORY_NIGHTLY', `notice send failed (not retried): ${r.error}`)
+    // 路是 sendText 里才定的(先微信、送不到退 App)⇒ 发完再问(Codex 评审)
+    try { channel = turn.channel() ?? undefined } catch { channel = undefined }
+    if (r.error) { sendError = true; deps.log('MEMORY_NIGHTLY', `notice send failed (not retried): ${r.error}`) }
   })
   // 免打扰 / 两条路都送不到 ⇒ 往后推(通知留着);别烦我 / 无回复暂停 ⇒ 这一份不发了
   if ('defer' in outcome) return 'waiting'
   if ('drop' in outcome) {
     clear()
     deps.log('MEMORY_NIGHTLY', `notice dropped: ${outcome.reason}`)
+    onSettled?.('dropped', pending.actTurn)
     return 'dropped'
   }
-  return 'sent'
+  // 发了但没发出去(不重试):别记成送到了(Codex 评审)
+  const r = sendError ? 'send_failed' : 'sent'
+  onSettled?.(r, pending.actTurn, channel)
+  return r
 }
 
 function lastLog(root: string): { at: string; ops: AppliedOp[] } | null {
@@ -120,7 +127,28 @@ function lastLog(root: string): { at: string; ops: AppliedOp[] } | null {
 
 const AGENDA_EVAL_TIMEOUT_MS = 60_000
 
-export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): MemoryNightlyRuntime {
+/** 「记忆整理」那件事的一轮(M5b):真动了手的才记 —— 写进去了 / 失败了 / 主人改过不敢写 / 网络没保护。 */
+const ACT_SKIPS_THAT_RAN = new Set(['owner_edited', 'network_unprotected'])
+function recordAct(acts: NightlyActs | undefined, r: NightlyRunResult, startedAt: number, endedAt: number, trigger: 'schedule' | 'owner'): string | null {
+  if (!acts) return null
+  if (r.status === 'skipped' && !ACT_SKIPS_THAT_RAN.has(r.reason)) return null
+  try {
+    const t = acts.begin('memory', { startedAt, policy: { trigger } })
+    if (r.status === 'written') {
+      const counts: Record<string, number> = {}
+      for (const op of r.applied) counts[op.kind] = (counts[op.kind] ?? 0) + 1
+      t.step('system', { applied: counts, notice: !!r.notice })
+      t.finish('completed', { endedAt })
+    } else {
+      t.step('system', { [r.status]: r.reason })
+      t.finish('failed', { endedAt, errorCode: r.reason })
+    }
+    return t.id
+  } catch { return null /* 只少一轮记录 */ }
+}
+type NightlyActs = Pick<import('../../ports/cc-acts').CcActs, 'begin' | 'toTurn'>
+
+export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { acts?: NightlyActs }): MemoryNightlyRuntime {
   async function dropAgendaByModel(c: Done): Promise<void> {
     const items = openAgendaItems(c.root)
     if (items.length === 0) return
@@ -361,10 +389,25 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
   // A skip reason like disabled / failed_today would otherwise log every
   // 15-min tick (~96 lines/day). Log it only when it changes.
   let lastSkipReason: string | null = null
+  /** 这一次整理排下了通知 ⇒ 记下它来自哪一轮,送出时补在那一轮上(Codex 评审:不是「最近那一轮」)。 */
+  const stampNotice = (r: NightlyRunResult, actTurn: string | null) => {
+    if (!actTurn || r.status !== 'written' || !r.notice) return
+    try {
+      const st = readNightlyState(deps.stateDir)
+      if (st.pendingNotice && st.pendingNotice.text === r.notice && !st.pendingNotice.actTurn) writeNightlyState(deps.stateDir, { ...st, pendingNotice: { ...st.pendingNotice, actTurn } })
+    } catch { /* 只是送出时少补一步 */ }
+  }
+  // 走的哪条路照实记(微信 / App,Codex 评审);作废 / 不发了 ⇒ 没有路
+  const noticeSettled = (r: 'sent' | 'send_failed' | 'expired' | 'dropped', actTurn: string | undefined, channel?: string) => {
+    if (!actTurn) return
+    try { deps.acts?.toTurn('memory', actTurn, 'delivery', { notice: r, ...(channel ? { channel } : {}) }, { status: r === 'sent' ? 'completed' : 'failed' }) } catch { /* 只少一步 */ }
+  }
   return {
     tick: () => serial(async () => {
       syncDiskSafely()
+      const startedAt = deps.now()
       const r = await runMemoryNightly(deps, { force: false })
+      stampNotice(r, recordAct(deps.acts, r, startedAt, deps.now(), 'schedule'))
       if (r.status === 'skipped') {
         if (r.reason !== 'not_due' && r.reason !== lastSkipReason) deps.log('MEMORY_NIGHTLY', `tick: skipped (${r.reason})`)
         lastSkipReason = r.reason
@@ -372,9 +415,16 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         lastSkipReason = null
         deps.log('MEMORY_NIGHTLY', `tick: ${r.status}${r.status === 'written' ? '' : ` (${r.reason})`}`)
       }
-      await deliverPendingNotice(deps)
+      // 通知送出去 / 没发出去 / 作废 / 不发了:补在排下它的那一轮整理上(那一轮可能几小时前就收了)
+      await deliverPendingNotice(deps, noticeSettled)
     }),
-    runNow: () => serial(() => { syncDiskSafely(); return runMemoryNightly(deps, { force: true }) }),
+    runNow: () => serial(async () => {
+      syncDiskSafely()
+      const startedAt = deps.now()
+      const r = await runMemoryNightly(deps, { force: true })
+      stampNotice(r, recordAct(deps.acts, r, startedAt, deps.now(), 'owner'))
+      return r
+    }),
     // 与每晚整理同一条串行链:不会和它同时改 memory.md
     correct: async (id, verdict) => {
       const done = await serial(async () => {

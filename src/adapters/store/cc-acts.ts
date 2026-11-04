@@ -8,7 +8,7 @@ import { CC_ACT_TITLES, type CcActs, type CcActTurn, type CcActWho } from '../..
  * id 由发起方名字定(sha1('cc-act:<who>') 前 8 位):不用绑定表(它的 surface 有 CHECK,协议里也是封闭枚举)。
  * 写不上一律吞掉 —— 原来的事(写信、整理记忆…)照做,只少一轮记录。
  */
-const NOOP: CcActTurn = { step() {}, finish() {} }
+const NOOP: CcActTurn = { id: null, step() {}, finish() {} }
 export const ccActMatterId = (who: CcActWho): string => createHash('sha1').update(`cc-act:${who}`).digest('hex').slice(0, 8)
 
 export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterStore, 'get' | 'create'>; onError?: (what: string, err: unknown) => void }): CcActs {
@@ -29,6 +29,7 @@ export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterS
       } catch (err) { fail(`begin ${who}`, err); return NOOP }
       let finished = false
       return {
+        id: turnId,
         step(kind, payload, o = {}) {
           // key 只在这一轮里认(一个发起方所有的轮都在同一件事里,MatterLog 的 key 按整件事认 ⇒ 带上轮 id,别把上一轮的步改掉;Codex 评审)
           try { log.writeItem({ matterId, turnId, kind, status: o.status ?? 'completed', ...(o.key ? { key: `${turnId}:${o.key}` } : {}), payload }) } catch (err) { fail(`step ${who} ${kind}`, err) }
@@ -39,6 +40,13 @@ export function makeCcActs(deps: { db: Db; log: MatterLog; matters: Pick<MatterS
           try { log.finishTurn(turnId, { status, ...(o.endedAt !== undefined ? { endedAt: o.endedAt } : {}), ...(o.errorCode ? { errorCode: o.errorCode } : {}) }) } catch (err) { fail(`finish ${who}`, err) }
         },
       }
+    },
+    toTurn(who, turnId, kind, payload, o = {}) {
+      try {
+        const matterId = ccActMatterId(who)
+        if (!db.query<{ id: string }, [string, string]>('SELECT id FROM matter_turns WHERE id=? AND matter_id=?').get(turnId, matterId)) return
+        log.writeItem({ matterId, turnId, kind, status: o.status ?? 'completed', payload })
+      } catch (err) { fail(`toTurn ${who} ${kind}`, err) }
     },
     interruptAll() {
       for (const t of db.query<{ id: string }, []>("SELECT t.id FROM matter_turns t JOIN matters m ON m.id=t.matter_id WHERE m.kind='act' AND t.status='running' ORDER BY t.cursor").all())

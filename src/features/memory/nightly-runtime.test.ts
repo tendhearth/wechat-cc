@@ -86,6 +86,58 @@ describe('memory nightly runtime', () => {
     expect(await deliverPendingNotice(deps())).toBe('expired')
     expect(sent).toEqual(['x'])
   })
+  it('「记忆整理」那件事(M5b):写进去了 = 一轮(改了几条);通知送出补在那一轮上;没到点的 tick 不记;主人叫的标 owner', async () => {
+    const log: string[] = []
+    const acts = {
+      begin: (_w: string, o?: { policy?: Record<string, unknown> }) => { log.push(`begin ${JSON.stringify(o?.policy)}`); const id = `turn${log.filter(l => l.startsWith('begin')).length}`; return { id, step: (k: string, p: unknown) => { log.push(`${k} ${JSON.stringify(p)}`) }, finish: (st: string) => { log.push(`finish ${st}`) } } },
+      toTurn: (_w: string, t: string, k: string, p: unknown) => { log.push(`${t} ${k} ${JSON.stringify(p)}`) },
+    }
+    const rt = makeMemoryNightlyRuntime({ ...deps(), acts: acts as never })
+    await rt.tick()
+    now = Date.parse('2026-09-25T09:01:00Z')
+    await rt.tick()
+    expect(log).toEqual([
+      'begin {"trigger":"schedule"}', 'system {"applied":{"add":1},"notice":true}', 'finish completed',
+      'turn1 delivery {"notice":"sent","channel":"wechat"}',
+    ])
+    log.length = 0
+    const failing = makeMemoryNightlyRuntime({ ...deps({ cheapEval: () => null, sources: { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => ['主人:新的一句'], projectMemory: () => '' } }), acts: acts as never })
+    await failing.runNow()
+    expect(log[0]).toBe('begin {"trigger":"owner"}')
+    expect(log.at(-1)).toBe('finish failed')
+  })
+  it('通知补在排下它的那一轮上,不是最近那一轮;发了没发出去 ⇒ 记 send_failed(Codex 评审)', async () => {
+    const log: string[] = []
+    let turns = 0
+    const acts = {
+      begin: () => { const id = `turn${++turns}`; return { id, step() {}, finish() {} } },
+      toTurn: (_w: string, t: string, _k: string, p: { notice: string }) => { log.push(`${t} ${p.notice}`) },
+    }
+    await makeMemoryNightlyRuntime({ ...deps(), acts: acts as never }).tick()   // 04:05 第一轮,排下通知
+    const more = { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => ['主人:又一句'], projectMemory: () => '' }
+    await makeMemoryNightlyRuntime({ ...deps({ sources: more }), acts: acts as never }).runNow()   // 通知还没送,主人又叫了一次(第二轮)
+    expect(turns).toBe(2)
+    now = Date.parse('2026-09-25T09:01:00Z')
+    const refusing = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, log: () => {}, now: () => now, outbound: {
+      appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async () => ({ msgId: '', error: 'ret=-2' }), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
+    } })
+    await makeMemoryNightlyRuntime({ ...deps({ speech: refusing }), acts: acts as never }).tick()
+    expect(log).toEqual(['turn1 send_failed'])
+  })
+  it('通知走的是 App ⇒ 记 app,不是写死的 wechat(Codex 评审)', async () => {
+    const got: unknown[] = []
+    const acts = { begin: () => ({ id: 'turn1', step() {}, finish() {} }), toTurn: (_w: string, _t: string, _k: string, p: unknown) => { got.push(p) } }
+    await makeMemoryNightlyRuntime({ ...deps(), acts: acts as never }).tick()
+    now = Date.parse('2026-09-25T09:01:00Z')
+    const viaApp = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, log: () => {}, now: () => now, outbound: {
+      appDeliverable: () => true, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      // 跟生产一样:路在 sendText 里才定,之前是 null
+      open: () => { let ch: 'app' | null = null; return { sendText: async () => { ch = 'app'; return { msgId: 'a1' } }, channel: () => ch, textOnly: () => true, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} } },
+    } })
+    await makeMemoryNightlyRuntime({ ...deps({ speech: viaApp }), acts: acts as never }).tick()
+    expect(got).toEqual([{ notice: 'sent', channel: 'app' }])
+  })
   it('readCurated shows the rendered memory with a header; curatedView marks last night changes and dues', async () => {
     const rt = makeMemoryNightlyRuntime(deps())
     expect(rt.readCurated()).toBeNull()
