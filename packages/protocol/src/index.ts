@@ -26,7 +26,7 @@ export {
   NativeSessionRow, NativeSessionMessage, NativeSessionPage, CliSessionRow, TodayItem, TodayNeed, TodayStuck, OverseerToday,
   MatterNativeStart, SESSION_CONTINUE_STATES, SessionContinue, SessionContinueResult, MatterQuotaHandoff, MatterHandoffResult, MatterActStep, MatterActTurn,
 } from './api'
-export type { MatterKindT, MatterStateT, MatterOriginT, DeviceRowT, ChatAttachmentT, LetterSummaryT, PhoneJobT, PhoneActivityItemT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, CliSessionRowT, CliActivityItemT, TodayItemT, OverseerTodayT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT, PhoneRewindPreviewT, MatterActTurnT } from './api'
+export type { MatterKindT, MatterStateT, MatterOriginT, DeviceRowT, ChatAttachmentT, LetterSummaryT, PhoneJobT, PhoneActivityItemT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, CliSessionRowT, CliActivityItemT, TodayItemT, OverseerTodayT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT, PhoneRewindPreviewT, MatterActTurnT, MatterEventT } from './api'
 export {
   base32Lower, RELAY_ID_RE, RELAY_SUBPROTOCOL, relayIdProtocol, relayIdFromPub, relayKeyPair, relayLoginMessage,
   signRelayLogin, verifyRelayLogin, RELAY_ERRORS, PushPlatform, pushTokenValid, PUSH_SEALED_MAX_CHARS, DaemonControl, RoomControl,

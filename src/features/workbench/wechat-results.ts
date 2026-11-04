@@ -1,11 +1,13 @@
 import {createHash} from 'node:crypto'
-import type {TaskEvent} from '../../adapters/store/workbench/store'
+import {stepPayload,timelineKind} from '../../adapters/store/workbench/store'
+import type {MatterItem} from '../../ports/matters'
 
 const PAGE_UTF16_UNITS=3000
 const TOKEN=/^r([1-9]\d*)-([a-f0-9]{12})$/
 
-export function resultToken(event:Pick<TaskEvent,'id'|'text'>):string {
-  return `r${event.id}-${createHash('sha256').update(event.text).digest('hex').slice(0,12)}`
+/** 执行者那句话的分页编号:步的 id + 正文哈希。微信「结果」那里给的是线上投影那条({id,text} 同一份)。 */
+export function resultToken(reply:{id:number;text:string}):string {
+  return `r${reply.id}-${createHash('sha256').update(reply.text).digest('hex').slice(0,12)}`
 }
 
 export function resultCommandHelp(taskId:string):string {
@@ -23,10 +25,11 @@ function textPages(text:string):string[] {
   return pages
 }
 
-export function wechatResultPage(input:{taskId:string;events:TaskEvent[];token:string;page:number}):string {
+export function wechatResultPage(input:{taskId:string;steps:readonly MatterItem[];token:string;page:number}):string {
   const parsed=TOKEN.exec(input.token)
   if(!parsed||!Number.isSafeInteger(input.page)||input.page<1)return resultCommandHelp(input.taskId)
-  const id=Number(parsed[1]),event=input.events.find(item=>item.id===id&&item.kind==='text')
+  const id=Number(parsed[1]),step=input.steps.find(item=>item.id===id&&timelineKind(item)==='text')
+  const event=step?{id:step.id,text:stepPayload(step).text}:null
   if(!event)return `任务 ${input.taskId}：这份正文不存在或不属于这个任务。请重新发送「任务 ${input.taskId} 结果」。`
   if(resultToken(event)!==input.token)return `任务 ${input.taskId}：这份正文内容已经更新，旧分页编号已失效。请重新发送「任务 ${input.taskId} 结果」载入新版本。`
   const pages=textPages(event.text),total=pages.length

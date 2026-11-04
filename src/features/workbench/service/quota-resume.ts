@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../../lib/read-json-file'
 import type { ServiceCtx } from './ctx'
+import { timelineKind } from '../../../adapters/store/workbench/store'
 import type { ExecuteDomain } from './execute'
 import type { NoticesDomain } from './notices'
 import type { QuotaDomain } from './quota'
@@ -65,7 +66,7 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, domains: QuotaResumeDomai
     try { task = store.get(id) } catch { return false }
     if (task.archivedAt !== null || task.status !== 'failed' || !QUOTA_CODES.has(task.error ?? '')) return false
     if (ctx.state.runsByTask.has(id)) return false
-    return !store.events(id).some(ev => ev.kind === 'user' && ev.createdAt > e.requestedAt)
+    return !store.steps(id).some(step => timelineKind(step) === 'user' && step.createdAt > e.requestedAt)
   }
 
   function fire(id: string) {

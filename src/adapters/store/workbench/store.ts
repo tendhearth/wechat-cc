@@ -18,7 +18,7 @@ import {makeCreationReceiptStore} from './creation-receipts'
 import {createEntryStore} from './entry-store'
 import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeArtifactDeliveryStore} from './artifact-deliveries'
-import {makeTimelineEvents,type TaskEvent} from './timeline-events'
+import {makeTimelineEvents} from './timeline-events'
 import {makeReviewMarkStore} from './review-marks'
 import {makeRewindStore} from './rewind-store'
 import {makeReviewCommentStore} from './review-comments'
@@ -61,7 +61,7 @@ function parseScriptGroups(raw:string|null):{groups:number[]|null;boot:number|nu
 }
 export interface GoalRecord { taskId:string; command:string; maxRounds:number; rounds:number; status:'active'|'passed'|'exhausted'|'stopped'; lastExit:number|null; stopReason:string|null; checkedTurn:string|null; updatedAt:number }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
-export type {TaskEvent} from './timeline-events'
+export {stepPayload,timelineKind,type TimelineKind,type TimelinePayload} from './timeline-events'
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt,workspace_kind AS workspaceKind FROM workbench_tasks'
 const HANDOFF_SELECT='SELECT id,source_task_id AS sourceTaskId,target_task_id AS targetTaskId,purpose,request,packet_sha256 AS packetSha256,artifact_refs_json AS artifactRefsJson,quote_json AS quoteJson,created_at AS createdAt,request_event_id AS requestEventId,source_native_id AS sourceNativeId,target_native_id AS targetNativeId,packet_json AS packetJson,token_hash AS tokenHash FROM workbench_handoffs'
@@ -116,7 +116,7 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
   const artifacts = (id: string) => db.query<StoredArtifact, [string]>(`${ART_SELECT} WHERE task_id=? ORDER BY created_at DESC,rowid DESC`).all(id)
   const matterLog=makeMatterLog(db)
   const execution=makeExecutionSettingsStore(db,matterLog)
-  const {events,addEvent:insertEvent,recordAgentEvent:upsertAgentEvent,finishRunActivities:finishActivities}=makeTimelineEvents(db,matterLog)
+  const {steps,events,addEvent:insertEvent,recordAgentEvent:upsertAgentEvent,finishRunActivities:finishActivities}=makeTimelineEvents(db,matterLog)
   const bump=(id:string):number=>{
     const row=db.query<{seq:number},[number,string]>('UPDATE workbench_tasks SET seq=seq+1,updated_at=? WHERE id=? RETURNING seq').get(Date.now(),id)
     if(!row)throw new Error('not_found')
@@ -168,6 +168,8 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     reviewHunks:makeReviewHunkLog(db,bump),
     /** 回退记录(v81):意图 / 已撤掉的轮 / 待告知执行者 / 撤销回退。 */
     rewinds:makeRewindStore(db,bump),
+    /** 时间线上的步(src 里读时间线读这个);`events` 是它的线上投影(WorkbenchTaskEvent),只给出口与测试。 */
+    steps,
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,
     recordHandoffNative:(id:string,nativeId:string):{sourceTaskId:string;targetTaskId:string}|null=>db.transaction(()=>{
       const row=db.query<{sourceTaskId:string;targetTaskId:string},[string,string]>('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL RETURNING source_task_id AS sourceTaskId,target_task_id AS targetTaskId').get(nativeId,id)

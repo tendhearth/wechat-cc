@@ -9,7 +9,7 @@ import { restartPreview, type Continuation } from '../continuation'
 import { normalizeExecutionChoice } from '../../../adapters/store/workbench/execution-settings'
 import { canResumeWorkbenchExecutor, isUnattendedExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, requireWorkbenchInput, type WorkbenchExecutorCapabilities } from '../../../domain/workbench/executor-capabilities'
 import { snapshotHash } from '../../../adapters/workbench/native-adoption'
-import { TERMINAL_TASK_STATUSES, type StoredTask } from '../../../adapters/store/workbench/store'
+import { TERMINAL_TASK_STATUSES, timelineKind, type StoredTask } from '../../../adapters/store/workbench/store'
 import type { Attachment } from '../../../ports/workbench'
 import type { AgentExecutionChoice, AgentModelCatalog } from '../../../ports/agent-provider'
 import type { ServiceCtx } from './ctx'
@@ -66,11 +66,12 @@ export function makeAdmissionDomain(ctx:ServiceCtx, domains:AdmissionDomains):Ad
     catch { return false }
   }
   function continuation(task:StoredTask,execution:AgentExecutionChoice=store.execution.choice(task.id)):Continuation {
-    const events=store.events(task.id)
-    if (!events.some(event => event.kind==='user' || event.kind==='text')) return {mode:'new'}
+    const steps=store.steps(task.id)
+    if (!steps.some(step => timelineKind(step)==='user' || timelineKind(step)==='text')) return {mode:'new'}
     if (canResume(task)) return {mode:'resume'}
-    return {mode:'restart_required',restart:restartPreview(task,events,execution,store.execution.choice(task.id))}
+    return {mode:'restart_required',restart:restartPreview(task,steps,execution,store.execution.choice(task.id))}
   }
+  // 指纹里放的是时间线的线上投影(不是步本身):步的 updatedAt / cursor 重写一次就变,投影只在看得见的内容变了才变 —— 跟 M6c 以前同一个值。
   function taskVersion(task:StoredTask){return snapshotHash(JSON.stringify({updatedAt:task.updatedAt,status:task.status,sessionId:task.sessionId,events:store.events(task.id),source:store.source(task.id)?.firstDispatchedAt,execution:store.execution.choice(task.id)}))}
   async function modelCatalog(providerId:string,path:string):Promise<AgentModelCatalog>{
     const entry=provider(providerId),canonical=canonicalProject(path)

@@ -58,25 +58,25 @@ describe('immutable WeChat result pages',()=>{
 
   it('keeps an old event token stable after a newer run adds text',()=>{
     const row=task(),old='旧结果'.repeat(1600),eventId=store.addEvent(row.id,'text',old,null,'old-run'),token=resultToken({id:eventId,text:old})
-    const before=wechatResultPage({taskId:row.id,events:store.events(row.id),token,page:2})
+    const before=wechatResultPage({taskId:row.id,steps:store.steps(row.id),token,page:2})
     store.addEvent(row.id,'text','新一轮结果',null,'new-run')
-    expect(wechatResultPage({taskId:row.id,events:store.events(row.id),token,page:2})).toBe(before)
+    expect(wechatResultPage({taskId:row.id,steps:store.steps(row.id),token,page:2})).toBe(before)
   })
 
   it('rejects a token when streaming changes the same event content',()=>{
     const row=task(),text='流式正文'.repeat(1200),eventId=store.addEvent(row.id,'text',text),token=resultToken({id:eventId,text})
     db.query("UPDATE matter_items SET payload_json=json_set(payload_json,'$.text',?) WHERE id=?").run(text+'更新',eventId)
-    expect(wechatResultPage({taskId:row.id,events:store.events(row.id),token,page:1})).toContain('内容已经更新')
+    expect(wechatResultPage({taskId:row.id,steps:store.steps(row.id),token,page:1})).toContain('内容已经更新')
   })
 
   it('rejects missing, foreign and non-text event tokens',()=>{
     const mine=task(),other=task(),foreignText='别人的正文',foreignId=store.addEvent(other.id,'text',foreignText),systemId=store.addEvent(mine.id,'system','内部状态')
     const childId=store.recordAgentEvent(mine.id,'run',{kind:'tool_call',tool:'Agent',activity:{id:'child',type:'agent',status:'completed',label:'子任务',output:'不可展示的子任务输出'}})
-    expect(wechatResultPage({taskId:mine.id,events:store.events(mine.id),token:`r${foreignId}-${createHash('sha256').update(foreignText).digest('hex').slice(0,12)}`,page:1})).toContain('不存在或不属于')
-    expect(wechatResultPage({taskId:mine.id,events:store.events(mine.id),token:`r${systemId}-${createHash('sha256').update('内部状态').digest('hex').slice(0,12)}`,page:1})).toContain('不存在或不属于')
-    const childReply=wechatResultPage({taskId:mine.id,events:store.events(mine.id),token:`r${childId}-${createHash('sha256').update('子任务').digest('hex').slice(0,12)}`,page:1})
+    expect(wechatResultPage({taskId:mine.id,steps:store.steps(mine.id),token:`r${foreignId}-${createHash('sha256').update(foreignText).digest('hex').slice(0,12)}`,page:1})).toContain('不存在或不属于')
+    expect(wechatResultPage({taskId:mine.id,steps:store.steps(mine.id),token:`r${systemId}-${createHash('sha256').update('内部状态').digest('hex').slice(0,12)}`,page:1})).toContain('不存在或不属于')
+    const childReply=wechatResultPage({taskId:mine.id,steps:store.steps(mine.id),token:`r${childId}-${createHash('sha256').update('子任务').digest('hex').slice(0,12)}`,page:1})
     expect(childReply).toContain('不存在或不属于');expect(childReply).not.toContain('不可展示的子任务输出')
-    expect(wechatResultPage({taskId:mine.id,events:store.events(mine.id),token:'r999999-aaaaaaaaaaaa',page:1})).toContain('不存在或不属于')
+    expect(wechatResultPage({taskId:mine.id,steps:store.steps(mine.id),token:'r999999-aaaaaaaaaaaa',page:1})).toContain('不存在或不属于')
   })
 
   it('consumes malformed and out-of-range reserved commands without dispatching a supplement',async()=>{

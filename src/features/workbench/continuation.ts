@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import type { StoredTask, TaskEvent } from '../../adapters/store/workbench/store'
+import { stepPayload, timelineKind, type StoredTask } from '../../adapters/store/workbench/store'
+import type { MatterItem } from '../../ports/matters'
 import type {AgentExecutionChoice} from '../../ports/agent-provider'
 import {PROVIDER_EXECUTION_CHOICE} from '../../adapters/store/workbench/execution-settings'
 
@@ -15,8 +16,14 @@ export interface RestartPreview {
 export type Continuation = { mode: 'new' | 'resume'; restart?: never } | { mode: 'restart_required'; restart: RestartPreview }
 
 /** Keep the newest conversation, including part of an oversized event with its role intact. */
-export function restartPreview(task: StoredTask, events: TaskEvent[],execution:AgentExecutionChoice=PROVIDER_EXECUTION_CHOICE,retainedExecution:AgentExecutionChoice=execution): RestartPreview {
-  const source=events.filter(event => event.kind==='user' || event.kind==='text')
+export function restartPreview(task: StoredTask, steps: readonly MatterItem[],execution:AgentExecutionChoice=PROVIDER_EXECUTION_CHOICE,retainedExecution:AgentExecutionChoice=execution): RestartPreview {
+  // 只要你说的和执行者说的;kind 照旧用 user / text(token 的哈希里有它,换了名字旧预览就全失效)。
+  const source=steps.flatMap(step => {
+    const kind=timelineKind(step)
+    if (kind!=='user' && kind!=='text') return []
+    const {text,attachments}=stepPayload(step)
+    return [{id:step.id,kind,text,...(attachments?.length?{attachments}:{})}]
+  })
   const selected=source.slice(-12)
   const parts:string[]=[]
   let remaining=source.some(e=>e.attachments?.length)?21_000:24_000, partial=false

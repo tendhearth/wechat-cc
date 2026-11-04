@@ -17,7 +17,7 @@ import { decodeNativeHistoryKey, historyDeadline, historyHash, normalizeHistoryL
 import { NATIVE_CONTINUE_REFUSAL, nativeImportInput, nativeResumeToken, publicSource, readNativeImport, selectNativeImportMessages, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeContinuePreview, type NativeContinueState, type NativeImportInput, type NativeResumeDecision } from '../../../adapters/workbench/native-adoption'
 import { pathsConflict } from '../../../lib/claim-paths'
 import type { AgentExecutionChoice } from '../../../ports/agent-provider'
-import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask } from '../../../adapters/store/workbench/store'
+import { publicTask, stepPayload, TERMINAL_TASK_STATUSES, timelineKind, type StoredTask } from '../../../adapters/store/workbench/store'
 import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
@@ -79,8 +79,8 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
       if(state.runsByTask.has(target.id)||!TERMINAL_TASK_STATUSES.includes(target.status)||target.error==='writer_not_closed')throw new Error('workbench_busy')
       if(target.providerId!==input.targetProviderId||target.path!==source.path)throw new Error('invalid_handoff_target')
       const origin=store.handoffs(source.id).find(h=>h.purpose==='review'&&h.sourceTaskId===target!.id&&h.targetTaskId===source.id)
-      const event=store.events(source.id).find(e=>e.id===input.quote!.eventId&&e.kind==='text')
-      if(!origin||!event?.text.includes(input.quote!.text))throw new Error('invalid_handoff_quote')
+      const quoted=store.steps(source.id).find(step=>step.id===input.quote!.eventId&&timelineKind(step)==='text')
+      if(!origin||!quoted||!stepPayload(quoted).text.includes(input.quote!.text))throw new Error('invalid_handoff_quote')
       artifacts=origin.artifacts
       const original=store.handoffRecord(source.id,origin.id)
       if(snapshotHash(original.packetJson)!==original.packetSha256)throw Error('artifact_changed')
@@ -91,7 +91,7 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     const files=artifacts.map(a=>handoffArtifactText(store,a,target?.id??source.id,ctx.stateDir))
     const materials=handoffAttachments(attachments,target?.id??source.id)
     requireInput(input.targetProviderId,combinedAttachments(materials,targetContinuation?.mode==='restart_required'?targetContinuation.restart.attachments:[]),target?store.execution.choice(target.id):PROVIDER_EXECUTION_CHOICE,!!target&&targetContinuation?.mode==='resume')
-    const packet=handoffContext({...input,attachments},source,store.events(source.id),files,materials)
+    const packet=handoffContext({...input,attachments},source,store.steps(source.id),files,materials)
     ctx.ensureAccepting()
     if(taskVersion(store.get(source.id))!==version)throw new Error('handoff_changed')
     const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,targetExecution:target?store.execution.choice(target.id):{...PROVIDER_EXECUTION_CHOICE},...(attachments.length?{attachments}:{}),quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
@@ -199,7 +199,7 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     if(mode==='fresh_context'&&recovery.mode!=='restart_required')throw new Error('invalid_request')
     ctx.ensureAccepting()
     if(taskVersion(store.get(id))!==version||state.runsByTask.has(id))throw new Error('external_close_confirmation_stale')
-    const preview=restartPreview(task,store.events(id),store.execution.choice(id))
+    const preview=restartPreview(task,store.steps(id),store.execution.choice(id))
     const decision:AcceptedNativeResume={token:nativeResumeToken(),taskId:id,sourceId:source.id,providerId:source.providerId,nativeId:source.nativeId,path:task.path,mode,expiresAt:Date.now()+5*60_000,context:mode==='fresh_context'?preview.context:'',truncated:source.truncated,changedSinceImport:JSON.stringify(current)!==JSON.stringify(pages),pages:current,taskVersion:version,directoryIdentity:identity,execution,...(mode==='fresh_context'?{restartToken:preview.token}:{})}
     for(const [token,value] of state.nativeDecisions)if(value.expiresAt<Date.now()||value.taskId===id)state.nativeDecisions.delete(token)
     if(state.nativeDecisions.size>=100)state.nativeDecisions.delete(state.nativeDecisions.keys().next().value!)
@@ -215,7 +215,7 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     await validateNativeDecision(task,decision)
     ctx.ensureAccepting()
     if(taskVersion(store.get(id))!==decision.taskVersion||state.runsByTask.has(id)||state.nativeDecisions.get(sourceClosedToken)!==decision)throw new Error('external_close_confirmation_stale')
-    const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id),store.execution.choice(id))}
+    const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.steps(id),store.execution.choice(id))}
     if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
     requireInput(task.providerId,combinedAttachments(attachments,accepted.mode==='restart'?accepted.preview.attachments:[]),execution,accepted.mode==='resume')
     state.nativeDecisions.delete(sourceClosedToken)

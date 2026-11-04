@@ -168,6 +168,7 @@ export const MatterEvent = z.object({
   // 工具那一步(2026-10-17):status = running / completed / failed …,手机据此标「正在」。老 daemon 不带。
   activity: z.object({ type: z.string(), status: z.string(), label: z.string() }).optional(),
 })
+export type MatterEventT = z.infer<typeof MatterEvent>
 
 export const MatterInput = z.object({
   id: z.string(), taskId: z.string(), runId: z.string(), text: z.string(),

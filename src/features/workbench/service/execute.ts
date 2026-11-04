@@ -36,7 +36,7 @@ import { makeRunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS, type PermissionFac
 import { workbenchAsk } from '../permission-ask'
 
 const RULE_BY_LABEL:Record<RuleDecider,string>={rule:'CC 按规则',review:'CC 初审',floor:'红线'}
-import { publicTask, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'
+import { publicTask, stepPayload, timelineKind, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'
 import { entryOrigin, type EntryContext } from '../../../adapters/workbench/task-entry'
 import { makeRunUserInput } from '../../../adapters/workbench/user-input'
 import type { CreateWechatTask } from '../wechat-types'
@@ -139,6 +139,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     try{store.execution.endTurn(running.turn.id)}catch{/* 记不上只少一轮 */}
   }
   const { store, state } = ctx
+  /** 主人交代这件事的第一句(判是不是「修 issue」、放行规则要问的那句)。 */
+  const firstUserText=(id:string)=>{const step=store.steps(id).find(s=>timelineKind(s)==='user');return step?stepPayload(step).text:undefined}
   const {runsByTask,queue,runningText}=state
   const {requireInput,canResume,continuation,provider}=domains.admission
   const {selectAttachments,combinedAttachments,continuationAttachmentScope}=domains.attachments
@@ -483,7 +485,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const runId=randomUUID()
     const execution=normalizeExecutionChoice(executionChoice,store.execution.choice(task.id))
     const dispatchAttachments=combinedAttachments(attachments,acceptedContinuation.mode==='restart'?acceptedContinuation.preview.attachments:[])
-    requireInput(task.providerId,dispatchAttachments,execution,acceptedContinuation.mode==='resume',isIssueIntent(store.events(task.id).find(e=>e.kind==='user')?.text))
+    requireInput(task.providerId,dispatchAttachments,execution,acceptedContinuation.mode==='resume',isIssueIntent(firstUserText(task.id)))
     // addRunEvent 自己 touched:权限/提问审计在 atomic 块外单独发生,不能漏。
     // 事务里面(下面 store.atomic 块内)绝不能用它——半路抛错时 bump 跟着回滚,但 touched 已经
     // 把 hub 拱到了那个从没真正落库的 seq,之后 wait 会把这个"幻影 seq"当成已经发生过的事,
@@ -521,7 +523,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           requestNotice(task,runId,'permission',event.permission.id,`${event.permission.tool} · ${event.permission.description}`)
         }else addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)
       },
-      ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),store.events(task.id).find(e=>e.kind==='user')?.text??null,facts))}:{}),
+      ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),firstUserText(task.id)??null,facts))}:{}),
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
       if(event.type==='request'){
