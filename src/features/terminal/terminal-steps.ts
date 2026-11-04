@@ -21,7 +21,7 @@ export interface TerminalSteps {
   ingest(sessionId: string, path: string, source: string): boolean
   /**
    * 有人来看(手机「看着它跑」、列表那一步、微信「看 码」):先 ingest,再给最近 max 步(旧 → 新)。
-   * 还没有那件事(钩子没来过的老会话)⇒ 当场建、导入一次(同钩子那条路:turns.adopt(= ensure + 按登记处对齐状态)+ ingest;第一次读照旧从尾巴 256KB 起),
+   * 还没有那件事(钩子没来过的老会话)⇒ 当场建、导入一次(同钩子那条路:turns.ensure + ingest;第一次读照旧从尾巴 256KB 起),
    * 之后只读步(M6d)。只在看的这条路上建 —— 钩子的回包有时限,钩子里不导入整份。
    * 调用方先挡掉那边(别的机器 / A2A)的会话:记录不在这台机器上。没报记录路径 ⇒ 空。读不了文件 ⇒ 抛。
    */
@@ -49,8 +49,8 @@ const KIND: Record<TerminalStepPayload['kind'], TerminalStepWrite['kind']> = { y
 
 export function makeTerminalSteps(deps: {
   store: TerminalStepStore
-  /** 首见建那件事(= 钩子那条路的 turns.ensure,再按登记处那一行对齐状态)。 */
-  turns: Pick<TerminalTurnLog, 'adopt'>
+  /** 首见建那件事(= 钩子那条路的 turns.ensure)。 */
+  turns: Pick<TerminalTurnLog, 'ensure'>
   size?: (path: string) => number
   read?: (path: string, from: number, to: number) => Buffer
 }): TerminalSteps {
@@ -108,7 +108,7 @@ export function makeTerminalSteps(deps: {
       let id = store.matterOf(s.session_id)
       // 记录读不了(文件没了)⇒ 先抛,别为它建一件空的事
       if (!id) sizeOf(s.transcript_path)
-      id ??= turns.adopt({
+      id ??= turns.ensure({
         source: s.source, session_id: s.session_id, cwd: s.cwd ?? '',
         ...(s.machine ? { machine: s.machine } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}),
       })

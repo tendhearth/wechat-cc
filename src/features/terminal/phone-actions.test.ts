@@ -32,7 +32,8 @@ let other: Map<string, boolean>
 
 beforeEach(() => {
   db = openDb({ path: ':memory:' })
-  hub = makeCliEventHub({ send: async () => 'sent', projectName: (c) => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db) })
+  // 同生产(wire.ts):登记处 + 那件事的轮与步一起接(M4d 第 2 步起状态只从那件事推)
+  hub = makeCliEventHub({ send: async () => 'sent', projectName: (c) => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db), turns: makeTerminalTurnLog({ db, log: makeMatterLog(db), matters: makeMatterStore(db) }) })
   presence = 'away'
   waiting = new Map()
   other = new Map([['selfx', true]])   // 别的待批(比如自改流水线)—— 手机这口不许碰
@@ -64,7 +65,7 @@ function actions(extra: Partial<Parameters<typeof makeCliPhoneActions>[0]> = {})
     },
     startCwd: () => '/w/start',
   })
-  // 生产的步(wire.ts 同款):这里的 hub 没接 turns ⇒ 每条会话都是「钩子没来过」,第一次看时当场建那件事、导入一次(M6d)
+  // 生产的步(wire.ts 同款):钩子没来过的会话第一次看时当场建那件事、导入一次(M6d);钩子来过的已经有了
   const log = makeMatterLog(db), matters = makeMatterStore(db)
   const steps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log, matters }), turns: makeTerminalTurnLog({ db, log, matters }) })
   return makeCliPhoneActions({
@@ -339,12 +340,13 @@ describe('看着它跑只从这件事的步读(M6d)', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
-  it('钩子没来过的会话第一次被看 ⇒ 当场建那件事、导入一次;记录再长了 ⇒ 只读新增的那一段', () => {
+  it('还没有那件事的会话(写轮失败过)第一次被看 ⇒ 当场建那件事、导入一次;记录再长了 ⇒ 只读新增的那一段', () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-first-view-'))
     try {
       const path = join(dir, 's.jsonl')
       writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '跑测试' } }) + '\n')
-      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'F1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
+      // 只有登记处那一行(钩子那条路接了 turns,每个事件都会建那件事;这里直接写登记处,造出没有那件事的一行)
+      makeCliSessionStore(db).touch({ source: 'claude', session_id: 'F1', cwd: '/w/proj', machine: 'mac', transcript_path: path }, Date.now())
       const matters = makeMatterStore(db), log = makeMatterLog(db)
       expect(matters.findBySurface('cli', 'F1')).toBeNull()
       const a = actions()

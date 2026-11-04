@@ -15,14 +15,16 @@ afterEach(() => { db.close() })
 const SID = 'a1b2c3d4-0000-1111'
 const ev = (over: Partial<CliEvent> = {}): CliEvent => ({ source: 'claude', kind: 'prompt', session_id: SID, cwd: '/home/u/work/wechat-cc', ...over })
 
+/** 真登记处 + 真那件事(M4d 第 2 步起状态只从这件事推,登记处不再记状态)。 */
+const terminalTurns = () => makeTerminalTurnLog({ db, log: makeMatterLog(db, () => clock), matters: makeMatterStore(db, () => clock) })
 function hub() {
   return makeCliEventHub({
     send: async () => 'sent', projectName: (c) => c, log: () => {},
-    now: () => clock, store: makeCliSessionStore(db, () => clock),
+    now: () => clock, store: makeCliSessionStore(db, () => clock), turns: terminalTurns(),
   })
 }
 
-describe('终端会话登记处:状态从已有 hook 事件推导(v76)', () => {
+describe('终端会话登记处:状态从已有 hook 事件推导(v76;M4d 起经那件事)', () => {
   it('prompt → running;权限 → waiting(带待批摘要);allow → running;stop → idle(带一句);session_end → ended', () => {
     const h = hub()
     h.ingest(ev({ transcript_path: '/t/a.jsonl', machine: 'mac' }))
@@ -116,7 +118,7 @@ describe('终端会话登记处:状态从已有 hook 事件推导(v76)', () => {
 
   it('observe 只登记不推(手侧转给脑时本机也记一笔)', async () => {
     const sent: string[] = []
-    const h = makeCliEventHub({ send: async (t) => { sent.push(t); return 'sent' }, projectName: (c) => c, log: () => {}, now: () => clock, store: makeCliSessionStore(db, () => clock), holds: { stop: 0 } })
+    const h = makeCliEventHub({ send: async (t) => { sent.push(t); return 'sent' }, projectName: (c) => c, log: () => {}, now: () => clock, store: makeCliSessionStore(db, () => clock), turns: terminalTurns(), holds: { stop: 0 } })
     h.observe(ev({ kind: 'stop', text: '完了' }))
     expect(h.pending()).toEqual([])
     expect(h.list()[0]).toMatchObject({ status: 'idle', last_summary: '完了' })
@@ -135,15 +137,20 @@ describe('终端会话登记处:状态从已有 hook 事件推导(v76)', () => {
 
   it('修剪:结束超过 7 天的、30 天没动静的、超过 500 行的最旧部分', () => {
     const store = makeCliSessionStore(db, () => clock)
+    const turns = terminalTurns()
     const now = 100 * 24 * 3600_000
-    store.touch({ session_id: 'ended-old', source: 'claude', cwd: '/w' }, now - CLI_SESSION_ENDED_RETAIN_MS - 1)
-    store.setStatus('ended-old', 'ended', now - CLI_SESSION_ENDED_RETAIN_MS - 1)
-    store.touch({ session_id: 'ended-recent', source: 'claude', cwd: '/w' }, now - 1000)
-    store.setStatus('ended-recent', 'ended', now - 1000)
+    const seen = (session_id: string, kind: 'stop' | 'session_end', at: number) => {
+      store.touch({ session_id, source: 'claude', cwd: '/w' }, at)
+      turns.event({ source: 'claude', kind, session_id, cwd: '/w' }, at)
+    }
+    seen('ended-old', 'session_end', now - CLI_SESSION_ENDED_RETAIN_MS - 1)
+    seen('ended-recent', 'session_end', now - 1000)
     store.touch({ session_id: 'abandoned', source: 'codex', cwd: '/w' }, now - CLI_SESSION_ABANDONED_RETAIN_MS - 1)
-    store.touch({ session_id: 'idle-week', source: 'codex', cwd: '/w' }, now - CLI_SESSION_ENDED_RETAIN_MS - 1)
+    seen('idle-week', 'stop', now - CLI_SESSION_ENDED_RETAIN_MS - 1)
+    // 没有那件事的读成歇着 ⇒ 不按「结束超过 7 天」修,只按 30 天没动静
+    store.touch({ session_id: 'no-matter-week', source: 'codex', cwd: '/w' }, now - CLI_SESSION_ENDED_RETAIN_MS - 1)
     store.prune(now)
-    expect(store.list({ includeEnded: true }).map(r => r.session_id).sort()).toEqual(['ended-recent', 'idle-week'])
+    expect(store.list({ includeEnded: true }).map(r => r.session_id).sort()).toEqual(['ended-recent', 'idle-week', 'no-matter-week'])
 
     for (let i = 0; i < CLI_SESSION_MAX_ROWS + 5; i++) store.touch({ session_id: `s${i}`, source: 'claude', cwd: '/w' }, now + i)
     store.prune(now + CLI_SESSION_MAX_ROWS + 5)
@@ -169,15 +176,14 @@ describe('终端会话登记处:状态从已有 hook 事件推导(v76)', () => {
   })
 })
 
-describe('M4d 第 1 步:有那件 terminal 的事 ⇒ 状态 / 最近一句 / 等你那一项从这件事推', () => {
+describe('M4d:状态 / 最近一句 / 等你那一项从那件 terminal 的事推(第 2 步起登记处没有这几列)', () => {
   const live = () => {
     const log = makeMatterLog(db), matters = makeMatterStore(db)
     const turns = makeTerminalTurnLog({ db, log, matters })
     const h = makeCliEventHub({ send: async () => 'sent', projectName: (c) => c, log: () => {}, now: () => clock, store: makeCliSessionStore(db, () => clock), turns })
     return { h, turns, log, matters }
   }
-  const cols = () => db.query<{ status: string; pending_tool: string | null }, [string]>('SELECT status, pending_tool FROM cli_sessions WHERE session_id=?').get(SID)
-  it('一串事件走下来,推出来的和以前列里记的一样;最近一句读时去 markdown、压成一行', () => {
+  it('一串事件走下来:状态、等你那一项、最近一句都对;最近一句读时去 markdown、压成一行', () => {
     const { h } = live()
     h.ingest(ev())
     expect(h.list()[0]).toMatchObject({ status: 'running', last_prompt_at: clock, pending: null })
@@ -201,18 +207,28 @@ describe('M4d 第 1 步:有那件 terminal 的事 ⇒ 状态 / 最近一句 / �
     expect(h.list({ includeEnded: true })[0]).toMatchObject({ status: 'ended' })
     expect(h.lookup('a1b2')).toBeNull()
   })
-  it('daemon 重启:还有动静的轮照旧在做;开着的卡作废了 ⇒ 不再显示等你(列里还记着 waiting)', () => {
+  it('daemon 重启:还有动静的轮照旧在做;开着的卡作废了 ⇒ 不再显示等你', () => {
     const first = live()
     first.h.ingest(ev())
     first.h.permissionAsked({ source: 'claude', session_id: SID, cwd: '/home/u/work/wechat-cc', tool_name: 'Bash', summary: 'ls' })
+    expect(first.h.list()[0]).toMatchObject({ status: 'waiting' })
     const again = live()
     again.turns.interruptAll(Date.now())
-    expect(cols()).toMatchObject({ status: 'waiting', pending_tool: 'Bash' })
     expect(again.h.list()[0]).toMatchObject({ status: 'running', pending: null })
   })
-  it('没有那件事的老会话(M4a 之前)⇒ 照旧读列', () => {
-    hub().ingest(ev({ kind: 'stop', text: '好了' }))
+  it('登记处只留指针和事实:表里没有 status / last_summary / pending_* 这几列(v100)', () => {
+    const cols = db.query<{ name: string }, []>('PRAGMA table_info(cli_sessions)').all().map(c => c.name)
+    expect(cols).toEqual(['session_id', 'source', 'cwd', 'machine', 'transcript_path', 'origin_agent', 'last_event_at', 'last_prompt_at', 'created_at'])
+  })
+  it('没有那件事(写轮失败的那几条;老会话 v100 都补建了)⇒ 当歇着:照样列出来、「@码」认得;没有最近一句 / 等你那一项;下一个钩子事件就建上', () => {
+    const store = makeCliSessionStore(db, () => clock)
+    store.touch({ session_id: SID, source: 'claude', cwd: '/w/p', transcript_path: '/t.jsonl' }, clock)
+    store.seen(SID, clock, { promptAt: clock })
     expect(db.query('SELECT count(*) n FROM matter_bindings').get()).toEqual({ n: 0 })
-    expect(hub().list()[0]).toMatchObject({ status: 'idle', last_summary: '好了' })
+    expect(store.list().map(r => r.session_id)).toEqual([SID])
+    expect(store.findByPrefix('a1b2')?.session_id).toBe(SID)
+    expect(store.get(SID)).toMatchObject({ status: 'idle', last_summary: null, pending_tool: null, pending_summary: null, pending_at: null, last_prompt_at: clock, transcript_path: '/t.jsonl' })
+    live().h.ingest(ev())
+    expect(store.get(SID)).toMatchObject({ status: 'running' })
   })
 })

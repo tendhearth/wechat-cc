@@ -210,21 +210,8 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
   function record(ev: CliEvent, t: number): void {
     persist(`record ${ev.kind} ${short(ev.session_id)}`, (store) => {
       store.touch(ev, t)
-      switch (ev.kind) {
-        case 'prompt':
-          // harness 自己塞的 prompt 也是开始干活了(running),只是不算主人敲字。
-          store.setStatus(ev.session_id, 'running', t, ev.automated ? {} : { promptAt: t })
-          break
-        case 'stop':
-          store.setStatus(ev.session_id, 'idle', t, { summary: ev.text ? summarizeOneLine(stripMarkdown(ev.text), SESSION_SUMMARY_MAX) || null : null })
-          break
-        case 'permission':
-          store.setStatus(ev.session_id, 'waiting', t, { pending: { tool: 'permission', summary: ev.text ? summarizeOneLine(stripMarkdown(ev.text), SESSION_SUMMARY_MAX) : null } })
-          break
-        case 'session_end':
-          store.setStatus(ev.session_id, 'ended', t)
-          break
-      }
+      // 状态 / 最近一句 / 等你那一项从那件事推(M4d),登记处只记最近一次发问:harness 自己塞的 prompt 不算主人敲字。
+      if (ev.kind === 'prompt' && !ev.automated) store.seen(ev.session_id, t, { promptAt: t })
     })
     turnsDo(`turn ${ev.kind} ${short(ev.session_id)}`, (turns) => turns.event(ev, t))
   }
@@ -412,16 +399,14 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
       state({ session_id: req.session_id, source: req.source, cwd: req.cwd, machine: req.machine })
       persist(`permission ${short(req.session_id)}`, (store) => {
         store.touch(req, t)
-        store.setStatus(req.session_id, 'waiting', t, { pending: { tool: req.tool_name, summary: req.summary ? summarizeOneLine(req.summary, SESSION_SUMMARY_MAX) : null } })
       })
       turnsDo(`turn permission ${short(req.session_id)}`, (turns) => turns.permissionAsked(req, t))
     },
     permissionSettled(sessionId, status) {
-      // 任何结果都把 waiting 放回 running:timeout / undelivered 之后终端自己问,主人在终端前答,
-      // 不会再有事件,留着 waiting 就会一直挂「等你批准」(评审 10-15 #1)。
+      // 任何结果都收掉那张卡(那件事里,turns.permissionSettled):timeout / undelivered 之后终端自己问,主人在终端前答,
+      // 不会再有事件,留着就会一直挂「等你批准」(评审 10-15 #1)。还在等的那一刻算一次动静(同以前 waiting → running)。
       persist(`permission settled ${short(sessionId)}`, (store) => {
-        // 只从 waiting 回到 running:中间已经 Stop / 结束的,不倒回去。
-        if (store.get(sessionId)?.status === 'waiting') store.setStatus(sessionId, 'running', now())
+        if (store.get(sessionId)?.status === 'waiting') store.seen(sessionId, now())
       })
       turnsDo(`turn permission settled ${short(sessionId)}`, (turns) => turns.permissionSettled(sessionId, status))
     },
