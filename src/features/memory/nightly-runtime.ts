@@ -81,7 +81,7 @@ export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
 
 const CHANGED_WINDOW_MS = 36 * 3_600_000
 
-export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps, onSettled?: (r: 'sent' | 'send_failed' | 'expired' | 'dropped', actTurn: string | undefined) => void): Promise<'none' | 'sent' | 'send_failed' | 'waiting' | 'expired' | 'dropped'> {
+export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps, onSettled?: (r: 'sent' | 'send_failed' | 'expired' | 'dropped', actTurn: string | undefined, channel?: string) => void): Promise<'none' | 'sent' | 'send_failed' | 'waiting' | 'expired' | 'dropped'> {
   const state = readNightlyState(deps.stateDir)
   const pending = state.pendingNotice
   const owner = deps.ownerChatId()
@@ -95,10 +95,11 @@ export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps, on
   const gate = deps.careGate(owner, nowIso)
   // 冷却没到 ⇒ 晚点再说(通知留着,24 小时过了自己作废);别的拒绝原因交给门,由它判 drop
   if (!gate.ok && gate.reason === 'memory_cooldown') return 'waiting'
-  let sendError = false
+  let sendError = false, channel: string | undefined
   const outcome = await deps.speech.say({ kind: 'memory_notice', chatId: owner, nowMs, perKind: gate }, async (turn) => {
     deps.claim(owner, nowIso)   // 先登记再发:至多一次,不重试轰炸
     clear()
+    try { channel = turn.channel() ?? undefined } catch { channel = undefined }
     const r = await turn.sendText(owner, pending.text)
     if (r.error) { sendError = true; deps.log('MEMORY_NIGHTLY', `notice send failed (not retried): ${r.error}`) }
   })
@@ -112,7 +113,7 @@ export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps, on
   }
   // 发了但没发出去(不重试):别记成送到了(Codex 评审)
   const r = sendError ? 'send_failed' : 'sent'
-  onSettled?.(r, pending.actTurn)
+  onSettled?.(r, pending.actTurn, channel)
   return r
 }
 
@@ -395,9 +396,10 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { a
       if (st.pendingNotice && st.pendingNotice.text === r.notice && !st.pendingNotice.actTurn) writeNightlyState(deps.stateDir, { ...st, pendingNotice: { ...st.pendingNotice, actTurn } })
     } catch { /* 只是送出时少补一步 */ }
   }
-  const noticeSettled = (r: 'sent' | 'send_failed' | 'expired' | 'dropped', actTurn: string | undefined) => {
+  // 走的哪条路照实记(微信 / App,Codex 评审);作废 / 不发了 ⇒ 没有路
+  const noticeSettled = (r: 'sent' | 'send_failed' | 'expired' | 'dropped', actTurn: string | undefined, channel?: string) => {
     if (!actTurn) return
-    try { deps.acts?.toTurn('memory', actTurn, 'delivery', { notice: r, channel: 'wechat' }, { status: r === 'sent' ? 'completed' : 'failed' }) } catch { /* 只少一步 */ }
+    try { deps.acts?.toTurn('memory', actTurn, 'delivery', { notice: r, ...(channel ? { channel } : {}) }, { status: r === 'sent' ? 'completed' : 'failed' }) } catch { /* 只少一步 */ }
   }
   return {
     tick: () => serial(async () => {

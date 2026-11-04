@@ -125,6 +125,18 @@ describe('memory nightly runtime', () => {
     await makeMemoryNightlyRuntime({ ...deps({ speech: refusing }), acts: acts as never }).tick()
     expect(log).toEqual(['turn1 send_failed'])
   })
+  it('通知走的是 App ⇒ 记 app,不是写死的 wechat(Codex 评审)', async () => {
+    const got: unknown[] = []
+    const acts = { begin: () => ({ id: 'turn1', step() {}, finish() {} }), toTurn: (_w: string, _t: string, _k: string, p: unknown) => { got.push(p) } }
+    await makeMemoryNightlyRuntime({ ...deps(), acts: acts as never }).tick()
+    now = Date.parse('2026-09-25T09:01:00Z')
+    const viaApp = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, log: () => {}, now: () => now, outbound: {
+      appDeliverable: () => true, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async () => ({ msgId: 'a1' }), channel: () => 'app', textOnly: () => true, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
+    } })
+    await makeMemoryNightlyRuntime({ ...deps({ speech: viaApp }), acts: acts as never }).tick()
+    expect(got).toEqual([{ notice: 'sent', channel: 'app' }])
+  })
   it('readCurated shows the rendered memory with a header; curatedView marks last night changes and dues', async () => {
     const rt = makeMemoryNightlyRuntime(deps())
     expect(rt.readCurated()).toBeNull()
