@@ -34,6 +34,8 @@ import { voiceRoutes } from '../../features/voice/routes'
 import { terminalRoutes, type TerminalRoutesDeps } from '../../features/terminal/routes'
 import { memoryRoutes } from '../../features/memory/routes'
 import { journalRoutes } from '../../features/journal/routes'
+import { workbenchRoutes } from '../../features/workbench/routes'
+import type { WorkbenchService } from '../../features/workbench'
 import { makeOwnerChatFileReader } from '../wiring/owner-chat-reading'
 import { fileChunkResponse } from '../../features/phone/mobile-chat'
 import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
@@ -125,6 +127,25 @@ function v1Owner() {
   }
 }
 
+/**
+ * P3c-4 起 `/m/api/entry/options`、`entry/models`、`attachment/discard`、`sessions`、`session` 是别名,翻到
+ * `/v1/workbench/entry-options`、`models`、`discard-attachment`、`sessions`、`session`:剧本挂在内部 API 上(工作台模块自己挂的
+ * workbenchRoutes,原生会话的读法同生产经 phoneSessions 交进去),同生产。
+ */
+function v1Workbench() {
+  return {
+    workbench: {
+      entryOptions: () => { check('entryOptions'); return { providers: [{ id: 'claude', name: 'Claude Code' }], projects: [{ id: PROJECT, name: 'app' }] } as never },
+      entryModels: async ({ providerId }: { providerId: string }) => ({ providerId, models: [{ id: 'opus', label: 'Opus' }], default: 'opus' }) as never,
+      discardAttachmentUpload: () => { check('discard') },
+    } as Partial<WorkbenchService> as WorkbenchService,
+    sessions: {
+      list: async (provider: 'claude' | 'codex', input: { q: string }) => ({ items: [{ key: `${provider}:s1`, providerId: provider, nativeId: 's1', title: `会话 ${input.q || '全部'}`, titleSource: 'first_prompt' as const, cwd: '/w/app', updatedAt: T0 - 600_000, remote: false, observedState: 'active' as const }], nextCursor: null, coverage: 'native_supported_history' as const }),
+      read: async (key: string) => ({ session: { key, providerId: 'claude' as const, nativeId: 's1', title: '会话', titleSource: 'first_prompt' as const, cwd: '/w/app', updatedAt: T0 - 600_000, remote: false, observedState: 'observed' as const }, messages: [{ id: 'u1', role: 'user' as const, text: '修登录', truncated: false }, { id: 'a1', role: 'assistant' as const, text: '好', truncated: false }], nextCursor: null, sourceFingerprint: 'fp', page: { limit: 20, cursor: null }, truncated: false }),
+    },
+  }
+}
+
 function deps(): SettingsPanelDeps {
   const reportPath = join(root, 'files', 'report.md')
   mkdirSync(dirname(reportPath), { recursive: true })
@@ -164,15 +185,12 @@ function deps(): SettingsPanelDeps {
       rewind: async (_id: string, artifactId: string) => { check('rewind'); return { artifactId, rewound: true } },
     } as never,
     entry: {
-      entryOptions: () => { check('entryOptions'); return { providers: [{ id: 'claude', name: 'Claude Code' }], projects: [{ id: PROJECT, name: 'app' }] } as never },
-      entryModels: async ({ providerId }) => ({ providerId, models: [{ id: 'opus', label: 'Opus' }], default: 'opus' }),
       createEntry: input => { check('createEntry'); return { requestId: input.requestId, taskId: TASK, created: true } as never },
       entryReceipt: requestId => requestId === REQ ? { requestId, taskId: TASK, created: false } as never : null,
     },
     uploads: {
       chunk: input => { check('chunk'); return { id: input.id, draftId: input.draftId, taskId: null, size: input.size, sha256: input.sha256, nextOffset: input.size, status: 'ready' } },
       status: input => { check('uploadStatus'); return { id: input.id, draftId: input.draftId, taskId: null, size: 4, sha256: SHA, nextOffset: 2, status: 'uploading' } },
-      discard: () => { check('discard') },
     },
     changes: id => {
       if (id === MISSING) throw new Error('not_found')
@@ -193,10 +211,6 @@ function deps(): SettingsPanelDeps {
     },
     todos: { facts: { findFacts: () => ({ results: [] }) }, names: () => [] },
     seen: { read: () => seenAt },
-    sessions: {
-      list: async (provider, input) => ({ items: [{ key: `${provider}:s1`, providerId: provider, nativeId: 's1', title: `会话 ${input.q || '全部'}`, titleSource: 'first_prompt', cwd: '/w/app', updatedAt: T0 - 600_000, remote: false, observedState: 'active' }], nextCursor: null, coverage: 'native_supported_history' }),
-      read: async key => ({ session: { key, providerId: 'claude', nativeId: 's1', title: '会话', titleSource: 'first_prompt', cwd: '/w/app', updatedAt: T0 - 600_000, remote: false, observedState: 'observed' }, messages: [{ id: 'u1', role: 'user', text: '修登录', truncated: false }, { id: 'a1', role: 'assistant', text: '好', truncated: false }], nextCursor: null, sourceFingerprint: 'fp', page: { limit: 20, cursor: null }, truncated: false }),
-    },
     presence: async () => ({ presence: 'near', activity: { kind: 'idle', label: '在旁边', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } } as never),
     feed: { journal: { list: () => [] }, planLogDays: () => [], turnsRecent: () => [{ chatId: OWNER, startedAt: T0 - 300_000, endedAt: T0 - 240_000, outcome: 'replied', mode: 'solo' }], timezone: () => 'Asia/Shanghai' },
   }
@@ -213,6 +227,8 @@ beforeAll(async () => {
   api.mount('memory', memoryRoutes({ stateDir: root, memoryLlm: () => null, memoryNightly: () => owner.nightly as never }))
   api.mount('journal', journalRoutes({ stateDir: root, journal: {} as never, seen: owner.seen }))
   api.mount('terminal', terminalRoutes({ overseerToday: reads.overseerToday, phoneSessions: reads.phoneSessions } as Partial<TerminalRoutesDeps> as TerminalRoutesDeps))
+  const wb = v1Workbench()
+  api.mount('workbench', workbenchRoutes({ workbench: wb.workbench, resolveAdminChatId: () => OWNER, phoneSessions: { sessions: wb.sessions, ...(d.executorName ? { executorName: d.executorName } : {}) } }))
   api.mount('voice', voiceRoutes({ voice: { transcribe: async () => { check('transcribe'); return { text: '  你好,帮我看看  ' } } } as never }))
   panel = makeSettingsPanel({ ...d, v1: api.panelDispatch })
   const pairLink = panel.issueToken()

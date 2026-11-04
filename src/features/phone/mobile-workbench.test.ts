@@ -18,7 +18,6 @@ describe('phone entry rejection wire contract',()=>{
     const url=new URL('http://phone.test/m/api/matter/create')
     const req=new Request(url,{method:'POST',body:JSON.stringify({requestId:crypto.randomUUID(),text:'要求',target:{kind:'managed'}})})
     const response=await routePhone(mobileWorkbenchRoutes(undefined,{
-      entryOptions:()=>({status:'ready',defaultProviderId:null,providers:[],projects:[]}),
       createEntry:()=>{throw Error(code)},entryReceipt:()=>null,
     }),url,req)
     expect(response?.status).toBe(status)
@@ -31,7 +30,7 @@ describe('phone entry rejection wire contract',()=>{
     const url=new URL('http://phone.test/m/api/attachment/chunk')
     const req=new Request(url,{method:'POST',body:JSON.stringify({id:crypto.randomUUID(),draftId:crypto.randomUUID(),name:'bad.png',mime:'image/png',size:1,sha256:'a'.repeat(64),offset:0,contentBase64:'eA=='})})
     const response=await routePhone(mobileWorkbenchRoutes(undefined,undefined,{
-      chunk:()=>{throw Error('upload_invalid_content')},status:()=>{throw Error('unexpected')},discard:()=>{},
+      chunk:()=>{throw Error('upload_invalid_content')},status:()=>{throw Error('unexpected')},
     }),url,req)
     expect(response?.status).toBe(400)
     expect(await response!.json()).toEqual({ok:false,error:'upload_invalid_content'})
@@ -198,23 +197,7 @@ describe('phone stop (2026-10-06)',()=>{
   })
 })
 
-describe('phone entry models (2026-10-06)',()=>{
-  const url=(q:string)=>new URL('http://phone.test/m/api/entry/models'+q)
-  const call=(q:string,entryModels=vi.fn(async(_i:{providerId:string;projectId?:string})=>({models:[{id:'gpt-5.6',displayName:'GPT-5.6',reasoningEfforts:['low','high']}],source:'native'})))=>
-    routePhone(mobileWorkbenchRoutes(undefined,{entryOptions:()=>({status:'ready',defaultProviderId:null,providers:[],projects:[]}),createEntry:()=>{throw Error('x')},entryReceipt:()=>null,entryModels}),url(q),new Request(url(q)))
-  it('asks by provider and project catalog id only; the path never comes from the phone',async()=>{
-    const entryModels=vi.fn(async(_i:{providerId:string;projectId?:string})=>({models:[],source:'native'}))
-    const r=await call('?providerId=codex&projectId=p-0123456789abcdef0123',entryModels)
-    expect(r?.status).toBe(200)
-    expect(entryModels).toHaveBeenCalledWith({providerId:'codex',projectId:'p-0123456789abcdef0123'})
-    expect((await call('?providerId=codex'))?.status).toBe(200)
-  })
-  it('rejects paths, odd ids and extra params before asking anything',async()=>{
-    const entryModels=vi.fn()
-    for(const q of ['','?providerId=Codex','?providerId=codex&projectId=/Users/me','?providerId=codex&path=/tmp','?providerId=codex&providerId=claude'])expect((await call(q,entryModels as never))?.status).toBe(400)
-    expect(entryModels).not.toHaveBeenCalled()
-  })
-})
+// 交办时问模型(2026-10-06):P3c-4 起是 /v1/workbench/models 的别名,测试在 daemon/internal-api/panel-v1-workbench.test.ts(新键、别名键两条路)。
 
 describe('phone worktree actions (2026-10-07)',()=>{
   const post=(worktree:(id:string,a:'commit'|'remove'|'merge')=>{branch:string;committed?:boolean;removed?:boolean;merged?:boolean},body:unknown)=>{const url=new URL('http://phone.test/m/api/matter/worktree');return routePhone(mobileWorkbenchRoutes({worktree}),url,new Request(url,{method:'POST',body:JSON.stringify(body)}))}

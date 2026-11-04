@@ -97,6 +97,8 @@ export const MERGED_ALIAS_KEYS = [
   'GET /m/api/cli/sessions', 'GET /m/api/today', 'GET /m/api/connections',
   // P3c-3 记忆、待办、看到哪了
   'GET /m/api/memory/retractions', 'POST /m/api/memory/restore', 'POST /m/api/todo', 'POST /m/api/seen',
+  // P3c-4 交办选项与会话(分块上传与进度两条不是 /v1 那条的同一个动作,改到 P3d)
+  'GET /m/api/entry/options', 'GET /m/api/entry/models', 'POST /m/api/attachment/discard', 'GET /m/api/sessions', 'GET /m/api/session',
 ] as const
 export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
 const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)
@@ -120,14 +122,17 @@ export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   alias('POST /m/api/memory/restore', 'POST /v1/memory/retractions/restore', 'P3c-3', 'phoneMemoryRestore'),
   alias('POST /m/api/todo', 'POST /v1/knowledge/facts/set_fact_status', 'P3c-3', 'phoneTodo'),
   alias('POST /m/api/seen', 'POST /v1/journal/seen', 'P3c-3', 'phoneSeen'),
-  // ── P3c-4 交办选项与会话
+  // ── P3c-4 交办选项与会话:已并(MERGED_ALIAS_KEYS),一份数据一个 /v1 处理器
   alias('GET /m/api/entry/options', 'GET /v1/workbench/entry-options', 'P3c-4', 'phoneEntryOptions'),
   alias('GET /m/api/entry/models', 'GET /v1/workbench/models', 'P3c-4', 'phoneEntryModels'),
-  alias('GET /m/api/attachment/upload', 'GET /v1/workbench/attachment', 'P3c-4', 'phoneAttachmentStatus'),
-  alias('POST /m/api/attachment/chunk', 'POST /v1/workbench/attachment', 'P3c-4', 'phoneAttachmentChunk'),
   alias('POST /m/api/attachment/discard', 'POST /v1/workbench/discard-attachment', 'P3c-4', 'phoneAttachmentDiscard'),
   alias('GET /m/api/sessions', 'GET /v1/workbench/sessions', 'P3c-4', 'phoneSessions'),
   alias('GET /m/api/session', 'GET /v1/workbench/session', 'P3c-4', 'phoneSession'),
+  // 分块上传与进度(P3c-4 核过,改到 P3d):手机是可续传的分块协议(id + draftId + offset,查进度),桌面 `/v1/workbench/attachment`
+  // 是一次传完 base64 / 按 taskId 读回材料内容 —— 不是同一个动作,并进去就是「一条路径按调用方做两件事」(设计稿「否决的」)。
+  // 起新路径,回包就是 /m/api 今天的回包。
+  alias('GET /m/api/attachment/upload', 'GET /v1/workbench/attachment/upload', 'P3d', null),
+  alias('POST /m/api/attachment/chunk', 'POST /v1/workbench/attachment/chunk', 'P3d', null),
   // ── P3d 手机独有的、相近的、撞名的:搬到新的 /v1 路径,纯改名(回包就是 /m/api 今天的回包)
   alias('GET /m/api/state', 'GET /v1/phone/state', 'P3d', null),
   alias('GET /m/api/art/presence', 'GET /v1/phone/art/presence', 'P3d', null, ['web'], 'read'),

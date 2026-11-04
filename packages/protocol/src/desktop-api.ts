@@ -14,7 +14,7 @@
 import z from 'zod'
 import {
   Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, MATTER_ORIGINS, Matter, MatterDetail, MatterEvent,
-  MatterSayResult, OverseerToday, WorkbenchExecutorCapabilities,
+  MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, WorkbenchExecutorCapabilities,
 } from './api'
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
@@ -934,11 +934,13 @@ export const WorkbenchAttentionResponse = z.object({
 export const WorkbenchInputResponse = z.object({ input: WorkbenchLiveInput })
 
 // ── GET /v1/workbench/sessions / GET /v1/workbench/session(原生会话历史)──
-export const WorkbenchSessionsResponse = z.object({
+// 手机令牌(设备,P3c-4)读这两条回的是手机那一份(api.ts 的 NativeSessionRow / NativeSessionPage:项目只给目录名、没有 cwd /
+// 原生 id,带 `ok: true`)—— 处理器按 caller 选(features/workbench/phone-sessions.ts),一次回包里只会是其中一种。
+export const WorkbenchSessionsResponse = z.union([z.object({
   items: z.array(WorkbenchNativeHistoryItem), nextCursor: z.string().nullable(),
   coverage: z.enum(['native_supported_history', 'native_indexed_history']),
-})
-export const WorkbenchSessionResponse = z.object({
+}), z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable(), names: z.record(z.string(), z.string()).optional() })])
+export const WorkbenchSessionResponse = z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), z.object({
   messages: z.array(z.object({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string(), truncated: z.boolean() })),
   nextCursor: z.string().nullable(),
   managedTaskId: z.string().optional(),
@@ -946,7 +948,7 @@ export const WorkbenchSessionResponse = z.object({
   sourceFingerprint: z.string().optional(),
   page: z.object({ limit: z.number(), cursor: z.string().nullable() }).optional(),
   truncated: z.boolean().optional(),
-})
+})])
 
 // ── GET /v1/workbench/task(详情;带 since / wait_ms 时长轮询)──
 const WorkbenchTaskEvent = z.object({

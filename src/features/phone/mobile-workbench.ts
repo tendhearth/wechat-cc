@@ -3,18 +3,17 @@ import type {EntryResult} from '../workbench'
 import type {NativeContinuePreview} from '../../adapters/workbench/native-adoption'
 import type {UploadChunk,UploadState} from '../../adapters/workbench/attachment-uploads'
 import type {MattersService,MatterSayInput} from '../../app/matters/service'
-import {parseEntryInput,type EntryInput,type EntryOptions} from '../../adapters/workbench/task-entry'
+import {parseEntryInput,type EntryInput} from '../../adapters/workbench/task-entry'
 import {ownsMethod,sharedRoute,type PhoneRouteTable} from './phone-route-table'
 
 export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'|'worktreeScript'|'rewindPreview'|'rewind'>>
+/** 交办(P3c-4 起交办选项与模型经 /v1/workbench/entry-options、/v1/workbench/models 走,legacy-routes.ts 的别名)。 */
 export interface MobileEntryActions {
-  entryOptions():EntryOptions
-  /** 交办时可选的模型(2026-10-06):手机只给执行者 id 与项目目录 id,路径在电脑上解析。没接 ⇒ 手机不显示模型选择。 */
-  entryModels?(input:{providerId:string;projectId?:string}):Promise<unknown>
   createEntry(input:EntryInput):EntryResult
   entryReceipt(requestId:string):EntryResult|null
 }
-export interface MobileUploadActions {chunk(input:UploadChunk):UploadState;status(input:{id:string;draftId:string}):UploadState;discard(input:{id:string;draftId:string}):void}
+/** 分块上传与进度(扔掉 P3c-4 起经 /v1/workbench/discard-attachment 走,legacy-routes.ts 的别名)。 */
+export interface MobileUploadActions {chunk(input:UploadChunk):UploadState;status(input:{id:string;draftId:string}):UploadState}
 const ID=/^[a-f0-9]{8}$/
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const SHA=/^[a-f0-9]{64}$/
@@ -56,7 +55,7 @@ export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,entr
       return input?json({ok:true,input}):json({ok:false,error:'not_found'},404)
     }catch(error){return mobileMatterError(error)}
   })
-  const upload=(uploadOperation:'chunk'|'status'|'discard')=>route(async(url,req)=>{
+  const upload=(uploadOperation:'chunk'|'status')=>route(async(url,req)=>{
     if(req.method!==(uploadOperation==='status'?'GET':'POST'))return json({ok:false,error:'method_not_allowed'},405)
     try{
       if(!uploads)throw Error('uploads_not_wired')
@@ -66,24 +65,13 @@ export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,entr
         return json({ok:true,...uploads.status({id:q.get('id')!,draftId:q.get('draftId')!})})
       }
       let body:unknown;try{body=await req.json()}catch{throw Error('invalid_upload_chunk')}
-      if(uploadOperation==='chunk')return json({ok:true,...uploads.chunk(body as UploadChunk)})
-      uploads.discard(body as {id:string;draftId:string});return json({ok:true})
+      return json({ok:true,...uploads.chunk(body as UploadChunk)})
     }catch(error){return mobileMatterError(error)}
   })
-  const entryModels=route(async(url,req)=>{
-    if(req.method!=='GET')return json({ok:false,error:'method_not_allowed'},405)
-    try{
-      const q=url.searchParams,providerId=q.get('providerId'),projectId=q.get('projectId')
-      if(q.getAll('providerId').length!==1||q.getAll('projectId').length>1||[...q.keys()].some(k=>!['providerId','projectId','t','d','_via'].includes(k))||!providerId||!/^[a-z][a-z0-9._-]{0,63}$/.test(providerId)||(projectId!==null&&!/^p-[A-Za-z0-9_-]{1,64}$/.test(projectId)))throw Error('invalid_request')
-      if(!entry?.entryModels)throw Error('entry_not_wired')
-      return json({ok:true,catalog:await entry.entryModels({providerId,...(projectId?{projectId}:{})})})
-    }catch(error){return mobileMatterError(error)}
-  })
-  const entryRoute=(entryOperation:'options'|'create'|'receipt')=>route(async(url,req)=>{
+  const entryRoute=(entryOperation:'create'|'receipt')=>route(async(url,req)=>{
     if(req.method!==(entryOperation==='create'?'POST':'GET'))return json({ok:false,error:'method_not_allowed'},405)
     try{
       if(!entry)throw Error('entry_not_wired')
-      if(entryOperation==='options')return json({ok:true,...entry.entryOptions()})
       if(entryOperation==='create'){
         let body:unknown;try{body=await req.json()}catch{throw Error('invalid_entry')}
         return json({ok:true,...entry.createEntry(parseEntryInput(body))},202)
@@ -178,9 +166,6 @@ export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,entr
     'GET /m/api/matter/input-receipt':inputReceipt,
     'POST /m/api/attachment/chunk':upload('chunk'),
     'GET /m/api/attachment/upload':upload('status'),
-    'POST /m/api/attachment/discard':upload('discard'),
-    'GET /m/api/entry/models':entryModels,
-    'GET /m/api/entry/options':entryRoute('options'),
     'POST /m/api/matter/create':entryRoute('create'),
     'GET /m/api/matter/create-receipt':entryRoute('receipt'),
     'POST /m/api/matter/handoff':handoff,

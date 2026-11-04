@@ -98,7 +98,7 @@
 - P3c-1 一件事与主人对话:`matters`、`matter`、`matter/say`、`chat/search`、`chat/file`、`chat/transcribe`(POST)。
 - P3c-2 终端与总览:`cli/sessions`、`today`、`connections`。
 - P3c-3 记忆、待办、看到哪了:`memory/retractions`、`memory/restore`、`todo`、`seen`(`/v1/journal/seen` 收可选的 `until`,不带照旧写 now)。
-- P3c-4 交办选项与会话:`entry/options`、`entry/models`、`attachment/*` 三条、`sessions`、`session`。
+- P3c-4 交办选项与会话:`entry/options`、`entry/models`、`attachment/*` 三条、`sessions`、`session`(分块上传与进度两条核过不是同一个动作,改到 P3d,见「进度 · P3c-4」)。
 - 做完怎么算(每个 PR):别名回包的金样一字不变;新路径的回包等于 `/v1` 今天的回包;`no-m-api-literal` 基线往下调;「还是自己处理器」那把棘轮往下调。
 - 第一组合完、部署 soak 绿以后,`ServerHello` 打开 `routes: 'v1'`。
 
@@ -166,6 +166,27 @@
 - **棘轮**:`MAX_OWN_HANDLER_ROWS` 52 → 48(行数仍 61);`no-m-api-literal` 基线 `routes.ts` 52 → 48、`settings-panel.ts` 19 → 15(合计 230 → 222)。
 - **金样**:`m-api-routes`、`matter-read-paths` 逐字节不变(金样文件没动;测试的接线改成把剧本挂在内部 API 上:记忆 / 日志路由 + `knowledge`)。
 - **和并之前不一样的几处**:① 记忆 / 日志模块此刻不是 ok ⇒ 四条回各自的「没接上」503(以前面板不看模块门);② 改待办状态抛了 ⇒ 500 `unavailable`(以前处理器不接,手机经隧道一直等);③ 手机的三条写(恢复、待办、seen)现在经内部 API 的分发,跑的时候持一枚 `api:POST …` 忙碌登记(桌宠在场推导本来就滤掉 `api:*`);④ 设备令牌经新键:恢复的正文多出来的键被 schema 丢掉(别名照旧 400)、待办回的是真结果 `{ ok: boolean }`(别名照旧一律 `ok: true`)、seen 不带 `until` 就推到现在(效果同带一个未来的时间,夹到 now);⑤ `/v1/journal/seen` 对本机 file / session 调用方也认 `until`,只能推到「现在的水位 ~ now」之间,不比以前的「推到现在」多;⑥「没接上」与「参数不对」先判哪个,个别路由换了先后(只在没接线的测试里看得到)。
+
+### P3c-4(交办选项与会话五条并成 `/v1` 一个处理器;老路径是别名;分块上传两条改到 P3d)
+- **并了哪五条**:`entry/options`、`entry/models`、`attachment/discard`、`sessions`、`session` → `GET /v1/workbench/entry-options`、`GET /v1/workbench/models`、`POST /v1/workbench/discard-attachment`、`GET /v1/workbench/sessions`、`GET /v1/workbench/session`。五行 `/v1` 带上 `phone: { link: 'none' }`(照别名行冻结,只给设备);`routes.ts` 删掉五条 `/m/api` 行;`mobile-workbench.ts` 的选项 / 模型 / 扔掉三个处理器与 `mobile-reads.ts` 的两个会话处理器删掉,面板 deps 的 `entry.entryOptions / entryModels`、`uploads.discard`、`sessions` 与 wiring 里那几处随之去掉。
+- **没并的两条(改到 P3d)**:`POST attachment/chunk`、`GET attachment/upload` 和 `/v1/workbench/attachment` 不是同一个动作 —— 手机是可续传的分块协议(`id + draftId + offset`,另查进度),桌面那条是一次传完 base64(POST)/ 按 `taskId` 读回材料内容(GET)。硬并就是「一条路径按调用方做两件事」(上文「否决的」)。别名表里这两行改成 `P3d`、新键 `POST /v1/workbench/attachment/chunk`、`GET /v1/workbench/attachment/upload`、转换 `null`(纯改名)。所以 P3c 实际并的是 18 条,不是 20 条。
+- **按 caller 收**(`features/workbench/routes.ts`,原生会话那一份在 `features/workbench/phone-sessions.ts`,手机处理器原样搬来):
+  - `entry-options`:同一份选项,手机令牌按手机表面问(`surface: 'phone'`,并之前面板交给服务的就是这一份)。
+  - `models`:手机令牌只认 `providerId`(手机那条的写法 `/^[a-z][a-z0-9._-]{0,63}$/`)+ 可选的项目目录 id `projectId`,**不认 `path`**、多一个参数就 400 —— 走 `entryModels`(路径在电脑上解析,没给项目 ⇒ 受管根目录);operator 照旧按绝对路径走 `modelCatalog`。
+  - `discard-attachment`:手机令牌只扔自己分块上传的那一份(`discardAttachmentUpload`,手机表面,正文原样交给上传登记处验 —— 恰好 `id + draftId`,不对 ⇒ `invalid_upload_chunk`,同并之前);operator 照旧走 `discardAttachment`(还能扔一次性上传的材料)。
+  - `sessions` / `session`:手机令牌回手机那一份 —— 行里项目只给目录名、**不给 `cwd` / 原生 id**,标题至多 200 字,带 `displayName` / `names`;一页 30 / 20,**不认 `limit` / `cwd`**(多一个参数就 400);每条正文至多 4000 字、按 `caller.frameBudget` 减半再拼;单飞 + 短缓存(`cacheSessions`,从 `wire-settings-panel.ts` 搬到工作台模块 init,`phoneSessionsOf`)、10 / 8 秒预算;回包带 `ok: true`(同 P3c-2 的 `/v1/cli/sessions`),别名原样转手,一帧的字节数不变。`WorkbenchRoutesDeps` 多一个可选的 `phoneSessions`;没接 ⇒ 手机令牌 503 `sessions_not_wired`(绝不退回桌面那一份)。两条的响应契约改成「桌面那一份 | 手机那一份」两种之一。
+  - 手机令牌的错误回包是桌面那一列,原始码经 `cause`(`x-cc-cause`)带给别名。
+- **别名**(`legacy-routes.ts` 的 `phoneEntryOptions` / `phoneEntryModels` / `phoneAttachmentDiscard` / `phoneSessions` / `phoneSession`):方法不对 405、手机的参数规矩先验(同并之前)、`{ ok }` 信封、带 `no-store`;有 `cause` ⇒ 按 phone 那一列换(`mobileMatterError`);没有 `cause` 的 503(模块门 `workbench_not_wired` / `module_*`)⇒ 手机原来「没接上」的码(`entry_not_wired`;扔掉那条 `uploads_not_wired` 本来就落成 `unavailable`);会话两条照并之前的 `sessionError`:不支持 404 `unsupported`、游标 / 键 / 参数不对 400 `invalid`、没接上 503 `sessions_not_wired`、别的 503 `unavailable`。
+- **棘轮**:`MAX_OWN_HANDLER_ROWS` 48 → 43(行数仍 61);`no-m-api-literal` 基线 `routes.ts` 48 → 43、`mobile-workbench.ts` 16 → 13、`mobile-reads.ts` 5 → 3(合计 222 → 212)。`mock-internal` 删掉 `pipeline-deps-native-history.test.ts` 那一行(文件删了,它测的接线搬进工作台模块)。`workbench-errors` 的 INTERNAL_ONLY 多 `busy`、`budget_exceeded`(只在手机会话那条分支里接住)。
+- **金样**:`m-api-routes`、`matter-read-paths` 逐字节不变(金样文件没动;测试的接线改成把剧本挂在内部 API 上:`workbenchRoutes` + `phoneSessions`)。
+- **和并之前不一样的几处**:① 工作台模块此刻不是 ok ⇒ 五条回各自的「没接上」(以前面板直接拿 `opts.workbench`,不看模块门);② 手机的扔掉一份材料现在经内部 API 的分发,跑的时候持一枚 `api:POST …` 忙碌登记,正文上限是 `/v1/workbench/*` 的 128 KiB;③ 设备令牌经新键:参数更严(会话两条多一个键就 400、模型不认 `path`),错误码是桌面那一列(`native_history_unsupported` 422、`invalid_request` 400);④ 原生会话的缓存从面板的接线挪到工作台模块(仍是一个实例、同样的 TTL / 在途上限,只有手机令牌走它;桌面照旧不经缓存);⑤「没接上」与「参数不对」先判哪个,个别路由换了先后(只在没接线的测试里看得到)。
+- **扩大了谁的够得着**:没有。设备令牌经新键够得着的函数和并之前 `/m/api` 那条一样(选项 / `entryModels` / `discardAttachmentUpload` / 缓存过的原生会话读法);链接令牌五条新键、五条别名键都 403(`panel-v1-workbench.test.ts`,每条规矩做过变异核对)。
+
+### 打开 `ServerHello.routes: 'v1'`(给整合者:soak 绿以后一行的 PR)
+- **改哪儿**:`src/features/phone/tunnel-client.ts` 里 v2 握手回应那一行 `sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2 })` 加上 `routes: 'v1'`(就这一处发 `ServerHello`;形状 `packages/protocol/src/messages.ts` 的 `ServerHello` 早就认 `routes: s.optional(s.literal('v1'))`,`shape.test.ts` 钉着)。同 PR 把 `messages.ts` 那段注释里「daemon 现在还不发」改掉,`tunnel-client.test.ts` 握手那条加一句 `expect(hello.routes).toBe('v1')`。不动 `packages/protocol` 的类型就不用 `build:mobile`(改了注释也跑一遍,生成物应该不变)。
+- **谁读它**:今天**没有人读**。`packages/protocol/src/client.ts` 的 `onHello` 只 `ServerHello.safeParse` 然后用 `hs` / `v`,不看 `routes`;App(`apps/app`,经 `makeProtocolClient`)、网页 `/m`(`apps/mobile`,同一个客户端打包进 `protocol-generated.js`)、`wechat-cc selftest phone`(`src/cli/selftest-phone.ts`)都一样。老 App 的 `shape` 丢掉不认识的键(`shape.ts` 的 `object` 只留声明过的键),所以对装着的 App 是无害的一行;真正开始读它是 P3f(新 App build 见到它才改调 `/v1` 键)。局域网直连没有握手,只有中继那条有这个信号。中继(`apps/relay`)只转帧不看内容,不用动。
+- **它说的是什么**:`'v1'` 只能表示「P3c 那 18 条的 `/v1` 新键手机令牌能走了」。P3d / P3e 的新路径今天还不存在 —— P3f 的 App 见到 `'v1'` 只能换 `MERGED_ALIAS_KEYS` 里那几条的键,别的照旧走 `/m/api`;P3d / P3e 合完以后要么换一个新值(`messages.ts` 那里 `literal('v1')` 变成并集),要么让 App 按 `ROUTES` 里有没有 `phone` 块判断。P3f 之前要定。
+- **真机上验什么**(整合者照 deploy.md 部署以后):① `wechat-cc selftest phone` 绿(中继 v2 闭环;它不读 `routes`,验的是握手多一个键没把谁弄坏);② 真 iPhone 上装着的 App(build 2 / 3)照常连上、此刻页 / 一起做 / 对话 / 交办选项与会话列表都打开(老 shape 丢掉 `routes`);③ 手机网页 `/m` 出门模式(经中继)照常连上;④ daemon 日志里没有 `bad_hello` / `downgrade_refused`;⑤ 照常 `wechat-cc self soak`。
 
 ## 不做 / 推后
 - **不改语义**:同步的 `/v1/companion/converse` 和收下即回的 `owner-chat/say` 各留一条(两个动作,不是一份数据两条路);「看 / 改记忆」两种读法照旧各一条。语义要合是另外的事。

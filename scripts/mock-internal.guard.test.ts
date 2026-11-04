@@ -32,7 +32,6 @@ const BASELINE: Record<string, number> = {
   'src/daemon/bootstrap.test.ts': 1,
   'src/daemon/ilink-glue.media-mirror.test.ts': 2,
   'src/daemon/wiring/pipeline-deps-delegate-selfid.test.ts': 1,
-  'src/daemon/wiring/pipeline-deps-native-history.test.ts': 2,
   'src/daemon/wiring/pipeline-deps-pet.test.ts': 1,
   'src/daemon/wiring/pipeline-deps-phone-chat.test.ts': 1,
   'src/features/memory/llm-ops.test.ts': 2,
