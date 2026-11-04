@@ -266,6 +266,85 @@ export function legacyRoutes(deps: LegacyRoutesDeps): PhoneRouteTable<Ctx> {
     return panelJson({ ok: false, error: 'unavailable' }, 500)
   }
 
+  // ── P3c-4 交办选项与会话:数据由 /v1 那一个处理器给(手机令牌按手机表面问、模型只认项目 id、只扔分块上传的那一份、
+  // 原生会话回手机那一份 —— features/workbench/routes.ts、phone-sessions.ts)。
+  // 别名只做:手机的参数规矩(先验再翻,同并之前)、`{ ok }` 信封、phone 那一列的码、带 no-store(mobile-workbench / mobile-reads 的 json())。
+  /** 处理器抛的原始码(cause)按 phone 那一列换;没有 cause 的 503(模块门 workbench_not_wired / module_*)⇒ 手机原来「没接上」的那个码。 */
+  const workbenchAliasError = (out: V1Out, notWired: string): Response => {
+    if (out.cause) return mobileMatterError(Error(out.cause))
+    const code = errorOf(out.body)
+    return mobileMatterError(Error(out.status === 503 && (code === 'workbench_not_wired' || code.startsWith('module_')) ? notWired : code))
+  }
+
+  // ── GET /m/api/entry/options → GET /v1/workbench/entry-options ────────
+  const phoneEntryOptions: PhoneHandler<Ctx> = ownsMethod(async (_url: URL, req: Request, { caller }: Ctx) => {
+    if (req.method !== 'GET') return noStore({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.v1) return mobileMatterError(Error('entry_not_wired'))
+    const out = await v1(req, caller, 'GET', '/v1/workbench/entry-options', {})
+    if (out.status === 200 && obj(out.body)) return noStore({ ok: true, ...out.body })
+    return workbenchAliasError(out, 'entry_not_wired')
+  })
+
+  // ── GET /m/api/entry/models → GET /v1/workbench/models ────────────────
+  // 手机只给执行者 id 与项目目录 id(路径在电脑上解析);参数规矩先验(同并之前,t / d / _via 是令牌与隧道标记)。
+  const phoneEntryModels: PhoneHandler<Ctx> = ownsMethod(async (url: URL, req: Request, { caller }: Ctx) => {
+    if (req.method !== 'GET') return noStore({ ok: false, error: 'method_not_allowed' }, 405)
+    const q = url.searchParams, providerId = q.get('providerId'), projectId = q.get('projectId')
+    if (q.getAll('providerId').length !== 1 || q.getAll('projectId').length > 1 || [...q.keys()].some(k => !['providerId', 'projectId', 't', 'd', '_via'].includes(k)) || !providerId || !/^[a-z][a-z0-9._-]{0,63}$/.test(providerId) || (projectId !== null && !/^p-[A-Za-z0-9_-]{1,64}$/.test(projectId))) return mobileMatterError(Error('invalid_request'))
+    if (!deps.v1) return mobileMatterError(Error('entry_not_wired'))
+    const out = await v1(req, caller, 'GET', '/v1/workbench/models', { providerId, ...(projectId ? { projectId } : {}) })
+    if (out.status === 200 && obj(out.body)) return noStore({ ok: true, catalog: out.body.catalog })
+    return workbenchAliasError(out, 'entry_not_wired')
+  })
+
+  // ── POST /m/api/attachment/discard → POST /v1/workbench/discard-attachment
+  // 正文原样交过去,由上传登记处验(恰好 id + draftId;不对 ⇒ invalid_upload_chunk,同并之前)。
+  const phoneAttachmentDiscard: PhoneHandler<Ctx> = ownsMethod(async (_url: URL, req: Request, { caller }: Ctx) => {
+    if (req.method !== 'POST') return noStore({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.v1) return mobileMatterError(Error('uploads_not_wired'))
+    let body: unknown
+    try { body = await req.json() } catch { return mobileMatterError(Error('invalid_upload_chunk')) }
+    const out = await v1(req, caller, 'POST', '/v1/workbench/discard-attachment', {}, body)
+    if (out.status === 200) return noStore({ ok: true })
+    return workbenchAliasError(out, 'uploads_not_wired')
+  })
+
+  // ── GET /m/api/sessions、/m/api/session → GET /v1/workbench/sessions、/v1/workbench/session
+  // 手机那一份(只给目录名、一页 30 / 20、按帧裁、单飞 + 预算)在 /v1 那边拼好,回包已带 ok: true,原样转手。
+  /** 读的错误(并之前的 sessionError):不支持 404 unsupported、游标 / 键 / 参数不对 400 invalid、没接上 503 sessions_not_wired、别的 503 unavailable。 */
+  const sessionAliasError = (out: V1Out): Response => {
+    const code = out.cause ?? errorOf(out.body)
+    if (code === 'native_history_unsupported') return noStore({ ok: false, error: 'unsupported' }, 404)
+    if (['invalid_cursor', 'invalid_native_history_key', 'invalid_request'].includes(code)) return noStore({ ok: false, error: 'invalid' }, 400)
+    if (code === 'sessions_not_wired' || (out.status === 503 && !out.cause && (code === 'workbench_not_wired' || code.startsWith('module_')))) return noStore({ ok: false, error: 'sessions_not_wired' }, 503)
+    return noStore({ ok: false, error: 'unavailable' }, 503)
+  }
+  const sessionCursor = (url: URL): string | undefined | null => {
+    const all = url.searchParams.getAll('cursor')
+    if (all.length > 1) return null
+    const c = all[0]
+    if (c === undefined) return undefined
+    return c && c.length <= 2048 ? c : null
+  }
+  const phoneSessions: PhoneHandler<Ctx> = ownsMethod(async (url: URL, req: Request, { caller }: Ctx) => {
+    if (req.method !== 'GET') return noStore({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.v1) return noStore({ ok: false, error: 'sessions_not_wired' }, 503)
+    const provider = url.searchParams.get('provider'), cursor = sessionCursor(url), queries = url.searchParams.getAll('q'), query = queries[0] ?? ''
+    if ((provider !== 'claude' && provider !== 'codex') || url.searchParams.getAll('provider').length !== 1 || cursor === null || queries.length > 1 || query.length > 200 || query.includes('\0')) return noStore({ ok: false, error: 'invalid' }, 400)
+    const out = await v1(req, caller, 'GET', '/v1/workbench/sessions', { providerId: provider, ...(queries.length ? { q: query } : {}), ...(cursor ? { cursor } : {}) })
+    if (out.status === 200 && obj(out.body) && out.body.ok === true) return noStore(out.body)
+    return sessionAliasError(out)
+  })
+  const phoneSession: PhoneHandler<Ctx> = ownsMethod(async (url: URL, req: Request, { caller }: Ctx) => {
+    if (req.method !== 'GET') return noStore({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.v1) return noStore({ ok: false, error: 'sessions_not_wired' }, 503)
+    const key = url.searchParams.get('key'), cursor = sessionCursor(url), windows = url.searchParams.getAll('window'), window = windows[0] ?? 'start'
+    if (!key || key.length > 2048 || url.searchParams.getAll('key').length !== 1 || cursor === null || windows.length > 1 || !['start', 'recent'].includes(window) || (window === 'recent' && cursor !== undefined)) return noStore({ ok: false, error: 'invalid' }, 400)
+    const out = await v1(req, caller, 'GET', '/v1/workbench/session', { key, ...(cursor ? { cursor } : {}), ...(windows.length ? { window } : {}) })
+    if (out.status === 200 && obj(out.body) && out.body.ok === true) return noStore(out.body)
+    return sessionAliasError(out)
+  })
+
   return {
     'GET /m/api/matters': phoneMatters,
     'GET /m/api/matter': phoneMatter,
@@ -280,5 +359,10 @@ export function legacyRoutes(deps: LegacyRoutesDeps): PhoneRouteTable<Ctx> {
     'POST /m/api/memory/restore': phoneMemoryRestore,
     'POST /m/api/todo': phoneTodo,
     'POST /m/api/seen': phoneSeen,
+    'GET /m/api/entry/options': phoneEntryOptions,
+    'GET /m/api/entry/models': phoneEntryModels,
+    'POST /m/api/attachment/discard': phoneAttachmentDiscard,
+    'GET /m/api/sessions': phoneSessions,
+    'GET /m/api/session': phoneSession,
   }
 }

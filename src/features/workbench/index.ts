@@ -24,6 +24,7 @@ import type { SpeechPolicy } from '../../daemon/speech/policy'
 import { log } from '../../lib/log'
 import { wireWorkbench } from './wire'
 import { workbenchRoutes } from './routes'
+import { phoneSessionsOf } from './phone-sessions'
 import { wireWorkbenchNotifications } from './wire-notifications'
 import { wireWorkbenchArtifacts } from './wire-artifacts'
 import type { WorkbenchService } from './service'
@@ -35,6 +36,10 @@ export { makeProjectLessons, LESSONS_MAX, LESSON_MAX_CHARS, type ProjectLessons 
 export { isWechatTaskCommand, wechatTaskMessageKey, type WechatMessageIdentity, type WechatWorkbenchReply } from './wechat-control'
 export { resolveTaskReference, makeCheapJudge, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from './task-reference'
 export { QUOTA_TAKEOVER_DEFAULT_REQUEST, quotaTakeoverText } from './quota-takeover'
+// 桌面 / 手机令牌的 /v1/workbench/* 路由表(模块自己挂;测试拼面板时也要)
+export { workbenchRoutes, type WorkbenchRoutesDeps } from './routes'
+// 手机令牌读原生会话的那一份(P3c-4;单飞 + 短缓存)
+export { cacheSessions, SESSIONS_DONE_MAX, PHONE_SESSIONS_PAGE, PHONE_SESSION_PAGE, type PhoneSessionsSource } from './phone-sessions'
 // 换一家来审(定时那边起只读轮时用同一套措辞)
 export { buildReviewText, reviewMissNote } from './review-request'
 
@@ -55,9 +60,16 @@ export function workbenchFeature(o: {
     ...(o.lazy ? { lazy: o.lazy } : {}),
     init(ctx) {
       const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
-      const service = wireWorkbench({ ...o.deps(ctx), internalApi })
+      const deps = o.deps(ctx)
+      const service = wireWorkbench({ ...deps, internalApi })
       ctx.own('stop', () => service.shutdown())
-      internalApi.mount('workbench', workbenchRoutes({ workbench: service, resolveAdminChatId: o.resolveAdminChatId }))
+      // 手机令牌读原生会话(P3c-4,以前在 wire-settings-panel.ts):单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
+      const phoneSessions = phoneSessionsOf(service)
+      internalApi.mount('workbench', workbenchRoutes({
+        workbench: service, resolveAdminChatId: o.resolveAdminChatId,
+        // 执行者叫什么(收敛清单 ⑥):唯一出处 registry
+        phoneSessions: { sessions: phoneSessions, executorName: (id: string) => deps.boot.registry.namesOf(id).name },
+      }))
       // GET /v1/matters 的「已暂停(网络未受保护)」标记:internal-api 只留这一个窄口
       internalApi.provide({ workbenchSuspended: () => service.networkSuspended() })
       return service

@@ -19,6 +19,8 @@ import { fileChunkResponse } from './mobile-chat'
 import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
 import { memoryRoutes } from '../memory'
 import { journalRoutes } from '../journal'
+import { workbenchRoutes, type PhoneSessionsSource, type WorkbenchService } from '../workbench'
+import type { MobileEntryActions, MobileUploadActions } from './mobile-workbench'
 
 /** 老测试给手机对话的假实现里还有这两样(P3c-1 以前面板自己用;现在经 /v1 用)。 */
 export type LegacyChatFakes = MobileChatDeps & {
@@ -33,7 +35,15 @@ export type LegacyChatFakes = MobileChatDeps & {
  * P3c-3 起记忆收回 / 恢复、待办改状态、推水位也经 `/v1` 走(生产里是记忆模块 / 日志模块挂的路由、bootApi 交的 knowledge):
  * 老测试照旧把假实现交给面板这一层(`memoryRetractions` / `restoreMemory`、`todos.facts.setFactStatus`、`seen.write`),这里转交内部 API。
  */
-export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'seen'> & {
+/**
+ * P3c-4 起交办选项 / 模型、扔掉分块上传的材料、电脑上的原生会话也经 `/v1/workbench/*` 走(生产里是工作台模块挂的路由):
+ * 老测试照旧把假实现交给面板这一层(`entry.entryOptions` / `entryModels`、`uploads.discard`、`sessions`),这里拼成一个
+ * 只有这几样的 WorkbenchService,挂上真的 workbenchRoutes。
+ */
+export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'seen' | 'entry' | 'uploads'> & {
+  entry?: MobileEntryActions & { entryOptions?(): object; entryModels?(input: { providerId: string; projectId?: string }): Promise<unknown> }
+  uploads?: MobileUploadActions & { discard?(input: { id: string; draftId: string }): void }
+  sessions?: PhoneSessionsSource
   chat?: LegacyChatFakes
   connections?: () => import('../../daemon/connections').ConnectionsSnapshot
   memoryRetractions?: () => Array<{ key: string; section: string | null; text: string; day: string | null; verdict: string | null; note: string }>
@@ -89,7 +99,17 @@ export function withPanelV1(d: PanelDepsWithFakes, options: InternalApiOptions =
   }
   const seen = d.seen, write = seen?.write
   if (seen && write) own.journal = journalRoutes({ stateDir: d.stateDir, journal: {} as never, seen: { read: () => seen.read(), write }, ...(d.now ? { now: d.now } : {}) })
+  const entry = d.entry, uploads = d.uploads
+  if (entry?.entryOptions || entry?.entryModels || uploads?.discard || d.sessions) {
+    const nope = (what: string) => () => { throw new Error(`${what} not in this test`) }
+    const workbench = {
+      entryOptions: entry?.entryOptions ? () => entry.entryOptions!() : nope('entryOptions'),
+      entryModels: entry?.entryModels ? (input: { providerId: string; projectId?: string }) => entry.entryModels!(input) : nope('entryModels'),
+      discardAttachmentUpload: uploads?.discard ? (input: { id: string; draftId: string }) => uploads.discard!(input) : nope('discard'),
+    } as Partial<WorkbenchService> as WorkbenchService
+    own.workbench = workbenchRoutes({ workbench, resolveAdminChatId: d.ownerChatId, phoneSessions: { ...(d.sessions ? { sessions: d.sessions } : {}), ...(d.executorName ? { executorName: d.executorName } : {}) } })
+  }
   for (const [name, table] of Object.entries({ ...own, ...mounts })) if (table) api.mount(name as ModuleName, table)
-  const { connections: _c, memoryRetractions: _r, restoreMemory: _m, ...panel } = d
+  const { connections: _c, memoryRetractions: _r, restoreMemory: _m, sessions: _s, ...panel } = d
   return { ...(panel as SettingsPanelDeps), v1: api.panelDispatch, api }
 }

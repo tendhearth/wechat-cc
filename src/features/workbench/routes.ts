@@ -13,7 +13,8 @@ import type {InputMaterials,WorkbenchService} from './service'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
 import {parseEntryInput} from '../../adapters/workbench/task-entry'
 import {workbenchErrorHttp,workbenchErrorSpec} from '@wechat-cc/protocol'
-import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
+import type { RouteHandler, RouteResult, RouteTable } from '../../daemon/internal-api/types'
+import { phoneSessionList, phoneSessionRead, type PhoneSessionsDeps } from './phone-sessions'
 
 const TASK_ID = /^[a-f0-9]{8}$/
 const EXPECTED_RUN_ID = /^[A-Za-z0-9_.:-]{1,128}$/
@@ -64,20 +65,42 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   return {status,body:workbenchErrorSpec(code)?.rewind?{error,...rewindExtra(err)}:{error}}
 }
 
+/** 手机设置面板那一口的令牌(设备 / 链接;P3c-4 起交办选项、模型、扔掉材料、原生会话两条也收它们,路由表那一行的 phone 块只放设备)。 */
+const fromPhone = (caller: Parameters<RouteHandler>[2]): boolean => caller?.origin === 'device' || caller?.origin === 'link'
+/** 手机令牌的错误:回包同桌面那一列,原始码经 cause 带给面板里的旧路径别名(它换回 phone 那一列;cause 不出面板)。 */
+function phoneError(err: unknown): RouteResult {
+  const code = errorCode(err)
+  const {status,error}=workbenchErrorHttp(code,'desktop')
+  return { status, body: { error }, ...(/^[a-z][a-z0-9_]{0,63}$/.test(code) ? { cause: code } : {}) }
+}
+/** 手机交办时问模型:执行者 id 的写法(并之前 /m/api/entry/models 的处理器就是这一条,不是 isWorkbenchProviderId)。 */
+const PHONE_PROVIDER_ID = /^[a-z][a-z0-9._-]{0,63}$/
+/** 手机只给项目目录 id(p-…),路径只在电脑上解析。 */
+const PHONE_PROJECT_ID = /^p-[A-Za-z0-9_-]{1,64}$/
+
 /** 这几条路由要的(以前是 InternalApiDeps 的 workbench + resolveAdminChatId)。 */
 export interface WorkbenchRoutesDeps {
   workbench: WorkbenchService
   /** 交办入口的主人(entry context 的 ownerKey);没配主人 ⇒ ''。 */
   resolveAdminChatId?: () => string | null
+  /**
+   * 手机令牌读原生会话(P3c-4,phone-sessions.ts):单飞 + 短缓存过的读法、执行者正式名字。缺 `sessions` ⇒ 手机令牌
+   * 503 sessions_not_wired(绝不退回桌面那一份)。
+   */
+  phoneSessions?: PhoneSessionsDeps
 }
 
 export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
   const entryContext=()=>({ownerKey:deps.resolveAdminChatId?.()??'',surface:'desktop' as const})
+  // 手机令牌按手机表面(并之前面板交给服务的就是这一份:wire-settings-panel.ts 的 entry / uploads)
+  const phoneContext=()=>({ownerKey:deps.resolveAdminChatId?.()??'',surface:'phone' as const})
   // 出生地(2026-10-19):只有桌面 app 的 operator 令牌才算「从电脑来的」;别的 admin 令牌(会话 / 未来的调用方)不知道 ⇒ 不写。
   const desktopOrigin=(caller?:{origin:string})=>caller?.origin==='operator'?{origin:'desktop' as const}:{}
   return {
-    'GET /v1/workbench/entry-options':async query=>{
+    'GET /v1/workbench/entry-options':async(query,_body,caller)=>{
       if(query.size)return invalid()
+      // 手机令牌(P3c-4,原 /m/api/entry/options):同一份选项,按手机表面问
+      if(fromPhone(caller)){try{return{status:200,body:deps.workbench.entryOptions(phoneContext())}}catch(error){return phoneError(error)}}
       try{return{status:200,body:deps.workbench.entryOptions(entryContext())}}catch(error){return mappedError(error)}
     },
     'POST /v1/workbench/create-entry':async(query,body,caller)=>{
@@ -100,7 +123,14 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if(!value||typeof value.path!=='string'||!isAbsolute(value.path)||value.path.includes('\0')||!isWorkbenchProviderId(value.providerId)||(value.name!==undefined&&typeof value.name!=='string'))return invalid()
       try{return{status:200,body:{project:deps.workbench.addProject({path:value.path,providerId:value.providerId,...(value.name!==undefined?{name:value.name as string}:{})})}}}catch(error){return mappedError(error)}
     },
-    'GET /v1/workbench/models':async query=>{
+    'GET /v1/workbench/models':async(query,_body,caller)=>{
+      // 手机令牌(P3c-4,原 /m/api/entry/models):只认执行者 id + 可选的项目目录 id,**不认 path** —— 手机说不出、也不该探
+      // 电脑上的任意路径;没给项目 ⇒ 由 CC 安排的受管根目录(service/entry.ts 的 entryModels)。
+      if(fromPhone(caller)){
+        const providerId=query.get('providerId'),projectId=query.get('projectId')
+        if([...query.keys()].some(k=>k!=='providerId'&&k!=='projectId')||query.getAll('providerId').length!==1||query.getAll('projectId').length>1||!providerId||!PHONE_PROVIDER_ID.test(providerId)||(projectId!==null&&!PHONE_PROJECT_ID.test(projectId)))return{status:400,body:{error:'invalid_request'},cause:'invalid_request'}
+        try{return{status:200,body:{catalog:await deps.workbench.entryModels({providerId,...(projectId?{projectId}:{})},phoneContext())}}}catch(error){return phoneError(error)}
+      }
       const providerId=query.get('providerId'),path=query.get('path')
       if(query.getAll('providerId').length!==1||query.getAll('path').length!==1||!isWorkbenchProviderId(providerId)||!path||path.length>4096||path.includes('\0')||!isAbsolute(path))return invalid()
       try{return{status:200,body:{catalog:await deps.workbench.modelCatalog(providerId,path)}}}catch(error){return mappedError(error)}
@@ -115,7 +145,10 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if(query.getAll('taskId').length!==1||query.getAll('id').length!==1||!taskId||!TASK_ID.test(taskId)||!id||!REQUEST_ID.test(id))return invalid()
       try{return{status:200,body:deps.workbench.readAttachment(taskId,id)}}catch(error){return mappedError(error)}
     },
-    'POST /v1/workbench/discard-attachment':async(_query,body)=>{
+    'POST /v1/workbench/discard-attachment':async(_query,body,caller)=>{
+      // 手机令牌(P3c-4,原 /m/api/attachment/discard):只扔手机分块上传的那一份(按主人 + 手机表面),正文原样交给上传登记处验
+      // (恰好 id + draftId,别的键 / 坏 id ⇒ invalid_upload_chunk,同并之前)。桌面那条还能扔一次性上传的材料,手机不能。
+      if(fromPhone(caller)){try{deps.workbench.discardAttachmentUpload(body as {id:string;draftId:string},phoneContext());return{status:200,body:{ok:true}}}catch(error){return phoneError(error)}}
       const value=objectBody(body)
       if(!value||typeof value.id!=='string'||!REQUEST_ID.test(value.id)||typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId))return invalid()
       try{deps.workbench.discardAttachment(value.id,value.draftId);return{status:200,body:{ok:true}}}catch(error){return mappedError(error)}
@@ -153,7 +186,9 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch(err){return mappedError(err)}
     },
 
-    'GET /v1/workbench/sessions': async query => {
+    'GET /v1/workbench/sessions': async (query, _body, caller) => {
+      // 手机令牌(P3c-4,原 /m/api/sessions):回手机那一份(phone-sessions.ts:只给目录名、一页 30、不认 cwd / limit、单飞 + 预算)
+      if (fromPhone(caller)) return phoneSessionList(deps.phoneSessions ?? {}, query, caller?.frameBudget)
       for(const key of ['providerId','q','limit','cursor','cwd'])if(query.getAll(key).length>1)return invalid()
       const providerId=query.get('providerId')
       if(!isNativeHistoryProvider(providerId))return invalid()
@@ -163,7 +198,9 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
         return {status:200,body:await deps.workbench.listNativeHistory(providerId,input)}
       }catch(error){return mappedError(error)}
     },
-    'GET /v1/workbench/session': async query => {
+    'GET /v1/workbench/session': async (query, _body, caller) => {
+      // 手机令牌(P3c-4,原 /m/api/session):回手机那一份(一页 20、每条至多 4000 字、window=start | recent)
+      if (fromPhone(caller)) return phoneSessionRead(deps.phoneSessions ?? {}, query, caller?.frameBudget)
       for(const field of ['key','limit','cursor'])if(query.getAll(field).length>1)return invalid()
       try {
         const key=query.get('key')??'';decodeNativeHistoryKey(key)

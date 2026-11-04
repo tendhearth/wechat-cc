@@ -143,8 +143,6 @@ export interface SettingsPanelDeps {
   featureRoutes?: ReadonlyArray<PhoneRouteTable<unknown>>
   /** 「CC 做过的事」(B9):只给设备令牌。 */
   activity?: import('./mobile-activity').MobileActivityDeps
-  /** 电脑上的原生会话(只读)。缺省 ⇒ /m/api/sessions 503。 */
-  sessions?: import('./mobile-reads').MobileSessionsDeps
   /** 终端会话:拍板等批准的那一项、接着说一句、看着它跑(features/terminal/phone-actions.ts)。缺省 ⇒ 那几条 503。 */
   cliActions?: import('../terminal').CliPhoneActions
   /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */
@@ -891,7 +889,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     ...(deps.featureRoutes ?? []),
     // CC 做过的事(B9):只读时间线。链接令牌不在册。
     mobileActivityRoutes(deps.activity),
-    mobileReadsRoutes({ ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}), ...(deps.executorName ? { executorName: deps.executorName } : {}) }),
+    mobileReadsRoutes({ ...(deps.cliActions ? { cliActions: deps.cliActions } : {}) }),
   )
 
   /** 不带令牌也给的几样(不敏感):图标、PWA 清单、service worker。任何方法都回,同改造前。 */

@@ -140,6 +140,8 @@ const INTERNAL_ONLY = new Set([
     'rewind_git_failed', 'rewind_verify_tree', 'runtime_closed_before_input_acknowledgement', 'session_start_timeout', 'subscription_conflict',
     'subscription_inactive', 'subscription_mismatch', 'turn_timeout', 'unsupported_api_tool', 'upload_conflict', 'upload_invalid_content',
     'upload_not_found', 'upload_unfinished_limit',
+    // 手机令牌读原生会话(features/workbench/phone-sessions.ts,P3c-4):在途满了 / 超预算,只在那条手机分支里接住、回 503 unavailable
+    'busy', 'budget_exceeded',
     // Claude 工作台运行时(claude-workbench-*)的不变式与上限:只在运行时内部抛,落进任务失败记录
     'claude_workbench_process_groups_unsupported', 'claude_workbench_custom_spawn_unsupported', 'claude_runtime_task_limit',
     'claude_runtime_task_owner_limit', 'claude_runtime_closed', 'claude_runtime_reader_not_closed', 'claude_runtime_child_output_parts_limit',

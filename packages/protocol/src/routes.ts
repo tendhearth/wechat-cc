@@ -200,7 +200,8 @@ export interface RouteSpec {
 const ROUTE_TABLE = {
   // ── 内部 API(/v1/*)。注释原样搬自 route-tiers.ts 的 ROUTE_MIN_TIER ─────────────────────
   // Owner Workbench: task instructions and generated artifacts are private.
-  'GET /v1/workbench/entry-options': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-4(手机原 /m/api/entry/options):手机令牌也走这一条,同一份选项、按手机表面问;只给设备。
+  'GET /v1/workbench/entry-options': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/workbench/create-entry': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/workbench/entry-receipt': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/workbench': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
@@ -225,16 +226,20 @@ const ROUTE_TABLE = {
   // 桌面(原 lib.rs 注释):出码(必要时打开远程隧道)与轮询已配对设备。
   'POST /v1/phone/link': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/phone/devices': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/models': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-4(手机原 /m/api/entry/models):手机令牌也走这一条,处理器按 caller 收 —— 只认 providerId + 项目目录 id、不认 path;只给设备。
+  'GET /v1/workbench/models': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/workbench/attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/workbench/attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/discard-attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-4(手机原 /m/api/attachment/discard):手机令牌也走这一条,只扔手机分块上传的那一份;只给设备。
+  'POST /v1/workbench/discard-attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/workbench/attention': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/input': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/answer': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/withdraw-input': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/sessions': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/session': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-4(手机原 /m/api/sessions、/m/api/session):手机令牌也走这两条,处理器按 caller 回手机那一份(只给目录名、不给 cwd,
+  // 一页 30 / 20、不认 cwd / limit;features/workbench/phone-sessions.ts);只给设备。
+  'GET /v1/workbench/sessions': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/workbench/session': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/workbench/task': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/project': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/create': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
@@ -637,9 +642,6 @@ const ROUTE_TABLE = {
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
   'GET /m/api/chat/model': { phone: { link: 'none' } },
   'POST /m/api/chat/model': { phone: { link: 'none' } },
-  // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
-  'GET /m/api/sessions': { phone: { link: 'none' } },
-  'GET /m/api/session': { phone: { link: 'none' } },
   // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
   'POST /m/api/cli/permission': { phone: { link: 'none' } },
   'POST /m/api/cli/say': { phone: { link: 'none' } },
@@ -650,12 +652,9 @@ const ROUTE_TABLE = {
   'POST /m/api/session/continue': { phone: { link: 'none' } },
   'GET /m/api/sticker/': { phone: { link: 'none' } },
   // 交办与材料(mobile-workbench.ts,#129)
-  // 交办时可选的模型(2026-10-06)
-  'GET /m/api/entry/models': { phone: { link: 'none' } },
+  // 材料分块上传与进度(和桌面一次传完的 /v1/workbench/attachment 不是同一个动作,P3d 起新路径)
   'POST /m/api/attachment/chunk': { phone: { link: 'none' } },
   'GET /m/api/attachment/upload': { phone: { link: 'none' } },
-  'POST /m/api/attachment/discard': { phone: { link: 'none' } },
-  'GET /m/api/entry/options': { phone: { link: 'none' } },
   'POST /m/api/matter/create': { phone: { link: 'none' } },
   'GET /m/api/matter/create-receipt': { phone: { link: 'none' } },
   'POST /m/api/matter/permission': { phone: { link: 'none' } },

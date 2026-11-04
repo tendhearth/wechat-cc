@@ -20,7 +20,7 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 import { pickJobExecutor, readPlanLogDays } from '../../features/companion'
 import { readJournalSeen } from '../../adapters/store/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
-import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, cacheSessions, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer, currentPhoneClient } from '../../features/phone'
+import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer, currentPhoneClient } from '../../features/phone'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
 import { letterDeliveries, letterPagePath, listLetters, mobileLettersRoutes } from '../../features/letters'
 import { ccActsFor } from '../../adapters/store/cc-acts'
@@ -54,13 +54,10 @@ export interface WireSettingsPanelDeps {
 export function wireSettingsPanel(d: WireSettingsPanelDeps) {
   const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, mattersService, memoryNightly } = d
   const { remoteCfg, remoteTunnel, push: phonePush, owner: phoneOwner, chat: phoneChat } = d.phone
-// 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
-const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
 return makeSettingsPanel({
   // 执行者叫什么(收敛清单 ⑥):唯一出处 registry;App 读行里的 displayName,不存名字表。
   executorName: (id: string) => boot.registry.namesOf(id).name,
   ...(opts.cliActions ? { cliActions: opts.cliActions } : {}),
-  ...(phoneSessions ? { sessions: phoneSessions } : {}),
   // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
   ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),
   stateDir,
@@ -92,11 +89,8 @@ return makeSettingsPanel({
   ...(opts.workbench?{uploads:{
     chunk:(input:Parameters<typeof opts.workbench.uploadAttachmentChunk>[0])=>opts.workbench!.uploadAttachmentChunk(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
     status:(input:{id:string;draftId:string})=>opts.workbench!.attachmentUploadStatus(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-    discard:(input:{id:string;draftId:string})=>opts.workbench!.discardAttachmentUpload(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
   }}:{}),
   ...(opts.workbench?{entry:{
-    entryOptions:()=>opts.workbench!.entryOptions({ownerKey:ownerChatId()??'',surface:'phone'}),
-    entryModels:(input:{providerId:string;projectId?:string})=>opts.workbench!.entryModels(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
     // 出生地:原生 App(中继 v2 帧)/ 浏览器 /m,只按传输判(phone-client.ts);不在手机请求里 ⇒ null。
     createEntry:(input:import('../../adapters/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone',origin:currentPhoneClient()}),
     entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
