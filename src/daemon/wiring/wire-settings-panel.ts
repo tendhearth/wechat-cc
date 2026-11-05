@@ -80,19 +80,13 @@ return makeSettingsPanel({
       summarizer: makeProgressSummarizer({ cheapEval: cheap, budgetMs, now: () => Date.now(), log: (tag, line) => log(tag, line) }),
     }) }
   })() : {}),
-  ...(opts.workbench ? { changes: (id: string) => opts.workbench!.reviewList(id) } : {}),
-  ...(opts.workbench ? { review: {
-    mark: (id: string, input: { artifactId: string; path: string; mark: 'accepted' | 'returned' }) => opts.workbench!.markReviewFile(id, input),
-    ret: (id: string, input: { artifactId: string; paths: string[]; comment: string }) => opts.workbench!.returnReviewFiles(id, input),
-    comment: (id: string, input: import('../../features/workbench').ReviewCommentInput) => opts.workbench!.reviewComment(id, input),
-    sendComments: (id: string, input: { summary?: string; inputRequestId?: string }) => opts.workbench!.sendReviewComments(id, input),
-  } } : {}),
+  // 改动与逐文件审阅、行评论(P3e 起):/v1/matter/changes、review-*(内部 API 那一个处理器,MattersService 那一层)。
   ...(opts.workbench?{uploads:{
     chunk:(input:Parameters<typeof opts.workbench.uploadAttachmentChunk>[0])=>opts.workbench!.uploadAttachmentChunk(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
     status:(input:{id:string;draftId:string})=>opts.workbench!.attachmentUploadStatus(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
   }}:{}),
   // 交办与回执(P3e 起):POST /v1/matter/create、GET /v1/matter/create-receipt(内部 API 那一个处理器,MattersService.createEntry / entryReceipt)。
-  ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), withActs: (rows) => mattersService.withActs(rows), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+  ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), withActs: (rows) => mattersService.withActs(rows), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
   // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
   ...(opts.activity ? { activity: opts.activity } : {}),
   // 信、定时、终端会话、记忆、表情的手机处理器归它们自己的功能(各自 index.ts 导出),这里只填 deps 交给面板。

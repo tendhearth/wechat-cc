@@ -90,7 +90,9 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     const OUTPUT_EVAL = ['POST /v1/eval/run']
     // operator:一件事上的动作收进 /v1/matter/*(P3e,设计稿 2026-11-05-p3-one-route-family):operator 本来就能走它们的 /v1/workbench/* 双胞胎
     // (cancel / permission / answer / artifact / quota-handoff / worktree / create-entry / entry-receipt,还在快照里),新键是同一个处理器,够得着的不变。
-    const P3E_MATTER_ACTIONS = ['POST /v1/matter/stop', 'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree', 'POST /v1/matter/create', 'GET /v1/matter/create-receipt']
+    const P3E_MATTER_ACTIONS = ['POST /v1/matter/stop', 'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree', 'POST /v1/matter/create', 'GET /v1/matter/create-receipt',
+      // P3e-2(双胞胎:rewind-preview / rewind / review / review-mark / review-return / review-comment / review-comments-send)
+      'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']
     const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...P3E_MATTER_ACTIONS], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
     reg.registerOperatorToken('op')

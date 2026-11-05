@@ -22,6 +22,7 @@ import { journalRoutes } from '../journal'
 import { workbenchRoutes, type PhoneSessionsSource, type WorkbenchService } from '../workbench'
 import type { MobileUploadActions } from './mobile-workbench'
 import type { EntryInput } from '../../adapters/workbench/task-entry'
+import { latestChanges, type ReviewTurnLike } from '../../domain/matters/phone-changes'
 
 /** 老测试给手机对话的假实现里还有这两样(P3c-1 以前面板自己用;现在经 /v1 用)。 */
 export type LegacyChatFakes = MobileChatDeps & {
@@ -46,14 +47,24 @@ export type LegacyChatFakes = MobileChatDeps & {
  * 那一个处理器,底下是 MattersService):老测试照旧把手机那一份的假实现交给面板这一层(`matters.stop` …、`entry.createEntry` /
  * `entryReceipt`),这里转交内部 API 的 MattersService。
  */
-type PhoneMatterActionFakes = Partial<Pick<MattersService, 'stop' | 'permission' | 'answer' | 'artifactChunk' | 'handoff' | 'worktree' | 'worktreeScript'>>
+type PhoneMatterActionFakes = Partial<Pick<MattersService, 'stop' | 'permission' | 'answer' | 'artifactChunk' | 'handoff' | 'worktree' | 'worktreeScript' | 'rewindPreview' | 'rewind'>>
+/** 改动与逐文件审阅(P3e-2 以前面板自己的 deps:`changes` = 工作台 reviewList,`review` = 标记 / 打回 / 行评论 / 发出评论)。 */
+type ReviewFakes = {
+  changes?: (id: string) => readonly ReviewTurnLike[]
+  review?: {
+    mark(id: string, input: { artifactId: string; path: string; mark: 'accepted' | 'returned' }): unknown
+    ret(id: string, input: { artifactId: string; paths: string[]; comment: string }): unknown
+    comment?(id: string, input: never): unknown
+    sendComments?(id: string, input: { summary?: string; inputRequestId?: string }): unknown
+  }
+}
 type EntryFakes = {
   createEntry?(input: EntryInput): unknown
   entryReceipt?(requestId: string): unknown
   entryOptions?(): object
   entryModels?(input: { providerId: string; projectId?: string }): Promise<unknown>
 }
-export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'seen' | 'uploads' | 'matters'> & {
+export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'seen' | 'uploads' | 'matters'> & ReviewFakes & {
   matters?: NonNullable<SettingsPanelDeps['matters']> & PhoneMatterActionFakes
   entry?: EntryFakes
   uploads?: MobileUploadActions & { discard?(input: { id: string; draftId: string }): void }
@@ -69,7 +80,7 @@ export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'see
 /** 面板 deps(含老测试的假实现)→ 内部 API 要的 MattersService(照 pipeline-deps.ts 的 mattersService 接法)。 */
 export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersService | undefined {
   const m = d.matters, chat = d.chat
-  if (!m && !chat && !d.entry?.createEntry && !d.entry?.entryReceipt) return undefined
+  if (!m && !chat && !d.entry?.createEntry && !d.entry?.entryReceipt && !d.changes && !d.review) return undefined
   const owner = () => chat?.owner()?.chatId ?? d.ownerChatId()
   return {
     list: f => (m ? m.list(f as never) : []) as never,
@@ -89,6 +100,12 @@ export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersServi
     ...phoneActionsFrom(m),
     createEntry: (input: unknown) => { if (!d.entry?.createEntry) throw new Error('workbench_not_wired'); return d.entry.createEntry(input as EntryInput) },
     entryReceipt: (requestId: string) => { if (!d.entry?.entryReceipt) throw new Error('workbench_not_wired'); return d.entry.entryReceipt(requestId) },
+    // P3e-2 改动与逐文件审阅:同 MattersService(changes 是 reviewList 裁到一帧;别的原样转交)
+    changes: (id: string) => { if (!d.changes) throw new Error('workbench_not_wired'); return latestChanges(d.changes(id)) },
+    markReviewFile: (id: string, input: never) => { if (!d.review) throw new Error('workbench_not_wired'); return d.review.mark(id, input) },
+    returnReviewFiles: async (id: string, input: never) => { if (!d.review) throw new Error('workbench_not_wired'); return await d.review.ret(id, input) as never },
+    reviewComment: (id: string, input: Record<string, unknown>) => { if (!d.review?.comment) throw new Error('workbench_not_wired'); return d.review.comment(id, input as never) },
+    sendReviewComments: async (id: string, input: { summary?: string; inputRequestId?: string }) => { if (!d.review?.sendComments) throw new Error('workbench_not_wired'); return await d.review.sendComments(id, input) },
     // pipeline-deps.ts 的 chat.file 那一行
     ownerChatFile: chat?.message
       ? makeOwnerChatFileReader({ ownerChatId: owner, ...(chat.inboxDir ? { inboxDir: chat.inboxDir } : {}), readChunk: fileChunkResponse, stickerDir: join(d.stateDir, 'stickers'), message: (chatId, id) => chat.message!(chatId, id) })
@@ -99,7 +116,7 @@ export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersServi
 /** 手机那一份动作的假实现:有就转交,没有就抛 workbench_not_wired(同 MattersService 没接工作台时)。 */
 function phoneActionsFrom(m: PhoneMatterActionFakes | undefined): PhoneMatterActionFakes {
   const out: Record<string, unknown> = {}
-  for (const k of ['stop', 'permission', 'answer', 'artifactChunk', 'handoff', 'worktree', 'worktreeScript'] as const) {
+  for (const k of ['stop', 'permission', 'answer', 'artifactChunk', 'handoff', 'worktree', 'worktreeScript', 'rewindPreview', 'rewind'] as const) {
     const fn = m?.[k] as ((...a: unknown[]) => unknown) | undefined
     out[k] = (...a: unknown[]) => { if (!fn) throw new Error('workbench_not_wired'); return fn.apply(m, a) }
   }
@@ -138,6 +155,6 @@ export function withPanelV1(d: PanelDepsWithFakes, options: InternalApiOptions =
     own.workbench = workbenchRoutes({ workbench, resolveAdminChatId: d.ownerChatId, phoneSessions: { ...(d.sessions ? { sessions: d.sessions } : {}), ...(d.executorName ? { executorName: d.executorName } : {}) } })
   }
   for (const [name, table] of Object.entries({ ...own, ...mounts })) if (table) api.mount(name as ModuleName, table)
-  const { connections: _c, memoryRetractions: _r, restoreMemory: _m, sessions: _s, ...panel } = d
+  const { connections: _c, memoryRetractions: _r, restoreMemory: _m, sessions: _s, changes: _ch, review: _rv, ...panel } = d
   return { ...(panel as SettingsPanelDeps), v1: api.panelDispatch, api }
 }

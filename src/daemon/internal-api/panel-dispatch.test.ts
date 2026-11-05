@@ -132,7 +132,9 @@ describe('两个监听各认各的令牌', () => {
 const P3C1_DEVICE = ['GET /v1/cli/sessions', 'GET /v1/connections', 'GET /v1/matter', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/retractions', 'GET /v1/overseer/today', 'GET /v1/workbench/entry-options', 'GET /v1/workbench/models', 'GET /v1/workbench/session', 'GET /v1/workbench/sessions', 'POST /v1/companion/transcribe', 'POST /v1/journal/seen', 'POST /v1/knowledge/facts/set_fact_status', 'POST /v1/matter/say', 'POST /v1/memory/retractions/restore', 'POST /v1/workbench/discard-attachment']
 const P3C1_LINK = ['GET /v1/matter', 'GET /v1/matters']
 /** P3e 起一件事上的动作收进 /v1/matter/*(交给分发,处理器在内部 API):只有停下给链接令牌(同别名行冻结的)。 */
-const P3E_DEVICE = ['GET /v1/matter/artifact', 'GET /v1/matter/create-receipt', 'POST /v1/matter/answer', 'POST /v1/matter/create', 'POST /v1/matter/handoff', 'POST /v1/matter/permission', 'POST /v1/matter/stop', 'POST /v1/matter/worktree']
+const P3E_DEVICE = ['GET /v1/matter/artifact', 'GET /v1/matter/create-receipt', 'POST /v1/matter/answer', 'POST /v1/matter/create', 'POST /v1/matter/handoff', 'POST /v1/matter/permission', 'POST /v1/matter/stop', 'POST /v1/matter/worktree',
+  // P3e-2
+  'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']
 const P3E_LINK = ['POST /v1/matter/stop']
 /**
  * P3d 起手机独有的 /v1 行(只有 phone 块,PanelV1Key):处理器在面板这一口,不经分发 —— 不在 PANEL_V1_ROUTES 里,

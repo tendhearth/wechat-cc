@@ -48,7 +48,9 @@ describe('phoneRouteAllowed', () => {
       'POST /v1/cli/decide', 'POST /v1/cli/session-say',
       // P3e-1:一件事上的动作与交办的新键(/v1/matter/*)—— 别名行都是 link: none(停下除外,见下),新键同
       'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree',
-      'POST /v1/matter/create', 'GET /v1/matter/create-receipt']
+      'POST /v1/matter/create', 'GET /v1/matter/create-receipt',
+      // P3e-2:撤掉这一轮、改动与逐文件审阅的新键 —— 别名行都是 link: none,新键同
+      'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     // 链接令牌剩下的就是链接页面会调的那几条:配对、设置页、此刻、一起做的看与停

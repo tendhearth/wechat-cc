@@ -113,6 +113,9 @@ export const MERGED_ALIAS_KEYS = [
   // P3e-1 一件事上的动作与交办:翻到 /v1/matter/<动词> 那一个处理器(MattersService 那一层)
   'POST /m/api/matter/stop', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'GET /m/api/matter/artifact',
   'POST /m/api/matter/handoff', 'POST /m/api/matter/worktree', 'POST /m/api/matter/create', 'GET /m/api/matter/create-receipt',
+  // P3e-2 撤掉这一轮、改动与逐文件审阅(同上)
+  'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind', 'GET /m/api/matter/changes',
+  'POST /m/api/matter/review-mark', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send',
 ] as const
 export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
 const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)
@@ -209,4 +212,11 @@ export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   desktopAlias('POST /v1/workbench/worktree', 'POST /v1/matter/worktree'),
   desktopAlias('POST /v1/workbench/create-entry', 'POST /v1/matter/create'),
   desktopAlias('GET /v1/workbench/entry-receipt', 'GET /v1/matter/create-receipt'),
+  desktopAlias('GET /v1/workbench/rewind-preview', 'GET /v1/matter/rewind'),
+  desktopAlias('POST /v1/workbench/rewind', 'POST /v1/matter/rewind'),
+  desktopAlias('GET /v1/workbench/review', 'GET /v1/matter/changes'),
+  desktopAlias('POST /v1/workbench/review-mark', 'POST /v1/matter/review-mark'),
+  desktopAlias('POST /v1/workbench/review-return', 'POST /v1/matter/review-return'),
+  desktopAlias('POST /v1/workbench/review-comment', 'POST /v1/matter/review-comment'),
+  desktopAlias('POST /v1/workbench/review-comments-send', 'POST /v1/matter/review-comments-send'),
 ] satisfies WireRouteAlias[])
