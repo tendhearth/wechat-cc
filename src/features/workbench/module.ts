@@ -10,6 +10,8 @@ import type { WiredDeps } from '../../daemon/wiring'
 import type { GuardRuntime } from '../../daemon/guard/runtime'
 import type { CliUpgradeModule } from '../../daemon/cli-upgrade/start'
 import { ownerChatIdOf } from '../../daemon/owner-chat'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { makeMatterTopics } from '../../daemon/threads/matter-topics'
 import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
 import { WECHAT_PORTS as W, type WechatPermissions } from '../../ports/wechat'
 import type { TerminalFeature } from '../terminal'
@@ -32,6 +34,8 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
       const jobs = ctx.get<JobsFeature>('jobs')
       const wxPerm = ctx.get<WechatPermissions>(W.permissions)
       const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
+      // 话题 T3:派活时从话题拣简报、做完把结论写回话题(只给主人的任务)
+      const matterTopics = makeMatterTopics({ db, threads: makeThreadsStore(db), ownerChatId: () => ownerChatIdOf(stateDir), log: (t, l) => log(t, l) })
       return {
         db, stateDir, boot, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
         onTurnError: (providerId, code, message) => {
@@ -40,6 +44,11 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
           f.providerRefusals.onTurn({ provider: providerId, outcome: 'error', ...(code ? { errorCode: code } : {}), endedAt: Date.now() })
         },
         onTurnCompleted: (providerId) => f.providerRefusals.onTurn({ provider: providerId, outcome: 'completed', endedAt: Date.now() }),
+        topics: {
+          brief: (t) => matterTopics.briefForMatter(t),
+          // 晚一拍再写:这一轮最后那条回话可能还在落 MatterLog 的路上
+          turnCompleted: (taskId) => { const h = setTimeout(() => { void matterTopics.writeBack(taskId) }, 1_000); (h as { unref?: () => void }).unref?.() },
+        },
         providerRefusal: (providerId) => f.providerRefusals.get(providerId),
         executionConflict: (path, providerId, nativeId) => boot.sessionManager.hasProjectConflict(path) ||
           (!!nativeId && Object.values(boot.sessionStore.all()).some(s => s.provider === providerId && s.session_id === nativeId)) ||

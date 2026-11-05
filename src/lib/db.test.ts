@@ -1445,3 +1445,20 @@ describe('v104 — 话题升格(T1):aliases / topic_entries / 新水位', () => 
     expect(db.query('SELECT COUNT(*) AS n FROM topic_entries').get()).toEqual({ n: 1 })
   })
 })
+
+describe('v105 — matter_topics(T3)', () => {
+  it('一件事可以挂几个话题、同一对只一行;话题删了跟着删;重放什么都不做', () => {
+    const db = migratedTo(104)
+    db.exec(`INSERT INTO threads(id,chat_id,title,summary,facets,tags,private,status,episodes,created_ts,last_active)
+      VALUES('t1','c','bx','','["task"]','[]',0,'active','[]','x','x'),('t2','c','服务器','','["task"]','[]',0,'active','[]','x','x')`)
+    runMigrations(db, migrations)
+    db.exec(`INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES('m1','t1','x'),('m1','t2','x')`)
+    expect(() => db.exec(`INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES('m1','t1','y')`)).toThrow()
+    expect(() => db.exec(`INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES('m1','nope','y')`)).toThrow()
+    db.exec(`DELETE FROM threads WHERE id='t1'`)
+    expect(db.query('SELECT thread_id, written_back_cursor FROM matter_topics').all()).toEqual([{ thread_id: 't2', written_back_cursor: 0 }])
+    db.exec('PRAGMA user_version = 104')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM matter_topics').get()).toEqual({ n: 1 })
+  })
+})

@@ -101,3 +101,34 @@
 
 **看得见**:CC 回话会带上以前聊过、agent 做过的事(这是这一步要的效果);调错了也会看见(风险里写的「调错比没调更糟」)。
 拿不准、去问便宜模型的那几轮会慢一点(1–3.5 秒)。界面不变;调进来的那几条现在看不到(T4 泡泡里才看得到)。
+
+## T3 一件事挂话题
+
+### 存法(v105)
+
+新表 `matter_topics(matter_id, thread_id, attached_ts, written_back_cursor)`:这件事挂在哪几个话题上、结论写回到 MatterLog 的哪一条
+(`matter_items.cursor`)。一件事可以挂几个话题;话题删了跟着删(外键 CASCADE)。`matter_id` 不加外键 —— delegate 一次咨询没有 matter。
+
+### 派活时:从话题生成简报
+
+- **工作台任务**(`features/workbench/service/execute.ts`,起执行者那一刻):主人的任务(`task.ownerChatId` 是主人的对话)才做。
+  拿「任务标题 + 这一轮的要求」去话题索引里匹配 —— 和 T2 同一个匹配,**只用索引、不叫模型**(起执行者不该多等一个模型)。
+  碰到了就把那一两个话题的几条拼成一段,接在项目经验后面进执行者的指令,并记一行 `matter_topics`。
+- **delegate**(`POST /v1/delegate`):只有主人自己的会话发起的(令牌里的 chat 是主人、档位 admin)才做;同样只用索引,
+  简报接在 prompt 后面(和 `context_summary` 同一个位置)。
+- **私密的话题(`private`)永远不进简报** —— 执行者 / 被咨询的那一家不该看到主人的情绪、人际关系。
+- 简报开头写明「CC 记得的相关背景,可能过时;和任务要求冲突时以任务为准」。
+
+### 做完了:结论写回话题
+
+- **工作台**:一轮真的完成(和 `onTurnCompleted` 同一处)⇒ 读这件事在 `written_back_cursor` 之后的最后那条 agent 回话(T1 同一个切段),
+  给每个挂着的话题加一条 `conclusion`(`source='work'`、`matter_id` 指回):line = `<任务标题>:<结论第一行>`,body = 结论(≤ 600 字);
+  推进 `written_back_cursor`。失败只记一行,不影响任务收尾。
+- **delegate**:回答成功 ⇒ 给碰到的话题加一条 `conclusion`(`source='delegate'`):line = `问 <peer>:<问题第一行>`,body = 回答。
+- **不重复**:T1 每天的抽取读 agent 的活时,跳过已经写回过的那几段(结论 cursor ≤ `written_back_cursor`)。
+- 没挂上话题的活照旧由 T1 每天抽取时归到话题里(慢一天,但不丢)。
+
+### 看得见吗
+
+**看得见(轻微)**:执行者的指令里多一段背景,活的做法可能因此不同(这是要的效果:换一家来做,也知道以前定过什么)。
+话题里会多出 agent 写回的结论(T4 泡泡里才看得到)。界面不变。

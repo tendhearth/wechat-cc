@@ -15,6 +15,8 @@ interface Options {
   managedWorkspaceRoot?: string
   networkGate?: import('../../lib/network-gate').NetworkGate
   projectLessons?: ServiceCtx['deps']['projectLessons']
+  topicBrief?: ServiceCtx['deps']['topicBrief']
+  onTaskTurnCompleted?: ServiceCtx['deps']['onTaskTurnCompleted']
   addLesson?: ServiceCtx['deps']['addLesson']
   checkpointDeadlineMs?: number
   reviewDeadlineMs?: number

@@ -180,6 +180,12 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         store.session(task.id,null)
       }
       const directory=outputDirectory(running.path,task.id)
+      // 话题 T3:从和主人聊过的话题里拣一份简报(只用索引,最多等 2 秒;拿不到就没有,不拦起执行者)
+      let briefTimer:ReturnType<typeof setTimeout>|undefined
+      const topicBrief=ctx.deps.topicBrief?await Promise.race([
+        ctx.deps.topicBrief({matterId:task.id,ownerChatId:task.ownerChatId??null,title:task.title,text}).catch(()=>null),
+        new Promise<null>(resolve=>{briefTimer=setTimeout(()=>resolve(null),2_000)}),
+      ]).finally(()=>clearTimeout(briefTimer)):null
       const instructions=[
         `你是 CC 的工作助手。当前任务编号 ${task.id}，任务：${task.title}。`,
         `本任务工作目录：${running.path}。成果目录：${directory}。`,
@@ -193,6 +199,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         '不要声称完成没有做过的检查。缺依赖、权限或信息时说明具体缺项。',
         // 项目经验(第二轮对标 ★2):按源项目(独立工作区算它的源项目)取主人写的那几句,哪家执行者都带上
         ...(()=>{try{const b=ctx.deps.projectLessons?.(store.worktrees.get(task.id)?.projectPath??(task.workspaceKind==='managed'?null:task.path));return b?[b]:[]}catch{return []}})(),
+        ...(topicBrief?[topicBrief]:[]),
       ].join('\n')
       const reviewStop=new AbortController()
       void running.stop.then(()=>reviewStop.abort())
@@ -362,7 +369,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         finalStatus='failed'; finalError=error
         const coded=error!==raw&&!!summary.error
         if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
-      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */} }
+      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */}; try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 写回话题失败不影响收尾 */} }
     } catch (error) {
       const thrown=isNetworkUnprotectedError(error)?'network_unprotected':error instanceof CodexExecutionError?error.code:error instanceof Error?error.message:'task_failed'
       const message=thrown==='network_unprotected'||error instanceof CodexExecutionError?thrown:taskErrorForProviderCode(providerErrorCodeOf(error),thrown)??thrown

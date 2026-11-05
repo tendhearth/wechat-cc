@@ -55,6 +55,54 @@ function cap(s: string, n: number): string {
 
 const DONE_STATES = new Set(['done', 'failed', 'cancelled'])
 
+interface MatterRow { kind: string; title: string; project_path: string | null; state: string }
+interface Segment { ask: string | null; firstCursor: number; last: { text: string; at: number; cursor: number } | null; closed: boolean }
+
+function matterRow(db: Db, id: string): MatterRow | null {
+  return db.query<MatterRow, [string]>('SELECT kind, title, project_path, state FROM matters WHERE id = ?').get(id) ?? null
+}
+
+/** 按主人的话切段,每段记最后那条 agent 回话。 */
+function segments(db: Db, matterId: string, upTo: number): Segment[] {
+  const items = db.query<{ kind: string; payload_json: string; created_at: number; cursor: number }, [string, number]>(
+    `SELECT kind, payload_json, created_at, cursor FROM matter_items
+     WHERE matter_id = ? AND kind IN ('user_message','agent_message') AND cursor <= ? ORDER BY seq`,
+  ).all(matterId, upTo)
+  const segs: Segment[] = []
+  let cur: Segment | null = null
+  for (const it of items) {
+    const t = textOf(it.payload_json)
+    if (it.kind === 'user_message') {
+      if (cur) cur.closed = true
+      cur = { ask: t || null, firstCursor: it.cursor, last: null, closed: false }
+      segs.push(cur)
+    } else {
+      if (!t) continue
+      if (!cur) { cur = { ask: null, firstCursor: it.cursor, last: null, closed: false }; segs.push(cur) }
+      cur.last = { text: t, at: it.created_at, cursor: it.cursor }
+    }
+  }
+  return segs
+}
+
+function toResult(id: string, m: MatterRow, s: Segment): WorkResult {
+  return {
+    matterId: id, kind: m.kind, title: m.title,
+    project: m.project_path ? m.project_path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? null : null,
+    state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, result: cap(s.last!.text, RESULT_MAX),
+    at: new Date(s.last!.at).toISOString(), cursor: s.last!.cursor,
+  }
+}
+
+/** T3:这件事刚做完的那一轮的结论(水位之后最后那段的最后一条 agent 回话);没有 ⇒ null。调用方知道这一轮已经结束,不看 SETTLE_MS。 */
+export function readMatterConclusion(db: Db, matterId: string, afterCursor: number): WorkResult | null {
+  const m = matterRow(db, matterId)
+  if (!m) return null
+  const segs = segments(db, matterId, Number.MAX_SAFE_INTEGER).filter(s => s.last && s.last.cursor > afterCursor)
+  const s = segs[segs.length - 1]
+  return s ? toResult(matterId, m, s) : null
+}
+
 /**
  * 读水位之后做完了的结论。`nextCursor`:下一拍的水位 —— 有没做完的段 ⇒ 停在最早那段的第一条之前;否则 = 这次看到的最大 cursor。
  */
@@ -71,42 +119,17 @@ export function readWorkResults(db: Db, afterCursor: number, now: number = Date.
   const results: WorkResult[] = []
   let holdAt = Infinity
   for (const id of matterIds) {
-    const m = db.query<{ kind: string; title: string; project_path: string | null; state: string }, [string]>(
-      'SELECT kind, title, project_path, state FROM matters WHERE id = ?',
-    ).get(id)
+    const m = matterRow(db, id)
     if (!m || isScratchMatter(m.title, m.project_path)) continue
-    const items = db.query<{ kind: string; payload_json: string; created_at: number; cursor: number }, [string, number]>(
-      `SELECT kind, payload_json, created_at, cursor FROM matter_items
-       WHERE matter_id = ? AND kind IN ('user_message','agent_message') AND cursor <= ? ORDER BY seq`,
-    ).all(id, scanTop)
-    // 切段:每遇到一句主人的话开新段
-    type Seg = { ask: string | null; firstCursor: number; last: { text: string; at: number; cursor: number } | null; closed: boolean }
-    const segs: Seg[] = []
-    let cur: Seg | null = null
-    for (const it of items) {
-      if (it.kind === 'user_message') {
-        const t = textOf(it.payload_json)
-        if (cur) cur.closed = true
-        cur = { ask: t || null, firstCursor: it.cursor, last: null, closed: false }
-        segs.push(cur)
-      } else {
-        const t = textOf(it.payload_json)
-        if (!t) continue
-        if (!cur) { cur = { ask: null, firstCursor: it.cursor, last: null, closed: false }; segs.push(cur) }
-        cur.last = { text: t, at: it.created_at, cursor: it.cursor }
-      }
-    }
+    // T3 已经写回过话题的那几段不再交(不重复记)
+    const writtenBack = db.query<{ c: number | null }, [string]>('SELECT MAX(written_back_cursor) AS c FROM matter_topics WHERE matter_id = ?').get(id)?.c ?? 0
     const matterDone = DONE_STATES.has(m.state)
-    for (const s of segs) {
+    for (const s of segments(db, id, scanTop)) {
       if (!s.last || s.last.cursor <= afterCursor) continue
       const settled = s.closed || matterDone || now - s.last.at >= SETTLE_MS
       if (!settled) { holdAt = Math.min(holdAt, s.firstCursor); continue }
-      results.push({
-        matterId: id, kind: m.kind, title: m.title,
-        project: m.project_path ? m.project_path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? null : null,
-        state: m.state, ask: s.ask ? cap(s.ask, ASK_MAX) : null, result: cap(s.last.text, RESULT_MAX),
-        at: new Date(s.last.at).toISOString(), cursor: s.last.cursor,
-      })
+      if (s.last.cursor <= writtenBack) continue
+      results.push(toResult(id, m, s))
     }
   }
   results.sort((a, b) => a.cursor - b.cursor)
