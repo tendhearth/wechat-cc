@@ -37,10 +37,10 @@ const qaQuietControl = document.getElementById('pet-quiet')
 if (qaQuietControl) new MutationObserver(() => reportQAState()).observe(qaQuietControl, { attributes: true, attributeFilter: ['aria-pressed'] })
 document.addEventListener('cc-motion-qa-refresh', () => {
   // Explicit QA fixture observations also run in a locked/hidden WebKit.
-  // Production visibility/polling stays unchanged; this is not a wake test.
-  Promise.all([poller.refresh(), petPoller.refresh()]).then(() => reportQAState())
+  // Production visibility/subscription stays unchanged; this is not a wake test.
+  feed.refresh().then(() => reportQAState())
 })
-window.__ccMotionQAControl = { pet, stopPolling: () => { poller.stop(); petPoller.stop() }, setLifeClockOffset:qaLifeClock.setOffset, lifeClockOffset:qaLifeClock.offset }
+window.__ccMotionQAControl = { pet, stopPolling: () => { feed.stop() }, setLifeClockOffset:qaLifeClock.setOffset, lifeClockOffset:qaLifeClock.offset }
 window.__ccMotionQAReady = true
 `)
   writeFileSync(join(output, 'api.js'), `import { createQAApi, createQAClock } from './qa-bridge.mjs'

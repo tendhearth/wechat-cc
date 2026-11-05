@@ -56,6 +56,20 @@ describe('isolated native motion QA', () => {
     expect((await api.invokeApi('GET', '/v1/companion/pet')).last_done_at).toEqual(expect.any(String))
   })
 
+  it('serves the presence topic the companion subscribes to: same synthetic facts, cursor moves only on a scenario change', async () => {
+    const api = createQAApi()
+    const first = await api.invokeApi('GET', '/v1/subscribe/presence?wait_ms=0')
+    expect(first).toMatchObject({ presence: { presence: 'ok' }, pet: { turn: { phase: 'idle' } } })
+    // Unchanged facts with no wait come straight back with the same cursor.
+    expect((await api.invokeApi('GET', `/v1/subscribe/presence?since=${first.cursor}&wait_ms=0`)).cursor).toBe(first.cursor)
+    const held = api.invokeApi('GET', `/v1/subscribe/presence?since=${first.cursor}&wait_ms=20000`)
+    api.setScenario('permission')
+    const next = await held
+    expect(next.cursor).toBe(first.cursor + 1)
+    expect(next.pet.pending_permissions).toHaveLength(1)
+    await expect(api.invokeApi('POST', '/v1/subscribe/presence')).rejects.toThrow('blocked')
+  })
+
   it('simulates a suspended wall clock without changing the host clock', () => {
     const hostNow = Date.now
     const clock = createQAClock(() => 1000)
@@ -147,7 +161,7 @@ describe('isolated native motion QA', () => {
       expect(readFileSync(join(destination, 'api.js'), 'utf8')).not.toContain('unsafe original')
       expect(readFileSync(join(destination, 'api.js'), 'utf8')).not.toContain('visibilitychange')
       expect(readFileSync(join(destination, 'api.js'), 'utf8')).toContain('cc-motion-qa-refresh')
-      expect(readFileSync(join(destination, 'companion-window.js'), 'utf8')).toContain('Promise.all([poller.refresh(), petPoller.refresh()])')
+      expect(readFileSync(join(destination, 'companion-window.js'), 'utf8')).toContain('feed.refresh().then(() => reportQAState())')
       expect(readFileSync(join(destination, 'companion-window.js'), 'utf8')).toContain('window.__ccMotionQAControl = { pet, stopPolling:')
       expect(readFileSync(join(destination,'companion-window.js'),'utf8')).toContain('life:true,random:qaLifeClock.random,monotonicNow:qaLifeClock.now,')
       expect(readFileSync(join(destination,'companion-window.js'),'utf8')).toContain('setLifeClockOffset:qaLifeClock.setOffset')

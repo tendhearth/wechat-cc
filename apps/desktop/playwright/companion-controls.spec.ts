@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures'
+import { routePresenceTopic, PRESENCE_OK } from './presence-topic'
 
 // Source-generating checks can run alongside this suite; developer reloads
 // must not replace the document in the middle of an actual control action.
@@ -212,11 +213,11 @@ test('quiet keeps permission controls usable in a small companion window', async
   await attachShim(page)
   await shim.invoke('demo.seed', {})
   await page.setViewportSize({ width: 240, height: 250 })
-  await page.route('**/v1/companion/pet', route => route.fulfill({ json: {
+  await routePresenceTopic(page, { pet: () => ({
     owner_last_contact_at: null, last_done_at: null,
     turn: { phase: 'permission', since: '2026-10-29T10:00:00Z' },
     pending_permissions: [{ hash: 'test-permission', prompt: '确认这次本地操作', since: '2026-10-29T10:00:00Z', expires_at: '2026-10-30T10:00:00Z' }],
-  } }))
+  }) })
   await openCompanion(page, shimUrl)
   await expect(page.getByRole('button', { name: '允许', exact: true })).toBeVisible()
   await toggleSettings(page)
@@ -242,17 +243,17 @@ test('an existing pet snapshot ends suspended quiet after consuming its completi
     Date.now = () => wallNow() + (window as any).__quietWallOffset
   })
   let complete = false, reads = 0
-  // 拨钟和换成「已完成」之间要是溜进一次 working 的拉取,安静已结束、基线成了 working,
-  // 下一拍的完成就是真·新完成(该播)—— 测的不是这个场景。拨钟期间扣住拉取。
+  // 拨钟和换成「已完成」之间要是溜进一次 working 的读取,安静已结束、基线成了 working,
+  // 下一拍的完成就是真·新完成(该播)—— 测的不是这个场景。拨钟期间扣住读取。
   let gate: Promise<void> | null = null
-  await page.route('**/v1/companion/pet', async route => {
+  await routePresenceTopic(page, { pet: async () => {
     if (gate) await gate
     reads++
-    return route.fulfill({ json: {
+    return {
       owner_last_contact_at: null, last_done_at: complete ? '2026-10-29T11:00:00Z' : null,
       turn: { phase: complete ? 'idle' : 'working', since: '2026-10-29T10:00:00Z' }, pending_permissions: [],
-    } })
-  })
+    }
+  } })
   await openCompanion(page, shimUrl)
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('working')
   await toggleSettings(page)
@@ -280,22 +281,22 @@ test('an existing pet snapshot ends suspended quiet after consuming its completi
 for (const recovery of ['quiet', 'user', 'system']) test(`${recovery} ends before cached presence and a fresh pet completion without replay`, async ({ page, shimUrl, shim }) => {
   await attachShim(page); await shim.invoke('demo.seed', {})
   await page.addInitScript(() => {
-    const wallNow = Date.now, interval = window.setInterval.bind(window)
+    const wallNow = Date.now
     ;(window as any).__quietWallOffset = 0
     Date.now = () => wallNow() + (window as any).__quietWallOffset
-    // Accelerate only the two existing pollers; their requests, caches and subscriptions stay real.
-    window.setInterval = ((fn: any, ms: number, ...args: any[]) => interval(fn, ms === 20_000 ? 100 : (ms === 2_000 || ms === 10_000) ? 50 : ms, ...args)) as any
   })
   let phase = 'working', done: string | null = null, contact: string | null = null
   let hold = false, release!: () => void, held = false
   const gate = new Promise<void>(r => { release = r })
-  await page.route('**/v1/companion/pet', async route => {
-    if (hold) { held = true; await gate }
-    return route.fulfill({ json: { owner_last_contact_at: contact, last_done_at: done,
-      turn: { phase, since: '2026-10-29T10:00:00Z' }, pending_permissions: [] } })
-  })
+  // 订阅的每一次读都是先读处境、再读在做什么:扣住在做什么,处境照样被读到(= 以前那次没变的 presence 轮询)。
   let presenceReads = 0
-  await page.route('**/v1/companion/presence', route => { presenceReads++; return route.fulfill({ json: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } } }) })
+  await routePresenceTopic(page, {
+    presence: () => { presenceReads++; return PRESENCE_OK },
+    pet: async () => {
+      if (hold) { held = true; await gate }
+      return { owner_last_contact_at: contact, last_done_at: done, turn: { phase, since: '2026-10-29T10:00:00Z' }, pending_permissions: [] }
+    },
+  })
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await openCompanion(page, shimUrl)
   await expect.poll(() => page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('working')
@@ -319,7 +320,7 @@ for (const recovery of ['quiet', 'user', 'system']) test(`${recovery} ends befor
   else if (recovery === 'user') await page.getByRole('checkbox', { name: '减少动作' }).uncheck()
   else await page.emulateMedia({ reducedMotion: 'no-preference' })
   await expect.poll(() => presenceReads).toBeGreaterThan(beforePresence)
-  // A real unchanged presence response applies the cached working turn before the held fresh turn.
+  // Recovery observes once more (a fresh topic read); until the held turn lands the cached working turn stays.
   await expect(page.getByRole('button', { name: '安静一小时' })).toBeVisible()
   expect(await page.evaluate(() => (window as any).__pet.machine.snapshot().behavior)).toBe('working')
   phase = 'idle'; done = '2026-10-29T11:00:00Z'; contact = done; hold = false; release()
@@ -350,8 +351,7 @@ for (const width of [200,240]) test(`factual task chooser opens exact tasks and 
   }}}
  })
  const activities=[{taskId:'deadbeef',title:'修好本地排版',phase:'needs_input',detail:'需要确认本地检查',updatedAt:1},{taskId:'bbbb2222',title:'<img src=x onerror=alert(1)>',phase:'working',detail:null,updatedAt:2}]
- await page.route('**/v1/companion/presence',route=>route.fulfill({json:{presence:'ok',activity:{kind:'idle',label:'',since:null},news:{unread:0,latest_kind:null,latest_title:null}}}))
- await page.route('**/v1/companion/pet',route=>route.fulfill({json:{owner_last_contact_at:null,last_done_at:null,turn:{phase:width===200?'working':'thinking',since:null},pending_permissions:[],activities}}))
+ await routePresenceTopic(page,{presence:()=>PRESENCE_OK,pet:()=>({owner_last_contact_at:null,last_done_at:null,turn:{phase:width===200?'working':'thinking',since:null},pending_permissions:[],activities})})
  await openCompanion(page,shimUrl)
  const host=page.locator('#pet-tasks'),primary=page.locator('#pet-task-primary'),toggle=page.locator('#pet-task-toggle')
  await expect(primary).toContainText('修好本地排版');await expect(primary).toContainText('等你决定')
@@ -372,8 +372,7 @@ for (const width of [200,240]) test(`factual task chooser opens exact tasks and 
 test('a focused task choice survives factual reordering and falls back to a visible entry when removed',async({page,shimUrl,shim})=>{
  await shim.invoke('demo.seed',{});await attachShim(page)
  let activities=[{taskId:'deadbeef',title:'排版检查',phase:'working',detail:null,updatedAt:2},{taskId:'bbbb2222',title:'动作素材',phase:'working',detail:null,updatedAt:1}]
- await page.route('**/v1/companion/presence',route=>route.fulfill({json:{presence:'ok',activity:{kind:'idle',label:'',since:null},news:{unread:0,latest_kind:null,latest_title:null}}}))
- await page.route('**/v1/companion/pet',route=>route.fulfill({json:{owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities}}))
+ await routePresenceTopic(page,{presence:()=>PRESENCE_OK,pet:()=>({owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities})})
  await openCompanion(page,shimUrl)
  await page.locator('#pet-task-toggle').click()
  const focused=page.locator('#pet-task-list [data-task-id="bbbb2222"]');await focused.focus()

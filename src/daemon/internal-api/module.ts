@@ -20,6 +20,8 @@ import { providerDisplayName } from '../provider-display-names'
 import { isHeartbeatFresh } from '../single-instance'
 import { ownerChatIdOf } from '../owner-chat'
 import { registerInternalApi, type InternalApiLifecycle } from './lifecycle'
+import { matterFeed } from '../../adapters/store/matter-feed'
+import { onWriteHint } from '../../lib/write-hints'
 
 export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecycle> {
   const { stateDir, dangerously, db } = f
@@ -69,6 +71,13 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
         messages: { listRange: (c: string, o: { limit: number; beforeTs?: string }) => f.messagesStore.listRange(c, o), search: (c: string, q: string, l: number) => f.messagesStore.search(c, q, l) },
         // 桌宠「主人真在跟我说话吗」:只认入站(伙伴自己的外发会 bump lastUsedAt,但不该让熊说「在跟你聊」)。
         latestInboundTs: (c: string) => f.messagesStore.latestInboundTs(c),
+        // 桌宠订的 presence 主题(S5)什么时候重算:内存里的 pet-signals / 待决权限(presencePulse)、一件事的变化
+        // (MatterLog 的 feed,任务进度与对话的轮)、不进游标的那几样写(write-hints:新消息、matters 行、觅食台、
+        // 「看到哪了」的水位 —— 和手机主题同一份提示)。都只是「变了」,内容由主题自己重算。
+        presenceChanged: (cb) => {
+          const offs = [f.presencePulse.on(cb), matterFeed(db).onChange(() => cb()), onWriteHint(db, () => cb()), onWriteHint(stateDir, () => cb())]
+          return () => { for (const off of offs) off() }
+        },
         setUserName: (chatId, name) => wxContacts.setUserName(chatId, name),
         sharePage: (t, c, o) => wxPages.sharePage(t, c, o), resurfacePage: (q) => wxPages.resurfacePage(q),
         ilink: { sendReply: (c, t) => wxSend.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => wxSend.sendFile(c, p), noteSentMedia: (c, m) => wxSend.noteSentMedia?.(c, m), editMessage: (c, m, t) => wxSend.editMessage(c, m, t), broadcast: (t, a) => wxSend.broadcast(t, a) },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { initialBridgeState, mergeIntent, recentContact, RECENT_CONTACT_MS } from './runtime-events.js'
+import { initialBridgeState, mergeIntent } from './runtime-events.js'
 
 const T0 = Date.parse('2026-09-05T10:00:00.000Z')
 const iso = (ms: number) => new Date(ms).toISOString()
@@ -20,7 +20,7 @@ describe('mergeIntent', () => {
     expect(mergeIntent({ presence: presenceIdle, turn: turn({ last_done_at: iso(T0 + 1000) }), state: next.state, nowMs: T0 + 3000 }).intent.oneShots).toEqual([])
   })
   it('明暗只看 presence(够得着 = lit),不看多久没说话:20 分钟以上没联系照样亮', () => {
-    const r = mergeIntent({ presence: presenceIdle, turn: turn({ owner_last_contact_at: iso(T0 - 3 * RECENT_CONTACT_MS) }), state: initialBridgeState(), nowMs: T0 })
+    const r = mergeIntent({ presence: presenceIdle, turn: turn({ owner_last_contact_at: iso(T0 - 60 * 60_000) }), state: initialBridgeState(), nowMs: T0 })
     expect(r.intent.form).toBe('lit')
     const never = mergeIntent({ presence: presenceIdle, turn: turn(), state: r.state, nowMs: T0 + 10 })
     expect(never.intent.form).toBe('lit')
@@ -78,13 +78,5 @@ describe('mergeIntent', () => {
     expect(r.intent).toEqual(presenceIdle)
     expect(r.state).toEqual(s)
     expect(r.permission).toBeNull(); expect(r.permissionCount).toBe(0)
-  })
-})
-
-describe('recentContact(只决定轮询快慢,不管明暗)', () => {
-  it('窗口内为真;没有联系 / 超窗为假', () => {
-    expect(recentContact({ ...initialBridgeState(), lastContactMs: T0 }, T0 + RECENT_CONTACT_MS)).toBe(true)
-    expect(recentContact({ ...initialBridgeState(), lastContactMs: T0 }, T0 + RECENT_CONTACT_MS + 1)).toBe(false)
-    expect(recentContact(initialBridgeState(), T0)).toBe(false)
   })
 })

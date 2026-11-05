@@ -74,6 +74,7 @@ export function makeIlinkContext(opts: {
   accounts: Account[]
   db: Db
   conversationStore: ConversationStore
+  onPendingChange?: () => void
 }): IlinkContext {
   const { stateDir, accounts, db, conversationStore } = opts
   mkdirSync(stateDir, { recursive: true })
@@ -87,7 +88,7 @@ export function makeIlinkContext(opts: {
   const sessionState = makeSessionStateStore(db, { migrateFromFile: join(stateDir, 'session-state.json') })
 
   // 开卡 / 了结落进 pending_cards(v91):重启后告诉主人哪几张作废了(pending-cards.ts)
-  const pending = new PendingPermissions(makePendingCardJournal(makePendingCardsStore(db), (t, l) => log(t, l)))
+  const pending = new PendingPermissions(makePendingCardJournal(makePendingCardsStore(db), (t, l) => log(t, l)), opts.onPendingChange)
   const sweepTimer = setInterval(() => { pending.sweep() }, 30_000)
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref()
 

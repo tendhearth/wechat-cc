@@ -51,7 +51,6 @@ export const DESKTOP_CALLS = {
     sessions: call('GET /v1/cli/sessions', { query: t<{ limit: number }>() }),
   },
   companion: {
-    pet: call('GET /v1/companion/pet'),
     presence: call('GET /v1/companion/presence'),
     status: call('GET /v1/companion/status'),
     thoughts: call('GET /v1/companion/thoughts'),
@@ -165,6 +164,8 @@ export const DESKTOP_CALLS = {
     wishSend: call('POST /v1/social/wish/send', body()),
     wishes: call('GET /v1/social/wishes'),
   },
+  // 桌宠订的 presence 主题(S5):since=<cursor>&wait_ms= 长轮询,和一起做详情同一种传输。
+  subscribe: { presence: call('GET /v1/subscribe/presence', { query: t<{ since?: number; wait_ms?: number }>() }) },
   workbench: {
     list: call('GET /v1/workbench', { query: t<URLSearchParams | { limit: number }>() }),
     answer: call('POST /v1/workbench/answer', body()),

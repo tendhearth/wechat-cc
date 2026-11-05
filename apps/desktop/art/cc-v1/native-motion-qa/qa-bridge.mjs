@@ -5,6 +5,29 @@ export function createQAApi() {
   const allowed = new Set(['idle', 'working', 'thinking', 'permission', 'away', 'completed', 'tasks', 'tasks-away'])
   const since = new Date().toISOString()
   let lastDone = null
+  const presenceFacts = () => ({
+    presence: scenario === 'away' || scenario === 'tasks-away' ? 'down' : 'ok',
+    activity: { kind: scenario === 'working' ? 'working' : 'idle', label: '', since: null },
+    news: { unread: 0, latest_kind: null, latest_title: null },
+  })
+  const petFacts = () => ({
+    owner_last_contact_at: null, last_done_at: lastDone,
+    turn: { phase: ['thinking', 'working', 'permission'].includes(scenario) ? scenario : 'idle', since },
+    pending_permissions: scenario === 'permission' ? [{ hash: 'qa-only', prompt: '演示权限卡，不会执行操作。', since, expires_at: new Date(Date.now() + 3_600_000).toISOString() }] : [],
+    ...(['tasks','tasks-away'].includes(scenario)?{activities:[
+      {taskId:'deadbeef',title:'修好本地排版',phase:'needs_input',detail:'确认本地检查方式',updatedAt:1},
+      {taskId:'bbbb2222',title:'整理动作素材',phase:'working',detail:null,updatedAt:2},
+    ]}:{}),
+  })
+  // A synthetic topic cursor: advances only when the synthetic facts change.
+  let cursor = 1, lastKey = ''
+  const topic = () => {
+    const facts = { presence: presenceFacts(), pet: petFacts() }
+    // expires_at follows the wall clock; it is not a change in what CC is doing.
+    const key = JSON.stringify([facts.presence, { ...facts.pet, pending_permissions: facts.pet.pending_permissions.map(p => p.hash) }])
+    if (key !== lastKey) { lastKey = key; cursor++ }
+    return { cursor, ...facts }
+  }
   return {
     setScenario(value) {
       if (!allowed.has(value)) throw Error('Unknown QA scenario')
@@ -14,19 +37,19 @@ export function createQAApi() {
     /** @returns {Promise<any>} */
     async invokeApi(method, path) {
       if (method !== 'GET') throw Error('Backend request blocked by isolated native QA')
-      if (path === '/v1/companion/presence') return {
-        presence: scenario === 'away' || scenario === 'tasks-away' ? 'down' : 'ok',
-        activity: { kind: scenario === 'working' ? 'working' : 'idle', label: '', since: null },
-        news: { unread: 0, latest_kind: null, latest_title: null },
-      }
-      if (path === '/v1/companion/pet') return {
-        owner_last_contact_at: null, last_done_at: lastDone,
-        turn: { phase: ['thinking', 'working', 'permission'].includes(scenario) ? scenario : 'idle', since },
-        pending_permissions: scenario === 'permission' ? [{ hash: 'qa-only', prompt: '演示权限卡，不会执行操作。', since, expires_at: new Date(Date.now() + 3_600_000).toISOString() }] : [],
-        ...(['tasks','tasks-away'].includes(scenario)?{activities:[
-          {taskId:'deadbeef',title:'修好本地排版',phase:'needs_input',detail:'确认本地检查方式',updatedAt:1},
-          {taskId:'bbbb2222',title:'整理动作素材',phase:'working',detail:null,updatedAt:2},
-        ]}:{}),
+      if (path === '/v1/companion/presence') return presenceFacts()
+      if (path === '/v1/companion/pet') return petFacts()
+      // The companion subscribes to the presence topic (S5). Like the daemon, an unchanged
+      // subscription waits for a change instead of returning at once; scenario changes land within 50 ms.
+      const [route, search = ''] = path.split('?')
+      if (route === '/v1/subscribe/presence') {
+        const query = new URLSearchParams(search), since = query.get('since')
+        const deadline = performance.now() + Math.min(Number(query.get('wait_ms') ?? 0) || 0, 25_000)
+        let reply = topic()
+        while (since !== null && Number(since) === reply.cursor && performance.now() < deadline) {
+          await new Promise(done => setTimeout(done, 50)); reply = topic()
+        }
+        return reply
       }
       throw Error('Backend request blocked by isolated native QA')
     },
