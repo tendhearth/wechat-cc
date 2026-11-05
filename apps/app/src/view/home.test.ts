@@ -128,3 +128,14 @@ describe('homeView(此刻与一起做合成的一份看法)', () => {
     expect(v.actionableWaiting).toEqual(['matter:w:p1', 'terminal:P:h'])
   })
 })
+
+it('M6f home prefers archivedAt/state/taskState and retains legacy payload behavior', () => {
+  const v = homeView(input({ matters: [
+    m('hidden', NOW, 'open', { state: 'done', archivedAt: 1 }),
+    m('visible', NOW, 'archived', { state: 'working', archivedAt: null }),
+    m('replied', NOW, 'open', { state: 'open', archivedAt: null, taskState: { status: 'running', phase: 'replied', pending: 0 } }),
+    m('old', NOW, 'replied'),
+  ] }))
+  expect(ids(v, 'working')).toEqual(['visible'])
+  expect(ids(v, 'back')).toEqual(['replied', 'old'])
+})

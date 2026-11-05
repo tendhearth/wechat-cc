@@ -1,3 +1,4 @@
+import { isMatterArchived } from './status'
 // 「CC 最近在忙」(M5c,设计稿 2026-11-04-m5-cc-acts-design.md):主页最末一组(默认折叠)与 act 那件事的详情页。纯 TS,不碰 react / expo。
 // 主人 10-31 定:CC 自己做的事不混进「一件事」列表(home.ts 把 act 挡在外面),只在这里。
 // 一句话从发起方(act.who)+ 那一轮的状态 / 原因码 / 步的 payload 推出来;认不出的发起方、状态、步都有通用的说法,不让新 daemon 的新值把页面弄坏。
@@ -82,7 +83,7 @@ export function actTitle(m: Pick<MatterT, 'title' | 'act'>, lang: Lang): string 
 /** 主页那一组:只认 act、不要归档的;按最近一轮的时间排(没有轮 ⇒ updatedAt),至多六行。没有行 ⇒ 这一组不出现。 */
 export function ccActsView(matters: readonly MatterT[], now: number, lang: Lang): CcActsView {
   const rows = matters
-    .filter(m => m.kind === 'act' && m.status !== 'archived')
+    .filter(m => m.kind === 'act' && !isMatterArchived(m))
     .map(m => {
       const latest = m.act?.latest
       const at = latest ? turnAt(latest) : m.updatedAt
