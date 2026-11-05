@@ -4,9 +4,9 @@ const STALE = new Set(['permission_stale', 'question_stale', 'cli_permission_sta
 /** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话。请求内容冲突另说,不能当排队。 */
 const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy', 'cli_session_busy'])
 /** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
-const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported', 'not_found', 'review_comment_not_found', 'memory_retraction_not_found', 'native_history_unsupported'])
+const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'owner_chat_not_configured', 'unsupported', 'not_found', 'review_comment_not_found', 'memory_retraction_not_found', 'native_history_unsupported'])
 /** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话 / 待办。 */
-const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired', 'review_not_wired', 'todos_not_wired', 'workbench_not_wired', 'input_storage_unavailable', 'module_off', 'module_degraded', 'module_starting'])
+const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired', 'matters_not_wired', 'memory_nightly_not_wired', 'knowledge_not_wired', 'review_not_wired', 'todos_not_wired', 'workbench_not_wired', 'input_storage_unavailable', 'module_off', 'module_degraded', 'module_starting'])
 /** 接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions D11):各有各的一句话,不能都说「没送到」。
  *  必须在 `invalid_` 前缀规则之前判(invalid_path ⇒ folder_missing)。后三个(裁决 R5):会话刚变(可重问预览再接)、
  *  没内容可带、已经接过了(不是错:页面重问预览、打开那件事)。 */
@@ -50,7 +50,7 @@ const errOf = (body: unknown): string | null => {
 /** 一条已到达的响应算不算失败、算哪种。成功 ⇒ null(之后再过 schema)。 */
 export function mapPhoneError(status: number, body: unknown): BackendCode | null {
   const err = errOf(body)
-  if (status === 401 || err === 'unauthorized') return 'revoked'
+  if (status === 401 || err === 'unauthorized' || err === 'auth_failed' || err === 'revoked') return 'revoked'
   const okFalse = typeof body === 'object' && body !== null && (body as { ok?: unknown }).ok === false
   if (!okFalse && status < 400) return null
   if (err && STALE.has(err)) return 'stale'
@@ -67,7 +67,7 @@ export function mapPhoneError(status: number, body: unknown): BackendCode | null
 /** 协议客户端拒绝请求的原因(client.ts 的 Error.message)。 */
 export function transportErrorCode(e: unknown): BackendCode {
   const m = e instanceof Error ? e.message : ''
-  if (m === 'auth_failed') return 'revoked'
+  if (m === 'auth_failed' || m === 'unauthorized' || m === 'revoked') return 'revoked'
   if (m === 'timeout') return 'timeout'
   if (m === 'frame_too_large' || m === 'binary_body_needs_v2') return 'unknown'
   return 'offline'

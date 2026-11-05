@@ -317,10 +317,10 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     try { body = JSON.parse(utf8d.decode(pt)) } catch { protoErr('v2_not_json'); return }
     const m = V2ServerMessage.safeParse(body)
     if (!m.success) { protoErr('bad_v2_message', m.error); return }
-    onV2Message(m.data)
+    onV2Message(c, m.data)
   }
 
-  function onV2Message(m: V2ServerMessageT): void {
+  function onV2Message(c: Conn, m: V2ServerMessageT): void {
     if (m.t === 'res') {
       let bytes: Uint8Array
       try { bytes = m.bodyEncoding === 'base64' ? b64Decode(m.body) : utf8.encode(m.body) } catch (e) { protoErr('bad_res_body', e); return }
@@ -329,6 +329,11 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     }
     if (m.t === 'pong') return   // 保活回执:到达本身已在 onMessage 里清掉了在等的 ping
     if (m.t === 'err') {
+      // Authentication failure invalidates the whole connection, including other pending requests.
+      if (m.code === 'auth_failed' || m.code === 'unauthorized' || m.code === 'revoked') {
+        onErrorFrame(c, 'auth_failed')
+        return
+      }
       if (m.rid !== undefined) settle(m.rid, p => p.reject(new Error(m.code)))
       if (m.sid !== undefined) {
         const sub = subs.get(m.sid)

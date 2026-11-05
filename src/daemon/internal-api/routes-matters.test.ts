@@ -49,4 +49,9 @@ describe('matters routes',()=>{
     const boom=mattersRoutes(deps({say:async()=>{throw new Error('ENOENT: /secret/path')}}))
     expect(await boom['POST /v1/matter/say']!(q(),{id:'deadbeef',text:'x'})).toEqual({status:500,body:{error:'internal'}})
   })
+  it.each(['input_conflict','input_stale','input_delivery_busy'])('say preserves %s as HTTP 409',async code=>{
+    const routes=mattersRoutes(deps({say:async()=>{throw new Error(code)}}))
+    expect(await routes['POST /v1/matter/say']!(q(),{id:'deadbeef',text:'x'})).toEqual({status:409,body:{error:code},cause:code})
+  })
+
 })

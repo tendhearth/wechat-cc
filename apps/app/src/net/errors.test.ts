@@ -148,3 +148,17 @@ it.each([
 ] as const)('P3f exact desktop-column error %s %s', (status, error, want) => {
   expect(mapPhoneError(status, { error })).toBe(want)
 })
+
+it.each([
+  [403, 'auth_failed', 'revoked'],
+  [403, 'unauthorized', 'revoked'],
+  [403, 'revoked', 'revoked'],
+  [503, 'matters_not_wired', 'unavailable'],
+  [503, 'knowledge_not_wired', 'unavailable'],
+  [503, 'memory_nightly_not_wired', 'unavailable'],
+  [404, 'owner_chat_not_configured', 'not_found'],
+  [409, 'input_conflict', 'input_conflict'],
+  [400, 'input_conflict', 'input_conflict'],
+] as const)('v1 response %s %s maps without a legacy envelope', (status, error, want) => {
+  expect(mapPhoneError(status, { error })).toBe(want)
+})

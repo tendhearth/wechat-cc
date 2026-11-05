@@ -385,6 +385,23 @@ describe('请求 / 响应', () => {
     c.close()
   })
 
+  it.each(['auth_failed', 'unauthorized', 'revoked'])('encrypted %s invalidates all pending requests and prevents reconnect', async code => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.dropNextReqs = 2
+    const { c, open } = client(daemon)
+    const p = c.request({ method: 'GET', path: '/x' })
+    const q = c.request({ method: 'GET', path: '/y' })
+    const assertions = [expect(p).rejects.toThrow('auth_failed'), expect(q).rejects.toThrow('auth_failed')]
+    await flush()
+    daemon.sendV2(daemon.d.live(), { t: 'err', rid: daemon.d.reqs[0]!.rid, code })
+    await flush()
+    await Promise.all(assertions)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(open).toHaveBeenCalledTimes(1)
+    await expect(c.request({ method: 'GET', path: '/z' })).rejects.toThrow('auth_failed')
+    c.close()
+  })
+
   it('后台回 err{rid} ⇒ 请求以该 code 拒绝', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
     daemon.d.dropNextReqs = 1
