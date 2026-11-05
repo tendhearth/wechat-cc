@@ -245,19 +245,19 @@ describe('CC Asset Kit v1.0-alpha', () => {
     expect(resolveAnimation(loaded.manifest, 'unlit', 'working').source).toBe('same-form-idle')
     expect(resolveTransition(loaded.manifest, 'lit-to-unlit', 'unlit').kind).toBe('fade')
   })
+  // 这两条只改几处元数据 / 一两个文件:走 withPngKit(历史那套,不拷 56MB 的动作 / 表演帧)。
+  // 整套拷贝 + 整套校验在 Windows runner 上要 30 秒以上(dev cdebc424 超时);整套素材另有上面那几条逐字节校验。
   it('release check detects missing files and tampered geometry even when metadata counts remain correct', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cc-kit-'))
-    try {
-      cpSync(root, join(dir, 'cc-v1'), { recursive: true })
-      cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
-      const path = join(dir, 'cc-v1/canonical/lit/front.svg')
+    withPngKit((target, next) => {
+      writeFileSync(join(target, 'manifest.json'), JSON.stringify(next))
+      const path = join(target, 'canonical/lit/front.svg')
       writeFileSync(path, readFileSync(path, 'utf8').replace('cx="170"', 'cx="171"'))
-      rmSync(join(dir, 'cc-v1/sprites/lit/working.svg'))
-      const errors = validateAssetKit(join(dir, 'cc-v1')).errors.join('\n')
+      rmSync(join(target, 'sprites/lit/working.svg'))
+      const errors = validateAssetKit(target).errors.join('\n')
       expect(errors).toContain('geometry_source:canonical/lit/front.svg')
       expect(errors).toContain('geometry_digest:canonical/lit/front.svg')
       expect(errors).toContain('path:sprites/lit/working.svg')
-    } finally { rmSync(dir, { recursive: true, force: true }) }
+    })
   }, 30_000)
   it('invalid frame paths and nonfinite canvas do not reach the renderer', () => {
     const broken = structuredClone(raw)
@@ -272,20 +272,17 @@ describe('CC Asset Kit v1.0-alpha', () => {
     expect(normalizeManifest(broken).ok).toBe(false)
   })
   it('release gate rejects filtered required frames and missing asset metadata, runtime stays fail-soft', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cc-kit-release-'))
-    try {
-      cpSync(root, join(dir, 'cc-v1'), { recursive: true })
-      cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
-      const broken = structuredClone(raw)
+    withPngKit((target, next) => {
+      const broken = structuredClone(next)
       broken.forms.lit.states.working.frames = [null]
       broken.transitions['unlit-to-lit'].frames = ['javascript:invalid']
       delete broken.assets[broken.forms.lit.states.thinking.frames[0]]
-      writeFileSync(join(dir, 'cc-v1/manifest.json'), JSON.stringify(broken))
+      writeFileSync(join(target, 'manifest.json'), JSON.stringify(broken))
       expect(normalizeManifest(broken).ok).toBe(true)
-      expect(validateAssetKit(join(dir, 'cc-v1')).errors).toEqual(expect.arrayContaining([
+      expect(validateAssetKit(target).errors).toEqual(expect.arrayContaining([
         'state_missing:lit/working', 'transition_missing:unlit-to-lit', `asset_metadata_missing:${broken.forms.lit.states.thinking.frames[0]}`,
       ]))
-    } finally { rmSync(dir, { recursive: true, force: true }) }
+    })
   }, 30_000)
   it('accepts a reviewed PNG replacement with one shared PNG mask; rejects changed coverage and distinct paths', () => {
     withPngKit((target, next, register) => {
