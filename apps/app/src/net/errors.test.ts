@@ -133,3 +133,18 @@ describe('工作台错误码表 × App(daemon 在手机上会回的码都有说�
     expect([...GENERIC].filter(code => !phone.includes(code))).toEqual([])
   })
 })
+
+it.each([
+  [428, 'script_approval_required', 'scripts_unapproved'],
+  [404, 'not_found', 'not_found'],
+  [400, 'invalid_request', 'invalid'],
+  [503, 'workbench_not_wired', 'unavailable'],
+  [503, 'input_storage_unavailable', 'unavailable'],
+  [503, 'module_off', 'unavailable'],
+  [503, 'module_starting', 'unavailable'],
+  [503, 'module_degraded', 'unavailable'],
+  [422, 'no_stt_config', 'stt_not_configured'],
+  [404, 'native_history_unsupported', 'not_found'],
+] as const)('P3f exact desktop-column error %s %s', (status, error, want) => {
+  expect(mapPhoneError(status, { error })).toBe(want)
+})

@@ -66,6 +66,7 @@ interface Conn {
   sock: ProtocolSocket
   priv: Uint8Array
   version: 2 | null
+  routes?: 'v1'
   chan?: V2Channel
   readyAt?: number
   /** 这条连接收到过几帧(任何帧都算,用来判断「悄悄死掉」)。 */
@@ -296,6 +297,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     // 版本协商是明文:中继能把 `v` 剥掉、想把双方降到没有防重放的 v1。v1 已经退休,回来的不是 v2 一律当篡改。
     if (h.data.v !== 2) { protoErr('downgrade_refused'); dropConn(c); return }
     c.chan = makeV2Channel(deriveV2Keys(shared, opts.token), 'client')
+    c.routes = h.data.routes
     c.version = 2
     negotiated = 2
     c.readyAt = now()
@@ -392,7 +394,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   }
 
   function sendReq(c: Conn, p: Pending): void {
-    const { req } = p
+    const req = { ...p.req, ...p.req.forRoutes?.(c.routes) }
     const m: ReqMsgT = { t: 'req', rid: p.rid, method: req.method, path: req.path }
     if (req.headers) m.headers = req.headers
     if (req.body instanceof Uint8Array) { m.body = b64Encode(req.body); m.bodyEncoding = 'base64' }
@@ -419,6 +421,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
 
   return {
     version: () => negotiated,
+    routes: () => conn?.routes,
 
     request(req) {
       if (closed) return Promise.reject(new Error('closed'))

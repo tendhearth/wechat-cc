@@ -14,7 +14,7 @@ type Reply = { status: number; json: unknown } | Error | typeof HANG
 type Handler = (req: { path: string; body: any }) => Reply
 
 /** 假协议客户端:按「METHOD /path」回夹具;每次 makeClient 都是一个新客户端(模拟重连 / 前后台)。 */
-function harness(routes: Record<string, Handler | Reply> = {}) {
+function harness(routes: Record<string, Handler | Reply> = {}, family?: 'v1') {
   const clients: Array<{ opts: ClientOpts; subs: Map<string, (d: unknown) => void>; closed: boolean; hanging: Array<(e: Error) => void> }> = []
   const reqs: Array<{ key: string; path: string; body: any; retry?: boolean; inHook: boolean }> = []
   /** 正在协议客户端的 onStatus 钩子里:这时回头调客户端可能开出第二条连接(Task 1 的已知坑)。 */
@@ -25,7 +25,9 @@ function harness(routes: Record<string, Handler | Reply> = {}) {
     clients.push(me)
     return {
       version: () => 2,
+      routes: () => family,
       async request(r: ProtocolRequest) {
+        r = { ...r, ...r.forRoutes?.(family) }
         const key = `${r.method} ${r.path.split('?')[0]}`
         const body = typeof r.body === 'string' ? JSON.parse(r.body) : undefined
         reqs.push({ key, path: r.path, body, retry: r.retry, inHook })
@@ -48,7 +50,7 @@ function harness(routes: Record<string, Handler | Reply> = {}) {
   }
   const last = () => clients.at(-1)!
   const logs: string[] = []
-  const b = makeLiveBackend({ open: () => { throw new Error('unused') }, token: 'd-secret-token', makeClient, now: () => 1_000_000, log: l => logs.push(l) })
+  const b = makeLiveBackend({ open: () => { throw new Error('unused') }, token: 'd-secret-token', build: '4', makeClient, now: () => 1_000_000, log: l => logs.push(l) })
   const status = (s: 'connecting' | 'ready' | 'down' | 'auth_failed') => {
     inHook = true
     try { last().opts.onStatus?.(s) } finally { inHook = false }
@@ -860,4 +862,41 @@ describe('待办与 CC 画的你(收敛清单 ④,2026-10-21)', () => {
     const shape = harness({ 'GET /m/api/state': ok({ ...STATE, todos: { active: [{ id: 'x' }], settled: [] } }) })
     await expect(shape.b.pocket()).rejects.toMatchObject({ code: 'unknown' })
   })
+})
+
+describe('P3f / M6f compatibility', () => {
+  it.each([undefined, 'v1'] as const)('App reads both route families and old/new payloads: %s', async family => {
+    const prefix = family ? '/v1' : '/m/api'
+    const matter = family ? { ...MATTER, state: 'working', archivedAt: null } : MATTER
+    const h = harness({
+      [`GET ${prefix}/matters`]: ok({ ...(family ? {} : { ok: true }), matters: [matter] }),
+      [`GET ${prefix}/matter`]: ok({ ...(family ? {} : { ok: true }), ...DETAIL, matter }),
+      [`POST ${prefix}/matter/worktree`]: ok({ error: family ? 'script_approval_required' : 'script_needs_computer' }, 428),
+    }, family)
+    expect(h.last().opts.build).toBe('4')
+    expect(await h.b.matters('zh-Hans')).toEqual([matter])
+    expect((await h.b.matter(ID, 'zh-Hans')).matter).toEqual(matter)
+    await expect(h.b.worktreeScript({ id: ID, action: 'run' })).rejects.toMatchObject({ code: 'scripts_unapproved' })
+    expect(h.reqs.map(r => r.key)).toEqual([`GET ${prefix}/matters`, `GET ${prefix}/matter`, `POST ${prefix}/matter/worktree`])
+    h.b.dispose()
+  })
+})
+
+it('v1 keeps list defaults, search projection, say envelope, transcription fields, and todo no-op', async () => {
+  const h = harness({
+    'GET /v1/matters': ok({ matters: [] }),
+    'GET /v1/matter/owner-chat/search': ok({ hits: [{ id: 'h', kind: 'user', text: 'x'.repeat(601), createdAt: 10 }] }),
+    'POST /v1/matter/say': ok({ kind: 'chat', reply: 'hello' }),
+    'POST /v1/companion/transcribe': ok({ ok: true, text: 'hello' }),
+    'POST /v1/knowledge/facts/set_fact_status': ok({ ok: false }),
+  }, 'v1')
+  await h.b.matters('zh-Hans')
+  expect(h.reqs.at(-1)?.path).toBe('/v1/matters?exclude=terminal%2Cact&status=open%2Creplied%2Cdone&limit=50&taskState=1')
+  expect(await h.b.chatSearch('hello')).toEqual([{ id: 'h', role: 'me', text: 'x'.repeat(600), truncated: true, at: 10, source: null }])
+  expect(h.reqs.at(-1)?.path).toBe('/v1/matter/owner-chat/search?q=hello&limit=30')
+  expect(await h.b.say(ID, 'hello', SAY_REQ)).toEqual({ kind: 'chat', reply: 'hello' })
+  expect(await h.b.transcribe({ mime: 'audio/m4a', audioBase64: 'YQ==' })).toBe('hello')
+  expect(h.reqs.at(-1)?.body).toEqual({ mime: 'audio/m4a', audio_b64: 'YQ==' })
+  await expect(h.b.setTodo(1, 'resolved')).resolves.toBeUndefined()
+  h.b.dispose()
 })

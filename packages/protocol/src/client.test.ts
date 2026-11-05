@@ -41,7 +41,7 @@ interface Conn {
   rawIn: string[]
 }
 
-function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean; manualOpen?: boolean }) {
+function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean; manualOpen?: boolean; routes?: 'v1' }) {
   const token = opts.token ?? TOKEN
   const conns: Conn[] = []
   const reqs: ReqSeen[] = []
@@ -130,7 +130,7 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
       if (opts.version === 2 && Array.isArray(f.v) && f.v.includes(2)) {
         conn.version = 2
         conn.chan = makeV2Channel(deriveV2Keys(shared, token), 'server')
-        conn.toClient({ hs: b64uEncode(kp.pub), v: 2 })
+        conn.toClient({ hs: b64uEncode(kp.pub), v: 2, routes: opts.routes })
       } else {
         conn.version = 1
         conn.toClient({ hs: b64uEncode(kp.pub) })
@@ -178,6 +178,28 @@ beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { vi.useRealTimers() })
 
 describe('握手协商', () => {
+  it.each([undefined, 'v1'] as const)('selects queued requests from handshake routes=%s and resets after reconnect', async routes => {
+    const opts = { version: 2 as const, routes }
+    const daemon = makeFakeDaemon(opts)
+    const { c } = client(daemon, { build: '4' })
+    expect(c.routes?.()).toBeUndefined()
+    const forRoutes = (r: 'v1' | undefined) => ({ path: r === 'v1' ? '/v1/home' : '/m/api/home' })
+    await c.request({ method: 'GET', path: '/m/api/home', forRoutes })
+    expect(c.routes?.()).toBe(routes)
+    expect(daemon.d.reqs.at(-1)?.path).toBe(forRoutes(routes).path)
+    expect(daemon.d.conns[0]!.hellos[0]).toMatchObject({ build: '4' })
+    daemon.d.conns[0]!.serverClose()
+    await flush()
+    expect(c.routes?.()).toBeUndefined()
+    opts.routes = routes === 'v1' ? undefined : 'v1'
+    const pending = c.request({ method: 'GET', path: '/m/api/home', forRoutes })
+    await vi.advanceTimersByTimeAsync(500)
+    await pending
+    expect(c.routes?.()).toBe(opts.routes)
+    expect(daemon.d.reqs.at(-1)?.path).toBe(forRoutes(opts.routes).path)
+    c.close()
+  })
+
   it('v2 后台 ⇒ version()===2,握手带 v:[2](不带 client),请求走 v2 帧', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
     const { c } = client(daemon)

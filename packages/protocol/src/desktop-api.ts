@@ -12,8 +12,9 @@
 // bundler; use the default export instead (both forms are equivalent at
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
+import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
-  Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent,
+  PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent,
   MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
@@ -2495,6 +2496,9 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  // Phone-only and binary chunk routes retain their existing JSON response contracts.
+  ...Object.fromEntries(WIRE_ROUTE_ALIASES.filter(a => !a.readers.includes('desktop'))
+    .map(a => [a.to, PHONE_API_SCHEMAS[a.from]])),
   'GET /v1/health': HealthResponse,
   'POST /v1/atelier/share': AtelierShareResponse,
   'POST /v1/memory/read': MemoryReadResponse,
