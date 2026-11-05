@@ -16,6 +16,7 @@
  * House pattern: src/daemon/observations/store.ts
  */
 import type { Db } from './db'
+import { redactIdentifiers } from './redact-identifiers'
 
 export type Facet = 'task' | 'knowledge' | 'life'
 export type ThreadStatus = 'active' | 'dormant' | 'done'
@@ -44,12 +45,14 @@ export interface TopicEntry {
   status: EntryStatus
   source: EntrySource
   matterId: string | null
+  /** 被睡一觉的整理并进了哪一条(只标,不删)。 */
+  supersededBy: string | null
   createdTs: string
   updatedTs: string
 }
 
 export type CreateEntryInput = Pick<TopicEntry, 'threadId' | 'kind' | 'line'> & Partial<Pick<TopicEntry, 'body' | 'due' | 'source' | 'matterId'>> & { ts?: string }
-export type UpdateEntryInput = Partial<Pick<TopicEntry, 'line' | 'body' | 'due' | 'status'>> & { ts?: string }
+export type UpdateEntryInput = Partial<Pick<TopicEntry, 'line' | 'body' | 'due' | 'status' | 'supersededBy'>> & { ts?: string }
 
 /** 抽取到哪了(v104 的两列新水位)。 */
 export interface ExtractState {
@@ -57,6 +60,8 @@ export interface ExtractState {
   entriesToTs: string | null
   /** agent 的活:matter_items.cursor 抽到哪(含)。 */
   workCursor: number
+  /** 睡一觉的整理:这个时刻以前改过的话题整理过了;null = 从没整理过。 */
+  consolidatedToTs: string | null
 }
 
 /** 存之前把 episodes 排好、合并重叠段(重读历史不叠出重复的时间段)。 */
@@ -227,7 +232,7 @@ export function makeThreadsStore(db: Db): ThreadsStore {
         id,
         input.chatId,
         input.title,
-        input.summary,
+        redactIdentifiers(input.summary),
         JSON.stringify(input.facets),
         JSON.stringify(input.tags),
         JSON.stringify(input.aliases ?? []),
@@ -256,6 +261,8 @@ export function makeThreadsStore(db: Db): ThreadsStore {
           values.push(JSON.stringify(mergeEpisodes(val as Episode[])))
         } else if (key === 'facets' || key === 'tags' || key === 'aliases') {
           values.push(JSON.stringify(val))
+        } else if (key === 'summary') {
+          values.push(redactIdentifiers(String(val)))
         } else if (key === 'private') {
           values.push(val ? 1 : 0)
         } else {
@@ -301,15 +308,17 @@ export function makeThreadsStore(db: Db): ThreadsStore {
     async addEntry(input) {
       const id = newEntryId()
       const ts = input.ts ?? new Date().toISOString()
-      stmtEntryInsert.run(id, input.threadId, input.kind, oneLine(input.line, LINE_MAX), (input.body ?? '').trim().slice(0, BODY_MAX),
+      // 身份号 / 尾号 / 密钥位置 / 令牌写进去之前就去掉(lib/redact-identifiers)
+      stmtEntryInsert.run(id, input.threadId, input.kind, oneLine(redactIdentifiers(input.line), LINE_MAX), redactIdentifiers((input.body ?? '').trim()).slice(0, BODY_MAX),
         input.kind === 'commitment' ? input.due ?? null : null, input.source ?? 'chat', input.matterId ?? null, ts, ts)
       return id
     },
 
     async updateEntry(id, patch) {
       const sets: string[] = [], vals: (string | null)[] = []
-      if (patch.line !== undefined) { sets.push('line = ?'); vals.push(oneLine(patch.line, LINE_MAX)) }
-      if (patch.body !== undefined) { sets.push('body = ?'); vals.push(patch.body.trim().slice(0, BODY_MAX)) }
+      if (patch.line !== undefined) { sets.push('line = ?'); vals.push(oneLine(redactIdentifiers(patch.line), LINE_MAX)) }
+      if (patch.body !== undefined) { sets.push('body = ?'); vals.push(redactIdentifiers(patch.body.trim()).slice(0, BODY_MAX)) }
+      if (patch.supersededBy !== undefined) { sets.push('superseded_by = ?'); vals.push(patch.supersededBy) }
       if (patch.due !== undefined) { sets.push('due = ?'); vals.push(patch.due) }
       if (patch.status !== undefined) { sets.push('status = ?'); vals.push(patch.status) }
       if (sets.length === 0) return
@@ -339,10 +348,10 @@ export function makeThreadsStore(db: Db): ThreadsStore {
     },
 
     async getExtractState(chatId) {
-      const r = db.query<{ entries_to_ts: string | null; work_cursor: number }, [string]>(
-        'SELECT entries_to_ts, work_cursor FROM thread_extract_state WHERE chat_id = ?',
+      const r = db.query<{ entries_to_ts: string | null; work_cursor: number; consolidated_to_ts: string | null }, [string]>(
+        'SELECT entries_to_ts, work_cursor, consolidated_to_ts FROM thread_extract_state WHERE chat_id = ?',
       ).get(chatId)
-      return { entriesToTs: r?.entries_to_ts ?? null, workCursor: r?.work_cursor ?? 0 }
+      return { entriesToTs: r?.entries_to_ts ?? null, workCursor: r?.work_cursor ?? 0, consolidatedToTs: r?.consolidated_to_ts ?? null }
     },
 
     async setExtractState(chatId, patch) {
@@ -350,23 +359,24 @@ export function makeThreadsStore(db: Db): ThreadsStore {
       db.query(`INSERT INTO thread_extract_state(chat_id, extracted_to_ts) VALUES (?, '1970-01-01T00:00:00Z') ON CONFLICT(chat_id) DO NOTHING`).run(chatId)
       if (patch.entriesToTs !== undefined) db.query('UPDATE thread_extract_state SET entries_to_ts = ? WHERE chat_id = ?').run(patch.entriesToTs, chatId)
       if (patch.workCursor !== undefined) db.query('UPDATE thread_extract_state SET work_cursor = ? WHERE chat_id = ?').run(patch.workCursor, chatId)
+      if (patch.consolidatedToTs !== undefined) db.query('UPDATE thread_extract_state SET consolidated_to_ts = ? WHERE chat_id = ?').run(patch.consolidatedToTs, chatId)
     },
   }
 }
 
 const LINE_MAX = 80
 const BODY_MAX = 600
-const ENTRY_COLS = 'id, thread_id, kind, line, body, due, status, source, matter_id, created_ts, updated_ts'
+const ENTRY_COLS = 'id, thread_id, kind, line, body, due, status, source, matter_id, superseded_by, created_ts, updated_ts'
 
 interface EntryRow {
   id: string; thread_id: string; kind: string; line: string; body: string; due: string | null
-  status: string; source: string; matter_id: string | null; created_ts: string; updated_ts: string
+  status: string; source: string; matter_id: string | null; superseded_by: string | null; created_ts: string; updated_ts: string
 }
 
 function rowToEntry(r: EntryRow): TopicEntry {
   return {
     id: r.id, threadId: r.thread_id, kind: r.kind as EntryKind, line: r.line, body: r.body, due: r.due,
-    status: r.status as EntryStatus, source: r.source as EntrySource, matterId: r.matter_id, createdTs: r.created_ts, updatedTs: r.updated_ts,
+    status: r.status as EntryStatus, source: r.source as EntrySource, matterId: r.matter_id, supersededBy: r.superseded_by, createdTs: r.created_ts, updatedTs: r.updated_ts,
   }
 }
 

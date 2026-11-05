@@ -1433,8 +1433,8 @@ describe('v104 — 话题升格(T1):aliases / topic_entries / 新水位', () => 
       { id: 'thr_c', title: 'writter', tags: '["产品开发"]', aliases: '[]' },
       { id: 'thr_d', title: '别的对话', tags: '["bx"]', aliases: '["bx"]' },
     ])
-    expect(db.query('SELECT chat_id,extracted_to_ts,entries_to_ts,work_cursor FROM thread_extract_state').all())
-      .toEqual([{ chat_id: 'c1', extracted_to_ts: '2026-11-05T01:01:04.643Z', entries_to_ts: null, work_cursor: 0 }])
+    expect(db.query('SELECT chat_id,extracted_to_ts,entries_to_ts,work_cursor,consolidated_to_ts FROM thread_extract_state').all())
+      .toEqual([{ chat_id: 'c1', extracted_to_ts: '2026-11-05T01:01:04.643Z', entries_to_ts: null, work_cursor: 0, consolidated_to_ts: null }])
     db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e1','thr_a','commitment','答应装 bx','chat','t','t')`)
     expect(() => db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e2','thr_a','note','x','chat','t','t')`)).toThrow()
     expect(() => db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e3','nope','fact','x','chat','t','t')`)).toThrow()

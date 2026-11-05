@@ -26,6 +26,8 @@ export interface ResolveOpts {
   cheapEval?: ((prompt: string) => Promise<string>) | null
   timeoutMs?: number
   log?: (tag: string, line: string) => void
+  /** false ⇒ 只放索引行、不带细节(交给执行者的简报)。缺省带。 */
+  bodies?: boolean
 }
 
 async function judge(text: string, cands: MatchTopic[], o: ResolveOpts): Promise<string | null> {
@@ -59,7 +61,7 @@ export async function resolveTopicRecall(text: string, topics: readonly MatchTop
   if (ids.length === 0) return null
   const picked = ids.slice(0, MAX_TOPICS).map(id => topics.find(t => t.id === id)!).filter(t => t && (t.entries.length > 0 || t.summary))
   if (picked.length === 0) return null
-  const block = renderTopicsBlock(text, picked)
+  const block = renderTopicsBlock(text, picked, undefined, { bodies: o.bodies ?? true })
   // 渲染里挑了哪几条,跟 renderTopicsBlock 用同一个挑法
   const entryIds = picked.flatMap(t => pickEntries(text, t).map(e => e.id))
   return { block, topicIds: picked.map(t => t.id), entryIds, via }

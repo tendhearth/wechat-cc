@@ -32,6 +32,14 @@ describe('makeMatterTopics (话题 T3)', () => {
     expect(await mt.briefForMatter({ matterId: 'm1', ownerChatId: 'owner', title: '写个周报', text: '' })).toBeNull()
   })
 
+  it('简报只带索引行,不带细节', async () => {
+    const { threads, bx, mt } = await setup()
+    await threads.addEntry({ threadId: bx, kind: 'fact', line: 'bx 服务器在 166', body: 'root 密码在钥匙串 bx-166 里' })
+    const b = await mt.briefForMatter({ matterId: 'm1', ownerChatId: 'owner', title: 'bx 服务器', text: '' })
+    expect(b).toContain('bx 服务器在 166')
+    expect(b).not.toContain('钥匙串')
+  })
+
   it('私密的话题永远不进简报', async () => {
     const { mt } = await setup()
     expect(await mt.briefForMatter({ matterId: 'm1', ownerChatId: 'owner', title: '妈妈体检的事查一下', text: '' })).toBeNull()

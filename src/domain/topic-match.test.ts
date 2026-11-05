@@ -74,6 +74,9 @@ describe('judge / render', () => {
     expect(b.split('\n')[0]).toBe('话题「服务器」—— 自用机队:91、166、mini')
     expect(b).toContain('- [承诺] 答应给 91 换硬盘(期限 2026-11-20)')
     expect([...renderTopicsBlock('x', [servers, bx], 30)].length).toBe(31)
+    const withBody: MatchTopic = { ...bx, entries: [e('b9', 'fact', 'bx 在 166', '2026-11-01T00:00:00Z', '细节在这')] }
+    expect(renderTopicsBlock('bx', [withBody])).toContain(':细节在这')
+    expect(renderTopicsBlock('bx', [withBody], undefined, { bodies: false })).not.toContain('细节在这')
   })
   it('tokens:中文二字词 + 英文词,去掉常用虚词', () => {
     expect([...tokens('帮我看看 BX server')].sort()).toEqual(['bx', 'server'])

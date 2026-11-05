@@ -73,11 +73,11 @@ describe('threads store', () => {
 
   it('v104:新水位两列;老水位照旧独立', async () => {
     const s = makeThreadsStore(openTestDb())
-    expect(await s.getExtractState('c1')).toEqual({ entriesToTs: null, workCursor: 0 })
+    expect(await s.getExtractState('c1')).toEqual({ entriesToTs: null, workCursor: 0, consolidatedToTs: null })
     await s.setExtractState('c1', { workCursor: 7 })
-    expect(await s.getExtractState('c1')).toEqual({ entriesToTs: null, workCursor: 7 })
+    expect(await s.getExtractState('c1')).toEqual({ entriesToTs: null, workCursor: 7, consolidatedToTs: null })
     await s.setExtractState('c1', { entriesToTs: '2026-06-11T00:00:00Z' })
-    expect(await s.getExtractState('c1')).toEqual({ entriesToTs: '2026-06-11T00:00:00Z', workCursor: 7 })
+    expect(await s.getExtractState('c1')).toEqual({ entriesToTs: '2026-06-11T00:00:00Z', workCursor: 7, consolidatedToTs: null })
     await s.setWatermark('c1', '2026-01-01T00:00:00Z')
     expect(await s.getWatermark('c1')).toBe('2026-01-01T00:00:00Z')
     expect((await s.getExtractState('c1')).entriesToTs).toBe('2026-06-11T00:00:00Z')
@@ -90,5 +90,16 @@ describe('threads store', () => {
     expect((await s.get(id))!.episodes).toEqual([{ from_ts: '2026-06-01T00:00:00Z', to_ts: '2026-06-03T00:00:00Z' }])
     await s.update(id, { episodes: [...(await s.get(id))!.episodes, { from_ts: '2026-06-02T00:00:00Z', to_ts: '2026-06-02T01:00:00Z' }, { from_ts: '2026-06-05T00:00:00Z', to_ts: '2026-06-05T00:00:00Z' }] })
     expect((await s.get(id))!.episodes).toEqual([{ from_ts: '2026-06-01T00:00:00Z', to_ts: '2026-06-03T00:00:00Z' }, { from_ts: '2026-06-05T00:00:00Z', to_ts: '2026-06-05T00:00:00Z' }])
+  })
+
+  it('写进去之前去掉身份号 / 尾号 / 密钥位置(条目和摘要都是)', async () => {
+    const s = makeThreadsStore(openTestDb())
+    const id = await s.create({ chatId: 'c1', title: 'Nategu', summary: 'EIN 61-2390916', facets: ['task'], tags: [], private: false, episodes: [] })
+    const e = await s.addEntry({ threadId: id, kind: 'fact', line: 'Airwallex 尾号 3419', body: '密钥在 ~/.private_keys/1in8b.env' })
+    expect(await s.getEntry(e)).toMatchObject({ line: 'Airwallex 尾号 ****', body: '密钥在 [密钥文件]' })
+    expect((await s.get(id))!.summary).toBe('EIN [EIN]')
+    await s.updateEntry(e, { body: 'EIN 61-2390916' }); await s.update(id, { summary: '尾号 3419' })
+    expect((await s.getEntry(e))!.body).toBe('EIN [EIN]')
+    expect((await s.get(id))!.summary).toBe('尾号 ****')
   })
 })

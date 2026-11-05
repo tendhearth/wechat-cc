@@ -41,7 +41,8 @@ export function makeMatterTopics(d: MatterTopicsDeps) {
     const all = await d.threads.list(owner)
     const open = new Set(all.filter(t => !t.private).map(t => t.id))
     const topics = (await loadMatchTopics(d.threads, owner)).filter(t => open.has(t.id))
-    const r = await resolveTopicRecall(text, topics, { cheapEval: null })
+    // 只用索引、不叫模型;简报只带索引行,不带细节(细节里常有账号、地址,执行者用不着)
+    const r = await resolveTopicRecall(text, topics, { cheapEval: null, bodies: false })
     return r ? { text: `${BRIEF_HEAD}\n${r.block}`, topicIds: r.topicIds } : null
   }
 

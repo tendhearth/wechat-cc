@@ -132,13 +132,17 @@ export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES): Mat
     .map(x => x.e)
 }
 
-/** 信封里 `<topics>` 的正文(不含标签本身)。最相关的两条带细节。 */
-export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], max = BLOCK_MAX): string {
+/**
+ * 信封里 `<topics>` 的正文(不含标签本身)。最相关的两条带细节;`bodies: false` ⇒ 只有索引行
+ * (交给执行者的简报:细节里常有账号、地址这类,执行者用不着 —— 整合者 2026-11-05 第 2 条)。
+ */
+export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], max = BLOCK_MAX, opts: { bodies?: boolean } = {}): string {
+  const bodies = opts.bodies ?? true
   const parts: string[] = []
   for (const t of picked) {
     const es = pickEntries(text, t)
     const lines = es.map((e, i) => {
-      const body = i < 2 && e.body ? `:${e.body.slice(0, 160)}` : ''
+      const body = bodies && i < 2 && e.body ? `:${e.body.slice(0, 160)}` : ''
       return `- [${KIND_LABEL[e.kind] ?? e.kind}] ${e.line}${e.due ? `(期限 ${e.due})` : ''}${body}`
     })
     parts.push([`话题「${t.title}」${t.summary ? `—— ${t.summary}` : ''}`, ...lines].join('\n'))
