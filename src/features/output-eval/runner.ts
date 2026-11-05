@@ -32,6 +32,8 @@ import { splitBubbles } from '../../daemon/reply-bubbles'
 import { routesForToken } from '../../daemon/internal-api/route-tiers'
 import { attachAsks, buildBriefMaterial, buildBriefText, type BriefInputs } from '../jobs'
 import { makeCheapJudge, resolveTaskReference, type FocusState, type TaskCandidate } from '../workbench'
+import { resolveTopicRecall } from '../../daemon/threads/recall'
+import type { MatchTopic } from '../../domain/topic-match'
 
 /** 跟 daemon 的轮次看门狗同一个缺省(一段时间没事件就算卡住)。 */
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -99,6 +101,16 @@ export type EvalJudgeResult = { ok: true; kind: 'judge'; answer: string; duratio
 
 export interface ReplyInput { text: string; tier?: 'admin' | 'trusted'; providerId?: string; model?: string; timeoutMs?: number }
 export interface BriefInput { material: BriefInputs; asks?: PickedAsk[]; asksBase?: number; nowIso?: string; providerId?: string; model?: string; timeoutMs?: number }
+/** 话题 T2 的样本:一句话 + 样本自带的一小份话题(同 reference 自带候选)。 */
+export interface TopicInput { text: string; topics: MatchTopic[] }
+export interface EvalTopicResult {
+  ok: true
+  kind: 'topic'
+  /** null = 什么都没调。 */
+  recall: { topicIds: string[]; entryIds: string[]; via: string } | null
+  durationMs: number
+}
+
 export interface ReferenceInput { text: string; quotedText?: string | null; candidates: TaskCandidate[]; focus?: FocusState | null; nowMs?: number }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -226,6 +238,13 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
       })
       const resolution = r.kind === 'ambiguous' ? { kind: r.kind, options: r.options.map(o => o.id) } : r
       return { ok: true, kind: 'reference', resolution, durationMs: now() - startedAt }
+    },
+
+    /** 话题 T2:生产的匹配 + 生产的便宜模型(拿不准时)跑样本自带的话题。 */
+    async topic(i: TopicInput): Promise<EvalTopicResult> {
+      const startedAt = now()
+      const r = await resolveTopicRecall(i.text, i.topics, { cheapEval: deps.registry.getCheapEval(), log: deps.log })
+      return { ok: true, kind: 'topic', recall: r ? { topicIds: r.topicIds, entryIds: r.entryIds, via: r.via } : null, durationMs: now() - startedAt }
     },
 
     async judge(prompt: string): Promise<EvalJudgeResult | EvalRefused> {

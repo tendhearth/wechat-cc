@@ -97,7 +97,7 @@ describe('runEval', () => {
       ['a', 'error', 'turn timed out (turn_timeout)'],
       ['b', 'error', 'http_404 eval_unknown_provider'],
       ['c', 'error', expect.stringContaining('样本文件读不了')],
-      ['d', 'error', '样本写错了:kind 只能是 reply / brief / reference'],
+      ['d', 'error', '样本写错了:kind 只能是 reply / brief / reference / topic'],
     ])
     expect(d.calls).toHaveLength(2)
   })
@@ -158,7 +158,7 @@ describe('formatRunSummary:裁判没跑成', () => {
 })
 
 describe('仓库里的示例样本(eval/output/examples/)', () => {
-  it('每一份都读得通,id 和文件名一致,三类各有一条', () => {
+  it('每一份都读得通,id 和文件名一致,四类都有', () => {
     const dir = join(__dirname, '..', '..', 'eval', 'output', 'examples')
     const files = readdirSync(dir).filter(f => f.endsWith('.json'))
     const kinds = files.map(f => {
@@ -167,6 +167,6 @@ describe('仓库里的示例样本(eval/output/examples/)', () => {
       expect(p, f).toMatchObject({ ok: true, sample: { id } })
       return p.ok ? p.sample.kind : null
     })
-    expect(kinds.sort()).toEqual(['brief', 'reference', 'reply'])
+    expect([...new Set(kinds)].sort()).toEqual(['brief', 'reference', 'reply', 'topic'])
   })
 })

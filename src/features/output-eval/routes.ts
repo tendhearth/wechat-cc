@@ -5,6 +5,7 @@
  *     { kind: 'reply', text, tier?: 'admin'|'trusted', providerId?, model?, timeoutMs? }       → EvalTurnResult
  *     { kind: 'brief', material: BriefInputs, asks?: PickedAsk[], asksBase?, nowIso?, providerId?, model?, timeoutMs? } → EvalTurnResult
  *     { kind: 'reference', text, quotedText?, candidates: TaskCandidate[], focus?, nowMs? }      → EvalReferenceResult
+ *     { kind: 'topic', text, topics: [{ id, title, summary?, aliases?, tags?, entries?: [{ id, kind?, line, body?, due? }] }] } → EvalTopicResult
  *     { kind: 'judge', prompt }                                                                → EvalJudgeResult(便宜模型原文)
  *
  * 跑了但没跑好(起不来、超时、模型报错)是 200 + `ok:false`(原因在 body 里,同 selftest/converse);
@@ -17,7 +18,8 @@ import type { RouteTable } from '../../daemon/internal-api/types'
 import type { PickedAsk } from '../../domain/owner-asks'
 import type { BriefInputs } from '../jobs'
 import type { TaskCandidate } from '../workbench'
-import type { EvalRunner, ReplyInput, BriefInput, ReferenceInput } from './runner'
+import type { EvalRunner, ReplyInput, BriefInput, ReferenceInput, TopicInput } from './runner'
+import type { MatchTopic } from '../../domain/topic-match'
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9._-]{0,63}$/
 const TEXT_MAX = 4000
@@ -89,6 +91,31 @@ function referenceInput(b: Record<string, unknown>): ReferenceInput {
   return { text, candidates, ...(quotedText !== undefined ? { quotedText } : {}), ...(focus ? { focus } : {}), ...(nowMs !== undefined ? { nowMs } : {}) }
 }
 
+const TOPICS_MAX = 50
+const ENTRY_KINDS = new Set(['fact', 'decision', 'commitment', 'progress', 'conclusion'])
+
+function topicInput(b: Record<string, unknown>): TopicInput {
+  const text = str(b.text, 'text')
+  if (!Array.isArray(b.topics) || b.topics.length > TOPICS_MAX) fail(`topics 要是不超过 ${TOPICS_MAX} 个的数组`)
+  const strs = (v: unknown, what: string): string[] => (v === undefined ? [] : Array.isArray(v) && v.every(x => typeof x === 'string') ? v as string[] : fail(`${what} 要是字符串数组`))
+  const topics: MatchTopic[] = (b.topics as unknown[]).map((t, i) => {
+    if (!isObj(t) || typeof t.id !== 'string' || typeof t.title !== 'string') fail(`topics[${i}] 至少要有字符串的 id、title`)
+    const o = t as Record<string, unknown>
+    const entries = o.entries === undefined ? [] : Array.isArray(o.entries) ? o.entries : fail(`topics[${i}].entries 要是数组`)
+    return {
+      id: o.id as string, title: o.title as string, summary: typeof o.summary === 'string' ? o.summary : '',
+      aliases: strs(o.aliases, `topics[${i}].aliases`), tags: strs(o.tags, `topics[${i}].tags`), lastActive: '',
+      entries: (entries as unknown[]).map((e, j) => {
+        if (!isObj(e) || typeof e.id !== 'string' || typeof e.line !== 'string') fail(`topics[${i}].entries[${j}] 至少要有字符串的 id、line`)
+        const x = e as Record<string, unknown>
+        const kind = typeof x.kind === 'string' && ENTRY_KINDS.has(x.kind) ? x.kind as MatchTopic['entries'][number]['kind'] : 'fact'
+        return { id: x.id as string, kind, line: x.line as string, body: typeof x.body === 'string' ? x.body : '', due: typeof x.due === 'string' ? x.due : null, updatedTs: typeof x.updatedTs === 'string' ? x.updatedTs : '' }
+      }),
+    }
+  })
+  return { text, topics }
+}
+
 export function outputEvalRoutes(runner: EvalRunner): RouteTable {
   const refused = (code: string) => { const h = workbenchErrorHttp(code, 'desktop'); return { status: h.status, body: { ok: false, error: h.error } } }
   return {
@@ -100,8 +127,9 @@ export function outputEvalRoutes(runner: EvalRunner): RouteTable {
           case 'reply': { const i = replyInput(b); call = () => runner.reply(i); break }
           case 'brief': { const i = briefInput(b); call = () => runner.brief(i); break }
           case 'reference': { const i = referenceInput(b); call = () => runner.reference(i); break }
+          case 'topic': { const i = topicInput(b); call = () => runner.topic(i); break }
           case 'judge': { const p = str(b.prompt, 'prompt', PROMPT_MAX); call = () => runner.judge(p); break }
-          default: return fail('kind 只能是 reply / brief / reference / judge')
+          default: return fail('kind 只能是 reply / brief / reference / topic / judge')
         }
       } catch (e) {
         if (e instanceof Invalid) { const h = workbenchErrorHttp('eval_invalid_request', 'desktop'); return { status: h.status, body: { ok: false, error: h.error, detail: e.message } } }

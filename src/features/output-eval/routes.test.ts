@@ -11,6 +11,7 @@ function fakeRunner(): EvalRunner & { calls: Array<[string, unknown]> } {
     reply: vi.fn(async (i) => { calls.push(['reply', i]); return { ok: true, kind: 'reply' as const, providerId: 'claude', finalText: 'x', bubbles: ['x'], silent: false, rawFinalText: 'x', narration: [], segments: ['x'], toolCalls: [], durationMs: 1 } }),
     brief: vi.fn(async (i) => { calls.push(['brief', i]); return { ok: false, code: 'eval_unknown_provider' } as const }),
     reference: vi.fn(async (i) => { calls.push(['reference', i]); return { ok: true, kind: 'reference', resolution: { kind: 'none' }, durationMs: 0 } as const }),
+    topic: vi.fn(async (i) => { calls.push(['topic', i]); return { ok: true, kind: 'topic', recall: null, durationMs: 0 } as const }),
     judge: vi.fn(async (p) => { calls.push(['judge', p]); return { ok: false, code: 'eval_no_cheap_model' } as const }),
   }
 }
@@ -37,6 +38,8 @@ describe('POST /v1/eval/run', () => {
       { kind: 'brief' }, { kind: 'brief', material: { reminders: 'x' } }, { kind: 'brief', material: {}, asks: [{ no: 'a' }] },
       { kind: 'reference', text: 'x' }, { kind: 'reference', text: 'x', candidates: [{ title: 't' }] },
       { kind: 'judge' }, { kind: 'judge', prompt: 'x'.repeat(20_001) },
+      { kind: 'topic', text: 'x' }, { kind: 'topic', text: 'x', topics: [{ title: 't' }] }, { kind: 'topic', text: 'x', topics: [{ id: 'a', title: 't', aliases: [1] }] },
+      { kind: 'topic', text: 'x', topics: [{ id: 'a', title: 't', entries: [{ id: 'e' }] }] },
     ]) {
       const res = await post(r, body)
       expect(res.status, JSON.stringify(body)).toBe(400)
@@ -64,5 +67,13 @@ describe('POST /v1/eval/run', () => {
       text: '登录那件', candidates: [{ id: 'aaaa1111', title: '修登录页', project: '', path: '', providerId: '', phase: '', updatedAt: 0 }],
       focus: { taskId: 'aaaa1111', expiresAt: 5 }, nowMs: 1,
     }]])
+  })
+
+  it('topic:话题照样本给的交给 runner,缺的字段补空', async () => {
+    const run = fakeRunner()
+    const res = await post(outputEvalRoutes(run), { kind: 'topic', text: '服务器', topics: [{ id: 'srv', title: '服务器', aliases: ['91'], entries: [{ id: 'e1', kind: 'commitment', line: '换硬盘', due: '2026-11-20' }, { id: 'e2', kind: 'bogus', line: 'x' }] }] })
+    expect(res.status).toBe(200)
+    expect(run.calls).toEqual([['topic', { text: '服务器', topics: [{ id: 'srv', title: '服务器', summary: '', aliases: ['91'], tags: [], lastActive: '',
+      entries: [{ id: 'e1', kind: 'commitment', line: '换硬盘', body: '', due: '2026-11-20', updatedTs: '' }, { id: 'e2', kind: 'fact', line: 'x', body: '', due: null, updatedTs: '' }] }] }]])
   })
 })

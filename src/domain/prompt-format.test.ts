@@ -73,6 +73,15 @@ describe('formatInbound', () => {
     expect(out).toContain('记得带书')
   })
 
+  it('话题 T2:<topics> 在 <recall> 前面、正文转义;没有 / 空白 ⇒ 信封逐字节不变', () => {
+    const base = { chatId: 'c', userId: 'u', userName: 'x', text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a' }
+    const out = formatInbound({ ...base, topics: '话题「bx」\n- [事实] a<b', recall: ['r1'] })
+    expect(out).toContain('<topics hint="这句话聊到的话题,以前记下的几条(可能过时,以主人这句为准)">\n话题「bx」\n- [事实] a&lt;b\n</topics>')
+    expect(out.indexOf('<topics')).toBeLessThan(out.indexOf('<recall'))
+    expect(formatInbound({ ...base, topics: '  ' })).toBe(formatInbound(base))
+    expect(formatInbound({ ...base, topics: undefined })).toBe(formatInbound(base))
+  })
+
   it('omits <recall> entirely when recall is absent, empty, or blank-only', () => {
     const base = { chatId: 'c', userId: 'u', userName: 'x', text: 'hi', msgType: 'text', createTimeMs: 1, accountId: 'a' }
     expect(formatInbound(base)).not.toContain('<recall')
