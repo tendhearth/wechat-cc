@@ -1,6 +1,6 @@
 import {join} from 'node:path'
 import {zipSync,unzipSync} from 'fflate'
-import {test,expect,clickNav} from './fixtures'
+import {test,expect,clickNav,WORKBENCH_ROUTES} from './fixtures'
 
 
 /** 「下载」在真 app 里走 Rust 的 save_file(webview 不处理 <a download>,2026-10-05):收集这次的调用。 */
@@ -39,7 +39,7 @@ async function setup(page:any,shim:any,shimUrl:string,withAttachment=false,siteA
   if(siteArchive)delivered.push({id:'site',name:'花园.site.zip',mime:'application/vnd.cc.workbench-site+zip',text:'',size:siteArchive.length,contentBase64:Buffer.from(siteArchive).toString('base64')})
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
   const approved=new Set<string>()
-  await page.route('**/v1/workbench**',async(route:any)=>{
+  await page.route(WORKBENCH_ROUTES,async(route:any)=>{
     const url=new URL(route.request().url())
     if(url.pathname==='/v1/workbench/approve')approved.add(route.request().postDataJSON().artifactId)
     const artifacts=delivered.map(a=>({...a,taskId:task.id,sha256:a.id,createdAt:3,approvedAt:approved.has(a.id)?4:null}))

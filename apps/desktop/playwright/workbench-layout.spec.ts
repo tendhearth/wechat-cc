@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { test, expect, clickNav } from './fixtures'
+import { test, expect, clickNav, WORKBENCH_ROUTES } from './fixtures'
 
 const site = { id:'site-store-id', name:'作品集', path:'/demo/site', providerId:'claude' }
 const notes = { id:'notes-store-id', name:'访谈笔记', path:'/demo/notes', providerId:'codex' }
@@ -26,7 +26,7 @@ const tasks = [
 
 async function setup(page:any, shimUrl:string, shim:any) {
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
-  await page.route('**/v1/workbench**', async (route:any) => {
+  await page.route(WORKBENCH_ROUTES, async (route:any) => {
     const url = new URL(route.request().url())
     const path = url.pathname
     let json:any = {}
