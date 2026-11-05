@@ -34,6 +34,8 @@ import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 export { wireMemory, type WireMemoryDeps } from './wire'
 export { makeMemoryLlmOps, resolveCheapEval, type MemoryLlmOps } from './llm-ops'
 export { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './curated-doc'
+// 手机「CC 记得你」两条:组装的地方交给面板的 featureRoutes(P3d-3)
+export { memoryPhoneRoutes, type MemoryPhoneRoutesDeps } from './phone-routes'
 export { makeMemoryImportCommand } from './import-command'
 export { synthesisMemoryFor, memoryFactsFor, overviewForOthersFromTable } from './memory-export'
 // memoryRoutes:测试把面板的假实现转交内部 API 时要(features/phone/test-panel-v1.ts);生产里只有本模块自己 mount。

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mobileLettersRoutes, type MobileLettersDeps } from './mobile'
-import { routePhone } from '../phone/phone-route-table'
+import { routePhone } from '../../lib/phone-route-table'
 import { framedTooLarge } from '../phone/mobile-matter-response'
 import type { LetterListItem } from './archive'
 

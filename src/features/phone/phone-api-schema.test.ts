@@ -41,6 +41,8 @@ import { makePhoneOwner } from './mobile-chat'
 import { makePhoneChat } from './phone-chat'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { letterPagePath, listLetters, mobileLettersRoutes } from '../letters'
+import { memoryPhoneRoutes } from '../memory'
+import { stickerPhoneRoutes } from '../stickers'
 
 // ── 1) 守卫:PHONE_ROUTES ↔ (PHONE_API_SCHEMAS ∪ PHONE_HTML_ROUTES) 双向核对 ──
 
@@ -410,7 +412,16 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
         names: () => [{ username: 'wx_f', display: '小飞' }],
       },
       stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(dir, 'stickers') },
-      featureRoutes: [mobileLettersRoutes({ list: () => listLetters(dir, new Map()), pagePath: (id, page) => letterPagePath(dir, new Map(), id, page) })],
+      // P3d-3 起记忆两条、表情原图也归各自的功能,经 featureRoutes 交进来(同 wire-settings-panel.ts)
+      featureRoutes: [
+        mobileLettersRoutes({ list: () => listLetters(dir, new Map()), pagePath: (id, page) => letterPagePath(dir, new Map(), id, page) }),
+        memoryPhoneRoutes({ curated: () => ({
+          updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
+          changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
+          sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: true, sources: [] }] }],
+        }) }),
+        stickerPhoneRoutes({ list: () => [{ file: 'bear.png' }], dir: join(dir, 'stickers') }),
+      ],
       feed: {
         journal: { list: () => [{ id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: OWNER, title: '好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null, matter_id: null }] },
         planLogDays: () => [{ at: '2026-09-06T03:03:55.347Z', chatId: OWNER, candidates: ['visit'], decision: 'none', why: '没朋友,在家歇着。', source: 'model' }],
@@ -420,11 +431,6 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
       presence: async () => ({ presence: 'ok' as const, activity: { kind: 'idle' as const, label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }),
       seen: { read: () => null, write: () => {} },
       push: { register: () => true, test: async () => ({ ok: true, code: 'ok' }), unregister: () => {}, forgetAll: () => {} },
-      curatedMemory: () => ({
-        updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
-        changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
-        sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: true, sources: [] }] }],
-      }),
       now: () => Date.parse('2026-09-06T08:00:00.000Z'),
     })
     const started = await panel.start(0)

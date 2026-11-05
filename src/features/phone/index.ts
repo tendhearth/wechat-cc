@@ -3,7 +3,8 @@
  * 走的同一套 `/m/api/*`,以及把它们送出家门的隧道、推送、订阅。页面源码在 apps/mobile、App 在 apps/app(都不在这里)。
  *
  *  - `settings-panel.ts`:面板本身(局域网 HTTP、令牌、`/m/api/*` 合表分发);`settings-panel-html.ts`:`/set` 页与几样静态资源;
- *  - `phone-route-table.ts`:处理器登记的写法(F2,`"METHOD /path"` 表、ownsMethod、合表、查表);
+ *  - 处理器登记的写法(F2,`"METHOD /path"` 表、ownsMethod、合表、查表)在 `src/lib/phone-route-table.ts`(P3d-3 挪下去:终端 / 记忆 / 表情
+ *    交自己的表时不必经手机这个功能,不然成环);这里照旧转出;
  *    `phone-routes.ts`:哪些路由给手机、哪些给链接令牌(PHONE_ROUTES / LINK_READ_OK / LINK_WRITE_OK 连理由)、LAN_ONLY_OPS、订阅主题;
  *  - `mobile-*.ts`:各块 `/m/api/*` 的处理器(一件事 / 工作台、对话、做过的事、读终端会话与会话、首屏、首屏焦点);
  *    `mobile-page*.ts` + 两份 json:手机页的生成物(apps/mobile 构建出来)与 presence 美术;
@@ -27,7 +28,7 @@ import { phoneRoutes, type PhoneRoutesDeps } from './routes'
 
 export type { PhoneConnectDep, PhoneRoutesDeps } from './routes'
 // 处理器登记的写法:别的功能交 `/m/api/*` 表时用(信、定时)
-export { ownsMethod, type PhoneHandler, type PhoneRouteTable } from './phone-route-table'
+export { ownsMethod, type PhoneHandler, type PhoneRouteTable } from '../../lib/phone-route-table'
 export { framedTooLarge } from './mobile-matter-response'
 export { fileChunkResponse, makePhoneChatId, makePhoneOwner } from './mobile-chat'
 export type { MobileActivityDeps } from './mobile-activity'

@@ -34,6 +34,7 @@ import { makeTunnelClient, type TunnelClient, type TunnelWS } from './tunnel-cli
 import { makePhoneEventsWiring } from './phone-topic-sources'
 import { makePhoneOwner } from './mobile-chat'
 import { makePhoneChat } from './phone-chat'
+import { stickerPhoneRoutes } from '../stickers'
 import { buildConnections } from '../../daemon/connections'
 import { makeLiveBackend } from '../../../apps/app/src/backend/live'
 import type { Backend, ConnState } from '../../../apps/app/src/backend/types'
@@ -141,6 +142,8 @@ beforeEach(async () => {
       speak: async text => ({ audio: Buffer.from(`voice:${text}`), mime: 'audio/mpeg' }),
     },
     stickers: { list: () => [{ file: 'happy.png', tags: ['开心'] }], dir: join(root, 'stickers') },
+    // P3d-3 起表情原图归表情那个功能,经 featureRoutes 交进来(同 wire-settings-panel.ts)
+    featureRoutes: [stickerPhoneRoutes({ list: () => [{ file: 'happy.png' }], dir: join(root, 'stickers') })],
     // 连接:真 buildConnections(插件快照还没出来 ⇒ unknown;知识库没开 ⇒ 不出现)+ 真工作台;detail 只在 admin 视图里有,手机路由去掉。
     connections: () => buildConnections({
       plugins: () => null, wechatSyncedAt: () => null,

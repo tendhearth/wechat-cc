@@ -56,6 +56,7 @@ import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
 import { makeCliPhoneActions } from '../../features/terminal/phone-actions'
 import { phoneCliSessionRows } from '../../features/terminal/phone-sessions'
 import { terminalRoutes, type TerminalRoutesDeps } from '../../features/terminal/routes'
+import { terminalPhoneRoutes } from '../../features/terminal/phone-routes'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
@@ -294,7 +295,7 @@ beforeAll(async () => {
       executorName: (id: string) => registry.namesOf(id).name,
     }),
   } as Partial<TerminalRoutesDeps> as TerminalRoutesDeps))
-  // wire-settings-panel.ts:matters 那一组、chat 那一组、cliActions
+  // wire-settings-panel.ts:matters 那一组、chat 那一组、终端会话那张表(P3d-3 起经 featureRoutes 交,同生产)
   panel = makeSettingsPanel({
     v1: internalApi.panelDispatch,
     stateDir: root, ownerChatId: () => OWNER, log: () => {},
@@ -302,7 +303,7 @@ beforeAll(async () => {
     executorName: (id: string) => registry.namesOf(id).name,
     matters: { list: f => service.list(f), withActs: rows => service.withActs(rows), detail: id => service.detail(id), inputReceipt: service.inputReceipt, say: (id, text, input) => service.say(id, text, 'phone', input), permission: service.permission, answer: service.answer, stop: service.stop, worktree: service.worktree, rewindPreview: service.rewindPreview, rewind: service.rewind, artifactChunk: service.artifactChunk, handoff: service.handoff, seenOnPhone: id => matters.bind(id, 'phone', 'pwa') },
     chat: { owner: () => phoneOwner.peek(), inboxDir, history: (chatId, o) => messages.listRange(chatId, o), chat: phoneChat, message: (chatId, id) => messages.get(chatId, id) },
-    cliActions,
+    featureRoutes: [terminalPhoneRoutes({ cliActions })],
   })
   const link = panel.issueToken()
   deviceToken = ((await (await panel.handleRequest(new Request(`http://127.0.0.1/set/api/pair?t=${link}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))).json()) as { device_token: string }).device_token

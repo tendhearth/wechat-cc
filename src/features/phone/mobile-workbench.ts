@@ -4,7 +4,7 @@ import type {NativeContinuePreview} from '../../adapters/workbench/native-adopti
 import type {UploadChunk,UploadState} from '../../adapters/workbench/attachment-uploads'
 import type {MattersService,MatterSayInput} from '../../app/matters/service'
 import {parseEntryInput,type EntryInput} from '../../adapters/workbench/task-entry'
-import {ownsMethod,sharedRoute,type PhoneRouteTable} from './phone-route-table'
+import {ownsMethod,sharedRoute,type PhoneRouteTable} from '../../lib/phone-route-table'
 
 export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'|'worktreeScript'|'rewindPreview'|'rewind'>>
 /** 交办(P3c-4 起交办选项与模型经 /v1/workbench/entry-options、/v1/workbench/models 走,legacy-routes.ts 的别名)。 */

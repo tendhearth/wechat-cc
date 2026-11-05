@@ -43,7 +43,9 @@ describe('phoneRouteAllowed', () => {
       // P3d-2:主人对话、记忆、表情、接着做、分块上传的新键 —— 别名行都是 link: none,新键同
       'GET /v1/matter/owner-chat/page', 'POST /v1/matter/owner-chat/say', 'GET /v1/matter/owner-chat/voice', 'GET /v1/companion/transcribe',
       'GET /v1/matter/owner-chat/model', 'POST /v1/matter/owner-chat/model', 'GET /v1/memory/curated', 'POST /v1/memory/correct', 'GET /v1/stickers/file/',
-      'GET /v1/workbench/session/continue', 'POST /v1/workbench/session/continue', 'GET /v1/workbench/attachment/upload', 'POST /v1/workbench/attachment/chunk']
+      'GET /v1/workbench/session/continue', 'POST /v1/workbench/session/continue', 'GET /v1/workbench/attachment/upload', 'POST /v1/workbench/attachment/chunk',
+      // P3d-3:终端会话拍板 / 接着说一句起的不撞名的新键 —— 同别名行只给设备(评审 10-15 #3)
+      'POST /v1/cli/decide', 'POST /v1/cli/session-say']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     // 链接令牌剩下的就是链接页面会调的那几条:配对、设置页、此刻、一起做的看与停

@@ -12,7 +12,9 @@ import type { WechatContacts, WechatVoice } from '../../ports/wechat'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../app/matters/service'
-import type { MemoryNightlyRuntime } from '../../features/memory'
+import { memoryPhoneRoutes, type MemoryNightlyRuntime } from '../../features/memory'
+import { terminalPhoneRoutes } from '../../features/terminal'
+import { stickerPhoneRoutes } from '../../features/stickers'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
 import { jobsView, jobsAction, mobileJobsRoutes } from '../../features/jobs'
 import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
@@ -57,7 +59,6 @@ export function wireSettingsPanel(d: WireSettingsPanelDeps) {
 return makeSettingsPanel({
   // 执行者叫什么(收敛清单 ⑥):唯一出处 registry;App 读行里的 displayName,不存名字表。
   executorName: (id: string) => boot.registry.namesOf(id).name,
-  ...(opts.cliActions ? { cliActions: opts.cliActions } : {}),
   // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
   ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),
   stateDir,
@@ -95,13 +96,17 @@ return makeSettingsPanel({
     createEntry:(input:import('../../adapters/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone',origin:currentPhoneClient()}),
     entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
   }}:{}),
-  curatedMemory: () => memoryNightly.curatedView(),
-  correctMemory: (id: string, verdict: import('../../features/memory').MemoryVerdict) => memoryNightly.correct(id, verdict),
   ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), withActs: (rows) => mattersService.withActs(rows), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
   // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
   ...(opts.activity ? { activity: opts.activity } : {}),
-  // 信、定时的手机处理器归它们自己的功能(features/letters、features/jobs 的 index.ts 导出),这里只填 deps 交给面板。
+  // 信、定时、终端会话、记忆、表情的手机处理器归它们自己的功能(各自 index.ts 导出),这里只填 deps 交给面板。
   featureRoutes: [
+    // 终端会话:看着它跑 / 拍板 / 接着说一句(P3d-3 从面板搬回 features/terminal)
+    terminalPhoneRoutes({ ...(opts.cliActions ? { cliActions: opts.cliActions } : {}) }),
+    // 「CC 记得你」:整理好的那份 + 逐条纠错(P3d-3 从面板搬回 features/memory)
+    memoryPhoneRoutes({ curated: () => memoryNightly.curatedView(), correct: (id, verdict) => memoryNightly.correct(id, verdict) }),
+    // 表情原图(P3d-3 从面板搬回 features/stickers);面板自己的 stickers 只给首屏 state 列库用
+    stickerPhoneRoutes(opts.stickers ? { list: () => opts.stickers!.list(), dir: join(stateDir, 'stickers') } : undefined),
     mobileLettersRoutes({ list: () => listLetters(stateDir, letterDeliveries(ccActsFor(db, log))), pagePath: (id: string, page: number) => letterPagePath(stateDir, letterDeliveries(ccActsFor(db, log)), id, page) }),
     // 定时在手机上看得见(对标 B7):与微信「定时」、runner 读写同一个 scheduled-jobs.json。
     mobileJobsRoutes((() => {

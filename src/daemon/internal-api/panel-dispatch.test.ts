@@ -139,7 +139,9 @@ const P3D_DEVICE = ['GET /v1/activity', 'GET /v1/cli/activity', 'GET /v1/home', 
   // P3d-2
   'GET /v1/companion/transcribe', 'GET /v1/matter/owner-chat/model', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/voice', 'GET /v1/memory/curated', 'GET /v1/stickers/file/',
   'GET /v1/workbench/attachment/upload', 'GET /v1/workbench/session/continue', 'POST /v1/matter/owner-chat/model', 'POST /v1/matter/owner-chat/say', 'POST /v1/memory/correct',
-  'POST /v1/workbench/attachment/chunk', 'POST /v1/workbench/session/continue']
+  'POST /v1/workbench/attachment/chunk', 'POST /v1/workbench/session/continue',
+  // P3d-3
+  'POST /v1/cli/decide', 'POST /v1/cli/session-say']
 const P3D_LINK = ['GET /v1/home', 'GET /v1/phone/art/presence']
 
 describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不了', () => {

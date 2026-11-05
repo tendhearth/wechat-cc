@@ -199,6 +199,19 @@
 - **金样**:`m-api-routes`、`matter-read-paths` 逐字节不变(金样文件、金样测试都没动;`attachment-chunk`、`attachment-upload` 四份就是这一组的)。`legacy-renames.test.ts` 自动带上这十三行(它按别名表里 `transform: null` 的行走),另加表情前缀一条:原图二进制、`?b64=1`、不在库里的名字、绕出目录的名字,旧前缀和新前缀一样。
 - **和搬之前不一样的几处**:没有手机看得见的。设备令牌多了十三个新键能走(同一个处理器);链接令牌两边都 403。
 
+### P3d-3(撞名的两条起不撞的名字;终端 / 记忆 / 表情的手机处理器搬回各自的功能)
+- **两条改名**:`POST /m/api/cli/permission` → `POST /v1/cli/decide`、`POST /m/api/cli/say` → `POST /v1/cli/session-say`(纯改名,`link: 'none'`)。不并进 `POST /v1/permissions/resolve` 的理由见「P3a 核过的几件」(手机那条多三道收窄,并进去等于设备令牌能批自改流水线的待批)。`/v1/cli/permission`(钩子登记 / 等答案,trusted)、`/v1/cli/say`(CC 的 terminal_say,只认主人会话)两行没动,设备 / 链接令牌照旧 403(`panel-dispatch.test.ts` 对每条没有 phone 块的 `/v1` 行逐条核)。
+- **处理器搬回各自的功能**(经面板的 `featureRoutes` 交进来,同信 / 定时;面板不再 import 终端、记忆):
+  - 终端会话三条(看着它跑 / 拍板 / 接着说一句):`features/phone/mobile-reads.ts` 整个搬成 `features/terminal/phone-routes.ts`(`terminalPhoneRoutes`),面板 deps 的 `cliActions` 去掉;
+  - 记忆两条(`GET /v1/memory/curated`、`POST /v1/memory/correct`):从 `settings-panel.ts` 搬成 `features/memory/phone-routes.ts`(`memoryPhoneRoutes`),面板 deps 的 `curatedMemory` / `correctMemory` 去掉;
+  - 表情原图(`GET /v1/stickers/file/`):从 `settings-panel.ts` 搬成 `features/stickers/phone-routes.ts`(`stickerPhoneRoutes`);面板自己的 `stickers` 留着,只给首屏 `state` 列库。
+  - 处理器一个字没动(回包头照旧:记忆、表情的错误与 `?b64=1` 不带 cache-control,终端三条带 `no-store`)。
+- **为了不成环挪了两样到下层**:这三个功能经手机的 `index.ts` 拿 `ownsMethod` 会成环(手机 → 工作台 → bootstrap → 社交 → 表情 ……,type-only 也算),所以处理器登记的写法 `phone-route-table.ts` 从 `features/phone/` 挪到 `src/lib/`(手机的 `index.ts` 照旧转出,别的引用改路径);终端那条的帧预算 300 KiB 挪成 `domain/matters/phone-scope.ts` 的 `PHONE_FRAME_BUDGET_BYTES`(`MAX_MOBILE_DETAIL_BYTES` 就是它)。
+- **留在面板里的**:`state`、`art/presence`、`home`、`push/*`、`matter/insight` —— 手机自己的数据(配对的设备、首屏拼装、形象画、推送登记、批准说明),要的是面板里的东西,本来就在手机这个功能里;P3e 那十五条也还在(`settings-panel.ts` 剩 5 行 `/m/api`、`mobile-workbench.ts` 剩 9 行,都是 P3e)。
+- **棘轮**:`MAX_OWN_HANDLER_ROWS` 17 → 15(行数仍 61,剩下的 15 行全是 P3e);`no-m-api-literal` 基线 `routes.ts` 17 → 15,`mobile-reads.ts` 随文件删掉(合计 159 → 155)。
+- **金样**:`m-api-routes`、`matter-read-paths` 逐字节不变(金样文件没动;`matter-read-paths` 的测试只改接线:终端那张表经 `featureRoutes` 交,同生产)。
+- **P3d 做完的样子**:`routes.ts` 里剩下的 15 条 `/m/api` 行全是 P3e;`src` 里 `/m/api` 字面量除了 `legacy-routes.ts`,只剩 P3e 那 14 行(`settings-panel.ts` 5、`mobile-workbench.ts` 9);`settings-panel.ts` 里的 `/m/api` 处理器只剩 P3e 的。「`src` 里只在 `legacy-routes.ts`」要等 P3e。
+
 ### 打开 `ServerHello.routes: 'v1'`(给整合者:soak 绿以后一行的 PR)
 - **改哪儿**:`src/features/phone/tunnel-client.ts` 里 v2 握手回应那一行 `sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2 })` 加上 `routes: 'v1'`(就这一处发 `ServerHello`;形状 `packages/protocol/src/messages.ts` 的 `ServerHello` 早就认 `routes: s.optional(s.literal('v1'))`,`shape.test.ts` 钉着)。同 PR 把 `messages.ts` 那段注释里「daemon 现在还不发」改掉,`tunnel-client.test.ts` 握手那条加一句 `expect(hello.routes).toBe('v1')`。不动 `packages/protocol` 的类型就不用 `build:mobile`(改了注释也跑一遍,生成物应该不变)。
 - **谁读它**:今天**没有人读**。`packages/protocol/src/client.ts` 的 `onHello` 只 `ServerHello.safeParse` 然后用 `hs` / `v`,不看 `routes`;App(`apps/app`,经 `makeProtocolClient`)、网页 `/m`(`apps/mobile`,同一个客户端打包进 `protocol-generated.js`)、`wechat-cc selftest phone`(`src/cli/selftest-phone.ts`)都一样。老 App 的 `shape` 丢掉不认识的键(`shape.ts` 的 `object` 只留声明过的键),所以对装着的 App 是无害的一行;真正开始读它是 P3f(新 App build 见到它才改调 `/v1` 键)。局域网直连没有握手,只有中继那条有这个信号。中继(`apps/relay`)只转帧不看内容,不用动。
