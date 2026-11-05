@@ -22,7 +22,7 @@ it('opens real model controls and only reads the native catalog, without resendi
   const invoke=vi.fn(async(method:string,path:string)=>{
     if(path.startsWith('/v1/matters?'))return{matters:[]}
     if(path.startsWith('/v1/workbench/task?'))return detail
-    if(path.startsWith('/v1/workbench/review?'))return{reviews:[]}
+    if(path.startsWith('/v1/matter/changes?'))return{reviews:[]}
     if(path.startsWith('/v1/workbench/models?'))return{catalog:{source:'native',models:[{id:'available-model',displayName:'Available model',reasoningEfforts:['low']}]}}
     if(path==='/v1/workbench/projects')return{projects:[]}
     if(path.startsWith('/v1/workbench'))return{...state,projects:[]}

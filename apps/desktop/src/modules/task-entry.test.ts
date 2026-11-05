@@ -36,8 +36,8 @@ function api(override?: (method: string, path: string, body?: Record<string, any
   return async (method: 'GET'|'POST', path: string, body?: Record<string, any>) => {
     if (override) { const response = await override(method, path, body); if (response !== undefined) return response }
     if (path === '/v1/workbench/entry-options') return options()
-    if (path.startsWith('/v1/workbench/entry-receipt?')) throw Error('entry_not_found')
-    if (path === '/v1/workbench/create-entry') { drafts.push(structuredClone(body!)); return result(body!.requestId) }
+    if (path.startsWith('/v1/matter/create-receipt?')) throw Error('entry_not_found')
+    if (path === '/v1/matter/create') { drafts.push(structuredClone(body!)); return result(body!.requestId) }
     throw Error(`Unexpected API ${method} ${path}`)
   }
 }
@@ -119,7 +119,7 @@ it('keeps a newer edited draft when the previous request is accepted', async () 
   let finish!: (value: unknown) => void
   const onAccepted = vi.fn(async () => {})
   const entry = createTaskEntry({invokeWorkbenchApi: api(async (_method, path, body) => {
-    if (path === '/v1/workbench/create-entry') { drafts.push(structuredClone(body!)); return await new Promise(resolve => {finish = resolve}) }
+    if (path === '/v1/matter/create') { drafts.push(structuredClone(body!)); return await new Promise(resolve => {finish = resolve}) }
   }), storage, onAccepted})
   const pending = entry.open({text: '第一份'}); await settle(); dialog.submit(); await settle()
   dialog.edit('text', '再补一份要求'); dialog.submit(); await settle()
@@ -137,12 +137,12 @@ it('keeps a newer edited draft when the previous request is accepted', async () 
 it('recovers an unknown submission after reload before consulting changed options', async () => {
   const {createTaskEntry} = await import('./task-entry.js')
   const entry = createTaskEntry({invokeWorkbenchApi: api(async (_method, path, body) => {
-    if (path === '/v1/workbench/create-entry') { drafts.push(structuredClone(body!)); throw Error('network disconnected') }
+    if (path === '/v1/matter/create') { drafts.push(structuredClone(body!)); throw Error('network disconnected') }
   }), storage})
   const first = entry.open({text: '不会重复'}); await settle(); dialog.submit(); await settle(); dialog.click('cancel'); await first
   let optionsRead = false
   const restored = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path) => {
-    if (path.startsWith('/v1/workbench/entry-receipt?')) return result(drafts[0]!.requestId)
+    if (path.startsWith('/v1/matter/create-receipt?')) return result(drafts[0]!.requestId)
     if (path === '/v1/workbench/entry-options') {optionsRead = true; throw Error('unavailable')}
   })})
   const second = restored.open({text: '不会重复'}); await settle()
@@ -154,7 +154,7 @@ it('recovers an unknown submission after reload before consulting changed option
 it('retries the immutable unknown request with its original UUID even after editing', async () => {
   const {createTaskEntry} = await import('./task-entry.js')
   const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path, body) => {
-    if (path === '/v1/workbench/create-entry') {
+    if (path === '/v1/matter/create') {
       drafts.push(structuredClone(body!))
       if (drafts.length === 1) throw Error('offline')
       return result(body!.requestId)
@@ -178,7 +178,7 @@ it('rejects mismatched receipts and keeps requirements when no executor is avail
   expect(drafts).toHaveLength(0); expect(dialog.innerHTML).toContain('先连接一个执行者')
   dialog.click('cancel'); await pending
   const second = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path) => {
-    if (path === '/v1/workbench/create-entry') return result('wrong-request')
+    if (path === '/v1/matter/create') return result('wrong-request')
   })})
   const next = second.open({text: '保留要求'}); await settle(); dialog.submit(); await settle()
   expect(dialog.open).toBe(true); expect(dialog.innerHTML).toContain('保留要求')
@@ -189,8 +189,8 @@ it('does not resurrect a request when its closed preview finishes after recovery
   const {createTaskEntry} = await import('./task-entry.js')
   let finish!: (value: unknown) => void, accepted = false
   const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path, body) => {
-    if (path === '/v1/workbench/create-entry') {drafts.push(structuredClone(body!)); return new Promise(resolve => {finish = resolve})}
-    if (path.startsWith('/v1/workbench/entry-receipt?') && accepted) return result(drafts[0]!.requestId)
+    if (path === '/v1/matter/create') {drafts.push(structuredClone(body!)); return new Promise(resolve => {finish = resolve})}
+    if (path.startsWith('/v1/matter/create-receipt?') && accepted) return result(drafts[0]!.requestId)
   })})
   const first = entry.open({text: '同一件事'}); await settle(); dialog.submit(); await settle(); dialog.click('cancel'); await first
   accepted = true
@@ -207,7 +207,7 @@ it('reserves uploaded materials across unknown results and submits only ready me
   const entry = createTaskEntry({storage, createAttachments: deps => (attachments = createWorkbenchAttachments({...deps, encode: async () => 'aGVsbG8='})), invokeWorkbenchApi: api(async (_method, path, body) => {
     if (path === '/v1/workbench/attachment') return {attachment: {id: body!.id, name: body!.name, mime: body!.mime, size: 5, sha256: 'a'.repeat(64)}}
     if (path === '/v1/workbench/discard-attachment') {discarded.push(body!.id); return {ok: true}}
-    if (path === '/v1/workbench/create-entry') {drafts.push(structuredClone(body!)); throw Error('offline')}
+    if (path === '/v1/matter/create') {drafts.push(structuredClone(body!)); throw Error('offline')}
   })})
   const first = entry.open({text: ''}); await settle()
   const state = JSON.parse(storage.getItem('cc.task-entry.window.v1')!)
@@ -250,7 +250,7 @@ it('uses the shared composed prompt boundary, including selected context labels,
 it.each(['invalid_text', 'project_stale', 'attachment_changed'])('lets a request rejected with %s be corrected without reusing its payload identity', async rejection => {
   const {createTaskEntry} = await import('./task-entry.js')
   const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path, body) => {
-    if (path === '/v1/workbench/create-entry') {
+    if (path === '/v1/matter/create') {
       drafts.push(structuredClone(body!))
       if (drafts.length === 1) throw Error(rejection)
       return result(body!.requestId)
@@ -266,7 +266,7 @@ it.each(['invalid_text', 'project_stale', 'attachment_changed'])('lets a request
 it.each(['creation_conflict','unavailable_provider'])('preserves an unknown identity after POST %s even when the current draft is edited',async code=>{
   const {createTaskEntry}=await import('./task-entry.js')
   const entry=createTaskEntry({storage,invokeWorkbenchApi:api(async(_method,path,body)=>{
-    if(path==='/v1/workbench/create-entry'){
+    if(path==='/v1/matter/create'){
       drafts.push(structuredClone(body!))
       if(drafts.length===1)throw Error(code)
       return result(body!.requestId)
@@ -309,7 +309,7 @@ it('inherits the chosen catalog project executor and preserves explicit executio
 it('keeps requirements after a definitively expired request and allocates a new ID only on the next explicit submit',async()=>{
   const {createTaskEntry}=await import('./task-entry.js')
   const entry=createTaskEntry({storage,invokeWorkbenchApi:api(async(_method,path,body)=>{
-    if(path==='/v1/workbench/create-entry'){drafts.push(structuredClone(body!));if(drafts.length===1)throw Error('entry_expired');return result(body!.requestId)}
+    if(path==='/v1/matter/create'){drafts.push(structuredClone(body!));if(drafts.length===1)throw Error('entry_expired');return result(body!.requestId)}
   })})
   const pending=entry.open({text:'保留这份要求'});await settle();dialog.submit();await settle()
   expect(drafts).toHaveLength(1);expect(dialog.innerHTML).toContain('保留这份要求')
@@ -409,7 +409,7 @@ it('keeps the explicitly chosen destination when project options finish loading 
 it.each(['offline', 'invalid_text'])('does not redirect a pending %s request when opening from another project', async failure => {
   const {createTaskEntry} = await import('./task-entry.js')
   const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path, body) => {
-    if (path === '/v1/workbench/create-entry') {
+    if (path === '/v1/matter/create') {
       drafts.push(structuredClone(body!))
       if (drafts.length === 1) throw Error(failure)
       return result(body!.requestId)

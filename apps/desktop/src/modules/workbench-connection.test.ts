@@ -9,7 +9,7 @@ it('keeps task reconnect status through healthy list refreshes and clears it on 
  const render=vi.fn()
  const api=async(_method:string,path:string)=>{
   if(path.includes('/task?')){if(path.includes('since=')){if(failed)throw Error('offline');return {...detail,events:[]}}return detail}
-  if(path.startsWith('/v1/workbench/review'))return {reviews:[]}
+  if(path.startsWith('/v1/matter/changes'))return {reviews:[]}
   return {tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}
  }
  const controller=createWorkbenchController({invokeWorkbenchApi:api,render})

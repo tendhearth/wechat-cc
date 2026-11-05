@@ -113,7 +113,7 @@ async function taskBoundary(page:import('@playwright/test').Page, missing:string
    const id=url.searchParams.get('id')!;reads.push(id)
    if(id===missing){await route.fulfill({status:404,json:{error:'not_found'}});return}
    json={task:task(id),version:1,events:[],artifacts:[],permissions:[],questions:[],continuation:{mode:'new'}}
-  } else if(url.pathname==='/v1/workbench/review')json={reviews:[]}
+  } else if(url.pathname==='/v1/matter/changes')json={reviews:[]}
   else if(url.pathname==='/v1/workbench/attention')json={tasks:[],progress:[]}
   await route.fulfill({json})
  })

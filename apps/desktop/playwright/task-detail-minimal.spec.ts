@@ -15,8 +15,8 @@ const reviewsByTask={};const posts=[];let rejectPost,delayReviews=false,releaseR
 const invokeWorkbenchApi=async(method,path,body)=>{
  if(method==='POST'){posts.push({path,body});return new Promise((_resolve,reject)=>rejectPost=reject)}
  if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):details[new URL(path,location.origin).searchParams.get('id')]
- if(path.startsWith('/v1/workbench/review?')){const reviews=reviewsByTask[new URL(path,location.origin).searchParams.get('id')]??[];return delayReviews?new Promise(resolve=>releaseReviews=()=>resolve({reviews})):{reviews}}
- if(path.startsWith('/v1/workbench/artifact?'))return{name:'访谈记录.md',mime:'text/plain',size:25,sha256:'a'.repeat(64),contentBase64:btoa('saved result')}
+ if(path.startsWith('/v1/matter/changes?')){const reviews=reviewsByTask[new URL(path,location.origin).searchParams.get('id')]??[];return delayReviews?new Promise(resolve=>releaseReviews=()=>resolve({reviews})):{reviews}}
+ if(path.startsWith('/v1/matter/artifact?'))return{name:'访谈记录.md',mime:'text/plain',size:25,sha256:'a'.repeat(64),contentBase64:btoa('saved result')}
  if(path.startsWith('/v1/matters?'))return{matters:[]}
  return{tasks:[task,other],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}
 }

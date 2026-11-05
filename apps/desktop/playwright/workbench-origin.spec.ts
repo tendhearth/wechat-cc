@@ -20,7 +20,7 @@ test('全部:出生地字形挨着头像组,读屏念「从哪来的」;老的�
     let json:any={}
     if(url.pathname==='/v1/workbench')json={tasks,projects:[{id:'p-'+'1'.repeat(20),path:'/demo/blog',name:'blog',providerId:'claude'}],providers:[{id:'claude',displayName:'Claude Code'},{id:'codex',displayName:'Codex'},{id:'cursor',displayName:'Cursor'}],defaultProvider:'claude',canWechat:true}
     else if(url.pathname==='/v1/workbench/task'){const task=tasks.find(x=>x.id===url.searchParams.get('id'))??tasks[0]!;json={task,events:[{id:'1',taskId:task.id,kind:'text',text:'改好了，你看看。',createdAt:2}],artifacts:[]}}
-    else if(url.pathname==='/v1/workbench/review')json={reviews:[]}
+    else if(url.pathname==='/v1/matter/changes')json={reviews:[]}
     await route.fulfill({json})
   })
   await page.goto(shimUrl)

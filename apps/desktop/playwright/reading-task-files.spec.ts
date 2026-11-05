@@ -11,9 +11,9 @@ const detail={task,events:[{id:1,taskId:'A',kind:'user',text,createdAt:1,attachm
 const base64=()=>btoa(String.fromCharCode(...new TextEncoder().encode(text)));window.qa={detail};
 const controller=initWorkbenchPage({pollMs:60000,invokeWorkbenchApi:async(method,path)=>{
  if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):detail;
- if(path.startsWith('/v1/workbench/review?'))return{reviews:[]};
+ if(path.startsWith('/v1/matter/changes?'))return{reviews:[]};
  if(path.startsWith('/v1/workbench/attachment?'))return{attachment:new URL(path,location.origin).searchParams.get('id')==='md'?md:plain,base64:base64()};
- if(path.startsWith('/v1/workbench/artifact?'))return{...artifact,contentBase64:base64()};
+ if(path.startsWith('/v1/matter/artifact?'))return{...artifact,contentBase64:base64()};
  if(path.startsWith('/v1/matters?'))return{matters:[]};
  return{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false};
 }});window.qa.controller=controller;window.qa.stop=stopWorkbenchPolling;

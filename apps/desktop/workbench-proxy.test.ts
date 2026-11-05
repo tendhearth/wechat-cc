@@ -49,7 +49,7 @@ it('only explicit task writes pass; cross-origin and unknown routes are refused'
  const upstream=vi.fn(async()=>Response.json({task:{id:'deadbeef'}},{status:202}))
  const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})
  expect((await proxy(req('/v1/workbench/create','POST')))?.status).toBe(202)
- expect((await proxy(req('/v1/workbench/permission','POST')))?.status).toBe(202)
+ expect((await proxy(req('/v1/matter/permission','POST')))?.status).toBe(202)
  expect((await proxy(req('/v1/workbench/create','POST',{origin:'http://localhost:9999'})))?.status).toBe(403)
  expect((await proxy(req('/v1/workbench/task/extra')))?.status).toBe(405)
  expect(await proxy(req('/v1/memory'))).toBeNull()
@@ -85,20 +85,20 @@ it('keeps archive writes behind explicit host write access while passing literal
  expect((await readonly(req('/v1/workbench/unattended-ack','POST')))?.status).toBe(403)
  expect((await writable(req('/v1/workbench/unattended-ack','POST')))?.status).toBe(200)
  expect((await writable(req('/v1/workbench/unattended-ack')))?.status).toBe(405)
- expect((await readonly(req('/v1/workbench/review?id=deadbeef')))?.status).toBe(200)
- expect((await readonly(req('/v1/workbench/review-mark','POST')))?.status).toBe(403)
- expect((await writable(req('/v1/workbench/review-mark','POST')))?.status).toBe(200)
- expect((await writable(req('/v1/workbench/review-mark')))?.status).toBe(405)
- expect((await readonly(req('/v1/workbench/review-return','POST')))?.status).toBe(403)
- expect((await writable(req('/v1/workbench/review-return','POST')))?.status).toBe(200)
- expect((await writable(req('/v1/workbench/review-return')))?.status).toBe(405)
+ expect((await readonly(req('/v1/matter/changes?id=deadbeef')))?.status).toBe(200)
+ expect((await readonly(req('/v1/matter/review-mark','POST')))?.status).toBe(403)
+ expect((await writable(req('/v1/matter/review-mark','POST')))?.status).toBe(200)
+ expect((await writable(req('/v1/matter/review-mark')))?.status).toBe(405)
+ expect((await readonly(req('/v1/matter/review-return','POST')))?.status).toBe(403)
+ expect((await writable(req('/v1/matter/review-return','POST')))?.status).toBe(200)
+ expect((await writable(req('/v1/matter/review-return')))?.status).toBe(405)
 })
 
 const liveRoutes = [
- ['POST', '/v1/workbench/quota-handoff'],
+ ['POST', '/v1/matter/handoff'],
  ['GET', '/v1/workbench/entry-options'],
- ['POST', '/v1/workbench/create-entry'],
- ['GET', '/v1/workbench/entry-receipt'],
+ ['POST', '/v1/matter/create'],
+ ['GET', '/v1/matter/create-receipt'],
  ['POST', '/v1/workbench/prepare-continuation'],
  ['GET', '/v1/workbench/models'],
  ['POST', '/v1/workbench/attachment'],
@@ -107,7 +107,7 @@ const liveRoutes = [
  ['GET', '/v1/workbench/attention'],
  ['POST', '/v1/workbench/input'],
  ['POST', '/v1/workbench/withdraw-input'],
- ['POST', '/v1/workbench/answer'],
+ ['POST', '/v1/matter/answer'],
 ] as const
 
 it.each(liveRoutes)('forwards authorized %s %s with the exact method and host credential',async(method,path)=>{

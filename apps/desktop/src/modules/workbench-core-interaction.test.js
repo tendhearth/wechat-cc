@@ -72,7 +72,7 @@ async function pageFixture(){
  let release=null
  const invokeWorkbenchApi=vi.fn(async(method,path)=>{
   if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(resolve=>{release=resolve}):detail
-  if(path.startsWith('/v1/workbench/review?'))return{reviews:[]}
+  if(path.startsWith('/v1/matter/changes?'))return{reviews:[]}
   if(path.startsWith('/v1/matters?'))return{matters:[]}
   return{tasks:[task],providers:[],defaultProvider:'codex',canWechat:false}
  })
