@@ -16,8 +16,8 @@ import type { Facet, Episode, ThreadStatus, EntryKind } from '../../lib/threads-
 export interface NewEntry { kind: EntryKind; line: string; body?: string; due?: string; /** 结论来自哪件事(agent 的活)。 */ matter?: string }
 
 export type ExtractOp =
-  | { op: 'create_topic'; title: string; summary: string; facets: [Facet, ...Facet[]]; tags: string[]; aliases: string[]; private: boolean; episode?: Episode; entries: NewEntry[] }
-  | { op: 'update_topic'; id: string; title?: string; summary?: string; facets?: Facet[]; tags?: string[]; aliases?: string[]; private?: boolean; status?: ThreadStatus }
+  | { op: 'create_topic'; title: string; summary: string; description?: string; facets: [Facet, ...Facet[]]; tags: string[]; aliases: string[]; private: boolean; episode?: Episode; entries: NewEntry[] }
+  | { op: 'update_topic'; id: string; title?: string; summary?: string; description?: string; facets?: Facet[]; tags?: string[]; aliases?: string[]; private?: boolean; status?: ThreadStatus }
   | { op: 'touch'; id: string; episode: Episode }
   | ({ op: 'add_entry'; topic: string } & NewEntry)
   | { op: 'update_entry'; id: string; line?: string; body?: string; due?: string; status?: 'live' | 'done' | 'superseded' }
@@ -33,6 +33,8 @@ export interface PromptTopic {
   tags: string[]
   aliases: string[]
   summary: string
+  /** 这个话题是什么(可空)。 */
+  description?: string
   /** 还算数的条目索引(新的在前,已截短)。 */
   entries: Array<{ id: string; kind: EntryKind; line: string; due?: string | null }>
 }
@@ -86,6 +88,7 @@ const TASK = `你是 CC,在整理和主人聊过的「话题」。话题是记�
 ## 话题
 - title:主人嘴里的那个词,≤12 字。不要写成句子(×「bx网络工具的产品架构与核心功能开发」→ ✓「bx」)。
   已有话题的标题超过 12 字、或带「」书名号的,这一批就用 update_topic 把它改成一个词(id 不变),顺手补上 aliases。
+- description:这个话题**是什么**,一句话 ≤40 字,不写进度(「自托管的透明代理网络工具」)。建话题时写;以后只在它说错了时改。
 - summary:一行索引钩子,≤60 字,说清这个话题是什么、现在大致到哪。
 - aliases:主人还会怎么叫它(简称、英文名、口头说法、只属于它的专有名词),3–8 个。以后靠它们认出「又聊到这个了」。
   不要放好几个话题都沾边的大类词(「产品开发」「AI」「运维」)——那是 tags 的事。
@@ -108,11 +111,11 @@ const TASK = `你是 CC,在整理和主人聊过的「话题」。话题是记�
 - agent 的活只记结论(改了什么、结果是什么、卡在哪、下一步),不记过程;结论条目写 "matter":"事的编号"。
 
 ## 时间戳
-episode 的时间戳原样复制消息里的 ts(UTC、以 Z 结尾)。没有对话、只有 agent 的活时不写 episode。
+episode 的时间戳必须原样复制消息里的 ts(UTC、以 Z 结尾),不要改写时区。没有对话、只有 agent 的活时不写 episode。
 
 ## 输出
 只输出一个 JSON 对象 {"ops":[...]},不要 markdown、解释。没有可做的就输出 {"ops":[]}。
-- {"op":"create_topic","title":"bx","summary":"…","facets":["task"],"tags":["产品开发"],"aliases":["bx server","代理"],"private":false,"episode":{"from_ts":"…","to_ts":"…"},"entries":[{"kind":"decision","line":"…","body":"…"}]}
+- {"op":"create_topic","title":"bx","description":"…","summary":"…","facets":["task"],"tags":["产品开发"],"aliases":["bx server","代理"],"private":false,"episode":{"from_ts":"…","to_ts":"…"},"entries":[{"kind":"decision","line":"…","body":"…"}]}
 - {"op":"update_topic","id":"thr_xxx","title":"…","summary":"…","aliases":["…"]}(只写要改的字段;status 可为 active / dormant / done)
 - {"op":"touch","id":"thr_xxx","episode":{"from_ts":"…","to_ts":"…"}}(话题又聊到了)
 - {"op":"add_entry","topic":"thr_xxx","kind":"commitment","line":"…","due":"2026-11-20"}
@@ -122,7 +125,7 @@ export function buildExtractPrompt(input: ExtractPromptInput): string {
   const { newMessages, existingThreads, tagVocabulary, contextTail, workResults } = input
 
   const topics = existingThreads.length === 0 ? '(暂无)' : existingThreads.map(t => {
-    const head = `- id: ${t.id}  「${t.title}」  facets: [${t.facets.join(', ')}]  tags: [${t.tags.join(', ')}]  aliases: [${t.aliases.join(', ')}]${t.summary ? `\n  摘要: ${t.summary}` : ''}`
+    const head = `- id: ${t.id}  「${t.title}」  facets: [${t.facets.join(', ')}]  tags: [${t.tags.join(', ')}]  aliases: [${t.aliases.join(', ')}]${t.description ? `\n  是什么: ${t.description}` : ''}${t.summary ? `\n  摘要: ${t.summary}` : ''}`
     const ents = t.entries.slice(0, ENTRIES_PER_TOPIC).map(e => `  · ${e.id} [${KIND_LABEL[e.kind] ?? e.kind}] ${e.line}${e.due ? `(期限 ${e.due})` : ''}`)
     return [head, ...ents].join('\n')
   }).join('\n')
@@ -166,11 +169,11 @@ const EntryShape = { kind: KindEnum, line: Line, body: z.string().optional(), du
 
 const ExtractOpSchema = z.discriminatedUnion('op', [
   z.object({
-    op: z.literal('create_topic'), title: Line, summary: z.string(), facets: z.array(FacetEnum).min(1), tags: Words, aliases: Words.default([]),
+    op: z.literal('create_topic'), title: Line, summary: z.string(), description: z.string().optional(), facets: z.array(FacetEnum).min(1), tags: Words, aliases: Words.default([]),
     private: z.boolean(), episode: EpisodeSchema.optional(), entries: z.array(z.object(EntryShape)).default([]),
   }),
   z.object({
-    op: z.literal('update_topic'), id: z.string(), title: Line.optional(), summary: z.string().optional(), facets: z.array(FacetEnum).min(1).optional(),
+    op: z.literal('update_topic'), id: z.string(), title: Line.optional(), summary: z.string().optional(), description: z.string().optional(), facets: z.array(FacetEnum).min(1).optional(),
     tags: Words.optional(), aliases: Words.optional(), private: z.boolean().optional(), status: ThreadStatusEnum.optional(),
   }),
   z.object({ op: z.literal('touch'), id: z.string(), episode: EpisodeSchema }),

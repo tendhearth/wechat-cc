@@ -12,6 +12,11 @@ import type { Migration } from './types'
 export const migration: Migration = (db) => {
   const has = (table: string, col: string) => db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().some(c => c.name === col)
   if (!has('threads', 'aliases')) db.exec(`ALTER TABLE threads ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'`)
+  // description:这个话题是什么(一行),只在抽取时写;摘要 = 它 + 睡一觉时代码拼的最新状态。老行先填成它的摘要(老摘要本来就是这个)。
+  if (!has('threads', 'description')) {
+    db.exec(`ALTER TABLE threads ADD COLUMN description TEXT NOT NULL DEFAULT ''`)
+    db.exec(`UPDATE threads SET description = summary`)
+  }
   db.exec(`
     UPDATE threads SET aliases = (
       SELECT json_group_array(j.value) FROM json_each(threads.tags) j

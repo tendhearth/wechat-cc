@@ -1427,6 +1427,7 @@ describe('v104 — 话题升格(T1):aliases / topic_entries / 新水位', () => 
       INSERT INTO thread_extract_state(chat_id,extracted_to_ts) VALUES('c1','2026-11-05T01:01:04.643Z');`)
     runMigrations(db, migrations)
     expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query("SELECT description FROM threads WHERE id='thr_a'").get()).toEqual({ description: 's' })
     expect(db.query('SELECT id,title,tags,aliases FROM threads ORDER BY id').all()).toEqual([
       { id: 'thr_a', title: 'bx网络工具的产品架构', tags: '["bx","产品开发"]', aliases: '["bx"]' },
       { id: 'thr_b', title: '坏行', tags: 'not-json', aliases: '[]' },

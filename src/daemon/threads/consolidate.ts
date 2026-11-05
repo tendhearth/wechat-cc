@@ -3,7 +3,7 @@
  *
  * 每晚整理记忆真跑过一次之后,接着整理这次以来改过的话题:同一件事一路记下来的几条进展并成一条(模型只分组、代码核主题词),
  * 几乎一样的事实并成一条(代码判);并出来的那条用最新那条的原话。被并掉的旧条目标 superseded、superseded_by 指向新的那条(不删)。
- * 承诺、决定、结论不并。提交号按规则去掉。话题摘要由代码从还算数的条目拼。
+ * 承诺、决定、结论不并。提交号按规则去掉。话题摘要 =「它是什么」(抽取时写的 description)+ 代码拼的最新状态。
  * 失败:同一个话题重试一次,还不行跳过它、水位不前移(下一晚再来);网络不安全 ⇒ 整批停。
  */
 import z from 'zod'
@@ -94,11 +94,28 @@ export function mergedEntry(group: readonly TopicEntry[]): { kind: EntryKind; li
   return { kind: newest.kind, line: stripCommitHashes(newest.line), body: body.slice(0, BODY_MAX), ts: newest.updatedTs, source: group.every(e => e.source === 'work') ? 'work' : 'chat' }
 }
 
-/** 话题摘要(代码拼,不让模型写):最新的进展 / 结论那一行 + 最新的决定那一行;都没有 ⇒ null(不改)。 */
-export function buildSummary(live: readonly TopicEntry[]): string | null {
+export const STATUS_MAX = 80
+
+/** 状态那一截:超过 STATUS_MAX 就在最后一个分句处切(;,。、),找不到再硬切加「…」。 */
+export function capAtClause(text: string, max = STATUS_MAX): string {
+  const chars = [...text]
+  if (chars.length <= max) return text
+  const head = chars.slice(0, max).join('')
+  const cut = Math.max(...['；', ';', '，', ',', '。', '、', ':', '：'].map(p => head.lastIndexOf(p)))
+  return cut >= max / 3 ? head.slice(0, cut) : `${head}…`
+}
+
+/**
+ * 话题摘要(代码拼,不让模型写):「它是什么」(description,只在抽取时写)+ 最新的那一行状态
+ * (最新的进展 / 结论;都没有就最新的决定),状态那一截 ≤ STATUS_MAX 字、在分句处切。都没有 ⇒ null(不改)。
+ */
+export function buildSummary(description: string, live: readonly TopicEntry[]): string | null {
   const pick = (kinds: EntryKind[]) => { const xs = live.filter(e => kinds.includes(e.kind)); return xs.length ? newestOf(xs) : null }
-  const parts = [pick(['progress', 'conclusion']), pick(['decision'])].filter((e): e is TopicEntry => !!e).map(e => stripCommitHashes(e.line))
-  return parts.length ? parts.join(';') : null
+  const latest = pick(['progress', 'conclusion']) ?? pick(['decision'])
+  const desc = description.trim().replace(/[。.;;]+$/, '')
+  if (!latest) return null
+  const status = capAtClause(stripCommitHashes(latest.line))
+  return desc ? `${desc}。现状:${status}` : status
 }
 
 /** 几乎一样的事实(代码判,不问模型):按出现先后贪心分组。 */
@@ -215,7 +232,7 @@ export async function consolidateTopics(d: ConsolidateDeps): Promise<Consolidate
       res.stripped++
     }
     // 3) 摘要:代码拼,不让模型写(模型改写过摘要,把「待邮寄」写成了「已寄出」)
-    const summary = buildSummary(await d.threads.entries(t.id, { live: true }))
+    const summary = buildSummary(t.description, await d.threads.entries(t.id, { live: true }))
     if (summary && summary !== t.summary) await d.threads.update(t.id, { summary })
   }
   if (res.failed === 0) await d.threads.setExtractState(d.chatId, { consolidatedToTs: startedAt })

@@ -82,6 +82,8 @@ export interface ThreadRecord {
   chatId: string
   title: string
   summary: string
+  /** 这个话题是什么(一行,v104):只在抽取时写;摘要 = 它 + 代码拼的最新状态(睡一觉时)。 */
+  description: string
   facets: Facet[]
   tags: string[]
   /** CC 定的「主人会怎么叫它」(v104):简称、英文名、口头说法。索引匹配用。 */
@@ -93,7 +95,8 @@ export interface ThreadRecord {
   lastActive: string
 }
 
-export type CreateThreadInput = Omit<ThreadRecord, 'id' | 'status' | 'createdTs' | 'lastActive' | 'aliases'> & {
+export type CreateThreadInput = Omit<ThreadRecord, 'id' | 'status' | 'createdTs' | 'lastActive' | 'aliases' | 'description'> & {
+  description?: string
   status?: ThreadStatus
   aliases?: string[]
   /** 活跃时刻(抽取时用那批消息的最后时刻);不给 ⇒ 现在。 */
@@ -103,6 +106,7 @@ export type CreateThreadInput = Omit<ThreadRecord, 'id' | 'status' | 'createdTs'
 export type UpdateThreadInput = {
   title?: string
   summary?: string
+  description?: string
   facets?: Facet[]
   tags?: string[]
   aliases?: string[]
@@ -137,6 +141,7 @@ interface ThreadRow {
   chat_id: string
   title: string
   summary: string
+  description: string
   facets: string
   tags: string
   aliases: string
@@ -165,6 +170,7 @@ function rowToRecord(r: ThreadRow): ThreadRecord {
     chatId: r.chat_id,
     title: r.title,
     summary: r.summary,
+    description: r.description,
     facets: safeJsonArray<Facet>(r.facets),
     tags: safeJsonArray<string>(r.tags),
     aliases: safeJsonArray<string>(r.aliases),
@@ -185,6 +191,7 @@ function newThreadId(): string {
 const UPDATABLE_COLS: Record<keyof UpdateThreadInput, string> = {
   title: 'title',
   summary: 'summary',
+  description: 'description',
   facets: 'facets',
   tags: 'tags',
   aliases: 'aliases',
@@ -195,18 +202,18 @@ const UPDATABLE_COLS: Record<keyof UpdateThreadInput, string> = {
 }
 
 export function makeThreadsStore(db: Db): ThreadsStore {
-  const stmtInsert = db.query<unknown, [string, string, string, string, string, string, string, number, string, string, string, string]>(
-    `INSERT INTO threads(id, chat_id, title, summary, facets, tags, aliases, private, status, episodes, created_ts, last_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  const stmtInsert = db.query<unknown, [string, string, string, string, string, string, string, string, number, string, string, string, string]>(
+    `INSERT INTO threads(id, chat_id, title, summary, description, facets, tags, aliases, private, status, episodes, created_ts, last_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
 
   const stmtList = db.query<ThreadRow, [string]>(
-    `SELECT id, chat_id, title, summary, facets, tags, aliases, private, status, episodes, created_ts, last_active
+    `SELECT id, chat_id, title, summary, description, facets, tags, aliases, private, status, episodes, created_ts, last_active
      FROM threads WHERE chat_id = ? ORDER BY last_active DESC`,
   )
 
   const stmtGet = db.query<ThreadRow, [string]>(
-    `SELECT id, chat_id, title, summary, facets, tags, aliases, private, status, episodes, created_ts, last_active
+    `SELECT id, chat_id, title, summary, description, facets, tags, aliases, private, status, episodes, created_ts, last_active
      FROM threads WHERE id = ?`,
   )
 
@@ -233,6 +240,7 @@ export function makeThreadsStore(db: Db): ThreadsStore {
         input.chatId,
         input.title,
         redactIdentifiers(input.summary),
+        redactIdentifiers(input.description ?? input.summary),
         JSON.stringify(input.facets),
         JSON.stringify(input.tags),
         JSON.stringify(input.aliases ?? []),
@@ -261,7 +269,7 @@ export function makeThreadsStore(db: Db): ThreadsStore {
           values.push(JSON.stringify(mergeEpisodes(val as Episode[])))
         } else if (key === 'facets' || key === 'tags' || key === 'aliases') {
           values.push(JSON.stringify(val))
-        } else if (key === 'summary') {
+        } else if (key === 'summary' || key === 'description') {
           values.push(redactIdentifiers(String(val)))
         } else if (key === 'private') {
           values.push(val ? 1 : 0)

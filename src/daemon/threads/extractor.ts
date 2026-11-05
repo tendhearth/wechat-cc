@@ -101,7 +101,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
       newMessages: batch.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })),
       ...(tail.length > 0 ? { contextTail: tail.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })) } : {}),
       existingThreads: existing.map(t => ({
-        id: t.id, title: t.title, facets: t.facets, tags: t.tags, aliases: t.aliases, summary: t.summary,
+        id: t.id, title: t.title, facets: t.facets, tags: t.tags, aliases: t.aliases, summary: t.summary, description: t.description,
         entries: (entries.get(t.id) ?? []).slice(0, ENTRIES_PER_TOPIC).map(e => ({ id: e.id, kind: e.kind, line: e.line, due: e.due })),
       })),
       tagVocabulary: await deps.threads.tagVocabulary(30),
@@ -135,7 +135,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
   for (const op of ops) {
     if (op.op === 'create_topic') {
       const id = await deps.threads.create({
-        chatId: deps.chatId, title: op.title, summary: op.summary, facets: op.facets as [Facet, ...Facet[]], tags: op.tags.slice(0, 3),
+        chatId: deps.chatId, title: op.title, summary: op.summary, ...(op.description?.trim() ? { description: op.description.trim() } : {}), facets: op.facets as [Facet, ...Facet[]], tags: op.tags.slice(0, 3),
         aliases: op.aliases, private: op.private, episodes: op.episode ? [op.episode] : [], lastActive: activeTs,
       })
       known.add(id)

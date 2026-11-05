@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makeThreadsStore } from '../../lib/threads-store'
-import { consolidateTopics, stripCommitHashes, hasCommitHash, parseConsolidate, sameSubject, topicWordsOf, duplicateFactGroups, similarity, mergedEntry, buildSummary } from './consolidate'
+import { consolidateTopics, stripCommitHashes, hasCommitHash, parseConsolidate, sameSubject, topicWordsOf, duplicateFactGroups, similarity, mergedEntry, buildSummary, capAtClause } from './consolidate'
 
 async function setup() {
   const threads = makeThreadsStore(openTestDb())
@@ -59,9 +59,21 @@ describe('同一件事才并(代码核)', () => {
     ])
     expect(m).toMatchObject({ kind: 'progress', line: '1in8b 全部 172 国上线', ts: '2026-11-03' })
     expect(m.body).toBe('18 种语言\n之前:\n- 1in8b 非洲板块上线\n- 1in8b 美洲板块上线')
-    expect(buildSummary([E('a', 'progress', '旧进展', '2026-11-01'), E('b', 'conclusion', '新结论 (commit e2aa78ba)', '2026-11-03'), E('c', 'decision', '定了用 Airwallex', '2026-11-02'), E('d', 'commitment', '答应 X', '2026-11-04')]))
-      .toBe('新结论;定了用 Airwallex')
-    expect(buildSummary([E('d', 'commitment', '答应 X', '2026-11-04')])).toBeNull()
+    const live = [E('a', 'progress', '旧进展', '2026-11-01'), E('b', 'conclusion', '新结论 (commit e2aa78ba)', '2026-11-03'), E('c', 'decision', '定了用 Airwallex', '2026-11-02'), E('d', 'commitment', '答应 X', '2026-11-04')]
+    expect(buildSummary('游戏本地化项目,172 国 18 种语言。', live)).toBe('游戏本地化项目,172 国 18 种语言。现状:新结论')
+    expect(buildSummary('', live)).toBe('新结论')
+    expect(buildSummary('x', [E('c', 'decision', '定了用 Airwallex', '2026-11-02')])).toBe('x。现状:定了用 Airwallex')
+    expect(buildSummary('x', [E('d', 'commitment', '答应 X', '2026-11-04')])).toBeNull()
+  })
+  it('状态那一截 ≤ 80 字,在分句处切', () => {
+    const long = 'Stripe 正式账户已验证通过并配置完毕:收款账户已连,商品及 18 条多语言链接已建,Webhook 已指向 lifelot 域名,前端切换正式密钥之后再观察一周的退款和对账,确认没问题再把测试账户关掉'
+    const c = capAtClause(long)
+    expect([...c].length).toBeLessThanOrEqual(80)
+    expect(long.startsWith(c)).toBe(true)
+    expect(/[,::]$/.test(c)).toBe(false)
+    expect(long[c.length]).toMatch(/[,;:;,:。、]/)
+    expect(capAtClause('短')).toBe('短')
+    expect(capAtClause('x'.repeat(100))).toBe('x'.repeat(80) + '…')
   })
 })
 
@@ -101,7 +113,7 @@ describe('consolidateTopics(睡一觉)', () => {
     expect(live.map(e => e.line).sort()).toEqual(['Stripe 正式密钥已配好', '日韩板块上线', '答应 11-20 前切到 Stripe 正式密钥', '翻译用 18 种语言'].sort())
     for (const id of ids.slice(0, 3)) expect(await threads.getEntry(id)).toMatchObject({ status: 'superseded', supersededBy: merged.id })
     expect((await threads.entries(t)).length).toBe(7)
-    expect((await threads.get(t))!.summary).toBe('Stripe 正式密钥已配好;翻译用 18 种语言')
+    expect((await threads.get(t))!).toMatchObject({ summary: '旧摘要。现状:Stripe 正式密钥已配好', description: '旧摘要' })
     expect((await threads.getExtractState('o')).consolidatedToTs).toBe('2026-11-05T04:00:00Z')
     let calls = 0
     await consolidateTopics({ chatId: 'o', threads, log: () => {}, now: () => '2026-11-06T04:00:00Z', sdkEval: async () => { calls++; return '{"groups":[]}' } })

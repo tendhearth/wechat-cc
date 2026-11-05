@@ -61,3 +61,59 @@ describe('parseExtractResponse', () => {
     expect(parseExtractResponse('{"ops":[]}')).toEqual({ ops: [], dropped: 0 })
   })
 })
+
+// 原有用例搬到新的操作形状上(T1:create → create_topic、update → update_topic;单条不合法只丢那一条,不再整批作废)
+describe('parseExtractResponse · 原有用例', () => {
+  const ep = '"episode":{"from_ts":"2026-06-11T00:00:00Z","to_ts":"2026-06-11T00:01:00Z"}'
+  it('rejects malformed responses with null (never throws)', () => {
+    expect(parseExtractResponse('not json at all')).toBeNull()
+    expect(parseExtractResponse('{"ops": "nope"}')).toBeNull()
+    expect(parseExtractResponse('{"ops":[')).toBeNull()
+  })
+  it('create with empty facets array → null (schema enforces min(1))', () => {
+    expect(parseExtractResponse(`{"ops":[{"op":"create_topic","title":"无 facet","summary":"s","facets":[],"tags":[],"private":false,${ep}}]}`)).toEqual({ ops: [], dropped: 1 })
+  })
+  it('extra unknown keys are stripped from the parsed op (not present in result)', () => {
+    const r = parseExtractResponse(`{"ops":[{"op":"touch","id":"thr_1",${ep},"unknownField":"should-be-gone"}]}`)
+    expect(r).not.toBeNull()
+    expect(r!.ops[0]).not.toHaveProperty('unknownField')
+  })
+  it('update with only id is parsed (documents the no-op contract)', () => {
+    const r = parseExtractResponse('{"ops":[{"op":"update_topic","id":"thr_abc"}]}')
+    expect(r).not.toBeNull()
+    expect(r!.ops.length).toBe(1)
+    expect(r!.ops[0]).toMatchObject({ op: 'update_topic', id: 'thr_abc' })
+  })
+  it('A4: episode with +08:00 offset ts → entire batch rejected (returns null)', () => {
+    // T1 起:只丢这一条(dropped),不再整批作废 —— 一条写错就让水位永远卡住更糟
+    const r = parseExtractResponse('{"ops":[{"op":"touch","id":"t","episode":{"from_ts":"2026-06-11T09:00:00+08:00","to_ts":"2026-06-11T09:01:00+08:00"}}]}')
+    expect(r).toEqual({ ops: [], dropped: 1 })
+  })
+  it('A4: valid Z-suffix ts passes schema', () => {
+    const r = parseExtractResponse('{"ops":[{"op":"touch","id":"t","episode":{"from_ts":"2026-06-11T01:00:00Z","to_ts":"2026-06-11T01:01:00Z"}}]}')
+    expect(r!.ops.length).toBe(1)
+    expect(r!.dropped).toBe(0)
+  })
+  it('A4: ts with milliseconds and Z suffix passes schema', () => {
+    const r = parseExtractResponse('{"ops":[{"op":"touch","id":"thr_1","episode":{"from_ts":"2026-06-11T01:00:00.123Z","to_ts":"2026-06-11T01:01:00.456Z"}}]}')
+    expect(r!.ops.length).toBe(1)
+  })
+  it('A4: prompt contains the UTC timestamp rule', () => {
+    const p = buildExtractPrompt({ newMessages: [], existingThreads: [], tagVocabulary: [] })
+    expect(p).toContain('时间戳必须原样复制')
+    expect(p).toContain('UTC')
+    expect(p).toContain('Z 结尾')
+  })
+  it('contextTail appears in prompt under the reappearance header', () => {
+    const p = buildExtractPrompt({
+      newMessages: [{ ts: '2026-06-11T02:00:00Z', direction: 'in', text: '排产又提了一次' }], existingThreads: [], tagVocabulary: [],
+      contextTail: [{ ts: '2026-06-10T20:00:00Z', direction: 'in', text: '上次说的排产问题' }, { ts: '2026-06-10T20:01:00Z', direction: 'out', text: '好的我记下了' }],
+    })
+    expect(p).toContain('近期历史(只用来判断话题是不是又聊到了')
+    expect(p).toContain('上次说的排产问题')
+    expect(p).toContain('好的我记下了')
+    const tailPos = p.indexOf('近期历史'), newMsgPos = p.indexOf('=== 新增对话片段 ===')
+    expect(tailPos).toBeGreaterThan(-1)
+    expect(tailPos).toBeLessThan(newMsgPos)
+  })
+})

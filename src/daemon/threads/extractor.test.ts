@@ -43,7 +43,7 @@ describe('threads extractor (话题 T1)', () => {
     })
     expect(res.applied).toBe(1)
     const [t] = await threads.list('c1')
-    expect(t).toMatchObject({ title: 'bx', aliases: ['bx server'], lastActive: '2026-06-11T01:00:00Z' })
+    expect(t).toMatchObject({ title: 'bx', aliases: ['bx server'], lastActive: '2026-06-11T01:00:00Z', description: '自托管网络工具' })
     const es = await threads.entries(t!.id)
     expect(es.map(e => [e.kind, e.due, e.source]).sort()).toEqual([['commitment', '2026-06-20', 'chat'], ['progress', null, 'chat']])
   })
@@ -143,5 +143,71 @@ describe('threads extractor (话题 T1)', () => {
     expect(es.find(e => e.line.startsWith('bx DNS'))).toMatchObject({ source: 'work', matterId: 'm1' })
     expect(es.find(e => e.line === '编的')).toMatchObject({ source: 'chat', matterId: null })
     expect((await threads.getExtractState('c1')).workCursor).toBe(50)
+  })
+})
+
+// 原有用例搬到新的操作形状和新水位上(T1)
+describe('threads extractor · 原有用例', () => {
+  const ts = (h: number) => `2026-06-11T0${h}:00:00Z`
+  it('excludes explicit workbench provenance from both new messages and context tail, preserving other commands', async () => {
+    const { messages, threads } = setup()
+    const rows = [['1', 'workbench', 'private old input'], ['2', 'live', 'ordinary old chat'], ['3', 'workbench', 'private result'], ['4', 'live', '/ordinary-command'], ['5', 'workbench', 'private latest']]
+    for (const [id, source, text] of rows) await messages.append({ id: id!, chatId: 'c1', ts: `2026-06-11T01:00:0${id}Z`, direction: id === '3' ? 'out' : 'in', kind: 'command', text: text!, source: source! })
+    await threads.setExtractState('c1', { entriesToTs: '2026-06-11T01:00:02Z' })
+    let prompt = ''
+    await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet, sdkEval: async v => { prompt = v; return '{"ops":[]}' } })
+    for (const marker of ['private old input', 'private result', 'private latest']) expect(prompt).not.toContain(marker)
+    expect(prompt).toContain('ordinary old chat')
+    expect(prompt).toContain('/ordinary-command')
+    expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-06-11T01:00:05Z')
+    expect(await messages.listSince('c1', '1970', 10)).toHaveLength(5)
+  })
+  it('update op on unknown id is skipped, others still apply', async () => {
+    const { messages, threads } = setup()
+    await messages.append({ id: '1', chatId: 'c1', ts: ts(1), direction: 'in', kind: 'text', text: 'x', source: 'live' })
+    const res = await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet,
+      sdkEval: async () => JSON.stringify({ ops: [{ op: 'touch', id: 'thr_ghost', episode: ep(ts(1)) }, { op: 'create_topic', title: 'y', summary: '', facets: ['life'], tags: [], private: false, episode: ep(ts(1)) }] }) })
+    expect(res.applied).toBe(1)
+    expect(res.skipped).toBe(1)
+  })
+  it('contextTail is passed to buildExtractPrompt when pre-watermark messages exist', async () => {
+    const { messages, threads } = setup()
+    await messages.append({ id: '1', chatId: 'c1', ts: ts(1), direction: 'in', kind: 'text', text: 'old message', source: 'live' })
+    await threads.setExtractState('c1', { entriesToTs: ts(1) })
+    await messages.append({ id: '2', chatId: 'c1', ts: ts(2), direction: 'in', kind: 'text', text: '新消息', source: 'live' })
+    let captured = ''
+    await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet, sdkEval: async p => { captured = p; return '{"ops":[]}' } })
+    expect(captured).toContain('old message')
+    expect(captured).toContain('近期历史')
+  })
+  it('empty ops list advances watermark and records event', async () => {
+    const { messages, threads } = setup()
+    await messages.append({ id: '1', chatId: 'c1', ts: ts(5), direction: 'out', kind: 'text', text: 'hi', source: 'live' })
+    let eventRecorded = false
+    const res = await runThreadsExtraction({ chatId: 'c1', messages, threads, log: () => {}, recordEvent: async () => { eventRecorded = true }, sdkEval: async () => '{"ops":[]}' })
+    expect(res.applied).toBe(0)
+    expect(res.skipped).toBe(0)
+    expect((await threads.getExtractState('c1')).entriesToTs).toBe(ts(5))
+    expect(eventRecorded).toBe(true)
+  })
+  it('update op on known id applies (touch adds episode, lastActive)', async () => {
+    const { messages, threads } = setup()
+    await messages.append({ id: '1', chatId: 'c1', ts: ts(3), direction: 'in', kind: 'text', text: 'follow-up on排产', source: 'live' })
+    const tId = await threads.create({ chatId: 'c1', title: '排产', summary: '', facets: ['task'], tags: [], private: false, episodes: [ep('2026-06-10T00:00:00Z')], lastActive: '2026-06-10T00:00:00Z' })
+    const res = await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet, sdkEval: async () => JSON.stringify({ ops: [{ op: 'touch', id: tId, episode: ep(ts(3)) }] }) })
+    expect(res.applied).toBe(1)
+    expect(res.skipped).toBe(0)
+    const updated = await threads.get(tId)
+    expect(updated?.episodes.length).toBe(2)
+    expect(updated?.lastActive).toBe(ts(3))
+  })
+  it('applies create ops and advances watermark to last message ts', async () => {
+    const { messages, threads } = setup()
+    await messages.append({ id: '1', chatId: 'c1', ts: '2026-06-11T01:00:00Z', direction: 'in', kind: 'text', text: '排产', source: 'live' })
+    const res = await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet,
+      sdkEval: async () => JSON.stringify({ ops: [{ op: 'create_topic', title: '排产', summary: 's', facets: ['task'], tags: [], private: false, episode: ep('2026-06-11T01:00:00Z') }] }) })
+    expect(res.applied).toBe(1)
+    expect((await threads.list('c1')).length).toBe(1)
+    expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-06-11T01:00:00Z')
   })
 })

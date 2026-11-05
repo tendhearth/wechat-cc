@@ -102,4 +102,14 @@ describe('threads store', () => {
     expect((await s.getEntry(e))!.body).toBe('EIN [EIN]')
     expect((await s.get(id))!.summary).toBe('尾号 ****')
   })
+
+  it('description:只在抽取时写;不给 ⇒ 先用摘要;update 能改', async () => {
+    const s = makeThreadsStore(openTestDb())
+    const a = await s.create({ chatId: 'c1', title: 'bx', summary: '网络工具,0.5 待发', description: '自托管的透明代理网络工具', facets: ['task'], tags: [], private: false, episodes: [] })
+    const b = await s.create({ chatId: 'c1', title: 'x', summary: '老摘要', facets: ['task'], tags: [], private: false, episodes: [] })
+    expect((await s.get(a))!.description).toBe('自托管的透明代理网络工具')
+    expect((await s.get(b))!.description).toBe('老摘要')
+    await s.update(a, { summary: '新摘要' })
+    expect((await s.get(a))!).toMatchObject({ summary: '新摘要', description: '自托管的透明代理网络工具' })
+  })
 })
