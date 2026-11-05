@@ -36,26 +36,35 @@ export function makeMatterProposals(d: {
 }): MatterProposals {
   const now = d.now ?? Date.now
   const after = d.escalateAfterMs ?? ESCALATE_AFTER_MS
+  // 一个接一个(中间要等在场探针 / 桌面通知):同一件事先后两次回报,后来的不会被先来的那次后到时盖掉
+  let chain: Promise<void> = Promise.resolve()
   return {
-    async propose(p, ref) {
-      const kind = pushSpeechKind(p.kind)
-      const chat = d.ownerChatId()
-      if (kind !== 'matter_report' || !chat || !p.taskId) { d.gate.push(p, ref); return }
-      let desk = false
-      try { desk = await d.atDesk() } catch { desk = false }
-      if (!desk) { d.gate.push(p, ref); return }
-      const o = d.speech.ask({ kind, chatId: chat, ...(ref ? { ref } : {}) }, { channel: 'desktop', deliverable: true })
-      if (!('allow' in o)) { d.gate.push(p, ref); return }
-      const t = now()
-      if (d.desktop.appConnected() && d.desktop.willAnnounce(p.taskId)) {
-        d.log('PUSH', `${p.kind} ${p.taskId}: owner at the desk — the desktop app shows it; App push waits ${Math.round(after / 1000)}s`)
-      } else {
-        // 系统通知里不放任务标题(可能带私事 / 项目名),和桌面 app 自己那条同一套措辞(workbench-attention.js)
-        const n = p.kind === 'task_failed' ? { title: '有一件事停下了', body: '打开 CC 看看发生了什么。' } : { title: '有一件事回复了', body: '打开 CC 查看。' }
-        const ok = await d.desktop.notify(n.title, n.body).catch(() => false)
-        d.log('PUSH', `${p.kind} ${p.taskId}: owner at the desk — ${ok ? 'desktop notification shown' : 'desktop notification failed'}; App push waits ${Math.round(after / 1000)}s`)
-      }
-      d.gate.later(p, { at: t + after, since: t, matterId: p.taskId, ...(ref ? { ref } : {}) })
+    propose(p, ref) {
+      // 批准 / 提问(blocking)不排队:照旧当场各处推,不等前面那件的在场探针
+      if (pushSpeechKind(p.kind) !== 'matter_report') { d.gate.push(p, ref); return Promise.resolve() }
+      const run = chain.then(() => one(p, ref))
+      chain = run.catch(() => {})
+      return run
     },
+  }
+  async function one(p: PushPayload, ref?: string): Promise<void> {
+    const kind = pushSpeechKind(p.kind)
+    const chat = d.ownerChatId()
+    if (kind !== 'matter_report' || !chat || !p.taskId) { d.gate.push(p, ref); return }
+    let desk = false
+    try { desk = await d.atDesk() } catch { desk = false }
+    if (!desk) { d.gate.push(p, ref); return }
+    const o = d.speech.ask({ kind, chatId: chat, ...(ref ? { ref } : {}) }, { channel: 'desktop', deliverable: true })
+    if (!('allow' in o)) { d.gate.push(p, ref); return }
+    const t = now()
+    if (d.desktop.appConnected() && d.desktop.willAnnounce(p.taskId)) {
+      d.log('PUSH', `${p.kind} ${p.taskId}: owner at the desk — the desktop app shows it; App push waits ${Math.round(after / 1000)}s`)
+    } else {
+      // 系统通知里不放任务标题(可能带私事 / 项目名),和桌面 app 自己那条同一套措辞(workbench-attention.js)
+      const n = p.kind === 'task_failed' ? { title: '有一件事停下了', body: '打开 CC 看看发生了什么。' } : { title: '有一件事回复了', body: '打开 CC 查看。' }
+      const ok = await d.desktop.notify(n.title, n.body).catch(() => false)
+      d.log('PUSH', `${p.kind} ${p.taskId}: owner at the desk — ${ok ? 'desktop notification shown' : 'desktop notification failed'}; App push waits ${Math.round(after / 1000)}s`)
+    }
+    d.gate.later(p, { at: t + after, since: t, matterId: p.taskId, ...(ref ? { ref } : {}) })
   }
 }

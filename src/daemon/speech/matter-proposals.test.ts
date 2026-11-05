@@ -72,4 +72,23 @@ describe('一件事一次提议(S3b)', () => {
     await s.p.propose(done)
     expect(s.gate.push).toHaveBeenCalledWith(done, undefined)
   })
+  it('一个接一个:先来的那次还在等探针时,后来的不会抢在前面(同一件事两次回报,留下的是后来的)', async () => {
+    const order: string[] = []
+    let release!: () => void
+    const slow = new Promise<void>(r => { release = r })
+    let first = true
+    const gate = { push: vi.fn((q: PushPayload) => { order.push(q.body); return null }), later: vi.fn() }
+    const p = makeMatterProposals({
+      gate, speech: { ask: vi.fn() }, ownerChatId: () => OWNER,
+      atDesk: async () => { if (first) { first = false; await slow } return false },
+      desktop: { appConnected: () => false, willAnnounce: () => false, notify: vi.fn(async () => true) }, log: () => {},
+    })
+    const a = p.propose({ ...done, body: '第一轮' })
+    const b = p.propose({ ...done, body: '第二轮' })
+    await Promise.resolve()
+    expect(order).toEqual([])
+    release()
+    await Promise.all([a, b])
+    expect(order).toEqual(['第一轮', '第二轮'])
+  })
 })
