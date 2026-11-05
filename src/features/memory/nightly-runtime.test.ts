@@ -56,6 +56,21 @@ beforeEach(() => {
 })
 
 describe('memory nightly runtime', () => {
+  it('睡一觉之后整理话题:真跑过才做(还没到点那一拍不做),出错只记一行', async () => {
+    const after = vi.fn(async () => {})
+    now = Date.parse('2026-09-25T03:00:00Z')
+    const rt = makeMemoryNightlyRuntime({ ...deps(), afterSleep: after })
+    await rt.tick()
+    expect(after).not.toHaveBeenCalled()
+    now = Date.parse('2026-09-25T04:05:00Z')
+    await rt.tick()
+    expect(after).toHaveBeenCalledOnce()
+    const logs: string[] = []
+    const rt2 = makeMemoryNightlyRuntime({ ...deps({ log: (_t, l) => logs.push(l) }), afterSleep: async () => { throw new Error('boom') } })
+    await rt2.runNow()
+    expect(logs.some(l => l.includes('after-sleep step failed: boom'))).toBe(true)
+  })
+
   it('tick at 04:05 writes the memory but holds the notice until 09:00', async () => {
     const rt = makeMemoryNightlyRuntime(deps())
     await rt.tick()
