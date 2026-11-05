@@ -17,6 +17,9 @@ import { makePhoneTopicSources } from '../src/features/phone/phone-topic-sources
 import { makeSettingsPanel } from '../src/features/phone/settings-panel'
 import { mobileLettersRoutes } from '../src/features/letters'
 import { mobileJobsRoutes } from '../src/features/jobs'
+import { terminalPhoneRoutes } from '../src/features/terminal'
+import { memoryPhoneRoutes } from '../src/features/memory'
+import { stickerPhoneRoutes } from '../src/features/stickers'
 
 const diff = (a: Iterable<string>, b: ReadonlySet<string>) => [...a].filter(k => !b.has(k)).sort()
 
@@ -28,7 +31,7 @@ describe('手机面板处理器表与路由表对得上', () => {
     stateDir, ownerChatId: () => null, chatPrefs: { get: () => ({}), set: () => ({}) },
     getUserName: () => null, setUserName: async () => {}, log: () => {},
     // 别的功能交来的表(A5 · 手机起不再由面板 import):和生产里 wire-settings-panel 交的是同一组,缺 deps 照样登记键
-    featureRoutes: [mobileLettersRoutes(undefined), mobileJobsRoutes(undefined)],
+    featureRoutes: [mobileLettersRoutes(undefined), mobileJobsRoutes(undefined), terminalPhoneRoutes({}), memoryPhoneRoutes({}), stickerPhoneRoutes(undefined)],
   })
   const keys = new Set(panel.routeKeys())
   /** 路由表里属于面板的路径(/m、/m/…、/set、/set/…),不管带没带 phone / set 块。 */

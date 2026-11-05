@@ -9,6 +9,9 @@
  *
  * 键的类型是协议包的 `PanelRouteKey`(架构终态 F3):路由表里没登记的键编译就不过,App 的类型化客户端
  * (`packages/protocol/src/phone-calls.ts`)认的也是同一组键 —— 路径只在 `routes.ts` 写一次。
+ *
+ * 放在 lib(P3d-3 从 `features/phone/` 挪下来):别的功能(终端、记忆、表情、信、定时)交自己的手机表时直接用它,
+ * 不经手机这个功能的 index —— 手机的依赖图会绕回终端 / 表情,经它就成环。
  */
 import type { PanelRouteKey } from '@wechat-cc/protocol/routes'
 

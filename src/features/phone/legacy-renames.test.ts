@@ -14,6 +14,9 @@ import { removeTempDir } from '../../lib/test-temp'
 import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
 import { mobileLettersRoutes } from '../letters'
 import { mobileJobsRoutes } from '../jobs'
+import { memoryPhoneRoutes } from '../memory'
+import { stickerPhoneRoutes } from '../stickers'
+import { terminalPhoneRoutes } from '../terminal'
 
 const OWNER = 'o9rename-owner@im.wechat'
 const RENAMES = WIRE_ROUTE_ALIASES.filter(r => r.handler === 'alias' && r.transform === null)
@@ -55,11 +58,12 @@ beforeEach(async () => {
     getUserName: () => '大人', setUserName: async () => {}, log: () => {}, now: () => Date.UTC(2026, 10, 5),
     insight: { forMatter: async () => ({ explanations: {}, progress: null }) },
     activity: { sources: () => ({}), now: () => Date.UTC(2026, 10, 5) },
-    // 表情原图(二进制回包)和 ?b64=1 两种都比;记忆读一份固定的
-    stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(dir, 'stickers') },
-    curatedMemory: () => ({ updated_at: null, when_label: null, mood: 'first', failures: 0, changes: [], sections: [] }),
     push: { register: () => true, unregister: () => {}, forgetAll: () => {}, test: async () => ({ ok: false, code: 'relay_offline' }) },
     featureRoutes: [
+      // 表情原图(二进制回包)和 ?b64=1 两种都比;记忆读一份固定的;终端那三条没接 cliActions(503,两边一样)
+      stickerPhoneRoutes({ list: () => [{ file: 'bear.png' }], dir: join(dir, 'stickers') }),
+      memoryPhoneRoutes({ curated: () => ({ updated_at: null, when_label: null, mood: 'first', failures: 0, changes: [], sections: [] }) }),
+      terminalPhoneRoutes({}),
       mobileLettersRoutes({ list: () => [{ id: '2026-10-01-abcdef', day: '2026-10-01', sentAt: 1, requested: false, via: 'wechat', opening: '开头', pages: 0, text: '信' }], pagePath: () => null }),
       mobileJobsRoutes({ view: () => ({ ok: true, timezone: 'Asia/Shanghai', executor: 'claude', jobs: [] }), action: () => ({ ok: false, error: 'not_found' }) }),
     ],
@@ -72,7 +76,7 @@ afterEach(async () => { await panel.stop(); removeTempDir(dir) })
 
 describe('P3d 纯改名:旧路径与新键逐字节一样', () => {
   it('别名表里纯改名、已并的行不是空的(这条测试不空转)', () => {
-    expect(RENAMES.length).toBeGreaterThanOrEqual(26)
+    expect(RENAMES.length).toBeGreaterThanOrEqual(28)
   })
 
   it('设备令牌:每一行旧路径 / 新路径的状态码、头、正文字节都一样', async () => {

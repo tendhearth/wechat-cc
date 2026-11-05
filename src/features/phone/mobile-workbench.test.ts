@@ -1,6 +1,6 @@
 import {describe,expect,it,vi} from 'vitest'
 import {mobileMatterError,mobileSessionContinueRoutes,mobileWorkbenchRoutes} from './mobile-workbench'
-import { routePhone } from './phone-route-table'
+import { routePhone } from '../../lib/phone-route-table'
 import {entryFailureKind} from '../../adapters/workbench/task-entry'
 
 describe('phone entry rejection wire contract',()=>{

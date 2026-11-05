@@ -25,7 +25,7 @@ import type {TokenInfo} from '../../daemon/internal-api/token-registry'
 import {MAX_MOBILE_DETAIL_BYTES,mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileMatterError,mobileSayInput} from './mobile-workbench'
 import {phoneClientOf} from './phone-client'
-import {lookupPhoneRoute,ownsMethod,type PhoneHandler,type PhoneRouteTable} from './phone-route-table'
+import {lookupPhoneRoute,ownsMethod,type PhoneHandler,type PhoneRouteTable} from '../../lib/phone-route-table'
 
 export interface LegacyRoutesDeps<C extends Ctx = Ctx> {
   /** 内部 API 的面板分发(P3b)。没接(测试)⇒ 各别名回它原来「没接上」的那个码。 */
@@ -401,6 +401,9 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     'POST /m/api/session/continue': rename('POST /m/api/session/continue'),
     'GET /m/api/attachment/upload': rename('GET /m/api/attachment/upload'),
     'POST /m/api/attachment/chunk': rename('POST /m/api/attachment/chunk'),
+    // P3d-3 撞名的两条:拍板 → /v1/cli/decide、接着说一句 → /v1/cli/session-say(纯改名)
+    'POST /m/api/cli/permission': rename('POST /m/api/cli/permission'),
+    'POST /m/api/cli/say': rename('POST /m/api/cli/say'),
     'GET /m/api/matters': phoneMatters,
     'GET /m/api/matter': phoneMatter,
     'POST /m/api/matter/say': phoneMatterSay,

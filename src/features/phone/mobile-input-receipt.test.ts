@@ -16,7 +16,7 @@ import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
 /** P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。 */
 const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import {mobileWorkbenchRoutes} from './mobile-workbench'
-import { routePhone } from './phone-route-table'
+import { routePhone } from '../../lib/phone-route-table'
 
 let root:string,db:Db,workbench:WorkbenchService,panel:SettingsPanel,owner:string|null
 let store:ReturnType<typeof makeWorkbenchStore>,matters:ReturnType<typeof makeMatterStore>,service:ReturnType<typeof makeMattersService>

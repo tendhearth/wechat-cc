@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mobileActivityRoutes } from './mobile-activity'
-import { routePhone } from './phone-route-table'
+import { routePhone } from '../../lib/phone-route-table'
 import { PHONE_API_SCHEMAS } from '../../../packages/protocol/src/api'
 
 const NOW = Date.parse('2026-10-20T12:00:00Z')

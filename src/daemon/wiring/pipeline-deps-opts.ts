@@ -22,7 +22,7 @@ export interface PipelineDepsOpts {
   workbench?: import('../../features/workbench').WorkbenchService
   /** 「CC 做过的事」(B9):main 拼好来源,这里只透传给手机面板。 */
   activity?: import('../../features/phone').MobileActivityDeps
-  /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
+  /** 终端会话的手机动作(拍板 / 说一句 / 看着它跑):POST /v1/cli/decide、/v1/cli/session-say、GET /v1/cli/activity(features/terminal/phone-routes.ts;老 App 的 /m/api/cli/* 是别名)。缺省 ⇒ 503。 */
   cliActions?: import('../../features/terminal').CliPhoneActions
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
   terminalHooks?: Pick<import('../../features/terminal').TerminalHooksService, 'capabilityInput'>

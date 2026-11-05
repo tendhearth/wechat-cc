@@ -40,9 +40,8 @@ import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import { mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
 import { mobileActivityRoutes } from './mobile-activity'
-import { mobileReadsRoutes } from './mobile-reads'
 import { legacyRoutes } from './legacy-routes'
-import { combinePhoneRoutes, lookupPhoneRoute, ownsMethod, routePhone, type PhoneHandler, type PhoneRouteTable } from './phone-route-table'
+import { combinePhoneRoutes, lookupPhoneRoute, ownsMethod, routePhone, type PhoneHandler, type PhoneRouteTable } from '../../lib/phone-route-table'
 import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {MAX_MOBILE_DETAIL_BYTES,mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
@@ -137,14 +136,13 @@ export interface SettingsPanelDeps {
   chat?: MobileChatDeps
   /**
    * 别的功能交来的 `/m/api/*` 处理器(架构终态 A5 · 手机):处理器归那个功能,表从它的 index.ts 导出,组装的地方
-   * (wiring/wire-settings-panel.ts)填进来 —— 面板不 import 别的功能。现在是信(`/m/api/letters*`)和定时(`/m/api/jobs*`)。
+   * (wiring/wire-settings-panel.ts)填进来 —— 面板不 import 别的功能。现在是信、定时、终端会话(看着它跑 / 拍板 / 接着说)、
+   * 记忆(整理好的那份 / 纠错)、表情原图(P3d-3 起后三样也搬回各自的功能)。
    * 路由表里登记了、这里没交 ⇒ 查不到(404);生产里组装的地方总会交(功能自己的 deps 缺了由它的处理器回 503)。
    */
   featureRoutes?: ReadonlyArray<PhoneRouteTable<unknown>>
   /** 「CC 做过的事」(B9):只给设备令牌。 */
   activity?: import('./mobile-activity').MobileActivityDeps
-  /** 终端会话:拍板等批准的那一项、接着说一句、看着它跑(features/terminal/phone-actions.ts)。缺省 ⇒ 那几条 503。 */
-  cliActions?: import('../terminal').CliPhoneActions
   /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */
   sessionContinue?: MobileSessionContinueActions
   /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。缺省 ⇒ 会话行不带 displayName,App 退回 id。 */
@@ -161,10 +159,6 @@ export interface SettingsPanelDeps {
     unregister(deviceId: string): void
     forgetAll(): void
   }
-  /** 手机「CC 记得你」(2026-09-25,memory/nightly-runtime)。 */
-  curatedMemory?: () => import('../memory').CuratedView
-  /** 主人逐条纠错(2026-10-06):不对 / 过时 / 删掉。没接 ⇒ 503。 */
-  correctMemory?: (id: string, verdict: import('../memory').MemoryVerdict) => Promise<{ text: string }>
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
@@ -770,25 +764,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     'GET /v1/phone/art/presence': async () => {
       return json({ ok: true, mime: 'image/png', unlit: presenceArt.unlit.base64, lit: presenceArt.lit.base64 })
     },
-    'GET /v1/memory/curated': async () => {
-      if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
-      // 经隧道时 handleRequest 抛出不会回包,手机会一直等 —— 这里兜住,让页面走「暂时读不到」。
-      try { return json({ ok: true, ...deps.curatedMemory() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
-    },
-    // 「CC 记得你」逐条纠错(步骤 A,2026-10-06):正文恰好 id + verdict;id 是 memory.md 每条尾注里的那串 hex。
-    'POST /v1/memory/correct': ownsMethod(async (_url, req) => {
-      if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
-      if (!deps.correctMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
-      let b: unknown
-      try { b = await req.json() } catch { return json({ ok: false, error: 'invalid' }, 400) }
-      const o = b as { id?: unknown; verdict?: unknown } | null
-      if (!o || typeof o !== 'object' || Array.isArray(o) || Object.keys(o).some(k => k !== 'id' && k !== 'verdict')
-        || typeof o.id !== 'string' || !/^[a-f0-9]{2,32}$/.test(o.id) || (o.verdict !== 'wrong' && o.verdict !== 'outdated' && o.verdict !== 'delete')) return json({ ok: false, error: 'invalid' }, 400)
-      try { await deps.correctMemory(o.id, o.verdict); return json({ ok: true }) } catch (e) {
-        const m = e instanceof Error ? e.message : ''
-        return m === 'memory_entry_not_found' || m === 'memory_not_found' ? json({ ok: false, error: 'not_found' }, 404) : json({ ok: false, error: 'unavailable' }, 500)
-      }
-    }),
     'GET /v1/home': async (url) => {
       return json(await home(parseLimit(url)))
     },
@@ -859,23 +834,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         return json({ ok: true, sent: n(r?.sent), remaining: n(r?.remaining), skippedDiscarded: n(r?.skippedDiscarded) })
       } catch (e) { return mobileMatterError(e) }
     },
-    'GET /v1/stickers/file/': async (url) => {
-      if (!deps.stickers) return json({ error: 'not_found' }, 404)
-      const raw = decodeURIComponent(url.pathname.slice('/v1/stickers/file/'.length))
-      const name = basename(raw)
-      // basename + known-in-library double guard — never a free file read.
-      if (name !== raw || !deps.stickers.list().some(e => e.file === name)) return json({ error: 'not_found' }, 404)
-      const fp = join(deps.stickers.dir, name)
-      if (!existsSync(fp)) return json({ error: 'not_found' }, 404)
-      const ext = name.split('.').pop()?.toLowerCase() ?? 'png'
-      const type = ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png'
-      // 隧道/壳模式的图片通道:隧道 body 是 JSON 文本,二进制走不了 ——
-      // ?b64=1 返回 base64 载荷,页面拼 data URI(出门表情不再裂图)。
-      if (url.searchParams.get('b64') === '1') {
-        return json({ ok: true, mime: type, data: readFileSync(fp).toString('base64') })
-      }
-      return new Response(readFileSync(fp), { headers: { 'content-type': type } })
-    },
   }
   const routes: PhoneRouteTable<PanelCtx> = combinePhoneRoutes<PanelCtx>(
     panelRoutes,
@@ -891,7 +849,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     ...(deps.featureRoutes ?? []),
     // CC 做过的事(B9):只读时间线。链接令牌不在册。
     mobileActivityRoutes(deps.activity),
-    mobileReadsRoutes({ ...(deps.cliActions ? { cliActions: deps.cliActions } : {}) }),
   )
 
   /** 不带令牌也给的几样(不敏感):图标、PWA 清单、service worker。任何方法都回,同改造前。 */

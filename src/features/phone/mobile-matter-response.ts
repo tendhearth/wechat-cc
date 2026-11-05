@@ -1,8 +1,8 @@
-import {framedTooLargeFor,withoutOldNarrationFor} from '../../domain/matters/phone-scope'
+import {PHONE_FRAME_BUDGET_BYTES,framedTooLargeFor,withoutOldNarrationFor} from '../../domain/matters/phone-scope'
 
 /** Leave room for the tunnel's JSON envelope and encrypted base64 frame under
  * the relay's 512 KiB ceiling. Decision descriptions are never truncated. */
-export const MAX_MOBILE_DETAIL_BYTES=300*1024
+export const MAX_MOBILE_DETAIL_BYTES=PHONE_FRAME_BUDGET_BYTES
 /** Would this JSON body, once the legacy tunnel wraps it ({rid,status,body}
  * stringified again, then sealed + base64url), risk the 512 KiB relay frame?
  * The 300 KiB framed budget leaves ~400 KiB on the wire after base64. */

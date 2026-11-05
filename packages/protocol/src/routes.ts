@@ -644,9 +644,10 @@ const ROUTE_TABLE = {
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
   'GET /v1/matter/owner-chat/model': { phone: { link: 'none' } },
   'POST /v1/matter/owner-chat/model': { phone: { link: 'none' } },
-  // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
-  'POST /m/api/cli/permission': { phone: { link: 'none' } },
-  'POST /m/api/cli/say': { phone: { link: 'none' } },
+  // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)。P3d-3 起不撞名:
+  // `/v1/cli/permission` 是钩子登记 / 等答案(CLI 子进程),`/v1/cli/say` 是 CC 的 terminal_say(按码、回票再等)。
+  'POST /v1/cli/decide': { phone: { link: 'none' } },
+  'POST /v1/cli/session-say': { phone: { link: 'none' } },
   // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
   'GET /v1/cli/activity': { phone: { link: 'none' } },
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
@@ -679,7 +680,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = ROUTE_TABLE
 export type DeclaredRouteKey = keyof typeof ROUTE_TABLE
 /**
  * 手机面板那一端(`/m`、`/m/api/*`、`/set`、`/set/api/*`)的键(架构终态 F3)。daemon 的处理器表
- * (`src/features/phone/phone-route-table.ts` 的 `PhoneRouteTable`)和类型化客户端(`phone-calls.ts`)都只认这些键 ——
+ * (`src/lib/phone-route-table.ts` 的 `PhoneRouteTable`)和类型化客户端(`phone-calls.ts`)都只认这些键 ——
  * 路径只在这张表里写一次。
  */
 export type PanelRouteKey = Extract<DeclaredRouteKey, `${string} /m` | `${string} /m/${string}` | `${string} /set` | `${string} /set/${string}`> | MergedAliasKey | PanelV1Key

@@ -25,6 +25,9 @@ export function withoutReplyExtras<T>(detail: T): T {
   }) }
 }
 
+/** 手机这条线上一帧正文的预算(中继一帧 512 KiB,给隧道的 JSON 外壳和 base64 留出余量)。面板与终端会话的手机表共用这一个数。 */
+export const PHONE_FRAME_BUDGET_BYTES = 300 * 1024
+
 /**
  * 这份 JSON 正文经中继再包一层({rid,status,body} 再 stringify 一遍,然后封装 + base64)以后,会不会顶破一帧。
  * 隧道把正文当字符串再序列化一次,引号和反斜杠会翻倍,所以按包好以后的字节数比。

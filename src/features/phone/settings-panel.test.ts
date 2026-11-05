@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeSettingsPanel as makePanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
 import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+import { memoryPhoneRoutes } from '../memory'
+import { stickerPhoneRoutes } from '../stickers'
 /**
  * P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。
  * 这里的假实现只给几个字段(并之前面板也不核 /v1 的响应契约),所以不核契约;契约由 phone-api-schema / 真服务的测试管。
@@ -226,6 +228,8 @@ describe('随身 CC (phone PWA + device pairing)', () => {
         names: () => [{ username: 'wx_f', display: '小飞' }],
       },
       stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(stateDir, 'stickers') },
+      // P3d-3 起表情原图归表情那个功能,经 featureRoutes 交进来(同 wire-settings-panel.ts);面板自己的 stickers 只给首屏 state
+      featureRoutes: [stickerPhoneRoutes({ list: () => [{ file: 'bear.png' }], dir: join(stateDir, 'stickers') })],
       log: () => {},
       now: () => nowMs,
     })
@@ -1111,7 +1115,8 @@ describe('phone curated memory', () => {
       stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-err-')), ownerChatId: () => null,
       chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
       getUserName: () => null, setUserName: async () => {}, log: () => {},
-      curatedMemory: () => { throw new Error('EACCES') },
+      // P3d-3 起「CC 记得你」两条归记忆那个功能,经 featureRoutes 交进来(同 wire-settings-panel.ts)
+      featureRoutes: [memoryPhoneRoutes({ curated: () => { throw new Error('EACCES') } })],
     })
     const { port } = await p.start(0)
     try {
@@ -1149,7 +1154,7 @@ describe('phone curated memory', () => {
       stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-')), ownerChatId: () => null,
       chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
       getUserName: () => null, setUserName: async () => {}, log: () => {},
-      curatedMemory: () => view,
+      featureRoutes: [memoryPhoneRoutes({ curated: () => view })],
     })
     const { port } = await p.start(0)
     try {
@@ -1167,7 +1172,7 @@ describe('phone curated memory', () => {
       stateDir: mkdtempSync(join(tmpdir(), 'sp-memc-')), ownerChatId: () => null,
       chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
       getUserName: () => null, setUserName: async () => {}, log: () => {},
-      correctMemory,
+      featureRoutes: [memoryPhoneRoutes({ correct: correctMemory })],
     })
     const { port } = await p.start(0)
     try {

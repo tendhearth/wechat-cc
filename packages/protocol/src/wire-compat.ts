@@ -107,6 +107,8 @@ export const MERGED_ALIAS_KEYS = [
   'GET /m/api/chat', 'POST /m/api/chat/say', 'GET /m/api/chat/voice', 'GET /m/api/chat/transcribe', 'GET /m/api/chat/model', 'POST /m/api/chat/model',
   'GET /m/api/memory', 'POST /m/api/memory/correct', 'GET /m/api/sticker/', 'GET /m/api/session/continue', 'POST /m/api/session/continue',
   'GET /m/api/attachment/upload', 'POST /m/api/attachment/chunk',
+  // P3d-3 撞名的两条起不撞的名字(纯改名,同上)
+  'POST /m/api/cli/permission', 'POST /m/api/cli/say',
 ] as const
 export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
 const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)

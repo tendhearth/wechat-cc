@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
 import { makePhoneChatId, makePhoneOwner, mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
-import { combinePhoneRoutes, routePhone, type PhoneRouteTable } from './phone-route-table'
+import { combinePhoneRoutes, routePhone, type PhoneRouteTable } from '../../lib/phone-route-table'
 import { legacyRoutes } from './legacy-routes'
 import { withPanelV1, type LegacyChatFakes } from './test-panel-v1'
 import { voiceRoutes } from '../voice/routes'

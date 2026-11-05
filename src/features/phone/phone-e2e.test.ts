@@ -26,6 +26,7 @@ const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import { makeMemoryRelay, type MemoryRelay } from './memory-relay.fixture'
 import { makeTunnelClient, type TunnelClient, type TunnelWS } from './tunnel-client'
 import { makePhoneEventsWiring } from './phone-topic-sources'
+import { stickerPhoneRoutes } from '../stickers'
 
 const DAEMON = 'e2e-daemon'
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x10, 0x80])
@@ -72,6 +73,8 @@ beforeEach(async () => {
   panel = makeSettingsPanel({
     stateDir: root, ownerChatId: () => 'owner', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {},
     stickers: { list: () => [{ file: 'wave.png', tags: ['wave'] }], dir: join(root, 'stickers') },
+    // P3d-3 起表情原图归表情那个功能,经 featureRoutes 交进来(同 wire-settings-panel.ts)
+    featureRoutes: [stickerPhoneRoutes({ list: () => [{ file: 'wave.png' }], dir: join(root, 'stickers') })],
     seen: { read: () => seenValue, write: iso => { seenValue = iso } },
     matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
   })
