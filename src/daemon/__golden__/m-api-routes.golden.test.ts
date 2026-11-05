@@ -74,9 +74,15 @@ let seenAt: string | null = null
 const msg = (r: Partial<MessageRecord> & Pick<MessageRecord, 'id' | 'direction' | 'text'>): MessageRecord =>
   ({ chatId: OWNER, ts: new Date(T0 - 60_000).toISOString(), kind: 'text', source: 'phone', ...r } as MessageRecord)
 
+/** P3e 起交办与回执经 `/v1/matter/create`、`create-receipt` 走(MattersService):剧本照旧写在这里,交给 v1Service。 */
+type GoldenDeps = SettingsPanelDeps & { entry: { createEntry(input: { requestId: string }): unknown; entryReceipt(requestId: string): unknown } }
+type PhoneActions = Pick<MattersService, 'stop' | 'permission' | 'answer' | 'artifactChunk' | 'handoff' | 'worktree' | 'worktreeScript'>
+
 /** 照剧本回话的 MattersService(并成别名的那几条经 /v1 读它;形状同 pipeline-deps.ts 交给内部 API 的那一份)。 */
-function v1Service(panel: SettingsPanelDeps): MattersService {
+function v1Service(panel: GoldenDeps): MattersService {
   const m = panel.matters!, chat = panel.chat!
+  // P3e 一件事上的动作:剧本仍挂在面板 deps 的 matters 上(下面 deps() 里),这里转交
+  const acts = m as unknown as PhoneActions
   const hits = [msg({ id: 'm-in-1', direction: 'in', text: '发我报告' }), msg({ id: 'm-out-1', direction: 'out', text: '报告在附件里。' })]
   return {
     list: f => m.list(f as never) as never,
@@ -85,6 +91,15 @@ function v1Service(panel: SettingsPanelDeps): MattersService {
     phoneMayOpen: matter => phoneMayOpenMatter(matter, OWNER),
     seenOnPhone: id => m.seenOnPhone(id),
     say: (id, text, _surface, input) => (input ? m.say(id, text, input) : m.say(id, text)) as never,
+    stop: (id, runId) => acts.stop(id, runId),
+    permission: (id, runId, requestId, decision) => acts.permission(id, runId, requestId, decision),
+    answer: (id, runId, requestId, answers) => acts.answer(id, runId, requestId, answers),
+    artifactChunk: (id, input) => acts.artifactChunk(id, input),
+    handoff: (id, input, surface) => acts.handoff(id, input, surface),
+    worktree: (id, action) => acts.worktree(id, action),
+    worktreeScript: (id, action) => acts.worktreeScript(id, action),
+    createEntry: input => panel.entry.createEntry(input as { requestId: string }),
+    entryReceipt: requestId => panel.entry.entryReceipt(requestId),
     // pipeline-deps.ts 的 chat.search 那一行(messagesStore.search → 事件形状)
     searchOwnerChat: async () => { check('search'); return { hits: hits.map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })) as never } },
     // pipeline-deps.ts 的 chat.file 那一行
@@ -146,7 +161,7 @@ function v1Workbench() {
   }
 }
 
-function deps(): SettingsPanelDeps {
+function deps(): GoldenDeps {
   const reportPath = join(root, 'files', 'report.md')
   mkdirSync(dirname(reportPath), { recursive: true })
   writeFileSync(reportPath, '# 报告\n\n全过。\n')

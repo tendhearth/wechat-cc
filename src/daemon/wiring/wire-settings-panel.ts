@@ -22,7 +22,7 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 import { pickJobExecutor, readPlanLogDays } from '../../features/companion'
 import { readJournalSeen } from '../../adapters/store/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
-import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer, currentPhoneClient } from '../../features/phone'
+import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer } from '../../features/phone'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
 import { letterDeliveries, letterPagePath, listLetters, mobileLettersRoutes } from '../../features/letters'
 import { ccActsFor } from '../../adapters/store/cc-acts'
@@ -91,12 +91,8 @@ return makeSettingsPanel({
     chunk:(input:Parameters<typeof opts.workbench.uploadAttachmentChunk>[0])=>opts.workbench!.uploadAttachmentChunk(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
     status:(input:{id:string;draftId:string})=>opts.workbench!.attachmentUploadStatus(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
   }}:{}),
-  ...(opts.workbench?{entry:{
-    // 出生地:原生 App(中继 v2 帧)/ 浏览器 /m,只按传输判(phone-client.ts);不在手机请求里 ⇒ null。
-    createEntry:(input:import('../../adapters/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone',origin:currentPhoneClient()}),
-    entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
-  }}:{}),
-  ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), withActs: (rows) => mattersService.withActs(rows), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+  // 交办与回执(P3e 起):POST /v1/matter/create、GET /v1/matter/create-receipt(内部 API 那一个处理器,MattersService.createEntry / entryReceipt)。
+  ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), withActs: (rows) => mattersService.withActs(rows), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
   // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
   ...(opts.activity ? { activity: opts.activity } : {}),
   // 信、定时、终端会话、记忆、表情的手机处理器归它们自己的功能(各自 index.ts 导出),这里只填 deps 交给面板。

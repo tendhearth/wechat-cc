@@ -45,13 +45,17 @@ describe('phoneRouteAllowed', () => {
       'GET /v1/matter/owner-chat/model', 'POST /v1/matter/owner-chat/model', 'GET /v1/memory/curated', 'POST /v1/memory/correct', 'GET /v1/stickers/file/',
       'GET /v1/workbench/session/continue', 'POST /v1/workbench/session/continue', 'GET /v1/workbench/attachment/upload', 'POST /v1/workbench/attachment/chunk',
       // P3d-3:终端会话拍板 / 接着说一句起的不撞名的新键 —— 同别名行只给设备(评审 10-15 #3)
-      'POST /v1/cli/decide', 'POST /v1/cli/session-say']
+      'POST /v1/cli/decide', 'POST /v1/cli/session-say',
+      // P3e-1:一件事上的动作与交办的新键(/v1/matter/*)—— 别名行都是 link: none(停下除外,见下),新键同
+      'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree',
+      'POST /v1/matter/create', 'GET /v1/matter/create-receipt']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     // 链接令牌剩下的就是链接页面会调的那几条:配对、设置页、此刻、一起做的看与停
     // P3c-1:一起做的列表 / 详情并进 /v1,链接令牌经新键够得着的同别名键(同一份数据的两个名字,P3g 网页改读新键后别名行删掉)
     // P3d-1:此刻页、形象画搬到 /v1/home、/v1/phone/art/presence,链接令牌经新键够得着的同别名键
-    expect([...LINK_ROUTES].sort()).toEqual(['GET /m', 'GET /m/api/art/presence', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'GET /set/api/state', 'GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence', 'POST /m/api/matter/stop', 'POST /set/api/apply', 'POST /set/api/pair'])
+    // P3e-1:一起做的「停下」并进 /v1/matter/stop(停下是安全方向,链接令牌照旧能停),经新键够得着的同别名键
+    expect([...LINK_ROUTES].sort()).toEqual(['GET /m', 'GET /m/api/art/presence', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'GET /set/api/state', 'GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence', 'POST /m/api/matter/stop', 'POST /set/api/apply', 'POST /set/api/pair', 'POST /v1/matter/stop'])
     expect([...LAN_ONLY_OPS].sort()).toEqual(['forget_devices', 'revoke_device', 'set_remote'])
   })
 })

@@ -52,7 +52,11 @@ export function assertResponseContract(routeKey: string, body: unknown): void {
 }
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
+import { DESKTOP_ROUTE_ALIASES } from './legacy-desktop-routes'
 import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
+
+/** 一件事上的动作(P3e,`/v1/matter/<动词>`):正文上限同它们的 `/v1/workbench/*` 双胞胎(128 KiB)。 */
+const MATTER_ACTION_PATHS: ReadonlySet<string> = new Set(DESKTOP_ROUTE_ALIASES.map(r => r.to.slice(r.to.indexOf(' ') + 1)))
 
 export type {
   InternalApi,
@@ -300,7 +304,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     let body: unknown = null
     if (method === 'POST') {
       try {
-        body = await inp.io.readBody(url.pathname==='/v1/workbench/attachment'?12*1024*1024:url.pathname.startsWith('/v1/workbench/')?128*1024:undefined)
+        body = await inp.io.readBody(url.pathname==='/v1/workbench/attachment'?12*1024*1024:url.pathname.startsWith('/v1/workbench/')||MATTER_ACTION_PATHS.has(url.pathname)?128*1024:undefined)
       } catch (err) {
         if(err instanceof Error&&err.message==='request_body_too_large') return { status: 413, body: { error: 'request_body_too_large' }, closeConnection: true }
         return { status: 400, body: { error: 'malformed_json', detail: errMsg(err) } }

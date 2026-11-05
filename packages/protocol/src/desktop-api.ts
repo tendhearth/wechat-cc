@@ -13,8 +13,8 @@
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 import {
-  Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, MATTER_ORIGINS, Matter, MatterDetail, MatterEvent,
-  MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, WorkbenchExecutorCapabilities,
+  Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent,
+  MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
@@ -1162,6 +1162,8 @@ export const WorkbenchPrepareContinuationResponse = z.object({ continuation: Wor
 
 // ── POST /v1/workbench/quota-handoff(202)──
 export const WorkbenchQuotaHandoffResponse = z.object({ taskId: z.string(), created: z.boolean() })
+/** 一件事上的动作(P3e,`/v1/matter/*`)手机令牌那一份的成功外壳。 */
+const PhoneActionOk = z.object({ ok: z.literal(true) })
 
 // ── POST /v1/workbench/handoff-preview ──
 export const WorkbenchHandoffPreviewResponse = z.object({
@@ -2577,6 +2579,15 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/workbench/handoff-preview': WorkbenchHandoffPreviewResponse,
   'POST /v1/workbench/handoff': WorkbenchHandoffResponse,
   'GET /v1/workbench/handoff': WorkbenchHandoffRecordResponse,
+  // 一件事上的动作(P3e,/v1/matter/*):operator ⇒ 桌面那一份(同 /v1/workbench/* 双胞胎);手机令牌 ⇒ 手机那一份(带 ok: true)
+  'POST /v1/matter/stop': z.union([WorkbenchTaskResponse, PhoneActionOk]),
+  'POST /v1/matter/permission': WorkbenchOkResponse,
+  'POST /v1/matter/answer': WorkbenchOkResponse,
+  'GET /v1/matter/artifact': z.union([WorkbenchArtifactResponse, PhoneActionOk.extend(MatterArtifactChunk.shape)]),
+  'POST /v1/matter/handoff': z.union([WorkbenchQuotaHandoffResponse, PhoneActionOk.extend(MatterHandoffResult.shape)]),
+  'POST /v1/matter/worktree': z.union([WorkbenchWorktreeResponse, PhoneWorktreeResult]),
+  'POST /v1/matter/create': z.union([WorkbenchEntryResultResponse, PhoneActionOk.extend(EntryResult.shape)]),
+  'GET /v1/matter/create-receipt': z.union([WorkbenchEntryResultResponse, PhoneActionOk.extend(EntryResult.shape)]),
   // 一件事 / 连接 / 手机 / 插件 / 许可 / 终端会话 / 日历 / 信
   'GET /v1/matters': MattersListResponse,
   'GET /v1/matter': MatterDetailResponse,

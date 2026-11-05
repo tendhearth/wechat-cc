@@ -640,6 +640,10 @@ export const SessionContinueResult = z.object({ matterId: z.string(), created: z
 /** 主人对话的后端 / 模型(GET/POST /m/api/chat/model,2026-10-06)。model=null ⇒ 用这个后端的全局设置。 */
 export const ChatModelView = z.object({ ok: z.literal(true), mode: z.string(), provider: z.string(), model: z.string().nullable(), globalModel: z.string().nullable(), providers: z.array(z.object({ id: z.string(), name: z.string() })) })
 
+/** 手机上工作区的那几个动作的回包(提交 / 删除 / 合回 / 另开 + 工作区脚本 run / stop):只有分支、结果、脚本状态与端口,不给合并命令与脚本原文。 */
+export const PhoneWorktreeResult = z.object({ ok: z.literal(true), branch: z.string(), committed: z.boolean().optional(), removed: z.boolean().optional(), merged: z.boolean().optional(), reopened: z.boolean().optional(),
+  port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional() })
+
 const PHONE_API = {
   'GET /set/api/state': z.union([SetStateSuccess, PhoneErrorResponse]),
   'POST /set/api/apply': z.object({ ok: z.boolean(), error: z.string().optional(), restart: z.enum(['requested', 'required']).optional() }),
@@ -721,8 +725,7 @@ const PHONE_API = {
   'POST /m/api/matter/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/matter/stop': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   // run / stop(2026-10-20)回分支 + 脚本状态 + 端口;没批 ⇒ 428 script_needs_computer(批准只在电脑上),在跑 409,没有 run 脚本 422 no_scripts。
-  'POST /m/api/matter/worktree': z.union([z.object({ ok: z.literal(true), branch: z.string(), committed: z.boolean().optional(), removed: z.boolean().optional(), merged: z.boolean().optional(), reopened: z.boolean().optional(),
-    port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional() }), PhoneErrorResponse]),
+  'POST /m/api/matter/worktree': z.union([PhoneWorktreeResult, PhoneErrorResponse]),
   'POST /m/api/matter/answer': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter/artifact': z.union([z.object({ ok: z.literal(true) }).extend(MatterArtifactChunk.shape), PhoneErrorResponse]),
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),

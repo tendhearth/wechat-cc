@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { request as httpRequest } from 'node:http'
 import { createInternalApi, type InternalApi } from '../../daemon/internal-api/index'
 import { workbenchRoutes } from './routes'
+import { makeMattersService } from '../../app/matters/service'
 import { minTierFor } from '../../daemon/internal-api/route-tiers'
 import {openDb} from '../../lib/db'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
@@ -393,7 +394,9 @@ describe('Workbench internal HTTP API', () => {
   })
 
   async function start(initial?: ReturnType<typeof service>,resolveAdminChatId:()=>string|null=()=> 'configured-owner') {
-    api = createInternalApi({ stateDir, daemonPid: 1 } as never)
+    // P3e:一件事上的动作(停下 / 批准 / 回答 / 成果 / 交给另一位 / 工作区 / 交办)是内部 API 自己的 /v1/matter/* 处理器(MattersService 那一层),
+    // 这些用例照旧打桌面的 /v1/workbench/* 旧键(wire-compat.ts 的别名,同一个处理器)。生产里 MattersService 的工作台就是这一个服务。
+    api = createInternalApi({ stateDir, daemonPid: 1, resolveAdminChatId, ...(initial ? { matters: makeMattersService({ store: {} as never, workbench: initial as never }) } : {}) } as never)
     // 架构终态 A5:桌面路由由 workbench 模块自己挂;没挂上 ⇒ 模块门回 503 workbench_not_wired(和搬家前一样)
     if (initial) api.mount('workbench', workbenchRoutes({ workbench: initial as never, resolveAdminChatId }))
     const adminToken = api.mintSessionToken('admin', 'codex/default/owner')

@@ -52,7 +52,8 @@ export const WIRE_COMPAT: readonly WireCompatRow[] = Object.freeze([
 /**
  * 旧路由别名表(P3,设计稿 docs/superpowers/specs/2026-11-05-p3-one-route-family-design.md「定案 · 别名表一处」)。
  *
- * 一行 = 一条 `/m/api` 旧路径:老 App / 网页还在读它,目标是一份数据一条 `/v1` 路径、一个处理器。P3a 把 61 行全部登记上,
+ * 一行 = 一条旧路径:老 App / 网页还在读的 `/m/api`,或桌面装着的 .app 还在调的 `/v1/workbench/*` 双胞胎(P3e,`desktopAlias`);
+ * 目标是一份数据一条 `/v1` 路径、一个处理器。P3a 把 61 条 `/m/api` 全部登记上,
  * 新键先按设计稿写好;还没并的标 `handler: 'own'`(面板里还是它自己的处理器,daemon 不读这张表)。并一条 ⇒ 那行改
  * `handler: 'alias'`,daemon 那边只有 `src/features/phone/legacy-routes.ts` 认这张表(按 `transform` 翻回包)。退休同上面那张表:
  * 按构建号,近 30 天连过的设备都 ≥ 改读新路径的那一版才删行。`scripts/wire-compat.guard.test.ts` 管两把棘轮:行数只许变少,
@@ -60,7 +61,7 @@ export const WIRE_COMPAT: readonly WireCompatRow[] = Object.freeze([
  */
 export type WireRouteStep = 'P3c-1' | 'P3c-2' | 'P3c-3' | 'P3c-4' | 'P3d' | 'P3e'
 export interface WireRouteAlias {
-  /** 旧键(`METHOD /m/api/...`,和 routes.ts 的键同一写法)。 */
+  /** 旧键(`METHOD /m/api/...`,或桌面的 `METHOD /v1/workbench/...`;和 routes.ts 的键同一写法)。 */
   from: string
   /** 新键(`METHOD /v1/...`)。有 `/v1` 双胞胎的就是那条;手机独有的是 P3d 要起的新路径;P3e 是 `/v1/matter/<动词>`。 */
   to: string
@@ -109,11 +110,21 @@ export const MERGED_ALIAS_KEYS = [
   'GET /m/api/attachment/upload', 'POST /m/api/attachment/chunk',
   // P3d-3 撞名的两条起不撞的名字(纯改名,同上)
   'POST /m/api/cli/permission', 'POST /m/api/cli/say',
+  // P3e-1 一件事上的动作与交办:翻到 /v1/matter/<动词> 那一个处理器(MattersService 那一层)
+  'POST /m/api/matter/stop', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'GET /m/api/matter/artifact',
+  'POST /m/api/matter/handoff', 'POST /m/api/matter/worktree', 'POST /m/api/matter/create', 'GET /m/api/matter/create-receipt',
 ] as const
 export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
 const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)
 const alias = (from: string, to: string, step: WireRouteStep, transform: string | null, readers: Readers = ['app'], link: WireRouteAlias['link'] = 'none'): WireRouteAlias =>
   ({ from, to, transform, readers, link, handler: MERGED.has(from) ? 'alias' : 'own', step, retireWhen: readers.map(r => RETIRE[r]).join(';') })
+/**
+ * 桌面的旧键(P3e):一件事上的动作收进 `/v1/matter/*` 以后,桌面装着的 .app 还调 `/v1/workbench/*` 双胞胎(tauri 白名单编在 .app 里)。
+ * 旧键照旧在路由表里(档位、operator、tauri 不动),处理器就是新键那一个(新键在 operator 范围下认旧键的参数、回旧键的回包),
+ * 所以一律纯改名(transform null)、登记即并(handler alias)、链接令牌走不了。daemon 里认它的是 src/daemon/internal-api/legacy-desktop-routes.ts。
+ */
+const desktopAlias = (from: string, to: string): WireRouteAlias =>
+  ({ from, to, transform: null, readers: ['desktop'], link: 'none', handler: 'alias', step: 'P3e', retireWhen: RETIRE.desktop })
 
 export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   // ── P3c-1 一件事与主人对话:已并(MERGED_ALIAS_KEYS),一份数据一个 /v1 处理器
@@ -188,4 +199,14 @@ export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   alias('POST /m/api/matter/rewind', 'POST /v1/matter/rewind', 'P3e', 'phoneMatterRewind'),
   alias('POST /m/api/matter/create', 'POST /v1/matter/create', 'P3e', 'phoneMatterCreate'),
   alias('GET /m/api/matter/create-receipt', 'GET /v1/matter/create-receipt', 'P3e', 'phoneMatterCreateReceipt'),
+  // ── P3e 桌面的双胞胎(读的人 = desktop;旧键还在路由表里,处理器是新键那一个)
+  desktopAlias('POST /v1/workbench/cancel', 'POST /v1/matter/stop'),
+  desktopAlias('POST /v1/workbench/permission', 'POST /v1/matter/permission'),
+  desktopAlias('POST /v1/workbench/answer', 'POST /v1/matter/answer'),
+  desktopAlias('GET /v1/workbench/artifact', 'GET /v1/matter/artifact'),
+  // 手机的「交给另一位」是额度用完那一个(quota-handoff);/v1/workbench/handoff 是交接预览之后带 token 的另一个动作,不是双胞胎
+  desktopAlias('POST /v1/workbench/quota-handoff', 'POST /v1/matter/handoff'),
+  desktopAlias('POST /v1/workbench/worktree', 'POST /v1/matter/worktree'),
+  desktopAlias('POST /v1/workbench/create-entry', 'POST /v1/matter/create'),
+  desktopAlias('GET /v1/workbench/entry-receipt', 'GET /v1/matter/create-receipt'),
 ] satisfies WireRouteAlias[])

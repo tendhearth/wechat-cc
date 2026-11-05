@@ -1,17 +1,14 @@
-import {PHONE_ANSWER_MAX_JSON,workbenchErrorHttp} from '@wechat-cc/protocol'
-import type {EntryResult} from '../workbench'
+import {workbenchErrorHttp} from '@wechat-cc/protocol'
 import type {NativeContinuePreview} from '../../adapters/workbench/native-adoption'
 import type {UploadChunk,UploadState} from '../../adapters/workbench/attachment-uploads'
 import type {MattersService,MatterSayInput} from '../../app/matters/service'
-import {parseEntryInput,type EntryInput} from '../../adapters/workbench/task-entry'
 import {ownsMethod,sharedRoute,type PhoneRouteTable} from '../../lib/phone-route-table'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'|'worktreeScript'|'rewindPreview'|'rewind'>>
-/** 交办(P3c-4 起交办选项与模型经 /v1/workbench/entry-options、/v1/workbench/models 走,legacy-routes.ts 的别名)。 */
-export interface MobileEntryActions {
-  createEntry(input:EntryInput):EntryResult
-  entryReceipt(requestId:string):EntryResult|null
-}
+/**
+ * 面板这一口还自己处理的那几样(读回执、撤掉这一轮)。停下 / 批准 / 回答 / 成果 / 交给另一位 / 工作区 / 交办与回执 P3e 起是
+ * `/v1/matter/*` 那一个处理器(internal-api/routes-matter-actions.ts,MattersService 那一层),`/m/api/matter/*` 是 legacy-routes.ts 的别名。
+ */
+export type MobileMatterActions=Partial<Pick<MattersService,'inputReceipt'|'rewindPreview'|'rewind'>>
 /** 分块上传与进度(扔掉 P3c-4 起经 /v1/workbench/discard-attachment 走,legacy-routes.ts 的别名)。 */
 export interface MobileUploadActions {chunk(input:UploadChunk):UploadState;status(input:{id:string;draftId:string}):UploadState}
 const ID=/^[a-f0-9]{8}$/
@@ -43,7 +40,7 @@ export function mobileSayInput(body:Record<string,unknown>):MatterSayInput|undef
   return {requestId:body.requestId.toLowerCase(),...(body.runId!==undefined?{runId:(body.runId as string).toLowerCase()}:{}),...(body.draftId!==undefined?{draftId:(body.draftId as string).toLowerCase()}:{}),...(ids?{attachmentIds:ids}:{})}
 }
 /** 只在 settings-panel 已验过设备令牌的边界里查表调用。 */
-export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,entry?:MobileEntryActions,uploads?:MobileUploadActions):PhoneRouteTable{
+export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,uploads?:MobileUploadActions):PhoneRouteTable{
   const route=(h:(url:URL,req:Request)=>Promise<Response>)=>ownsMethod(h)
   const inputReceipt=route(async(url,req)=>{
     if(req.method!=='GET')return json({ok:false,error:'method_not_allowed'},405)
@@ -68,47 +65,6 @@ export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,entr
       return json({ok:true,...uploads.chunk(body as UploadChunk)})
     }catch(error){return mobileMatterError(error)}
   })
-  const entryRoute=(entryOperation:'create'|'receipt')=>route(async(url,req)=>{
-    if(req.method!==(entryOperation==='create'?'POST':'GET'))return json({ok:false,error:'method_not_allowed'},405)
-    try{
-      if(!entry)throw Error('entry_not_wired')
-      if(entryOperation==='create'){
-        let body:unknown;try{body=await req.json()}catch{throw Error('invalid_entry')}
-        return json({ok:true,...entry.createEntry(parseEntryInput(body))},202)
-      }
-      const requestId=url.searchParams.get('requestId')
-      if(!requestId||!UUID.test(requestId)||url.searchParams.getAll('requestId').length!==1)throw Error('invalid_request_id')
-      const result=entry.entryReceipt(requestId.toLowerCase());if(!result)throw Error('not_found')
-      return json({ok:true,...result})
-    }catch(error){return mobileMatterError(error)}
-  })
-  // 额度用完 ⇒ 交给确认卡上那位继续(spec 2026-10-01-tendhearth-continue-sessions §7-3)。正文恰好三键;按 requestId 幂等。
-  const handoff=route(async(_url,req)=>{
-    if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
-    try{
-      let b:unknown
-      try{b=await req.json()}catch{throw Error('invalid_request')}
-      if(!object(b)||Object.keys(b).some(k=>!['id','requestId','providerId'].includes(k))||typeof b.id!=='string'||!ID.test(b.id)||typeof b.requestId!=='string'||!UUID.test(b.requestId)||typeof b.providerId!=='string'||!/^[a-z][a-z0-9._-]{0,63}$/.test(b.providerId))throw Error('invalid_request')
-      if(!actions?.handoff)throw Error('workbench_not_wired')
-      return json({ok:true,...await actions.handoff(b.id,{requestId:b.requestId,providerId:b.providerId},'phone')})
-    }catch(error){return mobileMatterError(error)}
-  })
-  // 独立工作区(2026-10-07):提交到分支 / 删除工作区 / 合回项目(10-08);正文恰好 id + action。
-  // run / stop(2026-10-20):工作区脚本,会在电脑上跑命令 ⇒ 只给设备令牌(不在链接白名单 LINK_READ_OK / LINK_WRITE_OK 里);批准不在这里。
-  const worktree=route(async(_url,req)=>{
-    if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
-    try{
-      let b:unknown
-      try{b=await req.json()}catch{throw Error('invalid_request')}
-      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='action')||typeof b.id!=='string'||!ID.test(b.id)||(b.action!=='commit'&&b.action!=='remove'&&b.action!=='merge'&&b.action!=='reopen'&&b.action!=='run'&&b.action!=='stop'))throw Error('invalid_request')
-      if(b.action==='run'||b.action==='stop'){
-        if(!actions?.worktreeScript)throw Error('workbench_not_wired')
-        return json({ok:true,...await actions.worktreeScript(b.id,b.action)})
-      }
-      if(!actions?.worktree)throw Error('workbench_not_wired')
-      return json({ok:true,...actions.worktree(b.id,b.action)})
-    }catch(error){return mobileMatterError(error)}
-  })
   // 撤掉这一轮(回退切片 4):GET 预览(固定回到最新那一轮开始之前)、POST 正文恰好 {id, artifactId, token}。只给设备令牌(不在链接白名单 LINK_READ_OK / LINK_WRITE_OK 里)。
   const rewind=route(async(url,req)=>{
     if(req.method!=='GET'&&req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
@@ -126,55 +82,11 @@ export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,entr
       return json({ok:true,...await actions.rewind(b.id,b.artifactId,b.token)})
     }catch(error){return mobileMatterError(error)}
   })
-  // 停下正在跑的这一轮(2026-10-06):正文恰好 id + runId;runId 必须是手机看到的那一轮。
-  const stop=route(async(_url,req)=>{
-    if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
-    try{
-      let b:unknown
-      try{b=await req.json()}catch{throw Error('invalid_request')}
-      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='runId')||typeof b.id!=='string'||!ID.test(b.id)||typeof b.runId!=='string'||!UUID.test(b.runId))throw Error('invalid_request')
-      if(!actions?.stop)throw Error('workbench_not_wired')
-      await actions.stop(b.id,b.runId.toLowerCase())
-      return json({ok:true})
-    }catch(error){return mobileMatterError(error)}
-  })
-  const runRoute=(operation:'permission'|'answer'|'artifact')=>route(async(url,req)=>{
-    if(req.method!==(operation==='artifact'?'GET':'POST'))return json({ok:false,error:'method_not_allowed'},405)
-    try{
-      if(operation==='artifact'){
-        const q=url.searchParams,id=q.get('id'),artifactId=q.get('artifactId'),sha256=q.get('sha256'),offset=q.get('offset'),length=q.get('length')
-        if(['id','artifactId','sha256','offset'].some(k=>q.getAll(k).length!==1)||q.getAll('length').length>1||!id||!ID.test(id)||!artifactId||!UUID.test(artifactId)||!sha256||!SHA.test(sha256)||offset===null||!/^\d+$/.test(offset)||(length!==null&&!/^\d+$/.test(length)))throw Error('invalid_request')
-        if(!actions?.artifactChunk)throw Error('workbench_not_wired')
-        return json({ok:true,...actions.artifactChunk(id,{artifactId,sha256,offset:Number(offset),...(length!==null?{length:Number(length)}:{})})})
-      }
-      let b:unknown
-      try{b=await req.json()}catch{throw Error('invalid_request')}
-      if(!object(b)||typeof b.id!=='string'||!ID.test(b.id)||typeof b.runId!=='string'||!UUID.test(b.runId)||typeof b.requestId!=='string'||!UUID.test(b.requestId))throw Error('invalid_request')
-      if(operation==='permission'){
-        if(b.decision!=='allow'&&b.decision!=='deny')throw Error('invalid_decision')
-        if(!actions?.permission)throw Error('workbench_not_wired')
-        actions.permission(b.id,b.runId,b.requestId,b.decision)
-      }else{
-        if((b.answers!==null&&!object(b.answers))||JSON.stringify(b.answers).length>PHONE_ANSWER_MAX_JSON)throw Error('invalid_answer')
-        if(!actions?.answer)throw Error('workbench_not_wired')
-        actions.answer(b.id,b.runId,b.requestId,b.answers)
-      }
-      return json({ok:true})
-    }catch(error){return mobileMatterError(error)}
-  })
   return {
     'GET /v1/matter/input-receipt':inputReceipt,
     'POST /v1/workbench/attachment/chunk':upload('chunk'),
     'GET /v1/workbench/attachment/upload':upload('status'),
-    'POST /m/api/matter/create':entryRoute('create'),
-    'GET /m/api/matter/create-receipt':entryRoute('receipt'),
-    'POST /m/api/matter/handoff':handoff,
-    'POST /m/api/matter/worktree':worktree,
     ...sharedRoute(['GET','POST'],'/m/api/matter/rewind',rewind),
-    'POST /m/api/matter/stop':stop,
-    'POST /m/api/matter/permission':runRoute('permission'),
-    'POST /m/api/matter/answer':runRoute('answer'),
-    'GET /m/api/matter/artifact':runRoute('artifact'),
   }
 }
 

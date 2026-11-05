@@ -5,7 +5,8 @@
  * (src 里只剩步一种读形状);按退休条件删掉一行,就把下面的上限往下调 —— 棘轮只往一个方向转。
  *
  * 同一个文件里的 WIRE_ROUTE_ALIASES(P3,设计稿 2026-11-05-p3-one-route-family-design.md「守卫」):一行 = 一条 `/m/api`
- * 旧路径。两把棘轮:行数只许变少;「还是自己处理器」(handler: 'own')的行只许变少。
+ * 旧路径,或桌面装着的 .app 还在调的 `/v1/workbench/*` 双胞胎(P3e,读的人 = desktop)。两把棘轮:行数只许变少;
+ * 「还是自己处理器」(handler: 'own')的行只许变少。
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -13,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { MERGED_ALIAS_KEYS, WIRE_COMPAT, WIRE_ROUTE_ALIASES } from '../packages/protocol/src/wire-compat'
 import { ROUTES } from '../packages/protocol/src/routes'
+import { makeRoutes } from '../src/daemon/internal-api/routes'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -37,13 +39,18 @@ describe('wire-compat 兼容表只许变少', () => {
   })
 })
 
-// @debt 还在线上的 /m/api 旧路径(别名表行数;按构建号逐行删,降到 0 = 手机只剩 /v1 一族)
-const MAX_WIRE_ROUTE_ALIASES = 61
+// @debt 还在线上的旧路径(别名表行数;按构建号逐行删,降到 0 = 手机只剩 /v1 一族、桌面只调 /v1/matter/*)。
+// P3e 起桌面的 /v1/workbench/* 双胞胎也登记进来(读的人 = desktop,并一条登记一行):P3e-1 一次上调 8(61 → 69),设计稿「P3a 核过的几件」那一条的二选一。
+const MAX_WIRE_ROUTE_ALIASES = 69
 // @debt 别名表里还是面板自己处理器的行(P3c–P3e 每并一条降一;降到 0 = 每份数据只有一个处理器)
-const MAX_OWN_HANDLER_ROWS = 15
+const MAX_OWN_HANDLER_ROWS = 7
 
 const routeKeys = new Set(Object.keys(ROUTES))
 const LEGACY_ROUTES = join(ROOT, 'src', 'features', 'phone', 'legacy-routes.ts')
+
+/** 手机那半(旧键 /m/api)与桌面那半(旧键 /v1/workbench/*,P3e)。 */
+const PHONE_ALIASES = WIRE_ROUTE_ALIASES.filter(r => r.from.includes(' /m/api/'))
+const DESKTOP_ALIASES = WIRE_ROUTE_ALIASES.filter(r => r.from.includes(' /v1/'))
 
 describe('WIRE_ROUTE_ALIASES 别名表只许变少', () => {
   const own = WIRE_ROUTE_ALIASES.filter(r => r.handler === 'own')
@@ -58,9 +65,10 @@ describe('WIRE_ROUTE_ALIASES 别名表只许变少', () => {
     expect(own.length).toBe(MAX_OWN_HANDLER_ROWS)
   })
 
-  it('每行写清:旧键 /m/api、新键 /v1、谁读、什么时候删;旧键不重复、新键不重复', () => {
+  it('每行写清:旧键 /m/api(或桌面的 /v1/workbench/*)、新键 /v1、谁读、什么时候删;旧键不重复、同一半里新键不重复', () => {
+    expect(PHONE_ALIASES.length + DESKTOP_ALIASES.length).toBe(WIRE_ROUTE_ALIASES.length)
     for (const r of WIRE_ROUTE_ALIASES) {
-      expect(r.from, JSON.stringify(r)).toMatch(/^(GET|POST) \/m\/api\//)
+      expect(r.from, JSON.stringify(r)).toMatch(/^(GET|POST) \/(m\/api|v1\/workbench)\//)
       expect(r.to, r.from).toMatch(/^(GET|POST) \/v1\//)
       expect(r.from.split(' ')[0], `${r.from}:新旧键方法要一样`).toBe(r.to.split(' ')[0])
       expect(r.readers.length, r.from).toBeGreaterThan(0)
@@ -68,12 +76,13 @@ describe('WIRE_ROUTE_ALIASES 别名表只许变少', () => {
       if (r.transform !== null) expect(r.transform, r.from).toMatch(/^[a-z][A-Za-z0-9]*$/)
     }
     expect(new Set(WIRE_ROUTE_ALIASES.map(r => r.from)).size).toBe(WIRE_ROUTE_ALIASES.length)
-    expect(new Set(WIRE_ROUTE_ALIASES.map(r => r.to)).size).toBe(WIRE_ROUTE_ALIASES.length)
+    expect(new Set(PHONE_ALIASES.map(r => r.to)).size).toBe(PHONE_ALIASES.length)
+    expect(new Set(DESKTOP_ALIASES.map(r => r.to)).size).toBe(DESKTOP_ALIASES.length)
   })
 
   it('路由表里每条 /m/api 都登记了;own 行的旧键还在路由表里、链接令牌范围照路由表冻结;已并的旧键不在路由表里', () => {
     const phoneKeys = [...routeKeys].filter(k => / \/m\/api\//.test(k)).sort()
-    for (const r of WIRE_ROUTE_ALIASES.filter(x => x.handler === 'alias')) expect(routeKeys.has(r.from), `${r.from} 已并成别名 ⇒ 路由表里不该还有它`).toBe(false)
+    for (const r of PHONE_ALIASES.filter(x => x.handler === 'alias')) expect(routeKeys.has(r.from), `${r.from} 已并成别名 ⇒ 路由表里不该还有它`).toBe(false)
     for (const r of own) {
       const spec = (ROUTES as Record<string, { phone?: { link: string } }>)[r.from]
       expect(spec?.phone, `${r.from}:还是自己处理器 ⇒ 路由表里该有这一行`).toBeDefined()
@@ -92,19 +101,19 @@ describe('WIRE_ROUTE_ALIASES 别名表只许变少', () => {
   })
 
   it('已并的行 = MERGED_ALIAS_KEYS(类型 PanelRouteKey 并进来的就是这几个);面板处理器表里有它、处理器在 legacy-routes.ts', () => {
-    expect(WIRE_ROUTE_ALIASES.filter(r => r.handler === 'alias').map(r => r.from).sort()).toEqual([...MERGED_ALIAS_KEYS].sort())
+    expect(PHONE_ALIASES.filter(r => r.handler === 'alias').map(r => r.from).sort()).toEqual([...MERGED_ALIAS_KEYS].sort())
     const src = readFileSync(LEGACY_ROUTES, 'utf8')
     for (const k of MERGED_ALIAS_KEYS) expect(src.includes(`'${k}':`), `${k}:legacy-routes.ts 的表里没有它`).toBe(true)
     // 新键那一行的 phone 块:link 照别名行冻结的值抄(链接令牌经新键也只够得着旧键今天够得着的)
-    for (const r of WIRE_ROUTE_ALIASES.filter(x => x.handler === 'alias')) {
+    for (const r of PHONE_ALIASES.filter(x => x.handler === 'alias')) {
       const spec = (ROUTES as Record<string, { phone?: { link: string } }>)[r.to]
       expect(spec?.phone?.link, `${r.to}:并了 ${r.from} ⇒ 这一行得有 phone 块,link 同别名行`).toBe(r.link)
     }
   })
 
-  it('P3d 是纯改名(transform null),双胞胎与 P3e 都有转换;已并的行转换在 legacy-routes.ts 里有实现', () => {
+  it('P3d 与桌面那半是纯改名(transform null),手机那半的双胞胎与 P3e 都有转换;已并的行转换在 legacy-routes.ts 里有实现', () => {
     for (const r of WIRE_ROUTE_ALIASES) {
-      if (r.step === 'P3d') expect(r.transform, r.from).toBeNull()
+      if (r.step === 'P3d' || DESKTOP_ALIASES.includes(r)) expect(r.transform, r.from).toBeNull()
       else expect(r.transform, r.from).not.toBeNull()
     }
     const merged = WIRE_ROUTE_ALIASES.filter(r => r.handler === 'alias' && r.transform !== null)
@@ -112,5 +121,30 @@ describe('WIRE_ROUTE_ALIASES 别名表只许变少', () => {
     expect(existsSync(LEGACY_ROUTES), 'legacy-routes.ts 不在').toBe(true)
     const src = readFileSync(LEGACY_ROUTES, 'utf8')
     for (const r of merged) expect(src.includes(r.transform!), `${r.from}:转换 ${r.transform} 在 legacy-routes.ts 里没有`).toBe(true)
+  })
+
+  it('桌面那半(P3e):读的人只有 desktop、登记即并;旧键照旧在路由表里(.app 的 tauri 白名单编着它);新键也在,且也是手机那半某一行的新键', () => {
+    expect(DESKTOP_ALIASES.length, '桌面那半一行都没有 ⇒ 这一条空转').toBeGreaterThan(0)
+    const phoneTargets = new Set(PHONE_ALIASES.filter(r => r.handler === 'alias').map(r => r.to))
+    for (const r of DESKTOP_ALIASES) {
+      expect(r.readers, r.from).toEqual(['desktop'])
+      expect(r.handler, r.from).toBe('alias')
+      expect(r.step, r.from).toBe('P3e')
+      expect(r.link, r.from).toBe('none')
+      expect(r.from.split(' ')[0], `${r.from}:新旧键方法要一样`).toBe(r.to.split(' ')[0])
+      const spec = (ROUTES as Record<string, { desktop?: { tauri?: true }; phone?: object }>)[r.from]
+      expect(spec?.desktop?.tauri, `${r.from}:旧键要照旧在路由表里、带 tauri(装着的 .app 调它)`).toBe(true)
+      expect(spec?.phone, `${r.from}:旧键不许带 phone 块(手机令牌不走桌面的别名)`).toBeUndefined()
+      expect(routeKeys.has(r.to), `${r.to} 要在路由表里`).toBe(true)
+      expect(phoneTargets.has(r.to), `${r.to}:桌面那半先于手机那半并了?一件事上的动作两边一起并`).toBe(true)
+    }
+  })
+
+  it('桌面那半:内部 API 上旧键挂的就是新键那一个处理器函数(一个动作只有一个处理器)', () => {
+    const table = makeRoutes({ deps: { stateDir: '/nonexistent', daemonPid: 1 } as never, getDelegate: () => null, maybePrefix: (_c, t) => t })
+    for (const r of DESKTOP_ALIASES) {
+      expect(table[r.to], `${r.to} 没有处理器`).toBeTypeOf('function')
+      expect(table[r.from], `${r.from} 挂的不是 ${r.to} 那一个处理器`).toBe(table[r.to])
+    }
   })
 })

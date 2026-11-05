@@ -19,7 +19,8 @@ import { stickerPhoneRoutes } from '../stickers'
 import { terminalPhoneRoutes } from '../terminal'
 
 const OWNER = 'o9rename-owner@im.wechat'
-const RENAMES = WIRE_ROUTE_ALIASES.filter(r => r.handler === 'alias' && r.transform === null)
+// 手机那半(旧键 /m/api);桌面的 /v1/workbench/* 双胞胎(P3e)是内部 API 那一口的别名,另有 wire-compat 守卫核「同一个处理器函数」
+const RENAMES = WIRE_ROUTE_ALIASES.filter(r => r.handler === 'alias' && r.transform === null && r.from.includes(' /m/api/'))
 /** 每条路径带一份像样的查询 / 正文,让处理器走到它真正的分支(不只是 400)。 */
 const QUERY: Record<string, string> = {
   '/v1/matter/insight': 'id=deadbeef&lang=zh', '/v1/matter/input-receipt': 'id=deadbeef&requestId=11111111-1111-4111-8111-111111111111',

@@ -59,7 +59,7 @@ export interface MattersServiceDeps {
     continueTask(id:string,text:string,options?:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):MatterTaskView
     submitInput?(id:string,input:{runId:string;requestId:string;text:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
     inputReceipt?(id:string,requestId:string):LiveInput|null
-    resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void
+    resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void|Promise<void>
     /** 停下这一轮(与桌面「停止」同一个 cancel;expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮)。 */
     cancel?(id:string,expectedRunId?:string):Promise<unknown>
     /** 独立工作区:提交到分支 / 删除工作区(2026-10-07,手机也能做)。没接 ⇒ 手机没有这两个按钮。 */
@@ -78,6 +78,9 @@ export interface MattersServiceDeps {
     reviewList?(id:string):ReadonlyArray<{artifactId:string;createdAt:number;discarded?:boolean}>
     rewindPreview?(id:string,input:{artifactId:string;to:'start'|'end'}):Promise<WorkbenchRewindPreview>
     rewind?(id:string,input:{artifactId:string;to:'start'|'end';token:string}):Promise<{discarded:string[]}>
+    /** 交办(P3e 起手机与桌面经 /v1/matter/create、create-receipt 同一个处理器;上下文由调用方给:谁的、哪个表面、出生地)。 */
+    createEntry?(input:never,context:MatterEntryContext):unknown
+    entryReceipt?(requestId:string,context:MatterEntryContext):unknown
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
   chat?:{file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterDetailEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterDetailEvent&{id:string})[]>}
@@ -124,6 +127,33 @@ export interface MattersService {
   rewindPreview(id:string,artifactId:string):Promise<PhoneRewindPreview>
   /** 带预览给的 token 撤掉(同一轮);回撤掉了哪几轮(制品 id)。 */
   rewind(id:string,artifactId:string,token:string):Promise<{discarded:string[]}>
+  /**
+   * 交办一件新事(P3e,`POST /v1/matter/create`):手机与桌面同一个调用,差别只在上下文 —— 表面、出生地,桌面的主人由调用方给
+   * (`ownerKey`,内部 API 的 resolveAdminChatId),手机缺省取这里的主人。`input` 是 parseEntryInput 验过的(在 daemon 那一层)。
+   */
+  createEntry(input:unknown,context:{surface:'desktop'|'phone';ownerKey?:string;origin?:MatterEntryContext['origin']}):unknown
+  /** 交办的回执(按 requestId);没有 ⇒ null。上下文同 createEntry(不带出生地)。 */
+  entryReceipt(requestId:string,context:{surface:'desktop'|'phone';ownerKey?:string}):unknown
+  /**
+   * 一件事上的动作,桌面那一份(P3e,`/v1/matter/*` 在 operator 范围下):参数、回包、错误码同搬来之前的 `/v1/workbench/*`
+   * —— 工作台原样,不经上面手机那几样的 matter 层判断(runId 过期、只撤最新一轮 …),桌面本来就没有。没接工作台 ⇒ workbench_not_wired。
+   */
+  desktop:MatterDesktopActions
+}
+/** 交办的上下文(工作台 task-entry 的 EntryContext 那几样;matters 不依赖工作台)。 */
+export interface MatterEntryContext {ownerKey:string;surface:'desktop'|'phone';origin?:'desktop'|'app'|'web'|null}
+/** 桌面那一份动作(见 MattersService.desktop)。回包是工作台原样,这里不收窄。 */
+export interface MatterDesktopActions {
+  /** 停下(桌面「停止」):expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮;回任务视图。 */
+  cancel(id:string,expectedRunId?:string):Promise<unknown>
+  resolvePermission(id:string,requestId:string,decision:PermissionDecision):Promise<void>
+  resolveAnswer(id:string,requestId:string,answers:unknown):void
+  /** 成果整份(桌面一次读完;手机按块读的是 artifactChunk)。 */
+  artifact(id:string,artifactId:string):Promise<unknown>
+  /** 额度用完 ⇒ 交给另一位(桌面 202 回工作台原样)。 */
+  quotaHandoff(id:string,input:{requestId:string;providerId:string}):unknown
+  /** 独立工作区:commit / remove / merge / reopen 同步,run / stop 是工作区脚本。回工作台原样(含合并命令)。 */
+  worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'|'run'|'stop'):Promise<unknown>
 }
 /** 工作台预览里手机用得到的那几样(service/rewind.ts 的 RewindPreview;不依赖它,免得 matters 反向依赖工作台域)。 */
 export interface WorkbenchRewindPreview {
@@ -419,5 +449,29 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(bytes.length!==artifact.size)throw Error('artifact_changed')
       return {taskId:id,artifactId:artifact.id,name:artifact.name,mime:artifact.mime,size:artifact.size,sha256:artifact.sha256,offset:input.offset,nextOffset:input.offset+chunk.length,contentBase64:chunk.toString('base64')}
     },
+    createEntry(input,context){
+      if(!deps.workbench?.createEntry)throw Error('workbench_not_wired')
+      const ownerKey=context.ownerKey??(deps.ownerChatId??deps.chat?.ownerChatId)?.()??''
+      return deps.workbench.createEntry(input as never,{ownerKey,surface:context.surface,...(context.origin!==undefined?{origin:context.origin}:{})})
+    },
+    entryReceipt(requestId,context){
+      if(!deps.workbench?.entryReceipt)throw Error('workbench_not_wired')
+      const ownerKey=context.ownerKey??(deps.ownerChatId??deps.chat?.ownerChatId)?.()??''
+      return deps.workbench.entryReceipt(requestId,{ownerKey,surface:context.surface})
+    },
+    desktop:desktopActions(deps.workbench),
+  }
+}
+
+/** 桌面那一份(MattersService.desktop):工作台原样;缺哪样 ⇒ workbench_not_wired(同搬来之前没挂上时的码)。 */
+function desktopActions(w:MattersServiceDeps['workbench']):MatterDesktopActions{
+  const need=<T>(fn:T|undefined):T=>{if(!fn)throw Error('workbench_not_wired');return fn}
+  return {
+    cancel:(id,expectedRunId)=>need(w?.cancel).call(w,id,expectedRunId),
+    resolvePermission:async(id,requestId,decision)=>{await need(w?.resolvePermission).call(w,id,requestId,decision)},
+    resolveAnswer:(id,requestId,answers)=>{need(w?.resolveAnswer).call(w,id,requestId,answers)},
+    artifact:async(id,artifactId)=>need(w?.artifact).call(w,id,artifactId),
+    quotaHandoff:(id,input)=>need(w?.handOff).call(w,id,input),
+    worktree:async(id,action)=>action==='run'||action==='stop'?await need(w?.scriptAction).call(w,id,action):need(w?.worktreeAction).call(w,id,action),
   }
 }

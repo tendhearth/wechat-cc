@@ -42,7 +42,7 @@ import { mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
 import { mobileActivityRoutes } from './mobile-activity'
 import { legacyRoutes } from './legacy-routes'
 import { combinePhoneRoutes, lookupPhoneRoute, ownsMethod, routePhone, type PhoneHandler, type PhoneRouteTable } from '../../lib/phone-route-table'
-import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
+import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {MAX_MOBILE_DETAIL_BYTES,mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../../app/matters/service'
@@ -76,7 +76,6 @@ const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-
 export interface SettingsPanelDeps {
   stateDir: string
   ownerChatId: () => string | null
-  entry?:MobileEntryActions
   uploads?:MobileUploadActions
   chatPrefs: {
     get(chatId: string): Record<string, unknown>
@@ -841,7 +840,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     // P3d 起纯改名的那几条:换成新键的路径,交给这张表里新键那一个处理器(取的时候才读 routes,它就是这张合成好的表)
     legacyRoutes<PanelCtx>({ ...(deps.v1 ? { v1: deps.v1 } : {}), local: (): PhoneRouteTable<PanelCtx> => routes }),
     // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
-    mobileWorkbenchRoutes(deps.matters, deps.entry, deps.uploads),
+    mobileWorkbenchRoutes(deps.matters, deps.uploads),
     mobileSessionContinueRoutes(deps.sessionContinue, id => deps.matters?.seenOnPhone(id), deps.executorName ? { executorName: deps.executorName } : {}),
     // 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句。
     mobileChatRoutes(deps.chat),

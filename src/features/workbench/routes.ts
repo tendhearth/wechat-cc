@@ -1,8 +1,10 @@
 /**
- * 工作台的桌面路由:44 条 `/v1/workbench/*`(架构终态 A5 从 daemon/internal-api/routes-workbench.ts 搬来)。
+ * 工作台的桌面路由 `/v1/workbench/*`(架构终态 A5 从 daemon/internal-api/routes-workbench.ts 搬来)。
  * 由 workbench 模块自己挂(internalApi.mount;路由表标了 module: 'workbench')。服务还没挂上 / 没起来时,
  * 模块门原样回 503 workbench_not_wired(protocol routes.ts 的 MODULE_UNAVAILABLE_CODE),处理器里不再写「没接线」的分支。
  * 状态与对外的码都查 packages/protocol 的 WORKBENCH_ERRORS(mappedError)。
+ * 一件事上的动作(停下、批准、回答、成果、交给另一位、工作区、交办与回执 …)P3e 起不在这里:一个处理器在
+ * daemon/internal-api/routes-matter-actions.ts(`/v1/matter/*`),桌面还在调的 `/v1/workbench/*` 旧键挂同一个函数(wire-compat.ts 的别名)。
  */
 import {validateHandoffInput,type HandoffInput} from './handoff'
 import {nativeImportInput,type NativeImportInput} from '../../adapters/workbench/native-adoption'
@@ -11,13 +13,11 @@ import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../adapters/store/workbench/store'
 import type {InputMaterials,WorkbenchService} from './service'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
-import {parseEntryInput} from '../../adapters/workbench/task-entry'
 import {workbenchErrorHttp,workbenchErrorSpec} from '@wechat-cc/protocol'
 import type { RouteHandler, RouteResult, RouteTable } from '../../daemon/internal-api/types'
 import { phoneSessionList, phoneSessionRead, type PhoneSessionsDeps } from './phone-sessions'
 
 const TASK_ID = /^[a-f0-9]{8}$/
-const EXPECTED_RUN_ID = /^[A-Za-z0-9_.:-]{1,128}$/
 const WAIT_MAX_MS = 20_000
 const nonNegInt = (v: string | null): number | null => v !== null && /^\d{1,12}$/.test(v) ? Number(v) : null
 const ARTIFACT_ID = /^[a-f0-9-]{8,64}$/
@@ -103,21 +103,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if(fromPhone(caller)){try{return{status:200,body:deps.workbench.entryOptions(phoneContext())}}catch(error){return phoneError(error)}}
       try{return{status:200,body:deps.workbench.entryOptions(entryContext())}}catch(error){return mappedError(error)}
     },
-    'POST /v1/workbench/create-entry':async(query,body,caller)=>{
-      if(query.size)return invalid()
-      try{
-        const input=parseEntryInput(body)
-        return{status:202,body:deps.workbench.createEntry(input,{...entryContext(),...desktopOrigin(caller)})}
-      }catch(error){return mappedError(error,true)}
-    },
-    'GET /v1/workbench/entry-receipt':async query=>{
-      const requestId=query.get('requestId')
-      if(query.size!==1||!requestId||!REQUEST_ID.test(requestId))return invalid()
-      try{
-        const result=deps.workbench.entryReceipt(requestId.toLowerCase(),entryContext())
-        return result?{status:200,body:result}:{status:404,body:{error:'not_found'}}
-      }catch(error){return mappedError(error)}
-    },
     'POST /v1/workbench/project':async(_query,body)=>{
       const value=objectBody(body)
       if(!value||typeof value.path!=='string'||!isAbsolute(value.path)||value.path.includes('\0')||!isWorkbenchProviderId(value.providerId)||(value.name!==undefined&&typeof value.name!=='string'))return invalid()
@@ -162,11 +147,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if(!value||Object.hasOwn(value,'execution')||!files||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.runId!=='string'||!REQUEST_ID.test(value.runId)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||typeof value.text!=='string'||(!value.text.trim()&&!files.attachmentIds?.length)||value.text.length>20_000)return invalid()
       try{return{status:200,body:{input:await deps.workbench.submitInput(value.id,{runId:value.runId,requestId:value.requestId,text:value.text,...files})}}}catch(err){return mappedError(err)}
     },
-    'POST /v1/workbench/answer':async(_query,body)=>{
-      const value=objectBody(body)
-      if(!value||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||(value.answers!==null&&!objectBody(value.answers))||JSON.stringify(value.answers).length>20_000)return invalid()
-      try{deps.workbench.resolveAnswer(value.id,value.requestId,value.answers);return{status:200,body:{ok:true}}}catch(err){return mappedError(err)}
-    },
     'POST /v1/workbench/withdraw-input':async(_query,body)=>{
       const value=objectBody(body)
       if(!value||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId))return invalid()
@@ -210,11 +190,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       }catch(error){return mappedError(error)}
     },
 
-    'POST /v1/workbench/quota-handoff':async(query,body)=>{
-      const value=objectBody(body)
-      if(query.size||!value||Object.keys(value).some(key=>!['id','requestId','providerId'].includes(key))||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||!isWorkbenchProviderId(value.providerId))return invalid()
-      try{return{status:202,body:deps.workbench.handOff(value.id,{requestId:value.requestId,providerId:value.providerId})}}catch(error){return mappedError(error)}
-    },
     'POST /v1/workbench/handoff-preview':async(_query,body)=>{
       try{return{status:200,body:await deps.workbench.previewHandoff(validateHandoffInput(body as HandoffInput))}}catch(error){return mappedError(error)}
     },
@@ -340,31 +315,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
-    'POST /v1/workbench/cancel': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      if (!TASK_ID.test(id)) return invalid()
-      const expectedRunIdRaw = value?.expectedRunId
-      if (typeof expectedRunIdRaw === 'string' && !EXPECTED_RUN_ID.test(expectedRunIdRaw)) return invalid()
-      const expectedRunId = typeof expectedRunIdRaw === 'string' ? expectedRunIdRaw : undefined
-      try {
-        return { status: 202, body: { task: await deps.workbench.cancel(id, expectedRunId) } }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
-    'GET /v1/workbench/artifact': async (query) => {
-      const id = query.get('id') ?? ''
-      const artifactId = query.get('artifactId') ?? ''
-      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId)) return invalid()
-      try {
-        return { status: 200, body: await deps.workbench.artifact(id, artifactId) }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
     'POST /v1/workbench/approve': async (_query, body) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
@@ -373,20 +323,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) || !SHA256.test(sha256)) return invalid()
       try {
         await deps.workbench.approve(id, artifactId, sha256)
-        return { status: 200, body: { ok: true } }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
-    'POST /v1/workbench/permission': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
-      const decision = value?.decision
-      if (!TASK_ID.test(id) || !REQUEST_ID.test(requestId) || (decision !== 'allow' && decision !== 'deny')) return invalid()
-      try {
-        await deps.workbench.resolvePermission(id, requestId, decision)
         return { status: 200, body: { ok: true } }
       } catch (err) {
         return mappedError(err)
@@ -422,17 +358,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       }
     },
 
-    // 逐文件撤销(2026-10-06):恢复成这一轮开始前的内容。文件夹还被占着 ⇒ 409 workbench_busy;之后又改过 ⇒ 409 review_file_changed。
-    // 独立工作区(2026-10-07):commit = 提交到分支(回合并命令),remove = 删工作区目录(分支保留);merge(10-08)= 快进合回项目。
-    // 工作区脚本(2026-10-20):run = 起 run 脚本(setup 没跑成先跑 setup),stop = 停下;没批 ⇒ 428 script_approval_required。
-    'POST /v1/workbench/worktree': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : '', action = value?.action
-      if (!TASK_ID.test(id) || (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen' && action !== 'run' && action !== 'stop') || Object.keys(value ?? {}).some(k => k !== 'id' && k !== 'action')) return invalid()
-      try { return { status: 200, body: { worktree: action === 'run' || action === 'stop' ? await deps.workbench.scriptAction(id, action) : deps.workbench.worktreeAction(id, action) } } }
-      catch (err) { return mappedError(err) }
-    },
-
     // 批准工作区脚本:hash = 主人在确认框里看到的那份内容;对不上 ⇒ 409 script_config_changed(重新拉详情再看)。
     'POST /v1/workbench/script-approve': async (_query, body) => {
       const value = objectBody(body)
@@ -442,6 +367,8 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
+    // 逐文件撤销(2026-10-06):恢复成这一轮开始前的内容。文件夹还被占着 ⇒ 409 workbench_busy;之后又改过 ⇒ 409 review_file_changed。
+    // (独立工作区的 commit / remove / merge / reopen 与工作区脚本 run / stop 是一件事上的动作,P3e 起在 /v1/matter/worktree。)
     'POST /v1/workbench/review-revert': async (_query, body) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''

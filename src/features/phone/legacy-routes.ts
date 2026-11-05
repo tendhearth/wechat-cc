@@ -54,15 +54,16 @@ const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'o
 const errorOf = (body: unknown) => obj(body) && typeof body.error === 'string' ? body.error : 'internal'
 
 /** 纯改名的行(transform 为 null):旧键 → 新键,只从别名表读,这里不另写一份。 */
-const RENAMED: ReadonlyMap<string, string> = new Map(WIRE_ROUTE_ALIASES.filter(r => r.transform === null).map(r => [r.from, r.to]))
+const RENAMED: ReadonlyMap<string, string> = new Map(WIRE_ROUTE_ALIASES.filter(r => r.transform === null && r.from.includes(' /m/api/')).map(r => [r.from, r.to]))
 
 interface V1Out { status: number; body: unknown; cause: string | null }
 
 export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): PhoneRouteTable<C> {
   /** 翻到新键,走同一个分发(带同一个令牌、同一个帧预算 / 出生地;断开信号跟着原请求)。 */
-  const v1 = async (req: Request, caller: TokenInfo, method: 'GET' | 'POST', path: string, query: Record<string, string>, body?: unknown): Promise<V1Out> => {
+  const v1 = async (req: Request, caller: TokenInfo, method: 'GET' | 'POST', path: string, query: Record<string, string> | URLSearchParams, body?: unknown): Promise<V1Out> => {
     const url = new URL(`http://panel.local${path}`)
-    for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v)
+    // URLSearchParams ⇒ 原样带过去(重复的键也带:新键那边照手机的规矩数 getAll);令牌与隧道标记(t / d / _via)分发那边会去掉
+    for (const [k, v] of query instanceof URLSearchParams ? query : Object.entries(query)) url.searchParams.append(k, v)
     const inner = new Request(url, {
       method, signal: req.signal,
       ...(body !== undefined ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}),
@@ -357,6 +358,30 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     return sessionAliasError(out)
   })
 
+  // ── P3e 一件事上的动作与交办 → /v1/matter/<动词>:数据、语义、手机的参数规矩都在新键那一个处理器里(手机令牌那一份:正文恰好那几个键、
+  // runId 过期判断、成果按块读、交办记手机表面 —— daemon/internal-api/routes-matter-actions.ts),参数不对它就按并之前手机回的码报
+  // (经 cause)。别名只做:方法不对 405、正文不是 JSON(码同并之前)、原样转手(新键那边的回包已经带 ok: true)、phone 那一列的码、
+  // 带 no-store(mobile-workbench 的 json())。`wiredFirst`:并之前先判「没接上」再读正文的那条(交办)。
+  const matterAction = (method: 'GET' | 'POST', path: string, o: { badJson?: string; notWired: string; wiredFirst?: true }): PhoneHandler<Ctx> =>
+    ownsMethod(async (url: URL, req: Request, { caller }: Ctx) => {
+      if (req.method !== method) return noStore({ ok: false, error: 'method_not_allowed' }, 405)
+      if (o.wiredFirst && !deps.v1) return mobileMatterError(Error(o.notWired))
+      let body: unknown
+      if (method === 'POST') { try { body = await req.json() } catch { return mobileMatterError(Error(o.badJson ?? 'invalid_request')) } }
+      if (!deps.v1) return mobileMatterError(Error(o.notWired))
+      const out = await v1(req, caller, method, path, url.searchParams, body)
+      if (out.status >= 200 && out.status < 300 && obj(out.body)) return noStore(out.body, out.status)
+      return workbenchAliasError(out, o.notWired)
+    })
+  const phoneMatterStop = matterAction('POST', '/v1/matter/stop', { notWired: 'workbench_not_wired' })
+  const phoneMatterPermission = matterAction('POST', '/v1/matter/permission', { notWired: 'workbench_not_wired' })
+  const phoneMatterAnswer = matterAction('POST', '/v1/matter/answer', { notWired: 'workbench_not_wired' })
+  const phoneMatterArtifact = matterAction('GET', '/v1/matter/artifact', { notWired: 'workbench_not_wired' })
+  const phoneMatterHandoff = matterAction('POST', '/v1/matter/handoff', { notWired: 'workbench_not_wired' })
+  const phoneMatterWorktree = matterAction('POST', '/v1/matter/worktree', { notWired: 'workbench_not_wired' })
+  const phoneMatterCreate = matterAction('POST', '/v1/matter/create', { badJson: 'invalid_entry', notWired: 'entry_not_wired', wiredFirst: true })
+  const phoneMatterCreateReceipt = matterAction('GET', '/v1/matter/create-receipt', { notWired: 'entry_not_wired' })
+
   // ── P3d 纯改名(wire-compat.ts 里 transform 为 null 的行):旧路径换成新键的路径(前缀键换前缀、后面原样),交给面板里新键那一个
   // 处理器 —— 同一个 Request(方法、正文、头、断开信号)、同一个 ctx(令牌、设备 id),回包一个字节不碰。查不到 ⇒ 面板同一个 404。
   // 一律 ownsMethod:方法不对也交过去,由新键那边照它自己的规矩回(它自己判方法就回它的 405,不判就落到这里的 404,同并之前)。
@@ -422,5 +447,14 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     'POST /m/api/attachment/discard': phoneAttachmentDiscard,
     'GET /m/api/sessions': phoneSessions,
     'GET /m/api/session': phoneSession,
+    // P3e-1 一件事上的动作与交办
+    'POST /m/api/matter/stop': phoneMatterStop,
+    'POST /m/api/matter/permission': phoneMatterPermission,
+    'POST /m/api/matter/answer': phoneMatterAnswer,
+    'GET /m/api/matter/artifact': phoneMatterArtifact,
+    'POST /m/api/matter/handoff': phoneMatterHandoff,
+    'POST /m/api/matter/worktree': phoneMatterWorktree,
+    'POST /m/api/matter/create': phoneMatterCreate,
+    'GET /m/api/matter/create-receipt': phoneMatterCreateReceipt,
   }
 }
