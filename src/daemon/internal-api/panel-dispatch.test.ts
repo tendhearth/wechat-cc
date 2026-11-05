@@ -135,7 +135,11 @@ const P3C1_LINK = ['GET /v1/matter', 'GET /v1/matters']
  * P3d 起手机独有的 /v1 行(只有 phone 块,PanelV1Key):处理器在面板这一口,不经分发 —— 不在 PANEL_V1_ROUTES 里,
  * 但在设备 / 链接令牌的集合里(链接令牌只读其中两条,同别名行冻结的)。
  */
-const P3D_DEVICE = ['GET /v1/activity', 'GET /v1/cli/activity', 'GET /v1/home', 'GET /v1/jobs', 'GET /v1/letters/page', 'GET /v1/letters/sent', 'GET /v1/matter/input-receipt', 'GET /v1/matter/insight', 'GET /v1/phone/art/presence', 'GET /v1/phone/state', 'POST /v1/jobs/action', 'POST /v1/phone/push/register', 'POST /v1/phone/push/test']
+const P3D_DEVICE = ['GET /v1/activity', 'GET /v1/cli/activity', 'GET /v1/home', 'GET /v1/jobs', 'GET /v1/letters/page', 'GET /v1/letters/sent', 'GET /v1/matter/input-receipt', 'GET /v1/matter/insight', 'GET /v1/phone/art/presence', 'GET /v1/phone/state', 'POST /v1/jobs/action', 'POST /v1/phone/push/register', 'POST /v1/phone/push/test',
+  // P3d-2
+  'GET /v1/companion/transcribe', 'GET /v1/matter/owner-chat/model', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/voice', 'GET /v1/memory/curated', 'GET /v1/stickers/file/',
+  'GET /v1/workbench/attachment/upload', 'GET /v1/workbench/session/continue', 'POST /v1/matter/owner-chat/model', 'POST /v1/matter/owner-chat/say', 'POST /v1/memory/correct',
+  'POST /v1/workbench/attachment/chunk', 'POST /v1/workbench/session/continue']
 const P3D_LINK = ['GET /v1/home', 'GET /v1/phone/art/presence']
 
 describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不了', () => {

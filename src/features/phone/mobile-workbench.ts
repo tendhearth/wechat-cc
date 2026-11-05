@@ -164,8 +164,8 @@ export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,entr
   })
   return {
     'GET /v1/matter/input-receipt':inputReceipt,
-    'POST /m/api/attachment/chunk':upload('chunk'),
-    'GET /m/api/attachment/upload':upload('status'),
+    'POST /v1/workbench/attachment/chunk':upload('chunk'),
+    'GET /v1/workbench/attachment/upload':upload('status'),
     'POST /m/api/matter/create':entryRoute('create'),
     'GET /m/api/matter/create-receipt':entryRoute('receipt'),
     'POST /m/api/matter/handoff':handoff,
@@ -209,7 +209,7 @@ function adoptError(error:unknown):Response {
  * POST {key} 幂等地接成一件事,成功后登记手机露面。回包不含文件夹路径与原生 id(D13)。
  */
 export function mobileSessionContinueRoutes(actions:MobileSessionContinueActions|undefined,seen?:(matterId:string)=>void,opts:{budgetMs?:number;maxInflight?:number;executorName?:(id:string)=>string}={}):PhoneRouteTable{
-  return sharedRoute(['GET','POST'],'/m/api/session/continue',ownsMethod((url:URL,req:Request)=>sessionContinue(actions,url,req,seen,opts)))
+  return sharedRoute(['GET','POST'],'/v1/workbench/session/continue',ownsMethod((url:URL,req:Request)=>sessionContinue(actions,url,req,seen,opts)))
 }
 async function sessionContinue(actions:MobileSessionContinueActions|undefined,url:URL,req:Request,seen:((matterId:string)=>void)|undefined,opts:{budgetMs?:number;maxInflight?:number;executorName?:(id:string)=>string}):Promise<Response>{
   if(req.method!=='GET'&&req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)

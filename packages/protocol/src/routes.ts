@@ -611,9 +611,9 @@ const ROUTE_TABLE = {
   'GET /m': { phone: { link: 'read', reason: '手机页面本身(配对之前也要能打开)' } },
   'GET /v1/phone/state': { phone: { link: 'none' } },
   'GET /v1/phone/art/presence': { phone: { link: 'read', reason: 'CC 的形象画(在不在身边)' } },
-  'GET /m/api/memory': { phone: { link: 'none' } },
+  'GET /v1/memory/curated': { phone: { link: 'none' } },
   // 「CC 记得你」逐条纠错(2026-10-06)
-  'POST /m/api/memory/correct': { phone: { link: 'none' } },
+  'POST /v1/memory/correct': { phone: { link: 'none' } },
   'GET /v1/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
   'GET /v1/matter/input-receipt': { phone: { link: 'none' } },
   'GET /v1/matter/insight': { phone: { link: 'none' } },
@@ -628,12 +628,12 @@ const ROUTE_TABLE = {
   'GET /m/api/matter/rewind': { phone: { link: 'none' } },
   'POST /m/api/matter/rewind': { phone: { link: 'none' } },
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
-  'GET /m/api/chat': { phone: { link: 'none' } },
-  'POST /m/api/chat/say': { phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/page': { phone: { link: 'none' } },
+  'POST /v1/matter/owner-chat/say': { phone: { link: 'none' } },
   // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
-  'GET /m/api/chat/voice': { phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/voice': { phone: { link: 'none' } },
   // 按住说话(2026-10-18):配没配语音转文字(录音转成字那一条 P3c-1 并进了 POST /v1/companion/transcribe)
-  'GET /m/api/chat/transcribe': { phone: { link: 'none' } },
+  'GET /v1/companion/transcribe': { phone: { link: 'none' } },
   // CC 的信(2026-10-18,mobile-letters.ts):寄出去了的信 + 一页 PNG 按块读。信是私事:链接令牌不在册(见 LINK_ROUTES)
   'GET /v1/letters/sent': { phone: { link: 'none' } },
   // 定时(对标 B7,2026-10-20):只给设备
@@ -642,21 +642,21 @@ const ROUTE_TABLE = {
   'POST /v1/jobs/action': { phone: { link: 'none' } },
   'GET /v1/letters/page': { phone: { link: 'none' } },
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
-  'GET /m/api/chat/model': { phone: { link: 'none' } },
-  'POST /m/api/chat/model': { phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/model': { phone: { link: 'none' } },
+  'POST /v1/matter/owner-chat/model': { phone: { link: 'none' } },
   // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
   'POST /m/api/cli/permission': { phone: { link: 'none' } },
   'POST /m/api/cli/say': { phone: { link: 'none' } },
   // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
   'GET /v1/cli/activity': { phone: { link: 'none' } },
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
-  'GET /m/api/session/continue': { phone: { link: 'none' } },
-  'POST /m/api/session/continue': { phone: { link: 'none' } },
-  'GET /m/api/sticker/': { phone: { link: 'none' } },
+  'GET /v1/workbench/session/continue': { phone: { link: 'none' } },
+  'POST /v1/workbench/session/continue': { phone: { link: 'none' } },
+  'GET /v1/stickers/file/': { phone: { link: 'none' } },
   // 交办与材料(mobile-workbench.ts,#129)
   // 材料分块上传与进度(和桌面一次传完的 /v1/workbench/attachment 不是同一个动作,P3d 起新路径)
-  'POST /m/api/attachment/chunk': { phone: { link: 'none' } },
-  'GET /m/api/attachment/upload': { phone: { link: 'none' } },
+  'POST /v1/workbench/attachment/chunk': { phone: { link: 'none' } },
+  'GET /v1/workbench/attachment/upload': { phone: { link: 'none' } },
   'POST /m/api/matter/create': { phone: { link: 'none' } },
   'GET /m/api/matter/create-receipt': { phone: { link: 'none' } },
   'POST /m/api/matter/permission': { phone: { link: 'none' } },

@@ -39,7 +39,11 @@ describe('phoneRouteAllowed', () => {
       'GET /v1/workbench/entry-options', 'GET /v1/workbench/models', 'POST /v1/workbench/discard-attachment', 'GET /v1/workbench/sessions', 'GET /v1/workbench/session',
       // P3d-1:手机独有的搬到新的 /v1 路径(纯改名)—— 别名行是 link: none 的,新键同
       'GET /v1/phone/state', 'POST /v1/phone/push/register', 'POST /v1/phone/push/test', 'GET /v1/matter/insight', 'GET /v1/matter/input-receipt',
-      'GET /v1/cli/activity', 'GET /v1/activity', 'GET /v1/jobs', 'POST /v1/jobs/action', 'GET /v1/letters/sent', 'GET /v1/letters/page']
+      'GET /v1/cli/activity', 'GET /v1/activity', 'GET /v1/jobs', 'POST /v1/jobs/action', 'GET /v1/letters/sent', 'GET /v1/letters/page',
+      // P3d-2:主人对话、记忆、表情、接着做、分块上传的新键 —— 别名行都是 link: none,新键同
+      'GET /v1/matter/owner-chat/page', 'POST /v1/matter/owner-chat/say', 'GET /v1/matter/owner-chat/voice', 'GET /v1/companion/transcribe',
+      'GET /v1/matter/owner-chat/model', 'POST /v1/matter/owner-chat/model', 'GET /v1/memory/curated', 'POST /v1/memory/correct', 'GET /v1/stickers/file/',
+      'GET /v1/workbench/session/continue', 'POST /v1/workbench/session/continue', 'GET /v1/workbench/attachment/upload', 'POST /v1/workbench/attachment/chunk']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     // 链接令牌剩下的就是链接页面会调的那几条:配对、设置页、此刻、一起做的看与停

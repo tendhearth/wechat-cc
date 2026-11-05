@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
 import { makePhoneChatId, makePhoneOwner, mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
-import { combinePhoneRoutes, routePhone } from './phone-route-table'
+import { combinePhoneRoutes, routePhone, type PhoneRouteTable } from './phone-route-table'
 import { legacyRoutes } from './legacy-routes'
 import { withPanelV1, type LegacyChatFakes } from './test-panel-v1'
 import { voiceRoutes } from '../voice/routes'
@@ -34,7 +34,9 @@ const call = async (d: LegacyChatFakes | undefined, r: Request) => {
   const transcribe = d?.transcribe
   const mounts = transcribe ? { voice: voiceRoutes({ voice: { transcribe: (a: Buffer, m: string) => transcribe(a, m) } as never }) } : {}
   const v1 = d ? withPanelV1({ stateDir: tmpdir(), ownerChatId: () => 'wx', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, chat: d }, {}, mounts).v1 : undefined
-  const table = combinePhoneRoutes(mobileChatRoutes(d), legacyRoutes(v1 ? { v1 } : {}))
+  // P3d-2 起手机对话自己那几条登记在新键上(/v1/matter/owner-chat/*、GET /v1/companion/transcribe),旧路径是纯改名的别名:
+  // 别名查的就是这张合起来的表(同 settings-panel.ts 的 local)
+  const table: PhoneRouteTable<{ caller: typeof DEVICE }> = combinePhoneRoutes<{ caller: typeof DEVICE }>(mobileChatRoutes(d), legacyRoutes<{ caller: typeof DEVICE }>({ ...(v1 ? { v1 } : {}), local: () => table }))
   const res = await routePhone(table, new URL(r.url), r, { caller: DEVICE })
   return { status: res!.status, body: await res!.json() as any }
 }
@@ -155,7 +157,7 @@ describe('中继帧大小(终审 M1):一页整页不能超过 512 KiB,也不能 
   for (const [name, text] of [['4000 个汉字', '汉'.repeat(4000)], ['控制字符(转义两次最胀)', '\u0001'.repeat(4000)], ['引号', '"'.repeat(4000)]] as const) {
     it(`每条 ${name} ⇒ 少给几条(hasMore、nextBefore 指向本页最旧那条),线上 < 512 KiB`, async () => {
       const d = deps({ history: worst(text) })
-      const res = (await routePhone(mobileChatRoutes(d), new URL('http://x/m/api/chat'), get()))!
+      const res = (await routePhone(mobileChatRoutes(d), new URL('http://x/v1/matter/owner-chat/page'), get()))!
       expect(res.status).toBe(200)
       const body = await res.clone().json() as any
       expect(body.messages.length).toBeGreaterThan(0)

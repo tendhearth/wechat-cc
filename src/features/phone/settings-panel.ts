@@ -770,13 +770,13 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     'GET /v1/phone/art/presence': async () => {
       return json({ ok: true, mime: 'image/png', unlit: presenceArt.unlit.base64, lit: presenceArt.lit.base64 })
     },
-    'GET /m/api/memory': async () => {
+    'GET /v1/memory/curated': async () => {
       if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
       // 经隧道时 handleRequest 抛出不会回包,手机会一直等 —— 这里兜住,让页面走「暂时读不到」。
       try { return json({ ok: true, ...deps.curatedMemory() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
     },
     // 「CC 记得你」逐条纠错(步骤 A,2026-10-06):正文恰好 id + verdict;id 是 memory.md 每条尾注里的那串 hex。
-    'POST /m/api/memory/correct': ownsMethod(async (_url, req) => {
+    'POST /v1/memory/correct': ownsMethod(async (_url, req) => {
       if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
       if (!deps.correctMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
       let b: unknown
@@ -859,9 +859,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         return json({ ok: true, sent: n(r?.sent), remaining: n(r?.remaining), skippedDiscarded: n(r?.skippedDiscarded) })
       } catch (e) { return mobileMatterError(e) }
     },
-    'GET /m/api/sticker/': async (url) => {
+    'GET /v1/stickers/file/': async (url) => {
       if (!deps.stickers) return json({ error: 'not_found' }, 404)
-      const raw = decodeURIComponent(url.pathname.slice('/m/api/sticker/'.length))
+      const raw = decodeURIComponent(url.pathname.slice('/v1/stickers/file/'.length))
       const name = basename(raw)
       // basename + known-in-library double guard — never a free file read.
       if (name !== raw || !deps.stickers.list().some(e => e.file === name)) return json({ error: 'not_found' }, 404)
