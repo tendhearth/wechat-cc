@@ -27,7 +27,7 @@ describe('phone entry rejection wire contract',()=>{
   })
 
   it('returns invalid uploaded content as HTTP 400 without making it an entry identity rejection',async()=>{
-    const url=new URL('http://phone.test/m/api/attachment/chunk')
+    const url=new URL('http://phone.test/v1/workbench/attachment/chunk')
     const req=new Request(url,{method:'POST',body:JSON.stringify({id:crypto.randomUUID(),draftId:crypto.randomUUID(),name:'bad.png',mime:'image/png',size:1,sha256:'a'.repeat(64),offset:0,contentBase64:'eA=='})})
     const response=await routePhone(mobileWorkbenchRoutes(undefined,undefined,{
       chunk:()=>{throw Error('upload_invalid_content')},status:()=>{throw Error('unexpected')},
@@ -70,7 +70,7 @@ describe('手机「交给另一位继续」路由(POST /m/api/matter/handoff,spe
 
 describe('手机「接着做」路由(/m/api/session/continue)',()=>{
   const KEY='eyJ2IjoxfQ'
-  const url=(q='')=>new URL(`http://phone.test/m/api/session/continue${q}`)
+  const url=(q='')=>new URL(`http://phone.test/v1/workbench/session/continue${q}`)
   const ready={state:'ready' as const,providerId:'claude' as const,project:'proj',mode:'native_resume' as const,taskId:null}
   const actions=(o:{preview?:()=>Promise<unknown>;adopt?:()=>Promise<unknown>}={})=>({
     preview:(o.preview??(async()=>ready)) as never,
@@ -78,7 +78,7 @@ describe('手机「接着做」路由(/m/api/session/continue)',()=>{
   })
   const post=(body:unknown)=>new Request(url(),{method:'POST',body:typeof body==='string'?body:JSON.stringify(body)})
   it('不是这条路径 ⇒ null;方法不对 ⇒ 405;没接 ⇒ 503 sessions_not_wired',async()=>{
-    const other=new URL('http://phone.test/m/api/session')
+    const other=new URL('http://phone.test/v1/workbench/session')
     expect(await routePhone(mobileSessionContinueRoutes(actions()),other,new Request(other))).toBeNull()
     expect((await routePhone(mobileSessionContinueRoutes(actions()),url(),new Request(url(),{method:'PUT'})))!.status).toBe(405)
     const r=await routePhone(mobileSessionContinueRoutes(undefined),url(`?key=${KEY}`),new Request(url(`?key=${KEY}`)))

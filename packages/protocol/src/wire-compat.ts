@@ -103,6 +103,10 @@ export const MERGED_ALIAS_KEYS = [
   'GET /m/api/state', 'GET /m/api/art/presence', 'POST /m/api/push/register', 'POST /m/api/push/test',
   'GET /m/api/matter/insight', 'GET /m/api/matter/input-receipt', 'GET /m/api/home', 'GET /m/api/cli/activity', 'GET /m/api/activity',
   'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/letters', 'GET /m/api/letters/page',
+  // P3d-2 主人对话、记忆、表情、接着做、分块上传(纯改名,同上)
+  'GET /m/api/chat', 'POST /m/api/chat/say', 'GET /m/api/chat/voice', 'GET /m/api/chat/transcribe', 'GET /m/api/chat/model', 'POST /m/api/chat/model',
+  'GET /m/api/memory', 'POST /m/api/memory/correct', 'GET /m/api/sticker/', 'GET /m/api/session/continue', 'POST /m/api/session/continue',
+  'GET /m/api/attachment/upload', 'POST /m/api/attachment/chunk',
 ] as const
 export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
 const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)

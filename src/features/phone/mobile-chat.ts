@@ -161,7 +161,7 @@ const message = (r: MessageRecord, inboxDir?:string) => ({
 
 export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTable {
   return {
-    'GET /m/api/chat': ownsMethod(async (url: URL, req: Request) => {
+    'GET /v1/matter/owner-chat/page': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return err('method_not_allowed', 405)
       if (!deps) return err('chat_not_wired', 503)
       const rawLimit = url.searchParams.get('limit'), before = url.searchParams.get('before')
@@ -196,7 +196,7 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
     }),
     // 搜主人那条对话(2026-10-06,对标 Orca 会话历史搜索):q 1–200 字;最多 30 条、每条截到 600 字(一帧装得下)。
     // 这条对话用哪个后端 / 模型(2026-10-06,对标 Paseo / Orca 手机上换模型):读 + 钉(只影响主人这条对话,下一句生效)。
-    ...sharedRoute(['GET', 'POST'], '/m/api/chat/model', ownsMethod(async (url: URL, req: Request) => {
+    ...sharedRoute(['GET', 'POST'], '/v1/matter/owner-chat/model', ownsMethod(async (url: URL, req: Request) => {
       if (!deps?.model) return err('model_not_wired', 503)
       let owner: ReturnType<MobileChatDeps['owner']>
       try { owner = deps.owner() } catch { return err('unavailable', 503) }
@@ -217,7 +217,7 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
       try { deps.model.set(owner.chatId, b.provider, typeof b.model === 'string' ? b.model : null) } catch { return err('unavailable', 503) }
       return json({ ok: true, ...deps.model.current(owner.chatId) })
     })),
-    'GET /m/api/chat/voice': ownsMethod(async (url: URL, req: Request) => {
+    'GET /v1/matter/owner-chat/voice': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return err('method_not_allowed', 405)
       if (!deps?.message || !deps.speak) return err('voice_not_wired', 503)
       const id = url.searchParams.get('id'), rawIdx = url.searchParams.get('i')
@@ -241,12 +241,12 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
     }),
     // 按住说话(2026-10-18):GET 只问电脑上配没配语音转文字(手机按钮先说清楚,不等录完才失败)。
     // 录音转成字那一条(POST)P3c-1 并进了 POST /v1/companion/transcribe,旧路径是别名(legacy-routes.ts)。
-    'GET /m/api/chat/transcribe': ownsMethod(async (_url: URL, req: Request) => {
+    'GET /v1/companion/transcribe': ownsMethod(async (_url: URL, req: Request) => {
       if (req.method !== 'GET') return err('method_not_allowed', 405)
       if (!deps?.transcribeStatus) return err('voice_not_wired', 503)
       try { return json({ ok: true, configured: deps.transcribeStatus().configured === true }) } catch { return err('unavailable', 503) }
     }),
-    'POST /m/api/chat/say': ownsMethod(async (url: URL, req: Request) => {
+    'POST /v1/matter/owner-chat/say': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'POST') return err('method_not_allowed', 405)
       if (!deps) return err('chat_not_wired', 503)
       let body: unknown
