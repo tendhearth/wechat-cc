@@ -88,6 +88,11 @@ export interface WorkbenchRoutesDeps {
    * 503 sessions_not_wired(绝不退回桌面那一份)。
    */
   phoneSessions?: PhoneSessionsDeps
+  /**
+   * 桌面那一侧(S3b):attention 每 3 秒拉一次 = 桌面 app 开着(`notePoll`);非手机令牌读一件任务的详情 = 在电脑上看过了(`seen`)。
+   * 一件事的提议读这两样决定桌面那一级由谁弹、到点还推不推手机。缺省 ⇒ 不记。
+   */
+  desktop?: { notePoll(): void; seen(taskId: string): void }
 }
 
 export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
@@ -138,7 +143,8 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if(!value||typeof value.id!=='string'||!REQUEST_ID.test(value.id)||typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId))return invalid()
       try{deps.workbench.discardAttachment(value.id,value.draftId);return{status:200,body:{ok:true}}}catch(error){return mappedError(error)}
     },
-    'GET /v1/workbench/attention':async()=>{
+    'GET /v1/workbench/attention':async(_query,_body,caller)=>{
+      if(!fromPhone(caller))try{deps.desktop?.notePoll()}catch{/* 只是记一笔 */}
       try{return{status:200,body:deps.workbench.attention()}}catch(err){return mappedError(err)}
     },
     'POST /v1/workbench/input':async(_query,body)=>{
@@ -222,9 +228,10 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       }catch(error){return mappedError(error)}
     },
 
-    'GET /v1/workbench/task': async (query) => {
+    'GET /v1/workbench/task': async (query, _body, caller) => {
       const id = query.get('id')
       if (!id || !TASK_ID.test(id)) return invalid()
+      if (!fromPhone(caller)) try { deps.desktop?.seen(id) } catch { /* 只是露面登记 */ }
       if (query.getAll('since').length > 1 || query.getAll('since_cursor').length > 1 || query.getAll('wait_ms').length > 1) return invalid()
       const sinceRaw = query.get('since'), cursorRaw = query.get('since_cursor'), waitRaw = query.get('wait_ms')
       if (sinceRaw !== null && cursorRaw !== null) return invalid()

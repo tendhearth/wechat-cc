@@ -2,6 +2,8 @@
  * wireMain 接进 daemon 的那一份:`wired`(入站管道的依赖、伙伴 tick、手机那一簇、CC 开口那道门)、入站管道 `pipeline`、
  * 会话起停 `sessions`、开机最后一步 `startup-sweeps`。只有模块表 daemon-modules.ts(和别的平台 module.ts 引类型)引这个文件。
  */
+import { makeOwnerPresence } from '../../lib/owner-presence'
+import { machineIdleSeconds } from '../../lib/machine-idle'
 import { log } from '../../lib/log'
 import { loadAccess } from '../../lib/access'
 import type { Lifecycle } from '../../lib/lifecycle'
@@ -72,6 +74,8 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
         // 手机拍板 / 说一句(终端会话那个功能造好的):拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
         cliActions: cli.phoneActions,
         matters: f.matters, guardRuntime: guardRt, subsystems: () => f.sup.statuses(), providerRefusals: () => f.providerRefusals.all(),
+        // 一件事的提议(S3b):人在电脑前 = 本机空闲不足 2 分钟(和终端会话同一个判法)
+        proposals: { atDesk: () => makeOwnerPresence({ machineIdle: f.machineIdle ?? (() => machineIdleSeconds()) }).atDesk(), desktop: f.desktopSurface, ...(f.escalateAfterMs !== undefined ? { escalateAfterMs: f.escalateAfterMs } : {}) },
         panelTokens: internalApi.panelTokens,
         panelDispatch: internalApi.panelDispatch,
         commands: owner.commands,

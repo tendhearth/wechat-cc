@@ -27,7 +27,7 @@ const reply = (narration: string[], text = '回你了') => ({ kind: 'message', r
 let stateDir: string, api: InternalApi, panel: SettingsPanel, localBase: string, operator: string
 let device: string, link: string
 let service: MattersService
-let spies: { seenOnPhone: ReturnType<typeof vi.fn>; say: ReturnType<typeof vi.fn>; searchOwnerChat: ReturnType<typeof vi.fn>; ownerChatFile: ReturnType<typeof vi.fn> }
+let spies: { seenOnPhone: ReturnType<typeof vi.fn>; seenOnDesktop: ReturnType<typeof vi.fn>; say: ReturnType<typeof vi.fn>; searchOwnerChat: ReturnType<typeof vi.fn>; ownerChatFile: ReturnType<typeof vi.fn> }
 let transcribe: ReturnType<typeof vi.fn>
 
 beforeEach(async () => {
@@ -42,6 +42,7 @@ beforeEach(async () => {
   })
   spies = {
     seenOnPhone: vi.fn(),
+    seenOnDesktop: vi.fn(),
     say: vi.fn(async () => ({ kind: 'chat', reply: '好' })),
     searchOwnerChat: vi.fn(async () => ({ hits: [] })),
     ownerChatFile: vi.fn(async () => ({ status: 404, body: { ok: false, error: 'not_found' } })),
@@ -112,6 +113,15 @@ describe('GET /v1/matter:别人的聊天按 id 也打不开;链接令牌不读�
     }
     expect(spies.seenOnPhone.mock.calls.map((c: unknown[]) => c[0])).not.toContain(THEIRS)
     expect((await viaOperator(`/v1/matter?id=${THEIRS}`)).status).toBe(200)
+  })
+
+  it('桌面(operator)读详情 ⇒ 记「在电脑上看过」(S3b),不记手机;手机令牌读 ⇒ 记手机,不记桌面', async () => {
+    expect((await viaOperator(`/v1/matter?id=${MINE}`)).status).toBe(200)
+    expect(spies.seenOnDesktop.mock.calls.map((c: unknown[]) => c[0])).toEqual([MINE])
+    expect(spies.seenOnPhone).not.toHaveBeenCalled()
+    expect((await viaPanel(`/v1/matter?id=${MINE}`, device)).status).toBe(200)
+    expect(spies.seenOnDesktop).toHaveBeenCalledTimes(1)
+    expect(spies.seenOnPhone.mock.calls.map((c: unknown[]) => c[0])).toEqual([MINE])
   })
 
   it('链接令牌:事件里没有 replyExtras / messageId(新键与别名键);设备令牌、operator 有', async () => {

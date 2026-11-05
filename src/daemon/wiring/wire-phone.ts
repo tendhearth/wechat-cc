@@ -21,6 +21,9 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 import { makePhoneChatId, makePhoneOwner, makePhoneChat, makePhoneEventsWiring, resolveRemoteRelay, makePhonePush, fanoutPush, makePhoneNotifier, deviceIdOf, currentPhoneClient, loadTunnelClient } from '../../features/phone'
 import { makePushGate } from '../speech/push-gate'
 import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
+import { makeMatterSeen } from '../../adapters/store/matter-seen'
+import { makeMatterProposals } from '../speech/matter-proposals'
+import { notifyDesktop } from '../../lib/desktop-notify'
 import { makeHeldPushes } from '../speech/held-pushes'
 import { makeAppChannel } from '../companion/app-channel'
 import { makeMediaMirror } from '../companion/media-mirror'
@@ -47,10 +50,12 @@ export interface WirePhoneDeps {
   memoryNightly: MemoryNightlyRuntime
   /** CC 开口那道门:工作台 / 终端会话的原生推送先问它(speech/push-gate.ts)。 */
   speech: Pick<import('../speech/policy').SpeechPolicy, 'ask' | 'expired' | 'onFlush'>
+  /** 一件事的提议按人在哪选通道(S3b,speech/matter-proposals.ts)。缺省 ⇒ 照旧直接推 App。 */
+  proposals?: import('./pipeline-deps-opts').PipelineDepsOpts['proposals']
 }
 
 export function wirePhone(d: WirePhoneDeps) {
-  const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, speech } = d
+  const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, speech, proposals: proposalDeps } = d
   // 簇里晚到的那一样(面板要 phonePush 当值,phonePush 又要读面板):建好就填,读的地方判空。
   const late: { panel: ReturnType<typeof wireSettingsPanel> | null } = { panel: null }
 // 微信可点开的图形设置面板 (2026-08-25) — lazily-started LAN server, every
@@ -87,7 +92,14 @@ const fanout = (p: import('../../features/phone').PushPayload) =>
 // 压着的推送在主库 speech_pending(lane='push',S2b):重启不丢;到点时中继还没连上就过一会儿再放
 // 同一个事件的键(S3a):「做完了」推送问门时带上这件事最新那一轮,和微信通知 / 回报问同一件事的那一行并成一行
 const eventRefs = makeMatterEventRefs(db)
-const pushGate = makePushGate({ speech, ownerChatId, push: fanout, held: makeHeldPushes(db), ready: () => v2Tunnel?.connected() ?? false, log: (tag, line) => log(tag, line) })
+const pushGate = makePushGate({ speech, ownerChatId, push: fanout, held: makeHeldPushes(db), ready: () => v2Tunnel?.connected() ?? false, seen: makeMatterSeen(db), log: (tag, line) => log(tag, line) })
+// 一件事一次提议(S3b):做完 / 没做成按人在哪选第一级 —— 在电脑前先只在桌面提示,10 分钟没看再推 App;批准 / 提问照旧各处推
+const proposals = proposalDeps ? makeMatterProposals({
+  gate: pushGate, speech, ownerChatId, atDesk: proposalDeps.atDesk,
+  desktop: { appConnected: () => proposalDeps.desktop.appConnected(), notify: (title, body) => notifyDesktop(title, body) },
+  ...(proposalDeps.escalateAfterMs !== undefined ? { escalateAfterMs: proposalDeps.escalateAfterMs } : {}),
+  log: (tag, line) => log(tag, line),
+}) : null
 phoneLc.add('push-gate', () => pushGate.stop())
 // 终端会话的手机推送出口(features/terminal/app-push.ts):问过门再推(批准 = blocking 照推;完成了 = report,免打扰里先压着)。
 const appPush: import('../../features/terminal').AppPushOutlet = (p) => (phonePush ? pushGate.push(p) : null)
@@ -192,7 +204,10 @@ if (relay) {
       const n = makePhoneNotifier({
         events: phone.events,
         push: phonePush,
-        deliver: (p, ref) => { pushGate.push(p, ref) },
+        deliver: (p, ref) => {
+          if (!proposals) { pushGate.push(p, ref); return }
+          void proposals.propose(p, ref).catch(err => log('PUSH', `proposal failed: ${err instanceof Error ? err.message : String(err)}`))
+        },
         taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
         turnRef: (id) => eventRefs.latestTurn(id),
         log: (tag, line) => log(tag, line),

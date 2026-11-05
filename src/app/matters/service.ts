@@ -110,6 +110,8 @@ export interface MattersService {
   phoneMayOpen(matter:unknown):boolean
   /** 这件在手机上露过面(绑定 phone / pwa;手机令牌读列表、详情时记)。 */
   seenOnPhone(id:string):void
+  /** 桌面读了这件事的详情(S3b):一件事的提议到点看「看过没有」,看过就不再推手机。 */
+  seenOnDesktop?(id:string):void
   detail(id:string):Promise<MatterDetail>
   /** One durable workbench input, including its delivery reason; never loads or mutates the detail. */
   inputReceipt(id:string,requestId:string):MatterInput|null
@@ -286,6 +288,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     withActs(matters){return matters.map(m=>actOf(m)?.matter??m)},
     phoneMayOpen(matter){return phoneMayOpenMatter(matter,(deps.ownerChatId??deps.chat?.ownerChatId)?.()??null)},
     seenOnPhone(id){deps.store.bind(id,'phone','pwa')},
+    seenOnDesktop(id){deps.store.bind(id,'desktop','app')},
     inputReceipt(id,requestId){
       if(!ID.test(id))throw Error('invalid_matter_id')
       const key=normalizeInputRequestId(requestId),matter=deps.store.get(id)

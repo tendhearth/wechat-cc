@@ -32,6 +32,8 @@ export interface PipelineDepsOpts {
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
   /** 真回合里被拒着的执行者(provider-refusals.ts)。 */
   providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
+  /** 一件事的提议按人在哪选通道(S3b,speech/matter-proposals.ts):人在不在电脑前、桌面 app 开没开、多久没看推 App。缺省 ⇒ 照旧直接推 App。 */
+  proposals?: { atDesk(): Promise<boolean>; desktop: import('../desktop-surface').DesktopSurface; escalateAfterMs?: number }
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   /** 内部 API 的分发 → 手机设置面板收到的 `/v1/*`(P3b:一个分发、两个监听)。 */

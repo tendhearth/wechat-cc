@@ -18,7 +18,7 @@
 import type { SpeechKind } from '../../domain/speech/kinds'
 import type { PushPayload } from '../../features/phone'
 import { RETRY_WINDOW_MS } from '../../lib/delivery-backoff'
-import type { HeldPushes } from './held-pushes'
+import { LATER_KEY_PREFIX, type HeldPushes } from './held-pushes'
 import type { SpeechPolicy } from './policy'
 
 export const MAX_HELD_PUSHES = 50
@@ -43,6 +43,11 @@ export interface PushGate {
    * `ref` = 同一个事件的键(domain/speech/event-ref.ts;S3a):问门带着它,账和别的路问同一件事的那一行并成一行;压着时一起存下。
    */
   push(p: PushPayload, ref?: string): PushResult
+  /**
+   * 先不推,到 `at` 再看(S3b 升级:人在电脑前,先只在桌面提示了):到点这件事从 `since` 起在桌面 / 手机上看过 ⇒ 不推;
+   * 没看过 ⇒ 照常问门、推(账带同一个 `ref`,并进那一行)。等的那一条落在 speech_pending,重启不丢。
+   */
+  later(p: PushPayload, o: { at: number; since: number; matterId: string; ref?: string }): void
   /** 停计时器。压着的留在表里,下次开机接着等。 */
   stop(): void
 }
@@ -57,6 +62,8 @@ export function makePushGate(d: {
   held: HeldPushes
   /** 中继连着没有(放压着的推送之前看一眼;缺省 = 连着)。 */
   ready?: () => boolean
+  /** 这件事从 sinceMs 起在哪个面上看过(adapters/store/matter-seen.ts;S3b 升级等待到点时问)。没给 ⇒ 当没看过。 */
+  seen?: (matterId: string, sinceMs: number) => string | null
   log: (tag: string, line: string) => void
   now?: () => number
   setTimer?: (cb: () => void, ms: number) => unknown
@@ -97,12 +104,15 @@ export function makePushGate(d: {
         d.speech.expired({ kind: x.kind, chatId: x.chatId, channel: 'app', ...(x.speechRef ? { ref: x.speechRef } : {}) })
         d.log('PUSH', `held ${x.payload.kind} push expired — not pushed (${x.key})`)
       }
-      const due = d.held.due(recheck ? Number.MAX_SAFE_INTEGER : t, MAX_RELEASE_PER_TICK)
+      const due = d.held.due(t, MAX_RELEASE_PER_TICK, recheck)
       if (due.length > 0 && d.ready && !d.ready()) {
         for (const h of due) d.held.reschedule(h.id, t + NOT_READY_RECHECK_MS)
         d.log('PUSH', `${due.length} held push(es) due but the relay is not connected yet — checking again in ${NOT_READY_RECHECK_MS / 1000}s`)
       } else {
         for (const h of due) {
+          // 升级等待(S3b):这件事在桌面 / 手机上看过了 ⇒ 不推
+          const seenOn = h.later ? d.seen?.(h.later.matterId, h.later.since) ?? null : null
+          if (seenOn) { d.held.remove(h.id); d.log('PUSH', `${h.payload.kind} push not escalated — seen on ${seenOn} (${h.key})`); continue }
           const r = attempt(h.payload, h.speechRef)
           if ('until' in r) { d.held.reschedule(h.id, r.until); continue }
           d.held.remove(h.id)
@@ -138,6 +148,24 @@ export function makePushGate(d: {
       d.log('PUSH', `${p.kind} push held by speech policy until ${new Date(r.until).toISOString()}`)
       arm()
       return { sent: 0, online: 0 }
+    },
+    later(p, o) {
+      if (stopped) return
+      const kind = pushSpeechKind(p.kind)
+      const chat = d.ownerChatId()
+      if (!kind || !chat) { d.push(p); return }
+      const t = now()
+      try {
+        d.held.hold({ key: `${LATER_KEY_PREFIX}${p.kind}:${p.taskId ?? ''}:${p.requestId ?? ''}`, kind, chatId: chat, payload: p, until: o.at, expiresAt: o.at + RETRY_WINDOW_MS, at: t,
+          later: { matterId: o.matterId, since: o.since }, ...(o.ref ? { speechRef: o.ref } : {}) })
+      } catch (err) {
+        // 存不下 ⇒ 当场照常问门推(宁可早一点响,不漏)
+        d.log('PUSH', `${p.kind} escalation not held (store failed): ${err instanceof Error ? err.message : String(err)} — pushing now`)
+        attempt(p, o.ref)
+        return
+      }
+      d.log('PUSH', `${p.kind} push waits until ${new Date(o.at).toISOString()} unless the owner looks first`)
+      arm()
     },
     stop() {
       stopped = true

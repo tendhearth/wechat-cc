@@ -43,6 +43,8 @@ export interface WireMainOpts {
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
   /** 真回合里被拒着的执行者(provider-refusals.ts)。 */
   providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
+  /** 一件事的提议按人在哪选通道(S3b)。 */
+  proposals?: import('./pipeline-deps-opts').PipelineDepsOpts['proposals']
   /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   /** 内部 API 的分发 → 手机设置面板收到的 `/v1/*`(P3b:一个分发、两个监听)。 */

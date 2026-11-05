@@ -10,7 +10,7 @@ const OWNER = 'owner@im.wechat'
 const T0 = Date.parse('2026-10-21T15:00:00.000Z')
 const QUIET_END = Date.parse('2026-10-21T23:00:00.000Z')
 
-function setup(o: { care?: 'off' | 'low'; quiet?: boolean; owner?: string | null; wechatDown?: boolean; db?: ReturnType<typeof openTestDb>; ready?: () => boolean; quietFn?: () => boolean } = {}) {
+function setup(o: { care?: 'off' | 'low'; quiet?: boolean; owner?: string | null; wechatDown?: boolean; db?: ReturnType<typeof openTestDb>; ready?: () => boolean; quietFn?: () => boolean; seen?: (m: string, since: number) => string | null } = {}) {
   let t = T0
   const db = o.db ?? openTestDb()
   const ledger: SpeechLedgerEntry[] = []
@@ -26,7 +26,7 @@ function setup(o: { care?: 'off' | 'low'; quiet?: boolean; owner?: string | null
   const gate = makePushGate({
     speech, ownerChatId: () => (o.owner === undefined ? OWNER : o.owner),
     push: (p) => { pushed.push(p); return { sent: 1, online: 0 } },
-    held: makeHeldPushes(db), ...(o.ready ? { ready: o.ready } : {}),
+    held: makeHeldPushes(db), ...(o.ready ? { ready: o.ready } : {}), ...(o.seen ? { seen: o.seen } : {}),
     log: () => {}, now: () => t,
     setTimer: (cb, ms) => { const h = { cb, ms }; timers.push(h); return h },
     clearTimer: (h) => { const i = timers.indexOf(h as never); if (i >= 0) timers.splice(i, 1) },
@@ -192,5 +192,53 @@ describe('压着的推送落在主库 speech_pending(S2b,主人 11-04:重启不�
     s.timers.shift()!.cb()
     expect(s.pushed).toEqual([done])
     expect(s.ledger.map(e => [e.outcome, e.ref])).toEqual([['allowed', undefined]])
+  })
+
+  it('later(S3b):到点没人看 ⇒ 照常问门、推一次(账带同一个键);重启不丢', () => {
+    const db = openTestDb()
+    const s = setup({ db, seen: () => null })
+    s.gate.later(done, { at: T0 + 600_000, since: T0, matterId: 't1', ref: 'turn:t1:2' })
+    expect(s.pushed).toEqual([])
+    expect(s.ledger).toEqual([])
+    s.gate.stop()
+    const again = setup({ db, seen: () => null })
+    again.advance(600_000)
+    again.timers.shift()!.cb()
+    expect(again.pushed).toEqual([done])
+    expect(again.ledger.map(e => [e.outcome, e.channel, e.ref])).toEqual([['allowed', 'app', 'turn:t1:2']])
+    expect(db.query("SELECT 1 FROM speech_pending WHERE lane='push'").all()).toEqual([])
+  })
+
+  it('later:到点这件事看过了 ⇒ 不推、不记账,那一条清掉;问「看过没有」用的是事件那一刻', () => {
+    const asked: Array<[string, number]> = []
+    const s = setup({ seen: (m, since) => { asked.push([m, since]); return 'desktop' } })
+    s.gate.later(done, { at: T0 + 600_000, since: T0, matterId: 't1', ref: 'turn:t1:2' })
+    s.advance(600_000)
+    s.timers.shift()!.cb()
+    expect(s.pushed).toEqual([])
+    expect(s.ledger).toEqual([])
+    expect(asked).toEqual([['t1', T0]])
+    expect(s.db.query("SELECT 1 FROM speech_pending WHERE lane='push'").all()).toEqual([])
+  })
+
+  it("later:「待说」那一拍顺手再问门时不提前放它(它在等人看,不是被门压着);被门压着的照旧提前放", async () => {
+    const s = setup({ seen: () => null, quietFn: () => false })
+    s.gate.later(done, { at: T0 + 600_000, since: T0, matterId: 't1' })
+    s.db.query(`INSERT INTO speech_pending(id,lane,chat_id,kind,body,ref,created_at,next_at,expires_at) VALUES('q','push',?,'matter_report',?,'task_done:t2:',?,?,?)`)
+      .run(OWNER, JSON.stringify({ ...done, taskId: 't2' }), T0, T0 + 3600_000, T0 + 86_400_000)
+    await s.speech.flushPending()
+    expect(s.pushed.map(p => p.taskId)).toEqual(['t2'])
+  })
+
+  it('later 在免打扰里到点 ⇒ 照 S2 压到时段结束(不丢)', () => {
+    const s = setup({ seen: () => null, quiet: true })
+    s.gate.later(done, { at: T0 + 600_000, since: T0, matterId: 't1', ref: 'turn:t1:2' })
+    s.advance(600_000)
+    s.timers.shift()!.cb()
+    expect(s.pushed).toEqual([])
+    expect(s.ledger.map(e => [e.outcome, e.ref])).toEqual([['deferred', 'turn:t1:2']])
+    s.advance(QUIET_END - T0)
+    s.timers.shift()!.cb()
+    expect(s.pushed).toEqual([done])
   })
 })
