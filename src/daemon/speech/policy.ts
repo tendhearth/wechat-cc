@@ -106,6 +106,7 @@ export function makeSpeechPolicy(deps: {
   /** (kind, chatId) → 上一次记下的那次推后(理由 + 时刻)。只在内存里:重启后多记一行无妨。 */
   const lastDefer = new Map<string, { reason: string; at: number }>()
   const DEFER_LOG_EVERY_MS = 60 * 60_000
+  const MAX_DEFER_KEYS = 256
   const write = (e: SpeechLedgerEntry): void => {
     try { deps.ledger?.(e) } catch (err) { deps.log('SPEECH', `ledger write failed: ${err instanceof Error ? err.message : String(err)}`) }
   }
@@ -128,6 +129,8 @@ export function makeSpeechPolicy(deps: {
       const prev = lastDefer.get(key)
       if (prev && prev.reason === decision.reason && nowMs - prev.at < DEFER_LOG_EVERY_MS) return { decision, base }
       lastDefer.set(key, { reason: decision.reason, at: nowMs })
+      // 带事件键的每件事一项(S3a):过了一小时的窗口就没用了,攒多了顺手清掉,长跑的 daemon 不会越攒越多
+      if (lastDefer.size > MAX_DEFER_KEYS) for (const [k, v] of lastDefer) if (nowMs - v.at >= DEFER_LOG_EVERY_MS) lastDefer.delete(k)
       write({ ...base, outcome: 'deferred', reason: decision.reason, channel: null })
       deps.log('SPEECH', `${req.kind} chat=${req.chatId} deferred: ${decision.reason}`)
       return { decision, base }
@@ -143,6 +146,7 @@ export function makeSpeechPolicy(deps: {
   const policy: SpeechPolicy = {
     onFlush(cb) { flushHooks.push(cb) },
     expired(e) {
+      if (e.ref) lastDefer.delete(`${e.kind}\u0000${e.chatId}\u0000${e.ref}`)
       write({ kind: e.kind, origin: originOf(e.kind), chatId: e.chatId, outcome: 'dropped', reason: 'expired', channel: e.channel, ts: new Date(now()).toISOString(), ...(e.ref ? { ref: e.ref } : {}) })
     },
     peek(req) {

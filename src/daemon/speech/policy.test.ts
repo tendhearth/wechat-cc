@@ -105,6 +105,18 @@ describe('policy.say —— CC 开口只有这一道门', () => {
     expect(policy.ask({ kind: 'matter_report', chatId: OWNER, ref: 'turn:c:1' }, { channel: 'app', deliverable: true })).toMatchObject({ defer: true })
     expect(ledger.at(-1)).toMatchObject({ outcome: 'deferred', ref: 'turn:c:1' })
   })
+  it('带事件键的推后记录过了一小时就清(S3a):攒过上限时顺手清掉旧的,之后同一件事再被推后照样记', async () => {
+    let now = Date.parse('2026-10-21T15:00:00.000Z')
+    const ob = fakeOutbound()
+    const ledger: SpeechLedgerEntry[] = []
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => now + 8 * 3600_000, outbound: ob.out, ledger: e => { ledger.push(e) }, log: () => {}, now: () => now })
+    for (let i = 0; i < 300; i++) policy.ask({ kind: 'matter_report', chatId: OWNER, ref: `turn:x${i}:1` }, { channel: 'app', deliverable: true })
+    expect(ledger).toHaveLength(300)
+    now += 61 * 60_000
+    policy.ask({ kind: 'matter_report', chatId: OWNER, ref: 'turn:fresh:1' }, { channel: 'app', deliverable: true })
+    policy.ask({ kind: 'matter_report', chatId: OWNER, ref: 'turn:x0:1' }, { channel: 'app', deliverable: true })
+    expect(ledger.slice(-2).map(e => e.ref)).toEqual(['turn:fresh:1', 'turn:x0:1'])
+  })
   it('记账抛错不影响开口', async () => {
     const ob = fakeOutbound()
     const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound: ob.out, ledger: () => { throw new Error('disk') }, log: () => {} })
