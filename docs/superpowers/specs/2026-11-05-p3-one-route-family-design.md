@@ -149,7 +149,7 @@
 - **棘轮**:`MAX_OWN_HANDLER_ROWS` 61 → 55(行数仍 61);`no-m-api-literal` 基线 `routes.ts` 61 → 55、`settings-panel.ts` 22 → 19、`mobile-chat.ts` 7 → 5(合计 247 → 236)。`routes-snapshot` 与 `link-routes-from-source` 两个守卫按「新键 ∪ 别名键」比:别名键照旧和快照 / 页面扫描比,新键另由一条核对「在不在、link、理由都同别名键」。
 - **金样**:`m-api-routes` 80 份、`matter-read-paths` 全部逐字节不变(文件没动)。两份金样的面板接上一个真的 `createInternalApi`(只用 `panelDispatch`);P3a 那份的服务是剧本,形状只有几个字段,所以那里用新加的测试开关 `responseContracts: false`。
 - **和并之前不一样的几处(都不在金样里,PR 里逐条写了)**:① `chat/file` 走 `/v1` 的读法,回复里的表情附件(sticker)手机也能按块读了(桌面本来就能;以前手机回 404);② 主人对话还没建(配了主人、那条 chat matter 还没有)时,`chat/search` 照搜(以前 404 `no_owner_chat`),`chat/file` 回 404 `not_found`(以前 `no_owner_chat`);③ 语音模块此刻不是 ok ⇒ `POST chat/transcribe` 回 503 `voice_not_wired`(以前不看模块,照转);④ `matters` 处理器抛了 ⇒ 500 `unavailable`(以前不回包,手机一直等);⑤ 「没接上」与「参数不对」先判哪个,个别路由换了先后(只在没接线的测试里看得到)。
-- **还没做**:`ServerHello.routes: 'v1'` 等 P3e 部署、soak 绿再开(整合者;P3e 时改了时机,见「打开 `ServerHello.routes: 'v1'`」)。
+- **已开**(11-05):`ServerHello.routes: 'v1'` 在 P3e 部署(6c7341dd)、soak 绿以后由整合者打开(P3e 时改了时机,见「打开 `ServerHello.routes: 'v1'`」)。
 
 ### P3c-2(终端与总览三条并成 `/v1` 一个处理器;老路径是别名)
 - **并了哪三条**:`cli/sessions`、`today`、`connections` → `GET /v1/cli/sessions`、`GET /v1/overseer/today`、`GET /v1/connections`。三行 `/v1` 带上 `phone: { link: 'none' }`(照别名行冻结,只给设备);`routes.ts` 删掉三条 `/m/api` 行;`mobile-reads.ts` 的三个处理器删掉,面板 deps 的 `connections` / `cliSessions` / `overseerToday` 与 wiring 里那几处随之去掉(连接经 `internalApi.provide({ connections })` 那一份,终端两条是终端模块自己挂的路由)。

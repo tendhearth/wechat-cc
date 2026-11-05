@@ -241,7 +241,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       catch { log('TUNNEL', `bad handshake pubkey on ${stream}`); return }
       const build = handshakeBuild(frame)
       streams.set(stream, { shared, client: handshakeClient(frame), ...(build ? { build } : {}) })
-      sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2 })
+      sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2, routes: 'v1' })   // P3:面板收 /v1(P3e 部署 soak 绿后打开);老 App 的 shape 丢掉不认识的键
       return
     }
     const st = streams.get(stream)

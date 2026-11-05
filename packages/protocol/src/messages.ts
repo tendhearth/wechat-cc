@@ -30,7 +30,7 @@ export type ClientHelloT = Infer<typeof ClientHello>
 /**
  * 后台握手回应:`v` 不是 2(老后台只会 v1,或中继剥掉了 `v`)⇒ 客户端拒绝降级。
  * `routes: 'v1'`(P3b 起可选,设计稿 2026-11-05-p3-one-route-family):daemon 的面板也收 `/v1` 路径了 ⇒ 新 App 才改读 `/v1`;
- * 不带 ⇒ 照旧走 `/m/api`。老 App 的 shape 丢掉不认识的键,不会坏。**daemon 现在还不发**(P3c 第一组合完、soak 绿以后才打开)。
+ * 不带 ⇒ 照旧走 `/m/api`。老 App 的 shape 丢掉不认识的键,不会坏。daemon 从 P3e 部署 soak 绿以后发(`tunnel-client.ts` 的 v2 握手回应;那时每个别名的新键都在)。
  */
 export const ServerHello = s.object({ hs: s.string({ min: 1 }), v: s.optional(s.union(s.literal(1), s.literal(2))), routes: s.optional(s.literal('v1')) })
 export type ServerHelloT = Infer<typeof ServerHello>

@@ -120,6 +120,7 @@ describe('tunnel-client v2', () => {
     client(sock, { log: (_t, l) => { logs.push(l) } })
     const p = await v2Phone(sock, 's2')
     expect(p.hello.v).toBe(2)
+    expect(p.hello.routes).toBe('v1')   // P3:告诉新 App 面板收 /v1 路径(P3e 起每个新键都在)
     for (const [stream, frame] of [['s1', { hs: b64uEncode(x25519KeyPair().pub) }], ['s3', { hs: b64uEncode(x25519KeyPair().pub), v: [1] }]] as const) {
       sock.emit({ stream, frame })
       await waitFor(() => sock.sent.some(s => JSON.parse(s).stream === stream && JSON.parse(s).close === true), `close ${stream}`)
