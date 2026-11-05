@@ -501,7 +501,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes(FRESH)), 15_000)
     await expect.poll(() => d.query("SELECT 1 FROM speech_log WHERE kind = 'job_notice' AND outcome = 'dropped' AND reason = 'expired'").length, { timeout: 15_000 }).toBe(1)
     expect(texts(d.ilink.outbox(), d.owner).some(t => t.includes(STALE))).toBe(false)
-    expect(d.query("SELECT 1 FROM speech_pending WHERE id IN ('legacy-stale', 'legacy-fresh')")).toEqual([])
+    await expect.poll(() => d.query("SELECT 1 FROM speech_pending WHERE id IN ('legacy-stale', 'legacy-fresh')"), { timeout: 5_000 }).toEqual([])   // 说完才删(同上)
   })
 
   it('offline: WeChat is down ⇒ a report that cannot go out is kept to say later, and the pending flush backs off on the shared backoff (first retry after 1 min) instead of hitting the link every tick', async () => {
