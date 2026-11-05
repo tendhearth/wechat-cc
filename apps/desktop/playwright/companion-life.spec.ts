@@ -31,7 +31,9 @@ async function idleClock(page:Page){
     for(let left=ms;left>0;){
       const step=Math.min(1000,left)
       await page.clock.runFor(step)
-      await expect.poll(()=>pending.size,{message:'Idle polling must settle before the next clock step'}).toBe(0)
+      // Each step now carries one immediate subscription answer; poll for it tightly (default
+      // back-off starts at 100ms, which over ~400 steps alone outruns the 30s test budget).
+      await expect.poll(()=>pending.size,{message:'Idle polling must settle before the next clock step',intervals:[5]}).toBe(0)
       expect(failed,'Idle fixture polling must remain connected').toEqual([])
       await page.evaluate(async()=>{await Promise.resolve();await Promise.resolve()})
       left-=step
