@@ -241,4 +241,16 @@ describe('压着的推送落在主库 speech_pending(S2b,主人 11-04:重启不�
     s.timers.shift()!.cb()
     expect(s.pushed).toEqual([done])
   })
+
+  it('later:同一件事来了新的回报(人走了,当场推了;或者又一轮做完 / 没做成)⇒ 等着升级的旧那条作废,不会到点再推一次', () => {
+    const s = setup({ seen: () => null })
+    s.gate.later(done, { at: T0 + 600_000, since: T0, matterId: 't1' })
+    s.gate.push({ ...done, body: '第二轮' })
+    expect(s.pushed.map(p => p.body)).toEqual(['第二轮'])
+    expect(s.db.query("SELECT 1 FROM speech_pending WHERE lane='push'").all()).toEqual([])
+    const failed: PushPayload = { kind: 'task_failed', title: '没做成', body: '修登录', taskId: 't1' }
+    s.gate.later(done, { at: T0 + 600_000, since: T0, matterId: 't1' })
+    s.gate.later(failed, { at: T0 + 700_000, since: T0, matterId: 't1' })
+    expect(s.db.query<{ ref: string }, []>("SELECT ref FROM speech_pending WHERE lane='push'").all().map(r => r.ref)).toEqual(['later:task_failed:t1:'])
+  })
 })
