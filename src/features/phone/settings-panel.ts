@@ -42,11 +42,11 @@ import { mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
 import { mobileActivityRoutes } from './mobile-activity'
 import { legacyRoutes } from './legacy-routes'
 import { combinePhoneRoutes, lookupPhoneRoute, ownsMethod, routePhone, type PhoneHandler, type PhoneRouteTable } from '../../lib/phone-route-table'
-import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
+import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileSayInput,type MobileMatterActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {MAX_MOBILE_DETAIL_BYTES,mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../../app/matters/service'
-import { MATTER_KINDS, type MatterKindT, pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
+import { MATTER_KINDS, type MatterKindT, pairCheckCode, PushPlatform, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../../domain/companion-presence'
 import type { CatchRow } from '../../adapters/store/journal-store'
 import type { PlanLogEntry } from '../../domain/companion-plan'
@@ -69,9 +69,6 @@ const MODEL_NAME_RE = /^[A-Za-z0-9._/:-]{1,100}$/
 
 const PREF_KEYS = new Set(['split', 'care', 'stickers', 'hunt'])
 const PERSONA_MAX_CHARS = 8000
-
-/** 客户端生成的评论 id / 投递 id(同 internal-api 的 REQUEST_ID)。 */
-const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 
 export interface SettingsPanelDeps {
   stateDir: string
@@ -111,17 +108,7 @@ export interface SettingsPanelDeps {
   presence?: () => Promise<Presence | null>
   /** 手机洞察(批准说明 + 进展概括,spec 2026-09-30-tendhearth-app-v1 §5)。缺省 ⇒ /m/api/matter/insight 503。 */
   insight?: import('./phone-insight').PhoneInsight
-  /** 手机看改动(§5.3):一件事的复盘轮次(工作台 reviewList);未知任务应抛。缺省 ⇒ /m/api/matter/changes 503。 */
-  changes?: (id: string) => readonly import('./phone-changes').ReviewTurnLike[]
-  /** 手机逐文件审阅(2026-10-17):同桌面 review-mark / review-return。缺省 ⇒ 两条路由 503。 */
-  review?: {
-    mark(id: string, input: { artifactId: string; path: string; mark: 'accepted' | 'returned' }): unknown
-    ret(id: string, input: { artifactId: string; paths: string[]; comment: string }): unknown
-    /** 行评论(切片 4):手机只建整块评论 / 删草稿。缺省 ⇒ review-comment 503。 */
-    comment?(id: string, input: { commentId: string; artifactId: string; path: string; hunk: number; hunkSha256: string; body: string } | { commentId: string; delete: true }): unknown
-    /** 发出这件事所有草稿;回 sent / remaining / skippedDiscarded(回执与任务视图不给手机)。缺省 ⇒ 503。 */
-    sendComments?(id: string, input: { summary?: string; inputRequestId?: string }): unknown
-  }
+  // 手机看改动、逐文件审阅、行评论(§5.3 / 2026-10-17 / 切片 4)P3e 起是 /v1/matter/changes、review-* 那一个处理器(内部 API,MattersService 那一层)。
   /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
   matters?: MobileMatterActions & {
     list(filter: { kind?: MatterKindT; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
@@ -257,7 +244,6 @@ import { serve, type Server } from '../../lib/runtime/http'
 import { makeTokenRegistry, type PanelTokens } from '../../daemon/internal-api/token-registry'
 import { deviceIdOf, makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device-store'
 import { normalizeLang } from './phone-insight-llm'
-import { latestChanges } from './phone-changes'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
 import { ROUTES } from '@wechat-cc/protocol/routes'
 import { phoneClientOf, withPhoneClient } from './phone-client'
@@ -686,29 +672,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     deps.log('SETTINGS', `push registered for device ${deviceId} (${platform.data})`)
     return json({ ok: true })
   }
-  // 逐文件审阅两条:同一份正文校验,mark 记一个文件、return 打回走续接。
-  const reviewFileRoute = (mark: boolean): PanelHandler => async (_url, req) => {
-    if (!deps.review) return json({ ok: false, error: 'review_not_wired' }, 503)
-    let body: unknown
-    try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
-    const b = (body ?? {}) as Record<string, unknown>
-    if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.artifactId !== 'string' || !b.artifactId) return json({ ok: false, error: 'invalid' }, 400)
-    try {
-      if (mark) {
-        if (typeof b.path !== 'string' || !b.path || (b.mark !== 'accepted' && b.mark !== 'returned')) return json({ ok: false, error: 'invalid' }, 400)
-        deps.review.mark(b.id, { artifactId: b.artifactId, path: b.path, mark: b.mark })
-      } else {
-        if (!Array.isArray(b.paths) || typeof b.comment !== 'string' || b.comment.length > PHONE_SAY_MAX_CHARS) return json({ ok: false, error: 'invalid' }, 400)
-        // 打回走续接:还在跑的会话里补一句 / 已结算的接着做;结果都靠刷新详情看到
-        await deps.review.ret(b.id, { artifactId: b.artifactId, paths: b.paths as string[], comment: b.comment })
-      }
-      return json({ ok: true })
-    } catch (e) {
-      const code = e instanceof Error ? e.message : ''
-      if (code === 'review_file_unmarkable') return json({ ok: false, error: code }, 400)
-      return mobileMatterError(e)
-    }
-  }
   const panelRoutes: PhoneRouteTable<PanelCtx> = {
     'GET /set': ownsMethod(async (_url, _req, { t }) => new Response(pageHtml(t), { headers: { 'content-type': 'text/html; charset=utf-8' } })),
     'GET /set/api/state': async (_url, _req, { t }) => {
@@ -779,59 +742,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         const msg = e instanceof Error ? e.message : ''
         return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500)
       }
-    },
-    'GET /m/api/matter/changes': async (url) => {
-      if (!deps.changes) return json({ ok: false, error: 'changes_not_wired' }, 503)
-      const id = url.searchParams.get('id')
-      if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
-      try { return json({ ok: true, turn: latestChanges(deps.changes(id)) }) }
-      catch (e) {
-        const notFound = e instanceof Error && e.message === 'not_found'
-        return json({ ok: false, error: notFound ? 'matter_not_found' : 'unavailable' }, notFound ? 404 : 500)
-      }
-    },
-    'POST /m/api/matter/review-mark': reviewFileRoute(true),
-    'POST /m/api/matter/review-return': reviewFileRoute(false),
-    // 行评论(切片 4):建 {id, commentId, artifactId, path, hunk, hunkSha256, body}(整块,不带行)/ 删 {id, commentId, delete:true},按键集合精确校验。
-    'POST /m/api/matter/review-comment': async (_url, req) => {
-      if (!deps.review?.comment) return json({ ok: false, error: 'review_not_wired' }, 503)
-      let body: unknown
-      try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
-      const b = (body && typeof body === 'object' && !Array.isArray(body) ? body : {}) as Record<string, unknown>
-      const keys = Object.keys(b).sort().join(',')
-      if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.commentId !== 'string' || !UUID_RE.test(b.commentId)) return json({ ok: false, error: 'invalid' }, 400)
-      const commentId = b.commentId.toLowerCase()
-      let input: Parameters<NonNullable<NonNullable<SettingsPanelDeps['review']>['comment']>>[1]
-      if (keys === 'commentId,delete,id') { if (b.delete !== true) return json({ ok: false, error: 'invalid' }, 400); input = { commentId, delete: true } }
-      else if (keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path') {
-        if (typeof b.artifactId !== 'string' || !/^[a-f0-9-]{8,64}$/.test(b.artifactId) || typeof b.path !== 'string' || !b.path || b.path.length > 4096 ||
-            typeof b.hunk !== 'number' || !Number.isInteger(b.hunk) || b.hunk < 0 || b.hunk > 1_000_000 || typeof b.hunkSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(b.hunkSha256) ||
-            typeof b.body !== 'string' || !b.body.trim() || b.body.length > 2000) return json({ ok: false, error: 'invalid' }, 400)
-        input = { commentId, artifactId: b.artifactId, path: b.path, hunk: b.hunk, hunkSha256: b.hunkSha256, body: b.body }
-      } else return json({ ok: false, error: 'invalid' }, 400)
-      try {
-        deps.review.comment(b.id, input)
-        return json({ ok: true, ...('delete' in input ? { deleted: true } : { commentId }) })
-      } catch (e) {
-        const code = e instanceof Error ? e.message : ''
-        if (code === 'review_file_unmarkable') return json({ ok: false, error: code }, 400)
-        return mobileMatterError(e)
-      }
-    },
-    // 发出评论 {id, summary?, inputRequestId?}:投递同 review-return;原会话接不上 ⇒ 409 restart_confirmation_required(手机不带 restartToken,回电脑上确认)。
-    'POST /m/api/matter/review-comments-send': async (_url, req) => {
-      if (!deps.review?.sendComments) return json({ ok: false, error: 'review_not_wired' }, 503)
-      let body: unknown
-      try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
-      const b = (body && typeof body === 'object' && !Array.isArray(body) ? body : {}) as Record<string, unknown>
-      if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || Object.keys(b).some(k => !['id', 'summary', 'inputRequestId'].includes(k)) ||
-          (b.summary !== undefined && (typeof b.summary !== 'string' || b.summary.length > 2000)) ||
-          (b.inputRequestId !== undefined && (typeof b.inputRequestId !== 'string' || !UUID_RE.test(b.inputRequestId)))) return json({ ok: false, error: 'invalid' }, 400)
-      try {
-        const r = await deps.review.sendComments(b.id, { ...(typeof b.summary === 'string' ? { summary: b.summary } : {}), ...(typeof b.inputRequestId === 'string' ? { inputRequestId: b.inputRequestId.toLowerCase() } : {}) }) as Record<string, unknown> | undefined
-        const n = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0
-        return json({ ok: true, sent: n(r?.sent), remaining: n(r?.remaining), skippedDiscarded: n(r?.skippedDiscarded) })
-      } catch (e) { return mobileMatterError(e) }
     },
   }
   const routes: PhoneRouteTable<PanelCtx> = combinePhoneRoutes<PanelCtx>(

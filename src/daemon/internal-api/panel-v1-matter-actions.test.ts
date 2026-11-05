@@ -25,9 +25,13 @@ const ART = '44444444-4444-4444-8444-444444444444'
 const SHA = 'ab'.repeat(32)
 const TASK = { id: ID, title: '修登录', status: 'running', providerId: 'claude', path: '/w/app', error: null, updatedAt: 1 }
 const CONTENT = Buffer.from('# 报告\n全过。\n')
+/** 两轮改动:新的那轮能撤(手机只撤它),旧的那轮桌面能回到。 */
+const ROUND = '77777777-7777-4777-8777-777777777777', OLD_ROUND = '88888888-8888-4888-8888-888888888888'
+const COMMENT = '99999999-9999-4999-8999-999999999999'
 
 let stateDir: string, api: InternalApi, panel: SettingsPanel, localBase: string, operator: string, device: string, link: string
 type WbFn = 'detail' | 'cancel' | 'resolvePermission' | 'resolveAnswer' | 'artifact' | 'handOff' | 'worktreeAction' | 'scriptAction' | 'createEntry' | 'entryReceipt'
+  | 'reviewList' | 'markReviewFile' | 'returnReviewFiles' | 'reviewComment' | 'sendReviewComments' | 'rewindPreview' | 'rewind' | 'undoRewind'
 let wb: Record<WbFn, ReturnType<typeof vi.fn>>
 
 beforeEach(async () => {
@@ -42,6 +46,23 @@ beforeEach(async () => {
     scriptAction: vi.fn(async () => ({ branch: 'cc/deadbeef', scripts: null, port: null })),
     createEntry: vi.fn((input: { requestId: string }) => ({ receipt: { requestId: input.requestId, taskId: ID, matterId: ID, runId: RUN, acceptedAt: 1 }, task: TASK })),
     entryReceipt: vi.fn((requestId: string) => requestId === REQ ? { receipt: { requestId, taskId: ID, matterId: ID, runId: RUN, acceptedAt: 1 }, task: TASK } : null),
+    // 下面几样的形状照 desktop-api.ts 的响应契约(测试里每个 2xx 回包都对着契约核一遍)
+    reviewList: vi.fn(() => [
+      { artifactId: OLD_ROUND, sha256: SHA, name: 'r1', createdAt: 1, status: 'complete', headBefore: null, headAfter: null, preexistingPaths: [], notes: [], files: [], rewindable: { start: true, end: true } },
+      { artifactId: ROUND, sha256: SHA, name: 'r2', createdAt: 2, status: 'complete', headBefore: null, headAfter: null, preexistingPaths: [], notes: [], rewindable: { start: true, end: true },
+        files: [{ path: 'README.md', preexisting: false, kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b\n', hunks: [{ index: 0, sha256: SHA, header: '@@ -1 +1 @@', oldStart: 1, oldCount: 1, newStart: 1, newCount: 1, rows: 2 }] }] },
+    ]),
+    markReviewFile: vi.fn(() => ({ taskId: ID, artifactSha256: SHA, path: 'README.md', afterSha256: null, mark: 'accepted', comment: '', createdAt: 1 })),
+    returnReviewFiles: vi.fn(async () => ({ taskId: ID, id: REQ, runId: RUN, text: '再短', status: 'pending', createdAt: 1, error: null })),
+    reviewComment: vi.fn((_id: string, input: { commentId: string; delete?: true }) => input.delete ? { deleted: input.commentId } : { comment: { id: input.commentId, hunk: 0, body: 'x', state: 'draft' } }),
+    sendReviewComments: vi.fn(async () => ({ input: { taskId: ID, id: REQ }, sent: 2, remaining: 0, skippedDiscarded: 1 })),
+    rewindPreview: vi.fn(async (_id: string, input: { artifactId: string; to: 'start' | 'end' }) => ({
+      token: 'cd'.repeat(32), target: { artifactId: input.artifactId, to: input.to, round: 2 }, discarded: [{ artifactId: input.artifactId, round: 2 }],
+      files: { count: 1, paths: [{ status: 'M', path: 'README.md' }] }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false },
+      ignoredUntouched: true, rebuildHint: '', refsNote: '', session: 'none', devServer: false, goal: null,
+    })),
+    rewind: vi.fn(async () => ({ rewindId: REQ, backupRef: 'refs/cc/backup', head: 'abc1234', discarded: [ROUND] })),
+    undoRewind: vi.fn(async () => ({ rewindId: REQ, backupRef: 'refs/cc/backup', head: 'abc1234', discarded: [] })),
   }
   const store = { get: (id: string) => id === ID ? { id, kind: 'task', ownerChatId: OWNER } : null, bind: vi.fn() }
   const matters = makeMattersService({ store: store as never, ownerChatId: () => OWNER, workbench: wb as never })
@@ -82,15 +103,25 @@ const DESKTOP_CASES: Record<string, { ok: string | object; bad: string | object;
   '/v1/matter/worktree': { ok: { id: ID, action: 'commit' }, bad: { id: ID, action: 'rebase' }, boom: ['scriptAction', { id: ID, action: 'run' }] },
   '/v1/matter/create': { ok: { requestId: REQ, text: '把说明改一下', target: { kind: 'managed' } }, bad: { requestId: REQ, text: '', target: { kind: 'managed' } }, boom: ['createEntry', { requestId: REQ, text: '把说明改一下', target: { kind: 'managed' } }] },
   '/v1/matter/create-receipt': { ok: `?requestId=${REQ}`, bad: `?requestId=${REQ}&extra=1`, boom: ['entryReceipt', `?requestId=${REQ}`] },
+  // P3e-2(GET / POST /v1/matter/rewind 同一条路径,按方法各一行)
+  'GET /v1/matter/rewind': { ok: `?id=${ID}&artifactId=${OLD_ROUND}&to=end`, bad: `?id=${ID}&artifactId=${OLD_ROUND}`, boom: ['rewindPreview', `?id=${ID}&artifactId=${ROUND}&to=start`] },
+  'POST /v1/matter/rewind': { ok: { id: ID, artifactId: OLD_ROUND, to: 'end', token: SHA }, bad: { id: ID, artifactId: ROUND, token: SHA }, boom: ['undoRewind', { id: ID, undo: REQ }] },
+  '/v1/matter/changes': { ok: `?id=${ID}`, bad: `?id=${ID}&id=${ID}`, boom: ['reviewList', `?id=${ID}`] },
+  '/v1/matter/review-mark': { ok: { id: ID, artifactId: ROUND, path: 'README.md', mark: 'returned', comment: '再短一点' }, bad: { id: ID, artifactId: ROUND, path: 'README.md', mark: 'maybe' }, boom: ['markReviewFile', { id: ID, artifactId: ROUND, path: 'README.md', mark: 'accepted' }] },
+  '/v1/matter/review-return': { ok: { id: ID, artifactId: ROUND, paths: ['README.md'], comment: '标题再短', restartToken: SHA, asLesson: true }, bad: { id: ID, artifactId: ROUND, paths: [], comment: 'x' }, boom: ['returnReviewFiles', { id: ID, artifactId: ROUND, paths: ['README.md'], comment: 'x' }] },
+  '/v1/matter/review-comment': { ok: { id: ID, commentId: COMMENT, body: '改一下措辞' }, bad: { id: ID, commentId: COMMENT, delete: false }, boom: ['reviewComment', { id: ID, commentId: COMMENT, delete: true }] },
+  '/v1/matter/review-comments-send': { ok: { id: ID, summary: '两处', restartToken: SHA }, bad: { id: ID, extra: 1 }, boom: ['sendReviewComments', { id: ID }] },
 }
-const BOOM: Partial<Record<WbFn, string>> = { cancel: 'not_found', resolvePermission: 'permission_stale', resolveAnswer: 'question_stale', artifact: 'artifact_changed', handOff: 'quota_handoff_changed', scriptAction: 'script_approval_required', createEntry: 'unattended_ack_required', entryReceipt: 'invalid_entry_owner' }
+const BOOM: Partial<Record<WbFn, string>> = {
+  reviewList: 'not_found', markReviewFile: 'review_file_unmarkable', returnReviewFiles: 'restart_confirmation_required', reviewComment: 'review_hunk_stale',
+  sendReviewComments: 'workbench_busy', rewindPreview: 'rewind_not_latest', undoRewind: 'rewind_failed', cancel: 'not_found', resolvePermission: 'permission_stale', resolveAnswer: 'question_stale', artifact: 'artifact_changed', handOff: 'quota_handoff_changed', scriptAction: 'script_approval_required', createEntry: 'unattended_ack_required', entryReceipt: 'invalid_entry_owner' }
 
 describe('桌面的 /v1/workbench/* 双胞胎:旧键与新键同一个处理器,operator 打两条一字不差', () => {
   it('每一行别名都有用例', () => {
-    expect(DESKTOP.map(r => pathOf(r.to)).sort()).toEqual(Object.keys(DESKTOP_CASES).sort())
+    expect(DESKTOP.map(r => DESKTOP_CASES[r.to] ? r.to : pathOf(r.to)).sort()).toEqual(Object.keys(DESKTOP_CASES).sort())
   })
   it.each(DESKTOP.map(r => [r.from, r.to] as const))('%s ≡ %s', async (from, to) => {
-    const method = from.split(' ')[0]!, c = DESKTOP_CASES[pathOf(to)]!
+    const method = from.split(' ')[0]!, c = (DESKTOP_CASES[to] ?? DESKTOP_CASES[pathOf(to)])!
     const call = async (path: string, arg: string | object) => raw(method === 'GET' ? await viaLocal(path + (arg as string)) : await viaLocal(path, post(arg)))
     const pair = async (arg: string | object) => {
       const old = await call(pathOf(from), arg), now = await call(pathOf(to), arg)
@@ -168,6 +199,53 @@ describe('手机令牌走新键:语义同并之前的 /m/api/matter/*,错误码�
     expect(got.status).toBe(200); expect(wb.entryReceipt).toHaveBeenLastCalledWith(REQ, { ownerKey: OWNER, surface: 'phone' })
     const none = await viaPanel(`/v1/matter/create-receipt?requestId=${RUN}`, { d: device })
     expect(none.status).toBe(404); expect(await none.json()).toEqual({ error: 'not_found' })
+  })
+})
+
+describe('手机令牌走新键(P3e-2):撤掉这一轮、改动与审阅', () => {
+  it('撤掉这一轮:只撤最新那一轮、只回到它开始之前;旧的那轮 ⇒ 409 rewind_not_latest;桌面那一份的 to / undo 手机用不了', async () => {
+    const p = await viaPanel(`/v1/matter/rewind?id=${ID}&artifactId=${ROUND}`, { d: device })
+    expect(p.status).toBe(200)
+    expect(await p.json()).toEqual({ ok: true, preview: { token: 'cd'.repeat(32), round: 2, rounds: [2], files: { count: 1, paths: [{ status: 'M', path: 'README.md' }] }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false }, rebuildHint: '', session: 'none', devServer: false, goalWillStop: false } })
+    expect(wb.rewindPreview).toHaveBeenLastCalledWith(ID, { artifactId: ROUND, to: 'start' })
+    const old = await viaPanel(`/v1/matter/rewind?id=${ID}&artifactId=${OLD_ROUND}`, { d: device })
+    expect(old.status).toBe(409); expect(await old.json()).toEqual({ error: 'rewind_not_latest' })
+    expect((await viaPanel(`/v1/matter/rewind?id=${ID}&artifactId=${ROUND}&to=end`, { d: device })).status).toBe(400)
+    const run = await viaPanel('/v1/matter/rewind', { d: device }, post({ id: ID, artifactId: ROUND, token: SHA }))
+    expect(await run.json()).toEqual({ ok: true, discarded: [ROUND] })
+    expect(wb.rewind).toHaveBeenLastCalledWith(ID, { artifactId: ROUND, to: 'start', token: SHA })
+    expect((await viaPanel('/v1/matter/rewind', { d: device }, post({ id: ID, undo: REQ }))).status).toBe(400)
+    expect(wb.undoRewind).not.toHaveBeenCalled()
+  })
+  it('回退失败:手机只看到 reason(短码)/ rolledBack,桌面那一份的 detail / 路径不给', async () => {
+    wb.rewind.mockImplementation(async () => { throw Object.assign(new Error('rewind_failed'), { rolledBack: false, detail: 'git said: /Users/owner/secret', path: '/Users/owner/secret' }) })
+    const r = await viaPanel('/v1/matter/rewind', { d: device }, post({ id: ID, artifactId: ROUND, token: SHA }))
+    expect(r.status).toBe(502); expect(await r.json()).toEqual({ error: 'rewind_failed', rolledBack: false })
+    const old = await viaPanel('/m/api/matter/rewind', { d: device }, post({ id: ID, artifactId: ROUND, token: SHA }))
+    expect(await old.json()).toEqual({ ok: false, error: 'rewind_failed', rolledBack: false })
+    const desk = await viaLocal('/v1/matter/rewind', post({ id: ID, artifactId: ROUND, to: 'start', token: SHA }))
+    expect(await desk.json()).toEqual({ error: 'rewind_failed', detail: 'git said: /Users/owner/secret', path: '/Users/owner/secret', rolledBack: false })
+  })
+  it('改动:手机只拿最新那一轮(裁到一帧),桌面拿各轮原样;参数不对新键是 400 invalid_request', async () => {
+    const r = await viaPanel(`/v1/matter/changes?id=${ID}`, { d: device })
+    const body = await r.json() as { ok: true; turn: { artifactId: string; files: unknown[] } }
+    expect(r.status).toBe(200); expect(body.ok).toBe(true); expect(body.turn.artifactId).toBe(ROUND); expect(body.turn.files).toHaveLength(1)
+    const desk = await (await viaLocal(`/v1/matter/changes?id=${ID}`)).json() as { reviews: unknown[] }
+    expect(desk.reviews).toHaveLength(2)
+    const bad = await viaPanel('/v1/matter/changes?id=nope', { d: device })
+    expect(bad.status).toBe(400); expect(await bad.json()).toEqual({ error: 'invalid_request' })
+  })
+  it('审阅:手机的标记不带评论、打回不带 restartToken / asLesson、发出评论不给回执', async () => {
+    expect(await (await viaPanel('/v1/matter/review-mark', { d: device }, post({ id: ID, artifactId: ROUND, path: 'README.md', mark: 'accepted', comment: 'x' }))).json()).toEqual({ ok: true })
+    expect(wb.markReviewFile).toHaveBeenLastCalledWith(ID, { artifactId: ROUND, path: 'README.md', mark: 'accepted' })
+    expect(await (await viaPanel('/v1/matter/review-return', { d: device }, post({ id: ID, artifactId: ROUND, paths: ['README.md'], comment: '再短', restartToken: SHA, asLesson: true }))).json()).toEqual({ ok: true })
+    expect(wb.returnReviewFiles).toHaveBeenLastCalledWith(ID, { artifactId: ROUND, paths: ['README.md'], comment: '再短' })
+    expect(await (await viaPanel('/v1/matter/review-comment', { d: device }, post({ id: ID, commentId: COMMENT.toUpperCase(), delete: true }))).json()).toEqual({ ok: true, deleted: true })
+    expect(wb.reviewComment).toHaveBeenLastCalledWith(ID, { commentId: COMMENT, delete: true })
+    // 改评论正文是桌面那一份(手机只建 / 删)
+    expect((await viaPanel('/v1/matter/review-comment', { d: device }, post({ id: ID, commentId: COMMENT, body: '改' }))).status).toBe(400)
+    expect(await (await viaPanel('/v1/matter/review-comments-send', { d: device }, post({ id: ID, summary: '两处' }))).json()).toEqual({ ok: true, sent: 2, remaining: 0, skippedDiscarded: 1 })
+    expect((await viaPanel('/v1/matter/review-comments-send', { d: device }, post({ id: ID, restartToken: SHA }))).status).toBe(400)
   })
 })
 

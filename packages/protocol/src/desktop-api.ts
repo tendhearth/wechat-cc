@@ -14,7 +14,7 @@
 import z from 'zod'
 import {
   Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent,
-  MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
+  MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
@@ -2588,6 +2588,13 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/matter/worktree': z.union([WorkbenchWorktreeResponse, PhoneWorktreeResult]),
   'POST /v1/matter/create': z.union([WorkbenchEntryResultResponse, PhoneActionOk.extend(EntryResult.shape)]),
   'GET /v1/matter/create-receipt': z.union([WorkbenchEntryResultResponse, PhoneActionOk.extend(EntryResult.shape)]),
+  'GET /v1/matter/rewind': z.union([WorkbenchRewindPreviewResponse, PhoneActionOk.extend({ preview: PhoneRewindPreview })]),
+  'POST /v1/matter/rewind': z.union([WorkbenchRewindResponse, PhoneActionOk.extend({ discarded: z.array(z.string()) })]),
+  'GET /v1/matter/changes': z.union([WorkbenchReviewResponse, PhoneActionOk.extend({ turn: PhoneChangesTurn.nullable() })]),
+  'POST /v1/matter/review-mark': z.union([WorkbenchReviewMarkResponse, PhoneActionOk]),
+  'POST /v1/matter/review-return': z.union([WorkbenchReviewReturnResponse, PhoneActionOk]),
+  'POST /v1/matter/review-comment': z.union([WorkbenchReviewCommentResponse, PhoneActionOk.extend({ commentId: z.string().optional(), deleted: z.boolean().optional() })]),
+  'POST /v1/matter/review-comments-send': z.union([WorkbenchReviewCommentsSendResponse, PhoneActionOk.extend({ sent: z.number(), remaining: z.number(), skippedDiscarded: z.number() })]),
   // 一件事 / 连接 / 手机 / 插件 / 许可 / 终端会话 / 日历 / 信
   'GET /v1/matters': MattersListResponse,
   'GET /v1/matter': MatterDetailResponse,

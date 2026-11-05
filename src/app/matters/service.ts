@@ -7,6 +7,7 @@ import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts
 import {lifecycleOfTaskView,wireMatter,type WireMatter} from '../../domain/matters/legacy-status'
 import {phoneMayOpenMatter} from '../../domain/matters/phone-scope'
 import {isReadyStep} from '../../domain/matters/ready-step'
+import {latestChanges,type ReviewTurnLike} from '../../domain/matters/phone-changes'
 import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
 
 /**
@@ -81,6 +82,12 @@ export interface MattersServiceDeps {
     /** 交办(P3e 起手机与桌面经 /v1/matter/create、create-receipt 同一个处理器;上下文由调用方给:谁的、哪个表面、出生地)。 */
     createEntry?(input:never,context:MatterEntryContext):unknown
     entryReceipt?(requestId:string,context:MatterEntryContext):unknown
+    /** 逐文件审阅与行评论(P3e 起手机与桌面经 /v1/matter/review-* 同一个处理器);撤销一次回退(桌面)。 */
+    markReviewFile?(id:string,input:never):unknown
+    returnReviewFiles?(id:string,input:never):Promise<unknown>|unknown
+    reviewComment?(id:string,input:never):unknown
+    sendReviewComments?(id:string,input:never):Promise<unknown>|unknown
+    undoRewind?(id:string,undo:string):Promise<unknown>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
   chat?:{file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterDetailEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterDetailEvent&{id:string})[]>}
@@ -135,6 +142,19 @@ export interface MattersService {
   /** 交办的回执(按 requestId);没有 ⇒ null。上下文同 createEntry(不带出生地)。 */
   entryReceipt(requestId:string,context:{surface:'desktop'|'phone';ownerKey?:string}):unknown
   /**
+   * 手机看改动(P3e,`GET /v1/matter/changes` 手机那一份):最近一轮的改动快照,裁到能放进中继一帧(domain/matters/phone-changes.ts)。
+   * 没撤掉的轮一个都没有 ⇒ null;未知任务 ⇒ 工作台抛 not_found。桌面那一份(各轮原样)是 desktop.reviews。
+   */
+  changes(id:string):unknown
+  /**
+   * 逐文件审阅 / 打回 / 行评论 / 发出评论(P3e,`/v1/matter/review-*`):手机与桌面同一个调用,差别只在调用方给的参数
+   * (手机不带 comment / restartToken / asLesson / 行号,发出评论的回执与任务视图不给手机 —— 这些在处理器里收)。
+   */
+  markReviewFile(id:string,input:{artifactId:string;path:string;mark:'accepted'|'returned';comment?:string}):unknown
+  returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string;asLesson?:true}):Promise<Record<string,unknown>>
+  reviewComment(id:string,input:Record<string,unknown>):unknown
+  sendReviewComments(id:string,input:{summary?:string;inputRequestId?:string;restartToken?:string}):Promise<unknown>
+  /**
    * 一件事上的动作,桌面那一份(P3e,`/v1/matter/*` 在 operator 范围下):参数、回包、错误码同搬来之前的 `/v1/workbench/*`
    * —— 工作台原样,不经上面手机那几样的 matter 层判断(runId 过期、只撤最新一轮 …),桌面本来就没有。没接工作台 ⇒ workbench_not_wired。
    */
@@ -154,6 +174,12 @@ export interface MatterDesktopActions {
   quotaHandoff(id:string,input:{requestId:string;providerId:string}):unknown
   /** 独立工作区:commit / remove / merge / reopen 同步,run / stop 是工作区脚本。回工作台原样(含合并命令)。 */
   worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'|'run'|'stop'):Promise<unknown>
+  /** 这件事各轮的改动(桌面「改动」面板,原样;手机那一份是 changes)。 */
+  reviews(id:string):Promise<unknown>
+  /** 回到某一轮:预览(任意一轮、开始前 / 结束后)、带 token 执行、撤销最近一次回退(手机只撤最新那一轮,是上面的 rewindPreview / rewind)。 */
+  rewindPreview(id:string,input:{artifactId:string;to:'start'|'end'}):Promise<unknown>
+  rewind(id:string,input:{artifactId:string;to:'start'|'end';token:string}):Promise<unknown>
+  undoRewind(id:string,undo:string):Promise<unknown>
 }
 /** 工作台预览里手机用得到的那几样(service/rewind.ts 的 RewindPreview;不依赖它,免得 matters 反向依赖工作台域)。 */
 export interface WorkbenchRewindPreview {
@@ -459,6 +485,14 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       const ownerKey=context.ownerKey??(deps.ownerChatId??deps.chat?.ownerChatId)?.()??''
       return deps.workbench.entryReceipt(requestId,{ownerKey,surface:context.surface})
     },
+    changes(id){
+      if(!deps.workbench?.reviewList)throw Error('workbench_not_wired')
+      return latestChanges(deps.workbench.reviewList(id) as unknown as ReviewTurnLike[])
+    },
+    markReviewFile(id,input){if(!deps.workbench?.markReviewFile)throw Error('workbench_not_wired');return deps.workbench.markReviewFile(id,input as never)},
+    async returnReviewFiles(id,input){if(!deps.workbench?.returnReviewFiles)throw Error('workbench_not_wired');return await deps.workbench.returnReviewFiles(id,input as never) as Record<string,unknown>},
+    reviewComment(id,input){if(!deps.workbench?.reviewComment)throw Error('workbench_not_wired');return deps.workbench.reviewComment(id,input as never)},
+    async sendReviewComments(id,input){if(!deps.workbench?.sendReviewComments)throw Error('workbench_not_wired');return await deps.workbench.sendReviewComments(id,input as never)},
     desktop:desktopActions(deps.workbench),
   }
 }
@@ -473,5 +507,9 @@ function desktopActions(w:MattersServiceDeps['workbench']):MatterDesktopActions{
     artifact:async(id,artifactId)=>need(w?.artifact).call(w,id,artifactId),
     quotaHandoff:(id,input)=>need(w?.handOff).call(w,id,input),
     worktree:async(id,action)=>action==='run'||action==='stop'?await need(w?.scriptAction).call(w,id,action):need(w?.worktreeAction).call(w,id,action),
+    reviews:async id=>need(w?.reviewList).call(w,id),
+    rewindPreview:(id,input)=>need(w?.rewindPreview).call(w,id,input),
+    rewind:(id,input)=>need(w?.rewind).call(w,id,input),
+    undoRewind:(id,undo)=>need(w?.undoRewind).call(w,id,undo),
   }
 }

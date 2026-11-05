@@ -329,35 +329,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       }
     },
 
-    'GET /v1/workbench/review': async (query) => {
-      const id = query.get('id') ?? ''
-      if (query.getAll('id').length !== 1 || !TASK_ID.test(id)) return invalid()
-      try {
-        return { status: 200, body: { reviews: await deps.workbench.reviewList(id) } }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
-    'POST /v1/workbench/review-mark': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
-      const path = value?.path
-      const mark = value?.mark
-      const comment = value?.comment
-      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
-          typeof path !== 'string' || !path || path.length > 4096 ||
-          (mark !== 'accepted' && mark !== 'returned') ||
-          (comment !== undefined && (typeof comment !== 'string' || comment.length > 2000))) return invalid()
-      try {
-        const result = await deps.workbench.markReviewFile(id, { artifactId, path, mark, ...(comment !== undefined ? { comment } : {}) })
-        return { status: 200, body: { mark: result } }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
     // 批准工作区脚本:hash = 主人在确认框里看到的那份内容;对不上 ⇒ 409 script_config_changed(重新拉详情再看)。
     'POST /v1/workbench/script-approve': async (_query, body) => {
       const value = objectBody(body)
@@ -367,6 +338,7 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
+    // 看改动 / 逐文件标记与打回 / 行评论(2026-10-06 起)P3e 起是一件事上的动作,在 /v1/matter/changes、review-*。
     // 逐文件撤销(2026-10-06):恢复成这一轮开始前的内容。文件夹还被占着 ⇒ 409 workbench_busy;之后又改过 ⇒ 409 review_file_changed。
     // (独立工作区的 commit / remove / merge / reopen 与工作区脚本 run / stop 是一件事上的动作,P3e 起在 /v1/matter/worktree。)
     'POST /v1/workbench/review-revert': async (_query, body) => {
@@ -379,40 +351,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
-    // 行评论(2026-10-21):按键集合精确分三种 —— 建 {id, commentId, artifactId, path, hunk, hunkSha256, rowStart?, rowEnd?, body} /
-    // 改 {id, commentId, body} / 删 {id, commentId, delete:true}。引用与行号由服务端算,客户端给了别的键一律 400。
-    'POST /v1/workbench/review-comment': async (query, body) => {
-      const value = objectBody(body)
-      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id) || typeof value.commentId !== 'string' || !REQUEST_ID.test(value.commentId)) return invalid()
-      const keys = Object.keys(value).sort().join(',')
-      const text = (v: unknown) => typeof v === 'string' && !!v.trim() && v.length <= 2000
-      const row = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 1_000_000
-      let input: Parameters<WorkbenchService['reviewComment']>[1]
-      if (keys === 'commentId,delete,id') { if (value.delete !== true) return invalid(); input = { commentId: value.commentId, delete: true } }
-      else if (keys === 'body,commentId,id') { if (!text(value.body)) return invalid(); input = { commentId: value.commentId, body: value.body as string } }
-      else if (keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path' || keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path,rowEnd,rowStart') {
-        if (typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) || typeof value.path !== 'string' || !value.path || value.path.length > 4096 ||
-            !row(value.hunk) || typeof value.hunkSha256 !== 'string' || !SHA256.test(value.hunkSha256) || !text(value.body) ||
-            (keys.includes('rowStart') && (!row(value.rowStart) || !row(value.rowEnd)))) return invalid()
-        input = { commentId: value.commentId, artifactId: value.artifactId, path: value.path, hunk: value.hunk as number, hunkSha256: value.hunkSha256, body: value.body as string,
-          ...(keys.includes('rowStart') ? { rowStart: value.rowStart as number, rowEnd: value.rowEnd as number } : {}) }
-      } else return invalid()
-      try { return { status: 200, body: deps.workbench.reviewComment(value.id, input) } }
-      catch (err) { return mappedError(err) }
-    },
-    // 发出行评论:投递同 review-return(202,{input}|{task} + sent / remaining / skippedDiscarded);restartToken 同那道门。
-    'POST /v1/workbench/review-comments-send': async (query, body) => {
-      const value = objectBody(body)
-      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id) || Object.keys(value).some(k => !['id', 'summary', 'inputRequestId', 'restartToken'].includes(k))) return invalid()
-      const { summary, inputRequestId, restartToken } = value
-      if (summary !== undefined && (typeof summary !== 'string' || summary.length > 2000)) return invalid()
-      if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !REQUEST_ID.test(inputRequestId))) return invalid()
-      if (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken))) return invalid()
-      try {
-        const result = await deps.workbench.sendReviewComments(value.id, { ...(summary !== undefined ? { summary: summary as string } : {}), ...(inputRequestId !== undefined ? { inputRequestId: inputRequestId as string } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}) })
-        return { status: 202, body: result }
-      } catch (err) { return mappedError(err) }
-    },
     // 按块撤回 / 恢复:这件事有会话(哪怕答复过)/ 检查 / 脚本在跑 ⇒ 409 workbench_busy;块变了 ⇒ 409 review_hunk_stale;之后又改过 ⇒ 409 review_file_changed。
     'POST /v1/workbench/review-hunk': async (query, body) => {
       const value = objectBody(body)
@@ -424,61 +362,13 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
-    // 回到某一轮(2026-10-21):先预览(拿 token),再带 token 执行;{id, undo} = 撤销最近一次回退;rewind-resolve = 停住后主人拍板。
-    'GET /v1/workbench/rewind-preview': async query => {
-      const id = query.get('id'), artifactId = query.get('artifactId'), to = query.get('to')
-      if (query.size !== 3 || query.getAll('id').length !== 1 || query.getAll('artifactId').length !== 1 || query.getAll('to').length !== 1 ||
-          !id || !TASK_ID.test(id) || !artifactId || !ARTIFACT_ID.test(artifactId) || (to !== 'start' && to !== 'end')) return invalid()
-      try { return { status: 200, body: { preview: await deps.workbench.rewindPreview(id, { artifactId, to }) } } }
-      catch (err) { return mappedError(err) }
-    },
-    'POST /v1/workbench/rewind': async (query, body) => {
-      const value = objectBody(body), keys = Object.keys(value ?? {}).sort().join(',')
-      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id)) return invalid()
-      if (keys === 'id,undo') {
-        if (typeof value.undo !== 'string' || !REQUEST_ID.test(value.undo)) return invalid()
-        try { return { status: 200, body: { rewind: await deps.workbench.undoRewind(value.id, value.undo) } } }
-        catch (err) { return mappedError(err) }
-      }
-      if (keys !== 'artifactId,id,to,token' || typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) ||
-          (value.to !== 'start' && value.to !== 'end') || typeof value.token !== 'string' || !SHA256.test(value.token)) return invalid()
-      try { return { status: 200, body: { rewind: await deps.workbench.rewind(value.id, { artifactId: value.artifactId, to: value.to, token: value.token }) } } }
-      catch (err) { return mappedError(err) }
-    },
+    // 回到某一轮(2026-10-21):预览与执行 / 撤销是一件事上的动作,P3e 起在 /v1/matter/rewind;这一条是停住后主人拍板。
     'POST /v1/workbench/rewind-resolve': async (query, body) => {
       const value = objectBody(body)
       if (query.size || !value || Object.keys(value).sort().join(',') !== 'choice,id' || typeof value.id !== 'string' || !TASK_ID.test(value.id) ||
           (value.choice !== 'keep' && value.choice !== 'restore_backup')) return invalid()
       try { return { status: 200, body: { resolved: await deps.workbench.rewindResolve(value.id, value.choice) } } }
       catch (err) { return mappedError(err) }
-    },
-
-    'POST /v1/workbench/review-return': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
-      const paths = value?.paths
-      const comment = value?.comment
-      const inputRequestId = value?.inputRequestId
-      // 重开令牌照 POST /v1/workbench/continue 那道门验(同一个 SHA256):原会话不能恢复时,打回也要能带着它再来一次。
-      const restartToken = value?.restartToken
-      if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !REQUEST_ID.test(inputRequestId))) return invalid()
-      if (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken))) return invalid()
-      // 同时记成这个项目的经验(10-20):可选布尔;记没记上只附在响应上,不改打回本身
-      const asLesson = value?.asLesson
-      if (asLesson !== undefined && typeof asLesson !== 'boolean') return invalid()
-      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
-          !Array.isArray(paths) || !paths.length || paths.length > 20 || paths.some(p => typeof p !== 'string' || !p) ||
-          typeof comment !== 'string' || !comment.trim() || comment.length > 2000) return invalid()
-      try {
-        const { lesson, ...result } = await deps.workbench.returnReviewFiles(id, { artifactId, paths, comment, ...(inputRequestId !== undefined ? { inputRequestId } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}), ...(asLesson === true ? { asLesson: true as const } : {}) })
-        // 保留会话还活着时打回走的是续接投递,回的是一张回执;已经结算的任务才回任务视图
-        // (评审 2026-09-21 #7)。两种都够桌面拿去刷新详情。
-        // 回执认 `taskId`(任务视图上只有 `id`),比认 `phase` 稳:少一个字段不会把回执当成任务发出去。
-        return { status: 202, body: { ...('taskId' in result ? { input: result } : { task: result }), ...(lesson ? { lesson } : {}) } }
-      } catch (err) {
-        return mappedError(err)
-      }
     },
   }
 }

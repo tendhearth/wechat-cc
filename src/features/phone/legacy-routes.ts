@@ -284,7 +284,8 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
   // 别名只做:手机的参数规矩(先验再翻,同并之前)、`{ ok }` 信封、phone 那一列的码、带 no-store(mobile-workbench / mobile-reads 的 json())。
   /** 处理器抛的原始码(cause)按 phone 那一列换;没有 cause 的 503(模块门 workbench_not_wired / module_*)⇒ 手机原来「没接上」的那个码。 */
   const workbenchAliasError = (out: V1Out, notWired: string): Response => {
-    if (out.cause) return mobileMatterError(Error(out.cause))
+    // 回退那几个码(P3e-2):新键的正文带着手机看得到的 reason / rolledBack,原样交给 mobileMatterError 再收一道(只认短码 / 布尔)
+    if (out.cause) return mobileMatterError(Object.assign(Error(out.cause), obj(out.body) ? { reason: out.body.reason, rolledBack: out.body.rolledBack } : {}))
     const code = errorOf(out.body)
     return mobileMatterError(Error(out.status === 503 && (code === 'workbench_not_wired' || code.startsWith('module_')) ? notWired : code))
   }
@@ -382,6 +383,45 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
   const phoneMatterCreate = matterAction('POST', '/v1/matter/create', { badJson: 'invalid_entry', notWired: 'entry_not_wired', wiredFirst: true })
   const phoneMatterCreateReceipt = matterAction('GET', '/v1/matter/create-receipt', { notWired: 'entry_not_wired' })
 
+  // ── P3e-2 撤掉这一轮(GET 预览 / POST 执行同一条路径,并之前是 mobile-workbench.ts 的 sharedRoute):同 matterAction,方法按 GET / POST 两种分
+  const phoneMatterRewind: PhoneHandler<Ctx> = ownsMethod(async (url: URL, req: Request, ctx: Ctx) => {
+    if (req.method !== 'GET' && req.method !== 'POST') return noStore({ ok: false, error: 'method_not_allowed' }, 405)
+    return (req.method === 'GET' ? phoneMatterRewindPreview : phoneMatterRewindRun)(url, req, ctx)
+  })
+  const phoneMatterRewindPreview = matterAction('GET', '/v1/matter/rewind', { notWired: 'workbench_not_wired' })
+  const phoneMatterRewindRun = matterAction('POST', '/v1/matter/rewind', { notWired: 'workbench_not_wired' })
+
+  // ── P3e-2 改动与逐文件审阅 → /v1/matter/changes、review-*:并之前是 settings-panel.ts 自己的处理器 —— 成功、参数不对、「没接上」、
+  // 不能标的文件用面板的 json()(不带 cache-control),服务里抛的经 mobileMatterError(带 no-store),金样把头一起钉了,这里照旧。
+  // 参数不对:新键那边按并之前的规矩验,并之前回的码(`invalid`)经 cause 带回来。
+  /** /v1 回的是「没接上」:模块门(没 cause)或 MattersService 没接工作台(cause workbench_not_wired)。 */
+  const reviewUnwired = (out: V1Out) => out.status === 503 && (out.cause === 'workbench_not_wired' || (!out.cause && (errorOf(out.body) === 'workbench_not_wired' || errorOf(out.body).startsWith('module_'))))
+  const phoneMatterChanges: PhoneHandler<Ctx> = async (url, req, { caller }) => {
+    if (!deps.v1) return panelJson({ ok: false, error: 'changes_not_wired' }, 503)
+    const out = await v1(req, caller, 'GET', '/v1/matter/changes', url.searchParams)
+    if (out.status === 200 && obj(out.body)) return panelJson(out.body)
+    if (out.cause === 'invalid') return panelJson({ ok: false, error: 'invalid' }, 400)
+    if (reviewUnwired(out)) return panelJson({ ok: false, error: 'changes_not_wired' }, 503)
+    const notFound = out.cause === 'not_found'
+    return panelJson({ ok: false, error: notFound ? 'matter_not_found' : 'unavailable' }, notFound ? 404 : 500)
+  }
+  /** `unmarkable`:并之前标记 / 打回 / 行评论三条把 review_file_unmarkable 原样 400(面板的 json());发出评论那条没有这一分支。 */
+  const reviewAlias = (path: string, o: { unmarkable: boolean }): PhoneHandler<Ctx> => async (_url, req, { caller }) => {
+    if (!deps.v1) return panelJson({ ok: false, error: 'review_not_wired' }, 503)
+    let body: unknown
+    try { body = await req.json() } catch { return panelJson({ ok: false, error: 'bad_json' }, 400) }
+    const out = await v1(req, caller, 'POST', path, {}, body)
+    if (out.status === 200 && obj(out.body)) return panelJson(out.body)
+    if (out.cause === 'invalid') return panelJson({ ok: false, error: 'invalid' }, 400)
+    if (reviewUnwired(out)) return panelJson({ ok: false, error: 'review_not_wired' }, 503)
+    if (o.unmarkable && out.cause === 'review_file_unmarkable') return panelJson({ ok: false, error: 'review_file_unmarkable' }, 400)
+    return mobileMatterError(Error(out.cause ?? errorOf(out.body)))
+  }
+  const phoneMatterReviewMark = reviewAlias('/v1/matter/review-mark', { unmarkable: true })
+  const phoneMatterReviewReturn = reviewAlias('/v1/matter/review-return', { unmarkable: true })
+  const phoneMatterReviewComment = reviewAlias('/v1/matter/review-comment', { unmarkable: true })
+  const phoneMatterReviewCommentsSend = reviewAlias('/v1/matter/review-comments-send', { unmarkable: false })
+
   // ── P3d 纯改名(wire-compat.ts 里 transform 为 null 的行):旧路径换成新键的路径(前缀键换前缀、后面原样),交给面板里新键那一个
   // 处理器 —— 同一个 Request(方法、正文、头、断开信号)、同一个 ctx(令牌、设备 id),回包一个字节不碰。查不到 ⇒ 面板同一个 404。
   // 一律 ownsMethod:方法不对也交过去,由新键那边照它自己的规矩回(它自己判方法就回它的 405,不判就落到这里的 404,同并之前)。
@@ -456,5 +496,13 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     'POST /m/api/matter/worktree': phoneMatterWorktree,
     'POST /m/api/matter/create': phoneMatterCreate,
     'GET /m/api/matter/create-receipt': phoneMatterCreateReceipt,
+    // P3e-2 撤掉这一轮、改动与逐文件审阅
+    'GET /m/api/matter/rewind': phoneMatterRewind,
+    'POST /m/api/matter/rewind': phoneMatterRewind,
+    'GET /m/api/matter/changes': phoneMatterChanges,
+    'POST /m/api/matter/review-mark': phoneMatterReviewMark,
+    'POST /m/api/matter/review-return': phoneMatterReviewReturn,
+    'POST /m/api/matter/review-comment': phoneMatterReviewComment,
+    'POST /m/api/matter/review-comments-send': phoneMatterReviewCommentsSend,
   }
 }

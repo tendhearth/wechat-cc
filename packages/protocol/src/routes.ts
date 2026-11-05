@@ -236,6 +236,15 @@ const ROUTE_TABLE = {
   // 交办一件新事 + 回执(桌面双胞胎是 create-entry / entry-receipt)
   'POST /v1/matter/create': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
   'GET /v1/matter/create-receipt': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  // 撤掉这一轮 / 回到某一轮(回退,2026-10-21):预览 + 带 token 执行(桌面双胞胎是 rewind-preview / rewind)
+  'GET /v1/matter/rewind': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  'POST /v1/matter/rewind': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  // 看改动(手机最近一轮 / 桌面各轮;桌面双胞胎是 review)、逐文件审阅、行评论(2026-10-17 / 10-21)
+  'GET /v1/matter/changes': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  'POST /v1/matter/review-mark': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  'POST /v1/matter/review-return': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  'POST /v1/matter/review-comment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  'POST /v1/matter/review-comments-send': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
   // 「CC 的连接」:带插件目录与原因,只给 admin。
   // P3c-2(手机原 /m/api/connections):手机令牌也走这一条,处理器按 caller 去掉 detail(routes-connections.ts);只给设备。
   'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
@@ -634,16 +643,6 @@ const ROUTE_TABLE = {
   'GET /v1/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
   'GET /v1/matter/input-receipt': { phone: { link: 'none' } },
   'GET /v1/matter/insight': { phone: { link: 'none' } },
-  'GET /m/api/matter/changes': { phone: { link: 'none' } },
-  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);两条都只给设备(链接页面不调)
-  'POST /m/api/matter/review-mark': { phone: { link: 'none' } },
-  'POST /m/api/matter/review-return': { phone: { link: 'none' } },
-  // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;只给设备(不在链接白名单里)
-  'POST /m/api/matter/review-comment': { phone: { link: 'none' } },
-  'POST /m/api/matter/review-comments-send': { phone: { link: 'none' } },
-  // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(不在链接白名单里)
-  'GET /m/api/matter/rewind': { phone: { link: 'none' } },
-  'POST /m/api/matter/rewind': { phone: { link: 'none' } },
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
   'GET /v1/matter/owner-chat/page': { phone: { link: 'none' } },
   'POST /v1/matter/owner-chat/say': { phone: { link: 'none' } },

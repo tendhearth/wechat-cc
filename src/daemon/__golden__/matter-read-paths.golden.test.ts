@@ -301,7 +301,7 @@ beforeAll(async () => {
     stateDir: root, ownerChatId: () => OWNER, log: () => {},
     chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {},
     executorName: (id: string) => registry.namesOf(id).name,
-    matters: { list: f => service.list(f), withActs: rows => service.withActs(rows), detail: id => service.detail(id), inputReceipt: service.inputReceipt, say: (id, text, input) => service.say(id, text, 'phone', input), rewindPreview: service.rewindPreview, rewind: service.rewind, seenOnPhone: id => matters.bind(id, 'phone', 'pwa') },
+    matters: { list: f => service.list(f), withActs: rows => service.withActs(rows), detail: id => service.detail(id), inputReceipt: service.inputReceipt, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => matters.bind(id, 'phone', 'pwa') },
     chat: { owner: () => phoneOwner.peek(), inboxDir, history: (chatId, o) => messages.listRange(chatId, o), chat: phoneChat, message: (chatId, id) => messages.get(chatId, id) },
     featureRoutes: [terminalPhoneRoutes({ cliActions })],
   })

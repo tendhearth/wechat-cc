@@ -14,7 +14,7 @@
  */
 import { isWorkbenchProviderId } from '../../domain/workbench/executor-capabilities'
 import { parseEntryInput } from '../../adapters/workbench/task-entry'
-import { PHONE_ANSWER_MAX_JSON, workbenchErrorHttp, workbenchErrorSpec } from '@wechat-cc/protocol'
+import { PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, workbenchErrorHttp, workbenchErrorSpec } from '@wechat-cc/protocol'
 import type { MattersService } from '../../app/matters/service'
 import type { InternalApiDeps, RouteHandler, RouteResult, RouteTable } from './types'
 
@@ -57,13 +57,23 @@ function mappedError(err: unknown, entry = false): RouteResult {
 const invalid = (): RouteResult => ({ status: 400, body: { error: 'invalid_request' } })
 
 // ── 手机那一份的错误:码取 message(同并之前 mobileMatterError 的取法),正文是桌面那一列,原始码经 cause 给别名 ──
+// 回退那几个码另带手机看得到的两样(同 mobileMatterError):不能回 ⇒ 只带短码 reason;切换失败 ⇒ rolledBack。
+// detail / backupRef / 路径这些桌面那一份才有的,手机令牌不给。
 function phoneError(err: unknown, entry = false): RouteResult {
   const code = err instanceof Error ? err.message : 'internal'
   const { status, error } = workbenchErrorHttp(code, 'desktop', entry)
-  return { status, body: { error }, ...(CAUSE.test(code) ? { cause: code } : {}) }
+  const e = (err ?? {}) as { reason?: unknown; rolledBack?: unknown }
+  const extra = (code === 'rewind_unavailable' || code === 'rewind_noop') && typeof e.reason === 'string' && /^[a-z_]{1,40}$/.test(e.reason) ? { reason: e.reason }
+    : code === 'rewind_failed' && typeof e.rolledBack === 'boolean' ? { rolledBack: e.rolledBack } : {}
+  return { status, body: { error, ...extra }, ...(CAUSE.test(code) ? { cause: code } : {}) }
 }
 /** 手机的参数不对:码同并之前手机那条回的(invalid_request / invalid_decision …)。 */
 const phoneInvalid = (code: string): RouteResult => phoneError(Error(code))
+/**
+ * 手机的参数不对,并之前回的是面板自己的 `invalid`(改动、审阅那几条):`invalid` 不是一个码表里的码(桌面那一列会落成 500),
+ * 新键的正文写 400 invalid_request,并之前的那个码经 cause 给别名。
+ */
+const phoneLooseInvalid: RouteResult = { status: 400, body: { error: 'invalid_request' }, cause: 'invalid' }
 
 /** MattersService 还没交给内部 API(开机途中):同工作台没挂上时的码。 */
 const notWired = (caller: Caller): RouteResult =>
@@ -165,6 +175,156 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
       const id = typeof value?.id === 'string' ? value.id : '', act = value?.action
       if (!TASK_ID.test(id) || (act !== 'commit' && act !== 'remove' && act !== 'merge' && act !== 'reopen' && act !== 'run' && act !== 'stop') || Object.keys(value ?? {}).some(k => k !== 'id' && k !== 'action')) return invalid()
       try { return { status: 200, body: { worktree: await m.desktop.worktree(id, act) } } } catch (err) { return mappedError(err) }
+    }),
+
+    // 撤掉这一轮(回退)。手机:只撤最新那一轮、只回到它开始之前(不是最新那轮 ⇒ rewind_not_latest);GET 预览查询恰好 id + artifactId,
+    // POST 正文恰好 {id, artifactId, token}。桌面(原 /v1/workbench/rewind-preview、/v1/workbench/rewind):任意一轮、开始前 / 结束后(to),
+    // POST 另认 {id, undo} = 撤销最近一次回退;错误带 rewindExtra。
+    'GET /v1/matter/rewind': action(async (m, q) => {
+      const id = q.get('id'), artifactId = q.get('artifactId')
+      if (q.getAll('id').length !== 1 || q.getAll('artifactId').length !== 1 || [...q.keys()].some(key => key !== 'id' && key !== 'artifactId') || !id || !ID.test(id) || !artifactId || !ARTIFACT_ID.test(artifactId)) return phoneInvalid('invalid_request')
+      try { return { status: 200, body: { ok: true, preview: await m.rewindPreview(id, artifactId) } } } catch (err) { return phoneError(err) }
+    }, async (m, query) => {
+      const id = query.get('id'), artifactId = query.get('artifactId'), to = query.get('to')
+      if (query.size !== 3 || query.getAll('id').length !== 1 || query.getAll('artifactId').length !== 1 || query.getAll('to').length !== 1 ||
+          !id || !TASK_ID.test(id) || !artifactId || !ARTIFACT_ID.test(artifactId) || (to !== 'start' && to !== 'end')) return invalid()
+      try { return { status: 200, body: { preview: await m.desktop.rewindPreview(id, { artifactId, to }) } } } catch (err) { return mappedError(err) }
+    }),
+    'POST /v1/matter/rewind': action(async (m, _q, body) => {
+      const b = objectBody(body)
+      if (!b || Object.keys(b).sort().join(',') !== 'artifactId,id,token' || typeof b.id !== 'string' || !ID.test(b.id) || typeof b.artifactId !== 'string' || !ARTIFACT_ID.test(b.artifactId) || typeof b.token !== 'string' || !SHA256.test(b.token)) return phoneInvalid('invalid_request')
+      try { return { status: 200, body: { ok: true, ...await m.rewind(b.id, b.artifactId, b.token) } } } catch (err) { return phoneError(err) }
+    }, async (m, query, body) => {
+      const value = objectBody(body), keys = Object.keys(value ?? {}).sort().join(',')
+      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id)) return invalid()
+      if (keys === 'id,undo') {
+        if (typeof value.undo !== 'string' || !UUID.test(value.undo)) return invalid()
+        try { return { status: 200, body: { rewind: await m.desktop.undoRewind(value.id, value.undo) } } } catch (err) { return mappedError(err) }
+      }
+      if (keys !== 'artifactId,id,to,token' || typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) ||
+          (value.to !== 'start' && value.to !== 'end') || typeof value.token !== 'string' || !SHA256.test(value.token)) return invalid()
+      try { return { status: 200, body: { rewind: await m.desktop.rewind(value.id, { artifactId: value.artifactId, to: value.to, token: value.token }) } } } catch (err) { return mappedError(err) }
+    }),
+
+    // 这件事的改动。手机:最近一轮的快照、裁到一帧(domain/matters/phone-changes.ts),回 {ok, turn};未知任务 ⇒ not_found(别名换成
+    // matter_not_found),别的 ⇒ 别名一律 unavailable。桌面(原 /v1/workbench/review):各轮原样,查询恰好一个 id。
+    'GET /v1/matter/changes': action(async (m, q) => {
+      const id = q.get('id')
+      if (!id || !ID.test(id)) return phoneLooseInvalid
+      try { return { status: 200, body: { ok: true, turn: m.changes(id) } } } catch (err) { return phoneError(err) }
+    }, async (m, query) => {
+      const id = query.get('id') ?? ''
+      if (query.getAll('id').length !== 1 || !TASK_ID.test(id)) return invalid()
+      try { return { status: 200, body: { reviews: await m.desktop.reviews(id) } } } catch (err) { return mappedError(err) }
+    }),
+
+    // 逐文件「没问题 / 退回」的标记。手机:{id, artifactId, path, mark}(不带评论),回 {ok};桌面(原 /v1/workbench/review-mark):可带 comment,回 {mark}。
+    'POST /v1/matter/review-mark': action(async (m, _q, body) => {
+      const b = (body ?? {}) as JsonObject
+      if (typeof b.id !== 'string' || !ID.test(b.id) || typeof b.artifactId !== 'string' || !b.artifactId || typeof b.path !== 'string' || !b.path || (b.mark !== 'accepted' && b.mark !== 'returned')) return phoneLooseInvalid
+      try { m.markReviewFile(b.id, { artifactId: b.artifactId, path: b.path, mark: b.mark }); return { status: 200, body: { ok: true } } } catch (err) { return phoneError(err) }
+    }, async (m, _q, body) => {
+      const value = objectBody(body)
+      const id = typeof value?.id === 'string' ? value.id : ''
+      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
+      const path = value?.path, mark = value?.mark, comment = value?.comment
+      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
+          typeof path !== 'string' || !path || path.length > 4096 ||
+          (mark !== 'accepted' && mark !== 'returned') ||
+          (comment !== undefined && (typeof comment !== 'string' || comment.length > 2000))) return invalid()
+      try { return { status: 200, body: { mark: await m.markReviewFile(id, { artifactId, path, mark, ...(comment !== undefined ? { comment } : {}) }) } } } catch (err) { return mappedError(err) }
+    }),
+
+    // 打回这几个文件(走续接:还在跑的会话里补一句 / 已结算的接着做)。手机:{id, artifactId, paths, comment}(评论至多 PHONE_SAY_MAX_CHARS),回 {ok};
+    // 桌面(原 /v1/workbench/review-return):另认 inputRequestId / restartToken(同续接那道门)/ asLesson,202 回 {input} | {task}(+ lesson)。
+    'POST /v1/matter/review-return': action(async (m, _q, body) => {
+      const b = (body ?? {}) as JsonObject
+      if (typeof b.id !== 'string' || !ID.test(b.id) || typeof b.artifactId !== 'string' || !b.artifactId || !Array.isArray(b.paths) || typeof b.comment !== 'string' || b.comment.length > PHONE_SAY_MAX_CHARS) return phoneLooseInvalid
+      try { await m.returnReviewFiles(b.id, { artifactId: b.artifactId, paths: b.paths as string[], comment: b.comment }); return { status: 200, body: { ok: true } } } catch (err) { return phoneError(err) }
+    }, async (m, _q, body) => {
+      const value = objectBody(body)
+      const id = typeof value?.id === 'string' ? value.id : ''
+      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
+      const paths = value?.paths, comment = value?.comment, inputRequestId = value?.inputRequestId
+      // 重开令牌照 POST /v1/workbench/continue 那道门验(同一个 SHA256):原会话不能恢复时,打回也要能带着它再来一次。
+      const restartToken = value?.restartToken
+      if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !UUID.test(inputRequestId))) return invalid()
+      if (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken))) return invalid()
+      // 同时记成这个项目的经验(10-20):可选布尔;记没记上只附在响应上,不改打回本身
+      const asLesson = value?.asLesson
+      if (asLesson !== undefined && typeof asLesson !== 'boolean') return invalid()
+      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
+          !Array.isArray(paths) || !paths.length || paths.length > 20 || paths.some(p => typeof p !== 'string' || !p) ||
+          typeof comment !== 'string' || !comment.trim() || comment.length > 2000) return invalid()
+      try {
+        const { lesson, ...result } = await m.returnReviewFiles(id, { artifactId, paths: paths as string[], comment, ...(inputRequestId !== undefined ? { inputRequestId: inputRequestId as string } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}), ...(asLesson === true ? { asLesson: true as const } : {}) })
+        // 保留会话还活着时打回走的是续接投递,回的是一张回执;已经结算的任务才回任务视图(评审 2026-09-21 #7)。
+        // 回执认 `taskId`(任务视图上只有 `id`),比认 `phase` 稳:少一个字段不会把回执当成任务发出去。
+        return { status: 202, body: { ...('taskId' in result ? { input: result } : { task: result }), ...(lesson ? { lesson } : {}) } }
+      } catch (err) { return mappedError(err) }
+    }),
+
+    // 行评论,按键集合精确分。手机:建整块 {id, commentId, artifactId, path, hunk, hunkSha256, body}(不带行号)/ 删 {id, commentId, delete:true},
+    // commentId 记成小写,回 {ok, commentId} / {ok, deleted}。桌面(原 /v1/workbench/review-comment):另认改 {id, commentId, body} 与行号,回服务原样。
+    'POST /v1/matter/review-comment': action(async (m, _q, body) => {
+      const b = objectBody(body) ?? {}
+      const keys = Object.keys(b).sort().join(',')
+      if (typeof b.id !== 'string' || !ID.test(b.id) || typeof b.commentId !== 'string' || !UUID.test(b.commentId)) return phoneLooseInvalid
+      const commentId = b.commentId.toLowerCase()
+      let input: Record<string, unknown>
+      if (keys === 'commentId,delete,id') { if (b.delete !== true) return phoneLooseInvalid; input = { commentId, delete: true } }
+      else if (keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path') {
+        if (typeof b.artifactId !== 'string' || !ARTIFACT_ID.test(b.artifactId) || typeof b.path !== 'string' || !b.path || b.path.length > 4096 ||
+            typeof b.hunk !== 'number' || !Number.isInteger(b.hunk) || b.hunk < 0 || b.hunk > 1_000_000 || typeof b.hunkSha256 !== 'string' || !SHA256.test(b.hunkSha256) ||
+            typeof b.body !== 'string' || !b.body.trim() || b.body.length > 2000) return phoneLooseInvalid
+        input = { commentId, artifactId: b.artifactId, path: b.path, hunk: b.hunk, hunkSha256: b.hunkSha256, body: b.body }
+      } else return phoneLooseInvalid
+      try {
+        m.reviewComment(b.id, input)
+        return { status: 200, body: { ok: true, ...('delete' in input ? { deleted: true } : { commentId }) } }
+      } catch (err) { return phoneError(err) }
+    }, async (m, query, body) => {
+      const value = objectBody(body)
+      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id) || typeof value.commentId !== 'string' || !UUID.test(value.commentId)) return invalid()
+      const keys = Object.keys(value).sort().join(',')
+      const text = (v: unknown) => typeof v === 'string' && !!v.trim() && v.length <= 2000
+      const row = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 1_000_000
+      let input: Record<string, unknown>
+      if (keys === 'commentId,delete,id') { if (value.delete !== true) return invalid(); input = { commentId: value.commentId, delete: true } }
+      else if (keys === 'body,commentId,id') { if (!text(value.body)) return invalid(); input = { commentId: value.commentId, body: value.body as string } }
+      else if (keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path' || keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path,rowEnd,rowStart') {
+        if (typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) || typeof value.path !== 'string' || !value.path || value.path.length > 4096 ||
+            !row(value.hunk) || typeof value.hunkSha256 !== 'string' || !SHA256.test(value.hunkSha256) || !text(value.body) ||
+            (keys.includes('rowStart') && (!row(value.rowStart) || !row(value.rowEnd)))) return invalid()
+        input = { commentId: value.commentId, artifactId: value.artifactId, path: value.path, hunk: value.hunk as number, hunkSha256: value.hunkSha256, body: value.body as string,
+          ...(keys.includes('rowStart') ? { rowStart: value.rowStart as number, rowEnd: value.rowEnd as number } : {}) }
+      } else return invalid()
+      try { return { status: 200, body: m.reviewComment(value.id, input) } } catch (err) { return mappedError(err) }
+    }),
+
+    // 发出这件事所有草稿评论(投递同打回)。手机:{id, summary?, inputRequestId?},只回 sent / remaining / skippedDiscarded(回执与任务视图不给手机;
+    // 原会话接不上 ⇒ 409 restart_confirmation_required,回电脑上确认)。桌面(原 /v1/workbench/review-comments-send):另认 restartToken,202 回服务原样。
+    'POST /v1/matter/review-comments-send': action(async (m, _q, body) => {
+      const b = objectBody(body) ?? {}
+      if (typeof b.id !== 'string' || !ID.test(b.id) || Object.keys(b).some(k => !['id', 'summary', 'inputRequestId'].includes(k)) ||
+          (b.summary !== undefined && (typeof b.summary !== 'string' || b.summary.length > 2000)) ||
+          (b.inputRequestId !== undefined && (typeof b.inputRequestId !== 'string' || !UUID.test(b.inputRequestId)))) return phoneLooseInvalid
+      try {
+        const r = await m.sendReviewComments(b.id, { ...(typeof b.summary === 'string' ? { summary: b.summary } : {}), ...(typeof b.inputRequestId === 'string' ? { inputRequestId: b.inputRequestId.toLowerCase() } : {}) }) as JsonObject | undefined
+        const n = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0
+        return { status: 200, body: { ok: true, sent: n(r?.sent), remaining: n(r?.remaining), skippedDiscarded: n(r?.skippedDiscarded) } }
+      } catch (err) { return phoneError(err) }
+    }, async (m, query, body) => {
+      const value = objectBody(body)
+      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id) || Object.keys(value).some(k => !['id', 'summary', 'inputRequestId', 'restartToken'].includes(k))) return invalid()
+      const { summary, inputRequestId, restartToken } = value
+      if (summary !== undefined && (typeof summary !== 'string' || summary.length > 2000)) return invalid()
+      if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !UUID.test(inputRequestId))) return invalid()
+      if (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken))) return invalid()
+      try {
+        const result = await m.sendReviewComments(value.id, { ...(summary !== undefined ? { summary: summary as string } : {}), ...(inputRequestId !== undefined ? { inputRequestId: inputRequestId as string } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}) })
+        return { status: 202, body: result }
+      } catch (err) { return mappedError(err) }
     }),
 
     // 交办一件新事(parseEntryInput 验正文)。手机:手机表面,出生地按传输(App / 浏览器),202 回 {ok, …结果};

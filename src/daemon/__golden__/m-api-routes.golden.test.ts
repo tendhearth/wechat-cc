@@ -40,6 +40,7 @@ import { makeOwnerChatFileReader } from '../wiring/owner-chat-reading'
 import { fileChunkResponse } from '../../features/phone/mobile-chat'
 import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
 import type { MattersService } from '../../app/matters/service'
+import { latestChanges, type ReviewTurnLike } from '../../domain/matters/phone-changes'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const GOLDEN = join(HERE, 'm-api-routes')
@@ -75,8 +76,13 @@ const msg = (r: Partial<MessageRecord> & Pick<MessageRecord, 'id' | 'direction' 
   ({ chatId: OWNER, ts: new Date(T0 - 60_000).toISOString(), kind: 'text', source: 'phone', ...r } as MessageRecord)
 
 /** P3e 起交办与回执经 `/v1/matter/create`、`create-receipt` 走(MattersService):剧本照旧写在这里,交给 v1Service。 */
-type GoldenDeps = SettingsPanelDeps & { entry: { createEntry(input: { requestId: string }): unknown; entryReceipt(requestId: string): unknown } }
-type PhoneActions = Pick<MattersService, 'stop' | 'permission' | 'answer' | 'artifactChunk' | 'handoff' | 'worktree' | 'worktreeScript'>
+type GoldenDeps = SettingsPanelDeps & {
+  entry: { createEntry(input: { requestId: string }): unknown; entryReceipt(requestId: string): unknown }
+  // P3e-2 起改动与逐文件审阅也经 /v1/matter/changes、review-* 走(MattersService):剧本照旧写在这里
+  changes: (id: string) => readonly ReviewTurnLike[]
+  review: { mark(id: string, input: unknown): unknown; ret(id: string, input: unknown): unknown; comment(id: string, input: unknown): unknown; sendComments(id: string, input: unknown): unknown }
+}
+type PhoneActions = Pick<MattersService, 'stop' | 'permission' | 'answer' | 'artifactChunk' | 'handoff' | 'worktree' | 'worktreeScript' | 'rewindPreview' | 'rewind'>
 
 /** 照剧本回话的 MattersService(并成别名的那几条经 /v1 读它;形状同 pipeline-deps.ts 交给内部 API 的那一份)。 */
 function v1Service(panel: GoldenDeps): MattersService {
@@ -100,6 +106,13 @@ function v1Service(panel: GoldenDeps): MattersService {
     worktreeScript: (id, action) => acts.worktreeScript(id, action),
     createEntry: input => panel.entry.createEntry(input as { requestId: string }),
     entryReceipt: requestId => panel.entry.entryReceipt(requestId),
+    rewindPreview: (id, artifactId) => acts.rewindPreview(id, artifactId),
+    rewind: (id, artifactId, token) => acts.rewind(id, artifactId, token),
+    changes: id => latestChanges(panel.changes(id)),
+    markReviewFile: (id, input) => panel.review.mark(id, input),
+    returnReviewFiles: async (id, input) => await panel.review.ret(id, input) as never,
+    reviewComment: (id, input) => panel.review.comment(id, input),
+    sendReviewComments: async (id, input) => await panel.review.sendComments(id, input),
     // pipeline-deps.ts 的 chat.search 那一行(messagesStore.search → 事件形状)
     searchOwnerChat: async () => { check('search'); return { hits: hits.map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })) as never } },
     // pipeline-deps.ts 的 chat.file 那一行
