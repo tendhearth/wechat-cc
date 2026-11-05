@@ -93,7 +93,7 @@ export interface WorkbenchRoutesDeps {
    * 之后的长轮询不算)= 在电脑上看过了(`seen`)。
    * 一件事的提议读这两样决定桌面那一级由谁弹、到点还推不推手机。缺省 ⇒ 不记。
    */
-  desktop?: { notePoll(): void; seen(taskId: string): void }
+  desktop?: { notePoll(progress?: ReadonlyArray<{ id: string; phase: string }> | null): void; seen(taskId: string): void }
 }
 
 export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
@@ -145,8 +145,11 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       try{deps.workbench.discardAttachment(value.id,value.draftId);return{status:200,body:{ok:true}}}catch(error){return mappedError(error)}
     },
     'GET /v1/workbench/attention':async(_query,_body,caller)=>{
-      if(!fromPhone(caller))try{deps.desktop?.notePoll()}catch{/* 只是记一笔 */}
-      try{return{status:200,body:deps.workbench.attention()}}catch(err){return mappedError(err)}
+      try{
+        const body=deps.workbench.attention()
+        if(!fromPhone(caller))try{deps.desktop?.notePoll((body as {progress?:Array<{id:string;phase:string}>}).progress)}catch{/* 只是记一笔 */}
+        return{status:200,body}
+      }catch(err){return mappedError(err)}
     },
     'POST /v1/workbench/input':async(_query,body)=>{
       const value=objectBody(body)

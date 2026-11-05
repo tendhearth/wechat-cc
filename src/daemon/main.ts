@@ -45,6 +45,7 @@ export interface BootDaemonOpts {
   /** 测试缝(S3b):本机空闲探针、先只在桌面提示之后推 App 的等待。 */
   machineIdle?: () => Promise<number | null>
   escalateAfterMs?: number
+  desktopNotify?: (title: string, body: string) => Promise<boolean>
 }
 export interface DaemonHandle {
   shutdown(): Promise<void>
@@ -67,7 +68,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   const { stateDir, dangerously } = opts
   const base = await openFoundation({ stateDir }, undo)
   const requestRestart = makeRequestRestart(stateDir, () => shutdown())
-  const f: Foundation = { ...base, dangerously, ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.machineIdle ? { machineIdle: opts.machineIdle } : {}), ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}), requestRestart }
+  const f: Foundation = { ...base, dangerously, ...(opts.schedulerIntervalMs !== undefined ? { schedulerIntervalMs: opts.schedulerIntervalMs } : {}), ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), ...(opts.machineIdle ? { machineIdle: opts.machineIdle } : {}), ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}), ...(opts.desktopNotify ? { desktopNotify: opts.desktopNotify } : {}), requestRestart }
   const modules = createModules(daemonModules(f), { log: (t, l) => log(t, l) })
   // 状态进 /v1/health.subsystems(和 bootstrap 的可选接线块一起)
   f.sup.adopt(modules)

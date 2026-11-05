@@ -75,7 +75,7 @@ export function wiredModule(f: Foundation): DaemonModule<WiredDeps> {
         cliActions: cli.phoneActions,
         matters: f.matters, guardRuntime: guardRt, subsystems: () => f.sup.statuses(), providerRefusals: () => f.providerRefusals.all(),
         // 一件事的提议(S3b):人在电脑前 = 本机空闲不足 2 分钟(和终端会话同一个判法)
-        proposals: { atDesk: () => makeOwnerPresence({ machineIdle: f.machineIdle ?? (() => machineIdleSeconds()) }).atDesk(), desktop: f.desktopSurface, ...(f.escalateAfterMs !== undefined ? { escalateAfterMs: f.escalateAfterMs } : {}) },
+        proposals: { atDesk: () => makeOwnerPresence({ machineIdle: f.machineIdle ?? (() => machineIdleSeconds()) }).atDesk(), desktop: f.desktopSurface, ...(f.escalateAfterMs !== undefined ? { escalateAfterMs: f.escalateAfterMs } : {}), ...(f.desktopNotify ? { notify: f.desktopNotify } : {}) },
         panelTokens: internalApi.panelTokens,
         panelDispatch: internalApi.panelDispatch,
         commands: owner.commands,

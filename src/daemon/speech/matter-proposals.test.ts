@@ -8,14 +8,14 @@ const T0 = Date.parse('2026-11-05T08:00:00.000Z')
 const done: PushPayload = { kind: 'task_done', title: '做完了', body: '修登录', taskId: 't1' }
 const perm: PushPayload = { kind: 'permission', title: '需要你批准', body: 'Bash: ls', taskId: 't1', requestId: 'p1' }
 
-function setup(o: { desk?: boolean | 'throws'; app?: boolean; gate?: SpeechOutcome; owner?: string | null } = {}) {
+function setup(o: { desk?: boolean | 'throws'; app?: boolean; announce?: boolean; gate?: SpeechOutcome; owner?: string | null } = {}) {
   const gate = { push: vi.fn(), later: vi.fn() }
   const ask = vi.fn((): SpeechOutcome => o.gate ?? { allow: true, channel: 'desktop' })
   const notify = vi.fn(async () => true)
   const p = makeMatterProposals({
     gate, speech: { ask }, ownerChatId: () => (o.owner === undefined ? OWNER : o.owner),
     atDesk: async () => { if (o.desk === 'throws') throw new Error('ioreg'); return o.desk ?? false },
-    desktop: { appConnected: () => o.app ?? false, notify },
+    desktop: { appConnected: () => o.app ?? false, willAnnounce: () => o.announce ?? true, notify },
     now: () => T0, log: () => {},
   })
   return { p, gate, ask, notify }
@@ -48,10 +48,16 @@ describe('一件事一次提议(S3b)', () => {
     expect(s.gate.push).not.toHaveBeenCalled()
     expect(s.gate.later).toHaveBeenCalledWith(done, { at: T0 + ESCALATE_AFTER_MS, since: T0, matterId: 't1', ref: 'turn:t1:2' })
   })
-  it('桌面 app 开着 ⇒ 它自己会弹,daemon 不另弹;App 那一条照样等', async () => {
+  it('桌面 app 开着、看见了这件在做 ⇒ 它自己会弹,daemon 不另弹;App 那一条照样等', async () => {
     const s = setup({ desk: true, app: true })
     await s.p.propose(done, 'turn:t1:2')
     expect(s.notify).not.toHaveBeenCalled()
+    expect(s.gate.later).toHaveBeenCalledOnce()
+  })
+  it('桌面 app 开着、但没看见这件在做(两拍之间就做完了)⇒ 它不会弹 ⇒ daemon 弹', async () => {
+    const s = setup({ desk: true, app: true, announce: false })
+    await s.p.propose(done, 'turn:t1:2')
+    expect(s.notify).toHaveBeenCalledOnce()
     expect(s.gate.later).toHaveBeenCalledOnce()
   })
   it('门说推后(免打扰)⇒ 交回推送那边照 S2 压着,不弹桌面', async () => {

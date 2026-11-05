@@ -6,8 +6,8 @@
  *  - blocking(等你批准 / 有问题问你):照旧各处都推 —— 原样交给 push-gate。
  *  - report(做完了 / 没做成):
  *      人不在电脑前 ⇒ 推 App(和以前一样);
- *      人在电脑前 ⇒ 先问门(带事件键,通道记 desktop);放行 ⇒ 桌面那一级:桌面 app 开着它自己会弹「有一件事回复了」,
- *        没开 ⇒ daemon 弹一条系统通知;App 那一条交给 push-gate 等 10 分钟,到点这件事在桌面 / 手机上看过 ⇒ 不推,没看过 ⇒ 推
+ *      人在电脑前 ⇒ 先问门(带事件键,通道记 desktop);放行 ⇒ 桌面那一级:桌面 app 开着、而且看见了这件在做 ⇒ 它自己会弹
+ *        「有一件事回复了」;否则(没开 / 两拍之间就做完了)⇒ daemon 弹一条系统通知;App 那一条交给 push-gate 等 10 分钟,到点这件事在桌面 / 手机上看过 ⇒ 不推,没看过 ⇒ 推
  *        (账还是那一行,通道追加成 desktop+app)。门说推后(免打扰)⇒ 交回 push-gate 照 S2 压着,时段结束推 App。
  * 判不出在不在(探针失败)⇒ 当作不在:宁可推手机,不漏。
  */
@@ -28,7 +28,8 @@ export function makeMatterProposals(d: {
   speech: Pick<SpeechPolicy, 'ask'>
   ownerChatId(): string | null
   atDesk(): Promise<boolean>
-  desktop: { appConnected(): boolean; notify(title: string, body: string): Promise<boolean> }
+  /** 桌面 app 开着、而且会为这件事自己弹(desktop-surface.ts willAnnounce)⇒ daemon 不另弹。 */
+  desktop: { appConnected(): boolean; willAnnounce(matterId: string): boolean; notify(title: string, body: string): Promise<boolean> }
   escalateAfterMs?: number
   now?: () => number
   log: (tag: string, line: string) => void
@@ -46,7 +47,7 @@ export function makeMatterProposals(d: {
       const o = d.speech.ask({ kind, chatId: chat, ...(ref ? { ref } : {}) }, { channel: 'desktop', deliverable: true })
       if (!('allow' in o)) { d.gate.push(p, ref); return }
       const t = now()
-      if (d.desktop.appConnected()) {
+      if (d.desktop.appConnected() && d.desktop.willAnnounce(p.taskId)) {
         d.log('PUSH', `${p.kind} ${p.taskId}: owner at the desk — the desktop app shows it; App push waits ${Math.round(after / 1000)}s`)
       } else {
         // 系统通知里不放任务标题(可能带私事 / 项目名),和桌面 app 自己那条同一套措辞(workbench-attention.js)

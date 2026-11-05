@@ -22,4 +22,20 @@ describe('desktop-surface(S3b)', () => {
     expect(s.seenSince('a', 0)).toBe(false)
     expect(s.seenSince(`x${MAX_SEEN - 1}`, 0)).toBe(true)
   })
+  it('willAnnounce:照桌面的判法 —— 上一拍 working、这一拍做完 ⇒ 弹了;最近一拍还在做 ⇒ 下一拍会弹;没见过 working ⇒ 不会', () => {
+    let t = 1_000
+    const s = makeDesktopSurface(() => t)
+    s.notePoll([{ id: 'a', phase: 'working' }, { id: 'b', phase: 'queued' }])
+    expect(s.willAnnounce('a')).toBe(true)
+    expect(s.willAnnounce('b')).toBe(false)
+    t += 3_000
+    s.notePoll([{ id: 'a', phase: 'replied' }, { id: 'b', phase: 'replied' }])
+    expect(s.willAnnounce('a')).toBe(true)
+    expect(s.willAnnounce('b')).toBe(false)
+    expect(s.willAnnounce('c')).toBe(false)
+    t += DESKTOP_FRESH_MS
+    expect(s.willAnnounce('a')).toBe(false)
+    s.notePoll(null)   // 老桌面没有 progress:只记来过
+    expect(s.appConnected()).toBe(true)
+  })
 })

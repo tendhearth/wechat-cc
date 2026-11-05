@@ -305,7 +305,8 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // 7. Boot daemon via exported bootDaemon — no SIGTERM needed for shutdown.
   // NOTE: import is dynamic so vi.mock has time to register before SDK loads.
   const { bootDaemon } = await import('../main')
-  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
+  // 一件事的提议(S3b)判「人在不在电脑前」、自己弹桌面通知:测试里不去探跑测试那台机器的真键鼠、也不真弹系统通知
+  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
 
   // Give polling loop a moment to spin up.
   await new Promise(r => setTimeout(r, 50))

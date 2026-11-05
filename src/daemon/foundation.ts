@@ -184,6 +184,8 @@ export type Foundation = Awaited<ReturnType<typeof openFoundation>> & {
   /** 测试缝(S3b):本机空闲秒数的探针(缺省 lib/machine-idle)与「先只在桌面提示」之后推 App 的等待(缺省 10 分钟)。 */
   machineIdle?: () => Promise<number | null>
   escalateAfterMs?: number
+  /** 测试缝(S3b):daemon 自己弹的桌面系统通知(缺省 lib/desktop-notify;测试里不真弹)。 */
+  desktopNotify?: (title: string, body: string) => Promise<boolean>
   /** daemon 自己要求的优雅重启(运维 POST /v1/daemon/restart、空闲加载新代码 ……)。 */
   requestRestart(reason: string): void
 }

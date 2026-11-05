@@ -96,7 +96,7 @@ const pushGate = makePushGate({ speech, ownerChatId, push: fanout, held: makeHel
 // 一件事一次提议(S3b):做完 / 没做成按人在哪选第一级 —— 在电脑前先只在桌面提示,10 分钟没看再推 App;批准 / 提问照旧各处推
 const proposals = proposalDeps ? makeMatterProposals({
   gate: pushGate, speech, ownerChatId, atDesk: proposalDeps.atDesk,
-  desktop: { appConnected: () => proposalDeps.desktop.appConnected(), notify: (title, body) => notifyDesktop(title, body) },
+  desktop: { appConnected: () => proposalDeps.desktop.appConnected(), willAnnounce: (id) => proposalDeps.desktop.willAnnounce(id), notify: (title, body) => (proposalDeps.notify ?? notifyDesktop)(title, body) },
   ...(proposalDeps.escalateAfterMs !== undefined ? { escalateAfterMs: proposalDeps.escalateAfterMs } : {}),
   log: (tag, line) => log(tag, line),
 }) : null
