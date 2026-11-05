@@ -17,12 +17,18 @@ const rec = (over: Partial<TurnRecord>): TurnRecord => ({
   chatId: OWNER, provider: 'claude', alias: '_default', mode: 'solo', startedAt: 1_000, endedAt: 4_000, durationMs: 3_000,
   outcome: 'completed', replyToolCalled: false, toolCalls: [], textChunks: 1, ...over,
 })
+/** v96 的库里 matters 还有 status 列(v102 才删),今天的 store 写不进去 ⇒ 照当时的形状直接插那件对话(id 固定)。 */
+function oldChat(db: Db, chatId: string, id = '0000c0de'): string {
+  db.query("INSERT INTO matters(id,kind,title,status,owner_chat_id,created_at,updated_at) VALUES(?,'chat','聊天','open',?,1,1)").run(id, chatId)
+  db.query("INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES(?,'wechat',?,1)").run(id, chatId)
+  return id
+}
 function seeded() {
   const db = openSqlite(':memory:') as unknown as Db
   db.exec('PRAGMA foreign_keys = ON;')
   for (const m of migrations.slice(0, 96)) m(db)
   db.exec('PRAGMA user_version = 96;')
-  makeMatterStore(db).ensureChat(OWNER)   // 主人那件对话已经在;访客那条没有 ⇒ 迁移补一件
+  oldChat(db, OWNER)   // 主人那件对话已经在;访客那条没有 ⇒ 迁移补一件
   const old = makeTurnRecordStore(db)
   old.append(rec({ startedAt: 1_000, endedAt: 4_000, toolCalls: ['wechat/reply', 'Bash'], replyToolCalled: true, textChunks: 3, delivery: 'text', bubbles: 2, attachments: 1, narrationSegments: 1 }))
   old.append(rec({ startedAt: 5_000, endedAt: 9_000, durationMs: 4_000, outcome: 'timeout', error: 'turn timed out', textChunks: 0, provider: 'codex', mode: 'parallel' }))
@@ -50,10 +56,10 @@ describe('chat-turn-records(M3b):从这件对话的轮读回合记录', () => {
     expect(makeChatTurnRecords(db).recent(50)).toHaveLength(3)
     const d2 = openSqlite(':memory:') as unknown as Db
     d2.exec('PRAGMA foreign_keys = ON;'); for (const m of migrations.slice(0, 96)) m(d2); d2.exec('PRAGMA user_version = 96;')
-    const ms = makeMatterStore(d2); ms.ensureChat(OWNER)
+    const chatId = oldChat(d2, OWNER)
     // M3a 那时写下的样子:policy 里只有 alias / mode,没有结局与其余几项
     const log2 = makeMatterLog(d2)
-    const live = log2.startTurn({ matterId: ms.findChat(OWNER)!.id, executor: 'claude', startedAt: 1_000, policy: { alias: '_default' } })
+    const live = log2.startTurn({ matterId: chatId, executor: 'claude', startedAt: 1_000, policy: { alias: '_default' } })
     log2.updateTurn(live.id, { policy: { alias: '_default', mode: 'solo' } })
     log2.finishTurn(live.id, { status: 'completed', endedAt: 4_000 })
     makeTurnRecordStore(d2).append(rec({}))
@@ -64,7 +70,7 @@ describe('chat-turn-records(M3b):从这件对话的轮读回合记录', () => {
   it('同一个对话同一家同一毫秒的两轮(runner 支持):迁移一对一配对,各补各的,哪一行都不丢(Codex 评审 P2)', () => {
     const db = openSqlite(':memory:') as unknown as Db
     db.exec('PRAGMA foreign_keys = ON;'); for (const m of migrations.slice(0, 96)) m(db); db.exec('PRAGMA user_version = 96;')
-    const ms = makeMatterStore(db); const mid = ms.ensureChat(OWNER).id
+    const mid = oldChat(db, OWNER)
     const log = makeMatterLog(db)
     // M3a 那时并行写下的两轮(只有 alias / mode)+ turn_records 里对应的两行,外加一行没并行写过的
     for (const end of [4_000, 6_000]) { const t = log.startTurn({ matterId: mid, executor: 'claude', startedAt: 1_000, policy: { alias: '_default', mode: 'solo' } }); log.finishTurn(t.id, { status: 'completed', endedAt: end }) }

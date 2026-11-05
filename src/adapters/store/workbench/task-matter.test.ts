@@ -14,8 +14,8 @@ describe('建任务 = 建这件事',()=>{
   it('同 id、kind=task、标题 / 目录 / 主人照抄,任务指着它',()=>{
     const store=makeWorkbenchStore(db)
     const task=store.create({title:'修登录',path:'/w/app',providerId:'codex',ownerChatId:'owner@im.wechat'})
-    expect(db.query('SELECT id,kind,initiator,title,project_path,owner_chat_id,status,state,origin_matter_id,origin_surface FROM matters WHERE id=?').get(task.id))
-      .toEqual({id:task.id,kind:'task',initiator:'owner',title:'修登录',project_path:'/w/app',owner_chat_id:'owner@im.wechat',status:'open',state:'open',origin_matter_id:null,origin_surface:null})
+    expect(db.query('SELECT id,kind,initiator,title,project_path,owner_chat_id,state,origin_matter_id,origin_surface FROM matters WHERE id=?').get(task.id))
+      .toEqual({id:task.id,kind:'task',initiator:'owner',title:'修登录',project_path:'/w/app',owner_chat_id:'owner@im.wechat',state:'open',origin_matter_id:null,origin_surface:null})
     expect(store.taskMatterId(task.id)).toBe(task.id)
   })
   it('出生地在建的这一次写进去:从哪次交流、哪条消息、哪个表面',()=>{

@@ -30,7 +30,7 @@ describe('「一件事」· 接过来的电脑会话',()=>{
     expect(continueImported).toHaveBeenCalledWith(ID,'接着改',{inputRequestId:REQ},'owner')
     expect(workbench.continueTask).not.toHaveBeenCalled()
     expect(r).toEqual({kind:'task',task:{...TASK,status:'queued'},input:{id:REQ,taskId:ID,runId:RUN,text:'接着改',status:'sending'}})
-    expect(store.get(ID)?.status).toBe('open')
+    expect(store.legacyStatuses([ID]).get(ID)).toBe('open')
   })
   it('第一句之后:第二句(新 requestId)走 continueTask;continueImported 只调一次',async()=>{
     const {workbench,continueImported,service}=imported()

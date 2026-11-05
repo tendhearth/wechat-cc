@@ -11,12 +11,14 @@ import type { MatterStore } from '../../ports/matters'
  */
 let db:Db,store:MatterStore,clock=1_000
 beforeEach(()=>{db=openDb({path:':memory:'});clock=1_000;store=makeMatterStore(db,()=>clock)})
+/** 线上的旧 status(v102 起不在 Matter 上,store.legacyStatuses 现算)。 */
+const legacy=(id:string)=>store.legacyStatuses([id]).get(id)
 afterEach(()=>db.close())
 
 describe('matters',()=>{
   it('creates a task matter with the task id and reads it back',()=>{
     const m=store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'})
-    expect(m).toEqual({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',status:'open',state:'open',archivedAt:null,ownerChatId:'owner',originMatterId:null,originMessageId:null,createdAt:1_000,updatedAt:1_000})
+    expect(m).toEqual({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',state:'open',archivedAt:null,ownerChatId:'owner',originMatterId:null,originMessageId:null,createdAt:1_000,updatedAt:1_000})
     expect(store.get('deadbeef')).toEqual(m)
     expect(store.get('nope')).toBeNull()
   })
@@ -62,26 +64,29 @@ describe('matters',()=>{
     ])
   })
 
-  it('lists newest-updated first with kind / status / since filters and a limit',()=>{
+  it('lists newest-updated first with kind / legacy status / since filters and a limit',()=>{
     store.create({id:'00000001',kind:'task',title:'old'});clock=2_000
     const chat=store.ensureChat('c');clock=3_000
     const t=store.create({id:'00000003',kind:'task',title:'new'});clock=4_000
-    store.setStatus('00000001','done')
+    store.setLifecycle('00000001','done')
     expect(store.list().map(m=>m.id)).toEqual(['00000001','00000003',chat.id])
     expect(store.list({kind:'task'}).map(m=>m.id)).toEqual(['00000001','00000003'])
-    expect(store.list({statuses:['open','replied']}).map(m=>m.id)).toEqual(['00000003',chat.id])
+    expect(store.list({legacy:['open','replied']}).map(m=>m.id)).toEqual(['00000003',chat.id])
     expect(store.list({since:2_500}).map(m=>m.id)).toEqual(['00000001','00000003'])
     expect(store.list({limit:1}).map(m=>m.id)).toEqual(['00000001'])
     store.bind(t.id,'desktop','app')
     expect(store.list({surface:'desktop'}).map(m=>m.id)).toEqual([t.id]);expect(store.list({surface:'wechat'}).map(m=>m.id)).toEqual([chat.id])
     expect(()=>store.list({surface:'fax' as never})).toThrow()
-    expect(store.get(t.id)?.status).toBe('open')
+    expect(legacy(t.id)).toBe('open')
+    expect(store.get(t.id)).not.toHaveProperty('status')
   })
 
-  it('rejects unknown kinds, statuses and surfaces at the boundary',()=>{
+  it('rejects unknown kinds, lifecycles and surfaces at the boundary',()=>{
     expect(()=>store.create({kind:'x' as never,title:'t'})).toThrow()
     const m=store.create({id:'cccccccc',kind:'task',title:'t'})
-    expect(()=>store.setStatus(m.id,'weird' as never)).toThrow()
+    expect(()=>store.setLifecycle(m.id,'weird' as never)).toThrow('invalid_matter_lifecycle')
+    expect(()=>store.setLifecycle(m.id,'replied' as never)).toThrow('invalid_matter_lifecycle')
+    expect(()=>store.list({legacy:['weird' as never]})).toThrow('invalid_matter_status')
     expect(()=>store.bind(m.id,'fax' as never,'k')).toThrow()
     expect(()=>store.bind('missing','wechat','k')).toThrow()
   })
@@ -123,12 +128,12 @@ describe('matter origin (v77, 2026-10-19)',()=>{
 
   it('rejects values outside the six surfaces (strict at the store and at the column)',()=>{
     expect(()=>store.create({kind:'task',title:'x',origin:'phone' as never})).toThrow('invalid_matter_origin')
-    expect(()=>db.query("INSERT INTO matters(id,kind,title,status,origin_surface,created_at,updated_at) VALUES('dddddddd','task','x','open','phone',1,1)").run()).toThrow()
+    expect(()=>db.query("INSERT INTO matters(id,kind,title,origin_surface,created_at,updated_at) VALUES('dddddddd','task','x','phone',1,1)").run()).toThrow()
   })
 
-  it('never changes afterwards — status / rename / touch / bind keep it, and the column itself refuses any update (even NULL → value)',()=>{
+  it('never changes afterwards — lifecycle / rename / touch / bind keep it, and the column itself refuses any update (even NULL → value)',()=>{
     store.create({id:'aaaaaaaa',kind:'task',title:'微信',origin:'wechat'})
-    store.setStatus('aaaaaaaa','done');store.rename('aaaaaaaa','改名');store.touch('aaaaaaaa');store.bind('aaaaaaaa','phone','pwa')
+    store.setLifecycle('aaaaaaaa','done');store.rename('aaaaaaaa','改名');store.touch('aaaaaaaa');store.bind('aaaaaaaa','phone','pwa')
     expect(store.get('aaaaaaaa')?.origin).toBe('wechat')
     expect(()=>db.query("UPDATE matters SET origin_surface='desktop' WHERE id='aaaaaaaa'").run()).toThrow('matter_origin_immutable')
     store.create({id:'bbbbbbbb',kind:'task',title:'老的'})
@@ -177,7 +182,7 @@ describe('matter origin (v77, 2026-10-19)',()=>{
 })
 
 describe('v92 的新列:发起方、统一状态、归档时间(读出口照旧不带)',()=>{
-  const row=(id:string)=>db.query('SELECT kind,initiator,state,archived_at,status FROM matters WHERE id=?').get(id)
+  const row=(id:string)=>db.query('SELECT kind,initiator,state,archived_at FROM matters WHERE id=?').get(id)
   it('四种 kind 与协议同一组;陌生的(包括从没建过的 companion)在边界拒掉',async()=>{
     const {MATTER_KINDS}=await import('@wechat-cc/protocol')
     MATTER_KINDS.forEach((kind,i)=>store.create({id:`0000000${i}`,kind,title:kind}))
@@ -191,48 +196,51 @@ describe('v92 的新列:发起方、统一状态、归档时间(读出口照旧�
     expect(()=>store.create({kind:'act',initiator:'stranger' as never,title:'x'})).toThrow('invalid_matter_initiator')
     expect(store.get('0000000b')).not.toHaveProperty('initiator')
   })
-  it('旧 setStatus 顺手跟上归档时间与做完 / 重开;没做成不被「做完」盖掉',()=>{
+  it('setLifecycle(以前的 setStatus)跟上归档时间与做完 / 重开;没做成不被「做完」盖掉;表里没有 status 列(v102)',()=>{
     store.create({id:'0000000a',kind:'task',title:'t'})
-    clock=2_000;store.setStatus('0000000a','archived')
-    expect(row('0000000a')).toEqual({kind:'task',initiator:'owner',state:'open',archived_at:2_000,status:'archived'})
-    clock=3_000;store.setStatus('0000000a','archived')
+    clock=2_000;store.setLifecycle('0000000a','archived')
+    expect(row('0000000a')).toEqual({kind:'task',initiator:'owner',state:'open',archived_at:2_000})
+    clock=3_000;store.setLifecycle('0000000a','archived')
     expect(row('0000000a')).toMatchObject({archived_at:2_000})
-    store.setStatus('0000000a','done')
+    store.setLifecycle('0000000a','done')
     expect(row('0000000a')).toMatchObject({state:'done',archived_at:null})
-    store.setStatus('0000000a','replied')
+    store.setLifecycle('0000000a','open')
     expect(row('0000000a')).toMatchObject({state:'open'})
     db.query("UPDATE matters SET state='failed' WHERE id='0000000a'").run()
-    store.setStatus('0000000a','done')
-    expect(row('0000000a')).toMatchObject({state:'failed',status:'done'})
+    store.setLifecycle('0000000a','done')
+    expect(row('0000000a')).toMatchObject({state:'failed'})
     db.query("UPDATE matters SET state='working' WHERE id='0000000a'").run()
-    store.setStatus('0000000a','replied')
+    store.setLifecycle('0000000a','open')
     expect(row('0000000a')).toMatchObject({state:'working'})
+    expect((db.query('PRAGMA table_info(matters)').all() as {name:string}[]).map(c=>c.name)).not.toContain('status')
   })
 })
 
 describe('旧 status 现算(M6b):get 与列表筛选同一个式子',()=>{
-  it('每一格:get 给的 status = legacyStatus;statuses 筛选(SQL 版本)挑出的正好是这些',async()=>{
+  it('每一格:legacyStatuses 给的 = legacyStatus;legacy 筛选(SQL 版本)挑出的正好是这些',async()=>{
     const {legacyStatus}=await import('../../domain/matters/legacy-status')
     const STATES=['open','working','waiting','done','failed','cancelled'] as const
     const TURNS=[null,'running','completed','failed','cancelled','interrupted'] as const
     const TASKS=[null,'queued','running','cancelling','completed','failed','cancelled','interrupted'] as const
     const want=new Map<string,{kind:string;status:string}>();let n=0,cursor=0
-    for(const kind of ['chat','task','terminal','act'] as const)for(const state of STATES)for(const archived of [false,true])for(const turn of TURNS)for(const task of kind==='task'?TASKS:[null])for(const storedReplied of [false,true]){
+    for(const kind of ['chat','task','terminal','act'] as const)for(const state of STATES)for(const archived of [false,true])for(const turn of TURNS)for(const task of kind==='task'?TASKS:[null])for(const ready of turn?[false,true]:[false]){
       const id=(++n).toString(16).padStart(8,'0')
-      db.query("INSERT INTO matters(id,kind,title,state,archived_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?)").run(id,kind,'t',state,archived?9:null,storedReplied?'replied':'open',n)
+      db.query("INSERT INTO matters(id,kind,title,state,archived_at,created_at,updated_at) VALUES(?,?,?,?,?,1,?)").run(id,kind,'t',state,archived?9:null,n)
       if(turn){
-        // 更早的一轮放相反的状态:只认 seq 最大的那一轮
+        // 更早的一轮放相反的状态、相反的 ready:只认 seq 最大的那一轮
         db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES(?,?,1,'x',?,1,?)").run(id+'a',id,turn==='completed'?'failed':'completed',++cursor)
         db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES(?,?,2,'x',?,1,?)").run(id+'b',id,turn,++cursor)
+        db.query("INSERT INTO matter_items(matter_id,turn_id,seq,kind,status,item_key,payload_json,created_at,updated_at,cursor) VALUES(?,?,1,'system','completed',?,'{\"ready\":true}',1,1,?)").run(id,ready?id+'b':id+'a','ready:'+(ready?id+'b':id+'a'),++cursor)
       }
       if(task)db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,'t','/w','claude',?,1,1)").run(id,task)
-      want.set(id,{kind,status:legacyStatus({kind,state,archivedAt:archived?9:null,latestTurn:turn,taskStatus:task,storedReplied})})
+      want.set(id,{kind,status:legacyStatus({kind,state,archivedAt:archived?9:null,latestTurn:turn,taskStatus:task,latestReady:ready})})
     }
-    for(const [id,w] of want)expect([id,store.get(id)?.status]).toEqual([id,w.status])
+    const all=store.legacyStatuses([...want.keys()])
+    for(const [id,w] of want)expect([id,all.get(id)]).toEqual([id,w.status])
     for(const kind of ['chat','task','terminal','act'] as const)for(const status of ['open','replied','done','archived'] as const){
       // 一页最多 500:翻过的那页把 updated_at 取负(since:0 就不再给它),直到翻完;只动排序用的时间,不碰算 status 的输入
       const got:string[]=[];let page:string[]
-      do{page=store.list({kind,statuses:[status],limit:500,since:0}).filter(m=>!got.includes(m.id)).map(m=>m.id);got.push(...page);if(page.length)db.query(`UPDATE matters SET updated_at=-updated_at WHERE id IN (${page.map(()=>'?').join(',')})`).run(...page)}while(page.length)
+      do{page=store.list({kind,legacy:[status],limit:500,since:0}).filter(m=>!got.includes(m.id)).map(m=>m.id);got.push(...page);if(page.length)db.query(`UPDATE matters SET updated_at=-updated_at WHERE id IN (${page.map(()=>'?').join(',')})`).run(...page)}while(page.length)
       got.sort()
       const exp=[...want].filter(([,w])=>w.status===status&&w.kind===kind).map(([id])=>id).sort()
       expect([kind,status,got]).toEqual([kind,status,exp])
@@ -240,27 +248,32 @@ describe('旧 status 现算(M6b):get 与列表筛选同一个式子',()=>{
     // 四种都出现过(这张格子没漏掉哪一种)
     expect(new Set([...want.values()].map(w=>w.status))).toEqual(new Set(['open','replied','done','archived']))
   })
-  it('Codex P2:常驻会话交了结果、后台还在干 ⇒ 轮已收、state 回 open,但没安静下来(列没写 replied)⇒ 列表与 get 都是 open;安静下来写了 replied ⇒ replied',()=>{
+  it('Codex P2:常驻会话交了结果、后台还在干 ⇒ 轮已收、state 回 open,但没安静下来(没写 ready 步)⇒ 列表与现算都是 open;安静下来写了 ready 步 ⇒ replied',()=>{
     const log=makeMatterLog(db,()=>clock)
     const m=store.create({id:'0000beef',kind:'task',title:'t'})
     db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,'t','/w','claude','running',1,1)").run(m.id)
     const turn=log.startTurn({matterId:m.id,executor:'claude'})
     log.finishTurn(turn.id,{status:'completed'})           // execute.ts noteTurn:result 到了,轮收了
     expect(log.state(m.id)?.state).toBe('open')
-    expect(store.get(m.id)?.status).toBe('open')
-    expect(store.list({statuses:['replied']})).toEqual([])
-    expect(store.list({statuses:['open']}).map(x=>x.id)).toEqual([m.id])
-    store.setStatus(m.id,'replied')                          // settleQuiet:运行时闲了、没后台、没待拍板
-    expect(store.get(m.id)?.status).toBe('replied')
-    expect(store.list({statuses:['replied']}).map(x=>x.id)).toEqual([m.id])
+    expect(legacy(m.id)).toBe('open')
+    expect(store.list({legacy:['replied']})).toEqual([])
+    expect(store.list({legacy:['open']}).map(x=>x.id)).toEqual([m.id])
+    // settleQuiet:运行时闲了、没后台、没待拍板 ⇒ 最近一轮上写 ready 步(同 workbench store.markReady)
+    log.writeItem({matterId:m.id,turnId:turn.id,kind:'system',status:'completed',key:'ready:'+turn.id,payload:{ready:true}})
+    expect(legacy(m.id)).toBe('replied')
+    expect(store.list({legacy:['replied']}).map(x=>x.id)).toEqual([m.id])
+    // 新一轮开始 ⇒ 最近一轮换了,ready 自然不算(不用撤)
+    log.startTurn({matterId:m.id,executor:'claude'})
+    expect(legacy(m.id)).toBe('open')
   })
-  it('筛选不再看列:列写着 replied、算出来 open 的不进 replied;state / archivedAt 上线',()=>{
+  it('筛选看现算:没有轮的任务 ⇒ 不进 replied;state / archivedAt 上线;归档 ⇒ archived',()=>{
     const m=store.create({id:'0000abcd',kind:'task',title:'t'})
-    db.query("UPDATE matters SET status='replied' WHERE id=?").run(m.id)
-    expect(store.list({statuses:['replied']})).toEqual([])
-    expect(store.get(m.id)).toMatchObject({status:'open',state:'open',archivedAt:null})
-    clock=7_000;store.setStatus(m.id,'archived')
-    expect(store.list({statuses:['archived']}).map(x=>[x.id,x.status,x.archivedAt])).toEqual([[m.id,'archived',7_000]])
-    expect(store.list({statuses:['open','replied','done']})).toEqual([])
+    expect(store.list({legacy:['replied']})).toEqual([])
+    expect(store.get(m.id)).toMatchObject({state:'open',archivedAt:null})
+    expect(legacy(m.id)).toBe('open')
+    clock=7_000;store.setLifecycle(m.id,'archived')
+    expect(store.list({legacy:['archived']}).map(x=>[x.id,legacy(x.id),x.archivedAt])).toEqual([[m.id,'archived',7_000]])
+    expect(store.list({legacy:['open','replied','done']})).toEqual([])
+    expect(store.legacyStatuses(['nope','0000abcd',m.id])).toEqual(new Map([[m.id,'archived']]))
   })
 })

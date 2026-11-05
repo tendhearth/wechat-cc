@@ -86,7 +86,7 @@ describe('matters service · CC 自己做的事',()=>{
 
   it('列表行带 act 照样过协议的 Matter 形状',()=>{
     const t=acts().begin('stickers',{startedAt:5,policy:{mood:'happy'}});t.step('artifact',{mood:'happy',file:'a.png',variation:false});t.finish('completed',{endedAt:6})
-    const rows=makeMattersService({store,log}).withActs(store.list({kind:'act'}))
+    const service=makeMattersService({store,log}),rows=service.withActs(service.list({kind:'act'}))
     expect(PHONE_API_SCHEMAS['GET /m/api/matters']!.safeParse({ok:true,matters:rows}).success).toBe(true)
   })
 })

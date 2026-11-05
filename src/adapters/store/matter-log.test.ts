@@ -180,7 +180,7 @@ describe('统一状态从轮与「等你」的步推出来',()=>{
     expect(()=>log.setState('0000000a','working' as never)).toThrow('invalid_matter_state')
   })
   it('归档和状态正交:归档的事照样能开轮,归档时间不动',()=>{
-    clock=7_000;store.setStatus('0000000a','archived')
+    clock=7_000;store.setLifecycle('0000000a','archived')
     log.startTurn({matterId:'0000000a',executor:'claude'})
     expect(log.state('0000000a')).toEqual({state:'working',archivedAt:7_000})
     expect(log.state('ffffffff')).toBeNull()

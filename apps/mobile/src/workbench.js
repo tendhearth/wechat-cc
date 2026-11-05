@@ -50,10 +50,24 @@ function mApi(path,opts,sender) {
 function mSetButtons() {
   document.querySelectorAll('#m-status [data-stop]').forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||mOffline||!!mBusy[mCurrent+':stop']})
 }
-/** 一件事的状态折成状态表的键:有 taskState(任务真正的状态)就跟 App 的 statusOf 一样折;老 daemon 不带 ⇒ 退回 matter.status。 */
+/**
+ * 旧状态(open / replied / done / archived)从 state / archivedAt 推(M6e,同 daemon 的 domain/matters/legacy-status.ts):
+ * 归档 ⇒ archived;不是任务 ⇒ open;任务看任务自己的状态(task = 详情的 task 或列表的 taskState):做完 / 没做成 / 停了 ⇒ done,
+ * 在跑且这一轮做完了(phase replied)⇒ replied,其余 open;读不到任务 ⇒ 看统一状态。老 daemon 不带 state ⇒ 退回 matter.status。
+ */
+var M_FINISHED = { completed: 1, failed: 1, cancelled: 1 }, M_STATE_FINISHED = { done: 1, failed: 1, cancelled: 1 }
+function mLegacyStatus(m, task) {
+  if (m.state === undefined) return m.status
+  if (m.archivedAt != null) return "archived"
+  if (m.kind !== "task") return "open"
+  if (!task) return M_STATE_FINISHED[m.state] ? "done" : "open"
+  if (M_FINISHED[task.status]) return "done"
+  return task.status === "running" && task.phase === "replied" ? "replied" : "open"
+}
+/** 一件事的状态折成状态表的键:有 taskState(任务真正的状态)就跟 App 的 statusOf 一样折;没有 ⇒ 按 state / archivedAt 推的旧状态。 */
 function mStatusKey(m) {
   var s = m.taskState
-  if (!s) return m.status === "open" ? "working" : m.status === "replied" ? "replied" : "done"
+  if (!s) { var st = mLegacyStatus(m, null); return st === "open" ? "working" : st === "replied" ? "replied" : "done" }
   if (s.pending > 0) return "waiting"
   if (s.phase === "failed" || s.status === "failed") return "failed"
   if (s.status === "cancelled" || s.phase === "cancelled" || s.status === "interrupted" || s.phase === "interrupted") return "stopped"
@@ -117,12 +131,12 @@ function mQuotaText(view, names) {
 function mStateWord(d) {
   var id=d.matter.id,task=d.task
   var waiting=(d.permissions||[]).concat(d.questions||[]).filter(function(r){return r.taskId===id}).length
-  var quota=mQuotaView(d.quotaHandoff)
-  if(d.matter.status==='archived')return {word:'已归档',waiting:waiting}
-  if(d.matter.status==='done')return {word:'完成',waiting:waiting}
+  var quota=mQuotaView(d.quotaHandoff),status=mLegacyStatus(d.matter,task)
+  if(status==='archived')return {word:'已归档',waiting:waiting}
+  if(status==='done')return {word:'完成',waiting:waiting}
   if(waiting||quota&&quota.state!=='handed')return {word:'等你决定',waiting:waiting}
   if(task&&task.phase&&M_PHASE[task.phase])return {word:M_PHASE[task.phase],waiting:0}
-  return {word:M_STATUS[d.matter.status]||d.matter.status,waiting:0}
+  return {word:M_STATUS[status]||status,waiting:0}
 }
 function mRenderStatus(d) {
   var root=document.getElementById('m-status'),state=mStateWord(d),quota=mQuotaView(d.quotaHandoff),html='<p class="m-state">'+esc(state.word)+'</p>'

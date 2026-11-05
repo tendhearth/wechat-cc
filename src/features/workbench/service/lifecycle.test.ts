@@ -31,8 +31,8 @@ function setup(deps: Partial<ServiceDeps> = {}, over: Partial<Pick<ViewDomain, '
     stageFinishedNotice: vi.fn(), publishFinishedNotices: vi.fn(), untilAfterTurn: vi.fn(), untilStop: vi.fn(), matterSync: vi.fn(), isReplied: vi.fn(() => true), runtimeSnapshot: vi.fn(() => idle() as AgentRuntimeSnapshot | undefined),
     enqueueNotice: vi.fn(),
   }
-  // matter 同步只认 ctx.deps.matters(matter-sync.ts):给一个假的,setStatus 就是 matterSync 的那次调用
-  const matters = { setStatus: spies.matterSync }
+  // matter 同步只认 ctx.deps.matters(matter-sync.ts):给一个假的,setLifecycle(以前的 setStatus)就是 matterSync 的那次调用
+  const matters = { setLifecycle: spies.matterSync }
   const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), matters: matters as never, ...deps }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, log, now: Date.now }
   const domain = makeLifecycleDomain(ctx, {
     view: { isReplied: spies.isReplied, runtimeSnapshot: spies.runtimeSnapshot, taskView: over.taskView ?? (t => ({ ...t, phase: 'replied', canArchive: true, waitingFor: null }) as never), held: () => [...state.reservations.values()] },
@@ -100,16 +100,16 @@ describe('makeLifecycleDomain · 回报、回忆、落定', () => {
     spies.isReplied.mockReturnValueOnce(false); domain.settleQuiet(r); expect(spies.collectTurnArtifacts).toHaveBeenCalledTimes(1); expect(spies.matterSync).not.toHaveBeenCalled()
     domain.settleQuiet(r); expect(spies.matterSync).toHaveBeenCalledTimes(1); expect(spies.captureCodeChanges).toHaveBeenCalledTimes(1); expect(r.idleClose).toBeDefined(); expect(r.reportedTurn).toBe(0)
   })
-  it('settleQuiet 写 replied 的那一刻也在最近一轮上落一步 ready(M6e 双写):没安静不写;重复安静只一行;时间线、版本号不变', () => {
+  it('settleQuiet 安静下来的那一刻在最近一轮上落一步 ready(M6e;线上 replied 读它):没安静不写;重复安静只一行;时间线、版本号不变', () => {
     const { domain, running, state, spies, store, task } = setup()
     const r = running(); state.reservations.set(r.identity, r); state.runsByTask.set(r.taskId, r)
     store.execution.endTurn(store.execution.accept(task.id, 'run-1', { defaults: 'provider', model: null, reasoningEffort: null })!)
     const before = { events: store.events(task.id), version: store.version(task.id) }
     const ready = () => store.feed.cursor(task.id)
     spies.isReplied.mockReturnValueOnce(false); const c0 = ready(); domain.settleQuiet(r)
-    expect(spies.matterSync).not.toHaveBeenCalled(); expect(ready()).toBe(c0) // 没安静:列没写、步也没写
+    expect(spies.matterSync).not.toHaveBeenCalled(); expect(ready()).toBe(c0) // 没安静:matter 没动、步也没写
     domain.settleQuiet(r); const c1 = ready(); domain.settleQuiet(r)
-    expect(spies.matterSync).toHaveBeenCalledWith(task.id, 'replied')
+    expect(spies.matterSync).toHaveBeenCalledWith(task.id, 'open') // 取消归档、结局清回 open;replied 只看 ready 步(v102 删列)
     expect(c1).toBeGreaterThan(c0); expect(ready()).toBe(c1) // 第二次安静:已经有了,不再写
     expect(store.markReady(task.id)).toBe(false)
     expect(store.events(task.id)).toEqual(before.events)
@@ -220,10 +220,10 @@ describe('makeLifecycleDomain · 起不来与归档撤销(变异测试第二轮)
     expect(s.state.reservations.get(r.identity)).toBe(r)
   })
   it.each([
-    // [任务状态, 视图 phase, 撤销归档后 matter 的状态]
+    // [任务状态, 视图 phase, 撤销归档后 matter 的归档 / 结局(setLifecycle;以前写 replied 列的那一格现在是 open,replied 看 ready 步)]
     ['interrupted', 'working', 'open'],
     ['completed', 'working', 'done'],
-    ['running', 'replied', 'replied'],
+    ['running', 'replied', 'open'],
     ['running', 'working', 'open'],
   ] as const)('取消归档:%s / %s ⇒ matter %s', (status, phase, want) => {
     const s = setup(undefined, { taskView: t => ({ ...t, phase, canArchive: true, waitingFor: null }) as never })

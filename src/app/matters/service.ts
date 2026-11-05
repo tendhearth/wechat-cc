@@ -4,7 +4,7 @@ import type { PendingWorkbenchPermission, PermissionDecision, PendingUserInput, 
 import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
 import { sayTextHash } from '../../lib/content-hash'
 import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts'
-import {legacyStatusOfTaskView} from '../../domain/matters/legacy-status'
+import {lifecycleOfTaskView,wireMatter,type WireMatter} from '../../domain/matters/legacy-status'
 import {phoneMayOpenMatter} from '../../domain/matters/phone-scope'
 import {isReadyStep} from '../../domain/matters/ready-step'
 import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
@@ -40,7 +40,7 @@ export type MatterQuotaHandoff =
   | {state:'offer';from:string;to:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'none';from:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'handed';from:string;to:string;matterId:string}
-export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterDetailEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
+export interface MatterDetail extends MatterTaskControls {/** 线上形状:带旧 status(wire-compat.ts 第一行)。 */matter:WireMatter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterDetailEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
 export interface MatterSayInput {requestId:string;runId?:string;draftId?:string;attachmentIds?:string[]}
 type MatterMaterials=Pick<MatterSayInput,'draftId'|'attachmentIds'>
 export interface MatterArtifactInput {artifactId:string;sha256:string;offset:number;length?:number}
@@ -92,9 +92,10 @@ export interface MattersServiceDeps {
   now?:()=>number
 }
 export interface MattersService {
-  list(filter?:ListMatters):Matter[]
+  /** 线上形状:每行带旧 status(wire-compat.ts 第一行,store.legacyStatuses 现算)。 */
+  list(filter?:ListMatters):WireMatter[]
   /** act 行带上发起方与最近那一轮(M5c,「CC 最近在忙」);别的行原样。没接 log / 读不到 ⇒ 原样。 */
-  withActs(matters:Matter[]):Matter[]
+  withActs<M extends Matter>(matters:M[]):M[]
   /** 手机令牌(设备 / 链接)能不能看这件:别人的聊天不给(domain/matters/phone-scope.ts;主人取 ownerChatId)。 */
   phoneMayOpen(matter:unknown):boolean
   /** 这件在手机上露过面(绑定 phone / pwa;手机令牌读列表、详情时记)。 */
@@ -180,7 +181,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     }
     return {...(who?{who}:{}),turns:picked.map(t=>actTurnView(t,steps.get(t.id)??[]))}
   }
-  const actOf=(m:Matter,n=1):{matter:Matter;turns:MatterActTurn[]}|null=>{
+  const actOf=<M extends Matter>(m:M,n=1):{matter:M;turns:MatterActTurn[]}|null=>{
     if(m.kind!=='act')return null
     try{const r=actTurns(m.id,n);if(!r)return null;const latest=r.turns[0];return {matter:{...m,act:{...(r.who?{who:r.who}:{}),...(latest?{latest}:{})}},turns:r.turns}}
     catch{return null/* 读不到轮:这一行照旧,只是不带 act */}
@@ -202,7 +203,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     // Receipt replay can refer to a finished or archived task. Derive its
     // actual current state, including a newly queued continuation, rather than
     // interpreting every successful request as a new running turn.
-    deps.store.setStatus(id,legacyStatusOfTaskView(task))
+    deps.store.setLifecycle(id,lifecycleOfTaskView(task))
     return task
   }
   /** 手机只撤最新那一轮(没撤掉的里最新的);换了一轮 / 已撤掉 ⇒ rewind_not_latest(页面重拉再看一眼)。 */
@@ -223,8 +224,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
   return {
     list(filter){
       // 列表每行行尾画参与过的执行者(一次查完整页)
-      const matters=deps.store.list(filter),agents=deps.store.agents(matters.map(m=>m.id))
-      return matters.map(m=>{const a=agents.get(m.id);return a?.length?{...m,agents:a,...namesFor(a)}:m})
+      const matters=deps.store.list(filter),ids=matters.map(m=>m.id),agents=deps.store.agents(ids),legacy=deps.store.legacyStatuses(ids)
+      return matters.map(m=>{const w=wireMatter(m,legacy.get(m.id)??'open'),a=agents.get(m.id);return a?.length?{...w,agents:a,...namesFor(a)}:w})
     },
     withActs(matters){return matters.map(m=>actOf(m)?.matter??m)},
     phoneMayOpen(matter){return phoneMayOpenMatter(matter,(deps.ownerChatId??deps.chat?.ownerChatId)?.()??null)},
@@ -267,7 +268,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       const agents=deps.store.agents([matter.id]).get(matter.id)
       const named=namesFor([...(agents??[]),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
       const act=actOf(matter,deps.actTurnLimit??20)
-      return {matter:{...(act?.matter??matter),...(agents?.length?{agents}:{}),...named},...(act?{actTurns:act.turns}:{}),bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
+      const status=deps.store.legacyStatuses([matter.id]).get(matter.id)??'open'
+      return {matter:wireMatter({...(act?.matter??matter),...(agents?.length?{agents}:{}),...named},status),...(act?{actTurns:act.turns}:{}),bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
     async ownerChatFile(input){return deps.chat?.file ? deps.chat.file(input) : {status:503,body:{error:'chat_not_wired'}}},
     async ownerChat(surface){

@@ -704,7 +704,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, d = await deviceOf(panel, base), t = panel.issueToken()
     const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${t}`)).json() as { ok: boolean; matters: unknown[] }
     expect(list).toEqual({ ok: true, matters: [MATTER] })
-    expect(matters.list).toHaveBeenCalledWith({ statuses: ['open', 'replied'], limit: 200 })
+    expect(matters.list).toHaveBeenCalledWith({ legacy: ['open', 'replied'], limit: 200 })
     expect(matters.seenOnPhone).toHaveBeenCalledWith('deadbeef')
     const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
     expect(detail.ok).toBe(true); expect(detail.matter.id).toBe('deadbeef'); expect(detail.events).toHaveLength(1)
@@ -740,7 +740,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
     const get = async (q: string) => ((await (await fetch(`${base}/m/api/matters?${q}t=${t}`)).json()) as { matters: Array<{ id: string; act?: unknown }> }).matters
     expect(await get('kind=act&')).toEqual([{ ...act, act: { who: 'letters', latest } }])
-    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'act', statuses: ['open', 'replied', 'done'], limit: 200 })
+    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'act', legacy: ['open', 'replied', 'done'], limit: 200 })
     expect(withActs).toHaveBeenCalledTimes(1)
     await get('kind=task&'); await get('')
     expect(withActs).toHaveBeenCalledTimes(1)
@@ -774,11 +774,11 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     panel = make(true)
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
     await fetch(`${base}/m/api/matters?t=${t}`)
-    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['open', 'replied', 'done'], limit: 200 })
+    expect(matters.list).toHaveBeenLastCalledWith({ legacy: ['open', 'replied', 'done'], limit: 200 })
     await fetch(`${base}/m/api/matters?kind=task&t=${t}`)
-    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'task', statuses: ['open', 'replied', 'done'], limit: 200 })
+    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'task', legacy: ['open', 'replied', 'done'], limit: 200 })
     await fetch(`${base}/m/api/matters?status=archived&t=${t}`)
-    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['archived'], limit: 200 })
+    expect(matters.list).toHaveBeenLastCalledWith({ legacy: ['archived'], limit: 200 })
   })
   it('聊天 matter 只留主人的;筛完再截 50(别人的聊天不到手机、也不挤掉任务)', async () => {
     const chat = (id: string, owner: string) => ({ ...MATTER, id, kind: 'chat', ownerChatId: owner })

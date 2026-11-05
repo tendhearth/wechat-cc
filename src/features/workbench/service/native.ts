@@ -152,7 +152,7 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
       task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials,undefined,p.targetExecution)
     }
     catch(error){
-      if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setStatus(record.targetTaskId,'done'))}
+      if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setLifecycle(record.targetTaskId,'done'))}
       store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
       throw error
     }

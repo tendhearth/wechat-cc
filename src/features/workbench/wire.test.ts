@@ -304,7 +304,7 @@ it('从微信交办的事,答复静下来那一拍真的把回报写进 matter_r
     })
     await expect.poll(() => matters.sessions(receipt.taskId)).not.toHaveLength(0)
     runtime.finishTurn()
-    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('replied')
+    await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
     const chat = matters.ensureChat('chat-1')
     await expect.poll(async () => (await reportOutbox.listDue(Date.now() + 1)).length).toBeGreaterThan(0)
     const due = await reportOutbox.listDue(Date.now() + 1)
@@ -362,7 +362,7 @@ it('notificationsEnabled 默认值:没有订阅记录时按"没静音过"处理,
     expect(db.query('SELECT * FROM workbench_wechat_subscriptions WHERE task_id=?').get(receipt.taskId)).toBeNull()
     await expect.poll(() => matters.sessions(receipt.taskId)).not.toHaveLength(0)
     runtime.finishTurn()
-    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('replied')
+    await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
     await expect.poll(async () => (await reportOutbox.listDue(Date.now() + 1)).length).toBeGreaterThan(0)
     const due = await reportOutbox.listDue(Date.now() + 1)
     expect(due).toEqual([expect.objectContaining({ matterId: receipt.taskId })])
@@ -436,7 +436,7 @@ it('从微信交办的事(真 agy 形状:非 retained、无 workbenchRuntime),�
     })
     // 非 retained:永不经过 settleQuiet,直接终态 done(跟 service-report.test.ts
     // 的「非 retained 执行者」用例、service-recollect.test.ts 的同类用例一致)。
-    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
+    await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
     await expect.poll(() => asked.length).toBe(1)
     expect(asked[0]).toContain('改首页')
     const journal = makeJournal(db)
@@ -511,7 +511,7 @@ it('回忆的便宜模型来源是 opts.boot.registry(带 cheapEvalProvider 钉�
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
     })
-    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
+    await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
     const journal = makeJournal(db)
     await expect.poll(() => journal.list().length).toBe(1)
     expect(journal.list()[0]!.note).toBe('钉死答的:改首页') // 不是 agy 自己那句
@@ -564,7 +564,7 @@ it('便宜模型的回复其实是认证失效(401/登出):当成真的调用失
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
     })
-    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
+    await expect.poll(() => matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
     await expect.poll(() => logs.some(([tag]) => tag === 'MATTER_RECOLLECT')).toBe(true)
     expect(logs.some(([tag, line]) => tag === 'MATTER_RECOLLECT' && line.includes('auth_failed'))).toBe(true)
     const journal = makeJournal(db)

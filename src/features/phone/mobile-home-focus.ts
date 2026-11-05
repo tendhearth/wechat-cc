@@ -1,11 +1,11 @@
 /** A read-only shortcut, never an approval snapshot. Opening it fetches fresh detail. */
-type Source={list(filter:{kind:'task';statuses:('open'|'replied'|'done')[];limit:number}):unknown[];detail(id:string):unknown|Promise<unknown>}
+type Source={list(filter:{kind:'task';legacy:('open'|'replied'|'done')[];limit:number}):unknown[];detail(id:string):unknown|Promise<unknown>}
 type Focus={id:string;title:string;kind:'decision'|'result'|'working'}
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v)
 export async function mobileHomeFocus(source:Source|undefined):Promise<{focus:Focus|null;partial:boolean}>{
   if(!source)return {focus:null,partial:true}
   let rows:unknown[]
-  try{rows=source.list({kind:'task',statuses:['open','replied','done'],limit:200})}catch{return {focus:null,partial:true}}
+  try{rows=source.list({kind:'task',legacy:['open','replied','done'],limit:200})}catch{return {focus:null,partial:true}}
   let partial=rows.length>=200
   const candidates:Focus[]=[]
   // Task detail is local; keep concurrency bounded and never load chat histories.

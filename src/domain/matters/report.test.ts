@@ -11,7 +11,7 @@ import {renderReport, shouldDisturb, VIEWED_RECENTLY_MS} from './report'
  * {matter,title,artifactCount}),测试不传它。
  */
 const base: Matter = {
-  id: 'a1b2c3d4', kind: 'task', title: '手动派的', projectPath: '/work', status: 'replied',
+  id: 'a1b2c3d4', kind: 'task', title: '手动派的', projectPath: '/work',
   ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1,
 }
 const handmade: Matter = {...base}

@@ -1,4 +1,5 @@
 import type {TurnUsage} from '../domain/turn-usage'
+import type {LegacyMatterStatus} from '../domain/matters/wire-status'
 
 /**
  * 「一件事」的口(架构终态 E5):matter 的形状与 store、对主人聊天那件事「说一句」的回执。实现在
@@ -11,11 +12,14 @@ export type MatterKind='chat'|'task'|'terminal'|'act'
 export type MatterInitiator='owner'|'cc'|'peer'
 /**
  * 统一状态(v92):open → working ⇄ waiting(等你)→ done | failed | cancelled;归档是另一列(archivedAt),和它正交。
- * 由 MatterLog 维护(轮开始 / 结束、等你的步出现 / 了结)。M6b 起出口的旧 status 从它推(domain/matters/legacy-status.ts)。
+ * 由 MatterLog 维护(轮开始 / 结束、等你的步出现 / 了结)。线上的旧 status 从它推(domain/matters/legacy-status.ts,v102 删了那一列)。
  */
 export type MatterState='open'|'working'|'waiting'|'done'|'failed'|'cancelled'
-/** 旧状态(v60):线上照旧带(老 App 必填),M6b 起现算;列 M6e 删。 */
-export type MatterStatus='open'|'replied'|'done'|'archived'
+/**
+ * 一件事的归档 / 结局怎么跟上(v102 前叫 setStatus、还写旧 status 列):archived ⇒ 记归档时间;done ⇒ 取消归档、统一状态 done
+ * (没做成 / 停下了不改写);open ⇒ 取消归档、结局清回 open。working / waiting 只归 MatterLog。
+ */
+export type MatterLifecycle='archived'|'done'|'open'
 export type MatterSurface='wechat'|'desktop'|'phone'|'cli'
 export type MatterSessionRole='main'|'review'|'handoff'
 /**
@@ -25,7 +29,7 @@ export type MatterSessionRole='main'|'review'|'handoff'
  * 不知道 ⇒ 不写(null),界面就不画 —— 旧行一律 null,不回填、不猜。
  */
 export type MatterOrigin='wechat'|'desktop'|'app'|'web'|'cli'|'companion'
-export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;/** 旧状态:M6b 起由 domain/matters/legacy-status.ts 现算(不再读列),线上冻结到 wire-compat.ts 那一行退休。 */status:MatterStatus;/** 统一状态(M6b 起上线);新客户端读它和 archivedAt。 */state?:MatterState;archivedAt?:number|null;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 出生地(只在知道时带)。 */origin?:MatterOrigin;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[];/** 执行者 id → 正式名字(收敛清单 ⑥):服务层按 registry 填,三端不存名字表。 */agentNames?:Record<string,string>;/** CC 自己做的事(M5c):发起方 + 最近那一轮。 */act?:MatterAct}
+export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;/** 统一状态(M6b 起上线);新客户端读它和 archivedAt。线上的旧 status 不在这里:出口经 domain/matters/legacy-status.ts 的 wireMatter 现算(wire-compat.ts 那一行)。 */state?:MatterState;archivedAt?:number|null;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 出生地(只在知道时带)。 */origin?:MatterOrigin;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[];/** 执行者 id → 正式名字(收敛清单 ⑥):服务层按 registry 填,三端不存名字表。 */agentNames?:Record<string,string>;/** CC 自己做的事(M5c):发起方 + 最近那一轮。 */act?:MatterAct}
 /**
  * CC 自己做的事那一件(kind='act',M5c):手机「CC 最近在忙」那一组与详情页的时间线。只在点名 kind=act 的列表与 act 的详情里带。
  * who = 发起方(letters / brief / memory / hunt / atelier / stickers,取自轮的 policy.who);步的 payload 只留数字、真假、短字符串。
@@ -35,15 +39,15 @@ export interface MatterActTurn {id:string;status:string;errorCode?:string|null;/
 export interface MatterAct {who?:string;latest?:MatterActTurn}
 export interface MatterBinding {matterId:string;surface:MatterSurface;surfaceKey:string;lastSeenAt:number}
 export interface MatterSession {matterId:string;providerId:string;sessionId:string;role:MatterSessionRole;createdAt:number}
-export interface CreateMatter {id?:string;kind:MatterKind;/** 不给 ⇒ owner。 */initiator?:MatterInitiator;title:string;projectPath?:string|null;ownerChatId?:string|null;status?:MatterStatus;originMatterId?:string|null;originMessageId?:string|null;/** 出生地:只在建行时写这一次;不知道就别给(null)。 */origin?:MatterOrigin|null}
-export interface ListMatters {kind?:MatterKind;statuses?:MatterStatus[];since?:number;limit?:number;/** 只要在这个表面露过面的 */surface?:MatterSurface}
+export interface CreateMatter {id?:string;kind:MatterKind;/** 不给 ⇒ owner。 */initiator?:MatterInitiator;title:string;projectPath?:string|null;ownerChatId?:string|null;originMatterId?:string|null;originMessageId?:string|null;/** 出生地:只在建行时写这一次;不知道就别给(null)。 */origin?:MatterOrigin|null}
+export interface ListMatters {kind?:MatterKind;/** 线上 `?status=` 的筛选(旧状态,wire-compat.ts 第一行):SQL 里按 legacy-status 的式子筛,LIMIT 之前。 */legacy?:LegacyMatterStatus[];since?:number;limit?:number;/** 只要在这个表面露过面的 */surface?:MatterSurface}
 
 export interface MatterStore {
   create(input:CreateMatter):Matter
   get(id:string):Matter|null
   list(filter?:ListMatters):Matter[]
-  /** 旧状态;顺手把 archived_at 与统一状态里能确定的那半边(做完 / 重新打开)跟上,working / waiting 只归 MatterLog。 */
-  setStatus(id:string,status:MatterStatus):void
+  /** 归档 / 取消归档,顺手把统一状态里能确定的那半边(做完 / 重新打开)跟上;见 MatterLifecycle。 */
+  setLifecycle(id:string,to:MatterLifecycle):void
   rename(id:string,title:string):void
   touch(id:string):void
   bind(id:string,surface:MatterSurface,surfaceKey:string):void
@@ -59,6 +63,8 @@ export interface MatterStore {
   agents(ids:string[]):Map<string,string[]>
   /** 一页里每件事的出生地(工作台列表一次查完);不知道的 id 不出现。 */
   origins(ids:string[]):Map<string,MatterOrigin>
+  /** 一页里每件事线上的旧状态(wire-compat.ts 第一行;式子在 domain/matters/legacy-status.ts)。没有的 id 不出现。 */
+  legacyStatuses(ids:string[]):Map<string,LegacyMatterStatus>
 }
 
 export type SayReceiptStatus='pending'|'replied'

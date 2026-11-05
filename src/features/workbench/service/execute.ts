@@ -429,7 +429,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           stageFinishedNotice(running,status,finalError,willReport)
         })
         terminalCommitted=true
-        matterSync(m=>m.setStatus(task.id,status==='interrupted'?'open':'done'))
+        matterSync(m=>m.setLifecycle(task.id,status==='interrupted'?'open':'done'))
         // 非 retained 的执行者永远不经过 settleQuiet(isReplied 要求 snapshot.retained),
         // 只走这条终态路径 —— 不在这里也调一次 reportOnce,那类执行者的任务永远不回报
         // (评审修复轮 1 ③)。turnSeq 去重保证 settleQuiet 已经报过这一轮时这里是 no-op。
