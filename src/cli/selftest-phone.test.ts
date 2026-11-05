@@ -1119,8 +1119,8 @@ describe('selftest phone --relay v2', () => {
   it('r… id link ⇒ connects /v2/phone, healthz, registers fake APNs token, Apple accepting the JWT is PASS', async () => {
     const h = makeHarness({ linkUrl: V2_LINK })
     h.fetchRoutes['https://relay.tendhearth.com/healthz'] = { ok: true, version: 'x', env: 'production', apns: true, fcm: false }
-    h.deviceRoutes['POST /m/api/push/register'] = { ok: true }
-    h.deviceRoutes['POST /m/api/push/test'] = { ok: true, result: { ok: false, code: 'BadDeviceToken' } }
+    h.deviceRoutes['POST /v1/phone/push/register'] = { ok: true }
+    h.deviceRoutes['POST /v1/phone/push/test'] = { ok: true, result: { ok: false, code: 'BadDeviceToken' } }
     const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2', timeoutMs: 5000 })
     expect(h.connectedUrls[0]).toBe('wss://relay.tendhearth.com/v2/phone?id=rabcdefghijklmnopqrstuvwxyz')
     for (const n of ['relay_healthz', 'push_registered', 'apns_auth_accepted']) {
@@ -1141,16 +1141,16 @@ describe('selftest phone --relay v2', () => {
   it('InvalidProviderToken ⇒ apns_auth_accepted FAIL with the code in detail', async () => {
     const h = makeHarness({ linkUrl: V2_LINK })
     h.fetchRoutes['https://relay.tendhearth.com/healthz'] = { ok: true, apns: true }
-    h.deviceRoutes['POST /m/api/push/register'] = { ok: true }
-    h.deviceRoutes['POST /m/api/push/test'] = { ok: true, result: { ok: false, code: 'InvalidProviderToken' } }
+    h.deviceRoutes['POST /v1/phone/push/register'] = { ok: true }
+    h.deviceRoutes['POST /v1/phone/push/test'] = { ok: true, result: { ok: false, code: 'InvalidProviderToken' } }
     const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2', timeoutMs: 5000 })
     expect(r.checks.find((c) => c.name === 'apns_auth_accepted')).toMatchObject({ ok: false, detail: expect.stringContaining('InvalidProviderToken') })
   })
   it('healthz without apns ⇒ relay_healthz FAIL', async () => {
     const h = makeHarness({ linkUrl: V2_LINK })
     h.fetchRoutes['https://relay.tendhearth.com/healthz'] = { ok: true, apns: false }
-    h.deviceRoutes['POST /m/api/push/register'] = { ok: true }
-    h.deviceRoutes['POST /m/api/push/test'] = { ok: true, result: { ok: false, code: 'BadDeviceToken' } }
+    h.deviceRoutes['POST /v1/phone/push/register'] = { ok: true }
+    h.deviceRoutes['POST /v1/phone/push/test'] = { ok: true, result: { ok: false, code: 'BadDeviceToken' } }
     const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2', timeoutMs: 5000 })
     expect(r.checks.find((c) => c.name === 'relay_healthz')?.ok).toBe(false)
   })

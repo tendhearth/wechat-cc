@@ -14,18 +14,27 @@
  *
  * 令牌照旧是面板认的设备 / 链接令牌:别名走面板同一个分发(`deps.v1` = 内部 API 的 panelDispatch),分发那边再按
  * `/v1` 那一行的 `phone` 块判一遍 —— 别名键在令牌的 routeAllow 里(phone-routes.ts 自动带上),新键也在。
+ *
+ * P3d 起还有一种:**纯改名**(表里 `transform: null`)。手机独有的数据搬到新的 `/v1` 路径(只有 `phone` 块的那一行,`PanelV1Key`),
+ * 处理器还在面板这一口(回包是 Response:PNG、表情原图、前缀键 —— 内部 API 的分发只认 JSON 和精确键)。别名只把路径换成新键的,
+ * 交给面板表里新键那一个处理器,请求、ctx、回包都不碰(`rename`)。
  */
-import {PHONE_SAY_MAX_CHARS,PHONE_TRANSCRIBE_MAX_BYTES,PHONE_TRANSCRIBE_MIMES,MATTER_KINDS} from '@wechat-cc/protocol'
+import {PHONE_SAY_MAX_CHARS,PHONE_TRANSCRIBE_MAX_BYTES,PHONE_TRANSCRIBE_MIMES,MATTER_KINDS,WIRE_ROUTE_ALIASES} from '@wechat-cc/protocol'
 import {PANEL_CAUSE_HEADER,type PanelDispatch} from '../../daemon/internal-api/types'
 import type {TokenInfo} from '../../daemon/internal-api/token-registry'
 import {MAX_MOBILE_DETAIL_BYTES,mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileMatterError,mobileSayInput} from './mobile-workbench'
 import {phoneClientOf} from './phone-client'
-import {ownsMethod,type PhoneHandler,type PhoneRouteTable} from './phone-route-table'
+import {lookupPhoneRoute,ownsMethod,type PhoneHandler,type PhoneRouteTable} from './phone-route-table'
 
-export interface LegacyRoutesDeps {
+export interface LegacyRoutesDeps<C extends Ctx = Ctx> {
   /** 内部 API 的面板分发(P3b)。没接(测试)⇒ 各别名回它原来「没接上」的那个码。 */
   v1?: PanelDispatch
+  /**
+   * 面板合成好的那张处理器表(P3d 纯改名用;取的时候才读 —— 这张别名表本身也在那张表里)。手机独有的新键(`PanelV1Key`,只有
+   * `phone` 块的 `/v1` 行)处理器在面板这一口;纯改名的别名把路径换成新键,交给它,同一个请求、同一个 ctx,回包原样。
+   */
+  local?: () => PhoneRouteTable<C>
 }
 type Ctx = { caller: TokenInfo }
 
@@ -44,9 +53,12 @@ const TRANSCRIBE_B64_MAX = Math.ceil(PHONE_TRANSCRIBE_MAX_BYTES / 3) * 4
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const errorOf = (body: unknown) => obj(body) && typeof body.error === 'string' ? body.error : 'internal'
 
+/** 纯改名的行(transform 为 null):旧键 → 新键,只从别名表读,这里不另写一份。 */
+const RENAMED: ReadonlyMap<string, string> = new Map(WIRE_ROUTE_ALIASES.filter(r => r.transform === null).map(r => [r.from, r.to]))
+
 interface V1Out { status: number; body: unknown; cause: string | null }
 
-export function legacyRoutes(deps: LegacyRoutesDeps): PhoneRouteTable<Ctx> {
+export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): PhoneRouteTable<C> {
   /** 翻到新键,走同一个分发(带同一个令牌、同一个帧预算 / 出生地;断开信号跟着原请求)。 */
   const v1 = async (req: Request, caller: TokenInfo, method: 'GET' | 'POST', path: string, query: Record<string, string>, body?: unknown): Promise<V1Out> => {
     const url = new URL(`http://panel.local${path}`)
@@ -345,7 +357,36 @@ export function legacyRoutes(deps: LegacyRoutesDeps): PhoneRouteTable<Ctx> {
     return sessionAliasError(out)
   })
 
+  // ── P3d 纯改名(wire-compat.ts 里 transform 为 null 的行):旧路径换成新键的路径(前缀键换前缀、后面原样),交给面板里新键那一个
+  // 处理器 —— 同一个 Request(方法、正文、头、断开信号)、同一个 ctx(令牌、设备 id),回包一个字节不碰。查不到 ⇒ 面板同一个 404。
+  // 一律 ownsMethod:方法不对也交过去,由新键那边照它自己的规矩回(它自己判方法就回它的 405,不判就落到这里的 404,同并之前)。
+  const rename = (from: string): PhoneHandler<C> => {
+    const to = RENAMED.get(from)
+    if (!to) throw new Error(`legacy-routes: ${from} 不是 wire-compat.ts 里的纯改名行`)
+    const fromPath = from.slice(from.indexOf(' ') + 1), toPath = to.slice(to.indexOf(' ') + 1)
+    return ownsMethod(async (url: URL, req: Request, ctx: C) => {
+      const next = new URL(url)
+      next.pathname = toPath.endsWith('/') ? toPath + url.pathname.slice(fromPath.length) : toPath
+      const h = deps.local ? lookupPhoneRoute(deps.local(), req.method, next.pathname) : null
+      return h ? await h(next, req, ctx) : panelJson({ error: 'not_found' }, 404)
+    })
+  }
+
   return {
+    // P3d-1 手机独有的(纯改名)
+    'GET /m/api/state': rename('GET /m/api/state'),
+    'GET /m/api/art/presence': rename('GET /m/api/art/presence'),
+    'POST /m/api/push/register': rename('POST /m/api/push/register'),
+    'POST /m/api/push/test': rename('POST /m/api/push/test'),
+    'GET /m/api/matter/insight': rename('GET /m/api/matter/insight'),
+    'GET /m/api/matter/input-receipt': rename('GET /m/api/matter/input-receipt'),
+    'GET /m/api/home': rename('GET /m/api/home'),
+    'GET /m/api/cli/activity': rename('GET /m/api/cli/activity'),
+    'GET /m/api/activity': rename('GET /m/api/activity'),
+    'GET /m/api/jobs': rename('GET /m/api/jobs'),
+    'POST /m/api/jobs/action': rename('POST /m/api/jobs/action'),
+    'GET /m/api/letters': rename('GET /m/api/letters'),
+    'GET /m/api/letters/page': rename('GET /m/api/letters/page'),
     'GET /m/api/matters': phoneMatters,
     'GET /m/api/matter': phoneMatter,
     'POST /m/api/matter/say': phoneMatterSay,

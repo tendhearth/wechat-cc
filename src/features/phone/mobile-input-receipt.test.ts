@@ -160,7 +160,8 @@ describe('single input receipt through real matter/workbench/phone layers',()=>{
   })
 
   it('fails closed when older service wiring has no single-receipt action',async()=>{
-    const url=new URL('http://phone.test'+path('deadbeef',randomUUID()))
+    // 直接查表:处理器登记在新键上(P3d-1);旧路径经面板的别名,上面几条走的就是它
+    const url=new URL('http://phone.test'+path('deadbeef',randomUUID()).replace('/m/api/','/v1/'))
     const response=await routePhone(mobileWorkbenchRoutes({}),url,new Request(url))
     expect(response?.status).toBe(503);expect(await response!.json()).toEqual({ok:false,error:'unavailable'})
     const mutation=await routePhone(mobileWorkbenchRoutes({}),url,new Request(url,{method:'POST'}))

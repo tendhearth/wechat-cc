@@ -42,9 +42,13 @@ describe('手机面板处理器表与路由表对得上', () => {
     expect(diff(keys, PHONE_ROUTES)).toEqual([])
   })
   it('路由表里每条面板路由都有处理器(没有登记了却 404 的)', () => {
-    // `/v1` 行上的 phone 块(P3b 起)不归面板处理器表:面板把它交给内部 API 的分发,处理器是 /v1 那一条。
+    // `/v1` 行上的 phone 块(P3b 起)有两种:带 desktop 的不归面板处理器表 —— 面板把它交给内部 API 的分发,处理器是 /v1 那一条;
+    // 只有 phone 块的(P3d 起,手机独有,PanelV1Key)处理器在面板这张表里。两种不许重叠:同一个键不能两边都有处理器。
     const v1 = [...PHONE_ROUTES].filter(k => / \/v1\//.test(k))
-    for (const k of v1) expect(ROUTES[k as keyof typeof ROUTES]?.desktop, `${k}: 面板转给分发,/v1 那一行得有 desktop`).toBeDefined()
+    const dispatched = v1.filter(k => ROUTES[k as keyof typeof ROUTES]?.desktop)
+    const panelOwn = v1.filter(k => !dispatched.includes(k))
+    for (const k of dispatched) expect(keys.has(k), `${k}: 交给分发的 /v1 行,面板表里不该再有处理器`).toBe(false)
+    expect(diff(panelOwn, keys), '手机独有的 /v1 行(只有 phone 块)要在面板表里有处理器').toEqual([])
     expect(diff([...PHONE_ROUTES].filter(k => !v1.includes(k)), keys)).toEqual([])
     expect(diff(panelPaths, keys)).toEqual([])
   })

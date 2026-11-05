@@ -14,14 +14,14 @@ const item = (i: number, text?: string): LetterListItem => ({ id: `2026-10-${Str
 describe('mobileLettersRoutes', () => {
   it('不是自己的路径 ⇒ null;方法不对 ⇒ 405;没接 ⇒ 503', async () => {
     expect(await call(undefined, '/m/api/chat')).toBeNull()
-    expect((await call(undefined, '/m/api/letters', 'POST'))!.status).toBe(405)
-    expect((await call(undefined, '/m/api/letters'))!.status).toBe(503)
-    expect((await call(undefined, '/m/api/letters/page?id=a&p=1'))!.status).toBe(503)
+    expect((await call(undefined, '/v1/letters/sent', 'POST'))!.status).toBe(405)
+    expect((await call(undefined, '/v1/letters/sent'))!.status).toBe(503)
+    expect((await call(undefined, '/v1/letters/page?id=a&p=1'))!.status).toBe(503)
   })
   it('列表一帧装不下 ⇒ 从最旧那头少给,最新那封总在', async () => {
     const big = '字'.repeat(4000)
     const letters = Array.from({ length: 60 }, (_, i) => item(60 - i, big))
-    const res = await call({ list: () => letters, pagePath: () => null }, '/m/api/letters')
+    const res = await call({ list: () => letters, pagePath: () => null }, '/v1/letters/sent')
     const body = await res!.text()
     expect(framedTooLarge(body)).toBe(false)
     const got = JSON.parse(body) as { letters: LetterListItem[] }
@@ -30,10 +30,10 @@ describe('mobileLettersRoutes', () => {
   })
   it('取页参数坏了 ⇒ 400;取不到 ⇒ 404;list / pagePath 抛错 ⇒ 503', async () => {
     const deps: MobileLettersDeps = { list: () => { throw new Error('x') }, pagePath: () => { throw new Error('x') } }
-    expect((await call(deps, '/m/api/letters'))!.status).toBe(503)
-    expect((await call(deps, '/m/api/letters/page?id=a&p=1'))!.status).toBe(503)
-    expect((await call(deps, '/m/api/letters/page?id=a'))!.status).toBe(400)
-    expect((await call(deps, '/m/api/letters/page?id=a&p=1&offset=-1'))!.status).toBe(400)
-    expect((await call({ list: () => [], pagePath: () => null }, '/m/api/letters/page?id=a&p=1'))!.status).toBe(404)
+    expect((await call(deps, '/v1/letters/sent'))!.status).toBe(503)
+    expect((await call(deps, '/v1/letters/page?id=a&p=1'))!.status).toBe(503)
+    expect((await call(deps, '/v1/letters/page?id=a'))!.status).toBe(400)
+    expect((await call(deps, '/v1/letters/page?id=a&p=1&offset=-1'))!.status).toBe(400)
+    expect((await call({ list: () => [], pagePath: () => null }, '/v1/letters/page?id=a&p=1'))!.status).toBe(404)
   })
 })

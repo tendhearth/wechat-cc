@@ -163,7 +163,7 @@ export function mobileWorkbenchRoutes(actions:MobileMatterActions|undefined,entr
     }catch(error){return mobileMatterError(error)}
   })
   return {
-    'GET /m/api/matter/input-receipt':inputReceipt,
+    'GET /v1/matter/input-receipt':inputReceipt,
     'POST /m/api/attachment/chunk':upload('chunk'),
     'GET /m/api/attachment/upload':upload('status'),
     'POST /m/api/matter/create':entryRoute('create'),

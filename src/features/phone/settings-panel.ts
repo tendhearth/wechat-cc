@@ -42,7 +42,7 @@ import { mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
 import { mobileActivityRoutes } from './mobile-activity'
 import { mobileReadsRoutes } from './mobile-reads'
 import { legacyRoutes } from './legacy-routes'
-import { combinePhoneRoutes, ownsMethod, routePhone, type PhoneHandler, type PhoneRouteTable } from './phone-route-table'
+import { combinePhoneRoutes, lookupPhoneRoute, ownsMethod, routePhone, type PhoneHandler, type PhoneRouteTable } from './phone-route-table'
 import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {MAX_MOBILE_DETAIL_BYTES,mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
@@ -204,7 +204,7 @@ export interface SettingsPanelDeps {
   /**
    * 面板收到的 `/v1/*` 交给内部 API 同一个分发(P3b,设计稿 2026-11-05-p3-one-route-family):令牌面板先认(device / link)、
    * routeAllow 先挡(`/v1` 那一行得有 `phone` 块才在 PHONE_ROUTES / LINK_ROUTES 里),分发那边再判一遍。缺省(测试)⇒ 404。
-   * `/m/api/*` 照旧走面板自己的处理器表。
+   * `/m/api/*` 照旧走面板自己的处理器表;手机独有的 `/v1` 行(只有 `phone` 块,P3d 起)处理器也在这张表里,不交给分发。
    */
   v1?: import('../../daemon/internal-api/types').PanelDispatch
 }
@@ -266,6 +266,7 @@ import { deviceIdOf, makeDeviceCredentials, makeDeviceStore, type DeviceRow } fr
 import { normalizeLang } from './phone-insight-llm'
 import { latestChanges } from './phone-changes'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
+import { ROUTES } from '@wechat-cc/protocol/routes'
 import { phoneClientOf, withPhoneClient } from './phone-client'
 import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 
@@ -757,7 +758,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     'GET /m': ownsMethod(async (_url, _req, { t }) => {
       return new Response(phoneHtml(t, deps.remoteInfo?.() ?? null), { headers: { 'content-type': 'text/html; charset=utf-8' } })
     }),
-    'GET /m/api/state': async () => {
+    'GET /v1/phone/state': async () => {
       const s = phoneState()
       // 原生 App 读 PNG(没有 SVG 渲染);画不出 / 画得慢 ⇒ 这一次不带这个字段,不挡回包
       const png = s.portrait ? await portraitPng(s.portrait).catch(() => null) : null
@@ -766,7 +767,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     // 「此刻」形象画(手机协议包 v2 Task 4 fix round 1,2026-09-29):按需拉,
     // 不再内联进 /m 页 —— 两张 PNG base64 加起来 ~257KB,是页面撑爆中继
     // 512KB 帧预算的大头。apps/mobile/src/presence.js 的 loadPresenceArt() 调这个。
-    'GET /m/api/art/presence': async () => {
+    'GET /v1/phone/art/presence': async () => {
       return json({ ok: true, mime: 'image/png', unlit: presenceArt.unlit.base64, lit: presenceArt.lit.base64 })
     },
     'GET /m/api/memory': async () => {
@@ -788,12 +789,12 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         return m === 'memory_entry_not_found' || m === 'memory_not_found' ? json({ ok: false, error: 'not_found' }, 404) : json({ ok: false, error: 'unavailable' }, 500)
       }
     }),
-    'GET /m/api/home': async (url) => {
+    'GET /v1/home': async (url) => {
       return json(await home(parseLimit(url)))
     },
-    'POST /m/api/push/register': pushRoute(false),
-    'POST /m/api/push/test': pushRoute(true),
-    'GET /m/api/matter/insight': async (url) => {
+    'POST /v1/phone/push/register': pushRoute(false),
+    'POST /v1/phone/push/test': pushRoute(true),
+    'GET /v1/matter/insight': async (url) => {
       if (!deps.insight) return json({ ok: false, error: 'insight_not_wired' }, 503)
       const id = url.searchParams.get('id')
       if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
@@ -876,10 +877,11 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       return new Response(readFileSync(fp), { headers: { 'content-type': type } })
     },
   }
-  const routes = combinePhoneRoutes<PanelCtx>(
+  const routes: PhoneRouteTable<PanelCtx> = combinePhoneRoutes<PanelCtx>(
     panelRoutes,
     // 已并成别名的旧路径(P3c 起,wire-compat.ts 的 WIRE_ROUTE_ALIASES):翻到 /v1 那一条,走内部 API 同一个分发
-    legacyRoutes({ ...(deps.v1 ? { v1: deps.v1 } : {}) }),
+    // P3d 起纯改名的那几条:换成新键的路径,交给这张表里新键那一个处理器(取的时候才读 routes,它就是这张合成好的表)
+    legacyRoutes<PanelCtx>({ ...(deps.v1 ? { v1: deps.v1 } : {}), local: (): PhoneRouteTable<PanelCtx> => routes }),
     // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
     mobileWorkbenchRoutes(deps.matters, deps.entry, deps.uploads),
     mobileSessionContinueRoutes(deps.sessionContinue, id => deps.matters?.seenOnPhone(id), deps.executorName ? { executorName: deps.executorName } : {}),
@@ -935,8 +937,16 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     const deviceId = deviceIdOfSession(caller.sessionKey)
     if (caller.origin === 'device' && deviceId) devices.touch(deviceId)
 
-    // ── /v1/*:内部 API 同一个分发(P3b)。帧预算局域网直连和隧道都带(今天的手机处理器就是两边都裁);出生地看传输。
+    // ── /v1/*:带 desktop 的那一行交给内部 API 同一个分发(P3b)。帧预算局域网直连和隧道都带(今天的手机处理器就是两边都裁);
+    // 出生地看传输。手机独有的 /v1 行(P3d 起,只有 phone 块:PanelV1Key)处理器在这张表里,查得到就在这里答。
+    // 手机独有的行没登记处理器(那个功能没交表来)⇒ 面板的 404,同 /m/api 的时候,不落到分发。
     if (url.pathname.startsWith('/v1/')) {
+      const row = (ROUTES as Readonly<Record<string, { desktop?: object; phone?: object }>>)[`${req.method} ${url.pathname}`]
+      if (!row?.desktop) {
+        const local = lookupPhoneRoute(routes, req.method, url.pathname)
+        if (local) return await local(url, req, { t: t!, caller, deviceId })
+        if (row?.phone) return json({ error: 'not_found' }, 404)
+      }
       if (!deps.v1) return json({ error: 'not_found' }, 404)
       return await deps.v1(req, caller, { frameBudget: MAX_MOBILE_DETAIL_BYTES, client: phoneClientOf(req) })
     }

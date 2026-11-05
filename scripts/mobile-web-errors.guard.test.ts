@@ -80,8 +80,9 @@ const ROUTE_CODES: Record<string, RouteCodes> = {
     ],
   },
   // home() 一律 ok:true(读不到的那一块写成 presence_error 字段,网页不当错误码用)
-  'GET /m/api/home': { direct: [], slices: [{ file: SP, from: entry('GET /m/api/home'), to: NEXT_ROUTE }] },
-  'GET /m/api/art/presence': { direct: [], slices: [{ file: SP, from: entry('GET /m/api/art/presence'), to: NEXT_ROUTE }] },
+  // P3d-1 起这两条是纯改名的别名(legacy-routes.ts 的 rename,回包原样):处理器在新键 GET /v1/home、GET /v1/phone/art/presence 上。
+  'GET /m/api/home': { direct: [], slices: [{ file: SP, from: entry('GET /v1/home'), to: NEXT_ROUTE }] },
+  'GET /m/api/art/presence': { direct: [], slices: [{ file: SP, from: entry('GET /v1/phone/art/presence'), to: NEXT_ROUTE }] },
   'POST /set/api/pair': {
     direct: ['link_only', 'device_limit'],
     slices: [{ file: SP, from: entry('POST /set/api/pair'), to: NEXT_ROUTE }],

@@ -295,7 +295,7 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
         JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } }),
       ].join('\n'))
       hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'A1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
-      const r = await routePhone(mobileReadsRoutes({ cliActions: actions() }), new URL('http://x/m/api/cli/activity?session_id=A1'), new Request('http://x/m/api/cli/activity?session_id=A1'))
+      const r = await routePhone(mobileReadsRoutes({ cliActions: actions() }), new URL('http://x/v1/cli/activity?session_id=A1'), new Request('http://x/v1/cli/activity?session_id=A1'))
       const body = await r!.json()
       expect(r!.status).toBe(200)
       PHONE_API_SCHEMAS['GET /m/api/cli/activity']!.parse(body)
@@ -312,11 +312,11 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
     expect(a.activity('N1')).toEqual({ ok: false, error: 'no_transcript' })
     hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'G1', cwd: '/w/proj', machine: 'mac', transcript_path: '/definitely/not/here.jsonl' })
     expect(a.activity('G1')).toEqual({ ok: false, error: 'no_transcript' })
-    const get = async (q: string) => (await routePhone(mobileReadsRoutes({ cliActions: a }), new URL('http://x/m/api/cli/activity' + q), new Request('http://x/m/api/cli/activity' + q)))!
+    const get = async (q: string) => (await routePhone(mobileReadsRoutes({ cliActions: a }), new URL('http://x/v1/cli/activity' + q), new Request('http://x/v1/cli/activity' + q)))!
     expect((await get('')).status).toBe(400)
     expect((await get('?session_id=nope')).status).toBe(404)
     expect((await get('?session_id=R1')).status).toBe(409)
-    expect((await routePhone(mobileReadsRoutes({}), new URL('http://x/m/api/cli/activity?session_id=A'), new Request('http://x/m/api/cli/activity?session_id=A')))!.status).toBe(503)
+    expect((await routePhone(mobileReadsRoutes({}), new URL('http://x/v1/cli/activity?session_id=A'), new Request('http://x/v1/cli/activity?session_id=A')))!.status).toBe(503)
   })
 })
 

@@ -22,7 +22,7 @@ const err = (error: string, status: number) => json({ ok: false, error }, status
 
 export function mobileLettersRoutes(deps: MobileLettersDeps | undefined): PhoneRouteTable {
   return {
-    'GET /m/api/letters': ownsMethod(async (_url: URL, req: Request) => {
+    'GET /v1/letters/sent': ownsMethod(async (_url: URL, req: Request) => {
       if (req.method !== 'GET') return err('method_not_allowed', 405)
       if (!deps) return err('letters_not_wired', 503)
       let letters: LetterListItem[]
@@ -35,7 +35,7 @@ export function mobileLettersRoutes(deps: MobileLettersDeps | undefined): PhoneR
       }
       return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
     }),
-    'GET /m/api/letters/page': ownsMethod(async (url: URL, req: Request) => {
+    'GET /v1/letters/page': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return err('method_not_allowed', 405)
       if (!deps) return err('letters_not_wired', 503)
       const id = url.searchParams.get('id'), rawPage = url.searchParams.get('p'), rawOffset = url.searchParams.get('offset') ?? '0'

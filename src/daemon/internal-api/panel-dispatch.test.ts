@@ -131,13 +131,19 @@ describe('两个监听各认各的令牌', () => {
 /** P3c-1 / P3c-2 / P3c-3 / P3c-4 起路由表里带 phone 块的 /v1 行(一份数据一个处理器,手机的旧路径是别名);链接令牌只读其中两条。 */
 const P3C1_DEVICE = ['GET /v1/cli/sessions', 'GET /v1/connections', 'GET /v1/matter', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/retractions', 'GET /v1/overseer/today', 'GET /v1/workbench/entry-options', 'GET /v1/workbench/models', 'GET /v1/workbench/session', 'GET /v1/workbench/sessions', 'POST /v1/companion/transcribe', 'POST /v1/journal/seen', 'POST /v1/knowledge/facts/set_fact_status', 'POST /v1/matter/say', 'POST /v1/memory/retractions/restore', 'POST /v1/workbench/discard-attachment']
 const P3C1_LINK = ['GET /v1/matter', 'GET /v1/matters']
+/**
+ * P3d 起手机独有的 /v1 行(只有 phone 块,PanelV1Key):处理器在面板这一口,不经分发 —— 不在 PANEL_V1_ROUTES 里,
+ * 但在设备 / 链接令牌的集合里(链接令牌只读其中两条,同别名行冻结的)。
+ */
+const P3D_DEVICE = ['GET /v1/activity', 'GET /v1/cli/activity', 'GET /v1/home', 'GET /v1/jobs', 'GET /v1/letters/page', 'GET /v1/letters/sent', 'GET /v1/matter/input-receipt', 'GET /v1/matter/insight', 'GET /v1/phone/art/presence', 'GET /v1/phone/state', 'POST /v1/jobs/action', 'POST /v1/phone/push/register', 'POST /v1/phone/push/test']
+const P3D_LINK = ['GET /v1/home', 'GET /v1/phone/art/presence']
 
 describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不了', () => {
-  it('路由表里带 phone 块的 /v1 行只有 P3c-1 / P3c-2 / P3c-3 / P3c-4 并的那几条;PHONE_ROUTES / LINK_ROUTES 里的 /v1 键就是它们', () => {
+  it('交给分发的(带 desktop + phone 块的)/v1 行只有 P3c-1 / P3c-2 / P3c-3 / P3c-4 并的那几条;PHONE_ROUTES / LINK_ROUTES 里的 /v1 键就是它们加 P3d 手机独有的', () => {
     expect([...PANEL_V1_ROUTES.device].sort()).toEqual(P3C1_DEVICE)
     expect([...PANEL_V1_ROUTES.link].sort()).toEqual(P3C1_LINK)
-    expect([...PHONE_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual(P3C1_DEVICE)
-    expect([...LINK_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual(P3C1_LINK)
+    expect([...PHONE_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual([...P3C1_DEVICE, ...P3D_DEVICE].sort())
+    expect([...LINK_ROUTES].filter(k => k.includes(' /v1/')).sort()).toEqual([...P3C1_LINK, ...P3D_LINK].sort())
     // 链接令牌能写的(LINK_WRITE_OK)都还是 /m/api、/set/api 那几条
     expect(Object.keys(LINK_WRITE_OK).length).toBeGreaterThan(0)
     expect(Object.keys(LINK_WRITE_OK).filter(k => k.includes(' /v1/'))).toEqual([])
@@ -152,7 +158,7 @@ describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不
       for (const key of V1_KEYS) {
         const [method, path] = key.split(' ') as [string, string]
         const r = await viaPanel(path, tok, method === 'POST' ? post({}) : {})
-        const open = tok === device ? P3C1_DEVICE.includes(key) : P3C1_LINK.includes(key)
+        const open = tok === device ? [...P3C1_DEVICE, ...P3D_DEVICE].includes(key) : [...P3C1_LINK, ...P3D_LINK].includes(key)
         if (open) { expect(r.status, `${tok[0]} ${key}`).not.toBe(403); continue }
         expect(r.status, `${tok[0]} ${key}`).toBe(403)
         expect(await r.json()).toEqual({ error: 'route_not_allowed' })

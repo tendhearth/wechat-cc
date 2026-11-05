@@ -32,7 +32,9 @@
  *   - `ownerWorkspace` 主人工作区(待办、记下的想法):打包版走 lib.rs 的 `daemon_request` 宿主命令(主人工作区那一半)
  *     (按路径放行,GET / POST 都收),桌面 api.js 的 OWNER_WORKSPACE_PATHS 据此把请求交给宿主,dev 预览的
  *     test-shim.ts 照同一份名单代理。和 `tauri` 互斥(一条路由只走一个宿主命令),必须有 `operator`。
- * - `phone`(`/m`、`/m/api/*`)与 `set`(`/set`、`/set/api/*`):设置面板的令牌(配过对的设备令牌一律能走)。
+ * - `phone`(`/m`、`/m/api/*`;P3b 起也写在 `/v1` 行上)与 `set`(`/set`、`/set/api/*`):设置面板的令牌(配过对的设备令牌一律能走)。
+ *   `/v1` 行上有 `phone` 块:同时有 `desktop` ⇒ 面板交给内部 API 同一个分发;只有 `phone`(P3d 起,手机独有,`PanelV1Key`)⇒
+ *   处理器在面板这一口,内部 API 上没有这一条。
  *   - `link` 10 分钟链接令牌能不能走:`none` 只给设备、`read` / `write` 要写一句 `reason`
  *     (逐字搬自原来的 LINK_READ_OK / LINK_WRITE_OK,规矩见 phone-routes.ts 的注释)。开成 read / write 的集合
  *     必须**等于**链接页面源码里扫出来的调用(`scripts/link-routes-from-source.guard.test.ts`,理念 2):
@@ -607,14 +609,14 @@ const ROUTE_TABLE = {
   // 一件事的进展 / 改动 / 成果 / 回执、审阅标记、对话模型、语音转字、连接、seen、记忆纠错)一并收成 'none'。
   // 给链接页面加一条调用:先写进页面,守卫会红着告诉你开哪一行。
   'GET /m': { phone: { link: 'read', reason: '手机页面本身(配对之前也要能打开)' } },
-  'GET /m/api/state': { phone: { link: 'none' } },
-  'GET /m/api/art/presence': { phone: { link: 'read', reason: 'CC 的形象画(在不在身边)' } },
+  'GET /v1/phone/state': { phone: { link: 'none' } },
+  'GET /v1/phone/art/presence': { phone: { link: 'read', reason: 'CC 的形象画(在不在身边)' } },
   'GET /m/api/memory': { phone: { link: 'none' } },
   // 「CC 记得你」逐条纠错(2026-10-06)
   'POST /m/api/memory/correct': { phone: { link: 'none' } },
-  'GET /m/api/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
-  'GET /m/api/matter/input-receipt': { phone: { link: 'none' } },
-  'GET /m/api/matter/insight': { phone: { link: 'none' } },
+  'GET /v1/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
+  'GET /v1/matter/input-receipt': { phone: { link: 'none' } },
+  'GET /v1/matter/insight': { phone: { link: 'none' } },
   'GET /m/api/matter/changes': { phone: { link: 'none' } },
   // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);两条都只给设备(链接页面不调)
   'POST /m/api/matter/review-mark': { phone: { link: 'none' } },
@@ -633,12 +635,12 @@ const ROUTE_TABLE = {
   // 按住说话(2026-10-18):配没配语音转文字(录音转成字那一条 P3c-1 并进了 POST /v1/companion/transcribe)
   'GET /m/api/chat/transcribe': { phone: { link: 'none' } },
   // CC 的信(2026-10-18,mobile-letters.ts):寄出去了的信 + 一页 PNG 按块读。信是私事:链接令牌不在册(见 LINK_ROUTES)
-  'GET /m/api/letters': { phone: { link: 'none' } },
+  'GET /v1/letters/sent': { phone: { link: 'none' } },
   // 定时(对标 B7,2026-10-20):只给设备
-  'GET /m/api/activity': { phone: { link: 'none' } },
-  'GET /m/api/jobs': { phone: { link: 'none' } },
-  'POST /m/api/jobs/action': { phone: { link: 'none' } },
-  'GET /m/api/letters/page': { phone: { link: 'none' } },
+  'GET /v1/activity': { phone: { link: 'none' } },
+  'GET /v1/jobs': { phone: { link: 'none' } },
+  'POST /v1/jobs/action': { phone: { link: 'none' } },
+  'GET /v1/letters/page': { phone: { link: 'none' } },
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
   'GET /m/api/chat/model': { phone: { link: 'none' } },
   'POST /m/api/chat/model': { phone: { link: 'none' } },
@@ -646,7 +648,7 @@ const ROUTE_TABLE = {
   'POST /m/api/cli/permission': { phone: { link: 'none' } },
   'POST /m/api/cli/say': { phone: { link: 'none' } },
   // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
-  'GET /m/api/cli/activity': { phone: { link: 'none' } },
+  'GET /v1/cli/activity': { phone: { link: 'none' } },
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
   'GET /m/api/session/continue': { phone: { link: 'none' } },
   'POST /m/api/session/continue': { phone: { link: 'none' } },
@@ -667,8 +669,8 @@ const ROUTE_TABLE = {
   // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3,mobile-workbench.ts)
   'POST /m/api/matter/handoff': { phone: { link: 'none' } },
   // 推送(中继 v2,spec 2026-09-30 §5):登记 APNs / FCM token、发一条测试通知。只认设备令牌。
-  'POST /m/api/push/register': { phone: { link: 'none' } },
-  'POST /m/api/push/test': { phone: { link: 'none' } },
+  'POST /v1/phone/push/register': { phone: { link: 'none' } },
+  'POST /v1/phone/push/test': { phone: { link: 'none' } },
 } satisfies Record<RouteKey, RouteSpec>
 
 export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = ROUTE_TABLE
@@ -680,7 +682,17 @@ export type DeclaredRouteKey = keyof typeof ROUTE_TABLE
  * (`src/features/phone/phone-route-table.ts` 的 `PhoneRouteTable`)和类型化客户端(`phone-calls.ts`)都只认这些键 ——
  * 路径只在这张表里写一次。
  */
-export type PanelRouteKey = Extract<DeclaredRouteKey, `${string} /m` | `${string} /m/${string}` | `${string} /set` | `${string} /set/${string}`> | MergedAliasKey
+export type PanelRouteKey = Extract<DeclaredRouteKey, `${string} /m` | `${string} /m/${string}` | `${string} /set` | `${string} /set/${string}`> | MergedAliasKey | PanelV1Key
+
+/**
+ * 手机独有的 `/v1` 行(P3d 起):只有 `phone` 块、没有 `desktop`。处理器在面板这一口(回包是面板的 Response:PNG / 表情原图 /
+ * 前缀键都有),不经内部 API 的分发 —— 内部 API 上没有这几条(127.0.0.1 来的一律 404)。带 `desktop` 的 `/v1` 行照旧交给分发。
+ */
+export type PanelV1Key = {
+  [K in DeclaredRouteKey]: K extends `${string} /v1/${string}`
+    ? ((typeof ROUTE_TABLE)[K] extends { phone: object } ? ((typeof ROUTE_TABLE)[K] extends { desktop: object } ? never : K) : never)
+    : never
+}[DeclaredRouteKey]
 
 /**
  * 手机能订阅的事件主题(phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾是前缀标记:
