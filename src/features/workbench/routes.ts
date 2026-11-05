@@ -88,6 +88,12 @@ export interface WorkbenchRoutesDeps {
    * 503 sessions_not_wired(绝不退回桌面那一份)。
    */
   phoneSessions?: PhoneSessionsDeps
+  /**
+   * 桌面那一侧(S3b):attention 每 3 秒拉一次 = 桌面 app 开着(`notePoll`);非手机令牌打开一件任务的详情(不带 since 的那一次;
+   * 之后的长轮询不算)= 在电脑上看过了(`seen`)。
+   * 一件事的提议读这两样决定桌面那一级由谁弹、到点还推不推手机。缺省 ⇒ 不记。
+   */
+  desktop?: { notePoll(progress?: ReadonlyArray<{ id: string; phase: string }> | null): void; seen(taskId: string): void }
 }
 
 export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
@@ -138,8 +144,12 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if(!value||typeof value.id!=='string'||!REQUEST_ID.test(value.id)||typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId))return invalid()
       try{deps.workbench.discardAttachment(value.id,value.draftId);return{status:200,body:{ok:true}}}catch(error){return mappedError(error)}
     },
-    'GET /v1/workbench/attention':async()=>{
-      try{return{status:200,body:deps.workbench.attention()}}catch(err){return mappedError(err)}
+    'GET /v1/workbench/attention':async(_query,_body,caller)=>{
+      try{
+        const body=deps.workbench.attention()
+        if(!fromPhone(caller))try{deps.desktop?.notePoll((body as {progress?:Array<{id:string;phase:string}>}).progress)}catch{/* 只是记一笔 */}
+        return{status:200,body}
+      }catch(err){return mappedError(err)}
     },
     'POST /v1/workbench/input':async(_query,body)=>{
       const value=objectBody(body)
@@ -222,7 +232,7 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       }catch(error){return mappedError(error)}
     },
 
-    'GET /v1/workbench/task': async (query) => {
+    'GET /v1/workbench/task': async (query, _body, caller) => {
       const id = query.get('id')
       if (!id || !TASK_ID.test(id)) return invalid()
       if (query.getAll('since').length > 1 || query.getAll('since_cursor').length > 1 || query.getAll('wait_ms').length > 1) return invalid()
@@ -232,6 +242,8 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       const sinceCursor = cursorRaw === null ? undefined : nonNegInt(cursorRaw)
       const waitMs = waitRaw === null ? 0 : nonNegInt(waitRaw)
       if (since === null || sinceCursor === null || waitMs === null) return invalid()
+      // 桌面打开这件事(不带 since / since_cursor 的那一次读)= 在电脑上看过了(S3b)。之后挂着的长轮询不算:窗口在后台时它照样在拉
+      if (!fromPhone(caller) && since === undefined && sinceCursor === undefined) try { deps.desktop?.seen(id) } catch { /* 只是记一笔 */ }
       try {
         // 按游标(P1b,桌面新版):这件事的游标超过 since_cursor 就回;不然挂着等它前进。
         if (sinceCursor !== undefined) {

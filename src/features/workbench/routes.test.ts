@@ -393,12 +393,12 @@ describe('Workbench internal HTTP API', () => {
     removeTempDir(stateDir)
   })
 
-  async function start(initial?: ReturnType<typeof service>,resolveAdminChatId:()=>string|null=()=> 'configured-owner') {
+  async function start(initial?: ReturnType<typeof service>,resolveAdminChatId:()=>string|null=()=> 'configured-owner',desktop?:{notePoll():void;seen(id:string):void}) {
     // P3e:一件事上的动作(停下 / 批准 / 回答 / 成果 / 交给另一位 / 工作区 / 交办)是内部 API 自己的 /v1/matter/* 处理器(MattersService 那一层),
     // 这些用例照旧打桌面的 /v1/workbench/* 旧键(wire-compat.ts 的别名,同一个处理器)。生产里 MattersService 的工作台就是这一个服务。
     api = createInternalApi({ stateDir, daemonPid: 1, resolveAdminChatId, ...(initial ? { matters: makeMattersService({ store: {} as never, workbench: initial as never }) } : {}) } as never)
     // 架构终态 A5:桌面路由由 workbench 模块自己挂;没挂上 ⇒ 模块门回 503 workbench_not_wired(和搬家前一样)
-    if (initial) api.mount('workbench', workbenchRoutes({ workbench: initial as never, resolveAdminChatId }))
+    if (initial) api.mount('workbench', workbenchRoutes({ workbench: initial as never, resolveAdminChatId, ...(desktop?{desktop}:{}) }))
     const adminToken = api.mintSessionToken('admin', 'codex/default/owner')
     const guestToken = api.mintSessionToken('guest', 'codex/default/guest')
     const trustedSessionToken = api.mintSessionToken('trusted', 'codex/default/trusted')
@@ -411,6 +411,19 @@ describe('Workbench internal HTTP API', () => {
     })
     return { request, trustedToken, operatorToken, port, adminToken,guestToken,trustedSessionToken }
   }
+
+  it('桌面那一侧(S3b):attention 记「桌面 app 开着」,读一件任务的详情记「在电脑上看过」;参数不对的不记',async()=>{
+    const notePoll=vi.fn(),seen=vi.fn()
+    const {request}=await start(service({attention:vi.fn(()=>({tasks:[]})),detail:vi.fn(async()=>({task:{id:'abcdef12'}}))} as never),()=> 'configured-owner',{notePoll,seen})
+    expect((await request('/v1/workbench/attention')).status).toBe(200)
+    expect(notePoll).toHaveBeenCalledOnce()
+    await request('/v1/workbench/task?id=abcdef12')
+    expect(seen).toHaveBeenCalledWith('abcdef12')
+    await request('/v1/workbench/task?id=NOT_AN_ID')
+    await request('/v1/workbench/task?id=abcdef12&since_cursor=3&wait_ms=0')   // 打开以后挂着的长轮询不算看过(窗口在后台时它照样在拉)
+    await request('/v1/workbench/task?id=abcdef12&since=3')
+    expect(seen).toHaveBeenCalledOnce()
+  })
 
   it('reads native history only through exact admin routes with bounded query input',async()=>{
     const listNativeHistory=vi.fn(async()=>({items:[],nextCursor:null,coverage:'native_indexed_history'})),readNativeHistory=vi.fn(async()=>({messages:[],nextCursor:null}))

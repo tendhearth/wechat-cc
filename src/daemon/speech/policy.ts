@@ -28,19 +28,22 @@ export interface SpeechRequest {
   ref?: string
 }
 
+/** 账上记的通道:proactive-channel 的两条之外,还有一件事的提议里的「桌面」那一级(S3b)。 */
+export type SpeechChannel = ProactiveChannel | 'desktop'
+
 export interface SpeechLedgerEntry {
   kind: SpeechKind
   origin: SpeechOrigin
   chatId: string
   outcome: 'allowed' | 'deferred' | 'dropped' | 'failed'
   reason: string | null
-  channel: ProactiveChannel | null
+  channel: SpeechChannel | null
   ts: string
   /** 同一个事件的键(v103):带了的同一个只有一行(ledger-store.ts)。 */
   ref?: string
 }
 
-export type SpeechOutcome = ({ allow: true; channel: ProactiveChannel | null }) | Exclude<SpeechDecision, { allow: true }>
+export type SpeechOutcome = ({ allow: true; channel: SpeechChannel | null }) | Exclude<SpeechDecision, { allow: true }>
 
 export interface SpeechPolicy {
   say(req: SpeechRequest, produce: (turn: ProactiveTurn) => Promise<void>): Promise<SpeechOutcome>
@@ -69,7 +72,7 @@ export interface SpeechPolicy {
    * (report / blocking 不能丢)。`deliverable` 由调用方给:推送送不送得到是推送自己的事,跟微信断没断无关。
    * 账上的 allowed 记的是**门的判定**,不是送达:放行以后推到 0 台(没配对 / 都离线)账上照样是 allowed,送达与否看推送自己的日志(#536 评审)。
    */
-  ask(req: SpeechRequest, o: { channel: ProactiveChannel; deliverable: boolean }): SpeechOutcome
+  ask(req: SpeechRequest, o: { channel: SpeechChannel; deliverable: boolean }): SpeechOutcome
   /**
    * 只判、不记账、不开一轮(S1):要先花钱(调便宜模型挑候选)的发起方用它在花钱之前问一声「这一拍门会不会放」——
    * 免打扰 / 关心档关着就别挑了。判法和 say 同一份(decideSpeech);真要说的时候照样走 say(那一次才记账)。

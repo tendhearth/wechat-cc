@@ -53,6 +53,8 @@ export function workbenchFeature(o: {
   deps: (ctx: ModuleCtx) => WireWorkbenchDeps
   /** 交办入口的主人(路由里的 entry context);以前经 InternalApiDeps.resolveAdminChatId。 */
   resolveAdminChatId: () => string | null
+  /** 桌面 app 开着没有 / 在电脑上看过哪件(S3b,路由记;一件事的提议读)。 */
+  desktop?: import('./routes').WorkbenchRoutesDeps['desktop']
 }): DaemonModule<WorkbenchService> {
   return {
     name: 'workbench',
@@ -66,12 +68,12 @@ export function workbenchFeature(o: {
       // 手机令牌读原生会话(P3c-4,以前在 wire-settings-panel.ts):单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
       const phoneSessions = phoneSessionsOf(service)
       internalApi.mount('workbench', workbenchRoutes({
-        workbench: service, resolveAdminChatId: o.resolveAdminChatId,
+        workbench: service, resolveAdminChatId: o.resolveAdminChatId, ...(o.desktop ? { desktop: o.desktop } : {}),
         // 执行者叫什么(收敛清单 ⑥):唯一出处 registry
         phoneSessions: { sessions: phoneSessions, executorName: (id: string) => deps.boot.registry.namesOf(id).name },
       }))
       // GET /v1/matters 的「已暂停(网络未受保护)」标记:internal-api 只留这一个窄口
-      internalApi.provide({ workbenchSuspended: () => service.networkSuspended() })
+      internalApi.provide({ workbenchSuspended: () => service.networkSuspended(), ...(o.desktop ? { desktopSeen: o.desktop.seen } : {}) })
       return service
     },
   }

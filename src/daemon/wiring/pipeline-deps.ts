@@ -490,6 +490,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const phone = wirePhone({
     opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore,
     ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, speech,
+    ...(opts.proposals ? { proposals: opts.proposals } : {}),
   })
   phoneDevices.current = () => phone.settingsPanel.phoneDevices().length
   const { appPush, companionApp, phoneChat, settingsPanel } = phone

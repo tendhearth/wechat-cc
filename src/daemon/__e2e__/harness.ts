@@ -85,6 +85,13 @@ export interface TestDaemonOpts {
   recordCursorSpawnOptions?: (options: Record<string, unknown>) => void
   /** 「待说」补说那一拍的间隔(ms;缺省生产的 5 分钟)。看补说 / 退避的场景设成几百毫秒。 */
   speechFlushIntervalMs?: number
+  /**
+   * 本机空闲秒数(S3b 一件事的提议判「人在不在电脑前」)。缺省 = 探不到(null ⇒ 当作不在)—— 测试从不去探跑测试那台机器的
+   * 真键鼠,结果不随谁在用电脑变。
+   */
+  machineIdleS?: number | null
+  /** 先只在桌面提示以后,多久没看推 App(ms;缺省生产的 10 分钟)。 */
+  escalateAfterMs?: number
   /** 开机前就让 sendmessage 失败(断线开机):开机那几句通知走的就是「发不出去」那条路。之后 `ilink.succeedSendMessage()` 恢复。 */
   ilinkFailSendMessage?: { errcode?: number; errmsg?: string }
   /** preset companion config — default: disabled */
@@ -298,7 +305,8 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // 7. Boot daemon via exported bootDaemon — no SIGTERM needed for shutdown.
   // NOTE: import is dynamic so vi.mock has time to register before SDK loads.
   const { bootDaemon } = await import('../main')
-  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}) })
+  // 一件事的提议(S3b)判「人在不在电脑前」、自己弹桌面通知:测试里不去探跑测试那台机器的真键鼠、也不真弹系统通知
+  const daemonHandle = await bootDaemon({ stateDir, dangerously: opts.dangerously ?? false, ...(opts.speechFlushIntervalMs !== undefined ? { speechFlushIntervalMs: opts.speechFlushIntervalMs } : {}), machineIdle: async () => opts.machineIdleS ?? null, desktopNotify: async () => true, ...(opts.escalateAfterMs !== undefined ? { escalateAfterMs: opts.escalateAfterMs } : {}) })
 
   // Give polling loop a moment to spin up.
   await new Promise(r => setTimeout(r, 50))

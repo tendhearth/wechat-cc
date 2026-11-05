@@ -7,6 +7,7 @@
  *
  * 这里失败(锁抢不到、库打不开、access.json 坏了)⇒ 抛;`undo` 里登记的按倒序放掉(main.ts 的 bootDaemon 负责)。
  */
+import { makeDesktopSurface } from './desktop-surface'
 import { makeMemoryFactsStore } from '../adapters/store/memory-facts'
 import { join } from 'node:path'
 import { acquireInstanceLockWaitingForShutdown, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS, LOCK_WAIT_FOR_SHUTDOWN_MS } from './single-instance'
@@ -170,6 +171,8 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     journal: makeJournal(db),
     // 子系统状态的汇总处:模块容器整组交给它收养,/v1/health.subsystems 读它。
     sup: new SubsystemSupervisor((t, l) => log(t, l)),
+    // 桌面 app 开着没有(S3b):工作台的 attention 路由记一笔,一件事的提议读它决定桌面那一级由谁弹
+    desktopSurface: makeDesktopSurface(),
   }
 }
 
@@ -178,6 +181,11 @@ export type Foundation = Awaited<ReturnType<typeof openFoundation>> & {
   schedulerIntervalMs?: number
   /** 测试缝:「待说」补说那一拍的间隔(main.ts BootDaemonOpts.speechFlushIntervalMs)。 */
   speechFlushIntervalMs?: number
+  /** 测试缝(S3b):本机空闲秒数的探针(缺省 lib/machine-idle)与「先只在桌面提示」之后推 App 的等待(缺省 10 分钟)。 */
+  machineIdle?: () => Promise<number | null>
+  escalateAfterMs?: number
+  /** 测试缝(S3b):daemon 自己弹的桌面系统通知(缺省 lib/desktop-notify;测试里不真弹)。 */
+  desktopNotify?: (title: string, body: string) => Promise<boolean>
   /** daemon 自己要求的优雅重启(运维 POST /v1/daemon/restart、空闲加载新代码 ……)。 */
   requestRestart(reason: string): void
 }

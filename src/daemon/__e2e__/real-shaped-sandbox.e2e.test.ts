@@ -103,7 +103,7 @@ const codexScript: FakeSdkScript = {
     return { toolCalls: [], finalText: 'Codex 在。' }
   },
 }
-const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs'> = {}) => startRealShapedDaemon({
+const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'machineIdleS' | 'escalateAfterMs'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
   recordClaudeSpawnOptions: (o) => { spawnOptions.push(o) },
@@ -128,7 +128,7 @@ let d: RealShapedDaemon
  * S2 那几条的起点(关机时写死,不靠上一条留下的):主人的免打扰开(盖住此刻,主人时区)/ 关、配没配一台手机、
  * 待发队列清空(keepPending 的除外 —— 「压着时重启」要的就是它)。然后照真机重启,「待说」那一拍 200ms。
  */
-async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: boolean; beforeBoot?: (stateDir: string) => void }): Promise<string> {
+async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: boolean; beforeBoot?: (stateDir: string) => void; atDesk?: boolean }): Promise<string> {
   const stateDir = d.stateDir
   await d.stop({ keepState: true })
   // 免打扰:chat_prefs.json 一个对话一行(值是 JSON 字符串),daemon 开机读一次
@@ -150,7 +150,8 @@ async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: bo
     try { db.exec('DELETE FROM speech_pending') } finally { db.close() }
   }
   o.beforeBoot?.(stateDir)
-  d = await boot({ stateDir, speechFlushIntervalMs: 200 })
+  // 人在不在电脑前(S3b):缺省探不到 = 不在;atDesk ⇒ 本机 5 秒前刚有键鼠输入,「先只在桌面提示」之后 2 秒就推 App(生产 10 分钟)
+  d = await boot({ stateDir, speechFlushIntervalMs: 200, ...(o.atDesk ? { machineIdleS: 5, escalateAfterMs: 2_000 } : {}) })
   expect(await d.moduleProblems()).toEqual([])
   if (o.phone) await expect.poll(() => d.phoneRelay.controls().some(c => (c.push_reg as { device?: string } | undefined)?.device === PHONE_ID), { timeout: 15_000 }).toBe(true)
   return stateDir
@@ -565,5 +566,46 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(() => rows().filter(r => r.ref?.startsWith(`ask:${asking}:`)), { timeout: 15_000 })
       .toEqual([{ kind: 'permission_ask', ref: expect.stringMatching(new RegExp(`^ask:${asking}:`)), outcome: 'allowed', channel: expect.stringMatching(/^(app\+wechat|wechat\+app)$/) }])
     expect(rows().filter(r => r.kind === 'permission_ask')).toHaveLength(1)
+  })
+
+  // S3b(一件事一次提议;主人点头的「任务做完时人在电脑前 ⇒ 先只在桌面提示,10 分钟没看再推手机」):沙盒里 10 分钟缩成 2 秒。
+  // 桌面 app 开着(这里每拍拉一次 attention,和桌面一样)⇒ 桌面那一级由它自己弹,daemon 不另弹(沙盒里也就不会真弹系统通知)。
+  // 这里**不**用 GET /v1/workbench/task 等状态 —— 桌面读详情就算「在电脑上看过了」;等状态看 attention 里的 progress。
+  // win32 不跑:要 Codex 在工作台里做完一件事 —— 同上。
+  it.skipIf(process.platform === 'win32')('owner at the desk: a finished task is shown on the desktop only; the App push waits, goes out once when nobody looked (one ledger row: desktop+app), and never goes out when the owner opened it on the desktop', async () => {
+    await rebootForS2({ quiet: false, phone: true, atDesk: true })
+    const since = Date.now()
+    const phaseOf = async (taskId: string) => (await desktop<{ progress?: Array<{ id: string; phase: string }> }>('GET', '/v1/workbench/attention')).body.progress?.find(p => p.id === taskId)?.phase
+    d.sendText(d.owner, '任务 项目')
+    const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    const dispatch = async (n: number, what: string) => {
+      d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex ${what}`)
+      const ack = await d.waitForOutbound(m => texts(m, d.owner).filter(t => t.startsWith('已接下这件事')).length >= n, 15_000)
+      const id = texts(ack, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
+      await expect.poll(() => phaseOf(id), { timeout: 30_000 }).toBe('replied')
+      return id
+    }
+    const row = (taskId: string) => d.query<{ ref: string; outcome: string; channel: string | null }>("SELECT ref, outcome, channel FROM speech_log WHERE at >= ? AND ref LIKE ?", since, `turn:${taskId}:%`)
+
+    // 没人看:做完那一刻只在桌面(账上一行,通道 desktop),App 那一条在 speech_pending 里等;2 秒后推一次,账还是那一行(desktop+app)
+    const unseen = await dispatch(1, '再写一份笔记')
+    await expect.poll(() => row(unseen).map(r => r.channel), { timeout: 15_000 }).toEqual(['desktop'])
+    expect(pushesFor(unseen)).toEqual([])
+    expect(d.query("SELECT 1 FROM speech_pending WHERE lane = 'push' AND ref LIKE ?", `later:task_done:${unseen}%`)).toHaveLength(1)
+    await expect.poll(() => pushesFor(unseen).length, { timeout: 15_000 }).toBe(1)
+    await expect.poll(() => row(unseen), { timeout: 5_000 }).toEqual([{ ref: expect.stringMatching(new RegExp(`^turn:${unseen}:\\d+$`)), outcome: 'allowed', channel: 'desktop+app' }])
+    await expect.poll(() => d.query("SELECT 1 FROM speech_pending WHERE lane = 'push'"), { timeout: 5_000 }).toEqual([])   // 推完才删
+
+    // 在桌面上打开看了(桌面读这件事的详情):到点不推,等着的那一条清掉;账一行,通道只有 desktop
+    const seen = await dispatch(2, '写第三份笔记')
+    await expect.poll(() => row(seen).map(r => r.channel), { timeout: 15_000 }).toEqual(['desktop'])
+    expect((await desktop('GET', `/v1/matter?id=${seen}`)).status).toBe(200)
+    await expect.poll(() => d.log().some(l => new RegExp(`push not escalated — seen on desktop \\(later:task_done:${seen}`).test(l)), { timeout: 15_000 }).toBe(true)
+    expect(d.query("SELECT 1 FROM speech_pending WHERE lane = 'push'")).toEqual([])
+    await new Promise(r => setTimeout(r, 1_000))
+    expect(pushesFor(seen)).toEqual([])
+    expect(row(seen).map(r => r.channel)).toEqual(['desktop'])
+    expect(pushesFor(unseen)).toHaveLength(1)
   })
 })

@@ -12,6 +12,7 @@
  * 权限同理但压得短。发送失败只记日志、丢弃 —— 断线不重试。
  */
 
+import { PRESENT_IDLE_S } from '../lib/owner-presence'
 import { cliSourceLabel } from '../domain/cli-session-digest'
 import { sortCliSessionViews, toCliSessionView } from '../domain/cli-session-view'
 import { stripMarkdown, summarizeOneLine as oneLine } from '../domain/one-line'
@@ -56,8 +57,8 @@ export const MAX_TRACKED_SESSIONS = 64
 export const MIN_TURN_MS = 90_000
 /** 最近这么久内敲过 prompt ⇒ 在场(没有空闲秒数时的副信号)。 */
 export const PRESENT_WINDOW_MS = 180_000
-/** 机器上次键鼠输入距今不足这么多秒 ⇒ 有人在用这台电脑。 */
-export const PRESENT_IDLE_S = 120
+/** 机器上次键鼠输入距今不足这么多秒 ⇒ 有人在用这台电脑(和一件事的提议同一个阈值,lib/owner-presence.ts)。 */
+export { PRESENT_IDLE_S }
 /** hook 报来的空闲秒数多久内算新鲜。 */
 export const IDLE_FRESH_MS = 5 * 60_000
 /** 刚在微信里问过这条会话的权限(卡片就是通知)⇒ 这段时间内的「等你批准」提醒不重复推。 */
