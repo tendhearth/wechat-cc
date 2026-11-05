@@ -648,7 +648,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
           .sort((a,b)=>b.updatedAt-a.updatedAt)
         // 有「一件事」登记处时以它为准:候选就是"最近动过的事",顺序也是它的顺序;任务详情仍从工作台取。
         const ordered=opts.matters
-          ?(()=>{const byId=new Map(tasks.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',statuses:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
+          ?(()=>{const byId=new Map(tasks.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',legacy:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
           :tasks
         return ordered.map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
       },

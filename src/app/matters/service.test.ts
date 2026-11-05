@@ -13,7 +13,7 @@ const TASK={id:'deadbeef',title:'整理周报',status:'running',phase:'replied',
 
 describe('matters service',()=>{
   it('details a task matter with its workbench view and recent events, and says into it via continueTask',async()=>{
-    store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'});store.bind('deadbeef','wechat','owner');store.setStatus('deadbeef','replied')
+    store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'});store.bind('deadbeef','wechat','owner');store.setLifecycle('deadbeef','done')
     let task=TASK
     const workbench={detail:vi.fn(()=>({task,events:[{kind:'text',text:'做好了',createdAt:3}]})),continueTask:vi.fn(()=>(task={...TASK,phase:'working'}))}
     const service=makeMattersService({store,workbench})
@@ -22,7 +22,8 @@ describe('matters service',()=>{
     expect(detail.bindings.map(b=>b.surface)).toEqual(['wechat']);expect(detail.sessions).toEqual([])
     await expect(service.say('deadbeef','再改一版')).resolves.toEqual({kind:'task',task:{...TASK,phase:'working'}})
     expect(workbench.continueTask).toHaveBeenCalledWith('deadbeef','再改一版')
-    expect(store.get('deadbeef')?.status).toBe('open')
+    expect(store.legacyStatuses(['deadbeef']).get('deadbeef')).toBe('open')
+    expect(store.get('deadbeef')?.state).toBe('open')
   })
 
   it('says into the owner chat matter through the app conversation channel (with the surface), shows the shared message stream, and refuses other chats',async()=>{

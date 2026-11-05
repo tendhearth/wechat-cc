@@ -20,9 +20,13 @@
  */
 import { TERMINAL_TASK_STATUSES } from '../../adapters/store/workbench/store'
 import type { WorkbenchService } from '../workbench'
-import type { MatterStore } from '../../ports/matters'
+import type { Matter, MatterStore } from '../../ports/matters'
+import { legacyStatus } from '../../domain/matters/legacy-status'
 import type { HomePayload } from './settings-panel'
 import { makePhoneEvents, type PhoneEvents, type TopicSource } from './phone-events'
+
+/** 非任务那件事主题帧的 phase = 线上旧 status(wire-compat.ts 最后一行;非任务只有 archived / open,不看轮与步)。 */
+const nonTaskPhase = (m: Matter) => legacyStatus({ kind: m.kind, state: m.state ?? 'open', archivedAt: m.archivedAt ?? null, latestTurn: null, latestReady: false })
 import type { WriteHint } from '../../lib/write-hints'
 
 /** 来源用得到的工作台面(结构化类型,测试可给假的)。 */
@@ -86,10 +90,9 @@ export function makePhoneTopicSources(deps: PhoneTopicSourceDeps): TopicSource[]
         let latest: number | null = null
         if (m.ownerChatId) { try { latest = await deps.chat.latestAt(m.ownerChatId) } catch { latest = null } }
         const version = Math.max(m.updatedAt, latest !== null && Number.isFinite(latest) ? latest : 0)
-        return { found: true, kind: m.kind, version, phase: deps.chat.pendingMatter() === id ? 'working' : m.status }
+        return { found: true, kind: m.kind, version, phase: deps.chat.pendingMatter() === id ? 'working' : nonTaskPhase(m) }
       }
-      // 非任务的 phase = 旧 status,M6b 起由 store 现算(domain/matters/legacy-status.ts),不再读列;冻结字段见 wire-compat.ts。
-      return { found: true, kind: m.kind, version: m.updatedAt, phase: m.status }
+      return { found: true, kind: m.kind, version: m.updatedAt, phase: nonTaskPhase(m) }
     },
   }
 

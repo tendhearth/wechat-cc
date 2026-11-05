@@ -1,4 +1,5 @@
-import type { ListMatters, Matter, MatterKind, MatterStatus, MatterSurface } from '../../ports/matters'
+import type { ListMatters, MatterKind, MatterSurface } from '../../ports/matters'
+import { LEGACY_MATTER_STATUSES, type LegacyMatterStatus, type WireMatter } from '../../domain/matters/legacy-status'
 import type { MatterSayInput } from '../../app/matters/service'
 import {MATTER_KINDS} from '@wechat-cc/protocol'
 import {framedTooLargeFor,withoutOldNarrationFor,withoutReplyExtras} from '../../domain/matters/phone-scope'
@@ -18,7 +19,7 @@ import type {InternalApiDeps,RouteHandler,RouteTable} from './types'
  */
 const ID=/^[a-f0-9]{8}$/
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
-const KINDS=new Set<string>(MATTER_KINDS),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli'])
+const KINDS=new Set<string>(MATTER_KINDS),STATUSES=new Set<string>(LEGACY_MATTER_STATUSES),SURFACES=new Set<string>(['wechat','desktop','phone','cli'])
 const invalid=()=>({status:400,body:{error:'invalid_request'}})
 const known=(message:string)=>/^(invalid_|matter_|workbench_|chat_)/.test(message)
 type Caller=Parameters<RouteHandler>[2]
@@ -77,12 +78,12 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       const filtering=phone||drop.size>0
       const filter:ListMatters={
         ...(kind!==null?{kind:kind as MatterKind}:{}),
-        ...(status!==null?{statuses:status.split(',') as MatterStatus[]}:{}),
+        ...(status!==null?{legacy:status.split(',') as LegacyMatterStatus[]}:{}),
         ...(since!==null?{since:Number(since)}:{}),
         ...(filtering?{limit:FILTER_FETCH}:limit!==null?{limit:Number(limit)}:{}),
         ...(surface!==null?{surface:surface as MatterSurface}:{}),
       }
-      let rows:Matter[]=service.list(filter)
+      let rows:WireMatter[]=service.list(filter)
       if(filtering){
         // 手机令牌:别人的聊天 matter(updated_at 会被微信入站推高)不给,也不挤掉任务
         rows=rows.filter(m=>(!phone||service.phoneMayOpen(m))&&!drop.has(m.kind))

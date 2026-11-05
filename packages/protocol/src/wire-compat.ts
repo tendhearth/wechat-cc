@@ -19,9 +19,9 @@ export interface WireCompatRow {
 export const WIRE_COMPAT: readonly WireCompatRow[] = Object.freeze([
   {
     field: 'Matter.status',
-    readers: ['app', 'web'],
-    derivedFrom: 'matters.state + archived_at + 最近一轮 matter_turns.status(任务再看 workbench_tasks.status;replied 这一位还读 matters.status 列,M6e 前换成步):src/domain/matters/legacy-status.ts',
-    retireWhen: '近 30 天连过的设备都 ≥ 改读 Matter.state / archivedAt 的 App 构建(M6f);手机网页改读(M6e)',
+    readers: ['app'],
+    derivedFrom: 'matters.state + archived_at + 最近一轮 matter_turns.status + 最近一轮上的 ready 步(任务再看 workbench_tasks.status;matters.status 列 v102 已删):src/domain/matters/legacy-status.ts 的 legacyStatus,出口经 wireMatter 插回原位(MattersService.list / detail)。手机网页 M6e 起改读 state / archivedAt(和 daemon 一起部署,退回它只为老 daemon);列表的 ?status= 筛选参数照收',
+    retireWhen: '近 30 天连过的设备都 ≥ 改读 Matter.state / archivedAt 的 App 构建(M6f)',
   },
   {
     field: 'MatterDetail.events(MatterEvent)',

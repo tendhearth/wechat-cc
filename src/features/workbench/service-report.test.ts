@@ -80,7 +80,7 @@ it('答复静下来那一拍,调用 reports.enqueue(taskId)',async()=>{
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   expect(enqueued).toEqual([receipt.taskId])
   // 正常路径不留痕。
   expect(logs).toEqual([])
@@ -92,7 +92,7 @@ it('reports.enqueue 抛错只落日志,不进 matterSync,不影响答复状态',
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   expect(enqueued).toEqual([receipt.taskId])
   await expect.poll(()=>logs.length).toBeGreaterThan(0)
   expect(logs.some(([,line])=>line.includes(receipt.taskId)&&line.includes('outbox_write_failed'))).toBe(true)
@@ -103,7 +103,7 @@ it('没有出生地的事(桌面亲手派的)照样入队 —— 该不该报是
   const task=service.create({path:project,providerId:'claude',text:'手动派的'})
   await expect.poll(()=>matters.sessions(task.id)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(task.id)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([task.id]).get(task.id)).toBe('replied')
   expect(enqueued).toEqual([task.id])
 })
 
@@ -118,7 +118,7 @@ it('主人续接开新一轮:连续两轮各报一条(即便两轮之间快照�
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   expect(enqueued).toEqual([receipt.taskId])
   const runId=service.detail(receipt.taskId).runId!
   await service.submitInput(receipt.taskId,{runId,requestId:randomUUID(),text:'再改一下'})
@@ -174,7 +174,7 @@ it('非 retained 的执行者永不经过 replied(isReplied 要求 snapshot.reta
     registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink()})
   const projectId=service.projects()[0]!.id
   const receipt=createTaskFromChat(projectId)
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
   expect(enqueued).toEqual([receipt.taskId])
 })
 
@@ -207,7 +207,7 @@ it('非 retained 执行者(微信交办、有出生地)completed:stageFinishedNo
     registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink()})
   const projectId=service.projects()[0]!.id
   const receipt=createTaskFromChat(projectId)
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
   expect(enqueued).toEqual([receipt.taskId]) // 回报确实入队了(有出生地)
   const notices=wbStore.wechatNotifications.list(receipt.taskId)
   expect(notices.some(n=>n.kind==='completed')).toBe(false) // 通知被压——不重叠外发
@@ -249,7 +249,7 @@ it('retained 执行者:settleQuiet 已经报过这一轮,idle 自动收工变 co
   // 不提交新输入,靠 retainedIdleCloseMs 空转到点,armIdleClose 到期自动收工
   // ——那一刻 status 是 completed(closedWhileReplied),reportOnce 因为
   // turnSeq 没变而是 no-op。
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
   expect(enqueued).toEqual([receipt.taskId]) // 终态那一拍没有再入队第二条(reportOnce no-op)
   const notices=wbStore.wechatNotifications.list(receipt.taskId)
   expect(notices.some(n=>n.kind==='completed')).toBe(true) // 通知原样保留——Important②a 修正的地方
@@ -283,7 +283,7 @@ it('桌面亲手派的任务(没有出生地):reportOnce 调了但不会真的�
   // 主人事后在微信里对这条(桌面派的)任务说过「提醒我」——这条任务依然
   // 没有出生地(不是从聊天交办的),但确实订阅了完成通知。
   service.setWechatWatch(task.id,'acct-1',true)
-  await expect.poll(()=>matters.get(task.id)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([task.id]).get(task.id)).toBe('done')
   expect(enqueued).toEqual([task.id]) // reportOnce 照样调了——该不该报是 renderReport 的事
   const notices=wbStore.wechatNotifications.list(task.id)
   expect(notices.some(n=>n.kind==='completed')).toBe(true) // 通知没被压
@@ -307,7 +307,7 @@ it('非 retained 的执行者以 failed 终态收尾时不入队(评审修复轮
   const projectId=service.projects()[0]!.id
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>service.detail(receipt.taskId).task.status).toBe('failed')
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done') // matter 侧照样落到 done(失败也是终态)
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done') // matter 侧照样落到 done(失败也是终态)
   expect(enqueued).toEqual([]) // 但不该被当成「已答复」报给主人
 })
 
@@ -317,7 +317,7 @@ it('没有 opts.reports 时(老接线),什么都不做,不报错',async()=>{
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   expect(enqueued).toEqual([])
   expect(logs).toEqual([])
 })

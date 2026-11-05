@@ -2,7 +2,7 @@
  * 一件事的轮与步只有一个写口(设计稿 docs/superpowers/specs/2026-10-31-one-companion-one-skeleton-design.md §3.1、M1):
  * `matter_turns` / `matter_items` / `matter_log_cursor` 的 INSERT / UPDATE / DELETE 只许出现在 src/adapters/store/matter-log.ts
  * (建表在迁移里,另有 schema-ddl 守卫管)。基线 0。只扫生产代码(排除 *.test.ts 与 __e2e__/);注释行按行跳。
- * 状态也一样:matters.state 只有 matter-log.ts 推 working / waiting;旧 setStatus 只碰做完 / 重开那半边(matters-store.ts)。
+ * 状态也一样:matters.state 只有 matter-log.ts 推 working / waiting;setLifecycle(以前的 setStatus)只碰做完 / 重开那半边(matters-store.ts)。
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'

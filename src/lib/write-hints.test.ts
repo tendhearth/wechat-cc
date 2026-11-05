@@ -82,7 +82,7 @@ describe('写口', () => {
     const store = makeMatterStore(db)
     const m = store.create({ id: 'cccc0001', kind: 'chat', title: '闲聊' })
     await tick()
-    store.setStatus(m.id, 'replied'); await tick()
+    store.setLifecycle(m.id, 'open'); await tick()
     store.rename(m.id, '新名字'); await tick()
     store.touch(m.id); await tick()
     expect(got).toEqual(Array(4).fill({ kind: 'matter', matterId: 'cccc0001' }))

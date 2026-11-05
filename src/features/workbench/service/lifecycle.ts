@@ -13,7 +13,7 @@
  */
 import { findPathBlocker } from '../../../adapters/workbench/scheduler'
 import { publicTask } from '../../../adapters/store/workbench/store'
-import { legacyTaskStatus } from '../../../domain/matters/legacy-status'
+import { taskLifecycle } from '../../../domain/matters/legacy-status'
 import type { Active } from './state'
 import type { WorkbenchTaskView } from './types'
 import type { ServiceCtx } from './ctx'
@@ -170,8 +170,9 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     if (!snapshot?.retained||snapshot.foreground!=='idle'||snapshot.backgroundCount!==0) return
     collectTurnArtifacts(running)
     if (!quiet(running)) return
-    matterSync(m=>m.setStatus(running.taskId,'replied'))
-    // M6e 双写:同一份「答完了、闲着」也落成这件事最近一轮上的一步(ready:<turnId>,幂等;主人看不见)。删列之后旧 status 读它。
+    // 取消归档、结局清回 open(以前写 replied 列的那一处;v102 删列后 replied 只看下面那一步)
+    matterSync(m=>m.setLifecycle(running.taskId,'open'))
+    // 「答完了、闲着」落成这件事最近一轮上的一步(ready:<turnId>,幂等;主人看不见)。线上旧 status 的 replied 读它(M6e)。
     try { store.markReady(running.taskId) } catch (err) { ctx.log?.('MATTER_READY',`markReady failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
     reportOnce(running)
     // 回忆(task-5,fix round 3,评审必判①):不在这里调 recollectOnce 了——
@@ -331,7 +332,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
       state.runningText.delete(running.identity)
       try {
         store.atomic(()=>{try{store.execution.endRun(running.taskId,running.identity,'cancelled')}catch{/* 只少一轮的结局 */};store.update(running.taskId,'cancelled');stageFinishedNotice(running,'cancelled')})
-        matterSync(m=>m.setStatus(running.taskId,'done'))
+        matterSync(m=>m.setLifecycle(running.taskId,'done'))
         publishFinishedNotices()
       } catch { /* in-memory cancellation still must settle */ }
       running.publicFinished=true; running.resolveDone()
@@ -431,7 +432,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     const view=taskView(publicTask(store.setArchived(id,archived)))
     // store.setArchived 是裸 UPDATE,不像别的写点那样自带 bump —— archivedAt 在 detail 里能看见,补一下。
     ctx.hub.bumped(id)
-    matterSync(m=>m.setStatus(id,legacyTaskStatus({archived,status:view.status,replied:view.phase==='replied'})))
+    matterSync(m=>m.setLifecycle(id,taskLifecycle({archived,status:view.status})))
     return view
   }
   async function cancel(id:string,expectedRunId?:string):Promise<WorkbenchTaskView> {

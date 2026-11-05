@@ -121,7 +121,7 @@ describe('adoptNativeSession:接成一件事',()=>{
     expect(one.created).toBe(true);expect(f.spawn).not.toHaveBeenCalled()
     const task=f.store.get(one.taskId)
     expect(task.sessionId).toBe('original');expect(task.status).toBe('interrupted');expect(f.store.source(one.taskId)?.firstDispatchedAt).toBeNull()
-    expect(matters.get(one.taskId)).toMatchObject({id:one.taskId,kind:'task',title:'Original task',projectPath:f.project,ownerChatId:'owner',status:'open'})
+    expect(matters.get(one.taskId)).toMatchObject({id:one.taskId,kind:'task',title:'Original task',projectPath:f.project,ownerChatId:'owner'});expect(matters.legacyStatuses([one.taskId]).get(one.taskId)).toBe('open')
     expect(matters.bindings(one.taskId).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner']])
     // 出生地(2026-10-19):从终端会话接过来的 ⇒ cli(手机按的「接着做」只是露面,不是出生地)
     expect(matters.get(one.taskId)?.origin).toBe('cli')
