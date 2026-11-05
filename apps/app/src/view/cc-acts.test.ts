@@ -127,3 +127,12 @@ describe('actTimeline(详情页:一轮一段,步一行一句)', () => {
     expect(s('x', 'whatever')).toBeNull()
   })
 })
+
+it('M6f act archive filtering prefers explicit archivedAt and falls back only when absent', () => {
+  expect(ccActsView([
+    act('hidden', 'letters', turn(), { state: 'done', archivedAt: 0 }),
+    act('shown', 'brief', turn(), { status: 'archived', state: 'done', archivedAt: null }),
+    act('old-hidden', 'memory', turn(), { status: 'archived' }),
+    act('old-shown', 'hunt', turn()),
+  ], NOW, 'zh-Hans').rows.map(r => r.id)).toEqual(['shown', 'old-shown'])
+})

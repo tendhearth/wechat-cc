@@ -79,7 +79,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const cliGet = (id: string) => { const r = cli.find(x => x.session_id === id); if (!r) throw new BackendError('not_found'); return r }
 
   function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number, agents?: string[]): MatterT {
-    return { id, kind, title, projectPath: path, status, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts, ...(agents ? { agents } : {}) }
+    return { id, kind, title, projectPath: path, status, state: status === 'open' ? 'working' : 'done', archivedAt: status === 'archived' ? ts : null, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts, ...(agents ? { agents } : {}) }
   }
   function mkDetail(m: MatterT, task: MatterDetailT['task'], extra: Partial<MatterDetailT> = {}): MatterDetailT {
     return { matter: m, bindings: [], sessions: [], task, events: [], permissions: [], questions: [], artifacts: [], inputs: [], ...extra }
@@ -187,7 +187,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
 
   // ---- 快照与订阅 ----
   const list = () => order.map(id => entries.get(id)!)
-  const phaseOf = (e: Entry) => e.detail.task?.phase ?? (e.detail.matter.status === 'replied' ? 'replied' : 'working')
+  const phaseOf = (e: Entry) => e.detail.task?.phase ?? ((e.detail.matter.state === undefined ? e.detail.matter.status === 'replied' : e.detail.matter.state === 'done') ? 'replied' : 'working')
   function snapshot(topic: Topic): unknown {
     if (topic === 'approvals') {
       return list().flatMap(e => [
@@ -209,7 +209,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     }
     const id = topic.slice('matter/'.length)
     const e = entries.get(id)
-    if (e && id === CHAT_ID) return { found: true, kind: 'chat', version: e.version, phase: chatPending ? 'working' : e.detail.matter.status }
+    if (e && id === CHAT_ID) return { found: true, kind: 'chat', version: e.version, phase: chatPending ? 'working' : e.detail.matter.state === undefined ? e.detail.matter.status : 'open' }
     return e ? { found: true, kind: e.detail.matter.kind, version: e.version, phase: phaseOf(e) } : { found: false }
   }
   /** 演示里 CC 在干什么:有执行者正在写 ⇒ working,否则 idle(不演别的状态)。 */
@@ -231,7 +231,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   }
   function touch(e: Entry, patch: { phase?: string; status?: MatterT['status'] }) {
     const ts = now()
-    e.detail.matter = { ...e.detail.matter, updatedAt: ts, ...(patch.status ? { status: patch.status } : {}) }
+    e.detail.matter = { ...e.detail.matter, updatedAt: ts, ...(patch.status ? { status: patch.status, state: patch.status === 'open' ? 'working' : 'done', archivedAt: patch.status === 'archived' ? ts : null } : {}) }
     if (e.detail.task) {
       const phase = patch.phase ?? e.detail.task.phase
       e.detail.task = { ...e.detail.task, updatedAt: ts, phase, status: phase === 'working' ? 'running' : 'completed' }

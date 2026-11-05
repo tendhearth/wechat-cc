@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { makeProtocolClient, type ProtocolSocket } from '@wechat-cc/protocol'
+import { makeProtocolClient, WIRE_ROUTE_ALIASES, type ProtocolSocket } from '@wechat-cc/protocol'
 import { openDb, type Db } from '../../lib/db'
 import { removeTempDir } from '../../lib/test-temp'
 import { createProviderRegistry } from '../../app/provider-registry'
@@ -178,8 +178,10 @@ beforeEach(async () => {
     activeLinkToken: () => panel.activeLinkToken(),
     handleRequest: async req => {
       const key = `${req.method} ${new URL(req.url).pathname}`
-      handled.push(key)
-      const hold = holds.get(key)
+      // Keep fixture observations in the legacy vocabulary for either wire route.
+      const fixtureKey = WIRE_ROUTE_ALIASES.find(alias => alias.to === key)?.from ?? key
+      handled.push(fixtureKey)
+      const hold = holds.get(fixtureKey)
       if (hold) await hold.wait
       return panel.handleRequest(req)
     },

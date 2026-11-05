@@ -158,7 +158,7 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
         // 只带码一样的原始码(不带消息原文:路径之类漏不出去 —— 虽然 cause 本来就不出面板)
         const cause=error instanceof Error&&/^[a-z][a-z0-9_]{0,63}$/.test(message)?{cause:message}:{}
         if(message==='matter_not_found')return {status:404,body:{error:message},...cause}
-        if(message==='workbench_busy'||message==='reply_sink_busy')return {status:409,body:{error:message},...cause}
+        if(message==='workbench_busy'||message==='reply_sink_busy'||message==='input_conflict'||message==='input_stale'||message==='input_delivery_busy')return {status:409,body:{error:message},...cause}
         return known(message)?{status:400,body:{error:message},...cause}:{status:500,body:{error:'internal'},...cause}
       }
     },

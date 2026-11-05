@@ -13,6 +13,7 @@
  * 查询串的拼法与搬家前逐字一致:按给的顺序、`undefined` 的不带;字符串 `encodeURIComponent`,数字原样。
  * 前缀路由(贴纸一族,键以 `/` 结尾)多一个 `suffix`,编码后接在路径后面。拼法和桌面(`desktop-calls.ts`)共用 `calls.ts`。
  */
+import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import type { PhoneApiKey, PhoneApiOk } from './api'
 import { callRequest, callSpec, makeApi, t, type CallArgs, type CallRequest, type CallSpec, type LooseCallArgs } from './calls'
 
@@ -138,7 +139,7 @@ export function phoneCallRequest<S extends PhoneCallSpec>(spec: S, args?: PhoneC
 }
 
 /** 给协议客户端(`ProtocolClient.request`)的形状:有正文 ⇒ JSON 序列化 + content-type。 */
-export function toProtocolRequest(r: PhoneCallRequest): { method: 'GET' | 'POST'; path: string; body?: string; headers?: Record<string, string>; retry?: boolean } {
+export function toProtocolRequest(r: CallRequest): { method: 'GET' | 'POST'; path: string; body?: string; headers?: Record<string, string>; retry?: boolean } {
   return {
     method: r.method, path: r.path,
     ...(r.body !== undefined ? { body: JSON.stringify(r.body), headers: { 'content-type': 'application/json' } } : {}),
@@ -149,4 +150,23 @@ export function toProtocolRequest(r: PhoneCallRequest): { method: 'GET' | 'POST'
 /** 类型化客户端:`api.matters.list()`、`api.matters.get({ query: { id } })` …,底下是可换的传输。 */
 export function makePhoneApi(send: PhoneTransport): PhoneApi {
   return makeApi(PHONE_CALLS, send as (req: CallRequest) => Promise<unknown>) as PhoneApi
+}
+
+/** Select the whole route family from ServerHello, preserving query and prefix suffix bytes. */
+export function phoneRouteRequest(req: PhoneCallRequest, routes?: 'v1'): CallRequest {
+  if (routes !== 'v1') return req
+  const alias = WIRE_ROUTE_ALIASES.find(a => a.from === req.key && a.readers.includes('app'))
+  if (!alias) return req // /set pairing routes have no v1 alias.
+  const oldPath = req.key.slice(req.key.indexOf(' ') + 1)
+  let path = alias.to.slice(alias.to.indexOf(' ') + 1) + req.path.slice(oldPath.length)
+  // Legacy aliases supplied these defaults; direct v1 callers must preserve them.
+  if (alias.transform === 'phoneMatters') {
+    const hasKind = /[?&]kind=/.test(path)
+    path += (path.includes('?') ? '&' : '?') + (hasKind ? '' : 'exclude=terminal%2Cact&') + 'status=open%2Creplied%2Cdone&limit=50&taskState=1'
+  }
+  if (alias.transform === 'phoneChatSearch') path += '&limit=30'
+  const body = alias.transform === 'phoneChatTranscribe'
+    ? { mime: (req.body as { mime: string }).mime, audio_b64: (req.body as { audioBase64: string }).audioBase64 }
+    : req.body
+  return { ...req, key: alias.to, path, ...(body !== undefined ? { body } : {}) }
 }

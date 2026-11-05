@@ -11,12 +11,12 @@ import type { PairingRecord } from '../net/pairing'
 /** 有配对记录 ⇒ 真后端(经中继);没有 ⇒ 演示后端。注入的优先(测试 / 预览)。log 只收错误码与路由键,从不收令牌。 */
 export function backendFor(
   pairing: PairingRecord | null,
-  deps: { lang: Lang; open(url: string): ProtocolSocket; log?(line: string): void; injected?: Backend },
+  deps: { lang: Lang; build?: string; open(url: string): ProtocolSocket; log?(line: string): void; injected?: Backend },
 ): { backend: Backend; demo: (Backend & { reset(): void }) | null } {
   if (deps.injected) return { backend: deps.injected, demo: null }
   if (pairing) {
     const url = pairing.relayUrl
-    return { backend: makeLiveBackend({ open: () => deps.open(url), token: pairing.deviceToken, ...(deps.log ? { log: deps.log } : {}) }), demo: null }
+    return { backend: makeLiveBackend({ open: () => deps.open(url), token: pairing.deviceToken, build: deps.build, ...(deps.log ? { log: deps.log } : {}) }), demo: null }
   }
   const demo = makeDemoBackend({ lang: deps.lang })
   return { backend: demo, demo }

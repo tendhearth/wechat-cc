@@ -10,7 +10,7 @@
  * 钩子期间对客户端的一切调用(请求、挂订阅、退订、关)都推到微任务之后。
  */
 import {
-  makeProtocolClient, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
+  makeProtocolClient, phoneRouteRequest, RESPONSE_SCHEMAS, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
   HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic,
   type ClientOpts, type ProtocolClient, type ProtocolSocket, type PhoneTransport,
 } from '@wechat-cc/protocol'
@@ -33,6 +33,7 @@ const HOME_LIMIT = 20
 export type LiveDeps = {
   open: () => ProtocolSocket
   token: string
+  build?: string
   now?: () => number
   log?: (line: string) => void
   makeClient?: (o: ClientOpts) => ProtocolClient
@@ -114,6 +115,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       ...d.clientOpts,
       open: d.open,
       token: d.token,
+      build: d.build,
       onStatus: s => hooked(() => {
         if (my !== gen) return
         if (s === 'auth_failed') revoke()
@@ -134,7 +136,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
 
   /** 类型化客户端的传输(F3):经中继 v2 送、按状态码 / 错误码挡失败、过 PHONE_API_SCHEMAS。路径由 `PHONE_CALLS` 拼。 */
   const send: PhoneTransport = async req => {
-    const key = req.key
+    let selected = phoneRouteRequest(req, client?.routes?.())
+    let key = selected.key
     if (hookDepth > 0) await new Promise<void>(r => queueMicrotask(r))
     if (conn.state === 'revoked') throw new BackendError('revoked')
     if (!client) throw new BackendError('offline')
@@ -142,7 +145,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     const my = gen
     let res: Awaited<ReturnType<ProtocolClient['request']>>
     try {
-      res = await c.request(toProtocolRequest(req))
+      res = await c.request({ ...toProtocolRequest(selected), forRoutes: routes => {
+        selected = phoneRouteRequest(req, routes)
+        key = selected.key
+        return toProtocolRequest(selected)
+      } })
     } catch (e) {
       // 这条可能已经送到电脑上,是我们自己把连接关了(进后台 / dispose / 撤销):不能说「没送到」。
       // 撤销了 ⇒ revoked;否则 ⇒ timeout,store 译成「不确定」,页面去重拉。
@@ -159,17 +166,30 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     }
     let json: unknown = null
     try { json = res.json() } catch { /* 非 JSON:交给状态码判断 */ }
-    const mapped = mapPhoneError(res.status, json)
+    const mapped = key === 'POST /v1/knowledge/facts/set_fact_status' && res.status < 400 ? null : mapPhoneError(res.status, json)
     if (mapped) {
       if (mapped === 'revoked') revoke()
       else log(`${key}: ${res.status} ${mapped}`)
       throw new BackendError(mapped)
     }
-    const schema = PHONE_API_SCHEMAS[key]
+    const schema = key === req.key
+      ? PHONE_API_SCHEMAS[req.key] : RESPONSE_SCHEMAS[key]
     const p = schema ? schema.safeParse(json) : null
     if (!p || !p.success) { log(`${key}: response did not match schema`); throw new BackendError('unknown') }
+    if (key === req.key) { dispatch({ t: 'synced', at: now() }); return p.data }
+    // v1 shares the data but some routes omit the legacy success envelope.
+    // Parse the phone projection too: union branches in RESPONSE_SCHEMAS can strip phone-only fields.
+    const data = json as Record<string, unknown>
+    const projected = key === 'POST /v1/matter/say' ? { ok: true, result: data }
+      : key === 'GET /v1/matter/owner-chat/search' ? { ok: true, hits: (data.hits as Array<Record<string, unknown>>).map(h => {
+        const text = String(h.text ?? '')
+        return { id: h.id, role: h.kind === 'user' ? 'me' : 'cc', text: text.slice(0, 600), truncated: text.length > 600, at: h.createdAt, source: h.source ?? null }
+      }) }
+      : { ...data, ok: true }
+    const phone = PHONE_API_SCHEMAS[req.key]?.safeParse(projected)
+    if (!phone?.success) throw new BackendError('unknown')
     dispatch({ t: 'synced', at: now() })
-    return p.data
+    return phone.data
   }
   const api = makePhoneApi(send)
   function strip<T extends { ok: true }>(r: T): Omit<T, 'ok'> {
