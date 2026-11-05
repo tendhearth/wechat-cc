@@ -27,7 +27,8 @@ const TASK = { id: ID, title: '修登录', status: 'running', providerId: 'claud
 const CONTENT = Buffer.from('# 报告\n全过。\n')
 
 let stateDir: string, api: InternalApi, panel: SettingsPanel, localBase: string, operator: string, device: string, link: string
-let wb: Record<string, ReturnType<typeof vi.fn>>
+type WbFn = 'detail' | 'cancel' | 'resolvePermission' | 'resolveAnswer' | 'artifact' | 'handOff' | 'worktreeAction' | 'scriptAction' | 'createEntry' | 'entryReceipt'
+let wb: Record<WbFn, ReturnType<typeof vi.fn>>
 
 beforeEach(async () => {
   stateDir = mkdtempSync(join(tmpdir(), 'panel-v1-matter-actions-'))
@@ -72,7 +73,7 @@ const raw = async (r: Response) => ({ status: r.status, body: await r.text() })
 const DESKTOP = WIRE_ROUTE_ALIASES.filter(r => r.from.includes(' /v1/'))
 const pathOf = (k: string) => k.slice(k.indexOf(' ') + 1)
 /** 每条桌面双胞胎:一份成功的、一份参数不对的、一份服务里抛的(桌面那一份的参数)。 */
-const DESKTOP_CASES: Record<string, { ok: string | object; bad: string | object; boom: [string, string | object] }> = {
+const DESKTOP_CASES: Record<string, { ok: string | object; bad: string | object; boom: [WbFn, string | object] }> = {
   '/v1/matter/stop': { ok: { id: ID, expectedRunId: 'run-1' }, bad: { id: ID, expectedRunId: 'bad run!' }, boom: ['cancel', { id: ID }] },
   '/v1/matter/permission': { ok: { id: ID, requestId: REQ, decision: 'allow' }, bad: { id: ID, requestId: REQ, decision: 'maybe' }, boom: ['resolvePermission', { id: ID, requestId: REQ, decision: 'deny' }] },
   '/v1/matter/answer': { ok: { id: ID, requestId: REQ, answers: { q: ['a'] } }, bad: { id: ID, requestId: 'x', answers: null }, boom: ['resolveAnswer', { id: ID, requestId: REQ, answers: null }] },
@@ -82,7 +83,7 @@ const DESKTOP_CASES: Record<string, { ok: string | object; bad: string | object;
   '/v1/matter/create': { ok: { requestId: REQ, text: '把说明改一下', target: { kind: 'managed' } }, bad: { requestId: REQ, text: '', target: { kind: 'managed' } }, boom: ['createEntry', { requestId: REQ, text: '把说明改一下', target: { kind: 'managed' } }] },
   '/v1/matter/create-receipt': { ok: `?requestId=${REQ}`, bad: `?requestId=${REQ}&extra=1`, boom: ['entryReceipt', `?requestId=${REQ}`] },
 }
-const BOOM: Record<string, string> = { cancel: 'not_found', resolvePermission: 'permission_stale', resolveAnswer: 'question_stale', artifact: 'artifact_changed', handOff: 'quota_handoff_changed', scriptAction: 'script_approval_required', createEntry: 'unattended_ack_required', entryReceipt: 'invalid_entry_owner' }
+const BOOM: Partial<Record<WbFn, string>> = { cancel: 'not_found', resolvePermission: 'permission_stale', resolveAnswer: 'question_stale', artifact: 'artifact_changed', handOff: 'quota_handoff_changed', scriptAction: 'script_approval_required', createEntry: 'unattended_ack_required', entryReceipt: 'invalid_entry_owner' }
 
 describe('桌面的 /v1/workbench/* 双胞胎:旧键与新键同一个处理器,operator 打两条一字不差', () => {
   it('每一行别名都有用例', () => {
@@ -100,7 +101,7 @@ describe('桌面的 /v1/workbench/* 双胞胎:旧键与新键同一个处理器,
     expect((await pair(c.bad)).status).toBe(400)
     const [fn, arg] = c.boom
     const code = BOOM[fn]!
-    wb[fn]!.mockImplementation(() => { throw new Error(code) })
+    wb[fn].mockImplementation(() => { throw new Error(code) })
     const failed = await pair(arg)
     expect(failed.status).toBeGreaterThanOrEqual(400)
     expect(JSON.parse(failed.body).error).toBeTruthy()
