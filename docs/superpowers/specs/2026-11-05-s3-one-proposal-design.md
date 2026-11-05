@@ -36,8 +36,8 @@
 ### 一个事件 = 一个提议 = 账上一行
 
 - **事件的键**(`ref`):`ask:<matterId>:<requestId>`(等你批准 / 有问题问你)、`turn:<matterId>:<seq>`(这一轮做完 / 没做成;`seq` = `matter_turns` 里这件事最新那一轮)。工作台任务和它的 matter 同 id。
-- **账一行**:迁移 **v103** 给 `speech_log` 加一列 `ref`(可空,带部分索引)。带 `ref` 的判定写账时:没有这一行就插;已有就**改这一行**(结果 / 原因 / 时刻换成最新的,通道追加,如 `desktop+app`)。不带 `ref` 的照旧一判一行。于是「同一事件 `speech_log` 只有一行」由写口保证,不靠各路自觉。
-  - 免打扰里先推后、天亮放行的,账上仍是一行(最后是 allowed);中间那次推后只留日志。S2 的「连着推后一小时只记一次」对带 `ref` 的自然成立。
+- **账一行**:迁移 **v103** 给 `speech_log` 加一列 `ref`(可空,带部分索引),`matter_report_outbox` 也加一列 `ref`(回报入队那一刻记下报的是哪一轮;同一件事两轮合并成一行时跟着换 —— 不能事后按 `created_at` 推,合并时它故意不动)。带 `ref` 的判定写账时:没有这一行就插;已有就**改这一行**(结果 / 原因 / 时刻换成最新的,通道追加,如 `desktop+app`)。不带 `ref` 的照旧一判一行。于是「同一事件 `speech_log` 只有一行」由写口保证,不靠各路自觉。
+  - 免打扰里先推后、天亮放行的,账上仍是一行(最后是 allowed);中间那次推后只留日志。S2 的「连着推后一小时只记一次」改成按事件分开(两件不同的事同一小时里推后各有一行)。
 - 第 1、2 条路的门都带上同一个 `ref`(App 推送那一份在 phone-notifier 里算,微信通知那一份由 notice 的 taskId / requestId / runId 推出同一个键)。第 3 条见下面「回原对话的回报」。
 
 ### 一条路:matter 状态变化 → 一个提议(`daemon/speech/matter-proposals.ts`)
@@ -50,7 +50,7 @@
   - 都不是 ⇒ **微信**(只对订了微信提醒的任务;没订的,这一级不存在,提议到此为止 —— 和今天一样不推)。
 - **升级**:第一级发出后 10 分钟内没被看到(见下)⇒ 升一级:desktop → app(没配手机就跳到 wechat)→ wechat(没订提醒就停)。每升一级之前**再问一次门**(带同一个 `ref`,账还是那一行,通道追加);期间开了免打扰就压着,时段结束接着升。被看到了 ⇒ 不再升,账那一行 reason 记 `seen:<在哪看到的>`。
 - 订了提醒的微信「这一轮已完成 / 需要处理」通知(第 2 条的 report 那一半):worker 照旧持久、照旧幂等,只是送之前问提议「轮到微信没有」:没轮到 ⇒ `postponed` 到升级时刻(不算尝试,S2a 已有这条路);被看到了 ⇒ `suppressed: seen`。
-- 存在哪:**复用 `speech_pending` lane = `push`**,不新建表。一个 report 提议在等升级 = 一行(`ref` = 事件键,唯一索引已有 `(lane, ref)`),`body` 是提议本身(JSON:事件、当前级别、第一级发出的时刻),`next_at` = 下一次升级的时刻,`expires_at` 照 S2 的 24 小时。开机按最早 `next_at` 起计时器(push-gate 已有),**重启不丢**。push-gate 放到点的行时,看到是提议就交给提议去升级,不当普通推送推。lane 的 CHECK 不用改,所以 v103 只动 `speech_log`。
+- 存在哪:**复用 `speech_pending` lane = `push`**,不新建表。一个 report 提议在等升级 = 一行(`ref` = 事件键,唯一索引已有 `(lane, ref)`),`body` 是提议本身(JSON:事件、当前级别、第一级发出的时刻),`next_at` = 下一次升级的时刻,`expires_at` 照 S2 的 24 小时。开机按最早 `next_at` 起计时器(push-gate 已有),**重启不丢**。push-gate 放到点的行时,看到是提议就交给提议去升级,不当普通推送推。lane 的 CHECK 不用改,所以 S3b 不用再加迁移。
 
 ### 「主人此刻在哪」(在场信号,从终端会话那份推广)
 
@@ -100,8 +100,8 @@ daemon 侧发的 osascript 通知点不到(系统不回调)⇒ 桌面 app 没开
 
 ## 顺序
 
-- **S3a**(daemon,行为不变):v103 `speech_log.ref` + 写口按 `ref` 并一行;第 1、2 条路的门带同一个键;`lib/owner-presence.ts` 抽出来、`cli-events` 改用;桌面读详情写 `desktop` 绑定。沙盒:一件做完的事 `speech_log` 里只有一行。
-- **S3b**(daemon,看得见的变化,已点头):探测不再以登记设备为条件;`matter-proposals.ts` 选第一级、`speech_pending` 里等升级、10 分钟升一级;worker 的微信 report 通知问「轮到没有」。测试缝:升级间隔、在场探针(像 `speechFlushIntervalMs` 那样从 Foundation 进)。沙盒:人在电脑前做完一件事 ⇒ 只有桌面那一级、账一行;不看 ⇒ 升到 App,账还是那一行(`desktop+app`);打开过 ⇒ 不升。
+- **S3a**(daemon,行为不变;#847):v103 `speech_log.ref` / `matter_report_outbox.ref` + 写口按 `ref` 并一行;第 1、2、3 条路的门带同一个键。沙盒:一件做完的事、一次等你批准,`speech_log` 里各只有一行。
+- **S3b**(daemon,看得见的变化,已点头):`lib/owner-presence.ts` 抽出来、`cli-events` 改用;桌面读详情写 `desktop` 绑定;探测不再以登记设备为条件;`matter-proposals.ts` 选第一级、`speech_pending` 里等升级、10 分钟升一级;worker 的微信 report 通知问「轮到没有」。测试缝:升级间隔、在场探针(像 `speechFlushIntervalMs` 那样从 Foundation 进)。沙盒:人在电脑前做完一件事 ⇒ 只有桌面那一级、账一行;不看 ⇒ 升到 App,账还是那一行(`desktop+app`);打开过 ⇒ 不升。
 - **S3c**(`apps/desktop`,随下一版桌面):通知点击 / 桌宠点开 ⇒ `POST /v1/matter/seen`;桌面自己那条「有一件事回复了」改由 daemon 的提议驱动(选项 C 点头后再加过门)。
 
 ## 测试
