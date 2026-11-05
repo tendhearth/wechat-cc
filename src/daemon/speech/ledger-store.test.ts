@@ -48,7 +48,7 @@ describe('speech_log 外发账', () => {
         { ref: null, channel: 'wechat', outcome: 'allowed' },
         { ref: null, channel: 'wechat', outcome: 'allowed' },
       ])
-      expect(s.recent('owner', 0).at(-1)).toEqual(entry('2026-11-05T08:00:02.000Z', { kind: 'matter_report', origin: 'report', channel: 'app+wechat', ref: R }))
+      expect(s.recent('owner', 0).at(-1)).toEqual({ ...entry('2026-11-05T08:00:02.000Z', { kind: 'matter_report', origin: 'report', ref: R }), channel: 'app+wechat' })
     } finally { db.close() }
   })
   it('带 ref:先推后、后放行 ⇒ 还是一行,结果是放行;已经放行了,另一条路被推后 / 失败 ⇒ 那一行不动', () => {
