@@ -83,6 +83,19 @@ describe('runReportSweep', () => {
     expect(await outbox.listDue(1_000)).toEqual([])
   })
 
+  it('outbox 行上记着事件键(S3a)⇒ 交给 send(问门带上它,账和 App 推送并成一行);合并时换成新的那一轮;没有 ⇒ 不带', async () => {
+    matters.bind(CHAT, 'wechat', 'user-1')
+    const calls: unknown[][] = []
+    const send = async (...args: [string, string, string?]) => { calls.push(args); return {ok: true} }
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: '第一轮 · 已答复。'}, 1_000, `turn:${TASK}:1`)
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: '第二轮 · 已答复。'}, 1_500, `turn:${TASK}:2`)
+    await runReportSweep({store: outbox, matters, send, nowMs: 2_000, log: () => {}})
+    expect(calls).toEqual([['user-1', '第二轮 · 已答复。', `turn:${TASK}:2`]])
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-8', text: '老的一条 · 已答复。'}, 3_000)
+    await runReportSweep({store: outbox, matters, send, nowMs: 3_000, log: () => {}})
+    expect(calls.at(-1)).toEqual(['user-1', '老的一条 · 已答复。'])
+  })
+
   it('origin matter 没有 wechat 绑定 → dropped 并 log,不重试', async () => {
     // CHAT 本身没有 bind 任何 wechat surface_key
     await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: 'x'}, 1_000)

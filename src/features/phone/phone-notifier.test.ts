@@ -113,4 +113,24 @@ describe('phone-notifier', () => {
     expect(() => h.emit('approvals', [{ taskId: 'x', kind: 'permission', id: 'p', summary: 's' }])).not.toThrow()
     expect(h.notify.mock.calls.map(c => c[0])).toEqual(['dev1', 'dev2'])
   })
+
+  it('带事件键(S3a):批准 / 提问按请求编号,做完 / 没做成按这件事最新那一轮;读不到那一轮 ⇒ 不带', () => {
+    const handlers = new Map<string, (ev: { epoch: string; seq: number; data: unknown }) => void>()
+    const events = { subscribe: (topic: string, _s: unknown, send: (ev: any) => void) => { handlers.set(topic, send); return () => {} } }
+    const got: Array<[string, string | undefined]> = []
+    const n = makePhoneNotifier({
+      events, push: { registered: () => ['dev1'] },
+      deliver: (p, ref) => { got.push([p.kind, ref]) },
+      taskInfo: () => ({ title: 'A', status: 'running' }),
+      turnRef: (id) => (id === 't1' ? 'turn:t1:4' : null),
+      log: () => {},
+    })
+    n.refresh()
+    let seq = 0
+    const emit = (topic: string, data: unknown) => handlers.get(topic)!({ epoch: 'e', seq: ++seq, data })
+    emit('approvals', []); emit('agents', agents([{ id: 't1', title: 'A', phase: 'working' }, { id: 't2', title: 'B', phase: 'working' }]))
+    emit('approvals', [{ taskId: 't1', kind: 'permission', id: 'p7', summary: 'Bash: ls' }])
+    emit('agents', agents([{ id: 't1', title: 'A', phase: 'replied' }, { id: 't2', title: 'B', phase: 'replied' }]))
+    expect(got).toEqual([['permission', 'ask:t1:p7'], ['task_done', 'turn:t1:4'], ['task_done', undefined]])
+  })
 })

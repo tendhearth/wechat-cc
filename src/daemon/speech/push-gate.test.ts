@@ -161,4 +161,36 @@ describe('压着的推送落在主库 speech_pending(S2b,主人 11-04:重启不�
     await s.speech.flushPending()
     expect(s.pushed).toEqual([done])
   })
+
+  it('带事件键(S3a):问门带上它;压着时一起存,重启后放出来问门还是同一个键(账并成一行),推出去的推送里没有它', () => {
+    const db = openTestDb()
+    const s = setup({ quiet: true, db })
+    s.gate.push(done, 'turn:t1:2')
+    expect(s.ledger.map(e => [e.outcome, e.ref])).toEqual([['deferred', 'turn:t1:2']])
+    s.gate.stop()
+    // 重启:新的门,同一个库
+    const again = setup({ db })
+    again.advance(QUIET_END - T0 + 1)
+    again.timers.shift()!.cb()
+    expect(again.pushed).toEqual([done])
+    expect(again.ledger.map(e => [e.outcome, e.channel, e.ref])).toEqual([['allowed', 'app', 'turn:t1:2']])
+  })
+
+  it('带事件键、压到过期 ⇒ 过期那一行也带同一个键', () => {
+    const s = setup({ quiet: true })
+    s.gate.push(done, 'turn:t1:3')
+    s.advance(25 * 3600_000)
+    s.timers.shift()!.cb()
+    expect(s.ledger.map(e => [e.outcome, e.reason, e.ref])).toEqual([['deferred', 'quiet_hours', 'turn:t1:3'], ['dropped', 'expired', 'turn:t1:3']])
+  })
+
+  it('v101 起压着的老行(body 只有推送本身)照样认得,放的时候不带键', () => {
+    const db = openTestDb()
+    db.query(`INSERT INTO speech_pending(id,lane,chat_id,kind,body,ref,created_at,next_at,expires_at) VALUES('old','push',?,'matter_report',?,'task_done:t1:',?,?,?)`)
+      .run(OWNER, JSON.stringify(done), T0 - 1000, T0 - 1, T0 + 3600_000)
+    const s = setup({ db })
+    s.timers.shift()!.cb()
+    expect(s.pushed).toEqual([done])
+    expect(s.ledger.map(e => [e.outcome, e.ref])).toEqual([['allowed', undefined]])
+  })
 })

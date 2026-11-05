@@ -2,16 +2,18 @@
  * 被门压着的 App 推送(speech/push-gate.ts)落在主库 `speech_pending`(lane = 'push',v101;S2b)。
  * 以前只在内存里,daemon 一重启夜里压着的推送就没了(主人 11-04 拍板:重启不丢)。
  * ref = 同一件事的键(种类 + 任务 + 请求):同一件事只留最新那一条。
+ * body = 推送本身的 JSON;带了账上的事件键(S3a,`speechRef`)⇒ `{payload, speechRef}`(放的时候问门要带同一个键,
+ * 账才并成一行)。读的时候两种都认(v101 起压着的是只有推送的那种)。
  */
 import type { Db } from '../../lib/db'
 import type { SpeechKind } from '../../domain/speech/kinds'
 import type { PushPayload } from '../../features/phone'
 
-export interface HeldPush { id: string; key: string; kind: SpeechKind; chatId: string; payload: PushPayload; until: number }
+export interface HeldPush { id: string; key: string; kind: SpeechKind; chatId: string; payload: PushPayload; until: number; speechRef?: string }
 
 export interface HeldPushes {
   /** 压一条(同 key 的旧那条换掉);回现在压着的条数。 */
-  hold(h: { key: string; kind: SpeechKind; chatId: string; payload: PushPayload; until: number; expiresAt: number; at: number }): number
+  hold(h: { key: string; kind: SpeechKind; chatId: string; payload: PushPayload; until: number; expiresAt: number; at: number; speechRef?: string }): number
   /** 到点的(按到点时刻、入队先后排),最多 limit 条。 */
   due(nowMs: number, limit: number): HeldPush[]
   /** 又被推后了:改到点时刻。 */
@@ -27,7 +29,11 @@ export interface HeldPushes {
 
 interface Row { id: string; ref: string; kind: string; chat_id: string; body: string; next_at: number }
 
-const toHeld = (r: Row): HeldPush => ({ id: r.id, key: r.ref, kind: r.kind as SpeechKind, chatId: r.chat_id, payload: JSON.parse(r.body) as PushPayload, until: r.next_at })
+const toHeld = (r: Row): HeldPush => {
+  const body = JSON.parse(r.body) as PushPayload | { payload: PushPayload; speechRef: string }
+  const wrapped = 'payload' in body && typeof body.speechRef === 'string'
+  return { id: r.id, key: r.ref, kind: r.kind as SpeechKind, chatId: r.chat_id, payload: wrapped ? body.payload : body as PushPayload, until: r.next_at, ...(wrapped ? { speechRef: body.speechRef } : {}) }
+}
 const COLS = 'id,ref,kind,chat_id,body,next_at'
 
 export function makeHeldPushes(db: Db): HeldPushes {
@@ -37,7 +43,7 @@ export function makeHeldPushes(db: Db): HeldPushes {
         db.query("DELETE FROM speech_pending WHERE lane='push' AND ref=?").run(h.key)
         db.query(`INSERT INTO speech_pending(id,lane,chat_id,kind,body,attach,ref,created_at,next_at,attempts,first_failed_at,expires_at,status)
           VALUES(?,'push',?,?,?,NULL,?,?,?,0,NULL,?,'pending')`)
-          .run(`push-${h.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, h.chatId, h.kind, JSON.stringify(h.payload), h.key, h.at, h.until, h.expiresAt)
+          .run(`push-${h.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, h.chatId, h.kind, JSON.stringify(h.speechRef ? { payload: h.payload, speechRef: h.speechRef } : h.payload), h.key, h.at, h.until, h.expiresAt)
         return db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM speech_pending WHERE lane='push'").get()!.n
       })()
     },

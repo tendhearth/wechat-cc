@@ -84,7 +84,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     providerProbesModule(),
     sessionsModule(),
     ilinkModule(),
-    workbenchNotificationsModule(),  // 工作台的微信通知 / 成果:停在 polling 之后,开动却在开机最后(startup-sweeps)
+    workbenchNotificationsModule(f),  // 工作台的微信通知 / 成果:停在 polling 之后,开动却在开机最后(startup-sweeps)
     workbenchArtifactsModule(),
     pollingModule(),
     memoryNightlyModule(),

@@ -16,6 +16,7 @@ import type { Lifecycle } from '../../lib/lifecycle'
 import type { ReportSink } from '../../domain/matters/report'
 import type { MatterStore } from '../../ports/matters'
 import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
+import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
 import type { DaemonModule, ModuleCtx } from '../../daemon/modules/container'
 import { lifecycleModule } from '../../daemon/modules/lifecycle-module'
 import type { SpeechPolicy } from '../../daemon/speech/policy'
@@ -54,12 +55,15 @@ export function makeReports(d: ReportsFeatureDeps): ReportsFeature {
   // 独立的一份 WorkbenchStore(同一个 db,写入互相可见;它只是 db 上的一层查询):回报读任务标题 / 成果数 / 静音,
   // 「放弃投递」在那件事自己的时间线上留一笔。
   const store = makeWorkbenchStore(d.db)
+  const refs = makeMatterEventRefs(d.db)
   const sink = makeReportSink({
     matters: d.matters, outbox,
     taskTitle: id => store.get(id).title, artifactCount: id => store.artifacts(id).length,
     // 终审 Critical:「任务 <id> 静音」落的是 workbench_wechat_subscriptions.enabled=0;
     // 没有订阅记录(从没配置过)按"没静音过"处理,不是默认静音。
     notificationsEnabled: id => store.wechatNotifications.subscription(id)?.enabled ?? true,
+    // 同一个事件的键(S3a):入队那一刻在报的那一轮,和 App「做完了」推送并成账上一行
+    eventRef: id => refs.latestTurn(id),
     log: d.log,
   })
   return {

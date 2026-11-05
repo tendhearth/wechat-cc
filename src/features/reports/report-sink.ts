@@ -28,6 +28,8 @@ export interface ReportSinkDeps {
    * 堆积永远没有消费者的行。
    */
   notificationsEnabled(taskId: string): boolean
+  /** 这一轮的事件键(adapters/store/matter-event-refs latestTurn;S3a):入队那一刻这件事最新那一轮就是在报的那一轮。没给 ⇒ 不带。 */
+  eventRef?: (matterId: string) => string | null
   now?: () => number
   /** Best-effort diagnostics for the rare async insert failure (the sqlite
    *  write itself is synchronous, so this is defense in depth, not the
@@ -58,7 +60,9 @@ export function makeReportSink(deps: ReportSinkDeps): ReportSink {
       }
       const report = renderReport({matter, title: deps.taskTitle(matterId), artifactCount: deps.artifactCount(matterId), turn, body})
       if (!report) return // No birthplace — renderReport already decided not to report.
-      void deps.outbox.insert(report, deps.now?.() ?? Date.now())
+      let ref: string | null = null
+      try { ref = deps.eventRef?.(matterId) ?? null } catch { /* 只是少一个键 */ }
+      void deps.outbox.insert(report, deps.now?.() ?? Date.now(), ref)
         .catch(err => deps.log?.('MATTER_REPORT', `outbox insert failed for ${matterId}: ${err instanceof Error ? err.message : err}`))
     },
   }

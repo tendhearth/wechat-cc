@@ -20,6 +20,7 @@ import type { MemoryNightlyRuntime } from '../../features/memory'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { makePhoneChatId, makePhoneOwner, makePhoneChat, makePhoneEventsWiring, resolveRemoteRelay, makePhonePush, fanoutPush, makePhoneNotifier, deviceIdOf, currentPhoneClient, loadTunnelClient } from '../../features/phone'
 import { makePushGate } from '../speech/push-gate'
+import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
 import { makeHeldPushes } from '../speech/held-pushes'
 import { makeAppChannel } from '../companion/app-channel'
 import { makeMediaMirror } from '../companion/media-mirror'
@@ -84,6 +85,8 @@ const onlineDevices = () => new Set([...(v2Tunnel?.subscribedDeviceTokens() ?? [
 const fanout = (p: import('../../features/phone').PushPayload) =>
   phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
 // 压着的推送在主库 speech_pending(lane='push',S2b):重启不丢;到点时中继还没连上就过一会儿再放
+// 同一个事件的键(S3a):「做完了」推送问门时带上这件事最新那一轮,和微信通知 / 回报问同一件事的那一行并成一行
+const eventRefs = makeMatterEventRefs(db)
 const pushGate = makePushGate({ speech, ownerChatId, push: fanout, held: makeHeldPushes(db), ready: () => v2Tunnel?.connected() ?? false, log: (tag, line) => log(tag, line) })
 phoneLc.add('push-gate', () => pushGate.stop())
 // 终端会话的手机推送出口(features/terminal/app-push.ts):问过门再推(批准 = blocking 照推;完成了 = report,免打扰里先压着)。
@@ -189,8 +192,9 @@ if (relay) {
       const n = makePhoneNotifier({
         events: phone.events,
         push: phonePush,
-        deliver: (p) => { pushGate.push(p) },
+        deliver: (p, ref) => { pushGate.push(p, ref) },
         taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
+        turnRef: (id) => eventRefs.latestTurn(id),
         log: (tag, line) => log(tag, line),
       })
       notifier = n

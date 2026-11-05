@@ -9,6 +9,7 @@
 import type { PhoneEvents } from './phone-events'
 import type { ApprovalSummary } from './phone-topic-sources'
 import type { PhonePush, PushPayload } from './phone-push'
+import { askRef } from '../../domain/speech/event-ref'
 
 /**
  * 一条推送发给每台登记过的手机;正连着实时订阅的跳过(它自己看得见)。单台失败只记日志、不重试。
@@ -44,15 +45,26 @@ export function makePhoneNotifier(deps: {
    * 推一条。接线处给的是问过 CC 开口那道门的推送(speech/push-gate.ts:批准 / 提问 = blocking,做完 / 没做成 =
    * report,免打扰里先压着)—— 这里不直接调 fanoutPush,免得绕过门。
    */
-  deliver(p: PushPayload): void
+  deliver(p: PushPayload, ref?: string): void
   taskInfo(taskId: string): { title: string; status: string } | null
+  /**
+   * 这件事最新那一轮的事件键(domain/speech/event-ref.ts turnRef;S3a):「做完了 / 没做成」问门时带上,微信通知 / 回报问同一件事
+   * 带的是同一个,账上并成一行。没给 / 读不到 ⇒ 不带。
+   */
+  turnRef?(taskId: string): string | null
   log: (tag: string, line: string) => void
 }): { refresh(): void; dispose(): void } {
   let offs: Array<() => void> = []
   let approvalsSeen: Set<string> | null = null
   let agentsPrev: Map<string, { title: string; phase: string }> | null = null
 
-  const fanout = (p: PushPayload): void => { deps.deliver(p) }
+  /** 事件键:批准 / 提问按请求编号;做完 / 没做成按这件事最新那一轮。 */
+  const refOf = (p: PushPayload): string | undefined => {
+    if (!p.taskId) return undefined
+    if (p.kind === 'permission' || p.kind === 'question') return p.requestId ? askRef(p.taskId, p.requestId) : undefined
+    return deps.turnRef?.(p.taskId) ?? undefined
+  }
+  const fanout = (p: PushPayload): void => { const ref = refOf(p); if (ref) deps.deliver(p, ref); else deps.deliver(p) }
 
   // 一条事件失败不连累其余;整个 fanout(registered / subscribedDevices 抛)也不许冒出去。
   function safeFanout(mk: () => PushPayload | null): void {
