@@ -63,7 +63,9 @@ export function makeMatterProposals(d: {
       // 系统通知里不放任务标题(可能带私事 / 项目名),和桌面 app 自己那条同一套措辞(workbench-attention.js)
       const n = p.kind === 'task_failed' ? { title: '有一件事停下了', body: '打开 CC 看看发生了什么。' } : { title: '有一件事回复了', body: '打开 CC 查看。' }
       const ok = await d.desktop.notify(n.title, n.body).catch(() => false)
-      d.log('PUSH', `${p.kind} ${p.taskId}: owner at the desk — ${ok ? 'desktop notification shown' : 'desktop notification failed'}; App push waits ${Math.round(after / 1000)}s`)
+      // 桌面那一级没弹出来 ⇒ 不让主人干等 10 分钟,当场推 App
+      if (!ok) { d.log('PUSH', `${p.kind} ${p.taskId}: owner at the desk but the desktop notification failed — pushing to the App now`); d.gate.push(p, ref); return }
+      d.log('PUSH', `${p.kind} ${p.taskId}: owner at the desk — desktop notification shown; App push waits ${Math.round(after / 1000)}s`)
     }
     d.gate.later(p, { at: t + after, since: t, matterId: p.taskId, ...(ref ? { ref } : {}) })
   }

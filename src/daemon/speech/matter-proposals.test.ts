@@ -8,10 +8,10 @@ const T0 = Date.parse('2026-11-05T08:00:00.000Z')
 const done: PushPayload = { kind: 'task_done', title: '做完了', body: '修登录', taskId: 't1' }
 const perm: PushPayload = { kind: 'permission', title: '需要你批准', body: 'Bash: ls', taskId: 't1', requestId: 'p1' }
 
-function setup(o: { desk?: boolean | 'throws'; app?: boolean; announce?: boolean; gate?: SpeechOutcome; owner?: string | null } = {}) {
+function setup(o: { desk?: boolean | 'throws'; app?: boolean; announce?: boolean; gate?: SpeechOutcome; owner?: string | null; notifyOk?: boolean | 'throws' } = {}) {
   const gate = { push: vi.fn(), later: vi.fn() }
   const ask = vi.fn((): SpeechOutcome => o.gate ?? { allow: true, channel: 'desktop' })
-  const notify = vi.fn(async () => true)
+  const notify = vi.fn(async () => { if (o.notifyOk === 'throws') throw new Error('osascript'); return o.notifyOk ?? true })
   const p = makeMatterProposals({
     gate, speech: { ask }, ownerChatId: () => (o.owner === undefined ? OWNER : o.owner),
     atDesk: async () => { if (o.desk === 'throws') throw new Error('ioreg'); return o.desk ?? false },
@@ -59,6 +59,14 @@ describe('一件事一次提议(S3b)', () => {
     await s.p.propose(done, 'turn:t1:2')
     expect(s.notify).toHaveBeenCalledOnce()
     expect(s.gate.later).toHaveBeenCalledOnce()
+  })
+  it('daemon 弹桌面通知失败(返回 false / 抛)⇒ 不干等,当场推 App', async () => {
+    for (const notifyOk of [false, 'throws'] as const) {
+      const s = setup({ desk: true, notifyOk })
+      await s.p.propose(done, 'turn:t1:2')
+      expect(s.gate.push).toHaveBeenCalledWith(done, 'turn:t1:2')
+      expect(s.gate.later).not.toHaveBeenCalled()
+    }
   })
   it('门说推后(免打扰)⇒ 交回推送那边照 S2 压着,不弹桌面', async () => {
     const s = setup({ desk: true, gate: { defer: true, reason: 'quiet_hours', until: '2026-11-05T23:00:00.000Z' } as SpeechOutcome })
