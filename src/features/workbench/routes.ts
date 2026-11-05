@@ -89,7 +89,8 @@ export interface WorkbenchRoutesDeps {
    */
   phoneSessions?: PhoneSessionsDeps
   /**
-   * 桌面那一侧(S3b):attention 每 3 秒拉一次 = 桌面 app 开着(`notePoll`);非手机令牌读一件任务的详情 = 在电脑上看过了(`seen`)。
+   * 桌面那一侧(S3b):attention 每 3 秒拉一次 = 桌面 app 开着(`notePoll`);非手机令牌打开一件任务的详情(不带 since 的那一次;
+   * 之后的长轮询不算)= 在电脑上看过了(`seen`)。
    * 一件事的提议读这两样决定桌面那一级由谁弹、到点还推不推手机。缺省 ⇒ 不记。
    */
   desktop?: { notePoll(): void; seen(taskId: string): void }
@@ -231,7 +232,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
     'GET /v1/workbench/task': async (query, _body, caller) => {
       const id = query.get('id')
       if (!id || !TASK_ID.test(id)) return invalid()
-      if (!fromPhone(caller)) try { deps.desktop?.seen(id) } catch { /* 只是露面登记 */ }
       if (query.getAll('since').length > 1 || query.getAll('since_cursor').length > 1 || query.getAll('wait_ms').length > 1) return invalid()
       const sinceRaw = query.get('since'), cursorRaw = query.get('since_cursor'), waitRaw = query.get('wait_ms')
       if (sinceRaw !== null && cursorRaw !== null) return invalid()
@@ -239,6 +239,8 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       const sinceCursor = cursorRaw === null ? undefined : nonNegInt(cursorRaw)
       const waitMs = waitRaw === null ? 0 : nonNegInt(waitRaw)
       if (since === null || sinceCursor === null || waitMs === null) return invalid()
+      // 桌面打开这件事(不带 since / since_cursor 的那一次读)= 在电脑上看过了(S3b)。之后挂着的长轮询不算:窗口在后台时它照样在拉
+      if (!fromPhone(caller) && since === undefined && sinceCursor === undefined) try { deps.desktop?.seen(id) } catch { /* 只是记一笔 */ }
       try {
         // 按游标(P1b,桌面新版):这件事的游标超过 since_cursor 就回;不然挂着等它前进。
         if (sinceCursor !== undefined) {

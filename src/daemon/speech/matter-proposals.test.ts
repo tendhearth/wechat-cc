@@ -42,7 +42,9 @@ describe('一件事一次提议(S3b)', () => {
     const s = setup({ desk: true })
     await s.p.propose(done, 'turn:t1:2')
     expect(s.ask).toHaveBeenCalledWith({ kind: 'matter_report', chatId: OWNER, ref: 'turn:t1:2' }, { channel: 'desktop', deliverable: true })
-    expect(s.notify).toHaveBeenCalledWith('做完了', '修登录')
+    expect(s.notify).toHaveBeenCalledWith('有一件事回复了', '打开 CC 查看。')   // 不放任务标题
+    const f = setup({ desk: true }); await f.p.propose({ kind: 'task_failed', title: '没做成', body: '修登录', taskId: 't1' })
+    expect(f.notify).toHaveBeenCalledWith('有一件事停下了', '打开 CC 看看发生了什么。')
     expect(s.gate.push).not.toHaveBeenCalled()
     expect(s.gate.later).toHaveBeenCalledWith(done, { at: T0 + ESCALATE_AFTER_MS, since: T0, matterId: 't1', ref: 'turn:t1:2' })
   })

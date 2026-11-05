@@ -420,6 +420,8 @@ describe('Workbench internal HTTP API', () => {
     await request('/v1/workbench/task?id=abcdef12')
     expect(seen).toHaveBeenCalledWith('abcdef12')
     await request('/v1/workbench/task?id=NOT_AN_ID')
+    await request('/v1/workbench/task?id=abcdef12&since_cursor=3&wait_ms=0')   // 打开以后挂着的长轮询不算看过(窗口在后台时它照样在拉)
+    await request('/v1/workbench/task?id=abcdef12&since=3')
     expect(seen).toHaveBeenCalledOnce()
   })
 
