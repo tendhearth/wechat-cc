@@ -32,7 +32,7 @@ function fitted(build: (max: number) => object, max: number): Response {
 export function mobileReadsRoutes(deps: MobileReadsDeps): PhoneRouteTable {
   return {
     // 看着它跑(2026-10-17):一条终端会话最近几步。手机展开那一行时每几秒拉一次;只读,和「看 码」同一份记录。
-    'GET /m/api/cli/activity': ownsMethod(async (url: URL, req: Request) => {
+    'GET /v1/cli/activity': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
       if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
       const id = url.searchParams.get('session_id')

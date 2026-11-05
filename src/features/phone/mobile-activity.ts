@@ -27,5 +27,5 @@ const activity = (deps: MobileActivityDeps | undefined) => async (url: URL, req:
 }
 
 export function mobileActivityRoutes(deps: MobileActivityDeps | undefined): PhoneRouteTable {
-  return { 'GET /m/api/activity': ownsMethod(activity(deps)) }
+  return { 'GET /v1/activity': ownsMethod(activity(deps)) }
 }
