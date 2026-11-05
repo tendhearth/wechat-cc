@@ -25,6 +25,53 @@ export interface Episode {
   to_ts: string
 }
 
+/** 话题下的一条(v104):一件事 + 一行索引。承诺单独一类。 */
+export type EntryKind = 'fact' | 'decision' | 'commitment' | 'progress' | 'conclusion'
+export type EntryStatus = 'live' | 'done' | 'superseded'
+export type EntrySource = 'chat' | 'work' | 'delegate'
+export const ENTRY_KINDS: readonly EntryKind[] = ['fact', 'decision', 'commitment', 'progress', 'conclusion']
+
+export interface TopicEntry {
+  id: string
+  threadId: string
+  kind: EntryKind
+  /** 索引那一行(≤ 60 字,带关键词)。 */
+  line: string
+  /** 细节(可空)。 */
+  body: string
+  /** 承诺的期限 YYYY-MM-DD(只有 commitment 带)。 */
+  due: string | null
+  status: EntryStatus
+  source: EntrySource
+  matterId: string | null
+  createdTs: string
+  updatedTs: string
+}
+
+export type CreateEntryInput = Pick<TopicEntry, 'threadId' | 'kind' | 'line'> & Partial<Pick<TopicEntry, 'body' | 'due' | 'source' | 'matterId'>> & { ts?: string }
+export type UpdateEntryInput = Partial<Pick<TopicEntry, 'line' | 'body' | 'due' | 'status'>> & { ts?: string }
+
+/** 抽取到哪了(v104 的两列新水位)。 */
+export interface ExtractState {
+  /** 对话:这个时刻(含)以前的消息按新格式抽过了;null = 从头。 */
+  entriesToTs: string | null
+  /** agent 的活:matter_items.cursor 抽到哪(含)。 */
+  workCursor: number
+}
+
+/** 存之前把 episodes 排好、合并重叠段(重读历史不叠出重复的时间段)。 */
+export function mergeEpisodes(eps: readonly Episode[]): Episode[] {
+  const sorted = eps.filter(e => e && typeof e.from_ts === 'string' && typeof e.to_ts === 'string')
+    .map(e => (e.from_ts <= e.to_ts ? { from_ts: e.from_ts, to_ts: e.to_ts } : { from_ts: e.to_ts, to_ts: e.from_ts }))
+    .sort((a, b) => (a.from_ts < b.from_ts ? -1 : a.from_ts > b.from_ts ? 1 : 0))
+  const out: Episode[] = []
+  for (const e of sorted) {
+    const last = out[out.length - 1]
+    if (last && e.from_ts <= last.to_ts) { if (e.to_ts > last.to_ts) last.to_ts = e.to_ts } else out.push({ ...e })
+  }
+  return out
+}
+
 export interface ThreadRecord {
   id: string
   chatId: string
@@ -32,6 +79,8 @@ export interface ThreadRecord {
   summary: string
   facets: Facet[]
   tags: string[]
+  /** CC 定的「主人会怎么叫它」(v104):简称、英文名、口头说法。索引匹配用。 */
+  aliases: string[]
   private: boolean
   status: ThreadStatus
   episodes: Episode[]
@@ -39,8 +88,11 @@ export interface ThreadRecord {
   lastActive: string
 }
 
-export type CreateThreadInput = Omit<ThreadRecord, 'id' | 'status' | 'createdTs' | 'lastActive'> & {
+export type CreateThreadInput = Omit<ThreadRecord, 'id' | 'status' | 'createdTs' | 'lastActive' | 'aliases'> & {
   status?: ThreadStatus
+  aliases?: string[]
+  /** 活跃时刻(抽取时用那批消息的最后时刻);不给 ⇒ 现在。 */
+  lastActive?: string
 }
 
 export type UpdateThreadInput = {
@@ -48,6 +100,7 @@ export type UpdateThreadInput = {
   summary?: string
   facets?: Facet[]
   tags?: string[]
+  aliases?: string[]
   private?: boolean
   status?: ThreadStatus
   episodes?: Episode[]
@@ -62,6 +115,16 @@ export interface ThreadsStore {
   tagVocabulary(n: number): Promise<string[]>
   getWatermark(chatId: string): Promise<string | null>
   setWatermark(chatId: string, ts: string): Promise<void>
+  // ── v104:条目与新水位 ──
+  addEntry(input: CreateEntryInput): Promise<string>
+  updateEntry(id: string, patch: UpdateEntryInput): Promise<void>
+  getEntry(id: string): Promise<TopicEntry | null>
+  /** 一个话题的条目(新的在前);`live` = 只要还算数的。 */
+  entries(threadId: string, opts?: { live?: boolean }): Promise<TopicEntry[]>
+  /** 一个对话里所有话题的条目(新的在前),按话题分好。 */
+  entriesByThread(chatId: string, opts?: { live?: boolean }): Promise<Map<string, TopicEntry[]>>
+  getExtractState(chatId: string): Promise<ExtractState>
+  setExtractState(chatId: string, patch: Partial<ExtractState>): Promise<void>
 }
 
 interface ThreadRow {
@@ -71,6 +134,7 @@ interface ThreadRow {
   summary: string
   facets: string
   tags: string
+  aliases: string
   private: number
   status: string
   episodes: string
@@ -98,6 +162,7 @@ function rowToRecord(r: ThreadRow): ThreadRecord {
     summary: r.summary,
     facets: safeJsonArray<Facet>(r.facets),
     tags: safeJsonArray<string>(r.tags),
+    aliases: safeJsonArray<string>(r.aliases),
     private: r.private !== 0,
     status: r.status as ThreadStatus,
     episodes: safeJsonArray<Episode>(r.episodes),
@@ -117,6 +182,7 @@ const UPDATABLE_COLS: Record<keyof UpdateThreadInput, string> = {
   summary: 'summary',
   facets: 'facets',
   tags: 'tags',
+  aliases: 'aliases',
   private: 'private',
   status: 'status',
   episodes: 'episodes',
@@ -124,19 +190,24 @@ const UPDATABLE_COLS: Record<keyof UpdateThreadInput, string> = {
 }
 
 export function makeThreadsStore(db: Db): ThreadsStore {
-  const stmtInsert = db.query<unknown, [string, string, string, string, string, string, number, string, string, string, string]>(
-    `INSERT INTO threads(id, chat_id, title, summary, facets, tags, private, status, episodes, created_ts, last_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  const stmtInsert = db.query<unknown, [string, string, string, string, string, string, string, number, string, string, string, string]>(
+    `INSERT INTO threads(id, chat_id, title, summary, facets, tags, aliases, private, status, episodes, created_ts, last_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
 
   const stmtList = db.query<ThreadRow, [string]>(
-    `SELECT id, chat_id, title, summary, facets, tags, private, status, episodes, created_ts, last_active
+    `SELECT id, chat_id, title, summary, facets, tags, aliases, private, status, episodes, created_ts, last_active
      FROM threads WHERE chat_id = ? ORDER BY last_active DESC`,
   )
 
   const stmtGet = db.query<ThreadRow, [string]>(
-    `SELECT id, chat_id, title, summary, facets, tags, private, status, episodes, created_ts, last_active
+    `SELECT id, chat_id, title, summary, facets, tags, aliases, private, status, episodes, created_ts, last_active
      FROM threads WHERE id = ?`,
+  )
+
+  const stmtEntryInsert = db.query<unknown, [string, string, string, string, string, string | null, string, string | null, string, string]>(
+    `INSERT INTO topic_entries(id, thread_id, kind, line, body, due, source, matter_id, created_ts, updated_ts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
 
   const stmtGetWatermark = db.query<{ extracted_to_ts: string }, [string]>(
@@ -159,11 +230,12 @@ export function makeThreadsStore(db: Db): ThreadsStore {
         input.summary,
         JSON.stringify(input.facets),
         JSON.stringify(input.tags),
+        JSON.stringify(input.aliases ?? []),
         input.private ? 1 : 0,
         input.status ?? 'active',
-        JSON.stringify(input.episodes),
+        JSON.stringify(mergeEpisodes(input.episodes)),
         now,
-        now,
+        input.lastActive ?? now,
       )
       return id
     },
@@ -180,7 +252,9 @@ export function makeThreadsStore(db: Db): ThreadsStore {
         if (!col) continue  // belt-and-suspenders: skip unknown keys
         setClauses.push(`${col} = ?`)
         const val = partial[key]
-        if (key === 'facets' || key === 'tags' || key === 'episodes') {
+        if (key === 'episodes') {
+          values.push(JSON.stringify(mergeEpisodes(val as Episode[])))
+        } else if (key === 'facets' || key === 'tags' || key === 'aliases') {
           values.push(JSON.stringify(val))
         } else if (key === 'private') {
           values.push(val ? 1 : 0)
@@ -223,5 +297,85 @@ export function makeThreadsStore(db: Db): ThreadsStore {
     async setWatermark(chatId, ts) {
       stmtSetWatermark.run(chatId, ts)
     },
+
+    async addEntry(input) {
+      const id = newEntryId()
+      const ts = input.ts ?? new Date().toISOString()
+      stmtEntryInsert.run(id, input.threadId, input.kind, oneLine(input.line, LINE_MAX), (input.body ?? '').trim().slice(0, BODY_MAX),
+        input.kind === 'commitment' ? input.due ?? null : null, input.source ?? 'chat', input.matterId ?? null, ts, ts)
+      return id
+    },
+
+    async updateEntry(id, patch) {
+      const sets: string[] = [], vals: (string | null)[] = []
+      if (patch.line !== undefined) { sets.push('line = ?'); vals.push(oneLine(patch.line, LINE_MAX)) }
+      if (patch.body !== undefined) { sets.push('body = ?'); vals.push(patch.body.trim().slice(0, BODY_MAX)) }
+      if (patch.due !== undefined) { sets.push('due = ?'); vals.push(patch.due) }
+      if (patch.status !== undefined) { sets.push('status = ?'); vals.push(patch.status) }
+      if (sets.length === 0) return
+      sets.push('updated_ts = ?'); vals.push(patch.ts ?? new Date().toISOString())
+      db.query(`UPDATE topic_entries SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id)
+    },
+
+    async getEntry(id) {
+      const r = db.query<EntryRow, [string]>(`SELECT ${ENTRY_COLS} FROM topic_entries WHERE id = ?`).get(id)
+      return r ? rowToEntry(r) : null
+    },
+
+    async entries(threadId, opts) {
+      return db.query<EntryRow, [string]>(
+        `SELECT ${ENTRY_COLS} FROM topic_entries WHERE thread_id = ?${opts?.live ? " AND status = 'live'" : ''} ORDER BY updated_ts DESC, id`,
+      ).all(threadId).map(rowToEntry)
+    },
+
+    async entriesByThread(chatId, opts) {
+      const rows = db.query<EntryRow, [string]>(
+        `SELECT ${ENTRY_COLS.split(', ').map(c => `e.${c}`).join(', ')} FROM topic_entries e JOIN threads t ON t.id = e.thread_id
+         WHERE t.chat_id = ?${opts?.live ? " AND e.status = 'live'" : ''} ORDER BY e.updated_ts DESC, e.id`,
+      ).all(chatId)
+      const out = new Map<string, TopicEntry[]>()
+      for (const r of rows) { const e = rowToEntry(r); const l = out.get(e.threadId); if (l) l.push(e); else out.set(e.threadId, [e]) }
+      return out
+    },
+
+    async getExtractState(chatId) {
+      const r = db.query<{ entries_to_ts: string | null; work_cursor: number }, [string]>(
+        'SELECT entries_to_ts, work_cursor FROM thread_extract_state WHERE chat_id = ?',
+      ).get(chatId)
+      return { entriesToTs: r?.entries_to_ts ?? null, workCursor: r?.work_cursor ?? 0 }
+    },
+
+    async setExtractState(chatId, patch) {
+      // 老列 extracted_to_ts 是 NOT NULL:新行给它一个占位(不再读它),已有的行不动它。
+      db.query(`INSERT INTO thread_extract_state(chat_id, extracted_to_ts) VALUES (?, '1970-01-01T00:00:00Z') ON CONFLICT(chat_id) DO NOTHING`).run(chatId)
+      if (patch.entriesToTs !== undefined) db.query('UPDATE thread_extract_state SET entries_to_ts = ? WHERE chat_id = ?').run(patch.entriesToTs, chatId)
+      if (patch.workCursor !== undefined) db.query('UPDATE thread_extract_state SET work_cursor = ? WHERE chat_id = ?').run(patch.workCursor, chatId)
+    },
   }
+}
+
+const LINE_MAX = 80
+const BODY_MAX = 600
+const ENTRY_COLS = 'id, thread_id, kind, line, body, due, status, source, matter_id, created_ts, updated_ts'
+
+interface EntryRow {
+  id: string; thread_id: string; kind: string; line: string; body: string; due: string | null
+  status: string; source: string; matter_id: string | null; created_ts: string; updated_ts: string
+}
+
+function rowToEntry(r: EntryRow): TopicEntry {
+  return {
+    id: r.id, threadId: r.thread_id, kind: r.kind as EntryKind, line: r.line, body: r.body, due: r.due,
+    status: r.status as EntryStatus, source: r.source as EntrySource, matterId: r.matter_id, createdTs: r.created_ts, updatedTs: r.updated_ts,
+  }
+}
+
+/** 索引那一行:去换行、压空白、截长。 */
+function oneLine(s: string, max: number): string {
+  const t = s.replace(/\s+/g, ' ').trim()
+  return [...t].length > max ? [...t].slice(0, max).join('') : t
+}
+
+function newEntryId(): string {
+  return `ent_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
 }

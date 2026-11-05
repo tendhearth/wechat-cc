@@ -1415,3 +1415,33 @@ describe('v103 — speech_log 与 matter_report_outbox 加 ref(S3a)', () => {
     expect(db.query('SELECT COUNT(*) AS n FROM speech_log').get()).toEqual({ n: 2 })
   })
 })
+
+describe('v104 — 话题升格(T1):aliases / topic_entries / 新水位', () => {
+  it('老话题原样留着,aliases 先填成只有它自己用的 tags;老水位不动、新水位从空开始;重放什么都不做', () => {
+    const db = migratedTo(103)
+    db.exec(`INSERT INTO threads(id,chat_id,title,summary,facets,tags,private,status,episodes,created_ts,last_active)
+      VALUES('thr_a','c1','bx网络工具的产品架构','s','["task"]','["bx","产品开发"]',0,'active','[]','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z'),
+            ('thr_b','c1','坏行','','["task"]','not-json',0,'active','[]','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z'),
+            ('thr_c','c1','writter','','["task"]','["产品开发"]',0,'active','[]','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z'),
+            ('thr_d','c2','别的对话','','["task"]','["bx"]',0,'active','[]','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z');
+      INSERT INTO thread_extract_state(chat_id,extracted_to_ts) VALUES('c1','2026-11-05T01:01:04.643Z');`)
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query('SELECT id,title,tags,aliases FROM threads ORDER BY id').all()).toEqual([
+      { id: 'thr_a', title: 'bx网络工具的产品架构', tags: '["bx","产品开发"]', aliases: '["bx"]' },
+      { id: 'thr_b', title: '坏行', tags: 'not-json', aliases: '[]' },
+      { id: 'thr_c', title: 'writter', tags: '["产品开发"]', aliases: '[]' },
+      { id: 'thr_d', title: '别的对话', tags: '["bx"]', aliases: '["bx"]' },
+    ])
+    expect(db.query('SELECT chat_id,extracted_to_ts,entries_to_ts,work_cursor FROM thread_extract_state').all())
+      .toEqual([{ chat_id: 'c1', extracted_to_ts: '2026-11-05T01:01:04.643Z', entries_to_ts: null, work_cursor: 0 }])
+    db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e1','thr_a','commitment','答应装 bx','chat','t','t')`)
+    expect(() => db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e2','thr_a','note','x','chat','t','t')`)).toThrow()
+    expect(() => db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e3','nope','fact','x','chat','t','t')`)).toThrow()
+    db.exec(`UPDATE threads SET aliases='["bx","x"]' WHERE id='thr_a'`)
+    db.exec('PRAGMA user_version = 103')
+    runMigrations(db, migrations)
+    expect(db.query("SELECT aliases FROM threads WHERE id='thr_a'").get()).toEqual({ aliases: '["bx","x"]' })
+    expect(db.query('SELECT COUNT(*) AS n FROM topic_entries').get()).toEqual({ n: 1 })
+  })
+})

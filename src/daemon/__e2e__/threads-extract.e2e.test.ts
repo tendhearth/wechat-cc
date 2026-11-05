@@ -73,7 +73,7 @@ describe('e2e: threads extraction on introspect tick', () => {
             threadsEvalFired = true
             return {
               toolCalls: [],
-              finalText: '{"ops":[{"op":"create","title":"排产系统","summary":"用户反复讨论排产问题","facets":["task"],"tags":["compass"],"private":false,"episode":{"from_ts":"2026-06-11T01:00:00Z","to_ts":"2026-06-11T01:01:00Z"}}]}',
+              finalText: '{"ops":[{"op":"create_topic","title":"排产系统","summary":"用户反复讨论排产问题","facets":["task"],"tags":["compass"],"aliases":["排产"],"private":false,"episode":{"from_ts":"2026-06-11T01:00:00Z","to_ts":"2026-06-11T01:01:00Z"},"entries":[{"kind":"progress","line":"排产系统今天又出问题"}]}]}',
             }
           }
           // Introspect decision call
@@ -112,8 +112,8 @@ describe('e2e: threads extraction on introspect tick', () => {
       expect(extractEv?.reasoning).toContain('batch=2')
 
       // ── 8. Assert watermark was advanced ─────────────────────────────────
-      const watermark = await tStore.getWatermark('chat1')
-      expect(watermark).toBe('2026-06-11T01:01:00Z')
+      expect((await tStore.getExtractState('chat1')).entriesToTs).toBe('2026-06-11T01:01:00Z')
+      expect((await tStore.entries(threads[0]!.id)).map(e => e.line)).toEqual(['排产系统今天又出问题'])
     } finally {
       db.close()
       await daemon.stop()
@@ -164,8 +164,8 @@ describe('e2e: threads extraction on introspect tick', () => {
 
       // Both chats should have a watermark
       const tStore = makeThreadsStore(db)
-      expect(await tStore.getWatermark('chatA')).toBe('2026-06-11T02:00:00Z')
-      expect(await tStore.getWatermark('chatB')).toBe('2026-06-11T03:00:00Z')
+      expect((await tStore.getExtractState('chatA')).entriesToTs).toBe('2026-06-11T02:00:00Z')
+      expect((await tStore.getExtractState('chatB')).entriesToTs).toBe('2026-06-11T03:00:00Z')
     } finally {
       db.close()
       await daemon.stop()
