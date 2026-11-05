@@ -122,7 +122,8 @@ export function makeSpeechPolicy(deps: {
       ...(req.scheduled ? { scheduled: true } : {}),
     })
     const base = { kind: req.kind, origin: originOf(req.kind), chatId: req.chatId, ts, ...(req.ref ? { ref: req.ref } : {}) }
-    const key = `${req.kind}\u0000${req.chatId}`
+    // 带事件键的按事件分开(S3a):两件不同的事同一小时里被推后,各记各的那一行;同一件事连着推后照旧一小时只记一次
+    const key = `${req.kind}\u0000${req.chatId}${req.ref ? `\u0000${req.ref}` : ''}`
     if ('defer' in decision) {
       const prev = lastDefer.get(key)
       if (prev && prev.reason === decision.reason && nowMs - prev.at < DEFER_LOG_EVERY_MS) return { decision, base }

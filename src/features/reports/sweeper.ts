@@ -124,12 +124,8 @@ export interface ReportSweepDeps {
    * 送一条回报。`deferred` = CC 开口那道门(SpeechPolicy,第三批 3a)说这会儿不该说 / 两条路都送不到 ——
    * 不是失败:不算尝试、不退避、不写 first_fail_at,留在 outbox 里下一拍再问(defer 只是不风暴,不是不送)。
    */
+  /** `ref` = 这一条回报的事件键(outbox 行上记着的,S3a):问门带上它,账和 App「做完了」推送并成一行。 */
   send: (chatId: string, text: string, ref?: string) => Promise<{ok: boolean; error?: string; deferred?: string}>
-  /**
-   * 这一条回报是哪一个事件(adapters/store/matter-event-refs turnStartedBy;S3a):带上它,门的账和 App「做完了」推送
-   * 问同一件事的那一行并成一行。没给 / 读不到 ⇒ 不带。
-   */
-  refOf?: (rec: {matterId: string; createdAt: number}) => string | null
   /** Current time, injected for tests. */
   nowMs: number
   log: (tag: string, line: string) => void
@@ -247,8 +243,7 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
 
     let outcome: {ok: boolean; error?: string; deferred?: string}
     try {
-      const ref = deps.refOf?.(rec) ?? null
-      outcome = ref ? await deps.send(chatId, rec.text, ref) : await deps.send(chatId, rec.text)
+      outcome = rec.ref ? await deps.send(chatId, rec.text, rec.ref) : await deps.send(chatId, rec.text)
     } catch (err) {
       outcome = {ok: false, error: err instanceof Error ? err.message : String(err)}
     }
@@ -328,12 +323,8 @@ export interface ReportSchedulerDeps {
    * 送一条回报。`deferred` = CC 开口那道门(SpeechPolicy,第三批 3a)说这会儿不该说 / 两条路都送不到 ——
    * 不是失败:不算尝试、不退避、不写 first_fail_at,留在 outbox 里下一拍再问(defer 只是不风暴,不是不送)。
    */
+  /** `ref` = 这一条回报的事件键(outbox 行上记着的,S3a):问门带上它,账和 App「做完了」推送并成一行。 */
   send: (chatId: string, text: string, ref?: string) => Promise<{ok: boolean; error?: string; deferred?: string}>
-  /**
-   * 这一条回报是哪一个事件(adapters/store/matter-event-refs turnStartedBy;S3a):带上它,门的账和 App「做完了」推送
-   * 问同一件事的那一行并成一行。没给 / 读不到 ⇒ 不带。
-   */
-  refOf?: (rec: {matterId: string; createdAt: number}) => string | null
   log: (tag: string, line: string) => void
   /** Override sweep interval (ms). Defaults to 60s. */
   intervalMs?: number
@@ -363,7 +354,6 @@ export function registerReportSweeper(deps: ReportSchedulerDeps): Lifecycle {
           nowMs: Date.now(),
           log: deps.log,
           noteAbandoned: deps.noteAbandoned,
-          ...(deps.refOf ? {refOf: deps.refOf} : {}),
         })
       } catch (err) {
         deps.log('REPORTS', `sweep failed: ${err instanceof Error ? err.message : String(err)}`)

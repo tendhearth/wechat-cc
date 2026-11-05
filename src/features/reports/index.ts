@@ -62,6 +62,8 @@ export function makeReports(d: ReportsFeatureDeps): ReportsFeature {
     // 终审 Critical:「任务 <id> 静音」落的是 workbench_wechat_subscriptions.enabled=0;
     // 没有订阅记录(从没配置过)按"没静音过"处理,不是默认静音。
     notificationsEnabled: id => store.wechatNotifications.subscription(id)?.enabled ?? true,
+    // 同一个事件的键(S3a):入队那一刻在报的那一轮,和 App「做完了」推送并成账上一行
+    eventRef: id => refs.latestTurn(id),
     log: d.log,
   })
   return {
@@ -70,8 +72,6 @@ export function makeReports(d: ReportsFeatureDeps): ReportsFeature {
       store: outbox,
       matters: d.matters,
       send: sendReportVia(speech),
-      // 同一个事件的键(S3a):入队那一刻在报的那一轮,和 App「做完了」推送并成账上一行
-      refOf: rec => refs.turnStartedBy(rec.matterId, rec.createdAt),
       log: d.log,
       noteAbandoned: (matterId, text) => {
         try { store.addEvent(matterId, 'system', text) } catch { /* best effort — the drop itself already succeeded */ }

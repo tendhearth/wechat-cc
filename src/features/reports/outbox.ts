@@ -23,6 +23,8 @@ export interface OutboxRecord {
   attempts: number
   nextAt: number
   createdAt: number
+  /** 这一条报的是哪一个事件(domain/speech/event-ref turnRef;v103、S3a):问门带上它,账和 App 推送并成一行。旧行 / 读不到 ⇒ null。 */
+  ref: string | null
   /**
    * When this row FIRST hit a non-(-2) delivery failure (v66; evaluation
    * round 3). Null = it has never really failed yet (either brand new, or
@@ -70,7 +72,7 @@ export interface ReportOutboxStore {
    * OutboxRecord's doc comment for why `created_at` doesn't work). Returns
    * the row id (new or the merged/collapsed existing one).
    */
-  insert(report: PendingReport, now: number): Promise<number>
+  insert(report: PendingReport, now: number, ref?: string | null): Promise<number>
   /** Pending rows with next_at <= now, oldest-due first. */
   listDue(now: number): Promise<OutboxRecord[]>
   /** Mark delivered. */
@@ -99,9 +101,10 @@ interface Row {
   next_at: number
   created_at: number
   first_fail_at: number | null
+  ref: string | null
 }
 
-const COLS = 'id, matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at, first_fail_at'
+const COLS = 'id, matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at, first_fail_at, ref'
 
 function rowToRecord(r: Row): OutboxRecord {
   return {
@@ -115,13 +118,14 @@ function rowToRecord(r: Row): OutboxRecord {
     nextAt: r.next_at,
     createdAt: r.created_at,
     firstFailAt: r.first_fail_at,
+    ref: r.ref,
   }
 }
 
 export function makeReportOutboxStore(db: Db): ReportOutboxStore {
-  const stmtInsert = db.query<{id: number}, [string, string, string | null, string, number, number]>(
-    "INSERT INTO matter_report_outbox(matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at) "
-    + "VALUES (?, ?, ?, ?, 'pending', 0, ?, ?) RETURNING id",
+  const stmtInsert = db.query<{id: number}, [string, string, string | null, string, number, number, string | null]>(
+    "INSERT INTO matter_report_outbox(matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at, ref) "
+    + "VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?) RETURNING id",
   )
   // The one canonical pending row for a matter, if any — lowest id wins
   // (deterministic; matters if dogfood data has historical duplicates).
@@ -132,8 +136,9 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
   // must not also be touched). next_at only jumps to `now` when attempts=0
   // (nothing has failed yet); otherwise the existing backoff schedule
   // stands untouched.
-  const stmtMergeById = db.query<unknown, [string, number, number]>(
-    "UPDATE matter_report_outbox SET text = ?, next_at = CASE WHEN attempts = 0 THEN ? ELSE next_at END WHERE id = ?",
+  // ref(S3a)跟着正文换成新的那一轮:合并后发出去的是这一轮的回报。
+  const stmtMergeById = db.query<unknown, [string, string | null, number, number]>(
+    "UPDATE matter_report_outbox SET text = ?, ref = ?, next_at = CASE WHEN attempts = 0 THEN ? ELSE next_at END WHERE id = ?",
   )
   // Any OTHER pending row for the same matter (historical duplicate from
   // before the ② merge fix) is marked dropped, not deleted — it would
@@ -162,14 +167,14 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
   )
 
   return {
-    async insert(report, now) {
+    async insert(report, now, ref = null) {
       const existing = stmtPendingIdByMatter.get(report.matterId)
       if (existing) {
-        stmtMergeById.run(report.text, now, existing.id)
+        stmtMergeById.run(report.text, ref, now, existing.id)
         stmtDropOtherPending.run(report.matterId, existing.id)
         return existing.id
       }
-      const row = stmtInsert.get(report.matterId, report.originMatterId, report.originMessageId, report.text, now, now)
+      const row = stmtInsert.get(report.matterId, report.originMatterId, report.originMessageId, report.text, now, now, ref)
       return row!.id
     },
     async listDue(now) {

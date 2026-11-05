@@ -10,8 +10,6 @@ export interface MatterEventRefs {
   latestTurn(matterId: string): string | null
   /** 某一个 run 的最后一轮(工作台 run 终态的通知)。 */
   lastTurnOfRun(matterId: string, runId: string): string | null
-  /** 某一刻之前开始的最后一轮(回报入队那一刻在报的那一轮;之后主人又说了一句也不会算到新一轮上)。 */
-  turnStartedBy(matterId: string, atMs: number): string | null
 }
 
 export function makeMatterEventRefs(db: Db): MatterEventRefs {
@@ -20,6 +18,5 @@ export function makeMatterEventRefs(db: Db): MatterEventRefs {
   return {
     latestTurn: id => guard(() => ref(id, db.query<{ seq: number | null }, [string]>('SELECT MAX(seq) AS seq FROM matter_turns WHERE matter_id=?').get(id))),
     lastTurnOfRun: (id, runId) => guard(() => ref(id, db.query<{ seq: number | null }, [string, string]>('SELECT MAX(seq) AS seq FROM matter_turns WHERE matter_id=? AND run_id=?').get(id, runId))),
-    turnStartedBy: (id, atMs) => guard(() => ref(id, db.query<{ seq: number | null }, [string, number]>('SELECT MAX(seq) AS seq FROM matter_turns WHERE matter_id=? AND started_at<=?').get(id, atMs))),
   }
 }

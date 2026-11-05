@@ -12,14 +12,12 @@ describe('matter-event-refs(S3a):同一个事件从 matter_turns 读出同一个
         ('t3','m1',3,'run-b','codex','running',300,3);`)
     return db
   }
-  it('最新那一轮 / 某个 run 的最后一轮 / 某一刻之前开始的最后一轮', () => {
+  it('最新那一轮 / 某个 run 的最后一轮', () => {
     const db = seeded()
     try {
       const r = makeMatterEventRefs(db)
       expect(r.latestTurn('m1')).toBe('turn:m1:3')
       expect(r.lastTurnOfRun('m1', 'run-a')).toBe('turn:m1:2')
-      expect(r.turnStartedBy('m1', 250)).toBe('turn:m1:2')
-      expect(r.turnStartedBy('m1', 300)).toBe('turn:m1:3')
     } finally { db.close() }
   })
   it('读不到 ⇒ null(调用方就不带键)', () => {
@@ -28,7 +26,6 @@ describe('matter-event-refs(S3a):同一个事件从 matter_turns 读出同一个
       const r = makeMatterEventRefs(db)
       expect(r.latestTurn('nope')).toBeNull()
       expect(r.lastTurnOfRun('m1', 'run-z')).toBeNull()
-      expect(r.turnStartedBy('m1', 50)).toBeNull()
       db.close()
       expect(r.latestTurn('m1')).toBeNull()
     } finally { try { db.close() } catch { /* 已关 */ } }

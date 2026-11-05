@@ -1394,7 +1394,14 @@ describe('v102 — 删掉 matters.status(M6e,不可逆)', () => {
   })
 })
 
-describe('v103 — speech_log 加 ref(S3a)', () => {
+describe('v103 — speech_log 与 matter_report_outbox 加 ref(S3a)', () => {
+  it('matter_report_outbox 多一列 ref(空);旧行原样', () => {
+    const db = migratedTo(102)
+    db.exec(`INSERT INTO matters(id,kind,title,state,created_at,updated_at,cursor) VALUES('m1','task','t','open',1,1,0),('c1','chat','c','open',1,1,0);
+      INSERT INTO matter_report_outbox(matter_id,origin_matter_id,text,status,attempts,next_at,created_at) VALUES('m1','c1','x','pending',0,1,1);`)
+    runMigrations(db, migrations)
+    expect(db.query('SELECT matter_id,text,ref FROM matter_report_outbox').all()).toEqual([{ matter_id: 'm1', text: 'x', ref: null }])
+  })
   it('旧行原样、ref 是空;新列可写;有部分索引;重放什么都不做', () => {
     const db = migratedTo(102)
     db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel) VALUES(1,'matter_report','report','o@im.wechat','allowed',NULL,'app')").run()
