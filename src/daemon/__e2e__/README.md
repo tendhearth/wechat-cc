@@ -31,12 +31,12 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 关机再开机 | 正常关机没有哪一步停失败;同一个 stateDir 再开机:不重复导入、照样健康、没有模块坏、对话模式留住了、照样收发 |
 | 开机时一样起不来 | 再开机时 A2A 端口被别的程序占了 ⇒ 照样开起来;`/v1/health` 里只有 `a2a-server=degraded`,其余专门开上的都 ok;主人收到一句「这次开机有几样没起来：CC 之间的往来。其它功能照常。」;照样收发 |
 | 输出评测 | `POST /v1/eval/run`(operator 令牌)跑一条 reply 样本:回 200、最后的话和气泡对;起的那条会话带生产的提示词(回复交付那段在,不是自检对话)、按只读档起(Write / Edit / Bash 被禁);微信外发箱和 `messages` 表都没多东西;`memory/` 下没留 `eval-*` 目录;缺字段回 400 `eval_invalid_request` |
-| 免打扰里做完一件事(S2b) | 再开机前配对一台手机(`settings-devices.json` + `phone-push.json`),「待说」那一拍 200ms;主人 `/set 免打扰` 盖住此刻,`POST /v1/self-change/notice` 回 502、微信里派的活做完 ⇒ App 的「做完了」推送和那句回报都在 `speech_pending` 里(push / say 各一行),中继没收到推送、微信外发箱里没那句 |
-| 压着时重启(S2b) | 重启以后两行都还在;主人 `/set 免打扰 关` ⇒ 中继收到那件事的推送(collapseId = 任务编号)、微信里收到那句,各一次;表空了,`speech_log` 有 `matter_report / allowed / app` |
+| 免打扰里的回报 + 重启(S2b) | 关机时把主人的免打扰写成盖住此刻、清空待发队列,「待说」那一拍 200ms;`POST /v1/self-change/notice` 回 502、那句在 `speech_pending`、没进微信;再重启(免打扰照旧)⇒ 还在;主人 `/set 免打扰 关` ⇒ 微信里收到那句,只一次,表空了 |
+| 免打扰里做完一件事 + 重启(S2b,win32 不跑) | 同样的起点再配一台手机(`settings-devices.json` + `phone-push.json`);微信里派给 Codex 的活做完 ⇒「做完了」推送压在 `speech_pending`(push),中继没收到;重启以后还在;主人 `/set 免打扰 关` ⇒ 中继收到那件事的推送(collapseId = 任务编号)一次,`speech_log` 有 `matter_report / allowed / app`。win32 不跑:同「微信里派活」,Codex 当工作台执行者在 Windows 上开头就拒绝 |
 | 过期的一条(S2b) | 关机时写一份旧格式的 `speech/pending-notices.json`(一条两天前、一条刚才)⇒ 开机读进表、文件改名 `.migrated`;刚才那条说了,两天前那条 `speech_log` 记 `dropped / expired`、没发 |
 | 断线时的补说(S2a) | 再开机,「待说」那一拍改成 200ms(`speechFlushIntervalMs`,生产 5 分钟);微信发不出去(`failSendMessage`)时 `POST /v1/self-change/notice` ⇒ 回 502 `send_failed`、日志 `kept to say later`;之后 3 秒(约 15 拍)里这句话**一次外发尝试都不再有**(补说按共用退避等满 1 分钟,或被门判送不到) |
 
-这些场景是**一条时间线**,共用一台 daemon(中途重启七次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。
+这些场景是**一条时间线**,共用一台 daemon(中途重启九次,win32 上七次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。例外:S2 那几条各自在关机时写死起点(免打扰开 / 关、配没配手机、待发队列清空,`rebootForS2`),一条红了不会把后面几条拖红。
 
 **红 / 绿实证**:把 boot-api(当时在 `daemon-modules.ts`,现在 `bootstrap/module.ts`)的 `lazy: ['wired'],` 删掉,沙盒在 `beforeAll` 就红
 (`boot-api failed at init (required): modules: 'boot-api' called ctx.late('wired') but 'wired' is not in its lazy`),
