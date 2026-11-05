@@ -13,7 +13,12 @@ describe('redactIdentifiers', () => {
     expect(r('ghp_abcdefghijklmnopqrstuvwxyz12')).toBe('[令牌]')
     expect(r('Authorization: Bearer abcdefghijklmnopqrstuvwx')).toBe('Authorization: Bearer [令牌]')
   })
+  it('电话', () => {
+    expect(r('代表人电话改用 (702) 210-1729')).toBe('代表人电话改用 [电话]')
+    expect(r('call 702-210-1729 or +1 702 210 1729')).toBe('call [电话] or [电话]')
+    expect(r('手机 13812345678,+86 13912345678')).toBe('手机 [电话],[电话]')
+  })
   it('正常的数字、日期、版本、提交号不动', () => {
-    for (const s of ['2026-11-04 提交', 'v0.5.18', '延期降低 10.9%', 'commit 3897195', '166.88.197.165', '端口 35721', '18 条链接', '1070 项测试', 'TestFlight 25', '000-1234567']) expect(r(s)).toBe(s)
+    for (const s of ['2026-11-04 提交', 'v0.5.18', '延期降低 10.9%', 'commit 3897195', '166.88.197.165', '端口 35721', '18 条链接', '1070 项测试', 'TestFlight 25', '000-1234567', '订单 20261104123', '时间戳 1793865837733']) expect(r(s)).toBe(s)
   })
 })
