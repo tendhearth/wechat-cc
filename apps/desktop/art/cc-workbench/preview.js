@@ -51,7 +51,7 @@ export function makeFixtureApi(initialMode = 'completed', fixedNow = Date.now())
     const url = new URL(path, 'http://fixture.local')
     if (method === 'GET' && url.pathname === '/v1/workbench') return { tasks: mode === 'empty' ? [] : [task], providers: [{ id: 'claude', displayName: 'Claude' }, { id: 'codex', displayName: 'Codex' }], defaultProvider: 'codex', canWechat: true }
     if (method === 'GET' && url.pathname === '/v1/workbench/task') return { task, events, artifacts }
-    if (method === 'GET' && url.pathname === '/v1/workbench/artifact') {
+    if (method === 'GET' && url.pathname === '/v1/matter/artifact') {
       const artifact = artifacts.find(item => item.id === url.searchParams.get('artifactId')) ?? artifacts[0]
       const content = artifact?.id === indexId ? 'quote,theme\n“样例引用”,协作\n' : '# 访谈主题摘要\n\n这是标注样例内容，不是真实模型输出。'
       return { name: artifact?.name ?? '访谈主题摘要.md', mime: artifact?.mime ?? 'text/markdown', contentBase64: utf8Base64(content), size: new TextEncoder().encode(content).length, sha256: artifact?.sha256 ?? summarySha }
@@ -69,7 +69,7 @@ export function makeFixtureApi(initialMode = 'completed', fixedNow = Date.now())
       mode = 'running'
       return { task }
     }
-    if (method === 'POST' && url.pathname === '/v1/workbench/cancel') {
+    if (method === 'POST' && url.pathname === '/v1/matter/stop') {
       task = { ...task, status: 'cancelled', updatedAt: fixedNow }
       return { task }
     }

@@ -16,7 +16,7 @@ const posts=[]
 const invokeWorkbenchApi=async(method,path,body)=>{
  if(method==='POST'){posts.push({path,body});throw Error('synthetic request rejected')}
  if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):details[new URL(path,location.origin).searchParams.get('id')]
- if(path.startsWith('/v1/workbench/review?'))return{reviews:[]}
+ if(path.startsWith('/v1/matter/changes?'))return{reviews:[]}
  if(path.startsWith('/v1/matters?'))return{matters:[]}
  return{tasks:[task,other],providers:[],defaultProvider:'codex',canWechat:false}
 }
@@ -55,7 +55,7 @@ for(const size of [{width:1400,height:850},{width:900,height:650},{width:390,hei
  expect(await page.evaluate(()=>(window as any).qa.posts)).toEqual([])
  await page.locator('[data-action="allow-permission"][data-request-id="p1"]').click()
  await expect(page.locator('.wb-error')).toBeVisible()
- expect(await page.evaluate(()=>(window as any).qa.posts)).toEqual([{path:'/v1/workbench/permission',body:{id:'A',requestId:'p1',decision:'allow'}}])
+ expect(await page.evaluate(()=>(window as any).qa.posts)).toEqual([{path:'/v1/matter/permission',body:{id:'A',requestId:'p1',decision:'allow'}}])
  await expect(page.locator('[data-action="allow-permission"][data-request-id="p1"]')).toBeEnabled()
  await page.evaluate(()=>(window as any).qa.removePermissions())
  const questionJump=page.getByRole('button',{name:'1 项等你处理，查看请求',exact:true})

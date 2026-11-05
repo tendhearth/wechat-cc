@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { test, expect, clickNav } from './fixtures'
+import { test, expect, clickNav, WORKBENCH_ROUTES } from './fixtures'
 
 // All state below is a controlled demo fixture using the existing endpoint shapes.
 const task = {
@@ -17,7 +17,7 @@ for (const width of [1440, 760]) {
     await page.setViewportSize({ width, height: 900 })
     await shim.invoke('demo.seed', { daemonAlive: true, cliSessions: [terminal] })
     let unreadable = false
-    await page.route('**/v1/workbench**', async route => {
+    await page.route(WORKBENCH_ROUTES, async route => {
       const path = new URL(route.request().url()).pathname
       if (path === '/v1/workbench/attention') {
         if (unreadable) return route.fulfill({ status: 503, json: { error: 'unavailable' } })

@@ -92,7 +92,7 @@ describe('review provenance arrives independently of task detail',()=>{
   const invokeWorkbenchApi=async(_method,path)=>{
    const id=new URL(path,'http://fixture.test').searchParams.get('id')
    if(path.startsWith('/v1/workbench/task?'))return{task:id==='A'?a:b,events:[],artifacts:[{...artifact,id:id==='A'?'snapshot':'saved'}]}
-   if(path.startsWith('/v1/workbench/review?'))return new Promise(resolve=>{releases[id]=resolve})
+   if(path.startsWith('/v1/matter/changes?'))return new Promise(resolve=>{releases[id]=resolve})
    if(path.startsWith('/v1/matters?'))return{matters:[]}
    return{tasks:[a,b],providers:[],defaultProvider:'codex',canWechat:false}
   }
@@ -127,7 +127,7 @@ describe('review discovery failures keep outcomes accessible without guessing pr
   const finished={...task,status:'completed'}
   const controller=initWorkbenchPage({pollMs:60000,invokeWorkbenchApi:async(_method,path)=>{
    if(path.startsWith('/v1/workbench/task?'))return{task:finished,events:[],artifacts:[artifact]}
-   if(path.startsWith('/v1/workbench/review?')){if(kind==='unavailable')throw Error('unavailable');return{}}
+   if(path.startsWith('/v1/matter/changes?')){if(kind==='unavailable')throw Error('unavailable');return{}}
    if(path.startsWith('/v1/matters?'))return{matters:[]}
    return{tasks:[finished],providers:[],defaultProvider:'codex',canWechat:false}
   }})
@@ -151,7 +151,7 @@ describe('review provenance belongs to the current artifact generation',()=>{
   const initial={task:finished,version:1,events:[],artifacts:[{...artifact,id:'snapshot'}]}
   const controller=initWorkbenchPage({pollMs:60000,invokeWorkbenchApi:async(_method,path)=>{
    if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(resolve=>{push=resolve}):initial
-   if(path.startsWith('/v1/workbench/review?'))return ++reviewCalls===1?{reviews:[review]}:new Promise(resolve=>{finishReviews=resolve})
+   if(path.startsWith('/v1/matter/changes?'))return ++reviewCalls===1?{reviews:[review]}:new Promise(resolve=>{finishReviews=resolve})
    if(path.startsWith('/v1/matters?'))return{matters:[]}
    return{tasks:[finished],providers:[],defaultProvider:'codex',canWechat:false}
   }})

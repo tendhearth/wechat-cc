@@ -129,9 +129,9 @@ async function pageFixture(post){
  const other={...sourceTask,id:'12345678',title:'另一件事',providerId:'codex',status:'completed',error:null}
  const target={...other,id:'abcdef12',title:'接手的任务'}
  const invoke=vi.fn(async(method,path,body)=>{
-  if(path==='/v1/workbench/quota-handoff')return post(body)
+  if(path==='/v1/matter/handoff')return post(body)
   if(path.startsWith('/v1/workbench/task?')){if(path.includes('since='))return new Promise(()=>{});const id=new URL('http://fixture'+path).searchParams.get('id');return{task:id===source.id?sourceTask:id===target.id?target:other,events:[],artifacts:[],version:1,continuation:{mode:'new'},quotaHandoff:id===source.id?offer:null}}
-  if(path.startsWith('/v1/workbench/review?'))return{reviews:[]}
+  if(path.startsWith('/v1/matter/changes?'))return{reviews:[]}
   if(path.startsWith('/v1/matters?'))return{matters:[]}
   return{tasks:[sourceTask,other,target],providers,defaultProvider:'claude',canWechat:false}
  })

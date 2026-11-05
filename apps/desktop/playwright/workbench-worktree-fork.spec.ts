@@ -14,9 +14,9 @@ const detailOf=t=>({task:t,version:1,events:[{id:'1',taskId:t.id,kind:'user',tex
 const calls=[]
 const invokeWorkbenchApi=async(method,path,body)=>{
   calls.push({method,path,body})
-  if(path==='/v1/workbench/create-entry'){tasks=[fork,wt];return{receipt:{requestId:body.requestId,taskId:'bbbb2222',matterId:'bbbb2222',runId:'r',acceptedAt:1},task:fork}}
+  if(path==='/v1/matter/create'){tasks=[fork,wt];return{receipt:{requestId:body.requestId,taskId:'bbbb2222',matterId:'bbbb2222',runId:'r',acceptedAt:1},task:fork}}
   if(path.startsWith('/v1/workbench/task?')){const id=new URL('http://x'+path).searchParams.get('id');return path.includes('since=')?new Promise(()=>{}):detailOf(tasks.find(t=>t.id===id))}
-  if(path.startsWith('/v1/workbench/review?'))return{reviews:[]}
+  if(path.startsWith('/v1/matter/changes?'))return{reviews:[]}
   if(path.startsWith('/v1/matters?'))return{matters:[]}
   return{tasks,providers:[{id:'codex',displayName:'Codex'},{id:'claude',displayName:'Claude'}],defaultProvider:'codex',canWechat:false,projects:[{id:'p-0123456789abcdef0123',name:'个人网站',path:'/work/site',providerId:'codex'}]}
 }
@@ -39,7 +39,7 @@ test('fork a worktree task to another executor: same request, same project, new 
  await expect(picker.locator('option')).toHaveText(['Claude'])
  await page.locator('[data-action="worktree-fork"]').click()
  await expect.poll(()=>page.evaluate(()=>(window as any).qa.controller.state.selectedId)).toBe('bbbb2222')
- const created=await page.evaluate(()=>(window as any).qa.calls.filter((c:any)=>c.path==='/v1/workbench/create-entry').map((c:any)=>c.body))
+ const created=await page.evaluate(()=>(window as any).qa.calls.filter((c:any)=>c.path==='/v1/matter/create').map((c:any)=>c.body))
  expect(created).toHaveLength(1)
  expect(created[0]).toMatchObject({text:'把首页的标题改短，并补一段介绍',title:'整理首页',providerId:'claude',target:{kind:'project',projectId:'p-0123456789abcdef0123',isolation:'worktree'}})
  expect(created[0].requestId).toMatch(/^[0-9a-f-]{36}$/)

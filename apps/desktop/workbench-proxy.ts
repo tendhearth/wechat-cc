@@ -5,6 +5,9 @@ import WORKBENCH_ROUTES from './src-tauri/generated/workbench-routes.json'
 // 放行名单是生成物(重构第二批 5a):路由表 packages/protocol/src/routes.ts 里 `desktop.devProxy` 的行,
 // `bun run gen:routes` 写进这份 JSON;lib.rs 读同一份文件的 `tauri` 名单。别在这里手加。
 const ROUTES:ReadonlySet<string> = new Set(WORKBENCH_ROUTES.devProxy)
+// 一件事上的动作(P3e-3 起桌面调 /v1/matter/<动词>,同一个处理器,旧的 /v1/workbench/* 双胞胎是 daemon 那边的别名):
+// 名单里 /v1/matter/ 开头的就是它们,按工作台那一类走(方法不对 / 后面多一截 ⇒ 405,mock 模式 ⇒ 503),和双胞胎一样。
+const MATTER_ACTION_PATHS:readonly string[] = [...new Set(WORKBENCH_ROUTES.devProxy.map(k=>k.slice(k.indexOf(' ')+1)).filter(p=>p.startsWith('/v1/matter/')))]
 interface Options {
   stateDir:string; dryRun:boolean; allowWrites:boolean
   fetch?:(url:string,init?:RequestInit)=>Promise<Response>
@@ -32,7 +35,7 @@ export function createWorkbenchProxy(opts:Options) {
     const url=new URL(req.url)
     // /v1/connections(此刻的连接浮层)、/v1/phone/*(连接手机)、/v1/cli/sessions(此刻里的终端会话)也走这里;mock 模式下交给 test-shim 的演示路由。
     // 架构终态 F6 起,桌面不再起 CLI 读的那些主人私事(记忆页、对话页、会话名单 ……)也是:名单里有、又不是工作台的,一律按这一类。
-    const isWorkbench=url.pathname==='/v1/workbench'||url.pathname.startsWith('/v1/workbench/')
+    const isWorkbench=url.pathname==='/v1/workbench'||url.pathname.startsWith('/v1/workbench/')||MATTER_ACTION_PATHS.some(p=>url.pathname.startsWith(p))
     const ownerSurface=url.pathname==='/v1/connections'||url.pathname.startsWith('/v1/phone/')||url.pathname==='/v1/cli/sessions'||url.pathname.startsWith('/v1/cli/hooks/')
       ||(!isWorkbench&&ROUTES.has(`${req.method} ${url.pathname}`))
     if(!ownerSurface&&!isWorkbench)return null

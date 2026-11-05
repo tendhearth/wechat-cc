@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { test, expect, clickNav } from './fixtures'
+import { test, expect, clickNav, WORKBENCH_ROUTES } from './fixtures'
 
 const site = { id:'site-store-id', name:'作品集', path:'/demo/site', providerId:'claude' }
 const notes = { id:'notes-store-id', name:'访谈笔记', path:'/demo/notes', providerId:'codex' }
@@ -26,7 +26,7 @@ const tasks = [
 
 async function setup(page:any, shimUrl:string, shim:any) {
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
-  await page.route('**/v1/workbench**', async (route:any) => {
+  await page.route(WORKBENCH_ROUTES, async (route:any) => {
     const url = new URL(route.request().url())
     const path = url.pathname
     let json:any = {}
@@ -38,7 +38,7 @@ async function setup(page:any, shimUrl:string, shim:any) {
         {id:'2',taskId:current.id,kind:'text',text:current.id==='deadbeef'?'已检查页面。我想运行本地测试，确认布局调整没有影响其他页面。':'这一轮的内容已经整理好了，可以继续补充要求。',createdAt:now-30000},
       ],artifacts:[],permissions:current.id==='deadbeef'?[{id:'permission-1',taskId:current.id,tool:'Bash',description:'运行本地测试：bun run test',createdAt:now-20000}]:[]}
     } else if(path==='/v1/workbench/attention') json={tasks:[]}
-    else if(path==='/v1/workbench/review') json={reviews:[]}
+    else if(path==='/v1/matter/changes') json={reviews:[]}
     else if(path==='/v1/workbench/entry-options') json={status:'ready',defaultProviderId:'claude',providers,projects:projects.map((p,i)=>({...p,id:catalogIds[i]}))}
     await route.fulfill({json})
   })

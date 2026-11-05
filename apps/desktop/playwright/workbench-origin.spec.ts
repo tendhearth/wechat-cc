@@ -1,5 +1,5 @@
 import {join} from 'node:path'
-import {test,expect,clickNav} from './fixtures'
+import {test,expect,clickNav,WORKBENCH_ROUTES} from './fixtures'
 
 // 出生地(2026-10-19):「全部」(原一起做)每行头像组旁边一个小字形,详情标题下「名字 · 从哪来的」。只画知道的;老的事不画。
 const t=(id:string,title:string,providerId:string,origin?:string,agents?:string[])=>({id,title,path:'/demo/blog',providerId,status:'completed',phase:'replied',createdAt:1,updatedAt:Date.now()-60_000,error:null,...(origin?{origin}:{}),...(agents?{agents}:{})})
@@ -15,12 +15,12 @@ const tasks=[
 test('全部:出生地字形挨着头像组,读屏念「从哪来的」;老的事不画',async({page,shim,shimUrl})=>{
   await page.setViewportSize({width:1280,height:820})
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
-  await page.route('**/v1/workbench**',async(route:any)=>{
+  await page.route(WORKBENCH_ROUTES,async(route:any)=>{
     const url=new URL(route.request().url())
     let json:any={}
     if(url.pathname==='/v1/workbench')json={tasks,projects:[{id:'p-'+'1'.repeat(20),path:'/demo/blog',name:'blog',providerId:'claude'}],providers:[{id:'claude',displayName:'Claude Code'},{id:'codex',displayName:'Codex'},{id:'cursor',displayName:'Cursor'}],defaultProvider:'claude',canWechat:true}
     else if(url.pathname==='/v1/workbench/task'){const task=tasks.find(x=>x.id===url.searchParams.get('id'))??tasks[0]!;json={task,events:[{id:'1',taskId:task.id,kind:'text',text:'改好了，你看看。',createdAt:2}],artifacts:[]}}
-    else if(url.pathname==='/v1/workbench/review')json={reviews:[]}
+    else if(url.pathname==='/v1/matter/changes')json={reviews:[]}
     await route.fulfill({json})
   })
   await page.goto(shimUrl)
