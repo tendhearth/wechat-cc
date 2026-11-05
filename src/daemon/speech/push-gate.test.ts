@@ -253,4 +253,16 @@ describe('压着的推送落在主库 speech_pending(S2b,主人 11-04:重启不�
     s.gate.later(failed, { at: T0 + 700_000, since: T0, matterId: 't1' })
     expect(s.db.query<{ ref: string }, []>("SELECT ref FROM speech_pending WHERE lane='push'").all().map(r => r.ref)).toEqual(['later:task_failed:t1:'])
   })
+
+  it('later:这件事有一条被免打扰压着的旧回报 ⇒ 新的进升级等待时旧的作废(不绕过等待先推出去)', async () => {
+    let quiet = true
+    const s = setup({ seen: () => null, quietFn: () => quiet })
+    s.gate.push(done)
+    expect(s.db.query<{ ref: string }, []>("SELECT ref FROM speech_pending WHERE lane='push'").all().map(r => r.ref)).toEqual(['task_done:t1:'])
+    quiet = false
+    s.gate.later({ ...done, body: '新的一轮' }, { at: T0 + 600_000, since: T0, matterId: 't1' })
+    await s.speech.flushPending()
+    expect(s.pushed).toEqual([])
+    expect(s.db.query<{ ref: string }, []>("SELECT ref FROM speech_pending WHERE lane='push'").all().map(r => r.ref)).toEqual(['later:task_done:t1:'])
+  })
 })

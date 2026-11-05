@@ -95,11 +95,15 @@ export function makePushGate(d: {
     return { until: Number.isFinite(until) ? until : now() + 5 * 60_000, kind, chat }
   }
 
-  /** 这件事等着升级的那几条(做完 / 没做成各一条 key)。同一件事来了新的回报 ⇒ 旧的作废(S3b)。 */
-  const dropLater = (p: PushPayload): void => {
+  /**
+   * 这件事等着升级的那几条(做完 / 没做成各一条 key)。同一件事来了新的回报 ⇒ 旧的作废(S3b)。
+   * alsoHeld:连被门压着的旧回报也作废(新的这条要进升级等待,旧的不该绕过等待先推出去)。
+   */
+  const dropLater = (p: PushPayload, alsoHeld = false): void => {
     if (!p.taskId || (p.kind !== 'task_done' && p.kind !== 'task_failed')) return
     try {
-      const n = d.held.removeKeys([`${LATER_KEY_PREFIX}task_done:${p.taskId}:`, `${LATER_KEY_PREFIX}task_failed:${p.taskId}:`])
+      const keys = ['task_done', 'task_failed'].flatMap(k => [`${LATER_KEY_PREFIX}${k}:${p.taskId}:`, ...(alsoHeld ? [`${k}:${p.taskId}:`] : [])])
+      const n = d.held.removeKeys(keys)
       if (n > 0) d.log('PUSH', `${p.taskId}: a newer report — dropped ${n} waiting escalation(s)`)
     } catch (err) { d.log('PUSH', `dropping waiting escalations failed: ${err instanceof Error ? err.message : String(err)}`) }
   }
@@ -165,7 +169,7 @@ export function makePushGate(d: {
       const chat = d.ownerChatId()
       if (!kind || !chat) { d.push(p); return }
       const t = now()
-      dropLater(p)
+      dropLater(p, true)
       try {
         d.held.hold({ key: `${LATER_KEY_PREFIX}${p.kind}:${p.taskId ?? ''}:${p.requestId ?? ''}`, kind, chatId: chat, payload: p, until: o.at, expiresAt: o.at + RETRY_WINDOW_MS, at: t,
           later: { matterId: o.matterId, since: o.since }, ...(o.ref ? { speechRef: o.ref } : {}) })
