@@ -35,6 +35,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 免打扰里做完一件事 + 重启(S2b,win32 不跑) | 同样的起点再配一台手机(`settings-devices.json` + `phone-push.json`);微信里派给 Codex 的活做完 ⇒「做完了」推送压在 `speech_pending`(push),中继没收到;重启以后还在;主人 `/set 免打扰 关` ⇒ 中继收到那件事的推送(collapseId = 任务编号)一次,`speech_log` 有 `matter_report / allowed / app`。win32 不跑:同「微信里派活」,Codex 当工作台执行者在 Windows 上开头就拒绝 |
 | 过期的一条(S2b) | 关机时写一份旧格式的 `speech/pending-notices.json`(一条两天前、一条刚才)⇒ 开机读进表、文件改名 `.migrated`;刚才那条说了,两天前那条 `speech_log` 记 `dropped / expired`、没发 |
 | 断线时的补说(S2a) | 再开机,「待说」那一拍改成 200ms(`speechFlushIntervalMs`,生产 5 分钟);微信发不出去(`failSendMessage`)时 `POST /v1/self-change/notice` ⇒ 回 502 `send_failed`、日志 `kept to say later`;之后 3 秒(约 15 拍)里这句话**一次外发尝试都不再有**(补说按共用退避等满 1 分钟,或被门判送不到) |
+| 一个事件账上一行(S3a,win32 不跑) | 配一台手机、免打扰关;微信里派给 Codex 的活做完 ⇒ App 推一次,`speech_log` 里这一轮只有一行(`ref = turn:<任务>:<轮>`、`allowed / app`),一秒后还是一行;再派一件要批准的 ⇒ App 推一次、微信里一张「需要你批准」,`speech_log` 里一行(`ref = ask:<任务>:<请求>`、通道 `app+wechat`)。win32 不跑:同「微信里派活」 |
 
 这些场景是**一条时间线**,共用一台 daemon(中途重启九次,win32 上七次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。例外:S2 那几条各自在关机时写死起点(免打扰开 / 关、配没配手机、待发队列清空,`rebootForS2`),一条红了不会把后面几条拖红。
 
@@ -56,6 +57,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | `features/output-eval/module.ts` 不收一次性 chatId 留下的记忆目录(去掉 `forgetChat`);或 runner 的 chatId 带 `/`(`eval/<uuid>`) | 输出评测(`memory/` 下多一个 `eval-*` 空目录;带 `/` 的那版直接 `ok:false`:`memory-export: bad chat id`) |
 | `daemon/speech/push-gate.ts` 停的时候把压着的推送删掉(回到「只在内存里」) | 压着时重启(`expected [] to have a length of 1`) |
 | `daemon/speech/pending-notices.ts` 的 `expire` 不回过期的行 | 过期的一条(等不到 `speech_log` 那一行) |
+| `daemon/speech/ledger-store.ts` 带 ref 的也一判一行(不查同一个 ref 的那一行) | 一个事件账上一行(`expected [ …(2) ] to deeply equal [ { kind: 'permission_ask', …(3) } ]`) |
 | `daemon/speech/policy.ts` 补说失败不退避(`nextAt: t`) | 断线时的补说(3 秒里又撞了 4 次:`expected 10 to be 6`);去掉「一次只跑一拍」那个守卫则是 3 秒 21 次(`expected 21 to be less than or equal to 6`) |
 
 ### 开了什么

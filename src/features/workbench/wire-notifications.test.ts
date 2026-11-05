@@ -262,4 +262,25 @@ describe('工作台通知经 CC 开口那道门(第三批 3a)', () => {
     expect(f.sendWorkbenchNotice).not.toHaveBeenCalled()
     expect(f.notificationStore.list('task-1')[0]).toMatchObject({ status: 'suppressed', reason: 'ineligible' })
   })
+
+  it('问门带事件键(S3a):批准 / 提问按请求编号,run 终态按那个 run 的最后一轮;读不到那一轮 ⇒ 不带', async () => {
+    const db = openSqlite(':memory:'); databases.push(db)
+    db.exec("PRAGMA foreign_keys=ON; CREATE TABLE workbench_tasks(id TEXT PRIMARY KEY NOT NULL) STRICT; INSERT INTO workbench_tasks(id) VALUES('task-1'),('task-2');")
+    initializeWechatNotificationSchema(db)
+    const notificationStore = makeWechatNotificationStore(db)
+    let wake: (() => Promise<void>) | undefined
+    const workbench = { notificationStore, notificationEligible: () => true, setNotificationWake: (w: typeof wake) => { wake = w } }
+    const asked: Array<string | undefined> = []
+    const speech = { say: vi.fn(async (req: { ref?: string }) => { asked.push(req.ref); return { allow: true as const, channel: 'wechat' as const } }) }
+    wireWorkbenchNotifications({ workbench: workbench as never, ilink: { sendWorkbenchNotice: async () => ({ status: 'accepted' as const }), chatAccountId: () => 'account-1' }, speech: speech as never,
+      turnRefOfRun: (taskId, runId) => (taskId === 'task-1' && runId === 'run-1' ? 'turn:task-1:3' : null) })
+    notificationStore.watch('task-1', 'owner-1', 'account-1', true)
+    notificationStore.watch('task-2', 'owner-1', 'account-1', true)
+    notificationStore.enqueue(input({ kind: 'permission', requestId: 'p9', text: '要批准' }))
+    notificationStore.enqueue(input())
+    notificationStore.enqueue(input({ taskId: 'task-2', runId: 'run-2' }))
+    await wake!()
+    expect(asked).toHaveLength(3)   // 同一毫秒入队的按 id 排,先后不定
+    expect(new Set(asked)).toEqual(new Set(['ask:task-1:p9', 'turn:task-1:3', undefined]))
+  })
 })

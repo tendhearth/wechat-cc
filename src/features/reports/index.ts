@@ -16,6 +16,7 @@ import type { Lifecycle } from '../../lib/lifecycle'
 import type { ReportSink } from '../../domain/matters/report'
 import type { MatterStore } from '../../ports/matters'
 import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
+import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
 import type { DaemonModule, ModuleCtx } from '../../daemon/modules/container'
 import { lifecycleModule } from '../../daemon/modules/lifecycle-module'
 import type { SpeechPolicy } from '../../daemon/speech/policy'
@@ -54,6 +55,7 @@ export function makeReports(d: ReportsFeatureDeps): ReportsFeature {
   // 独立的一份 WorkbenchStore(同一个 db,写入互相可见;它只是 db 上的一层查询):回报读任务标题 / 成果数 / 静音,
   // 「放弃投递」在那件事自己的时间线上留一笔。
   const store = makeWorkbenchStore(d.db)
+  const refs = makeMatterEventRefs(d.db)
   const sink = makeReportSink({
     matters: d.matters, outbox,
     taskTitle: id => store.get(id).title, artifactCount: id => store.artifacts(id).length,
@@ -68,6 +70,8 @@ export function makeReports(d: ReportsFeatureDeps): ReportsFeature {
       store: outbox,
       matters: d.matters,
       send: sendReportVia(speech),
+      // 同一个事件的键(S3a):入队那一刻在报的那一轮,和 App「做完了」推送并成账上一行
+      refOf: rec => refs.turnStartedBy(rec.matterId, rec.createdAt),
       log: d.log,
       noteAbandoned: (matterId, text) => {
         try { store.addEvent(matterId, 'system', text) } catch { /* best effort — the drop itself already succeeded */ }

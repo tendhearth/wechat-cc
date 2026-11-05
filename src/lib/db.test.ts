@@ -881,7 +881,7 @@ it('v84 creates speech_log (CC 主动开口的外发账) with origin / outcome c
     expect(()=>ins('initiative','sent')).toThrow()
     expect(()=>db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome) VALUES('x','k','report','c','allowed')").run()).toThrow()
     const cols=(db.query("PRAGMA table_info('speech_log')").all() as {name:string}[]).map(c=>c.name)
-    expect(cols).toEqual(['id','at','kind','origin','chat_id','outcome','reason','channel'])
+    expect(cols).toEqual(['id','at','kind','origin','chat_id','outcome','reason','channel','ref'])   // ref:v103 追加(S3a)
     expect((db.query("PRAGMA index_list('speech_log')").all() as {name:string}[]).map(i=>i.name)).toContain('speech_log_chat_at')
   }finally{db.close()}
 })
@@ -1391,5 +1391,20 @@ describe('v102 — 删掉 matters.status(M6e,不可逆)', () => {
     runMigrations(db, migrations)
     expect(db.query('SELECT * FROM matters ORDER BY id').all()).toEqual(before)
     expect(db.query("SELECT COUNT(*) AS n FROM matter_items WHERE kind='system'").get()).toEqual({ n: 2 })
+  })
+})
+
+describe('v103 — speech_log 加 ref(S3a)', () => {
+  it('旧行原样、ref 是空;新列可写;有部分索引;重放什么都不做', () => {
+    const db = migratedTo(102)
+    db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel) VALUES(1,'matter_report','report','o@im.wechat','allowed',NULL,'app')").run()
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query('SELECT kind,outcome,channel,ref FROM speech_log').all()).toEqual([{ kind: 'matter_report', outcome: 'allowed', channel: 'app', ref: null }])
+    db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel,ref) VALUES(2,'permission_ask','blocking','o@im.wechat','allowed',NULL,'app','ask:m:r')").run()
+    expect(db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='speech_log_ref'").all()).toEqual([{ name: 'speech_log_ref' }])
+    db.exec('PRAGMA user_version = 102')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM speech_log').get()).toEqual({ n: 2 })
   })
 })

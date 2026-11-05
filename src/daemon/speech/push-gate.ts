@@ -38,8 +38,11 @@ export function pushSpeechKind(kind: PushPayload['kind']): SpeechKind | null {
 type PushResult = { sent: number; online: number } | null
 
 export interface PushGate {
-  /** 问门;放行 ⇒ 原样推、回推送的结果;压着 ⇒ 回 {sent:0, online:0}。没接推送 ⇒ null。 */
-  push(p: PushPayload): PushResult
+  /**
+   * 问门;放行 ⇒ 原样推、回推送的结果;压着 ⇒ 回 {sent:0, online:0}。没接推送 ⇒ null。
+   * `ref` = 同一个事件的键(domain/speech/event-ref.ts;S3a):问门带着它,账和别的路问同一件事的那一行并成一行;压着时一起存下。
+   */
+  push(p: PushPayload, ref?: string): PushResult
   /** 停计时器。压着的留在表里,下次开机接着等。 */
   stop(): void
 }
@@ -74,11 +77,11 @@ export function makePushGate(d: {
   }
 
   /** 问门。放行 ⇒ 推;推后 ⇒ 记下到点时刻;(blocking / report 不会被拒;万一被拒 ⇒ 记一行,不推。) */
-  const attempt = (p: PushPayload): { pushed: PushResult } | { until: number; kind: SpeechKind; chat: string } | { dropped: string } => {
+  const attempt = (p: PushPayload, ref?: string): { pushed: PushResult } | { until: number; kind: SpeechKind; chat: string } | { dropped: string } => {
     const kind = pushSpeechKind(p.kind)
     const chat = d.ownerChatId()
     if (!kind || !chat) return { pushed: d.push(p) }
-    const o = d.speech.ask({ kind, chatId: chat }, { channel: 'app', deliverable: true })
+    const o = d.speech.ask({ kind, chatId: chat, ...(ref ? { ref } : {}) }, { channel: 'app', deliverable: true })
     if ('allow' in o) return { pushed: d.push(p) }
     if ('drop' in o) return { dropped: o.reason }
     const until = o.until ? Date.parse(o.until) : NaN
@@ -91,7 +94,7 @@ export function makePushGate(d: {
     try {
       const t = now()
       for (const x of d.held.expire(t)) {
-        d.speech.expired({ kind: x.kind, chatId: x.chatId, channel: 'app' })
+        d.speech.expired({ kind: x.kind, chatId: x.chatId, channel: 'app', ...(x.speechRef ? { ref: x.speechRef } : {}) })
         d.log('PUSH', `held ${x.payload.kind} push expired — not pushed (${x.key})`)
       }
       const due = d.held.due(recheck ? Number.MAX_SAFE_INTEGER : t, MAX_RELEASE_PER_TICK)
@@ -100,7 +103,7 @@ export function makePushGate(d: {
         d.log('PUSH', `${due.length} held push(es) due but the relay is not connected yet — checking again in ${NOT_READY_RECHECK_MS / 1000}s`)
       } else {
         for (const h of due) {
-          const r = attempt(h.payload)
+          const r = attempt(h.payload, h.speechRef)
           if ('until' in r) { d.held.reschedule(h.id, r.until); continue }
           d.held.remove(h.id)
           if ('pushed' in r) d.log('PUSH', `held ${h.payload.kind} push released (${h.key})`)
@@ -118,15 +121,15 @@ export function makePushGate(d: {
   try { arm() } catch (err) { d.log('PUSH', `held pushes not armed at start: ${err instanceof Error ? err.message : String(err)}`) }
 
   return {
-    push(p) {
+    push(p, ref) {
       if (stopped) return null
-      const r = attempt(p)
+      const r = attempt(p, ref)
       if ('pushed' in r) return r.pushed
       if ('dropped' in r) { d.log('PUSH', `${p.kind} push dropped by speech policy: ${r.dropped}`); return { sent: 0, online: 0 } }
       const key = `${p.kind}:${p.taskId ?? ''}:${p.requestId ?? ''}`
       const t = now()
       try {
-        d.held.hold({ key, kind: r.kind, chatId: r.chat, payload: p, until: r.until, expiresAt: t + RETRY_WINDOW_MS, at: t })
+        d.held.hold({ key, kind: r.kind, chatId: r.chat, payload: p, until: r.until, expiresAt: t + RETRY_WINDOW_MS, at: t, ...(ref ? { speechRef: ref } : {}) })
         for (const oldest of d.held.trim(MAX_HELD_PUSHES)) d.log('PUSH', `held pushes over ${MAX_HELD_PUSHES} — dropped the oldest (${oldest}); the task itself is still in the app`)
       } catch (err) {
         d.log('PUSH', `${p.kind} push not held (store failed): ${err instanceof Error ? err.message : String(err)}`)

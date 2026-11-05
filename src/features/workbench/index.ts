@@ -84,7 +84,7 @@ export interface DeferredStart { start(): void }
  * 工作台的微信通知:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
  * **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
  */
-export function workbenchNotificationsFeature(o: { needs: readonly string[]; speech: (ctx: ModuleCtx) => Pick<SpeechPolicy, 'say'> }): DaemonModule<DeferredStart> {
+export function workbenchNotificationsFeature(o: { needs: readonly string[]; speech: (ctx: ModuleCtx) => Pick<SpeechPolicy, 'say'>; turnRefOfRun?: (taskId: string, runId: string) => string | null }): DaemonModule<DeferredStart> {
   return {
     name: 'workbench-notifications',
     needs: o.needs,
@@ -92,7 +92,7 @@ export function workbenchNotificationsFeature(o: { needs: readonly string[]; spe
       let n: ReturnType<typeof wireWorkbenchNotifications> | null = null
       ctx.own('stop', async () => { await n?.close() })
       return { start: () => {
-        n = wireWorkbenchNotifications({ workbench: ctx.get<WorkbenchService>('workbench'), ilink: ctx.get<WechatWorkbenchTransport>(WECHAT_PORTS.workbench), speech: o.speech(ctx) })
+        n = wireWorkbenchNotifications({ workbench: ctx.get<WorkbenchService>('workbench'), ilink: ctx.get<WechatWorkbenchTransport>(WECHAT_PORTS.workbench), speech: o.speech(ctx), ...(o.turnRefOfRun ? { turnRefOfRun: o.turnRefOfRun } : {}) })
         void n.wake().catch(() => log('WORKBENCH', 'Task notifications are waiting for storage recovery.'))
       } }
     },

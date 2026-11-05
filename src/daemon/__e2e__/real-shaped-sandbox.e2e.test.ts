@@ -532,4 +532,38 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
       d.ilink.succeedSendMessage()
     }
   })
+
+  // S3a(一个事件账上一行;设计稿 docs/superpowers/specs/2026-11-05-s3-one-proposal-design.md):同一件事今天有几条路各自问门
+  // (App 推送、微信通知、回原对话的回报),问门时带同一个事件键,speech_log 里就只有一行。
+  // win32 不跑:要 Codex 在工作台里做一件事 —— 同上面「workbench from WeChat」那条的理由。
+  it.skipIf(process.platform === 'win32')('one event, one ledger row: a task asks for approval ⇒ the App push and the WeChat notice are one speech_log row (app+wechat); the task finishing ⇒ one row for that turn', async () => {
+    await rebootForS2({ quiet: false, phone: true })
+    const since = Date.now()
+    d.sendText(d.owner, '任务 项目')
+    const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 再写一份笔记`)
+    const ack = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.startsWith('已接下这件事')), 15_000)
+    const taskId = texts(ack, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
+    await expect.poll(async () => (await desktop<{ task: { phase: string } }>('GET', `/v1/workbench/task?id=${taskId}`)).body.task.phase, { timeout: 30_000 }).toBe('replied')
+    // 「做完了」:App 推了一次;账上这一轮只有一行,键是这件事的那一轮
+    await expect.poll(() => pushesFor(taskId).length, { timeout: 15_000 }).toBe(1)
+    const rows = () => d.query<{ kind: string; ref: string | null; outcome: string; channel: string | null }>(
+      "SELECT kind, ref, outcome, channel FROM speech_log WHERE at >= ? AND kind IN ('matter_report', 'permission_ask') ORDER BY id", since)
+    await expect.poll(() => rows().filter(r => r.ref?.startsWith(`turn:${taskId}:`)), { timeout: 15_000 })
+      .toEqual([{ kind: 'matter_report', ref: expect.stringMatching(new RegExp(`^turn:${taskId}:\\d+$`)), outcome: 'allowed', channel: 'app' }])
+    await new Promise(r => setTimeout(r, 1_000))   // 回报那一路(回原对话)主人刚说过话 ⇒ 晚些再发;发了也并进同一行。这里看「没有第二行」
+    expect(rows().filter(r => r.kind === 'matter_report')).toHaveLength(1)
+    expect(pushesFor(taskId)).toHaveLength(1)
+
+    // 「等你批准」(blocking,照旧各处都推):App 推一次、微信里一张卡,账上一行,通道两个
+    d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 把 build 删了`)
+    const ack2 = await d.waitForOutbound(m => texts(m, d.owner).filter(t => t.startsWith('已接下这件事')).length >= 2, 15_000)
+    const asking = texts(ack2, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
+    await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes(`· ${asking}`) && t.includes('需要你批准')), 30_000)
+    await expect.poll(() => pushesFor(asking).length, { timeout: 15_000 }).toBe(1)
+    await expect.poll(() => rows().filter(r => r.ref?.startsWith(`ask:${asking}:`)), { timeout: 15_000 })
+      .toEqual([{ kind: 'permission_ask', ref: expect.stringMatching(new RegExp(`^ask:${asking}:`)), outcome: 'allowed', channel: expect.stringMatching(/^(app\+wechat|wechat\+app)$/) }])
+    expect(rows().filter(r => r.kind === 'permission_ask')).toHaveLength(1)
+  })
 })

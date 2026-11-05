@@ -83,6 +83,18 @@ describe('runReportSweep', () => {
     expect(await outbox.listDue(1_000)).toEqual([])
   })
 
+  it('给了 refOf(S3a)⇒ 这一条回报的事件键交给 send(问门带上它,账和 App 推送并成一行);读不到 ⇒ 不带', async () => {
+    matters.bind(CHAT, 'wechat', 'user-1')
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: '首页调整 · 已答复。'}, 1_000)
+    const calls: unknown[][] = []
+    const send = async (...args: [string, string, string?]) => { calls.push(args); return {ok: true} }
+    await runReportSweep({store: outbox, matters, send, refOf: rec => rec.matterId === TASK && rec.createdAt === 1_000 ? `turn:${TASK}:2` : null, nowMs: 1_000, log: () => {}})
+    expect(calls).toEqual([['user-1', '首页调整 · 已答复。', `turn:${TASK}:2`]])
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-8', text: '又一轮 · 已答复。'}, 2_000)
+    await runReportSweep({store: outbox, matters, send, refOf: () => null, nowMs: 2_000, log: () => {}})
+    expect(calls.at(-1)).toEqual(['user-1', '又一轮 · 已答复。'])
+  })
+
   it('origin matter 没有 wechat 绑定 → dropped 并 log,不重试', async () => {
     // CHAT 本身没有 bind 任何 wechat surface_key
     await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: 'x'}, 1_000)

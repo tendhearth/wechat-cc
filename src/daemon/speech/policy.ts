@@ -24,6 +24,8 @@ export interface SpeechRequest {
   scheduled?: boolean
   /** 调用方这一拍的时刻(伙伴一拍有自己的 nowIso);缺省 = 时钟。免打扰按它判,账按它记。 */
   nowMs?: number
+  /** 同一个事件的键(domain/speech/event-ref.ts;S3a):几条路问同一件事时带同一个,账上并成一行。 */
+  ref?: string
 }
 
 export interface SpeechLedgerEntry {
@@ -34,6 +36,8 @@ export interface SpeechLedgerEntry {
   reason: string | null
   channel: ProactiveChannel | null
   ts: string
+  /** 同一个事件的键(v103):带了的同一个只有一行(ledger-store.ts)。 */
+  ref?: string
 }
 
 export type SpeechOutcome = ({ allow: true; channel: ProactiveChannel | null }) | Exclude<SpeechDecision, { allow: true }>
@@ -75,7 +79,7 @@ export interface SpeechPolicy {
    * 压着的一样过期了、不再说(S2b):记一行账 outcome=dropped、reason=expired。待说队列自己在 flushPending 里记;
    * 自己就是通道的(App 推送,push-gate)放压着的那几条时调它。
    */
-  expired(e: { kind: SpeechKind; chatId: string; channel: ProactiveChannel | null }): void
+  expired(e: { kind: SpeechKind; chatId: string; channel: ProactiveChannel | null; ref?: string }): void
   /**
    * 「待说」那一拍的尾巴上顺手跑一下(S2b):自己压着东西的通道(App 推送)借这一拍再问一次门 ——
    * 主人提前关了免打扰,压着的推送不必等到原来的时段结束。抛错只记日志。
@@ -117,7 +121,7 @@ export function makeSpeechPolicy(deps: {
       ...(req.perKind ? { perKind: req.perKind } : {}),
       ...(req.scheduled ? { scheduled: true } : {}),
     })
-    const base = { kind: req.kind, origin: originOf(req.kind), chatId: req.chatId, ts }
+    const base = { kind: req.kind, origin: originOf(req.kind), chatId: req.chatId, ts, ...(req.ref ? { ref: req.ref } : {}) }
     const key = `${req.kind}\u0000${req.chatId}`
     if ('defer' in decision) {
       const prev = lastDefer.get(key)
@@ -138,7 +142,7 @@ export function makeSpeechPolicy(deps: {
   const policy: SpeechPolicy = {
     onFlush(cb) { flushHooks.push(cb) },
     expired(e) {
-      write({ kind: e.kind, origin: originOf(e.kind), chatId: e.chatId, outcome: 'dropped', reason: 'expired', channel: e.channel, ts: new Date(now()).toISOString() })
+      write({ kind: e.kind, origin: originOf(e.kind), chatId: e.chatId, outcome: 'dropped', reason: 'expired', channel: e.channel, ts: new Date(now()).toISOString(), ...(e.ref ? { ref: e.ref } : {}) })
     },
     peek(req) {
       const nowMs = req.nowMs ?? now()

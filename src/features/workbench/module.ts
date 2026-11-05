@@ -10,6 +10,7 @@ import type { WiredDeps } from '../../daemon/wiring'
 import type { GuardRuntime } from '../../daemon/guard/runtime'
 import type { CliUpgradeModule } from '../../daemon/cli-upgrade/start'
 import { ownerChatIdOf } from '../../daemon/owner-chat'
+import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
 import { WECHAT_PORTS as W, type WechatPermissions } from '../../ports/wechat'
 import type { TerminalFeature } from '../terminal'
 import type { JobsFeature } from '../jobs'
@@ -52,8 +53,10 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
  * 工作台的微信通知 / 成果:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
  * **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
  */
-export function workbenchNotificationsModule(): DaemonModule {
-  return workbenchNotificationsFeature({ needs: ['workbench', 'wired', W.workbench], speech: (ctx) => ctx.get<WiredDeps>('wired').speech })
+export function workbenchNotificationsModule(f: Pick<Foundation, 'db'>): DaemonModule {
+  // 同一个事件的键(S3a):run 终态的通知带那个 run 的最后一轮,和 App「做完了」推送并成账上一行
+  const refs = makeMatterEventRefs(f.db)
+  return workbenchNotificationsFeature({ needs: ['workbench', 'wired', W.workbench], speech: (ctx) => ctx.get<WiredDeps>('wired').speech, turnRefOfRun: (taskId, runId) => refs.lastTurnOfRun(taskId, runId) })
 }
 export function workbenchArtifactsModule(): DaemonModule {
   return workbenchArtifactsFeature({ needs: ['workbench', W.workbench] })
