@@ -221,6 +221,21 @@ const ROUTE_TABLE = {
   // 搜主人那条对话(2026-10-06;手机原 /m/api/chat/search)
   'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
   'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
+  // P3e 一件事上的动作(设计稿 2026-11-05-p3-one-route-family「P3e」):一个动作一个处理器(internal-api/routes-matter-actions.ts,
+  // MattersService 那一层),按 caller 分两份参数 —— 手机令牌带 runId 过期判断、按块读成果;operator 是桌面那一份。
+  // 桌面装着的 .app 还在调 /v1/workbench/* 双胞胎、老 App / 网页还在调 /m/api/matter/*,两边都是 wire-compat.ts 的别名。
+  // 桌面下一版才改调这几条(那时加 tauri,编进 .app 的白名单);在那之前 operator 能走(CLI),宿主代理不放。link 照别名行冻结:只有停下给链接令牌。
+  'POST /v1/matter/stop': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'write', reason: '停下是安全方向:能停,不能让它多做什么' } },
+  'POST /v1/matter/permission': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  'POST /v1/matter/answer': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  'GET /v1/matter/artifact': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3;桌面双胞胎是 quota-handoff)
+  'POST /v1/matter/handoff': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  // 独立工作区:提交到分支 / 删除 / 合回 / 另开 + 工作区脚本 run / stop(2026-10-07 / 10-20)
+  'POST /v1/matter/worktree': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  // 交办一件新事 + 回执(桌面双胞胎是 create-entry / entry-receipt)
+  'POST /v1/matter/create': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
+  'GET /v1/matter/create-receipt': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
   // 「CC 的连接」:带插件目录与原因,只给 admin。
   // P3c-2(手机原 /m/api/connections):手机令牌也走这一条,处理器按 caller 去掉 detail(routes-connections.ts);只给设备。
   'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
@@ -660,17 +675,6 @@ const ROUTE_TABLE = {
   // 材料分块上传与进度(和桌面一次传完的 /v1/workbench/attachment 不是同一个动作,P3d 起新路径)
   'POST /v1/workbench/attachment/chunk': { phone: { link: 'none' } },
   'GET /v1/workbench/attachment/upload': { phone: { link: 'none' } },
-  'POST /m/api/matter/create': { phone: { link: 'none' } },
-  'GET /m/api/matter/create-receipt': { phone: { link: 'none' } },
-  'POST /m/api/matter/permission': { phone: { link: 'none' } },
-  // 手机上停下正在跑的这一轮(2026-10-06)
-  'POST /m/api/matter/stop': { phone: { link: 'write', reason: '停下是安全方向:能停,不能让它多做什么' } },
-  // 独立工作区:提交到分支 / 删除工作区(2026-10-07)
-  'POST /m/api/matter/worktree': { phone: { link: 'none' } },
-  'POST /m/api/matter/answer': { phone: { link: 'none' } },
-  'GET /m/api/matter/artifact': { phone: { link: 'none' } },
-  // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3,mobile-workbench.ts)
-  'POST /m/api/matter/handoff': { phone: { link: 'none' } },
   // 推送(中继 v2,spec 2026-09-30 §5):登记 APNs / FCM token、发一条测试通知。只认设备令牌。
   'POST /v1/phone/push/register': { phone: { link: 'none' } },
   'POST /v1/phone/push/test': { phone: { link: 'none' } },

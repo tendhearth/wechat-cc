@@ -1,7 +1,39 @@
-import {describe,expect,it,vi} from 'vitest'
-import {mobileMatterError,mobileSessionContinueRoutes,mobileWorkbenchRoutes} from './mobile-workbench'
-import { routePhone } from '../../lib/phone-route-table'
-import {entryFailureKind} from '../../adapters/workbench/task-entry'
+import {afterAll,describe,expect,it,vi} from 'vitest'
+import {mkdtempSync,realpathSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {mobileMatterError,mobileSessionContinueRoutes,mobileWorkbenchRoutes as panelOwnRoutes,type MobileUploadActions} from './mobile-workbench'
+import { routePhone as routeTable, type PhoneRouteTable } from '../../lib/phone-route-table'
+import {entryFailureKind,type EntryInput} from '../../adapters/workbench/task-entry'
+import {makeSettingsPanel} from './settings-panel'
+import {withPanelV1,type PanelDepsWithFakes} from './test-panel-v1'
+import {removeTempDir} from '../../lib/test-temp'
+
+/**
+ * P3e 起停下 / 批准 / 回答 / 成果 / 交给另一位 / 工作区 / 交办与回执是 `/v1/matter/*` 那一个处理器(内部 API,MattersService 那一层),
+ * `/m/api/matter/*` 是 legacy-routes.ts 的别名。这里的用例照旧按手机那条路径断言回包:那几条路径交给一个真的面板(真别名 + 真分发 +
+ * 真处理器,假实现转交内部 API 的 MattersService —— test-panel-v1.ts),别的(分块上传、读回执、撤掉这一轮)还是面板这一口自己的表。
+ */
+type Fakes={actions?:NonNullable<PanelDepsWithFakes['matters']> extends infer M?Partial<M>:never;entry?:PanelDepsWithFakes['entry'];uploads?:MobileUploadActions}
+const mobileWorkbenchRoutes=(actions?:Fakes['actions'],entry?:{createEntry?(input:EntryInput):unknown;entryReceipt?(id:string):unknown},uploads?:MobileUploadActions):Fakes=>({...(actions?{actions}:{}),...(entry?{entry}:{}),...(uploads?{uploads}:{})})
+const VIA_V1=new Set(['/m/api/matter/stop','/m/api/matter/permission','/m/api/matter/answer','/m/api/matter/artifact','/m/api/matter/handoff','/m/api/matter/worktree','/m/api/matter/create','/m/api/matter/create-receipt'])
+const roots:string[]=[]
+afterAll(()=>{for(const r of roots)removeTempDir(r)})
+async function routePhone(t:Fakes|PhoneRouteTable,url:URL,req:Request):Promise<Response|null>{
+  if(!('actions' in t||'entry' in t||'uploads' in t||Object.keys(t).length===0))return routeTable(t as PhoneRouteTable,url,req)
+  const f=t as Fakes
+  if(!VIA_V1.has(url.pathname))return routeTable(panelOwnRoutes(f.actions as never,f.uploads),url,req)
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-mobile-wb-')));roots.push(root)
+  const panel=makeSettingsPanel(withPanelV1({
+    stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},
+    ...(f.actions?{matters:{list:()=>[],detail:()=>({}),say:async()=>({}),seenOnPhone:()=>{},...f.actions} as never}:{}),
+    ...(f.entry?{entry:f.entry}:{}),
+  }))
+  const link=panel.issueToken()
+  const device=((await (await panel.handleRequest(new Request(`http://127.0.0.1/set/api/pair?t=${link}`,{method:'POST',body:'{}',headers:{'content-type':'application/json'}}))).json()) as {device_token:string}).device_token
+  const target=new URL(url);target.searchParams.set('d',device)
+  return panel.handleRequest(new Request(target,{method:req.method,...(req.method==='GET'?{}:{body:await req.text()})}))
+}
 
 describe('phone entry rejection wire contract',()=>{
   it.each([

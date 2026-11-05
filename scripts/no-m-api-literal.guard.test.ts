@@ -25,14 +25,14 @@ const LITERAL = /['"`](?:[A-Z]+ )?\/m\/api/
 
 // @debt 带引号的 /m/api 字面量,按文件记的行数(P3c–P3h 逐步降;降到 0 = 只剩 legacy-routes.ts 与 wire-compat.ts)
 const BASELINE: Record<string, number> = {
-  'src/features/phone/mobile-workbench.ts': 9,
+  'src/features/phone/mobile-workbench.ts': 1,
   'src/features/phone/settings-panel.ts': 5,
   'apps/mobile/src/home.js': 1,
   'apps/mobile/src/presence.js': 1,
   'apps/mobile/src/workbench.js': 3,
   'packages/protocol/src/api.ts': 61,
   'packages/protocol/src/phone-calls.ts': 60,
-  'packages/protocol/src/routes.ts': 15,
+  'packages/protocol/src/routes.ts': 7,
 }
 
 /** 一行是不是整行注释(按行判,不跨行)。 */

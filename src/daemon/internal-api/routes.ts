@@ -1,6 +1,8 @@
 import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'
 import { mattersRoutes } from './routes-matters'
+import { matterActionRoutes } from './routes-matter-actions'
+import { withDesktopAliases } from './legacy-desktop-routes'
 import { connectionsRoutes } from './routes-connections'
 /**
  * Route table for internal-api. Returns the full Record<"METHOD /path", handler>
@@ -72,8 +74,10 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情 / 语音附件交付时复用老路由
     // (表情由 stickers 模块、语音由 voice 模块挂上来)。
     ...turnRoutes(deps, (key) => table[key] ?? mounted?.[key]),
-    // 工作台的 44 条 /v1/workbench/* 由 workbench 模块自己挂(src/features/workbench,路由表标 module: 'workbench')
+    // 工作台的 /v1/workbench/* 由 workbench 模块自己挂(src/features/workbench,路由表标 module: 'workbench')
     ...mattersRoutes(deps),
+    // 一件事上的动作(P3e):/v1/matter/<动词> 一个处理器;桌面还在调的 /v1/workbench/* 双胞胎挂同一个函数(下面 withDesktopAliases)
+    ...matterActionRoutes(deps),
     ...connectionsRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
@@ -557,7 +561,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     ...federationRoutes(deps),
     ...fileRoutes(),
   }
-  return table
+  return withDesktopAliases(table)
 }
 
 /**

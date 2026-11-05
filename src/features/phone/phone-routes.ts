@@ -20,7 +20,8 @@ import { WIRE_ROUTE_ALIASES } from '@wechat-cc/protocol'
  * 新键(`/v1` 那一行)自己也带 `phone` 块,所以两个键都在下面的集合里;守卫按「新键 ∪ 别名键」比集合不许变大。
  */
 export const MERGED_ALIASES: ReadonlyArray<{ from: string; to: string; link: PanelSurface['link'] }> =
-  WIRE_ROUTE_ALIASES.filter(a => a.handler === 'alias').map(a => ({ from: a.from, to: a.to, link: a.link }))
+  // 只认 /m/api 那半:桌面的 /v1/workbench/* 双胞胎(P3e,读的人 = desktop)是内部 API 那一口的别名,手机令牌走不了
+  WIRE_ROUTE_ALIASES.filter(a => a.handler === 'alias' && a.from.includes(' /m/api/')).map(a => ({ from: a.from, to: a.to, link: a.link }))
 
 const PANEL_ROWS: Array<{ key: string; panel: PanelSurface }> = [
   ...Object.entries(ROUTES).flatMap(([key, r]) => {

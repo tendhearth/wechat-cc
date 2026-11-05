@@ -88,7 +88,10 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     ]
     // operator:AI 输出回归评测(2026-10-29,docs/design/2026-10-29-output-eval.md):`wechat-cc eval run` 起一条只读、不批权限、不发微信的真会话,同 selftest/converse。
     const OUTPUT_EVAL = ['POST /v1/eval/run']
-    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL], federation: [], selftest: [], link: [] }
+    // operator:一件事上的动作收进 /v1/matter/*(P3e,设计稿 2026-11-05-p3-one-route-family):operator 本来就能走它们的 /v1/workbench/* 双胞胎
+    // (cancel / permission / answer / artifact / quota-handoff / worktree / create-entry / entry-receipt,还在快照里),新键是同一个处理器,够得着的不变。
+    const P3E_MATTER_ACTIONS = ['POST /v1/matter/stop', 'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree', 'POST /v1/matter/create', 'GET /v1/matter/create-receipt']
+    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...P3E_MATTER_ACTIONS], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
     reg.registerOperatorToken('op')
     const all = (a: Iterable<string>) => [...a].sort()

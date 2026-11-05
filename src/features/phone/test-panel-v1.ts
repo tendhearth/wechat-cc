@@ -20,7 +20,8 @@ import { phoneMayOpenMatter } from '../../domain/matters/phone-scope'
 import { memoryRoutes } from '../memory'
 import { journalRoutes } from '../journal'
 import { workbenchRoutes, type PhoneSessionsSource, type WorkbenchService } from '../workbench'
-import type { MobileEntryActions, MobileUploadActions } from './mobile-workbench'
+import type { MobileUploadActions } from './mobile-workbench'
+import type { EntryInput } from '../../adapters/workbench/task-entry'
 
 /** 老测试给手机对话的假实现里还有这两样(P3c-1 以前面板自己用;现在经 /v1 用)。 */
 export type LegacyChatFakes = MobileChatDeps & {
@@ -40,8 +41,21 @@ export type LegacyChatFakes = MobileChatDeps & {
  * 老测试照旧把假实现交给面板这一层(`entry.entryOptions` / `entryModels`、`uploads.discard`、`sessions`),这里拼成一个
  * 只有这几样的 WorkbenchService,挂上真的 workbenchRoutes。
  */
-export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'seen' | 'entry' | 'uploads'> & {
-  entry?: MobileEntryActions & { entryOptions?(): object; entryModels?(input: { providerId: string; projectId?: string }): Promise<unknown> }
+/**
+ * P3e 起一件事上的动作(停下 / 批准 / 回答 / 成果 / 交给另一位 / 工作区)与交办、回执也经 `/v1/matter/*` 走(生产里是内部 API
+ * 那一个处理器,底下是 MattersService):老测试照旧把手机那一份的假实现交给面板这一层(`matters.stop` …、`entry.createEntry` /
+ * `entryReceipt`),这里转交内部 API 的 MattersService。
+ */
+type PhoneMatterActionFakes = Partial<Pick<MattersService, 'stop' | 'permission' | 'answer' | 'artifactChunk' | 'handoff' | 'worktree' | 'worktreeScript'>>
+type EntryFakes = {
+  createEntry?(input: EntryInput): unknown
+  entryReceipt?(requestId: string): unknown
+  entryOptions?(): object
+  entryModels?(input: { providerId: string; projectId?: string }): Promise<unknown>
+}
+export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'seen' | 'uploads' | 'matters'> & {
+  matters?: NonNullable<SettingsPanelDeps['matters']> & PhoneMatterActionFakes
+  entry?: EntryFakes
   uploads?: MobileUploadActions & { discard?(input: { id: string; draftId: string }): void }
   sessions?: PhoneSessionsSource
   chat?: LegacyChatFakes
@@ -55,7 +69,7 @@ export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'see
 /** 面板 deps(含老测试的假实现)→ 内部 API 要的 MattersService(照 pipeline-deps.ts 的 mattersService 接法)。 */
 export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersService | undefined {
   const m = d.matters, chat = d.chat
-  if (!m && !chat) return undefined
+  if (!m && !chat && !d.entry?.createEntry && !d.entry?.entryReceipt) return undefined
   const owner = () => chat?.owner()?.chatId ?? d.ownerChatId()
   return {
     list: f => (m ? m.list(f as never) : []) as never,
@@ -71,11 +85,25 @@ export function mattersServiceFromPanelDeps(d: PanelDepsWithFakes): MattersServi
       // pipeline-deps.ts 的 chat.search 那一行
       return { hits: (await chat.search(chatId, q, Math.max(1, Math.min(50, Math.trunc(limit))))).map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })) as never }
     },
+    // P3e 一件事上的动作(手机那一份):面板这一层交来的假实现原样转交;没交 ⇒ 同 MattersService 没接工作台
+    ...phoneActionsFrom(m),
+    createEntry: (input: unknown) => { if (!d.entry?.createEntry) throw new Error('workbench_not_wired'); return d.entry.createEntry(input as EntryInput) },
+    entryReceipt: (requestId: string) => { if (!d.entry?.entryReceipt) throw new Error('workbench_not_wired'); return d.entry.entryReceipt(requestId) },
     // pipeline-deps.ts 的 chat.file 那一行
     ownerChatFile: chat?.message
       ? makeOwnerChatFileReader({ ownerChatId: owner, ...(chat.inboxDir ? { inboxDir: chat.inboxDir } : {}), readChunk: fileChunkResponse, stickerDir: join(d.stateDir, 'stickers'), message: (chatId, id) => chat.message!(chatId, id) })
       : async () => ({ status: 503, body: { error: 'chat_not_wired' } }),
   } as Partial<MattersService> as MattersService
+}
+
+/** 手机那一份动作的假实现:有就转交,没有就抛 workbench_not_wired(同 MattersService 没接工作台时)。 */
+function phoneActionsFrom(m: PhoneMatterActionFakes | undefined): PhoneMatterActionFakes {
+  const out: Record<string, unknown> = {}
+  for (const k of ['stop', 'permission', 'answer', 'artifactChunk', 'handoff', 'worktree', 'worktreeScript'] as const) {
+    const fn = m?.[k] as ((...a: unknown[]) => unknown) | undefined
+    out[k] = (...a: unknown[]) => { if (!fn) throw new Error('workbench_not_wired'); return fn.apply(m, a) }
+  }
+  return out as PhoneMatterActionFakes
 }
 
 /**

@@ -11,6 +11,7 @@ import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {createInternalApi,type InternalApi} from '../../daemon/internal-api/index'
 import {workbenchRoutes} from './routes'
+import {makeMattersService} from '../../app/matters/service'
 
 const QUOTA="You've hit your usage limit. Try again at 10:00"
 describe('desktop quota handoff through the authenticated HTTP handler and real service',()=>{
@@ -23,7 +24,8 @@ describe('desktop quota handoff through the authenticated HTTP handler and real 
   db=openDb({path:join(dir,'state.db')});const registry=createProviderRegistry()
   for(const provider of ['claude','codex','cursor'])registry.register(provider,{async spawn(){return{async *dispatch(text:string){prompts.push({provider,text});yield{kind:'init',sessionId:provider};if(text==='stay busy')await new Promise<void>(resolve=>{unblock=resolve});yield provider==='claude'?{kind:'error',message:QUOTA}:{kind:'text',text:'finished'};yield{kind:'result',sessionId:provider}},async close(){unblock()}}}} as never,{displayName:provider,canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   workbench=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:dir,ownerChatId:()=> 'owner',usage:id=>blocked.has(id)?{providerId:id==='claude'?'claude':'codex',plan:null,windows:[{name:'window',usedPercent:100,resetsAt:Date.now()+3600000,durationMins:60}],exhausted:true,fetchedAt:Date.now()}:null})
-  api=createInternalApi({stateDir:dir,daemonPid:1} as never)
+  // P3e:quota-handoff 是 /v1/matter/handoff 的桌面别名(内部 API 那一个处理器,MattersService 那一层);MattersService 的工作台就是这一个服务
+  api=createInternalApi({stateDir:dir,daemonPid:1,resolveAdminChatId:()=> 'owner',matters:makeMattersService({store:{} as never,workbench})} as never)
   api.mount('workbench',workbenchRoutes({workbench,resolveAdminChatId:()=> 'owner'}))
   admin=api.mintSessionToken('admin','owner');guest=api.mintSessionToken('guest','guest')
   const started=await api.start();base=`http://127.0.0.1:${started.port}`;operator=readFileSync(started.operatorTokenFilePath,'utf8').trim();trusted=readFileSync(started.tokenFilePath,'utf8').trim()

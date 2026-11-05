@@ -36,7 +36,7 @@
 | 语音 | `POST /v1/companion/transcribe`、`/v1/companion/speak`、`GET /v1/stt/status`(op / trusted) | `POST·GET /m/api/chat/transcribe`、`GET /m/api/chat/voice`(d → App) | 转写重复(同一个 `voice.transcribe`,正文键 `audio_b64` / `audioBase64`);语音按消息 id 合成是手机独有 |
 | 这条对话的模型 | `GET·POST /v1/model`(admin,全局 / 按家) | `GET·POST /m/api/chat/model`(d → App,按主人对话钉) | 相近,不是一回事 |
 | 交办入口 | `/v1/workbench/entry-options`、`models`、`create-entry`、`entry-receipt`、`attachment`(GET / POST)、`discard-attachment`(op → 桌) | `/m/api/entry/options`、`entry/models`、`matter/create`、`matter/create-receipt`、`attachment/upload·chunk·discard`(d → App) | 重复 7 对 |
-| 一件事上的动作 | `/v1/workbench/cancel`、`permission`、`answer`、`artifact`、`handoff`、`worktree`、`review`、`review-mark·return·comment·comments-send`、`rewind-preview`、`rewind`(op → 桌,键是 taskId) | `/m/api/matter/stop`(d、l-w)、`permission`、`answer`、`artifact`、`handoff`、`worktree`、`changes`、`review-*` 四条、`rewind` GET / POST(d → App,键是 matter id,经 `MattersService` 多一道 runId 过期判断) | 重复 13 对(matter id 与任务 id 相同) |
+| 一件事上的动作 | `/v1/workbench/cancel`、`permission`、`answer`、`artifact`、`quota-handoff`(P3e 核过:不是 `handoff`)、`worktree`、`review`、`review-mark·return·comment·comments-send`、`rewind-preview`、`rewind`(op → 桌,键是 taskId) | `/m/api/matter/stop`(d、l-w)、`permission`、`answer`、`artifact`、`handoff`、`worktree`、`changes`、`review-*` 四条、`rewind` GET / POST(d → App,键是 matter id,经 `MattersService` 多一道 runId 过期判断) | 重复 13 对(matter id 与任务 id 相同) |
 | 电脑上的会话 | `GET /v1/workbench/sessions`、`session`;`POST /v1/workbench/prepare-resume`、`import`(op → 桌) | `GET /m/api/sessions`、`session`;`GET·POST /m/api/session/continue`(d → App) | 列表 / 读重复(同一个 `listNativeHistory`,参数 `providerId` / `provider`);接着做相近 |
 | 终端会话 | `GET /v1/cli/sessions`(op → 桌、CLI) | `GET /m/api/cli/sessions`(d → App) | 重复;手机行另带此刻那一步、`last_say`、`displayName`、`live_window` |
 | 终端看着它跑 | — | `GET /m/api/cli/activity`(d → App) | 手机独有 |
@@ -90,7 +90,7 @@
 ### P3b 一个分发、两个监听(daemon)
 - 把内部 API 的分发抽成一个函数,面板对 `/v1/*` 的请求也交给它(只认 device / link);`/m/api/*` 先照旧走面板自己那张表。
 - `routes.ts` 的 `phone` 块允许出现在 `/v1` 行上;`PHONE_ROUTES` / `LINK_ROUTES` 照推。`caller` 带上 `frameBudget`、出生地。
-- `ServerHello` 加 `routes: 'v1'`(先不发,P3c 第一组并完才打开)。
+- `ServerHello` 加 `routes: 'v1'`(先不发;P3e 部署、soak 绿以后才由整合者打开,见「打开 `ServerHello.routes: 'v1'`」)。
 - 做完怎么算:金样一字不变;新加的测试证明面板上 operator / file / session 令牌一律 401、内部 API 上 device / link 一律 401;没有 `phone` 块的 `/v1` 路由设备令牌走不了(403 `route_not_allowed`)。
 
 ### P3c 并 20 条不以 matter 为键的重复(daemon,分四个 PR)
@@ -100,7 +100,7 @@
 - P3c-3 记忆、待办、看到哪了:`memory/retractions`、`memory/restore`、`todo`、`seen`(`/v1/journal/seen` 收可选的 `until`,不带照旧写 now)。
 - P3c-4 交办选项与会话:`entry/options`、`entry/models`、`attachment/*` 三条、`sessions`、`session`(分块上传与进度两条核过不是同一个动作,改到 P3d,见「进度 · P3c-4」)。
 - 做完怎么算(每个 PR):别名回包的金样一字不变;新路径的回包等于 `/v1` 今天的回包;`no-m-api-literal` 基线往下调;「还是自己处理器」那把棘轮往下调。
-- 第一组合完、部署 soak 绿以后,`ServerHello` 打开 `routes: 'v1'`。
+- ~~第一组合完、部署 soak 绿以后,`ServerHello` 打开 `routes: 'v1'`。~~ 不对(P3e 时改):新 App 见到 `routes: 'v1'` 就把**所有**键换成新键,而 P3d / P3e 的新键在那之前还不存在 —— 早开就是让新 App 去调 404 的路径。改成:**P3e 部署、soak 绿以后**由整合者打开(见「打开 `ServerHello.routes: 'v1'`」)。
 
 ### P3d 手机独有的、相近的、撞名的搬到 `/v1`(daemon)
 - 纯改名(别名转换写 `null`):`/m/api/state` → `/v1/phone/state`、`art/presence` → `/v1/phone/art/presence`、`push/register·test` → `/v1/phone/push/register·test`、`matter/insight` → `/v1/matter/insight`、`matter/input-receipt` → `/v1/matter/input-receipt`、`home` → `/v1/home`、`cli/activity` → `/v1/cli/activity`、`activity` → `/v1/activity`、`jobs`、`jobs/action` → `/v1/jobs`、`/v1/jobs/action`、`letters` → `/v1/letters/sent`(`/v1/letters` 已经是状态)、`letters/page` → `/v1/letters/page`、`chat` → `/v1/matter/owner-chat/page`、`chat/say` → `/v1/matter/owner-chat/say`、`chat/voice` → `/v1/matter/owner-chat/voice`、`chat/transcribe`(GET)→ `GET /v1/stt/status`(形状一样就并;不一样起 `GET /v1/companion/transcribe`)、`chat/model` → `/v1/matter/owner-chat/model`、`memory` → `/v1/memory/curated`、`memory/correct` → `/v1/memory/correct`、`sticker/` → `/v1/stickers/file/`、`session/continue` → `/v1/workbench/session/continue`。
@@ -110,7 +110,7 @@
 
 ### P3e 一件事上的动作收进 `/v1/matter/*`(daemon;桌面随下一版)
 - 13 对动作 + 交办 2 条(`matter/create`、`matter/create-receipt`),共 15 条,新键是 `/v1/matter/<动词>`(`stop`、`permission`、`answer`、`artifact`、`handoff`、`worktree`、`changes`、`review-mark` …、`rewind` GET / POST、`create`、`create-receipt`),处理器是 `MattersService` 那一层(带 runId 过期判断,终端 / act 那几件以后也用得上);桌面独有的参数(`restartToken`、`expectedRunId`、交办入口那一列错误码 `desktopEntry`)作为同一个处理器在 operator 范围下的参数。
-- `/m/api/matter/*` 的别名改指新键;桌面的 `/v1/workbench/*` 那 15 条双胞胎(`cancel`、`permission`、`answer`、`artifact`、`handoff`、`worktree`、`review`、`review-mark·return·comment·comments-send`、`rewind-preview`、`rewind`、`create-entry`、`entry-receipt`)也进别名表(读的人 = desktop),桌面在下一版改调新键(`desktop-calls.ts` 一行一改、`gen:routes`;新键要 `tauri: true`,编进 `.app` 的白名单,所以**要发版**,PR 里写明并记进下一版的发版说明)。
+- `/m/api/matter/*` 的别名改指新键;桌面的 `/v1/workbench/*` 那 15 条双胞胎(`cancel`、`permission`、`answer`、`artifact`、`quota-handoff`(P3e-1 核过:原稿写的 `handoff` 是交接预览之后带 token 的另一个动作)、`worktree`、`review`、`review-mark·return·comment·comments-send`、`rewind-preview`、`rewind`、`create-entry`、`entry-receipt`)也进别名表(读的人 = desktop),桌面在下一版改调新键(`desktop-calls.ts` 一行一改、`gen:routes`;新键要 `tauri: true`,编进 `.app` 的白名单,所以**要发版**,PR 里写明并记进下一版的发版说明)。
 - 做完怎么算:工作台金样(`/v1/workbench/task` 那几份)和手机金样一字不变;一件事上的每个动作只有一个处理器。
 
 ### P3f App 改读新路径(随下一个 App build)
@@ -149,7 +149,7 @@
 - **棘轮**:`MAX_OWN_HANDLER_ROWS` 61 → 55(行数仍 61);`no-m-api-literal` 基线 `routes.ts` 61 → 55、`settings-panel.ts` 22 → 19、`mobile-chat.ts` 7 → 5(合计 247 → 236)。`routes-snapshot` 与 `link-routes-from-source` 两个守卫按「新键 ∪ 别名键」比:别名键照旧和快照 / 页面扫描比,新键另由一条核对「在不在、link、理由都同别名键」。
 - **金样**:`m-api-routes` 80 份、`matter-read-paths` 全部逐字节不变(文件没动)。两份金样的面板接上一个真的 `createInternalApi`(只用 `panelDispatch`);P3a 那份的服务是剧本,形状只有几个字段,所以那里用新加的测试开关 `responseContracts: false`。
 - **和并之前不一样的几处(都不在金样里,PR 里逐条写了)**:① `chat/file` 走 `/v1` 的读法,回复里的表情附件(sticker)手机也能按块读了(桌面本来就能;以前手机回 404);② 主人对话还没建(配了主人、那条 chat matter 还没有)时,`chat/search` 照搜(以前 404 `no_owner_chat`),`chat/file` 回 404 `not_found`(以前 `no_owner_chat`);③ 语音模块此刻不是 ok ⇒ `POST chat/transcribe` 回 503 `voice_not_wired`(以前不看模块,照转);④ `matters` 处理器抛了 ⇒ 500 `unavailable`(以前不回包,手机一直等);⑤ 「没接上」与「参数不对」先判哪个,个别路由换了先后(只在没接线的测试里看得到)。
-- **还没做**:`ServerHello.routes: 'v1'` 照本稿等这一组部署 soak 绿再开。
+- **还没做**:`ServerHello.routes: 'v1'` 等 P3e 部署、soak 绿再开(整合者;P3e 时改了时机,见「打开 `ServerHello.routes: 'v1'`」)。
 
 ### P3c-2(终端与总览三条并成 `/v1` 一个处理器;老路径是别名)
 - **并了哪三条**:`cli/sessions`、`today`、`connections` → `GET /v1/cli/sessions`、`GET /v1/overseer/today`、`GET /v1/connections`。三行 `/v1` 带上 `phone: { link: 'none' }`(照别名行冻结,只给设备);`routes.ts` 删掉三条 `/m/api` 行;`mobile-reads.ts` 的三个处理器删掉,面板 deps 的 `connections` / `cliSessions` / `overseerToday` 与 wiring 里那几处随之去掉(连接经 `internalApi.provide({ connections })` 那一份,终端两条是终端模块自己挂的路由)。
@@ -212,10 +212,27 @@
 - **金样**:`m-api-routes`、`matter-read-paths` 逐字节不变(金样文件没动;`matter-read-paths` 的测试只改接线:终端那张表经 `featureRoutes` 交,同生产)。
 - **P3d 做完的样子**:`routes.ts` 里剩下的 15 条 `/m/api` 行全是 P3e;`src` 里 `/m/api` 字面量除了 `legacy-routes.ts`,只剩 P3e 那 14 行(`settings-panel.ts` 5、`mobile-workbench.ts` 9);`settings-panel.ts` 里的 `/m/api` 处理器只剩 P3e 的。「`src` 里只在 `legacy-routes.ts`」要等 P3e。
 
-### 打开 `ServerHello.routes: 'v1'`(给整合者:soak 绿以后一行的 PR)
+### P3e-1(一件事上的八个动作与交办收进 `/v1/matter/*` 一个处理器;手机的 `/m/api/matter/*`、桌面的 `/v1/workbench/*` 都是别名)
+- **并了哪八条**:`matter/stop`、`permission`、`answer`、`artifact`、`handoff`、`worktree`、`create`、`create-receipt` → `POST /v1/matter/stop`、`POST /v1/matter/permission`、`POST /v1/matter/answer`、`GET /v1/matter/artifact`、`POST /v1/matter/handoff`、`POST /v1/matter/worktree`、`POST /v1/matter/create`、`GET /v1/matter/create-receipt`(新行)。桌面的双胞胎:`/v1/workbench/cancel`、`permission`、`answer`、`artifact`、`quota-handoff`、`worktree`、`create-entry`、`entry-receipt`。新行 `module: 'workbench'`(工作台此刻不是 ok ⇒ 模块门原样回 503 `workbench_not_wired`,同搬来之前)、`desktop: { tier: 'admin', tokens: ['operator'] }`(**还不加 `tauri`**:桌面下一版改调新键时才加,那时编进 `.app` 的白名单)、`phone: { link }` 照别名行冻结(停下 `write`、理由原样,其余 `none`)。`routes.ts` 删掉八条 `/m/api` 行;`mobile-workbench.ts` 的八个处理器、面板 deps 的 `entry` 与 `matters` 的那几样动作、wiring 里那几处随之去掉;`features/workbench/routes.ts` 的八个桌面处理器搬走。
+- **核过的一件(和本稿「P3e」不一样)**:手机「交给另一位」(`/m/api/matter/handoff`,正文 `{id, requestId, providerId}`,`workbench.handOff`)的桌面双胞胎是 **`/v1/workbench/quota-handoff`**(同正文、同一个函数),不是 `/v1/workbench/handoff` —— 那条是交接预览(`handoff-preview`)之后带 `token` / `restartToken` / `sourceClosedToken` 的另一个动作,手机没有。上文表里与「P3e」那一节已改。
+- **一个处理器**:`src/daemon/internal-api/routes-matter-actions.ts`(内部 API 自己的表,用 `deps.matters` = MattersService),每条一个 `action(手机那一份, 桌面那一份)`:
+  - 手机令牌(设备 / 链接):参数与语义原样搬自 `mobile-workbench.ts` —— 正文恰好那几个键、带 runId 过期判断(MattersService 的 `stop` / `permission` / `answer`:手机看到的那一轮换了 ⇒ `input_stale` / `permission_stale` / `question_stale`)、成果按块读(`artifactChunk`)、交给另一位记手机露面、工作区只回分支和结果、交办按手机表面问(出生地取 `caller.client`,同并之前的 `currentPhoneClient()`)。成功回包就是手机那一份(带 `ok: true`,同 P3c-4 的会话两条);错误是桌面那一列的码,原始码(取 `message`,同并之前 `mobileMatterError` 的取法)经 `cause` 带给别名。
+  - 别的(operator,以及 admin 会话令牌,同搬来之前谁能走双胞胎谁就能走):参数、回包、错误码原样搬自 `features/workbench/routes.ts` 的双胞胎 —— `expectedRunId`、整份成果、交办入口那一列错误码(`desktopEntry`)、只有 operator 记出生地 `desktop`、主人取内部 API 的 `resolveAdminChatId`(同工作台模块那一份,都是 `ownerChatIdOf`)。
+  - MattersService 多三样:`createEntry` / `entryReceipt`(两个表面同一个调用,上下文由调用方给)、`desktop`(桌面那一份:`cancel` / `resolvePermission` / `resolveAnswer` / `artifact` / `quotaHandoff` / `worktree`,工作台原样,不经手机那几样的 matter 层判断 —— 桌面本来就没有)。`deps.workbench` 多 `createEntry` / `entryReceipt` 两个可选口(生产里就是 WorkbenchService)。MattersService 还没交给内部 API(开机途中)⇒ 503 `workbench_not_wired`(同工作台没挂上时)。
+  - 新键的正文上限同双胞胎(128 KiB,`index.ts` 的 `MATTER_ACTION_PATHS`,从别名表推)。响应契约(`desktop-api.ts`)是「桌面那一份 | 手机那一份」两种之一。
+- **桌面的旧键**:`wire-compat.ts` 的 `WIRE_ROUTE_ALIASES` 加八行 `desktopAlias`(读的人 = desktop、`transform: null`、登记即 `alias`、`link: 'none'`、退休 = 桌面 ≥ 改读新键的那一版)。旧键在路由表里那一行**一个字不动**(档位、operator、`tauri` / `devProxy`、`module`),处理器就是新键那一个函数:`src/daemon/internal-api/legacy-desktop-routes.ts` 的 `withDesktopAliases` 把旧键挂到新键的处理器上(daemon 里认桌面那半的只有它)。所以旧键的模块门、正文上限、忙碌登记(`api:<旧键>`)、响应契约、日志都按旧键走,回包一个字节不变。
+- **手机的别名**(`legacy-routes.ts` 的 `matterAction`,八条一个写法):方法不对 405、正文不是 JSON(码同并之前:交办 `invalid_entry`,其余 `invalid_request`)、交办先判「没接上」再读正文(同并之前)、原样转手(新键那边的回包已经带 `ok: true`)、有 `cause` ⇒ 按 phone 那一列换、没有 `cause` 的 503(模块门)⇒ 手机原来「没接上」的码(交办 `entry_not_wired`,其余 `workbench_not_wired`)、带 `no-store`。手机的参数规矩不在别名里另写一份:新键那边按并之前的规矩验,报的就是并之前的码(经 `cause`)。
+- **守卫改了的**:`wire-compat`:别名表分手机那半(旧键 `/m/api`)和桌面那半(旧键 `/v1/workbench/*`);桌面那半每行读的人只有 desktop、登记即并、旧键照旧在路由表里且带 `tauri`、不带 `phone`、新键也是手机那半某一行的新键;**内部 API 上旧键挂的就是新键那一个处理器函数**(`toBe`,一个动作只有一个处理器);同一半里新键不重复(两半共用新键)。`phone-routes.ts` 的 `MERGED_ALIASES`、`legacy-routes.ts` 的纯改名表、`legacy-renames.test.ts` 只认手机那半(桌面那半的旧键手机令牌走不了:那一行没有 `phone` 块,分发那边也 403)。`routes-snapshot` 的 operator 新增明列这八个新键(operator 本来就能走双胞胎)。`mobile-web-errors` 的停下改看别名 + 新键处理器两段源码。
+- **棘轮**:`MAX_WIRE_ROUTE_ALIASES` 61 → 69(**一次上调 8**:桌面那半并一条登记一行,「P3a 核过的几件」里那条二选一选了同一张表);`MAX_OWN_HANDLER_ROWS` 15 → 7;`no-m-api-literal` 基线 `routes.ts` 15 → 7、`mobile-workbench.ts` 9 → 1(合计 155 → 139)。
+- **金样**:`m-api-routes`、`matter-read-paths`(含 `/v1/workbench/task` 那几份)逐字节不变(金样文件没动;`m-api-routes` 的测试把剧本里那几样动作与交办转交内部 API 的 MattersService,`matter-read-paths` 的面板接线照生产去掉搬走的几样)。新加 `src/daemon/internal-api/panel-v1-matter-actions.test.ts`:八对桌面双胞胎,operator 从 127.0.0.1 打旧键、新键,成功 / 参数不对 / 服务里抛的三份状态码与正文字节一样;手机令牌经新键的语义(runId 过期、按块读、只回分支、交办上下文)与桌面那一份的参数用不了;链接令牌只够得着停下。桌面那一份原有的用例(`features/workbench/routes.test.ts`、`routes-quota-handoff.test.ts`)一条没改,照旧打旧键(测试的接线给内部 API 补上 MattersService)。
+- **和并之前不一样的几处**:① 手机那几条经内部 API 的分发跑,写的那几条持一枚 `api:POST /v1/matter/…` 忙碌登记;正文上限 128 KiB(以前面板不设上限;手机正文远小于它)、超了 ⇒ 413 `request_body_too_large`(别名落成 phone 那一列)。② 工作台此刻不是 ok ⇒ 手机那八条走模块门回「没接上」(以前面板直接拿 `opts.workbench` / `mattersService`)。③ 设备令牌经新键:错误码是桌面那一列(`script_approval_required` 428、`not_found` 404 …)。④ 桌面的旧键要等 MattersService 交给内部 API(`wiring/module.ts` 里 `provide({ matters })`,和工作台同一拍的开机途中)才答,之前 503 `workbench_not_wired` —— 桌面开机途中本来就会碰到这个码。⑤ 「没接上」与「参数不对」先判哪个,个别路由换了先后(只在没接线的测试里看得到)。
+- **扩大了谁的够得着**:没有。设备令牌经新键够得着的函数和并之前 `/m/api` 那条一样(MattersService 的手机那几样、按手机表面的交办);桌面那一份的参数手机令牌用不了(`expectedRunId`、整份成果、桌面表面);链接令牌只有停下(新键、别名键)。operator 多的八个新键,够得着的就是它本来能走的八条双胞胎。
+
+### 打开 `ServerHello.routes: 'v1'`(给整合者:P3e 部署、soak 绿以后一行的 PR)
+- **什么时候开**:**P3e 全部合进 dev、部署、`self soak` 绿以后**,由整合者开;开发者的 PR 不碰它。以前写的「P3c 第一组以后就开」不对:新 App 见到 `routes: 'v1'` 就把它所有的键都换成新键(P3f),P3d / P3e 的新路径在那之前还不存在,早开就是让新 App 去调 404 的路径。P3e 合完,`/m/api` 的 61 行每一行都有一个 daemon 认的新键,`'v1'` 才说得上「新键全在」。
 - **改哪儿**:`src/features/phone/tunnel-client.ts` 里 v2 握手回应那一行 `sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2 })` 加上 `routes: 'v1'`(就这一处发 `ServerHello`;形状 `packages/protocol/src/messages.ts` 的 `ServerHello` 早就认 `routes: s.optional(s.literal('v1'))`,`shape.test.ts` 钉着)。同 PR 把 `messages.ts` 那段注释里「daemon 现在还不发」改掉,`tunnel-client.test.ts` 握手那条加一句 `expect(hello.routes).toBe('v1')`。不动 `packages/protocol` 的类型就不用 `build:mobile`(改了注释也跑一遍,生成物应该不变)。
 - **谁读它**:今天**没有人读**。`packages/protocol/src/client.ts` 的 `onHello` 只 `ServerHello.safeParse` 然后用 `hs` / `v`,不看 `routes`;App(`apps/app`,经 `makeProtocolClient`)、网页 `/m`(`apps/mobile`,同一个客户端打包进 `protocol-generated.js`)、`wechat-cc selftest phone`(`src/cli/selftest-phone.ts`)都一样。老 App 的 `shape` 丢掉不认识的键(`shape.ts` 的 `object` 只留声明过的键),所以对装着的 App 是无害的一行;真正开始读它是 P3f(新 App build 见到它才改调 `/v1` 键)。局域网直连没有握手,只有中继那条有这个信号。中继(`apps/relay`)只转帧不看内容,不用动。
-- **它说的是什么**:`'v1'` 只能表示「P3c 那 18 条的 `/v1` 新键手机令牌能走了」。P3d / P3e 的新路径今天还不存在 —— P3f 的 App 见到 `'v1'` 只能换 `MERGED_ALIAS_KEYS` 里那几条的键,别的照旧走 `/m/api`;P3d / P3e 合完以后要么换一个新值(`messages.ts` 那里 `literal('v1')` 变成并集),要么让 App 按 `ROUTES` 里有没有 `phone` 块判断。P3f 之前要定。
+- **它说的是什么**:P3e 部署以后才开 ⇒ `'v1'` 表示「`WIRE_ROUTE_ALIASES` 里手机那半每一行的新键,daemon 都认、手机令牌都能走」—— P3c 并的、P3d 搬的、P3e 收进 `/v1/matter/*` 的,一个不缺。P3f 的 App 见到它就整份换新键,不用再分哪几条先有;没见到(老 daemon)整份照旧走 `/m/api`。所以不需要第二个值,也不用让 App 按 `ROUTES` 猜。
 - **真机上验什么**(整合者照 deploy.md 部署以后):① `wechat-cc selftest phone` 绿(中继 v2 闭环;它不读 `routes`,验的是握手多一个键没把谁弄坏);② 真 iPhone 上装着的 App(build 2 / 3)照常连上、此刻页 / 一起做 / 对话 / 交办选项与会话列表都打开(老 shape 丢掉 `routes`);③ 手机网页 `/m` 出门模式(经中继)照常连上;④ daemon 日志里没有 `bad_hello` / `downgrade_refused`;⑤ 照常 `wechat-cc self soak`。
 
 ## 不做 / 推后
@@ -244,4 +261,4 @@
 无。每一步都以金样逐字节不变为门;主人在桌面、App、网页上看到的都不变。P3e 的桌面改动要随下一版桌面发版,只是发版说明里一句,不是看得见的变化。
 
 ## 顺序
-P3a → P3b → P3c-1 → (soak 绿后打开 `ServerHello.routes`)→ P3c-2、P3c-3、P3c-4(碰的文件不重叠,可并行)→ P3d → P3e → P3g;P3f 随下一个 App build,只依赖 P3b 的 `routes: 'v1'` 和它要用的那几组已经合进去;P3h 按退休条件一行一行来。P3a–P3e、P3g 只动 daemon 与网页(`self deploy` 生效),P3e 的桌面那一半随下一版桌面。
+P3a → P3b → P3c-1 → P3c-2、P3c-3、P3c-4(碰的文件不重叠,可并行)→ P3d → P3e →(部署、soak 绿后整合者打开 `ServerHello.routes`)→ P3g;P3f 随下一个 App build,只依赖 `routes: 'v1'` 已经打开(也就是 P3e 已经部署);P3h 按退休条件一行一行来。P3a–P3e、P3g 只动 daemon 与网页(`self deploy` 生效),P3e 的桌面那一半随下一版桌面。
