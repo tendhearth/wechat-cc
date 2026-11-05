@@ -54,13 +54,15 @@ describe('terminal-steps', () => {
   it('从每一个字节位置断开分两次读(包括断在一行中间、断在中文字中间)⇒ 结果都一样;第二次读换一个实例(重启后接得上)', () => {
     const whole = Buffer.from(CLAUDE)
     const want = parseAll(CLAUDE, 'claude')
+    // 每个断点一个新会话(新的一件事、新的 session id),同一个库:以前每个断点重开 :memory: 库、整套迁移重跑一遍,
+    // Windows runner 上几百遍迁移撞 30 秒超时(dev 243eb0ff 等,重跑照红)。断点、两次读、换实例都不变。
     for (let cut = 1; cut < whole.length; cut += 7) {
-      db.close(); db = openDb({ path: ':memory:' }); matters = makeMatterStore(db); log = makeMatterLog(db)
-      matters.bind(matters.create({ kind: 'terminal', title: 'blog', origin: 'cli' }).id, 'cli', 'S1')
+      const id = `S1-${cut}`, s = { ...session, session_id: id, transcript_path: `/t/${id}.jsonl` }
+      matters.bind(matters.create({ kind: 'terminal', title: 'blog', origin: 'cli' }).id, 'cli', id)
       file = whole.subarray(0, cut)
-      makeSteps().ingest('S1', session.transcript_path, 'claude')
+      makeSteps().ingest(id, s.transcript_path, 'claude')
       file = whole
-      expect(makeSteps().view(session, 40)).toEqual(want)
+      expect(makeSteps().view(s, 40)).toEqual(want)
     }
   })
 
