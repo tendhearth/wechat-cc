@@ -309,6 +309,8 @@ const ROUTE_TABLE = {
   'POST /v1/wechat/message': { desktop: { tier: 'admin' } },
   'POST /v1/wechat/reply_voice': { module: 'voice', desktop: { tier: 'guest' } },
   'POST /v1/memory/read': { module: 'memory', desktop: { tier: 'guest' } },
+  // 话题(T2 后续 ①,2026-11-05):主模型的 topic_search 工具;只读、admin;私密话题只给主人自己的对话
+  'POST /v1/memory/topics/search': { module: 'memory', desktop: { tier: 'admin' } },
   'GET /v1/memory/list': { module: 'memory', desktop: { tier: 'guest' } },
   'POST /v1/share/page': { desktop: { tier: 'guest' } },
   'POST /v1/share/resurface': { desktop: { tier: 'guest' } },

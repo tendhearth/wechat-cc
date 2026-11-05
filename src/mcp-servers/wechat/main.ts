@@ -20,7 +20,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { createInternalApiClient } from './client'
 import { logErr, formatError } from './tool-helpers'
-import { registerMemoryTools } from './tools-memory'
+import { registerMemoryTools, registerTopicSearchTool } from './tools-memory'
 import { registerProjectTools } from './tools-projects'
 import { registerVoiceShareTools } from './tools-voice-share'
 import { registerMessagingTools } from './tools-messaging'
@@ -211,6 +211,8 @@ if (SESSION_IS_ADMIN) {
   // over the owner's WeChat message history — same private-data trust
   // class as file_locate/social_seek, so admin-only.
   registerKnowledgeSearchTool(server, client)
+  // 话题(T2 后续 ①):topic_search 搜主人那条对话的话题;私密的只在主人自己的对话里给(daemon 判)
+  registerTopicSearchTool(server, client)
   // memory-infra Phase 2a (HF W1): federated_query reshapes the same
   // knowledge-search retrieval into hearth-compatible cited hits, letting
   // hearth (a separate memory app) query wechat-cc as a federated source.

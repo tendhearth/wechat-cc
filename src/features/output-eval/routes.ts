@@ -18,7 +18,7 @@ import type { RouteTable } from '../../daemon/internal-api/types'
 import type { PickedAsk } from '../../domain/owner-asks'
 import type { BriefInputs } from '../jobs'
 import type { TaskCandidate } from '../workbench'
-import type { EvalRunner, ReplyInput, BriefInput, ReferenceInput, TopicInput } from './runner'
+import { EVAL_TOOLS, type EvalRunner, type EvalTool, type ReplyInput, type BriefInput, type ReferenceInput, type TopicInput } from './runner'
 import type { MatchTopic } from '../../domain/topic-match'
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9._-]{0,63}$/
@@ -47,7 +47,12 @@ function runOpts(b: Record<string, unknown>): Pick<ReplyInput, 'providerId' | 'm
 function replyInput(b: Record<string, unknown>): ReplyInput {
   const text = str(b.text, 'text')
   if (b.tier !== undefined && b.tier !== 'admin' && b.tier !== 'trusted') fail('tier 只能是 admin / trusted')
-  return { text, ...(b.tier !== undefined ? { tier: b.tier as 'admin' | 'trusted' } : {}), ...runOpts(b) }
+  let tools: EvalTool[] | undefined
+  if (b.tools !== undefined) {
+    if (!Array.isArray(b.tools) || !b.tools.every(t => typeof t === 'string' && t in EVAL_TOOLS)) fail(`tools 只能是 ${Object.keys(EVAL_TOOLS).join(' / ')} 组成的数组`)
+    tools = [...new Set(b.tools as EvalTool[])]
+  }
+  return { text, ...(b.tier !== undefined ? { tier: b.tier as 'admin' | 'trusted' } : {}), ...(tools?.length ? { tools } : {}), ...runOpts(b) }
 }
 
 function briefInput(b: Record<string, unknown>): BriefInput {
@@ -113,7 +118,8 @@ function topicInput(b: Record<string, unknown>): TopicInput {
       }),
     }
   })
-  return { text, topics }
+  if (b.search !== undefined && typeof b.search !== 'boolean') fail('search 要是 true / false')
+  return { text, topics, ...(b.search === true ? { search: true } : {}) }
 }
 
 export function outputEvalRoutes(runner: EvalRunner): RouteTable {

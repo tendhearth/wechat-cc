@@ -150,3 +150,34 @@ export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], m
   const out = parts.join('\n\n')
   return [...out].length > max ? [...out].slice(0, max).join('') + '…' : out
 }
+
+export interface TopicSearchHit {
+  id: string
+  title: string
+  summary: string
+  score: number
+  entries: Array<{ id: string; kind: TopicEntryKind; line: string; body: string; due: string | null }>
+}
+
+/**
+ * topic_search 工具(主模型自己搜,话题 T2 后续 ①):按相关度排,不设门槛 —— 搜的人自己判断。
+ * 词表比每轮匹配宽:条目的细节也算,查询按空格切开的每一段原样出现也算(「Meet」「UDP」)。
+ */
+export function searchTopics(query: string, topics: readonly MatchTopic[], limit = 3, entriesPer = MAX_ENTRIES): TopicSearchHit[] {
+  const q = tokens(query)
+  const parts = norm(query).split(/[\s,，、;；]+/).map(p => p.trim()).filter(p => [...p].length >= 2)
+  const hits = topics.map(t => {
+    let score = 0
+    if ([t.title, ...t.aliases].some(k => keyIn(k, query))) score += 10
+    const w = topicTokens(t)
+    for (const e of t.entries) for (const tok of tokens(e.body)) if (!w.has(tok)) w.set(tok, 0.5)
+    for (const tok of q) score += w.get(tok) ?? 0
+    const hay = norm([t.title, t.summary, ...t.aliases, ...t.entries.flatMap(e => [e.line, e.body])].join('\n'))
+    for (const p of parts) if (hay.includes(p)) score += 1
+    return { t, score }
+  }).filter(h => h.score > 0).sort((a, b) => b.score - a.score).slice(0, limit)
+  return hits.map(({ t, score }) => ({
+    id: t.id, title: t.title, summary: t.summary, score: Math.round(score * 10) / 10,
+    entries: pickEntries(query, t, entriesPer).map(e => ({ id: e.id, kind: e.kind, line: e.line, body: e.body, due: e.due })),
+  }))
+}

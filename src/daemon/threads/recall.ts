@@ -6,7 +6,7 @@
  * `makeTopicRecall`:生产那一份 —— 只在主人自己的对话里,从库里读话题。失败一律当没碰到,绝不拖垮这一轮。
  */
 import type { ThreadsStore, TopicEntry, ThreadRecord } from '../../lib/threads-store'
-import { matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, topicJudgePrompt, MAX_TOPICS, type MatchTopic } from '../../domain/topic-match'
+import { matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, searchTopics, topicJudgePrompt, MAX_TOPICS, type MatchTopic, type TopicSearchHit } from '../../domain/topic-match'
 
 /** 真库副本上量过:生产的便宜模型(DeepSeek → 想光了换 Qwen)回一个编号 1–3.2 秒。整轮还有 mw-recall 的 4 秒总上限。 */
 export const TOPIC_JUDGE_TIMEOUT_MS = 3500
@@ -104,5 +104,20 @@ export function makeTopicRecall(d: TopicRecallDeps): TopicRecall {
       d.log('TOPICS', `recall failed for ${chatId}: ${err instanceof Error ? err.message : String(err)}`)
       return null
     }
+  }
+}
+
+/**
+ * topic_search 工具的 daemon 一侧(T2 后续 ①):搜的是主人那条对话的话题。私密话题只有从主人自己的对话里搜才给;
+ * 档位(admin)由路由管。
+ */
+export function makeTopicSearch(d: { threads: ThreadsStore; ownerChatId: () => string | null }) {
+  return async (callerChatId: string | undefined, query: string, limit = 3): Promise<TopicSearchHit[]> => {
+    const owner = d.ownerChatId()
+    if (!owner || !query.trim()) return []
+    const list = await d.threads.list(owner)
+    const hidden = new Set(callerChatId === owner ? [] : list.filter(t => t.private).map(t => t.id))
+    const topics = (await loadMatchTopics(d.threads, owner)).filter(t => !hidden.has(t.id))
+    return searchTopics(query, topics, Math.min(Math.max(1, limit), 5))
   }
 }

@@ -177,6 +177,9 @@ export function wireInstructions(
       //     precisely, non-admin/knowledge-off sessions unaffected (both
       //     default away from true).
       knowledgeSearchAvailable: !!parts.knowledge?.embedQuery && tierProfile.allow.has('knowledge_search'),
+      // 话题(2026-11-05):topic_search 跟着 SESSION_IS_ADMIN 注册(wechat-mcp/main.ts),分类是 knowledge_search;
+      // agy 那种钉死 trusted 的拿不到(同 daemonOpsAvailable 的 adminMcpTools)。
+      topicSearchAvailable: tierProfile.allow.has('knowledge_search') && capabilitiesFor(providerId).adminMcpTools,
       // Knowledge Graph inproc (Task 5) — same shape as knowledgeSearchAvailable
       // above, but keyed on `knowledge?.graph` (unconditional whenever
       // knowledge_enabled is on, no embed script required) and the

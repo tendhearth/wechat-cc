@@ -33,7 +33,7 @@ import { routesForToken } from '../../daemon/internal-api/route-tiers'
 import { attachAsks, buildBriefMaterial, buildBriefText, type BriefInputs } from '../jobs'
 import { makeCheapJudge, resolveTaskReference, type FocusState, type TaskCandidate } from '../workbench'
 import { resolveTopicRecall } from '../../daemon/threads/recall'
-import type { MatchTopic } from '../../domain/topic-match'
+import { searchTopics, type MatchTopic } from '../../domain/topic-match'
 
 /** 跟 daemon 的轮次看门狗同一个缺省(一段时间没事件就算卡住)。 */
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -99,10 +99,17 @@ export interface EvalReferenceResult {
 
 export type EvalJudgeResult = { ok: true; kind: 'judge'; answer: string; durationMs: number } | { ok: false; kind: 'judge'; error: string; durationMs: number }
 
-export interface ReplyInput { text: string; tier?: 'admin' | 'trusted'; providerId?: string; model?: string; timeoutMs?: number }
+/**
+ * `tools`:这一条样本要给会话放开的只读工具(话题 2026-11-05:只有 `topic_search`)。放开 ⇒ 会话按 admin 起 MCP(工具才注册),
+ * 令牌照旧只放行 GET /v1/health 再加这一个工具的路由;权限档只多这一类(knowledge_search),别的照旧拒。
+ */
+export const EVAL_TOOLS = { topic_search: { kind: 'knowledge_search' as const, route: 'POST /v1/memory/topics/search' } }
+export type EvalTool = keyof typeof EVAL_TOOLS
+export interface ReplyInput { text: string; tier?: 'admin' | 'trusted'; providerId?: string; model?: string; timeoutMs?: number; tools?: EvalTool[] }
 export interface BriefInput { material: BriefInputs; asks?: PickedAsk[]; asksBase?: number; nowIso?: string; providerId?: string; model?: string; timeoutMs?: number }
 /** 话题 T2 的样本:一句话 + 样本自带的一小份话题(同 reference 自带候选)。 */
-export interface TopicInput { text: string; topics: MatchTopic[] }
+/** `search`:跑 topic_search 那一套(按相关度排,不设门槛),不跑每轮的匹配。 */
+export interface TopicInput { text: string; topics: MatchTopic[]; search?: boolean }
 export interface EvalTopicResult {
   ok: true
   kind: 'topic'
@@ -122,7 +129,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
   /** 起一次性会话、发一句、收齐一轮;任何路径都 close + 作废令牌。 */
   async function oneTurn(a: {
     kind: 'reply' | 'brief'; providerId: string; model?: string; promptProfile: TierProfile
-    text: string; timeoutMs?: number; context: ReplyContext; transformFinal?: (raw: string) => string
+    text: string; timeoutMs?: number; context: ReplyContext; transformFinal?: (raw: string) => string; tools?: EvalTool[]
   }): Promise<EvalTurnResult | EvalRefused> {
     const entry = deps.registry.get(a.providerId)
     if (!entry) return { ok: false, code: 'eval_unknown_provider' }
@@ -133,8 +140,16 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
     const chatId = `eval-${uuid()}`
     // provider/alias/chatId 三段(internal-api 从会话键取 callerChatId 的形状,同 session-manager / selftest)
     const sessionKey = `${a.providerId}/eval/${chatId}`
-    const tier = tierNameFromProfile(JOB_PROFILE)
-    const token = deps.mintSessionToken(tier, sessionKey, { routeAllow: routesForToken('selftest'), ttlMs: TOKEN_TTL_MS })
+    const tools = a.tools ?? []
+    const extraKinds = tools.map(t => EVAL_TOOLS[t].kind)
+    const profile: TierProfile = extraKinds.length === 0 ? JOB_PROFILE : {
+      allow: new Set([...JOB_PROFILE.allow, ...extraKinds]), relay: JOB_PROFILE.relay,
+      deny: new Set([...JOB_PROFILE.deny].filter(k => !extraKinds.includes(k as never))),
+    }
+    // 放开了工具 ⇒ MCP 按 admin 起(那几个工具只在 admin 会话里注册);令牌的路由照旧是白名单
+    const tier = tools.length > 0 ? 'admin' : tierNameFromProfile(JOB_PROFILE)
+    const routeAllow = new Set([...routesForToken('selftest'), ...tools.map(t => EVAL_TOOLS[t].route)])
+    const token = deps.mintSessionToken(tier, sessionKey, { routeAllow, ttlMs: TOKEN_TTL_MS })
     const base = { kind: a.kind, providerId: a.providerId, ...(a.model !== undefined ? { model: a.model } : {}) }
     const empty = { finalText: '', bubbles: [] as string[], silent: false, rawFinalText: '', narration: [] as string[], segments: [] as string[], toolCalls: [] as string[] }
     let session: Awaited<ReturnType<typeof entry.provider.spawn>> | undefined
@@ -143,7 +158,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
       session = await entry.provider.spawn(
         { alias: 'eval', path: projectPath },
         {
-          tierProfile: JOB_PROFILE,
+          tierProfile: profile,
           permissionMode: 'strict',
           chatId,
           mcpEnv: sessionAuthEnv(tier, token),
@@ -210,7 +225,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
     reply(i: ReplyInput) {
       return oneTurn({
         kind: 'reply', ...pick(i.providerId, i.model), promptProfile: TIER_PROFILES[i.tier ?? 'admin'],
-        text: i.text, context: 'dm', ...(i.timeoutMs !== undefined ? { timeoutMs: i.timeoutMs } : {}),
+        text: i.text, context: 'dm', ...(i.timeoutMs !== undefined ? { timeoutMs: i.timeoutMs } : {}), ...(i.tools?.length ? { tools: i.tools } : {}),
       })
     },
 
@@ -243,6 +258,10 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
     /** 话题 T2:生产的匹配 + 生产的便宜模型(拿不准时)跑样本自带的话题。 */
     async topic(i: TopicInput): Promise<EvalTopicResult> {
       const startedAt = now()
+      if (i.search) {
+        const hits = searchTopics(i.text, i.topics)
+        return { ok: true, kind: 'topic', recall: hits.length ? { topicIds: hits.map(h => h.id), entryIds: hits.flatMap(h => h.entries.map(e => e.id)), via: 'search' } : null, durationMs: now() - startedAt }
+      }
       const r = await resolveTopicRecall(i.text, i.topics, { cheapEval: deps.registry.getCheapEval(), log: deps.log })
       return { ok: true, kind: 'topic', recall: r ? { topicIds: r.topicIds, entryIds: r.entryIds, via: r.via } : null, durationMs: now() - startedAt }
     },

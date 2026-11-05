@@ -29,6 +29,8 @@ export type EvalRule =
   | { resolves: { kind: string; taskId?: string; via?: string } }
   /** 话题 T2:要调出这个话题 / 这一条(写了才比);null = 什么都不该调。 */
   | { recalls: { topic?: string; entry?: string } | null }
+  /** 这一轮调过这个工具(按名字的结尾认:`wechat/topic_search`、`mcp__wechat__topic_search` 都算)。 */
+  | { calls: string }
 
 export interface EvalSample {
   id: string
@@ -44,7 +46,7 @@ export interface EvalSample {
 
 /** daemon 跑完交回来、规则要看的那部分。 */
 export type EvalOutput =
-  | { kind: 'reply' | 'brief'; finalText: string; bubbles: string[]; silent: boolean }
+  | { kind: 'reply' | 'brief'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[] }
   | { kind: 'reference'; resolution: { kind: string; taskId?: string; via?: string } }
   | { kind: 'topic'; recall: TopicRecallOutput }
 
@@ -130,6 +132,7 @@ function parseRule(raw: unknown, n: number): Parsed<EvalRule> {
       if (v.via !== undefined && !isNonEmptyStr(v.via)) return bad
       return { ok: true, value: { resolves: { kind: v.kind, ...(v.taskId !== undefined ? { taskId: v.taskId as string } : {}), ...(v.via !== undefined ? { via: v.via as string } : {}) } } }
     }
+    case 'calls': return isNonEmptyStr(v) && /^[A-Za-z0-9_]+$/.test(v) ? { ok: true, value: { calls: v } } : bad
     case 'recalls': {
       if (v === null) return { ok: true, value: { recalls: null } }
       if (!isObj(v) || (v.topic === undefined && v.entry === undefined)) return bad
@@ -219,6 +222,7 @@ function ruleLabel(r: EvalRule): string {
   if ('silent' in r) return `silent ${r.silent}`
   if ('lastLine' in r) return `lastLine 「${r.lastLine}」`
   if ('lines' in r) return `lines ${r.lines[0]}–${r.lines[1]}`
+  if ('calls' in r) return `calls ${r.calls}`
   if ('recalls' in r) return r.recalls === null ? 'recalls 无' : `recalls${r.recalls.topic ? ` 话题 ${r.recalls.topic}` : ''}${r.recalls.entry ? ` 条目 ${r.recalls.entry}` : ''}`
   return `resolves ${r.resolves.kind}${r.resolves.taskId ? ` ${r.resolves.taskId}` : ''}${r.resolves.via ? ` via ${r.resolves.via}` : ''}`
 }
@@ -246,6 +250,11 @@ export function checkRule(r: EvalRule, out: EvalOutput): RuleResult {
     return { rule, ok, detail }
   }
   if (out.kind === 'reference' || out.kind === 'topic') return { rule, ok: false, detail: '这条规则只用于 reply / brief' }
+  if ('calls' in r) {
+    const calls = out.toolCalls ?? []
+    const ok = calls.some(c => c === r.calls || c.endsWith(`/${r.calls}`) || c.endsWith(`__${r.calls}`))
+    return { rule, ok, detail: calls.length ? `调过 ${calls.join(', ')}` : '一个工具都没调' }
+  }
   const t = out.finalText
   if ('noThink' in r) {
     const hit = THINK_TAG.test(t) || THINK_LEAD.test(t)

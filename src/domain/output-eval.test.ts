@@ -96,6 +96,14 @@ describe('checkRule', () => {
     expect(checkRule({ resolves: { kind: 'task', via: 'name' } }, out).ok).toBe(false)
     expect(checkRule({ resolves: { kind: 'none' } }, out).ok).toBe(false)
   })
+  it('calls:按工具名结尾认', () => {
+    expect(parseSample({ id: 'a', kind: 'reply', input: { text: 'x' }, rules: [{ calls: 'topic_search' }] }, 'a')).toMatchObject({ ok: true })
+    expect(parseSample({ id: 'a', kind: 'reply', input: { text: 'x' }, rules: [{ calls: 'a b' }] }, 'a')).toMatchObject({ ok: false })
+    expect(checkRule({ calls: 'topic_search' }, reply({ toolCalls: ['wechat/topic_search'] }))).toEqual({ rule: 'calls topic_search', ok: true, detail: '调过 wechat/topic_search' })
+    expect(checkRule({ calls: 'topic_search' }, reply({ toolCalls: ['mcp__wechat__topic_search'] })).ok).toBe(true)
+    expect(checkRule({ calls: 'topic_search' }, reply({ toolCalls: ['wechat/topic_searchx'] })).ok).toBe(false)
+    expect(checkRule({ calls: 'topic_search' }, reply())).toEqual({ rule: 'calls topic_search', ok: false, detail: '一个工具都没调' })
+  })
   it('recalls:话题 / 条目写了才比;null 要求什么都没调', () => {
     const got: EvalOutput = { kind: 'topic', recall: { topicIds: ['srv'], entryIds: ['e1', 'e2'], via: 'exact' } }
     expect(checkRule({ recalls: { topic: 'srv', entry: 'e2' } }, got)).toEqual({ rule: 'recalls 话题 srv 条目 e2', ok: true, detail: '调出 话题 srv 条目 e1,e2(exact)' })

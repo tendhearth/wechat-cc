@@ -74,11 +74,38 @@ describe('仓库里的话题评测样例(eval/output/examples/topic-*.json)', ()
         ...(t as object), summary: String(t.summary ?? ''), aliases: (t.aliases ?? []) as string[], tags: (t.tags ?? []) as string[], lastActive: '',
         entries: ((t.entries ?? []) as Array<Record<string, unknown>>).map(e => ({ body: '', due: null, updatedTs: '', ...e })),
       })) as unknown as MatchTopic[]
-      const r = await resolveTopicRecall(String(p.sample.input.text), topics, { cheapEval: null })
+      const text = String(p.sample.input.text)
+      let recall: { topicIds: string[]; entryIds: string[]; via: string } | null
+      if (p.sample.input.search === true) {
+        const { searchTopics } = await import('../../domain/topic-match')
+        const hits = searchTopics(text, topics)
+        recall = hits.length ? { topicIds: hits.map(h => h.id), entryIds: hits.flatMap(h => h.entries.map(e => e.id)), via: 'search' } : null
+      } else {
+        const r = await resolveTopicRecall(text, topics, { cheapEval: null })
+        recall = r ? { topicIds: r.topicIds, entryIds: r.entryIds, via: r.via } : null
+      }
       for (const rule of effectiveRules(p.sample)) {
-        const res = checkRule(rule, { kind: 'topic', recall: r ? { topicIds: r.topicIds, entryIds: r.entryIds, via: r.via } : null })
+        const res = checkRule(rule, { kind: 'topic', recall })
         expect(res.ok, `${f}: ${res.rule} — ${res.detail}`).toBe(true)
       }
     }
+  })
+})
+
+describe('makeTopicSearch(topic_search 工具)', () => {
+  it('按相关度排、细节里的词也算;私密话题只有主人自己的对话搜得到', async () => {
+    const { makeTopicSearch } = await import('./recall')
+    const db = openTestDb()
+    const threads = makeThreadsStore(db)
+    const bx = await threads.create({ chatId: 'owner', title: 'bx', summary: '网络工具', facets: ['task'], tags: [], private: false, episodes: [] })
+    await threads.addEntry({ threadId: bx, kind: 'conclusion', line: 'Google Meet 延迟高根因', body: 'UDP-over-TCP 队头阻塞,实时视频会卡' })
+    const mom = await threads.create({ chatId: 'owner', title: '妈妈', summary: '', facets: ['life'], tags: [], private: true, episodes: [] })
+    await threads.addEntry({ threadId: mom, kind: 'fact', line: '视频通话时妈妈那边总卡' })
+    const search = makeTopicSearch({ threads, ownerChatId: () => 'owner' })
+    expect((await search('owner', '视频 卡')).map(h => h.title).sort()).toEqual(['bx', '妈妈'])
+    expect((await search('eval-x', '视频 卡')).map(h => h.title)).toEqual(['bx'])
+    expect((await search(undefined, '视频 卡')).map(h => h.title)).toEqual(['bx'])
+    expect(await search('owner', '   ')).toEqual([])
+    expect((await search('owner', 'Meet'))[0]).toMatchObject({ title: 'bx', entries: [{ line: 'Google Meet 延迟高根因' }] })
   })
 })

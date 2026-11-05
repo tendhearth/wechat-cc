@@ -40,6 +40,7 @@ describe('POST /v1/eval/run', () => {
       { kind: 'judge' }, { kind: 'judge', prompt: 'x'.repeat(20_001) },
       { kind: 'topic', text: 'x' }, { kind: 'topic', text: 'x', topics: [{ title: 't' }] }, { kind: 'topic', text: 'x', topics: [{ id: 'a', title: 't', aliases: [1] }] },
       { kind: 'topic', text: 'x', topics: [{ id: 'a', title: 't', entries: [{ id: 'e' }] }] },
+      { kind: 'reply', text: '早', tools: ['rm_rf'] }, { kind: 'reply', text: '早', tools: 'topic_search' }, { kind: 'topic', text: 'x', topics: [], search: 'yes' },
     ]) {
       const res = await post(r, body)
       expect(res.status, JSON.stringify(body)).toBe(400)
@@ -75,5 +76,12 @@ describe('POST /v1/eval/run', () => {
     expect(res.status).toBe(200)
     expect(run.calls).toEqual([['topic', { text: '服务器', topics: [{ id: 'srv', title: '服务器', summary: '', aliases: ['91'], tags: [], lastActive: '',
       entries: [{ id: 'e1', kind: 'commitment', line: '换硬盘', body: '', due: '2026-11-20', updatedTs: '' }, { id: 'e2', kind: 'fact', line: 'x', body: '', due: null, updatedTs: '' }] }] }]])
+  })
+
+  it('reply 的 tools / topic 的 search 照样本交给 runner', async () => {
+    const run = fakeRunner()
+    await post(outputEvalRoutes(run), { kind: 'reply', text: '那个问题', tools: ['topic_search', 'topic_search'] })
+    await post(outputEvalRoutes(run), { kind: 'topic', text: '视频会议', topics: [], search: true })
+    expect(run.calls).toEqual([['reply', { text: '那个问题', tools: ['topic_search'] }], ['topic', { text: '视频会议', topics: [], search: true }]])
   })
 })
