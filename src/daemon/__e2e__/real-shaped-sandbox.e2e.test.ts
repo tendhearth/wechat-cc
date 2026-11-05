@@ -449,7 +449,8 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     d.sendText(d.owner, '/set 免打扰 关')
     await d.waitForOutbound(m => texts(m, d.owner).includes('免打扰关了。'), 15_000)
     await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes(QUIET_NOTE)), 15_000)
-    expect(d.query("SELECT 1 FROM speech_pending WHERE body = ?", QUIET_NOTE)).toEqual([])
+    // 删行在发送返回之后(pending-notices.ts:说完才删),假 ilink 收到请求就记进外发箱 ⇒ 这里要等,不能当场查
+    await expect.poll(() => d.query("SELECT 1 FROM speech_pending WHERE body = ?", QUIET_NOTE), { timeout: 5_000 }).toEqual([])
     await new Promise(r => setTimeout(r, 1_000))   // 只送一次
     expect(texts(d.ilink.outbox(), d.owner).filter(t => t.includes(QUIET_NOTE))).toHaveLength(1)
   })
@@ -477,7 +478,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     d.sendText(d.owner, '/set 免打扰 关')
     await d.waitForOutbound(m => texts(m, d.owner).includes('免打扰关了。'), 15_000)
     await expect.poll(() => pushesFor(taskId).length, { timeout: 15_000 }).toBe(1)
-    expect(d.query("SELECT 1 FROM speech_pending WHERE lane = 'push'")).toEqual([])
+    await expect.poll(() => d.query("SELECT 1 FROM speech_pending WHERE lane = 'push'"), { timeout: 5_000 }).toEqual([])   // 同上:推完才删
     expect(d.query("SELECT 1 FROM speech_log WHERE kind = 'matter_report' AND outcome = 'allowed' AND channel = 'app'").length).toBeGreaterThan(0)
     await new Promise(r => setTimeout(r, 1_000))   // 只推一次
     expect(pushesFor(taskId)).toHaveLength(1)
