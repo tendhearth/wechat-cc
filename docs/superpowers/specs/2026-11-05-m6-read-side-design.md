@@ -59,6 +59,12 @@
   - 金样:25 份一字不变;另加一条在做完那件上写 ready 步、前后重读六条读路径(除游标与主题帧的 hub 计数外逐字节一样)。
   - 对账:`scripts/m6e-replied-audit.ts <副本.db>` 只读打开副本,数列 replied / ready 步 / 两种算法的 replied、列出不一样的行。11-05 真库副本:270 件事,列 replied **0 行**,ready 步 0 行,不一样 0 行。
 - `setStatus` 改名只管归档 / 重开(写 `archived_at` 与 `state`);迁移删 `matters.status`(重建表,`withoutForeignKeys`,见 `docs/maintainer/migrations.md`);从此回不到之前的版本。
+- 后半落地(11-05,v102,不可逆):
+  - 读:`legacyStatusSql('latest_ready')`;`legacyStatus` 的输入 `storedReplied` 换成 `latestReady`。`stored_replied` 只留给对账脚本读 v102 以前的副本。
+  - 口:`ports/matters.ts` 的 `Matter` / `CreateMatter` 没有 status,`MatterStatus` 删(取值搬到 `domain/matters/wire-status.ts`,免得和 `legacy-status.ts` 成环);`setStatus` → `setLifecycle(id, 'archived' | 'done' | 'open')`(以前写 replied 的那一处写 open,对 `archived_at` / `state` 一样);列表筛选 `statuses` → `legacy`;新增 `legacyStatuses(ids)`(同 `agents` / `origins` 一次查一页)。
+  - 出口:线上 `Matter.status` 只经 `wireMatter`(`legacy-status.ts`)产出,`MattersService.list` / `detail` 调;它把 status 插回 projectPath 之后的老位置,金样一字不变。主题帧非任务的 `phase` 用同一个 `legacyStatus`。
+  - 迁移:先搬只在列里的(列 archived 而 archived_at 空 ⇒ 补 updated_at;列 done 而 state open ⇒ done;列 replied、最近一轮已收、没有 ready 步 ⇒ 补一步 ready),再照 v92 重建。11-05 真库副本:377 件事、三样都是 0 行;迁移后行数、子表行数一样,`foreign_key_check` 空,每一行线上 status 和删掉的那一列逐行一样。
+  - 网页:`mLegacyStatus` 从 state / archivedAt(+ 任务的 status / phase)推,老 daemon 不带才退回 status;`?status=` 筛选参数照发。`wire-compat.ts` 第一行的读者只剩 app(M6f)。
 - 手机网页改读 `state` / `archivedAt`(随 `self deploy`,和 daemon 同步到手)。
 - 做完怎么算:`status` 不在 `matters` 表与 `ports/matters.ts` 里;线上 `Matter.status` 只剩 `wire-compat.ts` 那一行在推。
 
