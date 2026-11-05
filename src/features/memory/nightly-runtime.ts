@@ -164,7 +164,20 @@ function lastWrittenIso(acts: NightlyActs | undefined, legacy: string | null): s
   return legacy
 }
 
-export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { acts?: NightlyActs }): MemoryNightlyRuntime {
+/** 这一次整理是真的跑了(不是「还没到点」那类跳过):睡一觉之后的事(话题整理)跟着做。 */
+export function sleptTonight(r: NightlyRunResult): boolean {
+  return r.status === 'written' || (r.status === 'skipped' && r.reason === 'no_new_material')
+}
+
+export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & {
+  acts?: NightlyActs
+  /** 睡一觉之后(话题 T1–T3 后续 ④):整理这次以来改过的话题。同一条串行链上跑;抛错只记一行。 */
+  afterSleep?: () => Promise<void>
+}): MemoryNightlyRuntime {
+  const afterSleep = async (r: NightlyRunResult) => {
+    if (!deps.afterSleep || !sleptTonight(r)) return
+    try { await deps.afterSleep() } catch (err) { deps.log('MEMORY_NIGHTLY', `after-sleep step failed: ${err instanceof Error ? err.message : String(err)}`) }
+  }
   async function dropAgendaByModel(c: Done): Promise<void> {
     const items = openAgendaItems(c.root)
     if (items.length === 0) return
@@ -432,6 +445,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { a
       const startedAt = deps.now()
       const r = await runMemoryNightly(deps, { force: false, nowMs: startedAt, lastRunIso: lastWrittenIso(deps.acts, readNightlyState(deps.stateDir).lastRunIso) })
       stampNotice(r, settleRun(r, startedAt, recordAct(deps.acts, r, startedAt, deps.now(), 'schedule')))
+      await afterSleep(r)
       if (r.status === 'skipped') {
         if (r.reason !== 'not_due' && r.reason !== lastSkipReason) deps.log('MEMORY_NIGHTLY', `tick: skipped (${r.reason})`)
         lastSkipReason = r.reason
@@ -447,6 +461,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & { a
       const startedAt = deps.now()
       const r = await runMemoryNightly(deps, { force: true, nowMs: startedAt, lastRunIso: lastWrittenIso(deps.acts, readNightlyState(deps.stateDir).lastRunIso) })
       stampNotice(r, settleRun(r, startedAt, recordAct(deps.acts, r, startedAt, deps.now(), 'owner')))
+      await afterSleep(r)
       return r
     }),
     // 与每晚整理同一条串行链:不会和它同时改 memory.md

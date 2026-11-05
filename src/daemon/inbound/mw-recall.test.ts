@@ -110,4 +110,19 @@ describe('makeMwRecall', () => {
     await makeMwRecall({ recall: async () => [], isAdmin: () => true, log: noopLog })(ctx, async () => {})
     expect(ctx.msg.recall).toBeUndefined()
   })
+
+  it('话题 T2:topics 和 recall 并行,结果挂在 msg.topics 上;没碰到 / 抛错 / 超时 ⇒ 不挂,照常 next', async () => {
+    const ctx = ctxWith('最近上海的事')
+    let seen: { topics?: string; recall?: string[] } = {}
+    await makeMwRecall({ recall: async () => ['k'], topics: async () => ({ block: '话题「上海」' }), isAdmin: () => true, log: noopLog })(ctx, async () => { seen = { topics: ctx.msg.topics, recall: ctx.msg.recall } })
+    expect(seen).toEqual({ topics: '话题「上海」', recall: ['k'] })
+
+    for (const topics of [async () => null, async () => { throw new Error('boom') }, () => new Promise<never>(() => {})]) {
+      const c = ctxWith('x')
+      const next = vi.fn(async () => {})
+      await makeMwRecall({ topics, isAdmin: () => true, log: noopLog, timeoutMs: 20 })(c, next)
+      expect(next).toHaveBeenCalledOnce()
+      expect(c.msg.topics).toBeUndefined()
+    }
+  })
 })

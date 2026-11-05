@@ -21,6 +21,8 @@ import { makeNightlySources } from './nightly-sources'
 import { makeMemoryWriter } from './memory-export'
 import { memoryOwnerChatId } from './fact-import'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { consolidateTopics } from '../../daemon/threads/consolidate'
 
 export interface WireMemoryDeps {
   stateDir: string
@@ -80,6 +82,11 @@ export function wireMemory(d: WireMemoryDeps) {
     }),
     claim: (chatId, nowIso) => careLedger.claimMemory(chatId, nowIso),
     speech,
+    // 睡一觉之后整理今天改过的话题(重复的进展并成一条、去掉提交号;旧的标 superseded 不删)
+    afterSleep: async () => {
+      const o = nightlyOwner()
+      if (o) await consolidateTopics({ chatId: o, threads: makeThreadsStore(db), sdkEval: boot.registry.getCheapEval(), log })
+    },
   })
   // 手动立即运行(内部 API / 以后的微信「整理记忆」)可能跑到 5 分钟 —— 持 busy token,
   // 免得空闲自动重启把它杀掉。定时 tick 的 busy 由 registerMemoryNightly 自己持。

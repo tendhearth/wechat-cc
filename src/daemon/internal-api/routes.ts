@@ -359,7 +359,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
       }
     },
     // ── delegate consultation (RFC 03 P4) ───────────────────────────────
-    'POST /v1/delegate': async (_q, body) => {
+    'POST /v1/delegate': async (_q, body, caller) => {
       const d = getDelegate()
       if (!d) return { status: 503, body: { error: 'delegate_not_wired' } }
       // Body is pre-validated by index.ts via DelegateRequest schema.
@@ -390,14 +390,20 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
       // Compose the actual prompt that the peer sees. The peer is
       // bare-bones (no conversation history, no wechat tools), so the
       // prompt is self-contained.
-      const fullPrompt = context_summary && context_summary.length > 0
+      const withContext = context_summary && context_summary.length > 0
         ? `${prompt}\n\nContext from the calling agent:\n${context_summary}`
         : prompt
+      // 话题 T3:只有主人自己的会话(admin 档、令牌里的 chat 是主人)才带简报;判主人在 topics 里面
+      const brief = d.topics && caller?.tier === 'admin'
+        ? await d.topics.brief(caller.chatId, `${prompt}\n${context_summary ?? ''}`).catch(() => null)
+        : null
+      const fullPrompt = brief ? `${withContext}\n\n${brief.text}` : withContext
       const started = Date.now()
       try {
         const r = await d.dispatchOneShot(peer, fullPrompt, cwd)
         const elapsed = Date.now() - started
         if (r.ok) {
+          if (brief && d.topics) await d.topics.writeBack(brief.topicIds, peer, prompt, r.response).catch(() => {})
           deps.log?.('DELEGATE', `peer=${peer} ok response_chars=${r.response.length} ms=${elapsed}`, {
             event: 'delegate_ok',
             peer,

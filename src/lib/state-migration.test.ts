@@ -122,11 +122,11 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // 迁移加完之后漏改的(跟上面 v 的字面量是同一处腐烂,一起修)。
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'cli_sessions', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
-      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'knowledge_extraction_state', 'knowledge_judge_state', 'matter_bindings', 'matter_items', 'matter_log_cursor', 'matter_report_outbox', 'matter_say_receipts', 'matter_sessions', 'matter_turns', 'matters', 'memory_derived', 'memory_exports', 'memory_fact_events', 'memory_facts', 'memory_import', 'memory_source_revisions', 'message_attempts', 'messages',
+      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'knowledge_extraction_state', 'knowledge_judge_state', 'matter_bindings', 'matter_items', 'matter_log_cursor', 'matter_report_outbox', 'matter_say_receipts', 'matter_sessions', 'matter_topics', 'matter_turns', 'matters', 'memory_derived', 'memory_exports', 'memory_fact_events', 'memory_facts', 'memory_import', 'memory_source_revisions', 'message_attempts', 'messages',
       'milestones', 'observations', 'openai_chat_sessions', 'pending_cards', 'penpal_channel', 'penpal_letter', 'permission_decisions', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
-      'sessions', 'speech_log', 'speech_pending', 'sqlite_sequence', 'terminal_reads', 'thread_extract_state', 'threads',
+      'sessions', 'speech_log', 'speech_pending', 'sqlite_sequence', 'terminal_reads', 'thread_extract_state', 'threads', 'topic_entries',
       'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachment_uploads', 'workbench_attachments', 'workbench_control_receipts',
       'workbench_creation_receipts', 'workbench_entry_requests', 'workbench_goals', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_comments', 'workbench_review_hunks', 'workbench_review_marks', 'workbench_rewinds', 'workbench_script_approvals',
       'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions', 'workbench_worktrees',

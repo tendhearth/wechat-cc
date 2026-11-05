@@ -74,6 +74,19 @@ describe('reply:生产的提示词 + 只读档、不批权限', () => {
     expect([...(opts as { routeAllow: Set<string> }).routeAllow]).toEqual(['GET /v1/health'])
     expect(h.invalidateSession).toHaveBeenCalledWith(key)
   })
+  it('样本放开 topic_search:MCP 按 admin 起,令牌只多那一条路由,权限档只多 knowledge_search 一类', async () => {
+    const h = harness({ events: [text('好')] })
+    await h.runner.reply({ text: '那个问题后来怎么定的', tools: ['topic_search'] })
+    const [tier, , opts] = h.mintSessionToken.mock.calls[0]!
+    expect(tier).toBe('admin')
+    expect([...(opts as { routeAllow: Set<string> }).routeAllow].sort()).toEqual(['GET /v1/health', 'POST /v1/memory/topics/search'])
+    const p = h.spawned[0]!.ctx.tierProfile
+    expect(p.allow.has('knowledge_search')).toBe(true)
+    expect(p.deny.has('knowledge_search')).toBe(false)
+    expect([...p.allow].filter(k => !JOB_PROFILE.allow.has(k))).toEqual(['knowledge_search'])
+    expect(p.relay.size).toBe(0)
+    expect(h.spawned[0]!.ctx.mcpEnv).toEqual({ WECHAT_SESSION_TOKEN: 'tok', WECHAT_SESSION_TIER: 'admin' })
+  })
   it('trusted 档 / 指定执行者与模型', async () => {
     const h = harness({ events: [text('好')] })
     const r = await h.runner.reply({ text: '早', tier: 'trusted', providerId: 'codex', model: 'm2' })

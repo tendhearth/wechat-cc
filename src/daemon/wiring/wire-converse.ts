@@ -21,6 +21,7 @@ import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
 import { surfaceOrigin } from '../../features/phone'
 import { resolveOwnerSessionKey } from './owner-session-key'
+import type { TopicRecall } from '../threads/recall'
 
 export interface WireConverseDeps {
   stateDir: string
@@ -35,7 +36,12 @@ export interface WireConverseDeps {
   matters?: MatterStore
   petSignals?: PetSignals
   stickers?: StickerLib
+  /** 话题 T2:这一轮碰到的话题调出来的那几条(只在主人自己的对话里;缺席 ⇒ 不调)。 */
+  topicRecall?: TopicRecall
 }
+
+/** App 那一轮调话题最多等多久(和微信入站的 RECALL_TIMEOUT_MS 同值)。 */
+const TOPIC_RECALL_BUDGET_MS = 4000
 
 export type CompanionConverse = (text: string, origin?: 'desktop' | 'phone', images?: ConverseImage[]) => Promise<ConverseResult>
 
@@ -170,6 +176,14 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
         persistAppTurn(origin, synthetic, text, reply, undefined, images)
         return { reply }
       }
+    }
+    // 话题 T2:App 那一轮不走入站管道(mw-recall 够不着),在进对话之前调一次;超时 / 出错 ⇒ 不加。
+    if (d.topicRecall && text.trim()) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const r = await Promise.race([d.topicRecall(ownerChatId, text), new Promise<null>(res => { timer = setTimeout(() => res(null), TOPIC_RECALL_BUDGET_MS) })])
+        if (r && r.block.trim()) synthetic.topics = r.block
+      } catch { /* 调不出来就照常进对话 */ } finally { if (timer !== undefined) clearTimeout(timer) }
     }
     // 起飞时刻:app 轮次不走入站管道(见上面的 dispatch),所以在这儿单独记一笔,
     // 并且同样用 finally 配对 —— 两条进来的路,同一套 start/stop 语义。

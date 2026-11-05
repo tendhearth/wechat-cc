@@ -61,6 +61,14 @@ export interface InternalApiDelegateDep {
   >
   /** List of accepted peer ids — for 400 validation. */
   knownPeers(): ProviderId[]
+  /**
+   * 话题 T3(2026-11-05):主人自己的会话发起的咨询,从话题拣一份简报接在 prompt 后面;回答成功后写回碰到的话题。
+   * 判「是不是主人」在它自己里面(按令牌里的 chat);缺席 ⇒ 不加、不写。
+   */
+  topics?: {
+    brief(callerChatId: string | undefined, prompt: string): Promise<{ text: string; topicIds: string[] } | null>
+    writeBack(topicIds: readonly string[], peer: string, prompt: string, response: string): Promise<void>
+  }
 }
 
 /**

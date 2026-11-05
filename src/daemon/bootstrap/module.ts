@@ -27,6 +27,8 @@ import { makeReplyDeliveryRuntime } from '../reply-delivery'
 import { makeChatOwnerRules } from '../permission-gate'
 import { makeLlmHealth, type LlmHealth } from '../llm-health'
 import { ownerChatIdOf } from '../owner-chat'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { makeMatterTopics } from '../threads/matter-topics'
 import { bootstrapModules, type Bootstrap } from './index'
 
 /** boot-api 交出去的:靠 bootstrap 才有的 LLM 体检。 */
@@ -100,7 +102,12 @@ export function bootApiModule(f: Foundation): DaemonModule<BootApi> {
     init(ctx): BootApi {
       const boot = ctx.get<Bootstrap>('bootstrap')
       const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
-      internalApi.provide({ delegate: { dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() } })
+      // 话题 T3:主人自己的会话发起的咨询带话题简报、回答写回话题(daemon/threads/matter-topics)
+      const matterTopics = makeMatterTopics({ db: f.db, threads: makeThreadsStore(f.db), ownerChatId, log: (t, l) => log(t, l) })
+      internalApi.provide({ delegate: {
+        dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list(),
+        topics: { brief: (chatId, prompt) => matterTopics.briefForDelegate(chatId, prompt), writeBack: (ids, peer, prompt, response) => matterTopics.writeDelegate(ids, peer, prompt, response) },
+      } })
       internalApi.provide({ conversation: { setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) } })
       // 可选子系统没起(配置没开 / 降级)⇒ 不 provide,对应路由照旧 503。
       if (boot.a2aDeps) internalApi.provide({ a2a: boot.a2aDeps })

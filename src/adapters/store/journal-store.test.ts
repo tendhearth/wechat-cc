@@ -196,10 +196,14 @@ describe('postcard album', () => {
 it('upgrades an existing v44 journal without losing its picture and narration', async () => {
   const { openSqlite } = await import('../../lib/runtime/sqlite')
   const { runMigrations, migrations } = await import('../../lib/db')
+  // 从真迁移造一个 v44 的库(docs/maintainer/migrations.md「测试里要一个旧版本的库:从真迁移造」),
+  // 不手写只有一张表的假库 —— 2026-11-05 v104 动了 threads,手写的假库里没有它。
   const old = openSqlite(':memory:')
-  old.exec("CREATE TABLE journal(id TEXT PRIMARY KEY, image_svg TEXT, note TEXT); INSERT INTO journal VALUES ('old','<svg></svg>','the story'); PRAGMA user_version=44;")
+  old.exec('PRAGMA foreign_keys = ON;')
+  for (const m of migrations.slice(0, 44)) m(old as never)
+  old.exec("INSERT INTO journal(id, ts, chat_id, title, note, image_svg) VALUES ('old','2026-01-01T00:00:00Z','c','t','the story','<svg></svg>'); PRAGMA user_version=44;")
   runMigrations(old, migrations)
-  expect(old.query('SELECT * FROM journal').get()).toEqual({id:'old',image_svg:'<svg></svg>',note:'the story',favorite:0,matter_id:null})
+  expect(old.query('SELECT id, image_svg, note, favorite, matter_id FROM journal').get()).toEqual({id:'old',image_svg:'<svg></svg>',note:'the story',favorite:0,matter_id:null})
   runMigrations(old, migrations)
   expect(old.query('SELECT COUNT(*) AS n FROM journal').get()).toEqual({n:1})
   old.close()

@@ -26,6 +26,8 @@ import { makeAdminCommands } from '../admin-commands'
 import { makeSelfChangeSpawner, resolveSelfCli } from '../self-change-spawn'
 import { makeModeCommands } from '../mode-commands'
 import { loadCompanionConfig } from '../../lib/companion-config'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { makeTopicRecall } from '../threads/recall'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeCheapJudge, type TaskCandidate } from '../../features/workbench'
 import { scopedSend } from '../inbound/reply-scope'
@@ -440,6 +442,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
+  const topicRecall = makeTopicRecall({
+    threads: makeThreadsStore(db),
+    isOwner: (chatId) => chatId === ownerChatId(),
+    cheapEval: () => boot.registry.getCheapEval(),
+    log,
+  })
   // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
   const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
   // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。stop 退订 + 清定时器,main.ts 登记进 shutdown。
@@ -449,6 +458,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,
     appTurn: () => late.appTurn?.() ?? null,
     matters: opts.matters, petSignals: opts.petSignals, stickers: opts.stickers,
+    topicRecall,
   })
 
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
@@ -715,6 +725,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     recall: {
       isAdmin,
       log,
+      topics: topicRecall,
       // Non-admin lane — deterministic keyword recall over the chat's OWN
       // memory files only (same subtree memory_read grants it). Sync under
       // the hood; wrapped to satisfy the middleware's async contract.

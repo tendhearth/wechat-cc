@@ -77,6 +77,10 @@ export interface ServiceDeps {
   networkGate?: NetworkGate
   /** 项目经验(2026-10-20):源项目路径 ⇒ 要放进执行者指令的那一段;没有 ⇒ null。 */
   projectLessons?: (projectPath: string | null) => string | null
+  /** 话题 T3(2026-11-05):起执行者时从话题拼的简报(只给主人的任务、只用索引、私密话题不进);没有 ⇒ null。 */
+  topicBrief?: (task: { matterId: string; ownerChatId: string | null; title: string; text: string }) => Promise<string | null>
+  /** 话题 T3:这件事一轮真的完成了(同 onTurnCompleted 那一处)—— 把结论写回挂着的话题。 */
+  onTaskTurnCompleted?: (taskId: string) => void
   /** 加一条项目经验(打回时「同时记成这个项目的经验」);同微信「经验」命令、手机那个文件。 */
   /** checkpoint 总期限(毫秒);缺省 CHECKPOINT_DEADLINE_MS。只给测试放宽(负载下 15 秒不够,打不成点那一轮就回不去)。 */
   checkpointDeadlineMs?: number

@@ -91,20 +91,22 @@ function judgeInput(s: EvalSample): string {
 
 function judgeOutput(o: EvalOutput): string | null {
   if (o.kind === 'reference') return JSON.stringify(o.resolution)
+  if (o.kind === 'topic') return JSON.stringify(o.recall)
   if (o.silent) return null
   return o.bubbles.length ? o.bubbles.join('\n\n') : o.finalText
 }
 
 function toOutput(kind: EvalSample['kind'], body: any): EvalOutput {
   if (kind === 'reference') return { kind: 'reference', resolution: body?.resolution ?? { kind: 'none' } }
-  return { kind, finalText: String(body?.finalText ?? ''), bubbles: Array.isArray(body?.bubbles) ? body.bubbles.map(String) : [], silent: body?.silent === true }
+  if (kind === 'topic') return { kind: 'topic', recall: body?.recall ?? null }
+  return { kind, finalText: String(body?.finalText ?? ''), bubbles: Array.isArray(body?.bubbles) ? body.bubbles.map(String) : [], silent: body?.silent === true, ...(Array.isArray(body?.toolCalls) ? { toolCalls: body.toolCalls.map(String) } : {}) }
 }
 
 async function runSample(deps: EvalCliDeps, api: { baseUrl: string; operatorToken: string }, s: EvalSample, providerId: string | undefined): Promise<SampleResult> {
   const startedAt = deps.now()
   const base = { id: s.id, kind: s.kind, ...(s.note !== undefined ? { note: s.note } : {}) }
   // kind 放在展开之后:样本 input 里写的 kind 不能把这一条换成别的操作(Codex 评审)
-  const body = { ...s.input, kind: s.kind, ...(providerId && s.kind !== 'reference' ? { providerId } : {}) }
+  const body = { ...s.input, kind: s.kind, ...(providerId && s.kind !== 'reference' && s.kind !== 'topic' ? { providerId } : {}) }
   const turnMs = typeof s.input.timeoutMs === 'number' ? s.input.timeoutMs : TURN_DEFAULT_MS
   const r = await post(deps, api, body, turnMs + FETCH_MARGIN_MS)
   const ran = typeof r.json?.providerId === 'string' ? { providerId: r.json.providerId as string } : {}

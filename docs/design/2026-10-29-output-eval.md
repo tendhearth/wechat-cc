@@ -56,6 +56,7 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
   "input": { "text": "早", "tier": "admin" },
   // brief:   "input": { "material": { BriefInputs }, "asks": [PickedAsk] }
   // reference: "input": { "text", "quotedText"?, "candidates": [...], "focus"? }
+  // topic:     "input": { "text", "topics": [{ id, title, summary?, aliases?, entries: [{ id, kind?, line }] }] }(话题 T2,2026-11-05)
   "rules": [ … ],                  // 硬规则,见下
   "judge": "回复像熟人打招呼;不超过两句;不提自己是 AI"   // 可选:便宜模型按这句打 0/1
 }
@@ -66,7 +67,8 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 `{ "noThink": true }`(最终文字里没有 `<think>` / `</think>` / 「思考过程」开头)、
 `{ "maxChars": n }`、`{ "maxBubbles": n }`、`{ "contains": "…" }`、`{ "notContains": "…" }`、`{ "matches": "正则" }`、
 `{ "silent": true | false }`(NO_REPLY 与否)、`{ "lastLine": "就这些。" }`、`{ "lines": [min, max] }`(早报条数)、
-`{ "resolves": { "kind": "task", "taskId": "…" } }`(指称:kind 必比,taskId / via 写了才比)。
+`{ "resolves": { "kind": "task", "taskId": "…" } }`(指称:kind 必比,taskId / via 写了才比)、
+`{ "recalls": { "topic": "…", "entry": "…" } }` / `{ "recalls": null }`(话题:调出了这个话题 / 这一条;null = 什么都不该调)。
 
 **所有 `reply` / `brief` 样本自动带 `noThink`**,不用每条写。
 

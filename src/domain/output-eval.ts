@@ -10,8 +10,11 @@
  * 纯函数、零 I/O:CLI(src/cli/output-eval.ts)读样本、调路由、写报告。
  */
 
-export type EvalKind = 'reply' | 'brief' | 'reference'
-export const EVAL_KINDS: readonly EvalKind[] = ['reply', 'brief', 'reference']
+export type EvalKind = 'reply' | 'brief' | 'reference' | 'topic'
+export const EVAL_KINDS: readonly EvalKind[] = ['reply', 'brief', 'reference', 'topic']
+
+/** 话题 T2:这一轮调出了哪些(null = 什么都没调)。 */
+export type TopicRecallOutput = { topicIds: string[]; entryIds: string[]; via: string } | null
 
 export type EvalRule =
   | { noThink: true }
@@ -24,6 +27,10 @@ export type EvalRule =
   | { lastLine: string }
   | { lines: [number, number] }
   | { resolves: { kind: string; taskId?: string; via?: string } }
+  /** 话题 T2:要调出这个话题 / 这一条(写了才比);null = 什么都不该调。 */
+  | { recalls: { topic?: string; entry?: string } | null }
+  /** 这一轮调过这个工具(按名字的结尾认:`wechat/topic_search`、`mcp__wechat__topic_search` 都算)。 */
+  | { calls: string }
 
 export interface EvalSample {
   id: string
@@ -39,8 +46,9 @@ export interface EvalSample {
 
 /** daemon 跑完交回来、规则要看的那部分。 */
 export type EvalOutput =
-  | { kind: 'reply' | 'brief'; finalText: string; bubbles: string[]; silent: boolean }
+  | { kind: 'reply' | 'brief'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[] }
   | { kind: 'reference'; resolution: { kind: string; taskId?: string; via?: string } }
+  | { kind: 'topic'; recall: TopicRecallOutput }
 
 export interface RuleResult { rule: string; ok: boolean; detail?: string }
 export type JudgeVerdict = 'pass' | 'fail' | 'unclear' | 'error'
@@ -124,6 +132,14 @@ function parseRule(raw: unknown, n: number): Parsed<EvalRule> {
       if (v.via !== undefined && !isNonEmptyStr(v.via)) return bad
       return { ok: true, value: { resolves: { kind: v.kind, ...(v.taskId !== undefined ? { taskId: v.taskId as string } : {}), ...(v.via !== undefined ? { via: v.via as string } : {}) } } }
     }
+    case 'calls': return isNonEmptyStr(v) && /^[A-Za-z0-9_]+$/.test(v) ? { ok: true, value: { calls: v } } : bad
+    case 'recalls': {
+      if (v === null) return { ok: true, value: { recalls: null } }
+      if (!isObj(v) || (v.topic === undefined && v.entry === undefined)) return bad
+      if (v.topic !== undefined && !isNonEmptyStr(v.topic)) return bad
+      if (v.entry !== undefined && !isNonEmptyStr(v.entry)) return bad
+      return { ok: true, value: { recalls: { ...(v.topic !== undefined ? { topic: v.topic as string } : {}), ...(v.entry !== undefined ? { entry: v.entry as string } : {}) } } }
+    }
     default: return bad
   }
 }
@@ -139,6 +155,11 @@ function inputError(kind: EvalKind, input: Record<string, unknown>): string | nu
     if (input.asks !== undefined && !Array.isArray(input.asks)) return 'brief 的 input.asks 要是数组'
     return null
   }
+  if (kind === 'topic') {
+    if (!isNonEmptyStr(input.text)) return 'topic 的 input.text 要是非空字符串'
+    if (!Array.isArray(input.topics)) return 'topic 的 input.topics 要是数组'
+    return null
+  }
   if (!isNonEmptyStr(input.text)) return 'reference 的 input.text 要是非空字符串'
   if (!Array.isArray(input.candidates)) return 'reference 的 input.candidates 要是数组'
   return null
@@ -151,7 +172,7 @@ export function parseSample(raw: unknown, fileId: string): { ok: true; sample: E
   if (typeof id !== 'string' || !SAFE_ID.test(id)) return { ok: false, error: 'id 只能是字母、数字、- 和 _' }
   // 回归比较按 id 对,id 必须唯一:跟文件名走(同一目录里文件名不会重)
   if (id !== fileId) return { ok: false, error: `id 要和文件名一致(${fileId})` }
-  if (typeof raw.kind !== 'string' || !(EVAL_KINDS as readonly string[]).includes(raw.kind)) return { ok: false, error: 'kind 只能是 reply / brief / reference' }
+  if (typeof raw.kind !== 'string' || !(EVAL_KINDS as readonly string[]).includes(raw.kind)) return { ok: false, error: 'kind 只能是 reply / brief / reference / topic' }
   const kind = raw.kind as EvalKind
   if (!isObj(raw.input)) return { ok: false, error: 'input 要是对象' }
   const ie = inputError(kind, raw.input)
@@ -182,7 +203,7 @@ export function parseSample(raw: unknown, fileId: string): { ok: true; sample: E
 /** 这条样本实际要判的规则:reply / brief 自动带 noThink(写过就不重复),放在最前面。 */
 export function effectiveRules(s: EvalSample): EvalRule[] {
   const rules = s.rules ?? []
-  if (s.kind === 'reference' || rules.some(r => 'noThink' in r)) return [...rules]
+  if (s.kind === 'reference' || s.kind === 'topic' || rules.some(r => 'noThink' in r)) return [...rules]
   return [{ noThink: true }, ...rules]
 }
 
@@ -201,6 +222,8 @@ function ruleLabel(r: EvalRule): string {
   if ('silent' in r) return `silent ${r.silent}`
   if ('lastLine' in r) return `lastLine 「${r.lastLine}」`
   if ('lines' in r) return `lines ${r.lines[0]}–${r.lines[1]}`
+  if ('calls' in r) return `calls ${r.calls}`
+  if ('recalls' in r) return r.recalls === null ? 'recalls 无' : `recalls${r.recalls.topic ? ` 话题 ${r.recalls.topic}` : ''}${r.recalls.entry ? ` 条目 ${r.recalls.entry}` : ''}`
   return `resolves ${r.resolves.kind}${r.resolves.taskId ? ` ${r.resolves.taskId}` : ''}${r.resolves.via ? ` via ${r.resolves.via}` : ''}`
 }
 
@@ -216,7 +239,22 @@ export function checkRule(r: EvalRule, out: EvalOutput): RuleResult {
       && (r.resolves.via === undefined || got.via === r.resolves.via)
     return { rule, ok, detail: `得到 ${got.kind}${got.taskId ? ` ${got.taskId}` : ''}${got.via ? ` via ${got.via}` : ''}` }
   }
-  if (out.kind === 'reference') return { rule, ok: false, detail: '这条规则只用于 reply / brief' }
+  if ('recalls' in r) {
+    if (out.kind !== 'topic') return { rule, ok: false, detail: '这条规则只用于 topic' }
+    const got = out.recall
+    const detail = got ? `调出 话题 ${got.topicIds.join(',')} 条目 ${got.entryIds.join(',') || '-'}(${got.via})` : '什么都没调'
+    if (r.recalls === null) return { rule, ok: got === null, detail }
+    const ok = got !== null
+      && (r.recalls.topic === undefined || got.topicIds.includes(r.recalls.topic))
+      && (r.recalls.entry === undefined || got.entryIds.includes(r.recalls.entry))
+    return { rule, ok, detail }
+  }
+  if (out.kind === 'reference' || out.kind === 'topic') return { rule, ok: false, detail: '这条规则只用于 reply / brief' }
+  if ('calls' in r) {
+    const calls = out.toolCalls ?? []
+    const ok = calls.some(c => c === r.calls || c.endsWith(`/${r.calls}`) || c.endsWith(`__${r.calls}`))
+    return { rule, ok, detail: calls.length ? `调过 ${calls.join(', ')}` : '一个工具都没调' }
+  }
   const t = out.finalText
   if ('noThink' in r) {
     const hit = THINK_TAG.test(t) || THINK_LEAD.test(t)
@@ -311,6 +349,7 @@ const FENCE = '````'
 function outputText(o: EvalOutput | undefined): string | null {
   if (!o) return null
   if (o.kind === 'reference') return JSON.stringify(o.resolution)
+  if (o.kind === 'topic') return JSON.stringify(o.recall)
   if (o.silent) return '(NO_REPLY)'
   return o.bubbles.length > 1 ? o.bubbles.join('\n\n—— 下一条 ——\n\n') : o.finalText
 }

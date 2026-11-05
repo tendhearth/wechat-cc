@@ -230,6 +230,11 @@ export interface BuildSystemPromptArgs {
    */
   knowledgeSearchAvailable?: boolean
   /**
+   * 话题(2026-11-05,T2 后续 ①):这个会话注册了 `topic_search`(admin + 有 wechat MCP 管理工具)。
+   * 加一段:主人说到对不上号的事,先搜话题再答。缺席 / false ⇒ 输出和以前逐字节一样。
+   */
+  topicSearchAvailable?: boolean
+  /**
    * When true, this session is admin-tier AND the daemon's Graph Query
    * tools (`contact_profile`/`top_contacts`/…, Knowledge Graph inproc
    * design Task 5) are actually registered/functional for it — adds the
@@ -353,6 +358,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     args.personaCultivate === true ? personaCultivationSection({ personaEmpty: args.personaEmpty === true }) : '',
     stickerSectionRendered,
     memorySection(),
+    args.topicSearchAvailable === true ? topicSearchSection() : '',
     hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins ?? [], { knowledgeSearchAvailable, graphAvailable, factsAvailable, personAvailable }) : '',
     multiModeAwarenessSection(),
     companionEnabled ? companionSection() : '',
@@ -362,6 +368,15 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 }
 
 // ─── sections ──────────────────────────────────────────────────────────
+
+/** 话题(2026-11-05):主人说到你对不上号的事,先搜话题。 */
+export function topicSearchSection(): string {
+  return [
+    '## 话题记忆',
+    '主人说话时,你以前和他聊过、或者 agent 替他做过的相关几条,会放在这一轮的 <topics> 里。',
+    '主人说到你对不上号的事(「那个问题」「上次那个」「后来怎么定的」),而 <topics> 里没有,先用 `topic_search` 换几个关键词搜一下话题,再回答;搜不到就直说不记得,别猜。',
+  ].join('\n')
+}
 
 function baseChannelSection(providerId: ProviderId, model?: string, allSegments = false): string {
   const modelTag = model !== undefined ? `当前模型 ${model}` : '当前模型:provider 默认,未单独固定'

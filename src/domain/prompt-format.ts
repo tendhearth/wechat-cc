@@ -38,6 +38,11 @@ export interface InboundMsg {
    * context even when it never calls knowledge_search/memory_read itself.
    */
   recall?: string[]
+  /**
+   * 话题 T2(2026-11-05):这一轮碰到的话题调出来的那几条(src/daemon/threads/recall.ts 渲染好的正文),
+   * 只在主人自己的对话里有。渲染成 <recall> 前面的 <topics> 元素;没有 ⇒ 信封和以前逐字节一样。
+   */
+  topics?: string
 }
 
 /** Cap on the rendered <recall> body — recall is a hint, not a transcript. */
@@ -103,7 +108,10 @@ export function formatInbound(m: InboundMsg): string {
   const recallEl = recallLines.length
     ? `<recall hint="自动检索的相关片段，可能不相关，仅供参考">\n${escBody(recallLines.join('\n')).slice(0, RECALL_BLOCK_MAX)}\n</recall>`
     : ''
-  const body = [recallEl, quoteEl, escBody(m.text), ...attachmentLines].filter(Boolean).join('\n')
+  const topicsEl = m.topics && m.topics.trim()
+    ? `<topics hint="这句话聊到的话题,以前记下的几条(可能过时,以主人这句为准)">\n${escBody(m.topics.trim())}\n</topics>`
+    : ''
+  const body = [topicsEl, recallEl, quoteEl, escBody(m.text), ...attachmentLines].filter(Boolean).join('\n')
   return `<wechat ${attrs}>\n${body}\n</wechat>`
 }
 

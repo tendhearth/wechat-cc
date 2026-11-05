@@ -916,3 +916,16 @@ describe('聊天型模型的结构性约束(2026-10-03 审稿第二轮,只进聊
     expect(p).not.toContain('发了语音就不要再补一句文字收尾')
   })
 })
+
+describe('topic_search 那一段(话题 2026-11-05)', () => {
+  const defaults = () => ({ providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: true })
+  it('只在 topicSearchAvailable 时出现;缺席 / false ⇒ 逐字节不变', async () => {
+    const { topicSearchSection } = await import('./prompt-builder')
+    const base = buildSystemPrompt({ ...defaults() })
+    expect(buildSystemPrompt({ ...defaults(), topicSearchAvailable: false })).toBe(base)
+    const on = buildSystemPrompt({ ...defaults(), topicSearchAvailable: true })
+    expect(on).toContain(topicSearchSection())
+    expect(topicSearchSection()).toContain('先用 `topic_search`')
+    expect(on.replace(`\n\n${topicSearchSection()}`, '')).toBe(base)
+  })
+})

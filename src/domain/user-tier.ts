@@ -275,6 +275,8 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
       || sub === 'intro_request' || sub === 'intro_accept' || sub === 'intro_decline' || sub === 'intro_offers'
       || sub === 'relationships' || sub === 'visit') return 'social_act'
     if (sub === 'knowledge_search') return 'knowledge_search'
+    // 话题(2026-11-05):主人的话题记忆,和 knowledge_search 同一档私密数据 ⇒ 同一类(admin-only)
+    if (sub === 'topic_search') return 'knowledge_search'
     // memory-infra Phase 2a (HF W1): federated_query reshapes the same
     // retrieval knowledge_search uses into hearth-compatible cited hits —
     // same private-data trust class, so it gets its own admin-only kind.

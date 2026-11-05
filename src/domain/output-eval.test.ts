@@ -20,11 +20,18 @@ describe('parseSample', () => {
     expect(parseSample({ id: 'a', kind: 'reply', input: { text: '早' } }, 'a-copy')).toEqual({ ok: false, error: 'id 要和文件名一致(a-copy)' })
   })
   it('kind 不认得、input 不对 ⇒ 拒并说明', () => {
-    expect(parseSample({ id: 'a', kind: 'chat', input: {} }, 'a')).toEqual({ ok: false, error: 'kind 只能是 reply / brief / reference' })
+    expect(parseSample({ id: 'a', kind: 'chat', input: {} }, 'a')).toEqual({ ok: false, error: 'kind 只能是 reply / brief / reference / topic' })
     expect(parseSample({ id: 'a', kind: 'reply', input: {} }, 'a')).toEqual({ ok: false, error: 'reply 的 input.text 要是非空字符串' })
     expect(parseSample({ id: 'a', kind: 'reply', input: { text: '早', tier: 'guest' } }, 'a')).toEqual({ ok: false, error: 'reply 的 input.tier 只能是 admin / trusted' })
     expect(parseSample({ id: 'a', kind: 'brief', input: {} }, 'a')).toEqual({ ok: false, error: 'brief 的 input.material 要是对象' })
     expect(parseSample({ id: 'a', kind: 'reference', input: { text: 'x' } }, 'a')).toEqual({ ok: false, error: 'reference 的 input.candidates 要是数组' })
+    expect(parseSample({ id: 'a', kind: 'topic', input: { text: 'x' } }, 'a')).toEqual({ ok: false, error: 'topic 的 input.topics 要是数组' })
+  })
+  it('topic:recalls 规则(话题 / 条目 / null = 什么都不该调);不自动带 noThink', () => {
+    const r = parseSample({ id: 'a', kind: 'topic', input: { text: 'x', topics: [] }, rules: [{ recalls: { entry: 'e1' } }, { recalls: null }] }, 'a')
+    expect(r).toEqual({ ok: true, sample: { id: 'a', kind: 'topic', input: { text: 'x', topics: [] }, rules: [{ recalls: { entry: 'e1' } }, { recalls: null }] } })
+    expect(parseSample({ id: 'a', kind: 'topic', input: { text: 'x', topics: [] }, rules: [{ recalls: {} }] }, 'a')).toMatchObject({ ok: false })
+    expect(effectiveRules((r as { sample: EvalSample }).sample)).toEqual([{ recalls: { entry: 'e1' } }, { recalls: null }])
   })
   it('规则:不认得的键、坏正则、lines 不是 [min,max] ⇒ 拒', () => {
     expect(parseSample({ id: 'a', kind: 'reply', input: { text: '早' }, rules: [{ wat: 1 }] }, 'a')).toEqual({ ok: false, error: '第 1 条规则不认得:{"wat":1}' })
@@ -88,6 +95,24 @@ describe('checkRule', () => {
     expect(checkRule({ resolves: { kind: 'task', taskId: 'ffff0000' } }, out).ok).toBe(false)
     expect(checkRule({ resolves: { kind: 'task', via: 'name' } }, out).ok).toBe(false)
     expect(checkRule({ resolves: { kind: 'none' } }, out).ok).toBe(false)
+  })
+  it('calls:按工具名结尾认', () => {
+    expect(parseSample({ id: 'a', kind: 'reply', input: { text: 'x' }, rules: [{ calls: 'topic_search' }] }, 'a')).toMatchObject({ ok: true })
+    expect(parseSample({ id: 'a', kind: 'reply', input: { text: 'x' }, rules: [{ calls: 'a b' }] }, 'a')).toMatchObject({ ok: false })
+    expect(checkRule({ calls: 'topic_search' }, reply({ toolCalls: ['wechat/topic_search'] }))).toEqual({ rule: 'calls topic_search', ok: true, detail: '调过 wechat/topic_search' })
+    expect(checkRule({ calls: 'topic_search' }, reply({ toolCalls: ['mcp__wechat__topic_search'] })).ok).toBe(true)
+    expect(checkRule({ calls: 'topic_search' }, reply({ toolCalls: ['wechat/topic_searchx'] })).ok).toBe(false)
+    expect(checkRule({ calls: 'topic_search' }, reply())).toEqual({ rule: 'calls topic_search', ok: false, detail: '一个工具都没调' })
+  })
+  it('recalls:话题 / 条目写了才比;null 要求什么都没调', () => {
+    const got: EvalOutput = { kind: 'topic', recall: { topicIds: ['srv'], entryIds: ['e1', 'e2'], via: 'exact' } }
+    expect(checkRule({ recalls: { topic: 'srv', entry: 'e2' } }, got)).toEqual({ rule: 'recalls 话题 srv 条目 e2', ok: true, detail: '调出 话题 srv 条目 e1,e2(exact)' })
+    expect(checkRule({ recalls: { entry: 'e9' } }, got).ok).toBe(false)
+    expect(checkRule({ recalls: null }, got).ok).toBe(false)
+    expect(checkRule({ recalls: null }, { kind: 'topic', recall: null })).toEqual({ rule: 'recalls 无', ok: true, detail: '什么都没调' })
+    expect(checkRule({ recalls: { topic: 'srv' } }, { kind: 'topic', recall: null }).ok).toBe(false)
+    expect(checkRule({ recalls: null }, reply()).ok).toBe(false)
+    expect(checkRule({ maxChars: 3 }, got).ok).toBe(false)
   })
   it('文字规则用在指称样本上 / 指称规则用在回复上 ⇒ 不过并说明', () => {
     expect(checkRule({ maxChars: 3 }, { kind: 'reference', resolution: { kind: 'none' } })).toEqual({ rule: 'maxChars 3', ok: false, detail: '这条规则只用于 reply / brief' })
