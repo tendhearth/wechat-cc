@@ -36,7 +36,7 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 过期的一条(S2b) | 关机时写一份旧格式的 `speech/pending-notices.json`(一条两天前、一条刚才)⇒ 开机读进表、文件改名 `.migrated`;刚才那条说了,两天前那条 `speech_log` 记 `dropped / expired`、没发 |
 | 断线时的补说(S2a) | 再开机,「待说」那一拍改成 200ms(`speechFlushIntervalMs`,生产 5 分钟);微信发不出去(`failSendMessage`)时 `POST /v1/self-change/notice` ⇒ 回 502 `send_failed`、日志 `kept to say later`;之后 3 秒(约 15 拍)里这句话**一次外发尝试都不再有**(补说按共用退避等满 1 分钟,或被门判送不到) |
 | 一个事件账上一行(S3a,win32 不跑) | 配一台手机、免打扰关;微信里派给 Codex 的活做完 ⇒ App 推一次,`speech_log` 里这一轮只有一行(`ref = turn:<任务>:<轮>`、`allowed / app`),一秒后还是一行;再派一件要批准的 ⇒ App 推一次、微信里一张「需要你批准」,`speech_log` 里一行(`ref = ask:<任务>:<请求>`、通道 `app+wechat`)。win32 不跑:同「微信里派活」 |
-| 人在电脑前做完一件事(S3b,win32 不跑) | 配一台手机、本机 5 秒前刚有键鼠(`machineIdleS`)、升级等待 2 秒(`escalateAfterMs`,生产 10 分钟);等状态只拉 `attention`(桌面 app 开着,桌面那一级由它弹;不读详情,读详情就算看过)。没人看:做完那一刻 App 没推、账一行通道 `desktop`、`speech_pending` 里有 `later:` 那一条;2 秒后推一次,账还是那一行(`desktop+app`),表空了。在桌面打开看了(`GET /v1/matter?id=`):到点不推,日志 `seen on desktop`,账通道只有 `desktop` |
+| 人在电脑前做完一件事(S3b,win32 不跑) | 配一台手机、本机 5 秒前刚有键鼠(`machineIdleS`)、升级等待 2 秒(`escalateAfterMs`,生产 10 分钟);等状态只拉 `attention`(桌面 app 开着,桌面那一级由它弹;不读详情,读详情就算看过)。没人看:做完那一刻 App 没推、账一行通道 `desktop`、`speech_pending` 里有 `later:` 那一条;2 秒后推一次,账还是那一行(`desktop+app`),表空了。在桌面打开看了(`GET /v1/matter?id=`,operator 令牌;记在内存里,不写 `matter_bindings`):到点不推,日志 `seen on desktop`,账通道只有 `desktop` |
 
 这些场景是**一条时间线**,共用一台 daemon(中途重启九次,win32 上七次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。例外:S2 那几条各自在关机时写死起点(免打扰开 / 关、配没配手机、待发队列清空,`rebootForS2`),一条红了不会把后面几条拖红。
 

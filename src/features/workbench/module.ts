@@ -25,7 +25,7 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
     lazy: ['cli-upgrade'],
     resolveAdminChatId: () => ownerChatIdOf(stateDir),
     // 桌面 app 开着没有 / 在电脑上看过哪件(S3b):一件事的提议读
-    desktop: { notePoll: () => f.desktopSurface.notePoll(), seen: (taskId) => f.matters.bind(taskId, 'desktop', 'app') },
+    desktop: { notePoll: () => f.desktopSurface.notePoll(), seen: (id) => f.desktopSurface.noteSeen(id) },
     deps: (ctx) => {
       const boot = ctx.get<Bootstrap>('bootstrap')
       const cli = ctx.get<TerminalFeature>('terminal')

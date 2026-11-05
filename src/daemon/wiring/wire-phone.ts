@@ -92,7 +92,7 @@ const fanout = (p: import('../../features/phone').PushPayload) =>
 // 压着的推送在主库 speech_pending(lane='push',S2b):重启不丢;到点时中继还没连上就过一会儿再放
 // 同一个事件的键(S3a):「做完了」推送问门时带上这件事最新那一轮,和微信通知 / 回报问同一件事的那一行并成一行
 const eventRefs = makeMatterEventRefs(db)
-const pushGate = makePushGate({ speech, ownerChatId, push: fanout, held: makeHeldPushes(db), ready: () => v2Tunnel?.connected() ?? false, seen: makeMatterSeen(db), log: (tag, line) => log(tag, line) })
+const pushGate = makePushGate({ speech, ownerChatId, push: fanout, held: makeHeldPushes(db), ready: () => v2Tunnel?.connected() ?? false, seen: makeMatterSeen(db, proposalDeps?.desktop), log: (tag, line) => log(tag, line) })
 // 一件事一次提议(S3b):做完 / 没做成按人在哪选第一级 —— 在电脑前先只在桌面提示,10 分钟没看再推 App;批准 / 提问照旧各处推
 const proposals = proposalDeps ? makeMatterProposals({
   gate: pushGate, speech, ownerChatId, atDesk: proposalDeps.atDesk,

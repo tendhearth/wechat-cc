@@ -73,7 +73,7 @@ export function workbenchFeature(o: {
         phoneSessions: { sessions: phoneSessions, executorName: (id: string) => deps.boot.registry.namesOf(id).name },
       }))
       // GET /v1/matters 的「已暂停(网络未受保护)」标记:internal-api 只留这一个窄口
-      internalApi.provide({ workbenchSuspended: () => service.networkSuspended() })
+      internalApi.provide({ workbenchSuspended: () => service.networkSuspended(), ...(o.desktop ? { desktopSeen: o.desktop.seen } : {}) })
       return service
     },
   }

@@ -130,7 +130,7 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       catch(error){const message=error instanceof Error?error.message:'internal';return message==='matter_not_found'?{status:404,body:{error:message}}:known(message)?{status:400,body:{error:message}}:{status:500,body:{error:'internal'}}}
       if(!fromPhone(caller)){
         // 桌面读这件事的详情 = 在电脑上看过了(S3b):先只在桌面提示的那一件到点就不再推手机
-        try{service.seenOnDesktop?.(id)}catch{/* 只是露面登记 */}
+        try{deps.desktopSeen?.(id)}catch{/* 只是记一笔 */}
         return {status:200,body:detail}
       }
       // 手机令牌:跟列表同一条规矩,别人的聊天按 id 也打不开,回得跟「没有这件」一样(不让人拿 id 试探)
