@@ -5,11 +5,12 @@ import {routePresenceTopic,PRESENCE_OK} from './presence-topic'
 // Screenshots use real time, while the idle director uses page timers. Keep
 // that clock paused between steps, and let real HTTP polling settle before
 // advancing again; one 3-minute jump can outrun its asynchronous responses.
-// The presence subscription is a long poll. Under the paused page clock calm(page,0) answers
-// at once (no held request can outlive a clock step or hit its page-side timeout); the client
-// re-asks on a page timer and ignores unchanged cursors, so at most one request lands per step.
-async function idleClock(page:Page){
+// The presence subscription is a long poll: an unchanged request parks until the facts change
+// or the page clock passes its wait (presence-topic.ts), like the daemon. A parked request is not
+// polling, so only answers in flight have to land before the next step.
+async function idleClock(page:Page,topic:{parked:(request:Request)=>boolean}){
   const pending=new Set<Request>(),failed:string[]=[]
+  const landing=()=>[...pending].filter(request=>!topic.parked(request)).length
   const isPoll=(request:Request)=>new URL(request.url()).pathname==='/v1/subscribe/presence'
   page.on('request',request=>{if(isPoll(request))pending.add(request)})
   page.on('requestfinished',request=>pending.delete(request))
@@ -31,9 +32,7 @@ async function idleClock(page:Page){
     for(let left=ms;left>0;){
       const step=Math.min(1000,left)
       await page.clock.runFor(step)
-      // Each step now carries one immediate subscription answer; poll for it tightly (default
-      // back-off starts at 100ms, which over ~400 steps alone outruns the 30s test budget).
-      await expect.poll(()=>pending.size,{message:'Idle polling must settle before the next clock step',intervals:[5]}).toBe(0)
+      await expect.poll(landing,{message:'Idle polling must settle before the next clock step'}).toBe(0)
       expect(failed,'Idle fixture polling must remain connected').toEqual([])
       await page.evaluate(async()=>{await Promise.resolve();await Promise.resolve()})
       left-=step
@@ -66,7 +65,7 @@ async function entry(page:Page,shimUrl:string){
   await page.mouse.move(-10,-10)
 }
 async function calm(page:Page,holdMs?:number){
-  await routePresenceTopic(page,{holdMs,presence:()=>PRESENCE_OK,pet:()=>({owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities:[]})})
+  return routePresenceTopic(page,{holdMs,presence:()=>PRESENCE_OK,pet:()=>({owner_last_contact_at:null,last_done_at:null,turn:{phase:'idle',since:null},pending_permissions:[],activities:[]})})
 }
 
 async function traceCuriosity(page:Page){
@@ -103,7 +102,7 @@ async function awaitCuriosity(page:Page,advance:(ms:number)=>Promise<void>,calmS
 }
 
 test('CC completes its private curiosity through the real last image without inventing task activity',async({page,shimUrl,shim})=>{
-  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl)
+  await shim.invoke('demo.seed',{});const topic=await calm(page,Infinity);const advance=await idleClock(page,topic);await entry(page,shimUrl)
   await traceCuriosity(page)
   const stage=page.locator('#pet-stage'),body=page.locator('#pet-body'),img=page.locator('#pet-sprite')
   const calmSince=await page.evaluate(()=>performance.now())
@@ -131,7 +130,7 @@ test('CC completes its private curiosity through the real last image without inv
 
 for(const reason of ['controls','working','permission','quiet','reduced','hidden','settings'] as const)
 test(`curiosity yields to ${reason} without a stale callback or replay`,async({page,shimUrl,shim})=>{
-  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  await shim.invoke('demo.seed',{});const topic=await calm(page,Infinity);const advance=await idleClock(page,topic);await entry(page,shimUrl);await traceCuriosity(page)
   const stage=page.locator('#pet-stage')
   await awaitCuriosity(page,advance,await page.evaluate(()=>performance.now()))
   if(reason==='controls')await page.locator('.pet-controls').dispatchEvent('pointerenter')
@@ -154,7 +153,7 @@ test(`curiosity yields to ${reason} without a stale callback or replay`,async({p
 })
 
 test('curiosity waits for the restarted calm episode and yields to work',async({page,shimUrl,shim})=>{
-  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  await shim.invoke('demo.seed',{});const topic=await calm(page,Infinity);const advance=await idleClock(page,topic);await entry(page,shimUrl);await traceCuriosity(page)
   await advance(1_000)
   expect(await page.evaluate(()=>(window as any).__curiosityTrace.some((p:any)=>p.value==='curiosity'))).toBe(false)
   await page.evaluate(()=>window.dispatchEvent(new Event('blur')))
@@ -175,7 +174,7 @@ test('older seven-performance kits retain authored peeking and the original doze
     for(const form of ['lit','unlit'])for(const name of ['life-peek-left','life-curiosity'])delete kit.forms[form].states[name]
     await route.fulfill({response,json:kit})
   })
-  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl);await traceCuriosity(page)
+  await shim.invoke('demo.seed',{});const topic=await calm(page,Infinity);const advance=await idleClock(page,topic);await entry(page,shimUrl);await traceCuriosity(page)
   await advance(20_100)
   await expect(page.locator('#pet-sprite')).toHaveAttribute('src',/\/performance\/lit\/peek\//)
   await expect(page.locator('#pet-body')).toHaveAttribute('data-pet-performance','true')
@@ -191,7 +190,7 @@ for(const authored of [true,false])test(`idle CC visibly peeks, stops for nearby
     delete kit.performance
     await route.fulfill({response,json:kit})
   })
-  await shim.invoke('demo.seed',{});await calm(page,0);const advance=await idleClock(page);await entry(page,shimUrl)
+  await shim.invoke('demo.seed',{});const topic=await calm(page,Infinity);const advance=await idleClock(page,topic);await entry(page,shimUrl)
   const stage=page.locator('#pet-stage'),body=page.locator('#pet-body')
   await expect(stage).toHaveAttribute('data-pet-action','still')
   await advance(20_100);await expect(stage).toHaveAttribute('data-pet-action','peek')
