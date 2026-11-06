@@ -10,6 +10,9 @@ function loadPresenceArt() {
     var dark = /** @type {HTMLImageElement} */ (document.querySelector(".home-dark")), light = /** @type {HTMLImageElement} */ (document.querySelector(".home-light"))
     if (dark) dark.src = "data:" + f.mime + ";base64," + f.unlit
     if (light) light.src = "data:" + f.mime + ";base64," + f.lit
+    var headerDark=/** @type {HTMLImageElement} */ (document.querySelector('.cc-header-dark')),headerLight=/** @type {HTMLImageElement} */ (document.querySelector('.cc-header-light'))
+    if(headerDark)headerDark.src="data:"+f.mime+";base64,"+f.unlit
+    if(headerLight)headerLight.src="data:"+f.mime+";base64,"+f.lit
   }).catch(function() {})
 }
 loadPresenceArt()
@@ -39,6 +42,7 @@ function renderPresenceHome(s,stale) {
 // CC 亮 = 真的在身边(设计原则规矩 9):只在拿到新鲜、presence=ok 的状态时点亮;旧画面 / 断线 / 不对劲 ⇒ 暗。
 // 以前这里 800ms 后不看连接就点亮(手机端盘点 10-20);渐亮仍走 CSS 的 0.8s 过渡。
 function setPresenceLit(on) {
+  var small=document.getElementById('small-cc');if(small){if(on)small.classList.add('lit');else small.classList.remove('lit')}
   var scene = document.querySelector('.home-scene')
   if (!scene) return
   if (on) scene.classList.add('home-arrived'); else scene.classList.remove('home-arrived')

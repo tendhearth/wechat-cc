@@ -80,7 +80,7 @@ function tunnel() {
     tun = CCP.makeProtocolClient({
       open: function() { return ccSocket(remote.relay + "?id=" + encodeURIComponent(remote.id)) },
       token: T,
-      onSubscriptionError: function(topic,code){if(code === "auth_failed"&&identity===T&&typeof cClearPrivate === "function")cClearPrivate()},
+      onSubscriptionError: function(topic,code){if(code === "auth_failed"&&identity===T&&typeof cClearPrivate === "function"){cClearPrivate();if(typeof cShowReconnect === "function")cShowReconnect()}},
       client: "web",
       // 页面会发慢请求(说一句、转写一段话):单次等 30 秒;握手 15 秒没回就重连。
       requestTimeoutMs: 30000,
@@ -103,7 +103,7 @@ function viaTunnel(/** @type {string} */ path, /** @type {any} */ opts) {
     ccClearNotice("cc-tamper")
     return { status: r.status, text: function() { return Promise.resolve(r.text()) }, json: function() { return Promise.resolve(r.json()) } }
   }, function(/** @type {Error} */ err) {
-    if (err && err.message === "auth_failed" && identity===T && typeof cClearPrivate === "function") cClearPrivate()
+    if (err && err.message === "auth_failed" && identity===T && typeof cClearPrivate === "function") { cClearPrivate(); if(typeof cShowReconnect === "function")cShowReconnect() }
     if (err && err.message === "upgrade_required") ccNeedsRepair()
     throw err
   })

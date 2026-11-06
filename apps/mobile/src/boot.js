@@ -9,6 +9,7 @@ var isDevice = T.charAt(0) === "d"
 function ccLinkSession() { return !isDevice }
 document.body.classList.toggle("link-session", !isDevice)
 if (!isDevice) document.getElementById("pairbar").hidden = false
+if (!T) { document.getElementById("pairbar").firstChild.textContent="离线，需要联网后重新连接 CC。"; document.getElementById("pairbtn").hidden=true }
 if ("serviceWorker" in navigator) { navigator.serviceWorker.register("/m/sw.js", { scope: "/m" }).catch(function(){}) }
 function toast(m) { var t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(function(){ t.classList.remove("show") }, 1800) }
 function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") }

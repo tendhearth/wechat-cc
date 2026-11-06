@@ -38,3 +38,28 @@ body.conversation-ready header { display:flex; gap:12px; align-items:center; max
 .response fieldset { border:1px solid var(--line); margin:12px 0 }
 .response label { display:block; padding:10px 0; min-height:44px }
 .response input[type=radio],.response input[type=checkbox] { margin-right:10px }
+
+.cc-mini { display:none; position:relative; width:44px; height:44px; flex-shrink:0; border:0; background:none; padding:0 }
+.cc-mini img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain }
+.cc-header-light { opacity:0 }.cc-mini.lit .cc-header-light { opacity:1 }.cc-mini.lit .cc-header-dark { opacity:0 }
+.cc-connection { display:none; font:inherit; font-size:12px; border:0; background:none; color:var(--soft); min-height:44px; max-width:45%; text-align:left; overflow-wrap:anywhere }
+body.conversation-ready .cc-mini,body.conversation-ready .cc-connection { display:block }
+body.conversation-ready header h1 { font-size:19px; margin-right:auto }
+body.conversation-ready .m-elsewhere { display:none }.m-device-help { display:none; color:var(--soft); font-size:13px }body.conversation-ready .m-device-help { display:block }
+body:not(.conversation-ready) #conversation .conversation-tools,body:not(.conversation-ready) #chat-composer,body:not(.conversation-ready) #chat-form,body:not(.conversation-ready) #chat-messages,body:not(.conversation-ready) #chat-older { display:none }
+
+#chat-composer { position:sticky; bottom:0; background:var(--paper); padding-top:6px; z-index:10 }
+#chat-composer #chat-form,#chat-composer #topic-row { position:static }
+
+body.conversation-ready > header { position:sticky; top:0; z-index:15; background:var(--paper) }
+
+@media(min-width:1000px){body.matter-open #p-today{margin-right:440px}body.conversation-ready #m-detail{position:fixed;inset:0 0 0 auto;width:440px;padding:24px;overflow-y:auto;background:var(--paper);z-index:31;box-shadow:-12px 0 32px #0000000c}}
+
+.cc-reference .th-agents { display:inline-flex; vertical-align:middle; margin-right:8px; --th-agent-ring:var(--paper) }
+body.conversation-ready { min-height:100svh; padding-bottom:0; display:flex; flex-direction:column }
+body.conversation-ready > header { width:100%; flex-shrink:0 }
+body.conversation-ready #p-today { flex:1; display:flex; flex-direction:column; padding-bottom:0 }
+body.conversation-ready #m-home { flex:1; display:flex; flex-direction:column }
+body.conversation-ready #conversation { flex:1; display:flex; flex-direction:column; width:100% }
+body.conversation-ready #chat-messages { flex:1 }
+@media(min-width:1000px){body.topic-open.conversation-ready > header,body.matter-open.conversation-ready > header{max-width:none;width:calc(100% - 440px);margin-left:0;margin-right:440px}}

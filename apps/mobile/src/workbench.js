@@ -105,8 +105,9 @@ function renderMatters() {
   all.textContent = more ? "全部 · 还有 " + more + " 件更早的 →" : "全部 →"
 }
 function loadMatters() {
-  mApi("/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1").then(function(r){ mMatters = r.matters; renderMatters();if(typeof cMatterUpdates==='function')cMatterUpdates() })
-    .catch(function(e){ if (!mMatters) document.getElementById("m-list").textContent = mError(e.message) })
+  var epoch=mConnectionEpoch
+  mApi("/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1").then(function(r){ if(epoch!==mConnectionEpoch)return;mMatters = r.matters; renderMatters();if(typeof cMatterUpdates==='function')cMatterUpdates() })
+    .catch(function(e){ if(epoch!==mConnectionEpoch)return;if (!mMatters) document.getElementById("m-list").textContent = mError(e.message) })
 }
 document.getElementById("m-all").addEventListener("click", function(){ mAll = true; renderMatters() })
 // 「刷新」(home.js 也挂着它)顺带重拉列表:列表就在此刻页上
@@ -156,17 +157,21 @@ function mRenderStatus(d) {
   }
   if(typeof cMatterWork==='function')html+=cMatterWork(d)
   if(typeof cArtifactHtml==='function')html+=cArtifactHtml(d)
-  if(root.innerHTML!==html){
+  if(mRenderedStatus!==html){
+    var expanded=['matter-process','matter-results','matter-artifacts'].filter(function(name){var el=/** @type {HTMLDetailsElement} */ (root.querySelector&&root.querySelector('.'+name));return el&&el.open})
+    var summaryFocus=document.activeElement&&document.activeElement.tagName==='SUMMARY'&&document.activeElement.parentElement?document.activeElement.parentElement.className:null
     // 确认文字 / 轮询状态变化不能把键盘用户从「停下」上丢掉。
     var focused=document.activeElement
     var restore=focused&&root.contains(focused)&&focused.hasAttribute('data-stop')
     var task=restore?focused.getAttribute('data-task'):null,run=restore?focused.getAttribute('data-run'):null
-    root.innerHTML=html
+    root.innerHTML=html;mRenderedStatus=html
+    expanded.forEach(function(name){var el=/** @type {HTMLDetailsElement} */ (root.querySelector('.'+name));if(el)el.open=true})
+    if(['matter-process','matter-results','matter-artifacts'].includes(summaryFocus)){var summary=/** @type {HTMLElement} */ (root.querySelector('.'+summaryFocus+' > summary'));if(summary)summary.focus({preventScroll:true})}
     var next=restore?root.querySelector('button[data-stop]'):null
     if(next&&next.getAttribute('data-task')===task&&next.getAttribute('data-run')===run)/** @type {HTMLButtonElement} */ (next).focus({preventScroll:true})
   }
 }
-var mStopArmed=null,mStopTimer=null
+var mStopArmed=null,mStopTimer=null,mRenderedStatus=null
 async function mStop(task,run) {
   var key=task+':stop'
   if(task!==mCurrent||!mDetail||mDetail.runId!==run||!mDetailFresh||mOffline||mBusy[key])return
@@ -214,9 +219,10 @@ function openMatter(id) {
   if(typeof cPushLayer==='function')cPushLayer({kind:'matter',id:id})
   if(typeof cResetResponse==='function'&&id!==mCurrent)cResetResponse()
   mDetailFresh=false
-  if(mCurrent!==id){mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
+  if(mCurrent!==id){mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
   mCurrent=id;mActive=true
   document.getElementById("m-home").hidden=true;document.getElementById("m-detail").hidden=false
+  if(typeof cShowMatterLayout==='function')cShowMatterLayout()
   return mRefresh()
 }
 /** 此刻页那张「等你」的卡点进来:原地看这件事的状态。 */
@@ -224,7 +230,7 @@ function ccShowMatter(id) {
   openMatter(id)
 }
 document.getElementById("m-list").addEventListener("click",function(ev){var c=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(c)openMatter(c.dataset.mid)})
-document.getElementById("m-back").addEventListener("click",function(){if(typeof cBackLayer==='function'&&cReady&&!cHandlingPop){cBackLayer();return};mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-home").hidden=false;loadMatters()})
+document.getElementById("m-back").addEventListener("click",function(){if(typeof cBackLayer==='function'&&cReady&&!cHandlingPop){cBackLayer();return};mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-home").hidden=false;if(typeof cShowMatterLayout==='function')cShowMatterLayout();loadMatters()})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。
 document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
 window.addEventListener('offline',function(){clearTimeout(mPoll);mOffline=true;mSeq++;mConnectionEpoch++;mDetailFresh=false;mMisses=M_STALE_MISSES;mConn();mSetButtons()})

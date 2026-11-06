@@ -385,3 +385,9 @@ it('an app upload whose inbox sits under a symlinked directory still reads; a sy
     expect((await call(d,get(url))).status).toBe(404)
   }finally{rmSync(dir,{recursive:true,force:true})}
 })
+it('owner chat changes while paging: no old transcript is returned into the new owner scope',async()=>{
+ let owner:ReturnType<MobileChatDeps['owner']>={matterId:'c0ffee01',chatId:'wx',title:'聊天'},release!:(rows:MessageRecord[])=>void
+ const d=deps({owner:()=>owner,history:()=>new Promise(r=>{release=r})}),reading=call(d,get())
+ await Promise.resolve();owner=null;release([rec(1,{text:'private old owner'})]);const result=await reading
+ expect(result.status).toBe(404);expect(JSON.stringify(result.body)).not.toContain('private old owner')
+})

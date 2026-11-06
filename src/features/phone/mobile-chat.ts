@@ -176,6 +176,7 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
       // 多取一条判 hasMore。listRange 是严格 `<` beforeTs:同一毫秒的两条恰好跨页边界时会漏一条(可接受,见 preflight B7)。
       try { rows = await deps.history(owner.chatId, { ...(before !== null ? { beforeTs: before } : {}), limit: limit + 1 }) }
       catch { return err('unavailable', 503) }
+      try { const current = deps.owner(); if (!current || current.chatId !== owner.chatId || current.matterId !== owner.matterId) return err('no_owner_chat', 404) } catch { return err('unavailable', 503) }
       let hasMore = rows.length > limit
       let page = hasMore ? rows.slice(rows.length - limit) : rows   // rows 升序:多出来的是最旧那条
       const st = deps.chat.state()

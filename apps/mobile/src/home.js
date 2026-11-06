@@ -24,6 +24,7 @@ function presenceTtlCheck() {
   if (presenceAt !== null && Date.now() - presenceAt > PRESENCE_TTL_MS) {
     presenceAt = null
     document.getElementById("pres-txt").textContent = "不知道"
+    setPresenceLit(false);if(typeof cConnectionText==='function')cConnectionText()
   }
 }
 function renderHome(s, stale) {
@@ -39,6 +40,7 @@ function renderHome(s, stale) {
     presenceAt = null
     pt.textContent = "不知道"
   }
+  if(typeof cConnectionText==='function')cConnectionText()
 }
 setInterval(presenceTtlCheck, 30000)
 function showBanner(txt) { var b = document.getElementById("banner"); b.hidden = !txt; b.textContent = txt || "" }

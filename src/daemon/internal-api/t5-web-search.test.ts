@@ -21,3 +21,7 @@ it('device search finds old unclassified and archived work before limits; stable
  expect(ids).toHaveLength(511);expect(new Set(ids).size).toBe(511);expect(ids.at(-1)).toBe(old.id)
  expect((await call('search=1&cursor=bad')).status).toBe(400)
 })
+it('owner search discards a result if the configured owner changes during lookup',async()=>{
+ db=openDb({path:':memory:'});let owner:string|null='before';const store=makeMatterStore(db),service=makeMattersService({store,chat:{ownerChatId:()=>owner,say:async()=>({reply:''}),search:async()=>{owner='after';return [{id:'old',kind:'text',text:'old private result',createdAt:1}]}}})
+ expect(await service.searchOwnerChat('private')).toBeNull()
+})
