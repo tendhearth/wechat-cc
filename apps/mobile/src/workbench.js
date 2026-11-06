@@ -104,7 +104,7 @@ function renderMatters() {
   all.textContent = more ? "全部 · 还有 " + more + " 件更早的 →" : "全部 →"
 }
 function loadMatters() {
-  mApi("/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1").then(function(r){ mMatters = r.matters; renderMatters() })
+  mApi("/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1").then(function(r){ mMatters = r.matters; renderMatters();if(typeof cMatterUpdates==='function')cMatterUpdates() })
     .catch(function(e){ if (!mMatters) document.getElementById("m-list").textContent = mError(e.message) })
 }
 document.getElementById("m-all").addEventListener("click", function(){ mAll = true; renderMatters() })
@@ -133,6 +133,8 @@ function mStateWord(d) {
   var waiting=(d.permissions||[]).concat(d.questions||[]).filter(function(r){return r.taskId===id}).length
   var quota=mQuotaView(d.quotaHandoff),status=mLegacyStatus(d.matter,task)
   if(status==='archived')return {word:'已归档',waiting:waiting}
+  if(task&&(task.status==='failed'||task.phase==='failed'))return {word:'没做成',waiting:waiting}
+  if(task&&(task.status==='cancelled'||task.phase==='cancelled'||task.status==='interrupted'||task.phase==='interrupted'))return {word:'停下了',waiting:waiting}
   if(status==='done')return {word:'完成',waiting:waiting}
   if(waiting||quota&&quota.state!=='handed')return {word:'等你决定',waiting:waiting}
   if(task&&task.phase&&M_PHASE[task.phase])return {word:M_PHASE[task.phase],waiting:0}
@@ -151,6 +153,7 @@ function mRenderStatus(d) {
     var armed=mStopArmed&&mStopArmed.task===d.matter.id&&mStopArmed.run===d.runId
     html+='<button type="button" class="more" data-stop="1" data-task="'+esc(d.matter.id)+'" data-run="'+esc(d.runId)+'">'+(armed?'再点一次，确认停止':'停止这一轮')+'</button>'
   }
+  if(typeof cMatterWork==='function')html+=cMatterWork(d)
   if(root.innerHTML!==html){
     // 确认文字 / 轮询状态变化不能把键盘用户从「停下」上丢掉。
     var focused=document.activeElement

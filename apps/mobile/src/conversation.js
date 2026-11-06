@@ -5,6 +5,7 @@ function cRender() {
   var root = document.getElementById('chat-messages')
   var rows = Array.from(cMessages.values()).sort(function(a,b){return a.at-b.at||a.id.localeCompare(b.id)})
   var html = rows.map(function(m){return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+ (m.role==='me'?'你':'CC')+' · '+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div></article>'}).join('') || '<p class="empty">跟 CC 说一句吧。</p>'
+  if(typeof cReference==='function'){var added=new Set();html=rows.map(function(m){var text='<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+(m.role==='me'?'你':'CC')+' · '+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div></article>';cReferences.forEach(function(ref){if(ref.originMessageId===m.id){text+=cReference(ref,false);added.add(ref.id)}});return text}).join('');cReferences.forEach(function(ref){if(!added.has(ref.id))html+=cReference(ref,true)});if(!html)html='<p class="empty">跟 CC 说一句吧。</p>'}
   if(root.innerHTML!==html){var y=window.scrollY;root.innerHTML=html;window.scrollTo(0,y)}
 }
 async function cRead(older) {
@@ -23,7 +24,7 @@ async function cRead(older) {
     ;(b.messages||[]).forEach(function(m){cMessages.set(m.id,m)})
     if(older||!cBefore)cBefore=b.nextBefore
     if(older||cMessages.size===(b.messages||[]).length)document.getElementById('chat-older').hidden=!b.hasMore
-    cRender();cNotice(b.pending?'CC 正在回复…':b.failed?'上一句没做成，请核对后再说。':'')
+    if(typeof cMatterUpdates==='function')cMatterUpdates();else cRender();cNotice(b.pending?'CC 正在回复…':b.failed?'上一句没做成，请核对后再说。':'')
     if(cPending&&b.receipt&&b.receipt.requestId===cPending.requestId){var recovered=/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input'));if(b.receipt.status!=='failed'&&recovered.value===cPending.text){recovered.value='';try{sessionStorage.removeItem(cDraftKey)}catch(e){}};cNotice(b.receipt.status==='pending'?'这句已收下，结果待核对。':b.receipt.status==='failed'?'这句没做成，请核对后再说。':'CC 已回复。');cPending=null;cSavePending()}
     if(cPending&&(b.pending&&b.pending.requestId===cPending.requestId||b.failed&&b.failed.requestId===cPending.requestId)){var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input'));if(b.pending&&input.value===cPending.text){input.value='';try{sessionStorage.removeItem(cDraftKey)}catch(e){}};cPending=null;cSavePending()}
   } catch(e){cNotice('尚未同步 · 请检查连接后刷新。')}

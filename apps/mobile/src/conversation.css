@@ -10,3 +10,9 @@
 body.conversation-ready #m-home > .home-toolbar, body.conversation-ready #m-home > .home-scene, body.conversation-ready #home-focus, body.conversation-ready #m-list, body.conversation-ready #m-all { display:none }
 body.conversation-ready header { display:flex; gap:12px; align-items:center; max-width:800px; margin:auto }
 #conversation :focus-visible { outline:2px solid var(--accent); outline-offset:3px }
+
+.cc-reference { margin:16px 0 24px; padding:12px 16px; border-left:2px solid var(--line); line-height:1.65; overflow-wrap:anywhere }
+.cc-reference small { color:var(--soft); font-size:12px }
+.cc-reference summary { padding:8px 0; cursor:pointer; min-height:44px }
+.matter-process,.matter-results { margin:20px 0; white-space:pre-wrap; overflow-wrap:anywhere }
+#chat-waiting { display:block; width:100%; text-align:left; margin-top:12px }
