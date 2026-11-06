@@ -40,7 +40,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
   const hero = mountNowHero({ root, button: $('now-cc') })
   const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); hero.setPresence(p); greet() })
   /** @param {'home'|'chat'} m */
-  function setMode(m) { root.dataset.now = m; $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
+  function setMode(m) { if (root.dataset.conversation === 'single') m = 'chat'; root.dataset.now = m; $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
   const toChat = () => setMode('chat')
   $('now-cc-bubble').addEventListener('click', toChat)
   $('now-cc').addEventListener('click', toChat)

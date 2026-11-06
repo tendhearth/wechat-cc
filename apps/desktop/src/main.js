@@ -171,7 +171,7 @@ const nowPage = nowRoot ? mountNowPage({
     if (m === 'chat') document.getElementById('converse-input')?.focus()
   },
 }) : null
-if (nowPage) setConverseMode('home')
+if (nowPage) setConverseMode('chat')
 // 右上角状态行 = doctor(daemon 跑没跑)∧ presence(够不够得着),与 CC 明暗同一信号。
 /** @type {{alive:boolean}|null} */ let lastDaemon = null
 /** @type {{presence:string}|null} */ let lastPresence = null
@@ -761,7 +761,7 @@ function switchPane(name) {
   if (name === "overview") {
     // 「跟 CC 说」⇒ chat;已经在此刻时再点「此刻」⇒ 回 home;从别处回来保持原来那一态(草稿与对话都还在)。
     if (focusConversation) nowPage?.setMode("chat")
-    else if (!overviewWasHidden) nowPage?.setMode("home")
+    else nowPage?.setMode("chat")
     initConversePage(deps, { focus: focusConversation })
   }
   if (name === "a2a-agents") {
