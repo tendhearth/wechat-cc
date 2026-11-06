@@ -1,7 +1,6 @@
-# 终端里的会话 + 完成记录(演示模式):此刻直接呈现待回应行,完成记录收在数量入口里,
-# 终端那条等批准算进去(点进详情能拍)→ 一起做「终端里的会话」三行(等你批准 / 在跑 / 歇着),每行只有一个动作
-# (等批准那行是「看清楚 ›」)→ 在跑那条的详情:说一句是灰的 → 歇着那条的详情:说一句 → 收下
-# → 回到一起做,点「看清楚 ›」进详情「允许」→ 那条转成在跑。每一步截图。
+# 终端会话:等待批准 / 在跑 / 空闲 → 说一句 → 批准后继续。
+# 使用 ASCII 输入,避免 Maestro inputText 对中文输入的设备限制。
+# P3f 路由握手与 M6f 字段兼容另由 backend/live.test.ts、view/home.test.ts 覆盖。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -34,6 +33,9 @@ appId: com.tendhearth.app
     timeout: 5000
 - assertVisible:
     id: terminal-detail-pending
+- assertVisible:
+    id: terminal-say-send
+    enabled: false
 # 等批准时说一句框下的提示是「先拍板」,不是「还在跑」
 - assertVisible: "它在等你决定，先拍板再说下一句。|It’s waiting for your approval. Decide first, then send the next message."
 - takeScreenshot: t01c-terminal-waiting
@@ -89,7 +91,7 @@ appId: com.tendhearth.app
 - takeScreenshot: t04-terminal-idle
 - tapOn:
     id: terminal-say-input
-- inputText: "再加一条测试"
+- inputText: "Add one more test"
 - tapOn:
     id: terminal-say-send
 - extendedWaitUntil:
@@ -118,6 +120,13 @@ appId: com.tendhearth.app
       id: terminal-detail-note
     timeout: 5000
 - assertVisible: "好了，它在终端里接着做。|Done. It’s carrying on in the terminal."
+- assertNotVisible:
+    id: terminal-detail-allow
+- assertNotVisible:
+    id: terminal-detail-pending
+- assertVisible:
+    id: terminal-say-send
+    enabled: false
 - tapOn:
     id: topbar-back
 - extendedWaitUntil:

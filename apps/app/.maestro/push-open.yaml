@@ -24,6 +24,39 @@ appId: com.tendhearth.app
     visible:
       id: home-group-waiting
     timeout: 10000
+# 已完成事项仍可从通知读详情(M6f:done 不等于归档/消失)。
+- openLink: tendhearth://push-open?kind=task_done&taskId=e5f6a7b8
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: progress-status
+    timeout: 10000
+- assertVisible: "这一轮做完了|Done for this round"
+- assertNotVisible:
+    id: push-gone
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: home-group-waiting
+    timeout: 10000
+# 老终端通知(cli:会话)仍能打开批准详情,不能落到普通事项批准页。
+- openLink: tendhearth://push-open?kind=permission&taskId=cli%3Ademo-cli-blog
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: terminal-detail-allow
+    timeout: 10000
+- assertVisible:
+    id: terminal-detail-pending
+- assertNotVisible:
+    id: approval-allow
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: home-group-waiting
+    timeout: 10000
 - openLink: tendhearth://push-open?kind=task_done&taskId=ffffffff
 - runFlow: subflows/_open-link-guard.yaml
 - extendedWaitUntil:
