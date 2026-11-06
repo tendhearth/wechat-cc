@@ -45,7 +45,7 @@ export function makeSpeechLedgerStore(db: Db, opts: { now?: () => number } = {})
       const ref = e.ref ?? null
       const prev = ref === null ? null : db.query<{ id: number; outcome: string; channel: string | null }, [string]>('SELECT id,outcome,channel FROM speech_log WHERE ref = ? ORDER BY id LIMIT 1').get(ref)
       if (prev) {
-        if (e.spokenAt !== undefined) db.query("UPDATE speech_log SET spoken_at=COALESCE(spoken_at,?),delivery_state='confirmed' WHERE id=?").run(e.spokenAt, prev.id)
+        if (e.spokenAt !== undefined) db.query("UPDATE speech_log SET kind=CASE WHEN spoken_at IS NULL THEN ? ELSE kind END,origin=CASE WHEN spoken_at IS NULL THEN ? ELSE origin END,spoken_at=COALESCE(spoken_at,?),delivery_state='confirmed' WHERE id=?").run(e.kind, e.origin, e.spokenAt, prev.id)
         if (prev.outcome === 'allowed' && e.outcome !== 'allowed') return
         db.query('UPDATE speech_log SET at=?,outcome=?,reason=?,channel=? WHERE id=?')
           .run(Date.parse(e.ts), e.outcome, e.reason, mergeChannels(prev.channel, e.channel), prev.id)

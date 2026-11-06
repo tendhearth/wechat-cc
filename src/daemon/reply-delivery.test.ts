@@ -597,3 +597,17 @@ describe('makeReplyDeliveryRuntime — 句柄收口(变异测试第二轮)', () 
     expect(() => undo()).not.toThrow()
   })
 })
+
+it('an attachments-only WeChat turn confirms each successful receipt before later failure', async () => {
+  const h = harness()
+  const runtime = makeReplyDeliveryRuntime(h.deps)
+  const confirmDelivery = vi.fn()
+  const outbound = { sendText: async () => ({ msgId: 'w' }), textOnly: () => false, confirmDelivery }
+  const handle = runtime.begin('owner', { context: 'tick', providerId: 'claude', outbound })
+  runtime.attach('owner', pending({ kind: 'sticker', ref: { tag: 'happy' } }))
+  runtime.attach('owner', { attachment: { kind: 'sticker', ref: { tag: 'sad' } }, send: async () => ({ ok: false, error: 'offline' }) })
+  const result = await handle.deliver({ finalText: '', narration: [] })
+  expect(result.attachmentsSent).toBe(1)
+  expect(result.failures).toEqual(['offline'])
+  expect(confirmDelivery).toHaveBeenCalledExactlyOnceWith('wechat')
+})

@@ -43,3 +43,16 @@ it('recovery never retries an unknown send; it occupies one interval without for
     expect(restarted.available('visitor', 101)).toBe(true)
   } finally { db.close() }
 })
+
+it('confirmed external delivery with a missing ledger write stays unknown and occupies the interval', () => {
+  const db = openTestDb()
+  try {
+    const r = makeSpeechReservations(db)
+    expect(r.reserve({ ref: 'letter:a', recipient: 'owner', kind: 'letter', now: 100, payload: {} })).toEqual({ ok: true })
+    r.sending('letter:a')
+    r.settle('letter:a', 'confirmed')
+    expect(r.available('owner', 101)).toBe(false)
+    expect(r.available('owner', 100 + INITIATIVE_INTERVAL_MS)).toBe(true)
+    expect(db.query("SELECT status FROM speech_pending WHERE ref='letter:a'").get()).toEqual({ status: 'unknown' })
+  } finally { db.close() }
+})

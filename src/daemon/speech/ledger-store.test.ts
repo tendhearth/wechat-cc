@@ -89,3 +89,17 @@ it('budget uses first confirmed delivery, never allowed, and keeps it across ref
     expect(ledger.lastInitiativeAt('visitor')).toBe(400)
   } finally { db.close() }
 })
+
+it('an owner-requested resume of a wholly unsent letter does not consume initiative budget', () => {
+  const db = openTestDb()
+  try {
+    const ledger = makeSpeechLedgerStore(db)
+    ledger.append(entry('2026-11-06T08:00:00Z', { ref: 'letter:a' }))
+    ledger.append(entry('2026-11-06T09:00:00Z', { ref: 'letter:a', kind: 'letter_asked', origin: 'requested', spokenAt: 100 }))
+    expect(ledger.lastInitiativeAt('owner')).toBeNull()
+    expect(db.query('SELECT origin,kind,spoken_at FROM speech_log').all()).toEqual([{ origin: 'requested', kind: 'letter_asked', spoken_at: 100 }])
+    ledger.append(entry('2026-11-06T10:00:00Z', { ref: 'letter:b', spokenAt: 200 }))
+    ledger.append(entry('2026-11-06T11:00:00Z', { ref: 'letter:b', kind: 'letter_asked', origin: 'requested', spokenAt: 300 }))
+    expect(ledger.lastInitiativeAt('owner')).toBe(200)
+  } finally { db.close() }
+})

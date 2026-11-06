@@ -41,7 +41,12 @@ export function makeSpeechReservations(db: Db) {
     },
     settle(ref: string, result: 'confirmed' | 'not_sent' | 'unknown') {
       if (result === 'not_sent') db.query("DELETE FROM speech_pending WHERE lane='reservation' AND ref=?").run(ref)
-      else db.query("UPDATE speech_pending SET status=? WHERE lane='reservation' AND ref=?").run(result === 'confirmed' ? 'done' : 'unknown', ref)
+      else {
+        // Policy logging is best-effort. A failed ledger write must not free
+        // the interval after an externally confirmed delivery.
+        const persisted = result === 'confirmed' && db.query('SELECT id FROM speech_log WHERE ref=? AND spoken_at IS NOT NULL').get(ref)
+        db.query("UPDATE speech_pending SET status=? WHERE lane='reservation' AND ref=?").run(persisted ? 'done' : 'unknown', ref)
+      }
     },
   }
 }

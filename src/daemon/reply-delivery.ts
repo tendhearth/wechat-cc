@@ -46,6 +46,7 @@ export interface DeliverDeps {
   textOnly?(): boolean
   /** textOnly 时附件先交给它(出口自己收得下:伙伴落到 App 的那一轮,第 2 步);收下 ⇒ true。 */
   sendAttachment?(chatId: string, a: TurnAttachment): Promise<boolean>
+  confirmWechatAttachment?(): void
   chatPrefs?(chatId: string): { split?: boolean } | undefined
   log(tag: string, line: string, fields?: Record<string, unknown>): void
 }
@@ -162,7 +163,7 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
     }
     let r: { ok: boolean; error?: string }
     try { r = await a.send() } catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
-    if (r.ok) { attachmentsSent++; continue }
+    if (r.ok) { attachmentsSent++; deps.confirmWechatAttachment?.(); continue }
     if (a.attachment.kind === 'voice') {
       deps.log('REPLY_VOICE_FALLBACK', `chat=${chatId} voice failed (${r.error ?? 'unknown'}) — sending the same words as text`)
       if (await sendOne(a.attachment.text)) bubbles++
@@ -265,7 +266,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     // 这一轮另有出口(伙伴主动找你)⇒ 文字、进度都走它;其余(接收器、旁听、分条)照旧。
     const out: DeliverDeps = opts.outbound
       ? {
-          ...deps, sendText: (c, t) => opts.outbound!.sendText(c, t), textOnly: () => opts.outbound!.textOnly?.() ?? false,
+          ...deps, confirmWechatAttachment: () => opts.outbound!.confirmDelivery?.('wechat'), sendText: (c, t) => opts.outbound!.sendText(c, t), textOnly: () => opts.outbound!.textOnly?.() ?? false,
           ...(opts.outbound.sendAttachment ? { sendAttachment: (c: string, a: TurnAttachment) => opts.outbound!.sendAttachment!(c, a) } : {}),
         }
       : deps

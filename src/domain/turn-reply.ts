@@ -101,6 +101,8 @@ export interface ReplyDeliveryPort {
 
 /** 一轮的文字出口(见 ReplyDeliveryPort.begin 的 `outbound`)。 */
 export interface TurnOutbound {
+  /** Authorized delivery evidence from an external attachment adapter. */
+  confirmDelivery?(channel: 'wechat' | 'app'): void
   sendText(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   textOnly?(): boolean
   /**
