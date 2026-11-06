@@ -111,7 +111,7 @@ test('conversation layers preserve the global navigation and restore the convers
   await page.setViewportSize({width:1440,height:900})
   await setup(page,shimUrl,shim)
   await expect(page.locator('#dash-global-rail')).toBeVisible()
-  // 「全部」从此刻进,导航里亮的是此刻(宽窗口点它回去);窄窗口主导航收起,左上角「‹ 此刻」回去。
+  // 会话工具层保留此刻的导航归属；中等宽度主导航仍可用，手机宽度从返回按钮回到对话。
   await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toHaveClass(/active/)
   await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
   await expect(page.locator('.wb-chats')).toHaveCount(0)
@@ -120,10 +120,12 @@ test('conversation layers preserve the global navigation and restore the convers
   await expect(page.locator('#workbench-home')).toBeVisible()
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('inert','')
   await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
+  await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
   await page.setViewportSize({width:390,height:844})
   await expect(page.locator('#workbench-home')).toBeVisible()
   await page.locator('#workbench-home').click()
   await expect(page.locator('article.dash-pane[data-pane="overview"]')).toBeVisible()
+  await expect(page.locator('.cc-now-pane')).not.toHaveAttribute('inert')
 })
 
 test('the waiting count lives next to 此刻 in the rail, not in a banner',async({page,shimUrl,shim})=>{
