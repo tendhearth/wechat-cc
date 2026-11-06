@@ -374,7 +374,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       if (s.pending) {
         const pending = s.pending, owner = d.ownerChatId()
         if (!owner) return
-        const o = await d.speech.say({ kind: pending.requested ? 'letter_asked' : 'letter', chatId: owner, ref: `letter:${pending.id}`, nowMs: d.now() }, async (outbound) => { await deliverIn(actTurn({ letter: pending.id, resume: true }), pending, outbound) })
+        const o = await d.speech.propose({ source: 'letter', summary: 'Resume an archived letter', createdAt: pending.createdAt, expiresAt: pending.createdAt + PENDING_TTL_MS, payloadRef: { letter: pending.id }, validate: () => state().pending?.id === pending.id, kind: pending.requested ? 'letter_asked' : 'letter', chatId: owner, ref: `letter:${pending.id}`, nowMs: d.now() }, async (outbound) => { await deliverIn(actTurn({ letter: pending.id, resume: true }), pending, outbound) })
         if ('drop' in o) { save({ pending: null }); d.log('LETTERS', `letter ${pending.id} not sent: ${o.reason} (kept in archive)`) }
         return
       }
@@ -392,7 +392,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       // 到点了:先问门,再写(写信要调模型,被拦下的那一拍一个 token 都不花)。免打扰 / 两条路都送不到 ⇒ 不写,还是到期,
       // 下一拍再问;别烦我 ⇒ 这一封不写了,排下一封。
       const allocatedId = `${new Date(nowMs).toISOString().slice(0, 10)}-${d.newId()}`
-      const o = await d.speech.say({ kind: 'letter', chatId: owner, ref: `letter:${allocatedId}`, nowMs }, async (outbound) => {
+      const o = await d.speech.propose({ source: 'letter', summary: 'Write a due letter', payloadRef: { letter: allocatedId, dueAt: s.dueAt }, validate: () => d.enabled() && !state().pending && state().dueAt === s.dueAt && isLetterDue({ nowMs: d.now(), tz: d.timezone(), dueAt: s.dueAt! }), kind: 'letter', chatId: owner, ref: `letter:${allocatedId}`, nowMs }, async (outbound) => {
         const t = actTurn({ trigger: 'schedule' })
         await guarded(t, async () => {
         const r = await compose(owner, undefined)

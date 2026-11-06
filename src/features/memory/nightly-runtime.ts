@@ -96,7 +96,7 @@ export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps, on
   // 冷却没到 ⇒ 晚点再说(通知留着,24 小时过了自己作废);别的拒绝原因交给门,由它判 drop
   if (!gate.ok && gate.reason === 'memory_cooldown') return 'waiting'
   let sendError = false, channel: string | undefined
-  const outcome = await deps.speech.say({ kind: 'memory_notice', chatId: owner, ref: `memory:${pending.actTurn ?? pending.createdAtMs}`, nowMs, perKind: gate }, async (turn) => {
+  const outcome = await deps.speech.propose({ source: 'memory', summary: pending.text.slice(0, 1000), createdAt: pending.createdAtMs, payloadRef: { actTurn: pending.actTurn ?? null, createdAt: pending.createdAtMs }, validate: () => readNightlyState(deps.stateDir).pendingNotice?.createdAtMs === pending.createdAtMs && deps.careGate(owner, new Date(deps.now()).toISOString()).ok, kind: 'memory_notice', chatId: owner, ref: `memory:${pending.actTurn ?? pending.createdAtMs}`, nowMs, perKind: gate }, async (turn) => {
     deps.claim(owner, nowIso)   // 先登记再发:至多一次,不重试轰炸
     clear()
     const r = await turn.sendText(owner, pending.text)

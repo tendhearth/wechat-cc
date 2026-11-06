@@ -13,6 +13,7 @@
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../domain/speech/decide'
 import { keepForMs, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
+import type { SpeechSource } from './proposal'
 import { MAX_FLUSH_CHATS_PER_TICK, mergePending, type PendingAttach, type PendingNotice } from './pending-notices'
 
 export interface SpeechRequest {
@@ -47,7 +48,19 @@ export interface SpeechLedgerEntry {
 
 export type SpeechOutcome = ({ allow: true; channel: SpeechChannel | null }) | Exclude<SpeechDecision, { allow: true }>
 
+export interface SpeechProposalRequest extends SpeechRequest {
+  source: SpeechSource | 'requested'
+  summary: string
+  createdAt?: number
+  expiresAt?: number
+  payloadRef?: import('./proposal').SpeechProposal['payloadRef']
+  targets?: readonly string[]
+  validate?: () => boolean | Promise<boolean>
+}
+
 export interface SpeechPolicy {
+  /** Submit an initiative; only the presence scheduler may authorize produce. */
+  propose(req: SpeechProposalRequest, produce: (turn: ProactiveTurn, target?: string) => Promise<void>): Promise<SpeechOutcome>
   say(req: SpeechRequest, produce: (turn: ProactiveTurn) => Promise<void>): Promise<SpeechOutcome>
   /**
    * 一句话的主动开口(系统通知、社交通知 …):问门,放行就发。`send` 缺省 = 经 say 开的那一轮(微信能用走微信,
@@ -105,6 +118,8 @@ export function makeSpeechPolicy(deps: {
   /** 补说明信片那一类带文件的(S2c):走微信发文件;没接 / 发失败 ⇒ 那一样不补说(背包里照样有)。 */
   sendFile?: (chatId: string, path: string) => Promise<boolean>
   /** 「待说」队列(没接 ⇒ 推后的 report 就是这一句不说,只用于测试 / 最小嵌入)。 */
+  /** Production wiring installs the single presence scheduler. */
+  proposals?: (execute: SpeechPolicy['say'], peek: SpeechPolicy['peek']) => SpeechPolicy['propose']
   pending?: import('./pending-notices').PendingNotices
 }): SpeechPolicy {
   const now = deps.now ?? Date.now
@@ -148,7 +163,14 @@ export function makeSpeechPolicy(deps: {
     return { decision, base }
   }
   const flushHooks: Array<() => void> = []
+  let submit: SpeechPolicy['propose'] | undefined
   const policy: SpeechPolicy = {
+    propose(req, produce) {
+      if (originOf(req.kind) !== 'initiative') return policy.say(req, produce)
+      if (submit) return submit(req, produce)
+      // Minimal policy embeddings have no daemon scheduler. Production wiring always installs it.
+      return policy.say(req, produce)
+    },
     onFlush(cb) { flushHooks.push(cb) },
     expired(e) {
       if (e.ref) lastDefer.delete(`${e.kind}\u0000${e.chatId}\u0000${e.ref}`)
@@ -199,7 +221,10 @@ export function makeSpeechPolicy(deps: {
     },
     async tell(kind, chatId, text, send) {
       let sent = false
-      const o = await policy.say({ kind, chatId }, async (turn) => {
+      const sendTurn = originOf(kind) === 'initiative'
+        ? (produce: (turn: ProactiveTurn) => Promise<void>) => policy.propose({ source: 'social', summary: text.slice(0, 1000), kind, chatId }, produce)
+        : (produce: (turn: ProactiveTurn) => Promise<void>) => policy.say({ kind, chatId }, produce)
+      const o = await sendTurn(async (turn) => {
         try {
           // 自带的 send(比如 sendAssistantText)发不出去时回 false、不抛 ⇒ 那也算没说出去
           if (send) { sent = (await send(chatId, text)) !== false; if (sent) turn.confirmDelivery?.('wechat'); return }
@@ -289,7 +314,7 @@ export function makeSpeechPolicy(deps: {
     for (const item of own.filter(i => i.kind !== 'social_story' || i === stories.at(-1))) {
       if (tried >= budget) break
       let sent = false, undeliverable = false
-      const o = await policy.say({ kind: item.kind, chatId }, async (turn) => {
+      const o = await policy.propose({ source: item.kind === 'sticker' ? 'sticker' : 'social', summary: item.text.slice(0, 1000), ref: `pending:${item.id}`, createdAt: Date.parse(item.at), expiresAt: Date.parse(item.at) + (keepForMs(item.kind) ?? 0), payloadRef: { pending: item.id }, kind: item.kind, chatId }, async (turn) => {
         try {
           // 带图的先发图;图发不出去 ⇒ 这一样什么都不说,**不退成一句光秃秃的文字**(新贴纸那一句的老规矩)
           const a = item.attach
@@ -315,6 +340,7 @@ export function makeSpeechPolicy(deps: {
     }
     return tried
   }
+  submit = deps.proposals?.(policy.say.bind(policy), policy.peek.bind(policy))
   return policy
 }
 

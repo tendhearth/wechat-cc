@@ -301,16 +301,22 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
         if (!due) continue
         // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
         const priorMark = state.narrated[chatId]
-        state.narrated[chatId] = latestInboundTs
-        state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
-        changed = true
+        let claimed = false
+        const claim = () => {
+          claimed = true
+          state.narrated[chatId] = latestInboundTs
+          state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
+          changed = true
+        }
         const uncount = (): void => {
+          if (!claimed) return
           const n = (state.visits ?? {})[chatId] ?? 0
           if (n > 1) state.visits = { ...state.visits, [chatId]: n - 1 }
           else if (state.visits) { const { [chatId]: _drop, ...rest } = state.visits; state.visits = rest }
         }
         // 没讲出去 ⇒ 只撤这一位的水位和这一次的计数,前面几位这一拍讲完的照常保留(评审 #194)
         const unmark = (): void => {
+          if (!claimed) return
           if (priorMark === undefined) delete state.narrated[chatId]; else state.narrated[chatId] = priorMark
           uncount()
         }
@@ -319,7 +325,8 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
         let noModel = false
         let outcome: Awaited<ReturnType<typeof speech.say>>
         try {
-          outcome = await speech.say({ kind: 'guest_visit', chatId: ownerChat, nowMs }, async (turn) => {
+          outcome = await speech.propose({ source: 'guest', summary: `${name} visited`, ref: `guest:${chatId}:${latestInboundTs}`, payloadRef: { chatId, latestInboundTs }, kind: 'guest_visit', chatId: ownerChat, nowMs, validate: async () => (await messagesStore.latestInboundTs(chatId)) === latestInboundTs }, async (turn) => {
+            claim()
             const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
             // 一时没有可用模型:这次做客不能就此吞掉,等有模型了再讲
             if (!evalText) { noModel = true; return }
@@ -357,12 +364,14 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
         if ('drop' in outcome) {
           // 别烦我:这次来访记作看过(水位留着、不算讲过),以后打开主动关心也不翻旧账
           uncount()
+          state.narrated[chatId] = latestInboundTs
+          changed = true
           deps.log('VISIT', `guest visit not told: chat=${chatId} — ${outcome.reason}; marked as seen`)
           continue
         }
         if ('defer' in outcome) { unmark(); break }   // 免打扰 / 都送不到:这一拍什么都不动,之后照讲
         if (noModel) { unmark(); continue }
-        if (!told) continue
+        if (!told) { unmark(); continue }
         try { deps.journal?.recordVisit?.({ chatId: ownerChat, text: told, peerLabel: `${name}来过`, nowIso }) }
         catch (err) { deps.log('VISIT', `guest 见闻入库失败: ${errMsg(err)}`) }
         deps.log('VISIT', `guest visit told: chat=${chatId} name=${name} lines=${due.length}`)

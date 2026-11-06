@@ -35,7 +35,7 @@ export async function announceNewSticker(
   if (!path) { d.log('STICKERS', `new-sticker notice skipped: no file for mood=${mood}`); return 'skipped' }
   let sent = false
   const text = newStickerLine(mood)
-  const outcome = await d.speech.say({ kind: 'sticker', chatId: ownerChat }, async (turn) => {
+  const outcome = await d.speech.propose({ source: 'sticker', summary: text, ref: `sticker:${ownerChat}:${path}`, validate: () => d.stickers.resolve(mood) === path, payloadRef: { mood, path }, kind: 'sticker', chatId: ownerChat }, async (turn) => {
     if (!(await turn.sendSticker(ownerChat, mood, path))) { d.log('STICKERS', `new-sticker notice not sent: sticker undeliverable (mood=${mood})`); return }
     sent = true
     await turn.sendText(ownerChat, text)

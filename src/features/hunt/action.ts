@@ -33,7 +33,7 @@ export function huntAction(deps: HuntActionDeps, { dispatchToChat }: Pick<TickDi
       } catch { journal = null }
       return { context: { journal } }
     },
-    async run({ chatId, nowIso, prefs }) {
+    async run({ chatId, nowIso, prefs }, _target, outbound) {
       // 旁听这一拍发出去的东西 —— 打猎的产出此前只存在于微信聊天记录里,
       // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
       // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
@@ -50,6 +50,7 @@ export function huntAction(deps: HuntActionDeps, { dispatchToChat }: Pick<TickDi
       let went: boolean | 'refused' = false
       try {
         went = await dispatchToChat(chatId, {
+          source: 'hunt', outbound,
           claim: () => { const ticket = deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
           buildText: (style) => buildHuntText({ nowIso, avoid: prefs.avoid }, style),
           nowIso,

@@ -274,7 +274,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
             // 免打扰 / 都送不到 ⇒ 交给门的「待说」队列,24 小时内补发(S2c,主人 11-04;一次补说最多一条见闻)
             const sendFile = deps.sendFile
             const raster = () => rasterizeSvgDarwin(svg, join(deps.stateDir, 'companion', 'postcards'))
-            const o = await speech.say({ kind: 'social_story', chatId: op }, async (outbound) => {
+            const o = await speech.propose({ source: 'social', summary: 'A postcard from a visit', payloadRef: { svg }, kind: 'social_story', chatId: op }, async (outbound) => {
               const png = await raster()
               if (png) { const r = await sendFile(op, png); if (r !== false) outbound.confirmDelivery?.('wechat') }
             })

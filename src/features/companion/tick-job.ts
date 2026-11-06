@@ -46,7 +46,7 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
     let result: JobTurnResult = 'failed:error'
     try {
       const nowMs = Date.parse(args.nowIso)
-      const said = await speech.say({ kind: args.kind, chatId, ref: `job:${jobId}:${args.nowIso.slice(0, 16)}`, scheduled: args.scheduled, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
+      const said = await speech.propose({ source: args.kind === 'brief' || args.kind === 'recap' ? args.kind : 'requested', summary: args.kind, expiresAt: nowMs + 10 * 60_000, payloadRef: { jobId, scheduledAt: args.nowIso }, validate: () => resolveDispatch(chatId).blocked !== 'session_in_flight', kind: args.kind, chatId, ref: `job:${jobId}:${args.nowIso.slice(0, 16)}`, scheduled: args.scheduled, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
       // 回复交付按 chatId 记账 ⇒ 与主人的对话串行,不然两轮的回复会混在一起。
       await deps.boot.coordinator.runExclusive(chatId, async () => {
         // 先忘一次:上次若崩在半路(没走到 finally),留下的续接记录会让这次接着上次的对话(终审 minor)。
