@@ -1,4 +1,5 @@
 // App work executes only after the parent runner validates mini identity and owns its lock.
+import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { readFile, writeFile, mkdir, readdir, rm, chmod } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -39,18 +40,23 @@ export async function runApp({ request, config, insideLab, labHome, run, command
     COCOAPODS_DISABLE_STATS: 'true', EXPO_NO_TELEMETRY: '1', EXPO_OFFLINE: '1', LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', MAESTRO_CLI_NO_ANALYTICS: 'true', MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true',
     TENDHEARTH_UITESTS: '1', NODE_BINARY: '/opt/homebrew/bin/node', RCT_NO_LAUNCH_PACKAGER: '1' }
   const execute = (label, file, args, options = {}) => command(label, file, args, { cwd, extraEnv, ...options })
+  const prepareFile = join(root, 'prepare-receipt.json')
+  const nativeLockHash = async () => createHash('sha256').update(await readFile(join(cwd, 'ios/Podfile.lock'))).digest('hex')
   if (request.command === 'app-prepare') {
+    await rm(join(root, 'build-receipt.json'), { force: true })
+    await rm(prepareFile, { force: true })
     await execute('app-js-dependencies', 'bun', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: project, offline: false })
     await execute('expo-prebuild-prepare', '/opt/homebrew/bin/node', ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'ios', '--no-install'], { offline: false })
     await execute('pods-prepare', join(tools, 'gems/bin/pod'), ['install'], { cwd: join(cwd, 'ios'), offline: false })
+    await writeFile(prepareFile, JSON.stringify({ source, nativeLockHash: await nativeLockHash() }))
     return { source, prepared: true, note: 'Public dependencies only; build and UI execution remain offline' }
   }
   const app = join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app')
   const receiptFile = join(root, 'build-receipt.json')
   if (request.command === 'app-build') {
     await rm(receiptFile, { force: true })
-    await execute('expo-prebuild', '/opt/homebrew/bin/node', ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'ios', '--no-install'])
-    await execute('pods', join(tools, 'gems/bin/pod'), ['install', '--no-repo-update'], { cwd: join(cwd, 'ios') })
+    const prepared = JSON.parse(await readFile(prepareFile, 'utf8'))
+    if (JSON.stringify(prepared.source) !== JSON.stringify(source) || prepared.nativeLockHash !== await nativeLockHash()) throw Error('App preparation does not match the active snapshot; run app-prepare')
     await execute('app-build', '/usr/bin/xcodebuild', ['-workspace', 'ios/Tendhearth.xcworkspace', '-scheme', 'Tendhearth',
       '-configuration', 'Release', '-sdk', 'iphonesimulator', '-destination', 'generic/platform=iOS Simulator',
       '-derivedDataPath', join(root, 'build'), 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO', 'build'])

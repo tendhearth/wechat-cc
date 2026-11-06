@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -11,9 +12,11 @@ beforeEach(async () => {
   lab = await realpath(await mkdtemp(join(tmpdir(), 'cc-app-lane-')))
   root = join(lab, 'snapshot')
   const cwd = join(root, 'project/apps/app')
-  for (const path of [cwd, join(lab, 'app-tools/java/Contents/Home'), join(cwd, '.maestro'), join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app'), join(root, 'artifacts'), join(root, 'maestro-driver/driver-iPhoneSimulator/Debug-iphonesimulator/maestro-driver-iosUITests-Runner.app')]) await mkdir(path, { recursive: true })
+  for (const path of [join(cwd, 'ios'), cwd, join(lab, 'app-tools/java/Contents/Home'), join(cwd, '.maestro'), join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app'), join(root, 'artifacts'), join(root, 'maestro-driver/driver-iPhoneSimulator/Debug-iphonesimulator/maestro-driver-iosUITests-Runner.app')]) await mkdir(path, { recursive: true })
   const source = { commit: 'a'.repeat(40) }
   await writeFile(join(root, 'snapshot.json'), JSON.stringify(source))
+  await writeFile(join(cwd, 'ios/Podfile.lock'), 'fixture-lock')
+  await writeFile(join(root, 'prepare-receipt.json'), JSON.stringify({ source, nativeLockHash: createHash('sha256').update('fixture-lock').digest('hex') }))
   await writeFile(join(root, 'build-receipt.json'), JSON.stringify({ source, app: join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app') }))
   await writeFile(join(root, 'simulator.json'), JSON.stringify({ udid: 'lab-udid' }))
   for (const name of ['cc-acts', 'push-open', 'terminal-sessions']) await writeFile(join(cwd, '.maestro', name + '.yaml'), '')
@@ -75,5 +78,22 @@ test('only the explicit preparation command permits public dependency downloads'
   expect(calls.map(call => call.label)).toEqual(['app-js-dependencies', 'expo-prebuild-prepare', 'pods-prepare'])
   expect(calls.every(call => call.options.offline === false)).toBe(true)
   expect(calls[0].args).toEqual(['install', '--frozen-lockfile', '--ignore-scripts'])
+  expect(execFileSync).not.toHaveBeenCalled()
+})
+
+test('a changed native lock refuses compilation before running any build tool', async () => {
+  context.request = { command: 'app-build' }
+  await writeFile(join(root, 'project/apps/app/ios/Podfile.lock'), 'changed')
+  await expect(runApp(context)).rejects.toThrow('preparation does not match')
+  expect(calls).toEqual([])
+})
+
+test('a prepared build only compiles offline and never re-evaluates network-dependent podspecs', async () => {
+  context.request = { command: 'app-build' }
+  await writeFile(join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app/main.jsbundle'), 'fixture-js')
+  await expect(runApp(context)).resolves.toMatchObject({ source: { commit: 'a'.repeat(40) } })
+  expect(calls.map(call => call.label)).toEqual(['app-build'])
+  expect(calls[0].options).not.toHaveProperty('offline', false)
+  expect(calls[0].args).toContain('generic/platform=iOS Simulator')
   expect(execFileSync).not.toHaveBeenCalled()
 })
