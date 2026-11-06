@@ -142,7 +142,7 @@ const artifactsSignature = detail => JSON.stringify((detail?.artifacts ?? []).ma
 const windowStorage = workbenchWindowStorage()
 const savedView = loadWorkbenchView(windowStorage)
 
-/** @type {{timer:ReturnType<typeof setInterval>,cleanup:()=>void,openTask:(id:string)=>Promise<void>,openDraft:(draft:IncomingDraft)=>Promise<boolean>,getTaskId:()=>string|null}|null} */
+/** @type {{timer:ReturnType<typeof setInterval>,cleanup:()=>void,openTask:(id:string)=>Promise<void>,openDraft:(draft:IncomingDraft)=>Promise<boolean>,getTaskId:()=>string|null,getViewedTaskId:()=>string|null}|null} */
 let active = null
 /** @type {string|null} */
 let resumeScope = savedView.scope
@@ -689,6 +689,7 @@ export function createWorkbenchController(deps) {
       state.loadingId = null
       if (artifactsSignature(state.detail) !== artifactsSignature(result)) state.reviewsLoaded = false
       state.detail = result
+      if (/^[a-f0-9]{8}$/.test(id)) void v1(deps.invokeWorkbenchApi, V1.matter.seen, { body: { id } }).catch(() => {})
       state.detailDisconnected = false
       state.selectedArtifactId = chooseArtifactId(result.artifacts ?? [], state.selectedArtifactId)
       if (state.preview && state.preview.artifactId !== state.selectedArtifactId) state.preview = null
@@ -1961,7 +1962,7 @@ export function initWorkbenchPage(deps) {
     input('wb-create-text')?.focus()
     return true
   }
-  active = { timer, openTask, openDraft, getTaskId: () => controller.getTargetTaskId(), cleanup: () => {
+  active = { timer, openTask, openDraft, getTaskId: () => controller.getTargetTaskId(), getViewedTaskId: () => controller.state.detail?.task.id ?? null, cleanup: () => {
     saveWindowState()
     resumeQuery = { ...(controller.state.query ?? { q: '', archived: 'exclude' }) }
     resumeSearch = input('wb-search')?.value ?? searchDraft
@@ -1993,3 +1994,6 @@ export async function openWorkbenchDraft(draft) {
 }
 
 export function getActiveWorkbenchTaskId() { return active?.getTaskId() ?? null }
+
+/** The detail actually rendered, excluding an in-flight navigation target. */
+export function getViewedWorkbenchTaskId() { return active?.getViewedTaskId() ?? null }

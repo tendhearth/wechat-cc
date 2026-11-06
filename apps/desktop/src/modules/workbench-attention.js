@@ -4,7 +4,7 @@ import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{id:string,title:string,providerId:string,pendingPermissionCount:number,pendingQuestionCount:number,attentionKey:string,first?:{kind:'permission'|'question',text:string}|null}} AttentionTask */
 /** @typedef {{tasks:AttentionTask[],stale:boolean,progress?:Map<string,string>,moved?:{replied:string[],stopped:string[]}}} AttentionState */
-/** @typedef {{invokeWorkbenchApi:(method:'GET',path:string)=>Promise<unknown>,invoke:(command:string,args:Record<string,unknown>)=>Promise<unknown>,onChange?:(state:AttentionState)=>void,getContext?:()=>{taskId:string|null,focused:boolean},intervalMs?:number,maxBackoffMs?:number,requestTimeoutMs?:number}} PollerOptions */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke:(command:string,args:Record<string,unknown>)=>Promise<unknown>,onChange?:(state:AttentionState)=>void,getContext?:()=>{taskId:string|null,focused:boolean},intervalMs?:number,maxBackoffMs?:number,requestTimeoutMs?:number}} PollerOptions */
 
 /**
  * 各任务的 phase(2026-10-06,回复 / 停下的系统通知)。老 daemon 没有这一项 ⇒ null(不弹,也不报错)。
@@ -91,6 +91,9 @@ export function createWorkbenchAttentionPoller(options) {
         const context = options.getContext?.() ?? { taskId: null, focused: false }
         const progress = parseProgress(result)
         const moved = initialized ? progressTransitions(lastProgress, progress) : { replied: [], stopped: [] }
+        if (context.focused && context.taskId && (['replied', 'failed', 'interrupted'].includes(progress?.get(context.taskId) ?? ''))) {
+          void v1(options.invokeWorkbenchApi, V1.matter.seen, { body: { id: context.taskId } }).catch(() => {})
+        }
         lastProgress = progress
         let shouldNotify = false
         const activeIds = new Set()

@@ -103,10 +103,10 @@ test('a live destination during registration wins over a previous pending destin
 
 
 async function taskBoundary(page:import('@playwright/test').Page, missing:string|null=null) {
- const posts:string[]=[],reads:string[]=[]
+ const posts:string[]=[],reads:string[]=[],seen:string[]=[]
  const task=(id:string)=>({id,title:id==='deadbeef'?'桌宠指定的那件事':'原来的任务',path:'/demo/pet',providerId:'claude',status:'completed',phase:'replied',createdAt:1,updatedAt:2,error:null,archivedAt:null})
  await page.route(WORKBENCH_ROUTES,async route=>{
-  const request=route.request(),url=new URL(request.url());if(request.method()!=='GET')posts.push(url.pathname)
+  const request=route.request(),url=new URL(request.url());if(url.pathname==='/v1/matter/seen'){seen.push(request.postDataJSON().id);await route.fulfill({json:{ok:true}});return}if(request.method()!=='GET')posts.push(url.pathname)
   let json:any={}
   if(url.pathname==='/v1/workbench')json={tasks:[task('aaaa1111')],projects:[{path:'/demo/pet',name:'pet',providerId:'claude'}],providers:[{id:'claude',displayName:'Claude Code'}],defaultProvider:'claude',canWechat:false}
   else if(url.pathname==='/v1/workbench/task'){
@@ -117,7 +117,7 @@ async function taskBoundary(page:import('@playwright/test').Page, missing:string
   else if(url.pathname==='/v1/workbench/attention')json={tasks:[],progress:[]}
   await route.fulfill({json})
  })
- return {posts,reads}
+ return {posts,reads,seen}
 }
 for(const gate of ['doctor','pending'] as const)test(`cold pet task target survives ${gate} readiness and selects an item outside the list`,async({page,shimUrl})=>{
  const boundary=await taskBoundary(page)
@@ -127,6 +127,7 @@ for(const gate of ['doctor','pending'] as const)test(`cold pet task target survi
  await page.evaluate(g=>(window as any).__entryFixture[g==='doctor'?'releaseDoctor':'releasePending'](),gate)
  await expect(page.locator('.wb-task-head h2')).toHaveText('桌宠指定的那件事')
  expect(boundary.reads).toContain('deadbeef');expect(boundary.posts).toEqual([])
+ await expect.poll(()=>boundary.seen).toContain('deadbeef')
 })
 test('a newer live pet task wins an older cold target without sending or losing the prior draft',async({page,shimUrl})=>{
  const boundary=await taskBoundary(page)

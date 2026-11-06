@@ -484,6 +484,15 @@ describe('workbench drafts', () => {
 })
 
 describe('workbench request ordering', () => {
+  it('posts desktop seen after opening a detail, including the exact task reached from a pet or notification target', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    const api = vi.fn(async () => ({ task: { id: 'deadbeef' }, events: [], artifacts: [] }))
+    const controller = createWorkbenchController({ invokeWorkbenchApi: api, render: vi.fn() })
+    await controller.selectTask('deadbeef')
+    expect(api).toHaveBeenCalledWith('POST', '/v1/matter/seen', { id: 'deadbeef' })
+    expect(controller.state.detail?.task.id).toBe('deadbeef')
+  })
+
   it('opens the most recent task after the initial list loads', async () => {
     const { createWorkbenchController } = await import('./workbench.js')
     const invokeWorkbenchApi = vi.fn(async (_method: string, path: string) => path === '/v1/workbench'
@@ -919,6 +928,7 @@ describe('workbench mutations', () => {
     const preview=(token:string,context:string)=>({mode:'restart_required',restart:{token,context,eventCount:1,includedEventCount:1,truncated:false}})
     const pending=new Map<string,{resolve:(value:any)=>void,reject:(error:any)=>void}>(),sent:any[]=[]
     const api=async(method:string,path:string,body?:any)=>{
+      if(path==='/v1/matter/seen')return {ok:true}
       if(path==='/v1/workbench/prepare-continuation')return await new Promise((resolve,reject)=>pending.set(body.execution.model,{resolve,reject}))
       if(method==='POST'){sent.push(body);return{task}}
       return path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex'}:{task,events:[],artifacts:[],execution,continuation:preview('a'.repeat(64),'original preview A')}
@@ -1088,6 +1098,7 @@ describe('workbench mutations', () => {
     field.value = 'Keep A draft'
     const opening = module.openWorkbenchTask('B')
     expect(module.getActiveWorkbenchTaskId()).toBe('B')
+    expect(module.getViewedWorkbenchTaskId()).toBe('A')
     await module.openWorkbenchTask('C'); finish(detail('B')); await opening
     expect(module.getActiveWorkbenchTaskId()).toBe('C')
     await module.openWorkbenchTask('A'); expect(field.value).toBe('Keep A draft')
@@ -1145,7 +1156,8 @@ describe('workbench mutations', () => {
     const next=reloaded.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
     for(let i=0;i<8;i++)await Promise.resolve()
     expect(next.state.selectedId).toBe('bbbbbbbb');expect(restoredField.value).toBe('B 的未发送要求')
-    expect(api.mock.calls.every(([method])=>method==='GET')).toBe(true)
+    expect(api.mock.calls.filter(([,path])=>path!=='/v1/matter/seen').every(([method])=>method==='GET')).toBe(true)
+    expect(api).toHaveBeenCalledWith('POST','/v1/matter/seen',{id:'bbbbbbbb'})
     reloaded.stopWorkbenchPolling()
   })
 
@@ -1520,6 +1532,7 @@ describe('workbench mutations', () => {
     const task={id:'deadbeef',title:'恢复任务',path:'/tmp/recover',providerId:'codex',status:'failed',createdAt:1,updatedAt:2,error:null}
     let token='a'.repeat(64)
     const invokeWorkbenchApi=vi.fn(async(method:string,path:string)=>{
+      if(path==='/v1/matter/seen')return {ok:true}
       if(method==='POST') {token='b'.repeat(64);throw new Error('HTTP 409: {"error":"restart_confirmation_stale"}')}
       if(path==='/v1/workbench')return {tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}
       return {task,events:[],artifacts:[],continuation:{mode:'restart_required',restart:{token,context:'user: 原请求',eventCount:1,includedEventCount:1,truncated:false}}}
@@ -1528,7 +1541,8 @@ describe('workbench mutations', () => {
     const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
     const form=new FakeElement();form.tagName='FORM';form.dataset={action:'continue'}
     for(const listener of page.listeners.get('submit')??[])await listener({target:form,preventDefault:vi.fn()})
-    expect(invokeWorkbenchApi.mock.calls.filter(([method])=>method==='POST')).toHaveLength(0)
+    expect(invokeWorkbenchApi.mock.calls.filter(([method,path])=>method==='POST'&&path!=='/v1/matter/seen')).toHaveLength(0)
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST','/v1/matter/seen',{id:'deadbeef'})
     expect(field.value).toBe('继续整理资料')
     form.dataset={action:'restart',restartToken:'a'.repeat(64)}
     for(const listener of page.listeners.get('submit')??[])await listener({target:form,preventDefault:vi.fn()})
