@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile, realpath, rm } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest } from './macmini-ui-protocol.mjs'
+import { isInsideLab, miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest } from './macmini-ui-protocol.mjs'
 
 const textCommand = (file, args) => execFileSync(file, args, { encoding: 'utf8' }).trim()
 const identity = { computerName: textCommand('/usr/sbin/scutil', ['--get', 'ComputerName']),
@@ -25,7 +25,7 @@ const endpoint = assertLoopbackEndpoint(config.endpoint)
 
 async function insideLab(path) {
   const resolved = await realpath(path)
-  if (!resolved.startsWith(labHome + '/')) throw Error('Configured path leaves the dedicated UI lab')
+  if (!isInsideLab(await realpath(labHome), resolved)) throw Error('Configured path leaves the dedicated UI lab')
   return resolved
 }
 const root = await insideLab(config.root)

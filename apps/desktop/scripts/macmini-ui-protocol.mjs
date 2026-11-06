@@ -1,5 +1,5 @@
 // Pure boundaries for the dedicated, offline Mac mini UI executor.
-import { posix } from 'node:path'
+import path, { posix } from 'node:path'
 
 const QA_APPS = new Set(['com.tendhearth.cc-motion-qa-20261029', 'com.tendhearth.cc-native-control-20261030'])
 const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit', 'full', 'full-platform', 'capture', 'embedded', 'embedded-build', 'production-build', 'affected', 'app-status', 'app-prepare', 'app-build', 'app-maestro'])
@@ -87,4 +87,12 @@ export function sshInvocation(command, target = 'home', sshConfig, flow) {
     '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
     mini.host, `env PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${command.startsWith('app-') ? 'app-run.mjs' : 'run.mjs'}`],
   input: JSON.stringify(validateRequest({ command, ...(flow !== undefined ? { flow } : {}) })) + '\n' }
+}
+
+// Strict descendants only. Callers must realpath filesystem paths first so
+// symlinks cannot disguise an escape. Inject the path flavour for portable tests.
+export function isInsideLab(labRoot, candidate, paths = path) {
+  const relative = paths.relative(paths.resolve(labRoot), paths.resolve(candidate))
+  return relative !== '' && relative !== '..' &&
+    !relative.startsWith('..' + paths.sep) && !paths.isAbsolute(relative)
 }
