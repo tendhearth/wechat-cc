@@ -47,7 +47,7 @@ describe('phone style guard', () => {
   })
   it('top-bar status line only on the home page (detail pages: back button, no status; ConnectionNotice covers problems)', () => {
     expect(readFileSync(join(SRC, 'ui/TopBar.tsx'), 'utf8')).toMatch(/showStatus = false/)
-    const TABS = ['ui/HomeScreen.tsx']
+    const TABS = ['ui/HomeScreen.tsx', 'app/chat.tsx']
     for (const f of TSX.filter(f => rel(f) !== 'ui/TopBar.tsx')) {
       for (const bar of readFileSync(f, 'utf8').match(/<TopBar\b[\s\S]*?\/>/g) ?? []) {
         if (!TABS.includes(rel(f))) expect(bar, rel(f)).not.toMatch(/\bshowStatus\b|onConnection/)

@@ -9,6 +9,10 @@ import { dropDraftImages, getDraft, peekDraftImages, setDraft } from '../state/d
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection, useQuery } from '../state/hooks'
 import { useChat, type ChatSendOutcome } from '../state/useChat'
+import { DemoBanner } from '../ui/DemoBanner'
+import { CCFigure } from '../ui/CCFigure'
+import { ccPresence } from '../view/presence'
+import { LinkRow } from '../ui/Rows'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Button } from '../ui/Button'
 import { Icon } from '../ui/Icon'
@@ -45,6 +49,7 @@ export default function Chat() {
   const online = canSubmit(conn)
   const chat = useChat()
   const { backend } = useBackendCtx()
+  const inputRef = useRef<import('react-native').TextInput>(null)
   const [text, setTextState] = useState(() => getDraft('chat'))
   // 发送是异步的:成功回来时比的是「现在」输入框里的字,不是点发送时闭包里的那份
   const textRef = useRef(text)
@@ -104,11 +109,18 @@ export default function Chat() {
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar
-        title={t(lang, 'chat.title')}
-        onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-        actions={<IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />}
+        title="CC" showStatus onAvatar={() => router.push('/settings')}
+        onConnection={() => router.push('/connections')} connectionTestID="now-connections"
+        leading={<Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={() => inputRef.current?.focus()}><CCFigure size={36} presence={ccPresence(conn, { demo: backend.mode === 'demo' })} /></Pressable>}
+        actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
+          <StatusHint testID="home-more" icon="more" label={t(lang, 'minimal.more')} description="">
+            {close => <View>
+              <LinkRow testID="home-saved-inputs" label={t(lang, 'input.savedTitle')} onPress={() => { close(); router.push('/inputs') }} />
+              <LinkRow testID="home-sessions" label={t(lang, 'sessions.title')} onPress={() => { close(); router.push('/sessions') }} />
+            </View>}
+          </StatusHint></View>}
       />
-      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{backend.mode === 'demo' ? <DemoBanner /> : null}</View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <FlatList
           testID="chat-list"
@@ -172,6 +184,7 @@ export default function Chat() {
           <TalkStatus view={talk.view} elapsedMs={talk.elapsedMs} lang={lang} testID="chat-talk" />
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.s }}>
             <TextField
+              ref={inputRef}
               testID="chat-input"
               accessibilityLabel={t(lang, 'chat.placeholder')}
               value={text}
