@@ -144,27 +144,6 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-23T14:
 afterEach(() => { vi.useRealTimers() })
 
 describe('连不上的时候,页面说清你看到的是几点的样子', () => {
-  it.each([
-    [404, 'matter_not_found'], [413, 'detail_too_large'], [503, 'workbench_not_wired'], [503, 'module_off'], [503, 'module_degraded'],
-  ])('v1 错误 %s / %s 保留状态与精确码，不会误当成功', async (status, code) => {
-    const h = harness()
-    await h.enterPane()
-    await expect(h.request('/v1/matter?id=deadbeef', undefined, async () => ({ status, json: async () => ({ error: code }) })))
-      .rejects.toMatchObject({ message: code, status })
-    expect(h.errorText(String(code))).toBe(String(code) === 'matter_not_found' ? '找不到这件事了，可能已经删掉。'
-      : String(code) === 'detail_too_large' ? '这件事的内容太多，网页上读不全，请到手机 App 或电脑上看。' : '暂时没读到，请检查连接后再看。')
-  })
-
-  it('v1 列表显式保留旧别名的筛选、数量与任务状态，接受不带 ok 的列表和详情', async () => {
-    const h = harness()
-    await h.enterPane()
-    expect(h.calls[0]!.path).toBe('/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1')
-    expect(h.els.get('m-list')!.innerHTML).toContain('首页调整')
-    await h.openMatter()
-    expect(h.els.get('m-title')!.textContent).toBe('首页调整')
-    expect(h.notice.textContent).toBe('')
-  })
-
   it('连续两拍没联系上 daemon,浮出一条带时刻的提示', async () => {
     const h = harness()
     await h.enterPane()
@@ -366,3 +345,27 @@ describe('一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,等你 
   })
 })
 
+
+describe('v1 网页调用契约', () => {
+  it.each([
+    [404, 'matter_not_found'], [413, 'detail_too_large'], [503, 'workbench_not_wired'], [503, 'module_off'], [503, 'module_degraded'],
+  ])('v1 错误 %s / %s 保留状态与精确码，不会误当成功', async (status, code) => {
+    const h = harness()
+    await h.enterPane()
+    await expect(h.request('/v1/matter?id=deadbeef', undefined, async () => ({ status, json: async () => ({ error: code }) })))
+      .rejects.toMatchObject({ message: code, status })
+    expect(h.errorText(String(code))).toBe(String(code) === 'matter_not_found' ? '找不到这件事了，可能已经删掉。'
+      : String(code) === 'detail_too_large' ? '这件事的内容太多，网页上读不全，请到手机 App 或电脑上看。' : '暂时没读到，请检查连接后再看。')
+  })
+
+  it('v1 列表显式保留旧别名的筛选、数量与任务状态，接受不带 ok 的列表和详情', async () => {
+    const h = harness()
+    await h.enterPane()
+    expect(h.calls[0]!.path).toBe('/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1')
+    expect(h.els.get('m-list')!.innerHTML).toContain('首页调整')
+    await h.openMatter()
+    expect(h.els.get('m-title')!.textContent).toBe('首页调整')
+    expect(h.notice.textContent).toBe('')
+  })
+
+})
