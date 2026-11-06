@@ -2,7 +2,7 @@
  * presence.js 的「此刻」形象画加载(手机协议包 v2 Task 4 fix round 1,
  * 2026-09-29):两张 PNG 不再内联进页面(apps/mobile/src/presence.html 的
  * <img> 不带 src 了),改由 loadPresenceArt() 经 api() 拉
- * GET /m/api/art/presence —— 经隧道也能拿到,直接 <img src="/m/api/…"> 拿不到。
+ * GET /v1/phone/art/presence —— 经隧道也能拿到,直接 <img src="/m/api/…"> 拿不到。
  * 外加「等你的那一件」那张卡(收敛 5b,2026-10-21):只看,不带动作按钮。
  */
 import { afterEach, describe, it, expect, vi } from 'vitest'
@@ -32,9 +32,9 @@ function load(api: (p: string) => Promise<{ json: () => Promise<unknown> }>) {
 }
 
 describe('CC 此刻形象画(loadPresenceArt)', () => {
-  it('fetches GET /m/api/art/presence and sets both frames as data URIs', async () => {
+  it('fetches GET /v1/phone/art/presence and sets both frames as data URIs', async () => {
     const api = vi.fn(async (p: string) => {
-      expect(p).toBe('/m/api/art/presence')
+      expect(p).toBe('/v1/phone/art/presence')
       return { json: async () => ({ ok: true, mime: 'image/png', unlit: 'AAA', lit: 'BBB' }) }
     })
     const { loadPresenceArt, dark, light } = load(api)
