@@ -124,3 +124,9 @@
 .converse-search-meta { color:var(--th-ink-soft); font-size:12px; margin-bottom:2px; }
 .converse-search-text { white-space:pre-wrap; overflow-wrap:anywhere; }
 .converse-search-text mark { background:var(--th-hair); color:inherit; border-radius:2px; padding:0 1px; }
+
+.converse-matter { padding:var(--th-space-l); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); min-width:min(320px,60vw); }
+.converse-matter summary { cursor:pointer; display:flex; gap:var(--th-space-l); justify-content:space-between; }
+.converse-matter [data-matter-state] { color:var(--th-ink-soft); font-size:var(--th-size-small); }
+.converse-matter button { display:block; margin-top:var(--th-space-m); background:transparent; color:var(--th-ink); border:1px solid var(--th-hair); border-radius:var(--th-radius-control); padding:8px 12px; font:inherit; cursor:pointer; }
+.converse-matter small, [data-matter-progress] { display:block; color:var(--th-ink-soft); font-size:var(--th-size-small); margin-top:var(--th-space-s); }

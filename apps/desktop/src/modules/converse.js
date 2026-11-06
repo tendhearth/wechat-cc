@@ -12,6 +12,7 @@
 // compose row. Same vanilla-JS module shape as dialogue-page.js / logs.js.
 
 import {openOwnerChatFile,openConversationImage,openLocalConversationFile} from "./converse-media.js"
+import { matterReferenceHtml, updateConversationMatters, mountMatterProgress } from './conversation-matters.js'
 import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
@@ -21,9 +22,9 @@ import { V1, v1 } from '../daemon-client.js'
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onSend?: () => void }} Deps
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onOpenMatter?: (id:string) => unknown, onSend?: () => void }} Deps
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[] }} ConverseMsg
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[] }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -196,6 +197,7 @@ function attachmentsHtml(m) {
 
 /** @param {ConverseMsg} m */
 function messageHtml(m) {
+  if (m.matterId) return `<div class="converse-msg converse-msg-cc"><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
   if (m.role === "error") {
     return `<div class="converse-error-line">${escapeHtml(m.text)}</div>`
   }
@@ -504,6 +506,7 @@ function renderMessages({ follow = false } = {}) {
   if (scroll) {
     paintConversation(scroll,messages,messageHtml,emptyStateHtml(),{follow,latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))})
   }
+  updateConversationMatters([])
   for (const cb of listeners) {
     try { cb(messages) } catch (err) { console.error("converse subscriber threw", err) }
   }
@@ -666,8 +669,9 @@ async function delegateDraft(deps) {
   reflectMic()
   let accepted = false
   try {
-    const result = await deps.onDelegate({text: draft, visibleMessages: messages.flatMap(message => (message.role === 'user' || message.role === 'cc') && !message.pending && message.text.trim() ? [{role: message.role, text: message.text}] : [])})
+    const result = await deps.onDelegate({text: draft, visibleMessages: messages.flatMap(message => (message.role === 'user' || message.role === 'cc') && !message.matterId && !message.pending && message.text.trim() ? [{role: message.role, text: message.text}] : [])})
     accepted = !!result
+    if (result) addConversationMatter(result.receipt.taskId, result.task.title, false)
     if (accepted && input.value === draft) input.value = ""
   } catch {
     messages.push({ id: nextId++, role: "system", text: "暂时无法交给 CC 做，要求已保留，请稍后再试。" })
@@ -740,6 +744,11 @@ function wireEvents(root, deps) {
     scroll.addEventListener("scroll",()=>syncConversationLatest(scroll,latest),{passive:true})
     latest?.addEventListener("click",()=>showConversationLatest(scroll,latest))
   }
+  if (deps.invokeWorkbenchApi) mountMatterProgress(root,deps.invokeWorkbenchApi)
+  root.addEventListener('click', event => {
+    const id = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-matter]'))?.dataset.openMatter
+    if (id) deps.onOpenMatter?.(id)
+  })
   root.querySelector("#converse-delegate")?.addEventListener("click", () => { void delegateDraft(deps) })
   root.querySelector("#converse-send")?.addEventListener("click", () => {
     sendMessage(deps).catch(err => console.error("converse send failed", err))
@@ -868,4 +877,12 @@ export function initConversePage(deps, { focus = true } = {}) {
   void loadSharedHistory(deps)
   const input = document.getElementById("converse-input")
   if (focus && input instanceof HTMLElement) input.focus()
+}
+
+/** Stable identity across search/open/receipt paths; historical references are never attributed as old CC speech.
+ * @param {string} id @param {string} title @param {boolean} [historical] */
+export function addConversationMatter(id,title,historical = true) {
+  if (!messages.some(m => m.matterId === id)) messages.push({id:nextId++,role:'cc',text:title,matterId:id,historical,at:Date.now()})
+  renderMessages()
+  document.querySelector(`[data-matter-id="${CSS.escape(id)}"]`)?.scrollIntoView?.({block:'nearest'})
 }

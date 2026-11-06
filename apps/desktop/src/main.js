@@ -39,7 +39,8 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { updateConversationMatters } from './modules/conversation-matters.js'
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
 import { latestCCLine, nowStatusLine } from "./modules/now-home.js"
@@ -237,6 +238,7 @@ const homeTasks = createTaskListReader({
   onChange: next => {
     // 读不到(stale)⇒ 留着上一份(列表里本来就只有在做 / 做完的,不冒充等你);一份都没有 ⇒ 只剩终端的。
     if (next.data) { home.tasks = next.data.tasks ?? []; home.agentNames = next.data.agentNames }
+    updateConversationMatters(home.tasks ?? [], next.stale)
     renderHome()
   },
 })
@@ -287,8 +289,9 @@ window.addEventListener('drop', ev => {
 // in a JSDOM/happy-dom harness).
 
 const openAcceptedEntry = async (/** @type {import('./modules/task-entry.js').EntryResult} */ result) => {
-  switchPane('workbench')
-  await openWorkbenchTask(result.receipt.taskId)
+  switchPane('converse')
+  addConversationMatter(result.receipt.taskId, result.task.title, false)
+  updateConversationMatters([result.task])
 }
 const taskEntry = createTaskEntry({invokeWorkbenchApi, onAccepted: openAcceptedEntry})
 
@@ -296,6 +299,7 @@ const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
+  onOpenMatter: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
