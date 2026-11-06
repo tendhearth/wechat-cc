@@ -123,6 +123,7 @@ test('the local entry transports a bounded request through strict SSH, with no d
 })
 
 test('App commands share the strict SSH transport and reject arbitrary flows and fields at both boundaries', () => {
+  expect(sshInvocation('app-status').args.at(-1)).toContain('/cc-ui-lab/app-run.mjs')
   expect(JSON.parse(sshInvocation('app-status').input)).toEqual({ command: 'app-status' })
   expect(JSON.parse(sshInvocation('app-build').input)).toEqual({ command: 'app-build' })
   for (const flow of ['all', 'terminal-sessions', 'push-open', 'cc-acts']) {

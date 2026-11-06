@@ -46,7 +46,7 @@ if (process.argv[2] === '--receive') {
   const transport = sshInvocation('app-status', process.argv[3] ?? 'home', process.env.CC_UI_SSH_CONFIG)
   const args = [...transport.args]
   // The receiver is installed beside the trusted desktop executor by the integrator.
-  const receiver = args.at(-1).replace(/run\.mjs$/, `app-snapshot.mjs --receive ${sha}`)
+  const receiver = args.at(-1).replace(/app-run\.mjs$/, `app-snapshot.mjs --receive ${sha}`)
   args[args.length - 1] = receiver
   const remote = spawn(transport.file, args, { stdio: ['pipe', 'inherit', 'inherit'] })
   const archive = spawn('/usr/bin/git', ['-C', repo, 'archive', '--format=tar', sha], { stdio: ['ignore', 'pipe', 'inherit'] })

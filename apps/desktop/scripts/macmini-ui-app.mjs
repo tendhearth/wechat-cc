@@ -6,7 +6,7 @@ import { APP_FLOWS, appFlow } from './macmini-ui-protocol.mjs'
 
 export async function appStatus({ config, insideLab, labHome }) {
   const probe = (file, args, env = {}) => {
-    try { return execFileSync(file, args, { encoding: 'utf8', timeout: 20000, env: { PATH: '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin', MAESTRO_CLI_NO_ANALYTICS: 'true', MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true', ...env } }).trim() }
+    try { return execFileSync(file, args, { encoding: 'utf8', timeout: 20000, env: { PATH: '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', MAESTRO_CLI_NO_ANALYTICS: 'true', MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true', ...env } }).trim() }
     catch (error) { return { missing: true, detail: error.message } }
   }
   const tools = join(labHome, 'app-tools')
@@ -36,7 +36,7 @@ export async function runApp({ request, config, insideLab, labHome, run, command
     GEM_HOME: join(tools, 'gems'), GEM_PATH: join(tools, 'gems'),
     PATH: `${tools}/ruby/bin:${tools}/gems/bin:${java}/bin:${tools}/maestro/bin:${environment.PATH}`,
     GEM_SPEC_CACHE: join(tools, 'gem-spec-cache'), BUN_INSTALL_CACHE_DIR: join(root, 'cache/bun'),
-    COCOAPODS_DISABLE_STATS: 'true', EXPO_NO_TELEMETRY: '1', EXPO_OFFLINE: '1', MAESTRO_CLI_NO_ANALYTICS: 'true', MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true',
+    COCOAPODS_DISABLE_STATS: 'true', EXPO_NO_TELEMETRY: '1', EXPO_OFFLINE: '1', LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', MAESTRO_CLI_NO_ANALYTICS: 'true', MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true',
     TENDHEARTH_UITESTS: '1', NODE_BINARY: '/opt/homebrew/bin/node', RCT_NO_LAUNCH_PACKAGER: '1' }
   const execute = (label, file, args, options = {}) => command(label, file, args, { cwd, extraEnv, ...options })
   if (request.command === 'app-prepare') {

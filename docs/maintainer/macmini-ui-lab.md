@@ -94,7 +94,7 @@ node apps/desktop/scripts/macmini-ui.mjs capture
 
 App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照必须来自已审阅的 `origin/dev` 或 `app-maestro-build3`，仅传 Git archive，不复制 node_modules、忽略文件、账号或原生签名材料。
 
-整合者先把本仓库 `apps/desktop/scripts/macmini-ui{,-protocol,-remote,-app}.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 现有可信执行器目录；在 lab 根的 `app-snapshot.mjs` 写一行 import 指向该目录的 `macmini-app-snapshot.mjs`（与 `run.mjs` 相同模式）。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令。
+整合者把本仓库 `apps/desktop/scripts/macmini-ui-{protocol,remote,app}.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 的 `labHome/app-executor/` 目录。在 lab 根创建两个固定包装器：`app-run.mjs` import `./app-executor/macmini-ui-remote.mjs`，`app-snapshot.mjs` import `./app-executor/macmini-app-snapshot.mjs`。App 的 SSH 目标固定为 `app-run.mjs`，因此桌面整合者切换 `run.mjs` 不影响 App 入口。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令；仍与桌面共享 `active.json` 和执行锁。
 
 ```sh
 # 在主机调用；只传源码，接收器在 mini 持锁创建新目录并原子更新 appRoot。

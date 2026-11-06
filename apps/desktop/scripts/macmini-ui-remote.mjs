@@ -80,6 +80,9 @@ if (request.command === 'status') {
   process.exit(controller.ready ? 0 : 1)
 }
 
+const executionRoot = request.command.startsWith('app-')
+  ? await insideLab(config.appRoot ?? (() => { throw Error('APP_BLOCKED: configure an App snapshot first') })()) : root
+
 // No two test runs may control the same lab or use the same fixture port.
 const lock = join(labHome, '.execution-lock')
 try { await mkdir(lock, { mode: 0o700 }) } catch { throw Error('Another UI lab run owns the execution lock; inspect its owner before recovery') }
@@ -102,7 +105,7 @@ try {
     await writeFile(owned.file, owned.content, { flag: 'wx' })
   }
 } catch (error) { await releaseLocks(); throw error }
-const run = join(root, 'artifacts', new Date().toISOString().replaceAll(':', '-') + '-' + request.command)
+const run = join(executionRoot, 'artifacts', new Date().toISOString().replaceAll(':', '-') + '-' + request.command)
 const temporaryRoot = join(run, 'tmp')
 try {
   await mkdir(run, { recursive: true, mode: 0o700 })
