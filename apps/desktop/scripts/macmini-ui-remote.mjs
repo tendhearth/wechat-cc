@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile, realpath, rm } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { miniConfiguration, assertLoopbackEndpoint, createOfflineSession, sshInvocation } from './macmini-ui-protocol.mjs'
+import { miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest } from './macmini-ui-protocol.mjs'
 
 const textCommand = (file, args) => execFileSync(file, args, { encoding: 'utf8' }).trim()
 const identity = { computerName: textCommand('/usr/sbin/scutil', ['--get', 'ComputerName']),
@@ -19,8 +19,7 @@ for await (const chunk of process.stdin) {
   if (input.length > 1024) throw Error('UI lab request is too large')
 }
 const request = JSON.parse(input)
-if (!request || Object.keys(request).length !== 1 || typeof request.command !== 'string') throw Error('Expected one UI lab command')
-sshInvocation(request.command) // Reuse the same command allowlist at the receiving boundary.
+validateRequest(request) // Reuse the same command allowlist at the receiving boundary.
 const config = JSON.parse(await readFile(configPath, 'utf8'))
 const endpoint = assertLoopbackEndpoint(config.endpoint)
 
@@ -65,6 +64,12 @@ function consoleState() {
   return { consoleUser, locked: userSessionPresent ? locked : null }
 }
 
+if (request.command === 'app-status') {
+  const { appStatus } = await import('./macmini-ui-app.mjs')
+  console.log(JSON.stringify(await appStatus({ config, insideLab, labHome, bun: mini.bun }), null, 2))
+  process.exit(0)
+}
+
 if (request.command === 'status') {
   let controller
   try { controller = await api('/status') } catch (error) { controller = { ready: false, message: error.message } }
@@ -74,6 +79,9 @@ if (request.command === 'status') {
     productionAccess: false, localDesktopFallback: false }, null, 2))
   process.exit(controller.ready ? 0 : 1)
 }
+
+const executionRoot = request.command.startsWith('app-')
+  ? await insideLab(config.appRoot ?? (() => { throw Error('APP_BLOCKED: configure an App snapshot first') })()) : root
 
 // No two test runs may control the same lab or use the same fixture port.
 const lock = join(labHome, '.execution-lock')
@@ -97,7 +105,7 @@ try {
     await writeFile(owned.file, owned.content, { flag: 'wx' })
   }
 } catch (error) { await releaseLocks(); throw error }
-const run = join(root, 'artifacts', new Date().toISOString().replaceAll(':', '-') + '-' + request.command)
+const run = join(executionRoot, 'artifacts', new Date().toISOString().replaceAll(':', '-') + '-' + request.command)
 const temporaryRoot = join(run, 'tmp')
 try {
   await mkdir(run, { recursive: true, mode: 0o700 })
@@ -194,6 +202,10 @@ async function native() {
 try {
   let result
   switch (request.command) {
+    case 'app-prepare': case 'app-build': case 'app-maestro': {
+      const { runApp } = await import('./macmini-ui-app.mjs')
+      result = await runApp({ request, config, insideLab, labHome, run, command, environment, bun: mini.bun }); break
+    }
     case 'doctor': result = await command('doctor', '/opt/homebrew/bin/node', [join(runtime, 'node_modules/appium/build/lib/main.js'), 'driver', 'doctor', 'mac2'], { offline: false }); break
     case 'unit': result = await unit(); break
     case 'browser': result = await browser(); break
@@ -223,7 +235,7 @@ try {
 } catch (error) {
   await writeFile(join(run, 'result.json'), JSON.stringify({ ok: false, command: request.command, error: error.message }, null, 2))
   console.error(error.message)
-  process.exitCode = error.message.startsWith('NATIVE_BLOCKED:') ? 2 : 1
+  process.exitCode = /^(NATIVE|APP)_BLOCKED:/.test(error.message) ? 2 : 1
 } finally {
   await releaseLocks()
 }

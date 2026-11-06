@@ -98,6 +98,14 @@ appId: com.tendhearth.app
 - waitForAnimationToEnd
 - tapOn:
     id: compose-send
+# 补充先留在回执页;确认已收到后,由「查看进展」返回详情。
+- extendedWaitUntil:
+    visible:
+      id: input-status-.*
+      text: ".*(已收到|Received).*"
+    timeout: 10000
+- tapOn:
+    id: compose-progress
 - extendedWaitUntil:
     visible:
       id: progress-process

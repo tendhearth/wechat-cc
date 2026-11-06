@@ -66,6 +66,16 @@ appId: com.tendhearth.app
 - takeScreenshot: worktree-matter
 - tapOn:
     id: progress-wt-fork
+# 另做一份会自动打开调整页;先确认并收起,再验证入口可重新打开。
+- extendedWaitUntil:
+    visible:
+      id: compose-adjust-sheet
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "完成|Done"
+    direction: DOWN
+- tapOn: "完成|Done"
 - extendedWaitUntil:
     visible:
       id: compose-adjust

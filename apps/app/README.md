@@ -27,6 +27,8 @@ CC 沿用两张原图：真实在线时轻呼吸，新的回复、完成和待�
 
 ## 怎么跑
 
+原生构建、模拟器与 Maestro 只在专用 Mac mini 执行；主工作 Mac 调用下方 Maestro 一节的 SSH 入口。下面的开发工具命令供 mini 环境使用。
+
 ```bash
 bun install                      # 仓库根目录,一次
 cd apps/app
@@ -48,7 +50,21 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 
 ### Maestro
 
-装:`brew tap mobile-dev-inc/tap && brew trust --formula mobile-dev-inc/tap/maestro && brew install --formula mobile-dev-inc/tap/maestro`(注意是 formula;不带 `--formula` 会装成桌面版 Maestro Studio 的 cask)。要 Java,formula 会带上 openjdk。
+图形验收统一在专用 Mac mini 执行，主工作 Mac 只调用 SSH 入口：
+
+```sh
+node apps/desktop/scripts/macmini-ui.mjs app-status
+node apps/desktop/scripts/macmini-ui.mjs app-prepare
+node apps/desktop/scripts/macmini-ui.mjs app-build
+node apps/desktop/scripts/macmini-ui.mjs app-maestro terminal-sessions
+node apps/desktop/scripts/macmini-ui.mjs app-maestro push-open
+node apps/desktop/scripts/macmini-ui.mjs app-maestro cc-acts
+node apps/desktop/scripts/macmini-ui.mjs app-maestro all
+```
+
+以上命令在仓库根目录调用；首次快照、公开依赖准备与授权边界见 [Mac mini 实验室](../../docs/maintainer/macmini-ui-lab.md#app--maestro-lane)。下面的原生工具命令仅供 mini 上准备环境，不在主工作 Mac 执行。
+
+mini 的工具安装见[实验室准备步骤](../../docs/maintainer/macmini-ui-lab.md#app--maestro-lane)：Maestro CLI、Java runtime、CocoaPods 与必要的 Ruby/libyaml 都放在 lab 的 `app-tools` 内，不使用 sudo，也不修改全局 shell 配置。
 
 | 流程 | 走什么 |
 |---|---|
@@ -205,6 +221,8 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 - 开发专用:`tendhearth://dev-push-key` 页与开发令牌兜底(`src/push/dev-token.ts`)只在 `__DEV__` 生效,发布构建里深链改回此刻;开发令牌(`dev…`)形状刻意区别于真设备令牌(`d…`)。
 
 ### 怎么跑
+
+原生构建、模拟器与 Maestro 只在专用 Mac mini 执行；主工作 Mac 调用下方 Maestro 一节的 SSH 入口。下面的开发工具命令供 mini 环境使用。
 
 ```bash
 cd apps/app/native/ios-notify && swift test        # Swift(CryptoKit)跑协议包同一份向量
