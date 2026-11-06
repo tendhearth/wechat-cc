@@ -195,7 +195,7 @@ describe('workbench rendering', () => {
     const t=(id:string,extra:Record<string,unknown>={})=>({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,...extra})
     const html=renderWorkbench({tasks:[t('W',{pendingPermissionCount:1}),t('R',{phase:'replied'}),t('D',{status:'completed'}),t('X',{status:'failed'})],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
     const row=(id:string)=>html.slice(html.indexOf(`data-task-id="${id}"`),html.indexOf('</button>',html.indexOf(`data-task-id="${id}"`)))
-    expect(html).toMatch(/<aside class="wb-sidebar"[^>]*><header><h2 id="wb-all-title">全部<\/h2>/)
+    expect(html).toMatch(/<aside class="wb-sidebar"[^>]*><header><h2 id="wb-all-title">搜索事项<\/h2>/)
     expect(html).not.toContain('一起做')
     // 等你的那一组标题与此刻同一个词(状态表的 HOME_GROUP_WORDS)
     expect(html).toContain('<section class="wb-attention-list" aria-label="等你"><header><h3>等你</h3>')

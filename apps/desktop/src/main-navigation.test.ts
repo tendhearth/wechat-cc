@@ -85,3 +85,16 @@ it('a slow native handshake never delays readiness or overrides a newer live tas
  done({page:'workbench',taskId:'aaaa1111'});await Promise.resolve();await Promise.resolve()
  expect(seen).toEqual([{page:'workbench',taskId:'bbbb2222'}])
 })
+
+it('keeps old chat and all/together targets until the single conversation is ready',()=>{
+  const seen:unknown[]=[]
+  const nav=navigation.createMainNavigation(target=>seen.push(target))
+  expect(nav.request('all')).toBe(true)
+  expect(seen).toEqual([])
+  nav.setReady(true)
+  expect(seen).toEqual(['all'])
+  expect(nav.request({page:'together'})).toBe(true)
+  expect(nav.request('chat')).toBe(true)
+  expect(seen).toEqual(['all','together','chat'])
+  expect(nav.request({page:'all',taskId:'deadbeef'})).toBe(false)
+})

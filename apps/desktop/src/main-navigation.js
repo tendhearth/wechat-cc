@@ -1,7 +1,7 @@
 // @ts-check
-/** @typedef {'overview'|'a2a-agents'|'converse'} LegacyDestination */
+/** @typedef {'overview'|'a2a-agents'|'converse'|'chat'|'all'|'together'} LegacyDestination */
 /** @typedef {LegacyDestination | {page:'workbench',taskId:string}} MainDestination */
-const legacy = (/** @type {unknown} */ page) => page === 'overview' || page === 'a2a-agents' || page === 'converse'
+const legacy = (/** @type {unknown} */ page) => page === 'overview' || page === 'a2a-agents' || page === 'converse' || page === 'chat' || page === 'all' || page === 'together'
 /** Parse the whole untrusted target, retaining legacy pages and copying task IDs.
  * @param {unknown} value @returns {MainDestination|null}
  */

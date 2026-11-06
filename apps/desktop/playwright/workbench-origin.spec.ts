@@ -23,7 +23,7 @@ test('全部:出生地字形挨着头像组,读屏念「从哪来的」;老的�
     else if(url.pathname==='/v1/matter/changes')json={reviews:[]}
     await route.fulfill({json})
   })
-  await page.goto(shimUrl)
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
   await clickNav(page,'workbench')

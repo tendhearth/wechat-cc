@@ -100,7 +100,7 @@ export function mountNowHero({ root, button, motionQuery = typeof matchMedia ===
   const img = doc.createElement('img'); img.className = 'pet-sprite now-pet-sprite'; img.alt = ''; img.draggable = false
   const props = doc.createElement('span'); props.className = 'now-pet-props'
   stage.append(img, props); button.append(stage)
-  const isActive = () => !doc.hidden && !root.hidden && root.dataset.now !== 'chat' && !root.closest('[hidden]') && (!root.closest('.dashboard') || doc.documentElement.dataset.mode === 'dashboard')
+  const isActive = () => !doc.hidden && !root.hidden && (root.dataset.conversation === 'single' || root.dataset.now !== 'chat') && !root.closest('[hidden]') && (!root.closest('.dashboard') || doc.documentElement.dataset.mode === 'dashboard')
   let active = isActive()
   facts.setActive(active)
   /** @type {import('../companion-preferences.js').MotionPreferences} */ let motion

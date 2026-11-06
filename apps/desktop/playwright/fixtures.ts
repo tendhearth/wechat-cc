@@ -91,9 +91,9 @@ export { expect }
 export async function clickNav(page: import('@playwright/test').Page, pane: string): Promise<void> {
   // 「一起做」不再是导航项(设计稿 2026-10-31 U4):和用户一样回此刻,点「全部 →」。
   if (pane === 'workbench') {
-    if (await page.locator('article.dash-pane[data-pane="workbench"]').isVisible()) return
+    if (await page.locator('.dash-pane[data-pane="workbench"]').isVisible()) { if(await page.locator('.workbench-pane').getAttribute('data-workbench-view')==='search')return; await page.locator('#workbench-home').click() }
     await clickNav(page, 'overview')
-    await page.locator('#now-all').click()
+    await page.locator('[data-conversation-search-matters]').click()
     return
   }
   // 在「全部」(原一起做)里:左上角「‹ 此刻」回主页。

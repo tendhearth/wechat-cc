@@ -124,3 +124,49 @@
 .converse-search-meta { color:var(--th-ink-soft); font-size:12px; margin-bottom:2px; }
 .converse-search-text { white-space:pre-wrap; overflow-wrap:anywhere; }
 .converse-search-text mark { background:var(--th-hair); color:inherit; border-radius:2px; padding:0 1px; }
+
+.converse-matter { padding:var(--th-space-l); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); min-width:min(320px,60vw); }
+.converse-matter summary { cursor:pointer; display:flex; gap:var(--th-space-l); justify-content:space-between; }
+.converse-matter [data-matter-state] { color:var(--th-ink-soft); font-size:var(--th-size-small); }
+.converse-matter button { display:block; margin-top:var(--th-space-m); background:transparent; color:var(--th-ink); border:1px solid var(--th-hair); border-radius:var(--th-radius-control); padding:8px 12px; font:inherit; cursor:pointer; }
+.converse-matter small, [data-matter-progress] { display:block; color:var(--th-ink-soft); font-size:var(--th-size-small); margin-top:var(--th-space-s); }
+
+.conversation-tools { display:flex; gap:var(--th-space-m); align-items:center; flex:none; }
+.conversation-tools details { position:relative; }
+.conversation-tools summary, .conversation-tools button { cursor:pointer; font:inherit; background:transparent; color:var(--th-ink); border:0; padding:8px; }
+.conversation-tools details[open] { z-index:8; background:var(--th-paper); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); }
+.conversation-tools details[open] button { display:block; }
+.cc-now-pane[data-conversation="single"] .now-waiting:not([hidden]) { display:block; margin:0; font-size:var(--th-size-small); }
+.cc-now-pane[data-conversation="single"] .now-waiting > summary { cursor:pointer; color:var(--th-ink-soft); }
+.dashboard .workbench-pane { position:fixed; inset:16px 16px 16px auto; width:min(720px,calc(100vw - 100px)); z-index:20; background:var(--th-paper); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); padding:var(--th-space-l); }
+.workbench-pane[data-workbench-view="detail"] .wb-sidebar,
+.workbench-pane[data-workbench-view="projects"] .wb-sidebar,
+.workbench-pane[data-workbench-view="search"] .wb-main { display:none; }
+.workbench-pane[data-workbench-view="search"] .wb-sidebar { width:100%; border:0; }
+.workbench-pane .workbench-shell { grid-template-columns:minmax(0,1fr); }
+.workbench-pane #workbench-nav-toggle { display:none; }
+@media(max-width:760px) { .dashboard .workbench-pane { inset:0; width:100%; border:0; border-radius:0; } }
+.dashboard .workbench-pane > .cc-life-topline { display:flex!important; }
+.workbench-pane[data-workbench-view="search"] .wb-sidebar { max-height:none; flex:1; }
+.workbench-pane[data-workbench-view="search"] .wb-task-list { display:block; overflow:visible; }
+.workbench-pane .workbench-shell.has-preview { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+
+.cc-now-pane[inert] .conversation-topic-panel { visibility:hidden; }
+.workbench-pane[data-workbench-view="search"] .wb-project > details > summary { pointer-events:none; }
+.conversation-tools details:not([open]) > button { display:none; }
+.workbench-pane [data-project-search-group]::details-content { content-visibility:visible; }
+
+.conversation-migration { margin:0; color:var(--th-ink-soft); font-size:var(--th-size-small); }
+.conversation-migration button { border:0; background:transparent; color:var(--th-ink); font:inherit; padding:4px 8px; cursor:pointer; }
+/* Keep layer controls below the native title-bar drag strip. */
+.dashboard .workbench-pane { top:48px; height:auto; min-height:0; max-height:calc(100dvh - 64px); box-sizing:border-box; }
+@media(max-width:760px) { .dashboard .workbench-pane { top:44px; max-height:calc(100dvh - 44px); } }
+
+.cc-now-pane[data-conversation="single"] #now-waiting-list > li:not(.now-terminal) { display:none; }
+.cc-now-pane[data-conversation="single"] #now-waiting-list { max-height:34vh; overflow:auto; }
+.dashboard .workbench-pane { z-index:100; }
+
+.converse-terminal { padding:var(--th-space-l); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); }
+.converse-terminal summary { cursor:pointer; display:flex; gap:var(--th-space-l); justify-content:space-between; }
+.converse-terminal p { white-space:pre-wrap; overflow-wrap:anywhere; }
+.converse-terminal-note, .converse-terminal small { color:var(--th-ink-soft); font-size:var(--th-size-small); }

@@ -8,7 +8,7 @@ import { test, expect } from './fixtures'
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
 async function openNow(page: import('@playwright/test').Page, shimUrl: string) {
-  await page.goto(shimUrl)
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(() => { const m = document.documentElement.dataset.mode; return m !== undefined && m !== 'loading' }, { timeout: 15_000 })
   await page.evaluate(() => { document.documentElement.dataset.mode = 'dashboard' })
   await expect(page.locator('#converse-input')).toBeVisible()

@@ -23,6 +23,14 @@ function dom() {
 const poller = () => { let cb: any; return { subscribe: (f: any) => { cb = f; return () => {} }, push: (p: any) => cb(p) } }
 
 describe('mountNowPage', () => {
+  it('single conversation entry never returns to the retired home mode', () => {
+    const root = dom(); root.dataset.conversation = 'single'
+    const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn() })
+    page.setMode('home')
+    expect(root.dataset.now).toBe('chat')
+    page.setMode('chat')
+    expect(root.dataset.now).toBe('chat')
+  })
   it('greets by hour and flips CC by presence', () => {
     const root = dom(); const pp = poller()
     mountNowPage({ root, presencePoller: pp, onOpenTask: vi.fn(), now: () => new Date(2026, 9, 1, 21) })

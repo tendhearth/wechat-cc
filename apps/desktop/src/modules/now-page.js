@@ -35,16 +35,16 @@ function requestArrow(go, label) {
 export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onResolveTerminal, onModeChange, now = () => new Date() }) {
   const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (root.querySelector(`#${id}`))
   // 问候随钟点变:挂载、presence 每一拍、切 home/chat 都重算(textContent 同值不动 DOM)。
-  const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el.textContent !== g) el.textContent = g }
+  const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el && el.textContent !== g) el.textContent = g }
   greet()
   const hero = mountNowHero({ root, button: $('now-cc') })
   const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); hero.setPresence(p); greet() })
   /** @param {'home'|'chat'} m */
-  function setMode(m) { root.dataset.now = m; $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
+  function setMode(m) { if (root.dataset.conversation === 'single') m = 'chat'; root.dataset.now = m; if ($('now-back')) $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
   const toChat = () => setMode('chat')
-  $('now-cc-bubble').addEventListener('click', toChat)
+  $('now-cc-bubble')?.addEventListener('click', toChat)
   $('now-cc').addEventListener('click', toChat)
-  $('now-back').addEventListener('click', () => setMode('home'))
+  $('now-back')?.addEventListener('click', () => setMode('home'))
   const list = $('now-waiting-list')
   // 在做 / 带回来的(home-list.js 算好的行):一件事的行整行打开它;终端会话只看不点。
   for (const key of /** @type {const} */ (['working', 'back'])) {
@@ -168,7 +168,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     const heading = $('now-waiting-title')
     heading.textContent = head.title
     // 普通计数仍可按标题导航;读不到时必须把不确定性留在眼前。
-    heading.classList.toggle('now-sr', !attention?.stale)
+    heading.classList.toggle('now-sr', root.dataset.conversation !== 'single' && !attention?.stale)
     list.replaceChildren(...rows.map(r => {
       const li = document.createElement('li')
       const btn = document.createElement('button')
@@ -221,6 +221,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     /** @param {{text:string,at:number|null}|null} line */
     setLatestLine(line) {
       const b = $('now-cc-bubble')
+      if (!b) return
       b.hidden = !line
       if (!line) return
       const text = /** @type {HTMLElement} */ (b.querySelector('.now-bubble-text'))

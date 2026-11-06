@@ -27,7 +27,7 @@ let recorder: { mimeType: string; addEventListener: Function; start: Function; s
 let stopTrack: ReturnType<typeof vi.fn>
 let invoke: ReturnType<typeof vi.fn<(cmd: string, args: Record<string, unknown>) => Promise<string>>>
 type EntryResult = import('../../../../src/features/workbench/service').EntryResult
-const accepted = {receipt:{requestId:'request',taskId:'aabbccdd',matterId:'aabbccdd',runId:'run',acceptedAt:1},task:{id:'aabbccdd'}} as EntryResult
+const accepted = {receipt:{requestId:'request',taskId:'aabbccdd',matterId:'aabbccdd',runId:'run',acceptedAt:1},task:{id:'aabbccdd',title:'整理说明'}} as EntryResult
 let onDelegate: ReturnType<typeof vi.fn<(draft: {text:string;visibleMessages?:{role:'user'|'cc';text:string}[]}) => Promise<EntryResult|null>>>
 const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
 
@@ -38,7 +38,8 @@ beforeEach(async () => {
   els = Object.fromEntries(['root', 'scroll', 'latest', 'input', 'send', 'delegate', 'voice-toggle', 'mic', 'cancel-recording', 'recording', 'recording-label', 'recording-time', 'recording-hint'].map(id => [`converse-${id}`, new El()]))
   vi.stubGlobal('window', {})
   vi.stubGlobal('localStorage', { getItem: () => null, setItem() {} })
-  vi.stubGlobal('document', { getElementById: (id: string) => els[id] })
+  vi.stubGlobal('document', { getElementById: (id: string) => els[id], querySelectorAll: (selector:string) => els['converse-scroll']!.node.querySelectorAll(selector), querySelector: (selector:string) => els['converse-scroll']!.node.querySelector(selector) })
+  vi.stubGlobal('CSS', dom.CSS)
   vi.stubGlobal('HTMLElement', El)
   vi.stubGlobal('requestAnimationFrame', (fn: Function) => fn())
   vi.stubGlobal('FileReader', class {

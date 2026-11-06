@@ -518,6 +518,7 @@ function placeholderQr(text: string): string {
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
@@ -1627,8 +1628,10 @@ Bun.serve({
         headers: { 'content-type': 'text/html; charset=utf-8' },
       })
     }
-    const ct = CONTENT_TYPES[ext]
-    return new Response(file, ct ? { headers: { 'content-type': ct } } : undefined)
+    const ct = CONTENT_TYPES[ext] || file.type
+    // Materialize static assets before sending headers: Bun's macOS file stream
+    // can stall mid-response in the offline lab (notably the PDF worker).
+    return new Response(await file.arrayBuffer(), ct ? { headers: { 'content-type': ct } } : undefined)
   },
 })
 

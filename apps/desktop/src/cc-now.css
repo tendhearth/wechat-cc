@@ -190,3 +190,13 @@ div.now-terminal-row:hover .t { color: var(--th-ink); }
   .now-figure .pet-ghost { opacity: 0; }
   .now-figure::before { transition: none; }
 }
+
+/* T5: CC is the conversation entry, including returns from tools and native links. */
+.dashboard .cc-now-pane[data-conversation="single"] { padding-top: 20px; }
+.cc-now-pane[data-conversation="single"] .now-hero { display:flex; flex-direction:row; justify-content:flex-start; height:44px; }
+.cc-now-pane[data-conversation="single"] .now-greeting,
+.cc-now-pane[data-conversation="single"] .now-bubble,
+.cc-now-pane[data-conversation="single"] #now-back { display:none; }
+.cc-now-pane[data-conversation="single"] .now-figure { width:44px; height:44px; min-height:0; }
+.cc-now-pane[data-conversation="single"] .now-cc-col { width:44px; }
+.cc-now-pane[data-conversation="single"] .now-figure img { width:44px; height:44px; }
