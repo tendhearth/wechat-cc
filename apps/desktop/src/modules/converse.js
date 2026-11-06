@@ -886,3 +886,24 @@ export function addConversationMatter(id,title,historical = true) {
   renderMessages()
   document.querySelector(`[data-matter-id="${CSS.escape(id)}"]`)?.scrollIntoView?.({block:'nearest'})
 }
+
+/** Locate an already loaded source; older sources use the existing text search until
+ * the daemon supplies an anchor/window read contract.
+ * @param {Deps} deps @param {string} messageId @param {string} [excerpt] */
+export async function locateConversationMessage(deps,messageId,excerpt='') {
+  const message = messages.find(m=>m.messageId===messageId)
+  if (message) {
+    const node = document.querySelector(`[data-converse-message="${message.id}"]`)
+    node?.scrollIntoView?.({block:'center'})
+    if (node instanceof HTMLElement) { node.tabIndex=-1; node.focus({preventScroll:true}) }
+    return
+  }
+  setSearchOpen(true)
+  const field = /** @type {HTMLInputElement|null} */ (document.getElementById('converse-search-input'))
+  if (field) field.value=excerpt
+  if (excerpt) await runSearch(deps,excerpt)
+  else {
+    const host=document.getElementById('converse-search-results')
+    if(host){host.hidden=false;host.textContent='这段原消息尚未载入，可以搜索对话查找。'}
+  }
+}

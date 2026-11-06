@@ -39,7 +39,8 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, addConversationMatter, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, locateConversationMessage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { mountConversationTopics } from './modules/conversation-topics.js'
 import { updateConversationMatters } from './modules/conversation-matters.js'
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
@@ -1662,6 +1663,14 @@ async function boot() {
   wireEvents()
   startWorkbenchAttention()
   initConversePage(deps, { focus: false })
+  const conversationRoot=document.getElementById('converse-root')
+  if(conversationRoot){
+    const topics=mountConversationTopics({root:conversationRoot,call:invokeWorkbenchApi,
+      openMatter:async id=>{switchPane('workbench');await openWorkbenchTask(id)},
+      locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
+      manage:()=>switchPane('memory')})
+    window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
+  }
   startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop
   // launch. Keep it off the critical render path: decrypting larger archives
