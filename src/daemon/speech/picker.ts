@@ -12,6 +12,7 @@ export type ProposalOutcome = SpeechOutcome | { defer: true; reason: string }
 type Waiting = { proposal: SpeechProposal; resolve(result: ProposalOutcome): void }
 
 export function makeSpeechPicker(d: {
+  observed?(proposal: SpeechProposal, result: ProposalOutcome): void
   sources: SpeechSourceRegistry
   reservations: SpeechReservations
   peek(request: SpeechRequest): SpeechDecision
@@ -184,19 +185,24 @@ export function makeSpeechPicker(d: {
     }
   }
   return {
-    submit(proposal: SpeechProposal): Promise<ProposalOutcome> {
-      if (!d.sources.get(proposal)) return Promise.resolve(deferred('invalid_proposal'))
-      const gate = d.peek(request(proposal))
-      if (!('allow' in gate) && !(sourceRules(proposal).outing && 'defer' in gate && gate.reason === 'undeliverable')) return d.execute(request(proposal), async () => {})
-      if (!sourceRules(proposal).outing && d.reservations.duplicate(proposal.ref, continuation(proposal))) return Promise.resolve(deferred('duplicate'))
-      if (sourceRules(proposal).scheduled) return deliver(proposal)
-      return new Promise(resolve => {
-        const list = waiting.get(proposal.recipient) ?? []
-        list.push({ proposal, resolve }); waiting.set(proposal.recipient, list)
-        queueMicrotask(() => { void round(proposal.recipient) })
-      })
+    async submit(proposal: SpeechProposal): Promise<ProposalOutcome> {
+      const result = await submit(proposal)
+      try { d.observed?.(proposal, result) } catch (err) { d.log('SPEECH_AUDIT', String(err)) }
+      return result
     },
     flush(): void { for (const recipient of waiting.keys()) void round(recipient) },
+  }
+  function submit(proposal: SpeechProposal): Promise<ProposalOutcome> {
+    if (!d.sources.get(proposal)) return Promise.resolve(deferred('invalid_proposal'))
+    const gate = d.peek(request(proposal))
+    if (!('allow' in gate) && !(sourceRules(proposal).outing && 'defer' in gate && gate.reason === 'undeliverable')) return d.execute(request(proposal), async () => {})
+    if (!sourceRules(proposal).outing && d.reservations.duplicate(proposal.ref, continuation(proposal))) return Promise.resolve(deferred('duplicate'))
+    if (sourceRules(proposal).scheduled) return deliver(proposal)
+    return new Promise(resolve => {
+      const list = waiting.get(proposal.recipient) ?? []
+      list.push({ proposal, resolve }); waiting.set(proposal.recipient, list)
+      queueMicrotask(() => { void round(proposal.recipient) })
+    })
   }
 }
 export type SpeechPicker = ReturnType<typeof makeSpeechPicker>

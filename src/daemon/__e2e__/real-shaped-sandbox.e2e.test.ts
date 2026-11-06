@@ -593,6 +593,19 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(d.query("SELECT 1 FROM speech_log WHERE origin='initiative' AND spoken_at IS NOT NULL")).toHaveLength(1)
   })
 
+  it('S4 operations: audit CLI reads the real-shaped ledger and persisted picker outcomes without changing it', () => {
+    const before = d.query('SELECT COUNT(*) AS n,MAX(id) AS last FROM speech_log')
+    const output = execFileSync(process.execPath, ['cli.ts', 'speech', 'audit', '--db', join(d.stateDir, 'wechat-cc.db'), '--days', '7', '--json'], { encoding: 'utf8', env: { ...process.env, WECHAT_STATE_DIR: d.stateDir } })
+    const audit = JSON.parse(output)
+    expect(audit.completeWindow).toBe(false)
+    expect(audit.coverageStartedAt).toBeGreaterThan(0)
+    expect(audit.sources.some((s: { outcome: string; count: number }) => s.outcome === 'allowed' && s.count > 0)).toBe(true)
+    expect(audit.sources.some((s: { outcome: string; count: number }) => s.outcome === 'deferred' && s.count > 0)).toBe(true)
+    expect(audit.suspectedBypass).toEqual([])
+    expect(audit.intervalViolations).toEqual([])
+    expect(d.query('SELECT COUNT(*) AS n,MAX(id) AS last FROM speech_log')).toEqual(before)
+  })
+
   it('S4: a due fixed-time brief sends inside the occupied interval, is counted, and keeps ordinary initiatives waiting', async () => {
     const prior = d.query<{ at: number }>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'")[0]!.at
     expect(Date.now() - prior).toBeLessThan(20 * 3600_000)
