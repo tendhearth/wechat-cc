@@ -2,6 +2,7 @@
 export const HELP_TEXT = `wechat-cc — WeChat bridge for Claude Code (Agent SDK daemon)
 
 Usage:
+  wechat-cc speech <backfill|audit> [--db PATH] [--days 7] [--json]
   wechat-cc setup [--qr-json] Scan QR + bind a WeChat bot
   wechat-cc setup-poll --qrcode TOKEN [--base-url URL] [--json]
   wechat-cc run [--dangerously]   Start the daemon (foreground)

@@ -1551,3 +1551,18 @@ describe('fresh migration commit budget', () => {
     } finally { db.close() }
   })
 })
+
+it('v110 upgrades v109 without changing speech history and replay preserves audit evidence', () => {
+  const db = migratedTo(109)
+  try {
+    db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome) VALUES(1,'letter','initiative','owner','allowed')").run()
+    const before = db.query('SELECT * FROM speech_log').all()
+    runMigrations(db, migrations)
+    db.query("INSERT INTO speech_audit_events(at,source,chat_id,ref,outcome) VALUES(1,'letter','owner','letter:x','deferred')").run()
+    db.query('INSERT INTO speech_audit_coverage VALUES(1,1)').run()
+    migrations[109]!(db)
+    expect(db.query('SELECT * FROM speech_log').all()).toEqual(before)
+    expect(db.query('SELECT COUNT(*) AS n FROM speech_audit_events').get()).toEqual({ n: 1 })
+    expect(db.query('SELECT started_at FROM speech_audit_coverage').get()).toEqual({ started_at: 1 })
+  } finally { db.close() }
+})

@@ -204,3 +204,15 @@ it('a fixed proposal rechecks care after waiting for an owner send and returns t
   expect(produce).not.toHaveBeenCalled()
   expect(s.db.query("SELECT outcome,reason,spoken_at FROM speech_log WHERE ref='brief:one'").get()).toEqual({ outcome: 'dropped', reason: 'care_off', spoken_at: null })
 })
+
+it('persists one audit event per picker attempt, including early gate rejection and losing candidates', async () => {
+  const s = setup()
+  await Promise.all([s.submit('letter'), s.submit('memory', { expiresAt: Date.parse('2026-11-06T13:00:00Z') })])
+  s.off(); await s.submit('brief')
+  expect(s.db.query('SELECT source,outcome FROM speech_audit_events ORDER BY id').all()).toEqual([
+    { source: 'memory', outcome: 'allowed' },
+    { source: 'letter', outcome: 'deferred' },
+    { source: 'brief', outcome: 'blocked' },
+  ])
+  expect(s.db.query('SELECT COUNT(*) AS n FROM speech_audit_coverage').get()).toEqual({ n: 1 })
+})

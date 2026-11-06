@@ -39,9 +39,15 @@ export function wireSpeech(d: {
   const now = d.now ?? Date.now
   const reservations = makeSpeechReservations(d.db)
   reservations.recover()
+  d.db.query('INSERT OR IGNORE INTO speech_audit_coverage(id,started_at) VALUES(1,?)').run(now())
   return makeSpeechPolicy({
     proposals: (execute, peek) => makeProposalSubmissions((sources, sourceContext) => makeSpeechPicker({
       sources, reservations, execute, peek, now, log: d.log,
+      observed(p, result) {
+        const outcome = 'allow' in result ? 'allowed' : 'defer' in result ? 'deferred' : 'blocked'
+        d.db.query('INSERT INTO speech_audit_events(at,source,chat_id,ref,outcome,reason) VALUES(?,?,?,?,?,?)')
+          .run(now(), p.source, p.recipient, p.ref, outcome, 'reason' in result ? result.reason : null)
+      },
       expired: p => ledger.append({ kind: p.kind, origin: originOf(p.kind), chatId: p.recipient, ref: p.ref, outcome: 'dropped', reason: 'expired', channel: null, ts: new Date(now()).toISOString() }),
       evaluator: d.evaluator ?? (() => null),
       lastBackoff: recipient => {
