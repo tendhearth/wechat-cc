@@ -97,6 +97,7 @@ export function phoneRouteAllowed(allow: ReadonlySet<string>, method: string, pa
 }
 
 /**
+ * 订阅只给已登记设备；链接页面继续通过受限 HTTP 状态投影读取，不订阅 hub。
  * 手机能订阅的事件主题(第 9 步,phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾
  * 是前缀标记,跟 PHONE_ROUTES 同一个约定 —— 真正允许的是 `matter/<id>`,`phoneTopicAllowed`
  * 负责把前缀展开成"后面必须是合法 id"这条规矩。

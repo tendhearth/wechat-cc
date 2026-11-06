@@ -614,3 +614,13 @@ describe('tunnel-client:认不出的流 ⇒ 明文 stream_unknown(中继重连�
     expect(await p.next()).toEqual({ t: 'pong', rid: 'k1' })
   })
 })
+it('T5 link: no hub subscription can bypass the limited HTTP status projection',async()=>{
+ const {hub,live}=countedHub([{match:()=>true,snapshot:async()=>({private:'PRIVATE-BODY'})}]),sock=fakeSocket()
+ client(sock,{events:hub,activeLinkToken:()=> 'tlink',topicsOwner:()=> 'owner'});const link=await v2Phone(sock,'link-scope','tlink')
+ for(const topic of ['home','approvals','agents','matter/deadbeef','topics']){link.send({t:'sub',sid:topic,topic});expect(await link.next()).toEqual({t:'err',sid:topic,code:'topic_not_allowed'})}
+ expect(live()).toBe(0);expect(link.drain().filter(m=>'t' in m&&m.t==='ev')).toEqual([]);hub.dispose()
+})
+it('T5 device: a private GET accepted before revocation does not return its body after revocation',async()=>{
+ let tokens=[DTOK],release!:(r:Response)=>void;const sock=fakeSocket();client(sock,{knownDeviceTokens:()=>tokens,handleRequest:()=>new Promise(r=>{release=r})});const p=await v2Phone(sock,'read-revoked')
+ p.send({t:'req',rid:'private',method:'GET',path:'/v1/matter/owner-chat/page'});await waitFor(()=>!!release);tokens=[];release(new Response('PRIVATE-BODY'));expect(await p.next()).toEqual({error:'auth_failed'});expect(p.drain().filter(m=>'t' in m&&m.t==='res')).toEqual([])
+})

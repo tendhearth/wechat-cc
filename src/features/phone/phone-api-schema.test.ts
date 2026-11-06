@@ -142,10 +142,10 @@ describe('真实返回校验 — workbench + matters', () => {
   afterEach(async () => { await panel?.stop(); await workbench?.shutdown(); db?.close(); removeTempDir(root); removeTempDir(managedRoot) })
 
   function create(name: string) { const path = join(root, name); mkdirSync(path); return workbench.create({ path, providerId: 'claude', text: name }) }
-  // 送话给执行者的写操作只给设备令牌(审计 10-20):默认令牌碰到这类路由时先配一次对
+  // 私人任务详情与送话给执行者的写操作使用设备令牌(审计 10-20):默认令牌碰到这类路由时先配一次对
   let device: string | null = null
   async function request(path: string, body?: unknown, auth?: string) {
-    if (auth === undefined) { auth = token; if (linkCannot(path)) { if (!device) { device = await pairDevice(base, token); token = panel.issueToken() } auth = device } }
+    if (auth === undefined) { auth = token; if (linkCannot(path) || path.startsWith('/m/api/matter?')) { if (!device) { device = await pairDevice(base, token); token = panel.issueToken() } auth = device } }
     return fetch(base + path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(auth), body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   }
   async function ready(id: string) { await expect.poll(() => workbench.detail(id).permissions.length).toBe(1); return workbench.detail(id) }

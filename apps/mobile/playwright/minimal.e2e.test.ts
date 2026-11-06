@@ -1,5 +1,6 @@
 // @ts-nocheck — browser fixture runs real classic-script globals and schema-valid payloads.
 import { createRequire } from 'node:module'
+import { linkMatterStatus } from '../../../src/domain/matters/phone-scope.ts'
 import { readFileSync } from 'node:fs'
 import { pageHtml, EXPIRED_HTML } from '../../../src/features/phone/settings-panel-html.ts'
 import { mobilePhoneHtml, MOBILE_BOOTSTRAP_HTML } from '../../../src/features/phone/mobile-page.ts'
@@ -33,7 +34,7 @@ async function fixture(page, opts = {}) {
     if (req.method() === 'POST') { posts.push({ path: p, body: req.postDataJSON() }); return route.fulfill({ json: p === '/set/api/pair' ? { ok: true, device_token: 'dNEW' } : p === '/set/api/apply' ? { ok: false, error: 'lan_only' } : { ok: true } }) }
     if (p === '/v1/home') return route.fulfill({ json: home })
     if (p === '/v1/matters') return route.fulfill({ json: { ok: true, matters: empty ? [] : [matter] } })
-    if (p === '/v1/matter') return route.fulfill({ json: detail })
+    if (p === '/v1/matter') return route.fulfill({ json: opts.link ? linkMatterStatus(detail) : detail })
     if (p === '/set/api/state') return route.fulfill({ json: state })
     return route.fulfill({ status: 404, json: { ok: false, error: 'not_found' } })
   })

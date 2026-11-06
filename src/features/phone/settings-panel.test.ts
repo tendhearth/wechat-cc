@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeSettingsPanel as makePanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
 import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+import { serve } from '../../lib/runtime/http'
 import { memoryPhoneRoutes } from '../memory'
 import { stickerPhoneRoutes } from '../stickers'
 /**
@@ -453,12 +454,13 @@ describe('随身 CC 首屏:伙伴的一天', () => {
   afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
   async function withPanel(p: ReturnType<typeof makeSettingsPanel>, fn: (base: string, t: string) => Promise<void>) {
-    const { port } = await p.start(0)
-    try { await fn(`http://127.0.0.1:${port}`, p.issueToken()) } finally { await p.stop() }
+    const server=serve({hostname:'127.0.0.1',port:0,fetch:req=>p.handleRequest(req)});await server.ready
+    try { await fn(`http://127.0.0.1:${server.port}`, p.issueToken()) } finally { server.stop(true);await p.stop() }
   }
 
   it('home:三源合并、presence、unread、synced_at、today', async () => {
-    await withPanel(mk(), async (base, t) => {
+    await withPanel(mk(), async (base, link) => {
+      const t=await deviceOf({issueToken:()=>link},base)
       const r = await (await fetch(`${base}/m/api/home?t=${t}`)).json() as Record<string, unknown>
       expect(r.ok).toBe(true)
       expect(r.synced_at).toBe('2026-09-06T08:00:00.000Z')
@@ -474,7 +476,8 @@ describe('随身 CC 首屏:伙伴的一天', () => {
   it('home:presence 抛 → null + presence_error;单源抛 → degraded 仍 200', async () => {
     presenceImpl = async () => { throw new Error('nope') }
     planThrows = true
-    await withPanel(mk(), async (base, t) => {
+    await withPanel(mk(), async (base, link) => {
+      const t=await deviceOf({issueToken:()=>link},base)
       const res = await fetch(`${base}/m/api/home?t=${t}`)
       expect(res.status).toBe(200)
       const r = await res.json() as Record<string, unknown>
@@ -511,11 +514,32 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       turnsRecent: () => { throw new Error('turns 未接线') },
       timezone: () => 'Asia/Shanghai',
     }
-    await withPanel(mk({ feed: feedTurnsThrows }), async (base, t) => {
+    await withPanel(mk({ feed: feedTurnsThrows }), async (base, link) => {
+      const t=await deviceOf({issueToken:()=>link},base)
       const r = await (await fetch(`${base}/m/api/home?t=${t}`)).json() as Record<string, unknown>
       expect(r.ok).toBe(true)
       expect(r.sources_degraded).toEqual(['chat_day'])
       expect((r.events as unknown[]).length).toBe(2)
+    })
+  })
+  it('T5 link: home retains presence/work without personal feed or news, while paired devices keep them',async()=>{
+    presenceImpl=async()=>({...await okPresence(),news:{unread:9,latest_kind:'thought',latest_title:'PRIVATE-NEWS'}})
+    await withPanel(mk(),async(base,link)=>{
+      const limited=await (await fetch(`${base}/v1/home?t=${link}`)).json() as any
+      expect(limited.events).toEqual([]);expect(limited.unread).toBe(0);expect(limited.presence.presence).toBe('ok');expect(JSON.stringify(limited)).not.toContain('PRIVATE-NEWS')
+      const token=await deviceOf({issueToken:()=>link},base),paired=await (await fetch(`${base}/v1/home?d=${token}`)).json() as any
+      expect(paired.events).toHaveLength(3);expect(paired.presence.news.latest_title).toBe('PRIVATE-NEWS')
+    })
+  })
+  it('T5 device: revoking a device during a private GET withholds the delayed response',async()=>{
+    let release!: (presence:import('../../domain/companion-presence').Presence)=>void
+    presenceImpl=()=>new Promise(r=>{release=r})
+    await withPanel(mk(),async(base,link)=>{
+      const token=await deviceOf({issueToken:()=>link},base),reading=fetch(`${base}/v1/home?d=${token}`)
+      await vi.waitFor(()=>expect(release).toBeTypeOf('function'))
+      const revoked=await fetch(`${base}/set/api/apply?d=${token}&_via=tunnel`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({op:'unpair_self'})});expect(revoked.status).toBe(200)
+      release({...await okPresence(),news:{unread:1,latest_kind:'thought',latest_title:'PRIVATE-DELAYED'}})
+      const result=await reading;expect(result.status).toBe(401);expect(await result.text()).not.toContain('PRIVATE-DELAYED')
     })
   })
   it('seen:写入、夹到 now、单调不后退、非法 400、没接 503', async () => {
@@ -706,11 +730,11 @@ describe('「一件事」手机路由(2026-09-16)', () => {
   it('lists, details and says — same data as the desktop, and every look marks the phone surface', async () => {
     panel = make(true)
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, d = await deviceOf(panel, base), t = panel.issueToken()
-    const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${t}`)).json() as { ok: boolean; matters: unknown[] }
+    const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${d}`)).json() as { ok: boolean; matters: unknown[] }
     expect(list).toEqual({ ok: true, matters: [MATTER] })
     expect(matters.list).toHaveBeenCalledWith({ legacy: ['open', 'replied'], limit: 200 })
     expect(matters.seenOnPhone).toHaveBeenCalledWith('deadbeef')
-    const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
+    const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${d}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
     expect(detail.ok).toBe(true); expect(detail.matter.id).toBe('deadbeef'); expect(detail.events).toHaveLength(1)
     // 链接令牌不能送话给执行者(审计 10-20)
     expect((await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: '再改一版' }) })).status).toBe(403)
@@ -725,7 +749,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     const term = { ...MATTER, id: 'cccc0001', kind: 'terminal', status: 'open' }, act = { ...MATTER, id: 'dddd0001', kind: 'act', status: 'open' }
     matters.list.mockReturnValue([MATTER, term, act] as never)
     panel = make(true)
-    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = await deviceOf(panel, base)
     const ids = async (q: string) => ((await (await fetch(`${base}/m/api/matters?${q}t=${t}`)).json()) as { matters: Array<{ id: string }> }).matters.map(m => m.id)
     expect(await ids('')).toEqual(['deadbeef'])
     expect(await ids('status=open,replied&')).toEqual(['deadbeef'])
@@ -741,7 +765,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
       stateDir, ownerChatId: () => OWNER, matters: { ...matters, withActs },
       chatPrefs: { get: () => ({}), set: (_c: string, patch: Record<string, unknown>) => patch }, getUserName: () => '大人', setUserName: async () => {}, log: () => {},
     } as never)
-    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = await deviceOf(panel, base)
     const get = async (q: string) => ((await (await fetch(`${base}/m/api/matters?${q}t=${t}`)).json()) as { matters: Array<{ id: string; act?: unknown }> }).matters
     expect(await get('kind=act&')).toEqual([{ ...act, act: { who: 'letters', latest } }])
     expect(matters.list).toHaveBeenLastCalledWith({ kind: 'act', legacy: ['open', 'replied', 'done'], limit: 200 })
@@ -750,8 +774,8 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect(withActs).toHaveBeenCalledTimes(1)
     await panel.stop()
     panel = make(true)
-    const p2 = await panel.start(0)
-    const plain = ((await (await fetch(`http://127.0.0.1:${p2.port}/m/api/matters?kind=act&t=${panel.issueToken()}`)).json()) as { matters: unknown[] }).matters
+    const p2 = await panel.start(0), d2 = await deviceOf(panel, `http://127.0.0.1:${p2.port}`)
+    const plain = ((await (await fetch(`http://127.0.0.1:${p2.port}/m/api/matters?kind=act&t=${d2}`)).json()) as { matters: unknown[] }).matters
     expect(plain).toEqual([act])
     matters.list.mockReset(); matters.list.mockImplementation(() => [MATTER])
   })
@@ -764,7 +788,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
       : id === 'aaaa0002' ? { matter: stopped, task: { id, status: 'interrupted', phase: 'interrupted' }, permissions: [], questions: [] }
       : { matter: chat, task: null }) as never)
     panel = make(true)
-    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = await deviceOf(panel, base)
     const r = await (await fetch(`${base}/m/api/matters?t=${t}`)).json() as { matters: Array<{ id: string; taskState?: unknown }> }
     expect(r.matters.map(m => [m.id, m.taskState])).toEqual([
       ['aaaa0001', { status: 'running', phase: 'working', pending: 2 }],
@@ -791,7 +815,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     const mine = chat('cccccccc', OWNER)
     matters.list.mockReturnValueOnce([...guests, mine, ...tasks] as never)
     panel = make(true)
-    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = await deviceOf(panel, base)
     const r = await (await fetch(`${base}/m/api/matters?t=${t}`)).json() as { matters: Array<{ id: string; kind: string }> }
     expect(r.matters).toHaveLength(50)
     expect(r.matters.some(m => m.id.startsWith('aa'))).toBe(false)
@@ -814,7 +838,8 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     panel = make(true)
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, d = await deviceOf(panel, base), t = panel.issueToken()
     const viaLink = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { events: Array<Record<string, unknown>> }
-    expect(viaLink.events[0]).toEqual({ kind: 'text', text: '好了', createdAt: 3 })
+    expect(viaLink.events).toEqual([])
+    expect(JSON.stringify(viaLink)).not.toContain('好了')
     expect(JSON.stringify(viaLink)).not.toContain('私密.pdf')
     const viaDevice = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${d}`)).json() as { events: Array<Record<string, unknown>> }
     expect(viaDevice.events[0]).toMatchObject({ messageId: 'm1', replyExtras: { attachments: [{ kind: 'file', name: '私密.pdf' }] } })

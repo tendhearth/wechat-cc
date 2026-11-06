@@ -44,6 +44,8 @@ daemon 在 `/m` 服务的 PWA。T5 设备入口直接进入唯一主人对话；
 
 ## 短链接后备页的事项详情
 
+后备范围在 daemon 处理器中收口：只列任务，通用事项接口不读主人聊天；详情只回状态、当前工具标签、等待项计数及停下所需 runId。历史输出、审批正文、回答选项、成果和路径不向 link 返回，hub 订阅仅允许已登记设备。
+
 短链接与旧 daemon 后备模式下，`workbench.js` 的详情只读 `GET /v1/matter`,画标题、执行者、一个状态词(照 [用词表](../../docs/reference/phone-wording.md))、正在跑的那一步、等你决定的项数、额度用完 / 已交出这类状态句;唯一能按的是「停止这一轮」(点一下要确认,再点才发一次 `POST /v1/matter/stop`,不换通道重发)。回归见 `src/features/phone/mobile-page-workbench.test.ts` 与真浏览器的 `src/daemon/__e2e__/mobile-workbench.e2e.test.ts`。
 
 ## 类型

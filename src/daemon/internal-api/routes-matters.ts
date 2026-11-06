@@ -2,7 +2,7 @@ import type { ListMatters, MatterKind, MatterSurface } from '../../ports/matters
 import { LEGACY_MATTER_STATUSES, type LegacyMatterStatus, type WireMatter } from '../../domain/matters/legacy-status'
 import type { MatterSayInput } from '../../app/matters/service'
 import {MATTER_KINDS} from '@wechat-cc/protocol'
-import {framedTooLargeFor,withoutOldNarrationFor,withoutReplyExtras} from '../../domain/matters/phone-scope'
+import {framedTooLargeFor,withoutOldNarrationFor,linkMatterSummary,linkMatterStatus} from '../../domain/matters/phone-scope'
 import type {InternalApiDeps,RouteHandler,RouteTable} from './types'
 
 /**
@@ -108,7 +108,8 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       let rows:WireMatter[]=service.list(filter)
       if(filtering){
         // 手机令牌:别人的聊天 matter(updated_at 会被微信入站推高)不给,也不挤掉任务
-        rows=rows.filter(m=>(!phone||service.phoneMayOpen(m))&&!drop.has(m.kind))
+        rows=rows.filter(m=>(!phone||service.phoneMayOpen(m))&&(caller?.origin!=='link'||m.kind==='task')&&!drop.has(m.kind))
+        if(caller?.origin==='link')rows=rows.map(linkMatterSummary)
         if(limit!==null)rows=rows.slice(0,Number(limit))
       }
       // 网络守护冻住的那几件(2026-10-03):手机显示「已暂停(网络未受保护)」。matter 与工作台任务同 id。
@@ -156,9 +157,9 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
         return {status:200,body:detail}
       }
       // 手机令牌:跟列表同一条规矩,别人的聊天按 id 也打不开,回得跟「没有这件」一样(不让人拿 id 试探)
-      if(!service.phoneMayOpen(detail.matter))return {status:404,body:{error:'matter_not_found'}}
+      if(!service.phoneMayOpen(detail.matter)||(caller?.origin==='link'&&detail.matter.kind!=='task'))return {status:404,body:{error:'matter_not_found'}}
       try{service.seenOnPhone(id)}catch{/* 只是露面登记 */}
-      const scoped=caller?.origin==='link'?withoutReplyExtras(detail):detail
+      const scoped=caller?.origin==='link'?linkMatterStatus(detail):detail
       if(caller?.frameBudget===undefined)return {status:200,body:scoped}
       const fitted=withoutOldNarrationFor(scoped,caller.frameBudget)
       return framedTooLargeFor(fitted,caller.frameBudget)?{status:413,body:{error:'detail_too_large'}}:{status:200,body:JSON.parse(fitted)}
