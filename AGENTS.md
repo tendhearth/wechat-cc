@@ -22,20 +22,24 @@ Tendhearth CC 是住在用户自己电脑上的个人 AI,日常称呼为 CC。da
 
 ## 标准回路
 
-开发者在自己的分支完成修改、验证和提交,交给整合者。测试只增不减:删掉/放松的测试在 PR 描述 `## 删掉/放松的测试` 写理由;修 bug 的 PR 描述带 `## 红/绿`(撤掉修复时测试红、带上时绿),CI 会查,见 `docs/maintainer/verify.md`。整合者在指定的集成工作区逐项合入 `dev`,对合并后的版本重新验证,再部署、推送。分工、冲突处理和运行环境隔离见[维护者手册](docs/maintainer/README.md#多-agent-协作)。
+开发者在自己的分支完成修改、验证和提交,交给整合者。测试只增不减:删掉/放松的测试在 PR 描述 `## 删掉/放松的测试` 写理由;修 bug 的 PR 描述带 `## 红/绿`(撤掉修复时测试红、带上时绿),CI 会查,见 `docs/maintainer/verify.md`。整合者在指定的集成工作区逐项合入 `dev`,先等 PR 三平台 CI 绿再合入,确认部署 tree 被 CI 覆盖后部署。分工、冲突处理和运行环境隔离见[维护者手册](docs/maintainer/README.md#多-agent-协作)。
 
 ```bash
 # 开发分支本地验证:只跑改动牵连到的(typecheck + depcheck + 牵连的测试 + 全部守卫 + 真实形状沙盒)
 # 全绿才记下这份内容;git push 时 pre-push 钩子查(装一次:git config core.hooksPath scripts/git-hooks)
 bun run verify
-# 整合者合入 dev 后、部署前:跟 CI 一样四条全跑(test / test:node / typecheck / depcheck)
-bun run verify --full
+# PR CI 三平台绿 = 合入门 = 部署门;落后 dev 先同步再等 CI
+# 部署 tree 已被 CI 覆盖,不再本机 verify --full;未覆盖才补(重型测试在 mini)
+wechat-cc ci land <PR>
+wechat-cc ci triage --wait --rerun --sha <合入提交>
 
 # 以下由整合者在已验证的 dev 版本上串行执行
 wechat-cc self ship                                            # 负载 → 网络守护 → 构建 → self deploy → 两条自检(红了回滚)
-wechat-cc self soak                                            # 过几个小时:部署稳不稳看信号(改开机/关机顺序的加 --min-restarts 1)
+# 部署后主动自检:selftest phone / chat / workbench + 新路由闭环
+# 4h soak 后台跑;只有改开机/关机/重启顺序才等它(--min-restarts 1)
+wechat-cc self soak
 
-git push origin dev && wechat-cc ci triage --wait --rerun      # 看 CI(0 绿 / 1 真红 / 2 没运行 / 3 flake)
+# dev push 的 tree 等于已绿 PR merge-ref tree ⇒ 轻量覆盖轮;否则完整 CI,master 不变
 
 # 自动自改也要纳入同一整合安排,不要与人工部署/推送同时运行
 wechat-cc self change "<需求>"                                  # 让 CC 自己走完上面整套(五道闸门 + 主人微信拍板)

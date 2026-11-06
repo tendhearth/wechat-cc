@@ -21,6 +21,13 @@ describe('judgeRollup', () => {
     // 不同工作流里同名的作业各算各的
     expect(judgeRollup([...five, { ...old, workflowName: 'Other' }, fresh], 5)).toEqual({ kind: 'red', failed: ['pr'] })
   })
+  it('close/reopen 的 cancelled 没有 startedAt,更新成功仍能覆盖;新失败不能被旧成功掩盖', () => {
+    const cancelled = { name: 'build · windows-latest', status: 'COMPLETED', conclusion: 'CANCELLED', detailsUrl: 'https://github.com/o/r/actions/runs/1' }
+    const success = { ...cancelled, conclusion: 'SUCCESS', startedAt: '2026-11-06T00:00:00Z', detailsUrl: 'https://github.com/o/r/actions/runs/2' }
+    expect(judgeRollup([cancelled, success], 1).kind).toBe('green')
+    expect(judgeRollup([success, cancelled], 1).kind).toBe('green')
+    expect(judgeRollup([success, { ...success, conclusion: 'FAILURE', startedAt: '2026-11-06T01:00:00Z' }], 1).kind).toBe('red')
+  })
   it('空 rollup 永远不是绿', () => {
     expect(judgeRollup([], 5)).toEqual({ kind: 'too_few', counted: 0 })
     expect(judgeRollup([], 0).kind).toBe('green')
@@ -71,6 +78,8 @@ function fakeDeps(script: {
   open: PrInfo[]
   views: Array<{ headRefOid: string; statusCheckRollup: unknown[] } | null>
   rebaseFailsFor?: string
+  moveWhileWaiting?: boolean
+  behind?: boolean
   devMovedBySomeoneElse?: boolean
   merged?: Array<{ number: number; headRefName: string; headRefOid: string }>
   /** 前几次 push / gh pr merge 回什么 stderr(网络抖)。 */
@@ -99,6 +108,7 @@ function fakeDeps(script: {
     if (line.startsWith('gh pr list') && args.includes('merged')) return r(JSON.stringify(script.merged ?? []))
     if (line.startsWith('gh pr list')) return r(JSON.stringify(script.open))
     if (line.startsWith('git merge-base --is-ancestor')) {
+      if (args[2] === 'd0') return r('', script.behind ? 1 : 0)
       if (args[2] === 'origin/dev') return r('', (script.onTarget ?? []).includes(head) ? 0 : 1)
       return r('', (script.ancestors ?? []).includes(args[2]!) ? 0 : 1)
     }
@@ -109,6 +119,7 @@ function fakeDeps(script: {
       return r(JSON.stringify({ state: mergedNow.has(n) ? 'MERGED' : 'OPEN' }))
     }
     if (line.startsWith('gh pr view')) {
+      if (script.moveWhileWaiting) dev = 'd1'
       const v = script.views[Math.min(viewIdx++, script.views.length - 1)]
       return v ? r(JSON.stringify(v)) : r('', 1)
     }
@@ -145,11 +156,34 @@ function fakeDeps(script: {
   return { deps, calls }
 }
 
-const green = (sha: string) => ({ headRefOid: sha, statusCheckRollup: [ok('a'), ok('b'), ok('c'), ok('d'), ok('e'), skip('f')] })
+const green = (sha: string) => ({ headRefOid: sha, statusCheckRollup: [ok('build · ubuntu-latest'), ok('build · macos-latest'), ok('build · windows-latest'), ok('d'), ok('e'), skip('f')] })
 
 describe('runCiLand', () => {
   const open = [pr(1, 'dev', 'a', 'sa'), pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')]
 
+  it('落后 dev 时要求先同步,不等旧 CI、不合入', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sc')], behind: true })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.precondition)
+    expect(res.message).toContain('先 rebase')
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+  it('等待期间 dev 前进,停止合入并要求新 CI', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sc')], moveWhileWaiting: true })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
+    expect(res.message).toContain('同步分支')
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+  it('旧两平台 CI 即使检查数够也不放行', async () => {
+    const old = green('sc')
+    old.statusCheckRollup = old.statusCheckRollup.filter(c => c.name !== 'build · windows-latest')
+    old.statusCheckRollup.push(ok('other'))
+    const { deps, calls } = fakeDeps({ open, views: [old] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.red)
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
   it('等最上面那个绿 ⇒ 从下往上:第一层直接合,上层 rebase --onto 下层旧 head、带租约推、改 base、合', async () => {
     const { deps, calls } = fakeDeps({ open, views: [{ headRefOid: 'sc', statusCheckRollup: [] }, green('sc')] })
     const res = await runCiLand(deps, { top: 3, skipTypecheck: true })

@@ -2,11 +2,7 @@ name: CI
 
 on:
   push:
-    # `dev` is included so the essential gate (typecheck + unit tests + build)
-    # runs on the integration branch too — it sat uncovered while 91 commits
-    # piled up, which is how type errors accumulated unnoticed. The heavy e2e
-    # jobs below stay master/PR-only to keep routine dev pushes fast.
-    #
+    # PR 三平台是唯一门;dev 仅在 tree 有成功 PR 回执时复用,否则照旧完整跑。master 不复用。
     # 没有 `self/**`(2026-10-23):自改流水线推 self/<id> 时开一个进 dev 的 PR,CI 认的是 PR 那一份
     # (下面 pull_request)。两处都列着,同一个提交会跑两遍,ci land 还得等推送那一遍也进 rollup。
     # 推送单跑是以前那道闸门的位置 —— 现在没有 PR 就没有 CI,所以自改开不了 PR 就停(ci_unavailable)。
@@ -31,6 +27,10 @@ jobs:
   # 靠自觉。有了这个输出,改了桌面的 dev 推送也跑 desktop-e2e,没改的照旧跳过 ——
   # 多付的那 3 分钟只落在真的动过桌面的那些推送上。
   changes:
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     name: changes · paths
     runs-on: ubuntu-latest
     outputs:
@@ -42,12 +42,28 @@ jobs:
       code: ${{ steps.stack.outputs.all || steps.code.outputs.code }}
     steps:
       - uses: actions/checkout@v4
+      - id: coverage
+        name: Check exact PR merge-tree coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-tree-coverage.mjs
+      - name: covered · PR run ${{ steps.coverage.outputs.run }}
+        if: steps.coverage.outputs.covered == 'true'
+        run: echo 'Tree already covered by successful three-platform PR CI'
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: ci-tree-${{ steps.coverage.outputs.tree }}
+          path: ci-tree.json
+          retention-days: 30
+          overwrite: true
       # 叠在别的分支上的 PR:paths-filter 只看得见这一层相对下层的改动,下层动过的桌面 / 代码它看不见。
       # 这一层的 CI 是整串的闸门,所以全当「都动过」,每个作业都跑。
       - id: stack
         if: github.event_name == 'pull_request' && github.base_ref != 'dev' && github.base_ref != 'master'
         run: echo "all=true" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@v3
+        if: steps.coverage.outputs.covered != 'true'
         id: filter
         with:
           filters: |
@@ -71,6 +87,7 @@ jobs:
       # 单独一步:`every` 是整个过滤器的量词,放进上面那份会把 relay 这种多条路径的过滤器变成「同时匹配」。
       # 没有测试读仓库里的 .md;以后有了,把那份文件从这里的排除里拿出来。
       - uses: dorny/paths-filter@v3
+        if: steps.coverage.outputs.covered != 'true'
         id: code
         with:
           predicate-quantifier: every
@@ -87,12 +104,8 @@ jobs:
       # Let every platform complete so we can see which ones break at a
       # glance instead of the first failure cancelling the rest.
       fail-fast: false
-      # 不进 master 的 PR 不跑 Windows(进 dev 的、叠在别的分支上的):它一次 18 分钟,是整次 CI 的长杆(其余都在 9 分钟内)。
-      # Windows 不是不跑 —— 推 dev、进 master 的 PR、自改的 PR(head 是 self/…)都照旧三平台,发版前必须绿。
-      # 自改例外:它没人盯着、合完就部署,Windows 才有的问题等推 dev 那次才看见就晚了。
-      # 代价:Windows 才有的问题合进 dev 后才看见(推 dev 那次 CI 会红),补一个修复。
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref != 'master' && !startsWith(github.head_ref, 'self/') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -229,8 +242,11 @@ jobs:
   # 测试只增不减 + 修 bug 要有红/绿(2026-10-27 主人定;规矩见 docs/maintainer/verify.md,判法见 scripts/test-shrink-lib.ts)。
   # 只对 PR:要读 PR 描述。比的是这个 PR 的合并提交和它跟 base 的 merge-base,所以要全量历史(同 migrations,别让 build 慢一截)。
   # 测试变少/变松 ⇒ 描述里 `## 删掉/放松的测试` 逐个文件写理由;分支 fix/… 或标题以「修」/fix 开头 ⇒ 描述里要有 `## 红/绿`。
-  # 标题和描述经 env 传,不在 run 里插值(不可信输入)。重跑这个作业用的还是触发那一刻的描述 —— 改完描述推一次或 close/reopen。
+  # 标题和描述经 env 传,不在 run 里插值(不可信输入)。重跑时通过 gh api 读最新描述,失败才退回事件。
   pr-rules:
+    permissions:
+      contents: read
+      pull-requests: read
     name: pr · 测试只增不减 + 红/绿
     needs: changes
     if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
@@ -246,6 +262,7 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
         run: bun scripts/test-shrink-check.ts
 
   relay:

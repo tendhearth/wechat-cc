@@ -1,5 +1,9 @@
 # 验证
 
+PR CI 三平台绿 = 合入门 = 部署门。`dev` 推送先比对 `git rev-parse HEAD^{tree}` 与已成功 PR CI 的 merge-ref tree 回执;完全相同才复用,轻量作业会写明 PR run URL。回执缺失/过期、API 不可用、旧版两平台运行、tree 不同(例如分支落后 dev)都走原有完整 CI;`master` 一律照旧全跑。纯 Markdown 的路径跳过规则保留。
+
+部署前不再本机 `verify --full`,除非部署的 tree 没被 CI 跑过;这时先补验证,重型测试放专用 Mac mini。部署后主动跑 `selftest phone`、`selftest chat`、`selftest workbench` 和本次新增路由的闭环。4h soak 后台跑,只有改开机/关机/重启顺序才等待它,并用 `--min-restarts 1`。
+
 改完 + 部署完,用 `wechat-cc selftest` 做真机闭环。它不发微信、不碰主人的聊天记忆、不改主人的默认 provider。
 
 推上去之后还有最后一步 —— **看 CI**,也是一条命令:
