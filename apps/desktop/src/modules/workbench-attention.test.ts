@@ -40,7 +40,7 @@ describe('global workbench attention polling', () => {
     expect(invoke).toHaveBeenCalledTimes(1)
     const [command, payload] = invoke.mock.calls[0] as unknown as [string, { title: string; body: string }]
     expect(command).toBe('notify_user')
-    expect(Object.keys(payload).sort()).toEqual(['body', 'title'])
+    expect(Object.keys(payload).sort()).toEqual(['body', 'matterId', 'title'])
     expect(payload.title + payload.body).not.toMatch(/private|secret|a-1|任务 A|任务 B/)
 
     await attention.refresh()
@@ -167,10 +167,10 @@ describe('global workbench attention polling', () => {
     progress = [{ id: 'A', phase: 'replied' }, { id: 'B', phase: 'cancelled' }, { id: 'C', phase: 'working' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
     expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '有一件事回复了', body: '打开 CC 查看。' })
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { matterId: 'A', title: '有一件事回复了', body: '打开 CC 查看。' })
     progress = [{ id: 'A', phase: 'replied' }, { id: 'C', phase: 'interrupted' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
-    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '有一件事停下了', body: '打开 CC 看看发生了什么。' })
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { matterId: 'C', title: '有一件事停下了', body: '打开 CC 看看发生了什么。' })
     // 窗口在前面:不弹
     progress = [{ id: 'D', phase: 'working' }]; await attention.refresh()
     focused = true; progress = [{ id: 'D', phase: 'replied' }]
@@ -180,7 +180,7 @@ describe('global workbench attention polling', () => {
     focused = false; progress = [{ id: 'E', phase: 'working' }, { id: 'F', phase: 'working' }]; await attention.refresh()
     progress = [{ id: 'E', phase: 'replied' }, { id: 'F', phase: 'replied' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
-    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '2 件事回复了', body: '打开 CC 查看。' })
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { matterId: 'E', title: '2 件事回复了', body: '打开 CC 查看。' })
     attention.destroy()
   })
 
@@ -196,7 +196,7 @@ describe('global workbench attention polling', () => {
     await poller.refresh()
     expect(onChange).toHaveBeenLastCalledWith({ tasks, stale: false, progress: new Map([['A', 'replied']]), moved: { replied: ['A'], stopped: [] } })
     expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke).toHaveBeenCalledWith('notify_user', { title: '有一件事等你决定', body: '有新的问题或权限请求。打开 CC 看看。' })
+    expect(invoke).toHaveBeenCalledWith('notify_user', { matterId: 'B', title: '有一件事等你决定', body: '有新的问题或权限请求。打开 CC 看看。' })
     expect(api).toHaveBeenCalledTimes(2)
     poller.destroy()
   })

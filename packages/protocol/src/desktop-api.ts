@@ -2420,7 +2420,7 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/memory/topics/open': TopicOpenRequest,
-  'POST /v1/matter/seen': z.object({ id: z.string().regex(/^[a-f0-9]{8}$/) }).strict(),
+  'POST /v1/matter/seen': z.object({ id: z.string().regex(/^[a-f0-9]{8}$/), surface: z.literal('desktop').optional() }).strict(),
   // atelier
   'POST /v1/atelier/share': AtelierShareRequest,
 

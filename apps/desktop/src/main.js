@@ -96,6 +96,7 @@ let conversationTopics=null
 const mainNavigation = createMainNavigation(destination => {
   if (typeof destination === 'string') { switchPane(destination); return }
   switchPane('workbench')
+  void v1(invokeWorkbenchApi, V1.matter.seen, { body: { id: destination.taskId, surface: 'desktop' } }).catch(err => console.warn('mark seen failed', err))
   void openWorkbenchTask(destination.taskId).catch(err => console.warn('open task failed', err))
 })
 

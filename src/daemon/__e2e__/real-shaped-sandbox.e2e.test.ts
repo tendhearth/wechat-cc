@@ -724,6 +724,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // S3c:详情已在屏幕上,完成后桌面显式确认;不靠再次读取详情。
     const foreground = await dispatch(3, '写第四份笔记')
     await expect.poll(() => row(foreground).map(r => r.channel), { timeout: 15_000 }).toEqual(['desktop'])
+    expect((await desktop('POST', '/v1/matter/seen', { id: foreground, surface: 'desktop' })).status).toBe(200)
     for (let i = 0; i < 2; i++) expect((await desktop('POST', '/v1/matter/seen', { id: foreground })).status).toBe(200)
     await expect.poll(() => d.log().some(l => l.includes('push not escalated — seen on desktop') && l.includes(foreground)), { timeout: 15_000 }).toBe(true)
     expect(pushesFor(foreground)).toEqual([])
