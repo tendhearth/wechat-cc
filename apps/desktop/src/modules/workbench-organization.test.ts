@@ -152,3 +152,14 @@ describe('workbench task organization', () => {
     expect(archived).not.toContain('data-action="restart"')
   })
 })
+
+it('conversation search filters project and status while retaining archive pagination and original task identity', () => {
+  const tasks=[task('wait',{path:'/work',status:'running',pendingPermissionCount:1}),task('done',{path:'/other'})]
+  const state={...list(tasks,'next'),selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null,listProject:'/work',listStatus:'waiting',projects:[{id:'p',name:'项目',path:'/work',providerId:'codex'}]}
+  const html=renderWorkbench(state)
+  expect(html).toContain('id="wb-filter-project"')
+  expect(html).toContain('id="wb-filter-status"')
+  expect(html).toContain('data-task-id="wait"')
+  expect(html).not.toContain('data-task-id="done"')
+  expect(html).toContain('data-action="load-more"')
+})

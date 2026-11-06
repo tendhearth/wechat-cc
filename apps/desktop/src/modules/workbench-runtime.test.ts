@@ -20,7 +20,8 @@ describe('network-guard suspension (2026-10-03)',()=>{
       detail:{task,runtime:task.runtime,runId:'epoch',inputMode:'send',events:[],artifacts:[]}})
     expect(html.match(/已暂停\(网络未受保护\)/g)?.length).toBeGreaterThanOrEqual(2)
     expect(html).toContain('data-status="paused"')
-    expect(html).not.toContain('>在做<')
+    // Search filter labels are choices, not the frozen task's current state.
+    expect(html.replace(/<select[\s\S]*?<\/select>/g,'')).not.toContain('>在做<')
   })
 })
 

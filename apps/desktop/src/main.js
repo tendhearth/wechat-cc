@@ -40,6 +40,8 @@ import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-pa
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage, addConversationMatter, locateConversationMessage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { mountConversationTools } from './modules/conversation-tools.js'
+import { mountHistoryDialog } from './modules/workbench-history.js'
 import { mountConversationTopics } from './modules/conversation-topics.js'
 import { updateConversationMatters } from './modules/conversation-matters.js'
 import { mountNowPage } from "./modules/now-page.js"
@@ -294,12 +296,18 @@ const openAcceptedEntry = async (/** @type {import('./modules/task-entry.js').En
   addConversationMatter(result.receipt.taskId, result.task.title, false)
   updateConversationMatters([result.task])
 }
-const taskEntry = createTaskEntry({invokeWorkbenchApi, onAccepted: openAcceptedEntry})
+function openConversationProjects(){
+  switchPane('workbench')
+  document.querySelector('[data-action="add-project"]')?.dispatchEvent(new MouseEvent('click',{bubbles:true}))
+  const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane'));if(layer)layer.dataset.workbenchView='projects'
+}
+const taskEntry = createTaskEntry({invokeWorkbenchApi, onAccepted: openAcceptedEntry,onManageProjects:openConversationProjects})
 
 const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
+  onMatterViewed: (/** @type {import('./modules/workbench.js').Task} */ task) => { addConversationMatter(task.id,task.title); updateConversationMatters([task]) },
   onOpenMatter: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
@@ -717,10 +725,11 @@ function switchPane(name) {
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
-    htmlEl.hidden = htmlEl.dataset.pane !== name
+    htmlEl.hidden = htmlEl.dataset.pane !== name && !(name === 'workbench' && htmlEl.dataset.pane === 'overview')
+    if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench' 
   })
   // The destination must be visible before navigation transfers keyboard focus.
-  workbenchNavigation?.setWorkbenchActive(name === "workbench")
+  workbenchNavigation?.setWorkbenchActive(false)
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
   // pane switch so we don't burn CPU tailing log files no one is reading.
   if (name === "logs") {
@@ -752,6 +761,8 @@ function switchPane(name) {
     initTodosPage(deps)
   }
   if (name === "workbench") {
+    const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane'))
+    if(layer) layer.dataset.workbenchView='detail'
     initWorkbenchPage(deps)
   } else {
     stopWorkbenchPolling()
@@ -1665,6 +1676,15 @@ async function boot() {
   initConversePage(deps, { focus: false })
   const conversationRoot=document.getElementById('converse-root')
   if(conversationRoot){
+    const search=()=>{ switchPane('workbench'); const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane')); if(layer)layer.dataset.workbenchView='search'; document.getElementById('wb-search')?.focus() }
+    mountConversationTools({root:conversationRoot,
+      delegate:()=>taskEntry.open({text:/** @type {HTMLTextAreaElement|null} */(document.getElementById('converse-input'))?.value??''}),
+      search,
+      projects:openConversationProjects,
+      history:async()=>{const list=/** @type {import('./modules/workbench.js').ListResult} */(await v1(invokeWorkbenchApi,V1.workbench.list));mountHistoryDialog(invokeWorkbenchApi,list.historyProviders??[],async id=>{switchPane('workbench');await openWorkbenchTask(id)},list.agentNames??{})},
+      navigate:switchPane})
+    const waiting=document.getElementById('now-waiting')
+    if(waiting)conversationRoot.querySelector('.converse-compose')?.before(waiting)
     const topics=mountConversationTopics({root:conversationRoot,call:invokeWorkbenchApi,
       openMatter:async id=>{switchPane('workbench');await openWorkbenchTask(id)},
       locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),

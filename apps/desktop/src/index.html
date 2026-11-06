@@ -423,7 +423,7 @@
               <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
             </div>
             </details>
-            <button id="now-back" class="now-back" type="button" hidden>‹ 此刻</button>
+            <button id="now-back" class="now-back" type="button" hidden>‹ 返回对话</button>
             <section class="now-hero">
               <h1 id="now-greeting" class="now-greeting">晚上好</h1>
               <div class="now-cc-col">
@@ -435,10 +435,10 @@
               </div>
             </section>
             <div id="converse-root" class="converse-page"></div>
-            <section id="now-waiting" class="now-waiting" aria-labelledby="now-waiting-title" hidden>
-              <h2 id="now-waiting-title"></h2>
+            <details id="now-waiting" class="now-waiting" aria-labelledby="now-waiting-title" hidden>
+              <summary id="now-waiting-title"></summary>
               <ul id="now-waiting-list"></ul>
-            </section>
+            </details>
             <section id="now-group-working" class="now-group" aria-labelledby="now-group-working-title" hidden>
               <h2 id="now-group-working-title">在做</h2>
               <ul id="now-group-working-list"></ul>
@@ -682,7 +682,7 @@
 
           <!-- ── pane: workbench ───────────────────────────────────── -->
           <article class="dash-pane workbench-pane" data-pane="workbench" hidden>
-            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-home" class="workbench-home" type="button" data-life-pane="overview">‹ 此刻</button><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开导航" title="打开导航" aria-controls="dash-global-rail" aria-expanded="false"><span class="dash-wordmark">tendhearth</span></button></span></header>
+            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-home" class="workbench-home" type="button" data-life-pane="overview">‹ 返回对话</button><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开导航" title="打开导航" aria-controls="dash-global-rail" aria-expanded="false"><span class="dash-wordmark">tendhearth</span></button></span></header>
             <div id="workbench-root" class="workbench-root"><p class="empty-state">正在打开工作台…</p></div>
           </article>
 

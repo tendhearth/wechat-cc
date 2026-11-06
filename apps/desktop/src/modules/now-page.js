@@ -168,7 +168,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     const heading = $('now-waiting-title')
     heading.textContent = head.title
     // 普通计数仍可按标题导航;读不到时必须把不确定性留在眼前。
-    heading.classList.toggle('now-sr', !attention?.stale)
+    heading.classList.toggle('now-sr', root.dataset.conversation !== 'single' && !attention?.stale)
     list.replaceChildren(...rows.map(r => {
       const li = document.createElement('li')
       const btn = document.createElement('button')
