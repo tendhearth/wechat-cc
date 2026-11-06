@@ -6,6 +6,27 @@ import { join, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import { APP_FLOWS, appFlow } from './macmini-ui-protocol.mjs'
 
+// Maestro 2.12 chooses a free port before waiting for a manually managed runner.
+// Starting the runner first either selects a different port or fails its free-port check.
+export async function waitForMaestroPort(directory, udid, signal) {
+  const deadline = Date.now() + 60000
+  while (!signal.aborted && Date.now() < deadline) {
+    let entries = []
+    try { entries = await readdir(directory, { recursive: true }) } catch (error) { if (error.code !== 'ENOENT') throw error }
+    for (const entry of entries.filter(name => name.endsWith('maestro.log'))) {
+      const content = await readFile(join(directory, entry), 'utf8')
+      const match = content.match(/Selected device ([\w-]+) using port (\d+) with execution plan/)
+      if (match) {
+        const port = Number(match[2])
+        if (match[1] !== udid || port < 1024 || port > 65535) throw Error('Unexpected Maestro runner endpoint')
+        return port
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  throw Error('Maestro did not select a runner port before startup ended')
+}
+
 export async function appStatus({ config, insideLab, labHome, bun }) {
   const probe = (file, args, env = {}) => {
     try { return execFileSync(file, args, { encoding: 'utf8', timeout: 20000, env: { PATH: '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', MAESTRO_CLI_NO_ANALYTICS: 'true', MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true', ...env } }).trim() }
@@ -29,7 +50,7 @@ export async function appStatus({ config, insideLab, labHome, bun }) {
     note: 'Requires app-tools/{maestro,java,gems}, prepared Expo dependencies and Pods. Status never boots a simulator.' }
 }
 
-export async function runApp({ request, config, insideLab, labHome, run, command, environment, bun = '/usr/bin/bun' }) {
+export async function runApp({ request, config, insideLab, labHome, run, command, environment, bun = '/usr/bin/bun', waitForDriverPort = waitForMaestroPort }) {
   if (!config.appRoot) throw Error('APP_BLOCKED: integrator must place an App snapshot and set active.json appRoot')
   const root = await insideLab(config.appRoot)
   const project = await insideLab(join(root, 'project'))
@@ -153,15 +174,23 @@ process.exit(result.status ?? 1);
     await execute('maestro-runner-extract', '/usr/bin/unzip', ['-qo', join(products, 'maestro-driver-iosUITests-Runner.zip'), '-d', products])
     const runner = await insideLab(join(products, 'maestro-driver-iosUITests-Runner.app'))
     await execute('maestro-runner-install', '/usr/bin/xcrun', [...sim, 'install', udid, runner])
-    await execute('maestro-runner-launch', '/usr/bin/xcrun', [...sim, 'launch', '--terminate-running-process', udid, 'dev.mobile.maestro-driver-iosUITests.xctrunner'], {
-      extraEnv: { ...extraEnv, SIMCTL_CHILD_PORT: '22087' },
-    })
     extraEnv.USE_XCODE_TEST_RUNNER = '1'
 
     for (const name of flows) {
       try {
-        await execute(`maestro-${name}`, join(tools, 'maestro/bin/maestro'), ['--device', udid, 'test',
-          '--test-output-dir', join(run, name), '--debug-output', join(run, name, 'debug'), `.maestro/${name}.yaml`])
+        const controller = new AbortController()
+        const debug = join(run, name, 'debug')
+        const maestro = execute(`maestro-${name}`, join(tools, 'maestro/bin/maestro'), ['--device', udid, 'test',
+          '--test-output-dir', join(run, name), '--debug-output', debug, `.maestro/${name}.yaml`])
+          .finally(() => controller.abort())
+        const runner = waitForDriverPort(debug, udid, controller.signal).then(port =>
+          execute(`maestro-runner-launch-${name}`, '/usr/bin/xcrun', [...sim, 'launch', '--terminate-running-process', udid, 'dev.mobile.maestro-driver-iosUITests.xctrunner'], {
+            extraEnv: { ...extraEnv, SIMCTL_CHILD_PORT: String(port) },
+          }))
+        // Never shut down the device while either child is still using it.
+        const settled = await Promise.allSettled([maestro, runner])
+        const failed = settled.find(result => result.status === 'rejected')
+        if (failed) throw failed.reason
         results.push({ flow: name, ok: true })
       } catch (error) { results.push({ flow: name, ok: false, error: error.message }) }
     }

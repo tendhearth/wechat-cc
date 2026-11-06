@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }))
 import { execFileSync } from 'node:child_process'
-import { runApp } from './macmini-ui-app.mjs'
+import { runApp, waitForMaestroPort } from './macmini-ui-app.mjs'
 
 let lab, root, context, calls
 beforeEach(async () => {
@@ -35,9 +35,27 @@ beforeEach(async () => {
   })
   calls = []
   context = { request: { command: 'app-maestro', flow: 'all' }, config: { appRoot: root }, labHome: lab, run: join(root, 'artifacts'),
+    waitForDriverPort: async () => 54321,
     environment: { PATH: '/usr/bin:/bin', DEVELOPER_DIR: '/Applications/Xcode.app/Contents/Developer' },
     insideLab: async path => { const resolved = await realpath(path); if (!resolved.startsWith(lab + '/')) throw Error('outside lab'); return resolved },
     command: async (label, file, args, options) => { calls.push({ label, file, args, options }); if (label === 'maestro-push-open') throw Error('fixture failure'); return { exitCode: 0 } } }
+})
+
+test('manual runner uses the port selected by Maestro for the owned device', async () => {
+  await expect(runApp(context)).rejects.toThrow('Maestro failed')
+  const launches = calls.filter(call => call.label.startsWith('maestro-runner-launch-'))
+  expect(launches).toHaveLength(3)
+  for (const call of launches) {
+    expect(call.options.extraEnv.SIMCTL_CHILD_PORT).toBe('54321')
+    expect(call.args).toContain('lab-udid')
+  }
+  const debug = join(root, 'debug')
+  await mkdir(debug)
+  await writeFile(join(debug, 'maestro.log'), 'Selected device lab-udid using port 54321 with execution plan fixture')
+  await expect(waitForMaestroPort(debug, 'lab-udid', new AbortController().signal)).resolves.toBe(54321)
+  await expect(waitForMaestroPort(debug, 'other-device', new AbortController().signal)).rejects.toThrow('Unexpected Maestro')
+  await writeFile(join(debug, 'maestro.log'), 'Selected device lab-udid using port 99999 with execution plan fixture')
+  await expect(waitForMaestroPort(debug, 'lab-udid', new AbortController().signal)).rejects.toThrow('Unexpected Maestro')
 })
 afterEach(async () => { await rm(lab, { recursive: true, force: true }); vi.clearAllMocks() })
 
