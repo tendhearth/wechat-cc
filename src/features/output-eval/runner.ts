@@ -1,3 +1,4 @@
+import { turnJudge, TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
 /**
  * 输出评测在 daemon 里跑的那一下(设计稿 docs/design/2026-10-29-output-eval.md「怎么做到用的是生产那一套」)。
  *
@@ -46,6 +47,7 @@ export const EVAL_PROJECT_PATH = join(tmpdir(), 'wechat-cc-eval', 'project')
 export interface EvalRunnerDeps {
   registry: Pick<ProviderRegistry, 'get' | 'getCheapEval' | 'getCheapEvalBudgetMs'>
   /** 样本没点名执行者时用谁(daemon 的缺省执行者)。 */
+  turnJudgeProvider?: () => string | undefined
   defaultProviderId: () => ProviderId
   /** 生产的系统提示词组装点(bootstrap 的 buildInstructions)。 */
   buildInstructions: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
@@ -244,12 +246,12 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
 
     async reference(i: ReferenceInput): Promise<EvalReferenceResult> {
       const startedAt = now()
-      const cheap = deps.registry.getCheapEval()
+      const cheap = turnJudge(deps.registry, deps.turnJudgeProvider?.(), deps.log)
       const r = await resolveTaskReference({
         text: i.text, candidates: i.candidates, nowMs: i.nowMs ?? now(),
         ...(i.quotedText !== undefined ? { quotedText: i.quotedText } : {}),
         ...(i.focus !== undefined ? { focus: i.focus } : {}),
-        ...(cheap ? { judge: makeCheapJudge(cheap), judgeTimeoutMs: deps.registry.getCheapEvalBudgetMs() } : {}),
+        ...(cheap ? { judge: makeCheapJudge(cheap), judgeTimeoutMs: TURN_JUDGE_TIMEOUT_MS } : {}),
       })
       const resolution = r.kind === 'ambiguous' ? { kind: r.kind, options: r.options.map(o => o.id) } : r
       return { ok: true, kind: 'reference', resolution, durationMs: now() - startedAt }
@@ -262,7 +264,7 @@ export function makeEvalRunner(deps: EvalRunnerDeps) {
         const hits = searchTopics(i.text, i.topics)
         return { ok: true, kind: 'topic', recall: hits.length ? { topicIds: hits.map(h => h.id), entryIds: hits.flatMap(h => h.entries.map(e => e.id)), via: 'search' } : null, durationMs: now() - startedAt }
       }
-      const r = await resolveTopicRecall(i.text, i.topics, { cheapEval: deps.registry.getCheapEval(), log: deps.log })
+      const r = await resolveTopicRecall(i.text, i.topics, { cheapEval: turnJudge(deps.registry, deps.turnJudgeProvider?.(), deps.log), log: deps.log })
       return { ok: true, kind: 'topic', recall: r ? { topicIds: r.topicIds, entryIds: r.entryIds, via: r.via } : null, durationMs: now() - startedAt }
     },
 

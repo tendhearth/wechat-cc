@@ -12,7 +12,7 @@ afterEach(() => { rmSync(evalDir, { recursive: true, force: true }) })
 
 const sample = (id: string, body: Record<string, unknown>) => writeFileSync(join(evalDir, 'samples', `${id}.json`), JSON.stringify({ id, ...body }))
 
-type Handler = (path: string, body: any) => { status: number; json: unknown }
+type Handler = (path: string, body: any) => { status: number; json: unknown } | Promise<{ status: number; json: unknown }>
 function deps(handler: Handler, o: { health?: number; info?: boolean; t0?: number } = {}): EvalCliDeps & { calls: Array<{ path: string; body: any; auth: string }> } {
   const calls: Array<{ path: string; body: any; auth: string }> = []
   let t = o.t0 ?? Date.parse('2026-10-29T04:00:00.000Z')
@@ -26,7 +26,7 @@ function deps(handler: Handler, o: { health?: number; info?: boolean; t0?: numbe
       if (path === '/v1/health') return new Response('{}', { status: o.health ?? 200 })
       const body = init?.body ? JSON.parse(String(init.body)) : undefined
       calls.push({ path, body, auth })
-      const r = handler(path, body)
+      const r = await handler(path, body)
       return new Response(JSON.stringify(r.json), { status: r.status })
     }) as typeof fetch,
     now: () => (t += 1000),
@@ -97,7 +97,7 @@ describe('runEval', () => {
       ['a', 'error', 'turn timed out (turn_timeout)'],
       ['b', 'error', 'http_404 eval_unknown_provider'],
       ['c', 'error', expect.stringContaining('样本文件读不了')],
-      ['d', 'error', '样本写错了:kind 只能是 reply / brief / reference / topic'],
+      ['d', 'error', '样本写错了:kind 只能是 reply / brief / reference / topic / topic-recall'],
     ])
     expect(d.calls).toHaveLength(2)
   })
@@ -158,7 +158,7 @@ describe('formatRunSummary:裁判没跑成', () => {
 })
 
 describe('仓库里的示例样本(eval/output/examples/)', () => {
-  it('每一份都读得通,id 和文件名一致,四类都有', () => {
+  it('每一份都读得通,id 和文件名一致,五类都有', () => {
     const dir = join(__dirname, '..', '..', 'eval', 'output', 'examples')
     const files = readdirSync(dir).filter(f => f.endsWith('.json'))
     const kinds = files.map(f => {
@@ -167,6 +167,22 @@ describe('仓库里的示例样本(eval/output/examples/)', () => {
       expect(p, f).toMatchObject({ ok: true, sample: { id } })
       return p.ok ? p.sample.kind : null
     })
-    expect([...new Set(kinds)].sort()).toEqual(['brief', 'reference', 'reply', 'topic'])
+    expect([...new Set(kinds)].sort()).toEqual(['brief', 'reference', 'reply', 'topic', 'topic-recall'])
   })
+})
+
+
+it('topic-recall 四份样本走 CLI → 真路由 → 生产召回，三种说法同条目与闲聊均通过',async()=>{
+  const {makeEvalRunner}=await import('../features/output-eval/runner')
+  const {outputEvalRoutes}=await import('../features/output-eval/routes')
+  const runner=makeEvalRunner({registry:{get:()=>null,getCheapEval:()=>null,getCheapEvalBudgetMs:()=>2500},defaultProviderId:()=>'claude',turnJudgeProvider:()=>'index',buildInstructions:()=>'',mintSessionToken:()=>{throw Error('topic must not spawn')},invalidateSession:()=>{},log:()=>{}})
+  const routes=outputEvalRoutes(runner)
+  const dir=join(__dirname,'..','..','eval','output','examples')
+  for(const file of readdirSync(dir).filter(f=>f.startsWith('topic-recall-'))){const raw=JSON.parse(readFileSync(join(dir,file),'utf8'));sample(raw.id,raw)}
+  const d=deps(async(_path,body)=>{const response=await routes['POST /v1/eval/run']!(new URLSearchParams(),body,undefined as never);return {status:response.status,json:response.body}})
+  const result=await runEval(d,{providerId:'agy'})
+  expect(result.report.results).toHaveLength(4)
+  expect(result.report.results.map(r=>r.status)).toEqual(['pass','pass','pass','pass'])
+  expect(d.calls).toHaveLength(4)
+  expect(d.calls.every(c=>c.body.kind==='topic-recall'&&c.body.providerId===undefined)).toBe(true)
 })

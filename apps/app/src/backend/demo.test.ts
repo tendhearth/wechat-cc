@@ -573,3 +573,20 @@ it('demo topics preserve readonly reads, publish owner opens, and deduplicate th
   expect(snapshots).toHaveLength(2)
   backend.dispose()
 })
+
+it('demo topic corrections persist across detail/list reads and reset',async()=>{
+  const backend=makeDemoBackend()
+  try{
+    await backend.topicEdit('rename',{id:'demo-backup',title:'家中备份'})
+    expect((await backend.topicDetail({id:'demo-backup'})).topic.title).toBe('家中备份')
+    await backend.topicEdit('wrong',{id:'demo-entry'})
+    expect((await backend.topicDetail({id:'demo-backup'})).entries[0]?.status).toBe('superseded')
+    await backend.topicEdit('merge',{id:'demo-backup',into:'demo-trip'})
+    expect((await backend.topics({view:'all'})).topics.some(t=>t.id==='demo-backup')).toBe(false)
+    expect((await backend.topicDetail({id:'demo-backup'})).topic.mergedInto).toBe('demo-trip')
+    await backend.topicEdit('delete',{id:'demo-trip'})
+    await expect(backend.topicDetail({id:'demo-trip'})).rejects.toThrow()
+    backend.reset()
+    expect((await backend.topicDetail({id:'demo-backup'})).entries[0]?.status).toBe('live')
+  }finally{backend.dispose()}
+})

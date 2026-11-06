@@ -134,3 +134,42 @@ test('overlapping historical anchors retain the forward gap until they join the 
   await page.locator('#converse-later').click();await expect.poll(()=>forward).toEqual(['old2'])
   await expect(page.locator('#converse-later')).toBeHidden()
 })
+
+test('T6: owner manages topics and marks a recalled entry wrong inside the existing bubble',async({page,shimUrl})=>{
+  const writes:Array<{action:string;body:unknown}>=[]
+  let title='服务器',wrong=false
+  await page.route('**/v1/memory/topics/detail?*',route=>route.fulfill({json:{topic:{...topic('backup'),title},entries:wrong?[]:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[],messages:[],pages:{entries:{total:wrong?0:1,nextCursor:null},matters:{total:0,nextCursor:null},messages:{total:0,nextCursor:null}},revision:wrong?'3':'2'}}))
+  await page.route(/\/v1\/memory\/topics\/(rename|merge|delete|entry\/wrong)$/,async route=>{
+    const action=new URL(route.request().url()).pathname.split('/topics/')[1]!,body=route.request().postDataJSON()
+    writes.push({action,body})
+    if(action==='rename')title=body.title
+    if(action==='entry/wrong')wrong=true
+    await route.fulfill({json:{ok:true}})
+  })
+  await page.goto(shimUrl)
+  const panel=page.locator('.conversation-topic-panel')
+  const open=async()=>{await page.locator('.conversation-topics').getByRole('button',{name:'服务器',exact:true}).click();await expect(panel).toBeVisible()}
+  await open()
+  await panel.locator('details[data-entry-id="e1"] summary').click()
+  await panel.getByRole('button',{name:'这条不对',exact:true}).click()
+  await expect.poll(()=>writes.at(-1)).toEqual({action:'entry/wrong',body:{id:'e1'}})
+  await expect(panel.locator('[data-entry-id="e1"]')).toHaveCount(0)
+  await panel.getByText('管理话题',{exact:true}).click()
+  await panel.getByRole('textbox',{name:'话题名称'}).fill('家中备份')
+  await panel.getByRole('button',{name:'改名',exact:true}).click()
+  await expect.poll(()=>writes.at(-1)).toEqual({action:'rename',body:{id:'backup',title:'家中备份'}})
+  await expect(panel.getByRole('heading',{level:2})).toHaveText('家中备份')
+  await panel.getByText('管理话题',{exact:true}).click()
+  await panel.getByRole('combobox',{name:'并到哪个话题'}).selectOption('travel')
+  await panel.getByRole('button',{name:'并到…',exact:true}).click()
+  await expect.poll(()=>writes.at(-1)).toEqual({action:'merge',body:{id:'backup',into:'travel'}})
+  await expect(panel).toBeHidden()
+  await open()
+  await panel.getByText('管理话题',{exact:true}).click()
+  await panel.getByText('删话题',{exact:true}).click()
+  await expect(panel.getByText('删除这个话题和记下的内容？',{exact:true})).toBeVisible()
+  await panel.getByRole('button',{name:'确认删除',exact:true}).click()
+  await expect.poll(()=>writes.at(-1)).toEqual({action:'delete',body:{id:'backup'}})
+  await expect(panel).toBeHidden()
+  await expect(page.locator('#converse-input')).toBeVisible()
+})

@@ -19,7 +19,16 @@ export const TopicBubbleMessage = z.object({ id: z.string(), ts: z.string(), spe
 export const TopicsListResponse = z.object({ topics: z.array(TopicSummary), nextCursor: z.string().nullable(), revision: z.string() })
 export const TopicDetailResponse = z.object({ topic: TopicSummary, entries: z.array(TopicBubbleEntry), matters: z.array(TopicBubbleMatter), messages: z.array(TopicBubbleMessage), pages: z.object({ entries: Page, matters: Page, messages: Page }), revision: z.string() })
 export const TopicOpenResponse = z.object({ id: Id, bubbleState: z.enum(['open', 'closed']), revision: z.string() })
+export const TopicRenameRequest = z.object({id:Id,title:z.string().trim().min(1).max(120)}).strict()
+export const TopicMergeRequest = z.object({id:Id,into:Id}).strict()
+export const TopicDeleteRequest = z.object({id:Id}).strict()
+export const TopicWrongRequest = TopicDeleteRequest
+export const TopicEditResponse = z.object({ ok: z.literal(true), message: z.string().optional() })
 export const TOPIC_BUBBLE_RESPONSES = {
+  'POST /v1/memory/topics/rename': TopicEditResponse,
+  'POST /v1/memory/topics/merge': TopicEditResponse,
+  'POST /v1/memory/topics/delete': TopicEditResponse,
+  'POST /v1/memory/topics/entry/wrong': TopicEditResponse,
   'GET /v1/memory/topics': TopicsListResponse,
   'GET /v1/memory/topics/detail': TopicDetailResponse,
   'POST /v1/memory/topics/open': TopicOpenResponse,

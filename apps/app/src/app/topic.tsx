@@ -3,7 +3,7 @@ import { BusyIndicator } from '../ui/motion'
 import { t } from '../i18n'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScrollView, View } from 'react-native'
+import { ScrollView, View, TextInput } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { TopicDetailT } from '../backend/types'
 import { useBackendCtx } from '../state/BackendProvider'
@@ -38,8 +38,19 @@ export function TopicBubble() {
   const folded = useRef(false)
   const [opened, setOpened] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false), [name, setName] = useState(''), [targets, setTargets] = useState<Array<{id:string;title:string}>>([]), [deleting, setDeleting] = useState(false)
+  const edit = async (action: 'rename'|'merge'|'delete'|'wrong', input: {id:string;title?:string;into?:string}) => {
+    if (!enabled || lock.current) return
+    const gen=generation.current
+    lock.current=true;setBusy(true)
+    try { await backend.topicEdit(action,input);if(gen!==generation.current)return;if(action==='delete'||action==='merge')back();else { await query.refresh();setNote(zh?'记下了。':'Updated.') } }
+    catch { setNote(zh?'结果待核对，请刷新查看。':'Check the result by refreshing.') }
+    finally {lock.current=false;setBusy(false)}
+  }
+  const loadTargets = async () => { const gen=generation.current;const result:Array<{id:string;title:string}>=[];let cursor:string|undefined;do{const page=await backend.topics({view:'all',limit:50,cursor});result.push(...page.topics.filter(t=>t.id!==id));cursor=page.nextCursor??undefined}while(cursor);if(gen===generation.current&&dataBackend.current===backend)setTargets(result) }
   const [busy, setBusy] = useState(false)
   const generation = useRef(0), lock = useRef(false)
+  useEffect(()=>{setEditing(false);setTargets([]);setDeleting(false);setName('')},[backend,id])
   const request = useRef({ id, requestId: uuid() })
   useEffect(() => { generation.current++; dataBackend.current = backend; setData(query.error === 'not_found' ? undefined : query.data) }, [backend, query.data, query.error])
   useEffect(() => {
@@ -91,13 +102,22 @@ export function TopicBubble() {
       {!enabled || query.error || note ? <Txt testID="topic-note" role="meta" tone="inkSoft">{query.error === 'not_found' ? (zh ? '这个话题已不可用' : 'This topic is unavailable') : note ?? (zh ? '尚未同步' : 'Not synced')}</Txt> : null}
       {query.error ? <Button testID="topic-retry" kind="secondary" label={zh ? '暂时读不到，重试' : 'Cannot read right now. Retry'} onPress={() => void query.refresh()} /> : null}
       {data && conn.topics === 'v1' ? <>
+        <Button kind="secondary" label={zh?'管理话题':'Manage topic'} disabled={!enabled||busy} onPress={() => {setEditing(!editing);setName(data.topic.title);void loadTargets().catch(()=>setNote(zh?'暂时读不到，重试':'Cannot read right now'))}} />
+        {editing ? <View style={{gap:space.m}}>
+          <TextInput accessibilityLabel={zh?'话题名称':'Topic name'} value={name} onChangeText={setName} maxLength={120} style={{color:c.ink}} />
+          <Button kind="secondary" label={zh?'改名':'Rename'} disabled={!enabled||busy||!name.trim()} onPress={()=>void edit('rename',{id,title:name.trim()})} />
+          <Txt>{zh?'并到…':'Merge into…'}</Txt>
+          {targets.map(t=><Button key={t.id} kind="secondary" label={t.title} disabled={!enabled||busy} onPress={()=>void edit('merge',{id,into:t.id})} />)}
+          <Button kind="secondary" label={zh?'删话题':'Delete topic'} onPress={()=>setDeleting(!deleting)} />
+          {deleting?<><Txt>{zh?'删除这个话题和记下的内容？':'Delete this topic and its memories?'}</Txt><Button kind="secondary" label={zh?'确认删除':'Confirm deletion'} disabled={!enabled||busy} onPress={()=>void edit('delete',{id})} /></>:null}
+        </View>:null}
         {data.topic.description ? <Txt content="user">{data.topic.description}</Txt> : null}
         {data.topic.summary ? <Txt content="user">{data.topic.summary}</Txt> : null}
         {data.matters.length ? <View><Txt accessibilityRole="header">{zh ? '相关事项' : 'Related work'}</Txt>
           {data.matters.map(m => <LinkRow key={m.id} testID={`topic-matter-${m.id}`} label={m.title} detail={topicStatus(m.state) ? t(lang, `status.${topicStatus(m.state)!}`) : (zh ? '尚未同步' : 'Not synced')} onPress={() => { rememberReference(backend, m.id); router.push(`/matter/${encodeURIComponent(m.id)}`) }} />)}
         </View> : null}
         {data.entries.length ? <View><Txt accessibilityRole="header">{zh ? 'CC 记得' : 'CC remembers'}</Txt>
-          {data.entries.map(e => <Sheet key={e.id} testID={`topic-entry-${e.id}`} title={`${e.line}${e.recalled ? (zh ? ' · 这次想起' : ' · Recalled this time') : ''}`}><Txt content="user">{e.body}</Txt><Txt role="caption" tone="inkSoft">{e.source} · {e.createdTs}</Txt></Sheet>)}
+          {data.entries.map(e => <Sheet key={e.id} testID={`topic-entry-${e.id}`} title={`${e.line}${e.status==='superseded'?(zh?' · 不再采用':' · No longer used'):''}${e.recalled ? (zh ? ' · 这次想起' : ' · Recalled this time') : ''}`}><Txt content="user">{e.body}</Txt><Txt role="caption" tone="inkSoft">{e.source} · {e.createdTs}</Txt>{e.status==='live'?<Button kind="secondary" label={zh?'这条不对':'This is wrong'} disabled={!enabled||busy} onPress={()=>void edit('wrong',{id:e.id})} />:null}</Sheet>)}
         </View> : null}
         {data.messages.length ? <View><Txt accessibilityRole="header">{zh ? '最近聊到' : 'Recently discussed'}</Txt>
           {data.messages.map(m => <LinkRow key={m.id} testID={`topic-message-${m.id}`} label={`${m.speaker === 'owner' ? (zh ? '你' : 'You') : 'CC'} · ${m.excerpt}`} detail={`${m.ts}${m.source === 'episode' ? (zh ? ' · 相关记录' : ' · Related record') : ''}`} onPress={() => { router.dismissTo({ pathname: '/', params: { message: m.id, reference: '', locate: uuid() } }) }} />)}

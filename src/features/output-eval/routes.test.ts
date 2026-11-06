@@ -85,3 +85,12 @@ describe('POST /v1/eval/run', () => {
     expect(run.calls).toEqual([['reply', { text: '那个问题', tools: ['topic_search'] }], ['topic', { text: '视频会议', topics: [], search: true }]])
   })
 })
+
+it('topic-recall 使用同一生产召回入口，拒绝混入工具 search', async () => {
+  const runner=fakeRunner(), routes=outputEvalRoutes(runner)
+  const result=await post(routes,{kind:'topic-recall',text:'冷备怎么查',topics:[{id:'backup',title:'备份'}]})
+  expect(result.status).toBe(200)
+  expect(result.body).toMatchObject({kind:'topic-recall',recall:null})
+  expect(runner.calls[0]?.[0]).toBe('topic')
+  expect((await post(routes,{kind:'topic-recall',text:'冷备怎么查',topics:[],search:true})).status).toBe(400)
+})

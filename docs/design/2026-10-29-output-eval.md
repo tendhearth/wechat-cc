@@ -95,3 +95,5 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 |---|---|
 | 10-29 | 本稿 |
 | 10-29 | 落地:纯规则 `src/domain/output-eval.ts`;daemon `src/features/output-eval/`(模块 `output-eval`,`POST /v1/eval/run`,`kind: reply / brief / reference / judge`;码 `eval_invalid_request` / `eval_unknown_provider` / `eval_no_cheap_model`);CLI `src/cli/output-eval.ts` + `wechat-cc eval run / diff`;示例样本 `eval/output/examples/`(复制到 `<STATE_DIR>/eval/samples/`);沙盒场景「输出评测」。与稿不同:chatId 用 `eval-<uuid>`(见上);judge 走同一条路由的 `kind: 'judge'` |
+
+2026-11-06：每轮话题召回增加 `topic-recall` 类别（旧 `topic` 保留），样本索引、期望话题/条目、同义表达与闲聊负例，以及 `wechat-cc eval run` 跑法见 [话题召回评测](../../eval/output/TOPIC-RECALL.md)。召回与任务指称的秒级判定使用独立 `turn_judge_provider`，不再跟随后台 `cheap_eval_provider`。

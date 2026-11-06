@@ -70,6 +70,16 @@ describe('config surface', () => {
     expect(loadCompanionConfig(stateDir).import_local_history).toBe(true)
   })
 
+  it('回合内快判独立热配置，非法 provider 被拒', async () => {
+    expect((await writeConfigKey(stateDir,'turn_judge_provider','openai')).ok).toBe(true)
+    expect(loadAgentConfig(stateDir).turnJudgeProvider).toBe('openai')
+    expect((await writeConfigKey(stateDir,'turn_judge_provider','index')).ok).toBe(true)
+    expect(loadAgentConfig(stateDir).turnJudgeProvider).toBe('index')
+    expect((await writeConfigKey(stateDir,'turn_judge_provider','auto')).ok).toBe(true)
+    expect(loadAgentConfig(stateDir).turnJudgeProvider).toBe('auto')
+    expect((await writeConfigKey(stateDir,'turn_judge_provider','missing')).ok).toBe(false)
+  })
+
   it('bot_name enforces the nickname rule', async () => {
     expect((await writeConfigKey(stateDir, 'bot_name', '小助手')).ok).toBe(true)
     expect(await writeConfigKey(stateDir, 'bot_name', 'x'.repeat(30))).toMatchObject({ ok: false, error: 'invalid_value' })
