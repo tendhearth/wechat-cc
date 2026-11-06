@@ -2414,6 +2414,7 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 // against it (assertResponseContract).
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  'POST /v1/matter/seen': z.object({ id: z.string().regex(/^[a-f0-9]{8}$/) }).strict(),
   // atelier
   'POST /v1/atelier/share': AtelierShareRequest,
 
@@ -2604,6 +2605,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/matter': MatterDetailResponse,
   'GET /v1/matter/owner-chat': MatterOwnerChatResponse,
   'GET /v1/matter/owner-chat/search': MatterOwnerChatSearchResponse,
+  'POST /v1/matter/seen': z.object({ ok: z.literal(true) }),
   'POST /v1/matter/say': MatterSayResponse,
   'GET /v1/connections': ConnectionsResponse,
   'POST /v1/phone/link': PhoneLinkResponse,

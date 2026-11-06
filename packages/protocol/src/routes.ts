@@ -220,6 +220,7 @@ const ROUTE_TABLE = {
   'GET /v1/matter/owner-chat': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   // 搜主人那条对话(2026-10-06;手机原 /m/api/chat/search)
   'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
+  'POST /v1/matter/seen': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
   // P3e 一件事上的动作(设计稿 2026-11-05-p3-one-route-family「P3e」):一个动作一个处理器(internal-api/routes-matter-actions.ts,
   // MattersService 那一层),按 caller 分两份参数 —— 手机令牌带 runId 过期判断、按块读成果;operator 是桌面那一份。

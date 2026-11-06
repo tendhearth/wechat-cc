@@ -1,6 +1,6 @@
 {
   "_comment": "生成物,别手改:改 packages/protocol/src/routes.ts 后跑 bun run gen:routes",
-  "version": 6,
+  "version": 7,
   "tauri": [
     "GET /v1/access/list",
     "GET /v1/avatar/info",
@@ -60,6 +60,7 @@
     "POST /v1/matter/review-return",
     "POST /v1/matter/rewind",
     "POST /v1/matter/say",
+    "POST /v1/matter/seen",
     "POST /v1/matter/stop",
     "POST /v1/matter/worktree",
     "POST /v1/memory/edit",
