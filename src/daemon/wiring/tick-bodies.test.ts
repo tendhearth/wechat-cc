@@ -58,14 +58,18 @@ function makeFakeChatPrefs(
 function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): CareLedger {
   // 和真的 care-ledger 同一套语义(含定向撤回);撤回到空就删掉这一项,方便断言「台账没动」。
   const epochs = new Map<string, number>()
-  const claimField = (chatId: string, field: CareClaim['field'], nowIso: string): CareClaim => {
+  const claimField = (chatId: string, field: Exclude<CareClaim['field'], null>, nowIso: string): CareClaim => {
     const cur = entries[chatId] ?? { noReplyCount: 0 }
     entries[chatId] = { ...cur, [field]: nowIso, noReplyCount: cur.noReplyCount + 1 }
     return { field, at: nowIso, prior: cur[field], epoch: epochs.get(chatId) ?? 0 }
   }
   return {
     get: (chatId) => entries[chatId] ?? { noReplyCount: 0 },
-    claim: (chatId, nowIso) => claimField(chatId, 'lastProactiveAtIso', nowIso),
+    claim: (chatId, nowIso) => {
+      const cur = entries[chatId] ?? { noReplyCount: 0 }
+      entries[chatId] = { ...cur, noReplyCount: cur.noReplyCount + 1 }
+      return { field: null, at: nowIso, prior: undefined, epoch: epochs.get(chatId) ?? 0 }
+    },
     claimHunt: (chatId, nowIso) => claimField(chatId, 'lastHuntAtIso', nowIso),
     claimVisit: (chatId, nowIso) => claimField(chatId, 'lastVisitAtIso', nowIso),
     claimMemory: (chatId, nowIso) => claimField(chatId, 'lastMemoryAtIso', nowIso),
@@ -77,7 +81,7 @@ function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): Care
     unclaim: (chatId, claim) => {
       const cur = entries[chatId] ?? { noReplyCount: 0 }
       const next: CareLedgerEntry = { ...cur }
-      if (cur[claim.field] === claim.at) { if (claim.prior === undefined) delete next[claim.field]; else next[claim.field] = claim.prior }
+      if (claim.field !== null && cur[claim.field] === claim.at) { if (claim.prior === undefined) delete next[claim.field]; else next[claim.field] = claim.prior }
       if ((epochs.get(chatId) ?? 0) === claim.epoch && cur.noReplyCount > 0) next.noReplyCount = cur.noReplyCount - 1
       if (next.noReplyCount === 0 && Object.keys(next).length === 1) delete entries[chatId]
       else entries[chatId] = next
@@ -275,7 +279,7 @@ function setupDeps(opts: {
   // 主动开口的门(第三批 3a):跟生产一样由 wireSpeech 造,care 档 / 免打扰读同一份 prefs + 伙伴配置;
   // 微信那头每次都现读 ilink.sendMessage(测试会在 setup 之后换掉它)。
   for (const [chatId, entry] of Object.entries(careLedgerEntries)) {
-    if (entry.lastProactiveAtIso) s4Receipt(db, chatId, entry.lastProactiveAtIso)
+    if (entry.lastInitiativeAtIso) s4Receipt(db, chatId, entry.lastInitiativeAtIso)
   }
   const pickerClock = { now: Date.now(), evaluate: null as ((prompt: string) => Promise<string>) | null }
   deps.speech = wireSpeech({
@@ -696,7 +700,7 @@ describe('buildTickBodies / pushTick — multi-chat care sweep (Task 6)', () => 
     await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(s.dispatch).toHaveBeenCalledOnce()
     expect(readFileSync(agendaPath(s.stateDir, 'chat-1'), 'utf8')).toContain('- [x] done:2026-05-13 check in on project')
-    expect(s.careLedgerEntries['chat-1']?.lastProactiveAtIso).toBe('2026-05-13T10:00:00.000Z')
+    expect(s.careLedgerEntries['chat-1']?.lastInitiativeAtIso).toBeUndefined()
   })
 
   it('免打扰(10-20):主人设的时段里不主动找他 —— 到期的 agenda 也不发、不登记;时段外照常', async () => {
@@ -732,7 +736,7 @@ describe('buildTickBodies / pushTick — multi-chat care sweep (Task 6)', () => 
     expect(s.acquire.mock.calls[0]![0]).toMatchObject({ chatId: 'chat-2' })
     const text = s.dispatch.mock.calls[0]![0] as string
     expect(text).toContain('天')
-    expect(s.careLedgerEntries['chat-2']?.lastProactiveAtIso).toBe('2026-05-16T10:00:00.000Z')
+    expect(s.careLedgerEntries['chat-2']?.lastInitiativeAtIso).toBeUndefined()
   })
 
   it('伙伴的推送过主动开口的门(S1):放行的那一拍在 speech_log 记一行 companion / allowed,不记正文', async () => {
@@ -796,11 +800,11 @@ describe('buildTickBodies / pushTick — multi-chat care sweep (Task 6)', () => 
       defaultChatId: 'chat-1',
       inFlight: false,
       agendaMd: '- [ ] due:2026-05-13 check in on project',
-      careLedgerEntries: { 'chat-1': { lastProactiveAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+      careLedgerEntries: { 'chat-1': { lastInitiativeAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
     })
     cleanup.push(s.stateDir)
     const { pushTick } = buildTickBodies(s.deps)
-    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' }) // 1h after lastProactiveAtIso, < 20h cooldown
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' }) // 1h after lastInitiativeAtIso, < 20h cooldown
     expect(s.dispatch).not.toHaveBeenCalled()
     expect(s.logs.some(l => l.includes('CARE') && l.includes('agenda_cooldown'))).toBe(true)
   })
@@ -1703,7 +1707,7 @@ describe('日程判断(spec 2026-09-05-companion-plan)', () => {
   it('候选为空(打猎与串门都在冷却、安静不够久)→ planEval 从未被调', async () => {
     const s = setupDeps({
       defaultChatId: 'chat-1', inFlight: false,
-      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', lastVisitAtIso: '2026-05-13T09:30:00.000Z', lastProactiveAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', lastVisitAtIso: '2026-05-13T09:30:00.000Z', lastInitiativeAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
     })
     cleanup.push(s.stateDir)
     withVisit(s, { hasOpen: true })
@@ -1911,7 +1915,7 @@ describe('guard refusal undo keeps activity that happened meanwhile (review #194
     expect(e.lastVisitAtIso).toBe(visitAt)
     expect(e.lastMemoryAtIso).toBe('2026-05-13T10:00:30.000Z')
     expect(e.noReplyCount).toBe(1)                              // 清零后只有记忆通知那一次
-    expect(e.lastProactiveAtIso).toBe('2026-05-12T10:00:00.000Z')
+    expect(e.lastInitiativeAtIso).toBeUndefined()
   })
 
   it('agenda refused: our tick is taken back, a line added to agenda.md meanwhile survives', async () => {
@@ -2026,7 +2030,7 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
   // 结构保障(2026-10-03 审稿第 4 条):「推不推」在调用模型之前就由 shouldSpeak / 日程判断决定了;
   // daemon 模式下这一步仍然先于生成 —— 判了不推,就既不开轮也不调模型。NO_REPLY 只是第二道闸。
   it('daemon:议程冷却中(shouldSpeak 拒)⇒ 不开轮、不调模型', async () => {
-    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project', careLedgerEntries: { 'chat-1': { noReplyCount: 0, lastProactiveAtIso: '2026-05-13T09:00:00.000Z' } } })
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project', careLedgerEntries: { 'chat-1': { noReplyCount: 0, lastInitiativeAtIso: '2026-05-13T09:00:00.000Z' } } })
     cleanup.push(s.stateDir)
     const d = withDelivery(s, [{ kind: 'text', text: '在吗' }, { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }])
     await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
@@ -2087,7 +2091,8 @@ describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
     expect(w.app.record).toHaveBeenCalledWith('chat-1', '前两天说的面试,后来怎么样了?')
     expect(w.app.push).toHaveBeenCalledOnce()
     // App 送达和微信主动发一样进台账:无回复计数 +1(学到的暂停照常生效)
-    expect(s.careLedgerEntries['chat-1']).toMatchObject({ noReplyCount: 1, lastProactiveAtIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.careLedgerEntries['chat-1']).toMatchObject({ noReplyCount: 1 })
+    expect(s.db.query("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'").get()).toEqual({ at: Date.parse('2026-05-13T10:00:00.000Z') })
     expect(s.logs.some(l => l.includes('delivered to the app'))).toBe(true)
   })
 
@@ -2158,7 +2163,7 @@ describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
   })
 
   it('学到的暂停对 App 送达同样生效:连着 2 条没回 ⇒ 问候不再发(shouldSpeak 仍是唯一关口)', async () => {
-    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, careLedgerEntries: { 'chat-1': { noReplyCount: 2, lastProactiveAtIso: '2026-05-01T10:00:00.000Z' } } })
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, careLedgerEntries: { 'chat-1': { noReplyCount: 2, lastInitiativeAtIso: '2026-05-01T10:00:00.000Z' } } })
     cleanup.push(s.stateDir)
     const w = wire(s, { degraded: true, app: true })
     await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })

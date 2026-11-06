@@ -7,6 +7,7 @@
  *
  * 这里失败(锁抢不到、库打不开、access.json 坏了)⇒ 抛;`undo` 里登记的按倒序放掉(main.ts 的 bootDaemon 负责)。
  */
+import { makeSpeechLedgerStore } from './speech/ledger-store'
 import { makeDesktopSurface } from './desktop-surface'
 import { makeMemoryFactsStore } from '../adapters/store/memory-facts'
 import { join } from 'node:path'
@@ -157,7 +158,7 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     matters: makeMatterStore(db),
     chatPrefs,
     // pushTick claims/reads it; the inbound path resets the no-reply streak on every message.
-    careLedger: makeCareLedger(stateDir),
+    careLedger: makeCareLedger(stateDir, { lastInitiativeAt: makeSpeechLedgerStore(db).lastInitiativeAt }),
     // reply-sink registry: the POST /v1/wechat/reply route captures into it when a sink is open;
     // the companion-converse closure opens/closes it around a real turn.
     replySinks: makeReplySinks(),

@@ -58,3 +58,9 @@ it('initiators can only deliver inside an authorized producer adapter', () => {
   const violations = [...new Set(Object.values(sources).flat())].flatMap(path => directSends(readFileSync(join(root, path), 'utf8')).map(call => `${path}: ${call}`))
   expect(violations).toEqual([])
 })
+
+it('retired private send time cannot return to the production budget or source cadence', () => {
+  for (const path of ['src/features/companion/care-ledger.ts', 'src/features/companion/calibration.ts', 'src/domain/companion-plan.ts', 'src/features/companion/tick-push.ts', 'src/daemon/foundation.ts']) {
+    expect(readFileSync(join(root, path), 'utf8'), path).not.toContain('lastProactiveAtIso')
+  }
+})

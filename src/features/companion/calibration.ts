@@ -14,8 +14,8 @@ export type CareLevel = 'off' | 'low' | 'high'
 export type CareKind = 'agenda' | 'gap' | 'hunt' | 'visit' | 'memory'
 
 export interface CareLedgerEntry {
-  /** ISO timestamp of the last proactive send claimed for this chat. */
-  lastProactiveAtIso?: string
+  /** First confirmed delivery time of the latest initiative, derived from speech_log. */
+  lastInitiativeAtIso?: string
   /** ISO timestamp of the last hunt claimed for this chat. */
   lastHuntAtIso?: string
   /** 上次串门(visit)的时间。2026-09-03,见 core/visit.ts。 */
@@ -83,9 +83,9 @@ export function shouldSpeak(args: {
   const nowMs = Date.parse(nowIso)
   if (Number.isNaN(nowMs)) return { ok: false, reason: 'invalid_timestamp' }
 
-  const lastProactiveMs =
-    ledger.lastProactiveAtIso !== undefined ? Date.parse(ledger.lastProactiveAtIso) : undefined
-  if (lastProactiveMs !== undefined && Number.isNaN(lastProactiveMs)) {
+  const lastInitiativeMs =
+    ledger.lastInitiativeAtIso !== undefined ? Date.parse(ledger.lastInitiativeAtIso) : undefined
+  if (lastInitiativeMs !== undefined && Number.isNaN(lastInitiativeMs)) {
     return { ok: false, reason: 'invalid_timestamp' }
   }
 
@@ -102,9 +102,9 @@ export function shouldSpeak(args: {
   }
 
   if (kind === 'agenda') {
-    if (lastProactiveMs !== undefined) {
-      const sinceProactiveMs = nowMs - lastProactiveMs
-      if (sinceProactiveMs < AGENDA_COOLDOWN_MS) return { ok: false, reason: 'agenda_cooldown' }
+    if (lastInitiativeMs !== undefined) {
+      const sinceInitiativeMs = nowMs - lastInitiativeMs
+      if (sinceInitiativeMs < AGENDA_COOLDOWN_MS) return { ok: false, reason: 'agenda_cooldown' }
     }
     return { ok: true }
   }
@@ -148,9 +148,9 @@ export function shouldSpeak(args: {
   const sinceInboundMs = nowMs - lastInboundMs
   if (sinceInboundMs < gapMs) return { ok: false, reason: 'gap_inbound_recent' }
 
-  if (lastProactiveMs !== undefined) {
-    const sinceProactiveMs = nowMs - lastProactiveMs
-    if (sinceProactiveMs < gapMs) return { ok: false, reason: 'gap_proactive_recent' }
+  if (lastInitiativeMs !== undefined) {
+    const sinceInitiativeMs = nowMs - lastInitiativeMs
+    if (sinceInitiativeMs < gapMs) return { ok: false, reason: 'gap_proactive_recent' }
   }
 
   return { ok: true }

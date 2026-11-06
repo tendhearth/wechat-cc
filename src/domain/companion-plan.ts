@@ -12,7 +12,7 @@
 // 与 calibration.ts 结构一致,故意在此镜像一份,让 core 不引 daemon。
 export type CareLevel = 'off' | 'low' | 'high'
 export interface CareLedgerEntry {
-  lastProactiveAtIso?: string
+  lastInitiativeAtIso?: string
   lastHuntAtIso?: string
   lastVisitAtIso?: string
   noReplyCount: number
@@ -92,7 +92,7 @@ export function computeCandidates(i: CandidateInput, decide: SpeakGate): { candi
 export interface PlanContext {
   nowLocal: string
   ownerLastInboundMinutesAgo: number | null
-  today: { lastHuntHoursAgo: number | null; lastVisitHoursAgo: number | null; lastProactiveHoursAgo: number | null }
+  today: { lastHuntHoursAgo: number | null; lastVisitHoursAgo: number | null; lastInitiativeHoursAgo: number | null }
   candidates: Candidate[]
   rejected: Rejected[]
   journal: { unread: number; latest: Array<{ kind: string; title: string; ts: string }> } | null
