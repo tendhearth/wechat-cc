@@ -22,6 +22,12 @@ const reviews=()=>[{artifactId:'11111111',sha256:'a'.repeat(64),name:'本轮文�
 const task=()=>({id:'aaaa1111',title:'整理首页',path:'/work/site',workspaceKind:'project',providerId:'codex',status:'completed',createdAt:1,updatedAt:1,error:null})
 const calls=[]
 const invokeWorkbenchApi=async(method,path,body)=>{
+  // Background attention/read receipts are separate from the user mutations asserted below.
+  if(method==='GET' && path==='/v1/workbench/attention')return{tasks:[]}
+  if(method==='POST' && path==='/v1/matter/seen'){
+    if(body.id!=='aaaa1111')throw new Error('Unexpected seen task')
+    return{ok:true}
+  }
   calls.push({method,path,body})
   if(path==='/v1/matter/review-comment'){
     if(body.delete){comments.splice(comments.findIndex(c=>c.id===body.commentId),1);return{deleted:body.commentId}}

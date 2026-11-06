@@ -20,6 +20,12 @@ const rewind=()=>blocked?{undo:null,blocked:{rewindId:'33333333-3333-4333-8333-3
 const preview=()=>({token:previews===1?T1:T2,target:{artifactId:'11111111',to:'end',round:1},discarded:[{artifactId:'22222222',round:2}],files:{count:1,paths:[{status:'M',path:'src/22222222.ts'}]},extraChanges:{count:1,paths:[{status:'A',path:'notes.txt'}]},droppedCommits:{count:1,elsewhere:true},ignoredUntouched:true,rebuildHint:'被 ignore 的构建产物不会跟着回退，用之前先重新构建。',refsNote:'',session:'none',devServer:false,goal:null})
 const calls=[]
 const invokeWorkbenchApi=async(method,path,body)=>{
+  // Background attention/read receipts are separate from the user mutations asserted below.
+  if(method==='GET' && path==='/v1/workbench/attention')return{tasks:[]}
+  if(method==='POST' && path==='/v1/matter/seen'){
+    if(body.id!=='aaaa1111')throw new Error('Unexpected seen task')
+    return{ok:true}
+  }
   calls.push({method,path,body})
   if(path.startsWith('/v1/matter/rewind?')){previews++;return{preview:preview()}}
   if(path==='/v1/matter/rewind'){
