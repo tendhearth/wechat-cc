@@ -161,7 +161,25 @@ appId: com.tendhearth.app
     visible:
       id: search-work
     timeout: 5000
+# 演示执行者会异步做完；返回后核对同一事项的实际最终状态。
+- extendedWaitUntil:
+    visible:
+      id: row-terminal-demo-cli-blog
+      text: "blog, (这一轮做完了|Done for this round),.*"
+    timeout: 5000
+# 原 all-group-working 意图：仍有在做的会话可找到，迁到 docs 搜索引用。
+- tapOn:
+    id: chat-search-input
+- eraseText
+- inputText: docs
+- tapOn:
+    id: search-work
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-docs
+    direction: UP
+    centerElement: true
 - assertVisible:
-    id: row-terminal-demo-cli-blog
-    text: "blog, (在做|Working),.*"
+    id: row-terminal-demo-cli-docs
+    text: "docs, (在做|Working),.*"
 - takeScreenshot: t06-all-allowed
