@@ -436,6 +436,30 @@ describe('tunnel-client v2', () => {
     hub.dispose()
   })
 
+  it('topics只给设备,link拒绝;主人范围变化立即撤订且不发送新主人的摘要', async () => {
+    let owner: string | null = 'owner'
+    let revision = '1'
+    const { hub, live } = countedHub([{ match: t => t === 'topics', snapshot: async () => ({ revision, recentIds: [], openIds: [], hasMoreOpen: false }) }])
+    const sock = fakeSocket()
+    client(sock, { events: hub, topicsOwner: () => owner, activeLinkToken: () => 'tlink' })
+    const device = await v2Phone(sock, 'topic-device')
+    expect(device.hello.topics).toBe('v1')
+    device.send({ t: 'sub', sid: 'topics', topic: 'topics' })
+    expect(await device.next()).toMatchObject({ t: 'ev', sid: 'topics', data: { revision: '1' } })
+    const link = await v2Phone(sock, 'topic-link', 'tlink')
+    link.send({ t: 'sub', sid: 'private', topic: 'topics' })
+    expect(await link.next()).toEqual({ t: 'err', sid: 'private', code: 'topic_not_allowed' })
+    expect(live()).toBe(1)
+    owner = 'other'; revision = '2'; hub.poke()
+    expect(await device.next()).toEqual({ t: 'err', sid: 'topics', code: 'topic_not_allowed' })
+    expect(device.drain().filter(m => 't' in m && m.t === 'ev')).toEqual([])
+    expect(live()).toBe(0)
+    owner = null
+    device.send({ t: 'sub', sid: 'missing', topic: 'topics' })
+    expect(await device.next()).toEqual({ t: 'err', sid: 'missing', code: 'topic_not_allowed' })
+    hub.dispose()
+  })
+
   it('撤销设备:下一条事件发出前关流 —— 明文 auth_failed、订阅全退、流被忘掉', async () => {
     let tokens = [DTOK]
     let state = { n: 1 }

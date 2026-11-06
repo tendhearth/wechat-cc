@@ -23,3 +23,5 @@ export type HomeTopicT = z.infer<typeof HomeTopic>
 export type ApprovalItemT = z.infer<typeof ApprovalItem>
 export type AgentsTopicT = z.infer<typeof AgentsTopic>
 export type MatterTopicT = z.infer<typeof MatterTopic>
+
+export { TopicsSnapshot as TopicsTopic } from './topic-bubbles'

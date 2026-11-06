@@ -18,6 +18,8 @@ export interface TopicRecallResult {
   topicIds: string[]
   /** 每个话题挑进来的条目 id(评测按它判)。 */
   entryIds: string[]
+  /** 只在调用方真正采用结果后调用;超时迟到的候选没有副作用。 */
+  adopt?: (requestId: string, messageIds?: string[]) => void
   via: 'exact' | 'near' | 'model'
 }
 
@@ -81,6 +83,7 @@ export async function loadMatchTopics(threads: ThreadsStore, chatId: string): Pr
 }
 
 export interface TopicRecallDeps {
+  onAdopt?: (chatId: string, requestId: string, result: TopicRecallResult, messageIds: string[]) => void
   threads: ThreadsStore
   /** 主人自己的对话才调(现问:配置改了不用重启)。 */
   isOwner: (chatId: string) => boolean
@@ -99,6 +102,10 @@ export function makeTopicRecall(d: TopicRecallDeps): TopicRecall {
       const topics = await loadMatchTopics(d.threads, chatId)
       const r = await resolveTopicRecall(text, topics, { cheapEval: d.cheapEval(), ...(d.timeoutMs !== undefined ? { timeoutMs: d.timeoutMs } : {}), log: d.log })
       if (r) d.log('TOPICS', `recall chat=${chatId} via=${r.via} topics=${r.topicIds.join(',')} entries=${r.entryIds.length} chars=${r.block.length}`)
+      if (r && d.onAdopt) r.adopt = (requestId, messageIds = []) => {
+        try { if (d.isOwner(chatId)) d.onAdopt!(chatId, requestId, r, messageIds) }
+        catch (err) { d.log('TOPICS', `bubble recall failed: ${err instanceof Error ? err.message : String(err)}`) }
+      }
       return r
     } catch (err) {
       d.log('TOPICS', `recall failed for ${chatId}: ${err instanceof Error ? err.message : String(err)}`)

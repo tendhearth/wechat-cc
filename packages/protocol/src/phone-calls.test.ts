@@ -59,6 +59,11 @@ describe('P3f route families', () => {
       expect(phoneRouteRequest(req)).toEqual(req)
       const next = phoneRouteRequest(req, 'v1')
       if (spec.key.includes('/set/')) { expect(next).toEqual(req); continue }
+      if (spec.key.includes(' /v1/')) {
+        expect(next).toEqual(req)
+        expect(RESPONSE_SCHEMAS[next.key], next.key).toBeDefined()
+        continue
+      }
       const alias = WIRE_ROUTE_ALIASES.find(a => a.from === spec.key)!
       expect(next.key).toBe(alias.to)
       expect(next.path.startsWith(alias.to.split(' ')[1] + req.path.slice(spec.key.split(' ')[1]!.length))).toBe(true)

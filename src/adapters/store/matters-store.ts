@@ -1,3 +1,5 @@
+import { makeTopicBubbles } from '../../lib/topic-bubbles'
+import { log } from '../../lib/log'
 import {randomBytes} from 'node:crypto'
 import type {Db} from '../../lib/db'
 import {hintWrite} from '../../lib/write-hints'
@@ -84,7 +86,10 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     return r?toMatter(r):null
   }
   // matters 行自己的变化(状态 / 标题 / updated_at)不进 MatterLog 的游标:落笔后给手机主题一声提示(write-hints.ts)
-  const hinted=(id:string)=>hintWrite(db,{kind:'matter',matterId:id})
+  const hinted=(id:string,activity=false)=>{
+    hintWrite(db,{kind:'matter',matterId:id})
+    try { makeTopicBubbles(db).matterChanged(id,activity) } catch { log('TOPICS',`bubble update failed matter=${id}`) }
+  }
   const bump=(id:string)=>{db.query('UPDATE matters SET updated_at=? WHERE id=?').run(now(),id);hinted(id)}
   return {
     create,get,list,
@@ -99,7 +104,7 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
                    WHEN ?1='open' AND state IN ('done','failed','cancelled') THEN 'open'
                    ELSE state END
         WHERE id=?3`).run(to,ts,id)
-      hinted(id)
+      hinted(id,true)
     },
     rename(id,title){require(id);db.query('UPDATE matters SET title=?,updated_at=? WHERE id=?').run(title,now(),id);hinted(id)},
     touch(id){require(id);bump(id)},

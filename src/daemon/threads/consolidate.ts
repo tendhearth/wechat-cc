@@ -208,6 +208,10 @@ export async function consolidateTopics(d: ConsolidateDeps): Promise<Consolidate
     const groups: TopicEntry[][] = duplicateFactGroups(live)
     // 1) 进展:模型只分组,代码核过才并
     const progress = live.filter(e => e.kind === 'progress')
+    if (progress.length >= 2 && live.length > CONSOLIDATE_MIN_LIVE && !d.sdkEval) {
+      res.failed++
+      continue
+    }
     if (progress.length >= 2 && live.length > CONSOLIDATE_MIN_LIVE && d.sdkEval) {
       let picked: TopicEntry[][] | null = null
       try {

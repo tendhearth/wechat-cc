@@ -346,7 +346,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
     })
     const turnChatId = sharedTurn?.kind === 'bound' ? sharedTurn.chatId : undefined
     const callerInfo = {
-      tier: caller.tier, origin: caller.origin, chatId: callerChatId,
+      tier: caller.tier, origin: caller.origin, chatId: callerChatId, ...(caller.origin === 'session' && caller.sessionKey ? { sessionKey: caller.sessionKey } : {}),
       ...(sharedTurn ? { sharedTurn: sharedTurn.kind, ...(turnChatId ? { turnChatId } : {}) } : {}),
       // 面板那一口才有(127.0.0.1 进来的不带,和抽出来之前一字不差):帧预算 ⇒ 要裁的处理器按它裁;出生地 ⇒ app / web。
       ...(inp.panel ? { frameBudget: inp.panel.frameBudget, client: inp.panel.client } : {}),

@@ -1384,7 +1384,7 @@ describe('v102 — 删掉 matters.status(M6e,不可逆)', () => {
     expect(() => db.exec("INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('nope','wechat','x',1)")).toThrow()
     expect(() => db.exec("UPDATE matters SET origin_surface='app' WHERE id='0000000a'")).toThrow(/matter_origin_immutable/)
     const names = (db.query("SELECT name FROM sqlite_master WHERE tbl_name='matters' AND type IN ('index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(r => r.name)
-    expect(names).toEqual(['matters_origin', 'matters_origin_surface_once', 'matters_updated'])
+    expect(names).toEqual(['matters_origin', 'matters_origin_surface_once', 'matters_updated', 't4_matters_delete', 't4_matters_update'])
     expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'matters_v%'").all()).toEqual([])
     const before = db.query('SELECT * FROM matters ORDER BY id').all()
     db.exec('PRAGMA user_version = 101')

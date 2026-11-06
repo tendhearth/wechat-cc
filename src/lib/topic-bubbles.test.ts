@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { openTestDb } from './db'
+import { makeMessagesStore } from './messages-store'
 import { makeThreadsStore } from './threads-store'
 import { makeTopicBubbles } from './topic-bubbles'
 
@@ -56,10 +57,32 @@ describe('T4 bubble storage', () => {
     expect(bubbles.closeAfterSleep(bubbles.beginSleep('owner', 's2'))).toBe(0)
     db.query("UPDATE matters SET state='waiting' WHERE id='real'").run()
     expect(bubbles.closeAfterSleep(bubbles.beginSleep('owner', 's3'))).toBe(0)
+    const inProgressSleep = bubbles.beginSleep('owner', 'finishing-during-sleep')
     db.query("UPDATE matters SET state='done' WHERE id='real'").run()
     bubbles.matterChanged('real')
     expect(bubbles.get(id)?.state).toBe('open')
+    expect(bubbles.closeAfterSleep(inProgressSleep)).toBe(0)
     expect(bubbles.closeAfterSleep(bubbles.beginSleep('owner', 's4'))).toBe(1)
     db.close()
   })
+  it('持久revision单调且按owner隔离;消息计数不把revision触发器的写入算成第二条消息', async () => {
+    const { db, threads, id } = await setup()
+    const revision = () => db.query<{ revision: number }, [string]>('SELECT revision FROM topic_bubble_revisions WHERE chat_id=?').get('owner')!.revision
+    const before = revision()
+    await threads.update(id, { episodes: [{ from_ts: '2026-11-06T00:00:00Z', to_ts: '2026-11-06T01:00:00Z' }] })
+    expect(revision()).toBeGreaterThan(before)
+    const start = revision(), messages = makeMessagesStore(db)
+    const rec = { id: 'msg', chatId: 'owner', ts: '2026-11-06T00:01:00Z', direction: 'in' as const, kind: 'text' as const, text: '备份', source: 'wechat' as const }
+    expect(await messages.append(rec)).toBe(1)
+    expect(revision()).toBeGreaterThan(start)
+    const after = revision()
+    expect(await messages.append(rec)).toBe(0)
+    expect(revision()).toBe(after)
+    await messages.append({ ...rec, id: 'guest-msg', chatId: 'guest' })
+    expect(revision()).toBe(after)
+    await threads.addEntry({ threadId: id, kind: 'decision', line: '每天核验' })
+    expect(revision()).toBeGreaterThan(after)
+    db.close()
+  })
+
 })

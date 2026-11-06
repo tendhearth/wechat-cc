@@ -311,6 +311,10 @@ const ROUTE_TABLE = {
   'POST /v1/wechat/reply_voice': { module: 'voice', desktop: { tier: 'guest' } },
   'POST /v1/memory/read': { module: 'memory', desktop: { tier: 'guest' } },
   // 话题(T2 后续 ①,2026-11-05):主模型的 topic_search 工具;只读、admin;私密话题只给主人自己的对话
+  'GET /v1/memory/topics': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/memory/topics/detail': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/open': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/subscribe/topics': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/memory/topics/search': { module: 'memory', desktop: { tier: 'admin' } },
   'GET /v1/memory/list': { module: 'memory', desktop: { tier: 'guest' } },
   'POST /v1/share/page': { desktop: { tier: 'guest' } },
@@ -708,4 +712,4 @@ export type PanelV1Key = {
  * 手机能订阅的事件主题(phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾是前缀标记:
  * 真正允许的是 `matter/<id>`,见 phone-routes.ts 的 phoneTopicAllowed。
  */
-export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/']
+export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/', 'topics']

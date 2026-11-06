@@ -1,3 +1,4 @@
+import { log } from '../../lib/log'
 import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import {randomBytes} from 'node:crypto'
 import type {Db} from '../../lib/db'
@@ -53,7 +54,7 @@ export function makeMatterLog(db:Db,now:()=>number=()=>Date.now()):MatterLog {
       :current==='working'&&turnEdge?settled
       :current
     db.query('UPDATE matters SET state=?,updated_at=? WHERE id=?').run(next,now(),matterId)
-    makeTopicBubbles(db).matterChanged(matterId)
+    try { makeTopicBubbles(db).matterChanged(matterId, next !== current) } catch { log('TOPICS', `bubble update failed matter=${matterId}`) }
   }
 
   const startTurn=db.transaction((input:StartTurn):MatterTurn=>{

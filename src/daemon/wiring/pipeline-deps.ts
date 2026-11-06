@@ -1,3 +1,4 @@
+import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import { makeOwnerChatFileReader, ownerChatReadingEvent } from './owner-chat-reading'
 /**
  * Pipeline dep builder — admin/mode/onboarding handler construction +
@@ -444,6 +445,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
   // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
   const topicRecall = makeTopicRecall({
+    onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
     threads: makeThreadsStore(db),
     isOwner: (chatId) => chatId === ownerChatId(),
     cheapEval: () => boot.registry.getCheapEval(),

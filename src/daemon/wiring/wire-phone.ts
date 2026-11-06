@@ -1,3 +1,4 @@
+import { topicsProjection } from '../../features/memory'
 /**
  * 手机那一簇(重构第二批步 6c,从 pipeline-deps.ts 搬出来):中继 v2 推送、在线设备、终端会话的 App 推送出口、
  * 主人对话 / 手机「跟 CC 说」、App 主动通道、媒体镜像、设置面板、中继隧道、推送 notifier、手机订阅(phone-events)。
@@ -167,6 +168,13 @@ if (relay) {
   const phone = makePhoneEventsWiring({
     ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
     ...(opts.matters ? { matters: opts.matters } : {}),
+    topics: async () => {
+      const owner = ownerChatId()
+      if (!owner) throw new Error('no_owner')
+      const projection = await topicsProjection(db, owner)
+      if (ownerChatId() !== owner) throw new Error('owner_changed')
+      return projection.summary
+    },
     home: (limit, o) => settingsPanel.home(limit, o),
     ...(phoneChat ? { chat: {
       latestAt: async (chatId: string) => { const ts = await messagesStore.latestTs(chatId); return ts ? Date.parse(ts) : null },
@@ -182,6 +190,7 @@ if (relay) {
     if (phoneLc.stopped()) { phone.dispose(); return }
     const common = {
       events: phone.events,
+      topicsOwner: ownerChatId,
       handleRequest: (req: Request) => settingsPanel.handleRequest(req),
       // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
       knownDeviceTokens: () => settingsPanel.deviceTokens(),

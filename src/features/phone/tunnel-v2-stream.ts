@@ -76,6 +76,7 @@ export interface V2StreamDeps {
   handleRequest: (req: Request) => Promise<Response>
   events?: PhoneEvents
   /** 这条流的令牌此刻还有效吗。 */
+  topicsScope?: () => string | null
   tokenValid: () => boolean
   /** 令牌失效:调用方发明文 auth_failed 并忘掉这条流(订阅这里已经退完)。 */
   onRevoked: () => void
@@ -170,6 +171,8 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
 
   function onSub(m: SubMsgT): void {
     if (!deps.events) { sendMsg({ t: 'err', sid: m.sid, code: 'subscriptions_unavailable' }); return }
+    const topicOwner = m.topic === 'topics' ? deps.topicsScope?.() : undefined
+    if (m.topic === 'topics' && !topicOwner) { sendMsg({ t: 'err', sid: m.sid, code: 'topic_not_allowed' }); return }
     if (!phoneTopicAllowed(m.topic)) { sendMsg({ t: 'err', sid: m.sid, code: 'topic_not_allowed' }); return }
     if (!subs.has(m.sid) && subs.size >= MAX_SUBS_PER_STREAM) { sendMsg({ t: 'err', sid: m.sid, code: 'too_many_subscriptions' }); return }
     unsubscribe(m.sid)                                   // 同 sid ⇒ 替换
@@ -178,6 +181,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     entry.unsub = deps.events.subscribe(m.topic, m.since, (ev) => {
       if (dead || subs.get(m.sid) !== entry) throw new Error('stale subscription')   // 抛 ⇒ 集线器只摘这一个
       if (!checkToken()) return
+      if (m.topic === 'topics' && deps.topicsScope?.() !== topicOwner) { unsubscribe(m.sid); sendMsg({ t: 'err', sid: m.sid, code: 'topic_not_allowed' }); return }
       sendMsg({ t: 'ev', sid: m.sid, epoch: ev.epoch, seq: ev.seq, data: ev.data })
     })
     // subscribe 里同步发生的撤销来不及拿到 unsub —— 补退。

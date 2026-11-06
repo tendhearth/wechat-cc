@@ -1,3 +1,4 @@
+import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
  * api.ts — `/m/api/*` 与 `/set/api/*` 每条真实路由的返回形状(zod v4)。
  *
@@ -645,6 +646,7 @@ export const PhoneWorktreeResult = z.object({ ok: z.literal(true), branch: z.str
   port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional() })
 
 const PHONE_API = {
+  ...TOPIC_BUBBLE_RESPONSES,
   'GET /set/api/state': z.union([SetStateSuccess, PhoneErrorResponse]),
   'POST /set/api/apply': z.object({ ok: z.boolean(), error: z.string().optional(), restart: z.enum(['requested', 'required']).optional() }),
   'POST /set/api/pair': z.union([

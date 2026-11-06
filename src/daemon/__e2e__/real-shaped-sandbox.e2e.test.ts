@@ -19,6 +19,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { removeTempDir } from '../../lib/test-temp'
 import { deviceIdOf } from '../../features/phone/device-store'
 import { SANDBOX_OWNER, startRealShapedDaemon, type RealShapedDaemon, type RealShapedOpts } from './real-shaped'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { makeMatterStore } from '../../adapters/store/matters-store'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import type { Db } from '../../lib/db'
 import { openSqlite } from '../../lib/runtime/sqlite'
 import type { OutboundMsg } from './fake-ilink-server'
 import type { FakeSdkScript } from './fake-sdk'
@@ -106,6 +110,8 @@ const codexScript: FakeSdkScript = {
 const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'speechFlushIntervalMs' | 'machineIdleS' | 'escalateAfterMs'> = {}) => startRealShapedDaemon({
   ...more,
   claudeScript, codexScript,
+  // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
+  moderatorScript: { onEval: async () => JSON.stringify({ add: [], update: [], confirm: [], remove: [] }) },
   recordClaudeSpawnOptions: (o) => { spawnOptions.push(o) },
   recordCodexSpawnOptions: (o) => { codexThreads.push(o) },
   ...(more.stateDir ? {} : { seedFiles: { 'permission-rules.json': RULES, 'projects.json': PROJECTS } }),
@@ -197,6 +203,45 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(prompt).toContain('周三晚上固定打羽毛球')
     // 下一条场景要在记忆页上删掉的那一句,这时还在提示词里
     expect(prompt).toContain(RETRACTED)
+  })
+
+  it('T4: recall opens a private bubble; successful sleep closes it except for owner-visible running matters', async () => {
+    const db = openSqlite(join(d.stateDir, 'wechat-cc.db')) as unknown as Db
+    const threads = makeThreadsStore(db)
+    const id = await threads.create({ chatId: d.owner, title: '沙盒备份服务器', summary: '每天检查备份', facets: ['task'], tags: [], private: true, episodes: [] })
+    await threads.addEntry({ threadId: id, kind: 'decision', line: '备份必须每日核验' })
+    try {
+      d.sendText(d.owner, '沙盒备份服务器后来怎么样了')
+      await expect.poll(() => d.query<{ state: string }>('SELECT state FROM topic_bubbles WHERE thread_id=?', id)[0]?.state, { timeout: 15000 }).toBe('open')
+      await expect.poll(() => d.query('SELECT * FROM topic_recall_refs WHERE thread_id=?', id).length, { timeout: 5000 }).toBe(1)
+      const visible = await desktop<{ topics: Array<{ id: string }> }>('GET', '/v1/memory/topics')
+      expect(visible.status).toBe(200)
+      expect(visible.body.topics.map(t => t.id)).toContain(id)
+      for (const path of ['/v1/memory/topics', `/v1/memory/topics/detail?id=${id}`, '/v1/subscribe/topics?wait_ms=0']) {
+        const denied = await desktop('GET', path, undefined, 'trusted')
+        expect(denied.status).toBe(403)
+        expect(JSON.stringify(denied.body)).not.toContain('沙盒备份服务器')
+      }
+      // 轮可能还在收尾;等待它结束再开始一次真正成功的记忆整理。
+      await expect.poll(() => d.query("SELECT id FROM matter_turns WHERE status='running'").length, { timeout: 15000 }).toBe(0)
+      const sleep = await desktop<{ result: { status: string } }>('POST', '/v1/memory/nightly/run', {}, 'trusted')
+      expect(sleep.status).toBe(200)
+      expect(sleep.body.result.status).toBe('written')
+      await expect.poll(() => d.query<{ state: string }>('SELECT state FROM topic_bubbles WHERE thread_id=?', id)[0]?.state).toBe('closed')
+      const m = makeMatterStore(db).create({ kind: 'task', title: '核验备份', ownerChatId: d.owner })
+      db.query('INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES(?,?,?)').run(m.id, id, new Date().toISOString())
+      const log = makeMatterLog(db), turn = log.startTurn({ matterId: m.id, executor: 'sandbox' })
+      expect(d.query<{ state: string }>('SELECT state FROM topic_bubbles WHERE thread_id=?', id)[0]?.state).toBe('open')
+      const next = await desktop<{ result: { status: string; reason?: string } }>('POST', '/v1/memory/nightly/run', {}, 'trusted')
+      expect(next.status).toBe(200)
+      expect(['written', 'skipped']).toContain(next.body.result.status)
+      if (next.body.result.status === 'skipped') expect(next.body.result.reason).toBe('no_new_material')
+      expect(d.query<{ state: string }>('SELECT state FROM topic_bubbles WHERE thread_id=?', id)[0]?.state).toBe('open')
+      log.finishTurn(turn.id, { status: 'completed', matterState: 'done' })
+      expect(d.query<{ state: string }>('SELECT state FROM topic_bubbles WHERE thread_id=?', id)[0]?.state).toBe('open')
+      await desktop('POST', '/v1/memory/nightly/run', {}, 'trusted')
+      expect(d.query<{ state: string }>('SELECT state FROM topic_bubbles WHERE thread_id=?', id)[0]?.state).toBe('closed')
+    } finally { db.close() }
   })
 
   it('memory edit: the owner deletes a line on the desktop memory page ⇒ the row is retracted, memory.md is re-exported without it, it shows up under 收回的话', async () => {

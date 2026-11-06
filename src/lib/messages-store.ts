@@ -155,10 +155,11 @@ export function makeMessagesStore(db: Db): MessagesStore {
 
   return {
     async append(rec) {
-      const result = rec.extras !== undefined
+      rec.extras !== undefined
         ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, rec.extras)
         : stmtInsert.run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source)
-      const changes = (result as unknown as { changes: number }).changes
+      // SQLite changes()只数顶层消息行;Bun.run().changes 也会计入版本触发器。
+      const changes = db.query<{ n: number }, []>('SELECT changes() AS n').get()!.n
       // 消息不进 MatterLog 的游标:新的一行给手机主题一声提示(聊天的 matter/<id>、home 的「在跟你聊」)
       if (changes > 0) hintWrite(db, { kind: 'messages', chatId: rec.chatId })
       return changes

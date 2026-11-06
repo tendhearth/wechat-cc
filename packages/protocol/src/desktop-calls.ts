@@ -25,6 +25,12 @@ type Body = Record<string, unknown>
 const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
+  topics: {
+    list: call('GET /v1/memory/topics', { query: t<{ view?: 'recent' | 'all'; limit?: number; cursor?: string }>() }),
+    detail: call('GET /v1/memory/topics/detail', { query: t<{ id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }>() }),
+    open: call('POST /v1/memory/topics/open', { body: t<{ id: string; requestId: string }>() }),
+    subscribe: call('GET /v1/subscribe/topics', { query: t<{ since?: string; wait_ms?: number }>() }),
+  },
   access: { list: call('GET /v1/access/list') },
   avatar: {
     info: call('GET /v1/avatar/info', { query: t<{ key: string }>() }),
