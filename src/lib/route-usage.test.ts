@@ -92,3 +92,21 @@ it('does not mistake an unmarked page navigation or pairing for an old webpage A
   note('web', 'P3g', 'GET /v1/home')
   expect(readRouteUsage(d)!.rows.map(r => r.version)).toEqual(['P3g'])
 })
+
+describe('route usage on the hot request path', () => {
+  it('writes a new row at once, but repeats only flush once a minute (count is a lower bound)', () => {
+    const d = dir(); let t = now
+    const record = makeRouteUsage(d, () => t)
+    const file = join(d, ROUTE_USAGE_FILE)
+    const count = () => readRouteUsage(d)!.rows.find(r => r.alias === alias.from)?.count
+    record('app', '2', alias.from)
+    expect(count()).toBe(1)
+    const before = readFileSync(file, 'utf8')
+    for (let i = 0; i < 20; i++) { t += 1000; record('app', '2', alias.from) }
+    expect(readFileSync(file, 'utf8')).toBe(before)
+    record('app', '2', desktop.from)
+    expect(readRouteUsage(d)!.rows.some(r => r.alias === desktop.from)).toBe(true)
+    t += 61_000; record('app', '2', alias.from)
+    expect(count()).toBe(2)
+  })
+})

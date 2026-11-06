@@ -1,5 +1,5 @@
 /** P3h: daily aggregate only; no device IDs, tokens, URLs, bodies or query strings. */
-import { rmSync } from 'node:fs'
+import { rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from './read-json-file'
 import { writeFileAtomic } from './json-file'
@@ -23,13 +23,22 @@ export function readRouteUsage(stateDir: string): RouteUsage | null {
   } catch { return null }
 }
 /** Fresh read on every update: the panel and internal API share this file in one daemon. */
+/** Retirement only needs presence per day; counts are display-only (a lower bound), so increments flush at most once a minute. */
+export const ROUTE_USAGE_COUNT_FLUSH_MS = 60_000
 export function makeRouteUsage(stateDir: string, now = Date.now) {
+  // Rows already on disk this process; a repeat inside the flush window skips the file entirely (hot request path).
+  const persisted = new Set<string>()
+  let lastWrite = -Infinity, lastStamp = ''
+  const stamp = () => { try { const st = statSync(join(stateDir, ROUTE_USAGE_FILE)); return `${st.mtimeMs}:${st.size}` } catch { return 'missing' } }
   return (client: RouteClient, version?: string | null, key = ''): void => {
     try {
       const matched = aliases.has(key) ? key : [...aliases].find(alias => alias.endsWith('/') && key.startsWith(alias))
       // Page navigation/pairing has no API version headers, even in the new webpage.
       if (key && !matched && !key.includes(' /v1/')) return
       const at = now()
+      const rowKeys = ['', ...(matched ? [matched] : [])].map(a => `${new Date(at).toISOString().slice(0, 10)}|${client}|${version ?? ''}|${a}`)
+      // stat is the cheap guard: if the file was replaced or broken since our write, fall through and rebuild it.
+      if (rowKeys.every(k => persisted.has(k)) && at - lastWrite < ROUTE_USAGE_COUNT_FLUSH_MS && stamp() === lastStamp) return
       const data = readRouteUsage(stateDir) ?? { since: at, rows: [] }
       const day = new Date(at).toISOString().slice(0, 10)
       const cutoff = new Date(at - 30 * DAY).toISOString().slice(0, 10)
@@ -44,6 +53,8 @@ export function makeRouteUsage(stateDir: string, now = Date.now) {
       }
       if (!changed) return
       writeFileAtomic(join(stateDir, ROUTE_USAGE_FILE), JSON.stringify(data), { mode: 0o600 })
+      lastWrite = at; lastStamp = stamp()
+      for (const k of rowKeys) persisted.add(k)
     } catch {
       // A lost counter must invalidate the observation window, not certify zero calls.
       try { rmSync(join(stateDir, ROUTE_USAGE_FILE), { force: true }) } catch { /* telemetry only */ }
