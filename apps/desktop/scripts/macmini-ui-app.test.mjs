@@ -165,3 +165,12 @@ test('a missing successful build is reported as blocked before any simulator acc
   expect(calls).toEqual([])
   expect(execFileSync).not.toHaveBeenCalled()
 })
+
+test('interruption cleanup shuts down only the validated owned simulator', async () => {
+  let cleanup
+  await expect(runApp({ ...context, onStop: value => { cleanup = value } })).rejects.toThrow('Maestro failed')
+  expect(typeof cleanup).toBe('function')
+  execFileSync.mockClear()
+  await cleanup()
+  expect(execFileSync).toHaveBeenCalledWith('/usr/bin/xcrun', ['simctl', '--set', join(root, 'simulators'), 'shutdown', 'lab-udid'], expect.objectContaining({ timeout: 20000, stdio: 'ignore' }))
+})

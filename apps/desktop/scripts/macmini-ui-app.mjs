@@ -50,7 +50,7 @@ export async function appStatus({ config, insideLab, labHome, bun }) {
     note: 'Requires app-tools/{maestro,java,gems}, prepared Expo dependencies and Pods. Status never boots a simulator.' }
 }
 
-export async function runApp({ request, config, insideLab, labHome, run, command, environment, bun = '/usr/bin/bun', waitForDriverPort = waitForMaestroPort }) {
+export async function runApp({ request, config, insideLab, labHome, run, command, environment, bun = '/usr/bin/bun', waitForDriverPort = waitForMaestroPort, onStop = () => {} }) {
   if (!config.appRoot) throw Error('APP_BLOCKED: integrator must place an App snapshot and set active.json appRoot')
   const root = await insideLab(config.appRoot)
   const project = await insideLab(join(root, 'project'))
@@ -157,6 +157,12 @@ process.exit(result.status ?? 1);
   }
   const device = Object.values(JSON.parse(simOutput(['list', 'devices', '-j'])).devices).flat().find(value => value.udid === udid)
   if (!device || device.name !== 'CC UI Lab App') throw Error('APP_BLOCKED: configured simulator is not the lab device')
+  // simctl launch is serviced outside our process group. On interruption stop
+  // this validated lab device before returning the machine to the family.
+  onStop(async () => {
+    try { execFileSync('/usr/bin/xcrun', [...sim, 'shutdown', udid], { env: { ...environment, ...extraEnv }, timeout: 20000, stdio: 'ignore' }) }
+    catch { /* Already shut down or unavailable; never touch another device. */ }
+  })
   const flow = appFlow(request.flow)
   const available = (await readdir(join(cwd, '.maestro'))).filter(name => name.endsWith('.yaml')).map(name => name.slice(0, -5))
   if (!available.length || (flow !== 'all' && !available.includes(flow))) throw Error('Requested Maestro flow is absent from the snapshot')

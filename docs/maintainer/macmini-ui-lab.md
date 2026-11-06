@@ -1,6 +1,14 @@
 # Mac mini 离线 UI 测试
 
-主人日常使用的 Mac 不运行图形测试，不接管鼠标、键盘、焦点或窗口，也不运行重型测试与构建。所有测试在下述明确登记的 Mac mini 上执行，默认仍为 `homes-mac-mini` 对应的 `Home’s Mac mini`，没有本机回退。根目录 `AGENTS.md` 是协作规则入口。
+主人日常使用的 Mac 不运行图形测试，不接管鼠标、键盘、焦点或窗口，也不运行重型原生构建。`bun run verify` 在主 Mac 跑，不上 mini；主 Mac 1 分钟负载 ≥ 8 时不跑全量验证。UI 测试与重型原生构建在下述明确登记的 Mac mini 上执行，默认仍为 `homes-mac-mini` 对应的 `Home’s Mac mini`，没有本机回退。根目录 `AGENTS.md` 是协作规则入口。
+
+## 所有 job 共用机器锁（2026-11-06）
+
+所有 mini 上的 job 必须走本仓库入口、拿 `~/ci/lock`；禁止 SSH 直接运行临时 `/private/tmp/*.mjs`、单独 vitest/Playwright、构建或另开 verify。桌面 `run.mjs`、App `app-run.mjs` 和快照接收器必须一起更新到本仓库版本及锁模块；只更新本地 SSH 客户端不能保护旧远端执行器。`status` / `app-status` 只读，不占锁。
+
+锁用原子 mkdir，`info` 为 `pid=/since=/owner=`，owner 是 `wechat-cc <lane> <sha7>`，pid 是远端执行 job 的进程。过期规则与家族 runner 一致：无 pid 过期；pid=0 预留超过 900 秒过期；其余 pid 不存在过期。排队打印「家族 check 在跑 <owner>,等它」。拿锁后等 1 分钟负载 ≤ 核数 × 1.5 才开始，等待期间保持锁。完成、失败、INT/TERM/HUP 或超时均停止自有子进程并核对拥有权释放；SIGKILL/断电无法执行清理，下次按死 pid 回收。
+
+本地入口可设置 `CC_UI_LOCK_WAIT_MS`（默认 4 小时）、`CC_UI_LOAD_WAIT_MS`（默认 30 分钟）、`CC_UI_JOB_TIMEOUT_MS`（默认 4 小时，含排队）。只接受正整数毫秒，经 SSH 传给远端；超时停止自有进程组，不停止其他家族任务。任务收尾删除自己建立的 `~/cc-ui-lab/<任务>` 和 App 快照，只保留 active.json 指向的快照；不得清理别人的目录。以下旧验收记录属于历史证据，其中 mini verify 做法已被本节替代。
 
 ## 次级 Mini 的隔离入口（2026-11-01）
 
@@ -14,7 +22,7 @@ node apps/desktop/scripts/macmini-ui.mjs embedded homebot
 
 该目标使用 `homebot-mac-mini` SSH 别名；实际地址与私钥不进仓库。需要任务自己的 SSH 配置时，可通过 `CC_UI_SSH_CONFIG` 指向主机上的绝对文件路径，仍强制已知主机校验、关闭代理和 X11 转发。未指定目标时保持原来的 Home’s 入口，不自动切换机器。
 
-次级入口同时持有自己的 `.execution-lock` 和家族 `/Users/homebot/ci/lock`。已有检查锁时不开始测试；结束时核对自己写入的拥有权内容，只释放本次锁。公开 Bun/Cargo/浏览器依赖放在新 lab；安装阶段可以下载公开依赖，测试与 UI 构建仍使用拒绝外连的限制和空状态。原 Home’s lab、全局检查配置、家庭数据、relay 与其他项目不修改。
+两台 mini 的入口统一持有家族 `~/ci/lock`。已有检查锁时排队；结束时核对自己写入的拥有权内容，只释放本次锁。公开 Bun/Cargo/浏览器依赖放在新 lab；安装阶段可以下载公开依赖，测试与 UI 构建仍使用拒绝外连的限制和空状态。原 Home’s lab、全局检查配置、家庭数据、relay 与其他项目不修改。
 
 两台机器使用相同的 QA identifier、debug/production 编译限制与回环4199驱动；新增测试机不放宽生产应用或后台执行限制。具体新环境的安装、离线探针和验收状态以每批回执为准，入口存在本身不代表原生验收通过。
 
@@ -32,24 +40,21 @@ node apps/desktop/scripts/macmini-ui.mjs embedded homebot
 node apps/desktop/scripts/macmini-ui.mjs status
 node apps/desktop/scripts/macmini-ui.mjs doctor
 node apps/desktop/scripts/macmini-ui.mjs unit
-node apps/desktop/scripts/macmini-ui.mjs affected
 node apps/desktop/scripts/macmini-ui.mjs browser
 node apps/desktop/scripts/macmini-ui.mjs embedded-build
 node apps/desktop/scripts/macmini-ui.mjs embedded
-node apps/desktop/scripts/macmini-ui.mjs full
-node apps/desktop/scripts/macmini-ui.mjs full-platform
 node apps/desktop/scripts/macmini-ui.mjs production-build
 ```
 
-`unit` 检查远端执行边界、拖动控制器与真实页面接线、QA 边界、状态目录/桌面模拟接口的测试环境，以及 Rust 原生单测；`browser` 运行陪伴控制、此刻、状态和动作实验室的 26 条无界面浏览器用例。`full` 运行仓库的 `verify --full`，再运行上述两组检查；**它不包含硬件鼠标验收，在进程检查用例上仍受下面的系统限制**。`full-platform` 单独执行标准 `verify --full`，保留独立目录、空配置、测试替身与串行锁，使用正常的 macOS 进程访问权限；不声称具有系统强制断网的覆盖。入口在 mini 的 `/Users/home/cc-ui-lab/run.mjs`，数据配置在同目录 `active.json`。更换测试快照时由整合者更新这两处；不要从未知目录导入执行器。
+`unit` 检查远端执行边界、拖动控制器与真实页面接线、QA 边界、状态目录/桌面模拟接口的测试环境，以及 Rust 原生单测；`browser` 运行陪伴控制、此刻、状态和动作实验室的 26 条无界面浏览器用例。`affected`、`full`、`full-platform` 已停用，远端直接拒绝；verify 请在主 Mac 运行。入口在 mini 的 `labHome/run.mjs`，数据配置在同目录 `active.json`。更换测试快照时由整合者更新这两处；不要从未知目录导入执行器。
 
-一次只允许一组测试。mini 的 `.execution-lock/owner.json` 记录所属进程；意外退出留下锁时，先确认这个进程及其测试子进程都已结束，再处理锁，不能抢占另一个执行者。每轮日志和结果位于 lab 下 `artifacts/<时间>-<命令>/`。
+一次只允许一组测试。mini 的 `~/ci/lock/info` 记录所属进程；意外退出时按上述家族规则回收过期锁，不能抢占另一个执行者。每轮日志和结果位于 lab 下 `artifacts/<时间>-<命令>/`。
 
 `production-build` 仅在 mini 编译完整应用，不启动生产身份的程序。它关闭发布更新包与签名，只使用公开依赖和指定的公开 `sd-cli` 工具；不需要模型权重、私人插件或签名私钥。完整包回到主机后由整合者签名并核对身份，再走部署保护。
 
 ## 离线边界
 
-`embedded-build`、`embedded`、无界面浏览器、Rust、`affected` 与 `full` 通过 mini 的 `offline-tests.sb` 运行，允许回环请求并拒绝外连。实际探针确认 `127.0.0.1` 可用，向保留的外部地址建立连接被系统以 EPERM 拒绝。依赖安装阶段只下载公开开发工具，测试阶段 Cargo 使用 `--offline --locked`。
+`embedded-build`、`embedded`、无界面浏览器、Rust 通过 mini 的 `offline-tests.sb` 运行，允许回环请求并拒绝外连。实际探针确认 `127.0.0.1` 可用，向保留的外部地址建立连接被系统以 EPERM 拒绝。依赖安装阶段只下载公开开发工具，测试阶段 Cargo 使用 `--offline --locked`。
 
 原生 QA 页面使用现有的合成 API/受限 IPC 包装与独立空状态目录；Appium 不是 CC daemon，不需要模型账号。上述进程网络限制的实测范围是无界面测试子进程，不能据此宣称 Appium 冷启动的任意 GUI 程序都处于同一个网络限制中。原生入口只允许两个已知 QA 包。
 
@@ -94,7 +99,7 @@ node apps/desktop/scripts/macmini-ui.mjs capture
 
 App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照必须来自已审阅的 `origin/dev` 或 `app-maestro-build3`，仅传 Git archive，不复制 node_modules、忽略文件、账号或原生签名材料。
 
-整合者把本仓库 `apps/desktop/scripts/macmini-ui-{protocol,remote,app}.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 的 `labHome/app-executor/` 目录。在 lab 根创建两个固定包装器：`app-run.mjs` import `./app-executor/macmini-ui-remote.mjs`，`app-snapshot.mjs` import `./app-executor/macmini-app-snapshot.mjs`。App 的 SSH 目标固定为 `app-run.mjs`，因此桌面整合者切换 `run.mjs` 不影响 App 入口。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令；仍与桌面共享 `active.json` 和执行锁。
+整合者把本仓库 `apps/desktop/scripts/macmini-ui-{protocol,remote,app}.mjs`、`macmini-machine-lock.mjs`、`macmini-job-lifecycle.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 的 `labHome/app-executor/` 目录。在 lab 根创建两个固定包装器：`app-run.mjs` import `./app-executor/macmini-ui-remote.mjs`，`app-snapshot.mjs` import `./app-executor/macmini-app-snapshot.mjs`。App 的 SSH 目标固定为 `app-run.mjs`，因此桌面整合者切换 `run.mjs` 不影响 App 入口。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令；仍与桌面共享 `active.json` 和执行锁。
 
 ```sh
 # 在主机调用；只传源码，接收器在 mini 持锁创建新目录并原子更新 appRoot。
