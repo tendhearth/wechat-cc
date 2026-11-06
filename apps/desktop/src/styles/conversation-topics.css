@@ -1,4 +1,4 @@
-.conversation-topics { display:flex; flex:none; flex-wrap:wrap; gap:var(--th-space-s); padding:var(--th-space-s) 0; }
+.conversation-topics { display:flex; flex:none; flex-wrap:nowrap; overflow-x:auto; gap:var(--th-space-s); padding:var(--th-space-s) 0; }
 .conversation-topics[hidden], .conversation-topic-panel[hidden] { display:none; }
 .conversation-topics button, .conversation-topic-panel button { font:inherit; font-size:var(--th-size-small); color:var(--th-ink); background:transparent; border:1px solid var(--th-hair); border-radius:var(--th-radius-control); padding:8px 12px; cursor:pointer; }
 .conversation-topics button[aria-pressed="true"] { border-color:var(--th-ink); }
@@ -12,3 +12,6 @@
 .cc-now-pane { position:relative; }
 .has-topic { margin-right:min(360px,42%); }
 @media(max-width:760px) { .conversation-topic-panel { width:100%; inset:0; border:0; } .has-topic { margin-right:0; } }
+@media(max-width:760px) { .conversation-topic-panel { top:44px; } }
+
+.conversation-topics button { flex:none; white-space:nowrap; }

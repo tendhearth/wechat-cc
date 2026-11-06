@@ -1,5 +1,6 @@
 // @ts-check
 import { V1, v1 } from '../daemon-client.js'
+import { STATUS_WORDS } from '../generated/status-table.js'
 import { escapeHtml } from '../view.js'
 
 /** T4 reads never open a bubble. Only a deliberate owner selection writes.
@@ -11,16 +12,27 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   root.append(panel)
   /** @type {HTMLElement|null} */ let returnFocus = null
   let alive = true, selected = '', revision = '', ticket = 0, listTicket = 0, all = false, cursor = '', stale = false
+  /** @type {boolean|null} */ let supported=null
   /** @type {any[]} */ let topics = []
   /** @type {any} */ let detail = null
+  /** @type {{id:string,requestId:string}|null} */ let pendingOpen = null
   /** @type {ReturnType<typeof setTimeout>|undefined} */ let timer
-  const close = () => { all = false; selected = ''; ticket++; panel.hidden = true; root.classList.remove('has-topic'); drawRow(); returnFocus?.focus() }
+  const narrow=window.matchMedia('(max-width:760px)')
+  const syncPanel=()=>{
+    const modal=narrow.matches&&!panel.hidden
+    panel.setAttribute('role',narrow.matches?'dialog':'complementary')
+    if(modal)panel.setAttribute('aria-modal','true');else panel.removeAttribute('aria-modal')
+    for(const child of root.children)if(child!==panel&&child instanceof HTMLElement)child.inert=modal
+  }
+  const visibility=new MutationObserver(syncPanel);visibility.observe(panel,{attributes:true,attributeFilter:['hidden']})
+  narrow.addEventListener('change',syncPanel)
+  const close = () => { const id=selected; pendingOpen=null; all = false; selected = ''; ticket++; panel.hidden = true; root.classList.remove('has-topic'); syncPanel(); drawRow(); const target=id?row.querySelector(`[data-topic-id="${CSS.escape(id)}"]`):returnFocus; if(target instanceof HTMLElement)target.focus() }
   const button = (/** @type {string} */ label, /** @type {()=>unknown} */ action) => {
-    const el = document.createElement('button'); el.type = 'button'; el.textContent = label; el.onclick = action; return el
+    const el = document.createElement('button'); el.type = 'button'; el.textContent = label; el.dataset.topicFocusKey=label; el.onclick = action; return el
   }
   function drawRow() {
     row.replaceChildren(...topics.slice(0,6).map(t => {
-      const b = button(t.title, () => { void open(t.id) }); b.setAttribute('aria-pressed', String(selected === t.id)); return b
+      const b = button(t.title, () => { void open(t.id) }); b.dataset.topicId=t.id; b.setAttribute('aria-pressed', String(selected === t.id)); return b
     }))
     if (topics.length) row.append(button('更多话题', () => { all = true; selected = ''; cursor = ''; panel.hidden = false; root.classList.add('has-topic'); void listAll() }))
     row.hidden = !topics.length
@@ -31,12 +43,12 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       const data = await v1(call,V1.topics.list,{query:{view:'recent',limit:6}})
       if (!alive || generation !== listTicket) return
       if (!Array.isArray(data.topics) || typeof data.revision !== 'string') throw Error('invalid_topics')
-      topics = data.topics; stale = false; drawRow()
-      if (selected) await readDetail(selected)
+      supported=true; topics = data.topics; stale = false; drawRow()
+      if (selected && pendingOpen?.id!==selected) await readDetail(selected)
     } catch (error) {
       if (!alive || generation !== listTicket) return
       stale = true
-      if (/401|403|404|unauthorized|forbidden/.test(String(error))) { topics = []; detail = null; close(); drawRow(); return }
+      if (/401|403|404|unauthorized|forbidden/.test(String(error))) { supported=false;topics = []; detail = null; close(); drawRow(); return }
       // No data on an older daemon: conversation remains usable and no dead entry is advertised.
       if (detail && selected) drawDetail()
     }
@@ -53,22 +65,29 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       stale = true; drawDetail()
     }
   }
-  async function open(/** @type {string} */ id) {
+  async function open(/** @type {string} */ id, /** @type {string|undefined} */ retryRequestId=undefined) {
     returnFocus = /** @type {HTMLElement|null} */ (document.activeElement)
     all = false; selected = id; detail = null; cursor = ''; panel.hidden = false; root.classList.add('has-topic'); drawRow(); drawDetail(); panel.focus()
     const generation = ++ticket
+    const requestId=retryRequestId??crypto.randomUUID();pendingOpen={id,requestId}
     try {
-      await v1(call,V1.topics.open,{body:{id,requestId:crypto.randomUUID()}})
+      await v1(call,V1.topics.open,{body:{id,requestId}})
       if (!alive || generation !== ticket || selected !== id) return
+      pendingOpen=null
       await readDetail(id)
     } catch (error) { if (alive && generation === ticket) { if (/401|403|404|unauthorized|forbidden/.test(String(error))) { topics = []; detail = null; close(); drawRow() } else { stale = true; drawDetail() } } }
   }
   function drawDetail() {
     if (!selected) return
+    const top=panel.scrollTop
+    const previous=panel.contains(document.activeElement)?/** @type {HTMLElement|null} */(document.activeElement):null
+    const focusKey=previous?.dataset.topicFocusKey
+    const expanded=new Set([...panel.querySelectorAll('details[data-entry-id][open]')].map(el=>el.getAttribute('data-entry-id')))
+    const restore=()=>{panel.scrollTop=top;if(previous){const target=focusKey?panel.querySelector(`[data-topic-focus-key="${CSS.escape(focusKey)}"]`):panel;(target instanceof HTMLElement?target:panel).focus({preventScroll:true})}}
     panel.replaceChildren(button('收起', close))
     const h = document.createElement('h2'); h.id = 'conversation-topic-title'; panel.setAttribute('aria-labelledby',h.id); h.textContent = detail?.topic?.title ?? topics.find(t => t.id === selected)?.title ?? '话题'; panel.append(h)
-    if (stale) { const note = document.createElement('p'); note.role = 'status'; note.textContent = '尚未同步 · 暂时读不到'; panel.append(note, button('重试', () => { void readDetail(selected) })) }
-    if (!detail) { if (!stale) panel.append(document.createTextNode('正在读取…')); return }
+    if (stale) { const note = document.createElement('p'); note.role = 'status'; note.textContent = '尚未同步 · 暂时读不到'; panel.append(note, button('重试', () => { if(pendingOpen?.id===selected)void open(selected,pendingOpen.requestId);else void readDetail(selected) })) }
+    if (!detail) { if (!stale) panel.append(document.createTextNode('正在读取…')); restore(); return }
     for (const text of [detail.topic.description, detail.topic.summary]) if (text) { const p = document.createElement('p'); p.textContent = text; panel.append(p) }
     let count = 0
     for (const [key,title] of /** @type {[string,string][]} */ ([['matters','相关事项'],['entries','CC 记得'],['messages','最近聊到']])) {
@@ -76,11 +95,12 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       count += items.length
       const heading = document.createElement('h3'); heading.textContent = title; panel.append(heading)
       for (const item of items) {
-        if (key === 'matters') panel.append(button(`${item.state} · ${item.title}`, () => openMatter(item.id)))
-        else if (key === 'messages') panel.append(button(`${item.speaker === 'owner' ? '你' : 'CC'} · ${item.ts} · ${item.excerpt}${item.source === 'episode' ? '（相关记录）' : ''}`, () => locateMessage(item.id,item.excerpt)))
+        if (key === 'matters') panel.append(button(`${STATUS_WORDS[/** @type {import('../generated/status-table.js').StatusKey} */(item.state)]??'尚未同步'} · ${item.title}`, () => openMatter(item.id)))
+        else if (key === 'messages') panel.append(button(`${item.speaker === 'owner' ? '你' : 'CC'} · ${item.ts} · ${item.excerpt}${item.source === 'episode' ? '（相关记录）' : ''}`, () => {close();return locateMessage(item.id,item.excerpt)}))
         else {
-          const disclosure = document.createElement('details')
+          const disclosure = document.createElement('details');disclosure.dataset.entryId=item.id;disclosure.open=expanded.has(item.id)
           disclosure.innerHTML = `<summary>${escapeHtml(item.line)}${item.recalled && item.status === 'live' ? ' · 这次想起' : ''}</summary><p>${escapeHtml(item.body)}</p><small>${escapeHtml(item.source)} · ${escapeHtml(item.updatedTs)}</small>`
+          const summary=disclosure.querySelector('summary');if(summary instanceof HTMLElement)summary.dataset.topicFocusKey=`entry:${item.id}`
           panel.append(disclosure)
         }
       }
@@ -88,7 +108,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       if (page?.nextCursor) panel.append(button(`更多${title}（${page.total}）`, () => { void more(key,page.nextCursor) }))
     }
     if (!count) panel.append(document.createTextNode('还没有记下内容'))
-    panel.append(button('记忆管理与纠错', manage))
+    panel.append(button('记忆管理与纠错', manage));restore()
   }
   async function more(/** @type {string} */ section, /** @type {string} */ nextCursor) {
     const id = selected, generation = ticket
@@ -98,24 +118,52 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       const seen = new Set(detail[section].map((/** @type {any} */ item) => item.id))
       detail[section].push(...data[section].filter((/** @type {any} */ item) => !seen.has(item.id)))
       detail.pages[section] = data.pages[section]; drawDetail()
-    } catch { stale = true; drawDetail() }
+    } catch(error) { if(!alive||selected!==id||generation!==ticket)return; if(/401|403|404|unauthorized|forbidden/.test(String(error))){topics=[];detail=null;close();drawRow()}else{stale = true; drawDetail()} }
   }
   async function listAll() {
     const generation = ++ticket
-    panel.replaceChildren(button('返回对话', close))
-    try {
-      const data = await v1(call,V1.topics.list,{query:{view:'all',limit:50,cursor:cursor || undefined}})
-      if (!alive || !all || generation !== ticket) return
-      const search = document.createElement('input'); search.type = 'search'; search.placeholder = '搜索话题'; search.ariaLabel = '搜索话题'; panel.append(search)
-      const results = document.createElement('div'); panel.append(results)
-      const paint = () => results.replaceChildren(...data.topics.filter((/** @type {any} */ topic) => topic.title.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())).map((/** @type {any} */ topic) => button(topic.title, () => { void open(topic.id) })))
-      search.oninput = paint; paint()
-      if (data.nextCursor) panel.append(button('更多', () => { cursor = data.nextCursor; void listAll() }))
-      if (!data.topics.length) panel.append(document.createTextNode('还没有记下内容'))
-    } catch { if (alive && generation === ticket) panel.append(document.createTextNode('暂时读不到，重试'),button('重试', () => { void listAll() })) }
+    /** @type {any[]} */ const items=[]
+    /** @type {string|null} */ let next=null
+    let loading=false
+    const seen=new Set()
+    panel.replaceChildren(button('返回对话',close))
+    const title=document.createElement('h2');title.id='conversation-topic-title';title.textContent='更多话题';panel.setAttribute('aria-labelledby',title.id);panel.append(title)
+    const search=document.createElement('input');search.type='search';search.placeholder='搜索话题';search.ariaLabel='搜索话题'
+    const results=document.createElement('div'),notice=document.createElement('p'),actions=document.createElement('div')
+    notice.role='status';panel.append(search,results,notice,actions);search.focus()
+    const valid=()=>alive&&all&&generation===ticket
+    const paint=()=>{
+      results.replaceChildren(...items.filter(topic=>topic.title.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())).map(topic=>button(topic.title,()=>{void open(topic.id)})))
+      actions.replaceChildren()
+      if(next&&!loading)actions.append(button('更多话题',()=>{void load(false)}))
+      notice.textContent=loading?'正在读取…':!items.length?'还没有记下内容':search.value&&!results.childElementCount?'没有找到相关话题':''
+    }
+    const load=async (/** @type {boolean} */ exhaustive)=>{
+      if(loading)return
+      loading=true;paint()
+      const cursors=new Set()
+      try {
+        do {
+          const current=next??''
+          if(cursors.has(current))throw Error('repeated_cursor')
+          cursors.add(current)
+          const data=await v1(call,V1.topics.list,{query:{view:'all',limit:50,cursor:next??undefined}})
+          if(!valid())return
+          for(const topic of data.topics)if(!seen.has(topic.id)){seen.add(topic.id);items.push(topic)}
+          next=data.nextCursor;paint()
+        }while(next&&(exhaustive||!!search.value))
+        loading=false;paint()
+      }catch(error){
+        if(!valid())return
+        if(/401|403|404|unauthorized|forbidden/.test(String(error))){topics=[];detail=null;close();drawRow();return}
+        loading=false;paint();notice.textContent='暂时读不到，重试';actions.append(button('重试',()=>{void load(!!search.value)}))
+      }
+    }
+    search.oninput=()=>{paint();if(next)void load(true)}
+    void load(false)
   }
   async function subscribe() {
-    if (!alive) return
+    if (!alive || supported===false) return
     try {
       const data = await v1(call,V1.topics.subscribe,{query:{since:revision || undefined,wait_ms:25000}})
       if (!alive) return
@@ -123,8 +171,17 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       timer = setTimeout(() => { void subscribe() }, 250)
     } catch (error) { if (alive) { if (/401|403|unauthorized|forbidden/.test(String(error))) { topics=[];detail=null;close();drawRow() }; stale = true; if (selected) drawDetail(); timer = setTimeout(() => { void refresh(); void subscribe() },10000) } }
   }
-  const escape = (/** @type {KeyboardEvent} */ event) => { if (event.key === 'Escape' && !panel.hidden) { event.preventDefault(); close() } }
+  const escape = (/** @type {KeyboardEvent} */ event) => {
+    if(panel.hidden)return
+    if(event.key==='Escape'){event.preventDefault();close();return}
+    if(event.key==='Tab'&&narrow.matches){
+      const controls=[...panel.querySelectorAll('button,input,summary,[tabindex="0"]')].filter(el=>el.getClientRects().length)
+      const first=/** @type {HTMLElement|undefined} */(controls[0]),last=/** @type {HTMLElement|undefined} */(controls.at(-1))
+      if(event.shiftKey&&(document.activeElement===first||document.activeElement===panel)){event.preventDefault();last?.focus()}
+      else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}
+    }
+  }
   root.addEventListener('keydown',escape)
-  void refresh(); void subscribe()
-  return {close,refresh,destroy() { alive = false; ticket++; listTicket++; clearTimeout(timer); root.removeEventListener('keydown',escape); row.remove(); panel.remove() }}
+  void refresh().then(()=>{if(supported!==false)void subscribe()})
+  return {close,refresh,destroy() { alive = false; topics=[];detail=null;pendingOpen=null;panel.hidden=true; syncPanel(); visibility.disconnect(); narrow.removeEventListener('change',syncPanel); ticket++; listTicket++; clearTimeout(timer); root.removeEventListener('keydown',escape); row.remove(); panel.remove() }}
 }

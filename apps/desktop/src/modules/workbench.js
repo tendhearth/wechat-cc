@@ -372,7 +372,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     const create = 'workspaceKind' in project && project.workspaceKind === 'managed'
       ? '<button type="button" class="wb-new wb-project-new" data-action="task-entry" aria-label="随手交办一件事">＋ 交办</button>'
       : `<button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button>`
-    return `<section class="wb-project"><details id="${id}" data-sidebar-disclosure${open ? ' open' : ''}><summary title="${escapeWorkbenchHtml(project.path)}"><h3>${escapeWorkbenchHtml(project.label)}</h3><small>${project.tasks.length}</small></summary><div class="wb-project-tasks">${project.tasks.map(task => renderTask(task, providerNameOf(state), state.loadingId ?? state.selectedId)).join('') || '<p class="wb-empty-copy">在这个项目里交办一件事。</p>'}</div></details>${create}</section>`
+    return `<section class="wb-project"><details id="${id}" open data-project-search-group><summary title="${escapeWorkbenchHtml(project.path)}"><h3>${escapeWorkbenchHtml(project.label)}</h3><small>${project.tasks.length}</small></summary><div class="wb-project-tasks">${project.tasks.map(task => renderTask(task, providerNameOf(state), state.loadingId ?? state.selectedId)).join('') || '<p class="wb-empty-copy">在这个项目里交办一件事。</p>'}</div></details>${create}</section>`
   }
   const otherId = 'wb-other-projects'
   const otherList = otherProjects.length ? `<details id="${otherId}" class="wb-other-projects" data-sidebar-disclosure${query.q || executionView.sidebarDisclosures?.get(otherId) ? ' open' : ''}><summary>其他项目 <small>${otherProjects.length}</small></summary><div>${otherProjects.map(project => `<section class="wb-project wb-project-empty"><h3 title="${escapeWorkbenchHtml(project.path)}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button></section>`).join('')}</div></details>` : ''
@@ -469,10 +469,10 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const chosenContinuation=executionView.restartPreview?(executionView.restartPreview.status==='ready'?executionView.restartPreview.continuation??undefined:{mode:'restart_required'}):detail?.continuation
   const previewError=executionView.restartPreview?.error?`<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(executionView.restartPreview.error)} <button type="button" class="wb-new" data-action="retry-continuation-preview">重新读取恢复说明</button></p>`:''
   const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null,providerName:state.nativeResume?.taskId===detail.task.id?providerNameOf(state)(state.nativeResume.providerId):undefined},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
-  return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar" aria-labelledby="wb-all-title"><header><h2 id="wb-all-title">全部</h2><button type="button" class="wb-delegate" data-action="task-entry" aria-label="交办" title="交办一件事">${icon('add-01', {size:16})}<span aria-hidden="true">交办</span></button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner" data-task-focus="${taskFocus}">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
+  return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar" aria-labelledby="wb-all-title"><header><h2 id="wb-all-title">搜索事项</h2><button type="button" class="wb-delegate" data-action="task-entry" aria-label="交办" title="交办一件事">${icon('add-01', {size:16})}<span aria-hidden="true">交办</span></button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner" data-task-focus="${taskFocus}">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
 }
 
-/** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
+/** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,isTaskVisible?:()=>boolean,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
 export function createWorkbenchController(deps) {
   /** @type {WorkbenchState} */
   const state = { reviewsLoaded: false, reviews: /** @type {ReviewTurn[]} */ ([]), reviewsSignature: EMPTY_REVIEWS, reviewsError: false, reviewReturnOpen: /** @type {ReviewReturnOpen|null} */ (null), version: 0, tasks: [], providers: [], defaultProvider: '', canWechat: false, selectedId: null, loadingId: null, detail: null, selectedArtifactId: null, error: '', detailDisconnected:false, preview: null, query: { ...(deps.initialQuery ?? { q: '', archived: 'exclude' }) }, loadingMore: false, newScope: deps.initialScope?.startsWith('new:') ? deps.initialScope : 'new' }
@@ -689,7 +689,7 @@ export function createWorkbenchController(deps) {
       state.loadingId = null
       if (artifactsSignature(state.detail) !== artifactsSignature(result)) state.reviewsLoaded = false
       state.detail = result
-      if (/^[a-f0-9]{8}$/.test(id)) void v1(deps.invokeWorkbenchApi, V1.matter.seen, { body: { id } }).catch(() => {})
+      if (deps.isTaskVisible?.()!==false && /^[a-f0-9]{8}$/.test(id)) void v1(deps.invokeWorkbenchApi, V1.matter.seen, { body: { id } }).catch(() => {})
       state.detailDisconnected = false
       state.selectedArtifactId = chooseArtifactId(result.artifacts ?? [], state.selectedArtifactId)
       if (state.preview && state.preview.artifactId !== state.selectedArtifactId) state.preview = null
@@ -871,7 +871,7 @@ export function initWorkbenchPage(deps) {
     showReadingNotice()
     return true
   }
-  const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, initialScope, initialQuery: resumeQuery, patchLive, render: state => {
+  const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, isTaskVisible:()=>root.closest?.('.workbench-pane')?.getAttribute('data-workbench-view')!=='search', initialScope, initialQuery: resumeQuery, patchLive, render: state => {
     if (!alive) return
     if (hasPainted) { captureDraft(); searchDraft = input('wb-search')?.value ?? searchDraft }
     if (state.detail) {
@@ -1124,7 +1124,7 @@ export function initWorkbenchPage(deps) {
     const navigation = ++navigationGeneration
     const layer=/** @type {HTMLElement|null} */(root.closest?.('.workbench-pane'))
     if(layer)layer.dataset.workbenchView='detail'
-    try { await controller.selectTask(id); const task=controller.state.detail?.task;if(task?.id===id)deps.onMatterViewed?.(task) }
+    try { await controller.selectTask(id); const task=controller.state.detail?.task;if(task?.id===id)deps.onMatterViewed?.(task);if(layer){const heading=/** @type {HTMLElement|null} */(root.querySelector('.wb-task-head h2'));if(heading){heading.tabIndex=-1;heading.focus()}} }
     catch (error) { if (alive && navigation === navigationGeneration) fail(error) }
   }
   const refreshInteraction = async (/** @type {string} */ taskId, /** @type {number} */ navigation) => {
@@ -1923,6 +1923,7 @@ export function initWorkbenchPage(deps) {
   const onDragOver=(/** @type {DragEvent} */ event)=>{if(inComposer(event)&&Array.from(event.dataTransfer?.types??[]).includes('Files'))event.preventDefault()}
   const onToggle=(/** @type {Event} */event)=>{
     if(!(event.target instanceof Element)||!root.contains(event.target))return
+    if(event.target.hasAttribute('data-project-search-group')&&!event.target.hasAttribute('open')){event.target.setAttribute('open','');return}
     if(['wb-options','wb-task-info'].includes(event.target.id))loadExecutionCatalog()
     if(event.target.id==='wb-artifacts'&&!event.target.hasAttribute('open'))resultReturnPositions.delete(renderedScope)
     // 「在不在跟随最新」取决于有没有在翻成果 / 改动(browsingResults 看这些展开状态),而 toggle 是异步到的:

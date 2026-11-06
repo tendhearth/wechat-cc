@@ -423,31 +423,17 @@
               <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
             </div>
             </details>
-            <button id="now-back" class="now-back" type="button" hidden>‹ 返回对话</button>
-            <section class="now-hero">
-              <h1 id="now-greeting" class="now-greeting">晚上好</h1>
-              <div class="now-cc-col">
-                <button id="now-cc" class="now-figure" type="button" aria-label="跟 CC 说">
-                  <img class="now-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
-                  <img class="now-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
-                </button>
-                <button id="now-cc-bubble" class="now-bubble" type="button" hidden aria-label="CC 最近说的话，点开进对话"><span class="now-bubble-text"></span><span class="now-bubble-meta"><small class="now-bubble-time"></small><span class="now-bubble-more" hidden>查看完整回复 ›</span></span></button>
-              </div>
-            </section>
+            <header class="now-hero" aria-label="CC">
+              <button id="now-cc" class="now-figure" type="button" aria-label="跟 CC 说">
+                <img class="now-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
+                <img class="now-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
+              </button><span>CC</span>
+            </header>
             <div id="converse-root" class="converse-page"></div>
             <details id="now-waiting" class="now-waiting" aria-labelledby="now-waiting-title" hidden>
               <summary id="now-waiting-title"></summary>
               <ul id="now-waiting-list"></ul>
             </details>
-            <section id="now-group-working" class="now-group" aria-labelledby="now-group-working-title" hidden>
-              <h2 id="now-group-working-title">在做</h2>
-              <ul id="now-group-working-list"></ul>
-            </section>
-            <section id="now-group-back" class="now-group" aria-labelledby="now-group-back-title" hidden>
-              <h2 id="now-group-back-title">带回来的</h2>
-              <ul id="now-group-back-list"></ul>
-            </section>
-            <button id="now-all" class="now-all" type="button">全部 →</button>
           </article>
 
           <!-- Hidden shim: keeps the IDs that JS modules
@@ -681,10 +667,10 @@
           </article>
 
           <!-- ── pane: workbench ───────────────────────────────────── -->
-          <article class="dash-pane workbench-pane" data-pane="workbench" hidden>
+          <section id="conversation-matter-layer" class="dash-pane workbench-pane" data-pane="workbench" role="dialog" aria-modal="true" aria-label="事项" hidden>
             <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-home" class="workbench-home" type="button" data-life-pane="overview">‹ 返回对话</button><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开导航" title="打开导航" aria-controls="dash-global-rail" aria-expanded="false"><span class="dash-wordmark">tendhearth</span></button></span></header>
-            <div id="workbench-root" class="workbench-root"><p class="empty-state">正在打开工作台…</p></div>
-          </article>
+            <div id="workbench-root" class="workbench-root"><p class="empty-state">正在读取事项…</p></div>
+          </section>
 
           <!-- ── pane: a2a-agents → 觅食台 (forager's desk) ─────────────── -->
           <article class="dash-pane" data-pane="a2a-agents" hidden>

@@ -49,3 +49,49 @@ describe('T4 desktop topic bubbles', () => {
     expect((document.querySelector('.conversation-topic-panel') as HTMLElement).hidden).toBe(true)
   })
 })
+
+it('searches the remaining historical pages without opening any topic',async()=>{
+  const calls:Array<[string,string]>=[]
+  setup(async(method:string,path:string)=>{
+    calls.push([method,path])
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(path.includes('view=all'))return path.includes('cursor=next')?{topics:[topic('old-target')],nextCursor:null,revision:'1'}:{topics:[topic('first')],nextCursor:'next',revision:'1'}
+    return{topics:[topic('recent')],nextCursor:null,revision:'1'}
+  })
+  await settle()
+  ;([...document.querySelectorAll('nav button')].find(b=>b.textContent==='更多话题') as HTMLButtonElement).click()
+  await settle()
+  const field=document.querySelector('.conversation-topic-panel input') as HTMLInputElement
+  field.value='old-target';field.dispatchEvent(new Event('input'));await settle()
+  expect(document.querySelector('.conversation-topic-panel')!.textContent).toContain('话题old-target')
+  expect(calls.some(([,path])=>path.includes('cursor=next'))).toBe(true)
+  expect(calls.some(([method])=>method==='POST')).toBe(false)
+})
+
+it('retries an uncertain owner open with the same request ID',async()=>{
+  const ids:string[]=[]
+  setup(async(method:string,path:string,body:any)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST'){ids.push(body.requestId);if(ids.length===1)throw Error('network');return{id:body.id}}
+    if(path.includes('/detail'))return{topic:topic('r'),entries:[],matters:[],messages:[],pages:{}}
+    return{topics:[topic('r')],revision:'1',nextCursor:null}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  ;([...document.querySelectorAll('.conversation-topic-panel button')].find(b=>b.textContent==='重试') as HTMLButtonElement).click();await settle()
+  expect(ids).toHaveLength(2);expect(ids[0]).toBe(ids[1])
+})
+
+
+it('refreshing an expanded topic preserves the entry disclosure and keyboard focus',async()=>{
+  setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'a'}
+    if(path.includes('/detail'))return{topic:topic('a'),entries:[{id:'entry',line:'决定',body:'原文',source:'主人',updatedTs:'2026-11-06',status:'live'}],matters:[],messages:[],pages:{}}
+    return{topics:[topic('a')],revision:'1',nextCursor:null}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  const entry=document.querySelector('[data-entry-id="entry"]') as HTMLDetailsElement;entry.open=true;entry.querySelector('summary')!.focus()
+  await current!.refresh()
+  expect((document.querySelector('[data-entry-id="entry"]') as HTMLDetailsElement).open).toBe(true)
+  expect((document.activeElement as HTMLElement).dataset.topicFocusKey).toBe('entry:entry')
+})

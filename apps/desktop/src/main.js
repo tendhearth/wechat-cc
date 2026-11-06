@@ -39,14 +39,15 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, addConversationMatter, locateConversationMessage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
 import { mountConversationTopics } from './modules/conversation-topics.js'
-import { updateConversationMatters } from './modules/conversation-matters.js'
+import { updateConversationMatters, updateConversationAttention } from './modules/conversation-matters.js'
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
-import { latestCCLine, nowStatusLine } from "./modules/now-home.js"
+import { nowStatusLine } from "./modules/now-home.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents, deactivateA2AAgentsTab } from "./modules/a2a-agents.js"
 import { markJournalSeen, activateHuntBag, deactivateHuntBag } from "./modules/journal.js"
 import { deactivatePeople } from "./modules/people.js"
@@ -89,6 +90,8 @@ const state = {
   updateProbed: false,
   connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
+/** @type {ReturnType<typeof mountConversationTopics>|null} */
+let conversationTopics=null
 const mainNavigation = createMainNavigation(destination => {
   if (typeof destination === 'string') { switchPane(destination); return }
   switchPane('workbench')
@@ -158,7 +161,6 @@ const nowRoot = /** @type {HTMLElement|null} */ (document.querySelector('.cc-now
 const nowPage = nowRoot ? mountNowPage({
   root: nowRoot, presencePoller,
   onOpenTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
-  onOpenAll: () => switchPane('workbench'),
   // 终端里等批准的会话:与桌宠权限卡、微信「y 码」同一条拍板路(POST /v1/permissions/resolve,凭据在原生宿主)。
   onResolveTerminal: async (hash, decision) => {
     try { return (await invoke('pet_permission_resolve', { hash, decision })) === true }
@@ -166,10 +168,10 @@ const nowPage = nowRoot ? mountNowPage({
   },
   onModeChange: m => {
     setConverseMode(m)
-    if (m === 'home') {
+    if (m === 'home' || m === 'chat') {
       // Read the authoritative local client after returning: pending now proves
       // a future reply is new; an already arrived reply only aligns the baseline.
-      const off = subscribeConverse(msgs => nowPage?.setConversationSnapshot(msgs))
+      const off = subscribeConverse(msgs => nowPage?.setConversationSnapshot(msgs.filter(m=>!m.matterId&&!m.terminalId)))
       off()
     }
     if (m === 'chat') document.getElementById('converse-input')?.focus()
@@ -199,7 +201,7 @@ const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConne
     timer = setInterval(() => { void nowConnections.refresh() }, 30_000)
   })
 }
-subscribeConverse(msgs => { nowPage?.setLatestLine(latestCCLine(msgs)); nowPage?.setConversationSnapshot(msgs) })
+subscribeConverse(msgs => { nowPage?.setConversationSnapshot(msgs.filter(m=>!m.matterId&&!m.terminalId)) })
 window.addEventListener('pagehide',()=>{closeRecordReader({restoreFocus:false});deactivateAtelierGallery();deactivateTodosPage();deactivateHuntBag();deactivatePeople();deactivateWishes();deactivateA2AAgentsTab()})
 const memoryRecordsHost = document.getElementById("cc-memory-records")
 const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
@@ -250,7 +252,7 @@ window.addEventListener('pagehide', () => homeTasks.stop())
 const terminalWaiting = createTerminalWaitingPoller({
   call: (method, path) => invokeWorkbenchApi(method, path),
   onChange: rows => { terminalWaitingCount = rows.length; nowPage?.setTerminal(rows); renderNowCount() },
-  onSessions: sessions => { home.sessions = sessions; renderHome() },
+  onSessions: sessions => { home.sessions = sessions; updateTerminalReferences(sessions); renderHome() },
 })
 terminalWaiting.start()
 window.addEventListener('pagehide', () => terminalWaiting.stop())
@@ -260,6 +262,7 @@ function startWorkbenchAttention() {
   workbenchAttention = createWorkbenchAttentionPoller({
     invokeWorkbenchApi, invoke,
     onChange: snapshot => {
+      updateConversationAttention(snapshot)
       nowPage?.setAttention(snapshot)
       lastAttention = snapshot; renderNowCount(); renderHome()
     },
@@ -692,9 +695,11 @@ function setToggle(id, on) {
 
 /** @param {string} name */
 function switchPane(name) {
-  const focusConversation = name === "converse"
+  const searchRequested = name === 'all' || name === 'together'
+  if(searchRequested)name='workbench'
+  const focusConversation = name === "converse" || name === 'chat'
   document.body.dataset.pane = focusConversation ? "overview" : name
-  if (focusConversation) name = "overview"
+  if (focusConversation) {conversationTopics?.close();name = "overview"}
   // 连接浮层只在原地看一眼:任何一次导航都把它收起。
   document.querySelector(".cc-home-details")?.removeAttribute("open")
   const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
@@ -710,11 +715,10 @@ function switchPane(name) {
     }
   }
   if (isCurrentWorkbenchPane(name, currentPane)) {
-    workbenchNavigation?.setWorkbenchActive(true)
+    workbenchNavigation?.setWorkbenchActive(false)
     return
   }
   document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
-  const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
@@ -726,7 +730,7 @@ function switchPane(name) {
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
     htmlEl.hidden = htmlEl.dataset.pane !== name && !(name === 'workbench' && htmlEl.dataset.pane === 'overview')
-    if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench' 
+    if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench'
   })
   // The destination must be visible before navigation transfers keyboard focus.
   workbenchNavigation?.setWorkbenchActive(false)
@@ -762,8 +766,10 @@ function switchPane(name) {
   }
   if (name === "workbench") {
     const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane'))
-    if(layer) layer.dataset.workbenchView='detail'
+    if(layer) layer.dataset.workbenchView=searchRequested?'search':'detail'
     initWorkbenchPage(deps)
+    const back=document.getElementById('workbench-home')
+    if(back){back.textContent=document.querySelector('.conversation-topic-panel:not([hidden])')?'‹ 返回话题':'‹ 返回对话';back.focus()}
   } else {
     stopWorkbenchPolling()
   }
@@ -779,6 +785,7 @@ function switchPane(name) {
     if (focusConversation) nowPage?.setMode("chat")
     else nowPage?.setMode("chat")
     initConversePage(deps, { focus: focusConversation })
+    if(!focusConversation) /** @type {HTMLElement|null} */(document.querySelector('.conversation-topic-panel:not([hidden])'))?.focus()
   }
   if (name === "a2a-agents") {
     activateHuntBag()
@@ -1678,17 +1685,31 @@ async function boot() {
   if(conversationRoot){
     const search=()=>{ switchPane('workbench'); const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane')); if(layer)layer.dataset.workbenchView='search'; document.getElementById('wb-search')?.focus() }
     mountConversationTools({root:conversationRoot,
-      delegate:()=>taskEntry.open({text:/** @type {HTMLTextAreaElement|null} */(document.getElementById('converse-input'))?.value??''}),
+      delegate:()=>openConversationDelegation(deps),
       search,
       projects:openConversationProjects,
-      history:async()=>{const list=/** @type {import('./modules/workbench.js').ListResult} */(await v1(invokeWorkbenchApi,V1.workbench.list));mountHistoryDialog(invokeWorkbenchApi,list.historyProviders??[],async id=>{switchPane('workbench');await openWorkbenchTask(id)},list.agentNames??{})},
+      history:async()=>{await terminalWaiting.refresh();return openComputerSessions(()=>home.sessions,session=>addConversationTerminal(session),async()=>{try{const list=/** @type {import('./modules/workbench.js').ListResult} */(await v1(invokeWorkbenchApi,V1.workbench.list));mountHistoryDialog(invokeWorkbenchApi,list.historyProviders??[],async id=>{switchPane('workbench');await openWorkbenchTask(id)},list.agentNames??{})}catch{showToast('暂时读不到电脑上的会话，请稍后再试')}})},
       navigate:switchPane})
     const waiting=document.getElementById('now-waiting')
-    if(waiting)conversationRoot.querySelector('.converse-compose')?.before(waiting)
+    if(waiting){
+      conversationRoot.querySelector('.converse-compose')?.before(waiting)
+      waiting.addEventListener('toggle',()=>{
+        if(!(waiting instanceof HTMLDetailsElement)||!waiting.open||lastAttention?.stale)return
+        const tasks=lastAttention?.tasks??[]
+        for(const task of tasks)addConversationMatter(task.id,/** @type {any} */(task).title??'交办的事')
+        updateConversationMatters(home.tasks??[])
+        const first=tasks[0]
+        if(first)conversationRoot.querySelector(`[data-matter-id="${CSS.escape(first.id)}"]`)?.scrollIntoView({block:'center'})
+        // Terminal permissions keep their original protected card until a terminal detail contract exists.
+        if(!terminalWaitingCount)waiting.open=false
+      })
+    }
     const topics=mountConversationTopics({root:conversationRoot,call:invokeWorkbenchApi,
       openMatter:async id=>{switchPane('workbench');await openWorkbenchTask(id)},
       locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
       manage:()=>switchPane('memory')})
+    conversationTopics=topics
+    document.getElementById('now-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
     window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
   }
   startAppUpdateChecks()
@@ -1734,3 +1755,16 @@ async function boot() {
 }
 
 boot()
+
+// A detail layer owns keyboard input until it closes; drafts remain in their original scopes.
+window.addEventListener('keydown',event=>{
+  const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane:not([hidden])'))
+  if(!layer||event.defaultPrevented||document.querySelector('dialog[open]'))return
+  if(event.key==='Escape'){event.preventDefault();switchPane('overview');return}
+  if(event.key==='Tab'){
+    const controls=[...layer.querySelectorAll('button,input,textarea,select,summary,[tabindex="0"]')].filter(el=>!el.hasAttribute('disabled')&&el.getClientRects().length)
+    const first=/** @type {HTMLElement|undefined} */(controls[0]),last=/** @type {HTMLElement|undefined} */(controls.at(-1))
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}
+  }
+})

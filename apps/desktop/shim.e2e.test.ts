@@ -22,6 +22,8 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 
 let shim: ChildProcess
 
@@ -140,7 +142,7 @@ describe('apps/desktop shim — HTML structure', () => {
       'dash-stop', 'dash-restart', 'dash-refresh',
       'dash-rail-dot', 'dash-rail-text',
       // 此刻页(2026-10-01 照稿重排)
-      'now-greeting', 'now-cc', 'now-cc-bubble', 'now-waiting', 'now-back',
+      'now-cc', 'now-waiting', 'now-waiting-title', 'converse-root', 'conversation-matter-layer',
       'dev-banner',
       // sessions pane — Task 10 replaced the static HTML scaffold with a
       // single dynamic mount point rendered by dialogue-page.js. The old
@@ -289,4 +291,14 @@ describe('apps/desktop shim — CLI invoke contracts', () => {
     await expect(invoke('this_command_does_not_exist'))
       .rejects.toThrow(/unknown command/)
   })
+it('serves the complete bundled PDF worker with JavaScript MIME type',async()=>{
+  const response=await fetch(`${BASE}/vendor/pdfjs/pdf.worker.mjs`)
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toContain('javascript')
+  const bytes=Buffer.from(await response.arrayBuffer())
+  const expected=readFileSync(join(__dirname,'src/vendor/pdfjs/pdf.worker.mjs'))
+  expect(bytes.byteLength).toBe(expected.byteLength)
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(createHash('sha256').update(expected).digest('hex'))
+})
+
 })

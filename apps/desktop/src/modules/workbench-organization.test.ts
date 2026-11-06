@@ -163,3 +163,16 @@ it('conversation search filters project and status while retaining archive pagin
   expect(html).not.toContain('data-task-id="done"')
   expect(html).toContain('data-action="load-more"')
 })
+
+
+it('loading a hidden conversation search detail does not consume the task read receipt',async()=>{
+  let visible=false
+  const value=task('deadbeef')
+  const api=vi.fn(async(_method:string,path:string)=>path.includes('/task?')?{task:value,events:[],artifacts:[]}:{tasks:[value],providers,defaultProvider:'codex',canWechat:false})
+  const controller=createWorkbenchController({invokeWorkbenchApi:api,render:vi.fn(),isTaskVisible:()=>visible})
+  await controller.selectTask(value.id)
+  expect(api.mock.calls.some(([,path])=>path==='/v1/matter/seen')).toBe(false)
+  visible=true;await controller.selectTask(value.id)
+  expect(api.mock.calls.filter(([,path])=>path==='/v1/matter/seen')).toHaveLength(1)
+  controller.destroy()
+})

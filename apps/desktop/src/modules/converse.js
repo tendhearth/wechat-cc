@@ -12,6 +12,7 @@
 // compose row. Same vanilla-JS module shape as dialogue-page.js / logs.js.
 
 import {openOwnerChatFile,openConversationImage,openLocalConversationFile} from "./converse-media.js"
+import { terminalReferenceHtml, paintTerminalReferences } from './conversation-sessions.js'
 import { matterReferenceHtml, updateConversationMatters, mountMatterProgress } from './conversation-matters.js'
 import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
@@ -24,7 +25,7 @@ import { V1, v1 } from '../daemon-client.js'
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onOpenMatter?: (id:string) => unknown, onSend?: () => void }} Deps
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[] }} ConverseMsg
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, terminalId?: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[] }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -197,6 +198,7 @@ function attachmentsHtml(m) {
 
 /** @param {ConverseMsg} m */
 function messageHtml(m) {
+  if(m.terminalId)return terminalReferenceHtml(m.terminalId,m.text)
   if (m.matterId) return `<div class="converse-msg converse-msg-cc"><div class="converse-cc-body">${matterReferenceHtml(m.matterId,m.text,!!m.historical)}</div></div>`
   if (m.role === "error") {
     return `<div class="converse-error-line">${escapeHtml(m.text)}</div>`
@@ -507,6 +509,7 @@ function renderMessages({ follow = false } = {}) {
     paintConversation(scroll,messages,messageHtml,emptyStateHtml(),{follow,latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))})
   }
   updateConversationMatters([])
+  paintTerminalReferences()
   for (const cb of listeners) {
     try { cb(messages) } catch (err) { console.error("converse subscriber threw", err) }
   }
@@ -669,7 +672,7 @@ async function delegateDraft(deps) {
   reflectMic()
   let accepted = false
   try {
-    const result = await deps.onDelegate({text: draft, visibleMessages: messages.flatMap(message => (message.role === 'user' || message.role === 'cc') && !message.matterId && !message.pending && message.text.trim() ? [{role: message.role, text: message.text}] : [])})
+    const result = await deps.onDelegate({text: draft, visibleMessages: messages.flatMap(message => (message.role === 'user' || message.role === 'cc') && !message.matterId && !message.terminalId && !message.pending && message.text.trim() ? [{role: message.role, text: message.text}] : [])})
     accepted = !!result
     if (result) addConversationMatter(result.receipt.taskId, result.task.title, false)
     if (accepted && input.value === draft) input.value = ""
@@ -744,7 +747,7 @@ function wireEvents(root, deps) {
     scroll.addEventListener("scroll",()=>syncConversationLatest(scroll,latest),{passive:true})
     latest?.addEventListener("click",()=>showConversationLatest(scroll,latest))
   }
-  if (deps.invokeWorkbenchApi) mountMatterProgress(root,deps.invokeWorkbenchApi)
+  if (deps.invokeWorkbenchApi) {const stop=mountMatterProgress(root,deps.invokeWorkbenchApi);window.addEventListener?.('pagehide',stop,{once:true})}
   root.addEventListener('click', event => {
     const id = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-matter]'))?.dataset.openMatter
     if (id) deps.onOpenMatter?.(id)
@@ -884,7 +887,8 @@ export function initConversePage(deps, { focus = true } = {}) {
 export function addConversationMatter(id,title,historical = true) {
   if (!messages.some(m => m.matterId === id)) messages.push({id:nextId++,role:'cc',text:title,matterId:id,historical,at:Date.now()})
   renderMessages()
-  document.querySelector(`[data-matter-id="${CSS.escape(id)}"]`)?.scrollIntoView?.({block:'nearest'})
+  // paintConversation preserves an older reading position and announces unread changes.
+  // Opening a process or topic must not force the underlying conversation to the end.
 }
 
 /** Locate an already loaded source; older sources use the existing text search until
@@ -906,4 +910,20 @@ export async function locateConversationMessage(deps,messageId,excerpt='') {
     const host=document.getElementById('converse-search-results')
     if(host){host.hidden=false;host.textContent='这段原消息尚未载入，可以搜索对话查找。'}
   }
+}
+
+/** The plus menu is the visible home of delegation; retain the same draft/receipt logic.
+ * @param {Deps} deps */
+export async function openConversationDelegation(deps){
+  if(sending||delegating||recording||transcribing||requestingMic)return
+  const input=/** @type {HTMLTextAreaElement|null} */(document.getElementById('converse-input'))
+  if(input?.value.trim())return delegateDraft(deps)
+  return deps.onDelegate?.({text:'',visibleMessages:messages.flatMap(message=>(message.role==='user'||message.role==='cc')&&!message.matterId&&!message.terminalId&&!message.pending&&message.text.trim()?[{role:message.role,text:message.text}]:[])})
+}
+
+/** @param {import('./conversation-sessions.js').Session} session */
+export function addConversationTerminal(session){
+  if(!messages.some(message=>message.terminalId===session.session_id))messages.push({id:nextId++,role:'cc',text:session.project||'终端会话',terminalId:session.session_id})
+  renderMessages()
+  document.querySelector(`[data-terminal-reference="${CSS.escape(session.session_id)}"]`)?.scrollIntoView({block:'nearest'})
 }

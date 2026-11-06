@@ -18,7 +18,9 @@ describe('desktop rail', () => {
   })
   it('一个主页(设计稿 2026-10-31 U4):没有单独的「一起做」导航项,一件件事从此刻的行或「全部 →」进', () => {
     expect(rail).not.toContain('data-pane="workbench"')
-    expect(html).toContain('id="now-all"')
+    expect(html).not.toContain('id="now-all"')
+    expect(html).toContain('data-conversation="single"')
+    expect(html).toContain('id="conversation-matter-layer"')
     expect(html).toMatch(/id="workbench-home"[^>]*data-life-pane="overview"/)
   })
   it('the CC bubble is the chat entry; no separate 跟 CC 说 nav', () => {

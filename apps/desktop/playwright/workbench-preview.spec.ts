@@ -51,10 +51,11 @@ async function setup(page:any,shim:any,shimUrl:string,withAttachment=false,siteA
     else if(url.pathname==='/v1/matter/changes')json={reviews:[]}
     await route.fulfill({json})
   })
-  await page.goto(shimUrl)
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
   await clickNav(page,'workbench')
+  await page.locator(`.wb-task[data-task-id="${task.id}"]`).click()
   await expect(page.locator('.wb-task-head h2')).toHaveText(task.title)
 }
 
