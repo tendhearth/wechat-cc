@@ -12,7 +12,7 @@ import { fillMobileTemplate, inlineScriptJson } from './mobile-page-template'
  * 「此刻」形象画不再内联(手机协议包 v2 Task 4 fix round 1,2026-09-29):两张
  * PNG base64 加起来 ~257KB,是页面撑爆中继 512KB 帧预算的大头。手机页 JS
  * (apps/mobile/src/presence.js 的 loadPresenceArt)按需从
- * GET /m/api/art/presence(settings-panel.ts,同一份 mobile-presence-art.json)
+ * GET /v1/phone/art/presence(settings-panel.ts,同一份 mobile-presence-art.json)
  * 拉,不再走这里的运行时键填充。
  */
 export function mobilePhoneHtml(token: string, remote: { relay: string; id: string } | null): string {

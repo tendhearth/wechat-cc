@@ -101,7 +101,7 @@ export const MERGED_ALIAS_KEYS = [
   // P3c-4 交办选项与会话(分块上传与进度两条不是 /v1 那条的同一个动作,改到 P3d)
   'GET /m/api/entry/options', 'GET /m/api/entry/models', 'POST /m/api/attachment/discard', 'GET /m/api/sessions', 'GET /m/api/session',
   // P3d-1 手机独有的纯改名(transform null):新键的处理器还在面板这一口,别名把路径换成新键交给它,回包原样
-  'GET /m/api/state', 'GET /m/api/art/presence', 'POST /m/api/push/register', 'POST /m/api/push/test',
+  'GET /m/api/state', 'POST /m/api/push/register', 'POST /m/api/push/test',
   'GET /m/api/matter/insight', 'GET /m/api/matter/input-receipt', 'GET /m/api/home', 'GET /m/api/cli/activity', 'GET /m/api/activity',
   'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/letters', 'GET /m/api/letters/page',
   // P3d-2 主人对话、记忆、表情、接着做、分块上传(纯改名,同上)
@@ -131,8 +131,8 @@ const desktopAlias = (from: string, to: string): WireRouteAlias =>
 
 export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   // ── P3c-1 一件事与主人对话:已并(MERGED_ALIAS_KEYS),一份数据一个 /v1 处理器
-  alias('GET /m/api/matters', 'GET /v1/matters', 'P3c-1', 'phoneMatters', ['app', 'web'], 'read'),
-  alias('GET /m/api/matter', 'GET /v1/matter', 'P3c-1', 'phoneMatter', ['app', 'web'], 'read'),
+  alias('GET /m/api/matters', 'GET /v1/matters', 'P3c-1', 'phoneMatters', ['app'], 'read'),
+  alias('GET /m/api/matter', 'GET /v1/matter', 'P3c-1', 'phoneMatter', ['app'], 'read'),
   alias('POST /m/api/matter/say', 'POST /v1/matter/say', 'P3c-1', 'phoneMatterSay'),
   alias('GET /m/api/chat/search', 'GET /v1/matter/owner-chat/search', 'P3c-1', 'phoneChatSearch'),
   alias('GET /m/api/chat/file', 'GET /v1/matter/owner-chat/file', 'P3c-1', 'phoneChatFile'),
@@ -159,12 +159,11 @@ export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   alias('POST /m/api/attachment/chunk', 'POST /v1/workbench/attachment/chunk', 'P3d', null),
   // ── P3d 手机独有的、相近的、撞名的:搬到新的 /v1 路径,纯改名(回包就是 /m/api 今天的回包)
   alias('GET /m/api/state', 'GET /v1/phone/state', 'P3d', null),
-  alias('GET /m/api/art/presence', 'GET /v1/phone/art/presence', 'P3d', null, ['web'], 'read'),
   alias('POST /m/api/push/register', 'POST /v1/phone/push/register', 'P3d', null),
   alias('POST /m/api/push/test', 'POST /v1/phone/push/test', 'P3d', null),
   alias('GET /m/api/matter/insight', 'GET /v1/matter/insight', 'P3d', null),
   alias('GET /m/api/matter/input-receipt', 'GET /v1/matter/input-receipt', 'P3d', null),
-  alias('GET /m/api/home', 'GET /v1/home', 'P3d', null, ['app', 'web'], 'read'),
+  alias('GET /m/api/home', 'GET /v1/home', 'P3d', null, ['app'], 'read'),
   alias('GET /m/api/cli/activity', 'GET /v1/cli/activity', 'P3d', null),
   alias('GET /m/api/activity', 'GET /v1/activity', 'P3d', null),
   alias('GET /m/api/jobs', 'GET /v1/jobs', 'P3d', null),
@@ -187,7 +186,7 @@ export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   alias('POST /m/api/cli/permission', 'POST /v1/cli/decide', 'P3d', null),
   alias('POST /m/api/cli/say', 'POST /v1/cli/session-say', 'P3d', null),
   // ── P3e 一件事上的动作 + 交办:收进 /v1/matter/*(处理器是 MattersService 那一层)
-  alias('POST /m/api/matter/stop', 'POST /v1/matter/stop', 'P3e', 'phoneMatterStop', ['app', 'web'], 'write'),
+  alias('POST /m/api/matter/stop', 'POST /v1/matter/stop', 'P3e', 'phoneMatterStop', ['app'], 'write'),
   alias('POST /m/api/matter/permission', 'POST /v1/matter/permission', 'P3e', 'phoneMatterPermission'),
   alias('POST /m/api/matter/answer', 'POST /v1/matter/answer', 'P3e', 'phoneMatterAnswer'),
   alias('GET /m/api/matter/artifact', 'GET /v1/matter/artifact', 'P3e', 'phoneMatterArtifact'),

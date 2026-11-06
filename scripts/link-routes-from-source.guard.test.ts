@@ -94,15 +94,14 @@ describe('链接令牌的范围 = 链接页面调用的路由(理念 2)', () => 
     for (const s of SOURCES) expect(calls.some(c => c.source === s.name), s.name).toBe(true)
   })
   it('LINK_ROUTES 与扫出来的集合相等', () => {
-    // 已并成别名的(P3c 起):页面还调旧键(`/m/api/…`),链接令牌经新键(`/v1` 那一行)够得着的是同一份数据 ——
-    // 新键的 link 由 routes-snapshot 守卫「别名的新键」那一条核对(同别名键),这里只拿页面调的键比。P3g 网页改读新键时把这一条去掉。
-    const targets = new Set(MERGED_ALIASES.map(a => a.to))
-    expect(compareLinkScope(scanAll(), new Set([...LINK_ROUTES].filter(k => !targets.has(k))))).toEqual([])
+    // 旧 App 仍可用别名;网页按新键核对链接范围。
+    const aliases = new Map(MERGED_ALIASES.map(a => [a.from, a.to]))
+    expect(compareLinkScope(scanAll(), new Set([...LINK_ROUTES].map(k => aliases.get(k) ?? k)))).toEqual([])
   })
   it('现在的链接范围(看得见的一份;改了页面就会跟着动)', () => {
     const bySource = Object.fromEntries(SOURCES.map(s => [s.name, [...new Set(scanAll().filter(c => c.source === s.name && !c.deviceOnly).map(c => c.key))].sort()]))
     expect(bySource).toEqual({
-      'phone /m': ['GET /m/api/art/presence', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'POST /m/api/matter/stop', 'POST /set/api/pair'],
+      'phone /m': ['GET /set', 'GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence', 'POST /set/api/pair', 'POST /v1/matter/stop'],
       'settings /set': ['GET /m', 'GET /set/api/state', 'POST /set/api/apply'],
       'relay pset': ['GET /m'],
       'app pairing': ['POST /set/api/pair'],

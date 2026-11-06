@@ -2496,6 +2496,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  // P3g:形象画只由随 daemon 更新的网页读，schema 不再从已退休的别名推。
+  'GET /v1/phone/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   // Phone-only and binary chunk routes retain their existing JSON response contracts.
   ...Object.fromEntries(WIRE_ROUTE_ALIASES.filter(a => !a.readers.includes('desktop'))
     .map(a => [a.to, PHONE_API_SCHEMAS[a.from]])),

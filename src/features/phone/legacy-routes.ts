@@ -440,7 +440,6 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
   return {
     // P3d-1 手机独有的(纯改名)
     'GET /m/api/state': rename('GET /m/api/state'),
-    'GET /m/api/art/presence': rename('GET /m/api/art/presence'),
     'POST /m/api/push/register': rename('POST /m/api/push/register'),
     'POST /m/api/push/test': rename('POST /m/api/push/test'),
     'GET /m/api/matter/insight': rename('GET /m/api/matter/insight'),

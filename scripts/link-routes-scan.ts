@@ -52,7 +52,7 @@ export const NON_CALL_SITES: ReadonlyArray<{ before: RegExp; why: string; emit?:
 
 const CALLERS = ['api', 'mApi', 'mPostOnce', 'sapi', 'fetch', 'ccNav', 'q', 'linkClient.request'] as const
 const CALLER_RE = new RegExp(String.raw`(?<![\w$.])(${CALLERS.map(c => c.replace('.', String.raw`\.`)).join('|')})\s*\(`, 'g')
-const ROUTE_LITERAL_RE = /(["'`])(\/(?:m|set)(?:[/?][^"'`\s]*)?)\1/g
+const ROUTE_LITERAL_RE = /(["'`])(\/(?:m|set|v1)(?:[/?][^"'`\s]*)?)\1/g
 
 export class ScanError extends Error {}
 
@@ -160,7 +160,7 @@ export function scanSource(source: string, rawText: string, table: ReadonlySet<s
         : methodFrom(args[1], where)
       litOffset = text.indexOf(first, open)
     }
-    if (!/^\/(?:m|set)(?:\/|$)/.test(lit.path)) throw new ScanError(`调用的不是面板路由(${lit.raw}):${where}`)
+    if (!/^\/(?:m|set|v1)(?:\/|$)/.test(lit.path)) throw new ScanError(`调用的不是面板路由(${lit.raw}):${where}`)
     consumed.add(litOffset)
     calls.push({ key: routeKey(method, lit.path, lit.dynamic, table, where), source, snippet, deviceOnly })
   }

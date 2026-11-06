@@ -402,7 +402,7 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     expect(html).toContain('id="p-today"')
     expect(html).toContain('id="m-list"')
     expect(html).not.toContain('id="p-matters"')
-    expect(html).toContain('/m/api/home')
+    expect(html).toContain('/v1/home')
     expect(html).toContain('cc.home.v2:')
     for (const id of ['id="p-pocket"', 'id="p-memory"', 'id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).not.toContain(id)
   })
@@ -1135,8 +1135,8 @@ describe('phone curated memory', () => {
     const { port } = await p.start(0)
     try {
       const base = `http://127.0.0.1:${port}`
-      expect((await fetch(`${base}/m/api/art/presence`)).status).toBe(401)
-      const resp = await fetch(`${base}/m/api/art/presence?t=${p.issueToken()}`)
+      expect((await fetch(`${base}/v1/phone/art/presence`)).status).toBe(401)
+      const resp = await fetch(`${base}/v1/phone/art/presence?t=${p.issueToken()}`)
       // 200,不是 403 route_not_allowed —— 证明路由确实登记在 PHONE_ROUTES(phone-routes.ts)里。
       expect(resp.status).toBe(200)
       const r = await resp.json() as { ok: boolean; mime: string; unlit: string; lit: string }
