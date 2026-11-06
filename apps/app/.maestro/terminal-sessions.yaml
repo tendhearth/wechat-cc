@@ -65,6 +65,17 @@ appId: com.tendhearth.app
 - assertVisible:
     id: row-terminal-demo-cli-docs
 - takeScreenshot: t02-all-terminal
+# 用搜索定位目标，避免把固定搜索栏下面已裁剪的无障碍行当成可点击行。
+- tapOn:
+    id: chat-search-input
+- inputText: docs
+- tapOn:
+    id: search-work
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-docs
+    direction: UP
+    centerElement: true
 - tapOn:
     id: row-terminal-demo-cli-docs
 - extendedWaitUntil:
@@ -79,9 +90,16 @@ appId: com.tendhearth.app
 - takeScreenshot: t03-terminal-running
 - tapOn:
     id: topbar-back
+- tapOn:
+    id: chat-search-input
+- eraseText
+- inputText: api-server
+- tapOn:
+    id: search-work
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-api
+    direction: UP
     centerElement: true
 - tapOn:
     id: row-terminal-demo-cli-api
@@ -106,6 +124,12 @@ appId: com.tendhearth.app
 - takeScreenshot: t05-terminal-sent
 - tapOn:
     id: topbar-back
+- tapOn:
+    id: chat-search-input
+- eraseText
+- inputText: blog
+- tapOn:
+    id: search-work
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-blog
@@ -135,6 +159,9 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: all-group-working
+      id: search-work
     timeout: 5000
+- assertVisible:
+    id: row-terminal-demo-cli-blog
+    text: "blog, (在做|Working),.*"
 - takeScreenshot: t06-all-allowed
