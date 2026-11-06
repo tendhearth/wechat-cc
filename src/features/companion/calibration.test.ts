@@ -46,8 +46,8 @@ describe('shouldSpeak — invalid timestamps (fail-closed)', () => {
     ).toEqual({ ok: false, reason: 'invalid_timestamp' })
   })
 
-  it('malformed ledger.lastProactiveAtIso on agenda check ⇒ invalid_timestamp', () => {
-    const ledger: CareLedgerEntry = { lastProactiveAtIso: 'malformed', noReplyCount: 0 }
+  it('malformed ledger.lastInitiativeAtIso on agenda check ⇒ invalid_timestamp', () => {
+    const ledger: CareLedgerEntry = { lastInitiativeAtIso: 'malformed', noReplyCount: 0 }
     expect(
       shouldSpeak({ kind: 'agenda', level: 'low', nowIso: NOW, ledger }),
     ).toEqual({ ok: false, reason: 'invalid_timestamp' })
@@ -83,7 +83,7 @@ describe('shouldSpeak — off level always denies', () => {
 
 describe('shouldSpeak — agenda', () => {
   for (const level of ['low', 'high'] as const) {
-    it(`${level}: no lastProactiveAtIso ⇒ ok`, () => {
+    it(`${level}: no lastInitiativeAtIso ⇒ ok`, () => {
       expect(
         shouldSpeak({ kind: 'agenda', level, nowIso: NOW, ledger: emptyLedger }),
       ).toEqual({ ok: true })
@@ -91,7 +91,7 @@ describe('shouldSpeak — agenda', () => {
 
     it(`${level}: 19h59m since lastProactive ⇒ deny agenda_cooldown`, () => {
       const ledger: CareLedgerEntry = {
-        lastProactiveAtIso: agoIso(19 * HOUR + 59 * 60_000),
+        lastInitiativeAtIso: agoIso(19 * HOUR + 59 * 60_000),
         noReplyCount: 0,
       }
       expect(shouldSpeak({ kind: 'agenda', level, nowIso: NOW, ledger })).toEqual({
@@ -102,7 +102,7 @@ describe('shouldSpeak — agenda', () => {
 
     it(`${level}: 20h01m since lastProactive ⇒ ok`, () => {
       const ledger: CareLedgerEntry = {
-        lastProactiveAtIso: agoIso(20 * HOUR + 60_000),
+        lastInitiativeAtIso: agoIso(20 * HOUR + 60_000),
         noReplyCount: 0,
       }
       expect(shouldSpeak({ kind: 'agenda', level, nowIso: NOW, ledger })).toEqual({ ok: true })
@@ -110,17 +110,17 @@ describe('shouldSpeak — agenda', () => {
   }
 
   it('exactly 20h since lastProactive ⇒ ok (boundary is inclusive of the cooldown edge)', () => {
-    const ledger: CareLedgerEntry = { lastProactiveAtIso: agoIso(20 * HOUR), noReplyCount: 0 }
+    const ledger: CareLedgerEntry = { lastInitiativeAtIso: agoIso(20 * HOUR), noReplyCount: 0 }
     expect(shouldSpeak({ kind: 'agenda', level: 'low', nowIso: NOW, ledger })).toEqual({ ok: true })
   })
 
   it('noReplyCount does NOT gate agenda — still ok at count 2 once cooldown has passed', () => {
-    const ledger: CareLedgerEntry = { lastProactiveAtIso: agoIso(30 * HOUR), noReplyCount: 2 }
+    const ledger: CareLedgerEntry = { lastInitiativeAtIso: agoIso(30 * HOUR), noReplyCount: 2 }
     expect(shouldSpeak({ kind: 'agenda', level: 'low', nowIso: NOW, ledger })).toEqual({ ok: true })
   })
 
   it('noReplyCount does NOT gate agenda — even mid-cooldown, denial reason is agenda_cooldown, not paused_no_reply', () => {
-    const ledger: CareLedgerEntry = { lastProactiveAtIso: agoIso(1 * HOUR), noReplyCount: 5 }
+    const ledger: CareLedgerEntry = { lastInitiativeAtIso: agoIso(1 * HOUR), noReplyCount: 5 }
     expect(shouldSpeak({ kind: 'agenda', level: 'low', nowIso: NOW, ledger })).toEqual({
       ok: false,
       reason: 'agenda_cooldown',
@@ -198,21 +198,21 @@ describe('shouldSpeak — gap', () => {
   })
 
   it('both-gaps rule: inbound 8d ago (clears N) BUT proactive 1d ago (within N) ⇒ deny gap_proactive_recent', () => {
-    const ledger: CareLedgerEntry = { lastProactiveAtIso: agoIso(1 * DAY), noReplyCount: 0 }
+    const ledger: CareLedgerEntry = { lastInitiativeAtIso: agoIso(1 * DAY), noReplyCount: 0 }
     expect(
       shouldSpeak({ kind: 'gap', level: 'low', nowIso: NOW, ledger, lastInboundAtIso: agoIso(8 * DAY) }),
     ).toEqual({ ok: false, reason: 'gap_proactive_recent' })
   })
 
   it('both gaps satisfied (inbound 8d ago, proactive 8d ago) ⇒ ok', () => {
-    const ledger: CareLedgerEntry = { lastProactiveAtIso: agoIso(8 * DAY), noReplyCount: 0 }
+    const ledger: CareLedgerEntry = { lastInitiativeAtIso: agoIso(8 * DAY), noReplyCount: 0 }
     expect(
       shouldSpeak({ kind: 'gap', level: 'low', nowIso: NOW, ledger, lastInboundAtIso: agoIso(8 * DAY) }),
     ).toEqual({ ok: true })
   })
 
   it('both gaps satisfied exactly at N=7 boundary for proactive too ⇒ ok', () => {
-    const ledger: CareLedgerEntry = { lastProactiveAtIso: agoIso(7 * DAY), noReplyCount: 0 }
+    const ledger: CareLedgerEntry = { lastInitiativeAtIso: agoIso(7 * DAY), noReplyCount: 0 }
     expect(
       shouldSpeak({ kind: 'gap', level: 'low', nowIso: NOW, ledger, lastInboundAtIso: agoIso(10 * DAY) }),
     ).toEqual({ ok: true })
@@ -245,7 +245,7 @@ describe('shouldSpeak — gap', () => {
   })
 
   it('high (N=2): both-gaps rule — inbound 5d ago (clears) but proactive 1d ago (within N) ⇒ deny gap_proactive_recent', () => {
-    const ledger: CareLedgerEntry = { lastProactiveAtIso: agoIso(1 * DAY), noReplyCount: 0 }
+    const ledger: CareLedgerEntry = { lastInitiativeAtIso: agoIso(1 * DAY), noReplyCount: 0 }
     expect(
       shouldSpeak({ kind: 'gap', level: 'high', nowIso: NOW, ledger, lastInboundAtIso: agoIso(5 * DAY) }),
     ).toEqual({ ok: false, reason: 'gap_proactive_recent' })

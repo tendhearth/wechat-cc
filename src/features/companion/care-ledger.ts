@@ -1,6 +1,6 @@
 /**
- * care-ledger — per-chat proactive-care state (last claimed send + no-reply
- * streak), the learning signal calibration.ts reads to decide whether a
+ * care-ledger — per-chat source cadence and no-reply streak. Delivery time
+ * is derived from speech_log and never persisted here; the learning signal calibration.ts reads to decide whether a
  * proactive nudge is due. Write-through (debounceMs:0) per
  * architecture-conventions #5: low-frequency critical state survives kill -9.
  */
@@ -10,7 +10,7 @@ import type { CareLedgerEntry } from './calibration'
 
 /** 一次登记的回执,撤回时用(只撤这一次,见 unclaim)。 */
 export interface CareClaim {
-  field: 'lastProactiveAtIso' | 'lastHuntAtIso' | 'lastVisitAtIso' | 'lastMemoryAtIso'
+  field: null | 'lastHuntAtIso' | 'lastVisitAtIso' | 'lastMemoryAtIso'
   /** 这次登记写进去的时间。 */
   at: string
   /** 登记之前这个字段的值。 */
@@ -38,14 +38,18 @@ export interface CareLedger {
 
 const DEFAULT_ENTRY: CareLedgerEntry = { noReplyCount: 0 }
 
-export function makeCareLedger(stateDir: string, deps?: { store?: StateStore }): CareLedger {
+export function makeCareLedger(stateDir: string, deps?: { store?: StateStore; lastInitiativeAt?: (chatId: string) => number | null }): CareLedger {
   const store = deps?.store ?? makeStateStore(join(stateDir, 'care_ledger.json'), { debounceMs: 0 })
   const read = (chatId: string): CareLedgerEntry => {
     const raw = store.get(chatId)
     if (!raw) return DEFAULT_ENTRY
     try {
       const p = JSON.parse(raw) as unknown
-      return p && typeof p === 'object' && !Array.isArray(p) ? (p as CareLedgerEntry) : DEFAULT_ENTRY
+      if (!p || typeof p !== 'object' || Array.isArray(p)) return DEFAULT_ENTRY
+      const value = p as Record<string, unknown>
+      const entry: CareLedgerEntry = { noReplyCount: typeof value.noReplyCount === 'number' && Number.isFinite(value.noReplyCount) ? Math.max(0, value.noReplyCount) : 0 }
+      for (const key of ['lastHuntAtIso', 'lastVisitAtIso', 'lastMemoryAtIso'] as const) if (typeof value[key] === 'string') entry[key] = value[key]
+      return entry
     } catch {
       return DEFAULT_ENTRY
     }
@@ -53,22 +57,30 @@ export function makeCareLedger(stateDir: string, deps?: { store?: StateStore }):
   // 每个 chat 的「未回复计数」纪元:resetNoReply 一次加一。登记和撤回在同一拍、同一个进程里,内存就够。
   const epochs = new Map<string, number>()
   const epochOf = (chatId: string) => epochs.get(chatId) ?? 0
-  const claimField = (chatId: string, field: CareClaim['field'], nowIso: string): CareClaim => {
+  const claimField = (chatId: string, field: Exclude<CareClaim['field'], null>, nowIso: string): CareClaim => {
     const cur = read(chatId)
     const ticket: CareClaim = { field, at: nowIso, prior: cur[field], epoch: epochOf(chatId) }
     store.set(chatId, JSON.stringify({ ...cur, [field]: nowIso, noReplyCount: cur.noReplyCount + 1 }))
     return ticket
   }
   return {
-    get: read,
-    claim: (chatId, nowIso) => claimField(chatId, 'lastProactiveAtIso', nowIso),
+    get(chatId) {
+      const entry = read(chatId)
+      const at = deps?.lastInitiativeAt?.(chatId)
+      return at === undefined || at === null ? entry : { ...entry, lastInitiativeAtIso: new Date(at).toISOString() }
+    },
+    claim(chatId, nowIso) {
+      const cur = read(chatId)
+      store.set(chatId, JSON.stringify({ ...cur, noReplyCount: cur.noReplyCount + 1 }))
+      return { field: null, at: nowIso, prior: undefined, epoch: epochOf(chatId) }
+    },
     claimHunt: (chatId, nowIso) => claimField(chatId, 'lastHuntAtIso', nowIso),
     claimVisit: (chatId, nowIso) => claimField(chatId, 'lastVisitAtIso', nowIso),
     claimMemory: (chatId, nowIso) => claimField(chatId, 'lastMemoryAtIso', nowIso),
     unclaim(chatId, claim) {
       const cur = read(chatId)
       const next: CareLedgerEntry = { ...cur }
-      if (cur[claim.field] === claim.at) {
+      if (claim.field !== null && cur[claim.field] === claim.at) {
         if (claim.prior === undefined) delete next[claim.field]
         else next[claim.field] = claim.prior
       }

@@ -13,6 +13,7 @@
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../domain/speech/decide'
 import { keepForMs, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
+import type { SpeechSource } from './proposal'
 import { MAX_FLUSH_CHATS_PER_TICK, mergePending, type PendingAttach, type PendingNotice } from './pending-notices'
 
 export interface SpeechRequest {
@@ -32,6 +33,8 @@ export interface SpeechRequest {
 export type SpeechChannel = ProactiveChannel | 'desktop'
 
 export interface SpeechLedgerEntry {
+  /** First successful delivery receipt; never inferred from allowed. */
+  spokenAt?: number
   kind: SpeechKind
   origin: SpeechOrigin
   chatId: string
@@ -45,7 +48,21 @@ export interface SpeechLedgerEntry {
 
 export type SpeechOutcome = ({ allow: true; channel: SpeechChannel | null }) | Exclude<SpeechDecision, { allow: true }>
 
+export interface SpeechProposalRequest extends SpeechRequest {
+  source: SpeechSource | 'requested'
+  summary: string
+  createdAt?: number
+  expiresAt?: number
+  payloadRef?: import('./proposal').SpeechProposal['payloadRef']
+  getTargets?: () => readonly string[]
+  context?: () => Promise<object>
+  targets?: readonly string[]
+  validate?: (nowMs: number) => boolean | Promise<boolean>
+}
+
 export interface SpeechPolicy {
+  /** Submit an initiative; only the presence scheduler may authorize produce. */
+  propose(req: SpeechProposalRequest, produce: (turn: ProactiveTurn, target?: string) => Promise<void | import('./proposal').ProductionResult>): Promise<SpeechOutcome>
   say(req: SpeechRequest, produce: (turn: ProactiveTurn) => Promise<void>): Promise<SpeechOutcome>
   /**
    * 一句话的主动开口(系统通知、社交通知 …):问门,放行就发。`send` 缺省 = 经 say 开的那一轮(微信能用走微信,
@@ -103,6 +120,8 @@ export function makeSpeechPolicy(deps: {
   /** 补说明信片那一类带文件的(S2c):走微信发文件;没接 / 发失败 ⇒ 那一样不补说(背包里照样有)。 */
   sendFile?: (chatId: string, path: string) => Promise<boolean>
   /** 「待说」队列(没接 ⇒ 推后的 report 就是这一句不说,只用于测试 / 最小嵌入)。 */
+  /** Production wiring installs the single presence scheduler. */
+  proposals?: (execute: SpeechPolicy['say'], peek: SpeechPolicy['peek']) => SpeechPolicy['propose']
   pending?: import('./pending-notices').PendingNotices
 }): SpeechPolicy {
   const now = deps.now ?? Date.now
@@ -146,7 +165,15 @@ export function makeSpeechPolicy(deps: {
     return { decision, base }
   }
   const flushHooks: Array<() => void> = []
+  let submit: SpeechPolicy['propose'] | undefined
   const policy: SpeechPolicy = {
+    propose(req, produce) {
+      if (originOf(req.kind) !== 'initiative') return policy.say(req, async turn => { await produce(turn) })
+      if (submit && req.perKind && !req.perKind.ok) return execute(req, async turn => { await produce(turn) })
+      if (submit) return submit(req, produce)
+      // Minimal policy embeddings have no daemon scheduler. Production wiring always installs it.
+      return policy.say(req, async turn => { await produce(turn) })
+    },
     onFlush(cb) { flushHooks.push(cb) },
     expired(e) {
       if (e.ref) lastDefer.delete(`${e.kind}\u0000${e.chatId}\u0000${e.ref}`)
@@ -172,24 +199,38 @@ export function makeSpeechPolicy(deps: {
     async say(req, produce) {
       const { decision, base } = judge(req, deps.outbound.canDeliver(req.chatId))
       if (!('allow' in decision)) return decision
-      const turn = deps.outbound.open(req.chatId)
+      const rawTurn = deps.outbound.open(req.chatId)
+      let spokenAt: number | undefined
+      let receiptChannel: ProactiveChannel | null = null
+      const confirmed = () => { spokenAt ??= now() }
+      const turn: ProactiveTurn = {
+        ...rawTurn,
+        confirmDelivery(channel) { receiptChannel = channel; confirmed() },
+        async sendText(c, text) { const r = await rawTurn.sendText(c, text); if (!r.error) confirmed(); return r },
+        async sendAttachment(c, a) { const ok = await rawTurn.sendAttachment(c, a); if (ok) confirmed(); return ok },
+        async sendSticker(c, tag, path) { const ok = await rawTurn.sendSticker(c, tag, path); if (ok) confirmed(); return ok },
+        ...(rawTurn.sendTextWith ? { sendTextWith: async (...args: Parameters<NonNullable<ProactiveTurn['sendTextWith']>>) => { const r = await rawTurn.sendTextWith!(...args); if (r.ok) confirmed(); return r } } : {}),
+      }
       try {
         await produce(turn)
       } catch (err) {
-        write({ ...base, outcome: 'failed', reason: err instanceof Error ? err.message : String(err), channel: turn.channel() })
+        write({ ...base, outcome: 'failed', reason: err instanceof Error ? err.message : String(err), channel: receiptChannel ?? turn.channel(), ...(spokenAt !== undefined ? { spokenAt } : {}) })
         throw err
       } finally {
         turn.finish()
       }
-      write({ ...base, outcome: 'allowed', reason: null, channel: turn.channel() })
+      write({ ...base, outcome: 'allowed', reason: null, channel: receiptChannel ?? turn.channel(), ...(spokenAt !== undefined ? { spokenAt } : {}) })
       return { allow: true, channel: turn.channel() }
     },
     async tell(kind, chatId, text, send) {
       let sent = false
-      const o = await policy.say({ kind, chatId }, async (turn) => {
+      const sendTurn = originOf(kind) === 'initiative'
+        ? (produce: (turn: ProactiveTurn) => Promise<void>) => policy.propose({ source: 'social', summary: text.slice(0, 1000), kind, chatId }, produce)
+        : (produce: (turn: ProactiveTurn) => Promise<void>) => policy.say({ kind, chatId }, produce)
+      const o = await sendTurn(async (turn) => {
         try {
           // 自带的 send(比如 sendAssistantText)发不出去时回 false、不抛 ⇒ 那也算没说出去
-          if (send) { sent = (await send(chatId, text)) !== false; return }
+          if (send) { sent = (await send(chatId, text)) !== false; if (sent) turn.confirmDelivery?.('wechat'); return }
           sent = !(await turn.sendText(chatId, text)).error
         } catch (err) {
           deps.log('SPEECH', `${kind} chat=${chatId} send threw: ${err instanceof Error ? err.message : String(err)}`)
@@ -198,7 +239,7 @@ export function makeSpeechPolicy(deps: {
       // report / blocking 没说出去 —— 被推后,**或者放行了但发失败**(ilink 回 error / 网络抖)—— 都入队,之后补说(整合者评审 #531 ①)
       const notSaid = 'defer' in o || ('allow' in o && !sent)
       // 带会过期码的卡不排队(keepForMs = null):晚补出去只会给一个失效的码;initiative 只有声明了 keepMs 的才排(S2c)
-      if (notSaid && policy.keep({ kind, chatId, text })) {
+      if (notSaid && !('defer' in o && o.reason === 'delivery_unknown') && policy.keep({ kind, chatId, text })) {
         deps.log('SPEECH', `${kind} chat=${chatId} kept to say later (${'defer' in o ? o.reason : 'send failed'})`)
       }
       return sent
@@ -272,33 +313,44 @@ export function makeSpeechPolicy(deps: {
       write({ kind: s.kind, origin: originOf(s.kind), chatId, outcome: 'dropped', reason: 'story_limit', channel: null, ts: new Date(t).toISOString() })
       deps.log('SPEECH', `social_story chat=${chatId} older pending story left in the bag (one story per flush)`)
     }
-    let tried = 0
-    for (const item of own.filter(i => i.kind !== 'social_story' || i === stories.at(-1))) {
-      if (tried >= budget) break
+    let stopped = false
+    const tasks = own.filter(i => i.kind !== 'social_story' || i === stories.at(-1)).slice(0, budget).map(item => async () => {
+      if (stopped) return 0
       let sent = false, undeliverable = false
-      const o = await policy.say({ kind: item.kind, chatId }, async (turn) => {
+      const o = await policy.propose({ source: item.kind === 'sticker' ? 'sticker' : 'social', summary: item.text.slice(0, 1000), ref: `pending:${item.id}`, createdAt: Date.parse(item.at), expiresAt: item.expiresAt ?? Date.parse(item.at) + (keepForMs(item.kind) ?? 0), payloadRef: { pending: item.id }, kind: item.kind, chatId }, async (turn) => {
         try {
           // 带图的先发图;图发不出去 ⇒ 这一样什么都不说,**不退成一句光秃秃的文字**(新贴纸那一句的老规矩)
           const a = item.attach
           if (a && 'sticker' in a && !(await turn.sendSticker(chatId, a.sticker.mood, a.sticker.path))) { undeliverable = true; return }
-          if (a && 'file' in a && !(deps.sendFile && await deps.sendFile(chatId, a.file))) { undeliverable = true; return }
+          if (a && 'file' in a) {
+            if (!(deps.sendFile && await deps.sendFile(chatId, a.file))) { undeliverable = true; return }
+            turn.confirmDelivery?.('wechat')
+          }
           sent = item.text ? !(await turn.sendText(chatId, item.text)).error : true
         } catch { sent = false }
       })
-      if ('defer' in o) continue
-      if ('drop' in o) { deps.pending!.remove(chatId, [item.id], 0); continue }   // 别烦我 / 频率:账上已经记了 dropped
-      tried++
+      if ('defer' in o) return 0
+      if ('drop' in o) { deps.pending!.remove(chatId, [item.id], 0); return 0 }   // 别烦我 / 频率:账上已经记了 dropped
       if (sent || undeliverable) {
         deps.pending!.remove(chatId, [item.id], 0)
         deps.log('SPEECH', `${item.kind} chat=${chatId} pending ${undeliverable ? 'item not deliverable (image) — dropped, it stays in the library / bag' : 'item said'}`)
       } else {
+        stopped = true
         const fails = deps.pending!.failed(chatId, [item.id], t)
         deps.log('SPEECH', `${item.kind} chat=${chatId} pending send failed (try ${fails}) — backing off`)
-        break
       }
-    }
-    return tried
+      return 1
+    })
+    const attempts: number[] = []
+    if (submit) attempts.push(...await Promise.all(tasks.map(run => run())))
+    else for (const run of tasks) attempts.push(await run())
+    return attempts.reduce((sum: number, n) => sum + n, 0)
   }
+  const execute = policy.say.bind(policy)
+  submit = deps.proposals?.(execute, policy.peek.bind(policy))
+  if (submit) policy.say = (req, produce) => originOf(req.kind) === 'initiative'
+    ? Promise.resolve({ drop: true, reason: 'proposal_required' })
+    : execute(req, produce)
   return policy
 }
 

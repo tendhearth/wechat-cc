@@ -111,6 +111,8 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v60: matters(一件事)+ bindings + sessions,workbench_tasks.matter_id 回填。
     // v61: seq 列(实时事件流)
     // v62: workbench_review_marks(逐文件审阅标记)
+    // v106: topic bubble tables; v107–108 add delivery evidence and rebuild speech_pending
+    // in place, so the exact table list below includes T4a and no S4 temporary tables.
     // 断言总条数不写死字面量——每加一条迁移这里就得跟着改一次,而"这一版该有
     // 多少条"这件事已经由 migration-order.test.ts 的指纹锁看着了(那个锁最后
     // 一条断言就是 Math.max(...locked) === migrations.length),这里重复一遍

@@ -11,7 +11,7 @@ const base = { isOwnerChat: true, level: 'low' as const, prefs: { hunt: true }, 
 
 const ctx = (over: Partial<PlanContext> = {}): PlanContext => ({
   nowLocal: '2026-05-13 10:00 周三', ownerLastInboundMinutesAgo: 600,
-  today: { lastHuntHoursAgo: null, lastVisitHoursAgo: null, lastProactiveHoursAgo: null },
+  today: { lastHuntHoursAgo: null, lastVisitHoursAgo: null, lastInitiativeHoursAgo: null },
   candidates: [{ action: 'hunt' }, { action: 'visit' }], rejected: [{ action: 'gap', reason: 'gap_inbound_recent' }],
   journal: { unread: 2, latest: [{ kind: 'postcard', title: '我朋友周末常去', ts: NOW }] },
   social: { openWishes: 1, pendingOffers: 0, provenChannels: [{ id: 'pair:abc', label: '第 1 度的朋友' }] },

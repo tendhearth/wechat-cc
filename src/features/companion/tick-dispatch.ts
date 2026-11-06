@@ -82,7 +82,7 @@ export function makeTickDispatch(deps: TickDeps) {
    */
   async function dispatchToChat(
     chatId: string,
-    args: { claim: () => (() => void) | void; buildText: (style: TickTextStyle) => string; /** 这一拍的时刻(免打扰按它判、账按它记);缺省 = 时钟。 */ nowIso?: string },
+    args: { claim: () => (() => void) | void; buildText: (style: TickTextStyle) => string; /** 这一拍的时刻(免打扰按它判、账按它记);缺省 = 时钟。 */ nowIso?: string; ref?: string; summary?: string; payloadRef?: import('../../daemon/speech/proposal').SpeechProposal['payloadRef']; validate?: (nowMs: number) => boolean | Promise<boolean>; source?: 'agenda' | 'gap' | 'hunt'; outbound?: import('../../daemon/companion/proactive-channel').ProactiveTurn },
   ): Promise<boolean> {
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') {
@@ -118,7 +118,7 @@ export function makeTickDispatch(deps: TickDeps) {
     // 没接门 ⇒ 不开口(不退回直接发,同 tick-job)。
     if (!deps.speech) { deps.log('COMPANION', `chat=${chatId} skipped: speech policy not wired`); return false }
     const nowMs = args.nowIso ? Date.parse(args.nowIso) : NaN
-    const said = await deps.speech.say({ kind: 'companion', chatId, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
+    const produce = async (outbound: import('../../daemon/companion/proactive-channel').ProactiveTurn) => {
     await deps.boot.coordinator.runExclusive(chatId, async () => {
       const handle = await deps.boot.sessionManager.acquire({
         alias: proj.alias,
@@ -178,7 +178,8 @@ export function makeTickDispatch(deps: TickDeps) {
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
       }
     })
-    })
+    }
+    const said = args.outbound ? (await produce(args.outbound), { allow: true as const }) : await deps.speech.propose({ source: args.source ?? 'agenda', summary: args.summary ?? args.source ?? 'agenda', ref: args.ref, payloadRef: args.payloadRef, kind: 'companion', chatId, ...(Number.isFinite(nowMs) ? { nowMs } : {}), validate: async at => { const live = resolveDispatch(chatId); return live.blocked === null && live.providerId === providerId && live.tier === tier && live.proj.alias === proj.alias && live.proj.path === proj.path && (!args.validate || await args.validate(at)) } }, produce)
     if (!('allow' in said)) { deps.log('CARE', `skip chat=${chatId} kind=companion reason=${'reason' in said ? said.reason : 'deferred'}`); return false }
     return true
   }

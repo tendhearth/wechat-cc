@@ -175,7 +175,7 @@ export function wireJobs(d: WireJobsDeps) {
         if (job.recap) return recapTurn(job, nowIso)
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
         if (!owner) return 'skipped:no_owner'
-        return d.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso, kind: 'job', scheduled: true })
+        return d.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso, scheduledAt: job.schedule.at, kind: 'job', scheduled: true })
       },
       notifyOwner: (text) => {
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)

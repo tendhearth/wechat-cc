@@ -555,6 +555,62 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await expect.poll(() => d.query("SELECT 1 FROM speech_pending WHERE id IN ('legacy-stale', 'legacy-fresh')"), { timeout: 5_000 }).toEqual([])   // 说完才删(同上)
   })
 
+  it('S4: two retained initiators due within 20h speak once; the loser stays unattempted and expires by its original deadline', async () => {
+    await rebootForS2({ quiet: false, phone: false, beforeBoot(dir) {
+      const db = openSqlite(join(dir, 'wechat-cc.db'))
+      try {
+        db.query("DELETE FROM speech_log WHERE origin='initiative'").run()
+        const now = Date.now()
+        for (const [id, kind, text, ttl] of [['s4-sticker', 'sticker', 'S4 new drawing', 6], ['s4-story', 'social_story', 'S4 kept story', 24]] as const) {
+          db.query("INSERT INTO speech_pending(id,lane,chat_id,kind,body,created_at,next_at,expires_at,status) VALUES(?,'say',?,?,?,?,0,?,'pending')").run(id, SANDBOX_OWNER, kind, text, now, now + ttl * 3600_000)
+        }
+      } finally { db.close() }
+    } })
+    await expect.poll(() => d.query("SELECT spoken_at FROM speech_log WHERE origin='initiative' AND spoken_at IS NOT NULL").length, { timeout: 15_000 }).toBe(1)
+    expect(texts(d.ilink.outbox(), d.owner)).toContain('S4 new drawing')
+    expect(texts(d.ilink.outbox(), d.owner)).not.toContain('S4 kept story')
+    await expect.poll(() => d.query("SELECT id,attempts,next_at FROM speech_pending WHERE lane='say' ORDER BY id"), { timeout: 5_000 }).toEqual([{ id: 's4-story', attempts: 0, next_at: 0 }])
+    // Advance the source's persisted deadline to model expiry during sleep;
+    // keep the successful delivery fact and its still-active twenty-hour budget.
+    await rebootForS2({ quiet: false, phone: false, keepPending: true, beforeBoot(dir) {
+      const db = openSqlite(join(dir, 'wechat-cc.db'))
+      try { db.query("UPDATE speech_pending SET expires_at=? WHERE id='s4-story'").run(Date.now() - 1) } finally { db.close() }
+    } })
+    await expect.poll(() => d.query("SELECT 1 FROM speech_log WHERE kind='social_story' AND reason='expired'").length, { timeout: 15_000 }).toBe(1)
+    expect(texts(d.ilink.outbox(), d.owner)).not.toContain('S4 kept story')
+    expect(d.query("SELECT 1 FROM speech_log WHERE origin='initiative' AND spoken_at IS NOT NULL")).toHaveLength(1)
+  })
+
+  it('S4: a due fixed-time brief sends inside the occupied interval, is counted, and keeps ordinary initiatives waiting', async () => {
+    const prior = d.query<{ at: number }>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'")[0]!.at
+    expect(Date.now() - prior).toBeLessThan(20 * 3600_000)
+    await rebootForS2({ quiet: false, phone: false, beforeBoot(dir) {
+      writeFileSync(join(dir, 'scheduled-jobs.json'), JSON.stringify({ version: 1, jobs: [{ id: 'j991', schedule: { kind: 'daily', at: shanghaiHHMM(Date.now() - 60_000) }, text: 'S4 fixed brief', brief: true, paused: false, createdAt: new Date().toISOString() }] }))
+      const db = openSqlite(join(dir, 'wechat-cc.db'))
+      try {
+        db.query("INSERT INTO speech_pending(id,lane,chat_id,kind,body,created_at,next_at,expires_at,status) VALUES('s4-after-brief','say',?,'social_story','S4 after brief',?,0,?,'pending')").run(SANDBOX_OWNER, Date.now(), Date.now() + 24 * 3600_000)
+      } finally { db.close() }
+    } })
+    // Production jobs tick every minute; there is no accelerated private send path.
+    await expect.poll(() => d.query<{ spoken_at: number }>("SELECT spoken_at FROM speech_log WHERE kind='brief' AND spoken_at IS NOT NULL"), { timeout: 80_000, interval: 500 }).toHaveLength(1)
+    const briefAt = d.query<{ spoken_at: number }>("SELECT spoken_at FROM speech_log WHERE kind='brief'")[0]!.spoken_at
+    expect(briefAt).toBeGreaterThan(prior)
+    expect(d.query("SELECT 1 FROM speech_log WHERE origin='initiative' AND spoken_at IS NOT NULL")).toHaveLength(2)
+    expect(d.query("SELECT id,attempts FROM speech_pending WHERE id='s4-after-brief'")).toEqual([{ id: 's4-after-brief', attempts: 0 }])
+    expect(texts(d.ilink.outbox(), d.owner)).not.toContain('S4 after brief')
+  }, 100_000)
+
+  it('S4: requested reminder, report and blocking still deliver inside the initiative interval without moving its fact', async () => {
+    const initiativeAt = d.query<{ at: number }>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'")[0]!.at
+    expect(await desktop('POST', '/v1/self-change/notice', { text: 'S4 report during interval' })).toMatchObject({ status: 200 })
+    expect(await desktop('POST', '/v1/self-change/ask', { prompt: 'S4 approval during interval', timeoutMs: 60_000 })).toMatchObject({ status: 200, body: { delivered: true } })
+    expect(await desktop('POST', '/v1/reminders/schedule', { chat_id: d.owner, text: 'S4 requested reminder', due_at: new Date(Date.now() - 1_000).toISOString() })).toMatchObject({ status: 200, body: { ok: true } })
+    await expect.poll(() => texts(d.ilink.outbox(), d.owner).some(t => t.includes('S4 requested reminder')), { timeout: 80_000, interval: 500 }).toBe(true)
+    await expect.poll(() => d.query("SELECT DISTINCT origin FROM speech_log WHERE kind IN ('self_change_progress','self_change_ask','reminder') AND spoken_at IS NOT NULL ORDER BY origin"), { timeout: 5_000 }).toEqual([{ origin: 'blocking' }, { origin: 'report' }, { origin: 'requested' }])
+    expect(d.query<{ at: number }>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE origin='initiative'")[0]!.at).toBe(initiativeAt)
+    expect(texts(d.ilink.outbox(), d.owner)).not.toContain('S4 after brief')
+  }, 100_000)
+
   it('offline: WeChat is down ⇒ a report that cannot go out is kept to say later, and the pending flush backs off on the shared backoff (first retry after 1 min) instead of hitting the link every tick', async () => {
     // 没配手机:有能收的 App 时,微信发不出去会落到 App(那是另一条路);这里只看微信断了的时候
     await rebootForS2({ quiet: false, phone: false })

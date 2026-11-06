@@ -72,3 +72,34 @@ describe('speech_log 外发账', () => {
     expect(mergeChannels(null, null)).toBeNull()
   })
 })
+
+it('budget uses first confirmed delivery, never allowed, and keeps it across ref retries and partial failure', () => {
+  const db = openTestDb()
+  try {
+    const ledger = makeSpeechLedgerStore(db)
+    ledger.append(entry('2026-11-06T08:00:00Z', { ref: 'letter:a' }))
+    expect(ledger.lastInitiativeAt('owner')).toBeNull()
+    ledger.append(entry('2026-11-06T09:00:00Z', { ref: 'letter:a', outcome: 'failed', spokenAt: 100 }))
+    expect(ledger.lastInitiativeAt('owner')).toBe(100)
+    ledger.append(entry('2026-11-06T10:00:00Z', { ref: 'letter:a', spokenAt: 200, channel: 'app' }))
+    expect(ledger.lastInitiativeAt('owner')).toBe(100)
+    ledger.append(entry('2026-11-06T11:00:00Z', { origin: 'requested', kind: 'letter_asked', spokenAt: 300 }))
+    ledger.append(entry('2026-11-06T12:00:00Z', { chatId: 'visitor', spokenAt: 400 }))
+    expect(ledger.lastInitiativeAt('owner')).toBe(100)
+    expect(ledger.lastInitiativeAt('visitor')).toBe(400)
+  } finally { db.close() }
+})
+
+it('an owner-requested resume of a wholly unsent letter does not consume initiative budget', () => {
+  const db = openTestDb()
+  try {
+    const ledger = makeSpeechLedgerStore(db)
+    ledger.append(entry('2026-11-06T08:00:00Z', { ref: 'letter:a' }))
+    ledger.append(entry('2026-11-06T09:00:00Z', { ref: 'letter:a', kind: 'letter_asked', origin: 'requested', spokenAt: 100 }))
+    expect(ledger.lastInitiativeAt('owner')).toBeNull()
+    expect(db.query('SELECT origin,kind,spoken_at FROM speech_log').all()).toEqual([{ origin: 'requested', kind: 'letter_asked', spoken_at: 100 }])
+    ledger.append(entry('2026-11-06T10:00:00Z', { ref: 'letter:b', spokenAt: 200 }))
+    ledger.append(entry('2026-11-06T11:00:00Z', { ref: 'letter:b', kind: 'letter_asked', origin: 'requested', spokenAt: 300 }))
+    expect(ledger.lastInitiativeAt('owner')).toBe(200)
+  } finally { db.close() }
+})

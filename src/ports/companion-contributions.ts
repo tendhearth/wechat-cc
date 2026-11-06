@@ -45,7 +45,7 @@ export interface CompanionAction {
    * 做。true = 真做成了;false = 送的那一步被跳过(两道闸之间状态变了);'refused' = 网络守护拒了,什么都没做、不进台账。
    * `target` 只在模型点名了 targets 里的某一项时才有。
    */
-  run(ctx: CompanionTickCtx, target?: string): Promise<boolean | 'refused'>
+  run(ctx: CompanionTickCtx, target?: string, outbound?: import('./proactive-turn').ProactiveTurn): Promise<boolean | 'refused'>
 }
 
 /** 每天一次的自省那一拍,固定维护(反思 / 线索 / 总览 / 备份)之后依次跑的一步。 */

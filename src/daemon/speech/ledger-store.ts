@@ -18,6 +18,7 @@ const PRUNE_EVERY_MS = 60 * 60_000
 
 export interface SpeechLedgerStore {
   append(e: SpeechLedgerEntry): void
+  lastInitiativeAt(chatId: string): number | null
   /** 这条对话 sinceMs 之后的账,新的在前。带 ref 的那一行通道可能是追加过的(`app+wechat`)。 */
   recent(chatId: string, sinceMs: number, limit?: number): SpeechLedgerRow[]
 }
@@ -37,17 +38,21 @@ export function makeSpeechLedgerStore(db: Db, opts: { now?: () => number } = {})
   const now = opts.now ?? Date.now
   let lastPrune = Number.NEGATIVE_INFINITY
   return {
+    lastInitiativeAt(chatId) {
+      return db.query<{ at: number | null }, [string]>("SELECT MAX(spoken_at) AS at FROM speech_log WHERE chat_id=? AND origin='initiative'").get(chatId)?.at ?? null
+    },
     append(e) {
       const ref = e.ref ?? null
       const prev = ref === null ? null : db.query<{ id: number; outcome: string; channel: string | null }, [string]>('SELECT id,outcome,channel FROM speech_log WHERE ref = ? ORDER BY id LIMIT 1').get(ref)
       if (prev) {
+        if (e.spokenAt !== undefined) db.query("UPDATE speech_log SET kind=CASE WHEN spoken_at IS NULL THEN ? ELSE kind END,origin=CASE WHEN spoken_at IS NULL THEN ? ELSE origin END,spoken_at=COALESCE(spoken_at,?),delivery_state='confirmed' WHERE id=?").run(e.kind, e.origin, e.spokenAt, prev.id)
         if (prev.outcome === 'allowed' && e.outcome !== 'allowed') return
         db.query('UPDATE speech_log SET at=?,outcome=?,reason=?,channel=? WHERE id=?')
           .run(Date.parse(e.ts), e.outcome, e.reason, mergeChannels(prev.channel, e.channel), prev.id)
         return
       }
-      db.query('INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel,ref) VALUES(?,?,?,?,?,?,?,?)')
-        .run(Date.parse(e.ts), e.kind, e.origin, e.chatId, e.outcome, e.reason, e.channel, ref)
+      db.query('INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel,ref,spoken_at,delivery_state) VALUES(?,?,?,?,?,?,?,?,?,?)')
+        .run(Date.parse(e.ts), e.kind, e.origin, e.chatId, e.outcome, e.reason, e.channel, ref, e.spokenAt ?? null, e.spokenAt === undefined ? 'unconfirmed' : 'confirmed')
       const t = now()
       if (t - lastPrune >= PRUNE_EVERY_MS) {
         lastPrune = t

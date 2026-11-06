@@ -23,7 +23,7 @@ import type { SpeechKind } from '../../domain/speech/kinds'
 export type PendingAttach = { sticker: { mood: string; path: string } } | { file: string }
 
 /** id:入队时给,说完只删这次真说了的那几条(flush 发送途中又进来的不会被一并删掉;整合者评审 #531)。 */
-export interface PendingNotice { id: string; kind: SpeechKind; chatId: string; text: string; at: string; attach?: PendingAttach }
+export interface PendingNotice { id: string; kind: SpeechKind; chatId: string; text: string; at: string; expiresAt?: number; attach?: PendingAttach }
 
 export const MAX_PENDING_PER_CHAT = 20
 
@@ -54,7 +54,7 @@ export interface PendingNotices {
   expire(nowMs?: number): Array<{ id: string; kind: SpeechKind; chatId: string }>
 }
 
-interface Row { id: string; kind: string; chat_id: string; body: string; attach: string | null; created_at: number; next_at: number; attempts: number }
+interface Row { id: string; kind: string; chat_id: string; body: string; attach: string | null; created_at: number; next_at: number; attempts: number; expires_at: number }
 
 const newId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -83,7 +83,7 @@ export function makePendingNotices(o: {
   }
   if (o.stateDir) importLegacy(o.stateDir, insert, capChat, o.log)
   const toNotice = (r: Row): PendingNotice => ({
-    id: r.id, kind: r.kind as SpeechKind, chatId: r.chat_id, text: r.body, at: new Date(r.created_at).toISOString(),
+    id: r.id, kind: r.kind as SpeechKind, chatId: r.chat_id, text: r.body, at: new Date(r.created_at).toISOString(), expiresAt: r.expires_at,
     ...(r.attach ? { attach: JSON.parse(r.attach) as PendingAttach } : {}),
   })
   return {
@@ -95,7 +95,7 @@ export function makePendingNotices(o: {
         GROUP BY chat_id HAVING MAX(next_at) <= ? ORDER BY MIN(created_at), MIN(rowid) LIMIT ${Math.max(0, Math.trunc(Math.min(limit, 1_000_000)))}`).all(nowMs)
       return chats.map(({ chat_id: chatId }) => ({
         chatId,
-        items: db.query<Row, [string]>("SELECT id,kind,chat_id,body,attach,created_at,next_at,attempts FROM speech_pending WHERE lane='say' AND status='pending' AND chat_id=? ORDER BY created_at, rowid").all(chatId).map(toNotice),
+        items: db.query<Row, [string]>("SELECT id,kind,chat_id,body,attach,created_at,next_at,attempts,expires_at FROM speech_pending WHERE lane='say' AND status='pending' AND chat_id=? ORDER BY created_at, rowid").all(chatId).map(toNotice),
         dropped: db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM speech_pending WHERE lane='say' AND status='overflow' AND chat_id=?").get(chatId)!.n,
       }))
     },

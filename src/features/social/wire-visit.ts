@@ -78,7 +78,7 @@ export interface VisitDeps {
   postcard?: {
     sanitize(svg: string): string | null
     attach(rowId: string, svg: string): void
-    send(svg: string): Promise<void>
+    send(svg: string, story?: string, ref?: string): Promise<void>
   }
   log(tag: string, line: string): void
   /** 时钟(测试注入)。缺省 Date.now。 */
@@ -235,7 +235,6 @@ export function makeVisit(deps: VisitDeps): Visit {
     const text = cleanSpeech(await deps.evalText(buildVisitNarrationPrompt({ ...me, transcript, peerLabel: s.peerLabel, hosting })))
     if (!text) throw new VisitAbort('narration_empty')
     s.beforeTell?.()
-    deps.notifyOwner(text, 'social_story')
     const title = hosting ? `${s.peerLabel}来过` : `去${s.peerLabel}家串门`
     let rowId: string | null = null
     try { rowId = deps.recordVisit?.({ text, peerLabel: title }) ?? null }
@@ -243,18 +242,23 @@ export function makeVisit(deps: VisitDeps): Visit {
     deps.log('VISIT', `visit=${s.id} 讲给主人了 turns=${transcript.length} hosting=${hosting}`)
     try { s.afterFinish?.(transcript) } catch (err) { deps.log('VISIT', `afterFinish failed: ${err instanceof Error ? err.message : String(err)}`) }
     clear(s.id)
+    let submitted = false
     // 明信片只在**我去了对方家**时画 —— 来客没有「我去过那儿」可画。
     if (deps.postcard && !hosting) {
       try {
         const raw = await deps.evalText(buildPostcardPrompt({ myName: me.myName, peerLabel: s.peerLabel, scene: s.scene() }))
         const composed = composeCcInk(raw, 'postcard')
         const svg = composed ? deps.postcard.sanitize(composed) : null
-        if (!svg) { deps.log('VISIT', `postcard rejected by safeSvg visit=${s.id}`); return }
-        if (rowId) deps.postcard.attach(rowId, svg)
-        await deps.postcard.send(svg)
-        deps.log('VISIT', `visit=${s.id} 明信片寄出`)
+        if (!svg) deps.log('VISIT', `postcard rejected by safeSvg visit=${s.id}`)
+        else {
+          if (rowId) deps.postcard.attach(rowId, svg)
+          await deps.postcard.send(svg, text, `visit:${s.id}`)
+          submitted = true
+          deps.log('VISIT', `visit=${s.id} 见闻与明信片已提交`)
+        }
       } catch (err) { deps.log('VISIT', `明信片失败(见闻已发出): ${err instanceof Error ? err.message : String(err)}`) }
     }
+    if (!submitted) deps.notifyOwner(text, 'social_story')
   }
 
   // ── RemoteDriver:信封走信道,回话经 onInbound ─────────────────────────

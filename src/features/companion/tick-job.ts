@@ -2,6 +2,8 @@
  * 定时任务的一轮(从 tick-bodies.ts 原样搬出;spec 2026-10-20-scheduled-jobs-design):独立会话 `job:<id>`、只读档、strict,
  * 经 CC 开口那道门(say)开一轮;跑完 forget。
  */
+import { loadCompanionConfig } from '../../lib/companion-config'
+import { localParts } from '../../lib/local-time'
 import { JOB_PROFILE, REVIEW_PROFILE } from '../../domain/user-tier'
 import { replyTextStrategyFor } from '../../domain/capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE } from '../../ports/agent-provider'
@@ -12,7 +14,7 @@ import { buildJobText, type TickTextStyle } from './tick-texts'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
 /** skipped:quiet / skipped:care_off:SpeechPolicy 的判定(晨报、周报是 initiative —— 赶上免打扰当天记 skipped:quiet,别烦我 ⇒ skipped:care_off)。 */
-export type JobTurnResult = 'sent' | 'silent' | 'skipped:executor' | 'skipped:busy' | 'skipped:degraded' | 'skipped:network' | 'skipped:quiet' | 'skipped:care_off' | `failed:${string}`
+export type JobTurnResult = 'sent' | 'silent' | 'skipped:executor' | 'skipped:busy' | 'skipped:degraded' | 'skipped:network' | 'skipped:quiet' | 'skipped:care_off' | 'skipped:missed' | `failed:${string}`
 
 /** 定时那一轮用谁:装着 claude 就 claude,没有再 codex —— 不跟主人对话的执行者走(真机核对 10-20:对话用 openai 的主人,
  *  定时天天 skipped:executor)。只有这两家的只读档靠得住(Claude 走 profileGate,Codex 走只读沙箱)。 */
@@ -26,7 +28,7 @@ export const JOB_TURN_MAX_MS = 4 * 60_000
 export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
   const { resolveDispatch } = dispatch
 
-  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 交付之前改一下模型写好的最后那段(早报接上要主人拍板的候选,§4.8);NO_REPLY 由调用方自己判。 */ transformFinal?: (finalText: string) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(整合者评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult> {
+  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; scheduledAt?: string; buildText?: (style: TickTextStyle) => string; /** 交付之前改一下模型写好的最后那段(早报接上要主人拍板的候选,§4.8);NO_REPLY 由调用方自己判。 */ transformFinal?: (finalText: string) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(整合者评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult> {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
@@ -46,7 +48,11 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
     let result: JobTurnResult = 'failed:error'
     try {
       const nowMs = Date.parse(args.nowIso)
-      const said = await speech.say({ kind: args.kind, chatId, scheduled: args.scheduled, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
+      const timezone = loadCompanionConfig(deps.stateDir).timezone
+      const local = localParts(nowMs, timezone)
+      const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3))
+      const plannedAt = Math.floor(nowMs / 60_000) * 60_000 - (minutes(local.hhmm) - minutes(args.scheduledAt ?? local.hhmm)) * 60_000
+      const said = await speech.propose({ source: args.kind === 'brief' || args.kind === 'recap' ? args.kind : 'requested', summary: args.kind, expiresAt: plannedAt + 10 * 60_000, payloadRef: { jobId, day: local.day, scheduledAt: args.scheduledAt ?? local.hhmm }, validate: () => loadCompanionConfig(deps.stateDir).timezone === timezone && resolveDispatch(chatId).blocked !== 'session_in_flight', kind: args.kind, chatId, ref: `job:${jobId}:${local.day}:${args.scheduledAt ?? ''}`, scheduled: args.scheduled, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
       // 回复交付按 chatId 记账 ⇒ 与主人的对话串行,不然两轮的回复会混在一起。
       await deps.boot.coordinator.runExclusive(chatId, async () => {
         // 先忘一次:上次若崩在半路(没走到 finally),留下的续接记录会让这次接着上次的对话(终审 minor)。
@@ -83,7 +89,7 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
       })
       })
       if ('drop' in said) result = said.reason === 'skipped:quiet' ? 'skipped:quiet' : said.reason === 'care_off' ? 'skipped:care_off' : `failed:${said.reason}`
-      else if ('defer' in said) result = said.reason === 'undeliverable' ? 'skipped:degraded' : `failed:${said.reason}`
+      else if ('defer' in said) result = said.reason === 'expired' ? 'skipped:missed' : ['revalidation', 'occupied', 'duplicate'].includes(said.reason) ? 'skipped:busy' : said.reason === 'undeliverable' ? 'skipped:degraded' : `failed:${said.reason}`
     } catch (err) {
       result = isNetworkUnprotectedError(err) ? 'skipped:network' : `failed:${errMsg(err).slice(0, 60)}`
     } finally {

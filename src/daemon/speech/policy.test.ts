@@ -34,7 +34,7 @@ describe('policy.say —— CC 开口只有这一道门', () => {
     expect(r).toEqual({ allow: true, channel: 'wechat' })
     expect(s.sent).toEqual(['在忙吗'])
     expect(s.finished()).toBe(1)
-    expect(s.ledger).toEqual([{ kind: 'companion', origin: 'initiative', chatId: OWNER, outcome: 'allowed', reason: null, channel: 'wechat', ts: '2026-10-21T10:00:00.000Z' }])
+    expect(s.ledger).toEqual([{ kind: 'companion', origin: 'initiative', chatId: OWNER, outcome: 'allowed', reason: null, channel: 'wechat', ts: '2026-10-21T10:00:00.000Z', spokenAt: Date.parse('2026-10-21T10:00:00.000Z') }])
     expect(JSON.stringify(s.ledger)).not.toContain('在忙吗')
   })
   it('**被拒 / 被推后 ⇒ 生产者根本不跑**(贵的事——调模型——放在判定之后),也不开通道', async () => {
