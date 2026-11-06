@@ -82,6 +82,20 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       if((surface!==null&&!SURFACES.has(surface))||(kind!==null&&!KINDS.has(kind))||(status!==null&&status.split(',').some(s=>!STATUSES.has(s)))||(since!==null&&!/^\d+$/.test(since))||(limit!==null&&(!/^\d+$/.test(limit)||Number(limit)<1||Number(limit)>200)))return invalid()
       if((exclude!==null&&exclude.split(',').some(k=>!KINDS.has(k)))||(taskState!==null&&taskState!=='1'))return invalid()
       if(!deps.matters)return {status:503,body:{error:'matters_not_wired'}}
+      // T5: search is an owner device tool; the old link fallback retains its original list.
+      if(query.has('search')){
+        if(query.get('search')!=='1'||!caller||!['device','operator'].includes(caller.origin)||!['task','terminal'].includes(kind??'task'))return invalid()
+        for(const key of ['search','q','project','state','cursor'])if(query.getAll(key).length>1)return invalid()
+        const q=query.get('q')??'',project=query.get('project')??'',state=query.get('state')??''
+        if(q.length>200||project.length>1024||!['','open','working','waiting','done','failed','cancelled','archived'].includes(state))return invalid()
+        let before:{at:number;id:string}|undefined
+        const cursor=query.get('cursor')
+        if(cursor){try{if(cursor.length>200)throw Error();const b=JSON.parse(cursor);if(!Array.isArray(b)||b.length!==2||!Number.isSafeInteger(b[0])||b[0]<0||typeof b[1]!=='string'||!ID.test(b[1]))throw Error();before={at:b[0],id:b[1]}}catch{return invalid()}}
+        const count=Math.min(Number(limit??30),50)
+        const found=deps.matters.list({kind:(kind??'task') as MatterKind,limit:count+1,...(q?{q}:{}),...(project?{project}:{}),...(state==='archived'?{legacy:['archived'] as LegacyMatterStatus[]}:state?{state:state as import('../../ports/matters').MatterState}:{}),...(before?{before}:{})})
+        const page=found.slice(0,count),last=page.at(-1)
+        return {status:200,body:{matters:taskState==='1'?await withTaskState(deps.matters,page):page,nextCursor:found.length>count&&last?JSON.stringify([last.updatedAt,last.id]):null}}
+      }
       const service=deps.matters,phone=fromPhone(caller),drop=new Set(exclude?exclude.split(','):[])
       const filtering=phone||drop.size>0
       const filter:ListMatters={

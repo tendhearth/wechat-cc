@@ -1,11 +1,12 @@
 // Private UI never calls a private route under a link identity. No transcript cache on disk.
-var cMessages = new Map(), cBefore = null, cLoading = false, cReady = false, cPending = null, cDraftKey = null
+var cPrivacyRevision=0
+var cMessages = new Map(), cBefore = null, cLoading = false, cReady = false, cPending = null, cDraftKey = null, cSending = false
 function cNotice(text) { document.getElementById('chat-notice').textContent = text }
 function cRender() {
   var root = document.getElementById('chat-messages')
   var rows = Array.from(cMessages.values()).sort(function(a,b){return a.at-b.at||a.id.localeCompare(b.id)})
-  var html = rows.map(function(m){return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+ (m.role==='me'?'你':'CC')+' · '+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div></article>'}).join('') || '<p class="empty">跟 CC 说一句吧。</p>'
-  if(typeof cReference==='function'){var added=new Set();html=rows.map(function(m){var text='<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+(m.role==='me'?'你':'CC')+' · '+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div></article>';cReferences.forEach(function(ref){if(ref.originMessageId===m.id){text+=cReference(ref,false);added.add(ref.id)}});return text}).join('');cReferences.forEach(function(ref){if(!added.has(ref.id))html+=cReference(ref,true)});if(!html)html='<p class="empty">跟 CC 说一句吧。</p>'}
+  var html = rows.map(function(m){return '<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+ (m.role==='me'?'你':'CC')+' · '+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>'}).join('') || '<p class="empty">跟 CC 说一句吧。</p>'
+  if(typeof cReference==='function'){var added=new Set();html=rows.map(function(m){var text='<article class="chat-message" id="message-'+esc(m.id)+'"><small>'+(m.role==='me'?'你':'CC')+' · '+esc(new Date(m.at).toLocaleString())+'</small><div>'+esc(m.text)+'</div>'+(typeof cAttachmentHtml==='function'?cAttachmentHtml(m):'')+'</article>';cReferences.forEach(function(ref){if(ref.originMessageId===m.id){text+=cReference(ref,false);added.add(ref.id)}});return text}).join('');cReferences.forEach(function(ref){if(!added.has(ref.id))html+=cReference(ref,true)});if(!html)html='<p class="empty">跟 CC 说一句吧。</p>'}
   if(root.innerHTML!==html){var y=window.scrollY;root.innerHTML=html;window.scrollTo(0,y)}
 }
 async function cRead(older) {
@@ -33,20 +34,20 @@ async function cRead(older) {
 }
 function cSavePending(){try{if(cDraftKey)sessionStorage.setItem(cDraftKey+':pending',JSON.stringify(cPending))}catch(e){}}
 async function cSend(ev) {
-  ev.preventDefault();if(!isDevice||!cReady||cLoading)return
+  ev.preventDefault();if(!isDevice||!cReady||cSending)return
   var input=/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')),text=input.value.trim()
   if(!text)return
   if(!cPending)cPending={requestId:crypto.randomUUID(),text:text}
   if(cPending.text!==text){cNotice('上一句结果待核对，请先刷新；保留了当前输入。');return}
-  cSavePending();var identity=T;/** @type {HTMLButtonElement} */ (document.getElementById('chat-send')).disabled=true
+  cSavePending();cSending=true;var identity=T,privacy=cPrivacyRevision,sentDraft=input.value,submission={requestId:cPending.requestId,text:cPending.text};/** @type {HTMLButtonElement} */ (document.getElementById('chat-send')).disabled=true
   try{
-    var r=await /* link-scan: device-only */ mPostOnce('/v1/matter/owner-chat/say',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(cPending)})
+    var r=await /* link-scan: device-only */ mPostOnce('/v1/matter/owner-chat/say',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(submission)})
     if(r.status===401){onUnauthorized(identity);return}
-    var b=await r.json();if(identity!==T)return
-    if(!b.ok){cNotice(b.error==='chat_busy'?'CC 还在回复，稍后再试。':'没发出去，请刷新核对后重试。');return}
-    cPending=null;cSavePending();input.value='';try{sessionStorage.removeItem(cDraftKey)}catch(e){};await cRead(false)
+    var b=await r.json();if(identity!==T||privacy!==cPrivacyRevision||!isDevice)return
+    if(!b.ok){if(['chat_busy','no_owner_chat','invalid','input_conflict'].includes(b.error)){cPending=null;cSavePending()};cNotice(b.error==='chat_busy'?'CC 还在回复，稍后再试。':'没发出去，请刷新核对后重试。');return}
+    cPending=null;cSavePending();if(input.value===sentDraft){input.value='';try{sessionStorage.removeItem(cDraftKey)}catch(e){}};await cRead(false)
   }catch(e){cNotice('结果待核对 · 刷新后再试会使用同一回执，不重复发送。')}
-  finally{/** @type {HTMLButtonElement} */ (document.getElementById('chat-send')).disabled=false}
+  finally{cSending=false;/** @type {HTMLButtonElement} */ (document.getElementById('chat-send')).disabled=false}
 }
 document.getElementById('chat-form').addEventListener('submit',cSend)
 document.getElementById('chat-input').addEventListener('input',function(ev){try{if(cDraftKey)sessionStorage.setItem(cDraftKey,/** @type {HTMLTextAreaElement} */ (ev.target).value)}catch(e){}})
@@ -55,4 +56,4 @@ document.getElementById('chat-older').addEventListener('click',function(){cRead(
 if(isDevice){document.getElementById('conversation').hidden=false;cRead(false)}
 setInterval(function(){if(isDevice&&!document.hidden&&!mCurrent)cRead(false)},3000)
 
-function cClearPrivate(){isDevice=false;if(typeof tClear==='function')tClear();if(typeof cReferences!=='undefined')cReferences.clear();cMessages.clear();cReady=false;cPending=null;try{if(cDraftKey){sessionStorage.removeItem(cDraftKey);sessionStorage.removeItem(cDraftKey+':pending')}}catch(e){};cDraftKey=null;document.getElementById('chat-messages').replaceChildren();/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')).value='';document.getElementById('conversation').hidden=true;document.body.classList.remove('conversation-ready')}
+function cClearPrivate(){cPrivacyRevision++;isDevice=false;if(typeof cWaitingRows!=='undefined')cWaitingRows=null;if(typeof cMatterSeen!=='undefined')cMatterSeen.clear();if(typeof cExpanded!=='undefined')cExpanded.clear();if(typeof cResetResponse==='function')cResetResponse();if(typeof mSeq!=='undefined'){mSeq++;mCurrent=null;mDetail=null;clearTimeout(mPoll);document.getElementById('m-status').replaceChildren();document.getElementById('m-title').textContent='';document.getElementById('m-agents').replaceChildren();document.getElementById('m-detail').hidden=true;document.getElementById('m-home').hidden=false;}if(typeof tClear==='function')tClear();if(typeof cReferences!=='undefined')cReferences.clear();cMessages.clear();cReady=false;cPending=null;try{if(cDraftKey){sessionStorage.removeItem(cDraftKey);sessionStorage.removeItem(cDraftKey+':pending')}}catch(e){};cDraftKey=null;document.getElementById('chat-messages').replaceChildren();var search=document.getElementById('chat-search');if(search){search.hidden=true;document.getElementById('chat-search-results').replaceChildren()};/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')).value='';document.getElementById('conversation').hidden=true;document.body.classList.remove('conversation-ready')}

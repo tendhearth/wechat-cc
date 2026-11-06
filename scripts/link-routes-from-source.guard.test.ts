@@ -107,7 +107,7 @@ describe('链接令牌的范围 = 链接页面调用的路由(理念 2)', () => 
       'app pairing': ['POST /set/api/pair'],
       'selftest phone': ['POST /set/api/pair'],
     })
-    expect([...new Set(scanAll().filter(c => c.deviceOnly).map(c => c.key))].sort()).toEqual(['GET /v1/matter/owner-chat/page', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/owner-chat/say', 'POST /v1/memory/topics/open'])
+    expect([...new Set(scanAll().filter(c => c.deviceOnly).map(c => c.key))].sort()).toEqual(['GET /v1/matter/artifact', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/answer', 'POST /v1/matter/owner-chat/say', 'POST /v1/matter/permission', 'POST /v1/memory/topics/open'])
   })
 })
 

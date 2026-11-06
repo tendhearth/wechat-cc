@@ -57,6 +57,7 @@
     <div class="m-agents" id="m-agents" hidden></div>
     <div id="m-notice" role="status" aria-live="polite"></div>
     <section id="m-status" aria-label="现在到哪了" aria-live="polite"></section>
+    <section id="m-response" aria-label="回应这件事"></section><button id="matter-recheck" type="button" class="more" hidden>刷新核对请求</button>
     <p class="m-elsewhere">对话记录、成果和拍板在手机 App 或电脑上看。</p>
   </div>
 </div>
@@ -66,4 +67,4 @@
 <script>
 var T = {{TOKEN_JSON}}
 var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>workbench.js}}
-{{>presence.js}}{{>home.js}}{{>conversation.js}}{{>delegation.js}}{{>topics.js}}</script></body></html>
+{{>presence.js}}{{>home.js}}{{>conversation.js}}{{>delegation.js}}{{>topics.js}}{{>search.js}}{{>responses.js}}{{>files.js}}{{>layers.js}}</script></body></html>

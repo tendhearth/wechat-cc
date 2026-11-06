@@ -1214,6 +1214,7 @@ const D2SoftError = z.object({ ok: z.literal(false), error: z.string() })
 // ── GET /v1/matters ──
 // MattersService.list();被网络守护冻住的那几件多一个 networkSuspended:true。
 export const MattersListResponse = z.object({
+  nextCursor: z.string().nullable().optional(),
   matters: z.array(Matter.extend({ networkSuspended: z.literal(true).optional() })),
 })
 

@@ -40,6 +40,7 @@ export function makePhoneChat(d: {
   converse(text: string, images?: PhoneChatImage[]): Promise<{ reply: string }>
   /** 按主人校验并取出这一句引用的图(读出字节后暂存即删)。没接 ⇒ 带图的一句 409 不收。 */
   takeImages?(materials: PhoneChatMaterials): PhoneChatImage[]
+  peekOwnerMatterId?(): string | null
   ownerMatterId(): string | null
   /** 这一句开始等回复(pendingMatter 变成它):手机主题据此马上算出 working,不等兜底轮询。 */
   onPending?(matterId: string): void
@@ -90,7 +91,7 @@ export function makePhoneChat(d: {
     // Promise.resolve().then:converse 同步抛错也落成 failed,不会让 pending 卡死。
     Promise.resolve().then(() => { const images = imagesOf.get(job); return images?.length ? d.converse(job.text, images) : d.converse(job.text) }).then(
       result => {
-        d.receipts?.settle(job.requestId, result.reply)
+        try { d.receipts?.settle(job.requestId, result.reply) } catch { log('reply receipt could not be settled; keep the reservation') }
         if (!done) return finish(null)
         // 超时后才回来的成功(终审 I2):这句其实办成了、回复已落进对话 ⇒ 翻成 replied,
         // 同一 requestId 的重试去重成 replied、不起第二轮;它若还挂在 failed 上就撤掉(别人的 failed 不动)。
@@ -101,7 +102,11 @@ export function makePhoneChat(d: {
         log(`say ${job.requestId.slice(0, 8)} late reply`)
         wake(job)
       },
-      e => finish(e),
+      e => {
+        // Only a settled rejection is retryable; timeout/transport uncertainty keeps its reservation.
+        try { d.receipts?.drop(job.requestId) } catch { log('failed receipt could not be cleared') }
+        finish(e)
+      },
     )
   }
   const visibleFailed = () => (failed && ageFrom(failed) >= now() - PHONE_CHAT_JOB_TTL_MS ? failed : null)
@@ -142,7 +147,7 @@ export function makePhoneChat(d: {
       return { pending: pending ? { ...pending } : null, failed: f ? { ...f } : null }
     },
     receipt: requestId => {
-      const owner = d.ownerMatterId(), job = jobs.get(requestId)
+      const owner = d.peekOwnerMatterId ? d.peekOwnerMatterId() : d.ownerMatterId(), job = jobs.get(requestId)
       if (job && job.matterId === owner) return { requestId, status: job.status, since: job.since }
       const receipt = d.receipts?.get(requestId)
       return receipt && receipt.matterId === owner ? { requestId, status: receipt.status, since: receipt.createdAt } : null

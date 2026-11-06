@@ -78,6 +78,10 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     if(filter.legacy?.length){for(const s of filter.legacy)if(!LEGACY.has(s))throw new Error('invalid_matter_status');where.push(`legacy_status IN (${filter.legacy.map(()=>'?').join(',')})`);params.push(...filter.legacy)}
     if(filter.since!==undefined){where.push('updated_at>=?');params.push(filter.since)}
     if(filter.surface){if(!SURFACES.has(filter.surface))throw new Error('invalid_matter_surface');where.push('id IN (SELECT matter_id FROM matter_bindings WHERE surface=?)');params.push(filter.surface)}
+    if(filter.q){where.push("instr(lower(title || char(10) || COALESCE(project_path,'')),lower(?))>0");params.push(filter.q)}
+    if(filter.project){where.push("instr(lower(COALESCE(project_path,'')),lower(?))>0");params.push(filter.project)}
+    if(filter.state){where.push('state=? AND archived_at IS NULL');params.push(filter.state)}
+    if(filter.before){where.push('(updated_at<? OR (updated_at=? AND id>?))');params.push(filter.before.at,filter.before.at,filter.before.id)}
     const limit=Math.min(Math.max(1,filter.limit??100),500)
     return db.query<Row,(string|number)[]>(`${SELECT}${where.length?' WHERE '+where.join(' AND '):''} ORDER BY updated_at DESC, id LIMIT ${limit}`).all(...params).map(toMatter)
   }

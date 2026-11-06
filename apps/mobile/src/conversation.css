@@ -27,3 +27,14 @@ body.conversation-ready header { display:flex; gap:12px; align-items:center; max
 #topic-panel h2 { font-size:22px } #topic-panel h3 { font-size:16px; margin-top:28px }
 #topic-query { font:inherit; padding:12px; max-width:100%; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:var(--r-s) }
 @media(min-width:1000px){body.conversation-ready{max-width:1200px}body.topic-open #p-today { margin-right:440px }}
+
+#chat-search { position:fixed; inset:0; z-index:35; max-width:900px; margin:auto; padding:20px 22px; background:var(--paper); overflow:auto }
+#chat-search form { display:flex; flex-wrap:wrap; gap:12px; margin:24px 0 }
+#chat-search label { display:flex; flex-direction:column; gap:6px; max-width:100% }
+#chat-search input,#chat-search select,.response input[type=text] { font:inherit; color:var(--ink); background:var(--card); padding:10px; border:1px solid var(--line); border-radius:var(--r-s); max-width:100% }
+#chat-search-results button { display:block; width:100%; text-align:left; margin:12px 0; overflow-wrap:anywhere }
+.response { margin:24px 0; white-space:normal; overflow-wrap:anywhere }
+.response pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit }
+.response fieldset { border:1px solid var(--line); margin:12px 0 }
+.response label { display:block; padding:10px 0; min-height:44px }
+.response input[type=radio],.response input[type=checkbox] { margin-right:10px }

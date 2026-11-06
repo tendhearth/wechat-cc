@@ -48,6 +48,7 @@ function mApi(path,opts,sender) {
     .finally(function(){clearTimeout(timer)})
 }
 function mSetButtons() {
+  if(typeof cResponseButtons==='function')cResponseButtons()
   document.querySelectorAll('#m-status [data-stop]').forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||mOffline||!!mBusy[mCurrent+':stop']})
 }
 /**
@@ -142,7 +143,7 @@ function mStateWord(d) {
 }
 function mRenderStatus(d) {
   var root=document.getElementById('m-status'),state=mStateWord(d),quota=mQuotaView(d.quotaHandoff),html='<p class="m-state">'+esc(state.word)+'</p>'
-  if(state.waiting)html+='<p class="m-task-note">有 '+state.waiting+' 项等你决定，到手机 App 或电脑上处理。</p>'
+  if(state.waiting&&!(typeof cReady!=='undefined'&&cReady))html+='<p class="m-task-note">有 '+state.waiting+' 项等你决定，到手机 App 或电脑上处理。</p>'
   var events=d.events||[],last=events[events.length-1]
   if(last&&last.kind==='tool_call'&&last.activity&&last.activity.status==='running')html+='<p class="m-now"><span>正在</span> '+esc(last.activity.label||last.text)+'</p>'
   if(d.matter.kind==='task'&&quota)html+='<p class="m-task-note">'+esc(mQuotaText(quota,d.matter.agentNames))+'</p>'
@@ -154,6 +155,7 @@ function mRenderStatus(d) {
     html+='<button type="button" class="more" data-stop="1" data-task="'+esc(d.matter.id)+'" data-run="'+esc(d.runId)+'">'+(armed?'再点一次，确认停止':'停止这一轮')+'</button>'
   }
   if(typeof cMatterWork==='function')html+=cMatterWork(d)
+  if(typeof cArtifactHtml==='function')html+=cArtifactHtml(d)
   if(root.innerHTML!==html){
     // 确认文字 / 轮询状态变化不能把键盘用户从「停下」上丢掉。
     var focused=document.activeElement
@@ -191,13 +193,16 @@ function mPostOnce(path,opts) {
 document.getElementById('m-status').addEventListener('click',function(ev){var s=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-stop]'));if(s&&s.dataset.task===mCurrent)mStop(s.dataset.task,s.dataset.run)})
 function renderMatter(d) {
   mDetail=d;mDetailFresh=true
+  if(typeof cCaptureMatter==='function')cCaptureMatter(d)
   document.getElementById("m-title").textContent=ccPlain(d.matter.title)
   // 标题下一组头像 + 名字:任务那一家在前,老 daemon 不带 agents 也有
   // 出生地(2026-10-19):字形在头像组前面,名字后面写一句「从哪来的」;不知道 ⇒ 不画
   var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents"),from=mAgents.originLabel(d.matter.origin)
   who.hidden=!agents.length&&!from;who.innerHTML=agents.length||from?mAgents.originMarkHtml(d.matter.origin)+mAgents.agentAvatarsHtml(agents,{nameOf:mNameOf(d.matter.agentNames)})+'<span>'+esc([mAgents.agentsLabel(agents,mNameOf(d.matter.agentNames)),from].filter(Boolean).join(" · "))+'</span>':''
   mRenderStatus(d)
+  if(typeof cRenderResponses==='function')cRenderResponses(d)
   mSetButtons()
+  if(typeof cResponseButtons==='function')cResponseButtons()
 }
 function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidden)mPoll=setTimeout(mRefresh,3000) }
 function mRefresh() {
@@ -206,6 +211,8 @@ function mRefresh() {
   return mApi('/v1/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq)mNotice(mError(e.message))}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
 }
 function openMatter(id) {
+  if(typeof cPushLayer==='function')cPushLayer({kind:'matter',id:id})
+  if(typeof cResetResponse==='function'&&id!==mCurrent)cResetResponse()
   mDetailFresh=false
   if(mCurrent!==id){mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
   mCurrent=id;mActive=true
@@ -217,7 +224,7 @@ function ccShowMatter(id) {
   openMatter(id)
 }
 document.getElementById("m-list").addEventListener("click",function(ev){var c=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(c)openMatter(c.dataset.mid)})
-document.getElementById("m-back").addEventListener("click",function(){mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-home").hidden=false;loadMatters()})
+document.getElementById("m-back").addEventListener("click",function(){if(typeof cBackLayer==='function'&&cReady&&!cHandlingPop){cBackLayer();return};mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-home").hidden=false;loadMatters()})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。
 document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
 window.addEventListener('offline',function(){clearTimeout(mPoll);mOffline=true;mSeq++;mConnectionEpoch++;mDetailFresh=false;mMisses=M_STALE_MISSES;mConn();mSetButtons()})

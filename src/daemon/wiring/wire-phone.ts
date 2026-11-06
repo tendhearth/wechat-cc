@@ -120,6 +120,7 @@ const phoneChat = phoneOwner ? makePhoneChat({
   // 手机带的图:材料暂存里按主人取(与交办同一套校验),读完即删,图落到对话 inbox(2026-10-06)。
   ...(opts.workbench ? { takeImages: (m: { draftId: string; attachmentIds: string[] }) => opts.workbench!.takeChatImages(m, { ownerKey: ownerChatId() ?? '', surface: 'phone' }) } : {}),
   ownerMatterId: () => phoneOwner.ensure(),
+  peekOwnerMatterId: () => phoneOwner.peek()?.matterId ?? null,
   onPending: id => phoneEvents?.poke(topic => topic === `matter/${id}`),
   onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
   log: (tag, line) => log(tag, line),

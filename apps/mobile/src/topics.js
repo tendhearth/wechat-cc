@@ -11,6 +11,7 @@ async function tList(all,more){
 }
 function tRenderAll(){var query=/** @type {HTMLInputElement} */ (document.getElementById('topic-query')).value.toLowerCase();document.getElementById('topic-list').innerHTML=tAll.map(function(t){return '<button type="button" data-topic="'+esc(t.id)+'">'+esc(t.title)+'</button>'}).join('');document.getElementById('topic-list-more').hidden=!tCursor}
 async function tOpen(id){
+ if(typeof cPushLayer==='function')cPushLayer({kind:'topic',id:id})
  if(!isDevice||!tReady)return
  document.body.classList.add('topic-open');tSelected=id;tDetail=null;var seq=++tReadSeq
  document.getElementById('topic-panel').hidden=false;document.getElementById('topic-all').hidden=true;document.getElementById('topic-body').textContent='正在读…';document.getElementById('topic-close').focus()
@@ -34,14 +35,14 @@ async function tRead(section,cursor){
 }
 function tRenderDetail(){
  var d=tDetail,t=d.topic,html='<h2 id="topic-title">'+esc(t.title)+'</h2>'+(t.description?'<p>'+esc(t.description)+'</p>':'')+(t.summary?'<p>'+esc(t.summary)+'</p>':'')
- if(d.matters.length)html+='<h3>相关事项</h3>'+d.matters.map(function(m){return '<button type="button" data-mid="'+esc(m.id)+'">'+esc(m.title)+' · '+esc(m.state)+'</button>'}).join('')
+ if(d.matters.length)html+='<h3>相关事项</h3>'+d.matters.map(function(m){return '<button type="button" data-mid="'+esc(m.id)+'">'+esc(m.title)+' · '+esc(CCP.STATUS_WORDS[m.state==='open'?'working':m.state==='cancelled'?'stopped':m.state]||m.state)+'</button>'}).join('')
  if(d.entries.length)html+='<h3>CC 记得</h3>'+d.entries.map(function(e){return '<details><summary>'+esc(e.line)+(e.recalled?' · 这次想起':'')+'</summary><p>'+esc(e.body)+'</p><small>'+esc(e.source)+' · '+esc(e.createdTs)+'</small></details>'}).join('')
  if(d.messages.length)html+='<h3>最近聊到</h3>'+d.messages.map(function(m){return '<button type="button" data-message="'+esc(m.id)+'" data-at="'+esc(m.ts)+'">'+(m.speaker==='owner'?'你':'CC')+' · '+esc(m.excerpt)+' · '+esc(m.ts)+(m.source==='episode'?' · 相关记录':'')+' · 回看</button>'}).join('')
  ;['matters','entries','messages'].forEach(function(section){var p=d.pages[section];if(p.nextCursor)html+='<button type="button" data-topic-section="'+section+'" data-cursor="'+esc(p.nextCursor)+'">更多'+({matters:'相关事项',entries:'记忆',messages:'消息'}[section])+' · 共 '+p.total+'</button>'})
  if(!d.entries.length&&!d.matters.length&&!d.messages.length)html+='<p>还没有记下内容</p>'
  document.getElementById('topic-body').innerHTML=html
 }
-function tClose(){document.body.classList.remove('topic-open');tSelected=null;tDetail=null;tReadSeq++;document.getElementById('topic-panel').hidden=true;document.getElementById('topic-body').replaceChildren();document.getElementById('chat-input').focus();tList(false,false)}
+function tClose(){if(typeof cBackLayer==='function'&&!cHandlingPop&&history.state&&history.state.ccLayer&&history.state.ccLayer.kind==='topic'){cBackLayer();return};document.body.classList.remove('topic-open');tSelected=null;tDetail=null;tReadSeq++;document.getElementById('topic-panel').hidden=true;document.getElementById('topic-body').replaceChildren();document.getElementById('chat-input').focus();tList(false,false)}
 function tStart(){if(tReady)return;tReady=true;tList(false,false);tWatch()}
 async function tWatch(){
  if(tPolling||!isDevice||!tReady)return;
@@ -57,18 +58,20 @@ async function tWatch(){
 document.getElementById('topic-row').addEventListener('click',tClick)
 document.getElementById('topic-list').addEventListener('click',tClick)
 document.getElementById('topic-body').addEventListener('click',tClick)
-function tClick(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('button'));if(!b)return;if(b.dataset.topic)tOpen(b.dataset.topic);else if(b.hasAttribute('data-topic-more')){document.body.classList.add('topic-open');document.getElementById('topic-panel').hidden=false;document.getElementById('topic-all').hidden=false;document.getElementById('topic-body').replaceChildren();tList(true,false)}else if(b.dataset.mid){openMatter(b.dataset.mid)}else if(b.dataset.topicSection)tRead(b.dataset.topicSection,b.dataset.cursor);else if(b.dataset.message)cLocateMessage(b.dataset.message,b.dataset.at)}
+function tClick(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('button'));if(!b)return;if(b.dataset.topic)tOpen(b.dataset.topic);else if(b.hasAttribute('data-topic-more')){if(typeof cPushLayer==='function')cPushLayer({kind:'topic'});document.body.classList.add('topic-open');document.getElementById('topic-panel').hidden=false;document.getElementById('topic-all').hidden=false;document.getElementById('topic-body').replaceChildren();tList(true,false)}else if(b.dataset.mid){openMatter(b.dataset.mid)}else if(b.dataset.topicSection)tRead(b.dataset.topicSection,b.dataset.cursor);else if(b.dataset.message)cLocateMessage(b.dataset.message,b.dataset.at)}
 document.getElementById('topic-close').addEventListener('click',tClose)
 document.getElementById('topic-retry').addEventListener('click',function(){if(tSelected)tRead();else tList(true,false)})
 document.getElementById('topic-query').addEventListener('input',function(){clearTimeout(tSearchTimer);tSearchTimer=setTimeout(function(){tCursor=null;tList(true,false)},250)})
 document.getElementById('topic-list-more').addEventListener('click',function(){tList(true,true)})
 async function cLocateMessage(id,at){
  if(!isDevice||!cReady)return
+ var identity=T,privacy=typeof cPrivacyRevision==='undefined'?0:cPrivacyRevision
  // Fetch the actual source page around the timestamp; never invent a message from an excerpt.
  if(!cMessages.has(id)){
   try{
    var r=await /* link-scan: device-only */ api('/v1/matter/owner-chat/page?limit=40&before='+encodeURIComponent(new Date(Date.parse(at)+1).toISOString()))
-   if(r.status===401){onUnauthorized(T);return}var b=await r.json();if(!b.ok)throw Error('unavailable');(b.messages||[]).forEach(function(m){cMessages.set(m.id,m)})
+   if(identity!==T||!isDevice||!cReady||privacy!==(typeof cPrivacyRevision==='undefined'?0:cPrivacyRevision))return
+   if(r.status===401){onUnauthorized(identity);return}var b=await r.json();if(identity!==T||!isDevice||!cReady||privacy!==(typeof cPrivacyRevision==='undefined'?0:cPrivacyRevision))return;if(!b.ok)throw Error('unavailable');(b.messages||[]).forEach(function(m){cMessages.set(m.id,m)})
   }catch(e){cNotice('原消息暂时读不到，请重试。');return}
  }
  if(typeof tClose==='function'&&tSelected)tClose()
