@@ -2,7 +2,7 @@
 import { posix } from 'node:path'
 
 const QA_APPS = new Set(['com.tendhearth.cc-motion-qa-20261029', 'com.tendhearth.cc-native-control-20261030'])
-const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit', 'full', 'full-platform', 'capture', 'embedded', 'embedded-build', 'production-build', 'affected'])
+const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit', 'full', 'full-platform', 'capture', 'embedded', 'embedded-build', 'production-build', 'affected', 'app-status', 'app-build', 'app-maestro'])
 
 const MINIS = Object.freeze({
   home: { computerName: 'Home’s Mac mini', homeDir: '/Users/home', labHome: '/Users/home/cc-ui-lab',
@@ -63,7 +63,22 @@ export function createOfflineSession({ bundleId, appPath, stateRoot }) {
   } } }
 }
 
-export function sshInvocation(command, target = 'home', sshConfig) {
+export const APP_FLOWS = Object.freeze(['agent-avatars', 'approve', 'chat', 'chat-extras', 'connections', 'compose', 'worktree', 'quota-handoff', 'demo-walkthrough', 'pair-invalid', 'pair-link', 'terminal-sessions', 'push-open', 'cc-acts', 'continue-session', 'design-shots'])
+
+export function appFlow(value = 'all') {
+  if (value !== 'all' && !APP_FLOWS.includes(value)) throw Error('Unsupported App flow')
+  return value
+}
+
+export function validateRequest(request) {
+  if (!request || typeof request !== 'object' || !COMMANDS.has(request.command)) throw Error('Unsupported UI lab command')
+  const keys = Object.keys(request)
+  if (keys.some(key => key !== 'command' && !(request.command === 'app-maestro' && key === 'flow'))) throw Error('Unexpected UI lab request fields')
+  if (request.command === 'app-maestro') appFlow(request.flow)
+  return request
+}
+
+export function sshInvocation(command, target = 'home', sshConfig, flow) {
   if (!COMMANDS.has(command)) throw Error('Unsupported UI lab command')
   if (!Object.hasOwn(MINIS, target)) throw Error('Unsupported UI lab target')
   if (sshConfig !== undefined && (typeof sshConfig !== 'string' || !posix.isAbsolute(sshConfig) || sshConfig.includes('\0'))) throw Error('SSH config must be an absolute local path')
@@ -71,5 +86,5 @@ export function sshInvocation(command, target = 'home', sshConfig) {
   return { file: 'ssh', args: [...(sshConfig ? ['-F', sshConfig] : []), '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
     '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
     mini.host, `env PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/run.mjs`],
-  input: JSON.stringify({ command }) + '\n' }
+  input: JSON.stringify(validateRequest({ command, ...(flow !== undefined ? { flow } : {}) })) + '\n' }
 }

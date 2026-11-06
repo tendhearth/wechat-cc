@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile, realpath, rm } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { miniConfiguration, assertLoopbackEndpoint, createOfflineSession, sshInvocation } from './macmini-ui-protocol.mjs'
+import { miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest } from './macmini-ui-protocol.mjs'
 
 const textCommand = (file, args) => execFileSync(file, args, { encoding: 'utf8' }).trim()
 const identity = { computerName: textCommand('/usr/sbin/scutil', ['--get', 'ComputerName']),
@@ -19,8 +19,7 @@ for await (const chunk of process.stdin) {
   if (input.length > 1024) throw Error('UI lab request is too large')
 }
 const request = JSON.parse(input)
-if (!request || Object.keys(request).length !== 1 || typeof request.command !== 'string') throw Error('Expected one UI lab command')
-sshInvocation(request.command) // Reuse the same command allowlist at the receiving boundary.
+validateRequest(request) // Reuse the same command allowlist at the receiving boundary.
 const config = JSON.parse(await readFile(configPath, 'utf8'))
 const endpoint = assertLoopbackEndpoint(config.endpoint)
 
@@ -63,6 +62,12 @@ function consoleState() {
   const locked = /"CGSSessionScreenIsLocked"\s*=\s*Yes/.test(output)
   const userSessionPresent = /"IOConsoleUsers"/.test(output) && consoleUser === mini.homeDir.split('/').at(-1)
   return { consoleUser, locked: userSessionPresent ? locked : null }
+}
+
+if (request.command === 'app-status') {
+  const { appStatus } = await import('./macmini-ui-app.mjs')
+  console.log(JSON.stringify(await appStatus({ config, insideLab, labHome }), null, 2))
+  process.exit(0)
 }
 
 if (request.command === 'status') {
@@ -194,6 +199,10 @@ async function native() {
 try {
   let result
   switch (request.command) {
+    case 'app-build': case 'app-maestro': {
+      const { runApp } = await import('./macmini-ui-app.mjs')
+      result = await runApp({ request, config, insideLab, labHome, run, command, environment }); break
+    }
     case 'doctor': result = await command('doctor', '/opt/homebrew/bin/node', [join(runtime, 'node_modules/appium/build/lib/main.js'), 'driver', 'doctor', 'mac2'], { offline: false }); break
     case 'unit': result = await unit(); break
     case 'browser': result = await browser(); break

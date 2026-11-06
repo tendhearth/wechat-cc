@@ -89,3 +89,29 @@ node apps/desktop/scripts/macmini-ui.mjs capture
 整仓 `verify --full` 已实际运行：类型检查、依赖检查和真实形状沙盒 12/12 通过；Bun 8 条、Node 7 条失败，其中状态目录/CSP 的两处入口设置已修复并通过上述 14 条定向复验，其余涉及 `process-tree-freeze.test.ts`、`live-window.test.ts`、`claude-workbench-process.test.ts`、工作台 `service/scripts.test.ts` 的真实系统进程查询。最小对照确认，连仅有 `allow default` 的 Seatbelt profile 也会禁止启动平台特权 `ps`；不是网络拒绝规则导致。没有为这些用例修改生产进程管理、跳过断言或移除离线限制。该严格限制下的全量结果仍记录为失败，不生成全绿凭证。标准仓库回归另设 `full-platform`，不改这些断言、不跳过用例，也不放宽任何 UI 测试的断网限制；其结果单独记录。另检查未遗留这些失败用例的孤儿、停止或僵尸进程，无需清理。
 
 后续结果必须带实际命令、提交与日志；不要把原生包能构建、浏览器拖动样式变化或 IPC 返回成功写成原生拖动通过。
+
+## App / Maestro lane
+
+App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照必须来自已审阅的 `origin/dev` 或 `app-maestro-build3`，仅传 Git archive，不复制 node_modules、忽略文件、账号或原生签名材料。
+
+整合者先把本仓库 `apps/desktop/scripts/macmini-ui{,-protocol,-remote,-app}.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 现有可信执行器目录；在 lab 根的 `app-snapshot.mjs` 写一行 import 指向该目录的 `macmini-app-snapshot.mjs`（与 `run.mjs` 相同模式）。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令。
+
+```sh
+# 在主机调用；只传源码，接收器在 mini 持锁创建新目录并原子更新 appRoot。
+node apps/desktop/scripts/macmini-app-snapshot.mjs app-maestro-build3
+# 也可选择 origin/dev；可选第三参数 homebot，绝不自动切换。
+node apps/desktop/scripts/macmini-ui.mjs app-status
+node apps/desktop/scripts/macmini-ui.mjs app-build
+node apps/desktop/scripts/macmini-ui.mjs app-maestro terminal-sessions
+node apps/desktop/scripts/macmini-ui.mjs app-maestro push-open
+node apps/desktop/scripts/macmini-ui.mjs app-maestro cc-acts
+node apps/desktop/scripts/macmini-ui.mjs app-maestro all
+```
+
+`app-maestro [flow|all] [home|homebot]` 只接受协议中登记的流程名称，不接受文件路径、选项或任意命令。`all` 枚举快照中所有顶层 YAML，遇到未登记流程拒绝运行；子流程不单独作为套件。每条流程独立保存结果，全套中某条失败不吞掉其余结果。退出非零时看 `app-results.json` 与每步日志；构建失败时流程尚未执行，不能记成断言失败。
+
+首次准备由整合者在 mini 的 lab 内下载公开工具：`app-tools/maestro/bin/maestro`、`app-tools/java/Contents/Home`（JDK 21）及 `app-tools/gems/bin/pod`。不要运行会修改全局 shell 配置的安装器，不用 sudo。`app-status` 只读，不启动模拟器。工具、Expo/Bun 和 Pods 的公开依赖下载是准备阶段；先在 App 快照中安装锁定的 JS 依赖并缓存 CocoaPods 所需公开资源，之后 `app-build` 的 prebuild、Pods、Release 构建与 Maestro 子进程沿用拒绝外连、允许回环的 `offline-tests.sb`。缺缓存时明确失败，不在测试命令中隐式联网。
+
+构建使用模拟器 SDK、关闭签名、Release 内嵌 JS，不需要 Metro、Apple 账号、设备注册或生产凭据。`app-build` 写与快照对应的构建回执；更换快照必须重新构建。模拟器 device set 与 App 的 HOME 均位于 `appRoot` 下，只选择命名为 `CC UI Lab App` 的自有设备；不选择或清空已有个人模拟器。每轮显式安装该快照生成的包，指定 UDID 运行 Maestro，并在结束后关闭自有设备。
+
+与桌面一样，Seatbelt 的证据范围是所启动的构建/驱动子进程；CoreSimulator 系统服务派生的 App 不因驱动在沙盒中就自动获得相同网络限制。只运行无配对演示流程，不能把它当作真实推送、真实中继或模型验收。mini 锁屏或 XCTest 首次系统授权可能阻塞；由主人在 mini 正常解锁/确认，不改 TCC、不绕过身份验证。
