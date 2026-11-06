@@ -1,7 +1,7 @@
 /** T4:三端共用的话题泡泡契约。closed 是收起,不是事情完成。 */
 import z from 'zod'
 const Id = z.string().min(1).max(128)
-export const TopicsListQuery = z.object({ view: z.enum(['recent', 'all']).default('recent'), limit: z.coerce.number().int().min(1).max(50).default(6), cursor: z.string().max(1024).optional() })
+export const TopicsListQuery = z.object({ view: z.enum(['recent', 'all']).default('recent'), q: z.string().trim().min(1).max(200).optional(), limit: z.coerce.number().int().min(1).max(50).default(6), cursor: z.string().max(1024).optional() })
 export const TopicDetailQuery = z.object({ id: Id, section: z.enum(['entries', 'matters', 'messages']).optional(), limit: z.coerce.number().int().min(1).max(20).optional(), cursor: z.string().max(1024).optional() })
 export const TopicOpenRequest = z.object({ id: Id, requestId: Id })
 export const TopicsSubscribeQuery = z.object({ since: z.string().max(128).optional(), wait_ms: z.coerce.number().int().min(0).max(30000).default(25000) })

@@ -163,7 +163,7 @@ describe('T5 设备对话调用的权限', () => {
     const page = assembleMobilePage(readMobileSource).phone.split(read('apps', 'mobile', 'src', 'protocol-generated.js')).join('')
     const calls = scanSource('phone /m', page, PHONE_ROUTES).calls
     expect(uniq(calls.filter(c => c.deviceOnly).map(c => c.key))).toEqual([
-      'GET /v1/matter/owner-chat/page', 'POST /v1/matter/owner-chat/say',
+      'GET /v1/matter/owner-chat/page', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/owner-chat/say', 'POST /v1/memory/topics/open',
     ])
   })
 })

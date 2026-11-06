@@ -4,5 +4,12 @@
   <button id="chat-older" type="button" hidden>更早的消息</button>
   <div id="chat-messages" role="log" aria-label="主人与 CC 的对话"></div>
   <button id="chat-waiting" type="button" hidden></button>
+  <div id="topic-row" role="group" aria-label="最近话题" hidden></div>
   <form id="chat-form"><label for="chat-input" class="sr-only">跟 CC 说一句</label><textarea id="chat-input" rows="2" maxlength="20000" placeholder="跟 CC 说一句…"></textarea><button id="chat-send" type="submit">发送</button></form>
+  <section id="topic-panel" role="dialog" aria-label="话题" hidden>
+    <button id="topic-close" type="button">收起 · 返回对话</button>
+    <p id="topic-notice" role="status" aria-live="polite"></p><button id="topic-retry" type="button">重试</button>
+    <div id="topic-all" hidden><h2>更多话题</h2><label>搜索话题<input id="topic-query" type="search"></label><div id="topic-list"></div><button id="topic-list-more" type="button" hidden>更多话题</button></div>
+    <div id="topic-body"></div>
+  </section>
 </section>

@@ -19,6 +19,7 @@ async function cRead(older) {
     if(identity!==T||!isDevice)return
     if(!b.ok){cNotice(b.error==='no_owner_chat'?'还没设好主人对话，请在电脑上检查。':'对话暂时读不到，请刷新重试。');return}
     if(b.conversation!=='v1'){cNotice('电脑版本暂不支持网页对话，请在 App 或电脑上继续。');return}
+    if(b.topics==='v1'&&typeof tStart==='function')tStart()
     cReady=true;document.body.classList.add('conversation-ready');document.getElementById('conversation').hidden=false
     if(!cDraftKey){cDraftKey='cc.conversation.draft:'+ (REMOTE?REMOTE.id:location.host)+':'+T.slice(-16);try{/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')).value=sessionStorage.getItem(cDraftKey)||'';cPending=JSON.parse(sessionStorage.getItem(cDraftKey+':pending')||'null')}catch(e){}}
     ;(b.messages||[]).forEach(function(m){cMessages.set(m.id,m)})
@@ -54,4 +55,4 @@ document.getElementById('chat-older').addEventListener('click',function(){cRead(
 if(isDevice){document.getElementById('conversation').hidden=false;cRead(false)}
 setInterval(function(){if(isDevice&&!document.hidden&&!mCurrent)cRead(false)},3000)
 
-function cClearPrivate(){cMessages.clear();cReady=false;cPending=null;try{if(cDraftKey){sessionStorage.removeItem(cDraftKey);sessionStorage.removeItem(cDraftKey+':pending')}}catch(e){};cDraftKey=null;document.getElementById('chat-messages').replaceChildren();/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')).value='';document.getElementById('conversation').hidden=true;document.body.classList.remove('conversation-ready')}
+function cClearPrivate(){isDevice=false;if(typeof tClear==='function')tClear();if(typeof cReferences!=='undefined')cReferences.clear();cMessages.clear();cReady=false;cPending=null;try{if(cDraftKey){sessionStorage.removeItem(cDraftKey);sessionStorage.removeItem(cDraftKey+':pending')}}catch(e){};cDraftKey=null;document.getElementById('chat-messages').replaceChildren();/** @type {HTMLTextAreaElement} */ (document.getElementById('chat-input')).value='';document.getElementById('conversation').hidden=true;document.body.classList.remove('conversation-ready')}

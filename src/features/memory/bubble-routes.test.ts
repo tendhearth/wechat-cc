@@ -121,3 +121,16 @@ describe('T4 owner routes and topics projection', () => {
     db.close()
   })
 })
+
+it('历史话题搜索在 owner 内先搜索再分页；cursor不能换搜索词，不因搜索而打开泡泡',async()=>{
+ const {db,threads,call}=await fixture()
+ const a=await threads.create({chatId:'owner',title:'旧备份 A',summary:'',facets:[],tags:[],private:true,episodes:[]})
+ await threads.create({chatId:'owner',title:'旧备份 B',summary:'',facets:[],tags:[],private:true,episodes:[]})
+ await threads.create({chatId:'guest',title:'旧备份 秘密',summary:'',facets:[],tags:[],private:true,episodes:[]})
+ const first=TopicsListResponse.parse((await call('GET /v1/memory/topics','view=all&q=旧备份&limit=1')).body)
+ expect(first.topics).toHaveLength(1);expect(first.nextCursor).not.toBeNull()
+ const next=TopicsListResponse.parse((await call('GET /v1/memory/topics','view=all&q=旧备份&limit=1&cursor='+encodeURIComponent(first.nextCursor!))).body)
+ expect(new Set([...first.topics,...next.topics].map(t=>t.id)).size).toBe(2);expect(next.nextCursor).toBeNull();expect(JSON.stringify([first,next])).not.toContain('秘密')
+ expect((await call('GET /v1/memory/topics','view=all&q=其他&cursor='+encodeURIComponent(first.nextCursor!))).status).toBe(400)
+ expect(db.query('SELECT * FROM topic_bubbles WHERE thread_id=?').get(a)).toBeNull();db.close()
+})

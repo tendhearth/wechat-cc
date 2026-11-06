@@ -21,15 +21,17 @@ export async function topicSummary(db: Db, owner: string, id: string) {
   }
 }
 /** Hub/list 不读条目与消息正文。历史正文只在被点开的话题中按 LIMIT/OFFSET 读取。 */
-export async function topicsProjection(db: Db, owner: string, page?: { view: 'recent' | 'all'; offset: number; limit: number }) {
+export async function topicsProjection(db: Db, owner: string, page?: { view: 'recent' | 'all'; offset: number; limit: number; q?: string }) {
   const revision = topicsRevision(db, owner)
   const recentIds = db.query<{ id: string }, [string]>(`SELECT t.id ${FROM} ORDER BY ${RECENT_ORDER} LIMIT 8`).all(owner).map(t => t.id)
   const openIds = db.query<{ id: string }, [string]>(`SELECT t.id ${FROM} AND b.state='open' ORDER BY t.id LIMIT 65`).all(owner).map(t => t.id)
+  const search = page?.q ? ' AND instr(lower(t.title || char(10) || t.description || char(10) || t.summary),lower(?))>0' : ''
+  const searchArgs = page?.q ? [owner,page.q] : [owner]
   const ids = page ? page.view === 'recent' ? recentIds.slice(page.offset, page.offset + page.limit)
-    : db.query<{ id: string }, [string, number, number]>(`SELECT t.id ${FROM} ORDER BY ${RECENT_ORDER} LIMIT ? OFFSET ?`).all(owner, page.limit, page.offset).map(t => t.id) : []
+    : db.query<{ id: string }, (string | number)[]>(`SELECT t.id ${FROM}${search} ORDER BY ${RECENT_ORDER} LIMIT ? OFFSET ?`).all(...searchArgs, page.limit, page.offset).map(t => t.id) : []
   const topics = []
   for (const id of ids) { const topic = await topicSummary(db, owner, id); if (topic) topics.push(topic) }
-  const total = !page ? 0 : page.view === 'recent' ? recentIds.length : db.query<{ n: number }, [string]>('SELECT COUNT(*) AS n FROM threads WHERE chat_id=?').get(owner)!.n
+  const total = !page ? 0 : page.view === 'recent' ? recentIds.length : db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n ${FROM}${search}`).get(...searchArgs)!.n
   return { topics, total, revision, summary: { revision, recentIds, openIds: openIds.slice(0, 64), hasMoreOpen: openIds.length > 64 } }
 }
 export type TopicSection = 'entries' | 'matters' | 'messages'

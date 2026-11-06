@@ -16,3 +16,14 @@ body.conversation-ready header { display:flex; gap:12px; align-items:center; max
 .cc-reference summary { padding:8px 0; cursor:pointer; min-height:44px }
 .matter-process,.matter-results { margin:20px 0; white-space:pre-wrap; overflow-wrap:anywhere }
 #chat-waiting { display:block; width:100%; text-align:left; margin-top:12px }
+
+#topic-row { display:flex; overflow-x:auto; gap:8px; padding:8px 0; position:sticky; bottom:100px; background:var(--paper) }
+#topic-row button { white-space:nowrap; flex-shrink:0 }
+#topic-row [aria-pressed=true] { border-color:var(--accent) }
+#topic-panel { position:fixed; inset:0 0 0 auto; width:min(440px,100%); z-index:30; background:var(--paper); padding:20px 22px calc(24px + env(safe-area-inset-bottom)); overflow-y:auto; box-shadow:-12px 0 32px #0000000c }
+#topic-body button,#topic-list button { display:block; text-align:left; width:100%; margin:10px 0; overflow-wrap:anywhere }
+#topic-body details { margin:12px 0; white-space:pre-wrap; overflow-wrap:anywhere }
+#topic-body summary { min-height:44px; cursor:pointer }
+#topic-panel h2 { font-size:22px } #topic-panel h3 { font-size:16px; margin-top:28px }
+#topic-query { font:inherit; padding:12px; max-width:100%; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:var(--r-s) }
+@media(min-width:1000px){body.conversation-ready{max-width:1200px}body.topic-open #p-today { margin-right:440px }}
