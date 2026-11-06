@@ -66,6 +66,14 @@ function sayInput(body:Record<string,unknown>):MatterSayInput|undefined {
 
 export function mattersRoutes(deps:InternalApiDeps):RouteTable {
   return {
+    'POST /v1/matter/seen': async (_query, body, caller) => {
+      if (fromPhone(caller)) return { status: 403, body: { error: 'forbidden' } }
+      const input = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null
+      if (!input || Object.keys(input).some(k => k !== 'id') || typeof input.id !== 'string' || !ID.test(input.id)) return invalid()
+      if (!deps.desktopSeen) return { status: 503, body: { error: 'desktop_not_wired' } }
+      deps.desktopSeen(input.id)
+      return { status: 200, body: { ok: true } }
+    },
     // 可选参数(P3c-1,手机别名要的那几样,谁都能用):exclude=<kind,…> 不要这几类;taskState=1 任务行带任务真正的状态;
     // kind=act ⇒ act 行带发起方与最近那一轮。筛了(手机令牌 / exclude)⇒ 先取 200 再筛,limit 截的是筛过的。
     'GET /v1/matters': async (query,_body,caller) => {

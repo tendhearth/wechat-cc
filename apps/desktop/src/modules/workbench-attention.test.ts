@@ -208,3 +208,25 @@ describe('global workbench attention polling', () => {
     expect(progressTransitions(new Map([['A', 'queued']]), new Map([['A', 'replied']]))).toEqual({ replied: [], stopped: [] })
   })
 })
+
+it('acknowledges only the matter actually viewed in a focused window, including focus after a notification', async () => {
+  const { createWorkbenchAttentionPoller } = await import('./workbench-attention.js')
+  let phase = 'working', focused = true, taskId: string | null = 'deadbeef'
+  const api = vi.fn(async (_method: string, _path: string, _body?: unknown) => ({ tasks: [], progress: [{ id: 'deadbeef', phase }] }))
+  const poller = createWorkbenchAttentionPoller({ invokeWorkbenchApi: api, invoke: vi.fn(), getContext: () => ({ taskId, focused }) })
+  await poller.refresh()
+  expect(api.mock.calls.filter(c => c[0] === 'POST')).toHaveLength(0)
+  phase = 'replied'
+  await poller.refresh()
+  expect(api).toHaveBeenCalledWith('POST', '/v1/matter/seen', { id: 'deadbeef' })
+  api.mockClear(); focused = false
+  await poller.refresh()
+  expect(api.mock.calls.filter(c => c[0] === 'POST')).toHaveLength(0)
+  focused = true; taskId = null
+  await poller.refresh()
+  expect(api.mock.calls.filter(c => c[0] === 'POST')).toHaveLength(0)
+  taskId = 'deadbeef'
+  await poller.refresh()
+  expect(api).toHaveBeenCalledWith('POST', '/v1/matter/seen', { id: 'deadbeef' })
+  poller.destroy()
+})

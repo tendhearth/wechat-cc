@@ -5,7 +5,8 @@ import { createPet } from './pet/pet.js'
 import { createPresenceFeed } from './pet/bridge/presence-feed.js'
 import { createPetBridge } from './pet/bridge/pet-bridge.js'
 import { createPermissionCard } from './pet/permission/permission-card.js'
-import { invokeApi } from './api.js'
+import { invokeApi, invokeWorkbenchApi } from './api.js'
+import { openSeenMatter } from './matter-seen.js'
 import { invoke } from './ipc.js'
 import { createCompanionPreferences } from './companion-preferences.js'
 import { formatCompanionStatus } from './companion-status.js'
@@ -196,7 +197,7 @@ function openDestination(target) {
     pet.setLifeAvailable(false);await motion?.stop()
     await drag.cancel()
     if(mock){location.assign('./index.html');return}
-    try {await invoke('show_main_window',target)}
+    try {await openSeenMatter(target, destination => invoke('show_main_window', destination), invokeWorkbenchApi)}
     catch(err){console.warn('show_main_window failed',err);pet.setHint('没能打开 CC，请再试一次')}
   })().finally(()=>opening.delete(key))
   opening.set(key,action);return action

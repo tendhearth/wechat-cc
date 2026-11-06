@@ -13,6 +13,7 @@ const file=id=>({id,taskId:id==='saved-A'?'A':'B',name:'访谈记录.md',mime:'t
 const details={A:{task,version:1,runId:'run-A',inputMode:'steer',events:Array.from({length:18},(_,i)=>({id:'e'+i,taskId:'A',kind:'text',text:'第 '+i+' 段访谈的整理记录。保留这段正在阅读的文字。\\n\\n[查看原文](https://example.test/read)',createdAt:i})),artifacts:[file('saved-A')],permissions:[],questions:[]},B:{task:other,events:Array.from({length:18},(_,i)=>({id:'b'+i,taskId:'B',kind:'text',text:'访谈记录已整理并保存，可以继续补充。',createdAt:i})),artifacts:[file('saved-B')],continuation:{mode:'continue'}}}
 const reviewsByTask={};const posts=[];let rejectPost,delayReviews=false,releaseReviews
 const invokeWorkbenchApi=async(method,path,body)=>{
+ if(path==='/v1/matter/seen')return{ok:true}
  if(method==='POST'){posts.push({path,body});return new Promise((_resolve,reject)=>rejectPost=reject)}
  if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):details[new URL(path,location.origin).searchParams.get('id')]
  if(path.startsWith('/v1/matter/changes?')){const reviews=reviewsByTask[new URL(path,location.origin).searchParams.get('id')]??[];return delayReviews?new Promise(resolve=>releaseReviews=()=>resolve({reviews})):{reviews}}

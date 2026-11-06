@@ -61,7 +61,7 @@ import { createTaskListReader } from "./modules/task-list-reader.js"
 import { homeGroups } from "./modules/home-list.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
-import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
+import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getViewedWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
 import { createTerminalWaitingPoller } from "./modules/terminal-waiting.js"
@@ -259,12 +259,13 @@ function startWorkbenchAttention() {
       lastAttention = snapshot; renderNowCount(); renderHome()
     },
     getContext: () => ({
-      taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
+      taskId: state.mode === 'dashboard' && document.body.dataset.pane === 'workbench' ? getViewedWorkbenchTaskId() : null,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
     }),
   })
   void workbenchAttention.start()
 }
+window.addEventListener('focus', () => { void workbenchAttention?.refresh() })
 window.addEventListener('pagehide', () => { workbenchAttention?.destroy(); workbenchAttention = null })
 window.addEventListener('pageshow', event => { if (event.persisted) startWorkbenchAttention() })
 

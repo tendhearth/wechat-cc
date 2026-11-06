@@ -15,6 +15,7 @@ const task=()=>({id:'aaaa1111',title:'整理首页',path:'/state/worktrees/p/aaa
 const listTask=()=>{const {scripts:_s,...worktree}=task().worktree;return{...task(),worktree}}
 const calls=[]
 const invokeWorkbenchApi=async(method,path,body)=>{
+ if(path==='/v1/matter/seen')return{ok:true}
   calls.push({method,path,body})
   if(path==='/v1/matter/worktree'){
     if(body.action==='run'){if(!approved)throw new Error('script_approval_required');running=true}

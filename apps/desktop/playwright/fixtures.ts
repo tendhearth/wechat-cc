@@ -127,4 +127,4 @@ export async function clickRevealed(page: import('@playwright/test').Page, selec
  * 假的工作台接口要截的请求:`/v1/workbench/*`,外加 P3e-3 起桌面改调的一件事上的动作(`/v1/matter/<动词>`,同一个处理器)。
  * 只截这几个动词:`/v1/matter`、`/v1/matters`、主人对话那几条照旧走 test-shim。
  */
-export const WORKBENCH_ROUTES = /\/v1\/(workbench|matter\/(stop|permission|answer|artifact|handoff|worktree|create|create-receipt|rewind|changes|review-mark|review-return|review-comment|review-comments-send))(?=[/?#]|$)/
+export const WORKBENCH_ROUTES = /\/v1\/(workbench|matter\/(seen|stop|permission|answer|artifact|handoff|worktree|create|create-receipt|rewind|changes|review-mark|review-return|review-comment|review-comments-send))(?=[/?#]|$)/

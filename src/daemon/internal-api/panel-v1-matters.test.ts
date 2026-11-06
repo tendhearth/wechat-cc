@@ -187,3 +187,21 @@ describe('只给设备的四条:链接令牌一律 403(LINK_WRITE_OK 不收送�
     expect(spies.say).toHaveBeenLastCalledWith(TASK, '从桌面')
   })
 })
+
+describe('POST /v1/matter/seen', () => {
+  it('accepts repeated desktop acknowledgements, rejects malformed bodies and phone tokens', async () => {
+    for (let i = 0; i < 2; i++) {
+      const r = await viaOperator('/v1/matter/seen', post({ id: TASK }))
+      expect(r.status).toBe(200)
+      expect(await r.json()).toEqual({ ok: true })
+    }
+    expect(desktopSeen.mock.calls).toEqual([[TASK], [TASK]])
+    for (const body of [{}, { id: 'bad' }, { id: TASK, extra: true }, []]) {
+      expect((await viaOperator('/v1/matter/seen', post(body))).status).toBe(400)
+    }
+    for (const tok of [device, link]) {
+      expect((await viaPanel('/v1/matter/seen', tok, post({ id: TASK }))).status).not.toBe(200)
+    }
+    expect(desktopSeen).toHaveBeenCalledTimes(2)
+  })
+})
