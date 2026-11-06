@@ -16,6 +16,7 @@
  * House pattern: src/daemon/observations/store.ts
  */
 import type { Db } from './db'
+import { hintWrite } from './write-hints'
 import { redactIdentifiers } from './redact-identifiers'
 
 export type Facet = 'task' | 'knowledge' | 'life'
@@ -202,6 +203,10 @@ const UPDATABLE_COLS: Record<keyof UpdateThreadInput, string> = {
 }
 
 export function makeThreadsStore(db: Db): ThreadsStore {
+  const changed = (id: string) => {
+    const t = db.query<{ chat_id: string }, [string]>('SELECT chat_id FROM threads WHERE id=?').get(id)
+    if (t) hintWrite(db, { kind: 'topics', chatId: t.chat_id })
+  }
   const stmtInsert = db.query<unknown, [string, string, string, string, string, string, string, string, number, string, string, string, string]>(
     `INSERT INTO threads(id, chat_id, title, summary, description, facets, tags, aliases, private, status, episodes, created_ts, last_active)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -250,6 +255,7 @@ export function makeThreadsStore(db: Db): ThreadsStore {
         now,
         input.lastActive ?? now,
       )
+      changed(id)
       return id
     },
 
@@ -285,6 +291,7 @@ export function makeThreadsStore(db: Db): ThreadsStore {
       // values are all SQLQueryBindings-compatible (string | number | null).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       db.query(`UPDATE threads SET ${setClauses.join(', ')} WHERE id = ?`).run(...(values as any[]))
+      changed(id)
     },
 
     async list(chatId) {
@@ -319,6 +326,8 @@ export function makeThreadsStore(db: Db): ThreadsStore {
       // 身份号 / 尾号 / 密钥位置 / 令牌写进去之前就去掉(lib/redact-identifiers)
       stmtEntryInsert.run(id, input.threadId, input.kind, oneLine(redactIdentifiers(input.line), LINE_MAX), redactIdentifiers((input.body ?? '').trim()).slice(0, BODY_MAX),
         input.kind === 'commitment' ? input.due ?? null : null, input.source ?? 'chat', input.matterId ?? null, ts, ts)
+      changed(id)
+      changed(input.threadId)
       return id
     },
 
@@ -332,6 +341,8 @@ export function makeThreadsStore(db: Db): ThreadsStore {
       if (sets.length === 0) return
       sets.push('updated_ts = ?'); vals.push(patch.ts ?? new Date().toISOString())
       db.query(`UPDATE topic_entries SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id)
+      const e = db.query<{ thread_id: string }, [string]>('SELECT thread_id FROM topic_entries WHERE id=?').get(id)
+      if (e) changed(e.thread_id)
     },
 
     async getEntry(id) {

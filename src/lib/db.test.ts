@@ -1463,3 +1463,21 @@ describe('v105 — matter_topics(T3)', () => {
     expect(db.query('SELECT COUNT(*) AS n FROM matter_topics').get()).toEqual({ n: 1 })
   })
 })
+
+
+describe('v106 — topic bubbles', () => {
+  it('从真 v105 升级不打开历史话题,可重放,版本准确', () => {
+    const db = migratedTo(105)
+    db.exec(`INSERT INTO threads(id,chat_id,title,summary,facets,tags,private,status,episodes,created_ts,last_active)
+      VALUES('t1','owner','旧话题','','[]','[]',1,'active','[]','x','x')`)
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 106 })
+    expect(db.query('SELECT * FROM topic_bubbles').all()).toEqual([])
+    db.exec(`INSERT INTO topic_bubbles(thread_id) VALUES('t1')`)
+    expect(db.query('SELECT state,activity_revision FROM topic_bubbles').get()).toEqual({ state: 'closed', activity_revision: 0 })
+    db.exec('PRAGMA user_version=105')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM topic_bubbles').get()).toEqual({ n: 1 })
+    db.close()
+  })
+})
