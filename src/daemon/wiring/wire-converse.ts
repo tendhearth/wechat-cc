@@ -182,7 +182,10 @@ export function wireCompanionConverse(d: WireConverseDeps): CompanionConverse {
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         const r = await Promise.race([d.topicRecall(ownerChatId, text), new Promise<null>(res => { timer = setTimeout(() => res(null), TOPIC_RECALL_BUDGET_MS) })])
-        if (r && r.block.trim()) synthetic.topics = r.block
+        if (r && r.block.trim()) {
+          synthetic.topics = r.block
+          r.adopt?.(`app:${origin}:${synthetic.createTimeMs}`, [`app:${origin}:${synthetic.createTimeMs}:in`])
+        }
       } catch { /* 调不出来就照常进对话 */ } finally { if (timer !== undefined) clearTimeout(timer) }
     }
     // 起飞时刻:app 轮次不走入站管道(见上面的 dispatch),所以在这儿单独记一笔,

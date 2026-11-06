@@ -6,6 +6,7 @@
  *  - delegate 那一路没有 matter:writeDelegate 直接给碰到的话题记一条。
  * 只给主人自己的对话做;一切失败只记一行,不影响派活 / 收尾。
  */
+import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import type { Db } from '../../lib/db'
 import type { ThreadsStore } from '../../lib/threads-store'
 import { loadMatchTopics, resolveTopicRecall } from './recall'
@@ -58,6 +59,7 @@ export function makeMatterTopics(d: MatterTopicsDeps) {
           d.db.query('INSERT INTO matter_topics(matter_id, thread_id, attached_ts, written_back_cursor) VALUES (?, ?, ?, ?) ON CONFLICT(matter_id, thread_id) DO NOTHING')
             .run(m.matterId, id, ts, top)
         }
+        makeTopicBubbles(d.db).matterChanged(m.matterId)
         d.log('TOPICS', `brief matter=${m.matterId} topics=${b.topicIds.join(',')} chars=${b.text.length}`)
         return b.text
       } catch (err) {

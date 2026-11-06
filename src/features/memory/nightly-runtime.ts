@@ -172,6 +172,7 @@ export function sleptTonight(r: NightlyRunResult): boolean {
 export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & {
   acts?: NightlyActs
   /** 睡一觉之后(话题 T1–T3 后续 ④):整理这次以来改过的话题。同一条串行链上跑;抛错只记一行。 */
+  beforeSleep?: () => void
   afterSleep?: () => Promise<void>
 }): MemoryNightlyRuntime {
   const afterSleep = async (r: NightlyRunResult) => {
@@ -443,6 +444,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & {
     tick: () => serial(async () => {
       syncDiskSafely()
       const startedAt = deps.now()
+      deps.beforeSleep?.()
       const r = await runMemoryNightly(deps, { force: false, nowMs: startedAt, lastRunIso: lastWrittenIso(deps.acts, readNightlyState(deps.stateDir).lastRunIso) })
       stampNotice(r, settleRun(r, startedAt, recordAct(deps.acts, r, startedAt, deps.now(), 'schedule')))
       await afterSleep(r)
@@ -459,6 +461,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps & {
     runNow: () => serial(async () => {
       syncDiskSafely()
       const startedAt = deps.now()
+      deps.beforeSleep?.()
       const r = await runMemoryNightly(deps, { force: true, nowMs: startedAt, lastRunIso: lastWrittenIso(deps.acts, readNightlyState(deps.stateDir).lastRunIso) })
       stampNotice(r, settleRun(r, startedAt, recordAct(deps.acts, r, startedAt, deps.now(), 'owner')))
       await afterSleep(r)

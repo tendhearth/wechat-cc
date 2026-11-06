@@ -33,6 +33,7 @@ import type { WriteHint } from '../../lib/write-hints'
 export type PhoneWorkbench = Pick<WorkbenchService, 'list' | 'attention' | 'detail'>
 
 export interface PhoneTopicSourceDeps {
+  topics?: () => Promise<unknown>
   /** 缺省 ⇒ approvals / agents 回空摘要,matter/<任务> 回 {found:false}。 */
   workbench?: PhoneWorkbench
   /** 「一件事」登记处;缺省 ⇒ matter/<id> 一律 {found:false}。 */
@@ -131,7 +132,11 @@ export function makePhoneTopicSources(deps: PhoneTopicSourceDeps): TopicSource[]
     },
   }
 
-  return [home, matter, approvals, agents]
+  const topics: TopicSource = {
+    match: t => t === 'topics', driven: () => true,
+    async snapshot() { if (!deps.topics) throw new Error('topics_unavailable'); return deps.topics() },
+  }
+  return [home, matter, approvals, agents, topics]
 }
 
 // 推送判定在 phone-notifier.ts。
@@ -159,9 +164,10 @@ export function makePhoneEventsWiring(deps: PhoneTopicSourceDeps & {
   // 写口提示(P2 第二步):只算读得到这样东西的主题
   const ownerOf = (topic: string) => { const id = MATTER_TOPIC.exec(topic)?.[1]; try { return id ? deps.matters?.get(id)?.ownerChatId ?? null : null } catch { return null } }
   const offHints = deps.hints?.((hint) => {
-    if (hint.kind === 'matter') events.poke(topic => topic === `matter/${hint.matterId}`)
+    if (hint.kind === 'topics') events.poke(topic => topic === 'topics')
+    else if (hint.kind === 'matter') events.poke(topic => topic === `matter/${hint.matterId}` || topic === 'topics')
     // 新的一条消息:这个 chat 的聊天主题(版本 = 最新一条的时间)+ home(「在跟你聊」看入站时间)
-    else if (hint.kind === 'messages') events.poke(topic => topic === 'home' || (topic.startsWith('matter/') && ownerOf(topic) === hint.chatId))
+    else if (hint.kind === 'messages') events.poke(topic => topic === 'topics' || topic === 'home' || (topic.startsWith('matter/') && ownerOf(topic) === hint.chatId))
     else events.poke(topic => topic === 'home')   // journal / journal-seen / plan-log:home 的未读与动态
   })
   return {

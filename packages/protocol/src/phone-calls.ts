@@ -27,6 +27,12 @@ function call<K extends PhoneApiKey, Q = void, B = void>(key: K, types?: { query
 type JobsActionT = 'pause' | 'resume' | 'remove'
 
 export const PHONE_CALLS = {
+  topics: {
+    list: call('GET /v1/memory/topics', { query: t<{ view?: 'recent' | 'all'; limit?: number; cursor?: string }>() }),
+    detail: call('GET /v1/memory/topics/detail', { query: t<{ id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }>() }),
+    open: call('POST /v1/memory/topics/open', { body: t<{ id: string; requestId: string }>() }),
+    subscribe: call('GET /v1/subscribe/topics', { query: t<{ since?: string; wait_ms?: number }>() }),
+  },
   set: {
     state: call('GET /set/api/state'),
     apply: call('POST /set/api/apply', { body: t<{ op: string } & Record<string, unknown>>() }),

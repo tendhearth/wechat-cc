@@ -32,7 +32,7 @@ export interface RecallMwDeps {
    * 话题 T2:这一轮碰到的话题调出来的那几条(只在主人自己的对话里有,判断在它自己里面)。和上面的 recall 并行跑、
    * 同一个超时;缺席 / 没碰到 / 出错 ⇒ 不加 <topics>。
    */
-  topics?: (chatId: string, text: string) => Promise<{ block: string } | null>
+  topics?: (chatId: string, text: string) => Promise<{ block: string; adopt?: (requestId: string, messageIds?: string[]) => void } | null>
   timeoutMs?: number
   log: (tag: string, line: string) => void
 }
@@ -50,7 +50,7 @@ export function makeMwRecall(deps: RecallMwDeps): Middleware {
     const lane = deps.isAdmin(msg.chatId) ? deps.recall : deps.recallFallback
     const topics = deps.topics && msg.text.trim().length > 0
       ? withTimeout(deps.topics(msg.chatId, msg.text), 'topics').then(
-        r => { if (r && r.block.trim()) (msg as { topics?: string }).topics = r.block },
+        r => { if (r && r.block.trim()) { (msg as { topics?: string }).topics = r.block; r.adopt?.(ctx.requestId, ctx.messageId ? [ctx.messageId] : []) } },
         err => deps.log('TOPICS', `skip for ${msg.chatId}: ${err instanceof Error ? err.message : err}`))
       : null
     if (lane && msg.text.trim().length >= RECALL_MIN_QUERY) {

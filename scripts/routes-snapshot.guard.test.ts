@@ -93,7 +93,7 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     const P3E_MATTER_ACTIONS = ['POST /v1/matter/stop', 'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree', 'POST /v1/matter/create', 'GET /v1/matter/create-receipt',
       // P3e-2(双胞胎:rewind-preview / rewind / review / review-mark / review-return / review-comment / review-comments-send)
       'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']
-    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...P3E_MATTER_ACTIONS], federation: [], selftest: [], link: [] }
+    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'GET /v1/subscribe/topics', 'POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...P3E_MATTER_ACTIONS], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
     reg.registerOperatorToken('op')
     const all = (a: Iterable<string>) => [...a].sort()
@@ -108,7 +108,7 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     expect(sorted(phoneSide(LINK_ROUTES))).toEqual(snap.LINK_ROUTES)
     // 这两份不是路由:整份比
     expect([...LAN_ONLY_OPS].sort()).toEqual(snap.LAN_ONLY_OPS)
-    expect([...PHONE_TOPICS].sort()).toEqual(snap.PHONE_TOPICS)
+    expect([...PHONE_TOPICS].sort()).toEqual([...snap.PHONE_TOPICS, 'topics'].sort())
   })
   it('别名的新键:手机令牌经新键够得着的,和别名键一模一样(在不在、link、理由)', () => {
     expect(MERGED_ALIASES.length, '没有已并的行 ⇒ 这一条空转').toBeGreaterThan(0)

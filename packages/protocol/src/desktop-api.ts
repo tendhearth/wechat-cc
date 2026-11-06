@@ -1,3 +1,5 @@
+import { TopicOpenRequest } from './topic-bubbles'
+import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
  * Zod schemas for the daemon's `/v1/*` routes (desktop, CLI, the wechat-mcp stdio child, delegate-mcp).
  * Single source of truth for that HTTP contract — moved here from src/daemon/internal-api/schema.ts
@@ -2414,6 +2416,7 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 // against it (assertResponseContract).
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  'POST /v1/memory/topics/open': TopicOpenRequest,
   'POST /v1/matter/seen': z.object({ id: z.string().regex(/^[a-f0-9]{8}$/) }).strict(),
   // atelier
   'POST /v1/atelier/share': AtelierShareRequest,
@@ -2497,6 +2500,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  ...TOPIC_BUBBLE_RESPONSES,
   // P3g:形象画只由随 daemon 更新的网页读，schema 不再从已退休的别名推。
   'GET /v1/phone/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   // Phone-only and binary chunk routes retain their existing JSON response contracts.

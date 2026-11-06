@@ -117,6 +117,8 @@ describe('token-registry', () => {
       'POST /v1/memory/file/write',
       'GET /v1/memory/profile',
       'GET /v1/memory/profile/status',
+      // T4:主人批准的话题展示接口,不开放给file/session/link。
+      'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'GET /v1/subscribe/topics',
       'GET /v1/memory/projects',
       'GET /v1/conversations/list',
       'GET /v1/observations/list',

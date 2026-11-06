@@ -47,6 +47,7 @@ export interface TunnelClientDeps {
    *  finding the token whose HKDF-bound key decrypts the phone's first frame
    *  (see the handshake below) — so the token is NEVER sent over the wire, and
    *  a MITM relay (which knows no token) can't forge a working key. */
+  topicsOwner?: () => string | null
   knownDeviceTokens: () => string[]
   /** 当前还有效的 /set 链接令牌(单活、10 分钟),没有就 null。没配对的手机在外面点链接,
    *  只有它可以用来握手;进去后点「把 CC 带在身上」换长期设备令牌(2026-09-24)。
@@ -241,7 +242,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       catch { log('TUNNEL', `bad handshake pubkey on ${stream}`); return }
       const build = handshakeBuild(frame)
       streams.set(stream, { shared, client: handshakeClient(frame), ...(build ? { build } : {}) })
-      sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2, routes: 'v1' })   // P3:面板收 /v1(P3e 部署 soak 绿后打开);老 App 的 shape 丢掉不认识的键
+      sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2, routes: 'v1', topics: 'v1' })   // P3:面板收 /v1(P3e 部署 soak 绿后打开);老 App 的 shape 丢掉不认识的键
       return
     }
     const st = streams.get(stream)
@@ -273,6 +274,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       send: (f) => { if (streams.get(stream) === st) sendToStream(stream, f) },
       handleRequest: deps.handleRequest,
       events: deps.events,
+      topicsScope: () => deps.knownDeviceTokens().includes(token) ? deps.topicsOwner?.() ?? null : null,
       tokenValid: () => deps.knownDeviceTokens().includes(token) || (deps.activeLinkToken?.() ?? null) === token,
       onRevoked: () => {
         if (streams.get(stream) !== st) return

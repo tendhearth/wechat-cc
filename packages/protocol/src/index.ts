@@ -46,3 +46,5 @@ export { HOME_GROUP_ORDER, HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STA
 export type { StatusKey, HomeGroupKey, StatusIcon, StatusSpec } from './status-table'
 
 export { RESPONSE_SCHEMAS } from './desktop-api'
+
+export * from './topic-bubbles'
