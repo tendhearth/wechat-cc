@@ -54,6 +54,7 @@ export interface SpeechProposalRequest extends SpeechRequest {
   createdAt?: number
   expiresAt?: number
   payloadRef?: import('./proposal').SpeechProposal['payloadRef']
+  getTargets?: () => readonly string[]
   context?: () => Promise<object>
   targets?: readonly string[]
   validate?: (nowMs: number) => boolean | Promise<boolean>
@@ -61,7 +62,7 @@ export interface SpeechProposalRequest extends SpeechRequest {
 
 export interface SpeechPolicy {
   /** Submit an initiative; only the presence scheduler may authorize produce. */
-  propose(req: SpeechProposalRequest, produce: (turn: ProactiveTurn, target?: string) => Promise<void>): Promise<SpeechOutcome>
+  propose(req: SpeechProposalRequest, produce: (turn: ProactiveTurn, target?: string) => Promise<void | import('./proposal').ProductionResult>): Promise<SpeechOutcome>
   say(req: SpeechRequest, produce: (turn: ProactiveTurn) => Promise<void>): Promise<SpeechOutcome>
   /**
    * 一句话的主动开口(系统通知、社交通知 …):问门,放行就发。`send` 缺省 = 经 say 开的那一轮(微信能用走微信,
@@ -167,11 +168,11 @@ export function makeSpeechPolicy(deps: {
   let submit: SpeechPolicy['propose'] | undefined
   const policy: SpeechPolicy = {
     propose(req, produce) {
-      if (originOf(req.kind) !== 'initiative') return policy.say(req, produce)
-      if (submit && req.perKind && !req.perKind.ok) return execute(req, produce)
+      if (originOf(req.kind) !== 'initiative') return policy.say(req, async turn => { await produce(turn) })
+      if (submit && req.perKind && !req.perKind.ok) return execute(req, async turn => { await produce(turn) })
       if (submit) return submit(req, produce)
       // Minimal policy embeddings have no daemon scheduler. Production wiring always installs it.
-      return policy.say(req, produce)
+      return policy.say(req, async turn => { await produce(turn) })
     },
     onFlush(cb) { flushHooks.push(cb) },
     expired(e) {
@@ -238,7 +239,7 @@ export function makeSpeechPolicy(deps: {
       // report / blocking 没说出去 —— 被推后,**或者放行了但发失败**(ilink 回 error / 网络抖)—— 都入队,之后补说(整合者评审 #531 ①)
       const notSaid = 'defer' in o || ('allow' in o && !sent)
       // 带会过期码的卡不排队(keepForMs = null):晚补出去只会给一个失效的码;initiative 只有声明了 keepMs 的才排(S2c)
-      if (notSaid && policy.keep({ kind, chatId, text })) {
+      if (notSaid && !('defer' in o && o.reason === 'delivery_unknown') && policy.keep({ kind, chatId, text })) {
         deps.log('SPEECH', `${kind} chat=${chatId} kept to say later (${'defer' in o ? o.reason : 'send failed'})`)
       }
       return sent

@@ -14,7 +14,7 @@ import type { Retraction } from './memory-export'
 import { MEMORY_LOG_FILE, ownerMemoryRoot, readCorrections, readNightlyState, runMemoryNightly, writeNightlyState, type NightlyRunDeps } from './nightly'
 import type { NightlyRunResult } from './nightly-notify'
 import { MAX_ENTRY_CHARS, type AppliedOp } from './nightly-ops'
-import { localParts, noticeTiming } from './nightly-schedule'
+import { localParts, noticeTiming, NOTICE_TTL_MS } from './nightly-schedule'
 import { writeFileAtomic } from '../../lib/json-file'
 import { OWNER_FILENAME, readOwnerDoc, type AssertionOrigin } from '../../lib/memory-owner'
 import { BULK_CORRECTIONS, baseHashOf, keyGeneratedLines, overviewTextLines, ownerLines, planEdit, type EditLine, type EditableMemoryPath, type Replaces, type ViewLine } from '../../lib/memory-edit'
@@ -96,7 +96,7 @@ export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps, on
   // 冷却没到 ⇒ 晚点再说(通知留着,24 小时过了自己作废);别的拒绝原因交给门,由它判 drop
   if (!gate.ok && gate.reason === 'memory_cooldown') return 'waiting'
   let sendError = false, channel: string | undefined
-  const outcome = await deps.speech.propose({ source: 'memory', summary: pending.text.slice(0, 1000), createdAt: pending.createdAtMs, payloadRef: { actTurn: pending.actTurn ?? null, createdAt: pending.createdAtMs }, validate: () => readNightlyState(deps.stateDir).pendingNotice?.createdAtMs === pending.createdAtMs && deps.careGate(owner, new Date(deps.now()).toISOString()).ok, kind: 'memory_notice', chatId: owner, ref: `memory:${pending.actTurn ?? pending.createdAtMs}`, nowMs, perKind: gate }, async (turn) => {
+  const outcome = await deps.speech.propose({ source: 'memory', summary: pending.text.slice(0, 1000), createdAt: pending.createdAtMs, expiresAt: pending.createdAtMs + NOTICE_TTL_MS + 1, payloadRef: { actTurn: pending.actTurn ?? null, createdAt: pending.createdAtMs }, validate: at => noticeTiming({ nowMs: at, tz: deps.config().timezone, createdAtMs: pending.createdAtMs }) === 'send' && readNightlyState(deps.stateDir).pendingNotice?.createdAtMs === pending.createdAtMs && deps.careGate(owner, new Date(deps.now()).toISOString()).ok, kind: 'memory_notice', chatId: owner, ref: `memory:${pending.actTurn ?? pending.createdAtMs}`, nowMs, perKind: gate }, async (turn) => {
     deps.claim(owner, nowIso)   // 先登记再发:至多一次,不重试轰炸
     clear()
     const r = await turn.sendText(owner, pending.text)

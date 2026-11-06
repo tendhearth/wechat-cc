@@ -13,7 +13,7 @@ const sources = {
   visit: ['src/daemon/wiring/companion-actions.ts'], guest: ['src/features/companion/tick-push.ts'],
   letter: ['src/features/letters/runtime.ts'], brief: ['src/features/companion/tick-job.ts'], recap: ['src/features/companion/tick-job.ts'],
   memory: ['src/features/memory/nightly-runtime.ts'], sticker: ['src/features/stickers/artist-step.ts'],
-  social: ['src/features/social/social-tell.ts', 'src/features/social/wire-social.ts'],
+  social: ['src/features/social/social-tell.ts', 'src/features/social/wire-social.ts', 'src/features/social/postcard-proposal.ts'],
 } satisfies Record<keyof typeof SPEECH_SOURCES, string[]>
 const sends = new Set(['sendText', 'sendFile', 'sendMessage', 'sendAssistantText', 'sendSticker', 'sendAttachment', 'sendOnce', 'sendReplyOnce', 'fanoutPush'])
 /** Entry points may submit data and producer adapters. Only a callback given an
@@ -60,7 +60,7 @@ it('initiators can only deliver inside an authorized producer adapter', () => {
 })
 
 it('retired private send time cannot return to the production budget or source cadence', () => {
-  for (const path of ['src/features/companion/care-ledger.ts', 'src/features/companion/calibration.ts', 'src/domain/companion-plan.ts', 'src/features/companion/tick-push.ts', 'src/daemon/foundation.ts']) {
+  for (const path of [...new Set([...Object.values(sources).flat(), 'src/features/companion/care-ledger.ts', 'src/features/companion/calibration.ts', 'src/domain/companion-plan.ts', 'src/features/companion/tick-push.ts', 'src/daemon/foundation.ts'])]) {
     expect(readFileSync(join(root, path), 'utf8'), path).not.toContain('lastProactiveAtIso')
   }
 })

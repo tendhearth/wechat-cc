@@ -41,7 +41,7 @@ export async function announceNewSticker(
     await turn.sendText(ownerChat, text)
   })
   if ('defer' in outcome) {
-    const kept = d.speech.keep({ kind: 'sticker', chatId: ownerChat, text, attach: { sticker: { mood, path } } })
+    const kept = outcome.reason !== 'delivery_unknown' && d.speech.keep({ kind: 'sticker', chatId: ownerChat, text, attach: { sticker: { mood, path } } })
     d.log('STICKERS', `new-sticker notice deferred: ${outcome.reason}${kept ? ' — kept to say later (6h)' : ''}`)
     return 'deferred'
   }

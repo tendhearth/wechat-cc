@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { SPEECH_SOURCES, type SpeechProposal, type SpeechSource } from './proposal'
+import { SPEECH_SOURCES, type SpeechProposal, type SpeechSource, type ProductionResult } from './proposal'
 import { makeSpeechSourceRegistry } from './source-registry'
 import type { SpeechPicker } from './picker'
 import type { SpeechPolicy, SpeechProposalRequest } from './policy'
@@ -14,23 +14,26 @@ export function makeProposalSubmissions(
   now: () => number = Date.now,
 ): SpeechPolicy['propose'] {
   const sources = makeSpeechSourceRegistry()
-  const pending = new Map<string, { req: SpeechProposalRequest; produce: (turn: ProactiveTurn, target?: string) => Promise<void> }>()
+  const pending = new Map<string, { req: SpeechProposalRequest; produce: (turn: ProactiveTurn, target?: string) => Promise<void | ProductionResult> }>()
   for (const source of Object.keys(SPEECH_SOURCES) as SpeechSource[]) {
     sources.register(source, {
       async validate(p, nowMs) {
         const entry = pending.get(p.id)
+        if (entry?.req.getTargets && p.targets && JSON.stringify(entry.req.getTargets()) !== JSON.stringify(p.targets)) return false
         return !!entry && (!entry.req.perKind || entry.req.perKind.ok) && (!entry.req.validate || await entry.req.validate(nowMs))
       },
       async produce(p, turn, target) {
         const entry = pending.get(p.id)
         if (!entry) return 'blocked'
-        await entry.produce(turn, target)
-        // Receipt-bearing turns determine whether an external send occurred.
-        return 'completed'
+        return await entry.produce(turn, target) ?? 'completed'
       },
     })
   }
-  const picker = build(sources, candidates => Promise.all(candidates.map(p => pending.get(p.id)?.req.context?.() ?? Promise.resolve({}))))
+  const picker = build(sources, candidates => Promise.all(candidates.map(p => {
+    const req = pending.get(p.id)?.req
+    if (req?.getTargets) p.targets = [...req.getTargets()]
+    return req?.context?.() ?? Promise.resolve({})
+  })))
   return async (req, produce) => {
     if (req.source === 'requested') return { drop: true, reason: 'invalid_source' }
     const ref = req.ref ?? `${req.source}:${randomUUID()}`

@@ -397,3 +397,22 @@ describe('runtime preview', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 })
+
+it('requested composition retains its authorized recipient if owner configuration changes while the model is writing', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'letter-recipient-'))
+  let owner = 'original-owner'
+  const recipients: string[] = []
+  try {
+    const rt = makeLetterRuntime({
+      stateDir, enabled: () => true, timezone: () => TZ, ownerChatId: () => owner,
+      memory: () => '', chatSince: async () => [], lastInboundAt: async () => null,
+      evalText: () => async () => { owner = 'changed-owner'; return JSON.stringify({ salutation: '你好', paragraphs: ['今天的事我记得。'], signoff: '晚安' }) },
+      wechatSuspended: () => false,
+      sendText: async recipient => { recipients.push(recipient); return {} }, sendFile: async () => {},
+      rasterize: () => null, now: () => EVENING, random: () => 0, newId: () => 'one', log: () => {},
+      speech: lettersTestSpeech(),
+    })
+    expect(await rt.writeNow()).toMatchObject({ status: 'sent' })
+    expect(recipients).toEqual(['original-owner'])
+  } finally { rmSync(stateDir, { recursive: true, force: true }) }
+})

@@ -6,6 +6,7 @@
  * 主动开口的各条路逐个迁过来,迁一处就把 scripts/speech-send.guard.test.ts 的数字调下来。
  */
 import type { Db } from '../../lib/db'
+import { originOf } from '../../domain/speech/kinds'
 import { quietEndsAt } from '../../domain/quiet-hours'
 import type { ChatPrefsStore } from '../chat-prefs'
 import { careLevel } from '../../features/companion'
@@ -41,14 +42,15 @@ export function wireSpeech(d: {
   return makeSpeechPolicy({
     proposals: (execute, peek) => makeProposalSubmissions((sources, sourceContext) => makeSpeechPicker({
       sources, reservations, execute, peek, now, log: d.log,
+      expired: p => ledger.append({ kind: p.kind, origin: originOf(p.kind), chatId: p.recipient, ref: p.ref, outcome: 'dropped', reason: 'expired', channel: null, ts: new Date(now()).toISOString() }),
       evaluator: d.evaluator ?? (() => null),
       lastBackoff: recipient => {
-        const last = readPlanLogDays(d.stateDir, 14).filter(e => e.chatId === recipient && e.backoff).at(-1)
+        const last = readPlanLogDays(d.stateDir, 14).filter(e => e.chatId === recipient && (e.backoff || (e.backoff === undefined && e.decision === 'none' && (e.source === 'model' || e.source === 'downgraded')))).at(-1)
         return last ? Date.parse(last.at) : null
       },
-      record(recipient, at, choice, why, backoff) {
+      record(recipient, at, choice, why, backoff, candidates, source) {
         const iso = new Date(at).toISOString()
-        appendPlanLog(d.stateDir, iso.slice(0, 10), { at: iso, chatId: recipient, candidates: [], decision: choice ?? 'none', why, source: why.startsWith('fallback:') ? 'fallback' : 'model', backoff })
+        appendPlanLog(d.stateDir, iso.slice(0, 10), { at: iso, chatId: recipient, candidates, decision: choice ?? 'none', why, source, backoff })
       },
       async context(recipient, candidates) {
         let persona = '', observations: object[] = []

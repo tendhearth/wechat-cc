@@ -2371,3 +2371,20 @@ describe('runJobTurn × SpeechPolicy(第三批 3a 第 3 步):晨报 / 周报是 
     expect(s.dispatch).toHaveBeenCalledOnce()
   })
 })
+
+it('fixed scheduled proposals use the planned local day across UTC midnight and retain the original ten-minute deadline', async () => {
+  const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
+  try {
+    saveCompanionConfig(s.stateDir, { ...loadCompanionConfig(s.stateDir), timezone: 'Asia/Shanghai' })
+    ;(s.deps.boot.registry as unknown as { has(id: string): boolean }).has = () => true
+    const seen: Array<import('../speech/policy').SpeechProposalRequest> = []
+    s.deps.speech!.propose = async req => { seen.push(req); return { defer: true, reason: 'expired' } }
+    const ticks = buildTickBodies(s.deps)
+    for (const nowIso of ['2026-11-06T23:59:00Z', '2026-11-07T00:03:00Z']) {
+      expect(await ticks.runJobTurn({ kind: 'brief', scheduled: true, scheduledAt: '07:55', chatId: 'owner', jobId: 'j1', text: '', nowIso })).toBe('skipped:missed')
+    }
+    expect(seen.map(p => p.ref)).toEqual(['job:j1:2026-11-07:07:55', 'job:j1:2026-11-07:07:55'])
+    expect(seen.map(p => p.expiresAt)).toEqual([Date.parse('2026-11-07T00:05:00Z'), Date.parse('2026-11-07T00:05:00Z')])
+    expect(s.dispatch).not.toHaveBeenCalled()
+  } finally { rmSync(s.stateDir, { recursive: true, force: true }) }
+})

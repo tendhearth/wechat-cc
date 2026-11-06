@@ -56,3 +56,13 @@ it('confirmed external delivery with a missing ledger write stays unknown and oc
     expect(db.query("SELECT status FROM speech_pending WHERE ref='letter:a'").get()).toEqual({ status: 'unknown' })
   } finally { db.close() }
 })
+
+it('only a confirmed completed reservation can be reopened for explicit partial-page continuation', () => {
+  const db = openTestDb()
+  try {
+    const r = makeSpeechReservations(db)
+    const p = { ref: 'letter:partial', recipient: 'owner', kind: 'letter' as const, now: 100, payload: {} }
+    r.reserve(p); r.sending(p.ref); r.settle(p.ref, 'unknown')
+    expect(r.reserve({ ...p, now: 100 + INITIATIVE_INTERVAL_MS, resumeConfirmed: true })).toEqual({ ok: false, reason: 'duplicate' })
+  } finally { db.close() }
+})

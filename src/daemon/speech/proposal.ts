@@ -43,6 +43,7 @@ export function sourceRules(p: SpeechProposal): { kind: SpeechKind; scheduled?: 
 export function validateProposal(p: SpeechProposal): boolean {
   if (!Object.hasOwn(SPEECH_SOURCES, p.source) || sourceRules(p).kind !== p.kind) return false
   if (![p.id, p.ref, p.recipient].every(s => typeof s === 'string' && s.length > 0 && s.length <= 512)) return false
+  if (p.targets !== undefined && (!Array.isArray(p.targets) || p.targets.length > 5 || p.targets.some(t => typeof t !== 'string' || !t || t.length > 256) || new Set(p.targets).size !== p.targets.length)) return false
   if (typeof p.summary !== 'string' || p.summary.length > 1000) return false
   if (!Number.isFinite(p.createdAt) || !Number.isFinite(p.notBefore) || (p.expiresAt !== undefined && (!Number.isFinite(p.expiresAt) || p.expiresAt < p.createdAt))) return false
   const seen = new Set<object>()

@@ -11,7 +11,12 @@ export function makeSpeechReservations(db: Db) {
     const unknown = db.query<{ at: number | null }, [string]>("SELECT MAX(created_at) AS at FROM speech_pending WHERE lane='reservation' AND chat_id=? AND status='unknown'").get(recipient)?.at ?? null
     return spoken === null ? unknown : unknown === null ? spoken : Math.max(spoken, unknown)
   }
+  const duplicate = (ref: string, resumeConfirmed = false): boolean => {
+    const previous = db.query<{ status: string }, [string]>("SELECT status FROM speech_pending WHERE lane='reservation' AND ref=?").get(ref)
+    return !!previous && !(resumeConfirmed && previous.status === 'done' && db.query('SELECT id FROM speech_log WHERE ref=? AND spoken_at IS NOT NULL').get(ref))
+  }
   return {
+    duplicate,
     lastOccupiedAt,
     /** Once at boot, before accepting proposals. Reserved had not begun a send. */
     recover() {
@@ -25,12 +30,14 @@ export function makeSpeechReservations(db: Db) {
       const at = lastOccupiedAt(recipient)
       return scheduled || at === null || now - at >= INITIATIVE_INTERVAL_MS
     },
-    reserve(p: { ref: string; recipient: string; kind: SpeechKind; now: number; scheduled?: boolean; payload: object }): ReserveResult {
+    reserve(p: { ref: string; recipient: string; kind: SpeechKind; now: number; scheduled?: boolean; resumeConfirmed?: boolean; payload: object }): ReserveResult {
       return db.transaction((): ReserveResult => {
-        if (db.query("SELECT id FROM speech_pending WHERE lane='reservation' AND ref=?").get(p.ref)) return { ok: false, reason: 'duplicate' }
+        const previous = db.query<{ status: string }, [string]>("SELECT status FROM speech_pending WHERE lane='reservation' AND ref=?").get(p.ref)
+        if (previous && !(p.resumeConfirmed && previous.status === 'done' && db.query('SELECT id FROM speech_log WHERE ref=? AND spoken_at IS NOT NULL').get(p.ref))) return { ok: false, reason: 'duplicate' }
         if (db.query("SELECT id FROM speech_pending WHERE lane='reservation' AND chat_id=? AND status IN ('reserved','sending')").get(p.recipient)) return { ok: false, reason: 'occupied' }
         const at = lastOccupiedAt(p.recipient)
         if (!p.scheduled && at !== null && p.now - at < INITIATIVE_INTERVAL_MS) return { ok: false, reason: 'interval' }
+        if (previous) db.query("DELETE FROM speech_pending WHERE lane='reservation' AND ref=?").run(p.ref)
         db.query(`INSERT INTO speech_pending(id,lane,chat_id,kind,body,ref,created_at,next_at,expires_at,status)
           VALUES(?,'reservation',?,?,?,?,?,?,?,'reserved')`).run(`reservation:${p.ref}`, p.recipient, p.kind, JSON.stringify(p.payload), p.ref, p.now, p.now, p.now + INITIATIVE_INTERVAL_MS)
         return { ok: true }

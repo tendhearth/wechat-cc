@@ -106,3 +106,101 @@ it('production rejects any raw initiative say bypass', async () => {
   expect(await s.speech.say({ kind: 'letter', chatId: 'owner' }, produce)).toEqual({ drop: true, reason: 'proposal_required' })
   expect(produce).not.toHaveBeenCalled()
 })
+
+it('explicitly unknown production occupies the interval without forging a delivery or replaying the same event', async () => {
+  const s = setup()
+  expect(await s.speech.propose(s.req('letter'), async () => 'unknown')).toMatchObject({ defer: true, reason: 'delivery_unknown' })
+  expect(s.db.query("SELECT status FROM speech_pending WHERE ref='letter:one'").get()).toEqual({ status: 'unknown' })
+  expect(makeSpeechLedgerStore(s.db).lastInitiativeAt('owner')).toBeNull()
+  await s.submit('memory'); expect(s.sent).toEqual([])
+  s.advance(INITIATIVE_INTERVAL_MS)
+  expect(await s.submit('letter')).toMatchObject({ defer: true, reason: 'duplicate' })
+  expect(s.sent).toEqual([])
+  expect(s.evaluator).toHaveBeenCalledTimes(1) // duplicate/unknown gate before evaluator lookup, even after the interval
+})
+it('lazy target/context preparation stays behind gates and changed target snapshots cannot execute', async () => {
+  const targets = vi.fn(() => ['peer-a']), context = vi.fn(async () => ({}))
+  const off = setup(); off.off()
+  await off.speech.propose(off.req('visit', { getTargets: targets, context }), async () => {})
+  expect(targets).not.toHaveBeenCalled(); expect(context).not.toHaveBeenCalled()
+  const run = vi.fn(async () => {})
+  const s = setup(async () => { targets.mockReturnValue(['peer-b']); return '{"id":"visit:one","why":"visit","target":"peer-a"}' })
+  await s.speech.propose(s.req('visit', { getTargets: targets, context }), run)
+  expect(context).toHaveBeenCalledOnce(); expect(run).not.toHaveBeenCalled()
+})
+it('known partial letters resume only after the interval, preserve the first receipt and never duplicate completed pages in the picker', async () => {
+  const s = setup()
+  await s.submit('letter')
+  expect(await s.submit('letter', { payloadRef: { sentPages: 1 } })).toMatchObject({ defer: true })
+  s.advance(INITIATIVE_INTERVAL_MS)
+  expect(await s.submit('letter', { payloadRef: { sentPages: 1 } })).toMatchObject({ allow: true })
+  expect(s.sent).toEqual(['letter', 'letter'])
+  expect(makeSpeechLedgerStore(s.db).lastInitiativeAt('owner')).toBe(Date.parse('2026-11-06T12:00:00Z'))
+})
+
+it('honors a legacy persisted none decision after upgrade before resolving an evaluator', async () => {
+  const { appendPlanLog } = await import('../../features/companion/plan-memory')
+  const s = setup()
+  appendPlanLog(s.dir, '2026-11-06', { at: '2026-11-06T11:30:00Z', chatId: 'owner', candidates: ['hunt'], decision: 'none', why: 'old decision', source: 'model' })
+  await s.submit('memory')
+  expect(s.evaluator).not.toHaveBeenCalled(); expect(s.sent).toEqual([])
+  s.advance(90 * 60_000)
+  await s.submit('memory')
+  expect(s.sent).toEqual(['memory'])
+})
+
+it('a fixed proposal that expires behind a serialized send is recorded expired without producing', async () => {
+  const s = setup()
+  let release!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const first = s.speech.propose(s.req('letter'), async turn => { await barrier; await turn.sendText('owner', 'letter') })
+  await expect.poll(() => s.db.query("SELECT status FROM speech_pending WHERE ref='letter:one'").get()).toEqual({ status: 'sending' })
+  const produce = vi.fn(async () => {})
+  const fixed = s.speech.propose(s.req('brief', { expiresAt: Date.parse('2026-11-06T12:01:00Z') }), produce)
+  s.advance(2 * 60_000); release()
+  await first
+  expect(await fixed).toEqual({ defer: true, reason: 'expired' })
+  expect(produce).not.toHaveBeenCalled()
+  expect(s.db.query("SELECT reason,spoken_at FROM speech_log WHERE ref='brief:one'").get()).toEqual({ reason: 'expired', spoken_at: null })
+})
+
+it('a peer outing does not hold the owner send slot and its returned postcard can enter the same picker', async () => {
+  const { queuePostcardProposal } = await import('../../features/social/postcard-proposal')
+  const s = setup(async prompt => {
+    const data = JSON.parse(prompt.slice(prompt.indexOf('\n') + 1)) as { candidates: Array<{ id: string }> }
+    return JSON.stringify({ id: data.candidates[0]!.id, why: 'one eligible source' })
+  })
+  let release!: () => void, started = false
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const outing = s.speech.propose(s.req('visit'), async () => {
+    started = true
+    await barrier
+    queuePostcardProposal({ speech: s.speech, recipient: 'owner', story: 'returned story', ref: 'visit:return', raster: () => null, log: () => {} })
+  })
+  let fixed: Promise<unknown> | undefined
+  try {
+    await expect.poll(() => started).toBe(true)
+    fixed = s.submit('brief')
+    await expect.poll(() => s.sent, { timeout: 500 }).toEqual(['brief'])
+    expect(await fixed).toMatchObject({ allow: true })
+    expect(s.sent).toEqual(['brief']) // before the peer action completes
+  } finally { release(); await outing; await fixed }
+  // Brief consumed the budget, so the returned story is retained, not sent or
+  // awaited recursively by the action currently being completed.
+  await expect.poll(() => s.db.query("SELECT body FROM speech_pending WHERE lane='say'").all()).toEqual([{ body: 'returned story' }])
+  expect(s.sent).toEqual(['brief'])
+})
+
+it('a fixed proposal rechecks care after waiting for an owner send and returns the policy drop, not a production failure', async () => {
+  const s = setup()
+  let release!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const first = s.speech.propose(s.req('letter'), async turn => { await barrier; await turn.sendText('owner', 'letter') })
+  await expect.poll(() => s.db.query("SELECT status FROM speech_pending WHERE ref='letter:one'").get()).toEqual({ status: 'sending' })
+  const produce = vi.fn(async () => {})
+  const fixed = s.speech.propose(s.req('brief'), produce)
+  s.off(); release(); await first
+  expect(await fixed).toEqual({ drop: true, reason: 'care_off' })
+  expect(produce).not.toHaveBeenCalled()
+  expect(s.db.query("SELECT outcome,reason,spoken_at FROM speech_log WHERE ref='brief:one'").get()).toEqual({ outcome: 'dropped', reason: 'care_off', spoken_at: null })
+})

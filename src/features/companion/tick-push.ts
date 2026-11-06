@@ -2,6 +2,7 @@
  * 伙伴主动找主人那一拍(20 分钟一拍,从 tick-bodies.ts 原样搬出):到点的跟进 → 日程判断 → 来访叙述。
  * 日程判断在哪些事里挑,由登记进来的候选决定(ports/companion-contributions.ts,登记表在 daemon/wiring/tick-bodies.ts);这里不认识任何一个。
  */
+import { createHash } from 'node:crypto'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import { join } from 'node:path'
 import { loadAgentConfig } from '../../lib/agent-config'
@@ -88,7 +89,11 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
           }
         },
         buildText: (style) => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body, avoid: prefs.avoid }, style),
-        nowIso, source: 'agenda',
+        nowIso, source: 'agenda', summary: item.body.slice(0, 1000),
+        ref: `agenda:${createHash('sha256').update(`${chatId}\0${item.due}\0${item.body}`).digest('hex')}`,
+        payloadRef: { due: item.due ?? null, item: createHash('sha256').update(item.body).digest('hex') },
+        validate: async at => (await messagesStore.latestInboundTs(chatId)) === (lastInboundAtIso ?? null) && selectDue(parseAgenda(agendaFs.read('agenda.md') ?? ''), today).some(i => i.due === item.due && i.body === item.body) && shouldSpeak({ kind: 'agenda', level: careLevel(chatId, deps.chatPrefs.get(chatId), defaultChatId), nowIso: new Date(at).toISOString(), ledger: deps.careLedger.get(chatId), lastInboundAtIso }).ok,
+
       }))
     }
 
@@ -101,14 +106,17 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
       if (!decision.ok) { deps.log('CARE', `skip chat=${chatId} kind=${action.id} reason=${decision.reason}`); continue }
       if (action.needsWechat) { const blocked = dispatchBlockedReason(chatId); if (blocked) { deps.log('PLAN', `skip chat=${chatId} reason=${blocked}`); continue } }
       const source = action.id
-      const info = action.planInfo?.(actx)
+      let info: ReturnType<NonNullable<CompanionAction['planInfo']>> | undefined
+      const targets = () => { try { info = action.planInfo?.(actx) } catch { info = undefined }; return info?.targets?.slice(0, 5).map(t => t.id) ?? [] }
       submissions.push(deps.speech!.propose({
         source, kind: 'companion', chatId, nowMs: Date.parse(nowIso),
         summary: source, ref: `${source}:${chatId}:${nowIso}`, payloadRef: { tick: nowIso },
-        targets: info?.targets?.map(t => t.id), context: async () => info?.context ?? {},
+        getTargets: targets, context: async () => info?.context ?? {},
         validate: async (nowMs) => {
           if ((await messagesStore.latestInboundTs(chatId)) !== (lastInboundAtIso ?? null)) return false
-          const current = { ...actx, prefs: deps.chatPrefs.get(chatId), ledger: deps.careLedger.get(chatId) }
+          const livePrefs = deps.chatPrefs.get(chatId)
+          if (JSON.stringify(livePrefs.avoid) !== JSON.stringify(prefs.avoid)) return false
+          const current = { ...actx, prefs: livePrefs, level: careLevel(chatId, livePrefs, defaultChatId), ledger: deps.careLedger.get(chatId) }
           const lv = action.speakLevel(current)
           return lv !== null && shouldSpeak({ kind: source, level: lv, nowIso: new Date(nowMs).toISOString(), ledger: current.ledger, lastInboundAtIso }).ok && (!action.needsWechat || !dispatchBlockedReason(chatId))
         },
@@ -215,6 +223,8 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
         try {
           outcome = await speech.propose({ source: 'guest', summary: `${name} visited`, ref: `guest:${chatId}:${latestInboundTs}`, payloadRef: { chatId, latestInboundTs }, kind: 'guest_visit', chatId: ownerChat, nowMs, validate: async () => (await messagesStore.latestInboundTs(chatId)) === latestInboundTs }, async (turn) => {
             claim()
+            let sending = false
+            try {
             const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
             // 一时没有可用模型:这次做客不能就此吞掉,等有模型了再讲
             if (!evalText) { noModel = true; return }
@@ -230,9 +240,14 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
             if (!text) return
             // sendText **不抛**,失败是回 {error} —— 一定要看(盘点 10-21:以前只有 catch,失败时水位照记,这次来访就丢了)
             let r: { msgId: string; error?: string }
+            sending = true
             try { r = await turn.sendText(ownerChat, text) } catch (err) { throw new GuestNarrationSendFailed(errMsg(err)) }
             if (r.error) throw new GuestNarrationSendFailed(r.error)
             told = text
+            } catch (err) {
+              if (!sending && !isNetworkUnprotectedError(err)) throw Object.assign(err instanceof Error ? err : new Error(String(err)), { code: 'not_sent' })
+              throw err
+            }
           })
         } catch (err) {
           // 评审 #193 P2-3:讲述被网络守护拒了;或者发不出去 —— 没讲过,这一位的水位放回去;这一拍到此为止
@@ -257,6 +272,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
           deps.log('VISIT', `guest visit not told: chat=${chatId} — ${outcome.reason}; marked as seen`)
           continue
         }
+        if ('defer' in outcome && outcome.reason === 'delivery_unknown') { uncount(); continue } // at-most-once: preserve the seen watermark, never claim confirmed narration
         if ('defer' in outcome) { unmark(); break }   // 免打扰 / 都送不到:这一拍什么都不动,之后照讲
         if (noModel) { unmark(); continue }
         if (!told) { unmark(); continue }

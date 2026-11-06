@@ -88,7 +88,7 @@ export function makeBriefPrefs(root: () => string | null) {
 }
 
 export interface BriefTurnDeps {
-  runJobTurn: (a: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; transformFinal?: (finalText: string) => string; kind: 'job' | 'review' | 'brief' | 'recap'; scheduled: boolean }) => Promise<JobTurnResult>
+  runJobTurn: (a: { chatId: string; jobId: string; text: string; nowIso: string; scheduledAt?: string; buildText?: (style: TickTextStyle) => string; transformFinal?: (finalText: string) => string; kind: 'job' | 'review' | 'brief' | 'recap'; scheduled: boolean }) => Promise<JobTurnResult>
   ownerChatId: () => string | null
   today: () => string | null
   reminders: () => Array<{ at: string; text: string }> | Promise<Array<{ at: string; text: string }>>
@@ -146,7 +146,7 @@ export function makeBriefTurn(deps: BriefTurnDeps): (job: ScheduledJob, nowIso: 
     let r: string
     try {
       r = await deps.runJobTurn({
-      chatId: owner, jobId: job.id, text: job.text, nowIso, kind: 'brief', scheduled: true,
+      chatId: owner, jobId: job.id, text: job.text, nowIso, scheduledAt: job.schedule.at, kind: 'brief', scheduled: true,
       buildText: (style) => buildBriefText({ jobId: job.id, nowIso, material, ...(asks ? { asks } : {}) }, style),
       ...(picked.length ? { transformFinal: (t: string) => { const a = attachAsks(t, picked); st.attached = a.attached; return a.text } } : {}),
       })
