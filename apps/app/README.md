@@ -48,6 +48,20 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 
 ### Maestro
 
+图形验收统一在专用 Mac mini 执行，主工作 Mac 只调用 SSH 入口：
+
+```sh
+node apps/desktop/scripts/macmini-ui.mjs app-status
+node apps/desktop/scripts/macmini-ui.mjs app-prepare
+node apps/desktop/scripts/macmini-ui.mjs app-build
+node apps/desktop/scripts/macmini-ui.mjs app-maestro terminal-sessions
+node apps/desktop/scripts/macmini-ui.mjs app-maestro push-open
+node apps/desktop/scripts/macmini-ui.mjs app-maestro cc-acts
+node apps/desktop/scripts/macmini-ui.mjs app-maestro all
+```
+
+以上命令在仓库根目录调用；首次快照、公开依赖准备与授权边界见 [Mac mini 实验室](../../docs/maintainer/macmini-ui-lab.md#app--maestro-lane)。下面的原生工具命令仅供 mini 上准备环境，不在主工作 Mac 执行。
+
 装:`brew tap mobile-dev-inc/tap && brew trust --formula mobile-dev-inc/tap/maestro && brew install --formula mobile-dev-inc/tap/maestro`(注意是 formula;不带 `--formula` 会装成桌面版 Maestro Studio 的 cask)。要 Java,formula 会带上 openjdk。
 
 | 流程 | 走什么 |

@@ -199,7 +199,7 @@ async function native() {
 try {
   let result
   switch (request.command) {
-    case 'app-build': case 'app-maestro': {
+    case 'app-prepare': case 'app-build': case 'app-maestro': {
       const { runApp } = await import('./macmini-ui-app.mjs')
       result = await runApp({ request, config, insideLab, labHome, run, command, environment }); break
     }

@@ -1,19 +1,23 @@
 // App work executes only after the parent runner validates mini identity and owns its lock.
 import { execFileSync } from 'node:child_process'
-import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, readdir, rm, chmod } from 'node:fs/promises'
 import { join } from 'node:path'
 import { APP_FLOWS, appFlow } from './macmini-ui-protocol.mjs'
 
 export async function appStatus({ config, insideLab, labHome }) {
-  const probe = (file, args) => {
-    try { return execFileSync(file, args, { encoding: 'utf8', timeout: 20000 }).trim() }
+  const probe = (file, args, env = {}) => {
+    try { return execFileSync(file, args, { encoding: 'utf8', timeout: 20000, env: { PATH: '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin', MAESTRO_CLI_NO_ANALYTICS: 'true', MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true', ...env } }).trim() }
     catch (error) { return { missing: true, detail: error.message } }
   }
   const tools = join(labHome, 'app-tools')
   const appRoot = config.appRoot ? await insideLab(config.appRoot) : null
   return { appRoot, source: appRoot ? JSON.parse(await readFile(join(appRoot, 'snapshot.json'), 'utf8')) : null,
     xcode: probe('/usr/bin/xcodebuild', ['-version']),
-    simulators: probe('/usr/bin/xcrun', ['simctl', 'list', '-j']),
+    simulators: probe('/usr/bin/xcrun', ['simctl', 'list', 'devices', '-j']),
+    node: probe('/opt/homebrew/bin/node', ['--version']),
+    java: probe(join(tools, 'java/Contents/Home/bin/java'), ['--version']),
+    maestro: probe(join(tools, 'maestro/bin/maestro'), ['--version'], { HOME: join(tools, 'home'), JAVA_HOME: join(tools, 'java/Contents/Home') }),
+    pods: probe(join(tools, 'gems/bin/pod'), ['--version'], { HOME: join(tools, 'home'), GEM_HOME: join(tools, 'gems'), GEM_PATH: join(tools, 'gems'), PATH: `${tools}/ruby/bin:/usr/bin:/bin` }),
     tools, productionAccess: false, localFallback: false,
     note: 'Requires app-tools/{maestro,java,gems}, prepared Expo dependencies and Pods. Status never boots a simulator.' }
 }
@@ -25,18 +29,56 @@ export async function runApp({ request, config, insideLab, labHome, run, command
   const cwd = await insideLab(join(project, 'apps/app'))
   const source = JSON.parse(await readFile(join(root, 'snapshot.json'), 'utf8'))
   const tools = await insideLab(join(labHome, 'app-tools'))
-  const java = await insideLab(join(tools, 'java/Contents/Home'))
+  const java = join(tools, 'java/Contents/Home')
   const home = join(root, 'home')
   await mkdir(home, { recursive: true, mode: 0o700 })
   const extraEnv = { HOME: home, CFFIXED_USER_HOME: home, JAVA_HOME: java,
     GEM_HOME: join(tools, 'gems'), GEM_PATH: join(tools, 'gems'),
-    PATH: `${tools}/gems/bin:${java}/bin:${tools}/maestro/bin:${environment.PATH}`,
-    EXPO_NO_TELEMETRY: '1', EXPO_OFFLINE: '1', MAESTRO_CLI_NO_ANALYTICS: 'true',
-    NODE_BINARY: '/opt/homebrew/bin/node', RCT_NO_LAUNCH_PACKAGER: '1' }
+    PATH: `${tools}/ruby/bin:${tools}/gems/bin:${java}/bin:${tools}/maestro/bin:${environment.PATH}`,
+    GEM_SPEC_CACHE: join(tools, 'gem-spec-cache'), BUN_INSTALL_CACHE_DIR: join(root, 'cache/bun'),
+    COCOAPODS_DISABLE_STATS: 'true', EXPO_NO_TELEMETRY: '1', EXPO_OFFLINE: '1', MAESTRO_CLI_NO_ANALYTICS: 'true', MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true',
+    TENDHEARTH_UITESTS: '1', NODE_BINARY: '/opt/homebrew/bin/node', RCT_NO_LAUNCH_PACKAGER: '1' }
   const execute = (label, file, args, options = {}) => command(label, file, args, { cwd, extraEnv, ...options })
+  if (request.command === 'app-prepare') {
+    await execute('app-js-dependencies', 'bun', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: project, offline: false })
+    await execute('expo-prebuild-prepare', '/opt/homebrew/bin/node', ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'ios', '--no-install'], { offline: false })
+    await execute('pods-prepare', join(tools, 'gems/bin/pod'), ['install'], { cwd: join(cwd, 'ios'), offline: false })
+    return { source, prepared: true, note: 'Public dependencies only; build and UI execution remain offline' }
+  }
+  const app = join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app')
+  const receiptFile = join(root, 'build-receipt.json')
+  if (request.command === 'app-build') {
+    await rm(receiptFile, { force: true })
+    await execute('expo-prebuild', '/opt/homebrew/bin/node', ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'ios', '--no-install'])
+    await execute('pods', join(tools, 'gems/bin/pod'), ['install', '--no-repo-update'], { cwd: join(cwd, 'ios') })
+    await execute('app-build', '/usr/bin/xcodebuild', ['-workspace', 'ios/Tendhearth.xcworkspace', '-scheme', 'Tendhearth',
+      '-configuration', 'Release', '-sdk', 'iphonesimulator', '-destination', 'generic/platform=iOS Simulator',
+      '-derivedDataPath', join(root, 'build'), 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO', 'build'])
+    await insideLab(app)
+    await readFile(join(app, 'main.jsbundle'))
+    await writeFile(receiptFile, JSON.stringify({ source, app, configuration: 'Release', metro: false }))
+    return { source, app }
+  }
+  const receipt = JSON.parse(await readFile(receiptFile, 'utf8'))
+  if (JSON.stringify(receipt.source) !== JSON.stringify(source) || receipt.app !== app) throw Error('App build does not match the active snapshot')
+  await insideLab(app)
+  await insideLab(java)
   // A separate device set prevents selecting or clearing an owner's existing simulator.
   const devices = join(root, 'simulators')
   await mkdir(devices, { recursive: true, mode: 0o700 })
+  // Maestro invokes xcrun through PATH. Scope every simctl request to this set;
+  // setting HOME alone does not change CoreSimulator's default device set.
+  const bin = join(root, 'maestro-bin')
+  await mkdir(bin, { recursive: true, mode: 0o700 })
+  const wrapper = join(bin, 'xcrun')
+  await writeFile(wrapper, `#!/opt/homebrew/bin/node
+const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2);
+const result = spawnSync('/usr/bin/xcrun', args[0] === 'simctl' ? ['simctl', '--set', ${JSON.stringify(devices)}, ...args.slice(1)] : args, { stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`)
+  await chmod(wrapper, 0o700)
+  extraEnv.PATH = `${bin}:${extraEnv.PATH}`
   const sim = ['simctl', '--set', devices]
   const deviceFile = join(root, 'simulator.json')
   let udid
@@ -51,22 +93,6 @@ export async function runApp({ request, config, insideLab, labHome, run, command
   }
   const device = Object.values(JSON.parse(simOutput(['list', 'devices', '-j'])).devices).flat().find(value => value.udid === udid)
   if (!device || device.name !== 'CC UI Lab App') throw Error('APP_BLOCKED: configured simulator is not the lab device')
-  const app = join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app')
-  const receiptFile = join(root, 'build-receipt.json')
-  if (request.command === 'app-build') {
-    await execute('expo-prebuild', '/opt/homebrew/bin/node', ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'ios', '--no-install'])
-    await execute('pods', join(tools, 'gems/bin/pod'), ['install', '--no-repo-update'], { cwd: join(cwd, 'ios') })
-    await execute('app-build', '/usr/bin/xcodebuild', ['-workspace', 'ios/Tendhearth.xcworkspace', '-scheme', 'Tendhearth',
-      '-configuration', 'Release', '-sdk', 'iphonesimulator', '-destination', 'generic/platform=iOS Simulator',
-      '-derivedDataPath', join(root, 'build'), 'CODE_SIGNING_ALLOWED=NO', 'build'])
-    await insideLab(app)
-    await readFile(join(app, 'main.jsbundle'))
-    await writeFile(receiptFile, JSON.stringify({ source, app, configuration: 'Release', metro: false }))
-    return { source, app, udid }
-  }
-  const receipt = JSON.parse(await readFile(receiptFile, 'utf8'))
-  if (JSON.stringify(receipt.source) !== JSON.stringify(source) || receipt.app !== app) throw Error('App build does not match the active snapshot')
-  await insideLab(app)
   const flow = appFlow(request.flow)
   const available = (await readdir(join(cwd, '.maestro'))).filter(name => name.endsWith('.yaml')).map(name => name.slice(0, -5))
   if (available.some(name => !APP_FLOWS.includes(name))) throw Error('Snapshot has unregistered Maestro flows; update the allowlist first')
@@ -76,6 +102,20 @@ export async function runApp({ request, config, insideLab, labHome, run, command
     if (device.state !== 'Booted') await execute('simulator-boot', '/usr/bin/xcrun', [...sim, 'boot', udid])
     await execute('simulator-ready', '/usr/bin/xcrun', [...sim, 'bootstatus', udid, '-b'])
     await execute('app-install', '/usr/bin/xcrun', [...sim, 'install', udid, app])
+    // Maestro 2.12's bundled standalone runner supports custom device sets.
+    // xcodebuild's destination discovery only sees the default set on Xcode 27.
+    const driver = join(root, 'maestro-driver')
+    await mkdir(driver, { recursive: true, mode: 0o700 })
+    await execute('maestro-driver-extract', '/usr/bin/unzip', ['-qo', join(tools, 'maestro/lib/maestro-ios-driver.jar'), 'driver-iPhoneSimulator/*', '-d', driver])
+    const products = join(driver, 'driver-iPhoneSimulator/Debug-iphonesimulator')
+    await execute('maestro-runner-extract', '/usr/bin/unzip', ['-qo', join(products, 'maestro-driver-iosUITests-Runner.zip'), '-d', products])
+    const runner = await insideLab(join(products, 'maestro-driver-iosUITests-Runner.app'))
+    await execute('maestro-runner-install', '/usr/bin/xcrun', [...sim, 'install', udid, runner])
+    await execute('maestro-runner-launch', '/usr/bin/xcrun', [...sim, 'launch', '--terminate-running-process', udid, 'dev.mobile.maestro-driver-iosUITests.xctrunner'], {
+      extraEnv: { ...extraEnv, SIMCTL_CHILD_PORT: '22087' },
+    })
+    extraEnv.USE_XCODE_TEST_RUNNER = '1'
+
     for (const name of flows) {
       try {
         await execute(`maestro-${name}`, join(tools, 'maestro/bin/maestro'), ['--device', udid, 'test',
