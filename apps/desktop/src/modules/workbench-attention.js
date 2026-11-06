@@ -96,12 +96,13 @@ export function createWorkbenchAttentionPoller(options) {
         }
         lastProgress = progress
         let shouldNotify = false
+        let notificationMatterId = null
         const activeIds = new Set()
         for (const { task, requestIds } of entries) {
           for (const requestId of requestIds) {
             const key = `${task.id}:${requestId}`
             activeIds.add(key)
-            if (initialized && !seen.has(key) && (!context.focused || context.taskId !== task.id)) shouldNotify = true
+            if (initialized && !seen.has(key) && (!context.focused || context.taskId !== task.id)) { shouldNotify = true; notificationMatterId ??= task.id }
             // Seeing a request in its task also consumes its notice. Leaving the
             // page later must never turn that same request into a new notice.
             seen.add(key)
@@ -119,8 +120,8 @@ export function createWorkbenchAttentionPoller(options) {
         options.onChange?.({ tasks, stale: false, ...(progress ? { progress: new Map(progress), moved } : {}) })
         // 回复 / 停下:窗口在前面就不弹(你正看着 CC);待处理那条优先,一次轮询最多一条通知。
         const finishNotice = !shouldNotify && !context.focused
-          ? moved.stopped.length ? { title: '有一件事停下了', body: '打开 CC 看看发生了什么。' }
-            : moved.replied.length ? { title: moved.replied.length > 1 ? `${moved.replied.length} 件事回复了` : '有一件事回复了', body: '打开 CC 查看。' }
+          ? moved.stopped.length ? { matterId: moved.stopped[0], title: '有一件事停下了', body: '打开 CC 看看发生了什么。' }
+            : moved.replied.length ? { matterId: moved.replied[0], title: moved.replied.length > 1 ? `${moved.replied.length} 件事回复了` : '有一件事回复了', body: '打开 CC 查看。' }
             : null
           : null
         if (finishNotice && !destroyed) void Promise.resolve().then(() => options.invoke('notify_user', finishNotice)).catch(() => {})
@@ -128,6 +129,7 @@ export function createWorkbenchAttentionPoller(options) {
           // No task title, prompt, command, path, or request ID crosses into OS
           // notifications. Denied or uncertain delivery is intentionally final.
           void Promise.resolve().then(() => options.invoke('notify_user', {
+            matterId: notificationMatterId,
             title: '有一件事等你决定',
             body: '有新的问题或权限请求。打开 CC 看看。',
           })).catch(() => {})

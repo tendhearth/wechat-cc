@@ -193,6 +193,19 @@ describe('只给设备的四条:链接令牌一律 403(LINK_WRITE_OK 不收送�
 })
 
 describe('POST /v1/matter/seen', () => {
+  it('accepts the notification desktop surface and rejects other surfaces without relaxing caller scope', async () => {
+    const response = await viaOperator('/v1/matter/seen', post({ id: TASK, surface: 'desktop' }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true })
+    expect(desktopSeen.mock.calls).toEqual([[TASK]])
+    for (const surface of ['phone', 'wechat', '', null, 1]) {
+      expect((await viaOperator('/v1/matter/seen', post({ id: TASK, surface }))).status).toBe(400)
+    }
+    for (const token of [device, link]) {
+      expect((await viaPanel('/v1/matter/seen', token, post({ id: TASK, surface: 'desktop' }))).status).not.toBe(200)
+    }
+    expect(desktopSeen).toHaveBeenCalledTimes(1)
+  })
   it('accepts repeated desktop acknowledgements, rejects malformed bodies and phone tokens', async () => {
     for (let i = 0; i < 2; i++) {
       const r = await viaOperator('/v1/matter/seen', post({ id: TASK }))

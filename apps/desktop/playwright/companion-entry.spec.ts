@@ -159,3 +159,21 @@ test('an unavailable exact task shows the existing error without opening another
  expect(boundary.reads).toContain('deadbeef');expect(boundary.reads).not.toContain('aaaa1111')
  expect(boundary.posts).toEqual([]);await expect(page.locator('.wb-task-head h2')).toHaveCount(0)
 })
+
+test('notification click opens its exact matter and posts desktop seen', async ({page,shimUrl}) => {
+ const boundary=await taskBoundary(page)
+ const seenBodies:unknown[]=[]
+ await page.route('**/v1/matter/seen',async route=>{
+  seenBodies.push(route.request().postDataJSON())
+  await route.fulfill({json:{ok:true}})
+ })
+ await nativeEntry(page,{destination:null})
+ await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
+ await expect(page.locator('main.dashboard')).toBeVisible()
+ // The native UN notification delegate feeds the same durable navigation inbox.
+ expect(await page.evaluate(()=>(window as any).__entryFixture.emit({page:'workbench',taskId:'deadbeef'}))).toBe(true)
+ await expect(page.locator('.wb-task-head h2')).toHaveText('桌宠指定的那件事')
+ await expect.poll(()=>seenBodies).toContainEqual({id:'deadbeef',surface:'desktop'})
+ expect(boundary.reads).toContain('deadbeef')
+ expect(boundary.posts).toEqual([])
+})

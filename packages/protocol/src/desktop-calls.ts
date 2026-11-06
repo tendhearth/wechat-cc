@@ -112,7 +112,7 @@ export const DESKTOP_CALLS = {
   },
   matter: {
     get:call('GET /v1/matter',{query:t<{id:string}>()}),
-    seen: call('POST /v1/matter/seen', { body: t<{ id: string }>() }),
+    seen: call('POST /v1/matter/seen', { body: t<{ id: string; surface?: 'desktop' }>() }),
     ownerChatFile: call('GET /v1/matter/owner-chat/file', { query: t<{ id:string; i:number; offset:number; sha256?:string; size?:number }>() }),
     ownerChat: call('GET /v1/matter/owner-chat'),
     ownerChatSearch: call('GET /v1/matter/owner-chat/search', { query: t<{ q: string; limit: number }>() }),

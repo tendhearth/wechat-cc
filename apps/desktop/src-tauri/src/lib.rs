@@ -750,20 +750,51 @@ fn wechat_daemon_pid() -> Option<u32> {
     }
 }
 
-// OS-level notification — fires from JS (`invoke("notify_user", ...)`) when
-// the doctor-poller diff detects a newly-expired account. Uses
-// tauri-plugin-notification's native bridge (NSUserNotification on macOS,
-// the WinRT toast API on Windows, libnotify on Linux). Errors propagate to
-// JS as a string so the renderer can console.warn() them; no fallback.
+// macOS keeps the matter in UNNotificationContent.userInfo, including after
+// replacement of the main webview. Other desktop platforms retain plugin delivery.
+#[cfg(target_os = "macos")]
+static NOTIFICATION_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn cc_install_notifications() -> bool;
+    fn cc_show_notification(title: *const std::ffi::c_char, body: *const std::ffi::c_char, matter_id: *const std::ffi::c_char);
+}
+#[cfg(target_os = "macos")]
+#[no_mangle]
+extern "C" fn cc_notification_clicked(id: *const std::ffi::c_char) {
+    let Some(app) = NOTIFICATION_APP.get().cloned() else { return; };
+    let id = if id.is_null() { None } else { unsafe { std::ffi::CStr::from_ptr(id) }.to_str().ok().map(str::to_owned) };
+    let id = id.filter(|id| main_navigation::Destination::new(Some("workbench".into()), Some(id.clone())).is_ok());
+    tauri::async_runtime::spawn(async move {
+        let page = id.as_ref().map(|_| "workbench".to_string());
+        let pending = app.state::<PendingNavigate>();
+        let _ = show_main_window(app.clone(), page, id, pending).await;
+    });
+}
 #[tauri::command]
-fn notify_user(app: AppHandle, title: String, body: String) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-    app.notification()
-        .builder()
-        .title(&title)
-        .body(&body)
-        .show()
-        .map_err(|e| e.to_string())
+fn notify_user(app: AppHandle, title: String, body: String, matter_id: Option<String>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        // UNUserNotificationCenter requires an application bundle. Preserve the
+        // plugin's Terminal fallback for unbundled development executables.
+        if !unsafe { cc_install_notifications() } {
+            use tauri_plugin_notification::NotificationExt;
+            return app.notification().builder().title(&title).body(&body).show().map_err(|e| e.to_string());
+        }
+        let title = CString::new(title).map_err(|e| e.to_string())?;
+        let body = CString::new(body).map_err(|e| e.to_string())?;
+        let id = matter_id.map(CString::new).transpose().map_err(|e| e.to_string())?;
+        let _ = NOTIFICATION_APP.set(app);
+        unsafe { cc_show_notification(title.as_ptr(), body.as_ptr(), id.as_ref().map_or(std::ptr::null(), |id| id.as_ptr())); }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let _ = matter_id;
+        app.notification().builder().title(&title).body(&body).show().map_err(|e| e.to_string())
+    }
 }
 
 // Direct /v1/health ping — reads the bearer token from the token file (0o600,
@@ -1803,6 +1834,14 @@ pub fn run() {
             prepare_workbench_site_preview,
             release_workbench_html_preview
         ])
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = NOTIFICATION_APP.set(app.handle().clone());
+                unsafe { cc_install_notifications(); }
+            }
+            Ok(())
+        })
         .build(context)
         .expect("error while building wechat-cc desktop")
         .run(|app, event| {

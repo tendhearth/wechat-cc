@@ -14,6 +14,7 @@ default = []
 qa-webdriver = ["dep:tauri-plugin-wdio-webdriver", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [build-dependencies]
+cc = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]

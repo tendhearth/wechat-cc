@@ -70,7 +70,7 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
     'POST /v1/matter/seen': async (_query, body, caller) => {
       if (fromPhone(caller)) return { status: 403, body: { error: 'forbidden' } }
       const input = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null
-      if (!input || Object.keys(input).some(k => k !== 'id') || typeof input.id !== 'string' || !ID.test(input.id)) return invalid()
+      if (!input || Object.keys(input).some(k => k !== 'id' && k !== 'surface') || (input.surface !== undefined && input.surface !== 'desktop') || typeof input.id !== 'string' || !ID.test(input.id)) return invalid()
       if (!deps.desktopSeen) return { status: 503, body: { error: 'desktop_not_wired' } }
       deps.desktopSeen(input.id)
       return { status: 200, body: { ok: true } }
