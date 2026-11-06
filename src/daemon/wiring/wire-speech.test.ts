@@ -24,14 +24,14 @@ describe('wireSpeech —— care 档、免打扰跟伙伴一拍读同一份;账�
       const chatPrefs = makeChatPrefs(dir)
       let now = Date.parse('2026-10-21T02:00:00.000Z') // 上海 10:00
       const speech = wireSpeech({ stateDir: dir, db, chatPrefs, proactive: outbound(), log: () => {}, now: () => now })
-      expect(await speech.say({ kind: 'companion', chatId: OWNER }, async () => {})).toMatchObject({ allow: true })
+      expect(await speech.propose({ source: 'agenda', summary: 'agenda', kind: 'companion', chatId: OWNER }, async () => {})).toMatchObject({ allow: true })
       chatPrefs.set(OWNER, { care: 'off' })
-      expect(await speech.say({ kind: 'guest_visit', chatId: OWNER }, async () => {})).toEqual({ drop: true, reason: 'care_off' })
+      expect(await speech.propose({ source: 'guest', summary: 'guest', kind: 'guest_visit', chatId: OWNER }, async () => {})).toEqual({ drop: true, reason: 'care_off' })
       expect(await speech.say({ kind: 'permission_ask', chatId: OWNER }, async () => {})).toMatchObject({ allow: true })
       chatPrefs.set(OWNER, { care: 'low', quiet: { from: '09:00', to: '12:00' } })
       expect(await speech.say({ kind: 'matter_report', chatId: OWNER }, async () => {})).toEqual({ defer: true, until: '2026-10-21T04:00:00.000Z', reason: 'quiet_hours' })
       // 别的对话没设 care ⇒ off(伙伴一拍的口径:只有主人默认开)
-      expect(await speech.say({ kind: 'companion', chatId: 'friend@im.wechat' }, async () => {})).toEqual({ drop: true, reason: 'care_off' })
+      expect(await speech.propose({ source: 'agenda', summary: 'agenda', kind: 'companion', chatId: 'friend@im.wechat' }, async () => {})).toEqual({ drop: true, reason: 'care_off' })
       now += 1
       expect(makeSpeechLedgerStore(db).recent(OWNER, 0).map(e => e.outcome)).toEqual(['deferred', 'allowed', 'dropped', 'allowed'])
     } finally { db.close() }

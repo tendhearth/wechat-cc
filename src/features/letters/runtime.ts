@@ -256,7 +256,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     return { id, createdAt: nowMs, pages, text: letterText(letter), attempts: 0, blockedAt: null, ...(requested ? { requested: true } : {}) }
   }
 
-  async function deliver(p: PendingLetter, outbound?: ProactiveTurn): Promise<'sent' | 'waiting' | 'failed' | 'expired'> {
+  async function deliver(p: PendingLetter, outbound: ProactiveTurn): Promise<'sent' | 'waiting' | 'failed' | 'expired'> {
     const owner = d.ownerChatId()
     if (!owner) return 'waiting'
     const nowMs = d.now()
@@ -282,7 +282,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         return null
       }
       if (!ok) return null
-      outbound?.confirmDelivery?.('app')
+      outbound.confirmDelivery?.('app')
       markSent('app')
       d.log('LETTERS', `letter ${p.id} delivered to the app (${why})`)
       return 'sent'
@@ -296,12 +296,12 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     try {
       if (p.pages.length) for (; sentPages < p.pages.length; sentPages++) {
         await d.sendFile(owner, p.pages[sentPages]!)
-        outbound?.confirmDelivery?.('wechat')
+        outbound.confirmDelivery?.('wechat')
       }
       else {
         const r = await d.sendText(owner, `（一封信）\n\n${p.text}`)
         if (r.error) throw new Error(r.error)
-        outbound?.confirmDelivery?.('wechat')
+        outbound.confirmDelivery?.('wechat')
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -340,7 +340,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
   const guarded = async <T>(t: ActTurn, fn: () => Promise<T>): Promise<T> => {
     try { return await fn() } catch (e) { t.finish('failed', { endedAt: d.now(), errorCode: 'threw' }); throw e }
   }
-  const deliverIn = async (t: ActTurn, p: PendingLetter, outbound?: ProactiveTurn): Promise<Awaited<ReturnType<typeof deliver>>> => {
+  const deliverIn = async (t: ActTurn, p: PendingLetter, outbound: ProactiveTurn): Promise<Awaited<ReturnType<typeof deliver>>> => {
     let r: Awaited<ReturnType<typeof deliver>> = 'failed'
     sentMark = null
     try { r = await deliver(p, outbound) } finally {

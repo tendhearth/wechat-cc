@@ -4,10 +4,8 @@
  */
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 import { join } from 'node:path'
-import { readFileSync } from 'node:fs'
 import { loadAgentConfig } from '../../lib/agent-config'
 import { loadCompanionConfig } from '../../lib/companion-config'
-import { makeObservationsStore } from '../../daemon/observations/store'
 import { resolveEffectiveTier } from '../../domain/user-tier'
 import { dueGuestVisit, guestLabel, type GuestVisitState } from './guest-visits'
 import { buildGuestVisitNarrationPrompt } from '../../domain/visit'
@@ -16,8 +14,6 @@ import { parseAgenda, selectDue, markResolved, unmarkResolved } from './agenda'
 import { makeMessagesStore, type MessagesStore } from '../../lib/messages-store'
 import { careLevel, shouldSpeak } from './calibration'
 import { readJsonFile } from '../../lib/read-json-file'
-import { judgeCandidates, buildPlanPrompt, parsePlan, pickFallback, constrainPlan, shouldReask, formatLocal, PLAN_EVAL_TIMEOUT_MS, PLAN_MAX_OBSERVATIONS, type Consideration, type PlanAction, type PlanContext, type PlanLogEntry } from '../../domain/companion-plan'
-import { readPlanLog, appendPlanLog } from './plan-memory'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
 import type { TickDispatch } from './tick-dispatch'
@@ -27,11 +23,10 @@ import { writeJsonAtomic } from '../../lib/json-file'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
 /** 来访叙述发不出去(sendText 回了 {error}):在 say 的生产者里抛,外面撤水位。 */
-class GuestNarrationSendFailed extends Error {}
+class GuestNarrationSendFailed extends Error { readonly code = 'not_sent' }
 
 export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: readonly CompanionAction[]): (opts?: { nowIso?: string }) => Promise<void> {
   const { dispatchBlockedReason, dispatchToChat } = dispatch
-  const byId = new Map(actions.map(a => [a.id, a] as const))
 
   /**
    * Per-chat body: agenda branch (due self-authored intention) takes
@@ -62,6 +57,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
 
     const lastInboundAtIso = (await messagesStore.latestInboundTs(chatId)) ?? undefined
     const ledger = deps.careLedger.get(chatId)
+    const submissions: Promise<unknown>[] = []
 
     // Gate on the agenda: only wake the agent if a self-authored intention is
     // due (per-chat memory/<chatId>/agenda.md).
@@ -75,9 +71,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
       const decision = shouldSpeak({ kind: 'agenda', level, nowIso, ledger, lastInboundAtIso })
       if (!decision.ok) {
         deps.log('CARE', `skip chat=${chatId} kind=agenda reason=${decision.reason}`)
-        return
-      }
-      await dispatchToChat(chatId, {
+      } else submissions.push(dispatchToChat(chatId, {
         claim: () => {
           const updated = markResolved(agendaMd, item, today)
           if (updated !== agendaMd) agendaFs.write('agenda.md', updated)
@@ -94,143 +88,37 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
           }
         },
         buildText: (style) => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body, avoid: prefs.avoid }, style),
-        nowIso,
-      })
-      return
+        nowIso, source: 'agenda',
+      }))
     }
 
-    // ── 日程判断(spec 2026-09-05-companion-plan)──────────────────────────
-    // 候选由各功能交(ports/companion-contributions.ts,登记在 daemon/wiring/tick-bodies.ts),按登记顺序各问一次 shouldSpeak
-    // (冷却 / care 门 / 无回复暂停一律不变);模型只能在候选里选一个或选 none。没有模型 / 超时 / 解析失败 → 固定顺序。
+    // Every qualified source contributes to one presence snapshot. No local picker.
     const actx: CompanionTickCtx = { chatId, isOwnerChat: chatId === defaultChatId, nowIso, level, prefs, ledger, lastInboundAtIso }
-    const considered: Consideration[] = []
-    for (const a of actions) {
-      const lv = a.speakLevel(actx)
-      if (lv !== null) considered.push({ action: a.id, level: lv })
+    for (const action of actions) {
+      const speakLevel = action.speakLevel(actx)
+      if (speakLevel === null) continue
+      const decision = shouldSpeak({ kind: action.id, level: speakLevel, nowIso, ledger, lastInboundAtIso })
+      if (!decision.ok) { deps.log('CARE', `skip chat=${chatId} kind=${action.id} reason=${decision.reason}`); continue }
+      if (action.needsWechat) { const blocked = dispatchBlockedReason(chatId); if (blocked) { deps.log('PLAN', `skip chat=${chatId} reason=${blocked}`); continue } }
+      const source = action.id
+      const info = action.planInfo?.(actx)
+      submissions.push(deps.speech!.propose({
+        source, kind: 'companion', chatId, nowMs: Date.parse(nowIso),
+        summary: source, ref: `${source}:${chatId}:${nowIso}`, payloadRef: { tick: nowIso },
+        targets: info?.targets?.map(t => t.id), context: async () => info?.context ?? {},
+        validate: async (nowMs) => {
+          if ((await messagesStore.latestInboundTs(chatId)) !== (lastInboundAtIso ?? null)) return false
+          const current = { ...actx, prefs: deps.chatPrefs.get(chatId), ledger: deps.careLedger.get(chatId) }
+          const lv = action.speakLevel(current)
+          return lv !== null && shouldSpeak({ kind: source, level: lv, nowIso: new Date(nowMs).toISOString(), ledger: current.ledger, lastInboundAtIso }).ok && (!action.needsWechat || !dispatchBlockedReason(chatId))
+        },
+      }, async (outbound, target) => {
+        const result = await action.run(actx, target, outbound)
+        if (result === 'refused') throw Object.assign(new Error('network unprotected'), { code: 'network_unprotected' })
+      }))
     }
-    const { candidates: allCandidates, rejected } = judgeCandidates(considered, { nowIso, ledger, lastInboundAtIso }, shouldSpeak)
-    for (const r of rejected) deps.log('CARE', `skip chat=${chatId} kind=${r.action} reason=${r.reason}`)
-    if (allCandidates.length === 0) return
+    await Promise.all(submissions)
 
-    // 发不出去就别先烧模型:断线 / 会话在忙的时候,要经微信送的候选(打猎、问候)
-    // 反正到不了主人手里(memory: no-retry-storm-when-disconnected)。needsWechat:false 的
-    // 是例外 —— 串门走笔友信道,不是一条微信,链路断了照样能出门。
-    // 这道预判闸本身也可能抛(resolveDispatch 里 loadAccess / loadProjects /
-    // getMode / isInFlight 都是真调用):抛了不该把一拍能出的门(visit)也
-    // 一起掀翻 —— 当作没堵,真发那一步(dispatchToChat)还会再判一次。
-    let blocked: string | null
-    try { blocked = dispatchBlockedReason(chatId) }
-    catch (err) { deps.log('PLAN', `预判闸探测失败,当作没堵(真发前还会再判一次): ${errMsg(err)}`); blocked = null }
-    let candidates = allCandidates
-    if (blocked) {
-      candidates = allCandidates.filter(c => byId.get(c.action)?.needsWechat === false)
-      if (candidates.length === 0) { deps.log('PLAN', `skip chat=${chatId} reason=${blocked}`); return }
-    }
-
-    const today10 = formatLocal(nowIso).slice(0, 10)
-    const nowMs = Date.parse(nowIso)
-    const run = async (action: PlanAction, target?: string): Promise<boolean | 'refused'> => {
-      const a = action === 'none' ? undefined : byId.get(action)
-      return a ? await a.run(actx, target) : false
-    }
-    const record = (decision: PlanAction, why: string, source: PlanLogEntry['source']) => {
-      try { appendPlanLog(deps.stateDir, today10, { at: nowIso, chatId, candidates: candidates.map(c => c.action), decision, why, source }) }
-      catch (err) { deps.log('PLAN', `plan-log 写不进去(不影响这一拍): ${errMsg(err)}`) }
-    }
-    /**
-     * 先做,做完才记 —— 台账写的是「做过了」,不是「打算做」。真发那一步还有
-     * 自己的闸(断线 / 会话在忙),记在前面就会把没发出去的一拍记成发过了,
-     * 下一拍的退避与 earlierToday 都跟着骗人。做砸了也要记(标 `(failed) `),
-     * 然后照抛 —— 上层每个 chat 各自 catch。runner 自己判断「真发出去了
-     * 没有」:两道闸之间状态变了(比如预判过闸之后、真发之前微信掉线 /
-     * 会话又忙起来了)导致送时被跳过 → 标 `(skipped) `,不算「做过了」。
-     */
-    const runAndRecord = async (action: PlanAction, why: string, source: PlanLogEntry['source'], target?: string) => {
-      let dispatched: boolean | 'refused'
-      try { dispatched = await run(action, target) } catch (err) {
-        // 评审 #193 P2-3:网络守护拒了那一次模型调用 —— 什么都没做,不进台账,下一拍再来。
-        if (isNetworkUnprotectedError(err)) dispatched = 'refused'
-        else { record(action, `(failed) ${why}`, source); throw err }
-      }
-      if (dispatched === 'refused') { deps.log('PLAN', `skip chat=${chatId} action=${action}: network unprotected — nothing sent, not recorded; next tick retries`); return }
-      record(action, dispatched ? why : `(skipped) ${why}`, source)
-    }
-    const fallback = async (reason: string) => {
-      const pick = pickFallback(candidates)!
-      deps.log('PLAN', `fallback chat=${chatId} reason=${reason} → ${pick}`)
-      await runAndRecord(pick, `fallback:${reason}`, 'fallback')
-    }
-
-    const evaluate = deps.planEval ?? deps.boot.registry.getCheapEval() ?? null
-    if (!evaluate) { await fallback('no_evaluator'); return }
-
-    const earlier = readPlanLog(deps.stateDir, today10)
-    if (!shouldReask(earlier, chatId, nowMs)) { deps.log('PLAN', `skip chat=${chatId} reason=backoff`); return }
-
-    // 每个登记的候选交它那一格处境与可点名的去处(只读、自己 catch)—— 不管这一拍它是不是候选,同以前。
-    const targetsOf = new Map<PlanAction, string[]>()
-    let planParts: Partial<Pick<PlanContext, 'journal' | 'social'>> = {}
-    for (const a of actions) {
-      let info: ReturnType<NonNullable<CompanionAction['planInfo']>> | undefined
-      try { info = a.planInfo?.(actx) } catch { info = undefined }   // 某一格读不出来 = 那一格没接线,不掀翻这一拍
-      if (!info) continue
-      if (info.targets) targetsOf.set(a.id, info.targets.map(t => t.id))
-      if (info.context) planParts = { ...planParts, ...info.context }
-    }
-    const planCtx = await buildContext()
-    deps.log('PLAN', `ask chat=${chatId} candidates=[${candidates.map(c => c.action).join(',')}]`)
-
-    let raw: string
-    let timer: ReturnType<typeof setTimeout> | undefined
-    try {
-      raw = await Promise.race([
-        evaluate(buildPlanPrompt(planCtx)),
-        // 超时也要收摊:问成功了还挂着一个 20 秒的定时器,会把事件循环
-        // (重启、测试拆台)按住不放。
-        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), PLAN_EVAL_TIMEOUT_MS) }),
-      ])
-    } catch (err) {
-      // 评审 #193 P2-3:判断这一步被网络守护拒了 = 这一拍没判断过。不按老顺序硬做(那等于没问
-      // 就替它做了决定),不进 plan-log(也就不退避),下一拍再问。
-      if (isNetworkUnprotectedError(err)) {
-        deps.log('PLAN', `skip chat=${chatId}: plan judge needs a protected provider and the network is unprotected — nothing done; next tick retries`)
-        return
-      }
-      await fallback(err instanceof Error && err.message === 'timeout' ? 'timeout' : 'error')
-      return
-    } finally {
-      if (timer !== undefined) clearTimeout(timer)
-    }
-    const parsed = parsePlan(raw)
-    if (!parsed.ok) { await fallback(`parse:${parsed.reason}`); return }
-    const { plan, downgraded } = constrainPlan(parsed.plan, candidates, targetsOf.get(parsed.plan.action) ?? [])
-    if (downgraded) deps.log('PLAN', `downgraded chat=${chatId} action=${parsed.plan.action} → none`)
-    deps.log('PLAN', `→ ${plan.action}${plan.target ? ` target=${plan.target}` : ''} (${plan.why})`)
-    // none / 降级:什么都不会跑,当场记。
-    if (plan.action === 'none') { record('none', plan.why, downgraded ? 'downgraded' : 'model'); return }
-    await runAndRecord(plan.action, plan.why, 'model', plan.target)
-
-    /**
-     * 给伙伴看的处境。只读,每个来源各自 try/catch —— 判断这一步永远不该
-     * 因为某个子系统没接线 / 抛了而让整拍失败。
-     */
-    async function buildContext(): Promise<PlanContext> {
-      const hoursAgo = (iso?: string) => iso && !Number.isNaN(Date.parse(iso)) ? Math.round((nowMs - Date.parse(iso)) / 3_600_000) : null
-      let observations: PlanContext['observations'] = []
-      try {
-        const rows = await makeObservationsStore(deps.db, chatId, { migrateFromFile: join(deps.stateDir, 'memory', chatId, 'observations.jsonl') }).listActive()
-        observations = rows.slice(-PLAN_MAX_OBSERVATIONS).map(o => ({ tone: o.tone ?? null, body: o.body }))
-      } catch { observations = [] }
-      let personaExcerpt = ''
-      try { personaExcerpt = readFileSync(join(deps.stateDir, 'memory', chatId, 'persona.md'), 'utf8') } catch { personaExcerpt = '' }
-      return {
-        nowLocal: formatLocal(nowIso),
-        ownerLastInboundMinutesAgo: lastInboundAtIso ? Math.round((nowMs - Date.parse(lastInboundAtIso)) / 60_000) : null,
-        today: { lastHuntHoursAgo: hoursAgo(ledger.lastHuntAtIso), lastVisitHoursAgo: hoursAgo(ledger.lastVisitAtIso), lastProactiveHoursAgo: hoursAgo(ledger.lastProactiveAtIso) },
-        candidates, rejected, journal: planParts.journal ?? null, social: planParts.social ?? null, observations, personaExcerpt,
-        earlierToday: earlier.filter(e => e.chatId === chatId).map(e => ({ at: e.at, decision: e.decision, why: e.why })),
-      }
-    }
   }
 
   async function pushTick(opts?: { nowIso?: string }): Promise<void> {

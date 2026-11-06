@@ -13,6 +13,14 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 import type { ProactiveOutbound } from '../companion/proactive-channel'
 import { makeSpeechLedgerStore } from '../speech/ledger-store'
 import { makeSpeechPolicy, type SpeechPolicy } from '../speech/policy'
+import { makeSpeechReservations } from '../speech/reservations'
+import { makeSpeechPicker } from '../speech/picker'
+import { makeProposalSubmissions } from '../speech/proposal-submissions'
+import { readPlanLogDays, appendPlanLog } from '../../features/companion'
+import { makeMessagesStore } from '../../lib/messages-store'
+import { makeObservationsStore } from '../observations/store'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { makePendingNotices } from '../speech/pending-notices'
 
 export function wireSpeech(d: {
@@ -23,10 +31,32 @@ export function wireSpeech(d: {
   log: (tag: string, line: string) => void
   /** 补说明信片(S2c):微信发文件,成了 ⇒ true。 */
   sendFile?: (chatId: string, path: string) => Promise<boolean>
+  evaluator?: () => ((prompt: string) => Promise<string>) | null
   now?: () => number
 }): SpeechPolicy {
   const ledger = makeSpeechLedgerStore(d.db, d.now ? { now: d.now } : {})
+  const now = d.now ?? Date.now
+  const reservations = makeSpeechReservations(d.db)
+  reservations.recover()
   return makeSpeechPolicy({
+    proposals: (execute, peek) => makeProposalSubmissions((sources, sourceContext) => makeSpeechPicker({
+      sources, reservations, execute, peek, now, log: d.log,
+      evaluator: d.evaluator ?? (() => null),
+      lastBackoff: recipient => {
+        const last = readPlanLogDays(d.stateDir, 14).filter(e => e.chatId === recipient && e.backoff).at(-1)
+        return last ? Date.parse(last.at) : null
+      },
+      record(recipient, at, choice, why, backoff) {
+        const iso = new Date(at).toISOString()
+        appendPlanLog(d.stateDir, iso.slice(0, 10), { at: iso, chatId: recipient, candidates: [], decision: choice ?? 'none', why, source: why.startsWith('fallback:') ? 'fallback' : 'model', backoff })
+      },
+      async context(recipient, candidates) {
+        let persona = '', observations: object[] = []
+        try { persona = readFileSync(join(d.stateDir, 'memory', recipient, 'persona.md'), 'utf8').slice(0, 300) } catch { /* no persona */ }
+        try { observations = (await makeObservationsStore(d.db, recipient).listActive()).slice(-3).map(o => ({ tone: o.tone, body: o.body.slice(0, 80) })) } catch { /* no observations */ }
+        return { now: now(), persona, observations, lastInbound: await makeMessagesStore(d.db).latestInboundTs(recipient), lastInitiativeAt: ledger.lastInitiativeAt(recipient), earlierToday: readPlanLogDays(d.stateDir, 2).filter(e => e.chatId === recipient).slice(-5), sources: await sourceContext(candidates) }
+      },
+    }), now),
     care: (chatId) => careLevel(chatId, d.chatPrefs.get(chatId), loadCompanionConfig(d.stateDir).default_chat_id ?? undefined),
     quietEndsAt: (chatId, nowMs) => quietEndsAt(d.chatPrefs.get(chatId).quiet, nowMs, loadCompanionConfig(d.stateDir).timezone),
     outbound: d.proactive,

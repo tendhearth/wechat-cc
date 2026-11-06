@@ -160,7 +160,7 @@ export function constrainPlan(plan: Plan, candidates: Candidate[], provenIds: re
   return { plan: out, downgraded: false }
 }
 
-export interface PlanLogEntry { at: string; chatId: string; candidates: PlanAction[]; decision: PlanAction; why: string; source: 'model' | 'fallback' | 'downgraded' }
+export interface PlanLogEntry { at: string; chatId: string; candidates: string[]; decision: string; backoff?: boolean; why: string; source: 'model' | 'fallback' | 'downgraded' }
 
 export function shouldReask(entries: readonly PlanLogEntry[], chatId: string, nowMs: number): boolean {
   const last = [...entries].reverse().find(e => e.chatId === chatId)

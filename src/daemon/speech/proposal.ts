@@ -36,7 +36,7 @@ export interface SpeechProposal {
 export type ProductionResult = 'silent' | 'blocked' | 'failed' | 'unknown' | 'completed'
 export interface SpeechSourceAdapter {
   /** Re-evaluate live source eligibility, including version/inbound changes. */
-  validate(proposal: SpeechProposal): boolean | Promise<boolean>
+  validate(proposal: SpeechProposal, nowMs: number): boolean | Promise<boolean>
   produce(proposal: SpeechProposal, outbound: ProactiveTurn, target?: string): Promise<ProductionResult>
 }
 export function sourceRules(p: SpeechProposal): { kind: SpeechKind; scheduled?: true; outing?: true } { return SPEECH_SOURCES[p.source] }

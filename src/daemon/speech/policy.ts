@@ -54,8 +54,9 @@ export interface SpeechProposalRequest extends SpeechRequest {
   createdAt?: number
   expiresAt?: number
   payloadRef?: import('./proposal').SpeechProposal['payloadRef']
+  context?: () => Promise<object>
   targets?: readonly string[]
-  validate?: () => boolean | Promise<boolean>
+  validate?: (nowMs: number) => boolean | Promise<boolean>
 }
 
 export interface SpeechPolicy {
@@ -167,6 +168,7 @@ export function makeSpeechPolicy(deps: {
   const policy: SpeechPolicy = {
     propose(req, produce) {
       if (originOf(req.kind) !== 'initiative') return policy.say(req, produce)
+      if (submit && req.perKind && !req.perKind.ok) return execute(req, produce)
       if (submit) return submit(req, produce)
       // Minimal policy embeddings have no daemon scheduler. Production wiring always installs it.
       return policy.say(req, produce)
@@ -310,11 +312,11 @@ export function makeSpeechPolicy(deps: {
       write({ kind: s.kind, origin: originOf(s.kind), chatId, outcome: 'dropped', reason: 'story_limit', channel: null, ts: new Date(t).toISOString() })
       deps.log('SPEECH', `social_story chat=${chatId} older pending story left in the bag (one story per flush)`)
     }
-    let tried = 0
-    for (const item of own.filter(i => i.kind !== 'social_story' || i === stories.at(-1))) {
-      if (tried >= budget) break
+    let stopped = false
+    const tasks = own.filter(i => i.kind !== 'social_story' || i === stories.at(-1)).slice(0, budget).map(item => async () => {
+      if (stopped) return 0
       let sent = false, undeliverable = false
-      const o = await policy.propose({ source: item.kind === 'sticker' ? 'sticker' : 'social', summary: item.text.slice(0, 1000), ref: `pending:${item.id}`, createdAt: Date.parse(item.at), expiresAt: Date.parse(item.at) + (keepForMs(item.kind) ?? 0), payloadRef: { pending: item.id }, kind: item.kind, chatId }, async (turn) => {
+      const o = await policy.propose({ source: item.kind === 'sticker' ? 'sticker' : 'social', summary: item.text.slice(0, 1000), ref: `pending:${item.id}`, createdAt: Date.parse(item.at), expiresAt: item.expiresAt ?? Date.parse(item.at) + (keepForMs(item.kind) ?? 0), payloadRef: { pending: item.id }, kind: item.kind, chatId }, async (turn) => {
         try {
           // 带图的先发图;图发不出去 ⇒ 这一样什么都不说,**不退成一句光秃秃的文字**(新贴纸那一句的老规矩)
           const a = item.attach
@@ -326,21 +328,28 @@ export function makeSpeechPolicy(deps: {
           sent = item.text ? !(await turn.sendText(chatId, item.text)).error : true
         } catch { sent = false }
       })
-      if ('defer' in o) continue
-      if ('drop' in o) { deps.pending!.remove(chatId, [item.id], 0); continue }   // 别烦我 / 频率:账上已经记了 dropped
-      tried++
+      if ('defer' in o) return 0
+      if ('drop' in o) { deps.pending!.remove(chatId, [item.id], 0); return 0 }   // 别烦我 / 频率:账上已经记了 dropped
       if (sent || undeliverable) {
         deps.pending!.remove(chatId, [item.id], 0)
         deps.log('SPEECH', `${item.kind} chat=${chatId} pending ${undeliverable ? 'item not deliverable (image) — dropped, it stays in the library / bag' : 'item said'}`)
       } else {
+        stopped = true
         const fails = deps.pending!.failed(chatId, [item.id], t)
         deps.log('SPEECH', `${item.kind} chat=${chatId} pending send failed (try ${fails}) — backing off`)
-        break
       }
-    }
-    return tried
+      return 1
+    })
+    const attempts: number[] = []
+    if (submit) attempts.push(...await Promise.all(tasks.map(run => run())))
+    else for (const run of tasks) attempts.push(await run())
+    return attempts.reduce((sum: number, n) => sum + n, 0)
   }
-  submit = deps.proposals?.(policy.say.bind(policy), policy.peek.bind(policy))
+  const execute = policy.say.bind(policy)
+  submit = deps.proposals?.(execute, policy.peek.bind(policy))
+  if (submit) policy.say = (req, produce) => originOf(req.kind) === 'initiative'
+    ? Promise.resolve({ drop: true, reason: 'proposal_required' })
+    : execute(req, produce)
   return policy
 }
 
