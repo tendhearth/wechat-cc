@@ -7,11 +7,12 @@ import { BackendError, type Backend, type ChatPageT } from '../backend/types'
 import { clearDrafts, getDraft, putReceipt, setDraft } from './drafts'
 import { withProviders } from './providers.test-support'
 import Chat from '../ui/ConversationScreen'
+const scrollHost = vi.hoisted(() => ({ offset: vi.fn() }))
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => ({}), useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
 vi.mock('react-native', async () => {
-  const { createElement, forwardRef } = await import('react')
+  const { createElement, forwardRef, useImperativeHandle } = await import('react')
   const { nativeBoundary } = await import('../ui/native-motion.test-support')
   // 无障碍「激活」= 点一下(发送键是 View + onAccessibilityAction,没有 onPress)
   const View = ({ children, testID, accessibilityLabel, accessibilityRole, onAccessibilityAction }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole,
@@ -19,7 +20,10 @@ vi.mock('react-native', async () => {
   const Text = ({ children, testID }: any) => createElement('span', { 'data-testid': testID }, children)
   const Pressable = ({ children, testID, accessibilityLabel, disabled, onPress }: any) => createElement('button', { 'data-testid': testID, 'aria-label': accessibilityLabel, disabled, onClick: onPress }, children)
   const TextInput = forwardRef<any, any>(({ value, onChangeText, testID }: any, ref) => createElement('textarea', { ref, value, 'data-testid': testID, onInput: (e: any) => onChangeText(e.currentTarget.value) }))
-  const FlatList = ({ data, renderItem, ListEmptyComponent, ListFooterComponent }: any) => createElement('article', null, data.length ? data.map((item: any) => createElement('section', { key: item.key }, renderItem({ item }))) : ListEmptyComponent, ListFooterComponent)
+  const FlatList = forwardRef<any, any>(({ data, renderItem, ListEmptyComponent, ListFooterComponent, onScroll, testID }: any, ref) => {
+    useImperativeHandle(ref, () => ({ scrollToOffset: scrollHost.offset, scrollToIndex() {} }))
+    return createElement('article', { 'data-testid': testID, onScroll: (event: any) => onScroll?.({ nativeEvent: { contentOffset: { y: event.currentTarget.scrollTop } } }) }, data.length ? data.map((item: any) => createElement('section', { key: item.key }, renderItem({ item }))) : ListEmptyComponent, ListFooterComponent)
+  })
   const Modal = ({ children, visible }: any) => visible ? createElement('section', { role: 'dialog' }, children) : null
   return { ...nativeBoundary(), View, Text, Pressable, TextInput, FlatList, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View }
 
@@ -43,10 +47,23 @@ async function mount(page: ChatPageT, say: Backend['chatSay'] = vi.fn(), fail = 
   await act(() => root.render(withProviders(createElement(Chat), { backend, lang }))); await flush()
   return { read, say, backend }
 }
-beforeEach(() => { clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
+beforeEach(() => { scrollHost.offset.mockClear(); clearDrafts(); container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
 afterEach(async () => { await act(() => root.unmount()); container.remove() })
 
 describe('native chat feedback', () => {
+  it('announces new changes while reading old messages and moves only after an explicit tap', async () => {
+    let page = empty(), ctx!: import('./providers.test-support').TestCtx
+    const say = vi.fn(), backend = { ...makeDemoBackend(), chat: async () => page, chatSay: say }
+    await act(() => root.render(withProviders(createElement(Chat), { backend, onCtx: c => { ctx = c } }))); await flush()
+    const list = byId('chat-list')
+    await act(() => { list.scrollTop = 200; list.dispatchEvent(new Event('scroll')) })
+    page = { ...page, messages: [{ id: 'fresh', role: 'cc', source: 'phone', text: '新的回复', at: Date.now(), truncated: false, kind: 'text' }] }
+    await act(() => ctx.store.revalidateAll()); await flush()
+    expect(byId('conversation-new-updates')).not.toBeNull(); expect(scrollHost.offset).not.toHaveBeenCalled()
+    await click('conversation-new-updates')
+    expect(scrollHost.offset).toHaveBeenCalledWith({ offset: 0, animated: false }); expect(say).not.toHaveBeenCalled()
+  })
+
   it('keeps uncertain explanation behind the affected message and checks only by reading', async () => {
     setDraft('chat', '新的草稿')
     const at = Date.now(); putReceipt({ requestId: 'uncertain', text: '原文', at, localAt: at })

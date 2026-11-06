@@ -30,6 +30,11 @@ describe('一个主页', () => {
     expect(readFileSync(join(__dirname, '../app/all.tsx'), 'utf8')).toContain('/chat-search?scope=work')
     expect(existsSync(join(__dirname, 'HomeScreen.tsx'))).toBe(false)
   })
+  it('cold private browsing routes retain the welcome/identity gate', () => {
+    for (const route of ['all', 'together', 'chat-search', 'topic', 'topics', 'cc-activity']) {
+      expect(readFileSync(join(__dirname, `../app/${route}.tsx`), 'utf8'), route).toContain('<WelcomeGate>')
+    }
+  })
   it('批准是一件事的一步:/approval 只剩重定向到 /matter/<id>/decide', () => {
     const src = readFileSync(join(__dirname, '../app/approval/[id].tsx'), 'utf8')
     expect(src).toContain('<Redirect')

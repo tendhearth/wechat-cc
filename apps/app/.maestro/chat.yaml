@@ -32,7 +32,15 @@ appId: com.tendhearth.app
       - assertVisible:
           id: chat-send
           enabled: true
-- hideKeyboard
+# iOS 的 multiline 输入没有通用 hideKeyboard 动作；打开只读模型层再返回收起键盘。
+- tapOn:
+    id: chat-model-open
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
 - tapOn:
     id: chat-send
     waitToSettleTimeoutMs: 300

@@ -80,8 +80,9 @@ appId: com.tendhearth.app
     visible:
       id: chat-input
     timeout: 5000
+- runFlow: subflows/_work.yaml
 - tapOn:
-    id: conversation-waiting
+    id: row-matter-a1b2c3d4
 - extendedWaitUntil:
     visible:
       id: approval-title
@@ -92,7 +93,7 @@ appId: com.tendhearth.app
     id: topbar-back
 - extendedWaitUntil:
     visible:
-      id: now-cc
+      id: search-work
     timeout: 5000
 # 同 demo-walkthrough:第一下点标签偶尔没生效,没切过去就再点一次
 - runFlow: subflows/_work.yaml

@@ -26,6 +26,10 @@ export const DEMO_CHAT_REPLY_MS = 5000
 
 export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
+  const topicOpened = new Map<string, string>()
+  const topicReceipts = new Map<string, import('./types').TopicOpenT>()
+  let topicRevision = 0
+  const topicEntryTime = new Date(now()).toISOString()
   let lastLang: Lang = opts.lang ?? 'en' // 主题快照(approvals 摘要、agents 标题)用最近一次读的语言;读本身按参数给文案
   const schedule = (fn: () => void, ms: number) => (opts.setTimeout ?? globalThis.setTimeout)(fn, ms)
 
@@ -189,8 +193,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   // ---- 快照与订阅 ----
   const list = () => order.map(id => entries.get(id)!)
   const phaseOf = (e: Entry) => e.detail.task?.phase ?? ((e.detail.matter.state === undefined ? e.detail.matter.status === 'replied' : e.detail.matter.state === 'done') ? 'replied' : 'working')
+  function topicsList(p: { view?: 'recent' | 'all'; cursor?: string }) {
+    const all = demoTopics({ view: 'all' }).topics.map(t => topicOpened.has(t.id) ? { ...t, bubbleState: 'open' as const, lastOpenedByOwnerAt: topicOpened.get(t.id)! } : t)
+      .sort((a, b) => (b.lastOpenedByOwnerAt ?? b.lastRecalledAt ?? '').localeCompare(a.lastOpenedByOwnerAt ?? a.lastRecalledAt ?? '') || a.id.localeCompare(b.id))
+    return { topics: p.view === 'all' ? all : all.slice(0, 6), nextCursor: null, revision: `demo-topics:${topicRevision}` }
+  }
   function snapshot(topic: Topic): unknown {
-    if (topic === 'topics') return { revision: 'demo-topics', recentIds: ['demo-backup', 'demo-trip'], openIds: ['demo-backup'], hasMoreOpen: false }
+    if (topic === 'topics') { const all = topicsList({ view: 'all' }); return { revision: all.revision, recentIds: all.topics.slice(0, 6).map(t => t.id), openIds: all.topics.filter(t => t.bubbleState === 'open').map(t => t.id), hasMoreOpen: false } }
     if (topic === 'approvals') {
       return list().flatMap(e => [
         ...e.detail.permissions.map(p => ({ taskId: e.detail.matter.id, kind: 'permission' as const, id: p.id, summary: `${p.tool}: ${p.description}`.slice(0, 80) })),
@@ -269,14 +278,21 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       cb(snapshot(topic as Topic) as never)
       return () => { set!.delete(cb) }
     },
-    async topics(p) { return demoTopics(p) },
+    async topics(p) { return topicsList(p) },
     async topicDetail(p) {
-      const topic = demoTopics({ view: 'all' }).topics.find(t => t.id === p.id)
+      const topic = topicsList({ view: 'all' }).topics.find(t => t.id === p.id)
       if (!topic) throw new BackendError('not_found')
       const matters = list().slice(0, 3).map(e => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null }))
-      return { topic, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: 'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: new Date(now()).toISOString(), updatedTs: new Date(now()).toISOString(), recalled: true }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: 'demo-topics' }
+      return { topic, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: 'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: topicEntryTime, updatedTs: topicEntryTime, recalled: true }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: `demo-topics:${topicRevision}` }
     },
-    async topicOpen(id) { if (!demoTopics({ view: 'all' }).topics.some(t => t.id === id)) throw new BackendError('not_found'); return { id, bubbleState: 'open', revision: 'demo-topics' } },
+    async topicOpen(id, requestId) {
+      const receipt = topicReceipts.get(requestId)
+      if (receipt) { if (receipt.id !== id) throw new BackendError('invalid'); return receipt }
+      if (!topicsList({ view: 'all' }).topics.some(t => t.id === id)) throw new BackendError('not_found')
+      topicOpened.set(id, new Date(now()).toISOString()); topicRevision++
+      const result = { id, bubbleState: 'open' as const, revision: `demo-topics:${topicRevision}` }
+      topicReceipts.set(requestId, result); publish([]); return result
+    },
     async matterHistory(l) { noteLang(l); return list().map(e => localize(e, l).matter) },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
     // 「CC 最近在忙」(M5c):三件 act,点进去是它们的轮(和主人的事分开,不进 matters())
@@ -751,6 +767,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
+    reset() { topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }

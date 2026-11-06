@@ -1,3 +1,4 @@
+import { WelcomeGate } from '../ui/WelcomeGate'
 import { useRouter } from 'expo-router'
 import { ScrollView } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -11,7 +12,9 @@ import { CompanionCard } from '../ui/CompanionCard'
 import { TopBar } from '../ui/TopBar'
 import { space } from '../ui/tokens'
 import { useTheme } from '../ui/useTheme'
-export default function CcActivity() {
+export default function CcActivity() { return <WelcomeGate><CcActivityContent /></WelcomeGate> }
+
+export function CcActivityContent() {
   const router = useRouter(), { c } = useTheme(), lang = useLang(), now = Date.now()
   const acts = ccActsView(useCcActs(), now, lang), companion = useCompanion()
   const card = companion.home ? companionCard(companion.home.events, companion.home.seenUntil, now, companion.localSeen) : null

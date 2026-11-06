@@ -36,18 +36,21 @@ appId: com.tendhearth.app
 - scrollUntilVisible:
     element:
       id: row-matter-e5f6a7b8
+    centerElement: true
     direction: DOWN
 - assertVisible:
     id: row-matter-e5f6a7b8
 - scrollUntilVisible:
     element:
       id: row-matter-c9d0e1f2
-    direction: DOWN
+    centerElement: true
+    direction: UP
 - assertVisible:
     id: row-matter-c9d0e1f2
 - scrollUntilVisible:
     element:
       id: row-matter-a1b2c3d4
+    centerElement: true
     direction: UP
 - tapOn:
     id: row-matter-a1b2c3d4

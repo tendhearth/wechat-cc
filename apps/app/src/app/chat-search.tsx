@@ -1,3 +1,4 @@
+import { WelcomeGate } from '../ui/WelcomeGate'
 import { uuid } from '../net/uuid'
 import { WorkSearchResults } from '../ui/WorkSearchResults'
 import { Button } from '../ui/Button'
@@ -24,7 +25,9 @@ const pad = (n: number) => String(n).padStart(2, '0')
 const when = (ms: number) => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}` }
 
 // 搜和 CC 的对话(2026-10-06,对标 Orca 会话历史搜索):微信、电脑、手机说过的都在这条对话里。新的在前,最多 30 条。
-export default function ChatSearch() {
+export default function ChatSearch() { return <WelcomeGate><ConversationSearch /></WelcomeGate> }
+
+export function ConversationSearch() {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()

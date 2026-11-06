@@ -47,6 +47,7 @@ appId: com.tendhearth.app
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-api
+    centerElement: true
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-blog
@@ -81,6 +82,7 @@ appId: com.tendhearth.app
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-api
+    centerElement: true
 - tapOn:
     id: row-terminal-demo-cli-api
 - extendedWaitUntil:

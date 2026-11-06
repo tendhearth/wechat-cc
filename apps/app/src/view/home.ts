@@ -30,6 +30,8 @@ export type HomeInput = {
 export type HomeRow = {
   id: string
   source: 'matter' | 'terminal'
+  /** Canonical matter behind a terminal session, when the daemon provides it. */
+  matterId?: string
   href: string
   title: string
   /** 第二行小字:等你时是这件事的标题,做完类是状态词;终端是 项目 · 状态 · 多久前。没有 ⇒ null。 */
@@ -86,7 +88,7 @@ function matterRows(input: HomeInput): HomeRow[] {
   }))
   return [...orphans, ...matters
     // CC 自己做的事(act)不进这份列表(主人 10-31 定:不混排),只在「CC 最近在忙」那一组(view/cc-acts.ts);daemon 送来了也不放
-    .filter(m => !isMatterArchived(m) && m.kind !== 'chat' && m.kind !== 'act')
+    .filter(m => !isMatterArchived(m) && m.kind !== 'chat' && m.kind !== 'act' && !(m.kind === 'terminal' && input.terminal.some(s => s.matter_id === m.id)))
     .map(m => {
       const task = agents.tasks.find(x => x.id === m.id)
       const status = statusOfMatter(m, task ? { status: 'running', phase: task.phase } : null, pendingN(m.id))
@@ -123,6 +125,7 @@ function terminalHomeRows(input: HomeInput): HomeRow[] {
       return {
         id: r.id,
         source: 'terminal' as const,
+        ...(s.matter_id ? { matterId: s.matter_id } : {}),
         // 有那件事 ⇒ 点进同一个详情页(M4c);老 daemon 不带 matter_id ⇒ 旧地址
         href: s.matter_id ? `/matter/${encodeURIComponent(s.matter_id)}` : `/terminal/${encodeURIComponent(r.id)}`,
         title: r.pendingText || r.project,

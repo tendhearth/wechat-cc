@@ -19,9 +19,17 @@ appId: com.tendhearth.app
 - assertVisible:
     id: topic-matter-a1b2c3d4
 - takeScreenshot: t5-topic-sheet
+# 长内容可从底部 sheet 展开为全屏，再读记忆与来源。
+- swipe:
+    start: 50%, 47%
+    end: 50%, 12%
+    duration: 600
+- waitForAnimationToEnd
+- takeScreenshot: t5-topic-expanded
 - scrollUntilVisible:
     element:
       id: topic-entry-demo-entry
+    centerElement: true
     direction: DOWN
 - tapOn:
     id: topic-entry-demo-entry

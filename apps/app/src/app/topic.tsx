@@ -1,11 +1,13 @@
+import { WelcomeGate } from '../ui/WelcomeGate'
 import { BusyIndicator } from '../ui/motion'
 import { t } from '../i18n'
-import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useEffect, useRef, useState } from 'react'
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { TopicDetailT } from '../backend/types'
 import { useBackendCtx } from '../state/BackendProvider'
+import { isFresh } from '../state/store'
 import { useConnection, useQuery } from '../state/hooks'
 import { useTopicsRevision } from '../state/useTopics'
 import { useLang } from '../i18n/useLang'
@@ -20,16 +22,20 @@ import { Txt } from '../ui/Txt'
 import { space } from '../ui/tokens'
 import { useTheme } from '../ui/useTheme'
 
-export default function Topic() {
+export default function Topic() { return <WelcomeGate><TopicBubble /></WelcomeGate> }
+
+export function TopicBubble() {
   const { id = '', open } = useLocalSearchParams<{ id?: string; open?: string }>()
   const router = useRouter(), { c } = useTheme(), lang = useLang(), zh = lang === 'zh-Hans'
-  const { backend } = useBackendCtx(), conn = useConnection()
+  const { backend, store } = useBackendCtx(), conn = useConnection()
   const enabled = conn.topics === 'v1' && conn.state === 'online'
   const query = useQuery(`topic:${id}`, () => backend.topicDetail({ id }), { enabled, refreshOnMount: true })
   useTopicsRevision(enabled, query.refresh)
   const [stored, setData] = useState<TopicDetailT>()
   const dataBackend = useRef(backend)
-  const data = conn.topics === 'v1' && query.error !== 'not_found' && dataBackend.current === backend ? stored : undefined
+  const data = conn.topics === 'v1' && query.error !== 'not_found' && stored?.topic.id === id && dataBackend.current === backend ? stored : undefined
+  const folded = useRef(false)
+  const [opened, setOpened] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const generation = useRef(0), lock = useRef(false)
@@ -40,9 +46,21 @@ export default function Topic() {
     let active = true
     // Same click retries with the same request id; reading and closing never writes closed.
     if (request.current.id !== id) request.current = { id, requestId: uuid() }
-    void backend.topicOpen(id, request.current.requestId).then(() => { if (active) void query.refresh() }, () => { if (active) setNote(zh ? '尚未同步' : 'Not synced') })
+    folded.current = false
+    setOpened(false)
+    void (async () => {
+      try {
+        await backend.topicOpen(id, request.current.requestId)
+        // An older read may still be in flight. Only a read issued after the click's
+        // receipt can establish the open state we later fold after successful sleep.
+        const since = store.clock(), current = store.query(`topic:${id}`, () => backend.topicDetail({ id }))
+        await current.revalidate(since)
+        const read = current.get()
+        if (active && isFresh(read, since) && !read.error && read.data?.topic.bubbleState === 'open') setOpened(true)
+      } catch { if (active) setNote(zh ? '尚未同步' : 'Not synced') }
+    })()
     return () => { active = false }
-  }, [backend, id, open, enabled, query.refresh, zh])
+  }, [backend, store, id, open, enabled, zh])
   const more = async (section: 'entries' | 'matters' | 'messages') => {
     const cursor = data?.pages[section].nextCursor
     if (!enabled || !cursor || lock.current) return
@@ -56,7 +74,15 @@ export default function Topic() {
     } catch { setNote(zh ? '暂时读不到，重试' : 'Cannot read right now. Retry') }
     finally { lock.current = false; setBusy(false) }
   }
-  const back = () => router.canGoBack() ? router.back() : router.replace('/')
+  const back = () => { folded.current = true; if (router.canGoBack()) router.back(); else router.replace('/') }
+  useFocusEffect(useCallback(() => {
+    // A background revision must not pop the matter the owner is reading above
+    // this sheet. Fold only when this selection itself is focused again.
+    if (opened && !folded.current && !query.error && data?.topic.bubbleState === 'closed') {
+      folded.current = true
+      if (router.canGoBack()) router.back(); else router.replace('/')
+    }
+  }, [opened, query.error, data?.topic.bubbleState, data?.revision, router]))
   return <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
     <TopBar title={data?.topic.title ?? (zh ? '话题' : 'Topic')} onBack={back} />
     <ScrollView testID="topic-sheet" contentContainerStyle={{ padding: space.xl, gap: space.l }}>

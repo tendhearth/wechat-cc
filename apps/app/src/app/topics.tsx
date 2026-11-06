@@ -1,3 +1,4 @@
+import { WelcomeGate } from '../ui/WelcomeGate'
 import { BusyIndicator } from '../ui/motion'
 import { useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
@@ -14,7 +15,9 @@ import { Button } from '../ui/Button'
 import { Txt } from '../ui/Txt'
 import { space } from '../ui/tokens'
 import { useTheme } from '../ui/useTheme'
-export default function Topics() {
+export default function Topics() { return <WelcomeGate><TopicsList /></WelcomeGate> }
+
+export function TopicsList() {
   const lang = useLang(), zh = lang === 'zh-Hans', router = useRouter(), { c } = useTheme()
   const [cursor, setCursor] = useState<string>(), [q, setQ] = useState('')
   const page = useTopics({ view: 'all', cursor })

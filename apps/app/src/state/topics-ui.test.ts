@@ -3,10 +3,10 @@ import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend } from '../backend/types'
-import { cleanup, mount } from '../ui/native-motion.test-support'
+import { cleanup, focus, mount } from '../ui/native-motion.test-support'
 import { withProviders } from './providers.test-support'
 import { TopicRow } from '../ui/TopicRow'
-import Topic from '../app/topic'
+import { TopicBubble as Topic } from '../app/topic'
 const host = vi.hoisted(() => ({ params: {} as { id?: string; open?: string }, push: vi.fn(), back: vi.fn() }))
 vi.mock('react-native', async () => (await import('../ui/native-motion.test-support')).nativeBoundary())
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
@@ -45,6 +45,25 @@ describe('native topic surfaces', () => {
     await act(() => resolve(old)); await flush(); await flush()
     expect(topics).toHaveBeenCalledTimes(2); expect(ui.container.textContent).toContain('最新的备份')
     await act(() => update?.({ revision: 'r3' })); await flush(); expect(topics).toHaveBeenCalledTimes(2)
+  })
+
+  it('folds a successfully slept selection on return, without popping an overlaid matter or writing closed', async () => {
+    const demo = makeDemoBackend(), open = vi.fn(demo.topicOpen)
+    let closed = false, update: ((data: unknown) => void) | undefined
+    const backend: Backend = { ...demo, topicOpen: open, topicDetail: async p => {
+      const d = await demo.topicDetail(p)
+      return { ...d, topic: { ...d.topic, bubbleState: closed ? 'closed' : 'open' }, revision: closed ? 'sleep-2' : 'open-1' }
+    }, subscribe: (name, cb) => {
+      if (name !== 'topics') return demo.subscribe(name, cb)
+      update = cb as (data: unknown) => void; return () => { update = undefined }
+    } }
+    host.params = { id: 'demo-backup', open: '1' }
+    await mount(withProviders(createElement(Topic), { backend })); await flush(); await flush()
+    await focus(false)
+    closed = true; await act(() => update?.({ revision: 'sleep-2' })); await flush()
+    expect(host.back).not.toHaveBeenCalled()
+    await focus(true)
+    expect(host.back).toHaveBeenCalledOnce(); expect(open).toHaveBeenCalledOnce()
   })
 
   it('opens only an explicit click, shows source-backed memory, refreshes in place, and clears a deleted selection', async () => {

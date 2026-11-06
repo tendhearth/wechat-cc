@@ -16,6 +16,7 @@ appId: com.tendhearth.app
 - scrollUntilVisible:
     element:
       id: row-matter-f3a4b5c6
+    centerElement: true
 - tapOn:
     id: row-matter-f3a4b5c6
 - extendedWaitUntil:

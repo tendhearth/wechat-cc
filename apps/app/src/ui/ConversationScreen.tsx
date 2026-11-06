@@ -138,8 +138,8 @@ export default function Chat() {
   }, { enabled: references.length > 0 })
   const allMatters = [...new Map([...(history.data ?? []), ...work.matters].map(m => [m.id, m])).values()]
   const visibleMatters = allMatters.map(m => references.includes(`matter:${m.id}`) && isMatterArchived(m) ? { ...m, status: 'done' as const, archivedAt: null } : m)
-  const workView = homeView({ ...work, matters: visibleMatters, terminal: terminal.sessions ?? [], known: backend.mode === 'demo' || online, now: Date.now(), lang, backWindowMs: null })
-  const waiting = workView.groups.find(g => g.key === 'waiting')?.rows ?? []
+  const workView = homeView({ ...work, matters: visibleMatters, terminal: terminal.sessions ?? [], known: backend.mode === 'demo' || online, now: Date.now(), lang, backWindowMs: null, keepStaleWaiting: true })
+  const waiting = backend.mode === 'demo' || online ? workView.groups.find(g => g.key === 'waiting')?.rows ?? [] : []
   const [waitingIndex, setWaitingIndex] = useState(0)
   const companion = useCompanion()
   const card = companion.home ? companionCard(companion.home.events, companion.home.seenUntil, Date.now(), companion.localSeen) : null
@@ -161,6 +161,15 @@ export default function Chat() {
     const timer = setTimeout(() => { scrolled.current = key; listRef.current?.scrollToIndex({ index: messageIndex, animated: false, viewPosition: 0.5 }) }, 150)
     return () => clearTimeout(timer)
   }, [targetKey, locate, messageIndex])
+  const [readingOlder, setReadingOlder] = useState(false)
+  const [newChanges, setNewChanges] = useState(false)
+  const lastBubble = chat.bubbles.at(-1)
+  const revision = JSON.stringify([lastBubble?.key, lastBubble?.text.length, work.matters.map(m => [m.id, m.updatedAt, m.state, m.status]), work.approvals.map(a => a.id)])
+  const readRevision = useRef(revision)
+  useEffect(() => {
+    if (!readingOlder) { readRevision.current = revision; setNewChanges(false) }
+    else if (readRevision.current !== revision) setNewChanges(true)
+  }, [readingOlder, revision])
   const loadFailed = !chat.page && chat.error !== undefined && !chat.noOwner
 
   return (
@@ -176,7 +185,10 @@ export default function Chat() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <FlatList
           ref={listRef}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 80 }}
+          keyboardDismissMode="interactive"
+          onScroll={event => setReadingOlder(event.nativeEvent.contentOffset.y > 80)}
+          scrollEventThrottle={100}
           onScrollToIndexFailed={info => listRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false })}
           testID="chat-list"
           inverted
@@ -213,6 +225,7 @@ export default function Chat() {
           )}
         />
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
+          {readingOlder && newChanges ? <Button testID="conversation-new-updates" kind="secondary" label={lang === 'zh-Hans' ? '有新变化 · 回到最新' : 'New updates · Go to latest'} onPress={() => { listRef.current?.scrollToOffset({ offset: 0, animated: false }); setReadingOlder(false); setNewChanges(false) }} /> : null}
           {waiting.length ? <Pressable testID="conversation-waiting" accessibilityRole="button" onPress={() => {
             const row = waiting[waitingIndex % waiting.length]!
             rememberReference(backend, row.id, row.source); setWaitingIndex(i => i + 1)

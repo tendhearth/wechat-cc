@@ -23,4 +23,13 @@ describe('conversation references', () => {
     expect(ref).toMatchObject({ key: 'ref:matter:old', at: 1, historical: true })
     expect(ref.bubble).toBeUndefined()
   })
+  it('a terminal and its matter share one reference even when opened from a topic by matter id', () => {
+    const matters = [matter('terminal-matter', { kind: 'terminal' })]
+    const terminal = [{ session_id: 'shell', code: 'shell', source: 'claude' as const, status: 'idle' as const, stale: false, project: 'blog', machine: null, last_summary: 'done', last_event_at: 10, last_prompt_at: null, created_at: 1, pending: null, matter_id: 'terminal-matter' }]
+    const projected = homeView({ matters, approvals: [], agents: { tasks: [], running: 0, waiting: 0 }, terminal, known: true, now: 20, lang: 'zh-Hans', backWindowMs: null })
+    expect(projected.groups.flatMap(g => g.rows)).toHaveLength(1)
+    expect(conversationItems([], projected, matters, 'owner', ['matter:terminal-matter']).map(i => i.key)).toEqual(['ref:matter:terminal-matter'])
+    expect(conversationItems([], projected, matters, 'owner', ['terminal:shell']).map(i => i.key)).toEqual(['ref:matter:terminal-matter'])
+  })
+
 })

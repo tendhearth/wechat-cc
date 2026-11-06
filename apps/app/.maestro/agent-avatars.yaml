@@ -18,11 +18,13 @@ appId: com.tendhearth.app
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-api
+    centerElement: true
     direction: DOWN
 - takeScreenshot: a02-terminal
 - scrollUntilVisible:
     element:
       id: row-matter-a1b2c3d4
+    centerElement: true
     direction: UP
 - tapOn:
     id: row-matter-a1b2c3d4
