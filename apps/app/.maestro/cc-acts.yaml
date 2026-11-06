@@ -1,5 +1,4 @@
-# 「CC 最近在忙」(M5c,演示模式):主页最末一组默认折叠 → 点开三行(记忆整理 / 信 / 打猎,按最近一轮排)
-# → 点「信」进详情:两轮(新的在前),每轮一句 + 时间 + 几步 → 返回。CC 自己做的事不在等你 / 在做 / 带回来的里。每一步截图。
+# T5: 原有功能验收移到唯一对话、搜索引用与原详情。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -7,14 +6,21 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: home-group-waiting
+      id: chat-input
+    timeout: 10000
+- tapOn:
+    id: home-more
+- tapOn:
+    id: conversation-cc-acts
+- extendedWaitUntil:
+    visible:
+      id: home-group-cc-acts
     timeout: 10000
 - scrollUntilVisible:
     element:
       id: home-group-cc-acts
     direction: DOWN
     centerElement: true
-# 默认折叠:看得到组标题,看不到行
 - assertNotVisible:
     id: row-act-acc0a001
 - takeScreenshot: a01-cc-acts-collapsed
@@ -28,8 +34,8 @@ appId: com.tendhearth.app
     id: row-act-acc0a001
 - assertVisible:
     id: row-act-acc0a003
-- assertVisible: "整理了 3 条记忆.*|Tidied memories, 3 changed.*"
-- assertVisible: "写了一封信.*|Wrote you a letter.*"
+- assertVisible: 整理了 3 条记忆.*|Tidied memories, 3 changed.*
+- assertVisible: 写了一封信.*|Wrote you a letter.*
 - takeScreenshot: a02-cc-acts-open
 - tapOn:
     id: row-act-acc0a001
@@ -39,8 +45,8 @@ appId: com.tendhearth.app
     timeout: 5000
 - assertVisible:
     id: act-turn-1
-- assertVisible: "信写好了，420 字，2 页信纸|Letter written, 420 characters, 2 pages"
-- assertVisible: "写好了一封信，还没寄出|Wrote a letter, not sent yet"
+- assertVisible: 信写好了，420 字，2 页信纸|Letter written, 420 characters, 2 pages
+- assertVisible: 写好了一封信，还没寄出|Wrote a letter, not sent yet
 - takeScreenshot: a03-act-detail-letters
 - assertNotVisible:
     id: progress-say
@@ -54,7 +60,6 @@ appId: com.tendhearth.app
     visible:
       id: home-group-cc-acts
     timeout: 5000
-# 返回后保留展开状态;再次折叠应藏起所有活动行。
 - assertVisible:
     id: row-act-acc0a001
 - tapOn:

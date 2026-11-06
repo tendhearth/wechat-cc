@@ -1,3 +1,4 @@
+import { newReferences } from './conversation-references'
 // @vitest-environment happy-dom
 import { createHash } from 'node:crypto'
 import { act, createElement, type ReactNode } from 'react'
@@ -339,7 +340,8 @@ describe('real LiveBackend + native compose inputs', () => {
     await next.type('另一件事草稿')
     await act(() => create.resolve(ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202))); await flush()
     expect(getDraft('new')).toBe('另一件事草稿')
-    expect(host.replace).toHaveBeenCalledWith(`/matter/${ID}`)
+    expect(host.dismissTo).toHaveBeenCalledWith({ pathname: '/', params: { reference: `matter:${ID}`, locate: expect.any(String) } })
+    expect(newReferences(host.backend)).toContain(`matter:${ID}`)
   })
   it('shows the same receipts on the real matter page and restores the exact original without overwriting a newer draft', async () => {
     const h = harness(); const ui = await mount(); await ui.type('\n**要求**\n'); await ui.click('compose-send')

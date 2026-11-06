@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useFocusEffect } from 'expo-router'
 import type { AgentsTopicT, ApprovalItemT, MatterT } from '../backend/types'
 import { useBackendCtx } from './BackendProvider'
@@ -16,6 +16,9 @@ export function useWork() {
   const agents = useTopic<AgentsTopicT>('agents') ?? NO_AGENTS
   const matters = useQuery<MatterT[]>('matters', l => backend.matters(l))
   const { refresh } = matters
+  const revision = JSON.stringify([approvalTopic, agents])
+  const seen = useRef(revision)
+  useEffect(() => { if (seen.current !== revision) { seen.current = revision; void refresh() } }, [revision, refresh])
   useFocusEffect(useCallback(() => { void refresh() }, [refresh]))
   return {
     approvals, approvalsKnown: approvalTopic !== undefined, agents, matters: matters.data ?? NO_MATTERS,

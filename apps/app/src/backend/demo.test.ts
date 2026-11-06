@@ -558,3 +558,18 @@ describe('演示:待办与 CC 画的你(收敛清单 ④)', () => {
     expect(p.todos.active.map(r => r.id)).toEqual([101, 102, 103])
   })
 })
+
+it('demo topics preserve readonly reads, publish owner opens, and deduplicate the click receipt', async () => {
+  const backend = makeDemoBackend({ now: () => 1_800_000_000_000 })
+  const before = await backend.topics({ view: 'all' })
+  expect(before.topics.find(t => t.id === 'demo-trip')?.bubbleState).toBe('closed')
+  const snapshots: unknown[] = []; backend.subscribe('topics', value => snapshots.push(value))
+  await backend.topicDetail({ id: 'demo-trip' })
+  expect(snapshots).toHaveLength(1)
+  const receipt = await backend.topicOpen('demo-trip', 'click-1')
+  expect((await backend.topicDetail({ id: 'demo-trip' })).topic.bubbleState).toBe('open')
+  expect((await backend.topics({})).topics[0]?.id).toBe('demo-trip')
+  expect(await backend.topicOpen('demo-trip', 'click-1')).toEqual(receipt)
+  expect(snapshots).toHaveLength(2)
+  backend.dispose()
+})

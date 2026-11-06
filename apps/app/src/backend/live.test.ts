@@ -900,3 +900,26 @@ it('v1 keeps list defaults, search projection, say envelope, transcription field
   await expect(h.b.setTodo(1, 'resolved')).resolves.toBeUndefined()
   h.b.dispose()
 })
+
+describe('T4 topics use the shared v1 schemas and protected device transport', () => {
+  it('lists and reads without opening; explicit opens carry the same idempotency request id', async () => {
+    const topic = { id: 't1', title: '备份', description: '', summary: '', bubbleState: 'closed', lastRecalledAt: null, lastOpenedByOwnerAt: null, activityRevision: 0, matterSummary: { waiting: 0, running: 0, total: 0 } }
+    const empty = { total: 0, nextCursor: null }
+    const h = harness({
+      'GET /v1/memory/topics': ok({ topics: [topic], nextCursor: null, revision: 'r1' }),
+      'GET /v1/memory/topics/detail': ok({ topic, entries: [], matters: [], messages: [], pages: { entries: empty, matters: empty, messages: empty }, revision: 'r1' }),
+      'POST /v1/memory/topics/open': ok({ id: 't1', bubbleState: 'open', revision: 'r2' }),
+    })
+    expect((await h.b.topics({ view: 'recent', limit: 6 })).topics[0]?.bubbleState).toBe('closed')
+    await h.b.topicDetail({ id: 't1' })
+    expect(h.reqs.every(r => r.key.startsWith('GET'))).toBe(true)
+    await h.b.topicOpen('t1', REQ)
+    expect(h.reqs.at(-1)).toMatchObject({ key: 'POST /v1/memory/topics/open', body: { id: 't1', requestId: REQ }, retry: true })
+    const seen: unknown[] = []
+    h.b.subscribe('topics', d => seen.push(d))
+    h.last().subs.get('topics')?.({ revision: 'r2', recentIds: ['t1'], openIds: ['t1'], hasMoreOpen: false })
+    h.last().subs.get('topics')?.({ revision: 7 })
+    expect(seen).toHaveLength(1)
+    h.b.dispose()
+  })
+})

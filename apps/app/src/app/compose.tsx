@@ -1,3 +1,4 @@
+import { rememberReference } from '../state/conversation-references'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from 'react-native'
@@ -215,11 +216,13 @@ export default function Compose() {
     sending.current = true
     setBusy(true); setOutcome(null)
     let newId: string | null = null
+    let navigationId = ''
     const r = await submit(`compose:${draftKey}`, async () => {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
       const materials = !matter && images.length ? { draftId: materialDraftId(draftKey), attachmentIds: images.map(i => i.id) } : undefined
       // 换了图或模型就是新的一件:requestId 跟着正文、图、模型一起定
       const requestId = requestIdFor(draftKey, [body, materials?.attachmentIds.join(',') ?? '', execution ? JSON.stringify(execution) : '', project && isolated ? `worktree:${baseName}` : '', until ? `until:${until.maxRounds}:${until.command}` : ''].join('\u0000'))
+      navigationId = requestId
       if (matter) await backend.say(matter, body, requestId)
       else {
         if (materials) await uploadImages(backend, materials.draftId, images, bytesToBase64)
@@ -235,7 +238,7 @@ export default function Compose() {
       if (getDraft(myKey) === rawText) { deleteDraft(myKey); textRef.current = ''; setTextState('') }
       setImages([]); setImageNote(null)
       if (matter) router.back()
-      else router.replace(`/matter/${encodeURIComponent(newId ?? '')}`)
+      else { if (newId) rememberReference(backend, newId, 'matter', true); router.dismissTo({ pathname: '/', params: { reference: `matter:${newId}`, locate: navigationId } }) }
     } else {
       setOutcome(composeOutcome(r.error))
     }

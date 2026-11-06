@@ -1,0 +1,22 @@
+# 从唯一对话进入临时事项搜索；已在搜索时保留同一个层。
+appId: com.tendhearth.app
+---
+- runFlow:
+    when:
+      visible:
+        id: chat-search-open
+    commands:
+      - tapOn:
+          id: chat-search-open
+- extendedWaitUntil:
+    visible:
+      id: search-work
+    timeout: 10000
+- tapOn:
+    id: search-work
+- scrollUntilVisible:
+    element:
+      id: row-matter-a1b2c3d4
+    direction: UP
+    timeout: 15000
+    centerElement: true

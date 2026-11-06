@@ -6,6 +6,12 @@ appId: com.tendhearth.app
     id: welcome-pair
 - assertVisible:
     id: pair-steps
+# 输入框可能在滚动区屏幕外；先居中，避免误点固定位置上的扫码按钮。
+- scrollUntilVisible:
+    element:
+      id: pair-paste-input
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: pair-paste-input
 - inputText: "https://example.com/"
@@ -17,6 +23,12 @@ appId: com.tendhearth.app
 - assertVisible:
     id: pair-error
 - assertVisible: ".*Tendhearth.*配对码.*|.*isn’t a Tendhearth pairing code.*"
+# 输入框可能在滚动区屏幕外；先居中，避免误点固定位置上的扫码按钮。
+- scrollUntilVisible:
+    element:
+      id: pair-paste-input
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: pair-paste-input
 - eraseText: 40

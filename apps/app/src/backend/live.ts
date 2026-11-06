@@ -1,3 +1,4 @@
+import { observeTopics } from '../net/topics-capability'
 /**
  * live.ts — 真连接后端:经中继用协议包 v2 连回家里的 daemon(spec §4)。
  * 订阅主题拿摘要与版本号,req 拉详情;每个返回过 PHONE_API_SCHEMAS,每条事件过主题 schema;
@@ -11,7 +12,7 @@
  */
 import {
   makeProtocolClient, phoneRouteRequest, RESPONSE_SCHEMAS, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
-  HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic,
+  HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic, TopicsSnapshot, Matter,
   type ClientOpts, type ProtocolClient, type ProtocolSocket, type PhoneTransport,
 } from '@wechat-cc/protocol'
 import { INITIAL_CONNECTION, reduceConnection, type ConnEvent } from '../net/connection'
@@ -41,7 +42,7 @@ export type LiveDeps = {
 }
 
 const schemaOf = (topic: string) =>
-  topic === 'home' ? HomeTopic : topic === 'approvals' ? ApprovalsTopic : topic === 'agents' ? AgentsTopic : MatterTopic
+  topic === 'topics' ? TopicsSnapshot : topic === 'home' ? HomeTopic : topic === 'approvals' ? ApprovalsTopic : topic === 'agents' ? AgentsTopic : MatterTopic
 
 type Reg = { topic: Topic; cbs: Set<(d: unknown) => void>; off: (() => void) | null; last?: unknown; pinned: boolean }
 
@@ -56,6 +57,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
   let gen = 0
   let disposed = false
   let hookDepth = 0
+  let topicsSupported = false
 
   /** 在协议客户端的钩子里跑:期间对客户端的调用一律推迟(见文件头「重入」)。 */
   function hooked(fn: () => void): void {
@@ -71,7 +73,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
   function dispatch(e: ConnEvent): void {
     const next = reduceConnection(conn, e)
     if (next === conn) return
-    conn = next
+    conn = { ...next, topics: next.state === 'online' ? (topicsSupported ? 'v1' : undefined) : next.state === 'revoked' ? undefined : conn.topics }
     // 一个监听者抛错不能打断别的监听者,更不能打断 revoke() 后面的 closeClient()。
     for (const cb of [...connLs]) {
       try { cb(conn) } catch (e) { log(`connection listener threw (${e instanceof Error ? e.name : 'unknown'})`) }
@@ -113,7 +115,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     client = mk({
       // 协议客户端只说 v2(2026-10-25 v1 退休):回来 v1 ⇒ 当中继篡改,拒绝降级(downgrade_refused)
       ...d.clientOpts,
-      open: d.open,
+      open: () => observeTopics(d.open(), supported => { topicsSupported = supported }),
       token: d.token,
       build: d.build,
       onStatus: s => hooked(() => {
@@ -164,6 +166,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       else log(`${key}: ${code}`)
       throw new BackendError(code)
     }
+    if (req.key.includes('/memory/topics') && (my !== gen || connection().state === 'revoked')) throw new BackendError('revoked')
     let json: unknown = null
     try { json = res.json() } catch { /* 非 JSON:交给状态码判断 */ }
     const mapped = key === 'POST /v1/knowledge/facts/set_fact_status' && res.status < 400 ? null : mapPhoneError(res.status, json)
@@ -219,6 +222,21 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         r.off = null
         if (off) later(off)
       }
+    },
+    async topics(p) { return api.topics.list({ query: p }) },
+    async topicDetail(p) { return api.topics.detail({ query: p }) },
+    async topicOpen(id, requestId) { return api.topics.open({ body: { id, requestId }, retry: true }) },
+    async matterHistory() {
+      if (conn.state === 'revoked') throw new BackendError('revoked')
+      if (!client) throw new BackendError('offline')
+      if (client.routes?.() !== 'v1') return (await api.matters.list({ query: {} })).matters
+      const my = gen
+      const res = await client.request({ method: 'GET', path: '/v1/matters?status=open,replied,done,archived&exclude=chat,act,terminal&limit=200&taskState=1' })
+      if (gen !== my || connection().state === 'revoked') throw new BackendError('offline')
+      if (res.status !== 200) throw new BackendError(res.status === 404 ? 'not_found' : 'unavailable')
+      const parsed = Matter.array().safeParse(res.json<{ matters?: unknown }>().matters)
+      if (!parsed.success) throw new BackendError('unknown')
+      return parsed.data
     },
     async matters() {
       return (await api.matters.list({ query: {} })).matters

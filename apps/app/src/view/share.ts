@@ -75,8 +75,8 @@ export function normalizeShare(raw: unknown, max: number): ShareDraft {
 
 /** 两个去处:跟 CC 说 ⇒ 对话页(草稿键 'chat');交给 CC 做一件事 ⇒ 新交办(草稿键 'new')。都只预填,不自动发。 */
 export type ShareChoice = 'chat' | 'matter'
-export function shareRoute(choice: ShareChoice): { href: '/chat' | '/compose'; draftKey: 'chat' | 'new' } {
-  return choice === 'chat' ? { href: '/chat', draftKey: 'chat' } : { href: '/compose', draftKey: 'new' }
+export function shareRoute(choice: ShareChoice): { href: '/' | '/compose'; draftKey: 'chat' | 'new' } {
+  return choice === 'chat' ? { href: '/', draftKey: 'chat' } : { href: '/compose', draftKey: 'new' }
 }
 
 /** 没配对、也没选「先看看」⇒ 先去配对(分享留着,配好回来接着选);配了或在演示里 ⇒ 直接选。 */

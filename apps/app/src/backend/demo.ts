@@ -1,3 +1,4 @@
+import { demoTopics } from './demo-topics'
 import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_PORTRAIT_PNG, DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
@@ -8,7 +9,7 @@ import {
   demoName, demoNames, demoCcActs,
 } from './demo-data'
 
-type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
+type Topic = 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`
 type Copy = keyof typeof copy
 /** 事件记录:带 key 的在读时按请求的语言生成文案;text 是用户自己的字,原样保留。 */
 type EvRec = { kind: string; createdAt: number; key?: Copy; extra?: string; text?: string }
@@ -25,6 +26,10 @@ export const DEMO_CHAT_REPLY_MS = 5000
 
 export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
+  const topicOpened = new Map<string, string>()
+  const topicReceipts = new Map<string, import('./types').TopicOpenT>()
+  let topicRevision = 0
+  const topicEntryTime = new Date(now()).toISOString()
   let lastLang: Lang = opts.lang ?? 'en' // 主题快照(approvals 摘要、agents 标题)用最近一次读的语言;读本身按参数给文案
   const schedule = (fn: () => void, ms: number) => (opts.setTimeout ?? globalThis.setTimeout)(fn, ms)
 
@@ -188,7 +193,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   // ---- 快照与订阅 ----
   const list = () => order.map(id => entries.get(id)!)
   const phaseOf = (e: Entry) => e.detail.task?.phase ?? ((e.detail.matter.state === undefined ? e.detail.matter.status === 'replied' : e.detail.matter.state === 'done') ? 'replied' : 'working')
+  function topicsList(p: { view?: 'recent' | 'all'; cursor?: string }) {
+    const all = demoTopics({ view: 'all' }).topics.map(t => topicOpened.has(t.id) ? { ...t, bubbleState: 'open' as const, lastOpenedByOwnerAt: topicOpened.get(t.id)! } : t)
+      .sort((a, b) => (b.lastOpenedByOwnerAt ?? b.lastRecalledAt ?? '').localeCompare(a.lastOpenedByOwnerAt ?? a.lastRecalledAt ?? '') || a.id.localeCompare(b.id))
+    return { topics: p.view === 'all' ? all : all.slice(0, 6), nextCursor: null, revision: `demo-topics:${topicRevision}` }
+  }
   function snapshot(topic: Topic): unknown {
+    if (topic === 'topics') { const all = topicsList({ view: 'all' }); return { revision: all.revision, recentIds: all.topics.slice(0, 6).map(t => t.id), openIds: all.topics.filter(t => t.bubbleState === 'open').map(t => t.id), hasMoreOpen: false } }
     if (topic === 'approvals') {
       return list().flatMap(e => [
         ...e.detail.permissions.map(p => ({ taskId: e.detail.matter.id, kind: 'permission' as const, id: p.id, summary: `${p.tool}: ${p.description}`.slice(0, 80) })),
@@ -254,7 +265,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   }
   const sessionRow = (key: string) => { const row = demoSessions(lastLang, now()).find(r => r.key === key); if (!row) throw new BackendError('not_found'); return row }
 
-  const conn: Connection = { state: 'online', lastSyncedAt: null, epoch: 0 }
+  const conn: Connection = { topics: 'v1', state: 'online', lastSyncedAt: null, epoch: 0 }
 
   return {
     mode: 'demo',
@@ -267,6 +278,22 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       cb(snapshot(topic as Topic) as never)
       return () => { set!.delete(cb) }
     },
+    async topics(p) { return topicsList(p) },
+    async topicDetail(p) {
+      const topic = topicsList({ view: 'all' }).topics.find(t => t.id === p.id)
+      if (!topic) throw new BackendError('not_found')
+      const matters = list().slice(0, 3).map(e => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null }))
+      return { topic, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: 'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: topicEntryTime, updatedTs: topicEntryTime, recalled: true }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: `demo-topics:${topicRevision}` }
+    },
+    async topicOpen(id, requestId) {
+      const receipt = topicReceipts.get(requestId)
+      if (receipt) { if (receipt.id !== id) throw new BackendError('invalid'); return receipt }
+      if (!topicsList({ view: 'all' }).topics.some(t => t.id === id)) throw new BackendError('not_found')
+      topicOpened.set(id, new Date(now()).toISOString()); topicRevision++
+      const result = { id, bubbleState: 'open' as const, revision: `demo-topics:${topicRevision}` }
+      topicReceipts.set(requestId, result); publish([]); return result
+    },
+    async matterHistory(l) { noteLang(l); return list().map(e => localize(e, l).matter) },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
     // 「CC 最近在忙」(M5c):三件 act,点进去是它们的轮(和主人的事分开,不进 matters())
     async ccActs(l) { noteLang(l); return demoCcActs(now()).map(d => d.matter) },
@@ -740,6 +767,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
+    reset() { topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }

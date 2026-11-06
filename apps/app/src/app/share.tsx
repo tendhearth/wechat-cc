@@ -1,4 +1,6 @@
-import { useRouter } from 'expo-router'
+import { useBackendCtx } from '../state/BackendProvider'
+import { useQuery } from '../state/hooks'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -23,6 +25,9 @@ export default function Share() {
   const lang = useLang()
   const router = useRouter()
   const session = useSession()
+  const { matter } = useLocalSearchParams<{ matter?: string }>()
+  const { backend } = useBackendCtx()
+  const target = useQuery(`share-target:${matter ?? ''}`, l => backend.matter(matter!, l), { enabled: !!matter, refreshOnMount: true })
   const pending = useSyncExternalStore(subscribeShare, getShare)
   const draft = pending?.draft
   const [images, setImages] = useState<PickedImage[]>([])
@@ -54,6 +59,11 @@ export default function Share() {
     router.replace(href)
   }
 
+  const supplement = () => {
+    if (!draft || !matter || !target.fresh) return
+    setDraft(matter, mergeDraftText(getDraft(matter), draft.text)); putDraftImages(matter, images)
+    clearShare(); router.replace(`/compose?matter=${encodeURIComponent(matter)}`)
+  }
   const gate = shareGate(session)
   // 图还在读 ⇒ 先等;读完一张都没成、又没有字 ⇒ 两个去处都不亮(只剩「算了」)
   const usable = !!draft && !reading && (!!draft.text.trim() || images.length > 0)
@@ -81,6 +91,9 @@ export default function Share() {
             {notes.map(n => <Txt key={n} testID="share-note" role="meta" tone="inkSoft">{n}</Txt>)}
           </>
         )}
+        {gate === 'ready' && draft ? <View style={{ gap: space.m }}>
+          {matter ? <Button testID="share-supplement" kind="primary" label={`${lang === 'zh-Hans' ? '补充给这件事' : 'Add to this work'}${target.data ? ` · ${target.data.matter.title}` : ''}`} disabled={!usable || !target.fresh} onPress={supplement} /> : <Button testID="share-existing" kind="secondary" label={lang === 'zh-Hans' ? '补充给已有事项' : 'Add to existing work'} disabled={!usable} onPress={() => router.push('/chat-search?scope=work&share=1')} />}
+        </View> : null}
         {gate === 'needsPair' ? (
           <View testID="share-needs-pair" style={{ gap: space.m }}>
             <Txt role="item" accessibilityRole="header">{t(lang, 'share.needsPairTitle')}</Txt>

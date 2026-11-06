@@ -6,18 +6,23 @@ appId: com.tendhearth.app
     id: welcome-pair
 - tapOn:
     id: welcome-look-first
-# 此刻:CC、具体待回应行和低层级的带回内容;不再重复「N 件事等你」标题,没有填充话。
-# 演示里没有执行者在写 ⇒ CC 下面不说它在干什么(没信号不说话)。
+# 对话是唯一首页；自主活动仍单列，不混成主人交办。
 - extendedWaitUntil:
     visible:
-      id: home-group-waiting
+      id: chat-input
     timeout: 10000
 - assertVisible:
     id: now-cc
 - assertNotVisible:
     id: now-cc-status
 - assertVisible:
-    id: home-group-waiting
+    id: conversation-waiting
+- assertVisible:
+    id: now-connections
+- tapOn:
+    id: home-more
+- tapOn:
+    id: conversation-cc-acts
 - scrollUntilVisible:
     element:
       id: now-companion-card
@@ -25,25 +30,28 @@ appId: com.tendhearth.app
 - assertVisible:
     id: now-companion-card
 - assertNotVisible: ".*(慢慢来|take it slow).*"
-- assertVisible:
-    id: now-say
-- assertVisible:
-    id: now-connections
-# 欢迎页 replace 回此刻的转场里,第一下点标签偶尔没生效(可能是被原生栈吞掉;真机手点不会这么快);没切过去就再点一次。
+- tapOn:
+    id: topbar-back
+- runFlow: subflows/_work.yaml
 - scrollUntilVisible:
     element:
-      id: home-all
+      id: row-matter-e5f6a7b8
+    centerElement: true
     direction: DOWN
-- tapOn:
-    id: home-all
-- extendedWaitUntil:
-    visible:
-      id: row-matter-a1b2c3d4
-    timeout: 5000
 - assertVisible:
     id: row-matter-e5f6a7b8
+- scrollUntilVisible:
+    element:
+      id: row-matter-c9d0e1f2
+    centerElement: true
+    direction: UP
 - assertVisible:
     id: row-matter-c9d0e1f2
+- scrollUntilVisible:
+    element:
+      id: row-matter-a1b2c3d4
+    centerElement: true
+    direction: UP
 - tapOn:
     id: row-matter-a1b2c3d4
 # 待回应行直接打开具体批准;只允许这一步,成功后进入事项,概括按需展开。
