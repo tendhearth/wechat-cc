@@ -64,6 +64,18 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 | `.maestro/pair-link.yaml` | 开发构建用自定义 scheme 打开配对链接 ⇒ 确认卡出现、显示中继主机与核对码、没有自动配对;再开一个锚点丢了的链接 ⇒ 「没带全」提示 |
 | `.maestro/subflows/_start.yaml` | 共用开头:`clearState` 启动、收掉开发构建偶尔弹的系统框「Open in "Tendhearth"?」、等欢迎页 |
 
+Build 3 回归补充:
+
+| 流程 | 走什么 |
+|---|---|
+| `.maestro/terminal-sessions.yaml` | 等批准时禁止发言、在跑时禁止发言、空闲时说一句、批准后旧请求与按钮消失 |
+| `.maestro/push-open.yaml` | 批准通知、已完成事项通知、旧 `cli:` 终端通知、事项不存在、非法参数、连续通知返回栈、已处理请求 |
+| `.maestro/cc-acts.yaml` | 默认折叠、展开三类活动、信的两轮详情只读、返回后再次折叠 |
+
+这些流程使用演示后端,不会发起 ServerHello 握手。P3f 的新旧路由选择由 `src/backend/live.test.ts` 的 `P3f / M6f compatibility` 等用例覆盖;M6f 的 `state/archivedAt/taskState` 优先级由 `src/view/home.test.ts` 和 `src/view/status.test.ts` 覆盖。演示流程不能替代这些协议兼容检查。
+
+图形测试只在 Mac mini 执行,入口和快照管理见 [`macmini-ui-lab.md`](../../docs/maintainer/macmini-ui-lab.md)。当前登记入口只有桌面测试,尚未登记 App/simulator/Maestro 命令;需要先补齐专用入口,不能在主工作 Mac 补跑或将桌面 `full` 当成 App Maestro 全套。
+
 同时开着多台模拟器时加 `--device <UDID>`。流程只认 `testID` 和中英两份文案(正则 `中|英`),不依赖系统语言。
 
 ### 真机全自动验收(scripts/device-e2e.ts,2026-10-01)

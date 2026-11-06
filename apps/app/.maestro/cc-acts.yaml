@@ -42,8 +42,26 @@ appId: com.tendhearth.app
 - assertVisible: "信写好了，420 字，2 页信纸|Letter written, 420 characters, 2 pages"
 - assertVisible: "写好了一封信，还没寄出|Wrote a letter, not sent yet"
 - takeScreenshot: a03-act-detail-letters
-- back
+- assertNotVisible:
+    id: progress-say
+- assertNotVisible:
+    id: terminal-say-input
+- assertNotVisible:
+    id: approval-allow
+- tapOn:
+    id: topbar-back
 - extendedWaitUntil:
     visible:
       id: home-group-cc-acts
     timeout: 5000
+# 返回后保留展开状态;再次折叠应藏起所有活动行。
+- assertVisible:
+    id: row-act-acc0a001
+- tapOn:
+    id: home-group-cc-acts
+- assertNotVisible:
+    id: row-act-acc0a001
+- assertNotVisible:
+    id: row-act-acc0a002
+- assertNotVisible:
+    id: row-act-acc0a003
