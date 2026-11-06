@@ -124,7 +124,7 @@ describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产
     await t.send(); await t.close()
     expect(t.records[0]).toMatchObject({ outcome: 'completed', toolCalls: ['wechat/list_projects'] })
     expect(log.turns(matter)).toMatchObject([{ executor: 'claude', status: 'completed', policy: { alias: 'a', mode: 'solo' } }])
-    expect(log.items(matter).map(i => [i.kind, i.status, i.payload.tool ?? i.payload.delivery])).toEqual([['tool_call', 'completed', 'wechat/list_projects'], ['delivery', 'completed', 'text']])
+    expect(log.items(matter).map(i => [i.kind, i.status, i.payload.tool ?? i.payload.delivery ?? i.payload.text])).toEqual([['agent_message','completed',OPENING],['tool_call', 'completed', 'wechat/list_projects'],['agent_message','completed',ANSWER], ['delivery', 'completed', 'text']])
     expect(log.state(matter)?.state).toBe('open')
     db.close()
   })

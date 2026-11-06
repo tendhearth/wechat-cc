@@ -1,4 +1,3 @@
-import { observeTopics } from '../net/topics-capability'
 /**
  * live.ts — 真连接后端:经中继用协议包 v2 连回家里的 daemon(spec §4)。
  * 订阅主题拿摘要与版本号,req 拉详情;每个返回过 PHONE_API_SCHEMAS,每条事件过主题 schema;
@@ -57,7 +56,6 @@ export function makeLiveBackend(d: LiveDeps): Backend {
   let gen = 0
   let disposed = false
   let hookDepth = 0
-  let topicsSupported = false
 
   /** 在协议客户端的钩子里跑:期间对客户端的调用一律推迟(见文件头「重入」)。 */
   function hooked(fn: () => void): void {
@@ -73,7 +71,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
   function dispatch(e: ConnEvent): void {
     const next = reduceConnection(conn, e)
     if (next === conn) return
-    conn = { ...next, topics: next.state === 'online' ? (topicsSupported ? 'v1' : undefined) : next.state === 'revoked' ? undefined : conn.topics }
+    conn = { ...next, topics: next.state === 'online' ? (client?.capabilities?.().topics) : next.state === 'revoked' ? undefined : conn.topics }
     // 一个监听者抛错不能打断别的监听者,更不能打断 revoke() 后面的 closeClient()。
     for (const cb of [...connLs]) {
       try { cb(conn) } catch (e) { log(`connection listener threw (${e instanceof Error ? e.name : 'unknown'})`) }
@@ -115,7 +113,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     client = mk({
       // 协议客户端只说 v2(2026-10-25 v1 退休):回来 v1 ⇒ 当中继篡改,拒绝降级(downgrade_refused)
       ...d.clientOpts,
-      open: () => observeTopics(d.open(), supported => { topicsSupported = supported }),
+      open: d.open,
       token: d.token,
       build: d.build,
       onStatus: s => hooked(() => {
@@ -166,7 +164,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       else log(`${key}: ${code}`)
       throw new BackendError(code)
     }
-    if (req.key.includes('/memory/topics') && (my !== gen || connection().state === 'revoked')) throw new BackendError('revoked')
+    if (my !== gen || connection().state === 'revoked') throw new BackendError('revoked')
     let json: unknown = null
     try { json = res.json() } catch { /* 非 JSON:交给状态码判断 */ }
     const mapped = key === 'POST /v1/knowledge/facts/set_fact_status' && res.status < 400 ? null : mapPhoneError(res.status, json)
@@ -290,6 +288,25 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       // 不自动重发:超时 ⇒ 不确定(页面说「过一会儿看看」),重发要主人自己再点 —— 那时 token 多半已过期,会重拉预览
       await api.matters.rewind({ body: { id: p.id, artifactId: p.artifactId, token: p.token } })
     },
+    conversationEvents: since=>api.conversation.events({query:{since}}),
+    stopConversation: async turnId=>{await api.conversation.stop({body:{turnId}})},
+    conversationWindow: p => api.conversation.window({query:p}),
+    conversationWork: async () => {
+      const workReferences=new Map<string,NonNullable<Awaited<ReturnType<NonNullable<Backend['conversationWork']>>>>['references'][number]>()
+      const workResults=new Map<string,NonNullable<Awaited<ReturnType<NonNullable<Backend['conversationWork']>>>>['results'][number]>()
+      let workScope:string|undefined
+      let cursor:string|undefined
+      const visited=new Set<string>()
+      do {
+        const page=await api.conversation.work({query:{cursor}})
+        if(page.scope&&page.scope!==workScope){workReferences.clear();workResults.clear();workScope=page.scope}
+        for(const ref of page.references)workReferences.set(ref.id,ref)
+        for(const result of page.results)workResults.set(result.id,result)
+        cursor=page.nextCursor??undefined
+        if(cursor){if(visited.has(cursor))throw new BackendError('unknown');visited.add(cursor)}
+      }while(cursor)
+      return {references:[...workReferences.values()],results:[...workResults.values()]}
+    },
     async chat(p) {
       return strip(await api.chat.page({ query: { before: p.before || undefined, limit: p.limit } }))
     },
@@ -298,9 +315,10 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       const body = materials?.attachmentIds.length ? { requestId, text, draftId: materials.draftId, attachmentIds: materials.attachmentIds } : { requestId, text }
       return (await api.chat.say({ body, retry: true })).job
     },
-    async chatSearch(q) {
+    async chatSearch(q,before) {
       const query = q.trim()
       if (!query || query.length > 200) throw new BackendError('invalid')
+      if(before){const w=await api.conversation.window({query:{q:query,before,limit:30}});return w.messages.reverse().map(m=>({id:m.messageId,role:m.kind==='user'?'me' as const:'cc' as const,text:m.text.slice(0,600),truncated:m.text.length>600,at:m.createdAt,source:m.source}))}
       return (await api.chat.search({ query: { q: query } })).hits
     },
     async memory() {
@@ -403,6 +421,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       // 有码就带码:防止这期间换了一项待批,手机批到了没看过的那一项。
       await api.cli.permission({ body: { session_id: p.sessionId, ...(p.hash ? { hash: p.hash } : {}), decision: p.decision } })
     },
+    cliStop:async(sessionId,runId)=>{await api.cli.stop({body:{session_id:sessionId,run_id:runId,confirmed:true}})},
     async cliSay(sessionId, text) {
       const r = await api.cli.say({ body: { session_id: sessionId, text } })
       return { sayId: r.say_id ?? null }

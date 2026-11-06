@@ -33,3 +33,15 @@ describe('conversation references', () => {
   })
 
 })
+
+
+it('T5d uses cross-device message anchors independently of a local originMatterId',()=>{
+  const matters=[matter('durable')]
+  expect(conversationItems(bubbles,view(matters),matters,'owner',[],[],new Map([['durable','m1']])).map(i=>i.key)).toEqual(['m1','ref:matter:durable'])
+})
+
+it('shows a durable delegate act in the conversation without adding autonomous acts to the home list',()=>{
+  const matters=[matter('consult',{kind:'act',state:'done'})]
+  expect(view(matters).groups.flatMap(g=>g.rows)).toEqual([])
+  expect(conversationItems(bubbles,view(matters),matters,'owner',[],[],new Map([['consult','m1']])).map(i=>i.key)).toEqual(['m1','ref:matter:consult'])
+})

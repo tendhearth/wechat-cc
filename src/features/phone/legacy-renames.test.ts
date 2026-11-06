@@ -1,3 +1,4 @@
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
 /**
  * P3d 纯改名的别名(wire-compat.ts 里 transform 为 null、已并的行):旧路径和新键是同一个处理器,回包逐字节一样。
  *
@@ -11,13 +12,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WIRE_ROUTE_ALIASES } from '@wechat-cc/protocol'
 import { removeTempDir } from '../../lib/test-temp'
-import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
+import { makeSettingsPanel as makePanel, type SettingsPanel } from './settings-panel'
 import { mobileLettersRoutes } from '../letters'
 import { mobileJobsRoutes } from '../jobs'
 import { memoryPhoneRoutes } from '../memory'
 import { stickerPhoneRoutes } from '../stickers'
-import { terminalPhoneRoutes } from '../terminal'
 
+const makeSettingsPanel=(d:PanelDepsWithFakes)=>makePanel(withPanelV1(d))
 const OWNER = 'o9rename-owner@im.wechat'
 // 手机那半(旧键 /m/api);桌面的 /v1/workbench/* 双胞胎(P3e)是内部 API 那一口的别名,另有 wire-compat 守卫核「同一个处理器函数」
 const RENAMES = WIRE_ROUTE_ALIASES.filter(r => r.handler === 'alias' && r.transform === null && r.from.includes(' /m/api/'))
@@ -64,7 +65,6 @@ beforeEach(async () => {
       // 表情原图(二进制回包)和 ?b64=1 两种都比;记忆读一份固定的;终端那三条没接 cliActions(503,两边一样)
       stickerPhoneRoutes({ list: () => [{ file: 'bear.png' }], dir: join(dir, 'stickers') }),
       memoryPhoneRoutes({ curated: () => ({ updated_at: null, when_label: null, mood: 'first', failures: 0, changes: [], sections: [] }) }),
-      terminalPhoneRoutes({}),
       mobileLettersRoutes({ list: () => [{ id: '2026-10-01-abcdef', day: '2026-10-01', sentAt: 1, requested: false, via: 'wechat', opening: '开头', pages: 0, text: '信' }], pagePath: () => null }),
       mobileJobsRoutes({ view: () => ({ ok: true, timezone: 'Asia/Shanghai', executor: 'claude', jobs: [] }), action: () => ({ ok: false, error: 'not_found' }) }),
     ],

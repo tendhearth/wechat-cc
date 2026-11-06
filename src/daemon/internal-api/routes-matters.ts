@@ -1,3 +1,4 @@
+import { ConversationWindowQuery,ConversationWorkQuery } from '../../../packages/protocol/src/owner-conversation'
 import type { ListMatters, MatterKind, MatterSurface } from '../../ports/matters'
 import { LEGACY_MATTER_STATUSES, type LegacyMatterStatus, type WireMatter } from '../../domain/matters/legacy-status'
 import type { MatterSayInput } from '../../app/matters/service'
@@ -142,6 +143,39 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       if(!deps.matters)return {status:503,body:{error:'matters_not_wired'}}
       try{const r=await deps.matters.searchOwnerChat(q,limit);return r?{status:200,body:r}:{status:404,body:{error:'owner_chat_not_configured'}}}
       catch(error){const message=error instanceof Error?error.message:'internal';return message==='invalid_query'?invalid():{status:500,body:{error:'internal'}}}
+    },
+    'GET /v1/matter/owner-chat/events': async (q,_b,caller) => {
+      if(caller?.tier!=='admin'||!['operator','device'].includes(caller.origin))return {status:403,body:{error:'forbidden'}}
+      const since=q.get('since')??'0';if(!/^\d{1,15}$/.test(since)||!Number.isSafeInteger(Number(since)))return invalid()
+      let count=50,body=deps.matters?.conversationEvents?.(Number(since),count)
+      while(body&&count>1&&caller.frameBudget&&framedTooLargeFor(JSON.stringify(body),caller.frameBudget)){count=Math.max(1,Math.floor(count/2));body=deps.matters?.conversationEvents?.(Number(since),count)}
+      return body?{status:200,body:body as Record<string,unknown>}:{status:404,body:{error:'not_found'}}
+    },
+    'POST /v1/matter/owner-chat/stop': async (_q,b,caller) => {
+      if(caller?.tier!=='admin'||!['operator','device'].includes(caller.origin))return {status:403,body:{error:'forbidden'}}
+      const turnId=(b as {turnId?:unknown}|null)?.turnId;if(typeof turnId!=='string'||!turnId||turnId.length>128)return invalid()
+      return deps.matters?.stopConversation?.(turnId)?{status:200,body:{stopped:true}}:{status:409,body:{error:'input_stale'}}
+    },
+    'GET /v1/matter/owner-chat/window': async (q, _b, caller) => {
+      if(caller?.tier!=='admin'||!['operator','device'].includes(caller.origin))return {status:403,body:{error:'forbidden'}}
+      const parsed=ConversationWindowQuery.safeParse(Object.fromEntries(q))
+      if(!parsed.success||[...q.keys()].some(k=>q.getAll(k).length!==1))return invalid()
+      let count=parsed.data.limit,body=await deps.matters?.conversationWindow?.(parsed.data)
+      while(body&&count>1&&caller.frameBudget&&framedTooLargeFor(JSON.stringify(body),caller.frameBudget)){count=Math.max(1,Math.floor(count/2));body=await deps.matters?.conversationWindow?.({...parsed.data,limit:count})}
+      if(body&&caller.frameBudget&&framedTooLargeFor(JSON.stringify(body),caller.frameBudget)){const value=body as {messages:Array<{replyExtras?:unknown;truncated?:boolean}>};for(const message of value.messages){const extras=message.replyExtras as {narration?:unknown}|undefined;if(Array.isArray(extras?.narration)){message.replyExtras={...extras,narration:extras.narration.filter((s):s is string=>typeof s==='string').slice(-5).map(s=>s.slice(0,2000))};message.truncated=true}}}
+      return body?{status:200,body:body as Record<string,unknown>}:{status:404,body:{error:'not_found'}}
+    },
+    'GET /v1/matter/owner-chat/work': async (q, _b, caller) => {
+      if(caller?.tier!=='admin'||!['operator','device'].includes(caller.origin))return {status:403,body:{error:'forbidden'}}
+      const parsed=ConversationWorkQuery.safeParse(Object.fromEntries(q));if(!parsed.success)return invalid()
+      try{let count=parsed.data.limit,body=await deps.matters?.conversationWork?.(parsed.data)
+      while(body&&count>1&&caller.frameBudget&&framedTooLargeFor(JSON.stringify(body),caller.frameBudget)){count=Math.max(1,Math.floor(count/2));body=await deps.matters?.conversationWork?.({...parsed.data,limit:count})}
+      return body?{status:200,body:body as Record<string,unknown>}:{status:404,body:{error:'not_found'}}
+      }catch(error){return error instanceof Error&&error.message==='invalid_cursor'?invalid():{status:503,body:{error:'unavailable'}}}
+    },
+    'GET /v1/protocol/capabilities': async (_q, _b, caller) => {
+      if (caller?.tier !== 'admin' || !['operator', 'device'].includes(caller.origin)) return { status: 403, body: { error: 'forbidden' } }
+      return { status: 200, body: { routes: 'v1', topics: 'v1' } }
     },
     'GET /v1/matter': async (query,_body,caller) => {
       const id=query.get('id')

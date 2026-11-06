@@ -27,6 +27,12 @@ function call<K extends PhoneApiKey, Q = void, B = void>(key: K, types?: { query
 type JobsActionT = 'pause' | 'resume' | 'remove'
 
 export const PHONE_CALLS = {
+  conversation: {
+    events: call('GET /v1/matter/owner-chat/events', {query:t<{since?:number}>()}),
+    stop: call('POST /v1/matter/owner-chat/stop', {body:t<{turnId:string}>()}),
+    window: call('GET /v1/matter/owner-chat/window', { query: t<{ anchor?: string; before?: string; after?: string; q?: string; limit?: number }>() }),
+    work: call('GET /v1/matter/owner-chat/work',{query:t<{cursor?:string;limit?:number}>()}),
+  },
   topics: {
     list: call('GET /v1/memory/topics', { query: t<{ view?: 'recent' | 'all'; q?: string; limit?: number; cursor?: string }>() }),
     detail: call('GET /v1/memory/topics/detail', { query: t<{ id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }>() }),
@@ -111,6 +117,7 @@ export const PHONE_CALLS = {
     continue: call('POST /m/api/session/continue', { body: t<{ key: string }>() }),
   },
   cli: {
+    stop:call('POST /v1/cli/session-stop',{body:t<{session_id:string;run_id:string;confirmed:true}>()}),
     sessions: call('GET /m/api/cli/sessions'),
     permission: call('POST /m/api/cli/permission', { body: t<{ session_id: string; hash?: string; decision: string }>() }),
     say: call('POST /m/api/cli/say', { body: t<{ session_id: string; text: string }>() }),

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import { matterReferenceHtml, updateConversationMatters, updateConversationAttention } from './conversation-matters.js'
+import { matterReferenceHtml, updateConversationMatters, updateConversationAttention, mountMatterProgress } from './conversation-matters.js'
 describe('conversation matter references', () => {
   it('updates the stable reference without collapsing the process or changing focus', () => {
     document.body.innerHTML = matterReferenceHtml('test1', '<backup>', true)
@@ -51,4 +51,22 @@ it('fresh attention stays actionable when the older task list is unavailable',()
   expect(document.querySelector('[data-matter-progress]')!.textContent).toContain('确认文件夹')
   updateConversationAttention({stale:true,tasks:[]})
   expect(document.querySelector('[data-matter-state]')!.textContent).toBe('尚未同步')
+})
+
+it('checks canonical kind before reading the original task progress and never sends a terminal id to task APIs',async()=>{
+  document.body.innerHTML=matterReferenceHtml('progress-task','task')+matterReferenceHtml('progress-terminal','terminal')
+  const calls:string[]=[]
+  const stop=mountMatterProgress(document.body,async(_method:string,path:string)=>{
+    calls.push(path)
+    if(path.startsWith('/v1/matter?')){const terminal=path.includes('progress-terminal');return {matter:{id:terminal?'progress-terminal':'progress-task',kind:terminal?'terminal':'task',title:terminal?'terminal detail':'task'}}}
+    if(path.startsWith('/v1/workbench/task?'))return {task:{id:'progress-task',status:'running',createdAt:1,updatedAt:2},events:[{kind:'text',text:'original executor progress'}],artifacts:[]}
+    throw Error(path)
+  })
+  try{
+    for(const row of document.querySelectorAll('details')){row.open=true;row.dispatchEvent(new Event('toggle'))}
+    await expect.poll(()=>document.querySelector('[data-matter-id="progress-task"] [data-matter-progress]')?.textContent).toContain('original executor progress')
+    expect(calls.some(p=>p.startsWith('/v1/matter?')&&p.includes('progress-terminal'))).toBe(true)
+    expect(calls.some(p=>p.startsWith('/v1/workbench/task?')&&p.includes('progress-task'))).toBe(true)
+    expect(calls.some(p=>p.startsWith('/v1/workbench/task?')&&p.includes('progress-terminal'))).toBe(false)
+  }finally{stop();document.body.innerHTML=''}
 })

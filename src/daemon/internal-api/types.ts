@@ -46,6 +46,7 @@ export interface InternalApiPrefixDeps {
  * createInternalApi. Until set, the route returns 503.
  */
 export interface InternalApiDelegateDep {
+  recordOwnerWork?(callerChatId:string|undefined,peer:string,prompt:string,topicIds?:readonly string[]):((result:{ok:true;response:string}|{ok:false;reason:string})=>void)|null
   /**
    * Run a one-shot consultation against `peer` and return the assistant
    * text. The implementation owns provider construction + thread

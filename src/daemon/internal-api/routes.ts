@@ -398,9 +398,11 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
         ? await d.topics.brief(caller.chatId, `${prompt}\n${context_summary ?? ''}`).catch(() => null)
         : null
       const fullPrompt = brief ? `${withContext}\n\n${brief.text}` : withContext
+      const record=caller?.tier==='admin'&&caller.origin==='session'?d.recordOwnerWork?.(caller.sharedTurn==='bound'?caller.turnChatId:caller.chatId,peer,prompt,brief?.topicIds):null
       const started = Date.now()
       try {
         const r = await d.dispatchOneShot(peer, fullPrompt, cwd)
+        record?.(r)
         const elapsed = Date.now() - started
         if (r.ok) {
           if (brief && d.topics) await d.topics.writeBack(brief.topicIds, peer, prompt, r.response).catch(() => {})
@@ -420,6 +422,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
         }
         return { status: 200, body: r }
       } catch (err) {
+        record?.({ok:false,reason:errMsg(err)})
         deps.log?.('DELEGATE', `peer=${peer} threw: ${errMsg(err)}`, {
           event: 'delegate_threw',
           peer,

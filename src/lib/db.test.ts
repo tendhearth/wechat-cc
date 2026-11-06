@@ -1470,7 +1470,7 @@ describe('v106 — topic bubbles', () => {
     db.exec(`INSERT INTO threads(id,chat_id,title,summary,facets,tags,private,status,episodes,created_ts,last_active)
       VALUES('t1','owner','旧话题','','[]','[]',1,'active','[]','x','x')`)
     runMigrations(db, migrations)
-    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 108 })
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
     expect(db.query('SELECT * FROM topic_bubbles').all()).toEqual([])
     db.exec(`INSERT INTO topic_bubbles(thread_id) VALUES('t1')`)
     expect(db.query('SELECT state,activity_revision FROM topic_bubbles').get()).toEqual({ state: 'closed', activity_revision: 0 })

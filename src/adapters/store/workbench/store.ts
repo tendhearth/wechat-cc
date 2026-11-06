@@ -1,3 +1,4 @@
+import { makeMessagesStore } from '../../../lib/messages-store'
 import { existsSync } from 'node:fs'
 import { sumUsage, type TurnUsage, type UsageTotals } from '../../../domain/turn-usage'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -144,6 +145,7 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
     /** 还有没归档任务的文件夹 —— 这些项目即使文件夹没了也要留在列表里(任务行挂在它下面)。 */
     activeTaskPaths:()=>new Set(db.query<{path:string},[]>('SELECT DISTINCT path FROM workbench_tasks WHERE archived_at IS NULL').all().map(r=>r.path)),
+    recordConversationEntry:(owner:string,id:string,text:string,source:string)=>makeMessagesStore(db).appendSync!({id,chatId:owner,ts:new Date().toISOString(),direction:'in',kind:'text',text,source}),
     atomic:<T>(operation:()=>T,immediate=false):T=>{const transaction=db.transaction(operation);return immediate?transaction.immediate():transaction()},
     attachments:makeTaskAttachmentStore(db),
     uploadRequestExists:(id:string)=>!!db.query('SELECT id FROM workbench_attachment_uploads WHERE id=?').get(id),

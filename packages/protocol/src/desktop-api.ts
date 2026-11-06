@@ -1,4 +1,5 @@
 import { TopicOpenRequest } from './topic-bubbles'
+import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
  * Zod schemas for the daemon's `/v1/*` routes (desktop, CLI, the wechat-mcp stdio child, delegate-mcp).
@@ -745,6 +746,7 @@ export const CliPermissionQuery = z.object({
 // ── GET /v1/cli/sessions(终端会话登记处,v76)──────────────────────────────
 // ended=1 连已结束的也列;limit 默认 100,封顶 500(= 登记处的行数上限)。
 export const CliSessionsQuery = z.object({
+  owner:z.coerce.number().int().min(1).max(1).optional(),session_id:z.string().min(1).max(200).optional(),
   ended: z.enum(['0', '1']).optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
   // detail=1:每条补开没开着窗口 / 此刻在做哪一步(CC 的 terminal_sessions 用,2026-10-24)
@@ -2502,6 +2504,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   ...TOPIC_BUBBLE_RESPONSES,
+  ...OWNER_CONVERSATION_RESPONSES,
+  'POST /v1/cli/session-stop': z.object({ok:z.literal(true)}),
   // P3g:形象画只由随 daemon 更新的网页读，schema 不再从已退休的别名推。
   'GET /v1/phone/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   // Phone-only and binary chunk routes retain their existing JSON response contracts.

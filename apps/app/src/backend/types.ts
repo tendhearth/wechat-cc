@@ -155,6 +155,10 @@ export interface Backend {
   /** 让电脑发一条测试通知(POST /m/api/push/test);code 是中继 / APNs / FCM 的结果码。 */
   testPush(): Promise<{ ok: boolean; code: string }>
   /** 主人那条对话一页(before = 上一页的 nextBefore)。没设主人 / 还没说过话 ⇒ BackendError('not_found')(页面当空对话,照样能说)。 */
+  conversationWindow?(p: { anchor?: string; before?: string; after?: string; q?: string; limit?: number }): Promise<import('zod').infer<typeof import('@wechat-cc/protocol').ConversationWindow>>
+  conversationEvents?(since?:number): Promise<import('zod').infer<typeof import('@wechat-cc/protocol').ConversationEvents>>
+  stopConversation?(turnId:string):Promise<void>
+  conversationWork?(): Promise<import('zod').infer<typeof import('@wechat-cc/protocol').ConversationWork>>
   chat(p: { before?: string; limit?: number }): Promise<ChatPageT>
   /** 收下即回;回复经 matter/<matterId> 主题唤醒后再 chat() 拉。上一句还在等 ⇒ BackendError('busy')。
    *  requestId:只在上次失败 / 不确定时重发同一个;已知回复过的绝不重发(daemon 的去重表 50 条 / 1 小时就过期)。 */
@@ -172,7 +176,7 @@ export interface Backend {
   /** 完成 / 捞回一条待办(POST /m/api/todo,正文恰好 { id, status })。电脑没接待办 ⇒ BackendError('unavailable')。 */
   setTodo(id: number, status: TodoStatus): Promise<void>
   /** 在主人那条对话里搜(GET /m/api/chat/search,2026-10-06):新的在前,最多 30 条、每条最多 600 字。 */
-  chatSearch(q: string): Promise<ChatSearchHitT[]>
+  chatSearch(q: string, before?: string): Promise<ChatSearchHitT[]>
   /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */
   chatVoice(messageId: string, index: number): Promise<{ mime: string; data: string }>
   /** 按住说话(2026-10-18):电脑上配没配语音转文字(GET /m/api/chat/transcribe)。 */
@@ -218,6 +222,7 @@ export interface Backend {
   cliPermission(p: { sessionId: string; hash?: string; decision: 'allow' | 'deny' }): Promise<void>
   /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 
    *  sayId:送进开着的窗口时 daemon 给的,对上会话行 last_say.id 才知道送没送到;不开窗口的那条路 / 老 daemon ⇒ null。 */
+  cliStop?(sessionId:string,runId:string):Promise<void>
   cliSay(sessionId: string, text: string): Promise<{ sayId: string | null }>
   /** 看着它跑(GET /m/api/cli/activity,2026-10-17):最近几步,旧 → 新。在别的电脑上 ⇒ 'cli_session_remote';没有记录 ⇒ 'no_transcript';老电脑 ⇒ 'not_found' 之类。 */
   cliActivity(sessionId: string): Promise<CliActivityItemT[]>

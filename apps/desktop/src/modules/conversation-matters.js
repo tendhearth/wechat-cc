@@ -54,9 +54,12 @@ export function mountMatterProgress(root,call) {
     if (!id || !progress || inflight.has(card)) return
     inflight.add(card)
     try {
-      const detail = await v1(call,V1.workbench.task,{query:{id}})
-      if (!alive || !card.isConnected || !card.open || detail.task?.id !== id) return
+      const canonical = await v1(call,V1.matter.get,{query:{id}})
+      if (!alive || !card.isConnected || !card.open || canonical.matter?.id !== id) return
       detailStale.delete(id)
+      if(canonical.matter.kind!=='task'){progress.textContent=canonical.matter.title;return}
+      const detail=await v1(call,V1.workbench.task,{query:{id}})
+      if(!alive||!card.isConnected||!card.open||detail.task?.id!==id)return
       const latest = (detail.events ?? []).filter((/** @type {any} */ event) => event.kind === 'text' || event.kind === 'error').at(-1)
       const result = detail.artifacts?.length ? `成果：${detail.artifacts.map((/** @type {any} */ item) => item.name).join('、')}` : ''
       results.set(id,{at:detail.task.updatedAt,text:[latest?.text,result].filter(Boolean).join('\n')})

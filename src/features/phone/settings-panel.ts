@@ -819,7 +819,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       if (!row?.desktop) {
         const local = lookupPhoneRoute(routes, req.method, url.pathname)
         if (local) return await finishRead(local(url, req, { t: t!, caller, deviceId }))
-        if (row?.phone) return json({ error: 'not_found' }, 404)
+        if (row?.phone || Object.entries(ROUTES).some(([key,spec])=>key.slice(key.indexOf(' ')+1)===url.pathname&&spec.phone&&!spec.desktop)) return json({ error: 'not_found' }, 404)
       }
       if (!deps.v1) return json({ error: 'not_found' }, 404)
       return await finishRead(deps.v1(req, caller, { frameBudget: MAX_MOBILE_DETAIL_BYTES, client: phoneClientOf(req) }))

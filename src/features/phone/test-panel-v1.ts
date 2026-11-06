@@ -1,3 +1,5 @@
+import { terminalOwnerRoutes } from '../terminal'
+import type { CliPhoneActions } from '../terminal'
 /**
  * 测试用:给 makeSettingsPanel 的 deps 补上 `v1`(P3c-1 起并成别名的旧路径翻到 `/v1`,走内部 API 同一个分发)。
  *
@@ -65,6 +67,7 @@ type EntryFakes = {
   entryModels?(input: { providerId: string; projectId?: string }): Promise<unknown>
 }
 export type PanelDepsWithFakes = Omit<SettingsPanelDeps, 'chat' | 'todos' | 'seen' | 'uploads' | 'matters'> & ReviewFakes & {
+  cliActions?:CliPhoneActions
   matters?: NonNullable<SettingsPanelDeps['matters']> & PhoneMatterActionFakes
   entry?: EntryFakes
   uploads?: MobileUploadActions & { discard?(input: { id: string; draftId: string }): void }
@@ -154,6 +157,7 @@ export function withPanelV1(d: PanelDepsWithFakes, options: InternalApiOptions =
     } as Partial<WorkbenchService> as WorkbenchService
     own.workbench = workbenchRoutes({ workbench, resolveAdminChatId: d.ownerChatId, phoneSessions: { ...(d.sessions ? { sessions: d.sessions } : {}), ...(d.executorName ? { executorName: d.executorName } : {}) } })
   }
+  own.terminal=terminalOwnerRoutes(d.cliActions)
   for (const [name, table] of Object.entries({ ...own, ...mounts })) if (table) api.mount(name as ModuleName, table)
   const { connections: _c, memoryRetractions: _r, restoreMemory: _m, sessions: _s, changes: _ch, review: _rv, ...panel } = d
   return { ...(panel as SettingsPanelDeps), v1: api.panelDispatch, api }

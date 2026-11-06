@@ -124,7 +124,7 @@ it('accepts only current owner catalog IDs and explicitly selected discussion',a
   expect(result.task.path).toBe(project);expect(result.task.workspaceKind).toBe('project')
   expect(seen[0]).toContain('only selected material');expect(seen[0]).toContain('主人选择的讨论材料')
   const matter=makeMatterStore(db).get(result.receipt.matterId)!
-  expect(makeMatterStore(db).get(matter.originMatterId!)?.ownerChatId).toBe('owner');expect(matter.originMessageId).toBeNull()
+  expect(makeMatterStore(db).get(matter.originMatterId!)?.ownerChatId).toBe('owner');expect(matter.originMessageId).toBe(`entry:${request.requestId}`)
   expect(()=>service.createEntry(input({target:{kind:'project',projectId:'p-'+'a'.repeat(20)}}),context)).toThrow('project_stale')
   owner='new-owner';expect(()=>service.entryReceipt(request.requestId,context)).toThrow('invalid_entry_owner')
   expect(service.entryReceipt(request.requestId,{ownerKey:'new-owner',surface:'phone'})).toBeNull()

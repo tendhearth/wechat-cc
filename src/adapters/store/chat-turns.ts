@@ -25,6 +25,8 @@ export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<Ma
       const matter = matters.findChat(chatId)
       if (!matter) return null
       const turn = log.startTurn({ matterId: matter.id, executor: provider, policy: { alias }, startedAt })
+      let segment=0, breakSegment=true
+      const texts=new Map<string,string>()
       let usage: TurnUsage | null = null, sessionId: string | null = null, ended = false, plain = 0
       // 首字延迟(2026-11-04,对标 Revolut「首字 3 秒内」):从这一轮开始跑(begin)到执行者第一句话 / 第一个工具调用。
       // 先记数据,首字时限按主人网关的真实分布再定 —— 思考型模型首字本来就可能慢,拍脑袋压时限会误伤。
@@ -34,7 +36,15 @@ export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<Ma
         event(ev) {
           if (ended) return
           if (firstAt === null && (ev.kind === 'text' || ev.kind === 'tool_call')) firstAt = now()
-          if (ev.kind === 'tool_call') {
+          if(ev.kind==='text') {
+            if(breakSegment||ev.ownSegment)segment++
+            breakSegment=false
+            const key=`stream:${turn.id}:${ev.itemId??segment}`,previous=texts.get(key)??''
+            const text=(ev.textMode==='replace'?ev.text:previous+(previous&&!ev.textMode?'\n\n':'')+ev.text).slice(-40_000)
+            texts.set(key,text)
+            log.writeItem({matterId:matter.id,turnId:turn.id,kind:'agent_message',status:'started',key,payload:{text}})
+          } else if (ev.kind === 'tool_call') {
+            breakSegment=true
             const tool = ev.server ? `${ev.server}/${ev.tool}` : ev.tool
             if (ev.activity) log.writeItem({ matterId: matter.id, turnId: turn.id, kind: 'tool_call', status: statusOf(ev.activity), key: `${turn.id}:${ev.activity.id}`, payload: { tool, activity: activityPayload(ev.activity) } })
             else log.writeItem({ matterId: matter.id, turnId: turn.id, kind: 'tool_call', status: 'completed', key: `${turn.id}:plain:${++plain}`, payload: { tool } })
@@ -46,6 +56,7 @@ export function makeChatTurnLog(deps: { db: Db; log: MatterLog; matters: Pick<Ma
         end(r) {
           if (ended) return
           ended = true
+          for(const [key,text] of texts)log.writeItem({matterId:matter.id,turnId:turn.id,kind:'agent_message',status:r.outcome==='completed'?'completed':'failed',key,payload:{text}})
           // turn_records 那一行的其余几项也记在这一轮上(M3b:/v1/turns 与手机首页的「聊天日」从这里拼回同一个形状)
           const sm = r.summary
           log.updateTurn(turn.id, { policy: {

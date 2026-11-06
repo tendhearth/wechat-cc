@@ -40,6 +40,9 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   async function refresh() {
     const generation = ++listTicket
     try {
+      const capabilities=await v1(call,V1.protocol.capabilities)
+      if(!alive||generation!==listTicket)return
+      if(capabilities.topics!=='v1'){supported=false;topics=[];detail=null;close();drawRow();return}
       const data = await v1(call,V1.topics.list,{query:{view:'recent',limit:6}})
       if (!alive || generation !== listTicket) return
       if (!Array.isArray(data.topics) || typeof data.revision !== 'string') throw Error('invalid_topics')
@@ -58,6 +61,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
     try {
       const data = await v1(call,V1.topics.detail,{query:{id}})
       if (!alive || generation !== ticket || selected !== id) return
+      if(data.topic?.mergedInto&&data.topic.mergedInto!==id){selected=data.topic.mergedInto;pendingOpen=null;void refresh();await readDetail(selected);return}
       detail = data; stale = false; drawDetail()
     } catch (error) {
       if (!alive || generation !== ticket) return

@@ -1,5 +1,6 @@
 // @ts-check
 /// <reference lib="dom" />
+import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
 import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
 /** @typedef {import('../../../src/cli/schema').GuardStatusOutputT} GuardStatus */
 /** @typedef {import('../../../src/cli/schema').ProviderShowOutputT} ProviderConfig */
@@ -311,7 +312,8 @@ const deps = {
   invokeApi,
   invokeWorkbenchApi,
   onMatterViewed: (/** @type {import('./modules/workbench.js').Task} */ task) => { addConversationMatter(task.id,task.title); updateConversationMatters([task]) },
-  onOpenMatter: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+  onOpenMatter: async (/** @type {string} */ id) => openConversationWork(invokeWorkbenchApi,id,async taskId=>{switchPane('workbench');await openWorkbenchTask(taskId)}),
+  onOpenTerminal:(/** @type {string} */ id)=>openConversationTerminal(invokeWorkbenchApi,id),
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
@@ -1705,7 +1707,7 @@ async function boot() {
       })
     }
     const topics=mountConversationTopics({root:conversationRoot,call:invokeWorkbenchApi,
-      openMatter:async id=>{switchPane('workbench');await openWorkbenchTask(id)},
+      openMatter:id=>deps.onOpenMatter(id),
       locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
       manage:()=>switchPane('memory')})
     conversationTopics=topics

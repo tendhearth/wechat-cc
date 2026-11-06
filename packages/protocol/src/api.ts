@@ -1,3 +1,4 @@
+import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
  * api.ts — `/m/api/*` 与 `/set/api/*` 每条真实路由的返回形状(zod v4)。
@@ -21,7 +22,7 @@ import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
  * 成 undefined,见 messages.ts 同一条注释)。
  */
 import z from 'zod'
-import type { PanelRouteKey } from './routes'
+import type { PhoneSurfaceRouteKey } from './routes'
 
 // ── 错误响应(共享)───────────────────────────────────────────────────────
 
@@ -586,6 +587,7 @@ export const CliActivityItem = z.object({ kind: z.enum(['you', 'said', 'step']),
   verb: z.string().optional(), target: z.string().optional() })
 export type CliActivityItemT = z.infer<typeof CliActivityItem>
 export const CliSessionRow = z.object({
+  run_id:z.string().optional(),
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
   // displayName(收敛清单 ⑥):这家执行者的正式名字,daemon 定;老 daemon 不带 ⇒ 退回 source。
   displayName: z.string().optional(),
@@ -647,6 +649,7 @@ export const PhoneWorktreeResult = z.object({ ok: z.literal(true), branch: z.str
 
 const PHONE_API = {
   ...TOPIC_BUBBLE_RESPONSES,
+  ...OWNER_CONVERSATION_RESPONSES,
   'GET /set/api/state': z.union([SetStateSuccess, PhoneErrorResponse]),
   'POST /set/api/apply': z.object({ ok: z.boolean(), error: z.string().optional(), restart: z.enum(['requested', 'required']).optional() }),
   'POST /set/api/pair': z.union([
@@ -709,6 +712,7 @@ const PHONE_API = {
   // say_id:只在送进开着的窗口时给,对上会话行的 last_say.id 才是这一句的结果
   'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true), say_id: z.string().optional() }), PhoneErrorResponse]),
   // 错误码:not_found 404;cli_session_remote(记录在别的电脑上)/ no_transcript(没有可读的记录)409。
+  'POST /v1/cli/session-stop': z.object({ok:z.literal(true)}),
   'GET /m/api/cli/activity': z.union([z.object({ ok: z.literal(true), items: z.array(CliActivityItem) }), PhoneErrorResponse]),
   'GET /m/api/today': z.union([z.object({ ok: z.literal(true), today: OverseerToday }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
@@ -732,7 +736,7 @@ const PHONE_API = {
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),
   'POST /m/api/push/register': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/push/test': z.union([z.object({ ok: z.literal(true), result: z.object({ ok: z.boolean(), code: z.string() }) }), PhoneErrorResponse]),
-} satisfies Partial<Record<PanelRouteKey, z.ZodTypeAny>>
+} satisfies Partial<Record<PhoneSurfaceRouteKey, z.ZodTypeAny>>
 
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = PHONE_API
 

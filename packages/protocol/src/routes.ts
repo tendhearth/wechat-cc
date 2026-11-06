@@ -217,6 +217,11 @@ const ROUTE_TABLE = {
   'GET /v1/matter/owner-chat/file': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
   'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'read', reason: '一起做的列表' } },
   'GET /v1/matter': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'read', reason: '一件事的详情' } },
+  'GET /v1/matter/owner-chat/events': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/matter/owner-chat/stop': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/window': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/work': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/protocol/capabilities': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/matter/owner-chat': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
   // 搜主人那条对话(2026-10-06;手机原 /m/api/chat/search)
   'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
@@ -670,10 +675,11 @@ const ROUTE_TABLE = {
   'POST /v1/matter/owner-chat/model': { phone: { link: 'none' } },
   // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)。P3d-3 起不撞名:
   // `/v1/cli/permission` 是钩子登记 / 等答案(CLI 子进程),`/v1/cli/say` 是 CC 的 terminal_say(按码、回票再等)。
-  'POST /v1/cli/decide': { phone: { link: 'none' } },
-  'POST /v1/cli/session-say': { phone: { link: 'none' } },
+  'POST /v1/cli/decide': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/cli/session-stop': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/cli/session-say': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
-  'GET /v1/cli/activity': { phone: { link: 'none' } },
+  'GET /v1/cli/activity': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
   'GET /v1/workbench/session/continue': { phone: { link: 'none' } },
   'POST /v1/workbench/session/continue': { phone: { link: 'none' } },
@@ -713,3 +719,6 @@ export type PanelV1Key = {
  * 真正允许的是 `matter/<id>`,见 phone-routes.ts 的 phoneTopicAllowed。
  */
 export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/', 'topics']
+
+/** Every declared phone surface, including routes shared with the operator HTTP API. */
+export type PhoneSurfaceRouteKey = PanelRouteKey | { [K in DeclaredRouteKey]: (typeof ROUTE_TABLE)[K] extends {phone:object} ? K : never }[DeclaredRouteKey]

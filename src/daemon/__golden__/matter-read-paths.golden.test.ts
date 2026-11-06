@@ -56,7 +56,6 @@ import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
 import { makeCliPhoneActions } from '../../features/terminal/phone-actions'
 import { phoneCliSessionRows } from '../../features/terminal/phone-sessions'
 import { terminalRoutes, type TerminalRoutesDeps } from '../../features/terminal/routes'
-import { terminalPhoneRoutes } from '../../features/terminal/phone-routes'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
@@ -289,6 +288,7 @@ beforeAll(async () => {
   // P3c-2 起 /m/api/cli/sessions 是别名,翻到 /v1/cli/sessions(终端模块自己挂的路由;手机令牌读 phoneSessions,
   // 照 features/terminal/wire.ts:登记处 50 条 + 每行那件事,按手机口径挑字段)
   internalApi.mount('terminal', terminalRoutes({
+    ownerActions:cliActions,
     phoneSessions: () => phoneCliSessionRows({
       list: () => hub.list({ limit: 50 }).map(v => { const m = matters.findBySurface('cli', v.session_id)?.id; return m ? { ...v, matter_id: m } : v }),
       actions: cliActions,
@@ -303,7 +303,6 @@ beforeAll(async () => {
     executorName: (id: string) => registry.namesOf(id).name,
     matters: { list: f => service.list(f), withActs: rows => service.withActs(rows), detail: id => service.detail(id), inputReceipt: service.inputReceipt, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => matters.bind(id, 'phone', 'pwa') },
     chat: { owner: () => phoneOwner.peek(), inboxDir, history: (chatId, o) => messages.listRange(chatId, o), chat: phoneChat, message: (chatId, id) => messages.get(chatId, id) },
-    featureRoutes: [terminalPhoneRoutes({ cliActions })],
   })
   const link = panel.issueToken()
   deviceToken = ((await (await panel.handleRequest(new Request(`http://127.0.0.1/set/api/pair?t=${link}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))).json()) as { device_token: string }).device_token

@@ -11,7 +11,7 @@ import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
 import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
 import { makeMatterLog } from '../../adapters/store/matter-log'
 import { makeMatterStore } from '../../adapters/store/matters-store'
-import { terminalPhoneRoutes } from './phone-routes'
+import { terminalOwnerHandlers } from './phone-routes'
 import { phoneCliSessionRows } from './phone-sessions'
 import { routePhone } from '../../lib/phone-route-table'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
@@ -238,7 +238,7 @@ describe('POST /m/api/cli/permission、/m/api/cli/say 与列表里的码', () =>
     if (path === '/m/api/cli/sessions') return { status: 200, body: { ok: true, sessions: phoneCliSessionRows({ list: () => hub.list({ limit: 50 }), ...(cliActions ? { actions: cliActions } : {}) }) } as any }
     // 直接查终端那张表:P3d-3 起两条登记在不撞名的新键上(老路径是面板里的纯改名别名,legacy-renames.test.ts 比过一样)
     const url = 'http://x' + path.replace('/m/api/cli/permission', '/v1/cli/decide').replace('/m/api/cli/say', '/v1/cli/session-say')
-    const r = await routePhone(terminalPhoneRoutes({ ...(cliActions ? { cliActions } : {}) }), new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
+    const r = await routePhone(terminalOwnerHandlers({ ...(cliActions ? { cliActions } : {}) }), new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
     return { status: r!.status, body: await r!.json() as any }
   }
   it('列表:开了码 ⇒ pending.hash + actionable;在场 ⇒ 不挂 pending;过 schema', async () => {
@@ -296,7 +296,7 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
         JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } }),
       ].join('\n'))
       hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'A1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
-      const r = await routePhone(terminalPhoneRoutes({ cliActions: actions() }), new URL('http://x/v1/cli/activity?session_id=A1'), new Request('http://x/v1/cli/activity?session_id=A1'))
+      const r = await routePhone(terminalOwnerHandlers({ cliActions: actions() }), new URL('http://x/v1/cli/activity?session_id=A1'), new Request('http://x/v1/cli/activity?session_id=A1'))
       const body = await r!.json()
       expect(r!.status).toBe(200)
       PHONE_API_SCHEMAS['GET /m/api/cli/activity']!.parse(body)
@@ -313,11 +313,11 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
     expect(a.activity('N1')).toEqual({ ok: false, error: 'no_transcript' })
     hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'G1', cwd: '/w/proj', machine: 'mac', transcript_path: '/definitely/not/here.jsonl' })
     expect(a.activity('G1')).toEqual({ ok: false, error: 'no_transcript' })
-    const get = async (q: string) => (await routePhone(terminalPhoneRoutes({ cliActions: a }), new URL('http://x/v1/cli/activity' + q), new Request('http://x/v1/cli/activity' + q)))!
+    const get = async (q: string) => (await routePhone(terminalOwnerHandlers({ cliActions: a }), new URL('http://x/v1/cli/activity' + q), new Request('http://x/v1/cli/activity' + q)))!
     expect((await get('')).status).toBe(400)
     expect((await get('?session_id=nope')).status).toBe(404)
     expect((await get('?session_id=R1')).status).toBe(409)
-    expect((await routePhone(terminalPhoneRoutes({}), new URL('http://x/v1/cli/activity?session_id=A'), new Request('http://x/v1/cli/activity?session_id=A')))!.status).toBe(503)
+    expect((await routePhone(terminalOwnerHandlers({}), new URL('http://x/v1/cli/activity?session_id=A'), new Request('http://x/v1/cli/activity?session_id=A')))!.status).toBe(503)
   })
 })
 

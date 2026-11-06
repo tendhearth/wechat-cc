@@ -48,3 +48,4 @@ export type { StatusKey, HomeGroupKey, StatusIcon, StatusSpec } from './status-t
 export { RESPONSE_SCHEMAS } from './desktop-api'
 
 export * from './topic-bubbles'
+export * from './owner-conversation'

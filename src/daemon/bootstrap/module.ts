@@ -1,3 +1,4 @@
+import { makeOwnerDelegationRecorder } from '../wiring/owner-delegation'
 /**
  * bootstrap 那一组接进 daemon 的那一份:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙
  * (一组模块,./index.ts 的 bootstrapModules),把它的产物交给 internal-api 路由的 `boot-api`,外部 CLI 重探计时器 `provider-probes`。
@@ -105,6 +106,7 @@ export function bootApiModule(f: Foundation): DaemonModule<BootApi> {
       // 话题 T3:主人自己的会话发起的咨询带话题简报、回答写回话题(daemon/threads/matter-topics)
       const matterTopics = makeMatterTopics({ db: f.db, threads: makeThreadsStore(f.db), ownerChatId, log: (t, l) => log(t, l) })
       internalApi.provide({ delegate: {
+        recordOwnerWork:makeOwnerDelegationRecorder({db:f.db,ownerChatId,name:peer=>boot.registry.namesOf(peer).name}),
         dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list(),
         topics: { brief: (chatId, prompt) => matterTopics.briefForDelegate(chatId, prompt), writeBack: (ids, peer, prompt, response) => matterTopics.writeDelegate(ids, peer, prompt, response) },
       } })

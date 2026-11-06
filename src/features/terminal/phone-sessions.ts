@@ -52,7 +52,8 @@ export function phoneCliSessionRows(deps: PhoneCliSessionsDeps): object[] {
   // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
   const live = actions?.liveWindows?.() ?? new Set<string>()
   return deps.list().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
-    const plain = phoneCliSession(v, ph)
+    const runId=actions?.activeRun?.(v.session_id)
+    const plain = {...phoneCliSession(v, ph),...(runId?{run_id:runId}:{})}
     const base = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
     const lw = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
     let said: ReturnType<NonNullable<CliPhoneActions['lastSay']>> = null

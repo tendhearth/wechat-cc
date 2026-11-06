@@ -13,7 +13,7 @@ export async function topicSummary(db: Db, owner: string, id: string) {
   if (!t || t.chatId !== owner) return null
   const bubble = makeTopicBubbles(db).get(id), matters = topicMatters(db, owner, id)
   return {
-    id, title: t.title.slice(0, 160), description: t.description.slice(0, 600), summary: t.summary.slice(0, 600),
+    id, mergedInto: null, title: t.title.slice(0, 160), description: t.description.slice(0, 600), summary: t.summary.slice(0, 600),
     bubbleState: bubble?.state ?? 'closed' as const,
     lastRecalledAt: bubble?.last_recalled_at ?? null, lastOpenedByOwnerAt: bubble?.last_opened_by_owner_at ?? null,
     activityRevision: bubble?.activity_revision ?? 0,
@@ -45,7 +45,7 @@ export async function topicDetailPage(db: Db, owner: string, id: string, offsets
     id IN (SELECT value FROM json_each(?1)) AS recalled FROM topic_entries WHERE thread_id=?2 AND status='live'
     ORDER BY kind='commitment' DESC,recalled DESC,updated_ts DESC,id LIMIT ?3 OFFSET ?4`).all(recalled, id, limits.entries, offsets.entries)
     .map(e => TopicBubbleEntry.parse({ ...e, recalled: !!e.recalled }))
-  const allMatters = topicMatters(db, owner, id).map(m => ({ id: m.id, title: m.title.slice(0, 160), state: m.state, archivedAt: m.archived_at }))
+  const allMatters = topicMatters(db, owner, id, true).map(m => ({ id: m.id, kind: m.kind, detailRoute: `/v1/matter?id=${encodeURIComponent(m.id)}`, title: m.title.slice(0, 160), state: m.state, archivedAt: m.archived_at }))
     .sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting') || Number(b.state === 'working') - Number(a.state === 'working') || a.id.localeCompare(b.id))
   const related = `FROM messages m WHERE m.chat_id=?1 AND (
     EXISTS(SELECT 1 FROM topic_recall_refs r,json_each(r.message_ids) j WHERE r.chat_id=?1 AND r.thread_id=?2 AND j.value=m.id)

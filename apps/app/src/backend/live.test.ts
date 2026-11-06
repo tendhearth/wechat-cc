@@ -14,7 +14,7 @@ type Reply = { status: number; json: unknown } | Error | typeof HANG
 type Handler = (req: { path: string; body: any }) => Reply
 
 /** 假协议客户端:按「METHOD /path」回夹具;每次 makeClient 都是一个新客户端(模拟重连 / 前后台)。 */
-function harness(routes: Record<string, Handler | Reply> = {}, family?: 'v1') {
+function harness(routes: Record<string, Handler | Reply> = {}, family?: 'v1', capabilities:{routes?:'v1';topics?:'v1'}={}) {
   const clients: Array<{ opts: ClientOpts; subs: Map<string, (d: unknown) => void>; closed: boolean; hanging: Array<(e: Error) => void> }> = []
   const reqs: Array<{ key: string; path: string; body: any; retry?: boolean; inHook: boolean }> = []
   /** 正在协议客户端的 onStatus 钩子里:这时回头调客户端可能开出第二条连接(Task 1 的已知坑)。 */
@@ -26,6 +26,7 @@ function harness(routes: Record<string, Handler | Reply> = {}, family?: 'v1') {
     return {
       version: () => 2,
       routes: () => family,
+      capabilities:()=>capabilities,
       async request(r: ProtocolRequest) {
         r = { ...r, ...r.forRoutes?.(family) }
         const key = `${r.method} ${r.path.split('?')[0]}`
@@ -922,4 +923,22 @@ describe('T4 topics use the shared v1 schemas and protected device transport', (
     expect(seen).toHaveLength(1)
     h.b.dispose()
   })
+})
+
+
+it('T5d reads capabilities through protocol and uses shared owner window/work/events/stop contracts',async()=>{
+  const h=harness({
+    'GET /v1/matter/owner-chat/window':ok({messages:[{messageId:'old',kind:'text',text:'original',createdAt:1,source:'wechat'}],anchor:'old',earlier:'old',later:'old'}),
+    'GET /v1/matter/owner-chat/work':ok({references:[],results:[]}),
+    'GET /v1/matter/owner-chat/events':ok({running:{turnId:'turn',runId:null},events:[],cursor:12}),
+    'POST /v1/matter/owner-chat/stop':ok({stopped:true}),
+  },'v1',{routes:'v1',topics:'v1'})
+  h.status('ready');expect(h.b.connection().topics).toBe('v1')
+  expect((await h.b.conversationWindow!({anchor:'old'})).messages[0]?.messageId).toBe('old')
+  expect(await h.b.conversationWork!()).toEqual({references:[],results:[]})
+  expect((await h.b.conversationEvents!(10)).cursor).toBe(12)
+  await h.b.stopConversation!('turn')
+  expect(h.reqs.map(r=>r.path)).toEqual(['/v1/matter/owner-chat/window?anchor=old','/v1/matter/owner-chat/work','/v1/matter/owner-chat/events?since=10','/v1/matter/owner-chat/stop'])
+  expect(h.reqs.at(-1)?.body).toEqual({turnId:'turn'})
+  h.b.dispose()
 })

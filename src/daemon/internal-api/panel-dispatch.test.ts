@@ -129,7 +129,7 @@ describe('两个监听各认各的令牌', () => {
 })
 
 /** P3c-1 / P3c-2 / P3c-3 / P3c-4 起路由表里带 phone 块的 /v1 行(一份数据一个处理器,手机的旧路径是别名);链接令牌只读其中两条。 */
-const T4_DEVICE = ['GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'GET /v1/subscribe/topics']
+const T4_DEVICE = ['GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','GET /v1/cli/activity','POST /v1/cli/decide','POST /v1/cli/session-say','POST /v1/cli/session-stop','GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'GET /v1/subscribe/topics']
 const P3C1_DEVICE = ['GET /v1/cli/sessions', 'GET /v1/connections', 'GET /v1/matter', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/retractions', 'GET /v1/overseer/today', 'GET /v1/workbench/entry-options', 'GET /v1/workbench/models', 'GET /v1/workbench/session', 'GET /v1/workbench/sessions', 'POST /v1/companion/transcribe', 'POST /v1/journal/seen', 'POST /v1/knowledge/facts/set_fact_status', 'POST /v1/matter/say', 'POST /v1/memory/retractions/restore', 'POST /v1/workbench/discard-attachment']
 const P3C1_LINK = ['GET /v1/matter', 'GET /v1/matters']
 /** P3e 起一件事上的动作收进 /v1/matter/*(交给分发,处理器在内部 API):只有停下给链接令牌(同别名行冻结的)。 */
@@ -141,13 +141,13 @@ const P3E_LINK = ['POST /v1/matter/stop']
  * P3d 起手机独有的 /v1 行(只有 phone 块,PanelV1Key):处理器在面板这一口,不经分发 —— 不在 PANEL_V1_ROUTES 里,
  * 但在设备 / 链接令牌的集合里(链接令牌只读其中两条,同别名行冻结的)。
  */
-const P3D_DEVICE = ['GET /v1/activity', 'GET /v1/cli/activity', 'GET /v1/home', 'GET /v1/jobs', 'GET /v1/letters/page', 'GET /v1/letters/sent', 'GET /v1/matter/input-receipt', 'GET /v1/matter/insight', 'GET /v1/phone/art/presence', 'GET /v1/phone/state', 'POST /v1/jobs/action', 'POST /v1/phone/push/register', 'POST /v1/phone/push/test',
+const P3D_DEVICE = ['GET /v1/activity', 'GET /v1/home', 'GET /v1/jobs', 'GET /v1/letters/page', 'GET /v1/letters/sent', 'GET /v1/matter/input-receipt', 'GET /v1/matter/insight', 'GET /v1/phone/art/presence', 'GET /v1/phone/state', 'POST /v1/jobs/action', 'POST /v1/phone/push/register', 'POST /v1/phone/push/test',
   // P3d-2
   'GET /v1/companion/transcribe', 'GET /v1/matter/owner-chat/model', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/voice', 'GET /v1/memory/curated', 'GET /v1/stickers/file/',
   'GET /v1/workbench/attachment/upload', 'GET /v1/workbench/session/continue', 'POST /v1/matter/owner-chat/model', 'POST /v1/matter/owner-chat/say', 'POST /v1/memory/correct',
   'POST /v1/workbench/attachment/chunk', 'POST /v1/workbench/session/continue',
-  // P3d-3
-  'POST /v1/cli/decide', 'POST /v1/cli/session-say']
+  // P3d-3 terminal actions now use the shared internal dispatcher.
+  ]
 const P3D_LINK = ['GET /v1/home', 'GET /v1/phone/art/presence']
 
 describe('面板上的 /v1:没有 phone 块的路由,设备 / 链接令牌走不了', () => {

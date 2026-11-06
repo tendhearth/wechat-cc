@@ -1,4 +1,5 @@
 import { makeTopicBubbles } from '../../lib/topic-bubbles'
+import { makeOwnerConversationReader, ownerConversationWork, ownerConversationEvents, stopOwnerConversation } from './owner-conversation'
 import { makeOwnerChatFileReader, ownerChatReadingEvent } from './owner-chat-reading'
 /**
  * Pipeline dep builder — admin/mode/onboarding handler construction +
@@ -472,6 +473,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     executorName: (id: string) => boot.registry.namesOf(id).name,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
     chat: {
+      events:(owner,since,limit)=>ownerConversationEvents(db,owner,since,limit),
+      stop:(owner,turnId)=>stopOwnerConversation(db,owner,turnId,id=>boot.coordinator.cancel(id)),
+      window: makeOwnerConversationReader(db,join(stateDir,'inbox')),
+      work: (owner,input) => ownerConversationWork(db,owner,input),
       ownerChatId,
       say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
       // Retain stored reply extras, including attachment-only rows; paths stay in the daemon.

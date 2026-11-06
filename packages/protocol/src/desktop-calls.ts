@@ -25,6 +25,14 @@ type Body = Record<string, unknown>
 const body = () => ({ body: t<Body>() })
 
 export const DESKTOP_CALLS = {
+  conversation: {
+    events: call('GET /v1/matter/owner-chat/events', {query:t<{since?:number}>()}),
+    stop: call('POST /v1/matter/owner-chat/stop', {body:t<{turnId:string}>()}),
+    setMode: call('POST /v1/conversation/set-mode', body()),
+    window: call('GET /v1/matter/owner-chat/window', { query: t<{ anchor?: string; before?: string; after?: string; q?: string; limit?: number }>() }),
+    work: call('GET /v1/matter/owner-chat/work',{query:t<{cursor?:string;limit?:number}>()}),
+  },
+  protocol: { capabilities: call('GET /v1/protocol/capabilities') },
   topics: {
     list: call('GET /v1/memory/topics', { query: t<{ view?: 'recent' | 'all'; q?: string; limit?: number; cursor?: string }>() }),
     detail: call('GET /v1/memory/topics/detail', { query: t<{ id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }>() }),
@@ -53,8 +61,12 @@ export const DESKTOP_CALLS = {
     works: call('GET /v1/atelier/works', { query: t<{ limit: number }>() }),
   },
   cli: {
+    stop:call('POST /v1/cli/session-stop',{body:t<{session_id:string;run_id:string;confirmed:true}>()}),
+    activity:call('GET /v1/cli/activity',{query:t<{session_id:string}>()}),
+    sessionSay:call('POST /v1/cli/session-say',body()),
+    decide:call('POST /v1/cli/decide',body()),
     hooksInstall: call('POST /v1/cli/hooks/install', body()),
-    sessions: call('GET /v1/cli/sessions', { query: t<{ limit: number }>() }),
+    sessions: call('GET /v1/cli/sessions', { query: t<{ limit?: number; owner?:1; session_id?:string }>() }),
   },
   companion: {
     presence: call('GET /v1/companion/presence'),
@@ -62,7 +74,7 @@ export const DESKTOP_CALLS = {
     thoughts: call('GET /v1/companion/thoughts'),
   },
   connections: { get: call('GET /v1/connections') },
-  conversation: { setMode: call('POST /v1/conversation/set-mode', body()) },
+
   conversations: { list: call('GET /v1/conversations/list') },
   dialogue: {
     timeline: call('GET /v1/dialogue/timeline', { query: t<{ chat_id: string; limit: number; before?: string }>() }),
@@ -99,6 +111,7 @@ export const DESKTOP_CALLS = {
     keys: call('POST /v1/llm/keys', body()),
   },
   matter: {
+    get:call('GET /v1/matter',{query:t<{id:string}>()}),
     seen: call('POST /v1/matter/seen', { body: t<{ id: string }>() }),
     ownerChatFile: call('GET /v1/matter/owner-chat/file', { query: t<{ id:string; i:number; offset:number; sha256?:string; size?:number }>() }),
     ownerChat: call('GET /v1/matter/owner-chat'),

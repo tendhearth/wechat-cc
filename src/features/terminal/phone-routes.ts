@@ -1,16 +1,11 @@
 import { PHONE_FRAME_BUDGET_BYTES, framedTooLargeFor } from '../../domain/matters/phone-scope'
-import { ownsMethod, type PhoneRouteTable } from '../../lib/phone-route-table'
+import { ownsMethod, type PhoneHandler } from '../../lib/phone-route-table'
 import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './phone-actions'
 
 /**
- * phone-routes.ts — 手机上的终端会话三条(spec 2026-10-01 §3;P3d-3 从 `features/phone/mobile-reads.ts` 搬回终端这个功能):
- * 看着它跑、拍板、接着说一句。表经 index.ts 导出,组装的地方(`wiring/wire-settings-panel.ts`)交给面板的 `featureRoutes`
- * —— 面板不 import 别的功能。表里的键由 scripts/phone-routes.guard.test.ts 对着路由表核对。
- *
- * 键是手机独有的 `/v1` 行(只有 phone 块,处理器在面板这一口):`GET /v1/cli/activity`、`POST /v1/cli/decide`、
- * `POST /v1/cli/session-say`。后两条起了不撞的名字 —— `/v1/cli/permission` 是钩子登记 / 等答案(CLI 子进程,trusted),
- * `/v1/cli/say` 是 CC 的 terminal_say(只认主人会话,按「码」、回票再等);这里按 `session_id` / 中继开的码、收下即回。
- * 老 App 的 `/m/api/cli/*` 是 legacy-routes.ts 的纯改名别名,回包一字不变。
+ * 主人终端操作的共享 HTTP 处理器，由 terminal/routes.ts 接到同一条 /v1 路由。
+ * operator 与配对设备沿用同一套拍板码、会话恢复与运行轮次校验；旧 /m/api 地址只做改名。
+ * /v1/cli/permission 仍是 CLI 钩子的登记 / 等答案口，不与这里的主人决定口混用。
  */
 export interface TerminalPhoneRoutesDeps {
   cliActions?: CliPhoneActions
@@ -33,8 +28,14 @@ function fitted(build: (max: number) => object, max: number): Response {
   return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 }
 
-export function terminalPhoneRoutes(deps: TerminalPhoneRoutesDeps): PhoneRouteTable {
+export function terminalOwnerHandlers(deps: TerminalPhoneRoutesDeps): Record<string,PhoneHandler> {
   return {
+    'POST /v1/cli/session-stop': ownsMethod(async(_url,req)=>{
+      if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
+      const b=await bodyOf(req)
+      if(typeof b?.session_id!=='string'||!SESSION_ID_RE.test(b.session_id)||typeof b.run_id!=='string'||b.run_id.length>128||b.confirmed!==true)return json({ok:false,error:'invalid'},400)
+      return deps.cliActions?.stop?.(b.session_id,b.run_id)?json({ok:true}):json({ok:false,error:'input_stale'},409)
+    }),
     // 看着它跑(2026-10-17):一条终端会话最近几步。手机展开那一行时每几秒拉一次;只读,和「看 码」同一份记录。
     'GET /v1/cli/activity': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)

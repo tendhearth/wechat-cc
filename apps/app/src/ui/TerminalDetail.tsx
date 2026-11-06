@@ -47,6 +47,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   const [text, setTextState] = useState('')
   const draftRevision = useRef(0)
   const setText = (value: string) => { draftRevision.current++; setTextState(value) }
+  const [stopRun,setStopRun]=useState<string|null>(null)
   const [note, setNote] = useState<string | null>(null)
   // 刚说的那一句:发出时记下,之后随列表与时钟往前走(定下就不再改)
   const [track, setTrack] = useState<SayTrack | null>(null)
@@ -75,6 +76,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   }, [sendingLive])
   const deciding = actions.pending === `cli:decide:${id}`
 
+  const stop=async()=>{const run=s?.run_id;if(!run||!backend.cliStop)return;if(stopRun!==run){setStopRun(run);return}try{await backend.cliStop(id,run);setStopRun(null);await terminal.refresh()}catch{setNote(t(lang,'progress.stopFailed'))}}
   const shown = note ?? (said ? sayNote(said, lang) : null)
 
   const decide = async (d: 'allow' | 'deny') => {
@@ -102,7 +104,7 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={row?.project ?? t(lang, 'terminal.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
-      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{s?.run_id&&backend.cliStop?<Button testID="terminal-stop" kind="secondary" label={t(lang,stopRun===s.run_id?'progress.stopConfirm':'progress.stop')} onPress={()=>void stop()} />:null}</View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
           {!row ? (

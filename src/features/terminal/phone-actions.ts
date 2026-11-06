@@ -28,6 +28,8 @@ export interface CliPhoneSayState { id: string; state: 'sending' | 'sent' | 'fai
 export type CliPhoneSayResult = { ok: true; say_id?: string } | { ok: false; error: 'not_found' | 'cli_session_busy' | 'cli_session_ended' | 'cli_session_remote' }
 
 export interface CliPhoneActions {
+  activeRun?(sessionId:string):string|null
+  stop?(sessionId:string,runId:string):boolean
   /** 这条会话挂着的、手机能拍的码(中继开出去的那个);没有 ⇒ null。 */
   pendingHash(sessionId: string): string | null
   permission(target: { hash?: string; session_id?: string }, decision: 'allow' | 'deny'): CliPhonePermissionResult
@@ -47,7 +49,8 @@ export interface CliPhoneActionsDeps {
   relay: { pendingHash(sessionId: string): string | null; owns(hash: string): boolean }
   /** = ilink.resolvePermission(微信「y/n 码」、桌宠权限卡用的同一个)。 */
   resolve(hash: string, decision: 'allow' | 'deny'): boolean
-  core: Pick<CliReplyCore, 'resume'> & Partial<Pick<CliReplyCore, 'live'>>
+  recordReference?(sessionId:string,text:string):void
+  core: Pick<CliReplyCore, 'resume'> & Partial<Pick<CliReplyCore, 'live'|'activeRun'|'stop'>>
   localMachine?: string
   log: (tag: string, line: string) => void
   /** 开着窗口的会话 id(live-window.ts liveSessionIds);缺席 ⇒ 空。 */
@@ -65,7 +68,9 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
   const view = (sessionId: string): CliSessionView | null =>
     deps.hub.list({ includeEnded: true }).find(v => v.session_id === sessionId) ?? null
 
-  return {
+  const actions:CliPhoneActions = {
+    activeRun:id=>deps.core.activeRun?.(id)??null,
+    stop:(id,runId)=>deps.core.stop?.(id,runId)??false,
     pendingHash: (sessionId) => deps.relay.pendingHash(sessionId),
     liveWindows() { try { return deps.liveIds?.() ?? new Set() } catch { return new Set() } },
     permission(target, decision) {
@@ -142,6 +147,7 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       return currentStepOf(s, { localMachine: deps.localMachine, steps: deps.steps })
     },
   }
+  return {...actions,say(id,text){const result=actions.say(id,text);if(result.ok)deps.recordReference?.(id,text);return result}}
 }
 
 /**
@@ -160,4 +166,5 @@ export function currentStepOf(s: CliSessionInfo, opts: { localMachine?: string |
     }
     return null
   } catch { return null }
+
 }

@@ -4,6 +4,7 @@ import type { ChatAttachmentT, ChatMessageT, ChatPageT } from '../backend/types'
 import { composeOutcome } from './compose'
 
 export type Bubble = {
+  projection?:'result'|'stream'
   key: string; side: 'me' | 'cc'; text: string; at: number; source: 'wechat' | 'desktop' | 'phone'; state: 'sent' | 'thinking' | 'failed'
   failedKind?: 'busy' | 'unavailable' | 'notConfigured' | 'maybeLost' | 'notConfirmed'; requestId?: string; truncated: boolean
   /** CC 回复里的语音 / 表情 / 文件(回复交付,2026-10-04);语音按 (key = 消息 id, 下标) 向电脑要声音。 */
