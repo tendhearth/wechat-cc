@@ -146,3 +146,34 @@ push-open 首轮在 `2026-11-06T02-00-27.575Z-app-maestro` 失败：已回此刻
 `app-maestro all` 已执行全部 16 条：首轮 **14 PASS / 2 FAIL**，回执 `2026-11-06T02-07-56.684Z-app-maestro/app-results.json`。continue-session 的旧流程漏点补充回执页的「查看进展」；worktree 的旧流程未考虑 fork 自动打开调整页。仅补上操作步骤、保留原断言后，两条定向复验均 **PASS**：`2026-11-06T02-28-57.623Z-app-maestro`（continue-session）与 `2026-11-06T02-30-50.961Z-app-maestro`（worktree）。因此 16 条流程各自均有通过回执，但不把首次 all 的失败回执改写为全绿；未再次跑完整 all。没有 App 源码变更。
 
 本分支源码另以 Git archive 放入 mini 独立验证目录，空 HOME、共享锁、外层离线 profile 下 `bun run verify --base HEAD` 通过：根与 App typecheck、depcheck、受影响测试 13/13、守卫 646 通过（17 条既有跳过）、真实形状沙盒 18/18。日志 `/Users/home/cc-ui-lab/app-executor/verification/artifacts/2026-11-06T02-35-07.001Z-affected/1-verify-affected.log`。首次验证误用指向 App 快照的 node_modules 链接，导致 workspace 路径/缺模块失败；改为从公开缓存离线安装锁定依赖后通过，没有改产品或断言。
+
+### Lab 专用宏插件沙盒例外（整合者批准）
+
+`app-build` 仅在 lab 的 xcodebuild 命令行传入 `OTHER_SWIFT_FLAGS=$(inherited) -disable-sandbox`，关闭 Swift 宏插件的内层沙盒。原因是现有外层 Seatbelt 中再次调用 `sandbox_apply` 会返回 EPERM；允许 exec/read/temp/IPC 不能解决嵌套沙盒限制。外层 `offline-tests.sb` 及其网络拒绝保持原样，构建仍拒绝外连。此参数不写入 iOS 工程、EAS、Xcode 默认值或正式发布配置，也不应用于准备与 Maestro 通道。干净构建必须删除此前控制构建的 derived data 和成功回执后重跑，不能以缓存命中代替宏编译证据。
+
+本次先在共享执行锁内删除 active appRoot 的 `build/` 与 `build-receipt.json`，清理记录为 `clean-receipt.json`。随后标准 `app-build` 在原外层 profile 中干净构建成功：`artifacts/2026-11-06T02-38-29.842Z-app-build/1-app-build.log`（BUILD SUCCEEDED），没有无沙盒控制构建。主包和 ExpoUI 的 Swift 编译重新执行，未沿用控制构建的 DerivedData。既有公开依赖、Pods 与准备阶段 SwiftPM 缓存保留。
+
+同一新包的 `app-maestro all` 一次退出 0，**16 PASS / 0 FAIL**：`artifacts/2026-11-06T02-42-55.968Z-app-maestro/app-results.json`。本轮没有流程或 App 改动，也没有删减断言；仍使用上一轮已记录的三份 YAML 导航修正。以下所有结果属于这一轮完整 all：
+
+| 流程 | 结果 | 步骤日志 |
+| --- | --- | --- |
+| agent-avatars | PASS | `7-maestro-agent-avatars.log` |
+| approve | PASS | `9-maestro-approve.log` |
+| cc-acts | PASS | `11-maestro-cc-acts.log` |
+| chat | PASS | `13-maestro-chat.log` |
+| chat-extras | PASS | `15-maestro-chat-extras.log` |
+| compose | PASS | `17-maestro-compose.log` |
+| connections | PASS | `19-maestro-connections.log` |
+| continue-session | PASS | `21-maestro-continue-session.log` |
+| demo-walkthrough | PASS | `23-maestro-demo-walkthrough.log` |
+| design-shots | PASS | `25-maestro-design-shots.log` |
+| pair-invalid | PASS | `27-maestro-pair-invalid.log` |
+| pair-link | PASS | `29-maestro-pair-link.log` |
+| push-open | PASS | `31-maestro-push-open.log` |
+| quota-handoff | PASS | `33-maestro-quota-handoff.log` |
+| terminal-sessions | PASS | `35-maestro-terminal-sessions.log` |
+| worktree | PASS | `37-maestro-worktree.log` |
+
+执行结束关闭自有设备 `8963040A-943E-4A1B-9593-CF9B28B15F6E`，释放执行锁。构建和流程都只在 mini，未触碰主工作 Mac 的模拟器、浏览器、后台、状态或已安装 App。
+
+本轮 mini 验证：`bun run verify --base HEAD` 退出 0（`app-executor/verification/macro-verify.log`）；执行器/协议 26/26 通过（`macro-green.log`）。新增 flag 断言在撤掉本次修复时失败（`macro-red.log`），恢复后全绿。外层 profile SHA256 仍为 `3a89b1451ca096f59b53abd7d5e0e8b6d9c183cd469af7d6cb882188c71bdcdc`。没有推送、发布或主机部署。

@@ -113,7 +113,9 @@ export async function runApp({ request, config, insideLab, labHome, run, command
     if (prepared.jsiScriptHash !== createHash('sha256').update(await readFile(await jsiScript())).digest('hex')) throw Error('Expo JSI preparation changed; run app-prepare')
     await execute('app-build', '/usr/bin/xcodebuild', ['-workspace', 'ios/Tendhearth.xcworkspace', '-scheme', 'Tendhearth',
       '-configuration', 'Release', '-jobs', '2', '-sdk', 'iphonesimulator', '-destination', 'generic/platform=iOS Simulator',
-      '-derivedDataPath', join(root, 'build'), 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO', 'build'])
+      '-derivedDataPath', join(root, 'build'), 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO',
+      // Nested sandbox_apply fails with EPERM under Seatbelt; retain the outer network denial.
+      'OTHER_SWIFT_FLAGS=$(inherited) -disable-sandbox', 'build'])
     await insideLab(app)
     await readFile(join(app, 'main.jsbundle'))
     await writeFile(receiptFile, JSON.stringify({ source, app, configuration: 'Release', metro: false }))

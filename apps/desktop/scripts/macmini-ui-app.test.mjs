@@ -121,6 +121,7 @@ test('a prepared build only compiles offline and never re-evaluates network-depe
   expect(calls.map(call => call.label)).toEqual(['app-build'])
   expect(calls[0].options).not.toHaveProperty('offline', false)
   expect(calls[0].args).toContain('generic/platform=iOS Simulator')
+  expect(calls[0].args).toContain('OTHER_SWIFT_FLAGS=$(inherited) -disable-sandbox')
   expect(execFileSync).not.toHaveBeenCalled()
 })
 
