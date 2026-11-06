@@ -1475,3 +1475,15 @@ it('v106 adds delivery evidence without inventing historical success; replay pre
     expect(db.query('SELECT spoken_at,delivery_state FROM speech_log').all()).toEqual([{ spoken_at: null, delivery_state: 'legacy_unknown' }])
   } finally { db.close() }
 })
+
+it('v107 preserves both S2 lanes and their retry fields when adding reservations', () => {
+  const db = migratedTo(106)
+  try {
+    db.query("INSERT INTO speech_pending(id,lane,chat_id,kind,body,ref,created_at,next_at,attempts,first_failed_at,expires_at,status) VALUES('s','say','owner','sticker','body','sticker:a',10,20,2,11,100,'pending'),('p','push','owner','matter_report','{}','turn:a:1',12,22,3,13,200,'overflow')").run()
+    const before = db.query('SELECT * FROM speech_pending ORDER BY id').all()
+    runMigrations(db, migrations)
+    expect(db.query('SELECT * FROM speech_pending ORDER BY id').all()).toEqual(before)
+    migrations[106]!(db)
+    expect(db.query('SELECT * FROM speech_pending ORDER BY id').all()).toEqual(before)
+  } finally { db.close() }
+})
