@@ -164,7 +164,8 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
     'GET /v1/matter/owner-chat/page': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'GET') return err('method_not_allowed', 405)
       if (!deps) return err('chat_not_wired', 503)
-      const rawLimit = url.searchParams.get('limit'), before = url.searchParams.get('before')
+      const rawLimit = url.searchParams.get('limit'), before = url.searchParams.get('before'), requestId = url.searchParams.get('requestId')
+      if (requestId !== null && !UUID.test(requestId)) return err('invalid', 400)
       if (rawLimit !== null && (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > CHAT_PAGE_MAX)) return err('invalid', 400)
       if (before !== null && (before.length > 64 || !Number.isFinite(Date.parse(before)))) return err('invalid', 400)
       let owner: ReturnType<MobileChatDeps['owner']>
@@ -175,14 +176,16 @@ export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTa
       // 多取一条判 hasMore。listRange 是严格 `<` beforeTs:同一毫秒的两条恰好跨页边界时会漏一条(可接受,见 preflight B7)。
       try { rows = await deps.history(owner.chatId, { ...(before !== null ? { beforeTs: before } : {}), limit: limit + 1 }) }
       catch { return err('unavailable', 503) }
+      try { const current = deps.owner(); if (!current || current.chatId !== owner.chatId || current.matterId !== owner.matterId) return err('no_owner_chat', 404) } catch { return err('unavailable', 503) }
       let hasMore = rows.length > limit
       let page = hasMore ? rows.slice(rows.length - limit) : rows   // rows 升序:多出来的是最旧那条
       const st = deps.chat.state()
       const build = () => JSON.stringify({
-        ok: true, matterId: owner!.matterId, title: owner!.title, messages: page.map(row=>message(row,deps.inboxDir)), hasMore,
+        ok: true, conversation: 'v1', topics: 'v1', matterId: owner!.matterId, title: owner!.title, messages: page.map(row=>message(row,deps.inboxDir)), hasMore,
         // 原始 ts 字符串,不重新格式化 —— 下一页原样当 before 传回来。
         nextBefore: hasMore && page.length ? page[0]!.ts : null,
         pending: st.pending ? wireJob(st.pending) : null, failed: st.failed ? wireJob(st.failed) : null,
+        ...(requestId ? { receipt: deps.chat.receipt?.(requestId) ?? null } : {}),
       })
       // 旧中继一帧 512 KiB(终审 M1):整页太大就从最旧那头少给几条(hasMore + nextBefore 接着翻,不留洞),绝不 413 整页。
       // 单条至多 CHAT_TEXT_MAX 字,最坏转义后也远小于预算,所以总留得下最新那条。

@@ -40,7 +40,7 @@ export interface MatterAct {who?:string;latest?:MatterActTurn}
 export interface MatterBinding {matterId:string;surface:MatterSurface;surfaceKey:string;lastSeenAt:number}
 export interface MatterSession {matterId:string;providerId:string;sessionId:string;role:MatterSessionRole;createdAt:number}
 export interface CreateMatter {id?:string;kind:MatterKind;/** 不给 ⇒ owner。 */initiator?:MatterInitiator;title:string;projectPath?:string|null;ownerChatId?:string|null;originMatterId?:string|null;originMessageId?:string|null;/** 出生地:只在建行时写这一次;不知道就别给(null)。 */origin?:MatterOrigin|null}
-export interface ListMatters {kind?:MatterKind;/** 线上 `?status=` 的筛选(旧状态,wire-compat.ts 第一行):SQL 里按 legacy-status 的式子筛,LIMIT 之前。 */legacy?:LegacyMatterStatus[];since?:number;limit?:number;/** 只要在这个表面露过面的 */surface?:MatterSurface}
+export interface ListMatters {q?:string;project?:string;state?:MatterState;before?:{at:number;id:string};kind?:MatterKind;/** 线上 `?status=` 的筛选(旧状态,wire-compat.ts 第一行):SQL 里按 legacy-status 的式子筛,LIMIT 之前。 */legacy?:LegacyMatterStatus[];since?:number;limit?:number;/** 只要在这个表面露过面的 */surface?:MatterSurface}
 
 export interface MatterStore {
   create(input:CreateMatter):Matter

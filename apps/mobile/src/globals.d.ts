@@ -31,6 +31,7 @@ declare var CCP: {
     client?: 'web'
     requestTimeoutMs?: number
     handshakeTimeoutMs?: number
+    onSubscriptionError?: (topic: string, code: string) => void
     onProtocolError?: (reason: string, detail?: unknown) => void
   }): CCPClient
   /** 状态表与中文词(packages/protocol/src/status-table.ts,设计稿 2026-10-31 U5)。 */

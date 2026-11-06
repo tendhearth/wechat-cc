@@ -17,14 +17,6 @@
           "phase": "working",
           "pending": 0
         }
-      },
-      {
-        "id": "c0ffee00",
-        "kind": "chat",
-        "title": "事 c0ffee00",
-        "status": "open",
-        "updatedAt": 1793843880000,
-        "ownerChatId": "o9golden-owner@im.wechat"
       }
     ]
   }

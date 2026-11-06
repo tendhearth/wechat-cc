@@ -1,6 +1,5 @@
 /// <reference lib="dom" />
-// 手机网页(/m)在真浏览器里:收敛 5b(2026-10-21)之后「一起做」的详情只看状态 —— 标题、执行者、到哪了、额度这类状态,
-// 外加「停下」。对话记录、成果、接着说、批准 / 回答都不在网页上;此刻页「等你」那张卡只看,点进来就是这一页。
+// T5 决策 4：设备入口提供主人对话与已支持的响应；LINK 保留受限状态页。
 import {afterAll,afterEach,beforeAll,beforeEach,describe,expect,it} from 'vitest'
 import {createRequire} from 'node:module'
 import {readFileSync} from 'node:fs'
@@ -35,6 +34,7 @@ beforeEach(async()=>{
     if(path==='/m/icon.png')return route.fulfill({contentType:'image/png',body:icon})
     // Match the page's v1 LAN calls; retired /m/api aliases must stay unavailable.
     if(path==='/v1/phone/art/presence')return route.fulfill({json:{ok:false}})
+    if(path==='/v1/matter/owner-chat/page')return route.fulfill({json:{ok:true,conversation:'v1',matterId:'owner-chat',messages:[{id:'u1',role:'me',text:'主人提问',at:1},{id:'c1',role:'cc',text:'CC 回复',at:2}],hasMore:false,nextBefore:null}})
     if(path==='/v1/home')return route.fulfill({json:home})
     if(path==='/v1/matters')return route.fulfill({json:{ok:true,matters:[matter]}})
     if(path==='/v1/matter')return route.fulfill({json:{ok:true,bindings:[],sessions:[],...structuredClone(detail)}})
@@ -43,23 +43,44 @@ beforeEach(async()=>{
   })
 })
 afterEach(async()=>{await page?.close()})
-// 一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,没有底部标签
-async function open(){await page.goto('http://localhost/m');await page.locator('[data-mid="'+TASK+'"]').click()}
+// LINK 继续从状态列表打开；设备按 T5 事项深链进入，避免依赖已撤掉的首页列表。
+async function open(device=false){await page.goto(device?'http://localhost/m?matter='+TASK:'http://localhost/m?t=tLINK');if(device)await expect.poll(()=>page.locator('#chat-messages').textContent()).toContain('CC 回复');else await page.locator('[data-mid="'+TASK+'"]').click()}
 
-describe('phone web page: a matter is status only',()=>{
-  it('shows title, executor and where it is; no dialogue, artifacts, say box or decision controls',async()=>{
-    await open()
+describe('phone web page: T5 device conversation and restricted LINK status',()=>{
+  it('device shows dialogue, say box, process and artifacts alongside matter status',async()=>{
+    await page.goto('http://localhost/m')
+    await expect.poll(()=>page.locator('#chat-messages').textContent()).toContain('CC 回复')
+    // T5 设备首页的说话框必须实际可见，不能仅有隐藏的 textarea。
+    expect(await page.locator('#chat-input').isVisible()).toBe(true)
+    await open(true)
     await expect.poll(()=>page.locator('#m-status .m-state').textContent()).toBe('在做')
     expect(await page.locator('#m-title').textContent()).toBe('原任务')
     expect(await page.locator('#m-agents').isVisible()).toBe(true)
     expect(await page.locator('#m-status .m-now').textContent()).toContain('跑测试')
     const body=await page.locator('body').textContent()
-    for(const gone of ['公开要求','公开答复','报告.md'])expect(body).not.toContain(gone)
-    for(const sel of ['textarea','#m-events','#m-artifacts','#m-say','[data-control]','[data-handoff]','[data-artifact]'])expect(await page.locator(sel).count(),sel).toBe(0)
+    // T5 决策 4：设备可读主人对话、事项过程/结果和授权成果，旧的全文排除已过时。
+    for(const text of ['主人提问','CC 回复','公开要求','公开答复','报告.md'])expect(body).toContain(text)
+    // T5 使用 chat-input 和过程/成果折叠层，替代旧的 textarea/成果控件不存在断言。
+    for(const sel of ['#chat-input','#m-status .matter-process','#m-status .matter-results','#m-status [data-artifact]'])expect(await page.locator(sel).count(),sel).toBe(1)
+    // 旧容器和额度交接仍未开放；把已支持的输入/成果从排除列表移走。
+    for(const sel of ['#m-events','#m-artifacts','#m-say','[data-control]','[data-handoff]'])expect(await page.locator(sel).count(),sel).toBe(0)
     expect(errors).toEqual([])
   })
 
-  it('a pending decision and an exhausted quota read as status, with no buttons to act on them',async()=>{
+  it('device exposes the approved permission and question responses',async()=>{
+    detail.task.phase='replied'
+    detail.permissions=[{id:'p1',taskId:TASK,tool:'Bash',description:'rm -rf tmp',createdAt:1}]
+    detail.questions=[{id:'q1',taskId:TASK,questions:[{id:'choice',header:'选择',question:'继续吗？',options:[{label:'继续',description:'继续处理'}],multiSelect:false,allowOther:true}]}]
+    await open(true)
+    // T5 决策 4：批准/拒绝及问题回答是设备网页已批准支持的响应类型。
+    for(const decision of ['allow','deny'])expect(await page.locator('#m-response [data-decision="'+decision+'"]').isVisible()).toBe(true)
+    expect(await page.locator('#m-response').textContent()).toContain('rm -rf tmp')
+    expect(await page.locator('#m-response [data-question="q1"]').isVisible()).toBe(true)
+    expect(await page.locator('#m-response [data-question="q1"] button').isDisabled()).toBe(false)
+    expect(errors).toEqual([])
+  })
+
+  it('LINK: a pending decision and an exhausted quota read as status, with no buttons to act on them',async()=>{
     detail.task.phase='replied';detail.events=[]
     detail.permissions=[{id:'p1',taskId:TASK,tool:'Bash',description:'rm -rf tmp',createdAt:1}]
     detail.quotaHandoff={state:'offer',from:'codex',to:'claude',kind:'quota',resetAt:Date.now()+20*60000}
@@ -78,7 +99,7 @@ describe('phone web page: a matter is status only',()=>{
     await expect.poll(()=>page.locator('#m-status').textContent()).toContain('codex 的额度已用完')
   })
 
-  it('keeps 停下: arm, confirm, exactly one POST',async()=>{
+  it('LINK keeps 停下: arm, confirm, exactly one POST',async()=>{
     await open()
     const stop=page.locator('#m-status [data-stop]')
     await expect.poll(()=>stop.textContent()).toBe('停止这一轮')
@@ -90,9 +111,10 @@ describe('phone web page: a matter is status only',()=>{
     expect(sent).toEqual([{path:'/v1/matter/stop',body:{id:TASK,runId:RUN}}])
   })
 
-  it('the 此刻 card is view-only and opens the status page when tapped',async()=>{
+  it('LINK: the 此刻 card is view-only and opens the status page when tapped',async()=>{
     home.work={focus:{id:TASK,title:'**原任务**',kind:'decision'},partial:false}
-    await page.goto('http://localhost/m')
+    // 旧只读此刻卡属于 LINK 后备页；设备首页已改为 T5 对话。
+    await page.goto('http://localhost/m?t=tLINK')
     const card=page.locator('#home-focus .home-action')
     await expect.poll(()=>card.count()).toBe(1)
     expect(await card.textContent()).toBe('有件事等你决定原任务到手机 App 或电脑上拍板')
@@ -105,10 +127,18 @@ describe('phone web page: a matter is status only',()=>{
   })
 
   it('a /set link session reads only the routes still open to link tokens',async()=>{
+    // 即使后台有待响应请求，LINK 也不能显示正文或动作。
+    detail.permissions=[{id:'p1',taskId:TASK,tool:'Bash',description:'rm -rf tmp',createdAt:1}]
     await page.goto('http://localhost/m?t=tLINK')
     await page.locator('[data-mid="'+TASK+'"]').click()
-    await expect.poll(()=>page.locator('#m-status .m-state').textContent()).toBe('在做')
+    // 新增待批准 fixture 后应显示等你决定；这只是状态，不授予 LINK 响应能力。
+    await expect.poll(()=>page.locator('#m-status .m-state').textContent()).toBe('等你决定')
     expect(await page.locator('#pairbar').isVisible()).toBe(true)
+    // T5 不提升 LINK 权限：保留旧的内容排除，并检查新对话/响应控件不可见。
+    const body=await page.locator('body').textContent()
+    for(const gone of ['公开要求','公开答复','报告.md','主人提问','CC 回复','rm -rf tmp'])expect(body).not.toContain(gone)
+    for(const sel of ['textarea','#chat-input','#conversation','#m-response [data-decision]','#m-response [data-question]'])expect(await page.locator(sel).isVisible(),sel).toBe(false)
+    for(const sel of ['#m-events','#m-artifacts','#m-say','[data-control]','[data-handoff]','[data-artifact]'])expect(await page.locator(sel).count(),sel).toBe(0)
     const api=[...new Set(paths.filter(p=>/^(?:GET|POST) \/(?:v1|m\/api)\//.test(p)))].sort()
     expect(api).toEqual(['GET /v1/home','GET /v1/matter','GET /v1/matters','GET /v1/phone/art/presence'])
   })

@@ -41,12 +41,12 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null }): Route
   return {
     'GET /v1/memory/topics': wrap(async (q, _body, owner, caller) => {
       const parsed = TopicsListQuery.safeParse(Object.fromEntries(q))
-      if (!parsed.success) return err(400, 'invalid_params')
+      if (!parsed.success || (parsed.data.q && parsed.data.view !== 'all')) return err(400, 'invalid_params')
       const p = parsed.data, revision = topicsRevision(d.db, owner)
-      const scope = JSON.stringify([owner, 'list', p.view, revision])
+      const scope = JSON.stringify([owner, 'list', p.view, p.q ?? '', revision])
       const offset = offsetOf(p.cursor, scope)
       let count = Math.min(p.limit, p.view === 'recent' ? 8 : 50)
-      const projection = await topicsProjection(d.db, owner, { view: p.view, offset, limit: count })
+      const projection = await topicsProjection(d.db, owner, { view: p.view, offset, limit: count, ...(p.q ? {q:p.q} : {}) })
       const build = () => ({ topics: projection.topics.slice(0, count), nextCursor: offset + count < projection.total ? cursorFor(scope, offset + count) : null, revision })
       let body = build()
       while (count > 1 && caller.frameBudget && framedTooLargeFor(JSON.stringify(body), caller.frameBudget)) { count--; body = build() }

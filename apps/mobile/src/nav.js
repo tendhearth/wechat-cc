@@ -9,6 +9,7 @@ document.getElementById("pairbtn").addEventListener("click", function() {
       document.getElementById("pairbar").hidden = true
       toast("配好了,这台手机以后点链接不会再过期")
       // 壳页优先读本域的 deviceToken:重开一次,隧道就用长期令牌重新握手(这条流还绑着 10 分钟短令牌)。
+      if (typeof cRead === 'function') cRead(false)
       if (window.__CC_SHELL__) setTimeout(function(){ location.reload() }, 1200)
     } else toast("没配上:" + (r.error || ""))
   }).catch(function(){ toast("没配上,网络不通") })

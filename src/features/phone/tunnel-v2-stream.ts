@@ -75,6 +75,7 @@ export interface V2StreamDeps {
   send: (frame: unknown) => void
   handleRequest: (req: Request) => Promise<Response>
   events?: PhoneEvents
+  device: boolean
   /** 这条流的令牌此刻还有效吗。 */
   topicsScope?: () => string | null
   tokenValid: () => boolean
@@ -152,6 +153,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
       sendMsg({ t: 'err', rid: m.rid, code: 'internal' })
       return
     }
+    if(m.method.toUpperCase()==='GET'&&!checkToken())return
     const resHeaders: Record<string, string> = {}
     res.headers.forEach((v, k) => { resHeaders[k.toLowerCase()] = v })
     const text = isTextContentType(res.headers.get('content-type'))
@@ -170,6 +172,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
   }
 
   function onSub(m: SubMsgT): void {
+    if(!deps.device){sendMsg({t:'err',sid:m.sid,code:'topic_not_allowed'});return}
     if (!deps.events) { sendMsg({ t: 'err', sid: m.sid, code: 'subscriptions_unavailable' }); return }
     const topicOwner = m.topic === 'topics' ? deps.topicsScope?.() : undefined
     if (m.topic === 'topics' && !topicOwner) { sendMsg({ t: 'err', sid: m.sid, code: 'topic_not_allowed' }); return }

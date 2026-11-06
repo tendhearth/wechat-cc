@@ -58,3 +58,37 @@ export function withoutOldNarrationFor(detail: unknown, budget: number, wrap: (d
   }
   return body
 }
+
+/** The link page is a status fallback. Never reuse a full device detail as its DTO. */
+const pickFields = (value: Record<string, unknown>, keys: readonly string[]) => Object.fromEntries(keys.filter(key => key in value).map(key => [key, value[key]]))
+export function linkMatterSummary<T>(value: T): T {
+  const m = value as Record<string, unknown>
+  const out = pickFields(m, ['id','kind','title','status','state','archivedAt','createdAt','updatedAt','origin','agents','agentNames','networkSuspended','taskState'])
+  for (const key of ['projectPath','ownerChatId','originMatterId','originMessageId']) if (key in m) out[key] = null
+  return out as T
+}
+export function linkMatterStatus<T>(value: T): T {
+  const d = value as Record<string, unknown>, matter = d.matter as Record<string, unknown>
+  const task = d.task as Record<string, unknown> | null | undefined
+  const rows = (key: string) => Array.isArray(d[key]) ? (d[key] as Record<string, unknown>[]).filter(row => row.taskId === matter.id) : []
+  const events = Array.isArray(d.events) ? d.events as Record<string, unknown>[] : [], last = events.at(-1)
+  const activity = last?.activity as Record<string, unknown> | undefined
+  return {
+    matter: linkMatterSummary(matter),
+    ...(task !== undefined ? {task: task ? {...pickFields(task,['id','title','status','phase','providerId','updatedAt','archivedAt','rewind']),path:'',error:task.error === 'execution_model_unsupported' ? task.error : null} : null} : {}),
+    events: last?.kind === 'tool_call' && activity?.status === 'running' ? [{...pickFields(last,['kind','createdAt']),text:'',activity:pickFields(activity,['type','status','label'])}] : [],
+    permissions: rows('permissions').map(row => ({...pickFields(row,['id','taskId','createdAt']),tool:'',description:''})),
+    questions: rows('questions').map(row => ({...pickFields(row,['id','taskId','createdAt']),questions:[]})),
+    artifacts: [], inputs: [], bindings: [], sessions: [],
+    ...pickFields(d,['runId','quotaHandoff']),
+  } as T
+}
+
+/** Home still supplies the same presence/work fallback, without personal feed/news. */
+export function linkHomeStatus<T>(value: T): T {
+  const d=value as Record<string,unknown>,p=d.presence as Record<string,unknown>|null,w=d.work as Record<string,unknown>|undefined
+  return {ok:d.ok,synced_at:d.synced_at,today:d.today,
+    presence:p?{presence:p.presence,activity:pickFields(p.activity as Record<string,unknown>,['kind','label','since']),news:{unread:0,latest_kind:null,latest_title:null}}:null,
+    ...(w?{work:{focus:w.focus?pickFields(w.focus as Record<string,unknown>,['id','title','kind']):null,partial:w.partial}}:{}),
+    ...pickFields(d,['presence_error']),unread:0,seen_until:d.seen_until,events:[],next_cursor:null,sources_degraded:d.sources_degraded} as T
+}

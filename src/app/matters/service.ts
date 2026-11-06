@@ -460,7 +460,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(!q||q.length>200)throw Error('invalid_query')
       const chatId=deps.chat?.ownerChatId()
       if(!chatId||!deps.chat?.search)return null
-      return {hits:await deps.chat.search(chatId,q,Math.max(1,Math.min(50,Math.trunc(limit))))}
+      const hits=await deps.chat.search(chatId,q,Math.max(1,Math.min(50,Math.trunc(limit))))
+      return deps.chat.ownerChatId()===chatId?{hits}:null
     },
     artifactChunk(id,input){
       const d=taskDetail(id),artifact=d.artifacts?.find(a=>a.taskId===id&&a.id===input.artifactId)

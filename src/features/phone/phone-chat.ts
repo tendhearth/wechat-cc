@@ -1,3 +1,5 @@
+import type { SayReceipts } from '../../ports/matters'
+import { sayTextHash } from '../../lib/content-hash'
 /**
  * phone-chat.ts — 手机「跟 CC 说」(spec 2026-10-01 §1.1、§3):收下即回,companionConverse 在后台跑,
  * 回复经 matter/<聊天> 主题唤醒手机去拉。隧道约 15 秒没流量就断,所以不能同步等回复。
@@ -17,6 +19,7 @@ export interface PhoneChat {
   /** 收下即回。抛 'no_owner_chat' | 'chat_busy' | 'input_conflict'(同一 requestId 换了正文或图)| 取图的错误(invalid_attachment 等)。 */
   say(requestId: string, text: string, materials?: PhoneChatMaterials): ChatJob
   state(): { pending: ChatJob | null; failed: ChatJob | null }
+  receipt?(requestId: string): { requestId: string; status: 'pending' | 'replied' | 'failed'; since: number } | null
   /** 正在等回复的那件事的 matterId(给主题来源)。 */
   pendingMatter(): string | null
 }
@@ -33,9 +36,11 @@ const errorOf = (e: unknown): ChatJobError => {
 }
 
 export function makePhoneChat(d: {
+  receipts?: SayReceipts
   converse(text: string, images?: PhoneChatImage[]): Promise<{ reply: string }>
   /** 按主人校验并取出这一句引用的图(读出字节后暂存即删)。没接 ⇒ 带图的一句 409 不收。 */
   takeImages?(materials: PhoneChatMaterials): PhoneChatImage[]
+  peekOwnerMatterId?(): string | null
   ownerMatterId(): string | null
   /** 这一句开始等回复(pendingMatter 变成它):手机主题据此马上算出 working,不等兜底轮询。 */
   onPending?(matterId: string): void
@@ -85,7 +90,8 @@ export function makePhoneChat(d: {
     ;(timer as { unref?: () => void }).unref?.()
     // Promise.resolve().then:converse 同步抛错也落成 failed,不会让 pending 卡死。
     Promise.resolve().then(() => { const images = imagesOf.get(job); return images?.length ? d.converse(job.text, images) : d.converse(job.text) }).then(
-      () => {
+      result => {
+        try { d.receipts?.settle(job.requestId, result.reply) } catch { log('reply receipt could not be settled; keep the reservation') }
         if (!done) return finish(null)
         // 超时后才回来的成功(终审 I2):这句其实办成了、回复已落进对话 ⇒ 翻成 replied,
         // 同一 requestId 的重试去重成 replied、不起第二轮;它若还挂在 failed 上就撤掉(别人的 failed 不动)。
@@ -96,7 +102,11 @@ export function makePhoneChat(d: {
         log(`say ${job.requestId.slice(0, 8)} late reply`)
         wake(job)
       },
-      e => finish(e),
+      e => {
+        // Only a settled rejection is retryable; timeout/transport uncertainty keeps its reservation.
+        try { d.receipts?.drop(job.requestId) } catch { log('failed receipt could not be cleared') }
+        finish(e)
+      },
     )
   }
   const visibleFailed = () => (failed && ageFrom(failed) >= now() - PHONE_CHAT_JOB_TTL_MS ? failed : null)
@@ -109,12 +119,21 @@ export function makePhoneChat(d: {
       if (pending && pending.requestId !== requestId) throw new Error('chat_busy')
       const matterId = d.ownerMatterId()
       if (!matterId) throw new Error('no_owner_chat')
+      // Reserve before dispatch. A restart must never re-run an uncertain accepted turn.
+      if (d.receipts) {
+        const textHash = sayTextHash(JSON.stringify([text, materials ?? null]))
+        const prior = d.receipts.reserve({ requestId, matterId, textHash })
+        if (!prior.fresh) {
+          if (prior.receipt.matterId !== matterId || prior.receipt.textHash !== textHash) throw new Error('input_conflict')
+          return { requestId, matterId, text, status: prior.receipt.status === 'replied' ? 'replied' : 'pending', since: prior.receipt.createdAt }
+        }
+      }
       // 取图放在所有「不收」的判断之后:取出来就删暂存,不能取了又不收。重试沿用上一次取到的图。
       let images: PhoneChatImage[] = []
       if (seen) images = imagesOf.get(seen) ?? []
       else if (materials?.attachmentIds.length) {
-        if (!d.takeImages) throw new Error('images_not_wired')
-        images = d.takeImages(materials)
+        if (!d.takeImages) { d.receipts?.drop(requestId); throw new Error('images_not_wired') }
+        try { images = d.takeImages(materials) } catch (error) { d.receipts?.drop(requestId); throw error }
       }
       const job: ChatJob = { requestId, matterId, text, status: 'pending', since: now() }
       imagesOf.set(job, images); materialKey.set(job, keyOf(materials))
@@ -126,6 +145,12 @@ export function makePhoneChat(d: {
     state: () => {
       const f = visibleFailed()
       return { pending: pending ? { ...pending } : null, failed: f ? { ...f } : null }
+    },
+    receipt: requestId => {
+      const owner = d.peekOwnerMatterId ? d.peekOwnerMatterId() : d.ownerMatterId(), job = jobs.get(requestId)
+      if (job && job.matterId === owner) return { requestId, status: job.status, since: job.since }
+      const receipt = d.receipts?.get(requestId)
+      return receipt && receipt.matterId === owner ? { requestId, status: receipt.status, since: receipt.createdAt } : null
     },
     pendingMatter: () => pending?.matterId ?? null,
   }

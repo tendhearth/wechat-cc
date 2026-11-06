@@ -22,6 +22,7 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 import { makePhoneChatId, makePhoneOwner, makePhoneChat, makePhoneEventsWiring, resolveRemoteRelay, makePhonePush, fanoutPush, makePhoneNotifier, deviceIdOf, currentPhoneClient, loadTunnelClient } from '../../features/phone'
 import { makePushGate } from '../speech/push-gate'
 import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
+import { makeSayReceipts } from '../../adapters/store/say-receipts'
 import { makeMatterSeen } from '../../adapters/store/matter-seen'
 import { makeMatterProposals } from '../speech/matter-proposals'
 import { notifyDesktop } from '../../lib/desktop-notify'
@@ -114,10 +115,12 @@ let phoneEvents: import('../../features/phone').PhoneEvents | null = null
 // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:
 // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
 const phoneChat = phoneOwner ? makePhoneChat({
+  receipts: makeSayReceipts(db),
   converse: (text, images) => companionConverse(text, 'phone', images),
   // 手机带的图:材料暂存里按主人取(与交办同一套校验),读完即删,图落到对话 inbox(2026-10-06)。
   ...(opts.workbench ? { takeImages: (m: { draftId: string; attachmentIds: string[] }) => opts.workbench!.takeChatImages(m, { ownerKey: ownerChatId() ?? '', surface: 'phone' }) } : {}),
   ownerMatterId: () => phoneOwner.ensure(),
+  peekOwnerMatterId: () => phoneOwner.peek()?.matterId ?? null,
   onPending: id => phoneEvents?.poke(topic => topic === `matter/${id}`),
   onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
   log: (tag, line) => log(tag, line),

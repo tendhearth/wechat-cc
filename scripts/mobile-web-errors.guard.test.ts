@@ -153,8 +153,18 @@ describe('手机网页调的路由 = 这里登记了码的路由', () => {
   it('link-routes 扫描器从组装好的 /m 页里扫出来的,正好是 ROUTE_CODES 那六条 + 跳页', () => {
     // 内联的协议包(压缩过的 noble)不是页面逻辑,同 link-routes-from-source 的做法先拿掉
     const page = assembleMobilePage(readMobileSource).phone.split(read('apps', 'mobile', 'src', 'protocol-generated.js')).join('')
-    const called = uniq(scanSource('phone /m', page, PHONE_ROUTES).calls.map(c => c.key))
+    const called = uniq(scanSource('phone /m', page, PHONE_ROUTES).calls.filter(c => !c.deviceOnly).map(c => c.key))
     expect(called).toEqual(uniq([...Object.keys(ROUTE_CODES), ...NAVIGATIONS]))
+  })
+})
+
+describe('T5 设备对话调用的权限', () => {
+  it('新增私人调用逐项登记为设备专用，链接路径仍由上面的完整集合约束', () => {
+    const page = assembleMobilePage(readMobileSource).phone.split(read('apps', 'mobile', 'src', 'protocol-generated.js')).join('')
+    const calls = scanSource('phone /m', page, PHONE_ROUTES).calls
+    expect(uniq(calls.filter(c => c.deviceOnly).map(c => c.key))).toEqual([
+      'GET /v1/matter/artifact', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/answer', 'POST /v1/matter/owner-chat/say', 'POST /v1/matter/permission', 'POST /v1/memory/topics/open',
+    ])
   })
 })
 

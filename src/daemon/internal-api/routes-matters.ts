@@ -2,7 +2,7 @@ import type { ListMatters, MatterKind, MatterSurface } from '../../ports/matters
 import { LEGACY_MATTER_STATUSES, type LegacyMatterStatus, type WireMatter } from '../../domain/matters/legacy-status'
 import type { MatterSayInput } from '../../app/matters/service'
 import {MATTER_KINDS} from '@wechat-cc/protocol'
-import {framedTooLargeFor,withoutOldNarrationFor,withoutReplyExtras} from '../../domain/matters/phone-scope'
+import {framedTooLargeFor,withoutOldNarrationFor,linkMatterSummary,linkMatterStatus} from '../../domain/matters/phone-scope'
 import type {InternalApiDeps,RouteHandler,RouteTable} from './types'
 
 /**
@@ -82,6 +82,20 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       if((surface!==null&&!SURFACES.has(surface))||(kind!==null&&!KINDS.has(kind))||(status!==null&&status.split(',').some(s=>!STATUSES.has(s)))||(since!==null&&!/^\d+$/.test(since))||(limit!==null&&(!/^\d+$/.test(limit)||Number(limit)<1||Number(limit)>200)))return invalid()
       if((exclude!==null&&exclude.split(',').some(k=>!KINDS.has(k)))||(taskState!==null&&taskState!=='1'))return invalid()
       if(!deps.matters)return {status:503,body:{error:'matters_not_wired'}}
+      // T5: search is an owner device tool; the old link fallback retains its original list.
+      if(query.has('search')){
+        if(query.get('search')!=='1'||!caller||!['device','operator'].includes(caller.origin)||!['task','terminal'].includes(kind??'task'))return invalid()
+        for(const key of ['search','q','project','state','cursor'])if(query.getAll(key).length>1)return invalid()
+        const q=query.get('q')??'',project=query.get('project')??'',state=query.get('state')??''
+        if(q.length>200||project.length>1024||!['','open','working','waiting','done','failed','cancelled','archived'].includes(state))return invalid()
+        let before:{at:number;id:string}|undefined
+        const cursor=query.get('cursor')
+        if(cursor){try{if(cursor.length>200)throw Error();const b=JSON.parse(cursor);if(!Array.isArray(b)||b.length!==2||!Number.isSafeInteger(b[0])||b[0]<0||typeof b[1]!=='string'||!ID.test(b[1]))throw Error();before={at:b[0],id:b[1]}}catch{return invalid()}}
+        const count=Math.min(Number(limit??30),50)
+        const found=deps.matters.list({kind:(kind??'task') as MatterKind,limit:count+1,...(q?{q}:{}),...(project?{project}:{}),...(state==='archived'?{legacy:['archived'] as LegacyMatterStatus[]}:state?{state:state as import('../../ports/matters').MatterState}:{}),...(before?{before}:{})})
+        const page=found.slice(0,count),last=page.at(-1)
+        return {status:200,body:{matters:taskState==='1'?await withTaskState(deps.matters,page):page,nextCursor:found.length>count&&last?JSON.stringify([last.updatedAt,last.id]):null}}
+      }
       const service=deps.matters,phone=fromPhone(caller),drop=new Set(exclude?exclude.split(','):[])
       const filtering=phone||drop.size>0
       const filter:ListMatters={
@@ -94,7 +108,8 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       let rows:WireMatter[]=service.list(filter)
       if(filtering){
         // 手机令牌:别人的聊天 matter(updated_at 会被微信入站推高)不给,也不挤掉任务
-        rows=rows.filter(m=>(!phone||service.phoneMayOpen(m))&&!drop.has(m.kind))
+        rows=rows.filter(m=>(!phone||service.phoneMayOpen(m))&&(caller?.origin!=='link'||m.kind==='task')&&!drop.has(m.kind))
+        if(caller?.origin==='link')rows=rows.map(linkMatterSummary)
         if(limit!==null)rows=rows.slice(0,Number(limit))
       }
       // 网络守护冻住的那几件(2026-10-03):手机显示「已暂停(网络未受保护)」。matter 与工作台任务同 id。
@@ -142,9 +157,9 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
         return {status:200,body:detail}
       }
       // 手机令牌:跟列表同一条规矩,别人的聊天按 id 也打不开,回得跟「没有这件」一样(不让人拿 id 试探)
-      if(!service.phoneMayOpen(detail.matter))return {status:404,body:{error:'matter_not_found'}}
+      if(!service.phoneMayOpen(detail.matter)||(caller?.origin==='link'&&detail.matter.kind!=='task'))return {status:404,body:{error:'matter_not_found'}}
       try{service.seenOnPhone(id)}catch{/* 只是露面登记 */}
-      const scoped=caller?.origin==='link'?withoutReplyExtras(detail):detail
+      const scoped=caller?.origin==='link'?linkMatterStatus(detail):detail
       if(caller?.frameBudget===undefined)return {status:200,body:scoped}
       const fitted=withoutOldNarrationFor(scoped,caller.frameBudget)
       return framedTooLargeFor(fitted,caller.frameBudget)?{status:413,body:{error:'detail_too_large'}}:{status:200,body:JSON.parse(fitted)}

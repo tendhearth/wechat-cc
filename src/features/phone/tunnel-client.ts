@@ -274,6 +274,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       send: (f) => { if (streams.get(stream) === st) sendToStream(stream, f) },
       handleRequest: deps.handleRequest,
       events: deps.events,
+      device: deps.knownDeviceTokens().includes(token),
       topicsScope: () => deps.knownDeviceTokens().includes(token) ? deps.topicsOwner?.() ?? null : null,
       tokenValid: () => deps.knownDeviceTokens().includes(token) || (deps.activeLinkToken?.() ?? null) === token,
       onRevoked: () => {

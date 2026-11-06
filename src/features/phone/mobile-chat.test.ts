@@ -70,6 +70,8 @@ describe('mobileChatRoutes', () => {
   it('pending / failed 带出来但不带 matterId', async () => {
     const job = { requestId: RID, matterId: 'c0ffee01', text: 'hi', since: 1 }
     const r = await call(deps({ chat: { ...deps().chat, state: () => ({ pending: { ...job, status: 'pending' }, failed: { ...job, status: 'failed', error: 'busy' } }) } }), get())
+    expect(r.body.conversation).toBe('v1')
+    expect(r.body.topics).toBe('v1')
     expect(r.body.pending).toEqual({ requestId: RID, text: 'hi', status: 'pending', since: 1 })
     expect(r.body.failed).toEqual({ requestId: RID, text: 'hi', status: 'failed', since: 1, error: 'busy' })
     PHONE_API_SCHEMAS['GET /m/api/chat']!.parse(r.body)
@@ -382,4 +384,10 @@ it('an app upload whose inbox sits under a symlinked directory still reads; a sy
     const target=join(dir,'outside.png');writeFileSync(target,'private');rmSync(path);symlinkSync(target,path)
     expect((await call(d,get(url))).status).toBe(404)
   }finally{rmSync(dir,{recursive:true,force:true})}
+})
+it('owner chat changes while paging: no old transcript is returned into the new owner scope',async()=>{
+ let owner:ReturnType<MobileChatDeps['owner']>={matterId:'c0ffee01',chatId:'wx',title:'聊天'},release!:(rows:MessageRecord[])=>void
+ const d=deps({owner:()=>owner,history:()=>new Promise(r=>{release=r})}),reading=call(d,get())
+ await Promise.resolve();owner=null;release([rec(1,{text:'private old owner'})]);const result=await reading
+ expect(result.status).toBe(404);expect(JSON.stringify(result.body)).not.toContain('private old owner')
 })

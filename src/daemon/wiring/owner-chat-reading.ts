@@ -17,7 +17,7 @@ export function makeOwnerChatFileReader(deps:{ownerChatId():string|null;stickerD
     const fail=(status:number,error:string)=>({status,body:{error}})
     const owner=deps.ownerChatId();if(!owner)return fail(404,'not_found')
     const row=await deps.message(owner,input.id)
-    if(!row||row.id!==input.id||row.chatId!==owner)return fail(404,'not_found')
+    if(deps.ownerChatId()!==owner||!row||row.id!==input.id||row.chatId!==owner)return fail(404,'not_found')
     const attachment=(row.direction==='out'?parseExtras(row.extras)?.attachments:incomingUploadAttachments(row,deps.inboxDir))?.[input.i]
     if(!attachment)return fail(404,'not_found')
     const path=attachment.kind==='file'?attachment.path:attachment.kind==='sticker'&&attachment.file&&deps.stickerDir?join(deps.stickerDir,attachment.file):null
@@ -27,6 +27,7 @@ export function makeOwnerChatFileReader(deps:{ownerChatId():string|null;stickerD
     if(!recordedFileCanonical(path))return fail(404,'not_found')
     const response=deps.readChunk(path,name,input.offset)
     const body=await response.json() as Record<string,unknown>
+    if(deps.ownerChatId()!==owner)return fail(404,'not_found')
     if(response.ok&&((input.sha256!==undefined&&body.sha256!==input.sha256)||(input.size!==undefined&&body.size!==input.size)))return fail(409,'file_changed')
     return {status:response.status,body}
   }

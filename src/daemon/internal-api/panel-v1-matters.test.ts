@@ -82,7 +82,8 @@ describe('GET /v1/matters:手机令牌只见主人能在手机上打开的', () 
         const r = await viaPanel(path, tok)
         expect(r.status, `${tok[0]} ${path}`).toBe(200)
         const got = ids(await r.json())
-        expect(got, `${tok[0]} ${path}`).toContain(MINE)
+        if(tok===device)expect(got, `${tok[0]} ${path}`).toContain(MINE)
+        else expect(got, `${tok[0]} ${path}`).not.toContain(MINE)
         expect(got, `${tok[0]} ${path}`).not.toContain(THEIRS)
       }
     }
@@ -127,9 +128,12 @@ describe('GET /v1/matter:别人的聊天按 id 也打不开;链接令牌不读�
 
   it('链接令牌:事件里没有 replyExtras / messageId(新键与别名键);设备令牌、operator 有', async () => {
     for (const path of [`/v1/matter?id=${MINE}`, `/m/api/matter?id=${MINE}`]) {
-      const viaLink = await (await viaPanel(path, link)).json() as { events: Array<Record<string, unknown>> }
-      expect(viaLink.events[0], path).not.toHaveProperty('replyExtras')
-      expect(viaLink.events[0], path).not.toHaveProperty('messageId')
+      const denied = await viaPanel(path, link)
+      expect(denied.status,path).toBe(404)
+      const viaLink = await (await viaPanel(path.replace(MINE,TASK),link)).json() as {events:Array<Record<string,unknown>>}
+      expect(viaLink.events,path).toEqual([])
+      expect(JSON.stringify(viaLink),path).not.toContain('replyExtras')
+      expect(JSON.stringify(viaLink),path).not.toContain('messageId')
       const viaDevice = await (await viaPanel(path, device)).json() as { events: Array<Record<string, unknown>> }
       expect(viaDevice.events[0], path).toHaveProperty('replyExtras')
       expect(viaDevice.events[0], path).toHaveProperty('messageId', 'm-1')
@@ -204,4 +208,12 @@ describe('POST /v1/matter/seen', () => {
     }
     expect(desktopSeen).toHaveBeenCalledTimes(2)
   })
+})
+
+it('T5 link: task status keeps current progress, counts and stop identity while excluding private process, requests and files',async()=>{
+ vi.mocked(service.detail).mockImplementation(async(id)=>({matter:{...row(id,'task'),projectPath:'/PRIVATE',originMessageId:'PRIVATE-ID'},task:{id,title:id,status:'running',phase:'working',providerId:'codex',path:'/PRIVATE',updatedAt:1,error:null,prompt:'PRIVATE-PROMPT'},runId:'11111111-1111-4111-8111-111111111111',events:[{kind:'text',text:'PRIVATE-RESULT',createdAt:1},{kind:'tool_call',text:'PRIVATE-COMMAND',createdAt:2,activity:{type:'command',status:'running',label:'核对备份'}}],permissions:[{id:'p',taskId:id,createdAt:1,tool:'Bash',description:'PRIVATE-PERMISSION'}],questions:[{id:'q',taskId:id,createdAt:1,questions:[{question:'PRIVATE-QUESTION'}]}],artifacts:[{name:'PRIVATE-FILE'}],inputs:[{text:'PRIVATE-INPUT'}],bindings:[],sessions:[]}) as never)
+ for(const path of [`/v1/matter?id=${TASK}`,`/m/api/matter?id=${TASK}`]){
+  const linked=await viaPanel(path,link),body=await linked.json() as any;expect(linked.status).toBe(200);expect(JSON.stringify(body)).not.toContain('PRIVATE');expect(body.events[0].activity.label).toBe('核对备份');expect(body.permissions).toHaveLength(1);expect(body.questions).toHaveLength(1);expect(body.runId).toBe('11111111-1111-4111-8111-111111111111')
+  const paired=await viaPanel(path,device);expect(JSON.stringify(await paired.json())).toContain('PRIVATE-PERMISSION')
+ }
 })

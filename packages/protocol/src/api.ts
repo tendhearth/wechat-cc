@@ -540,7 +540,7 @@ export type LetterSummaryT = z.infer<typeof LetterSummary>
 /** 语音附件合成出来的声音(base64)。太长装不进中继一帧 ⇒ 413 too_large(手机提示去电脑上听)。 */
 export const ChatVoice = z.object({ mime: z.string(), data: z.string() })
 export const ChatJob = z.object({ requestId: z.string(), text: z.string(), status: z.enum(['pending', 'replied', 'failed']), since: z.number(), error: z.enum(['busy', 'unavailable', 'not_configured']).optional() })
-export const ChatPage = z.object({ matterId: z.string(), title: z.string(), messages: z.array(ChatMessage), hasMore: z.boolean(), nextBefore: z.string().nullable(), pending: ChatJob.nullable(), failed: ChatJob.nullable() })
+export const ChatPage = z.object({ receipt: z.object({requestId:z.string(),status:z.enum(['pending','replied','failed']),since:z.number()}).nullable().optional(), conversation: z.literal('v1').optional(), topics: z.literal('v1').optional(), matterId: z.string(), title: z.string(), messages: z.array(ChatMessage), hasMore: z.boolean(), nextBefore: z.string().nullable(), pending: ChatJob.nullable(), failed: ChatJob.nullable() })
 
 // ── CC 的连接(spec 2026-10-01):手机拿到的是去掉 detail 的快照 ──────────
 

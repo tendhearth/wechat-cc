@@ -1,3 +1,4 @@
+import { linkHomeStatus } from '../../domain/matters/phone-scope'
 /**
  * settings-panel.ts — the WeChat-openable graphical settings page
  * (2026-08-25, owner: 微信用户不会背命令,前期一个设置面板能非常好地帮助他们).
@@ -726,8 +727,11 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     'GET /v1/phone/art/presence': async () => {
       return json({ ok: true, mime: 'image/png', unlit: presenceArt.unlit.base64, lit: presenceArt.lit.base64 })
     },
-    'GET /v1/home': async (url) => {
-      return json(await home(parseLimit(url)))
+    'GET /v1/home': async (url, _req, ctx) => {
+      const payload=await home(parseLimit(url))
+      const response=json(ctx.caller.origin==='link'?linkHomeStatus(payload):payload)
+      response.headers.set('cache-control','no-store')
+      return response
     },
     'POST /v1/phone/push/register': pushRoute(false),
     'POST /v1/phone/push/test': pushRoute(true),
@@ -800,6 +804,10 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       deps.log('SETTINGS', `route_not_allowed origin=${caller.origin} path=${req.method} ${url.pathname}`)
       return json({ error: 'route_not_allowed' }, 403)
     }
+    const finishRead = async (response: Promise<Response> | Response): Promise<Response> => {
+      const result=await response
+      return req.method==='GET'&&!panelToken(t)?json({error:'unauthorized'},401):result
+    }
     const deviceId = deviceIdOfSession(caller.sessionKey)
     if (caller.origin === 'device' && deviceId) devices.touch(deviceId)
 
@@ -810,15 +818,15 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       const row = (ROUTES as Readonly<Record<string, { desktop?: object; phone?: object }>>)[`${req.method} ${url.pathname}`]
       if (!row?.desktop) {
         const local = lookupPhoneRoute(routes, req.method, url.pathname)
-        if (local) return await local(url, req, { t: t!, caller, deviceId })
+        if (local) return await finishRead(local(url, req, { t: t!, caller, deviceId }))
         if (row?.phone) return json({ error: 'not_found' }, 404)
       }
       if (!deps.v1) return json({ error: 'not_found' }, 404)
-      return await deps.v1(req, caller, { frameBudget: MAX_MOBILE_DETAIL_BYTES, client: phoneClientOf(req) })
+      return await finishRead(deps.v1(req, caller, { frameBudget: MAX_MOBILE_DETAIL_BYTES, client: phoneClientOf(req) }))
     }
 
     // ── token-gated:查表 ──────────────────────────────────────────
-    return (await routePhone(routes, url, req, { t: t!, caller, deviceId })) ?? json({ error: 'not_found' }, 404)
+    return await finishRead(routePhone(routes, url, req, { t: t!, caller, deviceId }).then(result=>result??json({error:'not_found'},404)))
   }
 
   return panel

@@ -56,3 +56,8 @@ it('a symlinked parent directory on the recorded path still reads; a symlinked f
  expect((await readIn(inInput)).status).toBe(200)
  rmSync(up);symlinkSync(join(real,'photo.png'),up);expect((await readIn(inInput)).status).toBe(404)
 })
+it('owner scope is revalidated after an asynchronous file record lookup',async()=>{
+ let owner:string|null='owner',release!:(r:MessageRecord)=>void
+ const read=makeOwnerChatFileReader({ownerChatId:()=>owner,message:()=>new Promise(r=>{release=r}),readChunk:()=>{throw Error('must not read another scope')}}),pending=read({id:'out',i:0,offset:0})
+ owner=null;release(row('/private/not-read'));expect((await pending).status).toBe(404)
+})

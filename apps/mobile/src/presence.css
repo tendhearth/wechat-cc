@@ -6,9 +6,6 @@ button svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6
 .pane{padding:8px 22px 24px}
 .card{background:none;border:0;border-bottom:1px solid var(--line-soft);border-radius:0;box-shadow:none;padding:20px 0;margin:0}
 .todo .tx b{font-size:17px;line-height:1.6;overflow-wrap:anywhere}.todo .tx small{display:block;font-size:12px;margin-top:5px;overflow-wrap:anywhere}
-nav{max-width:680px;margin:auto;background:var(--paper);border:0;z-index:10;padding-left:22px;padding-right:22px}
-nav button{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;min-height:60px;font-size:13px;padding:12px 0;color:var(--soft)}
-nav button.on{color:var(--accent);font-weight:500}nav button.on::before{content:"";position:absolute;top:0;left:calc(50% - 14px);width:28px;height:2px;background:var(--accent)}
 button{cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}button:focus-visible,summary:focus-visible,a:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:3px}[hidden]{display:none!important}
 .home-scene{position:relative;height:clamp(280px,48svh,385px);padding:20px 0 0;overflow:hidden;background:none}
 .home-scene h2{font-size:25px;font-weight:500;line-height:1.5;max-width:100%;margin:0;overflow-wrap:anywhere}
