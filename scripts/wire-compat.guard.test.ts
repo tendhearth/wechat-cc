@@ -150,3 +150,19 @@ describe('WIRE_ROUTE_ALIASES 别名表只许变少', () => {
     }
   })
 })
+
+
+it('P3h: every alias has structured retirement conditions for each reader and cached webpages', () => {
+  for (const row of WIRE_ROUTE_ALIASES) {
+    expect(row.retirement.length, row.from).toBeGreaterThan(0)
+    for (const reader of row.readers) expect(row.retirement.some(c => c.client === reader), row.from).toBe(true)
+    if (row.readers.includes('app')) expect(row.retirement.some(c => c.client === 'web'), row.from).toBe(true)
+    for (const c of row.retirement) {
+      expect(c.milestone.trim(), row.from).not.toBe('')
+      expect(c.minimum === null ? c.client === 'desktop' && c.milestone === 'P3e' : c.minimum.length > 0, row.from).toBe(true)
+      if (c.client === 'app') expect(c.minimum, row.from).toMatch(/^\d+$/)
+      if (c.client === 'desktop' && c.minimum !== null) expect(c.minimum, row.from).toMatch(/^\d+\.\d+\.\d+$/)
+      if (c.client === 'web') expect(c.minimum, row.from).toBe('P3g')
+    }
+  }
+})

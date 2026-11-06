@@ -81,7 +81,7 @@ function tunnel() {
       open: function() { return ccSocket(remote.relay + "?id=" + encodeURIComponent(remote.id)) },
       token: T,
       onSubscriptionError: function(topic,code){if(code === "auth_failed"&&identity===T&&typeof cClearPrivate === "function"){cClearPrivate();if(typeof cShowReconnect === "function")cShowReconnect()}},
-      client: "web",
+      client: "web", build: "P3g",
       // 页面会发慢请求(说一句、转写一段话):单次等 30 秒;握手 15 秒没回就重连。
       requestTimeoutMs: 30000,
       handshakeTimeoutMs: 15000,
@@ -98,6 +98,7 @@ function viaTunnel(/** @type {string} */ path, /** @type {any} */ opts) {
   /** @type {any} */
   var req = { method: o.method || "GET", path: path }
   if (o.headers) { /** @type {Record<string, string>} */ var hs = {}; for (var k in o.headers) if (typeof o.headers[k] === "string") hs[k] = o.headers[k]; req.headers = hs }
+  req.headers = Object.assign({}, req.headers, {"x-cc-web-routes":"P3g"})
   if (typeof o.body === "string") req.body = o.body
   return tunnel().request(req).then(function(/** @type {any} */ r) {
     ccClearNotice("cc-tamper")
@@ -126,6 +127,7 @@ function onUnauthorized(sentAs) {
 // 直接走隧道,不再每次白等 2.5s。返回 {status, json(), text()}。
 var preferTunnel = false
 function api(path, opts) {
+  opts = ccRouteVersion(opts)
   if (preferTunnel && REMOTE) return viaTunnel(path, opts)
   var ctrl = new AbortController()
   var to = setTimeout(function(){ ctrl.abort() }, 2500)
@@ -149,3 +151,6 @@ function ccNav(path) {
   }
   location.href = q(path)
 }
+
+/** Telemetry only; cached pre-P3g pages omit this marker. */
+function ccRouteVersion(opts) { return Object.assign({}, opts || {}, {headers:Object.assign({}, opts && opts.headers, {"x-cc-web-routes":"P3g"})}) }

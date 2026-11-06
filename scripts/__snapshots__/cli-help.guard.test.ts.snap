@@ -2121,6 +2121,8 @@ Usage:
                           'provider set openai' calls can omit it. API key is read
                           from the WECHAT_OPENAI_API_KEY env var, never persisted.
 
+  routes retire-check   只读检查旧路由近 30 天调用与客户端退休版本
+
 More subcommands (each has its own --help):
   wechat-cc access list|remove      Allowlist management — the add path stays in the admin chat flow
   wechat-cc avatar info|set|remove  Avatar metadata + binary (per chat / bot / user key)
@@ -2146,6 +2148,33 @@ Notes for 0.x users:
     subprocesses internally, per-project session pool.
   * /restart from WeChat is removed. Use /project switch or restart
     the daemon process.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > routes --help > routes retire-check --help 1`] = `
+"Check 30-day alias usage and active client versions; never deletes routes (routes retire-check)
+
+USAGE routes retire-check [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON evidence
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > routes --help 1`] = `
+"Route compatibility retirement evidence (read only) (wechat-cc routes v1.7.8 (dev))
+
+USAGE wechat-cc routes retire-check
+
+COMMANDS
+
+  retire-check    Check 30-day alias usage and active client versions; never deletes routes
+
+Use wechat-cc routes <command> --help for more information about a command.
 
 "
 `;

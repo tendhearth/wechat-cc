@@ -66,7 +66,7 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
   const win = { addEventListener(type: string, fn: Handler) { (winHandlers[type] ??= []).push(fn) } }
 
   /** 一次 api 调用的记录;测试用 respond/fail 决定它怎么收场。 */
-  const calls: Array<{ path: string; opts?: { method?: string; body?: string } }> = []
+  const calls: Array<{ path: string; opts?: { method?: string; body?: string; headers?: Record<string, string> } }> = []
   let mode: 'ok' | 'down' = 'ok'
   let detail = {
     matter: { id: 'm1', title: '首页调整', kind: 'task', status: 'open' }, runId: 'run1',
@@ -97,7 +97,8 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
   }
   const ccPlain = new Function(`${readMobileSource('boot.js').slice(readMobileSource('boot.js').indexOf('function ccPlain'))}\nreturn ccPlain`)()
   const CCP = { STATUS_TABLE, STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'], QUIET_AFTER_MS, ROW_HINT_WORDS: ROW_HINT_WORDS['zh-Hans'] }
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'viaTunnel', 'ccPlain', 'CCP', 'homeCardId', source + '\nreturn {mApi,mError}')
+  const routeVersionSource = readMobileSource('transport.js').slice(readMobileSource('transport.js').indexOf('function ccRouteVersion'))
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'viaTunnel', 'ccPlain', 'CCP', 'homeCardId', routeVersionSource + '\n' + source + '\nreturn {mApi,mError}')
   const page = boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
@@ -259,6 +260,7 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     await h.stop()
     expect(h.calls.filter((c) => c.opts?.method === 'POST').map((c) => [c.path, c.opts!.body])).toEqual([['/v1/matter/stop', JSON.stringify({ id: 'm1', runId: 'run1' })]])
     expect(h.notice.textContent).toBe('已经请电脑停下这一轮。')
+    expect(h.calls.find(c => c.opts?.method === 'POST')?.opts?.headers?.['x-cc-web-routes']).toBe('P3g')
   })
 
   it('页面上没有接着说、交办、成果、对话记录这些块', () => {

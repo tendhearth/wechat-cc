@@ -47,6 +47,7 @@ import { pairCmd } from './src/cli/commands/pair'
 import { licenseCmd } from './src/cli/commands/license'
 import { backupCmd } from './src/cli/commands/backup'
 import { speechCmd } from './src/cli/commands/speech'
+import { routesCmd } from './src/cli/commands/routes'
 import { cliCmd } from './src/cli/commands/cli'
 
 // PR4 batch 3c: parseCliArgs + CliArgs union deleted. All subcommands now
@@ -64,6 +65,7 @@ import { cliCmd } from './src/cli/commands/cli'
 
 const SUBCOMMANDS = {
   speech: speechCmd,
+  routes: routesCmd,
   backup: backupCmd,
   status: statusCmd,
   plugin: pluginCmd,

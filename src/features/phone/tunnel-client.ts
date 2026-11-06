@@ -71,7 +71,9 @@ export interface TunnelClientDeps {
   onControl?: (msg: Record<string, unknown>) => void
   /** v2 登录成功(每次重连后都会再来一次)。 */
   onLogin?: () => void
-  /** 一条流认出了令牌、握手里带了构建号(M6b):记到那台设备上(链接令牌由接收方自己忽略)。 */
+  /** 已认证的请求/保活活跃版本，P3h 计数；不影响鉴权。 */
+  onClientActivity?: (client: 'app' | 'web', build?: string) => void
+  /** 一条流认出了令牌、握手里带了构建号(M6b):记到那台设备上。 */
   onDeviceBuild?: (token: string, build: string) => void
 }
 
@@ -268,9 +270,10 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     const token = hit.token
     st.device = token
     // 认出是哪台之后才记它报的构建号(握手那一刻还不知道是谁);记不下来不挡这条流。
-    if (st.build && deps.onDeviceBuild) { try { deps.onDeviceBuild(token, st.build) } catch { /* 只少一次记录 */ } }
+    if (st.client === 'app' && st.build && st.build !== 'selftest-P3d' && deps.onDeviceBuild) { try { deps.onDeviceBuild(token, st.build) } catch { /* 只少一次记录 */ } }
     st.v2s = makeV2Stream({
-      stream, channel: hit.channel, token, client: st.client,
+      stream, channel: hit.channel, token, client: st.client, build: st.build,
+      onActivity: () => deps.onClientActivity?.(st.client, st.build),
       send: (f) => { if (streams.get(stream) === st) sendToStream(stream, f) },
       handleRequest: deps.handleRequest,
       events: deps.events,

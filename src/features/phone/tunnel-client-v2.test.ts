@@ -11,7 +11,7 @@ import type { V2ClientMessageT, V2ServerMessageT, SealedFrameV2 } from '@wechat-
 import { makeTunnelClient } from './tunnel-client'
 import { MAX_SUBS_PER_STREAM, MAX_INFLIGHT_REQS_PER_STREAM } from './tunnel-v2-stream'
 import { makePhoneEvents, type PhoneEvents, type TopicSource } from './phone-events'
-import { phoneClientOf } from './phone-client'
+import { phoneBuildOf, phoneClientOf } from './phone-client'
 
 const DTOK = 'dtest0000'
 
@@ -623,4 +623,24 @@ it('T5 link: no hub subscription can bypass the limited HTTP status projection',
 it('T5 device: a private GET accepted before revocation does not return its body after revocation',async()=>{
  let tokens=[DTOK],release!:(r:Response)=>void;const sock=fakeSocket();client(sock,{knownDeviceTokens:()=>tokens,handleRequest:()=>new Promise(r=>{release=r})});const p=await v2Phone(sock,'read-revoked')
  p.send({t:'req',rid:'private',method:'GET',path:'/v1/matter/owner-chat/page'});await waitFor(()=>!!release);tokens=[];release(new Response('PRIVATE-BODY'));expect(await p.next()).toEqual({error:'auth_failed'});expect(p.drain().filter(m=>'t' in m&&m.t==='res')).toEqual([])
+})
+
+
+it('P3h: stream activity carries its own build, including ping-only old clients and web', async () => {
+  const sock = fakeSocket()
+  const activity: Array<[string, string | undefined]> = []
+  const builds: Array<string | undefined> = []
+  client(sock, { onClientActivity: (kind, build) => activity.push([kind, build]), handleRequest: async req => {
+    builds.push(phoneBuildOf(req)); return new Response('{}')
+  } })
+  const app = await v2Phone(sock, 'retire-app', DTOK, { build: '2' })
+  app.send({ t: 'req', rid: 'a', method: 'GET', path: '/v1/home' }); await app.next()
+  const old = await v2Phone(sock, 'retire-old')
+  old.send({ t: 'ping', rid: 'b' }); await old.next()
+  const web = await v2Phone(sock, 'retire-web', DTOK, { web: true, build: 'P3g' })
+  web.send({ t: 'ping', rid: 'c' }); await web.next()
+  expect(builds).toEqual(['2'])
+  expect(activity).toContainEqual(['app', '2'])
+  expect(activity).toContainEqual(['app', undefined])
+  expect(activity).toContainEqual(['web', 'P3g'])
 })

@@ -171,6 +171,8 @@ Usage:
                           'provider set openai' calls can omit it. API key is read
                           from the WECHAT_OPENAI_API_KEY env var, never persisted.
 
+  routes retire-check   只读检查旧路由近 30 天调用与客户端退休版本
+
 More subcommands (each has its own --help):
   wechat-cc access list|remove      Allowlist management — the add path stays in the admin chat flow
   wechat-cc avatar info|set|remove  Avatar metadata + binary (per chat / bot / user key)

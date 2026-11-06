@@ -28,7 +28,7 @@ declare var CCP: {
   makeProtocolClient(opts: {
     open: () => CCPSocket
     token: string
-    client?: 'web'
+    client?: 'web'; build?: string
     requestTimeoutMs?: number
     handshakeTimeoutMs?: number
     onSubscriptionError?: (topic: string, code: string) => void

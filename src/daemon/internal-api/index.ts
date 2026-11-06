@@ -21,6 +21,7 @@
  * + interface types live in ./types.ts. The split is purely organisational
  * — no behaviour change vs the pre-split monolithic internal-api.ts.
  */
+import { makeRouteUsage } from '../../lib/route-usage'
 import { writeFileAtomic } from '../../lib/json-file'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync } from 'node:fs'
@@ -129,6 +130,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
   /** 面板那一口:设备令牌要这一行有 phone 块;链接令牌还要 link 是 read / write。别的 origin 一律不。 */
   const panelAllows = (origin: TokenOrigin, routeKey: string): boolean =>
     origin === 'device' ? panelRoutes.device.has(routeKey) : origin === 'link' ? panelRoutes.link.has(routeKey) : false
+  const noteRouteUsage = makeRouteUsage(deps.stateDir)
   const tokenPath = join(deps.stateDir, TOKEN_FILE)
   const operatorTokenPath = join(deps.stateDir, OPERATOR_TOKEN_FILE)
   const registry = makeTokenRegistry()
@@ -477,6 +479,7 @@ export function createInternalApi(deps: InternalApiDeps, options: InternalApiOpt
 
     const rawUrl = req.url ?? '/'
     const url = new URL(rawUrl, 'http://internal')
+    if (caller.origin === 'operator' || DESKTOP_ROUTE_ALIASES.some(r => r.from === `${method} ${url.pathname}`)) noteRouteUsage('desktop', typeof req.headers['x-cc-desktop-version'] === 'string' ? req.headers['x-cc-desktop-version'] : undefined, `${method} ${url.pathname}`)
     // 断开信号:处理器开跑那一刻登记(dispatch 调 io.signal())。
     // Bun 的 node:http 客户端断开时不发 res 'close'(10-24 实测),只发 req 'aborted' 与 socket 'close';node 三个都发。
     const ac = new AbortController()

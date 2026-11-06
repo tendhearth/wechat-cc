@@ -106,3 +106,12 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 
 真机报文也在仓库里:`src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`(脱敏后的 cursor-agent ACP 报文),回放契约测试 `src/adapters/executors/acp/fixtures.test.ts`,重新生成用
 `bun scripts/acp-fixture-from-transcript.ts <transcript.jsonl> src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`。
+
+## 旧路由退休证据（P3h）
+
+`wechat-cc routes retire-check [--json]` 只读 `<stateDir>/route-usage.json`，不连 daemon、不打开数据库、不删别名。
+每条旧键的结构化条件在 `WIRE_ROUTE_ALIASES.retirement`：App ≥ build 3（P3f），网页 P3g；桌面 P3e 的发行版本尚未确定，`minimum: null` 必须阻止退休，发版时由整合者登记真实版本号。
+
+daemon 按 UTC 日记录客户端种类、构建/版本、别名键、次数，同时记录新键请求与隧道保活的活跃版本；不存设备标识、令牌、查询参数或正文。只留最近 30 天（保守包含边界日），使用独立小文件原子写入，不需要迁移。旧 App 没报 build、旧桌面没报版本、缓存网页没带 P3g 标记均记 `unknown` 并阻止退休。selftest 用单独的构建标记，不冒充 App。
+
+首次观测不足 30 天、文件缺失或损坏、对应客户端版本未达到门槛、近 30 天仍有调用，命令均输出保留与原因。升级前出现过的旧版本也保留到它退出窗口，避免把一次新版本请求当成所有设备已升级。观测文件重建会重新等待 30 天。每次只按输出另开 PR 删除一行；本功能没有删除任何路由。
