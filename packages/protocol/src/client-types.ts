@@ -26,6 +26,8 @@ export interface ProtocolSocket {
 /** 连接状态(给 app 的连接状态机用,见 apps/app/src/net/connection.ts)。 */
 export type ClientStatus = 'connecting' | 'ready' | 'down' | 'auth_failed'
 
+export interface ProtocolCapabilities { routes?: 'v1'; topics?: 'v1' }
+
 export interface ClientOpts {
   /** 新建一条连接(每次重连调一次)。 */
   open: () => ProtocolSocket
@@ -108,6 +110,8 @@ export interface ProtocolClient {
   version(): 2 | null
   /** Route family advertised by the current connection; absent on old daemons. */
   routes?(): 'v1' | undefined
+  /** Validated hello capabilities for the current connection; empty while disconnected. */
+  capabilities?(): Readonly<ProtocolCapabilities>
   request(r: ProtocolRequest): Promise<ProtocolResponse>
   /** 返回取消函数(幂等)。 */
   subscribe(topic: string, onEvent: (data: unknown, meta: EventMeta) => void): () => void

@@ -22,6 +22,7 @@ export function useChat(): {
   /** 只读核对:刷新有限历史与 pending/failed。未找到或读失败不代表没送达,不会重发或清草稿。 */
   refresh(): Promise<void>
   seek(id: string): Promise<boolean>
+  canLoadLater:boolean; loadingLater:boolean; laterAfterId:string|null; loadLater():Promise<void>
   bubbles: Bubble[]; canLoadOlder: boolean; loadingOlder: boolean; loadOlder(): Promise<void>
   /** images:选好的图(2026-10-06),先传到电脑再说这一句;有图时文字可空。 */
   send(text: string, images?: readonly PickedImage[]): Promise<ChatSendOutcome>
@@ -34,6 +35,11 @@ export function useChat(): {
   const submit = useSubmit()
   const latest = useQuery<ChatPageT>('chat:latest', () => backend.chat({}), { refreshOnMount: true })
   const noOwner = latest.error === 'not_found'
+  const [anchorState,setAnchorState]=useState<{backend:typeof backend;pages:ChatPageT[];earlier:string|null;later:string|null}|null>(null)
+  const anchorWindow=anchorState?.backend===backend?anchorState.pages.at(-1)??null:null
+  const setAnchorWindow=(page:ChatPageT,append=false,later:string|null=null)=>setAnchorState(old=>({backend,earlier:page.nextBefore,pages:append&&old?.backend===backend?[...old.pages,page]:[page],later:append&&old?.backend===backend?old.later:later}))
+  const [loadingLater,setLoadingLater]=useState(false)
+  const laterAfterId=anchorState?.backend===backend?anchorState.later:null
   const [older, setOlder] = useState<ChatPageT[]>([])
   const [loadingOlder, setLoadingOlder] = useState(false)
   // 本机回执(可以几句)放在模块里(drafts.ts,终审 I1):离开 /chat 再回来、daemon 中间重启,那句照样显示「可能没送到」。
@@ -62,7 +68,7 @@ export function useChat(): {
   useChatUpdates(latest.data?.matterId, refresh)
 
   const page = latest.data ?? NO_JOB
-  const msgs = useMemo(() => (latest.data ? mergeChatPages(latest.data, older) : []), [latest.data, older])
+  const msgs = useMemo(() => (latest.data ? mergeChatPages(latest.data, [...older, ...(anchorState?.backend===backend?anchorState.pages:[])]) : []), [latest.data, older, anchorState, backend])
 
   // 修订 Ruling 5:只有看到落地才清回执;过了 TTL 气泡改成「没确认送到」,等重试或「不管它」。
   useEffect(() => {
@@ -78,11 +84,20 @@ export function useChat(): {
     return () => clearTimeout(id)
   }, [accepted, nowLocal])
 
+  const anchorGeneration = useRef(0)
+  useEffect(() => () => { anchorGeneration.current++ }, [backend])
   const seek = useCallback(async (id: string): Promise<boolean> => {
+    const selection = ++anchorGeneration.current
     if (!id || id.length > 200) return false
     if (msgs.some(m => m.id === id)) return true
     if (!latest.data) return false
     const generation = olderGen.current
+    if (backend.conversationWindow) {
+      const window = await backend.conversationWindow({ anchor: id })
+      if (selection !== anchorGeneration.current || generation !== olderGen.current) return false
+      setAnchorWindow(windowPage(latest.data, window),false,window.messages.some(m=>latest.data!.messages.some(n=>n.id===m.messageId))?null:window.later)
+      return window.messages.some(m => m.messageId === id)
+    }
     let before = olderCursor(latest.data, older)
     const pages: ChatPageT[] = []
     const seen = new Set<string>()
@@ -103,14 +118,25 @@ export function useChat(): {
     return chatBubbles(msgs, page, accepted, nowDaemon)
   }, [msgs, page, accepted, nowLocal])
 
-  const cursor = latest.data ? olderCursor(latest.data, older) : null
+  const cursor = anchorWindow ? anchorState!.earlier : latest.data ? olderCursor(latest.data, older) : null
+  const loadLater=useCallback(async()=>{
+    if(!laterAfterId||!backend.conversationWindow||!latest.data||loadingLater)return
+    const generation=anchorGeneration.current
+    setLoadingLater(true)
+    try {
+      const window=await backend.conversationWindow({after:laterAfterId})
+      if(generation!==anchorGeneration.current)return
+      const joined=window.messages.some(m=>latest.data!.messages.some(n=>n.id===m.messageId))
+      setAnchorState(old=>old?.backend===backend?{...old,pages:[...old.pages,windowPage(latest.data!,window)],later:joined?null:window.later}:old)
+    }catch{/* Retain the gap and cursor for an explicit retry. */}finally{setLoadingLater(false)}
+  },[backend,laterAfterId,latest.data,loadingLater])
   const loadOlder = useCallback(async () => {
     if (!cursor || loadingOlder) return
     setLoadingOlder(true)
-    const gen = olderGen.current
-    try { const p = await backend.chat({ before: cursor }); if (gen === olderGen.current) setOlder(o => [...o, p]) } catch { /* 翻不动就停在这;下次滑到顶再试 */ }
+    const gen = olderGen.current,selection=anchorGeneration.current
+    try { if(anchorWindow && backend.conversationWindow) { const w=await backend.conversationWindow({before:cursor});if(gen===olderGen.current&&selection===anchorGeneration.current){setAnchorWindow(windowPage(anchorWindow,w),true)} } else { const p = await backend.chat({ before: cursor }); if (gen === olderGen.current) setOlder(o => [...o, p]) } } catch { /* 翻不动就停在这;下次滑到顶再试 */ }
     finally { setLoadingOlder(false) }
-  }, [backend, cursor, loadingOlder])
+  }, [backend, cursor, loadingOlder, anchorWindow])
 
   const say = useCallback(async (text: string, requestId: string, materials?: { draftId: string; attachmentIds: string[] }, images?: readonly PickedImage[]): Promise<ChatSendOutcome> => {
     let job: ChatJobT | null = null
@@ -159,5 +185,9 @@ export function useChat(): {
 
   const dismiss = drop
 
-  return { seek, page: latest.data, error: latest.error, loading: latest.loading, refresh, noOwner, bubbles, canLoadOlder: !!cursor, loadingOlder, loadOlder, send, retry, dismiss }
+  return { seek, canLoadLater:!!laterAfterId,loadingLater,laterAfterId,loadLater, page: latest.data, error: latest.error, loading: latest.loading, refresh, noOwner, bubbles, canLoadOlder: !!cursor, loadingOlder, loadOlder, send, retry, dismiss }
+}
+
+function windowPage(page: ChatPageT, window: import('zod').infer<typeof import('@wechat-cc/protocol').ConversationWindow>): ChatPageT {
+  return { ...page, hasMore: !!window.earlier, nextBefore: window.earlier, messages: window.messages.map(m => ({ id: m.messageId, role: m.kind === 'user' ? 'me' as const : 'cc' as const, kind: 'text', text: m.text, truncated: !!m.truncated, at: m.createdAt, source: m.source === 'desktop' || m.source === 'phone' ? m.source : 'wechat', ...(m.replyExtras && typeof m.replyExtras==='object' ? m.replyExtras : {}) })) }
 }

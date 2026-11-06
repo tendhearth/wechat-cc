@@ -67,6 +67,7 @@ interface Conn {
   priv: Uint8Array
   version: 2 | null
   routes?: 'v1'
+  topics?: 'v1'
   chan?: V2Channel
   readyAt?: number
   /** 这条连接收到过几帧(任何帧都算,用来判断「悄悄死掉」)。 */
@@ -298,6 +299,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     if (h.data.v !== 2) { protoErr('downgrade_refused'); dropConn(c); return }
     c.chan = makeV2Channel(deriveV2Keys(shared, opts.token), 'client')
     c.routes = h.data.routes
+    c.topics = h.data.topics
     c.version = 2
     negotiated = 2
     c.readyAt = now()
@@ -427,6 +429,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   return {
     version: () => negotiated,
     routes: () => conn?.routes,
+    capabilities: () => conn?.version === 2 ? { routes: conn.routes, topics: conn.topics } : {},
 
     request(req) {
       if (closed) return Promise.reject(new Error('closed'))

@@ -33,6 +33,7 @@ for (const width of [1440, 760]) {
       } })
       return route.fulfill({ json: { reviews: [] } })
     })
+    await page.route('**/v1/matter?id=*',route=>route.fulfill({json:{matter:{...task,kind:'task'},bindings:[],sessions:[],events:[],permissions:[],questions:[],artifacts:[]}}))
     await page.goto(shimUrl, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => document.documentElement.dataset.mode === 'dashboard')
     await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'here')

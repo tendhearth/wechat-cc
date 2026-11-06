@@ -4,6 +4,11 @@ const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId
 const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
   await shim.invoke('demo.unseed');await shim.invoke('demo.seed',{})
+  await page.route('**/v1/protocol/capabilities',r=>r.fulfill({json:{routes:'v1',topics:'v1'}}))
+  await page.route('**/v1/matter/owner-chat/window**',r=>r.fulfill({json:{messages:[{kind:'user',text:'那台机器后来怎么样了？',createdAt:1,messageId:'source1'},{kind:'text',text:'正在核对备份。',createdAt:2,messageId:'source2'}],anchor:null,earlier:null,later:null}}))
+  await page.route('**/v1/matter/owner-chat/work',r=>r.fulfill({json:{references:[],results:[]}}))
+  await page.route('**/v1/matter/owner-chat/events**',r=>r.fulfill({json:{running:null,events:[],cursor:0}}))
+  await page.route('**/v1/matter?id=*',r=>r.fulfill({json:{matter:{...task,kind:'task'},bindings:[],sessions:[],task,events:[],permissions:[],questions:[],artifacts:[]}}))
   await page.route('**/__dev_reload.js',r=>r.fulfill({contentType:'application/javascript',body:''}))
   await page.route('**/v1/matter/owner-chat',r=>r.fulfill({json:{events:[{kind:'user',text:'那台机器后来怎么样了？',createdAt:1,messageId:'source1'},{kind:'text',text:'正在核对备份。',createdAt:2,messageId:'source2'}]}}))
   await page.route('**/v1/workbench/attention',r=>r.fulfill({json:{tasks:[{...task,attentionKey:'["r"]',first:{kind:'permission',text:'需要读取备份文件夹'}}]}}))
@@ -51,6 +56,7 @@ test('one conversation, six topics, original task tools and drafts survive wide 
   await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
 })
 test('older daemon hides topics and preserves the owner composer',async({page,shimUrl})=>{
+  await page.route('**/v1/protocol/capabilities',r=>r.fulfill({status:404,json:{error:'not_found'}}))
   await page.route('**/v1/memory/topics?*',r=>r.fulfill({status:404,json:{error:'not_found'}}))
   await page.goto(shimUrl)
   await expect(page.locator('#converse-input')).toBeVisible()
@@ -58,7 +64,7 @@ test('older daemon hides topics and preserves the owner composer',async({page,sh
   await expect(page.locator('#converse-scroll')).toContainText('正在核对备份。')
 })
 
-test('existing terminal status remains a read-only conversation reference without creating work',async({page,shim,shimUrl})=>{
+test('existing terminal reference exposes shared actions without creating work',async({page,shim,shimUrl})=>{
   await shim.invoke('demo.seed',{cliSessions:[{session_id:'terminal-offline',source:'codex',displayName:'Codex',status:'running',project:'核对备份终端',last_summary:'正在核对文件',last_event_at:1,pending:null}]})
   const dispatched:string[]=[]
   page.on('request',request=>{if(request.url().endsWith('/__invoke')){try{const body=request.postDataJSON();if(body.command==='agent_converse')dispatched.push(body.command)}catch{}}})
@@ -71,7 +77,7 @@ test('existing terminal status remains a read-only conversation reference withou
   await resources.getByRole('button',{name:/核对备份终端/}).click()
   const reference=page.locator('[data-terminal-reference="terminal-offline"]')
   await expect(reference).toBeVisible();await reference.locator('summary').click()
-  await expect(reference).toContainText('在做');await expect(reference).toContainText('正在核对文件');await expect(reference).toContainText('只读')
+  await expect(reference).toContainText('在做');await expect(reference).toContainText('正在核对文件');await expect(reference).toContainText('看过程、接着说或停止')
   expect(dispatched).toEqual([])
 })
 
@@ -86,4 +92,45 @@ test('unavailable native history is visible and preserves the owner draft',async
   await expect(page.locator('#app-toast')).toContainText('暂时读不到电脑上的会话')
   await expect(page.locator('#converse-input')).toHaveValue('这句还没发送')
   expect(errors).toEqual([])
+})
+
+test('shared anchor, durable result and observed owner stop use the daemon contracts',async({page,shimUrl})=>{
+  let stopped=false
+  const stops:unknown[]=[]
+  await page.route('**/v1/matter/owner-chat/window**',r=>{
+    const q=new URL(r.request().url()).searchParams
+    const old={kind:'text',text:'更早的原消息位置',createdAt:0,messageId:'old-source'}
+    return r.fulfill({json:{messages:q.has('anchor')||q.has('q')?[old]:[{kind:'text',text:'正在核对备份。',createdAt:2,messageId:'source2'}],anchor:q.get('anchor'),earlier:null,later:null}})
+  })
+  await page.route('**/v1/matter/owner-chat/work',r=>r.fulfill({json:{references:[{id:'work:aabbccdd',matterId:'aabbccdd',messageId:'source2',kind:'task',title:'检查备份',createdAt:2,detailRoute:'/v1/matter?id=aabbccdd'}],results:[{id:'result:stage1',matterId:'aabbccdd',turnId:'stage1',messageId:'source2',text:'这一阶段已经核对完毕',createdAt:3}]}}))
+  await page.route('**/v1/matter/owner-chat/events**',r=>r.fulfill({json:{running:stopped?null:{turnId:'owner-turn',runId:null},events:stopped?[]:[{id:'item:one',turnId:'owner-turn',cursor:1,kind:'agent_message',text:'正在整理结果',createdAt:4}],cursor:1}}))
+  await page.route('**/v1/matter/owner-chat/stop',r=>{stops.push(r.request().postDataJSON());stopped=true;return r.fulfill({json:{stopped:true}})})
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
+  await expect(page.locator('#converse-scroll')).toContainText('这一阶段已经核对完毕')
+  await expect(page.locator('#converse-scroll')).toContainText('正在整理结果')
+  await page.locator('#converse-stop').click();expect(stops).toEqual([])
+  await page.locator('#converse-stop').click();await expect.poll(()=>stops).toEqual([{turnId:'owner-turn'}])
+  await page.locator('#converse-search-open').click();await page.locator('#converse-search-input').fill('更早');await page.locator('#converse-search-input').press('Enter')
+  await page.getByRole('button',{name:'回到原消息',exact:true}).click()
+  await expect(page.locator('#converse-scroll')).toContainText('更早的原消息位置')
+  await expect(page.locator('[data-matter-id="aabbccdd"]')).toHaveCount(1)
+  await expect(page.locator('#converse-scroll').getByText('这一阶段已经核对完毕',{exact:true})).toHaveCount(1)
+})
+
+test('overlapping historical anchors retain the forward gap until they join the latest window',async({page,shimUrl})=>{
+  const row=(id:string,at:number)=>({messageId:id,kind:'text',text:id,createdAt:at})
+  const forward:string[]=[]
+  await page.route('**/v1/matter/owner-chat/window**',r=>{
+    const q=new URL(r.request().url()).searchParams
+    if(q.has('after'))forward.push(q.get('after')!)
+    return r.fulfill({json:q.has('anchor')||q.has('q')?{messages:[row('old1',1),row('old2',2)],anchor:q.get('anchor'),earlier:null,later:'old2'}:{messages:[row('latest',100)],anchor:null,earlier:null,later:null}})
+  })
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
+  await expect(page.locator('#converse-scroll')).toContainText('latest')
+  await page.locator('#converse-search-open').click();await page.locator('#converse-search-input').fill('old');await page.locator('#converse-search-input').press('Enter')
+  await page.locator('[data-locate-message="old1"]').click();await expect(page.locator('#converse-later')).toBeVisible()
+  await page.locator('#converse-search-open').click();await page.locator('#converse-search-input').fill('old2');await page.locator('#converse-search-input').press('Enter')
+  await page.locator('[data-locate-message="old2"]').click();await expect(page.locator('#converse-later')).toBeVisible()
+  await page.locator('#converse-later').click();await expect.poll(()=>forward).toEqual(['old2'])
+  await expect(page.locator('#converse-later')).toBeHidden()
 })

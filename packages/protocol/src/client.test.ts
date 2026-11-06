@@ -41,7 +41,7 @@ interface Conn {
   rawIn: string[]
 }
 
-function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean; manualOpen?: boolean; routes?: 'v1' }) {
+function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean; manualOpen?: boolean; routes?: 'v1'; topics?: 'v1' }) {
   const token = opts.token ?? TOKEN
   const conns: Conn[] = []
   const reqs: ReqSeen[] = []
@@ -130,7 +130,7 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
       if (opts.version === 2 && Array.isArray(f.v) && f.v.includes(2)) {
         conn.version = 2
         conn.chan = makeV2Channel(deriveV2Keys(shared, token), 'server')
-        conn.toClient({ hs: b64uEncode(kp.pub), v: 2, routes: opts.routes })
+        conn.toClient({ hs: b64uEncode(kp.pub), v: 2, routes: opts.routes, topics: opts.topics })
       } else {
         conn.version = 1
         conn.toClient({ hs: b64uEncode(kp.pub) })
@@ -178,6 +178,19 @@ beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { vi.useRealTimers() })
 
 describe('握手协商', () => {
+  it('exposes validated topics capabilities and clears them on close/reconnect',async()=>{
+    const opts={version:2 as const,routes:'v1' as const,topics:'v1' as 'v1'|undefined},daemon=makeFakeDaemon(opts),{c}=client(daemon)
+    expect(c.capabilities?.()).toEqual({})
+    await c.request({method:'GET',path:'/capabilities'})
+    expect(c.capabilities?.()).toEqual({routes:'v1',topics:'v1'})
+    daemon.d.conns[0]!.serverClose();await flush()
+    expect(c.capabilities?.()).toEqual({})
+    opts.topics=undefined
+    const pending=c.request({method:'GET',path:'/capabilities'});await vi.advanceTimersByTimeAsync(500);await pending
+    expect(c.capabilities?.().topics).toBeUndefined()
+    c.close();expect(c.capabilities?.()).toEqual({})
+  })
+
   it.each([undefined, 'v1'] as const)('selects queued requests from handshake routes=%s and resets after reconnect', async routes => {
     const opts = { version: 2 as const, routes }
     const daemon = makeFakeDaemon(opts)

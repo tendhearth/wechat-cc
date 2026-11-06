@@ -1,3 +1,5 @@
+import { makeMessagesStore } from '../../lib/messages-store'
+import { randomUUID as conversationReferenceId } from 'node:crypto'
 /**
  * 终端会话的接线(重构第二批步 6c 从 main.ts 搬出来,架构终态 A5 搬进 src/features/terminal):终端 Claude Code / Codex 的
  * hook 事件登记处、权限中继(微信 y/n、手机、放行规则)、「这边 / 那边」的脑手转发、对终端会话说话(送进开着的窗口 / resume)、
@@ -347,6 +349,16 @@ export function wireTerminal(d: WireTerminalDeps) {
   })
   // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
   const phoneActions = makeCliPhoneActions({
+    recordReference:(sessionId,text)=>{
+      const owner=loadCompanionConfig(stateDir).default_chat_id,matter=matterStore.findBySurface('cli',sessionId)
+      if(!owner||!matter||matter.ownerChatId!==owner)return
+      db.transaction(()=>{
+        if(db.query('SELECT 1 FROM conversation_work_references WHERE chat_id=? AND matter_id=?').get(owner,matter.id))return
+        const id=`terminal:${conversationReferenceId()}`
+        makeMessagesStore(db).appendSync!({id,chatId:owner,ts:new Date().toISOString(),direction:'in',kind:'text',text,source:'phone'})
+        db.query('INSERT INTO conversation_work_references VALUES(?,?,?)').run(owner,matter.id,id)
+      })()
+    },
     hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(), steps: terminalSteps,
     resolve: (h, dec) => d.resolvePermission(h, dec),
   })
@@ -354,12 +366,12 @@ export function wireTerminal(d: WireTerminalDeps) {
   const terminalMatterOf = (sessionId: string): string | null => { try { return matterStore.findBySurface('cli', sessionId)?.id ?? null } catch { return null } }
   // 手机令牌读 GET /v1/cli/sessions 的那一份(P3c-2,原 /m/api/cli/sessions 的处理器;接线原在 daemon/wiring/module.ts):
   // 登记处 50 条 + 每行那件事,再按手机口径挑字段(phone-sessions.ts)。
-  const phoneSessions = () => phoneCliSessionRows({
-    list: () => cliEvents.list({ limit: 50 }).map(v => { const m = terminalMatterOf(v.session_id); return m ? { ...v, matter_id: m } : v }),
+  const phoneSessions = (sessionId?:string) => phoneCliSessionRows({
+    list: () => cliEvents.list({ limit:sessionId?500:50,...(sessionId?{includeEnded:true}:{}) }).filter(v=>!sessionId||v.session_id===sessionId).map(v => { const m = terminalMatterOf(v.session_id); return m ? { ...v, matter_id: m } : v }),
     actions: phoneActions,
     executorName: (id: string) => boot.registry.namesOf(id).name,
   })
-  const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions }
+  const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,

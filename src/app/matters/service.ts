@@ -90,7 +90,7 @@ export interface MattersServiceDeps {
     undoRewind?(id:string,undo:string):Promise<unknown>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
-  chat?:{file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterDetailEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterDetailEvent&{id:string})[]>}
+  chat?:{events?(owner:string,since:number,limit?:number):unknown;stop?(owner:string,turnId:string):boolean;window?(owner:string,input:import('../../../packages/protocol/src/owner-conversation').ConversationWindowInput):Promise<unknown>;work?(owner:string,input?:{cursor?:string;limit?:number}):unknown;file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterDetailEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterDetailEvent&{id:string})[]>}
   /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
   sayReceipts?:SayReceipts
   /** 主人对话要是在这里首建,出生地记成什么(daemon 按鉴权来源算:桌面 = desktop,手机 = App / 浏览器)。没接 ⇒ 桌面记 desktop,手机不知道就不写。 */
@@ -115,6 +115,10 @@ export interface MattersService {
   inputReceipt(id:string,requestId:string):MatterInput|null
   /** 主人那条对话(没有就建),并记下是从哪个表面看的;没配主人 → null。 */
   ownerChat(surface:'desktop'|'phone'):Promise<MatterDetail|null>
+  conversationEvents?(since:number,limit?:number):unknown
+  stopConversation?(turnId:string):boolean
+  conversationWindow?(input:import('../../../packages/protocol/src/owner-conversation').ConversationWindowInput):Promise<unknown>
+  conversationWork?(input?:{cursor?:string;limit?:number}):Promise<unknown>
   ownerChatFile(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>
   say(id:string,text:string,surface?:'desktop'|'phone',input?:MatterSayInput):Promise<{kind:'task';task:MatterTaskView;input?:MatterInput}|{kind:'chat';reply:string}>
   permission(id:string,runId:string,requestId:string,decision:PermissionDecision):void
@@ -327,6 +331,10 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       const status=deps.store.legacyStatuses([matter.id]).get(matter.id)??'open'
       return {matter:wireMatter({...(act?.matter??matter),...(agents?.length?{agents}:{}),...named},status),...(act?{actTurns:act.turns}:{}),bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
+    conversationEvents(since,limit){const owner=deps.chat?.ownerChatId();return owner?deps.chat?.events?.(owner,since,limit):null},
+    stopConversation(turnId){const owner=deps.chat?.ownerChatId();return !!owner&&!!deps.chat?.stop?.(owner,turnId)},
+    async conversationWindow(input){ const owner=deps.chat?.ownerChatId(); if(!owner || !deps.chat?.window)return null; const result=await deps.chat.window(owner,input);return deps.chat.ownerChatId()===owner?result:null },
+    async conversationWork(input){ const owner=deps.chat?.ownerChatId(); if(!owner || !deps.chat?.work)return null; const result=await deps.chat.work(owner,input);return deps.chat.ownerChatId()===owner?result:null },
     async ownerChatFile(input){return deps.chat?.file ? deps.chat.file(input) : {status:503,body:{error:'chat_not_wired'}}},
     async ownerChat(surface){
       const owner=deps.chat?.ownerChatId();if(!owner)return null

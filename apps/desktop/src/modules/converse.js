@@ -1,5 +1,6 @@
 // @ts-check
 /// <reference lib="dom" />
+import { mountOwnerConversation } from './conversation-contracts.js'
 //
 // converse.js — the "跟 CC 说" pane: a minimal in-app text channel to the
 // owner's CC, independent of WeChat. Calls the `agent_converse` Tauri
@@ -12,7 +13,7 @@
 // compose row. Same vanilla-JS module shape as dialogue-page.js / logs.js.
 
 import {openOwnerChatFile,openConversationImage,openLocalConversationFile} from "./converse-media.js"
-import { terminalReferenceHtml, paintTerminalReferences } from './conversation-sessions.js'
+import { terminalReferenceHtml, paintTerminalReferences, setTerminalActionsSupported } from './conversation-sessions.js'
 import { matterReferenceHtml, updateConversationMatters, mountMatterProgress } from './conversation-matters.js'
 import { icon } from "./icons.js"
 import { escapeHtml } from "../view.js"
@@ -23,9 +24,9 @@ import { V1, v1 } from '../daemon-client.js'
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onOpenMatter?: (id:string) => unknown, onSend?: () => void }} Deps
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onOpenMatter?: (id:string) => unknown, onOpenTerminal?: (id:string)=>unknown, onSend?: () => void }} Deps
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, terminalId?: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[] }} ConverseMsg
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, terminalId?: string, matterId?: string, historical?: boolean, messageId?: string, legacyMedia?: boolean, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[], uploadedFiles?: {name:string,mime:string,data_b64:string}[], contractKey?:string, projection?:string }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -60,6 +61,58 @@ const IMAGE_MAX_BYTES = 10 * 1024 * 1024
 /** @type {Set<(msgs: ConverseMsg[]) => void>} */
 const listeners = new Set()
 
+/** @type {ReturnType<typeof mountOwnerConversation>|null} */ let ownerReader=null
+let sharedSupported=false,earlierCursor='',laterCursor='',reconcileAfter=0,ownerScope=''
+/** @type {Map<string,any>} */const streamRows=new Map()
+/** @type {Set<string>} */const latestMessageIds=new Set()
+
+/** @param {any[]} events */
+function mergeStoredEvents(events){
+  if(reconcileAfter){messages=messages.filter(m=>m.id<reconcileAfter||m.messageId||m.matterId||m.terminalId||m.contractKey||m.role==='error'||m.role==='system');reconcileAfter=0}
+  for(const event of events){
+    if(!event.messageId||messages.some(m=>m.messageId===event.messageId))continue
+    const extras=normalizeConverseReply(event.replyExtras)
+    messages.push({id:nextId++,role:event.kind==='user'?'user':'cc',text:event.text+(event.truncated?'…':''),at:event.createdAt,messageId:event.messageId,source:event.source,...extras})
+  }
+  messages.sort((a,b)=>(a.at??Date.now())-(b.at??Date.now())||a.id-b.id)
+}
+/** @param {any} page @param {any} query */
+function acceptWindow(page,query){
+  if(!Array.isArray(page.messages))return
+  if(page.scope&&page.scope!==ownerScope){messages=[];streamRows.clear();latestMessageIds.clear();earlierCursor='';laterCursor='';ownerScope=page.scope}
+  const joined=page.messages.some((/** @type {any} */ event)=>latestMessageIds.has(event.messageId))
+  if(!query.anchor&&!query.before&&!query.after){latestMessageIds.clear();for(const event of page.messages)latestMessageIds.add(event.messageId)}
+  if(query.anchor){earlierCursor=page.earlier??'';laterCursor=joined?'':page.later??''}
+  else if(query.before)earlierCursor=page.earlier??''
+  else if(query.after)laterCursor=joined?'':page.later??''
+  else if(!messages.some(m=>m.messageId))earlierCursor=page.earlier??''
+  mergeStoredEvents(page.messages);reflectSharedControls();renderMessages()
+}
+/** @param {any} data */
+function acceptWork(data){
+  for(const ref of data.references??[]){
+    const old=messages.find(m=>m.matterId===ref.matterId)
+    if(old){old.at=ref.createdAt;old.contractKey=ref.id;old.historical=false;continue}
+    messages.push({id:nextId++,role:'cc',text:ref.title,matterId:ref.matterId,contractKey:ref.id,at:ref.createdAt})
+  }
+  for(const result of data.results??[])if(!messages.some(m=>m.contractKey===result.id))messages.push({id:nextId++,role:'cc',text:result.text,contractKey:result.id,projection:'CC 的结果',at:result.createdAt})
+  messages.sort((a,b)=>(a.at??Date.now())-(b.at??Date.now())||a.id-b.id);renderMessages()
+}
+/** @param {any} data */
+function acceptStream(data){
+  for(const event of data.events??[]){const previous=streamRows.get(event.id);streamRows.set(event.id,{...event,localId:previous?.localId??nextId++})}
+  messages=messages.filter(m=>!m.contractKey?.startsWith('stream:'))
+  for(const [id,event] of streamRows){
+    if(event.turnId!==data.running?.turnId){streamRows.delete(id);continue}
+    if(event.kind==='agent_message'&&event.text)messages.push({id:event.localId,role:'cc',text:event.text,contractKey:`stream:${id}`,projection:'CC',at:event.createdAt})
+  }
+  reflectSharedControls();renderMessages()
+}
+function reflectSharedControls(){
+  const before=/** @type {HTMLButtonElement|null} */(document.getElementById('converse-earlier')),after=/** @type {HTMLButtonElement|null} */(document.getElementById('converse-later')),stop=/** @type {HTMLButtonElement|null} */(document.getElementById('converse-stop'))
+  if(before)before.hidden=!earlierCursor;if(after)after.hidden=!laterCursor;if(stop)stop.hidden=!ownerReader?.turn()
+}
+
 // Voice-out (Stage 1): 🔊 toggle persisted across app restarts, default OFF.
 // `no_voice_config` is expected to fire on every reply once the daemon has
 // no voice configured, so we surface it once per pane session rather than
@@ -93,6 +146,7 @@ function renderSkeleton(root, deps) {
       </form>
     </div>
     <div id="converse-search-results" class="converse-search-results" role="region" aria-label="搜索结果" aria-live="polite" hidden></div>
+    <div class="converse-page-actions"><button id="converse-earlier" type="button" hidden>更早的对话</button><button id="converse-later" type="button" hidden>后面的对话</button><button id="converse-stop" type="button" hidden>停止这一轮</button></div>
     <div id="converse-scroll" class="converse-scroll"></div>
     <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
     <div class="converse-compose">
@@ -214,7 +268,7 @@ function messageHtml(m) {
     ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}" aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
     : ""
   const markdown = m.role === "cc" && !m.pending
-  const bubble = `<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
+  const bubble = `${m.projection?`<small>${escapeHtml(m.projection)}</small>`:''}<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
   // Current-session upload previews are blob URLs, never recovered as durable history references.
   const userImages = m.role === "user" && (m.images?.length || m.files?.length)
     ? `<div class="converse-user-images">${(m.images ?? []).map((src,i) => `<button type="button" class="converse-user-image" data-msg-id="${m.id}" data-image="${i}" aria-label="打开你发的图片"><img src="${escapeHtml(src)}" alt="你发的图片" /></button>`).join("")}${(m.files ?? []).map((name,i) => m.uploadedFiles?.[i] ? `<button type="button" class="converse-file-chip" data-local-file="${i}" data-msg-id="${m.id}">${escapeHtml(name)}</button>` : `<span class="converse-file-chip">${escapeHtml(name)}</span>`).join("")}</div>`
@@ -490,7 +544,14 @@ function emptyStateHtml() {
 // 只在还没有任何本地消息时填充;拉不到就保持空白,不打断本地对话。
 /** @param {Deps} deps */
 async function loadSharedHistory(deps) {
-  if (!deps.invokeWorkbenchApi || messages.length) return
+  if (!deps.invokeWorkbenchApi) return
+  const root=document.getElementById('converse-root')
+  if(root){
+    ownerReader=mountOwnerConversation(root,deps.invokeWorkbenchApi,{window:acceptWindow,work:acceptWork,stream:acceptStream})
+    sharedSupported=await ownerReader.ready;setTerminalActionsSupported(sharedSupported)
+    if(sharedSupported)return
+  }
+  if(messages.length)return
   try {
     const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string,messageId?:string,replyExtras?:unknown}>}|null} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChat))
     const events = (detail?.events ?? []).filter(e => e.kind === "user" || e.kind === "text")
@@ -541,6 +602,7 @@ async function sendMessage(deps) {
   if (!text && !images.length) return
   deps.onSend?.()
 
+  const turnFirstId=nextId
   const pics = images.filter(i => i.mime.startsWith("image/")), docs = images.filter(i => !i.mime.startsWith("image/"))
   messages.push({ id: nextId++, role: "user", text, at: Date.now(), ...(pics.length ? { images: pics.map(i => i.url) } : {}), ...(docs.length ? { files: docs.map(i => i.name), uploadedFiles:docs.map(({name,mime,data_b64})=>({name,mime,data_b64})) } : {}) })
   pendingImages = []
@@ -589,6 +651,7 @@ async function sendMessage(deps) {
     // Only clear the compose box on success — an error leaves the typed
     // text in place so the user doesn't lose it and can just retry.
     input.value = ""
+    if(sharedSupported&&ownerReader){reconcileAfter=turnFirstId;try{await ownerReader.read()}catch{/* The next shared read reconciles the confirmed turn. */}}
   } catch (err) {
     pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
@@ -701,9 +764,10 @@ function hitTime(ms) {
   const d = new Date(ms), pad = (/** @type {number} */ n) => String(n).padStart(2, "0")
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-let searchSeq = 0
+let searchSeq = 0,searchBefore='',searchQuery=''
+/** @type {any[]} */let searchHits=[]
 /** @param {Deps} deps @param {string} q */
-async function runSearch(deps, q) {
+async function runSearch(deps, q, before='') {
   const host = document.getElementById("converse-search-results")
   if (!host || !deps.invokeWorkbenchApi) return
   const query = q.trim()
@@ -712,12 +776,15 @@ async function runSearch(deps, q) {
   host.hidden = false
   host.innerHTML = '<p class="converse-search-note">正在搜…</p>'
   try {
-    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string,messageId?:string,replyExtras?:unknown}>}} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChatSearch, { query: { q: query, limit: 30 } }))
+    /** @type {any} */ const r=sharedSupported?await v1(deps.invokeWorkbenchApi,V1.conversation.window,{query:{q:query,before:before||undefined,limit:30}}):await v1(deps.invokeWorkbenchApi,V1.matter.ownerChatSearch,{query:{q:query,limit:30}})
     if (seq !== searchSeq) return
-    const hits = r?.hits ?? []
+    const page=sharedSupported?[...(r.messages??[])].reverse():r.hits??[]
+    searchHits=before?[...new Map([...searchHits,...page].map(h=>[h.messageId??h.id,h])).values()]:page;searchBefore=sharedSupported?r.earlier??'':'';searchQuery=query
+    const hits=searchHits
     host.innerHTML = hits.length
-      ? `<p class="converse-search-note">找到 ${hits.length} 条${hits.length >= 30 ? "(只显示最近 30 条)" : ""}</p><ol class="converse-search-list">${hits.map(h => `<li><div class="converse-search-meta">${h.kind === "user" ? "你" : "CC"} · ${hitTime(h.createdAt)}${h.source && SOURCE_LABEL[h.source] ? ` · ${SOURCE_LABEL[h.source]}` : ""}</div><div class="converse-search-text">${highlight(h.text, query)}</div></li>`).join("")}</ol>`
+      ? `<p class="converse-search-note">找到 ${hits.length} 条${hits.length >= 30 ? "(只显示最近 30 条)" : ""}</p><ol class="converse-search-list">${hits.map(h => `<li><div class="converse-search-meta">${h.kind === "user" ? "你" : "CC"} · ${hitTime(h.createdAt)}${h.source && SOURCE_LABEL[h.source] ? ` · ${SOURCE_LABEL[h.source]}` : ""}</div><div class="converse-search-text">${highlight(h.text, query)}</div>${sharedSupported&&h.messageId?`<button type="button" data-locate-message="${escapeHtml(h.messageId)}">回到原消息</button>`:''}</li>`).join("")}</ol>`
       : '<p class="converse-search-note">没有找到。换个词试试。</p>'
+    if(searchBefore)host.insertAdjacentHTML('beforeend','<button type="button" data-search-earlier>更早的结果</button>')
   } catch {
     if (seq === searchSeq) host.innerHTML = '<p class="converse-search-note">暂时搜不了,稍后再试。</p>'
   }
@@ -751,6 +818,11 @@ function wireEvents(root, deps) {
   root.addEventListener('click', event => {
     const id = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-matter]'))?.dataset.openMatter
     if (id) deps.onOpenMatter?.(id)
+    const locate=/** @type {HTMLElement|null} */(/** @type {HTMLElement} */(event.target).closest('[data-locate-message]'))?.dataset.locateMessage
+    if(locate){setSearchOpen(false);void locateConversationMessage(deps,locate)}
+    if(/** @type {HTMLElement} */(event.target).closest('[data-search-earlier]'))void runSearch(deps,searchQuery,searchBefore)
+    const terminal=/** @type {HTMLElement|null} */(/** @type {HTMLElement} */(event.target).closest('[data-open-terminal]'))?.dataset.openTerminal
+    if(terminal)deps.onOpenTerminal?.(terminal)
   })
   root.querySelector("#converse-delegate")?.addEventListener("click", () => { void delegateDraft(deps) })
   root.querySelector("#converse-send")?.addEventListener("click", () => {
@@ -874,6 +946,9 @@ export function initConversePage(deps, { focus = true } = {}) {
   root.dataset.ready = "true"
   renderSkeleton(root, deps)
   wireEvents(root, deps)
+  for(const [id,direction] of /** @type {[string,'before'|'after'][]} */([['converse-earlier','before'],['converse-later','after']]))root.querySelector(`#${id}`)?.addEventListener('click',async()=>{const cursor=direction==='before'?earlierCursor:laterCursor;if(!cursor||!ownerReader)return;try{await ownerReader.read({[direction]:cursor})}catch{/* Keep the cursor for retry. */}})
+  let stopConfirmation=''
+  root.querySelector('#converse-stop')?.addEventListener('click',async()=>{const turn=ownerReader?.turn();if(!turn)return;const button=/** @type {HTMLButtonElement} */(root.querySelector('#converse-stop'));if(stopConfirmation!==turn){stopConfirmation=turn;button.textContent='再点一次，确认停止';return}try{await ownerReader?.stop(turn);button.textContent='停止这一轮';stopConfirmation=''}catch{button.textContent='这一轮已经结束或换了一轮，请刷新'}})
   syncVoiceToggleUI()
   reflectMic()
   renderMessages()
@@ -902,14 +977,11 @@ export async function locateConversationMessage(deps,messageId,excerpt='') {
     if (node instanceof HTMLElement) { node.tabIndex=-1; node.focus({preventScroll:true}) }
     return
   }
-  setSearchOpen(true)
-  const field = /** @type {HTMLInputElement|null} */ (document.getElementById('converse-search-input'))
-  if (field) field.value=excerpt
-  if (excerpt) await runSearch(deps,excerpt)
-  else {
-    const host=document.getElementById('converse-search-results')
-    if(host){host.hidden=false;host.textContent='这段原消息尚未载入，可以搜索对话查找。'}
-  }
+  if(!ownerReader||!sharedSupported)return
+  await ownerReader.read({anchor:messageId})
+  const found=messages.find(m=>m.messageId===messageId)
+  if(found){const node=document.querySelector(`[data-converse-message="${found.id}"]`);node?.scrollIntoView?.({block:'center'});if(node instanceof HTMLElement){node.tabIndex=-1;node.focus({preventScroll:true})}}
+
 }
 
 /** The plus menu is the visible home of delegation; retain the same draft/receipt logic.

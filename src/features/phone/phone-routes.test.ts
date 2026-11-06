@@ -48,6 +48,7 @@ describe('phoneRouteAllowed', () => {
       'GET /v1/matter/owner-chat/model', 'POST /v1/matter/owner-chat/model', 'GET /v1/memory/curated', 'POST /v1/memory/correct', 'GET /v1/stickers/file/',
       'GET /v1/workbench/session/continue', 'POST /v1/workbench/session/continue', 'GET /v1/workbench/attachment/upload', 'POST /v1/workbench/attachment/chunk',
       // P3d-3:终端会话拍板 / 接着说一句起的不撞名的新键 —— 同别名行只给设备(评审 10-15 #3)
+      'GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','POST /v1/cli/session-stop',
       'POST /v1/cli/decide', 'POST /v1/cli/session-say',
       // P3e-1:一件事上的动作与交办的新键(/v1/matter/*)—— 别名行都是 link: none(停下除外,见下),新键同
       'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree',

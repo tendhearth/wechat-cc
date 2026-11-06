@@ -8,7 +8,7 @@ const settle = async () => { for(let i=0;i<12;i++) await Promise.resolve() }
 function setup(call:any) {
   document.body.innerHTML='<div id="root"><textarea>未发送的草稿</textarea><div class="converse-compose"></div></div>'
   const openMatter=vi.fn(),locateMessage=vi.fn()
-  current=mountConversationTopics({root:document.getElementById('root')!,call,openMatter,locateMessage,manage:vi.fn()})
+  current=mountConversationTopics({root:document.getElementById('root')!,call:async(method:any,path:string,body?:any)=>{if(path==='/v1/protocol/capabilities'){await call(method,path,body);return {topics:'v1',routes:'v1'}}return call(method,path,body)},openMatter,locateMessage,manage:vi.fn()})
   return {openMatter,locateMessage}
 }
 describe('T4 desktop topic bubbles', () => {
@@ -94,4 +94,26 @@ it('refreshing an expanded topic preserves the entry disclosure and keyboard foc
   await current!.refresh()
   expect((document.querySelector('[data-entry-id="entry"]') as HTMLDetailsElement).open).toBe(true)
   expect((document.activeElement as HTMLElement).dataset.topicFocusKey).toBe('entry:entry')
+})
+
+it('requires topics:v1 from the operator capability contract, never infers it from routes or list success',async()=>{
+  document.body.innerHTML='<div id="root"><div class="converse-compose"></div></div>'
+  const call=vi.fn(async()=>({routes:'v1',topics:[topic('a')],revision:'1'}))
+  current=mountConversationTopics({root:document.getElementById('root')!,call,openMatter:vi.fn(),locateMessage:vi.fn(),manage:vi.fn()})
+  await settle()
+  expect((document.querySelector('nav') as HTMLElement).hidden).toBe(true)
+  expect(call.mock.calls).toHaveLength(1)
+})
+
+it('a selected merged topic follows the authorized surviving id',async()=>{
+  let detailReads=0
+  setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(path.includes('/detail')){detailReads++;return {topic:{...topic('survivor'),mergedInto:detailReads===1?'survivor':null},entries:[],matters:[],messages:[],pages:{}}}
+    if(method==='POST')return {id:'old'}
+    return {topics:[topic('old')],revision:'1'}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  expect(detailReads).toBeGreaterThanOrEqual(2)
+  expect(document.querySelector('h2')?.textContent).toBe('话题survivor')
 })

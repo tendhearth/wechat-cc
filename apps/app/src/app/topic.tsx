@@ -34,6 +34,7 @@ export function TopicBubble() {
   const [stored, setData] = useState<TopicDetailT>()
   const dataBackend = useRef(backend)
   const data = conn.topics === 'v1' && query.error !== 'not_found' && stored?.topic.id === id && dataBackend.current === backend ? stored : undefined
+  useEffect(() => { const into=query.data?.topic.mergedInto; if(into && into!==id)router.replace({pathname:'/topic',params:{id:into,open:'1'}}) },[query.data?.topic.mergedInto,id,router])
   const folded = useRef(false)
   const [opened, setOpened] = useState(false)
   const [note, setNote] = useState<string | null>(null)

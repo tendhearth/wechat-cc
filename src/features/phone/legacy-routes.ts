@@ -1,3 +1,4 @@
+import { ROUTES } from '@wechat-cc/protocol/routes'
 /**
  * legacy-routes.ts — 老 App / 网页还在读的 `/m/api/*` 旧路径,翻到 `/v1` 那一条(P3,设计稿
  * docs/superpowers/specs/2026-11-05-p3-one-route-family-design.md「定案 · 别名表一处」)。
@@ -432,6 +433,7 @@ export function legacyRoutes<C extends Ctx = Ctx>(deps: LegacyRoutesDeps<C>): Ph
     return ownsMethod(async (url: URL, req: Request, ctx: C) => {
       const next = new URL(url)
       next.pathname = toPath.endsWith('/') ? toPath + url.pathname.slice(fromPath.length) : toPath
+      if((ROUTES as Record<string,{desktop?:unknown}>)[to]?.desktop && deps.v1)return deps.v1(new Request(next,req),ctx.caller,{frameBudget:MAX_MOBILE_DETAIL_BYTES,client:phoneClientOf(req)})
       const h = deps.local ? lookupPhoneRoute(deps.local(), req.method, next.pathname) : null
       return h ? await h(next, req, ctx) : panelJson({ error: 'not_found' }, 404)
     })

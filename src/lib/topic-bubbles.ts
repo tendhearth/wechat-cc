@@ -20,9 +20,9 @@ function temporary(path: string | null): boolean {
     return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
   })
 }
-export function topicMatters(db: Db, owner: string, id: string): TopicMatter[] {
+export function topicMatters(db: Db, owner: string, id: string, includeActs=false): TopicMatter[] {
   return db.query<TopicMatter, [string, string]>(`SELECT m.id,m.title,m.state,m.archived_at,m.kind,m.project_path,m.owner_chat_id
-    FROM matters m JOIN matter_topics l ON l.matter_id=m.id WHERE l.thread_id=? AND m.owner_chat_id=? AND m.kind!='act' ORDER BY m.id`).all(id, owner)
+    FROM matters m JOIN matter_topics l ON l.matter_id=m.id WHERE l.thread_id=? AND m.owner_chat_id=? AND ${includeActs?"m.kind IN ('task','terminal','act')":"m.kind!='act'"} ORDER BY m.id`).all(id, owner)
     .filter(m => !temporary(m.project_path))
 }
 export const blocksBubble = (m: TopicMatter) => m.archived_at === null && (m.state === 'working' || m.state === 'waiting')

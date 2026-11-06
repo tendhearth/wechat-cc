@@ -38,13 +38,14 @@ export function ConversationSearch() {
   const [q, setQ] = useState('')
   const [asked, setAsked] = useState('')
   const [hits, setHits] = useState<ChatSearchHitT[] | null>(null)
+  const [hasMore,setHasMore]=useState(false)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
-  const run = async () => {
-    const query = q.trim()
+  const run = async (more=false) => {
+    const query = more?asked:q.trim()
     if (!query || busy || !online) return
     setBusy(true); setFailed(false)
-    try { setHits(await backend.chatSearch(query)); setAsked(query) } catch { setFailed(true) } finally { setBusy(false) }
+    try { const next=await backend.chatSearch(query,more?hits?.at(-1)?.id:undefined);setHits(old=>more?[...new Map([...(old??[]),...next].map(h=>[h.id,h])).values()]:next);setHasMore(next.length===30);setAsked(query) } catch { setFailed(true) } finally { setBusy(false) }
   }
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -67,6 +68,7 @@ export function ConversationSearch() {
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}
         ListHeaderComponent={failed ? <Txt testID="chat-search-failed" role="meta" tone="inkSoft">{t(lang, 'chatSearch.failed')}</Txt>
           : hits ? <Txt testID="chat-search-count" role="meta" tone="inkSoft">{hits.length ? t(lang, 'chatSearch.count', { n: hits.length }) : t(lang, 'chatSearch.none')}</Txt> : null}
+        ListFooterComponent={hasMore?<Button testID="chat-search-more" kind="secondary" label={t(lang,'activity.more')} disabled={busy||!online} onPress={()=>void run(true)} />:null}
         renderItem={({ item }) => (
           <View testID="chat-search-hit" style={{ gap: space.s, paddingVertical: space.m }}>
             <Txt role="caption" tone="inkSoft">{t(lang, item.role === 'me' ? 'chat.me' : 'cc.label')} · {when(item.at)}{item.source === 'wechat' || item.source === 'desktop' || item.source === 'phone' ? ` · ${t(lang, `chat.from.${item.source}`)}` : ''}</Txt>

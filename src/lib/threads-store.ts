@@ -118,6 +118,9 @@ export type UpdateThreadInput = {
 }
 
 export interface ThreadsStore {
+  /** Owner-scoped atomic merge; old ids survive as aliases, including chains. */
+  merge(owner:string,from:string,into:string):Promise<boolean>
+
   create(input: CreateThreadInput): Promise<string>
   update(id: string, partial: UpdateThreadInput): Promise<void>
   list(chatId: string): Promise<ThreadRecord[]>
@@ -237,6 +240,35 @@ export function makeThreadsStore(db: Db): ThreadsStore {
   )
 
   return {
+    async merge(owner,from,into) {
+      if(from===into)return false
+      return db.transaction(() => {
+        const source=db.query<{episodes:string},[string,string]>('SELECT episodes FROM threads WHERE id=? AND chat_id=?').get(from,owner)
+        const target=db.query<{episodes:string},[string,string]>('SELECT episodes FROM threads WHERE id=? AND chat_id=?').get(into,owner)
+        if(!source||!target)return false
+        db.query('UPDATE threads SET episodes=? WHERE id=?').run(JSON.stringify(mergeEpisodes([...JSON.parse(source.episodes),...JSON.parse(target.episodes)])),into)
+        db.query(`INSERT INTO topic_bubbles(thread_id,state,opened_at,last_recalled_at,last_opened_by_owner_at,activity_revision)
+          SELECT ?,state,opened_at,last_recalled_at,last_opened_by_owner_at,activity_revision+1 FROM topic_bubbles WHERE thread_id=?
+          ON CONFLICT(thread_id) DO UPDATE SET state=CASE WHEN topic_bubbles.state='open' OR excluded.state='open' THEN 'open' ELSE 'closed' END,
+          opened_at=COALESCE(topic_bubbles.opened_at,excluded.opened_at),
+          last_recalled_at=NULLIF(MAX(COALESCE(topic_bubbles.last_recalled_at,''),COALESCE(excluded.last_recalled_at,'')),''),
+          last_opened_by_owner_at=NULLIF(MAX(COALESCE(topic_bubbles.last_opened_by_owner_at,''),COALESCE(excluded.last_opened_by_owner_at,'')),''),
+          activity_revision=MAX(topic_bubbles.activity_revision,excluded.activity_revision)+1,closed_sleep_id=NULL`).run(into,from)
+        db.query('UPDATE topic_entries SET thread_id=? WHERE thread_id=?').run(into,from)
+        db.query('INSERT OR IGNORE INTO matter_topics(matter_id,thread_id,attached_ts,written_back_cursor) SELECT matter_id,?,attached_ts,written_back_cursor FROM matter_topics WHERE thread_id=?').run(into,from)
+        for(const ref of db.query<{chat_id:string;request_id:string;entry_ids:string;message_ids:string;created_at:string},[string]>('SELECT chat_id,request_id,entry_ids,message_ids,created_at FROM topic_recall_refs WHERE thread_id=?').all(from)) {
+          const previous=db.query<{entry_ids:string;message_ids:string},[string,string,string]>('SELECT entry_ids,message_ids FROM topic_recall_refs WHERE chat_id=? AND request_id=? AND thread_id=?').get(owner,ref.request_id,into)
+          const union=(a:string|undefined,b:string)=>JSON.stringify([...new Set([...JSON.parse(a??'[]'),...JSON.parse(b)])])
+          db.query(`INSERT INTO topic_recall_refs VALUES(?,?,?,?,?,?) ON CONFLICT(chat_id,request_id,thread_id) DO UPDATE SET entry_ids=excluded.entry_ids,message_ids=excluded.message_ids,created_at=MAX(topic_recall_refs.created_at,excluded.created_at)`)
+            .run(owner,ref.request_id,into,union(previous?.entry_ids,ref.entry_ids),union(previous?.message_ids,ref.message_ids),ref.created_at)
+        }
+        db.query('UPDATE topic_merge_aliases SET surviving_id=? WHERE chat_id=? AND surviving_id=?').run(into,owner,from)
+        db.query('INSERT OR REPLACE INTO topic_merge_aliases(chat_id,old_id,surviving_id) VALUES(?,?,?)').run(owner,from,into)
+        db.query('DELETE FROM threads WHERE id=? AND chat_id=?').run(from,owner)
+        hintWrite(db,{kind:'topics',chatId:owner})
+        return true
+      })()
+    },
     async create(input) {
       const id = newThreadId()
       const now = new Date().toISOString()

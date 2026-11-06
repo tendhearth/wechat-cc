@@ -57,6 +57,8 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null }): Route
       const parsed = TopicDetailQuery.safeParse(Object.fromEntries(q))
       if (!parsed.success || (parsed.data.cursor && !parsed.data.section)) return err(400, 'invalid_params')
       const p = parsed.data, revision = topicsRevision(d.db, owner)
+      const alias = d.db.query<{ surviving_id: string }, [string,string]>(`SELECT a.surviving_id FROM topic_merge_aliases a JOIN threads t ON t.id=a.surviving_id AND t.chat_id=a.chat_id WHERE a.chat_id=? AND a.old_id=?`).get(owner,p.id)
+      if(alias) p.id=alias.surviving_id
       const sections = ['entries', 'matters', 'messages'] as const
       const budgets = { entries: 4, matters: 3, messages: 4 }
       const offsets = { entries: 0, matters: 0, messages: 0 }
@@ -66,7 +68,7 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null }): Route
         const data = await topicDetailPage(d.db, owner, p.id, offsets, budgets)
         if (!data) return null
         const page = (section: typeof sections[number]) => ({ total: data.totals[section], nextCursor: offsets[section] + budgets[section] < data.totals[section] ? cursorFor(scope(section), offsets[section] + budgets[section]) : null })
-        return { topic: data.topic, entries: data.entries, matters: data.matters, messages: data.messages, pages: { entries: page('entries'), matters: page('matters'), messages: page('messages') }, revision }
+        return { topic: { ...data.topic, mergedInto: alias?.surviving_id ?? null }, entries: data.entries, matters: data.matters, messages: data.messages, pages: { entries: page('entries'), matters: page('matters'), messages: page('messages') }, revision }
       }
       let body = await build()
       if (!body) return err(404, 'not_found')
@@ -81,7 +83,9 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null }): Route
     'POST /v1/memory/topics/open': wrap(async (_q, body, owner) => {
       const parsed = TopicOpenRequest.safeParse(body)
       if (!parsed.success) return err(400, 'invalid_params')
-      const { id, requestId } = parsed.data
+      const { requestId } = parsed.data
+      const alias=d.db.query<{surviving_id:string},[string,string]>('SELECT a.surviving_id FROM topic_merge_aliases a JOIN threads t ON t.id=a.surviving_id AND t.chat_id=a.chat_id WHERE a.chat_id=? AND a.old_id=?').get(owner,parsed.data.id)
+      const id=alias?.surviving_id??parsed.data.id
       if (!d.db.query('SELECT id FROM threads WHERE id=? AND chat_id=?').get(id, owner)) return err(404, 'not_found')
       bubbles.adopt(owner, `${id}:${requestId}`, 'owner', [{ id }])
       const p = await topicsProjection(d.db, owner)

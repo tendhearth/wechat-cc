@@ -55,3 +55,20 @@ describe('matters routes',()=>{
   })
 
 })
+
+it('T5d contracts admit only owner operator/device surfaces and validate anchor/stop input',async()=>{
+  const window=vi.fn(async()=>({messages:[],earlier:null,later:null,anchor:'m'})),stop=vi.fn(()=>true)
+  const routes=mattersRoutes(deps({conversationWindow:window,conversationWork:async()=>({references:[],results:[]}),conversationEvents:()=>({running:null,events:[],cursor:0}),stopConversation:stop}))
+  const keys=['GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop']
+  for(const caller of [undefined,{tier:'admin',origin:'file'},{tier:'admin',origin:'session'},{tier:'admin',origin:'link'},{tier:'trusted',origin:'operator'}])for(const key of keys)expect((await routes[key]!(q('anchor=m'),{turnId:'t'},caller as never)).status).toBe(403)
+  expect(window).not.toHaveBeenCalled();expect(stop).not.toHaveBeenCalled()
+  for(const origin of ['operator','device']){
+    const caller={tier:'admin',origin} as const
+    expect((await routes[keys[0]!]!(q(),null,caller as never)).body).toEqual({routes:'v1',topics:'v1'})
+    expect((await routes[keys[1]!]!(q('anchor=m&before=n'),null,caller as never)).status).toBe(400)
+    expect((await routes[keys[1]!]!(q('anchor=m&limit=3'),null,caller as never)).status).toBe(200)
+    expect((await routes[keys[4]!]!(q(),{turnId:'t'},caller as never)).status).toBe(200)
+  }
+  expect(window).toHaveBeenCalledWith({anchor:'m',limit:3})
+  expect(stop).toHaveBeenCalledWith('t')
+})

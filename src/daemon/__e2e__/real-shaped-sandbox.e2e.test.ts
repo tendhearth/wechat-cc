@@ -321,6 +321,18 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     // 这一轮答完了:桌面看到的任务是「已答复」(Codex 的会话留着,等主人接着说),执行者真的把文件写进了项目
     await expect.poll(async () => (await desktop<{ task: { phase: string } }>('GET', `/v1/workbench/task?id=${taskId}`)).body.task.phase, { timeout: 30_000 }).toBe('replied')
     expect(readFileSync(join(project, 'NOTE.md'), 'utf8')).toBe('第一行\n第二行\n')
+    // T5d: real boot wiring projects the originating owner message and MatterLog result on the shared operator route.
+    expect((await desktop('GET','/v1/protocol/capabilities')).body).toEqual({routes:'v1',topics:'v1'})
+    type Work={references:Array<{id:string;matterId:string;messageId:string;kind:string}>;results:Array<{id:string;matterId:string;text:string}>}
+    await expect.poll(async()=> (await desktop<Work>('GET','/v1/matter/owner-chat/work')).body.results.find(r=>r.matterId===taskId)?.text,{timeout:15_000}).toContain('写好了 NOTE.md。')
+    const work=(await desktop<Work>('GET','/v1/matter/owner-chat/work')).body
+    const reference=work.references.find(r=>r.matterId===taskId)!
+    expect(reference).toMatchObject({id:`work:${taskId}`,kind:'task',messageId:expect.any(String)})
+    const original=await desktop<{messages:Array<{messageId:string;text:string}>}>('GET',`/v1/matter/owner-chat/window?anchor=${encodeURIComponent(reference.messageId)}`)
+    expect(original.status).toBe(200)
+    expect(original.body.messages.find(m=>m.messageId===reference.messageId)?.text).toContain('写一份笔记')
+    expect(new Set(work.results.map(r=>r.id)).size).toBe(work.results.length)
+
     // Same real daemon wiring as the desktop pet; selecting it remains read-only.
     expect((await desktop('GET','/v1/companion/pet')).status).toBe(403) // operator scope intentionally excludes this trusted read
     const pet = await desktop<{activities:Array<{taskId:string;title:string;phase:string}>}>('GET','/v1/companion/pet',undefined,'trusted')

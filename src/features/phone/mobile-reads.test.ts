@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
-import { terminalPhoneRoutes } from '../terminal/phone-routes'
+import { terminalOwnerHandlers } from '../terminal/phone-routes'
 import { cacheSessions, SESSIONS_DONE_MAX, type PhoneSessionsSource as MobileSessionsDeps } from '../workbench'
 import { workbenchRoutes } from '../workbench/routes'
 import { routePhone } from '../../lib/phone-route-table'
@@ -21,8 +21,8 @@ const SNAP: ConnectionsSnapshot = {
   generatedAt: 1, computers: [{ id: 'home', label: 'Mac', online: true, since: 0, version: '1.7.1' }], recent: [], outputs: [],
   sources: [{ id: 'wechat_history', kind: 'wechat_history', name: 'wxvault', state: 'not_loaded', latestAt: null, syncedAt: null, detail: { reason: 'missing', dir: '/Users/nate/plugins' } }],
 }
-const run = async (deps: Parameters<typeof terminalPhoneRoutes>[0], path: string, method = 'GET') => {
-  const r = await routePhone(terminalPhoneRoutes(deps), new URL('http://x' + path), new Request('http://x' + path, { method }))
+const run = async (deps: Parameters<typeof terminalOwnerHandlers>[0], path: string, method = 'GET') => {
+  const r = await routePhone(terminalOwnerHandlers(deps), new URL('http://x' + path), new Request('http://x' + path, { method }))
   return r && { status: r.status, body: await r.json() as any }
 }
 
@@ -296,7 +296,7 @@ describe('送进窗口的结果(10-20 真机)', () => {
     expect(r!.body.sessions[1].last_say).toBeUndefined()
     // 直接查终端那张表:P3d-3 起登记在新键 POST /v1/cli/session-say 上(老路径经面板的别名,legacy-renames.test.ts 比过一样)
     const u = 'http://x/v1/cli/session-say'
-    const res = await routePhone(terminalPhoneRoutes({ cliActions }), new URL(u), new Request(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: 'abc123-xyz', text: '一句' }) }))
+    const res = await routePhone(terminalOwnerHandlers({ cliActions }), new URL(u), new Request(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: 'abc123-xyz', text: '一句' }) }))
     const said = { body: await res!.json() as any }
     expect(said.body).toEqual({ ok: true, accepted: true, say_id: 'a1b2c3d4e5f6' })
     PHONE_API_SCHEMAS['POST /m/api/cli/say']!.parse(said.body)

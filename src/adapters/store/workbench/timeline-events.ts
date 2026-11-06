@@ -55,6 +55,7 @@ export function workbenchTaskEvent(item:MatterItem):WorkbenchTaskEventT|null {
 }
 
 export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
+  const activeTurn=(matterId:string,runId:string|null)=>runId?db.query<{id:string},[string,string]>("SELECT id FROM matter_turns WHERE matter_id=? AND run_id=? AND status='running' ORDER BY seq DESC LIMIT 1").get(matterId,runId)?.id:null
   /** 这件事时间线上的步,按 seq。 */
   const steps=(id:string)=>timelineSteps(log.items(id))
   /** 线上投影。since:按版本号(事件的 v)筛;sinceCursor(P1b):按这一步最后一次写的全库游标筛 —— 改过的步(工具调用做完)也会再来一次。 */
@@ -62,7 +63,7 @@ export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
     .filter(item=>since===undefined||(item.payload as Payload).v>since)
     .map(workbenchTaskEvent).filter((e):e is WorkbenchTaskEventT=>e!==null)
   const addEvent=(id:string,kind:EventKind,text:string,sourceId:string|null=null,runId:string|null=null,attachments:readonly Attachment[]=[],seq:number)=>
-    log.writeItem({matterId:id,kind:ITEM_KIND[kind],status:'completed',payload:payloadOf({text:text.slice(0,TEXT_MAX),v:seq,sourceId,runId,attachments})}).id
+    log.writeItem({matterId:id,turnId:activeTurn(id,runId),kind:ITEM_KIND[kind],status:'completed',payload:payloadOf({text:text.slice(0,TEXT_MAX),v:seq,sourceId,runId,attachments})}).id
   const recordAgentEvent=(taskId:string,runId:string,event:VisibleEvent,seq:number)=>{
     const activity=event.kind==='tool_call'&&event.activity?publicActivity(event.activity):undefined
     const nativeId=event.kind==='text'?event.itemId:activity?.id
@@ -72,7 +73,7 @@ export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
     const text=(event.kind==='text'&&event.textMode==='append'?((previous?.payload as Payload|undefined)?.text??'')+content:content).slice(0,TEXT_MAX)
     // Duplicate starts may arrive after completion; never turn a finished call back into a spinner(MatterLog 也守着这一条)。
     if(previous&&activity?.status==='running'&&previous.status!=='started')return previous.id
-    return log.writeItem({matterId:taskId,kind:ITEM_KIND[event.kind],status:statusOf(activity),key,payload:payloadOf({text,v:seq,runId,activity})}).id
+    return log.writeItem({matterId:taskId,turnId:previous?.turnId??activeTurn(taskId,runId),kind:ITEM_KIND[event.kind],status:statusOf(activity),key,payload:payloadOf({text,v:seq,runId,activity})}).id
   }
   const finishRunActivities=(taskId:string,runId:string|null,status:'cancelled'|'interrupted',seq:number)=>{
     for(const item of log.items(taskId)) {

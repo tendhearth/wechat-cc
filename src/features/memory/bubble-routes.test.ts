@@ -134,3 +134,43 @@ it('历史话题搜索在 owner 内先搜索再分页；cursor不能换搜索词
  expect((await call('GET /v1/memory/topics','view=all&q=其他&cursor='+encodeURIComponent(first.nextCursor!))).status).toBe(400)
  expect(db.query('SELECT * FROM topic_bubbles WHERE thread_id=?').get(a)).toBeNull();db.close()
 })
+
+it('T5d merge aliases preserve chains and owner scope with canonical matter routes',async()=>{
+  const {db,threads,id,call,setOwner}=await fixture()
+  const create=(title:string,chatId='owner')=>threads.create({chatId,title,summary:'',facets:[],tags:[],private:true,episodes:[]})
+  const next=await create('next'), final=await create('final'), guest=await create('private','guest')
+  expect(await threads.merge('owner',id,guest)).toBe(false)
+  const m=makeMatterStore(db).create({kind:'terminal',ownerChatId:'owner',title:'terminal'})
+  db.query('INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES(?,?,?)').run(m.id,id,'now')
+  expect(await threads.merge('owner',id,next)).toBe(true)
+  expect(await threads.merge('owner',next,final)).toBe(true)
+  const detail=TopicDetailResponse.parse((await call('GET /v1/memory/topics/detail',`id=${id}`)).body)
+  expect(detail.topic).toMatchObject({id:final,mergedInto:final})
+  expect(detail.matters).toEqual([expect.objectContaining({id:m.id,kind:'terminal',detailRoute:`/v1/matter?id=${m.id}`})])
+  setOwner('guest')
+  expect((await call('GET /v1/memory/topics/detail',`id=${id}`)).status).toBe(404)
+  db.close()
+})
+
+it('merging topics recalled in one request unions entry and message provenance',async()=>{
+  const {db,threads,id}=await fixture()
+  const into=await threads.create({chatId:'owner',title:'survivor',summary:'',facets:[],tags:[],private:true,episodes:[]})
+  const a=await threads.addEntry({threadId:id,kind:'fact',line:'a'}),b=await threads.addEntry({threadId:into,kind:'fact',line:'b'})
+  makeTopicBubbles(db).adopt('owner','same-request','recall',[{id,entryIds:[a],messageIds:['message-a']},{id:into,entryIds:[b],messageIds:['message-b']}])
+  expect(await threads.merge('owner',id,into)).toBe(true)
+  const row=db.query<{entry_ids:string;message_ids:string},[string]>('SELECT entry_ids,message_ids FROM topic_recall_refs WHERE thread_id=?').get(into)!
+  expect(JSON.parse(row.entry_ids).sort()).toEqual([a,b].sort())
+  expect(JSON.parse(row.message_ids).sort()).toEqual(['message-a','message-b'])
+  db.close()
+})
+
+it('merge keeps an adopted bubble open and lets an old id deliberately open its survivor',async()=>{
+  const {db,threads,id,call}=await fixture()
+  const into=await threads.create({chatId:'owner',title:'survivor',summary:'',facets:[],tags:[],private:true,episodes:[]})
+  makeTopicBubbles(db).adopt('owner','request','owner',[{id}])
+  await threads.merge('owner',id,into)
+  expect(makeTopicBubbles(db).get(into)?.state).toBe('open')
+  const result=await call('POST /v1/memory/topics/open','',{id,requestId:'old-link'})
+  expect(result.status).toBe(200);expect(result.body).toMatchObject({id:into,bubbleState:'open'})
+  db.close()
+})

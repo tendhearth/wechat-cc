@@ -1,3 +1,4 @@
+import { useConversationStream } from '../state/useConversationStream'
 import { useCompanion } from '../state/useCompanion'
 import { companionCard } from '../view/companion'
 import { CompanionCard } from '../ui/CompanionCard'
@@ -128,7 +129,19 @@ export default function Chat() {
   })
   const work = useWork()
   const terminal = useTerminalSessions()
-  const references = useReferences(backend)
+  const stream=useConversationStream(backend,online)
+  const [stopTurn,setStopTurn]=useState<string|null>(null)
+  const [stopError,setStopError]=useState(false)
+  useEffect(()=>{setStopTurn(null);setStopError(false)},[backend])
+  const stopConversation=async()=>{
+    const turn=stream?.running?.turnId;if(!turn||!backend.stopConversation)return
+    if(stopTurn!==turn){setStopTurn(turn);return}
+    try{await backend.stopConversation(turn);setStopTurn(null);setStopError(false)}catch{setStopError(true)}
+  }
+  const localReferences = useReferences(backend)
+  const durableWork = useQuery('conversation:work', () => backend.conversationWork!(), { enabled: !!backend.conversationWork, refreshOnMount: true })
+  useEffect(() => { if(!backend.conversationWork)return; return backend.subscribe('agents',()=>{ void durableWork.refresh() }) },[backend,durableWork.refresh])
+  const references = [...new Set([...localReferences,...(durableWork.data?.references.map(r=>`matter:${r.matterId}`)??[])])]
   const referenceKey = references.join(',')
   const history = useQuery(`conversation-history:${referenceKey}`, async l => {
     const found = await Promise.all(references.filter(key => key.startsWith('matter:')).map(async key => {
@@ -143,9 +156,12 @@ export default function Chat() {
   const [waitingIndex, setWaitingIndex] = useState(0)
   const companion = useCompanion()
   const card = companion.home ? companionCard(companion.home.events, companion.home.seenUntil, Date.now(), companion.localSeen) : null
-  const items = conversationItems(chat.bubbles, workView, allMatters, chat.page?.matterId, references, newReferences(backend))
+  const items = conversationItems(chat.bubbles, workView, allMatters, chat.page?.matterId, references, newReferences(backend),new Map((durableWork.data?.references??[]).flatMap(r=>r.messageId?[[r.matterId,r.messageId] as const]:[])))
+  if(stream?.running)for(const event of stream.events.filter(e=>e.turnId===stream.running?.turnId&&e.kind==='agent_message'&&e.text))items.push({key:event.id,at:event.createdAt,bubble:{projection:'stream',key:event.id,at:event.createdAt,side:'cc',source:'desktop',state:'sent',truncated:false,text:event.text}})
+  for(const result of durableWork.data?.results??[]) items.push({key:result.id,at:result.createdAt,bubble:{projection:'result',key:result.id,at:result.createdAt,side:'cc',source:'desktop',state:'sent',truncated:false,text:result.text}})
   if (card) items.push({ key: `companion:${card.id}`, at: card.at, card })
   const data = items.sort((a, b) => a.at - b.at).reverse()
+  if(chat.canLoadLater){const boundary=data.findIndex(i=>i.key===chat.laterAfterId);data.splice(boundary<0?0:boundary,0,{key:'conversation-gap',at:0,gap:true})}
   useEffect(() => {
     if (!message || !chat.page || located.current === `${message}:${locate ?? ''}`) return
     located.current = `${message}:${locate ?? ''}`
@@ -182,6 +198,8 @@ export default function Chat() {
           <ConversationMore /></View>}
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice />{backend.mode === 'demo' ? <DemoBanner /> : null}</View>
+      {stream?.running&&backend.stopConversation?<Button testID="conversation-stop" kind="secondary" label={t(lang,stopTurn===stream.running.turnId?'progress.stopConfirm':'progress.stop')} onPress={()=>void stopConversation()} />:null}
+      {stopError?<Txt role="meta" tone="inkSoft">{t(lang,'progress.stopFailed')}</Txt>:null}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <FlatList
           ref={listRef}
@@ -221,7 +239,7 @@ export default function Chat() {
             </View>
           }
           renderItem={({ item }) => (
-            <>{item.card ? <View><Txt role="caption" tone="inkSoft">CC</Txt><CompanionCard card={item.card} onSeen={companion.markSeen} /></View> : item.row ? <DelegationMessage live row={item.row} historical={item.historical} synced={online && !work.mattersError} /> : item.bubble ? <ChatBubble b={item.bubble} lang={lang} canRetry={online && !sending} onRetry={() => retry(item.bubble!)} onDismiss={() => chat.dismiss(item.bubble?.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} /> : null}</>
+            <>{item.gap?<Button testID="chat-load-later" kind="secondary" label={t(lang,'minimal.more')} busy={chat.loadingLater} onPress={()=>void chat.loadLater()} />:item.card ? <View><Txt role="caption" tone="inkSoft">CC</Txt><CompanionCard card={item.card} onSeen={companion.markSeen} /></View> : item.row ? <DelegationMessage live row={item.row} historical={item.historical} synced={online && !work.mattersError} /> : item.bubble ? <ChatBubble b={item.bubble} lang={lang} canRetry={online && !sending} onRetry={() => retry(item.bubble!)} onDismiss={() => chat.dismiss(item.bubble?.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} /> : null}</>
           )}
         />
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
@@ -277,7 +295,7 @@ export default function Chat() {
 function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
   const me = b.side === 'me'
   if (b.state === 'thinking') return <Thinking lang={lang} />
-  const from = t(lang, `chat.from.${b.source}`)
+  const from = b.projection==='result'?(lang==='zh-Hans'?'CC 的结果':'CC result'):b.projection==='stream'?'CC':t(lang, `chat.from.${b.source}`)
   // 只有附件的回复不画空文字区;过程仍可展开查看。
   return (
     <View style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>

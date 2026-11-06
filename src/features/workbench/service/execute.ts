@@ -566,7 +566,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     try{return ctx.deps.matters.ensureChat(ownerChatId,undefined,origin).id}
     catch(err){ctx.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
   }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void;conversationMessageId?:string;conversationText?:string}):WorkbenchTaskView {
     ctx.ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
     const attachments=entry?entry.materials:selectAttachments(input)
@@ -588,7 +588,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey,undefined,surface):null
         if(chat&&chat.ownerChatId!==entry.context.ownerKey)throw Error('invalid_entry_owner')
         // 建任务就建了这件事(store.create,同 id),出生地在这一次写进去。
-        task=store.create({...create,origin:{matterId:chat?.id??null,messageId:null,surface}})
+        const messageId=entry.conversationMessageId??null
+        if(messageId)store.recordConversationEntry(entry.context.ownerKey,messageId,entry.conversationText??text,surface??entry.context.surface)
+        task=store.create({...create,origin:{matterId:chat?.id??null,messageId,surface}})
         if(store.taskMatterId(task.id)!==task.id)throw Error('entry_matter_link_failed')
         m.bind(task.id,entry.context.surface,entry.context.ownerKey)
       }else{

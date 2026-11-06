@@ -13,7 +13,6 @@ import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../app/matters/service'
 import { memoryPhoneRoutes, type MemoryNightlyRuntime } from '../../features/memory'
-import { terminalPhoneRoutes } from '../../features/terminal'
 import { stickerPhoneRoutes } from '../../features/stickers'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
 import { jobsView, jobsAction, mobileJobsRoutes } from '../../features/jobs'
@@ -92,7 +91,6 @@ return makeSettingsPanel({
   // 信、定时、终端会话、记忆、表情的手机处理器归它们自己的功能(各自 index.ts 导出),这里只填 deps 交给面板。
   featureRoutes: [
     // 终端会话:看着它跑 / 拍板 / 接着说一句(P3d-3 从面板搬回 features/terminal)
-    terminalPhoneRoutes({ ...(opts.cliActions ? { cliActions: opts.cliActions } : {}) }),
     // 「CC 记得你」:整理好的那份 + 逐条纠错(P3d-3 从面板搬回 features/memory)
     memoryPhoneRoutes({ curated: () => memoryNightly.curatedView(), correct: (id, verdict) => memoryNightly.correct(id, verdict) }),
     // 表情原图(P3d-3 从面板搬回 features/stickers);面板自己的 stickers 只给首屏 state 列库用

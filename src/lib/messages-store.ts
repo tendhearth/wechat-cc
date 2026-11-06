@@ -34,6 +34,8 @@ export interface ListRangeOpts {
 export interface MessagesStore {
   /** Returns the number of rows actually inserted (0 if ignored by INSERT OR IGNORE). */
   append(rec: MessageRecord): Promise<number>
+  /** Same write inside a caller-owned SQLite transaction. */
+  appendSync?(rec: MessageRecord): number
   /** 按 id 取一行,并且必须属于这个 chat(否则 null)。 */
   get(chatId: string, id: string): Promise<MessageRecord | null>
   listRange(chatId: string, opts: ListRangeOpts): Promise<MessageRecord[]>
@@ -153,8 +155,7 @@ export function makeMessagesStore(db: Db): MessagesStore {
     return q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
   }
 
-  return {
-    async append(rec) {
+  const appendSync = (rec:MessageRecord):number => {
       rec.extras !== undefined
         ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, rec.extras)
         : stmtInsert.run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source)
@@ -163,7 +164,10 @@ export function makeMessagesStore(db: Db): MessagesStore {
       // 消息不进 MatterLog 的游标:新的一行给手机主题一声提示(聊天的 matter/<id>、home 的「在跟你聊」)
       if (changes > 0) hintWrite(db, { kind: 'messages', chatId: rec.chatId })
       return changes
-    },
+    }
+  return {
+    appendSync,
+    async append(rec) { return appendSync(rec) },
     async get(chatId, id) {
       const r = stmtGet.get(id, chatId)
       return r ? rowToRecord(r) : null
