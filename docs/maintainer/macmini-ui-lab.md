@@ -118,3 +118,11 @@ node apps/desktop/scripts/macmini-ui.mjs app-maestro all
 与桌面一样，Seatbelt 的证据范围是所启动的构建/驱动子进程；CoreSimulator 系统服务派生的 App 不因驱动在沙盒中就自动获得相同网络限制。只运行无配对演示流程，不能把它当作真实推送、真实中继或模型验收。mini 锁屏或 XCTest 首次系统授权可能阻塞；由主人在 mini 正常解锁/确认，不改 TCC、不绕过身份验证。
 
 Expo SDK 57 的 JSI 依赖在编译时嵌套调用 SwiftPM；macOS 不允许在外层 Seatbelt 中再次套沙盒。`app-prepare` 会先解析其本地 Package.swift、缓存清单元数据，并仅修改已知依赖脚本的 `env -i` 环境转发：固定 PATH、TMPDIR 与 CFFIXED_USER_HOME 到 lab，并显式设置两阶段共用的 `packageCachePath`。脚本其它内容和 SwiftPM 沙盒/插件校验选项不变，未知脚本形状直接拒绝；准备回执包含修改后的脚本摘要。正式编译仍受原有外层断网规则限制，缓存失效时失败并要求重新准备。
+
+### 2026-11-05 App lane 实测边界
+
+已在 Home’s mini 装好 lab 内 Maestro 2.12.1、Java runtime 21.0.13、Ruby 3.3.6 / libyaml 0.2.5 与 CocoaPods 1.16.2。PR #857 的 `d9458ef3` 快照已通过公开依赖准备，协议/回执/拒绝边界测试 25/25 通过。
+
+严格离线编译已通过 ExpoModulesJSI 阶段，但主包在 ExpoUI 的 Swift 宏处失败：`SwiftUIMacros.StateMacro` 找不到实现，`swift-plugin-server` 返回 malformed response。日志在该快照 `artifacts/2026-11-06T01-43-09.281Z-app-build/1-app-build.log`。尚未做解除沙盒的对照，不能仅凭此错误确定根因；没有为此关闭宏沙盒或放开外连。
+
+`terminal-sessions`、`push-open`、`cc-acts` 均实际经 `app-maestro` 入口调用，因没有成功构建回执而返回 **APP_BLOCKED / 退出码 2**，尚未执行 UI 断言，也未启动模拟器。自有设备保持 Shutdown。**App 原生验收尚未通过**；需要先解决该构建错误，再由整合者重新运行这三条及所需全套，不能把命令入口或纯测试通过当成 Maestro 通过。

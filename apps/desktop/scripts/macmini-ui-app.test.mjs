@@ -136,3 +136,10 @@ test('an empty suite cannot return a false green result', async () => {
   await expect(runApp(context)).rejects.toThrow('absent from the snapshot')
   expect(calls).toEqual([])
 })
+
+test('a missing successful build is reported as blocked before any simulator access', async () => {
+  await rm(join(root, 'build-receipt.json'))
+  await expect(runApp(context)).rejects.toThrow('APP_BLOCKED: no successful build')
+  expect(calls).toEqual([])
+  expect(execFileSync).not.toHaveBeenCalled()
+})

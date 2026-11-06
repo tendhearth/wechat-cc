@@ -64,7 +64,7 @@ node apps/desktop/scripts/macmini-ui.mjs app-maestro all
 
 以上命令在仓库根目录调用；首次快照、公开依赖准备与授权边界见 [Mac mini 实验室](../../docs/maintainer/macmini-ui-lab.md#app--maestro-lane)。下面的原生工具命令仅供 mini 上准备环境，不在主工作 Mac 执行。
 
-装:`brew tap mobile-dev-inc/tap && brew trust --formula mobile-dev-inc/tap/maestro && brew install --formula mobile-dev-inc/tap/maestro`(注意是 formula;不带 `--formula` 会装成桌面版 Maestro Studio 的 cask)。要 Java,formula 会带上 openjdk。
+mini 的工具安装见[实验室准备步骤](../../docs/maintainer/macmini-ui-lab.md#app--maestro-lane)：Maestro CLI、Java runtime、CocoaPods 与必要的 Ruby/libyaml 都放在 lab 的 `app-tools` 内，不使用 sudo，也不修改全局 shell 配置。
 
 | 流程 | 走什么 |
 |---|---|

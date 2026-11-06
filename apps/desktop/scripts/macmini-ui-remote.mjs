@@ -235,7 +235,7 @@ try {
 } catch (error) {
   await writeFile(join(run, 'result.json'), JSON.stringify({ ok: false, command: request.command, error: error.message }, null, 2))
   console.error(error.message)
-  process.exitCode = error.message.startsWith('NATIVE_BLOCKED:') ? 2 : 1
+  process.exitCode = /^(NATIVE|APP)_BLOCKED:/.test(error.message) ? 2 : 1
 } finally {
   await releaseLocks()
 }

@@ -98,7 +98,9 @@ export async function runApp({ request, config, insideLab, labHome, run, command
     await writeFile(receiptFile, JSON.stringify({ source, app, configuration: 'Release', metro: false }))
     return { source, app }
   }
-  const receipt = JSON.parse(await readFile(receiptFile, 'utf8'))
+  let receipt
+  try { receipt = JSON.parse(await readFile(receiptFile, 'utf8')) }
+  catch (error) { if (error.code === 'ENOENT') throw Error('APP_BLOCKED: no successful build for the active App snapshot; run app-build and inspect its artifacts'); throw error }
   if (JSON.stringify(receipt.source) !== JSON.stringify(source) || receipt.app !== app) throw Error('App build does not match the active snapshot')
   await insideLab(app)
   await insideLab(java)
