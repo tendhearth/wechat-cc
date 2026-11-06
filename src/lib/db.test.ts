@@ -1504,3 +1504,50 @@ it('v108 preserves both S2 lanes and their retry fields when adding reservations
     expect(db.query('SELECT * FROM speech_pending ORDER BY id').all()).toEqual(before)
   } finally { db.close() }
 })
+
+describe('fresh migration commit budget', () => {
+  it('builds the identical schema in at most five durable transactions', () => {
+    const db = openSqlite(':memory:')
+    const reference = openSqlite(':memory:')
+    try {
+      db.exec('PRAGMA foreign_keys=ON')
+      reference.exec('PRAGMA foreign_keys=ON')
+      let transactions = 0
+      const transaction = db.transaction.bind(db)
+      db.transaction = ((fn: () => unknown) => {
+        transactions++
+        return transaction(fn)
+      }) as typeof db.transaction
+      runMigrations(db, migrations)
+      // Slow disks pay per commit, so count commits instead of wall time.
+      expect(transactions).toBeLessThanOrEqual(5)
+      for (const m of migrations) m(reference)
+      const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
+      expect(db.query(schema).all()).toEqual(reference.query(schema).all())
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+      expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(db.query('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 })
+    } finally { db.close(); reference.close() }
+  })
+
+  it('rolls back the whole fresh batch and retries from its durable version', () => {
+    const db = openSqlite(':memory:')
+    const list = [migrations[0]!, () => { throw new Error('interrupted') }]
+    try {
+      expect(() => runMigrations(db, list)).toThrow('interrupted')
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 0 })
+      expect(db.query("SELECT name FROM sqlite_master WHERE name='sessions'").get()).toBeNull()
+      runMigrations(db, migrations)
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    } finally { db.close() }
+  })
+
+  it('keeps per-version commits for an existing schema even at version zero', () => {
+    const db = openSqlite(':memory:')
+    try {
+      migrations[0]!(db)
+      expect(() => runMigrations(db, [migrations[0]!, () => { throw new Error('interrupted') }])).toThrow('interrupted')
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 1 })
+    } finally { db.close() }
+  })
+})
