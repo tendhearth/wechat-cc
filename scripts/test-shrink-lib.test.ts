@@ -182,13 +182,31 @@ function repo(): { d: string; commit: (msg: string) => void } {
   g('checkout', '-q', '-b', 'feature')
   return { d, commit: (msg: string) => { g('add', '-A'); g('commit', '-q', '-m', msg) } }
 }
-const runPr = (cwd: string, pr: { title?: string; body?: string; head?: string }) =>
+const runPr = (cwd: string, pr: { title?: string; body?: string; head?: string; env?: Record<string, string> }) =>
   spawnSync(BUN, [SCRIPT], {
     cwd, encoding: 'utf8',
-    env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_BASE_REF: 'dev', GITHUB_HEAD_REF: pr.head ?? 'claude/x', PR_TITLE: pr.title ?? '加功能', PR_BODY: pr.body ?? '' },
+    env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_BASE_REF: 'dev', GITHUB_HEAD_REF: pr.head ?? 'claude/x', PR_TITLE: pr.title ?? '加功能', PR_BODY: pr.body ?? '', GITHUB_EVENT_PATH: '', ...pr.env },
   })
 
 describe.skipIf(!HAVE_BUN)('test-shrink-check(CLI,PR 模式)', () => {
+  it('rerun 读最新 API 标题/正文;API 失败退回 event,不执行正文里的 shell', () => {
+    const { d } = repo()
+    const event = join(d, 'event.json')
+    writeFileSync(event, JSON.stringify({ number: 7 }))
+    const bin = join(d, 'bin'); mkdirSync(bin)
+    const gh = join(bin, process.platform === 'win32' ? 'gh.cmd' : 'gh')
+    // This executable fixture needs POSIX shell; Windows retains the fallback integration cases below.
+    if (process.platform === 'win32') return
+    writeFileSync(gh, `#!/bin/sh
+printf '%s' '{"title":"fix: current","body":"## 红/绿\\nred then green $(touch injected)"}'
+`, { mode: 0o755 })
+    const env = { GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: 'o/r', PATH: `${bin}:${process.env.PATH}` }
+    expect(runPr(d, { title: 'fix: old', body: '', env }).status).toBe(0)
+    expect(spawnSync('git', ['status', '--porcelain'], { cwd: d, encoding: 'utf8' }).stdout).not.toContain('injected')
+    writeFileSync(gh, '#!/bin/sh\nexit 1\n')
+    expect(runPr(d, { title: 'fix: old', body: '', env }).status).toBe(1)
+    expect(runPr(d, { title: 'fix: old', body: '## 红/绿\nred then green', env }).status).toBe(0)
+  })
   it('改名搬家、用例一样 ⇒ 绿', () => {
     const { d, commit } = repo()
     mkdirSync(join(d, 'src/features'))

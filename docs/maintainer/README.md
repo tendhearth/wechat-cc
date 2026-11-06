@@ -16,7 +16,7 @@
 2. **按职责拆任务。** 尽量让两个实现者修改不同模块。共享接口、数据库迁移和依赖锁文件提前约定负责人及先后顺序;确实需要修改同一处时,先完成的一方提交,另一方基于该提交继续。worktree 不会消除接口和行为上的冲突。
 3. **交付可复核的提交。** 开发者交付分支、提交号、基线、改动范围、验证结果和已知限制。整合者在自己的集成工作区逐项合入,不去开发者目录修改文件。冲突退回对应负责人处理或由整合者明确接手,不能通过整文件覆盖来消除冲突。
    评审只报影响正确性的、跳过风格;动开机顺序 / 迁移 / 权限的再要一道没看过写代码过程的评审(Codex `review --base dev`)(见 [verify.md](verify.md#评审只报影响正确性的))。
-4. **验证整合结果。** 分支各自通过不代表组合正确。每次合入后检查累积差异,按改动范围验证;代码改动走下面的本地闸门,随后才部署、真机自检和推送。纯文档改动检查差异、链接与规则一致性,无需构建部署。不得重写共享的 `dev` 历史,进 `master` 仍走 squash PR。
+4. **验证整合结果。** 分支各自通过不代表组合正确。先同步 dev 并等 PR 三平台 CI 绿再合入,检查部署 tree 的 CI 覆盖;覆盖后无需本机 verify --full,随后部署和主动自检。纯文档改动检查差异、链接与规则一致性,无需构建部署。不得重写共享的 `dev` 历史,进 `master` 仍走 squash PR。
 5. **运行环境也要分开。** worktree 不隔离端口、数据库、daemon、账号配置和已安装的 app。并行验证使用各自的测试数据目录和端口,不要连生产数据做试验。共享 daemon 的重启、桌面安装、部署和 `dev` 推送归整合者串行执行;自动 `self change` 也纳入这份安排。这是协作约定,不代表已有跨进程锁自动替你排队。
 
 收尾只清理自己负责且已确认不再使用的分支和工作树。遇到集成工作区有未知改动或正在被别人使用,先交接,不能 `reset`、`clean` 或替别人 `stash`。
@@ -33,17 +33,18 @@
 ```bash
 # 1. 开发者在独立分支改代码并验证;整合者合入 dev 后复验
 bun run verify                       # 只跑改动牵连到的 + 全部守卫(scripts/verify.ts 开头写了判法)
-bun run verify --full                # 整合者:test / test:node / typecheck / depcheck 四条全跑,跟 CI 一样
+wechat-cc ci land <PR>               # 先同步 dev,PR 三平台 CI 绿才合入
+# 部署 tree 已被 CI 覆盖就不再 verify --full;未覆盖才补,重型测试放 mini
 cd apps/relay && bun run test        # 改了中继 / 协议包时(另有 test:e2e,见 relay.md)
 
 # 2+3. 以下由整合者串行执行(macOS):一道部署门走完 —— 负载 → 网络守护 → 构建 sidecar → self deploy → 工作台 + 对话两条自检,红了回滚(deploy.md「一条命令走完」)
 wechat-cc self ship                  # 机器忙退 3、守护不安全退 5,都是什么都没动;--wait-min N 等机器闲
 #   分步跑也行:build-sidecar → self deploy → selftest workbench --image --resume / selftest chat --resume(加 --keep 保留 scratch)
 wechat-cc selftest phone                # 手机协议 v2 真机闭环(需开「出门也能用」),ship 不含它
-# 过几个小时:wechat-cc self soak(改到开机 / 关机顺序的加 --min-restarts 1)
+# 部署后主动 selftest phone/chat/workbench + 新路由;4h soak 后台跑
+# 只有改开机/关机/重启顺序才等 soak(--min-restarts 1)
 
-# 4. 推 dev,看 CI
-git push origin dev
+# 4. 确认合入后的 tree 覆盖;无回执才等完整 CI
 wechat-cc ci triage --wait --rerun   # 退出码 0 绿 / 1 真红 / 2 没运行或 gh 出错 / 3 是已知 flake
 
 # 5. 自动自改也纳入整合安排,不与人工部署/推送并发(专用工作树 + 五道闸门 + 主人微信拍板)

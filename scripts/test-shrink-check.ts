@@ -5,10 +5,11 @@
  *   bun scripts/test-shrink-check.ts --pr <N>        本机按某个 PR 判(gh 取标题/描述/分支),跟 CI 同一个结论
  *   bun scripts/test-shrink-check.ts --base <ref>    换基线
  *
- * CI(ci.yml 的 pr-rules 作业,只在 pull_request 上跑):GITHUB_EVENT_NAME=pull_request 时从环境变量读
+ * CI(ci.yml 的 pr-rules 作业,只在 pull_request 上跑):GITHUB_EVENT_NAME=pull_request 时先从 gh api 读当前标题/正文,失败才从环境变量读
  * PR_TITLE / PR_BODY(workflow 用 env 传,不在 run 里插值:标题和描述是不可信输入)、GITHUB_HEAD_REF / GITHUB_BASE_REF。
  * 比的是 HEAD(PR 的合并提交)和 merge-base(origin/<base>, HEAD)。拿不到基线在 CI 里判红,不悄悄跳过。
  */
+import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { collectChanges, findShrinks, judge, type PrInfo } from './test-shrink-lib'
 
@@ -23,6 +24,18 @@ let pr: PrInfo | null = null
 let baseRef = opt('--base') ?? 'origin/dev'
 if (inPrCi) {
   pr = { title: process.env.PR_TITLE ?? '', body: process.env.PR_BODY ?? '', headRef: process.env.GITHUB_HEAD_REF ?? '', baseRef: process.env.GITHUB_BASE_REF }
+  try {
+    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!, 'utf8'))
+    const n = event.pull_request?.number ?? event.number
+    const r = spawnSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/pulls/${n}`], { encoding: 'utf8', timeout: 20_000 })
+    if (r.status === 0) {
+      const current = JSON.parse(r.stdout)
+      if (typeof current.title === 'string' && (typeof current.body === 'string' || current.body === null)) {
+        pr.title = current.title
+        pr.body = current.body ?? ''
+      }
+    }
+  } catch { /* Offline or unavailable API: event env remains the fallback. */ }
   if (process.env.GITHUB_BASE_REF) baseRef = `origin/${process.env.GITHUB_BASE_REF}`
 } else if (prNumber) {
   const r = spawnSync('gh', ['pr', 'view', prNumber, '--json', 'title,body,headRefName,baseRefName'], { encoding: 'utf8' })
@@ -59,5 +72,5 @@ if (!pr) {
 }
 const verdict = judge(findings, pr)
 for (const m of verdict.messages) (verdict.ok ? console.log : console.error)(m)
-if (!verdict.ok && inPrCi) console.error('\n改完 PR 描述后要重新触发:推一次,或者 gh pr close <N> && gh pr reopen <N>(重跑这个作业用的还是旧描述)。')
+if (!verdict.ok && inPrCi) console.error('\n改完 PR 描述后重跑此作业即可;gh api 不可用时才退回触发时正文。')
 process.exit(verdict.ok ? 0 : 1)

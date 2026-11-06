@@ -74,6 +74,8 @@ interface JobRow {
   name: string
   databaseId: number
   conclusion: string | null
+  startedAt?: string
+  completedAt?: string
   steps: Array<{ name: string; conclusion: string | null }>
 }
 
@@ -118,7 +120,7 @@ async function findRun(deps: CiTriageDeps, sha: string, wait: boolean): Promise<
     ])
     if (rows.length > 0) {
       // 同一个 SHA 上可能有重跑/多次触发,取 createdAt 最新的那条。
-      return [...rows].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]!
+      return [...rows].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.databaseId - a.databaseId)[0]!
     }
     if (attempt >= maxAttempts) return null
     deps.log(`这个 SHA 上还没有 CI 运行,${RUN_APPEAR_POLL_MS / 1000}s 后再看(${attempt}/${maxAttempts - 1})…`)
@@ -171,7 +173,7 @@ function triageFailedRun(
   // 还有 startup_failure。以前只挑 'failure' ⇒ 这些红作业一条不剩 ⇒ verdictOf([]) = green,
   // 而自改流水线只看 verdict(steps.ts),红 CI 就进了主人拍板。
   const PASSING = new Set(['success', 'skipped', 'neutral'])
-  const failed = jobs.filter(j => j.conclusion !== null && j.conclusion !== undefined && !PASSING.has(j.conclusion))
+  const failed = jobs.filter(j => !(j.conclusion === 'cancelled' && jobs.some(newer => newer.name === j.name && newer.conclusion === 'success' && newer.databaseId > j.databaseId)) && j.conclusion !== null && j.conclusion !== undefined && !PASSING.has(j.conclusion))
 
   // 基线 = 这条分支上「上一次绿」的 headSha(且是本 SHA 的祖先)。找不到就退化
   // 成 <sha>~1 —— 比「什么都没动过」保守,后者会把真红误判成 flake。
@@ -237,6 +239,7 @@ function triageFailedRun(
   })
 
   // 运行是红的(才会走到这里),却一条红作业都没找到:绝不能落成「没有失败 ⇒ 绿」。
+  if (out.length === 0 && jobs.some(j => j.conclusion === 'cancelled') && jobs.every(j => PASSING.has(j.conclusion ?? '') || (j.conclusion === 'cancelled' && jobs.some(n => n.name === j.name && n.conclusion === 'success' && n.databaseId > j.databaseId)))) return { base, changedFiles, jobs: [] }
   if (out.length === 0) {
     return { base, changedFiles, jobs: [{ name: '(run)', step: null, classified: [{ kind: 'unknown', failure: null, excerpt: 'run did not succeed but no failed job was found' }] as Classified[] }] }
   }
@@ -290,6 +293,14 @@ export async function runCiTriage(
       }
 
       if (runRow.conclusion === 'success') {
+        // Coverage is informational here: a successful workflow already proved the gate.
+        try {
+          const { jobs } = runJson<{ jobs: JobRow[] }>(deps, 'gh', ['run', 'view', String(runRow.databaseId), '--json', 'jobs'])
+          for (const step of jobs.flatMap(j => j.steps)) {
+            const id = step.conclusion === 'success' && step.name.match(/^covered · PR run (\d+)$/)?.[1]
+            if (id) deps.log(`已由 PR run 覆盖: ${runRow.url.replace(/\/runs\/\d+$/, `/runs/${id}`)}`)
+          }
+        } catch { /* Optional explanation must not invalidate a successful CI run. */ }
         return {
           report: { sha, runId: runRow.databaseId, url: runRow.url, verdict: 'green', base: null, changedFiles: [], jobs: [], reruns },
           exitCode: CI_TRIAGE_EXIT.green,
@@ -322,7 +333,7 @@ export async function runCiTriage(
         continue
       }
 
-      const exitCode = verdict === 'flake' ? CI_TRIAGE_EXIT.flake : CI_TRIAGE_EXIT.real
+      const exitCode = verdict === 'green' ? CI_TRIAGE_EXIT.green : verdict === 'flake' ? CI_TRIAGE_EXIT.flake : CI_TRIAGE_EXIT.real
       return { report, exitCode }
     }
   } catch (err) {

@@ -128,6 +128,29 @@ function failedRunHandler(log: string, changed: string): Handler {
 }
 
 describe('runCiTriage', () => {
+  it('tree 覆盖的轻量绿运行打印对应 PR run', async () => {
+    const h = harness(line => {
+      if (line.startsWith('git rev-parse')) return SHA
+      if (line.startsWith('gh run list --commit')) return runListRow({ conclusion: 'success' })
+      if (line.endsWith('--json jobs')) return JSON.stringify({ jobs: [{ steps: [{ name: 'covered · PR run 123', conclusion: 'success' }] }] })
+      return undefined
+    })
+    expect((await runCiTriage(h.deps, { sha: SHA })).exitCode).toBe(0)
+    expect(h.logs.join('\n')).toContain('https://github.com/o/r/actions/runs/123')
+  })
+  it('同轮旧 cancelled 被更新的同名成功 job 覆盖', async () => {
+    const h = harness(line => {
+      if (line.startsWith('git rev-parse')) return SHA
+      if (line.startsWith('gh run list --commit')) return runListRow()
+      if (line.endsWith('--json jobs')) return JSON.stringify({ jobs: [
+        { name: 'build · windows-latest', databaseId: 1, conclusion: 'cancelled', steps: [] },
+        { name: 'build · windows-latest', databaseId: 2, conclusion: 'success', steps: [] },
+      ] })
+      if (line.startsWith('gh run list --branch')) return '[]'
+      return ''
+    })
+    expect((await runCiTriage(h.deps, { sha: SHA })).exitCode).toBe(0)
+  })
   it('绿:conclusion success ⇒ verdict green,退出 0,不去拉任何日志', async () => {
     const h = harness((line) => {
       if (line === `git rev-parse ${SHA}`) return `${SHA}\n`
