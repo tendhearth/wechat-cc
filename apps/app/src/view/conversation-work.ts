@@ -13,5 +13,5 @@ export function conversationItems(bubbles: Bubble[], view: HomeView, matters: Ma
     if (!source && !opened.includes(`${row.source}:${row.id}`)) continue
     items.push({ key: `ref:${row.source}:${row.id}`, at: source?.at ?? matter?.createdAt ?? row.updatedAt, row, historical: !source && !fresh.includes(`${row.source}:${row.id}`) })
   }
-  return items.sort((a, b) => a.at - b.at || (a.bubble ? -1 : b.bubble ? 1 : a.key.localeCompare(b.key)))
+  return items.sort((a, b) => a.at - b.at || (a.bubble && !b.bubble ? -1 : b.bubble && !a.bubble ? 1 : a.key.localeCompare(b.key)))
 }

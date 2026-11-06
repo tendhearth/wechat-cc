@@ -1,5 +1,4 @@
-# 独立工作区(2026-10-08):一起做 → 整理笔记那件(独立分支)→ 提交到分支 → 合回项目(点两下)→ 任务页说「已合回」
-# → 删除工作区(点两下)→ 出现「重新打开工作区」→ 重开 → 「交给另一位另做一份」进交办页:要求、项目、独立工作区都预先填好。演示模式。
+# T5: 原有功能验收移到唯一对话、搜索引用与原详情。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -9,12 +8,7 @@ appId: com.tendhearth.app
     visible:
       id: now-connections
     timeout: 10000
-- scrollUntilVisible:
-    element:
-      id: home-all
-    direction: DOWN
-- tapOn:
-    id: home-all
+- runFlow: subflows/_work.yaml
 - extendedWaitUntil:
     visible:
       id: row-matter-a1b2c3d4
@@ -33,21 +27,20 @@ appId: com.tendhearth.app
 - scrollUntilVisible:
     element:
       id: progress-worktree
-- assertVisible: ".*cc/notes001.*"
+- assertVisible: .*cc/notes001.*
 - tapOn:
     id: progress-wt-commit
 - extendedWaitUntil:
     visible:
       id: progress-wt-note
     timeout: 5000
-# 合回要点两下:第一下只换成确认字样
 - tapOn:
     id: progress-wt-merge
-- assertVisible: ".*(再点一次：快进合并到项目|Tap again to fast-forward the project).*"
+- assertVisible: .*(再点一次：快进合并到项目|Tap again to fast-forward the project).*
 - tapOn:
     id: progress-wt-merge
 - extendedWaitUntil:
-    visible: ".*(已合回项目|merged into the project).*"
+    visible: .*(已合回项目|merged into the project).*
     timeout: 5000
 - tapOn:
     id: progress-wt-remove
@@ -66,16 +59,15 @@ appId: com.tendhearth.app
 - takeScreenshot: worktree-matter
 - tapOn:
     id: progress-wt-fork
-# 另做一份会自动打开调整页;先确认并收起,再验证入口可重新打开。
 - extendedWaitUntil:
     visible:
       id: compose-adjust-sheet
     timeout: 10000
 - scrollUntilVisible:
     element:
-      text: "完成|Done"
+      text: 完成|Done
     direction: DOWN
-- tapOn: "完成|Done"
+- tapOn: 完成|Done
 - extendedWaitUntil:
     visible:
       id: compose-adjust

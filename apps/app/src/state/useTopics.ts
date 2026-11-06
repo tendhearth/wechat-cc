@@ -4,14 +4,25 @@ import type { z } from 'zod'
 import { useBackendCtx } from './BackendProvider'
 import { useConnection, useQuery } from './hooks'
 
-/** Subscribe only with explicit topics:v1. A routes:v1 hello alone is insufficient. */
+/** Coalesce revisions, retaining a trailing read if a change arrives during an older request. */
 export function useTopicsRevision(enabled: boolean, refresh: () => Promise<void>) {
   const { backend } = useBackendCtx()
-  const { store } = useBackendCtx()
   useEffect(() => {
     if (!enabled) return
-    return backend.subscribe<z.infer<typeof TopicsSnapshot>>('topics', () => { void refresh() })
-  }, [backend, enabled, refresh, store])
+    let active = true, reading = false, pending = false, revision: string | undefined
+    const changed = async () => {
+      pending = true
+      if (reading) return
+      reading = true
+      try { do { pending = false; await refresh() } while (active && pending) }
+      finally { reading = false }
+    }
+    const off = backend.subscribe<z.infer<typeof TopicsSnapshot>>('topics', data => {
+      if (data.revision === revision) return
+      revision = data.revision; void changed()
+    })
+    return () => { active = false; off() }
+  }, [backend, enabled, refresh])
 }
 export function useTopics(p: { view?: 'recent' | 'all'; cursor?: string } = {}) {
   const { backend } = useBackendCtx()

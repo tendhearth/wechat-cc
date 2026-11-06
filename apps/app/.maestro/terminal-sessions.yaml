@@ -1,22 +1,20 @@
-# 终端会话:等待批准 / 在跑 / 空闲 → 说一句 → 批准后继续。
-# 使用 ASCII 输入,避免 Maestro inputText 对中文输入的设备限制。
-# P3f 路由握手与 M6f 字段兼容另由 backend/live.test.ts、view/home.test.ts 覆盖。
+# T5: 原有功能验收移到唯一对话、搜索引用与原详情。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
 - tapOn:
     id: welcome-look-first
+- runFlow: subflows/_work.yaml
 - extendedWaitUntil:
     visible:
-      id: home-group-waiting
+      id: row-matter-a1b2c3d4
     timeout: 10000
 - scrollUntilVisible:
     element:
-      id: home-group-back
+      id: row-terminal-demo-cli-api
     direction: DOWN
     centerElement: true
 - takeScreenshot: t01-home-back
-# 完成记录在待回应行之后;回到具体终端批准行,点进详情再拍板。
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-blog
@@ -36,17 +34,12 @@ appId: com.tendhearth.app
 - assertVisible:
     id: terminal-say-send
     enabled: false
-# 等批准时说一句框下的提示是「先拍板」,不是「还在跑」
-- assertVisible: "它在等你决定，先拍板再说下一句。|It’s waiting for your approval. Decide first, then send the next message."
+- assertVisible: 它在等你决定，先拍板再说下一句。|It’s waiting for your approval. Decide first,
+    then send the next message.
 - takeScreenshot: t01c-terminal-waiting
 - tapOn:
     id: topbar-back
-- scrollUntilVisible:
-    element:
-      id: home-all
-    direction: DOWN
-- tapOn:
-    id: home-all
+- runFlow: subflows/_work.yaml
 - extendedWaitUntil:
     visible:
       id: row-matter-a1b2c3d4
@@ -54,14 +47,23 @@ appId: com.tendhearth.app
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-api
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-blog
+    direction: UP
+    centerElement: true
 - assertVisible:
     id: row-terminal-demo-cli-blog
 - assertNotVisible:
     id: terminal-allow-demo-cli-blog
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-docs
+    direction: DOWN
+    centerElement: true
 - assertVisible:
     id: row-terminal-demo-cli-docs
 - takeScreenshot: t02-all-terminal
-# 在跑那条:说一句的框是灰的,并说明为什么
 - tapOn:
     id: row-terminal-demo-cli-docs
 - extendedWaitUntil:
@@ -76,7 +78,6 @@ appId: com.tendhearth.app
 - takeScreenshot: t03-terminal-running
 - tapOn:
     id: topbar-back
-# 歇着那条:接着说一句
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-api
@@ -91,7 +92,7 @@ appId: com.tendhearth.app
 - takeScreenshot: t04-terminal-idle
 - tapOn:
     id: terminal-say-input
-- inputText: "Add one more test"
+- inputText: Add one more test
 - tapOn:
     id: terminal-say-send
 - extendedWaitUntil:
@@ -103,10 +104,11 @@ appId: com.tendhearth.app
 - takeScreenshot: t05-terminal-sent
 - tapOn:
     id: topbar-back
-# 看清楚 › 进详情再允许:等批准那条转成在跑
 - scrollUntilVisible:
     element:
       id: row-terminal-demo-cli-blog
+    direction: UP
+    centerElement: true
 - tapOn:
     id: row-terminal-demo-cli-blog
 - extendedWaitUntil:
@@ -119,7 +121,7 @@ appId: com.tendhearth.app
     visible:
       id: terminal-detail-note
     timeout: 5000
-- assertVisible: "好了，它在终端里接着做。|Done. It’s carrying on in the terminal."
+- assertVisible: 好了，它在终端里接着做。|Done. It’s carrying on in the terminal.
 - assertNotVisible:
     id: terminal-detail-allow
 - assertNotVisible:

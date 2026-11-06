@@ -50,6 +50,8 @@ appId: com.tendhearth.app
 - takeScreenshot: p05-chat
 # 交办:对话页 → 交给 CC 去做一件事 → 调整(在哪里做)
 - tapOn:
+    id: chat-plus
+- tapOn:
     id: chat-handoff
 - extendedWaitUntil:
     visible:
@@ -79,13 +81,7 @@ appId: com.tendhearth.app
       id: chat-input
     timeout: 5000
 - tapOn:
-    id: topbar-back
-- extendedWaitUntil:
-    visible:
-      id: now-cc
-    timeout: 5000
-- tapOn:
-    id: row-matter-a1b2c3d4
+    id: conversation-waiting
 - extendedWaitUntil:
     visible:
       id: approval-title
@@ -99,12 +95,7 @@ appId: com.tendhearth.app
       id: now-cc
     timeout: 5000
 # 同 demo-walkthrough:第一下点标签偶尔没生效,没切过去就再点一次
-- scrollUntilVisible:
-    element:
-      id: home-all
-    direction: DOWN
-- tapOn:
-    id: home-all
+- runFlow: subflows/_work.yaml
 - extendedWaitUntil:
     visible:
       id: row-matter-a1b2c3d4

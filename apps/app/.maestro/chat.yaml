@@ -1,4 +1,4 @@
-# 跟 CC 说:此刻 → 点 CC 进对话再回来 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 回复出现。
+# 打开直接说话；小 CC 聚焦输入；发送与回复、离开工具后返回同一对话。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -6,40 +6,33 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: now-say
+      id: chat-input
     timeout: 10000
-# 点 CC 也能进对话
 - tapOn:
     id: now-cc
 - extendedWaitUntil:
     visible:
       id: chat-input
     timeout: 5000
-- tapOn:
-    id: topbar-back
-- extendedWaitUntil:
-    visible:
-      id: now-say
-    timeout: 5000
-- tapOn:
-    id: now-say
 - extendedWaitUntil:
     visible:
       id: chat-input
     timeout: 5000
-# 等推入对话页的转场停下再点输入框,否则点在转场中途、键盘没起来
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
 - waitForAnimationToEnd
-# 模拟器上偶尔点了输入框却没聚焦、字没打进去(发送键仍是灰的):没打进去就再来一次。
 - retry:
     maxRetries: 2
     commands:
       - tapOn:
           id: chat-input
-      - inputText: "Maestro hello"
+      - inputText: Maestro hello
       - assertVisible:
           id: chat-send
           enabled: true
-# 「在想…」会轻轻明暗(演示 5 秒后回复,见 src/backend/demo.ts 的 DEMO_CHAT_REPLY_MS);别让点击等画面静止,否则等到回复才返回、看不到「在想…」。
+- hideKeyboard
 - tapOn:
     id: chat-send
     waitToSettleTimeoutMs: 300
@@ -48,14 +41,27 @@ appId: com.tendhearth.app
       id: chat-thinking
     timeout: 3000
 - extendedWaitUntil:
-    visible: ".*(演示模式|This is the demo).*"
+    visible: .*收到。这是演示模式.*|.*Got it. This is the demo.*
     timeout: 8000
 - assertNotVisible:
     id: chat-thinking
 - tapOn:
-    id: topbar-back
-# 和 CC 的对话只住在「此刻」(2026-10-05):回到此刻点 CC 再进来,还是同一条对话。
-- tapOn:
     id: now-cc
 - assertVisible:
     id: chat-input
+- tapOn:
+    id: home-more
+- tapOn:
+    id: home-saved-inputs
+- extendedWaitUntil:
+    visible:
+      id: topbar-back
+    timeout: 10000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 10000
+- assertVisible:
+    id: chat-bubble-cc

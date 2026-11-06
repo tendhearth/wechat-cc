@@ -31,6 +31,22 @@ describe('native topic surfaces', () => {
     await act(() => ui.byId('topic-demo-backup').click())
     expect(host.push).toHaveBeenCalledWith('/topic?id=demo-backup&open=1'); expect(open).not.toHaveBeenCalled()
   })
+  it('retains a trailing read when a newer revision arrives during an older in-flight read', async () => {
+    const demo = makeDemoBackend(), old = await demo.topics({})
+    const fresh = { ...old, revision: 'r3', topics: [{ ...old.topics[0]!, title: '最新的备份' }] }
+    let resolve!: (v: typeof old) => void, update: ((data: unknown) => void) | undefined
+    const topics = vi.fn().mockImplementationOnce(() => new Promise(r => { resolve = r })).mockResolvedValue(fresh)
+    const backend: Backend = { ...demo, topics, subscribe: (name, cb) => {
+      if (name !== 'topics') return demo.subscribe(name, cb)
+      update = cb as (data: unknown) => void; return () => { update = undefined }
+    } }
+    const ui = await mount(withProviders(createElement(TopicRow), { backend })); await flush()
+    await act(() => { update?.({ revision: 'r2' }); update?.({ revision: 'r3' }) })
+    await act(() => resolve(old)); await flush(); await flush()
+    expect(topics).toHaveBeenCalledTimes(2); expect(ui.container.textContent).toContain('最新的备份')
+    await act(() => update?.({ revision: 'r3' })); await flush(); expect(topics).toHaveBeenCalledTimes(2)
+  })
+
   it('opens only an explicit click, shows source-backed memory, refreshes in place, and clears a deleted selection', async () => {
     const demo = makeDemoBackend({ lang: 'zh-Hans' }), open = vi.fn(demo.topicOpen)
     let title = '原话题', gone = false, update: ((data: unknown) => void) | undefined

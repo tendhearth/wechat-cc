@@ -15,9 +15,8 @@ export function TopicRow() {
   return <View testID="topic-row">
     {topics.error || !topics.online ? <Txt role="caption" tone="inkSoft">{zh ? '尚未同步' : 'Not synced'}</Txt> : null}
     {topics.error && !topics.data ? <LinkRow testID="topics-retry" label={zh ? '暂时读不到，重试' : 'Cannot read right now. Retry'} onPress={() => void topics.refresh()} /> : null}
-    <ScrollView horizontal keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.s }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}><ScrollView horizontal style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.s }}>
       {topics.data?.topics.slice(0, 6).map(topic => <Pressable key={topic.id} testID={`topic-${topic.id}`} accessibilityRole="button" accessibilityLabel={`${topic.title}, ${topic.bubbleState === 'open' ? (zh ? '已想起' : 'Recalled') : (zh ? '已收起' : 'Folded')}`} onPress={() => router.push(`/topic?id=${encodeURIComponent(topic.id)}&open=1`)} style={{ minHeight: 44, paddingHorizontal: space.s, justifyContent: 'center' }}><Txt role="meta" content="user">{topic.title}</Txt></Pressable>)}
-      {topics.data?.topics.length ? <LinkRow testID="topics-more" label={zh ? '更多话题' : 'More topics'} onPress={() => router.push('/topics')} /> : null}
-    </ScrollView>
+    </ScrollView>{topics.data?.topics.length ? <Pressable testID="topics-more" accessibilityRole="button" accessibilityLabel={zh ? '更多话题' : 'More topics'} onPress={() => router.push('/topics')} style={{ minHeight: 44, paddingHorizontal: space.s, justifyContent: 'center' }}><Txt role="meta">{zh ? '更多' : 'More'}</Txt></Pressable> : null}</View>
   </View>
 }

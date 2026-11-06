@@ -1,3 +1,4 @@
+import { uuid } from '../net/uuid'
 import { WorkSearchResults } from '../ui/WorkSearchResults'
 import { Button } from '../ui/Button'
 import { LinkRow } from '../ui/Rows'
@@ -71,7 +72,7 @@ export default function ChatSearch() {
                 ? <Txt key={i} role="bubble" content="user" style={{ backgroundColor: c.hair }}>{s.text}</Txt>
                 : s.text)}{item.truncated ? '…' : ''}
             </Txt>
-            <LinkRow testID={`chat-search-locate-${item.id}`} label={lang === 'zh-Hans' ? '回到这句' : 'Go to message'} onPress={() => router.dismissTo({ pathname: '/', params: { message: item.id } })} />
+            <LinkRow testID={`chat-search-locate-${item.id}`} label={lang === 'zh-Hans' ? '回到这句' : 'Go to message'} onPress={() => router.dismissTo({ pathname: '/', params: { message: item.id, reference: '', locate: uuid() } })} />
           </View>
         )}
       />}

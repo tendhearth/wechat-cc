@@ -24,9 +24,12 @@ export function WorkSearchResults({ query = '', prefix = 'all', share = false }:
   const history = useQuery('matter-history', l => backend.matterHistory(l), { refreshOnMount: true })
   const [project, setProject] = useState(''), [state, setState] = useState(''), [archived, setArchived] = useState(false)
   const matters = (history.data ?? work.matters).filter(m => (!query || `${m.title} ${m.projectPath ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && (!project || m.projectPath?.toLocaleLowerCase().includes(project.toLocaleLowerCase())) && (archived || !isMatterArchived(m)))
+  const matching = new Set(matters.map(m => m.id))
+  const known = new Set((history.data ?? work.matters).map(m => m.id))
+  const approvals = work.approvals.filter(a => matching.has(a.taskId) || (!known.has(a.taskId) && !project && (!query || a.summary.toLocaleLowerCase().includes(query.toLocaleLowerCase()))))
   // Archived rows are searchable references; opening retains the original archived matter identity.
-  const view = homeView({ ...work, matters: matters.map(m => isMatterArchived(m) ? { ...m, status: 'done', archivedAt: null } : m), terminal: (terminal.sessions ?? []).filter(s => !query || `${s.project} ${s.last_summary}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())), known: backend.mode === 'demo' || conn.state === 'online', now: Date.now(), lang, backWindowMs: null, keepStaleWaiting: true })
-  const rows = view.groups.flatMap(g => g.rows).filter(r => !state || r.status === state)
+  const view = homeView({ ...work, approvals, matters: matters.map(m => isMatterArchived(m) ? { ...m, status: 'done', archivedAt: null } : m), terminal: (terminal.sessions ?? []).filter(s => (!query || `${s.project} ${s.last_summary}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && (!project || s.project?.toLocaleLowerCase().includes(project.toLocaleLowerCase()))), known: backend.mode === 'demo' || conn.state === 'online', now: Date.now(), lang, backWindowMs: null, keepStaleWaiting: true })
+  const rows = view.groups.flatMap(g => g.rows).filter(r => (!state || r.status === state) && (!share || r.source === 'matter'))
   return <View style={{ gap: space.s }}>
     <Sheet title={zh ? '筛选事项' : 'Filter work'} testID="search-work-filters">
       <TextField testID="search-project" accessibilityLabel={zh ? '项目' : 'Project'} placeholder={zh ? '项目或文件夹' : 'Project or folder'} value={project} onChangeText={setProject} />

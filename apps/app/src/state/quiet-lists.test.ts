@@ -90,6 +90,14 @@ describe('matter list loading evidence', () => {
     expect(el('all-empty')).not.toBeNull()
   })
 
+  it('search filters do not reintroduce excluded waiting tasks as orphan approval references', async () => {
+    const backend = makeDemoBackend({ lang: 'en' })
+    await mount(backend, createElement(All, { query: 'no-title-matches-this' }))
+    expect(el('row-matter-a1b2c3d4')).toBeNull()
+    expect(el('row-matter-c9d0e1f2')).toBeNull()
+    expect(el('all-empty')).not.toBeNull()
+  })
+
   it('retains known rows and marks them stale when a later read fails', async () => {
     let fail = false
     const matter: MatterT = { id: 'a1b2c3d4', kind: 'task', title: 'Keep this task', projectPath: null, status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 }

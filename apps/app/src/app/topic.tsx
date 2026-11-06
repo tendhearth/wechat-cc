@@ -73,7 +73,7 @@ export default function Topic() {
           {data.entries.map(e => <Sheet key={e.id} testID={`topic-entry-${e.id}`} title={`${e.line}${e.recalled ? (zh ? ' · 这次想起' : ' · Recalled this time') : ''}`}><Txt content="user">{e.body}</Txt><Txt role="caption" tone="inkSoft">{e.source} · {e.createdTs}</Txt></Sheet>)}
         </View> : null}
         {data.messages.length ? <View><Txt accessibilityRole="header">{zh ? '最近聊到' : 'Recently discussed'}</Txt>
-          {data.messages.map(m => <LinkRow key={m.id} testID={`topic-message-${m.id}`} label={`${m.speaker === 'owner' ? (zh ? '你' : 'You') : 'CC'} · ${m.excerpt}`} detail={`${m.ts}${m.source === 'episode' ? (zh ? ' · 相关记录' : ' · Related record') : ''}`} onPress={() => { router.dismissAll(); router.replace(`/?message=${encodeURIComponent(m.id)}`) }} />)}
+          {data.messages.map(m => <LinkRow key={m.id} testID={`topic-message-${m.id}`} label={`${m.speaker === 'owner' ? (zh ? '你' : 'You') : 'CC'} · ${m.excerpt}`} detail={`${m.ts}${m.source === 'episode' ? (zh ? ' · 相关记录' : ' · Related record') : ''}`} onPress={() => { router.dismissTo({ pathname: '/', params: { message: m.id, reference: '', locate: uuid() } }) }} />)}
         </View> : null}
         {!data.entries.length && !data.matters.length && !data.messages.length ? <Txt>{zh ? '还没有记下内容' : 'Nothing recorded yet'}</Txt> : null}
         {(['matters', 'entries', 'messages'] as const).map(s => data.pages[s].nextCursor ? <Button key={s} testID={`topic-more-${s}`} kind="secondary" busy={busy} label={`${zh ? '更多' : 'More'} · ${s === 'matters' ? (zh ? '相关事项' : 'Work') : s === 'entries' ? (zh ? '记忆' : 'Memories') : (zh ? '对话' : 'Messages')} (${data.pages[s].total})`} onPress={() => void more(s)} /> : null)}

@@ -12,17 +12,23 @@ describe('一个主页', () => {
     expect(existsSync(join(__dirname, '../app/(tabs)'))).toBe(false)
     expect(existsSync(join(__dirname, 'TabBar.tsx'))).toBe(false)
   })
-  it('/together 只剩重定向到「全部」', () => {
+  it('/together 只剩重定向到对话搜索', () => {
     const src = readFileSync(join(__dirname, '../app/together.tsx'), 'utf8')
-    expect(src).toContain('<Redirect href="/all" />')
+    expect(src).toContain('<Redirect href="/chat-search?scope=work" />')
     expect(src).not.toMatch(/useWork|MatterRow|SectionList/)
   })
   it('主页和全部页的行都是 MatterRow,不手写行', () => {
-    for (const f of ['HomeScreen.tsx', '../app/all.tsx']) {
+    for (const f of ['ConversationScreen.tsx', '../app/all.tsx']) {
       const src = readFileSync(join(__dirname, f), 'utf8')
       expect(src, f).not.toMatch(/minHeight: (64|78)/)
     }
     expect(readFileSync(join(__dirname, 'WorkList.tsx'), 'utf8')).toContain('MatterRow')
+  })
+  it('index renders the owner conversation and old chat cannot mount another copy', () => {
+    expect(readFileSync(join(__dirname, '../app/index.tsx'), 'utf8')).toContain("../ui/ConversationScreen")
+    expect(readFileSync(join(__dirname, '../app/chat.tsx'), 'utf8')).toContain('router.dismissTo')
+    expect(readFileSync(join(__dirname, '../app/all.tsx'), 'utf8')).toContain('/chat-search?scope=work')
+    expect(existsSync(join(__dirname, 'HomeScreen.tsx'))).toBe(false)
   })
   it('批准是一件事的一步:/approval 只剩重定向到 /matter/<id>/decide', () => {
     const src = readFileSync(join(__dirname, '../app/approval/[id].tsx'), 'utf8')

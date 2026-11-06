@@ -59,9 +59,10 @@ export default function Chat() {
   const online = canSubmit(conn)
   const chat = useChat()
   const { backend } = useBackendCtx()
-  const { message } = useLocalSearchParams<{ message?: string }>()
+  const { message, reference, locate } = useLocalSearchParams<{ message?: string; reference?: string; locate?: string }>()
   const listRef = useRef<FlatList<import('../view/conversation-work').ConversationItem>>(null)
   const located = useRef<string | null>(null)
+  const scrolled = useRef<string | null>(null)
   const [locateNote, setLocateNote] = useState(false)
   const inputRef = useRef<import('react-native').TextInput>(null)
   const [text, setTextState] = useState(() => getDraft('chat'))
@@ -144,20 +145,22 @@ export default function Chat() {
   const card = companion.home ? companionCard(companion.home.events, companion.home.seenUntil, Date.now(), companion.localSeen) : null
   const items = conversationItems(chat.bubbles, workView, allMatters, chat.page?.matterId, references, newReferences(backend))
   if (card) items.push({ key: `companion:${card.id}`, at: card.at, card })
-  const data = items.sort((a, b) => b.at - a.at)
+  const data = items.sort((a, b) => a.at - b.at).reverse()
   useEffect(() => {
-    if (!message || !chat.page || located.current === message) return
-    located.current = message
+    if (!message || !chat.page || located.current === `${message}:${locate ?? ''}`) return
+    located.current = `${message}:${locate ?? ''}`
     let active = true
     void chat.seek(message).then(found => { if (active) setLocateNote(!found) }, () => { if (active) setLocateNote(true) })
     return () => { active = false }
-  }, [message, chat.page, chat.seek])
-  const messageIndex = message ? data.findIndex(i => i.bubble?.key === message) : -1
+  }, [message, locate, chat.page, chat.seek])
+  const targetKey = reference ? `ref:${reference}` : message
+  const messageIndex = targetKey ? data.findIndex(i => i.key === targetKey) : -1
   useEffect(() => {
-    if (messageIndex < 0) return
-    const timer = setTimeout(() => listRef.current?.scrollToIndex({ index: messageIndex, animated: false, viewPosition: 0.5 }), 150)
+    const key = `${targetKey}:${locate ?? ''}`
+    if (messageIndex < 0 || scrolled.current === key) return
+    const timer = setTimeout(() => { scrolled.current = key; listRef.current?.scrollToIndex({ index: messageIndex, animated: false, viewPosition: 0.5 }) }, 150)
     return () => clearTimeout(timer)
-  }, [message, messageIndex])
+  }, [targetKey, locate, messageIndex])
   const loadFailed = !chat.page && chat.error !== undefined && !chat.noOwner
 
   return (
@@ -206,7 +209,7 @@ export default function Chat() {
             </View>
           }
           renderItem={({ item }) => (
-            <>{item.card ? <View><Txt role="caption" tone="inkSoft">CC</Txt><CompanionCard card={item.card} onSeen={companion.markSeen} /></View> : item.row ? <DelegationMessage row={item.row} historical={item.historical} synced={online && !work.mattersError} /> : item.bubble ? <ChatBubble b={item.bubble} lang={lang} canRetry={online && !sending} onRetry={() => retry(item.bubble!)} onDismiss={() => chat.dismiss(item.bubble?.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} /> : null}</>
+            <>{item.card ? <View><Txt role="caption" tone="inkSoft">CC</Txt><CompanionCard card={item.card} onSeen={companion.markSeen} /></View> : item.row ? <DelegationMessage live row={item.row} historical={item.historical} synced={online && !work.mattersError} /> : item.bubble ? <ChatBubble b={item.bubble} lang={lang} canRetry={online && !sending} onRetry={() => retry(item.bubble!)} onDismiss={() => chat.dismiss(item.bubble?.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} /> : null}</>
           )}
         />
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>

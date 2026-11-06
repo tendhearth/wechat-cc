@@ -1,4 +1,4 @@
-# 交办:此刻 → 跟 CC 说 → 交给 CC 去做一件事 → 输入 → 交给 CC → 进展页 2 秒后「这一轮做完了」→ 一起做里出现这件新事。
+# ＋交办后回到对应 CC 引用；打开过程检查结果，再在搜索找到同一事项。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -6,20 +6,19 @@ appId: com.tendhearth.app
     id: welcome-look-first
 - extendedWaitUntil:
     visible:
-      id: now-say
+      id: chat-input
     timeout: 10000
-- tapOn:
-    id: now-say
 - extendedWaitUntil:
     visible:
-      id: chat-handoff
-    timeout: 5000
+      id: chat-plus
+    timeout: 10000
+- tapOn:
+    id: chat-plus
 - tapOn:
     id: chat-handoff
 - tapOn:
     id: compose-input
-- inputText: "Maestro demo task"
-# 项目与执行方式不改默认值;关掉面板后发送,不依赖已删掉的说明文字收键盘。
+- inputText: Maestro demo task
 - extendedWaitUntil:
     visible:
       id: compose-adjust
@@ -33,10 +32,10 @@ appId: com.tendhearth.app
     timeout: 5000
 - scrollUntilVisible:
     element:
-      text: "完成|Done"
+      text: 完成|Done
     direction: DOWN
 - tapOn:
-    text: "完成|Done"
+    text: 完成|Done
 - extendedWaitUntil:
     notVisible:
       id: compose-adjust-sheet
@@ -44,33 +43,34 @@ appId: com.tendhearth.app
 - waitForAnimationToEnd
 - tapOn:
     id: compose-send
-# 新事项建好后直接进它的进展页。
+- extendedWaitUntil:
+    visible:
+      id: delegation-matter-demo0001
+    timeout: 10000
+- tapOn:
+    id: row-matter-demo0001
 - extendedWaitUntil:
     visible:
       id: progress-status
     timeout: 10000
-- assertVisible: "Maestro demo task"
+- assertVisible: Maestro demo task
 - extendedWaitUntil:
-    visible: "这一轮做完了|Done for this round"
+    visible: 这一轮做完了|Done for this round
     timeout: 8000
 - tapOn:
     id: topbar-back
-# 交办是从对话页点进来的:返回先回到对话页,再返回此刻。
 - extendedWaitUntil:
     visible:
       id: chat-input
     timeout: 5000
-- tapOn:
-    id: topbar-back
-# 行的无障碍标签 = 「标题, 状态词」。点标签同 demo-walkthrough:没切过去就再点一次。
+- runFlow: subflows/_work.yaml
 - scrollUntilVisible:
     element:
-      id: home-all
+      id: row-matter-demo0001
     direction: DOWN
-- tapOn:
-    id: home-all
+    centerElement: true
 - extendedWaitUntil:
     visible:
       id: row-matter-demo0001
     timeout: 5000
-- assertVisible: "Maestro demo task, (这一轮做完了|Done for this round)"
+- assertVisible: Maestro demo task, (这一轮做完了|Done for this round)
