@@ -169,6 +169,13 @@ export function runMigrations(db: Database, list: readonly Migration[]): void {
   const row = db.query('PRAGMA user_version').get() as { user_version: number } | null
   const stored = row?.user_version ?? 0
   const current = list === migrations ? repairBranchRenumberedSchema(db, stored) : stored
+  // Only a genuinely new database can batch historical migrations. Existing
+  // stores retain per-version commits and their upgrade/recovery semantics.
+  // WAL still syncs every commit: hundreds of tiny commits on a slow Windows
+  // filesystem can dominate first open, even when every table is empty.
+  const fresh = current === 0 && !db.query(
+    "SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1",
+  ).get()
   for (let i = current; i < list.length; i++) {
     const next = list[i]!
     const rebuilt = next.withoutForeignKeys ?? []
@@ -178,6 +185,14 @@ export function runMigrations(db: Database, list: readonly Migration[]): void {
     try {
       db.transaction(() => {
         next(db)
+        // A foreign-key rebuild needs its own transaction: its pragma must
+        // change outside the transaction, and its integrity check must finish
+        // before any later migration runs.
+        if (fresh && !rebuilt.length) {
+          while (i + 1 < list.length && !list[i + 1]!.withoutForeignKeys?.length) {
+            list[++i]!(db)
+          }
+        }
         if (rebuilt.length) {
           const dangling = (db.query('PRAGMA foreign_key_check').all() as { table: string; parent: string }[]).filter(r => rebuilt.includes(r.parent))
           if (dangling.length) throw new Error(`migration ${i + 1}: foreign_key_check failed (${dangling.map(r => `${r.table}->${r.parent}`).join(', ')})`)
