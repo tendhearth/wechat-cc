@@ -1,0 +1,51 @@
+import { test, expect } from 'vitest'
+import { main } from './macmini-ui.mjs'
+import { readFileSync } from 'node:fs'
+
+test('fake SSH carries gate limits to both remote lanes and propagates failure', () => {
+  for (const lane of ['browser', 'unit', 'app-build', 'app-maestro']) {
+    const calls = []
+    const fakeSSH = (...args) => { calls.push(args); return { status: 124 } }
+    expect(main(['node', 'entry', lane], { PATH: '/fake-ssh', CC_UI_LOCK_WAIT_MS: '20', CC_UI_LOAD_WAIT_MS: '30', CC_UI_JOB_TIMEOUT_MS: '40' }, fakeSSH)).toBe(124)
+    expect(calls).toHaveLength(1)
+    const [file, args, options] = calls[0]
+    expect(file).toBe('ssh')
+    expect(args.at(-1)).toContain('CC_UI_LOCK_WAIT_MS=20 CC_UI_LOAD_WAIT_MS=30 CC_UI_JOB_TIMEOUT_MS=40')
+    expect(args.at(-1)).toContain(lane.startsWith('app-') ? 'app-run.mjs' : 'run.mjs')
+    expect(JSON.parse(options.input).command).toBe(lane)
+    expect(options.env.PATH).toBe('/fake-ssh')
+  }
+})
+
+test('invalid limits fail before fake SSH executes', () => {
+  for (const value of ['0', '-1', 'NaN', '1; touch /tmp/no', '1.2']) {
+    expect(() => main(['node', 'entry', 'browser'], { CC_UI_LOCK_WAIT_MS: value }, () => { throw Error('SSH called') })).toThrow('Invalid machine gate limit')
+  }
+})
+
+test('remote installed executor blocks verify and gates all CPU dispatch', () => {
+  const remote = readFileSync(new URL('./macmini-ui-remote.mjs', import.meta.url), 'utf8')
+  expect(remote).toContain("['affected', 'full', 'full-platform'].includes(request.command)")
+  expect(remote).not.toContain("['run', 'verify'")
+  expect(remote.indexOf('await acquireMachineLock')).toBeLessThan(remote.indexOf('switch (request.command)'))
+  expect(remote).toContain('onAcquired: lifecycle.acquired')
+  expect(remote).toContain('lifecycle.track(child)')
+  const snapshot = readFileSync(new URL('./macmini-app-snapshot.mjs', import.meta.url), 'utf8')
+  expect(snapshot.indexOf('await acquireMachineLock')).toBeLessThan(snapshot.indexOf("tar = spawn"))
+})
+
+test('both installed desktop and App receivers acquire the machine gate before work', () => {
+  for (const name of ['macmini-ui-remote.mjs', 'macmini-app-snapshot.mjs']) {
+    const source = readFileSync(new URL(name, import.meta.url), 'utf8')
+    expect(source).toContain("path: join(mini.homeDir, 'ci/lock')")
+    expect(source).toContain('await acquireMachineLock')
+    expect(source).toContain('onAcquired: lifecycle.acquired')
+    expect(source).toContain('lifecycle.track(')
+  }
+})
+
+test('legacy verify lanes fail locally before reaching even an old remote', () => {
+  for (const lane of ['affected', 'full', 'full-platform']) {
+    expect(() => main(['node', 'entry', lane], {}, () => { throw Error('SSH called') })).toThrow('verify runs on the primary Mac')
+  }
+})

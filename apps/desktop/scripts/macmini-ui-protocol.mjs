@@ -6,7 +6,7 @@ const COMMANDS = new Set(['status', 'doctor', 'native-smoke', 'browser', 'unit',
 
 const MINIS = Object.freeze({
   home: { computerName: 'Home’s Mac mini', homeDir: '/Users/home', labHome: '/Users/home/cc-ui-lab',
-    root: '/Users/home/cc-ui-lab/cc-motion-drag-20261030', host: 'homes-mac-mini', sharedLock: null,
+    root: '/Users/home/cc-ui-lab/cc-motion-drag-20261030', host: 'homes-mac-mini', sharedLock: '/Users/home/ci/lock',
     bun: '/Users/home/.bun/bin/bun', cargo: '/Users/home/cc-ui-lab/cc-motion-drag-20261030/toolchain/bin/cargo' },
   homebot: { computerName: 'Homebot’s Mac mini', homeDir: '/Users/homebot', labHome: '/Users/homebot/ci/cc-ui-lab',
     root: '/Users/homebot/ci/cc-ui-lab/cc-pet-feel-20261101', host: 'homebot-mac-mini', sharedLock: '/Users/homebot/ci/lock',
@@ -78,14 +78,21 @@ export function validateRequest(request) {
   return request
 }
 
-export function sshInvocation(command, target = 'home', sshConfig, flow) {
+export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv = {}) {
   if (!COMMANDS.has(command)) throw Error('Unsupported UI lab command')
   if (!Object.hasOwn(MINIS, target)) throw Error('Unsupported UI lab target')
   if (sshConfig !== undefined && (typeof sshConfig !== 'string' || !posix.isAbsolute(sshConfig) || sshConfig.includes('\0'))) throw Error('SSH config must be an absolute local path')
+  const settings = []
+  for (const key of ['CC_UI_LOCK_WAIT_MS', 'CC_UI_LOAD_WAIT_MS', 'CC_UI_JOB_TIMEOUT_MS']) {
+    if (gateEnv[key] === undefined) continue
+    const value = Number(gateEnv[key])
+    if (!Number.isSafeInteger(value) || value <= 0) throw Error('Invalid machine gate limit')
+    settings.push(`${key}=${value}`)
+  }
   const mini = MINIS[target]
   return { file: 'ssh', args: [...(sshConfig ? ['-F', sshConfig] : []), '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
     '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
-    mini.host, `env PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${command.startsWith('app-') ? 'app-run.mjs' : 'run.mjs'}`],
+    mini.host, `env ${settings.length ? settings.join(' ') + ' ' : ''}PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${command.startsWith('app-') ? 'app-run.mjs' : 'run.mjs'}`],
   input: JSON.stringify(validateRequest({ command, ...(flow !== undefined ? { flow } : {}) })) + '\n' }
 }
 

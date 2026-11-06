@@ -1,8 +1,10 @@
 // Dedicated-mini executor. The local entry only transports a bounded JSON request.
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdir, readFile, writeFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, realpath } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { homedir } from 'node:os'
+import { jobLifecycle } from './macmini-job-lifecycle.mjs'
+import { acquireMachineLock, machineGateOptions } from './macmini-machine-lock.mjs'
 import { join } from 'node:path'
 import { isInsideLab, miniConfiguration, assertLoopbackEndpoint, createOfflineSession, validateRequest } from './macmini-ui-protocol.mjs'
 
@@ -19,7 +21,9 @@ for await (const chunk of process.stdin) {
   if (input.length > 1024) throw Error('UI lab request is too large')
 }
 const request = JSON.parse(input)
-validateRequest(request) // Reuse the same command allowlist at the receiving boundary.
+validateRequest(request)
+if (['affected', 'full', 'full-platform'].includes(request.command)) throw Error('bun run verify runs on the primary Mac, never on mini')
+// Reuse the same command allowlist at the receiving boundary.
 const config = JSON.parse(await readFile(configPath, 'utf8'))
 const endpoint = assertLoopbackEndpoint(config.endpoint)
 
@@ -41,7 +45,7 @@ Object.assign(environment, {
   CARGO_TARGET_DIR: join(root, 'native-target'), CARGO_BUILD_JOBS: '2', CARGO_NET_OFFLINE: 'true',
   WECHAT_CC_NO_BUNDLE_MIGRATE: '1', PLAYWRIGHT_SHIM_PORT: '4198', CI: '1',
 })
-if (mini.sharedLock) {
+if (mini.rustc) {
   environment.PLAYWRIGHT_BROWSERS_PATH = join(root, 'cache/browser')
   environment.RUSTC = mini.rustc
 }
@@ -83,28 +87,14 @@ if (request.command === 'status') {
 const executionRoot = request.command.startsWith('app-')
   ? await insideLab(config.appRoot ?? (() => { throw Error('APP_BLOCKED: configure an App snapshot first') })()) : root
 
-// No two test runs may control the same lab or use the same fixture port.
-const lock = join(labHome, '.execution-lock')
-try { await mkdir(lock, { mode: 0o700 }) } catch { throw Error('Another UI lab run owns the execution lock; inspect its owner before recovery') }
-const ownership = JSON.stringify({ pid: process.pid, command: request.command, started: new Date().toISOString() })
-const ownedLocks = [{ path: lock, file: join(lock, 'owner.json'), content: ownership }]
-const releaseLocks = async () => {
-  for (const owned of [...ownedLocks].reverse()) {
-    try {
-      if (await readFile(owned.file, 'utf8') === owned.content) await rm(owned.path, { recursive: true })
-    } catch { /* Never reclaim a lock whose owner is missing or changed. */ }
-  }
-}
-try {
-  await writeFile(join(lock, 'owner.json'), ownership, { flag: 'wx' })
-  if (mini.sharedLock) {
-    try { await mkdir(mini.sharedLock, { mode: 0o700 }) } catch { throw Error('Another family check owns this Mini; no UI tests started') }
-    const owned = { path: mini.sharedLock, file: join(mini.sharedLock, 'info'),
-      content: `pid=${process.pid}\nsince=${Math.floor(Date.now() / 1000)}\nowner=cc-ui-lab ${request.command}\n` }
-    ownedLocks.push(owned)
-    await writeFile(owned.file, owned.content, { flag: 'wx' })
-  }
-} catch (error) { await releaseLocks(); throw error }
+// One machine gate covers every CPU lane, including preparation and native builds.
+const lifecycle = jobLifecycle()
+const releaseLocks = () => lifecycle.finish()
+await acquireMachineLock({ path: join(mini.homeDir, 'ci/lock'), lane: request.command,
+  sha: request.command.startsWith('app-')
+    ? JSON.parse(await readFile(join(executionRoot, 'snapshot.json'), 'utf8')).commit
+    : textCommand('/usr/bin/git', ['-C', project, 'rev-parse', 'HEAD']),
+  ...machineGateOptions(), onAcquired: lifecycle.acquired })
 const run = join(executionRoot, 'artifacts', new Date().toISOString().replaceAll(':', '-') + '-' + request.command)
 const temporaryRoot = join(run, 'tmp')
 try {
@@ -118,6 +108,7 @@ Object.assign(environment, { TMPDIR: temporaryRoot,
 let sequence = 0
 
 async function command(label, file, args, { offline = true, cwd = project, extraEnv = {} } = {}) {
+  lifecycle.assertRunning()
   const log = join(run, `${++sequence}-${label}.log`)
   console.log(JSON.stringify({ step: label, log, offline }))
   const chunks = []
@@ -125,8 +116,9 @@ async function command(label, file, args, { offline = true, cwd = project, extra
   let logError
   logStream.on('error', error => { logError = error })
   const child = offline
-    ? spawn('/usr/bin/sandbox-exec', ['-f', join(root, 'offline-tests.sb'), file, ...args], { cwd, env: { ...environment, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] })
-    : spawn(file, args, { cwd, env: { ...environment, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] })
+    ? spawn('/usr/bin/sandbox-exec', ['-f', join(root, 'offline-tests.sb'), file, ...args], { cwd, env: { ...environment, ...extraEnv }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    : spawn(file, args, { cwd, env: { ...environment, ...extraEnv }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  lifecycle.track(child)
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { chunks.push(chunk); logStream.write(chunk) })
   let code
   try { code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve) }) }
@@ -204,12 +196,11 @@ try {
   switch (request.command) {
     case 'app-prepare': case 'app-build': case 'app-maestro': {
       const { runApp } = await import('./macmini-ui-app.mjs')
-      result = await runApp({ request, config, insideLab, labHome, run, command, environment, bun: mini.bun }); break
+      result = await runApp({ request, config, insideLab, labHome, run, command, environment, bun: mini.bun, onStop: lifecycle.onStop }); break
     }
     case 'doctor': result = await command('doctor', '/opt/homebrew/bin/node', [join(runtime, 'node_modules/appium/build/lib/main.js'), 'driver', 'doctor', 'mac2'], { offline: false }); break
     case 'unit': result = await unit(); break
     case 'browser': result = await browser(); break
-    case 'affected': result = await command('verify-affected', mini.bun, ['run', 'verify', '--base', config.baseCommit ?? 'a4b8b2547d96e0f8301709e90370469d9408571d']); break
     case 'embedded': result = await command('embedded-webkit', '/opt/homebrew/bin/node', ['apps/desktop/scripts/macmini-embedded-ui.mjs'], {
       extraEnv: { CC_UI_ARTIFACT_DIR: run },
     }); break
@@ -221,13 +212,6 @@ try {
       '--bundles', 'app', '--no-sign', '--config', JSON.stringify({ bundle: { createUpdaterArtifacts: false } }), '--', '--locked'], {
       extraEnv: { CI: 'true', WECHAT_CC_ATELIER_SD_CLI: join(root, 'public-inputs/sd-cli') },
     }); break
-    case 'full': result = [await command('verify-full', mini.bun, ['run', 'verify', '--full']), ...await unit(), await browser()]; break
-    // Standard repository regression needs platform-entitled /bin/ps, which
-    // macOS refuses under ANY Seatbelt profile, including allow-default.
-    // This separate role keeps sanitized env/empty state/test fakes and the
-    // serial lock. It does not claim OS-enforced offline coverage. UI tests
-    // and QA builds above always retain their outbound-deny profile.
-    case 'full-platform': result = await command('verify-full-platform', mini.bun, ['run', 'verify', '--full'], { offline: false }); break
     case 'native-smoke': case 'capture': result = await native(); break
   }
   await writeFile(join(run, 'result.json'), JSON.stringify({ ok: true, command: request.command, result }, null, 2))
