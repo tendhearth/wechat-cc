@@ -1,3 +1,4 @@
+import { posix, win32 } from 'node:path'
 import { test, expect } from 'vitest'
 import { assertMiniIdentity, assertLoopbackEndpoint, assertEmbeddedEndpoint, createOfflineSession, sshInvocation } from './macmini-ui-protocol.mjs'
 import * as protocol from './macmini-ui-protocol.mjs'
@@ -139,3 +140,29 @@ test('App commands share the strict SSH transport and reject arbitrary flows and
     expect(() => protocol.validateRequest(request)).toThrow()
   }
 })
+
+for (const [flavour, paths, root, cases] of [
+  ['posix', posix, '/tmp/lab', [
+    ['/tmp/lab/snapshot', true], ['/tmp/lab/./snapshot/../build', true],
+    ['/tmp/lab', false], ['/tmp/lab/', false], ['/tmp/lab/..', false],
+    ['/tmp/lab/../outside', false], ['/tmp/lab-other/snapshot', false],
+    ['/tmp/LAB/snapshot', false], ['/elsewhere', false], ['/tmp/lab/..cache', true],
+  ]],
+  ['win32', win32, 'C:/Temp/Lab', [
+    ['C:/Temp/Lab/snapshot', true], [String.raw`c:\temp\LAB\snapshot`, true],
+    ['C:/Temp/Lab/./snapshot/../build', true], ['C:/Temp/Lab', false],
+    ['C:/Temp/Lab/', false], ['C:/Temp/Lab/..', false],
+    [String.raw`C:\Temp\Lab\..\outside`, false], ['C:/Temp/Lab-other/snapshot', false],
+    ['D:/Temp/Lab/snapshot', false], ['//server/share/Lab/snapshot', false],
+    ['C:/Temp/Lab/..cache', true],
+  ]],
+  ['win32 UNC', win32, '//server/share/Lab', [
+    [String.raw`\\SERVER\SHARE\lab\snapshot`, true],
+    ['//server/share/Lab/../outside', false], ['//server/other/Lab/snapshot', false],
+    ['//other/share/Lab/snapshot', false], ['//server/share/Lab', false],
+  ]],
+]) {
+  test.each(cases)(`${flavour} lab containment: %s => %s`, (candidate, expected) => {
+    expect(protocol.isInsideLab(root, candidate, paths)).toBe(expected)
+  })
+}

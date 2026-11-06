@@ -5,10 +5,13 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }))
 import { execFileSync } from 'node:child_process'
+import { isInsideLab } from './macmini-ui-protocol.mjs'
 import { runApp, waitForMaestroPort } from './macmini-ui-app.mjs'
 
 let lab, root, context, calls
 beforeEach(async () => {
+  // The executor runs on a Mac; Windows has no getuid. Keep preparation mocked.
+  vi.stubGlobal('process', { ...process, getuid: () => 501 })
   lab = await realpath(await mkdtemp(join(tmpdir(), 'cc-app-lane-')))
   root = join(lab, 'snapshot')
   const cwd = join(root, 'project/apps/app')
@@ -37,7 +40,7 @@ beforeEach(async () => {
   context = { request: { command: 'app-maestro', flow: 'all' }, config: { appRoot: root }, labHome: lab, run: join(root, 'artifacts'),
     waitForDriverPort: async () => 54321,
     environment: { PATH: '/usr/bin:/bin', DEVELOPER_DIR: '/Applications/Xcode.app/Contents/Developer' },
-    insideLab: async path => { const resolved = await realpath(path); if (!resolved.startsWith(lab + '/')) throw Error('outside lab'); return resolved },
+    insideLab: async path => { const resolved = await realpath(path); if (!isInsideLab(lab, resolved)) throw Error('outside lab'); return resolved },
     command: async (label, file, args, options) => { calls.push({ label, file, args, options }); if (label === 'maestro-push-open') throw Error('fixture failure'); return { exitCode: 0 } } }
 })
 
@@ -57,7 +60,7 @@ test('manual runner uses the port selected by Maestro for the owned device', asy
   await writeFile(join(debug, 'maestro.log'), 'Selected device lab-udid using port 99999 with execution plan fixture')
   await expect(waitForMaestroPort(debug, 'lab-udid', new AbortController().signal)).rejects.toThrow('Unexpected Maestro')
 })
-afterEach(async () => { await rm(lab, { recursive: true, force: true }); vi.clearAllMocks() })
+afterEach(async () => { await rm(lab, { recursive: true, force: true }); vi.clearAllMocks(); vi.unstubAllGlobals() })
 
 test('all flows retain individual failures, continue the suite and shut down only the owned simulator', async () => {
   await expect(runApp(context)).rejects.toThrow('Maestro failed')
