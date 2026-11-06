@@ -1384,7 +1384,7 @@ describe('v102 — 删掉 matters.status(M6e,不可逆)', () => {
     expect(() => db.exec("INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('nope','wechat','x',1)")).toThrow()
     expect(() => db.exec("UPDATE matters SET origin_surface='app' WHERE id='0000000a'")).toThrow(/matter_origin_immutable/)
     const names = (db.query("SELECT name FROM sqlite_master WHERE tbl_name='matters' AND type IN ('index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(r => r.name)
-    expect(names).toEqual(['matters_origin', 'matters_origin_surface_once', 'matters_updated'])
+    expect(names).toEqual(['matters_origin', 'matters_origin_surface_once', 'matters_updated', 't4_matters_delete', 't4_matters_update'])
     expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'matters_v%'").all()).toEqual([])
     const before = db.query('SELECT * FROM matters ORDER BY id').all()
     db.exec('PRAGMA user_version = 101')
@@ -1464,26 +1464,43 @@ describe('v105 — matter_topics(T3)', () => {
   })
 })
 
-it('v106 adds delivery evidence without inventing historical success; replay preserves it', () => {
-  const db = migratedTo(105)
+describe('v106 — topic bubbles', () => {
+  it('从真 v105 升级不打开历史话题,可重放,版本准确', () => {
+    const db = migratedTo(105)
+    db.exec(`INSERT INTO threads(id,chat_id,title,summary,facets,tags,private,status,episodes,created_ts,last_active)
+      VALUES('t1','owner','旧话题','','[]','[]',1,'active','[]','x','x')`)
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 108 })
+    expect(db.query('SELECT * FROM topic_bubbles').all()).toEqual([])
+    db.exec(`INSERT INTO topic_bubbles(thread_id) VALUES('t1')`)
+    expect(db.query('SELECT state,activity_revision FROM topic_bubbles').get()).toEqual({ state: 'closed', activity_revision: 0 })
+    db.exec('PRAGMA user_version=105')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM topic_bubbles').get()).toEqual({ n: 1 })
+    db.close()
+  })
+})
+
+it('v107 adds delivery evidence without inventing historical success; replay preserves it', () => {
+  const db = migratedTo(106)
   try {
     db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,channel) VALUES(1,'letter','initiative','owner','allowed','wechat')").run()
     runMigrations(db, migrations)
     expect(db.query('SELECT spoken_at,delivery_state FROM speech_log').all()).toEqual([{ spoken_at: null, delivery_state: 'legacy_unknown' }])
     expect((db.query("PRAGMA index_list('speech_log')").all() as { name: string }[]).map(i => i.name)).toContain('speech_log_initiative_spoken')
-    migrations[105]!(db)
+    migrations[106]!(db)
     expect(db.query('SELECT spoken_at,delivery_state FROM speech_log').all()).toEqual([{ spoken_at: null, delivery_state: 'legacy_unknown' }])
   } finally { db.close() }
 })
 
-it('v107 preserves both S2 lanes and their retry fields when adding reservations', () => {
-  const db = migratedTo(106)
+it('v108 preserves both S2 lanes and their retry fields when adding reservations', () => {
+  const db = migratedTo(107)
   try {
     db.query("INSERT INTO speech_pending(id,lane,chat_id,kind,body,ref,created_at,next_at,attempts,first_failed_at,expires_at,status) VALUES('s','say','owner','sticker','body','sticker:a',10,20,2,11,100,'pending'),('p','push','owner','matter_report','{}','turn:a:1',12,22,3,13,200,'overflow')").run()
     const before = db.query('SELECT * FROM speech_pending ORDER BY id').all()
     runMigrations(db, migrations)
     expect(db.query('SELECT * FROM speech_pending ORDER BY id').all()).toEqual(before)
-    migrations[106]!(db)
+    migrations[107]!(db)
     expect(db.query('SELECT * FROM speech_pending ORDER BY id').all()).toEqual(before)
   } finally { db.close() }
 })
