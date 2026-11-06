@@ -27,6 +27,8 @@ CC 沿用两张原图：真实在线时轻呼吸，新的回复、完成和待�
 
 ## 怎么跑
 
+原生构建、模拟器与 Maestro 只在专用 Mac mini 执行；主工作 Mac 调用下方 Maestro 一节的 SSH 入口。下面的开发工具命令供 mini 环境使用。
+
 ```bash
 bun install                      # 仓库根目录,一次
 cd apps/app
@@ -219,6 +221,8 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 - 开发专用:`tendhearth://dev-push-key` 页与开发令牌兜底(`src/push/dev-token.ts`)只在 `__DEV__` 生效,发布构建里深链改回此刻;开发令牌(`dev…`)形状刻意区别于真设备令牌(`d…`)。
 
 ### 怎么跑
+
+原生构建、模拟器与 Maestro 只在专用 Mac mini 执行；主工作 Mac 调用下方 Maestro 一节的 SSH 入口。下面的开发工具命令供 mini 环境使用。
 
 ```bash
 cd apps/app/native/ios-notify && swift test        # Swift(CryptoKit)跑协议包同一份向量

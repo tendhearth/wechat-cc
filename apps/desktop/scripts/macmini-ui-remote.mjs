@@ -66,7 +66,7 @@ function consoleState() {
 
 if (request.command === 'app-status') {
   const { appStatus } = await import('./macmini-ui-app.mjs')
-  console.log(JSON.stringify(await appStatus({ config, insideLab, labHome }), null, 2))
+  console.log(JSON.stringify(await appStatus({ config, insideLab, labHome, bun: mini.bun }), null, 2))
   process.exit(0)
 }
 
@@ -204,7 +204,7 @@ try {
   switch (request.command) {
     case 'app-prepare': case 'app-build': case 'app-maestro': {
       const { runApp } = await import('./macmini-ui-app.mjs')
-      result = await runApp({ request, config, insideLab, labHome, run, command, environment }); break
+      result = await runApp({ request, config, insideLab, labHome, run, command, environment, bun: mini.bun }); break
     }
     case 'doctor': result = await command('doctor', '/opt/homebrew/bin/node', [join(runtime, 'node_modules/appium/build/lib/main.js'), 'driver', 'doctor', 'mac2'], { offline: false }); break
     case 'unit': result = await unit(); break

@@ -13,10 +13,18 @@ beforeEach(async () => {
   root = join(lab, 'snapshot')
   const cwd = join(root, 'project/apps/app')
   for (const path of [join(cwd, 'ios'), cwd, join(lab, 'app-tools/java/Contents/Home'), join(cwd, '.maestro'), join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app'), join(root, 'artifacts'), join(root, 'maestro-driver/driver-iPhoneSimulator/Debug-iphonesimulator/maestro-driver-iosUITests-Runner.app')]) await mkdir(path, { recursive: true })
+  await writeFile(join(cwd, 'package.json'), '{}')
+  for (const name of ['expo', 'expo-modules-core', 'expo-modules-jsi', 'react-native']) {
+    await mkdir(join(cwd, 'node_modules', name), { recursive: true })
+    await writeFile(join(cwd, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '1.0.0' }))
+  }
+  const script = 'local env_args=(PATH="$PATH" HOME="$HOME" PODS_ROOT="$PODS_ROOT" RN_ROOT="$RN_ROOT")\n-derivedDataPath "$DERIVED_DATA_PATH"'
+  await mkdir(join(cwd, 'node_modules/expo-modules-jsi/apple/scripts'), { recursive: true })
+  await writeFile(join(cwd, 'node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh'), script)
   const source = { commit: 'a'.repeat(40) }
   await writeFile(join(root, 'snapshot.json'), JSON.stringify(source))
   await writeFile(join(cwd, 'ios/Podfile.lock'), 'fixture-lock')
-  await writeFile(join(root, 'prepare-receipt.json'), JSON.stringify({ source, nativeLockHash: createHash('sha256').update('fixture-lock').digest('hex') }))
+  await writeFile(join(root, 'prepare-receipt.json'), JSON.stringify({ source, nativeLockHash: createHash('sha256').update('fixture-lock').digest('hex'), jsiScriptHash: createHash('sha256').update(script).digest('hex') }))
   await writeFile(join(root, 'build-receipt.json'), JSON.stringify({ source, app: join(root, 'build/Build/Products/Release-iphonesimulator/Tendhearth.app') }))
   await writeFile(join(root, 'simulator.json'), JSON.stringify({ udid: 'lab-udid' }))
   for (const name of ['cc-acts', 'push-open', 'terminal-sessions']) await writeFile(join(cwd, '.maestro', name + '.yaml'), '')
@@ -27,7 +35,7 @@ beforeEach(async () => {
   })
   calls = []
   context = { request: { command: 'app-maestro', flow: 'all' }, config: { appRoot: root }, labHome: lab, run: join(root, 'artifacts'),
-    environment: { PATH: '/usr/bin:/bin' },
+    environment: { PATH: '/usr/bin:/bin', DEVELOPER_DIR: '/Applications/Xcode.app/Contents/Developer' },
     insideLab: async path => { const resolved = await realpath(path); if (!resolved.startsWith(lab + '/')) throw Error('outside lab'); return resolved },
     command: async (label, file, args, options) => { calls.push({ label, file, args, options }); if (label === 'maestro-push-open') throw Error('fixture failure'); return { exitCode: 0 } } }
 })
@@ -75,7 +83,7 @@ test('a failed rebuild invalidates its previous receipt without starting a simul
 test('only the explicit preparation command permits public dependency downloads', async () => {
   context.request = { command: 'app-prepare' }
   await expect(runApp(context)).resolves.toMatchObject({ prepared: true })
-  expect(calls.map(call => call.label)).toEqual(['app-js-dependencies', 'expo-prebuild-prepare', 'pods-prepare'])
+  expect(calls.map(call => call.label)).toEqual(['app-js-dependencies', 'expo-prebuild-prepare', 'pods-prepare', 'swift-package-metadata'])
   expect(calls.every(call => call.options.offline === false)).toBe(true)
   expect(calls[0].args).toEqual(['install', '--frozen-lockfile', '--ignore-scripts'])
   expect(execFileSync).not.toHaveBeenCalled()
@@ -96,4 +104,35 @@ test('a prepared build only compiles offline and never re-evaluates network-depe
   expect(calls[0].options).not.toHaveProperty('offline', false)
   expect(calls[0].args).toContain('generic/platform=iOS Simulator')
   expect(execFileSync).not.toHaveBeenCalled()
+})
+
+test('preparation only patches the known dependency environment and records its exact content', async () => {
+  context.request = { command: 'app-prepare' }
+  await runApp(context)
+  const script = await readFile(join(root, 'project/apps/app/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh'), 'utf8')
+  expect(script).toBe('local env_args=(PATH="${CC_UI_JSI_PATH:?}" HOME="$HOME" PODS_ROOT="$PODS_ROOT" RN_ROOT="$RN_ROOT" TMPDIR="${CC_UI_JSI_TMPDIR:?}" CFFIXED_USER_HOME="$HOME")\n-packageCachePath "$CC_UI_JSI_PACKAGE_CACHE" -derivedDataPath "$DERIVED_DATA_PATH"')
+  const prepared = JSON.parse(await readFile(join(root, 'prepare-receipt.json'), 'utf8'))
+  expect(prepared.jsiScriptHash).toBe(createHash('sha256').update(script).digest('hex'))
+  expect(calls.at(-1).args[0]).toBe('-i')
+  expect(calls.at(-1).args).toContain('DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer')
+  expect(calls.at(-1).args).toContain(`__CF_USER_TEXT_ENCODING=0x${process.getuid().toString(16).toUpperCase()}:0:0`)
+})
+
+test('unknown JSI scripts and changed prepared scripts fail closed', async () => {
+  const path = join(root, 'project/apps/app/node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh')
+  await writeFile(path, 'unknown dependency script')
+  context.request = { command: 'app-build' }
+  await expect(runApp(context)).rejects.toThrow('JSI preparation changed')
+  expect(calls).toEqual([])
+  context.request = { command: 'app-prepare' }
+  await expect(runApp(context)).rejects.toThrow('Unknown Expo JSI')
+  expect(calls.some(call => call.label === 'swift-package-metadata')).toBe(false)
+  await expect(readFile(join(root, 'prepare-receipt.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('an empty suite cannot return a false green result', async () => {
+  await rm(join(root, 'project/apps/app/.maestro'), { recursive: true })
+  await mkdir(join(root, 'project/apps/app/.maestro'))
+  await expect(runApp(context)).rejects.toThrow('absent from the snapshot')
+  expect(calls).toEqual([])
 })
