@@ -116,6 +116,7 @@ function resetTunnel() {
 /** @param {string} sentAs */
 function onUnauthorized(sentAs) {
   if (sentAs !== T) return
+  if (typeof cClearPrivate === "function") cClearPrivate()
   try { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } catch (e) {}
   location.replace("/m")
 }

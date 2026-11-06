@@ -2,6 +2,8 @@
   "status": 200,
   "body": {
     "ok": true,
+    "conversation": "v1",
+    "topics": "v1",
     "matterId": "<chat>",
     "title": "聊天",
     "messages": [

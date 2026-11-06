@@ -70,6 +70,8 @@ describe('mobileChatRoutes', () => {
   it('pending / failed 带出来但不带 matterId', async () => {
     const job = { requestId: RID, matterId: 'c0ffee01', text: 'hi', since: 1 }
     const r = await call(deps({ chat: { ...deps().chat, state: () => ({ pending: { ...job, status: 'pending' }, failed: { ...job, status: 'failed', error: 'busy' } }) } }), get())
+    expect(r.body.conversation).toBe('v1')
+    expect(r.body.topics).toBe('v1')
     expect(r.body.pending).toEqual({ requestId: RID, text: 'hi', status: 'pending', since: 1 })
     expect(r.body.failed).toEqual({ requestId: RID, text: 'hi', status: 'failed', since: 1, error: 'busy' })
     PHONE_API_SCHEMAS['GET /m/api/chat']!.parse(r.body)

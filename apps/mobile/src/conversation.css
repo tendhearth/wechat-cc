@@ -1,0 +1,12 @@
+#conversation { max-width:760px; margin:auto }
+#conversation button { min-height:44px; font:inherit; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:var(--r-s); padding:8px 12px }
+.conversation-tools { display:flex; justify-content:flex-end; gap:8px }
+#chat-notice { color:var(--soft); font-size:13px }
+.chat-message { margin:24px 0; overflow-wrap:anywhere; white-space:pre-wrap; line-height:1.65 }
+.chat-message small { display:block; color:var(--soft); font-size:12px }
+#chat-form { position:sticky; bottom:0; display:flex; gap:8px; padding:12px 0 calc(10px + env(safe-area-inset-bottom)); background:var(--paper) }
+#chat-input { flex:1; min-width:0; resize:vertical; max-height:200px; font:inherit; border:1px solid var(--line); border-radius:var(--r-s); padding:12px; color:var(--ink); background:var(--card) }
+.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }
+body.conversation-ready #m-home > .home-toolbar, body.conversation-ready #m-home > .home-scene, body.conversation-ready #home-focus, body.conversation-ready #m-list, body.conversation-ready #m-all { display:none }
+body.conversation-ready header { display:flex; gap:12px; align-items:center; max-width:800px; margin:auto }
+#conversation :focus-visible { outline:2px solid var(--accent); outline-offset:3px }

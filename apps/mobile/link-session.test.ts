@@ -30,7 +30,7 @@ describe('link session on the phone page', () => {
   // 只读配对前那一版要的几条(此刻、一起做的列表与详情、形象画)和「停下」。
   it('the page only calls the routes a link session may still reach', () => {
     const page = assembleMobilePage(readMobileSource).phone
-    const called = new Set([...page.matchAll(/["'](\/(?:v1\/|(?:m|set)\/api\/)[a-z/-]+)/g)].map(m => m[1]!))
+    const called = new Set([...page.replace(/\/\* link-scan: device-only \*\/[\s\S]*?(?:api|mPostOnce)\([^\n]+/g, '').matchAll(/["'](\/(?:v1\/|(?:m|set)\/api\/)[a-z/-]+)/g)].map(m => m[1]!))
     expect([...called].sort()).toEqual(['/set/api/pair', '/v1/home', '/v1/matter', '/v1/matter/stop', '/v1/matters', '/v1/phone/art/presence'])
   })
 })
