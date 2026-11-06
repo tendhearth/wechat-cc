@@ -9,7 +9,9 @@ import type { Backend, NativeSessionPageT, NativeSessionRowT, SessionContinueT }
 import { withProviders } from './providers.test-support'
 import Sessions from '../app/sessions/index'
 import SessionReader from '../app/sessions/[key]'
-import { HomeScreen as Home } from '../ui/HomeScreen'
+import { ConversationMore } from '../ui/ConversationMore'
+import { ConversationAdd } from '../ui/ConversationAdd'
+const Home = () => createElement('div', null, createElement(ConversationMore), createElement(ConversationAdd, { onImages() {} }))
 import { palette } from '../ui/tokens'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
@@ -297,7 +299,8 @@ describe('session reading with real LiveBackend and native UI', () => {
     expect(ui.byId('home-sessions').textContent).toContain('电脑上的会话')
     await ui.click('home-sessions')
     expect(host.push).toHaveBeenCalledWith('/sessions')
-    await ui.click('home-delegate')
+    await ui.click('chat-plus')
+    await ui.click('chat-handoff')
     expect(host.push).toHaveBeenCalledWith('/compose')
     expect(h.posts()).toHaveLength(0)
   })

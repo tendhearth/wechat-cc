@@ -101,6 +101,7 @@ export interface Backend {
   topics(p: { view?: 'recent' | 'all'; limit?: number; cursor?: string }): Promise<TopicsListT>
   topicDetail(p: { id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string }): Promise<TopicDetailT>
   topicOpen(id: string, requestId: string): Promise<TopicOpenT>
+  matterHistory(lang: Lang): Promise<MatterT[]>
   matters(lang: Lang): Promise<MatterT[]>
   /** CC 自己做的事(M5c「CC 最近在忙」):点名 kind=act。老 daemon 不给 ⇒ 空。 */
   ccActs(lang: Lang): Promise<MatterT[]>

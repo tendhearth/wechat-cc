@@ -1,3 +1,4 @@
+import { rememberReference } from '../state/conversation-references'
 import { useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
@@ -34,7 +35,8 @@ export function TerminalDetail({ sessionId }: { sessionId: string }) {
   const lang = useLang()
   const router = useRouter()
   const id = sessionId
-  const { store } = useBackendCtx()
+  const { store, backend } = useBackendCtx()
+  useEffect(() => { rememberReference(backend, id, 'terminal') }, [backend, id])
   // A late result belongs to the session and backend that submitted it, even if navigation returns here.
   const view = useRef({ id, store })
   if (view.current.id !== id || view.current.store !== store) view.current = { id, store }

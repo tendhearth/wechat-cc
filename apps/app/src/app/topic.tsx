@@ -1,3 +1,4 @@
+import { BusyIndicator } from '../ui/motion'
 import { t } from '../i18n'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
@@ -59,6 +60,7 @@ export default function Topic() {
   return <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
     <TopBar title={data?.topic.title ?? (zh ? '话题' : 'Topic')} onBack={back} />
     <ScrollView testID="topic-sheet" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
+      {!data && query.loading ? <BusyIndicator testID="topic-loading" label={zh ? '正在读取' : 'Loading'} /> : null}
       {!enabled || query.error || note ? <Txt testID="topic-note" role="meta" tone="inkSoft">{query.error === 'not_found' ? (zh ? '这个话题已不可用' : 'This topic is unavailable') : note ?? (zh ? '尚未同步' : 'Not synced')}</Txt> : null}
       {query.error ? <Button testID="topic-retry" kind="secondary" label={zh ? '暂时读不到，重试' : 'Cannot read right now. Retry'} onPress={() => void query.refresh()} /> : null}
       {data && conn.topics === 'v1' ? <>

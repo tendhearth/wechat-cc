@@ -1,3 +1,4 @@
+import { rememberReference } from '../../../state/conversation-references'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
 import { Modal, Pressable, ScrollView, View } from 'react-native'
@@ -63,6 +64,7 @@ export default function Matter() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id
   // 打开就拉新:有缓存也重拉详情与概括(旧缓存先摆着,拿到新的再换)。
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
+  useEffect(() => { if (detail.data?.matter.kind === 'task') rememberReference(backend, id) }, [backend, id, detail.data?.matter.kind])
   const localInputs = useMatterInputs(id, detail.data?.inputs ?? NO_INPUTS)
   const inputReceipts = inputRows(detail.data?.inputs ?? NO_INPUTS, localInputs)
   const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })

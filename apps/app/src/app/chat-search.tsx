@@ -1,6 +1,9 @@
-import { useRouter } from 'expo-router'
+import { WorkSearchResults } from '../ui/WorkSearchResults'
+import { Button } from '../ui/Button'
+import { LinkRow } from '../ui/Rows'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
-import { FlatList, View } from 'react-native'
+import { FlatList, Keyboard, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { ChatSearchHitT } from '../backend/types'
 import { t } from '../i18n'
@@ -26,6 +29,8 @@ export default function ChatSearch() {
   const router = useRouter()
   const { backend } = useBackendCtx()
   const online = canSubmit(useConnection())
+  const { scope, share } = useLocalSearchParams<{ scope?: string; share?: string }>()
+  const [tab, setTab] = useState(scope === 'work' ? 'work' : 'messages')
   const [q, setQ] = useState('')
   const [asked, setAsked] = useState('')
   const [hits, setHits] = useState<ChatSearchHitT[] | null>(null)
@@ -46,7 +51,12 @@ export default function ChatSearch() {
           style={{ flex: 1, minHeight: 44, paddingHorizontal: space.l, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }} />
         <IconButton name="search" label={t(lang, 'chatSearch.go')} testID="chat-search-go" disabled={!q.trim() || !online} busy={busy} onPress={() => void run()} />
       </View>
-      <FlatList
+      <View style={{ flexDirection: 'row', paddingHorizontal: space.xl, gap: space.s }}>
+        <Button testID="search-messages" kind="secondary" label={lang === 'zh-Hans' ? '对话' : 'Messages'} onPress={() => setTab('messages')} />
+        <Button testID="search-work" kind="secondary" label={lang === 'zh-Hans' ? '事项' : 'Work'} onPress={() => { Keyboard.dismiss(); setTab('work') }} />
+        <Button testID="search-topics" kind="secondary" label={lang === 'zh-Hans' ? '话题' : 'Topics'} onPress={() => router.push('/topics')} />
+      </View>
+      {tab === 'work' ? <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl }}><WorkSearchResults query={q} share={share === '1'} /></ScrollView> : <FlatList
         testID="chat-search-list"
         data={hits ?? []}
         keyExtractor={h => h.id}
@@ -61,9 +71,10 @@ export default function ChatSearch() {
                 ? <Txt key={i} role="bubble" content="user" style={{ backgroundColor: c.hair }}>{s.text}</Txt>
                 : s.text)}{item.truncated ? '…' : ''}
             </Txt>
+            <LinkRow testID={`chat-search-locate-${item.id}`} label={lang === 'zh-Hans' ? '回到这句' : 'Go to message'} onPress={() => router.dismissTo({ pathname: '/', params: { message: item.id } })} />
           </View>
         )}
-      />
+      />}
     </SafeAreaView>
   )
 }

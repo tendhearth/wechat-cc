@@ -12,7 +12,7 @@ import { observeTopics } from '../net/topics-capability'
  */
 import {
   makeProtocolClient, phoneRouteRequest, RESPONSE_SCHEMAS, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
-  HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic, TopicsSnapshot,
+  HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic, TopicsSnapshot, Matter,
   type ClientOpts, type ProtocolClient, type ProtocolSocket, type PhoneTransport,
 } from '@wechat-cc/protocol'
 import { INITIAL_CONNECTION, reduceConnection, type ConnEvent } from '../net/connection'
@@ -226,6 +226,18 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async topics(p) { return api.topics.list({ query: p }) },
     async topicDetail(p) { return api.topics.detail({ query: p }) },
     async topicOpen(id, requestId) { return api.topics.open({ body: { id, requestId }, retry: true }) },
+    async matterHistory() {
+      if (conn.state === 'revoked') throw new BackendError('revoked')
+      if (!client) throw new BackendError('offline')
+      if (client.routes?.() !== 'v1') return (await api.matters.list({ query: {} })).matters
+      const my = gen
+      const res = await client.request({ method: 'GET', path: '/v1/matters?status=open,replied,done,archived&exclude=chat,act,terminal&limit=200&taskState=1' })
+      if (gen !== my || connection().state === 'revoked') throw new BackendError('offline')
+      if (res.status !== 200) throw new BackendError(res.status === 404 ? 'not_found' : 'unavailable')
+      const parsed = Matter.array().safeParse(res.json<{ matters?: unknown }>().matters)
+      if (!parsed.success) throw new BackendError('unknown')
+      return parsed.data
+    },
     async matters() {
       return (await api.matters.list({ query: {} })).matters
     },

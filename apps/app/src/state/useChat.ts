@@ -21,6 +21,7 @@ export function useChat(): {
   page: ChatPageT | undefined; error: unknown; noOwner: boolean; loading: boolean
   /** 只读核对:刷新有限历史与 pending/failed。未找到或读失败不代表没送达,不会重发或清草稿。 */
   refresh(): Promise<void>
+  seek(id: string): Promise<boolean>
   bubbles: Bubble[]; canLoadOlder: boolean; loadingOlder: boolean; loadOlder(): Promise<void>
   /** images:选好的图(2026-10-06),先传到电脑再说这一句;有图时文字可空。 */
   send(text: string, images?: readonly PickedImage[]): Promise<ChatSendOutcome>
@@ -43,6 +44,7 @@ export function useChat(): {
   const drop = dropReceipt
   // 旧页的「代」:最新页刷新后旧页被清掉(接不上了),在途的往上翻结果就作废。
   const olderGen = useRef(0)
+  useEffect(() => () => { olderGen.current++ }, [])
   const prevLatest = useRef<ChatPageT | undefined>(undefined)
   useEffect(() => {
     const next = latest.data
@@ -75,6 +77,25 @@ export function useChat(): {
     const id = setTimeout(() => setNowLocal(Date.now()), Math.min(...next))
     return () => clearTimeout(id)
   }, [accepted, nowLocal])
+
+  const seek = useCallback(async (id: string): Promise<boolean> => {
+    if (!id || id.length > 200) return false
+    if (msgs.some(m => m.id === id)) return true
+    if (!latest.data) return false
+    const generation = olderGen.current
+    let before = olderCursor(latest.data, older)
+    const pages: ChatPageT[] = []
+    const seen = new Set<string>()
+    while (before && !seen.has(before)) {
+      seen.add(before)
+      const page = await backend.chat({ before })
+      if (generation !== olderGen.current) return false
+      pages.push(page)
+      if (page.messages.some(m => m.id === id)) { setOlder(o => [...o, ...pages]); return true }
+      before = page.hasMore ? page.nextBefore : null
+    }
+    return false
+  }, [backend, msgs, latest.data, older])
 
   const bubbles = useMemo(() => {
     const last = accepted[accepted.length - 1]
@@ -138,5 +159,5 @@ export function useChat(): {
 
   const dismiss = drop
 
-  return { page: latest.data, error: latest.error, loading: latest.loading, refresh, noOwner, bubbles, canLoadOlder: !!cursor, loadingOlder, loadOlder, send, retry, dismiss }
+  return { seek, page: latest.data, error: latest.error, loading: latest.loading, refresh, noOwner, bubbles, canLoadOlder: !!cursor, loadingOlder, loadOlder, send, retry, dismiss }
 }

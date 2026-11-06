@@ -6,10 +6,10 @@ import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type ChatPageT } from '../backend/types'
 import { clearDrafts, getDraft, putReceipt, setDraft } from './drafts'
 import { withProviders } from './providers.test-support'
-import Chat from '../app/chat'
+import Chat from '../ui/ConversationScreen'
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
+vi.mock('expo-router', async () => ({ ...await (await import('../ui/native-motion.test-support')).routerBoundary(), useLocalSearchParams: () => ({}), useRouter: () => ({ canGoBack: () => true, back() {}, replace() {}, push() {} }) }))
 vi.mock('react-native', async () => {
   const { createElement, forwardRef } = await import('react')
   const { nativeBoundary } = await import('../ui/native-motion.test-support')

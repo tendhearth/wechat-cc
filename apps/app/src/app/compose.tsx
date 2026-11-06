@@ -236,7 +236,7 @@ export default function Compose() {
       if (getDraft(myKey) === rawText) { deleteDraft(myKey); textRef.current = ''; setTextState('') }
       setImages([]); setImageNote(null)
       if (matter) router.back()
-      else { if (newId) rememberReference(backend, newId); router.replace('/') }
+      else { if (newId) rememberReference(backend, newId, 'matter', true); router.replace('/') }
     } else {
       setOutcome(composeOutcome(r.error))
     }

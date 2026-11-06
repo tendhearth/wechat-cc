@@ -6,8 +6,8 @@ import '../ui/native-motion.test-support'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type MatterT } from '../backend/types'
 import { t } from '../i18n'
-import All from '../app/all'
-import { HomeScreen as Home } from '../ui/HomeScreen'
+import { WorkSearchResults as All } from '../ui/WorkSearchResults'
+import { ConversationMore as Home } from '../ui/ConversationMore'
 import Activity from '../app/activity'
 import Jobs from '../app/jobs'
 import Letters from '../app/letters'
@@ -58,7 +58,7 @@ function backendWithMatters(load: () => Promise<MatterT[]>, opts: { approvals?: 
   const demo = makeDemoBackend({ lang: 'en' })
   // approvals: false ⇒ 「等你」这一路是空的(否则演示的批准会在列表里出行,列表就不「空」了)
   const subscribe: Backend['subscribe'] = (name, cb) => opts.approvals === false && name === 'approvals' ? (cb([] as never), () => {}) : demo.subscribe(name, cb)
-  return { ...demo, cliSessions: async () => [], matters: load, subscribe }
+  return { ...demo, cliSessions: async () => [], matters: load, matterHistory: load, subscribe }
 }
 afterEach(async () => {
   await act(() => { for (const root of roots.splice(0)) root.unmount() })

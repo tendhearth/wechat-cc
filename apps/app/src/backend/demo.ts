@@ -277,6 +277,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { topic, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: 'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: new Date(now()).toISOString(), updatedTs: new Date(now()).toISOString(), recalled: true }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: 'demo-topics' }
     },
     async topicOpen(id) { if (!demoTopics({ view: 'all' }).topics.some(t => t.id === id)) throw new BackendError('not_found'); return { id, bubbleState: 'open', revision: 'demo-topics' } },
+    async matterHistory(l) { noteLang(l); return list().map(e => localize(e, l).matter) },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
     // 「CC 最近在忙」(M5c):三件 act,点进去是它们的轮(和主人的事分开,不进 matters())
     async ccActs(l) { noteLang(l); return demoCcActs(now()).map(d => d.matter) },
