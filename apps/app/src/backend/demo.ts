@@ -1,3 +1,4 @@
+import { demoTopics } from './demo-topics'
 import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_PORTRAIT_PNG, DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
@@ -8,7 +9,7 @@ import {
   demoName, demoNames, demoCcActs,
 } from './demo-data'
 
-type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
+type Topic = 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`
 type Copy = keyof typeof copy
 /** 事件记录:带 key 的在读时按请求的语言生成文案;text 是用户自己的字,原样保留。 */
 type EvRec = { kind: string; createdAt: number; key?: Copy; extra?: string; text?: string }
@@ -189,6 +190,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const list = () => order.map(id => entries.get(id)!)
   const phaseOf = (e: Entry) => e.detail.task?.phase ?? ((e.detail.matter.state === undefined ? e.detail.matter.status === 'replied' : e.detail.matter.state === 'done') ? 'replied' : 'working')
   function snapshot(topic: Topic): unknown {
+    if (topic === 'topics') return { revision: 'demo-topics', recentIds: ['demo-backup', 'demo-trip'], openIds: ['demo-backup'], hasMoreOpen: false }
     if (topic === 'approvals') {
       return list().flatMap(e => [
         ...e.detail.permissions.map(p => ({ taskId: e.detail.matter.id, kind: 'permission' as const, id: p.id, summary: `${p.tool}: ${p.description}`.slice(0, 80) })),
@@ -254,7 +256,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   }
   const sessionRow = (key: string) => { const row = demoSessions(lastLang, now()).find(r => r.key === key); if (!row) throw new BackendError('not_found'); return row }
 
-  const conn: Connection = { state: 'online', lastSyncedAt: null, epoch: 0 }
+  const conn: Connection = { topics: 'v1', state: 'online', lastSyncedAt: null, epoch: 0 }
 
   return {
     mode: 'demo',
@@ -267,6 +269,14 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       cb(snapshot(topic as Topic) as never)
       return () => { set!.delete(cb) }
     },
+    async topics(p) { return demoTopics(p) },
+    async topicDetail(p) {
+      const topic = demoTopics({ view: 'all' }).topics.find(t => t.id === p.id)
+      if (!topic) throw new BackendError('not_found')
+      const matters = list().slice(0, 3).map(e => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null }))
+      return { topic, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: 'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: new Date(now()).toISOString(), updatedTs: new Date(now()).toISOString(), recalled: true }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: 'demo-topics' }
+    },
+    async topicOpen(id) { if (!demoTopics({ view: 'all' }).topics.some(t => t.id === id)) throw new BackendError('not_found'); return { id, bubbleState: 'open', revision: 'demo-topics' } },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
     // 「CC 最近在忙」(M5c):三件 act,点进去是它们的轮(和主人的事分开,不进 matters())
     async ccActs(l) { noteLang(l); return demoCcActs(now()).map(d => d.matter) },

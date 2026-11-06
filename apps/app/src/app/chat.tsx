@@ -38,6 +38,7 @@ import { homeView } from '../view/home'
 import { conversationItems } from '../view/conversation-work'
 import { rememberReference, useReferences } from '../state/conversation-references'
 import { DelegationMessage } from '../ui/DelegationMessage'
+import { TopicRow } from '../ui/TopicRow'
 import { canSubmit } from '../view/connection'
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -175,6 +176,7 @@ export default function Chat() {
             rememberReference(backend, row.id, row.source); setWaitingIndex(i => i + 1)
             router.push(row.href)
           }} style={{ minHeight: 44, justifyContent: 'center' }}><Txt role="meta" tone="accent">{lang === 'zh-Hans' ? `${waiting.length} 件事等你` : `${waiting.length} waiting for you`}</Txt></Pressable> : null}
+          <TopicRow />
           {outcome ? (
             <View style={{ alignItems: 'flex-end' }}><StatusHint testID={`chat-outcome-${outcome}`} label={t(lang, outcome === 'uncertain' ? 'feedback.unconfirmed' : 'feedback.notSent')}
               icon={outcome === 'uncertain' ? 'help' : 'alert'} description={t(lang, OUTCOME_KEY[outcome])}>

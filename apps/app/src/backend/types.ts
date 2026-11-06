@@ -1,3 +1,4 @@
+import type { TopicsListResponse, TopicDetailResponse, TopicOpenResponse } from '@wechat-cc/protocol'
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
@@ -66,9 +67,13 @@ export type PresenceT = z.infer<typeof Presence>
 export type CompanionHomeT = { presence: PresenceT | null; seenUntil: string | null; unread: number; events: FeedEventT[] }
 export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT, DeviceRowT } from '@wechat-cc/protocol'
 
+export type TopicsListT = z.infer<typeof TopicsListResponse>
+export type TopicDetailT = z.infer<typeof TopicDetailResponse>
+export type TopicOpenT = z.infer<typeof TopicOpenResponse>
+
 export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
 /** epoch:每次握手成功 +1。store 看它前进就重新验证全部查询(首次连上、重连、回到前台)。 */
-export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch: number }
+export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch: number; topics?: 'v1' }
 /** BackendError.code 的全集(映射见 src/net/errors.ts)。 */
 export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unavailable' | 'unknown'
   | 'session_busy' | 'folder_busy' | 'provider_missing' | 'folder_missing' | 'quota' | 'session_changed' | 'session_empty' | 'session_managed'
@@ -92,7 +97,10 @@ export interface Backend {
   readonly mode: 'demo' | 'live'
   connection(): Connection
   onConnection(cb: (c: Connection) => void): Unsubscribe
-  subscribe<T>(topic: 'home' | 'approvals' | 'agents' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
+  subscribe<T>(topic: 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
+  topics(p: { view?: 'recent' | 'all'; limit?: number; cursor?: string }): Promise<TopicsListT>
+  topicDetail(p: { id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string }): Promise<TopicDetailT>
+  topicOpen(id: string, requestId: string): Promise<TopicOpenT>
   matters(lang: Lang): Promise<MatterT[]>
   /** CC 自己做的事(M5c「CC 最近在忙」):点名 kind=act。老 daemon 不给 ⇒ 空。 */
   ccActs(lang: Lang): Promise<MatterT[]>

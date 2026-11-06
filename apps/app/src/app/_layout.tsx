@@ -46,6 +46,7 @@ function Themed() {
           <StatusBar style="dark" />
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.paper } }}>
             <Stack.Screen name="index" />
+            <Stack.Screen name="topic" options={{ presentation: 'formSheet', sheetAllowedDetents: [0.55, 1], sheetGrabberVisible: true }} />
             <Stack.Screen name="welcome" options={{ gestureEnabled: false }} />
             <Stack.Screen name="push-open" options={{ gestureEnabled: false }} />
             <Stack.Screen name="share" options={{ gestureEnabled: false }} />
