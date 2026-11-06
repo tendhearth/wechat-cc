@@ -654,7 +654,6 @@ const PHONE_API = {
     z.object({ ok: z.literal(false), error: z.literal('link_only') }),
   ]),
   'GET /m/api/state': z.union([PhoneStateSuccess, PhoneErrorResponse]),
-  'GET /m/api/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   'GET /m/api/memory': z.union([MemorySuccess, PhoneErrorResponse]),
   'POST /m/api/memory/correct': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/memory/retractions': z.union([MemoryRetractionsSuccess, PhoneErrorResponse]),

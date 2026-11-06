@@ -57,7 +57,7 @@ describe('phoneRouteAllowed', () => {
     // P3c-1:一起做的列表 / 详情并进 /v1,链接令牌经新键够得着的同别名键(同一份数据的两个名字,P3g 网页改读新键后别名行删掉)
     // P3d-1:此刻页、形象画搬到 /v1/home、/v1/phone/art/presence,链接令牌经新键够得着的同别名键
     // P3e-1:一起做的「停下」并进 /v1/matter/stop(停下是安全方向,链接令牌照旧能停),经新键够得着的同别名键
-    expect([...LINK_ROUTES].sort()).toEqual(['GET /m', 'GET /m/api/art/presence', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'GET /set/api/state', 'GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence', 'POST /m/api/matter/stop', 'POST /set/api/apply', 'POST /set/api/pair', 'POST /v1/matter/stop'])
+    expect([...LINK_ROUTES].sort()).toEqual(['GET /m', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'GET /set/api/state', 'GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence', 'POST /m/api/matter/stop', 'POST /set/api/apply', 'POST /set/api/pair', 'POST /v1/matter/stop'])
     expect([...LAN_ONLY_OPS].sort()).toEqual(['forget_devices', 'revoke_device', 'set_remote'])
   })
 })
@@ -109,10 +109,10 @@ describe('链接令牌白名单(审计续,10-20):读也要显式归类,缺省只
   // → P3c-1:列表 / 详情的新键 GET /v1/matters、GET /v1/matter 与别名键并存(同一份数据)⇒ 9 个键、还是 7 份数据
   it('the link-readable reads are exactly the 7 the link pages call (plus the /v1 names of the four merged ones); the private ones stay device-only', async () => {
     const reads = [...LINK_ROUTES].filter(r => !r.startsWith('POST ')).sort()
-    expect(reads).toHaveLength(11)
+    expect(reads).toHaveLength(10)
     expect(reads.filter(r => r.startsWith('GET /v1/'))).toEqual(['GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence'])
     for (const r of ['GET /v1/activity', 'GET /v1/jobs', 'GET /v1/letters/sent', 'GET /v1/letters/page', 'GET /v1/cli/activity', 'GET /v1/phone/state', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/cli/sessions', 'GET /v1/overseer/today', 'GET /v1/connections', 'GET /m/api/today', 'GET /m/api/connections', 'GET /m/api/activity', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/matter/rewind', 'GET /m/api/chat', 'GET /m/api/memory', 'GET /m/api/sessions', 'GET /m/api/cli/sessions', 'GET /m/api/cli/activity']) expect(LINK_ROUTES.has(r), r).toBe(false)
     // /set 链接打开的那一版网页(配对前)要读的这几条必须留着
-    for (const r of ['GET /m', 'GET /m/api/home', 'GET /m/api/matters', 'GET /m/api/matter', 'GET /m/api/art/presence']) expect(LINK_ROUTES.has(r), r).toBe(true)
+    for (const r of ['GET /m', 'GET /m/api/home', 'GET /m/api/matters', 'GET /m/api/matter', 'GET /v1/phone/art/presence']) expect(LINK_ROUTES.has(r), r).toBe(true)
   })
 })

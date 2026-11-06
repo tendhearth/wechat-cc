@@ -10,9 +10,9 @@
  *
  * 「路由会回的码」怎么来:下面 ROUTE_CODES 按处理器逐条写,并且对着处理器源码核对 ——
  *   - direct:处理器直接回的 `error: '码'`;源码切片里每个 `error: '…'` 都得列出来,列出来的每个码都得在切片里出现;
- *   - thrown:抛给 mobileMatterError 的 `Error('码')`,经错误表手机一栏(workbenchErrorHttp(code, 'phone'))换成对外的码;
+ *   - thrown:抛给 phoneError 的 `Error('码')`,经错误表桌面一栏(workbenchErrorHttp(code, 'desktop'))换成对外的码;
  *     切片里每个 `Error('…')` 都得列出来。切片覆盖处理器、MattersService.stop / taskDetail / require、工作台 cancel;
- *     更深处(deps.workbench.detail 之类)抛的码同样过手机一栏,表里没声明的落到兜底 unavailable / invalid_*。
+ *     更深处(deps.workbench.detail 之类)抛的码同样过桌面一栏,表里没声明的落到兜底 internal。
  *   - 所有面板路由在分派之前还可能回 unauthorized(401)、route_not_allowed(403)。
  * 网页自己造的(超时 timeout、正文里没有 error 时的 unavailable)不是路由回的码,不在这里管。
  */
@@ -43,7 +43,6 @@ function slice({ file, from, to }: Slice): string {
 }
 
 const SP = 'src/features/phone/settings-panel.ts'
-const LEGACY = 'src/features/phone/legacy-routes.ts'
 /** 面板处理器表(F2)里一条的开头;下一条的开头就是这一条的结尾。 */
 const entry = (key: string) => `'${key}': `
 const NEXT_ROUTE = "\n    '"
@@ -55,26 +54,21 @@ const COMMON: { codes: string[]; slices: Slice[] } = {
 
 interface RouteCodes { direct: string[]; thrown?: string[]; slices: Slice[] }
 const ROUTE_CODES: Record<string, RouteCodes> = {
-  // P3c-1 起这两条是别名(legacy-routes.ts):数据在 GET /v1/matters / GET /v1/matter,手机看到的码由别名的转换定。
-  // 列表:/v1 那边别的错(处理器抛了)以前是不回包(手机一直等),现在回 unavailable。
-  'GET /m/api/matters': {
-    direct: ['matters_not_wired', 'invalid', 'unavailable'],
-    slices: [{ file: LEGACY, from: 'const phoneMatters: PhoneHandler<Ctx> =', to: '// ── GET /m/api/matter →' }],
+  'GET /v1/matters': {
+    direct: ['invalid_request', 'matters_not_wired'],
+    slices: [{ file: 'src/daemon/internal-api/routes-matters.ts', from: "'GET /v1/matters':", to: "'GET /v1/matter/owner-chat':" },
+      { file: 'src/daemon/internal-api/routes-matters.ts', from: 'const invalid=', to: 'const known=' }],
   },
-  'GET /m/api/matter': {
-    // 只有 matter_not_found 原样出去,其余一律 unavailable(同并之前)
-    direct: ['matters_not_wired', 'invalid', 'matter_not_found', 'unavailable', 'detail_too_large'],
-    slices: [
-      { file: LEGACY, from: 'const phoneMatter: PhoneHandler<Ctx> =', to: '// ── POST /m/api/matter/say →' },
-      { file: 'src/features/phone/mobile-matter-response.ts', from: 'export function mobileMatterDetailResponse', to: '\n}\n' },
-    ],
+  'GET /v1/matter': {
+    direct: ['invalid_request', 'matters_not_wired', 'matter_not_found', 'internal', 'detail_too_large'],
+    slices: [{ file: 'src/daemon/internal-api/routes-matters.ts', from: "'GET /v1/matter':", to: "'POST /v1/matter/say':" },
+      { file: 'src/daemon/internal-api/routes-matters.ts', from: 'const invalid=', to: 'const known=' }],
   },
-  'POST /m/api/matter/stop': {
-    direct: ['method_not_allowed'],
+  'POST /v1/matter/stop': {
+    direct: [],
     thrown: ['invalid_request', 'workbench_not_wired', 'invalid_matter_id', 'matter_not_found', 'matter_task_required', 'input_stale', 'control_stale'],
     slices: [
-      // P3e-1 起是别名(legacy-routes.ts 的 matterAction:方法、正文、转手),手机的参数规矩与语义在 /v1/matter/stop 那一个处理器里
-      { file: LEGACY, from: 'const matterAction = ', to: 'const phoneMatterPermission = ' },
+      // 网页直接读新键：参数规矩与语义在 /v1/matter/stop 那一个处理器里。
       { file: 'src/daemon/internal-api/routes-matter-actions.ts', from: "'POST /v1/matter/stop': action(", to: "'POST /v1/matter/permission': action(" },
       { file: 'src/app/matters/service.ts', from: 'const require=', to: 'const current=' },
       { file: 'src/app/matters/service.ts', from: 'async stop(id,runId){', to: 'answer(' },
@@ -82,9 +76,9 @@ const ROUTE_CODES: Record<string, RouteCodes> = {
     ],
   },
   // home() 一律 ok:true(读不到的那一块写成 presence_error 字段,网页不当错误码用)
-  // P3d-1 起这两条是纯改名的别名(legacy-routes.ts 的 rename,回包原样):处理器在新键 GET /v1/home、GET /v1/phone/art/presence 上。
-  'GET /m/api/home': { direct: [], slices: [{ file: SP, from: entry('GET /v1/home'), to: NEXT_ROUTE }] },
-  'GET /m/api/art/presence': { direct: [], slices: [{ file: SP, from: entry('GET /v1/phone/art/presence'), to: NEXT_ROUTE }] },
+  // 网页直接读新键，保留手机独有的 ok 信封。
+  'GET /v1/home': { direct: [], slices: [{ file: SP, from: entry('GET /v1/home'), to: NEXT_ROUTE }] },
+  'GET /v1/phone/art/presence': { direct: [], slices: [{ file: SP, from: entry('GET /v1/phone/art/presence'), to: NEXT_ROUTE }] },
   'POST /set/api/pair': {
     direct: ['link_only', 'device_limit'],
     slices: [{ file: SP, from: entry('POST /set/api/pair'), to: NEXT_ROUTE }],
@@ -96,21 +90,21 @@ const NAVIGATIONS = ['GET /set']
 
 /** 网页的码表,以及哪几条路由的回包交给它。表外的路由没有码表:回什么都按通用那句(GENERIC 里明列)。 */
 const WEB_MAPS: Record<string, string[]> = {
-  M_ERRORS: ['GET /m/api/matters', 'GET /m/api/matter'],
-  M_STOP_ERRORS: ['POST /m/api/matter/stop'],
+  M_ERRORS: ['GET /v1/matters', 'GET /v1/matter'],
+  M_STOP_ERRORS: ['POST /v1/matter/stop'],
 }
 
 /** 有意按通用说法走的码(按路由)。路由多回了一个码 ⇒ 要么进网页的表,要么加进这里。 */
 const GENERIC: Record<string, string[]> = {
   // 「暂时没读到，请检查连接后再看。」
-  'GET /m/api/matters': ['route_not_allowed', 'matters_not_wired', 'invalid', 'unavailable'],
-  'GET /m/api/matter': ['route_not_allowed', 'matters_not_wired', 'invalid', 'unavailable'],
+  'GET /v1/matters': ['route_not_allowed', 'matters_not_wired', 'invalid_request'],
+  'GET /v1/matter': ['route_not_allowed', 'matters_not_wired', 'invalid_request', 'internal'],
   // 「没停成，稍后再试。」
-  'POST /m/api/matter/stop': ['unauthorized', 'route_not_allowed', 'method_not_allowed', 'invalid_request', 'invalid_matter_id', 'matter_not_found', 'matter_task_required', 'unavailable'],
+  'POST /v1/matter/stop': ['unauthorized', 'route_not_allowed', 'invalid_request', 'invalid_matter_id', 'matter_not_found', 'matter_task_required', 'workbench_not_wired', 'internal'],
   // 此刻:401 按状态走 onUnauthorized,其余是「家里的电脑暂时连不上」那条横幅;不看码
-  'GET /m/api/home': ['unauthorized', 'route_not_allowed'],
+  'GET /v1/home': ['unauthorized', 'route_not_allowed'],
   // 形象画拉不到就留空,不看码
-  'GET /m/api/art/presence': ['unauthorized', 'route_not_allowed'],
+  'GET /v1/phone/art/presence': ['unauthorized', 'route_not_allowed'],
   // 配对:toast「没配上:」后面直接跟码,没有逐码的话
   'POST /set/api/pair': ['unauthorized', 'route_not_allowed', 'link_only', 'device_limit'],
 }
@@ -122,7 +116,7 @@ const uniq = (a: Iterable<string>) => [...new Set(a)].sort()
 /** 一条路由真会回的码(对外的那个)。 */
 function returnable(key: string): string[] {
   const r = ROUTE_CODES[key]!
-  return uniq([...COMMON.codes, ...r.direct, ...(r.thrown ?? []).map(code => workbenchErrorHttp(code, 'phone').error)])
+  return uniq([...COMMON.codes, ...r.direct, ...(r.thrown ?? []).map(code => workbenchErrorHttp(code, 'desktop').error)])
 }
 
 /** workbench.js 里 `var NAME = { 码: "一句话", … }` 的键;不是全字符串值的对象字面量 ⇒ 报错。 */

@@ -14,7 +14,7 @@ const matter=(id:string,agents?:string[])=>({id,kind:'task',title:'事 '+id,proj
 function load(matters:unknown[]){
   const window=new Window({url:'https://fixture.test/m'});windows.push(window)
   const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
-  const api=vi.fn(async(path:string)=>({ok:true,status:200,json:async()=>path.startsWith('/m/api/matters')?{ok:true,matters}:{ok:false,error:'not_found'}}))
+  const api=vi.fn(async(path:string)=>({ok:true,status:200,json:async()=>path.startsWith('/v1/matters')?{matters}:{ok:false,error:'not_found'}}))
   const env={document,window,api,fetch:api,tunnel:vi.fn(),q:(p:string)=>p,localStorage:window.localStorage,REMOTE:{id:'t'},AbortController,setTimeout,clearTimeout,crypto,URL:{revokeObjectURL:()=>{}},
     ccPlain:(s:string)=>s,CCP:{STATUS_TABLE,STATUS_WORDS:STATUS_WORDS['zh-Hans'],HOME_GROUP_WORDS:HOME_GROUP_WORDS['zh-Hans']},
     esc:(text:unknown)=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!)}

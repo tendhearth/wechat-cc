@@ -42,7 +42,7 @@ describe('wire-compat 兼容表只许变少', () => {
 // P3e 起桌面的 /v1/workbench/* 双胞胎也登记进来(读的人 = desktop,并一条登记一行):P3e-1 上调 8(61 → 69)、P3e-2 上调 7(→ 76),
 // 设计稿「P3a 核过的几件」那一条的二选一。到这里登记完了:以后只许按退休条件往下删。
 // @debt 还在线上的旧路径(别名表行数;按构建号逐行删,降到 0 = 手机只剩 /v1 一族、桌面只调 /v1/matter/*)
-const MAX_WIRE_ROUTE_ALIASES = 76
+const MAX_WIRE_ROUTE_ALIASES = 75
 // P3e-2 降到 0:每份数据只有一个处理器。0 就是终点(棘轮留着:谁把一行改回 own 就红)。
 // @debt 别名表里还是面板自己处理器的行(P3c–P3e 每并一条降一;降到 0 = 每份数据只有一个处理器)
 const MAX_OWN_HANDLER_ROWS = 0

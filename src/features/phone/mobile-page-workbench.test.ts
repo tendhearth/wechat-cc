@@ -69,7 +69,7 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
   const calls: Array<{ path: string; opts?: { method?: string; body?: string } }> = []
   let mode: 'ok' | 'down' = 'ok'
   let detail = {
-    ok: true, matter: { id: 'm1', title: '首页调整', kind: 'task', status: 'open' }, runId: 'run1',
+    matter: { id: 'm1', title: '首页调整', kind: 'task', status: 'open' }, runId: 'run1',
     permissions: [] as Array<Record<string, unknown>>, questions: [], events: [] as Array<Record<string, unknown>>, artifacts: [], inputs: [],
   }
 
@@ -78,11 +78,11 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
   const api = (path: string, opts?: { method?: string; body?: string }) => {
     calls.push({ path, ...(opts ? { opts } : {}) })
     if (mode === 'down') return Promise.reject(new Error('network down'))
-    const body = path.startsWith('/m/api/matters')
-      ? { ok: true, matters: fx.matters ?? [{ id: 'm1', title: '首页调整', kind: 'task', status: 'open' }] }
-      : path.startsWith('/m/api/matter?') ? detail : { ok: true }
+    const body = path.startsWith('/v1/matters')
+      ? { matters: fx.matters ?? [{ id: 'm1', title: '首页调整', kind: 'task', status: 'open' }] }
+      : path.startsWith('/v1/matter?') ? detail : { ok: true }
     const response = { status: 200, json: () => Promise.resolve(body) }
-    if (deferNext && path.startsWith('/m/api/matter?')) {
+    if (deferNext && path.startsWith('/v1/matter?')) {
       deferNext = false
       return new Promise<typeof response>((resolve) => { deferred = () => resolve(response) })
     }
@@ -97,15 +97,17 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
   }
   const ccPlain = new Function(`${readMobileSource('boot.js').slice(readMobileSource('boot.js').indexOf('function ccPlain'))}\nreturn ccPlain`)()
   const CCP = { STATUS_TABLE, STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'], QUIET_AFTER_MS, ROW_HINT_WORDS: ROW_HINT_WORDS['zh-Hans'] }
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'ccPlain', 'CCP', 'homeCardId', source)
-  boot(doc, win, {
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'viaTunnel', 'ccPlain', 'CCP', 'homeCardId', source + '\nreturn {mApi,mError}')
+  const page = boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
     removeItem: (k: string) => { store.delete(k) },
-  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), fetchStub, (p: string) => p, () => Promise.reject(new Error('no tunnel')), false, ccPlain, CCP, fx.focus?.id ?? null)
+  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), fetchStub, (p: string) => p, () => Promise.reject(new Error('no tunnel')), false, api, ccPlain, CCP, fx.focus?.id ?? null)
 
   return {
     els, doc, calls, navButton, docHandlers, winHandlers,
+    request: page.mApi as (path: string, opts: unknown, send: unknown) => Promise<unknown>,
+    errorText: page.mError as (code: string) => string,
     get conn() { return els.get('m-conn')! },
     get notice() { return els.get('m-notice')! },
     deferDetail() { deferNext = true },
@@ -133,8 +135,8 @@ function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; foc
     /** 切后台再回前台。 */
     async background() { doc.hidden = true; for (const fn of docHandlers['visibilitychange'] ?? []) fn({}); await vi.advanceTimersByTimeAsync(0) },
     async foreground() { doc.hidden = false; for (const fn of docHandlers['visibilitychange'] ?? []) fn({}); await vi.advanceTimersByTimeAsync(0) },
-    listCalls() { return calls.filter((c) => c.path.startsWith('/m/api/matters')).length },
-    detailCalls() { return calls.filter((c) => c.path.startsWith('/m/api/matter?')).length },
+    listCalls() { return calls.filter((c) => c.path.startsWith('/v1/matters')).length },
+    detailCalls() { return calls.filter((c) => c.path.startsWith('/v1/matter?')).length },
   }
 }
 
@@ -247,7 +249,7 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     expect(h.status.innerHTML).not.toContain('data-stop')
   })
 
-  it('「停下」留着:点一下先要确认,再点才发一次 POST /m/api/matter/stop,不重发', async () => {
+  it('「停下」留着:点一下先要确认,再点才发一次 POST /v1/matter/stop,不重发', async () => {
     const h = harness()
     h.setDetail(busy as never)
     await h.enterPane(); await h.openMatter()
@@ -255,7 +257,7 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     expect(h.status.innerHTML).toContain('再点一次，确认停止')
     expect(h.postCalls()).toBe(0)
     await h.stop()
-    expect(h.calls.filter((c) => c.opts?.method === 'POST').map((c) => [c.path, c.opts!.body])).toEqual([['/m/api/matter/stop', JSON.stringify({ id: 'm1', runId: 'run1' })]])
+    expect(h.calls.filter((c) => c.opts?.method === 'POST').map((c) => [c.path, c.opts!.body])).toEqual([['/v1/matter/stop', JSON.stringify({ id: 'm1', runId: 'run1' })]])
     expect(h.notice.textContent).toBe('已经请电脑停下这一轮。')
   })
 
@@ -343,3 +345,27 @@ describe('一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,等你 
   })
 })
 
+
+describe('v1 网页调用契约', () => {
+  it.each([
+    [404, 'matter_not_found'], [413, 'detail_too_large'], [503, 'workbench_not_wired'], [503, 'module_off'], [503, 'module_degraded'],
+  ])('v1 错误 %s / %s 保留状态与精确码，不会误当成功', async (status, code) => {
+    const h = harness()
+    await h.enterPane()
+    await expect(h.request('/v1/matter?id=deadbeef', undefined, async () => ({ status, json: async () => ({ error: code }) })))
+      .rejects.toMatchObject({ message: code, status })
+    expect(h.errorText(String(code))).toBe(String(code) === 'matter_not_found' ? '找不到这件事了，可能已经删掉。'
+      : String(code) === 'detail_too_large' ? '这件事的内容太多，网页上读不全，请到手机 App 或电脑上看。' : '暂时没读到，请检查连接后再看。')
+  })
+
+  it('v1 列表显式保留旧别名的筛选、数量与任务状态，接受不带 ok 的列表和详情', async () => {
+    const h = harness()
+    await h.enterPane()
+    expect(h.calls[0]!.path).toBe('/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1')
+    expect(h.els.get('m-list')!.innerHTML).toContain('首页调整')
+    await h.openMatter()
+    expect(h.els.get('m-title')!.textContent).toBe('首页调整')
+    expect(h.notice.textContent).toBe('')
+  })
+
+})

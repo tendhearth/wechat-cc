@@ -77,7 +77,8 @@ afterEach(async () => { await panel.stop(); removeTempDir(dir) })
 
 describe('P3d 纯改名:旧路径与新键逐字节一样', () => {
   it('别名表里纯改名、已并的行不是空的(这条测试不空转)', () => {
-    expect(RENAMES.length).toBeGreaterThanOrEqual(28)
+    expect(RENAMES.length).toBe(27) // P3g:仅网页读的形象画已退休，新键由金样与网页 e2e 覆盖。
+    expect(WIRE_ROUTE_ALIASES.some(r => r.from === 'GET /m/api/art/presence')).toBe(false)
   })
 
   it('设备令牌:每一行旧路径 / 新路径的状态码、头、正文字节都一样', async () => {

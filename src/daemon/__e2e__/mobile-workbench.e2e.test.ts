@@ -33,10 +33,12 @@ beforeEach(async()=>{
     paths.push(route.request().method()+' '+path)
     if(path==='/m')return route.fulfill({contentType:'text/html',body:phoneHtml(url.searchParams.get('t')?'tLINK':'device-test',null)})
     if(path==='/m/icon.png')return route.fulfill({contentType:'image/png',body:icon})
-    if(path==='/m/api/home')return route.fulfill({json:home})
-    if(path==='/m/api/matters')return route.fulfill({json:{ok:true,matters:[matter]}})
-    if(path==='/m/api/matter')return route.fulfill({json:{ok:true,bindings:[],sessions:[],...structuredClone(detail)}})
-    if(path==='/m/api/matter/stop'&&route.request().method()==='POST'){sent.push({path,body:route.request().postDataJSON()});return route.fulfill({json:{ok:true}})}
+    // Match the page's v1 LAN calls; retired /m/api aliases must stay unavailable.
+    if(path==='/v1/phone/art/presence')return route.fulfill({json:{ok:false}})
+    if(path==='/v1/home')return route.fulfill({json:home})
+    if(path==='/v1/matters')return route.fulfill({json:{ok:true,matters:[matter]}})
+    if(path==='/v1/matter')return route.fulfill({json:{ok:true,bindings:[],sessions:[],...structuredClone(detail)}})
+    if(path==='/v1/matter/stop'&&route.request().method()==='POST'){sent.push({path,body:route.request().postDataJSON()});return route.fulfill({json:{ok:true}})}
     return route.fulfill({status:404,json:{ok:false,error:'not_found'}})
   })
 })
@@ -85,7 +87,7 @@ describe('phone web page: a matter is status only',()=>{
     expect(sent).toEqual([])
     await stop.click()
     await expect.poll(()=>page.locator('#m-notice').textContent()).toBe('已经请电脑停下这一轮。')
-    expect(sent).toEqual([{path:'/m/api/matter/stop',body:{id:TASK,runId:RUN}}])
+    expect(sent).toEqual([{path:'/v1/matter/stop',body:{id:TASK,runId:RUN}}])
   })
 
   it('the 此刻 card is view-only and opens the status page when tapped',async()=>{
@@ -107,7 +109,7 @@ describe('phone web page: a matter is status only',()=>{
     await page.locator('[data-mid="'+TASK+'"]').click()
     await expect.poll(()=>page.locator('#m-status .m-state').textContent()).toBe('在做')
     expect(await page.locator('#pairbar').isVisible()).toBe(true)
-    const api=[...new Set(paths.filter(p=>p.includes('/api/')))].sort()
-    expect(api).toEqual(['GET /m/api/art/presence','GET /m/api/home','GET /m/api/matter','GET /m/api/matters'])
+    const api=[...new Set(paths.filter(p=>/^(?:GET|POST) \/(?:v1|m\/api)\//.test(p)))].sort()
+    expect(api).toEqual(['GET /v1/home','GET /v1/matter','GET /v1/matters','GET /v1/phone/art/presence'])
   })
 })

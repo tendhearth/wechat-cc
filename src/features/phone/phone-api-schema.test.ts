@@ -1,3 +1,4 @@
+import { RESPONSE_SCHEMAS } from '@wechat-cc/protocol'
 /**
  * phone-api-schema.test.ts — 手机协议第 12 步:`/m/api/*`、`/set/api/*` 每条路由
  * 都有一份 zod schema(`packages/protocol/src/api.ts`),对着真实面板返回 `parse`。
@@ -471,7 +472,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     expect((await get('/m/api/state')).status).toBe(403)   // 链接页面不调 /m/api/state(App 在用)
     const st = parseAs('GET /m/api/state', await (await get('/m/api/state', await dev())).json()) as { portraitPng?: string }
     expect(st.portraitPng).toBe('iVBORw0KGgo=')
-    parseAs('GET /m/api/art/presence', await (await get('/m/api/art/presence')).json())
+    RESPONSE_SCHEMAS['GET /v1/phone/art/presence']!.parse(await (await get('/v1/phone/art/presence')).json())
   })
 
   // 手机 App(apps/app 的待办页)直接显示 r.time_ref —— schema 必须收得住

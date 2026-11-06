@@ -24,7 +24,7 @@ function mConn() {
   el.hidden = !stale
   el.textContent = stale ? (mLastOkAt===null?"家里的电脑暂时连不上，看看它开着没。":"家里的电脑暂时连不上 —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
 }
-// 码 → 一句话。读列表 / 详情(GET /m/api/matters、/m/api/matter)用 M_ERRORS,停下这一轮用 M_STOP_ERRORS;
+// 码 → 一句话。读列表 / 详情(GET /v1/matters、/v1/matter)用 M_ERRORS,停下这一轮用 M_STOP_ERRORS;
 // 没列的码走后面那句通用的。守卫 scripts/mobile-web-errors.guard.test.ts:每个码都得是那几条路由真会回的,
 // 路由会回的码要么在这里、要么在守卫的 GENERIC 里明列(以前这里认的 not_found 详情路由从来不回 —— 它回 matter_not_found)。
 var M_ERRORS = {
@@ -37,7 +37,7 @@ function mText(map, code, fallback) { return Object.prototype.hasOwnProperty.cal
 function mError(code) { return mText(M_ERRORS, code, "暂时没读到，请检查连接后再看。") }
 function mApi(path,opts,sender) {
   var timer, epoch=mConnectionEpoch, pageId=mCurrent
-  return Promise.race([(sender||api)(path,opts).then(function(r){return r.json().then(function(b){if (!r.status || r.status < 400) { if (b.ok) return b }; throw Object.assign(new Error(b.error || "unavailable"),{status:r.status})})}),new Promise(function(_r,reject){timer=setTimeout(function(){reject(new Error("timeout"))},15000)})])
+  return Promise.race([(sender||api)(path,opts).then(function(r){return r.json().then(function(b){if (!r.status || r.status < 400) { if (b && !b.error) return b }; throw Object.assign(new Error(b.error || "unavailable"),{status:r.status})})}),new Promise(function(_r,reject){timer=setTimeout(function(){reject(new Error("timeout"))},15000)})])
     .then(function(b){
       // 只在"从断线里回来"这一下清提示:断线期间那条错误不清就会赖到下一次操作;平时成功不动它(「已经请电脑停下」要留着)。
       if(epoch!==mConnectionEpoch||mOffline)return b
@@ -104,7 +104,7 @@ function renderMatters() {
   all.textContent = more ? "全部 · 还有 " + more + " 件更早的 →" : "全部 →"
 }
 function loadMatters() {
-  mApi("/m/api/matters?status=open,replied,done").then(function(r){ mMatters = r.matters; renderMatters() })
+  mApi("/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1").then(function(r){ mMatters = r.matters; renderMatters() })
     .catch(function(e){ if (!mMatters) document.getElementById("m-list").textContent = mError(e.message) })
 }
 document.getElementById("m-all").addEventListener("click", function(){ mAll = true; renderMatters() })
@@ -173,15 +173,15 @@ async function mStop(task,run) {
   mStopArmed=null;clearTimeout(mStopTimer);mBusy[key]=true;mSetButtons();mNotice('正在停下这一轮…')
   try{
     // 一次只走一条通道,不自动重发
-    var r=await mPostOnce('/m/api/matter/stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:task,runId:run})})
+    var r=await mPostOnce('/v1/matter/stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:task,runId:run})})
     var b=await r.json().catch(function(){return null})
-    mNotice(b&&b.ok?'已经请电脑停下这一轮。':mText(M_STOP_ERRORS,b&&b.error,'没停成，稍后再试。'))
+    mNotice(r.status>=200&&r.status<300&&b&&b.ok?'已经请电脑停下这一轮。':mText(M_STOP_ERRORS,b&&b.error,'没停成，稍后再试。'))
   }catch(e){mNotice('没停成，稍后再试。')}
   finally{delete mBusy[key];mSetButtons();clearTimeout(mPoll);mSchedule()}
 }
 /** A POST selects one transport once. A lost LAN reply must never send it again through the tunnel. */
 function mPostOnce(path,opts) {
-  if(preferTunnel&&REMOTE)return tunnel().then(function(send){return send(path,opts)})
+  if(preferTunnel&&REMOTE)return viaTunnel(path,opts)
   var ctrl=new AbortController(),timer=setTimeout(function(){ctrl.abort()},2500)
   return fetch(q(path),Object.assign({signal:ctrl.signal},opts)).catch(function(e){if(REMOTE)preferTunnel=true;throw e}).finally(function(){clearTimeout(timer)})
 }
@@ -200,7 +200,7 @@ function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidde
 function mRefresh() {
   clearTimeout(mPoll);if(!mActive||!mCurrent||document.hidden||mOffline)return Promise.resolve()
   var id=mCurrent,seq=++mSeq
-  return mApi('/m/api/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq)mNotice(mError(e.message))}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
+  return mApi('/v1/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq)mNotice(mError(e.message))}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
 }
 function openMatter(id) {
   mDetailFresh=false

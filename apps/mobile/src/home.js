@@ -47,7 +47,7 @@ function loadHome() {
   var cached = readCache()
   if (cached&&!homeState) { homeState = cached; renderHome(cached, true); showBanner("上次同步 " + ago(cached.synced_at)) }
   var sent = T
-  api("/m/api/home").then(function(r) {
+  api("/v1/home").then(function(r) {
     if (r.status === 401) { if (sent !== T) return HOME_STALE; onUnauthorized(sent); return null }
     return r.json()
   }).then(function(s) {

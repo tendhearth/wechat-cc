@@ -435,8 +435,8 @@ describe.skipIf(process.platform === 'win32')('/m/api 回包金样(P3a)', () => 
     pin('matters.link.json', await call('GET', '/m/api/matters', undefined, 'link'))
     pin('matter.device.json', await call('GET', `/m/api/matter?id=${CHAT}`))
     pin('matter.link.json', await call('GET', `/m/api/matter?id=${CHAT}`, undefined, 'link'))
-    pinDigest('art-presence.device.json', await call('GET', '/m/api/art/presence'))
-    pinDigest('art-presence.link.json', await call('GET', '/m/api/art/presence', undefined, 'link'))
+    pinDigest('art-presence.device.json', await call('GET', '/v1/phone/art/presence'))
+    pinDigest('art-presence.link.json', await call('GET', '/v1/phone/art/presence', undefined, 'link'))
     pin('matter-stop.link.json', await call('POST', '/m/api/matter/stop', { id: TASK, runId: RUN }, 'link'))
     // 链接令牌走不了的(只读的那几条之外):钉一份 403,范围收窄 / 放宽都会红
     pin('matter-say.link.json', await call('POST', '/m/api/matter/say', { id: TASK, text: 'x' }, 'link'))

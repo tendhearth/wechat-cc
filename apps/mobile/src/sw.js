@@ -17,5 +17,5 @@ self.addEventListener('fetch', function(e){
     e.respondWith(caches.open(BRAND_CACHE).then(function(c){ return c.match(e.request).then(function(m){ return m || fetch(e.request).then(function(r){ c.put(e.request, r.clone()); return r }) }) }))
     return
   }
-  // /m/api/* and everything else — let the page decide (LAN → tunnel).
+  // /v1/* and everything else — let the page decide (LAN → tunnel).
 })
