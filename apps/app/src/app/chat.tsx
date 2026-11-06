@@ -32,6 +32,12 @@ import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { hasBubbleText, textAfterSend, type Bubble } from '../view/chat'
+import { useWork } from '../state/useWork'
+import { useTerminalSessions } from '../state/useTerminal'
+import { homeView } from '../view/home'
+import { conversationItems } from '../view/conversation-work'
+import { rememberReference, useReferences } from '../state/conversation-references'
+import { DelegationMessage } from '../ui/DelegationMessage'
 import { canSubmit } from '../view/connection'
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -103,7 +109,13 @@ export default function Chat() {
     onText: s => setText(mergeTranscript(textRef.current, s)),
     configured: sttStatus.data?.configured ?? null,
   })
-  const data = [...chat.bubbles].reverse()
+  const work = useWork()
+  const terminal = useTerminalSessions()
+  const references = useReferences(backend)
+  const workView = homeView({ ...work, terminal: terminal.sessions ?? [], known: backend.mode === 'demo' || online, now: Date.now(), lang, backWindowMs: null })
+  const waiting = workView.groups.find(g => g.key === 'waiting')?.rows ?? []
+  const [waitingIndex, setWaitingIndex] = useState(0)
+  const data = conversationItems(chat.bubbles, workView, work.matters, chat.page?.matterId, references).reverse()
   const loadFailed = !chat.page && chat.error !== undefined && !chat.noOwner
 
   return (
@@ -154,10 +166,15 @@ export default function Chat() {
             </View>
           }
           renderItem={({ item }) => (
-            <ChatBubble b={item} lang={lang} canRetry={online && !sending} onRetry={() => retry(item)} onDismiss={() => chat.dismiss(item.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} />
+            <>{item.row ? <DelegationMessage row={item.row} historical={item.historical} synced={online && !work.mattersError} /> : item.bubble ? <ChatBubble b={item.bubble} lang={lang} canRetry={online && !sending} onRetry={() => retry(item.bubble!)} onDismiss={() => chat.dismiss(item.bubble?.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} /> : null}</>
           )}
         />
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
+          {waiting.length ? <Pressable testID="conversation-waiting" accessibilityRole="button" onPress={() => {
+            const row = waiting[waitingIndex % waiting.length]!
+            rememberReference(backend, row.id, row.source); setWaitingIndex(i => i + 1)
+            router.push(row.href)
+          }} style={{ minHeight: 44, justifyContent: 'center' }}><Txt role="meta" tone="accent">{lang === 'zh-Hans' ? `${waiting.length} 件事等你` : `${waiting.length} waiting for you`}</Txt></Pressable> : null}
           {outcome ? (
             <View style={{ alignItems: 'flex-end' }}><StatusHint testID={`chat-outcome-${outcome}`} label={t(lang, outcome === 'uncertain' ? 'feedback.unconfirmed' : 'feedback.notSent')}
               icon={outcome === 'uncertain' ? 'help' : 'alert'} description={t(lang, OUTCOME_KEY[outcome])}>

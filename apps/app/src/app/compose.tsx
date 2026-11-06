@@ -1,3 +1,4 @@
+import { rememberReference } from '../state/conversation-references'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from 'react-native'
@@ -235,7 +236,7 @@ export default function Compose() {
       if (getDraft(myKey) === rawText) { deleteDraft(myKey); textRef.current = ''; setTextState('') }
       setImages([]); setImageNote(null)
       if (matter) router.back()
-      else router.replace(`/matter/${encodeURIComponent(newId ?? '')}`)
+      else { if (newId) rememberReference(backend, newId); router.replace('/') }
     } else {
       setOutcome(composeOutcome(r.error))
     }
