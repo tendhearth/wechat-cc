@@ -32,6 +32,8 @@ export interface SpeechRequest {
 export type SpeechChannel = ProactiveChannel | 'desktop'
 
 export interface SpeechLedgerEntry {
+  /** First successful delivery receipt; never inferred from allowed. */
+  spokenAt?: number
   kind: SpeechKind
   origin: SpeechOrigin
   chatId: string
@@ -172,16 +174,27 @@ export function makeSpeechPolicy(deps: {
     async say(req, produce) {
       const { decision, base } = judge(req, deps.outbound.canDeliver(req.chatId))
       if (!('allow' in decision)) return decision
-      const turn = deps.outbound.open(req.chatId)
+      const rawTurn = deps.outbound.open(req.chatId)
+      let spokenAt: number | undefined
+      let receiptChannel: ProactiveChannel | null = null
+      const confirmed = () => { spokenAt ??= now() }
+      const turn: ProactiveTurn = {
+        ...rawTurn,
+        confirmDelivery(channel) { receiptChannel = channel; confirmed() },
+        async sendText(c, text) { const r = await rawTurn.sendText(c, text); if (!r.error) confirmed(); return r },
+        async sendAttachment(c, a) { const ok = await rawTurn.sendAttachment(c, a); if (ok) confirmed(); return ok },
+        async sendSticker(c, tag, path) { const ok = await rawTurn.sendSticker(c, tag, path); if (ok) confirmed(); return ok },
+        ...(rawTurn.sendTextWith ? { sendTextWith: async (...args: Parameters<NonNullable<ProactiveTurn['sendTextWith']>>) => { const r = await rawTurn.sendTextWith!(...args); if (r.ok) confirmed(); return r } } : {}),
+      }
       try {
         await produce(turn)
       } catch (err) {
-        write({ ...base, outcome: 'failed', reason: err instanceof Error ? err.message : String(err), channel: turn.channel() })
+        write({ ...base, outcome: 'failed', reason: err instanceof Error ? err.message : String(err), channel: receiptChannel ?? turn.channel(), ...(spokenAt !== undefined ? { spokenAt } : {}) })
         throw err
       } finally {
         turn.finish()
       }
-      write({ ...base, outcome: 'allowed', reason: null, channel: turn.channel() })
+      write({ ...base, outcome: 'allowed', reason: null, channel: receiptChannel ?? turn.channel(), ...(spokenAt !== undefined ? { spokenAt } : {}) })
       return { allow: true, channel: turn.channel() }
     },
     async tell(kind, chatId, text, send) {
@@ -189,7 +202,7 @@ export function makeSpeechPolicy(deps: {
       const o = await policy.say({ kind, chatId }, async (turn) => {
         try {
           // 自带的 send(比如 sendAssistantText)发不出去时回 false、不抛 ⇒ 那也算没说出去
-          if (send) { sent = (await send(chatId, text)) !== false; return }
+          if (send) { sent = (await send(chatId, text)) !== false; if (sent) turn.confirmDelivery?.('wechat'); return }
           sent = !(await turn.sendText(chatId, text)).error
         } catch (err) {
           deps.log('SPEECH', `${kind} chat=${chatId} send threw: ${err instanceof Error ? err.message : String(err)}`)
@@ -281,7 +294,10 @@ export function makeSpeechPolicy(deps: {
           // 带图的先发图;图发不出去 ⇒ 这一样什么都不说,**不退成一句光秃秃的文字**(新贴纸那一句的老规矩)
           const a = item.attach
           if (a && 'sticker' in a && !(await turn.sendSticker(chatId, a.sticker.mood, a.sticker.path))) { undeliverable = true; return }
-          if (a && 'file' in a && !(deps.sendFile && await deps.sendFile(chatId, a.file))) { undeliverable = true; return }
+          if (a && 'file' in a) {
+            if (!(deps.sendFile && await deps.sendFile(chatId, a.file))) { undeliverable = true; return }
+            turn.confirmDelivery?.('wechat')
+          }
           sent = item.text ? !(await turn.sendText(chatId, item.text)).error : true
         } catch { sent = false }
       })

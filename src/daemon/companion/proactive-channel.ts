@@ -59,6 +59,8 @@ export function chooseChannel(s: { wechatUsable: boolean; appDeliverable: boolea
 }
 
 export interface ProactiveTurn {
+  /** External authorized delivery adapter has a successful receipt. */
+  confirmDelivery?(channel: ProactiveChannel): void
   /** 给回复交付用的一条文字出口(同 ilink.sendMessage 的形状)。 */
   sendText(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   /** 已经落在哪条路上;还没送出过 ⇒ null。 */
