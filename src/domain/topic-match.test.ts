@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { keyIn, matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, tokens, topicJudgePrompt, type MatchTopic } from './topic-match'
+import { isSubstantiveTopicQuery, keyIn, matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, tokens, topicJudgePrompt, TOPIC_FALLBACK_MIN_CHARS, TOPIC_JUDGE_MAX_ENTRIES, TOPIC_JUDGE_ENTRY_CHARS, type MatchTopic } from './topic-match'
 
 const e = (id: string, kind: MatchTopic['entries'][number]['kind'], line: string, updatedTs = '2026-11-01T00:00:00Z', body = '', due: string | null = null) => ({ id, kind, line, body, due, updatedTs })
 const servers: MatchTopic = { id: 'srv', title: '服务器', summary: '自用机队:91、166、mini', aliases: ['机队', 'mini', '91'], tags: ['运维'], lastActive: '', entries: [
@@ -58,16 +58,53 @@ describe('judge / render', () => {
   it('提示词列候选和别名;单独一个数字才算数', () => {
     const p = topicJudgePrompt('那个工具', [writter, bx])
     expect(p).toContain('1. writter(也叫:NC、写作工具)')
-    expect(parseTopicJudge('1', [writter, bx])).toBe('wr')
-    expect(parseTopicJudge(' 2\n', [writter, bx])).toBe('bx')
+    expect(parseTopicJudge('1', [writter, bx])).toEqual({ topicId: 'wr' })
+    expect(parseTopicJudge(' 2\n', [writter, bx])).toEqual({ topicId: 'bx' })
     expect(parseTopicJudge('0', [writter, bx])).toBeNull()
     expect(parseTopicJudge('1 或 2', [writter, bx])).toBeNull()
     expect(parseTopicJudge('3', [writter, bx])).toBeNull()
     expect(parseTopicJudge('', [writter, bx])).toBeNull()
   })
+  it('零候选兜底只接够长且有不同实词的句子,不接短问句或寒暄', () => {
+    expect(isSubstantiveTopicQuery('开视频会议的时候浏览器会把真实 IP 漏出去吗')).toBe(true)
+    expect(isSubstantiveTopicQuery('浏览器开会时暴露了本机地址')).toBe(true)
+    expect(isSubstantiveTopicQuery('The browser exposes my public address during calls')).toBe(true)
+    expect(isSubstantiveTopicQuery('今天好累啊，先歇会儿')).toBe(false)
+    expect(isSubstantiveTopicQuery('早上好，今天吃了吗？')).toBe(false)
+    expect(isSubstantiveTopicQuery('hi, how are you?')).toBe(false)
+    expect(isSubstantiveTopicQuery('漏 IP 吗？')).toBe(false)
+    expect(isSubstantiveTopicQuery('？！ '.repeat(20))).toBe(false)
+    expect(isSubstantiveTopicQuery('你好'.repeat(20))).toBe(false)
+    expect(isSubstantiveTopicQuery('甲乙丙丁戊己庚辛壬癸子丑'.slice(0, TOPIC_FALLBACK_MIN_CHARS - 1) + '？！')).toBe(false)
+    expect(isSubstantiveTopicQuery('甲乙丙丁戊己庚辛壬癸子丑')).toBe(true)
+  })
+  it('提示词给条目编号、限条数和行长;解析只认展示过的编号', () => {
+    const many: MatchTopic = { ...servers, entries: Array.from({ length: TOPIC_JUDGE_MAX_ENTRIES + 1 }, (_, i) => e(`s${i}`, 'fact', `条目${i}:` + '甲'.repeat(200))) }
+    const prompt = topicJudgePrompt('开会是否暴露本机地址', [bx, many])
+    expect(prompt).toContain('1.1 bx 升级走 --force')
+    expect(prompt).toContain(`2.${TOPIC_JUDGE_MAX_ENTRIES} 条目${TOPIC_JUDGE_MAX_ENTRIES - 1}:`)
+    expect(prompt).not.toContain(`2.${TOPIC_JUDGE_MAX_ENTRIES + 1} `)
+    expect(prompt).not.toContain('甲'.repeat(TOPIC_JUDGE_ENTRY_CHARS + 1))
+    expect(parseTopicJudge(' 2.3\n', [bx, many])).toEqual({ topicId: 'srv', entryId: 's2' })
+    expect(parseTopicJudge(`2.${TOPIC_JUDGE_MAX_ENTRIES + 1}`, [bx, many])).toEqual({ topicId: 'srv' })
+    expect(parseTopicJudge('1.2', [bx, many])).toEqual({ topicId: 'bx' })
+    expect(parseTopicJudge('1.0', [bx, many])).toEqual({ topicId: 'bx' })
+    expect(parseTopicJudge('3.1', [bx, many])).toBeNull()
+    expect(parseTopicJudge('0.1', [bx, many])).toBeNull()
+  })
+  it.each(['话题 2', '2.', '2.1 因为有关', '2\n1', '```\n2\n```', '-2', '02', '2.01', '2.1.1'])('拒绝非完整编号回答 %s', answer => {
+    expect(parseTopicJudge(answer, [servers, bx])).toBeNull()
+  })
   it('挑条目:先重合,再没兑现的承诺,再新近', () => {
     expect(pickEntries('brook 还能用吗', servers).map(x => x.id)).toEqual(['s1', 's3', 's2'])
     expect(pickEntries('随便', servers).map(x => x.id)).toEqual(['s3', 's2', 's1'])
+  })
+  it('模型点名排在字面重合/承诺前,渲染和条目选择保持一致且不重复', () => {
+    expect(pickEntries('brook', servers, 2, 's2').map(x => x.id)).toEqual(['s2', 's1'])
+    expect(pickEntries('brook', servers, 2, 'gone').map(x => x.id)).toEqual(['s1', 's3'])
+    const block = renderTopicsBlock('brook', [servers], undefined, { preferredEntryIds: new Map([['srv', 's2']]) })
+    expect(block.split('\n')[1]).toContain('Mac mini M4')
+    expect(block.match(/Mac mini M4/g)).toHaveLength(1)
   })
   it('渲染:话题一行 + 条目,承诺带期限;超长截断', () => {
     const b = renderTopicsBlock('brook', [servers])

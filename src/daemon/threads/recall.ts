@@ -1,13 +1,13 @@
 /**
  * 每一轮按话题调记忆(话题 T2,设计稿 docs/superpowers/specs/2026-11-05-topics-t1-t3-design.md §T2)。
  *
- * `resolveTopicRecall`:给一句话和一份话题(带条目),先索引匹配(domain/topic-match),拿不准才问便宜模型;
+ * `resolveTopicRecall`:先索引匹配(domain/topic-match),分不开或零候选且句子够实在时问快模型;
  * 评测(eval 的 topic 类)用同一个函数跑样本自带的话题。
  * `makeTopicRecall`:生产那一份 —— 只在主人自己的对话里,从库里读话题。失败一律当没碰到,绝不拖垮这一轮。
  */
 import { TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
 import type { ThreadsStore, TopicEntry, ThreadRecord } from '../../lib/threads-store'
-import { matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, searchTopics, topicJudgePrompt, MAX_TOPICS, type MatchTopic, type TopicSearchHit } from '../../domain/topic-match'
+import { isSubstantiveTopicQuery, matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, searchTopics, topicJudgePrompt, MAX_TOPICS, MAX_ENTRIES, TOPIC_FALLBACK_MAX_CANDIDATES, type MatchTopic, type TopicJudgeSelection, type TopicSearchHit } from '../../domain/topic-match'
 
 /** 快判预算小于 mw-recall 的 4 秒总限，为读索引和记忆留出余量。 */
 export const TOPIC_JUDGE_TIMEOUT_MS = TURN_JUDGE_TIMEOUT_MS
@@ -25,7 +25,7 @@ export interface TopicRecallResult {
 }
 
 export interface ResolveOpts {
-  /** 拿不准时问的便宜模型;没有 ⇒ 拿不准就当没碰到。 */
+  /** 分不开 / 零候选兜底的快模型;没有 ⇒ 只用索引。 */
   cheapEval?: ((prompt: string) => Promise<string>) | null
   timeoutMs?: number
   log?: (tag: string, line: string) => void
@@ -33,7 +33,7 @@ export interface ResolveOpts {
   bodies?: boolean
 }
 
-async function judge(text: string, cands: MatchTopic[], o: ResolveOpts): Promise<string | null> {
+async function judge(text: string, cands: MatchTopic[], reason: 'ambiguous' | 'zero-candidates', o: ResolveOpts): Promise<TopicJudgeSelection | null> {
   if (!o.cheapEval || cands.length === 0) return null
   const started = Date.now()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -45,10 +45,10 @@ async function judge(text: string, cands: MatchTopic[], o: ResolveOpts): Promise
     // 空输出 / 想光了(EvalOutputExhaustedError 抛到下面的 catch)⇒ 当没碰到;这一轮不重试,不拖时间
     return answer && answer.trim() ? parseTopicJudge(answer, cands) : null
   } catch (err) {
-    o.log?.('TOPICS', `judge skipped: ${err instanceof Error ? err.message : String(err)}`)
+    o.log?.('TOPICS', `judge skipped reason=${reason}: ${err instanceof Error ? err.message : String(err)}`)
     return null
   } finally {
-    o.log?.('TOPICS', `judge via=${(o.cheapEval as {via?:string})?.via ?? 'model'} elapsedMs=${Date.now() - started}`)
+    o.log?.('TOPICS', `judge via=${(o.cheapEval as {via?:string})?.via ?? 'model'} reason=${reason} elapsedMs=${Date.now() - started}`)
     if (timer !== undefined) clearTimeout(timer)
   }
 }
@@ -58,17 +58,27 @@ export async function resolveTopicRecall(text: string, topics: readonly MatchTop
   const m = matchTopics(text, topics)
   let ids = m.hits.map(h => h.id)
   let via: TopicRecallResult['via'] = m.hits[0]?.via ?? 'model'
-  if (ids.length === 0 && m.ambiguous.length > 0) {
-    const cands = m.ambiguous.map(a => topics.find(t => t.id === a.id)!).filter(Boolean)
-    const picked = await judge(text, cands, o)
-    if (picked) { ids = [picked]; via = 'model' }
+  const preferredEntryIds = new Map<string, string>()
+  if (ids.length === 0) {
+    const reason = m.ambiguous.length > 0 ? 'ambiguous' : 'zero-candidates'
+    const cands = reason === 'ambiguous'
+      ? m.ambiguous.map(a => topics.find(t => t.id === a.id)!).filter(Boolean)
+      : isSubstantiveTopicQuery(text)
+        ? [...topics].sort((a, b) => b.lastActive.localeCompare(a.lastActive)).slice(0, TOPIC_FALLBACK_MAX_CANDIDATES)
+        : []
+    const picked = await judge(text, cands, reason, o)
+    if (picked) {
+      ids = [picked.topicId]
+      via = 'model'
+      if (picked.entryId) preferredEntryIds.set(picked.topicId, picked.entryId)
+    }
   }
   if (ids.length === 0) return null
   const picked = ids.slice(0, MAX_TOPICS).map(id => topics.find(t => t.id === id)!).filter(t => t && (t.entries.length > 0 || t.summary))
   if (picked.length === 0) return null
-  const block = renderTopicsBlock(text, picked, undefined, { bodies: o.bodies ?? true })
+  const block = renderTopicsBlock(text, picked, undefined, { bodies: o.bodies ?? true, preferredEntryIds })
   // 渲染里挑了哪几条,跟 renderTopicsBlock 用同一个挑法
-  const entryIds = picked.flatMap(t => pickEntries(text, t).map(e => e.id))
+  const entryIds = picked.flatMap(t => pickEntries(text, t, MAX_ENTRIES, preferredEntryIds.get(t.id)).map(e => e.id))
   return { block, topicIds: picked.map(t => t.id), entryIds, via }
 }
 
