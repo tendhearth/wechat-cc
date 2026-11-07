@@ -10,8 +10,8 @@
  * 纯函数、零 I/O:CLI(src/cli/output-eval.ts)读样本、调路由、写报告。
  */
 
-export type EvalKind = 'reply' | 'brief' | 'reference' | 'topic'
-export const EVAL_KINDS: readonly EvalKind[] = ['reply', 'brief', 'reference', 'topic']
+export type EvalKind = 'reply' | 'brief' | 'reference' | 'topic' | 'topic-recall'
+export const EVAL_KINDS: readonly EvalKind[] = ['reply', 'brief', 'reference', 'topic', 'topic-recall']
 
 /** 话题 T2:这一轮调出了哪些(null = 什么都没调)。 */
 export type TopicRecallOutput = { topicIds: string[]; entryIds: string[]; via: string } | null
@@ -49,6 +49,7 @@ export type EvalOutput =
   | { kind: 'reply' | 'brief'; finalText: string; bubbles: string[]; silent: boolean; toolCalls?: string[] }
   | { kind: 'reference'; resolution: { kind: string; taskId?: string; via?: string } }
   | { kind: 'topic'; recall: TopicRecallOutput }
+  | { kind: 'topic-recall'; recall: TopicRecallOutput }
 
 export interface RuleResult { rule: string; ok: boolean; detail?: string }
 export type JudgeVerdict = 'pass' | 'fail' | 'unclear' | 'error'
@@ -155,7 +156,7 @@ function inputError(kind: EvalKind, input: Record<string, unknown>): string | nu
     if (input.asks !== undefined && !Array.isArray(input.asks)) return 'brief 的 input.asks 要是数组'
     return null
   }
-  if (kind === 'topic') {
+  if (kind === 'topic' || kind === 'topic-recall') {
     if (!isNonEmptyStr(input.text)) return 'topic 的 input.text 要是非空字符串'
     if (!Array.isArray(input.topics)) return 'topic 的 input.topics 要是数组'
     return null
@@ -172,7 +173,7 @@ export function parseSample(raw: unknown, fileId: string): { ok: true; sample: E
   if (typeof id !== 'string' || !SAFE_ID.test(id)) return { ok: false, error: 'id 只能是字母、数字、- 和 _' }
   // 回归比较按 id 对,id 必须唯一:跟文件名走(同一目录里文件名不会重)
   if (id !== fileId) return { ok: false, error: `id 要和文件名一致(${fileId})` }
-  if (typeof raw.kind !== 'string' || !(EVAL_KINDS as readonly string[]).includes(raw.kind)) return { ok: false, error: 'kind 只能是 reply / brief / reference / topic' }
+  if (typeof raw.kind !== 'string' || !(EVAL_KINDS as readonly string[]).includes(raw.kind)) return { ok: false, error: 'kind 只能是 reply / brief / reference / topic / topic-recall' }
   const kind = raw.kind as EvalKind
   if (!isObj(raw.input)) return { ok: false, error: 'input 要是对象' }
   const ie = inputError(kind, raw.input)
@@ -203,7 +204,7 @@ export function parseSample(raw: unknown, fileId: string): { ok: true; sample: E
 /** 这条样本实际要判的规则:reply / brief 自动带 noThink(写过就不重复),放在最前面。 */
 export function effectiveRules(s: EvalSample): EvalRule[] {
   const rules = s.rules ?? []
-  if (s.kind === 'reference' || s.kind === 'topic' || rules.some(r => 'noThink' in r)) return [...rules]
+  if (s.kind === 'reference' || (s.kind === 'topic' || s.kind === 'topic-recall') || rules.some(r => 'noThink' in r)) return [...rules]
   return [{ noThink: true }, ...rules]
 }
 
@@ -240,7 +241,7 @@ export function checkRule(r: EvalRule, out: EvalOutput): RuleResult {
     return { rule, ok, detail: `得到 ${got.kind}${got.taskId ? ` ${got.taskId}` : ''}${got.via ? ` via ${got.via}` : ''}` }
   }
   if ('recalls' in r) {
-    if (out.kind !== 'topic') return { rule, ok: false, detail: '这条规则只用于 topic' }
+    if (out.kind !== 'topic' && out.kind !== 'topic-recall') return { rule, ok: false, detail: '这条规则只用于 topic' }
     const got = out.recall
     const detail = got ? `调出 话题 ${got.topicIds.join(',')} 条目 ${got.entryIds.join(',') || '-'}(${got.via})` : '什么都没调'
     if (r.recalls === null) return { rule, ok: got === null, detail }
@@ -249,7 +250,7 @@ export function checkRule(r: EvalRule, out: EvalOutput): RuleResult {
       && (r.recalls.entry === undefined || got.entryIds.includes(r.recalls.entry))
     return { rule, ok, detail }
   }
-  if (out.kind === 'reference' || out.kind === 'topic') return { rule, ok: false, detail: '这条规则只用于 reply / brief' }
+  if (out.kind === 'reference' || (out.kind === 'topic' || out.kind === 'topic-recall')) return { rule, ok: false, detail: '这条规则只用于 reply / brief' }
   if ('calls' in r) {
     const calls = out.toolCalls ?? []
     const ok = calls.some(c => c === r.calls || c.endsWith(`/${r.calls}`) || c.endsWith(`__${r.calls}`))
@@ -349,7 +350,7 @@ const FENCE = '````'
 function outputText(o: EvalOutput | undefined): string | null {
   if (!o) return null
   if (o.kind === 'reference') return JSON.stringify(o.resolution)
-  if (o.kind === 'topic') return JSON.stringify(o.recall)
+  if (o.kind === 'topic' || o.kind === 'topic-recall') return JSON.stringify(o.recall)
   if (o.silent) return '(NO_REPLY)'
   return o.bubbles.length > 1 ? o.bubbles.join('\n\n—— 下一条 ——\n\n') : o.finalText
 }

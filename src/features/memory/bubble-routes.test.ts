@@ -174,3 +174,29 @@ it('merge keeps an adopted bubble open and lets an old id deliberately open its 
   expect(result.status).toBe(200);expect(result.body).toMatchObject({id:into,bubbleState:'open'})
   db.close()
 })
+
+it('主人改名/合并/删/这条不对;link与其他owner均不能写,合并保留v109别名', async () => {
+  const { db, threads, id, call } = await fixture()
+  try {
+    const other = await threads.create({chatId:'guest',title:'guest',summary:'',facets:[],tags:[],private:true,episodes:[]})
+    const target = await threads.create({chatId:'owner',title:'目标',summary:'',facets:[],tags:[],private:true,episodes:[]})
+    const entry = await threads.addEntry({threadId:id,kind:'fact',line:'错误事实'})
+    for (const action of ['rename','merge','delete','entry/wrong']) {
+      const key=`POST /v1/memory/topics/${action}`
+      expect((await call(key,'',{id,title:'改名',into:target},{tier:'admin',origin:'link'})).status).toBe(403)
+      expect((await call(key,'',{id:other,...(action==='rename'?{title:'改名'}:action==='merge'?{into:target}:{})})).status).toBe(404)
+    }
+    expect((await call('POST /v1/memory/topics/rename','',{id,title:'新名字'},{tier:'admin',origin:'device'})).status).toBe(200)
+    expect((await threads.get(id))?.title).toBe('新名字')
+    expect((await call('POST /v1/memory/topics/entry/wrong','',{id:entry})).status).toBe(200)
+    expect((await threads.getEntry(entry))?.status).toBe('superseded')
+    expect((await call('POST /v1/memory/topics/merge','',{id,into:other})).status).toBe(404)
+    expect((await call('POST /v1/memory/topics/merge','',{id,into:target})).status).toBe(200)
+    expect(db.query('SELECT surviving_id FROM topic_merge_aliases WHERE old_id=?').get(id)).toEqual({surviving_id:target})
+    expect((await threads.getEntry(entry))?.threadId).toBe(target)
+    expect((await call('POST /v1/memory/topics/delete','',{id:target})).status).toBe(200)
+    expect(await threads.get(target)).toBeNull()
+    expect(await threads.getEntry(entry)).toBeNull()
+    expect(db.query('SELECT * FROM topic_merge_aliases WHERE old_id=?').all(id)).toEqual([])
+  } finally {db.close()}
+})

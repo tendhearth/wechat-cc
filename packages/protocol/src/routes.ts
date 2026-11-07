@@ -318,6 +318,10 @@ const ROUTE_TABLE = {
   // 话题(T2 后续 ①,2026-11-05):主模型的 topic_search 工具;只读、admin;私密话题只给主人自己的对话
   'GET /v1/memory/topics': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/memory/topics/detail': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/rename': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/merge': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/delete': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/entry/wrong': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/memory/topics/open': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/subscribe/topics': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/memory/topics/search': { module: 'memory', desktop: { tier: 'admin' } },

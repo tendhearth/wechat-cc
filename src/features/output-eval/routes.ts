@@ -133,6 +133,7 @@ export function outputEvalRoutes(runner: EvalRunner): RouteTable {
           case 'reply': { const i = replyInput(b); call = () => runner.reply(i); break }
           case 'brief': { const i = briefInput(b); call = () => runner.brief(i); break }
           case 'reference': { const i = referenceInput(b); call = () => runner.reference(i); break }
+          case 'topic-recall': { if (b.search) fail('topic-recall 不使用 search'); const i = topicInput(b); call = async () => ({ ...await runner.topic(i), kind: 'topic-recall' }); break }
           case 'topic': { const i = topicInput(b); call = () => runner.topic(i); break }
           case 'judge': { const p = str(b.prompt, 'prompt', PROMPT_MAX); call = () => runner.judge(p); break }
           default: return fail('kind 只能是 reply / brief / reference / topic / judge')

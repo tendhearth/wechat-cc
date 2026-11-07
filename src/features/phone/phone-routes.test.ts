@@ -21,7 +21,7 @@ describe('phoneRouteAllowed', () => {
     // chat/file:信的每一页也镜像进对话,链接令牌不能从这里读出信(评审 10-19 #1)
     const deviceOnly = [
       // T4:私密话题只给配对设备。
-      'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'GET /v1/subscribe/topics',
+      'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics',
       'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/matter/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'POST /m/api/matter/handoff', 'POST /m/api/session/continue', 'POST /m/api/matter/worktree', 'POST /m/api/chat/say', 'POST /m/api/push/register', 'POST /m/api/push/test',
       // 收敛 5b(2026-10-21):网页不再有这几页,链接令牌的读收回(#463「私事,收敛时再看」)
       'GET /m/api/chat', 'GET /m/api/chat/search', 'GET /m/api/chat/voice', 'GET /m/api/memory', 'GET /m/api/sessions', 'GET /m/api/session', 'GET /m/api/session/continue', 'GET /m/api/cli/sessions', 'GET /m/api/cli/activity',

@@ -11,6 +11,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
   root.querySelector('.converse-compose')?.before(row)
   root.append(panel)
   /** @type {HTMLElement|null} */ let returnFocus = null
+  let editing = false
   let alive = true, selected = '', revision = '', ticket = 0, listTicket = 0, all = false, cursor = '', stale = false
   /** @type {boolean|null} */ let supported=null
   /** @type {any[]} */ let topics = []
@@ -81,6 +82,36 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       await readDetail(id)
     } catch (error) { if (alive && generation === ticket) { if (/401|403|404|unauthorized|forbidden/.test(String(error))) { topics = []; detail = null; close(); drawRow() } else { stale = true; drawDetail() } } }
   }
+  async function editTopic(/** @type {'rename'|'merge'|'delete'|'wrong'} */ action, /** @type {any} */ body) {
+    if(stale||editing)return
+    const id=selected
+    editing=true
+    try { await v1(call,V1.topics[action],{body}); if(!alive||selected!==id)return;if(action==='delete'||action==='merge')close();await refresh() }
+    catch { if(alive&&selected===id){const note=document.createElement('p');note.role='status';note.textContent='结果待核对，请刷新查看。';panel.append(note)} }
+    finally {editing=false}
+  }
+  function management() {
+    const controls=document.createElement('details'),summary=document.createElement('summary');summary.textContent='管理话题';controls.append(summary)
+    const name=document.createElement('input');name.value=detail.topic.title;name.maxLength=120;name.ariaLabel='话题名称'
+    controls.append(name,button('改名',()=>{if(!name.value.trim()){name.focus();return};void editTopic('rename',{id:selected,title:name.value.trim()})}))
+    const target=document.createElement('select');target.ariaLabel='并到哪个话题'
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='选择话题';target.append(placeholder)
+    const current=selected
+    void (async()=>{
+      /** @type {string|undefined} */
+      let nextCursor=undefined
+      do {
+        /** @type {any} */
+        const page=await v1(call,V1.topics.list,{query:{view:'all',limit:50,cursor:nextCursor}})
+        if(!alive||current!==selected||!target.isConnected)return
+        for(const t of page.topics)if(t.id!==current){const option=document.createElement('option');option.value=t.id;option.textContent=t.title;target.append(option)}
+        nextCursor=page.nextCursor??undefined
+      }while(nextCursor)
+    })().catch(()=>{target.disabled=true})
+    controls.append(target,button('并到…',()=>{if(target.value)void editTopic('merge',{id:selected,into:target.value})}))
+    const confirm=document.createElement('details'),label=document.createElement('summary'),question=document.createElement('p');label.textContent='删话题';question.textContent='删除这个话题和记下的内容？';confirm.append(label,question,button('确认删除',()=>{void editTopic('delete',{id:selected})}));controls.append(confirm)
+    return controls
+  }
   function drawDetail() {
     if (!selected) return
     const top=panel.scrollTop
@@ -103,8 +134,9 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
         else if (key === 'messages') panel.append(button(`${item.speaker === 'owner' ? '你' : 'CC'} · ${item.ts} · ${item.excerpt}${item.source === 'episode' ? '（相关记录）' : ''}`, () => {close();return locateMessage(item.id,item.excerpt)}))
         else {
           const disclosure = document.createElement('details');disclosure.dataset.entryId=item.id;disclosure.open=expanded.has(item.id)
-          disclosure.innerHTML = `<summary>${escapeHtml(item.line)}${item.recalled && item.status === 'live' ? ' · 这次想起' : ''}</summary><p>${escapeHtml(item.body)}</p><small>${escapeHtml(item.source)} · ${escapeHtml(item.updatedTs)}</small>`
+          disclosure.innerHTML = `<summary>${escapeHtml(item.line)}${item.status==='superseded'?' · 不再采用':''}${item.recalled && item.status === 'live' ? ' · 这次想起' : ''}</summary><p>${escapeHtml(item.body)}</p><small>${escapeHtml(item.source)} · ${escapeHtml(item.updatedTs)}</small>`
           const summary=disclosure.querySelector('summary');if(summary instanceof HTMLElement)summary.dataset.topicFocusKey=`entry:${item.id}`
+          if(item.status==='live'&&!stale)disclosure.append(button('这条不对',()=>{void editTopic('wrong',{id:item.id})}))
           panel.append(disclosure)
         }
       }
@@ -112,6 +144,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       if (page?.nextCursor) panel.append(button(`更多${title}（${page.total}）`, () => { void more(key,page.nextCursor) }))
     }
     if (!count) panel.append(document.createTextNode('还没有记下内容'))
+    if(!stale)panel.append(management())
     panel.append(button('记忆管理与纠错', manage));restore()
   }
   async function more(/** @type {string} */ section, /** @type {string} */ nextCursor) {

@@ -1,3 +1,4 @@
+import { turnJudge } from '../../app/turn-judge'
 import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import { makeOwnerConversationReader, ownerConversationWork, ownerConversationEvents, stopOwnerConversation } from './owner-conversation'
 import { makeOwnerChatFileReader, ownerChatReadingEvent } from './owner-chat-reading'
@@ -450,7 +451,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
     threads: makeThreadsStore(db),
     isOwner: (chatId) => chatId === ownerChatId(),
-    cheapEval: () => boot.registry.getCheapEval(),
+    cheapEval: () => turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log),
     log,
   })
   // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
@@ -686,7 +687,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       handleWechat:opts.workbench.handleWechat,
       sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'}),
       // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
-      ...(boot.registry.getCheapEval()?{judge:makeCheapJudge(boot.registry.getCheapEval()!)}:{}),
+      judge: async (input) => { const fast = turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log); return fast ? makeCheapJudge(fast)(input) : {taskId:null,confident:false} },
       log,
     }}:{}),
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。

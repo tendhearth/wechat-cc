@@ -15,12 +15,13 @@ interface Spawned { project: AgentProject; ctx: SpawnContext; dispatched: string
 
 function harness(o: { events?: AgentEvent[]; spawnThrows?: Error; cheap?: ((p: string) => Promise<string>) | null; providers?: string[] } = {}) {
   const spawned: Spawned[] = []
-  const providers = o.providers ?? ['claude', 'codex']
+  const providers = o.providers ?? ['claude', 'codex', 'openai']
   const registry: EvalRunnerDeps['registry'] = {
     get: (id: string) => {
       if (!providers.includes(id)) return null
       return {
         provider: {
+          cheapEval: o.cheap ?? undefined,
           async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
             if (o.spawnThrows) throw o.spawnThrows
             const rec: Spawned = { project, ctx, dispatched: [], closed: false }

@@ -83,7 +83,8 @@ const codexThreads: Array<Record<string, unknown>> = []
 /** codex 收到的审批应答,按命令记。 */
 const decisions = new Map<string, unknown>()
 let codexDecision: unknown
-const claudeScript: FakeSdkScript = { async onDispatch(text) { return { toolCalls: [], finalText: text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
+let topicJudgeAttempts=0,topicRoundDispatches=0
+const claudeScript: FakeSdkScript = { async onDispatch(text) { if(text.includes('快判沙盒配色'))topicRoundDispatches++; return { toolCalls: [], finalText: text.includes('沙盒你好') ? '主人好,我在。' : '好的。' } } }
 const approval = (command: string, finalText: string) => ({
   toolCalls: [], finalText,
   codexSteps: [{
@@ -111,7 +112,7 @@ const boot = (more: Pick<RealShapedOpts, 'stateDir' | 'agentConfigPatch' | 'spee
   ...more,
   claudeScript, codexScript,
   // 只替身模型边界:让手动睡眠走正常成功路径,不发真实模型请求。
-  moderatorScript: { onEval: async () => JSON.stringify({ add: [], update: [], confirm: [], remove: [] }) },
+  moderatorScript: { onEval: async (prompt) => { if(prompt.startsWith('主人对 CC 说了一句话。判断')&&prompt.includes('快判沙盒配色')){topicJudgeAttempts++;await new Promise(r=>setTimeout(r,5500))}; return JSON.stringify({ add: [], update: [], confirm: [], remove: [] }) } },
   recordClaudeSpawnOptions: (o) => { spawnOptions.push(o) },
   recordCodexSpawnOptions: (o) => { codexThreads.push(o) },
   ...(more.stateDir ? {} : { seedFiles: { 'permission-rules.json': RULES, 'projects.json': PROJECTS } }),
@@ -203,6 +204,28 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     expect(prompt).toContain('周三晚上固定打羽毛球')
     // 下一条场景要在记忆页上删掉的那一句,这时还在提示词里
     expect(prompt).toContain(RETRACTED)
+  })
+
+  it('T6: 快判超时退回索引，回合不拖慢，之后精确命中仍可用', async () => {
+    const db = openSqlite(join(d.stateDir, 'wechat-cc.db')) as unknown as Db
+    const threads = makeThreadsStore(db), configPath=join(d.stateDir,'agent-config.json')
+    const config=readFileSync(configPath,'utf8')
+    const ids:string[]=[]
+    try {
+      writeFileSync(configPath,JSON.stringify({...JSON.parse(config),turnJudgeProvider:'claude'}))
+      for(const title of ['快判甲','快判乙']) {
+        const id=await threads.create({chatId:d.owner,title,summary:'快判沙盒配色',facets:[],tags:[],private:true,episodes:[]});ids.push(id)
+        await threads.addEntry({threadId:id,kind:'fact',line:'快判沙盒配色方案'})
+      }
+      const before=topicRoundDispatches, attempts=topicJudgeAttempts, start=Date.now()
+      d.sendText(d.owner,'快判沙盒配色')
+      await expect.poll(()=>topicRoundDispatches,{timeout:6000}).toBeGreaterThan(before)
+      expect(topicJudgeAttempts).toBe(attempts+1)
+      expect(Date.now()-start).toBeLessThan(3400)
+      expect(d.query('SELECT * FROM topic_recall_refs WHERE thread_id=?',ids[0]!)).toHaveLength(0)
+      d.sendText(d.owner,'快判甲后来怎么样了')
+      await expect.poll(()=>d.query('SELECT * FROM topic_recall_refs WHERE thread_id=?',ids[0]!).length,{timeout:6000}).toBe(1)
+    } finally {writeFileSync(configPath,config);for(const id of ids)db.query('DELETE FROM threads WHERE id=?').run(id);db.close()}
   })
 
   it('T4: recall opens a private bubble; successful sleep closes it except for owner-visible running matters', async () => {

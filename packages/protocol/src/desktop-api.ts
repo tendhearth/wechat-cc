@@ -1,4 +1,4 @@
-import { TopicOpenRequest } from './topic-bubbles'
+import { TopicOpenRequest, TopicRenameRequest, TopicMergeRequest, TopicDeleteRequest, TopicWrongRequest } from './topic-bubbles'
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
@@ -2419,6 +2419,10 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 // against it (assertResponseContract).
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  'POST /v1/memory/topics/rename': TopicRenameRequest,
+  'POST /v1/memory/topics/merge': TopicMergeRequest,
+  'POST /v1/memory/topics/delete': TopicDeleteRequest,
+  'POST /v1/memory/topics/entry/wrong': TopicWrongRequest,
   'POST /v1/memory/topics/open': TopicOpenRequest,
   'POST /v1/matter/seen': z.object({ id: z.string().regex(/^[a-f0-9]{8}$/), surface: z.literal('desktop').optional() }).strict(),
   // atelier

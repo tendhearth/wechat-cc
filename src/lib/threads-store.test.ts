@@ -113,3 +113,17 @@ describe('threads store', () => {
     expect((await s.get(a))!).toMatchObject({ summary: '新摘要', description: '自托管的透明代理网络工具' })
   })
 })
+
+it('主人合并话题保留旧名检索，并保留私密边界',async()=>{
+  const db=openTestDb(),s=makeThreadsStore(db)
+  try{
+    const from=await s.create({chatId:'owner',title:'家庭安排',summary:'',aliases:['家事'],facets:['life'],tags:['家人'],private:true,episodes:[]})
+    const into=await s.create({chatId:'owner',title:'日程',summary:'',status:'done',aliases:['计划'],facets:['task'],tags:['安排'],private:false,episodes:[]})
+    expect(await s.merge('owner',from,into)).toBe(true)
+    const result=await s.get(into)
+    expect(result?.private).toBe(true)
+    expect(result?.status).toBe('active')
+    expect(result?.aliases).toEqual(expect.arrayContaining(['家庭安排','家事','计划']))
+    expect(result?.tags).toEqual(expect.arrayContaining(['家人','安排']))
+  }finally{db.close()}
+})

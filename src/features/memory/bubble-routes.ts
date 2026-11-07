@@ -1,11 +1,12 @@
+import { makeThreadsStore } from '../../lib/threads-store'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { Db } from '../../lib/db'
 import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
-import { onWriteHint } from '../../lib/write-hints'
+import { hintWrite, onWriteHint } from '../../lib/write-hints'
 import { matterFeed } from '../../adapters/store/matter-feed'
 import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import { framedTooLargeFor } from '../../domain/matters/phone-scope'
-import { TopicDetailQuery, TopicOpenRequest, TopicsListQuery, TopicsSubscribeQuery } from '../../../packages/protocol/src/topic-bubbles'
+import { TopicDetailQuery, TopicOpenRequest, TopicRenameRequest, TopicMergeRequest, TopicDeleteRequest, TopicWrongRequest, TopicsListQuery, TopicsSubscribeQuery } from '../../../packages/protocol/src/topic-bubbles'
 import { topicDetailPage, topicsProjection, topicsRevision } from './topic-projection'
 
 type Caller = Parameters<RouteHandler>[2]
@@ -27,6 +28,7 @@ function offsetOf(cursor: string | undefined, scope: string): number {
   return offset
 }
 export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null }): RouteTable {
+  const threads = makeThreadsStore(d.db)
   const bubbles = makeTopicBubbles(d.db)
   const wrap = (run: (q: URLSearchParams, body: unknown, owner: string, caller: NonNullable<Caller>, ctx: Parameters<RouteHandler>[3]) => ReturnType<RouteHandler>): RouteHandler => async (q, body, caller, ctx) => {
     if (!isTopicOwnerSurface(caller)) return err(403, 'forbidden')
@@ -38,6 +40,37 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null }): Route
       return result
     } catch (e) { return err(e instanceof Error && e.message === 'invalid_cursor' ? 400 : 503, e instanceof Error && e.message === 'invalid_cursor' ? 'invalid_cursor' : 'topics_unavailable') }
   }
+  const edit = (action: 'rename' | 'merge' | 'delete' | 'entry/wrong'): RouteHandler => wrap(async (_q, body, owner) => {
+    const schema = action === 'rename' ? TopicRenameRequest : action === 'merge' ? TopicMergeRequest : action === 'entry/wrong' ? TopicWrongRequest : TopicDeleteRequest
+    const parsed = schema.safeParse(body)
+    if (!parsed.success) return err(400, 'invalid_params')
+    const p = parsed.data as {id:string;title?:string;into?:string}
+    if (action === 'entry/wrong') {
+      const entry = await threads.getEntry(p.id)
+      const topic = entry && await threads.get(entry.threadId)
+      if (!entry || topic?.chatId !== owner) return err(404, 'not_found')
+      if(d.ownerChatId()!==owner)return err(403,'forbidden')
+      await threads.updateEntry(entry.id, { status: 'superseded' })
+      return { status: 200, body: { ok: true, message: '记下了，这条不再当作事实。' } }
+    }
+    const topic = await threads.get(p.id)
+    if (topic?.chatId !== owner) return err(404, 'not_found')
+    if(d.ownerChatId()!==owner)return err(403,'forbidden')
+    if (action === 'rename') {
+      if (!p.title) return err(400, 'invalid_params')
+      await threads.update(p.id, { title: p.title })
+    } else if (action === 'merge') {
+      if (!p.into || p.into === p.id) return err(400, 'invalid_params')
+      if (!await threads.merge(owner, p.id, p.into)) return err(404, 'not_found')
+    } else {
+      d.db.transaction(() => {
+        d.db.query('DELETE FROM topic_merge_aliases WHERE chat_id=? AND (old_id=? OR surviving_id=?)').run(owner, p.id, p.id)
+        d.db.query('DELETE FROM threads WHERE id=? AND chat_id=?').run(p.id, owner)
+      })()
+    }
+    hintWrite(d.db, { kind: 'topics', chatId: owner })
+    return { status: 200, body: { ok: true } }
+  })
   return {
     'GET /v1/memory/topics': wrap(async (q, _body, owner, caller) => {
       const parsed = TopicsListQuery.safeParse(Object.fromEntries(q))
@@ -80,6 +113,10 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null }): Route
       }
       return { status: 200, body }
     }),
+    'POST /v1/memory/topics/rename': edit('rename'),
+    'POST /v1/memory/topics/merge': edit('merge'),
+    'POST /v1/memory/topics/delete': edit('delete'),
+    'POST /v1/memory/topics/entry/wrong': edit('entry/wrong'),
     'POST /v1/memory/topics/open': wrap(async (_q, body, owner) => {
       const parsed = TopicOpenRequest.safeParse(body)
       if (!parsed.success) return err(400, 'invalid_params')

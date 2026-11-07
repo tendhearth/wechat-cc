@@ -5,11 +5,12 @@
  * 评测(eval 的 topic 类)用同一个函数跑样本自带的话题。
  * `makeTopicRecall`:生产那一份 —— 只在主人自己的对话里,从库里读话题。失败一律当没碰到,绝不拖垮这一轮。
  */
+import { TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
 import type { ThreadsStore, TopicEntry, ThreadRecord } from '../../lib/threads-store'
 import { matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, searchTopics, topicJudgePrompt, MAX_TOPICS, type MatchTopic, type TopicSearchHit } from '../../domain/topic-match'
 
-/** 真库副本上量过:生产的便宜模型(DeepSeek → 想光了换 Qwen)回一个编号 1–3.2 秒。整轮还有 mw-recall 的 4 秒总上限。 */
-export const TOPIC_JUDGE_TIMEOUT_MS = 3500
+/** 快判预算小于 mw-recall 的 4 秒总限，为读索引和记忆留出余量。 */
+export const TOPIC_JUDGE_TIMEOUT_MS = TURN_JUDGE_TIMEOUT_MS
 export const TOPIC_RECALL_MIN_CHARS = 2
 
 export interface TopicRecallResult {
@@ -34,6 +35,7 @@ export interface ResolveOpts {
 
 async function judge(text: string, cands: MatchTopic[], o: ResolveOpts): Promise<string | null> {
   if (!o.cheapEval || cands.length === 0) return null
+  const started = Date.now()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const answer = await Promise.race([
@@ -46,6 +48,7 @@ async function judge(text: string, cands: MatchTopic[], o: ResolveOpts): Promise
     o.log?.('TOPICS', `judge skipped: ${err instanceof Error ? err.message : String(err)}`)
     return null
   } finally {
+    o.log?.('TOPICS', `judge via=${(o.cheapEval as {via?:string})?.via ?? 'model'} elapsedMs=${Date.now() - started}`)
     if (timer !== undefined) clearTimeout(timer)
   }
 }
@@ -99,9 +102,10 @@ export function makeTopicRecall(d: TopicRecallDeps): TopicRecall {
   return async (chatId, text) => {
     if (!d.isOwner(chatId)) return null
     try {
+      const started = Date.now()
       const topics = await loadMatchTopics(d.threads, chatId)
       const r = await resolveTopicRecall(text, topics, { cheapEval: d.cheapEval(), ...(d.timeoutMs !== undefined ? { timeoutMs: d.timeoutMs } : {}), log: d.log })
-      if (r) d.log('TOPICS', `recall chat=${chatId} via=${r.via} topics=${r.topicIds.join(',')} entries=${r.entryIds.length} chars=${r.block.length}`)
+      d.log('TOPICS', `recall chat=${chatId} via=${r?.via ?? 'index-none'} elapsedMs=${Date.now() - started} topics=${r?.topicIds.join(',') ?? ''}`)
       if (r && d.onAdopt) r.adopt = (requestId, messageIds = []) => {
         try { if (d.isOwner(chatId)) d.onAdopt!(chatId, requestId, r, messageIds) }
         catch (err) { d.log('TOPICS', `bubble recall failed: ${err instanceof Error ? err.message : String(err)}`) }

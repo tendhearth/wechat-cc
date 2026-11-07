@@ -9,7 +9,7 @@ function fixture(device=true){
  const calls:string[]=[],posts:any[]=[]
  let openFail=false,pageGate:Promise<any>|null=null,detailGate:Promise<any>|null=null
  const topic={id:'server',title:'服务器',description:'家里的备份',summary:'核对中',bubbleState:'closed'}
- const detail={topic,entries:[{id:'e',line:'每周核验',body:'原始内容',recalled:true,source:'主人',createdTs:'2026-11-06T00:00:00Z'}],matters:[],messages:[],pages:{entries:{total:1,nextCursor:null},matters:{total:0,nextCursor:null},messages:{total:0,nextCursor:null}}}
+ const detail={topic,entries:[{id:'e',status:'live',line:'每周核验',body:'原始内容',recalled:true,source:'主人',createdTs:'2026-11-06T00:00:00Z'}],matters:[],messages:[],pages:{entries:{total:1,nextCursor:null},matters:{total:0,nextCursor:null},messages:{total:0,nextCursor:null}}}
  const env={document:w.document,window:w,T:'dTEST',isDevice:device,REMOTE:null,preferTunnel:false,crypto:globalThis.crypto,setTimeout:()=>0,clearTimeout:()=>{},esc:(s:any)=>String(s).replace(/</g,'&lt;').replace(/"/g,'&quot;'),api:async(p:string)=>{calls.push(p);if(p.includes('/detail')&&detailGate){const pending=detailGate;detailGate=null;return await pending};return {status:200,json:async()=>p.includes('/owner-chat/page')&&pageGate?await pageGate:p.includes('/detail')?{...detail,topic:{...topic,id:new URL('https://fixture.test'+p).searchParams.get('id'),title:p.includes('id=other')?'另一个':'服务器'}}:{topics:[topic],nextCursor:null,revision:'1'}}},mPostOnce:async(p:string,o:any)=>{posts.push({p,body:JSON.parse(o.body)});if(openFail){openFail=false;throw Error('offline')};topic.bubbleState='open';return {status:200}},onUnauthorized:()=>{},cPrivacyRevision:0,cMessages:new Map(),cReady:true,cRender:()=>{},cNotice:()=>{},openMatter:()=>{},tunnel:()=>({subscribe:()=>()=>{}})}
  const f=new Function(...Object.keys(env),readMobileSource('topics.js')+'\nreturn {tStart,tOpen,tClose,tClear,tList,tRead,cLocateMessage,revoke(){isDevice=false;cReady=false;cPrivacyRevision++;cMessages.clear();tClear()},messageCount(){return cMessages.size},selected(){return tSelected}}')(...Object.values(env))
  return {w,calls,posts,failOpenOnce(){openFail=true},sleep(){topic.bubbleState='closed'},delayDetail(){let release!:(r:any)=>void;detailGate=new Promise(r=>{release=r});return release},delayPage(){let release!:(b:any)=>void;pageGate=new Promise(r=>{release=r});return release},...f}
@@ -33,4 +33,33 @@ it('a late 404 for the previous topic cannot clear or close the newly selected t
 
 it('a failed explicit open exposes Retry and retries the open action rather than reading a still-closed bubble',async()=>{
  const h=fixture();h.tStart();await new Promise(r=>setTimeout(r,0));h.failOpenOnce();await h.tOpen('server');const retry=h.w.document.getElementById('topic-retry') as unknown as HTMLButtonElement;expect(retry.hidden).toBe(false);retry.click();await new Promise(r=>setTimeout(r,0));expect(h.w.document.getElementById('topic-body')?.textContent).toContain('每周核验');expect(retry.hidden).toBe(true);expect(h.posts).toHaveLength(2);expect(h.posts.every((p:any)=>p.p==='/v1/memory/topics/open')).toBe(true)
+})
+
+
+it('device edits stay in the bubble and link identities cannot submit edits',async()=>{
+ const h=fixture();h.tStart();await new Promise(r=>setTimeout(r,0));await h.tOpen('server')
+ const body=h.w.document.getElementById('topic-body')!
+ expect(body.textContent).toContain('管理话题')
+ const name=h.w.document.getElementById('topic-name') as unknown as HTMLInputElement;name.value='家中备份'
+ ;(body.querySelector('[data-topic-edit="rename"]') as unknown as HTMLButtonElement).click()
+ await new Promise(r=>setTimeout(r,0))
+ expect(h.posts.at(-1)).toEqual({p:'/v1/memory/topics/rename',body:{id:'server',title:'家中备份'}})
+ ;(body.querySelector('[data-topic-wrong="e"]') as unknown as HTMLButtonElement).click()
+ await new Promise(r=>setTimeout(r,0))
+ expect(h.posts.at(-1)).toEqual({p:'/v1/memory/topics/entry/wrong',body:{id:'e'}})
+ const before=h.posts.length;h.revoke()
+ expect(h.posts).toHaveLength(before)
+ expect(h.w.document.getElementById('topic-body')?.textContent).toBe('')
+})
+
+
+it('合并后的旧话题引用跟随 v109 别名，不额外打开泡泡',async()=>{
+ const h=fixture();h.tStart();await new Promise(r=>setTimeout(r,0));await h.tOpen('server')
+ const release=h.delayDetail(),pending=h.tRead()
+ release({status:200,json:async()=>({topic:{id:'survivor',mergedInto:'survivor',bubbleState:'open'}})})
+ await pending
+ expect(h.selected()).toBe('survivor')
+ expect(h.calls.some((p:string)=>p.includes('/detail?id=survivor'))).toBe(true)
+ expect(h.posts).toHaveLength(1)
+ expect(h.w.document.getElementById('topic-notice')?.textContent).toBe('')
 })

@@ -34,6 +34,10 @@ export const DESKTOP_CALLS = {
   },
   protocol: { capabilities: call('GET /v1/protocol/capabilities') },
   topics: {
+    rename: call('POST /v1/memory/topics/rename', { body: t<{ id: string; title: string }>() }),
+    merge: call('POST /v1/memory/topics/merge', { body: t<{ id: string; into: string }>() }),
+    delete: call('POST /v1/memory/topics/delete', { body: t<{ id: string }>() }),
+    wrong: call('POST /v1/memory/topics/entry/wrong', { body: t<{ id: string }>() }),
     list: call('GET /v1/memory/topics', { query: t<{ view?: 'recent' | 'all'; q?: string; limit?: number; cursor?: string }>() }),
     detail: call('GET /v1/memory/topics/detail', { query: t<{ id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }>() }),
     open: call('POST /v1/memory/topics/open', { body: t<{ id: string; requestId: string }>() }),
