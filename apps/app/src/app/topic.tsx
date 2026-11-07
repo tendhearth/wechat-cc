@@ -3,7 +3,7 @@ import { BusyIndicator } from '../ui/motion'
 import { t } from '../i18n'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScrollView, View, TextInput } from 'react-native'
+import { ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { TopicDetailT } from '../backend/types'
 import { useBackendCtx } from '../state/BackendProvider'
@@ -19,6 +19,7 @@ import { LinkRow } from '../ui/Rows'
 import { Button } from '../ui/Button'
 import { Sheet } from '../ui/Sheet'
 import { Txt } from '../ui/Txt'
+import { TextField } from '../ui/TextField'
 import { space } from '../ui/tokens'
 import { useTheme } from '../ui/useTheme'
 
@@ -104,7 +105,7 @@ export function TopicBubble() {
       {data && conn.topics === 'v1' ? <>
         <Button kind="secondary" label={zh?'管理话题':'Manage topic'} disabled={!enabled||busy} onPress={() => {setEditing(!editing);setName(data.topic.title);void loadTargets().catch(()=>setNote(zh?'暂时读不到，重试':'Cannot read right now'))}} />
         {editing ? <View style={{gap:space.m}}>
-          <TextInput accessibilityLabel={zh?'话题名称':'Topic name'} value={name} onChangeText={setName} maxLength={120} style={{color:c.ink}} />
+          <TextField accessibilityLabel={zh?'话题名称':'Topic name'} value={name} onChangeText={setName} maxLength={120} />
           <Button kind="secondary" label={zh?'改名':'Rename'} disabled={!enabled||busy||!name.trim()} onPress={()=>void edit('rename',{id,title:name.trim()})} />
           <Txt>{zh?'并到…':'Merge into…'}</Txt>
           {targets.map(t=><Button key={t.id} kind="secondary" label={t.title} disabled={!enabled||busy} onPress={()=>void edit('merge',{id,into:t.id})} />)}
