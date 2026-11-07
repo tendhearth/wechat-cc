@@ -223,6 +223,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     },
     async topics(p) { return api.topics.list({ query: p }) },
     async topicDetail(p) { return api.topics.detail({ query: p }) },
+    async topicEdit(action, input) { await api.topics[action]({ body: input as never }) },
     async topicOpen(id, requestId) { return api.topics.open({ body: { id, requestId }, retry: true }) },
     async matterHistory() {
       if (conn.state === 'revoked') throw new BackendError('revoked')

@@ -243,10 +243,16 @@ export function makeThreadsStore(db: Db): ThreadsStore {
     async merge(owner,from,into) {
       if(from===into)return false
       return db.transaction(() => {
-        const source=db.query<{episodes:string},[string,string]>('SELECT episodes FROM threads WHERE id=? AND chat_id=?').get(from,owner)
-        const target=db.query<{episodes:string},[string,string]>('SELECT episodes FROM threads WHERE id=? AND chat_id=?').get(into,owner)
+        const source=db.query<ThreadRow,[string,string]>('SELECT * FROM threads WHERE id=? AND chat_id=?').get(from,owner)
+        const target=db.query<ThreadRow,[string,string]>('SELECT * FROM threads WHERE id=? AND chat_id=?').get(into,owner)
         if(!source||!target)return false
-        db.query('UPDATE threads SET episodes=? WHERE id=?').run(JSON.stringify(mergeEpisodes([...JSON.parse(source.episodes),...JSON.parse(target.episodes)])),into)
+        const union = (a: string, b: string, extra: string[] = []) => JSON.stringify([...new Set([...safeJsonArray<string>(a), ...safeJsonArray<string>(b), ...extra])])
+        // 合并不会把私密内容降为公开；旧话题名仍是新话题的检索别名。
+        db.query(`UPDATE threads SET episodes=?, aliases=?, tags=?, facets=?, private=?, last_active=MAX(last_active,?), status=CASE WHEN status='active' OR ?='active' THEN 'active' WHEN status='dormant' OR ?='dormant' THEN 'dormant' ELSE 'done' END WHERE id=?`).run(
+          JSON.stringify(mergeEpisodes([...safeJsonArray<Episode>(source.episodes),...safeJsonArray<Episode>(target.episodes)])),
+          union(target.aliases,source.aliases,[source.title]),union(target.tags,source.tags),union(target.facets,source.facets),
+          source.private||target.private ? 1 : 0,source.last_active,source.status,source.status,into)
+
         db.query(`INSERT INTO topic_bubbles(thread_id,state,opened_at,last_recalled_at,last_opened_by_owner_at,activity_revision)
           SELECT ?,state,opened_at,last_recalled_at,last_opened_by_owner_at,activity_revision+1 FROM topic_bubbles WHERE thread_id=?
           ON CONFLICT(thread_id) DO UPDATE SET state=CASE WHEN topic_bubbles.state='open' OR excluded.state='open' THEN 'open' ELSE 'closed' END,

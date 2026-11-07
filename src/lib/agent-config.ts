@@ -54,6 +54,7 @@ export interface AgentConfig {
   relay_v2_url?: string
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
    *  该 provider,openai 注册不再静默劫持。 */
+  turnJudgeProvider?: string
   cheapEvalProvider?: string
   /** 非管理员对话可以切到哪些 provider(core/provider-policy.ts)。缺省 =
    *  全部已注册。guest 对共享钥匙的 provider(agy/cursor)无论如何都拒。 */
@@ -325,6 +326,7 @@ const AgentConfigSchema = z.object({
   remote_tunnel: z.boolean().optional(),
   remote_relay_url: z.string().optional(),
   relay_v2_url: z.string().optional(),
+  turnJudgeProvider: z.string().optional(),
   cheapEvalProvider: z.string().optional(),
   trusted_providers: z.array(z.string()).optional(),
   cli_auto_upgrade: CliAutoUpgradeSettings.optional(),
@@ -465,6 +467,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
       ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
       ...(typeof parsed.relay_v2_url === 'string' ? { relay_v2_url: parsed.relay_v2_url } : {}),
+      ...(typeof parsed.turnJudgeProvider === 'string' ? { turnJudgeProvider: parsed.turnJudgeProvider } : {}),
       ...(typeof parsed.cheapEvalProvider === 'string' ? { cheapEvalProvider: parsed.cheapEvalProvider } : {}),
       ...(Array.isArray(parsed.trusted_providers) ? { trusted_providers: parsed.trusted_providers } : {}),
       ...(cliAutoUpgrade ? { cli_auto_upgrade: cliAutoUpgrade } : {}),

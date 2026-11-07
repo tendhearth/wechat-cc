@@ -27,6 +27,8 @@ export const DEMO_CHAT_REPLY_MS = 5000
 export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
   const topicOpened = new Map<string, string>()
+  const topicTitles = new Map<string,string>(), topicDeleted = new Set<string>(), topicMerged = new Map<string,string>()
+  let topicWrong = false
   const topicReceipts = new Map<string, import('./types').TopicOpenT>()
   let topicRevision = 0
   const topicEntryTime = new Date(now()).toISOString()
@@ -194,7 +196,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const list = () => order.map(id => entries.get(id)!)
   const phaseOf = (e: Entry) => e.detail.task?.phase ?? ((e.detail.matter.state === undefined ? e.detail.matter.status === 'replied' : e.detail.matter.state === 'done') ? 'replied' : 'working')
   function topicsList(p: { view?: 'recent' | 'all'; cursor?: string }) {
-    const all = demoTopics({ view: 'all' }).topics.map(t => topicOpened.has(t.id) ? { ...t, bubbleState: 'open' as const, lastOpenedByOwnerAt: topicOpened.get(t.id)! } : t)
+    const all = demoTopics({ view: 'all' }).topics.filter(t=>!topicDeleted.has(t.id)).map(t=>({...t,title:topicTitles.get(t.id)??t.title})).map(t => topicOpened.has(t.id) ? { ...t, bubbleState: 'open' as const, lastOpenedByOwnerAt: topicOpened.get(t.id)! } : t)
       .sort((a, b) => (b.lastOpenedByOwnerAt ?? b.lastRecalledAt ?? '').localeCompare(a.lastOpenedByOwnerAt ?? a.lastRecalledAt ?? '') || a.id.localeCompare(b.id))
     return { topics: p.view === 'all' ? all : all.slice(0, 6), nextCursor: null, revision: `demo-topics:${topicRevision}` }
   }
@@ -280,10 +282,21 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async topics(p) { return topicsList(p) },
     async topicDetail(p) {
-      const topic = topicsList({ view: 'all' }).topics.find(t => t.id === p.id)
+      const into = topicMerged.get(p.id)
+      const topic = topicsList({ view: 'all' }).topics.find(t => t.id === (into??p.id))
       if (!topic) throw new BackendError('not_found')
       const matters = list().slice(0, 3).map(e => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null }))
-      return { topic, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: 'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: topicEntryTime, updatedTs: topicEntryTime, recalled: true }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: `demo-topics:${topicRevision}` }
+      return { topic: {...topic,mergedInto:into??null}, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: topicWrong?'superseded':'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: topicEntryTime, updatedTs: topicEntryTime, recalled: !topicWrong }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: `demo-topics:${topicRevision}` }
+    },
+    async topicEdit(action,input) {
+      if(action==='wrong') { if(input.id!=='demo-entry')throw new BackendError('not_found');topicWrong=true }
+      else {
+        if(!topicsList({view:'all'}).topics.some(t=>t.id===input.id))throw new BackendError('not_found')
+        if(action==='rename') { if(!input.title?.trim())throw new BackendError('invalid');topicTitles.set(input.id,input.title.trim()) }
+        else if(action==='merge') {if(!input.into||input.into===input.id||!topicsList({view:'all'}).topics.some(t=>t.id===input.into))throw new BackendError('invalid');topicMerged.set(input.id,input.into);topicDeleted.add(input.id)}
+        else topicDeleted.add(input.id)
+      }
+      topicRevision++;publish([])
     },
     async topicOpen(id, requestId) {
       const receipt = topicReceipts.get(requestId)
@@ -767,6 +780,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
+    reset() { topicTitles.clear();topicDeleted.clear();topicMerged.clear();topicWrong=false;topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }

@@ -20,7 +20,7 @@ describe('parseSample', () => {
     expect(parseSample({ id: 'a', kind: 'reply', input: { text: '早' } }, 'a-copy')).toEqual({ ok: false, error: 'id 要和文件名一致(a-copy)' })
   })
   it('kind 不认得、input 不对 ⇒ 拒并说明', () => {
-    expect(parseSample({ id: 'a', kind: 'chat', input: {} }, 'a')).toEqual({ ok: false, error: 'kind 只能是 reply / brief / reference / topic' })
+    expect(parseSample({ id: 'a', kind: 'chat', input: {} }, 'a')).toEqual({ ok: false, error: 'kind 只能是 reply / brief / reference / topic / topic-recall' })
     expect(parseSample({ id: 'a', kind: 'reply', input: {} }, 'a')).toEqual({ ok: false, error: 'reply 的 input.text 要是非空字符串' })
     expect(parseSample({ id: 'a', kind: 'reply', input: { text: '早', tier: 'guest' } }, 'a')).toEqual({ ok: false, error: 'reply 的 input.tier 只能是 admin / trusted' })
     expect(parseSample({ id: 'a', kind: 'brief', input: {} }, 'a')).toEqual({ ok: false, error: 'brief 的 input.material 要是对象' })
@@ -206,4 +206,11 @@ describe('renderReportMd', () => {
     const cur = run('r1', [result('a', 'pass')])
     expect(renderReportMd(cur, diffRuns(null, cur))).toContain('第一次跑,这次是基线')
   })
+})
+
+
+it('topic-recall 样本进入现有 eval 硬规则流程', () => {
+  const result = parseSample({id:'topic-recall-case',kind:'topic-recall',input:{text:'冷备怎么查',topics:[]},rules:[{recalls:{topic:'backup',entry:'weekly'}}]},'topic-recall-case')
+  expect(result.ok).toBe(true)
+  if(result.ok) expect(result.sample.kind).toBe('topic-recall')
 })

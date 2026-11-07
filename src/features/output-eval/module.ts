@@ -1,3 +1,4 @@
+import { loadAgentConfig } from '../../lib/agent-config'
 /**
  * 输出评测接进 daemon 的那一份(模块清单在 index.ts)。只有 daemon-modules.ts import 这个文件。
  */
@@ -19,6 +20,7 @@ export function outputEvalModule(f: Foundation): DaemonModule<void> {
       const api = ctx.get<InternalApiLifecycle>('internal-api')
       return {
         registry: boot.registry,
+        turnJudgeProvider: () => loadAgentConfig(stateDir).turnJudgeProvider,
         defaultProviderId: () => boot.defaultProviderId,
         buildInstructions: (p, tp, chatId, model) => boot.buildInstructions(p, tp, chatId, model),
         ...(boot.currentModelFor ? { currentModelFor: boot.currentModelFor } : {}),
