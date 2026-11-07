@@ -97,3 +97,5 @@ wechat-cc eval diff [<runA> <runB>]                              # 缺省:最近
 | 10-29 | 落地:纯规则 `src/domain/output-eval.ts`;daemon `src/features/output-eval/`(模块 `output-eval`,`POST /v1/eval/run`,`kind: reply / brief / reference / judge`;码 `eval_invalid_request` / `eval_unknown_provider` / `eval_no_cheap_model`);CLI `src/cli/output-eval.ts` + `wechat-cc eval run / diff`;示例样本 `eval/output/examples/`(复制到 `<STATE_DIR>/eval/samples/`);沙盒场景「输出评测」。与稿不同:chatId 用 `eval-<uuid>`(见上);judge 走同一条路由的 `kind: 'judge'` |
 
 2026-11-06：每轮话题召回增加 `topic-recall` 类别（旧 `topic` 保留），样本索引、期望话题/条目、同义表达与闲聊负例，以及 `wechat-cc eval run` 跑法见 [话题召回评测](../../eval/output/TOPIC-RECALL.md)。召回与任务指称的秒级判定使用独立 `turn_judge_provider`，不再跟随后台 `cheap_eval_provider`。
+
+2026-11-07：零候选且去标点/空白后至少 12 个字母或数字、至少 3 个不同非停用词时，按 lastActive 取最近 5 个未 done 话题做 2.5 秒快判兜底；短句/寒暄不问模型，模型可用 `话题.条目` 点名并优先召回条目（见 [T2 修订](../superpowers/specs/2026-11-05-topics-t1-t3-design.md#怎么判这一轮碰到哪个话题先索引模型兜底)）。
