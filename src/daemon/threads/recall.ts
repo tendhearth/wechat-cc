@@ -64,7 +64,7 @@ export async function resolveTopicRecall(text: string, topics: readonly MatchTop
     const cands = reason === 'ambiguous'
       ? m.ambiguous.map(a => topics.find(t => t.id === a.id)!).filter(Boolean)
       : isSubstantiveTopicQuery(text)
-        ? [...topics].sort((a, b) => b.lastActive.localeCompare(a.lastActive)).slice(0, TOPIC_FALLBACK_MAX_CANDIDATES)
+        ? [...topics].sort((a, b) => (b.lastActive ?? '').localeCompare(a.lastActive ?? '')).slice(0, TOPIC_FALLBACK_MAX_CANDIDATES)
         : []
     const picked = await judge(text, cands, reason, o)
     if (picked) {

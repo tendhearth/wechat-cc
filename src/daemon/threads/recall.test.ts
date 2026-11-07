@@ -232,3 +232,13 @@ describe('makeTopicSearch(topic_search 工具)', () => {
     expect((await search('owner', 'Meet'))[0]).toMatchObject({ title: 'bx', entries: [{ line: 'Google Meet 延迟高根因' }] })
   })
 })
+
+describe('零候选兜底:评测样本里的话题可能没有 lastActive', () => {
+  it('缺 lastActive 也照常问模型,不抛', async () => {
+    const { resolveTopicRecall } = await import('./recall')
+    const t = { id: 't1', title: 'bx', summary: '自托管网络', aliases: [], tags: [], entries: [{ id: 'e1', kind: 'fact', line: 'bx防WebRTC泄漏：默认UDP走代理', body: '', due: null, updatedTs: '' }] } as unknown as import('../../domain/topic-match').MatchTopic
+    const r = await resolveTopicRecall('开视频会议的时候浏览器会把真实 IP 漏出去吗', [t, { ...t, id: 't2', title: '1in8b' }], { cheapEval: async () => '1.1' })
+    expect(r?.topicIds).toEqual(['t1'])
+    expect(r?.entryIds[0]).toBe('e1')
+  })
+})
