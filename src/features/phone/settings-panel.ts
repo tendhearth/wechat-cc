@@ -247,7 +247,8 @@ import { deviceIdOf, makeDeviceCredentials, makeDeviceStore, type DeviceRow } fr
 import { normalizeLang } from './phone-insight-llm'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
 import { ROUTES } from '@wechat-cc/protocol/routes'
-import { phoneClientOf, withPhoneClient } from './phone-client'
+import { makeRouteUsage } from '../../lib/route-usage'
+import { phoneBuildOf, phoneClientOf, withPhoneClient } from './phone-client'
 import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 
 /** 手机能看哪几件(P3c-1 起规矩在 domain/matters/phone-scope.ts,`/v1/matters`、`/v1/matter` 按 caller 用它)。 */
@@ -262,6 +263,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   // 10 分钟;长期设备令牌(随身 CC 配对)origin 'device'、永不过期但可按台撤销。
   // 设备的落盘与注册表同步只在 device-store.ts 的 makeDeviceCredentials 一处。
   const tokens: PanelTokens = deps.tokens ?? makeTokenRegistry(undefined, now)
+  const noteRouteUsage = makeRouteUsage(deps.stateDir, now)
   const devices = makeDeviceCredentials({ store: makeDeviceStore(deps.stateDir, now), tokens, routeAllow: PHONE_ROUTES })
   devices.bootRegister()
   const portraitPng = makePortraitPng({ stateDir: deps.stateDir, ...(deps.portraitRender ? { render: deps.portraitRender } : {}) })
@@ -804,6 +806,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       deps.log('SETTINGS', `route_not_allowed origin=${caller.origin} path=${req.method} ${url.pathname}`)
       return json({ error: 'route_not_allowed' }, 403)
     }
+    const selftest = phoneClientOf(req) === 'app' && phoneBuildOf(req) === 'selftest-P3d'
+    noteRouteUsage(selftest ? 'selftest' : phoneClientOf(req), selftest ? 'P3d' : phoneClientOf(req) === 'app' ? phoneBuildOf(req) : req.headers.get('x-cc-web-routes'), `${req.method} ${url.pathname}`)
     const finishRead = async (response: Promise<Response> | Response): Promise<Response> => {
       const result=await response
       return req.method==='GET'&&!panelToken(t)?json({error:'unauthorized'},401):result

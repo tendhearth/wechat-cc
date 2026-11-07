@@ -60,6 +60,14 @@ export const WIRE_COMPAT: readonly WireCompatRow[] = Object.freeze([
  * 「还是自己处理器」的行只许变少。
  */
 export type WireRouteStep = 'P3c-1' | 'P3c-2' | 'P3c-3' | 'P3c-4' | 'P3d' | 'P3e'
+export type RouteRetirement = { client: 'app' | 'web' | 'desktop' | 'selftest'; milestone: string; minimum: string | null }
+// P3e 尚未发版:不能拿当前 daemon/package 版本冒充已发布的桌面门槛。
+export const ROUTE_RETIREMENT = {
+  app: { client: 'app', milestone: 'P3f', minimum: '3' },
+  web: { client: 'web', milestone: 'P3g', minimum: 'P3g' },
+  desktop: { client: 'desktop', milestone: 'P3e', minimum: null },
+  selftest: { client: 'selftest', milestone: 'P3d', minimum: 'P3d' },
+} as const satisfies Record<string, RouteRetirement>
 export interface WireRouteAlias {
   /** 旧键(`METHOD /m/api/...`,或桌面的 `METHOD /v1/workbench/...`;和 routes.ts 的键同一写法)。 */
   from: string
@@ -75,16 +83,17 @@ export interface WireRouteAlias {
   handler: 'own' | 'alias'
   /** 哪一步并它(设计稿「分步」)。 */
   step: WireRouteStep
+  retirement: readonly RouteRetirement[]
   /** 什么时候删这一行。 */
   retireWhen: string
 }
 
 type Readers = WireRouteAlias['readers']
 const RETIRE: Record<Readers[number], string> = {
-  app: '近 30 天连过的设备都 ≥ 改读新路径的 App 构建(P3f)',
+  app: '近 30 天活跃 App 都 ≥ build 3(P3f)，且近 30 天无别名调用',
   web: '网页改读新路径(P3g,随 self deploy 当场换)',
   selftest: 'selftest 改调新路径(随 P3d 同一个 PR)',
-  desktop: '桌面 ≥ 改读新路径的那一版',
+  desktop: '桌面 ≥ P3e 发行版(未发布，版本号待登记)，且近 30 天无别名调用',
 }
 /**
  * 已并的旧键(handler: 'alias'):面板里没有自己的处理器了,翻到新键走同一个分发(转换在 legacy-routes.ts)。
@@ -120,14 +129,14 @@ export const MERGED_ALIAS_KEYS = [
 export type MergedAliasKey = (typeof MERGED_ALIAS_KEYS)[number]
 const MERGED: ReadonlySet<string> = new Set(MERGED_ALIAS_KEYS)
 const alias = (from: string, to: string, step: WireRouteStep, transform: string | null, readers: Readers = ['app'], link: WireRouteAlias['link'] = 'none'): WireRouteAlias =>
-  ({ from, to, transform, readers, link, handler: MERGED.has(from) ? 'alias' : 'own', step, retireWhen: readers.map(r => RETIRE[r]).join(';') })
+  ({ from, to, transform, readers, link, handler: MERGED.has(from) ? 'alias' : 'own', step, retirement: [...new Set([...readers, 'app', 'web'] as const)].map(r => ROUTE_RETIREMENT[r]), retireWhen: readers.map(r => RETIRE[r]).join(';') })
 /**
  * 桌面的旧键(P3e):一件事上的动作收进 `/v1/matter/*` 以后,桌面装着的 .app 还调 `/v1/workbench/*` 双胞胎(tauri 白名单编在 .app 里)。
  * 旧键照旧在路由表里(档位、operator、tauri 不动),处理器就是新键那一个(新键在 operator 范围下认旧键的参数、回旧键的回包),
  * 所以一律纯改名(transform null)、登记即并(handler alias)、链接令牌走不了。daemon 里认它的是 src/daemon/internal-api/legacy-desktop-routes.ts。
  */
 const desktopAlias = (from: string, to: string): WireRouteAlias =>
-  ({ from, to, transform: null, readers: ['desktop'], link: 'none', handler: 'alias', step: 'P3e', retireWhen: RETIRE.desktop })
+  ({ from, to, transform: null, readers: ['desktop'], link: 'none', handler: 'alias', step: 'P3e', retirement: [ROUTE_RETIREMENT.desktop], retireWhen: RETIRE.desktop })
 
 export const WIRE_ROUTE_ALIASES: readonly WireRouteAlias[] = Object.freeze([
   // ── P3c-1 一件事与主人对话:已并(MERGED_ALIAS_KEYS),一份数据一个 /v1 处理器

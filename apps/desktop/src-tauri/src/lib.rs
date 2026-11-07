@@ -825,6 +825,7 @@ async fn wechat_health_ping(
     let result = timeout(duration, async {
         reqwest::Client::new()
             .get(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
@@ -863,6 +864,7 @@ async fn wechat_health_version(
     let running = match timeout(duration, async {
         reqwest::Client::new()
             .get(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
@@ -1027,6 +1029,7 @@ async fn agent_converse(text: String, images: Option<Vec<Value>>) -> Result<Valu
     let result = timeout(duration, async {
         reqwest::Client::new()
             .post(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .body(payload)
@@ -1096,6 +1099,7 @@ async fn agent_speak(text: String) -> Result<SpeakOut, String> {
     let result = timeout(duration, async {
         reqwest::Client::new()
             .post(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .body(payload)
@@ -1164,6 +1168,7 @@ async fn agent_transcribe(audio_b64: String, mime: String) -> Result<String, Str
     let result = timeout(duration, async {
         reqwest::Client::new()
             .post(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .body(payload)
@@ -1281,7 +1286,8 @@ async fn owner_workspace_call(
                 .header("Content-Type", "application/json")
                 .body(body.unwrap_or_else(|| "{}".to_string()))
         };
-        req.header("Authorization", format!("Bearer {token}"))
+        req.header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
+            .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
     })
@@ -1404,7 +1410,7 @@ async fn workbench_call(method: String, path: String, body: Option<String>) -> R
         let request = if method == "GET" { client.get(url) } else {
             client.post(url).header("Content-Type", "application/json").body(body.unwrap_or_else(|| "{}".into()))
         };
-        request.bearer_auth(token).send().await
+        request.header("x-cc-desktop-version", env!("CARGO_PKG_VERSION")).bearer_auth(token).send().await
     }).await.map_err(|_| "request timed out".to_string())?
       .map_err(|e| format!("request error: {e}"))?;
     let status = response.status();
@@ -1651,6 +1657,7 @@ async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, 
     let result = timeout(Duration::from_secs(10), async {
         reqwest::Client::new()
             .post(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .body(payload)

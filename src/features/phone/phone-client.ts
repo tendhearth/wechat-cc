@@ -18,12 +18,16 @@ import { AsyncLocalStorage } from 'node:async_hooks'
  */
 export type PhoneClient = 'app' | 'web'
 
+const appBuilds = new WeakMap<Request, string>()
+export const phoneBuildOf = (req: Request): string | undefined => appBuilds.get(req)
+
 const appRequests = new WeakSet<Request>()
 const current = new AsyncLocalStorage<PhoneClient>()
 
 /** tunnel-v2-stream 合成的那个 Request:标记成「原生 App 来的」。只在 daemon 进程里调。 */
-export function markAppRequest(req: Request): Request {
+export function markAppRequest(req: Request, build?: string): Request {
   appRequests.add(req)
+  if (build) appBuilds.set(req, build)
   return req
 }
 

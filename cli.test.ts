@@ -93,6 +93,7 @@ describe('citty migrated commands', () => {
       'plugin',
       'provider',
       'reply',
+      'routes',
       'rules',
       'run',
       'self',

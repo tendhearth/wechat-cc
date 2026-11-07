@@ -191,6 +191,7 @@ async function mStop(task,run) {
 }
 /** A POST selects one transport once. A lost LAN reply must never send it again through the tunnel. */
 function mPostOnce(path,opts) {
+  opts=ccRouteVersion(opts)
   if(preferTunnel&&REMOTE)return viaTunnel(path,opts)
   var ctrl=new AbortController(),timer=setTimeout(function(){ctrl.abort()},2500)
   return fetch(q(path),Object.assign({signal:ctrl.signal},opts)).catch(function(e){if(REMOTE)preferTunnel=true;throw e}).finally(function(){clearTimeout(timer)})

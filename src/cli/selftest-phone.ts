@@ -522,7 +522,7 @@ export function defaultPhoneSelftestDeps(stateDir: string): PhoneSelftestDeps {
     },
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    connect: (url, token) => makeProtocolClient({ open: () => adaptWebSocket(new WebSocket(url)), token }),
+    connect: (url, token) => makeProtocolClient({ open: () => adaptWebSocket(new WebSocket(url)), token, build: 'selftest-P3d' }),
     log: (line) => console.error(`[selftest] ${line}`),
   }
 }

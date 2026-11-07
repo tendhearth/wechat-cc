@@ -1,3 +1,5 @@
+import { markAppRequest } from '../../features/phone/phone-client'
+import { readRouteUsage } from '../../lib/route-usage'
 /**
  * P3e 一件事上的动作收进 `/v1/matter/*`(设计稿 docs/superpowers/specs/2026-11-05-p3-one-route-family-design.md「P3e」):
  * 一个动作一个处理器(routes-matter-actions.ts,MattersService 那一层),两种调用方两份参数。这里盯三件事:
@@ -258,4 +260,28 @@ describe('链接令牌:只够得着停下(同别名行冻结的 write)', () => {
     }
     expect(wb.resolvePermission).not.toHaveBeenCalled(); expect(wb.worktreeAction).not.toHaveBeenCalled()
   })
+})
+
+
+it('P3h: real panel/local entry records aliases and activity without changing response semantics', async () => {
+  const path = '/m/api/matter/stop'
+  const make = (token: string) => new Request(`http://127.0.0.1:1${path}?d=${token}&private=not-recorded`, post({}))
+  await panel.handleRequest(markAppRequest(make(device), '2'))
+  await panel.handleRequest(make(device)) // old cached web, no version marker
+  await panel.handleRequest(markAppRequest(make('invalid'), '1'))
+  await fetch(`${localBase}/v1/workbench/cancel`, { ...post({}), headers: { Authorization: `Bearer ${operator}`, 'content-type': 'application/json', 'x-cc-desktop-version': '1.7.8' } })
+  await fetch(`${localBase}/v1/workbench/cancel`, { ...post({}), headers: { Authorization: `Bearer ${operator}`, 'content-type': 'application/json' } })
+  await panel.handleRequest(new Request(`http://127.0.0.1:1/v1/matter/stop?d=${device}`, { ...post({}), headers: { 'content-type': 'application/json', 'x-cc-web-routes': 'P3g' } }))
+  await panel.handleRequest(markAppRequest(new Request(`http://127.0.0.1:1/v1/matter/stop?d=${device}`, post({})), 'selftest-P3d'))
+  const beforeFile = readRouteUsage(stateDir)!.rows.find(r => r.alias === 'POST /v1/workbench/cancel' && r.version === 'unknown')!.count
+  await fetch(`${localBase}/v1/workbench/cancel`, { ...post({}), headers: { Authorization: `Bearer ${readFileSync(join(stateDir, 'internal-token'), 'utf8').trim()}`, 'content-type': 'application/json' } })
+  const rows = readRouteUsage(stateDir)!.rows
+  expect(rows.find(r => r.alias === 'POST /v1/workbench/cancel' && r.version === 'unknown')!.count).toBe(beforeFile + 1)
+  expect(rows.filter(r => r.alias === 'POST /m/api/matter/stop').map(r => [r.client, r.version, r.count])).toEqual([['app', '2', 1], ['web', 'unknown', 1]])
+  expect(rows.filter(r => r.alias === 'POST /v1/workbench/cancel').map(r => r.version)).toEqual(['1.7.8', 'unknown'])
+  expect(rows.some(r => r.client === 'web' && r.version === 'P3g' && r.alias === '')).toBe(true)
+  expect(JSON.stringify(rows)).not.toContain('not-recorded')
+  expect(rows.some(r => r.version === '1')).toBe(false)
+  expect(rows.some(r => r.client === 'selftest' && r.version === 'P3d')).toBe(true)
+  expect(rows.some(r => r.client === 'app' && r.version === 'selftest-P3d')).toBe(false)
 })
