@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { View, type StyleProp, type ViewStyle } from 'react-native'
-import { space } from './tokens'
+import { componentAppearance } from './tokens'
 import { useTheme } from './useTheme'
 
 // 单层内容容器:以留白分组,不重复画卡片边框。卡里不再放卡(style.guard 钉住)。
@@ -10,7 +10,7 @@ export function Card({ children, style, testID }: { children: ReactNode; style?:
     <View
       testID={testID}
       style={[
-        { backgroundColor: c.paper, paddingVertical: space.l },
+        { backgroundColor: c.paper, paddingVertical: componentAppearance.content.paddingY, borderWidth: componentAppearance.content.borderWidth },
         style,
       ]}
     >

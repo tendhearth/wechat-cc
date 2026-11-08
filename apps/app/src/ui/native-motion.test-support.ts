@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { vi } from 'vitest'
 type Animation = { start(callback?: (result: { finished: boolean }) => void): void; stop(): void }
 type FocusEntry = { run(): void | (() => void); cleanup?: void | (() => void) }
-export const host = { reduced: false, appState: 'active', focused: true, read: (): Promise<boolean> => Promise.resolve(host.reduced), reducedListeners: new Set<(value: boolean) => void>(), appListeners: new Set<(value: string) => void>(), focusEntries: new Set<FocusEntry>() }
+export const host = { pressed: false, reduced: false, appState: 'active', focused: true, read: (): Promise<boolean> => Promise.resolve(host.reduced), reducedListeners: new Set<(value: boolean) => void>(), appListeners: new Set<(value: string) => void>(), focusEntries: new Set<FocusEntry>() }
 export class Value {
   private current: number
   private listeners = new Set<() => void>()
@@ -42,8 +42,8 @@ export function View({ children, testID, style, accessibilityLabel, accessibilit
   return createElement('div', { 'data-testid': testID, 'data-style': snapshot, 'aria-label': accessibilityLabel, role: accessibilityViewIsModal ? 'dialog' : accessibilityRole, 'aria-busy': accessibilityState?.busy, 'aria-hidden': accessible === false ? true : undefined }, children)
 }
 export function nativeBoundary() {
-  const Pressable = ({ children, onPress, disabled, testID, accessibilityLabel, accessibilityState, style, ref }: any) => createElement('button', { ref, onClick: onPress, disabled, 'data-testid': testID, 'aria-label': accessibilityLabel, 'aria-expanded': accessibilityState?.expanded, 'data-style': JSON.stringify(flatten(typeof style === 'function' ? style({ pressed: false }) : style)) }, typeof children === 'function' ? children({ pressed: false }) : children)
-  const Text = ({ children, accessibilityRole, accessibilityLabel, testID }: any) => createElement('span', { role: accessibilityRole, 'aria-label': accessibilityLabel, 'data-testid': testID }, children)
+  const Pressable = ({ children, onPress, disabled, testID, accessibilityLabel, accessibilityState, style, ref }: any) => createElement('button', { ref, onClick: onPress, disabled, 'data-testid': testID, 'aria-label': accessibilityLabel, 'aria-expanded': accessibilityState?.expanded, 'aria-selected': accessibilityState?.selected, 'data-style': JSON.stringify(flatten(typeof style === 'function' ? style({ pressed: host.pressed }) : style)) }, typeof children === 'function' ? children({ pressed: false }) : children)
+  const Text = ({ children, accessibilityRole, accessibilityLabel, testID, style }: any) => createElement('span', { role: accessibilityRole, 'aria-label': accessibilityLabel, 'data-testid': testID, 'data-style': JSON.stringify(flatten(style)) }, children)
   const Image = ({ source, style, testID, accessibilityLabel, accessible }: any) => createElement('img', { src: source, 'data-testid': testID, 'data-style': JSON.stringify(flatten(style)), 'aria-label': accessibilityLabel, 'aria-hidden': accessible === false ? true : undefined })
   const Modal = ({ visible, children, onRequestClose }: any) => visible ? createElement('section', { onKeyDown: (event: any) => { if (event.key === 'Escape') onRequestClose() } }, children) : null
   return { useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }), View, Text, Image, Pressable, Modal, ScrollView: View, Animated: { View, Image, Value, timing, sequence, parallel, loop }, Easing: { ease: () => {}, linear: () => {}, out: (value: unknown) => value, inOut: (value: unknown) => value, bezier: () => () => {} }, AccessibilityInfo: { isReduceMotionEnabled: () => host.read(), addEventListener: (_: string, callback: (v: boolean) => void) => { host.reducedListeners.add(callback); return { remove: () => host.reducedListeners.delete(callback) } }, setAccessibilityFocus: () => {} }, AppState: { get currentState() { return host.appState }, addEventListener: (_: string, callback: (v: string) => void) => { host.appListeners.add(callback); return { remove: () => host.appListeners.delete(callback) } } }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, findNodeHandle: () => 1 }
@@ -53,7 +53,7 @@ export async function focus(on: boolean) { await act(() => { host.focused = on; 
 export async function background(state: string) { await act(() => { host.appState = state; host.appListeners.forEach(listener => listener(state)) }) }
 export async function reduce(on: boolean) { await act(() => { host.reduced = on; host.reducedListeners.forEach(listener => listener(on)) }) }
 export async function advance(ms: number) { await act(async () => { await vi.advanceTimersByTimeAsync(ms) }) }
-export function resetHost() { host.reduced = false; host.appState = 'active'; host.focused = true; host.read = () => Promise.resolve(host.reduced) }
+export function resetHost() { host.pressed = false; host.reduced = false; host.appState = 'active'; host.focused = true; host.read = () => Promise.resolve(host.reduced) }
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const require = createRequire(import.meta.url)
 require.extensions['.png'] = (module, file) => { module.exports = file }

@@ -29,7 +29,7 @@ import { SendTalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
 import { mergeTranscript } from '../view/hold-to-talk'
 import type { PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES } from '@wechat-cc/protocol'
-import { radius, space } from '../ui/tokens'
+import { componentAppearance, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
@@ -280,8 +280,9 @@ export default function Chat() {
               value={text}
               onChangeText={v => { setText(v); talk.ctl.clearNote() }}
               multiline
+              variant="chat"
               placeholder={t(lang, 'chat.placeholder')}
-              style={{ flex: 1, minHeight: 48, maxHeight: 140, paddingHorizontal: space.l, paddingTop: space.m, paddingBottom: space.m, borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }}
+              style={{ flex: 1, maxHeight: 140 }}
             />
             <SendTalkButton ctl={talk.ctl} view={talk.view} elapsedMs={talk.elapsedMs} lang={lang} sendable={canSend} talkable={online && !sending} sending={sending} onTap={send} testID="chat-send" />
           </View>
@@ -291,8 +292,10 @@ export default function Chat() {
   )
 }
 
-// 对话用左右与留白区分说话人,文件先于可展开的执行过程。
+// 用户消息用浅底，CC 回复为透明正文；左右与留白区分说话人,文件先于可展开的执行过程。
 function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
+  const { c } = useTheme()
+  const appearance = componentAppearance.message
   const me = b.side === 'me'
   if (b.state === 'thinking') return <Thinking lang={lang} />
   const from = b.projection==='result'?(lang==='zh-Hans'?'CC 的结果':'CC result'):b.projection==='stream'?'CC':t(lang, `chat.from.${b.source}`)
@@ -302,12 +305,13 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkErro
       {hasBubbleText(b) ? <View
         testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
         style={{
-          maxWidth: '88%', paddingVertical: space.m, gap: space.s,
+          maxWidth: '88%', paddingVertical: appearance.paddingY, paddingHorizontal: me ? appearance.paddingX : 0, gap: space.s,
+          borderRadius: appearance.radius, backgroundColor: me ? c[appearance.userBackground] : appearance.replyBackground,
           opacity: b.state === 'failed' ? 0.8 : 1,
         }}
       >
         <Txt role="caption" tone="inkSoft">{t(lang, me ? 'chat.me' : 'cc.label')}</Txt>
-        <MessageText role={me ? 'user' : 'assistant'} text={b.text} />
+        <MessageText typeRole={me ? appearance.userRole : appearance.replyRole} role={me ? 'user' : 'assistant'} text={b.text} />
         {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
       </View> : null}
       {b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}

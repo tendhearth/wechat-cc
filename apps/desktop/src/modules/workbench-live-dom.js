@@ -115,7 +115,8 @@ export function hasLiveTimelineInteraction(root){
   const document=root.ownerDocument
   if(!document)return false
   const active=document.activeElement,selection=document.getSelection()
-  if(active&&root.querySelector('.wb-dialogue')?.contains(active)&&active!==document.body)return true
-  if(selection&&!selection.isCollapsed)for(let i=0;i<selection.rangeCount;i++)try{if(selection.getRangeAt(i).intersectsNode(root.querySelector('.wb-dialogue')))return true}catch{/* A missing row is not being read. */}
-  return Array.from(/** @type {Element[]} */(root.querySelectorAll?.('.wb-dialogue pre,.wb-dialogue table')??[])).some(node=>node.scrollLeft>0)
+  const regions=['.wb-request','.wb-dialogue','.wb-earlier-dialogue'].map(selector=>root.querySelector(selector)).filter(Boolean)
+  if(active&&active!==document.body&&regions.some(region=>region.contains(active)))return true
+  if(selection&&!selection.isCollapsed)for(let i=0;i<selection.rangeCount;i++)for(const region of regions)try{if(selection.getRangeAt(i).intersectsNode(region))return true}catch{/* A detached region is not being read. */}
+  return regions.some(region=>Array.from(/** @type {Element[]} */(region.querySelectorAll?.('pre,table')??[])).some(node=>node.scrollLeft>0))
 }

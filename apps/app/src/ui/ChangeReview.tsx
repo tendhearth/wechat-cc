@@ -40,8 +40,7 @@ export function ChangeReview({ matterId, artifactId, path, mark, backend, lang, 
       {mark?.mark === 'returned' ? <Txt role="caption" tone="inkSoft">{t(lang, 'review.returned', { c: mark.comment })}</Txt> : null}
       {returning ? (
         <>
-          <TextField testID={`review-comment-${path}`} value={comment} onChangeText={setComment} placeholder={t(lang, 'review.placeholder')} multiline maxLength={2000}
-            style={{ paddingVertical: space.s, borderBottomWidth: 1, borderBottomColor: c.hair }} />
+          <TextField variant="comment" testID={`review-comment-${path}`} value={comment} onChangeText={setComment} placeholder={t(lang, 'review.placeholder')} multiline maxLength={2000} />
           <View style={{ flexDirection: 'row', gap: space.s }}>
             <Button kind="primary" testID={`review-send-${path}`} label={t(lang, 'review.send')} busy={busy} disabled={!online || !comment.trim()}
               onPress={() => void run(() => backend.reviewReturn({ id: matterId, artifactId, paths: [path], comment: comment.trim() }))} />
@@ -125,8 +124,7 @@ export function HunkComments({ matterId, artifactId, file, pieces, backend, lang
           ))}
           {editing === p.index ? (
             <>
-              <TextField testID={`line-comment-input-${file.path}-${p.index}`} value={body} onChangeText={v => { setBody(v); commentId.current = uuid() }} placeholder={t(lang, 'lineReview.placeholder')} multiline maxLength={COMMENT_MAX}
-                style={{ paddingVertical: space.s, borderBottomWidth: 1, borderBottomColor: c.hair }} />
+              <TextField variant="comment" testID={`line-comment-input-${file.path}-${p.index}`} value={body} onChangeText={v => { setBody(v); commentId.current = uuid() }} placeholder={t(lang, 'lineReview.placeholder')} multiline maxLength={COMMENT_MAX} />
               <View style={{ flexDirection: 'row', gap: space.s }}>
                 <Button kind="secondary" testID={`line-comment-save-${file.path}-${p.index}`} label={t(lang, 'lineReview.save')} busy={busy} disabled={!online || !body.trim()} onPress={() => void save(p)} />
                 <Button kind="secondary" label={t(lang, 'lineReview.cancel')} disabled={busy} onPress={() => { setEditing(null); setNote(null) }} />
@@ -175,8 +173,7 @@ export function CommentsSend({ matterId, block, backend, lang, online, onNote, o
   }
   return (
     <View testID="line-comments-send" style={{ gap: space.s, paddingTop: space.s }}>
-      <TextField testID="line-comments-summary" value={summary} onChangeText={setSummary} placeholder={t(lang, 'lineReview.summary')} multiline maxLength={COMMENT_MAX}
-        style={{ paddingVertical: space.s, borderBottomWidth: 1, borderBottomColor: c.hair }} />
+      <TextField variant="comment" testID="line-comments-summary" value={summary} onChangeText={setSummary} placeholder={t(lang, 'lineReview.summary')} multiline maxLength={COMMENT_MAX} />
       {block.notes.map(n => <Txt key={n} role="caption" tone="inkSoft">{n}</Txt>)}
       <Button kind="primary" testID="line-comments-send-button" label={block.label} busy={busy} disabled={!online} onPress={() => void send()} />
     </View>

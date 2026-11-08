@@ -90,10 +90,10 @@ div.now-terminal-row { cursor: default; }
 .now-group[hidden] { display: none; }
 .now-group h2 { font-size: var(--th-size-meta); font-weight: 500; color: var(--th-ink-soft); margin: 0 0 6px; letter-spacing: var(--th-tracking-meta); }
 .now-group ul { list-style: none; margin: 0; padding: 0; }
-.now-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 4px; text-align: left; }
+.now-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--th-matter-row-gap); min-height:var(--th-matter-row-min-height); align-items: center; padding: var(--th-matter-row-padding-y) 4px; text-align: left; }
 button.now-row { cursor: pointer; }
-.now-row .t { font-size: var(--th-size-item); margin: 0; overflow-wrap: anywhere; }
-.now-row .d, .now-row .x { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; overflow-wrap: anywhere; }
+.now-row .t { font-size: var(--th-matter-row-role); line-height:var(--th-lh-item); margin: 0; overflow-wrap: anywhere; }
+.now-row .d, .now-row .x { font-size: var(--th-matter-row-caption-role); line-height:var(--th-lh-caption); color: var(--th-ink-soft); margin: 2px 0 0; overflow-wrap: anywhere; }
 .now-row .x { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .now-row-status { display: inline-flex; color: var(--th-ink-soft); }
 /* 色调照状态表:只有「等你」上强调色(phone-wording.md);状态词本身不上。 */
@@ -200,3 +200,5 @@ div.now-terminal-row:hover .t { color: var(--th-ink); }
 .cc-now-pane[data-conversation="single"] .now-figure { width:44px; height:44px; min-height:0; }
 .cc-now-pane[data-conversation="single"] .now-cc-col { width:44px; }
 .cc-now-pane[data-conversation="single"] .now-figure img { width:44px; height:44px; }
+
+.now-row .x { font-size:var(--th-matter-row-detail-role); line-height:var(--th-lh-small); }

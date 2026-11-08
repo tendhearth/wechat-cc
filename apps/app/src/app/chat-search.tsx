@@ -17,7 +17,7 @@ import { searchSegments } from '../view/chat-search'
 import { TextField } from '../ui/TextField'
 import { TopBar } from '../ui/TopBar'
 import { IconButton } from '../ui/IconButton'
-import { radius, space } from '../ui/tokens'
+import { space } from '../ui/tokens'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 
@@ -51,9 +51,9 @@ export function ConversationSearch() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'chatSearch.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/chat'))} />
       <View style={{ flexDirection: 'row', gap: space.s, paddingHorizontal: space.xl, paddingBottom: space.m }}>
-        <TextField testID="chat-search-input" accessibilityLabel={t(lang, 'chatSearch.placeholder')} value={q} onChangeText={setQ} placeholder={t(lang, 'chatSearch.placeholder')}
+        <TextField variant="search" testID="chat-search-input" accessibilityLabel={t(lang, 'chatSearch.placeholder')} value={q} onChangeText={setQ} placeholder={t(lang, 'chatSearch.placeholder')}
           returnKeyType="search" onSubmitEditing={() => void run()} autoFocus maxLength={200}
-          style={{ flex: 1, minHeight: 44, paddingHorizontal: space.l, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }} />
+          style={{ flex: 1, minHeight: 44, backgroundColor: c.paper }} />
         <IconButton name="search" label={t(lang, 'chatSearch.go')} testID="chat-search-go" disabled={!q.trim() || !online} busy={busy} onPress={() => void run()} />
       </View>
       <View style={{ flexDirection: 'row', paddingHorizontal: space.xl, gap: space.s }}>

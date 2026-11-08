@@ -30,6 +30,12 @@ describe('structuralSignature', () => {
     expect(structuralSignature({ ...base, attachments: [{ id: 'f1' }] })).not.toBe(structuralSignature(base))
     expect(structuralSignature({ ...base, handoffs: [{ id: 'h1' }] })).not.toBe(structuralSignature(base))
   })
+  it('repaints a changed current-activity summary, but ordinary reply chunks remain incremental', () => {
+    const current={...base,events:[ev(2,'read',{kind:'tool_call',runId:'r',activity:{id:'read',type:'read',status:'running',label:'Read source'}})]}
+    expect(structuralSignature(current)).not.toBe(structuralSignature(base))
+    expect(structuralSignature({...current,events:[{...current.events[0],activity:{...current.events[0].activity,label:'Read another file'}}]})).not.toBe(structuralSignature(current))
+    expect(structuralSignature({...current,events:[ev(3,'answer')]})).toBe(structuralSignature(base))
+  })
   it('没有详情时是空串', () => { expect(structuralSignature(null)).toBe('') })
   it('waitingFor.closeInMs 现算的秒数不算结构;holderWriting 翻转才算(评审修复轮 2 #2)', () => {
     const waiting = { taskId: 'A', title: 'Holder', reason: 'same_path', holderWriting: false, closeInMs: 15000 }
@@ -56,16 +62,16 @@ describe('structuralSignature', () => {
 describe('patchLiveTimeline', () => {
   // 假 DOM:对话区带有序的孩子,因为「追加到哪一组」取决于位置。
   const operationList = () => ({ appended: [], insertAdjacentHTML(_pos, html) { this.appended.push(html) } })
-  const liveGroup = () => {
+  const liveGroup = (runId = '') => {
     const list = operationList()
-    return { tagName: 'DIV', dataset: { timelineGroup: '' }, live: true, list, querySelector: sel => sel === '.wb-operation-list' ? list : null }
+    return { tagName: 'DETAILS', dataset: { timelineGroup: '', timelineLive: '', runId }, getAttribute: name => name === 'data-run-id' ? runId : null, live: true, list, querySelector: sel => sel === '.wb-operation-list' ? list : null }
   }
   const closedGroup = () => ({ tagName: 'DETAILS', dataset: { timelineGroup: '' }, live: false, querySelector: () => null })
   const messageNode = () => ({ tagName: 'ARTICLE', dataset: {}, live: false, querySelector: () => null })
   const dialogue = (children = []) => ({
     children, appended: [],
     get lastElementChild() { return this.children.at(-1) ?? null },
-    querySelectorAll(sel) { return sel === '[data-timeline-group]:not(details)' ? this.children.filter(child => child.live) : [] },
+    querySelectorAll(sel) { return sel === '[data-timeline-group][data-timeline-live]' ? this.children.filter(child => child.live) : [] },
     insertAdjacentHTML(_pos, html) { this.appended.push(html); this.children.push(messageNode()) },
   })
   // 找得到的那一行:outerHTML 是 setter,好观察替换;open 表示里面有展开着的详情。
@@ -127,9 +133,20 @@ describe('patchLiveTimeline', () => {
     const group = liveGroup()
     const dialogueNode = dialogue([group])
     const root = fakeRoot({}, dialogueNode)
-    const result = patchLiveTimeline(root, [ev(9, 'hi', { kind: 'user' }), activity(10, 'ls')], render)
+    const result = patchLiveTimeline(root, [ev(9, 'hi', { kind: 'text' }), activity(10, 'ls')], render)
     expect(result).toEqual({ patched: 0, appended: 1, missing: 1 })
     expect(dialogueNode.appended).toEqual(['<m>hi</m>'])
+    expect(group.list.appended).toEqual([])
+  })
+
+  it('a new request triggers a full paint instead of appending to the previous round', () => {
+    const group = liveGroup(), root = fakeRoot({}, dialogue([group]))
+    expect(patchLiveTimeline(root, [ev(9, 'new request', { kind:'user' }), activity(10, 'new work')], render)).toEqual({ patched:0, appended:0, missing:2 })
+    expect(group.list.appended).toEqual([])
+  })
+  it('does not append an operation to a live group belonging to another run', () => {
+    const group = liveGroup('old'), root = fakeRoot({}, dialogue([group]))
+    expect(patchLiveTimeline(root, [activity(10, 'new work')], render)).toEqual({ patched:0, appended:0, missing:1 })
     expect(group.list.appended).toEqual([])
   })
 

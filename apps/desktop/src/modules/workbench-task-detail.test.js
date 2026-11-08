@@ -31,6 +31,8 @@ describe('task detail follows authoritative current state',()=>{
   const question={id:'q',taskId:'A',createdAt:1,questions:[{id:'choice',header:'选择',question:'保留哪一份？',options:[]}]}
   const root=render(page({phase:'replied'},{permissions:[permission,{...permission,id:'foreign',taskId:'B'}],questions:[question,{...question,id:'foreign-q',taskId:'B'}]}))
   expect(root.querySelector('.wb-content-inner').dataset.taskFocus).toBe('decision')
+  expect(root.querySelector('.wb-task-progress .now-row-status').dataset.tone).toBe('accent')
+  expect(root.querySelector('.wb-task-progress .wb-status').textContent).toBe('等你决定')
   expect(root.querySelector('#wb-artifacts').open).toBe(false)
   expect(root.querySelectorAll('[data-request-id="foreign"]')).toHaveLength(0)
   expect(root.querySelector('.wb-permission p').textContent).toBe(permission.description)
@@ -166,5 +168,24 @@ describe('review provenance belongs to the current artifact generation',()=>{
    await vi.waitFor(()=>expect(controller.state.reviewsLoaded).toBe(true))
    expect(document.querySelector('#wb-artifacts').classList.contains('is-outcome')).toBe(false)
   }finally{stopWorkbenchPolling();sessionStorage.clear()}
+ })
+})
+
+describe('11-08 request and result hierarchy',()=>{
+ it('puts the current concrete request before outcomes, with earlier answers behind a closed disclosure',()=>{
+  const events=[{id:'old-user',taskId:'A',kind:'user',text:'旧请求',createdAt:1},{id:'old-answer',taskId:'A',kind:'text',text:'旧答复',createdAt:2},{id:'new-user',taskId:'A',kind:'user',text:'新请求',createdAt:3},{id:'new-answer',taskId:'A',kind:'text',text:'新答复',createdAt:4}]
+  const root=render(page({status:'completed'},{events}))
+  expect(root.querySelector('.wb-request').textContent).toContain('新请求')
+  expect(root.querySelector('.wb-dialogue').textContent).toContain('新答复')
+  expect(root.querySelector('.wb-dialogue').textContent).not.toContain('旧答复')
+  expect(root.querySelector('#wb-earlier-dialogue').open).toBe(false)
+  expect(root.querySelector('#wb-earlier-dialogue').textContent).toContain('旧答复')
+  expect(root.querySelectorAll('[data-kind="user"]')).toHaveLength(2)
+  const html=root.innerHTML
+  expect(html.indexOf('class="wb-request"')).toBeLessThan(html.indexOf('id="wb-artifacts"'))
+ })
+ it.each([['failed','没做成'],['done','完成'],['completed','完成']])('uses shared words for phase %s even when the task status is running',(phase,word)=>{
+  const root=render(page({phase},{artifacts:[]}))
+  expect(root.querySelector('.wb-task-progress .wb-status').textContent).toBe(word)
  })
 })

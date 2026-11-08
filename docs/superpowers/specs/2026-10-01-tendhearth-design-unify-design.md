@@ -195,3 +195,28 @@
 基线同步(同日):本地 `dev=c122defa` 与 `origin/dev=2e9a29fb` 已分叉(共同祖先 `cdd822c0`,左右独有 3 / 11 个提交)。字体分支合并远端 1.7.4 更新,保留本地已确认的文件预览/阅读功能。Rust 冲突同时保留预览 commands 与新的 macOS 显示名菜单;聊天类型同时保留阅读来源、附件和过程;伴随窗口同时保留新显示名及共享字体依赖。独立复核无剩余问题。合并源码重新通过 Bun 11773 / 跳过14、Node 10066 / 跳过18、类型检查、模块边界0错误 / 21既有警告、44项浏览器交互和字体渲染检查。候选版本为1.7.4;共享安装与部署仍待指定整合者。
 
 PR 交付补验(同日):文件预览浏览器测试12项通过,覆盖HTML隔离与交互、PDF画布/选字/页码/缩放/原文件下载、完整网站相对资源及服务恢复;`cargo test --release html_preview` 18项通过。宽窄字体验收截图及来源记录入 `apps/desktop/art/cc-typography/`。源码验证提交为 `852ba27d`,此后仅补交付说明与截图;合并、CI和真机自检由主人负责。
+
+## 11. 组件合同与两端统一第一批（2026-11-08 主人决定）
+
+本节覆盖前文「全衬线」「任务状态只用点」「胶囊聊天输入」的历史要求；字体延续 §10 已批差异。本批为 A + B1 + B2，只改桌面 apps/desktop 与原生 apps/app 的外观和信息层级，不改数据、路由、迁移、授权或提交语义。图标库、动效、设置/记忆页的 B3 结构另批。
+
+唯一组件外观合同在 `packages/design-tokens/src/index.ts` 的 `componentAppearance`：文字角色、padding、圆角、边框、主次/按下/禁用/选中态及触区。CSS由同一生成器输出变量，RN直接import；两端分别实现与验证，不建跨端渲染框架，守卫棘轮只增不减。
+
+| 共同合同 | 桌面保留 | App保留 |
+|---|---|---|
+| 同一typeScale角色/层级；用户消息bubble、CC正文body、事项item、话题small；400/500 | Sans界面与中文，英文CC回复Reading，品牌Serif | 衬线及现有中英映射 |
+| Button胶囊；主accent/onAccent，次透明/hair；统一按下/禁用透明度 | small、36高；次级允许28 compact，hover与键盘焦点 | body、至少48；IconButton至少44，不依赖hover |
+| TextField显式variant：chat为sheet14多行，search为control28单行，comment为嵌入式底线；默认hair、焦点accent | Enter发送、Shift+Enter换行、IME保护、拖文件；行审阅目标 | 48聊天/评论、44搜索；安全区/键盘避让/原生图片与按住说话；plain留全页书写区 |
+| 用户消息rail浅底、bubble14、横16/竖12；CC透明正文；不逐条加CC头像 | 去32头像与预留缩进 | 来源、时间、失败/未确认入口 |
+| 话题hair/control胶囊、透明底，当前打开项ink边，selected语义与想起/收起数据分开；6项+更多 | 右栏可收起、Escape与Tab焦点管理 | ≥44触区，禁止rail选中色块；55%/全屏formSheet、grabber与返回手势 |
+| 内容以留白分组；事项引用至多一层hair边，内部过程无框 | 宽屏对话+右侧话题/事项；窄屏覆盖层 | 单栏、原生推入与逐层返回；无框引用仍合法 |
+| 任务词/记号/tone只认protocol status-table；waiting记号accent，其余inkSoft；细分观察词也共源 | 保留排队、后台工作与网络暂停事实 | 详情状态和步骤改用共享记号；连接/错误仍保留语义点 |
+| 页头CC可点占位44、图像可适配；执行者头像在名称前；不逐条画回复头像 | 图44，可选独立浮宠 | 图36/触区44，页内原生在场表现 |
+| 详情：具体请求→当前进展/真实成果；旧对话、执行信息和过程默认收起，待决与错误仍可见；旧回复不冒充新请求结果 | 审阅/回退/工作区工具次级；行选/Shift多选、宽diff、多层工程工具 | 触摸按块评论、纵向文件、受限高度预览；审阅草稿 |
+| 同一对话、事项、输入目标、草稿、requestId、返回位置和已处理语义 | 本机权限、daemon和项目路径工具 | 配对、设备通知、隐私和语言工具 |
+
+保留所有testID/选择器。任务、连接、授权结果和未确认/陈旧状态分开，不把它们强塞进六种任务态；不追求逐像素相等。
+
+本批负责人为当前Codex；工作区 `/Users/nategu_mac_company/Documents/tendhearth/wt-design-b1-codex`，分支 `design-unify-b1`，起点 `34aa50a364e988cba4acc4f0c31096a1b52324de`（origin/dev）。只读子任务不写工作区。只提交功能分支，不合入dev、不推送、不部署。
+
+主Mac默认 `bun run verify`，App/design-tokens变更须带App自己配置的 `bun run test`；UI只走mini lab共享锁。2026-11-08主人禁止App模拟器通道，当天不运行App Maestro或生成App前后图，不以历史图冒充。桌面用不可变源码快照与同一合成场景产前后对照；实际回执与未完成项写任务报告。

@@ -28,7 +28,7 @@ it('queued, paused and current attention remain honest in the conversation',()=>
   document.body.innerHTML=matterReferenceHtml('q','排队')+matterReferenceHtml('p','暂停')
   updateConversationAttention({stale:false,tasks:[]})
   updateConversationMatters([{id:'q',status:'queued',updatedAt:3,createdAt:1},{id:'p',status:'running',networkSuspended:{since:1},updatedAt:3,createdAt:1}] as any,false)
-  expect(document.querySelector('[data-matter-id="q"] [data-matter-state]')!.textContent).toContain('排队中')
+  expect(document.querySelector('[data-matter-id="q"] [data-matter-state]')!.textContent).toContain('等待中')
   expect(document.querySelector('[data-matter-id="p"] [data-matter-state]')!.textContent).toContain('已暂停')
   updateConversationAttention({stale:false,tasks:[{id:'q',first:{text:'确认目标'}}]})
   expect(document.querySelector('[data-matter-id="q"] [data-matter-state]')!.textContent).toContain('等你决定')

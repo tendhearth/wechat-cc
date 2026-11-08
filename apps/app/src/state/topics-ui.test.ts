@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { color, componentAppearance } from '@wechat-cc/design-tokens'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend } from '../backend/types'
 import { cleanup, focus, mount } from '../ui/native-motion.test-support'
@@ -28,8 +29,14 @@ describe('native topic surfaces', () => {
     const ui = await mount(withProviders(createElement(TopicRow), { backend, lang: 'zh-Hans' })); await flush()
     expect(ui.container.querySelectorAll('[data-testid^="topic-demo-"]')).toHaveLength(6)
     expect(topics).toHaveBeenCalledWith({ limit: 6 }); expect(open).not.toHaveBeenCalled()
+    expect(ui.style('topic-demo-backup')).toMatchObject({ borderRadius: componentAppearance.topic.radius, borderColor: color.hair, minHeight: 44, minWidth: 44, backgroundColor: 'transparent' })
     await act(() => ui.byId('topic-demo-backup').click())
     expect(host.push).toHaveBeenCalledWith('/topic?id=demo-backup&open=1'); expect(open).not.toHaveBeenCalled()
+    expect(ui.byId('topic-demo-backup').getAttribute('aria-selected')).toBe('true')
+    expect(ui.style('topic-demo-backup').borderColor).toBe(color.ink)
+    await focus(false); await focus(true)
+    expect(ui.byId('topic-demo-backup').getAttribute('aria-selected')).toBe('false')
+    expect(ui.style('topic-demo-backup').borderColor).toBe(color.hair)
   })
   it('retains a trailing read when a newer revision arrives during an older in-flight read', async () => {
     const demo = makeDemoBackend(), old = await demo.topics({})

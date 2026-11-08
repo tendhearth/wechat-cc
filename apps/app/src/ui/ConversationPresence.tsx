@@ -13,6 +13,7 @@ import { latestCCLine } from '../view/now'
 import { homeView } from '../view/home'
 import { companionStatus } from '../view/companion'
 import { makeCCMotionTracker, type CCMotionEvent } from '../view/cc-motion'
+import { componentAppearance } from './tokens'
 import { CCFigure } from './CCFigure'
 import { useMotionEnabled } from './motion'
 
@@ -33,5 +34,5 @@ export function ConversationPresence({ onPress = () => {} }: { onPress?: () => v
     if (event) setMotion(event)
     else if (!current.active || current.waiting?.length === 0) setMotion(previous => previous?.behavior === 'wait' || !current.active ? undefined : previous)
   }, [tracker, snapshot])
-  return <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={onPress} style={{ minWidth: 44, minHeight: 44, justifyContent: 'center' }}><CCFigure size={36} presence={presence} mood={statusKey ? t(lang, statusKey) : undefined} behavior={motion?.behavior} eventKey={motion?.eventKey} /></Pressable>
+  return <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={onPress} style={{ minWidth: componentAppearance.identity.headerTarget, minHeight: componentAppearance.identity.headerTarget, justifyContent: 'center' }}><CCFigure size={componentAppearance.identity.headerImage.phone} presence={presence} mood={statusKey ? t(lang, statusKey) : undefined} behavior={motion?.behavior} eventKey={motion?.eventKey} /></Pressable>
 }

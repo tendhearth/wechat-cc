@@ -1,5 +1,5 @@
 import { ActivityIndicator, Pressable } from 'react-native'
-import { radius, space } from './tokens'
+import { componentAppearance, space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
@@ -16,6 +16,7 @@ export type ButtonProps = {
 export function Button({ kind, label, onPress, disabled, busy, testID }: ButtonProps) {
   const { c } = useTheme()
   const inactive = !!disabled || !!busy
+  const appearance = componentAppearance.button
   const primary = kind === 'primary'
   return (
     <Pressable
@@ -26,21 +27,22 @@ export function Button({ kind, label, onPress, disabled, busy, testID }: ButtonP
       disabled={inactive}
       onPress={onPress}
       style={({ pressed }) => ({
-        minHeight: 48,
-        paddingHorizontal: space.xl,
-        borderRadius: radius.control,
+        minHeight: appearance.minHeight.phone,
+        paddingHorizontal: appearance.paddingX.phone,
+        paddingVertical: appearance.paddingY.phone,
+        borderRadius: appearance.radius,
         alignItems: 'center',
         justifyContent: 'center',
         flexDirection: 'row',
         gap: space.s,
-        backgroundColor: primary ? c.accent : 'transparent',
-        borderWidth: primary ? 0 : 1,
-        borderColor: c.hair,
-        opacity: inactive ? 0.55 : pressed ? 0.85 : 1,
+        backgroundColor: primary ? c[appearance.primary.background] : appearance.secondary.background,
+        borderWidth: appearance.borderWidth,
+        borderColor: c[primary ? appearance.primary.border : appearance.secondary.border],
+        opacity: inactive ? appearance.disabledOpacity : pressed ? appearance.pressedOpacity : 1,
       })}
     >
       {busy ? <ActivityIndicator color={primary ? c.onAccent : c.ink} /> : null}
-      <Txt role="body" tone={primary ? 'onAccent' : 'ink'}>{label}</Txt>
+      <Txt role={appearance.role.phone} tone={primary ? 'onAccent' : 'ink'}>{label}</Txt>
     </Pressable>
   )
 }

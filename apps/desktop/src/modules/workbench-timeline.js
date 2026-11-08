@@ -51,6 +51,8 @@ export function restoreWorkbenchTimelineAnchor(root, content, anchor) {
   // If the reader is inside a group at completion, keep that group readable.
   // Groups above the reader still fold; "latest content" closes this one too.
   node.closest('details[data-timeline-group]')?.setAttribute('open', '')
+  let disclosure = node.closest('details[data-timeline-disclosure]')
+  while (disclosure) { disclosure.setAttribute('open', ''); disclosure = disclosure.parentElement?.closest('details[data-timeline-disclosure]') ?? null }
   const rect = node.getBoundingClientRect?.(), viewport = content.getBoundingClientRect?.()
   if (rect && viewport && rect.height > 0) content.scrollTop += rect.top - viewport.top - anchor.offset
 }
@@ -110,16 +112,13 @@ function renderGroup(events, options) {
     && (options.runId ? first.runId === options.runId : !first.runId)
     && !(options.status === 'running' && options.runtime?.retained && options.runtime.foreground === 'idle' && !events.some(event => event.activity?.status === 'running'))
   const rows = `<div class="wb-operation-list">${events.map(event => renderWorkbenchOperation(event, options)).join('')}</div>`
-  // Live groups are not disclosures. Finishing a run therefore creates a new,
-  // closed disclosure instead of preserving an automatically opened state.
-  if (live) return `<div class="wb-operation-group" data-timeline-group data-run-id="${options.escapeHtml(first.runId)}">${rows}</div>`
   const counts = events.reduce((counts, event) => {
     const type = event.activity?.type ?? (event.kind === 'system' ? 'system' : 'tool')
     counts.set(type, (counts.get(type) ?? 0) + 1)
     return counts
   }, /** @type {Map<string,number>} */ (new Map()))
   const summary = activityTypes.filter(type => counts.has(type)).map(type => `${typeLabels[type]} ${counts.get(type)}`).join(' · ')
-  return `<details id="${disclosureId('operations', first)}" class="wb-disclosure wb-operation-group" data-timeline-group data-timeline-disclosure data-run-id="${options.escapeHtml(first.runId)}"><summary><span>操作记录</span><small>${summary}</small></summary>${rows}</details>`
+  return `<details id="${disclosureId('operations', first)}" class="wb-disclosure wb-operation-group" data-timeline-group data-timeline-disclosure${live ? ' data-timeline-live' : ''} data-run-id="${options.escapeHtml(first.runId)}"><summary><span>操作记录</span><small>${live ? '正在执行' : summary}</small></summary>${rows}</details>`
 }
 
 /** @param {WorkbenchEvent[]} events @param {TimelineOptions} options */

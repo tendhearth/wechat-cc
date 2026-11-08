@@ -182,3 +182,13 @@ push-open 首轮在 `2026-11-06T02-00-27.575Z-app-maestro` 失败：已回此刻
 执行结束关闭自有设备 `8963040A-943E-4A1B-9593-CF9B28B15F6E`，释放执行锁。构建和流程都只在 mini，未触碰主工作 Mac 的模拟器、浏览器、后台、状态或已安装 App。
 
 本轮 mini 验证：`bun run verify --base HEAD` 退出 0（`app-executor/verification/macro-verify.log`）；执行器/协议 26/26 通过（`macro-green.log`）。新增 flag 断言在撤掉本次修复时失败（`macro-red.log`），恢复后全绿。外层 profile SHA256 仍为 `3a89b1451ca096f59b53abd7d5e0e8b6d9c183cd469af7d6cb882188c71bdcdc`。没有推送、发布或主机部署。
+
+### 2026-11-08 桌面浏览器独立快照
+
+`browser` 使用独立 `browser-run.mjs` 包装器和 `active.json.browserRoot`，不切换原生桌面的 `root` 或 App 的 `appRoot`。包装器与接收器的安装仍是持 `~/ci/lock` 的可信工具维护操作；`browser-executor/` 放本仓库 remote/protocol/机器锁/lifecycle/browser-snapshot/source-manifest 模块及 `design-unify-shots.spec.ts` / `playwright.config.ts`，包装器分别 import remote 与 snapshot 模块。不得把任意脚本路径或 shell 命令加入请求协议。
+
+本批 `macmini-browser-snapshot.mjs before|after` 仅在 `design-unify-b1` 工作区使用：before取HEAD与origin/dev共同基线，after取已验证提交HEAD；传Git archive差异包与完整目标tree清单。接收器拿家族锁后创建空的 `browser-<sha>-<time>/project`；本批仅复用active App快照486f6547中的公共tracked源码，逐文件核对Git blob哈希后复制普通文件，变化文件来自差异archive。完整清单重建的Git tree、commit对象、最终每个blob与可执行mode都必须匹配目标，缺失/不匹配即失败；拒绝路径逃逸、链接与额外archive路径。记录源码commit/tree、manifest、差异archive/lockfile/profile摘要。只读公共源码缓存不运行任何App通道，不复制node_modules、原生生成物、账号或其他忽略文件。之后离线安装该快照自己的依赖，核对workspace包仍解析到该快照；公开Bun/Chromium缓存可复用，不链接其他快照的node_modules。
+
+before/after覆盖同一个合成截图harness；白名单只覆盖 `playwright/design-unify-shots.spec.ts` 与测试配置 `playwright.config.ts`，不覆盖产品代码、shim或协议包，harness摘要单独记在snapshot.json。before只产四页对照，不拿旧外观去跑新合同断言；after再跑T5、详情、工作台布局、行审阅及原陪伴浏览器回归。配置使用仓库的playwright.config.ts，经校验的Home缓存浏览器固定为原root下browser-1228，不下载/升级浏览器；每轮结果和 `design-shots/desktop-<page>-before|after.png` 在该快照artifacts下。主页行取当前唯一对话主页中的待决事项引用行。
+
+入口拿锁后核对快照未在排队期间切换，预检4198空闲（占用即失败，不杀未知进程），测试HOME、TMP、daemon/workbench状态与输出均在本轮目录。用 `node apps/desktop/scripts/macmini-ui.mjs browser` 执行；全程headless与拒绝外连，不启动Xcode/模拟器或真实daemon。取回证据后，持同一锁只删除自己创建且没有被active的root/appRoot/browserRoot指向的目录；保留active的after快照，不清理他人的App快照。

@@ -18,6 +18,19 @@ function select(node,start,end){const range=document.createRange();range.setStar
 const settle=()=>new Promise(resolve=>setTimeout(resolve,5))
 
 describe('live rows in a real DOM',()=>{
+ it.each(['wb-request','wb-earlier-dialogue'])('protects selection, link focus and horizontal reading in %s',className=>{
+  document.body.innerHTML=`<div id="fixture"><section class="${className}"><p>正在阅读请求</p><a href="https://example.test/read">来源</a><pre>wide code</pre></section><div class="wb-dialogue"></div></div>`
+  const root=document.getElementById('fixture'),link=root.querySelector('a'),pre=root.querySelector('pre')
+  expect(hasLiveTimelineInteraction(root)).toBe(false)
+  const selection=select(root.querySelector('p').firstChild,0,2)
+  expect(hasLiveTimelineInteraction(root)).toBe(true)
+  selection.removeAllRanges();link.focus()
+  expect(hasLiveTimelineInteraction(root)).toBe(true)
+  link.blur();pre.scrollLeft=80
+  expect(hasLiveTimelineInteraction(root)).toBe(true)
+  pre.scrollLeft=0
+  expect(hasLiveTimelineInteraction(root)).toBe(false)
+ })
  it('keeps unchanged message/link/code nodes, selected text, focus and horizontal reading while more text arrives',()=>{
   const text='保持选区文本\n\n[查看网页](https://example.test/read)\n\n```ts\nconst wide_line = 1\n```',f=rowFixture(text)
   const paragraph=f.row.querySelector('p'),link=f.row.querySelector('a'),pre=f.row.querySelector('pre')
@@ -86,6 +99,16 @@ async function pageFixture(){
  return{root,controller,invokeWorkbenchApi,content,geometry,permission,push:async events=>{await vi.waitFor(()=>expect(release).toBeTypeOf('function'));const resolve=release;release=null;detail={...detail,version:detail.version+1,events};resolve(detail);await settle()}}
 }
 describe('workbench page interaction through actual controls',()=>{
+ it('does not follow new progress while the current request is selected at the end',async()=>{
+  const f=await pageFixture()
+  f.controller.state.detail.events=[{...event('请保留正在阅读的具体请求'),id:'request',kind:'user'},event('当前成果')]
+  f.controller.paint(true);f.geometry();f.content().scrollTop=900
+  const node=f.root.querySelector('.wb-request .cc-user-plain').firstChild,selection=select(node,0,4)
+  f.controller.state.detail.events.push({...event('读取文件'),id:'operation',kind:'tool_call',runId:'run'})
+  f.controller.paint(true)
+  expect(selection.toString()).toBe('请保留正');expect(selection.anchorNode).toBe(node)
+  expect(f.content().scrollTop).toBe(900)
+ })
  it('retains read nodes, source disclosure, selection and link focus through a permission/status full paint',async()=>{
   const f=await pageFixture(),text='保持选区文本\n\n[查看网页](https://example.test/read)\n\n```ts\nwide code\n```'
   f.controller.state.detail.events=[event(text),{...event('**用户要求**'),id:'2',kind:'user'}];f.controller.paint(true);f.geometry()

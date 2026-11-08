@@ -24,11 +24,12 @@ function findEndpoint(root,point){
 export function captureTimelineReading(root){
   const document=root.ownerDocument
   if(!document)return null
-  const rows=Array.from(root.querySelectorAll('.wb-dialogue article[id]'))
+  const rows=Array.from(root.querySelectorAll('.wb-dialogue article[id],.wb-request article[id],.wb-earlier-dialogue article[id]'))
   const contains=(/** @type {Node|null} */ node)=>!!node&&rows.some(row=>row.contains(node))
-  const dialogue=root.querySelector('.wb-dialogue')
+  const regions=Array.from(root.querySelectorAll('.wb-dialogue,.wb-request,.wb-earlier-dialogue'))
+  const inTimeline=(/** @type {Node} */ node)=>regions.some(region=>region.contains(node))
   const selection=document.getSelection()
-  const selected=selection&&!selection.isCollapsed&&selection.anchorNode&&selection.focusNode&&dialogue?.contains(selection.anchorNode)&&dialogue.contains(selection.focusNode)
+  const selected=selection&&!selection.isCollapsed&&selection.anchorNode&&selection.focusNode&&inTimeline(selection.anchorNode)&&inTimeline(selection.focusNode)
     ? {anchor:selectionEndpoint(selection.anchorNode),anchorOffset:selection.anchorOffset,focus:selectionEndpoint(selection.focusNode),focusOffset:selection.focusOffset}:null
   const active=contains(document.activeElement)?/** @type {HTMLElement} */(document.activeElement):null
   const positions=rows.flatMap(row=>Array.from(row.querySelectorAll('pre,table,[data-timeline-disclosure]')).filter(node=>node.scrollLeft||node.scrollTop).map(node=>({node,left:node.scrollLeft,top:node.scrollTop})))
@@ -47,6 +48,10 @@ export function restoreTimelineReading(root,snapshot){
   // whether a changed message can safely update, so disruptive formatting stays deferred.
   const selected=snapshot.selected,selection=root.ownerDocument.getSelection()
   const anchor=selected?findEndpoint(root,selected.anchor):null,focus=selected?findEndpoint(root,selected.focus):null
+  // A new request may move the actively read row behind the history fold.
+  const reveal=(/** @type {Node|null} */ node)=>{let parent=node?.parentElement;while(parent&&root.contains(parent)){if(parent.tagName==='DETAILS')parent.setAttribute('open','');parent=parent.parentElement}}
+  if(selected){reveal(anchor);reveal(focus)}
+  if(snapshot.active)reveal(snapshot.active)
   if(selected&&anchor&&focus){
     try{selection?.setBaseAndExtent(anchor,selected.anchorOffset,focus,selected.focusOffset)}catch{/* Deleted messages cannot retain a selection. */}
   }

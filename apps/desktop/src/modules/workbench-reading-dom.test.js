@@ -37,6 +37,25 @@ async function releaseSelection(){
 }
 
 describe('full timeline paint preserves the actual reading nodes',()=>{
+  it('preserves request source focus, scrolling and a selection across request/reply on full paint', () => {
+    const request = `<section class="wb-request">${row('request','<p>requested text</p><details id="request-source" open><summary>原文</summary><pre>request code</pre></details>')}</section>`
+    const reply = timeline(row('reply','<p>reply text</p>'))
+    root.innerHTML=request+reply
+    const a=root.querySelector('#request p').firstChild,b=root.querySelector('#reply p').firstChild
+    const selected=select(a,2,b,4),text=selected.toString(),summary=root.querySelector('summary'),pre=root.querySelector('pre')
+    summary.focus();pre.scrollLeft=42
+    fullPaint(request+reply)
+    expect(selected.anchorNode).toBe(a);expect(selected.focusNode).toBe(b);expect(selected.toString()).toBe(text)
+    expect(document.activeElement).toBe(summary);expect(root.querySelector('pre')).toBe(pre);expect(pre.scrollLeft).toBe(42)
+  })
+  it('keeps an old reply visible when a new request moves it into closed history', () => {
+    const old=row('old-reply','<p>read this answer</p>')
+    root.innerHTML=timeline(old)
+    const text=root.querySelector('p').firstChild,selection=select(text,1,text,8)
+    fullPaint(`<section class="wb-request">${row('new-request','<p>new request</p>')}</section><div class="wb-dialogue"></div><details id="wb-earlier-dialogue" class="wb-earlier-dialogue" data-timeline-disclosure>${old}</details>`)
+    expect(root.querySelector('#wb-earlier-dialogue').open).toBe(true)
+    expect(selection.anchorNode).toBe(text);expect(selection.toString()).toBe('ead thi')
+  })
   it('retains a backward selection with its original anchor, focus and offsets',()=>{
     root.innerHTML=timeline(row('message-1','<p>abcdef</p>'))
     const article=root.querySelector('article'),paragraph=article.querySelector('p'),text=paragraph.firstChild

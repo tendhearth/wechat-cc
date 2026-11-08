@@ -49,3 +49,30 @@ test('legacy verify lanes fail locally before reaching even an old remote', () =
     expect(() => main(['node', 'entry', lane], {}, () => { throw Error('SSH called') })).toThrow('verify runs on the primary Mac')
   }
 })
+
+test('browser transport is isolated from the App and native desktop wrappers', () => {
+  const calls=[]
+  main(['node','entry','browser'],{},(...args)=>{calls.push(args);return {status:0}})
+  expect(calls[0][1].at(-1)).toContain('/browser-run.mjs')
+  const receiver=readFileSync(new URL('./macmini-browser-snapshot.mjs',import.meta.url),'utf8')
+  expect(receiver.indexOf('await acquireMachineLock')).toBeLessThan(receiver.indexOf("await mkdir(join(root,'project')"))
+  expect(receiver).toContain('archiveSha256')
+  expect(receiver).toContain('Workspace dependency leaves snapshot')
+  expect(receiver).toContain("{...config,browserRoot:root}")
+  expect(receiver).not.toContain('appRoot:')
+  const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+  expect(remote).toContain("probe.listen(4198,'127.0.0.1'")
+  expect(remote).toContain('Browser snapshot changed while queued')
+  expect(remote).toContain("'t5-conversation.spec.ts'")
+  expect(remote).toContain("'task-detail-minimal.spec.ts'")
+  expect(remote).toContain("'workbench-line-review.spec.ts'")
+})
+
+test('browser launch uses the known lab Chromium without changing product or App launchers',()=>{
+ const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
+ expect(remote).toContain("await insideLab(join(config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'))")
+ expect(remote).toContain('CC_UI_BROWSER_EXECUTABLE:browserExecutable')
+ const config=readFileSync(new URL('../playwright.config.ts',import.meta.url),'utf8')
+ expect(config).toContain('process.env.CC_UI_BROWSER_EXECUTABLE')
+ expect(config).toContain('Lab browser must remain inside the dedicated mini lab')
+})

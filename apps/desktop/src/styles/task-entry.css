@@ -6,13 +6,13 @@
 .task-entry-form h2 { margin:0; font-size:21px; }
 .task-entry-form header p { margin:4px 0 0; color:var(--th-ink-soft); font-size:12px; }
 .task-entry-form button,.task-entry-form select,.task-entry-form textarea { font:inherit; }
-.task-entry-form button { cursor:pointer; border:1px solid var(--th-hair); background:transparent; color:inherit; border-radius:8px; padding:7px 12px; }
-.task-entry-form button:disabled { opacity:.5; cursor:default; }
+.task-entry-form button { cursor:pointer; border:1px solid var(--th-hair); background:transparent; color:inherit; border-radius:var(--th-button-radius); padding:var(--th-button-padding-y) var(--th-button-padding-x); min-height:var(--th-button-min-height); font-size:var(--th-button-role); }
+.task-entry-form button:disabled { opacity:var(--th-button-disabled-opacity); cursor:default; }
 .task-entry-form button:focus-visible,.task-entry-form textarea:focus-visible,.task-entry-form select:focus-visible,.task-entry-form input:focus-visible,.task-entry-form summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:3px; }
 .task-entry-form header>button { font-size:22px; line-height:1; background:transparent; border:0; }
 .task-entry-body { min-height:0; overflow:auto; overscroll-behavior:contain; padding:20px 24px; }
 .task-entry-body>label { display:block; margin-bottom:8px; font-weight:500; }
-.task-entry-form textarea { box-sizing:border-box; width:100%; min-height:130px; resize:vertical; border:1px solid var(--th-hair); border-radius:10px; background:var(--th-paper); color:inherit; padding:12px; line-height:1.6; }
+.task-entry-form textarea { font-size:var(--th-text-field-role); box-sizing:border-box; width:100%; min-height:130px; resize:vertical; border:1px solid var(--th-hair); border-radius:var(--th-text-field-chat-radius); background:var(--th-paper); color:inherit; padding:var(--th-text-field-chat-padding-y) var(--th-text-field-chat-padding-x); line-height:1.6; }
 .task-entry-section-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:20px 0 8px; }
 .task-entry-section-head h3 { margin:0; font-size:14px; }
 .task-entry-section-head small { display:block; font-size:12px; font-weight:400; color:var(--th-ink-soft); }

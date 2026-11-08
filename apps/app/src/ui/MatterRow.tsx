@@ -7,7 +7,7 @@ import type { HomeRow } from '../view/home'
 import { originKey } from '../view/origin'
 import type { StatusKey } from '../view/status'
 import { Icon } from './Icon'
-import { space } from './tokens'
+import { componentAppearance, space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 import { WaitingTitle } from './WaitingTitle'
@@ -20,7 +20,7 @@ export function StatusWord({ status, testID }: { status: StatusKey; testID?: str
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
       {spec.icon ? <Icon name={spec.icon} size={14} color={spec.tone === 'accent' ? c.accent : c.inkSoft} /> : null}
-      <Txt testID={testID} role="small" tone={spec.tone === 'accent' ? 'accent' : 'inkSoft'}>{t(lang, spec.word)}</Txt>
+      <Txt testID={testID} role="small" tone={componentAppearance.status.text}>{t(lang, spec.word)}</Txt>
     </View>
   )
 }
@@ -50,15 +50,15 @@ export function MatterRow({ row, onOpen, fetchTitle = false }: { row: HomeRow; o
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onOpen}
-      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 64, paddingVertical: space.m, opacity: pressed ? 0.7 : 1 })}
+      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: componentAppearance.matterRow.minHeight.phone, paddingVertical: componentAppearance.matterRow.paddingY, opacity: pressed ? 0.7 : 1 })}
     >
       {spec.icon ? <Icon name={spec.icon} color={spec.tone === 'accent' ? c.accent : c.inkSoft} /> : <View style={{ width: 18 }} />}
       <View style={{ flex: 1, gap: space.xs }}>
         {row.pendingRequestId
           ? <WaitingTitle taskId={row.id} requestId={row.pendingRequestId} fallback={row.title} fetch={fetchTitle} />
-          : <Txt role="item" content="user" numberOfLines={2}>{row.title}</Txt>}
-        {row.caption ? <Txt testID={`row-caption-${row.id}`} role="caption" tone="inkSoft" content="user" numberOfLines={1}>{row.caption}</Txt> : null}
-        {row.detail ? <Txt testID={`row-detail-${row.id}`} role="small" tone="inkSoft" content="user" numberOfLines={1}>{row.detail}</Txt> : null}
+          : <Txt role={componentAppearance.matterRow.role} content="user" numberOfLines={2}>{row.title}</Txt>}
+        {row.caption ? <Txt testID={`row-caption-${row.id}`} role={componentAppearance.matterRow.captionRole} tone="inkSoft" content="user" numberOfLines={1}>{row.caption}</Txt> : null}
+        {row.detail ? <Txt testID={`row-detail-${row.id}`} role={componentAppearance.matterRow.detailRole} tone="inkSoft" content="user" numberOfLines={1}>{row.detail}</Txt> : null}
         {row.note ? <Txt testID={`row-note-${row.id}`} role="meta" tone="inkSoft">{row.note}</Txt> : null}
       </View>
       <Icon name="chevronRight" size={16} color={c.inkSoft} />

@@ -2,6 +2,7 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { color, componentAppearance, typeScale } from '@wechat-cc/design-tokens'
 import { makeDemoBackend } from '../backend/demo'
 import { BackendError, type Backend, type ChatPageT } from '../backend/types'
 import { clearDrafts, getDraft, putReceipt, setDraft } from './drafts'
@@ -15,10 +16,10 @@ vi.mock('react-native', async () => {
   const { createElement, forwardRef, useImperativeHandle } = await import('react')
   const { nativeBoundary } = await import('../ui/native-motion.test-support')
   // 无障碍「激活」= 点一下(发送键是 View + onAccessibilityAction,没有 onPress)
-  const View = ({ children, testID, accessibilityLabel, accessibilityRole, onAccessibilityAction }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole,
+  const View = ({ children, testID, accessibilityLabel, accessibilityRole, onAccessibilityAction, style }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole, 'data-style': JSON.stringify(style),
     onClick: onAccessibilityAction ? () => onAccessibilityAction({ nativeEvent: { actionName: 'activate' } }) : undefined }, children)
-  const Text = ({ children, testID }: any) => createElement('span', { 'data-testid': testID }, children)
-  const Pressable = ({ children, testID, accessibilityLabel, disabled, onPress }: any) => createElement('button', { 'data-testid': testID, 'aria-label': accessibilityLabel, disabled, onClick: onPress }, children)
+  const Text = nativeBoundary().Text
+  const Pressable = ({ children, testID, accessibilityLabel, disabled, onPress, style }: any) => createElement('button', { 'data-testid': testID, 'aria-label': accessibilityLabel, disabled, onClick: onPress, 'data-style': JSON.stringify(typeof style === 'function' ? style({pressed:false}) : style) }, children)
   const TextInput = forwardRef<any, any>(({ value, onChangeText, testID }: any, ref) => createElement('textarea', { ref, value, 'data-testid': testID, onInput: (e: any) => onChangeText(e.currentTarget.value) }))
   const FlatList = forwardRef<any, any>(({ data, renderItem, ListEmptyComponent, ListFooterComponent, onScroll, testID }: any, ref) => {
     useImperativeHandle(ref, () => ({ scrollToOffset: scrollHost.offset, scrollToIndex() {} }))
@@ -51,6 +52,18 @@ beforeEach(() => { scrollHost.offset.mockClear(); clearDrafts(); container = doc
 afterEach(async () => { await act(() => root.unmount()); container.remove() })
 
 describe('native chat feedback', () => {
+  it('uses a rail bubble and bubble text for the user, transparent body text for CC, and the 44-point header target', async () => {
+    const at=Date.now()
+    await mount({...empty(),messages:[{id:'me',role:'me',source:'phone',text:'我的消息',at,truncated:false,kind:'text'},{id:'cc',role:'cc',source:'phone',text:'CC 的回复',at:at+1,truncated:false,kind:'text'}]})
+    const me=byId('chat-bubble-me'),cc=byId('chat-bubble-cc')
+    expect(JSON.parse(me.getAttribute('data-style')!)).toMatchObject({backgroundColor:color.rail,borderRadius:componentAppearance.message.radius,paddingHorizontal:16,paddingVertical:12})
+    expect(JSON.parse(cc.getAttribute('data-style')!).backgroundColor).toBe('transparent')
+    const textStyle=(node:HTMLElement,text:string)=>JSON.parse([...node.querySelectorAll('span')].find(n=>n.textContent===text)!.getAttribute('data-style')!)
+    expect(textStyle(me,'我的消息').fontSize).toBe(typeScale.bubble.phone)
+    expect(textStyle(cc,'CC 的回复').fontSize).toBe(typeScale.body.phone)
+    expect(JSON.parse(byId('now-cc').getAttribute('data-style')!)).toMatchObject({minWidth:44,minHeight:44})
+  })
+
   it('announces new changes while reading old messages and moves only after an explicit tap', async () => {
     let page = empty(), ctx!: import('./providers.test-support').TestCtx
     const say = vi.fn(), backend = { ...makeDemoBackend(), chat: async () => page, chatSay: say }
