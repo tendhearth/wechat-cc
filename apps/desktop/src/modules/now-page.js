@@ -237,6 +237,12 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onRe
     setAttention(state) { attention = state; hero.setAttention(state); renderWaiting() },
     /** @param {import('./converse.js').ConverseMsg[]} msgs */
     setConversationSnapshot(msgs) { hero.setConverse(msgs) },
+    /** @param {import('../generated/cc-activity.js').CCStream|null} stream */
+    setConversationActivity(stream) { hero.setActivity(stream) },
+    /** @param {string[]} ids */
+    setTopics(ids) {
+      hero.setTopics(ids)
+    },
     /** 终端里等批准的会话(terminal-waiting.js 的行),接在工作台的等你行后面。 @param {import('./terminal-waiting.js').TerminalRow[]} rows */
     setTerminal(rows) {
       terminal = rows

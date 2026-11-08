@@ -97,6 +97,7 @@ for (const app of ['apps/mobile', 'apps/relay', 'apps/app']) {
 }
 step('depcheck', 'bun', ['run', 'depcheck'])
 step('测试 · 改动牵连到的', 'bun', ['--bun', 'vitest', 'run', '--changed', base, '--passWithNoTests'])
+if (touched('apps/app/', 'packages/protocol/')) step('App 单测', 'bun', ['run', 'test'], 'apps/app')
 
 const CODE = /\.(ts|tsx|js|mjs|cjs|jsx)$/
 const nonImport = changed.filter(f => !CODE.test(f) && !f.endsWith('.md') && !['package.json', 'bun.lock'].includes(f))

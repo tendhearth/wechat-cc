@@ -26,10 +26,11 @@ describe('home follows live chat evidence', () => {
     const read = vi.fn(async () => page), chatSay = vi.fn()
     const demo = makeDemoBackend({ lang: 'zh-Hans' })
     // 只有「真连着电脑」CC 才亮、才动(演示是暗的),所以假后端报 live + 在线。
-    const backend: Backend = { ...demo, mode: 'live', chat: read, chatSay,
+    const backend: Backend = { ...demo, mode: 'live', chat: read, chatSay, cliSessions: async () => [],
       connection: () => ({ state: 'online', lastSyncedAt: 1, epoch: 1 }),
       onConnection: cb => { cb({ state: 'online', lastSyncedAt: 1, epoch: 1 }); return () => {} },
       subscribe: <T,>(name: Parameters<Backend['subscribe']>[0], callback: (data: T) => void) => {
+        if (name === 'approvals') { callback([] as T); return () => {} } // this test observes replies with no permission blocking them
         if (!name.startsWith('matter/')) return demo.subscribe(name, callback)
         callbacks.set(name, callback as (data: unknown) => void); callback({ version: 1 } as T); return () => { callbacks.delete(name) }
       },

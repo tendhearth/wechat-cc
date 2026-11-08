@@ -13,6 +13,16 @@ const node = (props: Record<string, unknown> = {}) => createElement(CCFigure, { 
 const scale = (container: Element) => JSON.parse(container.firstElementChild!.getAttribute('data-style')!).transform.find((value: any) => value.scale !== undefined).scale
 
 describe('CC native motion lifecycle', () => {
+  it('has distinct evidence-driven listening, thinking and speaking poses and stops on signal removal', async () => {
+    const ui = await mount(node({ phase: 'listening' }))
+    await advance(180); expect(value(ui.container, 'rotate')).toBe('-2deg')
+    await ui.render(node({ phase: 'thinking' })); await advance(600)
+    expect(value(ui.container, 'rotate')).toBe('1deg')
+    await ui.render(node({ phase: 'speaking' })); await advance(300)
+    expect(value(ui.container, 'translateY')).toBe(-1)
+    await ui.render(node({ phase: 'idle' })); expect(value(ui.container, 'translateY')).toBe(0)
+    expect(value(ui.container, 'rotate')).toBe('0deg')
+  })
   it('stops at rest in the background and when the route blurs', async () => {
     const ui = await mount(node())
     await advance(2000); expect(scale(ui.container)).toBe(1.02)
@@ -27,6 +37,16 @@ describe('CC native motion lifecycle', () => {
     await advance(6000); expect(scale(ui.container)).toBe(1)
     await reduce(true); await ui.render(node({ presence: 'here' }))
     await advance(6000); expect(scale(ui.container)).toBe(1)
+  })
+  it('keeps all three evidence states static in reduced motion and Dark', async () => {
+    const ui = await mount(node())
+    await reduce(true)
+    for (const phase of ['listening', 'thinking', 'speaking']) {
+      await ui.render(node({ phase })); await advance(3000)
+      expect(value(ui.container, 'rotate')).toBe('0deg'); expect(value(ui.container, 'translateY')).toBe(0)
+      await ui.render(node({ phase, presence: 'away' })); await advance(3000)
+      expect(value(ui.container, 'translateY')).toBe(0)
+    }
   })
 })
 

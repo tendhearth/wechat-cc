@@ -4,8 +4,8 @@ import { STATUS_WORDS } from '../generated/status-table.js'
 import { escapeHtml } from '../view.js'
 
 /** T4 reads never open a bubble. Only a deliberate owner selection writes.
- * @param {{root:HTMLElement,call:(method:any,path:string,body?:any)=>Promise<any>,openMatter:(id:string)=>unknown,locateMessage:(id:string,excerpt?:string)=>unknown,manage:()=>unknown}} deps */
-export function mountConversationTopics({root,call,openMatter,locateMessage,manage}) {
+ * @param {{root:HTMLElement,call:(method:any,path:string,body?:any)=>Promise<any>,openMatter:(id:string)=>unknown,locateMessage:(id:string,excerpt?:string)=>unknown,manage:()=>unknown,onTopics?:(ids:string[])=>void}} deps */
+export function mountConversationTopics({root,call,openMatter,locateMessage,manage,onTopics}) {
   const row = document.createElement('nav'); row.className = 'conversation-topics'; row.ariaLabel = '最近话题'; row.hidden = true
   const panel = document.createElement('section'); panel.className = 'conversation-topic-panel'; panel.ariaLabel = '话题'; panel.hidden = true; panel.tabIndex = -1
   root.querySelector('.converse-compose')?.before(row)
@@ -47,7 +47,7 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       const data = await v1(call,V1.topics.list,{query:{view:'recent',limit:6}})
       if (!alive || generation !== listTicket) return
       if (!Array.isArray(data.topics) || typeof data.revision !== 'string') throw Error('invalid_topics')
-      supported=true; topics = data.topics; stale = false; drawRow()
+      supported=true; topics = data.topics; stale = false; drawRow(); onTopics?.(topics.slice(0,6).map(t=>t.id))
       if (selected && pendingOpen?.id!==selected) await readDetail(selected)
     } catch (error) {
       if (!alive || generation !== listTicket) return

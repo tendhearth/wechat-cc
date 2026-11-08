@@ -40,7 +40,7 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, subscribeConverseActivity, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
 import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
 import { mountConversationTools } from './modules/conversation-tools.js'
 import { mountHistoryDialog } from './modules/workbench-history.js'
@@ -180,6 +180,7 @@ const nowPage = nowRoot ? mountNowPage({
   },
 }) : null
 if (nowPage) setConverseMode('chat')
+subscribeConverseActivity(stream => nowPage?.setConversationActivity(stream))
 // 右上角状态行 = doctor(daemon 跑没跑)∧ presence(够不够得着),与 CC 明暗同一信号。
 /** @type {{alive:boolean}|null} */ let lastDaemon = null
 /** @type {{presence:string}|null} */ let lastPresence = null
@@ -1708,6 +1709,7 @@ async function boot() {
       })
     }
     const topics=mountConversationTopics({root:conversationRoot,call:invokeWorkbenchApi,
+      onTopics:ids=>nowPage?.setTopics(ids),
       openMatter:id=>deps.onOpenMatter(id),
       locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
       manage:()=>switchPane('memory')})

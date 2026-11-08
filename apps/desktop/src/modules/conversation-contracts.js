@@ -6,6 +6,7 @@ import { V1,v1 } from '../daemon-client.js'
  * @param {{window:(data:any,query:any)=>void,work:(data:any)=>void,stream:(data:any)=>void}} render */
 export function mountOwnerConversation(root,call,render) {
   let alive=true,busy=false,cursor=0,turnId='',ticks=0,scope='',streamScope=''
+  let activityReady=false
   /** @type {Map<string,any>} */const references=new Map(),results=new Map()
   /** @type {ReturnType<typeof setInterval>|undefined} */ let timer
   const read=async(/** @type {any} */ query={})=>{const data=await v1(call,V1.conversation.window,{query});if(alive)render.window(data,query);return data}
@@ -30,9 +31,9 @@ export function mountOwnerConversation(root,call,render) {
     busy=true
     try{
       const data=await v1(call,V1.conversation.events,{query:{since:cursor}})
-      if(!alive)return;if(data.scope&&streamScope&&data.scope!==streamScope){cursor=0;streamScope=data.scope;render.stream({...data,events:[]});return}streamScope=data.scope??streamScope;cursor=data.cursor;turnId=data.running?.turnId??'';render.stream(data)
+      if(!alive)return;if(data.scope&&streamScope&&data.scope!==streamScope){cursor=0;activityReady=false;streamScope=data.scope;render.stream({...data,activityReady:false,events:[]});return}streamScope=data.scope??streamScope;cursor=data.cursor;turnId=data.running?.turnId??'';render.stream({...data,activityReady});if(!data.events?.length)activityReady=true
       if(ticks++%5===0){await read();await readWork()}
-    }catch{/* Keep the last confirmed projection and retry a read, never a write. */}finally{busy=false}
+    }catch{activityReady=false;if(alive){turnId='';render.stream({running:null,events:[],cursor})}}finally{busy=false}
   }
   const ready=(async()=>{
     try{

@@ -60,6 +60,8 @@ const IMAGE_MAX_BYTES = 10 * 1024 * 1024
 // 「此刻」页的气泡要显示 CC 最近一句真话:订阅者每次渲染都拿到当前消息表。
 /** @type {Set<(msgs: ConverseMsg[]) => void>} */
 const listeners = new Set()
+/** @type {Set<(stream:import('../generated/cc-activity.js').CCStream|null)=>void>} */ const activityListeners = new Set()
+/** @type {import('../generated/cc-activity.js').CCStream|null} */ let currentActivity = null
 
 /** @type {ReturnType<typeof mountOwnerConversation>|null} */ let ownerReader=null
 let sharedSupported=false,earlierCursor='',laterCursor='',reconcileAfter=0,ownerScope=''
@@ -100,6 +102,8 @@ function acceptWork(data){
 }
 /** @param {any} data */
 function acceptStream(data){
+  currentActivity = data
+  for (const cb of activityListeners) cb(data)
   for(const event of data.events??[]){const previous=streamRows.get(event.id);streamRows.set(event.id,{...event,localId:previous?.localId??nextId++})}
   messages=messages.filter(m=>!m.contractKey?.startsWith('stream:'))
   for(const [id,event] of streamRows){
@@ -581,6 +585,8 @@ export function subscribeConverse(cb) {
   cb(messages)
   return () => { listeners.delete(cb) }
 }
+/** @param {(stream:import('../generated/cc-activity.js').CCStream|null)=>void} cb */
+export function subscribeConverseActivity(cb) { activityListeners.add(cb); cb(currentActivity); return () => { activityListeners.delete(cb) } }
 
 /** home 只露输入框与发送;chat 是完整对话。 @param {'home'|'chat'} mode */
 export function setConverseMode(mode) {

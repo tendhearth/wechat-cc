@@ -10,6 +10,7 @@ appId: com.tendhearth.app
     timeout: 10000
 - tapOn:
     id: now-cc
+- takeScreenshot: cc-alive-app-demo-idle
 - extendedWaitUntil:
     visible:
       id: chat-input
@@ -73,3 +74,46 @@ appId: com.tendhearth.app
     timeout: 10000
 - assertVisible:
     id: chat-bubble-cc
+# Existing dev-e2e build gate; explicit synthetic evidence, no pairing or live API.
+- openLink: tendhearth://dev-e2e?op=cc-motion
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    visible:
+      id: review-idle
+    timeout: 10000
+- assertVisible:
+    id: cc-phase-idle
+- takeScreenshot: cc-alive-app-before-idle
+- tapOn:
+    id: review-listening
+    waitToSettleTimeoutMs: 300
+- assertVisible:
+    id: cc-phase-listening
+- takeScreenshot: cc-alive-app-after-listening
+- tapOn:
+    id: review-thinking
+    waitToSettleTimeoutMs: 300
+- assertVisible:
+    id: cc-phase-thinking
+- takeScreenshot: cc-alive-app-after-thinking
+- tapOn:
+    id: review-speaking
+    waitToSettleTimeoutMs: 300
+- assertVisible:
+    id: cc-phase-speaking
+- takeScreenshot: cc-alive-app-after-speaking
+- tapOn:
+    id: review-done
+    waitToSettleTimeoutMs: 100
+- takeScreenshot: cc-alive-app-after-done
+- tapOn:
+    id: review-look
+    waitToSettleTimeoutMs: 100
+- takeScreenshot: cc-alive-app-after-topic
+- tapOn:
+    id: review-away
+- takeScreenshot: cc-alive-app-after-away

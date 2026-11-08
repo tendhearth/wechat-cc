@@ -67,6 +67,11 @@ export default function Chat() {
   const [locateNote, setLocateNote] = useState(false)
   const inputRef = useRef<import('react-native').TextInput>(null)
   const [text, setTextState] = useState(() => getDraft('chat'))
+  const [typing, setTyping] = useState(false)
+  const [topicIds, setTopicIds] = useState<string[]>()
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const endTyping = () => { clearTimeout(typingTimer.current); setTyping(false) }
+  useEffect(() => () => clearTimeout(typingTimer.current), [])
   // 发送是异步的:成功回来时比的是「现在」输入框里的字,不是点发送时闭包里的那份
   const textRef = useRef(text)
   const setText = (v: string) => { setDraft('chat', v); textRef.current = v; setTextState(v) }
@@ -99,6 +104,7 @@ export default function Chat() {
     if (lock.current || !online) return
     lock.current = true
     setSending(true); setOutcome(null)
+    endTyping()
     try {
       const r = await go()
       if (r === 'ok') {
@@ -193,7 +199,7 @@ export default function Chat() {
       <TopBar
         title="CC" showStatus onAvatar={() => router.push('/settings')}
         onConnection={() => router.push('/connections')} connectionTestID="now-connections"
-        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} />}
+        leading={<ConversationPresence onPress={() => inputRef.current?.focus()} stream={stream} typing={typing && focused} topics={topicIds} />}
         actions={<View style={{ flexDirection: 'row' }}><IconButton name="search" label={t(lang, 'chatSearch.title')} testID="chat-search-open" onPress={() => router.push('/chat-search')} />
           <ConversationMore /></View>}
       />
@@ -250,7 +256,7 @@ export default function Chat() {
             router.push(row.href)
           }} style={{ minHeight: 44, justifyContent: 'center' }}><Txt role="meta" tone="accent">{lang === 'zh-Hans' ? `${waiting.length} 件事等你` : `${waiting.length} waiting for you`}</Txt></Pressable> : null}
           {locateNote ? <Txt testID="chat-locate-gone" role="meta" tone="inkSoft">{lang === 'zh-Hans' ? '暂时找不到这句，仍可继续对话' : 'Cannot locate this message. You can continue talking.'}</Txt> : null}
-          <TopicRow />
+          <TopicRow onTopics={setTopicIds} />
           {outcome ? (
             <View style={{ alignItems: 'flex-end' }}><StatusHint testID={`chat-outcome-${outcome}`} label={t(lang, outcome === 'uncertain' ? 'feedback.unconfirmed' : 'feedback.notSent')}
               icon={outcome === 'uncertain' ? 'help' : 'alert'} description={t(lang, OUTCOME_KEY[outcome])}>
@@ -278,7 +284,8 @@ export default function Chat() {
               testID="chat-input"
               accessibilityLabel={t(lang, 'chat.placeholder')}
               value={text}
-              onChangeText={v => { setText(v); talk.ctl.clearNote() }}
+              onBlur={endTyping}
+              onChangeText={v => { setText(v); talk.ctl.clearNote(); clearTimeout(typingTimer.current); setTyping(!!v.trim()); typingTimer.current = setTimeout(() => setTyping(false), 1600) }}
               multiline
               variant="chat"
               placeholder={t(lang, 'chat.placeholder')}
