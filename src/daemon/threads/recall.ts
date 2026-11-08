@@ -7,7 +7,7 @@
  */
 import { TURN_JUDGE_TIMEOUT_MS } from '../../app/turn-judge'
 import type { ThreadsStore, TopicEntry, ThreadRecord } from '../../lib/threads-store'
-import { isSubstantiveTopicQuery, matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, searchTopics, topicJudgePrompt, MAX_TOPICS, MAX_ENTRIES, TOPIC_FALLBACK_MAX_CANDIDATES, type MatchTopic, type TopicJudgeSelection, type TopicSearchHit } from '../../domain/topic-match'
+import { isSubstantiveTopicQuery, matchTopics, parseTopicJudge, pickEntries, renderTopicsBlock, searchTopics, topicJudgePrompt, withoutRoutineTopicNoise, MAX_TOPICS, MAX_ENTRIES, TOPIC_FALLBACK_MAX_CANDIDATES, type MatchTopic, type TopicJudgeSelection, type TopicSearchHit } from '../../domain/topic-match'
 
 /** 快判预算小于 mw-recall 的 4 秒总限，为读索引和记忆留出余量。 */
 export const TOPIC_JUDGE_TIMEOUT_MS = TURN_JUDGE_TIMEOUT_MS
@@ -54,6 +54,7 @@ async function judge(text: string, cands: MatchTopic[], reason: 'ambiguous' | 'z
 }
 
 export async function resolveTopicRecall(text: string, topics: readonly MatchTopic[], o: ResolveOpts = {}): Promise<TopicRecallResult | null> {
+  topics = topics.map(withoutRoutineTopicNoise).filter(t => t.entries.length > 0 || t.summary)
   if (text.trim().length < TOPIC_RECALL_MIN_CHARS || topics.length === 0) return null
   const m = matchTopics(text, topics)
   let ids = m.hits.map(h => h.id)
@@ -83,10 +84,10 @@ export async function resolveTopicRecall(text: string, topics: readonly MatchTop
 }
 
 export function toMatchTopic(t: ThreadRecord, entries: readonly TopicEntry[]): MatchTopic {
-  return {
+  return withoutRoutineTopicNoise({
     id: t.id, title: t.title, summary: t.summary, aliases: t.aliases, tags: t.tags, lastActive: t.lastActive,
     entries: entries.filter(e => e.status === 'live').map(e => ({ id: e.id, kind: e.kind, line: e.line, body: e.body, due: e.due, updatedTs: e.updatedTs })),
-  }
+  })
 }
 
 /** 一个对话里还开着的话题(标 done 的不调),带还算数的条目。 */

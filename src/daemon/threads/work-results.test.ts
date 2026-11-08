@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { openTestDb } from '../../lib/db'
-import { readWorkResults, isScratchMatter, SETTLE_MS } from './work-results'
+import { readWorkResults, readMatterConclusion, isScratchMatter, SETTLE_MS } from './work-results'
 
 const T0 = Date.UTC(2026, 10, 1)
 function seed() {
@@ -19,6 +19,40 @@ function seed() {
 }
 
 describe('readWorkResults (话题 T1:agent 的活只取结论)', () => {
+  it('直接结论写回也排除自检和临时事项,保留主人修复升级的真实结论', () => {
+    const { db, matter, item } = seed()
+    try {
+      matter('self', 'task', 'selftest workbench', '/Users/o/cc', 'done')
+      matter('scratch', 'task', '演练', '/private/tmp/probe', 'done')
+      matter('real', 'task', '修复自动升级', '/Users/o/cc', 'done')
+      item('self', 'agent_message', '自检已过', T0)
+      item('scratch', 'agent_message', '演练完成', T0)
+      item('real', 'user_message', '修复自动升级的回滚漏洞', T0)
+      item('real', 'agent_message', '回滚漏洞已修复,补了失败版本的回归测试', T0)
+      expect(readMatterConclusion(db, 'self', 0)).toBeNull()
+      expect(readMatterConclusion(db, 'scratch', 0)).toBeNull()
+      expect(readMatterConclusion(db, 'real', 0)?.result).toContain('回滚漏洞已修复')
+    } finally { db.close() }
+  })
+  it('旧升级回执不进工作结论,水位照样越过机器事务', () => {
+    const { db, matter, item } = seed()
+    try {
+      matter('receipt', 'terminal', 'wechat-cc', '/Users/o/cc', 'done')
+      const cursor = item('receipt', 'agent_message', 'Codex升至0.167.0自检过', T0)
+      expect(readWorkResults(db, 0, T0)).toEqual({ results: [], nextCursor: cursor })
+      expect(readMatterConclusion(db, 'receipt', 0)).toBeNull()
+    } finally { db.close() }
+  })
+  it('selftest 功能开发的主人事项不是机器自检', () => {
+    const { db, matter, item } = seed()
+    try {
+      matter('real', 'task', 'selftest 手机验收的回滚漏洞修复', '/Users/o/cc', 'done')
+      item('real', 'user_message', '修复自检回滚漏洞', T0)
+      item('real', 'agent_message', '已修复自检回滚漏洞,决定保留新版验收入口', T0)
+      expect(readMatterConclusion(db, 'real', 0)?.result).toContain('已修复')
+      expect(readWorkResults(db, 0, T0).results.map(r => r.matterId)).toEqual(['real'])
+    } finally { db.close() }
+  })
   it('每段只取最后那条 agent 回话;过程不要;自检 / 临时目录跳过', () => {
     const { db, matter, item } = seed()
     matter('t1', 'terminal', 'bx', '/Users/o/Documents/bx', 'done')

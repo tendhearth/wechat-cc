@@ -18,7 +18,7 @@
  * `updateJsonFile` 做了一步乐观检查:写之前看一眼 mtime / size,读完以后被人改过就重读、重算一次;
  * 两次都被抢就照实抛 `ConcurrentJsonUpdateError`,不悄悄覆盖。真要强一致,要上锁,不在这一步。
  */
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { readJsonFile } from './read-json-file'
@@ -108,6 +108,20 @@ export function writeFileAtomic(path: string, data: string, opts: AtomicWriteOpt
 
 export function writeJsonAtomic(path: string, value: unknown, opts: AtomicWriteOptions = {}): void {
   writeFileAtomic(path, JSON.stringify(value, null, 2) + '\n', opts)
+}
+
+/** Durable create-only journal. Never replace an existing rollback receipt; caller supplies an existing directory. */
+export function writeJsonExclusive(path: string, value: unknown): void {
+  const fd = openSync(path, 'wx', 0o600)
+  try {
+    writeFileSync(fd, JSON.stringify(value, null, 2) + '\n')
+    fsyncSync(fd)
+  } finally { closeSync(fd) }
+  // A committed DB transaction must not outlive the new journal name. Windows cannot open directories this way.
+  if (process.platform !== 'win32') {
+    const directory = openSync(dirname(path), 'r')
+    try { fsyncSync(directory) } finally { closeSync(directory) }
+  }
 }
 
 function stamp(path: string): string | null {

@@ -9,6 +9,7 @@
  * 那时还没做完),所以每件被碰到的 matter 都从头切段,只交出结论 cursor > 水位的那几段。
  */
 import type { Db } from '../../lib/db'
+import { isRoutineTopicText } from '../../domain/topic-noise'
 
 export const SETTLE_MS = 30 * 60_000
 const ASK_MAX = 200
@@ -35,7 +36,8 @@ export interface WorkResult {
 
 /** 自检 / 草稿目录里跑的不算主人的活。 */
 export function isScratchMatter(title: string, projectPath: string | null): boolean {
-  if (/^selftest/i.test(title.trim())) return true
+  // These are generated selftest titles. A user task such as “selftest 手机验收的回滚漏洞修复” is real project work.
+  if (/^selftest(?:[- :：]*(?:phone|chat|workbench))?$/i.test(title.trim())) return true
   if (!projectPath) return false
   const p = projectPath.replace(/\\/g, '/')
   return /^\/(private\/)?(tmp|var\/folders)\//.test(p) || /\/wechat-cc-selftest\//.test(p) || /\/wechat-cc-eval\//.test(p) || /\/AppData\/Local\/Temp\//i.test(p)
@@ -56,6 +58,7 @@ function cap(s: string, n: number): string {
 const DONE_STATES = new Set(['done', 'failed', 'cancelled'])
 
 interface MatterRow { kind: string; title: string; project_path: string | null; state: string }
+const eligible = (m: MatterRow) => ['task', 'terminal', 'act'].includes(m.kind) && !isScratchMatter(m.title, m.project_path)
 interface Segment { ask: string | null; firstCursor: number; last: { text: string; at: number; cursor: number } | null; closed: boolean }
 
 function matterRow(db: Db, id: string): MatterRow | null {
@@ -97,10 +100,10 @@ function toResult(id: string, m: MatterRow, s: Segment): WorkResult {
 /** T3:这件事刚做完的那一轮的结论(水位之后最后那段的最后一条 agent 回话);没有 ⇒ null。调用方知道这一轮已经结束,不看 SETTLE_MS。 */
 export function readMatterConclusion(db: Db, matterId: string, afterCursor: number): WorkResult | null {
   const m = matterRow(db, matterId)
-  if (!m) return null
+  if (!m || !eligible(m)) return null
   const segs = segments(db, matterId, Number.MAX_SAFE_INTEGER).filter(s => s.last && s.last.cursor > afterCursor)
   const s = segs[segs.length - 1]
-  return s ? toResult(matterId, m, s) : null
+  return s && !isRoutineTopicText(s.last!.text) ? toResult(matterId, m, s) : null
 }
 
 /**
@@ -120,12 +123,13 @@ export function readWorkResults(db: Db, afterCursor: number, now: number = Date.
   let holdAt = Infinity
   for (const id of matterIds) {
     const m = matterRow(db, id)
-    if (!m || isScratchMatter(m.title, m.project_path)) continue
+    if (!m || !eligible(m)) continue
     // T3 已经写回过话题的那几段不再交(不重复记)
     const writtenBack = db.query<{ c: number | null }, [string]>('SELECT MAX(written_back_cursor) AS c FROM matter_topics WHERE matter_id = ?').get(id)?.c ?? 0
     const matterDone = DONE_STATES.has(m.state)
     for (const s of segments(db, id, scanTop)) {
       if (!s.last || s.last.cursor <= afterCursor) continue
+      if (isRoutineTopicText(s.last.text)) continue
       const settled = s.closed || matterDone || now - s.last.at >= SETTLE_MS
       if (!settled) { holdAt = Math.min(holdAt, s.firstCursor); continue }
       if (s.last.cursor <= writtenBack) continue

@@ -1,0 +1,13 @@
+{
+  "id": "topic-routine-receipts-only",
+  "kind": "topic",
+  "note": "独立样例:项目只有机器升级流水时,即使明确提到话题也不应召回机器事务",
+  "input": {
+    "text": "wechat-cc 近况",
+    "topics": [{ "id": "cc", "title": "wechat-cc", "summary": "Codex升至0.167.0自检过", "entries": [
+      { "id": "cli-upgrade", "kind": "progress", "line": "Codex升至0.167.0自检过" },
+      { "id": "db-migration", "kind": "progress", "line": "服务升级至DB v109…便宜模型切至agy" }
+    ] }]
+  },
+  "rules": [{ "recalls": null }]
+}

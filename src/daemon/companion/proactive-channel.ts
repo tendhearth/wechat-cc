@@ -18,6 +18,7 @@
  */
 
 import type { TurnAttachment } from '../../domain/turn-reply'
+import type { WechatSend } from '../../ports/wechat'
 import type { AppAttachment } from '../app-reply'
 
 export type ProactiveChannel = 'wechat' | 'app'
@@ -27,7 +28,7 @@ export interface AppChannel {
   /** 这个 chat 的话 App 收得到:是主人那条对话,且至少一台配对设备登记了推送(或正连着)。 */
   deliverable(chatId: string): boolean
   /** 记成主人对话里 CC 的一行 + 捅一下主题(App 对话页会刷新)。带附件 ⇒ 放 extras(信的几页)。成功 ⇒ true。 */
-  record(chatId: string, text: string, attachments?: readonly AppAttachment[]): Promise<boolean>
+  record(chatId: string, text: string, attachments?: readonly AppAttachment[], metadata?: ProactiveMetadata): Promise<boolean>
   /** 一条 `companion` 推送(在线的设备跳过)。只投不等,失败只记日志。 */
   push(text: string): void
   /**
@@ -43,7 +44,7 @@ export interface ProactiveChannelDeps {
   wechatDegraded(): boolean
   /** 这个 chat 的主动推送窗口已知关闭的时刻(ilink.proactiveClosedSince);开着 ⇒ null。 */
   wechatClosedSince(chatId: string): string | null
-  sendWechat(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
+  sendWechat(chatId: string, text: string, metadata?: ProactiveMetadata): Promise<{ msgId: string; error?: string }>
   /** 微信那头发一个本地文件(ilink.sendFile;抛错由调用方折成 {error})。没接 ⇒ 微信那条路发不了文件。 */
   sendWechatFile?(chatId: string, path: string): Promise<{ error?: string }>
   /** 没开中继 v2 / 没配对 ⇒ null(只剩微信,即改造前)。懒取:App 那头比伙伴的 tick 晚接线。 */
@@ -61,13 +62,15 @@ export function chooseChannel(s: { wechatUsable: boolean; appDeliverable: boolea
 export type { ProactiveTurn } from '../../ports/proactive-turn'
 import type { ProactiveTurn } from '../../ports/proactive-turn'
 
+export type ProactiveMetadata = NonNullable<Parameters<WechatSend['sendMessage']>[2]>
+
 export interface ProactiveOutbound {
   /** App 收得到这个 chat 的话吗(伙伴那一拍的闸要用)。 */
   appDeliverable(chatId: string): boolean
   /** 有没有哪条路送得到:微信没断,或 App 收得到。 */
   canDeliver(chatId: string): boolean
   /** 一轮(可能多条)的出口,路选定后粘住。 */
-  open(chatId: string): ProactiveTurn
+  open(chatId: string, metadata?: ProactiveMetadata): ProactiveTurn
   /** 单条(提醒):选路、送一次、落在 App 就推一次。 */
   sendOnce(chatId: string, text: string): Promise<{ ok: boolean; channel?: ProactiveChannel; error?: string }>
 }
@@ -90,7 +93,7 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
     try { return deps.wechatClosedSince(chatId) === null } catch { return true }
   }
 
-  function open(chatId: string): ProactiveTurn {
+  function open(chatId: string, metadata?: ProactiveMetadata): ProactiveTurn {
     let sticky: ProactiveChannel | null = null
     const appTexts: string[] = []
     let app: AppChannel | null = null
@@ -98,7 +101,7 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
 
     const toApp = async (a: AppChannel, text: string, silent = false): Promise<{ msgId: string; error?: string }> => {
       let ok = false
-      try { ok = await a.record(chatId, text) } catch (e) { deps.log('COMPANION_APP', `chat=${chatId} record threw: ${errMsg(e)}`) }
+      try { ok = await (metadata ? a.record(chatId, text, undefined, metadata) : a.record(chatId, text)) } catch (e) { deps.log('COMPANION_APP', `chat=${chatId} record threw: ${errMsg(e)}`) }
       if (!ok) return { msgId: `err:${Date.now()}`, error: 'app_record_failed' }
       if (!silent) appTexts.push(text)
       return { msgId: `app:${Date.now()}:${seq++}` }
@@ -107,7 +110,7 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
     return {
       async sendText(_c, text) {
         if (sticky === 'app' && app) return toApp(app, text)
-        if (sticky === 'wechat') return deps.sendWechat(chatId, text)
+        if (sticky === 'wechat') return deps.sendWechat(chatId, text, ...(metadata ? [metadata] as const : []))
         const a = appFor(chatId)
         const pick = chooseChannel({ wechatUsable: wechatUsable(chatId), appDeliverable: !!a })
         if (pick === 'app' && a) {
@@ -116,7 +119,7 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
           return toApp(a, text)
         }
         // 微信能用 —— 或者两条都不通(⇒ 同改造前:照试微信一次,该怎么失败就怎么失败)。
-        const r = await deps.sendWechat(chatId, text)
+        const r = await deps.sendWechat(chatId, text, ...(metadata ? [metadata] as const : []))
         if (!r.error) { sticky = 'wechat'; return r }
         if (a) {
           deps.log('COMPANION_APP', `chat=${chatId} wechat send failed (${r.error}) — delivering to the app instead`)

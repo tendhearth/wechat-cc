@@ -63,12 +63,12 @@ export function pushWords(a: AppAttachment): string {
 export function makeAppChannel(deps: AppChannelDeps): AppChannel {
   const now = deps.now ?? (() => Date.now())
   let seq = 0
-  async function record(chatId: string, text: string, attachments?: readonly AppAttachment[]): Promise<boolean> {
+  async function record(chatId: string, text: string, attachments?: readonly AppAttachment[], metadata?: import('./proactive-channel').ProactiveMetadata): Promise<boolean> {
     const t = now()
     const id = `app:companion:${t}:${seq++}:out`
     const rec: MessageRecord = attachments?.length
-      ? attachmentRow({ id, chatId, at: t, attachments: [...attachments], text, source: 'phone' })
-      : { id, chatId, ts: new Date(t).toISOString(), direction: 'out', kind: 'text', text, source: 'phone' }
+      ? attachmentRow({ id, chatId, at: t, attachments: [...attachments], text, source: metadata?.source ?? 'phone' })
+      : { id, chatId, ts: new Date(t).toISOString(), direction: 'out', kind: 'text', text, source: metadata?.source ?? 'phone' }
     try {
       await deps.append(rec)
     } catch (e) {

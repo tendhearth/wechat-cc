@@ -10,6 +10,7 @@
  * 每拍再问一次,会把账淹掉)。放行 / 被拒 / 失败以后重新算。
  * 第 1 步只加不接:还没有调用方,行为不变。
  */
+import { isRoutineSpeech } from '../../domain/topic-noise'
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../domain/speech/decide'
 import { keepForMs, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
@@ -199,7 +200,7 @@ export function makeSpeechPolicy(deps: {
     async say(req, produce) {
       const { decision, base } = judge(req, deps.outbound.canDeliver(req.chatId))
       if (!('allow' in decision)) return decision
-      const rawTurn = deps.outbound.open(req.chatId)
+      const rawTurn = (isRoutineSpeech(req.kind) ? deps.outbound.open(req.chatId, { source: `speech:${req.kind}` }) : deps.outbound.open(req.chatId))
       let spokenAt: number | undefined
       let receiptChannel: ProactiveChannel | null = null
       const confirmed = () => { spokenAt ??= now() }
@@ -276,7 +277,14 @@ export function makeSpeechPolicy(deps: {
     }
     // 还在退避的对话不在 groups 里(退避记在行上:共用 backoffMs,重启不归零;no-retry-storm)
     let tried = 0
-    for (const g of deps.pending.groups(t)) {
+    // Routine receipts must never share a persisted message with owner project reports.
+    const groups = deps.pending.groups(t).flatMap(g => {
+      const regular = g.items.filter(i => !isRoutineSpeech(i.kind))
+      const routine = new Map<SpeechKind, PendingNotice[]>()
+      for (const i of g.items.filter(i => isRoutineSpeech(i.kind))) routine.set(i.kind, [...(routine.get(i.kind) ?? []), i])
+      return [regular, ...routine.values()].filter(items => items.length > 0).map((items, index) => ({ ...g, items, dropped: index === 0 ? g.dropped : 0 }))
+    })
+    for (const g of groups) {
       if (tried >= MAX_FLUSH_CHATS_PER_TICK) break   // 每一拍有上限:静音一结束不一口气冒出一串
       const told = g.items.filter(i => originOf(i.kind) !== 'initiative')
       // 只剩 CC 自己的那几样(被挤掉的计数也许不是 0)⇒ 不单独说一句「还有 N 件更早的」:那一句跟着下一次回报说;
