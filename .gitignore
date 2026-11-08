@@ -1,4 +1,5 @@
 node_modules/
+.cc-workbench/
 
 # Editor / OS
 .DS_Store

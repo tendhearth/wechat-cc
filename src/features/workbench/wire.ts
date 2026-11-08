@@ -1,3 +1,4 @@
+import { taskEnvironment } from '../../adapters/executors/task-environment'
 import {createClaudeHistoryReader} from '../../adapters/executors/claude/native-claude-history'
 import { makeIssueFetcher } from './issue-fetch'
 import { lessonsBlock, makeProjectLessons } from './project-lessons'
@@ -38,12 +39,13 @@ import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../a
 import { findOnPath } from '../../lib/util'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
-export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
+export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string): Options {
   const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
+  const taskEnv = taskId ? taskEnvironment(base.cwd!, taskId) : {}
   return {
     cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,
-    env:workbenchClaudeEnvironment(base.env),
+    env:{...workbenchClaudeEnvironment(base.env),...taskEnv},
     ...tier,
     allowDangerouslySkipPermissions:false,
     allowedTools:[],
@@ -56,7 +58,7 @@ export function workbenchClaudeOptions(base: Options, instructions: string, perm
       ...native.nativeMcpPolicy,
       // Flag settings override disk env values. Empty values neutralize these
       // automatic companion pointers; this is not filesystem/process isolation.
-      env:Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),
+      env:{...Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),...taskEnv},
       disableAllHooks:true, disableSkillShellExecution:true,
       enabledPlugins:native.disabledPlugins ?? {},
       permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable',
@@ -194,7 +196,7 @@ export function wireWorkbench(opts: {
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)
           const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers))
-          return workbenchClaudeOptions(base,instructions ?? '',permit,native)
+          return workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId)
         },
       }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
     },

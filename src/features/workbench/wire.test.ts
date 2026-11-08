@@ -595,3 +595,13 @@ it('custom ACP executors (2026-10-07): valid ones register with ACP capabilities
   expect(target.get('gemini-cli')?.opts.workbench).toMatchObject({ permissions: 'task' })
   expect(log.mock.calls.map(c => c[1]).join('\n')).toMatch(/claude skipped[\s\S]*ghost: command ghost-cli not found[\s\S]*Bad skipped/)
 })
+
+it('pins the Claude task temp/cache in both process and settings environments',()=>{
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-claude-env-')))
+  try {
+    const options=workbenchClaudeOptions({cwd:path,env:{TMPDIR:'/tmp',BUN_INSTALL_CACHE_DIR:'/outside'}},'instructions',vi.fn(),{servers:{},omitted:[]},'abcd1234')
+    const temp=join(path,'node_modules/.cache/cc-tasks/abcd1234/tmp')
+    expect(options.env).toMatchObject({TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'node_modules/.cache/cc-tasks/abcd1234/cache')})
+    expect(options.settings).toMatchObject({env:{TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'node_modules/.cache/cc-tasks/abcd1234/cache')},permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable'}})
+  }finally{removeTempDir(path)}
+})

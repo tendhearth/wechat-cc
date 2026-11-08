@@ -216,3 +216,12 @@ it('owner history preserves durable attachment-only replies through the public s
   expect(await service.ownerChatFile({id:'saved',i:0,offset:0})).toEqual({status:200,body:{ok:true}})
   expect(file).toHaveBeenCalledWith({id:'saved',i:0,offset:0})
 })
+
+it('phone task details preserve the starting branch and SHA without exposing the source path',async()=>{
+  store.create({id:'deadbeef',kind:'task',title:'fresh',projectPath:'/work',ownerChatId:'owner'})
+  const task={...TASK,worktree:{branch:'cc/task',base:'origin/dev',baseSha:'a'.repeat(40),projectPath:'/Users/private/source',removed:false}}
+  const service=makeMattersService({store,workbench:{detail:()=>({task,events:[]})} as never})
+  const wt=(await service.detail('deadbeef')).task?.worktree
+  expect(wt).toEqual({branch:'cc/task',base:'origin/dev',baseSha:'a'.repeat(40),removed:false})
+  expect(JSON.stringify(wt)).not.toContain('/Users/private')
+})

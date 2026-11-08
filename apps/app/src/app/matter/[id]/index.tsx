@@ -382,6 +382,7 @@ export default function Matter() {
             {stopNote ? <Txt testID="progress-stop-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{stopNote}</Txt> : null}
             {d.task?.worktree ? (
               <View testID="progress-worktree" style={{ gap: space.s }}>
+                {d.task.worktree.base && d.task.worktree.baseSha ? <Txt testID="progress-wt-base" role="meta" tone="inkSoft">{t(lang, 'progress.wtBase', { base: d.task.worktree.base, sha: d.task.worktree.baseSha.slice(0, 7) })}</Txt> : null}
                 <Txt role="meta" tone="inkSoft">{t(lang, d.task.worktree.removed ? 'progress.wtGone' : d.task.worktree.merged ? 'progress.wtOnMerged' : 'progress.wtOn', { branch: d.task.worktree.branch })}</Txt>
                 {scripts ? (
                   <View testID="progress-scripts" style={{ gap: space.s }}>

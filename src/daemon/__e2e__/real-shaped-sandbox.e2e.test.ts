@@ -60,7 +60,10 @@ const RULES = JSON.stringify({
 const project = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-project-')))
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=sandbox@example.invalid', '-c', 'user.name=sandbox', ...args], { cwd: project, stdio: 'pipe' })
 git('init', '-q'); writeFileSync(join(project, 'README.md'), 'sandbox project\n'); git('add', '.'); git('commit', '-qm', 'init')
-const PROJECTS = JSON.stringify({ projects: { demo: { path: project, last_active: '2026-10-27T00:00:00.000Z' } }, current: null })
+// Chat and delegated work must have separate directories even when TMPDIR is
+// nested inside this checkout; otherwise the real session conflict gate is right to refuse.
+const chatProject = realpathSync(mkdtempSync(join(tmpdir(), 'wechat-cc-sandbox-chat-')))
+const PROJECTS = JSON.stringify({ projects: { demo: { path: project, last_active: '2026-10-27T00:00:00.000Z' }, chat: { path: chatProject, last_active: '2026-10-27T00:00:00.000Z' } }, current: 'chat' })
 
 /** 这一句主人在记忆页上删掉(记忆夹具 memory.md 里「关于你」那一栏生成的一行)。 */
 const RETRACTED = '每天早上七点起床跑步'
@@ -168,7 +171,7 @@ async function rebootForS2(o: { quiet: boolean; phone: boolean; keepPending?: bo
 }
 // 冷启动要 import 整个 daemon,满载下可以超过 15s 的缺省 hook 上限
 beforeAll(async () => { d = await boot() }, 60_000)
-afterAll(async () => { try { await d?.stop() } finally { removeTempDir(project) } }, 30_000)
+afterAll(async () => { try { await d?.stop() } finally { removeTempDir(project); removeTempDir(chatProject) } }, 30_000)
 
 describe('real-shaped sandbox: the full daemon, configured like the owner\'s machine', { timeout: 60_000 }, () => {
   it('boot: every module came up ok, health is green, nothing tried to reach the internet', async () => {
@@ -336,7 +339,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
     const listing = texts(list, d.owner).find(t => t.includes('选择要工作的项目'))!
     expect(listing).toContain(project)
-    const projectId = listing.match(/p-[a-f0-9]{20}/)?.[0]
+    const projectId = listing.match(/demo · (p-[a-f0-9]{20})/)?.[1]
     expect(projectId).toBeTruthy()
 
     d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 写一份笔记`)
@@ -550,7 +553,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     await rebootForS2({ quiet: true, phone: true })
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)   // 每次开机是新的假 ilink,外发箱从这次开机算
-    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/demo · (p-[a-f0-9]{20})/)![1]
     d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 再写一份笔记`)
     const ack = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.startsWith('已接下这件事')), 15_000)
     const taskId = texts(ack, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
@@ -707,7 +710,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const since = Date.now()
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
-    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/demo · (p-[a-f0-9]{20})/)![1]
     d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex 再写一份笔记`)
     const ack = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.startsWith('已接下这件事')), 15_000)
     const taskId = texts(ack, d.owner).filter(t => t.startsWith('已接下这件事')).at(-1)!.match(/已接下这件事 · ([a-f0-9]{8})/)![1]!
@@ -743,7 +746,7 @@ describe('real-shaped sandbox: the full daemon, configured like the owner\'s mac
     const phaseOf = async (taskId: string) => (await desktop<{ progress?: Array<{ id: string; phase: string }> }>('GET', '/v1/workbench/attention')).body.progress?.find(p => p.id === taskId)?.phase
     d.sendText(d.owner, '任务 项目')
     const list = await d.waitForOutbound(m => texts(m, d.owner).some(t => t.includes('选择要工作的项目')), 15_000)
-    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/p-[a-f0-9]{20}/)![0]
+    const projectId = texts(list, d.owner).filter(t => t.includes('选择要工作的项目')).at(-1)!.match(/demo · (p-[a-f0-9]{20})/)![1]
     const dispatch = async (n: number, what: string) => {
       d.sendText(d.owner, `任务 新建 ${projectId} 用 @codex ${what}`)
       const ack = await d.waitForOutbound(m => texts(m, d.owner).filter(t => t.startsWith('已接下这件事')).length >= n, 15_000)

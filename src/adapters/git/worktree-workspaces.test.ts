@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
@@ -218,5 +218,106 @@ describe('repoRootOrFail 只在 git 真说了「不是仓库」时才回 null(10
     expect(NOT_A_REPO.test("fatal: detected dubious ownership in repository at '/x'")).toBe(false)
     expect(NOT_A_REPO.test('fatal: Unable to create \'/x/.git/index.lock\': File exists.')).toBe(false)
     expect(NOT_A_REPO.test('')).toBe(false)
+  })
+})
+
+describe('fresh task starts and dependency clones',()=>{
+  function remoteRepo() {
+    const local=repo(), remote=repo()
+    execFileSync('git',['remote','add','origin',remote.project],{cwd:local.project})
+    execFileSync('git',['fetch','origin'],{cwd:local.project,stdio:'pipe'})
+    execFileSync('git',['branch','--set-upstream-to=origin/main','main'],{cwd:local.project,stdio:'pipe'})
+    // Both initial trees/commits may be identical. Freeze local at the fetched remote baseline.
+    execFileSync('git',['reset','--hard','origin/main'],{cwd:local.project,stdio:'pipe'})
+    const initial=git(local.project,['rev-parse','HEAD'])
+    writeFileSync(join(remote.project,'remote.txt'),'new remote code')
+    execFileSync('git',['add','remote.txt'],{cwd:remote.project})
+    execFileSync('git',['commit','-qm','remote moved'],{cwd:remote.project})
+    return {...local,remote:remote.project,initial,latest:git(remote.project,['rev-parse','HEAD'])}
+  }
+  it.each(['main','origin/main'])('fetches before starting from %s, freezes the newest SHA, and never moves the source branch',base=>{
+    const r=remoteRepo()
+    const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab001',base})
+    const path=ensureWorktree(plan)
+    expect(git(path,['rev-parse','HEAD'])).toBe(r.latest)
+    expect(git(r.project,['rev-parse','main'])).toBe(r.initial)
+    expect(plan.start).toMatchObject({base,sha:r.latest,notices:[]})
+    expect(readFileSync(join(path,'remote.txt'),'utf8')).toBe('new remote code')
+    writeFileSync(join(path,'task.txt'),'task commit');commitWorktree(path,'task moved')
+    const retry=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab001',base})
+    ensureWorktree(retry)
+    expect(retry.start).toEqual(plan.start)
+    expect(git(path,['rev-parse','HEAD'])).not.toBe(r.latest)
+  })
+  it('failed fetch is non-blocking and the task keeps a safe notice',()=>{
+    const r=remoteRepo()
+    execFileSync('git',['remote','set-url','origin',join(r.state,'unavailable-remote')],{cwd:r.project})
+    const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab002',base:'main'})
+    expect(git(ensureWorktree(plan),['rev-parse','HEAD'])).toBe(r.initial)
+    expect(plan.start?.notices).toEqual(['获取远端更新失败或超时，使用本机已有提交；起点可能不是最新版本。'])
+  })
+  it('a diverged local branch keeps its local commits',()=>{
+    const r=remoteRepo()
+    writeFileSync(join(r.project,'local.txt'),'local')
+    execFileSync('git',['add','local.txt'],{cwd:r.project});execFileSync('git',['commit','-qm','local commit'],{cwd:r.project})
+    const local=git(r.project,['rev-parse','HEAD'])
+    const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab003',base:'main'})
+    expect(git(ensureWorktree(plan),['rev-parse','HEAD'])).toBe(local)
+  })
+  function dependencies(){
+    const r=repo()
+    writeFileSync(join(r.project,'.gitignore'),'node_modules/\n')
+    writeFileSync(join(r.project,'.worktreeinclude'),'node_modules/\n')
+    writeFileSync(join(r.project,'package.json'),'{"name":"fixture","private":true}')
+    writeFileSync(join(r.project,'bun.lock'),'locked')
+    const g=(...args:string[])=>execFileSync('git',args,{cwd:r.project,stdio:'pipe'})
+    g('add','-A');g('commit','-qm','dependencies')
+    const modules=join(r.project,'node_modules'),pkg=join(modules,'.bun','tool','node_modules','tool')
+    mkdirSync(pkg,{recursive:true});mkdirSync(join(modules,'.bin'))
+    writeFileSync(join(pkg,'cli.js'),'original')
+    for(let i=0;i<1001;i++)writeFileSync(join(pkg,`file-${i}`),'fixture')
+    symlinkSync('.bun/tool/node_modules/tool',join(modules,'tool'),'dir')
+    symlinkSync('../tool/cli.js',join(modules,'.bin','tool'),'file')
+    symlinkSync(join(r.project,'pkg','app'),join(modules,'workspace'),'dir')
+    return {...r,modules,pkg,g}
+  }
+  it('clones a complete Bun dependency tree beyond include limits, relocates links and isolates all writes',()=>{
+    const r=dependencies()
+    mkdirSync(join(r.modules,'.cache/cc-tasks/other'),{recursive:true})
+    writeFileSync(join(r.modules,'.cache/cc-tasks/other/private.txt'),'other task scratch')
+    writeFileSync(join(r.project,'pkg/app/package.json'),'{"name":"child","private":true}')
+    mkdirSync(join(r.project,'pkg/app/node_modules'))
+    symlinkSync(join(r.pkg),join(r.project,'pkg/app/node_modules/tool'),'dir')
+    r.g('add','pkg/app/package.json');r.g('commit','-qm','child workspace')
+    const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab004'})
+    const path=ensureWorktree(plan)
+    const cli=join(path,'node_modules/.bin/tool')
+    expect(readFileSync(cli,'utf8')).toBe('original')
+    expect(readFileSync(join(path,'pkg/app/node_modules/tool/cli.js'),'utf8')).toBe('original')
+    expect(existsSync(join(path,'node_modules/.cache'))).toBe(false)
+    expect(readFileSync(join(path,'node_modules/tool/file-1000'),'utf8')).toBe('fixture')
+    expect(realpathSync(join(path,'node_modules/workspace'))).toBe(join(path,'pkg/app'))
+    expect(statSync(cli).ino).not.toBe(statSync(join(r.pkg,'cli.js')).ino)
+    writeFileSync(cli,'task edit')
+    expect(readFileSync(join(r.pkg,'cli.js'),'utf8')).toBe('original')
+    expect(worktreeDirty(path)).toBe(false)
+    removeWorktree(r.project,path);reopenWorktree(r.project,path,plan.branch,path)
+    expect(readFileSync(cli,'utf8')).toBe('original')
+  })
+  it('rejects source-external links atomically and reports missing dependencies instead of sharing them',()=>{
+    const r=dependencies()
+    symlinkSync(r.state,join(r.modules,'external'),'dir')
+    const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab005'})
+    const path=ensureWorktree(plan)
+    expect(existsSync(join(path,'node_modules'))).toBe(false)
+    expect(plan.start?.notices.join('')).toContain('未能完整复用项目依赖')
+  })
+  it('does not reuse dependencies when source and selected branch lockfiles differ',()=>{
+    const r=dependencies()
+    writeFileSync(join(r.project,'bun.lock'),'not committed')
+    const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab006'})
+    const path=ensureWorktree(plan)
+    expect(existsSync(join(path,'node_modules'))).toBe(false)
+    expect(plan.start?.notices.join('')).toContain('未能完整复用项目依赖')
   })
 })

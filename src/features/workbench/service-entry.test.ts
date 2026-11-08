@@ -20,12 +20,12 @@ vi.mock('node:fs',async importOriginal=>{
 })
 
 let area:string,stateDir:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
-let owner:string|null,spawnCount:number,mintCount:number,seen:string[]
+let owner:string|null,spawnCount:number,mintCount:number,seen:string[],spawnedTaskIds:(string|undefined)[]
 const context={ownerKey:'owner',surface:'desktop' as const}
 const input=(changes:Partial<EntryInput>={}):EntryInput=>({requestId:randomUUID(),text:'整理一份周报',target:{kind:'managed'},...changes})
 function setup(defaultProvider='claude',ids=['claude','codex']){
   const registry=createProviderRegistry()
-  for(const id of ids)registry.register(id,{async spawn(){spawnCount++;return{
+  for(const id of ids)registry.register(id,{async spawn(_project,spawnContext){spawnCount++;spawnedTaskIds.push(spawnContext.workbenchTaskId);return{
     async *dispatch(text){seen.push(text);yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){},
   }}},{displayName:id,canResume:()=>true,workbench:id==='unattended'?UNATTENDED_CAPABILITIES:MANAGED_NATIVE_CAPABILITIES,...(id==='openai'?{validateWorkbenchInput:validateApiTaskInput}:{})})
   store=makeWorkbenchStore(db)
@@ -34,7 +34,7 @@ function setup(defaultProvider='claude',ids=['claude','codex']){
 }
 beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-entry-service-')));stateDir=join(area,'state');project=join(area,'project');mkdirSync(stateDir);mkdirSync(project)
-  db=openDb({path:join(stateDir,'state.db')});owner='owner';spawnCount=0;mintCount=0;seen=[];setup()
+  db=openDb({path:join(stateDir,'state.db')});owner='owner';spawnCount=0;mintCount=0;seen=[];spawnedTaskIds=[];setup()
 })
 afterEach(async()=>{vi.restoreAllMocks();await service?.shutdown();db.close();removeTempDir(area)})
 // 真 git(worktree add / 基线 / 审阅 / checkpoint)的整轮在满载套件里放大好几倍:跟 service-one-session 同一个口径给足余量(10-21 负载下假红)
@@ -182,7 +182,7 @@ it('accepts owner-stamped material-only input while rejecting unbound legacy and
 
 it.each(['allocation','first material check'])('reuses the winner when another connection commits during %s',async(point)=>{
   const secondDb=openDb({path:join(stateDir,'state.db')}),secondStore=makeWorkbenchStore(secondDb),registry=createProviderRegistry()
-  registry.register('claude',{async spawn(){spawnCount++;return{async *dispatch(){yield{kind:'result' as const,sessionId:'second',numTurns:1,durationMs:1}},async close(){}}}},
+  registry.register('claude',{async spawn(_project,spawnContext){spawnCount++;spawnedTaskIds.push(spawnContext.workbenchTaskId);return{async *dispatch(){yield{kind:'result' as const,sessionId:'second',numTurns:1,durationMs:1}},async close(){}}}},
     {displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   const other=makeWorkbenchService({store:secondStore,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',matters:makeMatterStore(secondDb)})
   try{
@@ -468,4 +468,27 @@ it.skipIf(process.platform==='win32')('worktree scripts (2026-10-20): desktop an
   await expect.poll(()=>existsSync(log)?readFileSync(log,'utf8').trim():'',{timeout:8000}).toBe(service.detail(one).task.worktree!.branch)
   // 同一个仓库、同一份内容 ⇒ 另一个工作区不用再批
   expect(service.detail(viaWechat).task.worktree?.scripts).toMatchObject({approved:true})
+})
+
+it('accepts a not-yet-fetched remote branch, persists its SHA in task details and dispatches a task id',async()=>{
+  const {execFileSync}=await import('node:child_process')
+  const g=(path:string,...a:string[])=>execFileSync('git',a,{cwd:path,stdio:'pipe'}).toString().trim()
+  for(const path of [project,stateDir]){
+    g(path,'init','-q','-b','dev');g(path,'config','user.email','t@t');g(path,'config','user.name','t')
+    writeFileSync(join(path,'code.txt'),'baseline');g(path,'add','code.txt');g(path,'commit','-qm','baseline')
+  }
+  g(project,'remote','add','origin',stateDir)
+  g(stateDir,'checkout','-qb','fresh')
+  writeFileSync(join(stateDir,'fresh.txt'),'fresh code');g(stateDir,'add','fresh.txt');g(stateDir,'commit','-qm','fresh')
+  const sha=g(stateDir,'rev-parse','HEAD'),projectId=service.projects()[0]!.id
+  const request=input({target:{kind:'project',projectId,isolation:'worktree',base:'origin/fresh'}})
+  const accepted=service.createEntry(request,context)
+  await settle(accepted.task.id)
+  const detail=service.detail(accepted.task.id)
+  expect(detail.task.worktree).toMatchObject({base:'origin/fresh',baseSha:sha})
+  expect(store.worktrees.get(accepted.task.id)?.start).toEqual({base:'origin/fresh',sha,notices:[]})
+  expect(detail.events.some(e=>e.kind==='system'&&e.text.includes(`从 origin/fresh @ ${sha.slice(0,7)} 开始`))).toBe(true)
+  expect(spawnedTaskIds).toContain(accepted.task.id)
+  expect(service.createEntry(request,context).task.id).toBe(accepted.task.id)
+  expect(g(accepted.task.path,'rev-parse','HEAD')).toBe(sha)
 })

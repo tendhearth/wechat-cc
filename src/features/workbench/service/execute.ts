@@ -237,7 +237,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           const notice=message.trim().slice(0,2000)
           if(notice){store.addEvent(task.id,'system',notice,null,running.identity);}
         },
-        tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
+        workbenchTaskId:task.id,tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
         // 结束在这里补一次评估:请求**自己超时**(权限 5 分钟)那一下既没有事件、也不走
         // resolvePermission —— 会话早就静下来的话,没有人会回来起空闲收工的计时(终审 I4)。
@@ -636,7 +636,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     // 出生地:微信入站省略 ⇒ wechat;App 一轮里的「任务」命令由 daemon 填(不知道 ⇒ null)。
     const origin=input.origin===undefined?'wechat':input.origin
     createTask({path:tree?.path??project.path,providerId,text:input.text,origin,...(input.title!==undefined?{title:input.title}:{}),...(tree?{registerProject:false}:{})},(task,runId)=>{
-      if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root)})
+      if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root),start:tree.plan.start})
       store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
       receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
         reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音${tree?`\n\n在独立分支 ${tree.plan.branch} 上做。做完：任务 ${task.id} 提交 → 任务 ${task.id} 合回`:''}`,

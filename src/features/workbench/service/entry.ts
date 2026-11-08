@@ -18,7 +18,7 @@ import { createManagedWorkspaces, type ManagedWorkspaces } from '../managed-work
 import { publicTask } from '../../../adapters/store/workbench/store'
 import { canonicalEntryHash, composeEntryPrompt, entryOrigin, parseEntryInput, type EntryContext, type EntryInput, type EntryOptions } from '../../../adapters/workbench/task-entry'
 import { directoryIdentity } from './directory-identity'
-import { baseBranchExists, ensureWorktree, planWorktree, repoRootOrFail, type WorktreePlan } from '../../../adapters/git/worktree-workspaces'
+import { prepareWorktreeStart, ensureWorktree, planWorktree, repoRootOrFail, type WorktreePlan } from '../../../adapters/git/worktree-workspaces'
 import { pinnedScriptSha } from '../worktree-scripts'
 import type { ServiceCtx } from './ctx'
 import type { EntryResult } from './types'
@@ -83,6 +83,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     ctx.ensureAccepting()
     if(!ctx.deps.matters)throw Error('entry_not_wired')
     const text=composeEntryPrompt(input)
+    let start: WorktreePlan['start']
     try{
       if(record&&record.createdAt<Date.now()-7*86400_000)throw Error('entry_expired')
       const prepared=store.attachments.prepareAcceptance(input.attachmentIds??[],undefined,input.draftId,ctx.stateDir,context)
@@ -103,7 +104,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       if(isolated&&!repoRootOrFail(project!.path))throw Error('worktree_not_git')
       // 指定了起点分支 ⇒ 预约前就核对它在不在,不留半截预约(10-08)
       const base=input.target.kind==='project'?input.target.base:undefined
-      if(isolated&&base!==undefined&&!baseBranchExists(repoRootOrFail(project!.path)!,base))throw Error('worktree_base_missing')
+      if(isolated)start=prepareWorktreeStart(repoRootOrFail(project!.path)!,base)
       const workspaceId=input.target.kind==='managed'||isolated?randomUUID():null
       record=store.entryRequests.reserve({ownerKey:context.ownerKey,requestId:input.requestId,canonicalRequestHash:hash,target:input.target,
         workspaceId,resolvedPath:input.target.kind==='managed'?managed().resolvePath(workspaceId!):isolated?null:project?.path??null,directoryIdentity:project&&!isolated?directoryIdentity(project.path):null,
@@ -121,6 +122,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         const p=projects().find(x=>x.id===(record!.target as {projectId:string}).projectId)
         if(!p)throw Error('project_stale')
         const plan=worktreePlan(record!.workspaceId!,p,(record!.target as {base?:string}).base)
+        if(start)plan.start=start
         const path=ensureWorktree(plan)
         return {plan,path,directoryIdentity:directoryIdentity(path)}
       })():null
@@ -143,7 +145,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         verify()
         if(tree)createdId=task.id
         store.entryRequests.accept(context.ownerKey,input.requestId,{taskId:task.id,matterId:task.id,runId,acceptedAt:Date.now(),resolvedPath:path,directoryIdentity:identity})
-        if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root)})
+        if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root),start:tree.plan.start})
         // 做到条件成立为止(v80):命令在这里写一次就定死(parseEntryInput 已保证只在独立工作区上出现)。
         if(input.until)store.goals.create(task.id,input.until)
       },undefined,{

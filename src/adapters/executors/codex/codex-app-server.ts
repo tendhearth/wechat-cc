@@ -1,3 +1,4 @@
+import { taskEnvironment } from '../task-environment'
 import { makePausableTimers, type PausableTimer } from '../../../lib/pausable-timers'
 import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../../../domain/turn-usage'
 import { makeProcessTreeFreezer } from '../../../lib/process-tree-freeze'
@@ -239,9 +240,14 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       // Startup has no turn. Keep MCPs disabled while reading the native layers,
       // without overwriting the user's web-search mode before config/read.
       // 对话侧启动参数里什么都不带:工具与策略都在线程配置里(令牌不进 argv)。
-      const { web_search: _startupSearch, ...startupConfig } = discovery?.config ?? { web_search: undefined }
+      const taskEnv = !chat && context.workbenchTaskId ? taskEnvironment(project.path, context.workbenchTaskId) : {}
+      const taskConfig = context.workbenchTaskId && !chat ? {
+        sandbox_workspace_write: { ...discovery!.config.sandbox_workspace_write, writable_roots: [taskEnv.TMPDIR!] },
+        shell_environment_policy: { ...discovery!.config.shell_environment_policy, set: taskEnv, include_only: [...discovery!.config.shell_environment_policy.include_only, ...Object.keys(taskEnv)] },
+      } : {}
+      const { web_search: _startupSearch, ...startupConfig } = { ...discovery?.config, ...taskConfig }
       const enabledMcp = new Set<string>()
-      const childEnv = chat ? chat.env : workbenchCodexEnv()
+      const childEnv = chat ? chat.env : { ...workbenchCodexEnv(), ...taskEnv }
       // 守护(评审 #193 P1-1 + 2026-10-03):app-server 是常驻子进程,端点在它起来那一刻按配置定下。
       // 先按配置层预测;initialize 之后问 codex 自己(config/read),用它报的有效配置覆盖。
       let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: chat ? chat.config : startupConfig })
@@ -977,7 +983,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
             ...resumeParams,
             cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
-            developerInstructions: context.appendInstructions ?? '', config: {...config,...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
+            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
             ...(model ? {model} : {}),
           })
           if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
@@ -993,7 +999,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         } else if (response.approvalPolicy !== 'on-request' || response.approvalsReviewer !== 'user' ||
             sandbox?.type !== 'workspaceWrite' || sandbox.networkAccess !== false ||
             sandbox.excludeTmpdirEnvVar !== true || sandbox.excludeSlashTmp !== true ||
-            !Array.isArray(sandbox.writableRoots) || sandbox.writableRoots.some((root: unknown) => root !== project.path)) {
+            !Array.isArray(sandbox.writableRoots) || sandbox.writableRoots.some((root: unknown) => root !== project.path && root !== taskEnv.TMPDIR) ||
+            (taskEnv.TMPDIR && !sandbox.writableRoots.includes(taskEnv.TMPDIR))) {
           throw new Error('codex_unverified_thread_policy')
         }
         threadId = response.thread.id

@@ -154,3 +154,17 @@ describe('actual matter outcome before technical process', () => {
     expect(ui.container.textContent).not.toContain('raw-account-error')
   })
 })
+
+it('shows the persisted worktree base after the original start event is no longer in recent history',async()=>{
+  route.id='e5f6a7b8'
+  const backend=makeDemoBackend({lang:'en'})
+  const detail=await backend.matter(route.id,'en')
+  detail.task={...detail.task!,worktree:{branch:'cc/task',base:'dev',baseSha:'abcdef0123456789',removed:false}}
+  detail.events=Array.from({length:50},(_,i)=>event('system','Later activity',i+1))
+  backend.matter=async()=>detail
+  const ui=await mount(withProviders(createElement(Matter),{backend,lang:'en'}))
+  await flush()
+  await act(async()=>ui.byId('progress-process').click())
+  await flush()
+  expect(ui.byId('progress-wt-base')?.textContent).toBe('Started from dev @ abcdef0')
+})

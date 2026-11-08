@@ -17,7 +17,7 @@ import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
  * (工作台任务从 workbench 详情取),这里不复制数据。`say` 按 kind 路由:
  * task → 工作台续接;chat → 现有的 app 对话通道(只对主人的 chat)。
  */
-export interface MatterTaskView {networkSuspended?:{since:number};id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
+export interface MatterTaskView {networkSuspended?:{since:number};id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{base?:string;baseSha?:string;branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
 // activity(2026-10-17):工具那一步在跑还是做完了 —— 手机看着它跑要知道「正在」哪一步。只给 type/status/label,不给命令输出。
 /**
  * 详情 events 的一条(线上旧形状,M6c 起 src 不再手写):任务 = 时间线的步投影成 WorkbenchTaskEvent 再收窄到这里;
@@ -312,7 +312,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       if(matter.kind==='task'&&deps.workbench){
         try{
-          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{branch:string;projectPath?:string;removed:boolean;merged?:boolean;port?:number;scripts?:unknown}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{}),...(wt.removed?{}:phoneScripts(wt.scripts as never,wt.port,d.events as never,[d.task.path,wt.projectPath??'']))}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
+          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{base?:string;baseSha?:string;branch:string;projectPath?:string;removed:boolean;merged?:boolean;port?:number;scripts?:unknown}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{...(wt.base&&wt.baseSha?{base:wt.base,baseSha:wt.baseSha}:{}),branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{}),...(wt.removed?{}:phoneScripts(wt.scripts as never,wt.port,d.events as never,[d.task.path,wt.projectPath??'']))}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
             permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt})=>({id,taskId,tool,description,createdAt})),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),

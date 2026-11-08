@@ -25,7 +25,7 @@ export interface GitReview {version:1;scope:'working-tree-before-after';startedA
 export function gitEnv() {
   const env:NodeJS.ProcessEnv={...process.env}
   for(const key of Object.keys(env))if(key.startsWith('GIT_'))delete env[key]
-  return {...env,LC_ALL:'C',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_PAGER:'cat',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1'}
+  return {...env,LC_ALL:'C',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_PAGER:'cat',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_CEILING_DIRECTORIES:tmpdir()}
 }
 /** 每个阶段(基线 / 收尾)各自的总期限;缺省 15 秒。只给测试放宽(负载下 100 个文件读不完 ⇒ 快照变 partial)。 */
 export const REVIEW_DEADLINE_MS=15_000

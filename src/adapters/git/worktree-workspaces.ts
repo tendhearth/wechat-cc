@@ -1,3 +1,6 @@
+import { writeJsonAtomic } from '../../lib/json-file'
+import { readJsonFile } from '../../lib/read-json-file'
+import { tmpdir } from 'node:os'
 /**
  * 独立工作区(2026-10-07,主人定位「取代 Paseo 这一层」的第一项:同一个项目并行做几件事)。
  * 设计稿 docs/superpowers/specs/2026-10-06-workbench-parallel-worktrees-design.md,按其推荐默认:
@@ -16,8 +19,10 @@
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { copyWorkspaceDependencies } from './worktree-dependencies'
 
-export interface WorktreePlan { root: string; branch: string; taskPath: string; repoRoot: string; projectPath: string; /** 从哪个本地分支开始(10-08);缺省 = 项目当前 HEAD。 */ base?: string }
+export interface WorktreeStart { base: string; sha: string; notices: string[] }
+export interface WorktreePlan { root: string; branch: string; taskPath: string; repoRoot: string; projectPath: string; /** 本地或远端跟踪分支;缺省 = 当前分支。 */ base?: string; start?: WorktreeStart }
 
 const BRANCH_PREFIX = 'cc/'
 const TIMEOUT_MS = 30_000
@@ -29,7 +34,9 @@ const TIMEOUT_MS = 30_000
 function gitEnv(ownerConfig = false): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
-  return { ...env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', ...(ownerConfig ? {} : { GIT_CONFIG_NOSYSTEM: '1' }), GIT_OPTIONAL_LOCKS: '0' }
+  // Runtime scratch may live inside a checkout: a plain temp fixture must not
+  // accidentally discover (or mutate) the enclosing project's repository.
+  return { ...env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', ...(ownerConfig ? {} : { GIT_CONFIG_NOSYSTEM: '1' }), GIT_OPTIONAL_LOCKS: '0', GIT_CEILING_DIRECTORIES: tmpdir() }
 }
 const SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']
 /** 跑一条 git;非零退出抛 `worktree_git_failed`(stderr 头几行带上,只给日志)。 */
@@ -107,10 +114,40 @@ export function validBaseBranch(name: unknown): name is string {
   return typeof name === 'string' && name.length > 0 && name.length <= 200 && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name)
     && !name.includes('..') && !name.includes('//') && !name.endsWith('/') && !name.endsWith('.lock') && !name.endsWith('.')
 }
-/** 这个本地分支在不在。 */
+/** 只解析分支,不接受 tag、表达式或选项。本地同名分支优先。 */
+function baseRef(repoRoot: string, base: string): string | null {
+  if (!validBaseBranch(base)) return null
+  for (const ref of [`refs/heads/${base}`, `refs/remotes/${base}`]) {
+    try { git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]); return ref } catch { /* next */ }
+  }
+  return null
+}
+/** 这个本地或远端跟踪分支在不在。 */
 export function baseBranchExists(repoRoot: string, base: string): boolean {
-  if (!validBaseBranch(base)) return false
-  try { git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`]); return true } catch { return false }
+  return baseRef(repoRoot, base) !== null
+}
+
+/** Refresh first, then freeze a commit. A failed fetch never discards usable local work. */
+export function prepareWorktreeStart(repoRoot: string, base?: string): WorktreeStart {
+  const notices: string[] = []
+  try { git(repoRoot, ['fetch', '--all', '--no-tags', '--no-recurse-submodules']) }
+  catch { notices.push('获取远端更新失败或超时，使用本机已有提交；起点可能不是最新版本。') }
+  let ref = base === undefined ? 'HEAD' : baseRef(repoRoot, base)
+  if (!ref) throw new Error('worktree_base_missing')
+  const label = base ?? (() => { try { return git(repoRoot, ['symbolic-ref', '--short', 'HEAD']) } catch { return 'HEAD' } })()
+  // Only fast-forward the starting commit. Ahead/diverged local commits remain the owner's.
+  const local = base === undefined || ref.startsWith('refs/heads/')
+  if (local) {
+    try {
+      const name = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref
+      const upstream = git(repoRoot, ['rev-parse', '--symbolic-full-name', `${name}@{upstream}`])
+      if (upstream.startsWith('refs/remotes/')) {
+        git(repoRoot, ['merge-base', '--is-ancestor', ref, upstream])
+        ref = upstream
+      }
+    } catch { /* no upstream, ahead or diverged: retain local */ }
+  }
+  return { base: label, sha: git(repoRoot, ['rev-parse', '--verify', `${ref}^{commit}`]), notices }
 }
 
 /** 算位置,不碰盘。projectId / id 都按格式校验,拼不出越界的路径。 */
@@ -136,11 +173,20 @@ export function ensureWorktree(plan: WorktreePlan): string {
   } else {
     try { git(plan.repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${plan.branch}`]); throw new Error('worktree_branch_exists') }
     catch (error) { if ((error as Error).message === 'worktree_branch_exists') throw error }
-    if (plan.base !== undefined && !baseBranchExists(plan.repoRoot, plan.base)) throw new Error('worktree_base_missing')
+    plan.start ??= prepareWorktreeStart(plan.repoRoot, plan.base)
     mkdirSync(dirname(plan.root), { recursive: true, mode: 0o700 })
-    git(plan.repoRoot, ['worktree', 'add', '-b', plan.branch, plan.root, plan.base !== undefined ? `refs/heads/${plan.base}` : 'HEAD'])
+    git(plan.repoRoot, ['worktree', 'add', '-b', plan.branch, plan.root, plan.start.sha])
     created = true
     copyIncludedFiles(plan.repoRoot, plan.root)
+    plan.start.notices.push(...copyWorkspaceDependencies(plan.repoRoot, plan.root))
+    writeJsonAtomic(git(plan.root, ['rev-parse', '--git-path', 'cc-worktree-start.json']), plan.start)
+  }
+  // Creation can precede task acceptance; retry must keep the original SHA and notices.
+  if (!created) {
+    try {
+      const value = readJsonFile<WorktreeStart>(git(plan.root, ['rev-parse', '--git-path', 'cc-worktree-start.json']))
+      if (typeof value.base === 'string' && /^[0-9a-f]{40,64}$/.test(value.sha) && Array.isArray(value.notices) && value.notices.every(n => typeof n === 'string')) plan.start = value
+    } catch { /* legacy worktrees have no origin record */ }
   }
   if (!existsSync(plan.taskPath)) {
     // 基线分支上没有这个子项目:刚建的工作区和分支一并撤回,不留孤儿(2026-10-10)
@@ -168,7 +214,7 @@ export function copyIncludedFiles(repoRoot: string, root: string): number {
   } catch { return 0 }
   let files = 0, bytes = 0
   for (const rel of listed) {
-    if (!ignored.has(rel) || rel.split('/').includes('..') || isAbsolute(rel)) continue
+    if (rel.split('/').includes('node_modules') || !ignored.has(rel) || rel.split('/').includes('..') || isAbsolute(rel)) continue
     const from = join(repoRoot, rel), to = join(root, rel)
     let st
     try { st = lstatSync(from) } catch { continue }
@@ -250,6 +296,7 @@ export function reopenWorktree(repoRoot: string, root: string, branch: string, t
   mkdirSync(dirname(root), { recursive: true, mode: 0o700 })
   git(repoRoot, ['worktree', 'add', root, branch])
   copyIncludedFiles(repoRoot, root)
+  copyWorkspaceDependencies(repoRoot, root)
   // 分支上已经没有这个子项目:撤回这次检出(分支保留),否则目录留着、下次只会报 worktree_conflict(2026-10-10)
   if (!existsSync(taskPath)) { discardCheckout(repoRoot, root); throw new Error('worktree_project_missing') }
 }

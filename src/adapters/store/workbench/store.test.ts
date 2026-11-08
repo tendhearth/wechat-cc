@@ -163,3 +163,17 @@ describe('worktree scripts and ports (v79)',()=>{
     expect(store.scriptApprovals.has('/other','h1')).toBe(false)
   })
 })
+
+it('keeps worktree origin and fetch warnings across store recreation, removal, and duplicate registration',()=>{
+  const row=task(),start={base:'dev',sha:'a'.repeat(40),notices:['获取远端更新失败或超时，使用本机已有提交；起点可能不是最新版本。']}
+  const input={taskId:row.id,projectPath:'/p',repoRoot:'/p',root:'/w',branch:'cc/'+row.id,start}
+  store.worktrees.record(input)
+  store.worktrees.markRemoved(row.id)
+  store=makeWorkbenchStore(db)
+  store.worktrees.record({...input,start:{base:'other',sha:'b'.repeat(40),notices:[]}})
+  expect(store.worktrees.get(row.id)?.start).toEqual(start)
+  const events=store.detail(row.id).events.filter(e=>e.text.includes('从 dev @ aaaaaaa 开始'))
+  expect(events).toHaveLength(1)
+  expect(events[0]?.text).toContain(start.sha)
+  expect(events[0]?.text).toContain(start.notices[0])
+})
