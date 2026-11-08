@@ -21,7 +21,8 @@ import {GIT_REVIEW_MIME,serializeGitReview} from './git-review'
  * 回退核心(切片 2,2026-10-21):真临时仓库 + 独立工作区(linked worktree),假执行者每轮按脚本改文件。
  * 任务目录是仓库里的子目录 pkg/(monorepo 那种),checkpoint 打的是整个工作区根。
  */
-vi.setConfig({testTimeout:60_000})
+const TEST_TIMEOUT_MS=60_000
+vi.setConfig({testTimeout:TEST_TIMEOUT_MS})
 const win=process.platform==='win32'
 let area:string,stateDir:string,repo:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
 let turns:Array<(path:string)=>void>,requests:string[]
@@ -43,9 +44,20 @@ beforeEach(()=>{
   turns=[];requests=[]
   service=make()
 })
-afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
+afterEach(async({task})=>{
+  // shutdown 会取消还在收尾的 run;先留下现场,才能区分慢快照和终态写入失败。
+  if(task.result?.state==='fail'){
+    try {
+      console.error('rewind fixture before shutdown',JSON.stringify({requests:requests.length,tasks:store.list().map(t=>({id:t.id,status:t.status,error:t.error,runId:service.detail(t.id).runId??null,reviews:store.artifacts(t.id).filter(a=>a.mime===GIT_REVIEW_MIME).length,rewinds:store.rewinds.list(t.id).length}))}))
+    } catch(error){console.error('rewind fixture diagnostics failed',error)}
+  }
+  await service?.shutdown();db.close();removeTempDir(area)
+})
 
-const settle=(id:string,status='completed')=>expect.poll(()=>service.detail(id).task.status,{timeout:20_000}).toBe(status)
+// 这里等的是真 Git 基线 + 执行 + 轮末快照,不是执行者的即时答复。单条 Git 延迟 22s 时,
+// 旧 20s poll 会在仍有 runId / 只有一份审阅时误红,随后正常 completed / 两份审阅。
+// 共用整条测试原有的 60s 预算(外层仍会掐住挂死),不再给每轮另设更短的墙钟期限。
+const settle=(id:string,status='completed')=>expect.poll(()=>store.get(id).status,{timeout:TEST_TIMEOUT_MS}).toBe(status)
 async function start(first:(path:string)=>void,plain=false){
   const isolation=plain?undefined:'worktree' as const
   turns.push(p=>first(p))
