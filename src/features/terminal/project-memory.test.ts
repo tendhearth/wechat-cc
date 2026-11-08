@@ -12,7 +12,7 @@ import { makeMatterLog } from '../../adapters/store/matter-log'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
-const temp = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'cc-project-memory-'))); dirs.push(d); return d }
+const temp = () => { const d = realpathSync.native(mkdtempSync(join(tmpdir(), 'cc-project-memory-'))); dirs.push(d); return d }
 const repo: ProjectIdentity = { roots: ['/Users/u/Documents/tendhearth/wechat-cc', '/Users/u/Documents/tendhearth/wt-xxx'], names: ['wechat-cc'], key: '/Users/u/Documents/tendhearth/wechat-cc/.git' }
 const topic = (id = 'cc', title = 'Tendhearth CC', aliases = ['wechat-cc']): MatchTopic => ({ id, title, aliases, tags: [], summary: 'PRIVATE SUMMARY', lastActive: '', entries: [{ id: 'e1', kind: 'progress', line: '待补会话入口', body: 'secret@example.invalid', due: null, updatedTs: '2026-11-08' }] })
 
