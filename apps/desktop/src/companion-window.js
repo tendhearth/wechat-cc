@@ -35,7 +35,12 @@ if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window)
 const ccActivity = stage ? mountCCActivity({ stage }) : null
 const activityFeed = createCCActivityFeed({ read: since => v1(invokeWorkbenchApi, V1.conversation.events, { query: { since } }), observe: stream => ccActivity?.observe(stream) })
 
-let quiet = false, reducedMotion = false
+let quiet = false, reducedMotion = false, activityConnected = false
+function syncActivityAvailability() {
+  const available = activityConnected && !holding && !quiet && !reducedMotion && !document.hidden
+  ccActivity?.setEnabled(available)
+  if (available) activityFeed.start(); else activityFeed.stop()
+}
 function syncLifeAvailability(){
   const settings=document.querySelector('.pet-settings')
   const available=lifeFactsAvailable&&!pointerInShell&&!focusInShell&&!holding&&!quiet&&!reducedMotion&&!document.hidden&&!(settings instanceof HTMLDetailsElement&&settings.open)
@@ -56,7 +61,7 @@ const applyPreferences = s => {
   quiet = s.quiet; reducedMotion = s.reducedMotion
   pet.setReducedMotion(s.reducedMotion)
   pet.setQuiet(s.quiet)
-  ccActivity?.setEnabled(!holding && !s.quiet && !s.reducedMotion && !document.hidden)
+  syncActivityAvailability()
   syncLifeAvailability()
   const checkbox = /** @type {HTMLInputElement | null} */ ($('pet-reduced-motion'))
   if (checkbox) { checkbox.checked = s.reducedMotion; checkbox.disabled = s.systemReduced }
@@ -119,7 +124,8 @@ const apply = (freshTurn = false) => {
   syncLifeAvailability()
   const activity = formatCompanionStatus(r.intent, r.permissionCount)
   ccActivity?.update({ connected: r.intent.form === 'lit', waiting: r.intent.behavior === 'permission', blocked: r.intent.props.includes('exclamation'), enabled: !holding && !quiet && !reducedMotion && !document.hidden })
-  if (r.intent.form === 'lit' && !document.hidden) activityFeed.start(); else activityFeed.stop()
+  activityConnected = r.intent.form === 'lit'
+  syncActivityAvailability()
   if(selected)activity.ariaLabel=`CC，${taskPrimary?.getAttribute('aria-label')??selected.title}，打开任务`
   if (stage && stage.getAttribute('aria-label') !== activity.ariaLabel) stage.setAttribute('aria-label', activity.ariaLabel)
   const status = $('pet-connection')
@@ -152,6 +158,7 @@ if (!document.hidden) feed.start()
 // start() 自己会先要一份,这里不用再补 refresh()。
 // 窗口不可见 → 停订(spec §5.3);回来时 start() 先补一份。
 document.addEventListener('visibilitychange', () => {
+  syncActivityAvailability()
   if (document.hidden) { activityFeed.stop(); drag.cancel(); pet.setLifeAvailable(false);void motion?.stop();pet.setPaused(true); feed.stop(); return }
   preferences.refresh()
   bridge.resume()
@@ -164,7 +171,7 @@ const drag = createCompanionDrag({
   start: async () => {await motion?.stop();return mock?null:invoke('start_companion_drag')},
   move: position => invoke('move_companion_window', position),
   finish: () => invoke('finish_companion_drag'),
-  onBegin: () => {holding=true;ccActivity?.setEnabled(false);syncLifeAvailability();pet.beginDrag()}, onEnd: () => {holding=false;pet.endDrag();ccActivity?.setEnabled(!quiet&&!reducedMotion&&!document.hidden);syncLifeAvailability()},
+  onBegin: () => {holding=true;syncActivityAvailability();syncLifeAvailability();pet.beginDrag()}, onEnd: () => {holding=false;pet.endDrag();syncActivityAvailability();syncLifeAvailability()},
   onVelocity:speed=>pet.setDragVelocity(speed),onLanding:()=>pet.land(),
   onClick: () => { void openCharacter() },
   onError: error => console.warn('companion drag failed', error),

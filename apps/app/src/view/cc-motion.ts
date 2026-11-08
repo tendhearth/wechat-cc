@@ -43,6 +43,7 @@ export function makeCCMotionTracker() {
       if (snapshot.outcomes) {
         const completed = successfulCCResults(snapshot.outcomes).find(row => ['working', 'waiting'].includes(outcomes.get(row.id) ?? ''))
         if (canAnimate && outcomesKnown && completed) event = { behavior: 'done', eventKey: `done:${completed.id}:${completed.at}` }
+        outcomes.clear() // A complete list forgets disappeared identities; restored history needs a new baseline.
         snapshot.outcomes.forEach(row => outcomes.set(row.id, row.status))
         outcomesKnown = snapshot.active
       }

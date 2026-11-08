@@ -15,7 +15,7 @@ import { companionStatus } from '../view/companion'
 import { makeCCMotionTracker, type CCMotionEvent } from '../view/cc-motion'
 import { componentAppearance } from './tokens'
 import { CCFigure } from './CCFigure'
-import { useMotionEnabled } from './motion'
+import { useMotionState } from './motion'
 import type { CCStream } from '@wechat-cc/protocol'
 import { useCCActivity } from './useCCActivity'
 
@@ -28,10 +28,10 @@ export function ConversationPresence({ onPress = () => {}, stream, typing = fals
   useChatUpdates(chat.data?.matterId, chat.refresh)
   const line = latestCCLine(chat.data), presence = ccPresence(conn, { demo: work.demo })
   const statusKey = companionStatus({ known: work.demo || presence === 'here', activity: companion.activity, running: work.agents.running })
-  const enabled = useMotionEnabled(), tracker = useMemo(makeCCMotionTracker, [backend])
+  const { active, enabled } = useMotionState(), tracker = useMemo(makeCCMotionTracker, [backend])
   const [motion, setMotion] = useState<CCMotionEvent>()
   const outcomeReads = useRef({ matters: work.matters, terminal: terminal.sessions, mattersFresh: false, terminalFresh: false })
-  const phase = useCCActivity(stream, presence === 'here', enabled, typing, view.actionableWaiting.length > 0)
+  const phase = useCCActivity(stream, presence === 'here', active, typing, view.actionableWaiting.length > 0)
   const snapshot = JSON.stringify({ active: presence === 'here' && enabled, received: chat.data ? (line ? [{ id: line.id, at: line.at }] : []) : undefined, outcomes: work.mattersKnown && terminal.loaded ? view.groups.flatMap(g => g.rows).map(r => ({ id: `${r.source}:${r.id}`, at: r.updatedAt, status: r.status })) : undefined, waiting: view.waitingUnknown ? undefined : view.actionableWaiting, topics })
   useEffect(() => {
     const current = JSON.parse(snapshot), reads = outcomeReads.current
@@ -47,5 +47,6 @@ export function ConversationPresence({ onPress = () => {}, stream, typing = fals
     if (event) setMotion(event)
     else if (!current.active || current.waiting?.length === 0) setMotion(previous => previous?.behavior === 'wait' || !current.active ? undefined : previous)
   }, [tracker, snapshot, work.matters, terminal.sessions])
-  return <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={onPress} style={{ minWidth: componentAppearance.identity.headerTarget, minHeight: componentAppearance.identity.headerTarget, justifyContent: 'center' }}><CCFigure size={componentAppearance.identity.headerImage.phone} presence={presence} mood={statusKey ? t(lang, statusKey) : undefined} behavior={motion?.behavior} eventKey={motion?.eventKey} phase={phase} /></Pressable>
+  const label = [t(lang, 'now.openChat'), phase !== 'idle' ? t(lang, `cc.${phase}`) : undefined].filter(Boolean).join(lang === 'en' ? ', ' : '，')
+  return <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={{ minWidth: componentAppearance.identity.headerTarget, minHeight: componentAppearance.identity.headerTarget, justifyContent: 'center' }}><CCFigure size={componentAppearance.identity.headerImage.phone} presence={presence} mood={statusKey ? t(lang, statusKey) : undefined} behavior={motion?.behavior} eventKey={motion?.eventKey} phase={phase} /></Pressable>
 }

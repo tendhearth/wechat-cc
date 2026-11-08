@@ -1,8 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import { makeCCMotionTracker } from './cc-motion'
+import { homeView } from './home'
+import type { MatterT } from '../backend/types'
 
 const message = (id: string, at = 100) => ({ id, at })
 describe('CC motions follow new evidence once', () => {
+  it('does not celebrate a completed task archived before its next read and then restored on desktop', () => {
+    const track = makeCCMotionTracker()
+    const matter = { id: 'A', kind: 'task', title: 'A', createdAt: 1, updatedAt: 2, state: 'working', archivedAt: null } as MatterT
+    const rows = () => homeView({ matters: [matter], approvals: [], agents: { running: 0, waiting: 0, tasks: [] }, terminal: [], known: true, now: 3, lang: 'zh-Hans' }).groups.flatMap(g => g.rows).map(r => ({ id: `${r.source}:${r.id}`, at: r.updatedAt, status: r.status }))
+    track.read({ active: true, outcomes: rows() })
+    matter.state = 'done'; matter.archivedAt = 2
+    expect(rows()).toEqual([])
+    expect(track.read({ active: true, outcomes: rows() })).toBeUndefined()
+    matter.archivedAt = null
+    expect(rows()).toEqual([{ id: 'matter:A', at: 2, status: 'done' }])
+    expect(track.read({ active: true, outcomes: rows() })).toBeUndefined()
+  })
+  it.each(['working', 'waiting'])('baselines a restored historical result after a %s item disappears', status => {
+    const track = makeCCMotionTracker(), row = (status: string, at: number) => [{ id: 'archived', at, status }]
+    track.read({ active: true, outcomes: row(status, 1) })
+    expect(track.read({ active: true, outcomes: [] })).toBeUndefined()
+    expect(track.read({ active: true, outcomes: row('done', 2) })).toBeUndefined()
+    track.read({ active: true, outcomes: row(status, 3) })
+    expect(track.read({ active: true, outcomes: row('replied', 4) })).toEqual({ behavior: 'done', eventKey: 'done:archived:4' })
+  })
   it('looks at each genuinely new topic once, with a cooldown and no hidden replay', () => {
     const track = makeCCMotionTracker()
     track.read({ active: true, topics: ['history'] })

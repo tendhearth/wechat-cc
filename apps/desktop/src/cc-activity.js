@@ -33,7 +33,7 @@ export function mountCCActivity({ stage, doc = stage.ownerDocument, now = Date.n
   render()
   return {
     /** @param {import('./generated/cc-activity.js').CCStream|null|undefined} stream */
-    observe(stream) { tracker.observe(stream, now(), enabled && !doc.hidden); render() },
+    observe(stream) { tracker.observe(connected && enabled && !doc.hidden ? stream : null, now()); render() },
     /** @param {{connected:boolean,waiting?:boolean,blocked?:boolean,enabled?:boolean}} facts */
     update(facts) {
       connected = facts.connected; waiting = facts.waiting === true; blocked = facts.blocked === true; enabled = facts.enabled !== false
@@ -49,9 +49,11 @@ export function mountCCActivity({ stage, doc = stage.ownerDocument, now = Date.n
 /** Companion has no transcript reader. Read the existing owner event projection only while reachable/visible.
  * @param {{read:(cursor:number)=>Promise<import('./generated/cc-activity.js').CCStream & {cursor:number}>,observe:(s:import('./generated/cc-activity.js').CCStream|null)=>void}} deps */
 export function createCCActivityFeed({ read, observe }) {
-  let generation = 0, running = false, cursor = 0, scope = '', primed = false
+  let generation = 0, running = false, inFlight = false, cursor = 0, scope = '', primed = false
   /** @type {ReturnType<typeof setTimeout>|undefined} */ let timer
   const poll = async (/** @type {number} */ token) => {
+    if (!running || inFlight) return
+    inFlight = true
     try {
       const value = await read(cursor)
       if (running && token === generation) {
@@ -62,10 +64,16 @@ export function createCCActivityFeed({ read, observe }) {
       }
     }
     catch { if (running && token === generation) { primed=false; observe(null) } }
-    finally { if (running && token === generation) timer = setTimeout(() => void poll(token), 1000) }
+    finally {
+      inFlight = false
+      if (running) {
+        if (token === generation) timer = setTimeout(() => void poll(token), 1000)
+        else void poll(generation) // A resumed reader waits for the retired host request to finish.
+      }
+    }
   }
   return {
     start() { if (running) return; running = true; void poll(++generation) },
-    stop() { running = false; generation++; cursor=0; scope=''; primed=false; clearTimeout(timer); observe(null) },
+    stop() { if (!running) return; running = false; generation++; cursor=0; scope=''; primed=false; clearTimeout(timer); observe(null) },
   }
 }
