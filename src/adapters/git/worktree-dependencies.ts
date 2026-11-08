@@ -7,7 +7,13 @@ export const DEPENDENCY_NOTICE = '未能完整复用项目依赖，请在此工�
 const LOCKS = ['bun.lock','bun.lockb','package-lock.json','npm-shrinkwrap.json','pnpm-lock.yaml','yarn.lock']
 const inside = (base: string, path: string) => path === base || path.startsWith(base + sep)
 const safeRelative = (path: string) => !isAbsolute(path) && !path.split(/[\\/]/).some(p => p === '..' || p === '.git')
-export interface DependencyOptions extends PreparationOptions { maxEntries?: number; maxBytes?: number; maxMetadataBytes?: number; minFreeBytes?: number }
+export interface DependencyOptions extends PreparationOptions {
+  maxEntries?: number
+  /** Actual fallback copy bytes. Successful COW clones consume no data-copy budget. */
+  maxBytes?: number
+  maxMetadataBytes?: number
+  minFreeBytes?: number
+}
 /** No symlinks or devices, even for lockfiles. O_NONBLOCK also protects the open-before-fstat boundary. */
 export async function readPreparationFile(root: string, path: string, maxBytes: number): Promise<Buffer | null> {
   if (!safeRelative(path)) throw Error('unsafe_preparation_file')
@@ -45,6 +51,7 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
   }
   try {
     source = await fs.realpath(source); target = await fs.realpath(target)
+    await room(0)
     const patterns = ['package.json','**/package.json', ...LOCKS.flatMap(f => [f, `**/${f}`])]
     const lists = await Promise.all([source, target].map(root => budget.git(root, ['ls-files','-z','--',...patterns])))
     const tracked = new Set(lists.flatMap(list => list.split('\0').filter(Boolean)))
@@ -70,6 +77,9 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
     const clone = async (from: string, to: string): Promise<void> => {
       budget.check()
       if (++entries > maxEntries) throw Error('dependency_entry_budget')
+      // Clones still allocate directory/file metadata. Sample free space without
+      // paying a statfs syscall for each of a large repository's tiny files.
+      if (entries % 256 === 0) await room(0)
       const stat = await fs.lstat(from)
       if (stat.isSymbolicLink()) {
         const actual = await fs.realpath(from)
@@ -86,28 +96,36 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
           await clone(join(from, entry.name), join(to, entry.name))
         }
       } else if (stat.isFile()) {
-        bytes += stat.size
-        if (bytes > maxBytes) throw Error('dependency_byte_budget')
-        await room(stat.size)
         // Prefer COW, with bounded asynchronous chunked copying as the fallback.
         try { await fs.copyFile(from, to, constants.COPYFILE_FICLONE_FORCE) }
         catch (error) {
           if (!['ENOTSUP','EOPNOTSUPP','EXDEV','EINVAL','ENOSYS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+          if (stat.size > maxBytes - bytes) throw Error('dependency_byte_budget')
+          await room(stat.size)
           const input = await fs.open(from, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-          const output = await fs.open(to, 'wx', stat.mode & 0o777)
           try {
-            const buffer = Buffer.alloc(1024 * 1024)
-            let copied = 0
-            for (;;) {
-              budget.check()
-              const { bytesRead } = await input.read(buffer)
-              if (!bytesRead) break
-              copied += bytesRead
-              if (copied > stat.size) throw Error('dependency_byte_budget')
-              let offset = 0
-              while (offset < bytesRead) { budget.check(); offset += (await output.write(buffer, offset, bytesRead - offset)).bytesWritten }
-            }
-          } finally { await input.close(); await output.close() }
+            const opened = await input.stat()
+            if (!opened.isFile() || opened.size !== stat.size) throw Error('unsupported_dependency_file')
+            const output = await fs.open(to, 'wx', stat.mode & 0o777)
+            try {
+              const buffer = Buffer.alloc(Math.min(1024 * 1024, stat.size + 1))
+              let copied = 0
+              for (;;) {
+                budget.check()
+                const { bytesRead } = await input.read(buffer)
+                if (!bytesRead) break
+                copied += bytesRead
+                if (copied > stat.size || bytesRead > maxBytes - bytes) throw Error('dependency_byte_budget')
+                let offset = 0
+                while (offset < bytesRead) {
+                  budget.check()
+                  const written = (await output.write(buffer, offset, bytesRead - offset)).bytesWritten
+                  if (!written) throw Error('dependency_copy_stalled')
+                  offset += written; bytes += written
+                }
+              }
+            } finally { await output.close() }
+          } finally { await input.close() }
         }
         budget.check()
       } else throw Error('unsupported_dependency_file')
@@ -117,10 +135,12 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
       const rel = join(dirname(manifest), 'node_modules')
       if (!safeRelative(rel)) throw Error('unsafe_dependency_directory')
       const from = join(source, rel), to = join(target, rel)
+      const existing = await fs.lstat(to).catch(e => { if(e.code==='ENOENT')return null;throw e })
+      // A tracked ordinary directory may contain source-pointing links or stale
+      // files. We cannot claim or replace the user's existing installation.
+      if (existing) throw Error('unsafe_dependency_directory')
       const src = await fs.lstat(from).catch(e => { if (e.code === 'ENOENT') return null; throw e })
       if (!src) continue
-      const existing = await fs.lstat(to).catch(e => { if(e.code==='ENOENT')return null;throw e })
-      if(existing){if(!existing.isDirectory() || !inside(target,await fs.realpath(to)))throw Error('unsafe_dependency_directory');continue}
       if (!src.isDirectory() || !inside(source, await fs.realpath(from)) || !inside(target, await fs.realpath(dirname(to)))) throw Error('unsafe_dependency_directory')
       const stage = await fs.mkdtemp(join(dirname(to), '.cc-dependencies-'))
       stages.push({ from, to, stage })

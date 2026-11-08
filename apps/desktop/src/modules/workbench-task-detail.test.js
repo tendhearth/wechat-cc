@@ -230,6 +230,8 @@ it('a retained next-turn acknowledgement before text folds the old turn and late
  expect(pending.querySelector('.wb-dialogue').textContent).not.toContain('旧答复')
  const next={id:4,taskId:'A',kind:'text',text:'新答复',runId:'r',turnId:'new',createdAt:4}
  expect(render(page({phase:'replied'},{runId:'r',events:[...old,request,next]})).querySelector('.wb-dialogue').textContent).toContain('新答复')
+})
+
 it('task details show the recorded starting branch/SHA and escape the branch text',()=>{
   const root=render(page({worktree:{branch:'cc/task',base:'dev<script>',baseSha:'abcdef0123456789',projectPath:'/work/project',removed:false}}))
   expect(root.querySelector('#wb-task-info').textContent).toContain('从 dev<script> @ abcdef0 开始')

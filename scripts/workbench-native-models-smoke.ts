@@ -90,7 +90,7 @@ await writeFile(join(area,'config.toml'),codexConfig+`[mcp_servers.owned_forbidd
 await writeFile(join(project.path,'.mcp.json'),JSON.stringify({mcpServers:{owned_forbidden:{command:join(area,'forbidden-mcp.sh')}}}))
 await mkdir(join(project.path,'.claude'));await writeFile(join(project.path,'.claude','settings.json'),JSON.stringify({enableAllProjectMcpServers:true,hooks:{SessionStart:[{hooks:[{type:'command',command:join(area,'forbidden-mcp.sh')}]}]}}))
 const claudeEnv={HOME:area,CLAUDE_CONFIG_DIR:join(area,'.claude'),XDG_CONFIG_HOME:join(area,'.config'),ANTHROPIC_API_KEY:'owned-model-key',ANTHROPIC_BASE_URL:`http://127.0.0.1:${port}/claude`,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_TELEMETRY:'1',DISABLE_ERROR_REPORTING:'1',DISABLE_AUTOUPDATER:'1'}
-const baseOptions=()=>workbenchClaudeOptions({cwd:project.path,model:'owned-cc-fallback',pathToClaudeCodeExecutable:wrappers.claude,env:claudeEnv},'Owned model fixture only.',async()=>({behavior:'deny',message:'Tools are unavailable in this fixture.'}))
+const baseOptions=async()=>await workbenchClaudeOptions({cwd:project.path,model:'owned-cc-fallback',pathToClaudeCodeExecutable:wrappers.claude,env:claudeEnv},'Owned model fixture only.',async()=>({behavior:'deny',message:'Tools are unavailable in this fixture.'}))
 const providers:Record<'claude'|'codex',AgentProvider>={claude:createClaudeAgentProvider({sdkOptionsForProject:baseOptions}),codex:createWorkbenchCodexProvider({codexPathOverride:wrappers.codex,model:'owned-cc-fallback'})}
 async function paths(path:string):Promise<string[]> {
   const entries=await readdir(path,{withFileTypes:true}).catch(()=>[])

@@ -2,13 +2,15 @@ import { preparationJobspawnFixture } from '../../test-support/preparation-jobsp
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { copyWorkspaceDependencies } from './worktree-dependencies'
 import { copyIncludedFiles, ensureWorktree, planWorktree, prepareWorktreeStart, removeWorktree, reopenWorktree } from './worktree-workspaces'
 import { Preparation } from './worktree-preparation'
+import { refreshWorktreeRemotes } from './worktree-fetch'
 import { removeTempDir } from '../../lib/test-temp'
 
 vi.mock('node:fs/promises', async importOriginal => { const actual = await importOriginal<typeof import('node:fs/promises')>(); return { ...actual, copyFile: vi.fn(actual.copyFile) } })
@@ -37,6 +39,7 @@ function marker(root: string, name = 'ran') {
 }
 afterEach(async () => {
   vi.restoreAllMocks(); vi.unstubAllEnvs()
+  vi.mocked(fs.copyFile).mockReset().mockImplementation((await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).copyFile)
   for (const cleanup of cleanups.splice(0)) await cleanup()
   for (const root of areas.splice(0)) removeTempDir(root)
 })
@@ -75,7 +78,10 @@ describe('pre-approval preparation security', () => {
     expect(await copyWorkspaceDependencies(source,target,{maxMetadataBytes:32})).toHaveLength(1)
     for (const root of [source,target]) writeFileSync(join(root,'bun.lock'),'lock')
     for (const options of [{maxBytes:1},{maxEntries:1},{timeoutMs:0},{minFreeBytes:Number.MAX_SAFE_INTEGER}]) {
+      // Byte limits apply to actual copying; force that path rather than COW.
+      if ('maxBytes' in options) vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
       expect(await copyWorkspaceDependencies(source,target,options)).toHaveLength(1)
+      vi.mocked(fs.copyFile).mockReset().mockImplementation((await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).copyFile)
       expect(existsSync(join(target,'node_modules'))).toBe(false)
       expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
     }
@@ -105,7 +111,7 @@ describe('pre-approval preparation security', () => {
       expect(ticks).toBeGreaterThan(2); expect(Date.now()-started).toBeLessThan(3000)
     } finally {clearInterval(timer)}
     expect(readdirSync(join(source,'.git/objects')).filter(n=>n.startsWith('cc-fetch-'))).toEqual([])
-    expect(git(source,'for-each-ref','refs/remotes/cc-preparation-')).toBe('')
+    expect(git(source,'for-each-ref','--format=%(refname)').split('\n').filter(ref=>ref.startsWith('refs/remotes/cc-preparation-'))).toEqual([])
   })
 
   it('[P1-3] rejects repository credential/askpass/SSH/helper commands before approval', async () => {
@@ -127,8 +133,12 @@ describe('pre-approval preparation security', () => {
   it('[P1-3] kills TERM-ignoring descendants holding pipes on timeout and cancellation', async () => {
     if(process.platform==='win32')return // POSIX process groups; Windows uses the jobspawn job.
     const root=area(), bin=join(root,'git'), pidfile=join(root,'pid')
-    writeFileSync(join(root,'package.json'),'{"type":"commonjs"}')
-    writeFileSync(bin,`#!${process.execPath}\nif(process.argv.includes('config'))process.exit(1);const c=require('node:child_process').spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"],{stdio:'inherit'});require('node:fs').writeFileSync(${JSON.stringify(pidfile)},String(c.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`)
+    const quote=(value:string)=>`'${value.replaceAll("'","'\\''")}'`
+    // Keep the original hard deadline for process-tree cleanup, without two
+    // cold Bun startups consuming it before the descendant can write its PID.
+    const child=join(root,'child.sh')
+    writeFileSync(child,"#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n")
+    writeFileSync(bin,`#!/bin/sh\nfor arg do if [ "$arg" = config ]; then exit 1; fi; done\ntrap '' TERM\n/bin/sh ${quote(child)} &\nchild=$!\nprintf '%s' "$child" > ${quote(pidfile)}\nwait "$child"\n`)
     chmodSync(bin,0o755);vi.stubEnv('PATH',root+':'+process.env.PATH)
     for(const cancel of [false,true]){
       const controller=new AbortController(), prep=new Preparation({timeoutMs:2000,signal:controller.signal})
@@ -244,4 +254,169 @@ it('concurrent reopens cannot remove the successful checkout', async () => {
   expect(results.filter(r=>r.status==='rejected')).toHaveLength(1)
   expect(existsSync(join(plan.root,'package.json'))).toBe(true)
   expect(git(plan.root,'branch','--show-current')).toBe(plan.branch)
+})
+
+it.each([true,false])('[rereview-existing] selected branches with tracked dependencies cannot masquerade as reused installations (source installed=%s)', async installed => {
+  const {source}=pair()
+  const library=join(source,'library-data');mkdirSync(library);writeFileSync(join(library,'index.js'),'source')
+  git(source,'checkout','-qb','selected')
+  mkdirSync(join(source,'node_modules/local'),{recursive:true})
+  writeFileSync(join(source,'node_modules/local/tracked'),'keep this tracked file')
+  symlinkSync(library,join(source,'node_modules/local/source'),'dir')
+  git(source,'add','-f','node_modules/local');git(source,'commit','-qm','tracked dependencies')
+  git(source,'checkout','-q','main')
+  if(!installed)rmSync(join(source,'node_modules'),{recursive:true})
+  const plan=planWorktree({stateDir:area(),projectId:'p-0123456789abcdef0123',projectPath:source,repoRoot:source,base:'selected',id:'b8830001'})
+  await ensureWorktree(plan)
+  expect(plan.start?.notices).toHaveLength(1)
+  expect(readFileSync(join(plan.root,'node_modules/local/tracked'),'utf8')).toBe('keep this tracked file')
+  expect(readFileSync(join(library,'index.js'),'utf8')).toBe('source')
+})
+
+it.each([65*1024*1024,Number.MAX_SAFE_INTEGER])('[rereview-budget] COW accepts a dependency forest above 1 GiB (free=%s)', async available => {
+  const {source,target}=pair(), nominal=768*1024*1024
+  for (const name of ['a','b']) { writeFileSync(join(source,'node_modules',name),'');truncateSync(join(source,'node_modules',name),nominal) }
+  // Sparse, independent files model successful clonefile without allocating GiBs on CI.
+  vi.mocked(fs.copyFile).mockClear().mockImplementation(async (from,to)=>{await fs.writeFile(to,'');await fs.truncate(to,(await fs.stat(from)).size)})
+  const disk=await fs.statfs(target)
+  vi.spyOn(fs,'statfs').mockResolvedValue({...disk,bavail:available,bsize:1})
+  expect(await copyWorkspaceDependencies(source,target)).toEqual([])
+  expect(statSync(join(target,'node_modules/a')).size+statSync(join(target,'node_modules/b')).size).toBe(2*nominal)
+  expect(vi.mocked(fs.copyFile).mock.calls.length).toBe(3)
+  writeFileSync(join(target,'node_modules/a'),'task edit')
+  expect(statSync(join(source,'node_modules/a')).size).toBe(nominal)
+})
+
+it('[rereview-budget] unsupported COW enforces actual byte and disk limits and removes partial trees', async () => {
+  const {source,target}=pair()
+  vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
+  expect(await copyWorkspaceDependencies(source,target,{maxBytes:1})).toHaveLength(1)
+  expect(existsSync(join(target,'node_modules'))).toBe(false)
+  const disk=await fs.statfs(target)
+  vi.spyOn(fs,'statfs').mockResolvedValue({...disk,bavail:64*1024*1024+1,bsize:1})
+  expect(await copyWorkspaceDependencies(source,target)).toHaveLength(1)
+  expect(existsSync(join(target,'node_modules'))).toBe(false)
+  expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
+})
+
+it('[rereview-budget] successful fallback copies are independent and consume only actual copied bytes', async () => {
+  const {source,target}=pair()
+  vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
+  expect(await copyWorkspaceDependencies(source,target,{maxBytes:6})).toEqual([])
+  expect(readFileSync(join(target,'node_modules/library/index.js'),'utf8')).toBe('source')
+  writeFileSync(join(target,'node_modules/library/index.js'),'task')
+  expect(readFileSync(join(source,'node_modules/library/index.js'),'utf8')).toBe('source')
+})
+
+function partialClone() {
+  const remote=repo(), source=join(area(),'clone')
+  git(remote,'config','uploadpack.allowFilter','true')
+  git(remote,'clone','--filter=blob:none',pathToFileURL(remote).href,source)
+  return {remote,source}
+}
+const privateRefs = (root: string) => git(root,'for-each-ref','--format=%(refname)').split('\n').filter(ref=>ref.startsWith('refs/remotes/cc-preparation-'))
+it('[rereview-promisor] standard partial clones refresh to the remote HEAD and retain promisor packs', async () => {
+  const {remote,source}=partialClone()
+  expect(readdirSync(join(source,'.git/objects/pack')).some(n=>n.endsWith('.promisor'))).toBe(true)
+  writeFileSync(join(remote,'later'),'new commit');git(remote,'add','later');git(remote,'commit','-qm','later')
+  await expect(refreshWorktreeRemotes(source)).resolves.toBeUndefined()
+  expect(git(source,'rev-parse','origin/main')).toBe(git(remote,'rev-parse','HEAD'))
+  const packs=readdirSync(join(source,'.git/objects/pack'))
+  for(const name of packs.filter(n=>n.endsWith('.pack'))) expect(packs).toContain(name.replace(/\.pack$/,'.promisor'))
+  expect(privateRefs(source)).toEqual([])
+  expect(readdirSync(join(source,'.git/objects')).filter(n=>n.startsWith('cc-fetch-'))).toEqual([])
+})
+
+it.each([false,true])('[rereview-pack-cleanup] failed ref publication leaves the pack set unchanged (partial=%s)', async partial => {
+  const {remote,source}=partial ? partialClone() : (()=>{const remote=repo(),source=repo();git(source,'remote','add','origin',pathToFileURL(remote).href);git(source,'fetch','origin');return {remote,source}})()
+  const before=readdirSync(join(source,'.git/objects/pack')).sort(), old=git(source,'rev-parse','origin/main')
+  writeFileSync(join(remote,'later'),'new commit');git(remote,'add','later');git(remote,'commit','-qm','later')
+  writeFileSync(join(source,'.git/refs/remotes/origin/main.lock'),'owned fixture lock')
+  const result=await prepareWorktreeStart(source,'main')
+  expect(result.notices).toHaveLength(1)
+  expect(git(source,'rev-parse','origin/main')).toBe(old)
+  expect(readdirSync(join(source,'.git/objects/pack')).sort()).toEqual(before)
+  expect(privateRefs(source)).toEqual([])
+  expect(readdirSync(join(source,'.git/objects')).filter(n=>n.startsWith('cc-fetch-'))).toEqual([])
+})
+
+it('[rereview-pack-preflight] validates all pack entries before publishing any objects', async () => {
+  const remote=repo(),source=repo()
+  git(source,'remote','add','origin',pathToFileURL(remote).href);git(source,'fetch','origin')
+  const before=readdirSync(join(source,'.git/objects/pack')).sort()
+  writeFileSync(join(remote,'later'),'new commit');git(remote,'add','later');git(remote,'commit','-qm','later')
+  const actual=await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  // Return a bad final entry after all legitimate entries, reproducing the
+  // old streaming validation's partial publication regardless of readdir order.
+  vi.spyOn(fs,'readdir').mockImplementation((async (path: string,...args: unknown[])=>{
+    const entries=await (actual.readdir as Function)(path,...args)
+    return String(path).includes('cc-fetch-')&&String(path).endsWith(sep+'pack') ? [...entries,'zz-invalid-pack'] : entries
+  }) as typeof fs.readdir)
+  await expect(refreshWorktreeRemotes(source)).rejects.toThrow('unsafe_fetch_pack')
+  expect(readdirSync(join(source,'.git/objects/pack')).sort()).toEqual(before)
+  expect(privateRefs(source)).toEqual([])
+})
+
+it('[rereview-private-refs] cleanup assertions detect actual randomized private namespaces', () => {
+  const root=repo(),ref='refs/remotes/cc-preparation-abc/origin/main'
+  git(root,'update-ref',ref,'HEAD')
+  expect(privateRefs(root)).toEqual([ref])
+  git(root,'update-ref','-d',ref)
+  expect(privateRefs(root)).toEqual([])
+})
+
+it('[rereview-fetch-queue] concurrent tasks wait for a failed fetch to finish object rollback', async () => {
+  const remote=repo(),source=repo()
+  git(source,'remote','add','origin',pathToFileURL(remote).href);git(source,'fetch','origin')
+  writeFileSync(join(remote,'later'),'new commit');git(remote,'add','later');git(remote,'commit','-qm','later')
+  const original=Preparation.prototype.git
+  let reached!:()=>void,release!:()=>void,held=false,remoteLists=0
+  const ready=new Promise<void>(resolve=>{reached=resolve}),gate=new Promise<void>(resolve=>{release=resolve})
+  vi.spyOn(Preparation.prototype,'git').mockImplementation(async function(this: Preparation,cwd,args,input,env){
+    if(args[0]==='remote')remoteLists++
+    if(args[0]==='update-ref'&&input?.startsWith('start\n')&&!held){held=true;reached();await gate;throw Error('fixture_ref_failure')}
+    return original.call(this,cwd,args,input,env)
+  })
+  const first=refreshWorktreeRemotes(source).catch(error=>error)
+  await ready
+  const second=refreshWorktreeRemotes(source)
+  try {await new Promise(resolve=>setTimeout(resolve,100));expect(remoteLists).toBe(1)}
+  finally {release();await Promise.allSettled([first,second])}
+  expect((await first).message).toBe('fixture_ref_failure')
+  await expect(second).resolves.toBeUndefined()
+  expect(git(source,'show','origin/main:later')).toBe('new commit')
+  expect(privateRefs(source)).toEqual([])
+})
+
+it('[rereview-fetch-queue] queued preparations can be cancelled without starting another fetch', async () => {
+  const source=repo(),server=createServer(()=>reached())
+  let reached!:()=>void
+  const ready=new Promise<void>(resolve=>{reached=resolve})
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve))
+  cleanups.push(()=>{server.closeAllConnections();return new Promise<void>(resolve=>server.close(()=>resolve()))})
+  git(source,'remote','add','origin',`http://127.0.0.1:${(server.address() as {port:number}).port}/repo`)
+  const firstCancel=new AbortController(),secondCancel=new AbortController()
+  const first=refreshWorktreeRemotes(source,{signal:firstCancel.signal}).catch(error=>error)
+  await ready
+  const second=refreshWorktreeRemotes(source,{signal:secondCancel.signal})
+  secondCancel.abort()
+  await expect(second).rejects.toThrow('cancelled')
+  firstCancel.abort();await first
+  expect(privateRefs(source)).toEqual([])
+  expect(readdirSync(join(source,'.git/objects')).filter(n=>n.startsWith('cc-fetch-'))).toEqual([])
+})
+
+it('[rereview-interrupted-ref] interrupted ref publication preserves objects already used by tracking refs', async () => {
+  const remote=repo(),source=repo()
+  git(source,'remote','add','origin',pathToFileURL(remote).href);git(source,'fetch','origin')
+  writeFileSync(join(remote,'later'),'new commit');git(remote,'add','later');git(remote,'commit','-qm','later')
+  const sha=git(remote,'rev-parse','HEAD'),original=Preparation.prototype.git
+  vi.spyOn(Preparation.prototype,'git').mockImplementation(async function(this: Preparation,cwd,args,input,env){
+    if(args[0]==='update-ref'&&input?.startsWith('start\n')) {git(source,'update-ref','refs/remotes/origin/main',sha);throw Error('fixture_interrupted_commit')}
+    return original.call(this,cwd,args,input,env)
+  })
+  expect((await prepareWorktreeStart(source,'main')).notices).toHaveLength(1)
+  expect(git(source,'rev-parse','origin/main')).toBe(sha)
+  expect(git(source,'show','origin/main:later')).toBe('new commit')
+  expect(privateRefs(source)).toEqual([])
 })

@@ -190,13 +190,13 @@ export function wireWorkbench(opts: {
     claude:()=>{
       const claude=opts.boot.registry.get('claude')
       if (claude) registry.register('claude',createClaudeAgentProvider({
-        sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
+        async sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
           const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
           const native=readNativeClaudeTools(path)
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)
           const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers))
-          return workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId,context?.preparationSignal)
+          return await workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId,context?.preparationSignal)
         },
       }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
     },

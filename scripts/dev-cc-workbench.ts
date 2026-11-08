@@ -45,7 +45,7 @@ const registry=createProviderRegistry()
 if(binary)registry.register('codex',createWorkbenchCodexProvider({codexPathOverride:binary}),
   {workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Codex',canResume:(_cwd,id)=>codexSessionJsonlPaths(homedir(),id).some(existsSync)})
 if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
-  sdkOptionsForProject(_alias,path,_tier,_chatId,_env,instructions,context) {
+  async sdkOptionsForProject(_alias,path,_tier,_chatId,_env,instructions,context) {
     // Match production: native project rules and admitted tools, task approvals.
     const settingsPath=join(homedir(),'.claude','settings.json')
     let settings:unknown={}
@@ -56,7 +56,7 @@ if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
     const native=readNativeClaudeTools(path)
     const notice=claudeNativeCapabilityNotice(native)
     if(notice)context?.reportNotice?.(notice)
-    return workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claudeBinary,
+    return await workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claudeBinary,
       env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)}},
       instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers)),native)
   },

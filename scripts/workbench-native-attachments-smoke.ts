@@ -94,7 +94,7 @@ for (const [key, binary] of [['codex', codexBinary], ['claude', claudeBinary]] a
 await mkdir(join(area, '.claude'))
 await writeFile(join(area, 'config.toml'), `model='mock-model'\nmodel_provider='fixture'\n[model_providers.fixture]\nname='Owned attachment fixture'\nbase_url='http://127.0.0.1:${port}/codex/v1'\nwire_api='responses'\nrequires_openai_auth=false\nsupports_websockets=false\n[features]\nplugins=false\napps=false\nhooks=false\n`)
 const claudeEnv = { HOME: area, CLAUDE_CONFIG_DIR: join(area, '.claude'), XDG_CONFIG_HOME: join(area, '.config'), ANTHROPIC_API_KEY: 'owned-attachment-key', ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}/claude`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1', DISABLE_AUTOUPDATER: '1' }
-const options = () => workbenchClaudeOptions({ cwd: area, model: 'claude-sonnet-4-6', pathToClaudeCodeExecutable: wrappers.claude, env: claudeEnv }, 'Only the owned attachment fixture.', async () => ({ behavior: 'deny', message: 'Fixture does not permit tools.' }))
+const options = async () => await workbenchClaudeOptions({ cwd: area, model: 'claude-sonnet-4-6', pathToClaudeCodeExecutable: wrappers.claude, env: claudeEnv }, 'Only the owned attachment fixture.', async () => ({ behavior: 'deny', message: 'Fixture does not permit tools.' }))
 function blocks(provider: 'codex' | 'claude', body: any): any[] { return (body[provider === 'codex' ? 'input' : 'messages'] ?? []).filter((message: any) => message.role === 'user').flatMap((message: any) => Array.isArray(message.content) ? message.content : []) }
 function latestUserBody(provider: 'codex' | 'claude', body: any) {
   const key = provider === 'codex' ? 'input' : 'messages'
@@ -151,7 +151,7 @@ try {
   // mapping in production. Retained as a focused compatibility probe.
   async function* pdfInput(): AsyncIterable<SDKUserMessage> { yield { type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: document.data! } }, { type: 'text', text: 'Inspect this owned PDF.' }] } } }
   const abort = new AbortController(), deadline = setTimeout(() => abort.abort(), 30_000)
-  const raw = query({ prompt: pdfInput(), options: { ...options(), abortController: abort, maxTurns: 1 } })
+  const raw = query({ prompt: pdfInput(), options: { ...(await options()), abortController: abort, maxTurns: 1 } })
   try { for await (const message of raw) if (message.type === 'result') break }
   finally { clearTimeout(deadline); raw.close() }
   assert(hasPdf(requests.claude.at(-1)), 'installed native CLI did not forward the PDF content block')

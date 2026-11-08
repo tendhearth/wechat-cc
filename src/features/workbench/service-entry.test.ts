@@ -510,7 +510,7 @@ it('normal shutdown waits for unaccepted worktree fetch preparation to roll back
     await waiting
     await service.shutdown()
     expect(readdirSync(join(project,'.git/objects')).filter(name=>name.startsWith('cc-fetch-'))).toEqual([])
-    expect(g('for-each-ref','refs/remotes/cc-preparation-')).toBe('')
+    expect(g('for-each-ref','--format=%(refname)').split('\n').filter(ref=>ref.startsWith('refs/remotes/cc-preparation-'))).toEqual([])
     expect((await pending)?.message).toMatch(/cancelled|stopping/)
     expect(store.list()).toEqual([])
     expect(spawnCount).toBe(0)
