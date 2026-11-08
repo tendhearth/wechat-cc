@@ -34,11 +34,21 @@ bun run test:sandbox    # 只跑真实形状沙盒(几秒;bun run verify 每次�
 | 免打扰里的回报 + 重启(S2b) | 关机时把主人的免打扰写成盖住此刻、清空待发队列,「待说」那一拍 200ms;`POST /v1/self-change/notice` 回 502、那句在 `speech_pending`、没进微信;再重启(免打扰照旧)⇒ 还在;主人 `/set 免打扰 关` ⇒ 微信里收到那句,只一次,表空了 |
 | 免打扰里做完一件事 + 重启(S2b,win32 不跑) | 同样的起点再配一台手机(`settings-devices.json` + `phone-push.json`);微信里派给 Codex 的活做完 ⇒「做完了」推送压在 `speech_pending`(push),中继没收到;重启以后还在;主人 `/set 免打扰 关` ⇒ 中继收到那件事的推送(collapseId = 任务编号)一次,`speech_log` 有 `matter_report / allowed / app`。win32 不跑:同「微信里派活」,Codex 当工作台执行者在 Windows 上开头就拒绝 |
 | 过期的一条(S2b) | 关机时写一份旧格式的 `speech/pending-notices.json`(一条两天前、一条刚才)⇒ 开机读进表、文件改名 `.migrated`;刚才那条说了,两天前那条 `speech_log` 记 `dropped / expired`、没发 |
+| 全局主动间隔(S4) | 两条保留提议只发一条,落选项不增加 attempts、按原期限过期;已占用 20 小时间隔时早报照发并计入同一份账,普通提议继续等;requested / report / blocking 照常送达且不前移主动时间 |
+| 午夜早报夹具(S4) | 固定在 CI 曾失败的上海 `2026-11-09 00:00:31.912`,真实调度器发一条早报、状态记 `sent`、送达账和微信外发箱各一次;再过三拍没有重复 |
 | 断线时的补说(S2a) | 再开机,「待说」那一拍改成 200ms(`speechFlushIntervalMs`,生产 5 分钟);微信发不出去(`failSendMessage`)时 `POST /v1/self-change/notice` ⇒ 回 502 `send_failed`、日志 `kept to say later`;之后 3 秒(约 15 拍)里这句话**一次外发尝试都不再有**(补说按共用退避等满 1 分钟,或被门判送不到) |
 | 一个事件账上一行(S3a,win32 不跑) | 配一台手机、免打扰关;微信里派给 Codex 的活做完 ⇒ App 推一次,`speech_log` 里这一轮只有一行(`ref = turn:<任务>:<轮>`、`allowed / app`),一秒后还是一行;再派一件要批准的 ⇒ App 推一次、微信里一张「需要你批准」,`speech_log` 里一行(`ref = ask:<任务>:<请求>`、通道 `app+wechat`)。win32 不跑:同「微信里派活」 |
 | 人在电脑前做完一件事(S3b,win32 不跑) | 配一台手机、本机 5 秒前刚有键鼠(`machineIdleS`)、升级等待 2 秒(`escalateAfterMs`,生产 10 分钟);等状态只拉 `attention`(桌面 app 开着,桌面那一级由它弹;不读详情,读详情就算看过)。没人看:做完那一刻 App 没推、账一行通道 `desktop`、`speech_pending` 里有 `later:` 那一条;2 秒后推一次,账还是那一行(`desktop+app`),表空了。在桌面打开看了(`GET /v1/matter?id=`,operator 令牌;记在内存里,不写 `matter_bindings`):到点不推,日志 `seen on desktop`,账通道只有 `desktop` |
 
 这些场景是**一条时间线**,共用一台 daemon(中途重启九次,win32 上七次),后面的接着前面留下的状态 —— 单独 `-t` 跑某一条不保证成立。例外:S2 那几条各自在关机时写死起点(免打扰开 / 关、配没配手机、待发队列清空,`rebootForS2`),一条红了不会把后面几条拖红。
+
+S4 定时场景仍走完整 daemon 的生产调度器、路由、SpeechPolicy 和交付链路,只把系统时钟边界的检查间隔缩成 200ms
+(`scheduledJobsIntervalMs` / `reminderIntervalMs`,生产调用方不设,缺省一分钟)。早报场景只固定 Date,计时器和 HTTP 仍真实运行;
+任务设为当前本地分钟,不再用 `now-1min` 在午夜得到当天尚未到点的 `23:59`。还原 Date 后立即关闭该次 daemon,
+下一场景从保留状态重新开机,避免组件捕获的冻结 `Date.now` 泄漏。末尾的 `S4 clock:` 是独立新状态,可单独 `-t` 运行。
+
+午夜回归的红 / 绿:只把共享夹具退回 `shanghaiHHMM(now - 60_000)`,在固定 CI 时刻真实 runner 多次检查仍没有早报,
+送达账断言为 `[]`;恢复当前分钟即发出一次。生产「错过窗口不补跑」语义无需改变。
 
 **红 / 绿实证**:把 boot-api(当时在 `daemon-modules.ts`,现在 `bootstrap/module.ts`)的 `lazy: ['wired'],` 删掉,沙盒在 `beforeAll` 就红
 (`boot-api failed at init (required): modules: 'boot-api' called ctx.late('wired') but 'wired' is not in its lazy`),

@@ -37,6 +37,8 @@ type RunJobTurn = TickBodies['runJobTurn']
 export interface ReviewRequest { taskId: string; providerId: string; material: string }
 
 export interface WireJobsDeps {
+  /** 调度时钟边界的测试缝;缺省仍由 runner 每分钟检查。 */
+  intervalMs?: number
   /** 主人设的免打扰(建早报 / 周报时撞上了当场说);没接 ⇒ 不提。 */
   quietWindow?: () => import('../../domain/quiet-hours').QuietWindow | undefined
   stateDir: string
@@ -166,6 +168,7 @@ export function wireJobs(d: WireJobsDeps) {
     /** 每分钟一拍的 runner(起了就跑,返回停法);调用方是可选模块:坏了只降级,不挡启动。 */
     startRunner(): Lifecycle {
     return registerScheduledJobs({
+      intervalMs: d.intervalMs,
       store: jobsStore,
       activityLog,
       timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',

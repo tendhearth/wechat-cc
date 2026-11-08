@@ -23,6 +23,8 @@ export { makeRemindersStore } from './store'
 export type { RemindersStore } from './store'
 
 export function remindersFeature(d: {
+  /** 调度时钟边界的测试缝;缺省仍为一分钟。 */
+  intervalMs?: number
   db: Db
   isOwner: (chatId: string) => boolean
   /** CC 开口那道门(wired 模块里造)。 */
@@ -40,6 +42,7 @@ export function remindersFeature(d: {
       let lc: Lifecycle | null = null
       ctx.onStart('sweep', () => {
         lc = registerReminders({
+          intervalMs: d.intervalMs,
           store: makeRemindersStore(d.db),
           send: sendReminderVia(d.speech(ctx), (t, l) => log(t, l)),
           log: (t, l) => log(t, l),
