@@ -2,7 +2,7 @@ import { preparationJobspawnFixture } from '../../test-support/preparation-jobsp
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
+import { chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -81,6 +81,7 @@ describe('pre-approval preparation security', () => {
       // Byte limits apply to actual copying; force that path rather than COW.
       if ('maxBytes' in options) vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
       expect(await copyWorkspaceDependencies(source,target,options)).toHaveLength(1)
+      if ('maxBytes' in options) expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
       vi.mocked(fs.copyFile).mockReset().mockImplementation((await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).copyFile)
       expect(existsSync(join(target,'node_modules'))).toBe(false)
       expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
@@ -94,6 +95,7 @@ describe('pre-approval preparation security', () => {
     vi.mocked(fs.copyFile).mockRejectedValueOnce(Object.assign(Error('disk full'),{code:'ENOSPC'}))
     let ticks=0; const timer=setInterval(()=>ticks++,1)
     try { expect(await copyWorkspaceDependencies(source,target)).toHaveLength(1) } finally { clearInterval(timer) }
+    expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
     expect(ticks).toBeGreaterThan(0)
     expect(existsSync(join(target,'node_modules'))).toBe(false)
     expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
@@ -205,15 +207,42 @@ it('[P2-5] remote-tracking symrefs cannot redirect publication into a local bran
   expect(git(source,'rev-parse','refs/remotes/origin/z-last')).toBe(git(remote,'rev-parse','HEAD'))
 })
 
-it('[P1-2] cancellation after checkout removes only its own checkout, branch and dependency stages', async () => {
+it.each(['native','fallback'])('[P1-2] cancellation after checkout removes only its own checkout, branch and dependency stages (%s)', async mode => {
   const {source}=pair(), state=area(), controller=new AbortController()
   const plan=planWorktree({stateDir:state,projectId:'p-0123456789abcdef0123',projectPath:source,repoRoot:source,id:'deaf1234'})
-  const actual=await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
-  vi.mocked(fs.copyFile).mockImplementationOnce(async (...args)=>{await actual.copyFile(...args);controller.abort()})
+  const other=planWorktree({stateDir:state,projectId:'p-0123456789abcdef0123',projectPath:source,repoRoot:source,id:'feed1234'})
+  await ensureWorktree(other)
+  vi.mocked(fs.copyFile).mockClear()
+  if(mode==='fallback') vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
+  const check=Preparation.prototype.check, cancelledStages:string[]=[]
+  let atCancellation: { checkout:string; branch:string; dependenciesPublished:boolean; copied:string } | undefined
+  // Cancel at the real budget checkpoint after a staged file has been written,
+  // before publication. Both COW and chunked copies reach this same boundary.
+  vi.spyOn(Preparation.prototype,'check').mockImplementation(function(this:Preparation) {
+    if(this.options.signal===controller.signal && !controller.signal.aborted && existsSync(plan.root)) {
+      for(const name of readdirSync(plan.root).filter(n=>n.startsWith('.cc-dependencies-'))) {
+        const stage=join(plan.root,name), file=join(stage,'tree/library/index.js')
+        if(!existsSync(file) || statSync(file).size!==6) continue
+        cancelledStages.push(stage)
+        atCancellation={checkout:readFileSync(join(plan.root,'package.json'),'utf8'),branch:git(plan.root,'branch','--show-current'),dependenciesPublished:existsSync(join(plan.root,'node_modules')),copied:readFileSync(file,'utf8')}
+        controller.abort()
+        break
+      }
+    }
+    check.call(this)
+  })
   await expect(ensureWorktree(plan,{signal:controller.signal})).rejects.toThrow('cancelled')
+  expect(controller.signal.aborted).toBe(true)
+  expect(atCancellation).toEqual({checkout:'{}',branch:plan.branch,dependenciesPublished:false,copied:'source'})
+  if(mode==='fallback') expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(plan.root,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
+  expect(cancelledStages).toHaveLength(1)
+  expect(existsSync(cancelledStages[0]!)).toBe(false)
   expect(existsSync(plan.root)).toBe(false)
   expect(git(source,'branch','--list',plan.branch)).toBe('')
   expect(git(source,'worktree','list','--porcelain')).not.toContain(plan.root)
+  expect(git(other.root,'branch','--show-current')).toBe(other.branch)
+  expect(git(source,'worktree','list','--porcelain')).toContain(other.root)
+  expect(readFileSync(join(other.root,'node_modules/library/index.js'),'utf8')).toBe('source')
   expect(readFileSync(join(source,'node_modules/library/index.js'),'utf8')).toBe('source')
 })
 
@@ -283,6 +312,7 @@ it.each([65*1024*1024,Number.MAX_SAFE_INTEGER])('[rereview-budget] COW accepts a
   expect(await copyWorkspaceDependencies(source,target)).toEqual([])
   expect(statSync(join(target,'node_modules/a')).size+statSync(join(target,'node_modules/b')).size).toBe(2*nominal)
   expect(vi.mocked(fs.copyFile).mock.calls.length).toBe(3)
+  for(const call of vi.mocked(fs.copyFile).mock.calls) expect(call[2]).toBe(constants.COPYFILE_FICLONE_FORCE)
   writeFileSync(join(target,'node_modules/a'),'task edit')
   expect(statSync(join(source,'node_modules/a')).size).toBe(nominal)
 })
@@ -291,10 +321,14 @@ it('[rereview-budget] unsupported COW enforces actual byte and disk limits and r
   const {source,target}=pair()
   vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
   expect(await copyWorkspaceDependencies(source,target,{maxBytes:1})).toHaveLength(1)
+  expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
   expect(existsSync(join(target,'node_modules'))).toBe(false)
+  expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
+  vi.mocked(fs.copyFile).mockClear()
   const disk=await fs.statfs(target)
   vi.spyOn(fs,'statfs').mockResolvedValue({...disk,bavail:64*1024*1024+1,bsize:1})
   expect(await copyWorkspaceDependencies(source,target)).toHaveLength(1)
+  expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
   expect(existsSync(join(target,'node_modules'))).toBe(false)
   expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
 })
@@ -303,6 +337,7 @@ it('[rereview-budget] successful fallback copies are independent and consume onl
   const {source,target}=pair()
   vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
   expect(await copyWorkspaceDependencies(source,target,{maxBytes:6})).toEqual([])
+  expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
   expect(readFileSync(join(target,'node_modules/library/index.js'),'utf8')).toBe('source')
   writeFileSync(join(target,'node_modules/library/index.js'),'task')
   expect(readFileSync(join(source,'node_modules/library/index.js'),'utf8')).toBe('source')
