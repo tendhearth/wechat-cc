@@ -35,3 +35,7 @@ apps/desktop/src-tauri/generated/workbench-routes.json text eol=lf
 
 # 记忆金样(架构终态 G0):夹具里故意放了 BOM 与 CRLF,金样按字节比(src/features/memory/memory-golden.test.ts)。整棵树按原样进出。
 src/test-support/fixtures/memory/** -text
+
+# CC 活动合同:桌面生成物按字节等于共享源(apps/desktop/src/cc-activity.test.ts),Windows autocrlf 会让两边不一致。
+packages/protocol/src/cc-activity.js text eol=lf
+apps/desktop/src/generated/cc-activity.js text eol=lf
