@@ -45,7 +45,8 @@ it('[P2-7] ignores runtime in a non-Node repository, commits, checkpoints and re
   const baseline=await captureGitBaseline(root)
   const env=await taskEnvironment(root,'abcd1234')
   writeFileSync(join(env.TMPDIR!,'tool.log'),'private scratch');writeFileSync(join(env.npm_config_cache!,'cache.log'),'cache')
-  expect(git('check-ignore',join(env.TMPDIR!,'tool.log'))).toBe(join(env.TMPDIR!,'tool.log'))
+  // Check the exit status, not Git's platform-dependent quoted path output.
+  expect(git('check-ignore','--quiet','--',join(env.TMPDIR!,'tool.log'))).toBe('')
   expect(git('status','--porcelain','--untracked-files=all')).toBe('')
   writeFileSync(join(root,'readme.txt'),'changed')
   const result=commitWorktree(root,'change')

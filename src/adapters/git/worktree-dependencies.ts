@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { Preparation, type PreparationOptions } from './worktree-preparation'
 
 export const DEPENDENCY_NOTICE = '未能完整复用项目依赖，请在此工作区运行锁定安装；临时目录和缓存已限制在任务工作区内。'
+export const DEPENDENCY_COPY_NOTICE = '此工作区的依赖已独立复制，会额外占用磁盘空间。'
 const LOCKS = ['bun.lock','bun.lockb','package-lock.json','npm-shrinkwrap.json','pnpm-lock.yaml','yarn.lock']
 const inside = (base: string, path: string) => path === base || path.startsWith(base + sep)
 const safeRelative = (path: string) => !isAbsolute(path) && !path.split(/[\\/]/).some(p => p === '..' || p === '.git')
@@ -41,7 +42,7 @@ export async function readPreparationFile(root: string, path: string, maxBytes: 
 export async function copyWorkspaceDependencies(source: string, target: string, options: DependencyOptions = {}): Promise<string[]> {
   const budget = new Preparation({ ...options, timeoutMs: options.timeoutMs ?? 15_000 })
   const stages: Array<{ from: string; to: string; stage: string }> = []
-  let published = false, entries = 0, bytes = 0, metadata = 0
+  let published = false, usedFallback = false, entries = 0, bytes = 0, metadata = 0
   const maxBytes = options.maxBytes ?? 1024 * 1024 * 1024, maxEntries = options.maxEntries ?? 100_000
   const minFree = options.minFreeBytes ?? 64 * 1024 * 1024
   const room = async (needed: number) => {
@@ -96,10 +97,17 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
           await clone(join(from, entry.name), join(to, entry.name))
         }
       } else if (stat.isFile()) {
-        // Prefer COW, with bounded asynchronous chunked copying as the fallback.
-        try { await fs.copyFile(from, to, constants.COPYFILE_FICLONE_FORCE) }
-        catch (error) {
-          if (!['ENOTSUP','EOPNOTSUPP','EXDEV','EINVAL','ENOSYS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+        // Bun 1.3.14 on Windows ignores FICLONE_FORCE and calls CopyFileW.
+        // Never mistake that full copy for COW and bypass byte/space budgets.
+        let cloned = false
+        if (process.platform !== 'win32') {
+          try { await fs.copyFile(from, to, constants.COPYFILE_FICLONE_FORCE); cloned = true }
+          catch (error) {
+            if (!['ENOTSUP','EOPNOTSUPP','EXDEV','EINVAL','ENOSYS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+          }
+        }
+        if (!cloned) {
+          usedFallback = true
           if (stat.size > maxBytes - bytes) throw Error('dependency_byte_budget')
           await room(stat.size)
           const input = await fs.open(from, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -168,7 +176,7 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
     }
     published = true
     if (!await fs.lstat(join(target, 'node_modules')).then(() => true, () => false) && manifests.includes('package.json')) return [DEPENDENCY_NOTICE]
-    return []
+    return usedFallback ? [DEPENDENCY_COPY_NOTICE] : []
   } catch {
     if (options.signal?.aborted) throw Error('worktree_preparation_cancelled')
     return [DEPENDENCY_NOTICE]

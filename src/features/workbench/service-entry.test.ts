@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { readdirSync } from 'node:fs'
+import * as fsPromises from 'node:fs/promises'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {randomUUID} from 'node:crypto'
-import {existsSync,mkdirSync,mkdtempSync,realpathSync,renameSync,writeFileSync,unlinkSync} from 'node:fs'
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,writeFileSync,unlinkSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -15,12 +16,17 @@ import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES,UNATTENDED_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {canonicalEntryHash,type EntryInput} from '../../adapters/workbench/task-entry'
 import {validateApiTaskInput} from '../../adapters/executors/openai/openai-workbench-provider'
+import {preparationJobspawnFixture} from '../../test-support/preparation-jobspawn'
+import {DEPENDENCY_COPY_NOTICE} from '../../adapters/git/worktree-dependencies'
+
+preparationJobspawnFixture()
 
 const entryReads=vi.hoisted(()=>({observe:null as null|((count:number)=>void)}))
 vi.mock('node:fs',async importOriginal=>{
   const fs=await importOriginal<typeof import('node:fs')>()
   return{...fs,readSync:(...args:unknown[])=>{const count=Reflect.apply(fs.readSync,fs,args) as number;entryReads.observe?.(count);return count}}
 })
+vi.mock('node:fs/promises',async importOriginal=>({...await importOriginal<typeof import('node:fs/promises')>()}))
 
 let area:string,stateDir:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
 let owner:string|null,spawnCount:number,mintCount:number,seen:string[],spawnedTaskIds:(string|undefined)[]
@@ -394,15 +400,17 @@ it('until (v80): check fails ⇒ CC continues with the wrapped output; next turn
   service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t',unattendedAck:{get:()=>1,set:()=>{}}})
   const projectId=service.projects()[0]!.id
   await expect(service.createEntry(input({providerId:'agy',target:{kind:'project',projectId,isolation:'worktree'},until:{command:'true'}} as never),context)).rejects.toThrow('until_unattended_unsupported')
-  const r=(await service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'},until:{command:'test -f done.txt && echo PASSED',maxRounds:3}} as never),context))
+  // Product checks run in native CMD on Windows, which has no POSIX `test` builtin.
+  const command=process.platform==='win32'?'if exist done.txt (echo PASSED) else (exit /b 1)':'test -f done.txt && echo PASSED'
+  const r=(await service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'},until:{command,maxRounds:3}} as never),context))
   const id=r.receipt.taskId
   await expect.poll(()=>store.goals.get(id)?.status,{timeout:45_000}).toBe('passed')
   expect(prompts).toHaveLength(2)
   expect(prompts[1]).toContain('第 1/3 轮')
   expect(prompts[1]).toContain('<check_output>')
-  expect(prompts[1]).toContain('`test -f done.txt && echo PASSED`')
+  expect(prompts[1]).toContain(`\`${command}\``)
   expect(store.goals.get(id)).toMatchObject({rounds:2,lastExit:0})
-  expect(service.detail(id).task.until).toEqual({command:'test -f done.txt && echo PASSED',maxRounds:3,rounds:2,status:'passed',lastExit:0,stopReason:null})
+  expect(service.detail(id).task.until).toEqual({command,maxRounds:3,rounds:2,status:'passed',lastExit:0,stopReason:null})
   const texts=store.events(id).map(e=>e.text)
   expect(texts.some(t=>t.includes('检查没过(第 1/3 轮'))).toBe(true)
   expect(texts.some(t=>t.includes('检查通过(第 2 轮)'))).toBe(true)
@@ -496,6 +504,22 @@ it('accepts a not-yet-fetched remote branch, persists its SHA in task details an
   expect(g(accepted.task.path,'rev-parse','HEAD')).toBe(sha)
 })
 
+it('persists and displays an independent dependency copy notice once across entry retries', async () => {
+  const g=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe',encoding:'utf8'}).trim()
+  g('init','-q','-b','main');g('config','user.email','fixture@localhost');g('config','user.name','Fixture')
+  writeFileSync(join(project,'package.json'),'{}');writeFileSync(join(project,'bun.lock'),'lock')
+  writeFileSync(join(project,'.gitignore'),'node_modules/\n');g('add','.');g('commit','-qm','dependencies')
+  mkdirSync(join(project,'node_modules/library'),{recursive:true});writeFileSync(join(project,'node_modules/library/index.js'),'source')
+  vi.spyOn(fsPromises,'copyFile').mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
+  const request=input({target:{kind:'project',projectId:service.projects()[0]!.id,isolation:'worktree'}})
+  const accepted=await service.createEntry(request,context)
+  await settle(accepted.task.id)
+  expect(store.worktrees.get(accepted.task.id)?.start?.notices).toEqual([DEPENDENCY_COPY_NOTICE])
+  expect(readFileSync(join(accepted.task.path,'node_modules/library/index.js'),'utf8')).toBe('source')
+  expect((await service.createEntry(request,context)).task.id).toBe(accepted.task.id)
+  expect(service.detail(accepted.task.id).events.filter(event=>event.kind==='system'&&event.text.includes(DEPENDENCY_COPY_NOTICE))).toHaveLength(1)
+})
+
 
 it('normal shutdown waits for unaccepted worktree fetch preparation to roll back', async () => {
   const g=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe',encoding:'utf8'}).trim()
@@ -507,7 +531,7 @@ it('normal shutdown waits for unaccepted worktree fetch preparation to roll back
   g('remote','add','origin',`http://127.0.0.1:${(server.address() as {port:number}).port}/repo`)
   const pending=service.createEntry(input({target:{kind:'project',projectId:service.projects()[0]!.id,isolation:'worktree'}}),context).then(()=>null,error=>error)
   try {
-    await waiting
+    await Promise.race([waiting,pending.then(error=>{throw Error(`fetch ended before its HTTP request: ${error?.message ?? 'accepted'}`)})])
     await service.shutdown()
     expect(readdirSync(join(project,'.git/objects')).filter(name=>name.startsWith('cc-fetch-'))).toEqual([])
     expect(g('for-each-ref','--format=%(refname)').split('\n').filter(ref=>ref.startsWith('refs/remotes/cc-preparation-'))).toEqual([])

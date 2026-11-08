@@ -5,21 +5,27 @@ import { createServer } from 'node:http'
 import { chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { copyWorkspaceDependencies } from './worktree-dependencies'
+import { copyWorkspaceDependencies, DEPENDENCY_COPY_NOTICE, DEPENDENCY_NOTICE } from './worktree-dependencies'
 import { copyIncludedFiles, ensureWorktree, planWorktree, prepareWorktreeStart, removeWorktree, reopenWorktree } from './worktree-workspaces'
 import { Preparation } from './worktree-preparation'
 import { refreshWorktreeRemotes } from './worktree-fetch'
-import { removeTempDir } from '../../lib/test-temp'
+import { removeTempDir, writeWarmExecFixture } from '../../lib/test-temp'
 
 vi.mock('node:fs/promises', async importOriginal => { const actual = await importOriginal<typeof import('node:fs/promises')>(); return { ...actual, copyFile: vi.fn(actual.copyFile) } })
 
 preparationJobspawnFixture()
 
 const areas: string[] = [], cleanups: Array<() => void | Promise<void>> = []
-const area = () => { const path = realpathSync(mkdtempSync(join(tmpdir(), 'cc-prep-security-'))); areas.push(path); return path }
+// Match fs.promises.realpath used by preparation, including Windows 8.3 names.
+const area = () => { const path = realpathSync.native(mkdtempSync(join(tmpdir(), 'cc-prep-security-'))); areas.push(path); return path }
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',...args], { cwd, encoding: 'utf8', stdio: ['ignore','pipe','pipe'] }).trim()
+const worktreeRoots = (root: string) => git(root,'worktree','list','--porcelain','-z').split('\0').filter(field=>field.startsWith('worktree ')).map(field=>resolve(field.slice('worktree '.length)))
+function expectCloneAttempt(...args: unknown[]) {
+  if (process.platform === 'win32') expect(fs.copyFile).not.toHaveBeenCalled()
+  else expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(...args)
+}
 function repo() {
   const root = area()
   git(root,'init','-q','-b','main'); git(root,'config','user.name','Fixture'); git(root,'config','user.email','fixture@localhost')
@@ -53,7 +59,9 @@ describe('pre-approval preparation security', () => {
     writeFileSync(join(source,'.gitattributes'),'package.json filter=evil\n')
     git(source,'add','.gitattributes'); git(source,'commit','-qm','attributes')
     git(source,'config','filter.evil.smudge',script); git(source,'config','filter.evil.process',script)
-    expect(await copyWorkspaceDependencies(source,target)).toEqual([])
+    const notices = await copyWorkspaceDependencies(source,target)
+    expect(notices.filter(notice=>notice!==DEPENDENCY_COPY_NOTICE)).toEqual([])
+    expect(readFileSync(join(target,'node_modules/library/index.js'),'utf8')).toBe('source')
     expect(existsSync(mark)).toBe(false)
     const plan = planWorktree({stateDir:area(),projectId:'p-0123456789abcdef0123',projectPath:source,repoRoot:source,id:'abcd1234'})
     await ensureWorktree(plan)
@@ -81,7 +89,7 @@ describe('pre-approval preparation security', () => {
       // Byte limits apply to actual copying; force that path rather than COW.
       if ('maxBytes' in options) vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
       expect(await copyWorkspaceDependencies(source,target,options)).toHaveLength(1)
-      if ('maxBytes' in options) expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
+      if ('maxBytes' in options) expectCloneAttempt(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
       vi.mocked(fs.copyFile).mockReset().mockImplementation((await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).copyFile)
       expect(existsSync(join(target,'node_modules'))).toBe(false)
       expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
@@ -93,9 +101,15 @@ describe('pre-approval preparation security', () => {
   it('[P1-2] rolls back its stages on ENOSPC and allows other requests while copying', async () => {
     const {source,target} = pair()
     vi.mocked(fs.copyFile).mockRejectedValueOnce(Object.assign(Error('disk full'),{code:'ENOSPC'}))
+    const open = fs.open
+    const writes = vi.spyOn(fs,'open').mockImplementation((...args) => {
+      if (args[1] === 'wx') return Promise.reject(Object.assign(Error('disk full'),{code:'ENOSPC'}))
+      return Reflect.apply(open,fs,args)
+    })
     let ticks=0; const timer=setInterval(()=>ticks++,1)
     try { expect(await copyWorkspaceDependencies(source,target)).toHaveLength(1) } finally { clearInterval(timer) }
-    expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
+    expectCloneAttempt(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
+    if (process.platform === 'win32') expect(writes).toHaveBeenCalledWith(expect.stringContaining(join(target,'.cc-dependencies-')),'wx',expect.any(Number))
     expect(ticks).toBeGreaterThan(0)
     expect(existsSync(join(target,'node_modules'))).toBe(false)
     expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
@@ -140,8 +154,10 @@ describe('pre-approval preparation security', () => {
     // cold Bun startups consuming it before the descendant can write its PID.
     const child=join(root,'child.sh')
     writeFileSync(child,"#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n")
-    writeFileSync(bin,`#!/bin/sh\nfor arg do if [ "$arg" = config ]; then exit 1; fi; done\ntrap '' TERM\n/bin/sh ${quote(child)} &\nchild=$!\nprintf '%s' "$child" > ${quote(pidfile)}\nwait "$child"\n`)
-    chmodSync(bin,0o755);vi.stubEnv('PATH',root+':'+process.env.PATH)
+    // Pay macOS's first-exec assessment before starting the hard deadline.
+    writeWarmExecFixture(bin,`#!/bin/sh\nif [ "$1" = --version ]; then exit 0; fi\nfor arg do if [ "$arg" = config ]; then exit 1; fi; done\ntrap '' TERM\n/bin/sh ${quote(child)} &\nchild=$!\nprintf '%s' "$child" > ${quote(pidfile)}\nwait "$child"\n`)
+    vi.stubEnv('PATH',root+':'+process.env.PATH)
+    expect(existsSync(pidfile)).toBe(false)
     for(const cancel of [false,true]){
       const controller=new AbortController(), prep=new Preparation({timeoutMs:2000,signal:controller.signal})
       let failure: (Error & {detail?:string}) | undefined
@@ -234,14 +250,14 @@ it.each(['native','fallback'])('[P1-2] cancellation after checkout removes only 
   await expect(ensureWorktree(plan,{signal:controller.signal})).rejects.toThrow('cancelled')
   expect(controller.signal.aborted).toBe(true)
   expect(atCancellation).toEqual({checkout:'{}',branch:plan.branch,dependenciesPublished:false,copied:'source'})
-  if(mode==='fallback') expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(plan.root,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
+  if(mode==='fallback') expectCloneAttempt(join(source,'node_modules/library/index.js'),expect.stringContaining(join(plan.root,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
   expect(cancelledStages).toHaveLength(1)
   expect(existsSync(cancelledStages[0]!)).toBe(false)
   expect(existsSync(plan.root)).toBe(false)
   expect(git(source,'branch','--list',plan.branch)).toBe('')
-  expect(git(source,'worktree','list','--porcelain')).not.toContain(plan.root)
+  expect(worktreeRoots(source)).not.toContain(plan.root)
   expect(git(other.root,'branch','--show-current')).toBe(other.branch)
-  expect(git(source,'worktree','list','--porcelain')).toContain(other.root)
+  expect(worktreeRoots(source)).toContain(other.root)
   expect(readFileSync(join(other.root,'node_modules/library/index.js'),'utf8')).toBe('source')
   expect(readFileSync(join(source,'node_modules/library/index.js'),'utf8')).toBe('source')
 })
@@ -309,6 +325,14 @@ it.each([65*1024*1024,Number.MAX_SAFE_INTEGER])('[rereview-budget] COW accepts a
   vi.mocked(fs.copyFile).mockClear().mockImplementation(async (from,to)=>{await fs.writeFile(to,'');await fs.truncate(to,(await fs.stat(from)).size)})
   const disk=await fs.statfs(target)
   vi.spyOn(fs,'statfs').mockResolvedValue({...disk,bavail:available,bsize:1})
+  if (process.platform === 'win32') {
+    // Reject before reading either sparse file; Windows has no COW path here.
+    expect(await copyWorkspaceDependencies(source,target,{maxBytes:1})).toEqual([DEPENDENCY_NOTICE])
+    expect(fs.copyFile).not.toHaveBeenCalled()
+    expect(existsSync(join(target,'node_modules'))).toBe(false)
+    expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
+    return
+  }
   expect(await copyWorkspaceDependencies(source,target)).toEqual([])
   expect(statSync(join(target,'node_modules/a')).size+statSync(join(target,'node_modules/b')).size).toBe(2*nominal)
   expect(vi.mocked(fs.copyFile).mock.calls.length).toBe(3)
@@ -321,14 +345,14 @@ it('[rereview-budget] unsupported COW enforces actual byte and disk limits and r
   const {source,target}=pair()
   vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
   expect(await copyWorkspaceDependencies(source,target,{maxBytes:1})).toHaveLength(1)
-  expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
+  expectCloneAttempt(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
   expect(existsSync(join(target,'node_modules'))).toBe(false)
   expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
   vi.mocked(fs.copyFile).mockClear()
   const disk=await fs.statfs(target)
   vi.spyOn(fs,'statfs').mockResolvedValue({...disk,bavail:64*1024*1024+1,bsize:1})
   expect(await copyWorkspaceDependencies(source,target)).toHaveLength(1)
-  expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
+  expectCloneAttempt(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
   expect(existsSync(join(target,'node_modules'))).toBe(false)
   expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
 })
@@ -336,11 +360,36 @@ it('[rereview-budget] unsupported COW enforces actual byte and disk limits and r
 it('[rereview-budget] successful fallback copies are independent and consume only actual copied bytes', async () => {
   const {source,target}=pair()
   vi.mocked(fs.copyFile).mockRejectedValue(Object.assign(Error('no clone'),{code:'ENOTSUP'}))
-  expect(await copyWorkspaceDependencies(source,target,{maxBytes:6})).toEqual([])
-  expect(fs.copyFile).toHaveBeenCalledExactlyOnceWith(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
+  expect(await copyWorkspaceDependencies(source,target,{maxBytes:6})).toEqual([DEPENDENCY_COPY_NOTICE])
+  expectCloneAttempt(join(source,'node_modules/library/index.js'),expect.stringContaining(join(target,'.cc-dependencies-')),constants.COPYFILE_FICLONE_FORCE)
   expect(readFileSync(join(target,'node_modules/library/index.js'),'utf8')).toBe('source')
   writeFileSync(join(target,'node_modules/library/index.js'),'task')
   expect(readFileSync(join(source,'node_modules/library/index.js'),'utf8')).toBe('source')
+})
+
+it('[win32-copy] never trusts apparent COW success and budgets independent copies with a notice', async () => {
+  const {source,target}=pair(), platform=Object.getOwnPropertyDescriptor(process,'platform')!
+  const actual=await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  // Model Bun's Windows CopyFileW: it succeeds but ignores FICLONE_FORCE.
+  vi.mocked(fs.copyFile).mockImplementation((from,to)=>actual.copyFile(from,to))
+  Object.defineProperty(process,'platform',{value:'win32',configurable:true})
+  try {
+    expect(await copyWorkspaceDependencies(source,target,{maxBytes:1})).toEqual([DEPENDENCY_NOTICE])
+    expect(fs.copyFile).not.toHaveBeenCalled()
+    expect(existsSync(join(target,'node_modules'))).toBe(false)
+    expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
+    const disk=await fs.statfs(target)
+    const room=vi.spyOn(fs,'statfs').mockResolvedValue({...disk,bavail:64*1024*1024+1,bsize:1})
+    expect(await copyWorkspaceDependencies(source,target,{maxBytes:6})).toEqual([DEPENDENCY_NOTICE])
+    expect(existsSync(join(target,'node_modules'))).toBe(false)
+    expect(readdirSync(target).filter(n=>n.startsWith('.cc-dependencies-'))).toEqual([])
+    room.mockRestore()
+    expect(await copyWorkspaceDependencies(source,target,{maxBytes:6})).toEqual([DEPENDENCY_COPY_NOTICE])
+    expect(fs.copyFile).not.toHaveBeenCalled()
+    expect(readFileSync(join(target,'node_modules/library/index.js'),'utf8')).toBe('source')
+    writeFileSync(join(target,'node_modules/library/index.js'),'task edit')
+    expect(readFileSync(join(source,'node_modules/library/index.js'),'utf8')).toBe('source')
+  } finally { Object.defineProperty(process,'platform',platform) }
 })
 
 function partialClone() {
