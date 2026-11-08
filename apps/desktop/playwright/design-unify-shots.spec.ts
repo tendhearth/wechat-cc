@@ -48,3 +48,28 @@ test('design unification captures the four owner-approved surfaces', async ({pag
   await page.screenshot({path:join(out!,`desktop-matter-${phase}.png`)})
   await expect(page.locator('#converse-input')).toHaveValue('还没发出的草稿')
 })
+
+test('design fixes keep toolbar semantics, final identity dimensions and current activity',async({page,shimUrl})=>{
+ test.skip(process.env.CC_UI_CAPTURE_PHASE!=='after','Candidate contract only')
+ await page.goto(shimUrl)
+ const summary=page.locator('.conversation-add > summary')
+ await expect(summary).toBeVisible()
+ expect(await summary.evaluate(el=>getComputedStyle(el).listStyleType)).toBe('none')
+ const more=page.locator('.conversation-more > summary')
+ expect(await more.evaluate(el=>getComputedStyle(el).listStyleType)).toBe('none')
+ for(const control of [summary,more]){
+  await control.focus();await page.keyboard.press('Enter')
+  await expect(control.locator('..')).toHaveAttribute('open','')
+  expect(await control.evaluate(el=>getComputedStyle(el).outlineStyle)).toBe('solid')
+  await page.keyboard.press('Space');await expect(control.locator('..')).not.toHaveAttribute('open','')
+ }
+ expect(await page.locator('.now-waiting > summary').evaluate(el=>getComputedStyle(el).listStyleType)).not.toBe('none')
+ await page.evaluate(()=>{document.documentElement.style.setProperty('--th-identity-header-target','53px');document.documentElement.style.setProperty('--th-identity-header-image','37px')})
+ const dimensions=await page.locator('.now-figure').evaluate(el=>({width:getComputedStyle(el).width,height:getComputedStyle(el).height,image:getComputedStyle(el.querySelector('img')!).width}))
+ expect(dimensions).toEqual({width:'53px',height:'53px',image:'37px'})
+ await page.evaluate(()=>{document.documentElement.style.removeProperty('--th-identity-header-target');document.documentElement.style.removeProperty('--th-identity-header-image')})
+ await page.locator('.conversation-topics').getByRole('button',{name:'服务器',exact:true}).click()
+ await page.locator('.conversation-topic-panel').getByRole('button',{name:/检查备份/}).click()
+ await expect(page.locator('.wb-dialogue')).toContainText('正在核对文件')
+ await expect(page.locator('.wb-activity-now')).toHaveText('核对本地文件')
+})

@@ -53,6 +53,7 @@ export interface Active extends PathReservation {
   finishing?:boolean
   delivering?:boolean
   runtimeInputs?:Map<string,LiveInput>
+  acceptedInputTurns?:Map<string,string>
   interactionAt:number
   releaseBusy?: () => void
   publicFinished: boolean

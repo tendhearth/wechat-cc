@@ -193,12 +193,12 @@ div.now-terminal-row:hover .t { color: var(--th-ink); }
 
 /* T5: CC is the conversation entry, including returns from tools and native links. */
 .dashboard .cc-now-pane[data-conversation="single"] { padding-top: 20px; }
-.cc-now-pane[data-conversation="single"] .now-hero { display:flex; flex-direction:row; justify-content:flex-start; height:44px; }
+.cc-now-pane[data-conversation="single"] .now-hero { display:flex; flex-direction:row; justify-content:flex-start; height:var(--th-identity-header-target); }
 .cc-now-pane[data-conversation="single"] .now-greeting,
 .cc-now-pane[data-conversation="single"] .now-bubble,
 .cc-now-pane[data-conversation="single"] #now-back { display:none; }
-.cc-now-pane[data-conversation="single"] .now-figure { width:44px; height:44px; min-height:0; }
-.cc-now-pane[data-conversation="single"] .now-cc-col { width:44px; }
-.cc-now-pane[data-conversation="single"] .now-figure img { width:44px; height:44px; }
+.cc-now-pane[data-conversation="single"] .now-figure { width:var(--th-identity-header-target); height:var(--th-identity-header-target); min-height:0; }
+.cc-now-pane[data-conversation="single"] .now-cc-col { width:var(--th-identity-header-target); }
+.cc-now-pane[data-conversation="single"] .now-figure img { width:var(--th-identity-header-image); height:var(--th-identity-header-image); }
 
 .now-row .x { font-size:var(--th-matter-row-detail-role); line-height:var(--th-lh-small); }

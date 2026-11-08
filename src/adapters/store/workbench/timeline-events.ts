@@ -51,7 +51,7 @@ export function workbenchTaskEvent(item:MatterItem):WorkbenchTaskEventT|null {
   const kind=timelineKind(item);if(!kind)return null
   const p=stepPayload(item)
   return {id:item.id,taskId:item.matterId,kind,text:p.text,createdAt:item.createdAt,sourceId:p.sourceId??null,
-    ...(p.runId?{runId:p.runId}:{}),...(p.activity?{activity:p.activity}:{}),...(p.attachments?.length?{attachments:p.attachments}:{})}
+    ...(p.runId?{runId:p.runId}:{}),...(item.turnId?{turnId:item.turnId}:{}),...(p.activity?{activity:p.activity}:{}),...(p.attachments?.length?{attachments:p.attachments}:{})}
 }
 
 export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
@@ -62,8 +62,8 @@ export function makeTimelineEvents(db:Db,log:MatterLog=makeMatterLog(db)) {
   const events=(id:string,since?:number,sinceCursor?:number)=>(sinceCursor===undefined?log.items(id):log.items(id,{afterCursor:sinceCursor}))
     .filter(item=>since===undefined||(item.payload as Payload).v>since)
     .map(workbenchTaskEvent).filter((e):e is WorkbenchTaskEventT=>e!==null)
-  const addEvent=(id:string,kind:EventKind,text:string,sourceId:string|null=null,runId:string|null=null,attachments:readonly Attachment[]=[],seq:number)=>
-    log.writeItem({matterId:id,turnId:activeTurn(id,runId),kind:ITEM_KIND[kind],status:'completed',payload:payloadOf({text:text.slice(0,TEXT_MAX),v:seq,sourceId,runId,attachments})}).id
+  const addEvent=(id:string,kind:EventKind,text:string,sourceId:string|null=null,runId:string|null=null,attachments:readonly Attachment[]=[],seq:number,turnId?:string|null)=>
+    log.writeItem({matterId:id,turnId:turnId===undefined?activeTurn(id,runId):turnId,kind:ITEM_KIND[kind],status:'completed',payload:payloadOf({text:text.slice(0,TEXT_MAX),v:seq,sourceId,runId,attachments})}).id
   const recordAgentEvent=(taskId:string,runId:string,event:VisibleEvent,seq:number)=>{
     const activity=event.kind==='tool_call'&&event.activity?publicActivity(event.activity):undefined
     const nativeId=event.kind==='text'?event.itemId:activity?.id

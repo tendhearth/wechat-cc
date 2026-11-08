@@ -30,7 +30,8 @@
         "text": "把安装说明改一下",
         "createdAt": 1793412720000,
         "sourceId": null,
-        "runId": "<uuid:8>"
+        "runId": "<uuid:8>",
+        "turnId": "<turn:4>"
       },
       {
         "id": 14,
@@ -39,7 +40,8 @@
         "text": "动手之前先问一句。",
         "createdAt": 1793412720000,
         "sourceId": null,
-        "runId": "<uuid:8>"
+        "runId": "<uuid:8>",
+        "turnId": "<turn:4>"
       },
       {
         "id": 15,
@@ -48,7 +50,8 @@
         "text": "执行者提问：{\"questions\":[{\"id\":\"q-scope\",\"header\":\"范围\",\"question\":\"只改 README,还是连 docs 一起?\",\"options\":[{\"label\":\"只改 README\",\"description\":\"改动最小\"},{\"label\":\"连 docs 一起\",\"description\":\"一次改齐\"}],\"multiSelect\":false,\"allowOther\":true}],\"id\":\"<uuid:9>\",\"taskId\":\"<task:question>\",\"createdAt\":1793412720000}",
         "createdAt": 1793412720000,
         "sourceId": null,
-        "runId": "<uuid:8>"
+        "runId": "<uuid:8>",
+        "turnId": "<turn:4>"
       }
     ],
     "artifacts": [],

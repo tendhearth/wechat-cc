@@ -961,7 +961,7 @@ export const WorkbenchSessionResponse = z.union([z.object({ ok: z.literal(true) 
 // ── GET /v1/workbench/task(详情;带 since / wait_ms 时长轮询)──
 const WorkbenchTaskEvent = z.object({
   id: z.number(), taskId: z.string(), kind: z.enum(['user', 'text', 'tool_call', 'error', 'system']), text: z.string(), createdAt: z.number(),
-  sourceId: z.string().nullable().optional(), runId: z.string().optional(),
+  sourceId: z.string().nullable().optional(), runId: z.string().optional(), turnId: z.string().optional(),
   activity: z.object({
     id: z.string(), type: z.enum(['search', 'command', 'read', 'edit', 'tool', 'agent']),
     status: z.enum(['running', 'completed', 'failed', 'cancelled', 'interrupted']), label: z.string(),

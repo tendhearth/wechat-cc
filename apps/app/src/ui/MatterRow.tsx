@@ -13,14 +13,14 @@ import { useTheme } from './useTheme'
 import { WaitingTitle } from './WaitingTitle'
 
 /** 状态图标 + 词(详情页顶上用);图标与色调只来自状态表。 */
-export function StatusWord({ status, testID }: { status: StatusKey; testID?: string }) {
+export function StatusWord({ status, testID, label }: { status: StatusKey; testID?: string; label?: string }) {
   const { c } = useTheme()
   const lang = useLang()
   const spec = STATUS_TABLE[status]
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
       {spec.icon ? <Icon name={spec.icon} size={14} color={spec.tone === 'accent' ? c.accent : c.inkSoft} /> : null}
-      <Txt testID={testID} role="small" tone={componentAppearance.status.text}>{t(lang, spec.word)}</Txt>
+      <Txt testID={testID} role="small" tone={componentAppearance.status.text}>{label ?? t(lang, spec.word)}</Txt>
     </View>
   )
 }

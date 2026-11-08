@@ -2,7 +2,7 @@ import { makePausableTimers, type PausableTimer } from '../../../lib/pausable-ti
 import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../../../domain/turn-usage'
 import { makeProcessTreeFreezer } from '../../../lib/process-tree-freeze'
 import { realpathSync } from 'node:fs'
-import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProject, AgentProvider, AgentSession, AgentWorkbenchRuntime, SpawnContext } from '../../../ports/agent-provider'
+import type { AgentInputAcceptance, AgentAttachment, AgentEvent, AgentExecutionModel, AgentProject, AgentProvider, AgentSession, AgentWorkbenchRuntime, SpawnContext } from '../../../ports/agent-provider'
 import { spawnCodexAppServerProcess, type CodexAppServerSpawn } from './codex-app-server-process'
 import { wrapForProcessTree } from '../../../lib/jobspawn'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
@@ -976,7 +976,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         })
         return { turn, accepted }
       }
-      const submitted = new Map<string, { fingerprint: string; accepted: Promise<void> }>()
+      const submitted = new Map<string, { fingerprint: string; accepted: Promise<AgentInputAcceptance> }>()
       let initialAcceptance: Promise<void> = Promise.resolve(), submitTail: Promise<void> = Promise.resolve()
       const runtime: AgentWorkbenchRuntime | undefined = lifetime ? {
         events: { [Symbol.asyncIterator]: () => lifetime.iterate()[Symbol.asyncIterator]() },
@@ -1003,14 +1003,15 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           const accepted = submitTail.then(async () => {
             await initialAcceptance
             if (closing || stopped || runtimeEnded || broken) throw new Error('codex_session_closed')
-            if (!active) { await launch(text, attachments).accepted; return }
+            if (!active) { const launched=launch(text, attachments); await launched.accepted; return {mode:'send' as const,turnId:launched.turn.id!} }
             const turn = active, expectedTurnId = turn.id
             if (!expectedTurnId || turn.cancelled) throw new Error('codex_no_active_turn')
             const response = await request('turn/steer', { threadId, expectedTurnId, input: turnInput(text, attachments) })
             if (response.turnId !== expectedTurnId) throw new Error('codex_steer_turn_mismatch')
             if (closing || stopped || broken || turn.cancelled) throw new Error('codex_session_closed')
+            return {mode:'steer' as const,turnId:expectedTurnId}
           })
-          submitted.set(requestId, { fingerprint, accepted }); submitTail = accepted.catch(() => {})
+          submitted.set(requestId, { fingerprint, accepted }); submitTail = accepted.then(() => {},() => {})
           return accepted
         },
         snapshot() { return { retained, foreground: stopped || closing ? 'idle' : active ? 'running' : 'idle', backgroundCount: childTurns.size + unknownBackground.size, input: stopped || closing || runtimeEnded ? 'queue' : active ? active.id ? 'steer' : 'queue' : 'send' } },

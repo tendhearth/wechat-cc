@@ -1176,6 +1176,24 @@ describe('Codex retained workbench runtime', () => {
       await run.session.close(); await run.done
     }
   })
+it('observes actual accepted target after serialized steer becomes send then steer on the new turn',async()=>{
+ const run=await runtime()
+ const a=run.api.submit('serial-a','first'),b=run.api.submit('serial-b','next'),c=run.api.submit('serial-c','last')
+ await expect.poll(()=>run.child.sent.some(m=>m.method==='turn/steer')).toBe(true)
+ const first=run.child.sent.find(m=>m.method==='turn/steer')!
+ run.child.autoTurnStart=false
+ completed(run.child);await expect.poll(()=>run.api.snapshot().foreground).toBe('idle')
+ run.child.send({id:first.id,result:{turnId:'turn-1'}})
+ await begun(run.child,2)
+ const start=run.child.sent.filter(m=>m.method==='turn/start').at(-1)!
+ run.child.send({id:start.id,result:{turn:{id:'turn-2'}}})
+ await expect.poll(()=>run.child.sent.filter(m=>m.method==='turn/steer').length).toBe(2)
+ const last=run.child.sent.filter(m=>m.method==='turn/steer').at(-1)!
+ run.child.send({id:last.id,result:{turnId:'turn-2'}})
+ expect(await Promise.all([a,b,c])).toEqual([{mode:'steer',turnId:'turn-1'},{mode:'send',turnId:'turn-2'},{mode:'steer',turnId:'turn-2'}])
+ await run.session.close();await run.done
+})
+
 })
 
 describe('守护:工作台 Codex 的实际端点问 codex 自己(config/read,2026-10-03)', () => {

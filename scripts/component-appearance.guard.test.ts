@@ -1,5 +1,6 @@
 // @repo-guard
 import { describe, expect, it } from 'vitest'
+import { Window } from 'happy-dom'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { componentAppearance as contract, radius, typeScale } from '../packages/design-tokens/src'
@@ -39,4 +40,29 @@ describe('11-08 component appearance contract (ratchet)', () => {
     expect(source('apps/app/src/ui/TopicRow.tsx')).toContain('accessibilityState={{ selected:')
     for (const [file, variant] of [['ui/ConversationScreen', 'chat'], ['ui/TerminalDetail', 'chat'], ['app/chat-search', 'search'], ['app/topics', 'search'], ['ui/ChangeReview', 'comment']]) expect(source(`apps/app/src/${file}.tsx`), file).toContain(`variant="${variant}"`)
   })
+})
+
+it('final desktop header dimensions consume identity variables, including later overrides',()=>{
+ const w=new Window()
+ try {
+  w.document.body.innerHTML='<div class="dashboard"><section class="cc-now-pane" data-conversation="single"><div class="now-hero"><div class="now-cc-col"><button class="now-figure"><img></button></div></div></section></div>'
+  const cssFiles=[...source('apps/desktop/src/index.html').matchAll(/href="\.\/([^"?]+\.css)"/g)].map(m=>m[1])
+  const style=w.document.createElement('style')
+  style.textContent=cssFiles.map(file=>source(`apps/desktop/src/${file}`)).join('\n')+'\n:root { --th-identity-header-target:53px; --th-identity-header-image:37px; }'
+  w.document.head.append(style)
+  const computed=(selector:string)=>w.getComputedStyle(w.document.querySelector(selector)!)
+  expect(computed('.now-hero').height).toBe('53px')
+  expect(computed('.now-cc-col').width).toBe('53px')
+  expect(computed('.now-figure').width).toBe('53px')
+  expect(computed('.now-figure').height).toBe('53px')
+  expect(computed('.now-figure img').width).toBe('37px')
+  expect(computed('.now-figure img').height).toBe('37px')
+ } finally {w.close()}
+})
+it('hides native markers only for header tool summaries and keeps visible focus',()=>{
+ const css=source('apps/desktop/src/styles/converse.css')
+ expect(css).toMatch(/\.conversation-tools\s+summary\s*\{[^}]*list-style:\s*none/)
+ expect(css).toMatch(/\.conversation-tools\s+summary::-webkit-details-marker\s*\{[^}]*display:\s*none/)
+ expect(css).toMatch(/\.conversation-tools\s+summary:focus-visible\s*\{[^}]*outline:\s*2px/)
+ expect(css).not.toMatch(/(?:^|})\s*summary(?:::marker|::-webkit-details-marker)?\s*\{/)
 })

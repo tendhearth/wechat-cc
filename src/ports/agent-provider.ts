@@ -112,6 +112,9 @@ export interface AgentRuntimeSnapshot {
   input: 'steer' | 'send' | 'queue'
 }
 
+/** Native acceptance observation, independent of the transport receipt. */
+export interface AgentInputAcceptance { mode:'steer'|'send'; turnId?:string }
+
 /** Workbench-only stream: parent results are milestones, not runtime closure. */
 export interface AgentWorkbenchRuntime {
   /** One consumer, installed before start; ends only on safe no-background completion or close/failure. */
@@ -119,7 +122,7 @@ export interface AgentWorkbenchRuntime {
   /** Exactly one initial request per owned runtime epoch. */
   start(text: string, attachments?: readonly AgentAttachment[]): void
   /** Same epoch. Resolves only on native acceptance evidence; local enqueue is insufficient. */
-  submit(requestId: string, text: string, attachments?: readonly AgentAttachment[]): Promise<void>
+  submit(requestId: string, text: string, attachments?: readonly AgentAttachment[]): Promise<void|AgentInputAcceptance>
   /** Synchronous, non-throwing copy; retained is sticky after observed background work. */
   snapshot(): AgentRuntimeSnapshot
 }

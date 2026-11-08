@@ -14,10 +14,11 @@ const read = async file => { try { return await readFile(file, 'utf8') } catch (
 export async function acquireMachineLock({ path, lane, sha, pid = process.pid,
   now = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   isAlive = alive, load = () => loadavg()[0], cores = cpus().length, log = console.log,
-  onAcquired = () => {}, waitMs = 4 * 60 * 60 * 1000, loadWaitMs = 30 * 60 * 1000, pollMs = 5000 }) {
+  onAcquired = () => {}, assertRunning = () => {}, waitMs = 4 * 60 * 60 * 1000, loadWaitMs = 30 * 60 * 1000, pollMs = 5000 }) {
   if (typeof sha !== 'string' || !/^[a-f0-9]{7,40}$/.test(sha)) throw Error('Invalid source commit')
   for (const value of [waitMs, loadWaitMs, pollMs, cores]) if (!Number.isFinite(value) || value <= 0) throw Error('Invalid machine gate limit')
   await mkdir(dirname(path), { recursive: true })
+  assertRunning()
   const info = join(path, 'info')
   const start = now()
   let content
@@ -28,6 +29,7 @@ export async function acquireMachineLock({ path, lane, sha, pid = process.pid,
     if (await read(info) === content) await rm(path, { recursive: true, force: true })
   }
   for (;;) {
+    assertRunning()
     try {
       // Publish pid in the same JS turn as mkdir, so signal cleanup is installed
       // before the first await after acquiring the lock.
@@ -38,9 +40,12 @@ export async function acquireMachineLock({ path, lane, sha, pid = process.pid,
       break
     } catch (error) { if (error.code !== 'EEXIST') throw error }
     const before = await read(info)
+    assertRunning()
     if (lockStale(before, Math.floor(now() / 1000), isAlive)) {
       // Recheck before reclaiming: never delete a changed owner.
-      if (await read(info) === before) await rm(path, { recursive: true, force: true })
+      const unchanged = await read(info) === before
+      assertRunning()
+      if (unchanged) await rm(path, { recursive: true, force: true })
       continue
     }
     log(`家族 check 在跑 ${before.match(/^owner=(.*)$/m)?.[1] ?? 'unknown'},等它`)
@@ -50,6 +55,7 @@ export async function acquireMachineLock({ path, lane, sha, pid = process.pid,
   try {
     const loadStart = now()
     for (;;) {
+      assertRunning()
       const value = load()
       if (!Number.isFinite(value) || value < 0) throw Error('Invalid machine load')
       if (value <= cores * 1.5) break

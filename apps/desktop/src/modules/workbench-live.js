@@ -27,9 +27,24 @@ export function mergeEvents(existing, incoming) {
 /** Latest real activity only; used by both rendering and structural invalidation.
  * @param {Detail|null|undefined} detail */
 export function currentActivityLabel(detail) {
-  const latest=detail?.events?.at(-1)
-  return detail?.task.status==='running' && detail.task.phase!=='replied' && !detail.task.networkSuspended
-    && latest?.activity?.status==='running' && (!detail.runId || latest.runId===detail.runId) ? latest.activity.label : null
+  if (detail?.task.status !== 'running' || detail.task.phase === 'replied' || detail.task.networkSuspended) return null
+  const events = detail.events ?? []
+  const latestTurnIndex = events.findLastIndex(event => event.turnId && (!detail.runId || event.runId === detail.runId))
+  const requestIndex = events.findLastIndex(event => event.kind === 'user')
+  if (latestTurnIndex >= 0 && requestIndex > latestTurnIndex && !events[requestIndex]?.turnId) return null
+  const turnId = events[latestTurnIndex]?.turnId
+  const seen = new Set()
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (!event) continue
+    const activity = event.activity
+    if (!activity || (detail.runId && event.runId !== detail.runId) || (turnId && event.turnId !== turnId)) continue
+    const key = JSON.stringify([event.runId, activity.id])
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (activity.status === 'running') return activity.label
+  }
+  return null
 }
 
 /** 整页重画的判据:事件之外的一切。事件只改时间线,交给增量补丁。
@@ -43,7 +58,7 @@ export function structuralSignature(detail) {
   if (!detail) return ''
   const task = detail.task ?? {}
   return JSON.stringify([
-    task.status ?? null, task.phase ?? null, task.error ?? null, task.archivedAt ?? null,
+    task.status ?? null, task.phase ?? null, task.error ?? null, task.archivedAt ?? null, task.networkSuspended ?? null,
     // null(没有计时器)与非 null(已武装)是两种不同的状态,抹平成同一个 0 会把这个真转变
     // 去重吞掉(终审 M1);0 只代表「已武装、数字不重要」,null 保留 null。
     task.waitingFor ? { ...task.waitingFor, closeInMs: task.waitingFor.closeInMs == null ? null : 0 } : null,

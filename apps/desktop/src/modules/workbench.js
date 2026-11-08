@@ -79,7 +79,7 @@ function forkHtml(task, providers) {
 }
 /** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,agents?:string[],origin?:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean,merged?:boolean,port?:number,scripts?:import('./workbench-scripts-approve.js').ScriptsView},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null,until?:{command:string,maxRounds:number,rounds:number,status:'active'|'passed'|'exhausted'|'stopped',lastExit:number|null,stopReason:string|null}}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
-/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
+/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,turnId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
 /** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null,refusal?:{code:string,since:string}|null}} Provider */
@@ -412,13 +412,22 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const requestIndex = events.findLastIndex(event => event.kind === 'user')
   const request = events[requestIndex]
   const requestHtml = request ? `<section class="wb-request" aria-label="具体请求">${renderMessage(request)}</section>` : ''
-  const dialogueEvents = events.slice(requestIndex + 1)
-  const earlierEvents = requestIndex > 0 ? events.slice(0, requestIndex) : []
+  // Steer acknowledgements append a user row while the native answer keeps its
+  // original position. Stored turns distinguish later turns of a retained run.
+  // Idle submit can be acknowledged before the new native turn emits anything.
+  // In that case the request has no turn yet; its following reply supplies it.
+  const currentTurn = request?.turnId ?? (request?.runId ? events.slice(requestIndex + 1).find(event => event.runId === request.runId && event.turnId)?.turnId : undefined)
+  const hasTurnIdentity = request?.runId && events.some(event => event.runId === request.runId && event.turnId)
+  const turnStart = currentTurn ? Math.min(requestIndex, events.findIndex(event => event.turnId === currentTurn))
+    : request?.runId && !hasTurnIdentity ? events.findIndex(event => event.runId === request.runId) : requestIndex
+  const currentStart = Math.max(0, turnStart)
+  const dialogueEvents = events.slice(currentStart).filter(event => event !== request)
+  const earlierEvents = events.slice(0, currentStart)
   const activityLabel = currentActivityLabel(detail)
   const currentActivity = activityLabel ? `<p class="wb-activity-now" role="status">${escapeWorkbenchHtml(activityLabel)}</p>` : ''
   const earlierHtml = earlierEvents.length ? `<details id="wb-earlier-dialogue" class="wb-disclosure wb-earlier-dialogue" data-timeline-disclosure><summary>之前的对话</summary>${renderWorkbenchTimeline(earlierEvents, { status:'completed', renderMessage, escapeHtml:escapeWorkbenchHtml, formatTime:time })}</details>` : ''
   const dialogueHtml = dialogueEvents.length ? renderWorkbenchTimeline(dialogueEvents, { status:detail?.task.status ?? '', runId:detail?.runId, runtime:detail?.runtime, renderMessage, escapeHtml:escapeWorkbenchHtml, formatTime:time })
-    : `<p class="wb-empty-copy">${detail?.task.status === 'running' ? `${escapeWorkbenchHtml(helper)} 正在处理，有回复时会按顺序显示在这里。` : detail?.task.status === 'queued' ? queuedCopy : request ? '' : '这项任务还没有对话记录。'}</p>`
+    : `<p class="wb-empty-copy">${detail?.task.status === 'running' && detail.task.phase !== 'replied' ? `${escapeWorkbenchHtml(helper)} 正在处理，有回复时会按顺序显示在这里。` : detail?.task.status === 'queued' ? queuedCopy : request ? '' : '这项任务还没有对话记录。'}</p>`
   const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions">${['deny-permission','allow-permission'].map(action=>`<button id="${permissionControlId(permission.taskId,permission.id,action)}" class="wb-btn${action==='allow-permission'?' wb-btn-primary':''}" type="button" data-action="${action}" data-owner-task="${escapeWorkbenchHtml(permission.taskId)}" data-request-id="${escapeWorkbenchHtml(permission.id)}">${action==='allow-permission'?'允许':'拒绝'}</button>`).join('')}</div></article>`).join('')}</section>` : ''
   const listedArtifacts = promoteArtifacts ? [...(detail?.artifacts ?? [])].sort((a,b) => Number(reviewIds.has(a.id)) - Number(reviewIds.has(b.id))) : detail?.artifacts ?? []
   const artifacts = listedArtifacts.length ? listedArtifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifactDisplayName(artifact.name))}</span><small>${/\.preview\.json$/i.test(artifact.name) ? '网页预览' : `${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}`}</small></button>`).join('') : ''

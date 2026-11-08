@@ -9,9 +9,10 @@ import { Button } from './Button'
 import { IconButton } from './IconButton'
 import { TextField } from './TextField'
 import { StatusPill } from './StatusPill'
+import {taskDetailLabel,statusOf} from '../view/status'
 vi.mock('react-native', async () => {
   const { forwardRef } = await import('react')
-  return { ...(await import('./native-motion.test-support')).nativeBoundary(), ActivityIndicator: () => null,
+  return { ...(await import('./native-motion.test-support')).nativeBoundary(), ActivityIndicator: ({color}: {color:string}) => createElement('i', {'data-busy-color':color}),
     TextInput: forwardRef<any, any>(({ style, testID, onFocus, onBlur, editable, value, onChangeText }: any, ref) => createElement('textarea', { ref, 'data-testid': testID,
       'data-style': JSON.stringify(Object.assign({}, ...style)), disabled: editable === false, value, onInput: (e: any) => onChangeText?.(e.currentTarget.value), onFocus, onBlur })) }
 })
@@ -51,4 +52,26 @@ it.each(STATUS_KEYS)('detail %s uses the shared glyph and word rather than a sec
   expect(ui.container.textContent).toBe(STATUS_WORDS.en[status])
   expect(JSON.parse(ui.container.querySelector('span')!.getAttribute('data-style')!).color).toBe(color.inkSoft)
   expect(ui.container.querySelectorAll('img')).toHaveLength(status==='working'?0:1)
+})
+
+it.each(['primary','secondary'] as const)('button %s text and busy indicator follow a changed contract text tone',async kind=>{
+ const appearance=contract.button[kind] as {text:keyof typeof color}
+ const original=appearance.text
+ appearance.text=kind==='primary'?'bad':'accent'
+ try {
+  const ui=await mount(localized(createElement(Button,{kind,label:'Save',onPress:()=>{},busy:true,testID:'button'})))
+  const textStyle=JSON.parse(ui.byId('button').querySelector('span')!.getAttribute('data-style')!)
+  expect(textStyle.color).toBe(color[appearance.text])
+  expect(ui.byId('button').querySelector('i')!.getAttribute('data-busy-color')).toBe(color[appearance.text])
+ } finally {appearance.text=original}
+})
+
+it.each(['en','zh-Hans'] as const)('detail labels consume shared task observations while retaining canonical glyphs: %s',async lang=>{
+ for(const task of [{status:'queued',phase:'queued'},{status:'cancelling',phase:'working'},{status:'running',phase:'working',networkSuspended:{since:1}}]){
+  const label=taskDetailLabel(task,0,lang)
+  const ui=await mount(localized(createElement(StatusPill,{status:statusOf(task,0),label}),{lang}))
+  expect(ui.container.textContent).toBe(label)
+  expect(ui.container.querySelectorAll('img')).toHaveLength(0)
+  await cleanup()
+ }
 })

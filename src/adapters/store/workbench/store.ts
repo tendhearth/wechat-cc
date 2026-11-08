@@ -128,7 +128,7 @@ export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {})
   }
   const version=(id:string)=>db.query<{seq:number},[string]>('SELECT seq FROM workbench_tasks WHERE id=?').get(id)?.seq??0
   const marks=makeReviewMarkStore(db)
-  const addEvent=(id:Parameters<typeof insertEvent>[0],kind:Parameters<typeof insertEvent>[1],text:Parameters<typeof insertEvent>[2],sourceId:Parameters<typeof insertEvent>[3]=null,runId:Parameters<typeof insertEvent>[4]=null,attachments:Parameters<typeof insertEvent>[5]=[])=>db.transaction(()=>insertEvent(id,kind,text,sourceId,runId,attachments,bump(id)))()
+  const addEvent=(id:Parameters<typeof insertEvent>[0],kind:Parameters<typeof insertEvent>[1],text:Parameters<typeof insertEvent>[2],sourceId:Parameters<typeof insertEvent>[3]=null,runId:Parameters<typeof insertEvent>[4]=null,attachments:Parameters<typeof insertEvent>[5]=[],turnId?:string|null)=>db.transaction(()=>insertEvent(id,kind,text,sourceId,runId,attachments,bump(id),turnId))()
   const recordAgentEvent=(taskId:Parameters<typeof upsertAgentEvent>[0],runId:Parameters<typeof upsertAgentEvent>[1],event:Parameters<typeof upsertAgentEvent>[2])=>db.transaction(()=>upsertAgentEvent(taskId,runId,event,bump(taskId)))()
   const finishRunActivities=(taskId:Parameters<typeof finishActivities>[0],runId:Parameters<typeof finishActivities>[1],status:Parameters<typeof finishActivities>[2])=>db.transaction(()=>{finishActivities(taskId,runId,status,bump(taskId))})()
   const sourceRow=(row:StoredNativeSource|null)=>row?{...row,truncated:!!row.truncated}:null

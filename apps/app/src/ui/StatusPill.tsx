@@ -2,6 +2,6 @@
 import { StatusWord } from './MatterRow'
 import type { StatusKey } from '@wechat-cc/protocol'
 export type { StatusKey }
-export function StatusPill({ status }: { status: StatusKey }) {
-  return <StatusWord status={status} />
+export function StatusPill({ status, label }: { status: StatusKey; label?: string }) {
+  return <StatusWord status={status} label={label} />
 }

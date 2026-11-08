@@ -18,6 +18,7 @@ export function Button({ kind, label, onPress, disabled, busy, testID }: ButtonP
   const inactive = !!disabled || !!busy
   const appearance = componentAppearance.button
   const primary = kind === 'primary'
+  const textTone = appearance[kind].text
   return (
     <Pressable
       accessibilityRole="button"
@@ -41,8 +42,8 @@ export function Button({ kind, label, onPress, disabled, busy, testID }: ButtonP
         opacity: inactive ? appearance.disabledOpacity : pressed ? appearance.pressedOpacity : 1,
       })}
     >
-      {busy ? <ActivityIndicator color={primary ? c.onAccent : c.ink} /> : null}
-      <Txt role={appearance.role.phone} tone={primary ? 'onAccent' : 'ink'}>{label}</Txt>
+      {busy ? <ActivityIndicator color={c[textTone]} /> : null}
+      <Txt role={appearance.role.phone} tone={textTone}>{label}</Txt>
     </Pressable>
   )
 }

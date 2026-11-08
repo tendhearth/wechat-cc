@@ -7,6 +7,7 @@
  * 彼此之间只剩 inputs → lifecycle 一个方向。execute 收尾也直接用它。
  */
 import { sameAttachments } from '../../../adapters/store/workbench/live-inputs'
+import type {AgentInputAcceptance} from '../../../ports/agent-provider'
 import type { LiveInput } from '../../../ports/workbench'
 import type { ServiceCtx } from './ctx'
 import type { Active } from './state'
@@ -41,11 +42,12 @@ export function makePendingInputs(ctx:ServiceCtx) {
   function hasUndeliveredInput(running:Active):boolean {
     try { return store.liveInputs.count(running.taskId)>0 } catch { return true }
   }
-  function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown) {
+  function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown,submittedTurn?:{id:string;open:boolean;mode:'send'|'steer'|'queue'},accepted?:void|AgentInputAcceptance) {
     if(state.shutdownComplete){running.runtimeInputs?.delete(saved.id);return}
     try {
       // held-only 落库不会自己 bump(store.addEvent 才会);两条分支分别记账,没写就不吵。
       let changed:'held'|'delivered'|null=null
+      let openedTurn:string|undefined,acceptedTurn:string|undefined
       store.atomic(()=>{
         const current=store.liveInputs.get(saved.id)
         if(!current||current.taskId!==saved.taskId||current.runId!==saved.runId||current.text!==saved.text||!sameAttachments(current.attachments,saved.attachments))return
@@ -57,9 +59,22 @@ export function makePendingInputs(ctx:ServiceCtx) {
         if(current.status!=='sending'&&current.status!=='held')return
         // A late positive native acknowledgement is truthful only for this receipt.
         store.liveInputs.set(saved.id,'delivered')
-        store.addEvent(saved.taskId,'user',saved.text,null,saved.runId,saved.attachments)
+        // An in-flight steer stays with the turn it was submitted to, even if
+        // the positive acknowledgement arrives after result. An idle send is
+        // a new turn only after acceptance (never create one for failed input).
+        const mode=accepted?.mode??submittedTurn?.mode
+        const nativeTurn=accepted?.turnId?running.acceptedInputTurns?.get(accepted.turnId):undefined
+        let turnId=nativeTurn??(mode==='steer'&&submittedTurn?.open?submittedTurn.id
+          :running.turn?.id!==submittedTurn?.id?running.turn?.id:undefined)
+        if(!turnId&&state.runsByTask.get(saved.taskId)===running&&!running.cancelled&&!running.finishing){
+          openedTurn=store.execution.nextTurn(saved.taskId,saved.runId);turnId=openedTurn
+        }
+        store.addEvent(saved.taskId,'user',saved.text,null,saved.runId,saved.attachments,turnId??null)
+        acceptedTurn=turnId
         changed='delivered'
       })
+      if(acceptedTurn&&accepted?.turnId)(running.acceptedInputTurns??=new Map()).set(accepted.turnId,acceptedTurn)
+      if(openedTurn)running.turn={id:openedTurn,open:true}
       if(changed==='held')ctx.hub.bumped(saved.taskId)
       // Keep delivery uncertainty tracked if the durable transition failed.
       running.runtimeInputs?.delete(saved.id)

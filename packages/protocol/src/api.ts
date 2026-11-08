@@ -142,6 +142,8 @@ export const MatterSession = z.object({
 /** `matters/service.ts` 的 `MatterTaskView`(手机详情/say 结果里的任务投影)——
  * 跟 workbench 内部的 `WorkbenchTaskView`(见下面 entry 一节)不是同一个类型。 */
 export const MatterTaskView = z.object({
+  // Task pause, independent of the phone transport connection. Older daemons omit it.
+  networkSuspended: z.object({ since: z.number() }).optional(),
   id: z.string(), title: z.string(), status: z.string(), phase: z.string().optional(),
   providerId: z.string(), path: z.string(), error: z.string().nullable(), updatedAt: z.number(),
   archivedAt: z.number().nullable().optional(),

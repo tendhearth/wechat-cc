@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll } from './workbench-live.js'
+import { currentActivityLabel, mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll } from './workbench-live.js'
 
 const ev = (id, text, extra = {}) => ({ id, taskId: 't', kind: 'text', text, createdAt: id, ...extra })
 
@@ -288,4 +288,32 @@ describe('createLongPoll', () => {
     expect(poll.active).toBe(false)
     vi.useRealTimers()
   })
+})
+
+describe('current activity survives later body and system events',()=>{
+ const activity=(id,status='running',runId='r')=>ev(id,'核对文件',{kind:'tool_call',runId,activity:{id:String(id),type:'read',status,label:`核对文件${id}`}})
+ const detail=events=>({task:{status:'running',phase:'working'},runId:'r',events})
+ it.each(['text','system'])('keeps the latest still running activity before %s',(kind)=>{
+  const d=detail([activity(1),activity(2),ev(3,'还在核对',{kind,runId:'r'})])
+  expect(currentActivityLabel(d)).toBe('核对文件2')
+  expect(structuralSignature(d)).toBe(structuralSignature({...d,events:d.events.slice(0,-1)}))
+  d.events=mergeEvents(d.events,[activity(2,'completed')])
+  expect(currentActivityLabel(d)).toBe('核对文件1')
+  d.events=mergeEvents(d.events,[activity(1,'completed')])
+  expect(currentActivityLabel(d)).toBeNull()
+ })
+ it('hides during pause, restores after network recovery and clears after reply',()=>{
+  const d=detail([activity(1),ev(2,'网络恢复，已继续。',{kind:'system',runId:'r'})])
+  const paused={...d,task:{...d.task,networkSuspended:{since:1}}}
+  expect(currentActivityLabel(paused)).toBeNull()
+  expect(structuralSignature(paused)).not.toBe(structuralSignature(d))
+  expect(currentActivityLabel(d)).toBe('核对文件1')
+  expect(currentActivityLabel({...d,task:{...d.task,phase:'replied'}})).toBeNull()
+  expect(currentActivityLabel(detail([activity(1,'running','old'),ev(2,'正文')]))).toBeNull()
+ })
+})
+
+it('does not reuse a still-running activity payload from an older turn of the same retained run',()=>{
+ const events=[ev(1,'old',{kind:'tool_call',runId:'r',turnId:'old',activity:{id:'old',type:'read',status:'running',label:'旧轮读取'}}),ev(2,'new request',{kind:'user',runId:'r'}),ev(3,'new body',{runId:'r',turnId:'new'})]
+ expect(currentActivityLabel({task:{status:'running',phase:'working'},runId:'r',events})).toBeNull()
 })

@@ -30,7 +30,8 @@
         "text": "跑一下数据库迁移",
         "createdAt": 1793412600000,
         "sourceId": null,
-        "runId": "<uuid:6>"
+        "runId": "<uuid:6>",
+        "turnId": "<turn:3>"
       },
       {
         "id": 11,
@@ -40,6 +41,7 @@
         "createdAt": 1793412600000,
         "sourceId": null,
         "runId": "<uuid:6>",
+        "turnId": "<turn:3>",
         "activity": {
           "id": "call-1",
           "type": "read",
@@ -54,7 +56,8 @@
         "text": "权限请求：Bash · Run the migration against the local db · <uuid:7>",
         "createdAt": 1793412600000,
         "sourceId": null,
-        "runId": "<uuid:6>"
+        "runId": "<uuid:6>",
+        "turnId": "<turn:3>"
       }
     ],
     "artifacts": [],

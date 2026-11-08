@@ -157,6 +157,7 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
       if(inputMode(running)==='queue')return saved
       store.liveInputs.set(saved.id,'sending');ctx.hub.bumped(id)
       ;(running.runtimeInputs??=new Map()).set(saved.id,saved)
+      const submittedTurn=running.turn?{...running.turn,mode:inputMode(running)}:undefined
       try{
         if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
         const material=store.attachments.prepare(id,attachments,running.path,ctx.stateDir)
@@ -168,13 +169,14 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
         // Replay acknowledgement may wait behind an autonomous native turn.
         // The HTTP receipt is already durable; never wait here or auto-resend.
         void runtime.submit(saved.id,text,material).then(
-          ()=>settleRuntimeInput(running,saved),
-          error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));armIdleClose(running)},
+          accepted=>settleRuntimeInput(running,saved,undefined,submittedTurn,accepted),
+          error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'),submittedTurn);armIdleClose(running)},
         )
-      }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));armIdleClose(running)}
+      }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'),submittedTurn);armIdleClose(running)}
       return store.liveInputs.get(saved.id)!
     }
     if(!running.session?.steer)return saved
+    const submittedTurnId=running.turn?.id
     running.delivering=true;store.liveInputs.set(saved.id,'sending');ctx.hub.bumped(id)
     try{
       if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
@@ -182,7 +184,7 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
       await running.session.steer(text,material)
       running.interactionAt=Date.now()
       store.liveInputs.set(saved.id,'delivered');ctx.hub.bumped(id)
-      store.addEvent(id,'user',text,null,running.identity,attachments);
+      store.addEvent(id,'user',text,null,running.identity,attachments,submittedTurnId);
     }catch(error){store.liveInputs.set(saved.id,'held',`未确认执行者收到，请检查当前对话后再决定是否重发。${error instanceof Error?' '+error.message:''}`);ctx.hub.bumped(id)}
     finally{running.delivering=false}
     return store.liveInputs.get(saved.id)!

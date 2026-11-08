@@ -303,7 +303,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 静下来就交给 settleQuiet 判:它自己会因为「还在等主人拍板」而只收成果、不起计时。
         // 这里若因为有待决请求而跳过,这一次转移就被吃掉了 —— 之后 wasQuiet 一直是 true,
         // 再没有人回来收尾(评审 2026-09-21 #6 续:后台问题活过了父回合的答复)。
-        if (nowQuiet&&!wasQuiet) { quietTurn(running); settleQuiet(running); return }
+        if (nowQuiet&&!wasQuiet) { coalescer.flush(); quietTurn(running); settleQuiet(running); return }
         // 又动起来了(自己被后台通知唤醒也算):不再安静就不再计时。文件夹本来就是它的,
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
@@ -328,13 +328,16 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');ctx.hub.bumped(task.id)}
             if(rewound&&!rewoundNoticed&&['text','tool_call','result'].includes(ev.kind)){rewoundNoticed=true;domains.rewind?.markNoticed(task.id,rewound.ids)}
             if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
+            // Open the stored turn before its first row is persisted. For result,
+            // flush pending text first, while that same turn is still open.
+            if (ev.kind !== 'result') noteTurn(running,ev)
             coalescer.push(ev)
             // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
             // 任何一个成功回合(result)即视为这家恢复。
             if (ev.kind==='error') quota.note(task.providerId,ev.message,ev.code)
             if (ev.kind==='result') quota.clear(task.providerId)
             // 这件事的轮(M2b):result 收一轮、带执行者报的用量(每件事花了多少额度从这里加);别的动静接着开下一轮。
-            noteTurn(running,ev)
+            if (ev.kind === 'result') noteTurn(running,ev)
             if (ev.kind==='result') settleQuiet(running)
             // observe 是**故意**会往外抛的(身份不符那条),所以探测器自己抛出会把整轮带走。
             // 落定漏一次会被下一个事件补上,抛出去却不可逆 —— 吞掉,只记一次(终审 M5)。

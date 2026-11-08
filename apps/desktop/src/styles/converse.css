@@ -170,3 +170,8 @@
 .converse-terminal summary { cursor:pointer; display:flex; gap:var(--th-space-l); justify-content:space-between; }
 .converse-terminal p { white-space:pre-wrap; overflow-wrap:anywhere; }
 .converse-terminal-note, .converse-terminal small { color:var(--th-ink-soft); font-size:var(--th-size-small); }
+
+/* These are toolbar menus; content disclosures keep their native affordance. */
+.conversation-tools summary { list-style:none; }
+.conversation-tools summary::-webkit-details-marker { display:none; }
+.conversation-tools summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:3px; }

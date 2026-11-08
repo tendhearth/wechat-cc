@@ -17,7 +17,7 @@ import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
  * (工作台任务从 workbench 详情取),这里不复制数据。`say` 按 kind 路由:
  * task → 工作台续接;chat → 现有的 app 对话通道(只对主人的 chat)。
  */
-export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
+export interface MatterTaskView {networkSuspended?:{since:number};id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
 // activity(2026-10-17):工具那一步在跑还是做完了 —— 手机看着它跑要知道「正在」哪一步。只给 type/status/label,不给命令输出。
 /**
  * 详情 events 的一条(线上旧形状,M6c 起 src 不再手写):任务 = 时间线的步投影成 WorkbenchTaskEvent 再收窄到这里;
