@@ -24,7 +24,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '../packages/protocol/src/routes'
 import { DESKTOP_CALLS } from '../packages/protocol/src/desktop-calls'
-import { HOME_GROUP_ORDER, HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from '../packages/protocol/src/status-table'
+import { HOME_GROUP_ORDER, HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, TASK_DETAIL_WORDS, STATUS_TABLE, STATUS_WORDS } from '../packages/protocol/src/status-table'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const WORKBENCH_ROUTES_JSON = join(ROOT, 'apps', 'desktop', 'src-tauri', 'generated', 'workbench-routes.json')
@@ -93,6 +93,7 @@ export function renderStatusTable(): string {
     '',
     `export const HOME_GROUP_ORDER = /** @type {const} */ (${JSON.stringify(HOME_GROUP_ORDER)})`,
     '',
+    `export const TASK_DETAIL_WORDS = /** @type {const} */ (${JSON.stringify(TASK_DETAIL_WORDS['zh-Hans'], null, 2)})`,
     `export const STATUS_WORDS = /** @type {const} */ (${JSON.stringify(STATUS_WORDS['zh-Hans'], null, 2)})`,
     '',
     `export const HOME_GROUP_WORDS = /** @type {const} */ (${JSON.stringify(HOME_GROUP_WORDS['zh-Hans'], null, 2)})`,

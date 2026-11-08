@@ -1,4 +1,4 @@
-/* 「跟 CC 说」:CC 的话无底,我的话 rail 底;输入是一条胶囊,只有发送用 accent。零字面色值,无阴影。 */
+/* 「跟 CC 说」:CC 的话无底,我的话 rail 底;多行输入为 sheet 圆角矩形,只有发送用 accent。零字面色值,无阴影。 */
 .converse-page { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--th-paper); color: var(--th-ink); }
 .converse-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--th-space-xl); padding: 28px max(24px, calc((100% - 780px) / 2)); }
 .converse-latest { align-self:center; flex:none; padding:8px 12px; border:0; background:transparent; color:var(--th-accent); font:inherit; font-size:var(--th-size-small); cursor:pointer; }
@@ -17,12 +17,11 @@
 .converse-msg { display: flex; align-items: flex-end; gap: 6px; }
 .converse-msg-user { justify-content: flex-end; }
 .converse-msg-cc { justify-content: flex-start; }
-.converse-avatar { width: 32px; height: 32px; object-fit: contain; align-self: flex-start; margin-top: 8px; flex: none; }
-.converse-bubble { min-width:0; max-width: 85%; padding: 4px 0; font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
-.converse-msg-cc .converse-bubble.cc-readable-markdown { max-width:min(70ch,calc(100% - 74px)); }
+.converse-bubble { min-width:0; max-width: 85%; padding: 4px 0; font-size: var(--th-message-user-role); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
+.converse-msg-cc .converse-bubble.cc-readable-markdown { max-width:min(70ch,100%); }
 .converse-msg-user .converse-bubble.cc-user-bubble { max-width:min(70ch,85%); white-space:normal; }
-.converse-msg-cc .converse-bubble { background: transparent; color: var(--th-ink); }
-.converse-msg-user .converse-bubble { padding: 12px 16px; border-radius: var(--th-radius-bubble); background: var(--th-rail); color: var(--th-ink); }
+.converse-msg-cc .converse-bubble { font-size:var(--th-message-reply-role); background: transparent; color: var(--th-ink); }
+.converse-msg-user .converse-bubble { padding: var(--th-message-padding-y) var(--th-message-padding-x); border-radius: var(--th-message-radius); background: var(--th-message-user-background); color: var(--th-ink); }
 .converse-msg-cc.is-pending .converse-bubble { color: var(--th-ink-soft); }
 .converse-error-line, .converse-system-line { align-self: center; max-width: 80%; padding: 4px 12px; font-size: var(--th-size-caption); text-align: center; }
 .converse-error-line { color: var(--th-bad); }
@@ -33,7 +32,7 @@
 .converse-msg:hover .voice-replay-btn, .voice-replay-btn:focus-visible { opacity: 1; }
 
 /* 回复的附件与过程(回复交付 2026-10-04):过程在上、灰、默认收起;附件在下,细线框,不上色块。 */
-.converse-cc-body { min-width:0; max-width:min(70ch,calc(100% - 74px)); display:flex; flex-direction:column; gap:var(--th-space-s); }
+.converse-cc-body { min-width:0; max-width:min(70ch,100%); display:flex; flex-direction:column; gap:var(--th-space-s); }
 .converse-cc-body .converse-bubble.cc-readable-markdown { max-width:none; }
 .converse-process { color:var(--th-ink-soft); font-size:var(--th-size-small); line-height:var(--th-lh-small); }
 .converse-cc-line { display:flex; align-items:flex-end; gap:6px; min-width:0; }
@@ -45,7 +44,7 @@
 .converse-process summary::before { content:''; flex:none; width:0; height:0; border-style:solid; border-width:5px 0 5px 7px; border-color:transparent transparent transparent currentColor; transition:transform .15s; }
 .converse-process[open] summary::before { transform:rotate(90deg); }
 .converse-process summary:hover { color:var(--th-ink); }
-.converse-process-lines { margin:4px 0 0; padding:0 0 0 14px; border-left:1px solid var(--th-hair); list-style:none; display:flex; flex-direction:column; gap:4px; white-space:pre-wrap; word-break:break-word; }
+.converse-process-lines { margin:4px 0 0; padding:0; border:var(--th-content-process-border-width); list-style:none; display:flex; flex-direction:column; gap:4px; white-space:pre-wrap; word-break:break-word; }
 .converse-attachments { display:flex; flex-wrap:wrap; align-items:flex-start; gap:var(--th-space-s); }
 .converse-att { display:inline-flex; align-items:center; gap:8px; max-width:100%; min-height:36px; padding:4px 12px; border:1px solid var(--th-hair); border-radius:var(--th-radius-bubble); color:var(--th-ink); font-size:var(--th-size-small); }
 .converse-att svg { width:16px; height:16px; flex:none; color:var(--th-ink-soft); }
@@ -56,18 +55,19 @@
 .converse-att-sticker { display:block; max-width:140px; max-height:140px; object-fit:contain; border-radius:var(--th-radius-bubble); }
 .converse-att-sticker-label { color:var(--th-ink-soft); }
 
-/* 输入:一条胶囊,输入 + 工具条。一件事的详情之外只有此刻的聊天页会用到;此刻页再按 data-now 收放。 */
-.converse-compose { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: center; box-sizing: border-box; flex: none; width: min(780px, calc(100% - 48px)); margin: 12px auto 24px; padding: 8px 8px 8px 22px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: var(--th-paper); }
-.converse-compose:focus-within { border-color: var(--th-accent); }
+/* 输入:sheet 圆角矩形,输入 + 工具条。一件事的详情之外只有此刻的聊天页会用到;此刻页再按 data-now 收放。 */
+.converse-compose { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: center; box-sizing: border-box; flex: none; width: min(780px, calc(100% - 48px)); margin: 12px auto 24px; padding: var(--th-text-field-chat-padding-y) var(--th-text-field-chat-padding-x); border: 1px solid var(--th-text-field-border); border-radius: var(--th-text-field-chat-radius); background: var(--th-paper); }
+.converse-compose:focus-within { border-color: var(--th-text-field-focus-border); }
 .converse-compose [hidden] { display: none !important; }
 .converse-textarea { flex: 1 1 240px; min-width: 0; min-height: 40px; max-height: 180px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; color: var(--th-ink); font: inherit; font-size: var(--th-size-body); line-height: var(--th-lh-body); resize: vertical; box-sizing: border-box; }
 .converse-textarea::placeholder { color: var(--th-ink-soft); }
 .converse-textarea:focus, .converse-textarea:focus-visible { border: 0; outline: none; }
-.converse-textarea:disabled { opacity: .6; }
+.converse-textarea:disabled { opacity: var(--th-text-field-disabled-opacity); }
 .converse-toolbar { display: flex; align-items: center; gap: 8px; }
 .converse-toolbar button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 8px 12px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: transparent; color: var(--th-ink); font: inherit; font-size: var(--th-size-small); cursor: pointer; }
 .converse-toolbar button:hover { background: var(--th-rail); }
-.converse-toolbar button:disabled { opacity: .45; cursor: default; }
+.converse-toolbar button:active { opacity:var(--th-button-pressed-opacity); }
+.converse-toolbar button:disabled { opacity: var(--th-button-disabled-opacity); cursor: default; }
 .converse-toolbar svg { width: 18px; height: 18px; }
 .converse-toolbar .converse-voice-toggle.is-on { border-color: var(--th-accent); }
 .converse-mic.is-recording { border-color: var(--th-bad); }
@@ -116,8 +116,8 @@
 .converse-search-open { border:0; background:transparent; color:var(--th-ink-soft); font:inherit; font-size:13px; cursor:pointer; padding:4px 0; }
 .converse-search-open:hover { color:var(--th-ink); }
 .converse-search { display:flex; gap:8px; width:100%; }
-.converse-search input { flex:1; min-width:0; padding:8px 12px; border:1px solid var(--th-hair); border-radius:8px; background:var(--th-paper); color:var(--th-ink); font:inherit; }
-.converse-search button { border:1px solid var(--th-hair); border-radius:8px; background:var(--th-paper); color:var(--th-ink); font:inherit; padding:0 12px; cursor:pointer; }
+.converse-search input { flex:1; min-width:0; padding:8px 12px; border:1px solid var(--th-hair); border-radius:var(--th-text-field-search-radius); background:var(--th-paper); color:var(--th-ink); font:inherit; font-size:var(--th-text-field-role); }
+.converse-search button { border:1px solid var(--th-hair); border-radius:var(--th-button-radius); background:var(--th-paper); color:var(--th-ink); font:inherit; padding:0 12px; cursor:pointer; }
 .converse-search-results { max-height:50vh; overflow:auto; border-bottom:1px solid var(--th-hair); padding:8px 0 12px; }
 .converse-search-note { margin:4px 0 8px; color:var(--th-ink-soft); font-size:13px; }
 .converse-search-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
@@ -125,7 +125,7 @@
 .converse-search-text { white-space:pre-wrap; overflow-wrap:anywhere; }
 .converse-search-text mark { background:var(--th-hair); color:inherit; border-radius:2px; padding:0 1px; }
 
-.converse-matter { padding:var(--th-space-l); border:1px solid var(--th-hair); border-radius:var(--th-radius-sheet); min-width:min(320px,60vw); }
+.converse-matter { padding:var(--th-content-reference-padding); border:var(--th-content-reference-border-width) solid var(--th-hair); border-radius:var(--th-content-reference-radius); min-width:min(320px,60vw); }
 .converse-matter summary { cursor:pointer; display:flex; gap:var(--th-space-l); justify-content:space-between; }
 .converse-matter [data-matter-state] { color:var(--th-ink-soft); font-size:var(--th-size-small); }
 .converse-matter button { display:block; margin-top:var(--th-space-m); background:transparent; color:var(--th-ink); border:1px solid var(--th-hair); border-radius:var(--th-radius-control); padding:8px 12px; font:inherit; cursor:pointer; }

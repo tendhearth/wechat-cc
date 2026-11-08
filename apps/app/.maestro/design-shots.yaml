@@ -48,6 +48,19 @@ appId: com.tendhearth.app
     timeout: 5000
 - waitForAnimationToEnd
 - takeScreenshot: p05-chat
+# 11-08共同话题外观：沿用原生sheet和返回，不改变草稿/提交目标。
+- tapOn:
+    id: topic-demo-backup
+- extendedWaitUntil:
+    visible:
+      id: topic-sheet
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: p05a-topic-open
+- tapOn:
+    id: topbar-back
+- assertVisible:
+    id: chat-input
 # 交办:对话页 → 交给 CC 去做一件事 → 调整(在哪里做)
 - tapOn:
     id: chat-plus

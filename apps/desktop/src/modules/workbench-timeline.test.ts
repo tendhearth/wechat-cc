@@ -36,18 +36,19 @@ describe('workbench interleaved activity timeline', () => {
       event('reply2', 'text', 'Next explanation', { createdAt:20, runId:'current' }),
       operation('test1', 'command', 'Run focused tests'),
     ])
-    expect(html.indexOf('First explanation')).toBeLessThan(html.indexOf('Read source'))
-    expect(html.indexOf('Read source')).toBeLessThan(html.indexOf('Next explanation'))
-    expect(html.indexOf('Next explanation')).toBeLessThan(html.indexOf('Run focused tests'))
-    expect(foldedGroups(html)).toHaveLength(0)
+    const dialogue = html.slice(html.indexOf('<section class="wb-dialogue"'))
+    expect(dialogue.indexOf('First explanation')).toBeLessThan(dialogue.indexOf('Read source'))
+    expect(dialogue.indexOf('Read source')).toBeLessThan(dialogue.indexOf('Next explanation'))
+    expect(dialogue.indexOf('Next explanation')).toBeLessThan(dialogue.indexOf('Run focused tests'))
+    expect(foldedGroups(html)).toHaveLength(2)
     expect(html).toContain('data-status="running"')
     expect(html).not.toContain('id="wb-tools"')
   })
 
-  it('folds each consecutive group in its original position only after the run ends, with deterministic operation counts', () => {
+  it('folds each consecutive group in its original position during and after a run, with deterministic operation counts', () => {
     const events = [event('a', 'text', 'Before operations'), operation('r1', 'read', 'Read one', 'completed'), operation('r2', 'read', 'Read two', 'completed'), operation('c', 'command', 'Run tests', 'completed'), event('b', 'text', 'Between groups'), operation('s', 'search', 'Find symbol', 'completed'), event('z', 'text', 'Final answer')]
-    expect(foldedGroups(render(events))).toHaveLength(0)
-    expect(foldedGroups(render(events, 'cancelling'))).toHaveLength(0)
+    expect(foldedGroups(render(events))).toHaveLength(2)
+    expect(foldedGroups(render(events, 'cancelling'))).toHaveLength(2)
     const html = render(events, 'completed')
     expect(foldedGroups(html)).toHaveLength(2)
     expect(foldedGroups(html).every(tag => !/\sopen(?:\s|=|>)/.test(tag))).toBe(true)
@@ -66,9 +67,11 @@ describe('workbench interleaved activity timeline', () => {
       operation('old', 'read', 'Historical read', 'completed', { runId:'previous' }),
       operation('new', 'command', 'Current command'),
     ])
-    expect(foldedGroups(html)).toHaveLength(1)
+    expect(foldedGroups(html)).toHaveLength(2)
     expect(visibleWithoutGroups(html)).not.toContain('Historical read')
+    expect(visibleWithoutGroups(html)).toContain('class="wb-activity-now"')
     expect(visibleWithoutGroups(html)).toContain('Current command')
+    expect(foldedGroups(html).filter(tag => tag.includes('data-timeline-live'))).toHaveLength(1)
     expect(foldedGroups(render([operation('old', 'read', 'Historical read', 'completed', { runId:'previous' })], 'queued', undefined))).toHaveLength(1)
   })
 

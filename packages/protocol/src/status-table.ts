@@ -57,3 +57,9 @@ export const ROW_HINT_WORDS: Readonly<Record<'zh-Hans' | 'en', Readonly<{ quiet:
   'zh-Hans': { quiet: '可能卡住', pendingTotal: '共 {n} 项' },
   en: { quiet: 'May be stuck', pendingTotal: '{n} in total' },
 }
+
+/** 任务的细分观察，不另造第二份任务状态表。连接/授权结果和操作生命周期不属于这里。 */
+export const TASK_DETAIL_WORDS = {
+  'zh-Hans': { queued: '等待中', cancelling: '正在停止', imported: '尚未执行', networkPaused: '已暂停(网络未受保护)', background: '后台执行中 · {n}', retained: '会话保留中' },
+  en: { queued: 'Queued', cancelling: 'Stopping', imported: 'Not started', networkPaused: 'Paused (network unprotected)', background: 'Working in background · {n}', retained: 'Session retained' },
+} as const

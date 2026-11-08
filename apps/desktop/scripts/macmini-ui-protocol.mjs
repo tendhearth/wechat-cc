@@ -91,8 +91,8 @@ export function sshInvocation(command, target = 'home', sshConfig, flow, gateEnv
   }
   const mini = MINIS[target]
   return { file: 'ssh', args: [...(sshConfig ? ['-F', sshConfig] : []), '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
-    '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
-    mini.host, `env ${settings.length ? settings.join(' ') + ' ' : ''}PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${command.startsWith('app-') ? 'app-run.mjs' : 'run.mjs'}`],
+    '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'ClearAllForwardings=yes',
+    mini.host, `env ${settings.length ? settings.join(' ') + ' ' : ''}PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/node ${mini.labHome}/${command.startsWith('app-') ? 'app-run.mjs' : command === 'browser' ? 'browser-run.mjs' : 'run.mjs'}`],
   input: JSON.stringify(validateRequest({ command, ...(flow !== undefined ? { flow } : {}) })) + '\n' }
 }
 

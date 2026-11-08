@@ -27,6 +27,11 @@ const SYSTEM_CHROME_PATHS = [
 const systemChrome = SYSTEM_CHROME_PATHS.find(p => existsSync(p))
 const needsSystemChrome = MANAGED_CHROMIUM && !existsSync(MANAGED_CHROMIUM) && !!systemChrome
 
+// Only the dedicated mini lab supplies this fixed, already-installed public browser.
+const labBrowser = process.env.CC_UI_BROWSER_EXECUTABLE
+if (labBrowser && !/^\/Users\/(home\/cc-ui-lab|homebot\/ci\/cc-ui-lab)\//.test(labBrowser)) throw Error('Lab browser must remain inside the dedicated mini lab')
+const launchOptions = labBrowser ? { executablePath: labBrowser } : needsSystemChrome ? { executablePath: systemChrome } : undefined
+
 export default defineConfig({
   testDir: './playwright',
   timeout: 30_000,
@@ -38,14 +43,14 @@ export default defineConfig({
     headless: true,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
-    ...(needsSystemChrome ? { launchOptions: { executablePath: systemChrome } } : {}),
+    ...(launchOptions ? { launchOptions } : {}),
   },
   projects: [
     {
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        ...(needsSystemChrome ? { launchOptions: { executablePath: systemChrome } } : {}),
+        ...(launchOptions ? { launchOptions } : {}),
       },
     },
   ],

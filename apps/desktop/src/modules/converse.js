@@ -279,8 +279,7 @@ function messageHtml(m) {
   const body = extras
     ? `<div class="converse-cc-body">${m.role === "cc" ? narrationHtml(m) : ""}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m)}</div>`
     : bubble
-  return `<div class="converse-msg ${roleCls}${pendingCls}">
-    ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
+  return `<div class="converse-msg ${roleCls}${pendingCls}" role="group" aria-label="${m.role === "user" ? "你" : "CC"}">
     ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
     ${m.legacyMedia ? '<small class="converse-legacy-media">这条记录只保存了附件数量，原附件未保存在对话中。</small>' : ""}
     ${extras || !m.text.trim() ? "" : replayBtn}

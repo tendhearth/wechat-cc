@@ -60,6 +60,7 @@ if (full) {
   step('depcheck', 'bun', ['run', 'depcheck'])
   step('测试(bun)', 'bun', ['run', 'test'])
   step('测试(node)', 'npm', ['run', 'test:node'])
+  step('App 单测', 'bun', ['run', 'test'], 'apps/app')
   step('真实形状沙盒', 'bun', ['run', 'test:sandbox'])
   finish()
 }
@@ -110,5 +111,6 @@ if (nonImport.length) {
 const marked = lines(git(['grep', '-l', '@repo-guard', '--', 'src/**/*.test.ts']).stdout)
 step('测试 · 守卫', 'bun', ['--bun', 'vitest', 'run', 'scripts/', 'guard.test', 'no-bun-globals', ...marked])
 step('真实形状沙盒', 'bun', ['run', 'test:sandbox'])
+if (touched('apps/app/', 'packages/design-tokens/', 'packages/protocol/')) step('App 单测', 'bun', ['run', 'test'], 'apps/app')
 if (touched('apps/relay/', 'packages/protocol/')) step('中继单测', 'bun', ['run', 'test'], 'apps/relay')
 finish()

@@ -1,17 +1,30 @@
-import { forwardRef } from 'react'
+import { forwardRef, useState } from 'react'
 import { TextInput, type TextInputProps } from 'react-native'
 import type { TypeRole } from '@wechat-cc/design-tokens'
 import { useLang } from '../i18n/useLang'
 import { monoFamily } from './fonts'
 import { phoneFont } from './type'
+import { componentAppearance } from './tokens'
 import { useTheme } from './useTheme'
 
-/** `role` 是排版角色,不是 RN 的无障碍 role(用 accessibilityRole)。
- * 手机上所有输入框的出口:默认正文字号、用户内容家族(Noto Serif SC),占位字 inkSoft。 */
-export const TextField = forwardRef<TextInput, Omit<TextInputProps, 'role'> & { role?: TypeRole | 'code'; content?: 'ui' | 'user' }>(function TextField({ role = 'body', content = 'user', style, ...rest }, ref) {
+export type TextFieldVariant = 'plain' | 'chat' | 'search' | 'comment'
+/** role 管文字角色；variant 管使用场景。plain 留给全页书写区与尚未纳入本批的入口。 */
+export const TextField = forwardRef<TextInput, Omit<TextInputProps, 'role'> & { role?: TypeRole | 'code'; content?: 'ui' | 'user'; variant?: TextFieldVariant }>(function TextField({ role = componentAppearance.textField.role, content = 'user', variant = 'plain', style, onFocus, onBlur, ...rest }, ref) {
   const { c } = useTheme()
   const lang = useLang()
-  // role='code':等宽(命令原文这类),与 Txt 同一个 monoFamily
+  const [focused, setFocused] = useState(false)
   const f = phoneFont(role, lang, content)
-  return <TextInput ref={ref} placeholderTextColor={c.inkSoft} {...rest} style={[{ ...f, fontFamily: f.fontFamily === 'mono' ? monoFamily : f.fontFamily, color: c.ink }, style]} />
+  const contract = componentAppearance.textField
+  const shape = variant === 'plain' ? null : contract[variant]
+  const appearance = shape ? {
+    borderRadius: shape.radius, borderWidth: shape.borderWidth,
+    borderBottomWidth: variant === 'comment' ? contract.comment.borderBottomWidth : shape.borderWidth,
+    borderColor: c[focused ? contract.focusBorder : contract.border],
+    backgroundColor: variant === 'comment' ? 'transparent' : c.paper,
+    paddingHorizontal: shape.paddingX, paddingVertical: shape.paddingY, minHeight: shape.minHeight.phone,
+    opacity: rest.editable === false ? contract.disabledOpacity : 1,
+  } : {}
+  return <TextInput ref={ref} placeholderTextColor={c.inkSoft} {...rest}
+    onFocus={event => { setFocused(true); onFocus?.(event) }} onBlur={event => { setFocused(false); onBlur?.(event) }}
+    style={[{ ...f, fontFamily: f.fontFamily === 'mono' ? monoFamily : f.fontFamily, color: c.ink }, appearance, style]} />
 })

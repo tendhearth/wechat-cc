@@ -34,7 +34,7 @@
   background: var(--cc-surface);
   color: var(--cc-muted);
 }
-.atelier-share-open:not(:disabled), .settings-drawer .btn:not(.danger):not(.primary) {
+.atelier-share-open:not(:disabled) {
   min-height: 36px;
   border-color: var(--cc-line);
   border-radius: var(--cc-control-radius);
@@ -143,3 +143,5 @@
 }
 
 .fd-status-icon, .fd-status-icon > .hg-icon { width: 24px; height: 24px; flex-shrink: 0; color: var(--cc-muted); }
+
+.a2a-modal .btn { border-radius:var(--th-button-radius); }
