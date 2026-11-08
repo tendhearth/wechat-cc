@@ -5620,7 +5620,7 @@ dependencies = [
 
 [[package]]
 name = "wechat_cc_desktop"
-version = "1.7.8"
+version = "1.7.9"
 dependencies = [
  "base64 0.22.1",
  "cc",

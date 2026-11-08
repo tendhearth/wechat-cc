@@ -38,7 +38,13 @@ describe('route retirement evidence', () => {
     const d = data(); d.rows.push({ day: '2026-11-06', client: 'web', version: 'unknown', alias: '', count: 1 })
     expect(check(d).reasons.join()).toContain('web/unknown')
     d.rows[1]!.version = 'P3g'; expect(check(d).eligible).toBe(true)
-    expect(check(data(), desktop).reasons.join()).toContain('尚未发布/登记')
+    const unreleased: WireRouteAlias = { ...desktop, retirement: [{ client: 'desktop', milestone: 'P3e', minimum: null }] }
+    expect(check(data(), unreleased).reasons.join()).toContain('尚未发布/登记')
+    // 1.7.9 起桌面带版本头;1.7.8 及以前的调用记成 unknown,照样挡住退休
+    expect(desktop.retirement).toEqual([{ client: 'desktop', milestone: 'P3e', minimum: '1.7.9' }])
+    for (const [version, eligible] of [['unknown', false], ['1.7.8', false], ['1.7.9', true]] as const) {
+      expect(check({ ...data(), rows: [{ day: '2026-11-06', client: 'desktop', version, alias: '', count: 1 }] }, desktop).eligible).toBe(eligible)
+    }
     const released: WireRouteAlias = { ...desktop, retirement: [{ client: 'desktop', milestone: 'P3e', minimum: '1.8.0' }] }
     for (const [version, eligible] of [['1.7.9', false], ['1.8.0', true], ['1.10.0', true], ['1.8.0-beta', false]] as const) {
       expect(check({ ...data(), rows: [{ day: '2026-11-06', client: 'desktop', version, alias: '', count: 1 }] }, released).eligible).toBe(eligible)
@@ -62,7 +68,7 @@ describe('route retirement evidence', () => {
   })
   it('runs the real CLI on fabricated evidence without writing or opening a database', () => {
     const d = dir(); const fixture = data(); fixture.since = Date.now() - 31 * DAY
-    fixture.rows = []; writeFileSync(join(d, ROUTE_USAGE_FILE), JSON.stringify(fixture))
+    fixture.rows = [{ day: new Date().toISOString().slice(0, 10), client: 'desktop', version: 'unknown', alias: '', count: 1 }]; writeFileSync(join(d, ROUTE_USAGE_FILE), JSON.stringify(fixture))
     const before = readFileSync(join(d, ROUTE_USAGE_FILE), 'utf8')
     const result = spawnSync('bun', ['cli.ts', 'routes', 'retire-check', '--json'], { encoding: 'utf8', env: { ...process.env, WECHAT_STATE_DIR: d } })
     expect(result.status, result.stderr).toBe(0)
