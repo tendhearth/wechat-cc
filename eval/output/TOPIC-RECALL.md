@@ -19,3 +19,5 @@ wechat-cc eval diff
 ```
 
 报告仍在 `<STATE_DIR>/eval/runs/`。无需调用真实模型的索引回归由 `src/daemon/threads/recall.test.ts` 覆盖。回合内 `turn_judge_provider=auto` 优先已配置 OpenAI 兼容 API（包含 DeepSeek 网关），没有则只用索引；`index` 显式禁用模型。它与后台 `cheap_eval_provider` 独立，`config_set` 可即时修改。
+
+2026-11-08:新增 `topic-routine-receipts-only`(只有机器流水时不召回)和 `topic-routine-vs-owner-decision`(保留主人修复升级能力的决定)。两条均为独立文本样例,随离线索引回归执行;排序由 `topic-priority.test.ts` 验证。

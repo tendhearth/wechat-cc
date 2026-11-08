@@ -44,7 +44,7 @@ export const WECHAT_PORTS = {
 
 /** 往微信发东西。 */
 export interface WechatSend {
-  sendMessage(chatId: string, text: string, metadata?: { source: 'workbench' }): Promise<{ msgId: string; error?: string }>
+  sendMessage(chatId: string, text: string, metadata?: { source: 'workbench' | `speech:${string}` }): Promise<{ msgId: string; error?: string }>
   /** `mirror: false` ⇒ 成功之后不报给媒体镜像(调用方自己记,如一封信的几页记成一行)。 */
   sendFile(chatId: string, path: string, opts?: { mirror?: boolean }): Promise<void>
   /** ilink 没有真的编辑:发一条带「(编辑后)」前缀的新消息。 */

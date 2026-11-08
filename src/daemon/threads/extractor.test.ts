@@ -13,6 +13,54 @@ const quiet = { log: () => {}, recordEvent: async () => {} }
 const ep = (ts: string) => ({ from_ts: ts, to_ts: ts })
 
 describe('threads extractor (话题 T1)', () => {
+  it('既有机器流水摘要和条目不再喂给抽取模型', async () => {
+    const { db, messages, threads } = setup()
+    try {
+      const id = await threads.create({ chatId: 'c1', title: 'wechat-cc', description: '个人 AI 项目', summary: '个人 AI 项目。现状:Codex升至0.167.0自检过', facets: ['task'], tags: [], private: false, episodes: [] })
+      await threads.addEntry({ threadId: id, kind: 'progress', line: 'Codex升至0.167.0自检过' })
+      await messages.append({ id: 'ask', chatId: 'c1', ts: '2026-06-11T02:00:00Z', direction: 'in', kind: 'text', text: '决定把手机验收补齐', source: 'live' })
+      let prompt = ''
+      await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet, sdkEval: async p => { prompt = p; return '{"ops":[]}' } })
+      expect(prompt).not.toContain('0.167.0')
+      expect(prompt).toContain('个人 AI 项目')
+    } finally { db.close() }
+  })
+
+  it('模型仍吐出纯机器回执时,create/add/update 都不能写入条目', async () => {
+    const { db, messages, threads } = setup()
+    try {
+      const id = await threads.create({ chatId: 'c1', title: 'wechat-cc', summary: '', facets: ['task'], tags: [], private: false, episodes: [] })
+      const existing = await threads.addEntry({ threadId: id, kind: 'decision', line: '决定统一手机入口' })
+      await messages.append({ id: 'ask', chatId: 'c1', ts: '2026-06-11T02:00:00Z', direction: 'in', kind: 'text', text: '手机入口待补', source: 'live' })
+      const receipt = 'Codex升至0.167.0自检过'
+      await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet, sdkEval: async () => JSON.stringify({ ops: [
+        { op: 'add_entry', topic: id, kind: 'progress', line: receipt },
+        { op: 'update_entry', id: existing, line: receipt },
+        { op: 'create_topic', title: '工具链', summary: '', facets: ['task'], tags: [], private: false, entries: [{ kind: 'progress', line: receipt }] },
+      ] }) })
+      const all = [...(await threads.entriesByThread('c1')).values()].flat()
+      expect(all.map(e => e.line)).toEqual(['决定统一手机入口'])
+      expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-06-11T02:00:00Z')
+    } finally { db.close() }
+  })
+  it('例行通知不占模型批次或历史上下文;主人的升级开发决定仍保留', async () => {
+    const { db, messages, threads } = setup()
+    try {
+      await messages.append({ id: 'old', chatId: 'c1', ts: '2026-06-10T01:00:00Z', direction: 'out', kind: 'text', text: 'old routine marker', source: 'speech:upgrade_notice' })
+      await threads.setExtractState('c1', { entriesToTs: '2026-06-10T01:00:00Z' })
+      await messages.append({ id: 'auto', chatId: 'c1', ts: '2026-06-11T01:00:00Z', direction: 'out', kind: 'text', text: 'new routine marker', source: 'speech:upgrade_notice' })
+      let calls = 0
+      await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet, sdkEval: async () => { calls++; return '{"ops":[]}' } })
+      expect(calls).toBe(0)
+      expect((await threads.getExtractState('c1')).entriesToTs).toBe('2026-06-11T01:00:00Z')
+      await messages.append({ id: 'ask', chatId: 'c1', ts: '2026-06-11T02:00:00Z', direction: 'in', kind: 'text', text: '决定修复 CLI 自动升级的回滚漏洞', source: 'live' })
+      let prompt = ''
+      await runThreadsExtraction({ chatId: 'c1', messages, threads, ...quiet, sdkEval: async p => { prompt = p; return '{"ops":[]}' } })
+      expect(prompt).not.toContain('routine marker')
+      expect(prompt).toContain('决定修复 CLI 自动升级的回滚漏洞')
+    } finally { db.close() }
+  })
+
   it('CC 发的工作台通知不进提示词,水位照样越过它们', async () => {
     const { messages, threads } = setup()
     const rows = [['1', 'workbench', 'private notice 1'], ['2', 'live', 'ordinary chat'], ['3', 'workbench', 'private notice 2']]

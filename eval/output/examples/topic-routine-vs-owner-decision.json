@@ -1,0 +1,13 @@
+{
+  "id": "topic-routine-vs-owner-decision",
+  "kind": "topic",
+  "note": "独立样例:旧机器流水不能挤掉主人的决定;开发升级能力本身属于项目工作",
+  "input": {
+    "text": "wechat-cc 升级回滚怎么定的",
+    "topics": [{ "id": "cc", "title": "wechat-cc", "summary": "", "entries": [
+      { "id": "cli-upgrade", "kind": "progress", "line": "Codex升至0.167.0自检过" },
+      { "id": "rollback-decision", "kind": "decision", "line": "决定修复 CLI 自动升级回滚漏洞" }
+    ] }]
+  },
+  "rules": [{ "recalls": { "topic": "cc", "entry": "rollback-decision" } }]
+}

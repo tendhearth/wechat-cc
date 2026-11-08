@@ -181,6 +181,7 @@ More subcommands (each has its own --help):
   wechat-cc connection probe        Inspect this machine's WeChat connection
   wechat-cc conversations list      Per-chat conversation modes (RFC 03)
   wechat-cc dialogue <timeline|threads|search|thread-detail|backfill|lock|unlock>
+  wechat-cc dialogue cleanup-topic-noise --db <file> --chat-id <id> [--apply|--rollback --journal <file>]  默认只预览,标错可回滚
   wechat-cc guard status|enable|disable  Network-guard config + live probe
   wechat-cc hand add|accept|invite|join|list|ping  一个大脑多手: hand invite → hand join <code>
   wechat-cc license status|activate|deactivate  Manage the Pro license

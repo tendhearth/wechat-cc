@@ -761,6 +761,25 @@ OPTIONS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue cleanup-topic-noise --help 1`] = `
+"Offline topic maintenance-noise cleanup (dry-run by default; reversible) (dialogue cleanup-topic-noise)
+
+USAGE dialogue cleanup-topic-noise [OPTIONS] --db=<db> --chat-id=<chat_id>
+
+OPTIONS
+
+            --db=<db>    Explicit existing SQLite file; no default production database (Required)  
+  --chat-id=<chat_id>    Only clean this chat (Required)                                           
+            --dry-run    Read-only preview (also the default) (Default: false)                     
+              --apply    Mark candidates superseded; requires a new --journal file (Default: false)
+           --rollback    Restore --journal only if no relevant content has changed (Default: false)
+  --journal=<journal>    Private rollback journal; exclusive create on apply, read on rollback     
+               --json    (Default: false)                                                          
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue lock --help 1`] = `
 "Manage the dialogue private-thread passphrase (dialogue lock)
 
@@ -860,17 +879,18 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > dialogue --help 1`] = `
 "Dialogue page data — backfill + query commands (wechat-cc dialogue v1.7.9 (dev))
 
-USAGE wechat-cc dialogue backfill|timeline|threads|search|thread-detail|lock|unlock
+USAGE wechat-cc dialogue backfill|timeline|threads|search|thread-detail|lock|unlock|cleanup-topic-noise
 
 COMMANDS
 
-       backfill    Import history from agent session JSONLs into the messages table
-       timeline    Paged conversation timeline for a chat                          
-        threads    List topic threads for a chat                                   
-         search    Substring search over messages for a chat                       
-  thread-detail    Full thread detail with per-episode messages                    
-           lock    Manage the dialogue private-thread passphrase                   
-         unlock    Verify the dialogue private-thread passphrase                   
+             backfill    Import history from agent session JSONLs into the messages table        
+             timeline    Paged conversation timeline for a chat                                  
+              threads    List topic threads for a chat                                           
+               search    Substring search over messages for a chat                               
+        thread-detail    Full thread detail with per-episode messages                            
+                 lock    Manage the dialogue private-thread passphrase                           
+               unlock    Verify the dialogue private-thread passphrase                           
+  cleanup-topic-noise    Offline topic maintenance-noise cleanup (dry-run by default; reversible)
 
 Use wechat-cc dialogue <command> --help for more information about a command.
 
@@ -2131,6 +2151,7 @@ More subcommands (each has its own --help):
   wechat-cc connection probe        Inspect this machine's WeChat connection
   wechat-cc conversations list      Per-chat conversation modes (RFC 03)
   wechat-cc dialogue <timeline|threads|search|thread-detail|backfill|lock|unlock>
+  wechat-cc dialogue cleanup-topic-noise --db <file> --chat-id <id> [--apply|--rollback --journal <file>]  默认只预览,标错可回滚
   wechat-cc guard status|enable|disable  Network-guard config + live probe
   wechat-cc hand add|accept|invite|join|list|ping  一个大脑多手: hand invite → hand join <code>
   wechat-cc license status|activate|deactivate  Manage the Pro license

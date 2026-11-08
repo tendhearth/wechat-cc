@@ -10,6 +10,7 @@ import z from 'zod'
 import type { ThreadsStore, TopicEntry, EntryKind } from '../../lib/threads-store'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { tokens } from '../../domain/topic-match'
+import { isRoutineTopicText } from '../../domain/topic-noise'
 
 /** 条目少到这个数以内、又没有提交号 ⇒ 不叫模型。 */
 export const CONSOLIDATE_MIN_LIVE = 3
@@ -136,6 +137,7 @@ export function consolidatePrompt(topic: { title: string; summary: string }, pro
   return `你是 CC,今晚在整理话题「${topic.title}」下记的进展。找出**说的是同一件事、只是一路往前推进**的几条(「美洲板块上线」「非洲板块上线」「全部板块上线」是同一件事;
 「D-U-N-S 已分配」「Mercury 开了两步验证」「8822-B 签好字」是三件不同的事,不要放一组)。拿不准就别放一组。
 只分组,不要改写文字 —— 文字由程序按最新那条留。
+只记主人在这个项目上的决定、结论、进展与承诺。CC 自身的 CLI 自动升级、自检、self deploy、soak、迁移版本号是机器例行流水,不要和项目进展合并。
 
 ## 进展
 ${list}
@@ -201,7 +203,7 @@ export async function consolidateTopics(d: ConsolidateDeps): Promise<Consolidate
   for (const t of list) {
     const all = byThread.get(t.id) ?? []
     if (!(t.lastActive > since || all.some(e => e.updatedTs > since))) continue
-    const live = all.filter(e => e.status === 'live')
+    const live = all.filter(e => e.status === 'live' && !isRoutineTopicText(`${e.line}\n${e.body}`))
     if (live.length === 0) continue
     res.topics++
     const topicWords = topicWordsOf(t)
@@ -236,7 +238,7 @@ export async function consolidateTopics(d: ConsolidateDeps): Promise<Consolidate
       res.stripped++
     }
     // 3) 摘要:代码拼,不让模型写(模型改写过摘要,把「待邮寄」写成了「已寄出」)
-    const summary = buildSummary(t.description, await d.threads.entries(t.id, { live: true }))
+    const summary = buildSummary(t.description, (await d.threads.entries(t.id, { live: true })).filter(e => !isRoutineTopicText(`${e.line}\n${e.body}`)))
     if (summary && summary !== t.summary) await d.threads.update(t.id, { summary })
   }
   if (res.failed === 0) await d.threads.setExtractState(d.chatId, { consolidatedToTs: startedAt })

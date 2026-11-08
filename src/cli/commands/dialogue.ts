@@ -216,6 +216,23 @@ const dialogueUnlockCmd = defineCommand({
   },
 })
 
+const dialogueCleanupTopicNoiseCmd = defineCommand({
+  meta: { name: 'cleanup-topic-noise', description: 'Offline topic maintenance-noise cleanup (dry-run by default; reversible)' },
+  args: {
+    db: { type: 'string', required: true, description: 'Explicit existing SQLite file; no default production database' },
+    'chat-id': { type: 'string', required: true, description: 'Only clean this chat' },
+    'dry-run': { type: 'boolean', default: false, description: 'Read-only preview (also the default)' },
+    apply: { type: 'boolean', default: false, description: 'Mark candidates superseded; requires a new --journal file' },
+    rollback: { type: 'boolean', default: false, description: 'Restore --journal only if no relevant content has changed' },
+    journal: { type: 'string', description: 'Private rollback journal; exclusive create on apply, read on rollback' },
+    json: { type: 'boolean', default: false },
+  },
+  async run({ args }) {
+    const { runTopicNoiseCleanup } = await import('../topic-noise-cleanup')
+    console.log(JSON.stringify(runTopicNoiseCleanup({ db: args.db, chatId: args['chat-id'], apply: args.apply, rollback: args.rollback, dryRun: args['dry-run'], journal: args.journal }), null, 2))
+  },
+})
+
 export const dialogueCmd = defineCommand({
   meta: { name: 'dialogue', description: 'Dialogue page data — backfill + query commands' },
   subCommands: {
@@ -226,5 +243,6 @@ export const dialogueCmd = defineCommand({
     'thread-detail': dialogueThreadDetailCmd,
     lock: dialogueLockCmd,
     unlock: dialogueUnlockCmd,
+    'cleanup-topic-noise': dialogueCleanupTopicNoiseCmd,
   },
 })

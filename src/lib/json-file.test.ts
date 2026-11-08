@@ -2,11 +2,21 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ConcurrentJsonUpdateError, UnreadableJsonError, updateJsonFile, writeFileAtomic, writeJsonAtomic } from './json-file'
+import { ConcurrentJsonUpdateError, UnreadableJsonError, updateJsonFile, writeFileAtomic, writeJsonAtomic, writeJsonExclusive } from './json-file'
 
 const dirs: string[] = []
 const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'json-file-')); dirs.push(d); return d }
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
+
+it('exclusive rollback journal is private and never replaces an existing file', () => {
+  const d = fresh(), p = join(d, 'journal.json')
+  writeJsonExclusive(p, { before: '原文' })
+  expect(readFileSync(p, 'utf8')).toBe('{\n  "before": "原文"\n}\n')
+  if (process.platform !== 'win32') expect(statSync(p).mode & 0o777).toBe(0o600)
+  expect(() => writeJsonExclusive(p, { before: '覆盖' })).toThrow()
+  expect(readFileSync(p, 'utf8')).toContain('原文')
+  expect(readdirSync(d)).toEqual(['journal.json'])
+})
 
 describe('writeJsonAtomic', () => {
   it('writes pretty JSON with a trailing newline and leaves no tmp file behind', () => {

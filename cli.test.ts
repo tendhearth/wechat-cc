@@ -110,6 +110,15 @@ describe('citty migrated commands', () => {
     ])
   })
 
+  it('dialogue cleanup defaults to dry-run and requires explicit DB/chat scope', async () => {
+    const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
+    expect(Object.keys(subs.dialogue?.subCommands ?? {}).sort()).toEqual(['backfill', 'cleanup-topic-noise', 'lock', 'search', 'thread-detail', 'threads', 'timeline', 'unlock'])
+    const preview = await runWithNestedStub(['dialogue', 'cleanup-topic-noise', '--db', '/fixture/test.db', '--chat-id', 'owner'], ['dialogue', 'cleanup-topic-noise'])
+    expect(preview?.args).toMatchObject({ db: '/fixture/test.db', 'chat-id': 'owner', apply: false, rollback: false })
+    const apply = await runWithNestedStub(['dialogue', 'cleanup-topic-noise', '--db', '/fixture/test.db', '--chat-id', 'owner', '--apply', '--journal', '/fixture/undo.json'], ['dialogue', 'cleanup-topic-noise'])
+    expect(apply?.args).toMatchObject({ apply: true, journal: '/fixture/undo.json' })
+  })
+
   // 自维护三件套(spec 2026-09-18-self-maintenance)——子命令面也要钉住:
   // `self deploy` / `selftest workbench|chat` 是手册里写死的入口,改名/漏挂
   // 会让 docs/maintainer/*.md 里的每条命令一起失效。
