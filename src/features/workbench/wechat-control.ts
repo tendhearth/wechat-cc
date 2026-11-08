@@ -23,7 +23,7 @@ export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:str
 type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
 interface Actions {
   projects():ProjectCatalogEntry[]
-  createWechat(input:CreateWechatTask):CreationReceipt
+  createWechat(input:CreateWechatTask):CreationReceipt|Promise<CreationReceipt>
   setWechatWatch(id:string,accountId:string,enabled:boolean):unknown
   deliverWechatArtifact?(input:SendWechatArtifact):Promise<ArtifactDeliveryReceipt>
   detail(id:string):Detail
@@ -35,7 +35,7 @@ interface Actions {
   /** 变更快照(新→旧);没接就没有「改动」这条命令。 */
   reviewList?(id:string):ReviewTurn[]
   /** 独立工作区三个动作(2026-10-08 微信也能做);没接就回「在桌面上做」。 */
-  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}
+  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):Promise<{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}>|{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}
 }
 const UUID='[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
 const requestCommand=new RegExp(`^(权限|问题|允许|拒绝|回答)\\s+(${UUID})(?:\\s+([\\s\\S]+))?$`,'i')
@@ -152,10 +152,10 @@ function statusReply(detail:Detail){
   return lines.join('\n\n')
 }
 /** 「任务 <编号> 提交 / 合回 / 删除工作区」:与桌面、手机同一个 worktreeAction;拒绝原因都说成人话。 */
-function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重开工作区',act:Actions['worktreeAction']){
+async function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重开工作区',act:Actions['worktreeAction']){
   if(!act)return '这里做不了独立工作区的操作，请在桌面工作台上做。'
   try{
-    const r=act(id,verb==='提交'?'commit':verb==='合回'?'merge':verb==='重开工作区'?'reopen':'remove')
+    const r=await act(id,verb==='提交'?'commit':verb==='合回'?'merge':verb==='重开工作区'?'reopen':'remove')
     if(verb==='重开工作区')return `任务 ${id}：已从分支 ${r.branch} 重新打开独立工作区，可以接着做了。\n补充：任务 ${id} 补充 <要求>`
     if(verb==='提交')return r.committed?`任务 ${id}：已提交到分支 ${r.branch}（${(r.sha??'').slice(0,7)}）。\n合回项目：任务 ${id} 合回`:`任务 ${id}：分支 ${r.branch} 上没有新的改动要提交。`
     if(verb==='合回')return r.merged?`任务 ${id}：分支 ${r.branch} 已合进项目的 ${r.into??'当前分支'}。\n不再需要工作区：任务 ${id} 删除工作区`:`任务 ${id}：分支 ${r.branch} 上没有项目里还没有的提交，不用合。没提交的改动要先发「任务 ${id} 提交」。`
@@ -250,7 +250,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         const replies:string[]=[],started:string[]=[]
         for(const providerId of [a,b]){
           // 每家一个确定的请求编号:同一条消息重发 ⇒ 两件都按原样回放,不会多建
-          try{const receipt=opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,`compare:${providerId}`,text,identity),commandHash,projectId,isolation:true,providerId,title:`${singleLine(compareText.split('\n')[0]!,40).replace(/…$/,'')} · @${providerId}`.slice(0,120),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:compareText});started.push(receipt.taskId);replies.push(receipt.reply)}
+          try{const receipt=await opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,`compare:${providerId}`,text,identity),commandHash,projectId,isolation:true,providerId,title:`${singleLine(compareText.split('\n')[0]!,40).replace(/…$/,'')} · @${providerId}`.slice(0,120),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:compareText});started.push(receipt.taskId);replies.push(receipt.reply)}
           catch(error){replies.push(`交给 ${providerId} 的那一份没开始:${failure(error,'')}`)}
         }
         return `同一件事交给了 ${a} 和 ${b},各在自己的独立工作区里做,互不影响。\n\n${replies.join('\n\n')}\n\n两份都做完以后并排看改动:${started.length===2?`「任务 对比 ${started[0]} ${started[1]}」`:'「任务 <任务编号> 改动」'};留下好的那份「合回」,另一份「删除工作区」。`
@@ -281,7 +281,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         if(!got.ok)return ISSUE_FAIL[got.reason]??ISSUE_FAIL.failed!
         taskText=issueTaskText(got.issue)
       }
-      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:taskText}).reply}
+      try{return (await opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:taskText})).reply}
       catch(error){return failure(error,'')}
     }
     if(!command||command==='列表'){

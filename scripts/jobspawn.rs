@@ -50,7 +50,7 @@
 //!   收进错误文案里,平时也得干净。
 //! * **job 设置失败不许让命令跑不起来。** 今天的状态是「静默漏进程树」;失败时
 //!   大声写 stderr 然后**照常执行命令**,只是退回到今天的行为(漏,但有人知道)。
-//!   直接退出会让整个功能不可用,比漏更糟。
+//!   直接退出会让整个功能不可用,比漏更糟。审批前准备显式传 --require-job 时例外:失败直接拒绝执行。
 //!
 //! # 构建
 //!
@@ -71,13 +71,17 @@
 use std::process::Command;
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let require_job = args.first().map(|s| s == "--require-job").unwrap_or(false);
+    if require_job { args.remove(0); }
+    #[cfg(not(windows))]
+    let _ = require_job;
     if args.is_empty() {
         eprintln!("cc-jobspawn: 用法 cc-jobspawn <命令> [参数...]");
         std::process::exit(2);
     }
     #[cfg(windows)]
-    windows_job::enter_kill_on_close_job();
+    windows_job::enter_kill_on_close_job(require_job);
     exec_target(&args);
 }
 
@@ -139,18 +143,22 @@ mod windows_job {
     }
 
     /// 失败一律「大声 + 继续」:退回今天的行为(只杀直接子进程),但有人知道。
-    fn degraded(step: &str, code: u32) {
+    fn degraded(step: &str, code: u32, required: bool) {
+        if required {
+            eprintln!("cc-jobspawn: {step} 失败(GetLastError={code}); --require-job 拒绝执行命令");
+            std::process::exit(125);
+        }
         eprintln!(
             "cc-jobspawn: {step} 失败(GetLastError={code}) —— 进程树清理已退化,\
              这条命令的孙子进程在被杀之后可能残留;命令照常执行。"
         );
     }
 
-    pub fn enter_kill_on_close_job() {
+    pub fn enter_kill_on_close_job(required: bool) {
         unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
-                degraded("CreateJobObjectW", GetLastError());
+                degraded("CreateJobObjectW", GetLastError(), required);
                 return;
             }
             let mut info = ExtendedLimit::default();
@@ -162,12 +170,12 @@ mod windows_job {
                 std::mem::size_of::<ExtendedLimit>() as u32,
             ) == 0
             {
-                degraded("SetInformationJobObject", GetLastError());
+                degraded("SetInformationJobObject", GetLastError(), required);
                 return;
             }
             // 把**自己**放进 job:之后 spawn 的一切都自动是成员,没有竞态。
             if AssignProcessToJobObject(job, GetCurrentProcess()) == 0 {
-                degraded("AssignProcessToJobObject(self)", GetLastError());
+                degraded("AssignProcessToJobObject(self)", GetLastError(), required);
                 return;
             }
             // 故意不 CloseHandle(job):句柄活在本进程里,本进程一死它才关,

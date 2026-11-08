@@ -1,3 +1,4 @@
+import { preparationJobspawnFixture } from '../../test-support/preparation-jobspawn'
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -5,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
 import { baseBranchExists, validBaseBranch, commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, reopenWorktree, repoRootOf, repoRootOrFail, worktreeDirty, NOT_A_REPO } from './worktree-workspaces'
+
+preparationJobspawnFixture()
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -21,16 +24,16 @@ function repo() {
 }
 
 describe('worktree workspaces (2026-10-07)', () => {
-  it('plans, creates idempotently from HEAD (uncommitted changes stay behind), commits, and removes', () => {
+  it('plans, creates idempotently from HEAD (uncommitted changes stay behind), commits, and removes', async () => {
     const { project, state } = repo()
     writeFileSync(join(project, 'a.txt'), 'uncommitted\n')
     const repoRoot = repoRootOf(project)!
     expect(repoRoot).toBe(project)
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'abcd1234' })
     expect(plan).toMatchObject({ branch: 'cc/abcd1234', root: join(state, 'worktrees', PID, 'abcd1234') })
-    const path = ensureWorktree(plan)
+    const path = (await ensureWorktree(plan))
     expect(readFileSync(join(path, 'a.txt'), 'utf8')).toBe('one\n')
-    expect(ensureWorktree(plan)).toBe(path)
+    expect((await ensureWorktree(plan))).toBe(path)
     expect(worktreeDirty(plan.root)).toBe(false)
     expect(commitWorktree(plan.root, 'nothing').committed).toBe(false)
     writeFileSync(join(path, 'new.txt'), 'hi\n')
@@ -43,32 +46,32 @@ describe('worktree workspaces (2026-10-07)', () => {
     expect(existsSync(plan.root)).toBe(false)
     expect(git(project, ['rev-parse', '--verify', 'cc/abcd1234'])).toBe(c.sha)
   })
-  it('a project inside a monorepo runs in the same relative folder of the worktree', () => {
+  it('a project inside a monorepo runs in the same relative folder of the worktree', async () => {
     const { project, state } = repo()
     const sub = join(project, 'pkg', 'app')
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: sub, repoRoot: repoRootOf(sub)!, id: '00ff00ff' })
-    const path = ensureWorktree(plan)
+    const path = (await ensureWorktree(plan))
     expect(path).toBe(realpathSync.native(join(plan.root, 'pkg', 'app')))
     expect(readFileSync(join(path, 'b.txt'), 'utf8')).toBe('b\n')
   })
-  it('refuses an existing branch name, a foreign directory, bad ids, and non-git folders', () => {
+  it('refuses an existing branch name, a foreign directory, bad ids, and non-git folders', async () => {
     const { project, state } = repo()
     execFileSync('git', ['branch', 'cc/deadbeef'], { cwd: project })
     const repoRoot = repoRootOf(project)!
-    expect(() => ensureWorktree(planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'deadbeef' }))).toThrow('worktree_branch_exists')
+    await expect(ensureWorktree(planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'deadbeef' }))).rejects.toThrow('worktree_branch_exists')
     const foreign = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: '11112222' })
     mkdirSync(foreign.root, { recursive: true })
-    expect(() => ensureWorktree(foreign)).toThrow('worktree_conflict')
+    await expect(ensureWorktree(foreign)).rejects.toThrow('worktree_conflict')
     expect(() => planWorktree({ stateDir: state, projectId: '../x', projectPath: project, repoRoot, id: 'abcd1234' })).toThrow('invalid_worktree')
     expect(() => planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: '../../x' })).toThrow('invalid_worktree')
     const plain = realpathSync.native(mkdtempSync(join(tmpdir(), 'cc-plain-'))); dirs.push(plain)
     expect(repoRootOf(plain)).toBeNull()
   })
-  it('merges back only by fast-forward (2026-10-08); everything else is left to the owner', () => {
+  it('merges back only by fast-forward (2026-10-08); everything else is left to the owner', async () => {
     const { project, state } = repo()
     const repoRoot = repoRootOf(project)!
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'aaaa0001' })
-    const path = ensureWorktree(plan)
+    const path = (await ensureWorktree(plan))
     writeFileSync(join(path, 'new.txt'), 'hi\n')
     expect(() => mergeWorktree(repoRoot, plan.root, plan.branch)).toThrow('worktree_uncommitted')
     const c = commitWorktree(plan.root, 'add new')
@@ -84,14 +87,14 @@ describe('worktree workspaces (2026-10-07)', () => {
     expect(mergeWorktree(repoRoot, plan.root, plan.branch)).toEqual({ merged: false, into: 'main' })
     // 项目往前走了 ⇒ 快进不了
     const other = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'aaaa0002' })
-    writeFileSync(join(ensureWorktree(other), 'x.txt'), 'x\n'); commitWorktree(other.root, 'x')
+    writeFileSync(join((await ensureWorktree(other)), 'x.txt'), 'x\n'); commitWorktree(other.root, 'x')
     writeFileSync(join(project, 'main.txt'), 'm\n'); execFileSync('git', ['add', 'main.txt'], { cwd: project }); execFileSync('git', ['commit', '-q', '-m', 'main moved'], { cwd: project })
     expect(() => mergeWorktree(repoRoot, other.root, other.branch)).toThrow('worktree_not_ff')
     // 项目不在分支上 ⇒ 不动
     execFileSync('git', ['checkout', '-q', '--detach'], { cwd: project })
     expect(() => mergeWorktree(repoRoot, other.root, other.branch)).toThrow('project_detached')
   })
-  it('a new worktree brings the ignored files .worktreeinclude lists (2026-10-08); tracked / unlisted / symlinked ones stay behind', () => {
+  it('a new worktree brings the ignored files .worktreeinclude lists (2026-10-08); tracked / unlisted / symlinked ones stay behind', async () => {
     const { project, state } = repo()
     const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
     writeFileSync(join(project, '.gitignore'), '.env\n.env.*\nsecrets/\nbuild/\n')
@@ -103,7 +106,7 @@ describe('worktree workspaces (2026-10-07)', () => {
     writeFileSync(join(project, 'not-ignored.txt'), 'untracked but not ignored\n')
     const repoRoot = repoRootOf(project)!
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'bbbb0001' })
-    const path = ensureWorktree(plan)
+    const path = (await ensureWorktree(plan))
     expect(readFileSync(join(path, '.env'), 'utf8')).toBe('KEY=1\n')
     expect(readFileSync(join(path, '.env.local'), 'utf8')).toBe('L=1\n')
     expect(readFileSync(join(path, 'secrets', 'cert.pem'), 'utf8')).toBe('pem\n')
@@ -116,9 +119,9 @@ describe('worktree workspaces (2026-10-07)', () => {
     // 没有 .worktreeinclude ⇒ 什么都不带
     const bare = repo()
     writeFileSync(join(bare.project, '.gitignore'), '.env\n'); writeFileSync(join(bare.project, '.env'), 'K\n')
-    expect(copyIncludedFiles(bare.project, bare.state)).toBe(0)
+    expect((await copyIncludedFiles(bare.project, bare.state))).toBe(0)
   })
-  it('a destination parent that is a symlink out of the worktree is never written through (2026-10-08 review)', () => {
+  it('a destination parent that is a symlink out of the worktree is never written through (2026-10-08 review)', async () => {
     const { project, state } = repo()
     const outside = realpathSync.native(mkdtempSync(join(tmpdir(), 'cc-outside-'))); dirs.push(outside)
     const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
@@ -129,58 +132,58 @@ describe('worktree workspaces (2026-10-07)', () => {
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'cccc0001' })
     execFileSync('git', ['worktree', 'add', '-q', '-b', plan.branch, plan.root, 'HEAD'], { cwd: project })
     try { symlinkSync(outside, join(plan.root, 'cfg')) } catch { return } // Windows 没权限建链接 ⇒ 跳过
-    expect(copyIncludedFiles(repoRoot, plan.root)).toBe(1)
+    expect((await copyIncludedFiles(repoRoot, plan.root))).toBe(1)
     expect(existsSync(join(plan.root, 'top.secret'))).toBe(true)
     expect(existsSync(join(outside, 'a.secret'))).toBe(false)
   })
-  it('reopens a removed worktree from its kept branch at the same place (2026-10-08)', () => {
+  it('reopens a removed worktree from its kept branch at the same place (2026-10-08)', async () => {
     const { project, state } = repo()
     const repoRoot = repoRootOf(project)!
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'dddd0001' })
-    const path = ensureWorktree(plan)
+    const path = (await ensureWorktree(plan))
     writeFileSync(join(path, 'work.txt'), 'w\n'); commitWorktree(plan.root, 'work')
     removeWorktree(repoRoot, plan.root)
-    reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath)
+    ;(await reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath))
     expect(readFileSync(join(plan.root, 'work.txt'), 'utf8')).toBe('w\n')
     expect(git(plan.root, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe(plan.branch)
-    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath)).toThrow('worktree_conflict')
+    await expect(reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath)).rejects.toThrow('worktree_conflict')
     removeWorktree(repoRoot, plan.root); execFileSync('git', ['branch', '-D', plan.branch], { cwd: project, stdio: 'pipe' })
-    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath)).toThrow('worktree_branch_missing')
+    await expect(reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath)).rejects.toThrow('worktree_branch_missing')
   })
-  it('starts from a named local branch when asked (2026-10-08); bad names never reach git', () => {
+  it('starts from a named local branch when asked (2026-10-08); bad names never reach git', async () => {
     const { project, state } = repo()
     const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
     g('checkout', '-q', '-b', 'feature/login'); writeFileSync(join(project, 'login.txt'), 'l\n'); g('add', 'login.txt'); g('commit', '-q', '-m', 'login'); g('checkout', '-q', 'main')
     const repoRoot = repoRootOf(project)!
     expect(baseBranchExists(repoRoot, 'feature/login')).toBe(true)
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'eeee0001', base: 'feature/login' })
-    const path = ensureWorktree(plan)
+    const path = (await ensureWorktree(plan))
     expect(readFileSync(join(path, 'login.txt'), 'utf8')).toBe('l\n')
     expect(git(project, ['rev-parse', 'HEAD'])).not.toBe(git(path, ['rev-parse', 'HEAD']))
-    expect(() => ensureWorktree(planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'eeee0002', base: 'nope' }))).toThrow('worktree_base_missing')
+    await expect(ensureWorktree(planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'eeee0002', base: 'nope' }))).rejects.toThrow('worktree_base_missing')
     for (const bad of ['-x', '../x', 'a..b', '/abs', 'a/', 'x.lock', 'a b', 'a//b', '', 'x~1', 'a@{0}'])
       expect(validBaseBranch(bad), bad).toBe(false)
     expect(() => planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'eeee0003', base: '--upload-pack=x' })).toThrow('invalid_worktree')
   })
-  it('a project folder missing on the branch leaves nothing behind, so a retry is not stuck (2026-10-10)', () => {
+  it('a project folder missing on the branch leaves nothing behind, so a retry is not stuck (2026-10-10)', async () => {
     const { project, state } = repo()
     const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
     g('checkout', '-q', '-b', 'no-app'); g('rm', '-rq', 'pkg'); g('commit', '-q', '-m', 'drop app'); g('checkout', '-q', 'main')
     const sub = join(project, 'pkg', 'app'), repoRoot = repoRootOf(sub)!
     // 新建:基线分支上没有这个子项目 ⇒ 不留工作区目录、不留分支
     const fresh = planWorktree({ stateDir: state, projectId: PID, projectPath: sub, repoRoot, id: 'ffff0001', base: 'no-app' })
-    expect(() => ensureWorktree(fresh)).toThrow('worktree_project_missing')
+    await expect(ensureWorktree(fresh)).rejects.toThrow('worktree_project_missing')
     expect(existsSync(fresh.root)).toBe(false)
     expect(() => git(project, ['rev-parse', '--verify', '--quiet', `refs/heads/${fresh.branch}`])).toThrow()
     expect(git(project, ['worktree', 'list', '--porcelain'])).not.toContain(fresh.root)
     // 重新打开:分支上把子项目删了 ⇒ 撤回检出、分支照旧保留;再试一次还是同一个错,不会变成 worktree_conflict
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: sub, repoRoot, id: 'ffff0002' })
-    const path = ensureWorktree(plan)
+    const path = (await ensureWorktree(plan))
     execFileSync('git', ['rm', '-rq', '.'], { cwd: path, stdio: 'pipe' }); commitWorktree(plan.root, 'drop')
     removeWorktree(repoRoot, plan.root)
-    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch, path)).toThrow('worktree_project_missing')
+    await expect(reopenWorktree(repoRoot, plan.root, plan.branch, path)).rejects.toThrow('worktree_project_missing')
     expect(existsSync(plan.root)).toBe(false)
-    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch, path)).toThrow('worktree_project_missing')
+    await expect(reopenWorktree(repoRoot, plan.root, plan.branch, path)).rejects.toThrow('worktree_project_missing')
     expect(git(project, ['rev-parse', '--verify', plan.branch])).toMatch(/^[0-9a-f]{40}$/)
   })
   it('merge hint quotes paths with spaces', () => {
@@ -235,34 +238,34 @@ describe('fresh task starts and dependency clones',()=>{
     execFileSync('git',['commit','-qm','remote moved'],{cwd:remote.project})
     return {...local,remote:remote.project,initial,latest:git(remote.project,['rev-parse','HEAD'])}
   }
-  it.each(['main','origin/main'])('fetches before starting from %s, freezes the newest SHA, and never moves the source branch',base=>{
+  it.each(['main','origin/main'])('fetches before starting from %s, freezes the newest SHA, and never moves the source branch',async base=>{
     const r=remoteRepo()
     const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab001',base})
-    const path=ensureWorktree(plan)
+    const path=(await ensureWorktree(plan))
     expect(git(path,['rev-parse','HEAD'])).toBe(r.latest)
     expect(git(r.project,['rev-parse','main'])).toBe(r.initial)
     expect(plan.start).toMatchObject({base,sha:r.latest,notices:[]})
     expect(readFileSync(join(path,'remote.txt'),'utf8')).toBe('new remote code')
     writeFileSync(join(path,'task.txt'),'task commit');commitWorktree(path,'task moved')
     const retry=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab001',base})
-    ensureWorktree(retry)
+    ;(await ensureWorktree(retry))
     expect(retry.start).toEqual(plan.start)
     expect(git(path,['rev-parse','HEAD'])).not.toBe(r.latest)
   })
-  it('failed fetch is non-blocking and the task keeps a safe notice',()=>{
+  it('failed fetch is non-blocking and the task keeps a safe notice',async ()=>{
     const r=remoteRepo()
     execFileSync('git',['remote','set-url','origin',join(r.state,'unavailable-remote')],{cwd:r.project})
     const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab002',base:'main'})
-    expect(git(ensureWorktree(plan),['rev-parse','HEAD'])).toBe(r.initial)
+    expect(git((await ensureWorktree(plan)),['rev-parse','HEAD'])).toBe(r.initial)
     expect(plan.start?.notices).toEqual(['获取远端更新失败或超时，使用本机已有提交；起点可能不是最新版本。'])
   })
-  it('a diverged local branch keeps its local commits',()=>{
+  it('a diverged local branch keeps its local commits',async ()=>{
     const r=remoteRepo()
     writeFileSync(join(r.project,'local.txt'),'local')
     execFileSync('git',['add','local.txt'],{cwd:r.project});execFileSync('git',['commit','-qm','local commit'],{cwd:r.project})
     const local=git(r.project,['rev-parse','HEAD'])
     const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab003',base:'main'})
-    expect(git(ensureWorktree(plan),['rev-parse','HEAD'])).toBe(local)
+    expect(git((await ensureWorktree(plan)),['rev-parse','HEAD'])).toBe(local)
   })
   function dependencies(){
     const r=repo()
@@ -281,7 +284,7 @@ describe('fresh task starts and dependency clones',()=>{
     symlinkSync(join(r.project,'pkg','app'),join(modules,'workspace'),'dir')
     return {...r,modules,pkg,g}
   }
-  it('clones a complete Bun dependency tree beyond include limits, relocates links and isolates all writes',()=>{
+  it('clones a complete Bun dependency tree beyond include limits, relocates links and isolates all writes',async ()=>{
     const r=dependencies()
     mkdirSync(join(r.modules,'.cache/cc-tasks/other'),{recursive:true})
     writeFileSync(join(r.modules,'.cache/cc-tasks/other/private.txt'),'other task scratch')
@@ -290,7 +293,7 @@ describe('fresh task starts and dependency clones',()=>{
     symlinkSync(join(r.pkg),join(r.project,'pkg/app/node_modules/tool'),'dir')
     r.g('add','pkg/app/package.json');r.g('commit','-qm','child workspace')
     const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab004'})
-    const path=ensureWorktree(plan)
+    const path=(await ensureWorktree(plan))
     const cli=join(path,'node_modules/.bin/tool')
     expect(readFileSync(cli,'utf8')).toBe('original')
     expect(readFileSync(join(path,'pkg/app/node_modules/tool/cli.js'),'utf8')).toBe('original')
@@ -301,22 +304,22 @@ describe('fresh task starts and dependency clones',()=>{
     writeFileSync(cli,'task edit')
     expect(readFileSync(join(r.pkg,'cli.js'),'utf8')).toBe('original')
     expect(worktreeDirty(path)).toBe(false)
-    removeWorktree(r.project,path);reopenWorktree(r.project,path,plan.branch,path)
+    removeWorktree(r.project,path);(await reopenWorktree(r.project,path,plan.branch,path))
     expect(readFileSync(cli,'utf8')).toBe('original')
   })
-  it('rejects source-external links atomically and reports missing dependencies instead of sharing them',()=>{
+  it('rejects source-external links atomically and reports missing dependencies instead of sharing them',async ()=>{
     const r=dependencies()
     symlinkSync(r.state,join(r.modules,'external'),'dir')
     const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab005'})
-    const path=ensureWorktree(plan)
+    const path=(await ensureWorktree(plan))
     expect(existsSync(join(path,'node_modules'))).toBe(false)
     expect(plan.start?.notices.join('')).toContain('未能完整复用项目依赖')
   })
-  it('does not reuse dependencies when source and selected branch lockfiles differ',()=>{
+  it('does not reuse dependencies when source and selected branch lockfiles differ',async ()=>{
     const r=dependencies()
     writeFileSync(join(r.project,'bun.lock'),'not committed')
     const plan=planWorktree({stateDir:r.state,projectId:PID,projectPath:r.project,repoRoot:r.project,id:'aaaab006'})
-    const path=ensureWorktree(plan)
+    const path=(await ensureWorktree(plan))
     expect(existsSync(join(path,'node_modules'))).toBe(false)
     expect(plan.start?.notices.join('')).toContain('未能完整复用项目依赖')
   })

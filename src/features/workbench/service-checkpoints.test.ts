@@ -33,12 +33,12 @@ beforeEach(()=>{
   service=makeWorkbenchService({checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000,store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t'})
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
-const create=(isolation?:'worktree')=>service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,...(isolation?{isolation}:{})}} as EntryInput,context).receipt.taskId
+const create=async (isolation?:'worktree')=>(await service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,...(isolation?{isolation}:{})}} as EntryInput,context)).receipt.taskId
 const settle=(id:string)=>expect.poll(()=>service.detail(id).task.status,{timeout:20_000}).toBe('completed')
 const reviews=(id:string)=>service.detail(id).artifacts.filter(a=>a.name.startsWith('代码变更')).map(a=>parseGitReviewSnapshot(readArtifactSnapshot(store.artifact(id,a.id).storagePath,stateDir,a.sha256))!)
 
 it('worktree task: the round review carries before/after checkpoints of the whole worktree root',async()=>{
-  const id=create('worktree');await settle(id)
+  const id=await create('worktree');await settle(id)
   const wt=store.worktrees.get(id)!,[review]=reviews(id)
   expect(review?.files.map(f=>f.path)).toEqual(['out.txt'])
   const {checkpointBefore:before,checkpointAfter:after}=review!
@@ -55,19 +55,19 @@ it('worktree task: the round review carries before/after checkpoints of the whol
 
 it('worktree task: a binary-only round is still saved (tree changed)',async()=>{
   write=path=>writeFileSync(join(path,'pic.png'),Buffer.from([0,1,2,3]))
-  const id=create('worktree');await settle(id)
+  const id=await create('worktree');await settle(id)
   const [review]=reviews(id)
   expect(review?.files).toEqual([expect.objectContaining({path:'pic.png',kind:'not_reviewed'})])
   expect(review?.checkpointAfter).toMatch(/^[0-9a-f]{40}$/)
 })
 
 it('plain project task: no checkpoints, no refs, nothing new saved for binary-only rounds',async()=>{
-  const id=create();await settle(id)
+  const id=await create();await settle(id)
   const [review]=reviews(id)
   expect(review?.files.map(f=>f.path)).toEqual(['out.txt'])
   expect('checkpointBefore' in review!).toBe(false);expect('checkpointAfter' in review!).toBe(false)
   expect(g(repo,'for-each-ref','refs/tendhearth/')).toBe('')
   write=path=>writeFileSync(join(path,'pic2.png'),Buffer.from([0,9]))
-  const second=create();await settle(second)
+  const second=await create();await settle(second)
   expect(reviews(second)).toEqual([])
 })

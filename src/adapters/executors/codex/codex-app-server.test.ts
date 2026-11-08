@@ -10,7 +10,10 @@ import { TIER_PROFILES } from '../../../domain/user-tier'
 import { createWorkbenchCodexProvider } from './codex-app-server'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))
-vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
+vi.mock('node:child_process', async importOriginal => {
+  const actual=await importOriginal<typeof import('node:child_process')>()
+  return {...actual,spawn:(command:string,...args:unknown[])=>command==='git'?(actual.spawn as Function)(command,...args):mocks.spawn(command,...args)}
+})
 
 type Rpc = { id?: string | number; method?: string; params?: any; result?: any; error?: any }
 class FakeProcess extends EventEmitter {
@@ -1382,8 +1385,8 @@ it.each([false,true])('pins task temp/cache in child and shell environments and 
     sessions.push(session)
     const request=children.at(-1)!.sent.find(m=>m.method===(resume?'thread/resume':'thread/start'))!
     const env=mocks.spawn.mock.calls.at(-1)![2].env
-    const temp=join(path,'node_modules/.cache/cc-tasks/abcd1234/tmp')
-    expect(env).toMatchObject({TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'node_modules/.cache/cc-tasks/abcd1234/cache')})
+    const temp=join(path,'.cc-tasks/abcd1234/tmp')
+    expect(env).toMatchObject({TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')})
     expect(request.params.config.sandbox_workspace_write).toEqual({writable_roots:[temp],network_access:false,exclude_tmpdir_env_var:true,exclude_slash_tmp:true})
     expect(request.params.config.shell_environment_policy).toMatchObject({set:{TMPDIR:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:env.BUN_INSTALL_CACHE_DIR},include_only:expect.arrayContaining(['BUN_TMPDIR','BUN_INSTALL_CACHE_DIR'])})
     await session.close()

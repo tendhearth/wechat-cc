@@ -39,9 +39,9 @@ import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../a
 import { findOnPath } from '../../lib/util'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
-export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string): Options {
+export async function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string, preparationSignal?: AbortSignal): Promise<Options> {
   const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
-  const taskEnv = taskId ? taskEnvironment(base.cwd!, taskId) : {}
+  const taskEnv = taskId ? await taskEnvironment(base.cwd!, taskId,{signal:preparationSignal}) : {}
   return {
     cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,
@@ -196,7 +196,7 @@ export function wireWorkbench(opts: {
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)
           const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers))
-          return workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId)
+          return workbenchClaudeOptions(base,instructions ?? '',permit,native,context?.workbenchTaskId,context?.preparationSignal)
         },
       }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
     },

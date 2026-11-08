@@ -61,7 +61,7 @@ const settle=(id:string,status='completed')=>expect.poll(()=>store.get(id).statu
 async function start(first:(path:string)=>void,plain=false){
   const isolation=plain?undefined:'worktree' as const
   turns.push(p=>first(p))
-  const id=service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,...(isolation?{isolation}:{})}} as EntryInput,context).receipt.taskId
+  const id=(await service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,...(isolation?{isolation}:{})}} as EntryInput,context)).receipt.taskId
   current=service.detail(id).task.path
   await settle(id)
   return id
@@ -259,7 +259,7 @@ describe('执行段失败与开机对账', () => {
     expect((service.detail(id) as {rewind?:{blocked:{reason:string}}}).rewind?.blocked.reason).toContain(done.backupRef)
     // 持久的闸:派发 / 工作区动作 / 回退一律拒绝,直到主人拍板
     expect(()=>service.continueTask(id,'接着做',{inputRequestId:randomUUID()})).toThrow('rewind_needs_owner')
-    expect(()=>service.worktreeAction(id,'commit')).toThrow('rewind_needs_owner')
+    await expect(service.worktreeAction(id,'commit')).rejects.toThrow('rewind_needs_owner')
     await expect(service.rewindPreview(id,{artifactId:r1!.artifactId,to:'start'})).rejects.toThrow('rewind_needs_owner')
     await service.rewindResolve(id,'keep')
     expect(service.detail(id).task.error).toBeNull()
@@ -381,7 +381,7 @@ describe('自己那条安静的保留会话', () => {
     const r=createProviderRegistry()
     r.register('claude',{async spawn(){return session}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
     service=makeWorkbenchService({store,registry:r,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t',retainedIdleCloseMs:()=>9e9,checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000})
-    const id=service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,isolation:'worktree'}} as EntryInput,context).receipt.taskId
+    const id=(await service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,isolation:'worktree'}} as EntryInput,context)).receipt.taskId
     current=service.detail(id).task.path
     await expect.poll(()=>service.detail(id).task.phase,{timeout:20_000}).toBe('replied')
     await expect.poll(()=>rounds(id).length,{timeout:20_000}).toBe(1)
@@ -434,7 +434,7 @@ describe('打回时同时记成经验:记到哪个项目', () => {
     expect(view.lesson).toEqual({ok:true})
     expect(added).toEqual([[project,'改完跑 bun run test']])
     await settle(id)
-    const managed=service.createEntry({requestId:randomUUID(),text:'整理一下',target:{kind:'managed'}} as EntryInput,context).receipt.taskId
+    const managed=(await service.createEntry({requestId:randomUUID(),text:'整理一下',target:{kind:'managed'}} as EntryInput,context)).receipt.taskId
     await settle(managed)
     saveArtifactSnapshot(store,managed,{name:'代码变更-m.json',mime:GIT_REVIEW_MIME,bytes:serializeGitReview({version:1,scope:'working-tree-before-after',startedAt:1,finishedAt:2,headBefore:null,headAfter:null,status:'complete',preexistingPaths:[],notes:[],files:[{path:'x.md',preexisting:false,kind:'modified',beforeSha256:'a'.repeat(64),afterSha256:'b'.repeat(64),diff:'@@ -1 +1 @@\n-a\n+b'}]})},stateDir)
     const aid=store.artifacts(managed).find(a=>a.name==='代码变更-m.json')!.id

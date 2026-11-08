@@ -240,7 +240,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       // Startup has no turn. Keep MCPs disabled while reading the native layers,
       // without overwriting the user's web-search mode before config/read.
       // 对话侧启动参数里什么都不带:工具与策略都在线程配置里(令牌不进 argv)。
-      const taskEnv = !chat && context.workbenchTaskId ? taskEnvironment(project.path, context.workbenchTaskId) : {}
+      const taskEnv = !chat && context.workbenchTaskId ? await taskEnvironment(project.path, context.workbenchTaskId,{signal:context.preparationSignal}) : {}
       const taskConfig = context.workbenchTaskId && !chat ? {
         sandbox_workspace_write: { ...discovery!.config.sandbox_workspace_write, writable_roots: [taskEnv.TMPDIR!] },
         shell_environment_policy: { ...discovery!.config.shell_environment_policy, set: taskEnv, include_only: [...discovery!.config.shell_environment_policy.include_only, ...Object.keys(taskEnv)] },

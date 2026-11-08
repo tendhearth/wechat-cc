@@ -24,7 +24,7 @@ const PID = 'p-0123456789abcdef0123'
 const BASE = { PATH: '/usr/bin:/bin', HOME: tmpdir() }
 
 /** 真 git 仓库 + 真工作区 + 真 store;脚本用 /bin/sh 真跑。log = 脚本往外写的记号文件(不弄脏工作区)。 */
-function setup(scripts: Record<string, string> | null, deps: Partial<ServiceDeps> = {}, opts: ScriptsOptions = {}) {
+async function setup(scripts: Record<string, string> | null, deps: Partial<ServiceDeps> = {}, opts: ScriptsOptions = {}) {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'wb-scripts-domain-'))); dirs.push(root)
   const project = join(root, 'repo'), stateDir = join(root, 'state'), log = join(root, 'log')
   mkdirSync(project); mkdirSync(stateDir); mkdirSync(log)
@@ -42,7 +42,7 @@ function setup(scripts: Record<string, string> | null, deps: Partial<ServiceDeps
   stops.push(() => scriptsDomain.shutdown())
   const worktree = makeWorktreeDomain(ctx, { scripts: scriptsDomain, view: { isReplied: () => true } })
   const plan = planWorktree({ stateDir, projectId: PID, projectPath: project, repoRoot: project, id: 'abcd1234' })
-  const path = ensureWorktree(plan)
+  const path = (await ensureWorktree(plan))
   const task = store.create({ title: '事', path, providerId: 'claude', ownerChatId: 'owner', registerProject: false })
   store.worktrees.record({ taskId: task.id, projectPath: project, repoRoot: project, root: plan.root, branch: plan.branch, scriptSha: pinnedScriptSha(plan.root) })
   const hash = () => { const p = readPinnedScripts(project, store.worktrees.get(task.id)!.scriptSha!); return p.kind === 'ok' ? p.hash : '' }
@@ -57,7 +57,7 @@ const until = (fn: () => unknown, timeout = 8000) => expect.poll(fn, { timeout, 
 
 describe.skipIf(process.platform === 'win32')('workbench scripts domain (real git + /bin/sh)', () => {
   it('busy / serving(回退用,2026-10-21):setup 在跑 ⇒ busy;只有 run 在跑 ⇒ 不 busy、serving', async () => {
-    const t = setup({ setup: 'sleep 30', run: 'sleep 30' })
+    const t = await setup({ setup: 'sleep 30', run: 'sleep 30' })
     t.approve()
     expect(t.scripts.busy(t.task.id)).toBe(false)
     t.scripts.afterCheckout(t.task.id)
@@ -65,7 +65,7 @@ describe.skipIf(process.platform === 'win32')('workbench scripts domain (real gi
     expect(t.scripts.serving(t.task.id)).toBe(false)
   })
   it('not approved ⇒ afterCheckout only says 待确认; run refuses with 428 code; nothing runs', async () => {
-    const t = setup({ setup: 'echo s > $LOG/setup', run: 'echo r > $LOG/run' })
+    const t = await setup({ setup: 'echo s > $LOG/setup', run: 'echo r > $LOG/run' })
     t.scripts.afterCheckout(t.task.id)
     expect(t.notes().some(n => n.includes('待确认'))).toBe(true)
     await expect(t.scripts.scriptAction(t.task.id, 'run')).rejects.toThrow('script_approval_required')
@@ -77,7 +77,7 @@ describe.skipIf(process.platform === 'win32')('workbench scripts domain (real gi
   it('approve: wrong hash ⇒ script_config_changed; right hash ⇒ pending setup starts, holds busy, marks setup done', async () => {
     const releases: string[] = []
     const holdBusy = vi.fn((label: string) => () => { releases.push(label) })
-    const t = setup({ setup: 'echo "port=$TENDHEARTH_PORT" > $LOG/setup' }, { holdBusy })
+    const t = await setup({ setup: 'echo "port=$TENDHEARTH_PORT" > $LOG/setup' }, { holdBusy })
     expect(() => t.scripts.approveScripts(t.task.id, 'b'.repeat(64))).toThrow('script_config_changed')
     expect(t.store.scriptApprovals.has(repoKeyOf(t.project), t.hash())).toBe(false)
     t.scripts.approveScripts(t.task.id, t.hash())
@@ -91,7 +91,7 @@ describe.skipIf(process.platform === 'win32')('workbench scripts domain (real gi
   })
 
   it('afterCheckout with an approved config runs setup right away; a failure shows as failed and `run` retries setup first', async () => {
-    const t = setup({ setup: 'if [ -f $LOG/ok ]; then echo fine; else echo nope; exit 4; fi', run: 'echo r > $LOG/run; sleep 30' })
+    const t = await setup({ setup: 'if [ -f $LOG/ok ]; then echo fine; else echo nope; exit 4; fi', run: 'echo r > $LOG/run; sleep 30' })
     t.approve()
     t.scripts.afterCheckout(t.task.id)
     await until(() => t.scripts.status(t.task.id)).toMatchObject({ setup: 'failed' })
@@ -105,7 +105,7 @@ describe.skipIf(process.platform === 'win32')('workbench scripts domain (real gi
 
   it('run: one per worktree, no holdBusy, output tail is redacted, stop ⇒ cancelled; the group is recorded then cleared', async () => {
     const holdBusy = vi.fn(() => () => {})
-    const t = setup({ run: 'echo "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx"; echo ready > $LOG/run; sleep 30' }, { holdBusy })
+    const t = await setup({ run: 'echo "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx"; echo ready > $LOG/run; sleep 30' }, { holdBusy })
     t.approve()
     const result = await t.scripts.scriptAction(t.task.id, 'run')
     expect(result).toMatchObject({ branch: 'cc/abcd1234', port: 47100, scripts: { run: 'running', setup: 'none' } })
@@ -122,7 +122,7 @@ describe.skipIf(process.platform === 'win32')('workbench scripts domain (real gi
   }, 15_000)
 
   it('no run script ⇒ no_scripts; archived task ⇒ workbench_archived; not a worktree ⇒ not_worktree', async () => {
-    const t = setup({ setup: 'true' })
+    const t = await setup({ setup: 'true' })
     t.approve()
     await expect(t.scripts.scriptAction(t.task.id, 'run')).rejects.toThrow('no_scripts')
     t.db.query("UPDATE workbench_tasks SET status='completed' WHERE id=?").run(t.task.id)
@@ -133,19 +133,19 @@ describe.skipIf(process.platform === 'win32')('workbench scripts domain (real gi
     expect(t.scripts.status(other.id)).toBeNull()
   })
 
-  it('remove without archive / running scripts stays synchronous (unchanged)', () => {
-    const t = setup(null)
-    expect(t.worktree.worktreeAction(t.task.id, 'remove')).toEqual({ branch: 'cc/abcd1234', removed: true })
+  it('remove without archive / running scripts stays synchronous (unchanged)', async () => {
+    const t = await setup(null)
+    expect((await t.worktree.worktreeAction(t.task.id, 'remove'))).toEqual({ branch: 'cc/abcd1234', removed: true })
     expect(existsSync(t.plan.root)).toBe(false)
   })
 
   it('remove with an approved archive: stops run, runs archive (holds busy), then removes; reports removing', async () => {
     const holdBusy = vi.fn((_label: string) => () => {})
-    const t = setup({ run: 'echo up > $LOG/run; sleep 30', archive: 'echo "archived $TENDHEARTH_BRANCH" > $LOG/archive' }, { holdBusy })
+    const t = await setup({ run: 'echo up > $LOG/run; sleep 30', archive: 'echo "archived $TENDHEARTH_BRANCH" > $LOG/archive' }, { holdBusy })
     t.approve()
     await t.scripts.scriptAction(t.task.id, 'run')
     await until(() => t.read('run').trim()).toBe('up')
-    expect(t.worktree.worktreeAction(t.task.id, 'remove')).toEqual({ branch: 'cc/abcd1234', removing: true })
+    expect((await t.worktree.worktreeAction(t.task.id, 'remove'))).toEqual({ branch: 'cc/abcd1234', removing: true })
     expect(t.scripts.status(t.task.id)).toMatchObject({ archiving: true })
     await until(() => t.store.worktrees.get(t.task.id)?.removedAt).not.toBeNull()
     expect(t.read('archive').trim()).toBe('archived cc/abcd1234')
@@ -156,38 +156,38 @@ describe.skipIf(process.platform === 'win32')('workbench scripts domain (real gi
   }, 15_000)
 
   it('archive failure still removes, with a note; unapproved archive is skipped (sync) with a note', async () => {
-    const t = setup({ archive: 'echo bad; exit 2' })
+    const t = await setup({ archive: 'echo bad; exit 2' })
     t.approve()
-    expect(t.worktree.worktreeAction(t.task.id, 'remove')).toMatchObject({ removing: true })
+    expect((await t.worktree.worktreeAction(t.task.id, 'remove'))).toMatchObject({ removing: true })
     await until(() => t.notes().some(n => n.includes('没跑成功'))).toBe(true)
     expect(existsSync(t.plan.root)).toBe(false)
 
-    const u = setup({ archive: 'echo x > $LOG/archive' })
-    expect(u.worktree.worktreeAction(u.task.id, 'remove')).toEqual({ branch: 'cc/abcd1234', removed: true })
+    const u = await setup({ archive: 'echo x > $LOG/archive' })
+    expect((await u.worktree.worktreeAction(u.task.id, 'remove'))).toEqual({ branch: 'cc/abcd1234', removed: true })
     expect(u.read('archive')).toBe('')
     expect(u.notes().some(n => n.includes('还没确认'))).toBe(true)
   }, 15_000)
 
-  it('dirty worktree is refused before any archive runs', () => {
-    const t = setup({ archive: 'echo x > $LOG/archive' })
+  it('dirty worktree is refused before any archive runs', async () => {
+    const t = await setup({ archive: 'echo x > $LOG/archive' })
     t.approve()
     writeFileSync(join(t.plan.root, 'new.txt'), 'x')
-    expect(() => t.worktree.worktreeAction(t.task.id, 'remove')).toThrow('worktree_dirty')
+    await expect(t.worktree.worktreeAction(t.task.id, 'remove')).rejects.toThrow('worktree_dirty')
     expect(t.scripts.status(t.task.id)).toMatchObject({ archiving: false })
   })
 
   it('reopen clears setup_at and runs setup again', async () => {
-    const t = setup({ setup: 'echo s >> $LOG/setup' })
+    const t = await setup({ setup: 'echo s >> $LOG/setup' })
     t.approve()
     t.scripts.afterCheckout(t.task.id)
     await until(() => t.store.worktrees.get(t.task.id)?.setupAt).not.toBeNull()
-    t.worktree.worktreeAction(t.task.id, 'remove')
-    t.worktree.worktreeAction(t.task.id, 'reopen')
+    ;(await t.worktree.worktreeAction(t.task.id, 'remove'))
+    ;(await t.worktree.worktreeAction(t.task.id, 'reopen'))
     await until(() => t.read('setup').split('\n').filter(Boolean).length).toBe(2)
   }, 15_000)
 
   it('shutdown stops every script and refuses new ones', async () => {
-    const t = setup({ run: 'echo up > $LOG/run; sleep 30' })
+    const t = await setup({ run: 'echo up > $LOG/run; sleep 30' })
     t.approve()
     await t.scripts.scriptAction(t.task.id, 'run')
     await t.scripts.shutdown()

@@ -66,7 +66,7 @@ export interface MattersServiceDeps {
     /** 独立工作区:提交到分支 / 删除工作区(2026-10-07,手机也能做)。没接 ⇒ 手机没有这两个按钮。 */
     /** 手机「另做一份」要源项目编号(只给编号,不给路径);没接 ⇒ 手机没有这个按钮。 */
     projects?():ReadonlyArray<{id:string;path:string}>
-    worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}
+    worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}|Promise<{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}>
     /** 工作区脚本(2026-10-20):运行 / 停下。批准只在电脑上(没批 ⇒ script_approval_required)。没接 ⇒ 手机没有这个按钮。 */
     scriptAction?(id:string,action:'run'|'stop'):Promise<{branch:string;scripts:unknown;port:number|null}>
     resolveAnswer?(id:string,requestId:string,answers:unknown):void
@@ -126,7 +126,7 @@ export interface MattersService {
   /** 手机上停下正在跑的这一轮(2026-10-06)。runId 必须是手机看到的那一轮;已经换了一轮 / 没在跑 ⇒ input_stale。 */
   stop(id:string,runId:string):Promise<void>
   /** 独立工作区的提交 / 删除(2026-10-07):手机看不到合并命令(在电脑上合并),只回分支和结果。 */
-  worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;reopened?:boolean}
+  worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;reopened?:boolean}|Promise<{branch:string;committed?:boolean;removed?:boolean;removing?:boolean;merged?:boolean;reopened?:boolean}>
   /** 工作区脚本的运行 / 停下(2026-10-20):回分支 + 状态 + 端口,不带脚本原文、不带路径。 */
   worktreeScript(id:string,action:'run'|'stop'):Promise<{branch:string}&Omit<PhoneScripts,'lastLines'>>
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
@@ -428,10 +428,10 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(!deps.workbench?.resolvePermission)throw Error('workbench_not_wired')
       deps.workbench.resolvePermission(id,requestId,decision)
     },
-    worktree(id,action){
+    async worktree(id,action){
       require(id)
       if(!deps.workbench?.worktreeAction)throw Error('workbench_not_wired')
-      const r=deps.workbench.worktreeAction(id,action)
+      const r=await deps.workbench.worktreeAction(id,action)
       return {branch:r.branch,...(r.committed!==undefined?{committed:r.committed}:{}),...(r.removed?{removed:true}:{}),...(r.removing?{removing:true}:{}),...(r.merged!==undefined?{merged:r.merged}:{}),...(r.reopened?{reopened:true}:{})}
     },
     async worktreeScript(id,action){

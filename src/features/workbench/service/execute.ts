@@ -1,3 +1,4 @@
+import { trackPreparation } from './state'
 /**
  * execute 域:一条 run 的完整生命周期(派发 → 事件流 → 结算 → 终态),以及创建入口 create / continueTask / createWechat。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 10 项);spec §4:execute 跨九个域是事实,不再往下切。
@@ -9,8 +10,7 @@
  *   这里要的原生会话核对(validateNativeDecision)在 native-check.ts,不依赖 native 域。
  */
 import {isIssueIntent} from '../issue-intake'
-import { ensureWorktree, planWorktree, repoRootOrFail } from '../../../adapters/git/worktree-workspaces'
-import { pinnedScriptSha } from '../worktree-scripts'
+import { ensureWorktree, headShaAsync, planWorktree, repoRootOrFailAsync } from '../../../adapters/git/worktree-workspaces'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../../ports/agent-provider'
 import type { MatterOrigin, MatterStore } from '../../../ports/matters'
@@ -222,6 +222,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if (running.cancelled) revokeCredentials(running)
       store.update(task.id,running.cancelled ? 'cancelling' : 'running');
       if (running.cancelled) { finalStatus='cancelled'; return }
+      const preparationAbort=new AbortController()
+      void running.stop.then(()=>preparationAbort.abort())
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         workbenchTimeline:true,
         workbenchLifecycle:true,
@@ -237,6 +239,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           const notice=message.trim().slice(0,2000)
           if(notice){store.addEvent(task.id,'system',notice,null,running.identity);}
         },
+        preparationSignal:AbortSignal.any([state.preparationAbort.signal,preparationAbort.signal]),
         workbenchTaskId:task.id,tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
         // 结束在这里补一次评估:请求**自己超时**(权限 5 分钟)那一下既没有事件、也不走
@@ -609,7 +612,15 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     activate()
     return accepted
   }
-  function createWechat(input:CreateWechatTask):CreationReceipt {
+  const pendingWechat = new Map<string, { identity: string; promise: Promise<CreationReceipt> }>()
+  async function createWechat(input:CreateWechatTask):Promise<CreationReceipt> {
+    const identity=JSON.stringify([input.ownerChatId,input.accountId,input.commandHash]),prior=pendingWechat.get(input.requestId)
+    if(prior){if(prior.identity!==identity)throw Error('creation_conflict');return prior.promise}
+    const promise=trackPreparation(ctx.state,createWechatImpl(input)).finally(()=>pendingWechat.delete(input.requestId))
+    pendingWechat.set(input.requestId,{identity,promise})
+    return promise
+  }
+  async function createWechatImpl(input:CreateWechatTask):Promise<CreationReceipt> {
     ctx.ensureAccepting()
     if(!input.ownerChatId||ctx.deps.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
     const id=normalizeInputRequestId(input.requestId)
@@ -626,17 +637,20 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const providerId=input.providerId??project.providerId
     if(!providerId)throw Error('unavailable_provider')
     // 独立工作区:编号从请求编号派生,重试 ⇒ 同一个工作区同一个分支(建好了没接下也不会多建一个)。
-    const tree=input.isolation?(()=>{
-      const repoRoot=repoRootOrFail(project.path)
+    const tree=input.isolation?await (async()=>{
+      const repoRoot=await repoRootOrFailAsync(project.path,{signal:state.preparationAbort.signal})
       if(!repoRoot)throw Error('worktree_not_git')
       const plan=planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:createHash('sha256').update(id).digest('hex').slice(0,8),...(input.base!==undefined?{base:input.base}:{})})
-      return {plan,path:ensureWorktree(plan)}
+      const path=await ensureWorktree(plan,{signal:state.preparationAbort.signal})
+      ctx.ensureAccepting()
+      return {plan,path,scriptSha:plan.start?.sha??await headShaAsync(plan.root,{signal:state.preparationAbort.signal})}
     })():null
+    if(ctx.deps.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
     let receipt!:CreationReceipt
     // 出生地:微信入站省略 ⇒ wechat;App 一轮里的「任务」命令由 daemon 填(不知道 ⇒ null)。
     const origin=input.origin===undefined?'wechat':input.origin
     createTask({path:tree?.path??project.path,providerId,text:input.text,origin,...(input.title!==undefined?{title:input.title}:{}),...(tree?{registerProject:false}:{})},(task,runId)=>{
-      if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root),start:tree.plan.start})
+      if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:tree.scriptSha,start:tree.plan.start})
       store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
       receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
         reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音${tree?`\n\n在独立分支 ${tree.plan.branch} 上做。做完：任务 ${task.id} 提交 → 任务 ${task.id} 合回`:''}`,

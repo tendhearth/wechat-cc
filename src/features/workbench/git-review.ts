@@ -58,7 +58,7 @@ export async function filterOverrides(run:(args:string[])=>Promise<Buffer>):Prom
   return out
 }
 function paths(bytes:Buffer){return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes).split('\0').filter(Boolean)}
-function inScope(path:string){return !isAbsolute(path) && !path.split('/').some(p=>p==='..'||p==='.git'||p==='.cc-workbench'||p==='.cc-workbench-inputs') && !path.includes('\0') && !path.includes('\\')}
+function inScope(path:string){return !isAbsolute(path) && !path.split('/').some(p=>p==='..'||p==='.git'||p==='.cc-workbench'||p==='.cc-workbench-inputs'||p.toLowerCase()==='.cc-tasks') && !path.includes('\0') && !path.includes('\\')}
 function reviewable(path:string){return !path.split('/').some(p=>
   (p.startsWith('.')&&!['.gitignore','.gitattributes','.editorconfig'].includes(p)) || /^(id_(rsa|dsa|ecdsa|ed25519)|credentials(?:\..*)?|private[-_]key(?:\..*)?)$/i.test(p) || /\.(pem|p12|pfx|key)$/i.test(p)
 )}

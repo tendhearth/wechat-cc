@@ -52,10 +52,10 @@ describe('parseScriptsConfig', () => {
 })
 
 describe('readPinnedScripts', () => {
-  it('reads from the pinned commit — working-tree edits and later commits on the branch do not change it', () => {
+  it('reads from the pinned commit — working-tree edits and later commits on the branch do not change it', async () => {
     const { project, state } = repo({ 'tendhearth.json': cfg({ setup: 'echo setup', run: 'echo run' }) })
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot: project, id: 'abcd1234' })
-    ensureWorktree(plan)
+    ;(await ensureWorktree(plan))
     const sha = pinnedScriptSha(plan.root)!
     expect(sha).toBe(headSha(plan.root))
     const before = readPinnedScripts(project, sha)
