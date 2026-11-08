@@ -97,9 +97,9 @@ node apps/desktop/scripts/macmini-ui.mjs capture
 
 ## App / Maestro lane
 
-App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照必须来自已审阅的 `origin/dev` 或 `app-maestro-build3`，仅传 Git archive，不复制 node_modules、忽略文件、账号或原生签名材料。
+App 与桌面共用 mini 身份校验、BatchMode SSH、两端命令白名单、执行锁和每轮日志；没有主工作 Mac 回退。App 源码独立登记在 `active.json.appRoot`，不覆盖桌面的 `root`。快照必须来自已审阅的 `origin/dev`、`app-maestro-build3` 或主人指定验收的 `design-unify-b1-fixes`，仅传 Git archive，不复制 node_modules、忽略文件、账号或原生签名材料。
 
-整合者把本仓库 `apps/desktop/scripts/macmini-ui-{protocol,remote,app}.mjs`、`macmini-machine-lock.mjs`、`macmini-job-lifecycle.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 的 `labHome/app-executor/` 目录。在 lab 根创建两个固定包装器：`app-run.mjs` import `./app-executor/macmini-ui-remote.mjs`，`app-snapshot.mjs` import `./app-executor/macmini-app-snapshot.mjs`。App 的 SSH 目标固定为 `app-run.mjs`，因此桌面整合者切换 `run.mjs` 不影响 App 入口。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令；仍与桌面共享 `active.json` 和执行锁。
+整合者把本仓库 `apps/desktop/scripts/macmini-ui-{protocol,remote,app}.mjs`、`macmini-machine-lock.mjs`、`macmini-job-lifecycle.mjs` 与 `macmini-app-snapshot.mjs` 安装到 mini 的 `labHome/app-executor/` 目录。在 lab 根创建两个固定包装器：`app-run.mjs` import `./app-executor/macmini-ui-remote.mjs`，`app-snapshot.mjs` 显式 `import { main } from './app-executor/macmini-app-snapshot.mjs'; await main()`。App 的 SSH 目标固定为 `app-run.mjs`，因此桌面整合者切换 `run.mjs` 不影响 App 入口。这是更新可信工具的维护操作，不是向测试协议添加任意 shell 命令；仍与桌面共享 `active.json` 和执行锁。
 
 ```sh
 # 在主机调用；只传源码，接收器在 mini 持锁创建新目录并原子更新 appRoot。
@@ -185,9 +185,9 @@ push-open 首轮在 `2026-11-06T02-00-27.575Z-app-maestro` 失败：已回此刻
 
 ### 2026-11-08 桌面浏览器独立快照
 
-`browser` 使用独立 `browser-run.mjs` 包装器和 `active.json.browserRoot`，不切换原生桌面的 `root` 或 App 的 `appRoot`。包装器与接收器的安装仍是持 `~/ci/lock` 的可信工具维护操作；`browser-executor/` 放本仓库 remote/protocol/机器锁/lifecycle/browser-snapshot/source-manifest 模块及 `design-unify-shots.spec.ts` / `playwright.config.ts`，包装器分别 import remote 与 snapshot 模块。不得把任意脚本路径或 shell 命令加入请求协议。
+`browser` 使用独立 `browser-run.mjs` 包装器和 `active.json.browserRoot`，不切换原生桌面的 `root` 或 App 的 `appRoot`。可在持锁维护时以 `browserRuntimeRoot` 固定已核验的公开浏览器/profile根、以 `browserSourceRoot` 固定下述486f6547源码缓存；两者均须realpath后在lab内并保留commit/blob核验，避免其他通道换快照后失去公共缓存。包装器与接收器的安装仍是持 `~/ci/lock` 的可信工具维护操作；`browser-executor/` 放本仓库 remote/protocol/机器锁/lifecycle/browser-snapshot/source-manifest 模块及 `design-unify-shots.spec.ts` / `playwright.config.ts`，browser-run 包装器 import remote；browser-snapshot 包装器显式 `import { main } from './browser-executor/macmini-browser-snapshot.mjs'; await main()`。不得把任意脚本路径或 shell 命令加入请求协议。
 
-本批 `macmini-browser-snapshot.mjs before|after` 仅在 `design-unify-b1` 工作区使用：before取HEAD与origin/dev共同基线，after取已验证提交HEAD；传Git archive差异包与完整目标tree清单。接收器拿家族锁后创建空的 `browser-<sha>-<time>/project`；本批仅复用active App快照486f6547中的公共tracked源码，逐文件核对Git blob哈希后复制普通文件，变化文件来自差异archive。完整清单重建的Git tree、commit对象、最终每个blob与可执行mode都必须匹配目标，缺失/不匹配即失败；拒绝路径逃逸、链接与额外archive路径。记录源码commit/tree、manifest、差异archive/lockfile/profile摘要。只读公共源码缓存不运行任何App通道，不复制node_modules、原生生成物、账号或其他忽略文件。之后离线安装该快照自己的依赖，核对workspace包仍解析到该快照；公开Bun/Chromium缓存可复用，不链接其他快照的node_modules。
+本批 `macmini-browser-snapshot.mjs before|after` 仅在 `design-unify-b1` / `design-unify-b1-fixes` 工作区使用：before取HEAD与origin/dev共同基线，after取已验证提交HEAD；传Git archive差异包与完整目标tree清单。接收器拿家族锁后创建空的 `browser-<sha>-<time>/project`；本批仅复用active App快照486f6547中的公共tracked源码，逐文件核对Git blob哈希后复制普通文件，变化文件来自差异archive。完整清单重建的Git tree、commit对象、最终每个blob与可执行mode都必须匹配目标，缺失/不匹配即失败；拒绝路径逃逸、链接与额外archive路径。记录源码commit/tree、manifest、差异archive/lockfile/profile摘要。只读公共源码缓存不运行任何App通道，不复制node_modules、原生生成物、账号或其他忽略文件。之后离线安装该快照自己的依赖，核对workspace包仍解析到该快照；公开Bun/Chromium缓存可复用，不链接其他快照的node_modules。
 
 before/after覆盖同一个合成截图harness；白名单只覆盖 `playwright/design-unify-shots.spec.ts` 与测试配置 `playwright.config.ts`，不覆盖产品代码、shim或协议包，harness摘要单独记在snapshot.json。before只产四页对照，不拿旧外观去跑新合同断言；after再跑T5、详情、工作台布局、行审阅及原陪伴浏览器回归。配置使用仓库的playwright.config.ts，经校验的Home缓存浏览器固定为原root下browser-1228，不下载/升级浏览器；每轮结果和 `design-shots/desktop-<page>-before|after.png` 在该快照artifacts下。主页行取当前唯一对话主页中的待决事项引用行。
 

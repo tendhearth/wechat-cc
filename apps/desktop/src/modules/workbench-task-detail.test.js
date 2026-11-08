@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import {afterEach,describe,expect,it,vi} from 'vitest'
 import {renderWorkbench} from './workbench.js'
+import {mergeEvents} from './workbench-live.js'
 const task={id:'A',title:'准备交付',path:'/work/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
 const artifact={id:'saved',taskId:'A',name:'report.json',mime:'application/json',size:20,sha256:'a',createdAt:1,approvedAt:null}
 const review={artifactId:'snapshot',name:'changes.json',sha256:'b',createdAt:1,status:'complete',headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:[]}
@@ -188,4 +189,45 @@ describe('11-08 request and result hierarchy',()=>{
   const root=render(page({phase},{artifacts:[]}))
   expect(root.querySelector('.wb-task-progress .wb-status').textContent).toBe(word)
  })
+})
+
+describe('steer acknowledgements preserve the active native answer',()=>{
+ it.each([['running','working'],['running','replied'],['completed','completed']])('%s/%s keeps append → steer → same-item replace visible',(status,phase)=>{
+  let events=[{id:1,taskId:'A',kind:'user',text:'原请求',runId:'r',turnId:'turn',createdAt:1}]
+  events=mergeEvents(events,[{id:2,taskId:'A',kind:'text',text:'开始核对',runId:'r',turnId:'turn',createdAt:2}])
+  expect(render(page({phase:'working'},{runId:'r',events})).querySelector('.wb-dialogue').textContent).toContain('开始核对')
+  events=mergeEvents(events,[{id:3,taskId:'A',kind:'user',text:'补充：也检查附件',runId:'r',turnId:'turn',createdAt:3}])
+  expect(render(page({phase:'working'},{runId:'r',events})).querySelector('.wb-dialogue').textContent).toContain('开始核对')
+  events=mergeEvents(events,[{id:2,taskId:'A',kind:'text',text:'最终核对结果含附件',runId:'r',turnId:'turn',createdAt:2}])
+  const root=render(page({status,phase},{runId:'r',events}))
+  expect(root.querySelector('.wb-request').textContent).toContain('补充：也检查附件')
+  expect(root.querySelector('.wb-dialogue').textContent).toContain('最终核对结果含附件')
+  expect(root.querySelector('#wb-earlier-dialogue')?.textContent??'').not.toContain('最终核对结果含附件')
+  expect(root.querySelector('.wb-dialogue').textContent).not.toContain('正在处理')
+ })
+ it('folds a previous turn even when a retained session uses the same run',()=>{
+  const event=(id,kind,text,turnId)=>({id,kind,text,turnId,runId:'r',taskId:'A',createdAt:id})
+  const root=render(page({phase:'working'},{runId:'r',events:[event(1,'user','旧请求','old'),event(2,'text','旧答复','old'),event(3,'user','新请求','new'),event(4,'text','新答复','new'),event(5,'user','同轮补充','new')]}))
+  expect(root.querySelector('.wb-dialogue').textContent).toContain('新答复')
+  expect(root.querySelector('.wb-dialogue').textContent).not.toContain('旧答复')
+  expect(root.querySelector('#wb-earlier-dialogue').textContent).toContain('旧答复')
+  expect(root.querySelector('#wb-earlier-dialogue').open).toBe(false)
+ })
+ it('keeps a same-run streaming answer visible for older payloads without turn ids',()=>{
+  const events=[{id:1,taskId:'A',kind:'user',text:'原请求',runId:'r',createdAt:1},{id:2,taskId:'A',kind:'text',text:'仍在输出',runId:'r',createdAt:2},{id:3,taskId:'A',kind:'user',text:'中途补充',runId:'r',createdAt:3}]
+  expect(render(page({phase:'replied'},{runId:'r',events})).querySelector('.wb-dialogue').textContent).toContain('仍在输出')
+ })
+ it('does not claim to be processing after replied with no reply event',()=>{
+  const events=[{id:1,taskId:'A',kind:'user',text:'要求',createdAt:1}]
+  expect(render(page({phase:'replied'},{events})).querySelector('.wb-dialogue').textContent).not.toContain('正在处理')
+ })
+})
+
+it('a retained next-turn acknowledgement before text folds the old turn and later joins the new reply',()=>{
+ const old=[{id:1,taskId:'A',kind:'user',text:'旧请求',runId:'r',turnId:'old',createdAt:1},{id:2,taskId:'A',kind:'text',text:'旧答复',runId:'r',turnId:'old',createdAt:2}]
+ const request={id:3,taskId:'A',kind:'user',text:'新请求',runId:'r',createdAt:3}
+ const pending=render(page({phase:'working'},{runId:'r',events:[...old,request]}))
+ expect(pending.querySelector('.wb-dialogue').textContent).not.toContain('旧答复')
+ const next={id:4,taskId:'A',kind:'text',text:'新答复',runId:'r',turnId:'new',createdAt:4}
+ expect(render(page({phase:'replied'},{runId:'r',events:[...old,request,next]})).querySelector('.wb-dialogue').textContent).toContain('新答复')
 })

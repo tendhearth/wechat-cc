@@ -70,9 +70,22 @@ test('browser transport is isolated from the App and native desktop wrappers', (
 
 test('browser launch uses the known lab Chromium without changing product or App launchers',()=>{
  const remote=readFileSync(new URL('./macmini-ui-remote.mjs',import.meta.url),'utf8')
- expect(remote).toContain("await insideLab(join(config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'))")
+ expect(remote).toContain("await insideLab(join(config.browserRuntimeRoot??config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'))")
  expect(remote).toContain('CC_UI_BROWSER_EXECUTABLE:browserExecutable')
  const config=readFileSync(new URL('../playwright.config.ts',import.meta.url),'utf8')
  expect(config).toContain('process.env.CC_UI_BROWSER_EXECUTABLE')
  expect(config).toContain('Lab browser must remain inside the dedicated mini lab')
+})
+
+test('snapshot modules expose an explicit entry for trusted import wrappers and browser caches stay separate',()=>{
+ for(const name of ['macmini-app-snapshot.mjs','macmini-browser-snapshot.mjs']){
+  const source=readFileSync(new URL(name,import.meta.url),'utf8')
+  expect(source).toContain('export async function main()')
+  expect(source).toContain('lifecycle.assertRunning()')
+ }
+ const browser=readFileSync(new URL('./macmini-browser-snapshot.mjs',import.meta.url),'utf8')
+ expect(browser).toContain('config.browserSourceRoot??config.appRoot')
+ expect(browser).toContain("readFile(join(cacheRoot,'snapshot.json')")
+ expect(browser).toContain('PUBLIC_CACHE_COMMIT')
+ expect(browser).toContain("gitObject('blob',bytes)!==file.blob")
 })

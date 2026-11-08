@@ -179,7 +179,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     if (!p || !p.success) { log(`${key}: response did not match schema`); throw new BackendError('unknown') }
     if (key === req.key) { dispatch({ t: 'synced', at: now() }); return p.data }
     // v1 shares the data but some routes omit the legacy success envelope.
-    // Parse the phone projection too: union branches in RESPONSE_SCHEMAS can strip phone-only fields.
+    // Parse the phone projection from raw JSON too: the desktop union may strip
+    // phone-only fields, including the optional task.networkSuspended observation.
     const data = json as Record<string, unknown>
     const projected = key === 'POST /v1/matter/say' ? { ok: true, result: data }
       : key === 'GET /v1/matter/owner-chat/search' ? { ok: true, hits: (data.hits as Array<Record<string, unknown>>).map(h => {

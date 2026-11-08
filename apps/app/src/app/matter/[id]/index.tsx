@@ -1,3 +1,4 @@
+import { taskDetailLabel } from '../../../view/status'
 import { STATUS_TABLE } from '@wechat-cc/protocol'
 import { rememberReference } from '../../../state/conversation-references'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -260,7 +261,7 @@ export default function Matter() {
       {header}
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
-        <View testID="progress-status"><StatusPill status={v.status} /></View>
+        <View testID="progress-status"><StatusPill status={v.status} label={taskDetailLabel(d.task,v.pendingCount,lang,v.status)} /></View>
         {untilRow ? (
           // 直到…通过(10-20):状态在前、不截(命令再长也看得见结果);命令等宽,这里不是确认处,可以截;整句给读屏
           <View testID="progress-until" accessible accessibilityLabel={untilRow.accessibilityLabel} style={{ gap: 2 }}>

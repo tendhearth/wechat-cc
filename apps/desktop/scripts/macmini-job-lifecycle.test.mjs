@@ -40,3 +40,21 @@ test('normal completion cancels timeout, removes handlers and releases', async (
   expect(clearTimer).toHaveBeenCalledWith(7)
   expect(processRef.listenerCount('SIGHUP')).toBe(0)
 })
+
+test('late tracked child during stop cleanup is terminated and closed before release',async()=>{
+ const processRef=new EventEmitter(),events=[]
+ processRef.kill=(pid,signal)=>events.push([pid,signal]);processRef.exit=code=>events.push(['exit',code])
+ let continueCleanup,enteredCleanup
+ const cleanupEntered=new Promise(r=>enteredCleanup=r),cleanupGate=new Promise(r=>continueCleanup=r)
+ const lifecycle=jobLifecycle({processRef})
+ lifecycle.acquired(async()=>events.push('release'))
+ lifecycle.onStop(async()=>{enteredCleanup();await cleanupGate})
+ processRef.emit('SIGTERM');await cleanupEntered
+ const late=new EventEmitter();late.pid=456
+ lifecycle.track(late)
+ expect(events).toContainEqual([-456,'SIGTERM'])
+ continueCleanup();await new Promise(r=>setImmediate(r))
+ expect(events).not.toContain('release')
+ late.emit('close');await lifecycle.finish()
+ expect(events).toContain('release')
+})

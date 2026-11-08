@@ -291,7 +291,8 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
         requestIds.add(requestId); retained = true
         const acknowledged = new Promise<void>((resolve, reject) => pending.set(uuid, { resolve, reject }))
         input.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content }, uuid, priority: 'next' })
-        return acknowledged
+        await acknowledged
+        return {mode:'send' as const}
       },
       snapshot: () => ({ retained, foreground, backgroundCount: live.size, input: started && !ended && !closing && pending.size < 10 ? 'send' : 'queue' }),
     },

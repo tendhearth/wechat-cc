@@ -2,7 +2,7 @@
 export function jobLifecycle({ processRef = process, setTimer = setTimeout, clearTimer = clearTimeout,
   timeoutMs = Number(process.env.CC_UI_JOB_TIMEOUT_MS ?? 14400000) } = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw Error('Invalid job timeout')
-  const children = new Set()
+  const children = new Map()
   let cleanup = async () => {}
   let release = async () => {}
   let stopping = false
@@ -14,17 +14,22 @@ export function jobLifecycle({ processRef = process, setTimer = setTimeout, clea
     for (const [signal, handler] of handlers) processRef.removeListener(signal, handler)
     await release()
   }
+  const terminate = owned => {
+    if (owned.terminating) return
+    owned.terminating = true
+    const kill = signal => { try { processRef.kill(-owned.child.pid, signal) } catch {} }
+    kill('SIGTERM')
+    owned.escalation = setTimer(() => kill('SIGKILL'), 5000)
+  }
+  const drain = async () => {
+    while (children.size) await Promise.all([...children.values()].map(owned => owned.done))
+  }
   const stop = async code => {
     if (stopping) return
     stopping = true
-    const running = [...children]
-    const done = Promise.all(running.map(child => new Promise(resolve => child.once('close', resolve))))
-    const kill = signal => { for (const child of running) { try { processRef.kill(-child.pid, signal) } catch {} } }
-    kill('SIGTERM')
-    const escalation = setTimer(() => kill('SIGKILL'), 5000)
-    await done
-    clearTimer(escalation)
-    try { await cleanup() } finally { await finish() }
+    for (const owned of children.values()) terminate(owned)
+    await drain()
+    try { await cleanup() } finally { await drain(); await finish() }
     processRef.exit(code)
   }
   const requestStop = code => { stopPromise ??= stop(code); return stopPromise }
@@ -39,7 +44,19 @@ export function jobLifecycle({ processRef = process, setTimer = setTimeout, clea
     onStop: value => { cleanup = value },
     assertRunning: () => { if (stopping) throw Error('Mini job is stopping') },
     acquired: value => { release = value },
-    track: child => { children.add(child); child.once('close', () => children.delete(child)); return child },
+    track: child => {
+      const owned = { child, done: null, terminating: false, escalation: null }
+      owned.done = new Promise(resolve => child.once('close', () => {
+        clearTimer(owned.escalation)
+        children.delete(child)
+        resolve()
+      }))
+      children.set(child, owned)
+      // A late spawn is never admitted as new work while stopping. Keep its
+      // close receipt only so the machine lock cannot outlive its process group.
+      if (stopping) terminate(owned)
+      return child
+    },
     finish: () => stopping ? stopPromise : finish(),
   }
 }

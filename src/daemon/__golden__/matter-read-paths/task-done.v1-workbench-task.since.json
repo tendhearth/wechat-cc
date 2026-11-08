@@ -39,7 +39,8 @@
         "text": "权限结果：Bash · allow · <uuid:2>",
         "createdAt": 1793412120000,
         "sourceId": null,
-        "runId": "<uuid:1>"
+        "runId": "<uuid:1>",
+        "turnId": "<turn:1>"
       },
       {
         "id": 6,
@@ -49,6 +50,7 @@
         "createdAt": 1793412120000,
         "sourceId": null,
         "runId": "<uuid:1>",
+        "turnId": "<turn:1>",
         "activity": {
           "id": "call-2",
           "type": "command",
@@ -63,7 +65,8 @@
         "text": "测试全过,报告写好了。",
         "createdAt": 1793412180000,
         "sourceId": null,
-        "runId": "<uuid:1>"
+        "runId": "<uuid:1>",
+        "turnId": "<turn:1>"
       },
       {
         "id": 8,
@@ -72,7 +75,8 @@
         "text": "再确认一次",
         "createdAt": 1793412300000,
         "sourceId": null,
-        "runId": "<uuid:3>"
+        "runId": "<uuid:3>",
+        "turnId": "<turn:2>"
       },
       {
         "id": 9,
@@ -81,7 +85,8 @@
         "text": "第 2 轮:再确认一次 —— 确认过了。",
         "createdAt": 1793412300000,
         "sourceId": null,
-        "runId": "<uuid:3>"
+        "runId": "<uuid:3>",
+        "turnId": "<turn:2>"
       }
     ],
     "artifacts": [

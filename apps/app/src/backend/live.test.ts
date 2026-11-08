@@ -942,3 +942,17 @@ it('T5d reads capabilities through protocol and uses shared owner window/work/ev
   expect(h.reqs.at(-1)?.body).toEqual({turnId:'turn'})
   h.b.dispose()
 })
+
+describe('task network pause is separate from phone connectivity',()=>{
+ it.each(['m','v1'] as const)('%s preserves the narrow optional pause projection and recovery',async family=>{
+  const task={id:ID,title:'work',status:'running',phase:'working',providerId:'codex',path:'',error:null,updatedAt:1,networkSuspended:{since:42,privateDetail:'never projected'}}
+  let paused=true
+  const h=harness({[family==='v1'?'GET /v1/matter':'GET /m/api/matter']:()=>ok({ok:true,...DETAIL,task:{...task,networkSuspended:paused?task.networkSuspended:undefined}})},family==='v1'?'v1':undefined)
+  h.status('ready')
+  expect((await h.b.matter(ID,'en')).task?.networkSuspended).toEqual({since:42})
+  expect(h.b.connection().state).toBe('online')
+  paused=false
+  expect((await h.b.matter(ID,'en')).task?.networkSuspended).toBeUndefined()
+  expect(h.b.connection().state).toBe('online')
+ })
+})
