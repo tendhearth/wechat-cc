@@ -1,7 +1,7 @@
 /** Offline, reversible use of the topic “wrong” semantics. No migrations and no deletes. */
 import z from 'zod'
 import type { Db } from '../lib/db'
-import { isRoutineTopicText } from '../domain/topic-noise'
+import { isRoutineTopicEntry } from '../domain/topic-noise'
 
 const Scalar = z.union([z.string(), z.number(), z.null()])
 const Entry = z.object({ id: z.string(), thread_id: z.string(), kind: z.string(), line: z.string(), body: z.string(), status: z.string(), superseded_by: z.string().nullable(), updated_ts: z.string() }).catchall(Scalar)
@@ -16,7 +16,7 @@ function snapshot(db: Db, id: string): Snapshot {
 }
 
 function afterCleanup(before: Snapshot, at: string): Snapshot {
-  const entries = before.entries.map(e => e.status === 'live' && isRoutineTopicText(`${e.line}\n${e.body}`)
+  const entries = before.entries.map(e => e.status === 'live' && isRoutineTopicEntry(e)
     ? { ...e, status: 'superseded', superseded_by: null, updated_ts: at } : { ...e })
   const live = entries.filter(e => e.status === 'live').sort((a, b) => b.updated_ts.localeCompare(a.updated_ts) || b.id.localeCompare(a.id))
   const latest = live.find(e => e.kind === 'progress' || e.kind === 'conclusion') ?? live.find(e => e.kind === 'decision')
@@ -32,7 +32,7 @@ export function planTopicNoiseCleanup(db: Db, chatId: string, at = new Date().to
   const topics: TopicNoisePlan['topics'] = []
   for (const t of db.query<{ id: string }, [string]>('SELECT id FROM threads WHERE chat_id=? ORDER BY id').all(chatId)) {
     const before = snapshot(db, t.id)
-    if (!before.entries.some(e => e.status === 'live' && isRoutineTopicText(`${e.line}\n${e.body}`))) continue
+    if (!before.entries.some(e => e.status === 'live' && isRoutineTopicEntry(e))) continue
     topics.push({ before, after: afterCleanup(before, at) })
   }
   return { version: 1, chatId, at, topics }

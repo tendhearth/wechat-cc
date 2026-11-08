@@ -10,7 +10,7 @@ import z from 'zod'
 import type { ThreadsStore, TopicEntry, EntryKind } from '../../lib/threads-store'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { tokens } from '../../domain/topic-match'
-import { isRoutineTopicText } from '../../domain/topic-noise'
+import { isRoutineTopicEntry } from '../../domain/topic-noise'
 
 /** 条目少到这个数以内、又没有提交号 ⇒ 不叫模型。 */
 export const CONSOLIDATE_MIN_LIVE = 3
@@ -203,7 +203,7 @@ export async function consolidateTopics(d: ConsolidateDeps): Promise<Consolidate
   for (const t of list) {
     const all = byThread.get(t.id) ?? []
     if (!(t.lastActive > since || all.some(e => e.updatedTs > since))) continue
-    const live = all.filter(e => e.status === 'live' && !isRoutineTopicText(`${e.line}\n${e.body}`))
+    const live = all.filter(e => e.status === 'live' && !isRoutineTopicEntry(e))
     if (live.length === 0) continue
     res.topics++
     const topicWords = topicWordsOf(t)
@@ -238,7 +238,7 @@ export async function consolidateTopics(d: ConsolidateDeps): Promise<Consolidate
       res.stripped++
     }
     // 3) 摘要:代码拼,不让模型写(模型改写过摘要,把「待邮寄」写成了「已寄出」)
-    const summary = buildSummary(t.description, (await d.threads.entries(t.id, { live: true })).filter(e => !isRoutineTopicText(`${e.line}\n${e.body}`)))
+    const summary = buildSummary(t.description, (await d.threads.entries(t.id, { live: true })).filter(e => !isRoutineTopicEntry(e)))
     if (summary && summary !== t.summary) await d.threads.update(t.id, { summary })
   }
   if (res.failed === 0) await d.threads.setExtractState(d.chatId, { consolidatedToTs: startedAt })
