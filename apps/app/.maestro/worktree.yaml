@@ -1,4 +1,5 @@
 # T5: 原有功能验收移到唯一对话、搜索引用与原详情。
+# 原生确认文案会使按钮换行；每次布局变化后滚到实际控件中央，避免命中底部 SayBar。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -29,28 +30,65 @@ appId: com.tendhearth.app
     element:
       id: progress-worktree
 - assertVisible: .*cc/notes001.*
+- scrollUntilVisible:
+    element:
+      id: progress-wt-commit
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: progress-wt-commit
 - extendedWaitUntil:
     visible:
       id: progress-wt-note
     timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: progress-wt-merge
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: progress-wt-merge
 - assertVisible: .*(再点一次：快进合并到项目|Tap again to fast-forward the project).*
+- scrollUntilVisible:
+    element:
+      id: progress-wt-merge
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: progress-wt-merge
+- assertNotVisible:
+    id: compose-input
+- scrollUntilVisible:
+    element:
+      id: progress-wt-note
+    direction: DOWN
+    centerElement: true
 - extendedWaitUntil:
     visible: .*(已合回项目|merged into the project).*
     timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: progress-wt-remove
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: progress-wt-remove
+- scrollUntilVisible:
+    element:
+      id: progress-wt-remove
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: progress-wt-remove
 - extendedWaitUntil:
     visible:
       id: progress-wt-reopen
     timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: progress-wt-reopen
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: progress-wt-reopen
 - extendedWaitUntil:
@@ -58,6 +96,11 @@ appId: com.tendhearth.app
       id: progress-wt-fork
     timeout: 5000
 - takeScreenshot: worktree-matter
+- scrollUntilVisible:
+    element:
+      id: progress-wt-fork
+    direction: DOWN
+    centerElement: true
 - tapOn:
     id: progress-wt-fork
 - extendedWaitUntil:
