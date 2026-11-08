@@ -25,7 +25,9 @@ export function statusOfMatter(
     if (matter.taskState) return statusOf(matter.taskState, pending)
     if (isMatterArchived(matter)) return 'done'
     if (matter.kind && matter.kind !== 'task') return 'working'
-    return ['done', 'failed', 'cancelled'].includes(matter.state) ? 'done' : 'working'
+    if (matter.state === 'failed') return 'failed'
+    if (matter.state === 'cancelled') return 'stopped'
+    return matter.state === 'done' ? 'done' : 'working'
   }
   if (matter.status === 'replied') return 'replied'
   if (matter.status === 'done' || matter.status === 'archived') return 'done'

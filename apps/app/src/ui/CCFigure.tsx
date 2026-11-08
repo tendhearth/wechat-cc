@@ -4,14 +4,16 @@ import { useLang } from '../i18n/useLang'
 import { t } from '../i18n'
 import type { CCPresence } from '../view/presence'
 import { useMotionEnabled } from './motion'
+import type { CCPhase } from '@wechat-cc/protocol'
 
 const lit = require('../../assets/cc/lit.png')
 const unlit = require('../../assets/cc/unlit.png')
-type Behavior = 'idle' | 'receive' | 'done' | 'wait'
+type Behavior = 'idle' | 'receive' | 'done' | 'wait' | 'look'
 
 /** Canonical PNGs retain one geometry. Only confirmed presence lights CC; Dark remains still. */
-export function CCFigure({ size, presence, mood, behavior = 'idle', eventKey }: { size: number; presence: CCPresence; mood?: string; behavior?: Behavior; eventKey?: string | number }) {
+export function CCFigure({ size, presence, mood, behavior = 'idle', eventKey, phase = 'idle' }: { size: number; presence: CCPresence; mood?: string; behavior?: Behavior; eventKey?: string | number; phase?: CCPhase }) {
   const lang = useLang()
+  const description = phase !== 'idle' ? t(lang, `cc.${phase}`) : mood
   const enabled = useMotionEnabled()
   const scale = useRef(new Animated.Value(1)).current
   const y = useRef(new Animated.Value(0)).current
@@ -46,10 +48,15 @@ export function CCFigure({ size, presence, mood, behavior = 'idle', eventKey }: 
       animation = Animated.loop(Animated.sequence([timing(scale, 1.02, 2000), timing(scale, 1, 2000)]))
       animation.start()
     }
-    if (fresh && behavior !== 'idle') {
-      if (behavior === 'wait') {
-        tilt.setValue(-1.2)
-        animation = timing(tilt, 0, 360)
+    if (phase !== 'idle') {
+      if (phase === 'listening') animation = timing(tilt, -2, 180)
+      else if (phase === 'thinking') animation = Animated.loop(Animated.sequence([timing(tilt, 1, 600), timing(tilt, 0, 600), timing(tilt, 0, 8000)]))
+      else animation = Animated.loop(Animated.sequence([timing(y, -1, 300), timing(y, 0, 300)]))
+      animation.start()
+    } else if (fresh && behavior !== 'idle') {
+      if (behavior === 'wait' || behavior === 'look') {
+        tilt.setValue(behavior === 'look' ? 2 : -1.2)
+        animation = timing(tilt, 0, behavior === 'look' ? 520 : 360)
       } else {
         const receive = behavior === 'receive'
         const first = receive ? 176 : 230, last = receive ? 264 : 410
@@ -61,10 +68,10 @@ export function CCFigure({ size, presence, mood, behavior = 'idle', eventKey }: 
       animation.start(({ finished }) => { if (finished && alive) breathe() })
     } else breathe()
     return () => { alive = false; animation?.stop(); scale.stopAnimation(); y.stopAnimation(); tilt.stopAnimation(); rest() }
-  }, [enabled, presence, behavior, eventKey, scale, y, tilt])
+  }, [enabled, presence, behavior, eventKey, phase, scale, y, tilt])
 
   return (
-    <Animated.View accessible accessibilityRole="image" accessibilityLabel={mood ? t(lang, 'cc.labelMood', { mood }) : t(lang, 'cc.label')} style={{ width: size, height: size, transformOrigin: [size / 2, size * 470 / 512, 0], transform: [{ translateY: y }, { scale }, { rotate: tilt.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '1deg'] }) }] }}>
+    <Animated.View testID={`cc-phase-${phase}`} accessible accessibilityRole="image" accessibilityLabel={description ? t(lang, 'cc.labelMood', { mood: description }) : t(lang, 'cc.label')} style={{ width: size, height: size, transformOrigin: [size / 2, size * 470 / 512, 0], transform: [{ translateY: y }, { scale }, { rotate: tilt.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '1deg'] }) }] }}>
       <Animated.View testID="cc-unlit" accessible={false} style={{ position: 'absolute', width: size, height: size, opacity: light.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }}>
         <Image source={unlit} style={{ width: size, height: size }} resizeMode="contain" accessible={false} accessibilityElementsHidden importantForAccessibility="no" />
       </Animated.View>

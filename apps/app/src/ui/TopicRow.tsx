@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useFocusEffect, useRouter } from 'expo-router'
 import { Pressable, ScrollView, View } from 'react-native'
 import { useLang } from '../i18n/useLang'
@@ -8,7 +8,7 @@ import { Txt } from './Txt'
 import { componentAppearance, space } from './tokens'
 import { useTheme } from './useTheme'
 
-export function TopicRow() {
+export function TopicRow({ onTopics }: { onTopics?: (ids: string[] | undefined) => void }) {
   const { c } = useTheme()
   const appearance = componentAppearance.topic
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -17,6 +17,7 @@ export function TopicRow() {
   const topics = useTopics()
   const router = useRouter()
   const lang = useLang(), zh = lang === 'zh-Hans'
+  useEffect(() => { onTopics?.(topics.online && !topics.error && topics.data ? topics.data.topics.slice(0, 6).map(topic => topic.id) : undefined) }, [topics.online, topics.error, topics.data, onTopics])
   if (!topics.supported) return null
   if (!topics.data?.topics.length && !topics.error) return null
   return <View testID="topic-row">

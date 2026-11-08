@@ -44,7 +44,7 @@ describe('home hero consumes independent true-state streams', () => {
   })
   it('local pending can produce receive only when followed by a new real reply, not removal or history', () => {
     const f = fresh(); f.converse([]); f.converse([cc(1)])
-    expect(f.converse([cc(1), cc(2, true)]).intent.behavior).toBe('thinking')
+    expect(f.converse([cc(1), cc(2, true)]).intent.behavior).toBe('idle') // local pending is not runtime evidence
     expect(f.converse([cc(1), cc(3)]).intent.oneShots).toEqual(['receive'])
     expect(f.converse([cc(1), cc(3)]).intent.oneShots).toEqual([])
     f.converse([cc(1), cc(3), cc(4, true)])
@@ -98,7 +98,7 @@ describe('home hero consumes independent true-state streams', () => {
     const f = fresh(); f.attention(attention(null, [task()]))
     expect(f.current().intent.behavior).toBe('permission')
     f.attention(attention(null)); f.converse([cc(1, true)])
-    expect(f.current().intent.behavior).toBe('thinking')
+    expect(f.current().intent.behavior).toBe('idle') // an old daemon supplies no true thinking signal
   })
 })
 

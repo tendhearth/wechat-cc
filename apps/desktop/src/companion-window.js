@@ -13,6 +13,8 @@ import { formatCompanionStatus } from './companion-status.js'
 import { createCompanionDrag } from './companion-drag.js'
 import { createCompanionMotion } from './companion-motion.js'
 import { mountPetActivities, normalizePetActivities } from './pet-activities.js'
+import { mountCCActivity, createCCActivityFeed } from './cc-activity.js'
+import { V1, v1 } from './daemon-client.js'
 
 const $ = (/** @type {string} */ id) => document.getElementById(id)
 // 浏览器预览(没有 Tauri 运行时)里窗口命令无处可去 —— 用它决定要不要发。
@@ -30,8 +32,15 @@ const pet = await createPet({ stage, img, props, hint, body:$('pet-body') }, { m
   onLifeAction:pose=>{const travel=pose.action==='walk'&&pose.authored!==true&&!document.hidden;if(travel)void motion?.play(pose.direction);else if(walking)void motion?.stop();walking=travel},
 })
 if (new URLSearchParams(location.search).has('lab')) /** @type {any} */ (window).__pet = pet
+const ccActivity = stage ? mountCCActivity({ stage }) : null
+const activityFeed = createCCActivityFeed({ read: since => v1(invokeWorkbenchApi, V1.conversation.events, { query: { since } }), observe: stream => ccActivity?.observe(stream) })
 
-let quiet = false, reducedMotion = false
+let quiet = false, reducedMotion = false, activityConnected = false
+function syncActivityAvailability() {
+  const available = activityConnected && !holding && !quiet && !reducedMotion && !document.hidden
+  ccActivity?.setEnabled(available)
+  if (available) activityFeed.start(); else activityFeed.stop()
+}
 function syncLifeAvailability(){
   const settings=document.querySelector('.pet-settings')
   const available=lifeFactsAvailable&&!pointerInShell&&!focusInShell&&!holding&&!quiet&&!reducedMotion&&!document.hidden&&!(settings instanceof HTMLDetailsElement&&settings.open)
@@ -52,6 +61,7 @@ const applyPreferences = s => {
   quiet = s.quiet; reducedMotion = s.reducedMotion
   pet.setReducedMotion(s.reducedMotion)
   pet.setQuiet(s.quiet)
+  syncActivityAvailability()
   syncLifeAvailability()
   const checkbox = /** @type {HTMLInputElement | null} */ ($('pet-reduced-motion'))
   if (checkbox) { checkbox.checked = s.reducedMotion; checkbox.disabled = s.systemReduced }
@@ -113,6 +123,9 @@ const apply = (freshTurn = false) => {
   lifeFactsAvailable=tasksAvailable&&taskRows.length===0&&['idle','companion'].includes(r.intent.behavior)&&r.intent.badge===0
   syncLifeAvailability()
   const activity = formatCompanionStatus(r.intent, r.permissionCount)
+  ccActivity?.update({ connected: r.intent.form === 'lit', waiting: r.intent.behavior === 'permission', blocked: r.intent.props.includes('exclamation'), enabled: !holding && !quiet && !reducedMotion && !document.hidden })
+  activityConnected = r.intent.form === 'lit'
+  syncActivityAvailability()
   if(selected)activity.ariaLabel=`CC，${taskPrimary?.getAttribute('aria-label')??selected.title}，打开任务`
   if (stage && stage.getAttribute('aria-label') !== activity.ariaLabel) stage.setAttribute('aria-label', activity.ariaLabel)
   const status = $('pet-connection')
@@ -145,7 +158,8 @@ if (!document.hidden) feed.start()
 // start() 自己会先要一份,这里不用再补 refresh()。
 // 窗口不可见 → 停订(spec §5.3);回来时 start() 先补一份。
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { drag.cancel(); pet.setLifeAvailable(false);void motion?.stop();pet.setPaused(true); feed.stop(); return }
+  syncActivityAvailability()
+  if (document.hidden) { activityFeed.stop(); drag.cancel(); pet.setLifeAvailable(false);void motion?.stop();pet.setPaused(true); feed.stop(); return }
   preferences.refresh()
   bridge.resume()
   pet.setPaused(false)
@@ -157,7 +171,7 @@ const drag = createCompanionDrag({
   start: async () => {await motion?.stop();return mock?null:invoke('start_companion_drag')},
   move: position => invoke('move_companion_window', position),
   finish: () => invoke('finish_companion_drag'),
-  onBegin: () => {holding=true;syncLifeAvailability();pet.beginDrag()}, onEnd: () => {holding=false;pet.endDrag();syncLifeAvailability()},
+  onBegin: () => {holding=true;syncActivityAvailability();syncLifeAvailability();pet.beginDrag()}, onEnd: () => {holding=false;pet.endDrag();syncActivityAvailability();syncLifeAvailability()},
   onVelocity:speed=>pet.setDragVelocity(speed),onLanding:()=>pet.land(),
   onClick: () => { void openCharacter() },
   onError: error => console.warn('companion drag failed', error),
@@ -223,7 +237,7 @@ stage?.addEventListener('pointerleave', () => { pointerNear = false; releaseNear
 stage?.addEventListener('focus', () => { keyboardNear = true; pet.acknowledgeAttention() })
 stage?.addEventListener('blur', () => { keyboardNear = false; releaseNearby() })
 window.addEventListener('blur', () => { pointerNear = false; keyboardNear = false;pointerInShell=false;focusInShell=false;pet.setLifeAvailable(false);void motion?.stop();syncLifeAvailability();pet.releaseAttention(); taskView?.closeList(); closeSettings() })
-window.addEventListener('pagehide',()=>{pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
+window.addEventListener('pagehide',()=>{activityFeed.stop();ccActivity?.destroy();pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
 
 $('pet-reset-position')?.addEventListener('click', async () => {
   await motion?.stop()
