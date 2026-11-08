@@ -365,9 +365,29 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # Tauri 公证的是 .app;DMG 外壳要单独提交并 staple,断网首次打开才有 ticket。
+      # 复用上面按凭据完整性导出的 env,不在 if 里读 secrets,也不声明空串 APPLE_*。
+      - name: Notarize and staple DMG (macOS, only when provisioned)
+        id: notarize-dmg
+        if: matrix.os == 'macos-latest' && env.APPLE_ID != '' && env.APPLE_PASSWORD != '' && env.APPLE_TEAM_ID != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg)
+          if [ "${#dmgs[@]}" -eq 0 ]; then
+            echo "::error::No DMG found to notarize"
+            exit 1
+          fi
+          for dmg in "${dmgs[@]}"; do
+            xcrun notarytool submit "$dmg" \
+              --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$dmg"
+          done
+
       - name: Upload bundle artefacts
         uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: wechat-cc-${{ matrix.label }}
           # actions/upload-artifact uses @actions/glob, which does NOT expand
