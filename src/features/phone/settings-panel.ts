@@ -58,6 +58,7 @@ export const SETTINGS_LINK_TTL_MS = 10 * 60_000
 export const PANEL_CONFIG_KEYS: readonly string[] = [
   'bot_name', 'model', 'knowledge_enabled', 'social_enabled', 'autoStart',
   'companion.atelier_mode',
+  'companion.project_memory_into_sessions',
   // 「模型与后端」一块(2026-09-08):各家模型、/api 地址、后台评估用哪家。
   'openaiModel', 'openaiBaseUrl', 'agyModel', 'cursorModel', 'geminiModel', 'cheap_eval_provider', 'trusted_providers',
   'provider',

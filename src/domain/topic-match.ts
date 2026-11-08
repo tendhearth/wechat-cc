@@ -141,12 +141,13 @@ export function parseTopicJudge(answer: string, candidates: readonly Pick<MatchT
 const KIND_LABEL: Record<TopicEntryKind, string> = { fact: '事实', decision: '决定', commitment: '承诺', progress: '进展', conclusion: '结论' }
 
 /** 一个话题里挑几条:模型点名优先,再按字面重合、还没兑现的承诺和新近。 */
-export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES, preferredEntryId?: string): MatchEntry[] {
+export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES, preferredEntryId?: string, ongoingFirst = false): MatchEntry[] {
   const q = tokens(text)
   const overlap = (e: MatchEntry) => { let n = 0; for (const tok of tokens(`${e.line} ${e.body}`)) if (q.has(tok)) n++; return n }
+  const ongoing = (e: MatchEntry) => ongoingFirst ? (e.kind === 'commitment' ? 2 : e.kind === 'progress' ? 1 : 0) : 0
   return t.entries
     .map(e => ({ e, o: overlap(e) }))
-    .sort((a, b) => Number(b.e.id === preferredEntryId) - Number(a.e.id === preferredEntryId) || b.o - a.o || Number(b.e.kind === 'commitment') - Number(a.e.kind === 'commitment') || (a.e.updatedTs < b.e.updatedTs ? 1 : a.e.updatedTs > b.e.updatedTs ? -1 : 0))
+    .sort((a, b) => Number(b.e.id === preferredEntryId) - Number(a.e.id === preferredEntryId) || ongoing(b.e) - ongoing(a.e) || b.o - a.o || Number(b.e.kind === 'commitment') - Number(a.e.kind === 'commitment') || (a.e.updatedTs < b.e.updatedTs ? 1 : a.e.updatedTs > b.e.updatedTs ? -1 : 0))
     .slice(0, max)
     .map(x => x.e)
 }
@@ -155,11 +156,11 @@ export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES, pref
  * 信封里 `<topics>` 的正文(不含标签本身)。最相关的两条带细节;`bodies: false` ⇒ 只有索引行
  * (交给执行者的简报:细节里常有账号、地址这类,执行者用不着 —— 整合者 2026-11-05 第 2 条)。
  */
-export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], max = BLOCK_MAX, opts: { bodies?: boolean; preferredEntryIds?: ReadonlyMap<string, string> } = {}): string {
+export function renderTopicsBlock(text: string, picked: readonly MatchTopic[], max = BLOCK_MAX, opts: { bodies?: boolean; preferredEntryIds?: ReadonlyMap<string, string>; ongoingFirst?: boolean } = {}): string {
   const bodies = opts.bodies ?? true
   const parts: string[] = []
   for (const t of picked) {
-    const es = pickEntries(text, t, MAX_ENTRIES, opts.preferredEntryIds?.get(t.id))
+    const es = pickEntries(text, t, MAX_ENTRIES, opts.preferredEntryIds?.get(t.id), opts.ongoingFirst)
     const lines = es.map((e, i) => {
       const body = bodies && i < 2 && e.body ? `:${e.body.slice(0, 160)}` : ''
       return `- [${KIND_LABEL[e.kind] ?? e.kind}] ${e.line}${e.due ? `(期限 ${e.due})` : ''}${body}`

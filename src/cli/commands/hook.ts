@@ -19,10 +19,21 @@ function hookRelayCmd(source: Src) {
       try {
         // 回环守卫:daemon 自己拉起的 claude / codex / cursor-agent(ACP)也会触发同一份 hooks。
         // Cursor 这里什么都不写 ⇒ 按 Cursor 自己的规则走(ACP 会话有自己的权限卡)。
-        if (shouldSkipHook(process.env)) { if (debug) console.error('hook: skipped (daemon child)'); return }
+        if (shouldSkipHook(process.env)) return
         const raw = await readStdin()
         let parsed: unknown = null
         try { parsed = JSON.parse(raw) } catch { if (debug) console.error('hook: stdin is not JSON'); return }
+        if (source !== 'cursor' && parsed && typeof parsed === 'object' && (parsed as Record<string, unknown>)['hook_event_name'] === 'SessionStart') {
+          // Silent soft exit precedes the native 1s timeout, including imports and response-body consumption.
+          const deadline = setTimeout(() => process.exit(0), 800)
+          try {
+            const { sessionStartOutput } = await import('../hook-session-start')
+            const output = await sessionStartOutput(STATE_DIR, source, parsed)
+            if (output) process.stdout.write(output + '\n')
+          } catch { /* never interfere with session startup, even in debug mode */ }
+          finally { clearTimeout(deadline) }
+          return
+        }
         // PermissionRequest:去微信问主人;拿到 y/n 就往 stdout 写答复(两家同形状)。
         // 主人在场 / 没答 / daemon 没跑 → 什么都不写,终端自己弹提示;顺手按老规矩
         // 压一条「等你批准」提醒(刚发过卡片的话 daemon 那头会压掉)。
@@ -96,6 +107,7 @@ const hookInstallCmd = defineCommand({
     console.log('之后终端里的 claude / codex(装了 --cursor 的话还有 Cursor)跑完一个长回合,主人微信会收到一条(压 45s;期间你再敲一句就不发;一次提问最多推一条)。')
     console.log('停下来等批准时:你最近 3 分钟没在终端敲过字 ⇒ 微信里收到卡片,回「y 码」/「n 码」就替终端拍板(120s 内);否则终端自己问。')
     console.log('daemon 自己拉起的会话不会推(回环守卫)。查看:wechat-cc hook status;撤掉:wechat-cc hook uninstall。')
+    console.log('新会话会收到 CC 记下的项目近况索引;设置中可关闭。Codex 新增的 hook 需先在 /hooks 中审阅并信任。')
   },
 })
 

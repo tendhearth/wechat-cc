@@ -727,6 +727,12 @@ export const CliEventRequest = z.object({
 })
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
 
+export const CliProjectMemoryRequest = z.object({
+  source: z.enum(['claude', 'codex']),
+  session_id: z.string().min(1).max(200),
+  cwd: z.string().min(1).max(1000),
+})
+
 export const CliPermissionRequest = z.object({
   source: z.enum(['claude', 'codex', 'cursor']),
   session_id: z.string().min(1).max(200),
@@ -1332,6 +1338,7 @@ const CliD2Source = z.enum(['claude', 'codex', 'cursor'])
 
 // ── POST /v1/cli/event ──
 export const CliEventResponse = z.object({ ok: z.literal(true), action: z.enum(['scheduled', 'cancelled', 'cleared', 'noop']) })
+export const CliProjectMemoryResponse = z.object({ context: z.string().refine(s => [...s].length <= 1200), reason: z.string() })
 
 // ── POST /v1/cli/permission ──
 // CliPermissionOpen:主人在场 ⇒ owner_present(终端自己问);否则 pending + hash。
@@ -2470,6 +2477,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
   // cli hook events
   'POST /v1/cli/event': CliEventRequest,
+  'POST /v1/cli/project-memory': CliProjectMemoryRequest,
   'POST /v1/cli/permission': CliPermissionRequest,
   'GET /v1/cli/permission': CliPermissionQuery,
   'GET /v1/cli/sessions': CliSessionsQuery,
@@ -2634,6 +2642,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/license/activate': LicenseActivateResponse,
   'POST /v1/license/deactivate': LicenseDeactivateResponse,
   'POST /v1/cli/event': CliEventResponse,
+  'POST /v1/cli/project-memory': CliProjectMemoryResponse,
   'POST /v1/cli/permission': CliPermissionOpenResponse,
   'GET /v1/cli/permission': CliPermissionStatusResponse,
   'GET /v1/cli/sessions': CliSessionsResponse,

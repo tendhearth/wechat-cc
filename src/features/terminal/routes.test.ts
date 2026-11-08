@@ -1,12 +1,30 @@
 import { describe, it, expect, vi } from 'vitest'
 import { terminalRoutes, CLI_PERMISSION_POLL_CAP_MS, type TerminalRoutesDeps } from './routes'
 import { minTierFor } from '../../daemon/internal-api/route-tiers'
-import { REQUEST_SCHEMAS } from '../../daemon/internal-api/schema'
+import { REQUEST_SCHEMAS, RESPONSE_SCHEMAS } from '../../daemon/internal-api/schema'
 
 const qs = () => new URLSearchParams()
 // 只给用到的那一项:没接线的分支已经没有了(模块门在 internal-api 那一层回 module_starting,见 say-route.test.ts)
 const deps = (cliEvents?: Partial<TerminalRoutesDeps['cliEvents']>, cliPermissions?: TerminalRoutesDeps['cliPermissions']): TerminalRoutesDeps => ({ cliEvents, cliPermissions } as unknown as TerminalRoutesDeps)
 const body = { source: 'claude', kind: 'stop', session_id: 'abc123', cwd: '/w/p', text: 'done' }
+
+describe('SessionStart project memory route', () => {
+  it('only FILE callers can ask for context; request is bounded and trusted', async () => {
+    const projectMemory = async () => ({ context: '项目近况', reason: 'name' })
+    const on = terminalRoutes({ ...deps(), projectMemory })['POST /v1/cli/project-memory']!
+    const request = { source: 'codex', session_id: 's', cwd: '/repo' }
+    expect(await on(qs(), request, { origin: 'file', tier: 'trusted' } as never)).toEqual({ status: 200, body: { context: '项目近况', reason: 'name' } })
+    for (const origin of ['session', 'operator', 'device', 'link']) {
+      expect((await on(qs(), request, { origin, tier: 'admin' } as never)).status).toBe(403)
+    }
+    expect(minTierFor('POST /v1/cli/project-memory')).toBe('trusted')
+    const schema = REQUEST_SCHEMAS['POST /v1/cli/project-memory']!
+    expect(schema.safeParse(request).success).toBe(true)
+    expect(schema.safeParse({ ...request, cwd: 'x'.repeat(1001) }).success).toBe(false)
+    expect(schema.safeParse({ ...request, source: 'cursor' }).success).toBe(false)
+    expect(RESPONSE_SCHEMAS['POST /v1/cli/project-memory']!.safeParse({ context: '项目近况', reason: 'name' }).success).toBe(true)
+  })
+})
 
 describe('POST /v1/cli/event(spec 2026-09-09-cli-hook-push §6.1)', () => {
   it('转给 hub.ingest,回 action', async () => {

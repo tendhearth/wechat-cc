@@ -250,7 +250,7 @@ export type PostCliEventResult =
   | { ok: false; reason: string }
 
 /** 读 `<stateDir>/internal-api-info.json`(与 `wechat-cc agent` 同源)拿 baseUrl + FILE token。 */
-function readApiInfo(stateDir: string): { baseUrl: string; token: string } | { reason: string } {
+export function readApiInfo(stateDir: string): { baseUrl: string; token: string } | { reason: string } {
   const infoPath = join(stateDir, 'internal-api-info.json')
   if (!existsSync(infoPath)) return { reason: 'daemon_not_running' }
   let info: { baseUrl?: string; tokenFilePath?: string }
@@ -397,12 +397,14 @@ const PERMISSION_HOOK_TIMEOUT_SEC = 150
  */
 const EVENTS: Record<Exclude<HookSource, 'cursor'>, { event: string; matcher?: string; sync?: boolean }[]> = {
   claude: [
+    { event: 'SessionStart', sync: true },
     { event: 'Stop' },
     { event: 'PermissionRequest', sync: true },
     { event: 'UserPromptSubmit' },
     { event: 'SessionEnd' },
   ],
   codex: [
+    { event: 'SessionStart', sync: true },
     { event: 'Stop' },
     { event: 'PermissionRequest', sync: true },
     { event: 'UserPromptSubmit' },
@@ -463,7 +465,7 @@ export function installHooks(file: string, source: HookSource, command: string):
   cfg.hooks ??= {}
   for (const { event, matcher, sync } of EVENTS[source]) {
     const handler: HookHandler = sync
-      ? { type: 'command', command, timeout: PERMISSION_HOOK_TIMEOUT_SEC, async: false, statusMessage: HOOK_STATUS_MESSAGE }
+      ? { type: 'command', command, timeout: event === 'SessionStart' ? 1 : PERMISSION_HOOK_TIMEOUT_SEC, async: false, statusMessage: HOOK_STATUS_MESSAGE }
       : { type: 'command', command, timeout: HOOK_TIMEOUT_SEC, async: true, statusMessage: HOOK_STATUS_MESSAGE }
     const group: MatcherGroup = matcher ? { matcher, hooks: [handler] } : { hooks: [handler] }
     ;(cfg.hooks[event] ??= []).push(group)
@@ -504,6 +506,15 @@ export function hookStatus(file: string, source: HookSource): { installed: boole
     }
   }
   return { installed: false, command: null }
+}
+
+/** Old installations still count as installed, but need reconciliation to gain SessionStart. */
+export function hasSessionStartHook(file: string, source: HookSource): boolean {
+  if (source === 'cursor') return true
+  try {
+    return (readHooksFile(file).hooks?.['SessionStart'] ?? []).some(g =>
+      g.hooks?.some(h => isOurs(h, source) && h.async === false && h.timeout === 1))
+  } catch { return false }
 }
 
 // ── 3b. Cursor 的 hooks.json ─────────────────────────────────────────────────
