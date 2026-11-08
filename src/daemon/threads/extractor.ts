@@ -10,7 +10,7 @@ import type { MessagesStore, MessageRecord } from '../../lib/messages-store'
 import type { ThreadsStore, Facet } from '../../lib/threads-store'
 import { buildExtractPrompt, parseExtractResponse, renderMessage, renderWork, ENTRIES_PER_TOPIC, type ExtractOp } from './extract-prompt'
 import type { WorkResult } from './work-results'
-import { isTopicMessage, isRoutineTopicText } from '../../domain/topic-noise'
+import { isTopicMessage, isRoutineTopicEntry } from '../../domain/topic-noise'
 import { withoutRoutineTopicNoise } from '../../domain/topic-match'
 
 const FETCH_LIMIT = 500          // 一批最多从库里拿这么多条消息
@@ -104,7 +104,7 @@ export async function runThreadsExtraction(deps: ExtractorDeps): Promise<{ appli
       ...(tail.length > 0 ? { contextTail: tail.map(m => ({ ts: m.ts, direction: m.direction, text: m.text })) } : {}),
       existingThreads: existing.map(t => ({
         id: t.id, title: t.title, facets: t.facets, tags: t.tags, aliases: t.aliases, summary: withoutRoutineTopicNoise({ ...t, entries: [] }).summary, description: t.description,
-        entries: (entries.get(t.id) ?? []).filter(e => !isRoutineTopicText(`${e.line}\n${e.body}`)).slice(0, ENTRIES_PER_TOPIC).map(e => ({ id: e.id, kind: e.kind, line: e.line, due: e.due })),
+        entries: (entries.get(t.id) ?? []).filter(e => !isRoutineTopicEntry(e)).slice(0, ENTRIES_PER_TOPIC).map(e => ({ id: e.id, kind: e.kind, line: e.line, due: e.due })),
       })),
       tagVocabulary: await deps.threads.tagVocabulary(30),
       ...(work.length > 0 ? { workResults: work.map(w => ({ matterId: w.matterId, title: w.title, project: w.project, state: w.state, ask: w.ask, result: w.result, at: w.at })) } : {}),
@@ -142,7 +142,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       })
       known.add(id)
       for (const e of op.entries) {
-        if (isRoutineTopicText([e.line, e.body].filter(Boolean).join('\n'))) { skipped++; continue }
+        if (isRoutineTopicEntry(e)) { skipped++; continue }
         await deps.threads.addEntry({ threadId: id, kind: e.kind, line: e.line, ...(e.body ? { body: e.body } : {}), ...(e.due ? { due: e.due } : {}), source: sourceOf(e.matter), matterId: matterOf(e.matter) })
       }
       applied++
@@ -158,7 +158,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       applied++
     } else if (op.op === 'add_entry') {
       if (!known.has(op.topic)) { skipped++; continue }
-      if (isRoutineTopicText([op.line, op.body].filter(Boolean).join('\n'))) { skipped++; continue }
+      if (isRoutineTopicEntry({ line: op.line ?? '', body: op.body })) { skipped++; continue }
       await deps.threads.addEntry({ threadId: op.topic, kind: op.kind, line: op.line, ...(op.body ? { body: op.body } : {}), ...(op.due ? { due: op.due } : {}), source: sourceOf(op.matter), matterId: matterOf(op.matter) })
       const t = await deps.threads.get(op.topic)
       if (t && activeTs > t.lastActive) await deps.threads.update(op.topic, { lastActive: activeTs })
@@ -167,7 +167,7 @@ async function applyOps(deps: ExtractorDeps, ops: ExtractOp[], activeTs: string,
       const e = await deps.threads.getEntry(op.id)
       if (!e || !known.has(e.threadId)) { skipped++; continue }
       const { op: _op, id: _id, ...patch } = op
-      if ((patch.line !== undefined || patch.body !== undefined) && isRoutineTopicText(`${patch.line ?? e.line}\n${patch.body ?? e.body}`)) { skipped++; continue }
+      if ((patch.line !== undefined || patch.body !== undefined) && isRoutineTopicEntry({ line: patch.line ?? e.line, body: patch.body ?? e.body })) { skipped++; continue }
       await deps.threads.updateEntry(op.id, patch)
       applied++
     }

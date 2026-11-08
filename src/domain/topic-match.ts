@@ -7,7 +7,7 @@
  * 选好话题以后,每个话题挑几条最相关的条目、渲染成信封里的 `<topics>` 那一段。
  */
 
-import { isRoutineTopicText } from './topic-noise'
+import { isRoutineTopicEntry, isRoutineTopicText } from './topic-noise'
 
 export type TopicEntryKind = 'fact' | 'decision' | 'commitment' | 'progress' | 'conclusion'
 
@@ -18,7 +18,7 @@ export interface MatchTopic { id: string; title: string; summary: string; aliase
 export function withoutRoutineTopicNoise(t: MatchTopic): MatchTopic {
   const state = t.summary.match(/^(.*?)。?现状[:：]([\s\S]*)$/)
   const summary = isRoutineTopicText(t.summary) ? '' : state && isRoutineTopicText(state[2]!) ? state[1]!.replace(/[。.;；]+$/, '') : t.summary
-  return { ...t, summary, entries: t.entries.filter(e => !isRoutineTopicText(`${e.line}\n${e.body}`)) }
+  return { ...t, summary, entries: t.entries.filter(e => !isRoutineTopicEntry(e)) }
 }
 
 export interface TopicMatch {
@@ -166,7 +166,7 @@ export function pickEntries(text: string, t: MatchTopic, max = MAX_ENTRIES, pref
   const q = tokens(text)
   const overlap = (e: MatchEntry) => { let n = 0; for (const tok of tokens(`${e.line} ${e.body}`)) if (q.has(tok)) n++; return n }
   return t.entries
-    .filter(e => !isRoutineTopicText(`${e.line}\n${e.body}`))
+    .filter(e => !isRoutineTopicEntry(e))
     .map(e => ({ e, o: overlap(e) }))
     .sort((a, b) => Number(b.e.id === preferredEntryId) - Number(a.e.id === preferredEntryId) || (ongoingFirst ? entryPriority(b.e) - entryPriority(a.e) : 0) || b.o - a.o || entryPriority(b.e) - entryPriority(a.e) || (a.e.updatedTs < b.e.updatedTs ? 1 : a.e.updatedTs > b.e.updatedTs ? -1 : 0))
     .slice(0, max)
