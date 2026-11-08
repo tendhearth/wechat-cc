@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sessionStartOutput } from './hook-session-start'
 
 const dirs: string[] = []
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
+afterEach(() => { vi.useRealTimers(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
 function state() {
   const d = mkdtempSync(join(tmpdir(), 'cc-session-start-')); dirs.push(d)
   writeFileSync(join(d, 'token'), 'test-token')
@@ -37,6 +37,20 @@ describe('native SessionStart output', () => {
     expect(await sessionStartOutput(state(), 'claude', raw, { timeoutMs: 20, fetchImpl: stalledBody })).toBe('')
     expect(await sessionStartOutput(state(), 'claude', raw, { timeoutMs: 20, fetchImpl: (() => new Promise(() => {})) as unknown as typeof fetch })).toBe('')
     expect(performance.now() - start).toBeLessThan(1000)
+  })
+  it('does not restart the request deadline after synchronous setup stalls the event loop', async () => {
+    vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] })
+    const fetchImpl = (() => {
+      vi.advanceTimersByTime(30)
+      return Promise.resolve(Response.json({ context: 'too late' }))
+    }) as unknown as typeof fetch
+    expect(await sessionStartOutput(state(), 'claude', raw, { timeoutMs: 20, fetchImpl })).toBe('')
+  })
+  it('does not fetch after the absolute stdin deadline has already elapsed', async () => {
+    let requests = 0
+    const fetchImpl = (async () => { requests++; return Response.json({ context: 'too late' }) }) as unknown as typeof fetch
+    expect(await sessionStartOutput(state(), 'claude', raw, { deadlineAt: performance.now() - 1, fetchImpl })).toBe('')
+    expect(requests).toBe(0)
   })
   it('child agent, malformed input, cursor and daemon children never fetch', async () => {
     const fetchImpl = (() => { throw new Error('must not call') }) as unknown as typeof fetch

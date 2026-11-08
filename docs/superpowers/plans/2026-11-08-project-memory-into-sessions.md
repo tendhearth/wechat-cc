@@ -26,3 +26,19 @@
 - [x] Review the complete change and fix material findings with regression tests.
 
 Final verification, local commit and delivery receipts are recorded in the requested external `codex-project-memory-report.md`; do not push.
+
+## PR #881 CI repair
+
+User supplied the repair design and authorized inline implementation on `7e67f0b42` in this worktree. Node's offline server must be ready before publishing its port; the observed 69–78ms empty exits are connection failures, not exhausted deadlines. Keep the requested cold-start improvement as a separate product fix.
+
+Approach: move the existing command registry unchanged to `src/cli/main.ts`, with `cli.ts` dispatching exact native hook invocations to a small entry. Other hook events retain their relay; extract API-info/loop-guard helpers and the request schema so startup does not import the relay or the full desktop schema. A single shared schema is preferred over duplicate validation. Keep production request/soft budgets at 650/800ms after stdin, with a 900ms process-uptime ceiling; test-only env injection requires `NODE_ENV=test`. Native 1s timeout remains authoritative for OS scheduling and synchronous runtime work.
+
+- [x] Reproduce the original Node failure; only await server.ready and confirm the six original tests pass.
+- [x] Add red regressions: reject unrelated command/schema loads, allow an injected request budget, separate header timeout/body stall/absence, and bound unfinished stdin to 1.5s.
+- [x] Implement the lightweight entry and shared small dependencies; retain CLI help/relay behavior and all existing assertions.
+- [x] Measure source and compiled entry before/after, recording runtime uptime before fetch and parent spawn wall time (including first-exec macOS validation).
+Final gate: targeted Bun/Node tests, independent read-only review, `bun run verify` on the main Mac, and a local commit with the requested trailer. The external report records the receipts; do not push.
+
+Review focus: help flags must bypass stdin; non-SessionStart relay must receive the already-read input; test env must not affect production; total deadline must include unfinished stdin and body consumption. Measurements use only temporary state and an offline loopback server. The only main-Mac build is the explicitly requested temporary CLI measurement binary.
+
+Review repair: pass the absolute stdin-based deadline into the startup request helper, recalculate after synchronous API-info/token reads, and reject late results even if setup blocks timer delivery. A fake-clock regression first emitted late context and failed, before the repair.

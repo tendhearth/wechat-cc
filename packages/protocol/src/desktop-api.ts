@@ -1,3 +1,4 @@
+import { CliProjectMemoryRequest } from './cli-project-memory'
 import { TopicOpenRequest, TopicRenameRequest, TopicMergeRequest, TopicDeleteRequest, TopicWrongRequest } from './topic-bubbles'
 import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
 import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
@@ -727,11 +728,7 @@ export const CliEventRequest = z.object({
 })
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
 
-export const CliProjectMemoryRequest = z.object({
-  source: z.enum(['claude', 'codex']),
-  session_id: z.string().min(1).max(200),
-  cwd: z.string().min(1).max(1000),
-})
+export { CliProjectMemoryRequest } from './cli-project-memory'
 
 export const CliPermissionRequest = z.object({
   source: z.enum(['claude', 'codex', 'cursor']),

@@ -1,7 +1,5 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
-import { STATE_DIR } from '../../lib/config'
-import { readStdin } from '../stdin'
 // ── hook — 终端 claude / codex / cursor 会话的事件推到微信(spec 2026-09-09-cli-hook-push)──
 // 三家的 hooks 各拉起一个 `wechat-cc hook <source>` 子进程,stdin 是 hook JSON。
 // Cursor 的 hook 一律同步等 stdout:权限类回 {permission},beforeSubmitPrompt 回 {continue:true}。
@@ -14,50 +12,8 @@ function hookRelayCmd(source: Src) {
   return defineCommand({
     meta: { name: source, description: `${source} 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)` },
     async run() {
-      const { shouldSkipHook, normalizeHookPayload, postCliEvent, parsePermissionRequest, relayPermission, permissionDecisionOutput, withMachineContext, cursorPermissionOutput, cursorEventOutput, withCursorStopText } = await import('../hook.ts')
-      const debug = process.env['WECHAT_CC_HOOK_DEBUG'] === '1'
-      try {
-        // 回环守卫:daemon 自己拉起的 claude / codex / cursor-agent(ACP)也会触发同一份 hooks。
-        // Cursor 这里什么都不写 ⇒ 按 Cursor 自己的规则走(ACP 会话有自己的权限卡)。
-        if (shouldSkipHook(process.env)) return
-        const raw = await readStdin()
-        let parsed: unknown = null
-        try { parsed = JSON.parse(raw) } catch { if (debug) console.error('hook: stdin is not JSON'); return }
-        if (source !== 'cursor' && parsed && typeof parsed === 'object' && (parsed as Record<string, unknown>)['hook_event_name'] === 'SessionStart') {
-          // Silent soft exit precedes the native 1s timeout, including imports and response-body consumption.
-          const deadline = setTimeout(() => process.exit(0), 800)
-          try {
-            const { sessionStartOutput } = await import('../hook-session-start')
-            const output = await sessionStartOutput(STATE_DIR, source, parsed)
-            if (output) process.stdout.write(output + '\n')
-          } catch { /* never interfere with session startup, even in debug mode */ }
-          finally { clearTimeout(deadline) }
-          return
-        }
-        // PermissionRequest:去微信问主人;拿到 y/n 就往 stdout 写答复(两家同形状)。
-        // 主人在场 / 没答 / daemon 没跑 → 什么都不写,终端自己弹提示;顺手按老规矩
-        // 压一条「等你批准」提醒(刚发过卡片的话 daemon 那头会压掉)。
-        // Cursor:没拿到主人的决定就回 ask(Cursor 自己问),绝不放行。
-        const perm = parsePermissionRequest(source, parsed)
-        if (perm) {
-          const r = await relayPermission(STATE_DIR, await withMachineContext(perm))
-          if (debug) console.error(`hook: permission ${JSON.stringify(r)}`)
-          if (source === 'cursor') process.stdout.write(cursorPermissionOutput(r.decision) + '\n')
-          if (r.decision) { if (source !== 'cursor') process.stdout.write(permissionDecisionOutput(r.decision) + '\n'); return }
-          await postCliEvent(STATE_DIR, await withMachineContext({ source, kind: 'permission' as const, session_id: perm.session_id, cwd: perm.cwd, text: perm.summary ? `${perm.tool_name}: ${perm.summary}` : perm.tool_name }))
-          return
-        }
-        // Cursor 的其余事件先回放行,再报 daemon(不让主人的提交卡在 daemon 上)。
-        if (source === 'cursor') process.stdout.write(cursorEventOutput(parsed) + '\n')
-        const norm = normalizeHookPayload(source, parsed)
-        if (!norm) { if (debug) console.error('hook: event ignored'); return }
-        const ev = withCursorStopText(norm)
-        // prompt / session_end 不用探空闲(它们本身就说明有人在);stop / permission 要。
-        const r = await postCliEvent(STATE_DIR, ev.kind === 'stop' || ev.kind === 'permission' ? await withMachineContext(ev) : ev)
-        if (debug) console.error(`hook: ${JSON.stringify(r)}`)
-      } catch (err) {
-        if (debug) console.error(`hook: ${err instanceof Error ? err.message : String(err)}`)
-      }
+      const { runHookEntry } = await import('../hook-entry')
+      await runHookEntry(source)
     },
   })
 }
