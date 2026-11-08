@@ -4,6 +4,8 @@ import {Readable} from 'node:stream'
 import {receiveBrowserSnapshot} from './macmini-browser-snapshot.mjs'
 import {jobLifecycle} from './macmini-job-lifecycle.mjs'
 import {PUBLIC_CACHE_COMMIT,gitObject,manifestTree,sha256} from './macmini-source-manifest.mjs'
+// 夹具按 POSIX 路径比对;Windows 上 path.join 给反斜杠,先统一再比(接收器本身只在 mini 上跑)。
+const n=path=>String(path).replaceAll('\\','/')
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve}}
 for(const stage of ['materialize','home']) test(`cancel during ${stage} await stops receiver before later spawn and lock release`,async()=>{
  const processRef=new EventEmitter(),events=[],entered=deferred(),gate=deferred()
@@ -17,9 +19,9 @@ for(const stage of ['materialize','home']) test(`cancel during ${stage} await st
  const pause=async()=>{entered.resolve();await gate.promise;events.push('fs-done')}
  const fs={
   realpath:async path=>path,lstat:async()=>({isFile:()=>true,mode:0o644}),chmod:async()=>{},copyFile:async()=>{},rm:async()=>{},rename:async()=>events.push('activate'),
-  mkdir:async path=>{if(stage==='home'&&path.endsWith('/home'))await pause()},
-  writeFile:async path=>{if(stage==='materialize'&&path.endsWith('/README.md'))await pause()},
-  readFile:async path=>path==='/lab/active.json'?JSON.stringify(config):path==='/lab/cache/snapshot.json'?JSON.stringify({commit:PUBLIC_CACHE_COMMIT}):path.endsWith('README.md')?Buffer.from('public'):Buffer.from('fixture'),
+  mkdir:async path=>{if(stage==='home'&&n(path).endsWith('/home'))await pause()},
+  writeFile:async path=>{if(stage==='materialize'&&n(path).endsWith('/README.md'))await pause()},
+  readFile:async path=>n(path).endsWith('/lab/active.json')?JSON.stringify(config):n(path).endsWith('/lab/cache/snapshot.json')?JSON.stringify({commit:PUBLIC_CACHE_COMMIT}):n(path).endsWith('README.md')?Buffer.from('public'):Buffer.from('fixture'),
  }
  const run=receiveBrowserSnapshot({mini:{labHome:'/lab',homeDir:'/home/test',bun:'/bun'},sha,lifecycle,input:Readable.from([Buffer.concat([length,bytes,delta])]),fs,
   acquire:async options=>options.onAcquired(async()=>events.push('release')),
