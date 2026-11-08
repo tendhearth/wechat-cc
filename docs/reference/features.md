@@ -283,6 +283,17 @@ wechat-cc hook uninstall          # removes only wechat-cc's own entries
   WeChat side; `看` / `@` for a hand's session are dispatched back to it.
 - Sessions spawned by the daemon itself never loop back (`WECHAT_CC_DAEMON_CHILD=1`).
   The hook never blocks the CLI: no daemon, no network → silent exit 0.
+- **Project memory at session start** (Claude Code and Codex): `hook install`
+  also adds one synchronous `SessionStart` hook to existing installations.
+  CC matches the real Git repository (including worktrees/subdirectories) to
+  the owner's public topics, using exact repository/remote names and aliases
+  plus local terminal history. Ambiguous matches inject nothing. The startup
+  context contains at most 1200 characters of index lines, with a staleness
+  notice and unfinished work first; bodies and topic summaries are omitted.
+  Missing daemon, failures or deadlines silently return no context (native
+  hook limit: 1 second). In settings, turn off **终端里的项目近况**, or set
+  `companion.project_memory_into_sessions=false`; this takes effect immediately.
+  Codex requires new hook definitions to be reviewed and trusted in `/hooks`.
 
 Both CLIs speak the same hook contract (`Stop` / `UserPromptSubmit` /
 `SessionEnd` / `PermissionRequest`), so one implementation covers Claude Code

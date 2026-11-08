@@ -52,6 +52,7 @@ import { CliEventRequest, CliPermissionRequest } from '../../daemon/internal-api
 import type { WechatLinkStatus, WechatPages, WechatPermissions, WechatSend } from '../../ports/wechat'
 import type { Bootstrap } from '../../daemon/bootstrap/index'
 import type { NetworkGate } from '../../lib/network-gate'
+import { makeProjectMemory } from './project-memory'
 
 /** 工作台里这一块用到的两样:有没有跟外部会话撞文件夹、「今天」里那一节。 */
 export type CliSessionsWorkbench = TodayWorkbench & { conflictsExternal(cwd: string, source: string, sessionId: string): boolean }
@@ -371,7 +372,11 @@ export function wireTerminal(d: WireTerminalDeps) {
     actions: phoneActions,
     executorName: (id: string) => boot.registry.namesOf(id).name,
   })
-  const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions }
+  const projectMemory = makeProjectMemory({ db, config: () => {
+    const cfg = loadCompanionConfig(stateDir)
+    return { enabled: cfg.project_memory_into_sessions !== false, owner: cfg.default_chat_id }
+  }, log: line => log('PROJECT_MEMORY', line) })
+  const routes: TerminalRoutesDeps = { projectMemory, cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,

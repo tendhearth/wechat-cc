@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
-import { cittyRoot } from './cli'
+import { cittyRoot } from './src/cli/main'
 import { computeProviderSetOutcome } from './src/cli/commands/provider'
 import { parseBudgetUsdFlag, parseTimeoutMsFlag } from './src/cli/flags'
 import { activeModel, type AgentConfig } from './src/lib/agent-config'

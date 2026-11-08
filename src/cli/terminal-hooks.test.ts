@@ -70,6 +70,15 @@ describe('状态判定', () => {
 })
 
 describe('connectTerminalHooks / disconnectTerminalHooks(幂等,只动自家条目)', () => {
+  it('旧四事件安装也会补齐 SessionStart,下一次无重复', () => {
+    const d = deps({ locate: s => s === 'claude' ? '/bin/claude' : null })
+    installHooks(claudeFile(), 'claude', selfHookCommand('claude', d.self))
+    const cfg = JSON.parse(readFileSync(claudeFile(), 'utf8')); delete cfg.hooks.SessionStart
+    writeFileSync(claudeFile(), JSON.stringify(cfg))
+    expect(connectTerminalHooks(d)).toMatchObject([{ source: 'claude', changed: true }])
+    expect(JSON.parse(readFileSync(claudeFile(), 'utf8')).hooks.SessionStart).toHaveLength(1)
+    expect(connectTerminalHooks(d)).toEqual([])
+  })
   const onlyClaude = (s: string) => s === 'claude' ? '/usr/local/bin/claude' : null
   it('缺省只接这台机上有、还没接好的;再点一次什么都不做', () => {
     const cmd = selfHookCommand('claude', deps().self)

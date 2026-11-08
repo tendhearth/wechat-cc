@@ -151,6 +151,7 @@ ${MOBILE_TOKENS_CSS}
 <section>
   <details><summary>技术详情(好奇再点)</summary>
     <label class="row"><span><b>知识库</b><small>长期记忆检索</small></span><input type="checkbox" class="switch" id="f-knowledge"></label>
+    <label class="row"><span><b>终端里的项目近况</b><small>新开 Claude Code / Codex 时,带上 CC 记下的这个项目的近况</small></span><input type="checkbox" class="switch" id="f-project-memory"></label>
     <label class="row"><span><b>社交能力</b><small>替你和别人的 CC 打交道</small></span><input type="checkbox" class="switch" id="f-social"></label>
     <label class="row"><span><b>开机自启</b></span><input type="checkbox" class="switch" id="f-autostart"></label>
   </details>
@@ -337,6 +338,7 @@ async function load() {
   $("f-stickers").checked = s.prefs.stickers !== false
   $("f-hunt").checked = s.prefs.hunt === true  // 打猎默认关(10-21 起)
   $("f-knowledge").checked = s.config.knowledge_enabled === true
+  $("f-project-memory").checked = s.config["companion.project_memory_into_sessions"] !== false
   $("f-social").checked = s.config.social_enabled === true
   $("f-autostart").checked = s.config.autoStart === true
   const care = s.prefs.care || "low"
@@ -374,6 +376,7 @@ wireSwitch("f-split", "pref", "split")
 wireSwitch("f-stickers", "pref", "stickers")
 wireSwitch("f-hunt", "pref", "hunt")
 wireSwitch("f-knowledge", "config", "knowledge_enabled")
+wireSwitch("f-project-memory", "config", "companion.project_memory_into_sessions")
 wireSwitch("f-social", "config", "social_enabled")
 wireSwitch("f-autostart", "config", "autoStart")
 $("forget-devices").addEventListener("click", async () => {

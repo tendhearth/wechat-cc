@@ -111,6 +111,8 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
   { key: 'companion.memory_nightly_enabled', store: 'companion', field: 'memory_nightly_enabled',
     type: 'boolean', writable: true, effect: 'next-tick',
     description: '每晚整理长期记忆 memory.md(每次对话都读;有值得说的变化会告诉主人)' },
+  { key: 'companion.project_memory_into_sessions', store: 'companion', field: 'project_memory_into_sessions',
+    type: 'boolean', writable: true, effect: 'immediate', description: '新终端会话带上 CC 记下的项目近况索引' },
   { key: 'companion.memory_nightly_at', store: 'companion', field: 'memory_nightly_at',
     type: 'string', writable: true, effect: 'next-tick',
     description: '每晚整理的时间点(主人时区,HH:MM,默认 04:00)',

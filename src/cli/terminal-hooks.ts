@@ -17,7 +17,7 @@ import { isAbsolute, join } from 'node:path'
 import { CLI_ENTRY } from './repo-root'
 import { isCompiledBundle } from '../lib/runtime-info'
 import { defaultLocate } from '../adapters/cli-upgrade/locate'
-import { claudeSettingsPath, codexHooksPath, cursorHooksPath, hookCommandLine, hookStatus, installHooks, uninstallHooks, type HookSource } from './hook'
+import { claudeSettingsPath, codexHooksPath, cursorHooksPath, hookCommandLine, hookStatus, hasSessionStartHook, installHooks, uninstallHooks, type HookSource } from './hook'
 
 export const HOOK_SOURCES: readonly HookSource[] = ['claude', 'codex', 'cursor']
 
@@ -89,7 +89,8 @@ export function readTerminalHooks(deps: TerminalHooksDeps): HookSourceState[] {
     try { cli = deps.locate(source) } catch { cli = null }
     // Cursor 的 IDE 自己也触发 ~/.cursor/hooks.json:没装 cursor-agent、只有 IDE 也算「有」(cli 记成那个目录)。
     if (!cli && source === 'cursor') { const dir = join(deps.home, '.cursor'); if (deps.exists(dir)) cli = dir }
-    return { source, cli, file, installed: st.installed, command: st.command, health: hookHealth(st, deps.exists), matchesSelf: st.command === selfHookCommand(source, deps.self) }
+    const health = hookHealth(st, deps.exists)
+    return { source, cli, file, installed: st.installed, command: st.command, health: health === 'ok' && !hasSessionStartHook(file, source) ? 'stale' : health, matchesSelf: st.command === selfHookCommand(source, deps.self) }
   })
 }
 

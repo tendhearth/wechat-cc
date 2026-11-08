@@ -391,6 +391,7 @@ const ROUTE_TABLE = {
   // 终端 claude / codex 的 hook 事件(spec 2026-09-09-cli-hook-push):hook 子命令
   // 拿的是 FILE token(= trusted)。
   'POST /v1/cli/event': { module: 'terminal', desktop: { tier: 'trusted' } },
+  'POST /v1/cli/project-memory': { module: 'terminal', desktop: { tier: 'trusted' } },
   'POST /v1/cli/permission': { module: 'terminal', desktop: { tier: 'trusted' } },
   'GET /v1/cli/permission': { module: 'terminal', desktop: { tier: 'trusted' } },
   // 终端会话登记处(v76):列出主人所有终端会话的路径、最后一句、等批准的命令 —— 主人的私事,admin。

@@ -26,9 +26,9 @@ function run(args: string[], timeout = 15_000): { code: number; out: string } {
   return { code: r.status ?? -1, out: ((r.stdout ?? '') + (r.stderr ?? '')).replace(/\r\n/g, '\n') }
 }
 
-/** 从 cli.ts 源码读 SUBCOMMANDS 的键(不 import cli.ts —— import 会执行顶层代码)。 */
+/** 从延迟加载的命令登记表读键;不 import 它,避免执行命令族的顶层代码。 */
 function subcommandNames(): string[] {
-  const src = readFileSync(CLI, 'utf8')
+  const src = readFileSync(join(ROOT, 'src/cli/main.ts'), 'utf8')
   const start = src.indexOf('const SUBCOMMANDS = {')
   const end = src.indexOf('} as const', start)
   return [...src.slice(start, end).matchAll(/^\s+'?([a-z][a-z-]*)'?:/gm)].map(m => m[1]!)
