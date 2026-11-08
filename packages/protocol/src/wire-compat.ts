@@ -65,7 +65,7 @@ export type RouteRetirement = { client: 'app' | 'web' | 'desktop' | 'selftest'; 
 export const ROUTE_RETIREMENT = {
   app: { client: 'app', milestone: 'P3f', minimum: '3' },
   web: { client: 'web', milestone: 'P3g', minimum: 'P3g' },
-  desktop: { client: 'desktop', milestone: 'P3e', minimum: null },
+  desktop: { client: 'desktop', milestone: 'P3e', minimum: '1.7.9' },
   selftest: { client: 'selftest', milestone: 'P3d', minimum: 'P3d' },
 } as const satisfies Record<string, RouteRetirement>
 export interface WireRouteAlias {
