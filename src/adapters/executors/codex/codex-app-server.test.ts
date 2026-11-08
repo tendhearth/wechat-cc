@@ -12,7 +12,7 @@ type Rpc = { id?: string | number; method?: string; params?: any; result?: any; 
 class FakeProcess extends EventEmitter {
   stdin = new PassThrough(); stdout = new PassThrough(); stderr = new PassThrough()
   exitCode: number | null = null; signalCode: string | null = null
-  sent: Rpc[] = []; autoExit = true; autoTurnStart = true; autoInterrupt = true
+  sent: Rpc[] = []; autoExit = true; autoTurnStart = true; autoInterrupt = true; autoTerminalList = true
   kill = vi.fn((signal = 'SIGTERM') => { if (this.autoExit) queueMicrotask(() => this.exit(null, signal)); return true })
   constructor(readonly probe: boolean) {
     super()
@@ -30,7 +30,7 @@ class FakeProcess extends EventEmitter {
         if (message.method === 'turn/start' && this.autoTurnStart) queueMicrotask(() => this.send({ id: message.id, result: { turn: { id: `turn-${this.sent.filter(m => m.method === 'turn/start').length}` } } }))
         if (message.method === 'thread/read') queueMicrotask(() => this.send({ id: message.id, result: { thread: nativeThreads[message.params.threadId] } }))
         if (message.method === 'thread/backgroundTerminals/clean') queueMicrotask(() => this.send(terminalCleanup === 'unavailable' ? {id:message.id,error:{message:'unsupported terminal API'}} : {id:message.id,result:{}}))
-        if (message.method === 'thread/backgroundTerminals/list') queueMicrotask(() => this.send({id:message.id,result:{data:terminalCleanup === 'running' ? [{processId:'owned-running'}] : [],nextCursor:null}}))
+        if (message.method === 'thread/backgroundTerminals/list' && this.autoTerminalList) queueMicrotask(() => this.send(terminalCleanup === 'unavailable' ? {id:message.id,error:{message:'unsupported terminal API'}} : {id:message.id,result:{data:terminalCleanup === 'running' ? [{processId:'owned-running'}] : [],nextCursor:null}}))
         if (message.method === 'turn/interrupt' && this.autoInterrupt) queueMicrotask(() => this.send({ id: message.id, result: {} }))
       }
     })
@@ -951,6 +951,89 @@ describe('Codex retained workbench runtime', () => {
     expect(run.api.snapshot()).toMatchObject({ retained: false, foreground: 'idle', backgroundCount: 0 })
     expect(() => run.api.start('again')).toThrow()
     await expect(run.api.submit('later', 'again')).rejects.toThrow()
+  })
+  it.each(['cc_workbench/0.153.4 (fixture)', 'future-native/9.0.0 (fixture)'])('reconciles an approved command whose native launch failed before canonical completion (%s)', async userAgent => {
+    initializeResponse.userAgent = userAgent
+    const requestPermission = vi.fn(async () => true), run = await runtime({ requestPermission })
+    // app-server publishes a synthetic start before approval. A spawn failure
+    // after acceptance returns a tool error without the canonical item/completed.
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'item-1', command: 'pwd', status: 'inProgress', processId: null } })
+    approval(run.child)
+    await expect.poll(() => run.child.sent.find(m => m.id === 'approve-1')?.result.decision).toBe('accept')
+    completed(run.child)
+    await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ retained: true, foreground: 'idle', backgroundCount: 0 })
+    expect(run.child.sent.some(m => m.method === 'thread/backgroundTerminals/list')).toBe(true)
+    expect(run.ended()).toBe(false)
+    await run.session.close(); await run.done
+    expect(run.child.sent.some(m => m.method === 'thread/backgroundTerminals/clean')).toBe(userAgent.startsWith('future-native/'))
+  })
+  it('does not apply stale empty-registry evidence after a new turn has started', async () => {
+    const run = await runtime(); run.child.autoTerminalList = false
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'unconfirmed', command: 'work', status: 'inProgress', processId: null } })
+    completed(run.child)
+    await expect.poll(() => run.child.sent.some(m => m.method === 'thread/backgroundTerminals/list')).toBe(true)
+    const check = run.child.sent.find(m => m.method === 'thread/backgroundTerminals/list')!
+    await run.api.submit('next', 'new work'); await begun(run.child, 2)
+    run.child.send({ id: check.id, result: { data: [], nextCursor: null } })
+    await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ foreground: 'running', backgroundCount: 1 })
+    run.child.autoTerminalList = true; completed(run.child, 'completed', 'turn-2')
+    await expect.poll(() => run.events.filter(e => e.kind === 'result').length).toBe(2)
+    expect(run.api.snapshot()).toMatchObject({ foreground: 'idle', backgroundCount: 0 })
+    await run.session.close(); await run.done
+  })
+  it('still requires terminal cleanup after an unknown background launch even with no counted children', async () => {
+    const run = await runtime()
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'collabToolCall', id: 'future-launch', tool: 'futureBackground' } })
+    completed(run.child); await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    terminalCleanup = 'unavailable'
+    await expect(run.session.close()).rejects.toThrow('codex_terminal_cleanup_unverified'); await run.done
+  })
+  it('does not skip detached terminal cleanup after cancelling a command before its completion notification', async () => {
+    const run = await runtime()
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'running-command', command: 'work', status: 'inProgress', processId: '123' } })
+    await run.session.cancel!(); terminalCleanup = 'unavailable'
+    await expect(run.session.close()).rejects.toThrow('codex_terminal_cleanup_unverified'); await run.done
+    expect(run.child.sent.some(m => m.method === 'thread/backgroundTerminals/clean')).toBe(true)
+  })
+  it.each(['command', 'collab', 'replayed_start'] as const)('does not strand another orphan on a late %s notification with no new writer', async kind => {
+    const run = await runtime(); run.child.autoTerminalList = false
+    for (const id of ['late', 'orphan']) run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id, command: 'work', status: 'inProgress', processId: null } })
+    completed(run.child)
+    await expect.poll(() => run.child.sent.some(m => m.method === 'thread/backgroundTerminals/list')).toBe(true)
+    const check = run.child.sent.find(m => m.method === 'thread/backgroundTerminals/list')!
+    run.child.notify(kind === 'replayed_start' ? 'item/started' : 'item/completed', { threadId: 'thread-1', turnId: 'turn-1', item: kind === 'command' ? { type: 'commandExecution', id: 'late', status: 'completed', exitCode: 0 } : kind === 'replayed_start' ? { type: 'commandExecution', id: 'late', command: 'work', status: 'inProgress', processId: null } : { type: 'collabToolCall', id: 'finished-wait', tool: 'wait', status: 'completed', receiverThreadIds: [] } })
+    run.child.send({ id: check.id, result: { data: [], nextCursor: null } })
+    await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ foreground: 'idle', backgroundCount: 0 })
+    run.child.autoTerminalList = true; await run.session.close(); await run.done
+  })
+  it('reconciles an orphaned command when the last child producer completes', async () => {
+    const run = await runtime(); launch(run.child)
+    await expect.poll(() => run.api.snapshot().backgroundCount).toBe(1)
+    completed(run.child)
+    run.child.notify('item/started', { threadId: 'child-1', turnId: 'child-turn-1', item: { type: 'commandExecution', id: 'child-command', command: 'work', status: 'inProgress', processId: null } })
+    childEnd(run.child)
+    await expect.poll(() => run.events.some(e => e.kind === 'tool_call' && e.activity?.id === 'codex-child:child-1:child-turn-1' && e.activity.status === 'completed')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ foreground: 'idle', backgroundCount: 0 })
+    await run.session.close(); await run.done
+  })
+  it('closes a verified completed no-background turn without requiring optional terminal cleanup RPCs', async () => {
+    const run = await runtime(); completed(run.child); await run.done
+    terminalCleanup = 'unavailable'
+    await expect(run.session.close()).resolves.toBeUndefined()
+    expect(run.child.exitCode !== null || run.child.signalCode !== null).toBe(true)
+    expect(run.child.sent.some(m => m.method === 'thread/backgroundTerminals/clean')).toBe(false)
+  })
+  it.each(['unavailable', 'running'] as const)('keeps an unconfirmed command isolated when native terminal evidence is %s', async state => {
+    const run = await runtime()
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'unconfirmed', command: 'work', status: 'inProgress', processId: null } })
+    terminalCleanup = state; completed(run.child)
+    await expect.poll(() => run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({ retained: true, foreground: 'idle', backgroundCount: 1 })
+    await expect(run.session.close()).rejects.toThrow('codex_terminal_cleanup_unverified')
+    await run.done
   })
   it.each(['v1', 'v2'])('retains %s children, scopes late output, and deduplicates occurrence lifecycle', async mode => {
     const reportExecution = vi.fn(); const run = await runtime({ reportExecution })
