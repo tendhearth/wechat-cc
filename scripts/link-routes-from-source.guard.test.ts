@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { LINK_ROUTES, PHONE_ROUTES } from '../src/features/phone/phone-routes'
+import { LINK_ROUTES, MERGED_ALIASES, PHONE_ROUTES } from '../src/features/phone/phone-routes'
 import { pageHtml } from '../src/features/phone/settings-panel-html'
 import { assembleMobilePage } from '../apps/mobile/assemble'
 import { readMobileSource } from '../apps/mobile/sources'
@@ -94,18 +94,20 @@ describe('链接令牌的范围 = 链接页面调用的路由(理念 2)', () => 
     for (const s of SOURCES) expect(calls.some(c => c.source === s.name), s.name).toBe(true)
   })
   it('LINK_ROUTES 与扫出来的集合相等', () => {
-    expect(compareLinkScope(scanAll(), LINK_ROUTES)).toEqual([])
+    // 旧 App 仍可用别名;网页按新键核对链接范围。
+    const aliases = new Map(MERGED_ALIASES.map(a => [a.from, a.to]))
+    expect(compareLinkScope(scanAll(), new Set([...LINK_ROUTES].map(k => aliases.get(k) ?? k)))).toEqual([])
   })
   it('现在的链接范围(看得见的一份;改了页面就会跟着动)', () => {
     const bySource = Object.fromEntries(SOURCES.map(s => [s.name, [...new Set(scanAll().filter(c => c.source === s.name && !c.deviceOnly).map(c => c.key))].sort()]))
     expect(bySource).toEqual({
-      'phone /m': ['GET /m/api/art/presence', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'POST /m/api/matter/stop', 'POST /set/api/pair'],
+      'phone /m': ['GET /set', 'GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence', 'POST /set/api/pair', 'POST /v1/matter/stop'],
       'settings /set': ['GET /m', 'GET /set/api/state', 'POST /set/api/apply'],
       'relay pset': ['GET /m'],
       'app pairing': ['POST /set/api/pair'],
       'selftest phone': ['POST /set/api/pair'],
     })
-    expect(scanAll().filter(c => c.deviceOnly)).toEqual([])
+    expect([...new Set(scanAll().filter(c => c.deviceOnly).map(c => c.key))].sort()).toEqual(['GET /v1/matter/artifact', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/page', 'GET /v1/matter/owner-chat/search', 'GET /v1/matters', 'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'GET /v1/subscribe/topics', 'POST /v1/matter/answer', 'POST /v1/matter/owner-chat/say', 'POST /v1/matter/permission', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename'])
   })
 })
 

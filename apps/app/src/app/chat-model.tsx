@@ -9,8 +9,11 @@ import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection, useQuery } from '../state/hooks'
 import { canSubmit } from '../view/connection'
 import { TextField } from '../ui/TextField'
+import { Button } from '../ui/Button'
+import { Icon } from '../ui/Icon'
+import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { TopBar } from '../ui/TopBar'
-import { radius, space } from '../ui/tokens'
+import { space } from '../ui/tokens'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 
@@ -47,8 +50,8 @@ export default function ChatModel() {
   }
   const option = (testID: string, label: string, selected: boolean, onPress: () => void, hint?: string) => (
     <Pressable key={testID} testID={testID} accessibilityRole="radio" accessibilityState={{ selected }} onPress={onPress}
-      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 44, paddingVertical: space.s, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
-      <Txt role="meta" tone={selected ? 'ink' : 'inkSoft'}>{selected ? '●' : '○'}</Txt>
+      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 44, paddingVertical: space.m, opacity: pressed ? 0.7 : 1 })}>
+      <View style={{ width: 18 }}>{selected ? <Icon name="check" color={c.inkSoft} /> : null}</View>
       <View style={{ flex: 1 }}>
         <Txt role="bubble" content="user">{label}</Txt>
         {hint ? <Txt role="caption" tone="inkSoft">{hint}</Txt> : null}
@@ -59,6 +62,7 @@ export default function ChatModel() {
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'chatModel.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         {!v ? <Txt testID="chat-model-state" role="meta" tone="inkSoft">{t(lang, current.error ? 'chatModel.unavailable' : 'progress.loading')}</Txt> : null}
         {v && v.mode !== 'solo' ? <Txt role="meta" tone="inkSoft">{t(lang, 'chatModel.multi', { mode: v.mode })}</Txt> : null}
@@ -80,10 +84,7 @@ export default function ChatModel() {
           </View>
         ) : null}
         {v ? (
-          <Pressable testID="chat-model-save" accessibilityRole="button" disabled={!online || busy || !changed || invalid} onPress={() => void save()}
-            style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', paddingHorizontal: space.l, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: !online || busy || !changed || invalid ? 0.5 : pressed ? 0.7 : 1 })}>
-            <Txt role="meta">{t(lang, busy ? 'chatModel.saving' : 'chatModel.save')}</Txt>
-          </Pressable>
+          <Button kind="primary" testID="chat-model-save" label={t(lang, 'chatModel.save')} busy={busy} disabled={!online || !changed || invalid} onPress={() => void save()} />
         ) : null}
         {note ? <Txt testID="chat-model-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{note}</Txt> : null}
         <Txt role="caption" tone="inkSoft">{t(lang, 'chatModel.scope')}</Txt>

@@ -20,9 +20,10 @@ it('offers task-scoped model recovery and keeps exact diagnostics collapsed and 
 it('opens real model controls and only reads the native catalog, without resending or changing defaults',async()=>{
   document.body.innerHTML='<div id="workbench-root"></div>'
   const invoke=vi.fn(async(method:string,path:string)=>{
+    if(path==='/v1/matter/seen')return {ok:true}
     if(path.startsWith('/v1/matters?'))return{matters:[]}
     if(path.startsWith('/v1/workbench/task?'))return detail
-    if(path.startsWith('/v1/workbench/review?'))return{reviews:[]}
+    if(path.startsWith('/v1/matter/changes?'))return{reviews:[]}
     if(path.startsWith('/v1/workbench/models?'))return{catalog:{source:'native',models:[{id:'available-model',displayName:'Available model',reasoningEfforts:['low']}]}}
     if(path==='/v1/workbench/projects')return{projects:[]}
     if(path.startsWith('/v1/workbench'))return{...state,projects:[]}
@@ -37,5 +38,6 @@ it('opens real model controls and only reads the native catalog, without resendi
   await expect.poll(()=>document.querySelector('#wb-model option[value="available-model"]')).not.toBeNull()
   expect(document.querySelector<HTMLDetailsElement>('#wb-task-info')!.open).toBe(true)
   expect(document.querySelector<HTMLTextAreaElement>('#wb-followup-text')!.value).toBe('保留新草稿')
-  expect(invoke.mock.calls.every(([method])=>method==='GET')).toBe(true)
+  expect(invoke.mock.calls.filter(([,path])=>path!=='/v1/matter/seen').every(([method])=>method==='GET')).toBe(true)
+  expect(invoke).toHaveBeenCalledWith('POST','/v1/matter/seen',{id:task.id})
 })

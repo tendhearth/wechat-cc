@@ -1,22 +1,58 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
-import { mobileReadsRoutes, cacheSessions, SESSIONS_DONE_MAX, type MobileSessionsDeps } from './mobile-reads'
-import { routePhone } from './phone-route-table'
+import { terminalOwnerHandlers } from '../terminal/phone-routes'
+import { cacheSessions, SESSIONS_DONE_MAX, type PhoneSessionsSource as MobileSessionsDeps } from '../workbench'
+import { workbenchRoutes } from '../workbench/routes'
+import { routePhone } from '../../lib/phone-route-table'
 import type { ConnectionsSnapshot } from '../../daemon/connections'
-import { buildOverseerToday } from '../../domain/overseer-today'
+import { buildOverseerToday, type OverseerToday } from '../../domain/overseer-today'
+import type { CliSessionView } from '../../ports/cli-session'
+import type { CliPhoneActions } from '../terminal'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { removeTempDir } from '../../lib/test-temp'
+import { makeSettingsPanel } from './settings-panel'
+import { withPanelV1 } from './test-panel-v1'
+import { terminalRoutes, type TerminalRoutesDeps } from '../terminal/routes'
+import { phoneCliSessionRows } from '../terminal/phone-sessions'
 
 const SNAP: ConnectionsSnapshot = {
   generatedAt: 1, computers: [{ id: 'home', label: 'Mac', online: true, since: 0, version: '1.7.1' }], recent: [], outputs: [],
   sources: [{ id: 'wechat_history', kind: 'wechat_history', name: 'wxvault', state: 'not_loaded', latestAt: null, syncedAt: null, detail: { reason: 'missing', dir: '/Users/nate/plugins' } }],
 }
-const run = async (deps: Parameters<typeof mobileReadsRoutes>[0], path: string, method = 'GET') => {
-  const r = await routePhone(mobileReadsRoutes(deps), new URL('http://x' + path), new Request('http://x' + path, { method }))
+const run = async (deps: Parameters<typeof terminalOwnerHandlers>[0], path: string, method = 'GET') => {
+  const r = await routePhone(terminalOwnerHandlers(deps), new URL('http://x' + path), new Request('http://x' + path, { method }))
   return r && { status: r.status, body: await r.json() as any }
+}
+
+/**
+ * P3c-2 起 /m/api/connections、/m/api/cli/sessions、/m/api/today 是别名:翻到 /v1/connections、/v1/cli/sessions、/v1/overseer/today,
+ * 手机那一份由 /v1 处理器按 caller 收。这里照生产拼:真面板 + 真内部 API(withPanelV1),连接经内部 API 的 deps,
+ * 终端会话列表 / 「今天」是终端模块挂的路由(同 features/terminal/wire.ts 的 phoneSessions);真配对一枚设备令牌去打旧路径。
+ */
+interface MergedFakes { connections?: () => ConnectionsSnapshot; cliSessions?: () => CliSessionView[]; cliActions?: CliPhoneActions; today?: () => OverseerToday; executorName?: (id: string) => string }
+const runV1 = async (f: MergedFakes, path: string, method = 'GET') => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'mobile-reads-v1-'))
+  const terminal = f.cliSessions || f.today ? terminalRoutes({
+    ...(f.today ? { overseerToday: f.today } : {}),
+    ...(f.cliSessions ? { phoneSessions: () => phoneCliSessionRows({ list: f.cliSessions!, ...(f.cliActions ? { actions: f.cliActions } : {}), ...(f.executorName ? { executorName: f.executorName } : {}) }) } : {}),
+  } as Partial<TerminalRoutesDeps> as TerminalRoutesDeps) : undefined
+  const panel = makeSettingsPanel(withPanelV1({
+    stateDir, ownerChatId: () => 'wx', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {},
+    ...(f.connections ? { connections: f.connections } : {}),
+  }, {}, terminal ? { terminal } : {}))
+  try {
+    const paired = await panel.handleRequest(new Request(`http://127.0.0.1/set/api/pair?t=${panel.issueToken()}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))
+    const device = ((await paired.json()) as { device_token: string }).device_token
+    const r = await panel.handleRequest(new Request(`http://127.0.0.1${path}?d=${encodeURIComponent(device)}`, { method }))
+    return { status: r.status, body: await r.json() as any }
+  } finally { await panel.stop(); removeTempDir(stateDir) }
 }
 
 describe('GET /m/api/connections', () => {
   it('去掉 detail,过 schema', async () => {
-    const r = await run({ connections: () => SNAP }, '/m/api/connections')
+    const r = await runV1({ connections: () => SNAP }, '/m/api/connections')
     expect(r!.status).toBe(200)
     const text = JSON.stringify(r!.body)
     expect(text).not.toContain('/Users')
@@ -24,12 +60,12 @@ describe('GET /m/api/connections', () => {
     PHONE_API_SCHEMAS['GET /m/api/connections']!.parse(r!.body)
   })
   it('没接 ⇒ 503;抛 ⇒ 503 unavailable(裁定 7);别的路径 ⇒ null;非 GET ⇒ 405', async () => {
-    expect((await run({}, '/m/api/connections'))!.status).toBe(503)
-    const thrown = await run({ connections: () => { throw new Error('x') } }, '/m/api/connections')
+    expect((await runV1({}, '/m/api/connections'))!.status).toBe(503)
+    const thrown = await runV1({ connections: () => { throw new Error('x') } }, '/m/api/connections')
     expect(thrown!.status).toBe(503)
     expect(thrown!.body).toEqual({ ok: false, error: 'unavailable' })
     expect(await run({}, '/m/api/matters')).toBeNull()
-    expect((await run({ connections: () => SNAP }, '/m/api/connections', 'POST'))!.status).toBe(405)
+    expect((await runV1({ connections: () => SNAP }, '/m/api/connections', 'POST'))!.status).toBe(405)
   })
 })
 
@@ -40,15 +76,32 @@ const sessions = (over: Partial<MobileSessionsDeps> = {}): MobileSessionsDeps =>
   ...over,
 })
 
+/**
+ * P3c-4 起 /m/api/sessions、/m/api/session 是别名:翻到 /v1/workbench/sessions、/v1/workbench/session,手机那一份由工作台路由按
+ * caller 拼(features/workbench/phone-sessions.ts)。这里照生产拼:真面板 + 真内部 API + 真 workbenchRoutes,真配对一枚设备令牌去打旧路径。
+ */
+const runS = async (s: MobileSessionsDeps | undefined, path: string, o: { budgetMs?: number; executorName?: (id: string) => string } = {}) => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'mobile-sessions-v1-'))
+  const workbench = workbenchRoutes({ workbench: {} as never, phoneSessions: { ...(s ? { sessions: s } : {}), ...o } })
+  const panel = makeSettingsPanel(withPanelV1({ stateDir, ownerChatId: () => 'wx', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {} }, {}, { workbench }))
+  try {
+    const paired = await panel.handleRequest(new Request(`http://127.0.0.1/set/api/pair?t=${panel.issueToken()}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))
+    const device = ((await paired.json()) as { device_token: string }).device_token
+    const r = await panel.handleRequest(new Request(`http://127.0.0.1${path}${path.includes('?') ? '&' : '?'}d=${encodeURIComponent(device)}`))
+    const text = await r.text()
+    return { status: r.status, text, body: JSON.parse(text) as any }
+  } finally { await panel.stop(); removeTempDir(stateDir) }
+}
+
 describe('GET /m/api/sessions、/m/api/session', () => {
   it('列表:只给目录名,不给 cwd / nativeId;标题截 200;过 schema', async () => {
-    const r = await run({ sessions: sessions() }, '/m/api/sessions?provider=claude')
+    const r = await runS(sessions(), '/m/api/sessions?provider=claude')
     expect(r!.body.items[0]).toEqual({ key: 'k1', provider: 'claude', title: 'T'.repeat(200), project: 'portfolio', updatedAt: 5, active: true })
     expect(JSON.stringify(r!.body)).not.toContain('/Users')
     PHONE_API_SCHEMAS['GET /m/api/sessions']!.parse(r!.body)
   })
   it('读一页:每条截 4000、managed;过 schema', async () => {
-    const r = await run({ sessions: sessions() }, '/m/api/session?key=k1')
+    const r = await runS(sessions(), '/m/api/session?key=k1')
     expect(r!.body.messages[0]).toMatchObject({ truncated: true }); expect(r!.body.messages[0].text).toHaveLength(4000)
     expect(r!.body.managed).toBe(true)
     expect(r!.body.window).toBe('start')
@@ -57,46 +110,46 @@ describe('GET /m/api/sessions、/m/api/session', () => {
   })
   it('recent only uses the recent reader and retains the phone limits, privacy and managed state', async () => {
     const read=vi.fn(sessions().read),readRecent=vi.fn(sessions().read)
-    const r=await run({sessions:sessions({read,readRecent})},'/m/api/session?key=k1&window=recent')
+    const r=await runS(sessions({read,readRecent}),'/m/api/session?key=k1&window=recent')
     expect(r!.status).toBe(200);expect(r!.body.window).toBe('recent')
     expect(readRecent).toHaveBeenCalledExactlyOnceWith('k1',{limit:20});expect(read).not.toHaveBeenCalled()
     expect(r!.body.messages[0].text).toHaveLength(4000);expect(r!.body.managed).toBe(true)
     expect(JSON.stringify(r!.body)).not.toContain('/Users')
   })
   it('validates window and refuses an unavailable recent reader without falling back to old history', async () => {
-    const read=vi.fn(sessions().read),readRecent=vi.fn(sessions().read),deps={sessions:sessions({read,readRecent})}
-    for(const query of ['window=recent&window=recent','window=','window=tail','window=recent&cursor=a'])expect((await run(deps,'/m/api/session?key=k1&'+query))!.status).toBe(400)
+    const read=vi.fn(sessions().read),readRecent=vi.fn(sessions().read),deps=sessions({read,readRecent})
+    for(const query of ['window=recent&window=recent','window=','window=tail','window=recent&cursor=a'])expect((await runS(deps,'/m/api/session?key=k1&'+query))!.status).toBe(400)
     expect(read).not.toHaveBeenCalled();expect(readRecent).not.toHaveBeenCalled()
-    const missing=await run({sessions:sessions({read})},'/m/api/session?key=k1&window=recent')
-    expect(missing).toEqual({status:503,body:{ok:false,error:'unavailable'}});expect(read).not.toHaveBeenCalled()
-    expect((await run(deps,'/m/api/session?key=k1&window=start&cursor=abc'))!.body.window).toBe('start')
+    const missing=await runS(sessions({read}),'/m/api/session?key=k1&window=recent')
+    expect(missing).toMatchObject({status:503,body:{ok:false,error:'unavailable'}});expect(read).not.toHaveBeenCalled()
+    expect((await runS(deps,'/m/api/session?key=k1&window=start&cursor=abc'))!.body.window).toBe('start')
     expect(read).toHaveBeenCalledWith('k1',{limit:20,cursor:'abc'})
   })
   it('passes a trimmed search query with the same cursor and 30-row paging, rejecting malformed queries before listing', async () => {
-    const list=vi.fn(sessions().list),deps={sessions:sessions({list})}
-    await run(deps,'/m/api/sessions?provider=codex&q=%20recent%20&cursor=next')
+    const list=vi.fn(sessions().list),deps=sessions({list})
+    await runS(deps,'/m/api/sessions?provider=codex&q=%20recent%20&cursor=next')
     expect(list).toHaveBeenCalledExactlyOnceWith('codex',{q:'recent',limit:30,cursor:'next'})
     list.mockClear()
-    for(const query of ['q=a&q=b','q='+ 'x'.repeat(201),'q=before%00after'])expect((await run(deps,'/m/api/sessions?provider=claude&'+query))!.status).toBe(400)
+    for(const query of ['q=a&q=b','q='+ 'x'.repeat(201),'q=before%00after'])expect((await runS(deps,'/m/api/sessions?provider=claude&'+query))!.status).toBe(400)
     expect(list).not.toHaveBeenCalled()
-    await run(deps,'/m/api/sessions?provider=claude&q='+ 'x'.repeat(200))
+    await runS(deps,'/m/api/sessions?provider=claude&q='+ 'x'.repeat(200))
     expect(list).toHaveBeenCalledWith('claude',{q:'x'.repeat(200),limit:30})
   })
   it('分页大小:列表 30、读 20;cursor 原样', async () => {
     const seen: unknown[] = []
-    await run({ sessions: sessions({ list: async (p, i) => { seen.push([p, i]); return { items: [], nextCursor: null, coverage: 'native_supported_history' } } }) }, '/m/api/sessions?provider=codex&cursor=abc')
+    await runS(sessions({ list: async (p, i) => { seen.push([p, i]); return { items: [], nextCursor: null, coverage: 'native_supported_history' } } }), '/m/api/sessions?provider=codex&cursor=abc')
     expect(seen).toEqual([['codex', { q: '', limit: 30, cursor: 'abc' }]])
   })
   it('坏参数 400;不支持 404;读得慢(超预算)503 —— 隧道 15 秒前一定回', async () => {
-    for (const p of ['/m/api/sessions', '/m/api/sessions?provider=gemini', `/m/api/sessions?provider=claude&cursor=${'a'.repeat(2049)}`, '/m/api/sessions?provider=claude&cursor=a&cursor=b', '/m/api/session']) expect((await run({ sessions: sessions() }, p))!.status).toBe(400)
-    expect((await run({ sessions: sessions({ list: async () => { throw new Error('native_history_unsupported') } }) }, '/m/api/sessions?provider=codex'))!.body).toEqual({ ok: false, error: 'unsupported' })
-    expect((await run({ sessions: sessions({ read: async () => { throw new Error('invalid_cursor') } }) }, '/m/api/session?key=k1'))!.status).toBe(400)
+    for (const p of ['/m/api/sessions', '/m/api/sessions?provider=gemini', `/m/api/sessions?provider=claude&cursor=${'a'.repeat(2049)}`, '/m/api/sessions?provider=claude&cursor=a&cursor=b', '/m/api/session']) expect((await runS(sessions(), p))!.status).toBe(400)
+    expect((await runS(sessions({ list: async () => { throw new Error('native_history_unsupported') } }), '/m/api/sessions?provider=codex'))!.body).toEqual({ ok: false, error: 'unsupported' })
+    expect((await runS(sessions({ read: async () => { throw new Error('invalid_cursor') } }), '/m/api/session?key=k1'))!.status).toBe(400)
     const slow = sessions({ read: () => new Promise(() => {}) })
     const t0 = Date.now()
-    const r = await routePhone(mobileReadsRoutes({ sessions: slow }, { budgetMs: 30 }), new URL('http://x/m/api/session?key=k1'), new Request('http://x/m/api/session?key=k1'))
+    const r = await runS(slow, '/m/api/session?key=k1', { budgetMs: 30 })
     expect(r!.status).toBe(503); expect(Date.now() - t0).toBeLessThan(1000)
-    expect((await run({}, '/m/api/sessions?provider=claude'))!.status).toBe(503)
-    expect((await run({ sessions: sessions({ list: async () => { throw new Error('boom') } }) }, '/m/api/sessions?provider=claude'))!.status).toBe(503)
+    expect((await runS(undefined, '/m/api/sessions?provider=claude'))!.body).toEqual({ ok: false, error: 'sessions_not_wired' })
+    expect((await runS(sessions({ list: async () => { throw new Error('boom') } }), '/m/api/sessions?provider=claude'))!.body).toEqual({ ok: false, error: 'unavailable' })
   })
 })
 
@@ -177,9 +230,9 @@ describe('中继帧大小(终审 M1):会话页 / 会话列表最坏情况也不�
       const d = sessions({ read, readRecent:read })
       for(const window of ['start','recent']){
         const url=new URL('http://x/m/api/session?key=k1&window='+window)
-        const r = (await routePhone(mobileReadsRoutes({ sessions: d }), url, new Request(url)))!
+        const r = await runS(d, url.pathname + url.search)
         expect(r.status).toBe(200)
-        const text = await r.text(),body = JSON.parse(text)
+        const text = r.text,body = JSON.parse(text)
         expect(body.messages).toHaveLength(20);expect(body.window).toBe(window)
         expect(body.nextCursor).toBe('n')
         if (ch !== '汉') expect(body.messages.every((m: { truncated: boolean }) => m.truncated)).toBe(true)
@@ -190,9 +243,9 @@ describe('中继帧大小(终审 M1):会话页 / 会话列表最坏情况也不�
     it(`列表 30 行,标题与目录名全是${name} ⇒ 线上 < 512 KiB`, async () => {
       const items = Array.from({ length: 30 }, (_, i) => ({ ...ITEM, key: `k${i}`, title: ch.repeat(300), cwd: '/w/' + ch.repeat(4000) }))
       const d = sessions({ list: async () => ({ items, nextCursor: 'c', coverage: 'native_supported_history' }) })
-      const r = (await routePhone(mobileReadsRoutes({ sessions: d }), new URL('http://x/m/api/sessions?provider=claude'), new Request('http://x/m/api/sessions?provider=claude')))!
+      const r = await runS(d, '/m/api/sessions?provider=claude')
       expect(r.status).toBe(200)
-      const text = await r.text()
+      const text = r.text
       expect(JSON.parse(text).items).toHaveLength(30)
       expect(await wireBytes(200, text)).toBeLessThan(RELAY_FRAME_MAX)
     })
@@ -206,16 +259,22 @@ describe('GET /m/api/cli/sessions(终端会话登记处,v76)', () => {
     last_event_at: 5, last_prompt_at: 3, created_at: 1, pending: { tool: 'Bash', summary: 'rm -rf ./tmp', since: 5 },
   }
   it('只给目录名不给完整路径,过 schema;没接 ⇒ 503;抛 ⇒ 503;非 GET ⇒ 405;最多 50 条', async () => {
-    const r = await run({ cliSessions: () => [view] }, '/m/api/cli/sessions')
+    const r = await runV1({ cliSessions: () => [view] }, '/m/api/cli/sessions')
     expect(r!.status).toBe(200)
     expect(JSON.stringify(r!.body)).not.toContain('/Users')
     expect(r!.body.sessions[0]).toMatchObject({ code: 'abc123', project: 'wechat-cc', status: 'waiting', pending: { tool: 'Bash' } })
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r!.body)
-    expect((await run({}, '/m/api/cli/sessions'))!.status).toBe(503)
-    expect((await run({ cliSessions: () => { throw new Error('x') } }, '/m/api/cli/sessions'))!.body).toEqual({ ok: false, error: 'unavailable' })
-    expect((await run({ cliSessions: () => [view] }, '/m/api/cli/sessions', 'POST'))!.status).toBe(405)
-    const many = await run({ cliSessions: () => Array.from({ length: 80 }, (_, i) => ({ ...view, session_id: `s${i}` })) }, '/m/api/cli/sessions')
+    expect((await runV1({}, '/m/api/cli/sessions'))!.status).toBe(503)
+    expect((await runV1({ cliSessions: () => { throw new Error('x') } }, '/m/api/cli/sessions'))!.body).toEqual({ ok: false, error: 'unavailable' })
+    expect((await runV1({ cliSessions: () => [view] }, '/m/api/cli/sessions', 'POST'))!.status).toBe(405)
+    const many = await runV1({ cliSessions: () => Array.from({ length: 80 }, (_, i) => ({ ...view, session_id: `s${i}` })) }, '/m/api/cli/sessions')
     expect(many!.body.sessions.length).toBe(50)
+  })
+  it('有那件事 ⇒ 行里带 matter_id(App 点进 /matter/<id>,M4c)、过 schema;没有 ⇒ 不带', async () => {
+    const r = await runV1({ cliSessions: () => [{ ...view, matter_id: 'deadbeef' }, { ...view, session_id: 'other' }] }, '/m/api/cli/sessions')
+    PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r!.body)
+    expect(r!.body.sessions[0].matter_id).toBe('deadbeef')
+    expect('matter_id' in r!.body.sessions[1]).toBe(false)
   })
 })
 
@@ -231,12 +290,13 @@ describe('送进窗口的结果(10-20 真机)', () => {
       lastSay: (id: string) => id === 'abc123-xyz' ? { id: 'a1b2c3d4e5f6', state: 'failed' as const, error: '没送进电脑上开着的窗口(x)', at: 9 } : null,
       say: () => ({ ok: true as const, say_id: 'a1b2c3d4e5f6' }),
     } as never
-    const r = await run({ cliSessions: () => [view, { ...view, session_id: 'other-1' }], cliActions }, '/m/api/cli/sessions')
+    const r = await runV1({ cliSessions: () => [view, { ...view, session_id: 'other-1' }], cliActions }, '/m/api/cli/sessions')
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r!.body)
     expect(r!.body.sessions[0].last_say).toEqual({ id: 'a1b2c3d4e5f6', state: 'failed', error: '没送进电脑上开着的窗口(x)', at: 9 })
     expect(r!.body.sessions[1].last_say).toBeUndefined()
-    const u = 'http://x/m/api/cli/say'
-    const res = await routePhone(mobileReadsRoutes({ cliActions }), new URL(u), new Request(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: 'abc123-xyz', text: '一句' }) }))
+    // 直接查终端那张表:P3d-3 起登记在新键 POST /v1/cli/session-say 上(老路径经面板的别名,legacy-renames.test.ts 比过一样)
+    const u = 'http://x/v1/cli/session-say'
+    const res = await routePhone(terminalOwnerHandlers({ cliActions }), new URL(u), new Request(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: 'abc123-xyz', text: '一句' }) }))
     const said = { body: await res!.json() as any }
     expect(said.body).toEqual({ ok: true, accepted: true, say_id: 'a1b2c3d4e5f6' })
     PHONE_API_SCHEMAS['POST /m/api/cli/say']!.parse(said.body)
@@ -251,14 +311,14 @@ describe('GET /m/api/today(「今天」一眼看完,2026-10-14)', () => {
       terminal: [{ session_id: 'abc123-xyz', code: 'abc123', source: 'claude', status: 'idle', stale: false, project: 'wechat-cc', cwd: '/Users/nate/work/wechat-cc', machine: 'mac', origin_agent: null, last_summary: '改好了', last_event_at: now - 60_000, last_prompt_at: null, created_at: 1, pending: null }],
       tasks: [{ id: 'a1b2c3d4', title: '修打包', path: '/Users/nate/work/melu', providerId: 'codex', phase: 'working', updatedAt: now - 1000, error: null, archivedAt: null }],
     })
-    const r = await run({ today: () => today }, '/m/api/today')
+    const r = await runV1({ today: () => today }, '/m/api/today')
     expect(r!.status).toBe(200)
     expect(JSON.stringify(r!.body)).not.toContain('/Users')
     expect(r!.body.today.counts).toEqual({ needsYou: 0, done: 1, running: 1, stuck: 0 })
     PHONE_API_SCHEMAS['GET /m/api/today']!.parse(r!.body)
-    expect((await run({}, '/m/api/today'))!.status).toBe(503)
-    expect((await run({ today: () => { throw new Error('x') } }, '/m/api/today'))!.body).toEqual({ ok: false, error: 'unavailable' })
-    expect((await run({ today: () => today }, '/m/api/today', 'POST'))!.status).toBe(405)
+    expect((await runV1({}, '/m/api/today'))!.status).toBe(503)
+    expect((await runV1({ today: () => { throw new Error('x') } }, '/m/api/today'))!.body).toEqual({ ok: false, error: 'unavailable' })
+    expect((await runV1({ today: () => today }, '/m/api/today', 'POST'))!.status).toBe(405)
   })
 })
 
@@ -271,20 +331,20 @@ describe('执行者名字由 daemon 下发(收敛清单 ⑥)', () => {
     last_event_at: 5, last_prompt_at: 3, created_at: 1, pending: null,
   }
   it('终端会话行、原生会话行 / 页都带 displayName;列表带两个分段的 names;都过 schema', async () => {
-    const cli = await run({ cliSessions: () => [view], executorName }, '/m/api/cli/sessions')
+    const cli = await runV1({ cliSessions: () => [view], executorName }, '/m/api/cli/sessions')
     expect(cli!.body.sessions[0].displayName).toBe('Codex')
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(cli!.body)
-    const list = await run({ sessions: sessions(), executorName }, '/m/api/sessions?provider=claude')
+    const list = await runS(sessions(), '/m/api/sessions?provider=claude', { executorName })
     expect(list!.body.items[0].displayName).toBe('Claude')
     expect(list!.body.names).toEqual({ claude: 'Claude', codex: 'Codex' })
     PHONE_API_SCHEMAS['GET /m/api/sessions']!.parse(list!.body)
-    const page = await run({ sessions: sessions(), executorName }, '/m/api/session?key=k1')
+    const page = await runS(sessions(), '/m/api/session?key=k1', { executorName })
     expect(page!.body.session.displayName).toBe('Claude')
     PHONE_API_SCHEMAS['GET /m/api/session']!.parse(page!.body)
   })
   it('没接名字 ⇒ 都不带(App 退回 id)', async () => {
-    expect((await run({ cliSessions: () => [view] }, '/m/api/cli/sessions'))!.body.sessions[0].displayName).toBeUndefined()
-    const list = await run({ sessions: sessions() }, '/m/api/sessions?provider=claude')
+    expect((await runV1({ cliSessions: () => [view] }, '/m/api/cli/sessions'))!.body.sessions[0].displayName).toBeUndefined()
+    const list = await runS(sessions(), '/m/api/sessions?provider=claude')
     expect(list!.body.names).toBeUndefined()
     expect(list!.body.items[0].displayName).toBeUndefined()
   })

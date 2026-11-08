@@ -47,19 +47,19 @@ export const SPEECH_KINDS = {
   letter_asked: { origin: 'requested', label: '当面要的信' },
   companion: { origin: 'initiative', label: '伙伴' },
   guest_visit: { origin: 'initiative', label: '来访' },
-  // 一次性:只在画好的那一刻触发一次,没有「下一拍」—— 被推后就等于这一句丢了(贴纸已经进库,照样会用到)。
-  // 以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(整合者评审 #520)。
-  sticker: { origin: 'initiative', label: '新贴纸' },
+  // 一次性:只在画好的那一刻触发一次。被推后 ⇒ 进待说队列,**6 小时内**过了免打扰再说(S2c,主人 11-04:隔天再说
+  // 「我画了张新表情」就怪了)。以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么给一个 keepMs。
+  sticker: { origin: 'initiative', label: '新贴纸', keepMs: 6 * 3600_000 },
   // 社交(笔友 / 心愿 / 介绍 / 串门)。report / blocking 那几条被推后 ⇒ 门的「待说」队列接住、之后补说(speech/pending-notices.ts);
-  // social_story(CC 自己的见闻)推后就是这一句不说,东西在背包 / 觅食台里(第三批 3a,整合者评审 #528)。
+  // social_story(CC 自己的见闻 / 明信片)推后也进队列,**24 小时**过期,一次补说最多一条,剩下的留在背包 / 觅食台里(S2c,主人 11-04)。
   social_ask: { origin: 'blocking', label: '有人想认识你' },        // 介绍:等主人回「同意 / 不了」
   social_result: { origin: 'report', label: '社交的结果' },          // 心愿的答复、介绍成没成、替主人回了谁
   social_mail: { origin: 'report', label: '笔友来信' },               // 信在信箱里留着
   // 别的 agent 经 A2A 给主人捎的一句([A2A:<id>] …):别人写给主人的,跟来信一样不吞;推后进待说队列(wire-a2a-server.ts)
   a2a_notify: { origin: 'report', label: '别的 agent 捎话' },           // 原文在 a2a 事件表里
-  social_story: { origin: 'initiative', label: '串门见闻' },          // 串门回来讲、邻居、明信片
+  social_story: { origin: 'initiative', label: '串门见闻', keepMs: 24 * 3600_000 },          // 串门回来讲、邻居、明信片
   memory_notice: { origin: 'initiative', label: '整理记忆' },
-} as const satisfies Record<string, { origin: SpeechOrigin; label: string; expiring?: true }>
+} as const satisfies Record<string, { origin: SpeechOrigin; label: string; expiring?: true; keepMs?: number }>
 
 export type SpeechKind = keyof typeof SPEECH_KINDS
 
@@ -69,6 +69,20 @@ export type SpeechKind = keyof typeof SPEECH_KINDS
  */
 export function isExpiring(kind: SpeechKind): boolean {
   return 'expiring' in SPEECH_KINDS[kind]
+}
+
+/** 回报 / 拍板类没说出去的,在待说队列里最多留多久(S2b)。 */
+export const KEEP_REPORT_MS = 24 * 3600_000
+
+/**
+ * 这一种被推后 / 没发出去时,进待说队列留多久;null = 不进(S2c)。
+ * 带会过期码的 ⇒ 不进;report / blocking / requested ⇒ 24 小时;initiative 只有声明了 keepMs 的才进(新贴纸 6 小时、见闻 24 小时)。
+ */
+export function keepForMs(kind: SpeechKind): number | null {
+  if (isExpiring(kind)) return null
+  const k: { origin: SpeechOrigin; keepMs?: number } = SPEECH_KINDS[kind]
+  if (k.origin !== 'initiative') return KEEP_REPORT_MS
+  return k.keepMs ?? null
 }
 
 export function originOf(kind: SpeechKind): SpeechOrigin {

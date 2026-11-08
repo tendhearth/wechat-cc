@@ -1,0 +1,20 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "catalog": {
+      "providerId": "claude",
+      "models": [
+        {
+          "id": "opus",
+          "label": "Opus"
+        }
+      ],
+      "default": "opus"
+    }
+  }
+}

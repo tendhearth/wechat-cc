@@ -33,3 +33,36 @@ describe('GET /v1/companion/pet', () => {
     expect(minTierFor('GET /v1/companion/pet')).toBe('trusted')
   })
 })
+
+describe('GET /v1/subscribe/presence(S5:桌宠订的 presence 主题)', () => {
+  it('没给 since ⇒ 马上回 { cursor, presence, pet };没接线的那一半是 null(桌面画成联系不上 / 端点没接)', async () => {
+    const r = await petRoutes(deps())['GET /v1/subscribe/presence']!(qs(), undefined)
+    expect(r.status).toBe(200)
+    expect(r.body).toEqual({ cursor: expect.any(Number), presence: null, pet: null })
+    const on = await petRoutes(deps(async () => payload))['GET /v1/subscribe/presence']!(qs(), undefined)
+    expect((on.body as { pet: unknown }).pet).toEqual(payload)
+  })
+
+  it('写口一戳,挂着的长轮询马上带回新内容', async () => {
+    let current: unknown = payload
+    let poke: (() => void) | null = null
+    const d = { petTurn: async () => current, presenceChanged: (cb: () => void) => { poke = cb; return () => {} } } as unknown as InternalApiDeps
+    const route = petRoutes(d)['GET /v1/subscribe/presence']!
+    const first = (await route(qs(), undefined)).body as { cursor: number }
+    const waiting = route(new URLSearchParams({ since: String(first.cursor), wait_ms: '20000' }), undefined)
+    current = { ...payload, turn: { phase: 'idle', since: null } }
+    poke!()
+    const got = (await waiting).body as { cursor: number; pet: { turn: { phase: string } } }
+    expect(got.cursor).toBe(first.cursor + 1)
+    expect(got.pet.turn.phase).toBe('idle')
+  })
+
+  it('since 不是数 ⇒ 400', async () => {
+    const r = await petRoutes(deps())['GET /v1/subscribe/presence']!(new URLSearchParams({ since: 'abc' }), undefined)
+    expect(r.status).toBe(400)
+  })
+
+  it('tier 是 trusted(和 presence / pet 两条同一类)', () => {
+    expect(minTierFor('GET /v1/subscribe/presence')).toBe('trusted')
+  })
+})

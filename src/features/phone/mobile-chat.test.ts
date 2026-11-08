@@ -1,14 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS, makeV2Channel } from '@wechat-cc/protocol'
 import { makePhoneChatId, makePhoneOwner, mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
-import { routePhone } from './phone-route-table'
+import { combinePhoneRoutes, routePhone, type PhoneRouteTable } from '../../lib/phone-route-table'
+import { legacyRoutes } from './legacy-routes'
+import { withPanelV1, type LegacyChatFakes } from './test-panel-v1'
+import { voiceRoutes } from '../voice/routes'
+import { PHONE_ROUTES } from './phone-routes'
+import { tmpdir } from 'node:os'
 import type { MessageRecord } from '../../lib/messages-store'
 import { openTestDb } from '../../lib/db'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 
 const RID = '00000000-0000-4000-8000-000000000001'
 const rec = (i: number, over: Partial<MessageRecord> = {}): MessageRecord => ({ id: `m${i}`, chatId: 'wx', ts: new Date(Date.UTC(2026, 8, 30, 0, 0, i)).toISOString(), direction: i % 2 ? 'out' : 'in', kind: 'text', text: `t${i}`, source: 'live', ...over })
-function deps(over: Partial<MobileChatDeps> = {}): MobileChatDeps {
+function deps(over: Partial<LegacyChatFakes> = {}): LegacyChatFakes {
   return {
     owner: () => ({ matterId: 'c0ffee01', chatId: 'wx', title: '聊天' }),
     history: vi.fn(async (_c, o) => Array.from({ length: o.limit }, (_, i) => rec(i))),
@@ -18,7 +23,23 @@ function deps(over: Partial<MobileChatDeps> = {}): MobileChatDeps {
 }
 const get = (q = '') => new Request(`http://x/m/api/chat${q}`)
 const post = (body: unknown) => new Request('http://x/m/api/chat/say', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-const call = async (d: MobileChatDeps | undefined, r: Request) => { const res = await routePhone(mobileChatRoutes(d), new URL(r.url), r); return { status: res!.status, body: await res!.json() as any } }
+/**
+ * P3c-1:chat/search、chat/file、POST chat/transcribe 并成别名(legacy-routes.ts),翻到 /v1 那一条处理器(内部 API 同一个分发)。
+ * 这里照生产把两张表合起来:手机对话自己的几条 + 别名;别名的 v1 由 test-panel-v1.ts 照 pipeline-deps.ts 拼(同一份假实现)。
+ * d 为 undefined ⇒ 面板没接内部 API(别名回「没接上」)。
+ */
+const DEVICE = { tier: 'admin' as const, origin: 'device' as const, sessionKey: 'device:t', routeAllow: PHONE_ROUTES }
+const call = async (d: LegacyChatFakes | undefined, r: Request) => {
+  // 语音口:POST /v1/companion/transcribe 归语音模块(它自己挂);假实现的 transcribe 就是 WechatVoice 那一个
+  const transcribe = d?.transcribe
+  const mounts = transcribe ? { voice: voiceRoutes({ voice: { transcribe: (a: Buffer, m: string) => transcribe(a, m) } as never }) } : {}
+  const v1 = d ? withPanelV1({ stateDir: tmpdir(), ownerChatId: () => 'wx', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, chat: d }, {}, mounts).v1 : undefined
+  // P3d-2 起手机对话自己那几条登记在新键上(/v1/matter/owner-chat/*、GET /v1/companion/transcribe),旧路径是纯改名的别名:
+  // 别名查的就是这张合起来的表(同 settings-panel.ts 的 local)
+  const table: PhoneRouteTable<{ caller: typeof DEVICE }> = combinePhoneRoutes<{ caller: typeof DEVICE }>(mobileChatRoutes(d), legacyRoutes<{ caller: typeof DEVICE }>({ ...(v1 ? { v1 } : {}), local: () => table }))
+  const res = await routePhone(table, new URL(r.url), r, { caller: DEVICE })
+  return { status: res!.status, body: await res!.json() as any }
+}
 
 describe('mobileChatRoutes', () => {
   it('不是这两条路径 ⇒ null', async () => {
@@ -49,6 +70,8 @@ describe('mobileChatRoutes', () => {
   it('pending / failed 带出来但不带 matterId', async () => {
     const job = { requestId: RID, matterId: 'c0ffee01', text: 'hi', since: 1 }
     const r = await call(deps({ chat: { ...deps().chat, state: () => ({ pending: { ...job, status: 'pending' }, failed: { ...job, status: 'failed', error: 'busy' } }) } }), get())
+    expect(r.body.conversation).toBe('v1')
+    expect(r.body.topics).toBe('v1')
     expect(r.body.pending).toEqual({ requestId: RID, text: 'hi', status: 'pending', since: 1 })
     expect(r.body.failed).toEqual({ requestId: RID, text: 'hi', status: 'failed', since: 1, error: 'busy' })
     PHONE_API_SCHEMAS['GET /m/api/chat']!.parse(r.body)
@@ -136,7 +159,7 @@ describe('中继帧大小(终审 M1):一页整页不能超过 512 KiB,也不能 
   for (const [name, text] of [['4000 个汉字', '汉'.repeat(4000)], ['控制字符(转义两次最胀)', '\u0001'.repeat(4000)], ['引号', '"'.repeat(4000)]] as const) {
     it(`每条 ${name} ⇒ 少给几条(hasMore、nextBefore 指向本页最旧那条),线上 < 512 KiB`, async () => {
       const d = deps({ history: worst(text) })
-      const res = (await routePhone(mobileChatRoutes(d), new URL('http://x/m/api/chat'), get()))!
+      const res = (await routePhone(mobileChatRoutes(d), new URL('http://x/v1/matter/owner-chat/page'), get()))!
       expect(res.status).toBe(200)
       const body = await res.clone().json() as any
       expect(body.messages.length).toBeGreaterThan(0)
@@ -197,7 +220,8 @@ describe('GET /m/api/chat/search (2026-10-06)', () => {
     const search = vi.fn(async () => [])
     for (const q of ['', '?q=', '?q=%20', `?q=${'x'.repeat(201)}`, '?q=a&q=b']) expect((await call(deps({ search }), get('/search' + q))).status).toBe(400)
     expect((await call(deps({ search, owner: () => null }), get('/search?q=a'))).status).toBe(404)
-    expect((await call(deps(), get('/search?q=a'))).status).toBe(503)
+    // 没接 = 面板没接内部 API(P3c-1 起搜索在 /v1 那一条;生产里接了主人对话就一定接了搜索)
+    expect((await call(undefined, get('/search?q=a'))).status).toBe(503)
     expect(search).not.toHaveBeenCalled()
   })
 })
@@ -329,4 +353,41 @@ describe('/m/api/chat/transcribe 按住说话(2026-10-18)', () => {
     expect((await call(undefined, postT({ mime: 'audio/mp4', audioBase64: AUDIO }))).status).toBe(503)
     expect((await call(d, new Request('http://x/m/api/chat/transcribe', { method: 'PUT' }))).status).toBe(405)
   })
+})
+
+
+it('restores only validated app uploads from the owner inbox in both history and the existing file reader',async()=>{
+  const {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync}=await import('node:fs'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+  const dir=mkdtempSync(join(tmpdir(),'phone-incoming-')),inbox=join(dir,'inbox');mkdirSync(inbox)
+  try{
+    const path=join(inbox,'app-desktop-123-1.png');writeFileSync(path,'image bytes')
+    let row=rec(2,{id:'app:desktop:123:in',source:'desktop',direction:'in',text:'text\n[图片 ×1]',extras:JSON.stringify({attachments:[{kind:'file',name:'original.png',path}],narration:[]})})
+    const d=deps({inboxDir:inbox,history:async()=>[row],message:async()=>row}),url='/file?id=app%3Adesktop%3A123%3Ain&i=0'
+    expect((await call(d,get())).body.messages[0].attachments).toEqual([{kind:'file',name:'original.png'}])
+    expect((await call(d,get(url))).status).toBe(200)
+    const good={...row}
+    for(const changes of [{source:'live'},{id:'forged'},{chatId:'foreign'},{extras:JSON.stringify({attachments:[{kind:'file',name:'other',path:join(dir,'outside.png')}],narration:[]})}]){row={...good,...changes};expect((await call(d,get(url))).status).toBe(404)}
+    row=good;const target=join(dir,'outside.png');writeFileSync(target,'private');rmSync(path);symlinkSync(target,path);expect((await call(d,get(url))).status).toBe(404)
+    row={...good,extras:undefined};expect((await call(d,get())).body.messages[0].attachments).toBeUndefined();expect((await call(d,get(url))).status).toBe(404)
+  }finally{rmSync(dir,{recursive:true,force:true})}
+})
+
+it('an app upload whose inbox sits under a symlinked directory still reads; a symlinked upload file never does',async()=>{
+  const {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync}=await import('node:fs'),{tmpdir}=await import('node:os'),{join}=await import('node:path')
+  const dir=mkdtempSync(join(tmpdir(),'phone-incoming-parent-link-'))
+  try{
+    mkdirSync(join(dir,'real','inbox'),{recursive:true});symlinkSync(join(dir,'real'),join(dir,'alias'))
+    const inbox=join(dir,'alias','inbox'),path=join(inbox,'app-desktop-123-1.png');writeFileSync(path,'image bytes')
+    const row=rec(2,{id:'app:desktop:123:in',source:'desktop',direction:'in',text:'',extras:JSON.stringify({attachments:[{kind:'file',name:'original.png',path}],narration:[]})})
+    const d=deps({inboxDir:inbox,message:async()=>row}),url='/file?id=app%3Adesktop%3A123%3Ain&i=0'
+    expect((await call(d,get(url))).status).toBe(200)
+    const target=join(dir,'outside.png');writeFileSync(target,'private');rmSync(path);symlinkSync(target,path)
+    expect((await call(d,get(url))).status).toBe(404)
+  }finally{rmSync(dir,{recursive:true,force:true})}
+})
+it('owner chat changes while paging: no old transcript is returned into the new owner scope',async()=>{
+ let owner:ReturnType<MobileChatDeps['owner']>={matterId:'c0ffee01',chatId:'wx',title:'聊天'},release!:(rows:MessageRecord[])=>void
+ const d=deps({owner:()=>owner,history:()=>new Promise(r=>{release=r})}),reading=call(d,get())
+ await Promise.resolve();owner=null;release([rec(1,{text:'private old owner'})]);const result=await reading
+ expect(result.status).toBe(404);expect(JSON.stringify(result.body)).not.toContain('private old owner')
 })

@@ -1,0 +1,112 @@
+{
+  "id": "topic-servers-by-title",
+  "kind": "topic",
+  "note": "示例(编的):原词:直接说话题名",
+  "input": {
+    "text": "服务器 166 现在还能用吗",
+    "topics": [
+      {
+        "id": "srv",
+        "title": "服务器",
+        "summary": "自用机队:91 日常首选、166 代理机、局域网的 Mac mini",
+        "aliases": [
+          "机队",
+          "mini",
+          "91",
+          "166"
+        ],
+        "tags": [
+          "运维"
+        ],
+        "entries": [
+          {
+            "id": "srv-166",
+            "kind": "fact",
+            "line": "166.88.197.165 被商家重置,重装了 brook + bx server(端口 35721),旧链接全作废"
+          },
+          {
+            "id": "srv-mini",
+            "kind": "fact",
+            "line": "Mac mini M4 在局域网 215,ssh beef;tailscale 走 beefts"
+          },
+          {
+            "id": "srv-disk",
+            "kind": "commitment",
+            "line": "答应给 91 换一块新硬盘",
+            "due": "2026-11-20"
+          }
+        ]
+      },
+      {
+        "id": "bx",
+        "title": "bx",
+        "summary": "自托管网络工具:AI 可安全操作的 fail-closed 网络 appliance",
+        "aliases": [
+          "bx server",
+          "透明代理"
+        ],
+        "tags": [
+          "产品开发"
+        ],
+        "entries": [
+          {
+            "id": "bx-udp",
+            "kind": "decision",
+            "line": "实时视频的 UDP 走 hysteria2(QUIC),不走 direct-realtime"
+          },
+          {
+            "id": "bx-meet",
+            "kind": "fact",
+            "line": "Google Meet 卡顿根因:UDP 默认回落到 TCP 隧道,且绕过了路由规则"
+          }
+        ]
+      },
+      {
+        "id": "wr",
+        "title": "writter",
+        "summary": "写作工具 NC:界面重构与写作修订主流程",
+        "aliases": [
+          "NC",
+          "写作工具"
+        ],
+        "tags": [
+          "产品开发"
+        ],
+        "entries": [
+          {
+            "id": "wr-flow",
+            "kind": "progress",
+            "line": "界面重构与主流程闭环完成:正文为主角,审读后给「继续写作 / 修订」入口"
+          }
+        ]
+      },
+      {
+        "id": "melu",
+        "title": "melu",
+        "summary": "亲子饮食 App:狐狸会引用以前的记录",
+        "aliases": [
+          "狐狸",
+          "饮食记录"
+        ],
+        "tags": [
+          "产品开发"
+        ],
+        "entries": [
+          {
+            "id": "melu-health",
+            "kind": "progress",
+            "line": "iOS 健康数据写入完成(热量 / 宏量营养素 / 菜名),14 天内可改可删"
+          }
+        ]
+      }
+    ]
+  },
+  "rules": [
+    {
+      "recalls": {
+        "topic": "srv",
+        "entry": "srv-166"
+      }
+    }
+  ]
+}

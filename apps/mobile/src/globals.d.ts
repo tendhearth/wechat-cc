@@ -28,9 +28,17 @@ declare var CCP: {
   makeProtocolClient(opts: {
     open: () => CCPSocket
     token: string
-    client?: 'web'
+    client?: 'web'; build?: string
     requestTimeoutMs?: number
     handshakeTimeoutMs?: number
+    onSubscriptionError?: (topic: string, code: string) => void
     onProtocolError?: (reason: string, detail?: unknown) => void
   }): CCPClient
+  /** 状态表与中文词(packages/protocol/src/status-table.ts,设计稿 2026-10-31 U5)。 */
+  STATUS_TABLE: Record<'working' | 'waiting' | 'replied' | 'done' | 'failed' | 'stopped', { word: string; icon: string | null; tone: 'accent' | 'inkSoft'; group: 'waiting' | 'working' | 'back' }>
+  STATUS_WORDS: Record<'working' | 'waiting' | 'replied' | 'done' | 'failed' | 'stopped', string>
+  HOME_GROUP_WORDS: Record<'waiting' | 'working' | 'back', string>
+  /** 「在做」却这么久没动静 ⇒ 提示可能卡住(ms)。 */
+  QUIET_AFTER_MS: number
+  ROW_HINT_WORDS: { quiet: string; pendingTotal: string }
 }

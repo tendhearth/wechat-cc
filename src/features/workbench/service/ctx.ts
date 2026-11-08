@@ -15,11 +15,10 @@ import type { ReportSink } from '../../../domain/matters/report'
 import type { RecollectSink } from '../../../domain/matters/recollection'
 
 export interface ServiceHub {
-  /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */
-  touched(id:string,seq?:number):void
-  /** 非 store 状态变化:先落库拿新 seq 再唤醒。 */
+  /** 非 store 状态变化(补充回执、权限卡、脚本运行态…):落库推进版本号与这件事的游标 —— 订阅的人靠游标知道变了(P1a,MatterLog 发通知)。
+   *  store 自己的写方法本来就在同一笔里推进,不用再调这个。 */
   bumped(id:string):void
-  /** 长轮询中心收尾:叫醒所有 waiter、清缓存(shutdown 最后一步)。 */
+  /** 收尾:叫醒所有挂着的长轮询、退掉经 service 订的回调(shutdown 最后一步)。 */
   dispose():void
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
@@ -78,6 +77,10 @@ export interface ServiceDeps {
   networkGate?: NetworkGate
   /** 项目经验(2026-10-20):源项目路径 ⇒ 要放进执行者指令的那一段;没有 ⇒ null。 */
   projectLessons?: (projectPath: string | null) => string | null
+  /** 话题 T3(2026-11-05):起执行者时从话题拼的简报(只给主人的任务、只用索引、私密话题不进);没有 ⇒ null。 */
+  topicBrief?: (task: { matterId: string; ownerChatId: string | null; title: string; text: string }) => Promise<string | null>
+  /** 话题 T3:这件事一轮真的完成了(同 onTurnCompleted 那一处)—— 把结论写回挂着的话题。 */
+  onTaskTurnCompleted?: (taskId: string) => void
   /** 加一条项目经验(打回时「同时记成这个项目的经验」);同微信「经验」命令、手机那个文件。 */
   /** checkpoint 总期限(毫秒);缺省 CHECKPOINT_DEADLINE_MS。只给测试放宽(负载下 15 秒不够,打不成点那一轮就回不去)。 */
   checkpointDeadlineMs?: number

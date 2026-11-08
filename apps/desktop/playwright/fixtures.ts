@@ -89,7 +89,16 @@ export { expect }
  * 它收起 —— 直接点被折叠的按钮会一直等 visible 到超时。先展开再点,和用户的手一样。
  */
 export async function clickNav(page: import('@playwright/test').Page, pane: string): Promise<void> {
-  // 窄窗口的「一起做」把主导航收起(2026-10-05 起宽窗口不收):和用户一样先点左上角叫出来。
+  // 「一起做」不再是导航项(设计稿 2026-10-31 U4):和用户一样回此刻,点「全部 →」。
+  if (pane === 'workbench') {
+    if (await page.locator('.dash-pane[data-pane="workbench"]').isVisible()) { if(await page.locator('.workbench-pane').getAttribute('data-workbench-view')==='search')return; await page.locator('#workbench-home').click() }
+    await clickNav(page, 'overview')
+    await page.locator('[data-conversation-search-matters]').click()
+    return
+  }
+  // 在「全部」(原一起做)里:左上角「‹ 此刻」回主页。
+  if (pane === 'overview' && await page.locator('#workbench-home').isVisible()) { await page.locator('#workbench-home').click(); return }
+  // 窄窗口的「全部」把主导航收起(2026-10-05 起宽窗口不收):和用户一样先点左上角叫出来。
   const toggle = page.locator('#workbench-nav-toggle')
   if (await toggle.isVisible() && (await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
   await page.locator('details.cc-life-nav-more').evaluateAll(els => { for (const el of els) el.setAttribute('open', '') })
@@ -113,3 +122,9 @@ export async function clickRevealed(page: import('@playwright/test').Page, selec
   await reveal(page, selector)
   await page.locator(selector).first().click()
 }
+
+/**
+ * 假的工作台接口要截的请求:`/v1/workbench/*`,外加 P3e-3 起桌面改调的一件事上的动作(`/v1/matter/<动词>`,同一个处理器)。
+ * 只截这几个动词:`/v1/matter`、`/v1/matters`、主人对话那几条照旧走 test-shim。
+ */
+export const WORKBENCH_ROUTES = /\/v1\/(workbench|matter\/(seen|stop|permission|answer|artifact|handoff|worktree|create|create-receipt|rewind|changes|review-mark|review-return|review-comment|review-comments-send))(?=[/?#]|$)/

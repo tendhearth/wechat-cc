@@ -1,0 +1,9 @@
+{
+  "status": 403,
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "error": "route_not_allowed"
+  }
+}

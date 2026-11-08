@@ -24,6 +24,8 @@ import { memoryRoutes } from './routes'
 import { memoryReviewRoutes } from './review-routes'
 import { memoryOwnerRoutes } from './owner-routes'
 import { makeMemoryPromptReads, type MemoryPromptReads } from './prompt-reads'
+import { bubbleRoutes } from './bubble-routes'
+import { topicRoutes } from './topic-routes'
 import { registerMemoryNightly } from './nightly-lifecycle'
 import type { MemoryLlmOps } from './llm-ops'
 import type { MemoryNightlyRuntime } from './nightly-runtime'
@@ -34,9 +36,12 @@ import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
 export { wireMemory, type WireMemoryDeps } from './wire'
 export { makeMemoryLlmOps, resolveCheapEval, type MemoryLlmOps } from './llm-ops'
 export { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './curated-doc'
+// 手机「CC 记得你」两条:组装的地方交给面板的 featureRoutes(P3d-3)
+export { memoryPhoneRoutes, type MemoryPhoneRoutesDeps } from './phone-routes'
 export { makeMemoryImportCommand } from './import-command'
 export { synthesisMemoryFor, memoryFactsFor, overviewForOthersFromTable } from './memory-export'
-export { RESTORE_NOTE } from './routes'
+// memoryRoutes:测试把面板的假实现转交内部 API 时要(features/phone/test-panel-v1.ts);生产里只有本模块自己 mount。
+export { RESTORE_NOTE, memoryRoutes } from './routes'
 export { retractOnFactStatus } from './fact-status'
 export { formatNightlyReply, type NightlyRunResult } from './nightly-notify'
 export { MEMORY_LOG_FILE, ownerMemoryRoot, readNightlyState } from './nightly'
@@ -92,6 +97,9 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
           },
         }),
         ...memoryOwnerRoutes({ stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId }),
+        // 话题(T2 后续 ①):topic_search 工具搜主人那条对话的话题
+        ...topicRoutes({ db: d.db, ownerChatId: d.resolveAdminChatId }),
+        ...bubbleRoutes({ db: d.db, ownerChatId: d.resolveAdminChatId }),
       })
       return { promptReads: makeMemoryPromptReads({ stateDir: d.stateDir, memory: d.memory, facts: makeMemoryWriter({ store: makeMemoryFactsStore(d.db), stateDir: d.stateDir }) }) }
     },
@@ -107,3 +115,5 @@ export function memoryNightlyFeature(o: {
 }): DaemonModule {
   return lifecycleModule('memory-nightly', (ctx) => registerMemoryNightly({ runtime: o.runtime(ctx), holdBusy: o.holdBusy(ctx), log: o.log }), { needs: o.needs })
 }
+
+export { topicsProjection } from './topic-projection'

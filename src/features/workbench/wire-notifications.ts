@@ -3,6 +3,7 @@ import type { WorkbenchService } from './service'
 import type { SpeechKind } from '../../domain/speech/kinds'
 import type { WechatWorkbenchTransport } from '../../ports/wechat'
 import type { SpeechPolicy } from '../../daemon/speech/policy'
+import { askRef } from '../../domain/speech/event-ref'
 
 /** 两条路都送不到时,多久再问一次门(只是本地判定,不碰网络;不算尝试)。 */
 export const UNDELIVERABLE_RECHECK_MS = 60_000
@@ -27,12 +28,22 @@ export function wireWorkbenchNotifications(opts: {
   workbench: WorkbenchService
   ilink: Pick<WechatWorkbenchTransport, 'sendWorkbenchNotice' | 'chatAccountId'>
   speech: Pick<SpeechPolicy, 'say'>
+  /**
+   * 这一次 run 的最后一轮的事件键(adapters/store/matter-event-refs lastTurnOfRun;S3a)。run 终态的通知问门时带上,
+   * App「做完了」推送问同一件事带的是同一个,账上并成一行。没给 / 读不到 ⇒ 不带。批准 / 提问按请求编号,不用它。
+   */
+  turnRefOfRun?: (taskId: string, runId: string) => string | null
   now?: () => number
 }): {
   wake(context?: { ownerChatId: string; accountId: string }): Promise<void>
   close(): Promise<void>
 } {
   const now = opts.now ?? Date.now
+  /** 同一个事件的键:批准 / 提问 ⇒ 请求编号;run 终态 ⇒ 那个 run 的最后一轮。 */
+  const noticeRef = (notice: WechatNotificationNotice): string | null => {
+    if (notice.kind === 'permission' || notice.kind === 'question') return notice.requestId ? askRef(notice.taskId, notice.requestId) : null
+    try { return opts.turnRefOfRun?.(notice.taskId, notice.runId) ?? null } catch { return null }
+  }
   /** 送之前那一道同步核对。不过 ⇒ 回拦下的理由。 */
   const blockedReason = (notice: WechatNotificationNotice): string | null => {
     if (!opts.workbench.notificationEligible(notice)) return 'ineligible'
@@ -47,7 +58,8 @@ export function wireWorkbenchNotifications(opts: {
       // 核对失败就不必问门(也不记一行账)
       const early = blockedReason(notice)
       if (early) return { status: 'blocked', reason: early }
-      const o = await opts.speech.say({ kind: noticeSpeechKind(notice.kind), chatId: notice.ownerChatId }, async (turn) => {
+      const ref = noticeRef(notice)
+      const o = await opts.speech.say({ kind: noticeSpeechKind(notice.kind), chatId: notice.ownerChatId, ...(ref ? { ref } : {}) }, async (turn) => {
         // This check deliberately stays synchronous and adjacent to transport.
         // Awaiting between eligibility and send would let a resolved request,
         // mute, owner change, or account rebind become stale in the gap.

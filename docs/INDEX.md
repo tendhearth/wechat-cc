@@ -35,13 +35,13 @@
 | 变异测试(测试到底护住了什么:怎么跑、2026-10 基线、活变异逐条解读) | [maintainer/verify.md「变异测试」](maintainer/verify.md#变异测试定期传感器不进-verify--每个-pr-的-ci) + [maintainer/mutation-baseline-2026-10.md](maintainer/mutation-baseline-2026-10.md) | `stryker.config.mjs` / `stryker.db.config.mjs` |
 | 加一个执行者(哪几处要动、哪些是推导出来的、漏了谁会红) | [maintainer/add-an-executor.md](maintainer/add-an-executor.md) | `superpowers/specs/2026-10-22-{executor-detect-once,policy-compile}-design.md` |
 | 加一个微信命令(命令表的顺序、放哪一族、两两互斥、路由快照) | [maintainer/add-a-command.md](maintainer/add-a-command.md) | `superpowers/specs/2026-10-20-refactor-batch2-design.md` §1 |
-| 加一页(路由表一行、要发版的那几格、错误码、桌面 / App / 手机网页怎么接) | [maintainer/add-a-page.md](maintainer/add-a-page.md) | `packages/protocol/src/routes.ts` 顶部注释 |
+| 加一页(路由表一行、要发版的那几格、错误码、桌面 / App / 手机网页怎么接) | [maintainer/add-a-page.md](maintainer/add-a-page.md) | `packages/protocol/src/routes.ts` 顶部注释;路由一族(一份数据一条 `/v1`、按令牌范围放行、`/m/api` 进别名表按构建号退,P3,2026-11-05)[`2026-11-05-p3-one-route-family-design.md`](superpowers/specs/2026-11-05-p3-one-route-family-design.md) |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
 | 外部 agent CLI 自动升级(claude / codex / cursor-agent / agy:官方升级器、升级后自检、自动退回、坏版本、`wechat-cc cli`) | [maintainer/cli-auto-upgrade.md](maintainer/cli-auto-upgrade.md) | 主人拍板(2026-10-04),见 roadmap 修订记录 |
 | 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)；[统一交办开发分支验证](superpowers/plans/2026-09-26-task-entry-validation.md) |
 | 原生手机（Expo） | [roadmap.md](roadmap.md);[app 怎么跑与硬要求](../apps/app/README.md) | spec `superpowers/specs/2026-09-30-tendhearth-app-v1-design.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-backend.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-skeleton.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-live.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-push.md` + spec `superpowers/specs/2026-10-01-tendhearth-app-chat-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-app-chat.md` + 设计稿 `design/tendhearth-app-v1/` |
 | 两端设计统一 | [roadmap.md](roadmap.md) | spec `superpowers/specs/2026-10-01-tendhearth-design-unify-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-design-unify.md`;验收截图与对稿记录在仓库外 `~/Documents/tendhearth/cc-screens-2026-10-01-design/` |
-| 此刻 / 一起做的层级(每样东西只有一个家:对话→此刻、交办→一起做;桌面一起做不再收主导航;横条换成「此刻」旁的数字;2026-10-05) | — | `superpowers/specs/2026-10-05-now-together-hierarchy.md` |
+| 此刻 / 一起做的层级(每样东西只有一个家:对话→此刻、交办→一起做;桌面一起做不再收主导航;横条换成「此刻」旁的数字;2026-10-05) | — | `superpowers/specs/2026-10-05-now-together-hierarchy.md`;桌面两页一套语言(一种行、一个状态映射、界面不再写「一起做」,2026-11-05)[`2026-11-05-u4b-desktop-one-language.md`](superpowers/specs/2026-11-05-u4b-desktop-one-language.md) |
 | 三端阅读与核心旅程优化 | [实施与验收清单](superpowers/specs/2026-10-02-core-experience-optimization.md) | 竞品一手依据、设计约束、真实回执、已有会话阅读与交付边界 |
 | 重启恢复、额度接手与模型失败 | [本轮对照与验收](superpowers/specs/2026-10-03-recovery-and-competitor-comparison.md) | 固定竞品源码依据、SecureStore 提交日志、单回执读取与两端确认流程 |
 | 手机配对 | [roadmap.md](roadmap.md);[中继 §9 通用链接](maintainer/relay.md) | spec `superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-pairing-ux.md` |
@@ -54,9 +54,10 @@
 | 每晚整理记忆 / 记忆视图 | [reference/architecture-companion-2026-07.md §2.4](reference/architecture-companion-2026-07.md) | `superpowers/specs/2026-09-25-memory-nightly-design.md` + `2026-09-26-memory-view-design.md` |
 | 记忆一个源(主库事实表、一种收回、知识库进迁移框架;架构终态 G,**设计稿**) | [架构终态](architecture-end-state-2026-10-25.md) 第 7 条 | `superpowers/specs/2026-10-25-memory-single-source-design.md`(上承 `2026-10-23-memory-{source-vs-derived,edits-stick}-design.md`) |
 | 网页设计统一(手机 `tokens.css` 唯一色板) | [../apps/mobile/README.md](../apps/mobile/README.md) | `superpowers/specs/2026-09-26-web-design-unify.md` |
-| 桌宠 CC / 美术资产 | — | `superpowers/specs/2026-09-05-cc-desktop-pet-design.md` + `2026-09-08-cc-asset-production-brief.md` + `2026-09-01-cc-atelier-design.md` |
+| 桌宠 CC / 美术资产 | [协调表演与播放契约](../apps/desktop/art/cc-v1/performance/README.md)；[素材合同与当前包](../apps/desktop/src/assets/pet/cc-v1/README.md)；[双态素材与验证记录](superpowers/reports/2026-10-29-cc-motion-verification.md)；[转面与动作道具研究（非运行时候选）](../apps/desktop/art/cc-v1/studies/README.md) | [表演与偶发好奇心设计](superpowers/specs/2026-11-03-cc-pet-delight-design.md)；[第二轮素材研究](superpowers/specs/2026-10-30-cc-materials-round-two-design.md)；[双态连续动作与陪伴控制](superpowers/specs/2026-10-29-cc-motion-expansion-design.md)；原始依据 `2026-09-05-cc-desktop-pet-design.md` + `2026-09-08-cc-asset-production-brief.md` + `2026-09-01-cc-atelier-design.md` |
 | 社交层(信封 / 关系 / 觅食台 / 串门 / 明信片 / 介绍) | — | `superpowers/specs/2026-09-04-social-architecture-rethink.md`(重构定案)+ `2026-09-04-{wish-postcard,introduction}-design.md` |
 | 伙伴状态与日程判断 | — | `superpowers/specs/2026-09-03-companion-presence-design.md` + `2026-09-05-companion-plan-design.md` |
+| 主人对话窗口、持久工作引用与停止 | [共享合同](reference/owner-conversation.md) | T5d 三端合同 |
 | 手机协议 v2 与协议包 | [../packages/protocol/README.md](../packages/protocol/README.md) | `superpowers/specs/2026-09-29-phone-protocol-v2-design.md` + `superpowers/plans/2026-09-29-phone-protocol-v2.md` |
 | 官方中继 v2(Cloudflare Workers + 推送) | [maintainer/relay.md](maintainer/relay.md) | `superpowers/specs/2026-09-30-relay-cloudflare-push-design.md` + `superpowers/plans/2026-09-30-relay-cloudflare-push.md` |
 | 手机版 | [任务衔接现状](cc-workbench.md)；[手机页源码与规矩](../apps/mobile/README.md) | `superpowers/specs/2026-09-06-mobile-home-feed-design.md`；[手机任务验证记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
@@ -104,6 +105,7 @@
 
 ## 修订记录
 
+- 2026-10-29：桌宠主题增加双态动作与陪伴功能的候选交付记录、素材合同和当前设计入口；功能分支、主人美术验收与原生检查分别记录。
 - 2026-10-05:回复交付从「设计已定」改为现行手册入口，标明默认 daemon 已交付与观察期收尾边界。
 - 2026-10-02:新增 `reference/network-guard.md`(网络守护:bx 优先、全入口拦截、威胁模型与验证),入主题表与 reference 目录说明。
 - 2026-10-02:`reference/network-guard.md` 改写为守护 v2(按调用判;主人收窄的决定原样记录)。

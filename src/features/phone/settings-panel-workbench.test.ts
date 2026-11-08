@@ -13,7 +13,10 @@ import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from '../workbench/service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {saveArtifactSnapshot} from '../../adapters/workbench/artifacts'
-import {makeSettingsPanel,type SettingsPanel} from './settings-panel'
+import {makeSettingsPanel as makePanel,type SettingsPanel} from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+/** P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。 */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import {makeMemoryRelay} from './memory-relay.fixture'
 import {makeTunnelClient,type TunnelWS} from './tunnel-client'
 import {currentPhoneClient,markAppRequest} from './phone-client'
@@ -59,11 +62,11 @@ beforeEach(async()=>{
 // 重试 20 次再降级成一条 warning(仓库约定,见 AGENTS.md 的临时目录那条)。
 afterEach(async()=>{await panel?.stop();await workbench?.shutdown();db?.close();removeTempDir(root);removeTempDir(managedRoot)})
 function create(name:string){const path=join(root,name);mkdirSync(path);return workbench.create({path,providerId:'claude',text:name})}
-// 送话给执行者的写操作只给设备令牌(审计 10-20):默认令牌碰到这类路由时先配一次对,再发一枚新的链接令牌给其余调用
+// 私人任务详情与送话给执行者的写操作使用设备令牌(审计 10-20):默认令牌碰到这类路由时先配一次对,再发一枚新的链接令牌给其余调用
 let device:string|null=null
 async function deviceAuth(){if(!device){device=await pairDevice(base,token);token=panel.issueToken()}return device}
 async function request(path:string,body?:unknown,auth?:string){
-  if(auth===undefined){auth=token;if(linkCannot(path)){if(!device){device=await pairDevice(base,token);token=panel.issueToken()}auth=device}}
+  if(auth===undefined){auth=token;if(linkCannot(path)||path.startsWith('/m/api/matter?')){if(!device){device=await pairDevice(base,token);token=panel.issueToken()}auth=device}}
   return fetch(base+path+(path.includes('?')?'&':'?')+'t='+encodeURIComponent(auth),body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
 }
 async function ready(id:string){await expect.poll(()=>workbench.detail(id).permissions.length).toBe(1);return workbench.detail(id)}
@@ -181,16 +184,16 @@ describe('phone task controls keep the existing execution boundary',()=>{
     const firstFinish=terminalFinishes.get(task.path)
     const body={id:task.id,requestId:randomUUID(),text:'继续这一件事'}
     expect((await request('/m/api/matter/say',body)).status).toBe(200)
-    expect(matters.get(task.id)?.status).toBe('open')
+    expect(matters.legacyStatuses([task.id]).get(task.id)).toBe('open')
     await expect.poll(()=>terminalFinishes.get(task.path)!==firstFinish).toBe(true)
     terminalFinishes.get(task.path)!()
     await expect.poll(()=>workbench.detail(task.id).task.status).toBe('completed')
     const replay=await (await request('/m/api/matter/say',body)).json()
-    expect(matters.get(task.id)?.status).toBe('done')
+    expect(matters.legacyStatuses([task.id]).get(task.id)).toBe('done')
     expect(replay.result.input).toMatchObject({id:body.requestId,status:'delivered'})
     workbench.setArchived(task.id,true)
     expect((await request('/m/api/matter/say',body)).status).toBe(200)
-    expect(matters.get(task.id)?.status).toBe('archived')
+    expect(matters.legacyStatuses([task.id]).get(task.id)).toBe('archived')
     workbench.setArchived(task.id,false)
     expect(workbench.detail(task.id).events.filter(e=>e.kind==='user'&&e.text===body.text)).toHaveLength(1)
     expect(matters.list({kind:'task'})).toHaveLength(1)

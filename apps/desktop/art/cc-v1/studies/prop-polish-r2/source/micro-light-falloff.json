@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "artStatus": "production-candidate",
+  "blender": "5.2.1 LTS",
+  "samples": 96,
+  "seed": 11,
+  "glowRadius": 28,
+  "scriptSha256": "d56119450be52199459dcd297732f74d529ac58d415325ed09e78d17676d6687",
+  "adapterSha256": "6e9bac9b66d85f20a953e36a4b226b2bf3ee9feb71128ccc47dbad7c30b1a529",
+  "bodySha256": "2c6cdb52291a2ca12d7714a299b79f17c6985eb7ff271e99f4cc4f376ad3675a",
+  "pngSha256": "e0f9eb33ae762e092da2c85a08d314293ad2d261b2b2d5a2f9e9b52764ec072f",
+  "hdrSha256": "b9fe6ecaf54af5defb740507b28542110114f48c03479fa1a6f47727f69b328d"
+}

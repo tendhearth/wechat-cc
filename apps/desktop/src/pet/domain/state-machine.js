@@ -69,7 +69,7 @@ export function createPetStateMachine(opts = {}) {
       }
       if (oneShot) {
         if (transition) return 'ignored'
-        if (playingOneShot() && PRIORITY[behavior] > PRIORITY[b]) return 'ignored'
+        if (PRIORITY[behavior] > PRIORITY[b] && !(behavior === 'companion' && (b === 'blink' || b === 'look'))) return 'ignored'
         behavior = b; notify(); return 'applied'
       }
       // 持续行为

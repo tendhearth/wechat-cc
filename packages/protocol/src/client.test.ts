@@ -41,7 +41,7 @@ interface Conn {
   rawIn: string[]
 }
 
-function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean; manualOpen?: boolean }) {
+function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean; manualOpen?: boolean; routes?: 'v1'; topics?: 'v1' }) {
   const token = opts.token ?? TOKEN
   const conns: Conn[] = []
   const reqs: ReqSeen[] = []
@@ -130,7 +130,7 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
       if (opts.version === 2 && Array.isArray(f.v) && f.v.includes(2)) {
         conn.version = 2
         conn.chan = makeV2Channel(deriveV2Keys(shared, token), 'server')
-        conn.toClient({ hs: b64uEncode(kp.pub), v: 2 })
+        conn.toClient({ hs: b64uEncode(kp.pub), v: 2, routes: opts.routes, topics: opts.topics })
       } else {
         conn.version = 1
         conn.toClient({ hs: b64uEncode(kp.pub) })
@@ -178,6 +178,41 @@ beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { vi.useRealTimers() })
 
 describe('握手协商', () => {
+  it('exposes validated topics capabilities and clears them on close/reconnect',async()=>{
+    const opts={version:2 as const,routes:'v1' as const,topics:'v1' as 'v1'|undefined},daemon=makeFakeDaemon(opts),{c}=client(daemon)
+    expect(c.capabilities?.()).toEqual({})
+    await c.request({method:'GET',path:'/capabilities'})
+    expect(c.capabilities?.()).toEqual({routes:'v1',topics:'v1'})
+    daemon.d.conns[0]!.serverClose();await flush()
+    expect(c.capabilities?.()).toEqual({})
+    opts.topics=undefined
+    const pending=c.request({method:'GET',path:'/capabilities'});await vi.advanceTimersByTimeAsync(500);await pending
+    expect(c.capabilities?.().topics).toBeUndefined()
+    c.close();expect(c.capabilities?.()).toEqual({})
+  })
+
+  it.each([undefined, 'v1'] as const)('selects queued requests from handshake routes=%s and resets after reconnect', async routes => {
+    const opts = { version: 2 as const, routes }
+    const daemon = makeFakeDaemon(opts)
+    const { c } = client(daemon, { build: '4' })
+    expect(c.routes?.()).toBeUndefined()
+    const forRoutes = (r: 'v1' | undefined) => ({ path: r === 'v1' ? '/v1/home' : '/m/api/home' })
+    await c.request({ method: 'GET', path: '/m/api/home', forRoutes })
+    expect(c.routes?.()).toBe(routes)
+    expect(daemon.d.reqs.at(-1)?.path).toBe(forRoutes(routes).path)
+    expect(daemon.d.conns[0]!.hellos[0]).toMatchObject({ build: '4' })
+    daemon.d.conns[0]!.serverClose()
+    await flush()
+    expect(c.routes?.()).toBeUndefined()
+    opts.routes = routes === 'v1' ? undefined : 'v1'
+    const pending = c.request({ method: 'GET', path: '/m/api/home', forRoutes })
+    await vi.advanceTimersByTimeAsync(500)
+    await pending
+    expect(c.routes?.()).toBe(opts.routes)
+    expect(daemon.d.reqs.at(-1)?.path).toBe(forRoutes(opts.routes).path)
+    c.close()
+  })
+
   it('v2 后台 ⇒ version()===2,握手带 v:[2](不带 client),请求走 v2 帧', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
     const { c } = client(daemon)
@@ -198,6 +233,21 @@ describe('握手协商', () => {
     const { c } = client(daemon, { client: 'web' })
     await c.request({ method: 'GET', path: '/m/api/home' })
     expect(daemon.d.conns[0]!.hellos[0]).toMatchObject({ v: [2], client: 'web' })
+    expect(daemon.d.conns[0]!.hellos[0]).not.toHaveProperty('build')
+    c.close()
+  })
+
+  it('App 填 build ⇒ 握手带上(M6b);ClientHello 认它,老形状照样过', async () => {
+    const { ClientHello } = await import('./messages')
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c } = client(daemon, { build: '3' })
+    await c.request({ method: 'GET', path: '/m/api/home' })
+    const hello = daemon.d.conns[0]!.hellos[0]
+    expect(hello).toMatchObject({ v: [2], build: '3' })
+    expect(hello).not.toHaveProperty('client')
+    expect(ClientHello.parse(hello)).toMatchObject({ build: '3' })
+    expect(ClientHello.safeParse({ hs: 'x', v: [2] }).success).toBe(true)
+    expect(ClientHello.safeParse({ hs: 'x', v: [2], build: '' }).success).toBe(false)
     c.close()
   })
 })
@@ -345,6 +395,23 @@ describe('请求 / 响应', () => {
     await vi.advanceTimersByTimeAsync(2500)
     await assertion
     expect(daemon.d.reqs).toHaveLength(2)
+    c.close()
+  })
+
+  it.each(['auth_failed', 'unauthorized', 'revoked'])('encrypted %s invalidates all pending requests and prevents reconnect', async code => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.dropNextReqs = 2
+    const { c, open } = client(daemon)
+    const p = c.request({ method: 'GET', path: '/x' })
+    const q = c.request({ method: 'GET', path: '/y' })
+    const assertions = [expect(p).rejects.toThrow('auth_failed'), expect(q).rejects.toThrow('auth_failed')]
+    await flush()
+    daemon.sendV2(daemon.d.live(), { t: 'err', rid: daemon.d.reqs[0]!.rid, code })
+    await flush()
+    await Promise.all(assertions)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(open).toHaveBeenCalledTimes(1)
+    await expect(c.request({ method: 'GET', path: '/z' })).rejects.toThrow('auth_failed')
     c.close()
   })
 

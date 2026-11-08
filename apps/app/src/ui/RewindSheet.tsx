@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal, Pressable, ScrollView, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type Backend, type RewindPreviewT } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import type { SubmitResult } from '../state/store'
@@ -53,18 +54,20 @@ export function RewindSheet({ matterId, artifactId, backend, lang, online, submi
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1 }}>
       <Pressable accessibilityLabel={t(lang, 'rewind.cancel')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={onClose} />
-      <View testID="rewind-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.m, maxHeight: '85%', borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+      <SafeAreaView testID="rewind-sheet" edges={['bottom']} style={{ backgroundColor: c.paper, maxHeight: '85%', borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+        <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ padding: space.xl, gap: space.m }}>
         {v ? (
           <>
             <Txt role="item" accessibilityRole="header">{v.title}</Txt>
-            <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: space.s }}>
+            <View style={{ gap: space.s }}>
               <Txt role="bubble">{v.what}</Txt>
               <Txt role="meta" tone="inkSoft">{v.filesHead}</Txt>
-              {v.paths.map((p, i) => <Txt key={i} testID={`rewind-path-${i}`} role="code" tone="inkSoft" content="user" numberOfLines={1}>{p}</Txt>)}
+              {v.paths.map((p, i) => <Txt key={i} testID={`rewind-path-${i}`} role="code" tone="inkSoft" content="user" selectable>{p}</Txt>)}
               {v.more ? <Txt role="meta" tone="inkSoft">{v.more}</Txt> : null}
               {v.notes.map((n, i) => <Txt key={i} testID={`rewind-note-${i}`} role="meta" tone="inkSoft">{n}</Txt>)}
-            </ScrollView>
+            </View>
           </>
         ) : (
           <Txt testID="rewind-loading" role="bubble" tone="inkSoft" accessibilityLiveRegion="polite">{loadError ?? t(lang, 'rewind.loading')}</Txt>
@@ -73,6 +76,8 @@ export function RewindSheet({ matterId, artifactId, backend, lang, online, submi
         {loadError ? <Button kind="secondary" testID="rewind-retry" label={t(lang, 'common.retry')} onPress={() => void load()} /> : null}
         {v ? <Button kind="primary" testID="rewind-confirm" label={t(lang, 'rewind.confirm')} onPress={() => void confirm()} disabled={!online} busy={sending} /> : null}
         <Button kind="secondary" testID="rewind-cancel" label={t(lang, 'rewind.cancel')} onPress={onClose} disabled={sending} />
+        </ScrollView>
+      </SafeAreaView>
       </View>
     </Modal>
   )

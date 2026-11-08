@@ -20,14 +20,10 @@ export type PipelineWechat =
 
 export interface PipelineDepsOpts {
   workbench?: import('../../features/workbench').WorkbenchService
-  /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
-  cliSessions?: () => import('../../ports/cli-session').CliSessionView[]
   /** 「CC 做过的事」(B9):main 拼好来源,这里只透传给手机面板。 */
   activity?: import('../../features/phone').MobileActivityDeps
-  /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
+  /** 终端会话的手机动作(拍板 / 说一句 / 看着它跑):POST /v1/cli/decide、/v1/cli/session-say、GET /v1/cli/activity(features/terminal/phone-routes.ts;老 App 的 /m/api/cli/* 是别名)。缺省 ⇒ 503。 */
   cliActions?: import('../../features/terminal').CliPhoneActions
-  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
-  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
   terminalHooks?: Pick<import('../../features/terminal').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
@@ -36,8 +32,12 @@ export interface PipelineDepsOpts {
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
   /** 真回合里被拒着的执行者(provider-refusals.ts)。 */
   providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
+  /** 一件事的提议按人在哪选通道(S3b,speech/matter-proposals.ts):人在不在电脑前、桌面 app 开没开、多久没看推 App。缺省 ⇒ 照旧直接推 App。 */
+  proposals?: { atDesk(): Promise<boolean>; desktop: import('../desktop-surface').DesktopSurface; escalateAfterMs?: number; notify?: (title: string, body: string) => Promise<boolean> }
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
+  /** 内部 API 的分发 → 手机设置面板收到的 `/v1/*`(P3b:一个分发、两个监听)。 */
+  panelDispatch?: import('../internal-api/types').PanelDispatch
   matters?: import('../../ports/matters').MatterStore
   stateDir: string
   db: import('../../lib/db').Db

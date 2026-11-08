@@ -3,7 +3,6 @@ import { openTestDb } from '../../lib/db'
 import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService } from './service'
 import { createProviderRegistry } from '../../app/provider-registry'
-import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
 import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 import { removeTempDir } from '../../lib/test-temp'
 import { mkdtempSync, realpathSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
@@ -16,15 +15,14 @@ function setup(opts: { registerCodex?: boolean } = {}) {
   // realpathSync:canonicalProject 要求 task.path 已经是真实路径;macOS 上 tmpdir() 经 /tmp 符号链接。
   const db = openTestDb(), store = makeWorkbenchStore(db), stateDir = realpathSync(mkdtempSync(join(tmpdir(), 'wb-live-')))
   dirs.push(stateDir)
-  const hub: TaskChangeHub = makeTaskChangeHub()
   const registry = createProviderRegistry()
   if (opts.registerCodex) {
-    // spawn 永不落地:这些行只关心「同步落库那一刻 hub 有没有被通知」,不关心执行者真跑完。
+    // spawn 永不落地:这些行只关心「同步落库那一刻这件事的游标有没有前进」,不关心执行者真跑完。
     registry.register('codex', { async spawn() { return new Promise<never>(() => {}) } }, { displayName: 'Codex', canResume: () => false, workbench: MANAGED_NATIVE_CAPABILITIES })
   }
-  const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner', changes: hub })
+  const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner' })
   const task = store.create({ title: 't', path: stateDir, providerId: 'codex', ownerChatId: 'owner' })
-  return { store, service, hub, id: task.id, stateDir }
+  return { store, service, id: task.id, stateDir }
 }
 
 describe('service 实时流面', () => {
@@ -34,12 +32,33 @@ describe('service 实时流面', () => {
     const full = await service.detail(id); expect(full.version).toBe(2); expect(full.events).toHaveLength(2)
     const part = await service.detail(id, { since: 1 }); expect(part.events.map(e => e.text)).toEqual(['你']); expect(part.version).toBe(2)
   })
-  it('changes.wait:store 直接写不经 service 时 hub 不知道,但 wait 先看持久化 version 再挂', async () => {
+  it('detail 带 cursor;sinceCursor 只回这之后写过的步 —— 改过的步(工具调用做完)也再来一次(P1b)', async () => {
     const { store, service, id } = setup()
-    store.addEvent(id, 'user', '要求')             // version 1,hub 不知道
-    await expect(service.changes.wait(id, 0, 1000)).resolves.toBe(1)   // wait 用 store.version 兜底
+    store.addEvent(id, 'user', '要求')
+    store.recordAgentEvent(id, 'r1', { kind: 'tool_call', itemId: 'c1', text: '跑测试', activity: { id: 'c1', type: 'exec', status: 'running', label: '跑测试' } } as never)
+    const first = await service.detail(id)
+    expect(first.cursor).toBeGreaterThan(0)
+    expect((await service.detail(id, { sinceCursor: first.cursor })).events).toEqual([])
+    store.recordAgentEvent(id, 'r1', { kind: 'tool_call', itemId: 'c1', text: '跑测试', activity: { id: 'c1', type: 'exec', status: 'completed', label: '跑测试' } } as never)
+    const next = await service.detail(id, { sinceCursor: first.cursor })
+    expect(next.events.map(e => [e.kind, e.activity?.status])).toEqual([['tool_call', 'completed']])
+    expect(next.cursor).toBeGreaterThan(first.cursor)
+    // 只动了非步的状态(比如回执、状态):游标前进、事件为空 —— 桌面照样整份换掉非事件那部分
+    store.update(id, 'running')
+    const third = await service.detail(id, { sinceCursor: next.cursor })
+    expect(third.events).toEqual([]); expect(third.cursor).toBeGreaterThan(next.cursor)
+    // 按游标等:已经超过 ⇒ 马上回;没有 ⇒ 等到下一笔
+    await expect(service.changes.waitCursor(id, next.cursor, 1000)).resolves.toBe(third.cursor)
+    const p = service.changes.waitCursor(id, third.cursor, 5000)
+    store.addEvent(id, 'system', 'x')
+    await expect(p).resolves.toBeGreaterThan(third.cursor)
+  })
+  it('changes.wait:store 直接写不经 service 也叫醒(信号来自 MatterLog,P1a);已经超过 since 的马上返回', async () => {
+    const { store, service, id } = setup()
+    store.addEvent(id, 'user', '要求')             // version 1
+    await expect(service.changes.wait(id, 0, 1000)).resolves.toBe(1)
     const p = service.changes.wait(id, 1, 5000)
-    store.addEvent(id, 'system', 'x'); await service.detail(id)        // detail 顺手 publish 当前 version
+    store.addEvent(id, 'system', 'x')               // 不经 service、不读详情:光写库就该叫醒
     await expect(p).resolves.toBe(2)
   })
   it('cancel 后 version 递增(cancelling 落库即 bump)', async () => {
@@ -50,7 +69,7 @@ describe('service 实时流面', () => {
   })
 })
 
-describe('service 实时流面 · 无需真执行者的写点都经 hub 发布', () => {
+describe('service 实时流面 · 无需真执行者的写点都推进这件事的游标', () => {
   type Ctx = ReturnType<typeof setup>
   const rows: Array<{ name: string; registerCodex?: boolean; run: (ctx: Ctx) => Promise<void> | void }> = [
     { name: 'detail(读到一条绕过 service 的新写)', run: async ({ store, service, id }) => { store.addEvent(id, 'user', '要求'); await service.detail(id) } },
@@ -63,18 +82,18 @@ describe('service 实时流面 · 无需真执行者的写点都经 hub 发布',
     { name: 'continueTask(terminal 任务:写 user 事件 + 转 queued)', registerCodex: true, run: ({ store, service, id }) => { store.update(id, 'completed'); service.continueTask(id, '继续') } },
   ]
   for (const row of rows) {
-    it(`${row.name} → hub.seq(id) 增加`, async () => {
+    it(`${row.name} → 这件事的游标增加`, async () => {
       const ctx = setup({ registerCodex: row.registerCodex })
-      const before = ctx.hub.seq(ctx.id)
+      const before = ctx.store.feed.cursor(ctx.id)
       await row.run(ctx)
-      expect(ctx.hub.seq(ctx.id)).toBeGreaterThan(before)
+      expect(ctx.store.feed.cursor(ctx.id)).toBeGreaterThan(before)
       await ctx.service.shutdown()
     })
   }
 })
 
 describe('service 实时流面 · shutdown 与并发 wait', () => {
-  it('shutdown() 唤醒挂起的 changes.wait(hub.dispose)', async () => {
+  it('shutdown() 唤醒挂起的 changes.wait(feed.wakeAll)', async () => {
     const { service, id } = setup()
     const p = service.changes.wait(id, 999, 30_000)
     let settled = false; void p.then(() => { settled = true })
@@ -94,39 +113,34 @@ describe('service 实时流面 · shutdown 与并发 wait', () => {
     await service.detail(id)
     await new Promise(r => setTimeout(r, 5))
     expect(aSettled).toBe(false); expect(bSettled).toBe(false)
-    // 真写了一条,再 detail 一次:两个 waiter 都该醒,拿到同一个新 version。
+    // 真写了一条:两个 waiter 都该醒,拿到同一个新 version。
     store.addEvent(id, 'system', 'x')
-    const d = await service.detail(id)
-    await expect(a).resolves.toBe(d.version)
-    await expect(b).resolves.toBe(d.version)
+    await expect(a).resolves.toBe(store.version(id))
+    await expect(b).resolves.toBe(store.version(id))
   })
-  it('hub 幻影提前于持久化(比如一笔事务回滚前已经 touched 过)⇒ wait 只信 store.version,不会因为超前的缓存直接放行', async () => {
-    const { store, service, hub, id } = setup()
-    const persisted = store.version(id)
-    hub.publish(id, persisted + 5)   // 模拟 hub 缓存被幻影带到了比落库更靠前的 seq
-    const started = Date.now()
-    await expect(service.changes.wait(id, persisted, 50)).resolves.toBe(persisted)
-    expect(Date.now() - started).toBeGreaterThanOrEqual(45)   // 没有立刻放行,是真的等到了超时
-    expect(hub.seq(id)).toBe(persisted)   // 顺手把幻影缓存纠正回了持久化值
-  })
-  it('changes.wait 提前发现(persisted>since)的分支也要 publish,好让挂起的旧 waiter 一起醒', async () => {
+  it('回滚了的写不叫醒任何人(通知要等提交、确认落了库才发 —— 没有「幻影前进」,也就不用回落纠偏)', async () => {
     const { store, service, id } = setup()
-    const v = store.version(id)
-    const parked = service.changes.wait(id, v, 5000)
-    let parkedSettled = false; void parked.then(() => { parkedSettled = true })
-    await new Promise(r => setTimeout(r, 5))
-    expect(parkedSettled).toBe(false)
-    store.addEvent(id, 'system', 'x')   // 绕过 service 直接写,hub 不知道
-    const second = await service.changes.wait(id, v, 1000)   // 这一次的 wait 立刻发现 persisted>since
-    expect(second).toBeGreaterThan(v)
-    await expect(parked).resolves.toBe(second)   // 之前挂起的那位也该醒了,不用耗到超时
+    const v = store.version(id), heard: string[] = []
+    const off = service.changes.onChange(taskId => heard.push(taskId))
+    const parked = service.changes.wait(id, v, 60)
+    expect(() => store.atomic(() => { store.addEvent(id, 'system', '会回滚'); throw new Error('boom') })).toThrow('boom')
+    const started = Date.now()
+    await expect(parked).resolves.toBe(v)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(40)   // 等到了超时,不是被叫醒
+    expect(heard).toEqual([])
+    store.addEvent(id, 'system', '这条提交了')
+    await Promise.resolve()
+    expect(heard).toEqual([id])
+    off()
   })
-  it('service.changes.onChange:create 落库 activate() 同步 touched,回调该任务的新 seq', () => {
-    const { service, stateDir } = setup({ registerCodex: true })
+  it('service.changes.onChange:create 提交以后回调该任务和它的新游标(同一轮同步代码里的多笔合成一次)', async () => {
+    const { store, service, stateDir } = setup({ registerCodex: true })
     const calls: Array<[string, number]> = []
-    const off = service.changes.onChange((taskId, seq) => calls.push([taskId, seq]))
+    const off = service.changes.onChange((taskId, cursor) => calls.push([taskId, cursor]))
     const created = service.create({ path: stateDir, providerId: 'codex', text: '新任务' })
-    expect(calls.length).toBeGreaterThan(0)
+    expect(calls).toEqual([])   // 还在同步代码里:没确认提交前不发
+    await Promise.resolve()
+    expect(calls.filter(([taskId]) => taskId === created.id)).toEqual([[created.id, store.feed.cursor(created.id)]])
     expect(calls.some(([taskId]) => taskId === created.id)).toBe(true)
     off()
   })

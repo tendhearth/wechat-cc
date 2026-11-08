@@ -3,7 +3,7 @@
  *
  * 以前整合者每层手做四步(rebase --onto、改 base、force push、等 CI、squash 合),一串五个就是五次 20 分钟。
  * 规矩(docs/maintainer/ci-and-flakes.md「提速的边界」):上层包含下层的全部改动,只看最上面那个 PR 的 CI;
- * 绿了从下往上逐层合,不再每层等;合完推 dev 那一次(三平台)才是正式闸门。这条命令就是把这套做成一步,
+ * 绿了从下往上逐层合;PR 三平台是正式闸门,dev push 仅在 tree 相同且有成功回执时复用。这条命令就是把这套做成一步,
  * 也是 CC 以后自己合代码要用的那块。
  *
  * 每一条「停下来」都来自整合者真踩过的坑(2026-10-23):
@@ -15,7 +15,7 @@
  *     要求不是 skipped 的检查至少 N 条、全部 SUCCESS;任何一条红 ⇒ 停。
  *   - gh 偶尔什么都不回(网络抖)⇒ 隔一会儿再问,不当成 head 变了;连续十次 ⇒ 停(登录态没了不能死等)。
  *   - 检查不够数不当场判红:changes 先完、别的作业还没进 rollup 的那一分钟里就是这个样子。
- *   - 等 CI 期间 dev 被别人合了东西 ⇒ 只打一行提示、照合(有意的):rollup 拿不到 CI 测的 base,正式闸门是合完推 dev 那一次。
+ *   - 等 CI 期间 dev 被别人合了东西 ⇒ 停,先同步再等新 CI。
  *   - rebase 后先 bun install --frozen-lockfile 再 tsc:新 worktree 没 node_modules 是假红。
  *   - rebase 冲突 ⇒ abort,不留半截;已经合进去的几层照旧在 dev 上,报告停在哪一层。
  *   - 开始后 dev 被别人动过(不是我们刚合的那一个)⇒ 停:剩下几层的内容不再是 CI 验过的那一份。
@@ -71,7 +71,7 @@ export interface Layer extends PrInfo {
 
 export interface MergedPr { number: number; headRefName: string; headRefOid: string }
 
-export interface RollupItem { name?: string; context?: string; status?: string; conclusion?: string; state?: string; startedAt?: string; workflowName?: string }
+export interface RollupItem { name?: string; context?: string; status?: string; conclusion?: string; state?: string; startedAt?: string; workflowName?: string; detailsUrl?: string; completedAt?: string }
 
 export type RollupVerdict =
   | { kind: 'green'; counted: number }
@@ -81,17 +81,19 @@ export type RollupVerdict =
 
 /**
  * 同一个提交上同一个作业跑过不止一次(close/reopen、改完描述重新触发、被新推送取消的旧一轮)⇒ rollup 里每一次都在。
- * 只认每个(工作流, 作业名)最近开始的那一次;没有 startedAt 的照旧都算(StatusContext、老数据)。
+ * 只认每个(工作流, 作业名)最新 run ID / 开始时间的那一次;没有任何排序证据的照旧都算。
  * 2026-10-27 #747:旧一轮 pr-rules 读的是改之前的描述、红了,新一轮绿了,不去重就永远合不下去。
  */
 export function latestRuns(items: RollupItem[]): RollupItem[] {
   const latest = new Map<string, RollupItem>()
   const rest: RollupItem[] = []
   for (const it of items) {
-    if (it.status === undefined || !it.startedAt || !it.name) { rest.push(it); continue }
+    if (it.status === undefined || !it.name || (!it.startedAt && !it.completedAt && !it.detailsUrl)) { rest.push(it); continue }
     const key = `${it.workflowName ?? ''}\u0000${it.name}`
     const prev = latest.get(key)
-    if (!prev || (prev.startedAt ?? '') < it.startedAt) latest.set(key, it)
+    const order = (r: RollupItem) => r.startedAt && !r.startedAt.startsWith('0001-') ? r.startedAt : r.completedAt ?? ''
+    const id = (r: RollupItem) => Number(r.detailsUrl?.match(/(?:runs|check-runs)\/(\d+)/)?.[1] ?? 0)
+    if (!prev || (id(prev) && id(it) && id(prev) !== id(it) ? id(prev) < id(it) : order(prev) < order(it))) latest.set(key, it)
   }
   return [...rest, ...latest.values()]
 }
@@ -322,8 +324,11 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
 
   // ── 等最上面那个的 CI ───────────────────────────────────────────
   const deadline = deps.now() + (opts.timeoutMin ?? DEFAULT_TIMEOUT_MIN) * 60_000
-  git('fetch', 'origin', target)
+  if (git('fetch', 'origin', target).code !== 0) return done(CI_LAND_EXIT.precondition, `git fetch origin ${target} 失败`)
   const devAtStart = git('rev-parse', `origin/${target}`).stdout.trim()
+  if (!isAncestor(devAtStart, stack[0]!.oldHead)) {
+    return done(CI_LAND_EXIT.precondition, `#${stack[0]!.number} 落后 ${target}:先 rebase 到 origin/${target} 并推送,再运行 ci land 等新 CI`)
+  }
   let blips = 0
   // too_few 不当场判红:changes 十秒就完,依赖它的作业要再过几秒到一分钟才进 rollup,
   // 那个空档里看到的是「一条 SUCCESS、没有在跑的」。rollup 十分钟没变化、还是不够数,才判。
@@ -344,7 +349,14 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
     }
     blips = 0
     if (v.headRefOid !== pinnedTop) return done(CI_LAND_EXIT.moved, `#${topLayer.number} 的 head 变了(${pinnedTop.slice(0, 8)} → ${v.headRefOid.slice(0, 8)}):没看过的版本不合,重新跑一次`)
-    const verdict = judgeRollup(v.statusCheckRollup ?? [], minChecks)
+    let verdict = judgeRollup(v.statusCheckRollup ?? [], minChecks)
+    if (verdict.kind === 'green' && minChecks > 1) {
+      const checks = latestRuns(v.statusCheckRollup ?? [])
+      const platforms = ['ubuntu-latest', 'macos-latest', 'windows-latest']
+      if (!platforms.every(os => checks.some(c => c.name === `build · ${os}` && c.conclusion === 'SUCCESS'))) {
+        verdict = { kind: 'too_few', counted: verdict.counted }
+      }
+    }
     if (verdict.kind === 'red') return done(CI_LAND_EXIT.red, `#${topLayer.number} 的 CI 红了:${verdict.failed.join('、')}(看是不是 flake:wechat-cc ci triage --sha ${pinnedTop})`)
     if (verdict.kind === 'green') { deps.log(`#${topLayer.number} 的 CI 绿了(${verdict.counted} 条)`); break }
     const sig = JSON.stringify(v.statusCheckRollup ?? [])
@@ -366,7 +378,7 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
       // 十分钟还是空 ⇒ CI 根本没触发(比如 pull_request 的 base 过滤);不空但不够数 ⇒ 多半是只改文档的串。
       return done(CI_LAND_EXIT.red, verdict.counted === 0
         ? `#${topLayer.number} 十分钟了一条检查都没有:CI 没触发,不能当绿。${reopenHint},然后重跑 ci land`
-        : `#${topLayer.number} 只跑了 ${verdict.counted} 条非 skipped 检查(要 ${minChecks}):只改文档的串用 --min-checks 1`)
+        : `#${topLayer.number} 只跑了 ${verdict.counted} 条非 skipped 检查(要 ${minChecks}):必须有三平台 build 全绿;只改文档的串用 --min-checks 1`)
     }
     deps.log(`#${topLayer.number} 的 CI 还在跑(${verdict.kind === 'pending' ? verdict.counted : 0} 条),${POLL_MS / 60_000} 分钟后再看`)
     await deps.sleep(POLL_MS)
@@ -376,9 +388,7 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   if (git('fetch', 'origin', target).code !== 0) return done(CI_LAND_EXIT.precondition, `git fetch origin ${target} 失败`)
   let devBefore = git('rev-parse', `origin/${target}`).stdout.trim()
   if (devBefore !== devAtStart) {
-    // 有意接受:rollup 里拿不到 CI 测的是哪个 base,底层会落在 CI 没验过的 dev 上。正式闸门是合完推 dev 那一次。
-    const n = git('rev-list', '--count', `${devAtStart}..${devBefore}`).stdout.trim()
-    deps.log(`注意:等 CI 期间 ${target} 多了 ${n || '?'} 个提交,这一串落在 CI 没验过的 ${target} 上;合完看 ${target} 推送那一次`)
+    return done(CI_LAND_EXIT.moved, `${target} 在等待 CI 期间变了:先同步分支并等待新 PR CI,再合入`)
   }
   for (let i = 0; i < stack.length; i++) {
     const layer = stack[i]!
@@ -404,5 +414,5 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
     }
     devBefore = devNow
   }
-  return done(CI_LAND_EXIT.landed, `合完 ${merged.length} 层:${merged.map(n => `#${n}`).join(' → ')}。接着看 ${target} 推送那一次(三平台):wechat-cc ci triage --wait --rerun --sha ${devBefore}`)
+  return done(CI_LAND_EXIT.landed, `合完 ${merged.length} 层:${merged.map(n => `#${n}`).join(' → ')}。接着确认 ${target} 推送的 tree 覆盖(未覆盖才完整 CI):wechat-cc ci triage --wait --rerun --sha ${devBefore}`)
 }

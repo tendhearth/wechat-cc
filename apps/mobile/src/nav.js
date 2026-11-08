@@ -9,18 +9,9 @@ document.getElementById("pairbtn").addEventListener("click", function() {
       document.getElementById("pairbar").hidden = true
       toast("配好了,这台手机以后点链接不会再过期")
       // 壳页优先读本域的 deviceToken:重开一次,隧道就用长期令牌重新握手(这条流还绑着 10 分钟短令牌)。
+      if (typeof cRead === 'function') cRead(false)
       if (window.__CC_SHELL__) setTimeout(function(){ location.reload() }, 1200)
     } else toast("没配上:" + (r.error || ""))
   }).catch(function(){ toast("没配上,网络不通") })
-})
-// 两页:此刻 / 一起做。workbench.js 也挂在同一组按钮上(进「一起做」才拉列表)。
-function ccSelectMobilePane(name) {
-  document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ button){button.classList.toggle('on',button.dataset.p===name)})
-  document.querySelectorAll('.pane').forEach(function(pane){pane.classList.toggle('on',pane.id==='p-'+name)})
-}
-document.querySelectorAll("nav button[data-p]").forEach(function(/** @type {HTMLButtonElement} */ b) {
-  b.addEventListener("click", function() {
-    ccSelectMobilePane(b.dataset.p)
-  })
 })
 document.getElementById("nav-set").addEventListener("click", function(){ ccNav("/set") })

@@ -490,3 +490,133 @@ bun tools/mutation/unique-kills.ts reports/mutation/inc/adm-after.json reports/m
 ### 下一步
 
 三面对照想删,得先在 permission-relay / wire-model-options / 一起做的 canUseTool 旁边补直接的表(按上面那几十个会变活的变异补,红 → 绿),补完再删、再量。这是加测试的活,不在这一批。
+
+## 2026-10-28 第四轮:补表,删掉剩下三面对照
+
+接第三轮的「下一步」。对话 Claude、定时任务只读档、一起做 Claude 这三面对照,是 permission-relay、定时任务只读闸门、一起做 canUseTool 的主力:先在这三份源文件旁边补直接的表,补完再删、再量。
+
+### 删前:哪些变异只有对照杀得了
+
+三份各跑一次不 bail(`--disableBail`,2 worker,nice),读 `killedBy`,数「杀死它的测试全在 `authorize.parity.test.ts` 里」的:
+
+| 源文件 | 删前分数 | 只有对照杀得了 | 大致是什么 |
+|---|---:|---:|---|
+| `src/adapters/executors/claude/permission-relay.ts` | 83.9 | 30 | 拒的那几句话、日志行、等 10 分钟、5 位码(补 0 / 取后 5 位 / 哈希的加减)、「Claude wants to run …」里参数的截法 |
+| `src/daemon/bootstrap/wire-model-options.ts` | 76.0 | 23 | 定时任务拒的几种理由各自那句话、绝对路径的 glob 当路径、读文件 / 记忆 / 观察三类都算「读过本机」 |
+| `src/adapters/executors/claude/claude-agent-provider.ts:80-172`(一起做的 canUseTool) | 74.2 | 25 | 没登记的 MCP 那句话和前缀判法、取消、提问 / MCP / 内置三条路各自那句拒、名字只有前缀、问的通道抛错 |
+
+### 补的表(放在被测代码旁边,只替身注进来的回调,不 mock 内部模块)
+
+- `src/adapters/executors/claude/permission-relay.table.test.ts`:扇出里拒 reply 族 / message(不读档位、不问);档位拒的确切话和日志;要问主人时给谁、什么话、哪个码、等多久(码按 toolUseID 列成表,含补 0 和取后 5 位);主人四种答法;主人自己的对话里规则放 / 拒 / 没拿主意;不是主人的对话规则一次都不问。
+- `src/daemon/bootstrap/wire-model-options.job-gate.test.ts`:定时 / 审查两档 × 每种调用的确切结果;红线带理由;MCP 读文件没路径;每种调用之后还能不能上网(污点);Claude 用哪个模型。真临时目录、真红线判定。
+- `src/adapters/executors/claude/workbench-can-use-tool.table.test.ts`:登记表;取消;AskUserQuestion 的好 / 坏输入表;MCP 放进来 × 问的通道;名字 160 / 161、预览长度边界;内置工具要问时交出去的那份请求(上下文先后、命令原文);细节装不下。
+
+### 删后
+
+三面对照和它们的旧实现(`legacyClaudeChatGate`、`legacyJobGate`、`legacyWorkbenchGateInner` 等)一起删:`authorize.parity.test.ts` 693 → 362 行,留下 Gemini、一起做放行规则、终端会话三面(格子数下限 150_000 → 45_000)。三份表共 562 行,测试净 +231 行。
+
+三份主文件删后重跑(不 bail):
+
+| 源文件 | 删前 | 删后 | 删前死、删后活 |
+|---|---:|---:|---:|
+| `permission-relay.ts` | 83.9 | **92.7** | 0 |
+| `wire-model-options.ts` | 76.0 | **86.0** | 0 |
+| `claude-agent-provider.ts:80-172` | 74.2 | **84.4** | 0 |
+
+按变异逐个比对两份报告:删前只有对照杀得了的 78 个,删后全由新表杀掉;删后多杀的是对照也没杀的(日志里的 owner-rule 两行、MCP 读文件没路径那一支、`currentClaudeModel` 等)。
+
+### 被删的测试真正跑过的其余源文件
+
+第三轮的教训:要量删掉的测试**真正跑过的每一份**。三面对照还跑过 authorize、对话侧规则、红线、路径、事实抽取、档位分类、能力表、policy、提问校验、参数预览、陪伴 MCP 判定、一起做的 SDK 选项、reply 族判名。逐份全量不 bail 太慢(主人在用机器,能力表一份 45 分钟、提问校验估 2 小时),换了一个等价的量法:
+
+1. 把删掉的三面原样放进一个临时测试文件,用只含它的 vitest 配置跑 Stryker(`related: false`),得到**这三面能杀的变异集合 F**;
+2. 删后的树上(三面已删、表已加)只变异 F 所在的行,看 F 里每一个是不是还被杀。
+
+F 全被杀 ⇒ 删前被杀的(别的测试 ∪ 三面 ∪ 留下的对照)删后都还被杀,分数只会持平或升。临时文件和配置没提交。
+
+| 源文件 | 三面能杀(F) | 删后 F 里还活着的 | 删后分数 |
+|---|---:|---:|---|
+| `src/domain/authorize.ts` | 81 | 0 | 95.5(全量,= 第三轮删前) |
+| `src/domain/permission-rules/facts.ts` | 10 | 0 | 85.0(全量) |
+| `src/domain/capability-matrix.ts` | 7 | 0 | 91.0(全量) |
+| `src/domain/workbench/native-tools.ts` | 8 | 0 | 只量 F 所在行 |
+| `src/features/workbench/wire.ts:41-74` | 5 | 0 | 只量 F 所在行 |
+| `src/adapters/permission-rules/chat.ts` | 12 | 0 | 只量 F 所在行 |
+| `src/adapters/permission-rules/paths.ts` | 3 | 0 | 只量 F 所在行 |
+| `src/adapters/permission-rules/floor.ts` | 1 | 0 | 只量 F 所在行 |
+| `src/domain/policy.ts` | 5 | 没量完 | 见下 |
+| `src/domain/user-tier.ts` | 48 | 没量完 | 见下 |
+| `src/adapters/workbench/user-input.ts` | 0 | — | — |
+| `src/domain/workbench/tool-input-preview.ts` | 0 | — | — |
+| `src/ports/agent-provider.ts:500-556`(reply 族) | 0 | — | — |
+
+`policy.ts` / `user-tier.ts` 的 F 没量完:两份的 F 几乎全是模块加载时的静态变异(把 `ALL_KINDS`、档位表、`TIER_PROFILES` 清空 / 某个类别名改成空串,`compilePolicy` / `tierProfileToClaudeSdkOpts` 整个函数体清空、内置工具映射表清空),每个都要把牵连的几千条测试全跑一遍;这一晚 load 在 100–500 之间,policy 一份估 50 分钟(中断前测完的 26 / 69 个全被杀)、tier 更久,中断了。这类变异会让 user-tier / policy 自己的表(`user-tier.test.ts` 的「wechat 工具 × 三档」、`policy.test.ts`)和上面三份新表成片红,删掉三面不会让它们活回来,但这一条是推断,不是量出来的 —— 下次机器空的时候补跑 `--mutate src/domain/user-tier.ts:51-56,…`(F 所在行,不 bail 也行)确认。
+
+提问校验、参数预览、reply 族判名这几份三面一个都杀不了:对照的新旧两份调的是同一个 helper,改坏 helper 两边一起变,对照看不出来 —— 「逐格对照」只护得住新旧不同的那一层。
+
+### 跑的时候撞到的
+
+- 主人这台机器这一晚 load 多次冲到 100–600,run 之间按 1 分钟 load < 20 等;authorize 那一份全量在高 load 下跑出 6 个 Timeout(按惯例算杀死;没有逐个在空机器上复核)。
+- 用 `mergeConfig` 继承 vitest 配置时 `include` 是**拼接**的,只想跑一个文件得直接覆盖 `test.include`,不然首轮会跑整个仓库。
+
+## 2026-10-29 第五轮:lifecycle 活变异逐条分类
+
+接第二轮那句「168 个活的这一轮没逐个分类,下一轮从这份开始」。基于 `origin/dev` 3290b4ec。只量 `src/features/workbench/service/lifecycle.ts`(`stryker.areas.config.mjs --mutate`,2 个 worker,`nice -n 10`,默认 bail),一次只跑一份。
+
+### 分数
+
+| | 变异 | 杀 | 超时 | 活 | 没覆盖 | 分数 |
+|---|---:|---:|---:|---:|---:|---:|
+| 之前(没动测试) | 638 | 437 | 10 | 175 | 16 | **70.1** |
+| 之后 | 638 | 551 | 2 | 85 | 0 | **86.7** |
+
+变异数比第二轮(590 个,71.2)多,是这期间 lifecycle 改过(网络守护暂停 / 恢复 / 到顶那一段)。之后那次按第二轮「跑的时候撞到的」第 1 条做:先把增量文件里 `Survived` / `NoCoverage` 删掉再增量重跑。剩下的 85 个活变异全是下面的 (a) / (c);之前的 10 个超时里 8 个落在守望那一段(释放没发生 ⇒ 用例一直等),补完被新用例当场杀死;剩 2 个:shutdown 里 `while(state.collections.size)` 的 `[...]` 换成 `[]`(真的死循环)、守望里「组没了 ⇒ 释放」那一支清空(释放永远不发生,用例一直等到超时)。
+
+### 分类(175 活 + 16 没覆盖 = 191)
+
+- **(a) 等价**:改了也看不出区别。
+- **(b) 看得见、没人断言**:补了用例。
+- **(c) 看得见、不值得钉**:每条一句理由,见表下。
+
+| 区域(行号) | (a) | (b) | (c) | 合计 |
+|---|---:|---:|---:|---:|
+| 凭据 / 旋钮(L48–78) | 3 | 0 | 0 | 3 |
+| 空闲收工计时(armIdleClose / closeForIdle,L83–116) | 6 | 11 | 1 | 18 |
+| 回报 / 回忆 / 落定(L134–198) | 0 | 8 | 4 | 12 |
+| 占用释放 / 迟到收尾(L199–226) | 4 | 4 | 1 | 9 |
+| 没确认退出的守望(adopt / watch / check / confirmWriterExited,L227–292) | 8 | 28 | 17 | 53 |
+| 派发泵(L294–321) | 5 | 1 | 0 | 6 |
+| 取消 cancelRun(L322–356) | 17 | 16 | 2 | 35 |
+| 网络守护暂停 / 恢复 / 到顶(L367–424) | 12 | 27 | 0 | 39 |
+| 归档 / cancel 入口(L425–445) | 0 | 2 | 1 | 3 |
+| shutdown(L446–468) | 4 | 9 | 0 | 13 |
+| **合计** | **59** | **106** | **26** | **191** |
+
+(a) 的几类:
+- **同一段同步代码里还会再叫醒一次长轮询**(`hub.touched` / `hub.bumped` 删掉,后面同一条路上还有一次;长轮询醒了以后才去读,读到的是这段代码跑完的状态)—— 14 个,占 (a) 的四分之一。
+- **前面已经兜住**:`try` 里的 `?.` 换 `.`(抛了被同一个 `catch` 吞掉)、`msKnob` 的 `typeof raw==='number'`(`Number.isFinite` 不做类型转换)、`frozen` 的初值(总会被赋值)、`suspension?.` 换 `.`(没有 suspension 的冻不住,本来也是 false)、`rejectAll` 前的 `permissions.resume()`(`rejectAll` 不看暂停)。
+- **不变式**:队列里只有 `queued` 的(派发和取消都在同一次调用里出队)、run 的 identity 唯一(`reservations.get(identity)===running` 换 `true`)、shutdown 先同步取消全部排队的(所以 `stopping` 时队列是空的,`pump` 开头的判断等价)、order 唯一(`<` 换 `<=`)、重启留下的占用 identity / order(`writer/…` 换空串、`-1` 换 `+1`:`findPathBlocker` 先挑 `uncertain` 的,不看这两样)。
+
+(c) 的理由:
+- `ctx.log?.` 换 `ctx.log`(3 个)、`recollect?.` 换 `.`(抛了被接住,只多一行日志):daemon 一定接了 logger(`src/features/workbench/module.ts`),只差在测试里不传 logger 的时候。
+- 守望**没事可做时多开 / 晚关一个 15 秒的空转计时器**(`pending` 判断的 6 个变体、停的分支里 `writerWatch` 换 `false` 那 3 个、`checkWriters` 最后不调 `watchWriters`、`confirming` 没清):计时器 `unref` 过,`checkWriters` 每一拍什么都不做;停机那一下 shutdown 自己会清。
+- `confirmWriterExited` 里退到库里那份进程组的那一截(5 个):库里有进程组的记录,重启后要么变成 orphan、要么当场释放,本进程里的那条由 live 那一截接住,走不到第三截。
+- `BOOT_TOLERANCE_MS` 的 `>` 换 `>=`:用 uptime 推出来的开机时刻本来就漂,恰好等于 10 分钟的边界没有意义。
+- closeForIdle 复查「占用还是不是它」、cancelRun 里「runsByTask 指的还是不是它」两处:占用 / 登记只在 run 收尾时还回去,那时它已经 `finishing` / `cancelled`;续接在旧的还登记着时会被准入拒掉(`workbench_busy`)。
+- 排队取消时 `runningText.delete` 删掉:只留一条以后不会再用的 identity 的旧文本。
+- 归档时 `canArchive` 那道换 `false`:`store.setArchived` 自己按同样的条件(终态、不是 `writer_not_closed`)拒,只差「终态了但 run 还在登记表里」这一拍。
+
+### 补的用例(都在 `src/features/workbench/service/lifecycle.test.ts`,只替身注进来的依赖)
+
+在当前代码上第一次跑就全绿 —— **没发现真漏洞**,这些都是「行为对、没人钉住」。每组手工改坏源码核对过红 / 绿(27 处)。值得记一笔的:
+
+- **取消一条排队的任务,随后的 `pump` 会把它起起来**:排队分支里出队那一行(`index>=0` 的 4 个变体、`splice` 删掉)改坏,原用例只断言「队列空了」—— 队列确实空了,因为 `pump` 把这条已取消的任务当成排队的派发了。补的用例:被取消的那条不派发,排在它后面、只被它挡着的那条马上派发,matter 记 `done`。
+- **守望「没有证据就占着」那条线,以前只有一条一条测**:`some` 换 `every`(旁边还有一个正常在跑的任务 ⇒ 守望根本不起,关不掉的那条要等重启或主人确认)、`writerGone([])` 当成「组都没了」(另一条 uncertain 让守望起来以后,没交出进程组的那条被无证据放行)、`groups.some(alive)` 换 `every`(两个组还活一个就放)、旧记录没有开机时刻被当成「电脑重启过」、守望每一拍都放重启留下的占用、迟到的收尾还没做完下一拍又做一遍(成果收三次)。
+- **网络守护**:排队 / 没确认退出 / 已取消 / 在收尾 / 已冻住的 run 不该被问「要不要保护」(改坏后排队的会被停掉 —— 文档写的是「排队的不动」);冻的那一下抛了要当成没冻住、退回停下(改坏 ⇒ 挂着「已暂停」接着跑,网络不受保护);冻住要撤掉已排的空闲收工(改坏 ⇒ 到点把冻住的会话杀掉);恢复后要重新评估安静(改坏 ⇒ 冻过又放开的安静会话永远不收工、一直占着文件夹);到顶只停冻住的、恢复只放冻住的;没冻住的会话取消时走优雅取消,不走 `terminate`。
+- **派发失败那一支不 resolve `done` ⇒ shutdown 永远等着**;**shutdown 之后守望还在查进程组**(两次武装会漏掉前一个计时器、停机时不清)。
+- 计时器卫生:撤掉 / 被短让位换掉的计时器不会在旧的到点时再响。收工那句话写对秒数、让给真正挡在这个文件夹上的那条。
+
+### 跑的时候撞到的
+
+1. 这一轮主人在玩游戏 + Xcode,CPU 空闲在 10%–80% 之间来回跳。按惯例空闲掉下去就中断(SIGINT,增量照存),空了再接着跑;之前那次总共中断两次,超时 10 个,其中 8 个补测试后被正常杀死,说明不是机器忙造成的。
+2. **续跑「之前」时要把测试文件换回原样**:中途已经开始写新用例,而增量看的是工作区里的测试文件 —— 不换回去,续跑的那部分就是拿新用例量的。做法:续跑前 `git show HEAD:<测试文件>` 覆盖回去,等日志出现 `Starting initial test run`(沙箱已经复制好)再放回新的。**等这一行之前先清空日志**:不清就会读到上一次的同一行,在沙箱建好之前就把新用例放回去 —— 踩过一次,沙箱里出现了新用例,那一段作废、增量从备份恢复。

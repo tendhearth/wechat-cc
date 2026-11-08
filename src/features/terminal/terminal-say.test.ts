@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openDb, type Db } from '../../lib/db'
 import { makeCliEventHub, type CliEvent, type CliEventHub } from '../../app/cli-events'
 import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
+import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeCliReplyCore, type RunResult } from './reply-handler'
 import { makeTerminalSay, terminalSayMaxWaitMs, TERMINAL_SAY_HEADER, type TerminalSay, type TerminalSayDeps } from './terminal-say'
 import { relayCommand, relayMessage } from './live-window'
@@ -48,7 +51,8 @@ function make(over: Partial<TerminalSayDeps> = {}, coreOver: { dangerously?: boo
 
 beforeEach(() => {
   db = openDb({ path: ':memory:' })
-  hub = makeCliEventHub({ send: async () => 'sent', projectName: (c) => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db) })
+  // 同生产(wire.ts):登记处 + 那件事的轮与步一起接(M4d 第 2 步起状态只从那件事推)
+  hub = makeCliEventHub({ send: async () => 'sent', projectName: (c) => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db), turns: makeTerminalTurnLog({ db, log: makeMatterLog(db), matters: makeMatterStore(db) }) })
   windows = new Map(); relayed = []; relayResult = { ok: true }; releaseRelay = null; runs = []; busy = []; told = []; transcript = null
   say = make()
 })

@@ -38,6 +38,18 @@ const DEFAULT_MAX_OUTPUT_TOKENS=4096
 /** generate()(后台一次性评估)的输出上限;聊天回合不设(交给上游默认)。 */
 export const DEFAULT_EVAL_MAX_OUTPUT_TOKENS=4000
 
+/**
+ * 一次性评估的输出预算被思考吃光、一个字答案都没有(finish_reason=length + 正文空 / 只有没闭合的 <think>)。
+ * 2026-10-30 起真机:网关上的 DeepSeek 把 4000 token 全花在 reasoning_content 上,generate() 回 '' ——
+ * 调用方只看得到「不是 JSON」(记忆整理连败五晚,日志写 bad_json)。现在抛这个,原因写清楚,provider 可以换模型再试。
+ */
+export class EvalOutputExhaustedError extends Error{
+  constructor(readonly model:string,readonly budget:number){
+    super(`eval_output_exhausted: ${model} spent the whole ${budget}-token output budget thinking and returned no answer`)
+    this.name='EvalOutputExhaustedError'
+  }
+}
+
 function deferred<T>(){
   let resolve!:(value:T)=>void,reject!:(reason:unknown)=>void
   const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no})
@@ -133,17 +145,26 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
       // content="" + finish_reason=length —— 看起来像模型不回话。重试照 AI SDK 缺省(和以前一样)。
       const first=messages[0]
       const system=first?.role==='system'?first.content:undefined
-      const result=streamText({model,system,messages:system===undefined?messages:messages.slice(1),maxOutputTokens:options.evalMaxOutputTokens??DEFAULT_EVAL_MAX_OUTPUT_TOKENS})
+      const budget=options.evalMaxOutputTokens??DEFAULT_EVAL_MAX_OUTPUT_TOKENS
+      const result=streamText({model,system,messages:system===undefined?messages:messages.slice(1),maxOutputTokens:budget})
       // 同上:传输层失败是 fullStream 里的 error 分块,`result.text` 之后只剩通用的 NoOutputGeneratedError。
-      let streamError:unknown
+      let streamError:unknown,finishReason:string|undefined
       for await(const part of result.fullStream){
         if(part.type==='error')streamError=(part as {error?:unknown}).error??Error('stream error part without cause')
+        else if(part.type==='finish')finishReason=part.finishReason
       }
+      let raw:string,visible:string
       try{
+        raw=await result.text
         // 一次性调用也要剥 —— cheapEval / 判断题直接拿这个字符串比对。
         const think=makeThinkFilter()
-        return think.push(await result.text)+think.end()
+        visible=think.push(raw)+think.end()
       }catch(error){throw streamError??error}
+      // 预算用完还一个字没答(思考在 reasoning_content 里,或内联 <think> 没闭合)⇒ 不是答案,别当答案交出去。
+      // 截了一半的正文照旧返回 —— 那是调用方自己判的事。
+      const lead=raw.trimStart()
+      if(finishReason==='length'&&(!visible.trim()||(lead.startsWith('<think>')&&!lead.includes('</think>'))))throw new EvalOutputExhaustedError(modelId,budget)
+      return visible
     },
   }
 }

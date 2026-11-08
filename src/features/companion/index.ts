@@ -46,7 +46,7 @@ export { buildJobText, buildPushTickText, buildGapCheckinText, buildHuntText, ty
 export { careLevel, shouldSpeak, type CareLevel, type CareKind, type CareLedgerEntry } from './calibration'
 export { makeCareLedger, type CareLedger, type CareClaim } from './care-ledger'
 export { parseAgenda, selectDue, type AgendaItem } from './agenda'
-export { readPlanLogDays } from './plan-memory'
+export { readPlanLogDays, appendPlanLog } from './plan-memory'
 export { companionOfferEligible } from './offer-eligibility'
 export { maxDecryptedMtime } from './ingest/cycle'
 

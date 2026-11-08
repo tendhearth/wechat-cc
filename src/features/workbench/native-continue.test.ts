@@ -121,7 +121,7 @@ describe('adoptNativeSession:接成一件事',()=>{
     expect(one.created).toBe(true);expect(f.spawn).not.toHaveBeenCalled()
     const task=f.store.get(one.taskId)
     expect(task.sessionId).toBe('original');expect(task.status).toBe('interrupted');expect(f.store.source(one.taskId)?.firstDispatchedAt).toBeNull()
-    expect(matters.get(one.taskId)).toMatchObject({id:one.taskId,kind:'task',title:'Original task',projectPath:f.project,ownerChatId:'owner',status:'open'})
+    expect(matters.get(one.taskId)).toMatchObject({id:one.taskId,kind:'task',title:'Original task',projectPath:f.project,ownerChatId:'owner'});expect(matters.legacyStatuses([one.taskId]).get(one.taskId)).toBe('open')
     expect(matters.bindings(one.taskId).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner']])
     // 出生地(2026-10-19):从终端会话接过来的 ⇒ cli(手机按的「接着做」只是露面,不是出生地)
     expect(matters.get(one.taskId)?.origin).toBe('cli')
@@ -130,12 +130,13 @@ describe('adoptNativeSession:接成一件事',()=>{
     expect(service!.list().tasks).toHaveLength(1)
     expect(await service!.previewNativeContinue(f.item.key)).toEqual({state:'managed',providerId:'claude',project:'proj',mode:null,taskId:one.taskId})
   })
-  it('桌面早先导入过、没有 matter 行 ⇒ 不再导入,只补 matter 行',async()=>{
+  it('桌面早先导入过 ⇒ 不再导入;这件事导入时就有了(出生地 cli),这里只补微信那边的露面',async()=>{
     const f=fixture()
     const p=await f.read(f.item.key,{limit:100})
     const desk=await service!.importNativeHistory({key:f.item.key,pages:[{...p.page,sourceFingerprint:p.sourceFingerprint}],messageIds:['u','a']})
-    expect(matters.get(desk.task.id)).toBeNull()
+    expect(matters.bindings(desk.task.id)).toEqual([])
     expect(await service!.adoptNativeSession(f.item.key)).toEqual({taskId:desk.task.id,created:false})
+    expect(matters.bindings(desk.task.id).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner']])
     expect(matters.get(desk.task.id)?.kind).toBe('task');expect(service!.list().tasks).toHaveLength(1)
     expect(matters.get(desk.task.id)?.origin).toBe('cli')
   })
@@ -167,7 +168,7 @@ describe('adoptNativeSession:接成一件事',()=>{
 describe('幂等与无副作用(补充)',()=>{
   it('预览不写库:前后各表行数不变',async()=>{
     const f=fixture()
-    const count=()=>['workbench_tasks','workbench_sources','workbench_events','workbench_projects','matters','matter_bindings'].map(t=>db.query<{n:number},[]>(`SELECT COUNT(*) AS n FROM ${t}`).get()!.n)
+    const count=()=>['workbench_tasks','workbench_sources','matter_items','workbench_projects','matters','matter_bindings'].map(t=>db.query<{n:number},[]>(`SELECT COUNT(*) AS n FROM ${t}`).get()!.n)
     const before=count()
     await service!.previewNativeContinue(f.item.key)
     f.resumable(false);await service!.previewNativeContinue(f.item.key)
@@ -186,42 +187,27 @@ describe('幂等与无副作用(补充)',()=>{
     await expect(service!.adoptNativeSession(f.item.key)).rejects.toThrow('native_session_busy')
     expect(service!.list().tasks).toEqual([]);expect(matters.list()).toEqual([]);expect(f.spawn).not.toHaveBeenCalled()
   })
-  it('桌面导入路径不变:importNativeHistory 仍然不建 matter 行',async()=>{
+  it('桌面导入也是一件事(M2:建任务 = 建这件事):出生地 cli,不在微信露面',async()=>{
     const f=fixture()
     const p=await f.read(f.item.key,{limit:100})
     const desk=await service!.importNativeHistory({key:f.item.key,pages:[{...p.page,sourceFingerprint:p.sourceFingerprint}],messageIds:['u','a']})
-    expect(desk.created).toBe(true);expect(matters.list()).toEqual([])
+    expect(desk.created).toBe(true)
+    expect(matters.list().map(m=>[m.id,m.kind,m.origin])).toEqual([[desk.task.id,'task','cli']])
+    expect(matters.bindings(desk.task.id)).toEqual([])
   })
 })
 
-describe('fix round 1:补建自愈、状态映射、挑法确定',()=>{
-  it('matter 行建好了、bind 中途抛 ⇒ 整笔回滚;再点一次补齐(create + linkTask + bind)',async()=>{
+describe('fix round 1:露面自愈、挑法确定',()=>{
+  it('微信露面那一步中途抛 ⇒ 再点一次补上(这件事在导入时就有了)',async()=>{
     const f=fixture()
     const bind=vi.spyOn(matters,'bind').mockImplementationOnce(()=>{throw new Error('boom')})
     await expect(service!.adoptNativeSession(f.item.key)).rejects.toThrow('boom')
     const id=service!.list().tasks[0]!.id
-    expect(matters.get(id)).toBeNull()
+    expect(matters.bindings(id)).toEqual([])
     expect(await service!.adoptNativeSession(f.item.key)).toEqual({taskId:id,created:false})
     expect(matters.get(id)?.kind).toBe('task');expect(f.store.taskMatterId(id)).toBe(id)
     expect(matters.bindings(id).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner']])
     bind.mockRestore()
-  })
-  it('matter 行已在、但 linkTask / bind 缺 ⇒ 下次照样补上(只有 create 看「已有」)',async()=>{
-    const f=fixture()
-    const p=await f.read(f.item.key,{limit:100})
-    const desk=await service!.importNativeHistory({key:f.item.key,pages:[{...p.page,sourceFingerprint:p.sourceFingerprint}],messageIds:['u','a']})
-    matters.create({id:desk.task.id,kind:'task',title:'half',projectPath:f.project,ownerChatId:'owner'})
-    await service!.adoptNativeSession(f.item.key)
-    expect(f.store.taskMatterId(desk.task.id)).toBe(desk.task.id)
-    expect(matters.bindings(desk.task.id).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner']])
-  })
-  it('补建的状态跟任务走:completed / failed / cancelled ⇒ done;interrupted ⇒ open',async()=>{
-    const f=fixture()
-    const p=await f.read(f.item.key,{limit:100})
-    const desk=await service!.importNativeHistory({key:f.item.key,pages:[{...p.page,sourceFingerprint:p.sourceFingerprint}],messageIds:['u','a']})
-    f.store.update(desk.task.id,'completed')
-    await service!.adoptNativeSession(f.item.key)
-    expect(matters.get(desk.task.id)?.status).toBe('done')
   })
   it('同一 nativeId 有两个工作台任务 ⇒ taskByNativeIdentity 取最近更新的那个(确定)',()=>{
     const f=fixture()

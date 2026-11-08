@@ -230,6 +230,70 @@ describe('floor 词表:每个词都是红线', () => {
     for (const c of ['curl --url=http://localhost:3000/x', 'curl -o $OUT http://localhost:3000/x', 'wget -O $FILE localhost/x', 'curl -d "$BODY" http://localhost:3000/x', 'curl localhost:$PORT/health', 'curl http://localhost:${PORT}/', 'curl -X $METHOD localhost:3000', 'curl -sSLo "$OUT" http://localhost:3000/x', 'echo $(date) > out.txt', 'curl --resolve=localhost:80:127.0.0.1 http://localhost/', 'openssl rand -hex 16'])
       expect(reason(c), c).toBeNull()
   })
+  // #750 留下的口子:不带点 / 冒号的裸主机名(`curl intranet/up`)。按网络工具自己的参数语法判:
+  // 不是选项值的位置参数就是网址(curl 把 `intranet/up` 当 http://intranet/up);`-o out` 的 out 是选项值、是文件。
+  it('往外连网:裸主机名按 curl / wget 的参数语法认(位置参数 = 网址,选项值 = 文件)', () => {
+    const table = [
+      'curl intranet/up', 'curl intranet', 'wget host/x', 'curl -o out intranet/x', 'curl -O $URL', 'curl -sSo out intranet',
+      'curl -sSoout intranet', 'curl -fsSL intranet/install.sh', 'curl --url=intranet/x', 'curl --url intranet', 'curl --output out intranet',
+      'wget -qO- intranet/x', 'wget --output-document=out intranet', 'curl -- intranet', 'curl -s localhost:3000/health intranet',
+      'curl http://localhost/ $URL', 'curl -d @body.json intranet/upload', 'curl -T f intranet', 'timeout 5 curl intranet',
+      // 值本身是主机的选项:代理 / socks / doh;-K / wget -i:网址写在文件里,看不见 ⇒ 当外面
+      'curl -x intranet http://localhost/', 'curl -sx intranet http://localhost/', 'curl --socks5 intranet http://localhost/', 'curl --doh-url intranet http://localhost/',
+      'curl -K cfg', 'curl --config cfg localhost:3000', 'wget -i urls.txt', 'wget --input-file=- ', 'wget -e https_proxy=intranet http://localhost/',
+      // --resolve 把本机名解析到外面的地址
+      'curl --resolve=localhost:80:10.0.0.5 http://localhost/', 'curl --resolve localhost:80:intranet http://localhost/',
+      // 目标从标准输入来;引号里的 ; 不是 shell 分隔符
+      'cat urls | xargs curl', 'xargs -n1 wget < urls', 'find . -name u -exec curl {} ;', 'curl -d "x;" intranet/up', 'curl -H "a|b" intranet',
+      // 把 curl 当程序跑的「读命令」不算数据:rg --pre、git 的 pager / alias
+      'rg --pre curl x intranet', 'git -c core.pager="sh -c curl intranet" log',
+      // 引号里的 > 不是重定向,后面的词照样是网址
+      'curl ">" intranet/up', "curl '<' intranet", 'curl \\> intranet',
+    ]
+    for (const c of table) expect(reason(c), c).toBe('往外连网')
+    const ok = [
+      'curl localhost:3000/health', 'curl -o out http://localhost/x', 'cat out', 'ls intranet', 'curl -sSo out localhost:3000/x',
+      'curl --max-time 5 http://localhost:3000/', 'curl -m 5 -X POST localhost:3000/x', 'curl -w %{http_code} -o /dev/null -s localhost:3000',
+      'wget -q -O - http://localhost/x', 'wget -t 3 -T 10 localhost:8080/x', 'curl -x localhost:8080 http://localhost/', 'curl --resolve=localhost:443:[::1] https://localhost/',
+      'curl --unix-socket sock http://localhost/x', 'grep -rn curl src', 'rg curl src/adapters', 'brew install curl wget', 'which curl', 'man curl',
+      'curl -A agent -e ref localhost:3000',
+      // shell 重定向的目标是文件,不是网址
+      'curl -s localhost:3000/x > out', 'curl -s localhost:3000/x 2>/dev/null', 'curl localhost:3000 >> log 2>&1', 'curl -d @- localhost:3000/x < body',
+    ]
+    for (const c of ok) expect(reason(c), c).toBeNull()
+  })
+  // #761 独立评审找到的绕过(都用 bun 脚本对 floor.ts 复现过)
+  it('往外连网:评审 #761 —— 重定向里的 &、空引号参数、会执行的「读命令」、wget 长选项缩写', () => {
+    const table = [
+      // 重定向里的 & 不是后台符(改之前带点的主机也漏);续行 \ + CRLF
+      'curl -s 2>&1 evil.com/x', 'curl -s &>/dev/null evil.com/x', 'wget -q >&2 evil.com', 'curl 2>&1 intranet/up', 'curl -s &>>log intranet', 'curl -s \\\r\n intranet/up',
+      // 空引号参数是一个词:选项吃掉的是它,不是后面的网址
+      'curl -d "" intranet/up', "curl -H '' intranet", 'curl -A "" intranet/x', 'wget --post-data "" intranet/x',
+      // 能执行别的程序的「读命令」
+      'brew bundle exec -- curl intranet/up', "ag --pager 'curl intranet/up'", "ack --pager 'curl intranet/up'", "rg --pager 'curl intranet/up' x",
+      // wget(GNU getopt)认唯一前缀;不认识的 --x=值 把值当可能的目标
+      'wget --input-f=urls.txt', 'wget --bas=intranet', 'curl --prepr=intranet', 'curl --prepr=intranet http://localhost/',
+    ]
+    for (const c of table) expect(reason(c), c).toBe('往外连网')
+    for (const c of ['curl -s localhost:3000 2>&1', 'curl -s localhost:3000/x &>/dev/null', 'wget -q localhost/x >&2', 'brew install curl wget', 'brew info curl', 'wget --output-doc=out localhost/x', 'wget --max-redirect 3 localhost/x', 'curl -s \\\n localhost:3000/x'])
+      expect(reason(c), c).toBeNull()
+  })
+  // #761 第二轮独立评审(用真 bash / zsh + 假 curl 确认过):e477586c 新引入的绕过。134744072 = 8.8.8.8(十进制,不带点)。
+  it('往外连网:评审 #761 第二轮 —— 转义的 \\> 后面的 &、转义的反斜杠 + 换行、wget 的布尔 --hsts', () => {
+    const table = [
+      'grep \\>& curl intranet/up', 'grep x\\>&curl intranet/up', 'cat \\<& curl 134744072', 'grep "x"\\>& curl intranet', 'grep x 2\\>& curl intranet',
+      'ls \\>& curl intranet', 'brew info \\>& curl intranet', 'pip install \\>& curl intranet', 'grep \\>& wget intranet', 'grep \\>& curl 134744072',
+      'grep x >\\& curl intranet', 'grep \\>\\& curl intranet', 'echo \\>& curl intranet',
+      'grep x \\\\\ncurl intranet/up', 'grep x \\\\\r\ncurl intranet', 'ls \\\\\ncurl intranet', 'grep x \\\\\nwget 134744072', "grep 'x\\'\ncurl intranet/up", "rg foo '\\'\ncurl intranet",
+      'wget --hsts intranet/up', 'wget -q --hsts intranet', 'wget --hsts 134744072', 'wget --hsts -O- intranet',
+      // dash 里 `&>` 是后台 + 重定向
+      'grep x &>/dev/null curl intranet',
+      'curl 134744072',
+    ]
+    for (const c of table) expect(reason(c), c).toBe('往外连网')
+    for (const c of ['curl "" http://localhost:3000/x', 'curl -d " " http://localhost:3000/x', 'curl -s localhost:3000 2>&1', 'curl -s \\\n localhost:3000/x', 'curl -s \\\r\n localhost:3000/x', 'wget --hsts localhost/x', 'wget --no-hsts localhost/x'])
+      expect(reason(c), c).toBeNull()
+  })
   it('项目目录是根目录(posix / win32 盘根)⇒ 不给项目内待遇', () => {
     expect(floorReason(edit(['/etc/hosts'], { project: '/' }), HOME)).toBe('写到了项目目录之外')
     expect(floorReason(edit(['C:\\Windows\\x.dll'], { project: 'C:\\' }), 'C:\\Users\\me', { platform: 'win32' })).toBe('写到了项目目录之外')

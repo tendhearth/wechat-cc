@@ -10,8 +10,8 @@
  * 钩子期间对客户端的一切调用(请求、挂订阅、退订、关)都推到微任务之后。
  */
 import {
-  makeProtocolClient, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
-  HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic,
+  makeProtocolClient, phoneRouteRequest, RESPONSE_SCHEMAS, makePhoneApi, toProtocolRequest, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
+  HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic, TopicsSnapshot, Matter,
   type ClientOpts, type ProtocolClient, type ProtocolSocket, type PhoneTransport,
 } from '@wechat-cc/protocol'
 import { INITIAL_CONNECTION, reduceConnection, type ConnEvent } from '../net/connection'
@@ -33,6 +33,7 @@ const HOME_LIMIT = 20
 export type LiveDeps = {
   open: () => ProtocolSocket
   token: string
+  build?: string
   now?: () => number
   log?: (line: string) => void
   makeClient?: (o: ClientOpts) => ProtocolClient
@@ -40,7 +41,7 @@ export type LiveDeps = {
 }
 
 const schemaOf = (topic: string) =>
-  topic === 'home' ? HomeTopic : topic === 'approvals' ? ApprovalsTopic : topic === 'agents' ? AgentsTopic : MatterTopic
+  topic === 'topics' ? TopicsSnapshot : topic === 'home' ? HomeTopic : topic === 'approvals' ? ApprovalsTopic : topic === 'agents' ? AgentsTopic : MatterTopic
 
 type Reg = { topic: Topic; cbs: Set<(d: unknown) => void>; off: (() => void) | null; last?: unknown; pinned: boolean }
 
@@ -70,7 +71,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
   function dispatch(e: ConnEvent): void {
     const next = reduceConnection(conn, e)
     if (next === conn) return
-    conn = next
+    conn = { ...next, topics: next.state === 'online' ? (client?.capabilities?.().topics) : next.state === 'revoked' ? undefined : conn.topics }
     // 一个监听者抛错不能打断别的监听者,更不能打断 revoke() 后面的 closeClient()。
     for (const cb of [...connLs]) {
       try { cb(conn) } catch (e) { log(`connection listener threw (${e instanceof Error ? e.name : 'unknown'})`) }
@@ -114,6 +115,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       ...d.clientOpts,
       open: d.open,
       token: d.token,
+      build: d.build,
       onStatus: s => hooked(() => {
         if (my !== gen) return
         if (s === 'auth_failed') revoke()
@@ -134,7 +136,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
 
   /** 类型化客户端的传输(F3):经中继 v2 送、按状态码 / 错误码挡失败、过 PHONE_API_SCHEMAS。路径由 `PHONE_CALLS` 拼。 */
   const send: PhoneTransport = async req => {
-    const key = req.key
+    let selected = phoneRouteRequest(req, client?.routes?.())
+    let key = selected.key
     if (hookDepth > 0) await new Promise<void>(r => queueMicrotask(r))
     if (conn.state === 'revoked') throw new BackendError('revoked')
     if (!client) throw new BackendError('offline')
@@ -142,7 +145,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     const my = gen
     let res: Awaited<ReturnType<ProtocolClient['request']>>
     try {
-      res = await c.request(toProtocolRequest(req))
+      res = await c.request({ ...toProtocolRequest(selected), forRoutes: routes => {
+        selected = phoneRouteRequest(req, routes)
+        key = selected.key
+        return toProtocolRequest(selected)
+      } })
     } catch (e) {
       // 这条可能已经送到电脑上,是我们自己把连接关了(进后台 / dispose / 撤销):不能说「没送到」。
       // 撤销了 ⇒ revoked;否则 ⇒ timeout,store 译成「不确定」,页面去重拉。
@@ -157,19 +164,33 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       else log(`${key}: ${code}`)
       throw new BackendError(code)
     }
+    if (my !== gen || connection().state === 'revoked') throw new BackendError('revoked')
     let json: unknown = null
     try { json = res.json() } catch { /* 非 JSON:交给状态码判断 */ }
-    const mapped = mapPhoneError(res.status, json)
+    const mapped = key === 'POST /v1/knowledge/facts/set_fact_status' && res.status < 400 ? null : mapPhoneError(res.status, json)
     if (mapped) {
       if (mapped === 'revoked') revoke()
       else log(`${key}: ${res.status} ${mapped}`)
       throw new BackendError(mapped)
     }
-    const schema = PHONE_API_SCHEMAS[key]
+    const schema = key === req.key
+      ? PHONE_API_SCHEMAS[req.key] : RESPONSE_SCHEMAS[key]
     const p = schema ? schema.safeParse(json) : null
     if (!p || !p.success) { log(`${key}: response did not match schema`); throw new BackendError('unknown') }
+    if (key === req.key) { dispatch({ t: 'synced', at: now() }); return p.data }
+    // v1 shares the data but some routes omit the legacy success envelope.
+    // Parse the phone projection too: union branches in RESPONSE_SCHEMAS can strip phone-only fields.
+    const data = json as Record<string, unknown>
+    const projected = key === 'POST /v1/matter/say' ? { ok: true, result: data }
+      : key === 'GET /v1/matter/owner-chat/search' ? { ok: true, hits: (data.hits as Array<Record<string, unknown>>).map(h => {
+        const text = String(h.text ?? '')
+        return { id: h.id, role: h.kind === 'user' ? 'me' : 'cc', text: text.slice(0, 600), truncated: text.length > 600, at: h.createdAt, source: h.source ?? null }
+      }) }
+      : { ...data, ok: true }
+    const phone = PHONE_API_SCHEMAS[req.key]?.safeParse(projected)
+    if (!phone?.success) throw new BackendError('unknown')
     dispatch({ t: 'synced', at: now() })
-    return p.data
+    return phone.data
   }
   const api = makePhoneApi(send)
   function strip<T extends { ok: true }>(r: T): Omit<T, 'ok'> {
@@ -200,8 +221,27 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         if (off) later(off)
       }
     },
+    async topics(p) { return api.topics.list({ query: p }) },
+    async topicDetail(p) { return api.topics.detail({ query: p }) },
+    async topicEdit(action, input) { await api.topics[action]({ body: input as never }) },
+    async topicOpen(id, requestId) { return api.topics.open({ body: { id, requestId }, retry: true }) },
+    async matterHistory() {
+      if (conn.state === 'revoked') throw new BackendError('revoked')
+      if (!client) throw new BackendError('offline')
+      if (client.routes?.() !== 'v1') return (await api.matters.list({ query: {} })).matters
+      const my = gen
+      const res = await client.request({ method: 'GET', path: '/v1/matters?status=open,replied,done,archived&exclude=chat,act,terminal&limit=200&taskState=1' })
+      if (gen !== my || connection().state === 'revoked') throw new BackendError('offline')
+      if (res.status !== 200) throw new BackendError(res.status === 404 ? 'not_found' : 'unavailable')
+      const parsed = Matter.array().safeParse(res.json<{ matters?: unknown }>().matters)
+      if (!parsed.success) throw new BackendError('unknown')
+      return parsed.data
+    },
     async matters() {
-      return (await api.matters.list()).matters
+      return (await api.matters.list({ query: {} })).matters
+    },
+    async ccActs() {
+      return (await api.matters.list({ query: { kind: 'act' } })).matters.filter(m => m.kind === 'act')
     },
     async matter(id) {
       return strip(await api.matters.get({ query: { id } }))
@@ -249,6 +289,25 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       // 不自动重发:超时 ⇒ 不确定(页面说「过一会儿看看」),重发要主人自己再点 —— 那时 token 多半已过期,会重拉预览
       await api.matters.rewind({ body: { id: p.id, artifactId: p.artifactId, token: p.token } })
     },
+    conversationEvents: since=>api.conversation.events({query:{since}}),
+    stopConversation: async turnId=>{await api.conversation.stop({body:{turnId}})},
+    conversationWindow: p => api.conversation.window({query:p}),
+    conversationWork: async () => {
+      const workReferences=new Map<string,NonNullable<Awaited<ReturnType<NonNullable<Backend['conversationWork']>>>>['references'][number]>()
+      const workResults=new Map<string,NonNullable<Awaited<ReturnType<NonNullable<Backend['conversationWork']>>>>['results'][number]>()
+      let workScope:string|undefined
+      let cursor:string|undefined
+      const visited=new Set<string>()
+      do {
+        const page=await api.conversation.work({query:{cursor}})
+        if(page.scope&&page.scope!==workScope){workReferences.clear();workResults.clear();workScope=page.scope}
+        for(const ref of page.references)workReferences.set(ref.id,ref)
+        for(const result of page.results)workResults.set(result.id,result)
+        cursor=page.nextCursor??undefined
+        if(cursor){if(visited.has(cursor))throw new BackendError('unknown');visited.add(cursor)}
+      }while(cursor)
+      return {references:[...workReferences.values()],results:[...workResults.values()]}
+    },
     async chat(p) {
       return strip(await api.chat.page({ query: { before: p.before || undefined, limit: p.limit } }))
     },
@@ -257,9 +316,10 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       const body = materials?.attachmentIds.length ? { requestId, text, draftId: materials.draftId, attachmentIds: materials.attachmentIds } : { requestId, text }
       return (await api.chat.say({ body, retry: true })).job
     },
-    async chatSearch(q) {
+    async chatSearch(q,before) {
       const query = q.trim()
       if (!query || query.length > 200) throw new BackendError('invalid')
+      if(before){const w=await api.conversation.window({query:{q:query,before,limit:30}});return w.messages.reverse().map(m=>({id:m.messageId,role:m.kind==='user'?'me' as const:'cc' as const,text:m.text.slice(0,600),truncated:m.text.length>600,at:m.createdAt,source:m.source}))}
       return (await api.chat.search({ query: { q: query } })).hits
     },
     async memory() {
@@ -362,6 +422,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       // 有码就带码:防止这期间换了一项待批,手机批到了没看过的那一项。
       await api.cli.permission({ body: { session_id: p.sessionId, ...(p.hash ? { hash: p.hash } : {}), decision: p.decision } })
     },
+    cliStop:async(sessionId,runId)=>{await api.cli.stop({body:{session_id:sessionId,run_id:runId,confirmed:true}})},
     async cliSay(sessionId, text) {
       const r = await api.cli.say({ body: { session_id: sessionId, text } })
       return { sayId: r.say_id ?? null }

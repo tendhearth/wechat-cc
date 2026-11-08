@@ -45,7 +45,13 @@ export async function initPluginsTab(deps) {
 }
 
 export async function refresh() {
-  await Promise.all([refreshInstalled(), refreshMarket()])
+  await Promise.all([
+    refreshInstalled().catch(err => {
+      const list = document.getElementById('plugins-list')
+      if (list) list.innerHTML = `<li class="empty" role="status">加载失败：${escapeHtml(String(err?.message ?? err))}</li>`
+    }),
+    refreshMarket(),
+  ])
 }
 
 async function refreshInstalled() {
@@ -58,7 +64,7 @@ async function refreshInstalled() {
   list.innerHTML = ''
   if (plugins.length === 0) {
     list.innerHTML =
-      '<li class="empty">还没有插件。把插件目录放进 <code>~/.claude/channels/wechat/plugins/</code> 再刷新。</li>'
+      '<li class="empty">还没有插件。可以从市场安装，或展开「手动添加插件」。</li>'
     return
   }
   for (const p of plugins) {

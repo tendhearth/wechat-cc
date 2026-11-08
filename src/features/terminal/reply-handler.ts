@@ -10,12 +10,14 @@
  */
 import { decideCall, unprotectedMessage, type NetworkGate } from '../../lib/network-gate'
 import { codexCallTarget } from '../../lib/codex-target'
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { wrapForProcessTree } from '../../lib/jobspawn'
 import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { parseCliReply, resumeCommand } from './cli-reply'
 import { renderTranscriptTail } from '../../domain/cli-transcript'
-import { renderTurnSteps } from './cli-activity'
+import { renderTurnSteps, VIEW_STEPS_READ } from './cli-activity'
+import type { TerminalSteps } from './terminal-steps'
 import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../../app/cli-events'
 import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../../domain/cli-session-digest'
 import { formatOverseerToday, type OverseerToday } from '../../domain/overseer-today'
@@ -25,7 +27,7 @@ export const RESUME_TIMEOUT_MS = 10 * 60_000
 const TRANSCRIPT_READ_MAX = 512 * 1024
 
 export interface RunResult { code: number | null; stdout: string; stderr: string; timedOut: boolean; closed?:boolean }
-export type Runner = (cmd: string, args: string[], cwd: string, timeoutMs: number) => Promise<RunResult>
+export type Runner = (cmd: string, args: string[], cwd: string, timeoutMs: number, signal?:AbortSignal) => Promise<RunResult>
 
 /**
  * 起进程、收输出、到点掐掉。掐的是**进程组**(POSIX 下 detached 起),不然 `claude` 下面
@@ -35,7 +37,8 @@ export type Runner = (cmd: string, args: string[], cwd: string, timeoutMs: numbe
  * MCP 与子代理留下继续跑(而且照旧拖着管道)。所以 spawn 这一侧套一层 `cc-jobspawn`
  * (`wrapForProcessTree`,只在 win32 生效),杀它等于杀整棵树 —— 下面两处 kill 没动。
  */
-export const defaultRunner: Runner = (cmd, args, cwd, timeoutMs) => new Promise((resolve) => {
+export const defaultRunner: Runner = (cmd, args, cwd, timeoutMs, signal) => new Promise((resolve) => {
+  if(signal?.aborted){resolve({code:null,stdout:'',stderr:'stopped',timedOut:false,closed:true});return}
   const posix = process.platform !== 'win32'
   const wrapped = wrapForProcessTree(cmd, args)
   const child = spawn(wrapped.command, wrapped.args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: posix })
@@ -45,11 +48,14 @@ export const defaultRunner: Runner = (cmd, args, cwd, timeoutMs) => new Promise(
     if (done) return
     done = true
     clearTimeout(t)
+    signal?.removeEventListener('abort',killAll)
     resolve({ code, stdout, stderr: extraErr ? stderr + extraErr : stderr, timedOut,closed:closed() })
   }
   const killAll = () => {
     try { if (posix && child.pid) process.kill(-child.pid, 'SIGTERM'); else child.kill('SIGTERM') } catch { /* 已经没了 */ }
   }
+  signal?.addEventListener('abort',killAll,{once:true})
+  if(signal?.aborted)killAll()
   const t = setTimeout(() => { timedOut = true; killAll() }, timeoutMs)
   child.stdout.on('data', (b) => { stdout += String(b) })
   child.stderr.on('data', (b) => { stderr += String(b) })
@@ -91,6 +97,11 @@ export interface CliReplyCoreDeps {
   }
   /** Claude 的 resume 要在会话开始时的文件夹里起(从记录开头读);缺席 / 读不到 ⇒ 用登记处的 cwd。 */
   startCwd?: (s: CliSessionInfo) => string | null
+  /**
+   * 这件事的步(M6d):「看 码」页面末尾「这一轮做了什么」从这里读(还没有那件事 ⇒ 当场建、导入一次),不再整段重解析记录。
+   * 缺席(老测试)⇒ 页面不带这一段。
+   */
+  steps?: Pick<TerminalSteps, 'view'>
 }
 
 export interface CliReplyHandlerDeps extends CliReplyCoreDeps {
@@ -121,6 +132,8 @@ export type ResumeOutcome = { kind: 'ok' | 'timeout' | 'failed' | 'relayed'; tex
 
 /** 「看」「说」的本机执行,不知道微信;WeChat 面与手侧 A2A 面都用它。 */
 export interface CliReplyCore {
+  activeRun?(sessionId:string):string|null
+  stop?(sessionId:string,runId:string):boolean
   viewMarkdown(s: CliSessionInfo, title: string): { ok: true; markdown: string } | { ok: false; error: string }
   /**
    * header(2026-10-24 terminal_say):话不是主人原话、是 CC 代主人说的 ⇒ 第一行换成这一句。窗口那条路交给
@@ -143,14 +156,17 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
   }
   /** 每条会话一条发信队列(在 return 之前建:relayInner 是提升的函数,但这个 Map 不是)。 */
   const relayChains = new Map<string, Promise<unknown>>()
+  const activeRuns=new Map<string,{id:string;controller:AbortController}>()
   return {
+    activeRun:id=>activeRuns.get(id)?.id??null,
+    stop(id,runId){const run=activeRuns.get(id);if(!run||run.id!==runId)return false;run.controller.abort();return true},
     live,
     viewMarkdown(s, title) {
       if (!s.transcript_path) return { ok: false, error: '没报过记录路径,看不了' }
       try {
         const jsonl = readFile(s.transcript_path)
-        // 对话之后补一段这一轮做过的步骤(看码 2026-10-17)。
-        const steps = renderTurnSteps(jsonl, s.source)
+        // 对话之后补一段这一轮做过的步骤(看码 2026-10-17;M6d 起读这件事的步)。对话原文照旧读记录:步里每句截在 600 字。
+        const steps = deps.steps && !s.origin_agent ? renderTurnSteps(deps.steps.view(s, VIEW_STEPS_READ)) : ''
         return { ok: true, markdown: renderTranscriptTail(jsonl, s.source, { title }) + (steps ? `\n${steps}` : '') }
       }
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }
@@ -162,7 +178,10 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       const ident = { source: s.source, session_id: s.session_id, cwd: s.cwd, ...(s.machine ? { machine: s.machine } : {}), ...(s.transcript_path ? { transcript_path: s.transcript_path } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}) }
       const note = (ev: { kind: 'prompt' } | { kind: 'stop'; text: string }) => { try { deps.hub.observe?.({ ...ident, ...ev }) } catch { /* 登记处出错不影响接着跑 */ } }
       note({ kind: 'prompt' })
-      const r = await resumeInner(s, text, opts?.noBypass === true)
+      if(activeRuns.has(s.session_id))return {kind:'failed',text:'cli_session_busy'}
+      const current={id:randomUUID(),controller:new AbortController()};activeRuns.set(s.session_id,current)
+      let r:ResumeOutcome
+      try{r=await resumeInner(s,text,opts?.noBypass===true,current.controller.signal)}finally{if(activeRuns.get(s.session_id)===current)activeRuns.delete(s.session_id)}
       note({ kind: 'stop', text: r.kind === 'ok' ? r.text : r.kind === 'timeout' ? `跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? ` ${r.text}` : ''}` : `没跑起来：${r.text}` })
       return r
     },
@@ -189,7 +208,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     if (!r.ok) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} failed: ${r.error}`); return { kind: 'failed', text: `没送进电脑上开着的窗口(${r.error})` } }
     return { kind: 'relayed', text: w.name }
   }
-  async function resumeInner(s: CliSessionInfo, text: string, noBypass = false): Promise<ResumeOutcome> {
+  async function resumeInner(s: CliSessionInfo, text: string, noBypass = false,signal?:AbortSignal): Promise<ResumeOutcome> {
     // 守护 v2:按这条终端会话的来源分类(claude 看 ANTHROPIC_BASE_URL;codex 看它自己的配置层 ——
     // CODEX_HOME/config.toml + 这个目录的项目层,codex 不认 OPENAI_BASE_URL);需要保护且网络不安全才不起 CLI。
     if (deps.networkGate) {
@@ -212,7 +231,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     if (s.source === 'claude' && deps.startCwd) { try { cwd = deps.startCwd(s) ?? s.cwd } catch { cwd = s.cwd } }
     try {
       deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} in ${cwd}`)
-      const r = await run(cmd, args, cwd, RESUME_TIMEOUT_MS)
+      const r = await run(cmd, args, cwd, RESUME_TIMEOUT_MS,signal)
       closed=r.closed===true
       const out = r.stdout.trim()
       if (r.timedOut) return { kind: 'timeout', text: out }

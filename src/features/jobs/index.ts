@@ -16,6 +16,8 @@ export { statusWord } from './command'
 export { jobsView, jobsAction, type JobsActionKind } from './view'
 export { mobileJobsRoutes, type MobileJobsDeps } from './mobile'
 export type { WireJobsDeps } from './wire'
+// 输出评测(features/output-eval)按生产那一份拼早报信封、接拍板候选。
+export { buildBriefMaterial, buildBriefText, attachAsks, type BriefInputs } from './brief'
 
 export type JobsFeature = ReturnType<typeof wireJobs>
 

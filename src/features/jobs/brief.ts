@@ -88,7 +88,7 @@ export function makeBriefPrefs(root: () => string | null) {
 }
 
 export interface BriefTurnDeps {
-  runJobTurn: (a: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; transformFinal?: (finalText: string) => string; kind: 'job' | 'review' | 'brief' | 'recap'; scheduled: boolean }) => Promise<JobTurnResult>
+  runJobTurn: (a: { chatId: string; jobId: string; text: string; nowIso: string; scheduledAt?: string; buildText?: (style: TickTextStyle) => string; transformFinal?: (finalText: string) => string; kind: 'job' | 'review' | 'brief' | 'recap'; scheduled: boolean }) => Promise<JobTurnResult>
   ownerChatId: () => string | null
   today: () => string | null
   reminders: () => Array<{ at: string; text: string }> | Promise<Array<{ at: string; text: string }>>
@@ -108,6 +108,8 @@ export interface BriefTurnDeps {
   }
   /** 早报里已有的拍板项条数(素材里等主人的那几件);缺省 0。 */
   decisionsBefore?: () => number
+  /** CC 自己做的事(M5b):写一次早报 = 「早报」那件事的一轮;不给 ⇒ 不记。主人自己的定时任务不走这里。 */
+  acts?: Pick<import('../../ports/cc-acts').CcActs, 'begin'>
 }
 
 /**
@@ -137,11 +139,20 @@ export function makeBriefTurn(deps: BriefTurnDeps): (job: ScheduledJob, nowIso: 
     const picked = deps.asks ? safe(() => deps.asks!.pick(base, nowIso), [] as PickedAsk[]) : []
     const st = { attached: false }
     const asks = picked.length ? { count: picked.length, base } : undefined
-    const r = await deps.runJobTurn({
-      chatId: owner, jobId: job.id, text: job.text, nowIso, kind: 'brief', scheduled: true,
+    // 「早报」那件事的一轮(M5b):真去写了才开(没有主人 ⇒ 上面就回了);结果收(sent ⇒ completed,其余 ⇒ failed,原因照写)
+    const NO_TURN = { id: null, step: () => false, finish: () => false }
+    let act: ReturnType<NonNullable<BriefTurnDeps['acts']>['begin']> = NO_TURN
+    try { act = deps.acts?.begin('brief', { startedAt: Date.parse(nowIso) || Date.now(), policy: { job: job.id } }) ?? NO_TURN } catch { act = NO_TURN }
+    let r: string
+    try {
+      r = await deps.runJobTurn({
+      chatId: owner, jobId: job.id, text: job.text, nowIso, scheduledAt: job.schedule.at, kind: 'brief', scheduled: true,
       buildText: (style) => buildBriefText({ jobId: job.id, nowIso, material, ...(asks ? { asks } : {}) }, style),
       ...(picked.length ? { transformFinal: (t: string) => { const a = attachAsks(t, picked); st.attached = a.attached; return a.text } } : {}),
-    })
+      })
+    } catch (e) { act.finish('failed', { errorCode: 'threw' }); throw e }
+    act.step('delivery', { result: r, asks: picked.length, attached: st.attached }, { status: r === 'sent' ? 'completed' : 'failed' })
+    act.finish(r === 'sent' ? 'completed' : 'failed', r === 'sent' ? {} : { errorCode: r.slice(0, 80) })
     if (r === 'sent') { try { deps.claim(owner, nowIso) } catch { /* 记不上只是当天可能多一句问候 */ } }
     // 只有主人真看到了才算问过一天(三天没回才记成「主人没要」,没看到的不能算)。
     if (r === 'sent' && st.attached) { try { deps.asks!.commit(picked, nowIso) } catch { /* 记不上 ⇒ 明天照问,不会少问 */ } }

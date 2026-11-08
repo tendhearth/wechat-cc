@@ -18,15 +18,15 @@ export type { ProtocolSocket, ClientOpts, ClientStatus, ProtocolClient, Protocol
 export { makeProtocolClient } from './client'
 export {
   PhoneErrorResponse, PhonePlainError, DeviceRow, PHONE_SAY_MAX_CHARS, EntryModelCatalog, ChatModelView, MemorySuccess, MemoryRetractionsSuccess, MemoryRestoreSuccess, ChatSearchHit, PHONE_CHAT_MAX_IMAGES, PHONE_ANSWER_MAX_JSON, PHONE_TRANSCRIBE_MAX_SECONDS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
-  Attachment, Matter, MATTER_ORIGINS, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput, MatterInputReceiptResult,
+  Attachment, Matter, MATTER_KINDS, MATTER_STATES, MATTER_ORIGINS, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput, MatterInputReceiptResult,
   ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail, MatterSayResult,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
   UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn, PhoneRewindPreview, PhoneRewindError,
   ChatMessage, ChatJob, ChatPage, CHAT_PAGE_MAX, CHAT_TEXT_MAX, ChatAttachment, ChatVoice, CHAT_NARRATION_MAX, LetterSummary, PhoneJob, PhoneActivityItem, ConnectionSource, Connections,
   NativeSessionRow, NativeSessionMessage, NativeSessionPage, CliSessionRow, TodayItem, TodayNeed, TodayStuck, OverseerToday,
-  MatterNativeStart, SESSION_CONTINUE_STATES, SessionContinue, SessionContinueResult, MatterQuotaHandoff, MatterHandoffResult,
+  MatterNativeStart, SESSION_CONTINUE_STATES, SessionContinue, SessionContinueResult, MatterQuotaHandoff, MatterHandoffResult, MatterActStep, MatterActTurn,
 } from './api'
-export type { MatterOriginT, DeviceRowT, ChatAttachmentT, LetterSummaryT, PhoneJobT, PhoneActivityItemT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, CliSessionRowT, CliActivityItemT, TodayItemT, OverseerTodayT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT, PhoneRewindPreviewT } from './api'
+export type { MatterKindT, MatterStateT, MatterOriginT, DeviceRowT, ChatAttachmentT, LetterSummaryT, PhoneJobT, PhoneActivityItemT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, CliSessionRowT, CliActivityItemT, TodayItemT, OverseerTodayT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT, PhoneRewindPreviewT, MatterActTurnT, MatterEventT } from './api'
 export {
   base32Lower, RELAY_ID_RE, RELAY_SUBPROTOCOL, relayIdProtocol, relayIdFromPub, relayKeyPair, relayLoginMessage,
   signRelayLogin, verifyRelayLogin, RELAY_ERRORS, PushPlatform, pushTokenValid, PUSH_SEALED_MAX_CHARS, DaemonControl, RoomControl,
@@ -36,7 +36,16 @@ export { pairCheckCode, PAIR_CHECK_ALPHABET, PAIR_CHECK_RE } from './pair-check'
 export { HomeTopic, ApprovalItem, ApprovalsTopic, AgentsTopic, MatterTopic } from './topics'
 export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT } from './topics'
 export { WORKBENCH_ERRORS, workbenchErrorSpec, workbenchErrorHttp } from './workbench-errors'
+export { WIRE_COMPAT, WIRE_ROUTE_ALIASES } from './wire-compat'
+export type { WireCompatRow, WireRouteAlias } from './wire-compat'
 export type { WorkbenchErrorSpec, WorkbenchErrorOut, WorkbenchErrorSurface } from './workbench-errors'
 export type { PhoneApiKey, PhoneApiResponse, PhoneApiOk } from './api'
 export type { PhoneApi, PhoneCallSpec, PhoneCallArgs, PhoneCallFn, PhoneCallRequest, PhoneTransport } from './phone-calls'
-export { PHONE_CALLS, makePhoneApi, phoneCallRequest, toProtocolRequest } from './phone-calls'
+export { PHONE_CALLS, phoneRouteRequest, makePhoneApi, phoneCallRequest, toProtocolRequest } from './phone-calls'
+export { HOME_GROUP_ORDER, HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_KEYS, STATUS_TABLE, STATUS_WORDS } from './status-table'
+export type { StatusKey, HomeGroupKey, StatusIcon, StatusSpec } from './status-table'
+
+export { RESPONSE_SCHEMAS } from './desktop-api'
+
+export * from './topic-bubbles'
+export * from './owner-conversation'

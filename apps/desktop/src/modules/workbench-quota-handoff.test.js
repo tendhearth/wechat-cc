@@ -129,9 +129,10 @@ async function pageFixture(post){
  const other={...sourceTask,id:'12345678',title:'另一件事',providerId:'codex',status:'completed',error:null}
  const target={...other,id:'abcdef12',title:'接手的任务'}
  const invoke=vi.fn(async(method,path,body)=>{
-  if(path==='/v1/workbench/quota-handoff')return post(body)
+  if(path==='/v1/matter/seen')return {ok:true}
+  if(path==='/v1/matter/handoff')return post(body)
   if(path.startsWith('/v1/workbench/task?')){if(path.includes('since='))return new Promise(()=>{});const id=new URL('http://fixture'+path).searchParams.get('id');return{task:id===source.id?sourceTask:id===target.id?target:other,events:[],artifacts:[],version:1,continuation:{mode:'new'},quotaHandoff:id===source.id?offer:null}}
-  if(path.startsWith('/v1/workbench/review?'))return{reviews:[]}
+  if(path.startsWith('/v1/matter/changes?'))return{reviews:[]}
   if(path.startsWith('/v1/matters?'))return{matters:[]}
   return{tasks:[sourceTask,other,target],providers,defaultProvider:'claude',canWechat:false}
  })
@@ -152,7 +153,8 @@ describe('actual desktop task-detail hooks',()=>{
   f.root.querySelector('[data-action="quota-handoff"]').click()
   await vi.waitFor(()=>expect(document.querySelector('[data-quota="confirm"]')).not.toBeNull());document.querySelector('[data-quota="confirm"]').click()
   await vi.waitFor(()=>expect(document.querySelector('dialog').textContent).toContain('确认无法保存，尚未交接'))
-  expect(f.invoke.mock.calls.filter(c=>c[0]==='POST')).toHaveLength(0);expect(f.controller.state.selectedId).toBe(source.id)
+  expect(f.invoke.mock.calls.filter(c=>c[0]==='POST'&&c[1]!=='/v1/matter/seen')).toHaveLength(0);expect(f.controller.state.selectedId).toBe(source.id)
+  expect(f.invoke).toHaveBeenCalledWith('POST','/v1/matter/seen',{id:source.id})
  })
  it('opens the task ID actually returned by quota handOff through the visible confirmation controls',async()=>{
   const f=await pageFixture(async()=>({taskId:'abcdef12',created:true}))
@@ -160,14 +162,15 @@ describe('actual desktop task-detail hooks',()=>{
   await vi.waitFor(()=>expect(document.querySelector('[data-quota="confirm"]')).not.toBeNull())
   document.querySelector('[data-quota="confirm"]').click()
   await vi.waitFor(()=>expect(f.controller.state.selectedId).toBe('abcdef12'))
-  expect(f.invoke.mock.calls.filter(c=>c[0]==='POST')).toHaveLength(1);expect(document.querySelector('dialog')).toBeNull()
+  expect(f.invoke.mock.calls.filter(c=>c[0]==='POST'&&c[1]!=='/v1/matter/seen')).toHaveLength(1);expect(document.querySelector('dialog')).toBeNull()
+  expect(f.invoke).toHaveBeenCalledWith('POST','/v1/matter/seen',{id:'abcdef12'})
  })
  it('a delayed reply cannot replace another selected task, its draft or its reading position',async()=>{
   const pending=deferred(),f=await pageFixture(async()=>pending.promise)
   f.root.querySelector('[data-action="quota-handoff"]').click()
   await vi.waitFor(()=>expect(document.querySelector('[data-quota="confirm"]')).not.toBeNull())
   document.querySelector('[data-quota="confirm"]').click()
-  await vi.waitFor(()=>expect(f.invoke.mock.calls.some(c=>c[0]==='POST')).toBe(true))
+  await vi.waitFor(()=>expect(f.invoke.mock.calls.some(c=>c[0]==='POST'&&c[1]==='/v1/matter/handoff')).toBe(true))
   f.root.querySelector('[data-task-id="12345678"]').click()
   await vi.waitFor(()=>expect(f.controller.state.selectedId).toBe('12345678'))
   const input=f.root.querySelector('#wb-followup-text'),content=f.root.querySelector('.wb-content');input.value='别页保留草稿';input.dispatchEvent(new Event('input',{bubbles:true}));content.scrollTop=85

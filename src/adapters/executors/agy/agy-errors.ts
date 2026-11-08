@@ -22,7 +22,9 @@ const AMBIGUOUS = /authentication failed or timed out/i
 // because it is not currently available in your location.」—— 出口地区不在服务范围。不是登录问题,也不是瞬时(重试没用)。
 // 只认「location」那半句:「not eligible for Antigravity, because …」是所有不合格原因的开头(没订阅、年龄 / 组织限制 …),
 // 都判成地区会把主人指错方向(整合者评审 #604)。别的原因先认不出、走原来的回退。
-const REGION = /not currently available in your location/i
+// 2026-10-27 起(agy 1.4.8+,走 API 的那条路)同一件事换了说法:「FAILED_PRECONDITION (code 400): User location is not supported
+// for the API use.」。认不出时升级自检把它当成 CLI 坏了,1.4.8–1.4.12 全被记成坏版本(2026-11-02 真机)。
+const REGION = /not currently available in your location|user location is not supported/i
 const GO_NETWORK = /no such host|": EOF\b|TLS handshake timeout|i\/o timeout|connection (?:refused|reset)|network is unreachable|There was a network issue|context deadline exceeded|Client\.Timeout/i
 
 export function agyErrorCode(message: string): ProviderErrorCode | undefined {

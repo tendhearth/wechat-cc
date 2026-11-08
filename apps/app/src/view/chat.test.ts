@@ -204,3 +204,25 @@ describe('chat 视图', () => {
     })
   })
 })
+
+
+it('retains validated inbound attachments by identity without changing text, source, ids or receipts', () => {
+  const input = { ...msg('incoming', 1, 'me', '原始输入 [文件×1]', 'phone'), attachments: [{ kind: 'file' as const, name: 'source.txt' }] }
+  const [bubble] = chatBubbles([input], { pending: null, failed: null }, null, 2)
+  expect(bubble).toMatchObject({ key: 'incoming', side: 'me', text: input.text, source: 'phone', state: 'sent' })
+  expect(bubble?.attachments).toBe(input.attachments)
+})
+
+it('marks only persisted incoming count-only records as missing originals, never current uploads or synthetic receipt bubbles', () => {
+  const none = { pending: null, failed: null }
+  const image = msg('legacy', 100, 'me', '以前的图片\n[图片 ×2]', 'phone')
+  const file = msg('file', 200, 'me', '[文件×1]', 'wechat')
+  const both = msg('both', 300, 'me', '原文\n[图片 ×2]\n[文件 ×1]', 'desktop')
+  expect(chatBubbles([image, file, both], none, null, 1000).map(b => b.originalUnavailable)).toEqual([true, true, true])
+  const restored = { ...image, attachments: [{ kind: 'file' as const, name: 'p.png' }] }
+  expect(chatBubbles([restored, msg('cc', 200, 'cc', '[图片 ×2]'), msg('plain', 200, 'me', '讨论 [图片 ×2] 这个记号'), msg('zero', 200, 'me', '[图片 ×0]')], none, null, 1000).every(b => !b.originalUnavailable)).toBe(true)
+  const pending = { requestId: 'new', text: image.text, since: 100, status: 'pending' as const }
+  expect(chatBubbles([image], { pending, failed: null }, null, 1000).every(b => !b.originalUnavailable)).toBe(true)
+  expect(chatBubbles([], none, { requestId: 'local', text: image.text, at: 100 }, 1000).every(b => !b.originalUnavailable)).toBe(true)
+  expect(chatBubbles([image], none, { requestId: 'local', text: image.text, at: 100 }, 1000).every(b => !b.originalUnavailable)).toBe(true)
+})

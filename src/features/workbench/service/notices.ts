@@ -9,7 +9,7 @@ import { executionFailureMessage } from '../../../adapters/store/workbench/execu
 import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
 import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../../adapters/workbench/permissions'
 import { providerDisplayName } from '../../../domain/provider-display-names'
-import { TERMINAL_TASK_STATUSES, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'
+import { stepPayload, TERMINAL_TASK_STATUSES, timelineKind, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'
 import type { WechatNoticeKind, WechatNotificationNotice, WechatNotificationSubscription } from '../../../adapters/store/workbench/wechat-notifications'
 import type { ArtifactDeliveryReceipt } from '../../../adapters/store/workbench/artifact-deliveries'
 import type { SendWechatArtifact } from '../wechat-types'
@@ -46,6 +46,8 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
   const { store, state } = ctx
   const { fallbackExecutor } = domains.quota
   const { artifact: readArtifact } = domains.artifacts
+  /** 这一次 run 里执行者最后说的那句。 */
+  const lastRunText=(taskId:string,runId:string)=>{const step=store.steps(taskId).filter(s=>timelineKind(s)==='text'&&stepPayload(s).runId===runId).at(-1);return step?stepPayload(step).text:undefined}
   const wakeNotices=(context?:{ownerChatId:string;accountId:string})=>queueMicrotask(()=>{if(!state.stopping)void state.noticeWake(context).catch(()=>{})})
   function enqueueNotice(task:StoredTask,runId:string,kind:WechatNoticeKind,text:string,requestId:string|null=null){
     try{
@@ -55,7 +57,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
       wakeNotices()
     }catch{
       // A notification failure must not deny a valid permission or terminate execution.
-      try{store.addEvent(task.id,'system','微信提醒未能保存；任务仍可在工作台查看。',null,runId);ctx.hub.touched(task.id)}catch{}
+      try{store.addEvent(task.id,'system','微信提醒未能保存；任务仍可在工作台查看。',null,runId);}catch{}
     }
   }
   function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
@@ -72,7 +74,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
    * 回报文案。
    */
   function terminalReportBody(running:Active):string|undefined {
-    const reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
+    const reply=lastRunText(running.taskId,running.identity)
     const artifacts=store.artifacts(running.taskId).slice(0,5)
     const parts=[reply?reply.slice(0,1800):undefined,artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500):undefined].filter((s):s is string=>!!s)
     return parts.length?parts.join('\n\n'):undefined
@@ -108,7 +110,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
     if(status==='completed'&&suppressCompleted)return
     const watch=store.wechatNotifications.subscription(running.taskId)
     if(!watch?.enabled||watch.ownerChatId!==running.task.ownerChatId||watch.ownerChatId!==ctx.deps.ownerChatId())return
-    let reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
+    let reply=lastRunText(running.taskId,running.identity)
     const label={completed:'这一轮已完成',failed:'这一轮需要处理',interrupted:'这一轮已中断',cancelled:'这一轮已停止'}[status as 'completed'|'failed'|'interrupted'|'cancelled']
     // 网络守护暂停到顶停下的:说那句老实话(「网络一直没恢复，任务已停止，可以接着做」),不贴半截回复。
     if(running.stopNotice)reply=running.stopNotice

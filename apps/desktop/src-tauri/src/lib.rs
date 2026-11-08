@@ -8,10 +8,18 @@
 // the .app/.exe/.deb bundle and is resolved by tauri-plugin-shell.
 
 pub mod bundle_migrate;
+#[cfg(all(feature = "qa-webdriver", not(debug_assertions)))]
+compile_error!("The embedded QA driver must never be included in a release application");
 pub mod daemon_mode;
 mod daemon_info;
+mod companion_placement;
+mod companion_motion;
+mod companion_drag;
 mod html_preview;
 mod nav_guard;
+mod main_navigation;
+#[cfg(any(test, feature = "qa-webdriver"))]
+mod qa_webdriver;
 
 #[cfg(test)]
 mod workbench_folder_tests;
@@ -21,7 +29,8 @@ mod native_io_tests;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -145,6 +154,168 @@ fn render_qr_svg(text: String) -> Result<String, String> {
         .build())
 }
 
+fn companion_screen(monitor: &tauri::Monitor) -> companion_placement::Screen {
+    let area = monitor.work_area();
+    companion_placement::Screen {
+        name: monitor.name().cloned(),
+        x: f64::from(area.position.x), y: f64::from(area.position.y),
+        width: f64::from(area.size.width), height: f64::from(area.size.height),
+        scale: monitor.scale_factor(),
+    }
+}
+
+// Use current work areas (excluding menu bars/taskbars), never cached display
+// dimensions. Monitor APIs are fallible during a display configuration change.
+fn companion_screens(window: &WebviewWindow) -> (Vec<companion_placement::Screen>, usize) {
+    let preferred = window.current_monitor().ok().flatten()
+        .or_else(|| window.primary_monitor().ok().flatten()).map(|m| companion_screen(&m));
+    let mut screens: Vec<_> = window.available_monitors().unwrap_or_default().iter().map(companion_screen).collect();
+    let index = preferred.map(|screen| {
+        screens.iter().position(|s| s == &screen).unwrap_or_else(|| { screens.push(screen); screens.len() - 1 })
+    }).unwrap_or(0);
+    (screens, index)
+}
+
+fn companion_layout(window: &WebviewWindow) -> Option<companion_placement::Layout> {
+    let scale = window.scale_factor().ok()?;
+    if !scale.is_finite() || scale <= 0.0 { return None; }
+    let size = window.inner_size().ok()?.to_logical::<f64>(scale);
+    let origin = window.outer_position().ok()?;
+    Some(companion_placement::Layout { scale, x: f64::from(origin.x), y: f64::from(origin.y), width: size.width, height: size.height })
+}
+
+fn apply_companion_layout(window: &WebviewWindow, layout: &companion_placement::Layout) -> Result<(), String> {
+    window.set_size(LogicalSize::new(layout.width, layout.height))
+        .map_err(|err| format!("resize companion window: {err}"))?;
+    let position: tauri::Position = match companion_placement::native_position(layout, cfg!(target_os = "macos")) {
+        companion_placement::NativePosition::Logical(x, y) => tauri::LogicalPosition::new(x, y).into(),
+        companion_placement::NativePosition::Physical(x, y) => tauri::PhysicalPosition::new(x, y).into(),
+    };
+    window.set_position(position).map_err(|err| format!("position companion window: {err}"))
+}
+
+struct CompanionPlacementAdapter<'a>(&'a WebviewWindow);
+impl companion_placement::PlacementAdapter for CompanionPlacementAdapter<'_> {
+    fn apply(&mut self, desired: &companion_placement::Layout) -> Result<(), String> {
+        apply_companion_layout(self.0, desired)
+    }
+    fn observed(&mut self) -> Option<companion_placement::Layout> { companion_layout(self.0) }
+    fn persist(&mut self, observed: &companion_placement::Layout) {
+        remember_companion_layout(self.0, observed);
+    }
+}
+
+async fn apply_companion_confirmed(window: &WebviewWindow, desired: &companion_placement::Layout, persist: bool) -> Result<(), String> {
+    companion_placement::apply_confirmed(
+        &mut CompanionPlacementAdapter(window), desired, cfg!(target_os = "macos"), persist,
+        || tokio::time::sleep(std::time::Duration::from_millis(20)),
+    ).await
+}
+
+fn companion_placement_path(window: &WebviewWindow) -> Option<PathBuf> {
+    window.app_handle().path().app_data_dir().ok().map(|dir| dir.join("ui").join(companion_placement::FILE_NAME))
+}
+
+fn remember_companion_layout(window: &WebviewWindow, layout: &companion_placement::Layout) {
+    // All entry points (debounce, close, quit and explicit controls) share this guard.
+    if companion_motion_state().lock().map(|s| s.temporary()).unwrap_or(true) { return; }
+    persist_companion_user_layout(window,layout);
+}
+
+// Only confirmed user geometry or a validated user-resized original anchor.
+fn persist_companion_user_layout(window: &WebviewWindow, layout: &companion_placement::Layout) {
+    let placement = (|| {
+        let visible = window.is_visible().ok()?;
+        let minimized = window.is_minimized().ok()?;
+        let monitor = window.current_monitor().ok().flatten()?;
+        companion_placement::capture(&companion_screen(&monitor), layout, visible, minimized)
+    })();
+    if let (Some(path), Some(placement)) = (companion_placement_path(window), placement) {
+        let _ = companion_placement::save(&path, &placement);
+    }
+}
+
+fn remember_companion_placement(window: &WebviewWindow) {
+    if let Some(layout) = companion_layout(window) { remember_companion_layout(window, &layout); }
+}
+
+fn remember_companion_resize(window: &WebviewWindow) {
+    if COMPANION_PLACING.load(Ordering::SeqCst) {return}
+    let (screens,preferred)=companion_screens(window);
+    let resized=companion_layout(window).and_then(|observed|screens.get(preferred).and_then(|screen| {
+        companion_motion_state().lock().ok()?.resize_anchor(screen,&observed,cfg!(target_os="macos"))
+    }));
+    if let Some(anchor)=resized {
+        COMPANION_MOVE_GEN.fetch_add(1,Ordering::SeqCst);
+        persist_companion_user_layout(window,&anchor);
+    } else {remember_companion_placement_soon(window)}
+}
+
+// 拖动 / 拉边改大小只发 Moved/Resized,以前只在 CloseRequested 才存;Cmd+Q、更新后重启、
+// 崩溃都不走 CloseRequested ⇒ 拖到的位置丢了。停手 500ms 后存一次(代数去抖)。
+// 恢复期间不存:恢复的结果可能是「原显示器拔了」的退路位置,存了会覆盖用户真正放的地方。
+static COMPANION_PLACING: AtomicBool = AtomicBool::new(false);
+static COMPANION_MOVE_GEN: AtomicU64 = AtomicU64::new(0);
+fn companion_motion_state() -> &'static Mutex<companion_motion::MotionSession> {
+    static MOTION: std::sync::OnceLock<Mutex<companion_motion::MotionSession>> = std::sync::OnceLock::new();
+    MOTION.get_or_init(|| Mutex::new(companion_motion::MotionSession::default()))
+}
+fn stop_companion_idle_motion() {
+    if let Ok(mut state) = companion_motion_state().lock() { state.stop(); }
+    COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
+}
+fn companion_user_layout(window: &WebviewWindow) -> Option<companion_placement::Layout> {
+    stop_companion_idle_motion();
+    companion_motion_state().lock().ok().and_then(|s| s.anchor().cloned()).or_else(|| companion_layout(window))
+}
+fn adopt_companion_layout(window: &WebviewWindow, persist: bool) {
+    if let Ok(mut state) = companion_motion_state().lock() { state.adopt(); }
+    COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
+    if persist { remember_companion_placement(window); }
+}
+// 两次 open 挤在一起时,第二次会在第一次「从磁盘恢复」还没完时抓默认位置并提前 show,
+// 谁赢看时序;串行化整个 open。
+static COMPANION_OPENING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn remember_companion_placement_soon(window: &WebviewWindow) {
+    if COMPANION_PLACING.load(Ordering::SeqCst) || companion_motion_state().lock().map(|s|s.temporary()).unwrap_or(true) { return; }
+    let generation = COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let window = window.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if COMPANION_MOVE_GEN.load(Ordering::SeqCst) == generation && !COMPANION_PLACING.load(Ordering::SeqCst) {
+            remember_companion_placement(&window);
+        }
+    });
+}
+
+async fn restore_companion_placement(window: &WebviewWindow, from_disk: bool) {
+    stop_companion_idle_motion();
+    COMPANION_PLACING.store(true, Ordering::SeqCst);
+    if restore_companion_placement_inner(window, from_disk).await {
+        if let Ok(mut state) = companion_motion_state().lock() { state.adopt(); }
+    }
+    // 恢复本身触发的 Moved 已经排了去抖,换代让它们作废。
+    COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
+    COMPANION_PLACING.store(false, Ordering::SeqCst);
+}
+
+async fn restore_companion_placement_inner(window: &WebviewWindow, from_disk: bool) -> bool {
+    let (screens, preferred) = companion_screens(window);
+    let transient=companion_motion_state().lock().ok().and_then(|s|s.saved());
+    let saved = if transient.is_some() { transient } else if from_disk {
+        companion_placement_path(window).and_then(|path| companion_placement::load(&path))
+    } else {
+        // Existing hidden windows retain their current bounds, while also
+        // recovering from a disconnected display before they become visible.
+        companion_layout(window).and_then(|layout| screens.get(preferred).and_then(|screen| companion_placement::capture(screen, &layout, true, false)))
+    };
+    if let Some(layout) = companion_placement::restore(saved.as_ref(), &screens, preferred, cfg!(target_os = "macos")) {
+        return apply_companion_confirmed(window, &layout, false).await.is_ok();
+    }
+    false
+}
+
 // Opens the companion as its own transparent desktop window. The aquarium
 // itself remains a regular webview page, so it can reuse the same Canvas scene
 // and assets as the dashboard rather than keeping a second animation engine in
@@ -157,7 +328,10 @@ fn render_qr_svg(text: String) -> Result<String, String> {
 // recommended fix. macOS never deadlocked here; behavior there is unchanged.
 #[tauri::command]
 async fn open_companion_window(app: AppHandle) -> Result<(), String> {
+    let _opening = COMPANION_OPENING.lock().await;
     if let Some(window) = app.get_webview_window("companion") {
+        let _ = window.unminimize();
+        restore_companion_placement(&window, false).await;
         window.show().map_err(|err| format!("show companion window: {err}"))?;
         window.set_focus().map_err(|err| format!("focus companion window: {err}"))?;
         return Ok(());
@@ -174,6 +348,12 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     // expand it at any time with the in-window + control.
     .inner_size(240.0, 300.0)
     .min_inner_size(200.0, 250.0)
+    .max_inner_size(600.0, 750.0)
+    .visible(false)
+    // CC is a window-drag surface; file uploads belong to the main workspace.
+    .disable_drag_drop_handler()
+    // The first press must reach CC even while another application is active.
+    .accept_first_mouse(true)
     .transparent(true)
     .decorations(false)
     .always_on_top(true)
@@ -188,9 +368,22 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let builder = builder.shadow(false);
 
-    builder
+    let window = builder
         .build()
         .map_err(|err| format!("create companion window: {err}"))?;
+    // Restore before showing. Corrupt/unwritable UI preferences cannot block
+    // opening; persistence is deliberately independent of daemon config.
+    restore_companion_placement(&window, true).await;
+    let on_close = window.clone();
+    window.on_window_event(move |event| {
+        match event {
+            tauri::WindowEvent::CloseRequested { .. } => remember_companion_placement(&on_close),
+            tauri::WindowEvent::Moved(_) => remember_companion_placement_soon(&on_close),
+            tauri::WindowEvent::Resized(_) => remember_companion_resize(&on_close),
+            _ => {}
+        }
+    });
+    window.show().map_err(|err| format!("show companion window: {err}"))?;
 
     Ok(())
 }
@@ -199,57 +392,43 @@ async fn open_companion_window(app: AppHandle) -> Result<(), String> {
 // 「关了主窗口只留桌宠」正是这个功能的主场景。这时点包袱得先把窗口重建回来,
 // 再导航;但新窗口的前端还没 listen,事件发出去就丢了,所以目的地先存这儿,
 // 由前端 boot 完成后调 take_pending_navigate 主动来取。
-struct PendingNavigate(Mutex<Option<String>>);
+struct PendingNavigate(Mutex<main_navigation::NavigationInbox>);
+static MAIN_OPENING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-// 浮窗点脚边的道具 → 主窗口露面并切到觅食台(spec 2026-09-03-companion-presence §3.4)。
-// 页面名只是转发,白名单在 JS 侧;这里不解释它。async 与 open_companion_window
-// 同理(Windows 上窗口操作别占主线程 —— 重建窗口时这条更要紧)。
 #[tauri::command]
 async fn show_main_window(
     app: AppHandle,
     page: Option<String>,
+    task_id: Option<String>,
     pending: State<'_, PendingNavigate>,
 ) -> Result<(), String> {
-    if let Some(main) = app.get_webview_window("main") {
+    let destination = main_navigation::Destination::new(page, task_id)?;
+    let _opening = MAIN_OPENING.lock().await;
+    let main = app.get_webview_window("main");
+    let live = pending.0.lock().map_err(|err| format!("pending navigate lock: {err}"))?
+        .request(destination, main.is_some());
+    if let Some(main) = main {
         main.show().map_err(|err| format!("show main window: {err}"))?;
         main.unminimize().map_err(|err| format!("unminimize main window: {err}"))?;
         main.set_focus().map_err(|err| format!("focus main window: {err}"))?;
-        if let Some(page) = page {
-            // 定向发给 main,不广播:浮窗自己也监听不到才对。
-            app.emit_to("main", "wechat-cc:navigate", serde_json::json!({ "page": page }))
+        if let Some(target) = live {
+            app.emit_to("main", "wechat-cc:navigate", target)
                 .map_err(|err| format!("emit navigate: {err}"))?;
         }
         return Ok(());
     }
-
-    if let Some(page) = page {
-        let mut slot = pending
-            .0
-            .lock()
-            .map_err(|err| format!("pending navigate lock: {err}"))?;
-        *slot = Some(page);
-    }
-    // 照 tauri.conf.json 里 main 的原始配置重建(尺寸、标题、装饰一律不另写一份)。
-    let config = app
-        .config()
-        .app
-        .windows
-        .iter()
-        .find(|w| w.label == "main")
-        .cloned()
+    let config = app.config().app.windows.iter().find(|w| w.label == "main").cloned()
         .ok_or_else(|| "no main window in tauri.conf.json".to_string())?;
     WebviewWindowBuilder::from_config(&app, &config)
-        .map_err(|err| format!("main window config: {err}"))?
-        .build()
+        .map_err(|err| format!("main window config: {err}"))?.build()
         .map_err(|err| format!("create main window: {err}"))?;
     Ok(())
 }
 
-// 前端 boot 完成后来取「重建主窗口之前记下的目的地」,取走即清空。
-// 没有待办时返回 null —— 正常启动就是这条路。
+// Called only after the renderer has successfully installed its live listener.
 #[tauri::command]
-fn take_pending_navigate(pending: State<'_, PendingNavigate>) -> Option<String> {
-    pending.0.lock().ok().and_then(|mut slot| slot.take())
+fn take_pending_navigate(pending: State<'_, PendingNavigate>) -> Option<Value> {
+    pending.0.lock().ok().and_then(|mut inbox| inbox.take_ready()).map(|target| target.pending_value())
 }
 
 // Keep companion controls on the Rust side. Dynamic windows have a more
@@ -266,37 +445,112 @@ fn close_companion_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn start_companion_drag(app: AppHandle) -> Result<(), String> {
+fn start_companion_drag(app: AppHandle) -> Result<Option<companion_drag::Point>, String> {
+    // A press stops autonomous movement but is not adoption: a click must not
+    // save a temporary location. Only a confirmed manual move adopts it.
+    stop_companion_idle_motion();
     let window = app
         .get_webview_window("companion")
         .ok_or_else(|| "companion window is not open".to_string())?;
-    window
-        .start_dragging()
-        .map_err(|err| format!("start companion drag: {err}"))
+    #[cfg(target_os = "macos")]
+    {
+        let position = window.outer_position().map_err(|err| format!("read companion drag origin: {err}"))?;
+        let scale = window.scale_factor().map_err(|err| format!("read companion drag scale: {err}"))?;
+        companion_drag::Point::from_physical(f64::from(position.x), f64::from(position.y), scale).map(Some)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.start_dragging().map_err(|err| format!("start companion drag: {err}"))?;
+        Ok(None)
+    }
 }
 
 #[tauri::command]
-fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), String> {
-    let window = app
-        .get_webview_window("companion")
+async fn move_companion_window(app: AppHandle, x: f64, y: f64) -> Result<(), String> {
+    let requested = companion_drag::Point::new(x, y)?;
+    let window = app.get_webview_window("companion").ok_or("companion window is not open")?;
+    window.set_position(tauri::LogicalPosition::new(requested.x, requested.y))
+        .map_err(|err| format!("position companion window: {err}"))?;
+    for _ in 0..25 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        if companion_layout(&window).is_some_and(|layout| requested.matches_physical(layout.x, layout.y, layout.scale)) { adopt_companion_layout(&window,false); return Ok(()); }
+    }
+    Err("companion drag position did not settle before timeout".into())
+}
+
+#[tauri::command]
+fn finish_companion_drag(app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("companion").ok_or("companion window is not open")?;
+    remember_companion_placement(&window);
+    Ok(())
+}
+
+#[tauri::command]
+async fn companion_motion_context(app: AppHandle) -> Result<Option<companion_motion::MotionContext>, String> {
+    // Other platforms retain their established native-managed drag/placement.
+    if !cfg!(target_os="macos") { return Ok(None); }
+    let window=app.get_webview_window("companion").ok_or("companion window is not open")?;
+    if COMPANION_PLACING.load(Ordering::SeqCst)||!window.is_visible().unwrap_or(false)||window.is_minimized().unwrap_or(true){return Ok(None)}
+    let (screens,preferred)=companion_screens(&window);
+    let Some(screen)=screens.get(preferred) else {return Ok(None)};
+    let mut state=companion_motion_state().lock().map_err(|_|"companion motion unavailable")?;
+    let Some(origin)=state.anchor().cloned().or_else(||companion_layout(&window)) else {return Ok(None)};
+    COMPANION_MOVE_GEN.fetch_add(1, Ordering::SeqCst);
+    Ok(state.begin(screen,&origin))
+}
+
+#[tauri::command]
+async fn step_companion_motion(app: AppHandle, token:u64, offset:f64) -> Result<(), String> {
+    let window=app.get_webview_window("companion").ok_or("companion window is not open")?;
+    let (screens,preferred)=companion_screens(&window);
+    let screen=screens.get(preferred).ok_or("companion display unavailable")?;
+    let visible=window.is_visible().unwrap_or(false)&&!window.is_minimized().unwrap_or(true)
+        &&window.scale_factor().is_ok_and(|scale|(scale-screen.scale).abs()<1e-6);
+    let mut state=companion_motion_state().lock().map_err(|_|"companion motion unavailable")?;
+    let layout=state.step(token,offset,screen,visible).ok_or("companion motion expired or outside bounds")?;
+    // Native event delivery may reenter placement capture; never hold its lock
+    // across a window setter.
+    drop(state);
+    let position:tauri::Position=match companion_placement::native_position(&layout,cfg!(target_os="macos")) {
+        companion_placement::NativePosition::Logical(x,y)=>tauri::LogicalPosition::new(x,y).into(),
+        companion_placement::NativePosition::Physical(x,y)=>tauri::PhysicalPosition::new(x,y).into(),
+    };
+    window.set_position(position).map_err(|e|format!("move companion: {e}"))
+}
+
+#[tauri::command]
+fn stop_companion_motion() { stop_companion_idle_motion(); }
+
+#[tauri::command]
+async fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), String> {
+    let window = app.get_webview_window("companion")
         .ok_or_else(|| "companion window is not open".to_string())?;
     let factor = match direction.as_str() {
         "in" => 1.12,
         "out" => 1.0 / 1.12,
         _ => return Err("invalid companion resize direction".to_string()),
     };
-    let scale_factor = window
-        .scale_factor()
-        .map_err(|err| format!("read companion scale factor: {err}"))?;
-    let current = window
-        .inner_size()
-        .map_err(|err| format!("read companion size: {err}"))?
-        .to_logical::<f64>(scale_factor);
-    let width = (current.width * factor).clamp(200.0, 600.0);
-    let height = (current.height * factor).clamp(250.0, 750.0);
-    window
-        .set_size(LogicalSize::new(width, height))
-        .map_err(|err| format!("resize companion window: {err}"))
+    let current = companion_user_layout(&window).ok_or_else(|| "cannot read companion layout".to_string())?;
+    let (screens, preferred) = companion_screens(&window);
+    let desired = screens.get(preferred).and_then(|screen| companion_placement::zoom(screen, &current, factor, cfg!(target_os = "macos")))
+        .ok_or_else(|| "cannot resolve companion monitor".to_string())?;
+    // Derive the requested size before queuing native setters. An immediate
+    // read can still be the old geometry on macOS and must not undo the zoom.
+    apply_companion_confirmed(&window, &desired, false).await?;
+    adopt_companion_layout(&window,true); Ok(())
+}
+
+#[tauri::command]
+async fn reset_companion_position(app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("companion")
+        .ok_or_else(|| "companion window is not open".to_string())?;
+    let (screens, preferred) = companion_screens(&window);
+    let size = companion_user_layout(&window);
+    let (width, height) = size.map(|layout| (layout.width, layout.height)).unwrap_or((240.0, 300.0));
+    let layout = companion_placement::edge(&screens, preferred, width, height, cfg!(target_os = "macos"))
+        .ok_or_else(|| "cannot resolve companion monitor".to_string())?;
+    apply_companion_confirmed(&window, &layout, false).await?;
+    adopt_companion_layout(&window,true); Ok(())
 }
 
 // Spawn the bundled sidecar and collect its stdout. Stderr is forwarded as
@@ -328,6 +582,9 @@ fn bundled_plugins_dir(app: &AppHandle) -> Option<PathBuf> {
 }
 
 async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, String> {
+    if cfg!(feature = "qa-webdriver") {
+        return Err("CLI and daemon execution are disabled in the embedded UI QA application".into());
+    }
     #[cfg(debug_assertions)]
     if let Some(root) = resolve_dev_repo_root() {
         return run_dev_bun(&root, args).await;
@@ -493,20 +750,51 @@ fn wechat_daemon_pid() -> Option<u32> {
     }
 }
 
-// OS-level notification — fires from JS (`invoke("notify_user", ...)`) when
-// the doctor-poller diff detects a newly-expired account. Uses
-// tauri-plugin-notification's native bridge (NSUserNotification on macOS,
-// the WinRT toast API on Windows, libnotify on Linux). Errors propagate to
-// JS as a string so the renderer can console.warn() them; no fallback.
+// macOS keeps the matter in UNNotificationContent.userInfo, including after
+// replacement of the main webview. Other desktop platforms retain plugin delivery.
+#[cfg(target_os = "macos")]
+static NOTIFICATION_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn cc_install_notifications() -> bool;
+    fn cc_show_notification(title: *const std::ffi::c_char, body: *const std::ffi::c_char, matter_id: *const std::ffi::c_char);
+}
+#[cfg(target_os = "macos")]
+#[no_mangle]
+extern "C" fn cc_notification_clicked(id: *const std::ffi::c_char) {
+    let Some(app) = NOTIFICATION_APP.get().cloned() else { return; };
+    let id = if id.is_null() { None } else { unsafe { std::ffi::CStr::from_ptr(id) }.to_str().ok().map(str::to_owned) };
+    let id = id.filter(|id| main_navigation::Destination::new(Some("workbench".into()), Some(id.clone())).is_ok());
+    tauri::async_runtime::spawn(async move {
+        let page = id.as_ref().map(|_| "workbench".to_string());
+        let pending = app.state::<PendingNavigate>();
+        let _ = show_main_window(app.clone(), page, id, pending).await;
+    });
+}
 #[tauri::command]
-fn notify_user(app: AppHandle, title: String, body: String) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-    app.notification()
-        .builder()
-        .title(&title)
-        .body(&body)
-        .show()
-        .map_err(|e| e.to_string())
+fn notify_user(app: AppHandle, title: String, body: String, matter_id: Option<String>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        // UNUserNotificationCenter requires an application bundle. Preserve the
+        // plugin's Terminal fallback for unbundled development executables.
+        if !unsafe { cc_install_notifications() } {
+            use tauri_plugin_notification::NotificationExt;
+            return app.notification().builder().title(&title).body(&body).show().map_err(|e| e.to_string());
+        }
+        let title = CString::new(title).map_err(|e| e.to_string())?;
+        let body = CString::new(body).map_err(|e| e.to_string())?;
+        let id = matter_id.map(CString::new).transpose().map_err(|e| e.to_string())?;
+        let _ = NOTIFICATION_APP.set(app);
+        unsafe { cc_show_notification(title.as_ptr(), body.as_ptr(), id.as_ref().map_or(std::ptr::null(), |id| id.as_ptr())); }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let _ = matter_id;
+        app.notification().builder().title(&title).body(&body).show().map_err(|e| e.to_string())
+    }
 }
 
 // Direct /v1/health ping — reads the bearer token from the token file (0o600,
@@ -537,6 +825,7 @@ async fn wechat_health_ping(
     let result = timeout(duration, async {
         reqwest::Client::new()
             .get(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
@@ -575,6 +864,7 @@ async fn wechat_health_version(
     let running = match timeout(duration, async {
         reqwest::Client::new()
             .get(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
@@ -739,6 +1029,7 @@ async fn agent_converse(text: String, images: Option<Vec<Value>>) -> Result<Valu
     let result = timeout(duration, async {
         reqwest::Client::new()
             .post(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .body(payload)
@@ -808,6 +1099,7 @@ async fn agent_speak(text: String) -> Result<SpeakOut, String> {
     let result = timeout(duration, async {
         reqwest::Client::new()
             .post(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .body(payload)
@@ -876,6 +1168,7 @@ async fn agent_transcribe(audio_b64: String, mime: String) -> Result<String, Str
     let result = timeout(duration, async {
         reqwest::Client::new()
             .post(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .body(payload)
@@ -993,7 +1286,8 @@ async fn owner_workspace_call(
                 .header("Content-Type", "application/json")
                 .body(body.unwrap_or_else(|| "{}".to_string()))
         };
-        req.header("Authorization", format!("Bearer {token}"))
+        req.header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
+            .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
     })
@@ -1116,7 +1410,7 @@ async fn workbench_call(method: String, path: String, body: Option<String>) -> R
         let request = if method == "GET" { client.get(url) } else {
             client.post(url).header("Content-Type", "application/json").body(body.unwrap_or_else(|| "{}".into()))
         };
-        request.bearer_auth(token).send().await
+        request.header("x-cc-desktop-version", env!("CARGO_PKG_VERSION")).bearer_auth(token).send().await
     }).await.map_err(|_| "request timed out".to_string())?
       .map_err(|e| format!("request error: {e}"))?;
     let status = response.status();
@@ -1363,6 +1657,7 @@ async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, 
     let result = timeout(Duration::from_secs(10), async {
         reqwest::Client::new()
             .post(&url)
+            .header("x-cc-desktop-version", env!("CARGO_PKG_VERSION"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .body(payload)
@@ -1481,11 +1776,19 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 }
 
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(feature = "qa-webdriver")]
+    qa_webdriver::validate_process(&context.config().identifier).expect("embedded UI QA gate refused launch");
     let builder = tauri::Builder::default();
+    #[cfg(feature = "qa-webdriver")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(4199));
+    #[cfg(all(feature = "qa-webdriver", target_os = "macos"))]
+    let builder = builder.plugin(tauri::plugin::Builder::<tauri::Wry>::new("cc-motion-qa-native-observation")
+        .setup(|app, _| { qa_webdriver::native::install(app); Ok(()) }).build());
     #[cfg(target_os = "macos")]
     let builder = builder.menu(app_menu);
     builder
-        .manage(PendingNavigate(Mutex::new(None)))
+        .manage(PendingNavigate(Mutex::new(main_navigation::NavigationInbox::default())))
         .manage(html_preview::HtmlPreviewStore::default())
         .register_uri_scheme_protocol("cc-preview", |context, request| {
             if context.webview_label() != "main" {
@@ -1512,7 +1815,13 @@ pub fn run() {
             open_companion_window,
             close_companion_window,
             start_companion_drag,
+            companion_motion_context,
+            step_companion_motion,
+            stop_companion_motion,
+            move_companion_window,
+            finish_companion_drag,
             resize_companion_window,
+            reset_companion_position,
             show_main_window,
             take_pending_navigate,
             wechat_daemon_pid,
@@ -1532,7 +1841,15 @@ pub fn run() {
             prepare_workbench_site_preview,
             release_workbench_html_preview
         ])
-        .build(tauri::generate_context!())
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = NOTIFICATION_APP.set(app.handle().clone());
+                unsafe { cc_install_notifications(); }
+            }
+            Ok(())
+        })
+        .build(context)
         .expect("error while building wechat-cc desktop")
         .run(|app, event| {
             // On macOS, clicking the Dock icon (or opening the app again) emits
@@ -1540,6 +1857,10 @@ pub fn run() {
             // explicit main-window focus it can look as though the dashboard
             // never opened. Keep the companion running, but bring the real app
             // window back whenever the user re-enters WeChat-cc.
+            // 退出(Cmd+Q、更新后重启)不发浮窗的 CloseRequested;去抖还没到点的位置在这里补存。
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) && !COMPANION_PLACING.load(Ordering::SeqCst) {
+                if let Some(companion) = app.get_webview_window("companion") { remember_companion_placement(&companion); }
+            }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
                 if let Some(main) = app.get_webview_window("main") {
@@ -1769,6 +2090,15 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/import/extra"),
             ("GET", "/v1/workbench/task/extra"),
             ("POST", "/v1/workbench/rewind-preview"),
+            // P3e-3:一件事上的动作改调 /v1/matter/*(同样只放精确的方法 + 路径)
+            ("GET", "/v1/matter/create"),
+            ("POST", "/v1/matter/create-receipt"),
+            ("GET", "/v1/matter/stop"),
+            ("POST", "/v1/matter/stop/extra"),
+            ("POST", "/v1/matter/changes"),
+            ("GET", "/v1/matter/rewind/"),
+            ("DELETE", "/v1/matter/rewind"),
+            ("POST", "/v1/matter/review-mark-extra"),
             ("GET", "/v1/workbench/review-comment"),
             ("GET", "/v1/workbench/review-comments-send"),
             ("GET", "/v1/workbench/review-hunk"),

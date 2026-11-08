@@ -242,7 +242,7 @@ describe('workbench live interactions', () => {
     const pending = ui.answer(request)
     ui.setDraft('A', request.id, { choice: { selected: ['Large'], other: '' } })
     await ui.answer(request, true)
-    expect(sent).toEqual([{ method: 'POST', path: '/v1/workbench/answer', body: { id: 'A', requestId: 'request-A', answers: { choice: ['Small'], notes: ['First answer'] } } }])
+    expect(sent).toEqual([{ method: 'POST', path: '/v1/matter/answer', body: { id: 'A', requestId: 'request-A', answers: { choice: ['Small'], notes: ['First answer'] } } }])
     finish(); expect(await pending).toBe(true)
     expect(ui.getDraft('A', request.id)).toEqual({})
     expect(ui.questionState('A', request.id).resolved).toBe(true)

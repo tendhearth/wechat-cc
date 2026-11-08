@@ -24,7 +24,7 @@ function setup(o: { error?: string; resetIn?: number | null; running?: boolean }
   const ctx = {
     store, stateDir, now: () => now, ensureAccepting: () => {}, log: () => {},
     state: { runsByTask, stopping: false } as never,
-    hub: { touched: () => {}, bumped: () => {}, dispose: () => {} },
+    hub: { bumped: () => {}, dispose: () => {} },
     deps: {} as never,
   } as unknown as ServiceCtx
   const timers: Array<{ fn: () => void; ms: number }> = []

@@ -11,7 +11,6 @@ import {makeMatterStore} from '../../adapters/store/matters-store'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
-import {makeTaskChangeHub} from './task-changes'
 import {REWIND_GOAL_REASON,REWIND_RETAIN_MS,type RewindOptions} from './service/rewind'
 import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime} from '../../ports/agent-provider'
 import type {EntryInput} from '../../adapters/workbench/task-entry'
@@ -22,7 +21,8 @@ import {GIT_REVIEW_MIME,serializeGitReview} from './git-review'
  * 回退核心(切片 2,2026-10-21):真临时仓库 + 独立工作区(linked worktree),假执行者每轮按脚本改文件。
  * 任务目录是仓库里的子目录 pkg/(monorepo 那种),checkpoint 打的是整个工作区根。
  */
-vi.setConfig({testTimeout:60_000})
+const TEST_TIMEOUT_MS=60_000
+vi.setConfig({testTimeout:TEST_TIMEOUT_MS})
 const win=process.platform==='win32'
 let area:string,stateDir:string,repo:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
 let turns:Array<(path:string)=>void>,requests:string[]
@@ -34,7 +34,7 @@ const registry=()=>{
   return r
 }
 let current=''
-const make=(rewind?:RewindOptions,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={})=>makeWorkbenchService({store,registry:registry(),stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000,...(rewind?{rewind}:{}),...extra})
+const make=(rewind?:RewindOptions,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={})=>makeWorkbenchService({store,registry:registry(),stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t',checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000,...(rewind?{rewind}:{}),...extra})
 beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-rewind-service-')));stateDir=join(area,'state');repo=join(area,'repo');project=join(repo,'pkg')
   mkdirSync(stateDir);mkdirSync(project,{recursive:true})
@@ -44,9 +44,20 @@ beforeEach(()=>{
   turns=[];requests=[]
   service=make()
 })
-afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
+afterEach(async({task})=>{
+  // shutdown 会取消还在收尾的 run;先留下现场,才能区分慢快照和终态写入失败。
+  if(task.result?.state==='fail'){
+    try {
+      console.error('rewind fixture before shutdown',JSON.stringify({requests:requests.length,tasks:store.list().map(t=>({id:t.id,status:t.status,error:t.error,runId:service.detail(t.id).runId??null,reviews:store.artifacts(t.id).filter(a=>a.mime===GIT_REVIEW_MIME).length,rewinds:store.rewinds.list(t.id).length}))}))
+    } catch(error){console.error('rewind fixture diagnostics failed',error)}
+  }
+  await service?.shutdown();db.close();removeTempDir(area)
+})
 
-const settle=(id:string,status='completed')=>expect.poll(()=>service.detail(id).task.status,{timeout:20_000}).toBe(status)
+// 这里等的是真 Git 基线 + 执行 + 轮末快照,不是执行者的即时答复。单条 Git 延迟 22s 时,
+// 旧 20s poll 会在仍有 runId / 只有一份审阅时误红,随后正常 completed / 两份审阅。
+// 共用整条测试原有的 60s 预算(外层仍会掐住挂死),不再给每轮另设更短的墙钟期限。
+const settle=(id:string,status='completed')=>expect.poll(()=>store.get(id).status,{timeout:TEST_TIMEOUT_MS}).toBe(status)
 async function start(first:(path:string)=>void,plain=false){
   const isolation=plain?undefined:'worktree' as const
   turns.push(p=>first(p))
@@ -369,7 +380,7 @@ describe('自己那条安静的保留会话', () => {
     const session:AgentSession={workbenchRuntime:runtime,async *dispatch(){},close:async()=>{ended=true;wake()}}
     const r=createProviderRegistry()
     r.register('claude',{async spawn(){return session}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-    service=makeWorkbenchService({store,registry:r,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',retainedIdleCloseMs:()=>9e9,checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000})
+    service=makeWorkbenchService({store,registry:r,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),mintSessionToken:()=>'t',retainedIdleCloseMs:()=>9e9,checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000})
     const id=service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,isolation:'worktree'}} as EntryInput,context).receipt.taskId
     current=service.detail(id).task.path
     await expect.poll(()=>service.detail(id).task.phase,{timeout:20_000}).toBe('replied')

@@ -6,7 +6,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { buildLetterPrompt, cjkPunct, cjkQuotes, letterText, parseLetter, BODY_CAP } from './compose'
 import { color } from '../../../packages/design-tokens/src/index'
 import { chineseDate, letterSvgs, linesFor, paginate, SIZES } from './render'
-import { makeLetterRuntime, readLetterState, type LetterDeps } from './runtime'
+import { letterDeliveries, makeLetterRuntime, readLetterState, type LetterDeps } from './runtime'
+import { letterPagePath, listLetters } from './archive'
+import { openTestDb } from '../../lib/db'
+import { makeCcActs } from '../../adapters/store/cc-acts'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { DAY_MS, GAP_DAYS, inEveningWindow, isLetterDue, nextDueAt } from './schedule'
 
 const TZ = 'Asia/Shanghai'
@@ -237,6 +242,80 @@ describe('runtime', () => {
     expect(t.rt.status().letters[0]).toMatchObject({ requested: true })
   })
 
+  it('「信」那件事(M5b):写一封 = 一轮(稿子一步、寄出一步);被挡下先收成等着,续寄另开一轮;写不成也记一轮', async () => {
+    const turns: Array<{ policy: unknown; steps: Array<[string, Record<string, unknown>]>; end?: [string, string | undefined] }> = []
+    const acts = { begin: (_who: string, o?: { policy?: Record<string, unknown> }) => {
+      const t: (typeof turns)[number] = { policy: o?.policy, steps: [] }; turns.push(t)
+      return { step: (k: string, p: Record<string, unknown>) => { t.steps.push([k, p]) }, finish: (st: string, f?: { errorCode?: string }) => { t.end ??= [st, f?.errorCode] } }
+    } }
+    let refuse = true, inbound: number | null = null
+    const t = setup({ acts: acts as never, sendFile: async () => { if (refuse) throw new Error('ilink/sendmessage errcode=-2: prepare failed') }, lastInboundAt: async () => inbound })
+    await t.rt.writeNow('想要一封信')
+    expect(turns[0]).toMatchObject({ policy: { trigger: 'owner' }, end: ['failed', 'waiting'] })
+    expect(turns[0]!.steps.map(([k, p]) => [k, k === 'delivery' ? p.result : p.letter])).toEqual([['artifact', '2026-10-16-abc'], ['delivery', 'waiting']])
+    refuse = false; inbound = EVENING + 2 * 3_600_000; t.setNow(EVENING + 3 * 3_600_000)
+    await t.rt.tick()
+    expect(turns[1]).toMatchObject({ policy: { letter: '2026-10-16-abc', resume: true }, end: ['completed', undefined] })
+    expect(turns[1]!.steps).toEqual([['delivery', { letter: '2026-10-16-abc', result: 'sent', via: 'wechat', sentAt: EVENING + 3 * 3_600_000 }]])
+    const none = setup({ acts: acts as never, evalText: () => null })
+    await none.rt.writeNow()
+    expect(turns[2]).toMatchObject({ steps: [['system', { failed: 'no_model' }]], end: ['failed', 'compose_failed'] })
+    // 写的时候抛了(读材料 / 存档出错):这一轮也收掉,不挂在「在跑」(Codex 评审)
+    const boom = setup({ acts: acts as never, chatSince: async () => { throw new Error('db gone') } })
+    await expect(boom.rt.writeNow()).rejects.toThrow('db gone')
+    expect(turns[3]).toMatchObject({ policy: { trigger: 'owner' }, end: ['failed', 'threw'] })
+  })
+
+  it('M5d:寄出的时刻 / 去处只记在「信」那件事的轮上(不再写 lastSentAt、存档的 sent_at);状态、抽屉、下一封的素材窗口与间隔照旧', async () => {
+    const db = openTestDb()
+    const acts = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db) })
+    const sinces: string[] = []
+    const t = setup({ acts, newId: () => 'abc123', chatSince: async (_c, since) => { sinces.push(since); return ['主人:终于接上 Cursor 了'] } })
+    expect(await t.rt.writeNow()).toEqual({ status: 'sent', id: '2026-10-16-abc123' })
+    expect(readLetterState(t.stateDir).lastSentAt).toBeUndefined()
+    const rec = JSON.parse(readFileSync(join(t.stateDir, 'letters', '2026-10-16-abc123', 'letter.json'), 'utf8'))
+    expect(rec.sent_at).toBeNull()
+    expect(rec.sent_via).toBeUndefined()
+    expect(t.rt.status().letters[0]).toMatchObject({ id: '2026-10-16-abc123', sent_at: new Date(EVENING).toISOString() })
+    expect(listLetters(t.stateDir, letterDeliveries(acts))[0]).toMatchObject({ id: '2026-10-16-abc123', sentAt: EVENING, via: 'wechat' })
+    expect(letterPagePath(t.stateDir, letterDeliveries(acts), '2026-10-16-abc123', 1)).not.toBeNull()
+    expect(letterPagePath(t.stateDir, new Map(), '2026-10-16-abc123', 1)).toBeNull()
+    // 下一封:素材从上一封寄出前两天读起(上一封的时刻从轮里来)
+    t.setNow(EVENING + 10 * DAY_MS)
+    await t.rt.writeNow()
+    expect(sinces).toEqual([new Date(EVENING - 30 * DAY_MS).toISOString(), new Date(EVENING - 2 * DAY_MS).toISOString()])
+    // 排期丢了重排:寄过信 ⇒ 按常规间隔,不按第一封的
+    await t.rt.tick()
+    expect(readLetterState(t.stateDir).dueAt).toBe(nextDueAt(EVENING + 10 * DAY_MS, GAP_DAYS, () => 0))
+    db.close()
+  })
+
+  it('M5d:寄出的那一步没记上(轮开了、库随后写不进)⇒ 退回写旧标记,信照样在抽屉里、间隔照样算(Codex 评审)', async () => {
+    const db = openTestDb()
+    const real = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db) })
+    const acts = { stepsOf: real.stepsOf, begin: (...a: Parameters<typeof real.begin>) => ({ ...real.begin(...a), step: () => false }) }
+    const t = setup({ acts, newId: () => 'abc123' })
+    expect(await t.rt.writeNow()).toEqual({ status: 'sent', id: '2026-10-16-abc123' })
+    expect(readLetterState(t.stateDir).lastSentAt).toBe(EVENING)
+    expect(listLetters(t.stateDir, letterDeliveries(acts))[0]).toMatchObject({ id: '2026-10-16-abc123', sentAt: EVENING, via: 'wechat' })
+    db.close()
+  })
+
+  it('M5d:还没有轮(真机上 M5d 之前寄的)⇒ 旧标记 lastSentAt / sent_at 照旧算数', async () => {
+    const db = openTestDb()
+    const acts = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db) })
+    const t = setup({ acts })
+    mkdirSync(join(t.stateDir, 'companion'), { recursive: true })
+    writeFileSync(join(t.stateDir, 'companion', 'letters.json'), JSON.stringify({ dueAt: null, pending: null, lastSentAt: EVENING - 5 * DAY_MS }))
+    await t.rt.tick()
+    expect(readLetterState(t.stateDir).dueAt).toBe(nextDueAt(EVENING, GAP_DAYS, () => 0))
+    mkdirSync(join(t.stateDir, 'letters', '2026-10-11-aaaaaa'), { recursive: true })
+    writeFileSync(join(t.stateDir, 'letters', '2026-10-11-aaaaaa', 'letter.json'), JSON.stringify({ id: '2026-10-11-aaaaaa', day: '2026-10-11', created_at: '2026-10-11T11:00:00Z', sent_at: '2026-10-11T12:00:00.000Z', sent_via: 'app', requested: false, letter: { salutation: '你好:', paragraphs: ['旧信'], signoff: '' } }))
+    expect(listLetters(t.stateDir, letterDeliveries(acts))[0]).toMatchObject({ id: '2026-10-11-aaaaaa', sentAt: Date.parse('2026-10-11T12:00:00Z'), via: 'app' })
+    expect(t.rt.status().letters[0]).toMatchObject({ sent_at: '2026-10-11T12:00:00.000Z' })
+    db.close()
+  })
+
   it('gives up after three ordinary failures but keeps the letter in the archive', async () => {
     const t = setup({ sendFile: async () => { throw new Error('upload failed') } })
     await t.rt.writeNow()
@@ -317,4 +396,23 @@ describe('runtime preview', () => {
     expect(readLetterState(stateDir)).toMatchObject({ dueAt: null, pending: null })
     rmSync(stateDir, { recursive: true, force: true })
   })
+})
+
+it('requested composition retains its authorized recipient if owner configuration changes while the model is writing', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'letter-recipient-'))
+  let owner = 'original-owner'
+  const recipients: string[] = []
+  try {
+    const rt = makeLetterRuntime({
+      stateDir, enabled: () => true, timezone: () => TZ, ownerChatId: () => owner,
+      memory: () => '', chatSince: async () => [], lastInboundAt: async () => null,
+      evalText: () => async () => { owner = 'changed-owner'; return JSON.stringify({ salutation: '你好', paragraphs: ['今天的事我记得。'], signoff: '晚安' }) },
+      wechatSuspended: () => false,
+      sendText: async recipient => { recipients.push(recipient); return {} }, sendFile: async () => {},
+      rasterize: () => null, now: () => EVENING, random: () => 0, newId: () => 'one', log: () => {},
+      speech: lettersTestSpeech(),
+    })
+    expect(await rt.writeNow()).toMatchObject({ status: 'sent' })
+    expect(recipients).toEqual(['original-owner'])
+  } finally { rmSync(stateDir, { recursive: true, force: true }) }
 })

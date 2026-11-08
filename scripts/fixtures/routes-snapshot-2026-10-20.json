@@ -290,7 +290,6 @@
     "device": [
       "GET /m",
       "GET /m/api/activity",
-      "GET /m/api/art/presence",
       "GET /m/api/attachment/upload",
       "GET /m/api/chat",
       "GET /m/api/chat/file",
@@ -324,6 +323,7 @@
       "GET /m/api/today",
       "GET /set",
       "GET /set/api/state",
+      "GET /v1/phone/art/presence",
       "POST /m/api/attachment/chunk",
       "POST /m/api/attachment/discard",
       "POST /m/api/chat/model",
@@ -355,12 +355,12 @@
     ],
     "link": [
       "GET /m",
-      "GET /m/api/art/presence",
       "GET /m/api/home",
       "GET /m/api/matter",
       "GET /m/api/matters",
       "GET /set",
       "GET /set/api/state",
+      "GET /v1/phone/art/presence",
       "POST /m/api/matter/stop",
       "POST /set/api/apply",
       "POST /set/api/pair"
@@ -375,7 +375,6 @@
   "PHONE_ROUTES": [
     "GET /m",
     "GET /m/api/activity",
-    "GET /m/api/art/presence",
     "GET /m/api/attachment/upload",
     "GET /m/api/chat",
     "GET /m/api/chat/file",
@@ -409,6 +408,7 @@
     "GET /m/api/today",
     "GET /set",
     "GET /set/api/state",
+    "GET /v1/phone/art/presence",
     "POST /m/api/attachment/chunk",
     "POST /m/api/attachment/discard",
     "POST /m/api/chat/model",
@@ -440,7 +440,7 @@
   ],
   "LINK_READ_OK": {
     "GET /m": "手机页面本身(配对之前也要能打开)",
-    "GET /m/api/art/presence": "CC 的形象画(在不在身边)",
+    "GET /v1/phone/art/presence": "CC 的形象画(在不在身边)",
     "GET /m/api/home": "此刻页的内容(只读)",
     "GET /m/api/matter": "一件事的详情",
     "GET /m/api/matters": "一起做的列表",
@@ -454,12 +454,12 @@
   },
   "LINK_ROUTES": [
     "GET /m",
-    "GET /m/api/art/presence",
     "GET /m/api/home",
     "GET /m/api/matter",
     "GET /m/api/matters",
     "GET /set",
     "GET /set/api/state",
+    "GET /v1/phone/art/presence",
     "POST /m/api/matter/stop",
     "POST /set/api/apply",
     "POST /set/api/pair"

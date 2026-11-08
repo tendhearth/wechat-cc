@@ -13,6 +13,7 @@ import { makeMessagesStore } from '../../lib/messages-store'
 import { recentInboundTexts } from './recent-inbound'
 import { makeThreadsStore } from '../../lib/threads-store'
 import { runThreadsExtraction } from '../../daemon/threads/extractor'
+import { readWorkResults } from '../../daemon/threads/work-results'
 import { runLocalImportIfEnabled } from '../../daemon/local-import'
 import { synthesizeOverview, type SynthesisMemory } from '../../lib/memory-synthesis'
 import { makeLifeStoresReader } from '../../daemon/life-stores'
@@ -100,6 +101,8 @@ export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectSte
           messages: messagesStore,
           threads: threadsStore,
           sdkEval,
+          // 话题 T1:agent 做完的活的结论只进主人的对话(那些活都是主人的)
+          ...(extractChatId === chatId ? { work: (after: number) => readWorkResults(deps.db, after) } : {}),
           recordEvent: async (reasoning) => {
             await chatEvents.append({ kind: 'threads_extracted', trigger: 'introspect', reasoning })
           },

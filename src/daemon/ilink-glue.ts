@@ -107,6 +107,8 @@ export function makeIlinkAdapter(opts: {
    * blocking 一律放行,投递仍是下面那条 fail-fast,行为不变 —— 只是账上多一行「为什么说了」,跟工作台的卡、App 推送同一种口径。
    */
   speech?: () => Pick<import('./speech/policy').SpeechPolicy, 'ask'> | null
+  /** 待决权限开一条 / 了结一条(S5:桌宠订的 presence 主题据此重算)。 */
+  onPendingChange?: () => void
 }): IlinkAdapter {
   const ctx = makeIlinkContext(opts)
   const speechOf = opts.speech   // askUser 的形参也叫 opts,先取出来

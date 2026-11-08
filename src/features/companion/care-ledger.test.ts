@@ -12,26 +12,26 @@ describe('care-ledger', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
-  it('claim() sets lastProactiveAtIso and increments noReplyCount', () => {
+  it('claim() increments noReplyCount without inventing a delivery fact', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
     try {
       const ledger = makeCareLedger(dir)
       ledger.claim('c1', '2026-07-07T00:00:00.000Z')
-      expect(ledger.get('c1')).toEqual({ lastProactiveAtIso: '2026-07-07T00:00:00.000Z', noReplyCount: 1 })
+      expect(ledger.get('c1')).toEqual({ noReplyCount: 1 })
 
       ledger.claim('c1', '2026-07-08T00:00:00.000Z')
-      expect(ledger.get('c1')).toEqual({ lastProactiveAtIso: '2026-07-08T00:00:00.000Z', noReplyCount: 2 })
+      expect(ledger.get('c1')).toEqual({ noReplyCount: 2 })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
-  it('resetNoReply() zeroes the count but keeps lastProactiveAtIso', () => {
+  it('resetNoReply() zeroes the count without inventing a delivery fact', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
     try {
       const ledger = makeCareLedger(dir)
       ledger.claim('c1', '2026-07-07T00:00:00.000Z')
       ledger.claim('c1', '2026-07-08T00:00:00.000Z')
       ledger.resetNoReply('c1')
-      expect(ledger.get('c1')).toEqual({ lastProactiveAtIso: '2026-07-08T00:00:00.000Z', noReplyCount: 0 })
+      expect(ledger.get('c1')).toEqual({ noReplyCount: 0 })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
@@ -63,7 +63,7 @@ describe('care-ledger', () => {
     try {
       const ledger = makeCareLedger(dir)
       ledger.claim('c1', '2026-07-07T00:00:00.000Z')
-      expect(makeCareLedger(dir).get('c1')).toEqual({ lastProactiveAtIso: '2026-07-07T00:00:00.000Z', noReplyCount: 1 })
+      expect(makeCareLedger(dir).get('c1')).toEqual({ noReplyCount: 1 })
       expect(readFileSync(join(dir, 'care_ledger.json'), 'utf8')).toContain('c1')
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
@@ -94,15 +94,13 @@ describe('care-ledger', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
-  it('claimHunt() leaves lastProactiveAtIso untouched', () => {
+  it('claimHunt() does not invent a delivery fact', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
     try {
       const ledger = makeCareLedger(dir)
       ledger.claim('c1', '2026-07-07T00:00:00.000Z')
       ledger.claimHunt('c1', '2026-07-08T00:00:00.000Z')
-      expect(ledger.get('c1')).toEqual({
-        lastProactiveAtIso: '2026-07-07T00:00:00.000Z',
-        lastHuntAtIso: '2026-07-08T00:00:00.000Z',
+      expect(ledger.get('c1')).toEqual({ lastHuntAtIso: '2026-07-08T00:00:00.000Z',
         noReplyCount: 2,
       })
     } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -115,9 +113,7 @@ describe('care-ledger', () => {
       ledger.claimHunt('c1', '2026-07-07T00:00:00.000Z')
       ledger.claim('c1', '2026-07-08T00:00:00.000Z')
       expect(ledger.get('c1')).toEqual({
-        lastHuntAtIso: '2026-07-07T00:00:00.000Z',
-        lastProactiveAtIso: '2026-07-08T00:00:00.000Z',
-        noReplyCount: 2,
+        lastHuntAtIso: '2026-07-07T00:00:00.000Z', noReplyCount: 2,
       })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
@@ -134,7 +130,7 @@ describe('care-ledger unclaim — targeted undo (review #194)', () => {
       l.resetNoReply('c')                                             // 等待期间主人来信
       l.claimMemory('c', '2026-05-13T10:01:00.000Z')                 // 又登记了一次记忆通知
       l.unclaim('c', claim)                                           // 串门被守护拒了:只撤这一项
-      expect(l.get('c')).toEqual({ lastProactiveAtIso: '2026-05-01T00:00:00.000Z', lastMemoryAtIso: '2026-05-13T10:01:00.000Z', noReplyCount: 1 })
+      expect(l.get('c')).toEqual({ lastMemoryAtIso: '2026-05-13T10:01:00.000Z', noReplyCount: 1 })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
   it('no activity in between → back to exactly the state before the claim', () => {
@@ -158,4 +154,40 @@ describe('care-ledger unclaim — targeted undo (review #194)', () => {
       expect(l.get('c')).toMatchObject({ lastHuntAtIso: '2026-05-13T11:00:00.000Z', noReplyCount: 1 })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
+})
+
+it('derives initiative time from confirmed speech facts across sources; claims and owner replies never persist that time', async () => {
+  const { openTestDb } = await import('../../lib/db')
+  const { makeSpeechLedgerStore } = await import('../../daemon/speech/ledger-store')
+  const { shouldSpeak } = await import('./calibration')
+  const db = openTestDb(), dir = mkdtempSync(join(tmpdir(), 'ledger-facts-'))
+  try {
+    const facts = makeSpeechLedgerStore(db)
+    const ledger = makeCareLedger(dir, { lastInitiativeAt: facts.lastInitiativeAt })
+    const at = Date.parse('2026-11-06T10:00:00Z')
+    facts.append({ kind: 'letter', origin: 'initiative', chatId: 'owner', outcome: 'allowed', channel: 'app', reason: null, ts: new Date(at).toISOString(), spokenAt: at, ref: 'letter:one' })
+    expect(ledger.get('owner')).toEqual({ noReplyCount: 0, lastInitiativeAtIso: new Date(at).toISOString() })
+    ledger.claim('owner', new Date(at + 1).toISOString())
+    ledger.resetNoReply('owner')
+    expect(ledger.get('owner')).toEqual({ noReplyCount: 0, lastInitiativeAtIso: new Date(at).toISOString() })
+    expect(readFileSync(join(dir, 'care_ledger.json'), 'utf8')).not.toContain('lastInitiativeAtIso')
+    for (const [kind, reason] of [['agenda', 'agenda_cooldown'], ['gap', 'gap_proactive_recent']] as const) {
+      expect(shouldSpeak({ kind, level: 'high', nowIso: new Date(at + 3600_000).toISOString(), ledger: ledger.get('owner'), lastInboundAtIso: new Date(at - 8 * 24 * 3600_000).toISOString() })).toEqual({ ok: false, reason })
+    }
+    facts.append({ kind: 'brief', origin: 'initiative', chatId: 'owner', outcome: 'allowed', channel: 'wechat', reason: null, ts: new Date(at + 3600_000).toISOString(), spokenAt: at + 3600_000, ref: 'brief:one' })
+    expect(ledger.get('owner').lastInitiativeAtIso).toBe(new Date(at + 3600_000).toISOString())
+    expect(ledger.get('other')).toEqual({ noReplyCount: 0 })
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('ignores old private timestamps while preserving the existing no-reply streak and source cadences', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ledger-legacy-'))
+  try {
+    const legacyKey = ['last', 'Proactive', 'AtIso'].join('')
+    let raw = JSON.stringify({ [legacyKey]: '2099-01-01T00:00:00Z', noReplyCount: 2, lastVisitAtIso: '2026-11-05T00:00:00Z' })
+    const ledger = makeCareLedger(dir, { store: { get: () => raw, set: (_key, value) => { raw = value }, delete() {}, all: () => ({}), flush: async () => {} } })
+    expect(ledger.get('owner')).toEqual({ noReplyCount: 2, lastVisitAtIso: '2026-11-05T00:00:00Z' })
+    ledger.resetNoReply('owner')
+    expect(JSON.parse(raw)).toEqual({ noReplyCount: 0, lastVisitAtIso: '2026-11-05T00:00:00Z' })
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

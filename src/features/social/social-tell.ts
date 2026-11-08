@@ -2,7 +2,7 @@
  * 告诉主人一句社交上的事(笔友来信、心愿的答复、介绍、串门见闻)—— 第三批 3a。
  * 经 CC 开口那道门的 `tell`:kind 决定别烦我 / 免打扰拦不拦(core/speech/kinds 的 social_*);放行就经 sendAssistantText 发
  * (它还管 App 那头的回话截获和旁听,投递不换)。report / blocking 被推后 ⇒ 门自己的「待说」队列接住,之后补说
- * (speech/pending-notices.ts);CC 自己的见闻(initiative)推后就是这一句不说,东西在背包里。
+ * (speech/pending-notices.ts);CC 自己的见闻(initiative)推后也进队列,24 小时内补说、一次最多一条(S2c),东西照样在背包里。
  * 门取不到 ⇒ 不发、记一行,不退回直接发。
  */
 import type { SocialNotice, SpeechKind } from '../../domain/speech/kinds'

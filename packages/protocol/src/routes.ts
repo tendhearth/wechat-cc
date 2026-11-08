@@ -32,7 +32,9 @@
  *   - `ownerWorkspace` 主人工作区(待办、记下的想法):打包版走 lib.rs 的 `daemon_request` 宿主命令(主人工作区那一半)
  *     (按路径放行,GET / POST 都收),桌面 api.js 的 OWNER_WORKSPACE_PATHS 据此把请求交给宿主,dev 预览的
  *     test-shim.ts 照同一份名单代理。和 `tauri` 互斥(一条路由只走一个宿主命令),必须有 `operator`。
- * - `phone`(`/m`、`/m/api/*`)与 `set`(`/set`、`/set/api/*`):设置面板的令牌(配过对的设备令牌一律能走)。
+ * - `phone`(`/m`、`/m/api/*`;P3b 起也写在 `/v1` 行上)与 `set`(`/set`、`/set/api/*`):设置面板的令牌(配过对的设备令牌一律能走)。
+ *   `/v1` 行上有 `phone` 块:同时有 `desktop` ⇒ 面板交给内部 API 同一个分发;只有 `phone`(P3d 起,手机独有,`PanelV1Key`)⇒
+ *   处理器在面板这一口,内部 API 上没有这一条。
  *   - `link` 10 分钟链接令牌能不能走:`none` 只给设备、`read` / `write` 要写一句 `reason`
  *     (逐字搬自原来的 LINK_READ_OK / LINK_WRITE_OK,规矩见 phone-routes.ts 的注释)。开成 read / write 的集合
  *     必须**等于**链接页面源码里扫出来的调用(`scripts/link-routes-from-source.guard.test.ts`,理念 2):
@@ -42,6 +44,9 @@
  *
  * 这一批不合并命名空间(桌面 `/v1/matter/say` 与手机 `/m/api/matter/say` 仍是两行):手机 App 不能强制升级。
  */
+
+/** 已并成别名的旧手机键(P3c 起):路由表里没有这一行,老客户端照样按它调(wire-compat.ts 的 MERGED_ALIAS_KEYS)。 */
+import type { MergedAliasKey } from './wire-compat'
 
 export type RouteKey = `${string} /${string}`
 
@@ -74,7 +79,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench', 'companion', 'console'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench', 'companion', 'console', 'output-eval'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 /**
@@ -197,33 +202,77 @@ export interface RouteSpec {
 const ROUTE_TABLE = {
   // ── 内部 API(/v1/*)。注释原样搬自 route-tiers.ts 的 ROUTE_MIN_TIER ─────────────────────
   // Owner Workbench: task instructions and generated artifacts are private.
-  'GET /v1/workbench/entry-options': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-4(手机原 /m/api/entry/options):手机令牌也走这一条,同一份选项、按手机表面问;只给设备。
+  'GET /v1/workbench/entry-options': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/workbench/create-entry': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/workbench/entry-receipt': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/workbench': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 「一件事」(2026-09-16):任务指令、聊天都是主人的私事。
   // 桌面(原 lib.rs 注释):「一件事」的 matter 列表与会话面、此刻里搜主人那条对话。只走 tauri:dev 代理经 test-shim 另一条路。
-  'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
-  'GET /v1/matter': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  // P3c-1(设计稿 2026-11-05-p3-one-route-family):下面带 `phone` 块的几行,设备 / 链接令牌也能从手机设置面板那一口走;
+  // 老 App / 网页读的 `/m/api/*` 旧路径是 wire-compat.ts 的别名,翻到这里(src/features/phone/legacy-routes.ts)。
+  // 手机看到的范围由处理器按 caller 收(routes-matters.ts:别人的聊天不给、链接令牌不读 replyExtras、按帧预算裁)。
+  // link 照别名行冻结的值抄;送话给执行者的(matter/say)只给设备。
+  // CC 回复里的文件按块读(2026-10-06;手机原 /m/api/chat/file)
+  'GET /v1/matter/owner-chat/file': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
+  'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'read', reason: '一起做的列表' } },
+  'GET /v1/matter': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'read', reason: '一件事的详情' } },
+  'GET /v1/matter/owner-chat/events': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/matter/owner-chat/stop': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/window': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/work': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/protocol/capabilities': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/matter/owner-chat': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
-  'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
-  'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  // 搜主人那条对话(2026-10-06;手机原 /m/api/chat/search)
+  'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
+  'POST /v1/matter/seen': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true }, phone: { link: 'none' } },
+  // P3e 一件事上的动作(设计稿 2026-11-05-p3-one-route-family「P3e」):一个动作一个处理器(internal-api/routes-matter-actions.ts,
+  // MattersService 那一层),按 caller 分两份参数 —— 手机令牌带 runId 过期判断、按块读成果;operator 是桌面那一份。
+  // 桌面装着的 .app 还在调 /v1/workbench/* 双胞胎、老 App / 网页还在调 /m/api/matter/*,两边都是 wire-compat.ts 的别名。
+  // 桌面这一版起改调这几条(P3e-3:tauri / devProxy 同它们的 /v1/workbench/* 双胞胎,编进 .app 的白名单);双胞胎那几行照旧带 tauri,
+  // 给还装着上一版的 .app(它的白名单里只有旧键)。link 照别名行冻结:只有停下给链接令牌。
+  'POST /v1/matter/stop': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'write', reason: '停下是安全方向:能停,不能让它多做什么' } },
+  'POST /v1/matter/permission': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/matter/answer': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/matter/artifact': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3;桌面双胞胎是 quota-handoff)
+  'POST /v1/matter/handoff': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  // 独立工作区:提交到分支 / 删除 / 合回 / 另开 + 工作区脚本 run / stop(2026-10-07 / 10-20)
+  'POST /v1/matter/worktree': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  // 交办一件新事 + 回执(桌面双胞胎是 create-entry / entry-receipt)
+  'POST /v1/matter/create': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/matter/create-receipt': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  // 撤掉这一轮 / 回到某一轮(回退,2026-10-21):预览 + 带 token 执行(桌面双胞胎是 rewind-preview / rewind)
+  'GET /v1/matter/rewind': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/matter/rewind': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  // 看改动(手机最近一轮 / 桌面各轮;桌面双胞胎是 review)、逐文件审阅、行评论(2026-10-17 / 10-21)
+  'GET /v1/matter/changes': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/matter/review-mark': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/matter/review-return': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/matter/review-comment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/matter/review-comments-send': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 「CC 的连接」:带插件目录与原因,只给 admin。
-  'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-2(手机原 /m/api/connections):手机令牌也走这一条,处理器按 caller 去掉 detail(routes-connections.ts);只给设备。
+  'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 桌面「连接手机」(plan 7a):铸 admin 链接令牌 / 打开远程隧道,只给 operator 凭据。
   // 桌面(原 lib.rs 注释):出码(必要时打开远程隧道)与轮询已配对设备。
   'POST /v1/phone/link': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/phone/devices': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/models': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-4(手机原 /m/api/entry/models):手机令牌也走这一条,处理器按 caller 收 —— 只认 providerId + 项目目录 id、不认 path;只给设备。
+  'GET /v1/workbench/models': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/workbench/attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/workbench/attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/discard-attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-4(手机原 /m/api/attachment/discard):手机令牌也走这一条,只扔手机分块上传的那一份;只给设备。
+  'POST /v1/workbench/discard-attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/workbench/attention': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/input': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/answer': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/withdraw-input': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/sessions': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/session': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-4(手机原 /m/api/sessions、/m/api/session):手机令牌也走这两条,处理器按 caller 回手机那一份(只给目录名、不给 cwd,
+  // 一页 30 / 20、不认 cwd / limit;features/workbench/phone-sessions.ts);只给设备。
+  'GET /v1/workbench/sessions': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/workbench/session': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/workbench/task': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/project': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/create': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
@@ -266,6 +315,16 @@ const ROUTE_TABLE = {
   'POST /v1/wechat/message': { desktop: { tier: 'admin' } },
   'POST /v1/wechat/reply_voice': { module: 'voice', desktop: { tier: 'guest' } },
   'POST /v1/memory/read': { module: 'memory', desktop: { tier: 'guest' } },
+  // 话题(T2 后续 ①,2026-11-05):主模型的 topic_search 工具;只读、admin;私密话题只给主人自己的对话
+  'GET /v1/memory/topics': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/memory/topics/detail': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/rename': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/merge': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/delete': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/entry/wrong': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/open': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/subscribe/topics': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/topics/search': { module: 'memory', desktop: { tier: 'admin' } },
   'GET /v1/memory/list': { module: 'memory', desktop: { tier: 'guest' } },
   'POST /v1/share/page': { desktop: { tier: 'guest' } },
   'POST /v1/share/resurface': { desktop: { tier: 'guest' } },
@@ -304,6 +363,8 @@ const ROUTE_TABLE = {
   // presence 同一类:桌面的唯一凭据是 daemon 级 0600 FILE token(=trusted),
   // admin 会让每一次真机轮询 403 —— 觅食台 2026-07-22 就是这么静默坏的。
   'GET /v1/companion/pet': { desktop: { tier: 'trusted' } },
+  // 桌宠订的 presence 主题(S5,骨架设计稿 §3.3):处境 + 在做什么,since=<cursor> 长轮询。档位同上两条。
+  'GET /v1/subscribe/presence': { desktop: { tier: 'trusted' } },
   'POST /v1/conversation/set-mode': { desktop: { tier: 'trusted' } },
   'GET /v1/projects/list': { desktop: { tier: 'trusted' } },
   'POST /v1/projects/add': { desktop: { tier: 'trusted' } },
@@ -335,13 +396,16 @@ const ROUTE_TABLE = {
   // 终端会话登记处(v76):列出主人所有终端会话的路径、最后一句、等批准的命令 —— 主人的私事,admin。
   // 桌面(原 lib.rs / workbench-proxy.ts 注释):此刻「N 件事等你」里列出终端里等批准的 Claude Code / Codex,只读。
   // 拍板不走这里,走 pet_permission_resolve(POST /v1/permissions/resolve)。
-  'GET /v1/cli/sessions': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-2(手机原 /m/api/cli/sessions):手机令牌也走这一条,处理器按 caller 回手机那一份(只给目录名、不给 cwd,
+  // features/terminal/phone-sessions.ts);只给设备。
+  'GET /v1/cli/sessions': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):往主人终端里正在干活的会话里送话 —— admin,
   // 不给 operator(桌面 / CLI 没有这个入口;主人自己说走微信「@码」/ 手机)。路由里另外只认主人那条聊天的会话令牌。
   'POST /v1/cli/say': { module: 'terminal', desktop: { tier: 'admin' } },
   'GET /v1/cli/say': { module: 'terminal', desktop: { tier: 'admin' } },
   // 「今天」一眼看完(2026-10-14):同上一份登记处 + 一起做的标题与待批 —— 主人的私事,admin。
-  'GET /v1/overseer/today': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'] } },
+  // P3c-2(手机原 /m/api/today):手机令牌也走这一条,同一份(只有目录名);只给设备。
+  'GET /v1/overseer/today': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
   // 读日历(对标 #8):日程是主人的私事。
   'GET /v1/calendar/agenda': { module: 'calendar', desktop: { tier: 'admin' } },
   // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):改主人 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json,admin。
@@ -396,7 +460,8 @@ const ROUTE_TABLE = {
   // reply audio for the owner's app-conversation-channel session.
   'POST /v1/companion/speak': { module: 'voice', desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — voice arc Stage 2: transcribes inbound app-channel audio to text.
-  'POST /v1/companion/transcribe': { module: 'voice', desktop: { tier: 'admin', tokens: ['operator'] } },
+  // 手机按住说话(2026-10-18;手机原 POST /m/api/chat/transcribe):只回字,不发、不执行。
+  'POST /v1/companion/transcribe': { module: 'voice', desktop: { tier: 'admin', tokens: ['operator'] }, phone: { link: 'none' } },
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': { desktop: { tier: 'admin' } },
   'GET /v1/sessions': { desktop: { tier: 'admin' } },
@@ -410,6 +475,9 @@ const ROUTE_TABLE = {
   // 白嫖 daemon 去开一整条真会话,不该比 daemon-control 的其它成员松。
   'POST /v1/selftest/converse': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin —— 换主人电脑上的软件版本(外部 agent CLI 自动升级,2026-10-04);`wechat-cc cli` 用 operator 凭据调。
+  // admin — AI 输出回归评测(2026-10-29,docs/design/2026-10-29-output-eval.md):`wechat-cc eval run` 用 operator 凭据调。
+  // 跟 selftest/converse 一样会在 daemon 里起一整条真会话(只读档、不批权限、不发微信),所以同档。
+  'POST /v1/eval/run': { module: 'output-eval', desktop: { tier: 'admin', tokens: ['operator'] } },
   'POST /v1/cli/upgrade': { desktop: { tier: 'admin', tokens: ['operator'] } },
   'POST /v1/cli/rollback': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — on-demand file locate over the owner's computer (file_locate)
@@ -436,7 +504,8 @@ const ROUTE_TABLE = {
   'GET /v1/journal/postcards': { module: 'journal', desktop: { tier: 'trusted' } },
   'POST /v1/journal/favorite': { module: 'journal', desktop: { tier: 'trusted' } },
   'POST /v1/journal/status': { module: 'journal', desktop: { tier: 'trusted' } },
-  'POST /v1/journal/seen': { module: 'journal', desktop: { tier: 'trusted' } },
+  // P3c-3(手机原 /m/api/seen):手机令牌也走这一条,正文可带 `until`(夹到 now、只往后推);只给设备。
+  'POST /v1/journal/seen': { module: 'journal', desktop: { tier: 'trusted' }, phone: { link: 'none' } },
   'POST /v1/journal/remove': { module: 'journal', desktop: { tier: 'trusted' } },
   // trusted — 配对码 (spec §7). Same trust class as a2a/send + social wish:
   // internal-api is 127.0.0.1 + 0600 file token; the CLI holds the FILE token
@@ -469,8 +538,9 @@ const ROUTE_TABLE = {
   'POST /v1/memory/view': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/memory/edit': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 收回的话(架构终态 G6):和记忆编辑同一档,桌面经宿主调。
-  'GET /v1/memory/retractions': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/memory/retractions/restore': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // P3c-3(手机原 /m/api/memory/retractions、/m/api/memory/restore):手机令牌也走这两条,同一份;只给设备。
+  'GET /v1/memory/retractions': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/memory/retractions/restore': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 桌面不再起 CLI(架构终态 F6):主人私事,admin + operator,经宿主代理。理由见文件头 operator 那一段。
   'GET /v1/memory/files': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/memory/file': { module: 'memory', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
@@ -553,7 +623,8 @@ const ROUTE_TABLE = {
   'POST /v1/knowledge/facts/record_facts': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/facts/contact_facts': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/facts/find_facts': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
-  'POST /v1/knowledge/facts/set_fact_status': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
+  // P3c-3(手机原 /m/api/todo):手机令牌也走这一条,处理器按 caller 收 —— 只认 resolved / active / rejected、不认 `now`;只给设备。
+  'POST /v1/knowledge/facts/set_fact_status': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true }, phone: { link: 'none' } },
   'GET /v1/knowledge/facts/extraction_status': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/person/brief': { desktop: { tier: 'admin' } },
   // Config surface (config_get/config_set MCP tools) — admin-only: reads and
@@ -581,93 +652,49 @@ const ROUTE_TABLE = {
   // 一件事的进展 / 改动 / 成果 / 回执、审阅标记、对话模型、语音转字、连接、seen、记忆纠错)一并收成 'none'。
   // 给链接页面加一条调用:先写进页面,守卫会红着告诉你开哪一行。
   'GET /m': { phone: { link: 'read', reason: '手机页面本身(配对之前也要能打开)' } },
-  'GET /m/api/state': { phone: { link: 'none' } },
-  'GET /m/api/art/presence': { phone: { link: 'read', reason: 'CC 的形象画(在不在身边)' } },
-  'GET /m/api/memory': { phone: { link: 'none' } },
+  'GET /v1/phone/state': { phone: { link: 'none' } },
+  'GET /v1/phone/art/presence': { phone: { link: 'read', reason: 'CC 的形象画(在不在身边)' } },
+  'GET /v1/memory/curated': { phone: { link: 'none' } },
   // 「CC 记得你」逐条纠错(2026-10-06)
-  'POST /m/api/memory/correct': { phone: { link: 'none' } },
-  // 收回的话与恢复(架构终态 G6)
-  'GET /m/api/memory/retractions': { phone: { link: 'none' } },
-  'POST /m/api/memory/restore': { phone: { link: 'none' } },
-  'GET /m/api/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
-  'POST /m/api/seen': { phone: { link: 'none' } },
-  'GET /m/api/matters': { phone: { link: 'read', reason: '一起做的列表' } },
-  'GET /m/api/matter': { phone: { link: 'read', reason: '一件事的详情' } },
-  'GET /m/api/matter/input-receipt': { phone: { link: 'none' } },
-  'GET /m/api/matter/insight': { phone: { link: 'none' } },
-  'GET /m/api/matter/changes': { phone: { link: 'none' } },
-  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);两条都只给设备(链接页面不调)
-  'POST /m/api/matter/review-mark': { phone: { link: 'none' } },
-  'POST /m/api/matter/review-return': { phone: { link: 'none' } },
-  // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;只给设备(不在链接白名单里)
-  'POST /m/api/matter/review-comment': { phone: { link: 'none' } },
-  'POST /m/api/matter/review-comments-send': { phone: { link: 'none' } },
-  // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(不在链接白名单里)
-  'GET /m/api/matter/rewind': { phone: { link: 'none' } },
-  'POST /m/api/matter/rewind': { phone: { link: 'none' } },
-  'POST /m/api/matter/say': { phone: { link: 'none' } },
+  'POST /v1/memory/correct': { phone: { link: 'none' } },
+  'GET /v1/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
+  'GET /v1/matter/input-receipt': { phone: { link: 'none' } },
+  'GET /v1/matter/insight': { phone: { link: 'none' } },
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
-  'GET /m/api/chat': { phone: { link: 'none' } },
-  'POST /m/api/chat/say': { phone: { link: 'none' } },
-  // 搜主人那条对话(2026-10-06)
-  'GET /m/api/chat/search': { phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/page': { phone: { link: 'none' } },
+  'POST /v1/matter/owner-chat/say': { phone: { link: 'none' } },
   // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
-  'GET /m/api/chat/voice': { phone: { link: 'none' } },
-  // 按住说话(2026-10-18):配没配语音转文字 + 一段录音转成字(只回字,不发、不执行)
-  'GET /m/api/chat/transcribe': { phone: { link: 'none' } },
-  'POST /m/api/chat/transcribe': { phone: { link: 'none' } },
-  // CC 回复里的文件按块读(2026-10-06)
-  'GET /m/api/chat/file': { phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/voice': { phone: { link: 'none' } },
+  // 按住说话(2026-10-18):配没配语音转文字(录音转成字那一条 P3c-1 并进了 POST /v1/companion/transcribe)
+  'GET /v1/companion/transcribe': { phone: { link: 'none' } },
   // CC 的信(2026-10-18,mobile-letters.ts):寄出去了的信 + 一页 PNG 按块读。信是私事:链接令牌不在册(见 LINK_ROUTES)
-  'GET /m/api/letters': { phone: { link: 'none' } },
+  'GET /v1/letters/sent': { phone: { link: 'none' } },
   // 定时(对标 B7,2026-10-20):只给设备
-  'GET /m/api/activity': { phone: { link: 'none' } },
-  'GET /m/api/jobs': { phone: { link: 'none' } },
-  'POST /m/api/jobs/action': { phone: { link: 'none' } },
-  'GET /m/api/letters/page': { phone: { link: 'none' } },
+  'GET /v1/activity': { phone: { link: 'none' } },
+  'GET /v1/jobs': { phone: { link: 'none' } },
+  'POST /v1/jobs/action': { phone: { link: 'none' } },
+  'GET /v1/letters/page': { phone: { link: 'none' } },
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
-  'GET /m/api/chat/model': { phone: { link: 'none' } },
-  'POST /m/api/chat/model': { phone: { link: 'none' } },
-  // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
-  'GET /m/api/connections': { phone: { link: 'none' } },
-  // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
-  'GET /m/api/sessions': { phone: { link: 'none' } },
-  'GET /m/api/session': { phone: { link: 'none' } },
-  // 终端会话登记处(v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话 —— 谁在跑、谁在等批准
-  'GET /m/api/cli/sessions': { phone: { link: 'none' } },
-  // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
-  'POST /m/api/cli/permission': { phone: { link: 'none' } },
-  'POST /m/api/cli/say': { phone: { link: 'none' } },
+  'GET /v1/matter/owner-chat/model': { phone: { link: 'none' } },
+  'POST /v1/matter/owner-chat/model': { phone: { link: 'none' } },
+  // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)。P3d-3 起不撞名:
+  // `/v1/cli/permission` 是钩子登记 / 等答案(CLI 子进程),`/v1/cli/say` 是 CC 的 terminal_say(按码、回票再等)。
+  'POST /v1/cli/decide': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/cli/session-stop': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'POST /v1/cli/session-say': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
-  'GET /m/api/cli/activity': { phone: { link: 'none' } },
-  // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;与微信「日报」同一份
-  'GET /m/api/today': { phone: { link: 'none' } },
+  'GET /v1/cli/activity': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
-  'GET /m/api/session/continue': { phone: { link: 'none' } },
-  'POST /m/api/session/continue': { phone: { link: 'none' } },
-  'POST /m/api/todo': { phone: { link: 'none' } },
-  'GET /m/api/sticker/': { phone: { link: 'none' } },
+  'GET /v1/workbench/session/continue': { phone: { link: 'none' } },
+  'POST /v1/workbench/session/continue': { phone: { link: 'none' } },
+  'GET /v1/stickers/file/': { phone: { link: 'none' } },
   // 交办与材料(mobile-workbench.ts,#129)
-  // 交办时可选的模型(2026-10-06)
-  'GET /m/api/entry/models': { phone: { link: 'none' } },
-  'POST /m/api/attachment/chunk': { phone: { link: 'none' } },
-  'GET /m/api/attachment/upload': { phone: { link: 'none' } },
-  'POST /m/api/attachment/discard': { phone: { link: 'none' } },
-  'GET /m/api/entry/options': { phone: { link: 'none' } },
-  'POST /m/api/matter/create': { phone: { link: 'none' } },
-  'GET /m/api/matter/create-receipt': { phone: { link: 'none' } },
-  'POST /m/api/matter/permission': { phone: { link: 'none' } },
-  // 手机上停下正在跑的这一轮(2026-10-06)
-  'POST /m/api/matter/stop': { phone: { link: 'write', reason: '停下是安全方向:能停,不能让它多做什么' } },
-  // 独立工作区:提交到分支 / 删除工作区(2026-10-07)
-  'POST /m/api/matter/worktree': { phone: { link: 'none' } },
-  'POST /m/api/matter/answer': { phone: { link: 'none' } },
-  'GET /m/api/matter/artifact': { phone: { link: 'none' } },
-  // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3,mobile-workbench.ts)
-  'POST /m/api/matter/handoff': { phone: { link: 'none' } },
+  // 材料分块上传与进度(和桌面一次传完的 /v1/workbench/attachment 不是同一个动作,P3d 起新路径)
+  'POST /v1/workbench/attachment/chunk': { phone: { link: 'none' } },
+  'GET /v1/workbench/attachment/upload': { phone: { link: 'none' } },
   // 推送(中继 v2,spec 2026-09-30 §5):登记 APNs / FCM token、发一条测试通知。只认设备令牌。
-  'POST /m/api/push/register': { phone: { link: 'none' } },
-  'POST /m/api/push/test': { phone: { link: 'none' } },
+  'POST /v1/phone/push/register': { phone: { link: 'none' } },
+  'POST /v1/phone/push/test': { phone: { link: 'none' } },
 } satisfies Record<RouteKey, RouteSpec>
 
 export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = ROUTE_TABLE
@@ -676,13 +703,26 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = ROUTE_TABLE
 export type DeclaredRouteKey = keyof typeof ROUTE_TABLE
 /**
  * 手机面板那一端(`/m`、`/m/api/*`、`/set`、`/set/api/*`)的键(架构终态 F3)。daemon 的处理器表
- * (`src/features/phone/phone-route-table.ts` 的 `PhoneRouteTable`)和类型化客户端(`phone-calls.ts`)都只认这些键 ——
+ * (`src/lib/phone-route-table.ts` 的 `PhoneRouteTable`)和类型化客户端(`phone-calls.ts`)都只认这些键 ——
  * 路径只在这张表里写一次。
  */
-export type PanelRouteKey = Extract<DeclaredRouteKey, `${string} /m` | `${string} /m/${string}` | `${string} /set` | `${string} /set/${string}`>
+export type PanelRouteKey = Extract<DeclaredRouteKey, `${string} /m` | `${string} /m/${string}` | `${string} /set` | `${string} /set/${string}`> | MergedAliasKey | PanelV1Key
+
+/**
+ * 手机独有的 `/v1` 行(P3d 起):只有 `phone` 块、没有 `desktop`。处理器在面板这一口(回包是面板的 Response:PNG / 表情原图 /
+ * 前缀键都有),不经内部 API 的分发 —— 内部 API 上没有这几条(127.0.0.1 来的一律 404)。带 `desktop` 的 `/v1` 行照旧交给分发。
+ */
+export type PanelV1Key = {
+  [K in DeclaredRouteKey]: K extends `${string} /v1/${string}`
+    ? ((typeof ROUTE_TABLE)[K] extends { phone: object } ? ((typeof ROUTE_TABLE)[K] extends { desktop: object } ? never : K) : never)
+    : never
+}[DeclaredRouteKey]
 
 /**
  * 手机能订阅的事件主题(phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾是前缀标记:
  * 真正允许的是 `matter/<id>`,见 phone-routes.ts 的 phoneTopicAllowed。
  */
-export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/']
+export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/', 'topics']
+
+/** Every declared phone surface, including routes shared with the operator HTTP API. */
+export type PhoneSurfaceRouteKey = PanelRouteKey | { [K in DeclaredRouteKey]: (typeof ROUTE_TABLE)[K] extends {phone:object} ? K : never }[DeclaredRouteKey]

@@ -57,7 +57,17 @@ const ABANDON_TIMEOUTS = 6
 export interface TopicSource {
   match(topic: string): boolean
   snapshot(topic: string): Promise<unknown>
+  /**
+   * 这个主题只随变化信号变(P2,2026-11-04):轮询只每 `safetyTicks`(缺省 DRIVEN_SAFETY_TICKS)拍兜一次底,平时等 poke。
+   * 不给 / 回 false ⇒ 照旧每拍都算。
+   */
+  driven?(topic: string): boolean
+  /** 变化驱动的主题多少拍兜一次底;缺省 DRIVEN_SAFETY_TICKS。有一部分输入没有写口可提示(在场随时间退)的来源给得短一些。 */
+  safetyTicks?: number
 }
+
+/** 变化驱动的主题,轮询多少拍兜一次底(2 秒一拍 ⇒ 30 秒):漏了一次信号也不会一直不对。 */
+export const DRIVEN_SAFETY_TICKS = 15
 
 export interface PhoneEvents {
   /**
@@ -71,8 +81,11 @@ export interface PhoneEvents {
     since: { epoch: string; seq: number } | undefined,
     send: (ev: { epoch: string; seq: number; data: unknown }) => void,
   ): () => void
-  /** 所有有订阅者的主题立即重算一轮(排到微任务,同一拍内多次调用合并成一轮)。 */
-  poke(): void
+  /**
+   * 有订阅者的主题立即重算一轮(排到微任务,同一拍内多次调用合并成一轮)。
+   * 给了 only ⇒ 只算它挑中的那些(某一件事变了:那件事的主题 + 不分事的主题);同一拍里有一次不带 ⇒ 全算。
+   */
+  poke(only?: (topic: string) => boolean): void
   /** 清掉轮询定时器与全部订阅;之后的 subscribe / poke / dispose 都是空操作。 */
   dispose(): void
 }
@@ -163,7 +176,7 @@ export function makePhoneEvents(opts: {
   /** 第一个订阅者来了才起定时器(修 5);幂等,已经在跑或已 dispose 就什么都不做。 */
   function ensureTimer(): void {
     if (timer || disposed) return
-    timer = setInterval(poke, pollMs)
+    timer = setInterval(onTick, pollMs)
     if (typeof timer.unref === 'function') timer.unref()
   }
 
@@ -299,16 +312,36 @@ export function makePhoneEvents(opts: {
     }
   }
 
-  function poke(): void {
-    if (disposed || pokeScheduled) return
+  /** 这一拍要算的:null = 全部;否则是各次 poke 挑的并集。 */
+  let pokeFilters: Array<(topic: string) => boolean> | null = []
+  function poke(only?: (topic: string) => boolean): void {
+    if (disposed) return
+    if (!only) pokeFilters = null
+    else if (pokeFilters) pokeFilters.push(only)
+    if (pokeScheduled) return
     pokeScheduled = true
     // 不在调用者的栈里同步重算 —— 排到微任务,同一拍内连续多次 poke() 只排一次。
     queueMicrotask(() => {
       pokeScheduled = false
+      const filters = pokeFilters
+      pokeFilters = []
       if (disposed) return
       for (const [topic, state] of topics) {
-        if (state.subs.size > 0) void recomputeTopic(topic)
+        if (state.subs.size > 0 && (!filters || filters.some(f => f(topic)))) void recomputeTopic(topic)
       }
+    })
+  }
+  /** 轮询一拍:变化驱动的主题只每 safetyTicks(缺省 DRIVEN_SAFETY_TICKS)拍兜一次底(P2)。 */
+  let ticks = 0
+  function onTick(): void {
+    ticks++
+    poke(topic => {
+      const source = opts.sources.find(s => s.match(topic))
+      let driven: boolean
+      try { driven = !!source?.driven?.(topic) } catch { return true }
+      if (!driven) return true
+      const every = source?.safetyTicks !== undefined && source.safetyTicks >= 1 ? Math.floor(source.safetyTicks) : DRIVEN_SAFETY_TICKS
+      return ticks % every === 0
     })
   }
 

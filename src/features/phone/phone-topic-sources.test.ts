@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic } from '@wechat-cc/protocol'
 import { makePhoneEventsWiring, makePhoneTopicSources, type PhoneWorkbench } from './phone-topic-sources'
+import type { WriteHint } from '../../lib/write-hints'
 
 afterEach(() => { vi.useRealTimers() })
 
@@ -86,5 +87,118 @@ describe('matter/<聊天> 主题', () => {
   })
   it('快照形状仍过 MatterTopic', async () => {
     MatterTopic.parse(await src({ latestAt: async () => 7, pendingMatter: () => 'c0ffee01' }).snapshot('matter/c0ffee01'))
+  })
+})
+
+describe('变化驱动的主题(P2)', () => {
+  const kinds: Record<string, string> = { aaaa0001: 'task', aaaa0002: 'task', bbbb0001: 'terminal', cccc0001: 'chat', cccc0002: 'chat' }
+  const owners: Record<string, string> = { cccc0001: 'owner@im', cccc0002: 'guest@im' }
+  const rig = () => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    let listener: ((id: string, cursor: number) => void) | null = null
+    let hintCb: ((h: WriteHint) => void) | null = null
+    const workbench = {
+      list: () => { calls.push('agents'); return { tasks: [] } },
+      attention: () => { calls.push('approvals'); return { tasks: [] } },
+      detail: (id: string) => { calls.push(id); return { version: 1, task: { phase: 'working' }, permissions: [], questions: [] } },
+    } as unknown as PhoneWorkbench
+    const matters = { get: (id: string) => (kinds[id] ? { id, kind: kinds[id], status: 'open', updatedAt: 1, ownerChatId: owners[id] ?? null } : null) }
+    const wiring = makePhoneEventsWiring({
+      workbench, matters: matters as never, pollMs: 2000,
+      home: async () => { calls.push('home'); return { unread: 0, presence: null, next_cursor: null } as never },
+      chat: { latestAt: async (chatId: string) => { calls.push(`chat:${chatId}`); return 5 }, pendingMatter: () => null },
+      changes: { onChange: (cb) => { listener = cb; return () => { listener = null } } },
+      hints: (cb) => { hintCb = cb; return () => { hintCb = null } },
+    })
+    const count = (c: string) => calls.filter(x => x === c).length
+    return { wiring, calls, count, change: (id: string) => listener!(id, 1), hint: (h: WriteHint) => hintCb!(h), hinted: () => hintCb !== null }
+  }
+  const ALL = ['matter/aaaa0001', 'matter/bbbb0001', 'matter/cccc0001', 'home', 'approvals', 'agents']
+
+  it('没有主题每 2 秒算一次:matter / approvals / agents 每 30 秒兜一次底,home 每 10 秒', async () => {
+    const { wiring, calls, count } = rig()
+    for (const t of ALL) wiring.events.subscribe(t, undefined, () => {})
+    await vi.advanceTimersByTimeAsync(0)
+    calls.length = 0
+    await vi.advanceTimersByTimeAsync(2000 * 4)
+    expect(calls).toEqual([])
+    await vi.advanceTimersByTimeAsync(2000)                   // 第 5 拍:home 兜底
+    expect(calls).toEqual(['home'])
+    await vi.advanceTimersByTimeAsync(2000 * 10)              // 第 15 拍:全部兜底
+    expect(count('home')).toBe(3)
+    for (const c of ['aaaa0001', 'chat:owner@im', 'approvals', 'agents']) expect(count(c)).toBe(1)
+    wiring.dispose()
+  })
+
+  it('一件事变了 ⇒ 只算那件事的主题 + 不分事的主题,别的 matter/<id> 不算', async () => {
+    const { wiring, calls, change } = rig()
+    for (const t of ['matter/aaaa0001', 'matter/aaaa0002', 'home', 'approvals', 'agents']) wiring.events.subscribe(t, undefined, () => {})
+    await vi.advanceTimersByTimeAsync(0)
+    calls.length = 0
+    change('aaaa0001')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls.sort()).toEqual(['aaaa0001', 'agents', 'approvals', 'home'])
+    wiring.dispose()
+  })
+
+  it('新的一条消息 ⇒ 只算这个 chat 的聊天主题 + home;别的 chat、任务、approvals 不算', async () => {
+    const { wiring, calls, hint } = rig()
+    for (const t of [...ALL, 'matter/cccc0002']) wiring.events.subscribe(t, undefined, () => {})
+    await vi.advanceTimersByTimeAsync(0)
+    calls.length = 0
+    hint({ kind: 'messages', chatId: 'owner@im' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls.sort()).toEqual(['chat:owner@im', 'home'])
+    wiring.dispose()
+  })
+
+  it('matters 行变了 ⇒ 只算那件事;觅食台 / 看到哪了 / 伙伴的念头 ⇒ 只算 home', async () => {
+    const { wiring, calls, hint } = rig()
+    for (const t of ALL) wiring.events.subscribe(t, undefined, () => {})
+    await vi.advanceTimersByTimeAsync(0)
+    calls.length = 0
+    hint({ kind: 'matter', matterId: 'bbbb0001' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls).toEqual([])                                 // 终端会话:没有 workbench 读,走 updatedAt 那支,算了但不记 calls
+    hint({ kind: 'matter', matterId: 'cccc0001' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls).toEqual(['chat:owner@im'])
+    calls.length = 0
+    for (const kind of ['journal', 'journal-seen', 'plan-log'] as const) {
+      hint({ kind })
+      await vi.advanceTimersByTimeAsync(0)
+    }
+    expect(calls).toEqual(['home', 'home', 'home'])
+    wiring.dispose()
+  })
+
+  it('信号来了才推:聊天主题的版本变了,不等兜底就推一份新的', async () => {
+    vi.useFakeTimers()
+    let latest = 5
+    let hintCb: ((h: WriteHint) => void) | null = null
+    const wiring = makePhoneEventsWiring({
+      matters: { get: () => ({ id: 'cccc0001', kind: 'chat', status: 'open', updatedAt: 1, ownerChatId: 'owner@im' }) } as never,
+      pollMs: 2000, home,
+      chat: { latestAt: async () => latest, pendingMatter: () => null },
+      hints: (cb) => { hintCb = cb; return () => { hintCb = null } },
+    })
+    const got: unknown[] = []
+    wiring.events.subscribe('matter/cccc0001', undefined, ev => got.push(ev.data))
+    await vi.advanceTimersByTimeAsync(0)
+    latest = 9
+    await vi.advanceTimersByTimeAsync(2000 * 3)
+    expect(got).toEqual([{ found: true, kind: 'chat', version: 5, phase: 'open' }])   // 没信号:不算、不推
+    hintCb!({ kind: 'messages', chatId: 'owner@im' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(got).toEqual([{ found: true, kind: 'chat', version: 5, phase: 'open' }, { found: true, kind: 'chat', version: 9, phase: 'open' }])
+    wiring.dispose()
+  })
+
+  it('dispose 退订写口提示', async () => {
+    const { wiring, hinted } = rig()
+    expect(hinted()).toBe(true)
+    wiring.dispose()
+    expect(hinted()).toBe(false)
   })
 })

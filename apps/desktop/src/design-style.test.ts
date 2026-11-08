@@ -45,10 +45,14 @@ describe('desktop design style', () => {
     expect(css).toMatch(/--sans:\s*var\(--th-font-sans\)/)
     expect(css).not.toMatch(/font-family:\s*"Geist"/)
   })
-  it('workbench status chips are dot + text (no tinted chip backgrounds)', () => {
+  it('workbench status is the status-table glyph + text, same as 此刻 (no tinted chips, no coloured dots)', () => {
     const css = readFileSync(join(ROOT, 'styles/workbench.css'), 'utf8')
     expect(css.match(/background(-color)?:\s*var\(--(green|amber|rouge)-soft\)/g) ?? []).toEqual([])
-    expect(css).toMatch(/\.wb-status::before/)
+    // 2026-11-05 U4 一套语言:行与详情的状态记号走 matter-status.js 的 .now-row-status(此刻同款),
+    // 状态词旁边不再画红黄绿圆点 —— 圆点是第二套状态语言。
+    expect(css).not.toMatch(/\.wb-status(\[[^\]]*\])?::before/)
+    expect(css).not.toMatch(/\.wb-task-attention::before/)
+    expect(css).toMatch(/\.now-row-status\[data-tone="accent"\]/)
     for (const f of ['styles/workbench.css', 'styles/task-entry.css', 'styles/converse.css']) expect(readFileSync(join(ROOT, f), 'utf8'), f).not.toMatch(/box-shadow:\s*(?!none)/)
   })
   it('literal colours: ratchet', () => {

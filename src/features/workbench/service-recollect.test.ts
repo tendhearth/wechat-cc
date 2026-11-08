@@ -79,7 +79,7 @@ it('settleQuiet 安静下来(答复完)——不触发 recollect,只走到 repli
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   expect(triggered).toEqual([]) // fix round 3:settleQuiet 这一处已经不调 recollectOnce 了
 })
 
@@ -89,21 +89,21 @@ it('多轮续接之后,只在最终收尾(cancel→completed)时触发一次,带
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   let runId=service.detail(receipt.taskId).runId!
   await service.submitInput(receipt.taskId,{runId,requestId:randomUUID(),text:'再改一下'})
   runtime.finishTurn() // turnSeq → 1
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   runId=service.detail(receipt.taskId).runId!
   await service.submitInput(receipt.taskId,{runId,requestId:randomUUID(),text:'再改一下'})
   runtime.finishTurn() // turnSeq → 2
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   expect(triggered).toEqual([]) // 三次 settleQuiet,一次都没触发
   // 已经答复过的任务被取消 ⇒ 记 completed(closedWhileReplied),走终态那条路径。
   await service.cancel(receipt.taskId)
   await settle(receipt.taskId)
   expect(triggered).toEqual([[receipt.taskId,2]]) // 只有这一条,带着最终累计的 turnSeq
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
 })
 
 it('没有 opts.recollect 时(老接线),终态收尾也什么都不做,不报错',async()=>{
@@ -112,7 +112,7 @@ it('没有 opts.recollect 时(老接线),终态收尾也什么都不做,不报�
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   await service.cancel(receipt.taskId)
   await settle(receipt.taskId)
   expect(triggered).toEqual([])
@@ -134,10 +134,10 @@ it('recollect.maybeTrigger 抛错:留痕(MATTER_RECOLLECT),不打断终态收尾
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('replied')
   await service.cancel(receipt.taskId)
   await settle(receipt.taskId)
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
   expect(triggered).toEqual([[receipt.taskId,0]])
   expect(logs.some(([tag,line])=>tag==='MATTER_RECOLLECT'&&line.includes(receipt.taskId)&&line.includes('recollect_boom'))).toBe(true)
 })
@@ -171,7 +171,7 @@ it('runtimeSnapshot 的 retained:false 分支(settleQuiet 挡住的那一半):co
     registeredProjects:()=>[{alias:'project',path:project}],recollect:makeSink(),log:(tag,line)=>logs.push([tag,line])})
   const projectId=service.projects()[0]!.id
   const receipt=createTaskFromChat(projectId)
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
   expect(triggered).toEqual([[receipt.taskId,0]])
 })
 
@@ -193,7 +193,7 @@ it('同一分支以 failed 终态收尾:也触发 recollect(不再继承 complet
   const projectId=service.projects()[0]!.id
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>service.detail(receipt.taskId).task.status).toBe('failed')
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([receipt.taskId]).get(receipt.taskId)).toBe('done')
   expect(triggered).toEqual([[receipt.taskId,0]]) // 旧行为(继承 completed 门)下这里会是 []
 })
 

@@ -132,3 +132,22 @@ describe('createPetStateMachine', () => {
     expect(m.snapshot().form).toBe('lit')
   })
 })
+
+describe('continuous priority', () => {
+  it('permission rejects lower priority one-shots including real errors until it clears', () => {
+    const m = createPetStateMachine()
+    m.setState('permission')
+    for (const b of ['receive', 'done', 'blink', 'look', 'error']) expect(m.setState(b)).toBe('ignored')
+    expect(m.snapshot().behavior).toBe('permission')
+    m.setState('idle')
+    expect(m.setState('error')).toBe('applied')
+  })
+  it('idle decoration still plays during companion; real receive still interrupts working', () => {
+    const m = createPetStateMachine()
+    m.setState('companion')
+    expect(m.setState('blink')).toBe('applied')
+    m.notifyAnimationEnded()
+    m.setState('working')
+    expect(m.setState('receive')).toBe('applied')
+  })
+})

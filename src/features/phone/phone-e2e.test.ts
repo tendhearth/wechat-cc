@@ -19,10 +19,15 @@ import { makeMattersService } from '../../app/matters/service'
 import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../workbench/service'
 import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
-import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
+import { makeSettingsPanel as makePanel, type SettingsPanel } from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+/** P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。 */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import { makeMemoryRelay, type MemoryRelay } from './memory-relay.fixture'
 import { makeTunnelClient, type TunnelClient, type TunnelWS } from './tunnel-client'
 import { makePhoneEventsWiring } from './phone-topic-sources'
+import { stickerPhoneRoutes } from '../stickers'
+import { readMobileSource } from '../../../apps/mobile/sources'
 
 const DAEMON = 'e2e-daemon'
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x10, 0x80])
@@ -69,6 +74,8 @@ beforeEach(async () => {
   panel = makeSettingsPanel({
     stateDir: root, ownerChatId: () => 'owner', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {},
     stickers: { list: () => [{ file: 'wave.png', tags: ['wave'] }], dir: join(root, 'stickers') },
+    // P3d-3 起表情原图归表情那个功能,经 featureRoutes 交进来(同 wire-settings-panel.ts)
+    featureRoutes: [stickerPhoneRoutes({ list: () => [{ file: 'wave.png' }], dir: join(root, 'stickers') })],
     seen: { read: () => seenValue, write: iso => { seenValue = iso } },
     matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
   })
@@ -115,15 +122,16 @@ afterEach(async () => {
 
 /** 一条手机 ↔ 中继的内存 WebSocket。`stripV`:把握手里的 `v` 两个方向都抹掉 = 中继想把双方降到退休了的 v1。 */
 interface PhoneLine { sent: string[]; streamId: () => string; drop: () => void; handshakes: () => number }
-function phoneLine(opts: { stripV?: boolean } = {}): { open: () => ProtocolSocket; line: PhoneLine } {
+function phoneLine(opts: { stripV?: boolean; stripRoutes?: boolean } = {}): { open: () => ProtocolSocket; line: PhoneLine } {
   const sent: string[] = []
   let current: { streamId: string; kill: () => void } | null = null
   let handshakes = 0
   const strip = (s: string): string => {
-    if (!opts.stripV) return s
+    if (!opts.stripV && !opts.stripRoutes) return s
     const f = JSON.parse(s) as Record<string, unknown>
     if (typeof f.hs !== 'string') return s
-    delete f.v
+    if (opts.stripV) delete f.v
+    if (opts.stripRoutes) delete f.routes
     return JSON.stringify(f)
   }
   const open = (): ProtocolSocket => {
@@ -185,6 +193,65 @@ const utf8 = new TextEncoder()
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 describe('手机协议 v2 进程内端到端', () => {
+  it.each(['lan', 'relay'] as const)('网页源码在 %s 上固定调用五条 v1 路由，不依赖握手 routes', async transport => {
+    const task = createTask('web-v1')
+    await expect.poll(() => workbench.detail(task.id).runId).toBeTruthy()
+    const runId = workbench.detail(task.id).runId!
+    const { open } = phoneLine({ stripRoutes: true })
+    const elements = new Map<string, any>()
+    const element = (id: string) => {
+      if (!elements.has(id)) elements.set(id, { textContent: '', src: '', hidden: false, innerHTML: '',
+        addEventListener() {}, replaceChildren() {}, classList: { contains: () => true, add() {}, remove() {} } })
+      return elements.get(id)
+    }
+    const document = { hidden: false, getElementById: element, querySelector: element, querySelectorAll: () => [], addEventListener() {} }
+    const paths: string[] = []
+    const fetchPage = async (path: string, opts?: RequestInit) => {
+      const url = new URL(path, 'http://web.test')
+      paths.push(url.pathname)
+      return panel.handleRequest(new Request(url, opts))
+    }
+    const storage = { getItem: () => null, setItem() {}, removeItem() {} }
+    // 真网页传输和调用源码，只有 DOM / socket 边界替身；无浏览器、无生产监听。
+    const source = ['transport.js', 'workbench.js', 'presence.js', 'home.js'].map(readMobileSource).join('\n')
+    const boot = new Function('document', 'window', 'CCP', 'fetch', 'localStorage', 'location', 'setInterval', 'openSocket', 'token', 'remote', `
+      var T=token,REMOTE=remote;
+      function q(path){return path+(path.includes('?')?'&':'?')+'d='+encodeURIComponent(T)}
+      function esc(s){return String(s)}
+      ${source}
+      ccSocket=openSocket;
+      preferTunnel=${transport === 'relay'};
+      renderMatters=function(){};
+      renderMatter=function(d){mDetail=d;mDetailFresh=true};
+      renderHome=function(){};
+      mRenderStatus=function(){};
+      mSchedule=function(){};
+      return {openMatter,mStop,list:()=>mMatters,home:()=>homeState,detail:()=>mDetail,
+        close:()=>{clearTimeout(mPoll);clearTimeout(mStopTimer);if(tun)tun.close()}};
+    `)
+    // 出门模式首次 LAN 失败后自动转中继，后续固定走该通道。
+    const remote = transport === 'relay' ? { id: DAEMON, relay: 'wss://relay.test/v2/phone' } : null
+    const page = boot(document, { addEventListener() {} }, { makeProtocolClient: (opts: any) => {
+      const c = makeProtocolClient({ ...opts, open }); clients.push(c); return c
+    } }, transport === 'relay' ? () => Promise.reject(Error('outside LAN')) : fetchPage,
+    storage, { host: 'web.test', replace() {} }, () => 0, open, deviceToken, remote)
+    try {
+      await expect.poll(() => page.list()?.some((m: { id: string }) => m.id === task.id)).toBe(true)
+      await expect.poll(() => page.home()?.ok).toBe(true)
+      await expect.poll(() => element('.home-light').src.startsWith('data:image/png;base64,')).toBe(true)
+      await page.openMatter(task.id)
+      await expect.poll(() => page.detail()?.runId).toBe(runId)
+      await page.mStop(task.id, runId)
+      await page.mStop(task.id, runId)
+      await expect.poll(() => element('m-notice').textContent).toBe('已经请电脑停下这一轮。')
+      await expect.poll(() => workbench.detail(task.id).task.status).toBe('cancelled')
+      const received = transport === 'relay' ? handled.map(k => k.split(' ')[1]!) : paths
+      expect(received).toEqual(expect.arrayContaining(['/v1/home', '/v1/phone/art/presence', '/v1/matters', '/v1/matter', '/v1/matter/stop']))
+      expect(received.some((p: string) => p.startsWith('/m/api/'))).toBe(false)
+      expect(received.filter((p: string) => p === '/v1/matter/stop')).toHaveLength(1)
+    } finally { page.close() }
+  })
+
   it('reads one persistent input through the encrypted relay after the detail window and frame limit',async()=>{
     const {client,line}=phone(),task=createTask('receipt-v2')
     await expect.poll(()=>workbench.detail(task.id).runId).toBeTruthy()

@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../../lib/read-json-file'
 import type { ServiceCtx } from './ctx'
+import { timelineKind } from '../../../adapters/store/workbench/store'
 import type { ExecuteDomain } from './execute'
 import type { NoticesDomain } from './notices'
 import type { QuotaDomain } from './quota'
@@ -56,7 +57,7 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, domains: QuotaResumeDomai
     catch (err) { ctx.log?.('WORKBENCH_QUOTA_RESUME', `write failed: ${err instanceof Error ? err.message : err}`) }
   }
   const drop = (id: string) => { const all = read(); if (all[id]) { delete all[id]; write(all) } timers.get(id)?.cancel(); timers.delete(id) }
-  const note = (id: string, text: string) => { try { store.addEvent(id, 'system', text); ctx.hub.touched(id) } catch { /* 记不上不影响 */ } }
+  const note = (id: string, text: string) => { try { store.addEvent(id, 'system', text); } catch { /* 记不上不影响 */ } }
   const hhmm = (t: number) => new Date(t).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 
   /** 主人期间没动过、还是那个额度失败、没有在跑、没归档。 */
@@ -65,7 +66,7 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, domains: QuotaResumeDomai
     try { task = store.get(id) } catch { return false }
     if (task.archivedAt !== null || task.status !== 'failed' || !QUOTA_CODES.has(task.error ?? '')) return false
     if (ctx.state.runsByTask.has(id)) return false
-    return !store.events(id).some(ev => ev.kind === 'user' && ev.createdAt > e.requestedAt)
+    return !store.steps(id).some(step => timelineKind(step) === 'user' && step.createdAt > e.requestedAt)
   }
 
   function fire(id: string) {

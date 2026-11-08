@@ -34,7 +34,7 @@ function setup(o: { exit?: ScriptExit; maxRounds?: number; retained?: boolean; c
   const ctx = {
     store, stateDir: '/tmp/s', now: Date.now, ensureAccepting: () => {},
     state: { runsByTask, stopping: false } as never,
-    hub: { touched: () => {}, bumped: () => {}, dispose: () => {} },
+    hub: { bumped: () => {}, dispose: () => {} },
     deps: { registry: { get: () => ({ opts: { workbench: o.caps ?? { attended: true } } }) }, holdBusy: (l: string) => () => released.push(l) } as never,
   } as unknown as ServiceCtx
   let result = o.exit ?? exit(0, 'ok')

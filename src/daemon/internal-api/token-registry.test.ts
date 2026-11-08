@@ -48,7 +48,10 @@ describe('token-registry', () => {
       'GET /v1/workbench/attachment',
       'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
-      'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','GET /v1/matter/owner-chat/search','POST /v1/matter/say',
+      'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','GET /v1/matter/owner-chat/file','GET /v1/matter/owner-chat/search','POST /v1/matter/say','POST /v1/matter/seen',
+      // P3e 一件事上的动作(/v1/matter/*):operator 本来就能走它们的 /v1/workbench/* 双胞胎,新键是同一个处理器
+      'POST /v1/matter/stop','POST /v1/matter/permission','POST /v1/matter/answer','GET /v1/matter/artifact','POST /v1/matter/handoff','POST /v1/matter/worktree','POST /v1/matter/create','GET /v1/matter/create-receipt',
+      'GET /v1/matter/rewind','POST /v1/matter/rewind','GET /v1/matter/changes','POST /v1/matter/review-mark','POST /v1/matter/review-return','POST /v1/matter/review-comment','POST /v1/matter/review-comments-send',
       'GET /v1/connections',
       'POST /v1/phone/link',
       'GET /v1/phone/devices',
@@ -114,6 +117,9 @@ describe('token-registry', () => {
       'POST /v1/memory/file/write',
       'GET /v1/memory/profile',
       'GET /v1/memory/profile/status',
+      // T4:主人批准的话题展示接口,不开放给file/session/link。
+      'GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','GET /v1/cli/activity','POST /v1/cli/decide','POST /v1/cli/session-say','POST /v1/cli/session-stop',
+      'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics',
       'GET /v1/memory/projects',
       'GET /v1/conversations/list',
       'GET /v1/observations/list',
@@ -132,6 +138,8 @@ describe('token-registry', () => {
       'GET /v1/dialogue/thread',
       'GET /v1/dialogue/search',
       'POST /v1/dialogue/unlock',
+      // AI 输出回归评测(2026-10-29):`wechat-cc eval run`
+      'POST /v1/eval/run',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })

@@ -90,7 +90,7 @@ export function hhmmOf(ms: number, timezone: string): string {
   return hhmmFmt(timezone).format(new Date(ms))
 }
 
-const THOUGHT_TITLE: Record<string, string> = { hunt: '出门打猎去了', visit: '去串门了', none: '在家待着' }
+const THOUGHT_TITLE: Record<string, string> = { hunt: '出门打猎去了', visit: '去串门了', none: '在家待着', agenda: '记起一件事', gap: '问候了你', letter: '写了一封信', memory: '整理了记忆', sticker: '画了张表情', social: '带回一段见闻', guest: '朋友来过了' }
 
 export function thoughtEvent(e: PlanLogEntry, timezone: string): FeedEvent {
   // 手改坏的 plan-log 条目可能有 at/chatId 却没有 why(或不是字符串)——
@@ -105,7 +105,7 @@ export function thoughtEvent(e: PlanLogEntry, timezone: string): FeedEvent {
     id: `thought:${e.chatId}:${e.at}`,
     ts: e.at,
     kind: 'thought',
-    title: aborted ? '想出门,没走成' : (THOUGHT_TITLE[e.decision] ?? e.decision),
+    title: aborted ? (e.decision === 'hunt' || e.decision === 'visit' ? '想出门,没走成' : '这次没说') : (THOUGHT_TITLE[e.decision] ?? e.decision),
     // 只有模型自己说的话才是想法;fallback 的 why 是机器原因,downgraded 的
     // why 说的是另一件事(想做的没在候选里)。都不给它编理由。
     note: !aborted && e.source === 'model' && why ? why : null,

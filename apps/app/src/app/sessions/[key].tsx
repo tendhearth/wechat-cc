@@ -9,6 +9,7 @@ import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useSubmit } from '../../state/hooks'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
+import { IconButton } from '../../ui/IconButton'
 import { Dot } from '../../ui/Dot'
 import { MessageText } from '../../ui/Markdown'
 import { radius, space } from '../../ui/tokens'
@@ -172,14 +173,16 @@ export default function SessionReader() {
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={title || t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/sessions'))} onAvatar={() => router.push('/settings')} />
+      <TopBar title={title || t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/sessions'))} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
         {confirmedWindow === 'recent' ? <Txt testID="session-window" role="meta" tone="inkSoft">{t(lang, 'sessions.recent')}</Txt> : window === 'start' && state === 'ok' ? <Txt testID="session-window" role="meta" tone="inkSoft">{t(lang, 'sessions.start')}</Txt> : null}
-        <Button kind="secondary" testID={window === 'recent' ? 'session-view-start' : 'session-view-recent'} label={t(lang, window === 'recent' ? 'sessions.viewStart' : 'sessions.viewRecent')} onPress={() => chooseWindow(window === 'recent' ? 'start' : 'recent')} />
-        {sameReading(loadedContext.current, { key, window, backend }) ? <Pressable testID="session-refresh" accessibilityRole="button" accessibilityLabel={t(lang, 'sessions.refreshRecords')} accessibilityState={{ disabled: !online || busy, busy }} disabled={!online || busy} onPress={() => void load()} style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}>
-          <Txt role="small" style={{ textDecorationLine: 'underline' }}>{t(lang, 'sessions.refreshRecords')}</Txt>
-        </Pressable> : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m }}>
+          <Pressable testID={window === 'recent' ? 'session-view-start' : 'session-view-recent'} accessibilityRole="button" onPress={() => chooseWindow(window === 'recent' ? 'start' : 'recent')} style={{ minHeight: 44, justifyContent: 'center', flex: 1 }}>
+            <Txt role="meta" tone="inkSoft">{t(lang, window === 'recent' ? 'sessions.viewStart' : 'sessions.viewRecent')}</Txt>
+          </Pressable>
+          {sameReading(loadedContext.current, { key, window, backend }) ? <IconButton name="refresh" testID="session-refresh" label={t(lang, 'sessions.refreshRecords')} disabled={!online || busy} busy={busy} onPress={() => void load()} /> : null}
+        </View>
       </View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.m }}>
         {state === 'loading' ? <Txt role="bubble" tone="inkSoft">{t(lang, 'sessions.loading')}</Txt> : null}
@@ -197,8 +200,7 @@ export default function SessionReader() {
             <View
               key={`${m.id}:${i}`}
               testID={`session-message-${i}`}
-              style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%', backgroundColor: c.paper, borderColor: c.hair, borderWidth: 1, paddingHorizontal: space.l, paddingVertical: space.m, gap: space.xs,
-                borderTopLeftRadius: radius.bubble, borderTopRightRadius: radius.bubble, borderBottomLeftRadius: mine ? radius.bubble : 4, borderBottomRightRadius: mine ? 4 : radius.bubble }}
+              style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: mine ? '88%' : '100%', paddingVertical: space.m, gap: space.s }}
             >
               <Txt role="caption" tone="inkSoft">{mine ? t(lang, 'chat.me') : rowProvider ? providerName(rowProvider, names) : t(lang, 'cc.label')}</Txt>
               <MessageText role={mine ? 'user' : 'assistant'} text={m.text} />
@@ -231,8 +233,10 @@ export default function SessionReader() {
       )}
 
       <Modal visible={sheet} transparent animationType="slide" onRequestClose={() => setSheet(false)}>
+        <View style={{ flex: 1 }}>
         <Pressable accessibilityLabel={t(lang, 'common.cancel')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setSheet(false)} />
-        <View testID="continue-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+        <SafeAreaView testID="continue-sheet" edges={['bottom']} style={{ backgroundColor: c.paper, maxHeight: '90%', borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+        <ScrollView testID="continue-sheet-scroll" style={{ flexShrink: 1 }} contentContainerStyle={{ padding: space.xl, gap: space.m }}>
           <Txt role="item" accessibilityRole="header">{t(lang, 'continue.title')}</Txt>
           {typeof cont === 'object' && cont.state === 'ready' ? (
             <>
@@ -255,6 +259,8 @@ export default function SessionReader() {
             </>
           ) : null}
           <Button kind="secondary" testID="continue-cancel" label={t(lang, 'common.cancel')} onPress={() => setSheet(false)} />
+        </ScrollView>
+        </SafeAreaView>
         </View>
       </Modal>
     </SafeAreaView>

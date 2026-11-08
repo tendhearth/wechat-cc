@@ -1,0 +1,17 @@
+{
+  "id": "reply-topic-search-meeting-lag",
+  "kind": "reply",
+  "note": "主人 11-05 的真问法:「那个问题」一个词都不沾话题,每轮的匹配调不出来 —— CC 要自己用 topic_search 搜到 bx 那几条再答。依赖主人真库里的 bx 话题(T1 抽出来的),换台机器跑会不过。",
+  "input": {
+    "text": "开视频会议卡顿那个问题后来怎么定的",
+    "tools": [
+      "topic_search"
+    ]
+  },
+  "rules": [
+    {
+      "calls": "topic_search"
+    }
+  ],
+  "judge": "回答说出了以前查到的原因或定下的办法(比如 bx 的 UDP 走 QUIC / hysteria2、TCP 队头阻塞),而不是说不记得、也不是反问是哪个问题"
+}

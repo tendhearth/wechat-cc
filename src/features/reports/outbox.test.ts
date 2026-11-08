@@ -34,6 +34,15 @@ describe('report outbox store', () => {
     expect(due[0]).toMatchObject({id, matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: report.text, status: 'pending', attempts: 0, nextAt: 1_000})
   })
 
+  it('事件键(S3a,v103):入队带上就记在行上;合并成一行时换成新的那一轮(created_at 照旧不动);没带 ⇒ null', async () => {
+    await store.insert(report, 1_000, `turn:${TASK}:1`)
+    expect((await store.listDue(1_000))[0]).toMatchObject({ref: `turn:${TASK}:1`, createdAt: 1_000})
+    await store.insert({...report, text: '第二轮'}, 2_000, `turn:${TASK}:2`)
+    expect(await store.listDue(2_000)).toEqual([expect.objectContaining({text: '第二轮', ref: `turn:${TASK}:2`, createdAt: 1_000})])
+    await store.insert({...report, matterId: LATE}, 3_000)
+    expect((await store.listDue(3_000)).find(r => r.matterId === LATE)?.ref).toBeNull()
+  })
+
   it('listDue only returns rows whose next_at has passed', async () => {
     await store.insert(report, 5_000)
     expect(await store.listDue(1_000)).toEqual([])

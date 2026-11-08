@@ -71,6 +71,7 @@ describe('citty migrated commands', () => {
       'demo',
       'dialogue',
       'doctor',
+      'eval',
       'events',
       'federated-source',
       'guard',
@@ -92,6 +93,7 @@ describe('citty migrated commands', () => {
       'plugin',
       'provider',
       'reply',
+      'routes',
       'rules',
       'run',
       'self',
@@ -102,6 +104,7 @@ describe('citty migrated commands', () => {
       'setup-poll',
       'setup-status',
       'social',
+      'speech',
       'status',
       'update',
     ])

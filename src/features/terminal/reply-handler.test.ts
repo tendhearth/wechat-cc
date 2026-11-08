@@ -266,7 +266,7 @@ it('守护(2026-10-15):终端 Cursor 会话的模型登记处里没有 ⇒ 按�
  expect(r.kind).toBe('failed');expect(r.text).toContain('Cursor');expect(run).not.toHaveBeenCalled()
  const safe=vi.fn(async()=>({safe:true,source:'bx' as const,detail:'ok'}))
  const ok=await makeCliReplyCore({hub:{lookup:()=>cur,sessions:()=>[cur]},run,reserveExecution:()=>()=>{},log:()=>{},dangerously:true,networkGate:{check:safe,classify:t=>classifyCall(t)}}).resume(cur,'go')
- expect(ok.kind).toBe('ok');expect(run).toHaveBeenCalledWith('cursor-agent',[`--resume=${cur.session_id}`,'-p','--trust','--force','--','go'],cur.cwd,expect.any(Number))
+ expect(ok.kind).toBe('ok');expect(run).toHaveBeenCalledWith('cursor-agent',[`--resume=${cur.session_id}`,'-p','--trust','--force','--','go'],cur.cwd,expect.any(Number),expect.any(AbortSignal))
 })
 
 it('守护(2026-10-03):终端 Codex 会话按 codex 自己的配置判,不看 OPENAI_BASE_URL',async()=>{
@@ -318,4 +318,27 @@ describe('makeCliReplyCore 把接着跑的这一轮记进登记处(手机看得�
     const core = makeCliReplyCore({ hub: { lookup: () => s, sessions: () => [s], observe: () => { throw new Error('db') } }, run: async () => ({ code: 0, stdout: 'ok', stderr: '', timedOut: false }), log: () => {}, dangerously: false })
     expect((await core.resume(s, 'go')).kind).toBe('ok')
   })
+})
+
+it('T5d only stops the exact CC-owned resumed run, never an external window or a later run',async()=>{
+  const s=sess(),signals:AbortSignal[]=[]
+  const core=makeCliReplyCore({hub:{lookup:()=>s,sessions:()=>[s]},dangerously:false,log:()=>{},run:async(_cmd,_args,_cwd,_timeout,signal)=>{
+    signals.push(signal!)
+    return new Promise(resolve=>signal!.addEventListener('abort',()=>resolve({code:null,stdout:'',stderr:'stopped',timedOut:false,closed:true}),{once:true}))
+  }})
+  expect(core.stop?.(s.session_id,'external')).toBe(false)
+  const pending=core.resume(s,'go')
+  await expect.poll(()=>signals.length).toBe(1)
+  const first=core.activeRun!(s.session_id)!
+  expect(core.stop?.(s.session_id,'stale')).toBe(false)
+  expect(signals[0]!.aborted).toBe(false)
+  expect(core.stop?.(s.session_id,first)).toBe(true)
+  await pending
+  expect(core.activeRun?.(s.session_id)).toBeNull()
+  const next=core.resume(s,'next')
+  await expect.poll(()=>signals.length).toBe(2)
+  expect(core.stop?.(s.session_id,first)).toBe(false)
+  expect(signals[1]!.aborted).toBe(false)
+  expect(core.stop?.(s.session_id,core.activeRun!(s.session_id)!)).toBe(true)
+  await next
 })

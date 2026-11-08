@@ -169,14 +169,41 @@ export function runMigrations(db: Database, list: readonly Migration[]): void {
   const row = db.query('PRAGMA user_version').get() as { user_version: number } | null
   const stored = row?.user_version ?? 0
   const current = list === migrations ? repairBranchRenumberedSchema(db, stored) : stored
+  // Only a genuinely new database can batch historical migrations. Existing
+  // stores retain per-version commits and their upgrade/recovery semantics.
+  // WAL still syncs every commit: hundreds of tiny commits on a slow Windows
+  // filesystem can dominate first open, even when every table is empty.
+  const fresh = current === 0 && !db.query(
+    "SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1",
+  ).get()
   for (let i = current; i < list.length; i++) {
     const next = list[i]!
-    db.transaction(() => {
-      next(db)
-      // PRAGMA user_version doesn't accept bound params; safe — value is
-      // a literal integer index from our own array, not user input.
-      db.exec(`PRAGMA user_version = ${i + 1};`)
-    })()
+    const rebuilt = next.withoutForeignKeys ?? []
+    // PRAGMA foreign_keys 在事务里改不了 ⇒ 只能在事务外关、事务外恢复(见 Migration.withoutForeignKeys)。
+    const fkBefore = rebuilt.length ? (db.query('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys : null
+    if (rebuilt.length) db.exec('PRAGMA foreign_keys = OFF;')
+    try {
+      db.transaction(() => {
+        next(db)
+        // A foreign-key rebuild needs its own transaction: its pragma must
+        // change outside the transaction, and its integrity check must finish
+        // before any later migration runs.
+        if (fresh && !rebuilt.length) {
+          while (i + 1 < list.length && !list[i + 1]!.withoutForeignKeys?.length) {
+            list[++i]!(db)
+          }
+        }
+        if (rebuilt.length) {
+          const dangling = (db.query('PRAGMA foreign_key_check').all() as { table: string; parent: string }[]).filter(r => rebuilt.includes(r.parent))
+          if (dangling.length) throw new Error(`migration ${i + 1}: foreign_key_check failed (${dangling.map(r => `${r.table}->${r.parent}`).join(', ')})`)
+        }
+        // PRAGMA user_version doesn't accept bound params; safe — value is
+        // a literal integer index from our own array, not user input.
+        db.exec(`PRAGMA user_version = ${i + 1};`)
+      })()
+    } finally {
+      if (fkBefore !== null) db.exec(`PRAGMA foreign_keys = ${fkBefore ? 'ON' : 'OFF'};`)
+    }
   }
 }
 

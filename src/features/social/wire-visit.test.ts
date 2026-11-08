@@ -316,24 +316,27 @@ describe('明信片', () => {
   const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320"><circle cx="1" cy="1" r="1"/></svg>'
   const mk = (evalText: (p: string) => Promise<string>, postcard: NonNullable<VisitDeps['postcard']>) => {
     const owner: string[] = []; const recorded: Array<{ text: string; peerLabel: string }> = []
+    const notify = vi.fn((text: string) => { owner.push(text) })
     const visit = makeVisit({
       stateDir: mkdtempSync(join(tmpdir(), 'visit-pc-')), ownerOverviewForOthers: () => '', channelStore: { get: () => null, list: () => [] } as never,
       letterStore: { listForChannel: () => [], markRead: () => {} } as never,
       sendEnvelope: async () => ({ ok: true }), evalText, myName: '煞笔', disclosurePolicy: 'p',
-      notifyOwner: (t) => owner.push(t), recordVisit: (a) => { recorded.push(a); return 'row-1' }, postcard, log: () => {},
+      notifyOwner: notify, recordVisit: (a) => { recorded.push(a); return 'row-1' }, postcard: { ...postcard, send: async (svg, story, ref) => { await postcard.send(svg, story, ref); if (story) owner.push(story) } }, log: () => {},
     })
-    return { visit, owner, recorded }
+    return { visit, owner, recorded, notify }
   }
   const evalFor = async (p: string) => p.includes('明信片') ? '```json\n' + JSON.stringify({form:'dark',pose:'company',sceneSvg:SVG}) + '\n```' : p.includes('串门回来') ? '去了一趟。' : '嗨'
 
   it('去邻居家 → 叙述之后画一张:safeSvg → 存进那条见闻 → 发给主人;代码围栏剥掉', async () => {
-    const attached: Array<[string, string]> = []; const sent: string[] = []
-    const { visit, owner } = mk(evalFor, { sanitize: (s) => s.includes('<svg') ? s : null, attach: (id, s) => attached.push([id, s]), send: async (s) => { sent.push(s) } })
+    const attached: Array<[string, string]> = []; const sent: string[] = []; const combined = vi.fn(async (svg: string, story?: string, ref?: string) => { sent.push(svg) })
+    const { visit, owner, notify } = mk(evalFor, { sanitize: (s) => s.includes('<svg') ? s : null, attach: (id, s) => attached.push([id, s]), send: combined })
     expect((await visit.startVisit('邻居')).ok).toBe(true)
     const composed = composeCcInk(JSON.stringify({form:'dark',pose:'company',sceneSvg:SVG}), 'postcard')
     expect(composed).toContain('#343330')
     expect(attached).toEqual([['row-1', composed]])
     expect(sent).toEqual([composed])
+    expect(combined).toHaveBeenCalledWith(composed, '去了一趟。', expect.stringMatching(/^visit:/))
+    expect(notify).not.toHaveBeenCalledWith('去了一趟。', 'social_story') // one combined proposal, no independent narrative send
     expect(owner.some(t => t === '去了一趟。')).toBe(true)
   })
 

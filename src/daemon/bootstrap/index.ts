@@ -182,7 +182,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
   })
   // A2A registry / client / events + resolveOperatorChatId — ./wire-a2a.ts。
   const a2a = wireA2a(ctxBase)
-  return { readAgentConfig, sdkOptionsForProject, sessionStore, registry, defaultProviderId, baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider, buildInstructions, sessionManager, anomalyNotes, sendAssistantText, coordinator, dispatchDelegate, ...a2a }
+  return { readAgentConfig, sdkOptionsForProject, sessionStore, registry, defaultProviderId, baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider, buildInstructions, currentModelFor, sessionManager, anomalyNotes, sendAssistantText, coordinator, dispatchDelegate, ...a2a }
 }
 type BootCore = Awaited<ReturnType<typeof bootCore>>
 
@@ -353,6 +353,7 @@ function assemble(b: BootBase, c: BootCore, opt: {
     formatInbound,
     sdkOptionsForProject: c.sdkOptionsForProject,
     buildInstructions: c.buildInstructions,
+    currentModelFor: c.currentModelFor,
     defaultProviderId: c.defaultProviderId, pluginsHealth: b.pluginsHealth, providerProbes: c.providerProbes, stopProviderProbes: c.stopProviderProbes, reprobeProvider: c.reprobeProvider,
     codeHead: opt.selfRestart?.loadedHead ?? null,
     providerNotes: () => {

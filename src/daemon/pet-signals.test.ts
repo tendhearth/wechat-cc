@@ -13,6 +13,16 @@ describe('makePetSignals', () => {
     expect(s.snapshot('c2')).toMatchObject({ lastToolCallAtMs: null, lastContactMs: 2000 })
   })
 
+  it('每记一笔都 onChange 一次(S5:桌宠订的 presence 主题据此重算);回调抛错不影响记账', () => {
+    let n = 0
+    const s = makePetSignals(() => 1, () => { n++ })
+    s.noteTurnStart('c'); s.noteToolCall('c'); s.noteTurnEnd('c'); s.noteTurnStop('c'); s.noteContact()
+    expect(n).toBe(5)
+    const boom = makePetSignals(() => 1, () => { throw new Error('x') })
+    boom.noteToolCall('c', 7)
+    expect(boom.snapshot('c').lastToolCallAtMs).toBe(7)
+  })
+
   it('显式 nowMs 参数优先于时钟', () => {
     const s = makePetSignals(() => 1)
     s.noteTurnEnd('c', 99); expect(s.snapshot('c').lastResultAtMs).toBe(99)

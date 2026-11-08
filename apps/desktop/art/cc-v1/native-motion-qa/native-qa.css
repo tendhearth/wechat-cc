@@ -1,0 +1,13 @@
+html,body { background: var(--th-paper); color: var(--th-ink); overflow: auto; }
+main { max-width: 1080px; margin: auto; padding: 22px; font: 14px/1.6 var(--th-font-sans); }
+h1 { margin: 0; font-size: 28px; font-weight: 500; } h2 { font-size: 15px; font-weight: 500; }
+p { margin: 6px 0 18px; color: var(--th-ink-soft); }
+.native-actions,.art-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+button,select { padding: 5px 10px; color: var(--th-ink); background: transparent; border: 1px solid var(--th-hair); border-radius: 5px; }
+button { cursor: pointer; } #open { background: var(--th-accent); color: var(--th-paper); }
+pre { min-height: 94px; max-height: 160px; overflow: auto; font: 12px/1.6 var(--th-font-mono); white-space: pre-wrap; }
+.pair { display: flex; justify-content: center; gap: 36px; margin: 14px 0; padding: 12px; background: var(--th-paper); }
+.pair[data-backdrop="slate"] { background: #424850; color: #fff; }
+.pair article { text-align: center; }.pair .pet-stage { width: var(--qa-size,256px); height: var(--qa-size,256px); margin: auto; }
+.pair .pet-breathing .pet-sprite { animation: none; }
+#asset-state { overflow-wrap: anywhere; }

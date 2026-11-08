@@ -12,11 +12,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '@wechat-cc/protocol/routes'
-import { PHONE_ROUTES, PHONE_TOPICS, phoneTopicAllowed } from '../src/features/phone/phone-routes'
+import { MERGED_ALIASES, PHONE_ROUTES, PHONE_TOPICS, phoneTopicAllowed } from '../src/features/phone/phone-routes'
 import { makePhoneTopicSources } from '../src/features/phone/phone-topic-sources'
 import { makeSettingsPanel } from '../src/features/phone/settings-panel'
 import { mobileLettersRoutes } from '../src/features/letters'
 import { mobileJobsRoutes } from '../src/features/jobs'
+import { memoryPhoneRoutes } from '../src/features/memory'
+import { stickerPhoneRoutes } from '../src/features/stickers'
 
 const diff = (a: Iterable<string>, b: ReadonlySet<string>) => [...a].filter(k => !b.has(k)).sort()
 
@@ -28,7 +30,7 @@ describe('手机面板处理器表与路由表对得上', () => {
     stateDir, ownerChatId: () => null, chatPrefs: { get: () => ({}), set: () => ({}) },
     getUserName: () => null, setUserName: async () => {}, log: () => {},
     // 别的功能交来的表(A5 · 手机起不再由面板 import):和生产里 wire-settings-panel 交的是同一组,缺 deps 照样登记键
-    featureRoutes: [mobileLettersRoutes(undefined), mobileJobsRoutes(undefined)],
+    featureRoutes: [mobileLettersRoutes(undefined), mobileJobsRoutes(undefined), memoryPhoneRoutes({}), stickerPhoneRoutes(undefined)],
   })
   const keys = new Set(panel.routeKeys())
   /** 路由表里属于面板的路径(/m、/m/…、/set、/set/…),不管带没带 phone / set 块。 */
@@ -36,12 +38,20 @@ describe('手机面板处理器表与路由表对得上', () => {
   it('真的拿到了东西(拿空 = 守卫沉默)', () => {
     expect(keys.size).toBeGreaterThanOrEqual(60)
   })
-  it('表里每个键都在路由表里,而且是面板路由', () => {
-    expect(diff(keys, new Set(Object.keys(ROUTES)))).toEqual([])
+  it('表里每个键都在路由表里(或是已并成别名的旧键),而且是面板路由', () => {
+    // 已并成别名的旧键(P3c 起):路由表里没有这一行了,处理器是 legacy-routes.ts 的转换
+    expect(diff(keys, new Set([...Object.keys(ROUTES), ...MERGED_ALIASES.map(a => a.from)]))).toEqual([])
     expect(diff(keys, PHONE_ROUTES)).toEqual([])
   })
   it('路由表里每条面板路由都有处理器(没有登记了却 404 的)', () => {
-    expect(diff(PHONE_ROUTES, keys)).toEqual([])
+    // `/v1` 行上的 phone 块(P3b 起)有两种:带 desktop 的不归面板处理器表 —— 面板把它交给内部 API 的分发,处理器是 /v1 那一条;
+    // 只有 phone 块的(P3d 起,手机独有,PanelV1Key)处理器在面板这张表里。两种不许重叠:同一个键不能两边都有处理器。
+    const v1 = [...PHONE_ROUTES].filter(k => / \/v1\//.test(k))
+    const dispatched = v1.filter(k => ROUTES[k as keyof typeof ROUTES]?.desktop)
+    const panelOwn = v1.filter(k => !dispatched.includes(k))
+    for (const k of dispatched) expect(keys.has(k), `${k}: 交给分发的 /v1 行,面板表里不该再有处理器`).toBe(false)
+    expect(diff(panelOwn, keys), '手机独有的 /v1 行(只有 phone 块)要在面板表里有处理器').toEqual([])
+    expect(diff([...PHONE_ROUTES].filter(k => !v1.includes(k)), keys)).toEqual([])
     expect(diff(panelPaths, keys)).toEqual([])
   })
 })

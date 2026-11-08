@@ -1390,7 +1390,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 }
 [data-mode="dashboard"] .dashboard { flex: 1; min-height: 0; }
 
-/* 侧栏只放导航(2026-10-01):tendhearth 字标 + 此刻/一起做/回忆 + 生活与工具 + 设置。
+/* 侧栏只放导航(2026-10-01;一起做 2026-11-01 起退成此刻页上的「全部 →」):tendhearth 字标 + 此刻/回忆 + 生活与工具 + 设置。
    几何与层级在 cc-life.css 的 ".dashboard .dash-rail" 一组里,这里只放基础。 */
 .dash-rail {
   position: relative;
@@ -1896,6 +1896,8 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .privacy-card {
   position: relative;
   width: min(420px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
   padding: 32px;
   display: flex;
   flex-direction: column;
@@ -2659,6 +2661,9 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .memory-maintenance-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--th-space-m); align-items: center; }
 .memory-maintenance-item p { margin: 0; color: var(--th-ink-soft); font-size: var(--th-size-small); line-height: var(--th-lh-small); }
 .memory-maintenance-item .btn { font-size: var(--th-size-small); }
+.memory-generation-note,
+.memory-fold-description { margin: 0; color: var(--th-ink-soft); font-size: var(--th-size-small); line-height: var(--th-lh-small); }
+.memory-fold-description { padding: 0 6px var(--th-space-m); }
 .memory-profile-status {
   color: var(--th-ink-soft);
   font-size: var(--th-size-small);
@@ -4926,6 +4931,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   border-radius: 3px;
 }
 .connection-options .btn { margin-top: 6px; }
+.moment-actions .connection-checks { flex-basis: 100%; margin-top: 0; }
 .connection-history p { margin: 4px 0 10px; }
 
 /* AI connections: explain readiness before exposing configuration. */
@@ -4998,13 +5004,10 @@ b, strong { font-weight: 500; }
 .onboard-phone .qr-sub { margin: 0; font-size: var(--th-size-small); color: var(--th-ink-soft); }
 
 /* 执行者头像放在哪儿(图形与半叠的画法在 shared/agent-avatars.css):描边色跟着所在行的底色。 */
-.wb-sidebar .th-agents { --th-agent-ring: var(--wb-sidebar); --th-agent-fill: var(--th-paper); }
-.wb-task:hover .th-agents, .wb-task.is-selected .th-agents { --th-agent-ring: var(--th-ground); }
-.wb-task-meta .th-agents { margin: -3px 0 -3px auto; --th-agent-size: 20px; }
-/* 出生地字形(2026-10-19)跟头像组挨着,一起推到行尾。 */
-.wb-task-marks { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
-.wb-task-marks .th-agents { margin-left: 0; }
-.wb-task-meta .th-origin { --th-origin-size: 14px; }
+.wb-task.is-selected .th-agents { --th-agent-ring: var(--th-ground); }
+/* 出生地字形(2026-10-19)跟头像组挨着,一起放在行尾(和此刻的行同一格)。 */
+.wb-task-marks { display: inline-flex; align-items: center; gap: 6px; }
+.wb-task-marks .th-origin { --th-origin-size: 14px; }
 .wb-task-agents { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--wb-muted); font-size: 12px; line-height: 1.5; }
 .wb-task-agents > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-waiting-row.now-terminal-row { grid-template-columns: minmax(0, 1fr) auto auto; }

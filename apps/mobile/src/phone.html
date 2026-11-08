@@ -8,7 +8,7 @@
 <style>
 {{>tokens.css}}
   * { box-sizing:border-box }
-  body { margin:0; font-family:var(--font); background:var(--paper); color:var(--ink); padding-bottom:70px }
+  body { margin:0; font-family:var(--font); background:var(--paper); color:var(--ink); padding-bottom:calc(20px + env(safe-area-inset-bottom)) }
   /* 层级靠字号与留白,不靠粗细:浏览器默认把 b / strong / 标题加粗到 700,这里统一收到中等(500)。 */
   b, strong, h1, h2, h3, h4, th { font-weight:500 }
   header { padding:18px 16px 8px } header h1 { font-size:22px; margin:0 }
@@ -22,12 +22,9 @@
   .m-agents { display:flex; align-items:center; gap:8px; margin:-2px 2px 8px; color:var(--soft); font-size:13px } .m-agents[hidden] { display:none }
   .grp { color:var(--ink); font-size:13px; font-weight:500; margin:14px 2px 6px }
   .empty { text-align:center; color:var(--soft); padding:40px 10px }
-  nav { position:fixed; left:0; right:0; bottom:0; display:flex; background:var(--card); border-top:1.5px solid var(--line); padding-bottom:env(safe-area-inset-bottom) }
-  nav button { flex:1; font:inherit; font-size:12px; padding:10px 0 8px; border:0; background:none; color:var(--soft) }
-  nav button.on { color:var(--ink); font-weight:500 }
   #pairbar { margin:8px 14px; padding:9px 12px; background:var(--wash); border-radius:var(--r-s); font-size:12.5px; color:var(--soft) }
   #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:var(--r-pill); background:var(--accent); color:var(--on-accent) }
-  #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:var(--card); padding:7px 16px; border-radius:var(--r-l); font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
+  #toast { position:fixed; left:50%; bottom:calc(24px + env(safe-area-inset-bottom)); transform:translateX(-50%); background:var(--ink); color:var(--card); padding:7px 16px; border-radius:var(--r-l); font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
   #banner { margin:6px 14px; padding:8px 12px; background:var(--wash); border-radius:var(--r-s); font-size:12.5px; color:var(--ink) }
   .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:var(--r-pill); background:var(--card); color:var(--soft) }
@@ -39,35 +36,34 @@
   #m-status button { display:inline-block; min-height:44px; margin:8px 0 0; padding:9px 16px; border-radius:var(--r-s); color:var(--ink) }
   #m-status button:disabled { opacity:.5 } #m-status :focus-visible { outline:2px solid var(--accent); outline-offset:3px }
 </style></head><body>
-<header><h1>CC</h1><button id="nav-set" type="button">设置</button></header>
+<header><button id="small-cc" class="cc-mini" type="button" aria-label="返回和 CC 的对话"><img class="cc-header-dark" alt=""><img class="cc-header-light" alt=""></button><h1>CC</h1><button id="cc-connection" type="button" class="cc-connection">连接</button><button id="nav-set" type="button" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span></button></header>
 <div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
 <div class="pane on" id="p-today">
-  <div class="home-toolbar"><button id="refresh" type="button">刷新</button></div>
-  <div id="banner" hidden></div>
-  {{>presence.html}}
-</div>
-<div class="pane" id="p-matters">
-  <!-- 网页只看状态(收敛 5b,2026-10-21):交办、接着说、拍板、成果、对话记录都在 App 和电脑上。 -->
-  <!-- 连接提示:平时不在,连续两次联系不上 daemon 才浮出来,恢复后自己消失。放在列表与详情之外,两边共用同一行。 -->
+  <!-- 设备入口为唯一主人对话；旧状态区仅供短链接和旧 daemon 后备。 -->
+  <div id="m-home">
+    {{>conversation.html}}
+    <div class="home-toolbar"><button id="refresh" type="button" aria-label="刷新状态"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 13-2l2 6M4 12l2 6a8 8 0 0 0 13-2"/></svg><span>刷新</span></button></div>
+    <div id="banner" hidden></div>
+    {{>presence.html}}
+    <div id="m-list"><div class="empty">正在读…</div></div>
+    <button id="m-all" class="more" type="button" hidden>全部 →</button>
+  </div>
+  <!-- 连接提示:平时不在,连续两次联系不上 daemon 才浮出来,恢复后自己消失。主页与详情共用这一行。 -->
   <div id="m-conn" role="status" aria-live="polite" hidden></div>
-  <div id="m-list"><div class="empty">正在读…</div></div>
   <div id="m-detail" hidden>
-    <button id="m-back" class="more" type="button">← 全部</button>
+    <button id="m-back" class="more" type="button">← 返回</button>
     <div class="grp" id="m-title"></div>
     <div class="m-agents" id="m-agents" hidden></div>
     <div id="m-notice" role="status" aria-live="polite"></div>
     <section id="m-status" aria-label="现在到哪了" aria-live="polite"></section>
-    <p class="m-elsewhere">对话记录、成果和拍板在手机 App 或电脑上看。</p>
+    <section id="m-response" aria-label="回应这件事"></section><button id="matter-recheck" type="button" class="more" hidden>刷新核对请求</button>
+    <p class="m-elsewhere">对话记录、成果和拍板在手机 App 或电脑上看。</p><p class="m-device-help">交接、脚本批准和自改拍板请在手机 App 或电脑上处理。</p>
   </div>
 </div>
-<nav>
-  <button data-p="today" class="on">此刻</button>
-  <button data-p="matters">一起做</button>
-</nav>
-<style>{{>presence.css}}</style>
+<style>{{>presence.css}}{{>conversation.css}}</style>
 <style>{{>agent-avatars.css}}</style>
 <div id="toast"></div>
 <script>
 var T = {{TOKEN_JSON}}
 var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>workbench.js}}
-{{>presence.js}}{{>home.js}}</script></body></html>
+{{>presence.js}}{{>home.js}}{{>conversation.js}}{{>delegation.js}}{{>topics.js}}{{>search.js}}{{>responses.js}}{{>files.js}}{{>layers.js}}{{>entry.js}}</script></body></html>

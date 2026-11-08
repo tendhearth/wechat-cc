@@ -1,0 +1,1325 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "66c79e3c32eb6e061a60689942aeb93fab4427d6",
+  "artifactStatus": "production-candidate",
+  "ownerArtAccepted": false,
+  "fullVerification": {
+    "command": "VITEST_MAX_WORKERS=2 CC_SHARP_MODULE=<existing-sharp> nice -n 20 bun run verify --full",
+    "exitCode": 0,
+    "typecheckSeconds": 13,
+    "dependencyWarnings": 17,
+    "dependencyErrors": 0,
+    "bun": {
+      "passedFiles": 1040,
+      "skippedFiles": 2,
+      "passedTests": 13788,
+      "skippedTests": 15,
+      "seconds": 200
+    },
+    "node": {
+      "passedFiles": 863,
+      "skippedFiles": 4,
+      "passedTests": 11607,
+      "skippedTests": 17,
+      "seconds": 205
+    },
+    "countsOverlapAcrossRuntimes": true
+  },
+  "chromiumRegression": {
+    "passedCases": 22,
+    "sourceFixReviewed": true,
+    "nativeProof": false
+  },
+  "realHourQuiet": {
+    "startedAt": "2026-10-29T20:23:52.358Z",
+    "elapsedMs": 3605003.1042919997,
+    "quietDurationMs": 3600000,
+    "clock": "real wall + monotonic; no fake timers",
+    "changes": [
+      {
+        "elapsed": 0.15262500000000045,
+        "source": "original",
+        "userReduced": false,
+        "systemReduced": false,
+        "reducedMotion": false,
+        "quiet": true,
+        "quietUntil": 1793309032357.9446
+      },
+      {
+        "elapsed": 3599973.337458,
+        "source": "reloaded",
+        "userReduced": false,
+        "systemReduced": false,
+        "reducedMotion": false,
+        "quiet": false,
+        "quietUntil": 0
+      },
+      {
+        "elapsed": 3600001.453458,
+        "source": "original",
+        "userReduced": false,
+        "systemReduced": false,
+        "reducedMotion": false,
+        "quiet": false,
+        "quietUntil": 0
+      }
+    ],
+    "samples": [
+      {
+        "elapsedMs": 60002.699958000005,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4792920
+      },
+      {
+        "elapsedMs": 120004.76787499999,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4827912
+      },
+      {
+        "elapsedMs": 180007.1005,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4834136
+      },
+      {
+        "elapsedMs": 240009.733083,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4842168
+      },
+      {
+        "elapsedMs": 300011.695083,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4859088
+      },
+      {
+        "elapsedMs": 360013.991875,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4889664
+      },
+      {
+        "elapsedMs": 420014.928167,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4904744
+      },
+      {
+        "elapsedMs": 480016.893708,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4912880
+      },
+      {
+        "elapsedMs": 540018.29175,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4938640
+      },
+      {
+        "elapsedMs": 600020.508708,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5002792
+      },
+      {
+        "elapsedMs": 660020.661,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5012896
+      },
+      {
+        "elapsedMs": 720022.358792,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5021728
+      },
+      {
+        "elapsedMs": 780024.401125,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5030104
+      },
+      {
+        "elapsedMs": 840026.319167,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5038720
+      },
+      {
+        "elapsedMs": 900028.183583,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5055896
+      },
+      {
+        "elapsedMs": 960030.2543329999,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5065024
+      },
+      {
+        "elapsedMs": 1020032.6381669999,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5074552
+      },
+      {
+        "elapsedMs": 1080033.556583,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5091032
+      },
+      {
+        "elapsedMs": 1140035.9808750001,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5101296
+      },
+      {
+        "elapsedMs": 1200036.413375,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5111648
+      },
+      {
+        "elapsedMs": 1260037.5240830001,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 5122072
+      },
+      {
+        "elapsedMs": 1320039.207708,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4629128
+      },
+      {
+        "elapsedMs": 1380039.69925,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4640080
+      },
+      {
+        "elapsedMs": 1440041.425875,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4651336
+      },
+      {
+        "elapsedMs": 1500043.5648750002,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4662800
+      },
+      {
+        "elapsedMs": 1560043.4842080001,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4674696
+      },
+      {
+        "elapsedMs": 1620045.578125,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4686736
+      },
+      {
+        "elapsedMs": 1680047.2247920001,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4698968
+      },
+      {
+        "elapsedMs": 1740049.7908750002,
+        "quiet": true,
+        "reloadedQuiet": null,
+        "memoryBytes": 4711536
+      },
+      {
+        "elapsedMs": 1800051.72475,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4730632
+      },
+      {
+        "elapsedMs": 1860053.3792080001,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4743944
+      },
+      {
+        "elapsedMs": 1920055.863792,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4757592
+      },
+      {
+        "elapsedMs": 1980057.888458,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4771424
+      },
+      {
+        "elapsedMs": 2040059.455083,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4785560
+      },
+      {
+        "elapsedMs": 2100060.0285,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4799896
+      },
+      {
+        "elapsedMs": 2160062.397542,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4814472
+      },
+      {
+        "elapsedMs": 2220064.824458,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4829472
+      },
+      {
+        "elapsedMs": 2280066.5585829997,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4844576
+      },
+      {
+        "elapsedMs": 2340067.724792,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4860000
+      },
+      {
+        "elapsedMs": 2400069.219083,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4875600
+      },
+      {
+        "elapsedMs": 2460071.399167,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4891456
+      },
+      {
+        "elapsedMs": 2520071.983333,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4907624
+      },
+      {
+        "elapsedMs": 2580072.4935,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4923992
+      },
+      {
+        "elapsedMs": 2640072.406,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4940672
+      },
+      {
+        "elapsedMs": 2700074.038125,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4958208
+      },
+      {
+        "elapsedMs": 2760076.5388329998,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4975336
+      },
+      {
+        "elapsedMs": 2820076.8237079997,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4992776
+      },
+      {
+        "elapsedMs": 2880078.446583,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 5010432
+      },
+      {
+        "elapsedMs": 2940080.329833,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 5028392
+      },
+      {
+        "elapsedMs": 3000082.9763749996,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 5046536
+      },
+      {
+        "elapsedMs": 3060083.5312079997,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 5064960
+      },
+      {
+        "elapsedMs": 3120085.7981249997,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 5087360
+      },
+      {
+        "elapsedMs": 3180087.157125,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 5106312
+      },
+      {
+        "elapsedMs": 3240089.884625,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 5125568
+      },
+      {
+        "elapsedMs": 3300091.6803329997,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4667888
+      },
+      {
+        "elapsedMs": 3360093.679,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4687664
+      },
+      {
+        "elapsedMs": 3420095.657083,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4707632
+      },
+      {
+        "elapsedMs": 3480096.0851669996,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4727840
+      },
+      {
+        "elapsedMs": 3540098.0297499998,
+        "quiet": true,
+        "reloadedQuiet": true,
+        "memoryBytes": 4748384
+      },
+      {
+        "elapsedMs": 3600100.5615,
+        "quiet": false,
+        "reloadedQuiet": false,
+        "memoryBytes": 4771872
+      }
+    ],
+    "stored": {
+      "userReduced": false,
+      "quietUntil": 0
+    },
+    "complete": true
+  },
+  "runtimeValidation": {
+    "generatedAt": "2026-10-30T00:19:52.618Z",
+    "scope": "SOFTWARE-ONLY actual component/runtime/art exercise. Final source fixed at66c79e3c. No native WKWebView, backend, owner visual approval or leak freedom claim.",
+    "threeHour": {
+      "status": "passed",
+      "complete": true,
+      "sourceCommit": "66c79e3c32eb6e061a60689942aeb93fab4427d6",
+      "pid": 44039,
+      "execSessionId": 34942,
+      "execExitCode": 0,
+      "startedAt": "2026-10-29T21:18:52.631Z",
+      "endedAt": "2026-10-30T00:18:56.500Z",
+      "requestedRuntimeMs": 10800000,
+      "actualActiveProtocolElapsedMs": 10800532,
+      "actualMonotonicProtocolElapsedMs": 10802055,
+      "wallElapsedMs": 10803869,
+      "maxClockTickMs": 1059.5546249998733,
+      "clockGaps": [],
+      "cycles": 63,
+      "phases": 812,
+      "resourceSamples": 302,
+      "errors": [],
+      "warnings": [],
+      "cleanup": {
+        "petDestroy": {
+          "generation": 13,
+          "activeTimers": 0,
+          "frameDelta": 0,
+          "remainingContainers": 0
+        },
+        "browserClosed": true,
+        "serverClosed": true
+      },
+      "lifecycle": {
+        "generations": 13,
+        "pauseChecks": 62,
+        "quietReducedChecks": 62,
+        "destroyChecks": 13,
+        "peakOwnedTimers": 8,
+        "timerScheduled": 46211,
+        "timerFired": 41587,
+        "timerCancelled": 4624,
+        "activeTimers": 0,
+        "frameSrcMutations": 43019,
+        "uniqueAssignedMainFramePaths": 256,
+        "uniqueSuccessfulMainImageLoadPaths": 256,
+        "mainImageLoadEventCount": 41393
+      },
+      "resources": {
+        "rssSumMiB": {
+          "min": 316.96875,
+          "max": 1176.125,
+          "median": 1131.6796875,
+          "first": 316.96875,
+          "last": 1176.125
+        },
+        "heapUsedMiB": {
+          "min": 1.3965034484863281,
+          "max": 3.051616668701172,
+          "median": 2.1943130493164062,
+          "first": 2.4175491333007812,
+          "last": 2.08746337890625
+        },
+        "domNodes": {
+          "min": 22,
+          "max": 134,
+          "median": 22,
+          "first": 49,
+          "last": 22
+        },
+        "listeners": {
+          "min": 4,
+          "max": 8,
+          "median": 4,
+          "first": 4,
+          "last": 4
+        },
+        "browserCpuPercent": {
+          "min": 0,
+          "max": 27.9,
+          "median": 16,
+          "first": 5.7,
+          "last": 6.4
+        },
+        "nodeRssMiB": {
+          "min": 139.0625,
+          "max": 301.609375,
+          "median": 265.9453125,
+          "first": 142.328125,
+          "last": 301.609375
+        },
+        "rssSumOlsMiBPerMinute": {
+          "window150to180": 0.35713388580767713,
+          "window120to180": 0.3528650917734017
+        },
+        "hourBuckets": [
+          {
+            "windowMinutes": [
+              0,
+              60
+            ],
+            "samples": 100,
+            "rssSumMiB": {
+              "min": 316.96875,
+              "max": 1125.515625,
+              "median": 1107.515625,
+              "first": 316.96875,
+              "last": 1121.5
+            },
+            "rssSumOlsMiBPerMinute": 4.642613501715015,
+            "heapUsedMiB": {
+              "min": 1.3965034484863281,
+              "max": 2.9966888427734375,
+              "median": 2.1145172119140625,
+              "first": 2.4175491333007812,
+              "last": 2.2901611328125
+            },
+            "lastServerRequests": 292
+          },
+          {
+            "windowMinutes": [
+              60,
+              120
+            ],
+            "samples": 99,
+            "rssSumMiB": {
+              "min": 1095.78125,
+              "max": 1152.234375,
+              "median": 1131.8125,
+              "first": 1122.234375,
+              "last": 1152.234375
+            },
+            "rssSumOlsMiBPerMinute": 0.3325878201629947,
+            "heapUsedMiB": {
+              "min": 1.4828529357910156,
+              "max": 2.9252777099609375,
+              "median": 2.2233238220214844,
+              "first": 2.188648223876953,
+              "last": 2.335826873779297
+            },
+            "lastServerRequests": 573
+          },
+          {
+            "windowMinutes": [
+              120,
+              180
+            ],
+            "samples": 100,
+            "rssSumMiB": {
+              "min": 1125.46875,
+              "max": 1170.65625,
+              "median": 1153.5,
+              "first": 1140.03125,
+              "last": 1161.71875
+            },
+            "rssSumOlsMiBPerMinute": 0.3528650917734017,
+            "heapUsedMiB": {
+              "min": 1.556793212890625,
+              "max": 3.051616668701172,
+              "median": 2.2765464782714844,
+              "first": 2.3376617431640625,
+              "last": 2.254222869873047
+            },
+            "lastServerRequests": 854
+          }
+        ],
+        "terminalDom": {
+          "documents": 1,
+          "nodes": 22,
+          "jsEventListeners": 4
+        },
+        "serverRequests": 854,
+        "serverDistinctPaths": 292,
+        "servedMiB": 76.80281734466553,
+        "imageRequestAborts": 0
+      },
+      "receipt": "<soak-workspace>/.superpowers/soak/full-receipt.json",
+      "receiptSha256": "37f4776b7c98b931dcf3395a38edcb23069cf600ab7544f0e1d3bda77a1b909f",
+      "samples": "<soak-workspace>/.superpowers/soak/full-samples.jsonl",
+      "samplesSha256": "c325e4413d9253bca45713a1653a21a89315d3e4764342ebe4e3bd2d2050a263"
+    },
+    "staticBaseline": {
+      "status": "passed",
+      "complete": true,
+      "actualActiveProtocolElapsedMs": 3600542,
+      "cycles": 21,
+      "phases": 273,
+      "errors": [],
+      "warnings": [],
+      "clockGaps": [],
+      "cleanup": {
+        "petDestroy": {
+          "generation": 5,
+          "activeTimers": 0,
+          "frameDelta": 0,
+          "remainingContainers": 0
+        },
+        "browserClosed": true,
+        "serverClosed": true
+      },
+      "execSessionId": 83552,
+      "execExitCode": 0
+    },
+    "firstHourComparison": {
+      "json": "<soak-workspace>/.superpowers/soak/static-baseline/comparison.json",
+      "markdown": "<soak-workspace>/.superpowers/soak/static-baseline/comparison.md",
+      "newArt": {
+        "sampleFile": "<soak-workspace>/.superpowers/soak/full-samples.jsonl",
+        "selectedSampleSha256": "600d881cd6ea6ba8f959174d120f12b8215bcb770402c1bf9d709f8f5222c899",
+        "windowDefinition": "0 <= sample.runtimeElapsedMs <= 3600000; no interpolation; excludes terminal cleanup after60min",
+        "sampleCount": 100,
+        "firstSampleMinute": 0.0008,
+        "lastSampleMinute": 59.45885,
+        "rssSumMiB": {
+          "min": 316.96875,
+          "max": 1125.515625,
+          "median": 1107.515625,
+          "first": 316.96875,
+          "last": 1121.5
+        },
+        "rssSumLast15MiB": {
+          "min": 1089.546875,
+          "max": 1125.515625,
+          "median": 1116.046875,
+          "first": 1114.484375,
+          "last": 1121.5
+        },
+        "rssSumOlsSlopeMiBPerMinute": {
+          "window45to60": 0.06328785388115407,
+          "window30to60": 0.33503185200724006
+        },
+        "jsHeapUsedMiB": {
+          "min": 1.3965034484863281,
+          "max": 2.9966888427734375,
+          "median": 2.1145172119140625,
+          "first": 2.4175491333007812,
+          "last": 2.2901611328125
+        },
+        "domNodes": {
+          "min": 22,
+          "max": 100,
+          "median": 22,
+          "first": 49,
+          "last": 70
+        },
+        "listeners": {
+          "min": 4,
+          "max": 8,
+          "median": 4,
+          "first": 4,
+          "last": 4
+        },
+        "naturalIdle": {
+          "sampleCount": 20,
+          "domNodes": {
+            "min": 22,
+            "max": 85,
+            "median": 22,
+            "first": 22,
+            "last": 22
+          },
+          "listeners": {
+            "min": 4,
+            "max": 8,
+            "median": 4,
+            "first": 4,
+            "last": 4
+          }
+        },
+        "last": {
+          "cycles": 20,
+          "phases": 273,
+          "generation": 5,
+          "frameSrcMutationCount": 14291,
+          "distinctAssignedMainFramePaths": 256,
+          "distinctSuccessfulMainImageLoadPaths": 256,
+          "mainImageLoadEventCount": 13741,
+          "serverRequestCount": 292,
+          "serverDistinctPaths": 292,
+          "servedMiB": 25.635951042175293,
+          "pauseChecks": 21,
+          "controlChecks": 21,
+          "destroyChecks": 4
+        },
+        "browserCpuPercent": {
+          "min": 0,
+          "max": 25.8,
+          "median": 15,
+          "first": 5.7,
+          "last": 0
+        },
+        "nodeRssMiB": {
+          "min": 139.0625,
+          "max": 220.9375,
+          "median": 181.609375,
+          "first": 142.328125,
+          "last": 220.9375
+        }
+      },
+      "staticArt": {
+        "sampleFile": "<soak-workspace>/.superpowers/soak/static-baseline/full-samples.jsonl",
+        "selectedSampleSha256": "752861d19e93ecb1d75322bb0e32e8a2cf6fafb7d0344df06298f6d85e0ee04b",
+        "windowDefinition": "0 <= sample.runtimeElapsedMs <= 3600000; no interpolation; excludes terminal cleanup after60min",
+        "sampleCount": 100,
+        "firstSampleMinute": 0.0011833333333333333,
+        "lastSampleMinute": 59.04365,
+        "rssSumMiB": {
+          "min": 314.171875,
+          "max": 454.9375,
+          "median": 424.21875,
+          "first": 314.171875,
+          "last": 454.046875
+        },
+        "rssSumLast15MiB": {
+          "min": 435.375,
+          "max": 454.9375,
+          "median": 447.6640625,
+          "first": 451.265625,
+          "last": 454.046875
+        },
+        "rssSumOlsSlopeMiBPerMinute": {
+          "window45to60": -0.4356916777569085,
+          "window30to60": 0.7796206085999031
+        },
+        "jsHeapUsedMiB": {
+          "min": 1.3824958801269531,
+          "max": 2.567119598388672,
+          "median": 1.8795928955078125,
+          "first": 2.3272933959960938,
+          "last": 2.063739776611328
+        },
+        "domNodes": {
+          "min": 22,
+          "max": 69,
+          "median": 30,
+          "first": 49,
+          "last": 69
+        },
+        "listeners": {
+          "min": 4,
+          "max": 8,
+          "median": 4,
+          "first": 4,
+          "last": 6
+        },
+        "naturalIdle": {
+          "sampleCount": 20,
+          "domNodes": {
+            "min": 22,
+            "max": 48,
+            "median": 25,
+            "first": 44,
+            "last": 45
+          },
+          "listeners": {
+            "min": 4,
+            "max": 6,
+            "median": 4,
+            "first": 4,
+            "last": 6
+          }
+        },
+        "last": {
+          "cycles": 20,
+          "phases": 273,
+          "generation": 5,
+          "frameSrcMutationCount": 4456,
+          "distinctAssignedMainFramePaths": 32,
+          "distinctSuccessfulMainImageLoadPaths": 32,
+          "mainImageLoadEventCount": 3905,
+          "serverRequestCount": 46,
+          "serverDistinctPaths": 46,
+          "servedMiB": 3.2824926376342773,
+          "pauseChecks": 21,
+          "controlChecks": 21,
+          "destroyChecks": 4
+        },
+        "browserCpuPercent": {
+          "min": 0,
+          "max": 23.7,
+          "median": 15.25,
+          "first": 19.7,
+          "last": 0
+        },
+        "nodeRssMiB": {
+          "min": 123.109375,
+          "max": 148.65625,
+          "median": 131.875,
+          "first": 140.15625,
+          "last": 129.953125
+        }
+      }
+    },
+    "concerns": [
+      "Summed process RSS can double-count shared pages and includes native, decoded-image, raster and cache memory; it is not unique physical memory.",
+      "Main-image load events/paths are observed; decoded-buffer counts and cache allocations are not instrumented. Nominal RGBA byte models are not measurements.",
+      "Same semantic phase/control/idle/recreate schedule; archived frame sets and their declared timing differ. Workloads ran at different times; baseline ran concurrently with unchanged long job.",
+      "Lower baseline RSS under this software workload is an observed association; it does not prove a specific memory mechanism, leak freedom, native WKWebView behavior or owner visual approval.",
+      "Production intentionally freezes sleep in both forms; normal idle randomness stays real, with bounded public-API retries for interrupted blink/look phases."
+    ],
+    "trackedWorktreeClean": true,
+    "partialEvidence": "<soak-workspace>/.superpowers/soak/pre-final-ce72defe/archive-index.json"
+  },
+  "firstHourComparison": {
+    "generatedAt": "2026-10-30T00:19:52.616Z",
+    "sourceCommit": "66c79e3c32eb6e061a60689942aeb93fab4427d6",
+    "comparison": "Actual archived static-state response overlay vs new-art first60min; same current runtime/CSS/two forms/API workload",
+    "newArt": {
+      "sampleFile": "<soak-workspace>/.superpowers/soak/full-samples.jsonl",
+      "selectedSampleSha256": "600d881cd6ea6ba8f959174d120f12b8215bcb770402c1bf9d709f8f5222c899",
+      "windowDefinition": "0 <= sample.runtimeElapsedMs <= 3600000; no interpolation; excludes terminal cleanup after60min",
+      "sampleCount": 100,
+      "firstSampleMinute": 0.0008,
+      "lastSampleMinute": 59.45885,
+      "rssSumMiB": {
+        "min": 316.96875,
+        "max": 1125.515625,
+        "median": 1107.515625,
+        "first": 316.96875,
+        "last": 1121.5
+      },
+      "rssSumLast15MiB": {
+        "min": 1089.546875,
+        "max": 1125.515625,
+        "median": 1116.046875,
+        "first": 1114.484375,
+        "last": 1121.5
+      },
+      "rssSumOlsSlopeMiBPerMinute": {
+        "window45to60": 0.06328785388115407,
+        "window30to60": 0.33503185200724006
+      },
+      "jsHeapUsedMiB": {
+        "min": 1.3965034484863281,
+        "max": 2.9966888427734375,
+        "median": 2.1145172119140625,
+        "first": 2.4175491333007812,
+        "last": 2.2901611328125
+      },
+      "domNodes": {
+        "min": 22,
+        "max": 100,
+        "median": 22,
+        "first": 49,
+        "last": 70
+      },
+      "listeners": {
+        "min": 4,
+        "max": 8,
+        "median": 4,
+        "first": 4,
+        "last": 4
+      },
+      "naturalIdle": {
+        "sampleCount": 20,
+        "domNodes": {
+          "min": 22,
+          "max": 85,
+          "median": 22,
+          "first": 22,
+          "last": 22
+        },
+        "listeners": {
+          "min": 4,
+          "max": 8,
+          "median": 4,
+          "first": 4,
+          "last": 4
+        }
+      },
+      "last": {
+        "cycles": 20,
+        "phases": 273,
+        "generation": 5,
+        "frameSrcMutationCount": 14291,
+        "distinctAssignedMainFramePaths": 256,
+        "distinctSuccessfulMainImageLoadPaths": 256,
+        "mainImageLoadEventCount": 13741,
+        "serverRequestCount": 292,
+        "serverDistinctPaths": 292,
+        "servedMiB": 25.635951042175293,
+        "pauseChecks": 21,
+        "controlChecks": 21,
+        "destroyChecks": 4
+      },
+      "browserCpuPercent": {
+        "min": 0,
+        "max": 25.8,
+        "median": 15,
+        "first": 5.7,
+        "last": 0
+      },
+      "nodeRssMiB": {
+        "min": 139.0625,
+        "max": 220.9375,
+        "median": 181.609375,
+        "first": 142.328125,
+        "last": 220.9375
+      }
+    },
+    "staticArt": {
+      "sampleFile": "<soak-workspace>/.superpowers/soak/static-baseline/full-samples.jsonl",
+      "selectedSampleSha256": "752861d19e93ecb1d75322bb0e32e8a2cf6fafb7d0344df06298f6d85e0ee04b",
+      "windowDefinition": "0 <= sample.runtimeElapsedMs <= 3600000; no interpolation; excludes terminal cleanup after60min",
+      "sampleCount": 100,
+      "firstSampleMinute": 0.0011833333333333333,
+      "lastSampleMinute": 59.04365,
+      "rssSumMiB": {
+        "min": 314.171875,
+        "max": 454.9375,
+        "median": 424.21875,
+        "first": 314.171875,
+        "last": 454.046875
+      },
+      "rssSumLast15MiB": {
+        "min": 435.375,
+        "max": 454.9375,
+        "median": 447.6640625,
+        "first": 451.265625,
+        "last": 454.046875
+      },
+      "rssSumOlsSlopeMiBPerMinute": {
+        "window45to60": -0.4356916777569085,
+        "window30to60": 0.7796206085999031
+      },
+      "jsHeapUsedMiB": {
+        "min": 1.3824958801269531,
+        "max": 2.567119598388672,
+        "median": 1.8795928955078125,
+        "first": 2.3272933959960938,
+        "last": 2.063739776611328
+      },
+      "domNodes": {
+        "min": 22,
+        "max": 69,
+        "median": 30,
+        "first": 49,
+        "last": 69
+      },
+      "listeners": {
+        "min": 4,
+        "max": 8,
+        "median": 4,
+        "first": 4,
+        "last": 6
+      },
+      "naturalIdle": {
+        "sampleCount": 20,
+        "domNodes": {
+          "min": 22,
+          "max": 48,
+          "median": 25,
+          "first": 44,
+          "last": 45
+        },
+        "listeners": {
+          "min": 4,
+          "max": 6,
+          "median": 4,
+          "first": 4,
+          "last": 6
+        }
+      },
+      "last": {
+        "cycles": 20,
+        "phases": 273,
+        "generation": 5,
+        "frameSrcMutationCount": 4456,
+        "distinctAssignedMainFramePaths": 32,
+        "distinctSuccessfulMainImageLoadPaths": 32,
+        "mainImageLoadEventCount": 3905,
+        "serverRequestCount": 46,
+        "serverDistinctPaths": 46,
+        "servedMiB": 3.2824926376342773,
+        "pauseChecks": 21,
+        "controlChecks": 21,
+        "destroyChecks": 4
+      },
+      "browserCpuPercent": {
+        "min": 0,
+        "max": 23.7,
+        "median": 15.25,
+        "first": 19.7,
+        "last": 0
+      },
+      "nodeRssMiB": {
+        "min": 123.109375,
+        "max": 148.65625,
+        "median": 131.875,
+        "first": 140.15625,
+        "last": 129.953125
+      }
+    },
+    "assetSizeModels": {
+      "newArt": {
+        "registeredFrameAndPropPaths": 293,
+        "compressedPNGMiB": 26.236194610595703,
+        "nominalSingleRGBAImageBuffersMiB": 289.9375,
+        "note": "PNG header size model for selected registered states/transitions/props; not measured decoded-buffer count or browser allocation."
+      },
+      "staticArt": {
+        "registeredFrameAndPropPaths": 47,
+        "compressedPNGMiB": 3.9504079818725586,
+        "nominalSingleRGBAImageBuffersMiB": 43.9375,
+        "note": "PNG header size model for selected registered states/transitions/props; not measured decoded-buffer count or browser allocation."
+      }
+    },
+    "provenance": {
+      "newArtLaunch": "<soak-workspace>/.superpowers/soak/full-launch.json",
+      "baselineLaunch": "<soak-workspace>/.superpowers/soak/static-baseline/full-launch.json",
+      "baselineTerminal": "<soak-workspace>/.superpowers/soak/static-baseline/full-receipt.json",
+      "manifestOverlay": {
+        "kind": "read-only response overlay of actual committed motion.staticStates",
+        "overlaidStates": {
+          "lit": [
+            "thinking",
+            "working",
+            "permission",
+            "receive",
+            "done",
+            "look",
+            "sleep",
+            "wake",
+            "error",
+            "drag"
+          ],
+          "unlit": [
+            "thinking",
+            "working",
+            "permission",
+            "receive",
+            "done",
+            "look",
+            "sleep",
+            "wake",
+            "error",
+            "drag"
+          ]
+        },
+        "unchanged": "idle, blink, companion, transitions, props and runtime/CSS",
+        "originalManifestSha256": "551ab8abefdf7952160aac7dc20206fb8b590fde77022ac6c0563c8ee7677363",
+        "responseManifestSha256": "7db998a9b9100769d84d78766c17f298f8d9fc6ec38b95fae1e28565ced3397e",
+        "sourceFileUnmodified": true
+      },
+      "newArtHarnessSha256": "cd1846bcec2cc57bf190d42615269cf3929d175ea65b1cfc0a9f82d761c29348",
+      "baselineHarnessSha256": "d6346a9a37a3fa05377d3d6e6230b76ffe0c3ef55bc9326098a7f67bd7a300c7",
+      "sourceAndRunningHarnessUnchanged": true
+    },
+    "baselineTerminal": {
+      "status": "passed",
+      "complete": true,
+      "actualActiveProtocolElapsedMs": 3600542,
+      "cycles": 21,
+      "phases": 273,
+      "errors": [],
+      "warnings": [],
+      "clockGaps": [],
+      "cleanup": {
+        "petDestroy": {
+          "generation": 5,
+          "activeTimers": 0,
+          "frameDelta": 0,
+          "remainingContainers": 0
+        },
+        "browserClosed": true,
+        "serverClosed": true
+      },
+      "execSessionId": 83552,
+      "execExitCode": 0
+    },
+    "fullThreeHourVerdict": {
+      "status": "passed",
+      "complete": true,
+      "sourceCommit": "66c79e3c32eb6e061a60689942aeb93fab4427d6",
+      "pid": 44039,
+      "execSessionId": 34942,
+      "execExitCode": 0,
+      "startedAt": "2026-10-29T21:18:52.631Z",
+      "endedAt": "2026-10-30T00:18:56.500Z",
+      "requestedRuntimeMs": 10800000,
+      "actualActiveProtocolElapsedMs": 10800532,
+      "actualMonotonicProtocolElapsedMs": 10802055,
+      "wallElapsedMs": 10803869,
+      "maxClockTickMs": 1059.5546249998733,
+      "clockGaps": [],
+      "cycles": 63,
+      "phases": 812,
+      "resourceSamples": 302,
+      "errors": [],
+      "warnings": [],
+      "cleanup": {
+        "petDestroy": {
+          "generation": 13,
+          "activeTimers": 0,
+          "frameDelta": 0,
+          "remainingContainers": 0
+        },
+        "browserClosed": true,
+        "serverClosed": true
+      },
+      "lifecycle": {
+        "generations": 13,
+        "pauseChecks": 62,
+        "quietReducedChecks": 62,
+        "destroyChecks": 13,
+        "peakOwnedTimers": 8,
+        "timerScheduled": 46211,
+        "timerFired": 41587,
+        "timerCancelled": 4624,
+        "activeTimers": 0,
+        "frameSrcMutations": 43019,
+        "uniqueAssignedMainFramePaths": 256,
+        "uniqueSuccessfulMainImageLoadPaths": 256,
+        "mainImageLoadEventCount": 41393
+      },
+      "resources": {
+        "rssSumMiB": {
+          "min": 316.96875,
+          "max": 1176.125,
+          "median": 1131.6796875,
+          "first": 316.96875,
+          "last": 1176.125
+        },
+        "heapUsedMiB": {
+          "min": 1.3965034484863281,
+          "max": 3.051616668701172,
+          "median": 2.1943130493164062,
+          "first": 2.4175491333007812,
+          "last": 2.08746337890625
+        },
+        "domNodes": {
+          "min": 22,
+          "max": 134,
+          "median": 22,
+          "first": 49,
+          "last": 22
+        },
+        "listeners": {
+          "min": 4,
+          "max": 8,
+          "median": 4,
+          "first": 4,
+          "last": 4
+        },
+        "browserCpuPercent": {
+          "min": 0,
+          "max": 27.9,
+          "median": 16,
+          "first": 5.7,
+          "last": 6.4
+        },
+        "nodeRssMiB": {
+          "min": 139.0625,
+          "max": 301.609375,
+          "median": 265.9453125,
+          "first": 142.328125,
+          "last": 301.609375
+        },
+        "rssSumOlsMiBPerMinute": {
+          "window150to180": 0.35713388580767713,
+          "window120to180": 0.3528650917734017
+        },
+        "hourBuckets": [
+          {
+            "windowMinutes": [
+              0,
+              60
+            ],
+            "samples": 100,
+            "rssSumMiB": {
+              "min": 316.96875,
+              "max": 1125.515625,
+              "median": 1107.515625,
+              "first": 316.96875,
+              "last": 1121.5
+            },
+            "rssSumOlsMiBPerMinute": 4.642613501715015,
+            "heapUsedMiB": {
+              "min": 1.3965034484863281,
+              "max": 2.9966888427734375,
+              "median": 2.1145172119140625,
+              "first": 2.4175491333007812,
+              "last": 2.2901611328125
+            },
+            "lastServerRequests": 292
+          },
+          {
+            "windowMinutes": [
+              60,
+              120
+            ],
+            "samples": 99,
+            "rssSumMiB": {
+              "min": 1095.78125,
+              "max": 1152.234375,
+              "median": 1131.8125,
+              "first": 1122.234375,
+              "last": 1152.234375
+            },
+            "rssSumOlsMiBPerMinute": 0.3325878201629947,
+            "heapUsedMiB": {
+              "min": 1.4828529357910156,
+              "max": 2.9252777099609375,
+              "median": 2.2233238220214844,
+              "first": 2.188648223876953,
+              "last": 2.335826873779297
+            },
+            "lastServerRequests": 573
+          },
+          {
+            "windowMinutes": [
+              120,
+              180
+            ],
+            "samples": 100,
+            "rssSumMiB": {
+              "min": 1125.46875,
+              "max": 1170.65625,
+              "median": 1153.5,
+              "first": 1140.03125,
+              "last": 1161.71875
+            },
+            "rssSumOlsMiBPerMinute": 0.3528650917734017,
+            "heapUsedMiB": {
+              "min": 1.556793212890625,
+              "max": 3.051616668701172,
+              "median": 2.2765464782714844,
+              "first": 2.3376617431640625,
+              "last": 2.254222869873047
+            },
+            "lastServerRequests": 854
+          }
+        ],
+        "terminalDom": {
+          "documents": 1,
+          "nodes": 22,
+          "jsEventListeners": 4
+        },
+        "serverRequests": 854,
+        "serverDistinctPaths": 292,
+        "servedMiB": 76.80281734466553,
+        "imageRequestAborts": 0
+      },
+      "receipt": "<soak-workspace>/.superpowers/soak/full-receipt.json",
+      "receiptSha256": "37f4776b7c98b931dcf3395a38edcb23069cf600ab7544f0e1d3bda77a1b909f",
+      "samples": "<soak-workspace>/.superpowers/soak/full-samples.jsonl",
+      "samplesSha256": "c325e4413d9253bca45713a1653a21a89315d3e4764342ebe4e3bd2d2050a263"
+    },
+    "limitations": [
+      "Summed process RSS can double-count shared pages and includes native, decoded-image, raster and cache memory; it is not unique physical memory.",
+      "Main-image load events/paths are observed; decoded-buffer counts and cache allocations are not instrumented. Nominal RGBA byte models are not measurements.",
+      "Same semantic phase/control/idle/recreate schedule; archived frame sets and their declared timing differ. Workloads ran at different times; baseline ran concurrently with unchanged long job.",
+      "Lower baseline RSS under this software workload is an observed association; it does not prove a specific memory mechanism, leak freedom, native WKWebView behavior or owner visual approval.",
+      "Production intentionally freezes sleep in both forms; normal idle randomness stays real, with bounded public-API retries for interrupted blink/look phases."
+    ]
+  },
+  "nativeSmoke": {
+    "platform": "macOS Retina2x, actual Tauri WKWebView",
+    "sourceCommit": "66c79e3c32eb6e061a60689942aeb93fab4427d6",
+    "isolatedQaApp": true,
+    "finalBundleBuild": "passed",
+    "pairedWorking256OnPaper": "observed",
+    "actualFloatingWorkingStatus": "observed",
+    "reducedTogglePreservesWorkingFact": "observed",
+    "findCCReturnsToIsolatedMain": "observed",
+    "quietOn": {
+      "button": "恢复动作",
+      "pressed": true
+    },
+    "afterTestWebviewWallPlusTwoHours": {
+      "quiet": false,
+      "quietAction": "安静一小时",
+      "quietPressed": "false",
+      "quietOffApplied": true,
+      "actualButtonOffObserved": true
+    },
+    "futureCompletionAfterRecovery": "unconfirmed; later scenario selection did not change before Mac relocked",
+    "systemTimeChanged": false,
+    "realOSSleepTested": false,
+    "windowsTested": false,
+    "physicalMixedDPITested": false,
+    "nativeDragTestedSuccessfully": false,
+    "qaProcessStoppedAfterRelock": true
+  },
+  "reproduction": {
+    "shareableFilesByteIdentical": 23,
+    "contactSheetPNGsByteIdentical": 40,
+    "contactSummaryOnlyGeneratedAtDiffers": true,
+    "poseGuidesByteIdentical": 2
+  }
+}

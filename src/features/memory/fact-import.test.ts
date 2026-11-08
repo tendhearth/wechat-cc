@@ -35,6 +35,7 @@ beforeEach(() => {
 })
 afterEach(() => { db.close(); removeTempDir(stateDir) })
 const run = (now = 1_761_400_000_000) => importChatMemory(store, root, OWNER, now, '2026-10-26')
+const archive = () => join(stateDir, 'memory-archive', OWNER)
 const eventCount = () => (db.query('SELECT COUNT(*) AS n FROM memory_fact_events').get() as { n: number }).n
 
 describe('importChatMemory', () => {
@@ -60,14 +61,15 @@ describe('importChatMemory', () => {
     expect(renderCorrectionsMd(store.tombstones(OWNER))).toBe(readFileSync(join(root, 'corrections.md'), 'utf8'))
   })
 
-  it('a second run with the same files does nothing; the originals are kept and copied once as *.imported-<day>', () => {
+  it('a second run with the same files does nothing; the originals are kept and copied once as *.imported-<day> into memory-archive/<chat>/', () => {
     run()
     const n = eventCount()
     expect(run()).toEqual({ chatId: OWNER, outcome: 'unchanged' })
     expect(eventCount()).toBe(n)
     for (const f of ['memory.md', 'owner.md', 'corrections.md']) {
       expect(readFileSync(join(root, f), 'utf8')).toBe(readFileSync(join(FIXTURES, 'chats', 'owner', f), 'utf8'))
-      expect(readFileSync(join(root, `${f}.imported-2026-10-26`), 'utf8')).toBe(readFileSync(join(root, f), 'utf8'))
+      expect(readFileSync(join(archive(), `${f}.imported-2026-10-26`), 'utf8')).toBe(readFileSync(join(root, f), 'utf8'))
+      expect(existsSync(join(root, `${f}.imported-2026-10-26`))).toBe(false)
     }
   })
 
@@ -112,7 +114,10 @@ describe('importChatMemory', () => {
     expect(run()).toMatchObject({ outcome: 'mismatch', what: 'corrections.md' })
     expect(store.list(OWNER)).toEqual([])
     expect(store.importHash(OWNER)).toBeNull()
-    for (const f of ['memory.md', 'owner.md', 'corrections.md']) expect(existsSync(join(root, `${f}.imported-2026-10-26`))).toBe(false)
+    for (const f of ['memory.md', 'owner.md', 'corrections.md']) {
+      expect(existsSync(join(root, `${f}.imported-2026-10-26`))).toBe(false)
+      expect(existsSync(join(archive(), `${f}.imported-2026-10-26`))).toBe(false)
+    }
   })
 
   it('a mismatch found after mirroring rolls the whole chat back', () => {
@@ -136,6 +141,30 @@ describe('importMemoryOnBoot', () => {
     expect(renderMemoryMd(store.list('o9fixture-guest@im.wechat'), STAMP)).toBe(golden('guest/memory.md'))
     expect(existsSync(join(stateDir, 'memory', OWNER, 'memory.md'))).toBe(true)
     expect(logs.filter(l => l.includes('imported')).length).toBe(2)
+  })
+
+  it('copies a 1.7.8 boot left next to the files (*.imported-<day>) are moved into memory-archive/<chat>/, never deleted; a name already there is left alone', () => {
+    writeFileSync(join(root, 'memory.md.imported-2026-10-26'), 'old copy of memory.md')
+    writeFileSync(join(root, 'owner.md.imported-2026-10-26'), 'old copy of owner.md')
+    writeFileSync(join(root, 'notes.md.imported-2026-10-26'), 'not one of ours')
+    writeFileSync(join(root, 'memory.md.imported-later'), 'not a date')
+    const arch = archive()
+    cpSync(join(FIXTURES, 'chats', 'owner', 'owner.md'), join(arch, 'owner.md.imported-2026-10-26'), { recursive: true })
+    const already = readFileSync(join(arch, 'owner.md.imported-2026-10-26'), 'utf8')
+    const logs: string[] = []
+    importMemoryOnBoot({ store, stateDir, now: () => 1_761_400_000_000, log: (_t, l) => logs.push(l) })
+    expect(readFileSync(join(arch, 'memory.md.imported-2026-10-26'), 'utf8')).toBe('old copy of memory.md')
+    expect(existsSync(join(root, 'memory.md.imported-2026-10-26'))).toBe(false)
+    // 目的地已有同名:两边都不动
+    expect(readFileSync(join(root, 'owner.md.imported-2026-10-26'), 'utf8')).toBe('old copy of owner.md')
+    expect(readFileSync(join(arch, 'owner.md.imported-2026-10-26'), 'utf8')).toBe(already)
+    expect(logs.some(l => l.includes('owner.md.imported-2026-10-26') && l.includes('left both'))).toBe(true)
+    // 不是三份记忆文件的、不是日期的,一概不碰
+    expect(existsSync(join(root, 'notes.md.imported-2026-10-26'))).toBe(true)
+    expect(existsSync(join(root, 'memory.md.imported-later'))).toBe(true)
+    // 原文件照旧在、照旧导进去
+    expect(existsSync(join(root, 'memory.md'))).toBe(true)
+    expect(store.importHash(OWNER)).not.toBeNull()
   })
 })
 

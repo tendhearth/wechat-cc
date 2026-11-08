@@ -1,0 +1,36 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "matter": {
+      "id": "<terminal>",
+      "kind": "terminal",
+      "title": "app",
+      "projectPath": "/w/app",
+      "status": "open",
+      "state": "working",
+      "archivedAt": null,
+      "ownerChatId": null,
+      "originMatterId": null,
+      "originMessageId": null,
+      "createdAt": 1793413800000,
+      "updatedAt": 1793413800000,
+      "origin": "cli"
+    },
+    "bindings": [
+      {
+        "matterId": "<terminal>",
+        "surface": "cli",
+        "surfaceKey": "cli-golden-1",
+        "lastSeenAt": 1793413800000
+      }
+    ],
+    "sessions": [],
+    "task": null,
+    "events": [],
+    "permissions": [],
+    "questions": [],
+    "artifacts": [],
+    "inputs": []
+  }
+}

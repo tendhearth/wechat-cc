@@ -138,11 +138,11 @@ describe('matter materials',()=>{
 
   it.each(['restart_confirmation_required','external_close_confirmation_required'])('preserves %s and does not manufacture an accepted material receipt',async error=>{
     const task={id:'deadbeef',title:'t',status:'completed',providerId:'claude',path:project,error:null,updatedAt:1}
-    matterStore.create({id:task.id,kind:'task',title:'t',status:'done'})
+    matterStore.create({id:task.id,kind:'task',title:'t'});matterStore.setLifecycle(task.id,'done')
     const continueTask=vi.fn<NonNullable<MattersServiceDeps['workbench']>['continueTask']>(()=>{throw Error(error)}),material=upload()
     service=makeMattersService({store:matterStore,workbench:{detail:()=>({task,events:[]}),continueTask}})
     await expect(service.say(task.id,'','phone',{...material,requestId:randomUUID()})).rejects.toThrow(error)
-    expect(matterStore.get(task.id)?.status).toBe('done')
+    expect(matterStore.legacyStatuses([task.id]).get(task.id)).toBe('done')
     expect(continueTask.mock.calls[0]?.[2]).not.toHaveProperty('restartToken')
   })
 

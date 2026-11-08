@@ -15,6 +15,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../../ports/agent-provider'
 import type { MatterOrigin, MatterStore } from '../../../ports/matters'
 import { classifyProviderError } from '../../../domain/provider-quota'
+import type { TurnUsage } from '../../../domain/turn-usage'
 import { decideCall, isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { providerCallTarget } from '../../../app/provider-registry'
 import { liveRunTarget } from './call-target'
@@ -35,7 +36,7 @@ import { makeRunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS, type PermissionFac
 import { workbenchAsk } from '../permission-ask'
 
 const RULE_BY_LABEL:Record<RuleDecider,string>={rule:'CC 按规则',review:'CC 初审',floor:'红线'}
-import { publicTask, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'
+import { publicTask, stepPayload, timelineKind, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'
 import { entryOrigin, type EntryContext } from '../../../adapters/workbench/task-entry'
 import { makeRunUserInput } from '../../../adapters/workbench/user-input'
 import type { CreateWechatTask } from '../wechat-types'
@@ -119,9 +120,27 @@ export interface ExecuteDomains {
 }
 
 export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
-  /** 每条 run 里第几个带用量的 result(v82 主键的第二段)。 */
-  const usageSeq=new WeakMap<Active,number>()
+  /**
+   * 一起做的轮(M2b):result 收这一轮(带用量);收了以后再有动静就开下一轮;静下来(常驻会话后台活干完、没有 result)
+   * 也收。记不上只少一轮的记录,不打断任务。
+   */
+  const noteTurn=(running:Active,ev:{kind:string;usage?:TurnUsage;sessionId?:string})=>{
+    try {
+      if(ev.kind==='result'){
+        const id=running.turn?.open?running.turn.id:store.execution.nextTurn(running.taskId,running.identity)
+        running.turn={id,open:false}
+        store.execution.endTurn(id,{usage:ev.usage??null,nativeSessionId:ev.sessionId??null})
+      } else if(!running.turn?.open)running.turn={id:store.execution.nextTurn(running.taskId,running.identity),open:true}
+    } catch { /* 记不上只少一轮 */ }
+  }
+  const quietTurn=(running:Active)=>{
+    if(!running.turn?.open)return
+    running.turn.open=false
+    try{store.execution.endTurn(running.turn.id)}catch{/* 记不上只少一轮 */}
+  }
   const { store, state } = ctx
+  /** 主人交代这件事的第一句(判是不是「修 issue」、放行规则要问的那句)。 */
+  const firstUserText=(id:string)=>{const step=store.steps(id).find(s=>timelineKind(s)==='user');return step?stepPayload(step).text:undefined}
   const {runsByTask,queue,runningText}=state
   const {requireInput,canResume,continuation,provider}=domains.admission
   const {selectAttachments,combinedAttachments,continuationAttachmentScope}=domains.attachments
@@ -159,9 +178,14 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         history=acceptedContinuation.preview.context
         store.addEvent(task.id,'system','用户已确认带此前记录重新开始；原任务对话和成果继续保留。')
         store.session(task.id,null)
-        ctx.hub.touched(task.id)
       }
       const directory=outputDirectory(running.path,task.id)
+      // 话题 T3:从和主人聊过的话题里拣一份简报(只用索引,最多等 2 秒;拿不到就没有,不拦起执行者)
+      let briefTimer:ReturnType<typeof setTimeout>|undefined
+      const topicBrief=ctx.deps.topicBrief?await Promise.race([
+        ctx.deps.topicBrief({matterId:task.id,ownerChatId:task.ownerChatId??null,title:task.title,text}).catch(()=>null),
+        new Promise<null>(resolve=>{briefTimer=setTimeout(()=>resolve(null),2_000)}),
+      ]).finally(()=>clearTimeout(briefTimer)):null
       const instructions=[
         `你是 CC 的工作助手。当前任务编号 ${task.id}，任务：${task.title}。`,
         `本任务工作目录：${running.path}。成果目录：${directory}。`,
@@ -175,6 +199,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         '不要声称完成没有做过的检查。缺依赖、权限或信息时说明具体缺项。',
         // 项目经验(第二轮对标 ★2):按源项目(独立工作区算它的源项目)取主人写的那几句,哪家执行者都带上
         ...(()=>{try{const b=ctx.deps.projectLessons?.(store.worktrees.get(task.id)?.projectPath??(task.workspaceKind==='managed'?null:task.path));return b?[b]:[]}catch{return []}})(),
+        ...(topicBrief?[topicBrief]:[]),
       ].join('\n')
       const reviewStop=new AbortController()
       void running.stop.then(()=>reviewStop.abort())
@@ -195,7 +220,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const token=ctx.deps.mintSessionToken?.(sessionKey)
       running.credentialsMinted=!!ctx.deps.mintSessionToken
       if (running.cancelled) revokeCredentials(running)
-      store.update(task.id,running.cancelled ? 'cancelling' : 'running');ctx.hub.touched(task.id)
+      store.update(task.id,running.cancelled ? 'cancelling' : 'running');
       if (running.cancelled) { finalStatus='cancelled'; return }
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         workbenchTimeline:true,
@@ -210,7 +235,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         reportNotice:message=>{
           if(runsByTask.get(task.id)!==running||running.cancelled||running.finishing)return
           const notice=message.trim().slice(0,2000)
-          if(notice){store.addEvent(task.id,'system',notice,null,running.identity);ctx.hub.touched(task.id)}
+          if(notice){store.addEvent(task.id,'system',notice,null,running.identity);}
         },
         tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
@@ -253,13 +278,13 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const stream=runtime?.events??running.session.dispatch(request,material)
       let flushErrorNoted=false
       const coalescer=makeDeltaCoalescer(ev => {
-        if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') { store.recordAgentEvent(task.id,running.identity,ev); ctx.hub.touched(task.id) }
+        if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') { store.recordAgentEvent(task.id,running.identity,ev); }
       },{onError:()=>{
         // 定时器驱动的 flush 落库失败(比如 SQLite 一过性错误):别让它把进程带走,
         // 本轮记一条提示就够,不用每次 flush 都刷屏。
         if (flushErrorNoted) return
         flushErrorNoted=true
-        try { store.addEvent(task.id,'system','有一段输出没能保存，后面的会照常。'); ctx.hub.touched(task.id) } catch { /* best effort */ }
+        try { store.addEvent(task.id,'system','有一段输出没能保存，后面的会照常。'); } catch { /* best effort */ }
       }})
       /**
        * 状态转移探测器(评审 2026-09-21 #6 #2):每个事件之后比一次快照,而不是只看 `result`。
@@ -278,7 +303,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 静下来就交给 settleQuiet 判:它自己会因为「还在等主人拍板」而只收成果、不起计时。
         // 这里若因为有待决请求而跳过,这一次转移就被吃掉了 —— 之后 wasQuiet 一直是 true,
         // 再没有人回来收尾(评审 2026-09-21 #6 续:后台问题活过了父回合的答复)。
-        if (nowQuiet&&!wasQuiet) { settleQuiet(running); return }
+        if (nowQuiet&&!wasQuiet) { quietTurn(running); settleQuiet(running); return }
         // 又动起来了(自己被后台通知唤醒也算):不再安静就不再计时。文件夹本来就是它的,
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
@@ -302,21 +327,21 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             if (running.cancelled) return
             if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');ctx.hub.bumped(task.id)}
             if(rewound&&!rewoundNoticed&&['text','tool_call','result'].includes(ev.kind)){rewoundNoticed=true;domains.rewind?.markNoticed(task.id,rewound.ids)}
-            if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId){const peer=store.recordHandoffNative(running.handoffId,ev.sessionId);if(peer)ctx.hub.touched(peer.sourceTaskId)}ctx.hub.touched(task.id)}
+            if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
             coalescer.push(ev)
             // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
             // 任何一个成功回合(result)即视为这家恢复。
             if (ev.kind==='error') quota.note(task.providerId,ev.message,ev.code)
             if (ev.kind==='result') quota.clear(task.providerId)
-            // 每件事花了多少额度(v82):执行者报了用量就落一行;一条 run 里按 result 数编号(常驻会话自己醒来也算一轮)。
-            if (ev.kind==='result'&&ev.usage){const seq=(usageSeq.get(running)??0)+1;usageSeq.set(running,seq);try{store.usage.record({taskId:task.id,runId:running.identity,turnSeq:seq,providerId:task.providerId,usage:ev.usage,durationMs:ev.durationMs})}catch{/* 记不上只少一行用量 */}}
+            // 这件事的轮(M2b):result 收一轮、带执行者报的用量(每件事花了多少额度从这里加);别的动静接着开下一轮。
+            noteTurn(running,ev)
             if (ev.kind==='result') settleQuiet(running)
             // observe 是**故意**会往外抛的(身份不符那条),所以探测器自己抛出会把整轮带走。
             // 落定漏一次会被下一个事件补上,抛出去却不可逆 —— 吞掉,只记一次(终审 M5)。
             try { noteTransition() } catch {
               if (!transitionErrorNoted) {
                 transitionErrorNoted=true
-                try { store.addEvent(task.id,'system','本轮的状态跟踪出过一次错；收尾会在后面的事件里补上。');ctx.hub.touched(task.id) } catch { /* best effort */ }
+                try { store.addEvent(task.id,'system','本轮的状态跟踪出过一次错；收尾会在后面的事件里补上。');} catch { /* best effort */ }
               }
             }
           },()=>{
@@ -327,7 +352,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)
       } finally { coalescer.dispose() }
       if (!summary) { finalStatus='cancelled'; return }
-      if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId){const peer=store.recordHandoffNative(running.handoffId,summary.result.sessionId);if(peer)ctx.hub.touched(peer.sourceTaskId)}ctx.hub.touched(task.id)}
+      if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,summary.result.sessionId)}
       if (running.cancelled) finalStatus='cancelled'
       else if (summary.error || !summary.result || runtime?.snapshot().retained) {
         // An old foreground result cannot turn an unexpected retained EOF into success.
@@ -344,14 +369,13 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         finalStatus='failed'; finalError=error
         const coded=error!==raw&&!!summary.error
         if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
-        ctx.hub.touched(task.id)
-      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */} }
+      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */}; try{ctx.deps.onTaskTurnCompleted?.(task.id)}catch{/* 写回话题失败不影响收尾 */} }
     } catch (error) {
       const thrown=isNetworkUnprotectedError(error)?'network_unprotected':error instanceof CodexExecutionError?error.code:error instanceof Error?error.message:'task_failed'
       const message=thrown==='network_unprotected'||error instanceof CodexExecutionError?thrown:taskErrorForProviderCode(providerErrorCodeOf(error),thrown)??thrown
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
       if(!running.cancelled&&thrown!=='network_unprotected')try{ctx.deps.onTurnError?.(task.providerId,error instanceof CodexExecutionError?error.code:providerErrorCodeOf(error),error instanceof Error?error.message:String(error))}catch{/* 只是个提示 */}
-      if (!running.cancelled) { store.addEvent(task.id,'error',error instanceof CodexExecutionError?error.message:message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
+      if (!running.cancelled) { store.addEvent(task.id,'error',error instanceof CodexExecutionError?error.message:message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); }
     } finally {
       cancelIdleClose(running)
       running.finishing=true;running.questions.close();ctx.hub.bumped(task.id)
@@ -365,7 +389,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           await Promise.race([closePromise,new Promise<never>((_resolve,reject) => { closeTimer=setTimeout(() => reject(new Error('close_timeout')),ctx.deps.closeTimeoutMs ?? 3000) })])
         } catch {
           markUncertain(running); finalStatus='interrupted'; finalError='writer_not_closed'
-          try { store.addEvent(task.id,'system','执行程序未确认退出，此文件夹内的新任务将等待。请检查后台进程或重启服务。');ctx.hub.touched(task.id) } catch { /* final status write below may still succeed */ }
+          try { store.addEvent(task.id,'system','执行程序未确认退出，此文件夹内的新任务将等待。请检查后台进程或重启服务。');} catch { /* final status write below may still succeed */ }
           if (closePromise) void closePromise.then(() => confirmLateClose(running,true),() => {})
         } finally { if (closeTimer) clearTimeout(closeTimer) }
       }
@@ -406,12 +430,13 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         const body=willReport?terminalReportBody(running):undefined
         store.atomic(()=>{
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
+          // 这件事的轮记不上(比如这件事的行没了)不能挡任务自己的终态 —— 外层 catch 会把写者一直锁着。
+          try{store.execution.endRun(task.id,running.identity,status,finalError)}catch{/* 只少一轮的结局 */}
           store.update(task.id,status,finalError)
           stageFinishedNotice(running,status,finalError,willReport)
         })
-        ctx.hub.touched(task.id)
         terminalCommitted=true
-        matterSync(m=>m.setStatus(task.id,status==='interrupted'?'open':'done'))
+        matterSync(m=>m.setLifecycle(task.id,status==='interrupted'?'open':'done'))
         // 非 retained 的执行者永远不经过 settleQuiet(isReplied 要求 snapshot.retained),
         // 只走这条终态路径 —— 不在这里也调一次 reportOnce,那类执行者的任务永远不回报
         // (评审修复轮 1 ③)。turnSeq 去重保证 settleQuiet 已经报过这一轮时这里是 no-op。
@@ -467,15 +492,16 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const runId=randomUUID()
     const execution=normalizeExecutionChoice(executionChoice,store.execution.choice(task.id))
     const dispatchAttachments=combinedAttachments(attachments,acceptedContinuation.mode==='restart'?acceptedContinuation.preview.attachments:[])
-    requireInput(task.providerId,dispatchAttachments,execution,acceptedContinuation.mode==='resume',isIssueIntent(store.events(task.id).find(e=>e.kind==='user')?.text))
+    requireInput(task.providerId,dispatchAttachments,execution,acceptedContinuation.mode==='resume',isIssueIntent(firstUserText(task.id)))
     // addRunEvent 自己 touched:权限/提问审计在 atomic 块外单独发生,不能漏。
     // 事务里面(下面 store.atomic 块内)绝不能用它——半路抛错时 bump 跟着回滚,但 touched 已经
     // 把 hub 拱到了那个从没真正落库的 seq,之后 wait 会把这个"幻影 seq"当成已经发生过的事,
     // 一路卡到超时才被 store.version 兜底纠正(纠正见下面 changes.wait);直接调 store.addEvent
-    // 就不会发布这个未提交的信号,提交后的 ctx.hub.touched(task.id)(atomic 块外)会把真实 seq 发出去。
-    const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);ctx.hub.touched(task.id);return id}
+    // 就不会发布这个未提交的信号,提交后的 (atomic 块外)会把真实 seq 发出去。
+    const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);return id}
+    let firstTurn=null as string|null
     const handoffPeer=store.atomic(()=>{
-      store.execution.accept(task.id,runId,execution)
+      firstTurn=store.execution.accept(task.id,runId,execution)
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
@@ -504,7 +530,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           requestNotice(task,runId,'permission',event.permission.id,`${event.permission.tool} · ${event.permission.description}`)
         }else addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)
       },
-      ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),store.events(task.id).find(e=>e.kind==='user')?.text??null,facts))}:{}),
+      ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),firstUserText(task.id)??null,facts))}:{}),
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
       if(event.type==='request'){
@@ -521,8 +547,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
+      ...(firstTurn?{turn:{id:firstTurn,open:true}}:{}),
     }
-    const activate=()=>{if(handoffPeer)ctx.hub.touched(handoffPeer.sourceTaskId);ctx.hub.touched(task.id);runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
+    const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()
     return taskView(publicTask({...task,status:'queued',error:null}))
   }
@@ -539,7 +566,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     try{return ctx.deps.matters.ensureChat(ownerChatId,undefined,origin).id}
     catch(err){ctx.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
   }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void;conversationMessageId?:string;conversationText?:string}):WorkbenchTaskView {
     ctx.ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
     const attachments=entry?entry.materials:selectAttachments(input)
@@ -552,18 +579,25 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
       entry?.beforeCreate()
-      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'})
+      const create={title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'}
+      let task:StoredTask
       if(entry){
         const m=ctx.deps.matters;if(!m)throw Error('entry_not_wired')
         // 出生地:从鉴权来源来的(桌面 operator / 手机 v2 帧或浏览器),不认请求里自报的;不知道 ⇒ null,不画。
-        const origin=entryOrigin(entry.context)
-        const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey,undefined,origin):null
+        const surface=entryOrigin(entry.context)
+        const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey,undefined,surface):null
         if(chat&&chat.ownerChatId!==entry.context.ownerKey)throw Error('invalid_entry_owner')
-        m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:entry.context.ownerKey,originMatterId:chat?.id??null,originMessageId:null,origin})
-        m.linkTask(task.id)
+        // 建任务就建了这件事(store.create,同 id),出生地在这一次写进去。
+        const messageId=entry.conversationMessageId??null
+        if(messageId)store.recordConversationEntry(entry.context.ownerKey,messageId,entry.conversationText??text,surface??entry.context.surface)
+        task=store.create({...create,origin:{matterId:chat?.id??null,messageId,surface}})
         if(store.taskMatterId(task.id)!==task.id)throw Error('entry_matter_link_failed')
         m.bind(task.id,entry.context.surface,entry.context.ownerKey)
-      }else matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null,origin:input.origin??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
+      }else{
+        task=store.create({...create,origin:{matterId:origin?.matterId??null,messageId:origin?.messageId??null,surface:input.origin??null}})
+        const owner=task.ownerChatId
+        if(owner)matterSync(m=>m.bind(task.id,'wechat',owner))
+      }
       return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
         persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},scope:entry?.context,
       })

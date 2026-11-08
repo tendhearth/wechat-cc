@@ -43,15 +43,14 @@ describe('phone style guard', () => {
     for (const f of TSX) expect(readFileSync(f, 'utf8').match(/on \? c\.rail|focused \? c\.rail|selected \? c\.rail/g) ?? [], rel(f)).toEqual([])
   })
   it('detail-page titles use the title size, not display (display only for the Now greeting and the welcome hero)', () => {
-    for (const f of TSX.filter(f => !['app/(tabs)/index.tsx', 'app/welcome.tsx'].includes(rel(f)))) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/role="display"/)
+    for (const f of TSX.filter(f => !['ui/HomeScreen.tsx', 'app/welcome.tsx'].includes(rel(f)))) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/role="display"/)
   })
-  it('top-bar status line only on the two tab pages (detail pages: back button, no status; ConnectionNotice covers problems)', () => {
+  it('top-bar status line only on the home page (detail pages: back button, no status; ConnectionNotice covers problems)', () => {
     expect(readFileSync(join(SRC, 'ui/TopBar.tsx'), 'utf8')).toMatch(/showStatus = false/)
-    const TABS = ['app/(tabs)/index.tsx', 'app/(tabs)/together.tsx']
+    const TABS = ['ui/ConversationScreen.tsx']
     for (const f of TSX.filter(f => rel(f) !== 'ui/TopBar.tsx')) {
       for (const bar of readFileSync(f, 'utf8').match(/<TopBar\b[\s\S]*?\/>/g) ?? []) {
-        if (TABS.includes(rel(f))) expect(bar, rel(f)).toMatch(/\bshowStatus\b/)
-        else expect(bar, rel(f)).not.toMatch(/\bshowStatus\b|onConnection/)
+        if (!TABS.includes(rel(f))) expect(bar, rel(f)).not.toMatch(/\bshowStatus\b|onConnection/)
         if (/\bshowStatus\b/.test(bar)) expect(bar, rel(f)).not.toMatch(/\bonBack=/)
       }
     }

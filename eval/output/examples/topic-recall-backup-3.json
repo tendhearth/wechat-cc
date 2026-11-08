@@ -1,0 +1,34 @@
+{
+  "id": "topic-recall-backup-3",
+  "kind": "topic-recall",
+  "note": "虚构示例；前三句应召回同一条，第四句是闲聊负例。",
+  "input": {
+    "topics": [
+      {
+        "id": "backup",
+        "title": "家中备份",
+        "summary": "每周检查离线备份",
+        "aliases": [
+          "冷备",
+          "离线副本"
+        ],
+        "entries": [
+          {
+            "id": "backup-weekly",
+            "kind": "decision",
+            "line": "每周日核验离线副本，备份留在本地"
+          }
+        ]
+      }
+    ],
+    "text": "离线副本应该留在哪里"
+  },
+  "rules": [
+    {
+      "recalls": {
+        "topic": "backup",
+        "entry": "backup-weekly"
+      }
+    }
+  ]
+}

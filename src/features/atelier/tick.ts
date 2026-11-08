@@ -2,6 +2,7 @@
  * 画室那一拍:反省那一拍(companion introspect)的最后一步调它(wiring/introspect-steps.ts 的 atelierStep)。
  * 以前写在 wiring/index.ts 里,搬进功能目录时原样挪过来,只把用到的 boot / opts 收成 `AtelierTickDeps`。
  */
+import { ccActsFor } from '../../adapters/store/cc-acts'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Db } from '../../lib/db'
@@ -10,7 +11,7 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeAtelierStore } from './store'
 import { makeJsonAtelierPlanner, type JsonAtelierPlannerDeps } from './planner'
 import { locateAtelierSdCli, resolveAtelierRenderer } from './renderer-resolve'
-import { buildAtelierContext, runAtelierCycle } from './runtime'
+import { appendAtelierSuccess, buildAtelierContext, runAtelierCycle } from './runtime'
 
 export interface AtelierTickDeps {
   stateDir: string
@@ -19,6 +20,8 @@ export interface AtelierTickDeps {
   cheapEval: () => JsonAtelierPlannerDeps['evaluate'] | null
   log: (tag: string, line: string) => void
 }
+
+const ATELIER_RAN = new Set<string>(['created', 'render_failed', 'save_failed'])
 
 export function makeAtelierTick(opts: AtelierTickDeps): (o?: { nowIso?: string }) => Promise<void> {
   // Atelier is deliberately lazy and default-off. The callback is mounted
@@ -54,8 +57,14 @@ export function makeAtelierTick(opts: AtelierTickDeps): (o?: { nowIso?: string }
       } catch (err) { opts.log('ATELIER', `observations unavailable: ${String(err)}`) }
       try { persona = readFileSync(join(memoryRoot, chatId, 'persona.md'), 'utf8') } catch { /* persona is optional */ }
     }
+    const startedAt = Date.now()
+    // 「画室」那件事(M5b);M5d 起「画成了的那几次」也从它的轮推(和旧标记 successfulAt 合起来算),不再另记
+    const acts = opts.db ? ccActsFor(opts.db, opts.log) : null
     const result = await runAtelierCycle({
       stateDir: opts.stateDir,
+      // 节奏的时刻 = 这一轮的 startedAt:轮里推出来的「画成的那一刻」和以前记进 successfulAt 的是同一个值
+      now: () => new Date(startedAt),
+      ...(acts ? { successes: () => acts.runs('atelier', { status: 'completed', steps: false }).map(t => new Date(t.startedAt).toISOString()) } : {}),
       mode: cfg.atelier_mode,
       planner,
       renderer,
@@ -68,6 +77,17 @@ export function makeAtelierTick(opts: AtelierTickDeps): (o?: { nowIso?: string }
       }),
       log: (tag, line) => opts.log(tag, line),
     })
+    // 「画室」那件事的一轮(M5b):真动了笔才记(画成了 / 渲染或保存失败);没冲动、节奏没到、隐私拦下的不记
+    if (acts && ATELIER_RAN.has(result.status)) {
+      let recorded = false
+      try {
+        const t = acts.begin('atelier', { startedAt })
+        if (result.status === 'created') { t.step('artifact', { work: result.recordId, shared: result.shared }); recorded = t.finish('completed') === true }
+        else t.finish('failed', { errorCode: result.status })
+      } catch { /* 只少一轮记录 */ }
+      // 画成了、这一轮却没收成 completed(库写不进):记进旧标记,别让节奏漏掉这一次
+      if (result.status === 'created' && !recorded) { try { appendAtelierSuccess(opts.stateDir, new Date(startedAt).toISOString()) } catch { /* 下一次节奏门只靠 lastEvaluatedAt */ } }
+    }
     opts.log('ATELIER', result.status === 'created'
       ? `cycle created record=${result.recordId} shared=${result.shared}`
       : `cycle ${result.status}`)

@@ -10,6 +10,7 @@ import type { ChatAttachmentT } from '../backend/types'
 import { INLINE_IMAGE_MAX_BYTES, inlineImageMime, isInlineImage, voiceFailureKey } from '../view/chat'
 import { bytesToBase64 } from '../state/image-upload'
 import { radius, space } from './tokens'
+import { Icon } from './Icon'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 import { playVoice } from './voice-player'
@@ -30,12 +31,14 @@ export function ReplyProcess({ lines, lang, testID }: { lines: string[]; lang: L
         accessibilityState={{ expanded: open }}
         accessibilityHint={t(lang, 'chat.processHint')}
         onPress={() => setOpen(o => !o)}
-        hitSlop={8}
+        style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.xs }}
+        accessibilityLabel={t(lang, 'chat.process', { n: lines.length })}
       >
-        <Txt role="small" tone="inkSoft">{open ? '⌄' : '›'} {t(lang, 'chat.process', { n: lines.length })}</Txt>
+        <Txt role="small" tone="inkSoft">{t(lang, 'chat.process', { n: lines.length })}</Txt>
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} color={c.inkSoft} size={14} />
       </Pressable>
       {open ? (
-        <View testID={`${testID}-lines`} style={{ gap: space.xs, paddingLeft: space.m, borderLeftWidth: 1, borderColor: c.hair }}>
+        <View testID={`${testID}-lines`} style={{ gap: space.s, paddingVertical: space.s }}>
           <Txt role="caption" tone="inkSoft">{t(lang, 'chat.processHint')}</Txt>
           {lines.map((l, i) => <Txt key={i} role="small" tone="inkSoft" content="user">{l}</Txt>)}
         </View>
@@ -59,9 +62,8 @@ export function ReplyAttachments({ messageId, items, lang }: { messageId: string
 }
 
 function Chip({ children, testID }: { children: ReactNode; testID: string }) {
-  const { c } = useTheme()
   return (
-    <View testID={testID} style={{ flexDirection: 'row', alignItems: 'center', gap: space.s, minHeight: 36, paddingHorizontal: space.m, borderRadius: radius.bubble, borderWidth: 1, borderColor: c.hair, maxWidth: '100%' }}>
+    <View testID={testID} style={{ flexDirection: 'row', alignItems: 'center', gap: space.s, minHeight: 44, paddingHorizontal: space.m, maxWidth: '100%' }}>
       {children}
     </View>
   )
@@ -87,7 +89,7 @@ function VoiceChip({ messageId, index, text, lang }: { messageId: string; index:
         accessibilityLabel={t(lang, 'chat.voicePlay', { text })}
         accessibilityState={{ busy }}
         onPress={() => { void play() }}
-        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.s, minHeight: 36, paddingHorizontal: space.m, borderRadius: radius.bubble, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1, maxWidth: '100%' })}
+        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.s, minHeight: 44, paddingHorizontal: space.m, opacity: pressed ? 0.7 : 1, maxWidth: '100%' })}
       >
         {busy ? <ActivityIndicator size="small" color={c.inkSoft} /> : <Txt role="small" tone="accent">▶</Txt>}
         <Txt role="small">{t(lang, 'chat.voice')}</Txt>
@@ -123,7 +125,7 @@ function StickerImage({ file, label, lang }: { file: string; label: string; lang
 function InlineImage({ messageId, index, name, lang }: { messageId: string; index: number; name: string; lang: Lang }) {
   const { backend } = useBackendCtx()
   const { c } = useTheme()
-  const opener = useFileOpener(lang)
+  const opener = useFileOpener(lang, `${messageId}:${index}`)
   const [img, setImg] = useState<{ bytes: Uint8Array; uri: string } | null>(null)
   const [ratio, setRatio] = useState(3 / 4)
   const [missing, setMissing] = useState(false)
@@ -146,9 +148,10 @@ function InlineImage({ messageId, index, name, lang }: { messageId: string; inde
     <View style={{ width: 240, maxWidth: '100%' }}>
       <Pressable testID="chat-att-image" accessibilityRole="imagebutton" accessibilityLabel={t(lang, 'chat.image', { name })} disabled={!img}
         onPress={() => { if (img) void opener.open({ id: `${messageId}:${index}`, name, mime }, async () => img.bytes) }}
-        style={{ width: '100%', aspectRatio: ratio, borderRadius: radius.bubble, borderWidth: 1, borderColor: c.hair, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
-        {img ? <Image source={{ uri: img.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : <ActivityIndicator size="small" color={c.inkSoft} accessibilityLabel={t(lang, 'progress.loading')} />}
+        style={{ width: '100%', minHeight: 44, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+        {img ? <Image testID="chat-att-image-content" source={{ uri: img.uri }} style={{ width: '100%', aspectRatio: ratio }} resizeMode="contain" /> : <ActivityIndicator size="small" color={c.inkSoft} accessibilityLabel={t(lang, 'progress.loading')} />}
       </Pressable>
+      {opener.note ? <Txt testID="chat-att-image-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{opener.note}</Txt> : null}
       {opener.viewer}
     </View>
   )
@@ -157,14 +160,14 @@ function InlineImage({ messageId, index, name, lang }: { messageId: string; inde
 /** CC 回复里的文件(2026-10-06):点一下按块读下来,在手机上打开(图片 / 文字在 app 里看,其它交给系统)。 */
 function FileChip({ messageId, index, name, lang }: { messageId: string; index: number; name: string; lang: Lang }) {
   const { backend } = useBackendCtx()
-  const opener = useFileOpener(lang)
+  const opener = useFileOpener(lang, `${messageId}:${index}`)
   const id = `${messageId}:${index}`
   const mime = guessMime(name)
   return (
     <View style={{ gap: space.xs }}>
       <Pressable testID="chat-att-file" accessibilityRole="button" accessibilityLabel={t(lang, 'chat.fileOpen', { name })} disabled={!!opener.busyId}
         onPress={() => void opener.open({ id, name, mime }, () => downloadReplyFile(backend, messageId, index, sha256Hex))}>
-        <Chip testID="chat-att-file-chip"><Txt role="small" content="user" style={{ flexShrink: 1 }}>{name}</Txt><Txt role="caption" tone="inkSoft">{opener.busyId === id ? t(lang, 'progress.loading') : t(lang, 'artifacts.open')}</Txt></Chip>
+        <Chip testID="chat-att-file-chip"><Icon name="folder" /><Txt role="small" content="user" style={{ flexShrink: 1 }}>{name}</Txt><Txt role="caption" tone="inkSoft">{opener.busyId === id ? t(lang, 'progress.loading') : t(lang, 'artifacts.open')}</Txt></Chip>
       </Pressable>
       {opener.note ? <Txt testID="chat-att-file-note" role="caption" tone="inkSoft" accessibilityLiveRegion="polite">{opener.note}</Txt> : null}
       {opener.viewer}

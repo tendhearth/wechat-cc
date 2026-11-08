@@ -9,6 +9,7 @@
  * 设置面板 / 微信「背包」,不归哪一个功能。地基里一份(foundation.ts 的 `journal`);读写路由在 src/features/journal。
  */
 import type { Db } from '../../lib/db'
+import { hintWrite } from '../../lib/write-hints'
 import { parseCatch } from '../../domain/hunt-catch'
 
 export type CatchStatus = 'new' | 'tried' | 'using' | 'dropped'
@@ -145,6 +146,9 @@ export function makeJournal(db: Db): Journal {
     'SELECT kind, title, ts FROM journal ORDER BY ts DESC, rowid DESC LIMIT 1',
   )
 
+  // 觅食台条目不进 MatterLog 的游标:落笔后给手机 home 主题一声提示(write-hints.ts)
+  const hinted = () => hintWrite(db, { kind: 'journal' })
+
   return {
     recordHunt({ chatId, text, nowIso }) {
       const ts = nowIso ?? new Date().toISOString()
@@ -155,7 +159,7 @@ export function makeJournal(db: Db): Journal {
         ins.run(`${ts}:${n}:${Math.random().toString(36).slice(2, 8)}`, ts, chatId, item.title, item.url, item.note)
         n++
       }
-      if (n > 0) prune.run(PRUNE_KEEP)
+      if (n > 0) { prune.run(PRUNE_KEEP); hinted() }
       return n
     },
     recordVisit({ chatId, text, peerLabel, nowIso, imageSvg }) {
@@ -165,6 +169,7 @@ export function makeJournal(db: Db): Journal {
       const id = `${ts}:visit:${Math.random().toString(36).slice(2, 8)}`
       insVisit.run(id, ts, chatId, peerLabel, body, imageSvg ?? null)
       prune.run(PRUNE_KEEP)
+      hinted()
       return id
     },
     recordPostcard({ chatId, text, peerLabel, nowIso }) {
@@ -174,6 +179,7 @@ export function makeJournal(db: Db): Journal {
       const id = `${ts}:postcard:${Math.random().toString(36).slice(2, 8)}`
       insPostcard.run(id, ts, chatId, `${peerLabel} 回了你的心愿`, body)
       prune.run(PRUNE_KEEP)
+      hinted()
       return id
     },
     recordRecollection({ chatId, text, matterId, nowIso }) {
@@ -183,10 +189,11 @@ export function makeJournal(db: Db): Journal {
       const id = `${ts}:recollection:${Math.random().toString(36).slice(2, 8)}`
       insRecollection.run(id, ts, chatId, RECOLLECTION_TITLE, body, matterId)
       prune.run(PRUNE_KEEP)
+      hinted()
       return id
     },
     hasRecollection(matterId) { return (selHasRecollection.get(matterId)?.cnt ?? 0) > 0 },
-    attachImage(id, svg) { setImage.run(svg, id) },
+    attachImage(id, svg) { setImage.run(svg, id); hinted() },
     list(limit = 200) { return selAll.all(limit) },
     listPostcards({ limit = 24, offset = 0, favoritesOnly = false }) {
       const where = "kind = 'visit' AND image_svg IS NOT NULL AND trim(image_svg) != ''" + (favoritesOnly ? ' AND favorite = 1' : '')
@@ -196,16 +203,19 @@ export function makeJournal(db: Db): Journal {
     },
     setFavorite(id, favorite) {
       const result = db.query("UPDATE journal SET favorite = ? WHERE id = ? AND kind = 'visit' AND image_svg IS NOT NULL AND trim(image_svg) != ''").run(favorite ? 1 : 0, id)
+      if (result.changes > 0) hinted()
       return result.changes > 0
     },
     setStatus(id, status) {
       if ((exists.get(id)?.cnt ?? 0) === 0) return false
       upd.run(status, id)
+      hinted()
       return true
     },
     remove(id) {
       if ((exists.get(id)?.cnt ?? 0) === 0) return false
       del.run(id)
+      hinted()
       return true
     },
     summary(seenUntil) {

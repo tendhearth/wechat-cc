@@ -259,6 +259,28 @@ describe('workbench owned background runtime',()=>{
     await expect(owned.context!.requestUserInput!(spec)).resolves.toBeNull()
   })
 
+  it('常驻会话的轮(M2b):result 收一轮、再有动静开下一轮;后台活干完静下来也收;run 断了落 failed',async()=>{
+    const owned=new OwnedRuntime();setup(owned);const task=create();await started(owned)
+    const turns=()=>db.query('SELECT status,usage_json AS usage,model FROM matter_turns WHERE matter_id=? ORDER BY seq').all(task.id)
+    const state=()=>db.query<{state:string},[string]>('SELECT state FROM matters WHERE id=?').get(task.id)!.state
+    await expect.poll(turns).toEqual([{status:'completed',usage:null,model:'owned-model'}])
+    expect(state()).toBe('open');expect(service.detail(task.id).task.status).toBe('running')
+    owned.queue.push({kind:'text',itemId:'second',text:'自己醒来接着做'})
+    await expect.poll(state).toBe('working')
+    owned.queue.push({...result,usage:{input:5,output:2}})
+    await expect.poll(turns).toEqual([{status:'completed',usage:null,model:'owned-model'},{status:'completed',usage:'{"input":5,"output":2}',model:'owned-model'}])
+    expect(state()).toBe('open')
+    owned.state={...owned.state,backgroundCount:1}
+    owned.queue.push({kind:'tool_call',itemId:'bg',tool:'Bash',status:'running',label:'后台跑测试'} as AgentEvent)
+    await expect.poll(()=>turns().length).toBe(3);expect(state()).toBe('working')
+    owned.state={...owned.state,backgroundCount:0}
+    owned.queue.push({kind:'tool_call',itemId:'bg',tool:'Bash',status:'completed',label:'后台跑测试'} as AgentEvent)
+    await expect.poll(()=>(turns()[2] as {status:string}).status).toBe('completed')
+    expect(state()).toBe('open')
+    owned.queue.end();await settled(task.id)
+    expect(turns()).toHaveLength(3);expect(state()).toBe('failed')
+  })
+
   it('does not report a retained runtime as completed when its stream unexpectedly ends after a parent result',async()=>{
     const owned=new OwnedRuntime();setup(owned);const task=create();await started(owned)
     owned.queue.end();await settled(task.id)

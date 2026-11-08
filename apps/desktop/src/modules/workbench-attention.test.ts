@@ -40,7 +40,7 @@ describe('global workbench attention polling', () => {
     expect(invoke).toHaveBeenCalledTimes(1)
     const [command, payload] = invoke.mock.calls[0] as unknown as [string, { title: string; body: string }]
     expect(command).toBe('notify_user')
-    expect(Object.keys(payload).sort()).toEqual(['body', 'title'])
+    expect(Object.keys(payload).sort()).toEqual(['body', 'matterId', 'title'])
     expect(payload.title + payload.body).not.toMatch(/private|secret|a-1|任务 A|任务 B/)
 
     await attention.refresh()
@@ -167,16 +167,38 @@ describe('global workbench attention polling', () => {
     progress = [{ id: 'A', phase: 'replied' }, { id: 'B', phase: 'cancelled' }, { id: 'C', phase: 'working' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
     expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '一起做有回复了', body: '有一件事回复了。打开 CC 查看。' })
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { matterId: 'A', title: '有一件事回复了', body: '打开 CC 查看。' })
     progress = [{ id: 'A', phase: 'replied' }, { id: 'C', phase: 'interrupted' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
-    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '一起做有任务停下了', body: '打开 CC 看看发生了什么。' })
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { matterId: 'C', title: '有一件事停下了', body: '打开 CC 看看发生了什么。' })
     // 窗口在前面:不弹
     progress = [{ id: 'D', phase: 'working' }]; await attention.refresh()
     focused = true; progress = [{ id: 'D', phase: 'replied' }]
     await attention.refresh(); await Promise.resolve(); await Promise.resolve()
     expect(invoke).toHaveBeenCalledTimes(2)
+    // 一次回来好几件:标题写件数,不再提「一起做」(U4:桌面没有单独的一起做了)
+    focused = false; progress = [{ id: 'E', phase: 'working' }, { id: 'F', phase: 'working' }]; await attention.refresh()
+    progress = [{ id: 'E', phase: 'replied' }, { id: 'F', phase: 'replied' }]
+    await attention.refresh(); await Promise.resolve(); await Promise.resolve()
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { matterId: 'E', title: '2 件事回复了', body: '打开 CC 查看。' })
     attention.destroy()
+  })
+
+  it('forwards progress and observed round transitions from the same request without changing native notice priority', async () => {
+    const { createWorkbenchAttentionPoller } = await import('./workbench-attention.js')
+    let phase = 'working', tasks: ReturnType<typeof attentionTask>[] = []
+    const onChange = vi.fn(), invoke = vi.fn(async () => undefined)
+    const api = vi.fn(async () => ({ tasks, progress: [{ id: 'A', phase }] }))
+    const poller = createWorkbenchAttentionPoller({ invokeWorkbenchApi: api, invoke, onChange })
+    await poller.refresh()
+    expect(onChange).toHaveBeenLastCalledWith({ tasks: [], stale: false, progress: new Map([['A', 'working']]), moved: { replied: [], stopped: [] } })
+    phase = 'replied'; tasks = [attentionTask('B', ['request'])]
+    await poller.refresh()
+    expect(onChange).toHaveBeenLastCalledWith({ tasks, stale: false, progress: new Map([['A', 'replied']]), moved: { replied: ['A'], stopped: [] } })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('notify_user', { matterId: 'B', title: '有一件事等你决定', body: '有新的问题或权限请求。打开 CC 看看。' })
+    expect(api).toHaveBeenCalledTimes(2)
+    poller.destroy()
   })
 
   it('an older daemon without progress never notifies about replies', async () => {
@@ -185,4 +207,26 @@ describe('global workbench attention polling', () => {
     expect(progressTransitions(null, new Map([['A', 'replied']]))).toEqual({ replied: [], stopped: [] })
     expect(progressTransitions(new Map([['A', 'queued']]), new Map([['A', 'replied']]))).toEqual({ replied: [], stopped: [] })
   })
+})
+
+it('acknowledges only the matter actually viewed in a focused window, including focus after a notification', async () => {
+  const { createWorkbenchAttentionPoller } = await import('./workbench-attention.js')
+  let phase = 'working', focused = true, taskId: string | null = 'deadbeef'
+  const api = vi.fn(async (_method: string, _path: string, _body?: unknown) => ({ tasks: [], progress: [{ id: 'deadbeef', phase }] }))
+  const poller = createWorkbenchAttentionPoller({ invokeWorkbenchApi: api, invoke: vi.fn(), getContext: () => ({ taskId, focused }) })
+  await poller.refresh()
+  expect(api.mock.calls.filter(c => c[0] === 'POST')).toHaveLength(0)
+  phase = 'replied'
+  await poller.refresh()
+  expect(api).toHaveBeenCalledWith('POST', '/v1/matter/seen', { id: 'deadbeef' })
+  api.mockClear(); focused = false
+  await poller.refresh()
+  expect(api.mock.calls.filter(c => c[0] === 'POST')).toHaveLength(0)
+  focused = true; taskId = null
+  await poller.refresh()
+  expect(api.mock.calls.filter(c => c[0] === 'POST')).toHaveLength(0)
+  taskId = 'deadbeef'
+  await poller.refresh()
+  expect(api).toHaveBeenCalledWith('POST', '/v1/matter/seen', { id: 'deadbeef' })
+  poller.destroy()
 })

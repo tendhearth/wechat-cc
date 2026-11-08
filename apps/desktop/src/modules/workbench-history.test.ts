@@ -44,7 +44,8 @@ it('renders both sides in both previews while preserving exact inspectable user 
   expect(reply.querySelector('pre code')?.textContent).toContain('const answer = 42')
   expect(reply.querySelector('a')?.getAttribute('href')).toBe('https://example.com/docs')
   expect(reply.textContent).toContain('功能说明')
-  expect(reply.textContent).not.toContain('/Users/example')
+  expect(reply.textContent).toContain('/Users/example/project/docs/cc-workbench.md:13')
+  expect(reply.querySelector('a[href^="/Users/"]')).toBeNull()
  }
  const requests=document.querySelectorAll('.wb-history-message-user .cc-user-reading')
  expect(requests).toHaveLength(2)
@@ -67,7 +68,11 @@ it('keeps history Markdown from creating executable content or forged import con
  expect(document.querySelectorAll('script,img')).toHaveLength(0)
  expect(document.querySelectorAll('[data-history="import"]')).toHaveLength(1)
  for(const reply of document.querySelectorAll('.wb-history-message-body')){
-  expect(reply.querySelectorAll('a,button')).toHaveLength(0)
+  expect(reply.querySelectorAll('button')).toHaveLength(0)
+  expect(reply.querySelectorAll('a')).toHaveLength(1)
+  expect(reply.querySelector('a')?.getAttribute('href')).toBe('https://example.com/tracker.png')
+  expect(reply.querySelector('a')?.getAttribute('rel')).toBe('noopener noreferrer')
+  expect(reply.querySelector('img')).toBeNull()
   expect(reply.textContent).toContain('<script>bad()</script>')
   expect(reply.textContent).toContain('外部图片')
  }

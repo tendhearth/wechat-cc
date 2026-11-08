@@ -111,6 +111,8 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v60: matters(一件事)+ bindings + sessions,workbench_tasks.matter_id 回填。
     // v61: seq 列(实时事件流)
     // v62: workbench_review_marks(逐文件审阅标记)
+    // v106: topic bubble tables; v107–108 add delivery evidence and rebuild speech_pending
+    // in place, so the exact table list below includes T4a and no S4 temporary tables.
     // 断言总条数不写死字面量——每加一条迁移这里就得跟着改一次,而"这一版该有
     // 多少条"这件事已经由 migration-order.test.ts 的指纹锁看着了(那个锁最后
     // 一条断言就是 Math.max(...locked) === migrations.length),这里重复一遍
@@ -121,15 +123,15 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // AUTOINCREMENT,SQLite 因此也会自建 sqlite_sequence——这两个同样是三条
     // 迁移加完之后漏改的(跟上面 v 的字面量是同一处腐烂,一起修)。
     expect(tables.map(t => t.name)).toEqual([
-      'a2a_events', 'activity', 'cli_sessions', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
-      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'knowledge_extraction_state', 'knowledge_judge_state', 'matter_bindings', 'matter_report_outbox', 'matter_say_receipts', 'matter_sessions', 'matters', 'memory_derived', 'memory_exports', 'memory_fact_events', 'memory_facts', 'memory_import', 'memory_source_revisions', 'message_attempts', 'messages',
+      'a2a_events', 'activity', 'cli_sessions', 'connection_heartbeat', 'conversation_work_references', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
+      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'knowledge_extraction_state', 'knowledge_judge_state', 'matter_bindings', 'matter_items', 'matter_log_cursor', 'matter_report_outbox', 'matter_say_receipts', 'matter_sessions', 'matter_topics', 'matter_turns', 'matters', 'memory_derived', 'memory_exports', 'memory_fact_events', 'memory_facts', 'memory_import', 'memory_source_revisions', 'message_attempts', 'messages',
       'milestones', 'observations', 'openai_chat_sessions', 'pending_cards', 'penpal_channel', 'penpal_letter', 'permission_decisions', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
-      'sessions', 'speech_log', 'sqlite_sequence', 'thread_extract_state', 'threads', 'turn_records',
+      'sessions', 'speech_audit_coverage', 'speech_audit_events', 'speech_log', 'speech_pending', 'sqlite_sequence', 'terminal_reads', 'thread_extract_state', 'threads', 'topic_bubble_requests', 'topic_bubble_revisions', 'topic_bubbles', 'topic_entries', 'topic_merge_aliases', 'topic_recall_refs',
       'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachment_uploads', 'workbench_attachments', 'workbench_control_receipts',
-      'workbench_creation_receipts', 'workbench_entry_requests', 'workbench_events', 'workbench_goals', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_comments', 'workbench_review_hunks', 'workbench_review_marks', 'workbench_rewinds', 'workbench_run_execution', 'workbench_script_approvals',
-      'workbench_sources', 'workbench_tasks', 'workbench_turn_usage', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions', 'workbench_worktrees',
+      'workbench_creation_receipts', 'workbench_entry_requests', 'workbench_goals', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_comments', 'workbench_review_hunks', 'workbench_review_marks', 'workbench_rewinds', 'workbench_script_approvals',
+      'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions', 'workbench_worktrees',
     ])
   })
 

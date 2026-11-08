@@ -12,12 +12,14 @@
  *  - **核对**:facts.db 的每一行(没跳过的)在表里都要有同一句,而且表里那一行不比它旧、时间一样时每个字段都一样;
  *    不满足的那几行写日志、这一次不记「导过了」(下次开机再导;已经进表的不会重复进)。
  *
- * facts.db **只读、不删、不改名**(主人 10-26 第 5 条):第一次导完用 `VACUUM INTO` 复制一份 `facts.db.imported-<日期>`。
+ * facts.db **只读、不删、不改名**(主人 10-26 第 5 条):第一次导完用 `VACUUM INTO` 复制一份 `facts.db.imported-<日期>`,放进
+ * `archiveDir`(`<stateDir>/memory-archive/knowledge/`;1.7.8 之前放在 knowledge/ 里,开机挪过去,见 lib/imported-copies)。
  * 指纹(所有行的摘要)变了 ⇒ 回滚过的老二进制写过它 ⇒ 再导一次。`'facts.db'` 只许出现在这里(scripts/facts-db.guard.test.ts)。
  */
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { ensureArchiveDir, importedCopyName, moveImportedCopies } from '../../lib/imported-copies'
 import { openSqlite, type SqlDatabase } from '../../lib/runtime/sqlite'
 import type { FactRow } from '../../ports/knowledge'
 import type { MemoryFactsStore } from '../../ports/memory-facts'
@@ -84,7 +86,8 @@ export function coerceLegacyFact(r: Record<string, unknown>): { row: FactRow; no
 const FIELDS = ['contact', 'kind', 'predicate', 'value', 'related_contact', 'time_ref', 'confidence', 'source_msg_keys', 'status', 'updated_at', 'valid_from', 'invalidated_at', 'superseded_by'] as const
 const canon = (r: FactRow) => JSON.stringify(FIELDS.map(k => (r as unknown as Record<string, unknown>)[k] ?? null))
 
-export function importFactsDb(d: { store: MemoryFactsStore; knowledgeRoot: string; now: () => number; log: (tag: string, line: string) => void }): FactsImportOutcome {
+export function importFactsDb(d: { store: MemoryFactsStore; knowledgeRoot: string; archiveDir: string; now: () => number; log: (tag: string, line: string) => void }): FactsImportOutcome {
+  try { moveImportedCopies(d.knowledgeRoot, d.archiveDir, [FACTS_DB_FILE], line => d.log('FACTS_IMPORT', line)) } catch (e) { d.log('FACTS_IMPORT', `moving old *.imported-* copies failed: ${e instanceof Error ? e.message : String(e)}`) }
   const file = join(d.knowledgeRoot, FACTS_DB_FILE)
   if (!existsSync(file)) return { outcome: 'none' }
   const legacy = openSqlite(file, { readonly: true })
@@ -138,8 +141,9 @@ export function importFactsDb(d: { store: MemoryFactsStore; knowledgeRoot: strin
     d.store.setImportHash(FACTS_IMPORT_MARK, h, nowMs)
     if (prior === null) {
       const day = new Date(nowMs).toISOString().slice(0, 10)
-      const copy = join(d.knowledgeRoot, `${FACTS_DB_FILE}.imported-${day}`)
-      if (!existsSync(copy)) { try { legacy.exec(`VACUUM INTO '${copy.replace(/'/g, "''")}'`) } catch (e) { d.log('FACTS_IMPORT', `archive copy failed (facts.db itself is untouched): ${e instanceof Error ? e.message : String(e)}`) } }
+      let copy: string | null = null
+      try { copy = join(ensureArchiveDir(d.archiveDir), importedCopyName(FACTS_DB_FILE, day)) } catch (e) { d.log('FACTS_IMPORT', `archive dir unavailable (facts.db itself is untouched): ${e instanceof Error ? e.message : String(e)}`) }
+      if (copy && !existsSync(copy)) { try { legacy.exec(`VACUUM INTO '${copy.replace(/'/g, "''")}'`) } catch (e) { d.log('FACTS_IMPORT', `archive copy failed (facts.db itself is untouched): ${e instanceof Error ? e.message : String(e)}`) } }
     }
     d.log('FACTS_IMPORT', `${prior === null ? 'imported' : 're-synced'} facts.db: +${inserted} ~${updated} reassigned ${reassigned} skipped ${skipped}`)
     return { outcome: 'imported', first: prior === null, inserted, updated, reassigned, skipped }

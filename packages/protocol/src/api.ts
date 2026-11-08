@@ -1,3 +1,5 @@
+import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
+import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
  * api.ts — `/m/api/*` 与 `/set/api/*` 每条真实路由的返回形状(zod v4)。
  *
@@ -20,7 +22,7 @@
  * 成 undefined,见 messages.ts 同一条注释)。
  */
 import z from 'zod'
-import type { PanelRouteKey } from './routes'
+import type { PhoneSurfaceRouteKey } from './routes'
 
 // ── 错误响应(共享)───────────────────────────────────────────────────────
 
@@ -63,12 +65,43 @@ export const Attachment = z.object({
 export const MATTER_ORIGINS = ['wechat', 'desktop', 'app', 'web', 'cli', 'companion'] as const
 export type MatterOriginT = typeof MATTER_ORIGINS[number]
 
+/**
+ * 一件事是什么(v92,设计稿 §3.1):chat = 对话,task = 一起做,terminal = 终端会话,act = CC 自己做的事。
+ * terminal / act 要到 M4 / M5 才会真的发出来;先进协议,好让那之前装上的 App 认得(App 不能强制升级)。
+ */
+export const MATTER_KINDS = ['chat', 'task', 'terminal', 'act'] as const
+export type MatterKindT = typeof MATTER_KINDS[number]
+/** 一件事的统一状态(v92):open → working ⇄ waiting(等你)→ done | failed | cancelled;归档是另一个字段(archivedAt)。 */
+export const MATTER_STATES = ['open', 'working', 'waiting', 'done', 'failed', 'cancelled'] as const
+export type MatterStateT = typeof MATTER_STATES[number]
+
+/**
+ * CC 自己做的事(kind='act',M5c):一轮 = CC 做了一次(写了一封信、整理了一次记忆…),步 = 这一轮的过程(草稿、送达、改了几条)。
+ * 状态 / 步的种类都用字符串不用枚举:以后多一种,老 App 当认不出、照样显示,不让整页解析失败。payload 只有数字、真假、短字符串。
+ */
+export const MatterActStep = z.object({
+  kind: z.string(), status: z.string(), at: z.number(),
+  payload: z.record(z.string(), z.unknown()).optional(),
+})
+export const MatterActTurn = z.object({
+  id: z.string(), status: z.string(), errorCode: z.string().nullable().optional(),
+  /** 记忆整理:schedule = 到点自己做的,owner = 主人当面叫的。 */
+  trigger: z.string().optional(),
+  startedAt: z.number(), endedAt: z.number().nullable(), steps: z.array(MatterActStep),
+})
+export type MatterActTurnT = z.infer<typeof MatterActTurn>
+
 export const Matter = z.object({
   id: z.string(),
-  kind: z.enum(['chat', 'task', 'companion']),
+  kind: z.enum(MATTER_KINDS),
   title: z.string(),
   projectPath: z.string().nullable(),
+  /** 旧状态:冻结的线上字段(老 App 必填),daemon 从 state + archivedAt 现算,退休条件见 wire-compat.ts。新客户端读下面两个。 */
   status: z.enum(['open', 'replied', 'done', 'archived']),
+  /** 统一状态(M6b 起):老 daemon 不带;认不出的新值当没有(不让整行解析失败)。 */
+  state: z.enum(MATTER_STATES).optional().catch(undefined),
+  /** 归档时间(毫秒);null = 没归档。老 daemon 不带。 */
+  archivedAt: z.number().nullable().optional(),
   ownerChatId: z.string().nullable(),
   originMatterId: z.string().nullable(),
   originMessageId: z.string().nullable(),
@@ -86,6 +119,16 @@ export const Matter = z.object({
    * 老 daemon 不带、老的事不知道 ⇒ 省略,界面就不画。认不出的新值当没有(不让整行解析失败)。
    */
   origin: z.enum(MATTER_ORIGINS).optional().catch(undefined),
+  /**
+   * 任务真正的状态(2026-11-01,设计稿 U5):只有 GET /m/api/matters 的任务行带。matter.status 说不清停下了 / 没做成 / 等你,
+   * 手机网页拿它跟 App 的 statusOf 同样折成状态表里的词。读不到那件的详情 ⇒ 不带,网页退回 matter.status。
+   */
+  taskState: z.object({ status: z.string(), phase: z.string().optional(), pending: z.number() }).optional(),
+  /**
+   * CC 自己做的事(M5c):who = 发起方(letters / brief / memory / hunt / atelier / stickers)+ 最近那一轮。
+   * 只有点名 kind=act 的列表与 act 的详情带;老 daemon 不带。形状不对当没有(不让整行解析失败)。
+   */
+  act: z.object({ who: z.string().optional(), latest: MatterActTurn.optional() }).optional().catch(undefined),
 })
 
 export const MatterBinding = z.object({
@@ -127,6 +170,7 @@ export const MatterEvent = z.object({
   // 工具那一步(2026-10-17):status = running / completed / failed …,手机据此标「正在」。老 daemon 不带。
   activity: z.object({ type: z.string(), status: z.string(), label: z.string() }).optional(),
 })
+export type MatterEventT = z.infer<typeof MatterEvent>
 
 export const MatterInput = z.object({
   id: z.string(), taskId: z.string(), runId: z.string(), text: z.string(),
@@ -182,6 +226,8 @@ export const MatterDetail = z.object({
   artifacts: z.array(MatterArtifact), inputs: z.array(MatterInput),
   nativeStart: MatterNativeStart.optional(),
   quotaHandoff: MatterQuotaHandoff.optional(),
+  /** CC 自己做的事(M5c):最近的轮(新的在前,至多 20 轮),每轮带自己的步。只有 act 带;老 daemon 不带。 */
+  actTurns: z.array(MatterActTurn).optional().catch(undefined),
 })
 
 // ── 交办入口(entry/create/create-receipt,mobile-workbench.ts)───────────
@@ -495,7 +541,7 @@ export type LetterSummaryT = z.infer<typeof LetterSummary>
 /** 语音附件合成出来的声音(base64)。太长装不进中继一帧 ⇒ 413 too_large(手机提示去电脑上听)。 */
 export const ChatVoice = z.object({ mime: z.string(), data: z.string() })
 export const ChatJob = z.object({ requestId: z.string(), text: z.string(), status: z.enum(['pending', 'replied', 'failed']), since: z.number(), error: z.enum(['busy', 'unavailable', 'not_configured']).optional() })
-export const ChatPage = z.object({ matterId: z.string(), title: z.string(), messages: z.array(ChatMessage), hasMore: z.boolean(), nextBefore: z.string().nullable(), pending: ChatJob.nullable(), failed: ChatJob.nullable() })
+export const ChatPage = z.object({ receipt: z.object({requestId:z.string(),status:z.enum(['pending','replied','failed']),since:z.number()}).nullable().optional(), conversation: z.literal('v1').optional(), topics: z.literal('v1').optional(), matterId: z.string(), title: z.string(), messages: z.array(ChatMessage), hasMore: z.boolean(), nextBefore: z.string().nullable(), pending: ChatJob.nullable(), failed: ChatJob.nullable() })
 
 // ── CC 的连接(spec 2026-10-01):手机拿到的是去掉 detail 的快照 ──────────
 
@@ -541,6 +587,7 @@ export const CliActivityItem = z.object({ kind: z.enum(['you', 'said', 'step']),
   verb: z.string().optional(), target: z.string().optional() })
 export type CliActivityItemT = z.infer<typeof CliActivityItem>
 export const CliSessionRow = z.object({
+  run_id:z.string().optional(),
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
   // displayName(收敛清单 ⑥):这家执行者的正式名字,daemon 定;老 daemon 不带 ⇒ 退回 source。
   displayName: z.string().optional(),
@@ -554,6 +601,8 @@ export const CliSessionRow = z.object({
   live_window: z.boolean().optional(),
   // last_say(2026-10-20):最近一句送进窗口的结果 —— 送进窗口是后台的,手机发出后看这里改说法(sending → sent / failed)。老 daemon 不带。
   last_say: z.object({ id: z.string(), state: z.enum(['sending', 'sent', 'failed']), error: z.string().optional(), at: z.number() }).optional(),
+  // matter_id(M4c,2026-11-04):这条会话的那件事(kind='terminal');App 的终端行点进 /matter/<id>。老 daemon / 还没有那件事 不带。
+  matter_id: z.string().optional(),
 })
 export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
@@ -594,7 +643,13 @@ export const SessionContinueResult = z.object({ matterId: z.string(), created: z
 /** 主人对话的后端 / 模型(GET/POST /m/api/chat/model,2026-10-06)。model=null ⇒ 用这个后端的全局设置。 */
 export const ChatModelView = z.object({ ok: z.literal(true), mode: z.string(), provider: z.string(), model: z.string().nullable(), globalModel: z.string().nullable(), providers: z.array(z.object({ id: z.string(), name: z.string() })) })
 
+/** 手机上工作区的那几个动作的回包(提交 / 删除 / 合回 / 另开 + 工作区脚本 run / stop):只有分支、结果、脚本状态与端口,不给合并命令与脚本原文。 */
+export const PhoneWorktreeResult = z.object({ ok: z.literal(true), branch: z.string(), committed: z.boolean().optional(), removed: z.boolean().optional(), merged: z.boolean().optional(), reopened: z.boolean().optional(),
+  port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional() })
+
 const PHONE_API = {
+  ...TOPIC_BUBBLE_RESPONSES,
+  ...OWNER_CONVERSATION_RESPONSES,
   'GET /set/api/state': z.union([SetStateSuccess, PhoneErrorResponse]),
   'POST /set/api/apply': z.object({ ok: z.boolean(), error: z.string().optional(), restart: z.enum(['requested', 'required']).optional() }),
   'POST /set/api/pair': z.union([
@@ -604,7 +659,6 @@ const PHONE_API = {
     z.object({ ok: z.literal(false), error: z.literal('link_only') }),
   ]),
   'GET /m/api/state': z.union([PhoneStateSuccess, PhoneErrorResponse]),
-  'GET /m/api/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   'GET /m/api/memory': z.union([MemorySuccess, PhoneErrorResponse]),
   'POST /m/api/memory/correct': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/memory/retractions': z.union([MemoryRetractionsSuccess, PhoneErrorResponse]),
@@ -658,6 +712,7 @@ const PHONE_API = {
   // say_id:只在送进开着的窗口时给,对上会话行的 last_say.id 才是这一句的结果
   'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true), say_id: z.string().optional() }), PhoneErrorResponse]),
   // 错误码:not_found 404;cli_session_remote(记录在别的电脑上)/ no_transcript(没有可读的记录)409。
+  'POST /v1/cli/session-stop': z.object({ok:z.literal(true)}),
   'GET /m/api/cli/activity': z.union([z.object({ ok: z.literal(true), items: z.array(CliActivityItem) }), PhoneErrorResponse]),
   'GET /m/api/today': z.union([z.object({ ok: z.literal(true), today: OverseerToday }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
@@ -675,14 +730,13 @@ const PHONE_API = {
   'POST /m/api/matter/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/matter/stop': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   // run / stop(2026-10-20)回分支 + 脚本状态 + 端口;没批 ⇒ 428 script_needs_computer(批准只在电脑上),在跑 409,没有 run 脚本 422 no_scripts。
-  'POST /m/api/matter/worktree': z.union([z.object({ ok: z.literal(true), branch: z.string(), committed: z.boolean().optional(), removed: z.boolean().optional(), merged: z.boolean().optional(), reopened: z.boolean().optional(),
-    port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional() }), PhoneErrorResponse]),
+  'POST /m/api/matter/worktree': z.union([PhoneWorktreeResult, PhoneErrorResponse]),
   'POST /m/api/matter/answer': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter/artifact': z.union([z.object({ ok: z.literal(true) }).extend(MatterArtifactChunk.shape), PhoneErrorResponse]),
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),
   'POST /m/api/push/register': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/push/test': z.union([z.object({ ok: z.literal(true), result: z.object({ ok: z.boolean(), code: z.string() }) }), PhoneErrorResponse]),
-} satisfies Partial<Record<PanelRouteKey, z.ZodTypeAny>>
+} satisfies Partial<Record<PhoneSurfaceRouteKey, z.ZodTypeAny>>
 
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = PHONE_API
 

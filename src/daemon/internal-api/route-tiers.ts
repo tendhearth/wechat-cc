@@ -1,4 +1,4 @@
-import { ROUTES, type ModuleName } from '@wechat-cc/protocol/routes'
+import { ROUTES, type ModuleName, type RouteSpec } from '@wechat-cc/protocol/routes'
 import type { UserTier } from '../../domain/user-tier'
 
 /**
@@ -43,4 +43,21 @@ export function minTierFor(routeKey: string): UserTier {
 /** 这条路由属于哪个模块(表里的 `module`);没标 ⇒ undefined,不受模块门管。 */
 export function moduleFor(routeKey: string): ModuleName | undefined {
   return (ROUTES as Readonly<Record<string, { module?: ModuleName }>>)[routeKey]?.module
+}
+
+/**
+ * 手机设置面板那一口能走的 `/v1` 路由(P3b,设计稿 2026-11-05-p3-one-route-family「令牌范围从路由表推」):
+ * 路由表里同时带 `desktop` 与 `phone` 块的 `/v1` 行。`device` = 全部这样的行;`link` = 其中 `phone.link` 是
+ * read / write 的。没有 `phone` 块的 `/v1` 路由,设备 / 链接令牌一律 403 route_not_allowed(内部 API 的 dispatch
+ * 在 `panel` 入口上查它,和令牌自己的 routeAllow 两道都要过)。P3b 时表里还没有这样的行(P3c 起一条一条加)。
+ */
+export const PANEL_V1_ROUTES: { readonly device: ReadonlySet<string>; readonly link: ReadonlySet<string> } = panelV1RoutesOf(ROUTES)
+
+/** 从一张路由表推面板那一口的 `/v1` 名单(拆出来好拿假表测推法)。 */
+export function panelV1RoutesOf(table: Readonly<Record<string, RouteSpec>>): { device: ReadonlySet<string>; link: ReadonlySet<string> } {
+  const rows = Object.entries(table).filter(([key, r]) => r.desktop && r.phone && /^(GET|POST) \/v1\//.test(key))
+  return {
+    device: new Set(rows.map(([key]) => key)),
+    link: new Set(rows.filter(([, r]) => r.phone!.link === 'read' || r.phone!.link === 'write').map(([key]) => key)),
+  }
 }

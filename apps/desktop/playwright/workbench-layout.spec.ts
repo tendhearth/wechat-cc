@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { test, expect, clickNav } from './fixtures'
+import { test, expect, clickNav, WORKBENCH_ROUTES } from './fixtures'
 
 const site = { id:'site-store-id', name:'作品集', path:'/demo/site', providerId:'claude' }
 const notes = { id:'notes-store-id', name:'访谈笔记', path:'/demo/notes', providerId:'codex' }
@@ -26,7 +26,7 @@ const tasks = [
 
 async function setup(page:any, shimUrl:string, shim:any) {
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
-  await page.route('**/v1/workbench**', async (route:any) => {
+  await page.route(WORKBENCH_ROUTES, async (route:any) => {
     const url = new URL(route.request().url())
     const path = url.pathname
     let json:any = {}
@@ -38,40 +38,41 @@ async function setup(page:any, shimUrl:string, shim:any) {
         {id:'2',taskId:current.id,kind:'text',text:current.id==='deadbeef'?'已检查页面。我想运行本地测试，确认布局调整没有影响其他页面。':'这一轮的内容已经整理好了，可以继续补充要求。',createdAt:now-30000},
       ],artifacts:[],permissions:current.id==='deadbeef'?[{id:'permission-1',taskId:current.id,tool:'Bash',description:'运行本地测试：bun run test',createdAt:now-20000}]:[]}
     } else if(path==='/v1/workbench/attention') json={tasks:[]}
-    else if(path==='/v1/workbench/review') json={reviews:[]}
+    else if(path==='/v1/matter/changes') json={reviews:[]}
     else if(path==='/v1/workbench/entry-options') json={status:'ready',defaultProviderId:'claude',providers,projects:projects.map((p,i)=>({...p,id:catalogIds[i]}))}
     await route.fulfill({json})
   })
-  await page.goto(shimUrl)
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
   await clickNav(page,'workbench')
-  await expect(page.locator('[data-task-id="deadbeef"]')).toBeVisible()
-  await expect(page.locator('.wb-task-head h2')).toHaveText('完善作品集在手机上的排版')
+  await expect(page.locator('.workbench-pane [data-task-id="deadbeef"]')).toBeVisible()
+  await expect(page.locator('#wb-filter-project')).toBeVisible()
 }
 
-test('workbench prioritizes decisions, keeps project folds across navigation, and focuses the permission action',async({page,shimUrl,shim})=>{
+test('conversation search prioritizes decisions, filters projects and focuses the original permission action',async({page,shimUrl,shim})=>{
   await page.setViewportSize({width:1440,height:900})
   await setup(page,shimUrl,shim)
   await expect(page.locator('.wb-attention-list [data-task-id="deadbeef"]')).toHaveCount(1)
-  await expect(page.locator('[data-task-id="deadbeef"]')).toHaveCount(1)
+  await expect(page.locator('.workbench-pane [data-task-id="deadbeef"]')).toHaveCount(1)
   await expect(page.locator('[data-action="add-project"]')).toBeHidden()
   await page.locator('#wb-list-more summary').click()
   await expect(page.locator('[data-action="add-project"]')).toBeVisible()
   await expect(page.getByRole('button',{name:'导入已有会话',exact:true})).toBeVisible()
   await page.locator('#wb-list-more summary').click()
-  const report = page.locator('.wb-project').filter({has:page.locator('summary h3', {hasText:'报告'})}).locator('details')
-  await expect(report).not.toHaveAttribute('open')
+  await page.locator('#wb-filter-project').selectOption('/demo/quiet')
+  await expect(page.locator('.wb-task[data-task-id="aabbccdd"]')).toBeVisible()
+  await expect(page.locator('.wb-task[data-task-id="f00dbeef"]')).toHaveCount(0)
+  await page.locator('#wb-filter-project').selectOption('')
   await page.locator('#wb-search').fill('报告')
   await page.locator('#wb-search').press('Enter')
-  await expect(report).toHaveAttribute('open','')
+  await expect(page.locator('#wb-search')).toHaveValue('报告')
   await page.locator('[data-action="clear-search"]').click()
-  await expect(report).not.toHaveAttribute('open')
-  await report.locator('summary').click()
-  await page.locator('[data-task-id="f00dbeef"]').click()
+  await page.locator('.workbench-pane [data-task-id="f00dbeef"]').click()
   await expect(page.locator('.wb-task-head h2')).toHaveText('补充作品集说明文案')
-  await expect(report).toHaveAttribute('open','')
-  await page.locator('[data-task-id="deadbeef"]').click()
+  await expect(page.locator('.wb-sidebar')).toBeHidden()
+  await clickNav(page,'workbench')
+  await page.locator('.workbench-pane [data-task-id="deadbeef"]').click()
   await page.locator('[data-action="show-decisions"]').click()
   await expect(page.locator('[data-action="deny-permission"]')).toBeFocused()
   const screenshotDir = process.env.WECHAT_CC_DESIGN_SHOTS
@@ -98,6 +99,7 @@ test('workbench stays readable at a narrow desktop width with no horizontal over
   await page.setViewportSize({width:760,height:1100})
   await setup(page,shimUrl,shim)
   await expect(page.locator('.wb-delegate')).toBeVisible()
+  await page.locator('.workbench-pane [data-task-id="deadbeef"]').click()
   await expect(page.locator('.wb-permissions')).toBeVisible()
   const overflow = await page.locator('.workbench-shell').evaluate((el:HTMLElement)=>el.scrollWidth>el.clientWidth+1)
   expect(overflow).toBe(false)
@@ -105,21 +107,25 @@ test('workbench stays readable at a narrow desktop width with no horizontal over
   if(screenshotDir) { await page.waitForTimeout(700); await page.screenshot({path:join(screenshotDir,'workbench-narrow.png')}) }
 })
 
-test('一起做 sits under the global nav: wide keeps the rail, narrow folds it behind the wordmark',async({page,shimUrl,shim})=>{
+test('conversation layers preserve the global navigation and restore the conversation at every width',async({page,shimUrl,shim})=>{
   await page.setViewportSize({width:1440,height:900})
   await setup(page,shimUrl,shim)
   await expect(page.locator('#dash-global-rail')).toBeVisible()
-  await expect(page.locator('button.dash-nav-link[data-pane="workbench"]')).toHaveClass(/active/)
+  // 会话工具层保留此刻的导航归属；中等宽度主导航仍可用，手机宽度从返回按钮回到对话。
+  await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toHaveClass(/active/)
   await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
   await expect(page.locator('.wb-chats')).toHaveCount(0)
   await page.setViewportSize({width:1000,height:900})
-  await expect(page.locator('#workbench-nav-toggle')).toBeVisible()
-  await expect(page.locator('#dash-global-rail')).toHaveAttribute('aria-hidden','true')
-  await page.locator('#workbench-nav-toggle').click()
-  await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
-  await page.setViewportSize({width:1440,height:900})
   await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
+  await expect(page.locator('#workbench-home')).toBeVisible()
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('inert','')
   await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
+  await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
+  await page.setViewportSize({width:390,height:844})
+  await expect(page.locator('#workbench-home')).toBeVisible()
+  await page.locator('#workbench-home').click()
+  await expect(page.locator('article.dash-pane[data-pane="overview"]')).toBeVisible()
+  await expect(page.locator('.cc-now-pane')).not.toHaveAttribute('inert')
 })
 
 test('the waiting count lives next to 此刻 in the rail, not in a banner',async({page,shimUrl,shim})=>{
@@ -128,7 +134,7 @@ test('the waiting count lives next to 此刻 in the rail, not in a banner',async
     {id:'deadbeef',title:'完善作品集在手机上的排版',providerId:'claude',pendingPermissionCount:1,pendingQuestionCount:0,attentionKey:JSON.stringify(['permission-1']),first:{kind:'permission',text:'Bash: bun run test'}},
     {id:'cafefeed',title:'整理访谈主题与引用',providerId:'codex',pendingPermissionCount:0,pendingQuestionCount:1,attentionKey:JSON.stringify(['question-1']),first:{kind:'question',text:'要保留原话吗？'}},
   ]}}))
-  await page.goto(shimUrl)
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
   await expect(page.locator('#now-count')).toHaveText('2')

@@ -1,6 +1,6 @@
 import {join} from 'node:path'
 import {zipSync,unzipSync} from 'fflate'
-import {test,expect,clickNav} from './fixtures'
+import {test,expect,clickNav,WORKBENCH_ROUTES} from './fixtures'
 
 
 /** 「下载」在真 app 里走 Rust 的 save_file(webview 不处理 <a download>,2026-10-05):收集这次的调用。 */
@@ -39,7 +39,7 @@ async function setup(page:any,shim:any,shimUrl:string,withAttachment=false,siteA
   if(siteArchive)delivered.push({id:'site',name:'花园.site.zip',mime:'application/vnd.cc.workbench-site+zip',text:'',size:siteArchive.length,contentBase64:Buffer.from(siteArchive).toString('base64')})
   await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
   const approved=new Set<string>()
-  await page.route('**/v1/workbench**',async(route:any)=>{
+  await page.route(WORKBENCH_ROUTES,async(route:any)=>{
     const url=new URL(route.request().url())
     if(url.pathname==='/v1/workbench/approve')approved.add(route.request().postDataJSON().artifactId)
     const artifacts=delivered.map(a=>({...a,taskId:task.id,sha256:a.id,createdAt:3,approvedAt:approved.has(a.id)?4:null}))
@@ -47,14 +47,15 @@ async function setup(page:any,shim:any,shimUrl:string,withAttachment=false,siteA
     if(url.pathname==='/v1/workbench')json={tasks:[task],projects:[],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}
     else if(url.pathname==='/v1/workbench/task')json={task,events:[...(withAttachment?[{id:'0',taskId:task.id,kind:'user',text:'请看看这份 PDF',createdAt:1,attachments:[{id:'input-pdf',name:'参考.pdf',mime:'application/pdf',size:smallPdf().length,sha256:'input-pdf'}]}]:[]),{id:'1',taskId:task.id,kind:'text',text:'页面已做好。可以打开成果试一试，或继续告诉我怎么改。',createdAt:2}],artifacts}
     else if(url.pathname==='/v1/workbench/attachment')json={attachment:{id:'input-pdf',name:'参考.pdf',mime:'application/pdf',size:smallPdf().length,sha256:'input-pdf'},base64:Buffer.from(smallPdf()).toString('base64')}
-    else if(url.pathname==='/v1/workbench/artifact'){const a=delivered.find(a=>a.id===url.searchParams.get('artifactId'))!;json={...a,sha256:a.id}}
-    else if(url.pathname==='/v1/workbench/review')json={reviews:[]}
+    else if(url.pathname==='/v1/matter/artifact'){const a=delivered.find(a=>a.id===url.searchParams.get('artifactId'))!;json={...a,sha256:a.id}}
+    else if(url.pathname==='/v1/matter/changes')json={reviews:[]}
     await route.fulfill({json})
   })
-  await page.goto(shimUrl)
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
   await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
   await clickNav(page,'workbench')
+  await page.locator(`.wb-task[data-task-id="${task.id}"]`).click()
   await expect(page.locator('.wb-task-head h2')).toHaveText(task.title)
 }
 
@@ -117,7 +118,7 @@ test('preview failures are visible in the narrow reader and can be retried',asyn
   await page.setViewportSize({width:760,height:1000})
   await setup(page,shim,shimUrl)
   let broken=true
-  await page.route('**/v1/workbench/artifact?**',async route=>{
+  await page.route('**/v1/matter/artifact?**',async route=>{
     if(broken)await route.fulfill({status:404,json:{error:'这份成果暂时没能读取'}})
     else await route.fulfill({json:{...outputs[0],contentBase64:Buffer.from(html).toString('base64')}})
   })
@@ -134,7 +135,7 @@ test('downloading during a slow preview does not cancel its pending result',asyn
   let release!:()=>void
   const pending=new Promise<void>(resolve=>{release=resolve})
   let first=true
-  await page.route('**/v1/workbench/artifact?**',async route=>{
+  await page.route('**/v1/matter/artifact?**',async route=>{
     if(first){first=false;await pending}
     await route.fulfill({json:{...outputs[0],contentBase64:Buffer.from(html).toString('base64')}})
   })
@@ -242,7 +243,7 @@ test('failed native attachment downloads show the error inside the dialog and pr
 test('unreadable PDFs keep a visible error and the download action',async({page,shim,shimUrl})=>{
   await page.setViewportSize({width:760,height:900})
   await setup(page,shim,shimUrl)
-  await page.route('**/v1/workbench/artifact?**',async route=>route.fulfill({json:{...outputs[3],contentBase64:Buffer.from('not a PDF').toString('base64')}}))
+  await page.route('**/v1/matter/artifact?**',async route=>route.fulfill({json:{...outputs[3],contentBase64:Buffer.from('not a PDF').toString('base64')}}))
   await page.getByRole('button',{name:'成果 · 4',exact:true}).click()
   await page.locator('#wb-artifact-choice').selectOption('pdf')
   await expect(page.locator('.cc-pdf-reader [role=alert]')).toContainText('暂时没能显示')
@@ -332,7 +333,7 @@ test('saved website renders linked CSS, image and module imports, navigates with
 test('HTTPS loopback webpages pass availability checks under the production CSP',async({page,shim,shimUrl})=>{
   await setup(page,shim,shimUrl)
   await page.route('https://localhost:4301/**',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:'<h1>安全连接的网页</h1>'}))
-  await page.route('**/v1/workbench/artifact?**',route=>route.request().url().includes('artifactId=web')?route.fulfill({json:{name:'garden.preview.json',mime:'application/json',contentBase64:Buffer.from('{"url":"https://localhost:4301/"}').toString('base64')}}):route.fallback())
+  await page.route('**/v1/matter/artifact?**',route=>route.request().url().includes('artifactId=web')?route.fulfill({json:{name:'garden.preview.json',mime:'application/json',contentBase64:Buffer.from('{"url":"https://localhost:4301/"}').toString('base64')}}):route.fallback())
   await page.getByRole('button',{name:'成果 · 4',exact:true}).click()
   await page.locator('#wb-artifact-choice').selectOption('web')
   await expect(page.frameLocator('#wb-preview-frame').locator('h1')).toHaveText('安全连接的网页')

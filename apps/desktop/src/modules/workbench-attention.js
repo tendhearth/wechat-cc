@@ -3,8 +3,8 @@
 import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{id:string,title:string,providerId:string,pendingPermissionCount:number,pendingQuestionCount:number,attentionKey:string,first?:{kind:'permission'|'question',text:string}|null}} AttentionTask */
-/** @typedef {{tasks:AttentionTask[],stale:boolean}} AttentionState */
-/** @typedef {{invokeWorkbenchApi:(method:'GET',path:string)=>Promise<unknown>,invoke:(command:string,args:Record<string,unknown>)=>Promise<unknown>,onChange?:(state:AttentionState)=>void,getContext?:()=>{taskId:string|null,focused:boolean},intervalMs?:number,maxBackoffMs?:number,requestTimeoutMs?:number}} PollerOptions */
+/** @typedef {{tasks:AttentionTask[],stale:boolean,progress?:Map<string,string>,moved?:{replied:string[],stopped:string[]}}} AttentionState */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke:(command:string,args:Record<string,unknown>)=>Promise<unknown>,onChange?:(state:AttentionState)=>void,getContext?:()=>{taskId:string|null,focused:boolean},intervalMs?:number,maxBackoffMs?:number,requestTimeoutMs?:number}} PollerOptions */
 
 /**
  * 各任务的 phase(2026-10-06,回复 / 停下的系统通知)。老 daemon 没有这一项 ⇒ null(不弹,也不报错)。
@@ -91,14 +91,18 @@ export function createWorkbenchAttentionPoller(options) {
         const context = options.getContext?.() ?? { taskId: null, focused: false }
         const progress = parseProgress(result)
         const moved = initialized ? progressTransitions(lastProgress, progress) : { replied: [], stopped: [] }
+        if (context.focused && context.taskId && (['replied', 'failed', 'interrupted'].includes(progress?.get(context.taskId) ?? ''))) {
+          void v1(options.invokeWorkbenchApi, V1.matter.seen, { body: { id: context.taskId } }).catch(() => {})
+        }
         lastProgress = progress
         let shouldNotify = false
+        let notificationMatterId = null
         const activeIds = new Set()
         for (const { task, requestIds } of entries) {
           for (const requestId of requestIds) {
             const key = `${task.id}:${requestId}`
             activeIds.add(key)
-            if (initialized && !seen.has(key) && (!context.focused || context.taskId !== task.id)) shouldNotify = true
+            if (initialized && !seen.has(key) && (!context.focused || context.taskId !== task.id)) { shouldNotify = true; notificationMatterId ??= task.id }
             // Seeing a request in its task also consumes its notice. Leaving the
             // page later must never turn that same request into a new notice.
             seen.add(key)
@@ -113,11 +117,11 @@ export function createWorkbenchAttentionPoller(options) {
         initialized = true
         retryMs = intervalMs
         tasks = entries.map(({ task }) => task)
-        options.onChange?.({ tasks, stale: false })
+        options.onChange?.({ tasks, stale: false, ...(progress ? { progress: new Map(progress), moved } : {}) })
         // 回复 / 停下:窗口在前面就不弹(你正看着 CC);待处理那条优先,一次轮询最多一条通知。
         const finishNotice = !shouldNotify && !context.focused
-          ? moved.stopped.length ? { title: '一起做有任务停下了', body: '打开 CC 看看发生了什么。' }
-            : moved.replied.length ? { title: '一起做有回复了', body: moved.replied.length > 1 ? `${moved.replied.length} 件事回复了。打开 CC 查看。` : '有一件事回复了。打开 CC 查看。' }
+          ? moved.stopped.length ? { matterId: moved.stopped[0], title: '有一件事停下了', body: '打开 CC 看看发生了什么。' }
+            : moved.replied.length ? { matterId: moved.replied[0], title: moved.replied.length > 1 ? `${moved.replied.length} 件事回复了` : '有一件事回复了', body: '打开 CC 查看。' }
             : null
           : null
         if (finishNotice && !destroyed) void Promise.resolve().then(() => options.invoke('notify_user', finishNotice)).catch(() => {})
@@ -125,8 +129,9 @@ export function createWorkbenchAttentionPoller(options) {
           // No task title, prompt, command, path, or request ID crosses into OS
           // notifications. Denied or uncertain delivery is intentionally final.
           void Promise.resolve().then(() => options.invoke('notify_user', {
-            title: '一起做需要你回应',
-            body: '有新的问题或权限请求。打开 CC 查看待处理事项。',
+            matterId: notificationMatterId,
+            title: '有一件事等你决定',
+            body: '有新的问题或权限请求。打开 CC 看看。',
           })).catch(() => {})
         }
         return tasks

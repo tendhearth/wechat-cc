@@ -31,14 +31,10 @@ export interface WireMainOpts {
   /** 比 wireMain 晚才有的几样(拉消息、入站管道、App 一轮、知识库催一下):调用时现取,模块容器的 ctx.late。 */
   late: PipelineDepsLate
   workbench?: import('../../features/workbench').WorkbenchService
-  /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
-  cliSessions?: () => import('../../ports/cli-session').CliSessionView[]
   /** 「CC 做过的事」(B9):透传给手机面板。 */
   activity?: import('../../features/phone').MobileActivityDeps
-  /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
+  /** 终端会话的手机动作(拍板 / 说一句 / 看着它跑):POST /v1/cli/decide、/v1/cli/session-say、GET /v1/cli/activity(features/terminal/phone-routes.ts;老 App 的 /m/api/cli/* 是别名)。缺省 ⇒ 503。 */
   cliActions?: import('../../features/terminal').CliPhoneActions
-  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
-  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
   terminalHooks?: Pick<import('../../features/terminal').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02,network-gate 模块建):闸门 + 健康快照 + 后台任务跳过包装。缺省 = 老行为。 */
@@ -47,8 +43,12 @@ export interface WireMainOpts {
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
   /** 真回合里被拒着的执行者(provider-refusals.ts)。 */
   providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
+  /** 一件事的提议按人在哪选通道(S3b)。 */
+  proposals?: import('./pipeline-deps-opts').PipelineDepsOpts['proposals']
   /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
+  /** 内部 API 的分发 → 手机设置面板收到的 `/v1/*`(P3b:一个分发、两个监听)。 */
+  panelDispatch?: import('../internal-api/types').PanelDispatch
   /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
   matters?: import('../../ports/matters').MatterStore
   stateDir: string

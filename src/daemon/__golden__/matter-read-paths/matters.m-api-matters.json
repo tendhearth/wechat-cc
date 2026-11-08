@@ -1,0 +1,98 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "matters": [
+      {
+        "id": "<chat>",
+        "kind": "chat",
+        "title": "聊天",
+        "projectPath": null,
+        "status": "open",
+        "state": "open",
+        "archivedAt": null,
+        "ownerChatId": "o9golden-owner@im.wechat",
+        "originMatterId": null,
+        "originMessageId": null,
+        "createdAt": 1793413200000,
+        "updatedAt": 1793413200000,
+        "origin": "wechat"
+      },
+      {
+        "id": "<task:question>",
+        "kind": "task",
+        "title": "改文档",
+        "projectPath": "<tmp>/projects/question",
+        "status": "open",
+        "state": "working",
+        "archivedAt": null,
+        "ownerChatId": "o9golden-owner@im.wechat",
+        "originMatterId": null,
+        "originMessageId": null,
+        "createdAt": 1793412720000,
+        "updatedAt": 1793412720000,
+        "agents": [
+          "claude"
+        ],
+        "agentNames": {
+          "claude": "Claude"
+        },
+        "taskState": {
+          "status": "running",
+          "phase": "working",
+          "pending": 1
+        }
+      },
+      {
+        "id": "<task:permission>",
+        "kind": "task",
+        "title": "跑迁移",
+        "projectPath": "<tmp>/projects/permission",
+        "status": "open",
+        "state": "working",
+        "archivedAt": null,
+        "ownerChatId": "o9golden-owner@im.wechat",
+        "originMatterId": null,
+        "originMessageId": null,
+        "createdAt": 1793412600000,
+        "updatedAt": 1793412600000,
+        "agents": [
+          "claude"
+        ],
+        "agentNames": {
+          "claude": "Claude"
+        },
+        "taskState": {
+          "status": "running",
+          "phase": "working",
+          "pending": 1
+        }
+      },
+      {
+        "id": "<task:done>",
+        "kind": "task",
+        "title": "修好测试并写报告",
+        "projectPath": "<tmp>/projects/done",
+        "status": "done",
+        "state": "done",
+        "archivedAt": null,
+        "ownerChatId": "o9golden-owner@im.wechat",
+        "originMatterId": null,
+        "originMessageId": null,
+        "createdAt": 1793412060000,
+        "updatedAt": 1793412300000,
+        "agents": [
+          "claude"
+        ],
+        "agentNames": {
+          "claude": "Claude"
+        },
+        "taskState": {
+          "status": "completed",
+          "phase": "replied",
+          "pending": 0
+        }
+      }
+    ]
+  }
+}

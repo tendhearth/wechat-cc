@@ -9,6 +9,8 @@ export interface InboundCtx {
   readonly msg: InboundMsg
   readonly receivedAtMs: number
   readonly requestId: string
+  /** messages 写口认出的稳定来源 id,供本轮回忆引用。 */
+  messageId?: string
   consumedBy?: ConsumedBy
   /** 路由阶段(mw-route)算出来的意图;闸门之前是 undefined。 */
   intent?: Intent

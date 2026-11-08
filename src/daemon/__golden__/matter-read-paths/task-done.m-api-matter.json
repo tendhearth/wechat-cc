@@ -1,0 +1,144 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "matter": {
+      "id": "<task:done>",
+      "kind": "task",
+      "title": "修好测试并写报告",
+      "projectPath": "<tmp>/projects/done",
+      "status": "done",
+      "state": "done",
+      "archivedAt": null,
+      "ownerChatId": "o9golden-owner@im.wechat",
+      "originMatterId": null,
+      "originMessageId": null,
+      "createdAt": 1793412060000,
+      "updatedAt": 1793412300000,
+      "agents": [
+        "claude"
+      ],
+      "agentNames": {
+        "claude": "Claude"
+      }
+    },
+    "bindings": [
+      {
+        "matterId": "<task:done>",
+        "surface": "wechat",
+        "surfaceKey": "o9golden-owner@im.wechat",
+        "lastSeenAt": 1793412060000
+      }
+    ],
+    "sessions": [
+      {
+        "matterId": "<task:done>",
+        "providerId": "claude",
+        "sessionId": "native-done",
+        "role": "main",
+        "createdAt": 1793412060000
+      }
+    ],
+    "task": {
+      "id": "<task:done>",
+      "title": "修好测试并写报告",
+      "path": "<tmp>/projects/done",
+      "providerId": "claude",
+      "status": "completed",
+      "error": null,
+      "createdAt": 1793412060000,
+      "updatedAt": 1793412300000,
+      "archivedAt": null,
+      "workspaceKind": "project",
+      "phase": "replied",
+      "canArchive": true,
+      "usage": {
+        "turns": 2,
+        "input": 3600,
+        "output": 900,
+        "cacheRead": 1600,
+        "cacheWrite": null,
+        "reasoning": null,
+        "costUsd": null
+      },
+      "waitingFor": null,
+      "pendingPermissionCount": 0,
+      "pendingQuestionCount": 0,
+      "agents": [
+        "claude"
+      ]
+    },
+    "events": [
+      {
+        "kind": "user",
+        "text": "把测试修好,写一份报告",
+        "createdAt": 1793412060000
+      },
+      {
+        "kind": "text",
+        "text": "先跑一遍测试。",
+        "createdAt": 1793412060000
+      },
+      {
+        "kind": "tool_call",
+        "text": "bun test",
+        "createdAt": 1793412060000,
+        "activity": {
+          "type": "command",
+          "status": "completed",
+          "label": "bun test"
+        }
+      },
+      {
+        "kind": "system",
+        "text": "权限请求：Bash · Delete scratch.txt · <uuid:2>",
+        "createdAt": 1793412060000
+      },
+      {
+        "kind": "system",
+        "text": "权限结果：Bash · allow · <uuid:2>",
+        "createdAt": 1793412120000
+      },
+      {
+        "kind": "tool_call",
+        "text": "rm scratch.txt",
+        "createdAt": 1793412120000,
+        "activity": {
+          "type": "command",
+          "status": "completed",
+          "label": "rm scratch.txt"
+        }
+      },
+      {
+        "kind": "text",
+        "text": "测试全过,报告写好了。",
+        "createdAt": 1793412180000
+      },
+      {
+        "kind": "user",
+        "text": "再确认一次",
+        "createdAt": 1793412300000
+      },
+      {
+        "kind": "text",
+        "text": "第 2 轮:再确认一次 —— 确认过了。",
+        "createdAt": 1793412300000
+      }
+    ],
+    "permissions": [],
+    "questions": [],
+    "artifacts": [
+      {
+        "id": "<uuid:4>",
+        "taskId": "<task:done>",
+        "name": "report.md",
+        "mime": "text/markdown",
+        "size": 38,
+        "sha256": "915286aeee2deb03419985f1c6648a879bdf22a5618162dec6dd9bf7aed633b6",
+        "createdAt": 1793412180000,
+        "approvedAt": null
+      }
+    ],
+    "inputs": []
+  }
+}

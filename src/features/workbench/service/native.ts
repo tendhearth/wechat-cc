@@ -17,7 +17,7 @@ import { decodeNativeHistoryKey, historyDeadline, historyHash, normalizeHistoryL
 import { NATIVE_CONTINUE_REFUSAL, nativeImportInput, nativeResumeToken, publicSource, readNativeImport, selectNativeImportMessages, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeContinuePreview, type NativeContinueState, type NativeImportInput, type NativeResumeDecision } from '../../../adapters/workbench/native-adoption'
 import { pathsConflict } from '../../../lib/claim-paths'
 import type { AgentExecutionChoice } from '../../../ports/agent-provider'
-import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask } from '../../../adapters/store/workbench/store'
+import { publicTask, stepPayload, TERMINAL_TASK_STATUSES, timelineKind, type StoredTask } from '../../../adapters/store/workbench/store'
 import { normalizeInputRequestId } from '../../../domain/workbench/input-request-id'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
@@ -79,8 +79,8 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
       if(state.runsByTask.has(target.id)||!TERMINAL_TASK_STATUSES.includes(target.status)||target.error==='writer_not_closed')throw new Error('workbench_busy')
       if(target.providerId!==input.targetProviderId||target.path!==source.path)throw new Error('invalid_handoff_target')
       const origin=store.handoffs(source.id).find(h=>h.purpose==='review'&&h.sourceTaskId===target!.id&&h.targetTaskId===source.id)
-      const event=store.events(source.id).find(e=>e.id===input.quote!.eventId&&e.kind==='text')
-      if(!origin||!event?.text.includes(input.quote!.text))throw new Error('invalid_handoff_quote')
+      const quoted=store.steps(source.id).find(step=>step.id===input.quote!.eventId&&timelineKind(step)==='text')
+      if(!origin||!quoted||!stepPayload(quoted).text.includes(input.quote!.text))throw new Error('invalid_handoff_quote')
       artifacts=origin.artifacts
       const original=store.handoffRecord(source.id,origin.id)
       if(snapshotHash(original.packetJson)!==original.packetSha256)throw Error('artifact_changed')
@@ -91,7 +91,7 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     const files=artifacts.map(a=>handoffArtifactText(store,a,target?.id??source.id,ctx.stateDir))
     const materials=handoffAttachments(attachments,target?.id??source.id)
     requireInput(input.targetProviderId,combinedAttachments(materials,targetContinuation?.mode==='restart_required'?targetContinuation.restart.attachments:[]),target?store.execution.choice(target.id):PROVIDER_EXECUTION_CHOICE,!!target&&targetContinuation?.mode==='resume')
-    const packet=handoffContext({...input,attachments},source,store.events(source.id),files,materials)
+    const packet=handoffContext({...input,attachments},source,store.steps(source.id),files,materials)
     ctx.ensureAccepting()
     if(taskVersion(store.get(source.id))!==version)throw new Error('handoff_changed')
     const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,targetExecution:target?store.execution.choice(target.id):{...PROVIDER_EXECUTION_CHOICE},...(attachments.length?{attachments}:{}),quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
@@ -152,9 +152,8 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
       task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials,undefined,p.targetExecution)
     }
     catch(error){
-      if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setStatus(record.targetTaskId,'done'))}
+      if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setLifecycle(record.targetTaskId,'done'))}
       store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
-      ctx.hub.touched(record.targetTaskId)
       throw error
     }
     return{task,handoffId:record.id,sourceTaskId:source.id}
@@ -200,7 +199,7 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     if(mode==='fresh_context'&&recovery.mode!=='restart_required')throw new Error('invalid_request')
     ctx.ensureAccepting()
     if(taskVersion(store.get(id))!==version||state.runsByTask.has(id))throw new Error('external_close_confirmation_stale')
-    const preview=restartPreview(task,store.events(id),store.execution.choice(id))
+    const preview=restartPreview(task,store.steps(id),store.execution.choice(id))
     const decision:AcceptedNativeResume={token:nativeResumeToken(),taskId:id,sourceId:source.id,providerId:source.providerId,nativeId:source.nativeId,path:task.path,mode,expiresAt:Date.now()+5*60_000,context:mode==='fresh_context'?preview.context:'',truncated:source.truncated,changedSinceImport:JSON.stringify(current)!==JSON.stringify(pages),pages:current,taskVersion:version,directoryIdentity:identity,execution,...(mode==='fresh_context'?{restartToken:preview.token}:{})}
     for(const [token,value] of state.nativeDecisions)if(value.expiresAt<Date.now()||value.taskId===id)state.nativeDecisions.delete(token)
     if(state.nativeDecisions.size>=100)state.nativeDecisions.delete(state.nativeDecisions.keys().next().value!)
@@ -216,7 +215,7 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     await validateNativeDecision(task,decision)
     ctx.ensureAccepting()
     if(taskVersion(store.get(id))!==decision.taskVersion||state.runsByTask.has(id)||state.nativeDecisions.get(sourceClosedToken)!==decision)throw new Error('external_close_confirmation_stale')
-    const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id),store.execution.choice(id))}
+    const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.steps(id),store.execution.choice(id))}
     if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
     requireInput(task.providerId,combinedAttachments(attachments,accepted.mode==='restart'?accepted.preview.attachments:[]),execution,accepted.mode==='resume')
     state.nativeDecisions.delete(sourceClosedToken)
@@ -279,7 +278,6 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
     if(redispatch){
       store.liveInputs.set(redispatch,'sending')
       store.addEvent(id,'system','CC 重启后按同一请求重发了一次。')
-      ctx.hub.touched(id)
     }
     return view
   }
@@ -359,18 +357,14 @@ export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
   async function previewNativeContinue(key:string):Promise<NativeContinuePreview> {
     return (await inspectNativeSession(key)).preview
   }
-  /** 导入的任务补一行 matter(spec D4):与 execute.createTask 的登记一致。没接 matters ⇒ 手机进不去,直说。 */
+  /**
+   * 导入的任务在主人的微信里露个面(spec D4)。这件事本身在建任务时就有了(store.create 同一事务,出生地 cli);
+   * 这里只登记表面。没接 matters ⇒ 手机进不去,直说。
+   */
   function ensureTaskMatter(task:StoredTask):void {
     const m=ctx.deps.matters
     if(!m)throw new Error('matters_not_wired')
-    // 三步同一事务;且只有 create 看「已有」—— linkTask / bind 都幂等,每次都跑:哪一步中途失败,下次再点都能补齐。
-    // 状态与 execute 的终态登记一致:完成 / 失败 / 取消 ⇒ done;interrupted 与仍在跑的 ⇒ open。
-    store.atomic(()=>{
-      // 出生地:从终端会话导入的(有原会话记录)⇒ cli;CC 自己的老任务补行 ⇒ 不知道当初从哪来,不写。
-      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open',origin:store.source(task.id)?'cli':null})
-      m.linkTask(task.id)
-      if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
-    })
+    if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
   }
   /**
    * 带过来的要是最近的,不是开头 100 条(裁决 R2):拿到会话尾部最后 ≤5 页 —— 与桌面「继续读取原对话」同一个窗口

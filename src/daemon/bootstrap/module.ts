@@ -1,3 +1,4 @@
+import { makeOwnerDelegationRecorder } from '../wiring/owner-delegation'
 /**
  * bootstrap 那一组接进 daemon 的那一份:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙
  * (一组模块,./index.ts 的 bootstrapModules),把它的产物交给 internal-api 路由的 `boot-api`,外部 CLI 重探计时器 `provider-probes`。
@@ -27,6 +28,8 @@ import { makeReplyDeliveryRuntime } from '../reply-delivery'
 import { makeChatOwnerRules } from '../permission-gate'
 import { makeLlmHealth, type LlmHealth } from '../llm-health'
 import { ownerChatIdOf } from '../owner-chat'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { makeMatterTopics } from '../threads/matter-topics'
 import { bootstrapModules, type Bootstrap } from './index'
 
 /** boot-api 交出去的:靠 bootstrap 才有的 LLM 体检。 */
@@ -70,7 +73,7 @@ export function bootstrapGroupModules(f: Foundation): DaemonModule[] {
         },
         petSignals: f.petSignals,
         onTurnRecord: (r) => {
-          f.turnRecordStore.append(r)
+          // 回合记录本身由 runner 经 MatterLog 写进这件对话的轮(M3b);这里只剩它驱动的那几样
           f.providerRefusals.onTurn(r)
           // CLI 自动升级的报错触发(2026-10-04):错误通道像「CLI 太旧」⇒ 排一次版本检查。
           if (r.outcome !== 'completed') cliUpgrade()?.upgrader()?.onTurnError(r.provider, r.errorCode, r.error)
@@ -100,7 +103,13 @@ export function bootApiModule(f: Foundation): DaemonModule<BootApi> {
     init(ctx): BootApi {
       const boot = ctx.get<Bootstrap>('bootstrap')
       const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
-      internalApi.provide({ delegate: { dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() } })
+      // 话题 T3:主人自己的会话发起的咨询带话题简报、回答写回话题(daemon/threads/matter-topics)
+      const matterTopics = makeMatterTopics({ db: f.db, threads: makeThreadsStore(f.db), ownerChatId, log: (t, l) => log(t, l) })
+      internalApi.provide({ delegate: {
+        recordOwnerWork:makeOwnerDelegationRecorder({db:f.db,ownerChatId,name:peer=>boot.registry.namesOf(peer).name}),
+        dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list(),
+        topics: { brief: (chatId, prompt) => matterTopics.briefForDelegate(chatId, prompt), writeBack: (ids, peer, prompt, response) => matterTopics.writeDelegate(ids, peer, prompt, response) },
+      } })
       internalApi.provide({ conversation: { setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) } })
       // 可选子系统没起(配置没开 / 降级)⇒ 不 provide,对应路由照旧 503。
       if (boot.a2aDeps) internalApi.provide({ a2a: boot.a2aDeps })

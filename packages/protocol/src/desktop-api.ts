@@ -1,3 +1,6 @@
+import { TopicOpenRequest, TopicRenameRequest, TopicMergeRequest, TopicDeleteRequest, TopicWrongRequest } from './topic-bubbles'
+import { OWNER_CONVERSATION_RESPONSES } from './owner-conversation'
+import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 /**
  * Zod schemas for the daemon's `/v1/*` routes (desktop, CLI, the wechat-mcp stdio child, delegate-mcp).
  * Single source of truth for that HTTP contract — moved here from src/daemon/internal-api/schema.ts
@@ -12,9 +15,10 @@
 // bundler; use the default export instead (both forms are equivalent at
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
+import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
-  Attachment, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, MATTER_ORIGINS, Matter, MatterDetail, MatterEvent,
-  MatterSayResult, OverseerToday, WorkbenchExecutorCapabilities,
+  PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent,
+  MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
 // ── GET /v1/health ───────────────────────────────────────────────────────────
@@ -742,6 +746,7 @@ export const CliPermissionQuery = z.object({
 // ── GET /v1/cli/sessions(终端会话登记处,v76)──────────────────────────────
 // ended=1 连已结束的也列;limit 默认 100,封顶 500(= 登记处的行数上限)。
 export const CliSessionsQuery = z.object({
+  owner:z.coerce.number().int().min(1).max(1).optional(),session_id:z.string().min(1).max(200).optional(),
   ended: z.enum(['0', '1']).optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
   // detail=1:每条补开没开着窗口 / 此刻在做哪一步(CC 的 terminal_sessions 用,2026-10-24)
@@ -934,11 +939,13 @@ export const WorkbenchAttentionResponse = z.object({
 export const WorkbenchInputResponse = z.object({ input: WorkbenchLiveInput })
 
 // ── GET /v1/workbench/sessions / GET /v1/workbench/session(原生会话历史)──
-export const WorkbenchSessionsResponse = z.object({
+// 手机令牌(设备,P3c-4)读这两条回的是手机那一份(api.ts 的 NativeSessionRow / NativeSessionPage:项目只给目录名、没有 cwd /
+// 原生 id,带 `ok: true`)—— 处理器按 caller 选(features/workbench/phone-sessions.ts),一次回包里只会是其中一种。
+export const WorkbenchSessionsResponse = z.union([z.object({
   items: z.array(WorkbenchNativeHistoryItem), nextCursor: z.string().nullable(),
   coverage: z.enum(['native_supported_history', 'native_indexed_history']),
-})
-export const WorkbenchSessionResponse = z.object({
+}), z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable(), names: z.record(z.string(), z.string()).optional() })])
+export const WorkbenchSessionResponse = z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), z.object({
   messages: z.array(z.object({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string(), truncated: z.boolean() })),
   nextCursor: z.string().nullable(),
   managedTaskId: z.string().optional(),
@@ -946,7 +953,7 @@ export const WorkbenchSessionResponse = z.object({
   sourceFingerprint: z.string().optional(),
   page: z.object({ limit: z.number(), cursor: z.string().nullable() }).optional(),
   truncated: z.boolean().optional(),
-})
+})])
 
 // ── GET /v1/workbench/task(详情;带 since / wait_ms 时长轮询)──
 const WorkbenchTaskEvent = z.object({
@@ -961,6 +968,8 @@ const WorkbenchTaskEvent = z.object({
   errorCode: z.literal('execution_model_unsupported').optional(),
   diagnostic: z.string().optional(),
 })
+/** 桌面工作台详情时间线的一条(线上冻结的旧形状):daemon 由「步」现算(src/adapters/store/workbench/timeline-events.ts)。 */
+export type WorkbenchTaskEventT = z.infer<typeof WorkbenchTaskEvent>
 const WorkbenchTaskArtifact = z.object({
   id: z.string(), taskId: z.string(), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(),
   createdAt: z.number(), approvedAt: z.number().nullable(),
@@ -979,6 +988,8 @@ export const WorkbenchTaskDetailResponse = z.object({
   artifacts: z.array(WorkbenchTaskArtifact),
 }).extend(z.object({
   version: z.number(),
+  /** 这件事最后一次有动静时的全库游标(P1b);长轮询带 since_cursor 回来。旧后台没有。 */
+  cursor: z.number().optional(),
   handoffs: z.array(WorkbenchHandoffView),
   source: WorkbenchNativeSource.optional(),
   wechatNotifications: z.object({
@@ -1156,6 +1167,8 @@ export const WorkbenchPrepareContinuationResponse = z.object({ continuation: Wor
 
 // ── POST /v1/workbench/quota-handoff(202)──
 export const WorkbenchQuotaHandoffResponse = z.object({ taskId: z.string(), created: z.boolean() })
+/** 一件事上的动作(P3e,`/v1/matter/*`)手机令牌那一份的成功外壳。 */
+const PhoneActionOk = z.object({ ok: z.literal(true) })
 
 // ── POST /v1/workbench/handoff-preview ──
 export const WorkbenchHandoffPreviewResponse = z.object({
@@ -1203,6 +1216,7 @@ const D2SoftError = z.object({ ok: z.literal(false), error: z.string() })
 // ── GET /v1/matters ──
 // MattersService.list();被网络守护冻住的那几件多一个 networkSuspended:true。
 export const MattersListResponse = z.object({
+  nextCursor: z.string().nullable().optional(),
   matters: z.array(Matter.extend({ networkSuspended: z.literal(true).optional() })),
 })
 
@@ -1352,7 +1366,12 @@ const CliSessionsRowShape = z.object({
   live_window: z.boolean().optional(),
   now_step: z.string().nullable().optional(),
 })
-export const CliSessionsResponse = z.object({ ok: z.literal(true), sessions: z.array(CliSessionsRowShape) })
+// 手机令牌(设备 / 链接,P3c-2)读这一条回的是手机那一份(api.ts 的 CliSessionRow:只给目录名、没有 cwd / origin_agent,
+// 带拍板的码、此刻那一步、displayName)—— 处理器按 caller 选,一次回包里只会是其中一种。
+export const CliSessionsResponse = z.union([
+  z.object({ ok: z.literal(true), sessions: z.array(CliSessionsRowShape) }),
+  z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }),
+])
 
 // ── POST /v1/cli/say ──
 // TerminalSayStart 的 ok:true 分支;ok:false 一律走 4xx(workbench-errors 表)。
@@ -2106,6 +2125,13 @@ const PetPendingPermissionShape = z.object({
   since: z.string(),
   expires_at: z.string(),
 })
+const PetTaskActivityShape = z.object({
+  taskId:z.string().regex(/^[a-f0-9]{8}$/),
+  title:z.string().max(80),
+  phase:z.enum(['needs_input','failed','interrupted','paused','replied','working','queued','stopping']),
+  detail:z.string().max(120).nullable(),
+  updatedAt:z.number().finite().nonnegative(),
+})
 export const PetTurnResponse = z.object({
   owner_last_contact_at: z.string().nullable(),
   turn: z.object({
@@ -2114,8 +2140,21 @@ export const PetTurnResponse = z.object({
   }),
   last_done_at: z.string().nullable(),
   pending_permissions: z.array(PetPendingPermissionShape),
+  activities:z.array(PetTaskActivityShape).max(8).optional(),
 })
 export type PetTurnResponseT = z.infer<typeof PetTurnResponse>
+
+// ── GET /v1/subscribe/presence ── 桌宠订的 presence 主题(S5):since=<cursor>&wait_ms= 长轮询
+// 两半各自算不出来就是 null:presence = 「联系不上」(journal 没接),pet = 「端点没接」。
+export const PresenceTopicQuery = z.object({
+  since: z.coerce.number().optional(),
+  wait_ms: z.coerce.number().int().min(0).max(60_000).optional(),
+})
+export const PresenceTopicResponse = z.object({
+  cursor: z.number(),
+  presence: PresenceResponse.nullable(),
+  pet: PetTurnResponse.nullable(),
+})
 
 // ── GET /v1/a2a/list ── 逐字段投影(不含密钥)
 const A2AListAgentShape = z.object({
@@ -2380,6 +2419,12 @@ export const PenpalMarkReadResponse = z.object({ ok: z.literal(true) })
 // against it (assertResponseContract).
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  'POST /v1/memory/topics/rename': TopicRenameRequest,
+  'POST /v1/memory/topics/merge': TopicMergeRequest,
+  'POST /v1/memory/topics/delete': TopicDeleteRequest,
+  'POST /v1/memory/topics/entry/wrong': TopicWrongRequest,
+  'POST /v1/memory/topics/open': TopicOpenRequest,
+  'POST /v1/matter/seen': z.object({ id: z.string().regex(/^[a-f0-9]{8}$/), surface: z.literal('desktop').optional() }).strict(),
   // atelier
   'POST /v1/atelier/share': AtelierShareRequest,
 
@@ -2430,6 +2475,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/cli/sessions': CliSessionsQuery,
   'POST /v1/cli/say': CliSayRequest,
   'GET /v1/cli/say': CliSayQuery,
+  'GET /v1/subscribe/presence': PresenceTopicQuery,
   'POST /v1/cli/hooks/install': CliHooksRequest,
   'POST /v1/cli/hooks/uninstall': CliHooksRequest,
 
@@ -2461,6 +2507,14 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  ...TOPIC_BUBBLE_RESPONSES,
+  ...OWNER_CONVERSATION_RESPONSES,
+  'POST /v1/cli/session-stop': z.object({ok:z.literal(true)}),
+  // P3g:形象画只由随 daemon 更新的网页读，schema 不再从已退休的别名推。
+  'GET /v1/phone/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
+  // Phone-only and binary chunk routes retain their existing JSON response contracts.
+  ...Object.fromEntries(WIRE_ROUTE_ALIASES.filter(a => !a.readers.includes('desktop'))
+    .map(a => [a.to, PHONE_API_SCHEMAS[a.from]])),
   'GET /v1/health': HealthResponse,
   'POST /v1/atelier/share': AtelierShareResponse,
   'POST /v1/memory/read': MemoryReadResponse,
@@ -2545,11 +2599,28 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/workbench/handoff-preview': WorkbenchHandoffPreviewResponse,
   'POST /v1/workbench/handoff': WorkbenchHandoffResponse,
   'GET /v1/workbench/handoff': WorkbenchHandoffRecordResponse,
+  // 一件事上的动作(P3e,/v1/matter/*):operator ⇒ 桌面那一份(同 /v1/workbench/* 双胞胎);手机令牌 ⇒ 手机那一份(带 ok: true)
+  'POST /v1/matter/stop': z.union([WorkbenchTaskResponse, PhoneActionOk]),
+  'POST /v1/matter/permission': WorkbenchOkResponse,
+  'POST /v1/matter/answer': WorkbenchOkResponse,
+  'GET /v1/matter/artifact': z.union([WorkbenchArtifactResponse, PhoneActionOk.extend(MatterArtifactChunk.shape)]),
+  'POST /v1/matter/handoff': z.union([WorkbenchQuotaHandoffResponse, PhoneActionOk.extend(MatterHandoffResult.shape)]),
+  'POST /v1/matter/worktree': z.union([WorkbenchWorktreeResponse, PhoneWorktreeResult]),
+  'POST /v1/matter/create': z.union([WorkbenchEntryResultResponse, PhoneActionOk.extend(EntryResult.shape)]),
+  'GET /v1/matter/create-receipt': z.union([WorkbenchEntryResultResponse, PhoneActionOk.extend(EntryResult.shape)]),
+  'GET /v1/matter/rewind': z.union([WorkbenchRewindPreviewResponse, PhoneActionOk.extend({ preview: PhoneRewindPreview })]),
+  'POST /v1/matter/rewind': z.union([WorkbenchRewindResponse, PhoneActionOk.extend({ discarded: z.array(z.string()) })]),
+  'GET /v1/matter/changes': z.union([WorkbenchReviewResponse, PhoneActionOk.extend({ turn: PhoneChangesTurn.nullable() })]),
+  'POST /v1/matter/review-mark': z.union([WorkbenchReviewMarkResponse, PhoneActionOk]),
+  'POST /v1/matter/review-return': z.union([WorkbenchReviewReturnResponse, PhoneActionOk]),
+  'POST /v1/matter/review-comment': z.union([WorkbenchReviewCommentResponse, PhoneActionOk.extend({ commentId: z.string().optional(), deleted: z.boolean().optional() })]),
+  'POST /v1/matter/review-comments-send': z.union([WorkbenchReviewCommentsSendResponse, PhoneActionOk.extend({ sent: z.number(), remaining: z.number(), skippedDiscarded: z.number() })]),
   // 一件事 / 连接 / 手机 / 插件 / 许可 / 终端会话 / 日历 / 信
   'GET /v1/matters': MattersListResponse,
   'GET /v1/matter': MatterDetailResponse,
   'GET /v1/matter/owner-chat': MatterOwnerChatResponse,
   'GET /v1/matter/owner-chat/search': MatterOwnerChatSearchResponse,
+  'POST /v1/matter/seen': z.object({ ok: z.literal(true) }),
   'POST /v1/matter/say': MatterSayResponse,
   'GET /v1/connections': ConnectionsResponse,
   'POST /v1/phone/link': PhoneLinkResponse,
@@ -2644,6 +2715,7 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/federation/mint': FederationMintResponse,
   // 桌宠 / A2A / 社交 / 权限 / 自改 / 手帐 / 配对 / 笔友
   'GET /v1/companion/pet': PetTurnResponse,
+  'GET /v1/subscribe/presence': PresenceTopicResponse,
   'GET /v1/a2a/list': A2AListResponse,
   'GET /v1/a2a/info': A2AInfoResponse,
   'GET /v1/a2a/activity': A2AActivityResponse,

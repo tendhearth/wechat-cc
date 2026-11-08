@@ -8,6 +8,7 @@
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import { writeJsonAtomic } from '../../lib/json-file'
+import { hintWrite } from '../../lib/write-hints'
 
 const file = (stateDir: string) => join(stateDir, 'companion', 'journal-seen.json')
 
@@ -20,4 +21,5 @@ export function readJournalSeen(stateDir: string): string | null {
 
 export function writeJournalSeen(stateDir: string, iso: string): void {
   writeJsonAtomic(file(stateDir), { seenUntil: iso })
+  hintWrite(stateDir, { kind: 'journal-seen' })  // 手机 home 的未读数跟着它(write-hints.ts)
 }

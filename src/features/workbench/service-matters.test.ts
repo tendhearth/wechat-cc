@@ -44,32 +44,34 @@ afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 it('mirrors a task into a matter with the same id, then follows it through replied, done and archived',async()=>{
   const task=service.create({path:project,providerId:'claude',text:'整理周报'})
   const created=matters.get(task.id)
-  expect(created).toMatchObject({id:task.id,kind:'task',title:task.title,projectPath:project,status:'open',ownerChatId:'owner-chat'})
+  expect(created).toMatchObject({id:task.id,kind:'task',title:task.title,projectPath:project,ownerChatId:'owner-chat'})
+  expect(matters.legacyStatuses([task.id]).get(task.id)).toBe('open')
   expect(matters.bindings(task.id).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner-chat']])
   // 迁移里那一列也要跟上,存量任务靠回填,新任务靠这里。
   expect(db.query<{matter_id:string|null},[string]>('SELECT matter_id FROM workbench_tasks WHERE id=?').get(task.id)).toEqual({matter_id:task.id})
 
   await expect.poll(()=>matters.sessions(task.id)).toEqual([expect.objectContaining({providerId:'claude',sessionId:'native-1',role:'main'})])
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(task.id)?.status).toBe('replied')
+  await expect.poll(()=>matters.legacyStatuses([task.id]).get(task.id)).toBe('replied')
 
   await service.cancel(task.id)
   await expect.poll(()=>service.detail(task.id).task.status).not.toMatch(/^(running|cancelling)$/)
-  await expect.poll(()=>matters.get(task.id)?.status).toBe('done')
+  await expect.poll(()=>matters.legacyStatuses([task.id]).get(task.id)).toBe('done')
 
   service.setArchived(task.id,true)
-  expect(matters.get(task.id)?.status).toBe('archived')
+  expect(matters.legacyStatuses([task.id]).get(task.id)).toBe('archived')
   service.setArchived(task.id,false)
-  expect(matters.get(task.id)?.status).toBe('done')
+  expect(matters.legacyStatuses([task.id]).get(task.id)).toBe('done')
 })
 
-it('works without a matter store (older wiring) — nothing else changes',async()=>{
+it('works without a matter store wired into the service — the task still is its own matter (store-level, M2); only the extras are absent',async()=>{
   const registry=createProviderRegistry();const r=new TurnRuntime()
   registry.register('claude',{async spawn(){return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   const plain=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>null})
   try{
     const task=plain.create({path:project,providerId:'claude',text:'x'})
-    expect(matters.get(task.id)).toBeNull()
+    expect(matters.get(task.id)?.kind).toBe('task')
+    expect(matters.bindings(task.id)).toEqual([])
     // 没接 matters ⇒ 不带 agents,桌面退回任务自己那一家
     expect(plain.list().tasks.find(t=>t.id===task.id)?.agents).toBeUndefined()
   }finally{await plain.shutdown()}

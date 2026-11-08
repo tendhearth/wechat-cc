@@ -1,0 +1,36 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "session": {
+      "key": "claude:s1",
+      "provider": "claude",
+      "title": "会话",
+      "project": "app",
+      "updatedAt": 1793843400000,
+      "active": false,
+      "displayName": "Claude Code"
+    },
+    "nextCursor": null,
+    "managed": false,
+    "window": "start",
+    "messages": [
+      {
+        "id": "u1",
+        "role": "user",
+        "text": "修登录",
+        "truncated": false
+      },
+      {
+        "id": "a1",
+        "role": "assistant",
+        "text": "好",
+        "truncated": false
+      }
+    ]
+  }
+}

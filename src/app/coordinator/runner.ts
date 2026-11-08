@@ -14,7 +14,7 @@ import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } fro
 import { isAuthErrorCode } from '../../lib/provider-error-code'
 import type { DeliveryReport } from '../../domain/turn-reply'
 import type { CoordinatorCtx } from './ctx'
-import type { TurnRecord } from './types'
+import type { ChatTurnHandle, TurnRecord } from './types'
 
 /**
  * Per-agent timeout for a single /chat debate beat. Much shorter than the
@@ -44,6 +44,10 @@ export interface RunTurn {
   observe?: (ev: AgentEvent) => void
   /** 一轮超过阈值还没完时调一次(一轮最多一次)。 */
   progress?: () => void
+  /** 这一轮从什么时候算起(和 record 的 startedAt 同一个数):记进这件对话那一轮的开始时刻(M3a)。 */
+  startedAt?: number
+  /** 这一轮的身份:调用方每轮新建一个对象,run 和 record 带同一个 ⇒ 记进这件对话的同一轮。不给 ⇒ 不在 run 时开轮。 */
+  turn?: object
 }
 
 export interface TurnRecordInput {
@@ -58,6 +62,8 @@ export interface TurnRecordInput {
   /** summary 里没有 error 时的补充(acquire / 回合抛出来的)。 */
   error?: string
   report?: DeliveryReport
+  /** 和 run 的 turn 同一个对象(见 RunTurn.turn);没给或 run 没开过 ⇒ 这里补开一轮当场收。 */
+  turn?: object
 }
 
 export interface TurnRunner {
@@ -130,6 +136,12 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
   // /stop 的代数(2026-10-10):cancel() 每次 +1;一轮开始时记下、结束时比对 ⇒ 这一轮被主人中止过。
   // 中止过的轮不发出错通知、不交付半截话 —— 各家 provider 中止后的收尾不一样(报 error / 像正常结束)。
   const cancelGen = new Map<string, number>()
+  // 对话的轮(M3a):run 开的那一轮按调用方给的 turn 对象记着,record 收。不拿时间当钥匙 —— 同一毫秒开的两轮会撞(Codex 评审)。
+  // 记不上不挡回合。
+  const openTurns = new WeakMap<object, ChatTurnHandle>()
+  const beginTurn = (chatId: string, provider: ProviderId, alias: string, startedAt: number): ChatTurnHandle | null => {
+    try { return deps.chatTurns?.begin({ chatId, provider, alias, startedAt }) ?? null } catch { return null }
+  }
 
   return {
     run(t) {
@@ -143,9 +155,10 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
         ? Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS)
         : deps.turnTimeoutMs
       const observe = t.observe
-      const onEvent = observe
-        ? (ev: AgentEvent) => { observe(ev); deps.onTurnEvent?.(t.chatId, ev) }
-        : (ev: AgentEvent) => deps.onTurnEvent?.(t.chatId, ev)
+      const handle = t.turn === undefined || t.startedAt === undefined ? null : beginTurn(t.chatId, t.providerId, t.alias, t.startedAt)
+      if (handle) openTurns.set(t.turn!, handle)
+      const log = handle ? (ev: AgentEvent) => { try { handle.event(ev) } catch { /* 只少一步 */ } } : undefined
+      const onEvent = (ev: AgentEvent) => { observe?.(ev); log?.(ev); deps.onTurnEvent?.(t.chatId, ev) }
       const turn = oneTurnPerSession(t.chatId, t.alias, t.providerId, () => collectTurn(t.handle.dispatch(t.prompt), { timeoutMs, onEvent }))
       if (progressTimer) {
         // 旁路收尾,不多套一层 then:调用方 await 的还是回合本身,恢复的那一拍不变。
@@ -200,6 +213,11 @@ export function createTurnRunner(ctx: CoordinatorCtx): TurnRunner {
     // One structured TurnRecord per provider turn — the AI-legible / human-legible trace that
     // makes "why did chat X stop replying at HH:MM" a query, not a log dig.
     record(r) {
+      // 这件对话的这一轮:run 开过就收它;没走到 run(会话起不来)⇒ 补开一轮当场收,结局照记。
+      const opened = r.turn ? openTurns.get(r.turn) : undefined
+      if (r.turn) openTurns.delete(r.turn)
+      const handle = opened ?? beginTurn(r.chatId, r.provider, r.alias, r.startedAt)
+      try { handle?.end({ mode: r.mode, outcome: r.outcome, endedAt: r.endedAt, summary: { replyToolCalled: r.summary?.replyToolCalled ?? false, toolCalls: r.summary?.toolCalls ?? [], textChunks: r.summary?.assistantText.length ?? 0, ...(r.report ? { narrationSegments: r.summary?.narration?.length ?? 0 } : {}) }, ...(r.summary?.errorCode ? { errorCode: r.summary.errorCode } : {}), ...((r.summary?.error ?? r.error) ? { error: r.summary?.error ?? r.error } : {}), ...(r.report ? { report: r.report } : {}) }) } catch { /* 只少一轮 */ }
       deps.recordTurn?.({
         chatId: r.chatId,
         provider: r.provider,

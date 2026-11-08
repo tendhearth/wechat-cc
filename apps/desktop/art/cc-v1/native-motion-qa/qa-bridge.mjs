@@ -1,0 +1,117 @@
+// QA-only boundaries: synthetic facts; native commands target this test app's CC.
+import { mainDestination } from '../../../src/main-navigation.js'
+export function createQAApi() {
+  let scenario = 'idle'
+  const allowed = new Set(['idle', 'working', 'thinking', 'permission', 'away', 'completed', 'tasks', 'tasks-away'])
+  const since = new Date().toISOString()
+  let lastDone = null
+  const presenceFacts = () => ({
+    presence: scenario === 'away' || scenario === 'tasks-away' ? 'down' : 'ok',
+    activity: { kind: scenario === 'working' ? 'working' : 'idle', label: '', since: null },
+    news: { unread: 0, latest_kind: null, latest_title: null },
+  })
+  const petFacts = () => ({
+    owner_last_contact_at: null, last_done_at: lastDone,
+    turn: { phase: ['thinking', 'working', 'permission'].includes(scenario) ? scenario : 'idle', since },
+    pending_permissions: scenario === 'permission' ? [{ hash: 'qa-only', prompt: '演示权限卡，不会执行操作。', since, expires_at: new Date(Date.now() + 3_600_000).toISOString() }] : [],
+    ...(['tasks','tasks-away'].includes(scenario)?{activities:[
+      {taskId:'deadbeef',title:'修好本地排版',phase:'needs_input',detail:'确认本地检查方式',updatedAt:1},
+      {taskId:'bbbb2222',title:'整理动作素材',phase:'working',detail:null,updatedAt:2},
+    ]}:{}),
+  })
+  // A synthetic topic cursor: advances only when the synthetic facts change.
+  let cursor = 1, lastKey = ''
+  const topic = () => {
+    const facts = { presence: presenceFacts(), pet: petFacts() }
+    // expires_at follows the wall clock; it is not a change in what CC is doing.
+    const key = JSON.stringify([facts.presence, { ...facts.pet, pending_permissions: facts.pet.pending_permissions.map(p => p.hash) }])
+    if (key !== lastKey) { lastKey = key; cursor++ }
+    return { cursor, ...facts }
+  }
+  return {
+    setScenario(value) {
+      if (!allowed.has(value)) throw Error('Unknown QA scenario')
+      scenario = value
+      if (value === 'completed') lastDone = new Date(Date.now()).toISOString()
+    },
+    /** @returns {Promise<any>} */
+    async invokeApi(method, path) {
+      if (method !== 'GET') throw Error('Backend request blocked by isolated native QA')
+      if (path === '/v1/companion/presence') return presenceFacts()
+      if (path === '/v1/companion/pet') return petFacts()
+      // The companion subscribes to the presence topic (S5). Like the daemon, an unchanged
+      // subscription waits for a change instead of returning at once; scenario changes land within 50 ms.
+      const [route, search = ''] = path.split('?')
+      if (route === '/v1/subscribe/presence') {
+        const query = new URLSearchParams(search), since = query.get('since')
+        const deadline = performance.now() + Math.min(Number(query.get('wait_ms') ?? 0) || 0, 25_000)
+        let reply = topic()
+        while (since !== null && Number(since) === reply.cursor && performance.now() < deadline) {
+          await new Promise(done => setTimeout(done, 50)); reply = topic()
+        }
+        return reply
+      }
+      throw Error('Backend request blocked by isolated native QA')
+    },
+  }
+}
+
+// Installed only in the staged test webview before preference factories load.
+export function createQAClock(now = Date.now) {
+  let offset = 0
+  return {
+    now: () => now() + offset,
+    /** @param {unknown} value */
+    setOffset(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 4 * 60 * 60_000) throw Error('Invalid QA clock offset')
+      offset = value
+    },
+  }
+}
+
+// Eligibility can be accelerated after the first real-time native scene. Sprite
+// timers, the host monotonic clock and production preferences are never replaced.
+export function createQALifeClock(now = () => performance.now()) {
+  let offset = 0
+  return {
+    now: () => now() + offset,
+    random: () => 0,
+    offset: () => offset,
+    /** @param {unknown} value */
+    setOffset(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < offset || value > 4 * 60 * 60_000) throw Error('Invalid QA life clock offset')
+      offset = value
+    },
+  }
+}
+
+/**
+ * @param {{behavior: string}} state
+ * @param {boolean} quiet
+ * @param {{getAttribute(name: string): string | null, textContent: string | null} | null} control
+ */
+export function captureQAObservation(state, quiet, control) {
+  const quietPressed = control?.getAttribute('aria-pressed') ?? null
+  const quietAction = control?.textContent?.trim() ?? null
+  return { behavior: state.behavior, quiet, quietPressed, quietAction,
+    quietOffApplied: quiet === false && quietPressed === 'false' && quietAction === '安静一小时' }
+}
+
+/**
+ * @param {(command: string, args: Record<string, unknown>) => Promise<unknown>} nativeInvoke
+ * @param {() => void} [clearPermission]
+ * @param {(value: {command: string, ok: boolean, error?: string,destination?:unknown}) => void} [onSettled]
+ */
+export function createQAInvoke(nativeInvoke, clearPermission = () => {}, onSettled = () => {}) {
+  const controls = new Set(['open_companion_window', 'close_companion_window', 'start_companion_drag', 'move_companion_window', 'finish_companion_drag', 'companion_motion_context', 'step_companion_motion', 'stop_companion_motion', 'resize_companion_window', 'reset_companion_position', 'show_main_window', 'take_pending_navigate'])
+  return async (command, args = {}) => {
+    if (command === 'pet_permission_resolve') { clearPermission(); return false }
+    if (!controls.has(command)) throw Error('Native/backend command blocked by isolated native QA')
+    let result
+    try { result = await nativeInvoke(command, args) }
+    catch (error) { onSettled({ command, ok: false, error: String(error) }); throw error }
+    const destination=command==='show_main_window'?mainDestination(args):null
+    onSettled({ command, ok: true,...(destination?{destination}: {}) })
+    return result
+  }
+}

@@ -72,7 +72,7 @@ describe('normalizeShare —— 系统交来的原始内容 ⇒ {正文, 图, �
 
 describe('去处、配对门、草稿合并', () => {
   it('跟 CC 说 ⇒ 对话页 / chat 草稿;交给 CC 做一件事 ⇒ 新交办 / new 草稿', () => {
-    expect(shareRoute('chat')).toEqual({ href: '/chat', draftKey: 'chat' })
+    expect(shareRoute('chat')).toEqual({ href: '/', draftKey: 'chat' })
     expect(shareRoute('matter')).toEqual({ href: '/compose', draftKey: 'new' })
   })
   it('没配对也没选先看看 ⇒ 先配对;配了 / 演示 ⇒ 直接选', () => {

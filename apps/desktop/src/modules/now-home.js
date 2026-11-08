@@ -1,6 +1,7 @@
 // @ts-check
 // now-home.js — 「此刻」页的纯函数(spec 2026-10-01 §6.3)。无 DOM。
 import { markdownPlainText } from './workbench-markdown.js'
+import { ROW_HINT_WORDS } from '../generated/status-table.js'
 
 /** @param {number} hour */
 export function greetingFor(hour) {
@@ -68,7 +69,7 @@ export function waitingRows(state) {
     if (first) return {
       id: t.id,
       title: first.text.trim(),
-      detail: [t.title, total > 1 ? `共 ${total} 项` : ''].filter(Boolean).join(' · '),
+      detail: [t.title, total > 1 ? ROW_HINT_WORDS.pendingTotal.replace('{n}', String(total)) : ''].filter(Boolean).join(' · '),
       go: /** @type {'看清楚'|'回答'} */ (first.kind === 'permission' ? '看清楚' : '回答'),
     }
     return {
@@ -84,8 +85,8 @@ export function waitingRows(state) {
 // extra = 同一张表里另外几行(终端里等批准的会话,2026-10-14)。
 /** @param {{tasks:Array<any>,stale:boolean}|null} state @param {number} [extra] */
 export function waitingHeader(state, extra = 0) {
-  // 一起做那边读不到,终端那边读到了:照样列出终端的,标题里说清楚另一半不知道。
-  if (state?.stale && extra > 0) return { hidden: false, unknown: false, title: `${extra} 件事等你 · 一起做那边暂时读不到` }
+  // 交给 CC 的事读不到,终端那边读到了:照样列出终端的,标题里说清楚另一半不知道。
+  if (state?.stale && extra > 0) return { hidden: false, unknown: false, title: `${extra} 件事等你 · 其余的暂时读不到` }
   if (state?.stale) return { hidden: false, unknown: true, title: '暂时不知道有没有等你的事' }
   const n = waitingRows(state).length + extra
   return n === 0 ? { hidden: true, unknown: false, title: '' } : { hidden: false, unknown: false, title: `${n} 件事等你` }

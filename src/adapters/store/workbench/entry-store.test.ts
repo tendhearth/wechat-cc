@@ -18,7 +18,6 @@ const reservation=(changes:Partial<EntryReservation>={}):EntryReservation=>({
 })
 function accepted(){
   const task=makeWorkbenchStore(db).create({title:'entry',path:'/work/task',providerId:'claude',ownerChatId:'owner'})
-  db.query("INSERT INTO matters(id,kind,title,status,owner_chat_id,created_at,updated_at) VALUES(?,'task','entry','open','owner',1,1)").run(task.id)
   return {taskId:task.id,matterId:task.id,runId:randomUUID(),acceptedAt:Date.now(),resolvedPath:'/work/task',directoryIdentity:'1:2'}
 }
 

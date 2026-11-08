@@ -22,8 +22,14 @@ const reviews=()=>[{artifactId:'11111111',sha256:'a'.repeat(64),name:'本轮文�
 const task=()=>({id:'aaaa1111',title:'整理首页',path:'/work/site',workspaceKind:'project',providerId:'codex',status:'completed',createdAt:1,updatedAt:1,error:null})
 const calls=[]
 const invokeWorkbenchApi=async(method,path,body)=>{
+  // Background attention/read receipts are separate from the user mutations asserted below.
+  if(method==='GET' && path==='/v1/workbench/attention')return{tasks:[]}
+  if(method==='POST' && path==='/v1/matter/seen'){
+    if(body.id!=='aaaa1111')throw new Error('Unexpected seen task')
+    return{ok:true}
+  }
   calls.push({method,path,body})
-  if(path==='/v1/workbench/review-comment'){
+  if(path==='/v1/matter/review-comment'){
     if(body.delete){comments.splice(comments.findIndex(c=>c.id===body.commentId),1);return{deleted:body.commentId}}
     const c={id:body.commentId,hunk:body.hunk,rowStart:body.rowStart,rowEnd:body.rowEnd,side:'new',lineStart:body.rowStart+1,lineEnd:body.rowEnd,body:body.body,state:'draft'}
     comments.push(c);return{comment:c}
@@ -32,14 +38,14 @@ const invokeWorkbenchApi=async(method,path,body)=>{
     if(busy)throw new Error('HTTP 409: {"error":"workbench_busy"}')
     reverted=body.action==='revert';return{hunk:{path:body.path,hunk:body.hunk,state:reverted?'reverted':'restored'}}
   }
-  if(path==='/v1/workbench/review-comments-send'){
+  if(path==='/v1/matter/review-comments-send'){
     if(!body.restartToken){restartAsked=true;throw new Error('HTTP 409: {"error":"restart_confirmation_required"}')}
     for(const c of comments){c.state='sent';c.sentAt=9}
     return{task:task(),sent:comments.length,remaining:0,skippedDiscarded:0}
   }
-  if(path==='/v1/workbench/review-return')return{task:task(),...(body.asLesson?{lesson:{ok:true}}:{})}
+  if(path==='/v1/matter/review-return')return{task:task(),...(body.asLesson?{lesson:{ok:true}}:{})}
   if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):{task:task(),version:1,events:[],artifacts:[],permissions:[],...(restartAsked?{continuation:{mode:'restart_required',restart:{token:TOKEN,context:'记录',eventCount:1,includedEventCount:1,truncated:false}}}:{})}
-  if(path.startsWith('/v1/workbench/review?'))return{reviews:reviews()}
+  if(path.startsWith('/v1/matter/changes?'))return{reviews:reviews()}
   if(path.startsWith('/v1/matters?'))return{matters:[]}
   return{tasks:[task()],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,projects:[{id:'p-0123456789abcdef0123',name:'个人网站',path:'/work/site',providerId:'codex'}]}
 }
@@ -83,7 +89,7 @@ test('line comments: select rows, save a draft, revert a hunk, send with restart
  await expect(draft).toContainText('草稿')
  await expect(panel.locator('.wb-review-send-count')).toHaveText('1 条评论待发出')
  const [[createPath,created]]=await posts(page)
- expect(createPath).toBe('/v1/workbench/review-comment')
+ expect(createPath).toBe('/v1/matter/review-comment')
  expect(created).toMatchObject({id:'aaaa1111',artifactId:'11111111',path:'src/app.ts',hunk:0,hunkSha256:'1'.repeat(64),rowStart:1,rowEnd:2,body:'这里改成常量'})
  expect(created.commentId).toMatch(/^[0-9a-f-]{36}$/)
 
@@ -104,10 +110,10 @@ test('line comments: select rows, save a draft, revert a hunk, send with restart
  await again.click()
  await expect(panel.locator('.wb-review-send [role="status"]')).toHaveText('已发出 1 条评论。')
  await expect(panel.locator('.wb-line-comment[data-state="sent"]')).toContainText('之后没再动过这个文件')
- const sends=(await posts(page)).filter(([path]:[string])=>path==='/v1/workbench/review-comments-send')
+ const sends=(await posts(page)).filter(([path]:[string])=>path==='/v1/matter/review-comments-send')
  expect(sends).toEqual([
-  ['/v1/workbench/review-comments-send',{id:'aaaa1111',summary:'整体再收一收'}],
-  ['/v1/workbench/review-comments-send',{id:'aaaa1111',summary:'整体再收一收',restartToken:'c'.repeat(64)}],
+  ['/v1/matter/review-comments-send',{id:'aaaa1111',summary:'整体再收一收'}],
+  ['/v1/matter/review-comments-send',{id:'aaaa1111',summary:'整体再收一收',restartToken:'c'.repeat(64)}],
  ])
 })
 
@@ -134,7 +140,7 @@ test('return form: also record the comment as a project lesson',async({page})=>{
  await form.locator('button[type="submit"]').click()
  await expect(panel.locator('[data-review-return-result]')).toHaveText('已发回。已记成这个项目的经验。')
  await expect(panel.locator('.wb-review-return-form')).toHaveCount(0)
- expect((await posts(page)).filter(([path]:[string])=>path==='/v1/workbench/review-return')).toEqual([
-  ['/v1/workbench/review-return',{id:'aaaa1111',artifactId:'11111111',paths:['src/app.ts'],comment:'改完跑 bun run test',asLesson:true}],
+ expect((await posts(page)).filter(([path]:[string])=>path==='/v1/matter/review-return')).toEqual([
+  ['/v1/matter/review-return',{id:'aaaa1111',artifactId:'11111111',paths:['src/app.ts'],comment:'改完跑 bun run test',asLesson:true}],
  ])
 })

@@ -76,11 +76,12 @@ function ccSocket(/** @type {string} */ url) {
 var tun = null
 function tunnel() {
   if (!tun) {
-    var remote = REMOTE
+    var remote = REMOTE, identity = T
     tun = CCP.makeProtocolClient({
       open: function() { return ccSocket(remote.relay + "?id=" + encodeURIComponent(remote.id)) },
       token: T,
-      client: "web",
+      onSubscriptionError: function(topic,code){if(code === "auth_failed"&&identity===T&&typeof cClearPrivate === "function"){cClearPrivate();if(typeof cShowReconnect === "function")cShowReconnect()}},
+      client: "web", build: "P3g",
       // 页面会发慢请求(说一句、转写一段话):单次等 30 秒;握手 15 秒没回就重连。
       requestTimeoutMs: 30000,
       handshakeTimeoutMs: 15000,
@@ -93,15 +94,17 @@ function tunnel() {
 /** 经中继发一个请求;回 {status, json(), text()}(跟 fetch 的 Response 用法一样,json/text 是 Promise)。 */
 function viaTunnel(/** @type {string} */ path, /** @type {any} */ opts) {
   if (ccLegacyRemote(REMOTE)) { ccNeedsRepair(); return Promise.reject(new Error("upgrade_required")) }
-  var o = opts || {}
+  var o = opts || {}, identity = T
   /** @type {any} */
   var req = { method: o.method || "GET", path: path }
   if (o.headers) { /** @type {Record<string, string>} */ var hs = {}; for (var k in o.headers) if (typeof o.headers[k] === "string") hs[k] = o.headers[k]; req.headers = hs }
+  req.headers = Object.assign({}, req.headers, {"x-cc-web-routes":"P3g"})
   if (typeof o.body === "string") req.body = o.body
   return tunnel().request(req).then(function(/** @type {any} */ r) {
     ccClearNotice("cc-tamper")
     return { status: r.status, text: function() { return Promise.resolve(r.text()) }, json: function() { return Promise.resolve(r.json()) } }
   }, function(/** @type {Error} */ err) {
+    if (err && err.message === "auth_failed" && identity===T && typeof cClearPrivate === "function") { cClearPrivate(); if(typeof cShowReconnect === "function")cShowReconnect() }
     if (err && err.message === "upgrade_required") ccNeedsRepair()
     throw err
   })
@@ -116,6 +119,7 @@ function resetTunnel() {
 /** @param {string} sentAs */
 function onUnauthorized(sentAs) {
   if (sentAs !== T) return
+  if (typeof cClearPrivate === "function") cClearPrivate()
   try { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } catch (e) {}
   location.replace("/m")
 }
@@ -123,6 +127,7 @@ function onUnauthorized(sentAs) {
 // 直接走隧道,不再每次白等 2.5s。返回 {status, json(), text()}。
 var preferTunnel = false
 function api(path, opts) {
+  opts = ccRouteVersion(opts)
   if (preferTunnel && REMOTE) return viaTunnel(path, opts)
   var ctrl = new AbortController()
   var to = setTimeout(function(){ ctrl.abort() }, 2500)
@@ -146,3 +151,6 @@ function ccNav(path) {
   }
   location.href = q(path)
 }
+
+/** Telemetry only; cached pre-P3g pages omit this marker. */
+function ccRouteVersion(opts) { return Object.assign({}, opts || {}, {headers:Object.assign({}, opts && opts.headers, {"x-cc-web-routes":"P3g"})}) }

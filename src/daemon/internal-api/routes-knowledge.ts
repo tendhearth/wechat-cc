@@ -23,7 +23,12 @@
  * query_vector_required (NOT 503 — the store is wired, the caller just
  * skipped a required field / the indexer isn't configured).
  */
-import type { InternalApiDeps, RouteTable } from './types'
+import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
+
+/** 手机设置面板那一口的令牌(设备 / 链接)。 */
+const fromPhone = (caller: Parameters<RouteHandler>[2]): boolean => caller?.origin === 'device' || caller?.origin === 'link'
+/** 手机待办页能改成的三个状态(并之前 /m/api/todo 的处理器就只认这三个)。 */
+const PHONE_FACT_STATUSES: ReadonlySet<string> = new Set(['resolved', 'active', 'rejected'])
 
 const DEFAULT_MESSAGES_LIMIT = 500
 const MAX_MESSAGES_LIMIT = 2000
@@ -224,10 +229,16 @@ export function knowledgeRoutes(deps: InternalApiDeps): RouteTable {
         body: deps.knowledge.facts.findFacts(b.kind ?? null, b.predicate ?? null, b.query ?? null, b.status ?? 'active', b.limit ?? 50),
       }
     },
-    'POST /v1/knowledge/facts/set_fact_status': (_q, body) => {
+    'POST /v1/knowledge/facts/set_fact_status': (_q, body, caller) => {
       if (!deps.knowledge?.facts) return { status: 503, body: { error: 'knowledge_not_wired' } }
       const b = (body ?? {}) as { id?: unknown; status?: unknown; now?: number }
       if (typeof b.id !== 'number' || typeof b.status !== 'string' || !b.status) return { status: 400, body: { error: 'invalid_args' } }
+      // 手机令牌(P3c-3,原 /m/api/todo 的处理器):待办页只有「完成 / 捞回 / 不对」三个按钮 ⇒ 只认这三个状态,
+      // 时间戳由 daemon 定(不认正文里的 now)。别的状态(superseded …)是 MCP / 桌面的事。
+      if (fromPhone(caller)) {
+        if (!PHONE_FACT_STATUSES.has(b.status)) return { status: 400, body: { error: 'invalid_args' } }
+        return { status: 200, body: deps.knowledge.facts.setFactStatus(b.id, b.status, Math.floor(Date.now() / 1000)) }
+      }
       return { status: 200, body: deps.knowledge.facts.setFactStatus(b.id, b.status, b.now ?? Math.floor(Date.now() / 1000)) }
     },
     'GET /v1/knowledge/facts/extraction_status': () => {

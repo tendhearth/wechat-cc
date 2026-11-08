@@ -77,6 +77,18 @@ describe('makeBriefTurn', () => {
     await turn({ id: 'j1', schedule: { kind: 'daily', at: '08:00' }, text: '早报', createdAt: 'x', paused: false, brief: true }, 't2')
     expect(claims).toHaveLength(1)
   })
+  it('「早报」那件事(M5b):写一次 = 一轮;发出去了 completed,没发(silent / 失败)⇒ failed 原因照写;没有主人不开轮', async () => {
+    const { makeBriefTurn } = await import('./brief')
+    const log: string[] = []
+    const acts = { begin: (_w: string, o?: { policy?: unknown }) => { log.push(`begin ${JSON.stringify(o?.policy)}`); return { id: 't', step: (k: string, p: { result: string }) => { log.push(`${k} ${p.result}`) }, finish: (st: string, f?: { errorCode?: string }) => { log.push(`finish ${st}${f?.errorCode ? ` ${f.errorCode}` : ''}`) } } } }
+    let result = 'sent', owner: string | null = 'owner'
+    const turn = makeBriefTurn({ acts: acts as never, runJobTurn: async () => result as never, ownerChatId: () => owner, today: () => null, reminders: () => [], agenda: () => [], prefs: () => [], claim: () => {} })
+    const job = { id: 'j1', schedule: { kind: 'daily' as const, at: '08:00' }, text: '早报', createdAt: 'x', paused: false, brief: true }
+    await turn(job, '2026-10-20T00:00:00Z')
+    result = 'silent'; await turn(job, '2026-10-21T00:00:00Z')
+    owner = null; await turn(job, '2026-10-22T00:00:00Z')
+    expect(log).toEqual(['begin {"job":"j1"}', 'delivery sent', 'finish completed', 'begin {"job":"j1"}', 'delivery silent', 'finish failed silent'])
+  })
   it('no owner ⇒ skipped:no_owner', async () => {
     const { makeBriefTurn } = await import('./brief')
     const turn = makeBriefTurn({ runJobTurn: async () => 'sent', ownerChatId: () => null, today: () => null, reminders: () => [], agenda: () => [], prefs: () => [], claim: () => {} })

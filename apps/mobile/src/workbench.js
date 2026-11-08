@@ -6,7 +6,10 @@ var mAgents
 var M_STATUS = { open: "在做", replied: "这一轮做完了", done: "完成", archived: "已归档" }
 var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
 var M_PHASE = { queued: "在做", working: "在做", replied: "这一轮做完了", failed: "没做成", cancelled: "停下了", interrupted: "停下了" }
-var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = false, mBusy = {}
+var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = true, mBusy = {}
+// 一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,分「在做」「带回来的」两组(等你那一件是此刻页上那张卡);
+// 带回来的只收 24 小时内,更早的点「全部」。组名、状态词来自协议包那一张(CCP,App / 桌面同一张)。
+var M_BACK_WINDOW_MS = 24 * 3600 * 1000, mAll = false, mMatters = null
 var mDetailFresh = false, mConnectionEpoch = 0, mOffline = false
 /** 最后一次真正联系上 daemon 的时刻。断网时它会停住变旧 —— 这正是"你看到的是几点的样子"要报的那个数。 */
 var mLastOkAt = null
@@ -21,7 +24,7 @@ function mConn() {
   el.hidden = !stale
   el.textContent = stale ? (mLastOkAt===null?"家里的电脑暂时连不上，看看它开着没。":"家里的电脑暂时连不上 —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
 }
-// 码 → 一句话。读列表 / 详情(GET /m/api/matters、/m/api/matter)用 M_ERRORS,停下这一轮用 M_STOP_ERRORS;
+// 码 → 一句话。读列表 / 详情(GET /v1/matters、/v1/matter)用 M_ERRORS,停下这一轮用 M_STOP_ERRORS;
 // 没列的码走后面那句通用的。守卫 scripts/mobile-web-errors.guard.test.ts:每个码都得是那几条路由真会回的,
 // 路由会回的码要么在这里、要么在守卫的 GENERIC 里明列(以前这里认的 not_found 详情路由从来不回 —— 它回 matter_not_found)。
 var M_ERRORS = {
@@ -34,7 +37,7 @@ function mText(map, code, fallback) { return Object.prototype.hasOwnProperty.cal
 function mError(code) { return mText(M_ERRORS, code, "暂时没读到，请检查连接后再看。") }
 function mApi(path,opts,sender) {
   var timer, epoch=mConnectionEpoch, pageId=mCurrent
-  return Promise.race([(sender||api)(path,opts).then(function(r){return r.json().then(function(b){if (!r.status || r.status < 400) { if (b.ok) return b }; throw Object.assign(new Error(b.error || "unavailable"),{status:r.status})})}),new Promise(function(_r,reject){timer=setTimeout(function(){reject(new Error("timeout"))},15000)})])
+  return Promise.race([(sender||api)(path,opts).then(function(r){return r.json().then(function(b){if (!r.status || r.status < 400) { if (b && !b.error) return b }; throw Object.assign(new Error(b.error || "unavailable"),{status:r.status})})}),new Promise(function(_r,reject){timer=setTimeout(function(){reject(new Error("timeout"))},15000)})])
     .then(function(b){
       // 只在"从断线里回来"这一下清提示:断线期间那条错误不清就会赖到下一次操作;平时成功不动它(「已经请电脑停下」要留着)。
       if(epoch!==mConnectionEpoch||mOffline)return b
@@ -45,13 +48,70 @@ function mApi(path,opts,sender) {
     .finally(function(){clearTimeout(timer)})
 }
 function mSetButtons() {
+  if(typeof cResponseButtons==='function')cResponseButtons()
   document.querySelectorAll('#m-status [data-stop]').forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||mOffline||!!mBusy[mCurrent+':stop']})
 }
-function loadMatters() {
-  mApi("/m/api/matters?status=open,replied,done").then(function(r){
-    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(ccPlain(m.title))+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents,{nameOf:mNameOf(m.agentNames)})+'</button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
-  }).catch(function(e){document.getElementById("m-list").textContent=mError(e.message)})
+/**
+ * 旧状态(open / replied / done / archived)从 state / archivedAt 推(M6e,同 daemon 的 domain/matters/legacy-status.ts):
+ * 归档 ⇒ archived;不是任务 ⇒ open;任务看任务自己的状态(task = 详情的 task 或列表的 taskState):做完 / 没做成 / 停了 ⇒ done,
+ * 在跑且这一轮做完了(phase replied)⇒ replied,其余 open;读不到任务 ⇒ 看统一状态。老 daemon 不带 state ⇒ 退回 matter.status。
+ */
+var M_FINISHED = { completed: 1, failed: 1, cancelled: 1 }, M_STATE_FINISHED = { done: 1, failed: 1, cancelled: 1 }
+function mLegacyStatus(m, task) {
+  if (m.state === undefined) return m.status
+  if (m.archivedAt != null) return "archived"
+  if (m.kind !== "task") return "open"
+  if (!task) return M_STATE_FINISHED[m.state] ? "done" : "open"
+  if (M_FINISHED[task.status]) return "done"
+  return task.status === "running" && task.phase === "replied" ? "replied" : "open"
 }
+/** 一件事的状态折成状态表的键:有 taskState(任务真正的状态)就跟 App 的 statusOf 一样折;没有 ⇒ 按 state / archivedAt 推的旧状态。 */
+function mStatusKey(m) {
+  var s = m.taskState
+  if (!s) { var st = mLegacyStatus(m, null); return st === "open" ? "working" : st === "replied" ? "replied" : "done" }
+  if (s.pending > 0) return "waiting"
+  if (s.phase === "failed" || s.status === "failed") return "failed"
+  if (s.status === "cancelled" || s.phase === "cancelled" || s.status === "interrupted" || s.phase === "interrupted") return "stopped"
+  if (s.phase === "replied") return "replied"
+  if (s.status === "completed" || s.phase === "completed" || s.phase === "done") return "done"
+  return "working"
+}
+function mRow(m, key) {
+  // 三端同一句(状态表):等你好几项 ⇒「共 N 项」;在做却 30 分钟没动静 ⇒「可能卡住」
+  var pending = (m.taskState && m.taskState.pending) || 0
+  var caption = m.networkSuspended ? "已暂停(网络未受保护)"
+    : key === "working" ? (Date.now() - (m.updatedAt || Date.now()) > CCP.QUIET_AFTER_MS ? CCP.ROW_HINT_WORDS.quiet : "")
+    : key === "waiting" && pending > 1 ? CCP.STATUS_WORDS[key] + " · " + CCP.ROW_HINT_WORDS.pendingTotal.replace("{n}", String(pending))
+    : CCP.STATUS_WORDS[key]
+  return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(ccPlain(m.title))+'</b>'+(caption?'<small>'+esc(caption)+'</small>':'')+'</span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents,{nameOf:mNameOf(m.agentNames)})+'</button>'
+}
+function renderMatters() {
+  var list = document.getElementById("m-list"), all = document.getElementById("m-all")
+  if (!mMatters) return
+  // 此刻页那张卡(等你决定 / 带回了成果)上的那一件不再重复;对话、陪伴不算「一件事」(同 App 的主页)
+  var focusId = typeof homeCardId !== "undefined" ? homeCardId : null
+  var rows = mMatters.filter(function(m){ return m.kind === "task" && m.id !== focusId }).sort(function(a, b){ return (b.updatedAt || 0) - (a.updatedAt || 0) })
+  var keyed = rows.map(function(m){ return { m: m, key: mStatusKey(m) } })
+  var inGroup = function(g){ return keyed.filter(function(r){ return CCP.STATUS_TABLE[r.key].group === g }) }
+  var cutoff = Date.now() - M_BACK_WINDOW_MS
+  var backAll = inGroup("back")
+  var back = mAll ? backAll : backAll.filter(function(r){ return (r.m.updatedAt || 0) >= cutoff })
+  var more = backAll.length - back.length
+  var groups = [["waiting", inGroup("waiting")], ["working", inGroup("working")], ["back", back]]
+  var html = groups.map(function(g){ return g[1].length ? '<div class="grp">'+esc(CCP.HOME_GROUP_WORDS[g[0]])+'</div>' + g[1].map(function(r){ return mRow(r.m, r.key) }).join("") : "" }).join("")
+  // 卡上已经有一件、列表里没别的 ⇒ 不说「还没有事」
+  list.innerHTML = html || (more || focusId ? "" : '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>')
+  all.hidden = more === 0
+  all.textContent = more ? "全部 · 还有 " + more + " 件更早的 →" : "全部 →"
+}
+function loadMatters() {
+  var epoch=mConnectionEpoch
+  mApi("/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1").then(function(r){ if(epoch!==mConnectionEpoch)return;mMatters = r.matters; renderMatters();if(typeof cMatterUpdates==='function')cMatterUpdates() })
+    .catch(function(e){ if(epoch!==mConnectionEpoch)return;if (!mMatters) document.getElementById("m-list").textContent = mError(e.message) })
+}
+document.getElementById("m-all").addEventListener("click", function(){ mAll = true; renderMatters() })
+// 「刷新」(home.js 也挂着它)顺带重拉列表:列表就在此刻页上
+document.getElementById("refresh").addEventListener("click", function(){ if (!mCurrent) loadMatters() })
 /** 执行者叫什么只读 daemon 给的 matter.agentNames(收敛清单 ⑥),网页不存名字表;老 daemon 不带 ⇒ id。 */
 function mNameOf(names) { return function(id) { return names&&typeof names[id]==='string'&&names[id]?names[id]:id } }
 var M_ID = /^[a-z][a-z0-9._-]{0,63}$/
@@ -73,16 +133,18 @@ function mQuotaText(view, names) {
 function mStateWord(d) {
   var id=d.matter.id,task=d.task
   var waiting=(d.permissions||[]).concat(d.questions||[]).filter(function(r){return r.taskId===id}).length
-  var quota=mQuotaView(d.quotaHandoff)
-  if(d.matter.status==='archived')return {word:'已归档',waiting:waiting}
-  if(d.matter.status==='done')return {word:'完成',waiting:waiting}
+  var quota=mQuotaView(d.quotaHandoff),status=mLegacyStatus(d.matter,task)
+  if(status==='archived')return {word:'已归档',waiting:waiting}
+  if(task&&(task.status==='failed'||task.phase==='failed'))return {word:'没做成',waiting:waiting}
+  if(task&&(task.status==='cancelled'||task.phase==='cancelled'||task.status==='interrupted'||task.phase==='interrupted'))return {word:'停下了',waiting:waiting}
+  if(status==='done')return {word:'完成',waiting:waiting}
   if(waiting||quota&&quota.state!=='handed')return {word:'等你决定',waiting:waiting}
   if(task&&task.phase&&M_PHASE[task.phase])return {word:M_PHASE[task.phase],waiting:0}
-  return {word:M_STATUS[d.matter.status]||d.matter.status,waiting:0}
+  return {word:M_STATUS[status]||status,waiting:0}
 }
 function mRenderStatus(d) {
   var root=document.getElementById('m-status'),state=mStateWord(d),quota=mQuotaView(d.quotaHandoff),html='<p class="m-state">'+esc(state.word)+'</p>'
-  if(state.waiting)html+='<p class="m-task-note">有 '+state.waiting+' 项等你决定，到手机 App 或电脑上处理。</p>'
+  if(state.waiting&&!(typeof cReady!=='undefined'&&cReady))html+='<p class="m-task-note">有 '+state.waiting+' 项等你决定，到手机 App 或电脑上处理。</p>'
   var events=d.events||[],last=events[events.length-1]
   if(last&&last.kind==='tool_call'&&last.activity&&last.activity.status==='running')html+='<p class="m-now"><span>正在</span> '+esc(last.activity.label||last.text)+'</p>'
   if(d.matter.kind==='task'&&quota)html+='<p class="m-task-note">'+esc(mQuotaText(quota,d.matter.agentNames))+'</p>'
@@ -93,9 +155,23 @@ function mRenderStatus(d) {
     var armed=mStopArmed&&mStopArmed.task===d.matter.id&&mStopArmed.run===d.runId
     html+='<button type="button" class="more" data-stop="1" data-task="'+esc(d.matter.id)+'" data-run="'+esc(d.runId)+'">'+(armed?'再点一次，确认停止':'停止这一轮')+'</button>'
   }
-  if(root.innerHTML!==html)root.innerHTML=html
+  if(typeof cMatterWork==='function')html+=cMatterWork(d)
+  if(typeof cArtifactHtml==='function')html+=cArtifactHtml(d)
+  if(mRenderedStatus!==html){
+    var expanded=['matter-process','matter-results','matter-artifacts'].filter(function(name){var el=/** @type {HTMLDetailsElement} */ (root.querySelector&&root.querySelector('.'+name));return el&&el.open})
+    var summaryFocus=document.activeElement&&document.activeElement.tagName==='SUMMARY'&&document.activeElement.parentElement?document.activeElement.parentElement.className:null
+    // 确认文字 / 轮询状态变化不能把键盘用户从「停下」上丢掉。
+    var focused=document.activeElement
+    var restore=focused&&root.contains(focused)&&focused.hasAttribute('data-stop')
+    var task=restore?focused.getAttribute('data-task'):null,run=restore?focused.getAttribute('data-run'):null
+    root.innerHTML=html;mRenderedStatus=html
+    expanded.forEach(function(name){var el=/** @type {HTMLDetailsElement} */ (root.querySelector('.'+name));if(el)el.open=true})
+    if(['matter-process','matter-results','matter-artifacts'].includes(summaryFocus)){var summary=/** @type {HTMLElement} */ (root.querySelector('.'+summaryFocus+' > summary'));if(summary)summary.focus({preventScroll:true})}
+    var next=restore?root.querySelector('button[data-stop]'):null
+    if(next&&next.getAttribute('data-task')===task&&next.getAttribute('data-run')===run)/** @type {HTMLButtonElement} */ (next).focus({preventScroll:true})
+  }
 }
-var mStopArmed=null,mStopTimer=null
+var mStopArmed=null,mStopTimer=null,mRenderedStatus=null
 async function mStop(task,run) {
   var key=task+':stop'
   if(task!==mCurrent||!mDetail||mDetail.runId!==run||!mDetailFresh||mOffline||mBusy[key])return
@@ -107,53 +183,61 @@ async function mStop(task,run) {
   mStopArmed=null;clearTimeout(mStopTimer);mBusy[key]=true;mSetButtons();mNotice('正在停下这一轮…')
   try{
     // 一次只走一条通道,不自动重发
-    var r=await mPostOnce('/m/api/matter/stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:task,runId:run})})
+    var r=await mPostOnce('/v1/matter/stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:task,runId:run})})
     var b=await r.json().catch(function(){return null})
-    mNotice(b&&b.ok?'已经请电脑停下这一轮。':mText(M_STOP_ERRORS,b&&b.error,'没停成，稍后再试。'))
+    mNotice(r.status>=200&&r.status<300&&b&&b.ok?'已经请电脑停下这一轮。':mText(M_STOP_ERRORS,b&&b.error,'没停成，稍后再试。'))
   }catch(e){mNotice('没停成，稍后再试。')}
   finally{delete mBusy[key];mSetButtons();clearTimeout(mPoll);mSchedule()}
 }
 /** A POST selects one transport once. A lost LAN reply must never send it again through the tunnel. */
 function mPostOnce(path,opts) {
-  if(preferTunnel&&REMOTE)return tunnel().then(function(send){return send(path,opts)})
+  opts=ccRouteVersion(opts)
+  if(preferTunnel&&REMOTE)return viaTunnel(path,opts)
   var ctrl=new AbortController(),timer=setTimeout(function(){ctrl.abort()},2500)
   return fetch(q(path),Object.assign({signal:ctrl.signal},opts)).catch(function(e){if(REMOTE)preferTunnel=true;throw e}).finally(function(){clearTimeout(timer)})
 }
 document.getElementById('m-status').addEventListener('click',function(ev){var s=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-stop]'));if(s&&s.dataset.task===mCurrent)mStop(s.dataset.task,s.dataset.run)})
 function renderMatter(d) {
   mDetail=d;mDetailFresh=true
+  if(typeof cCaptureMatter==='function')cCaptureMatter(d)
   document.getElementById("m-title").textContent=ccPlain(d.matter.title)
   // 标题下一组头像 + 名字:任务那一家在前,老 daemon 不带 agents 也有
   // 出生地(2026-10-19):字形在头像组前面,名字后面写一句「从哪来的」;不知道 ⇒ 不画
   var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents"),from=mAgents.originLabel(d.matter.origin)
   who.hidden=!agents.length&&!from;who.innerHTML=agents.length||from?mAgents.originMarkHtml(d.matter.origin)+mAgents.agentAvatarsHtml(agents,{nameOf:mNameOf(d.matter.agentNames)})+'<span>'+esc([mAgents.agentsLabel(agents,mNameOf(d.matter.agentNames)),from].filter(Boolean).join(" · "))+'</span>':''
   mRenderStatus(d)
+  if(typeof cRenderResponses==='function')cRenderResponses(d)
   mSetButtons()
+  if(typeof cResponseButtons==='function')cResponseButtons()
 }
 function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidden)mPoll=setTimeout(mRefresh,3000) }
 function mRefresh() {
   clearTimeout(mPoll);if(!mActive||!mCurrent||document.hidden||mOffline)return Promise.resolve()
   var id=mCurrent,seq=++mSeq
-  return mApi('/m/api/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq)mNotice(mError(e.message))}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
+  return mApi('/v1/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq)mNotice(mError(e.message))}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
 }
 function openMatter(id) {
+  if(typeof cPushLayer==='function')cPushLayer({kind:'matter',id:id})
+  if(typeof cResetResponse==='function'&&id!==mCurrent)cResetResponse()
   mDetailFresh=false
-  if(mCurrent!==id){mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
+  if(mCurrent!==id){mRenderedStatus=null;mSeq++;mDetail=null;mStopArmed=null;document.getElementById('m-status').replaceChildren();document.getElementById('m-agents').hidden=true;mNotice("");document.getElementById("m-title").textContent="正在读…"}
   mCurrent=id;mActive=true
-  document.getElementById("m-list").hidden=true;document.getElementById("m-detail").hidden=false
+  document.getElementById("m-home").hidden=true;document.getElementById("m-detail").hidden=false
+  if(typeof cShowMatterLayout==='function')cShowMatterLayout()
   return mRefresh()
 }
-/** 此刻页那张「等你」的卡点进来:切到「一起做」,直接看这件事的状态。 */
+/** 此刻页那张「等你」的卡点进来:原地看这件事的状态。 */
 function ccShowMatter(id) {
-  ccSelectMobilePane('matters')
   openMatter(id)
 }
 document.getElementById("m-list").addEventListener("click",function(ev){var c=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(c)openMatter(c.dataset.mid)})
-document.getElementById("m-back").addEventListener("click",function(){mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-list").hidden=false;loadMatters()})
-document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ b){b.addEventListener('click',function(){mActive=b.dataset.p==='matters';clearTimeout(mPoll);if(mActive){if(mCurrent)mRefresh();else loadMatters()}})})
+document.getElementById("m-back").addEventListener("click",function(){if(typeof cBackLayer==='function'&&cReady&&!cHandlingPop){cBackLayer();return};mSeq++;mCurrent=null;mDetail=null;mStopArmed=null;clearTimeout(mPoll);document.getElementById("m-detail").hidden=true;document.getElementById("m-home").hidden=false;if(typeof cShowMatterLayout==='function')cShowMatterLayout();loadMatters()})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。
 document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
 window.addEventListener('offline',function(){clearTimeout(mPoll);mOffline=true;mSeq++;mConnectionEpoch++;mDetailFresh=false;mMisses=M_STALE_MISSES;mConn();mSetButtons()})
 window.addEventListener('online',function(){mOffline=false;if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
 window.addEventListener('pagehide',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons()})
 window.addEventListener('pageshow',function(){if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
+// 列表跟此刻页一起:一载入就拉,看着的时候 15 秒刷一次(同 home.js)。
+setInterval(function(){ if (!document.hidden && !mCurrent) loadMatters() }, 15000)
+loadMatters()

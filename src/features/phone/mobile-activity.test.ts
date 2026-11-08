@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mobileActivityRoutes } from './mobile-activity'
-import { routePhone } from './phone-route-table'
+import { routePhone } from '../../lib/phone-route-table'
 import { PHONE_API_SCHEMAS } from '../../../packages/protocol/src/api'
 
 const NOW = Date.parse('2026-10-20T12:00:00Z')
@@ -13,19 +13,19 @@ const items = Array.from({ length: 5 }, (_, i) => ({ id: `job:${i}`, kind: 'job'
 describe('GET /m/api/activity', () => {
   it('pages with a cursor, passes the schema, reports degraded sources', async () => {
     const deps = { sources: () => ({ log: items, letters: null }), now: () => NOW }
-    const p1 = await run(deps, '/m/api/activity?limit=2')
+    const p1 = await run(deps, '/v1/activity?limit=2')
     expect(p1!.status).toBe(200)
     PHONE_API_SCHEMAS['GET /m/api/activity']!.parse(p1!.body)
     expect(p1!.body.items.map((i: any) => i.id)).toEqual(['job:0', 'job:1'])
     expect(p1!.body.degraded).toEqual(['letters'])
-    const p2 = await run(deps, `/m/api/activity?limit=2&cursor=${p1!.body.next}`)
+    const p2 = await run(deps, `/v1/activity?limit=2&cursor=${p1!.body.next}`)
     expect(p2!.body.items.map((i: any) => i.id)).toEqual(['job:2', 'job:3'])
   })
   it('not wired ⇒ 503; throws ⇒ 500; non-GET ⇒ 405; bad limit ⇒ clamped; other paths ⇒ null', async () => {
-    expect((await run(undefined, '/m/api/activity'))!.status).toBe(503)
-    expect((await run({ sources: () => { throw new Error('x') }, now: () => NOW }, '/m/api/activity'))!.status).toBe(500)
-    expect((await run({ sources: () => ({}), now: () => NOW }, '/m/api/activity', 'POST'))!.status).toBe(405)
-    expect((await run({ sources: () => ({ log: items }), now: () => NOW }, '/m/api/activity?limit=abc'))!.body.items).toHaveLength(5)
+    expect((await run(undefined, '/v1/activity'))!.status).toBe(503)
+    expect((await run({ sources: () => { throw new Error('x') }, now: () => NOW }, '/v1/activity'))!.status).toBe(500)
+    expect((await run({ sources: () => ({}), now: () => NOW }, '/v1/activity', 'POST'))!.status).toBe(405)
+    expect((await run({ sources: () => ({ log: items }), now: () => NOW }, '/v1/activity?limit=abc'))!.body.items).toHaveLength(5)
     expect(await run({ sources: () => ({}), now: () => NOW }, '/m/api/other')).toBeNull()
   })
 })

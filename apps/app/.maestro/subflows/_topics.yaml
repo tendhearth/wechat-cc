@@ -1,0 +1,62 @@
+# T4: 六个最近话题、sheet、来源与事项、历史话题、返回保留主人草稿。
+appId: com.tendhearth.app
+---
+- tapOn:
+    id: chat-model-open
+- tapOn:
+    id: topbar-back
+- tapOn:
+    id: chat-input
+- inputText: "topic draft stays"
+- tapOn:
+    id: topic-demo-backup
+- extendedWaitUntil:
+    visible:
+      id: topic-sheet
+    timeout: 10000
+- assertVisible: "家里的服务与备份"
+- assertVisible: "上次：备份留在本地"
+- assertVisible:
+    id: topic-matter-a1b2c3d4
+- takeScreenshot: t5-topic-sheet
+# 长内容可从底部 sheet 展开为全屏，再读记忆与来源。
+- swipe:
+    start: 50%, 47%
+    end: 50%, 12%
+    duration: 600
+- waitForAnimationToEnd
+- takeScreenshot: t5-topic-expanded
+- scrollUntilVisible:
+    element:
+      id: topic-entry-demo-entry
+    centerElement: true
+    direction: DOWN
+- tapOn:
+    id: topic-entry-demo-entry
+- assertVisible: "每周核验一次备份。"
+- takeScreenshot: t5-topic-memory-source
+- tapOn:
+    id: topbar-back
+- assertVisible:
+    id: chat-input
+    text: "topic draft stays"
+- tapOn:
+    id: topics-more
+- extendedWaitUntil:
+    visible:
+      id: topics-search
+    timeout: 5000
+- tapOn:
+    id: topic-demo-trip
+- extendedWaitUntil:
+    visible:
+      id: topic-sheet
+    timeout: 5000
+- tapOn:
+    id: topbar-back
+- tapOn:
+    id: topbar-back
+- assertVisible:
+    id: chat-input
+    text: "topic draft stays"
+- takeScreenshot: t5-conversation-draft-retained

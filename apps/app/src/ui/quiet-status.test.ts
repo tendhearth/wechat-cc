@@ -13,7 +13,7 @@ import { inputStatusText } from '../view/matter-input'
 import { CompanionCard } from './CompanionCard'
 import { ConnectionNotice } from './ConnectionNotice'
 import { InputReceipts } from './InputReceipts'
-import { Sheet } from './Sheet'
+import { Expansion, Sheet } from './Sheet'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
@@ -111,6 +111,31 @@ describe('compact native status details', () => {
 })
 
 describe('expandable native content', () => {
+  it('lazily retains opted-in editors, hiding their controls for the entire closed interval', async () => {
+    const action = vi.fn(), closed = vi.fn()
+    const node = (open: boolean) => createElement(Expansion, { open, keepMounted: true, onClosed: closed,
+      children: createElement('button', { 'data-testid': 'retained-editor', onClick: action }, 'Draft') })
+    const root = await mount(node(false))
+    expect(el('retained-editor')).toBeNull()
+    await act(() => root.render(node(true))); await flush()
+    const editor = el('retained-editor')
+    expect(editor).not.toBeNull()
+    await act(() => root.render(node(false))); await flush()
+    expect(el('retained-editor')?.closest('[aria-hidden="true"]')).not.toBeNull()
+    await click('retained-editor')
+    expect(action).not.toHaveBeenCalled()
+    await act(() => { for (const finish of host.finish.splice(0)) finish() })
+    expect(el('retained-editor')).toBe(editor)
+    expect(closed).toHaveBeenCalledTimes(1)
+    await click('retained-editor')
+    expect(action).not.toHaveBeenCalled()
+    await act(() => root.render(node(true))); await flush()
+    expect(el('retained-editor')).toBe(editor)
+    expect(el('retained-editor')?.closest('[aria-hidden="true"]')).toBeNull()
+    await click('retained-editor')
+    expect(action).toHaveBeenCalledTimes(1)
+  })
+
   it('hides closing sheet content from accessibility immediately but retains it until the visual close completes', async () => {
     await mount(createElement(Sheet, { title: 'Details', testID: 'sheet-toggle', children: createElement('span', { 'data-testid': 'sheet-detail' }, 'details') }))
     expect(el('sheet-detail')).toBeNull()

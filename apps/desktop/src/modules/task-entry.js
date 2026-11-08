@@ -4,7 +4,9 @@ import {createWorkbenchDraftStore} from './workbench-window-state.js'
 import {createExecutionCatalogs, renderExecutionControls, executionErrorMessage} from './workbench-execution.js'
 import {createWorkbenchThumbnails} from './workbench-thumbnails.js'
 import {ENTRY_LIMITS,entryContentError,entryFailureKind} from '../shared/task-entry-contract.js'
-import {renderWorkbenchMarkdown,renderWorkbenchUserText,captureUserSources,restoreUserSources} from './workbench-markdown.js'
+import {renderWorkbenchUserText,captureUserSources,restoreUserSources} from './workbench-markdown.js'
+// 交办预览里的讨论摘录只读不点:外部图片 / 链接不出现 URL(阅读页那套「打开图片」不用在这里)。
+import {renderMarkdown as renderExcerptMarkdown} from '../vendor/markdown.js'
 import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {import('../../../../src/adapters/workbench/task-entry').EntryInput} EntryInput */
@@ -14,7 +16,7 @@ import { V1, v1 } from '../daemon-client.js'
 /** @typedef {{text:string,visibleMessages?:Message[],projectPath?:string}} Draft */
 /** @typedef {{input:EntryInput,signature:string,uncertain:boolean,material:import('./workbench-window-state.js').Draft}} Submission */
 /** @typedef {{sourceText:string,text:string,draftId:string,target:EntryInput['target'],providerId:string,execution:import('./workbench-execution.js').ExecutionChoice,candidates:Message[],selected:number[],pending:Submission|null,untilCommand?:string,untilRounds?:number}} EntryDraft */
-/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,storage?:Pick<Storage,'getItem'|'setItem'|'removeItem'>|null,createAttachments?:typeof createWorkbenchAttachments,onAccepted?:(result:EntryResult)=>void|Promise<void>}} Deps */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,storage?:Pick<Storage,'getItem'|'setItem'|'removeItem'>|null,createAttachments?:typeof createWorkbenchAttachments,onManageProjects?:()=>void,onAccepted?:(result:EntryResult)=>void|Promise<void>}} Deps */
 const KEY='cc.task-entry.window.v1'
 const esc=(/** @type {unknown} */v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]??c)
 const uuid=(/** @type {unknown} */v)=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(v)
@@ -101,9 +103,9 @@ export function createTaskEntry(deps){
         dialog.innerHTML=`<form class="task-entry-form"><header><div><h2>交给 CC 做</h2><p>确认要求和材料后开始；成果会留在这件事里。</p></div><button type="button" data-entry-action="cancel" aria-label="关闭交办预览">×</button></header>
           <div class="task-entry-body"><label for="task-entry-text">要求</label><textarea id="task-entry-text" name="text" rows="5" maxlength="${ENTRY_LIMITS.text}" placeholder="希望 CC 帮你完成什么？">${esc(state.text)}</textarea>
           <section class="task-entry-context" aria-label="主人选择的讨论材料"><div class="task-entry-section-head"><h3>讨论材料 <small>默认不带聊天</small></h3>${state.candidates.length?'<button type="button" data-entry-action="recent">带上最近五轮</button>':''}</div>
-          ${state.candidates.length?state.candidates.map((m,i)=>`<div class="task-entry-excerpt"><input id="task-entry-excerpt-${i}" type="checkbox" name="excerpt" value="${i}" aria-label="带上${m.role==='user'?'我':'CC'}的第 ${i+1} 段讨论"${state.selected.includes(i)?' checked':''}><div class="task-entry-excerpt-content"><label class="task-entry-excerpt-author" for="task-entry-excerpt-${i}">${m.role==='user'?'我':'CC'}</label><div class="task-entry-excerpt-body ${m.role==='cc'?'cc-readable-markdown wb-markdown':''}">${m.role==='cc'?renderWorkbenchMarkdown(m.text):renderWorkbenchUserText(m.text,`entry:${state.draftId}:${i}`)}</div></div></div>`).join(''):'<p class="task-entry-hint">没有选择讨论材料，只会交办上面的要求。</p>'}</section>
+          ${state.candidates.length?state.candidates.map((m,i)=>`<div class="task-entry-excerpt"><input id="task-entry-excerpt-${i}" type="checkbox" name="excerpt" value="${i}" aria-label="带上${m.role==='user'?'我':'CC'}的第 ${i+1} 段讨论"${state.selected.includes(i)?' checked':''}><div class="task-entry-excerpt-content"><label class="task-entry-excerpt-author" for="task-entry-excerpt-${i}">${m.role==='user'?'我':'CC'}</label><div class="task-entry-excerpt-body ${m.role==='cc'?'cc-readable-markdown wb-markdown':''}">${m.role==='cc'?renderExcerptMarkdown(m.text):renderWorkbenchUserText(m.text,`entry:${state.draftId}:${i}`)}</div></div></div>`).join(''):'<p class="task-entry-hint">没有选择讨论材料，只会交办上面的要求。</p>'}</section>
           ${renderAttachmentComposer(material,attachments.error(scope)).replace('id="wb-attachment-files"','id="task-entry-files"')}
-          <details class="task-entry-more"${more?' open':''}><summary>更多：项目和执行设置</summary><label>放在哪里<select name="project">${projectUnavailable()?'<option value="" selected disabled>所选项目暂不可用，请重新选择</option>':''}<option value="managed"${state.target.kind==='managed'?' selected':''}>随手交办 · 自动准备独立文件夹</option>${(options?.projects??[]).map(p=>`<option value="${esc(p.id)}"${state.target.kind==='project'&&state.target.projectId===p.id?' selected':''}>${esc(p.name)} · ${esc(p.path)}</option>`).join('')}</select></label>
+          <details class="task-entry-more"${more?' open':''}><summary>更多：项目和执行设置</summary>${deps.onManageProjects?'<button type="button" data-entry-action="projects">管理项目与文件夹</button>':''}<label>放在哪里<select name="project">${projectUnavailable()?'<option value="" selected disabled>所选项目暂不可用，请重新选择</option>':''}<option value="managed"${state.target.kind==='managed'?' selected':''}>随手交办 · 自动准备独立文件夹</option>${(options?.projects??[]).map(p=>`<option value="${esc(p.id)}"${state.target.kind==='project'&&state.target.projectId===p.id?' selected':''}>${esc(p.name)} · ${esc(p.path)}</option>`).join('')}</select></label>
           <label>执行者<select name="provider">${(options?.providers??[]).map(p=>`<option value="${esc(p.id)}"${state.providerId===p.id?' selected':''}${p.available?'':' disabled'}>${esc(p.displayName)}${p.available?'':` · ${esc(p.unavailableReason?.message??'暂不可用')}`}</option>`).join('')}</select></label>
           ${canExecution?`<label>默认设置<select name="defaults"><option value="provider"${state.execution.defaults==='provider'?' selected':''}>沿用 CC 设置</option><option value="native"${state.execution.defaults==='native'?' selected':''}>沿用执行者本身设置</option></select></label>${p?renderExecutionControls(state.execution,catalogs.get(state.providerId,p.path)).replaceAll('wb-model','task-entry-model').replaceAll('wb-reasoning-effort','task-entry-effort'):'<p class="task-entry-hint">新事项使用自动模型；选择已有项目后可读取该项目的模型设置。</p>'}`:'<p class="task-entry-hint">这个执行者沿用已连接的设置。</p>'}</details>
           <p class="task-entry-destination">${projectPath&&!recovering&&!destinationChosen&&!options?'正在确认所选项目…':state.target.kind==='managed'?'随手交办：CC 会为这件事准备独立文件夹。':`项目：${esc(p?.name??'所选项目暂不可用')}`}</p>
@@ -195,7 +197,8 @@ export function createTaskEntry(deps){
       })
       dialog.addEventListener('click',event=>{
         const button=/** @type {HTMLElement|null} */(event.target)?.closest?.('button'),action=button?.dataset.entryAction
-        if(action==='cancel'){persist(state);dialog.close()}
+        if(action==='projects'){persist(state);dialog.close();deps.onManageProjects?.()}
+        else if(action==='cancel'){persist(state);dialog.close()}
         else if(action==='accepted'&&accepted){const result=accepted;dialog.close();void deps.onAccepted?.(result)}
         else if(action==='recent'){state.selected=state.candidates.map((_,i)=>i);persist(state);render()}
         else if(button?.dataset.action==='choose-attachments'){

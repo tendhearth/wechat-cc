@@ -3,7 +3,7 @@ import type { Backend } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import { downloadArtifact, humanSize, type ArtifactRef } from '../state/artifact-download'
 import { sha256Hex, useFileOpener } from './FileViewer'
-import { Sheet } from './Sheet'
+import { Icon } from './Icon'
 import { space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
@@ -14,25 +14,27 @@ import { useTheme } from './useTheme'
  */
 export function Artifacts({ matterId, artifacts, backend, lang, online }: { matterId: string; artifacts: readonly ArtifactRef[]; backend: Pick<Backend, 'artifactChunk'>; lang: Lang; online: boolean }) {
   const { c } = useTheme()
-  const opener = useFileOpener(lang)
+  const opener = useFileOpener(lang, matterId)
   if (!artifacts.length) return null
   return (
-    <Sheet testID="progress-artifacts" title={t(lang, 'artifacts.title', { n: artifacts.length })} defaultOpen>
+    <View testID="progress-artifacts" style={{ gap: space.m }}>
+      <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'artifacts.title', { n: artifacts.length })}</Txt>
       <View style={{ gap: space.s }}>
         {artifacts.map((a, i) => (
           <Pressable key={a.id} testID={`artifact-${i}`} accessibilityRole="button" accessibilityLabel={`${a.name}, ${humanSize(a.size)}`} disabled={!online || !!opener.busyId}
             onPress={() => void opener.open(a, () => downloadArtifact(backend, matterId, a, sha256Hex))}
-            style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, paddingVertical: space.s, opacity: !online ? 0.55 : pressed ? 0.7 : 1 })}>
+            style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 56, paddingVertical: space.s, opacity: !online ? 0.55 : pressed ? 0.7 : 1 })}>
+            <Icon name="folder" color={c.inkSoft} />
             <View style={{ flex: 1 }}>
               <Txt role="bubble" content="user" numberOfLines={1}>{a.name}</Txt>
               <Txt role="caption" tone="inkSoft">{humanSize(a.size)}</Txt>
             </View>
-            {opener.busyId === a.id ? <ActivityIndicator color={c.inkSoft} /> : <Txt role="meta" tone="inkSoft">{t(lang, 'artifacts.open')} ›</Txt>}
+            {opener.busyId === a.id ? <ActivityIndicator color={c.inkSoft} /> : <Icon name="chevronRight" color={c.inkSoft} />}
           </Pressable>
         ))}
         {opener.note ? <Txt testID="artifact-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{opener.note}</Txt> : null}
       </View>
       {opener.viewer}
-    </Sheet>
+    </View>
   )
 }

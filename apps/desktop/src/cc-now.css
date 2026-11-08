@@ -72,18 +72,37 @@
 .cc-now-pane[data-cc="away"] .now-figure::before { opacity: 0; }
 .now-waiting[hidden] { display: none; }
 .now-waiting h2 { font-size: var(--th-size-meta); font-weight: 500; color: var(--th-ink-soft); margin: 0 0 6px; letter-spacing: var(--th-tracking-meta); }
-.now-waiting[data-state="unknown"] h2 { font-weight: 400; margin: 0; }
+.now-waiting[data-state="unknown"] h2, .now-waiting[data-state="partial"] h2 { font-weight: 400; }
+.now-waiting[data-state="unknown"] h2 { margin: 0; }
 .now-waiting[data-state="unknown"] ul { display: none; }
-.now-waiting ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--th-hair); }
-.now-waiting-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 16px 4px; border-bottom: 1px solid var(--th-hair); text-align: left; }
+.now-waiting ul { list-style: none; margin: 0; padding: 0; }
+.now-waiting-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 12px 4px; text-align: left; }
 .now-waiting-row .t { font-size: var(--th-size-item); margin: 0; overflow-wrap: anywhere; }
-.now-waiting-row .d { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; }
+.now-waiting-row .d { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; overflow-wrap: anywhere; }
 .now-waiting-row .d:empty { display: none; }
-.now-waiting-row .go { color: var(--th-ink-soft); font-size: var(--th-size-bubble); white-space: nowrap; }
+.now-waiting-row .go { display: inline-flex; align-items: center; color: var(--th-ink-soft); font-size: var(--th-size-meta); white-space: nowrap; }
+.now-request-arrow { transform: rotate(180deg); flex: none; }
 .now-waiting-row:hover .t, .now-waiting-row:focus-visible .t { color: var(--th-accent); }
-.now-waiting-row:focus-visible { outline: none; }
-/* 终端里等批准的会话(2026-10-14):开了码的整行是按钮,只给「看清楚 ›」,点开小窗再拍板(2026-10-16);没开码的只写「回终端处理」。 */
+.now-waiting-row:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
+/* 终端请求点开小窗再拍板;没开码的仍明确写「回终端处理」,不画可点击的箭头。 */
 div.now-terminal-row { cursor: default; }
+/* 一个主页(设计稿 2026-10-31 U4):在做 / 带回来的与等你同一种行 —— 状态记号 · 标题与小字 · 执行者头像。 */
+.now-group[hidden] { display: none; }
+.now-group h2 { font-size: var(--th-size-meta); font-weight: 500; color: var(--th-ink-soft); margin: 0 0 6px; letter-spacing: var(--th-tracking-meta); }
+.now-group ul { list-style: none; margin: 0; padding: 0; }
+.now-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 4px; text-align: left; }
+button.now-row { cursor: pointer; }
+.now-row .t { font-size: var(--th-size-item); margin: 0; overflow-wrap: anywhere; }
+.now-row .d, .now-row .x { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; overflow-wrap: anywhere; }
+.now-row .x { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.now-row-status { display: inline-flex; color: var(--th-ink-soft); }
+/* 色调照状态表:只有「等你」上强调色(phone-wording.md);状态词本身不上。 */
+.now-row-status[data-tone="accent"] { color: var(--th-accent); }
+.now-row-agents { display: inline-flex; }
+button.now-row:hover .t, button.now-row:focus-visible .t { color: var(--th-accent); }
+button.now-row:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
+.now-all { appearance: none; border: 0; background: transparent; padding: 6px 4px; font: inherit; cursor: pointer; align-self: center; color: var(--th-ink-soft); font-size: var(--th-size-meta); }
+.now-all:hover, .now-all:focus-visible { color: var(--th-ink); }
 div.now-terminal-row:hover .t { color: var(--th-ink); }
 .now-terminal-dialog { height: auto; }
 .now-terminal-dialog .now-terminal-command { margin: var(--th-space-s) 0 0; padding: var(--th-space-m); border: 1px solid var(--th-hair); border-radius: var(--th-radius-nav); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--th-size-small)/1.7 var(--th-font-mono); color: var(--th-ink); }
@@ -94,7 +113,7 @@ div.now-terminal-row:hover .t { color: var(--th-ink); }
 .now-back[hidden] { display: none; }
 .now-back:hover, .now-back:focus-visible { color: var(--th-ink); }
 
-/* 输入框:一条胶囊,输入 + 圆形发送(稿里的 composer)。这一份 converse 也会被搬进「一起做」的会话面。 */
+/* 输入框:一条胶囊,输入 + 圆形发送(稿里的 composer)。 */
 .dashboard .cc-now-pane #converse-root { background: transparent; color: var(--th-ink); }
 .cc-now-pane .converse-compose { width: auto; margin: 0; }
 
@@ -108,7 +127,8 @@ div.now-terminal-row:hover .t { color: var(--th-ink); }
 .cc-now-pane[data-now="home"] .converse-textarea { flex: 1 1 0; height: 48px; min-height: 48px; padding: 10px 0; resize: none; }
 .cc-now-pane[data-now="home"] .converse-toolbar { flex: none; }
 .cc-now-pane[data-now="home"] .now-waiting { width: 100%; max-width: 680px; margin-top: var(--th-space-m); }
-.cc-now-pane[data-now="chat"] .now-hero, .cc-now-pane[data-now="chat"] .now-waiting { display: none; }
+.cc-now-pane[data-now="home"] .now-group { width: 100%; max-width: 680px; }
+.cc-now-pane[data-now="chat"] .now-hero, .cc-now-pane[data-now="chat"] .now-waiting, .cc-now-pane[data-now="chat"] .now-group, .cc-now-pane[data-now="chat"] .now-all { display: none; }
 .cc-now-pane[data-now="chat"] #converse-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cc-now-pane[data-now="chat"] .converse-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px 0 16px; }
 .cc-now-pane[data-now="chat"] { gap: var(--th-space-l); }
@@ -129,8 +149,54 @@ div.now-terminal-row:hover .t { color: var(--th-ink); }
   .now-bubble::after { left: 50%; top: auto; bottom: -6px; margin-top: 0; margin-left: -5px; border-left: 0; border-right: 1px solid var(--th-hair); }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .cc-now-pane[data-cc="here"] .now-figure img { animation: now-breathe 6s ease-in-out infinite; transform-origin: 50% 90%; }
+  .cc-now-pane[data-cc="here"] .now-figure:not([data-runtime="ready"]):not([data-motion="reduced"]) > img { animation: now-breathe 6s ease-in-out infinite; transform-origin: 50% 90%; }
   @keyframes now-breathe { 50% { transform: scaleY(1.015) translateY(-1px); } }
 }
 
 .now-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Shared pet renderer, scoped to the home button. Keep the full square and anchor;
+   importing the transparent companion window stylesheet would alter the whole app. */
+.now-figure[data-runtime="ready"] > .now-cc-light,
+.now-figure[data-runtime="ready"] > .now-cc-dark { display: none; }
+.now-figure .now-pet-stage { position: absolute; inset: 0; display: block; container-type: size; pointer-events: none;
+  --pet-side: min(100cqw, 100cqh); --pet-box-x: calc((100cqw - var(--pet-side)) / 2); --pet-box-y: calc((100cqh - var(--pet-side)) / 2);
+  --pet-origin-x: calc(var(--pet-box-x) + var(--pet-anchor-x, .5) * var(--pet-side)); --pet-origin-y: calc(var(--pet-box-y) + var(--pet-anchor-y, .92) * var(--pet-side)); }
+.now-figure .now-pet-stage[hidden] { display: none; }
+.now-figure .now-pet-stage .pet-sprite { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: var(--pet-origin-x) var(--pet-origin-y); pointer-events: none; user-select: none; transition: opacity 240ms ease; }
+.now-figure .pet-sprite.pet-fading { opacity: 0; }
+.now-figure .pet-ghost { opacity: 0; transition: none; }
+.now-figure .pet-ghost-out-a { animation: now-pet-ghost-a 160ms ease-out forwards; }
+.now-figure .pet-ghost-out-b { animation: now-pet-ghost-b 160ms ease-out forwards; }
+@keyframes now-pet-ghost-a { from { opacity: 1; } to { opacity: 0; } }
+@keyframes now-pet-ghost-b { from { opacity: 1; } to { opacity: 0; } }
+.now-figure .now-pet-props { position: absolute; inset: 0; pointer-events: none; }
+.now-figure .pet-prop { position: absolute; left: calc(var(--pet-origin-x) + var(--slot-dx, 0) * var(--pet-side)); top: calc(var(--pet-origin-y) + var(--slot-dy, 0) * var(--pet-side)); width: calc(var(--slot-scale, .34) * var(--pet-side)); aspect-ratio: 1; transform: translate(-50%, -50%); }
+.now-figure .pet-prop img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.now-figure .pet-prop.pet-prop-motion { transition: opacity 160ms ease; }
+.now-figure .pet-motion-reduced .pet-prop, .now-figure .pet-paused .pet-prop { transition: none; }
+@media (prefers-reduced-motion: reduce) { .now-figure .pet-prop.pet-prop-motion { transition: none; } }
+.now-figure .pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; padding: 0 5px; border-radius: var(--th-radius-control); background: var(--th-accent); color: var(--th-paper); font-size: var(--th-size-caption); line-height: 18px; text-align: center; }
+@media (prefers-reduced-motion: no-preference) {
+  .now-figure .pet-breathing .pet-sprite:not(.pet-ghost) { animation: now-pet-breathe 6s ease-in-out infinite; }
+  .now-figure .pet-breathing .pet-ghost-out-a { animation: now-pet-breathe 6s ease-in-out infinite, now-pet-ghost-a 160ms ease-out forwards; }
+  .now-figure .pet-breathing .pet-ghost-out-b { animation: now-pet-breathe 6s ease-in-out infinite, now-pet-ghost-b 160ms ease-out forwards; }
+  @keyframes now-pet-breathe { 50% { transform: scaleY(1.015) translateY(-1px); } }
+}
+.now-figure .pet-motion-reduced .pet-sprite, .now-figure .pet-paused .pet-sprite { animation: none; transition: none; }
+.now-figure .pet-motion-reduced .pet-ghost, .now-figure .pet-paused .pet-ghost { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .now-figure .pet-sprite { animation: none; transition: none; }
+  .now-figure .pet-ghost { opacity: 0; }
+  .now-figure::before { transition: none; }
+}
+
+/* T5: CC is the conversation entry, including returns from tools and native links. */
+.dashboard .cc-now-pane[data-conversation="single"] { padding-top: 20px; }
+.cc-now-pane[data-conversation="single"] .now-hero { display:flex; flex-direction:row; justify-content:flex-start; height:44px; }
+.cc-now-pane[data-conversation="single"] .now-greeting,
+.cc-now-pane[data-conversation="single"] .now-bubble,
+.cc-now-pane[data-conversation="single"] #now-back { display:none; }
+.cc-now-pane[data-conversation="single"] .now-figure { width:44px; height:44px; min-height:0; }
+.cc-now-pane[data-conversation="single"] .now-cc-col { width:44px; }
+.cc-now-pane[data-conversation="single"] .now-figure img { width:44px; height:44px; }

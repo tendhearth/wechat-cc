@@ -1,9 +1,14 @@
+import { randomUUID } from 'node:crypto'
+import { makeTopicBubbles } from '../../lib/topic-bubbles'
 /**
  * 记忆这一块(重构第二批步 6c,从 pipeline-deps.ts 搬出来;架构终态 A5 随记忆进 src/features/memory):LLM 记忆操作
  * (概览合成 / 画像生成,微信管理命令用)、每晚整理 memory.md 的运行时(定时器是 `memory-nightly` 模块)。
  * 它要 CC 开口那道门,门在 wired 里才造,所以由 wired(pipeline-deps)经 index.ts 调;
  * 欢迎时写一条观察不是记忆的事,留在 pipeline-deps 自己造。
  */
+import { makeCcActs } from '../../adapters/store/cc-acts'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { randomBytes } from 'node:crypto'
 import type { Db } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
@@ -18,6 +23,8 @@ import { makeNightlySources } from './nightly-sources'
 import { makeMemoryWriter } from './memory-export'
 import { memoryOwnerChatId } from './fact-import'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { consolidateTopics } from '../../daemon/threads/consolidate'
 
 export interface WireMemoryDeps {
   stateDir: string
@@ -45,8 +52,12 @@ export function wireMemory(d: WireMemoryDeps) {
   // 每晚整理长期记忆 memory.md(spec 2026-09-25-memory-nightly-design)。定时器由 main.ts 挂。
   // 记忆的主人只有一处定义(fact-import 的 memoryOwnerChatId),开机导入认手改用的是同一个。
   const nightlyOwner = (): string | null => memoryOwnerChatId(stateDir)
+  const bubbles = makeTopicBubbles(db)
+  let bubbleSleep: ReturnType<typeof bubbles.beginSleep> | null = null
   const nightlyRuntime = makeMemoryNightlyRuntime({
     stateDir,
+    // CC 自己做的事(M5b):整理一次 = 「记忆整理」那件事的一轮;通知送出补在那一轮上
+    acts: makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db), onError: (what, err) => log('CC_ACTS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) }),
     ownerChatId: nightlyOwner,
     config: () => {
       const c = loadCompanionConfig(stateDir)
@@ -75,6 +86,18 @@ export function wireMemory(d: WireMemoryDeps) {
     }),
     claim: (chatId, nowIso) => careLedger.claimMemory(chatId, nowIso),
     speech,
+    // 睡一觉之后整理今天改过的话题(重复的进展并成一条、去掉提交号;旧的标 superseded 不删)
+    beforeSleep: () => {
+      const owner = nightlyOwner()
+      bubbleSleep = owner ? bubbles.beginSleep(owner, randomUUID()) : null
+    },
+    afterSleep: async () => {
+      const o = nightlyOwner()
+      if (o) {
+        const consolidated = await consolidateTopics({ chatId: o, threads: makeThreadsStore(db), sdkEval: boot.registry.getCheapEval(), log })
+        if (consolidated.failed === 0 && bubbleSleep && bubbleSleep.owner === o && nightlyOwner() === o) bubbles.closeAfterSleep(bubbleSleep)
+      }
+    },
   })
   // 手动立即运行(内部 API / 以后的微信「整理记忆」)可能跑到 5 分钟 —— 持 busy token,
   // 免得空闲自动重启把它杀掉。定时 tick 的 busy 由 registerMemoryNightly 自己持。

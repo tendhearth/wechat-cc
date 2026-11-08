@@ -6,7 +6,7 @@ export type PushRoute =
   | { kind: 'gone' }
   | { kind: 'approval'; id: string; request?: string }
   | { kind: 'matter'; id: string }
-  /** 终端会话(daemon 的 features/terminal/app-push.ts):id 空 ⇒ 「一起做」里的终端列表。那页自己拍板、自己处理会话已不在。 */
+  /** 终端会话(daemon 的 features/terminal/app-push.ts):id 空 ⇒ 「全部」。那页自己拍板、自己处理会话已不在。 */
   | { kind: 'terminal'; id: string }
   /** CC 主动找你(companion,微信不通时落到 App 的那一句):去对话页,那页自己拉最新历史。 */
   | { kind: 'chat' }
@@ -36,9 +36,9 @@ export async function resolvePushRoute(t: PushTarget | null, fetchDetail: (id: s
 }
 
 export function hrefFor(r: PushRoute): string {
-  if (r.kind === 'approval') return `/approval/${encodeURIComponent(r.id)}${r.request ? `?request=${encodeURIComponent(r.request)}` : ''}`
+  if (r.kind === 'approval') return `/matter/${encodeURIComponent(r.id)}/decide${r.request ? `?request=${encodeURIComponent(r.request)}` : ''}`
   if (r.kind === 'matter') return `/matter/${encodeURIComponent(r.id)}`
-  if (r.kind === 'terminal') return r.id ? `/terminal/${encodeURIComponent(r.id)}` : '/together'
+  if (r.kind === 'terminal') return r.id ? `/terminal/${encodeURIComponent(r.id)}` : '/all'
   if (r.kind === 'chat') return '/chat'
   return '/'
 }

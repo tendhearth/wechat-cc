@@ -6,14 +6,17 @@ import { resolveAnimation, resolveTransition } from './assets/animation-resolver
 import { createPetStateMachine } from './domain/state-machine.js'
 import { ONE_SHOT } from './domain/types.js'
 import { createSpriteRenderer } from './renderer/sprite-renderer.js'
-import { renderProps } from './renderer/prop-layer.js'
+import { composeProps, createPropRenderer } from './renderer/prop-layer.js'
 import { emergencyManifest, fallbackFrame } from '../assets/pet/cc-v1/placeholder.js'
+import { createLifeDirector } from './life/life-director.js'
+import { createBodyMotion } from './life/body-motion.js'
+import { resolvePerformance } from './life/performance.js'
 
 /** @typedef {import('./bridge/presence-map.js').PetIntent} PetIntent */
 /** @typedef {import('./domain/types.js').PetForm} PetForm */
 /** @typedef {import('./assets/manifest-loader.js').Animation} Animation */
 
-const BREATHING_BEHAVIORS = new Set(['idle', 'working', 'thinking', 'permission', 'companion', 'sleep'])
+const BREATHING_BEHAVIORS = new Set(['idle', 'working', 'thinking', 'permission', 'companion'])
 /** 一次性行为在没有专属帧的形态下(v1 的 unlit)露多久就回落。 */
 const ONE_SHOT_FALLBACK_MS = 600
 /** 空闲小动作的随机区间(spec §4):blink 6–12 s、look 25–60 s。 */
@@ -25,14 +28,23 @@ const CALM_BEHAVIORS = new Set(['idle', 'companion'])
 const IDLE_MOVES = new Set(['blink', 'look'])
 
 /**
- * @param {{ stage: any, img: any, props: any, hint?: any }} root
- * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number }} opts
+ * @param {{ stage: any, img: any, props: any, hint?: any, body?:any }} root
+ * @param {{ manifestUrl: string, fetchImpl?: typeof fetch, reducedMotion?: boolean, makeEl?: (tag: string) => any, schedule?: (fn: () => void, ms: number) => unknown, cancel?: (h: unknown) => void, preload?: (url: string) => void, random?: () => number, now?: () => number, monotonicNow?:()=>number,life?:boolean,onLifeAction?:(pose:import('./life/life-director.js').Action)=>void }} opts
  */
 export async function createPet(root, opts) {
   const makeEl = opts.makeEl ?? ((/** @type {string} */ tag) => document.createElement(tag))
   const schedule = opts.schedule ?? ((/** @type {() => void} */ fn, /** @type {number} */ ms) => setTimeout(fn, ms))
   const cancel = opts.cancel ?? ((/** @type {unknown} */ h) => clearTimeout(/** @type {any} */ (h)))
   const random = opts.random ?? Math.random
+  const now = opts.now ?? Date.now
+  let lastAttention = -Infinity
+  let ownsAttention = false
+  let reducedMotion = opts.reducedMotion === true
+  let quiet = false
+  let paused = false
+  let disposed = false
+  const suppressDecoration = () => reducedMotion || quiet || paused
+  const decorative = new Set(['blink', 'look', 'receive', 'done', 'wake'])
   /** @type {unknown} */ let oneShotTimer = null
   /** @type {unknown} */ let blinkTimer = null
   /** @type {unknown} */ let lookTimer = null
@@ -47,7 +59,7 @@ export async function createPet(root, opts) {
   const ghost = makeEl('img')
   ghost.classList.add('pet-sprite'); ghost.classList.add('pet-ghost')
   ghost.setAttribute('alt', ''); ghost.setAttribute('aria-hidden', 'true'); ghost.setAttribute('draggable', 'false')
-  root.stage.insertBefore?.(ghost, root.img)
+  ;(root.body??root.stage).insertBefore?.(ghost, root.img)
   const renderer = createSpriteRenderer({ img: root.img, stage: root.stage, ghost, schedule, cancel, preload: opts.preload, reducedMotion: opts.reducedMotion, onFrameError: (url) => onFrameError(url) })
   const machine = createPetStateMachine()
   /** @type {string[]} */
@@ -70,17 +82,31 @@ export async function createPet(root, opts) {
   const manifest = structuredClone(loaded.ok ? loaded.manifest : emergencyManifest())
   warn(...manifest.warnings)
   renderer.applyAnchor(manifest.canvas.anchor)
+  const propRenderer = createPropRenderer({ container: root.props, manifest, makeEl, schedule, cancel })
+  propRenderer.setMotionSuppressed(suppressDecoration())
   setHint(null)
 
   /** 上一次画的是什么,避免同一快照重复 play / 重建道具 */
   let lastKey = ''
   let lastPropsKey = ''
+  const bodyMotion=opts.life?createBodyMotion(root):null
+  let renderedPerformance=false
+  /** @type {ReturnType<typeof createLifeDirector>|null} */ let life=null
   const render = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
-    const propsKey = `${s.badge}|${s.props.join(',')}`
-    if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; renderProps(root.props, s.props, s.badge, manifest, makeEl) }
-    const key = s.transition ? `t:${s.transition}` : `b:${s.form}/${s.behavior}`
+    const pose=life?.current(),action=pose?.action??'still'
+    const visibleProps = composeProps(s.transition ? 'idle' : s.behavior, s.props, { decorative: !suppressDecoration() })
+    if(action==='work-exit'&&!visibleProps.includes('laptop'))visibleProps.push('laptop')
+    const propsKey = `${s.badge}|${visibleProps.join(',')}`
+    if (propsKey !== lastPropsKey) { lastPropsKey = propsKey; propRenderer.render(visibleProps, s.badge) }
+    const performance=opts.life&&!s.transition&&!suppressDecoration()?resolvePerformance(manifest,s.form,action,s.behavior,pose?.direction):null
+    renderedPerformance=Boolean(performance)
+    bodyMotion?.setAuthored(renderedPerformance)
+    const visual=action==='doze'?'sleep':action==='peek'?'look':action==='wake'?'wake':s.behavior
+    const key = s.transition ? `t:${s.transition}` : performance ? `p:${s.form}/${performance.id}/${performance.hold}` : `b:${s.form}/${visual}/${action}`
+    if (paused) return
     if (key === lastKey) return
     lastKey = key
+    renderer.setReducedMotion(reducedMotion || quiet || s.behavior === 'sleep')
     // 画的东西换了:上一个一次性行为的兜底回落不再有意义(它只对 lastKey 那次有效)
     if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null }
     if (s.transition && s.targetForm) {
@@ -91,9 +117,19 @@ export async function createPet(root, opts) {
       else renderer.fadeTo(t.to, { onEnd: () => machine.notifyAnimationEnded() })
       return
     }
-    const r = resolveAnimation(manifest, s.form, s.behavior)
+    if(performance){
+      renderer.setBreathing(false)
+      renderer.play(performance.animation,{restMs:performance.id==='work'?6000:0,
+        onEnd:performance.id==='curiosity'?()=>{
+          if(typeof pose?.token==='number'&&life?.finishCuriosity(pose.token)&&IDLE_MOVES.has(machine.snapshot().behavior))machine.notifyAnimationEnded()
+        }:performance.id==='celebrate'&&s.behavior==='done'?()=>{
+          if(machine.snapshot().behavior==='done')machine.notifyAnimationEnded()
+        }:undefined})
+      return
+    }
+    const r = resolveAnimation(manifest, s.form, visual)
     warn(...r.warnings)
-    renderer.setBreathing(BREATHING_BEHAVIORS.has(s.behavior))
+    renderer.setBreathing(BREATHING_BEHAVIORS.has(s.behavior)&&!['doze','lift','land','stretch','walk-start','walk','walk-stop'].includes(action))
     const oneShot = ONE_SHOT.has(s.behavior)
     if (oneShot && r.animation.loop) {
       // 一次性行为被 fallback 成了 loop 动画(unlit 下只有 master):renderer 永远不会 onEnd,
@@ -102,7 +138,8 @@ export async function createPet(root, opts) {
       oneShotTimer = schedule(() => { oneShotTimer = null; machine.notifyAnimationEnded() }, ONE_SHOT_FALLBACK_MS)
       return
     }
-    renderer.play(r.animation, { onEnd: oneShot || !r.animation.loop ? () => machine.notifyAnimationEnded() : undefined })
+    const restMs = s.behavior === 'working' ? 6000 : s.behavior === 'thinking' ? 9000 : 0
+    renderer.play(r.animation, { restMs, onEnd: visual===s.behavior&&(oneShot || !r.animation.loop) ? () => machine.notifyAnimationEnded() : undefined })
   }
 
   // ── 帧加载失败(404 / 坏文件):把那一帧从 manifest 里摘掉,重画(spec §3「跳过该帧」)。
@@ -120,6 +157,8 @@ export async function createPet(root, opts) {
     }
   }
   const reportFrameError = (/** @type {string} */ url) => {
+    // A pending image may fail after its owner removed the stage and stopped the pet.
+    if (disposed) return
     if (typeof url !== 'string' || !url || badFrames.has(url)) return
     badFrames.add(url)
     dropFrame(manifest.forms.unlit.states, url)
@@ -130,6 +169,7 @@ export async function createPet(root, opts) {
     for (const form of /** @type {const} */ (['unlit', 'lit'])) {
       if (isFrame(manifest.forms[form].master, url)) manifest.forms[form].master = fallbackFrame(form)
     }
+    life?.setCuriosityAvailable(Boolean(resolvePerformance(manifest,'lit','curiosity','idle')))
     warn(`frame_missing:${url}`)
     lastKey = ''                        // 帧表变了,同一个状态也得重画
     render(machine.snapshot())
@@ -144,7 +184,7 @@ export async function createPet(root, opts) {
     if (lookTimer !== null) { cancel(lookTimer); lookTimer = null }
   }
   const armIdleMoves = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
-    if (opts.reducedMotion) return
+    if (suppressDecoration()||(life&&life.current().action!=='still')) { cancelIdleMoves(); return }
     if (s.transition !== null || !CALM_BEHAVIORS.has(s.behavior)) {
       // 正在播的是我们自己排的 blink / look:另一个的倒计时照走。否则 6–12 s 的眨眼
       // 每次都把 25–60 s 的张望清零,look 永远轮不到(实测 10 分钟 62 次眨眼、0 次张望)。
@@ -159,9 +199,14 @@ export async function createPet(root, opts) {
 
   /** 一次性行为:进不去就记下来,等画面闲下来补播 —— 丢掉就等于「出了错但没人告诉你」。 */
   const requestOneShot = (/** @type {string} */ b) => {
+    if ((quiet || paused) && decorative.has(b)) return
     if (machine.setState(b) === 'ignored' && !heldOneShots.includes(b)) heldOneShots.push(b)
   }
   const onSnapshot = (/** @type {ReturnType<typeof machine.snapshot>} */ s) => {
+    life?.observe(s)
+    if (s.transition || s.behavior !== 'look') ownsAttention = false
+    if (suppressDecoration() && s.props.includes('micro-light')) { machine.setProps(s.props.filter(p => p !== 'micro-light'), s.badge); return }
+    if ((quiet || paused) && (s.transition || decorative.has(s.behavior))) { machine.notifyAnimationEnded(); return }
     render(s)
     armIdleMoves(s)
     // 闲下来了(没转场、没在拖、没在播别的一次性行为):把欠的补播回来。
@@ -170,16 +215,81 @@ export async function createPet(root, opts) {
       for (const b of heldOneShots.splice(0, heldOneShots.length)) requestOneShot(b)
     }
   }
+  if(opts.life){
+    life=createLifeDirector({schedule,cancel,random,now:opts.monotonicNow??opts.now??(()=>performance.now()),onAction:pose=>{bodyMotion?.render(pose);root.props.setAttribute?.('data-pet-action',pose.action);render(machine.snapshot());armIdleMoves(machine.snapshot());opts.onLifeAction?.({...pose,authored:renderedPerformance})}})
+    life.setCuriosityAvailable(Boolean(resolvePerformance(manifest,'lit','curiosity','idle')))
+    bodyMotion?.render(life.current())
+    life.setSuppressed(suppressDecoration())
+  }
   const off = machine.subscribe(onSnapshot)
   onSnapshot(machine.snapshot())
 
+  // A control change consumes decoration immediately; it never creates a deferred celebration.
+  const syncMotion = () => {
+    life?.setSuppressed(suppressDecoration())
+    propRenderer.setMotionSuppressed(suppressDecoration())
+    lastPropsKey = ''
+    const current = machine.snapshot()
+    if (suppressDecoration() && current.props.includes('micro-light')) machine.setProps(current.props.filter(p => p !== 'micro-light'), current.badge)
+    renderer.setReducedMotion(reducedMotion || quiet)
+    renderer.setPaused(paused)
+    if (suppressDecoration()) cancelIdleMoves()
+    if (quiet || paused) {
+      for (let i = heldOneShots.length - 1; i >= 0; i--) if (decorative.has(heldOneShots[i] ?? '')) heldOneShots.splice(i, 1)
+      if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null }
+      const s = machine.snapshot()
+      if (s.transition || decorative.has(s.behavior)) machine.notifyAnimationEnded()
+    }
+    if (reducedMotion && IDLE_MOVES.has(machine.snapshot().behavior)) machine.notifyAnimationEnded()
+    if (paused) { renderer.stop(); render(machine.snapshot()); return }
+    lastKey = ''
+    onSnapshot(machine.snapshot())
+  }
+
   return {
     machine, warnings,
-    setState: machine.setState,
+    /** @param {boolean} on */
+    setLifeAvailable(on){life?.setAvailable(on)},
+    /** @param {number} speed */
+    setDragVelocity(speed){bodyMotion?.velocity(speed)},
+    land(){life?.land()},
+    acknowledgeAttention() {
+      if (disposed || suppressDecoration()) return false
+      const current = machine.snapshot()
+      if (current.transition || !CALM_BEHAVIORS.has(current.behavior) || !manifest.forms[current.form]?.states.look) return false
+      const time = now()
+      if (!Number.isFinite(time) || time - lastAttention < 12_000) return false
+      // Local attention is disposable decoration; never enqueue it as a fact.
+      if (machine.setState('look') !== 'applied') return false
+      lastAttention = time
+      ownsAttention = true
+      return true
+    },
+    releaseAttention() {
+      const current = machine.snapshot()
+      if (!ownsAttention || current.transition || current.behavior !== 'look') { ownsAttention = false; return false }
+      ownsAttention = false
+      machine.notifyAnimationEnded()
+      return true
+    },
+    /** @param {boolean} on */
+    setReducedMotion(on) { if (reducedMotion !== on) { reducedMotion = on; syncMotion() } },
+    /** @param {boolean} on */
+    setQuiet(on) { if (quiet !== on) { quiet = on; syncMotion() } },
+    /** @param {boolean} on */
+    setPaused(on) { if (paused !== on) { paused = on; syncMotion() } },
+    /** Explicit behavior requests supersede a local attention pose, including another look.
+     * @param {string} behavior
+     */
+    setState(behavior) { ownsAttention = false; return machine.setState(behavior) },
     setForm: machine.setForm,
     setProps: machine.setProps,
     /** @param {PetIntent} intent */
     applyIntent(intent) {
+      if(['working','thinking'].includes(intent.behavior)){
+        for(let i=heldOneShots.length-1;i>=0;i--)if(heldOneShots[i]==='done')heldOneShots.splice(i,1)
+        if(machine.snapshot().behavior==='done')machine.notifyAnimationEnded()
+      }
       machine.setForm(intent.form)
       machine.setProps(intent.props, intent.badge)
       machine.setState(intent.behavior)
@@ -191,6 +301,6 @@ export async function createPet(root, opts) {
     endDrag: machine.endDrag,
     /** 某一帧图片加载失败(renderer 的 img error 会自动喂进来,也可以手动报)。 */
     reportFrameError,
-    destroy() { off(); renderer.stop(); heldOneShots.length = 0; cancelIdleMoves(); if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null } },
+    destroy() { disposed = true; off(); life?.destroy(); renderer.stop(); propRenderer.destroy(); heldOneShots.length = 0; cancelIdleMoves(); if (oneShotTimer !== null) { cancel(oneShotTimer); oneShotTimer = null } },
   }
 }

@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '../packages/protocol/src/routes'
-import { DAEMON_CALLS_JS, renderDaemonCalls, renderWorkbenchRoutes, WORKBENCH_ROUTES_JSON } from './gen-routes'
+import { DAEMON_CALLS_JS, renderDaemonCalls, renderStatusTable, renderWorkbenchRoutes, STATUS_TABLE_JS, WORKBENCH_ROUTES_JSON } from './gen-routes'
 import { makeTokenRegistry } from '../src/daemon/internal-api/token-registry'
 import { ROUTE_MIN_TIER, TIER_RANK } from '../src/daemon/internal-api/route-tiers'
 
@@ -55,6 +55,9 @@ describe('桌面白名单生成物与路由表一致', () => {
   })
   it('apps/desktop/src/generated/daemon-calls.js 是最新的(否则跑 bun run gen:routes)', () => {
     expect(readFileSync(DAEMON_CALLS_JS, 'utf8').replace(/\r\n/g, '\n'), '跑 bun run gen:routes 再提交').toBe(renderDaemonCalls())
+  })
+  it('apps/desktop/src/generated/status-table.js 是最新的(状态表 + 中文词,否则跑 bun run gen:routes)', () => {
+    expect(readFileSync(STATUS_TABLE_JS, 'utf8').replace(/\r\n/g, '\n'), '跑 bun run gen:routes 再提交').toBe(renderStatusTable())
   })
   it('CRLF 检出下也算一致(Windows 的 git autocrlf 会把生成物改成 CRLF)', () => {
     const crlf = GENERATED.replace(/\r?\n/g, '\r\n')
@@ -127,11 +130,16 @@ describe('路由表内的约束(原来四份名单之间的包含关系)', () =>
   })
   it('手机 / 设置页的行:路径归对端,link 为 read 必是 GET、write 必是 POST,且都带理由', () => {
     for (const [key, r] of Object.entries(ROUTES)) {
-      if (r.phone) expect(key, key).toMatch(/^(GET|POST) \/m(\/|$)/)
+      // P3b:`phone` 块也可以写在 `/v1` 行上(和 `desktop` 同一行:一份数据一条 /v1、令牌范围从这一行推);
+      // 这种行不许是前缀键(以 `/` 结尾)—— 分发按精确键查,前缀在 `/v1` 上没有处理器。
+      // P3d:手机独有的 `/v1` 行只有 `phone` 块(PanelV1Key):处理器在面板这一口(phone-routes.guard 核对),可以是前缀键(表情一族)。
+      const v1Phone = !!r.phone && /^(GET|POST) \/v1\//.test(key)
+      if (r.phone && !v1Phone) expect(key, key).toMatch(/^(GET|POST) \/m(\/|$)/)
+      if (v1Phone && r.desktop) expect(key.endsWith('/'), `${key}: 交给分发的 /v1 phone 行不许是前缀键`).toBe(false)
       if (r.set) expect(key, key).toMatch(/^(GET|POST) \/set(\/|$)/)
       const panel = r.phone ?? r.set
       if (!panel) continue
-      expect([r.desktop, r.phone, r.set].filter(Boolean).length, key).toBe(1)
+      expect([r.desktop, r.phone, r.set].filter(Boolean).length, key).toBe(v1Phone && r.desktop ? 2 : 1)
       if (panel.link === 'read') expect(key.startsWith('GET '), key).toBe(true)
       if (panel.link === 'write') expect(key.startsWith('POST '), key).toBe(true)
       if (panel.link !== 'none') expect((panel.reason ?? '').length, key).toBeGreaterThan(4)

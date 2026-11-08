@@ -27,6 +27,10 @@ import type { Mode } from '../domain/conversation'
 import type { InboundMsg } from '../domain/prompt-format'
 import type { TurnReply } from '../domain/turn-reply'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
+import { openDb } from '../lib/db'
+import { makeMatterStore } from '../adapters/store/matters-store'
+import { makeMatterLog } from '../adapters/store/matter-log'
+import { makeChatTurnLog } from '../adapters/store/chat-turns'
 
 const CHAT = 'chat-1'
 
@@ -35,6 +39,7 @@ interface RigOpts {
   shape?: ClaudeShape
   sink?: boolean
   progressAfterMs?: number
+  chatTurns?: ConversationCoordinatorDeps['chatTurns']
 }
 
 function rig(o: RigOpts) {
@@ -81,6 +86,7 @@ function rig(o: RigOpts) {
     sendAssistantText: async (_c, t) => { wechat.push(t) },
     sendNotice: async (_c, t) => { notices.push(t) },
     recordTurn: (r) => { records.push(r) },
+    ...(o.chatTurns ? { chatTurns: o.chatTurns } : {}),
     replyDelivery: rt,
     ...(o.progressAfterMs !== undefined ? { replyProgressAfterMs: o.progressAfterMs } : {}),
   })
@@ -108,6 +114,19 @@ describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产
       expect(t.logs.some(l => l.startsWith('[REPLY_FINAL_CHECK]')), shape).toBe(false)
       expect(t.records[0]).toMatchObject({ provider: 'claude', outcome: 'completed', delivery: 'text', bubbles: 1, narrationSegments: 1, replyToolCalled: false })
     }
+  })
+
+  it('这一轮记进这件对话(M3a):一轮做完、工具调用一步、送达一步,和 turn_records 那行对得上', async () => {
+    const db = openDb({ path: ':memory:' })
+    const matters = makeMatterStore(db), log = makeMatterLog(db)
+    const matter = matters.ensureChat(CHAT).id
+    const t = rig({ turns: [daemonTurn()], chatTurns: makeChatTurnLog({ db, log, matters }) })
+    await t.send(); await t.close()
+    expect(t.records[0]).toMatchObject({ outcome: 'completed', toolCalls: ['wechat/list_projects'] })
+    expect(log.turns(matter)).toMatchObject([{ executor: 'claude', status: 'completed', policy: { alias: 'a', mode: 'solo' } }])
+    expect(log.items(matter).map(i => [i.kind, i.status, i.payload.tool ?? i.payload.delivery ?? i.payload.text])).toEqual([['agent_message','completed',OPENING],['tool_call', 'completed', 'wechat/list_projects'],['agent_message','completed',ANSWER], ['delivery', 'completed', 'text']])
+    expect(log.state(matter)?.state).toBe('open')
+    db.close()
   })
 
   it('daemon + bundled:同一条消息里「开场 + tool_use」,下一条是结论 ⇒ 开场是旁白(以前先发 tool_call 再发文字,开场和结论粘成一段)', async () => {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { openTestDb } from '../../lib/db'
 import { openSqlite, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
 import { initializeWechatNotificationSchema, makeWechatNotificationStore } from '../../adapters/store/workbench/wechat-notifications'
 import { wireWorkbenchNotifications } from './wire-notifications'
@@ -30,7 +31,7 @@ function speechHarness(o: { care?: 'off' | 'low'; quietEnds?: number | null; wec
   const dir = mkdtempSync(join(tmpdir(), 'wb-speech-')); tempDirs.push(dir)
   const sendWechat = vi.fn(async () => ({ msgId: 'plain' }))
   const outbound = makeProactiveOutbound({ wechatDegraded: () => o.wechatDegraded ?? false, wechatClosedSince: () => null, sendWechat, app: () => o.app ?? null, log: () => {} })
-  const pending = makePendingNotices({ stateDir: dir, log: () => {} })
+  const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
   const speech = makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: () => o.quietEnds ?? null, outbound, log: () => {}, pending })
   return { speech, pending, sendWechat }
 }
@@ -86,7 +87,7 @@ describe('wireWorkbenchNotifications', () => {
     const one = f.notificationStore.enqueue(input())
     const two = f.notificationStore.enqueue(input({ taskId: 'task-2', runId: 'run-2', ownerChatId: 'owner-2', accountId: 'account-2' }))
     const now = Date.now()
-    for (const notice of [one, two]) { f.notificationStore.claim(notice.id, now); f.notificationStore.defer(notice.id, 'missing_context', now, 60_000, 60_000) }
+    for (const notice of [one, two]) { f.notificationStore.claim(notice.id, now); f.notificationStore.defer(notice.id, 'missing_context', now) }
     await f.wired.wake({ ownerChatId: 'owner-2', accountId: 'account-2' })
     expect(f.sendWorkbenchNotice.mock.calls.map(call => (call[0] as { taskId: string }).taskId)).toEqual(['task-2'])
     expect(f.notificationStore.list('task-1')[0]?.status).toBe('pending')
@@ -211,8 +212,8 @@ describe('工作台通知经 CC 开口那道门(第三批 3a)', () => {
     await f.wired.close()
     // 不算尝试:时段结束后第一次真发失败,退避从头算(defer_count 没因推后而涨)
     expect(f.notificationStore.claim(done.id, QUIET_END)).not.toBeNull()
-    f.notificationStore.defer(done.id, 'window_closed', QUIET_END, 1000, 60_000)
-    expect(f.notificationStore.nextDue(QUIET_END)).toBe(QUIET_END + 1000)
+    f.notificationStore.defer(done.id, 'window_closed', QUIET_END)
+    expect(f.notificationStore.nextDue(QUIET_END)).toBe(QUIET_END + 60_000)   // 共用退避的第一档(S2a)
   })
 
   it('微信降级 ⇒ 落到 App:记进主人对话,不另推(phone-notifier 已经推过原生通知),工作台发送口不碰', async () => {
@@ -260,5 +261,26 @@ describe('工作台通知经 CC 开口那道门(第三批 3a)', () => {
     await f.wake!()
     expect(f.sendWorkbenchNotice).not.toHaveBeenCalled()
     expect(f.notificationStore.list('task-1')[0]).toMatchObject({ status: 'suppressed', reason: 'ineligible' })
+  })
+
+  it('问门带事件键(S3a):批准 / 提问按请求编号,run 终态按那个 run 的最后一轮;读不到那一轮 ⇒ 不带', async () => {
+    const db = openSqlite(':memory:'); databases.push(db)
+    db.exec("PRAGMA foreign_keys=ON; CREATE TABLE workbench_tasks(id TEXT PRIMARY KEY NOT NULL) STRICT; INSERT INTO workbench_tasks(id) VALUES('task-1'),('task-2');")
+    initializeWechatNotificationSchema(db)
+    const notificationStore = makeWechatNotificationStore(db)
+    let wake: (() => Promise<void>) | undefined
+    const workbench = { notificationStore, notificationEligible: () => true, setNotificationWake: (w: typeof wake) => { wake = w } }
+    const asked: Array<string | undefined> = []
+    const speech = { say: vi.fn(async (req: { ref?: string }) => { asked.push(req.ref); return { allow: true as const, channel: 'wechat' as const } }) }
+    wireWorkbenchNotifications({ workbench: workbench as never, ilink: { sendWorkbenchNotice: async () => ({ status: 'accepted' as const }), chatAccountId: () => 'account-1' }, speech: speech as never,
+      turnRefOfRun: (taskId, runId) => (taskId === 'task-1' && runId === 'run-1' ? 'turn:task-1:3' : null) })
+    notificationStore.watch('task-1', 'owner-1', 'account-1', true)
+    notificationStore.watch('task-2', 'owner-1', 'account-1', true)
+    notificationStore.enqueue(input({ kind: 'permission', requestId: 'p9', text: '要批准' }))
+    notificationStore.enqueue(input())
+    notificationStore.enqueue(input({ taskId: 'task-2', runId: 'run-2' }))
+    await wake!()
+    expect(asked).toHaveLength(3)   // 同一毫秒入队的按 id 排,先后不定
+    expect(new Set(asked)).toEqual(new Set(['ask:task-1:p9', 'turn:task-1:3', undefined]))
   })
 })

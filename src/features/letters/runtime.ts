@@ -12,6 +12,8 @@
  *   - 其它失败最多试 3 次,之后放弃(信还在存档里)。
  * 一次一封:上一封没寄出去之前,不写下一封。
  */
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
+import type { ProactiveTurn } from '../../daemon/companion/proactive-channel'
 import { writeFileAtomic } from '../../lib/json-file'
 import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -45,15 +47,20 @@ export interface PendingLetter {
 export interface LetterState {
   dueAt: number | null
   pending: PendingLetter | null
-  lastSentAt: number | null
+  /**
+   * 旧标记(M5d 起只读不写):上一封寄出的时刻。现在从「信」那件事的轮推(letterDeliveries);真机上第一封信寄出之前
+   * 一轮都没有,所以两边取较新的(lastSentAtOf)。
+   */
+  lastSentAt?: number | null
 }
 export interface LetterRecord {
   id: string
   day: string
   created_at: string
+  /** 旧标记(M5d 起只读不写):寄出的时刻。现在从「信」那件事的轮推(letterDeliveries),老信没有轮 ⇒ 读这个。 */
   sent_at: string | null
   requested: boolean
-  /** 寄到哪了(2026-10-18 起才记;老信没有这个字段 = 微信)。 */
+  /** 寄到哪了(2026-10-18 起才记;老信没有这个字段 = 微信)。同 sent_at:M5d 起只读不写,新信从轮推。 */
   sent_via?: 'wechat' | 'app'
   letter: LetterDraft
 }
@@ -72,6 +79,8 @@ export type WriteResult =
 
 export interface LetterDeps {
   stateDir: string
+  /** CC 自己做的事(M5b):写一封 / 续寄一次 = 「信」那件事的一轮;不给 ⇒ 不记。 */
+  acts?: Pick<import('../../ports/cc-acts').CcActs, 'begin' | 'stepsOf'>
   enabled(): boolean
   timezone(): string
   ownerChatId(): string | null
@@ -117,7 +126,42 @@ export interface LetterRuntime {
   status(): LetterStatus
 }
 
-const DEFAULT_STATE: LetterState = { dueAt: null, pending: null, lastSentAt: null }
+const DEFAULT_STATE: LetterState = { dueAt: null, pending: null }
+
+/** 一封信寄出的那一刻、寄到哪(从「信」那件事的轮推出来;M5d)。 */
+export interface LetterDelivery { at: number; via: 'wechat' | 'app' }
+export type LetterDeliveries = ReadonlyMap<string, LetterDelivery>
+
+/**
+ * 「信」那件事的轮里,寄出去了的每一封:delivery 那一步 result='sent'。时刻取那一步记的 sentAt(= 以前写进 sent_at /
+ * lastSentAt 的那一刻),没有就取这一步写下的时刻。读不出来 ⇒ 空(调用方照旧读旧标记)。
+ */
+export function letterDeliveries(acts: Pick<import('../../ports/cc-acts').CcActs, 'stepsOf'> | undefined): Map<string, LetterDelivery> {
+  const out = new Map<string, LetterDelivery>()
+  let steps: ReturnType<import('../../ports/cc-acts').CcActs['stepsOf']> = []
+  // 所有轮里的 delivery 那一步(不限轮数:失败、续寄的轮再多,也找得到每一封寄出的那一步;Codex 评审)
+  try { steps = acts?.stepsOf('letters', 'delivery') ?? [] } catch { steps = [] }
+  for (const st of steps) {
+    const p = st.payload
+    if (p.result !== 'sent' || typeof p.letter !== 'string' || out.has(p.letter)) continue
+    out.set(p.letter, { at: typeof p.sentAt === 'number' && Number.isFinite(p.sentAt) ? p.sentAt : st.at, via: p.via === 'app' ? 'app' : 'wechat' })
+  }
+  return out
+}
+/** 这封信寄出了没有、什么时候、寄到哪:轮里有 ⇒ 轮;没有(M5d 之前寄的)⇒ 存档里的旧 sent_at / sent_via。 */
+export function letterSent(r: LetterRecord, delivered: LetterDeliveries): LetterDelivery | null {
+  const d = delivered.get(r.id)
+  if (d) return d
+  if (!r.sent_at) return null
+  const at = Date.parse(r.sent_at)
+  return Number.isFinite(at) ? { at, via: r.sent_via === 'app' ? 'app' : 'wechat' } : null
+}
+/** 上一封寄出的时刻:轮里最新的那封和旧标记 lastSentAt 取较新的。 */
+export function lastSentAtOf(s: LetterState, delivered: LetterDeliveries): number | null {
+  let best = typeof s.lastSentAt === 'number' && Number.isFinite(s.lastSentAt) ? s.lastSentAt : null
+  for (const d of delivered.values()) if (best === null || d.at > best) best = d.at
+  return best
+}
 
 /** 存档里的信,新的在前(手机「CC 的信」也读这个,letters/archive.ts)。 */
 export function readLetterRecords(stateDir: string): LetterRecord[] { return readRecords(stateDir) }
@@ -161,13 +205,15 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
   const state = () => readLetterState(d.stateDir)
   const save = (patch: Partial<LetterState>) => writeLetterState(d.stateDir, { ...state(), ...patch })
+  const delivered = () => letterDeliveries(d.acts)
+  const lastSentAt = () => lastSentAtOf(state(), delivered())
 
   async function compose(owner: string, request: string | undefined): Promise<{ kind: 'letter'; letter: LetterDraft } | { kind: 'skip' | 'failed'; reason: string }> {
     const ev = d.evalText()
     if (!ev) return { kind: 'failed', reason: 'no_model' }
     const nowMs = d.now()
     const records = readRecords(d.stateDir)
-    const lastSent = state().lastSentAt
+    const lastSent = lastSentAt()
     const since = new Date(Math.max(nowMs - CHAT_LOOKBACK_MS, lastSent ? lastSent - 2 * DAY_MS : 0)).toISOString()
     const material: LetterMaterial = {
       today: localParts(nowMs, d.timezone()).day,
@@ -187,17 +233,17 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         d.log('LETTERS', `draft said 「${hit[0]}」; rewriting once`)
         raw = await withTimeout(ev(`${prompt}\n\n## 你刚写的一稿\n${raw}\n\n这一稿里出现了「${hit[0]}」这种字眼,读起来像在翻档案。按同样的格式重写一遍:同样的事,写得像你自然记得。`), EVAL_TIMEOUT_MS)
       }
-    } catch (e) { return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { if (isNetworkUnprotectedError(e)) throw e; return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) } }
     const r = parseLetter(raw)
     if (r.kind !== 'letter' && (r.reason === 'empty' || r.reason === 'unparseable')) d.log('LETTERS', `model reply not a letter (${raw.length} chars): ${raw.slice(0, 80).replace(/\s+/g, ' ')}`)
     return r.kind === 'letter' ? r : { kind: 'skip', reason: r.reason }
   }
 
   /** 存档 + 排成图;返回待寄的那封。 */
-  function file(letter: LetterDraft, requested: boolean): PendingLetter {
+  function file(letter: LetterDraft, requested: boolean, allocatedId?: string): PendingLetter {
     const nowMs = d.now()
     const day = localParts(nowMs, d.timezone()).day
-    const id = `${day}-${d.newId()}`
+    const id = allocatedId ?? `${day}-${d.newId()}`
     const record: LetterRecord = { id, day, created_at: new Date(nowMs).toISOString(), sent_at: null, requested, letter }
     writeRecord(d.stateDir, record)
     const dir = join(d.stateDir, LETTERS_DIR, id)
@@ -211,19 +257,17 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     return { id, createdAt: nowMs, pages, text: letterText(letter), attempts: 0, blockedAt: null, ...(requested ? { requested: true } : {}) }
   }
 
-  async function deliver(p: PendingLetter): Promise<'sent' | 'waiting' | 'failed' | 'expired'> {
-    const owner = d.ownerChatId()
-    if (!owner) return 'waiting'
+  async function deliver(p: PendingLetter, outbound: ProactiveTurn, owner: string): Promise<'sent' | 'waiting' | 'failed' | 'expired'> {
     const nowMs = d.now()
     if (nowMs - p.createdAt > PENDING_TTL_MS) {
       save({ pending: null })
       d.log('LETTERS', `letter ${p.id} expired unsent (kept in archive)`)
       return 'expired'
     }
+    // 寄出的时刻和去处记在这一轮的 delivery 那一步上(deliverIn 写),不再回写存档 / lastSentAt(M5d)
     const markSent = (via: 'wechat' | 'app') => {
-      const rec = readRecords(d.stateDir).find(r => r.id === p.id)
-      if (rec) writeRecord(d.stateDir, { ...rec, sent_at: new Date(nowMs).toISOString(), sent_via: via })
-      save({ pending: null, lastSentAt: nowMs })
+      sentMark = { id: p.id, at: nowMs, via }
+      save({ pending: null })
     }
     // 微信不通时寄到 App:收得到且记上了 ⇒ 'sent';否则 null(照旧等)。
     const toApp = async (why: string): Promise<'sent' | null> => {
@@ -237,6 +281,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         return null
       }
       if (!ok) return null
+      outbound.confirmDelivery?.('app')
       markSent('app')
       d.log('LETTERS', `letter ${p.id} delivered to the app (${why})`)
       return 'sent'
@@ -248,12 +293,17 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     }
     let sentPages = Math.min(Math.max(0, p.sentPages ?? 0), p.pages.length)
     try {
-      if (p.pages.length) for (; sentPages < p.pages.length; sentPages++) await d.sendFile(owner, p.pages[sentPages]!)
+      if (p.pages.length) for (; sentPages < p.pages.length; sentPages++) {
+        await d.sendFile(owner, p.pages[sentPages]!)
+        outbound.confirmDelivery?.('wechat')
+      }
       else {
         const r = await d.sendText(owner, `（一封信）\n\n${p.text}`)
         if (r.error) throw new Error(r.error)
+        outbound.confirmDelivery?.('wechat')
       }
     } catch (e) {
+      if (isNetworkUnprotectedError(e)) throw e
       const msg = e instanceof Error ? e.message : String(e)
       if (isWindowClosed(msg)) {
         if (await toApp('wechat window closed')) return 'sent'
@@ -277,6 +327,38 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     return 'sent'
   }
 
+  /** deliver 寄出时记下的那一刻和去处(deliverIn 写进 delivery 那一步;寄出的时刻只记在轮上,M5d)。 */
+  let sentMark: { id: string; at: number; via: 'wechat' | 'app' } | null = null
+  const sentMarkOf = (id: string) => (sentMark?.id === id ? sentMark : null)   // 读成函数:await 之后 TS 不再把它收窄成 null
+  /** 「信」那件事的一轮(M5b):写信 / 续寄时开,寄的结果收。记不上不影响寄信。 */
+  const NO_TURN = { id: null, step: () => false, finish: () => false }
+  const actTurn = (policy: Record<string, unknown>) => { try { return d.acts?.begin('letters', { startedAt: d.now(), policy }) ?? NO_TURN } catch { return NO_TURN } }
+  type ActTurn = ReturnType<typeof actTurn>
+  const filed = (t: ActTurn, p: PendingLetter) => t.step('artifact', { letter: p.id, pages: p.pages.length, chars: p.text.length, opening: p.text.split('\n')[0]!.slice(0, 40) })
+  const noLetter = (t: ActTurn, r: { kind: 'skip' | 'failed'; reason: string }) => { t.step('system', { [r.kind === 'skip' ? 'skipped' : 'failed']: r.reason }); t.finish('failed', { endedAt: d.now(), errorCode: r.kind === 'skip' ? 'skipped' : 'compose_failed' }) }
+  /** 写 / 存档 / 排版中途抛了:这一轮收成 failed 再往外抛,别让它一直挂「在跑」(Codex 评审)。finish 只收一次。 */
+  const guarded = async <T>(t: ActTurn, fn: () => Promise<T>): Promise<T> => {
+    try { return await fn() } catch (e) { t.finish('failed', { endedAt: d.now(), errorCode: 'threw' }); throw e }
+  }
+  const deliverIn = async (t: ActTurn, p: PendingLetter, outbound: ProactiveTurn, owner: string): Promise<Awaited<ReturnType<typeof deliver>>> => {
+    let r: Awaited<ReturnType<typeof deliver>> = 'failed'
+    sentMark = null
+    try { r = await deliver(p, outbound, owner) } finally {
+      const mark = r === 'sent' ? sentMarkOf(p.id) : null
+      const recorded = t.step('delivery', { letter: p.id, result: r, ...(mark ? { via: mark.via, sentAt: mark.at } : {}) }, { status: r === 'sent' ? 'completed' : 'failed' }) === true
+      // 寄出的那一步没记上(没接 act / 库写不进):退回旧标记,别让寄出去的信在抽屉里看不见、下一封的间隔算错
+      if (mark && !recorded) {
+        try {
+          const rec = readRecords(d.stateDir).find(x => x.id === p.id)
+          if (rec) writeRecord(d.stateDir, { ...rec, sent_at: new Date(mark.at).toISOString(), sent_via: mark.via })
+          save({ lastSentAt: mark.at })
+        } catch (e) { d.log('LETTERS', `letter ${p.id} sent mark not saved: ${e instanceof Error ? e.message : String(e)}`) }
+      }
+      t.finish(r === 'sent' ? 'completed' : 'failed', { endedAt: d.now(), ...(r === 'sent' ? {} : { errorCode: r }) })
+    }
+    return r
+  }
+
   // tick 与 writeNow 走同一条串行链:不会两封同时写,也不会同一封寄两次。
   let chain: Promise<unknown> = Promise.resolve()
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -292,14 +374,15 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       if (s.pending) {
         const pending = s.pending, owner = d.ownerChatId()
         if (!owner) return
-        const o = await d.speech.say({ kind: pending.requested ? 'letter_asked' : 'letter', chatId: owner, nowMs: d.now() }, async () => { await deliver(pending) })
+        if (d.now() - pending.createdAt > PENDING_TTL_MS) { save({ pending: null }); d.speech.expired({ kind: pending.requested ? 'letter_asked' : 'letter', chatId: owner, channel: null, ref: `letter:${pending.id}` }); return }
+        const o = await d.speech.propose({ source: 'letter', summary: 'Resume an archived letter', createdAt: pending.createdAt, expiresAt: pending.createdAt + PENDING_TTL_MS, payloadRef: { letter: pending.id, sentPages: pending.sentPages ?? 0, attempts: pending.attempts }, validate: () => { const current = state().pending; return d.ownerChatId() === owner && current?.id === pending.id && (current.sentPages ?? 0) === (pending.sentPages ?? 0) && current.attempts === pending.attempts }, kind: pending.requested ? 'letter_asked' : 'letter', chatId: owner, ref: `letter:${pending.id}`, nowMs: d.now() }, async (outbound) => { const result = await deliverIn(actTurn({ letter: pending.id, resume: true }), pending, outbound, owner); return result === 'failed' || (result === 'waiting' && (state().pending?.attempts ?? 0) > pending.attempts) ? 'unknown' : result === 'sent' ? 'completed' : 'blocked' })
         if ('drop' in o) { save({ pending: null }); d.log('LETTERS', `letter ${pending.id} not sent: ${o.reason} (kept in archive)`) }
         return
       }
       if (!d.enabled()) return
       const nowMs = d.now()
       if (s.dueAt === null) {
-        const dueAt = nextDueAt(nowMs, s.lastSentAt ? GAP_DAYS : FIRST_GAP_DAYS, d.random)
+        const dueAt = nextDueAt(nowMs, lastSentAt() ? GAP_DAYS : FIRST_GAP_DAYS, d.random)
         save({ dueAt })
         d.log('LETTERS', `next letter scheduled ${new Date(dueAt).toISOString()}`)
         return
@@ -309,17 +392,24 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       if (!owner) return
       // 到点了:先问门,再写(写信要调模型,被拦下的那一拍一个 token 都不花)。免打扰 / 两条路都送不到 ⇒ 不写,还是到期,
       // 下一拍再问;别烦我 ⇒ 这一封不写了,排下一封。
-      const o = await d.speech.say({ kind: 'letter', chatId: owner, nowMs }, async () => {
+      const allocatedId = `${new Date(nowMs).toISOString().slice(0, 10)}-${d.newId()}`
+      const o = await d.speech.propose({ source: 'letter', summary: 'Write a due letter', payloadRef: { letter: allocatedId, dueAt: s.dueAt }, validate: () => d.ownerChatId() === owner && d.enabled() && !state().pending && state().dueAt === s.dueAt && isLetterDue({ nowMs: d.now(), tz: d.timezone(), dueAt: s.dueAt! }), kind: 'letter', chatId: owner, ref: `letter:${allocatedId}`, nowMs }, async (outbound) => {
+        const t = actTurn({ trigger: 'schedule' })
+        return guarded(t, async () => {
         const r = await compose(owner, undefined)
         if (r.kind !== 'letter') {
+          noLetter(t, r)
           const retryDays = r.kind === 'skip' ? THIN_RETRY_DAYS : 1
           save({ dueAt: nowMs + retryDays * DAY_MS })
           d.log('LETTERS', `scheduled letter ${r.kind}: ${r.reason}; look again in ${retryDays}d`)
           return
         }
-        const p = file(r.letter, false)
+        const p = file(r.letter, false, allocatedId)
+        filed(t, p)
         save({ pending: p, dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
-        await deliver(p)
+        const result = await deliverIn(t, p, outbound, owner)
+        return result === 'failed' || (result === 'waiting' && (state().pending?.attempts ?? 0) > p.attempts) ? 'unknown' as const : result === 'sent' ? 'completed' as const : 'blocked' as const
+        })
       })
       if ('drop' in o) {
         save({ dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
@@ -335,21 +425,29 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       if (s.pending) {
         const pending = s.pending
         let r = 'waiting' as Awaited<ReturnType<typeof deliver>>
-        await d.speech.say({ kind: 'letter_asked', chatId: owner, nowMs: d.now() }, async () => { r = await deliver(pending) })
+        await d.speech.say({ kind: 'letter_asked', chatId: owner, ref: `letter:${pending.id}`, nowMs: d.now() }, async (outbound) => { r = await deliverIn(actTurn({ letter: pending.id, resume: true, trigger: 'owner' }), pending, outbound, owner) })
         return r === 'sent' ? { status: 'sent', id: pending.id } : r === 'waiting' ? { status: 'waiting', id: pending.id } : { status: 'failed', reason: `previous_${r}` }
       }
+      const t = actTurn({ trigger: 'owner' })
+      return guarded(t, async (): Promise<WriteResult> => {
       const r = await compose(owner, request)
       if (r.kind !== 'letter') {
+        noLetter(t, r)
         d.log('LETTERS', `requested letter ${r.kind}: ${r.reason}`)
         // 主人当面要的,写不成要说一声(「出了错但没人告诉你」)
         await d.sendText(owner, r.kind === 'skip' ? '这封信我没写成 —— 能落笔的具体的事还太少。多跟我说说,过几天再给你写。' : '这封信我没写成(这会儿模型连不上)。晚点再跟我说一次。').catch(() => {})
         return { status: r.kind === 'skip' ? 'skipped' : 'failed', reason: r.reason }
       }
       const p = file(r.letter, true)
+      filed(t, p)
       save({ pending: p })
       let out = 'waiting' as Awaited<ReturnType<typeof deliver>>
-      await d.speech.say({ kind: 'letter_asked', chatId: owner, nowMs: d.now() }, async () => { out = await deliver(p) })
+      let delivered = false
+      await d.speech.say({ kind: 'letter_asked', chatId: owner, ref: `letter:${p.id}`, nowMs: d.now() }, async (outbound) => { delivered = true; out = await deliverIn(t, p, outbound, owner) })
+      // 门没让寄(两条路都送不到):这一轮先收成「等着」,下次续寄再开一轮
+      if (!delivered) t.finish('failed', { endedAt: d.now(), errorCode: 'waiting' })
       return out === 'sent' || out === 'waiting' ? { status: out, id: p.id } : { status: 'failed', reason: out }
+      })
     }),
 
     preview: (request) => serial(async () => {
@@ -365,11 +463,12 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
 
     status: () => {
       const s = state()
+      const sent = delivered()
       return {
         enabled: d.enabled(),
         scheduled: d.enabled() && s.dueAt !== null,
         pending: s.pending ? { id: s.pending.id, created_at: new Date(s.pending.createdAt).toISOString(), waiting_for_owner: s.pending.blockedAt !== null } : null,
-        letters: readRecords(d.stateDir).slice(0, 20).map(r => ({ id: r.id, day: r.day, sent_at: r.sent_at, requested: r.requested, opening: opening(r) })),
+        letters: readRecords(d.stateDir).slice(0, 20).map(r => { const at = letterSent(r, sent)?.at; return { id: r.id, day: r.day, sent_at: at !== undefined ? new Date(at).toISOString() : null, requested: r.requested, opening: opening(r) } }),
       }
     },
   }

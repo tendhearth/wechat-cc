@@ -9,14 +9,16 @@
  *     处理磁盘文件得到的逐字节相等,才记 `memory_import`。
  *
  * 文件**不改名**(和设计稿不同,见 §6):G3 时 daemon 的读者和写者都还在用这些文件(G4 起写者才落表、文件变成导出),改名会让
- * 记忆当场消失。改为第一次导入成功时复制一份 `*.imported-<日期>` 留档(主人 10-26 定:留到下一个小版本发版,再挪进 memory-archive/,不删)。
+ * 记忆当场消失。改为第一次导入成功时复制一份 `*.imported-<日期>` 留档,放在 `memory-archive/<chat>/`(1.7.8 之前和原文件放在一起;
+ * 主人 10-26 定发版后挪进 memory-archive/、不删 —— 开机时 `importMemoryOnBoot` 把还在原处的挪过去,见 lib/imported-copies)。
  *
  * 指纹(三份文件的总 sha256)没变 ⇒ 什么都不做;变了 ⇒ 再同步一次(G3 时就是镜像:文件还是源)。
  */
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { writeFileAtomic } from '../../lib/json-file'
+import { ensureArchiveDir, importedCopyName, moveImportedCopies } from '../../lib/imported-copies'
 import { readJsonFile } from '../../lib/read-json-file'
 import { MEMORY_SECTIONS, factsFromMemoryDoc, factsFromOwnerDoc, type DesiredFact } from '../../domain/memory/facts'
 import { type Tombstone, MIN_RETRACTED_CHARS, markWrittenBack, normalizeCorrectionsText, normalizeFactText, placeholderTombstone, renderCorrectionsMd, retractedTextSet, tombstonesFromCorrections } from '../../domain/memory/corrections'
@@ -76,10 +78,14 @@ export function diskStateOf(store: MemoryFactsStore, root: string, chatId: strin
  * 被覆盖 / 被丢开之前的那份磁盘文件存进 `<stateDir>/memory-archive/<chat>/`(同一份内容只存一次)。
  * 规矩:磁盘上任何不是我们自己写下的内容,覆盖之前都先存一份(数据安全评审第 2 条)。返回存档路径。
  */
+/** 一个对话的存档目录:`<stateDir>/memory-archive/<chat>/`(root 是 `<stateDir>/memory/<chat>`)。 */
+export function memoryArchiveDir(root: string, chatId: string): string {
+  return join(dirname(dirname(root)), 'memory-archive', chatId)
+}
+
 export function archiveMemoryFile(root: string, chatId: string, file: string, content: string, reason: string): string {
   void reason   // 只给读代码的人看;文件名按内容指纹,同一份内容不管为什么存都只存一次
-  const dir = join(dirname(dirname(root)), 'memory-archive', chatId)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const dir = ensureArchiveDir(memoryArchiveDir(root, chatId))
   const p = join(dir, `${file}.kept-${sha256(content).slice(0, 12)}.md`)
   if (!existsSync(p)) writeFileAtomic(p, content, { mode: 0o600 })
   return p
@@ -182,8 +188,11 @@ export function importChatMemory(store: MemoryFactsStore, root: string, chatId: 
     })
     if (prior === null) {
       for (const f of IMPORTED_FILES) {
-        const src = join(root, f), dst = `${src}.imported-${day}`
-        if (files[f] !== null && !existsSync(dst)) { try { copyFileSync(src, dst) } catch { /* 留档是附带的 */ } }
+        if (files[f] === null) continue
+        try {
+          const dst = join(ensureArchiveDir(memoryArchiveDir(root, chatId)), importedCopyName(f, day))
+          if (!existsSync(dst)) copyFileSync(join(root, f), dst)
+        } catch { /* 留档是附带的 */ }
       }
     }
     return { chatId, outcome: 'imported', first: prior === null, ...res }
@@ -235,6 +244,7 @@ export function importMemoryOnBoot(d: {
   const out: ImportOutcome[] = []
   for (const chatId of names) {
     try {
+      try { moveImportedCopies(join(base, chatId), memoryArchiveDir(join(base, chatId), chatId), IMPORTED_FILES, line => d.log('MEMORY_IMPORT', `${chatId}: ${line}`)) } catch (e) { d.log('MEMORY_IMPORT', `${chatId}: moving old *.imported-* copies failed: ${e instanceof Error ? e.message : String(e)}`) }
       try { importDerivedState(d.store, join(base, chatId), chatId, nowMs) } catch (e) { d.log('MEMORY_IMPORT', `${chatId}: derived-state import failed: ${e instanceof Error ? e.message : String(e)}`) }
       try { d.beforeChat?.(chatId) } catch (e) { d.log('MEMORY_IMPORT', `${chatId}: re-export before import failed: ${e instanceof Error ? e.message : String(e)}`) }
       const r = importChatMemory(d.store, join(base, chatId), chatId, nowMs, day, { ownerChat: chatId === owner, ownerUnknown: owner === null })

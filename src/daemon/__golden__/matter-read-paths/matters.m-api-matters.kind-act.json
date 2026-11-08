@@ -1,0 +1,57 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "matters": [
+      {
+        "id": "2a7b5391",
+        "kind": "act",
+        "title": "信",
+        "projectPath": null,
+        "status": "open",
+        "state": "open",
+        "archivedAt": null,
+        "ownerChatId": null,
+        "originMatterId": null,
+        "originMessageId": null,
+        "createdAt": 1793413920000,
+        "updatedAt": 1793413980000,
+        "origin": "companion",
+        "act": {
+          "who": "letters",
+          "latest": {
+            "id": "<turn:6>",
+            "status": "completed",
+            "errorCode": null,
+            "trigger": "owner",
+            "startedAt": 1793413920000,
+            "endedAt": 1793413980000,
+            "steps": [
+              {
+                "kind": "artifact",
+                "status": "completed",
+                "at": 1793413920000,
+                "payload": {
+                  "letter": "letter-golden-1",
+                  "pages": 2,
+                  "chars": 480,
+                  "opening": "大人:"
+                }
+              },
+              {
+                "kind": "delivery",
+                "status": "completed",
+                "at": 1793413980000,
+                "payload": {
+                  "letter": "letter-golden-1",
+                  "result": "sent",
+                  "via": "wechat"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

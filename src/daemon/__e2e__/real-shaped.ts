@@ -33,7 +33,7 @@ const MEMORY_FIXTURES = join(HERE, '..', '..', 'test-support', 'fixtures', 'memo
 export const SANDBOX_OWNER = 'o9fixture-owner@im.wechat'
 export const SANDBOX_GUEST = 'o9fixture-guest@im.wechat'
 
-export interface RealShapedOpts extends Pick<TestDaemonOpts, 'claudeScript' | 'codexScript' | 'cursorScript' | 'moderatorScript' | 'recordClaudeSpawnOptions' | 'recordCodexSpawnOptions' | 'modes' | 'seedFiles'> {
+export interface RealShapedOpts extends Pick<TestDaemonOpts, 'claudeScript' | 'codexScript' | 'cursorScript' | 'moderatorScript' | 'recordClaudeSpawnOptions' | 'recordCodexSpawnOptions' | 'modes' | 'seedFiles' | 'speechFlushIntervalMs' | 'ilinkFailSendMessage' | 'machineIdleS' | 'escalateAfterMs'> {
   /** 复用上一次的 stateDir(重启场景):不再播种记忆 / 知识库 / 对话,只把指向替身的 URL 换成这次的端口。 */
   stateDir?: string
   /** 盖在 agent-config.json 上的几项(这次开机的「机器上变了什么」,比如 a2a 端口被别的程序占了)。 */

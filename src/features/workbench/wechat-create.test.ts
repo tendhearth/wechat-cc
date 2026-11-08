@@ -108,8 +108,8 @@ describe('create one shared workbench task from WeChat',()=>{
     expect(reply).toContain('暂时无法')
     await Promise.resolve();await Promise.resolve()
     expect(service.list().tasks).toHaveLength(0);expect(seen).toHaveLength(0)
-    expect(db.query('SELECT count(*) AS n FROM workbench_events').get()).toEqual({n:0})
-    expect(db.query('SELECT count(*) AS n FROM workbench_run_execution').get()).toEqual({n:0})
+    expect(db.query('SELECT count(*) AS n FROM matter_items').get()).toEqual({n:0})
+    expect(db.query('SELECT count(*) AS n FROM matter_turns').get()).toEqual({n:0})
     expect(service.attention().tasks).toHaveLength(0)
   })
 

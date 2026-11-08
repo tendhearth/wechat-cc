@@ -8,8 +8,9 @@ export type ArtifactRef = { id: string; name: string; mime: string; size: number
 export type ArtifactPreview = { kind: 'image' | 'text' | 'file' }
 /** 图片在 app 里直接看;文字类(Markdown / 纯文本 / JSON / CSV)用阅读视图;其它(PDF / 网页 / 表格 / 压缩包)交给系统打开。 */
 export function previewKind(mime: string, name: string): ArtifactPreview['kind'] {
+  mime = mime.split(';')[0]!.trim().toLowerCase()
   if (/^image\/(png|jpeg|gif|webp)$/.test(mime)) return 'image'
-  if (/^text\/(plain|markdown|csv)$/.test(mime) || mime === 'application/json' || /\.(md|txt|csv|json)$/i.test(name)) return 'text'
+  if (/^text\/(plain|markdown|csv)$/.test(mime) || mime === 'application/json' || /\.(md|markdown|txt|csv|json)$/i.test(name)) return 'text'
   return 'file'
 }
 

@@ -12,24 +12,25 @@ import type { WechatContacts, WechatVoice } from '../../ports/wechat'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../app/matters/service'
-import { retractOnFactStatus, type MemoryNightlyRuntime } from '../../features/memory'
+import { memoryPhoneRoutes, type MemoryNightlyRuntime } from '../../features/memory'
+import { stickerPhoneRoutes } from '../../features/stickers'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
 import { jobsView, jobsAction, mobileJobsRoutes } from '../../features/jobs'
 import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { pickJobExecutor, readPlanLogDays } from '../../features/companion'
-import { readJournalSeen, writeJournalSeen } from '../../adapters/store/journal-seen'
+import { readJournalSeen } from '../../adapters/store/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
-import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, cacheSessions, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer, currentPhoneClient } from '../../features/phone'
+import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer } from '../../features/phone'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
-import { letterPagePath, listLetters, mobileLettersRoutes } from '../../features/letters'
+import { letterDeliveries, letterPagePath, listLetters, mobileLettersRoutes } from '../../features/letters'
+import { ccActsFor } from '../../adapters/store/cc-acts'
 import { makeEventsStore } from '../events/store'
 import { hasLlmKey } from '../llm-keys'
 
 export interface WireSettingsPanelDeps {
   /** 面板直接读的那几项 opts(只有这些)。 */
-  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'cliSessions' | 'journal' | 'llmHealth' | 'matters' | 'overseerToday' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
-  connections: Parameters<typeof makeSettingsPanel>[0]['connections']
+  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'journal' | 'llmHealth' | 'matters' | 'panelDispatch' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
   stateDir: string
   db: Db
   boot: Bootstrap
@@ -52,18 +53,11 @@ export interface WireSettingsPanelDeps {
 }
 
 export function wireSettingsPanel(d: WireSettingsPanelDeps) {
-  const { opts, connections, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, mattersService, memoryNightly } = d
+  const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, mattersService, memoryNightly } = d
   const { remoteCfg, remoteTunnel, push: phonePush, owner: phoneOwner, chat: phoneChat } = d.phone
-// 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
-const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
 return makeSettingsPanel({
-  connections,
   // 执行者叫什么(收敛清单 ⑥):唯一出处 registry;App 读行里的 displayName,不存名字表。
   executorName: (id: string) => boot.registry.namesOf(id).name,
-  ...(opts.cliSessions ? { cliSessions: opts.cliSessions } : {}),
-  ...(opts.cliActions ? { cliActions: opts.cliActions } : {}),
-  ...(opts.overseerToday ? { overseerToday: opts.overseerToday } : {}),
-  ...(phoneSessions ? { sessions: phoneSessions } : {}),
   // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
   ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),
   stateDir,
@@ -85,35 +79,23 @@ return makeSettingsPanel({
       summarizer: makeProgressSummarizer({ cheapEval: cheap, budgetMs, now: () => Date.now(), log: (tag, line) => log(tag, line) }),
     }) }
   })() : {}),
-  ...(opts.workbench ? { changes: (id: string) => opts.workbench!.reviewList(id) } : {}),
-  ...(opts.workbench ? { review: {
-    mark: (id: string, input: { artifactId: string; path: string; mark: 'accepted' | 'returned' }) => opts.workbench!.markReviewFile(id, input),
-    ret: (id: string, input: { artifactId: string; paths: string[]; comment: string }) => opts.workbench!.returnReviewFiles(id, input),
-    comment: (id: string, input: import('../../features/workbench').ReviewCommentInput) => opts.workbench!.reviewComment(id, input),
-    sendComments: (id: string, input: { summary?: string; inputRequestId?: string }) => opts.workbench!.sendReviewComments(id, input),
-  } } : {}),
+  // 改动与逐文件审阅、行评论(P3e 起):/v1/matter/changes、review-*(内部 API 那一个处理器,MattersService 那一层)。
   ...(opts.workbench?{uploads:{
     chunk:(input:Parameters<typeof opts.workbench.uploadAttachmentChunk>[0])=>opts.workbench!.uploadAttachmentChunk(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
     status:(input:{id:string;draftId:string})=>opts.workbench!.attachmentUploadStatus(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-    discard:(input:{id:string;draftId:string})=>opts.workbench!.discardAttachmentUpload(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
   }}:{}),
-  ...(opts.workbench?{entry:{
-    entryOptions:()=>opts.workbench!.entryOptions({ownerKey:ownerChatId()??'',surface:'phone'}),
-    entryModels:(input:{providerId:string;projectId?:string})=>opts.workbench!.entryModels(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-    // 出生地:原生 App(中继 v2 帧)/ 浏览器 /m,只按传输判(phone-client.ts);不在手机请求里 ⇒ null。
-    createEntry:(input:import('../../adapters/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone',origin:currentPhoneClient()}),
-    entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
-  }}:{}),
-  curatedMemory: () => memoryNightly.curatedView(),
-  correctMemory: (id: string, verdict: import('../../features/memory').MemoryVerdict) => memoryNightly.correct(id, verdict),
-  memoryRetractions: () => memoryNightly.retractions(),
-  restoreMemory: (key: string) => memoryNightly.restore(key),
-  ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+  // 交办与回执(P3e 起):POST /v1/matter/create、GET /v1/matter/create-receipt(内部 API 那一个处理器,MattersService.createEntry / entryReceipt)。
+  ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), withActs: (rows) => mattersService.withActs(rows), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
   // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
   ...(opts.activity ? { activity: opts.activity } : {}),
-  // 信、定时的手机处理器归它们自己的功能(features/letters、features/jobs 的 index.ts 导出),这里只填 deps 交给面板。
+  // 信、定时、终端会话、记忆、表情的手机处理器归它们自己的功能(各自 index.ts 导出),这里只填 deps 交给面板。
   featureRoutes: [
-    mobileLettersRoutes({ list: () => listLetters(stateDir), pagePath: (id: string, page: number) => letterPagePath(stateDir, id, page) }),
+    // 终端会话:看着它跑 / 拍板 / 接着说一句(P3d-3 从面板搬回 features/terminal)
+    // 「CC 记得你」:整理好的那份 + 逐条纠错(P3d-3 从面板搬回 features/memory)
+    memoryPhoneRoutes({ curated: () => memoryNightly.curatedView(), correct: (id, verdict) => memoryNightly.correct(id, verdict) }),
+    // 表情原图(P3d-3 从面板搬回 features/stickers);面板自己的 stickers 只给首屏 state 列库用
+    stickerPhoneRoutes(opts.stickers ? { list: () => opts.stickers!.list(), dir: join(stateDir, 'stickers') } : undefined),
+    mobileLettersRoutes({ list: () => listLetters(stateDir, letterDeliveries(ccActsFor(db, log))), pagePath: (id: string, page: number) => letterPagePath(stateDir, letterDeliveries(ccActsFor(db, log)), id, page) }),
     // 定时在手机上看得见(对标 B7):与微信「定时」、runner 读写同一个 scheduled-jobs.json。
     mobileJobsRoutes((() => {
       const store = makeJobsStore(stateDir)
@@ -125,13 +107,12 @@ return makeSettingsPanel({
   ],
   ...(phoneOwner && phoneChat ? { chat: {
     owner: () => phoneOwner.peek(),
+    inboxDir: join(stateDir,'inbox'),
     history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),
     chat: phoneChat,
     message: (chatId: string, id: string) => messagesStore.get(chatId, id),
-    search: (chatId: string, query: string, limit: number) => messagesStore.search(chatId, query, limit),
     speak: (text: string) => ilink.voice.synthesizeSpeech(text),
-    // 按住说话(2026-10-18):与微信语音同一个语音转文字(已过网络守护);没配抛 no_stt_config。
-    ...(ilink.voice?.transcribe ? { transcribe: (audio: Buffer, mime: string) => ilink.voice.transcribe!(audio, mime) } : {}),
+    // 按住说话(2026-10-18):这里只给「配没配」;录音转成字走 POST /v1/companion/transcribe(语音模块那一条,P3c-1)。
     ...(ilink.voice?.sttStatus ? { transcribeStatus: () => ({ configured: ilink.voice.sttStatus!().configured }) } : {}),
     // 与微信 `/api <模型>` 同一处:Mode.solo 按对话钉,下一句生效(同后端换模型时协调器自己释放旧会话)。
     model: {
@@ -158,14 +139,7 @@ return makeSettingsPanel({
     todos: {
       facts: {
         findFacts: (k, pr, q2, st, li) => boot.knowledge!.facts!.findFacts(k, pr, q2, st, li),
-        // 待办「不对」= 收回(架构终态 G5,主人 10-26 第 1 条):记忆、笔记、总览里同一句也一路收回
-        setFactStatus: retractOnFactStatus({ setFactStatus: (id: number, st: string, n: number) => boot.knowledge!.facts!.setFactStatus(id, st, n) }, {
-          factById: (id) => boot.knowledge!.store.factById(id),
-          retract: (text, verdict) => {
-            const owner = ownerChatId()
-            if (owner) void memoryNightly.retractText(owner, text, verdict, '待办').catch(err => log('MEMORY_NIGHTLY', `todo retract failed: ${err instanceof Error ? err.message : String(err)}`))
-          },
-        }).setFactStatus,
+        // 改状态(完成 / 捞回 / 不对)走 POST /v1/knowledge/facts/set_fact_status(P3c-3):「不对」一路收回的那一层在 bootstrap/module.ts。
       },
       names: () => {
         try { return (boot.knowledge?.graph?.topContacts('closeness', 500, 'person') ?? []) as Array<{ username: string; display: string }> } catch { return [] }
@@ -190,7 +164,8 @@ return makeSettingsPanel({
     },
   } : {}),
   ...(opts.presence ? { presence: opts.presence } : {}),
-  seen: { read: () => readJournalSeen(stateDir), write: (iso: string) => writeJournalSeen(stateDir, iso) },
+  // 推水位走 POST /v1/journal/seen(P3c-3,日志模块那一条);这里只读,首屏算未读。
+  seen: { read: () => readJournalSeen(stateDir) },
   // 「模型与后端」:注册表 + 体检缓存 + key 有无(只回 boolean)。
   llm: {
     registered: () => boot.registry.list(),
@@ -211,5 +186,7 @@ return makeSettingsPanel({
   log: (tag, line) => log(tag, line),
   // 内部 API 同一个 token-registry(梳理第 6 步);没接上(测试)⇒ 面板自建。
   ...(opts.panelTokens ? { tokens: opts.panelTokens } : {}),
+  // `/v1/*` 交给内部 API 同一个分发(P3b);没接上(测试)⇒ 面板上的 `/v1` 一律 404。
+  ...(opts.panelDispatch ? { v1: opts.panelDispatch } : {}),
 })
 }

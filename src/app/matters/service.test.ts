@@ -13,7 +13,7 @@ const TASK={id:'deadbeef',title:'整理周报',status:'running',phase:'replied',
 
 describe('matters service',()=>{
   it('details a task matter with its workbench view and recent events, and says into it via continueTask',async()=>{
-    store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'});store.bind('deadbeef','wechat','owner');store.setStatus('deadbeef','replied')
+    store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'});store.bind('deadbeef','wechat','owner');store.setLifecycle('deadbeef','done')
     let task=TASK
     const workbench={detail:vi.fn(()=>({task,events:[{kind:'text',text:'做好了',createdAt:3}]})),continueTask:vi.fn(()=>(task={...TASK,phase:'working'}))}
     const service=makeMattersService({store,workbench})
@@ -22,7 +22,8 @@ describe('matters service',()=>{
     expect(detail.bindings.map(b=>b.surface)).toEqual(['wechat']);expect(detail.sessions).toEqual([])
     await expect(service.say('deadbeef','再改一版')).resolves.toEqual({kind:'task',task:{...TASK,phase:'working'}})
     expect(workbench.continueTask).toHaveBeenCalledWith('deadbeef','再改一版')
-    expect(store.get('deadbeef')?.status).toBe('open')
+    expect(store.legacyStatuses(['deadbeef']).get('deadbeef')).toBe('open')
+    expect(store.get('deadbeef')?.state).toBe('open')
   })
 
   it('says into the owner chat matter through the app conversation channel (with the surface), shows the shared message stream, and refuses other chats',async()=>{
@@ -47,7 +48,7 @@ describe('matters service',()=>{
     await expect(service.say('00000001','  ')).rejects.toThrow('invalid_text')
     await expect(service.say('00000001','x')).rejects.toThrow('workbench_not_wired')
     const chat=store.ensureChat('c');await expect(service.say(chat.id,'x')).rejects.toThrow('chat_not_wired')
-    store.create({id:'00000002',kind:'companion',title:'心愿'})
+    store.create({id:'00000002',kind:'act',initiator:'cc',title:'心愿'})
     await expect(service.say('00000002','x')).rejects.toThrow('matter_say_unsupported')
   })
 
@@ -204,4 +205,14 @@ describe('工作区脚本到手机(2026-10-20)',()=>{
     const service=makeMattersService({store,workbench:{detail:()=>({task:TASK,events:[]}),continueTask:vi.fn()} as never})
     await expect(service.worktreeScript('deadbeef','run')).rejects.toThrow('workbench_not_wired')
   })
+})
+
+
+it('owner history preserves durable attachment-only replies through the public service projection',async()=>{
+  const event={kind:'text',text:'',createdAt:1,messageId:'saved',replyExtras:{attachments:[{kind:'file' as const,name:'photo.png'}],narration:['checked']}}
+  const file=vi.fn(async()=>({status:200,body:{ok:true}}))
+  const service=makeMattersService({store,chat:{ownerChatId:()=>'owner',say:async()=>({reply:''}),recent:async()=>[event],file}})
+  expect((await service.ownerChat('desktop'))?.events).toEqual([event])
+  expect(await service.ownerChatFile({id:'saved',i:0,offset:0})).toEqual({status:200,body:{ok:true}})
+  expect(file).toHaveBeenCalledWith({id:'saved',i:0,offset:0})
 })

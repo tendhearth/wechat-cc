@@ -1,0 +1,19 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "ok": true,
+    "items": [
+      {
+        "key": "c:abc123",
+        "section": "喜好",
+        "text": "爱喝美式",
+        "day": "2026-11-01",
+        "verdict": "outdated",
+        "note": "主人说过时了"
+      }
+    ]
+  }
+}

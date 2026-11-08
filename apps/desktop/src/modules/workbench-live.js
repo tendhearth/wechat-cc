@@ -94,26 +94,27 @@ export function patchLiveTimeline(root, changed, render) {
   return { patched, appended, missing, ...(deferred?{deferred}:{}) }
 }
 
-/** @typedef {{fetchDetail:(id:string,since:number,waitMs:number)=>Promise<any>,onDetail:(detail:any)=>void,onError?:(error:unknown)=>void,waitMs?:number,backoff?:number[]}} LongPollOptions */
+/** @typedef {{fetchDetail:(id:string,since:number,waitMs:number,cursor?:number)=>Promise<any>,onDetail:(detail:any)=>void,onError?:(error:unknown)=>void,waitMs?:number,backoff?:number[]}} LongPollOptions */
 /** @typedef {{start:(id:string,version?:number)=>void,stop:()=>void,readonly active:boolean}} LongPoll */
 
 /** 长轮询循环:一次请求挂到后台有新东西为止,回来就接着下一次。
- * since 永远取上一次响应里的 version —— 后台回卷最多重放一行(按 id 合并),不会漏。
+ * 后台回了 cursor(这件事最后一次有动静的全库游标,P1b)就按它问(since_cursor):改过的步(工具调用做完)也会带回来;
+ * 旧后台没有 cursor 就照旧按上一次的 version 问(since)。两种都是最多重放几行(按 id 合并),不会漏。
  * @param {LongPollOptions} options @returns {LongPoll} */
 export function createLongPoll({ fetchDetail, onDetail, onError, waitMs = 20000, backoff = [1000, 2000, 5000, 10000] }) {
   let generation = 0
   let running = false
   /** @type {ReturnType<typeof setTimeout>|null} */ let timer = null
   const halt = () => { running = false; if (timer) { clearTimeout(timer); timer = null } }
-  /** @param {string} id @param {number} version @param {number} mine @param {number} failures */
-  const loop = async (id, version, mine, failures) => {
+  /** @param {string} id @param {number} version @param {number} mine @param {number} failures @param {number|undefined} [cursor] */
+  const loop = async (id, version, mine, failures, cursor) => {
     if (mine !== generation) return
     /** @type {any} */ let detail
-    try { detail = await fetchDetail(id, version, waitMs) }
+    try { detail = await fetchDetail(id, version, waitMs, cursor) }
     catch (error) {
       if (mine !== generation) return
       onError?.(error)
-      timer = setTimeout(() => { timer = null; void loop(id, version, mine, failures + 1) }, backoff[Math.min(failures, backoff.length - 1)] ?? 1000)
+      timer = setTimeout(() => { timer = null; void loop(id, version, mine, failures + 1, cursor) }, backoff[Math.min(failures, backoff.length - 1)] ?? 1000)
       return
     }
     if (mine !== generation) return
@@ -122,7 +123,8 @@ export function createLongPoll({ fetchDetail, onDetail, onError, waitMs = 20000,
     if (mine !== generation) return
     // 旧后台不带 version:再问一次只会立刻回来,白转;停在这里,退回 3 秒重拉。
     if (typeof detail?.version !== 'number') { halt(); return }
-    timer = setTimeout(() => { timer = null; void loop(id, detail.version, mine, 0) }, 0)
+    const next = typeof detail.cursor === 'number' ? detail.cursor : undefined
+    timer = setTimeout(() => { timer = null; void loop(id, detail.version, mine, 0, next) }, 0)
   }
   return {
     get active() { return running },

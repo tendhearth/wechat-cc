@@ -25,6 +25,9 @@ import { terminalRoutes } from './routes'
 export type { WireTerminalDeps, CliSessionsWorkbench } from './wire'
 export type { AppPushOutlet } from './app-push'
 export { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './phone-actions'
+// 手机上的终端会话三条(看着它跑 / 拍板 / 接着说一句):组装的地方交给面板的 featureRoutes(P3d-3)
+export { terminalOwnerRoutes } from './routes'
+export { terminalOwnerHandlers, type TerminalPhoneRoutesDeps } from './phone-routes'
 export type { TerminalHooksService } from './hooks'
 // 起进程、收输出、到点掐掉(进程组):日历读 JXA 也用这一个
 export { defaultRunner, type Runner } from './reply-handler'

@@ -148,7 +148,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         if(input.until)store.goals.create(task.id,input.until)
       },undefined,{
         // 独立工作区的目录不登记成项目:它属于源项目,侧栏按源项目归组(2026-10-07)。
-        context,workspaceKind:frozen.target.kind==='managed'?'managed':'project',...(tree?{registerProject:false}:{}),fromChat:!!input.context,materials:current,
+        context,conversationMessageId:`entry:${input.requestId}`,conversationText:input.text.trim()||input.title||current.map(a=>a.name).join('\n'),workspaceKind:frozen.target.kind==='managed'?'managed':'project',...(tree?{registerProject:false}:{}),fromChat:!!input.context,materials:current,
         beforeCreate:()=>{
           const latest=store.entryRequests.get(context.ownerKey,input.requestId)
           if(latest?.phase==='accepted')throw Error('entry_already_accepted')

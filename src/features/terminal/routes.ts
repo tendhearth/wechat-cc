@@ -10,6 +10,8 @@
  * 分级 trusted:`wechat-cc hook` 子命令读的是 internal-api-info.json 指向的 FILE
  * token(= trusted),与 `wechat-cc agent` 同源;admin 会让每一条 hook 都 403。
  */
+import { terminalOwnerHandlers } from './phone-routes'
+import type { CliPhoneActions } from './phone-actions'
 import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
 import type { CliEvent, CliEventAction } from '../../app/cli-events'
 import type { CliPermissionRelay, CliPermissionRequest } from '../../app/cli-permission-relay'
@@ -40,6 +42,13 @@ export interface TerminalRoutesDeps {
   cliHooks: Pick<TerminalHooksService, 'install' | 'uninstall'>
   /** 「今天」一眼看完(core/overseer-today.ts,2026-10-14):终端 + 一起做,过去 24 小时。只读,只在被问时算。 */
   overseerToday: () => OverseerToday
+  /**
+   * 手机令牌(设备 / 链接)读 GET /v1/cli/sessions 时回的那一份(P3c-2,phone-sessions.ts 的 phoneCliSessionRows):
+   * 只给目录名、不给 cwd / origin_agent,最多 50 条,带拍板的码与此刻那一步。缺 ⇒ 手机令牌 503 cli_sessions_not_wired
+   * (绝不退回桌面那一份)。
+   */
+  phoneSessions?: (sessionId?:string) => object[]
+  ownerActions?: CliPhoneActions
 }
 
 /** GET /v1/cli/sessions 默认给多少条。 */
@@ -48,11 +57,28 @@ export const CLI_SESSIONS_DEFAULT_LIMIT = 100
 /** 一次 GET 最多等这么久再回;hook 那头自己循环。 */
 export const CLI_PERMISSION_POLL_CAP_MS = 25_000
 
+/** 手机设置面板那一口的令牌(设备 / 链接)。 */
+const fromPhone = (caller: Parameters<RouteHandler>[2]): boolean => caller?.origin === 'device' || caller?.origin === 'link'
+
+export function terminalOwnerRoutes(actions?:CliPhoneActions):RouteTable {
+  const shared:RouteTable={}
+  for(const [key,handler] of Object.entries(terminalOwnerHandlers({cliActions:actions}))) {
+    shared[key]=async(q,body,caller)=>{
+      if(caller?.tier!=='admin'||!['operator','device'].includes(caller.origin))return {status:403,body:{error:'forbidden'}}
+      const [method,path]=key.split(' '),url=new URL(path!,'http://127.0.0.1');url.search=String(q)
+      const response=await handler!(url,new Request(url,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{})}),undefined)
+      return {status:response.status,body:await response.json() as Record<string,unknown>}
+    }
+  }
+  return shared
+}
+
 export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
   const ownerSession = (caller: Parameters<RouteHandler>[2]): boolean =>
     caller?.origin === 'session' && caller.tier === 'admin' && !!caller.chatId && deps.terminalSay.isOwnerChat(caller.chatId)
   const sayError = (code: string) => { const h = workbenchErrorHttp(code, 'desktop'); return { status: h.status, body: { ok: false, error: h.error } } }
   return {
+    ...terminalOwnerRoutes(deps.ownerActions),
     'POST /v1/cli/event': async (_q, body) => {
       const action = await deps.cliEvents.ingest(body as CliEvent)
       return { status: 200, body: { ok: true, action } }
@@ -71,7 +97,13 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     },
     // 终端会话登记处(v76):主人在 CC 外面开的 claude / codex 会话,等你批准的在前,其余按最近事件
     // 倒序;running / waiting 超过 30 分钟没事件读成 idle(stale=true)。admin 档,operator 凭据。
-    'GET /v1/cli/sessions': async (q) => {
+    // 手机令牌(P3c-2,原 /m/api/cli/sessions):回手机那一份(phone-sessions.ts),查询参数不看(不给已结束的、不给 detail)。
+    'GET /v1/cli/sessions': async (q, _body, caller) => {
+      if (fromPhone(caller)||(caller?.origin==='operator'&&q.get('owner')==='1')) {
+        if (!deps.phoneSessions) return { status: 503, body: { error: 'cli_sessions_not_wired' } }
+        try { return { status: 200, body: { ok: true, sessions: deps.phoneSessions(q.get('session_id')??undefined) } } }
+        catch { return { status: 503, body: { error: 'unavailable' } } }
+      }
       const limitRaw = Number(q.get('limit') ?? CLI_SESSIONS_DEFAULT_LIMIT)
       const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(Math.trunc(limitRaw), 500)) : CLI_SESSIONS_DEFAULT_LIMIT
       const sessions = deps.cliEvents.list({ includeEnded: q.get('ended') === '1', limit })
@@ -114,6 +146,7 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
     },
     // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;等你 / 做完 / 在跑 / 可能卡住。
     // 结构化数据,微信那段纯文本由调用方(CC 的 today_digest 工具)用 formatOverseerToday 排。admin 档。
+    // 手机令牌(P3c-2,原 /m/api/today)读同一份:里面只有目录名、没有完整路径,手机口径原样给(并之前手机那条也是原样)。
     'GET /v1/overseer/today': async () => {
       try { return { status: 200, body: { ok: true, today: deps.overseerToday() } } }
       catch { return { status: 503, body: { error: 'unavailable' } } }

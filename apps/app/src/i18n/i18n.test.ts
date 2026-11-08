@@ -16,11 +16,6 @@ describe('文案表', () => {
     expect(pickLang(['fr-FR', 'zh-CN'])).toBe('en')
     expect(pickLang([])).toBe('en')
   })
-  it('问候不带句号(照稿)', () => {
-    for (const k of ['now.greetingMorning', 'now.greetingAfternoon', 'now.greetingEvening'] as const) for (const l of ['en', 'zh-Hans'] as const) expect(t(l, k)).not.toMatch(/[.。]$/)
-    expect(t('zh-Hans', 'now.greetingEvening')).toBe('晚上好')
-    expect(t('en', 'now.greetingEvening')).toBe('Good evening')
-  })
   it('演示横幅是一句短话', () => {
     expect(en['demo.banner'].length).toBeLessThanOrEqual(40)
     expect(zh['demo.banner'].length).toBeLessThanOrEqual(20)

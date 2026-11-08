@@ -28,6 +28,7 @@ export function makeMwMessages(deps: MessagesMwDeps): Middleware {
     const messageId = wechatTaskMessageKey(ctx.msg) ?? (ctx.msg.createTimeMs
       ? inboundMessageId(ctx.msg.userId, ctx.msg.createTimeMs)
       : inboundFallbackMessageId(ctx.msg.userId, ctx.msg.text))
+    ctx.messageId = messageId
     const rec: MessageRecord = {
       id: messageId,
       chatId: ctx.msg.chatId,

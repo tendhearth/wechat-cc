@@ -1,9 +1,14 @@
-import type { ListMatters, Matter, MatterBinding, MatterOrigin, MatterSession, MatterStore, SayReceipts } from '../../ports/matters'
+import type { ListMatters, Matter, MatterActStep, MatterActTurn, MatterBinding, MatterLog, MatterOrigin, MatterSession, MatterStore, MatterTurn, SayReceipts } from '../../ports/matters'
 import {randomUUID} from '../../lib/random'
 import type { PendingWorkbenchPermission, PermissionDecision, PendingUserInput, Artifact, LiveInput, Attachment } from '../../ports/workbench'
 import { normalizeInputRequestId } from '../../domain/workbench/input-request-id'
 import { sayTextHash } from '../../lib/content-hash'
 import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts'
+import {lifecycleOfTaskView,wireMatter,type WireMatter} from '../../domain/matters/legacy-status'
+import {phoneMayOpenMatter} from '../../domain/matters/phone-scope'
+import {isReadyStep} from '../../domain/matters/ready-step'
+import {latestChanges,type ReviewTurnLike} from '../../domain/matters/phone-changes'
+import type {ChatAttachmentT,MatterEventT} from '@wechat-cc/protocol'
 
 /**
  * matters/service.ts — 各表面共用的"一件事"读写面:列表、详情、往一件事说话。
@@ -14,12 +19,17 @@ import {phoneScripts,type PhoneScripts} from '../../domain/matters/phone-scripts
  */
 export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}&PhoneScripts;until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
 // activity(2026-10-17):工具那一步在跑还是做完了 —— 手机看着它跑要知道「正在」哪一步。只给 type/status/label,不给命令输出。
-export interface MatterEvent {kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string;activity?:{type:string;status:string;label:string}}
+/**
+ * 详情 events 的一条(线上旧形状,M6c 起 src 不再手写):任务 = 时间线的步投影成 WorkbenchTaskEvent 再收窄到这里;
+ * 对话 = messages 表(正文唯一来源,§8.4,daemon/wiring/owner-chat-reading.ts);终端 / act 是空的。
+ * 形状是协议包的 MatterEventT;对话那几条还多带 messageId / replyExtras(桌面 converse.js 读,App 的 zod 丢掉不认)。
+ */
+export type MatterDetailEvent=MatterEventT&{messageId?:string;replyExtras?:{attachments?:ChatAttachmentT[];narration?:string[]}}
 export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>&Partial<Pick<LiveInput,'error'>>
 // 只投影显示材料所需的五个字段；不能把内部存储路径、owner 或草稿身份带到手机。
 const publicMaterials=(attachments?:readonly Attachment[])=>attachments?.length?{attachments:attachments.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))}:{}
 const publicInput=({id,taskId,runId,text,status,attachments}:MatterInput):MatterInput=>({id,taskId,runId,text,status,...publicMaterials(attachments)})
-const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic,activity}:MatterEvent):MatterEvent=>({kind,text,createdAt,...(source!==undefined?{source}:{}),...(kind==='tool_call'&&activity&&typeof activity.status==='string'?{activity:{type:String(activity.type),status:activity.status,label:String(activity.label??'').slice(0,200)}}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
+const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic,activity,messageId,replyExtras}:MatterDetailEvent):MatterDetailEvent=>({kind,text,createdAt,...(messageId?{messageId}:{}),...(replyExtras?{replyExtras}:{}),...(source!==undefined?{source}:{}),...(kind==='tool_call'&&activity&&typeof activity.status==='string'?{activity:{type:String(activity.type),status:activity.status,label:String(activity.label??'').slice(0,200)}}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
 export interface MatterTaskControls {
   runId?:string;inputMode?:'steer'|'send'|'queue'
   permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];artifacts:Artifact[];inputs:MatterInput[]
@@ -31,7 +41,7 @@ export type MatterQuotaHandoff =
   | {state:'offer';from:string;to:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'none';from:string;kind:'quota'|'rate_limit';resetAt:number}
   | {state:'handed';from:string;to:string;matterId:string}
-export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff}
+export interface MatterDetail extends MatterTaskControls {/** 线上形状:带旧 status(wire-compat.ts 第一行)。 */matter:WireMatter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterDetailEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff;/** CC 自己做的事(M5c):最近的轮,新的在前,每轮带自己的步。只有 act 带;读不到就不带。 */actTurns?:MatterActTurn[]}
 export interface MatterSayInput {requestId:string;runId?:string;draftId?:string;attachmentIds?:string[]}
 type MatterMaterials=Pick<MatterSayInput,'draftId'|'attachmentIds'>
 export interface MatterArtifactInput {artifactId:string;sha256:string;offset:number;length?:number}
@@ -44,13 +54,13 @@ export interface MattersServiceDeps {
   /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。没接 ⇒ 不带 agentNames,界面退回 id。 */
   executorName?:(id:string)=>string
   workbench?:{
-    detail(id:string):{task:MatterTaskView;events:MatterEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string};rewind?:{blocked:unknown}|null}
+    detail(id:string):{task:MatterTaskView;events:MatterDetailEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string};rewind?:{blocked:unknown}|null}
     /** 手机说第一句给「导入了、还没发过第一句」的任务(spec D5);没接 ⇒ 手机也走 continueTask(409)。 */
     continueImported?(id:string,text:string,options:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<MatterTaskView>
     continueTask(id:string,text:string,options?:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):MatterTaskView
     submitInput?(id:string,input:{runId:string;requestId:string;text:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
     inputReceipt?(id:string,requestId:string):LiveInput|null
-    resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void
+    resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void|Promise<void>
     /** 停下这一轮(与桌面「停止」同一个 cancel;expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮)。 */
     cancel?(id:string,expectedRunId?:string):Promise<unknown>
     /** 独立工作区:提交到分支 / 删除工作区(2026-10-07,手机也能做)。没接 ⇒ 手机没有这两个按钮。 */
@@ -69,22 +79,47 @@ export interface MattersServiceDeps {
     reviewList?(id:string):ReadonlyArray<{artifactId:string;createdAt:number;discarded?:boolean}>
     rewindPreview?(id:string,input:{artifactId:string;to:'start'|'end'}):Promise<WorkbenchRewindPreview>
     rewind?(id:string,input:{artifactId:string;to:'start'|'end';token:string}):Promise<{discarded:string[]}>
+    /** 交办(P3e 起手机与桌面经 /v1/matter/create、create-receipt 同一个处理器;上下文由调用方给:谁的、哪个表面、出生地)。 */
+    createEntry?(input:never,context:MatterEntryContext):unknown
+    entryReceipt?(requestId:string,context:MatterEntryContext):unknown
+    /** 逐文件审阅与行评论(P3e 起手机与桌面经 /v1/matter/review-* 同一个处理器);撤销一次回退(桌面)。 */
+    markReviewFile?(id:string,input:never):unknown
+    returnReviewFiles?(id:string,input:never):Promise<unknown>|unknown
+    reviewComment?(id:string,input:never):unknown
+    sendReviewComments?(id:string,input:never):Promise<unknown>|unknown
+    undoRewind?(id:string,undo:string):Promise<unknown>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
-  chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
+  chat?:{events?(owner:string,since:number,limit?:number):unknown;stop?(owner:string,turnId:string):boolean;window?(owner:string,input:import('../../../packages/protocol/src/owner-conversation').ConversationWindowInput):Promise<unknown>;work?(owner:string,input?:{cursor?:string;limit?:number}):unknown;file?(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>;ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterDetailEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterDetailEvent&{id:string})[]>}
   /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
   sayReceipts?:SayReceipts
   /** 主人对话要是在这里首建,出生地记成什么(daemon 按鉴权来源算:桌面 = desktop,手机 = App / 浏览器)。没接 ⇒ 桌面记 desktop,手机不知道就不写。 */
   originOf?:(surface:'desktop'|'phone')=>MatterOrigin|null
+  /** 轮与步(只读;M5c 给 act 的列表行与详情用)。没接 ⇒ act 行不带 act、详情不带 actTurns。 */
+  log?:Pick<MatterLog,'turns'|'items'>
+  /** act 详情至多带几轮(默认 20)。 */
+  actTurnLimit?:number
   now?:()=>number
 }
 export interface MattersService {
-  list(filter?:ListMatters):Matter[]
+  /** 线上形状:每行带旧 status(wire-compat.ts 第一行,store.legacyStatuses 现算)。 */
+  list(filter?:ListMatters):WireMatter[]
+  /** act 行带上发起方与最近那一轮(M5c,「CC 最近在忙」);别的行原样。没接 log / 读不到 ⇒ 原样。 */
+  withActs<M extends Matter>(matters:M[]):M[]
+  /** 手机令牌(设备 / 链接)能不能看这件:别人的聊天不给(domain/matters/phone-scope.ts;主人取 ownerChatId)。 */
+  phoneMayOpen(matter:unknown):boolean
+  /** 这件在手机上露过面(绑定 phone / pwa;手机令牌读列表、详情时记)。 */
+  seenOnPhone(id:string):void
   detail(id:string):Promise<MatterDetail>
   /** One durable workbench input, including its delivery reason; never loads or mutates the detail. */
   inputReceipt(id:string,requestId:string):MatterInput|null
   /** 主人那条对话(没有就建),并记下是从哪个表面看的;没配主人 → null。 */
   ownerChat(surface:'desktop'|'phone'):Promise<MatterDetail|null>
+  conversationEvents?(since:number,limit?:number):unknown
+  stopConversation?(turnId:string):boolean
+  conversationWindow?(input:import('../../../packages/protocol/src/owner-conversation').ConversationWindowInput):Promise<unknown>
+  conversationWork?(input?:{cursor?:string;limit?:number}):Promise<unknown>
+  ownerChatFile(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>
   say(id:string,text:string,surface?:'desktop'|'phone',input?:MatterSayInput):Promise<{kind:'task';task:MatterTaskView;input?:MatterInput}|{kind:'chat';reply:string}>
   permission(id:string,runId:string,requestId:string,decision:PermissionDecision):void
   answer(id:string,runId:string,requestId:string,answers:unknown):void
@@ -96,13 +131,59 @@ export interface MattersService {
   worktreeScript(id:string,action:'run'|'stop'):Promise<{branch:string}&Omit<PhoneScripts,'lastLines'>>
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
   /** 在主人那条对话里搜(2026-10-06,对标 Orca 会话历史搜索):新的在前;没配主人 ⇒ null。 */
-  searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterEvent&{id:string})[]}|null>
+  searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterDetailEvent&{id:string})[]}|null>
   /** 额度用完 ⇒ 交给确认卡上那位继续(同一文件夹新开一件);从手机来的,新那件记手机露面。 */
   handoff(id:string,input:{requestId:string;providerId:string},surface?:'desktop'|'phone'):Promise<{matterId:string;created:boolean}>
   /** 手机「撤掉这一轮」的预览(切片 4):只认最新那一轮没撤的、只回到它开始之前;不是最新那轮 ⇒ rewind_not_latest。 */
   rewindPreview(id:string,artifactId:string):Promise<PhoneRewindPreview>
   /** 带预览给的 token 撤掉(同一轮);回撤掉了哪几轮(制品 id)。 */
   rewind(id:string,artifactId:string,token:string):Promise<{discarded:string[]}>
+  /**
+   * 交办一件新事(P3e,`POST /v1/matter/create`):手机与桌面同一个调用,差别只在上下文 —— 表面、出生地,桌面的主人由调用方给
+   * (`ownerKey`,内部 API 的 resolveAdminChatId),手机缺省取这里的主人。`input` 是 parseEntryInput 验过的(在 daemon 那一层)。
+   */
+  createEntry(input:unknown,context:{surface:'desktop'|'phone';ownerKey?:string;origin?:MatterEntryContext['origin']}):unknown
+  /** 交办的回执(按 requestId);没有 ⇒ null。上下文同 createEntry(不带出生地)。 */
+  entryReceipt(requestId:string,context:{surface:'desktop'|'phone';ownerKey?:string}):unknown
+  /**
+   * 手机看改动(P3e,`GET /v1/matter/changes` 手机那一份):最近一轮的改动快照,裁到能放进中继一帧(domain/matters/phone-changes.ts)。
+   * 没撤掉的轮一个都没有 ⇒ null;未知任务 ⇒ 工作台抛 not_found。桌面那一份(各轮原样)是 desktop.reviews。
+   */
+  changes(id:string):unknown
+  /**
+   * 逐文件审阅 / 打回 / 行评论 / 发出评论(P3e,`/v1/matter/review-*`):手机与桌面同一个调用,差别只在调用方给的参数
+   * (手机不带 comment / restartToken / asLesson / 行号,发出评论的回执与任务视图不给手机 —— 这些在处理器里收)。
+   */
+  markReviewFile(id:string,input:{artifactId:string;path:string;mark:'accepted'|'returned';comment?:string}):unknown
+  returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string;asLesson?:true}):Promise<Record<string,unknown>>
+  reviewComment(id:string,input:Record<string,unknown>):unknown
+  sendReviewComments(id:string,input:{summary?:string;inputRequestId?:string;restartToken?:string}):Promise<unknown>
+  /**
+   * 一件事上的动作,桌面那一份(P3e,`/v1/matter/*` 在 operator 范围下):参数、回包、错误码同搬来之前的 `/v1/workbench/*`
+   * —— 工作台原样,不经上面手机那几样的 matter 层判断(runId 过期、只撤最新一轮 …),桌面本来就没有。没接工作台 ⇒ workbench_not_wired。
+   */
+  desktop:MatterDesktopActions
+}
+/** 交办的上下文(工作台 task-entry 的 EntryContext 那几样;matters 不依赖工作台)。 */
+export interface MatterEntryContext {ownerKey:string;surface:'desktop'|'phone';origin?:'desktop'|'app'|'web'|null}
+/** 桌面那一份动作(见 MattersService.desktop)。回包是工作台原样,这里不收窄。 */
+export interface MatterDesktopActions {
+  /** 停下(桌面「停止」):expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮;回任务视图。 */
+  cancel(id:string,expectedRunId?:string):Promise<unknown>
+  resolvePermission(id:string,requestId:string,decision:PermissionDecision):Promise<void>
+  resolveAnswer(id:string,requestId:string,answers:unknown):void
+  /** 成果整份(桌面一次读完;手机按块读的是 artifactChunk)。 */
+  artifact(id:string,artifactId:string):Promise<unknown>
+  /** 额度用完 ⇒ 交给另一位(桌面 202 回工作台原样)。 */
+  quotaHandoff(id:string,input:{requestId:string;providerId:string}):unknown
+  /** 独立工作区:commit / remove / merge / reopen 同步,run / stop 是工作区脚本。回工作台原样(含合并命令)。 */
+  worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'|'run'|'stop'):Promise<unknown>
+  /** 这件事各轮的改动(桌面「改动」面板,原样;手机那一份是 changes)。 */
+  reviews(id:string):Promise<unknown>
+  /** 回到某一轮:预览(任意一轮、开始前 / 结束后)、带 token 执行、撤销最近一次回退(手机只撤最新那一轮,是上面的 rewindPreview / rewind)。 */
+  rewindPreview(id:string,input:{artifactId:string;to:'start'|'end'}):Promise<unknown>
+  rewind(id:string,input:{artifactId:string;to:'start'|'end';token:string}):Promise<unknown>
+  undoRewind(id:string,undo:string):Promise<unknown>
 }
 /** 工作台预览里手机用得到的那几样(service/rewind.ts 的 RewindPreview;不依赖它,免得 matters 反向依赖工作台域)。 */
 export interface WorkbenchRewindPreview {
@@ -119,11 +200,52 @@ export interface PhoneRewindPreview {
 const PHONE_REWIND_PATHS=50
 const phonePaths=(l:{count:number;paths:Array<{status:string;path:string}>})=>({count:l.count,paths:l.paths.slice(0,PHONE_REWIND_PATHS).map(({status,path})=>({status,path}))})
 const ID=/^[a-f0-9]{8}$/
+/**
+ * act 步的 payload 到手机只留数字、真假、短字符串(≤120 字),外加一层全是数字的表(记忆整理改了几条);别的(数组、深一层的对象)不给。
+ * 各发起方写的本来就只是摘要(设计稿 M5:正文不进库),这里再收一道,免得以后哪个发起方顺手塞了大东西一路送到手机。
+ */
+const ACT_STR_MAX=120,ACT_KEYS_MAX=12
+function phoneActPayload(p:Record<string,unknown>):Record<string,unknown>|undefined{
+  const out:Record<string,unknown>={}
+  for(const [k,v] of Object.entries(p)){
+    if(Object.keys(out).length>=ACT_KEYS_MAX)break
+    if(typeof v==='number'&&Number.isFinite(v)||typeof v==='boolean')out[k]=v
+    else if(typeof v==='string')out[k]=v.slice(0,ACT_STR_MAX)
+    else if(v&&typeof v==='object'&&!Array.isArray(v)){const e=Object.entries(v as Record<string,unknown>);if(e.length<=ACT_KEYS_MAX&&e.every(([,n])=>typeof n==='number'&&Number.isFinite(n)))out[k]={...(v as Record<string,number>)}}
+  }
+  return Object.keys(out).length?out:undefined
+}
+function actTurnView(t:MatterTurn,steps:MatterActStep[]):MatterActTurn{
+  const trigger=t.policy?.trigger
+  return {id:t.id,status:t.status,errorCode:t.errorCode,...(typeof trigger==='string'?{trigger}:{}),startedAt:t.startedAt,endedAt:t.endedAt,steps}
+}
 
 export function makeMattersService(deps:MattersServiceDeps):MattersService {
   /** 同一 requestId 还在说的那一轮:重发直接跟上它,不起第二轮(回执表只管跨重启与已说完的)。 */
   const chatInFlight=new Map<string,Promise<{kind:'chat';reply:string}>>()
   const require=(id:string):Matter=>{if(!ID.test(id))throw new Error('invalid_matter_id');const m=deps.store.get(id);if(!m)throw new Error('matter_not_found');return m}
+  /** act 那件事最近的 n 轮(新的在前)+ 发起方(取自轮的 policy.who)。没接 log ⇒ null;读失败往外抛(调用方吞)。 */
+  const actTurns=(id:string,n:number):{who?:string;turns:MatterActTurn[]}|null=>{
+    if(!deps.log)return null
+    const all=deps.log.turns(id)
+    const who=all.map(t=>t.policy?.who).find((w):w is string=>typeof w==='string')
+    const picked=all.slice(-n).reverse()
+    if(!picked.length)return {...(who?{who}:{}),turns:[]}
+    const want=new Set(picked.map(t=>t.id)),steps=new Map<string,MatterActStep[]>()
+    for(const i of deps.log.items(id)){
+      // 「答完了、闲着」那一步(M6e)是内部事实,不进给人看的轮视图
+      if(!i.turnId||!want.has(i.turnId)||isReadyStep(i))continue
+      const payload=phoneActPayload(i.payload)
+      let l=steps.get(i.turnId);if(!l)steps.set(i.turnId,l=[])
+      l.push({kind:i.kind,status:i.status,at:i.updatedAt,...(payload?{payload}:{})})
+    }
+    return {...(who?{who}:{}),turns:picked.map(t=>actTurnView(t,steps.get(t.id)??[]))}
+  }
+  const actOf=<M extends Matter>(m:M,n=1):{matter:M;turns:MatterActTurn[]}|null=>{
+    if(m.kind!=='act')return null
+    try{const r=actTurns(m.id,n);if(!r)return null;const latest=r.turns[0];return {matter:{...m,act:{...(r.who?{who:r.who}:{}),...(latest?{latest}:{})}},turns:r.turns}}
+    catch{return null/* 读不到轮:这一行照旧,只是不带 act */}
+  }
   const taskDetail=(id:string)=>{
     if(require(id).kind!=='task')throw Error('matter_task_required')
     if(!deps.workbench)throw Error('workbench_not_wired')
@@ -141,7 +263,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     // Receipt replay can refer to a finished or archived task. Derive its
     // actual current state, including a newly queued continuation, rather than
     // interpreting every successful request as a new running turn.
-    deps.store.setStatus(id,task.archivedAt!=null?'archived':task.status==='interrupted'?'open':['completed','failed','cancelled'].includes(task.status)?'done':task.phase==='replied'?'replied':'open')
+    deps.store.setLifecycle(id,lifecycleOfTaskView(task))
     return task
   }
   /** 手机只撤最新那一轮(没撤掉的里最新的);换了一轮 / 已撤掉 ⇒ rewind_not_latest(页面重拉再看一眼)。 */
@@ -162,9 +284,12 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
   return {
     list(filter){
       // 列表每行行尾画参与过的执行者(一次查完整页)
-      const matters=deps.store.list(filter),agents=deps.store.agents(matters.map(m=>m.id))
-      return matters.map(m=>{const a=agents.get(m.id);return a?.length?{...m,agents:a,...namesFor(a)}:m})
+      const matters=deps.store.list(filter),ids=matters.map(m=>m.id),agents=deps.store.agents(ids),legacy=deps.store.legacyStatuses(ids)
+      return matters.map(m=>{const w=wireMatter(m,legacy.get(m.id)??'open'),a=agents.get(m.id);return a?.length?{...w,agents:a,...namesFor(a)}:w})
     },
+    withActs(matters){return matters.map(m=>actOf(m)?.matter??m)},
+    phoneMayOpen(matter){return phoneMayOpenMatter(matter,(deps.ownerChatId??deps.chat?.ownerChatId)?.()??null)},
+    seenOnPhone(id){deps.store.bind(id,'phone','pwa')},
     inputReceipt(id,requestId){
       if(!ID.test(id))throw Error('invalid_matter_id')
       const key=normalizeInputRequestId(requestId),matter=deps.store.get(id)
@@ -177,7 +302,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     },
     async detail(id){
       const matter=require(id)
-      let task:MatterTaskView|null=null,events:MatterEvent[]=[]
+      let task:MatterTaskView|null=null,events:MatterDetailEvent[]=[]
       let controls:MatterTaskControls={permissions:[],questions:[],artifacts:[],inputs:[]}
       let nativeStart:MatterNativeStart|undefined
       let quotaHandoff:MatterQuotaHandoff|undefined
@@ -202,8 +327,15 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       // 详情页标题下那组头像:跟列表同一个出处
       const agents=deps.store.agents([matter.id]).get(matter.id)
       const named=namesFor([...(agents??[]),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
-      return {matter:{...matter,...(agents?.length?{agents}:{}),...named},bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
+      const act=actOf(matter,deps.actTurnLimit??20)
+      const status=deps.store.legacyStatuses([matter.id]).get(matter.id)??'open'
+      return {matter:wireMatter({...(act?.matter??matter),...(agents?.length?{agents}:{}),...named},status),...(act?{actTurns:act.turns}:{}),bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
+    conversationEvents(since,limit){const owner=deps.chat?.ownerChatId();return owner?deps.chat?.events?.(owner,since,limit):null},
+    stopConversation(turnId){const owner=deps.chat?.ownerChatId();return !!owner&&!!deps.chat?.stop?.(owner,turnId)},
+    async conversationWindow(input){ const owner=deps.chat?.ownerChatId(); if(!owner || !deps.chat?.window)return null; const result=await deps.chat.window(owner,input);return deps.chat.ownerChatId()===owner?result:null },
+    async conversationWork(input){ const owner=deps.chat?.ownerChatId(); if(!owner || !deps.chat?.work)return null; const result=await deps.chat.work(owner,input);return deps.chat.ownerChatId()===owner?result:null },
+    async ownerChatFile(input){return deps.chat?.file ? deps.chat.file(input) : {status:503,body:{error:'chat_not_wired'}}},
     async ownerChat(surface){
       const owner=deps.chat?.ownerChatId();if(!owner)return null
       const origin=deps.originOf?deps.originOf(surface):surface==='desktop'?'desktop':null
@@ -336,7 +468,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(!q||q.length>200)throw Error('invalid_query')
       const chatId=deps.chat?.ownerChatId()
       if(!chatId||!deps.chat?.search)return null
-      return {hits:await deps.chat.search(chatId,q,Math.max(1,Math.min(50,Math.trunc(limit))))}
+      const hits=await deps.chat.search(chatId,q,Math.max(1,Math.min(50,Math.trunc(limit))))
+      return deps.chat.ownerChatId()===chatId?{hits}:null
     },
     artifactChunk(id,input){
       const d=taskDetail(id),artifact=d.artifacts?.find(a=>a.taskId===id&&a.id===input.artifactId)
@@ -351,5 +484,41 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(bytes.length!==artifact.size)throw Error('artifact_changed')
       return {taskId:id,artifactId:artifact.id,name:artifact.name,mime:artifact.mime,size:artifact.size,sha256:artifact.sha256,offset:input.offset,nextOffset:input.offset+chunk.length,contentBase64:chunk.toString('base64')}
     },
+    createEntry(input,context){
+      if(!deps.workbench?.createEntry)throw Error('workbench_not_wired')
+      const ownerKey=context.ownerKey??(deps.ownerChatId??deps.chat?.ownerChatId)?.()??''
+      return deps.workbench.createEntry(input as never,{ownerKey,surface:context.surface,...(context.origin!==undefined?{origin:context.origin}:{})})
+    },
+    entryReceipt(requestId,context){
+      if(!deps.workbench?.entryReceipt)throw Error('workbench_not_wired')
+      const ownerKey=context.ownerKey??(deps.ownerChatId??deps.chat?.ownerChatId)?.()??''
+      return deps.workbench.entryReceipt(requestId,{ownerKey,surface:context.surface})
+    },
+    changes(id){
+      if(!deps.workbench?.reviewList)throw Error('workbench_not_wired')
+      return latestChanges(deps.workbench.reviewList(id) as unknown as ReviewTurnLike[])
+    },
+    markReviewFile(id,input){if(!deps.workbench?.markReviewFile)throw Error('workbench_not_wired');return deps.workbench.markReviewFile(id,input as never)},
+    async returnReviewFiles(id,input){if(!deps.workbench?.returnReviewFiles)throw Error('workbench_not_wired');return await deps.workbench.returnReviewFiles(id,input as never) as Record<string,unknown>},
+    reviewComment(id,input){if(!deps.workbench?.reviewComment)throw Error('workbench_not_wired');return deps.workbench.reviewComment(id,input as never)},
+    async sendReviewComments(id,input){if(!deps.workbench?.sendReviewComments)throw Error('workbench_not_wired');return await deps.workbench.sendReviewComments(id,input as never)},
+    desktop:desktopActions(deps.workbench),
+  }
+}
+
+/** 桌面那一份(MattersService.desktop):工作台原样;缺哪样 ⇒ workbench_not_wired(同搬来之前没挂上时的码)。 */
+function desktopActions(w:MattersServiceDeps['workbench']):MatterDesktopActions{
+  const need=<T>(fn:T|undefined):T=>{if(!fn)throw Error('workbench_not_wired');return fn}
+  return {
+    cancel:(id,expectedRunId)=>need(w?.cancel).call(w,id,expectedRunId),
+    resolvePermission:async(id,requestId,decision)=>{await need(w?.resolvePermission).call(w,id,requestId,decision)},
+    resolveAnswer:(id,requestId,answers)=>{need(w?.resolveAnswer).call(w,id,requestId,answers)},
+    artifact:async(id,artifactId)=>need(w?.artifact).call(w,id,artifactId),
+    quotaHandoff:(id,input)=>need(w?.handOff).call(w,id,input),
+    worktree:async(id,action)=>action==='run'||action==='stop'?await need(w?.scriptAction).call(w,id,action):need(w?.worktreeAction).call(w,id,action),
+    reviews:async id=>need(w?.reviewList).call(w,id),
+    rewindPreview:(id,input)=>need(w?.rewindPreview).call(w,id,input),
+    rewind:(id,input)=>need(w?.rewind).call(w,id,input),
+    undoRewind:(id,undo)=>need(w?.undoRewind).call(w,id,undo),
   }
 }

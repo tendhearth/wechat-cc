@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makeMemoryFactsStore } from '../../adapters/store/memory-facts'
+import { makeCcActs } from '../../adapters/store/cc-acts'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeMemoryWriter } from './memory-export'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -53,6 +56,21 @@ beforeEach(() => {
 })
 
 describe('memory nightly runtime', () => {
+  it('睡一觉之后整理话题:真跑过才做(还没到点那一拍不做),出错只记一行', async () => {
+    const after = vi.fn(async () => {})
+    now = Date.parse('2026-09-25T03:00:00Z')
+    const rt = makeMemoryNightlyRuntime({ ...deps(), afterSleep: after })
+    await rt.tick()
+    expect(after).not.toHaveBeenCalled()
+    now = Date.parse('2026-09-25T04:05:00Z')
+    await rt.tick()
+    expect(after).toHaveBeenCalledOnce()
+    const logs: string[] = []
+    const rt2 = makeMemoryNightlyRuntime({ ...deps({ log: (_t, l) => logs.push(l) }), afterSleep: async () => { throw new Error('boom') } })
+    await rt2.runNow()
+    expect(logs.some(l => l.includes('after-sleep step failed: boom'))).toBe(true)
+  })
+
   it('tick at 04:05 writes the memory but holds the notice until 09:00', async () => {
     const rt = makeMemoryNightlyRuntime(deps())
     await rt.tick()
@@ -85,6 +103,84 @@ describe('memory nightly runtime', () => {
     writeNightlyState(stateDir, { ...readNightlyState(stateDir), pendingNotice: { text: 'z', createdAtMs: Date.parse('2026-09-24T04:00:00Z') } })
     expect(await deliverPendingNotice(deps())).toBe('expired')
     expect(sent).toEqual(['x'])
+  })
+  it('「记忆整理」那件事(M5b):写进去了 = 一轮(改了几条);通知送出补在那一轮上;没到点的 tick 不记;主人叫的标 owner', async () => {
+    const log: string[] = []
+    const acts = {
+      begin: (_w: string, o?: { policy?: Record<string, unknown> }) => { log.push(`begin ${JSON.stringify(o?.policy)}`); const id = `turn${log.filter(l => l.startsWith('begin')).length}`; return { id, step: (k: string, p: unknown) => { log.push(`${k} ${JSON.stringify(p)}`) }, finish: (st: string) => { log.push(`finish ${st}`) } } },
+      toTurn: (_w: string, t: string, k: string, p: unknown) => { log.push(`${t} ${k} ${JSON.stringify(p)}`) },
+    }
+    const rt = makeMemoryNightlyRuntime({ ...deps(), acts: acts as never })
+    await rt.tick()
+    now = Date.parse('2026-09-25T09:01:00Z')
+    await rt.tick()
+    expect(log).toEqual([
+      'begin {"trigger":"schedule"}', 'system {"applied":{"add":1},"notice":true}', 'finish completed',
+      'turn1 delivery {"notice":"sent","channel":"wechat"}',
+    ])
+    log.length = 0
+    const failing = makeMemoryNightlyRuntime({ ...deps({ cheapEval: () => null, sources: { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => ['主人:新的一句'], projectMemory: () => '' } }), acts: acts as never })
+    await failing.runNow()
+    expect(log[0]).toBe('begin {"trigger":"owner"}')
+    expect(log.at(-1)).toBe('finish failed')
+  })
+  it('M5d:上次写进去的时刻从「记忆整理」的轮推(不再写 lastRunIso);真机上还没有轮 ⇒ 读旧标记;记不上轮 ⇒ 退回写旧标记', async () => {
+    const db = openTestDb()
+    const acts = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db) })
+    const seen: Array<string | null> = []
+    const sources = (line: string) => ({ observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async (since: string | null) => { seen.push(since); return [line] }, projectMemory: () => '' })
+    // 旧标记(M5d 之前写的),还没有轮:素材从它之后读,看板也报它
+    writeNightlyState(stateDir, { ...readNightlyState(stateDir), lastRunDay: '2026-09-20', lastRunIso: '2026-09-20T04:05:00.000Z', firstRunDone: true })
+    writeFileSync(join(root, 'memory.md'), '# 记忆\n')
+    const rt = makeMemoryNightlyRuntime({ ...deps({ sources: sources('主人:周五前给 X 回话') }), acts })
+    expect(rt.curatedView().updated_at).toBe('2026-09-20T04:05:00.000Z')
+    await rt.tick()
+    expect(seen).toEqual(['2026-09-20T04:05:00.000Z'])
+    // 写进去了:这一轮 completed,startedAt 就是这一刻;状态文件里的旧标记不动
+    expect(readNightlyState(stateDir).lastRunIso).toBe('2026-09-20T04:05:00.000Z')
+    expect(acts.runs('memory')).toMatchObject([{ status: 'completed', startedAt: Date.parse('2026-09-25T04:05:00Z') }])
+    expect(rt.curatedView().updated_at).toBe('2026-09-25T04:05:00.000Z')
+    // 第二天:素材从上一轮之后读(轮比旧标记新)
+    now = Date.parse('2026-09-26T04:05:00Z')
+    await makeMemoryNightlyRuntime({ ...deps({ sources: sources('主人:又一句') }), acts }).tick()
+    expect(seen).toEqual(['2026-09-20T04:05:00.000Z', '2026-09-25T04:05:00.000Z'])
+    // 没接 act(或库写不进)⇒ 退回写旧标记,下一晚照样接得上
+    now = Date.parse('2026-09-27T04:05:00Z')
+    await makeMemoryNightlyRuntime(deps({ sources: sources('主人:第三句') })).tick()
+    expect(readNightlyState(stateDir).lastRunIso).toBe('2026-09-27T04:05:00.000Z')
+    db.close()
+  })
+  it('通知补在排下它的那一轮上,不是最近那一轮;发了没发出去 ⇒ 记 send_failed(Codex 评审)', async () => {
+    const log: string[] = []
+    let turns = 0
+    const acts = {
+      begin: () => { const id = `turn${++turns}`; return { id, step() {}, finish() {} } },
+      toTurn: (_w: string, t: string, _k: string, p: { notice: string }) => { log.push(`${t} ${p.notice}`) },
+    }
+    await makeMemoryNightlyRuntime({ ...deps(), acts: acts as never }).tick()   // 04:05 第一轮,排下通知
+    const more = { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => ['主人:又一句'], projectMemory: () => '' }
+    await makeMemoryNightlyRuntime({ ...deps({ sources: more }), acts: acts as never }).runNow()   // 通知还没送,主人又叫了一次(第二轮)
+    expect(turns).toBe(2)
+    now = Date.parse('2026-09-25T09:01:00Z')
+    const refusing = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, log: () => {}, now: () => now, outbound: {
+      appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async () => ({ msgId: '', error: 'ret=-2' }), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
+    } })
+    await makeMemoryNightlyRuntime({ ...deps({ speech: refusing }), acts: acts as never }).tick()
+    expect(log).toEqual(['turn1 send_failed'])
+  })
+  it('通知走的是 App ⇒ 记 app,不是写死的 wechat(Codex 评审)', async () => {
+    const got: unknown[] = []
+    const acts = { begin: () => ({ id: 'turn1', step() {}, finish() {} }), toTurn: (_w: string, _t: string, _k: string, p: unknown) => { got.push(p) } }
+    await makeMemoryNightlyRuntime({ ...deps(), acts: acts as never }).tick()
+    now = Date.parse('2026-09-25T09:01:00Z')
+    const viaApp = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, log: () => {}, now: () => now, outbound: {
+      appDeliverable: () => true, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      // 跟生产一样:路在 sendText 里才定,之前是 null
+      open: () => { let ch: 'app' | null = null; return { sendText: async () => { ch = 'app'; return { msgId: 'a1' } }, channel: () => ch, textOnly: () => true, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} } },
+    } })
+    await makeMemoryNightlyRuntime({ ...deps({ speech: viaApp }), acts: acts as never }).tick()
+    expect(got).toEqual([{ notice: 'sent', channel: 'app' }])
   })
   it('readCurated shows the rendered memory with a header; curatedView marks last night changes and dues', async () => {
     const rt = makeMemoryNightlyRuntime(deps())

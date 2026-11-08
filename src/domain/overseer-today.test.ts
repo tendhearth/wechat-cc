@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { buildOverseerToday, formatOverseerToday, TODAY_TEXT_MAX_LINES, TODAY_WINDOW_MS, type TodayAttentionInput, type TodayTaskInput } from './overseer-today'
+import { buildOverseerToday, formatOverseerToday, TODAY_QUIET_MS, TODAY_TEXT_MAX_LINES, TODAY_WINDOW_MS, type TodayAttentionInput, type TodayTaskInput } from './overseer-today'
+import { QUIET_AFTER_MS } from '@wechat-cc/protocol'
 import type { CliDigestView } from './cli-session-digest'
 
 const NOW = 1_800_000_000_000
@@ -202,4 +203,8 @@ describe('日报 × 定时任务(10-20)', () => {
     const t = formatOverseerToday(withJobs({ ran: 0, spoke: 0, paused: [{ id: 'j3', text: '看 issue' }] }))
     expect(t).toContain('定时 j3「看 issue」连着没跑成,停了')
   })
+})
+
+describe('「可能卡住」的门槛', () => {
+  it('微信日报和三端主页的「可能卡住」是同一个数(协议包的 QUIET_AFTER_MS)', () => { expect(TODAY_QUIET_MS).toBe(QUIET_AFTER_MS) })
 })

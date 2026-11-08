@@ -1,0 +1,20 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "preview": {
+      "artifactId": "33333333-3333-4333-8333-333333333333",
+      "token": "abababababababababababababababababababababababababababababababab",
+      "files": [
+        {
+          "path": "README.md",
+          "kind": "modified"
+        }
+      ]
+    }
+  }
+}

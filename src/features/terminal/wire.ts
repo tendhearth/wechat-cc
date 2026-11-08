@@ -1,3 +1,5 @@
+import { makeMessagesStore } from '../../lib/messages-store'
+import { randomUUID as conversationReferenceId } from 'node:crypto'
 /**
  * 终端会话的接线(重构第二批步 6c 从 main.ts 搬出来,架构终态 A5 搬进 src/features/terminal):终端 Claude Code / Codex 的
  * hook 事件登记处、权限中继(微信 y/n、手机、放行规则)、「这边 / 那边」的脑手转发、对终端会话说话(送进开着的窗口 / resume)、
@@ -8,6 +10,11 @@
  * 两样晚到的东西:工作台与手机 App 推送出口(wireMain 里才造),都是调用时现取的读口(模块容器的 `ctx.late`)。
  * 要停的东西经 `own` 登记(模块容器的 `ctx.own`,关机逆序)。
  */
+import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
+import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
+import { makeTerminalSteps, withTranscriptSteps } from './terminal-steps'
 import { hostname as osHostname } from 'node:os'
 import { randomUUID as claimUuid } from 'node:crypto'
 import { log } from '../../lib/log'
@@ -35,6 +42,7 @@ import { makeTerminalHooksService } from './hooks'
 import { findLiveWindow, liveSessionIds, relayToWindow, transcriptStartCwd, type LiveWindow } from './live-window'
 import { makeTerminalSay } from './terminal-say'
 import { currentStepOf, makeCliPhoneActions } from './phone-actions'
+import { phoneCliSessionRows } from './phone-sessions'
 import { makeRemoteReply } from './remote-reply'
 import type { TerminalRoutesDeps } from './routes'
 import { scopedSend } from '../../daemon/inbound/reply-scope'
@@ -84,6 +92,14 @@ export function wireTerminal(d: WireTerminalDeps) {
   const cliAppPush = (): AppPushOutlet | null => d.appPush()
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):replyCore 在下面才建,这里先占位
   let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
+  const matterLog = makeMatterLog(db), matterStore = makeMatterStore(db)
+  const terminalTurns = makeTerminalTurnLog({ db, log: matterLog, matters: matterStore })
+  try { terminalTurns.interruptAll() } catch (err) { log('CLI_TURNS', `interruptAll failed: ${err instanceof Error ? err.message : String(err)}`) }
+  // 记录增量读进这件事的步(M4b):钩子事件来了读新增的那一段;手机「看着它跑」、列表那一步、微信「看 码」只从这里拿(M6d)。
+  // 钩子没来过的老会话:第一次有人来看时当场建那件事、导入一次(turns.ensure + ingest,只在看的这条路上)。
+  const terminalSteps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log: matterLog, matters: matterStore }), turns: terminalTurns })
+  let lookupSession: (id: string) => CliSessionInfo | null = () => null
+  const turnsWithSteps = withTranscriptSteps({ turns: terminalTurns, steps: terminalSteps, localMachine: osHostname(), lookup: (id) => lookupSession(id), log: (l) => log('CLI_TURNS', l) })
   const cliEvents = makeCliEventHub({
     // 经 CC 开口那道门(cli_session,report;汇总里可能带 y/n 码 ⇒ expiring,不进待说队列),
     // 投递仍走 sendAssistantText;没说出去 ⇒ 'rejected',hub 照旧落到 App 推送 / 桌面通知。
@@ -115,7 +131,10 @@ export function wireTerminal(d: WireTerminalDeps) {
     localMachine: osHostname(),
     // 终端会话登记处(v76):状态落库,重启后「看 码」「@码」照样认得;GET /v1/cli/sessions、手机都读它。
     store: makeCliSessionStore(db),
+    // 终端会话成为一件事(M4a):钩子事件同时写进这件事的轮与步(和登记处并行;读的人 M4b 再切过来)
+    turns: turnsWithSteps,
   })
+  lookupSession = (id) => cliEvents.lookup(id)
   // terminal_say 的票(下面才建)随登记处一起收:放掉还持着的 busy、叫醒还在等的(启停只许一种写法,不另登记一行)
   own('cli-events', async () => { terminalSay?.dispose(); cliEvents.dispose() })
   // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
@@ -129,7 +148,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     // 主人第一次碰到的变化是「问得少了」—— 说一次为什么(整合者审 #615)。进待说队列,由 SpeechPolicy 挑时候说(免打扰 / 断线照规矩推后)
     const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
     if (owner) {
-      try { makePendingNotices({ stateDir, log }).add({ kind: 'rules_notice', chatId: owner, text: STARTER_NOTICE, at: new Date().toISOString() }) }
+      try { makePendingNotices({ db, log }).add({ kind: 'rules_notice', chatId: owner, text: STARTER_NOTICE, at: new Date().toISOString() }) }
       catch (err) { log('PERMISSION_RULES', `starter notice not queued: ${err instanceof Error ? err.message : String(err)}`) }
     }
   }
@@ -212,7 +231,7 @@ export function wireTerminal(d: WireTerminalDeps) {
       const out: Record<string, { live_window: boolean; now_step: string | null }> = {}
       for (const id of ids) {
         const s = cliEvents.lookup(id)
-        const step = s && s.session_id === id ? currentStepOf(s, { localMachine: osHostname() }) : null
+        const step = s && s.session_id === id ? currentStepOf(s, { localMachine: osHostname(), steps: terminalSteps }) : null
         out[id] = { live_window: live.has(id), now_step: step?.text ?? null }
       }
       return out
@@ -247,7 +266,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     relay: (w: LiveWindow, text: string, o?: { header?: string; noBypass?: boolean }) => relayToWindow(w, text, { run: defaultRunner, cwd: stateDir, dangerously, ...(o?.noBypass ? { noBypass: true } : {}), ...(claudeCli ? { bin: claudeCli } : {}), ...(o?.header !== undefined ? { header: o.header } : {}) }),
   }
   const startCwd = (s: CliSessionInfo) => s.transcript_path ? transcriptStartCwd(readHead(s.transcript_path, 64 * 1024)) : null
-  const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: d.networkGate, liveWindow, startCwd })
+  const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: d.networkGate, liveWindow, startCwd, steps: terminalSteps })
   terminalSay = makeTerminalSay({
     hub: cliEvents, core: replyCore, holdBusy: (l) => boot.holdBusy(l), localMachine: osHostname(), log: (t, l) => log(t, l),
     // 没人领的终局(CC 那一轮早结束了,比如 resume 跑了好几分钟):经 CC 开口那道门告诉主人,同终端完成推送(cli_session,report)。
@@ -322,7 +341,7 @@ export function wireTerminal(d: WireTerminalDeps) {
     log: (t, l) => log(t, l),
     dangerously,
     networkGate: d.networkGate,
-    liveWindow, startCwd,
+    liveWindow, startCwd, steps: terminalSteps,
     localMachine: osHostname(),
     listSessions: () => cliSessionViews({ limit: 50 }),
     today: overseerToday,
@@ -330,13 +349,33 @@ export function wireTerminal(d: WireTerminalDeps) {
   })
   // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
   const phoneActions = makeCliPhoneActions({
-    hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(),
+    recordReference:(sessionId,text)=>{
+      const owner=loadCompanionConfig(stateDir).default_chat_id,matter=matterStore.findBySurface('cli',sessionId)
+      if(!owner||!matter||matter.ownerChatId!==owner)return
+      db.transaction(()=>{
+        if(db.query('SELECT 1 FROM conversation_work_references WHERE chat_id=? AND matter_id=?').get(owner,matter.id))return
+        const id=`terminal:${conversationReferenceId()}`
+        makeMessagesStore(db).appendSync!({id,chatId:owner,ts:new Date().toISOString(),direction:'in',kind:'text',text,source:'phone'})
+        db.query('INSERT INTO conversation_work_references VALUES(?,?,?)').run(owner,matter.id,id)
+      })()
+    },
+    hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(), steps: terminalSteps,
     resolve: (h, dec) => d.resolvePermission(h, dec),
   })
-  const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday }
+  /** 这条终端会话的那件事(M4c:列表行带上,App 点进 /matter/<id>);还没有 ⇒ null。 */
+  const terminalMatterOf = (sessionId: string): string | null => { try { return matterStore.findBySurface('cli', sessionId)?.id ?? null } catch { return null } }
+  // 手机令牌读 GET /v1/cli/sessions 的那一份(P3c-2,原 /m/api/cli/sessions 的处理器;接线原在 daemon/wiring/module.ts):
+  // 登记处 50 条 + 每行那件事,再按手机口径挑字段(phone-sessions.ts)。
+  const phoneSessions = (sessionId?:string) => phoneCliSessionRows({
+    list: () => cliEvents.list({ limit:sessionId?500:50,...(sessionId?{includeEnded:true}:{}) }).filter(v=>!sessionId||v.session_id===sessionId).map(v => { const m = terminalMatterOf(v.session_id); return m ? { ...v, matter_id: m } : v }),
+    actions: phoneActions,
+    executorName: (id: string) => boot.registry.namesOf(id).name,
+  })
+  const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday, phoneSessions, ownerActions:phoneActions }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
     command, phoneActions, routes,
+    terminalMatterOf,
   }
 }

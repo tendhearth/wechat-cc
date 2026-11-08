@@ -49,7 +49,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/features/letters/wire.ts': ['primitive', 1],
   // 社交那几条通知:判定走 policy.say(social-tell.ts,经 sendAssistantText 发 —— 它管 App 回话截获与旁听,不换);
   // 剩下这一处是明信片的 sendFile,也只在 say 的生产者里。
-  'src/features/social/wire-social.ts': ['primitive', 1],   // 社交搬进 src/features/social(架构终态 A5),数没变
+  'src/features/social/postcard-proposal.ts': ['primitive', 1],   // 社交搬进 src/features/social(架构终态 A5),数没变
   // 工作台的微信通知:判定走 policy.say(批准 / 提问 = permission_ask,做完 / 失败 = matter_report);剩下这一处是工作台
   // 自己的严格发送口(幂等 client_id + 绑定核对 + 回执),只在 say 的生产者里、经 turn.sendTextWith 当微信那条腿。
   'src/features/workbench/wire-notifications.ts': ['primitive', 1],   // 工作台搬进 src/features/workbench(架构终态 A5),数没变
@@ -57,6 +57,8 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 收尾时推)、工作台通知推送(phone-notifier)、终端会话推送(appPush)—— 后两处先过 speech/push-gate.ts 问门(policy.ask)。
   'src/features/phone/phone-notifier.ts': ['primitive', 1],   // 手机搬进 src/features/phone(架构终态 A5),数没变
   'src/daemon/wiring/wire-phone.ts': ['primitive', 1],
+  // 门自己:补发推后了的明信片(S2c)只能走文件那一口,只在 flushPending 经 say 开的那一轮的生产者里调
+  'src/daemon/speech/policy.ts': ['primitive', 1],
   // 模块的接线(以前在 main.ts、后来在 daemon-modules.ts,2026-10-26 起各在各的 module.ts)全是接线:回复交付、命令回话、信自己的投递、
   // internal-api 的回话出口、贴纸路由的发文件口(主动开口都已经走门,10-21)。微信「终端 / @码」那条命令的回话出口跟着终端会话搬进
   // src/features/terminal/wire.ts(架构终态 A5,算在下面 'reply' 那一组)。daemon-modules.ts 现在只列模块,一处都没有;总数没变
@@ -66,7 +68,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/features/letters/module.ts': ['primitive', 2],
   'src/features/stickers/module.ts': ['primitive', 1],
   // pipeline-deps 剩下的全是接线:回话出口、proactive 的微信出口(发字 / 发文件)、给访客的回话、llm-health 的回话;访客申请已走门(10-21)
-  'src/daemon/wiring/pipeline-deps.ts': ['primitive', 6],
+  'src/daemon/wiring/pipeline-deps.ts': ['primitive', 7],   // S2c +1:给门补发明信片的 sendFile 出口(同 proactive 那一处)
   // —— 回答对方刚发来的那一句 ——
   'src/daemon/admin-commands.ts': ['reply', 70], // +1 2026-10-23「放行规则关掉 / 打开」:回主人当面那一句
   'src/daemon/onboarding.ts': ['reply', 16],
@@ -130,5 +132,42 @@ describe('发送原语只在登记过的地方出现,次数只许降', () => {
       if (now !== n) drift.push(`${f} [${tag}]: 登记 ${n},现在 ${now}`)
     }
     expect(drift).toEqual([])
+  })
+})
+
+/**
+ * 回复交付也是发送(S1,设计稿 2026-10-31 §4 S):`replyDelivery.begin(` 开的一轮会把话送出去。
+ *  - 回答主人刚发来的那一句(协调器的 solo / parallel / chatroom)是 'reply',照常;
+ *  - **主动开口的那一轮(`context: 'tick'`)只能用门开出来的 `outbound`**(policy.say 交给生产者的那一轮):
+ *    写成可选(`...(outbound ? { outbound } : {})`)或不带,就是绕过门自己开口 —— 红。
+ */
+const REPLY_BEGIN_ALLOWED = new Set(['src/app/coordinator/solo.ts', 'src/app/coordinator/parallel.ts', 'src/app/coordinator/chatroom.ts'])
+export function tickBeginsWithoutGate(src: string): number {
+  let bad = 0
+  for (const m of src.matchAll(/replyDelivery\.begin\(([^\n]*)/g)) {
+    const line = m[1]!
+    if (!/context:\s*'tick'/.test(line)) continue
+    if (/\.\.\.\(\s*outbound\s*\?/.test(line) || !/\boutbound\b/.test(line)) bad++
+  }
+  return bad
+}
+describe('回复交付也算开口:主动的那一轮只能从门里开(S1)', () => {
+  it('识别得出', () => {
+    expect(tickBeginsWithoutGate("deps.replyDelivery.begin(chatId, { context: 'tick', providerId, outbound })")).toBe(0)
+    expect(tickBeginsWithoutGate("deps.replyDelivery.begin(chatId, { context: 'tick', providerId, ...(outbound ? { outbound } : {}) })")).toBe(1)
+    expect(tickBeginsWithoutGate("deps.replyDelivery.begin(chatId, { context: 'tick', providerId })")).toBe(1)
+    expect(tickBeginsWithoutGate("deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId })")).toBe(0)
+  })
+  it('src 里主动的那一轮都带着门开的 outbound;非主动的 begin 只出现在协调器回答主人那几处', () => {
+    const offenders: string[] = [], replies: string[] = []
+    for (const d of ['src/daemon', 'src/features', 'src/app']) {
+      for (const f of walk(join(ROOT, d))) {
+        const src = readFileSync(f, 'utf8'), rel = relative(ROOT, f).split('\\').join('/')
+        if (tickBeginsWithoutGate(src)) offenders.push(rel)
+        for (const m of src.matchAll(/replyDelivery\.begin\(([^\n]*)/g)) if (!/context:\s*'tick'/.test(m[1]!) && !REPLY_BEGIN_ALLOWED.has(rel)) replies.push(rel)
+      }
+    }
+    expect(offenders, '主动开口走 policy.say,用它交给生产者的那一轮当 outbound').toEqual([])
+    expect(replies, '回复交付只用来回答主人刚说的那一句;主动开口走 policy.say').toEqual([])
   })
 })

@@ -1,5 +1,7 @@
 // @ts-check
 /// <reference lib="dom" />
+import { openConversationWork, openConversationTerminal } from './modules/conversation-work-detail.js'
+import { createMainNavigation, createNativeNavigation } from './main-navigation.js'
 /** @typedef {import('../../../src/cli/schema').GuardStatusOutputT} GuardStatus */
 /** @typedef {import('../../../src/cli/schema').ProviderShowOutputT} ProviderConfig */
 /** @typedef {import('../../../src/cli/schema').GuardEnableOutputT} GuardEnable */
@@ -38,10 +40,15 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { initConversePage, addConversationMatter, addConversationTerminal, openConversationDelegation, locateConversationMessage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
+import { openComputerSessions, updateTerminalReferences } from './modules/conversation-sessions.js'
+import { mountConversationTools } from './modules/conversation-tools.js'
+import { mountHistoryDialog } from './modules/workbench-history.js'
+import { mountConversationTopics } from './modules/conversation-topics.js'
+import { updateConversationMatters, updateConversationAttention } from './modules/conversation-matters.js'
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
-import { latestCCLine, nowStatusLine } from "./modules/now-home.js"
+import { nowStatusLine } from "./modules/now-home.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents, deactivateA2AAgentsTab } from "./modules/a2a-agents.js"
 import { markJournalSeen, activateHuntBag, deactivateHuntBag } from "./modules/journal.js"
 import { deactivatePeople } from "./modules/people.js"
@@ -56,10 +63,11 @@ import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery, deactivateAtelierGallery } from "./modules/atelier-gallery.js"
 import {closeRecordReader} from './modules/record-reader.js'
 import { createLifeArchive } from "./modules/cc-life.js"
-import { mountCareSheet } from "./modules/cc-care.js"
+import { createTaskListReader } from "./modules/task-list-reader.js"
+import { homeGroups } from "./modules/home-list.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
-import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
+import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getViewedWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
 import { createTerminalWaitingPoller } from "./modules/terminal-waiting.js"
@@ -83,6 +91,14 @@ const state = {
   updateProbed: false,
   connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
+/** @type {ReturnType<typeof mountConversationTopics>|null} */
+let conversationTopics=null
+const mainNavigation = createMainNavigation(destination => {
+  if (typeof destination === 'string') { switchPane(destination); return }
+  switchPane('workbench')
+  void v1(invokeWorkbenchApi, V1.matter.seen, { body: { id: destination.taskId, surface: 'desktop' } }).catch(err => console.warn('mark seen failed', err))
+  void openWorkbenchTask(destination.taskId).catch(err => console.warn('open task failed', err))
+})
 
 const dashWindow = /** @type {HTMLElement|null} */ (document.querySelector('.dash-window'))
 const dashRail = /** @type {HTMLElement|null} */ (document.getElementById('dash-global-rail'))
@@ -141,12 +157,8 @@ const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 // CC 的处境(GET /v1/companion/presence):「此刻」的明暗与状态行都看它(spec 2026-10-01 §4)。
 const presencePoller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
 presencePoller.start()
-const careSheet = mountCareSheet({
-  call: invokeWorkbenchApi, presencePoller, navigate: switchPane,
-  openWorkbench: () => switchPane('workbench'),
-  openTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
-})
-// 「此刻」(spec 2026-10-01 §6.3):CC 的气泡就是对话入口,careSheet 不再从这里打开(只喂 attention)。
+// 「此刻」(spec 2026-10-01 §6.3):CC 的气泡就是对话入口。
+// 一个主页(设计稿 2026-10-31 U4):等你 → 在做 → 带回来的;「一起做」不再是导航项,成了「全部 →」(按项目列出 + 详情)。
 const nowRoot = /** @type {HTMLElement|null} */ (document.querySelector('.cc-now-pane'))
 const nowPage = nowRoot ? mountNowPage({
   root: nowRoot, presencePoller,
@@ -158,10 +170,16 @@ const nowPage = nowRoot ? mountNowPage({
   },
   onModeChange: m => {
     setConverseMode(m)
+    if (m === 'home' || m === 'chat') {
+      // Read the authoritative local client after returning: pending now proves
+      // a future reply is new; an already arrived reply only aligns the baseline.
+      const off = subscribeConverse(msgs => nowPage?.setConversationSnapshot(msgs.filter(m=>!m.matterId&&!m.terminalId)))
+      off()
+    }
     if (m === 'chat') document.getElementById('converse-input')?.focus()
   },
 }) : null
-if (nowPage) setConverseMode('home')
+if (nowPage) setConverseMode('chat')
 // 右上角状态行 = doctor(daemon 跑没跑)∧ presence(够不够得着),与 CC 明暗同一信号。
 /** @type {{alive:boolean}|null} */ let lastDaemon = null
 /** @type {{presence:string}|null} */ let lastPresence = null
@@ -185,8 +203,7 @@ const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConne
     timer = setInterval(() => { void nowConnections.refresh() }, 30_000)
   })
 }
-subscribeConverse(msgs => nowPage?.setLatestLine(latestCCLine(msgs)))
-window.addEventListener('pagehide', () => careSheet.close())
+subscribeConverse(msgs => { nowPage?.setConversationSnapshot(msgs.filter(m=>!m.matterId&&!m.terminalId)) })
 window.addEventListener('pagehide',()=>{closeRecordReader({restoreFocus:false});deactivateAtelierGallery();deactivateTodosPage();deactivateHuntBag();deactivatePeople();deactivateWishes();deactivateA2AAgentsTab()})
 const memoryRecordsHost = document.getElementById("cc-memory-records")
 const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
@@ -210,17 +227,34 @@ const conversationsPoller = createConversationsPoller({ call: (method, path) => 
 /** @type {ReturnType<typeof createWorkbenchAttentionPoller>|null} */
 let workbenchAttention = null
 const nowCount = document.getElementById('now-count')
-/** @type {{stale:boolean,tasks:unknown[]}|null} */ let lastAttention = null
+/** @type {{stale:boolean,tasks:Array<{id:string}>}|null} */ let lastAttention = null
 let terminalWaitingCount = 0
 function renderNowCount() {
   if (!nowCount) return
   const n = (lastAttention && !lastAttention.stale ? lastAttention.tasks.length : 0) + terminalWaitingCount
   nowCount.textContent = n ? String(n) : ''
 }
+// 主页的「在做」「带回来的」:一件件事(GET /v1/workbench,只在此刻开着时读)+ 终端会话(下面那个轮询顺带交出整份)。
+/** @type {{tasks:any[]|null,agentNames?:Record<string,string>,sessions:any[]}} */
+const home = { tasks: null, sessions: [] }
+function renderHome() {
+  nowPage?.setHome(homeGroups({ tasks: home.tasks, attention: lastAttention, sessions: home.sessions, now: Date.now(), ...(home.agentNames ? { agentNames: home.agentNames } : {}) }))
+}
+const homeTasks = createTaskListReader({
+  call: invokeWorkbenchApi,
+  onChange: next => {
+    // 读不到(stale)⇒ 留着上一份(列表里本来就只有在做 / 做完的,不冒充等你);一份都没有 ⇒ 只剩终端的。
+    if (next.data) { home.tasks = next.data.tasks ?? []; home.agentNames = next.data.agentNames }
+    updateConversationMatters(home.tasks ?? [], next.stale)
+    renderHome()
+  },
+})
+window.addEventListener('pagehide', () => homeTasks.stop())
 // 终端里等批准的 Claude Code / Codex(GET /v1/cli/sessions,admin,走原生宿主):接在「N 件事等你」后面,不另开一页。
 const terminalWaiting = createTerminalWaitingPoller({
   call: (method, path) => invokeWorkbenchApi(method, path),
   onChange: rows => { terminalWaitingCount = rows.length; nowPage?.setTerminal(rows); renderNowCount() },
+  onSessions: sessions => { home.sessions = sessions; updateTerminalReferences(sessions); renderHome() },
 })
 terminalWaiting.start()
 window.addEventListener('pagehide', () => terminalWaiting.stop())
@@ -230,16 +264,18 @@ function startWorkbenchAttention() {
   workbenchAttention = createWorkbenchAttentionPoller({
     invokeWorkbenchApi, invoke,
     onChange: snapshot => {
-      careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot)
-      lastAttention = snapshot; renderNowCount()
+      updateConversationAttention(snapshot)
+      nowPage?.setAttention(snapshot)
+      lastAttention = snapshot; renderNowCount(); renderHome()
     },
     getContext: () => ({
-      taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
+      taskId: state.mode === 'dashboard' && document.body.dataset.pane === 'workbench' ? getViewedWorkbenchTaskId() : null,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
     }),
   })
   void workbenchAttention.start()
 }
+window.addEventListener('focus', () => { void workbenchAttention?.refresh() })
 window.addEventListener('pagehide', () => { workbenchAttention?.destroy(); workbenchAttention = null })
 window.addEventListener('pageshow', event => { if (event.persisted) startWorkbenchAttention() })
 
@@ -261,15 +297,24 @@ window.addEventListener('drop', ev => {
 // in a JSDOM/happy-dom harness).
 
 const openAcceptedEntry = async (/** @type {import('./modules/task-entry.js').EntryResult} */ result) => {
-  switchPane('workbench')
-  await openWorkbenchTask(result.receipt.taskId)
+  switchPane('converse')
+  addConversationMatter(result.receipt.taskId, result.task.title, false)
+  updateConversationMatters([result.task])
 }
-const taskEntry = createTaskEntry({invokeWorkbenchApi, onAccepted: openAcceptedEntry})
+function openConversationProjects(){
+  switchPane('workbench')
+  document.querySelector('[data-action="add-project"]')?.dispatchEvent(new MouseEvent('click',{bubbles:true}))
+  const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane'));if(layer)layer.dataset.workbenchView='projects'
+}
+const taskEntry = createTaskEntry({invokeWorkbenchApi, onAccepted: openAcceptedEntry,onManageProjects:openConversationProjects})
 
 const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
+  onMatterViewed: (/** @type {import('./modules/workbench.js').Task} */ task) => { addConversationMatter(task.id,task.title); updateConversationMatters([task]) },
+  onOpenMatter: async (/** @type {string} */ id) => openConversationWork(invokeWorkbenchApi,id,async taskId=>{switchPane('workbench');await openWorkbenchTask(taskId)}),
+  onOpenTerminal:(/** @type {string} */ id)=>openConversationTerminal(invokeWorkbenchApi,id),
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
@@ -440,6 +485,10 @@ function setMode(mode) {
     else doctorPoller.stop()
     conversationsPoller.stop()
   }
+  mainNavigation.setReady(mode === 'dashboard')
+  // 主页的一件件事只在此刻开着时读。
+  if (mode === 'dashboard' && document.querySelector('.dash-pane[data-pane="overview"]:not([hidden])')) void homeTasks.start()
+  else homeTasks.stop()
 }
 
 // 引导页最后一步的码(spec 2026-10-01-tendhearth-pairing-ux §5):在 #screen-service 且 daemon 活着才要码。
@@ -649,9 +698,11 @@ function setToggle(id, on) {
 
 /** @param {string} name */
 function switchPane(name) {
-  const focusConversation = name === "converse"
+  const searchRequested = name === 'all' || name === 'together'
+  if(searchRequested)name='workbench'
+  const focusConversation = name === "converse" || name === 'chat'
   document.body.dataset.pane = focusConversation ? "overview" : name
-  if (focusConversation) name = "overview"
+  if (focusConversation) {conversationTopics?.close();name = "overview"}
   // 连接浮层只在原地看一眼:任何一次导航都把它收起。
   document.querySelector(".cc-home-details")?.removeAttribute("open")
   const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
@@ -667,25 +718,25 @@ function switchPane(name) {
     }
   }
   if (isCurrentWorkbenchPane(name, currentPane)) {
-    workbenchNavigation?.setWorkbenchActive(true)
+    workbenchNavigation?.setWorkbenchActive(false)
     return
   }
   document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
-  const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
     const hit = htmlEl.dataset.backstageEntry === "true"
       ? backstagePanes.has(name)
-      : htmlEl.dataset.pane === name
+      : htmlEl.dataset.pane === name || (name === "workbench" && htmlEl.dataset.pane === "overview")
     htmlEl.classList.toggle("active", hit && !htmlEl.classList.contains("disabled"))
   })
   document.querySelectorAll(".dash-pane[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
-    htmlEl.hidden = htmlEl.dataset.pane !== name
+    htmlEl.hidden = htmlEl.dataset.pane !== name && !(name === 'workbench' && htmlEl.dataset.pane === 'overview')
+    if (htmlEl.dataset.pane === 'overview') htmlEl.inert = name === 'workbench'
   })
   // The destination must be visible before navigation transfers keyboard focus.
-  workbenchNavigation?.setWorkbenchActive(name === "workbench")
+  workbenchNavigation?.setWorkbenchActive(false)
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
   // pane switch so we don't burn CPU tailing log files no one is reading.
   if (name === "logs") {
@@ -711,12 +762,17 @@ function switchPane(name) {
   if (name === "recollections") void loadLifeCategory(lifeCategory)
   else lifeArchive?.cancel()
   if (name === "atelier") void loadAtelierGallery({ invokeApi })
-  if (name === "overview") void presencePoller.refresh()
+  if (name === "overview") { void presencePoller.refresh(); void homeTasks.start() }
+  else homeTasks.stop()
   if (name === "todos") {
     initTodosPage(deps)
   }
   if (name === "workbench") {
+    const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane'))
+    if(layer) layer.dataset.workbenchView=searchRequested?'search':'detail'
     initWorkbenchPage(deps)
+    const back=document.getElementById('workbench-home')
+    if(back){back.textContent=document.querySelector('.conversation-topic-panel:not([hidden])')?'‹ 返回话题':'‹ 返回对话';back.focus()}
   } else {
     stopWorkbenchPolling()
   }
@@ -730,8 +786,9 @@ function switchPane(name) {
   if (name === "overview") {
     // 「跟 CC 说」⇒ chat;已经在此刻时再点「此刻」⇒ 回 home;从别处回来保持原来那一态(草稿与对话都还在)。
     if (focusConversation) nowPage?.setMode("chat")
-    else if (!overviewWasHidden) nowPage?.setMode("home")
+    else nowPage?.setMode("chat")
     initConversePage(deps, { focus: focusConversation })
+    if(!focusConversation) /** @type {HTMLElement|null} */(document.querySelector('.conversation-topic-panel:not([hidden])'))?.focus()
   }
   if (name === "a2a-agents") {
     activateHuntBag()
@@ -1613,7 +1670,7 @@ function showDevBannerIfShim() {
     : allowMut
       ? `<b>开发模式 · 安全阀已关闭</b> · 删账号 / service / setup / update 会真实生效`
       : w.__WECHAT_CC_WORKBENCH_WRITES__
-        ? `<b>开发模式</b> · 一起做已连接真实执行 · 其他页面保持只读`
+        ? `<b>开发模式</b> · 交给 CC 的事已连接真实执行 · 其他页面保持只读`
         : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；只放行已知只读的命令`
   // 关阀是唯一能毁掉真实状态的模式，颜色上必须一眼可辨（spec §3）。
   banner.classList.toggle("is-unsafe", Boolean(allowMut) && !w.__WECHAT_CC_DRY_RUN__)
@@ -1627,6 +1684,37 @@ async function boot() {
   wireEvents()
   startWorkbenchAttention()
   initConversePage(deps, { focus: false })
+  const conversationRoot=document.getElementById('converse-root')
+  if(conversationRoot){
+    const search=()=>{ switchPane('workbench'); const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane')); if(layer)layer.dataset.workbenchView='search'; document.getElementById('wb-search')?.focus() }
+    mountConversationTools({root:conversationRoot,
+      delegate:()=>openConversationDelegation(deps),
+      search,
+      projects:openConversationProjects,
+      history:async()=>{await terminalWaiting.refresh();return openComputerSessions(()=>home.sessions,session=>addConversationTerminal(session),async()=>{try{const list=/** @type {import('./modules/workbench.js').ListResult} */(await v1(invokeWorkbenchApi,V1.workbench.list));mountHistoryDialog(invokeWorkbenchApi,list.historyProviders??[],async id=>{switchPane('workbench');await openWorkbenchTask(id)},list.agentNames??{})}catch{showToast('暂时读不到电脑上的会话，请稍后再试')}})},
+      navigate:switchPane})
+    const waiting=document.getElementById('now-waiting')
+    if(waiting){
+      conversationRoot.querySelector('.converse-compose')?.before(waiting)
+      waiting.addEventListener('toggle',()=>{
+        if(!(waiting instanceof HTMLDetailsElement)||!waiting.open||lastAttention?.stale)return
+        const tasks=lastAttention?.tasks??[]
+        for(const task of tasks)addConversationMatter(task.id,/** @type {any} */(task).title??'交办的事')
+        updateConversationMatters(home.tasks??[])
+        const first=tasks[0]
+        if(first)conversationRoot.querySelector(`[data-matter-id="${CSS.escape(first.id)}"]`)?.scrollIntoView({block:'center'})
+        // Terminal permissions keep their original protected card until a terminal detail contract exists.
+        if(!terminalWaitingCount)waiting.open=false
+      })
+    }
+    const topics=mountConversationTopics({root:conversationRoot,call:invokeWorkbenchApi,
+      openMatter:id=>deps.onOpenMatter(id),
+      locateMessage:(id,excerpt)=>locateConversationMessage(deps,id,excerpt),
+      manage:()=>switchPane('memory')})
+    conversationTopics=topics
+    document.getElementById('now-cc')?.addEventListener('click',()=>{topics.close();document.getElementById('converse-input')?.focus()})
+    window.addEventListener('pagehide',()=>topics.destroy(),{once:true})
+  }
   startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop
   // launch. Keep it off the critical render path: decrypting larger archives
@@ -1640,24 +1728,20 @@ async function boot() {
       else console.info(`[wxvault] startup refresh skipped: ${result.reason}`)
     })
     .catch(err => console.warn('[wxvault] startup refresh failed:', err))
-  await loadAgentConfig().catch(err => console.error("agent config load failed", err))
-  // Wire the A2A agents tab (event listeners attached once; first list load
-  // is deferred until the user actually switches to that pane).
-  initA2AAgentsTab().catch(err => console.error("a2a-agents init failed", err))
-  // 浮窗点道具 → Rust show_main_window 发来的导航事件(spec 2026-09-03 §3.4)。
-  // 只认白名单里的 pane,事件 payload / 命令返回值一律不可信。
-  /** @param {unknown} page */
-  const navigateTo = (page) => { if (page === "a2a-agents") switchPane(page) }
   const tauriEvent = /** @type {any} */ (window).__TAURI__?.event
-  if (tauriEvent?.listen) {
-    tauriEvent.listen("wechat-cc:navigate", (/** @type {{ payload?: { page?: string } }} */ ev) => {
-      navigateTo(ev?.payload?.page)
-    }).catch((/** @type {unknown} */ err) => console.warn("navigate listener failed", err))
-  }
-  // 主窗口被关掉之后点包袱:Rust 那边是**重建**了窗口,事件早在本监听器存在
-  // 之前就发过了(发出去也没人接)。目的地存在 Rust 侧,这里主动来取一次。
-  // 浏览器 / mock shim 没有这个命令,拒绝就当没有待办。
-  invoke("take_pending_navigate", {}).then(navigateTo).catch(() => {})
+  const connectNavigation = tauriEvent?.listen ? createNativeNavigation({
+    navigation: mainNavigation,
+    listen: (name, callback) => tauriEvent.listen(name, callback),
+    takePending: () => invoke("take_pending_navigate", {}),
+    onError: err => console.warn("navigate listener failed", err),
+  }) : null
+  await connectNavigation?.()
+  // Retry a failed listener without acknowledging or discarding native targets.
+  window.addEventListener('focus', () => { void connectNavigation?.() })
+  await loadAgentConfig().catch(err => console.error("agent config load failed", err))
+  void connectNavigation?.()
+  // Wire after the native entry listener, so provider loading cannot lose it.
+  initA2AAgentsTab().catch(err => console.error("a2a-agents init failed", err))
   initPluginsTab({ invoke }).catch(err => console.error("plugins init failed", err))
   initLicense().catch(err => console.error("license init failed", err))
   let report = await doctorPoller.refresh()
@@ -1674,3 +1758,16 @@ async function boot() {
 }
 
 boot()
+
+// A detail layer owns keyboard input until it closes; drafts remain in their original scopes.
+window.addEventListener('keydown',event=>{
+  const layer=/** @type {HTMLElement|null} */(document.querySelector('.workbench-pane:not([hidden])'))
+  if(!layer||event.defaultPrevented||document.querySelector('dialog[open]'))return
+  if(event.key==='Escape'){event.preventDefault();switchPane('overview');return}
+  if(event.key==='Tab'){
+    const controls=[...layer.querySelectorAll('button,input,textarea,select,summary,[tabindex="0"]')].filter(el=>!el.hasAttribute('disabled')&&el.getClientRects().length)
+    const first=/** @type {HTMLElement|undefined} */(controls[0]),last=/** @type {HTMLElement|undefined} */(controls.at(-1))
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}
+  }
+})

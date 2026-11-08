@@ -147,12 +147,31 @@ export function mountPhoneConnect(deps) {
   /** @type {HTMLElement | null} */ let modal = null
   /** @type {ReturnType<typeof makePhoneLinkFlow> | null} */ let flow = null
   let seq = 0
+  /** @type {HTMLElement | null} */ let opener = null
+  /** @type {Map<HTMLElement, boolean>} */ const background = new Map()
+  const focusClose = () => /** @type {HTMLElement | null} */ (modal?.querySelector('#phone-connect-close'))?.focus()
+  /** @param {FocusEvent} ev */
+  const onFocus = ev => { if (modal && !modal.contains(/** @type {Node | null} */ (ev.target))) focusClose() }
   /** @param {KeyboardEvent} ev */
-  const onKey = ev => { if (ev.key === 'Escape') close() }
+  const onKey = ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); close(); return }
+    if (ev.key !== 'Tab' || !modal) return
+    const actions = [...modal.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]')]
+    const first = /** @type {HTMLElement | undefined} */ (actions[0])
+    const last = /** @type {HTMLElement | undefined} */ (actions.at(-1))
+    if (!modal.contains(doc.activeElement) || (ev.shiftKey && doc.activeElement === first)) { ev.preventDefault(); last?.focus() }
+    else if (!ev.shiftKey && doc.activeElement === last) { ev.preventDefault(); first?.focus() }
+  }
   function close() {
+    seq++
     flow?.stop(); flow = null
     modal?.remove(); modal = null
-    doc.removeEventListener('keydown', onKey)
+    doc.removeEventListener('keydown', onKey, true)
+    doc.removeEventListener('focusin', onFocus)
+    for (const [node, inert] of background) node.inert = inert
+    background.clear()
+    if (opener?.isConnected && !opener.closest('[hidden], [inert]')) opener.focus({ preventScroll: true })
+    opener = null
   }
   /** @param {View} v */
   async function render(v) {
@@ -160,6 +179,14 @@ export function mountPhoneConnect(deps) {
     const mine = ++seq
     const body = /** @type {HTMLElement} */ (modal.querySelector('#phone-connect-body'))
     const closeBtn = /** @type {HTMLElement} */ (modal.querySelector('#phone-connect-close'))
+    /** @param {...Node} children */
+    const replaceBody = (...children) => {
+      const removesFocus = body.contains(doc.activeElement)
+      body.replaceChildren(...children)
+      // Removing a focused child does not emit focusin in Chromium/WebKit.
+      // Keep a valid modal focus; do not move an unaffected close control.
+      if (removesFocus && modal && !modal.contains(doc.activeElement)) focusClose()
+    }
     closeBtn.textContent = v.kind === 'paired' ? c.done : c.close
     if (v.kind === 'qr') {
       let svg
@@ -172,23 +199,24 @@ export function mountPhoneConnect(deps) {
         try { await (deps.writeClipboard ?? (t => navigator.clipboard.writeText(t)))(v.url); copy.textContent = c.copied } catch { /* 复制不了就不改字 */ }
       })
       const check = v.checkCode ? [el(doc, 'p', { class: 'qr-check', id: 'phone-connect-check' }, c.checkCode.replace('{code}', v.checkCode))] : []
-      body.replaceChildren(qr, ...check, el(doc, 'p', { class: 'qr-note', id: 'phone-connect-note' }, c.readyNote), el(doc, 'p', { class: 'qr-sub' }, c.readySub), copy)
+      replaceBody(qr, ...check, el(doc, 'p', { class: 'qr-note', id: 'phone-connect-note' }, c.readyNote), el(doc, 'p', { class: 'qr-sub' }, c.readySub), copy)
       return
     }
-    if (v.kind === 'loading') body.replaceChildren(el(doc, 'p', { class: 'qr-note' }, c.loading))
-    else if (v.kind === 'starting') body.replaceChildren(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-starting' }, c.starting))
-    else if (v.kind === 'notice') body.replaceChildren(el(doc, 'p', { class: 'qr-notice', id: 'phone-connect-notice' }, v.title), ...(v.body ? [el(doc, 'p', { class: 'qr-note' }, v.body)] : []))
-    else if (v.kind === 'error') body.replaceChildren(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-error' }, v.text))
-    else if (v.kind === 'paired') body.replaceChildren(el(doc, 'p', { class: 'qr-paired', id: 'phone-connect-paired' }, v.line))
+    if (v.kind === 'loading') replaceBody(el(doc, 'p', { class: 'qr-note' }, c.loading))
+    else if (v.kind === 'starting') replaceBody(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-starting' }, c.starting))
+    else if (v.kind === 'notice') replaceBody(el(doc, 'p', { class: 'qr-notice', id: 'phone-connect-notice' }, v.title), ...(v.body ? [el(doc, 'p', { class: 'qr-note' }, v.body)] : []))
+    else if (v.kind === 'error') replaceBody(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-error' }, v.text))
+    else if (v.kind === 'paired') replaceBody(el(doc, 'p', { class: 'qr-paired', id: 'phone-connect-paired' }, v.line))
     else if (v.kind === 'expired') {
       const renew = el(doc, 'button', { type: 'button', class: 'btn ghost', id: 'phone-connect-renew' }, c.renew)
       renew.addEventListener('click', () => { void flow?.start() })
-      body.replaceChildren(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-expired' }, c.expired), renew)
+      replaceBody(el(doc, 'p', { class: 'qr-note', id: 'phone-connect-expired' }, c.expired), renew)
     }
   }
   return {
     open() {
       close()
+      opener = /** @type {HTMLElement | null} */ (doc.activeElement)
       modal = el(doc, 'div', { id: 'phone-settings-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'phone-connect-title' })
       const card = el(doc, 'div', { class: 'qr-card' })
       const closeBtn = el(doc, 'button', { type: 'button', class: 'btn ghost', id: 'phone-connect-close' }, c.close)
@@ -196,8 +224,15 @@ export function mountPhoneConnect(deps) {
       card.append(el(doc, 'h2', { id: 'phone-connect-title' }, c.title), el(doc, 'div', { id: 'phone-connect-body' }), closeBtn)
       modal.append(card)
       modal.addEventListener('click', ev => { if (ev.target === modal) close() })
-      doc.addEventListener('keydown', onKey)
+      for (const child of doc.body.children) {
+        const node = /** @type {HTMLElement} */ (child)
+        background.set(node, node.inert)
+        node.inert = true
+      }
+      doc.addEventListener('keydown', onKey, true)
+      doc.addEventListener('focusin', onFocus)
       doc.body.append(modal)
+      closeBtn.focus()
       flow = makePhoneLinkFlow({ ...(deps.flowDeps ?? {}), call: deps.call, onView: v => { void render(v) } })
       void flow.start()
     },

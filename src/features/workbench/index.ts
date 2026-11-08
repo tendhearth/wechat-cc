@@ -24,6 +24,7 @@ import type { SpeechPolicy } from '../../daemon/speech/policy'
 import { log } from '../../lib/log'
 import { wireWorkbench } from './wire'
 import { workbenchRoutes } from './routes'
+import { phoneSessionsOf } from './phone-sessions'
 import { wireWorkbenchNotifications } from './wire-notifications'
 import { wireWorkbenchArtifacts } from './wire-artifacts'
 import type { WorkbenchService } from './service'
@@ -35,6 +36,10 @@ export { makeProjectLessons, LESSONS_MAX, LESSON_MAX_CHARS, type ProjectLessons 
 export { isWechatTaskCommand, wechatTaskMessageKey, type WechatMessageIdentity, type WechatWorkbenchReply } from './wechat-control'
 export { resolveTaskReference, makeCheapJudge, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from './task-reference'
 export { QUOTA_TAKEOVER_DEFAULT_REQUEST, quotaTakeoverText } from './quota-takeover'
+// 桌面 / 手机令牌的 /v1/workbench/* 路由表(模块自己挂;测试拼面板时也要)
+export { workbenchRoutes, type WorkbenchRoutesDeps } from './routes'
+// 手机令牌读原生会话的那一份(P3c-4;单飞 + 短缓存)
+export { cacheSessions, SESSIONS_DONE_MAX, PHONE_SESSIONS_PAGE, PHONE_SESSION_PAGE, type PhoneSessionsSource } from './phone-sessions'
 // 换一家来审(定时那边起只读轮时用同一套措辞)
 export { buildReviewText, reviewMissNote } from './review-request'
 
@@ -48,6 +53,8 @@ export function workbenchFeature(o: {
   deps: (ctx: ModuleCtx) => WireWorkbenchDeps
   /** 交办入口的主人(路由里的 entry context);以前经 InternalApiDeps.resolveAdminChatId。 */
   resolveAdminChatId: () => string | null
+  /** 桌面 app 开着没有 / 在电脑上看过哪件(S3b,路由记;一件事的提议读)。 */
+  desktop?: import('./routes').WorkbenchRoutesDeps['desktop']
 }): DaemonModule<WorkbenchService> {
   return {
     name: 'workbench',
@@ -55,11 +62,18 @@ export function workbenchFeature(o: {
     ...(o.lazy ? { lazy: o.lazy } : {}),
     init(ctx) {
       const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
-      const service = wireWorkbench({ ...o.deps(ctx), internalApi })
+      const deps = o.deps(ctx)
+      const service = wireWorkbench({ ...deps, internalApi })
       ctx.own('stop', () => service.shutdown())
-      internalApi.mount('workbench', workbenchRoutes({ workbench: service, resolveAdminChatId: o.resolveAdminChatId }))
+      // 手机令牌读原生会话(P3c-4,以前在 wire-settings-panel.ts):单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
+      const phoneSessions = phoneSessionsOf(service)
+      internalApi.mount('workbench', workbenchRoutes({
+        workbench: service, resolveAdminChatId: o.resolveAdminChatId, ...(o.desktop ? { desktop: o.desktop } : {}),
+        // 执行者叫什么(收敛清单 ⑥):唯一出处 registry
+        phoneSessions: { sessions: phoneSessions, executorName: (id: string) => deps.boot.registry.namesOf(id).name },
+      }))
       // GET /v1/matters 的「已暂停(网络未受保护)」标记:internal-api 只留这一个窄口
-      internalApi.provide({ workbenchSuspended: () => service.networkSuspended() })
+      internalApi.provide({ workbenchSuspended: () => service.networkSuspended(), ...(o.desktop ? { desktopSeen: o.desktop.seen } : {}) })
       return service
     },
   }
@@ -72,7 +86,7 @@ export interface DeferredStart { start(): void }
  * 工作台的微信通知:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
  * **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
  */
-export function workbenchNotificationsFeature(o: { needs: readonly string[]; speech: (ctx: ModuleCtx) => Pick<SpeechPolicy, 'say'> }): DaemonModule<DeferredStart> {
+export function workbenchNotificationsFeature(o: { needs: readonly string[]; speech: (ctx: ModuleCtx) => Pick<SpeechPolicy, 'say'>; turnRefOfRun?: (taskId: string, runId: string) => string | null }): DaemonModule<DeferredStart> {
   return {
     name: 'workbench-notifications',
     needs: o.needs,
@@ -80,7 +94,7 @@ export function workbenchNotificationsFeature(o: { needs: readonly string[]; spe
       let n: ReturnType<typeof wireWorkbenchNotifications> | null = null
       ctx.own('stop', async () => { await n?.close() })
       return { start: () => {
-        n = wireWorkbenchNotifications({ workbench: ctx.get<WorkbenchService>('workbench'), ilink: ctx.get<WechatWorkbenchTransport>(WECHAT_PORTS.workbench), speech: o.speech(ctx) })
+        n = wireWorkbenchNotifications({ workbench: ctx.get<WorkbenchService>('workbench'), ilink: ctx.get<WechatWorkbenchTransport>(WECHAT_PORTS.workbench), speech: o.speech(ctx), ...(o.turnRefOfRun ? { turnRefOfRun: o.turnRefOfRun } : {}) })
         void n.wake().catch(() => log('WORKBENCH', 'Task notifications are waiting for storage recovery.'))
       } }
     },

@@ -16,6 +16,7 @@ import { wireLetters, type WireLettersDeps } from './wire'
 import { lettersRoutes } from './routes'
 
 export { listLetters, letterPagePath } from './archive'
+export { letterDeliveries } from './runtime'
 export type { LetterListItem } from './archive'
 export { mobileLettersRoutes, type MobileLettersDeps } from './mobile'
 export type { WireLettersDeps } from './wire'

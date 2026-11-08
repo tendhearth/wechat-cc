@@ -24,6 +24,7 @@ function presenceTtlCheck() {
   if (presenceAt !== null && Date.now() - presenceAt > PRESENCE_TTL_MS) {
     presenceAt = null
     document.getElementById("pres-txt").textContent = "不知道"
+    setPresenceLit(false);if(typeof cConnectionText==='function')cConnectionText()
   }
 }
 function renderHome(s, stale) {
@@ -39,6 +40,7 @@ function renderHome(s, stale) {
     presenceAt = null
     pt.textContent = "不知道"
   }
+  if(typeof cConnectionText==='function')cConnectionText()
 }
 setInterval(presenceTtlCheck, 30000)
 function showBanner(txt) { var b = document.getElementById("banner"); b.hidden = !txt; b.textContent = txt || "" }
@@ -47,7 +49,7 @@ function loadHome() {
   var cached = readCache()
   if (cached&&!homeState) { homeState = cached; renderHome(cached, true); showBanner("上次同步 " + ago(cached.synced_at)) }
   var sent = T
-  api("/m/api/home").then(function(r) {
+  api("/v1/home").then(function(r) {
     if (r.status === 401) { if (sent !== T) return HOME_STALE; onUnauthorized(sent); return null }
     return r.json()
   }).then(function(s) {

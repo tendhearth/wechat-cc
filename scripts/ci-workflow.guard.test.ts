@@ -140,11 +140,11 @@ describe('ci.yml —— Tendhearth 手机 app 作业', () => {
     const bun = jobs.app!.steps?.find(s => s.uses?.startsWith('oven-sh/setup-bun'))
     expect(bun?.with?.['bun-version']).toBe('1.3.14')
   })
-  it('app-native 作业只在 apps/app/native/** 或协议包动过时跑,且跑 Swift 与 Kotlin 两端', () => {
+  it('app-native 在原生代码、协议包或 CI 定义变化时跑,且保留 Swift 与 Kotlin 两端', () => {
     const changes = jobs.changes!
     expect(changes.outputs?.app_native).toBe('${{ steps.stack.outputs.all || steps.filter.outputs.app_native }}')
     const filter = parse(changes.steps?.find(s => s.id === 'filter')?.with?.filters as string) as Record<string, string[]>
-    expect(filter.app_native).toEqual(['apps/app/native/**', 'packages/protocol/**'])
+    expect(filter.app_native).toEqual(['apps/app/native/**', 'packages/protocol/**', '.github/workflows/ci.yml'])
     const native = jobs['app-native']!
     expect(native.needs).toContain('changes')
     expect(native.if).toContain("needs.changes.outputs.app_native == 'true'")
@@ -170,7 +170,7 @@ describe('ci.yml —— pr-rules(测试只增不减 + 红/绿)', () => {
   })
   it('PR 标题和描述经 env 传,run 里不插值', () => {
     const step = job!.steps!.find(s => s.run?.includes('scripts/test-shrink-check.ts'))!
-    expect(step.env).toEqual({ PR_TITLE: '${{ github.event.pull_request.title }}', PR_BODY: '${{ github.event.pull_request.body }}' })
+    expect(step.env).toEqual({ PR_TITLE: '${{ github.event.pull_request.title }}', PR_BODY: '${{ github.event.pull_request.body }}', GH_TOKEN: '${{ github.token }}' })
     expect(step.run).not.toContain('${{')
   })
 })
@@ -208,11 +208,23 @@ describe('ci.yml —— 提速的边界', () => {
       expect(j.if, name).toContain("needs.changes.outputs.code == 'true'")
     }
   })
-  it('不进 master 的 PR 跳过 Windows;推 dev、进 master 的 PR、自改的 PR 照旧三平台', () => {
-    const os = String((jobs.build as { strategy?: { matrix?: { os?: unknown } } }).strategy?.matrix?.os)
-    expect(os).toContain("github.event_name == 'pull_request' && github.base_ref != 'master' && !startsWith(github.head_ref, 'self/')")
-    expect(os).toContain('["ubuntu-latest","macos-latest"]')
-    expect(os).toContain('["ubuntu-latest","macos-latest","windows-latest"]')
+  it('所有 PR 和 push 都保留三平台并行', () => {
+    const os = (jobs.build as { strategy?: { matrix?: { os?: unknown } } }).strategy?.matrix?.os
+    expect(os).toContain('ubuntu-latest')
+    expect(os).toContain('macos-latest')
+    expect(os).toContain('windows-latest')
+    expect(os).toEqual(['ubuntu-latest', 'macos-latest', 'windows-latest'])
+  })
+  it('唯一轻作业先核对 tree 回执,覆盖后不运行路径过滤器', () => {
+    const changes = jobs.changes!
+    const text = JSON.stringify(changes)
+    expect(text).toContain('node scripts/ci-tree-coverage.mjs')
+    expect(text).toContain('actions/upload-artifact@v4')
+    for (const id of ['filter', 'code']) {
+      const step = changes.steps?.find(s => s.id === id) as { if?: string }
+      expect(step.if).toBe("steps.coverage.outputs.covered != 'true'")
+    }
+    expect(text).toContain('GH_TOKEN')
   })
   it('真实形状沙盒三个平台一样挡:不许 continue-on-error(Windows 在 dev 上连续绿过,2026-10-26 去掉的)', () => {
     const step = (jobs.build!.steps ?? []).find(s => (s as { name?: string }).name === 'Real-shaped sandbox') as Record<string, unknown> | undefined

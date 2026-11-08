@@ -1,32 +1,5 @@
-import type { ApprovalItemT, AgentsTopicT, ChatPageT, MatterT } from '../backend/types'
+import type { ChatPageT } from '../backend/types'
 import { markdownPlainText } from '@wechat-cc/markdown'
-import { statusOfMatter, type StatusKey } from './status'
-
-export function matterStatus(m: MatterT, agents: AgentsTopicT, pending: number): StatusKey {
-  const t = agents.tasks.find(x => x.id === m.id)
-  return statusOfMatter(m, t ? { status: 'running', phase: t.phase } : null, pending)
-}
-
-export type WaitingRow = { taskId: string; kind: 'permission' | 'question'; firstRequestId: string; count: number; fallback: string; matterTitle: string }
-
-/** 「此刻」只回答一个问题:现在有什么要我管的(spec 2026-10-01 §5.2)。一起做的列表不在这里重复。
- * known=false(够不着电脑,等你的事读不到/是旧的)⇒ 不显示旧行,waitingUnknown 让页面说「暂时不知道有没有等你的事」(终审 M3)。 */
-export function nowView(input: { approvals: ApprovalItemT[]; matters: MatterT[]; hour: number; known?: boolean }): {
-  greetingKey: 'now.greetingMorning' | 'now.greetingAfternoon' | 'now.greetingEvening'
-  waiting: WaitingRow[]
-  waitingUnknown: boolean
-} {
-  const { approvals, matters, hour } = input
-  const known = input.known ?? true
-  const greetingKey = hour >= 5 && hour <= 11 ? 'now.greetingMorning' : hour >= 12 && hour <= 17 ? 'now.greetingAfternoon' : 'now.greetingEvening'
-  const rows = new Map<string, WaitingRow>()
-  for (const x of approvals) {
-    const r = rows.get(x.taskId)
-    if (r) { r.count++; if (x.kind === 'permission') r.kind = 'permission'; continue }
-    rows.set(x.taskId, { taskId: x.taskId, kind: x.kind, firstRequestId: x.id, count: 1, fallback: x.summary, matterTitle: matters.find(m => m.id === x.taskId)?.title ?? '' })
-  }
-  return known ? { greetingKey, waiting: [...rows.values()], waitingUnknown: false } : { greetingKey, waiting: [], waitingUnknown: true }
-}
 
 // 系统通知不是 CC 说的话(2026-10-18 真机:气泡挂着两周前的「🔄 wechat-cc daemon 已重启 pid=…」):
 // 🔄 重启通知、🔔 终端会话完成推送、✅ / ❌ 命令回执。打猎 🎯、串门 🚶 是 CC 自己的话,照常。
@@ -43,9 +16,4 @@ export function latestCCLine(page: ChatPageT | undefined): { id: string; text: s
     }
   }
   return null
-}
-
-/** 标签栏「此刻」后面的数字:几件事(按任务算,不按请求算)等你;够不着电脑时旧数据不算 ⇒ 0(不写数)。与 nowView 的行数一致。 */
-export function waitingCount(approvals: ApprovalItemT[], known: boolean): number {
-  return known ? new Set(approvals.map(a => a.taskId)).size : 0
 }

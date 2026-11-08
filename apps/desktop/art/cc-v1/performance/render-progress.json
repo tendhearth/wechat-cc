@@ -1,0 +1,6527 @@
+{
+  "identity": {
+    "planSha256": "fa58c255e6001b2c066006f905104ccca6508168983ca8b8c5022f0e3c72f06f",
+    "sourceSha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+    "rendererSha256": "5d5946732a406d5d47064c62fe4744b5fc2b16dae1b02d06acef9c7735aafc54",
+    "geometrySha256": "d26db56b5699b524db792b12187747f1451128dca019ea188d1e64053992e17d",
+    "blender": "5.2.1 LTS",
+    "samples": 96,
+    "seed": 11,
+    "performanceGeometrySha256": "72656f5a9c4144a00e59d52545f7ddc243cfc7eaf7e3207309b310ad2840a845"
+  },
+  "samples": {
+    "curiosity/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/000.png",
+        "performance/unlit/curiosity/000.png",
+        "masks/performance/curiosity/000.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/000.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/curiosity/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/curiosity/000.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/001": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/001.png",
+        "performance/unlit/curiosity/001.png",
+        "masks/performance/curiosity/001.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/001.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/curiosity/001.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/curiosity/001.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/002": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/002.png",
+        "performance/unlit/curiosity/002.png",
+        "masks/performance/curiosity/002.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/002.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/curiosity/002.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/curiosity/002.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/003": {
+      "parameters": {
+        "pose": {
+          "happy": 0.168519
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0.207407,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/003.png",
+        "performance/unlit/curiosity/003.png",
+        "masks/performance/curiosity/003.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/003.png": "a7fe005d41e654c37ec046bd3e8a362564e34616294b9bd80029788d4d4d7638",
+        "performance/unlit/curiosity/003.png": "2fc6517c6b0464edb9497c0f88d216fc59ad93421d82e54e5bc2e278b1bbb105",
+        "masks/performance/curiosity/003.png": "d25653b14381aa676ba55142492b6b71620e09f8e7685454a7f5d3053b60024b"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.3328003749250113e-07,
+        "crestDeterminant": 0.9999998211860657
+      }
+    },
+    "curiosity/004": {
+      "parameters": {
+        "pose": {
+          "happy": 0.481481
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0.592593,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/004.png",
+        "performance/unlit/curiosity/004.png",
+        "masks/performance/curiosity/004.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/004.png": "9e652f38c31ea5d25ca5aee7d2867dafd71030517f740cf30852c4d990b69b6c",
+        "performance/unlit/curiosity/004.png": "b4b9d026ded572b13e913dd13a1b0ec82acdc3d0b5890e4e33b27ee2c782b52b",
+        "masks/performance/curiosity/004.png": "cb77118fbcd2bbbb6111ea98b3093f2750483b87884b383eef32a23a5393fd55"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/005": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/005.png",
+        "performance/unlit/curiosity/005.png",
+        "masks/performance/curiosity/005.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/005.png": "a9c1f7c16a92d05a8cc1ab08ec1a40e53ea0fd223835e4d6dd4fcd8d75283447",
+        "performance/unlit/curiosity/005.png": "6bf1235fa238e76b28ce2c0c98ee0440d9549ed31d65caa5e95e5afd551b196b",
+        "masks/performance/curiosity/005.png": "1c7e56b8517fe10ca741a3297f245b4ec75b70a6afce73e6ae624d102a0a506e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.5840151626966372e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/006": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/006.png",
+        "performance/unlit/curiosity/006.png",
+        "masks/performance/curiosity/006.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/006.png": "a9c1f7c16a92d05a8cc1ab08ec1a40e53ea0fd223835e4d6dd4fcd8d75283447",
+        "performance/unlit/curiosity/006.png": "6bf1235fa238e76b28ce2c0c98ee0440d9549ed31d65caa5e95e5afd551b196b",
+        "masks/performance/curiosity/006.png": "1c7e56b8517fe10ca741a3297f245b4ec75b70a6afce73e6ae624d102a0a506e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.5840151626966372e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/007": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/007.png",
+        "performance/unlit/curiosity/007.png",
+        "masks/performance/curiosity/007.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/007.png": "1657a6765a41c3c684d6d18293b67bbe1dcd0c27a2c544523180f1190a3f7dc8",
+        "performance/unlit/curiosity/007.png": "33ddd93588b5c766956b2422e59f9405e0c2cdd5ad4d71e546f9d4055f0e7c54",
+        "masks/performance/curiosity/007.png": "732b95a82f6e29f8094d5cea4ac6cc135952a0afe06c198dfe316670ddbd6469"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.5840151626966372e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/008": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/008.png",
+        "performance/unlit/curiosity/008.png",
+        "masks/performance/curiosity/008.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/008.png": "1657a6765a41c3c684d6d18293b67bbe1dcd0c27a2c544523180f1190a3f7dc8",
+        "performance/unlit/curiosity/008.png": "33ddd93588b5c766956b2422e59f9405e0c2cdd5ad4d71e546f9d4055f0e7c54",
+        "masks/performance/curiosity/008.png": "732b95a82f6e29f8094d5cea4ac6cc135952a0afe06c198dfe316670ddbd6469"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.5840151626966372e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/009": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/009.png",
+        "performance/unlit/curiosity/009.png",
+        "masks/performance/curiosity/009.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/009.png": "1657a6765a41c3c684d6d18293b67bbe1dcd0c27a2c544523180f1190a3f7dc8",
+        "performance/unlit/curiosity/009.png": "33ddd93588b5c766956b2422e59f9405e0c2cdd5ad4d71e546f9d4055f0e7c54",
+        "masks/performance/curiosity/009.png": "732b95a82f6e29f8094d5cea4ac6cc135952a0afe06c198dfe316670ddbd6469"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.5840151626966372e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/010": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/010.png",
+        "performance/unlit/curiosity/010.png",
+        "masks/performance/curiosity/010.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/010.png": "1657a6765a41c3c684d6d18293b67bbe1dcd0c27a2c544523180f1190a3f7dc8",
+        "performance/unlit/curiosity/010.png": "33ddd93588b5c766956b2422e59f9405e0c2cdd5ad4d71e546f9d4055f0e7c54",
+        "masks/performance/curiosity/010.png": "732b95a82f6e29f8094d5cea4ac6cc135952a0afe06c198dfe316670ddbd6469"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.5840151626966372e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/011": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.035,
+          "squash": 1.035,
+          "rise": 0.11,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.11,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.11,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/011.png",
+        "performance/unlit/curiosity/011.png",
+        "masks/performance/curiosity/011.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/011.png": "0b101e16ede2894ded483e522c14eba3380a68431ac649cff364e3020b7eec9f",
+        "performance/unlit/curiosity/011.png": "24458088c33cc0f4db46d6086f9588dbef32c40ae6e651d8f4468c669b8eee42",
+        "masks/performance/curiosity/011.png": "255a421d580f56dcbd13f9c2ac0e93e2ccd38584c7be61a44c3988b9cf8d4648"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.11,
+          "right": 0.11
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.1920928955078125e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/012": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.035,
+          "squash": 1.035,
+          "rise": 0.11,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.11,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.11,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/012.png",
+        "performance/unlit/curiosity/012.png",
+        "masks/performance/curiosity/012.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/012.png": "0b101e16ede2894ded483e522c14eba3380a68431ac649cff364e3020b7eec9f",
+        "performance/unlit/curiosity/012.png": "24458088c33cc0f4db46d6086f9588dbef32c40ae6e651d8f4468c669b8eee42",
+        "masks/performance/curiosity/012.png": "255a421d580f56dcbd13f9c2ac0e93e2ccd38584c7be61a44c3988b9cf8d4648"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.11,
+          "right": 0.11
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.1920928955078125e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/013": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.035,
+          "squash": 1.035,
+          "rise": 0.11,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.11,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.11,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/013.png",
+        "performance/unlit/curiosity/013.png",
+        "masks/performance/curiosity/013.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/013.png": "0b101e16ede2894ded483e522c14eba3380a68431ac649cff364e3020b7eec9f",
+        "performance/unlit/curiosity/013.png": "24458088c33cc0f4db46d6086f9588dbef32c40ae6e651d8f4468c669b8eee42",
+        "masks/performance/curiosity/013.png": "255a421d580f56dcbd13f9c2ac0e93e2ccd38584c7be61a44c3988b9cf8d4648"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.11,
+          "right": 0.11
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.1920928955078125e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/014": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.06,
+          "squash": 0.92,
+          "rise": 0,
+          "shift": -0.04
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/014.png",
+        "performance/unlit/curiosity/014.png",
+        "masks/performance/curiosity/014.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/014.png": "9dd53336857218aa81ccabf88b99db509bde78610110e01162b4eaf3e7723997",
+        "performance/unlit/curiosity/014.png": "d47fe25fa60740c34dd2ae1c65d8aa6ba0aafad021b9923c09a0e8f98de3607d",
+        "masks/performance/curiosity/014.png": "e61c9f3c8a02f4406f2137c7b5c6d020c348f14a3ebc6e8469cb91fb638b5508"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.3328003749250113e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/015": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.06,
+          "squash": 0.92,
+          "rise": 0,
+          "shift": -0.04
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/015.png",
+        "performance/unlit/curiosity/015.png",
+        "masks/performance/curiosity/015.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/015.png": "9dd53336857218aa81ccabf88b99db509bde78610110e01162b4eaf3e7723997",
+        "performance/unlit/curiosity/015.png": "d47fe25fa60740c34dd2ae1c65d8aa6ba0aafad021b9923c09a0e8f98de3607d",
+        "masks/performance/curiosity/015.png": "e61c9f3c8a02f4406f2137c7b5c6d020c348f14a3ebc6e8469cb91fb638b5508"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.3328003749250113e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/016": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.06,
+          "squash": 0.92,
+          "rise": 0,
+          "shift": -0.04
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/016.png",
+        "performance/unlit/curiosity/016.png",
+        "masks/performance/curiosity/016.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/016.png": "9dd53336857218aa81ccabf88b99db509bde78610110e01162b4eaf3e7723997",
+        "performance/unlit/curiosity/016.png": "d47fe25fa60740c34dd2ae1c65d8aa6ba0aafad021b9923c09a0e8f98de3607d",
+        "masks/performance/curiosity/016.png": "e61c9f3c8a02f4406f2137c7b5c6d020c348f14a3ebc6e8469cb91fb638b5508"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.3328003749250113e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/017": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.06,
+          "squash": 0.92,
+          "rise": 0,
+          "shift": -0.04
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/017.png",
+        "performance/unlit/curiosity/017.png",
+        "masks/performance/curiosity/017.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/017.png": "9dd53336857218aa81ccabf88b99db509bde78610110e01162b4eaf3e7723997",
+        "performance/unlit/curiosity/017.png": "d47fe25fa60740c34dd2ae1c65d8aa6ba0aafad021b9923c09a0e8f98de3607d",
+        "masks/performance/curiosity/017.png": "e61c9f3c8a02f4406f2137c7b5c6d020c348f14a3ebc6e8469cb91fb638b5508"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.3328003749250113e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/018": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.06,
+          "squash": 0.92,
+          "rise": 0,
+          "shift": -0.04
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/018.png",
+        "performance/unlit/curiosity/018.png",
+        "masks/performance/curiosity/018.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/018.png": "9dd53336857218aa81ccabf88b99db509bde78610110e01162b4eaf3e7723997",
+        "performance/unlit/curiosity/018.png": "d47fe25fa60740c34dd2ae1c65d8aa6ba0aafad021b9923c09a0e8f98de3607d",
+        "masks/performance/curiosity/018.png": "e61c9f3c8a02f4406f2137c7b5c6d020c348f14a3ebc6e8469cb91fb638b5508"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.3328003749250113e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/019": {
+      "parameters": {
+        "pose": {
+          "happy": 0.65
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.8,
+        "body": {
+          "lean": -0.06,
+          "squash": 0.92,
+          "rise": 0,
+          "shift": -0.04
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/019.png",
+        "performance/unlit/curiosity/019.png",
+        "masks/performance/curiosity/019.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/019.png": "9dd53336857218aa81ccabf88b99db509bde78610110e01162b4eaf3e7723997",
+        "performance/unlit/curiosity/019.png": "d47fe25fa60740c34dd2ae1c65d8aa6ba0aafad021b9923c09a0e8f98de3607d",
+        "masks/performance/curiosity/019.png": "e61c9f3c8a02f4406f2137c7b5c6d020c348f14a3ebc6e8469cb91fb638b5508"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.3328003749250113e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/020": {
+      "parameters": {
+        "pose": {
+          "happy": 0.525
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": 0.26,
+        "body": {
+          "lean": -0.06,
+          "squash": 0.92,
+          "rise": 0,
+          "shift": -0.04
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/020.png",
+        "performance/unlit/curiosity/020.png",
+        "masks/performance/curiosity/020.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/020.png": "e5b2945115f3dda1f2a65d26f17ff62144652ef30f1fbbdf4ec2d65b1db69293",
+        "performance/unlit/curiosity/020.png": "2416acc96a751302398f0e6cc2d053908e5ed196839e6efa2be66c6c681c996e",
+        "masks/performance/curiosity/020.png": "1dc9b2fb63f0690b9c7b7a327d9acc44e9eea32e9d5de60ea048d891b40f5d4f"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.3328003749250113e-07,
+        "crestDeterminant": 0.9999999403953552
+      }
+    },
+    "curiosity/021": {
+      "parameters": {
+        "pose": {
+          "happy": 0.4
+        },
+        "eyeScale": 1.15,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0.14,
+        "crestTilt": -0.28,
+        "body": {
+          "lean": -0.06,
+          "squash": 0.92,
+          "rise": 0,
+          "shift": -0.04
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/021.png",
+        "performance/unlit/curiosity/021.png",
+        "masks/performance/curiosity/021.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/021.png": "09275b69c37d181f2192e53026de0b6113f2054753c18706054f4fa441abacf5",
+        "performance/unlit/curiosity/021.png": "95e186492f5dfafdc83c6bfea7e3f173131164d3a4aea1de28605a751c9dbb47",
+        "masks/performance/curiosity/021.png": "da4926b04340ac4c67792cff98cad473e1965ec84c0652a85ac43964a354b838"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.1920928955078125e-07,
+        "crestDeterminant": 0.9999998807907104
+      }
+    },
+    "curiosity/022": {
+      "parameters": {
+        "pose": {
+          "happy": 0.4
+        },
+        "eyeScale": 1.125,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0.14,
+        "crestTilt": -0.28,
+        "body": {
+          "lean": -0.045,
+          "squash": 0.9525,
+          "rise": 0,
+          "shift": -0.025
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/022.png",
+        "performance/unlit/curiosity/022.png",
+        "masks/performance/curiosity/022.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/022.png": "b791e4be6df705089187df3c089065790b3511219cfc0c6258dab659bfa75815",
+        "performance/unlit/curiosity/022.png": "a0a8320e5af983fdf6cac3be1f2762478804eafd55e5964c05544b47cd426505",
+        "masks/performance/curiosity/022.png": "360fa47a5ef2d73e89a14fbee3083e2ad878415a6f61319a1cd6ac317f2a9335"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.4901161193847656e-08,
+        "crestDeterminant": 0.9999998807907104
+      }
+    },
+    "curiosity/023": {
+      "parameters": {
+        "pose": {
+          "happy": 0.4
+        },
+        "eyeScale": 1.1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0.14,
+        "crestTilt": -0.28,
+        "body": {
+          "lean": -0.03,
+          "squash": 0.985,
+          "rise": 0,
+          "shift": -0.01
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/023.png",
+        "performance/unlit/curiosity/023.png",
+        "masks/performance/curiosity/023.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/023.png": "0a55d34cb0da2ce30666edb2d2aa8b8e6381e405cbbd41d52a50aa5bbdc3e449",
+        "performance/unlit/curiosity/023.png": "faa9feca8de6d715b9160960526ca6fee2f9394093aa0e2fdda58532314ecc9f",
+        "masks/performance/curiosity/023.png": "d4127a8c00edc59c526a3831688d13261fe9dea96c55165d7f2ab44daa331099"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 5.960464477539063e-08,
+        "crestDeterminant": 0.9999998807907104
+      }
+    },
+    "curiosity/024": {
+      "parameters": {
+        "pose": {
+          "happy": 0.2
+        },
+        "eyeScale": 1.09,
+        "crescent": 0,
+        "gaze": -0.055,
+        "gazeUp": 0.14,
+        "crestTilt": -0.14,
+        "body": {
+          "lean": -0.015,
+          "squash": 0.9925,
+          "rise": 0,
+          "shift": -0.005
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/024.png",
+        "performance/unlit/curiosity/024.png",
+        "masks/performance/curiosity/024.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/024.png": "5fbe9d4682801e2ec8c92de4f573a60be7992061ab074bca11f0f17871204176",
+        "performance/unlit/curiosity/024.png": "0baf660a0097b445cbbef5bd5265055aa7f51c411bdf2779ca8d3b88a09eaa06",
+        "masks/performance/curiosity/024.png": "222e84282dc60ef0302495db09153fe129cac5a6150ca9c20783ab56116236da"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.228781230931777e-07,
+        "crestDeterminant": 0.9999998807907104
+      }
+    },
+    "curiosity/025": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": -0.04,
+        "gazeUp": 0.14,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/025.png",
+        "performance/unlit/curiosity/025.png",
+        "masks/performance/curiosity/025.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/025.png": "f533a5ca420ca3ad67b88e08b1ee08a140597a719342749dd558988a93b372fe",
+        "performance/unlit/curiosity/025.png": "c0faee2c4d8f9eba18d827e90e93877b67c160c63753ab7690ab3085a7f84490",
+        "masks/performance/curiosity/025.png": "10c6cfc92197dfff7043d0c865256c71b12df775f4f27b32eb6113475e9855f4"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/026": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": -0.04,
+        "gazeUp": 0.14,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/026.png",
+        "performance/unlit/curiosity/026.png",
+        "masks/performance/curiosity/026.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/026.png": "f533a5ca420ca3ad67b88e08b1ee08a140597a719342749dd558988a93b372fe",
+        "performance/unlit/curiosity/026.png": "c0faee2c4d8f9eba18d827e90e93877b67c160c63753ab7690ab3085a7f84490",
+        "masks/performance/curiosity/026.png": "10c6cfc92197dfff7043d0c865256c71b12df775f4f27b32eb6113475e9855f4"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/027": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": -0.04,
+        "gazeUp": 0.14,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/027.png",
+        "performance/unlit/curiosity/027.png",
+        "masks/performance/curiosity/027.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/027.png": "f533a5ca420ca3ad67b88e08b1ee08a140597a719342749dd558988a93b372fe",
+        "performance/unlit/curiosity/027.png": "c0faee2c4d8f9eba18d827e90e93877b67c160c63753ab7690ab3085a7f84490",
+        "masks/performance/curiosity/027.png": "10c6cfc92197dfff7043d0c865256c71b12df775f4f27b32eb6113475e9855f4"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/028": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1.04,
+        "crescent": 0,
+        "gaze": -0.02,
+        "gazeUp": 0.07,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/028.png",
+        "performance/unlit/curiosity/028.png",
+        "masks/performance/curiosity/028.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/028.png": "371250b77c54722540a1e34e07f50c46ba135b3dd7561e289e0771bc9cac7eb2",
+        "performance/unlit/curiosity/028.png": "bb308e645e2a148f2b045bebb5956578c26a06ea9f73d8a13d1bbbccc9252f0e",
+        "masks/performance/curiosity/028.png": "a16fc0f373503f1fdb7a3d843a53edb8191addb2d5037fc477c586df86e7a335"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/029": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/029.png",
+        "performance/unlit/curiosity/029.png",
+        "masks/performance/curiosity/029.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/029.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/curiosity/029.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/curiosity/029.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/030": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 0.12,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/030.png",
+        "performance/unlit/curiosity/030.png",
+        "masks/performance/curiosity/030.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/030.png": "cc8db333577db37d08f490000ee078ddcf3b4936f2e73d29e5775171060ef721",
+        "performance/unlit/curiosity/030.png": "596d64b8b0e607eb27be5cb5878ecdce9f8c01568fd24938e17ae70a85b857fd",
+        "masks/performance/curiosity/030.png": "c4f2732d22414039f4f9e114a47608614f2ee62269b29a2d61582873a2d3ce07"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/031": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 0.56,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/031.png",
+        "performance/unlit/curiosity/031.png",
+        "masks/performance/curiosity/031.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/031.png": "70b69ed6aecf43e91c58e8c67707a7cfc5fe747624a2104e5fef5c764a5cae5e",
+        "performance/unlit/curiosity/031.png": "d111fd57f032cf4b019645cb1e0f34d3e9c9b748429228a339bae092ec7ff29f",
+        "masks/performance/curiosity/031.png": "54203d62fc2174392a07f16e7a43163f2359f0e407c192310ab00d6aa9e66fd0"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/032": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/032.png",
+        "performance/unlit/curiosity/032.png",
+        "masks/performance/curiosity/032.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/032.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/curiosity/032.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/curiosity/032.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/033": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/033.png",
+        "performance/unlit/curiosity/033.png",
+        "masks/performance/curiosity/033.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/033.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/curiosity/033.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/curiosity/033.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/034": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/034.png",
+        "performance/unlit/curiosity/034.png",
+        "masks/performance/curiosity/034.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/034.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/curiosity/034.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/curiosity/034.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "curiosity/035": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/curiosity/035.png",
+        "performance/unlit/curiosity/035.png",
+        "masks/performance/curiosity/035.png"
+      ],
+      "files": {
+        "performance/lit/curiosity/035.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/curiosity/035.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/curiosity/035.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/000": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.012,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.065,
+            "stride": 0.02,
+            "roll": 0.11
+          },
+          "right": {
+            "lift": 0.105,
+            "stride": -0.02,
+            "roll": -0.1
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/000.png",
+        "performance/unlit/lift/000.png",
+        "masks/performance/lift/000.png"
+      ],
+      "files": {
+        "performance/lit/lift/000.png": "a097c1431890fa271c9d58b5fd84214497073c129492a8768f3d946f43530de0",
+        "performance/unlit/lift/000.png": "eca92ac2ccf6059c8fe416684b0e8993d842de107ff6259cd1755351848ce71d",
+        "masks/performance/lift/000.png": "cb32b04c7724ce5d8972ec093f73249ef92e7c1fe2ae8390ba8aaec34ef9a925"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.06500285187173545,
+          "right": 0.1050044714239472
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.4901161193847656e-08,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/001": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.009908,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.064128,
+            "stride": 0.016514,
+            "roll": 0.090826
+          },
+          "right": {
+            "lift": 0.105872,
+            "stride": -0.016514,
+            "roll": -0.082569
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/001.png",
+        "performance/unlit/lift/001.png",
+        "masks/performance/lift/001.png"
+      ],
+      "files": {
+        "performance/lit/lift/001.png": "b361e89fca8530f796715206944de5fa4536f0fe3ce25a8a853a25debbe43191",
+        "performance/unlit/lift/001.png": "de6f80c8bc18bfe7aa7d3ba82a305495a8409b6b0dcfcb61625d3f24cb07d925",
+        "masks/performance/lift/001.png": "7a484e0fe9106cc383b53deca8aa01f20fb5f859f32fd9af1a290727d1eeb32e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.06415945646210779,
+          "right": 0.10589417911797393
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0000000596046483
+      }
+    },
+    "lift/002": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.004787,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.061995,
+            "stride": 0.007979,
+            "roll": 0.043884
+          },
+          "right": {
+            "lift": 0.108005,
+            "stride": -0.007979,
+            "roll": -0.039895
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/002.png",
+        "performance/unlit/lift/002.png",
+        "masks/performance/lift/002.png"
+      ],
+      "files": {
+        "performance/lit/lift/002.png": "37c03709826249513d362aeb59c3bc31429e6e1ae83f0400449408ca575a8b26",
+        "performance/unlit/lift/002.png": "633632d612a7b8aee806d9d006287395ecde10c561dafe3b0aacf80cc9fa35b2",
+        "masks/performance/lift/002.png": "ac58765b0e596b96f4f6a5f865d7c3643fced6406f4ba55dce8dcf7dc73987f2"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.062006374357686654,
+          "right": 0.10800840123371024
+        },
+        "bodyDeterminant": 0.9999998807907104,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/003": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.001632,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.05932,
+            "stride": -0.00272,
+            "roll": -0.014959
+          },
+          "right": {
+            "lift": 0.11068,
+            "stride": 0.00272,
+            "roll": 0.013599
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/003.png",
+        "performance/unlit/lift/003.png",
+        "masks/performance/lift/003.png"
+      ],
+      "files": {
+        "performance/lit/lift/003.png": "e6cf42f389197103bde31ba2110a3ee7432660431cdaefa3b64dd29bcf60eb20",
+        "performance/unlit/lift/003.png": "0fa5a6f238e68e7a7a2745ac37d92096c3030ea819a94f2095fb81a2ba80cb7b",
+        "masks/performance/lift/003.png": "e5ad7ac99443f018ea4504addfb7efcbabeef2544ae616de410c5bbbc11fc85d"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.05935289227134335,
+          "right": 0.11070718369089041
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/004": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.007618,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.056826,
+            "stride": -0.012697,
+            "roll": -0.069835
+          },
+          "right": {
+            "lift": 0.113174,
+            "stride": 0.012697,
+            "roll": 0.063486
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/004.png",
+        "performance/unlit/lift/004.png",
+        "masks/performance/lift/004.png"
+      ],
+      "files": {
+        "performance/lit/lift/004.png": "be89abe662d0f5a5615bad950f0d6fa0cc44b4d0314cd5f5a31216dd70df5234",
+        "performance/unlit/lift/004.png": "8dd1af44f24b48ddb3a80192ac1d1deaa085a2794161476a8f0604215fb64fbe",
+        "masks/performance/lift/004.png": "3ee469a56e6940d5618bf561435201aa1443a0acfcf5524cca0b83345c357dab"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.05682602037399993,
+          "right": 0.11318064904874675
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/005": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.011441,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.055233,
+            "stride": -0.019068,
+            "roll": -0.104876
+          },
+          "right": {
+            "lift": 0.114767,
+            "stride": 0.019068,
+            "roll": 0.095342
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/005.png",
+        "performance/unlit/lift/005.png",
+        "masks/performance/lift/005.png"
+      ],
+      "files": {
+        "performance/lit/lift/005.png": "a76a2a75804c330673779d0933bc6f1de424a8b2f173065292546565847e591a",
+        "performance/unlit/lift/005.png": "4cd00d09b3e6815b94efbb542c04981bae983f7223c372f8b2c0a345775625d4",
+        "masks/performance/lift/005.png": "3e47ff85ae4541c88eefc35ecc89042dddbf15b4ca85c80402450e2aa91c7c39"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0552330661167065,
+          "right": 0.11478212635341212
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/006": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.011441,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.055233,
+            "stride": -0.019068,
+            "roll": -0.104876
+          },
+          "right": {
+            "lift": 0.114767,
+            "stride": 0.019068,
+            "roll": 0.095342
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/006.png",
+        "performance/unlit/lift/006.png",
+        "masks/performance/lift/006.png"
+      ],
+      "files": {
+        "performance/lit/lift/006.png": "a76a2a75804c330673779d0933bc6f1de424a8b2f173065292546565847e591a",
+        "performance/unlit/lift/006.png": "4cd00d09b3e6815b94efbb542c04981bae983f7223c372f8b2c0a345775625d4",
+        "masks/performance/lift/006.png": "3e47ff85ae4541c88eefc35ecc89042dddbf15b4ca85c80402450e2aa91c7c39"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0552330661167065,
+          "right": 0.11478212635341212
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/007": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.007618,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.056826,
+            "stride": -0.012697,
+            "roll": -0.069835
+          },
+          "right": {
+            "lift": 0.113174,
+            "stride": 0.012697,
+            "roll": 0.063486
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/007.png",
+        "performance/unlit/lift/007.png",
+        "masks/performance/lift/007.png"
+      ],
+      "files": {
+        "performance/lit/lift/007.png": "be89abe662d0f5a5615bad950f0d6fa0cc44b4d0314cd5f5a31216dd70df5234",
+        "performance/unlit/lift/007.png": "8dd1af44f24b48ddb3a80192ac1d1deaa085a2794161476a8f0604215fb64fbe",
+        "masks/performance/lift/007.png": "3ee469a56e6940d5618bf561435201aa1443a0acfcf5524cca0b83345c357dab"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.05682602037399993,
+          "right": 0.11318064904874675
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/008": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.001632,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.05932,
+            "stride": -0.00272,
+            "roll": -0.014959
+          },
+          "right": {
+            "lift": 0.11068,
+            "stride": 0.00272,
+            "roll": 0.013599
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/008.png",
+        "performance/unlit/lift/008.png",
+        "masks/performance/lift/008.png"
+      ],
+      "files": {
+        "performance/lit/lift/008.png": "e6cf42f389197103bde31ba2110a3ee7432660431cdaefa3b64dd29bcf60eb20",
+        "performance/unlit/lift/008.png": "0fa5a6f238e68e7a7a2745ac37d92096c3030ea819a94f2095fb81a2ba80cb7b",
+        "masks/performance/lift/008.png": "e5ad7ac99443f018ea4504addfb7efcbabeef2544ae616de410c5bbbc11fc85d"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.05935289227134335,
+          "right": 0.11070718369089041
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/009": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.004787,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.061995,
+            "stride": 0.007979,
+            "roll": 0.043884
+          },
+          "right": {
+            "lift": 0.108005,
+            "stride": -0.007979,
+            "roll": -0.039895
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/009.png",
+        "performance/unlit/lift/009.png",
+        "masks/performance/lift/009.png"
+      ],
+      "files": {
+        "performance/lit/lift/009.png": "37c03709826249513d362aeb59c3bc31429e6e1ae83f0400449408ca575a8b26",
+        "performance/unlit/lift/009.png": "633632d612a7b8aee806d9d006287395ecde10c561dafe3b0aacf80cc9fa35b2",
+        "masks/performance/lift/009.png": "ac58765b0e596b96f4f6a5f865d7c3643fced6406f4ba55dce8dcf7dc73987f2"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.062006374357686654,
+          "right": 0.10800840123371024
+        },
+        "bodyDeterminant": 0.9999998807907104,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "lift/010": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.009908,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.064128,
+            "stride": 0.016514,
+            "roll": 0.090826
+          },
+          "right": {
+            "lift": 0.105872,
+            "stride": -0.016514,
+            "roll": -0.082569
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/010.png",
+        "performance/unlit/lift/010.png",
+        "masks/performance/lift/010.png"
+      ],
+      "files": {
+        "performance/lit/lift/010.png": "b361e89fca8530f796715206944de5fa4536f0fe3ce25a8a853a25debbe43191",
+        "performance/unlit/lift/010.png": "de6f80c8bc18bfe7aa7d3ba82a305495a8409b6b0dcfcb61625d3f24cb07d925",
+        "masks/performance/lift/010.png": "7a484e0fe9106cc383b53deca8aa01f20fb5f859f32fd9af1a290727d1eeb32e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.06415945646210779,
+          "right": 0.10589417911797393
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0000000596046483
+      }
+    },
+    "lift/011": {
+      "parameters": {
+        "pose": {
+          "happy": 0.12
+        },
+        "eyeScale": 1.08,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": -0.035,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.012,
+          "squash": 1.015,
+          "rise": 0.18,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.065,
+            "stride": 0.02,
+            "roll": 0.11
+          },
+          "right": {
+            "lift": 0.105,
+            "stride": -0.02,
+            "roll": -0.1
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/lift/011.png",
+        "performance/unlit/lift/011.png",
+        "masks/performance/lift/011.png"
+      ],
+      "files": {
+        "performance/lit/lift/011.png": "a097c1431890fa271c9d58b5fd84214497073c129492a8768f3d946f43530de0",
+        "performance/unlit/lift/011.png": "eca92ac2ccf6059c8fe416684b0e8993d842de107ff6259cd1755351848ce71d",
+        "masks/performance/lift/011.png": "cb32b04c7724ce5d8972ec093f73249ef92e7c1fe2ae8390ba8aaec34ef9a925"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.06500285187173545,
+          "right": 0.1050044714239472
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.4901161193847656e-08,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/000.png",
+        "performance/unlit/peek/000.png",
+        "masks/performance/peek/000.png"
+      ],
+      "files": {
+        "performance/lit/peek/000.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/peek/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/peek/000.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/001": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.060537,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/001.png",
+        "performance/unlit/peek/001.png",
+        "masks/performance/peek/001.png"
+      ],
+      "files": {
+        "performance/lit/peek/001.png": "730238cc1be3e84d8c7fb59c6ad8be812ae6a9eed0eae35ca75019a00f1eefd8",
+        "performance/unlit/peek/001.png": "1d1b5b5f6d80dd1ffa255fdda2baaf9b57bdaa4b9a67dd4d4b69a9ee388be653",
+        "masks/performance/peek/001.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/002": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/002.png",
+        "performance/unlit/peek/002.png",
+        "masks/performance/peek/002.png"
+      ],
+      "files": {
+        "performance/lit/peek/002.png": "54ef8a169ff9f25b1a748c8624871009fc25878e6e6880d64905ebd0857a4e67",
+        "performance/unlit/peek/002.png": "842e3dc90cd08cbc2b5a097c5ea197428d51a66dfedbeca14fddf35baf18c986",
+        "masks/performance/peek/002.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/003": {
+      "parameters": {
+        "pose": {
+          "confused": 0.017843
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.003505,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.002868
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/003.png",
+        "performance/unlit/peek/003.png",
+        "masks/performance/peek/003.png"
+      ],
+      "files": {
+        "performance/lit/peek/003.png": "8237571550a7c79ecff40102abd660e892ab51bb613210d98f462123bd4e1141",
+        "performance/unlit/peek/003.png": "747fff6cadced4a9636130595ba1972c4ad3c43c49b7151b8503fce0cfeca0f0",
+        "masks/performance/peek/003.png": "9feb46963aea67583f11cb48e27dcb24e894122ccdd265ead1652d5d2e6cccf0"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 0.9999998807907247
+      }
+    },
+    "peek/004": {
+      "parameters": {
+        "pose": {
+          "confused": 0.156122
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.030667,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.025091
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/004.png",
+        "performance/unlit/peek/004.png",
+        "masks/performance/peek/004.png"
+      ],
+      "files": {
+        "performance/lit/peek/004.png": "7b259c9b7f834e1e180af68abf78dcd639abc5797065339819d0ff0259bb4edd",
+        "performance/unlit/peek/004.png": "fd437d1515a2b7a60994c7221026c6c8a8fada134f414a91779e3adf85bee4da",
+        "masks/performance/peek/004.png": "439d720ca43143ecd5112c09ee041cbbcc5e79ffc59963c9ed1add6cf2b94a4e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 7.450580596923828e-09,
+        "crestDeterminant": 0.9999998807907104
+      }
+    },
+    "peek/005": {
+      "parameters": {
+        "pose": {
+          "confused": 0.275284
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.054074,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.044242
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/005.png",
+        "performance/unlit/peek/005.png",
+        "masks/performance/peek/005.png"
+      ],
+      "files": {
+        "performance/lit/peek/005.png": "475050ba98bcae5f3af453373451f00e74f2e56aeaa972be93f4e46b37e9efff",
+        "performance/unlit/peek/005.png": "85c2bfbc74ccb4eff50cbdc56e0fb9c3965228f720469bfd069221f7bb20196b",
+        "masks/performance/peek/005.png": "88a848ea3581273a02b7f8967d7de4afa5e329aa48f44b83657c37c391506fae"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/006": {
+      "parameters": {
+        "pose": {
+          "confused": 0.28
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.055,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.045
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/006.png",
+        "performance/unlit/peek/006.png",
+        "masks/performance/peek/006.png"
+      ],
+      "files": {
+        "performance/lit/peek/006.png": "7cce7493634c97bbbcbe5ae0ed83ae48527445b83cf1427a10727368a5b73469",
+        "performance/unlit/peek/006.png": "094e0f6710e234550c5c46bf17b7102dd0323cdce7e191f05ecdbe5eae476689",
+        "masks/performance/peek/006.png": "14b8b1c9b241199fdaa7002fc3638b466f451b7582e09922bf6835ed997067b8"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.4901161193847656e-08,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/007": {
+      "parameters": {
+        "pose": {
+          "confused": 0.28
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.055,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.045
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/007.png",
+        "performance/unlit/peek/007.png",
+        "masks/performance/peek/007.png"
+      ],
+      "files": {
+        "performance/lit/peek/007.png": "7cce7493634c97bbbcbe5ae0ed83ae48527445b83cf1427a10727368a5b73469",
+        "performance/unlit/peek/007.png": "094e0f6710e234550c5c46bf17b7102dd0323cdce7e191f05ecdbe5eae476689",
+        "masks/performance/peek/007.png": "14b8b1c9b241199fdaa7002fc3638b466f451b7582e09922bf6835ed997067b8"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.4901161193847656e-08,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/008": {
+      "parameters": {
+        "pose": {
+          "confused": 0.264065
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.058845,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.051813,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.04261
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/008.png",
+        "performance/unlit/peek/008.png",
+        "masks/performance/peek/008.png"
+      ],
+      "files": {
+        "performance/lit/peek/008.png": "f8782ea8d7135dbaa02886ab5682a93eb650524917ea51a2ee73d54f6478478f",
+        "performance/unlit/peek/008.png": "9721a5e4d6e9f79bd861c0c12f33656ddceae0b9a8a7e0f8fd3d7a7d4103d039",
+        "masks/performance/peek/008.png": "ae700b1c9c86b253f59e285df311484b6c49a6ffc06035a0f435657b89a02ab9"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/009": {
+      "parameters": {
+        "pose": {
+          "confused": 0.19019
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.007133,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.037038,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.031528
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/009.png",
+        "performance/unlit/peek/009.png",
+        "masks/performance/peek/009.png"
+      ],
+      "files": {
+        "performance/lit/peek/009.png": "460d3ffacc3a2b3d097d29d3969af71229034b5cf8ee1ce1cb35adc1fd3b5357",
+        "performance/unlit/peek/009.png": "77eb24480ce009190477d1431b4a443fe35ec1dd36608491b3944c462731ad85",
+        "masks/performance/peek/009.png": "b9c03e46c38874732f4fb8e58771230ae916dff40a1b73cfbeccb19a9617e8a3"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/010": {
+      "parameters": {
+        "pose": {
+          "confused": 0.14876
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.03074,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.02574
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/010.png",
+        "performance/unlit/peek/010.png",
+        "masks/performance/peek/010.png"
+      ],
+      "files": {
+        "performance/lit/peek/010.png": "f86889c0582d08e40a6bba99835b395bde99f771ac9c2cee8cb6e8173a1a693b",
+        "performance/unlit/peek/010.png": "662d585d38d2298d3473b2122511981b376b2efedc7f83750d07c9adb85d716d",
+        "masks/performance/peek/010.png": "6eea5a4b1715b4ba0948dca4db2053ead5a89610c42b4b22abd3ec48a94b0ed9"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/011": {
+      "parameters": {
+        "pose": {
+          "confused": 0.073015
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.020411,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.015411
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/011.png",
+        "performance/unlit/peek/011.png",
+        "masks/performance/peek/011.png"
+      ],
+      "files": {
+        "performance/lit/peek/011.png": "ab3f68b8dcd7670d832bd48841c301f5aab3ab6da0e51f35771e8c3da5bf7dba",
+        "performance/unlit/peek/011.png": "a0f863d05e33389eee6b466f9c0dd3f3d914847aa487f1b2b7d4026f99e3fb1b",
+        "masks/performance/peek/011.png": "5feef88bfda5eec9cf50035641c50c5192af0a1a887e3a508e18d1431ce81904"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/012": {
+      "parameters": {
+        "pose": {
+          "confused": 0.021582
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.006166,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.004625
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/012.png",
+        "performance/unlit/peek/012.png",
+        "masks/performance/peek/012.png"
+      ],
+      "files": {
+        "performance/lit/peek/012.png": "41934ae14e31e0e55dd4bf134cae7a3f596533e04d0b2a0a4e155df7c086e452",
+        "performance/unlit/peek/012.png": "9a05ac0be1375410ee71b3fe621f49aba7bf05c492bd7e0addcf0d416297ac42",
+        "masks/performance/peek/012.png": "d3401f0d49a53f4cc4a1ea1f18b42ca1c16ac784798fb0ab710d70a3521605a3"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek/013": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek/013.png",
+        "performance/unlit/peek/013.png",
+        "masks/performance/peek/013.png"
+      ],
+      "files": {
+        "performance/lit/peek/013.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/peek/013.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/peek/013.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/000.png",
+        "performance/unlit/peek-left/000.png",
+        "masks/performance/peek-left/000.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/000.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/peek-left/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/peek-left/000.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/001": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.060537,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/001.png",
+        "performance/unlit/peek-left/001.png",
+        "masks/performance/peek-left/001.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/001.png": "827e6da4ca851b3e703b81299d2ba5ca185441e5d9b8a3a9a78f0e1c5daf5e93",
+        "performance/unlit/peek-left/001.png": "1f735dd47d7c53ab817279b69e23f1399445d724d91e19dd1cadd81ffe115bb3",
+        "masks/performance/peek-left/001.png": "bdf7c7aa0983a6461fee671dcbc492eb7baa17fef7447bbe12d2a58e9650480e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/002": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/002.png",
+        "performance/unlit/peek-left/002.png",
+        "masks/performance/peek-left/002.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/002.png": "3106926d927132f486725e475c59a0f455cb7a2199117ed809824497625079dd",
+        "performance/unlit/peek-left/002.png": "836f4285d3ee30ced7054b977f57653ece3932e328c99c00735443d4fd92947b",
+        "masks/performance/peek-left/002.png": "cf0b6154fcadf863fe0fd8df00deb6fef3f09f0ac62d437b11d759c676899007"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/003": {
+      "parameters": {
+        "pose": {
+          "confused": 0.017843
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.003505,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.002868
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/003.png",
+        "performance/unlit/peek-left/003.png",
+        "masks/performance/peek-left/003.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/003.png": "ad503be3aa98d5a5d01a55fbd14c1b4bc95a82412f7b1ff118478b96e21c987c",
+        "performance/unlit/peek-left/003.png": "b7c7f9b11a0bb2f974fd0fe95cad21d2ff25a6b593e9a27720b35b0c49a58142",
+        "masks/performance/peek-left/003.png": "807f89bc783823b21e39d4247d1e43caabe6625693fec21795e4a1fe61c62dee"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/004": {
+      "parameters": {
+        "pose": {
+          "confused": 0.156122
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.030667,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.025091
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/004.png",
+        "performance/unlit/peek-left/004.png",
+        "masks/performance/peek-left/004.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/004.png": "3d32cbc0589c253945f5194432c126d847a88988047b76b395b9560839862e14",
+        "performance/unlit/peek-left/004.png": "26ac8ecda6e1d179bbe73150d46df9afafd1d5e1ac6f8de46a1f09d2110177fd",
+        "masks/performance/peek-left/004.png": "690960c28934bccc7ff4005ee464f7aa948d8547663abbbf0932c45daf591c8d"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.4901161193847656e-08,
+        "crestDeterminant": 0.9999998807907104
+      }
+    },
+    "peek-left/005": {
+      "parameters": {
+        "pose": {
+          "confused": 0.275284
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.054074,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.044242
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/005.png",
+        "performance/unlit/peek-left/005.png",
+        "masks/performance/peek-left/005.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/005.png": "9156839f488490d50737ebfdfe1893a7585d45d027940a1776b381e4d6620e77",
+        "performance/unlit/peek-left/005.png": "d306f1db8e747ef89f514a6c3d09f8fbc5cdbac1c9011b5b92e15d90571ae80e",
+        "masks/performance/peek-left/005.png": "3c2ae52d74779970e5133d54236345943280f007ece8ddb0e08e6f1ba5e6625f"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/006": {
+      "parameters": {
+        "pose": {
+          "confused": 0.28
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.055,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.045
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/006.png",
+        "performance/unlit/peek-left/006.png",
+        "masks/performance/peek-left/006.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/006.png": "f2999b14c4bdf1a1467f2fe10a58aa5331a5babd7eef1df15fb813ce559611f1",
+        "performance/unlit/peek-left/006.png": "a2f5e6c387f8eb799a0143530d2057215e94d62b8e338c67fa4f549aab61661b",
+        "masks/performance/peek-left/006.png": "f400ca40a1db09f793d35d9b9e20580f00bc414287dba329b09a49690258f834"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 2.9802322387695312e-08,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/007": {
+      "parameters": {
+        "pose": {
+          "confused": 0.28
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.07,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.055,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.045
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/007.png",
+        "performance/unlit/peek-left/007.png",
+        "masks/performance/peek-left/007.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/007.png": "f2999b14c4bdf1a1467f2fe10a58aa5331a5babd7eef1df15fb813ce559611f1",
+        "performance/unlit/peek-left/007.png": "a2f5e6c387f8eb799a0143530d2057215e94d62b8e338c67fa4f549aab61661b",
+        "masks/performance/peek-left/007.png": "f400ca40a1db09f793d35d9b9e20580f00bc414287dba329b09a49690258f834"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 2.9802322387695312e-08,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/008": {
+      "parameters": {
+        "pose": {
+          "confused": 0.264065
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.058845,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.051813,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.04261
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/008.png",
+        "performance/unlit/peek-left/008.png",
+        "masks/performance/peek-left/008.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/008.png": "5547f57e75ce6a0276344a1f045aabb5e0aa78f3e42f1fbdd9e51e31ec06dfa4",
+        "performance/unlit/peek-left/008.png": "ac263729a48b66f6eb61b116971e521e4b08ac3670f2a82159030bb559c28072",
+        "masks/performance/peek-left/008.png": "464fd0cdfbac1cbd800b6a490130f6bf23c7b98f090717df90c45982c9239bd4"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/009": {
+      "parameters": {
+        "pose": {
+          "confused": 0.19019
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": -0.007133,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.037038,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.031528
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/009.png",
+        "performance/unlit/peek-left/009.png",
+        "masks/performance/peek-left/009.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/009.png": "b59021203401c8f03da8e355a6a6dd6cda2fcc060f3b49d13f9d814d91bb2aae",
+        "performance/unlit/peek-left/009.png": "005aa78597ee8e8b71b3742ebdca48e2bfc0a07fed1511fc02405be887ed40fa",
+        "masks/performance/peek-left/009.png": "9048dd7cce44ec23b49dbeb6fad57e3c7df8931988a5f3a93d7f8c3e0ca08a92"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/010": {
+      "parameters": {
+        "pose": {
+          "confused": 0.14876
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.03074,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.02574
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/010.png",
+        "performance/unlit/peek-left/010.png",
+        "masks/performance/peek-left/010.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/010.png": "f46fc41db07834fc0a4cf27c9606ca5bbf88473006cc120ef1f4ffa083933e06",
+        "performance/unlit/peek-left/010.png": "e98a52eca5577b56a90ebb26b33b54496cb3886524dc4a9e087895e0dcea4784",
+        "masks/performance/peek-left/010.png": "5631a2631817be567219ed5924d752ddd667adef8604a566b5dc25f14f222f45"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/011": {
+      "parameters": {
+        "pose": {
+          "confused": 0.073015
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.020411,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.015411
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/011.png",
+        "performance/unlit/peek-left/011.png",
+        "masks/performance/peek-left/011.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/011.png": "25c4a2d059520d6a9f871dbf75c3a7999099f6065b72826b3b3db030966b00f3",
+        "performance/unlit/peek-left/011.png": "374bf3821e4389d3af5c1c22fd0df3d9b30f4204edc410ad87da0a8f74717d5f",
+        "masks/performance/peek-left/011.png": "655aad6517789cbc9de14d54769d58cbf40eb9c89073041d74ce40748fc180b7"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/012": {
+      "parameters": {
+        "pose": {
+          "confused": 0.021582
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.006166,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.004625
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/012.png",
+        "performance/unlit/peek-left/012.png",
+        "masks/performance/peek-left/012.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/012.png": "fba88fefe93bdb273602a57b86f7d714e7ff4fa00273c8495c461cac44d2c73c",
+        "performance/unlit/peek-left/012.png": "ec77f7b850dd723d5c6a52e26ffc398c7c56a7d16256b18e5a6ba5f78e4ca80d",
+        "masks/performance/peek-left/012.png": "559170d22c29174738ab8a082803c97df44eb831a4193d6f7624ddd2638ba90e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "peek-left/013": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/peek-left/013.png",
+        "performance/unlit/peek-left/013.png",
+        "masks/performance/peek-left/013.png"
+      ],
+      "files": {
+        "performance/lit/peek-left/013.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/peek-left/013.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/peek-left/013.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/000.png",
+        "performance/unlit/celebrate/000.png",
+        "masks/performance/celebrate/000.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/000.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/celebrate/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/celebrate/000.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/001": {
+      "parameters": {
+        "pose": {
+          "low": 0.102262
+        },
+        "eyeScale": 0.786954,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.914781,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/001.png",
+        "performance/unlit/celebrate/001.png",
+        "masks/performance/celebrate/001.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/001.png": "c5560a5cd4786114458d5e0d67cdcc8122660347e7032bfca75a244834031dc4",
+        "performance/unlit/celebrate/001.png": "a2c7708df6f86a774eb10383fba8a305dca1a1076eb58699df9ba6ffd5144f05",
+        "masks/performance/celebrate/001.png": "0f5b220af8b168dc03007dc49c193c416daf924a796efe8f3eaaa02328d2f2c6"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/002": {
+      "parameters": {
+        "pose": {
+          "low": 0.105035,
+          "happy": 0.024941
+        },
+        "eyeScale": 0.781177,
+        "crescent": 0.112237,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.003118,
+          "squash": 0.916835,
+          "rise": 0.014965,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.014965,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.014965,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/002.png",
+        "performance/unlit/celebrate/002.png",
+        "masks/performance/celebrate/002.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/002.png": "a86c5cfdee2439ea17b571b7271f5eb48b1e6f2545f948b7cd2951a1eb528650",
+        "performance/unlit/celebrate/002.png": "9f95dd3eb12dce546e4de2a053cf2975f2b5193f9759490dfddcc8ef64055170",
+        "masks/performance/celebrate/002.png": "d840a7ed18b705ea847eb1cd50dcd315fc746e56fe41bb0f25244ef2efd93649"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.014965,
+          "right": 0.014965
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/003": {
+      "parameters": {
+        "pose": {
+          "low": 0.051841,
+          "happy": 0.113599
+        },
+        "eyeScale": 0.891998,
+        "crescent": 0.511195,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.0142,
+          "squash": 0.976679,
+          "rise": 0.068159,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.068159,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.068159,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/003.png",
+        "performance/unlit/celebrate/003.png",
+        "masks/performance/celebrate/003.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/003.png": "549b28a97e6dd4c525b094eee1862e85d87b913e8ef88656c2acde743951e944",
+        "performance/unlit/celebrate/003.png": "e79a451b0771e08c5190086eb28fa1a4e6965a4d7af0b87aa170f07483c8504c",
+        "masks/performance/celebrate/003.png": "5280b2789312c09df6b01ff8ddf3ba2d1989d006be687f524b3fe186db4cfe8b"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.068159,
+          "right": 0.068159
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/004": {
+      "parameters": {
+        "pose": {
+          "low": 0.005546,
+          "happy": 0.190756
+        },
+        "eyeScale": 0.988446,
+        "crescent": 0.858404,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.023845,
+          "squash": 1.028761,
+          "rise": 0.114454,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.114454,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.114454,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/004.png",
+        "performance/unlit/celebrate/004.png",
+        "masks/performance/celebrate/004.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/004.png": "f717c400b7335bd45f661cd00ae95813baacc7ffb8329fd023dd9ef7c1978493",
+        "performance/unlit/celebrate/004.png": "5fcbc7da0bcddb13ea8b8b85c0822f238fdb2770a8ce6155027f85dfc6e21c3d",
+        "masks/performance/celebrate/004.png": "4010006d9e5197cee75737ac0d2ef1d07e634a7e7b2f50af8891f76ba9e7bff8"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.114454,
+          "right": 0.114454
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0000000596046483
+      }
+    },
+    "celebrate/005": {
+      "parameters": {
+        "pose": {
+          "happy": 0.269974
+        },
+        "eyeScale": 1,
+        "crescent": 0.919993,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.020002,
+          "squash": 1.010009,
+          "rise": 0.096009,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.096009,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.096009,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/005.png",
+        "performance/unlit/celebrate/005.png",
+        "masks/performance/celebrate/005.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/005.png": "b8746bac3c50e991f2696887d98f3b2a62731bc12ea7be2c5b454563420e6de7",
+        "performance/unlit/celebrate/005.png": "fdf1021b1e328e2f8eb5e58f27a7f2f17b9470870f390d34d3b956f9a2b47770",
+        "masks/performance/celebrate/005.png": "19114b955d89479788625d29c5a8471766efd6149c6f19bf077753eb5ef3ce62"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.096009,
+          "right": 0.096009
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.4901161193847656e-08,
+        "crestDeterminant": 1.0000001192092896
+      }
+    },
+    "celebrate/006": {
+      "parameters": {
+        "pose": {
+          "happy": 0.501306
+        },
+        "eyeScale": 1,
+        "crescent": 0.986087,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.003478,
+          "squash": 0.927391,
+          "rise": 0.016695,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.016695,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.016695,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/006.png",
+        "performance/unlit/celebrate/006.png",
+        "masks/performance/celebrate/006.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/006.png": "d050a9312fcbe6a784e722d7472a384cdcd1b3ccf49ef5435c8f4f0be1a0a66c",
+        "performance/unlit/celebrate/006.png": "e46b189166e3d8ac8d337dc100c04d7125159ac1cb5e6e37838f5a26dc3acc52",
+        "masks/performance/celebrate/006.png": "1b0ce1b356b58de103522c1e44f99baa5cc60c0b1a4cf7329fe084770294bc40"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.016695,
+          "right": 0.016695
+        },
+        "bodyDeterminant": 0.9999998807907104,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/007": {
+      "parameters": {
+        "pose": {
+          "happy": 0.579086
+        },
+        "eyeScale": 1,
+        "crescent": 0.941829,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.936177,
+          "rise": 0.005235,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.005235,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.005235,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/007.png",
+        "performance/unlit/celebrate/007.png",
+        "masks/performance/celebrate/007.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/007.png": "bde05f354d400efa252b978a2fead5f4d35056d9d384d760b814bf8ba75088d4",
+        "performance/unlit/celebrate/007.png": "19246faf6b1b57a93ba9a0469f4dbca48e07aa2746bb05650bc82dc1b727974e",
+        "masks/performance/celebrate/007.png": "2d57a9a61f995465256614e08c61588327dd87663881ada1a6159c2644c45adf"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.005235,
+          "right": 0.005235
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/008": {
+      "parameters": {
+        "pose": {
+          "happy": 0.645342
+        },
+        "eyeScale": 1,
+        "crescent": 0.797671,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0.017581,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.017581,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.017581,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/008.png",
+        "performance/unlit/celebrate/008.png",
+        "masks/performance/celebrate/008.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/008.png": "1ed383489f1390cc3504a82d7ca2590081ca4ef5a21105917a39d95769e1a63d",
+        "performance/unlit/celebrate/008.png": "c5cde2d35fa876e77ac86190c7a8a3dc418f2c8b7f1d03439ca5983cbfb02d54",
+        "masks/performance/celebrate/008.png": "b63aeb587138a550247f7a54f4be510558466456e3f071601f827532b41b047d"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.017581,
+          "right": 0.017581
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/009": {
+      "parameters": {
+        "pose": {
+          "happy": 0.428212
+        },
+        "eyeScale": 1,
+        "crescent": 0.665139,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/009.png",
+        "performance/unlit/celebrate/009.png",
+        "masks/performance/celebrate/009.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/009.png": "f687afeac7ff04b75f7efe9058bc5ca0dd882052bce6fbe2bbca1c69e487f092",
+        "performance/unlit/celebrate/009.png": "d7637d65314994cca77ed8020e1c2a34fe1af6c4d4d8ce85b4e517f8f3069e04",
+        "masks/performance/celebrate/009.png": "d9e25a8fa13b5579c258ae1ea3571920fe6cbdaa84c9ec0e4761fccd347268d2"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/010": {
+      "parameters": {
+        "pose": {
+          "happy": 0.195342
+        },
+        "eyeScale": 1,
+        "crescent": 0.293013,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/010.png",
+        "performance/unlit/celebrate/010.png",
+        "masks/performance/celebrate/010.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/010.png": "4a4d2025a11f1777fc4bc43da32120a9652796a1832f723655f28ce20d266570",
+        "performance/unlit/celebrate/010.png": "916e7fe30110ce73faa98f028dec3b39407c9566929f8ac6a69bfc8dae9202e9",
+        "masks/performance/celebrate/010.png": "ca1a6c148decc92fe49fb7490fd7315dafae945b86271933f97a4b46e3d2e57e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "celebrate/011": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/celebrate/011.png",
+        "performance/unlit/celebrate/011.png",
+        "masks/performance/celebrate/011.png"
+      ],
+      "files": {
+        "performance/lit/celebrate/011.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/celebrate/011.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/celebrate/011.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/000.png",
+        "performance/unlit/walk/000.png",
+        "masks/performance/walk/000.png"
+      ],
+      "files": {
+        "performance/lit/walk/000.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/walk/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/walk/000.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/001": {
+      "parameters": {
+        "pose": {
+          "listening": 0.117205
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.034185,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.043952
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/001.png",
+        "performance/unlit/walk/001.png",
+        "masks/performance/walk/001.png"
+      ],
+      "files": {
+        "performance/lit/walk/001.png": "fd9a5c897e611ef15c67b5da5fb8cfdcf532dcf10a4cc621d87a7b165c1cba36",
+        "performance/unlit/walk/001.png": "74473fc805e4c0f0fdc5feadd82f139242bac2ca3288843851a542d7d5aa53a2",
+        "masks/performance/walk/001.png": "28e729d4354c931821214a8d0f6c9670e95685fe5eb54c492ba714b352fe2665"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/002": {
+      "parameters": {
+        "pose": {
+          "listening": 0.12
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.035,
+          "squash": 1.006254,
+          "rise": 0,
+          "shift": 0.045
+        },
+        "feet": {
+          "left": {
+            "lift": 0.065669,
+            "stride": -0.07505,
+            "roll": -0.087559
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/002.png",
+        "performance/unlit/walk/002.png",
+        "masks/performance/walk/002.png"
+      ],
+      "files": {
+        "performance/lit/walk/002.png": "227e874e220014fefeff97165e2bdc5b81ad28a6b37d35538aff942558e765f4",
+        "performance/unlit/walk/002.png": "ebd8006239cc4c01cd6164916a051fe2b665e217c77d429f1c43c4535cad6db9",
+        "masks/performance/walk/002.png": "0d4f094ccbbd85d46d4b1c6172536d60babf59a44e135cdfc93d2df7f892b29f"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.06571274714324578,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/003": {
+      "parameters": {
+        "pose": {
+          "listening": 0.12
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.035,
+          "squash": 1.01,
+          "rise": 0,
+          "shift": 0.045
+        },
+        "feet": {
+          "left": {
+            "lift": 0.105,
+            "stride": -0.12,
+            "roll": -0.14
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/003.png",
+        "performance/unlit/walk/003.png",
+        "masks/performance/walk/003.png"
+      ],
+      "files": {
+        "performance/lit/walk/003.png": "fd817b22ec69b55cd83c639d5cc6e5420cdd3b63ad558888cca37bf481d8a3f8",
+        "performance/unlit/walk/003.png": "b71a789bb1cf3663a74ec94b83d4226ef8d27ce543c29fd82dee9facf896c299",
+        "masks/performance/walk/003.png": "bb27ec55ec9e9a7ad01a6d763fbe147b0322952503b089b9dcd439729c7247b1"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.1050001842486118,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/004": {
+      "parameters": {
+        "pose": {
+          "listening": 0.119676
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.034906,
+          "squash": 1.009973,
+          "rise": 0,
+          "shift": 0.044879
+        },
+        "feet": {
+          "left": {
+            "lift": 0.104717,
+            "stride": -0.119676,
+            "roll": -0.139622
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/004.png",
+        "performance/unlit/walk/004.png",
+        "masks/performance/walk/004.png"
+      ],
+      "files": {
+        "performance/lit/walk/004.png": "64dfcdc0648dae7ed715517e08a70521a2980ca515fcba9346ef298651890700",
+        "performance/unlit/walk/004.png": "24e87e14659f29ef11cbc32f9ce4feb970300cd63806eb3284d9cadd5019eb8b",
+        "masks/performance/walk/004.png": "f47e38ded8580a47e29631ad8d5abe6ae63819ffc0384324e1eb4d2fa2df4cb4"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.10471732740991356,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 7.450580596923828e-09,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/005": {
+      "parameters": {
+        "pose": {
+          "listening": 0.013908
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.004056,
+          "squash": 1.001159,
+          "rise": 0,
+          "shift": 0.005215
+        },
+        "feet": {
+          "left": {
+            "lift": 0.012169,
+            "stride": -0.013908,
+            "roll": -0.016226
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/005.png",
+        "performance/unlit/walk/005.png",
+        "masks/performance/walk/005.png"
+      ],
+      "files": {
+        "performance/lit/walk/005.png": "81fb8b824fe941092acf0555de5096a627e0d65c3beadd775541eb8fa61b947c",
+        "performance/unlit/walk/005.png": "eee7a417d9434ee83e798c4facd01745a23459f521908800f2f603bd7bee394e",
+        "masks/performance/walk/005.png": "3a2178fb02cc187b6563eaed9190d2e15594cb7357f638d1ef8473015e74fedf"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.012207699550016833,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999998807907104,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/006": {
+      "parameters": {
+        "pose": {
+          "listening": 0.118548
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.029637,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.039516
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/006.png",
+        "performance/unlit/walk/006.png",
+        "masks/performance/walk/006.png"
+      ],
+      "files": {
+        "performance/lit/walk/006.png": "6de93214c04de68e2f19bb4e0fe17e0e136a03dd5e07354ab315a70431a344c4",
+        "performance/unlit/walk/006.png": "dff9126a6d47d1e3b847ccf8d3d232944a4d46b55b58199ae01a3c64a3f558c3",
+        "masks/performance/walk/006.png": "88c67ab7c23257bcaaca6a5b96063bcd51b74514bb4045579e5c597808b84607"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.1920928955078125e-07,
+        "crestDeterminant": 0.9999998807907104
+      }
+    },
+    "walk/007": {
+      "parameters": {
+        "pose": {
+          "listening": 0.12
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.03256,
+          "squash": 1.00512,
+          "rise": 0,
+          "shift": -0.04256
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.053763,
+            "stride": 0.061444,
+            "roll": 0.071684
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/007.png",
+        "performance/unlit/walk/007.png",
+        "masks/performance/walk/007.png"
+      ],
+      "files": {
+        "performance/lit/walk/007.png": "f5268c5d906937988a15bcb4a837f28902a76a2b1e2e38b73b53d9e5e9a01c02",
+        "performance/unlit/walk/007.png": "b8e5094b425bc57788ca722f9549a4359325a96a29e80990a54069ac3523f1ea",
+        "masks/performance/walk/007.png": "06829aef3ac594274984a51282393a01da493235d60b5a647d6e64b9dc760dc4"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.05376330327246025
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 2.9802322387695312e-08,
+        "crestDeterminant": 1.0000000596046483
+      }
+    },
+    "walk/008": {
+      "parameters": {
+        "pose": {
+          "listening": 0.12
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.035,
+          "squash": 1.01,
+          "rise": 0,
+          "shift": -0.045
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.105,
+            "stride": 0.12,
+            "roll": 0.14
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/008.png",
+        "performance/unlit/walk/008.png",
+        "masks/performance/walk/008.png"
+      ],
+      "files": {
+        "performance/lit/walk/008.png": "0522e1e556c94c51b5a0590d2fd9bcde6e99cf8961dd76c6269c333c57e06e0a",
+        "performance/unlit/walk/008.png": "9260f320f5a58fe41ac830400dd83e7d5e8ca4a0696b06c6ab9f827078236e1e",
+        "masks/performance/walk/008.png": "a1451cb6497d93f504faded3f7062c4e6ffe4a528b1275c91a1c862ce7c1fb24"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.10500019256602958
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/009": {
+      "parameters": {
+        "pose": {
+          "listening": 0.12
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.035,
+          "squash": 1.01,
+          "rise": 0,
+          "shift": -0.045
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.105,
+            "stride": 0.12,
+            "roll": 0.14
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/009.png",
+        "performance/unlit/walk/009.png",
+        "masks/performance/walk/009.png"
+      ],
+      "files": {
+        "performance/lit/walk/009.png": "0522e1e556c94c51b5a0590d2fd9bcde6e99cf8961dd76c6269c333c57e06e0a",
+        "performance/unlit/walk/009.png": "9260f320f5a58fe41ac830400dd83e7d5e8ca4a0696b06c6ab9f827078236e1e",
+        "masks/performance/walk/009.png": "a1451cb6497d93f504faded3f7062c4e6ffe4a528b1275c91a1c862ce7c1fb24"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.10500019256602958
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/010": {
+      "parameters": {
+        "pose": {
+          "listening": 0.072197
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.021057,
+          "squash": 1.006016,
+          "rise": 0,
+          "shift": -0.027074
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.063172,
+            "stride": 0.072197,
+            "roll": 0.084229
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/010.png",
+        "performance/unlit/walk/010.png",
+        "masks/performance/walk/010.png"
+      ],
+      "files": {
+        "performance/lit/walk/010.png": "717f240795024bfb2d9e6949ee6df4b3a14c8e3128c3c08d1f6dc05335f502d3",
+        "performance/unlit/walk/010.png": "93e3dc9900f2046b2123aea94b86deba582fd3c000bed0d21e84fe1421793f0a",
+        "masks/performance/walk/010.png": "cd7240f26f9463f368bc16b18c981d9b4509856e890f767365428460d4e4d85e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0632005514470174
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "walk/011": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/walk/011.png",
+        "performance/unlit/walk/011.png",
+        "masks/performance/walk/011.png"
+      ],
+      "files": {
+        "performance/lit/walk/011.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/walk/011.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/walk/011.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/000": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/000.png",
+        "performance/unlit/stretch/000.png",
+        "masks/performance/stretch/000.png"
+      ],
+      "files": {
+        "performance/lit/stretch/000.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/stretch/000.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/stretch/000.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/001": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 0.273555,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/001.png",
+        "performance/unlit/stretch/001.png",
+        "masks/performance/stretch/001.png"
+      ],
+      "files": {
+        "performance/lit/stretch/001.png": "c398f1e9b3f4355e3a1796739c3ca5f1c1465f866f7a202b4bf0e2590ef89eb9",
+        "performance/unlit/stretch/001.png": "4ac1f7f3b4e46c0c0e33d385b814d8a7e7ffbe3c1e71d8ab1f7b053707296a73",
+        "masks/performance/stretch/001.png": "c4f2732d22414039f4f9e114a47608614f2ee62269b29a2d61582873a2d3ce07"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/002": {
+      "parameters": {
+        "pose": {
+          "low": 0.058814
+        },
+        "eyeScale": 0.16,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.979415,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/002.png",
+        "performance/unlit/stretch/002.png",
+        "masks/performance/stretch/002.png"
+      ],
+      "files": {
+        "performance/lit/stretch/002.png": "8800dd97b525ba4b3a88e9d0f4bf24f3a89bac3d40a1d2990a7cc7770f432da9",
+        "performance/unlit/stretch/002.png": "c0007b7a766a7774d4101b5e16ecd0dab96db8047231ea4a4c123cc4926b399f",
+        "masks/performance/stretch/002.png": "e4d543046cb249a1e9776f93c986731bdb7cc1980a041296aedb0e309b251085"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/003": {
+      "parameters": {
+        "pose": {
+          "low": 0.190981
+        },
+        "eyeScale": 0.16,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.933157,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/003.png",
+        "performance/unlit/stretch/003.png",
+        "masks/performance/stretch/003.png"
+      ],
+      "files": {
+        "performance/lit/stretch/003.png": "1d88b0e6a362f1ceb3218052ffc7656bbcf678406456f52fdb1fd6e918075cf6",
+        "performance/unlit/stretch/003.png": "92588c7a086c9bd436590bdafa77ac2dc2568e8f106e61c4beb5f8beca044d23",
+        "masks/performance/stretch/003.png": "cf16f8396045ef4238f90efc59f9e12b394e90ada87a569bfc2e9472cce29bfc"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/004": {
+      "parameters": {
+        "pose": {
+          "low": 0.155879,
+          "happy": 0.026473
+        },
+        "eyeScale": 0.16,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.958679,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/004.png",
+        "performance/unlit/stretch/004.png",
+        "masks/performance/stretch/004.png"
+      ],
+      "files": {
+        "performance/lit/stretch/004.png": "21720934215aafdddfbba5479b3d696442e7c75202ae94e94a25e73c4ccffd3d",
+        "performance/unlit/stretch/004.png": "3cf03f617d0f47bd8edd1644b8a2c73c7d70696d5580a275ea24e2b33f0d83ec",
+        "masks/performance/stretch/004.png": "1176bd0571fab338b8717645e4ad549f2b74d8efd32d26bbbd61d5d660928d94"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/005": {
+      "parameters": {
+        "pose": {
+          "low": 0.041075,
+          "happy": 0.095355
+        },
+        "eyeScale": 0.16,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1.033301,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/005.png",
+        "performance/unlit/stretch/005.png",
+        "masks/performance/stretch/005.png"
+      ],
+      "files": {
+        "performance/lit/stretch/005.png": "1408925ef16a49df0faa34866b469fa703680d5fa7d4da9c35a4494daba77460",
+        "performance/unlit/stretch/005.png": "22a95908252965fe88387ada96637c51e8d1ce8e8c565f824571b9dba4745a76",
+        "masks/performance/stretch/005.png": "4fb813bd5758df69f82eff7f78099bd12c03a699455880f41aea7f7c1b938e8e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/006": {
+      "parameters": {
+        "pose": {
+          "happy": 0.130657
+        },
+        "eyeScale": 0.16,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1.06,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/006.png",
+        "performance/unlit/stretch/006.png",
+        "masks/performance/stretch/006.png"
+      ],
+      "files": {
+        "performance/lit/stretch/006.png": "51d8ae815223b2103a123697c4ef5e4a9b8584b7fb43a63fd600ec56f0807f51",
+        "performance/unlit/stretch/006.png": "2627fe2d9fe388ed5a5ea72e9780baa714724b82f34ebb57b31ccdec2fab2edb",
+        "masks/performance/stretch/006.png": "735b86c4ba92608daacfd40c6b99792fd5c8f546c84bceefa2e1a9449ac48c85"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/007": {
+      "parameters": {
+        "pose": {
+          "happy": 0.281193
+        },
+        "eyeScale": 0.16,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1.06,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/007.png",
+        "performance/unlit/stretch/007.png",
+        "masks/performance/stretch/007.png"
+      ],
+      "files": {
+        "performance/lit/stretch/007.png": "325388de65320952e5fa7cccd8e82a4e8eda4f94abff4ff37cce150bf714858e",
+        "performance/unlit/stretch/007.png": "5baf7bf77962c06639b513f8c355e3ebebd2ad244f5cf6a05c0f32f05e1b2211",
+        "masks/performance/stretch/007.png": "d57b6f9739fc6ac2be5140fb5c9f956fe42f999cdd2e03457ece8988525d9293"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/008": {
+      "parameters": {
+        "pose": {
+          "happy": 0.436234
+        },
+        "eyeScale": 0.16,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1.06,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/008.png",
+        "performance/unlit/stretch/008.png",
+        "masks/performance/stretch/008.png"
+      ],
+      "files": {
+        "performance/lit/stretch/008.png": "d18bb051ca1b864492c3d48e9b4c4b92e2ab728c2ee37d4adc609984bd8046ea",
+        "performance/unlit/stretch/008.png": "3646594b2ea6e3410c25dc75ca21fef0557341d591611db61db98e9327d24710",
+        "masks/performance/stretch/008.png": "64e3b73d8d94be76fba456a996f590f410617c68e330c737c4a5dd63dbb904d2"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/009": {
+      "parameters": {
+        "pose": {
+          "happy": 0.409118
+        },
+        "eyeScale": 0.42416,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1.041131,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/009.png",
+        "performance/unlit/stretch/009.png",
+        "masks/performance/stretch/009.png"
+      ],
+      "files": {
+        "performance/lit/stretch/009.png": "ffd12adade70242ea7985cd8f3b57bfc6ef9753f9cfeb4435d0674903bdf8ece",
+        "performance/unlit/stretch/009.png": "74661c60c0bcc8dd9eef5694b4d7be04103ac49bc4ecf82015540547c5fa20c2",
+        "masks/performance/stretch/009.png": "94ab7a3e492a2de9d73c21b95654c731e61bb22fbaa3bd831fcb6d19bf72d118"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/010": {
+      "parameters": {
+        "pose": {
+          "happy": 0.322189
+        },
+        "eyeScale": 0.985853,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1.00101,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/010.png",
+        "performance/unlit/stretch/010.png",
+        "masks/performance/stretch/010.png"
+      ],
+      "files": {
+        "performance/lit/stretch/010.png": "7d1397829df5cc66ef5d0b5bec2721f5aa87ae6e692827ce359f11604455f31b",
+        "performance/unlit/stretch/010.png": "3d4b2d3b706b710f36576c495be615be28bb039aac51674280194618c1de2dcf",
+        "masks/performance/stretch/010.png": "1f5d36f50b8522f3e09762b17f06dd2e90a2295fd538b4888355e3e70de0d59d"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/011": {
+      "parameters": {
+        "pose": {
+          "happy": 0.238273
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/011.png",
+        "performance/unlit/stretch/011.png",
+        "masks/performance/stretch/011.png"
+      ],
+      "files": {
+        "performance/lit/stretch/011.png": "3b90fbb85b1e6cc5e6131bb38b86ed1925363712491a7c075f3b22ea04980556",
+        "performance/unlit/stretch/011.png": "5adb3f7ba1f05f078ca4271edbaaf4a7c89c862487442b932868edf72d0d9d19",
+        "masks/performance/stretch/011.png": "6ff79f44359a7c61bd091fd3ae2ed6afc3186d546bf182386c715235cec38dee"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/012": {
+      "parameters": {
+        "pose": {
+          "happy": 0.106863
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/012.png",
+        "performance/unlit/stretch/012.png",
+        "masks/performance/stretch/012.png"
+      ],
+      "files": {
+        "performance/lit/stretch/012.png": "a41367bf6aa01f14704022a23bede54f836b6cbb7237da7d919b5011a3ee12a1",
+        "performance/unlit/stretch/012.png": "1d101d0a4f53be3eefb41c4f6db1e55451870f1fae8655559c75e4f83f7948b1",
+        "masks/performance/stretch/012.png": "41d3c18d3b0dd2bfab24c76b9e1c8fea92f2a2c72b31876f6e3cb731da369d2e"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "stretch/013": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/stretch/013.png",
+        "performance/unlit/stretch/013.png",
+        "masks/performance/stretch/013.png"
+      ],
+      "files": {
+        "performance/lit/stretch/013.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/stretch/013.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/stretch/013.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "land/000": {
+      "parameters": {
+        "pose": {
+          "excited": 0.2
+        },
+        "eyeScale": 1.05,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1.025,
+          "rise": 0.08,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.08,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.08,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/land/000.png",
+        "performance/unlit/land/000.png",
+        "masks/performance/land/000.png"
+      ],
+      "files": {
+        "performance/lit/land/000.png": "1cb0a6516b29bc720824f654eaa2244724dcbe0469451308297c90064a9d020a",
+        "performance/unlit/land/000.png": "26de87779ddabb42f3ea55db25dfc081a1360b0bc2e273125abb764a14be469c",
+        "masks/performance/land/000.png": "1bf3bc9a10e648d64ac37adc1e75e58a521e44dc718e66c89c24fcbfccd14fa1"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.08,
+          "right": 0.08
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "land/001": {
+      "parameters": {
+        "pose": {
+          "excited": 0.071774,
+          "low": 0.160282
+        },
+        "eyeScale": 0.761492,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.938448,
+          "rise": 0.02871,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.02871,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.02871,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/land/001.png",
+        "performance/unlit/land/001.png",
+        "masks/performance/land/001.png"
+      ],
+      "files": {
+        "performance/lit/land/001.png": "f0b6981ac894d8ceacc6b4edaaa426f462aae4f95252d0e0e498b1fcc72d60f2",
+        "performance/unlit/land/001.png": "7739980fad44f42350b09d3d1327291f5aefff01e68429e566521d0aca131fc7",
+        "masks/performance/land/001.png": "391cecd5c3972dc0599d73959c6984602dbb8acca460e0bc82fa6decb0d16ab9"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.02871,
+          "right": 0.02871
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "land/002": {
+      "parameters": {
+        "pose": {
+          "low": 0.232729
+        },
+        "eyeScale": 0.653141,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.907935,
+          "rise": 0.003188,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.003188,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.003188,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/land/002.png",
+        "performance/unlit/land/002.png",
+        "masks/performance/land/002.png"
+      ],
+      "files": {
+        "performance/lit/land/002.png": "9f692b30b2fdf42aee90d9cd5589d1506a0317d79f455a8bccd81f5f2278e649",
+        "performance/unlit/land/002.png": "5fecbb17a84c555b9e56128ceee08a06476928046c2629675cb51a0ed93a2862",
+        "masks/performance/land/002.png": "081899136eb2979e6a3aea3182d16412a14e0361e758dfb7f01bee8d2c111bee"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.003188,
+          "right": 0.003188
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "land/003": {
+      "parameters": {
+        "pose": {
+          "low": 0.121225
+        },
+        "eyeScale": 0.996231,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1.023728,
+          "rise": 0.023774,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.023774,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.023774,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/land/003.png",
+        "performance/unlit/land/003.png",
+        "masks/performance/land/003.png"
+      ],
+      "files": {
+        "performance/lit/land/003.png": "bf0e8d4415ad86048969771d146a62dee5d8cc0c1582d4b42bd8eba28d5f85b3",
+        "performance/unlit/land/003.png": "a1aa2c2cb9d0dcab5418aa203fabb2787f1f622f36149867b40d8e64bc3a1f62",
+        "masks/performance/land/003.png": "bee537d70c1c5b65c59d3833e3f67697a3496482d2bfa8b4a13ce0bc2b914eba"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.023774,
+          "right": 0.023774
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "land/004": {
+      "parameters": {
+        "pose": {
+          "low": 0.021498,
+          "happy": 0.205213
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.992166,
+          "rise": 0.0043,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0.0043,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0.0043,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/land/004.png",
+        "performance/unlit/land/004.png",
+        "masks/performance/land/004.png"
+      ],
+      "files": {
+        "performance/lit/land/004.png": "a3caf2d054bac2d841579bad43bee61f37972b3f0dcdfe4c79c359ea620a5ce5",
+        "performance/unlit/land/004.png": "212e8c34b7b3ea7a4ffc8c1ae2a617efabebffe39ad9277d4220f26269349109",
+        "masks/performance/land/004.png": "f6878795b4de25276d9fb4894807c9ae078c20b298990d5b535abd8668f1226a"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0043,
+          "right": 0.0043
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "land/005": {
+      "parameters": {
+        "pose": {
+          "happy": 0.272493
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 0.996246,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/land/005.png",
+        "performance/unlit/land/005.png",
+        "masks/performance/land/005.png"
+      ],
+      "files": {
+        "performance/lit/land/005.png": "91f064d7f7d15a8b1771f4a8663ecfa7687fe5068cf0f0661c8892fc7a38ee1b",
+        "performance/unlit/land/005.png": "0c4b4c27aa63fb2ee8f76ad5fa84b105694ef78fd9bd7332674b8c3c92e07dd9",
+        "masks/performance/land/005.png": "0d23c77205642cf574779b1e35656903ace1f82cd868f898c7d085ecf9e5fdb9"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "land/006": {
+      "parameters": {
+        "pose": {
+          "happy": 0.155801
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/land/006.png",
+        "performance/unlit/land/006.png",
+        "masks/performance/land/006.png"
+      ],
+      "files": {
+        "performance/lit/land/006.png": "31aca3d009b9aafc3312c59e93ddb0ac44516930529df2ef52b2ee124c2a8765",
+        "performance/unlit/land/006.png": "d77db72755e32b1005db31f72ce420eebfdac019d7eb935c79a508a23e374793",
+        "masks/performance/land/006.png": "aac202d9f65fd66598a4ae444326d47a8cdf842f12e93890627b0d0e4b094e6b"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "land/007": {
+      "parameters": {
+        "pose": {},
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0,
+        "gazeUp": 0,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/land/007.png",
+        "performance/unlit/land/007.png",
+        "masks/performance/land/007.png"
+      ],
+      "files": {
+        "performance/lit/land/007.png": "0a808150aa1860d7b9269ddf71d09f9d2f9cd9ce7704b228885ce5e9c875c7a1",
+        "performance/unlit/land/007.png": "21024ff79d6a43cb485a01920f11beaaba31593c1b95ea5734b5e51c3b61f051",
+        "masks/performance/land/007.png": "38f107f0e5cb9b52aa6d86fc3a2071e91053fcb872e606255c4a24d088eb118c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/000": {
+      "parameters": {
+        "pose": {
+          "listening": 0.9
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/000.png",
+        "performance/unlit/work/000.png",
+        "masks/performance/work/000.png"
+      ],
+      "files": {
+        "performance/lit/work/000.png": "97e2c005095957de72146cf76addbf4ed79646bf12af19e57190acf999d64bce",
+        "performance/unlit/work/000.png": "7e7fd56b071df1412ecf4364d31afb2903b0ca5ef9ec58a5990fbdd1ff35b9da",
+        "masks/performance/work/000.png": "765e09bc13a63fd9a156a78bf0b9c29b50d94b371e6abe470af0d5ef1d317ab6"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/001": {
+      "parameters": {
+        "pose": {
+          "listening": 0.924779
+        },
+        "eyeScale": 0.975221,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.003717,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.002478
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/001.png",
+        "performance/unlit/work/001.png",
+        "masks/performance/work/001.png"
+      ],
+      "files": {
+        "performance/lit/work/001.png": "b24f6da460a682fe6622e48e4cb6c590b7e1a3e75ecd0d8d98145e9f5f26f0f0",
+        "performance/unlit/work/001.png": "52cd895a830916ba38097f803d42a1483041496f6ca03c153d9504bbae06d9b4",
+        "masks/performance/work/001.png": "279efbf2309dde0292a75eee5f14b217799bf309b68f79062f93de170f5c957c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/002": {
+      "parameters": {
+        "pose": {
+          "listening": 0.971736
+        },
+        "eyeScale": 0.928264,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.01076,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.007174
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/002.png",
+        "performance/unlit/work/002.png",
+        "masks/performance/work/002.png"
+      ],
+      "files": {
+        "performance/lit/work/002.png": "a611a2eebc6ef83ffd14612a0cf8f22661472adfd11793baddf6b030dd2be877",
+        "performance/unlit/work/002.png": "2d66f211e28acc7f26584fa8cf4384c75b39e227f19b02bb6a210f4f5680ddb0",
+        "masks/performance/work/002.png": "4e0fb2b269c63a1329860894821abd0066a5a99c5ecc3429f113f2710f9affa6"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/003": {
+      "parameters": {
+        "pose": {
+          "listening": 0.999801
+        },
+        "eyeScale": 0.900199,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.01497,
+          "squash": 1,
+          "rise": 0,
+          "shift": -0.00998
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/003.png",
+        "performance/unlit/work/003.png",
+        "masks/performance/work/003.png"
+      ],
+      "files": {
+        "performance/lit/work/003.png": "2638eea945af4b040cc8611a2d9f8d47e9e0a09cfc66bd57f58b90a0e1b2fe9c",
+        "performance/unlit/work/003.png": "7293cc6302d11a9264c82651fee95cbed4af04a9bce48822c732a205f0bb6f81",
+        "masks/performance/work/003.png": "7929ce6cbe6593b85a4648023a7363cec9e6b3583aa1064fbf4b0a821623d81a"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/004": {
+      "parameters": {
+        "pose": {
+          "listening": 0.983816
+        },
+        "eyeScale": 0.647522,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.010145,
+          "squash": 0.998382,
+          "rise": 0,
+          "shift": -0.006763
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/004.png",
+        "performance/unlit/work/004.png",
+        "masks/performance/work/004.png"
+      ],
+      "files": {
+        "performance/lit/work/004.png": "c03a6609bd8cd0c2f605b67b06bd99f18005001633e93a5951e4c10adb6cf839",
+        "performance/unlit/work/004.png": "896ecab7237f9d28de5923bc65c7acfaee9c1829778d90d91897a152d321039f",
+        "masks/performance/work/004.png": "35b8961ee0e962eaf57f22781698400f1bf9083ad37eb01a22f87aebe1d00477"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/005": {
+      "parameters": {
+        "pose": {
+          "listening": 0.955521
+        },
+        "eyeScale": 0.206132,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": -0.001656,
+          "squash": 0.995552,
+          "rise": 0,
+          "shift": -0.001104
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/005.png",
+        "performance/unlit/work/005.png",
+        "masks/performance/work/005.png"
+      ],
+      "files": {
+        "performance/lit/work/005.png": "9ff26fbf684bb4bd92f8f37f3e48a839cdbb208ab4f26694e254b997d80ba4e2",
+        "performance/unlit/work/005.png": "382a7f95ba47849a938e46ca77baf3a9a38d14d0e2b37e4b6c697a46fa06d874",
+        "masks/performance/work/005.png": "d1cceecf44dd95ef8cb8030d7c5fbfef69dbe4b7cee605c251892dd65e4bd314"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0000001192092896,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/006": {
+      "parameters": {
+        "pose": {
+          "listening": 0.945227
+        },
+        "eyeScale": 0.252053,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.001591,
+          "squash": 0.995796,
+          "rise": 0,
+          "shift": 0.001591
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/006.png",
+        "performance/unlit/work/006.png",
+        "masks/performance/work/006.png"
+      ],
+      "files": {
+        "performance/lit/work/006.png": "f241286c9ee13a2fdf05940fd087fa42cebf2685b77e9aa5a2c294e0024fc4bd",
+        "performance/unlit/work/006.png": "6fa842e0c186faed5a2c849beda26d503587a1b43786eb9c93bbdf45c7306499",
+        "masks/performance/work/006.png": "105898a05c3a165c1ad28a2b644d42f6d0e32daac2eab09c28e1f2865963e2db"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.4901161193847656e-08,
+        "crestDeterminant": 0.9999998807907104
+      }
+    },
+    "work/007": {
+      "parameters": {
+        "pose": {
+          "listening": 0.924434
+        },
+        "eyeScale": 0.827314,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.008522,
+          "squash": 0.999261,
+          "rise": 0,
+          "shift": 0.008522
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/007.png",
+        "performance/unlit/work/007.png",
+        "masks/performance/work/007.png"
+      ],
+      "files": {
+        "performance/lit/work/007.png": "3949a94ae2d786055a21a2114c78916e8e08e23a9021d1af5d97e80b7b57a34c",
+        "performance/unlit/work/007.png": "8be2324c0f6d7fb768fe5c84918dcf168d0455db135e3d97d599ed52c7d6ba61",
+        "masks/performance/work/007.png": "6ab3beea2d2e9d06afd54f5281bbecfd22706c6a23e31c0ce503f29b4c0af341"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999998807907104,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/008": {
+      "parameters": {
+        "pose": {
+          "listening": 0.91882
+        },
+        "eyeScale": 0.952951,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.00941,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.00941
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/008.png",
+        "performance/unlit/work/008.png",
+        "masks/performance/work/008.png"
+      ],
+      "files": {
+        "performance/lit/work/008.png": "24715452b2a9db1a2b11d4efa8f46786d6397412b8f3a61efeace8efbd5b7a7d",
+        "performance/unlit/work/008.png": "daecd90495e0b814c21671fc55da75e8fb329ccbbb6872d8ce40db332fd323ba",
+        "masks/performance/work/008.png": "f1c3dc98546a681f9063a76db6c38ecc9e152882e9033ae0f880b2ffe2690b9c"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 1.1920928955078125e-07,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/009": {
+      "parameters": {
+        "pose": {
+          "listening": 0.912033
+        },
+        "eyeScale": 0.969918,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.006016,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.006016
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/009.png",
+        "performance/unlit/work/009.png",
+        "masks/performance/work/009.png"
+      ],
+      "files": {
+        "performance/lit/work/009.png": "4f39bfb371673f8ca25608e326e3ad6b00364598ee283033ddf29bf83884a692",
+        "performance/unlit/work/009.png": "0c000d1da0010aa4974defc5b9e9246f1bc185d2dd903382432ea293a27a95bd",
+        "masks/performance/work/009.png": "b894323c55680c17f1f42864b9c966118461d390f21b6594a0e6f8b4f995a137"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 0.9999999403953552,
+        "crestRootError": 0.0,
+        "crestDeterminant": 0.9999998807907033
+      }
+    },
+    "work/010": {
+      "parameters": {
+        "pose": {
+          "listening": 0.903925
+        },
+        "eyeScale": 0.990187,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0.001963,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0.001963
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/010.png",
+        "performance/unlit/work/010.png",
+        "masks/performance/work/010.png"
+      ],
+      "files": {
+        "performance/lit/work/010.png": "ec4a287f21fbb942ccc99c9a9848b833cdeaaf324adf7579c8a662be34eb66f7",
+        "performance/unlit/work/010.png": "019675e0ebaadf8714634b7f8e21d55dbea7836692ec9b2bd0c38e8f094b8443",
+        "masks/performance/work/010.png": "535be4ea3fc80ee654e86fd585ed557b7ff57c5a64a4018885ded05087d729ba"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    },
+    "work/011": {
+      "parameters": {
+        "pose": {
+          "listening": 0.9
+        },
+        "eyeScale": 1,
+        "crescent": 0,
+        "gaze": 0.03,
+        "gazeUp": -0.03,
+        "crestTilt": 0,
+        "body": {
+          "lean": 0,
+          "squash": 1,
+          "rise": 0,
+          "shift": 0
+        },
+        "feet": {
+          "left": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          },
+          "right": {
+            "lift": 0,
+            "stride": 0,
+            "roll": 0
+          }
+        }
+      },
+      "paths": [
+        "performance/lit/work/011.png",
+        "performance/unlit/work/011.png",
+        "masks/performance/work/011.png"
+      ],
+      "files": {
+        "performance/lit/work/011.png": "97e2c005095957de72146cf76addbf4ed79646bf12af19e57190acf999d64bce",
+        "performance/unlit/work/011.png": "7e7fd56b071df1412ecf4364d31afb2903b0ca5ef9ec58a5990fbdd1ff35b9da",
+        "masks/performance/work/011.png": "765e09bc13a63fd9a156a78bf0b9c29b50d94b371e6abe470af0d5ef1d317ab6"
+      },
+      "rig": {
+        "footLowestZ": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "bodyDeterminant": 1.0,
+        "crestRootError": 0.0,
+        "crestDeterminant": 1.0
+      }
+    }
+  }
+}

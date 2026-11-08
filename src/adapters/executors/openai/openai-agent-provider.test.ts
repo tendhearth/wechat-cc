@@ -11,6 +11,7 @@ import { openDb, type Db } from '../../../lib/db'
 import { makeChatSessionStore, openAiConnectionHash, CHAT_RESUME_MAX_BYTES } from './api-sessions'
 import { trimDanglingToolCalls } from './openai-session'
 import { scriptedOpenAiModel, scriptedMcpTools, type OpenAiScriptedStep } from '../../../test-support/executors/openai-scripted'
+import { EvalOutputExhaustedError } from './api-model'
 
 const guestSpawn = {
   tierProfile: { allow: new Set(['reply']), relay: new Set(), deny: new Set() } as any,
@@ -223,6 +224,47 @@ describe('openai provider loop(对话这一份用途)', () => {
     expect(calledWith).toEqual(['deepseek-x'])
     await provider.cheapEval!('ping')
     expect(calledWith).toEqual(['deepseek-x', undefined])
+  })
+
+  it('evalModel(现取):后台评估 / 它的闸门目标走它;没设 ⇒ 默认模型;对话不受影响', async () => {
+    let evalModel: string | undefined = 'DeepSeek'
+    const calledWith: Array<string | undefined> = []
+    const makeChatModel = (model?: string) => { calledWith.push(model); return scriptedOpenAiModel([{ text: 'x' }], { generate: () => 'ok' }).model }
+    const provider = createOpenAiAgentProvider({ makeChatModel, evalModel: () => evalModel, endpoint: { baseUrl: 'https://gw/v1', model: 'Qwen3.8' }, makeMcpBridge: async () => replyBridge().bridge })
+    await provider.cheapEval!('ping')
+    await provider.strongEval!('ping')
+    expect(provider.callTarget!('cheapEval')).toMatchObject({ model: 'DeepSeek' })
+    const session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
+    await collectTurn(session.dispatch('hi'))
+    await session.close()
+    expect(provider.callTarget!('spawn')).toMatchObject({ model: 'Qwen3.8' })
+    evalModel = undefined
+    await provider.cheapEval!('ping')
+    expect(calledWith).toEqual(['DeepSeek', 'DeepSeek', undefined, undefined])
+    expect(provider.callTarget!('cheapEval')).toMatchObject({ model: 'Qwen3.8' })
+  })
+
+  it('评估模型把预算全花在思考上、一个字没答 ⇒ 换默认模型再答一次(2026-10-30 起记忆整理连败的真形状)', async () => {
+    const calledWith: Array<string | undefined> = []
+    const logs: string[] = []
+    const makeChatModel = (model?: string) => {
+      calledWith.push(model)
+      return scriptedOpenAiModel([], { generate: () => { if (model === 'DeepSeek') throw new EvalOutputExhaustedError('DeepSeek', 4000); return '{"add":[],"update":[],"confirm":[],"remove":[]}' } }).model
+    }
+    const provider = createOpenAiAgentProvider({ makeChatModel, evalModel: () => 'DeepSeek', endpoint: { baseUrl: 'https://gw/v1', model: 'Qwen3.8' }, makeMcpBridge: async () => replyBridge().bridge, log: (t, l) => logs.push(`${t} ${l}`) })
+    expect(await provider.cheapEval!('整理记忆')).toBe('{"add":[],"update":[],"confirm":[],"remove":[]}')
+    expect(await provider.strongEval!('整理记忆')).toContain('"add"')
+    expect(calledWith).toEqual(['DeepSeek', undefined, 'DeepSeek', undefined])
+    expect(logs.filter(l => l.startsWith('EVAL_FALLBACK')).length).toBe(2)
+    expect(logs[0]).toContain('DeepSeek')
+  })
+
+  it('没有单独的评估模型时预算耗尽照实抛出(没有别的模型可换,不重试同一个)', async () => {
+    let calls = 0
+    const makeChatModel = () => { calls++; return scriptedOpenAiModel([], { generate: () => { throw new EvalOutputExhaustedError('Qwen3.8', 4000) } }).model }
+    const provider = createOpenAiAgentProvider({ makeChatModel, evalModel: () => undefined, endpoint: { baseUrl: 'https://gw/v1', model: 'Qwen3.8' }, makeMcpBridge: async () => replyBridge().bridge })
+    await expect(provider.cheapEval!('x')).rejects.toBeInstanceOf(EvalOutputExhaustedError)
+    expect(calls).toBe(1)
   })
 
   it('a tool the model invented (not on any surface) gets an error result instead of crashing the loop', async () => {

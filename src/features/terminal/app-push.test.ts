@@ -187,7 +187,7 @@ describe('权限中继:先推手机,微信拒了码也不作废', () => {
   const open = () => relay.open({ source: 'claude', session_id: 'S1', cwd: '/w/proj', tool_name: 'Bash', summary: 'rm -rf ./tmp' })
   const tick = () => new Promise(r => setTimeout(r, 0))
   const phone = () => makeCliPhoneActions({
-    hub: { lookup: () => null, list: () => [] }, relay, core: { resume: async () => {} } as never, log: () => {},
+    hub: { lookup: () => null, list: () => [] }, relay, core: { resume: async () => {} } as never, log: () => {}, steps: { view: () => [] },
     resolve: (h, d) => pending.consume(h, d),
   })
 

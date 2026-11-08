@@ -1,4 +1,5 @@
-import { PHONE_TOPIC_NAMES, ROUTES } from '@wechat-cc/protocol/routes'
+import { PHONE_TOPIC_NAMES, ROUTES, type PanelSurface } from '@wechat-cc/protocol/routes'
+import { WIRE_ROUTE_ALIASES } from '@wechat-cc/protocol'
 
 /**
  * 手机设置面板(`/set`、`/m`)令牌能走的路由,与经隧道不许做的操作(梳理第 6 步,2026-09-29)。
@@ -7,16 +8,31 @@ import { PHONE_TOPIC_NAMES, ROUTES } from '@wechat-cc/protocol/routes'
  * 形状与内部 API 的 routeAllow 一致:`"METHOD /path"` 精确键;以 `/` 结尾的键是前缀
  * (贴纸一族)。**名单本身在路由表 `packages/protocol/src/routes.ts`**(重构第二批 5a):新加手机路由
  * 在那里加一行(`phone` / `set` 块,`link` 必填),这里的集合都是推出来的,名字和类型不变。
- * 处理器登记在 `settings-panel.ts` 合成的 `"METHOD /path"` 表里(phone-route-table.ts),`scripts/phone-routes.guard.test.ts` 拿表的键双向核对。
+ * 处理器登记在 `settings-panel.ts` 合成的 `"METHOD /path"` 表里(src/lib/phone-route-table.ts),`scripts/phone-routes.guard.test.ts` 拿表的键双向核对。
  *
  * 设计稿:docs/superpowers/specs/2026-09-27-device-token-registry-design.md;与之不同的
  * 两条裁决见 docs/superpowers/plans/2026-09-29-device-token-registry.md。
  */
 
-const PANEL_ROWS = Object.entries(ROUTES).flatMap(([key, r]) => {
-  const panel = r.phone ?? r.set
-  return panel ? [{ key, panel }] : []
-})
+/**
+ * 已并成别名的旧路径(P3c 起,`wire-compat.ts` 的 WIRE_ROUTE_ALIASES 里 `handler: 'alias'` 的行):路由表里没有这一行了,
+ * 令牌照样能走 —— 面板把它翻到新键,走内部 API 同一个分发(`legacy-routes.ts`)。link 照别名表冻结的值,理由抄新键那一行的。
+ * 新键(`/v1` 那一行)自己也带 `phone` 块,所以两个键都在下面的集合里;守卫按「新键 ∪ 别名键」比集合不许变大。
+ */
+export const MERGED_ALIASES: ReadonlyArray<{ from: string; to: string; link: PanelSurface['link'] }> =
+  // 只认 /m/api 那半:桌面的 /v1/workbench/* 双胞胎(P3e,读的人 = desktop)是内部 API 那一口的别名,手机令牌走不了
+  WIRE_ROUTE_ALIASES.filter(a => a.handler === 'alias' && a.from.includes(' /m/api/')).map(a => ({ from: a.from, to: a.to, link: a.link }))
+
+const PANEL_ROWS: Array<{ key: string; panel: PanelSurface }> = [
+  ...Object.entries(ROUTES).flatMap(([key, r]) => {
+    const panel = r.phone ?? r.set
+    return panel ? [{ key, panel }] : []
+  }),
+  ...MERGED_ALIASES.map(a => {
+    const reason = (ROUTES as Readonly<Record<string, { phone?: PanelSurface }>>)[a.to]?.phone?.reason
+    return { key: a.from, panel: { link: a.link, ...(reason !== undefined ? { reason } : {}) } }
+  }),
+]
 
 /** 设备令牌的 routeAllow:表里带 `phone` / `set` 的每一行(各行的注释在表里)。 */
 export const PHONE_ROUTES: ReadonlySet<string> = new Set(PANEL_ROWS.map(r => r.key))
@@ -81,6 +97,7 @@ export function phoneRouteAllowed(allow: ReadonlySet<string>, method: string, pa
 }
 
 /**
+ * 订阅只给已登记设备；链接页面继续通过受限 HTTP 状态投影读取，不订阅 hub。
  * 手机能订阅的事件主题(第 9 步,phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾
  * 是前缀标记,跟 PHONE_ROUTES 同一个约定 —— 真正允许的是 `matter/<id>`,`phoneTopicAllowed`
  * 负责把前缀展开成"后面必须是合法 id"这条规矩。

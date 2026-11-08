@@ -26,7 +26,7 @@ function setup(over: { defaultProvider?: string; owner?: string | null } = {}) {
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => over.owner === undefined ? 'owner' : over.owner, registry, nativeHistory: { claude: {} as never }, ...(over.defaultProvider ? { defaultProvider: over.defaultProvider } : {}) }, ensureAccepting: () => {}, now: Date.now }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => over.owner === undefined ? 'owner' : over.owner, registry, nativeHistory: { claude: {} as never }, ...(over.defaultProvider ? { defaultProvider: over.defaultProvider } : {}) }, ensureAccepting: () => {}, now: Date.now }
   const domain = makeViewDomain(ctx, { admission: { provider: id => { const p = registry.get(id); if (!p) throw new Error('unavailable_provider'); return p as never }, continuation: () => ({ mode: 'new' }) }, quota: { quotaExhausted: () => null } })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const snapshot = (over: Partial<AgentRuntimeSnapshot> = {}): AgentRuntimeSnapshot => ({ retained: true, foreground: 'idle', backgroundCount: 0, input: 'send', ...over })
@@ -35,7 +35,7 @@ function setup(over: { defaultProvider?: string; owner?: string | null } = {}) {
     const { snap, ...rest } = over
     return { identity: 'run-1', taskId: task.id, title: task.title, task, path: project, order: 1, state: 'active', cancelled: false, finishing: false, uncertain: false, permissions: { pending: () => [] }, questions: { pending: () => [] }, session: snap ? { workbenchRuntime: { snapshot: () => snap } } : undefined, ...rest } as unknown as Active
   }
-  return { store, state, domain, task, project, running, snapshot }
+  return { store, state, domain, task, project, running, snapshot, db, hub: ctx.hub }
 }
 
 describe('makeViewDomain · 进度', () => {
@@ -119,4 +119,51 @@ describe('makeViewDomain · 列表与详情', () => {
     state.runsByTask.set(task.id, running({ snap: snapshot({ input: 'steer' }) }))
     expect(domain.detail(task.id)).toMatchObject({ runId: 'run-1', inputMode: 'steer' })
   })
+})
+
+
+describe('pet owner activity projection',()=>{
+ it('includes older live owner decisions before truncation, excludes foreign and archived tasks, and stays read-only',()=>{
+  const {store,state,domain,task,project,running,db,hub}=setup()
+  store.update(task.id,'running')
+  db.query('UPDATE workbench_tasks SET updated_at=1 WHERE id=?').run(task.id)
+  state.runsByTask.set(task.id,running({permissions:{pending:()=>[{id:'p1',taskId:task.id,tool:'Bash',description:'运行本地检查',createdAt:1}]}} as never))
+  for(let i=0;i<25;i++)store.create({title:'近期自己的事',path:project,providerId:'claude',ownerChatId:'owner'})
+  let foreign:any
+  for(let i=0;i<205;i++)foreign=store.create({title:'他人的私事',path:project,providerId:'claude',ownerChatId:'other'})
+  state.runsByTask.set(foreign.id,running({taskId:foreign.id,task:foreign,title:foreign.title,permissions:{pending:()=>[{id:'secret',taskId:foreign.id,tool:'Bash',description:'private',createdAt:0}]}} as never))
+  const archived=store.create({title:'已归档',path:project,providerId:'claude',ownerChatId:'owner'});store.update(archived.id,'completed');store.setArchived(archived.id,true)
+  const before=db.query<{n:number},[]>('SELECT total_changes() AS n').get()!.n
+  const result=domain.petActivities()
+  expect(result).toHaveLength(8)
+  expect(result[0]).toEqual({taskId:task.id,title:'事',phase:'needs_input',detail:'Bash: 运行本地检查',updatedAt:store.get(task.id).updatedAt})
+  expect(result.some((a:any)=>a.taskId===foreign.id||a.taskId===archived.id||a.title==='他人的私事')).toBe(false)
+  expect(db.query<{n:number},[]>('SELECT total_changes() AS n').get()!.n).toBe(before)
+  expect(hub.bumped).not.toHaveBeenCalled()
+ })
+ it('without a trusted owner returns no task summaries even if active runs exist',()=>{
+  const {domain,state,running,task}=setup({owner:null});state.runsByTask.set(task.id,running())
+  expect(domain.petActivities()).toEqual([])
+ })
+ it('reports actual questions, suspended work, stopping and recent replies without claiming unread',()=>{
+  const {domain,state,running,store,task,project,db}=setup()
+  store.update(task.id,'running');state.runsByTask.set(task.id,running({questions:{pending:()=>[{id:'q',taskId:task.id,createdAt:1,questions:[{question:'  选择\n哪一种?  '}]}]}} as never))
+  const paused=store.create({title:'暂停的事',path:project,providerId:'claude',ownerChatId:'owner'});store.update(paused.id,'running');state.runsByTask.set(paused.id,running({taskId:paused.id,task:paused,networkSuspended:{since:'2026-11-01T00:00:00Z'}} as never))
+  const stopping=store.create({title:'停下中的事',path:project,providerId:'claude',ownerChatId:'owner'});store.update(stopping.id,'cancelling')
+  const reply=store.create({title:'已答复的事',path:project,providerId:'claude',ownerChatId:'owner'});store.update(reply.id,'completed')
+  const old=store.create({title:'旧答复',path:project,providerId:'claude',ownerChatId:'owner'});store.update(old.id,'completed');db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(Date.now()-600001,old.id)
+  const cancel=store.create({title:'已取消',path:project,providerId:'claude',ownerChatId:'owner'});store.update(cancel.id,'cancelled')
+  const result=domain.petActivities()
+  expect(result.find((x:any)=>x.taskId===task.id)).toMatchObject({phase:'needs_input',detail:'选择 哪一种?'})
+  expect(result.find((x:any)=>x.taskId===paused.id)).toMatchObject({phase:'paused'})
+  expect(result.find((x:any)=>x.taskId===stopping.id)).toMatchObject({phase:'stopping'})
+  expect(result.find((x:any)=>x.taskId===reply.id)).toMatchObject({phase:'replied'})
+  expect(result.some((x:any)=>x.taskId===old.id||x.taskId===cancel.id)).toBe(false)
+  expect(result.every((x:any)=>!('unread' in x))).toBe(true)
+ })
+ it('bounds owner-provided titles and pending summaries and preserves the exact task identity',()=>{
+  const {domain,state,running,task,store,db}=setup();db.query('UPDATE workbench_tasks SET title=? WHERE id=?').run('  标题\n'+'字'.repeat(100),task.id);store.update(task.id,'running')
+  state.runsByTask.set(task.id,running({permissions:{pending:()=>[{id:'p',taskId:task.id,tool:'Bash',description:'x'.repeat(500),createdAt:1}]}} as never))
+  const activity=domain.petActivities()[0]!;expect(activity.taskId).toBe(task.id);expect(activity.title.length).toBeLessThanOrEqual(80);expect(activity.title).not.toMatch(/\n/);expect(activity.detail!.length).toBeLessThanOrEqual(120)
+ })
 })

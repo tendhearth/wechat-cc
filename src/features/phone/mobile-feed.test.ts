@@ -34,7 +34,7 @@ describe('thoughtEvent', () => {
     expect(thoughtEvent(plan(), TZ)).toMatchObject({ id: 'thought:o:2026-09-06T03:03:55.347Z', kind: 'thought', title: '在家待着', note: '通讯录里没朋友,先在家歇着。', day: '2026-09-06', hhmm: '11:03' })
     expect(thoughtEvent(plan({ decision: 'hunt' }), TZ).title).toBe('出门打猎去了')
     expect(thoughtEvent(plan({ decision: 'visit' }), TZ).title).toBe('去串门了')
-    expect(thoughtEvent(plan({ decision: 'gap' }), TZ).title).toBe('gap')
+    expect(thoughtEvent(plan({ decision: 'gap' }), TZ).title).toBe('问候了你')
   })
   it('fallback / downgraded 不显示理由', () => {
     expect(thoughtEvent(plan({ decision: 'visit', why: 'fallback:timeout', source: 'fallback' }), TZ)).toMatchObject({ title: '去串门了', note: null })
@@ -174,4 +174,10 @@ describe('buildFeed', () => {
     expect(all.sources_degraded).toEqual(['journal', 'thought', 'chat_day'])
     expect(all.events).toEqual([])
   })
+})
+
+it('new initiative sources have readable titles and a silent production is not described as a completed act', () => {
+  expect(thoughtEvent(plan({ decision: 'letter' }), TZ).title).toBe('写了一封信')
+  expect(thoughtEvent(plan({ decision: 'memory' }), TZ).title).toBe('整理了记忆')
+  expect(thoughtEvent(plan({ decision: 'letter', why: '(skipped) silent' }), TZ)).toMatchObject({ title: '这次没说', note: null })
 })

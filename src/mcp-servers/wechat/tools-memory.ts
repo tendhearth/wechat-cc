@@ -157,3 +157,30 @@ export function registerMemoryTools(server: McpServer, client: InternalApiClient
     },
   )
 }
+
+/**
+ * topic_search(话题 T2 后续 ①,2026-11-05):搜主人和 CC 聊过的话题(索引 + 条目)。主人说到 CC 对不上号的事
+ * (「那个问题」「上次那个」)时用。只读、只在 admin 会话里注册(main.ts 的 SESSION_IS_ADMIN 块);
+ * 私密话题只有从主人自己的对话里搜才给(daemon 判)。
+ */
+export function registerTopicSearchTool(server: McpServer, client: InternalApiClient): void {
+  server.registerTool(
+    'topic_search',
+    {
+      title: 'Search the topics CC keeps for the owner',
+      description: '搜主人和你聊过的话题(每个话题底下一条一条记着的事实、决定、承诺、进展、做完的活的结论)。主人说到你对不上号的事(「那个问题」「上次那个」「后来怎么定的」)时,先用它搜,再回答。只读。',
+      inputSchema: {
+        query: z.string().describe('要找的事,用你能想到的关键词,例如「视频会议 卡顿 UDP」'),
+        limit: z.number().int().min(1).max(5).optional().describe('最多几个话题,默认 3'),
+      },
+    },
+    async ({ query, limit }) => {
+      try {
+        const resp = await client.request('POST', '/v1/memory/topics/search', { query, ...(limit ? { limit } : {}) })
+        return { content: [{ type: 'text', text: JSON.stringify(resp) }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'topic_search')
+      }
+    },
+  )
+}

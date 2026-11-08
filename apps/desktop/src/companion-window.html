@@ -7,16 +7,37 @@
     <link rel="stylesheet" href="./tokens.css" />
     <link rel="stylesheet" href="./fonts.css" />
     <link rel="stylesheet" href="./companion-window.css" />
+    <link rel="stylesheet" href="./pet/life/body-motion.css" />
+    <link rel="stylesheet" href="./styles/secondary-minimal.css" />
   </head>
   <body>
     <main class="pet-shell">
-      <section class="pet-stage" id="pet-stage" aria-label="CC">
-        <img class="pet-sprite" id="pet-sprite" alt="" draggable="false" />
-        <div class="pet-props" id="pet-props" aria-hidden="true"></div>
+      <section class="pet-stage" id="pet-stage" role="button" tabindex="0" aria-label="CC" title="点一下交办，拖动移动">
+        <div class="pet-body" id="pet-body">
+          <img class="pet-sprite" id="pet-sprite" alt="" draggable="false" />
+          <div class="pet-props" id="pet-props" aria-hidden="true"></div>
+        </div>
+        <p class="pet-activity" id="pet-activity" aria-hidden="true" hidden></p>
       </section>
+      <div class="pet-tasks" id="pet-tasks" hidden>
+        <button class="pet-task-primary" id="pet-task-primary" type="button"></button>
+        <button class="pet-task-toggle" id="pet-task-toggle" type="button" aria-expanded="false" aria-controls="pet-task-list" hidden></button>
+        <div class="pet-task-list" id="pet-task-list" aria-label="当前任务" hidden></div>
+      </div>
       <p class="pet-hint" id="pet-hint" hidden></p>
       <div class="pet-card-host" id="pet-card" hidden></div>
       <div class="pet-controls">
+        <button id="pet-open-main" class="pet-open-main" type="button">找 CC</button>
+        <details class="pet-settings">
+          <summary>陪伴设置</summary>
+          <div class="pet-settings-panel">
+            <p id="pet-connection" role="status">正在联系 CC</p>
+            <label><input id="pet-reduced-motion" type="checkbox" />减少动作</label>
+            <p id="pet-system-motion" hidden>跟随系统减少动态</p>
+            <button id="pet-quiet" type="button" aria-pressed="false">安静一小时</button>
+            <button id="pet-reset-position" type="button">回到屏幕边缘</button>
+          </div>
+        </details>
         <button id="pet-zoom-out" type="button" aria-label="缩小">−</button>
         <button id="pet-zoom-in" type="button" aria-label="放大">＋</button>
         <button id="companion-window-close" type="button" aria-label="关闭桌面陪伴">×</button>

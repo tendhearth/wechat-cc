@@ -6,7 +6,6 @@ import type { ReportSink } from '../../domain/matters/report'
 import type { RecollectSink } from '../../domain/matters/recollection'
 import type { UsageSnapshot } from '../../domain/subscription-usage'
 import type { WorkbenchStore } from '../../adapters/store/workbench/store'
-import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
 
 interface Options {
   store: WorkbenchStore
@@ -16,6 +15,8 @@ interface Options {
   managedWorkspaceRoot?: string
   networkGate?: import('../../lib/network-gate').NetworkGate
   projectLessons?: ServiceCtx['deps']['projectLessons']
+  topicBrief?: ServiceCtx['deps']['topicBrief']
+  onTaskTurnCompleted?: ServiceCtx['deps']['onTaskTurnCompleted']
   addLesson?: ServiceCtx['deps']['addLesson']
   checkpointDeadlineMs?: number
   reviewDeadlineMs?: number
@@ -57,8 +58,6 @@ interface Options {
   retainedIdleCloseMs?: number | (() => number)
   /** 安静下来而**有人在等这个文件夹**时的短让位时长(ms;缺省 15 秒)。同上。 */
   handoffGraceMs?: number | (() => number)
-  /** 变更信号中心(长轮询);不传就自建。 */
-  changes?: TaskChangeHub
   /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
   // scripts / until / rewind:工作区脚本、检查命令(2026-10-20)与回退(2026-10-21)的测试旋钮,生产不传;quotaResume.notify:到点没接上时告诉主人一句
   unattendedAck?: { get(): number | null; set(at: number): void }
@@ -132,17 +131,20 @@ export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, Ent
  */
 export function makeWorkbenchService(opts: Options) {
   const { store } = opts
-  const changes = opts.changes ?? makeTaskChangeHub()
-  /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */
-  const touched = (id: string, seq?: number) => { try { changes.publish(id, seq ?? store.version(id)) } catch { /* 信号丢了只是多等一轮 */ } }
-  /** 非 store 状态变化:先落库拿新 seq 再唤醒。bump 本身可能抛(任务不存在),别让它冒进调用方的 finally/catch。 */
-  const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
+  /**
+   * 「变了」的信号只有一个来源:MatterLog 推进这件事的游标(P1a,设计稿 2026-11-02-p1-change-feed-design.md)。store 的每笔写
+   * 在同一事务里推进它;这里不再另发。经 service 订的回调记下来,关机时退掉。
+   */
+  const feed = store.feed
+  const unsubscribes = new Set<() => void>()
+  /** 非 store 状态变化:落库推进版本号与游标。bump 本身可能抛(任务不存在),别让它冒进调用方的 finally/catch。 */
+  const bumped = (id: string) => { try { store.bump(id) } catch { /* 信号丢了只是多等一轮 */ } }
   const state = makeRuntimeState()
   // Options 里除了这几样(store / 目录 / 变更中心 / 四个子功能的选项),其余原样就是 ServiceDeps —— 不再逐字段抄一遍。
-  const { store: _store, stateDir, changes: _changes, scripts: _scripts, until: _until, rewind: _rewind, quotaResume: _quotaResume, ...deps } = opts
+  const { store: _store, stateDir, scripts: _scripts, until: _until, rewind: _rewind, quotaResume: _quotaResume, ...deps } = opts
   const ctx: ServiceCtx = {
     store, stateDir, state,
-    hub: { touched, bumped, dispose: () => changes.dispose() },
+    hub: { bumped, dispose: () => { for (const off of [...unsubscribes]) off(); unsubscribes.clear(); feed.wakeAll() } },
     deps,
     ensureAccepting,
     ...(opts.log ? { log: opts.log } : {}),
@@ -284,6 +286,7 @@ export function makeWorkbenchService(opts: Options) {
     projects:viewDomain.projects,
     createWechat:executeDomain.createWechat,
     attention:viewDomain.attention,
+    petActivities:viewDomain.petActivities,
     resolveAnswer:inputsDomain.resolveAnswer,
     withdrawInput:inputsDomain.withdrawInput,
     submitInput:inputsDomain.submitInput,inputReceipt:inputsDomain.inputReceipt,
@@ -338,16 +341,19 @@ export function makeWorkbenchService(opts: Options) {
       Promise.resolve(quotaResumeDomain.shutdown()),
       lifecycleDomain.shutdown(),
     ]).then(() => {}),
-    changes: { onChange: (cb: (taskId: string, seq: number) => void) => changes.onChange(cb),
-      /** store.version 才是权威:hub 缓存可能因为一笔回滚的事务而"幻影提前",落库的 seq 从不会。
-       * 提前发现(persisted>since)时也顺手 publish 一下,把挂在旧值上的 waiter 一并叫醒,
-       * 不用等它们各自超时。 */
+    changes: {
+      /** 这件事每次真的变了(已落库)回调一次。 */
+      onChange: (cb: (taskId: string, cursor: number) => void) => { const off = feed.onChange(cb); unsubscribes.add(off); return () => { unsubscribes.delete(off); off() } },
+      /** 长轮询:版本号超过 since 就返回;否则等这件事的游标前进(先读游标再读版本号 —— 中间提交的那笔会让 wait 立刻返回,不会漏)。 */
       async wait(id: string, since: number, maxMs: number): Promise<number> {
+        const cursor = feed.cursor(id)
         const persisted = store.version(id)
-        if (persisted > since) { changes.publish(id, persisted); return persisted }
-        changes.publish(id, persisted)
-        return changes.wait(id, since, maxMs)
+        if (persisted > since) return persisted
+        await feed.wait(id, cursor, maxMs)
+        return store.version(id)
       },
+      /** 长轮询按游标(P1b):这件事的游标超过 since 就返回;否则等它前进,最多 maxMs。 */
+      waitCursor: (id: string, since: number, maxMs: number): Promise<number> => feed.wait(id, since, maxMs),
     },
   }
   const wechatControl=makeWechatWorkbenchControl({

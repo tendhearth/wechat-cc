@@ -58,7 +58,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   rewind_needs_owner: {desktop: 409, phone: 409, rewind: true},
   rewind_noop: {desktop: 422, phone: 422, rewind: true},
   rewind_not_blocked: {desktop: 409, rewind: true},
-  rewind_not_latest: {phone: 409},
+  rewind_not_latest: {desktop: 409, phone: 409},
   rewind_shared_folder: {desktop: 409, phone: 409, rewind: true},
   rewind_unavailable: {desktop: 422, phone: 422, rewind: true},
   rewind_undo_stale: {desktop: 409, rewind: true},
@@ -192,7 +192,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   invalid_state: {desktop: 409},
   matter_not_found: {desktop: 404, phone: 404},
   matter_say_unsupported: {phone: 400},
-  matter_task_required: {phone: 400},
+  matter_task_required: {desktop: 400, phone: 400},
   not_found: {desktop: 404, phone: [404, 'matter_not_found']},
   permission_stale: {desktop: 409, phone: 409, wechat: '这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'},
   question_stale: {desktop: 409, phone: 409, wechat: '这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'},
@@ -210,6 +210,11 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   terminal_say_ended: {desktop: 409},
   terminal_say_turn_open: {desktop: 409},
   terminal_say_pending: {desktop: 409},
+  // ── 输出评测(2026-10-29,features/output-eval/routes.ts 的 POST /v1/eval/run,调用方只有 `wechat-cc eval run`)。
+  // 跑了没跑好(超时、模型报错)是 200 + ok:false;下面是请求本身不成立:字段不对(带 detail)/ 执行者没注册 / 没有便宜模型可打分。
+  eval_invalid_request: {desktop: 400},
+  eval_unknown_provider: {desktop: 404},
+  eval_no_cheap_model: {desktop: 503},
   // ── 只在微信(features/workbench/wechat-control)
   artifact_delivery_conflict: {wechat: '这条文件请求与已记录的内容不一致，没有再次发送。请重新查看任务成果。'},
   artifact_transport_unavailable: {wechat: '文件发送暂不可用，已保存的成果仍可在桌面工作台查看。'},

@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "body": {
+    "epoch": "<uuid:5>",
+    "seq": 2,
+    "data": {
+      "found": true,
+      "kind": "task",
+      "version": 7,
+      "phase": "working"
+    }
+  }
+}

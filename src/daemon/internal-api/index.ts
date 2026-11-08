@@ -21,19 +21,21 @@
  * + interface types live in ./types.ts. The split is purely organisational
  * — no behaviour change vs the pre-split monolithic internal-api.ts.
  */
+import { makeRouteUsage } from '../../lib/route-usage'
 import { writeFileAtomic } from '../../lib/json-file'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { makeTokenRegistry, type TokenInfo } from './token-registry'
-import { minTierFor, moduleFor, tierMeets } from './route-tiers'
+import { makeTokenRegistry, type TokenInfo, type TokenOrigin } from './token-registry'
+import { minTierFor, moduleFor, PANEL_V1_ROUTES, tierMeets } from './route-tiers'
 import { MODULE_UNAVAILABLE_CODE } from '@wechat-cc/protocol/routes'
 import type { UserTier } from '../../domain/user-tier'
 import type { AddressInfo } from 'node:net'
 import {
   errMsg,
   LATE_KEYS,
+  PANEL_CAUSE_HEADER,
   type InternalApi,
   type InternalApiDeps,
   type RouteTable,
@@ -51,7 +53,11 @@ export function assertResponseContract(routeKey: string, body: unknown): void {
 }
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
+import { DESKTOP_ROUTE_ALIASES } from './legacy-desktop-routes'
 import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
+
+/** 一件事上的动作(P3e,`/v1/matter/<动词>`):正文上限同它们的 `/v1/workbench/*` 双胞胎(128 KiB)。 */
+const MATTER_ACTION_PATHS: ReadonlySet<string> = new Set(DESKTOP_ROUTE_ALIASES.map(r => r.to.slice(r.to.indexOf(' ') + 1)))
 
 export type {
   InternalApi,
@@ -63,6 +69,54 @@ export type {
   LateKey,
 } from './types'
 
+/**
+ * 两个监听各认哪几种令牌(P3b「两个监听,只管谁能进门」):127.0.0.1 的内部 API 只认桌面 / 本机凭据,
+ * 手机设置面板只认手机的。内部 API 不上局域网,面板不认桌面凭据 —— 和抽出共用分发之前一样。
+ */
+export type DispatchEntry = 'local' | 'panel'
+const ENTRY_ORIGINS: Readonly<Record<DispatchEntry, ReadonlySet<TokenOrigin>>> = {
+  local: new Set<TokenOrigin>(['file', 'session', 'operator']),
+  panel: new Set<TokenOrigin>(['device', 'link']),
+}
+export function entryAccepts(entry: DispatchEntry, origin: TokenOrigin): boolean {
+  return ENTRY_ORIGINS[entry].has(origin)
+}
+
+/** 面板令牌在查询串里(`?d=` 设备、`?t=` 链接),隧道再加 `_via=tunnel`:交给 `/v1` 处理器之前剥掉。 */
+const PANEL_QUERY_KEYS = ['d', 't', '_via'] as const
+
+/** dispatch 的结果:回包 + 传输层要做的两件事(413 后关连接、回包写出去以后调的回调)。 */
+type DispatchResult = { status: number; body: unknown; cause?: string; closeConnection?: true; onSent?: Array<() => void> }
+
+/** 面板那一口能走哪些 `/v1` 路由:默认从路由表推(`PANEL_V1_ROUTES`,带 `phone` 块的 `/v1` 行)。 */
+export interface InternalApiOptions {
+  /** 测试用:替换「路由表里带 phone 块的 /v1 行」这份名单(P3b 时表里还没有这样的行,正向路径只能这样测)。 */
+  panelRoutes?: { device: ReadonlySet<string>; link: ReadonlySet<string> }
+  /**
+   * 测试用:false ⇒ 2xx 回包不对着响应契约核。只给 `/m/api` 金样(P3a)用 —— 那份金样钉的是面板这一层,底下的服务给的是
+   * 照剧本回话的假实现(形状故意只有几个字段),核契约会把它们一律变成 500。别的测试别关。
+   */
+  responseContracts?: false
+}
+
+/** Fetch 的 Request 读 JSON 正文,带和 node 那边一样的上限语义(超了抛 request_body_too_large)。 */
+async function readFetchJsonBody(req: Request, maxBytes?: number): Promise<unknown> {
+  if (maxBytes !== undefined && Number(req.headers.get('content-length')) > maxBytes) throw Error('request_body_too_large')
+  if (!req.body) return null
+  const reader = req.body.getReader()
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    bytes += value.byteLength
+    if (maxBytes !== undefined && bytes > maxBytes) { try { await reader.cancel() } catch { /* 已经断了 */ } throw Error('request_body_too_large') }
+    chunks.push(value)
+  }
+  const text = Buffer.concat(chunks).toString('utf8')
+  return text ? JSON.parse(text) : null
+}
+
 const TOKEN_FILE = 'internal-token'
 // Separate admin-tier credential (option B security fix) — see the
 // "OPERATOR token" note in token-registry.ts's module doc comment. Kept in
@@ -71,7 +125,12 @@ const TOKEN_FILE = 'internal-token'
 // it on disk.
 const OPERATOR_TOKEN_FILE = 'internal-operator-token'
 
-export function createInternalApi(deps: InternalApiDeps): InternalApi {
+export function createInternalApi(deps: InternalApiDeps, options: InternalApiOptions = {}): InternalApi {
+  const panelRoutes = options.panelRoutes ?? PANEL_V1_ROUTES
+  /** 面板那一口:设备令牌要这一行有 phone 块;链接令牌还要 link 是 read / write。别的 origin 一律不。 */
+  const panelAllows = (origin: TokenOrigin, routeKey: string): boolean =>
+    origin === 'device' ? panelRoutes.device.has(routeKey) : origin === 'link' ? panelRoutes.link.has(routeKey) : false
+  const noteRouteUsage = makeRouteUsage(deps.stateDir)
   const tokenPath = join(deps.stateDir, TOKEN_FILE)
   const operatorTokenPath = join(deps.stateDir, OPERATOR_TOKEN_FILE)
   const registry = makeTokenRegistry()
@@ -159,6 +218,212 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     return JSON.parse(text)
   }
 
+  /**
+   * 一个分发(P3 设计稿「一个处理器、一个分发」,P3b):档位 → routeAllow → 模块门 → 请求 schema → chat 范围门 → 处理器 → 响应契约。
+   * 两个监听都交给它,只是**谁能进门**各管各的(`entry`):
+   *   - `local`:127.0.0.1 的内部 API,只认 file / session / operator(device / link 一律 401);
+   *   - `panel`:手机设置面板(局域网 Bun.serve + 中继隧道),只认 device / link,并且路由表那一行得有 `phone` 块
+   *     (link 令牌还得是 `link: read | write`)——没有 ⇒ 403 route_not_allowed,在查路由之前就挡,不让 404 / 503 变成探测口。
+   * 传输层的事(读正文、断开信号、写回包、CORS)由调用方经 `io` 交进来,这里不碰 node:http / fetch。
+   */
+  async function dispatch(inp: {
+    entry: DispatchEntry
+    method: string
+    url: URL
+    rawUrl: string
+    caller: TokenInfo
+    /** 只在面板那一口有:帧预算与出生地(设计稿「按范围不按路径的差别」)。 */
+    panel?: { frameBudget: number; client: 'app' | 'web' }
+    io: {
+      readBody(maxBytes?: number): Promise<unknown>
+      /** 处理器开跑前调一次:断开信号从这一刻起算(和抽出来之前一样的时刻)。 */
+      signal(): AbortSignal
+    }
+  }): Promise<DispatchResult> {
+    const { entry, method, url, rawUrl, caller } = inp
+    const routeKey = `${method} ${url.pathname}`
+    if (!entryAccepts(entry, caller.origin)) return { status: 401, body: { error: 'unauthorized' } }
+
+    if (entry === 'panel') {
+      // 面板那一口:令牌自己的 routeAllow(PHONE_ROUTES / LINK_ROUTES)精确命中 + 路由表那一行真有 phone 块。两道都过才往下。
+      if (!caller.routeAllow?.has(routeKey) || !panelAllows(caller.origin, routeKey)) {
+        deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} route_not_allowed`, {
+          event: 'route_not_allowed', path: routeKey, caller: caller.tier, origin: caller.origin, entry,
+        })
+        return { status: 403, body: { error: 'route_not_allowed' } }
+      }
+    }
+
+    const route = ROUTES[routeKey] ?? MOUNTED[routeKey]
+
+    if (!route && !moduleFor(routeKey)) {
+      return { status: 404, body: { error: 'not_found', method, url: rawUrl } }
+    }
+
+    // Tier gate: the caller's tier (from its token) must meet the route's
+    // declared minimum. Unlisted routes default to admin (fail-closed).
+    const need = minTierFor(routeKey)
+    if (!tierMeets(caller.tier, need)) {
+      deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier} need=${need}`, {
+        event: 'tier_denied', path: routeKey, caller: caller.tier, required: need,
+      })
+      return { status: 403, body: { error: 'forbidden', required: need } }
+    }
+
+    // Route-allow gate: some tokens (currently the operator token — see
+    // token-registry.ts's "ROUTE-SCOPING" doc note) are restricted to a
+    // fixed set of routes regardless of their tier, so an admin-tier grant
+    // that leaks doesn't hand out the whole admin surface. Checked after
+    // the tier gate so a route-scoped token still needs the right tier too.
+    if (caller.routeAllow && !caller.routeAllow.has(routeKey)) {
+      deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} route_not_allowed`, {
+        event: 'route_not_allowed', path: routeKey, caller: caller.tier, origin: caller.origin,
+      })
+      return { status: 403, body: { error: 'route_not_allowed' } }
+    }
+
+    // Module gate(第三批 3b,设计稿 2026-10-22-daemon-module-design):表里标了 module 的路由,那个模块此刻
+    // 不是 ok ⇒ 统一 503,处理器里不用再写分支。放在鉴权两道门**之后**:没权限的照旧 401 / 403,
+    // 不让「模块关着」变成探测装了什么功能的口子。主人关的 ⇒ module_off;开着却没起来 ⇒ module_degraded
+    // 带原因 —— 别把坏了说成关了。subsystems 里找不到这个模块(测试 / 还没登记)⇒ 放给处理器,它自己的兜底照旧。
+    const mod = moduleFor(routeKey)
+    // 搬家前客户端就认得的「没准备好」码(MODULE_UNAVAILABLE_CODE,现在只有工作台的 workbench_not_wired):
+    // 这个模块不是 ok 或还没挂上 ⇒ 原样回 503 { error: 那个码 },跟搬家前处理器里写的一字不差。
+    const legacy = mod ? MODULE_UNAVAILABLE_CODE[mod] : undefined
+    if (mod) {
+      const st = deps.subsystems?.().find(s => s.name === mod)
+      if (st && st.state !== 'ok') {
+        const code = st.state === 'off' ? 'module_off' : 'module_degraded'
+        deps.log?.('INTERNAL_API', `503 ${routeKey} ${code} module=${mod}`, { event: code, path: routeKey, module: mod })
+        if (legacy) return { status: 503, body: { error: legacy } }
+        return { status: 503, body: { error: code, module: mod, ...(st.state !== 'off' && st.error ? { detail: st.error } : {}) } }
+      }
+    }
+
+    // 表里有、模块也没说关着 / 坏了,只是处理器还没挂上来:开机途中(模块还没 init 到)。
+    if (!route) return { status: 503, body: legacy ? { error: legacy } : { error: 'module_starting', module: mod } }
+
+    let body: unknown = null
+    if (method === 'POST') {
+      try {
+        body = await inp.io.readBody(url.pathname==='/v1/workbench/attachment'?12*1024*1024:url.pathname.startsWith('/v1/workbench/')||MATTER_ACTION_PATHS.has(url.pathname)?128*1024:undefined)
+      } catch (err) {
+        if(err instanceof Error&&err.message==='request_body_too_large') return { status: 413, body: { error: 'request_body_too_large' }, closeConnection: true }
+        return { status: 400, body: { error: 'malformed_json', detail: errMsg(err) } }
+      }
+    }
+
+    const reqSchema = REQUEST_SCHEMAS[routeKey]
+    if (reqSchema) {
+      const input = method === 'POST'
+        ? body
+        : Object.fromEntries(url.searchParams.entries())
+      const parsed = reqSchema.safeParse(input)
+      if (!parsed.success) {
+        deps.log?.('INTERNAL_API', `400 ${routeKey} schema mismatch`, {
+          path: routeKey,
+          issues: parsed.error.issues,
+        })
+        return { status: 400, body: { error: 'invalid_request', detail: parsed.error.flatten() } }
+      }
+      if (method === 'POST') body = parsed.data
+      // GET: handler still reads from url.searchParams (legacy contract);
+      // schema validation just gatekeeps.
+    }
+
+    // Derive the caller's chatId from a session token's sessionKey
+    // (`provider/alias/chatId`) — chatId is everything after the SECOND
+    // `/` so a chatId that itself contains `/` survives intact. File-origin
+    // tokens (the daemon-wide operator token) never carry a sessionKey, so
+    // chatId stays undefined for them — routes that scope by chatId (e.g.
+    // memory/*) treat undefined + origin!=='session' as "unrestricted".
+    const callerChatId = caller.origin === 'session' && caller.sessionKey
+      ? caller.sessionKey.split('/').slice(2).join('/')
+      : undefined
+    // 共享令牌按本轮绑定(回复交付第 2 步):`agy-static` 的「自己的 chat」就是此刻正在跑的那一轮 agy 的
+    // 聊天 —— 附件路由与发送类的 chat 范围门用它。其它路由(记忆 / 提醒……)照旧只看令牌里读出来的
+    // chatId(agy-static 没有)。
+    const sharedTurn = sharedTokenTurn(caller, {
+      turnChatFor: deps.replyDelivery ? (p) => deps.replyDelivery!.turnChatFor(p) : undefined,
+    })
+    const turnChatId = sharedTurn?.kind === 'bound' ? sharedTurn.chatId : undefined
+    const callerInfo = {
+      tier: caller.tier, origin: caller.origin, chatId: callerChatId, ...(caller.origin === 'session' && caller.sessionKey ? { sessionKey: caller.sessionKey } : {}),
+      ...(sharedTurn ? { sharedTurn: sharedTurn.kind, ...(turnChatId ? { turnChatId } : {}) } : {}),
+      // 面板那一口才有(127.0.0.1 进来的不带,和抽出来之前一字不差):帧预算 ⇒ 要裁的处理器按它裁;出生地 ⇒ app / web。
+      ...(inp.panel ? { frameBudget: inp.panel.frameBudget, client: inp.panel.client } : {}),
+    }
+
+    // Chat-scope gate for the send family (send-scope.ts): a session of ANY
+    // tier may only send to / edit in its OWN chat (tightened 2026-10-04 for
+    // admin too); the one cross-chat path is the admin-only `message` route,
+    // allowed and logged (chat_scope_admin_cross); broadcast: admin sessions only. Runs after schema validation and BEFORE the handler,
+    // so a denied request never reaches the App reply sink, the outbound
+    // tap, or ilink. File / operator tokens are not affected.
+    const sendTarget = SEND_SCOPED_ROUTES[routeKey]
+    if (sendTarget) {
+      const target = sendTarget(body)
+      const decision = sendScopeDecision(target, sharedTurn
+        ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey }
+        : { ...callerInfo, sessionKey: caller.sessionKey }, routeKey)
+      const targetLabel = target === ALL_CHATS ? '*' : target
+      if (decision.kind === 'deny') {
+        const own = sharedTurn ? (turnChatId ?? `-(agy-static turn=${sharedTurn.kind})`) : (callerChatId ?? '-')
+        deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} chat_scope own=${own} target=${targetLabel}`, {
+          event: 'chat_scope_denied', path: routeKey, caller: caller.tier, origin: caller.origin,
+          callerChat: (sharedTurn ? turnChatId : callerChatId) ?? null, target: targetLabel,
+          ...(sharedTurn ? { sharedTurn: sharedTurn.kind } : {}),
+        })
+        return { status: 403, body: { error: 'chat_scope', message: decision.message } }
+      }
+      if (decision.kind === 'admin_cross') {
+        // `message` 跨 chat(send-scope.ts):放行,记一笔审计 —— 主人「帮我告诉某人」的用量。
+        deps.log?.('INTERNAL_API', `${routeKey} admin cross-chat own=${callerChatId ?? '-'} target=${targetLabel}`, {
+          event: 'chat_scope_admin_cross', path: routeKey, callerChat: callerChatId ?? null, target: targetLabel,
+        })
+      }
+    }
+
+    // busy-registry hold (spec 2026-08-11 §2) — non-GET authenticated
+    // request awaits the handler with a token held, released right after.
+    // Same "worst case" motivation as markInboundActivity above: without
+    // this, a slow handler is invisible to the idle self-restart check
+    // between activity ticks. holdBusy itself must never break the request.
+    const releaseBusy = method !== 'GET'
+      ? (() => { try { return deps.holdBusy?.(`api:${routeKey}`) } catch { return undefined } })()
+      : undefined
+    try {
+      // 调用方断开(MCP 子进程死了 / 工具调用被客户端放弃)⇒ signal 中止。只有长轮询的路由(GET /v1/cli/say)读它:
+      // 挂着的等待不能当成「还有人在等」(terminal_say 评审 #2a,2026-10-24)。
+      // onSent:回包真写出去了才调 —— terminal_say 据此才算「回话被领走」;没写出去就留给它自己的兜底(告诉主人),评审 #662 二轮 #1。
+      // 怎么判「断开」「写出去了」是传输层的事(见下面 handleRequest / panelDispatch)。
+      const signal = inp.io.signal()
+      const onSent: Array<() => void> = []
+      const out = await route(url.searchParams, body, callerInfo, { signal, onSent: (cb) => { onSent.push(cb) } })
+      // 契约(架构终态 F1):测试里每个 2xx 回包都对着响应契约核一遍 —— 契约写错了、处理器回的形状变了,测试当场红;
+      // 生产里不核(不为契约多花一次 parse,也不因契约漏写一个可选字段就让主人的请求失败)。
+      if (UNDER_TEST_RUNNER && options.responseContracts !== false && out.status >= 200 && out.status < 300) assertResponseContract(routeKey, out.body)
+      return { status: out.status, body: out.body, onSent, ...(typeof out.cause === 'string' ? { cause: out.cause } : {}) }
+    } catch (err) {
+      // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
+      // 不是 500,daemon 也不退。
+      const code = (err as { code?: unknown })?.code
+      if (code === 'config_unreadable' || code === 'config_busy') {
+        deps.log?.('INTERNAL_API', `409 ${method} ${rawUrl}: ${errMsg(err)}`, { event: 'config_write_refused', method, url: rawUrl, error: errMsg(err) })
+        return { status: 409, body: { error: code, detail: errMsg(err) } }
+      }
+      deps.log?.('INTERNAL_API', `500 ${method} ${rawUrl}: ${errMsg(err)}`, {
+        event: 'route_threw',
+        method,
+        url: rawUrl,
+        error: errMsg(err),
+      })
+      return { status: 500, body: { error: 'internal', detail: errMsg(err) } }
+    } finally {
+      try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
+    }
+  }
+
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const origin = (req.headers.origin && typeof req.headers.origin === 'string') ? req.headers.origin : undefined
 
@@ -180,7 +445,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     }
 
     const caller = authResolve(req)
-    if (!caller) {
+    // 127.0.0.1 这一口只认 file / session / operator:手机的 device / link 令牌在这里和不认识的令牌一样 401
+    // (P3b:它们的 routeAllow 以后会带 /v1 键,只能经面板那一口进,内部 API 不替手机开第二个门)。
+    if (!caller || !entryAccepts('local', caller.origin)) {
       deps.log?.('INTERNAL_API', `401 ${req.method} ${req.url}`, {
         event: 'auth_rejected',
         method: req.method,
@@ -212,197 +479,74 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
 
     const rawUrl = req.url ?? '/'
     const url = new URL(rawUrl, 'http://internal')
-    const routeKey = `${method} ${url.pathname}`
-    const route = ROUTES[routeKey] ?? MOUNTED[routeKey]
-
-    if (!route && !moduleFor(routeKey)) {
-      return send(res, 404, { error: 'not_found', method, url: rawUrl }, origin)
-    }
-
-    // Tier gate: the caller's tier (from its token) must meet the route's
-    // declared minimum. Unlisted routes default to admin (fail-closed).
-    const need = minTierFor(routeKey)
-    if (!tierMeets(caller.tier, need)) {
-      deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier} need=${need}`, {
-        event: 'tier_denied', path: routeKey, caller: caller.tier, required: need,
-      })
-      return send(res, 403, { error: 'forbidden', required: need }, origin)
-    }
-
-    // Route-allow gate: some tokens (currently the operator token — see
-    // token-registry.ts's "ROUTE-SCOPING" doc note) are restricted to a
-    // fixed set of routes regardless of their tier, so an admin-tier grant
-    // that leaks doesn't hand out the whole admin surface. Checked after
-    // the tier gate so a route-scoped token still needs the right tier too.
-    if (caller.routeAllow && !caller.routeAllow.has(routeKey)) {
-      deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} route_not_allowed`, {
-        event: 'route_not_allowed', path: routeKey, caller: caller.tier, origin: caller.origin,
-      })
-      return send(res, 403, { error: 'route_not_allowed' }, origin)
-    }
-
-    // Module gate(第三批 3b,设计稿 2026-10-22-daemon-module-design):表里标了 module 的路由,那个模块此刻
-    // 不是 ok ⇒ 统一 503,处理器里不用再写分支。放在鉴权两道门**之后**:没权限的照旧 401 / 403,
-    // 不让「模块关着」变成探测装了什么功能的口子。主人关的 ⇒ module_off;开着却没起来 ⇒ module_degraded
-    // 带原因 —— 别把坏了说成关了。subsystems 里找不到这个模块(测试 / 还没登记)⇒ 放给处理器,它自己的兜底照旧。
-    const mod = moduleFor(routeKey)
-    // 搬家前客户端就认得的「没准备好」码(MODULE_UNAVAILABLE_CODE,现在只有工作台的 workbench_not_wired):
-    // 这个模块不是 ok 或还没挂上 ⇒ 原样回 503 { error: 那个码 },跟搬家前处理器里写的一字不差。
-    const legacy = mod ? MODULE_UNAVAILABLE_CODE[mod] : undefined
-    if (mod) {
-      const st = deps.subsystems?.().find(s => s.name === mod)
-      if (st && st.state !== 'ok') {
-        const code = st.state === 'off' ? 'module_off' : 'module_degraded'
-        deps.log?.('INTERNAL_API', `503 ${routeKey} ${code} module=${mod}`, { event: code, path: routeKey, module: mod })
-        if (legacy) return send(res, 503, { error: legacy }, origin)
-        return send(res, 503, { error: code, module: mod, ...(st.state !== 'off' && st.error ? { detail: st.error } : {}) }, origin)
-      }
-    }
-
-    // 表里有、模块也没说关着 / 坏了,只是处理器还没挂上来:开机途中(模块还没 init 到)。
-    if (!route) return send(res, 503, legacy ? { error: legacy } : { error: 'module_starting', module: mod }, origin)
-
-    let body: unknown = null
-    if (method === 'POST') {
-      try {
-        body = await readJsonBody(req,url.pathname==='/v1/workbench/attachment'?12*1024*1024:url.pathname.startsWith('/v1/workbench/')?128*1024:undefined)
-      } catch (err) {
-        if(err instanceof Error&&err.message==='request_body_too_large'){
-          // A rejected stream may still contain unread chunks. Do not reuse its
-          // connection for a following request before the parser finishes it.
-          // Bun's node:http compatibility layer needs the explicit end as well
-          // as the header; end after finish so the 413 response is flushed first.
-          const socket=req.socket
-          res.once('finish',()=>{if(!socket.destroyed)socket.end()})
-          res.setHeader('connection','close')
-          return send(res,413,{error:'request_body_too_large'},origin)
-        }
-        return send(res, 400, { error: 'malformed_json', detail: errMsg(err) }, origin)
-      }
-    }
-
-    const reqSchema = REQUEST_SCHEMAS[routeKey]
-    if (reqSchema) {
-      const input = method === 'POST'
-        ? body
-        : Object.fromEntries(url.searchParams.entries())
-      const parsed = reqSchema.safeParse(input)
-      if (!parsed.success) {
-        deps.log?.('INTERNAL_API', `400 ${routeKey} schema mismatch`, {
-          path: routeKey,
-          issues: parsed.error.issues,
-        })
-        return send(res, 400, { error: 'invalid_request', detail: parsed.error.flatten() }, origin)
-      }
-      if (method === 'POST') body = parsed.data
-      // GET: handler still reads from url.searchParams (legacy contract);
-      // schema validation just gatekeeps.
-    }
-
-    // Derive the caller's chatId from a session token's sessionKey
-    // (`provider/alias/chatId`) — chatId is everything after the SECOND
-    // `/` so a chatId that itself contains `/` survives intact. File-origin
-    // tokens (the daemon-wide operator token) never carry a sessionKey, so
-    // chatId stays undefined for them — routes that scope by chatId (e.g.
-    // memory/*) treat undefined + origin!=='session' as "unrestricted".
-    const callerChatId = caller.origin === 'session' && caller.sessionKey
-      ? caller.sessionKey.split('/').slice(2).join('/')
-      : undefined
-    // 共享令牌按本轮绑定(回复交付第 2 步):`agy-static` 的「自己的 chat」就是此刻正在跑的那一轮 agy 的
-    // 聊天 —— 附件路由与发送类的 chat 范围门用它。其它路由(记忆 / 提醒……)照旧只看令牌里读出来的
-    // chatId(agy-static 没有)。
-    const sharedTurn = sharedTokenTurn(caller, {
-      turnChatFor: deps.replyDelivery ? (p) => deps.replyDelivery!.turnChatFor(p) : undefined,
-    })
-    const turnChatId = sharedTurn?.kind === 'bound' ? sharedTurn.chatId : undefined
-    const callerInfo = {
-      tier: caller.tier, origin: caller.origin, chatId: callerChatId,
-      ...(sharedTurn ? { sharedTurn: sharedTurn.kind, ...(turnChatId ? { turnChatId } : {}) } : {}),
-    }
-
-    // Chat-scope gate for the send family (send-scope.ts): a session of ANY
-    // tier may only send to / edit in its OWN chat (tightened 2026-10-04 for
-    // admin too); the one cross-chat path is the admin-only `message` route,
-    // allowed and logged (chat_scope_admin_cross); broadcast: admin sessions only. Runs after schema validation and BEFORE the handler,
-    // so a denied request never reaches the App reply sink, the outbound
-    // tap, or ilink. File / operator tokens are not affected.
-    const sendTarget = SEND_SCOPED_ROUTES[routeKey]
-    if (sendTarget) {
-      const target = sendTarget(body)
-      const decision = sendScopeDecision(target, sharedTurn
-        ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey }
-        : { ...callerInfo, sessionKey: caller.sessionKey }, routeKey)
-      const targetLabel = target === ALL_CHATS ? '*' : target
-      if (decision.kind === 'deny') {
-        const own = sharedTurn ? (turnChatId ?? `-(agy-static turn=${sharedTurn.kind})`) : (callerChatId ?? '-')
-        deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} chat_scope own=${own} target=${targetLabel}`, {
-          event: 'chat_scope_denied', path: routeKey, caller: caller.tier, origin: caller.origin,
-          callerChat: (sharedTurn ? turnChatId : callerChatId) ?? null, target: targetLabel,
-          ...(sharedTurn ? { sharedTurn: sharedTurn.kind } : {}),
-        })
-        return send(res, 403, { error: 'chat_scope', message: decision.message }, origin)
-      }
-      if (decision.kind === 'admin_cross') {
-        // `message` 跨 chat(send-scope.ts):放行,记一笔审计 —— 主人「帮我告诉某人」的用量。
-        deps.log?.('INTERNAL_API', `${routeKey} admin cross-chat own=${callerChatId ?? '-'} target=${targetLabel}`, {
-          event: 'chat_scope_admin_cross', path: routeKey, callerChat: callerChatId ?? null, target: targetLabel,
-        })
-      }
-    }
-
-    // busy-registry hold (spec 2026-08-11 §2) — non-GET authenticated
-    // request awaits the handler with a token held, released right after.
-    // Same "worst case" motivation as markInboundActivity above: without
-    // this, a slow handler is invisible to the idle self-restart check
-    // between activity ticks. holdBusy itself must never break the request.
-    const releaseBusy = method !== 'GET'
-      ? (() => { try { return deps.holdBusy?.(`api:${routeKey}`) } catch { return undefined } })()
-      : undefined
+    if (caller.origin === 'operator' || DESKTOP_ROUTE_ALIASES.some(r => r.from === `${method} ${url.pathname}`)) noteRouteUsage('desktop', typeof req.headers['x-cc-desktop-version'] === 'string' ? req.headers['x-cc-desktop-version'] : undefined, `${method} ${url.pathname}`)
+    // 断开信号:处理器开跑那一刻登记(dispatch 调 io.signal())。
+    // Bun 的 node:http 客户端断开时不发 res 'close'(10-24 实测),只发 req 'aborted' 与 socket 'close';node 三个都发。
+    const ac = new AbortController()
+    const sock = req.socket
+    const gone = () => { if (!res.writableFinished) ac.abort() }
+    let attached = false
     try {
-      // 调用方断开(MCP 子进程死了 / 工具调用被客户端放弃)⇒ signal 中止。只有长轮询的路由(GET /v1/cli/say)读它:
-      // 挂着的等待不能当成「还有人在等」(terminal_say 评审 #2a,2026-10-24)。
-      // Bun 的 node:http 客户端断开时不发 res 'close'(10-24 实测),只发 req 'aborted' 与 socket 'close';node 三个都发。
-      // onSent:回包真写出去了('finish';socket 已断时不发,Bun 与 node 都是,10-24 实测)才调 —— terminal_say 据此才算
-      // 「回话被领走」;没写出去就留给它自己的兜底(告诉主人),评审 #662 二轮 #1。
-      const ac = new AbortController()
-      const sock = req.socket
-      const gone = () => { if (!res.writableFinished) ac.abort() }
-      req.on('aborted', gone)
-      res.on('close', gone)
-      sock?.on('close', gone)
-      // 登记前就已经断了(比如在读 body / 校验那段时间里断的)⇒ 那些事件不会再来,直接算断开(评审 #662 二轮 #2)
-      if (sock?.destroyed || req.destroyed) gone()
-      const onSent: Array<() => void> = []
-      try {
-        const out = await route(url.searchParams, body, callerInfo, { signal: ac.signal, onSent: (cb) => { onSent.push(cb) } })
-        // 契约(架构终态 F1):测试里每个 2xx 回包都对着响应契约核一遍 —— 契约写错了、处理器回的形状变了,测试当场红;
-        // 生产里不核(不为契约多花一次 parse,也不因契约漏写一个可选字段就让主人的请求失败)。
-        if (UNDER_TEST_RUNNER && out.status >= 200 && out.status < 300) assertResponseContract(routeKey, out.body)
-        if (onSent.length && !ac.signal.aborted) res.once('finish', () => { for (const cb of onSent) { try { cb() } catch { /* 回调出错不影响已回的包 */ } } })
-        send(res, out.status, out.body, origin)
-      } finally {
-        // keep-alive 的同一条连接上会来很多请求:这一个请求一结束(回完 / 断开 / 抛错)就摘掉,不在 socket 上越挂越多
-        sock?.off('close', gone)
-      }
-    } catch (err) {
-      // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
-      // 不是 500,daemon 也不退。
-      const code = (err as { code?: unknown })?.code
-      if (code === 'config_unreadable' || code === 'config_busy') {
-        deps.log?.('INTERNAL_API', `409 ${method} ${rawUrl}: ${errMsg(err)}`, { event: 'config_write_refused', method, url: rawUrl, error: errMsg(err) })
-        send(res, 409, { error: code, detail: errMsg(err) }, origin)
-        return
-      }
-      deps.log?.('INTERNAL_API', `500 ${method} ${rawUrl}: ${errMsg(err)}`, {
-        event: 'route_threw',
-        method,
-        url: rawUrl,
-        error: errMsg(err),
+      const out = await dispatch({
+        entry: 'local', method, url, rawUrl, caller,
+        io: {
+          readBody: (maxBytes) => readJsonBody(req, maxBytes),
+          signal: () => {
+            attached = true
+            req.on('aborted', gone)
+            res.on('close', gone)
+            sock?.on('close', gone)
+            // 登记前就已经断了(比如在读 body / 校验那段时间里断的)⇒ 那些事件不会再来,直接算断开(评审 #662 二轮 #2)
+            if (sock?.destroyed || req.destroyed) gone()
+            return ac.signal
+          },
+        },
       })
-      send(res, 500, { error: 'internal', detail: errMsg(err) }, origin)
+      if (out.closeConnection) {
+        // A rejected stream may still contain unread chunks. Do not reuse its
+        // connection for a following request before the parser finishes it.
+        // Bun's node:http compatibility layer needs the explicit end as well
+        // as the header; end after finish so the 413 response is flushed first.
+        const socket=req.socket
+        res.once('finish',()=>{if(!socket.destroyed)socket.end()})
+        res.setHeader('connection','close')
+      }
+      // onSent:回包真写出去了('finish';socket 已断时不发,Bun 与 node 都是,10-24 实测)才调。
+      const onSent = out.onSent ?? []
+      if (onSent.length && !ac.signal.aborted) res.once('finish', () => { for (const cb of onSent) { try { cb() } catch { /* 回调出错不影响已回的包 */ } } })
+      send(res, out.status, out.body, origin)
     } finally {
-      try { releaseBusy?.() } catch { /* release 幂等且不抛,防御性 */ }
+      // keep-alive 的同一条连接上会来很多请求:这一个请求一结束(回完 / 断开 / 抛错)就摘掉,不在 socket 上越挂越多
+      if (attached) sock?.off('close', gone)
     }
+  }
+
+  /**
+   * 面板那一口(P3b):手机设置面板收到 `/v1/*` 时交到这里 —— 令牌面板已经认过(device / link),这里照 `dispatch` 的
+   * `panel` 入口再判一遍。回包就是 `/v1` 的回包(不套 `{ ok }`、不换 phone 那一列错误码 —— 那些只活在别名里,P3c 起)。
+   * 响应头:content-type + `cache-control: no-store`(手机这条线上的数据不进浏览器缓存);不回 CORS(面板在局域网上,不替任意网页开读权限)。
+   * 查询串里的 `d` / `t`(令牌)与 `_via`(隧道标记)先剥掉:处理器读 searchParams、GET 的 schema 也按它校验。
+   * onSent 在这一口不调:Response 交给 Bun.serve / 隧道以后写没写出去这里看不到,当没写出去(长轮询那条本来也不给手机)。
+   */
+  async function panelDispatch(req: Request, caller: TokenInfo, opts: { frameBudget: number; client: 'app' | 'web'; cause?: true }): Promise<Response> {
+    const url = new URL(req.url)
+    for (const k of PANEL_QUERY_KEYS) url.searchParams.delete(k)
+    const rawUrl = `${url.pathname}${url.search}`
+    const ac = new AbortController()
+    if (req.signal.aborted) ac.abort()
+    else req.signal.addEventListener('abort', () => ac.abort(), { once: true })
+    const out = await dispatch({
+      entry: 'panel', method: req.method, url, rawUrl, caller, panel: { frameBudget: opts.frameBudget, client: opts.client },
+      io: { readBody: (maxBytes) => readFetchJsonBody(req, maxBytes), signal: () => ac.signal },
+    })
+    return new Response(JSON.stringify(out.body), {
+      status: out.status,
+      headers: {
+        'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
+        // 只给面板进程里的旧路由别名(opts.cause);它读完就丢,不写回手机
+        ...(opts.cause && out.cause ? { [PANEL_CAUSE_HEADER]: out.cause } : {}),
+      },
+    })
   }
 
   return {
@@ -497,6 +641,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     invalidateSession(sessionKey: string) {
       registry.invalidateSession(sessionKey)
     },
+    panelDispatch,
     // 手机设置面板的窄接口(梳理第 6 步):同一个注册表,只给 device / link 的登记、查、撤、列。
     panelTokens: {
       register: (tokenHex, info) => registry.register(tokenHex, info),

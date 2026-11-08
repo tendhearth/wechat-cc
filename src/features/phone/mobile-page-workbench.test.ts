@@ -15,8 +15,9 @@ import { MOBILE_WORKBENCH_JS } from './mobile-page'
 import { phoneHtml } from './settings-panel-html'
 import { assembleMobilePage } from '../../../apps/mobile/assemble'
 import { readMobileSource } from '../../../apps/mobile/sources'
+import { HOME_GROUP_WORDS, QUIET_AFTER_MS, ROW_HINT_WORDS, STATUS_TABLE, STATUS_WORDS } from '../../../packages/protocol/src/status-table'
 
-const IDS = ['m-list', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
+const IDS = ['refresh', 'm-home', 'm-list', 'm-all', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
 
 type Handler = (ev: unknown) => void
 interface FakeEl {
@@ -41,7 +42,8 @@ function fakeEl(id: string): FakeEl {
   }
 }
 
-function harness(source = MOBILE_WORKBENCH_JS) {
+type ListMatter = { id: string; title: string; kind: string; status: string; updatedAt?: number; networkSuspended?: unknown; taskState?: { status: string; phase?: string; pending: number } }
+function harness(source = MOBILE_WORKBENCH_JS, fx: { matters?: ListMatter[]; focus?: { id: string; kind: string } | null } = {}) {
   const els = new Map(IDS.map((id) => [id, fakeEl(id)]))
   // 照真页面来:连接提示那行平时不在(<div id="m-conn" hidden>),详情栏也是先藏着。
   els.get('m-conn')!.hidden = true
@@ -64,10 +66,10 @@ function harness(source = MOBILE_WORKBENCH_JS) {
   const win = { addEventListener(type: string, fn: Handler) { (winHandlers[type] ??= []).push(fn) } }
 
   /** 一次 api 调用的记录;测试用 respond/fail 决定它怎么收场。 */
-  const calls: Array<{ path: string; opts?: { method?: string; body?: string } }> = []
+  const calls: Array<{ path: string; opts?: { method?: string; body?: string; headers?: Record<string, string> } }> = []
   let mode: 'ok' | 'down' = 'ok'
   let detail = {
-    ok: true, matter: { id: 'm1', title: '首页调整', kind: 'task', status: 'open' }, runId: 'run1',
+    matter: { id: 'm1', title: '首页调整', kind: 'task', status: 'open' }, runId: 'run1',
     permissions: [] as Array<Record<string, unknown>>, questions: [], events: [] as Array<Record<string, unknown>>, artifacts: [], inputs: [],
   }
 
@@ -76,11 +78,11 @@ function harness(source = MOBILE_WORKBENCH_JS) {
   const api = (path: string, opts?: { method?: string; body?: string }) => {
     calls.push({ path, ...(opts ? { opts } : {}) })
     if (mode === 'down') return Promise.reject(new Error('network down'))
-    const body = path.startsWith('/m/api/matters')
-      ? { ok: true, matters: [{ id: 'm1', title: '首页调整', kind: 'task', status: 'open' }] }
-      : path.startsWith('/m/api/matter?') ? detail : { ok: true }
+    const body = path.startsWith('/v1/matters')
+      ? { matters: fx.matters ?? [{ id: 'm1', title: '首页调整', kind: 'task', status: 'open' }] }
+      : path.startsWith('/v1/matter?') ? detail : { ok: true }
     const response = { status: 200, json: () => Promise.resolve(body) }
-    if (deferNext && path.startsWith('/m/api/matter?')) {
+    if (deferNext && path.startsWith('/v1/matter?')) {
       deferNext = false
       return new Promise<typeof response>((resolve) => { deferred = () => resolve(response) })
     }
@@ -94,15 +96,19 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true }) })
   }
   const ccPlain = new Function(`${readMobileSource('boot.js').slice(readMobileSource('boot.js').indexOf('function ccPlain'))}\nreturn ccPlain`)()
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'ccPlain', 'ccSelectMobilePane', source)
-  boot(doc, win, {
+  const CCP = { STATUS_TABLE, STATUS_WORDS: STATUS_WORDS['zh-Hans'], HOME_GROUP_WORDS: HOME_GROUP_WORDS['zh-Hans'], QUIET_AFTER_MS, ROW_HINT_WORDS: ROW_HINT_WORDS['zh-Hans'] }
+  const routeVersionSource = readMobileSource('transport.js').slice(readMobileSource('transport.js').indexOf('function ccRouteVersion'))
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'viaTunnel', 'ccPlain', 'CCP', 'homeCardId', routeVersionSource + '\n' + source + '\nreturn {mApi,mError}')
+  const page = boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
     removeItem: (k: string) => { store.delete(k) },
-  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), fetchStub, (p: string) => p, () => Promise.reject(new Error('no tunnel')), false, ccPlain, () => {})
+  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), fetchStub, (p: string) => p, () => Promise.reject(new Error('no tunnel')), false, api, ccPlain, CCP, fx.focus?.id ?? null)
 
   return {
     els, doc, calls, navButton, docHandlers, winHandlers,
+    request: page.mApi as (path: string, opts: unknown, send: unknown) => Promise<unknown>,
+    errorText: page.mError as (code: string) => string,
     get conn() { return els.get('m-conn')! },
     get notice() { return els.get('m-notice')! },
     deferDetail() { deferNext = true },
@@ -111,8 +117,8 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     down() { mode = 'down' },
     up() { mode = 'ok' },
     setDetail(next: Partial<typeof detail>) { detail = { ...detail, ...next } as typeof detail },
-    /** 进「事」这一栏 → 拉列表。 */
-    async enterPane() { navButton.fire('click'); await vi.advanceTimersByTimeAsync(0) },
+    /** 列表就在此刻页上:脚本一载入就拉一次,这里等它落地。 */
+    async enterPane() { await vi.advanceTimersByTimeAsync(0) },
     /** 点开列表里的那件事。 */
     async openMatter() {
       const list = els.get('m-list')!
@@ -130,8 +136,8 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     /** 切后台再回前台。 */
     async background() { doc.hidden = true; for (const fn of docHandlers['visibilitychange'] ?? []) fn({}); await vi.advanceTimersByTimeAsync(0) },
     async foreground() { doc.hidden = false; for (const fn of docHandlers['visibilitychange'] ?? []) fn({}); await vi.advanceTimersByTimeAsync(0) },
-    listCalls() { return calls.filter((c) => c.path.startsWith('/m/api/matters')).length },
-    detailCalls() { return calls.filter((c) => c.path.startsWith('/m/api/matter?')).length },
+    listCalls() { return calls.filter((c) => c.path.startsWith('/v1/matters')).length },
+    detailCalls() { return calls.filter((c) => c.path.startsWith('/v1/matter?')).length },
   }
 }
 
@@ -244,7 +250,7 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     expect(h.status.innerHTML).not.toContain('data-stop')
   })
 
-  it('「停下」留着:点一下先要确认,再点才发一次 POST /m/api/matter/stop,不重发', async () => {
+  it('「停下」留着:点一下先要确认,再点才发一次 POST /v1/matter/stop,不重发', async () => {
     const h = harness()
     h.setDetail(busy as never)
     await h.enterPane(); await h.openMatter()
@@ -252,8 +258,9 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     expect(h.status.innerHTML).toContain('再点一次，确认停止')
     expect(h.postCalls()).toBe(0)
     await h.stop()
-    expect(h.calls.filter((c) => c.opts?.method === 'POST').map((c) => [c.path, c.opts!.body])).toEqual([['/m/api/matter/stop', JSON.stringify({ id: 'm1', runId: 'run1' })]])
+    expect(h.calls.filter((c) => c.opts?.method === 'POST').map((c) => [c.path, c.opts!.body])).toEqual([['/v1/matter/stop', JSON.stringify({ id: 'm1', runId: 'run1' })]])
     expect(h.notice.textContent).toBe('已经请电脑停下这一轮。')
+    expect(h.calls.find(c => c.opts?.method === 'POST')?.opts?.headers?.['x-cc-web-routes']).toBe('P3g')
   })
 
   it('页面上没有接着说、交办、成果、对话记录这些块', () => {
@@ -263,4 +270,104 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     expect(page).not.toContain('CCM')
     expect(page.slice(page.indexOf('<script'), page.indexOf('<script') + 8)).toBe('<script>')
   })
+})
+
+describe('一个主页(设计稿 2026-10-31 U5):列表就在此刻页上,等你 → 在做 → 带回来的', () => {
+  const NOW = new Date('2026-09-23T14:05:00+08:00').getTime()
+  it('在做 / 带回来的两组,组名和状态词来自协议包那一张;对话、陪伴不进;等你那一件(此刻的卡)不重复', async () => {
+    const h = harness(MOBILE_WORKBENCH_JS, { focus: { id: 'w1', kind: 'decision' }, matters: [
+      { id: 'o1', title: '首页调整', kind: 'task', status: 'open', updatedAt: NOW - 60_000 },
+      { id: 'r1', title: '日报', kind: 'task', status: 'replied', updatedAt: NOW - 3_600_000 },
+      { id: 'd1', title: '发布', kind: 'task', status: 'done', updatedAt: NOW - 7_200_000 },
+      { id: 'c1', title: '聊天', kind: 'chat', status: 'open', updatedAt: NOW },
+      { id: 'p1', title: '陪伴', kind: 'companion', status: 'open', updatedAt: NOW },
+      { id: 'w1', title: '等你那件', kind: 'task', status: 'open', updatedAt: NOW },
+    ] })
+    await h.enterPane()
+    const html = h.els.get('m-list')!.innerHTML
+    expect(html.indexOf('>在做<')).toBeLessThan(html.indexOf('>带回来的<'))
+    for (const id of ['o1', 'r1', 'd1']) expect(html).toContain(`data-mid="${id}"`)
+    for (const id of ['c1', 'p1', 'w1']) expect(html).not.toContain(`data-mid="${id}"`)
+    expect(html).toContain('这一轮做完了')
+    expect(html).toContain('>完成<')
+    expect(h.els.get('m-all')!.hidden).toBe(true)
+  })
+  it('带回来的只收 24 小时内;更早的点「全部」才出来', async () => {
+    const h = harness(MOBILE_WORKBENCH_JS, { matters: [{ id: 'old', title: '上周的事', kind: 'task', status: 'done', updatedAt: NOW - 25 * 3_600_000 }] })
+    await h.enterPane()
+    expect(h.els.get('m-list')!.innerHTML).not.toContain('data-mid="old"')
+    const all = h.els.get('m-all')!
+    expect(all.hidden).toBe(false)
+    expect(all.textContent).toBe('全部 · 还有 1 件更早的 →')
+    all.fire('click')
+    expect(h.els.get('m-list')!.innerHTML).toContain('data-mid="old"')
+    expect(all.hidden).toBe(true)
+  })
+  it('点开一件事:此刻那一屏收起,详情在原地;「← 此刻」回来', async () => {
+    const h = harness()
+    await h.enterPane()
+    await h.openMatter()
+    expect(h.els.get('m-home')!.hidden).toBe(true)
+    expect(h.els.get('m-detail')!.hidden).toBe(false)
+    h.els.get('m-back')!.fire('click')
+    expect(h.els.get('m-home')!.hidden).toBe(false)
+    expect(h.els.get('m-detail')!.hidden).toBe(true)
+  })
+  it('任务真正的状态(taskState)照 App 的 statusOf 折:打断的 ⇒ 停下了、失败的 ⇒ 没做成,都进带回来的;还在等你的 ⇒ 等你那一组(卡上那件除外)', async () => {
+    const h = harness(MOBILE_WORKBENCH_JS, { focus: { id: 'w0', kind: 'decision' }, matters: [
+      { id: 'w0', title: '卡上那件', kind: 'task', status: 'open', updatedAt: NOW, taskState: { status: 'running', phase: 'working', pending: 1 } },
+      { id: 'w1', title: '另一件等你', kind: 'task', status: 'open', updatedAt: NOW, taskState: { status: 'running', phase: 'working', pending: 2 } },
+      { id: 'i1', title: '重启打断', kind: 'task', status: 'open', updatedAt: NOW - 60_000, taskState: { status: 'interrupted', phase: 'interrupted', pending: 0 } },
+      { id: 'f1', title: '失败', kind: 'task', status: 'done', updatedAt: NOW - 120_000, taskState: { status: 'failed', phase: 'failed', pending: 0 } },
+      { id: 'o1', title: '老 daemon', kind: 'task', status: 'open', updatedAt: NOW - 180_000 },
+      { id: 'q1', title: '半小时没动静', kind: 'task', status: 'open', updatedAt: NOW - 31 * 60_000, taskState: { status: 'running', phase: 'working', pending: 0 } },
+    ] })
+    await h.enterPane()
+    const html = h.els.get('m-list')!.innerHTML
+    const at = (s: string) => html.indexOf(s)
+    expect(at('>等你<')).toBeGreaterThanOrEqual(0)
+    expect(at('>等你<')).toBeLessThan(at('data-mid="w1"'))
+    expect(at('data-mid="w1"')).toBeLessThan(at('>在做<'))
+    expect(html).not.toContain('data-mid="w0"')
+    expect(at('>在做<')).toBeLessThan(at('data-mid="o1"'))
+    expect(at('>带回来的<')).toBeLessThan(at('data-mid="i1"'))
+    expect(html).toMatch(/data-mid="i1"[^]*?<small>停下了<\/small>/)
+    expect(html).toMatch(/data-mid="f1"[^]*?<small>没做成<\/small>/)
+    expect(html).toMatch(/data-mid="w1"[^]*?<small>等你决定 · 共 2 项<\/small>/)
+    expect(html).toMatch(/data-mid="q1"[^]*?<small>可能卡住<\/small>/)   // 在做却 30 分钟没动静(三端同一句)
+    expect(html).not.toMatch(/data-mid="o1"[^<]*<span class="tx"><b>[^<]*<\/b><small>/)   // 刚有动静的不说   // 等你好几项 ⇒ 共 N 项(三端同一句)
+  })
+  it('「刷新」也重拉列表(列表就在此刻页上)', async () => {
+    const h = harness()
+    await h.enterPane()
+    const before = h.listCalls()
+    h.els.get('refresh')!.fire('click')
+    await h.tick(0)
+    expect(h.listCalls()).toBe(before + 1)
+  })
+})
+
+
+describe('v1 网页调用契约', () => {
+  it.each([
+    [404, 'matter_not_found'], [413, 'detail_too_large'], [503, 'workbench_not_wired'], [503, 'module_off'], [503, 'module_degraded'],
+  ])('v1 错误 %s / %s 保留状态与精确码，不会误当成功', async (status, code) => {
+    const h = harness()
+    await h.enterPane()
+    await expect(h.request('/v1/matter?id=deadbeef', undefined, async () => ({ status, json: async () => ({ error: code }) })))
+      .rejects.toMatchObject({ message: code, status })
+    expect(h.errorText(String(code))).toBe(String(code) === 'matter_not_found' ? '找不到这件事了，可能已经删掉。'
+      : String(code) === 'detail_too_large' ? '这件事的内容太多，网页上读不全，请到手机 App 或电脑上看。' : '暂时没读到，请检查连接后再看。')
+  })
+
+  it('v1 列表显式保留旧别名的筛选、数量与任务状态，接受不带 ok 的列表和详情', async () => {
+    const h = harness()
+    await h.enterPane()
+    expect(h.calls[0]!.path).toBe('/v1/matters?status=open,replied,done&exclude=terminal%2Cact&limit=50&taskState=1')
+    expect(h.els.get('m-list')!.innerHTML).toContain('首页调整')
+    await h.openMatter()
+    expect(h.els.get('m-title')!.textContent).toBe('首页调整')
+    expect(h.notice.textContent).toBe('')
+  })
+
 })

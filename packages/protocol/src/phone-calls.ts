@@ -13,6 +13,7 @@
  * 查询串的拼法与搬家前逐字一致:按给的顺序、`undefined` 的不带;字符串 `encodeURIComponent`,数字原样。
  * 前缀路由(贴纸一族,键以 `/` 结尾)多一个 `suffix`,编码后接在路径后面。拼法和桌面(`desktop-calls.ts`)共用 `calls.ts`。
  */
+import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import type { PhoneApiKey, PhoneApiOk } from './api'
 import { callRequest, callSpec, makeApi, t, type CallArgs, type CallRequest, type CallSpec, type LooseCallArgs } from './calls'
 
@@ -26,6 +27,22 @@ function call<K extends PhoneApiKey, Q = void, B = void>(key: K, types?: { query
 type JobsActionT = 'pause' | 'resume' | 'remove'
 
 export const PHONE_CALLS = {
+  conversation: {
+    events: call('GET /v1/matter/owner-chat/events', {query:t<{since?:number}>()}),
+    stop: call('POST /v1/matter/owner-chat/stop', {body:t<{turnId:string}>()}),
+    window: call('GET /v1/matter/owner-chat/window', { query: t<{ anchor?: string; before?: string; after?: string; q?: string; limit?: number }>() }),
+    work: call('GET /v1/matter/owner-chat/work',{query:t<{cursor?:string;limit?:number}>()}),
+  },
+  topics: {
+    rename: call('POST /v1/memory/topics/rename', { body: t<{ id: string; title: string }>() }),
+    merge: call('POST /v1/memory/topics/merge', { body: t<{ id: string; into: string }>() }),
+    delete: call('POST /v1/memory/topics/delete', { body: t<{ id: string }>() }),
+    wrong: call('POST /v1/memory/topics/entry/wrong', { body: t<{ id: string }>() }),
+    list: call('GET /v1/memory/topics', { query: t<{ view?: 'recent' | 'all'; q?: string; limit?: number; cursor?: string }>() }),
+    detail: call('GET /v1/memory/topics/detail', { query: t<{ id: string; section?: 'entries' | 'matters' | 'messages'; cursor?: string; limit?: number }>() }),
+    open: call('POST /v1/memory/topics/open', { body: t<{ id: string; requestId: string }>() }),
+    subscribe: call('GET /v1/subscribe/topics', { query: t<{ since?: string; wait_ms?: number }>() }),
+  },
   set: {
     state: call('GET /set/api/state'),
     apply: call('POST /set/api/apply', { body: t<{ op: string } & Record<string, unknown>>() }),
@@ -44,7 +61,8 @@ export const PHONE_CALLS = {
     restore: call('POST /m/api/memory/restore', { body: t<{ key: string }>() }),
   },
   matters: {
-    list: call('GET /m/api/matters'),
+    // kind 点名才给 terminal / act(M4a / M5c);不点名 = 主人的列表
+    list: call('GET /m/api/matters', { query: t<{ kind?: 'task' | 'chat' | 'terminal' | 'act' }>() }),
     get: call('GET /m/api/matter', { query: t<{ id: string }>() }),
     inputReceipt: call('GET /m/api/matter/input-receipt', { query: t<{ id: string; requestId: string }>() }),
     insight: call('GET /m/api/matter/insight', { query: t<{ id: string; lang: string }>() }),
@@ -103,6 +121,7 @@ export const PHONE_CALLS = {
     continue: call('POST /m/api/session/continue', { body: t<{ key: string }>() }),
   },
   cli: {
+    stop:call('POST /v1/cli/session-stop',{body:t<{session_id:string;run_id:string;confirmed:true}>()}),
     sessions: call('GET /m/api/cli/sessions'),
     permission: call('POST /m/api/cli/permission', { body: t<{ session_id: string; hash?: string; decision: string }>() }),
     say: call('POST /m/api/cli/say', { body: t<{ session_id: string; text: string }>() }),
@@ -137,7 +156,7 @@ export function phoneCallRequest<S extends PhoneCallSpec>(spec: S, args?: PhoneC
 }
 
 /** 给协议客户端(`ProtocolClient.request`)的形状:有正文 ⇒ JSON 序列化 + content-type。 */
-export function toProtocolRequest(r: PhoneCallRequest): { method: 'GET' | 'POST'; path: string; body?: string; headers?: Record<string, string>; retry?: boolean } {
+export function toProtocolRequest(r: CallRequest): { method: 'GET' | 'POST'; path: string; body?: string; headers?: Record<string, string>; retry?: boolean } {
   return {
     method: r.method, path: r.path,
     ...(r.body !== undefined ? { body: JSON.stringify(r.body), headers: { 'content-type': 'application/json' } } : {}),
@@ -148,4 +167,23 @@ export function toProtocolRequest(r: PhoneCallRequest): { method: 'GET' | 'POST'
 /** 类型化客户端:`api.matters.list()`、`api.matters.get({ query: { id } })` …,底下是可换的传输。 */
 export function makePhoneApi(send: PhoneTransport): PhoneApi {
   return makeApi(PHONE_CALLS, send as (req: CallRequest) => Promise<unknown>) as PhoneApi
+}
+
+/** Select the whole route family from ServerHello, preserving query and prefix suffix bytes. */
+export function phoneRouteRequest(req: PhoneCallRequest, routes?: 'v1'): CallRequest {
+  if (routes !== 'v1') return req
+  const alias = WIRE_ROUTE_ALIASES.find(a => a.from === req.key && a.readers.includes('app'))
+  if (!alias) return req // /set pairing routes have no v1 alias.
+  const oldPath = req.key.slice(req.key.indexOf(' ') + 1)
+  let path = alias.to.slice(alias.to.indexOf(' ') + 1) + req.path.slice(oldPath.length)
+  // Legacy aliases supplied these defaults; direct v1 callers must preserve them.
+  if (alias.transform === 'phoneMatters') {
+    const hasKind = /[?&]kind=/.test(path)
+    path += (path.includes('?') ? '&' : '?') + (hasKind ? '' : 'exclude=terminal%2Cact&') + 'status=open%2Creplied%2Cdone&limit=50&taskState=1'
+  }
+  if (alias.transform === 'phoneChatSearch') path += '&limit=30'
+  const body = alias.transform === 'phoneChatTranscribe'
+    ? { mime: (req.body as { mime: string }).mime, audio_b64: (req.body as { audioBase64: string }).audioBase64 }
+    : req.body
+  return { ...req, key: alias.to, path, ...(body !== undefined ? { body } : {}) }
 }

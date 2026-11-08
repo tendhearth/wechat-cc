@@ -3,7 +3,7 @@ import {MockLanguageModelV2} from 'ai/test'
 import {simulateReadableStream,type LanguageModel} from 'ai'
 import {createServer} from 'node:http'
 import {once} from 'node:events'
-import {createApiModel,userMessage,toolResultMessage,DEFAULT_EVAL_MAX_OUTPUT_TOKENS,type ChatMessage,type ToolSpec} from './api-model'
+import {createApiModel,userMessage,toolResultMessage,DEFAULT_EVAL_MAX_OUTPUT_TOKENS,EvalOutputExhaustedError,type ChatMessage,type ToolSpec} from './api-model'
 
 const user=(text:string):ChatMessage=>({role:'user',content:text})
 const streamModel=(chunks:unknown[],capture?:Record<string,unknown>)=>new MockLanguageModelV2({
@@ -170,6 +170,34 @@ describe('APIModel —— 对话用的选项与一次性评估',()=>{
     expect(capture.maxOutputTokens).toBe(DEFAULT_EVAL_MAX_OUTPUT_TOKENS)
     await api(textModel(['ok'],capture),{evalMaxOutputTokens:123}).generate([user('hi')])
     expect(capture.maxOutputTokens).toBe(123)
+  })
+
+  // 2026-10-30 → 11-03 真机:网关上的 DeepSeek 把 4000 个输出 token 全花在 reasoning_content 上,
+  // finish_reason=length、content 空 —— generate() 回 '',记忆整理连败五晚、日志只写 bad_json。
+  it('generate() throws EvalOutputExhaustedError when thinking ate the whole budget (reasoning only, finish=length, no text)',async()=>{
+    const model=streamModel([
+      {type:'reasoning-start',id:'r'},{type:'reasoning-delta',id:'r',delta:'让我逐条看一下当前记忆……'},{type:'reasoning-end',id:'r'},
+      {type:'finish',finishReason:'length',usage:{inputTokens:9000,outputTokens:4000,totalTokens:13000}},
+    ])
+    const err=await api(model).generate([user('整理记忆')]).catch(e=>e)
+    expect(err).toBeInstanceOf(EvalOutputExhaustedError)
+    expect(String(err.message)).toContain('eval_output_exhausted')
+  })
+
+  it('generate() also treats an unclosed inline <think> cut off by the budget as exhausted (not as an answer)',async()=>{
+    const model=streamModel([
+      {type:'text-start',id:'1'},{type:'text-delta',id:'1',delta:'<think>\n先看 {"add":[] 这类'},{type:'text-end',id:'1'},
+      {type:'finish',finishReason:'length',usage:{inputTokens:1,outputTokens:4000,totalTokens:4001}},
+    ])
+    await expect(api(model).generate([user('x')])).rejects.toBeInstanceOf(EvalOutputExhaustedError)
+  })
+
+  it('generate() still returns a partial answer that was cut by the budget (callers judge it; only an empty one throws)',async()=>{
+    const model=streamModel([
+      {type:'text-start',id:'1'},{type:'text-delta',id:'1',delta:'{"add":['},{type:'text-end',id:'1'},
+      {type:'finish',finishReason:'length',usage:{inputTokens:1,outputTokens:4000,totalTokens:4001}},
+    ])
+    expect(await api(model).generate([user('x')])).toBe('{"add":[')
   })
 })
 

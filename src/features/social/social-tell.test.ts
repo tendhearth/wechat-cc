@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { openTestDb } from '../../lib/db'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,15 +9,16 @@ import type { ProactiveOutbound } from '../../daemon/companion/proactive-channel
 import { makeTellOwner, makeTellOwnerAs } from './social-tell'
 
 const OWNER = 'owner@im.wechat'
-function setup(o: { care?: 'off' | 'low'; quiet?: () => boolean; noSpeech?: boolean; stateDir?: string } = {}) {
+function setup(o: { care?: 'off' | 'low'; quiet?: () => boolean; noSpeech?: boolean; stateDir?: string; db?: ReturnType<typeof openTestDb> } = {}) {
   const sent: string[] = [], logs: string[] = []
   const quiet = o.quiet ?? (() => false)
   const stateDir = o.stateDir ?? mkdtempSync(join(tmpdir(), 'social-tell-'))
+  const db = o.db ?? openTestDb()
   // 补说走 say 开的那一轮(这里记进 sent);当时说走 sendAssistantText(也记进 sent)
   const outbound: ProactiveOutbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }), open: () => ({ sendText: async (_c, t) => { sent.push(t); return { msgId: 'm' } }, channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
-  const speech = makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: (_c, n) => (quiet() ? n + 3600_000 : null), outbound, log: () => {}, pending: makePendingNotices({ stateDir, log: (_t, l) => logs.push(l) }) })
+  const speech = makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: (_c, n) => (quiet() ? n + 3600_000 : null), outbound, log: () => {}, pending: makePendingNotices({ db, log: (_t, l) => logs.push(l) }) })
   const tell = makeTellOwner({ resolveOperatorChatId: () => OWNER, sendAssistantText: async (_c, t) => { sent.push(t) }, speech: () => (o.noSpeech ? null : speech), log: (_t, l) => logs.push(l) })
-  return { tell, flush: () => speech.flushPending(), sent, logs, stateDir }
+  return { tell, flush: () => speech.flushPending(), sent, logs, stateDir, db }
 }
 
 describe('社交通知走 CC 开口那道门(第三批 3a)', () => {
@@ -64,22 +66,34 @@ describe('**report / blocking 推后不是不送**:门的「待说」队列接�
     expect(s.sent[0]).toContain('老王给你写信了')
     expect(s.sent[0]).toContain('小李回了你的心愿')
   })
-  it('落了盘:重启以后(新的一份)照样说得出来', async () => {
+  it('落了盘(主库 speech_pending):重启以后(新的一份)照样说得出来', async () => {
     let q = true
     const a = setup({ quiet: () => q })
     await a.tell('social_result', '介绍成了')
     q = false
-    const b = setup({ quiet: () => q, stateDir: a.stateDir })
+    const b = setup({ quiet: () => q, stateDir: a.stateDir, db: a.db })
     await b.flush()
     expect(b.sent).toEqual(['介绍成了'])
   })
-  it('CC 自己的见闻(initiative)推后 ⇒ 不排队', async () => {
+  it('CC 自己的见闻(initiative)推后 ⇒ 也排队(S2c,24 小时),过了免打扰单独补说,不并进「刚才没顾上」那一句', async () => {
     let q = true
     const s = setup({ quiet: () => q })
     await s.tell('social_story', '去老王家串门了')
+    await s.tell('social_mail', '老王给你写信了')
     q = false
     await s.flush()
-    expect(s.sent).toEqual([])
+    expect(s.sent).toEqual(['老王给你写信了', '去老王家串门了'])
+  })
+  it('见闻一次补说最多一条:留最新的,更早的留在背包(不补说)', async () => {
+    let q = true
+    const s = setup({ quiet: () => q })
+    await s.tell('social_story', '去老王家串门了')
+    await s.tell('social_story', '又去小李家串门了')
+    q = false
+    await s.flush()
+    await s.flush()
+    expect(s.sent).toEqual(['又去小李家串门了'])
+    expect(s.db.query('SELECT COUNT(*) AS n FROM speech_pending').get()).toEqual({ n: 0 })   // 更早那条不留着等下一拍
   })
   it('超过 20 条 ⇒ 丢最老的、记日志;说的时候带一句「还有 N 件更早的」', async () => {
     let q = true

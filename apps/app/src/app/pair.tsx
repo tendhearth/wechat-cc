@@ -11,18 +11,14 @@ import { parsePairLink, type ParsedLink } from '../net/link'
 import { pairWithLink, PairError, retirePrevious } from '../net/pairing'
 import { rnConnect } from '../net/rn-connect'
 import { takePendingLink } from '../net/system-link'
-import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
 import { pairAndSave } from '../state/wiring'
 import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
-import { CCFigure } from '../ui/CCFigure'
 import { TextField } from '../ui/TextField'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
-import { ccPresence } from '../view/presence'
 import { confirmCard, intakeIncomingLink, linkErrorKey, makeGate, pairBackTarget, pairErrorKey } from '../view/pair'
 
 type Phase =
@@ -38,7 +34,6 @@ export default function Pair() {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
-  const conn = useConnection()
   const { setPaired, pairing } = useSession()
   const [phase, setPhase] = useState<Phase>({ k: 'intro' })
   const [pasted, setPasted] = useState('')
@@ -124,12 +119,10 @@ export default function Pair() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {/* 配对进行中关掉 iOS 侧滑返回(安卓返回键由 BackHandler 吞掉) */}
       <Stack.Screen options={{ gestureEnabled: phase.k !== 'working' }} />
-      <TopBar onBack={back} onAvatar={() => router.push('/settings')} />
+      <TopBar title={t(lang, 'pair.title')} onBack={back} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
-        <View style={{ alignItems: 'center' }}><CCFigure size={120} presence={ccPresence(conn)} /></View>
-        <Txt role="title" accessibilityRole="header" style={{ textAlign: 'center' }}>{t(lang, 'pair.title')}</Txt>
         {card && (phase.k === 'confirm' || phase.k === 'working') ? (
-          <Card testID="pair-confirm" style={{ gap: space.m }}>
+          <View testID="pair-confirm" style={{ gap: space.l }}>
             <Txt role="item" accessibilityRole="header">{t(lang, 'pair.confirmTitle')}</Txt>
             <Txt role="bubble" tone="inkSoft">{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Txt>
             {/* 核对码:和电脑上「连接手机」那里显示的对一下(共用中继上分清是不是自己的电脑);链接谁都能铸,正文不断定是「你的电脑」 */}
@@ -144,7 +137,7 @@ export default function Pair() {
               busy={phase.k === 'working'}
               onPress={() => void connect(phase.link)}
             />
-          </Card>
+          </View>
         ) : (
           <>
             {phase.k === 'error' ? (
@@ -153,10 +146,10 @@ export default function Pair() {
                 {phase.camera ? <Button kind="secondary" testID="pair-open-settings" label={t(lang, 'pair.openSettings')} onPress={() => void Linking.openSettings()} /> : null}
               </View>
             ) : null}
-            {/* 三步:编号 + 一句,行间细线;不画圆圈色块 */}
-            <View testID="pair-steps" style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+            {/* 设置路径只保留三步,靠留白呈现次序。 */}
+            <View testID="pair-steps" style={{ gap: space.s }}>
               {steps.map((k, i) => (
-                <View key={k} style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.m, paddingVertical: space.m, borderBottomWidth: 1, borderBottomColor: c.hair }}>
+                <View key={k} style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.m, paddingVertical: space.m }}>
                   <Txt role="meta" tone="inkSoft" style={{ width: 16 }}>{i + 1}</Txt>
                   <Txt role="body" style={{ flex: 1 }}>{t(lang, k)}</Txt>
                 </View>

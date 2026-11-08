@@ -1,6 +1,6 @@
 import { decodeMarkdownEntities, hasMarkdownFormatting, parseMarkdown, safeMarkdownUrl, type Token, type Tokens } from '@wechat-cc/markdown'
 import { memo, useMemo, useState, type ReactNode } from 'react'
-import { Linking, Pressable, ScrollView, View } from 'react-native'
+import { Linking, Pressable, ScrollView, View, useWindowDimensions } from 'react-native'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { radius, space } from './tokens'
@@ -9,12 +9,16 @@ import { useTheme } from './useTheme'
 
 type BodyRole = 'body' | 'bubble'
 type InlineRole = BodyRole | 'title' | 'item'
+// Local targets remain readable, never actionable. Schemes and network-relative URLs
+// are not local paths; displaying them as an affordance would imply unsupported access.
+const localTarget = (href: string): string | null => !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href) || /^[a-z]:[\\/]/i.test(href) ? href : null
+
 type Props = { text: string; typeRole?: BodyRole }
 
 /** 助手正文的原生阅读出口。解析结果只随原文改变;链接只接受共享策略批准的绝对网址。 */
 export const Markdown = memo(function Markdown({ text, typeRole = 'body' }: Props) {
   const tokens = useMemo(() => parseMarkdown(text), [text])
-  return <View style={{ maxWidth: '100%', minWidth: 0, gap: space.s }}><Blocks tokens={tokens} typeRole={typeRole} /></View>
+  return <View style={{ maxWidth: '100%', minWidth: 0, gap: space.s }}><Blocks tokens={tokens} typeRole={typeRole} /><ImageActions tokens={tokens} /></View>
 })
 
 /** 用户与助手共用阅读格式;用户原文只在需要时展开。系统、错误、工具日志不进入此组件。 */
@@ -34,7 +38,7 @@ const UserMessage = memo(function UserMessage({ text, typeRole = 'body', userAli
       <Markdown text={text} typeRole={typeRole} />
       <Pressable testID="message-source-toggle" accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ expanded }}
         onPress={() => setSourceFor(expanded ? null : text)} hitSlop={6}
-        style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
+        style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
         <Txt role="caption" tone="inkSoft">{label}</Txt>
       </Pressable>
       {expanded ? <Txt testID="message-source-text" selectable role={typeRole} content="user">{text}</Txt> : null}
@@ -63,10 +67,12 @@ function Inline({ tokens, typeRole, tone = 'ink' }: { tokens: Token[]; typeRole:
             onPress={() => { void Linking.openURL(url).catch(() => {}) }} style={{ textDecorationLine: 'underline' }}>
             {nested('accent')}
           </Txt>
-        ) : <Txt key={i} role={typeRole} content="user" tone={tone}>{nested()}</Txt>
+        ) : <Txt key={i} role={typeRole} content="user" tone={tone}>{nested()}{localTarget(link.href) ? ` (${link.href})` : ''}</Txt>
       }
-      case 'image':
-        return <Txt key={i} role={typeRole} content="user" tone="inkSoft">{decodeMarkdownEntities((token as Tokens.Image).text) || '📷'}</Txt>
+      case 'image': {
+        const picture = token as Tokens.Image
+        return <Txt key={i} role={typeRole} content="user" tone="inkSoft">{decodeMarkdownEntities(picture.text)}{localTarget(picture.href) ? ` (${picture.href})` : ''}</Txt>
+      }
       case 'codespan':
         return <Txt key={i} role="code" content="user" tone={tone} style={{ backgroundColor: c.rail }}>{(token as Tokens.Codespan).text}</Txt>
       case 'br': return '\n'
@@ -84,6 +90,7 @@ function Inline({ tokens, typeRole, tone = 'ink' }: { tokens: Token[]; typeRole:
 
 function Blocks({ tokens, typeRole }: { tokens: Token[]; typeRole: BodyRole }): ReactNode {
   const { c } = useTheme()
+  const { fontScale } = useWindowDimensions()
   return tokens.map((token, i) => {
     switch (token.type) {
       case 'space': case 'def': case 'checkbox': return null
@@ -125,7 +132,7 @@ function Blocks({ tokens, typeRole }: { tokens: Token[]; typeRole: BodyRole }): 
             {[table.header, ...table.rows].map((row, j) => (
               <View key={j} style={{ flexDirection: 'row', backgroundColor: j === 0 ? c.rail : c.paper, borderTopWidth: j === 0 ? 0 : 1, borderTopColor: c.hair }}>
                 {row.map((cell, k) => (
-                  <View key={k} style={{ width: 160, padding: space.s, borderLeftWidth: k === 0 ? 0 : 1, borderLeftColor: c.hair }}>
+                  <View key={k} style={{ width: 160 * Math.max(1, fontScale), padding: space.s, borderLeftWidth: k === 0 ? 0 : 1, borderLeftColor: c.hair }}>
                     <Txt selectable role={typeRole} content="user" style={{ textAlign: cell.align ?? 'left' }}>
                       <Inline tokens={cell.tokens} typeRole={typeRole} tone={j === 0 ? 'accent' : 'ink'} />
                     </Txt>
@@ -140,4 +147,37 @@ function Blocks({ tokens, typeRole }: { tokens: Token[]; typeRole: BodyRole }): 
       default: return <Txt key={i} selectable role={typeRole} content="user">{token.raw}</Txt>
     }
   })
+}
+
+
+function imageTargets(tokens: Token[]): Tokens.Image[] {
+  const images: Tokens.Image[] = []
+  for (const token of tokens) {
+    if (token.type === 'image') images.push(token as Tokens.Image)
+    else if (token.type === 'list') for (const item of (token as Tokens.List).items) images.push(...imageTargets(item.tokens))
+    else if (token.type === 'table') for (const row of [(token as Tokens.Table).header, ...(token as Tokens.Table).rows]) for (const cell of row) images.push(...imageTargets(cell.tokens))
+    else if ('tokens' in token && Array.isArray(token.tokens)) images.push(...imageTargets(token.tokens))
+  }
+  return images
+}
+
+function ImageActions({ tokens }: { tokens: Token[] }) {
+  const lang = useLang()
+  const [failed, setFailed] = useState<string | null>(null)
+  const targets = imageTargets(tokens).flatMap(image => {
+    const url = safeMarkdownUrl(image.href)
+    return url ? [{ url, alt: decodeMarkdownEntities(image.text) }] : []
+  })
+  if (!targets.length) return null
+  return <View style={{ gap: space.xs }}>
+    {targets.map(({ url, alt }, i) => <View key={`${i}:${url}`}>
+      <Pressable testID="markdown-image-open" accessibilityRole="link" accessibilityLabel={`${t(lang, 'message.openImage')}: ${alt || url}`}
+        onPress={() => { setFailed(null); void Linking.openURL(url).catch(() => setFailed(url)) }}
+        style={{ minHeight: 44, justifyContent: 'center', paddingVertical: space.s }}>
+        <Txt role="meta" tone="accent">{t(lang, 'message.openImage')}{alt ? ` · ${alt}` : ''}</Txt>
+      </Pressable>
+      <Txt role="small" tone="inkSoft" selectable>{url}</Txt>
+      {failed === url ? <Txt role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{t(lang, 'message.openFailed')}</Txt> : null}
+    </View>)}
+  </View>
 }

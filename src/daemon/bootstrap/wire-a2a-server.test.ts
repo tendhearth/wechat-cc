@@ -22,7 +22,7 @@ async function setup(port: number, o: { quiet?: boolean; noSpeech?: boolean } = 
   }))
   const sent: Array<[string, string]> = [], logs: string[] = []
   const outbound: ProactiveOutbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }), open: () => ({ sendText: async () => ({ msgId: 'm' }), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
-  const pending = makePendingNotices({ stateDir, log: () => {} })
+  const pending = makePendingNotices({ db: openTestDb(), log: () => {} })
   const speech = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, n) => (o.quiet ? n + 3600_000 : null), outbound, log: () => {}, pending })
   const slice = wireA2a({ stateDir, db: openTestDb() })
   const w = await wireA2aServer({

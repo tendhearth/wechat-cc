@@ -1,0 +1,72 @@
+# T5: 原有功能验收移到唯一对话、搜索引用与原详情。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 10000
+- tapOn:
+    id: home-more
+- tapOn:
+    id: conversation-cc-acts
+- extendedWaitUntil:
+    visible:
+      id: home-group-cc-acts
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: home-group-cc-acts
+    direction: DOWN
+    centerElement: true
+- assertNotVisible:
+    id: row-act-acc0a001
+- takeScreenshot: a01-cc-acts-collapsed
+- tapOn:
+    id: home-group-cc-acts
+- extendedWaitUntil:
+    visible:
+      id: row-act-acc0a002
+    timeout: 5000
+- assertVisible:
+    id: row-act-acc0a001
+- assertVisible:
+    id: row-act-acc0a003
+- assertVisible: 整理了 3 条记忆.*|Tidied memories, 3 changed.*
+- assertVisible: 写了一封信.*|Wrote you a letter.*
+- takeScreenshot: a02-cc-acts-open
+- tapOn:
+    id: row-act-acc0a001
+- extendedWaitUntil:
+    visible:
+      id: act-turn-0
+    timeout: 5000
+- assertVisible:
+    id: act-turn-1
+- assertVisible: 信写好了，420 字，2 页信纸|Letter written, 420 characters, 2 pages
+- assertVisible: 写好了一封信，还没寄出|Wrote a letter, not sent yet
+- takeScreenshot: a03-act-detail-letters
+- assertNotVisible:
+    id: progress-say
+- assertNotVisible:
+    id: terminal-say-input
+- assertNotVisible:
+    id: approval-allow
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: home-group-cc-acts
+    timeout: 5000
+- assertVisible:
+    id: row-act-acc0a001
+- tapOn:
+    id: home-group-cc-acts
+- assertNotVisible:
+    id: row-act-acc0a001
+- assertNotVisible:
+    id: row-act-acc0a002
+- assertNotVisible:
+    id: row-act-acc0a003

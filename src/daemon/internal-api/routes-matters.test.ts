@@ -16,7 +16,7 @@ describe('matters routes',()=>{
   it('lists with validated filters',async()=>{
     const d=deps(),routes=mattersRoutes(d)
     expect(await routes['GET /v1/matters']!(q('kind=task&status=open,replied&since=5&limit=10&surface=desktop'),undefined)).toEqual({status:200,body:{matters:[MATTER]}})
-    expect(d.matters!.list).toHaveBeenCalledWith({kind:'task',statuses:['open','replied'],since:5,limit:10,surface:'desktop'})
+    expect(d.matters!.list).toHaveBeenCalledWith({kind:'task',legacy:['open','replied'],since:5,limit:10,surface:'desktop'})
     for(const bad of ['kind=x','status=weird','since=-1','limit=0','limit=999','kind=task&kind=chat','surface=fax'])expect((await routes['GET /v1/matters']!(q(bad),undefined)).status).toBe(400)
     expect((await mattersRoutes({} as InternalApiDeps)['GET /v1/matters']!(q(),undefined)).status).toBe(503)
   })
@@ -49,4 +49,26 @@ describe('matters routes',()=>{
     const boom=mattersRoutes(deps({say:async()=>{throw new Error('ENOENT: /secret/path')}}))
     expect(await boom['POST /v1/matter/say']!(q(),{id:'deadbeef',text:'x'})).toEqual({status:500,body:{error:'internal'}})
   })
+  it.each(['input_conflict','input_stale','input_delivery_busy'])('say preserves %s as HTTP 409',async code=>{
+    const routes=mattersRoutes(deps({say:async()=>{throw new Error(code)}}))
+    expect(await routes['POST /v1/matter/say']!(q(),{id:'deadbeef',text:'x'})).toEqual({status:409,body:{error:code},cause:code})
+  })
+
+})
+
+it('T5d contracts admit only owner operator/device surfaces and validate anchor/stop input',async()=>{
+  const window=vi.fn(async()=>({messages:[],earlier:null,later:null,anchor:'m'})),stop=vi.fn(()=>true)
+  const routes=mattersRoutes(deps({conversationWindow:window,conversationWork:async()=>({references:[],results:[]}),conversationEvents:()=>({running:null,events:[],cursor:0}),stopConversation:stop}))
+  const keys=['GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop']
+  for(const caller of [undefined,{tier:'admin',origin:'file'},{tier:'admin',origin:'session'},{tier:'admin',origin:'link'},{tier:'trusted',origin:'operator'}])for(const key of keys)expect((await routes[key]!(q('anchor=m'),{turnId:'t'},caller as never)).status).toBe(403)
+  expect(window).not.toHaveBeenCalled();expect(stop).not.toHaveBeenCalled()
+  for(const origin of ['operator','device']){
+    const caller={tier:'admin',origin} as const
+    expect((await routes[keys[0]!]!(q(),null,caller as never)).body).toEqual({routes:'v1',topics:'v1'})
+    expect((await routes[keys[1]!]!(q('anchor=m&before=n'),null,caller as never)).status).toBe(400)
+    expect((await routes[keys[1]!]!(q('anchor=m&limit=3'),null,caller as never)).status).toBe(200)
+    expect((await routes[keys[4]!]!(q(),{turnId:'t'},caller as never)).status).toBe(200)
+  }
+  expect(window).toHaveBeenCalledWith({anchor:'m',limit:3})
+  expect(stop).toHaveBeenCalledWith('t')
 })

@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { PlanLogEntry } from '../../domain/companion-plan'
 import { writeJsonAtomic } from '../../lib/json-file'
+import { hintWrite } from '../../lib/write-hints'
 
 const dirOf = (stateDir: string) => join(stateDir, 'companion')
 const pathOf = (stateDir: string) => join(dirOf(stateDir), 'plan-log.json')
@@ -64,4 +65,5 @@ export function appendPlanLog(stateDir: string, today: string, entry: PlanLogEnt
   const days: Record<string, PlanLogEntry[]> = {}
   for (const k of keep) days[k] = all[k]!
   writeJson(stateDir, { days })
+  hintWrite(stateDir, { kind: 'plan-log' })  // 手机 home 的「伙伴的一天」要它(write-hints.ts)
 }

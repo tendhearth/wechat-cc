@@ -20,6 +20,8 @@ import { stickersRoutes, type StickersRoutesDeps } from './routes'
 export type { StickerLib, StickerEntry } from './stickers'
 export { stickerArtistStep, type StickerArtistStepDeps } from './artist-step'
 export { rasterizeSvgDarwin } from './artist'
+// 手机按文件名取一张表情:组装的地方交给面板的 featureRoutes(P3d-3)
+export { stickerPhoneRoutes, type StickerPhoneRoutesDeps } from './phone-routes'
 
 export interface StickersFeature {
   /** 全 daemon 一份的表情库。 */

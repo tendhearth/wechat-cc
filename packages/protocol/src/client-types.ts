@@ -26,6 +26,8 @@ export interface ProtocolSocket {
 /** 连接状态(给 app 的连接状态机用,见 apps/app/src/net/connection.ts)。 */
 export type ClientStatus = 'connecting' | 'ready' | 'down' | 'auth_failed'
 
+export interface ProtocolCapabilities { routes?: 'v1'; topics?: 'v1' }
+
 export interface ClientOpts {
   /** 新建一条连接(每次重连调一次)。 */
   open: () => ProtocolSocket
@@ -61,6 +63,8 @@ export interface ClientOpts {
    * 重连,绝不降级。原来的 `requireV2` 开关随 v1 一起删了。)
    */
   client?: 'web'
+  /** App 的构建号(M6b):握手里带上,daemon 记在这台设备上,线上旧字段按它判退休(wire-compat.ts)。网页不填。 */
+  build?: string
   /** 时钟(毫秒),缺省 Date.now。用于判断连接是否稳定到可以清零退避。 */
   now?: () => number
   /** 丢弃了一条畸形/无法解密的线上消息,或 hello 畸形(只做记录)。 */
@@ -79,6 +83,8 @@ export interface ClientOpts {
 export interface ProtocolRequest {
   method: string
   path: string
+  /** Resolve a phone route after each handshake, including queued requests and retries. */
+  forRoutes?: (routes: 'v1' | undefined) => Pick<ProtocolRequest, 'path' | 'body' | 'headers'>
   headers?: Record<string, string>
   /** 字符串按 utf8 发;Uint8Array 按 base64 发。 */
   body?: string | Uint8Array
@@ -102,6 +108,10 @@ export interface EventMeta { epoch: string; seq: number }
 export interface ProtocolClient {
   /** 最近一次握手协商出的版本;还没握过手为 null。 */
   version(): 2 | null
+  /** Route family advertised by the current connection; absent on old daemons. */
+  routes?(): 'v1' | undefined
+  /** Validated hello capabilities for the current connection; empty while disconnected. */
+  capabilities?(): Readonly<ProtocolCapabilities>
   request(r: ProtocolRequest): Promise<ProtocolResponse>
   /** 返回取消函数(幂等)。 */
   subscribe(topic: string, onEvent: (data: unknown, meta: EventMeta) => void): () => void

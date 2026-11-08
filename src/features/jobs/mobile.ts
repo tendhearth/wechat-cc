@@ -22,14 +22,14 @@ const ACTIONS: readonly JobsActionKind[] = ['pause', 'resume', 'remove']
 
 export function mobileJobsRoutes(deps: MobileJobsDeps | undefined): PhoneRouteTable {
   return {
-    'GET /m/api/jobs': ownsMethod(async (_url: URL, req: Request) => {
+    'GET /v1/jobs': ownsMethod(async (_url: URL, req: Request) => {
       if (req.method !== 'GET') return err('method_not_allowed', 405)
       if (!deps) return err('jobs_not_wired', 503)
       let v: JobsView
       try { v = deps.view() } catch { return err('unavailable', 500) }
       return v.ok ? json(v) : err(v.error, 500)
     }),
-    'POST /m/api/jobs/action': ownsMethod(async (_url: URL, req: Request) => {
+    'POST /v1/jobs/action': ownsMethod(async (_url: URL, req: Request) => {
       if (req.method !== 'POST') return err('method_not_allowed', 405)
       if (!deps) return err('jobs_not_wired', 503)
       let b: unknown

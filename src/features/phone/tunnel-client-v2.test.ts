@@ -11,7 +11,7 @@ import type { V2ClientMessageT, V2ServerMessageT, SealedFrameV2 } from '@wechat-
 import { makeTunnelClient } from './tunnel-client'
 import { MAX_SUBS_PER_STREAM, MAX_INFLIGHT_REQS_PER_STREAM } from './tunnel-v2-stream'
 import { makePhoneEvents, type PhoneEvents, type TopicSource } from './phone-events'
-import { phoneClientOf } from './phone-client'
+import { phoneBuildOf, phoneClientOf } from './phone-client'
 
 const DTOK = 'dtest0000'
 
@@ -42,10 +42,11 @@ async function settle(): Promise<void> { for (let i = 0; i < 20; i++) await new 
 type Inbound = { error: string } | V2ServerMessageT
 
 /** 一台 v2 手机:握手、发密封消息、按顺序拆收件箱。缺省扮老 App(握手 v:[1,2]);`web` ⇒ 网页的握手。 */
-async function v2Phone(sock: Sock, stream: string, token = DTOK, opts: { web?: boolean } = {}) {
+async function v2Phone(sock: Sock, stream: string, token = DTOK, opts: { web?: boolean; build?: unknown } = {}) {
   const kp = x25519KeyPair()
   const start = sock.sent.length
-  sock.emit({ stream, frame: opts.web ? { hs: b64uEncode(kp.pub), v: [2], client: 'web' } : { hs: b64uEncode(kp.pub), v: [1, 2] } })
+  const hs = opts.web ? { hs: b64uEncode(kp.pub), v: [2], client: 'web' } : { hs: b64uEncode(kp.pub), v: [1, 2] }
+  sock.emit({ stream, frame: opts.build !== undefined ? { ...hs, build: opts.build } : hs })
   await waitFor(() => sock.sent.slice(start).some(s => JSON.parse(s).stream === stream), 'hello')
   const idx = sock.sent.findIndex((s, i) => i >= start && JSON.parse(s).stream === stream)
   const hello = ServerHello.parse(JSON.parse(sock.sent[idx]!).frame)
@@ -119,6 +120,7 @@ describe('tunnel-client v2', () => {
     client(sock, { log: (_t, l) => { logs.push(l) } })
     const p = await v2Phone(sock, 's2')
     expect(p.hello.v).toBe(2)
+    expect(p.hello.routes).toBe('v1')   // P3:告诉新 App 面板收 /v1 路径(P3e 起每个新键都在)
     for (const [stream, frame] of [['s1', { hs: b64uEncode(x25519KeyPair().pub) }], ['s3', { hs: b64uEncode(x25519KeyPair().pub), v: [1] }]] as const) {
       sock.emit({ stream, frame })
       await waitFor(() => sock.sent.some(s => JSON.parse(s).stream === stream && JSON.parse(s).close === true), `close ${stream}`)
@@ -169,6 +171,25 @@ describe('tunnel-client v2', () => {
     p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/home' })
     expect(await p.next()).toMatchObject({ t: 'res', rid: 'r1', status: 200 })
     expect(seenClient).toBe('web')
+  })
+
+  it('握手报的构建号(M6b):认出令牌之后交给 onDeviceBuild 一次;不像构建号 / 没报 ⇒ 不记', async () => {
+    const sock = fakeSocket()
+    const seen: Array<[string, string]> = []
+    client(sock, { onDeviceBuild: (token, build) => { seen.push([token, build]) } })
+    const p = await v2Phone(sock, 'sB', DTOK, { build: '7' })
+    expect(seen).toEqual([])   // 握手那一刻还不知道是哪台
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/home' })
+    await p.next()
+    p.send({ t: 'req', rid: 'r2', method: 'GET', path: '/m/api/home' })
+    await p.next()
+    expect(seen).toEqual([[DTOK, '7']])
+    for (const [stream, build] of [['sX', 'x'.repeat(33)], ['sY', '1 2'], ['sZ', 7], ['sN', undefined]] as const) {
+      const q = await v2Phone(sock, stream, DTOK, { build })
+      q.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/home' })
+      await q.next()
+    }
+    expect(seen).toEqual([[DTOK, '7']])
   })
 
   it('二进制(贴纸):image/png 响应 ⇒ base64;base64 请求正文按字节交给面板', async () => {
@@ -415,6 +436,30 @@ describe('tunnel-client v2', () => {
     hub.dispose()
   })
 
+  it('topics只给设备,link拒绝;主人范围变化立即撤订且不发送新主人的摘要', async () => {
+    let owner: string | null = 'owner'
+    let revision = '1'
+    const { hub, live } = countedHub([{ match: t => t === 'topics', snapshot: async () => ({ revision, recentIds: [], openIds: [], hasMoreOpen: false }) }])
+    const sock = fakeSocket()
+    client(sock, { events: hub, topicsOwner: () => owner, activeLinkToken: () => 'tlink' })
+    const device = await v2Phone(sock, 'topic-device')
+    expect(device.hello.topics).toBe('v1')
+    device.send({ t: 'sub', sid: 'topics', topic: 'topics' })
+    expect(await device.next()).toMatchObject({ t: 'ev', sid: 'topics', data: { revision: '1' } })
+    const link = await v2Phone(sock, 'topic-link', 'tlink')
+    link.send({ t: 'sub', sid: 'private', topic: 'topics' })
+    expect(await link.next()).toEqual({ t: 'err', sid: 'private', code: 'topic_not_allowed' })
+    expect(live()).toBe(1)
+    owner = 'other'; revision = '2'; hub.poke()
+    expect(await device.next()).toEqual({ t: 'err', sid: 'topics', code: 'topic_not_allowed' })
+    expect(device.drain().filter(m => 't' in m && m.t === 'ev')).toEqual([])
+    expect(live()).toBe(0)
+    owner = null
+    device.send({ t: 'sub', sid: 'missing', topic: 'topics' })
+    expect(await device.next()).toEqual({ t: 'err', sid: 'missing', code: 'topic_not_allowed' })
+    hub.dispose()
+  })
+
   it('撤销设备:下一条事件发出前关流 —— 明文 auth_failed、订阅全退、流被忘掉', async () => {
     let tokens = [DTOK]
     let state = { n: 1 }
@@ -568,4 +613,34 @@ describe('tunnel-client:认不出的流 ⇒ 明文 stream_unknown(中继重连�
     p.send({ t: 'ping', rid: 'k1' })
     expect(await p.next()).toEqual({ t: 'pong', rid: 'k1' })
   })
+})
+it('T5 link: no hub subscription can bypass the limited HTTP status projection',async()=>{
+ const {hub,live}=countedHub([{match:()=>true,snapshot:async()=>({private:'PRIVATE-BODY'})}]),sock=fakeSocket()
+ client(sock,{events:hub,activeLinkToken:()=> 'tlink',topicsOwner:()=> 'owner'});const link=await v2Phone(sock,'link-scope','tlink')
+ for(const topic of ['home','approvals','agents','matter/deadbeef','topics']){link.send({t:'sub',sid:topic,topic});expect(await link.next()).toEqual({t:'err',sid:topic,code:'topic_not_allowed'})}
+ expect(live()).toBe(0);expect(link.drain().filter(m=>'t' in m&&m.t==='ev')).toEqual([]);hub.dispose()
+})
+it('T5 device: a private GET accepted before revocation does not return its body after revocation',async()=>{
+ let tokens=[DTOK],release!:(r:Response)=>void;const sock=fakeSocket();client(sock,{knownDeviceTokens:()=>tokens,handleRequest:()=>new Promise(r=>{release=r})});const p=await v2Phone(sock,'read-revoked')
+ p.send({t:'req',rid:'private',method:'GET',path:'/v1/matter/owner-chat/page'});await waitFor(()=>!!release);tokens=[];release(new Response('PRIVATE-BODY'));expect(await p.next()).toEqual({error:'auth_failed'});expect(p.drain().filter(m=>'t' in m&&m.t==='res')).toEqual([])
+})
+
+
+it('P3h: stream activity carries its own build, including ping-only old clients and web', async () => {
+  const sock = fakeSocket()
+  const activity: Array<[string, string | undefined]> = []
+  const builds: Array<string | undefined> = []
+  client(sock, { onClientActivity: (kind, build) => activity.push([kind, build]), handleRequest: async req => {
+    builds.push(phoneBuildOf(req)); return new Response('{}')
+  } })
+  const app = await v2Phone(sock, 'retire-app', DTOK, { build: '2' })
+  app.send({ t: 'req', rid: 'a', method: 'GET', path: '/v1/home' }); await app.next()
+  const old = await v2Phone(sock, 'retire-old')
+  old.send({ t: 'ping', rid: 'b' }); await old.next()
+  const web = await v2Phone(sock, 'retire-web', DTOK, { web: true, build: 'P3g' })
+  web.send({ t: 'ping', rid: 'c' }); await web.next()
+  expect(builds).toEqual(['2'])
+  expect(activity).toContainEqual(['app', '2'])
+  expect(activity).toContainEqual(['app', undefined])
+  expect(activity).toContainEqual(['web', 'P3g'])
 })

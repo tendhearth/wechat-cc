@@ -1,3 +1,4 @@
+import { makeMessagesStore } from '../../../lib/messages-store'
 import { existsSync } from 'node:fs'
 import { sumUsage, type TurnUsage, type UsageTotals } from '../../../domain/turn-usage'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -11,16 +12,21 @@ import {makeLiveInputStore} from './live-inputs'
 import {makeTaskAttachmentStore} from '../../workbench/attachments'
 import {createAttachmentUploads} from '../../workbench/attachment-uploads'
 import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
+import {makeMatterLog} from '../matter-log'
+import {READY_STEP_PAYLOAD,readyStepKey} from '../../../domain/matters/ready-step'
+import {matterFeed} from '../matter-feed'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeCreationReceiptStore} from './creation-receipts'
 import {createEntryStore} from './entry-store'
 import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeArtifactDeliveryStore} from './artifact-deliveries'
-import {makeTimelineEvents,type TaskEvent} from './timeline-events'
+import {makeTimelineEvents} from './timeline-events'
 import {makeReviewMarkStore} from './review-marks'
 import {makeRewindStore} from './rewind-store'
 import {makeReviewCommentStore} from './review-comments'
 import {makeReviewHunkLog} from './review-hunk-log'
+import {makeMatterStore} from '../matters-store'
+import type {MatterOrigin,MatterStore} from '../../../ports/matters'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
@@ -57,7 +63,7 @@ function parseScriptGroups(raw:string|null):{groups:number[]|null;boot:number|nu
 }
 export interface GoalRecord { taskId:string; command:string; maxRounds:number; rounds:number; status:'active'|'passed'|'exhausted'|'stopped'; lastExit:number|null; stopReason:string|null; checkedTurn:string|null; updatedAt:number }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
-export type {TaskEvent} from './timeline-events'
+export {stepPayload,timelineKind,type TimelineKind,type TimelinePayload} from './timeline-events'
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt,workspace_kind AS workspaceKind FROM workbench_tasks'
 const HANDOFF_SELECT='SELECT id,source_task_id AS sourceTaskId,target_task_id AS targetTaskId,purpose,request,packet_sha256 AS packetSha256,artifact_refs_json AS artifactRefsJson,quote_json AS quoteJson,created_at AS createdAt,request_event_id AS requestEventId,source_native_id AS sourceNativeId,target_native_id AS targetNativeId,packet_json AS packetJson,token_hash AS tokenHash FROM workbench_handoffs'
@@ -97,7 +103,9 @@ function listFilters(query:WorkbenchListQuery) {
   return {q,archived,limit,filterHash,cursor}
 }
 
-export function makeWorkbenchStore(db: Db) {
+/** `matters`:接线时交进来的那一个(同一个时钟、同一个实例);不给 ⇒ 就地开一个(单测、只读的报表)。 */
+export function makeWorkbenchStore(db: Db, opts: { matters?: MatterStore } = {}) {
+  const matterStore=opts.matters??makeMatterStore(db)
   const addProject=(input:{path:string;name?:string;providerId:string}):WorkbenchProject=>{
     db.query('INSERT OR IGNORE INTO workbench_projects(id,path,name,provider_id,created_at) VALUES(?,?,?,?,?)').run('p-'+randomUUID(),input.path,input.name?.trim()||basename(input.path)||input.path,input.providerId,Date.now())
     return projectName(db.query<WorkbenchProject,[string]>(PROJECT_SELECT+' WHERE path=?').get(input.path)!)
@@ -108,10 +116,14 @@ export function makeWorkbenchStore(db: Db) {
     return task
   }
   const artifacts = (id: string) => db.query<StoredArtifact, [string]>(`${ART_SELECT} WHERE task_id=? ORDER BY created_at DESC,rowid DESC`).all(id)
-  const {events,addEvent:insertEvent,recordAgentEvent:upsertAgentEvent,finishRunActivities:finishActivities}=makeTimelineEvents(db)
+  const matterLog=makeMatterLog(db)
+  const execution=makeExecutionSettingsStore(db,matterLog)
+  const {steps,events,addEvent:insertEvent,recordAgentEvent:upsertAgentEvent,finishRunActivities:finishActivities}=makeTimelineEvents(db,matterLog)
   const bump=(id:string):number=>{
     const row=db.query<{seq:number},[number,string]>('UPDATE workbench_tasks SET seq=seq+1,updated_at=? WHERE id=? RETURNING seq').get(Date.now(),id)
     if(!row)throw new Error('not_found')
+    // 版本号(seq)照旧是详情的 version / 事件的 v;「变了」的信号从 P1a 起只认这件事的游标 —— 同一笔写里推进它(任务与它的那件事同 id)。
+    matterLog.touch(id)
     return row.seq
   }
   const version=(id:string)=>db.query<{seq:number},[string]>('SELECT seq FROM workbench_tasks WHERE id=?').get(id)?.seq??0
@@ -127,15 +139,18 @@ export function makeWorkbenchStore(db: Db) {
     return{...h,artifacts:JSON.parse(artifactRefsJson),quote:quoteJson?JSON.parse(quoteJson):null,sourceTitle:a.title,targetTitle:b.title,sourceProviderId:a.providerId,targetProviderId:b.providerId,sourceStatus:a.status,targetStatus:b.status}
   })
   return {
+    /** 这件事「变了」的信号(P1a):只有 MatterLog 发;长轮询与订阅从这里等。 */
+    feed:matterFeed(db),
     addProject,
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
     /** 还有没归档任务的文件夹 —— 这些项目即使文件夹没了也要留在列表里(任务行挂在它下面)。 */
     activeTaskPaths:()=>new Set(db.query<{path:string},[]>('SELECT DISTINCT path FROM workbench_tasks WHERE archived_at IS NULL').all().map(r=>r.path)),
+    recordConversationEntry:(owner:string,id:string,text:string,source:string)=>makeMessagesStore(db).appendSync!({id,chatId:owner,ts:new Date().toISOString(),direction:'in',kind:'text',text,source}),
     atomic:<T>(operation:()=>T,immediate=false):T=>{const transaction=db.transaction(operation);return immediate?transaction.immediate():transaction()},
     attachments:makeTaskAttachmentStore(db),
     uploadRequestExists:(id:string)=>!!db.query('SELECT id FROM workbench_attachment_uploads WHERE id=?').get(id),
     attachmentUploads:(options:Omit<Parameters<typeof createAttachmentUploads>[0],'db'|'attachments'>)=>createAttachmentUploads({...options,db,attachments:makeTaskAttachmentStore(db)}),
-    execution:makeExecutionSettingsStore(db),
+    execution,
     liveInputs:makeLiveInputStore(db),
     controlReceipts:makeControlReceiptStore(db),
     creationReceipts:makeCreationReceiptStore(db),
@@ -156,6 +171,21 @@ export function makeWorkbenchStore(db: Db) {
     reviewHunks:makeReviewHunkLog(db,bump),
     /** 回退记录(v81):意图 / 已撤掉的轮 / 待告知执行者 / 撤销回退。 */
     rewinds:makeRewindStore(db,bump),
+    /**
+     * 「答完了、闲着」落成这件事上的一步(M6e 前半,domain/matters/ready-step.ts):最近一轮已经收了 ⇒ 在它上面写
+     * `system` / `ready:<turnId>` / `{ready:true}`;已经有了 ⇒ 什么都不写(不推进游标)。最近一轮还在跑 / 没收成 / 一轮都没有 ⇒ 不写。
+     * 不 bump 版本号:这一步主人看不见,详情的 version 与 `?since=` 不该因为它变。返回这次是不是新写的。
+     */
+    markReady:(id:string):boolean=>db.transaction(()=>{
+      const turn=db.query<{id:string;status:string},[string]>('SELECT id,status FROM matter_turns WHERE matter_id=? ORDER BY seq DESC LIMIT 1').get(id)
+      if(!turn||turn.status!=='completed')return false
+      const key=readyStepKey(turn.id)
+      if(matterLog.item(id,key))return false
+      matterLog.writeItem({matterId:id,turnId:turn.id,kind:'system',status:'completed',key,payload:{...READY_STEP_PAYLOAD}})
+      return true
+    })(),
+    /** 时间线上的步(src 里读时间线读这个);`events` 是它的线上投影(WorkbenchTaskEvent),只给出口与测试。 */
+    steps,
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,
     recordHandoffNative:(id:string,nativeId:string):{sourceTaskId:string;targetTaskId:string}|null=>db.transaction(()=>{
       const row=db.query<{sourceTaskId:string;targetTaskId:string},[string,string]>('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL RETURNING source_task_id AS sourceTaskId,target_task_id AS targetTaskId').get(nativeId,id)
@@ -187,7 +217,7 @@ export function makeWorkbenchStore(db: Db) {
       return db.transaction(()=>{
         const existing=sourceByIdentity(input.providerId,input.nativeId)
         if(existing)return{task:get(existing.taskId),source:publicSource(existing),created:false}
-        const task=this.create({title:input.title,path:input.path,providerId:input.providerId,ownerChatId:input.ownerChatId}),id=randomUUID(),now=Date.now()
+        const task=this.create({title:input.title,path:input.path,providerId:input.providerId,ownerChatId:input.ownerChatId,origin:{surface:'cli'}}),id=randomUUID(),now=Date.now()
         db.query('UPDATE workbench_tasks SET execution_choice_json=? WHERE id=?').run(JSON.stringify(NATIVE_EXECUTION_CHOICE),task.id)
         db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,task.id,input.providerId,input.nativeId,input.cwd,now,input.snapshotSha256,input.observedFingerprint,input.messages.length,input.truncated?1:0,input.snapshotJson,input.pagesJson)
         for(const message of input.messages)addEvent(task.id,message.role==='user'?'user':'text',message.text,id)
@@ -294,20 +324,15 @@ export function makeWorkbenchStore(db: Db) {
         return db.query<{taskId:string;repoRoot:string;branch:string;archivedAt:number|null},[]>('SELECT w.task_id AS taskId,w.repo_root AS repoRoot,w.branch,t.archived_at AS archivedAt FROM workbench_worktrees w JOIN workbench_tasks t ON t.id=w.task_id').all()
       },
     },
-    /** 每件事花了多少额度(v82):执行者自己报的,一轮一行;重放不重复。 */
+    /** 每件事花了多少额度(v82 起;M2b 起记在这件事的轮上):执行者自己在一轮结束时报的,一轮一份;不报的轮不算。 */
     usage: {
-      record(r:{taskId:string;runId:string;turnSeq:number;providerId:string;usage:TurnUsage;durationMs?:number}) {
-        const u=r.usage
-        db.query('INSERT OR IGNORE INTO workbench_turn_usage(task_id,run_id,turn_seq,provider_id,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_usd,duration_ms,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-          .run(r.taskId,r.runId,r.turnSeq,r.providerId,u.input??null,u.output??null,u.cacheRead??null,u.cacheWrite??null,u.reasoning??null,u.costUsd??null,r.durationMs??null,Date.now())
-      },
       totals(taskId:string):UsageTotals {
-        const rows=db.query<{i:number|null;o:number|null;cr:number|null;cw:number|null;r:number|null;c:number|null},[string]>('SELECT input_tokens AS i,output_tokens AS o,cache_read_tokens AS cr,cache_write_tokens AS cw,reasoning_tokens AS r,cost_usd AS c FROM workbench_turn_usage WHERE task_id=?').all(taskId)
-        return sumUsage(rows.map(x=>({...(x.i!==null?{input:x.i}:{}),...(x.o!==null?{output:x.o}:{}),...(x.cr!==null?{cacheRead:x.cr}:{}),...(x.cw!==null?{cacheWrite:x.cw}:{}),...(x.r!==null?{reasoning:x.r}:{}),...(x.c!==null?{costUsd:x.c}:{})})))
+        return sumUsage(db.query<{u:string},[string]>('SELECT usage_json AS u FROM matter_turns WHERE matter_id=? AND usage_json IS NOT NULL ORDER BY seq').all(taskId).map(x=>JSON.parse(x.u) as TurnUsage))
       },
-      /** 某个时刻以来各执行者用了多少(周报用)。 */
+      /** 某个时刻以来各执行者在一起做里用了多少(周报用)。 */
       sinceByProvider(at:number):Array<{providerId:string;turns:number;input:number|null;output:number|null}> {
-        return db.query<{providerId:string;turns:number;input:number|null;output:number|null},[number]>('SELECT provider_id AS providerId,COUNT(*) AS turns,SUM(input_tokens) AS input,SUM(output_tokens) AS output FROM workbench_turn_usage WHERE at>=? GROUP BY provider_id ORDER BY provider_id').all(at)
+        return db.query<{providerId:string;turns:number;input:number|null;output:number|null},[number]>(`SELECT t.executor AS providerId,COUNT(*) AS turns,SUM(json_extract(t.usage_json,'$.input')) AS input,SUM(json_extract(t.usage_json,'$.output')) AS output
+          FROM matter_turns t JOIN matters m ON m.id=t.matter_id WHERE m.kind='task' AND t.usage_json IS NOT NULL AND t.ended_at>=? GROUP BY t.executor ORDER BY t.executor`).all(at)
       },
     },
     /** 做到条件成立为止(v80):命令只在建任务时写一次 —— 这里没有、也不许有改命令的方法。 */
@@ -353,13 +378,20 @@ export function makeWorkbenchStore(db: Db) {
       return db.query<{id:string;title:string;path:string;groups:string|null},[]>("SELECT id,title,path,writer_groups AS groups FROM workbench_tasks WHERE error='writer_not_closed'").all()
         .map(row=>({id:row.id,title:row.title,path:row.path,...parseGroups(row.groups)}))
     },
-    create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean }): StoredTask {
-      let id: string
-      do { id = randomBytes(4).toString('hex') } while (db.query('SELECT 1 FROM workbench_tasks WHERE id=?').get(id))
-      const now = Date.now()
-      if(input.registerProject!==false)addProject(input)
-      db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at,workspace_kind) VALUES(?,?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now,input.workspaceKind??'project')
-      return get(id)
+    /**
+     * 建任务 = 建这件事(M2):同一个事务里先建 matter(同 id、kind=task),再建任务指着它。出生地只在这一次写(v77 之后改不了),
+     * 所以由调用方在这里给,不再事后补。
+     */
+    create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean;origin?:{matterId?:string|null;messageId?:string|null;surface?:MatterOrigin|null} }): StoredTask {
+      return db.transaction(()=>{
+        let id: string
+        do { id = randomBytes(4).toString('hex') } while (db.query('SELECT 1 FROM workbench_tasks WHERE id=?1 UNION ALL SELECT 1 FROM matters WHERE id=?1').get(id))
+        const now = Date.now()
+        if(input.registerProject!==false)addProject(input)
+        matterStore.create({id,kind:'task',title:input.title,projectPath:input.path,ownerChatId:input.ownerChatId,originMatterId:input.origin?.matterId??null,originMessageId:input.origin?.messageId??null,origin:input.origin?.surface??null})
+        db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at,workspace_kind,matter_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now,input.workspaceKind??'project',id)
+        return get(id)
+      })()
     },
     update(id: string, status: TaskStatus, error: string | null = null) {
       db.transaction(()=>{
@@ -371,6 +403,8 @@ export function makeWorkbenchStore(db: Db) {
     recover() {
       const rows = db.query<{ id: string; path: string; status: TaskStatus }, []>("SELECT id,path,status FROM workbench_tasks WHERE status IN ('queued','running','cancelling')").all()
       db.transaction(() => {
+        // 轮记不上不挡开机对账(任务自己的中断照记)。
+        try{execution.interruptAll(rows.map(row=>row.id))}catch{/* 只少几轮的结局 */}
         for (const { id,path,status } of rows) {
           finishRunActivities(id,null,'interrupted')
           db.query("UPDATE workbench_tasks SET status='interrupted',error='daemon_restarted',updated_at=? WHERE id=?").run(Date.now(),id)
@@ -408,12 +442,13 @@ export function makeWorkbenchStore(db: Db) {
         bump(taskId)
       })()
     },
-    detail(id: string, opts: { since?: number } = {}) {
+    detail(id: string, opts: { since?: number; sinceCursor?: number } = {}) {
       // version 必须先读、events 后读:并发写夹在两次读之间时,宁可让这次的 version 落后于
       // 已经读到的 events(下一轮轮询用同一个 since 会重复看到那几行,按 id 去重即可),
       // 也不要反过来让 version 抢先报出「已追上」而漏掉刚落库、还没读到的那几行。
-      const v=version(id),origin=source(id)
-      return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id,opts.since), artifacts: artifacts(id).map(publicArtifact), version: v }
+      // cursor(P1b)同理:先读。下一轮带 since_cursor 回来,夹在中间写的那几步会再来一次(按 id 合并),不会漏。
+      const v=version(id),cursor=matterFeed(db).cursor(id),origin=source(id)
+      return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id,opts.since,opts.sinceCursor), artifacts: artifacts(id).map(publicArtifact), version: v, cursor }
     },
   }
 }

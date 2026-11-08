@@ -362,11 +362,11 @@ export async function runPhoneSelftest(
       let regOk = false, code = 'no_response'
       rec.knownSecret(SYNTHETIC_APNS_TOKEN)
       try {
-        const reg = await deviceClient.request({ method: 'POST', path: '/m/api/push/register', body: JSON.stringify({ platform: 'apns', token: SYNTHETIC_APNS_TOKEN }) })
+        const reg = await deviceClient.request({ method: 'POST', path: '/v1/phone/push/register', body: JSON.stringify({ platform: 'apns', token: SYNTHETIC_APNS_TOKEN }) })
         regOk = reg.json<{ ok?: boolean }>().ok === true
         rec.push('push_registered', regOk, regOk ? undefined : reg.text())
         if (regOk) {
-          const t = await deviceClient.request({ method: 'POST', path: '/m/api/push/test', body: '{}' })
+          const t = await deviceClient.request({ method: 'POST', path: '/v1/phone/push/test', body: '{}' })
           code = t.json<{ result?: { code?: string } }>().result?.code ?? 'no_result'
         }
       } catch (err) {
@@ -522,7 +522,7 @@ export function defaultPhoneSelftestDeps(stateDir: string): PhoneSelftestDeps {
     },
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    connect: (url, token) => makeProtocolClient({ open: () => adaptWebSocket(new WebSocket(url)), token }),
+    connect: (url, token) => makeProtocolClient({ open: () => adaptWebSocket(new WebSocket(url)), token, build: 'selftest-P3d' }),
     log: (line) => console.error(`[selftest] ${line}`),
   }
 }

@@ -1,3 +1,4 @@
+import { RESPONSE_SCHEMAS } from '@wechat-cc/protocol'
 /**
  * phone-api-schema.test.ts — 手机协议第 12 步:`/m/api/*`、`/set/api/*` 每条路由
  * 都有一份 zod schema(`packages/protocol/src/api.ts`),对着真实面板返回 `parse`。
@@ -29,7 +30,10 @@ import { makeWorkbenchService, type WorkbenchService } from '../workbench/servic
 import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 import { saveArtifactSnapshot } from '../../adapters/workbench/artifacts'
 import { GIT_REVIEW_MIME, serializeGitReview, type GitReview } from '../workbench/git-review'
-import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
+import { makeSettingsPanel as makePanel, type SettingsPanel } from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+/** P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。 */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import { PHONE_ROUTES } from './phone-routes'
 import { makePhoneInsight } from './phone-insight'
 import { makeApprovalExplainer } from './phone-explain'
@@ -38,12 +42,16 @@ import { makePhoneOwner } from './mobile-chat'
 import { makePhoneChat } from './phone-chat'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { letterPagePath, listLetters, mobileLettersRoutes } from '../letters'
+import { memoryPhoneRoutes } from '../memory'
+import { stickerPhoneRoutes } from '../stickers'
 
 // ── 1) 守卫:PHONE_ROUTES ↔ (PHONE_API_SCHEMAS ∪ PHONE_HTML_ROUTES) 双向核对 ──
 
 describe('手机接口 schema 守卫', () => {
   it('PHONE_ROUTES 每条要么是 HTML(登记在 PHONE_HTML_ROUTES 并带理由)要么有 schema', () => {
     for (const route of PHONE_ROUTES) {
+      // `/v1` 行上的 phone 块(P3c 起):返回形状就是 /v1 那一份(desktop-api.ts 的 RESPONSE_SCHEMAS),不在手机这份里
+      if (/^(GET|POST) \/v1\//.test(route)) continue
       const isHtml = PHONE_HTML_ROUTES.has(route)
       const hasSchema = Object.hasOwn(PHONE_API_SCHEMAS, route)
       expect(isHtml || hasSchema, `${route} 既不在 PHONE_HTML_ROUTES 也没有 schema`).toBe(true)
@@ -134,10 +142,10 @@ describe('真实返回校验 — workbench + matters', () => {
   afterEach(async () => { await panel?.stop(); await workbench?.shutdown(); db?.close(); removeTempDir(root); removeTempDir(managedRoot) })
 
   function create(name: string) { const path = join(root, name); mkdirSync(path); return workbench.create({ path, providerId: 'claude', text: name }) }
-  // 送话给执行者的写操作只给设备令牌(审计 10-20):默认令牌碰到这类路由时先配一次对
+  // 私人任务详情与送话给执行者的写操作使用设备令牌(审计 10-20):默认令牌碰到这类路由时先配一次对
   let device: string | null = null
   async function request(path: string, body?: unknown, auth?: string) {
-    if (auth === undefined) { auth = token; if (linkCannot(path)) { if (!device) { device = await pairDevice(base, token); token = panel.issueToken() } auth = device } }
+    if (auth === undefined) { auth = token; if (linkCannot(path) || path.startsWith('/m/api/matter?')) { if (!device) { device = await pairDevice(base, token); token = panel.issueToken() } auth = device } }
     return fetch(base + path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(auth), body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   }
   async function ready(id: string) { await expect.poll(() => workbench.detail(id).permissions.length).toBe(1); return workbench.detail(id) }
@@ -405,7 +413,16 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
         names: () => [{ username: 'wx_f', display: '小飞' }],
       },
       stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(dir, 'stickers') },
-      featureRoutes: [mobileLettersRoutes({ list: () => listLetters(dir), pagePath: (id, page) => letterPagePath(dir, id, page) })],
+      // P3d-3 起记忆两条、表情原图也归各自的功能,经 featureRoutes 交进来(同 wire-settings-panel.ts)
+      featureRoutes: [
+        mobileLettersRoutes({ list: () => listLetters(dir, new Map()), pagePath: (id, page) => letterPagePath(dir, new Map(), id, page) }),
+        memoryPhoneRoutes({ curated: () => ({
+          updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
+          changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
+          sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: true, sources: [] }] }],
+        }) }),
+        stickerPhoneRoutes({ list: () => [{ file: 'bear.png' }], dir: join(dir, 'stickers') }),
+      ],
       feed: {
         journal: { list: () => [{ id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: OWNER, title: '好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null, matter_id: null }] },
         planLogDays: () => [{ at: '2026-09-06T03:03:55.347Z', chatId: OWNER, candidates: ['visit'], decision: 'none', why: '没朋友,在家歇着。', source: 'model' }],
@@ -415,11 +432,6 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
       presence: async () => ({ presence: 'ok' as const, activity: { kind: 'idle' as const, label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }),
       seen: { read: () => null, write: () => {} },
       push: { register: () => true, test: async () => ({ ok: true, code: 'ok' }), unregister: () => {}, forgetAll: () => {} },
-      curatedMemory: () => ({
-        updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
-        changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
-        sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: true, sources: [] }] }],
-      }),
       now: () => Date.parse('2026-09-06T08:00:00.000Z'),
     })
     const started = await panel.start(0)
@@ -460,7 +472,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     expect((await get('/m/api/state')).status).toBe(403)   // 链接页面不调 /m/api/state(App 在用)
     const st = parseAs('GET /m/api/state', await (await get('/m/api/state', await dev())).json()) as { portraitPng?: string }
     expect(st.portraitPng).toBe('iVBORw0KGgo=')
-    parseAs('GET /m/api/art/presence', await (await get('/m/api/art/presence')).json())
+    RESPONSE_SCHEMAS['GET /v1/phone/art/presence']!.parse(await (await get('/v1/phone/art/presence')).json())
   })
 
   // 手机 App(apps/app 的待办页)直接显示 r.time_ref —— schema 必须收得住

@@ -14,13 +14,15 @@ export function gapAction(deps: Pick<TickDeps, 'careLedger'>, { dispatchToChat }
     id: 'gap',
     needsWechat: true,
     speakLevel: (c) => c.level,
-    async run({ chatId, nowIso, prefs, lastInboundAtIso }) {
+    async run({ chatId, nowIso, prefs, lastInboundAtIso }, _target, outbound) {
       const daysSinceContact = lastInboundAtIso !== undefined
         ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
         : 0
       return await dispatchToChat(chatId, {
+        source: 'gap', outbound,
         claim: () => { const ticket = deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
         buildText: (style) => buildGapCheckinText({ nowIso, chatId, daysSinceContact, avoid: prefs.avoid }, style),
+        nowIso,
       })
     },
   }

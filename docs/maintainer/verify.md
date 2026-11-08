@@ -1,5 +1,9 @@
 # 验证
 
+PR CI 三平台绿 = 合入门 = 部署门。`dev` 推送先比对 `git rev-parse HEAD^{tree}` 与已成功 PR CI 的 merge-ref tree 回执;完全相同才复用,轻量作业会写明 PR run URL。回执缺失/过期、API 不可用、旧版两平台运行、tree 不同(例如分支落后 dev)都走原有完整 CI;`master` 一律照旧全跑。纯 Markdown 的路径跳过规则保留。
+
+部署前不再本机 `verify --full`,除非部署的 tree 没被 CI 跑过;这时先补验证,重型测试放专用 Mac mini。部署后主动跑 `selftest phone`、`selftest chat`、`selftest workbench` 和本次新增路由的闭环。4h soak 后台跑,只有改开机/关机/重启顺序才等待它,并用 `--min-restarts 1`。
+
 改完 + 部署完,用 `wechat-cc selftest` 做真机闭环。它不发微信、不碰主人的聊天记忆、不改主人的默认 provider。
 
 推上去之后还有最后一步 —— **看 CI**,也是一条命令:
@@ -38,7 +42,7 @@ bun x vitest run <测试文件>            # 绿
 
 写不了测试的修复(纯配置、只有真机能复现)也写这一节,说为什么、怎么验的。CI 怎么认「修 bug」:分支以 `fix/` 开头,或标题以 `fix` / 「修」开头(「修改」「修订」不算;自改的标题是「自改 #…」,不在内)。
 
-两条都在 `ci.yml` 的 **pr · 测试只增不减 + 红/绿** 作业里查,只在 PR 上跑、只改 Markdown 时跳过。它读的是触发那一刻的 PR 描述:红了改完描述,**重跑作业没用**,推一次或 `gh pr close <N> && gh pr reopen <N>`。自改流水线的 PR 也查:自改删了测试就停在 CI 红,交给人看。
+两条都在 `ci.yml` 的 **pr · 测试只增不减 + 红/绿** 作业里查,只在 PR 上跑、只改 Markdown 时跳过。它读的是触发那一刻的 PR 描述:红了改完描述,**重跑作业没用**,推一次或 `gh pr close <N> && gh pr reopen <N>`。自改流水线的 PR 也查:自改删了测试就停在 CI 红,交给人看。dev → master 的发版 PR 不查 —— 它的 diff 是两次发版之间 dev 的累计,里面每个 PR 进 dev 时都查过(1.7.8 那次累计报了 102 个文件);别的分支直接开进 master 照查。
 
 ## 跨模块的行为至少一条走真实接线(沙盒)的测试
 
@@ -69,8 +73,21 @@ bun x vitest run <测试文件>            # 绿
 **不要求给不可能发生的情况补测试**。叫评审者找问题,它总能找到点什么;每条都修,最后多出几层抽象、一堆测不到真东西的测试 ——
 测试越写越多、越写越像实现细节,一部分就是这么来的。派评审时提示词里写明「只报正确性,跳过风格」。
 
-动开机 / 关机顺序、数据迁移、权限判定的 PR,合进去之前再要一道**没看过写代码过程**的评审:新开一个子 agent(Claude Code 的 `/code-review`),
-只给它 diff 和设计稿,不给对话。整合者自己写过或审过的,看 diff 时带着写的时候的推理,容易顺着它读过去。
+动开机 / 关机顺序、数据迁移、权限判定的 PR,合进去之前再要一道**没看过写代码过程**的评审,由 **Codex** 来做(2026-10-29 主人定;
+写代码和日常评审多是 Claude,换一家模型看,盲区不重合)。在分支的 worktree 里跑:
+
+```bash
+codex exec --ignore-user-config --disable plugins --disable browser_use --disable computer_use \
+  --disable apps --disable hooks -s read-only \
+  review --base dev
+```
+
+`--base` 不能再带自定义提示词(codex-cli 0.165 直接报错退出),用它内置的评审提示:按 P0–P3 列问题,本身就偏正确性;
+照上一节只处理会让结果错的,风格类的不改。它只拿到 diff 和仓库,不拿对话,也不拿设计稿 —— 设计稿里定下的取舍它可能当成问题报,对着稿判。
+一次约半分钟到几分钟。整合者自己写过或审过的,看 diff 时带着写的时候的推理,容易顺着它读过去。
+前面那串 `--ignore-user-config --disable …` 不能省:本机 Codex 配了能操作电脑和浏览器的 MCP,只读沙箱管不住它们
+(同 `src/cli/self-change/runner.ts` 的 `CODEX_REVIEW_LOCKDOWN`)。api.openai.com 要走 bx,先看 `wechat-cc guard status`。
+Codex 用不了(额度、登录)时退回 Claude Code 的 `/code-review` 子 agent,PR 里写一句。
 
 ## 两种用法
 
@@ -141,6 +158,22 @@ POST /v1/workbench/cancel        { id }
 POST /v1/workbench/archive       { id, archived: true }
 POST /v1/workbench/attachment    { id, draftId, name, mime, base64 }
 ```
+
+## AI 输出回归评测(手动,不进 verify / CI)
+
+单测钉的是代码;**模型 + 提示词**这一对靠它:改了 `src/domain/prompt-builder.ts`、早报信封(`src/features/jobs/brief.ts`)、
+指称裁判提示词(`task-reference.ts`),或换了默认模型 / 便宜模型 ⇒ 合 dev 之前跑一次,PR 里贴 `eval diff` 的结果
+(有回归就写为什么可以接受)。设计与样本格式见 [输出评测设计稿](../design/2026-10-29-output-eval.md)。
+
+```bash
+mkdir -p ~/.claude/channels/wechat/eval/samples
+cp eval/output/examples/*.json ~/.claude/channels/wechat/eval/samples/   # 编出来的示例;真样本从 messages 表挑,不进仓库
+wechat-cc eval run [--only <id,…>] [--provider <id>] [--json]   # daemon 需在跑;退出码 0 全过 / 1 有不过 / 2 daemon 没在跑
+wechat-cc eval diff [<runA> <runB>]                              # 缺省最近两次:列出「上次过、这次不过」的
+```
+
+被测的那一下在 daemon 里跑(`POST /v1/eval/run`,operator 令牌):生产的提示词、模型、便宜模型;会话只读、不批权限、
+不发微信、不写对话库。报告在 `<STATE_DIR>/eval/runs/<时间>/report.md`。要真模型、要花钱、要 bx,所以不进 CI。
 
 ## 变异测试(定期传感器,不进 verify / 每个 PR 的 CI)
 

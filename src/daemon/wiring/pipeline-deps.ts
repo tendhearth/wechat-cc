@@ -1,3 +1,7 @@
+import { turnJudge } from '../../app/turn-judge'
+import { makeTopicBubbles } from '../../lib/topic-bubbles'
+import { makeOwnerConversationReader, ownerConversationWork, ownerConversationEvents, stopOwnerConversation } from './owner-conversation'
+import { makeOwnerChatFileReader, ownerChatReadingEvent } from './owner-chat-reading'
 /**
  * Pipeline dep builder — admin/mode/onboarding handler construction +
  * 13-mw deps assembly into InboundPipelineDeps.
@@ -25,6 +29,8 @@ import { makeAdminCommands } from '../admin-commands'
 import { makeSelfChangeSpawner, resolveSelfCli } from '../self-change-spawn'
 import { makeModeCommands } from '../mode-commands'
 import { loadCompanionConfig } from '../../lib/companion-config'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { makeTopicRecall } from '../threads/recall'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeCheapJudge, type TaskCandidate } from '../../features/workbench'
 import { scopedSend } from '../inbound/reply-scope'
@@ -58,7 +64,8 @@ import type { YiHub, YiDispatch } from '../../app/yi-hub'
 import type { ExecResult } from '../../ports/a2a'
 import { makeMattersService } from '../../app/matters/service'
 import { makeSayReceipts } from '../../adapters/store/say-receipts'
-import { surfaceOrigin } from '../../features/phone'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { surfaceOrigin, fileChunkResponse } from '../../features/phone'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -186,7 +193,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     app: () => companionAppRef.current,
     log: (tag, line) => log(tag, line),
   })
-  const speech = wireSpeech({ stateDir, db, chatPrefs, proactive, log: (tag, line) => log(tag, line) })
+  const speech = wireSpeech({
+    evaluator: () => boot.registry.getCheapEval(),
+    stateDir, db, chatPrefs, proactive, log: (tag, line) => log(tag, line),
+    // 推后了的明信片补发(S2c):跟当时发一样走 ilink.sendFile —— 失败是抛错,折成 false
+    sendFile: async (chatId, path) => { try { await ilink.sendFile(chatId, path); return true } catch { return false } },
+  })
 
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
   // often tens of seconds to minutes. The shared a2aDeps.client's 10s timeout
@@ -434,6 +446,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
+  const topicRecall = makeTopicRecall({
+    onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
+    threads: makeThreadsStore(db),
+    isOwner: (chatId) => chatId === ownerChatId(),
+    cheapEval: () => turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log),
+    log,
+  })
   // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
   const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
   // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。stop 退订 + 清定时器,main.ts 登记进 shutdown。
@@ -443,6 +463,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,
     appTurn: () => late.appTurn?.() ?? null,
     matters: opts.matters, petSignals: opts.petSignals, stickers: opts.stickers,
+    topicRecall,
   })
 
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
@@ -453,18 +474,25 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     executorName: (id: string) => boot.registry.namesOf(id).name,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
     chat: {
+      events:(owner,since,limit)=>ownerConversationEvents(db,owner,since,limit),
+      stop:(owner,turnId)=>stopOwnerConversation(db,owner,turnId,id=>boot.coordinator.cancel(id)),
+      window: makeOwnerConversationReader(db,join(stateDir,'inbox')),
+      work: (owner,input) => ownerConversationWork(db,owner,input),
       ownerChatId,
       say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
-      // 只有附件的行(媒体镜像 / 只发了表情的回复,text 为空)在「一件事」的文字时间线里没东西可显示 —— 跳过;App 对话页另读整行。
-      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).filter(r => r.text.trim() !== '').map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
+      // Retain stored reply extras, including attachment-only rows; paths stay in the daemon.
+      file: makeOwnerChatFileReader({ownerChatId,inboxDir:join(stateDir,'inbox'),readChunk:fileChunkResponse,stickerDir:join(stateDir,'stickers'),message:(chatId,id)=>messagesStore.get(chatId,id)}),
+      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(row=>ownerChatReadingEvent(row,join(stateDir,'inbox'))).filter(r => r.text.trim() !== '' || r.replyExtras),
       search: async (chatId: string, query: string, limit: number) => (await messagesStore.search(chatId, query, limit)).map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
     // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。
     sayReceipts: makeSayReceipts(db),
     originOf: surfaceOrigin,
+    // CC 自己做的事(M5c):act 的列表行与详情读轮与步(只读)
+    log: makeMatterLog(db),
   }) : null
   // 「CC 的连接」与「CC 现在怎么样」(重构第二批步 6c,wire-connections.ts)。
-  // 配对过的手机数从设置面板读,面板又要 connections 当值 —— 真环。显式的晚绑定:手机那一簇建好之后才填;
+  // 配对过的手机数从设置面板读,面板在 connections 之后才建(手机读连接 P3c-2 起走内部 API 的 /v1/connections)。显式的晚绑定:手机那一簇建好之后才填;
   // 没填 ⇒ 0(不靠 try/catch 吞 TDZ,catch 只留给真的读失败,#488 评审)。
   const phoneDevices: { current: (() => number) | null } = { current: null }
   const connections = wireConnections({
@@ -480,7 +508,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // 簇里的环在 wirePhone 里面解(显式的 late 对象);这里只拿结果。关机停它的那一项 main.ts 登记在 polling 之前。
   const phone = wirePhone({
     opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore,
-    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections, speech,
+    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, speech,
+    ...(opts.proposals ? { proposals: opts.proposals } : {}),
   })
   phoneDevices.current = () => phone.settingsPanel.phoneDevices().length
   const { appPush, companionApp, phoneChat, settingsPanel } = phone
@@ -639,7 +668,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
           .sort((a,b)=>b.updatedAt-a.updatedAt)
         // 有「一件事」登记处时以它为准:候选就是"最近动过的事",顺序也是它的顺序;任务详情仍从工作台取。
         const ordered=opts.matters
-          ?(()=>{const byId=new Map(tasks.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',statuses:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
+          ?(()=>{const byId=new Map(tasks.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',legacy:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
           :tasks
         return ordered.map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
       },
@@ -658,7 +687,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       handleWechat:opts.workbench.handleWechat,
       sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'}),
       // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
-      ...(boot.registry.getCheapEval()?{judge:makeCheapJudge(boot.registry.getCheapEval()!)}:{}),
+      judge: async (input) => { const fast = turnJudge(boot.registry, loadAgentConfig(stateDir).turnJudgeProvider, log); return fast ? makeCheapJudge(fast)(input) : {taskId:null,confident:false} },
       log,
     }}:{}),
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
@@ -705,6 +734,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     recall: {
       isAdmin,
       log,
+      topics: topicRecall,
       // Non-admin lane — deterministic keyword recall over the chat's OWN
       // memory files only (same subtree memory_read grants it). Sync under
       // the hood; wrapped to satisfy the middleware's async contract.
@@ -774,7 +804,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   }
 
   // 桌宠的「在做什么」(重构第二批步 6c,wire-pet-turn.ts)
-  const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore })
+  const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore, activities:()=>opts.workbench?.petActivities()??[] })
 
 
   return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }

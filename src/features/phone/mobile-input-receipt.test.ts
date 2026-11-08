@@ -11,9 +11,12 @@ import {makeMatterStore} from '../../adapters/store/matters-store'
 import {makeMattersService} from '../../app/matters/service'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from '../workbench/service'
-import {makeSettingsPanel,type SettingsPanel} from './settings-panel'
+import {makeSettingsPanel as makePanel,type SettingsPanel} from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+/** P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。 */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import {mobileWorkbenchRoutes} from './mobile-workbench'
-import { routePhone } from './phone-route-table'
+import { routePhone } from '../../lib/phone-route-table'
 
 let root:string,db:Db,workbench:WorkbenchService,panel:SettingsPanel,owner:string|null
 let store:ReturnType<typeof makeWorkbenchStore>,matters:ReturnType<typeof makeMatterStore>,service:ReturnType<typeof makeMattersService>
@@ -36,7 +39,6 @@ afterEach(async()=>{vi.restoreAllMocks();await panel?.stop();await workbench?.sh
 
 function task(taskOwner='owner'){
   const t=store.create({title:'原来的任务',path:root,providerId:'claude',ownerChatId:taskOwner})
-  matters.create({id:t.id,kind:'task',title:t.title,ownerChatId:taskOwner});matters.linkTask(t.id)
   return t
 }
 function receipt(taskId:string,text='原始要求\r\n  不改空格'){
@@ -158,7 +160,8 @@ describe('single input receipt through real matter/workbench/phone layers',()=>{
   })
 
   it('fails closed when older service wiring has no single-receipt action',async()=>{
-    const url=new URL('http://phone.test'+path('deadbeef',randomUUID()))
+    // 直接查表:处理器登记在新键上(P3d-1);旧路径经面板的别名,上面几条走的就是它
+    const url=new URL('http://phone.test'+path('deadbeef',randomUUID()).replace('/m/api/','/v1/'))
     const response=await routePhone(mobileWorkbenchRoutes({}),url,new Request(url))
     expect(response?.status).toBe(503);expect(await response!.json()).toEqual({ok:false,error:'unavailable'})
     const mutation=await routePhone(mobileWorkbenchRoutes({}),url,new Request(url,{method:'POST'}))

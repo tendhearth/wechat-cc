@@ -152,6 +152,15 @@ describe('PR 描述', () => {
     expect(judge([], { title: '修:x', body: `${body}bun x vitest run a.test.ts:撤掉修复红 1 条,带上修复绿\n`, headRef: 'claude/x' }).ok).toBe(true)
     expect(judge([], { title: '加功能', body: '', headRef: 'claude/x' })).toEqual({ ok: true, messages: [] })
   })
+
+  it('dev → master 的发版 PR 不查(dev 上每个 PR 都查过);别的分支进 master、进 dev 照查', () => {
+    const findings = [{ file: 'src/a.test.ts', what: '删掉了用例「x」' }]
+    expect(judge(findings, { title: '发版 desktop v9.9.9', body: '', headRef: 'dev', baseRef: 'master' }).ok).toBe(true)
+    expect(judge(findings, { title: '发版 desktop v9.9.9', body: '', headRef: 'dev', baseRef: 'dev' }).ok).toBe(false)
+    expect(judge(findings, { title: 'hotfix', body: '', headRef: 'claude/x', baseRef: 'master' }).ok).toBe(false)
+    expect(judge([], { title: '修:x', body: '', headRef: 'fix/x', baseRef: 'master' }).ok).toBe(false)
+    expect(judge(findings, { title: 't', body: '', headRef: 'claude/x' }).ok).toBe(false)
+  })
 })
 
 // ───────────────────────── CLI:临时 git 仓库里按 CI 的样子跑 ─────────────────────────
@@ -173,13 +182,31 @@ function repo(): { d: string; commit: (msg: string) => void } {
   g('checkout', '-q', '-b', 'feature')
   return { d, commit: (msg: string) => { g('add', '-A'); g('commit', '-q', '-m', msg) } }
 }
-const runPr = (cwd: string, pr: { title?: string; body?: string; head?: string }) =>
+const runPr = (cwd: string, pr: { title?: string; body?: string; head?: string; env?: Record<string, string> }) =>
   spawnSync(BUN, [SCRIPT], {
     cwd, encoding: 'utf8',
-    env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_BASE_REF: 'dev', GITHUB_HEAD_REF: pr.head ?? 'claude/x', PR_TITLE: pr.title ?? '加功能', PR_BODY: pr.body ?? '' },
+    env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_BASE_REF: 'dev', GITHUB_HEAD_REF: pr.head ?? 'claude/x', PR_TITLE: pr.title ?? '加功能', PR_BODY: pr.body ?? '', GITHUB_EVENT_PATH: '', ...pr.env },
   })
 
 describe.skipIf(!HAVE_BUN)('test-shrink-check(CLI,PR 模式)', () => {
+  it('rerun 读最新 API 标题/正文;API 失败退回 event,不执行正文里的 shell', () => {
+    const { d } = repo()
+    const event = join(d, 'event.json')
+    writeFileSync(event, JSON.stringify({ number: 7 }))
+    const bin = join(d, 'bin'); mkdirSync(bin)
+    const gh = join(bin, process.platform === 'win32' ? 'gh.cmd' : 'gh')
+    // This executable fixture needs POSIX shell; Windows retains the fallback integration cases below.
+    if (process.platform === 'win32') return
+    writeFileSync(gh, `#!/bin/sh
+printf '%s' '{"title":"fix: current","body":"## 红/绿\\nred then green $(touch injected)"}'
+`, { mode: 0o755 })
+    const env = { GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: 'o/r', PATH: `${bin}:${process.env.PATH}` }
+    expect(runPr(d, { title: 'fix: old', body: '', env }).status).toBe(0)
+    expect(spawnSync('git', ['status', '--porcelain'], { cwd: d, encoding: 'utf8' }).stdout).not.toContain('injected')
+    writeFileSync(gh, '#!/bin/sh\nexit 1\n')
+    expect(runPr(d, { title: 'fix: old', body: '', env }).status).toBe(1)
+    expect(runPr(d, { title: 'fix: old', body: '## 红/绿\nred then green', env }).status).toBe(0)
+  })
   it('改名搬家、用例一样 ⇒ 绿', () => {
     const { d, commit } = repo()
     mkdirSync(join(d, 'src/features'))

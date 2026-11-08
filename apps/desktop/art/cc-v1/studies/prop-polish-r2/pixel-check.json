@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "radius": 28,
+  "beforeFarAlphaPixels": 83108,
+  "afterFarAlphaPixels": 0,
+  "nearExteriorPixels": 22436,
+  "opaqueCoreUnchanged": true,
+  "frozenFiles": 14,
+  "otherPropsUnchanged": 6,
+  "beforeSha256": "25bcc10287a275b1c492aa531a60ee6022b0ae82dcf56d2a2b228a90237a8613",
+  "afterSha256": "e0f9eb33ae762e092da2c85a08d314293ad2d261b2b2d5a2f9e9b52764ec072f"
+}

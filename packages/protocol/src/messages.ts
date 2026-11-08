@@ -22,12 +22,17 @@ import { b64uEncode, b64uDecode } from './b64u'
 /**
  * 客户端握手:裸 X25519 公钥(base64url)+ 支持的版本列表(现在只有 `[2]`;老 App 发 `[1,2]`)。
  * `client: 'web'`:浏览器 /m 页自报(只用来记「一件事的出生地」,见 src/features/phone/phone-client.ts);不带 ⇒ 原生 App。
+ * `build`:App 自报的构建号(M6b,可选;老 daemon 丢掉不认识的键)。daemon 记在那台设备上,兼容表(wire-compat.ts)按它判退休。
  */
-export const ClientHello = s.object({ hs: s.string(), v: s.optional(s.array(s.int())), client: s.optional(s.literal('web')) })
+export const ClientHello = s.object({ hs: s.string(), v: s.optional(s.array(s.int())), client: s.optional(s.literal('web')), build: s.optional(s.string({ min: 1 })) })
 export type ClientHelloT = Infer<typeof ClientHello>
 
-/** 后台握手回应:`v` 不是 2(老后台只会 v1,或中继剥掉了 `v`)⇒ 客户端拒绝降级。 */
-export const ServerHello = s.object({ hs: s.string({ min: 1 }), v: s.optional(s.union(s.literal(1), s.literal(2))) })
+/**
+ * 后台握手回应:`v` 不是 2(老后台只会 v1,或中继剥掉了 `v`)⇒ 客户端拒绝降级。
+ * `routes: 'v1'`(P3b 起可选,设计稿 2026-11-05-p3-one-route-family):daemon 的面板也收 `/v1` 路径了 ⇒ 新 App 才改读 `/v1`;
+ * 不带 ⇒ 照旧走 `/m/api`。老 App 的 shape 丢掉不认识的键,不会坏。daemon 从 P3e 部署 soak 绿以后发(`tunnel-client.ts` 的 v2 握手回应;那时每个别名的新键都在)。
+ */
+export const ServerHello = s.object({ hs: s.string({ min: 1 }), v: s.optional(s.union(s.literal(1), s.literal(2))), routes: s.optional(s.literal('v1')), topics: s.optional(s.literal('v1')) })
 export type ServerHelloT = Infer<typeof ServerHello>
 
 /**

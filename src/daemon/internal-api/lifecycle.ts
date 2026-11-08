@@ -15,6 +15,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   mintSessionToken(tier: import('../../domain/user-tier').UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string
   invalidateSession(sessionKey: string): void
   panelTokens: import('./token-registry').PanelTokens
+  panelDispatch: import('./types').PanelDispatch
 }
 
 /**
@@ -46,6 +47,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     mintSessionToken: (tier, sessionKey, opts) => api.mintSessionToken(tier, sessionKey, opts),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     panelTokens: api.panelTokens,
+    panelDispatch: (req, caller, opts) => api.panelDispatch(req, caller, opts),
     stop: async () => {
       // Remove the discovery file on clean stop so stale info doesn't
       // mislead a subsequent CLI invocation after the daemon exits.

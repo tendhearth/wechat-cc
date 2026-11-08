@@ -15,15 +15,16 @@ const task=()=>({id:'aaaa1111',title:'整理首页',path:'/state/worktrees/p/aaa
 const listTask=()=>{const {scripts:_s,...worktree}=task().worktree;return{...task(),worktree}}
 const calls=[]
 const invokeWorkbenchApi=async(method,path,body)=>{
+ if(path==='/v1/matter/seen')return{ok:true}
   calls.push({method,path,body})
-  if(path==='/v1/workbench/worktree'){
+  if(path==='/v1/matter/worktree'){
     if(body.action==='run'){if(!approved)throw new Error('script_approval_required');running=true}
     if(body.action==='stop')running=false
     return{worktree:{branch:'cc/aaaa1111',scripts:scripts(),port:running?47100:null}}
   }
   if(path==='/v1/workbench/script-approve'){if(body.hash!==HASH)throw new Error('script_config_changed');approved=true;return{scripts:scripts()}}
   if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):{task:task(),version:1,events:[],artifacts:[],permissions:[]}
-  if(path.startsWith('/v1/workbench/review?'))return{reviews:[]}
+  if(path.startsWith('/v1/matter/changes?'))return{reviews:[]}
   if(path.startsWith('/v1/matters?'))return{matters:[]}
   return{tasks:[listTask()],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,projects:[{id:'p-0123456789abcdef0123',name:'个人网站',path:'/work/site',providerId:'codex'}]}
 }
@@ -51,9 +52,9 @@ test('run a worktree script: unapproved ⇒ the dialog shows the scripts verbati
  await expect(status).toContainText('运行中 · 端口 47100')
  const calls=await page.evaluate(()=>(window as any).qa.calls.filter((c:any)=>c.method==='POST').map((c:any)=>[c.path,c.body]))
  expect(calls).toEqual([
-  ['/v1/workbench/worktree',{id:'aaaa1111',action:'run'}],
+  ['/v1/matter/worktree',{id:'aaaa1111',action:'run'}],
   ['/v1/workbench/script-approve',{id:'aaaa1111',hash:'ab'.repeat(32)}],
-  ['/v1/workbench/worktree',{id:'aaaa1111',action:'run'}],
+  ['/v1/matter/worktree',{id:'aaaa1111',action:'run'}],
  ])
  await status.locator('[data-action="worktree-stop"]').click()
  await expect(status.locator('[data-action="worktree-run"]')).toBeVisible()
@@ -73,6 +74,6 @@ test('cancelling the dialog runs nothing and sends no approval',async({page})=>{
  await page.locator('dialog.wb-scripts-dialog [data-scripts="cancel"]').click()
  await expect(page.locator('dialog.wb-scripts-dialog')).toHaveCount(0)
  const posts=await page.evaluate(()=>(window as any).qa.calls.filter((c:any)=>c.method==='POST').map((c:any)=>c.path))
- expect(posts).toEqual(['/v1/workbench/worktree'])
+ expect(posts).toEqual(['/v1/matter/worktree'])
  await expect(page.locator('[data-scripts-status]')).toContainText('待确认')
 })

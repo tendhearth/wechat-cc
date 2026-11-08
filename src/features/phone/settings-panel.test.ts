@@ -2,7 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
+import { makeSettingsPanel as makePanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+import { serve } from '../../lib/runtime/http'
+import { memoryPhoneRoutes } from '../memory'
+import { stickerPhoneRoutes } from '../stickers'
+/**
+ * P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。
+ * 这里的假实现只给几个字段(并之前面板也不核 /v1 的响应契约),所以不核契约;契约由 phone-api-schema / 真服务的测试管。
+ */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d, { responseContracts: false }))
 import { writeFileSync as wf } from 'node:fs'
 
 const OWNER = 'owner_chat@im.wechat'
@@ -220,6 +229,8 @@ describe('随身 CC (phone PWA + device pairing)', () => {
         names: () => [{ username: 'wx_f', display: '小飞' }],
       },
       stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(stateDir, 'stickers') },
+      // P3d-3 起表情原图归表情那个功能,经 featureRoutes 交进来(同 wire-settings-panel.ts);面板自己的 stickers 只给首屏 state
+      featureRoutes: [stickerPhoneRoutes({ list: () => [{ file: 'bear.png' }], dir: join(stateDir, 'stickers') })],
       log: () => {},
       now: () => nowMs,
     })
@@ -385,13 +396,14 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     }])
   })
 
-  it('/m 首屏是「此刻」;收敛 5b 后只有此刻与一起做,回忆和口袋三块去了 App', async () => {
+  it('/m 首屏是「此刻」;一个主页(U5)后只剩这一页,列表在它上面,回忆和口袋三块去了 App', async () => {
     const { port } = await panel.start(0)
     const t = panel.issueToken()
     const html = await (await fetch(`http://127.0.0.1:${port}/m?t=${t}`)).text()
     expect(html).toContain('id="p-today"')
-    expect(html).toContain('id="p-matters"')
-    expect(html).toContain('/m/api/home')
+    expect(html).toContain('id="m-list"')
+    expect(html).not.toContain('id="p-matters"')
+    expect(html).toContain('/v1/home')
     expect(html).toContain('cc.home.v2:')
     for (const id of ['id="p-pocket"', 'id="p-memory"', 'id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).not.toContain(id)
   })
@@ -442,12 +454,13 @@ describe('随身 CC 首屏:伙伴的一天', () => {
   afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
   async function withPanel(p: ReturnType<typeof makeSettingsPanel>, fn: (base: string, t: string) => Promise<void>) {
-    const { port } = await p.start(0)
-    try { await fn(`http://127.0.0.1:${port}`, p.issueToken()) } finally { await p.stop() }
+    const server=serve({hostname:'127.0.0.1',port:0,fetch:req=>p.handleRequest(req)});await server.ready
+    try { await fn(`http://127.0.0.1:${server.port}`, p.issueToken()) } finally { server.stop(true);await p.stop() }
   }
 
   it('home:三源合并、presence、unread、synced_at、today', async () => {
-    await withPanel(mk(), async (base, t) => {
+    await withPanel(mk(), async (base, link) => {
+      const t=await deviceOf({issueToken:()=>link},base)
       const r = await (await fetch(`${base}/m/api/home?t=${t}`)).json() as Record<string, unknown>
       expect(r.ok).toBe(true)
       expect(r.synced_at).toBe('2026-09-06T08:00:00.000Z')
@@ -463,7 +476,8 @@ describe('随身 CC 首屏:伙伴的一天', () => {
   it('home:presence 抛 → null + presence_error;单源抛 → degraded 仍 200', async () => {
     presenceImpl = async () => { throw new Error('nope') }
     planThrows = true
-    await withPanel(mk(), async (base, t) => {
+    await withPanel(mk(), async (base, link) => {
+      const t=await deviceOf({issueToken:()=>link},base)
       const res = await fetch(`${base}/m/api/home?t=${t}`)
       expect(res.status).toBe(200)
       const r = await res.json() as Record<string, unknown>
@@ -500,11 +514,32 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       turnsRecent: () => { throw new Error('turns 未接线') },
       timezone: () => 'Asia/Shanghai',
     }
-    await withPanel(mk({ feed: feedTurnsThrows }), async (base, t) => {
+    await withPanel(mk({ feed: feedTurnsThrows }), async (base, link) => {
+      const t=await deviceOf({issueToken:()=>link},base)
       const r = await (await fetch(`${base}/m/api/home?t=${t}`)).json() as Record<string, unknown>
       expect(r.ok).toBe(true)
       expect(r.sources_degraded).toEqual(['chat_day'])
       expect((r.events as unknown[]).length).toBe(2)
+    })
+  })
+  it('T5 link: home retains presence/work without personal feed or news, while paired devices keep them',async()=>{
+    presenceImpl=async()=>({...await okPresence(),news:{unread:9,latest_kind:'thought',latest_title:'PRIVATE-NEWS'}})
+    await withPanel(mk(),async(base,link)=>{
+      const limited=await (await fetch(`${base}/v1/home?t=${link}`)).json() as any
+      expect(limited.events).toEqual([]);expect(limited.unread).toBe(0);expect(limited.presence.presence).toBe('ok');expect(JSON.stringify(limited)).not.toContain('PRIVATE-NEWS')
+      const token=await deviceOf({issueToken:()=>link},base),paired=await (await fetch(`${base}/v1/home?d=${token}`)).json() as any
+      expect(paired.events).toHaveLength(3);expect(paired.presence.news.latest_title).toBe('PRIVATE-NEWS')
+    })
+  })
+  it('T5 device: revoking a device during a private GET withholds the delayed response',async()=>{
+    let release!: (presence:import('../../domain/companion-presence').Presence)=>void
+    presenceImpl=()=>new Promise(r=>{release=r})
+    await withPanel(mk(),async(base,link)=>{
+      const token=await deviceOf({issueToken:()=>link},base),reading=fetch(`${base}/v1/home?d=${token}`)
+      await vi.waitFor(()=>expect(release).toBeTypeOf('function'))
+      const revoked=await fetch(`${base}/set/api/apply?d=${token}&_via=tunnel`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({op:'unpair_self'})});expect(revoked.status).toBe(200)
+      release({...await okPresence(),news:{unread:1,latest_kind:'thought',latest_title:'PRIVATE-DELAYED'}})
+      const result=await reading;expect(result.status).toBe(401);expect(await result.text()).not.toContain('PRIVATE-DELAYED')
     })
   })
   it('seen:写入、夹到 now、单调不后退、非法 400、没接 503', async () => {
@@ -695,11 +730,11 @@ describe('「一件事」手机路由(2026-09-16)', () => {
   it('lists, details and says — same data as the desktop, and every look marks the phone surface', async () => {
     panel = make(true)
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, d = await deviceOf(panel, base), t = panel.issueToken()
-    const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${t}`)).json() as { ok: boolean; matters: unknown[] }
+    const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${d}`)).json() as { ok: boolean; matters: unknown[] }
     expect(list).toEqual({ ok: true, matters: [MATTER] })
-    expect(matters.list).toHaveBeenCalledWith({ statuses: ['open', 'replied'], limit: 200 })
+    expect(matters.list).toHaveBeenCalledWith({ legacy: ['open', 'replied'], limit: 200 })
     expect(matters.seenOnPhone).toHaveBeenCalledWith('deadbeef')
-    const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
+    const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${d}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
     expect(detail.ok).toBe(true); expect(detail.matter.id).toBe('deadbeef'); expect(detail.events).toHaveLength(1)
     // 链接令牌不能送话给执行者(审计 10-20)
     expect((await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: '再改一版' }) })).status).toBe(403)
@@ -710,15 +745,68 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${base}/m/api/matter/say?t=${d}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
     expect((await fetch(`${base}/m/api/matters`)).status).toBe(401)
   })
+  it('终端会话的那件事不进默认列表(App 主页另有终端行,两份就重了);点名 kind=terminal 才给', async () => {
+    const term = { ...MATTER, id: 'cccc0001', kind: 'terminal', status: 'open' }, act = { ...MATTER, id: 'dddd0001', kind: 'act', status: 'open' }
+    matters.list.mockReturnValue([MATTER, term, act] as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = await deviceOf(panel, base)
+    const ids = async (q: string) => ((await (await fetch(`${base}/m/api/matters?${q}t=${t}`)).json()) as { matters: Array<{ id: string }> }).matters.map(m => m.id)
+    expect(await ids('')).toEqual(['deadbeef'])
+    expect(await ids('status=open,replied&')).toEqual(['deadbeef'])
+    expect(await ids('kind=terminal&')).toEqual(['deadbeef', 'cccc0001', 'dddd0001'])
+    matters.list.mockReset(); matters.list.mockImplementation(() => [MATTER])
+  })
+  it('点名 kind=act ⇒ 行带上发起方与最近那一轮(M5c「CC 最近在忙」);不点名 / 点别的种类不去读轮;没接 withActs ⇒ 原样(老接线)', async () => {
+    const act = { ...MATTER, id: 'dddd0001', kind: 'act', status: 'open' }
+    const latest = { id: 't1', status: 'completed', startedAt: 1, endedAt: 2, steps: [] }
+    const withActs = vi.fn((rows: Array<Record<string, unknown>>) => rows.map(m => m.kind === 'act' ? { ...m, act: { who: 'letters', latest } } : m))
+    matters.list.mockImplementation(() => [act] as never)
+    panel = makeSettingsPanel({
+      stateDir, ownerChatId: () => OWNER, matters: { ...matters, withActs },
+      chatPrefs: { get: () => ({}), set: (_c: string, patch: Record<string, unknown>) => patch }, getUserName: () => '大人', setUserName: async () => {}, log: () => {},
+    } as never)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = await deviceOf(panel, base)
+    const get = async (q: string) => ((await (await fetch(`${base}/m/api/matters?${q}t=${t}`)).json()) as { matters: Array<{ id: string; act?: unknown }> }).matters
+    expect(await get('kind=act&')).toEqual([{ ...act, act: { who: 'letters', latest } }])
+    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'act', legacy: ['open', 'replied', 'done'], limit: 200 })
+    expect(withActs).toHaveBeenCalledTimes(1)
+    await get('kind=task&'); await get('')
+    expect(withActs).toHaveBeenCalledTimes(1)
+    await panel.stop()
+    panel = make(true)
+    const p2 = await panel.start(0), d2 = await deviceOf(panel, `http://127.0.0.1:${p2.port}`)
+    const plain = ((await (await fetch(`http://127.0.0.1:${p2.port}/m/api/matters?kind=act&t=${d2}`)).json()) as { matters: unknown[] }).matters
+    expect(plain).toEqual([act])
+    matters.list.mockReset(); matters.list.mockImplementation(() => [MATTER])
+  })
+  it('一件事带上任务真正的状态(一个主页 U5):status / phase / 等你几项 —— matter 的 open/done 说不清停下了、没做成、等你', async () => {
+    const waiting = { ...MATTER, id: 'aaaa0001', status: 'open' }, stopped = { ...MATTER, id: 'aaaa0002', status: 'open' }, chat = { ...MATTER, id: 'aaaa0003', kind: 'chat' }
+    matters.list.mockReturnValueOnce([waiting, stopped, chat] as never)
+    const original = matters.detail.getMockImplementation()!
+    matters.detail.mockImplementation(((id: string) => id === 'aaaa0001'
+      ? { matter: waiting, task: { id, status: 'running', phase: 'working' }, runId: 'r1', permissions: [{ taskId: id }], questions: [{ taskId: id }, { taskId: 'other' }] }
+      : id === 'aaaa0002' ? { matter: stopped, task: { id, status: 'interrupted', phase: 'interrupted' }, permissions: [], questions: [] }
+      : { matter: chat, task: null }) as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = await deviceOf(panel, base)
+    const r = await (await fetch(`${base}/m/api/matters?t=${t}`)).json() as { matters: Array<{ id: string; taskState?: unknown }> }
+    expect(r.matters.map(m => [m.id, m.taskState])).toEqual([
+      ['aaaa0001', { status: 'running', phase: 'working', pending: 2 }],
+      ['aaaa0002', { status: 'interrupted', phase: 'interrupted', pending: 0 }],
+      ['aaaa0003', undefined],
+    ])
+    expect(matters.detail).not.toHaveBeenCalledWith('aaaa0003')
+    matters.detail.mockImplementation(original)
+  })
   it('不带 status ⇒ 默认只要 open / replied / done(归档的自检噪声不占前 50)', async () => {
     panel = make(true)
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
     await fetch(`${base}/m/api/matters?t=${t}`)
-    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['open', 'replied', 'done'], limit: 200 })
+    expect(matters.list).toHaveBeenLastCalledWith({ legacy: ['open', 'replied', 'done'], limit: 200 })
     await fetch(`${base}/m/api/matters?kind=task&t=${t}`)
-    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'task', statuses: ['open', 'replied', 'done'], limit: 200 })
+    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'task', legacy: ['open', 'replied', 'done'], limit: 200 })
     await fetch(`${base}/m/api/matters?status=archived&t=${t}`)
-    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['archived'], limit: 200 })
+    expect(matters.list).toHaveBeenLastCalledWith({ legacy: ['archived'], limit: 200 })
   })
   it('聊天 matter 只留主人的;筛完再截 50(别人的聊天不到手机、也不挤掉任务)', async () => {
     const chat = (id: string, owner: string) => ({ ...MATTER, id, kind: 'chat', ownerChatId: owner })
@@ -727,7 +815,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     const mine = chat('cccccccc', OWNER)
     matters.list.mockReturnValueOnce([...guests, mine, ...tasks] as never)
     panel = make(true)
-    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = await deviceOf(panel, base)
     const r = await (await fetch(`${base}/m/api/matters?t=${t}`)).json() as { matters: Array<{ id: string; kind: string }> }
     expect(r.matters).toHaveLength(50)
     expect(r.matters.some(m => m.id.startsWith('aa'))).toBe(false)
@@ -743,6 +831,18 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect(r.status).toBe(404)
     expect(JSON.stringify(await r.json())).not.toContain('客人的私事')
     expect(matters.seenOnPhone).not.toHaveBeenCalled()
+  })
+  it('链接令牌拿不到回复附带的旁白 / 附件名(replyExtras、messageId 只给已配对设备)', async () => {
+    const withExtras = () => ({ matter: MATTER, bindings: [], sessions: [], task: null, events: [{ kind: 'text', text: '好了', createdAt: 3, messageId: 'm1', replyExtras: { narration: ['CC 在想的过程'], attachments: [{ kind: 'file', name: '私密.pdf' }] } }] })
+    matters.detail.mockReturnValueOnce(withExtras() as never).mockReturnValueOnce(withExtras() as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, d = await deviceOf(panel, base), t = panel.issueToken()
+    const viaLink = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { events: Array<Record<string, unknown>> }
+    expect(viaLink.events).toEqual([])
+    expect(JSON.stringify(viaLink)).not.toContain('好了')
+    expect(JSON.stringify(viaLink)).not.toContain('私密.pdf')
+    const viaDevice = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${d}`)).json() as { events: Array<Record<string, unknown>> }
+    expect(viaDevice.events[0]).toMatchObject({ messageId: 'm1', replyExtras: { attachments: [{ kind: 'file', name: '私密.pdf' }] } })
   })
   it('is 503 when the matter registry is not wired, and maps not-found / busy', async () => {
     panel = make(false)
@@ -1040,7 +1140,8 @@ describe('phone curated memory', () => {
       stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-err-')), ownerChatId: () => null,
       chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
       getUserName: () => null, setUserName: async () => {}, log: () => {},
-      curatedMemory: () => { throw new Error('EACCES') },
+      // P3d-3 起「CC 记得你」两条归记忆那个功能,经 featureRoutes 交进来(同 wire-settings-panel.ts)
+      featureRoutes: [memoryPhoneRoutes({ curated: () => { throw new Error('EACCES') } })],
     })
     const { port } = await p.start(0)
     try {
@@ -1059,8 +1160,8 @@ describe('phone curated memory', () => {
     const { port } = await p.start(0)
     try {
       const base = `http://127.0.0.1:${port}`
-      expect((await fetch(`${base}/m/api/art/presence`)).status).toBe(401)
-      const resp = await fetch(`${base}/m/api/art/presence?t=${p.issueToken()}`)
+      expect((await fetch(`${base}/v1/phone/art/presence`)).status).toBe(401)
+      const resp = await fetch(`${base}/v1/phone/art/presence?t=${p.issueToken()}`)
       // 200,不是 403 route_not_allowed —— 证明路由确实登记在 PHONE_ROUTES(phone-routes.ts)里。
       expect(resp.status).toBe(200)
       const r = await resp.json() as { ok: boolean; mime: string; unlit: string; lit: string }
@@ -1078,7 +1179,7 @@ describe('phone curated memory', () => {
       stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-')), ownerChatId: () => null,
       chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
       getUserName: () => null, setUserName: async () => {}, log: () => {},
-      curatedMemory: () => view,
+      featureRoutes: [memoryPhoneRoutes({ curated: () => view })],
     })
     const { port } = await p.start(0)
     try {
@@ -1096,7 +1197,7 @@ describe('phone curated memory', () => {
       stateDir: mkdtempSync(join(tmpdir(), 'sp-memc-')), ownerChatId: () => null,
       chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
       getUserName: () => null, setUserName: async () => {}, log: () => {},
-      correctMemory,
+      featureRoutes: [memoryPhoneRoutes({ correct: correctMemory })],
     })
     const { port } = await p.start(0)
     try {

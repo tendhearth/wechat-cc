@@ -1,0 +1,32 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  },
+  "body": {
+    "ok": true,
+    "today": {
+      "generatedAt": 1793844000000,
+      "since": 1793757600000,
+      "windowHours": 24,
+      "needsYou": [],
+      "done": [
+        {
+          "title": "修好登录"
+        }
+      ],
+      "running": [],
+      "stuck": [],
+      "counts": {
+        "needsYou": 0,
+        "done": 1,
+        "running": 0,
+        "stuck": 0
+      },
+      "unavailable": [],
+      "ccDecided": null,
+      "jobs": null
+    }
+  }
+}

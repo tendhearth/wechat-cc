@@ -92,6 +92,15 @@ function closingBunDatabase(): BunDatabaseCtor {
     override close(throwOnError?: boolean): void {
       for (const ref of this.#live) { try { ref.deref()?.finalize() } catch { /* 已经 finalize 过 */ } }
       this.#live.clear()
+      // 弱引用有一个缝(2026-10-28):GC 标记过、FinalizationRegistry 已经把它从 #live 拿掉的语句,
+      // 原生那头要等 JSC 懒清扫到它才 sqlite3_finalize —— 这段时间里 close() 既 finalize 不到它,
+      // close_v2 又只能把连接挂成僵尸。工作台跑过一轮的测试几乎每条都中(那一轮的垃圾正好触发一次 GC):
+      // Windows 上每条白等 removeTempDir 21 轮;更糟的是僵尸攒着,某次 GC 清扫时在 JS 线程上一口气
+      // 真关掉一串(每个都做 WAL 检查点 + 落盘),本机 100 个就是 440ms,慢盘上卡住正在跑的那条用例 / hook。
+      // 先严格关(还有没 finalize 的语句 ⇒ 抛 database is locked、连接原样可用);关不上就同步 GC
+      // 一次让那些语句的析构跑完,再照调用方的口径关。只有真漏了才多付这一次 GC(本机约 5ms)。
+      try { super.close(true); return } catch { /* 还有语句没 finalize,下面补 */ }
+      ;(globalThis as { Bun?: { gc(force: boolean): void } }).Bun?.gc(true)
       super.close(throwOnError)
     }
   }

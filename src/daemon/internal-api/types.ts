@@ -46,6 +46,7 @@ export interface InternalApiPrefixDeps {
  * createInternalApi. Until set, the route returns 503.
  */
 export interface InternalApiDelegateDep {
+  recordOwnerWork?(callerChatId:string|undefined,peer:string,prompt:string,topicIds?:readonly string[]):((result:{ok:true;response:string}|{ok:false;reason:string})=>void)|null
   /**
    * Run a one-shot consultation against `peer` and return the assistant
    * text. The implementation owns provider construction + thread
@@ -61,6 +62,14 @@ export interface InternalApiDelegateDep {
   >
   /** List of accepted peer ids — for 400 validation. */
   knownPeers(): ProviderId[]
+  /**
+   * 话题 T3(2026-11-05):主人自己的会话发起的咨询,从话题拣一份简报接在 prompt 后面;回答成功后写回碰到的话题。
+   * 判「是不是主人」在它自己里面(按令牌里的 chat);缺席 ⇒ 不加、不写。
+   */
+  topics?: {
+    brief(callerChatId: string | undefined, prompt: string): Promise<{ text: string; topicIds: string[] } | null>
+    writeBack(topicIds: readonly string[], peer: string, prompt: string, response: string): Promise<void>
+  }
 }
 
 /**
@@ -101,6 +110,8 @@ export interface InternalApiDeps {
    * 架构终态 A5:工作台整个搬进 src/features/workbench、桌面路由自己挂,这里只剩这一个窄口,由 workbench 模块 `provide`。
    */
   workbenchSuspended?: () => readonly { taskId: string }[]
+  /** 桌面读了一件事的详情(S3b):记「在电脑上看过」,一件事的提议到点就不再推手机。由 workbench 模块 `provide`。 */
+  desktopSeen?: (matterId: string) => void
   /** 「一件事」读写面(routes-matters);与工作台一样晚绑定。 */
   matters?: import('../../app/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
@@ -211,6 +222,11 @@ export interface InternalApiDeps {
    * 返回 503 pet_not_wired。
    */
   petTurn?: PetTurnDep
+  /**
+   * 在场变了的信号(S5):pet-signals、待决权限、一件事的 feed、write-hints(新消息、matters 行、觅食台、看到哪了)这几个写口一动就回调。
+   * `presence` 主题(GET /v1/subscribe/presence)据此重算;不给 ⇒ 主题只靠到点和兜底重算。返回退订。
+   */
+  presenceChanged?: (cb: () => void) => () => void
   /**
    * 待决权限的两个面(spec §6)。list/resolve 都直接落到 ilink-glue 的
    * PendingPermissions —— 和微信「y/n <hash>」是同一个 consume(),所以桌面
@@ -337,7 +353,7 @@ export interface InternalApiDeps {
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
    * minimal embeddings / tests, in which case the route returns 503.
    */
-  turns?: import('../../adapters/store/turn-record-store').TurnRecordStore
+  turns?: import('../../ports/turn-records').TurnRecordStore
   /**
    * Optional live-session lister — backs GET /v1/sessions and the
    * sessions_live count in GET /v1/health. A thunk (not the SessionManager
@@ -533,7 +549,7 @@ export interface InternalApiDeps {
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
   'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
-  'workbenchSuspended', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
+  'workbenchSuspended', 'desktopSeen', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
   'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
 export type LateKey = typeof LATE_KEYS[number]
@@ -580,7 +596,32 @@ export interface InternalApi {
   invalidateSession(sessionKey: string): void
   /** 手机设置面板的窄接口:同一个注册表,只能登记 / 查 / 撤 / 列 device 与 link 令牌(梳理第 6 步)。 */
   panelTokens: import('./token-registry').PanelTokens
+  /**
+   * 面板收到的 `/v1/*` 交给内部 API 同一个分发(P3b)。`caller` 是面板认过的 device / link 令牌;
+   * 别的 origin、令牌 routeAllow 里没有、或路由表那一行没有 `phone` 块 ⇒ 401 / 403,处理器不跑。
+   */
+  panelDispatch: PanelDispatch
 }
+
+/**
+ * 面板 → 内部 API 分发(P3b):帧预算与出生地由面板交进来(它知道传输)。
+ * `cause`(P3c-1):只有面板进程里的旧路由别名(legacy-routes.ts)这样调 —— 处理器报了原始错误码(`RouteResult.cause`)
+ * 就放进回包头 `x-cc-cause`,别名据此换成手机那一列的码。从网上来的请求设不了它(opts 由面板代码给),所以 `/v1` 的契约不变。
+ */
+export type PanelDispatch = (
+  req: Request,
+  caller: import('./token-registry').TokenInfo,
+  opts: { frameBudget: number; client: 'app' | 'web'; cause?: true },
+) => Promise<Response>
+
+/** 别名要的原始错误码放在这个回包头里(只在 `opts.cause` 时有;别名读完就丢,不出面板)。 */
+export const PANEL_CAUSE_HEADER = 'x-cc-cause'
+
+/**
+ * 处理器的回包。`cause`(可选,P3c-1):错误回包背后的原始码(抛出来的那个),不进正文、不上 127.0.0.1 的线 ——
+ * 只给面板里的旧路由别名换手机那一列的码用(`/v1` 回的是桌面那一列,有的码桌面列改了名,别名就认不回来)。
+ */
+export type RouteResult = { status: number; body: unknown; cause?: string }
 
 /**
  * Each route handler receives the parsed query (always present) and the
@@ -600,6 +641,8 @@ export type RouteHandler = (
     tier: UserTier
     origin: import('./token-registry').TokenOrigin
     chatId?: string
+    /** 经令牌注册表认证的会话键,仅供绑定当前主人轮次。 */
+    sessionKey?: string
     /**
      * 共享令牌(`agy-static`)在 daemon 交付模式下绑定到的那一轮的聊天(回复交付第 2 步):令牌里读不出 chat,
      * daemon 按「这家 provider 此刻正在跑的那一轮」认。`sharedTurn` 说明绑定结果(bound / none / ambiguous)。
@@ -607,13 +650,20 @@ export type RouteHandler = (
      */
     turnChatId?: string
     sharedTurn?: 'bound' | 'none' | 'ambiguous'
+    /**
+     * 只在从手机设置面板那一口进来时有(P3b;局域网直连和隧道都是):回包要裁的处理器按这个字节预算裁
+     * (`framedTooLarge` 那一套)。127.0.0.1 进来的不带 ⇒ 不裁。
+     */
+    frameBudget?: number
+    /** 同上,只在面板那一口有:原生 App 还是浏览器 /m(出生地,phone-client.ts 的判法)。operator ⇒ 桌面,不带这个字段。 */
+    client?: 'app' | 'web'
   },
   /**
    * signal:调用方断开时中止(长轮询的路由用;其余忽略)。
    * onSent:回包真写出去之后再调(没写出去 / 调用方已断 ⇒ 不调)。
    */
   ctx?: { signal: AbortSignal; onSent(cb: () => void): void },
-) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
+) => Promise<RouteResult> | RouteResult
 
 export type RouteTable = Record<string, RouteHandler | undefined>
 

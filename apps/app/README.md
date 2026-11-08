@@ -4,9 +4,13 @@
 
 「自己电脑上的个人 AI + 指挥编码 agent」的手机端。这一版有**演示模式**与**真连接**:没配对时是演示后端;扫码配对后换成 `src/backend/live.ts`,经中继连回家里的电脑。配对后收系统通知:iOS 通知服务扩展与安卓消息服务在本机解密(`native/`),由 `plugins/` 在 prebuild 时接进构建。
 
-对话页、事项对话和电脑会话记录的用户与助手正文共用原生 Markdown 阅读组件,首页最近一句只提取可读文字。带格式的用户消息可展开「查看原文」,原始换行与字面语法完整保留且可选择复制;普通文字不增加控件。日志、输入、发送和存储保持原样。只允许打开绝对 HTTP/S 链接;文件与应用链接只显示名称,图片只显示替代文字。长代码与表格在各自区域内横向滚动。中文继续使用已打包的 Noto Serif SC Regular,重点以强调墨色和轻底色呈现。
+Build 3 的唯一主页是主人与 CC 的对话；页头保留小 CC、连接、搜索与更多。交办从「＋ → 交办一件事」进入，回到稳定事项引用，原事项、审批与终端详情保留。更多里可以找保存的输入、电脑会话、CC 自己做的事、来信与记忆工具。旧 `/chat` 归到同一对话，`/all`、`/together` 进入临时事项搜索。
 
-事项「补充要求」携带首次执行轮次,逐条显示受理、交付、保留、撤回及拒绝回执。原文和首次 requestId/runId 写入本机 SecureStore 分片日志：单片 UTF-8 ≤1800 字节，总计 ≤64 条/512 KiB；只清理已确认且已处理草稿的旧记录，不淘汰未确认补充。正文不可变，回执写入小型状态索引，最后切换版本化提交指针；部分写失败保留上次提交。启动恢复完成前锁住发送，恢复中的 submitting 变为 uncertain，首次发送必须保存成功并复查配对世代。进程结束后仍可恢复；「一起做 → 保留的补充」显示全部未确认项，归档或详情超出中继大小也不隐藏原文。恢复和重连只 GET 单条回执；缺失、旧服务 404/unsupported 不解释为未送达；只有用户显式重试才 POST，沿用原始身份与正文。取回原文不覆盖新草稿，draftHandled 持久化。普通未提交草稿仍只保存在内存中。
+握手明确声明 `topics: 'v1'` 时，输入区上方显示六个最近话题；点击打开可扩展全屏的原生 sheet。只读列表/详情不会打开泡泡，返回不会关闭后台泡泡。未支持的电脑隐藏话题入口。历史事项当前最多读取 200 件；更早的服务端分页查询仍需 daemon 支持。
+
+对话页、事项对话和电脑会话记录的用户与助手正文共用原生 Markdown 阅读组件,首页直接显示原消息。带格式的用户消息可展开「查看原文」,原始换行与字面语法完整保留且可选择复制;普通文字不增加控件。日志、输入、发送和存储保持原样。只允许打开绝对 HTTP/S 链接;文件与应用链接只显示名称,图片只显示替代文字。长代码与表格在各自区域内横向滚动。中文继续使用已打包的 Noto Serif SC Regular,重点以强调墨色和轻底色呈现。
+
+事项「补充要求」携带首次执行轮次,逐条显示受理、交付、保留、撤回及拒绝回执。原文和首次 requestId/runId 写入本机 SecureStore 分片日志：单片 UTF-8 ≤1800 字节，总计 ≤64 条/512 KiB；只清理已确认且已处理草稿的旧记录，不淘汰未确认补充。正文不可变，回执写入小型状态索引，最后切换版本化提交指针；部分写失败保留上次提交。启动恢复完成前锁住发送，恢复中的 submitting 变为 uncertain，首次发送必须保存成功并复查配对世代。进程结束后仍可恢复；「对话更多 → 保存的输入」显示全部未确认项，归档或详情超出中继大小也不隐藏原文。恢复和重连只 GET 单条回执；缺失、旧服务 404/unsupported 不解释为未送达；只有用户显式重试才 POST，沿用原始身份与正文。取回原文不覆盖新草稿，draftHandled 持久化。普通未提交草稿仍只保存在内存中。
 
 日志配对身份使用中继地址、daemon/device 与完整 deviceToken 的 SHA256，不保存明文令牌。换配对、换令牌、演示、解除、撤销、stale 同步隔离内存，先提交 tombstone 后删除分片，迟到读写不能复活。钥匙串拒绝清除时暂停发送并显示错误，不能宣称未实际删除的字节已擦除。
 
@@ -26,6 +30,8 @@ CC 沿用两张原图：真实在线时轻呼吸，新的回复、完成和待�
 聊天「核对状态」只刷新已有 GET 历史，读失败或有限历史里没找到都继续保留未确认；显式重试仍沿用原 requestId。录音只显示静止点与时间，输入按钮按状态切换图标；上滑取消、时限与转写留草稿的行为不变。权限页保留原始命令、执行位置及提交锁，成功后仍回到事项。详见[设计与边界](../../docs/superpowers/specs/2026-10-24-phone-motion-feedback-design.md)。
 
 ## 怎么跑
+
+原生构建、模拟器与 Maestro 只在专用 Mac mini 执行；主工作 Mac 调用下方 Maestro 一节的 SSH 入口。下面的开发工具命令供 mini 环境使用。
 
 ```bash
 bun install                      # 仓库根目录,一次
@@ -48,21 +54,47 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 
 ### Maestro
 
-装:`brew tap mobile-dev-inc/tap && brew trust --formula mobile-dev-inc/tap/maestro && brew install --formula mobile-dev-inc/tap/maestro`(注意是 formula;不带 `--formula` 会装成桌面版 Maestro Studio 的 cask)。要 Java,formula 会带上 openjdk。
+图形验收统一在专用 Mac mini 执行，主工作 Mac 只调用 SSH 入口：
+
+```sh
+node apps/desktop/scripts/macmini-ui.mjs app-status
+node apps/desktop/scripts/macmini-ui.mjs app-prepare
+node apps/desktop/scripts/macmini-ui.mjs app-build
+node apps/desktop/scripts/macmini-ui.mjs app-maestro terminal-sessions
+node apps/desktop/scripts/macmini-ui.mjs app-maestro push-open
+node apps/desktop/scripts/macmini-ui.mjs app-maestro cc-acts
+node apps/desktop/scripts/macmini-ui.mjs app-maestro all
+```
+
+以上命令在仓库根目录调用；首次快照、公开依赖准备与授权边界见 [Mac mini 实验室](../../docs/maintainer/macmini-ui-lab.md#app--maestro-lane)。下面的原生工具命令仅供 mini 上准备环境，不在主工作 Mac 执行。
+
+mini 的工具安装见[实验室准备步骤](../../docs/maintainer/macmini-ui-lab.md#app--maestro-lane)：Maestro CLI、Java runtime、CocoaPods 与必要的 Ruby/libyaml 都放在 lab 的 `app-tools` 内，不使用 sudo，也不修改全局 shell 配置。
 
 | 流程 | 走什么 |
 |---|---|
-| `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮做完了」 |
-| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 回复位置加载指示 → 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
-| `.maestro/chat-extras.yaml` | 跟 CC 说 → 发一句 → 演示回复带「过程 · 2 段」(默认收起)、语音、本地表情(图)、联网表情(只写情绪)→ 展开过程看到「没有发到微信」→ 点语音不报错(2026-10-04) |
+| `.maestro/approve.yaml` | 先看看 → 对话搜索中的事项引用 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮做完了」 |
+| `.maestro/chat.yaml` | 打开对话 → 发一句 → 回复位置加载指示 → 演示回复出现 |
+| `.maestro/chat-extras.yaml` | 跟 CC 说 → 发一句 → 演示回复带「过程 · 2 段」(默认收起)、语音、本地表情(图)、联网表情(只写情绪)→ 展开过程看到「没有发到微信」→ 点语音不报错 → 话题 sheet、记忆来源与草稿保留 |
 | `.maestro/connections.yaml` | 设置 → CC 的连接卡(演示数据)→ 各项状态词 → 电脑上的会话列表(只读) |
-| `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它(交办不再是默认动作) |
-| `.maestro/worktree.yaml` | 一起做 → 整理笔记那件(独立分支 cc/notes001)→ 提交到分支 → 合回项目(点两下)→「已合回」→ 删除工作区(点两下)→ 重新打开 →「交给另一位另做一份」进交办页:项目、独立工作区、从分支开始都在,执行者换成另一位(2026-10-08) |
-| `.maestro/quota-handoff.yaml` | 一起做 → 周报那件(Claude Code 额度用完)→ 灰字 +「交给 Codex 继续」→ 确认卡如实说(同一文件夹新开一件、原来那件不动、Codex 看不到之前的对话、会用 Codex 的额度)→ 交出去 → 进新那件 → 返回,原来那件说「已经交给 Codex 继续」 |
-| `.maestro/demo-walkthrough.yaml` | 欢迎 → 先看看 → 此刻 → 一起做 → 某件事 → 展开改动 / 过程 → 设置 → 切语言 → 退出演示回欢迎页 |
+| `.maestro/compose.yaml` | 对话 → ＋ → 交办一件事→ 输入 → 交给 CC → CC 事项引用 → 原进展页 → 搜索里找到同一件事(交办不再是默认动作) |
+| `.maestro/worktree.yaml` | 对话搜索 → 事项→ 整理笔记那件(独立分支 cc/notes001)→ 提交到分支 → 合回项目(点两下)→「已合回」→ 删除工作区(点两下)→ 重新打开 →「交给另一位另做一份」进交办页:项目、独立工作区、从分支开始都在,执行者换成另一位(2026-10-08) |
+| `.maestro/quota-handoff.yaml` | 对话搜索 → 事项→ 周报那件(Claude Code 额度用完)→ 灰字 +「交给 Codex 继续」→ 确认卡如实说(同一文件夹新开一件、原来那件不动、Codex 看不到之前的对话、会用 Codex 的额度)→ 交出去 → 进新那件 → 返回,原来那件说「已经交给 Codex 继续」 |
+| `.maestro/demo-walkthrough.yaml` | 欢迎 → 先看看 → 对话 → 搜索 → 事项引用 → 展开改动 / 过程 → 设置 → 切语言 → 退出演示回欢迎页 |
 | `.maestro/pair-invalid.yaml` | 欢迎 → 配对 → 粘贴无效链接 / 局域网链接 → 各自的提示(不联网;真配对是主人真机验收) |
 | `.maestro/pair-link.yaml` | 开发构建用自定义 scheme 打开配对链接 ⇒ 确认卡出现、显示中继主机与核对码、没有自动配对;再开一个锚点丢了的链接 ⇒ 「没带全」提示 |
 | `.maestro/subflows/_start.yaml` | 共用开头:`clearState` 启动、收掉开发构建偶尔弹的系统框「Open in "Tendhearth"?」、等欢迎页 |
+
+Build 3 回归补充:
+
+| 流程 | 走什么 |
+|---|---|
+| `.maestro/terminal-sessions.yaml` | 等批准时禁止发言、在跑时禁止发言、空闲时说一句、批准后旧请求与按钮消失 |
+| `.maestro/push-open.yaml` | 批准通知、已完成事项通知、旧 `cli:` 终端通知、事项不存在、非法参数、连续通知返回栈、已处理请求 |
+| `.maestro/cc-acts.yaml` | 默认折叠、展开三类活动、信的两轮详情只读、返回后再次折叠 |
+
+这些流程使用演示后端,不会发起 ServerHello 握手。P3f 的新旧路由选择由 `src/backend/live.test.ts` 的 `P3f / M6f compatibility` 等用例覆盖;M6f 的 `state/archivedAt/taskState` 优先级由 `src/view/home.test.ts` 和 `src/view/status.test.ts` 覆盖。演示流程不能替代这些协议兼容检查。
+
+图形测试只在 Mac mini 执行,入口和快照管理见 [`macmini-ui-lab.md`](../../docs/maintainer/macmini-ui-lab.md)。当前登记入口只有桌面测试,尚未登记 App/simulator/Maestro 命令;需要先补齐专用入口,不能在主工作 Mac 补跑或将桌面 `full` 当成 App Maestro 全套。
 
 同时开着多台模拟器时加 `--device <UDID>`。流程只认 `testID` 和中英两份文案(正则 `中|英`),不依赖系统语言。
 
@@ -105,12 +137,13 @@ bun scripts/device-e2e.ts --only chat,push   # 只跑部分(配对与收尾总�
 ## 目录
 
 ```
-src/app/          expo-router 页面:(tabs)/ 此刻 index + 一起做 together;welcome、pair、compose、settings、
-                  matter/[id](进展页)、approval/[id](批准页 + 问答表单)
+src/app/          expo-router 页面:index 主页「此刻」(没有标签栏,2026-11-01)、all「全部」、together(旧链接 ⇒ all);
+                  welcome、pair、compose、settings、matter/[id]/index(一件事)、matter/[id]/decide(批准 + 问答,
+                  旧的 approval/[id] 只剩重定向)
 src/backend/      Backend 接口(types.ts)与演示后端(demo.ts + demo-data.ts 的中英文案)
 src/net/          真连接:connection.ts(连接状态机)、errors.ts(错误映射)、link.ts / pairing.ts(配对链接与配对)、credentials.ts(钥匙串)、ws-socket.ts / rn-connect.ts(RN 传输)、uuid / utf8 / polyfills
 src/state/        BackendProvider、会话(语言覆盖、已看过欢迎页;配对记录与偏好落钥匙串 `tendhearth.pairing.v1` / `tendhearth.prefs.v1`)、订阅 store、查询 hooks、草稿
-src/view/         纯函数视图模型(此刻 / 一起做 / 进展 / 批准 / 状态词),vitest 覆盖
+src/view/         纯函数视图模型(主页 home / 进展 / 批准 / 状态词),vitest 覆盖;状态 ⇒ 图标 / 词条只认协议包 status-table
 src/i18n/         en 与 zh-Hans 文案表(两份键一致有测试)+ useLang(设置覆盖 ?? 系统)
 src/ui/           组件与色板(tokens.ts,复用共享 design-tokens;固定暖纸,CC 明暗由真实信号决定)
 src/push/         推送:key-store(钥匙串里的推送密钥记录)、target / route(点通知去哪)、register(登记生命周期)、PushProvider / PushRouter、前台横幅、开发用 dev-token
@@ -134,7 +167,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 - 错误映射只在 `src/net/errors.ts` 一处:`permission_stale / question_stale / input_stale` ⇒ `stale`;`auth_failed` 或 HTTP 401 ⇒ `revoked`;`timeout` ⇒ `timeout`(界面当「不确定」);`unreachable / daemon_offline / closed / stream_unknown / rate_limited / quota_exceeded / too_many_streams` 及未知传输错误 ⇒ `offline`(例外:请求在飞时是本机自己关的连接——进后台 / dispose / 撤销——`live.ts` 报 `timeout`,撤销了则报 `revoked`:那一条可能已经送到);`matter_not_found` ⇒ `not_found`;`invalid` 与 `invalid_*`(含 `invalid_answer`)⇒ `invalid`;其余 ⇒ `unknown`。
 - 说一句与交办的 `requestId` 按草稿稳定(`state/drafts.ts` `requestIdFor`:同一份草稿、同样正文重发用同一个,正文改了才换,发成功删草稿时一起丢)。daemon 两条说一句都按它去重:工作台任务走工作台输入回执;微信聊天那件事走 `matter_say_receipts`(2026-10-01,v70)——同 id 同文重发拿回原来的回复(在跑就跟上同一轮),同 id 异文 ⇒ 409 `input_conflict`,那一轮失败不留回执(重发 = 重试),daemon 重启打断的那句当已收下、不再说。
 - 上限:回答 `JSON.stringify(answers).length > 20_000`、说一句正文 `> 20_000` 字,在手机上就拦下,不发(协议包常量 `PHONE_ANSWER_MAX_JSON` / `PHONE_SAY_MAX_CHARS`)。
-- **跟 CC 说走 `/m/api/chat*`,收下即回**:`/m/api/chat/say` 立刻返回(走 companion 路径,与微信同一个主人会话),回复靠 `matter/<聊天>` 主题唤醒后拉取;一次只等一句(上一句在等 ⇒ 409 `chat_busy`,草稿留着),10 分钟超时。`requestId` 用 `requestIdFor('chat', 正文)`。老网页壳 `/m/api/matter/say` 的同步语义不动。主人的对话在「一起做」里置顶;访客的聊天不出现在手机上。
+- **跟 CC 说走 `/m/api/chat*`,收下即回**:`/m/api/chat/say` 立刻返回(走 companion 路径,与微信同一个主人会话),回复靠 `matter/<聊天>` 主题唤醒后拉取;一次只等一句(上一句在等 ⇒ 409 `chat_busy`,草稿留着),10 分钟超时。`requestId` 用 `requestIdFor('chat', 正文)`。老网页壳 `/m/api/matter/say` 的同步语义不动。主人的对话从主页的 CC 进;访客的聊天不出现在手机上。
 - **「可能没送到」**:本机收过回执,但 daemon 那边既不 pending 也没历史 ⇒ 显示未确认气泡(可重试、可忽略);重试用同一个 `requestId`,daemon 去重,所以即使其实已落在历史别页也安全。原因:任务表只在内存,daemon 重启会丢正在等的那句。不自动重发(不重试风暴)。
 - **连接卡与会话页拿到的都是 admin 以下的投影:没有路径**(无插件目录、无 cwd / nativeId)。连接卡「不知道」永不显示成绿;知识库没开不是故障(不显示红),开了没建起来才红;知识库陈旧按最近一次同步判,微信聊天记录的日期按 wxvault 解密时间。会话列表查询只读、只给目录名；#166 另提供确认后「接着做」的写入入口，查询投影与续接授权分别验收。
 - **额度用完交给另一位**(spec continue-sessions §7-3):详情的 `quotaHandoff`(daemon 算:`offer` / `none` / `handed`)⇒ 进展页底部一块;确认卡确认后 `POST /m/api/matter/handoff {id, requestId, providerId}`,`requestId` 每次点开卡换一个、卡里重试沿用,daemon 按它幂等、一件事也只交一次。`quota_handoff_*` ⇒ `handoff_changed`(重读详情,不说「没送到」)。与微信「交给 X 继续？」同一个信号、同一个动作。
@@ -193,6 +226,8 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 
 ### 怎么跑
 
+原生构建、模拟器与 Maestro 只在专用 Mac mini 执行；主工作 Mac 调用下方 Maestro 一节的 SSH 入口。下面的开发工具命令供 mini 环境使用。
+
 ```bash
 cd apps/app/native/ios-notify && swift test        # Swift(CryptoKit)跑协议包同一份向量
 apps/app/native/android-push/test.sh               # Kotlin JVM 单测;第一次联网,之后加 --offline
@@ -248,12 +283,14 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 
 ## 硬要求(改界面前先对一遍)
 
+2026-10-28：主人确认极简手机稿并要求接入，视觉层级以[极简接入设计](../../docs/superpowers/specs/2026-10-28-phone-minimal-design.md)为准：此刻居中 CC 与真实近况、具体待回应行、勾号与数量的完成入口；一起做留白分组；纯文字底栏；齿轮进入设置。原始操作、工作目录、授权范围、发送回执、旧数据、失败与推测边界仍按下列安全与事实要求保留。旧条目中的“头像进设置”、逐行重复状态词与所有状态必须常显文字，已由新设计中的可访问图标与按需详情替代。
+
 - **批准页**:说明来自模型(`source === 'model'`)时,原始命令第一行与工作目录**不折叠、直接可见**(`approval-raw-inline`,Maestro 断言它);完整原始命令在「查看具体操作」里;提交中锁定按钮;以返回结果为准,不做乐观成功;超时 ⇒ 当「不确定」并重新拉详情。
 - **进展页**:状态标签在「CC 的进展」概括之上。
-- **状态词**按手机端用词表(`docs/reference/phone-wording.md`):在做 / 等你决定 / 这一轮做完了 / 完成 / 没做成 / 停下了(Working / Waiting on you / Done for this round / Done / Didn't finish / Stopped),不显示百分比。「一起做」按等你 / 在做 / 做完分组,只有「等你」的小标题上强调色。
+- **状态词**按手机端用词表(`docs/reference/phone-wording.md`):在做 / 等你决定 / 这一轮做完了 / 完成 / 没做成 / 停下了(Working / Waiting on you / Done for this round / Done / Didn't finish / Stopped),不显示百分比。主页按等你 / 在做 / 带回来的分组,只有「等你」的小标题上强调色。
 - **电脑够不着**(合盖 / 中继不在)是「电脑歇了,事情先停着」:CC 变暗、灰点,不上红;只有撤销是红点。
 - **主动作是跟 CC 说**,交办是显式选项(此刻页入口、发送框默认都是说一句,不是建任务;一次一句,等回复时发送锁住并保留草稿)。
-- **导航**:底部「此刻 / 一起做」;右上角头像进设置,旁边是「家里的电脑」状态点;说一句的入口随处可见。
+- **导航**(2026-11-01 一个主页):没有底部标签。主页 = CC + 一份列表(等你 → 在做 → 带回来的)+「全部 →」;右上角 + 交办、… 里是保存的输入与电脑上的会话、齿轮进设置;说一句在主页底部。
 - **语言**:`en` 与 `zh-Hans`,跟随系统、设置里可改;所有面向用户的字符串进文案表。
 - **隐私页**要说明:打开此刻、进展或批准页时,待批准的命令文本和任务的进展事件会从主人自己的电脑发给那里配置的便宜模型服务商;其余只在手机与电脑之间加密传输(`i18n.test.ts` 钉住)。
 - 系统「减少动态效果」时关掉 CC 动作;所有状态都有文字。

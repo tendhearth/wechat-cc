@@ -12,9 +12,12 @@
  * 权限同理但压得短。发送失败只记日志、丢弃 —— 断线不重试。
  */
 
+import { PRESENT_IDLE_S } from '../lib/owner-presence'
 import { cliSourceLabel } from '../domain/cli-session-digest'
 import { sortCliSessionViews, toCliSessionView } from '../domain/cli-session-view'
+import { stripMarkdown, summarizeOneLine as oneLine } from '../domain/one-line'
 import type { CliSessionRow, CliSessionStore, CliSessionView } from '../ports/cli-session'
+import type { TerminalTurnLog } from '../ports/terminal-turns'
 
 export type CliSource = 'claude' | 'codex' | 'cursor'
 export type CliEventKind = 'stop' | 'prompt' | 'permission' | 'session_end'
@@ -54,8 +57,8 @@ export const MAX_TRACKED_SESSIONS = 64
 export const MIN_TURN_MS = 90_000
 /** 最近这么久内敲过 prompt ⇒ 在场(没有空闲秒数时的副信号)。 */
 export const PRESENT_WINDOW_MS = 180_000
-/** 机器上次键鼠输入距今不足这么多秒 ⇒ 有人在用这台电脑。 */
-export const PRESENT_IDLE_S = 120
+/** 机器上次键鼠输入距今不足这么多秒 ⇒ 有人在用这台电脑(和一件事的提议同一个阈值,lib/owner-presence.ts)。 */
+export { PRESENT_IDLE_S }
 /** hook 报来的空闲秒数多久内算新鲜。 */
 export const IDLE_FRESH_MS = 5 * 60_000
 /** 刚在微信里问过这条会话的权限(卡片就是通知)⇒ 这段时间内的「等你批准」提醒不重复推。 */
@@ -109,6 +112,8 @@ export interface CliEventHubDeps {
    * daemon 重启也认得;缺席(老测试)⇒ 只用内存表,同改造前。
    */
   store?: CliSessionStore
+  /** 终端会话成为一件事(M4a):钩子事件同时写进这件事的轮与步(和登记处并行)。缺席 ⇒ 只写登记处。写不上只记日志。 */
+  turns?: TerminalTurnLog
 }
 
 /** 推给手机 app 的一条(结构化,措辞由 daemon 那头定;core 不碰推送协议)。 */
@@ -206,22 +211,16 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
   function record(ev: CliEvent, t: number): void {
     persist(`record ${ev.kind} ${short(ev.session_id)}`, (store) => {
       store.touch(ev, t)
-      switch (ev.kind) {
-        case 'prompt':
-          // harness 自己塞的 prompt 也是开始干活了(running),只是不算主人敲字。
-          store.setStatus(ev.session_id, 'running', t, ev.automated ? {} : { promptAt: t })
-          break
-        case 'stop':
-          store.setStatus(ev.session_id, 'idle', t, { summary: ev.text ? summarizeOneLine(stripMarkdown(ev.text), SESSION_SUMMARY_MAX) || null : null })
-          break
-        case 'permission':
-          store.setStatus(ev.session_id, 'waiting', t, { pending: { tool: 'permission', summary: ev.text ? summarizeOneLine(stripMarkdown(ev.text), SESSION_SUMMARY_MAX) : null } })
-          break
-        case 'session_end':
-          store.setStatus(ev.session_id, 'ended', t)
-          break
-      }
+      // 状态 / 最近一句 / 等你那一项从那件事推(M4d),登记处只记最近一次发问:harness 自己塞的 prompt 不算主人敲字。
+      if (ev.kind === 'prompt' && !ev.automated) store.seen(ev.session_id, t, { promptAt: t })
     })
+    turnsDo(`turn ${ev.kind} ${short(ev.session_id)}`, (turns) => turns.event(ev, t))
+  }
+
+  /** 这件事的轮与步(M4a)写失败只记日志 —— 钩子的回包和推送那条路都不能因此断。 */
+  function turnsDo(what: string, fn: (turns: TerminalTurnLog) => void): void {
+    if (!deps.turns) return
+    try { fn(deps.turns) } catch (err) { deps.log('CLI_TURNS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) }
   }
 
   function isLocal(machine: string | undefined): boolean {
@@ -401,16 +400,16 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
       state({ session_id: req.session_id, source: req.source, cwd: req.cwd, machine: req.machine })
       persist(`permission ${short(req.session_id)}`, (store) => {
         store.touch(req, t)
-        store.setStatus(req.session_id, 'waiting', t, { pending: { tool: req.tool_name, summary: req.summary ? summarizeOneLine(req.summary, SESSION_SUMMARY_MAX) : null } })
       })
+      turnsDo(`turn permission ${short(req.session_id)}`, (turns) => turns.permissionAsked(req, t))
     },
     permissionSettled(sessionId, status) {
-      // 任何结果都把 waiting 放回 running:timeout / undelivered 之后终端自己问,主人在终端前答,
-      // 不会再有事件,留着 waiting 就会一直挂「等你批准」(评审 10-15 #1)。
+      // 任何结果都收掉那张卡(那件事里,turns.permissionSettled):timeout / undelivered 之后终端自己问,主人在终端前答,
+      // 不会再有事件,留着就会一直挂「等你批准」(评审 10-15 #1)。还在等的那一刻算一次动静(同以前 waiting → running)。
       persist(`permission settled ${short(sessionId)}`, (store) => {
-        // 只从 waiting 回到 running:中间已经 Stop / 结束的,不倒回去。
-        if (store.get(sessionId)?.status === 'waiting') store.setStatus(sessionId, 'running', now())
+        if (store.get(sessionId)?.status === 'waiting') store.seen(sessionId, now())
       })
+      turnsDo(`turn permission settled ${short(sessionId)}`, (turns) => turns.permissionSettled(sessionId, status))
     },
     list(opts) {
       const t = now()
@@ -457,32 +456,12 @@ function safeProjectName(fn: (cwd: string) => string, cwd: string): string {
   try { return fn(cwd) } catch { return basename(cwd) }
 }
 
-/** 压成一行、截到上限;空串原样。 */
+/** 压成一行、截到上限;空串原样(实现在 domain/one-line.ts)。 */
 export function summarizeOneLine(text: string, max = DESKTOP_BODY_MAX): string {
-  const one = text.replace(/\s+/g, ' ').trim()
-  if (one.length <= max) return one
-  return one.slice(0, max - 1) + '…'
+  return oneLine(text, max)
 }
 
-/**
- * 微信不认 markdown:去掉记号、留下结构。星号粗体、反引号、标题井号、列表点、链接。
- * 段落间最多留一个空行。
- */
-export function stripMarkdown(text: string): string {
-  return text
-    .replace(/```[a-zA-Z0-9_-]*\n?/g, '')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1$2')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
-    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-    .replace(/^\s*[-*+]\s+/gm, '· ')
-    .replace(/^\s*>\s?/gm, '')
-    .replace(/[ \t]+$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
+export { stripMarkdown }
 
 /** 标题行:哪家 · 干了什么 · 哪台机(非本机才写)· 项目 · 会话短码。 */
 export function formatCliHeader(ev: CliEvent, projectName: string, localMachine?: string): string {

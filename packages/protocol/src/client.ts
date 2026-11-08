@@ -66,6 +66,8 @@ interface Conn {
   sock: ProtocolSocket
   priv: Uint8Array
   version: 2 | null
+  routes?: 'v1'
+  topics?: 'v1'
   chan?: V2Channel
   readyAt?: number
   /** 这条连接收到过几帧(任何帧都算,用来判断「悄悄死掉」)。 */
@@ -162,7 +164,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     c.hsTimer = setTimeout(() => { c.hsTimer = undefined; if (c.version === null) dropConn(c) }, hsTimeoutMs)
     sock.onOpen(() => {
       if (conn !== c) return
-      sendRaw(c, JSON.stringify(opts.client ? { hs: b64uEncode(kp.pub), v: [2], client: opts.client } : { hs: b64uEncode(kp.pub), v: [2] }))
+      sendRaw(c, JSON.stringify({ hs: b64uEncode(kp.pub), v: [2], ...(opts.client ? { client: opts.client } : {}), ...(opts.build ? { build: opts.build } : {}) }))
     })
     sock.onMessage(s => {
       if (conn !== c) return
@@ -296,6 +298,8 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     // 版本协商是明文:中继能把 `v` 剥掉、想把双方降到没有防重放的 v1。v1 已经退休,回来的不是 v2 一律当篡改。
     if (h.data.v !== 2) { protoErr('downgrade_refused'); dropConn(c); return }
     c.chan = makeV2Channel(deriveV2Keys(shared, opts.token), 'client')
+    c.routes = h.data.routes
+    c.topics = h.data.topics
     c.version = 2
     negotiated = 2
     c.readyAt = now()
@@ -315,10 +319,10 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     try { body = JSON.parse(utf8d.decode(pt)) } catch { protoErr('v2_not_json'); return }
     const m = V2ServerMessage.safeParse(body)
     if (!m.success) { protoErr('bad_v2_message', m.error); return }
-    onV2Message(m.data)
+    onV2Message(c, m.data)
   }
 
-  function onV2Message(m: V2ServerMessageT): void {
+  function onV2Message(c: Conn, m: V2ServerMessageT): void {
     if (m.t === 'res') {
       let bytes: Uint8Array
       try { bytes = m.bodyEncoding === 'base64' ? b64Decode(m.body) : utf8.encode(m.body) } catch (e) { protoErr('bad_res_body', e); return }
@@ -327,6 +331,11 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     }
     if (m.t === 'pong') return   // 保活回执:到达本身已在 onMessage 里清掉了在等的 ping
     if (m.t === 'err') {
+      // Authentication failure invalidates the whole connection, including other pending requests.
+      if (m.code === 'auth_failed' || m.code === 'unauthorized' || m.code === 'revoked') {
+        onErrorFrame(c, 'auth_failed')
+        return
+      }
       if (m.rid !== undefined) settle(m.rid, p => p.reject(new Error(m.code)))
       if (m.sid !== undefined) {
         const sub = subs.get(m.sid)
@@ -392,7 +401,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   }
 
   function sendReq(c: Conn, p: Pending): void {
-    const { req } = p
+    const req = { ...p.req, ...p.req.forRoutes?.(c.routes) }
     const m: ReqMsgT = { t: 'req', rid: p.rid, method: req.method, path: req.path }
     if (req.headers) m.headers = req.headers
     if (req.body instanceof Uint8Array) { m.body = b64Encode(req.body); m.bodyEncoding = 'base64' }
@@ -419,6 +428,8 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
 
   return {
     version: () => negotiated,
+    routes: () => conn?.routes,
+    capabilities: () => conn?.version === 2 ? { routes: conn.routes, topics: conn.topics } : {},
 
     request(req) {
       if (closed) return Promise.reject(new Error('closed'))

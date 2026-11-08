@@ -601,6 +601,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       const provider = createOpenAiAgentProvider({
         // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
         endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
+        // 后台评估单独的模型(现取:改了配置下一次评估就换,不用重启)。
+        evalModel: () => readAgentConfig().openaiEvalModel,
         ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
         // Built per-spawn (not once at construction) so an operator's `/api <model>` pin — re-read via the mtime-cached
         // config reader through currentModelFor → SpawnContext.model — takes effect on the NEXT session without a daemon

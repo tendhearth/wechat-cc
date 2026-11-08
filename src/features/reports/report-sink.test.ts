@@ -36,6 +36,13 @@ describe('makeReportSink', () => {
     expect(due[0]!.text).toContain('累计生成了2份成果。')
   })
 
+  it('给了 eventRef(S3a)⇒ 入队那一刻这一轮的事件键记在行上;读抛错 ⇒ 照样入队、不带键', async () => {
+    makeReportSink({matters, outbox, taskTitle: () => 't', artifactCount: () => 0, notificationsEnabled: () => true, now: () => 1_000, eventRef: id => `turn:${id}:3`}).enqueue(FROM_CHAT, 0)
+    expect((await outbox.listDue(1_000))[0]).toMatchObject({ref: `turn:${FROM_CHAT}:3`})
+    makeReportSink({matters, outbox, taskTitle: () => 't', artifactCount: () => 0, notificationsEnabled: () => true, now: () => 2_000, eventRef: () => { throw new Error('db') }}).enqueue(FROM_CHAT, 1)
+    expect(await outbox.listDue(2_000)).toEqual([expect.objectContaining({ref: null})])
+  })
+
   it('没有出生地(桌面手动派的):不写进 outbox', async () => {
     const sink = makeReportSink({matters, outbox, taskTitle: () => '手动派的', artifactCount: () => 0, notificationsEnabled: () => true, now: () => 1_000})
     sink.enqueue(HANDMADE, 0)

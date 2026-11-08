@@ -1,5 +1,5 @@
 import type {AgentEvent} from '../../../ports/agent-provider'
-import type {TaskEvent} from '../../store/workbench/store'
+import type {WorkbenchTaskEventT} from '@wechat-cc/protocol/desktop-api'
 import {executionFailureMessage} from '../../store/workbench/execution-settings'
 
 /** One observed native error shape, on the error channel only. Never scan assistant prose. */
@@ -20,8 +20,11 @@ export class CodexExecutionError extends Error {
 }
 export const codexRpcError=(message:string):Error=>codexExecutionErrorCode(message)?new CodexExecutionError(message):new Error(message)
 
-/** Persist native bytes as before; translate only the public reading projection. */
-export function readableExecutionEvent(event:TaskEvent):TaskEvent {
+/**
+ * Persist native bytes as before; translate only the public reading projection(步原样存;出口那条线上投影才翻成人话)。
+ * 收的是投影的一条(WorkbenchTaskEvent):errorCode / diagnostic 不在步里,只在这里补。
+ */
+export function readableExecutionEvent(event:WorkbenchTaskEventT):WorkbenchTaskEventT {
   if(event.kind!=='error')return event
   const code=codexExecutionErrorCode(event.text)
   return code?{...event,text:executionFailureMessage(code).replace('当前模型不可用。','当前账号不支持所用模型。'),errorCode:code,diagnostic:event.text}:event

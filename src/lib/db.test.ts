@@ -12,6 +12,11 @@ import { removeTempDir } from './test-temp'
  * 以前这几条测试手写一个「声称自己在 v9 / v26」的假库,表和真 v9 / v26 不一样 —— 迁移体里那批「表在不在」的守卫就是为
  * 这些假库加的。改从真迁移起步以后,测的就是用户真正走的那条升级路。
  */
+/** M2c(v95)删了一起做的三张旧表;测更早那几条迁移、要看那几张表的,只迁到 v94。 */
+const THROUGH_V94 = migrations.slice(0, 94)
+/** M3c(v99)删了 turn_records;测更早那几条迁移、要看这张表的,只迁到 v98。 */
+const THROUGH_V98 = migrations.slice(0, 98)
+
 function migratedTo(n: number): Db {
   const db = openSqlite(':memory:') as unknown as Db
   db.exec('PRAGMA foreign_keys = ON;')
@@ -103,6 +108,28 @@ describe('openDb', () => {
       const kept = db.prepare('SELECT 1 AS one')
       kept.get()
       expect(() => db.close(true)).not.toThrow()
+    } finally {
+      removeTempDir(dir)
+    }
+  })
+
+  // 上一条的弱引用有个缝(2026-10-28,Windows CI native-continue「Hook timed out」那次查出来的):
+  // GC 已经把语句收走、FinalizationRegistry 已经把它从登记里拿掉,原生那头却要等 JSC 懒清扫才
+  // sqlite3_finalize —— 这时 close() 两头都够不着它,连接照样变僵尸。工作台跑过一轮的测试几乎条条中。
+  // 这里造垃圾逼出几次小 GC、让出一拍让登记的回调跑完,正好卡在那个缝里。修之前本机 20 次里十几次抛
+  // database is locked;GC 时机因机器而异,所以按次数判、留两次余量,没修时远远超过。
+  it('close() still releases the file when GC already dropped statements whose native side is not finalized yet', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'db-test-close-gc-'))
+    try {
+      let locked = 0
+      for (let run = 0; run < 20; run++) {
+        const db = openSqlite(join(dir, `gc-${run}.db`), { create: true })
+        ;(() => { for (let i = 0; i < 200; i++) db.query(`SELECT ${i} AS n`).get() })()
+        ;(() => { const junk: { i: number }[] = []; for (let i = 0; i < 200_000; i++) junk.push({ i }); return junk.length })()
+        await new Promise(resolve => setTimeout(resolve, 10))
+        try { db.close(true) } catch { locked++; db.close() }
+      }
+      expect(locked).toBeLessThanOrEqual(2)
     } finally {
       removeTempDir(dir)
     }
@@ -392,8 +419,13 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
   // A database in exactly the shape the branch build left behind: every
   // customer_review_* table present and populated, every social_* and
   // penpal_* table absent, user_version parked at 21.
+  //
+  // 2026-11-05(v102 删 matters.status):以前是「全量迁移再 DROP 掉 social 表」,那样的库里已经有 v60+ 才有的表
+  // (matters 等),重放 v19+ 时 v60 往删过列的 matters 里插 status 就炸 —— 真机上不会有这种库(分支版停在 v21,
+  // 根本没有 matters)。改成从真迁移造:主线 v1–v18 + 分支那三个客户回顾迁移(主线编号 v26–v28),停在 21。
   function branchBuildDb() {
-    const db = openTestDb()
+    const db = migratedTo(18)
+    for (const m of migrations.slice(25, 28)) m(db)
     db.exec(`
       INSERT INTO customer_reviews
         (id, contact_id, contact_display_name, range_from, range_to, status,
@@ -563,15 +595,15 @@ describe('migration v41 — reminders back-fills columns the old June schema lac
 
 describe('migration v42 — heals the Atelier-branch v35 tool_calls collision', () => {
   it('adds tool_calls when user_version advanced past the skipped official v35', () => {
-    const db = openTestDb()
+    const db = migratedTo(98)
     db.exec('ALTER TABLE turn_records DROP COLUMN tool_calls; PRAGMA user_version = 41;')
 
-    expect(() => runMigrations(db, migrations)).not.toThrow()
+    expect(() => runMigrations(db, THROUGH_V98)).not.toThrow()
 
     const cols = db.query<{ name: string }, []>("PRAGMA table_info('turn_records')").all().map(c => c.name)
     expect(cols).toContain('tool_calls')
     const version = db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version
-    expect(version).toBe(migrations.length)
+    expect(version).toBe(98)
     db.close()
   })
 })
@@ -609,7 +641,8 @@ it('upgrades a real v46 database retaining task history, native identity and app
       const upgraded=openDb({path})
       try {
         expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})
-        expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null,attachments_json:'[]',seq:0})))
+        // 时间线 v93 搬进了 matter_items,v95 删了旧表:历史还在,在新家里(M2c)。
+        expect(upgraded.query("SELECT matter_id,kind,status,json_extract(payload_json,'$.text') AS text,created_at FROM matter_items").all()).toEqual(oldEvents.map(row=>{const e=row as {task_id:string;text:string;created_at:number};return{matter_id:e.task_id,kind:'user_message',status:'completed',text:e.text,created_at:e.created_at}}))
         expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
       } finally {upgraded.close()}
     }
@@ -626,9 +659,9 @@ it('upgrades v51 with separate durable control receipts while preserving task hi
     db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original input',3,'run-original')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','delivered',4)
     const tasks=db.query('SELECT * FROM workbench_tasks').all(),events=db.query('SELECT * FROM workbench_events').all(),inputs=db.query('SELECT * FROM workbench_live_inputs').all()
-    runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94)
     db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
-    runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94)
     expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})))
     expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events.map(row=>({...row as object,attachments_json:'[]',seq:0})))
     expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs.map(row=>({...row as object,attachments_json:'[]',execution_json:null})))
@@ -644,7 +677,7 @@ it('upgrades v52 with staged attachments and empty refs on existing messages and
     db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('deadbeef','task','/project','claude','completed',1,2)
     db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original',3,'run-original')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','held',4)
-    runMigrations(db, migrations);runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94);runMigrations(db, THROUGH_V94)
     expect(db.query('SELECT attachments_json FROM workbench_events').get()).toEqual({attachments_json:'[]'})
     expect(db.query('SELECT attachments_json FROM workbench_live_inputs').get()).toEqual({attachments_json:'[]'})
     expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_attachments'").get()).toEqual({name:'workbench_attachments'})
@@ -689,7 +722,7 @@ it('upgrades v53 with provider defaults, native import defaults and nullable que
     db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('source','feedbeef','claude','native-original','/project',3,'sha','fingerprint',0,0,'{}','[]')
     db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input','deadbeef','run','queued','held',4)
     const oldTasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
-    runMigrations(db, migrations);runMigrations(db, migrations)
+    runMigrations(db, THROUGH_V94);runMigrations(db, THROUGH_V94)
     const tasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
     expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null}),seq:0,workspace_kind:'project',writer_groups:null})))
     expect(db.query('SELECT execution_json FROM workbench_live_inputs').get()).toEqual({execution_json:null})
@@ -718,7 +751,7 @@ it('upgrades v67 without assigning staged legacy attachments to a new owner',()=
 })
 
 it('v61: workbench_tasks / workbench_events 都有 seq 列,事件表有 (task_id, seq) 索引', () => {
-  const db = openTestDb()
+  const db = migratedTo(94)
   const cols = (t: string) => db.query<{ name: string }, []>(`PRAGMA table_info(${t})`).all().map(c => c.name)
   expect(cols('workbench_tasks')).toContain('seq')
   expect(cols('workbench_events')).toContain('seq')
@@ -759,8 +792,17 @@ it('v70 creates the chat-matter say receipts table empty (phone requestId dedupe
   try{expect(db.query('SELECT * FROM matter_say_receipts').all()).toEqual([])}finally{db.close()}
 })
 
+it('v99 删掉 turn_records(M3c):迁到最新就没有这张表;重放不抛',()=>{
+  const db=migratedTo(98)
+  try{
+    runMigrations(db, migrations)
+    expect(db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='turn_records'").get()).toBeNull()
+    db.exec('PRAGMA user_version = 98'); expect(()=>runMigrations(db, migrations)).not.toThrow()
+  }finally{db.close()}
+})
+
 it('v71 adds the reply-delivery columns to turn_records (spec 2026-10-03 §4.10)',()=>{
-  const db=openTestDb()
+  const db=migratedTo(98)
   try{
     const cols=(db.query("PRAGMA table_info('turn_records')").all() as {name:string}[]).map(c=>c.name)
     expect(cols).toEqual(expect.arrayContaining(['delivery','bubbles','attachments','narration_segments']))
@@ -839,7 +881,7 @@ it('v84 creates speech_log (CC 主动开口的外发账) with origin / outcome c
     expect(()=>ins('initiative','sent')).toThrow()
     expect(()=>db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome) VALUES('x','k','report','c','allowed')").run()).toThrow()
     const cols=(db.query("PRAGMA table_info('speech_log')").all() as {name:string}[]).map(c=>c.name)
-    expect(cols).toEqual(['id','at','kind','origin','chat_id','outcome','reason','channel'])
+    expect(cols).toEqual(['id','at','kind','origin','chat_id','outcome','reason','channel','ref','spoken_at','delivery_state'])   // ref:v103 追加(S3a)
     expect((db.query("PRAGMA index_list('speech_log')").all() as {name:string}[]).map(i=>i.name)).toContain('speech_log_chat_at')
   }finally{db.close()}
 })
@@ -966,4 +1008,561 @@ describe('runMigrations — #79 修复只认主库那份迁移表', () => {
     expect(ran).toEqual([22, 23]) // 回退到 v18 的话会从 v19 跑起
     expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(23)
   })
+})
+
+describe('runMigrations — 重建被外键指着的表(withoutForeignKeys)', () => {
+  const base = (db: Db) => db.exec(`CREATE TABLE p(id TEXT PRIMARY KEY, k TEXT CHECK(k IN ('a'))) STRICT;
+    CREATE TABLE c(pid TEXT NOT NULL REFERENCES p(id)) STRICT;`)
+  const rebuild = (db: Db) => db.exec(`CREATE TABLE p_v2(id TEXT PRIMARY KEY, k TEXT CHECK(k IN ('a','b'))) STRICT;
+    INSERT INTO p_v2 SELECT * FROM p; DROP TABLE p; ALTER TABLE p_v2 RENAME TO p;`)
+  const seeded = () => {
+    const db = openSqlite(':memory:') as unknown as Db
+    db.exec('PRAGMA foreign_keys = ON;')
+    runMigrations(db, [base])
+    db.exec("INSERT INTO p VALUES('1','a'); INSERT INTO c VALUES('1');")
+    return db
+  }
+  it('带标记 ⇒ 关外键跑完、子表照旧指着新表、外键重新打开', () => {
+    const db = seeded()
+    runMigrations(db, [base, Object.assign((d: Db) => rebuild(d), { withoutForeignKeys: ['p'] as const })])
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 2 })
+    expect(db.query('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 })
+    expect(db.query("SELECT sql FROM sqlite_master WHERE name='c'").get()).toEqual({ sql: 'CREATE TABLE c(pid TEXT NOT NULL REFERENCES p(id)) STRICT' })
+    db.exec("INSERT INTO p VALUES('2','b'); INSERT INTO c VALUES('2');")
+    expect(() => db.exec("INSERT INTO c VALUES('nope')")).toThrow()
+  })
+  it('不带标记 ⇒ 外键开着,重建在 DROP 那一步就失败(这就是为什么要标记)', () => {
+    const db = seeded()
+    expect(() => runMigrations(db, [base, rebuild])).toThrow()
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 1 })
+  })
+  it('重建后有子行指不到新表 ⇒ 整条回滚、版本不动、外键照样打开', () => {
+    const db = seeded()
+    const lossy = Object.assign((d: Db) => d.exec(`CREATE TABLE p_v2(id TEXT PRIMARY KEY, k TEXT) STRICT;
+      DROP TABLE p; ALTER TABLE p_v2 RENAME TO p;`), { withoutForeignKeys: ['p'] as const })
+    expect(() => runMigrations(db, [base, lossy])).toThrow(/foreign_key_check/)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 1 })
+    expect(db.query('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 })
+    expect(db.query("SELECT sql FROM sqlite_master WHERE name='p'").get()).toEqual({ sql: "CREATE TABLE p(id TEXT PRIMARY KEY, k TEXT CHECK(k IN ('a'))) STRICT" })
+  })
+  it('别的表本来就有的悬空外键不拦这一次重建(只核被重建的那几张)', () => {
+    const db = seeded()
+    db.exec("CREATE TABLE q(id TEXT PRIMARY KEY) STRICT; CREATE TABLE r(qid TEXT REFERENCES q(id)) STRICT; PRAGMA foreign_keys=OFF; INSERT INTO r VALUES('ghost'); PRAGMA foreign_keys=ON;")
+    runMigrations(db, [base, Object.assign((d: Db) => rebuild(d), { withoutForeignKeys: ['p'] as const })])
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 2 })
+  })
+})
+
+describe('v92 — 一件事 → 一轮 → 一步(M1)', () => {
+  const upgraded = () => {
+    const db = migratedTo(91)
+    const matter = db.query('INSERT INTO matters(id,kind,title,project_path,status,owner_chat_id,created_at,updated_at,origin_matter_id,origin_message_id,origin_surface) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    matter.run('0000000a', 'chat', '聊天', null, 'replied', 'owner@im.wechat', 1, 10, null, null, 'wechat')
+    matter.run('0000000b', 'task', '修登录', '/w/app', 'open', null, 2, 20, '0000000a', 'msg-1', 'desktop')
+    matter.run('0000000c', 'task', '写文档', '/w/doc', 'done', null, 3, 30, null, null, null)
+    matter.run('0000000d', 'task', '旧的', '/w/old', 'archived', null, 4, 40, null, null, null)
+    matter.run('0000000e', 'task', '被停的', '/w/x', 'done', null, 5, 50, null, null, null)
+    matter.run('0000000f', 'chat', '归档的聊天', null, 'archived', 'g@chatroom', 6, 60, null, null, null)
+    const task = db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id,archived_at) VALUES(?,?,?,?,?,?,?,?,?)')
+    task.run('0000000b', '修登录', '/w/app', 'codex', 'running', 2, 20, '0000000b', null)
+    task.run('0000000c', '写文档', '/w/doc', 'claude', 'completed', 3, 30, '0000000c', null)
+    task.run('0000000d', '旧的', '/w/old', 'claude', 'failed', 4, 40, '0000000d', 400)
+    task.run('0000000e', '被停的', '/w/x', 'claude', 'cancelled', 5, 50, '0000000e', null)
+    db.exec(`INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('0000000a','wechat','owner@im.wechat',10);
+      INSERT INTO matter_sessions(matter_id,provider_id,session_id,role,created_at) VALUES('0000000b','codex','s-1','main',20);`)
+    // 只跑到 v92:status 列 v102 删了,这里核的是 v92 自己留下的形状(v102 的见下面它自己那一组)
+    runMigrations(db, migrations.slice(0, 92))
+    return db
+  }
+  it('老行一行不少:原来的列原样,kind 不变,发起方都是主人', () => {
+    const db = upgraded()
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 92 })
+    expect(db.query('SELECT id,kind,initiator,title,project_path,status,owner_chat_id,created_at,updated_at,origin_matter_id,origin_message_id,origin_surface FROM matters ORDER BY id').all()).toEqual([
+      { id: '0000000a', kind: 'chat', initiator: 'owner', title: '聊天', project_path: null, status: 'replied', owner_chat_id: 'owner@im.wechat', created_at: 1, updated_at: 10, origin_matter_id: null, origin_message_id: null, origin_surface: 'wechat' },
+      { id: '0000000b', kind: 'task', initiator: 'owner', title: '修登录', project_path: '/w/app', status: 'open', owner_chat_id: null, created_at: 2, updated_at: 20, origin_matter_id: '0000000a', origin_message_id: 'msg-1', origin_surface: 'desktop' },
+      { id: '0000000c', kind: 'task', initiator: 'owner', title: '写文档', project_path: '/w/doc', status: 'done', owner_chat_id: null, created_at: 3, updated_at: 30, origin_matter_id: null, origin_message_id: null, origin_surface: null },
+      { id: '0000000d', kind: 'task', initiator: 'owner', title: '旧的', project_path: '/w/old', status: 'archived', owner_chat_id: null, created_at: 4, updated_at: 40, origin_matter_id: null, origin_message_id: null, origin_surface: null },
+      { id: '0000000e', kind: 'task', initiator: 'owner', title: '被停的', project_path: '/w/x', status: 'done', owner_chat_id: null, created_at: 5, updated_at: 50, origin_matter_id: null, origin_message_id: null, origin_surface: null },
+      { id: '0000000f', kind: 'chat', initiator: 'owner', title: '归档的聊天', project_path: null, status: 'archived', owner_chat_id: 'g@chatroom', created_at: 6, updated_at: 60, origin_matter_id: null, origin_message_id: null, origin_surface: null },
+    ])
+  })
+  it('统一状态按来源推:任务看工作台的状态,对话看旧状态;归档单独一列', () => {
+    const db = upgraded()
+    expect(db.query('SELECT id,state,archived_at FROM matters ORDER BY id').all()).toEqual([
+      { id: '0000000a', state: 'open', archived_at: null },
+      { id: '0000000b', state: 'working', archived_at: null },
+      { id: '0000000c', state: 'done', archived_at: null },
+      { id: '0000000d', state: 'failed', archived_at: 400 },
+      { id: '0000000e', state: 'cancelled', archived_at: null },
+      { id: '0000000f', state: 'open', archived_at: 60 },
+    ])
+  })
+  it('指着 matters 的子表、来源不可改的触发器、索引都还在', () => {
+    const db = upgraded()
+    expect(db.query('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 })
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(() => db.exec("INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('nope','wechat','x',1)")).toThrow()
+    expect(() => db.exec("UPDATE matters SET origin_surface='app' WHERE id='0000000a'")).toThrow(/matter_origin_immutable/)
+    const names = (db.query("SELECT name FROM sqlite_master WHERE tbl_name='matters' AND type IN ('index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(r => r.name)
+    expect(names).toEqual(['matters_origin', 'matters_origin_surface_once', 'matters_updated'])
+    expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'matters_v%'").all()).toEqual([])
+  })
+  it('新的 kind 与发起方能写,陌生值不能', () => {
+    const db = upgraded()
+    const ins = db.query("INSERT INTO matters(id,kind,initiator,title,state,status,created_at,updated_at) VALUES(?,?,?,'x',?,'open',1,1)")
+    ins.run('00000010', 'terminal', 'owner', 'working')
+    ins.run('00000011', 'act', 'cc', 'open')
+    ins.run('00000012', 'chat', 'peer', 'open')
+    expect(() => ins.run('00000013', 'companion', 'cc', 'open')).toThrow()
+    expect(() => ins.run('00000014', 'act', 'stranger', 'open')).toThrow()
+    expect(() => ins.run('00000015', 'act', 'cc', 'replied')).toThrow()
+  })
+  it('一轮一步两张表:外键、每件事里 seq 唯一、同一把 item_key 只一行、游标全库唯一', () => {
+    const db = upgraded()
+    const turn = db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES(?,?,?,'codex','running',1,?)")
+    turn.run('t1', '0000000b', 1, 1)
+    expect(() => turn.run('t2', '0000000b', 1, 2)).toThrow()
+    expect(() => turn.run('t3', 'nope', 1, 3)).toThrow()
+    const item = db.query("INSERT INTO matter_items(matter_id,turn_id,seq,kind,status,item_key,payload_json,created_at,updated_at,cursor) VALUES(?,?,?,?,'started',?,'{}',1,1,?)")
+    item.run('0000000b', 't1', 1, 'tool_call', 'k1', 4)
+    expect(() => item.run('0000000b', 't1', 2, 'tool_call', 'k1', 5)).toThrow()
+    item.run('0000000b', 't1', 2, 'tool_call', null, 6)
+    item.run('0000000b', 't1', 3, 'tool_call', null, 7)
+    expect(() => item.run('0000000b', 't1', 4, 'tool_call', null, 7)).toThrow()
+    expect(() => item.run('0000000b', 't1', 5, 'reasoning', null, 8)).toThrow()
+    expect(() => item.run('0000000b', 'nope', 6, 'system', null, 9)).toThrow()
+    expect(db.query('SELECT value FROM matter_log_cursor').all()).toEqual([{ value: 0 }])
+  })
+})
+
+describe('v93 — 一起做的时间线搬进 matter_items(M2)', () => {
+  const upgraded = () => {
+    const db = migratedTo(92)
+    const task = db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id,seq) VALUES(?,?,'/w','claude',?,1,1,?,?)")
+    db.query("INSERT INTO matters(id,kind,title,status,created_at,updated_at) VALUES('0000000a','task','有 matter 的','open',1,1)").run()
+    task.run('0000000a', '有 matter 的', 'running', '0000000a', 9)
+    task.run('0000000b', '没挂 matter 的老任务', 'completed', null, 2)
+    db.query("INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES('src-1','0000000a','claude','n1','/w',1,'s','f',1,0,'{}','[]')").run()
+    const ev = db.query('INSERT INTO workbench_events(id,task_id,kind,text,created_at,source_id,run_id,event_key,activity_json,attachments_json,seq) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    ev.run(3, '0000000a', 'user', '帮我修登录', 100, 'src-1', null, null, null, '[]', 1)
+    ev.run(5, '0000000a', 'tool_call', '读 a.ts', 101, null, 'run-1', '["tool_call","c1"]', '{"id":"c1","type":"read","status":"running","label":"读 a.ts"}', '[]', 4)
+    ev.run(6, '0000000a', 'text', '好了', 102, null, 'run-1', '["text","m1"]', null, '[{"id":"a1","name":"x.png"}]', 5)
+    ev.run(7, '0000000a', 'tool_call', '跑测试', 103, null, 'run-1', '["tool_call","c2"]', '{"id":"c2","type":"exec","status":"cancelled","label":"跑测试"}', '[]', 6)
+    ev.run(8, '0000000b', 'system', '旧的', 50, null, null, null, null, '[]', 2)
+    db.query("INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,created_at,request_event_id,packet_json,token_hash) VALUES('h1','0000000a','0000000b','review','看看','p','[]',1,6,'{}','t1')").run()
+    runMigrations(db, migrations.slice(0, 93))
+    return db
+  }
+  it('每条事件搬成一步:id 不变、每件事里按 id 排 seq、payload 只存有的字段、步的状态跟着工具调用走', () => {
+    const db = upgraded()
+    expect(db.query('SELECT id,matter_id,turn_id,seq,kind,status,item_key,message_id,payload_json,created_at,updated_at FROM matter_items ORDER BY id').all()).toEqual([
+      { id: 3, matter_id: '0000000a', turn_id: null, seq: 1, kind: 'user_message', status: 'completed', item_key: null, message_id: null, payload_json: '{"text":"帮我修登录","v":1,"sourceId":"src-1"}', created_at: 100, updated_at: 100 },
+      { id: 5, matter_id: '0000000a', turn_id: null, seq: 2, kind: 'tool_call', status: 'started', item_key: '["run-1","[\\"tool_call\\",\\"c1\\"]"]', message_id: null, payload_json: '{"text":"读 a.ts","v":4,"runId":"run-1","activity":{"id":"c1","type":"read","status":"running","label":"读 a.ts"}}', created_at: 101, updated_at: 101 },
+      { id: 6, matter_id: '0000000a', turn_id: null, seq: 3, kind: 'agent_message', status: 'completed', item_key: '["run-1","[\\"text\\",\\"m1\\"]"]', message_id: null, payload_json: '{"text":"好了","v":5,"runId":"run-1","attachments":[{"id":"a1","name":"x.png"}]}', created_at: 102, updated_at: 102 },
+      { id: 7, matter_id: '0000000a', turn_id: null, seq: 4, kind: 'tool_call', status: 'failed', item_key: '["run-1","[\\"tool_call\\",\\"c2\\"]"]', message_id: null, payload_json: '{"text":"跑测试","v":6,"runId":"run-1","activity":{"id":"c2","type":"exec","status":"cancelled","label":"跑测试"}}', created_at: 103, updated_at: 103 },
+      { id: 8, matter_id: '0000000b', turn_id: null, seq: 1, kind: 'system', status: 'completed', item_key: null, message_id: null, payload_json: '{"text":"旧的","v":2}', created_at: 50, updated_at: 50 },
+    ])
+  })
+  it('没挂 matter 的老任务先补一件事;游标接着搬过来的最后一个往下数', () => {
+    const db = upgraded()
+    expect(db.query("SELECT id,kind,state,status FROM matters WHERE id='0000000b'").get()).toEqual({ id: '0000000b', kind: 'task', state: 'done', status: 'done' })
+    expect(db.query("SELECT matter_id FROM workbench_tasks WHERE id='0000000b'").get()).toEqual({ matter_id: '0000000b' })
+    const cursors = (db.query('SELECT cursor FROM matter_items ORDER BY id').all() as { cursor: number }[]).map(r => r.cursor)
+    expect(cursors).toEqual([1, 2, 3, 4, 5])
+    expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 5 })
+  })
+  it('交接记的那条请求指向搬过来的步(外键改指 matter_items);旧表这一版还留着(M2c 才删)', () => {
+    const db = upgraded()
+    expect(db.query("SELECT request_event_id FROM workbench_handoffs WHERE id='h1'").get()).toEqual({ request_event_id: 6 })
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(() => db.query("UPDATE workbench_handoffs SET request_event_id=999 WHERE id='h1'").run()).toThrow()
+    expect(db.query("SELECT sql FROM sqlite_master WHERE name='workbench_handoffs'").get()).toEqual({ sql: expect.stringContaining('REFERENCES matter_items(id)') })
+    expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('workbench_handoffs_source','workbench_handoffs_target','workbench_events') ORDER BY name").all())
+      .toEqual([{ name: 'workbench_events' }, { name: 'workbench_handoffs_source' }, { name: 'workbench_handoffs_target' }])
+  })
+  it('搬之前已有同 id、属于别的事的步 ⇒ 整条迁移报错,不悄悄跳过(Codex 评审 P1)', () => {
+    const db = migratedTo(92)
+    db.query("INSERT INTO matters(id,kind,title,status,created_at,updated_at) VALUES('0000000a','task','a','open',1,1),('0000000c','chat','c','open',1,1)").run()
+    db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id) VALUES('0000000a','a','/w','claude','completed',1,1,'0000000a')").run()
+    db.query("INSERT INTO workbench_events(id,task_id,kind,text,created_at,seq) VALUES(1,'0000000a','user','x',1,1)").run()
+    db.query("INSERT INTO matter_items(id,matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES(1,'0000000c',1,'system','completed','{}',1,1,1)").run()
+    expect(() => runMigrations(db, migrations.slice(0, 93))).toThrow(/v93/)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 92 })
+  })
+})
+
+describe('v94 — 一起做的执行设置与用量搬进 matter_turns(M2b)', () => {
+  const choice = '{"defaults":"provider","model":"opus","reasoningEffort":null}'
+  const upgraded = () => {
+    const db = migratedTo(93)
+    const matter = db.query("INSERT INTO matters(id,kind,title,state,status,created_at,updated_at) VALUES(?,'task',?,?,'open',1,1)")
+    const task = db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id) VALUES(?,?,'/w',?,?,1,?,?)")
+    matter.run('0000000a', '做完的', 'done'); task.run('0000000a', '做完的', 'claude', 'completed', 900, '0000000a')
+    matter.run('0000000b', '还在跑的', 'working'); task.run('0000000b', '还在跑的', 'cursor', 'running', 950, '0000000b')
+    const run = db.query('INSERT INTO workbench_run_execution(run_id,task_id,choice_json,effective_json,created_at,observed_at) VALUES(?,?,?,?,?,?)')
+    run.run('run-1', '0000000a', choice, '{"model":"claude-opus-4","source":"native_response"}', 100, 105)
+    run.run('run-2', '0000000a', choice, null, 300, null)
+    run.run('run-3', '0000000b', '{"defaults":"native","model":null,"reasoningEffort":null}', null, 500, null)
+    const usage = db.query('INSERT INTO workbench_turn_usage(task_id,run_id,turn_seq,provider_id,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_usd,duration_ms,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+    usage.run('0000000a', 'run-1', 1, 'claude', 100, 20, null, null, null, null, 30, 130)
+    usage.run('0000000a', 'run-1', 2, 'claude', 50, 5, 300, null, null, null, 10, 200)
+    usage.run('0000000a', 'run-2', 1, 'claude', 7, 1, null, null, null, 0.5, null, 320)
+    runMigrations(db, THROUGH_V94)
+    return db
+  }
+  it('每行用量一轮(做完);run 没有用量 ⇒ 补一轮,最后一条跟着任务的状态;设置抄进 policy;模型取实际的', () => {
+    const db = upgraded()
+    expect(db.query('SELECT id,matter_id,seq,run_id,executor,model,status,usage_json,policy_json,started_at,ended_at FROM matter_turns ORDER BY cursor').all()).toEqual([
+      { id: 'v94:run-1:1', matter_id: '0000000a', seq: 1, run_id: 'run-1', executor: 'claude', model: 'claude-opus-4', status: 'completed', usage_json: '{"input":100,"output":20}',
+        policy_json: `{"choice":${choice},"effective":{"model":"claude-opus-4","source":"native_response"},"observedAt":105}`, started_at: 100, ended_at: 130 },
+      { id: 'v94:run-1:2', matter_id: '0000000a', seq: 2, run_id: 'run-1', executor: 'claude', model: 'claude-opus-4', status: 'completed', usage_json: '{"input":50,"output":5,"cacheRead":300}',
+        policy_json: `{"choice":${choice},"effective":{"model":"claude-opus-4","source":"native_response"},"observedAt":105}`, started_at: 190, ended_at: 200 },
+      { id: 'v94:run-2:1', matter_id: '0000000a', seq: 3, run_id: 'run-2', executor: 'claude', model: 'opus', status: 'completed', usage_json: '{"input":7,"output":1,"costUsd":0.5}',
+        policy_json: `{"choice":${choice}}`, started_at: 300, ended_at: 320 },
+      { id: 'v94:run-3:0', matter_id: '0000000b', seq: 1, run_id: 'run-3', executor: 'cursor', model: null, status: 'interrupted', usage_json: null,
+        policy_json: '{"choice":{"defaults":"native","model":null,"reasoningEffort":null}}', started_at: 500, ended_at: 950 },
+    ])
+    expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 4 })
+  })
+  it('重放不重复搬;旧表这一版还留着(M2c 才删)', () => {
+    const db = upgraded()
+    db.exec('PRAGMA user_version=93')
+    runMigrations(db, THROUGH_V94)
+    expect(db.query('SELECT COUNT(*) AS n FROM matter_turns').get()).toEqual({ n: 4 })
+    expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('workbench_run_execution','workbench_turn_usage') ORDER BY name").all())
+      .toEqual([{ name: 'workbench_run_execution' }, { name: 'workbench_turn_usage' }])
+  })
+})
+
+describe('v95 — 删掉一起做搬家前的三张表(M2c)', () => {
+  const OLD = ['workbench_events', 'workbench_run_execution', 'workbench_turn_usage']
+  const left = (db: Db) => db.query(`SELECT name FROM sqlite_master WHERE name IN (${OLD.map(() => '?').join(',')})`).all(...OLD)
+  it('三张表与它们的索引都没了;搬过来的步和轮还在;外键完好', () => {
+    const db = migratedTo(94)
+    db.query("INSERT INTO matters(id,kind,title,state,status,created_at,updated_at) VALUES('0000000a','task','t','done','done',1,1)").run()
+    db.query("INSERT INTO matter_items(matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES('0000000a',1,'system','completed','{}',1,1,1)").run()
+    runMigrations(db, migrations)
+    expect(left(db)).toEqual([])
+    expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'workbench_events%' OR name LIKE 'workbench_run_execution%' OR name LIKE 'workbench_turn_usage%'").all()).toEqual([])
+    expect(db.query('SELECT COUNT(*) AS n FROM matter_items').get()).toEqual({ n: 1 })
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+  })
+  it('重跑一次不报错(删过的表 IF EXISTS)', () => {
+    const db = migratedTo(migrations.length)
+    db.exec('PRAGMA user_version = 94')
+    runMigrations(db, migrations)
+    expect(left(db)).toEqual([])
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+  })
+})
+
+describe('v96 — 一件事最后一次有动静的游标(P1a)', () => {
+  it('新列默认 0;存量按这件事已有轮 / 步里最大的游标补;重跑只往大里补', () => {
+    const db = migratedTo(95)
+    const m = db.query("INSERT INTO matters(id,kind,title,state,status,created_at,updated_at) VALUES(?,'task','t','open','open',1,1)")
+    m.run('0000000a'); m.run('0000000b'); m.run('0000000c')
+    db.query("INSERT INTO matter_items(matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES('0000000a',1,'system','completed','{}',1,1,3),('0000000a',2,'system','completed','{}',1,1,7)").run()
+    db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES('t1','0000000b',1,'claude','completed',1,9)").run()
+    runMigrations(db, migrations)
+    expect(db.query('SELECT id,cursor FROM matters ORDER BY id').all()).toEqual([{ id: '0000000a', cursor: 7 }, { id: '0000000b', cursor: 9 }, { id: '0000000c', cursor: 0 }])
+    db.exec("UPDATE matters SET cursor=20 WHERE id='0000000a'; PRAGMA user_version = 95")
+    runMigrations(db, migrations)
+    expect(db.query("SELECT cursor FROM matters WHERE id='0000000a'").get()).toEqual({ cursor: 20 })
+  })
+})
+
+describe('v100 — cli_sessions 收成指针(M4d 第 2 步)', () => {
+  const COLS_AFTER = ['session_id', 'source', 'cwd', 'machine', 'transcript_path', 'origin_agent', 'last_event_at', 'last_prompt_at', 'created_at']
+  it('删掉 status / last_summary / pending_*;别的列、行、索引原样;重放不抛', () => {
+    const db = migratedTo(99)
+    db.query(`INSERT INTO cli_sessions(session_id,source,cwd,machine,transcript_path,origin_agent,status,last_event_at,last_prompt_at,last_summary,pending_tool,pending_summary,pending_at,created_at)
+      VALUES('s1','claude','/w','mac','/t.jsonl','hand-1','waiting',5,4,'好了','Bash','ls',5,1),('s2','codex','/v',NULL,NULL,NULL,'ended',9,NULL,NULL,NULL,NULL,NULL,2)`).run()
+    runMigrations(db, migrations)
+    expect(db.query<{ name: string }, []>('PRAGMA table_info(cli_sessions)').all().map(c => c.name)).toEqual(COLS_AFTER)
+    expect(db.query('SELECT * FROM cli_sessions ORDER BY session_id').all()).toEqual([
+      { session_id: 's1', source: 'claude', cwd: '/w', machine: 'mac', transcript_path: '/t.jsonl', origin_agent: 'hand-1', last_event_at: 5, last_prompt_at: 4, created_at: 1 },
+      { session_id: 's2', source: 'codex', cwd: '/v', machine: null, transcript_path: null, origin_agent: null, last_event_at: 9, last_prompt_at: null, created_at: 2 },
+    ])
+    expect(db.query<{ name: string }, []>("PRAGMA index_list('cli_sessions')").all().map(i => i.name)).toContain('idx_cli_sessions_last_event')
+    const matters = db.query('SELECT COUNT(*) AS n FROM matters').get()
+    db.exec('PRAGMA user_version = 99')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM cli_sessions').get()).toEqual({ n: 2 })
+    expect(db.query('SELECT COUNT(*) AS n FROM matters').get()).toEqual(matters)
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+    db.close()
+  })
+  it('还没有那件事的老会话:按列补建 —— ended ⇒ done;其余 ⇒ open、不开轮不挂卡;有最近一句 ⇒ 一步 agent_message;已经有的不另建', () => {
+    const db = migratedTo(99)
+    db.exec(`INSERT INTO matters(id,kind,title,state,status,origin_surface,created_at,updated_at) VALUES('0000000a','terminal','have','working','open','cli',1,1);
+      INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('0000000a','cli','HAVE',1);
+      INSERT INTO matters(id,kind,title,state,status,origin_surface,created_at,updated_at) VALUES('0000000b','terminal','said','open','open','cli',1,1);
+      INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('0000000b','cli','SAID',1);
+      INSERT INTO matter_items(matter_id,seq,kind,status,payload_json,created_at,updated_at,cursor) VALUES('0000000a',1,'user_message','completed','{}',1,1,1),('0000000b',1,'agent_message','completed','{"text":"步里那句"}',1,1,2);
+      UPDATE matter_log_cursor SET value = 41 WHERE id = 1;`)
+    const ins = db.query(`INSERT INTO cli_sessions(session_id,source,cwd,status,last_event_at,last_summary,pending_tool,pending_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)`)
+    ins.run('HAVE', 'claude', '/w/have', 'running', 10, '列里那句', null, null, 1)
+    ins.run('SAID', 'claude', '/w/said', 'idle', 11, '列里旧的', null, null, 1)
+    ins.run('E', 'claude', '/Users/me/blog', 'ended', 20, '收尾了', null, null, 2)
+    ins.run('I', 'codex', 'C:\\w\\proj', 'idle', 30, '**改好了**', null, null, 3)
+    ins.run('W', 'claude', '', 'waiting', 40, null, 'Bash', 40, 4)
+    // 只跑到 v100:下面还核 matters.status(v102 才删)
+    runMigrations(db, migrations.slice(0, 100))
+    const of = (sid: string) => db.query<{ id: string; kind: string; title: string; project_path: string | null; state: string; status: string; origin_surface: string; created_at: number; updated_at: number; cursor: number }, [string]>(
+      "SELECT m.id,m.kind,m.title,m.project_path,m.state,m.status,m.origin_surface,m.created_at,m.updated_at,m.cursor FROM matters m JOIN matter_bindings b ON b.matter_id=m.id WHERE b.surface='cli' AND b.surface_key=?").get(sid)!
+    expect(of('HAVE')).toMatchObject({ id: '0000000a', title: 'have', state: 'working' })
+    expect(of('E')).toMatchObject({ kind: 'terminal', title: 'blog', project_path: '/Users/me/blog', state: 'done', status: 'open', origin_surface: 'cli', created_at: 2, updated_at: 20 })
+    expect(of('I')).toMatchObject({ title: 'proj', state: 'open' })
+    expect(of('W')).toMatchObject({ title: 'claude', project_path: null, state: 'open' })
+    const items = (sid: string) => db.query<{ seq: number; kind: string; status: string; payload_json: string; turn_id: string | null; cursor: number }, [string]>('SELECT seq,kind,status,payload_json,turn_id,cursor FROM matter_items WHERE matter_id=? ORDER BY seq').all(of(sid).id)
+    expect(items('E')).toEqual([{ seq: 1, kind: 'agent_message', status: 'completed', payload_json: JSON.stringify({ text: '收尾了' }), turn_id: null, cursor: 42 }])
+    expect(items('I').map(i => JSON.parse(i.payload_json))).toEqual([{ text: '**改好了**' }])
+    expect(items('W')).toEqual([])
+    expect(of('E').cursor).toBe(42)
+    // 已经有那件事、还没有一步最后一句 ⇒ 列里那句排在最后记一步(第 1 步读时 COALESCE 的那一句);已经有的不加
+    expect(items('HAVE').map(i => [i.seq, i.kind, i.payload_json, i.cursor])).toEqual([[1, 'user_message', '{}', 1], [2, 'agent_message', JSON.stringify({ text: '列里那句' }), 44]])
+    expect(items('SAID').map(i => i.payload_json)).toEqual([JSON.stringify({ text: '步里那句' })])
+    expect(db.query('SELECT COUNT(*) AS n FROM matter_turns').get()).toEqual({ n: 0 })
+    expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 44 })
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+    db.close()
+  })
+})
+
+describe('v102 — 删掉 matters.status(M6e,不可逆)', () => {
+  const upgraded = () => {
+    const db = migratedTo(101)
+    const matter = db.query('INSERT INTO matters(id,kind,title,state,archived_at,status,origin_matter_id,origin_surface,created_at,updated_at,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    matter.run('0000000a', 'task', '答完了', 'open', null, 'replied', null, 'desktop', 1, 10, 3)        // 最近一轮已收、没有 ready 步 ⇒ 补一步
+    matter.run('0000000b', 'task', '双写过', 'open', null, 'replied', null, null, 2, 20, 6)              // 已经有 ready 步 ⇒ 不重复
+    matter.run('0000000c', 'task', '又在跑', 'working', null, 'replied', null, null, 3, 30, 7)           // 最近一轮在跑 ⇒ 列的式子也不算 replied,不补
+    matter.run('0000000d', 'chat', '归档没时间', 'open', null, 'archived', '0000000a', null, 4, 40, 0)  // 只在列里归档 ⇒ archived_at = updated_at
+    matter.run('0000000e', 'chat', '只在列里做完', 'open', null, 'done', null, null, 5, 50, 0)          // ⇒ state = done
+    matter.run('0000000f', 'task', '照旧', 'failed', 60, 'archived', null, 'wechat', 6, 60, 0)          // 已经对得上 ⇒ 一字不动
+    const task = db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,matter_id) VALUES(?,'t','/w','claude','running',1,1,?)")
+    for (const id of ['0000000a', '0000000b', '0000000c']) task.run(id, id)
+    const turn = db.query("INSERT INTO matter_turns(id,matter_id,seq,executor,status,started_at,cursor) VALUES(?,?,?,'claude',?,1,?)")
+    turn.run('ta1', '0000000a', 1, 'completed', 1); turn.run('ta2', '0000000a', 2, 'completed', 2)
+    turn.run('tb1', '0000000b', 1, 'completed', 4)
+    turn.run('tc1', '0000000c', 1, 'completed', 5); turn.run('tc2', '0000000c', 2, 'running', 7)
+    db.exec(`INSERT INTO matter_items(matter_id,turn_id,seq,kind,status,item_key,payload_json,created_at,updated_at,cursor) VALUES
+        ('0000000a','ta2',1,'agent_message','completed',NULL,'{}',1,1,3),
+        ('0000000b','tb1',1,'system','completed','ready:tb1','{"ready":true}',1,1,6);
+      UPDATE matter_log_cursor SET value = 7 WHERE id = 1;
+      INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('0000000d','wechat','owner@im.wechat',40);`)
+    runMigrations(db, migrations)
+    return db
+  }
+  it('列没了;行一行不少、别的列原样;只在列里的归档 / 做完先搬过去', () => {
+    const db = upgraded()
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query<{ name: string }, []>('PRAGMA table_info(matters)').all().map(c => c.name)).toEqual(
+      ['id', 'kind', 'initiator', 'title', 'project_path', 'state', 'archived_at', 'owner_chat_id', 'created_at', 'updated_at', 'origin_matter_id', 'origin_message_id', 'origin_surface', 'cursor'])
+    expect(db.query('SELECT id,state,archived_at,origin_matter_id,origin_surface,created_at,updated_at FROM matters ORDER BY id').all()).toEqual([
+      { id: '0000000a', state: 'open', archived_at: null, origin_matter_id: null, origin_surface: 'desktop', created_at: 1, updated_at: 10 },
+      { id: '0000000b', state: 'open', archived_at: null, origin_matter_id: null, origin_surface: null, created_at: 2, updated_at: 20 },
+      { id: '0000000c', state: 'working', archived_at: null, origin_matter_id: null, origin_surface: null, created_at: 3, updated_at: 30 },
+      { id: '0000000d', state: 'open', archived_at: 40, origin_matter_id: '0000000a', origin_surface: null, created_at: 4, updated_at: 40 },
+      { id: '0000000e', state: 'done', archived_at: null, origin_matter_id: null, origin_surface: null, created_at: 5, updated_at: 50 },
+      { id: '0000000f', state: 'failed', archived_at: 60, origin_matter_id: null, origin_surface: 'wechat', created_at: 6, updated_at: 60 },
+    ])
+  })
+  it('只在列里的 replied ⇒ 最近一轮补一步 ready(seq 接着排、游标取下一个);已经有的不重复;最近一轮在跑的不补', () => {
+    const db = upgraded()
+    expect(db.query("SELECT matter_id,turn_id,seq,item_key,payload_json,cursor FROM matter_items WHERE kind='system' ORDER BY matter_id").all()).toEqual([
+      { matter_id: '0000000a', turn_id: 'ta2', seq: 2, item_key: 'ready:ta2', payload_json: '{"ready":true}', cursor: 8 },
+      { matter_id: '0000000b', turn_id: 'tb1', seq: 1, item_key: 'ready:tb1', payload_json: '{"ready":true}', cursor: 6 },
+    ])
+    expect(db.query('SELECT value FROM matter_log_cursor').get()).toEqual({ value: 8 })
+    expect(db.query("SELECT id,cursor FROM matters WHERE id IN ('0000000a','0000000b') ORDER BY id").all()).toEqual([{ id: '0000000a', cursor: 8 }, { id: '0000000b', cursor: 6 }])
+  })
+  it('外键、子表、来源不可改的触发器、索引都还在;重放什么都不做', () => {
+    const db = upgraded()
+    expect(db.query('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 })
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(db.query('SELECT COUNT(*) AS n FROM matter_bindings').get()).toEqual({ n: 1 })
+    expect(() => db.exec("INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES('nope','wechat','x',1)")).toThrow()
+    expect(() => db.exec("UPDATE matters SET origin_surface='app' WHERE id='0000000a'")).toThrow(/matter_origin_immutable/)
+    const names = (db.query("SELECT name FROM sqlite_master WHERE tbl_name='matters' AND type IN ('index','trigger') AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(r => r.name)
+    expect(names).toEqual(['matters_origin', 'matters_origin_surface_once', 'matters_updated', 't4_matters_delete', 't4_matters_update'])
+    expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'matters_v%'").all()).toEqual([])
+    const before = db.query('SELECT * FROM matters ORDER BY id').all()
+    db.exec('PRAGMA user_version = 101')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT * FROM matters ORDER BY id').all()).toEqual(before)
+    expect(db.query("SELECT COUNT(*) AS n FROM matter_items WHERE kind='system'").get()).toEqual({ n: 2 })
+  })
+})
+
+describe('v103 — speech_log 与 matter_report_outbox 加 ref(S3a)', () => {
+  it('matter_report_outbox 多一列 ref(空);旧行原样', () => {
+    const db = migratedTo(102)
+    db.exec(`INSERT INTO matters(id,kind,title,state,created_at,updated_at,cursor) VALUES('m1','task','t','open',1,1,0),('c1','chat','c','open',1,1,0);
+      INSERT INTO matter_report_outbox(matter_id,origin_matter_id,text,status,attempts,next_at,created_at) VALUES('m1','c1','x','pending',0,1,1);`)
+    runMigrations(db, migrations)
+    expect(db.query('SELECT matter_id,text,ref FROM matter_report_outbox').all()).toEqual([{ matter_id: 'm1', text: 'x', ref: null }])
+  })
+  it('旧行原样、ref 是空;新列可写;有部分索引;重放什么都不做', () => {
+    const db = migratedTo(102)
+    db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel) VALUES(1,'matter_report','report','o@im.wechat','allowed',NULL,'app')").run()
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query('SELECT kind,outcome,channel,ref FROM speech_log').all()).toEqual([{ kind: 'matter_report', outcome: 'allowed', channel: 'app', ref: null }])
+    db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel,ref) VALUES(2,'permission_ask','blocking','o@im.wechat','allowed',NULL,'app','ask:m:r')").run()
+    expect(db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='speech_log_ref'").all()).toEqual([{ name: 'speech_log_ref' }])
+    db.exec('PRAGMA user_version = 102')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM speech_log').get()).toEqual({ n: 2 })
+  })
+})
+
+describe('v104 — 话题升格(T1):aliases / topic_entries / 新水位', () => {
+  it('老话题原样留着,aliases 先填成只有它自己用的 tags;老水位不动、新水位从空开始;重放什么都不做', () => {
+    const db = migratedTo(103)
+    db.exec(`INSERT INTO threads(id,chat_id,title,summary,facets,tags,private,status,episodes,created_ts,last_active)
+      VALUES('thr_a','c1','bx网络工具的产品架构','s','["task"]','["bx","产品开发"]',0,'active','[]','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z'),
+            ('thr_b','c1','坏行','','["task"]','not-json',0,'active','[]','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z'),
+            ('thr_c','c1','writter','','["task"]','["产品开发"]',0,'active','[]','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z'),
+            ('thr_d','c2','别的对话','','["task"]','["bx"]',0,'active','[]','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z');
+      INSERT INTO thread_extract_state(chat_id,extracted_to_ts) VALUES('c1','2026-11-05T01:01:04.643Z');`)
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query("SELECT description FROM threads WHERE id='thr_a'").get()).toEqual({ description: 's' })
+    expect(db.query('SELECT id,title,tags,aliases FROM threads ORDER BY id').all()).toEqual([
+      { id: 'thr_a', title: 'bx网络工具的产品架构', tags: '["bx","产品开发"]', aliases: '["bx"]' },
+      { id: 'thr_b', title: '坏行', tags: 'not-json', aliases: '[]' },
+      { id: 'thr_c', title: 'writter', tags: '["产品开发"]', aliases: '[]' },
+      { id: 'thr_d', title: '别的对话', tags: '["bx"]', aliases: '["bx"]' },
+    ])
+    expect(db.query('SELECT chat_id,extracted_to_ts,entries_to_ts,work_cursor,consolidated_to_ts FROM thread_extract_state').all())
+      .toEqual([{ chat_id: 'c1', extracted_to_ts: '2026-11-05T01:01:04.643Z', entries_to_ts: null, work_cursor: 0, consolidated_to_ts: null }])
+    db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e1','thr_a','commitment','答应装 bx','chat','t','t')`)
+    expect(() => db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e2','thr_a','note','x','chat','t','t')`)).toThrow()
+    expect(() => db.exec(`INSERT INTO topic_entries(id,thread_id,kind,line,source,created_ts,updated_ts) VALUES('e3','nope','fact','x','chat','t','t')`)).toThrow()
+    db.exec(`UPDATE threads SET aliases='["bx","x"]' WHERE id='thr_a'`)
+    db.exec('PRAGMA user_version = 103')
+    runMigrations(db, migrations)
+    expect(db.query("SELECT aliases FROM threads WHERE id='thr_a'").get()).toEqual({ aliases: '["bx","x"]' })
+    expect(db.query('SELECT COUNT(*) AS n FROM topic_entries').get()).toEqual({ n: 1 })
+  })
+})
+
+describe('v105 — matter_topics(T3)', () => {
+  it('一件事可以挂几个话题、同一对只一行;话题删了跟着删;重放什么都不做', () => {
+    const db = migratedTo(104)
+    db.exec(`INSERT INTO threads(id,chat_id,title,summary,facets,tags,private,status,episodes,created_ts,last_active)
+      VALUES('t1','c','bx','','["task"]','[]',0,'active','[]','x','x'),('t2','c','服务器','','["task"]','[]',0,'active','[]','x','x')`)
+    runMigrations(db, migrations)
+    db.exec(`INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES('m1','t1','x'),('m1','t2','x')`)
+    expect(() => db.exec(`INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES('m1','t1','y')`)).toThrow()
+    expect(() => db.exec(`INSERT INTO matter_topics(matter_id,thread_id,attached_ts) VALUES('m1','nope','y')`)).toThrow()
+    db.exec(`DELETE FROM threads WHERE id='t1'`)
+    expect(db.query('SELECT thread_id, written_back_cursor FROM matter_topics').all()).toEqual([{ thread_id: 't2', written_back_cursor: 0 }])
+    db.exec('PRAGMA user_version = 104')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM matter_topics').get()).toEqual({ n: 1 })
+  })
+})
+
+describe('v106 — topic bubbles', () => {
+  it('从真 v105 升级不打开历史话题,可重放,版本准确', () => {
+    const db = migratedTo(105)
+    db.exec(`INSERT INTO threads(id,chat_id,title,summary,facets,tags,private,status,episodes,created_ts,last_active)
+      VALUES('t1','owner','旧话题','','[]','[]',1,'active','[]','x','x')`)
+    runMigrations(db, migrations)
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    expect(db.query('SELECT * FROM topic_bubbles').all()).toEqual([])
+    db.exec(`INSERT INTO topic_bubbles(thread_id) VALUES('t1')`)
+    expect(db.query('SELECT state,activity_revision FROM topic_bubbles').get()).toEqual({ state: 'closed', activity_revision: 0 })
+    db.exec('PRAGMA user_version=105')
+    runMigrations(db, migrations)
+    expect(db.query('SELECT COUNT(*) AS n FROM topic_bubbles').get()).toEqual({ n: 1 })
+    db.close()
+  })
+})
+
+it('v107 adds delivery evidence without inventing historical success; replay preserves it', () => {
+  const db = migratedTo(106)
+  try {
+    db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,channel) VALUES(1,'letter','initiative','owner','allowed','wechat')").run()
+    runMigrations(db, migrations)
+    expect(db.query('SELECT spoken_at,delivery_state FROM speech_log').all()).toEqual([{ spoken_at: null, delivery_state: 'legacy_unknown' }])
+    expect((db.query("PRAGMA index_list('speech_log')").all() as { name: string }[]).map(i => i.name)).toContain('speech_log_initiative_spoken')
+    migrations[106]!(db)
+    expect(db.query('SELECT spoken_at,delivery_state FROM speech_log').all()).toEqual([{ spoken_at: null, delivery_state: 'legacy_unknown' }])
+  } finally { db.close() }
+})
+
+it('v108 preserves both S2 lanes and their retry fields when adding reservations', () => {
+  const db = migratedTo(107)
+  try {
+    db.query("INSERT INTO speech_pending(id,lane,chat_id,kind,body,ref,created_at,next_at,attempts,first_failed_at,expires_at,status) VALUES('s','say','owner','sticker','body','sticker:a',10,20,2,11,100,'pending'),('p','push','owner','matter_report','{}','turn:a:1',12,22,3,13,200,'overflow')").run()
+    const before = db.query('SELECT * FROM speech_pending ORDER BY id').all()
+    runMigrations(db, migrations)
+    expect(db.query('SELECT * FROM speech_pending ORDER BY id').all()).toEqual(before)
+    migrations[107]!(db)
+    expect(db.query('SELECT * FROM speech_pending ORDER BY id').all()).toEqual(before)
+  } finally { db.close() }
+})
+
+describe('fresh migration commit budget', () => {
+  it('builds the identical schema in at most five durable transactions', () => {
+    const db = openSqlite(':memory:')
+    const reference = openSqlite(':memory:')
+    try {
+      db.exec('PRAGMA foreign_keys=ON')
+      reference.exec('PRAGMA foreign_keys=ON')
+      let transactions = 0
+      const transaction = db.transaction.bind(db)
+      db.transaction = ((fn: () => unknown) => {
+        transactions++
+        return transaction(fn)
+      }) as typeof db.transaction
+      runMigrations(db, migrations)
+      // Slow disks pay per commit, so count commits instead of wall time.
+      expect(transactions).toBeLessThanOrEqual(5)
+      for (const m of migrations) m(reference)
+      const schema = "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
+      expect(db.query(schema).all()).toEqual(reference.query(schema).all())
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+      expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(db.query('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 })
+    } finally { db.close(); reference.close() }
+  })
+
+  it('rolls back the whole fresh batch and retries from its durable version', () => {
+    const db = openSqlite(':memory:')
+    const list = [migrations[0]!, () => { throw new Error('interrupted') }]
+    try {
+      expect(() => runMigrations(db, list)).toThrow('interrupted')
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 0 })
+      expect(db.query("SELECT name FROM sqlite_master WHERE name='sessions'").get()).toBeNull()
+      runMigrations(db, migrations)
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: migrations.length })
+    } finally { db.close() }
+  })
+
+  it('keeps per-version commits for an existing schema even at version zero', () => {
+    const db = openSqlite(':memory:')
+    try {
+      migrations[0]!(db)
+      expect(() => runMigrations(db, [migrations[0]!, () => { throw new Error('interrupted') }])).toThrow('interrupted')
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 1 })
+    } finally { db.close() }
+  })
+})
+
+it('v110 upgrades v109 without changing speech history and replay preserves audit evidence', () => {
+  const db = migratedTo(109)
+  try {
+    db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome) VALUES(1,'letter','initiative','owner','allowed')").run()
+    const before = db.query('SELECT * FROM speech_log').all()
+    runMigrations(db, migrations)
+    db.query("INSERT INTO speech_audit_events(at,source,chat_id,ref,outcome) VALUES(1,'letter','owner','letter:x','deferred')").run()
+    db.query('INSERT INTO speech_audit_coverage VALUES(1,1)').run()
+    migrations[109]!(db)
+    expect(db.query('SELECT * FROM speech_log').all()).toEqual(before)
+    expect(db.query('SELECT COUNT(*) AS n FROM speech_audit_events').get()).toEqual({ n: 1 })
+    expect(db.query('SELECT started_at FROM speech_audit_coverage').get()).toEqual({ started_at: 1 })
+  } finally { db.close() }
 })

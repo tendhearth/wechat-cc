@@ -19,7 +19,7 @@
 
 1. **提示词身份行**:每轮系统提示写「你是 <provider>(当前模型 <model>)」,问「你是哪个模型」如实答,零工具零权限。
 2. **微信 `/set` 与斜杠**(`src/daemon/mode-commands.ts`):
-   - `/set cheap <provider|auto>`(管理员)—— 后台评估(整理记忆 / moderator / introspect)用哪家,走 config-surface 的 `cheap_eval_provider`,热改不重启;
+   - `/set cheap <provider|auto>`(管理员)—— 后台评估(整理记忆 / moderator / introspect)用哪家,走 config-surface 的 `cheap_eval_provider`,热改不重启;选了 openai 时,后台评估默认跟对话用同一个网关模型,另设 `openaiEvalModel`(如 `DeepSeek`)就只换后台那一路,对话不变,也是热改;
    - `/set providers a,b|all`(管理员)—— 非管理员对话能用哪些;
    - `/set provider cc|agy|api|…`(管理员)—— 全局默认大脑,改完自动重启;
    - `/api list`(拉网关 `GET {base}/models`,主人主动触发才拨,60s 缓存)、`/api <别名|模型>`(只对本对话)、`/api alias ds=DeepSeek` / `/api unalias ds`、裸 `/api` 回全局默认;

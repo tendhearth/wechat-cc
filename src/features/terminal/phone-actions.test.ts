@@ -6,8 +6,14 @@ import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
 import { makeCliPermissionRelay, type CliPermissionRelay } from '../../app/cli-permission-relay'
 import { makeCliReplyCore, type RunResult } from './reply-handler'
 import { makeCliPhoneActions, PHONE_CLI_SAY_MAX } from './phone-actions'
-import { mobileReadsRoutes } from '../phone/mobile-reads'
-import { routePhone } from '../phone/phone-route-table'
+import { makeTerminalSteps } from './terminal-steps'
+import { makeTerminalStepStore } from '../../adapters/store/terminal-steps'
+import { makeTerminalTurnLog } from '../../adapters/store/terminal-turns'
+import { makeMatterLog } from '../../adapters/store/matter-log'
+import { makeMatterStore } from '../../adapters/store/matters-store'
+import { terminalOwnerHandlers } from './phone-routes'
+import { phoneCliSessionRows } from './phone-sessions'
+import { routePhone } from '../../lib/phone-route-table'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,7 +32,8 @@ let other: Map<string, boolean>
 
 beforeEach(() => {
   db = openDb({ path: ':memory:' })
-  hub = makeCliEventHub({ send: async () => 'sent', projectName: (c) => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db) })
+  // 同生产(wire.ts):登记处 + 那件事的轮与步一起接(M4d 第 2 步起状态只从那件事推)
+  hub = makeCliEventHub({ send: async () => 'sent', projectName: (c) => c.split('/').pop()!, log: () => {}, store: makeCliSessionStore(db), turns: makeTerminalTurnLog({ db, log: makeMatterLog(db), matters: makeMatterStore(db) }) })
   presence = 'away'
   waiting = new Map()
   other = new Map([['selfx', true]])   // 别的待批(比如自改流水线)—— 手机这口不许碰
@@ -47,7 +54,7 @@ let relayResult: { ok: true } | { ok: false; error: string }
 let busy: string[]
 beforeEach(() => { windows = new Map(); relayed = []; relayResult = { ok: true }; busy = [] })
 
-function actions() {
+function actions(extra: Partial<Parameters<typeof makeCliPhoneActions>[0]> = {}) {
   const core = makeCliReplyCore({
     hub, log: () => {}, dangerously: false,
     holdBusy: (l) => { busy.push(`+${l}`); return () => busy.push(`-${l}`) },
@@ -58,6 +65,9 @@ function actions() {
     },
     startCwd: () => '/w/start',
   })
+  // 生产的步(wire.ts 同款):钩子没来过的会话第一次看时当场建那件事、导入一次(M6d);钩子来过的已经有了
+  const log = makeMatterLog(db), matters = makeMatterStore(db)
+  const steps = makeTerminalSteps({ store: makeTerminalStepStore({ db, log, matters }), turns: makeTerminalTurnLog({ db, log, matters }) })
   return makeCliPhoneActions({
     hub, relay, core, localMachine: 'mac', log: () => {}, liveIds: () => new Set(windows.keys()),
     // = ilink.resolvePermission:consume 一条待批(哪一种都行),回 true/false
@@ -66,6 +76,8 @@ function actions() {
       if (w) { waiting.delete(h); w(d); return true }
       return other.delete(h)
     },
+    ...extra,
+    steps: extra.steps ?? steps,
   })
 }
 
@@ -212,8 +224,8 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W3', cwd: '/w/proj' })
     hub.ingest({ source: 'codex', kind: 'stop', session_id: 'W4', cwd: '/w/proj' })
     windows.set('W3', 'a'); windows.set('W4', 'b')
-    const r = await routePhone(mobileReadsRoutes({ cliSessions: () => hub.list(), cliActions: actions() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
-    const body = await r!.json()
+    // 手机那一份列表(P3c-2 起是 GET /v1/cli/sessions 按 caller 回的;旧路径 /m/api/cli/sessions 是它的别名)
+    const body = { ok: true, sessions: phoneCliSessionRows({ list: () => hub.list(), actions: actions() }) as any[] }
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(body)
     const by = (id: string) => body.sessions.find((s: { session_id: string }) => s.session_id === id)
     expect(by('W3').live_window).toBe(true)
@@ -223,8 +235,10 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
 
 describe('POST /m/api/cli/permission、/m/api/cli/say 与列表里的码', () => {
   const post = async (cliActions: ReturnType<typeof actions> | undefined, path: string, body: unknown, method = 'POST') => {
-    const url = 'http://x' + path
-    const r = await routePhone(mobileReadsRoutes({ ...(cliActions ? { cliActions } : {}), cliSessions: () => hub.list({ limit: 50 }) }), new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
+    if (path === '/m/api/cli/sessions') return { status: 200, body: { ok: true, sessions: phoneCliSessionRows({ list: () => hub.list({ limit: 50 }), ...(cliActions ? { actions: cliActions } : {}) }) } as any }
+    // 直接查终端那张表:P3d-3 起两条登记在不撞名的新键上(老路径是面板里的纯改名别名,legacy-renames.test.ts 比过一样)
+    const url = 'http://x' + path.replace('/m/api/cli/permission', '/v1/cli/decide').replace('/m/api/cli/say', '/v1/cli/session-say')
+    const r = await routePhone(terminalOwnerHandlers({ ...(cliActions ? { cliActions } : {}) }), new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
     return { status: r!.status, body: await r!.json() as any }
   }
   it('列表:开了码 ⇒ pending.hash + actionable;在场 ⇒ 不挂 pending;过 schema', async () => {
@@ -282,7 +296,7 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
         JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } }),
       ].join('\n'))
       hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'A1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
-      const r = await routePhone(mobileReadsRoutes({ cliActions: actions() }), new URL('http://x/m/api/cli/activity?session_id=A1'), new Request('http://x/m/api/cli/activity?session_id=A1'))
+      const r = await routePhone(terminalOwnerHandlers({ cliActions: actions() }), new URL('http://x/v1/cli/activity?session_id=A1'), new Request('http://x/v1/cli/activity?session_id=A1'))
       const body = await r!.json()
       expect(r!.status).toBe(200)
       PHONE_API_SCHEMAS['GET /m/api/cli/activity']!.parse(body)
@@ -299,11 +313,64 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
     expect(a.activity('N1')).toEqual({ ok: false, error: 'no_transcript' })
     hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'G1', cwd: '/w/proj', machine: 'mac', transcript_path: '/definitely/not/here.jsonl' })
     expect(a.activity('G1')).toEqual({ ok: false, error: 'no_transcript' })
-    const get = async (q: string) => (await routePhone(mobileReadsRoutes({ cliActions: a }), new URL('http://x/m/api/cli/activity' + q), new Request('http://x/m/api/cli/activity' + q)))!
+    const get = async (q: string) => (await routePhone(terminalOwnerHandlers({ cliActions: a }), new URL('http://x/v1/cli/activity' + q), new Request('http://x/v1/cli/activity' + q)))!
     expect((await get('')).status).toBe(400)
     expect((await get('?session_id=nope')).status).toBe(404)
     expect((await get('?session_id=R1')).status).toBe(409)
-    expect((await routePhone(mobileReadsRoutes({}), new URL('http://x/m/api/cli/activity?session_id=A'), new Request('http://x/m/api/cli/activity?session_id=A')))!.status).toBe(503)
+    expect((await routePhone(terminalOwnerHandlers({}), new URL('http://x/v1/cli/activity?session_id=A'), new Request('http://x/v1/cli/activity?session_id=A')))!.status).toBe(503)
+  })
+})
+
+describe('看着它跑只从这件事的步读(M6d)', () => {
+  it('activity / currentStep 都从步拿;步是空的 ⇒ 就是空,不退回直接解析记录', () => {
+    const asked: Array<[string, number]> = []
+    const fromSteps = [{ kind: 'you' as const, text: '跑', at: null }, { kind: 'step' as const, text: '运行 ls', at: null, detail: 'a', verb: 'run' as const, target: 'ls' }]
+    const dir = mkdtempSync(join(tmpdir(), 'cli-steps-only-'))
+    try {
+      // M2 的记录里有东西;步却是空的 —— 以前 view 给 null 会退回整段解析这份记录
+      const path = join(dir, 'm2.jsonl')
+      writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '记录里的' } }) + '\n')
+      const a = actions({ steps: { view: (s, max) => { asked.push([s.session_id, max]); return s.session_id === 'M1' ? fromSteps : [] } } })
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'M1', cwd: '/w/proj', machine: 'mac', transcript_path: '/fake/m1.jsonl' })
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'M2', cwd: '/w/proj', machine: 'mac', transcript_path: path })
+      expect(a.activity('M1')).toEqual({ ok: true, items: fromSteps })
+      expect(a.currentStep('M1')).toEqual({ kind: 'step', text: '运行 ls', at: null, verb: 'run', target: 'ls' })
+      expect(a.activity('M2')).toEqual({ ok: true, items: [] })
+      expect(a.currentStep('M2')).toBeNull()
+      expect(asked).toEqual([['M1', 40], ['M1', 20], ['M2', 40], ['M2', 20]])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('还没有那件事的会话(写轮失败过)第一次被看 ⇒ 当场建那件事、导入一次;记录再长了 ⇒ 只读新增的那一段', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-first-view-'))
+    try {
+      const path = join(dir, 's.jsonl')
+      writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '跑测试' } }) + '\n')
+      // 只有登记处那一行(钩子那条路接了 turns,每个事件都会建那件事;这里直接写登记处,造出没有那件事的一行)
+      makeCliSessionStore(db).touch({ source: 'claude', session_id: 'F1', cwd: '/w/proj', machine: 'mac', transcript_path: path }, Date.now())
+      const matters = makeMatterStore(db), log = makeMatterLog(db)
+      expect(matters.findBySurface('cli', 'F1')).toBeNull()
+      const a = actions()
+      expect(a.activity('F1')).toEqual({ ok: true, items: [{ kind: 'you', text: '跑测试', at: null }] })
+      const m = matters.findBySurface('cli', 'F1')!
+      expect(m).toMatchObject({ kind: 'terminal', title: 'proj' })
+      expect(log.items(m.id).map(i => i.kind)).toEqual(['user_message'])
+      writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '跑测试' } }) + '\n' + JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } }) + '\n')
+      expect(a.currentStep('F1')).toMatchObject({ kind: 'step', text: '运行 bun test' })
+      expect(log.items(m.id).map(i => i.kind)).toEqual(['user_message', 'tool_call'])
+      expect(matters.findBySurface('cli', 'F1')!.id).toBe(m.id)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('那边的会话(别的机器 / A2A)⇒ 照旧回 remote,不建那件事、不读', () => {
+    const view = vi.fn(() => [])
+    const a = actions({ steps: { view } })
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'P1', cwd: '/w/proj', machine: 'pc', transcript_path: '/x.jsonl' })
+    hub.observe({ source: 'claude', kind: 'prompt', session_id: 'P2', cwd: '/w/proj', origin_agent: 'hand', transcript_path: '/x.jsonl' })
+    expect(a.activity('P1')).toEqual({ ok: false, error: 'cli_session_remote' })
+    expect(a.currentStep('P1')).toBeNull()
+    expect(a.activity('P2')).toEqual({ ok: false, error: 'cli_session_remote' })
+    expect(view).not.toHaveBeenCalled()
   })
 })
 
@@ -318,15 +385,14 @@ describe('列表一眼:在跑的会话带此刻那一步', () => {
       const a = actions()
       expect(a.currentStep('N1')).toMatchObject({ kind: 'step', text: '运行 npm test', verb: 'run', target: 'npm test' })
       expect(a.currentStep('N1')!.detail).toBeUndefined()
-      const r = await routePhone(mobileReadsRoutes({ cliActions: a, cliSessions: () => hub.list() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
-      const body = await r!.json()
+      const body = { ok: true, sessions: phoneCliSessionRows({ list: () => hub.list(), actions: a }) as any[] }
       PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(body)
       expect(body.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now.text).toBe('运行 npm test')
       writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '再来' } }))
       expect(a.currentStep('N1')).toBeNull()
       hub.ingest({ source: 'claude', kind: 'stop', session_id: 'N1', cwd: '/w/proj', machine: 'mac', text: '好了' })
       writeFileSync(path, tool('c', 'Bash', { command: 'ls' }))
-      const idle = await (await routePhone(mobileReadsRoutes({ cliActions: a, cliSessions: () => hub.list() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions')))!.json()
+      const idle = { sessions: phoneCliSessionRows({ list: () => hub.list(), actions: a }) as any[] }
       expect(idle.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now).toBeUndefined()
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })

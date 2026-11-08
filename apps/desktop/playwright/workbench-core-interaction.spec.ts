@@ -13,7 +13,7 @@ const events=[event(1,'# 工作进行中\\n\\n'+Array.from({length:12},(_,i)=>'�
 const permission=id=>({id,taskId:'A',tool:'command',description:'合成权限请求 '+id,createdAt:1})
 let detail={task,version:1,events,artifacts:[{id:'file',taskId:'A',name:'fixture.md',mime:'text/plain',size:5,sha256:'a'.repeat(64),createdAt:1,approvedAt:null}],permissions:['p1','p2','p3'].map(permission)},release
 const calls=[]
-const invokeWorkbenchApi=async(method,path,body)=>{calls.push({method,path,body});if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(resolve=>{release=resolve}):detail;if(path.startsWith('/v1/workbench/review?'))return{reviews:[]};if(path.startsWith('/v1/matters?'))return{matters:[]};return{tasks:[task],providers:[],defaultProvider:'codex',canWechat:false}}
+const invokeWorkbenchApi=async(method,path,body)=>{calls.push({method,path,body});if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(resolve=>{release=resolve}):detail;if(path.startsWith('/v1/matter/changes?'))return{reviews:[]};if(path.startsWith('/v1/matters?'))return{matters:[]};return{tasks:[task],providers:[],defaultProvider:'codex',canWechat:false}}
 const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60000})
 window.qa={controller,calls,text,permission,stop:stopWorkbenchPolling,setPermissions:ids=>{detail.permissions=ids.map(permission);controller.state.detail.permissions=detail.permissions;controller.paint(true)},push:async(nextText)=>{while(!release)await new Promise(r=>setTimeout(r,1));detail={...detail,version:detail.version+1,events:[...detail.events.slice(0,-1),event(2,nextText)]};const send=release;release=null;send(detail);await new Promise(r=>setTimeout(r,20))}}
 </script></body></html>`

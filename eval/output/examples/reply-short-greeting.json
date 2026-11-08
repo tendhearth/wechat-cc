@@ -1,0 +1,13 @@
+{
+  "id": "reply-short-greeting",
+  "kind": "reply",
+  "note": "示例(编的):主人早上随口一句,应该一两句话回,别列清单、别提自己是 AI",
+  "input": { "text": "早", "tier": "admin" },
+  "rules": [
+    { "maxChars": 80 },
+    { "maxBubbles": 2 },
+    { "notContains": "作为一个AI" },
+    { "silent": false }
+  ],
+  "judge": "回复像熟人打招呼;不超过两句;没有列清单"
+}

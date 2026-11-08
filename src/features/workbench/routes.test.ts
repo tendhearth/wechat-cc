@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { request as httpRequest } from 'node:http'
 import { createInternalApi, type InternalApi } from '../../daemon/internal-api/index'
 import { workbenchRoutes } from './routes'
+import { makeMattersService } from '../../app/matters/service'
 import { minTierFor } from '../../daemon/internal-api/route-tiers'
 import {openDb} from '../../lib/db'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
@@ -97,7 +98,6 @@ describe('Workbench internal HTTP API', () => {
     let owner='configured-owner'
     const own=crypto.randomUUID(),foreign=crypto.randomUUID(),db=openDb({path:join(stateDir,'entry-receipts.sqlite')}),store=makeWorkbenchStore(db)
     const task=store.create({title:'Private',path:stateDir,ownerChatId:owner,providerId:'codex'}),runId=crypto.randomUUID()
-    db.query("INSERT INTO matters(id,kind,title,status,owner_chat_id,created_at,updated_at) VALUES(?,'task','Private','open',?,1,1)").run(task.id,owner)
     store.entryRequests.reserve({ownerKey:owner,requestId:own,canonicalRequestHash:'a'.repeat(64),target:{kind:'project',projectId:'p-'+'a'.repeat(20)},workspaceId:null,resolvedPath:stateDir,directoryIdentity:'1:1',providerId:'codex',execution:{defaults:'provider',model:null,reasoningEffort:null},materialSnapshot:[]})
     store.entryRequests.accept(owner,own,{taskId:task.id,matterId:task.id,runId,acceptedAt:1,resolvedPath:stateDir,directoryIdentity:'1:1'})
     const actual=makeWorkbenchService({store,registry:createProviderRegistry(),stateDir,ownerChatId:()=>owner}),entryReceipt=vi.spyOn(actual,'entryReceipt')
@@ -393,10 +393,12 @@ describe('Workbench internal HTTP API', () => {
     removeTempDir(stateDir)
   })
 
-  async function start(initial?: ReturnType<typeof service>,resolveAdminChatId:()=>string|null=()=> 'configured-owner') {
-    api = createInternalApi({ stateDir, daemonPid: 1 } as never)
+  async function start(initial?: ReturnType<typeof service>,resolveAdminChatId:()=>string|null=()=> 'configured-owner',desktop?:{notePoll():void;seen(id:string):void}) {
+    // P3e:一件事上的动作(停下 / 批准 / 回答 / 成果 / 交给另一位 / 工作区 / 交办)是内部 API 自己的 /v1/matter/* 处理器(MattersService 那一层),
+    // 这些用例照旧打桌面的 /v1/workbench/* 旧键(wire-compat.ts 的别名,同一个处理器)。生产里 MattersService 的工作台就是这一个服务。
+    api = createInternalApi({ stateDir, daemonPid: 1, resolveAdminChatId, ...(initial ? { matters: makeMattersService({ store: {} as never, workbench: initial as never }) } : {}) } as never)
     // 架构终态 A5:桌面路由由 workbench 模块自己挂;没挂上 ⇒ 模块门回 503 workbench_not_wired(和搬家前一样)
-    if (initial) api.mount('workbench', workbenchRoutes({ workbench: initial as never, resolveAdminChatId }))
+    if (initial) api.mount('workbench', workbenchRoutes({ workbench: initial as never, resolveAdminChatId, ...(desktop?{desktop}:{}) }))
     const adminToken = api.mintSessionToken('admin', 'codex/default/owner')
     const guestToken = api.mintSessionToken('guest', 'codex/default/guest')
     const trustedSessionToken = api.mintSessionToken('trusted', 'codex/default/trusted')
@@ -409,6 +411,19 @@ describe('Workbench internal HTTP API', () => {
     })
     return { request, trustedToken, operatorToken, port, adminToken,guestToken,trustedSessionToken }
   }
+
+  it('桌面那一侧(S3b):attention 记「桌面 app 开着」,读一件任务的详情记「在电脑上看过」;参数不对的不记',async()=>{
+    const notePoll=vi.fn(),seen=vi.fn()
+    const {request}=await start(service({attention:vi.fn(()=>({tasks:[]})),detail:vi.fn(async()=>({task:{id:'abcdef12'}}))} as never),()=> 'configured-owner',{notePoll,seen})
+    expect((await request('/v1/workbench/attention')).status).toBe(200)
+    expect(notePoll).toHaveBeenCalledOnce()
+    await request('/v1/workbench/task?id=abcdef12')
+    expect(seen).toHaveBeenCalledWith('abcdef12')
+    await request('/v1/workbench/task?id=NOT_AN_ID')
+    await request('/v1/workbench/task?id=abcdef12&since_cursor=3&wait_ms=0')   // 打开以后挂着的长轮询不算看过(窗口在后台时它照样在拉)
+    await request('/v1/workbench/task?id=abcdef12&since=3')
+    expect(seen).toHaveBeenCalledOnce()
+  })
 
   it('reads native history only through exact admin routes with bounded query input',async()=>{
     const listNativeHistory=vi.fn(async()=>({items:[],nextCursor:null,coverage:'native_indexed_history'})),readNativeHistory=vi.fn(async()=>({messages:[],nextCursor:null}))
@@ -959,6 +974,36 @@ describe('Workbench internal HTTP API', () => {
       expect(detail).toHaveBeenNthCalledWith(1, 'deadbeef', { since: 4 })
       expect(detail).toHaveBeenNthCalledWith(2, 'deadbeef', { since: 4 })
       expect((await response.json()).version).toBe(6)
+    })
+
+    it('since_cursor(P1b):游标没超过就挂在 waitCursor 上,醒了按同一个 since_cursor 再取一次;已经超过 / 不等 ⇒ 直接回', async () => {
+      let detailCalls = 0
+      let resolveWait: (v: number) => void = () => {}
+      const waitDone = new Promise<number>(resolve => { resolveWait = resolve })
+      const detail = vi.fn((_id: string, _opts?: { sinceCursor?: number }) => { detailCalls++; return { task: TASK, events: [], artifacts: [], version: 1, cursor: detailCalls === 1 ? 10 : 12 } })
+      const waitCursor = vi.fn(async () => waitDone)
+      const svc = service({ detail, changes: { wait: vi.fn(), waitCursor } })
+      const { request } = await start(svc)
+      const responsePromise = request('/v1/workbench/task?id=deadbeef&since_cursor=10&wait_ms=99999')
+      await vi.waitFor(() => expect(waitCursor).toHaveBeenCalled(), { timeout: 5_000 })
+      expect(waitCursor).toHaveBeenCalledWith('deadbeef', 10, 20000)
+      resolveWait(12)
+      const response = await responsePromise
+      expect(detail).toHaveBeenNthCalledWith(1, 'deadbeef', { sinceCursor: 10 })
+      expect(detail).toHaveBeenNthCalledWith(2, 'deadbeef', { sinceCursor: 10 })
+      expect((await response.json()).cursor).toBe(12)
+      detailCalls = 0
+      expect((await (await request('/v1/workbench/task?id=deadbeef&since_cursor=3&wait_ms=99999')).json()).cursor).toBe(10)
+      detailCalls = 1
+      expect((await request('/v1/workbench/task?id=deadbeef&since_cursor=12')).status).toBe(200)
+      expect(waitCursor).toHaveBeenCalledTimes(1)
+    })
+
+    it('since 和 since_cursor 不能一起给;since_cursor 不是非负整数 / 给了两次 ⇒ 400', async () => {
+      const svc = service({ detail: vi.fn(() => ({ task: TASK, events: [], artifacts: [], version: 1, cursor: 1 })), changes: { wait: vi.fn(), waitCursor: vi.fn() } })
+      const { request } = await start(svc)
+      for (const q of ['since=1&since_cursor=1', 'since_cursor=-1', 'since_cursor=x', 'since_cursor=1&since_cursor=2'])
+        expect((await request(`/v1/workbench/task?id=deadbeef&${q}`)).status).toBe(400)
     })
 
     it('未知 id 带 since+wait_ms ⇒ 404,不等 20 秒(detail 探测就抛 not_found,wait 不被调用)', async () => {

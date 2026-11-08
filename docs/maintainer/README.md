@@ -15,8 +15,8 @@
 1. **开工先分配。** 每个任务记录负责人、工作区路径、分支和起点提交,并明确本批的整合者。从已确认的 `dev` 提交创建独立分支和 worktree;已有别人使用的工作区不得接管。未指定整合者时可以开发和提交,不能自行开始共享部署或推送 `dev`。
 2. **按职责拆任务。** 尽量让两个实现者修改不同模块。共享接口、数据库迁移和依赖锁文件提前约定负责人及先后顺序;确实需要修改同一处时,先完成的一方提交,另一方基于该提交继续。worktree 不会消除接口和行为上的冲突。
 3. **交付可复核的提交。** 开发者交付分支、提交号、基线、改动范围、验证结果和已知限制。整合者在自己的集成工作区逐项合入,不去开发者目录修改文件。冲突退回对应负责人处理或由整合者明确接手,不能通过整文件覆盖来消除冲突。
-   评审只报影响正确性的、跳过风格;动开机顺序 / 迁移 / 权限的再要一道没看过写代码过程的评审(见 [verify.md](verify.md#评审只报影响正确性的))。
-4. **验证整合结果。** 分支各自通过不代表组合正确。每次合入后检查累积差异,按改动范围验证;代码改动走下面的本地闸门,随后才部署、真机自检和推送。纯文档改动检查差异、链接与规则一致性,无需构建部署。不得重写共享的 `dev` 历史,进 `master` 仍走 squash PR。
+   评审只报影响正确性的、跳过风格;动开机顺序 / 迁移 / 权限的再要一道没看过写代码过程的评审(Codex `review --base dev`)(见 [verify.md](verify.md#评审只报影响正确性的))。
+4. **验证整合结果。** 分支各自通过不代表组合正确。先同步 dev 并等 PR 三平台 CI 绿再合入,检查部署 tree 的 CI 覆盖;覆盖后无需本机 verify --full,随后部署和主动自检。纯文档改动检查差异、链接与规则一致性,无需构建部署。不得重写共享的 `dev` 历史,进 `master` 仍走 squash PR。
 5. **运行环境也要分开。** worktree 不隔离端口、数据库、daemon、账号配置和已安装的 app。并行验证使用各自的测试数据目录和端口,不要连生产数据做试验。共享 daemon 的重启、桌面安装、部署和 `dev` 推送归整合者串行执行;自动 `self change` 也纳入这份安排。这是协作约定,不代表已有跨进程锁自动替你排队。
 
 收尾只清理自己负责且已确认不再使用的分支和工作树。遇到集成工作区有未知改动或正在被别人使用,先交接,不能 `reset`、`clean` 或替别人 `stash`。
@@ -33,17 +33,18 @@
 ```bash
 # 1. 开发者在独立分支改代码并验证;整合者合入 dev 后复验
 bun run verify                       # 只跑改动牵连到的 + 全部守卫(scripts/verify.ts 开头写了判法)
-bun run verify --full                # 整合者:test / test:node / typecheck / depcheck 四条全跑,跟 CI 一样
+wechat-cc ci land <PR>               # 先同步 dev,PR 三平台 CI 绿才合入
+# 部署 tree 已被 CI 覆盖就不再 verify --full;未覆盖才补,重型测试放 mini
 cd apps/relay && bun run test        # 改了中继 / 协议包时(另有 test:e2e,见 relay.md)
 
 # 2+3. 以下由整合者串行执行(macOS):一道部署门走完 —— 负载 → 网络守护 → 构建 sidecar → self deploy → 工作台 + 对话两条自检,红了回滚(deploy.md「一条命令走完」)
 wechat-cc self ship                  # 机器忙退 3、守护不安全退 5,都是什么都没动;--wait-min N 等机器闲
 #   分步跑也行:build-sidecar → self deploy → selftest workbench --image --resume / selftest chat --resume(加 --keep 保留 scratch)
 wechat-cc selftest phone                # 手机协议 v2 真机闭环(需开「出门也能用」),ship 不含它
-# 过几个小时:wechat-cc self soak(改到开机 / 关机顺序的加 --min-restarts 1)
+# 部署后主动 selftest phone/chat/workbench + 新路由;4h soak 后台跑
+# 只有改开机/关机/重启顺序才等 soak(--min-restarts 1)
 
-# 4. 推 dev,看 CI
-git push origin dev
+# 4. 确认合入后的 tree 覆盖;无回执才等完整 CI
 wechat-cc ci triage --wait --rerun   # 退出码 0 绿 / 1 真红 / 2 没运行或 gh 出错 / 3 是已知 flake
 
 # 5. 自动自改也纳入整合安排,不与人工部署/推送并发(专用工作树 + 五道闸门 + 主人微信拍板)
@@ -74,11 +75,14 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | [app-rename-migration.md](app-rename-migration.md) | 1.7.5 macOS 改名(`Tendhearth CC.app` / 主二进制 / sidecar):updater 原地安装的证据、首启自改名、`service repair`(LaunchAgent / hook / `~/.local/bin/wechat-cc`)、1.7.4→1.7.5 真机验证清单 |
 | [release.md](release.md) | 给用户发版:四个人工步骤、两道 `release-signing` 批准、tag 镜像、R2 更新源;和 `self deploy` 的区别 |
 | [verify.md](verify.md) | `selftest` 三种用法(workbench / chat / phone)、两种 token 分别够得着什么、必须主人在场的检查清单 |
+| [macmini-ui-lab.md](macmini-ui-lab.md) | 双 Mac 测试分工、离线验证入口、远端原生输入与系统授权的实际边界 |
+| [desktop-notification-click.md](desktop-notification-click.md) | 桌面通知事项回跳、seen、平台限制与离线测试边界 |
 | [mobile-presence.md](mobile-presence.md) | 手机此刻、待处理入口、成果与回忆,断线提交和冻结资产的接线边界 |
 | [ci-and-flakes.md](ci-and-flakes.md) | 三平台作业、Windows 排除清单的规矩、`ci triage` 与 flake 登记表、PR 与合并纪律 |
 | [self-change.md](self-change.md) | 让 CC 自己改自己:五道闸门、修复轮上限、退出码、停机与 `--unhalt`、微信不通时怎么拍板(`--approve` / 桌面卡)、禁改清单、费用、微信「自改」 |
 | [cli-auto-upgrade.md](cli-auto-upgrade.md) | 外部 agent CLI(claude / codex / cursor-agent / agy)自动升级:官方升级器、只在空闲时、升级后自检 + 协议烟测、自动退回与坏版本、`wechat-cc cli status\|upgrade\|rollback` |
 | [reply-delivery.md](reply-delivery.md) | 回复交付只剩一条路(D3 删了 legacy / shadow 与 `reply_delivery` 回滚)、排查看哪几行日志 |
+| [speech-audit.md](speech-audit.md) | S4 历史送达证据回填、只读对账与七天影子观察口径 |
 | [migrations.md](migrations.md) | `user_version` 是计数、新迁移要改的三处测试、指纹与 `foreign_keys` 坑 |
 | [practices.md](practices.md) | **干活的**规矩:动手前看什么、怎么证明、什么时候问主人(每条带出处)—— CC 自己跑开发时读的就是它 |
 | [rules-from-real-machines.md](rules-from-real-machines.md) | 真机(而不是单测)抓到的规矩清单 —— 写代码前先扫一眼 |
@@ -102,3 +106,12 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 
 真机报文也在仓库里:`src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`(脱敏后的 cursor-agent ACP 报文),回放契约测试 `src/adapters/executors/acp/fixtures.test.ts`,重新生成用
 `bun scripts/acp-fixture-from-transcript.ts <transcript.jsonl> src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`。
+
+## 旧路由退休证据（P3h）
+
+`wechat-cc routes retire-check [--json]` 只读 `<stateDir>/route-usage.json`，不连 daemon、不打开数据库、不删别名。
+每条旧键的结构化条件在 `WIRE_ROUTE_ALIASES.retirement`：App ≥ build 3（P3f），网页 P3g；桌面 P3e 的发行版本尚未确定，`minimum: null` 必须阻止退休，发版时由整合者登记真实版本号。
+
+daemon 按 UTC 日记录客户端种类、构建/版本、别名键、次数，同时记录新键请求与隧道保活的活跃版本；不存设备标识、令牌、查询参数或正文。只留最近 30 天（保守包含边界日），使用独立小文件原子写入，不需要迁移。旧 App 没报 build、旧桌面没报版本、缓存网页没带 P3g 标记均记 `unknown` 并阻止退休。selftest 用单独的构建标记，不冒充 App。
+
+首次观测不足 30 天、文件缺失或损坏、对应客户端版本未达到门槛、近 30 天仍有调用，命令均输出保留与原因。升级前出现过的旧版本也保留到它退出窗口，避免把一次新版本请求当成所有设备已升级。观测文件重建会重新等待 30 天。每次只按输出另开 PR 删除一行；本功能没有删除任何路由。

@@ -1,8 +1,10 @@
 /**
- * 工作台的桌面路由:44 条 `/v1/workbench/*`(架构终态 A5 从 daemon/internal-api/routes-workbench.ts 搬来)。
+ * 工作台的桌面路由 `/v1/workbench/*`(架构终态 A5 从 daemon/internal-api/routes-workbench.ts 搬来)。
  * 由 workbench 模块自己挂(internalApi.mount;路由表标了 module: 'workbench')。服务还没挂上 / 没起来时,
  * 模块门原样回 503 workbench_not_wired(protocol routes.ts 的 MODULE_UNAVAILABLE_CODE),处理器里不再写「没接线」的分支。
  * 状态与对外的码都查 packages/protocol 的 WORKBENCH_ERRORS(mappedError)。
+ * 一件事上的动作(停下、批准、回答、成果、交给另一位、工作区、交办与回执 …)P3e 起不在这里:一个处理器在
+ * daemon/internal-api/routes-matter-actions.ts(`/v1/matter/*`),桌面还在调的 `/v1/workbench/*` 旧键挂同一个函数(wire-compat.ts 的别名)。
  */
 import {validateHandoffInput,type HandoffInput} from './handoff'
 import {nativeImportInput,type NativeImportInput} from '../../adapters/workbench/native-adoption'
@@ -11,12 +13,11 @@ import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../adapters/store/workbench/store'
 import type {InputMaterials,WorkbenchService} from './service'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
-import {parseEntryInput} from '../../adapters/workbench/task-entry'
 import {workbenchErrorHttp,workbenchErrorSpec} from '@wechat-cc/protocol'
-import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
+import type { RouteHandler, RouteResult, RouteTable } from '../../daemon/internal-api/types'
+import { phoneSessionList, phoneSessionRead, type PhoneSessionsDeps } from './phone-sessions'
 
 const TASK_ID = /^[a-f0-9]{8}$/
-const EXPECTED_RUN_ID = /^[A-Za-z0-9_.:-]{1,128}$/
 const WAIT_MAX_MS = 20_000
 const nonNegInt = (v: string | null): number | null => v !== null && /^\d{1,12}$/.test(v) ? Number(v) : null
 const ARTIFACT_ID = /^[a-f0-9-]{8,64}$/
@@ -64,43 +65,63 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   return {status,body:workbenchErrorSpec(code)?.rewind?{error,...rewindExtra(err)}:{error}}
 }
 
+/** 手机设置面板那一口的令牌(设备 / 链接;P3c-4 起交办选项、模型、扔掉材料、原生会话两条也收它们,路由表那一行的 phone 块只放设备)。 */
+const fromPhone = (caller: Parameters<RouteHandler>[2]): boolean => caller?.origin === 'device' || caller?.origin === 'link'
+/** 手机令牌的错误:回包同桌面那一列,原始码经 cause 带给面板里的旧路径别名(它换回 phone 那一列;cause 不出面板)。 */
+function phoneError(err: unknown): RouteResult {
+  const code = errorCode(err)
+  const {status,error}=workbenchErrorHttp(code,'desktop')
+  return { status, body: { error }, ...(/^[a-z][a-z0-9_]{0,63}$/.test(code) ? { cause: code } : {}) }
+}
+/** 手机交办时问模型:执行者 id 的写法(并之前 /m/api/entry/models 的处理器就是这一条,不是 isWorkbenchProviderId)。 */
+const PHONE_PROVIDER_ID = /^[a-z][a-z0-9._-]{0,63}$/
+/** 手机只给项目目录 id(p-…),路径只在电脑上解析。 */
+const PHONE_PROJECT_ID = /^p-[A-Za-z0-9_-]{1,64}$/
+
 /** 这几条路由要的(以前是 InternalApiDeps 的 workbench + resolveAdminChatId)。 */
 export interface WorkbenchRoutesDeps {
   workbench: WorkbenchService
   /** 交办入口的主人(entry context 的 ownerKey);没配主人 ⇒ ''。 */
   resolveAdminChatId?: () => string | null
+  /**
+   * 手机令牌读原生会话(P3c-4,phone-sessions.ts):单飞 + 短缓存过的读法、执行者正式名字。缺 `sessions` ⇒ 手机令牌
+   * 503 sessions_not_wired(绝不退回桌面那一份)。
+   */
+  phoneSessions?: PhoneSessionsDeps
+  /**
+   * 桌面那一侧(S3b):attention 每 3 秒拉一次 = 桌面 app 开着(`notePoll`);非手机令牌打开一件任务的详情(不带 since 的那一次;
+   * 之后的长轮询不算)= 在电脑上看过了(`seen`)。
+   * 一件事的提议读这两样决定桌面那一级由谁弹、到点还推不推手机。缺省 ⇒ 不记。
+   */
+  desktop?: { notePoll(progress?: ReadonlyArray<{ id: string; phase: string }> | null): void; seen(taskId: string): void }
 }
 
 export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
   const entryContext=()=>({ownerKey:deps.resolveAdminChatId?.()??'',surface:'desktop' as const})
+  // 手机令牌按手机表面(并之前面板交给服务的就是这一份:wire-settings-panel.ts 的 entry / uploads)
+  const phoneContext=()=>({ownerKey:deps.resolveAdminChatId?.()??'',surface:'phone' as const})
   // 出生地(2026-10-19):只有桌面 app 的 operator 令牌才算「从电脑来的」;别的 admin 令牌(会话 / 未来的调用方)不知道 ⇒ 不写。
   const desktopOrigin=(caller?:{origin:string})=>caller?.origin==='operator'?{origin:'desktop' as const}:{}
   return {
-    'GET /v1/workbench/entry-options':async query=>{
+    'GET /v1/workbench/entry-options':async(query,_body,caller)=>{
       if(query.size)return invalid()
+      // 手机令牌(P3c-4,原 /m/api/entry/options):同一份选项,按手机表面问
+      if(fromPhone(caller)){try{return{status:200,body:deps.workbench.entryOptions(phoneContext())}}catch(error){return phoneError(error)}}
       try{return{status:200,body:deps.workbench.entryOptions(entryContext())}}catch(error){return mappedError(error)}
-    },
-    'POST /v1/workbench/create-entry':async(query,body,caller)=>{
-      if(query.size)return invalid()
-      try{
-        const input=parseEntryInput(body)
-        return{status:202,body:deps.workbench.createEntry(input,{...entryContext(),...desktopOrigin(caller)})}
-      }catch(error){return mappedError(error,true)}
-    },
-    'GET /v1/workbench/entry-receipt':async query=>{
-      const requestId=query.get('requestId')
-      if(query.size!==1||!requestId||!REQUEST_ID.test(requestId))return invalid()
-      try{
-        const result=deps.workbench.entryReceipt(requestId.toLowerCase(),entryContext())
-        return result?{status:200,body:result}:{status:404,body:{error:'not_found'}}
-      }catch(error){return mappedError(error)}
     },
     'POST /v1/workbench/project':async(_query,body)=>{
       const value=objectBody(body)
       if(!value||typeof value.path!=='string'||!isAbsolute(value.path)||value.path.includes('\0')||!isWorkbenchProviderId(value.providerId)||(value.name!==undefined&&typeof value.name!=='string'))return invalid()
       try{return{status:200,body:{project:deps.workbench.addProject({path:value.path,providerId:value.providerId,...(value.name!==undefined?{name:value.name as string}:{})})}}}catch(error){return mappedError(error)}
     },
-    'GET /v1/workbench/models':async query=>{
+    'GET /v1/workbench/models':async(query,_body,caller)=>{
+      // 手机令牌(P3c-4,原 /m/api/entry/models):只认执行者 id + 可选的项目目录 id,**不认 path** —— 手机说不出、也不该探
+      // 电脑上的任意路径;没给项目 ⇒ 由 CC 安排的受管根目录(service/entry.ts 的 entryModels)。
+      if(fromPhone(caller)){
+        const providerId=query.get('providerId'),projectId=query.get('projectId')
+        if([...query.keys()].some(k=>k!=='providerId'&&k!=='projectId')||query.getAll('providerId').length!==1||query.getAll('projectId').length>1||!providerId||!PHONE_PROVIDER_ID.test(providerId)||(projectId!==null&&!PHONE_PROJECT_ID.test(projectId)))return{status:400,body:{error:'invalid_request'},cause:'invalid_request'}
+        try{return{status:200,body:{catalog:await deps.workbench.entryModels({providerId,...(projectId?{projectId}:{})},phoneContext())}}}catch(error){return phoneError(error)}
+      }
       const providerId=query.get('providerId'),path=query.get('path')
       if(query.getAll('providerId').length!==1||query.getAll('path').length!==1||!isWorkbenchProviderId(providerId)||!path||path.length>4096||path.includes('\0')||!isAbsolute(path))return invalid()
       try{return{status:200,body:{catalog:await deps.workbench.modelCatalog(providerId,path)}}}catch(error){return mappedError(error)}
@@ -115,24 +136,26 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       if(query.getAll('taskId').length!==1||query.getAll('id').length!==1||!taskId||!TASK_ID.test(taskId)||!id||!REQUEST_ID.test(id))return invalid()
       try{return{status:200,body:deps.workbench.readAttachment(taskId,id)}}catch(error){return mappedError(error)}
     },
-    'POST /v1/workbench/discard-attachment':async(_query,body)=>{
+    'POST /v1/workbench/discard-attachment':async(_query,body,caller)=>{
+      // 手机令牌(P3c-4,原 /m/api/attachment/discard):只扔手机分块上传的那一份(按主人 + 手机表面),正文原样交给上传登记处验
+      // (恰好 id + draftId,别的键 / 坏 id ⇒ invalid_upload_chunk,同并之前)。桌面那条还能扔一次性上传的材料,手机不能。
+      if(fromPhone(caller)){try{deps.workbench.discardAttachmentUpload(body as {id:string;draftId:string},phoneContext());return{status:200,body:{ok:true}}}catch(error){return phoneError(error)}}
       const value=objectBody(body)
       if(!value||typeof value.id!=='string'||!REQUEST_ID.test(value.id)||typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId))return invalid()
       try{deps.workbench.discardAttachment(value.id,value.draftId);return{status:200,body:{ok:true}}}catch(error){return mappedError(error)}
     },
-    'GET /v1/workbench/attention':async()=>{
-      try{return{status:200,body:deps.workbench.attention()}}catch(err){return mappedError(err)}
+    'GET /v1/workbench/attention':async(_query,_body,caller)=>{
+      try{
+        const body=deps.workbench.attention()
+        if(!fromPhone(caller))try{deps.desktop?.notePoll((body as {progress?:Array<{id:string;phase:string}>}).progress)}catch{/* 只是记一笔 */}
+        return{status:200,body}
+      }catch(err){return mappedError(err)}
     },
     'POST /v1/workbench/input':async(_query,body)=>{
       const value=objectBody(body)
       const files=value?materials(value):null
       if(!value||Object.hasOwn(value,'execution')||!files||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.runId!=='string'||!REQUEST_ID.test(value.runId)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||typeof value.text!=='string'||(!value.text.trim()&&!files.attachmentIds?.length)||value.text.length>20_000)return invalid()
       try{return{status:200,body:{input:await deps.workbench.submitInput(value.id,{runId:value.runId,requestId:value.requestId,text:value.text,...files})}}}catch(err){return mappedError(err)}
-    },
-    'POST /v1/workbench/answer':async(_query,body)=>{
-      const value=objectBody(body)
-      if(!value||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||(value.answers!==null&&!objectBody(value.answers))||JSON.stringify(value.answers).length>20_000)return invalid()
-      try{deps.workbench.resolveAnswer(value.id,value.requestId,value.answers);return{status:200,body:{ok:true}}}catch(err){return mappedError(err)}
     },
     'POST /v1/workbench/withdraw-input':async(_query,body)=>{
       const value=objectBody(body)
@@ -153,7 +176,9 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch(err){return mappedError(err)}
     },
 
-    'GET /v1/workbench/sessions': async query => {
+    'GET /v1/workbench/sessions': async (query, _body, caller) => {
+      // 手机令牌(P3c-4,原 /m/api/sessions):回手机那一份(phone-sessions.ts:只给目录名、一页 30、不认 cwd / limit、单飞 + 预算)
+      if (fromPhone(caller)) return phoneSessionList(deps.phoneSessions ?? {}, query, caller?.frameBudget)
       for(const key of ['providerId','q','limit','cursor','cwd'])if(query.getAll(key).length>1)return invalid()
       const providerId=query.get('providerId')
       if(!isNativeHistoryProvider(providerId))return invalid()
@@ -163,7 +188,9 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
         return {status:200,body:await deps.workbench.listNativeHistory(providerId,input)}
       }catch(error){return mappedError(error)}
     },
-    'GET /v1/workbench/session': async query => {
+    'GET /v1/workbench/session': async (query, _body, caller) => {
+      // 手机令牌(P3c-4,原 /m/api/session):回手机那一份(一页 20、每条至多 4000 字、window=start | recent)
+      if (fromPhone(caller)) return phoneSessionRead(deps.phoneSessions ?? {}, query, caller?.frameBudget)
       for(const field of ['key','limit','cursor'])if(query.getAll(field).length>1)return invalid()
       try {
         const key=query.get('key')??'';decodeNativeHistoryKey(key)
@@ -173,11 +200,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       }catch(error){return mappedError(error)}
     },
 
-    'POST /v1/workbench/quota-handoff':async(query,body)=>{
-      const value=objectBody(body)
-      if(query.size||!value||Object.keys(value).some(key=>!['id','requestId','providerId'].includes(key))||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||!isWorkbenchProviderId(value.providerId))return invalid()
-      try{return{status:202,body:deps.workbench.handOff(value.id,{requestId:value.requestId,providerId:value.providerId})}}catch(error){return mappedError(error)}
-    },
     'POST /v1/workbench/handoff-preview':async(_query,body)=>{
       try{return{status:200,body:await deps.workbench.previewHandoff(validateHandoffInput(body as HandoffInput))}}catch(error){return mappedError(error)}
     },
@@ -210,15 +232,26 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       }catch(error){return mappedError(error)}
     },
 
-    'GET /v1/workbench/task': async (query) => {
+    'GET /v1/workbench/task': async (query, _body, caller) => {
       const id = query.get('id')
       if (!id || !TASK_ID.test(id)) return invalid()
-      if (query.getAll('since').length > 1 || query.getAll('wait_ms').length > 1) return invalid()
-      const sinceRaw = query.get('since'), waitRaw = query.get('wait_ms')
+      if (query.getAll('since').length > 1 || query.getAll('since_cursor').length > 1 || query.getAll('wait_ms').length > 1) return invalid()
+      const sinceRaw = query.get('since'), cursorRaw = query.get('since_cursor'), waitRaw = query.get('wait_ms')
+      if (sinceRaw !== null && cursorRaw !== null) return invalid()
       const since = sinceRaw === null ? undefined : nonNegInt(sinceRaw)
+      const sinceCursor = cursorRaw === null ? undefined : nonNegInt(cursorRaw)
       const waitMs = waitRaw === null ? 0 : nonNegInt(waitRaw)
-      if (since === null || waitMs === null) return invalid()
+      if (since === null || sinceCursor === null || waitMs === null) return invalid()
+      // 桌面打开这件事(不带 since / since_cursor 的那一次读)= 在电脑上看过了(S3b)。之后挂着的长轮询不算:窗口在后台时它照样在拉
+      if (!fromPhone(caller) && since === undefined && sinceCursor === undefined) try { deps.desktop?.seen(id) } catch { /* 只是记一笔 */ }
       try {
+        // 按游标(P1b,桌面新版):这件事的游标超过 since_cursor 就回;不然挂着等它前进。
+        if (sinceCursor !== undefined) {
+          const first = await deps.workbench.detail(id, { sinceCursor })
+          if (first.cursor > sinceCursor || waitMs === 0) return { status: 200, body: first }
+          await deps.workbench.changes.waitCursor(id, sinceCursor, Math.min(waitMs, WAIT_MAX_MS))
+          return { status: 200, body: await deps.workbench.detail(id, { sinceCursor }) }
+        }
         if (since !== undefined && waitMs > 0) {
           // 先探一次:数据已经比 since 新(或任务压根不存在,detail 直接抛 not_found)就地返回,
           // 不然一个已下线的 id 会在 wait 里空耗满 20 秒才等到 detail 去报 404。
@@ -294,31 +327,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
-    'POST /v1/workbench/cancel': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      if (!TASK_ID.test(id)) return invalid()
-      const expectedRunIdRaw = value?.expectedRunId
-      if (typeof expectedRunIdRaw === 'string' && !EXPECTED_RUN_ID.test(expectedRunIdRaw)) return invalid()
-      const expectedRunId = typeof expectedRunIdRaw === 'string' ? expectedRunIdRaw : undefined
-      try {
-        return { status: 202, body: { task: await deps.workbench.cancel(id, expectedRunId) } }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
-    'GET /v1/workbench/artifact': async (query) => {
-      const id = query.get('id') ?? ''
-      const artifactId = query.get('artifactId') ?? ''
-      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId)) return invalid()
-      try {
-        return { status: 200, body: await deps.workbench.artifact(id, artifactId) }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
     'POST /v1/workbench/approve': async (_query, body) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
@@ -333,60 +341,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       }
     },
 
-    'POST /v1/workbench/permission': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
-      const decision = value?.decision
-      if (!TASK_ID.test(id) || !REQUEST_ID.test(requestId) || (decision !== 'allow' && decision !== 'deny')) return invalid()
-      try {
-        await deps.workbench.resolvePermission(id, requestId, decision)
-        return { status: 200, body: { ok: true } }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
-    'GET /v1/workbench/review': async (query) => {
-      const id = query.get('id') ?? ''
-      if (query.getAll('id').length !== 1 || !TASK_ID.test(id)) return invalid()
-      try {
-        return { status: 200, body: { reviews: await deps.workbench.reviewList(id) } }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
-    'POST /v1/workbench/review-mark': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
-      const path = value?.path
-      const mark = value?.mark
-      const comment = value?.comment
-      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
-          typeof path !== 'string' || !path || path.length > 4096 ||
-          (mark !== 'accepted' && mark !== 'returned') ||
-          (comment !== undefined && (typeof comment !== 'string' || comment.length > 2000))) return invalid()
-      try {
-        const result = await deps.workbench.markReviewFile(id, { artifactId, path, mark, ...(comment !== undefined ? { comment } : {}) })
-        return { status: 200, body: { mark: result } }
-      } catch (err) {
-        return mappedError(err)
-      }
-    },
-
-    // 逐文件撤销(2026-10-06):恢复成这一轮开始前的内容。文件夹还被占着 ⇒ 409 workbench_busy;之后又改过 ⇒ 409 review_file_changed。
-    // 独立工作区(2026-10-07):commit = 提交到分支(回合并命令),remove = 删工作区目录(分支保留);merge(10-08)= 快进合回项目。
-    // 工作区脚本(2026-10-20):run = 起 run 脚本(setup 没跑成先跑 setup),stop = 停下;没批 ⇒ 428 script_approval_required。
-    'POST /v1/workbench/worktree': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : '', action = value?.action
-      if (!TASK_ID.test(id) || (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen' && action !== 'run' && action !== 'stop') || Object.keys(value ?? {}).some(k => k !== 'id' && k !== 'action')) return invalid()
-      try { return { status: 200, body: { worktree: action === 'run' || action === 'stop' ? await deps.workbench.scriptAction(id, action) : deps.workbench.worktreeAction(id, action) } } }
-      catch (err) { return mappedError(err) }
-    },
-
     // 批准工作区脚本:hash = 主人在确认框里看到的那份内容;对不上 ⇒ 409 script_config_changed(重新拉详情再看)。
     'POST /v1/workbench/script-approve': async (_query, body) => {
       const value = objectBody(body)
@@ -396,6 +350,9 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
+    // 看改动 / 逐文件标记与打回 / 行评论(2026-10-06 起)P3e 起是一件事上的动作,在 /v1/matter/changes、review-*。
+    // 逐文件撤销(2026-10-06):恢复成这一轮开始前的内容。文件夹还被占着 ⇒ 409 workbench_busy;之后又改过 ⇒ 409 review_file_changed。
+    // (独立工作区的 commit / remove / merge / reopen 与工作区脚本 run / stop 是一件事上的动作,P3e 起在 /v1/matter/worktree。)
     'POST /v1/workbench/review-revert': async (_query, body) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
@@ -406,40 +363,6 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
-    // 行评论(2026-10-21):按键集合精确分三种 —— 建 {id, commentId, artifactId, path, hunk, hunkSha256, rowStart?, rowEnd?, body} /
-    // 改 {id, commentId, body} / 删 {id, commentId, delete:true}。引用与行号由服务端算,客户端给了别的键一律 400。
-    'POST /v1/workbench/review-comment': async (query, body) => {
-      const value = objectBody(body)
-      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id) || typeof value.commentId !== 'string' || !REQUEST_ID.test(value.commentId)) return invalid()
-      const keys = Object.keys(value).sort().join(',')
-      const text = (v: unknown) => typeof v === 'string' && !!v.trim() && v.length <= 2000
-      const row = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 1_000_000
-      let input: Parameters<WorkbenchService['reviewComment']>[1]
-      if (keys === 'commentId,delete,id') { if (value.delete !== true) return invalid(); input = { commentId: value.commentId, delete: true } }
-      else if (keys === 'body,commentId,id') { if (!text(value.body)) return invalid(); input = { commentId: value.commentId, body: value.body as string } }
-      else if (keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path' || keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path,rowEnd,rowStart') {
-        if (typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) || typeof value.path !== 'string' || !value.path || value.path.length > 4096 ||
-            !row(value.hunk) || typeof value.hunkSha256 !== 'string' || !SHA256.test(value.hunkSha256) || !text(value.body) ||
-            (keys.includes('rowStart') && (!row(value.rowStart) || !row(value.rowEnd)))) return invalid()
-        input = { commentId: value.commentId, artifactId: value.artifactId, path: value.path, hunk: value.hunk as number, hunkSha256: value.hunkSha256, body: value.body as string,
-          ...(keys.includes('rowStart') ? { rowStart: value.rowStart as number, rowEnd: value.rowEnd as number } : {}) }
-      } else return invalid()
-      try { return { status: 200, body: deps.workbench.reviewComment(value.id, input) } }
-      catch (err) { return mappedError(err) }
-    },
-    // 发出行评论:投递同 review-return(202,{input}|{task} + sent / remaining / skippedDiscarded);restartToken 同那道门。
-    'POST /v1/workbench/review-comments-send': async (query, body) => {
-      const value = objectBody(body)
-      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id) || Object.keys(value).some(k => !['id', 'summary', 'inputRequestId', 'restartToken'].includes(k))) return invalid()
-      const { summary, inputRequestId, restartToken } = value
-      if (summary !== undefined && (typeof summary !== 'string' || summary.length > 2000)) return invalid()
-      if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !REQUEST_ID.test(inputRequestId))) return invalid()
-      if (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken))) return invalid()
-      try {
-        const result = await deps.workbench.sendReviewComments(value.id, { ...(summary !== undefined ? { summary: summary as string } : {}), ...(inputRequestId !== undefined ? { inputRequestId: inputRequestId as string } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}) })
-        return { status: 202, body: result }
-      } catch (err) { return mappedError(err) }
-    },
     // 按块撤回 / 恢复:这件事有会话(哪怕答复过)/ 检查 / 脚本在跑 ⇒ 409 workbench_busy;块变了 ⇒ 409 review_hunk_stale;之后又改过 ⇒ 409 review_file_changed。
     'POST /v1/workbench/review-hunk': async (query, body) => {
       const value = objectBody(body)
@@ -451,61 +374,13 @@ export function workbenchRoutes(deps: WorkbenchRoutesDeps): RouteTable {
       catch (err) { return mappedError(err) }
     },
 
-    // 回到某一轮(2026-10-21):先预览(拿 token),再带 token 执行;{id, undo} = 撤销最近一次回退;rewind-resolve = 停住后主人拍板。
-    'GET /v1/workbench/rewind-preview': async query => {
-      const id = query.get('id'), artifactId = query.get('artifactId'), to = query.get('to')
-      if (query.size !== 3 || query.getAll('id').length !== 1 || query.getAll('artifactId').length !== 1 || query.getAll('to').length !== 1 ||
-          !id || !TASK_ID.test(id) || !artifactId || !ARTIFACT_ID.test(artifactId) || (to !== 'start' && to !== 'end')) return invalid()
-      try { return { status: 200, body: { preview: await deps.workbench.rewindPreview(id, { artifactId, to }) } } }
-      catch (err) { return mappedError(err) }
-    },
-    'POST /v1/workbench/rewind': async (query, body) => {
-      const value = objectBody(body), keys = Object.keys(value ?? {}).sort().join(',')
-      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id)) return invalid()
-      if (keys === 'id,undo') {
-        if (typeof value.undo !== 'string' || !REQUEST_ID.test(value.undo)) return invalid()
-        try { return { status: 200, body: { rewind: await deps.workbench.undoRewind(value.id, value.undo) } } }
-        catch (err) { return mappedError(err) }
-      }
-      if (keys !== 'artifactId,id,to,token' || typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) ||
-          (value.to !== 'start' && value.to !== 'end') || typeof value.token !== 'string' || !SHA256.test(value.token)) return invalid()
-      try { return { status: 200, body: { rewind: await deps.workbench.rewind(value.id, { artifactId: value.artifactId, to: value.to, token: value.token }) } } }
-      catch (err) { return mappedError(err) }
-    },
+    // 回到某一轮(2026-10-21):预览与执行 / 撤销是一件事上的动作,P3e 起在 /v1/matter/rewind;这一条是停住后主人拍板。
     'POST /v1/workbench/rewind-resolve': async (query, body) => {
       const value = objectBody(body)
       if (query.size || !value || Object.keys(value).sort().join(',') !== 'choice,id' || typeof value.id !== 'string' || !TASK_ID.test(value.id) ||
           (value.choice !== 'keep' && value.choice !== 'restore_backup')) return invalid()
       try { return { status: 200, body: { resolved: await deps.workbench.rewindResolve(value.id, value.choice) } } }
       catch (err) { return mappedError(err) }
-    },
-
-    'POST /v1/workbench/review-return': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
-      const paths = value?.paths
-      const comment = value?.comment
-      const inputRequestId = value?.inputRequestId
-      // 重开令牌照 POST /v1/workbench/continue 那道门验(同一个 SHA256):原会话不能恢复时,打回也要能带着它再来一次。
-      const restartToken = value?.restartToken
-      if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !REQUEST_ID.test(inputRequestId))) return invalid()
-      if (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken))) return invalid()
-      // 同时记成这个项目的经验(10-20):可选布尔;记没记上只附在响应上,不改打回本身
-      const asLesson = value?.asLesson
-      if (asLesson !== undefined && typeof asLesson !== 'boolean') return invalid()
-      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
-          !Array.isArray(paths) || !paths.length || paths.length > 20 || paths.some(p => typeof p !== 'string' || !p) ||
-          typeof comment !== 'string' || !comment.trim() || comment.length > 2000) return invalid()
-      try {
-        const { lesson, ...result } = await deps.workbench.returnReviewFiles(id, { artifactId, paths, comment, ...(inputRequestId !== undefined ? { inputRequestId } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}), ...(asLesson === true ? { asLesson: true as const } : {}) })
-        // 保留会话还活着时打回走的是续接投递,回的是一张回执;已经结算的任务才回任务视图
-        // (评审 2026-09-21 #7)。两种都够桌面拿去刷新详情。
-        // 回执认 `taskId`(任务视图上只有 `id`),比认 `phase` 稳:少一个字段不会把回执当成任务发出去。
-        return { status: 202, body: { ...('taskId' in result ? { input: result } : { task: result }), ...(lesson ? { lesson } : {}) } }
-      } catch (err) {
-        return mappedError(err)
-      }
     },
   }
 }

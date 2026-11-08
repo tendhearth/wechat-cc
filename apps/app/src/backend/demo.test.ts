@@ -13,6 +13,16 @@ describe('演示后端', () => {
     expect((await b.insight('a1b2c3d4', 'zh-Hans')).explanations['perm-demo-1']?.source).toBe('model')
     expect((await b.matter('c9d0e1f2', 'en')).questions.length).toBe(1)
   })
+  it('「CC 最近在忙」(M5c):三件 act 只从 ccActs 来、不混进 matters();点进去有轮,形状过协议', async () => {
+    const b = makeDemoBackend()
+    const acts = await b.ccActs('zh-Hans')
+    expect(acts.map(m => [m.kind, m.act?.who])).toEqual([['act', 'memory'], ['act', 'letters'], ['act', 'hunt']])
+    expect((await b.matters('zh-Hans')).some(m => m.kind === 'act')).toBe(false)
+    expect(PHONE_API_SCHEMAS['GET /m/api/matters']!.safeParse({ ok: true, matters: acts }).success).toBe(true)
+    const d = await b.matter(acts[1]!.id, 'zh-Hans')
+    expect(d.actTurns?.length).toBe(2)
+    expect(MatterDetail.safeParse(d).success).toBe(true)
+  })
   it('允许 ⇒ 立刻推「正在整理」,2 秒后「这一轮已回复」;四个主题都更新', async () => {
     vi.useFakeTimers()
     try {
@@ -547,4 +557,36 @@ describe('演示:待办与 CC 画的你(收敛清单 ④)', () => {
     p = await b.pocket()
     expect(p.todos.active.map(r => r.id)).toEqual([101, 102, 103])
   })
+})
+
+it('demo topics preserve readonly reads, publish owner opens, and deduplicate the click receipt', async () => {
+  const backend = makeDemoBackend({ now: () => 1_800_000_000_000 })
+  const before = await backend.topics({ view: 'all' })
+  expect(before.topics.find(t => t.id === 'demo-trip')?.bubbleState).toBe('closed')
+  const snapshots: unknown[] = []; backend.subscribe('topics', value => snapshots.push(value))
+  await backend.topicDetail({ id: 'demo-trip' })
+  expect(snapshots).toHaveLength(1)
+  const receipt = await backend.topicOpen('demo-trip', 'click-1')
+  expect((await backend.topicDetail({ id: 'demo-trip' })).topic.bubbleState).toBe('open')
+  expect((await backend.topics({})).topics[0]?.id).toBe('demo-trip')
+  expect(await backend.topicOpen('demo-trip', 'click-1')).toEqual(receipt)
+  expect(snapshots).toHaveLength(2)
+  backend.dispose()
+})
+
+it('demo topic corrections persist across detail/list reads and reset',async()=>{
+  const backend=makeDemoBackend()
+  try{
+    await backend.topicEdit('rename',{id:'demo-backup',title:'家中备份'})
+    expect((await backend.topicDetail({id:'demo-backup'})).topic.title).toBe('家中备份')
+    await backend.topicEdit('wrong',{id:'demo-entry'})
+    expect((await backend.topicDetail({id:'demo-backup'})).entries[0]?.status).toBe('superseded')
+    await backend.topicEdit('merge',{id:'demo-backup',into:'demo-trip'})
+    expect((await backend.topics({view:'all'})).topics.some(t=>t.id==='demo-backup')).toBe(false)
+    expect((await backend.topicDetail({id:'demo-backup'})).topic.mergedInto).toBe('demo-trip')
+    await backend.topicEdit('delete',{id:'demo-trip'})
+    await expect(backend.topicDetail({id:'demo-trip'})).rejects.toThrow()
+    backend.reset()
+    expect((await backend.topicDetail({id:'demo-backup'})).entries[0]?.status).toBe('live')
+  }finally{backend.dispose()}
 })

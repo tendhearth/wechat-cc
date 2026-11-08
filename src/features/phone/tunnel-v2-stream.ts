@@ -71,11 +71,15 @@ export interface V2StreamDeps {
   token: string
   /** 握手里自报的客户端(浏览器 /m 页带 `client:'web'`,原生 App 不带)。只决定「一件事的出生地」。 */
   client?: 'app' | 'web'
+  build?: string
+  onActivity?: () => void
   /** 往这条流发一个帧(已封好的密封帧)。 */
   send: (frame: unknown) => void
   handleRequest: (req: Request) => Promise<Response>
   events?: PhoneEvents
+  device: boolean
   /** 这条流的令牌此刻还有效吗。 */
+  topicsScope?: () => string | null
   tokenValid: () => boolean
   /** 令牌失效:调用方发明文 auth_failed 并忘掉这条流(订阅这里已经退完)。 */
   onRevoked: () => void
@@ -117,7 +121,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     if (dead) return false
     let ok = false
     try { ok = deps.tokenValid() } catch { ok = false }
-    if (ok) return true
+    if (ok) { try { deps.onActivity?.() } catch { /* telemetry only */ } return true }
     log('TUNNEL', `token revoked on ${stream} — closing v2 stream`)
     close()
     deps.onRevoked()
@@ -139,7 +143,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     }
     let req: Request
     // 原生 App 来的才标(phone-client.ts);浏览器 /m 页握手时自报了 web ⇒ 不标,跟局域网直连一样算 web。
-    try { init.headers = headers; req = new Request(url.toString(), init); if (deps.client !== 'web') markAppRequest(req) }
+    try { init.headers = headers; req = new Request(url.toString(), init); if (deps.client !== 'web') markAppRequest(req, deps.build) }
     catch { sendMsg({ t: 'err', rid: m.rid, code: 'bad_request' }); return }
     let res: Response
     let bytes: Uint8Array
@@ -151,6 +155,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
       sendMsg({ t: 'err', rid: m.rid, code: 'internal' })
       return
     }
+    if(m.method.toUpperCase()==='GET'&&!checkToken())return
     const resHeaders: Record<string, string> = {}
     res.headers.forEach((v, k) => { resHeaders[k.toLowerCase()] = v })
     const text = isTextContentType(res.headers.get('content-type'))
@@ -169,7 +174,10 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
   }
 
   function onSub(m: SubMsgT): void {
+    if(!deps.device){sendMsg({t:'err',sid:m.sid,code:'topic_not_allowed'});return}
     if (!deps.events) { sendMsg({ t: 'err', sid: m.sid, code: 'subscriptions_unavailable' }); return }
+    const topicOwner = m.topic === 'topics' ? deps.topicsScope?.() : undefined
+    if (m.topic === 'topics' && !topicOwner) { sendMsg({ t: 'err', sid: m.sid, code: 'topic_not_allowed' }); return }
     if (!phoneTopicAllowed(m.topic)) { sendMsg({ t: 'err', sid: m.sid, code: 'topic_not_allowed' }); return }
     if (!subs.has(m.sid) && subs.size >= MAX_SUBS_PER_STREAM) { sendMsg({ t: 'err', sid: m.sid, code: 'too_many_subscriptions' }); return }
     unsubscribe(m.sid)                                   // 同 sid ⇒ 替换
@@ -178,6 +186,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     entry.unsub = deps.events.subscribe(m.topic, m.since, (ev) => {
       if (dead || subs.get(m.sid) !== entry) throw new Error('stale subscription')   // 抛 ⇒ 集线器只摘这一个
       if (!checkToken()) return
+      if (m.topic === 'topics' && deps.topicsScope?.() !== topicOwner) { unsubscribe(m.sid); sendMsg({ t: 'err', sid: m.sid, code: 'topic_not_allowed' }); return }
       sendMsg({ t: 'ev', sid: m.sid, epoch: ev.epoch, seq: ev.seq, data: ev.data })
     })
     // subscribe 里同步发生的撤销来不及拿到 unsub —— 补退。

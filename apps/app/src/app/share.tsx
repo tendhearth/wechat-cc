@@ -1,6 +1,8 @@
-import { useRouter } from 'expo-router'
+import { useBackendCtx } from '../state/BackendProvider'
+import { useQuery } from '../state/hooks'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { ScrollView, View } from 'react-native'
+import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -9,7 +11,6 @@ import type { ImageCheck, PickedImage } from '../state/image-upload'
 import { useSession } from '../state/session'
 import { clearShare, getShare, subscribeShare } from '../state/share-inbox'
 import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
 import { ImageTray } from '../ui/ImageTray'
 import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
@@ -24,6 +25,9 @@ export default function Share() {
   const lang = useLang()
   const router = useRouter()
   const session = useSession()
+  const { matter } = useLocalSearchParams<{ matter?: string }>()
+  const { backend } = useBackendCtx()
+  const target = useQuery(`share-target:${matter ?? ''}`, l => backend.matter(matter!, l), { enabled: !!matter, refreshOnMount: true })
   const pending = useSyncExternalStore(subscribeShare, getShare)
   const draft = pending?.draft
   const [images, setImages] = useState<PickedImage[]>([])
@@ -55,6 +59,11 @@ export default function Share() {
     router.replace(href)
   }
 
+  const supplement = () => {
+    if (!draft || !matter || !target.fresh) return
+    setDraft(matter, mergeDraftText(getDraft(matter), draft.text)); putDraftImages(matter, images)
+    clearShare(); router.replace(`/compose?matter=${encodeURIComponent(matter)}`)
+  }
   const gate = shareGate(session)
   // 图还在读 ⇒ 先等;读完一张都没成、又没有字 ⇒ 两个去处都不亮(只剩「算了」)
   const usable = !!draft && !reading && (!!draft.text.trim() || images.length > 0)
@@ -73,15 +82,18 @@ export default function Share() {
         ) : (
           <>
             {draft.text.trim() ? (
-              <Card testID="share-text">
+              <View testID="share-text" style={{ paddingVertical: space.m }}>
                 <Txt role="bubble" content="user" numberOfLines={12} selectable>{draft.text}</Txt>
-              </Card>
+              </View>
             ) : null}
             <ImageTray testID="share-images" images={images} lang={lang} onRemove={id => setImages(cur => cur.filter(i => i.id !== id))} />
             {reading ? <Txt testID="share-reading" role="meta" tone="inkSoft">{t(lang, 'progress.loading')}</Txt> : null}
             {notes.map(n => <Txt key={n} testID="share-note" role="meta" tone="inkSoft">{n}</Txt>)}
           </>
         )}
+        {gate === 'ready' && draft ? <View style={{ gap: space.m }}>
+          {matter ? <Button testID="share-supplement" kind="primary" label={`${lang === 'zh-Hans' ? '补充给这件事' : 'Add to this work'}${target.data ? ` · ${target.data.matter.title}` : ''}`} disabled={!usable || !target.fresh} onPress={supplement} /> : <Button testID="share-existing" kind="secondary" label={lang === 'zh-Hans' ? '补充给已有事项' : 'Add to existing work'} disabled={!usable} onPress={() => router.push('/chat-search?scope=work&share=1')} />}
+        </View> : null}
         {gate === 'needsPair' ? (
           <View testID="share-needs-pair" style={{ gap: space.m }}>
             <Txt role="item" accessibilityRole="header">{t(lang, 'share.needsPairTitle')}</Txt>
@@ -96,7 +108,9 @@ export default function Share() {
             <Button kind="secondary" testID="share-to-matter" label={t(lang, 'share.toMatter')} onPress={() => choose('matter')} disabled={!usable} />
           </View>
         ) : null}
-        <Button kind="secondary" testID="share-dismiss" label={t(lang, 'share.dismiss')} onPress={dismiss} />
+        <Pressable testID="share-dismiss" accessibilityRole="button" accessibilityLabel={t(lang, 'share.dismiss')} onPress={dismiss} style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+          <Txt role="body" tone="inkSoft">{t(lang, 'share.dismiss')}</Txt>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   )

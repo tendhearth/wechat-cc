@@ -1,7 +1,11 @@
 // @ts-check
 // now-page.js — 「此刻」页(spec 2026-10-01 §6.3):问候、CC(明暗来自 presence)、最近一句真话的气泡、等你的事、home/chat 两态。
 import { greetingFor, ccPresence, waitingRows, waitingHeader, ccBubblePreview } from './now-home.js'
+import { mountNowHero } from './now-hero.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
+import { icon } from './icons.js'
+import { HOME_GROUP_WORDS } from '../generated/status-table.js'
+import { statusGlyphHtml } from './matter-status.js'
 
 const AGENTS = createAgentAvatars()
 
@@ -13,24 +17,44 @@ function when(at, now) {
   return d.toDateString() === now.toDateString() ? hm : `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
 }
 
+
+// 动作文字保留在按钮的可访问名称中;视觉上只留本地箭头,让请求原文本身成为重点。
+/** @param {HTMLElement} go @param {string} label */
+function requestArrow(go, label) {
+  const purpose = document.createElement('span'); purpose.className = 'now-sr'; purpose.textContent = `${label} ›`
+  go.append(purpose)
+  go.insertAdjacentHTML('beforeend', icon('arrow-left-02', { size: 16, className: 'now-request-arrow' }))
+}
+
 /**
  * onResolveTerminal:终端里等批准的那一行点开小窗后按了「允许 / 拒绝」(2026-10-14)。缺席 ⇒ 行不能点。
  * 返回 true = 拍板了;false = 那一项已经不在(微信 / 桌宠刚拍过、过期);抛错 = 没送出去。
- * @param {{root:HTMLElement,presencePoller:{subscribe:(cb:(p:any)=>void)=>()=>void},onOpenTask:(id:string)=>unknown,onResolveTerminal?:(hash:string,decision:'allow'|'deny')=>Promise<boolean>,onModeChange?:(m:'home'|'chat')=>void,now?:()=>Date}} o
+ * onOpenAll:「全部 →」(原来的一起做那一页成了「全部」:按项目列出所有的事 + 详情,设计稿 2026-10-31 U4)。
+ * @param {{root:HTMLElement,presencePoller:{subscribe:(cb:(p:any)=>void)=>()=>void},onOpenTask:(id:string)=>unknown,onOpenAll?:()=>void,onResolveTerminal?:(hash:string,decision:'allow'|'deny')=>Promise<boolean>,onModeChange?:(m:'home'|'chat')=>void,now?:()=>Date}} o
  */
-export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTerminal, onModeChange, now = () => new Date() }) {
+export function mountNowPage({ root, presencePoller, onOpenTask, onOpenAll, onResolveTerminal, onModeChange, now = () => new Date() }) {
   const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (root.querySelector(`#${id}`))
   // 问候随钟点变:挂载、presence 每一拍、切 home/chat 都重算(textContent 同值不动 DOM)。
-  const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el.textContent !== g) el.textContent = g }
+  const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el && el.textContent !== g) el.textContent = g }
   greet()
-  const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); greet() })
+  const hero = mountNowHero({ root, button: $('now-cc') })
+  const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); hero.setPresence(p); greet() })
   /** @param {'home'|'chat'} m */
-  function setMode(m) { root.dataset.now = m; $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
+  function setMode(m) { if (root.dataset.conversation === 'single') m = 'chat'; root.dataset.now = m; if ($('now-back')) $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
   const toChat = () => setMode('chat')
-  $('now-cc-bubble').addEventListener('click', toChat)
+  $('now-cc-bubble')?.addEventListener('click', toChat)
   $('now-cc').addEventListener('click', toChat)
-  $('now-back').addEventListener('click', () => setMode('home'))
+  $('now-back')?.addEventListener('click', () => setMode('home'))
   const list = $('now-waiting-list')
+  // 在做 / 带回来的(home-list.js 算好的行):一件事的行整行打开它;终端会话只看不点。
+  for (const key of /** @type {const} */ (['working', 'back'])) {
+    root.querySelector(`#now-group-${key}-list`)?.addEventListener('click', e => {
+      const row = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (e.target).closest('button.now-row[data-task-id]'))
+      if (row?.dataset.taskId) void onOpenTask(row.dataset.taskId)
+    })
+  }
+  const allLink = /** @type {HTMLButtonElement|null} */ (root.querySelector('#now-all'))
+  if (allLink) { allLink.textContent = '全部 →'; allLink.addEventListener('click', () => onOpenAll?.()) }
   /** @type {any} */ let attention = null
   /** @type {import('./terminal-waiting.js').TerminalRow[]} */ let terminal = []
   // 按下去之后到下一拍列表把它收走之前,别让 3 秒一次的重绘把「看清楚」又放出来(hash → 行上那句话;'' = 正在送)。
@@ -42,7 +66,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     const row = /** @type {HTMLElement|null} */ (target.closest('.now-waiting-row'))
     if (row?.dataset.taskId) void onOpenTask(row.dataset.taskId)
   })
-  // 终端那一行只给「看清楚 ›」(与工作台行一样一个动作);点开一个小窗看清命令,再「允许 / 拒绝」(2026-10-16)。
+  // 终端行与工作台行一样只有一个打开动作;点开小窗看清命令,再「允许 / 拒绝」。
   /** @type {{dialog:HTMLDialogElement,hash:string}|null} */ let decideView = null
   /** @param {string} hash */
   function openDecide(hash) {
@@ -116,7 +140,10 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     const canDecide = Boolean(r.hash && onResolveTerminal && done === undefined)
     const box = document.createElement(canDecide ? 'button' : 'div')
     box.className = 'now-waiting-row now-terminal-row'
-    if (canDecide && r.hash) { /** @type {HTMLButtonElement} */ (box).type = 'button'; box.dataset.hash = r.hash }
+    if (canDecide && r.hash) {
+      /** @type {HTMLButtonElement} */ (box).type = 'button'; box.dataset.hash = r.hash
+      box.title = `看清楚：${[r.title, r.detail, r.source].filter(Boolean).join(' · ')}`
+    }
     const text = document.createElement('div')
     const t = document.createElement('p'); t.className = 't'; t.textContent = r.title
     const d = document.createElement('p'); d.className = 'd'; d.textContent = r.detail
@@ -125,7 +152,8 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     const who = document.createElement('span'); who.className = 'now-terminal-agent'
     who.innerHTML = AGENTS.agentAvatarsHtml([r.agent], { cls: 'now-agents', nameOf: () => r.source })
     const go = document.createElement('span'); go.className = 'go'
-    go.textContent = canDecide ? '看清楚 ›' : done === '' ? '正在送…' : done ?? (r.hash ? '' : '回终端处理')
+    if (canDecide) requestArrow(go, '看清楚')
+    else go.textContent = done === '' ? '正在送…' : done ?? (r.hash ? '' : '回终端处理')
     if (done !== undefined) go.setAttribute('aria-live', 'polite')
     box.append(text, who, go); li.append(box)
     return li
@@ -135,25 +163,65 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     const head = waitingHeader(attention, terminal.length)
     const box = $('now-waiting')
     box.hidden = head.hidden
-    if (head.unknown) box.dataset.state = 'unknown'; else delete box.dataset.state
-    $('now-waiting-title').textContent = head.title
+    box.setAttribute('aria-labelledby', 'now-waiting-title')
+    if (attention?.stale) box.dataset.state = head.unknown ? 'unknown' : 'partial'; else delete box.dataset.state
+    const heading = $('now-waiting-title')
+    heading.textContent = head.title
+    // 普通计数仍可按标题导航;读不到时必须把不确定性留在眼前。
+    heading.classList.toggle('now-sr', root.dataset.conversation !== 'single' && !attention?.stale)
     list.replaceChildren(...rows.map(r => {
       const li = document.createElement('li')
       const btn = document.createElement('button')
       btn.type = 'button'; btn.className = 'now-waiting-row'; btn.dataset.taskId = r.id
+      btn.title = `${r.go}：${[r.title, r.detail].filter(Boolean).join(' · ')}`
       const text = document.createElement('div')
       const t = document.createElement('p'); t.className = 't'; t.textContent = r.title
       const d = document.createElement('p'); d.className = 'd'; d.textContent = r.detail
       text.append(t, d)
-      const go = document.createElement('span'); go.className = 'go'; go.textContent = `${r.go} ›`
+      const go = document.createElement('span'); go.className = 'go'; requestArrow(go, r.go)
       btn.append(text, go); li.append(btn); return li
     }), ...terminal.map(terminalItem))
   }
+  /** @param {import('./home-list.js').HomeRow} r */
+  function homeItem(r) {
+    const li = document.createElement('li')
+    const box = document.createElement(r.source === 'task' ? 'button' : 'div')
+    box.className = 'now-row'
+    box.dataset.status = r.status
+    if (r.source === 'task') { /** @type {HTMLButtonElement} */ (box).type = 'button'; box.dataset.taskId = r.id }
+    else box.dataset.sessionId = r.id
+    const text = document.createElement('div')
+    const t = document.createElement('p'); t.className = 't'; t.textContent = r.title; text.append(t)
+    if (r.caption) { const d = document.createElement('p'); d.className = 'd'; d.textContent = r.caption; text.append(d) }
+    if (r.detail) { const x = document.createElement('p'); x.className = 'x'; x.textContent = r.detail; text.append(x) }
+    // 记号与「全部」、详情同一个(matter-status.js):状态表的图标与色调。
+    box.insertAdjacentHTML('afterbegin', statusGlyphHtml(r.status))
+    const who = document.createElement('span'); who.className = 'now-row-agents'
+    who.innerHTML = AGENTS.agentAvatarsHtml(r.agents, { cls: 'now-agents', nameOf: id => r.agentNames?.[id] })
+    box.append(text, who); li.append(box)
+    return li
+  }
+  /** @param {'working'|'back'} key @param {import('./home-list.js').HomeRow[]} rows */
+  function renderGroup(key, rows) {
+    const box = /** @type {HTMLElement|null} */ (root.querySelector(`#now-group-${key}`))
+    if (!box) return
+    box.hidden = rows.length === 0
+    box.setAttribute('aria-labelledby', `now-group-${key}-title`)
+    $(`now-group-${key}-title`).textContent = HOME_GROUP_WORDS[key]
+    $(`now-group-${key}-list`).replaceChildren(...rows.map(homeItem))
+  }
   return {
     setMode,
+    /** 在做 / 带回来的两组(home-list.js 的 homeGroups)。 @param {{working:import('./home-list.js').HomeRow[],back:import('./home-list.js').HomeRow[],moreCount:number}} g */
+    setHome(g) {
+      renderGroup('working', g.working)
+      renderGroup('back', g.back)
+      if (allLink) allLink.textContent = g.moreCount > 0 ? `全部 · 还有 ${g.moreCount} 件更早的 →` : '全部 →'
+    },
     /** @param {{text:string,at:number|null}|null} line */
     setLatestLine(line) {
       const b = $('now-cc-bubble')
+      if (!b) return
       b.hidden = !line
       if (!line) return
       const text = /** @type {HTMLElement} */ (b.querySelector('.now-bubble-text'))
@@ -166,15 +234,18 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
       time.textContent = line.at === null ? '' : when(line.at, now())
     },
     /** @param {any} state */
-    setAttention(state) { attention = state; renderWaiting() },
+    setAttention(state) { attention = state; hero.setAttention(state); renderWaiting() },
+    /** @param {import('./converse.js').ConverseMsg[]} msgs */
+    setConversationSnapshot(msgs) { hero.setConverse(msgs) },
     /** 终端里等批准的会话(terminal-waiting.js 的行),接在工作台的等你行后面。 @param {import('./terminal-waiting.js').TerminalRow[]} rows */
     setTerminal(rows) {
       terminal = rows
+      hero.setTerminal(rows)
       for (const h of [...decided.keys()]) if (!rows.some(r => r.hash === h)) decided.delete(h)
       // 小窗开着时那一项已经不在(微信 / 桌宠刚拍过)⇒ 关掉,别留一个按了也白按的窗。
       if (decideView && !rows.some(r => r.hash === decideView?.hash)) decideView.dialog.close()
       renderWaiting()
     },
-    destroy() { unsub(); decideView?.dialog.close() },
+    destroy() { unsub(); hero.destroy(); decideView?.dialog.close() },
   }
 }

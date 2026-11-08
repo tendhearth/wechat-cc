@@ -10,6 +10,9 @@ import type { WiredDeps } from '../../daemon/wiring'
 import type { GuardRuntime } from '../../daemon/guard/runtime'
 import type { CliUpgradeModule } from '../../daemon/cli-upgrade/start'
 import { ownerChatIdOf } from '../../daemon/owner-chat'
+import { makeThreadsStore } from '../../lib/threads-store'
+import { makeMatterTopics } from '../../daemon/threads/matter-topics'
+import { makeMatterEventRefs } from '../../adapters/store/matter-event-refs'
 import { WECHAT_PORTS as W, type WechatPermissions } from '../../ports/wechat'
 import type { TerminalFeature } from '../terminal'
 import type { JobsFeature } from '../jobs'
@@ -23,12 +26,16 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
     needs: ['bootstrap', 'terminal', 'jobs', W.permissions, 'internal-api', 'network-gate', 'report-outbox'],
     lazy: ['cli-upgrade'],
     resolveAdminChatId: () => ownerChatIdOf(stateDir),
+    // 桌面 app 开着没有 / 在电脑上看过哪件(S3b):一件事的提议读
+    desktop: { notePoll: (progress) => f.desktopSurface.notePoll(progress), seen: (id) => f.desktopSurface.noteSeen(id) },
     deps: (ctx) => {
       const boot = ctx.get<Bootstrap>('bootstrap')
       const cli = ctx.get<TerminalFeature>('terminal')
       const jobs = ctx.get<JobsFeature>('jobs')
       const wxPerm = ctx.get<WechatPermissions>(W.permissions)
       const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
+      // 话题 T3:派活时从话题拣简报、做完把结论写回话题(只给主人的任务)
+      const matterTopics = makeMatterTopics({ db, threads: makeThreadsStore(db), ownerChatId: () => ownerChatIdOf(stateDir), log: (t, l) => log(t, l) })
       return {
         db, stateDir, boot, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
         onTurnError: (providerId, code, message) => {
@@ -37,6 +44,11 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
           f.providerRefusals.onTurn({ provider: providerId, outcome: 'error', ...(code ? { errorCode: code } : {}), endedAt: Date.now() })
         },
         onTurnCompleted: (providerId) => f.providerRefusals.onTurn({ provider: providerId, outcome: 'completed', endedAt: Date.now() }),
+        topics: {
+          brief: (t) => matterTopics.briefForMatter(t),
+          // 晚一拍再写:这一轮最后那条回话可能还在落 MatterLog 的路上
+          turnCompleted: (taskId) => { const h = setTimeout(() => { void matterTopics.writeBack(taskId) }, 1_000); (h as { unref?: () => void }).unref?.() },
+        },
         providerRefusal: (providerId) => f.providerRefusals.get(providerId),
         executionConflict: (path, providerId, nativeId) => boot.sessionManager.hasProjectConflict(path) ||
           (!!nativeId && Object.values(boot.sessionStore.all()).some(s => s.provider === providerId && s.session_id === nativeId)) ||
@@ -52,8 +64,10 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
  * 工作台的微信通知 / 成果:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
  * **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
  */
-export function workbenchNotificationsModule(): DaemonModule {
-  return workbenchNotificationsFeature({ needs: ['workbench', 'wired', W.workbench], speech: (ctx) => ctx.get<WiredDeps>('wired').speech })
+export function workbenchNotificationsModule(f: Pick<Foundation, 'db'>): DaemonModule {
+  // 同一个事件的键(S3a):run 终态的通知带那个 run 的最后一轮,和 App「做完了」推送并成账上一行
+  const refs = makeMatterEventRefs(f.db)
+  return workbenchNotificationsFeature({ needs: ['workbench', 'wired', W.workbench], speech: (ctx) => ctx.get<WiredDeps>('wired').speech, turnRefOfRun: (taskId, runId) => refs.lastTurnOfRun(taskId, runId) })
 }
 export function workbenchArtifactsModule(): DaemonModule {
   return workbenchArtifactsFeature({ needs: ['workbench', W.workbench] })

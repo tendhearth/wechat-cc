@@ -1,3 +1,4 @@
+import { queuePostcardProposal } from './postcard-proposal'
 import { makeTellOwner } from './social-tell'
 import { overviewForOthersFromTable } from '../../adapters/store/memory-overview'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -265,16 +266,12 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         postcard: {
           sanitize: (svg) => safeSvg(svg),
           attach: (rowId, svg) => makeJournal(deps.db).attachImage(rowId, svg),
-          send: async (svg) => {
-            const op = resolveOperatorChatId()
-            if (!op || !deps.sendFile) return
-            const speech = deps.speech?.()
-            if (!speech) { deps.log('SOCIAL', 'postcard not sent: speech policy not wired yet'); return }
-            // 明信片也问门(串门见闻那一类:别烦我 / 免打扰 ⇒ 这张不发微信,背包里照样有)
-            const sendFile = deps.sendFile
-            await speech.say({ kind: 'social_story', chatId: op }, async () => {
-              const png = await rasterizeSvgDarwin(svg, join(deps.stateDir, 'companion', 'postcards'))
-              if (png) await sendFile(op, png)
+          send: async (svg, story = '', ref) => {
+            const op = resolveOperatorChatId(), speech = deps.speech?.()
+            if (!op || !speech) return
+            queuePostcardProposal({ speech, recipient: op, story, ref,
+              raster: () => rasterizeSvgDarwin(svg, join(deps.stateDir, 'companion', 'postcards')),
+              sendFile: deps.sendFile, log: deps.log,
             })
           },
         },

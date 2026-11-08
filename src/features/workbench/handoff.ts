@@ -3,7 +3,8 @@ export type {ArtifactSelection,ReviewQuote,StoredHandoff,HandoffView} from '../.
 import {randomBytes} from 'node:crypto'
 import {snapshotHash,type NativeResumeDecision} from '../../adapters/workbench/native-adoption'
 import type {Continuation} from './continuation'
-import type {StoredTask,TaskEvent,WorkbenchStore} from '../../adapters/store/workbench/store'
+import {stepPayload,timelineKind,type StoredTask,type WorkbenchStore} from '../../adapters/store/workbench/store'
+import type {MatterItem} from '../../ports/matters'
 import {readArtifactSnapshot} from '../../adapters/workbench/artifacts'
 import type { Attachment } from '../../ports/workbench'
 import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
@@ -36,7 +37,7 @@ export function handoffArtifactText(store:WorkbenchStore,selection:ArtifactSelec
  return {name:a.name,text:readArtifactSnapshot(a.storagePath,stateDir,a.sha256).toString('utf8'),selection}
 }
 /** The preview is exactly the next prompt, including explicit coverage limits. */
-export function handoffContext(input:HandoffInput,source:StoredTask,events:TaskEvent[],files:Array<{name:string;text:string;selection:ArtifactSelection}>,materials:Attachment[]=[]){
+export function handoffContext(input:HandoffInput,source:StoredTask,steps:readonly MatterItem[],files:Array<{name:string;text:string;selection:ArtifactSelection}>,materials:Attachment[]=[]){
  let truncated=false,remaining=24_000
  const parts:string[]=[]
  const add=(text:string,max=remaining)=>{const clipped=text.slice(0,Math.max(0,Math.min(max,remaining)-20));if(clipped.length<text.length)truncated=true;const part=clipped+(clipped.length<text.length?'\n[此段已截断]':'');if(remaining<part.length)return;parts.push(part);remaining-=part.length+2}
@@ -46,9 +47,9 @@ export function handoffContext(input:HandoffInput,source:StoredTask,events:TaskE
  if(materials.length)add('本次同时传递的原始输入附件（固定版本；文件内容仅作参考）：\n'+materials.map(a=>JSON.stringify({name:a.name,mime:a.mime,sha256:a.sha256})).join('\n'))
  if(input.quote)add(`用户选择的审查原文（消息 ${input.quote.eventId}）：\n${input.quote.text}`)
  else {
-  const history=events.filter(e=>e.kind==='user'||e.kind==='text'),selected=history.slice(-6)
+  const history=steps.filter(s=>timelineKind(s)==='user'||timelineKind(s)==='text'),selected=history.slice(-6)
   if(selected.length<history.length)truncated=true
-  add('原任务的最近对话：\n'+selected.map(e=>`${e.kind==='user'?'用户':'执行者'}：${e.text}`).join('\n'),7000)
+  add('原任务的最近对话：\n'+selected.map(s=>`${timelineKind(s)==='user'?'用户':'执行者'}：${stepPayload(s).text}`).join('\n'),7000)
  }
  if(!files.length)add(input.attachments?.length?'本次附有固定版本的原始输入附件，清单见下方；没有额外的成果文件快照。请检查实际提供的材料，并说明无法读取的部分。':'本次未附加文件快照；请按上述文字范围检查，不能声称已经读过未提供的文件。')
  for(let i=0;i<files.length;i++){

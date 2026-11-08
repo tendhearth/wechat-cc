@@ -7,6 +7,8 @@
  *
  * 这里失败(锁抢不到、库打不开、access.json 坏了)⇒ 抛;`undo` 里登记的按倒序放掉(main.ts 的 bootDaemon 负责)。
  */
+import { makeSpeechLedgerStore } from './speech/ledger-store'
+import { makeDesktopSurface } from './desktop-surface'
 import { makeMemoryFactsStore } from '../adapters/store/memory-facts'
 import { join } from 'node:path'
 import { acquireInstanceLockWaitingForShutdown, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS, LOCK_WAIT_FOR_SHUTDOWN_MS } from './single-instance'
@@ -17,7 +19,9 @@ import { loadAccess, AccessConfigCorruptError } from '../lib/access'
 import { consumePreviousRunEvidence, peekCleanShutdown } from '../lib/restart-markers'
 import { makeMemoryFS } from '../adapters/store/memory-fs'
 import { makeConversationStore } from '../adapters/store/conversation-store'
-import { makeTurnRecordStore } from '../adapters/store/turn-record-store'
+import { makeChatTurnRecords } from '../adapters/store/chat-turn-records'
+import { makeCcActs } from '../adapters/store/cc-acts'
+import { makeMatterLog } from '../adapters/store/matter-log'
 import { loadAllAccounts, type IlinkAccount } from './ilink-glue'
 import { makeMessagesStore } from '../lib/messages-store'
 import { makeJobsStore } from '../adapters/store/scheduled-jobs-store'
@@ -25,6 +29,7 @@ import { makeMatterStore } from '../adapters/store/matters-store'
 import { makeChatPrefs } from './chat-prefs'
 import { makeOutboundTaps } from './outbound-taps'
 import { makePetSignals } from './pet-signals'
+import { makePresencePulse } from './presence-pulse'
 import { makeJournal } from '../adapters/store/journal-store'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from '../features/companion'
@@ -118,6 +123,8 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
   // A second instance would have a stale in-memory cache: the store's
   // write-through only protects its own writes, not cross-instance reads.
   const chatPrefs = makeChatPrefs(stateDir)
+  // 「在场变了」(S5):pet-signals 与待决权限登记处写了就戳,桌宠订的 presence 主题据此重算。
+  const presencePulse = makePresencePulse()
 
   return {
     stateDir,
@@ -131,7 +138,14 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     voidedCards,
     // Per-turn observability store — written by the coordinator's recordTurn
     // (via bootstrap onTurnRecord) and read by internal-api GET /v1/turns.
-    turnRecordStore: makeTurnRecordStore(db),
+    // 对话的回合记录从这件对话的轮读(M3b);turn_records 已删(M3c,v99)
+    turnRecordStore: makeChatTurnRecords(db),
+    // CC 自己做的事(M5):每个发起方一件 act、每做一次一轮;开机先把上一次没收的轮记中断。发起方在 M5b 逐个接上。
+    ccActs: (() => {
+      const acts = makeCcActs({ db, log: makeMatterLog(db), matters: makeMatterStore(db), onError: (what, err) => log('CC_ACTS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) })
+      try { acts.interruptAll() } catch (err) { log('CC_ACTS', `interruptAll failed: ${err instanceof Error ? err.message : String(err)}`) }
+      return acts
+    })(),
     // 执行者「真被拒着」(地区不可用):只看真回合,一轮真完成才清(provider-refusals.ts)
     providerRefusals: makeProviderRefusals({ stateDir, log }),
     conversationStore,
@@ -144,25 +158,35 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     matters: makeMatterStore(db),
     chatPrefs,
     // pushTick claims/reads it; the inbound path resets the no-reply streak on every message.
-    careLedger: makeCareLedger(stateDir),
+    careLedger: makeCareLedger(stateDir, { lastInitiativeAt: makeSpeechLedgerStore(db).lastInitiativeAt }),
     // reply-sink registry: the POST /v1/wechat/reply route captures into it when a sink is open;
     // the companion-converse closure opens/closes it around a real turn.
     replySinks: makeReplySinks(),
     // 打猎战利品(2026-09-03):旁听而非改道,见 outbound-taps.ts。开 tap 的是打猎那一拍,往里写的是发送路径。
     outboundTaps: makeOutboundTaps(),
     // 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1):纯内存,重启就忘 —— 描述的本来就只是当下。
-    petSignals: makePetSignals(),
+    petSignals: makePetSignals(undefined, () => presencePulse.poke()),
+    presencePulse,
     // 伙伴日志(背包,v36 起):打猎、串门见闻、明信片、回忆都进这一张表;桌宠 / 手机首屏 / 设置面板 / 微信「背包」读它。
     // 读写路由归日志模块(src/features/journal)。
     journal: makeJournal(db),
     // 子系统状态的汇总处:模块容器整组交给它收养,/v1/health.subsystems 读它。
     sup: new SubsystemSupervisor((t, l) => log(t, l)),
+    // 桌面 app 开着没有(S3b):工作台的 attention 路由记一笔,一件事的提议读它决定桌面那一级由谁弹
+    desktopSurface: makeDesktopSurface(),
   }
 }
 
 export type Foundation = Awaited<ReturnType<typeof openFoundation>> & {
   dangerously: boolean
   schedulerIntervalMs?: number
+  /** 测试缝:「待说」补说那一拍的间隔(main.ts BootDaemonOpts.speechFlushIntervalMs)。 */
+  speechFlushIntervalMs?: number
+  /** 测试缝(S3b):本机空闲秒数的探针(缺省 lib/machine-idle)与「先只在桌面提示」之后推 App 的等待(缺省 10 分钟)。 */
+  machineIdle?: () => Promise<number | null>
+  escalateAfterMs?: number
+  /** 测试缝(S3b):daemon 自己弹的桌面系统通知(缺省 lib/desktop-notify;测试里不真弹)。 */
+  desktopNotify?: (title: string, body: string) => Promise<boolean>
   /** daemon 自己要求的优雅重启(运维 POST /v1/daemon/restart、空闲加载新代码 ……)。 */
   requestRestart(reason: string): void
 }

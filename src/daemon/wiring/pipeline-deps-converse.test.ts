@@ -1,3 +1,5 @@
+import {makeOwnerChatFileReader,ownerChatReadingEvent} from './owner-chat-reading'
+import {fileChunkResponse} from '../../features/phone/mobile-chat'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -368,6 +370,11 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     await vi.waitFor(async () => {
       const rows = await makeMessagesStore(db).listRange('owner_chat', { limit: 10 })
       expect(rows.find(m => m.direction === 'in')?.text).toBe('[图片 ×2]')
+      const saved=rows.find(m=>m.direction==='in')!
+      expect(ownerChatReadingEvent(saved,join(stateDir,'inbox')).replyExtras?.attachments).toHaveLength(2)
+      const reader=makeOwnerChatFileReader({ownerChatId:()=> 'owner_chat',inboxDir:join(stateDir,'inbox'),readChunk:fileChunkResponse,message:(chat,id)=>makeMessagesStore(db).get(chat,id)})
+      const restored=await reader({id:saved.id,i:0,offset:0})
+      expect(restored.status).toBe(200);expect(Buffer.from(restored.body.contentBase64 as string,'base64')).toEqual(Buffer.from(png))
     })
   })
 

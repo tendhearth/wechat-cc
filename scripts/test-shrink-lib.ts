@@ -399,10 +399,22 @@ export function unexplained(files: string[], sectionText: string): string[] {
   })
 }
 
-export type PrInfo = { title: string; body: string; headRef: string }
+/** baseRef:PR 要合进的分支(不带 origin/)。 */
+export type PrInfo = { title: string; body: string; headRef: string; baseRef?: string }
 export type Verdict = { ok: boolean; messages: string[] }
 
+/**
+ * dev → master 的发版 PR,diff 是上次发版以来 dev 的累计:里面每个 PR 进 dev 时都过过这道检查,
+ * 再查一遍只会把两周的删减全列出来(1.7.8 是 102 个文件),逼人机械地抄一遍「随 #NNN」。所以它不查。
+ * 只认 dev → master:别的分支直接开进 master 照查,这里不是绕开检查的口子。
+ */
+export const RELEASE_BASE = 'master'
+export const RELEASE_HEAD = 'dev'
+
 export function judge(findings: Finding[], pr: PrInfo): Verdict {
+  if (pr.baseRef === RELEASE_BASE && pr.headRef === RELEASE_HEAD) {
+    return { ok: true, messages: [`✓ ${RELEASE_HEAD} → ${RELEASE_BASE} 的发版 PR:里面每个 PR 进 ${RELEASE_HEAD} 时都查过,这里不再查。`] }
+  }
   const messages: string[] = []
   let ok = true
   const files = [...new Set(findings.map(f => f.file))]

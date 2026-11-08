@@ -14,7 +14,7 @@ type Reply = { status: number; json: unknown } | Error | typeof HANG
 type Handler = (req: { path: string; body: any }) => Reply
 
 /** 假协议客户端:按「METHOD /path」回夹具;每次 makeClient 都是一个新客户端(模拟重连 / 前后台)。 */
-function harness(routes: Record<string, Handler | Reply> = {}) {
+function harness(routes: Record<string, Handler | Reply> = {}, family?: 'v1', capabilities:{routes?:'v1';topics?:'v1'}={}) {
   const clients: Array<{ opts: ClientOpts; subs: Map<string, (d: unknown) => void>; closed: boolean; hanging: Array<(e: Error) => void> }> = []
   const reqs: Array<{ key: string; path: string; body: any; retry?: boolean; inHook: boolean }> = []
   /** 正在协议客户端的 onStatus 钩子里:这时回头调客户端可能开出第二条连接(Task 1 的已知坑)。 */
@@ -25,7 +25,10 @@ function harness(routes: Record<string, Handler | Reply> = {}) {
     clients.push(me)
     return {
       version: () => 2,
+      routes: () => family,
+      capabilities:()=>capabilities,
       async request(r: ProtocolRequest) {
+        r = { ...r, ...r.forRoutes?.(family) }
         const key = `${r.method} ${r.path.split('?')[0]}`
         const body = typeof r.body === 'string' ? JSON.parse(r.body) : undefined
         reqs.push({ key, path: r.path, body, retry: r.retry, inHook })
@@ -48,7 +51,7 @@ function harness(routes: Record<string, Handler | Reply> = {}) {
   }
   const last = () => clients.at(-1)!
   const logs: string[] = []
-  const b = makeLiveBackend({ open: () => { throw new Error('unused') }, token: 'd-secret-token', makeClient, now: () => 1_000_000, log: l => logs.push(l) })
+  const b = makeLiveBackend({ open: () => { throw new Error('unused') }, token: 'd-secret-token', build: '4', makeClient, now: () => 1_000_000, log: l => logs.push(l) })
   const status = (s: 'connecting' | 'ready' | 'down' | 'auth_failed') => {
     inHook = true
     try { last().opts.onStatus?.(s) } finally { inHook = false }
@@ -84,6 +87,13 @@ describe('LiveBackend 读', () => {
     expect(await b.changes(ID)).toBeNull()
     expect(await b.entryOptions('en')).toEqual(OPTIONS)
     expect(reqs.map(r => r.path)).toEqual(['/m/api/matters', `/m/api/matter?id=${ID}`, `/m/api/matter/insight?id=${ID}&lang=zh-Hans`, `/m/api/matter/changes?id=${ID}`, '/m/api/entry/options'])
+  })
+  it('「CC 最近在忙」点名 kind=act;daemon 混进别的种类也只留 act;主人的列表不点名', async () => {
+    const act = { ...MATTER, id: 'acc0a001', kind: 'act', act: { who: 'letters' } }
+    const { b, reqs } = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [act, MATTER] }) })
+    expect((await b.ccActs('en')).map(m => m.id)).toEqual(['acc0a001'])
+    await b.matters('en')
+    expect(reqs.map(r => r.path)).toEqual(['/m/api/matters?kind=act', '/m/api/matters'])
   })
   it('逐文件审阅:没问题 / 退回各走自己的路由,带 artifactId;忙 ⇒ busy', async () => {
     const { b, reqs } = harness({
@@ -853,4 +863,82 @@ describe('待办与 CC 画的你(收敛清单 ④,2026-10-21)', () => {
     const shape = harness({ 'GET /m/api/state': ok({ ...STATE, todos: { active: [{ id: 'x' }], settled: [] } }) })
     await expect(shape.b.pocket()).rejects.toMatchObject({ code: 'unknown' })
   })
+})
+
+describe('P3f / M6f compatibility', () => {
+  it.each([undefined, 'v1'] as const)('App reads both route families and old/new payloads: %s', async family => {
+    const prefix = family ? '/v1' : '/m/api'
+    const matter = family ? { ...MATTER, state: 'working', archivedAt: null } : MATTER
+    const h = harness({
+      [`GET ${prefix}/matters`]: ok({ ...(family ? {} : { ok: true }), matters: [matter] }),
+      [`GET ${prefix}/matter`]: ok({ ...(family ? {} : { ok: true }), ...DETAIL, matter }),
+      [`POST ${prefix}/matter/worktree`]: ok({ error: family ? 'script_approval_required' : 'script_needs_computer' }, 428),
+    }, family)
+    expect(h.last().opts.build).toBe('4')
+    expect(await h.b.matters('zh-Hans')).toEqual([matter])
+    expect((await h.b.matter(ID, 'zh-Hans')).matter).toEqual(matter)
+    await expect(h.b.worktreeScript({ id: ID, action: 'run' })).rejects.toMatchObject({ code: 'scripts_unapproved' })
+    expect(h.reqs.map(r => r.key)).toEqual([`GET ${prefix}/matters`, `GET ${prefix}/matter`, `POST ${prefix}/matter/worktree`])
+    h.b.dispose()
+  })
+})
+
+it('v1 keeps list defaults, search projection, say envelope, transcription fields, and todo no-op', async () => {
+  const h = harness({
+    'GET /v1/matters': ok({ matters: [] }),
+    'GET /v1/matter/owner-chat/search': ok({ hits: [{ id: 'h', kind: 'user', text: 'x'.repeat(601), createdAt: 10 }] }),
+    'POST /v1/matter/say': ok({ kind: 'chat', reply: 'hello' }),
+    'POST /v1/companion/transcribe': ok({ ok: true, text: 'hello' }),
+    'POST /v1/knowledge/facts/set_fact_status': ok({ ok: false }),
+  }, 'v1')
+  await h.b.matters('zh-Hans')
+  expect(h.reqs.at(-1)?.path).toBe('/v1/matters?exclude=terminal%2Cact&status=open%2Creplied%2Cdone&limit=50&taskState=1')
+  expect(await h.b.chatSearch('hello')).toEqual([{ id: 'h', role: 'me', text: 'x'.repeat(600), truncated: true, at: 10, source: null }])
+  expect(h.reqs.at(-1)?.path).toBe('/v1/matter/owner-chat/search?q=hello&limit=30')
+  expect(await h.b.say(ID, 'hello', SAY_REQ)).toEqual({ kind: 'chat', reply: 'hello' })
+  expect(await h.b.transcribe({ mime: 'audio/m4a', audioBase64: 'YQ==' })).toBe('hello')
+  expect(h.reqs.at(-1)?.body).toEqual({ mime: 'audio/m4a', audio_b64: 'YQ==' })
+  await expect(h.b.setTodo(1, 'resolved')).resolves.toBeUndefined()
+  h.b.dispose()
+})
+
+describe('T4 topics use the shared v1 schemas and protected device transport', () => {
+  it('lists and reads without opening; explicit opens carry the same idempotency request id', async () => {
+    const topic = { id: 't1', title: '备份', description: '', summary: '', bubbleState: 'closed', lastRecalledAt: null, lastOpenedByOwnerAt: null, activityRevision: 0, matterSummary: { waiting: 0, running: 0, total: 0 } }
+    const empty = { total: 0, nextCursor: null }
+    const h = harness({
+      'GET /v1/memory/topics': ok({ topics: [topic], nextCursor: null, revision: 'r1' }),
+      'GET /v1/memory/topics/detail': ok({ topic, entries: [], matters: [], messages: [], pages: { entries: empty, matters: empty, messages: empty }, revision: 'r1' }),
+      'POST /v1/memory/topics/open': ok({ id: 't1', bubbleState: 'open', revision: 'r2' }),
+    })
+    expect((await h.b.topics({ view: 'recent', limit: 6 })).topics[0]?.bubbleState).toBe('closed')
+    await h.b.topicDetail({ id: 't1' })
+    expect(h.reqs.every(r => r.key.startsWith('GET'))).toBe(true)
+    await h.b.topicOpen('t1', REQ)
+    expect(h.reqs.at(-1)).toMatchObject({ key: 'POST /v1/memory/topics/open', body: { id: 't1', requestId: REQ }, retry: true })
+    const seen: unknown[] = []
+    h.b.subscribe('topics', d => seen.push(d))
+    h.last().subs.get('topics')?.({ revision: 'r2', recentIds: ['t1'], openIds: ['t1'], hasMoreOpen: false })
+    h.last().subs.get('topics')?.({ revision: 7 })
+    expect(seen).toHaveLength(1)
+    h.b.dispose()
+  })
+})
+
+
+it('T5d reads capabilities through protocol and uses shared owner window/work/events/stop contracts',async()=>{
+  const h=harness({
+    'GET /v1/matter/owner-chat/window':ok({messages:[{messageId:'old',kind:'text',text:'original',createdAt:1,source:'wechat'}],anchor:'old',earlier:'old',later:'old'}),
+    'GET /v1/matter/owner-chat/work':ok({references:[],results:[]}),
+    'GET /v1/matter/owner-chat/events':ok({running:{turnId:'turn',runId:null},events:[],cursor:12}),
+    'POST /v1/matter/owner-chat/stop':ok({stopped:true}),
+  },'v1',{routes:'v1',topics:'v1'})
+  h.status('ready');expect(h.b.connection().topics).toBe('v1')
+  expect((await h.b.conversationWindow!({anchor:'old'})).messages[0]?.messageId).toBe('old')
+  expect(await h.b.conversationWork!()).toEqual({references:[],results:[]})
+  expect((await h.b.conversationEvents!(10)).cursor).toBe(12)
+  await h.b.stopConversation!('turn')
+  expect(h.reqs.map(r=>r.path)).toEqual(['/v1/matter/owner-chat/window?anchor=old','/v1/matter/owner-chat/work','/v1/matter/owner-chat/events?since=10','/v1/matter/owner-chat/stop'])
+  expect(h.reqs.at(-1)?.body).toEqual({turnId:'turn'})
+  h.b.dispose()
 })

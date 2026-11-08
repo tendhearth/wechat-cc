@@ -85,7 +85,7 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
   }
   function noteWarnings(running:Active,warnings:string[]) {
     const seen=(running.warned??=new Set())
-    for (const warning of warnings) { if (seen.has(warning)) continue; seen.add(warning); store.addEvent(running.taskId,'system',warning); ctx.hub.touched(running.taskId) }
+    for (const warning of warnings) { if (seen.has(warning)) continue; seen.add(warning); store.addEvent(running.taskId,'system',warning); }
   }
   /** Every turn and final settlement use the same collector and failure semantics. */
   function captureTaskArtifacts(running:Active) {
@@ -99,7 +99,6 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
         store.addEvent(running.taskId,'system',warnings.length?'成果收集已恢复，部分文件仍未收集，请查看具体提示。':'成果收集已恢复，文件已保存，可在成果列表查看。')
         running.collectionFailure=undefined
       }
-      ctx.hub.touched(running.taskId)
     } catch(error) {
       const failure=error instanceof ArtifactSnapshotError?'storage':stage
       const message=failure==='storage'
@@ -110,7 +109,6 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
       try {
         if(running.collectionFailure!==failure)store.addEvent(running.taskId,'system',message)
         running.collectionFailure=failure
-        ctx.hub.touched(running.taskId)
       } catch { /* The task database itself may be unavailable. */ }
     }
   }
@@ -153,8 +151,7 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
         if(!report.files.some(f=>f.kind!=='not_reviewed')&&!(treeChanged&&report.files.length))return
         const seq=(running.reviewSeq??0)+1; running.reviewSeq=seq
         saveArtifactSnapshot(store,running.taskId,{name:`代码变更-${running.identity.slice(0,8)}${seq>1?`-${seq}`:''}.json`,mime:GIT_REVIEW_MIME,bytes:serializeGitReview(report)},ctx.stateDir)
-        ctx.hub.touched(running.taskId)
-      } catch { try { store.addEvent(running.taskId,'system','代码对比未能保存；其他成果仍会单独收集。');ctx.hub.touched(running.taskId) } catch { /* storage unavailable */ } }
+      } catch { try { store.addEvent(running.taskId,'system','代码对比未能保存；其他成果仍会单独收集。');} catch { /* storage unavailable */ } }
     })()
     running.reviewCapture=pending
     void pending.then(()=>{if(running.reviewCapture===pending)running.reviewCapture=undefined},()=>{if(running.reviewCapture===pending)running.reviewCapture=undefined})
@@ -179,7 +176,7 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
       const a=store.artifact(id,artifactId),bytes=readArtifactSnapshot(a.storagePath,ctx.stateDir,a.sha256)
       return {name:a.name,mime:a.mime,size:bytes.length,sha256:a.sha256,contentBase64:bytes.toString('base64')}
   }
-  function approve(id:string,artifactId:string,sha256:string) { artifact(id,artifactId); store.approve(id,artifactId,sha256); ctx.hub.touched(id) }
+  function approve(id:string,artifactId:string,sha256:string) { artifact(id,artifactId); store.approve(id,artifactId,sha256); }
 
   return { collect,collectTurnArtifacts,noteWarnings,captureTaskArtifacts,captureOutputs,captureCodeChanges,retakeBaseline,takeBaseline:(running,signal)=>takeBaselineFor(ctx,running,signal),artifact,approve }
 }

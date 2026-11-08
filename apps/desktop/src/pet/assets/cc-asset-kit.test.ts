@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { resolve, join } from 'node:path'
+import { resolve, join, relative, sep } from 'node:path'
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { inflateSync, deflateSync } from 'node:zlib'
 import { normalizeManifest } from './manifest-loader.js'
 import { resolveAnimation, resolveTransition } from './animation-resolver.js'
@@ -42,9 +43,26 @@ function withPngKit(run: (target: string, next: any, add: (path: string, bytes: 
   const dir = mkdtempSync(join(tmpdir(), 'cc-entity-mask-'))
   try {
     const target = join(dir, 'cc-v1')
-    cpSync(root, target, { recursive: true })
+    // Mutation fixtures exercise one pixel/metadata rule. Use the registered
+    // historical kit here; the complete active motion kit is validated below.
+    cpSync(root, target, { recursive: true, filter: path => {
+      const name = relative(root, path).split(sep).join('/')
+      return !['motion','masks/motion','performance','masks/performance'].some(prefix=>name===prefix||name.startsWith(prefix+'/'))
+    } })
     cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
     const next = structuredClone(raw)
+    if (next.motion?.staticStates) {
+      for (const form of ['lit', 'unlit']) Object.assign(next.forms[form].states, next.motion.staticStates[form])
+      for (const path of Object.keys(next.assets)) if (path.startsWith('motion/') || path.startsWith('masks/motion/')) delete next.assets[path]
+      delete next.motion
+    }
+    // Keep one-pixel mutation fixtures focused on the historical kit. Both
+    // complete active profiles are independently validated against all bytes.
+    if(next.performance){
+      for(const form of ['lit','unlit']) for(const name of Object.keys(next.forms[form].states)) if(name.startsWith('life-'))delete next.forms[form].states[name]
+      for(const path of Object.keys(next.assets))if(path.startsWith('performance/')||path.startsWith('masks/performance/'))delete next.assets[path]
+      delete next.performance
+    }
     const add = (path: string, bytes: Buffer, extra = next.assets[path]) => {
       writeFileSync(join(target, path), bytes)
       next.assets[path] = { ...extra, sha256: createHash('sha256').update(bytes).digest('hex') }
@@ -227,19 +245,19 @@ describe('CC Asset Kit v1.0-alpha', () => {
     expect(resolveAnimation(loaded.manifest, 'unlit', 'working').source).toBe('same-form-idle')
     expect(resolveTransition(loaded.manifest, 'lit-to-unlit', 'unlit').kind).toBe('fade')
   })
+  // 这两条只改几处元数据 / 一两个文件:走 withPngKit(历史那套,不拷 56MB 的动作 / 表演帧)。
+  // 整套拷贝 + 整套校验在 Windows runner 上要 30 秒以上(dev cdebc424 超时);整套素材另有上面那几条逐字节校验。
   it('release check detects missing files and tampered geometry even when metadata counts remain correct', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cc-kit-'))
-    try {
-      cpSync(root, join(dir, 'cc-v1'), { recursive: true })
-      cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
-      const path = join(dir, 'cc-v1/canonical/lit/front.svg')
+    withPngKit((target, next) => {
+      writeFileSync(join(target, 'manifest.json'), JSON.stringify(next))
+      const path = join(target, 'canonical/lit/front.svg')
       writeFileSync(path, readFileSync(path, 'utf8').replace('cx="170"', 'cx="171"'))
-      rmSync(join(dir, 'cc-v1/sprites/lit/working.svg'))
-      const errors = validateAssetKit(join(dir, 'cc-v1')).errors.join('\n')
+      rmSync(join(target, 'sprites/lit/working.svg'))
+      const errors = validateAssetKit(target).errors.join('\n')
       expect(errors).toContain('geometry_source:canonical/lit/front.svg')
       expect(errors).toContain('geometry_digest:canonical/lit/front.svg')
       expect(errors).toContain('path:sprites/lit/working.svg')
-    } finally { rmSync(dir, { recursive: true, force: true }) }
+    })
   }, 30_000)
   it('invalid frame paths and nonfinite canvas do not reach the renderer', () => {
     const broken = structuredClone(raw)
@@ -254,31 +272,22 @@ describe('CC Asset Kit v1.0-alpha', () => {
     expect(normalizeManifest(broken).ok).toBe(false)
   })
   it('release gate rejects filtered required frames and missing asset metadata, runtime stays fail-soft', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cc-kit-release-'))
-    try {
-      cpSync(root, join(dir, 'cc-v1'), { recursive: true })
-      cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
-      const broken = structuredClone(raw)
+    withPngKit((target, next) => {
+      const broken = structuredClone(next)
       broken.forms.lit.states.working.frames = [null]
       broken.transitions['unlit-to-lit'].frames = ['javascript:invalid']
       delete broken.assets[broken.forms.lit.states.thinking.frames[0]]
-      writeFileSync(join(dir, 'cc-v1/manifest.json'), JSON.stringify(broken))
+      writeFileSync(join(target, 'manifest.json'), JSON.stringify(broken))
       expect(normalizeManifest(broken).ok).toBe(true)
-      expect(validateAssetKit(join(dir, 'cc-v1')).errors).toEqual(expect.arrayContaining([
+      expect(validateAssetKit(target).errors).toEqual(expect.arrayContaining([
         'state_missing:lit/working', 'transition_missing:unlit-to-lit', `asset_metadata_missing:${broken.forms.lit.states.thinking.frames[0]}`,
       ]))
-    } finally { rmSync(dir, { recursive: true, force: true }) }
+    })
   }, 30_000)
   it('accepts a reviewed PNG replacement with one shared PNG mask; rejects changed coverage and distinct paths', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cc-kit-png-'))
-    try {
-      const target = join(dir, 'cc-v1')
-      cpSync(root, target, { recursive: true })
-      cpSync(resolve(root, '../props'), join(dir, 'props'), { recursive: true })
-      const next = structuredClone(raw)
+    withPngKit((target, next, register) => {
       const add = (path: string, bytes: Buffer, extra = {}) => {
-        writeFileSync(join(target, path), bytes)
-        next.assets[path] = { artStatus: 'reviewed-production', ...extra, sha256: createHash('sha256').update(bytes).digest('hex') }
+        register(path, bytes, { artStatus: 'reviewed-production', ...extra })
       }
       // Fixtures are rasterizations of the controlled placeholder, not approved art.
       // Coverage includes the shared shadow as well as the opaque silhouette.
@@ -296,8 +305,9 @@ describe('CC Asset Kit v1.0-alpha', () => {
         next.turnarounds[form].front = path
       }
       writeFileSync(join(target, 'manifest.json'), JSON.stringify(next))
-      expect(validateAssetKit(target).errors).toEqual([])
-      expect(validateAssetKit(target).warnings).toContain('bitmap_geometry_attestation_only:front')
+      const reviewed = validateAssetKit(target)
+      expect(reviewed.errors).toEqual([])
+      expect(reviewed.warnings).toContain('bitmap_geometry_attestation_only:front')
       // Preserve a valid PNG and update its digest, but shift its actual coverage.
       // This catches validators that only compare mask filenames or attestations.
       const path = 'canonical/lit/front.png'
@@ -332,17 +342,23 @@ describe('CC Asset Kit v1.0-alpha', () => {
       next.assets['canonical/unlit/front.png'].geometryMask = 'masks/b.png'
       writeFileSync(join(target, 'manifest.json'), JSON.stringify(next))
       expect(validateAssetKit(target).errors).toContain('pair_geometry_mask:front')
-    } finally { rmSync(dir, { recursive: true, force: true }) }
-  }, 60_000) // 四份改过的整套各校验一遍(每遍解约 50 张 PNG);负载下 30s 不够(10-21)
+    })
+  }, 60_000) // 正反例校验历史夹具;上面的整包检查仍覆盖全部已注册动画。
 })
 
 
-describe('second-batch authored performances', () => {
+describe('preserved second-batch authored performances', () => {
   const poses = { thinking: 'listening', working: 'listening', done: 'happy', receive: 'happy', permission: 'confused', error: 'excited', look: 'front', drag: 'excited' }
-  it('delivers every behavior in both forms without rest placeholders', () => {
+  it('retains prior authored behavior frames for deliberate rollback, without rest placeholders', () => {
     for (const form of ['lit', 'unlit']) {
-      const states = raw.forms[form].states
-      expect(Object.keys(states)).toHaveLength(13)
+      expect(raw.motion.active).toBe(true)
+      const states = { ...raw.forms[form].states, ...raw.motion.staticStates[form] }
+      expect(Object.keys(states).filter(name=>!name.startsWith('life-')).sort()).toEqual([
+        'blink','companion','done','drag','error','idle','look','permission','receive','sleep','thinking','wake','working',
+      ])
+      expect(Object.keys(states).filter(name=>name.startsWith('life-')).sort()).toEqual([
+        'celebrate','curiosity','land','lift','peek','peek-left','stretch','walk','work',
+      ].map(id=>`life-${id}`).sort())
       for (const [behavior, pose] of Object.entries(poses)) {
         const path = `sprites/${form}/${behavior}.png`
         expect(states[behavior].frames).toEqual([path])
@@ -406,16 +422,49 @@ it('renders two readable crescent/squint eyes, enlarged eyes and a shifted gaze'
   }
 })
 
-it('registers seven owner-reviewed standalone props as padded 384px RGBA, without sprout', () => {
+it('preserves seven prior prop reviews and registers the micro-light revision as candidate padded RGBA', () => {
   expect(Object.keys(raw.props).sort()).toEqual(['envelope','exclamation','laptop','micro-light','mug','speech-bubble','thought-bubble'])
   for (const path of Object.values(raw.props) as string[]) {
     expect(raw.assets[path]?.kind).toBe('prop')
-    expect(raw.assets[path]?.artStatus).toBe('reviewed-production')
-    expect(raw.assets[path]?.visualReview).toMatchObject({owner: 'ggshr9', reviewedAt: '2026-09-09', method: 'native transparent window on real wallpaper'})
+    const accepted = path === '../props/micro-light.png' ? raw.assets[path].previousVersions[0] : raw.assets[path]
+    expect(accepted.artStatus).toBe('reviewed-production')
+    expect(accepted.visualReview).toMatchObject({owner: 'ggshr9', reviewedAt: '2026-09-09', method: 'native transparent window on real wallpaper'})
+    expect(raw.assets[path].artStatus).toBe(path === '../props/micro-light.png' ? 'production-candidate' : 'reviewed-production')
     const { alpha, width, height } = readRGBA(readFileSync(join(root, path)), 384)
     expect([width, height]).toEqual([384,384])
     expect(alpha.some(a => a > 0)).toBe(true)
     expect(alpha.every((a, i) => !a || (i % 384 >= 12 && i % 384 < 372 && Math.floor(i / 384) >= 12 && Math.floor(i / 384) < 372))).toBe(true)
+  }
+})
+
+it('pins the old accepted micro-light bytes and never transfers that owner review to revised glow', () => {
+  const asset=raw.assets['../props/micro-light.png'],art=resolve(__dirname,'../../../art/cc-v1/studies/prop-polish-r2')
+  const digest=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex')
+  expect(asset.previousVersions).toHaveLength(1)
+  expect(asset.previousVersions[0].sha256).toBe('25bcc10287a275b1c492aa531a60ee6022b0ae82dcf56d2a2b228a90237a8613')
+  expect(digest(readFileSync(join(art,'before.png')))).toBe(asset.previousVersions[0].sha256)
+  expect(asset.artStatus).toBe('production-candidate');expect(asset.visualReview.owner).toBeUndefined()
+  expect(asset.sha256).not.toBe(asset.previousVersions[0].sha256)
+  expect(digest(readFileSync(join(root,'../props/micro-light.png')))).toBe(asset.sha256)
+  expect(asset.generation.pngSha256).toBe(asset.sha256)
+  const proof=JSON.parse(readFileSync(join(art,'pixel-check.json'),'utf8'))
+  expect(proof.afterSha256).toBe(asset.sha256);expect(digest(readFileSync(join(art,'source/micro-light.png')))).toBe(asset.sha256)
+  expect(asset.generation.bodySha256).toBe(digest(readFileSync(join(art,'source/micro-light-body.png'))))
+  expect(asset.generation.scriptSha256).toBe(digest(readFileSync(resolve(__dirname,'../../../scripts/render-cc-props.py'))))
+  expect(asset.generation.adapterSha256).toBe(digest(readFileSync(resolve(__dirname,'../../../scripts/cc_prop_glow.py'))))
+  expect(proof).toMatchObject({ok:true,afterFarAlphaPixels:0,opaqueCoreUnchanged:true,frozenFiles:14,otherPropsUnchanged:6})
+  expect(proof.beforeFarAlphaPixels).toBeGreaterThan(0);expect(proof.nearExteriorPixels).toBeGreaterThan(0)
+})
+
+it('keeps generation script bytes portable under Windows checkout line-ending filters', () => {
+  const generation=raw.assets['../props/micro-light.png'].generation,repo=resolve(__dirname,'../../../../..')
+  for(const [file,key] of [['render-cc-props.py','scriptSha256'],['cc_prop_glow.py','adapterSha256']] as const){
+    const path=`apps/desktop/scripts/${file}`
+    // Use current source, including a valid newly generated uncommitted revision.
+    // Content-addressed objects do not alter the index or working tree.
+    const object=execFileSync('git',['hash-object','-w','--stdin'],{cwd:repo,input:readFileSync(join(repo,path)),encoding:'utf8',windowsHide:true}).trim()
+    const bytes=execFileSync('git',['-c','core.autocrlf=true','cat-file','--filters',`--path=${path}`,object],{cwd:repo,windowsHide:true})
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(generation[key])
   }
 })
 
@@ -435,12 +484,15 @@ it('rejects standalone prop dimensions and missing registration independently of
   })
 }, 30_000)
 
-it('records native owner acceptance without promoting SVG placeholders', () => {
-  expect(raw.artStatus).toBe('reviewed-production')
-  for (const form of Object.values(raw.forms) as any[]) for (const state of Object.values(form.states) as any[]) expect(state.artStatus).toBe('reviewed-production')
+it('preserves prior owner acceptance while keeping all new motion as candidates and SVGs as placeholders', () => {
+  expect(raw.artStatus).toBe('production-candidate')
+  for (const [name, form] of Object.entries(raw.forms) as [string, any][]) {
+    for (const [behavior, state] of Object.entries(form.states) as [string, any][]) expect(state.artStatus).toBe(raw.motion.staticStates[name][behavior]||behavior.startsWith('life-') ? 'production-candidate' : 'reviewed-production')
+    for (const state of Object.values(raw.motion.staticStates[name]) as any[]) expect(state.artStatus).toBe('reviewed-production')
+  }
   for (const [path, asset] of Object.entries(raw.assets) as [string, any][]) {
     if (path.endsWith('.svg')) expect(asset.artStatus).toBe('normative-placeholder')
-    else expect(asset.artStatus).toBe((path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
+    else expect(asset.artStatus).toBe((path === '../props/micro-light.png' || path.startsWith('motion/') || path.startsWith('masks/motion/') || path.startsWith('performance/') || path.startsWith('masks/performance/') || path.startsWith('transitions/light-to-dark/') || /^transitions\/dark-to-light\/00[1-6]\.png$/.test(path)) ? 'production-candidate' : 'reviewed-production')
   }
 })
 

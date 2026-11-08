@@ -39,6 +39,10 @@ describe('shape:消息校验器(代替 zod,见文件头)', () => {
     expect(ClientHello.safeParse({ hs: 'k', client: 'app' }).success).toBe(false)
     expect(ServerHello.safeParse({ hs: '', v: 2 }).success).toBe(false)
     expect(ServerHello.safeParse({ hs: 42, v: 2 }).success).toBe(false)
+    // routes: 'v1'(P3b 起可选,P3e 部署后 daemon 才发):认得的值留下,别的值拒,不带照旧
+    expect(ServerHello.parse({ hs: 'k', v: 2, routes: 'v1' })).toEqual({ hs: 'k', v: 2, routes: 'v1' })
+    expect(ServerHello.parse({ hs: 'k', v: 2 })).toEqual({ hs: 'k', v: 2 })
+    expect(ServerHello.safeParse({ hs: 'k', v: 2, routes: 'v2' }).success).toBe(false)
     expect(SealedV2Frame.safeParse({ c: 0, ct: 'x' }).success).toBe(false)   // 计数器必须是字符串(v2.ts 的同一个洞)
     expect(ReqMsg.safeParse({ t: 'req', rid: '', method: 'GET', path: '/' }).success).toBe(false)
   })

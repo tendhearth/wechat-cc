@@ -1,4 +1,4 @@
-# 执行者头像(2026-10-19)验收出图:「一起做」列表行尾的头像叠 + 一件事详情页标题下那一组。演示模式,不进 CI。
+# T5: 原有功能验收移到唯一对话、搜索引用与原详情。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -8,27 +8,45 @@ appId: com.tendhearth.app
     visible:
       id: now-cc
     timeout: 10000
-- tapOn:
-    id: tab-together
+- runFlow: subflows/_work.yaml
 - extendedWaitUntil:
     visible:
-      id: together-item-a1b2c3d4
+      id: row-matter-a1b2c3d4
     timeout: 5000
 - waitForAnimationToEnd
 - takeScreenshot: a01-together
 - scrollUntilVisible:
     element:
-      id: together-terminal
+      id: row-terminal-demo-cli-api
+    centerElement: true
     direction: DOWN
 - takeScreenshot: a02-terminal
 - scrollUntilVisible:
     element:
-      id: together-item-a1b2c3d4
+      id: row-matter-a1b2c3d4
+    centerElement: true
     direction: UP
 - tapOn:
-    id: together-item-a1b2c3d4
+    id: row-matter-a1b2c3d4
 - extendedWaitUntil:
     visible:
-      id: progress-agents
+      id: approval-allow
+      enabled: true
     timeout: 5000
+- tapOn:
+    id: approval-allow
+- extendedWaitUntil:
+    visible:
+      id: progress-status
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: progress-process
+    direction: DOWN
+- tapOn:
+    id: progress-process
+- scrollUntilVisible:
+    element:
+      id: progress-agents
+    direction: DOWN
 - takeScreenshot: a03-detail

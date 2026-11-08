@@ -12,7 +12,7 @@ import { test, expect, clickNav, clickRevealed } from './fixtures'
 import { REPORTS } from './reports'
 
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
-  await page.goto(shimUrl)
+  await page.goto(shimUrl,{waitUntil:'domcontentloaded'})
   await page.waitForFunction(
     () => {
       const m = document.documentElement.dataset.mode
@@ -30,7 +30,8 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // 顶层导航项(2026-08-24 导航重构后):待办升到一级,日志/插件收进后厨
 // —— 它们仍有 pane,但不再有顶层导航按钮,所以分成两张表校验。
-const NAV_PANES = ['overview', 'workbench', 'recollections', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
+// 「一起做」不再是导航项(设计稿 2026-10-31 U4):它的 pane 还在,从此刻的「全部 →」进,见下面那条。
+const NAV_PANES = ['overview', 'recollections', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
 /** 有 pane、但入口在后厨标签页里(见 logs.spec.ts 的 bootAndOpenLogs)。 */
 const BACKSTAGE_PANES = ['logs', 'plugins'] as const
 
@@ -42,6 +43,9 @@ test('dashboard renders nav + panes (all attached)', async ({ page, shimUrl, shi
     await expect(page.locator(`button.dash-nav-link[data-pane="${pane}"]`)).toBeAttached()
     await expect(page.locator(`article.dash-pane[data-pane="${pane}"]`)).toBeAttached()
   }
+  await expect(page.locator('button.dash-nav-link[data-pane="workbench"]')).toHaveCount(0)
+  await expect(page.locator('.dash-pane[data-pane="workbench"]')).toBeAttached()
+  await expect(page.locator('[data-conversation-search-matters]')).toBeVisible()
   for (const pane of BACKSTAGE_PANES) {
     await expect(page.locator(`article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="${pane}"]`)).toBeAttached()
   }
@@ -174,6 +178,7 @@ test('此刻「N 件事等你」也列终端里等批准的会话:开了码的�
   const waiting = page.locator('#now-waiting')
   // mock 里工作台读不到(503)⇒ 标题后半句说那边不知道;终端这两条照样列出来。
   await expect(waiting.locator('#now-waiting-title')).toHaveText(/^2 件事等你/)
+  await waiting.locator('summary').click()
   const rows = waiting.locator('.now-terminal')
   await expect(rows).toHaveCount(2)
   await expect(rows.nth(0)).toContainText('想运行 npm publish')
@@ -525,30 +530,32 @@ test('presence shell keeps one home composer and its draft through navigation', 
   expect(rail!.height).toBeGreaterThan(500)
 })
 
-test('此刻 home → chat via the CC, draft survives a workbench round-trip, one converse root', async ({ page, shimUrl, shim }) => {
+test('conversation opens directly; CC focuses input and draft survives navigation', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   const pane = page.locator('.cc-now-pane')
-  await expect(pane).toHaveAttribute('data-now', 'home')
+  await expect(pane).toHaveAttribute('data-now', 'chat')
   // shim 默认 presence ok ⇒ 够得着 ⇒ 亮着的 CC。
   await expect(pane).toHaveAttribute('data-cc', 'here')
-  await expect(page.locator('.now-cc-light')).toBeVisible()
+  // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
+  await expect(page.locator('#now-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
   await expect(page.locator('.now-cc-dark')).toBeHidden()
-  await expect(page.locator('#converse-scroll')).toBeHidden()
+  await expect(page.locator('#converse-scroll')).toBeVisible()
   await page.locator('#converse-input').fill('草稿不丢')
   await page.locator('#now-cc').click()
   await expect(pane).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('#converse-scroll')).toBeVisible()
-  await clickNav(page, 'workbench')
+  // 一起做不再是导航项(设计稿 2026-10-31 U4,从主页的「全部 →」进,聊天态里不露):换一个别的页来回。
+  await clickNav(page, 'recollections')
   await clickNav(page, 'overview')
   await expect(pane).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('#converse-input')).toHaveValue('草稿不丢')
   await expect(page.locator('#converse-root')).toHaveCount(1)
-  await page.locator('#now-back').click()
-  await expect(pane).toHaveAttribute('data-now', 'home')
+  await clickNav(page,'overview')
+  await expect(pane).toHaveAttribute('data-now', 'chat')
 })
 
-test('首页摘出完整原话,点气泡读完整回复,空输入框没有滚动条', async ({ page, shimUrl, shim }) => {
+test('原话只在对话出现,小 CC 聚焦输入,草稿和完整回复保留', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   const reply = '备选安排如下：\n\n1. 周五去上海，周日回来。\n2. 也可以把行程往后挪一周。'
   await page.route('**/v1/matter/owner-chat', route => route.fulfill({ json: { events: [
@@ -556,12 +563,12 @@ test('首页摘出完整原话,点气泡读完整回复,空输入框没有滚动
     { kind: 'text', text: '任务完成：已修改 3 个文件', createdAt: Date.now(), source: 'workbench' },
   ] } }))
   await bootIntoDashboard(page, shimUrl)
-  await expect(page.locator('.now-bubble-text')).toHaveText('周五去上海，周日回来。')
-  await expect(page.locator('.now-bubble-more')).toBeVisible()
+  await expect(page.locator('#converse-scroll')).toContainText('周五去上海，周日回来。')
+  await expect(page.locator('#now-cc-bubble')).toHaveCount(0)
   const metrics = await page.locator('#converse-input').evaluate(el => ({ client: el.clientHeight, scroll: el.scrollHeight }))
   expect(metrics.scroll).toBeLessThanOrEqual(metrics.client)
   await page.locator('#converse-input').fill('保留这句草稿')
-  await page.locator('#now-cc-bubble').click()
+  await page.locator('#now-cc').click()
   await expect(page.locator('#converse-scroll')).toContainText('备选安排如下：')
   await expect(page.locator('#converse-scroll ol li')).toHaveText(['周五去上海，周日回来。','也可以把行程往后挪一周。'])
   await expect(page.locator('#converse-scroll')).toContainText('任务完成：已修改 3 个文件')
@@ -585,6 +592,7 @@ test('CC is lit and the status line is green when presence answers', async ({ pa
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
-  await expect(page.locator('.now-cc-light')).toBeVisible()
+  // 动画就绪后静态 PNG 让位给 now-pet-stage(cc-now.css),亮着看 stage 的 data-form。
+  await expect(page.locator('#now-cc .now-pet-stage')).toHaveAttribute('data-form', 'lit')
   await expect(page.locator('#dash-rail-dot')).toHaveClass(/ok/, { timeout: 15_000 })
 })

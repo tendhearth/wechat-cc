@@ -20,16 +20,22 @@ const rewind=()=>blocked?{undo:null,blocked:{rewindId:'33333333-3333-4333-8333-3
 const preview=()=>({token:previews===1?T1:T2,target:{artifactId:'11111111',to:'end',round:1},discarded:[{artifactId:'22222222',round:2}],files:{count:1,paths:[{status:'M',path:'src/22222222.ts'}]},extraChanges:{count:1,paths:[{status:'A',path:'notes.txt'}]},droppedCommits:{count:1,elsewhere:true},ignoredUntouched:true,rebuildHint:'被 ignore 的构建产物不会跟着回退，用之前先重新构建。',refsNote:'',session:'none',devServer:false,goal:null})
 const calls=[]
 const invokeWorkbenchApi=async(method,path,body)=>{
+  // Background attention/read receipts are separate from the user mutations asserted below.
+  if(method==='GET' && path==='/v1/workbench/attention')return{tasks:[]}
+  if(method==='POST' && path==='/v1/matter/seen'){
+    if(body.id!=='aaaa1111')throw new Error('Unexpected seen task')
+    return{ok:true}
+  }
   calls.push({method,path,body})
-  if(path.startsWith('/v1/workbench/rewind-preview')){previews++;return{preview:preview()}}
-  if(path==='/v1/workbench/rewind'){
+  if(path.startsWith('/v1/matter/rewind?')){previews++;return{preview:preview()}}
+  if(path==='/v1/matter/rewind'){
     if(body.undo){rewound=false;return{rewind:{rewindId:'u',backupRef:'b',head:'h',discarded:[]}}}
     if(stale){stale=false;throw new Error('rewind_confirmation_stale')}
     rewound=true;return{rewind:{rewindId:'44444444-4444-4444-8444-444444444444',backupRef:'b',head:'h',discarded:['22222222']}}
   }
   if(path==='/v1/workbench/rewind-resolve'){blocked=false;return{resolved:{resolution:body.choice}}}
   if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):{task:task(),version:1,events:[],artifacts:[],permissions:[],...(rewind()?{rewind:rewind()}:{})}
-  if(path.startsWith('/v1/workbench/review?'))return{reviews:reviews()}
+  if(path.startsWith('/v1/matter/changes?'))return{reviews:reviews()}
   if(path.startsWith('/v1/matters?'))return{matters:[]}
   return{tasks:[task()],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,projects:[{id:'p-0123456789abcdef0123',name:'个人网站',path:'/work/site',providerId:'codex'}]}
 }
@@ -68,8 +74,8 @@ test('rewind a round: preview, stale ⇒ re-preview, confirm, discarded round gr
  await expect(gone).toContainText('已撤掉')
  await expect(gone.locator('[data-action="review-accept"]')).toHaveCount(0)
  expect(await posts(page)).toEqual([
-  ['/v1/workbench/rewind',{id:'aaaa1111',artifactId:'11111111',to:'end',token:'1'.repeat(64)}],
-  ['/v1/workbench/rewind',{id:'aaaa1111',artifactId:'11111111',to:'end',token:'2'.repeat(64)}],
+  ['/v1/matter/rewind',{id:'aaaa1111',artifactId:'11111111',to:'end',token:'1'.repeat(64)}],
+  ['/v1/matter/rewind',{id:'aaaa1111',artifactId:'11111111',to:'end',token:'2'.repeat(64)}],
  ])
  const undo=panel.locator('[data-action="rewind-undo"]')
  await undo.click()
@@ -77,7 +83,7 @@ test('rewind a round: preview, stale ⇒ re-preview, confirm, discarded round gr
  await undo.click()
  await expect(panel.locator('.wb-review-turn.is-discarded')).toHaveCount(0)
  await expect(panel.locator('[data-action="rewind-undo"]')).toHaveCount(0)
- expect((await posts(page)).at(-1)).toEqual(['/v1/workbench/rewind',{id:'aaaa1111',undo:'44444444-4444-4444-8444-444444444444'}])
+ expect((await posts(page)).at(-1)).toEqual(['/v1/matter/rewind',{id:'aaaa1111',undo:'44444444-4444-4444-8444-444444444444'}])
 })
 
 test('a parked task shows one notice with the reason; restore asks once more before it is sent',async({page})=>{

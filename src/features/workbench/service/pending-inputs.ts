@@ -61,7 +61,6 @@ export function makePendingInputs(ctx:ServiceCtx) {
         changed='delivered'
       })
       if(changed==='held')ctx.hub.bumped(saved.taskId)
-      else if(changed==='delivered')ctx.hub.touched(saved.taskId)
       // Keep delivery uncertainty tracked if the durable transition failed.
       running.runtimeInputs?.delete(saved.id)
       if(state.runsByTask.get(saved.taskId)===running&&!running.cancelled&&!running.finishing)running.interactionAt=Date.now()

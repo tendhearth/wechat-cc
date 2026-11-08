@@ -47,6 +47,7 @@ export interface TunnelClientDeps {
    *  finding the token whose HKDF-bound key decrypts the phone's first frame
    *  (see the handshake below) — so the token is NEVER sent over the wire, and
    *  a MITM relay (which knows no token) can't forge a working key. */
+  topicsOwner?: () => string | null
   knownDeviceTokens: () => string[]
   /** 当前还有效的 /set 链接令牌(单活、10 分钟),没有就 null。没配对的手机在外面点链接,
    *  只有它可以用来握手;进去后点「把 CC 带在身上」换长期设备令牌(2026-09-24)。
@@ -70,6 +71,10 @@ export interface TunnelClientDeps {
   onControl?: (msg: Record<string, unknown>) => void
   /** v2 登录成功(每次重连后都会再来一次)。 */
   onLogin?: () => void
+  /** 已认证的请求/保活活跃版本，P3h 计数；不影响鉴权。 */
+  onClientActivity?: (client: 'app' | 'web', build?: string) => void
+  /** 一条流认出了令牌、握手里带了构建号(M6b):记到那台设备上。 */
+  onDeviceBuild?: (token: string, build: string) => void
 }
 
 /** Does this handshake ask for v2? (`v` is an array containing 2; anything else is a retired v1 client.) */
@@ -81,6 +86,12 @@ function wantsV2(frame: unknown): boolean {
 /** 浏览器 /m 页在握手里自报 `client:'web'`(packages/protocol ClientOpts.client);不带 ⇒ 原生 App。 */
 function handshakeClient(frame: unknown): 'app' | 'web' {
   return (frame as { client?: unknown }).client === 'web' ? 'web' : 'app'
+}
+
+/** App 在握手里自报的构建号(M6b,ClientHello.build):短的、只含构建号常见字符才认,否则当没报。 */
+export function handshakeBuild(frame: unknown): string | undefined {
+  const b = (frame as { build?: unknown }).build
+  return typeof b === 'string' && /^[\w.+-]{1,32}$/.test(b) ? b : undefined
 }
 
 /** Read a plaintext handshake control frame → the peer's pubkey b64, or null. */
@@ -118,7 +129,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   // Per-stream ephemeral state: the raw ECDH shared secret, who the handshake said it was
   // (app / web), and — once the first sealed frame identifies the device — that device
   // token + its V2Stream.
-  type StreamState = { shared: Uint8Array; client: 'app' | 'web'; device?: string; v2s?: V2Stream }
+  type StreamState = { shared: Uint8Array; client: 'app' | 'web'; build?: string; device?: string; v2s?: V2Stream }
   const streams = new Map<string, StreamState>()
   // One promise chain per stream for the ordering-sensitive work (handshake, identification
   // + open). req handling is dispatched off it.
@@ -231,8 +242,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       let shared: Uint8Array
       try { shared = x25519Shared(kp.priv, b64uDecode(hsPub)) }
       catch { log('TUNNEL', `bad handshake pubkey on ${stream}`); return }
-      streams.set(stream, { shared, client: handshakeClient(frame) })
-      sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2 })
+      const build = handshakeBuild(frame)
+      streams.set(stream, { shared, client: handshakeClient(frame), ...(build ? { build } : {}) })
+      sendToStream(stream, { hs: b64uEncode(kp.pub), v: 2, routes: 'v1', topics: 'v1' })   // P3:面板收 /v1(P3e 部署 soak 绿后打开);老 App 的 shape 丢掉不认识的键
       return
     }
     const st = streams.get(stream)
@@ -257,11 +269,16 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     }
     const token = hit.token
     st.device = token
+    // 认出是哪台之后才记它报的构建号(握手那一刻还不知道是谁);记不下来不挡这条流。
+    if (st.client === 'app' && st.build && st.build !== 'selftest-P3d' && deps.onDeviceBuild) { try { deps.onDeviceBuild(token, st.build) } catch { /* 只少一次记录 */ } }
     st.v2s = makeV2Stream({
-      stream, channel: hit.channel, token, client: st.client,
+      stream, channel: hit.channel, token, client: st.client, build: st.build,
+      onActivity: () => deps.onClientActivity?.(st.client, st.build),
       send: (f) => { if (streams.get(stream) === st) sendToStream(stream, f) },
       handleRequest: deps.handleRequest,
       events: deps.events,
+      device: deps.knownDeviceTokens().includes(token),
+      topicsScope: () => deps.knownDeviceTokens().includes(token) ? deps.topicsOwner?.() ?? null : null,
       tokenValid: () => deps.knownDeviceTokens().includes(token) || (deps.activeLinkToken?.() ?? null) === token,
       onRevoked: () => {
         if (streams.get(stream) !== st) return

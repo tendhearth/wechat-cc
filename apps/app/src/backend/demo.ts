@@ -1,3 +1,4 @@
+import { demoTopics } from './demo-topics'
 import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_PORTRAIT_PNG, DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
@@ -5,10 +6,10 @@ import { BackendError, type Backend, type CliSessionRowT, type Connection, type 
 import {
   copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, DEMO_REWIND_TOKEN, DEMO_HUNK_SHA, entryOptions,
   demoActivity, demoConnections, demoJobs, demoLetters, demoTodos, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
-  demoName, demoNames,
+  demoName, demoNames, demoCcActs,
 } from './demo-data'
 
-type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
+type Topic = 'home' | 'approvals' | 'agents' | 'topics' | `matter/${string}`
 type Copy = keyof typeof copy
 /** 事件记录:带 key 的在读时按请求的语言生成文案;text 是用户自己的字,原样保留。 */
 type EvRec = { kind: string; createdAt: number; key?: Copy; extra?: string; text?: string }
@@ -25,6 +26,12 @@ export const DEMO_CHAT_REPLY_MS = 5000
 
 export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
+  const topicOpened = new Map<string, string>()
+  const topicTitles = new Map<string,string>(), topicDeleted = new Set<string>(), topicMerged = new Map<string,string>()
+  let topicWrong = false
+  const topicReceipts = new Map<string, import('./types').TopicOpenT>()
+  let topicRevision = 0
+  const topicEntryTime = new Date(now()).toISOString()
   let lastLang: Lang = opts.lang ?? 'en' // 主题快照(approvals 摘要、agents 标题)用最近一次读的语言;读本身按参数给文案
   const schedule = (fn: () => void, ms: number) => (opts.setTimeout ?? globalThis.setTimeout)(fn, ms)
 
@@ -79,7 +86,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const cliGet = (id: string) => { const r = cli.find(x => x.session_id === id); if (!r) throw new BackendError('not_found'); return r }
 
   function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number, agents?: string[]): MatterT {
-    return { id, kind, title, projectPath: path, status, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts, ...(agents ? { agents } : {}) }
+    return { id, kind, title, projectPath: path, status, state: status === 'open' ? 'working' : 'done', archivedAt: status === 'archived' ? ts : null, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts, ...(agents ? { agents } : {}) }
   }
   function mkDetail(m: MatterT, task: MatterDetailT['task'], extra: Partial<MatterDetailT> = {}): MatterDetailT {
     return { matter: m, bindings: [], sessions: [], task, events: [], permissions: [], questions: [], artifacts: [], inputs: [], ...extra }
@@ -187,8 +194,14 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
 
   // ---- 快照与订阅 ----
   const list = () => order.map(id => entries.get(id)!)
-  const phaseOf = (e: Entry) => e.detail.task?.phase ?? (e.detail.matter.status === 'replied' ? 'replied' : 'working')
+  const phaseOf = (e: Entry) => e.detail.task?.phase ?? ((e.detail.matter.state === undefined ? e.detail.matter.status === 'replied' : e.detail.matter.state === 'done') ? 'replied' : 'working')
+  function topicsList(p: { view?: 'recent' | 'all'; cursor?: string }) {
+    const all = demoTopics({ view: 'all' }).topics.filter(t=>!topicDeleted.has(t.id)).map(t=>({...t,title:topicTitles.get(t.id)??t.title})).map(t => topicOpened.has(t.id) ? { ...t, bubbleState: 'open' as const, lastOpenedByOwnerAt: topicOpened.get(t.id)! } : t)
+      .sort((a, b) => (b.lastOpenedByOwnerAt ?? b.lastRecalledAt ?? '').localeCompare(a.lastOpenedByOwnerAt ?? a.lastRecalledAt ?? '') || a.id.localeCompare(b.id))
+    return { topics: p.view === 'all' ? all : all.slice(0, 6), nextCursor: null, revision: `demo-topics:${topicRevision}` }
+  }
   function snapshot(topic: Topic): unknown {
+    if (topic === 'topics') { const all = topicsList({ view: 'all' }); return { revision: all.revision, recentIds: all.topics.slice(0, 6).map(t => t.id), openIds: all.topics.filter(t => t.bubbleState === 'open').map(t => t.id), hasMoreOpen: false } }
     if (topic === 'approvals') {
       return list().flatMap(e => [
         ...e.detail.permissions.map(p => ({ taskId: e.detail.matter.id, kind: 'permission' as const, id: p.id, summary: `${p.tool}: ${p.description}`.slice(0, 80) })),
@@ -209,7 +222,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     }
     const id = topic.slice('matter/'.length)
     const e = entries.get(id)
-    if (e && id === CHAT_ID) return { found: true, kind: 'chat', version: e.version, phase: chatPending ? 'working' : e.detail.matter.status }
+    if (e && id === CHAT_ID) return { found: true, kind: 'chat', version: e.version, phase: chatPending ? 'working' : e.detail.matter.state === undefined ? e.detail.matter.status : 'open' }
     return e ? { found: true, kind: e.detail.matter.kind, version: e.version, phase: phaseOf(e) } : { found: false }
   }
   /** 演示里 CC 在干什么:有执行者正在写 ⇒ working,否则 idle(不演别的状态)。 */
@@ -231,7 +244,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   }
   function touch(e: Entry, patch: { phase?: string; status?: MatterT['status'] }) {
     const ts = now()
-    e.detail.matter = { ...e.detail.matter, updatedAt: ts, ...(patch.status ? { status: patch.status } : {}) }
+    e.detail.matter = { ...e.detail.matter, updatedAt: ts, ...(patch.status ? { status: patch.status, state: patch.status === 'open' ? 'working' : 'done', archivedAt: patch.status === 'archived' ? ts : null } : {}) }
     if (e.detail.task) {
       const phase = patch.phase ?? e.detail.task.phase
       e.detail.task = { ...e.detail.task, updatedAt: ts, phase, status: phase === 'working' ? 'running' : 'completed' }
@@ -254,7 +267,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   }
   const sessionRow = (key: string) => { const row = demoSessions(lastLang, now()).find(r => r.key === key); if (!row) throw new BackendError('not_found'); return row }
 
-  const conn: Connection = { state: 'online', lastSyncedAt: null, epoch: 0 }
+  const conn: Connection = { topics: 'v1', state: 'online', lastSyncedAt: null, epoch: 0 }
 
   return {
     mode: 'demo',
@@ -267,8 +280,41 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       cb(snapshot(topic as Topic) as never)
       return () => { set!.delete(cb) }
     },
+    async topics(p) { return topicsList(p) },
+    async topicDetail(p) {
+      const into = topicMerged.get(p.id)
+      const topic = topicsList({ view: 'all' }).topics.find(t => t.id === (into??p.id))
+      if (!topic) throw new BackendError('not_found')
+      const matters = list().slice(0, 3).map(e => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null }))
+      return { topic: {...topic,mergedInto:into??null}, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: topicWrong?'superseded':'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: topicEntryTime, updatedTs: topicEntryTime, recalled: !topicWrong }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: `demo-topics:${topicRevision}` }
+    },
+    async topicEdit(action,input) {
+      if(action==='wrong') { if(input.id!=='demo-entry')throw new BackendError('not_found');topicWrong=true }
+      else {
+        if(!topicsList({view:'all'}).topics.some(t=>t.id===input.id))throw new BackendError('not_found')
+        if(action==='rename') { if(!input.title?.trim())throw new BackendError('invalid');topicTitles.set(input.id,input.title.trim()) }
+        else if(action==='merge') {if(!input.into||input.into===input.id||!topicsList({view:'all'}).topics.some(t=>t.id===input.into))throw new BackendError('invalid');topicMerged.set(input.id,input.into);topicDeleted.add(input.id)}
+        else topicDeleted.add(input.id)
+      }
+      topicRevision++;publish([])
+    },
+    async topicOpen(id, requestId) {
+      const receipt = topicReceipts.get(requestId)
+      if (receipt) { if (receipt.id !== id) throw new BackendError('invalid'); return receipt }
+      if (!topicsList({ view: 'all' }).topics.some(t => t.id === id)) throw new BackendError('not_found')
+      topicOpened.set(id, new Date(now()).toISOString()); topicRevision++
+      const result = { id, bubbleState: 'open' as const, revision: `demo-topics:${topicRevision}` }
+      topicReceipts.set(requestId, result); publish([]); return result
+    },
+    async matterHistory(l) { noteLang(l); return list().map(e => localize(e, l).matter) },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
-    async matter(id, l) { noteLang(l); return localize(get(id), l) },
+    // 「CC 最近在忙」(M5c):三件 act,点进去是它们的轮(和主人的事分开,不进 matters())
+    async ccActs(l) { noteLang(l); return demoCcActs(now()).map(d => d.matter) },
+    async matter(id, l) {
+      noteLang(l)
+      const act = demoCcActs(now()).find(d => d.matter.id === id)
+      return act ?? localize(get(id), l)
+    },
     async matterInputReceipt(id, requestId) { return get(id).detail.inputs.find(row => row.id === requestId) ?? null },
     async insight(id, l) {
       noteLang(l)
@@ -734,6 +780,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
+    reset() { topicTitles.clear();topicDeleted.clear();topicMerged.clear();topicWrong=false;topicOpened.clear(); topicReceipts.clear(); topicRevision = 0; epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }

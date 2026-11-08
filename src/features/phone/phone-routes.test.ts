@@ -19,7 +19,10 @@ describe('phoneRouteAllowed', () => {
   })
   it('链接令牌与设备令牌同一套(裁决 1),但终端会话的「接着说」「拍板」(评审 10-15 #3)与「CC 的信」(2026-10-18,私事;连同能读出信页的 chat/file)只给配好的设备;只允局域网的三条', () => {
     // chat/file:信的每一页也镜像进对话,链接令牌不能从这里读出信(评审 10-19 #1)
-    const deviceOnly = ['GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/matter/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'POST /m/api/matter/handoff', 'POST /m/api/session/continue', 'POST /m/api/matter/worktree', 'POST /m/api/chat/say', 'POST /m/api/push/register', 'POST /m/api/push/test',
+    const deviceOnly = [
+      // T4:私密话题只给配对设备。
+      'GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics',
+      'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/matter/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'POST /m/api/matter/handoff', 'POST /m/api/session/continue', 'POST /m/api/matter/worktree', 'POST /m/api/chat/say', 'POST /m/api/push/register', 'POST /m/api/push/test',
       // 收敛 5b(2026-10-21):网页不再有这几页,链接令牌的读收回(#463「私事,收敛时再看」)
       'GET /m/api/chat', 'GET /m/api/chat/search', 'GET /m/api/chat/voice', 'GET /m/api/memory', 'GET /m/api/sessions', 'GET /m/api/session', 'GET /m/api/session/continue', 'GET /m/api/cli/sessions', 'GET /m/api/cli/activity',
       // 理念 2(2026-10-21):链接范围 = 链接页面扫出来的调用(scripts/link-routes-from-source.guard.test.ts);网页不再调的 22 条收回
@@ -28,11 +31,37 @@ describe('phoneRouteAllowed', () => {
       'GET /m/api/matter/insight', 'GET /m/api/matter/changes', 'GET /m/api/matter/artifact', 'GET /m/api/chat/transcribe', 'POST /m/api/chat/transcribe',
       'GET /m/api/chat/model', 'POST /m/api/chat/model', 'POST /m/api/seen', 'POST /m/api/todo', 'POST /m/api/memory/correct', 'POST /m/api/matter/review-mark',
       // 收回的话与恢复(架构终态 G6):只有配好的设备(App)用
-      'GET /m/api/memory/retractions', 'POST /m/api/memory/restore']
+      'GET /m/api/memory/retractions', 'POST /m/api/memory/restore',
+      // P3c-1:并成别名的那几条的新键(/v1 那一行带 phone 块,link 同别名行)—— 送话给执行者、对话里的文件 / 搜索、语音转字都只给设备
+      'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'POST /v1/companion/transcribe', 'POST /v1/matter/say',
+      // P3c-2:终端会话列表、「今天」、CC 的连接的新键 —— 别名行都是 link: none,新键同
+      'GET /v1/cli/sessions', 'GET /v1/overseer/today', 'GET /v1/connections',
+      // P3c-3:收回的话 / 恢复、待办改状态、看到哪了的新键 —— 别名行都是 link: none,新键同
+      'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', 'POST /v1/knowledge/facts/set_fact_status', 'POST /v1/journal/seen',
+      // P3c-4:交办选项 / 模型、扔掉分块上传的材料、电脑上的原生会话的新键 —— 别名行都是 link: none,新键同
+      'GET /v1/workbench/entry-options', 'GET /v1/workbench/models', 'POST /v1/workbench/discard-attachment', 'GET /v1/workbench/sessions', 'GET /v1/workbench/session',
+      // P3d-1:手机独有的搬到新的 /v1 路径(纯改名)—— 别名行是 link: none 的,新键同
+      'GET /v1/phone/state', 'POST /v1/phone/push/register', 'POST /v1/phone/push/test', 'GET /v1/matter/insight', 'GET /v1/matter/input-receipt',
+      'GET /v1/cli/activity', 'GET /v1/activity', 'GET /v1/jobs', 'POST /v1/jobs/action', 'GET /v1/letters/sent', 'GET /v1/letters/page',
+      // P3d-2:主人对话、记忆、表情、接着做、分块上传的新键 —— 别名行都是 link: none,新键同
+      'GET /v1/matter/owner-chat/page', 'POST /v1/matter/owner-chat/say', 'GET /v1/matter/owner-chat/voice', 'GET /v1/companion/transcribe',
+      'GET /v1/matter/owner-chat/model', 'POST /v1/matter/owner-chat/model', 'GET /v1/memory/curated', 'POST /v1/memory/correct', 'GET /v1/stickers/file/',
+      'GET /v1/workbench/session/continue', 'POST /v1/workbench/session/continue', 'GET /v1/workbench/attachment/upload', 'POST /v1/workbench/attachment/chunk',
+      // P3d-3:终端会话拍板 / 接着说一句起的不撞名的新键 —— 同别名行只给设备(评审 10-15 #3)
+      'GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','POST /v1/cli/session-stop',
+      'POST /v1/cli/decide', 'POST /v1/cli/session-say',
+      // P3e-1:一件事上的动作与交办的新键(/v1/matter/*)—— 别名行都是 link: none(停下除外,见下),新键同
+      'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree',
+      'POST /v1/matter/create', 'GET /v1/matter/create-receipt',
+      // P3e-2:撤掉这一轮、改动与逐文件审阅的新键 —— 别名行都是 link: none,新键同
+      'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     // 链接令牌剩下的就是链接页面会调的那几条:配对、设置页、此刻、一起做的看与停
-    expect([...LINK_ROUTES].sort()).toEqual(['GET /m', 'GET /m/api/art/presence', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'GET /set/api/state', 'POST /m/api/matter/stop', 'POST /set/api/apply', 'POST /set/api/pair'])
+    // P3c-1:一起做的列表 / 详情并进 /v1,链接令牌经新键够得着的同别名键(同一份数据的两个名字,P3g 网页改读新键后别名行删掉)
+    // P3d-1:此刻页、形象画搬到 /v1/home、/v1/phone/art/presence,链接令牌经新键够得着的同别名键
+    // P3e-1:一起做的「停下」并进 /v1/matter/stop(停下是安全方向,链接令牌照旧能停),经新键够得着的同别名键
+    expect([...LINK_ROUTES].sort()).toEqual(['GET /m', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'GET /set/api/state', 'GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence', 'POST /m/api/matter/stop', 'POST /set/api/apply', 'POST /set/api/pair', 'POST /v1/matter/stop'])
     expect([...LAN_ONLY_OPS].sort()).toEqual(['forget_devices', 'revoke_device', 'set_remote'])
   })
 })
@@ -68,7 +97,7 @@ describe('链接令牌能做的写操作:每条都要归类(审计 10-20)', () =
     const posts = [...PHONE_ROUTES].filter(r => r.startsWith('POST '))
     for (const r of posts) expect(LINK_ROUTES.has(r) === r in LINK_WRITE_OK, r).toBe(true)
     for (const [r, why] of Object.entries(LINK_WRITE_OK)) { expect(PHONE_ROUTES.has(r), r).toBe(true); expect(why.length, r).toBeGreaterThan(4) }
-    for (const r of ['POST /m/api/matter/say', 'POST /m/api/chat/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission']) expect(LINK_ROUTES.has(r), r).toBe(false)
+    for (const r of ['POST /m/api/matter/say', 'POST /v1/matter/say', 'POST /m/api/chat/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission']) expect(LINK_ROUTES.has(r), r).toBe(false)
   })
 })
 
@@ -81,11 +110,13 @@ describe('链接令牌白名单(审计续,10-20):读也要显式归类,缺省只
     for (const r of Object.keys(LINK_READ_OK)) expect(r.startsWith('POST '), r).toBe(false)
   })
   // 32 条读 → 5b(2026-10-21)删了 feed / art/blink 两条路由、收回 9 条私事读 ⇒ 21 条 → 理念 2(同日)只留链接页面调的 ⇒ 7 条
-  it('the link-readable reads are exactly the 7 the link pages call; the private ones stay device-only', async () => {
+  // → P3c-1:列表 / 详情的新键 GET /v1/matters、GET /v1/matter 与别名键并存(同一份数据)⇒ 9 个键、还是 7 份数据
+  it('the link-readable reads are exactly the 7 the link pages call (plus the /v1 names of the four merged ones); the private ones stay device-only', async () => {
     const reads = [...LINK_ROUTES].filter(r => !r.startsWith('POST ')).sort()
-    expect(reads).toHaveLength(7)
-    for (const r of ['GET /m/api/activity', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/matter/rewind', 'GET /m/api/chat', 'GET /m/api/memory', 'GET /m/api/sessions', 'GET /m/api/cli/sessions', 'GET /m/api/cli/activity']) expect(LINK_ROUTES.has(r), r).toBe(false)
+    expect(reads).toHaveLength(10)
+    expect(reads.filter(r => r.startsWith('GET /v1/'))).toEqual(['GET /v1/home', 'GET /v1/matter', 'GET /v1/matters', 'GET /v1/phone/art/presence'])
+    for (const r of ['GET /v1/activity', 'GET /v1/jobs', 'GET /v1/letters/sent', 'GET /v1/letters/page', 'GET /v1/cli/activity', 'GET /v1/phone/state', 'GET /v1/matter/owner-chat/file', 'GET /v1/matter/owner-chat/search', 'GET /v1/cli/sessions', 'GET /v1/overseer/today', 'GET /v1/connections', 'GET /m/api/today', 'GET /m/api/connections', 'GET /m/api/activity', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/matter/rewind', 'GET /m/api/chat', 'GET /m/api/memory', 'GET /m/api/sessions', 'GET /m/api/cli/sessions', 'GET /m/api/cli/activity']) expect(LINK_ROUTES.has(r), r).toBe(false)
     // /set 链接打开的那一版网页(配对前)要读的这几条必须留着
-    for (const r of ['GET /m', 'GET /m/api/home', 'GET /m/api/matters', 'GET /m/api/matter', 'GET /m/api/art/presence']) expect(LINK_ROUTES.has(r), r).toBe(true)
+    for (const r of ['GET /m', 'GET /m/api/home', 'GET /m/api/matters', 'GET /m/api/matter', 'GET /v1/phone/art/presence']) expect(LINK_ROUTES.has(r), r).toBe(true)
   })
 })

@@ -19,7 +19,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTE_MIN_TIER, routesForToken } from '../src/daemon/internal-api/route-tiers'
 import { makeTokenRegistry } from '../src/daemon/internal-api/token-registry'
-import { LAN_ONLY_OPS, LINK_READ_OK, LINK_ROUTES, LINK_WRITE_OK, PHONE_ROUTES, PHONE_TOPICS } from '../src/features/phone/phone-routes'
+import { LAN_ONLY_OPS, LINK_READ_OK, LINK_ROUTES, LINK_WRITE_OK, MERGED_ALIASES, PHONE_ROUTES, PHONE_TOPICS } from '../src/features/phone/phone-routes'
 import { WORKBENCH_ROUTES_JSON } from './gen-routes'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -29,6 +29,14 @@ const generated = JSON.parse(readFileSync(WORKBENCH_ROUTES_JSON, 'utf8')) as { t
 const KNOWN: ReadonlySet<string> = new Set([...Object.keys(snap.ROUTE_MIN_TIER), ...snap.PHONE_ROUTES])
 const sorted = (a: Iterable<string>) => [...a].filter(k => KNOWN.has(k)).sort()
 const known = <T>(o: Readonly<Record<string, T>>) => Object.fromEntries(Object.entries(o).filter(([k]) => KNOWN.has(k)))
+/**
+ * 已并成别名的那几条(P3c 起,设计稿 2026-11-05-p3-one-route-family「守卫」):手机令牌的集合按「新键 ∪ 别名键」比 ——
+ * 别名键(旧的 `/m/api/…`)照旧在集合里、和快照逐条比;新键(`/v1` 那一行)是同一份数据的另一个名字,比的时候拿掉,
+ * 另由下面「别名的新键」那一条核对:新键在不在、link 与理由,都和它的别名键一模一样(集合不许借新键变大)。
+ */
+const ALIAS_TARGETS: ReadonlySet<string> = new Set(MERGED_ALIASES.map(a => a.to))
+const phoneSide = (a: Iterable<string>) => [...a].filter(k => !ALIAS_TARGETS.has(k))
+const knownPhone = <T>(o: Readonly<Record<string, T>>) => known(Object.fromEntries(Object.entries(o).filter(([k]) => !ALIAS_TARGETS.has(k))))
 
 describe('从路由表推出来的名单与改造前快照逐条一致', () => {
   it('ROUTE_MIN_TIER(每条 /v1 路由的档位)', () => {
@@ -39,8 +47,8 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     reg.registerOperatorToken('op')
     expect({
       operator: sorted(reg.resolve('op')!.routeAllow!),
-      device: sorted(PHONE_ROUTES),
-      link: sorted(LINK_ROUTES),
+      device: sorted(phoneSide(PHONE_ROUTES)),
+      link: sorted(phoneSide(LINK_ROUTES)),
       federation: sorted(routesForToken('federation')),
       selftest: sorted(routesForToken('selftest')),
     }).toEqual(snap.tokenAllow)
@@ -78,7 +86,14 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
       'GET /v1/dialogue/search',
       'POST /v1/dialogue/unlock',
     ]
-    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER], federation: [], selftest: [], link: [] }
+    // operator:AI 输出回归评测(2026-10-29,docs/design/2026-10-29-output-eval.md):`wechat-cc eval run` 起一条只读、不批权限、不发微信的真会话,同 selftest/converse。
+    const OUTPUT_EVAL = ['POST /v1/eval/run','GET /v1/protocol/capabilities','GET /v1/matter/owner-chat/window','GET /v1/matter/owner-chat/work','GET /v1/matter/owner-chat/events','POST /v1/matter/owner-chat/stop','GET /v1/cli/activity','POST /v1/cli/decide','POST /v1/cli/session-say','POST /v1/cli/session-stop']
+    // operator:一件事上的动作收进 /v1/matter/*(P3e,设计稿 2026-11-05-p3-one-route-family):operator 本来就能走它们的 /v1/workbench/* 双胞胎
+    // (cancel / permission / answer / artifact / quota-handoff / worktree / create-entry / entry-receipt,还在快照里),新键是同一个处理器,够得着的不变。
+    const P3E_MATTER_ACTIONS = ['POST /v1/matter/stop', 'POST /v1/matter/permission', 'POST /v1/matter/answer', 'GET /v1/matter/artifact', 'POST /v1/matter/handoff', 'POST /v1/matter/worktree', 'POST /v1/matter/create', 'GET /v1/matter/create-receipt',
+      // P3e-2(双胞胎:rewind-preview / rewind / review / review-mark / review-return / review-comment / review-comments-send)
+      'GET /v1/matter/rewind', 'POST /v1/matter/rewind', 'GET /v1/matter/changes', 'POST /v1/matter/review-mark', 'POST /v1/matter/review-return', 'POST /v1/matter/review-comment', 'POST /v1/matter/review-comments-send']
+    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['GET /v1/memory/topics', 'GET /v1/memory/topics/detail', 'POST /v1/memory/topics/open', 'POST /v1/memory/topics/rename', 'POST /v1/memory/topics/merge', 'POST /v1/memory/topics/delete', 'POST /v1/memory/topics/entry/wrong', 'GET /v1/subscribe/topics', 'POST /v1/matter/seen', 'GET /v1/matter/owner-chat/file', 'POST /v1/memory/edit', 'POST /v1/memory/view', 'GET /v1/memory/retractions', 'POST /v1/memory/retractions/restore', ...F6_DESKTOP_OWNER, ...OUTPUT_EVAL, ...P3E_MATTER_ACTIONS], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
     reg.registerOperatorToken('op')
     const all = (a: Iterable<string>) => [...a].sort()
@@ -86,18 +101,28 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
     expect(all(reg.resolve('op')!.routeAllow!)).toEqual(want('operator'))
     expect(all(routesForToken('federation'))).toEqual(want('federation'))
     expect(all(routesForToken('selftest'))).toEqual(want('selftest'))
-    expect(all(LINK_ROUTES)).toEqual(want('link'))
+    expect(all(phoneSide(LINK_ROUTES))).toEqual(want('link'))
   })
   it('PHONE_ROUTES / LINK_ROUTES / LAN_ONLY_OPS / PHONE_TOPICS', () => {
-    expect(sorted(PHONE_ROUTES)).toEqual(snap.PHONE_ROUTES)
-    expect(sorted(LINK_ROUTES)).toEqual(snap.LINK_ROUTES)
+    expect(sorted(phoneSide(PHONE_ROUTES))).toEqual(snap.PHONE_ROUTES)
+    expect(sorted(phoneSide(LINK_ROUTES))).toEqual(snap.LINK_ROUTES)
     // 这两份不是路由:整份比
     expect([...LAN_ONLY_OPS].sort()).toEqual(snap.LAN_ONLY_OPS)
-    expect([...PHONE_TOPICS].sort()).toEqual(snap.PHONE_TOPICS)
+    expect([...PHONE_TOPICS].sort()).toEqual([...snap.PHONE_TOPICS, 'topics'].sort())
+  })
+  it('别名的新键:手机令牌经新键够得着的,和别名键一模一样(在不在、link、理由)', () => {
+    expect(MERGED_ALIASES.length, '没有已并的行 ⇒ 这一条空转').toBeGreaterThan(0)
+    for (const a of MERGED_ALIASES) {
+      expect(PHONE_ROUTES.has(a.from), `${a.from}:别名键要在设备令牌的集合里`).toBe(true)
+      expect(PHONE_ROUTES.has(a.to), `${a.to}:新键要在设备令牌的集合里`).toBe(true)
+      expect(LINK_ROUTES.has(a.to), `${a.to}:链接令牌能不能走,同别名键`).toBe(LINK_ROUTES.has(a.from))
+      expect(LINK_READ_OK[a.to], `${a.to}:读的理由同别名键`).toBe(LINK_READ_OK[a.from])
+      expect(LINK_WRITE_OK[a.to], `${a.to}:写的理由同别名键`).toBe(LINK_WRITE_OK[a.from])
+    }
   })
   it('LINK_READ_OK / LINK_WRITE_OK 连理由逐字一致', () => {
-    expect(known(LINK_READ_OK)).toEqual(snap.LINK_READ_OK)
-    expect(known(LINK_WRITE_OK)).toEqual(snap.LINK_WRITE_OK)
+    expect(knownPhone(LINK_READ_OK)).toEqual(snap.LINK_READ_OK)
+    expect(knownPhone(LINK_WRITE_OK)).toEqual(snap.LINK_WRITE_OK)
   })
   it('lib.rs 与 dev 代理的放行名单(生成物)和改造前源码里的元组一致', () => {
     expect(sorted(generated.tauri)).toEqual(snap.tauriAllowed)

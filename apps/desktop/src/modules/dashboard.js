@@ -93,7 +93,7 @@ export function renderDashboard(report) {
   // row if no admin is in the bound accounts (e.g. access.json admins[] is
   // empty, or admin hasn't re-bound after a fresh install).
   const currentRow = rows.find((/** @type {any} */ r) => r.isAdmin) || rows[0]
-  if (!hasOpenConfirm && current) {
+  if (!hasOpenConfirm && !_providerMenuOpen && current) {
     if (!currentRow) {
       current.innerHTML = `
         <div class="user-copy">
@@ -128,8 +128,8 @@ export function renderDashboard(report) {
     }
   }
 
-  if (hasOpenConfirm) {
-    /* skip */
+  if (hasOpenConfirm || _providerMenuOpen) {
+    /* Preserve the menu opener and its focus while choosing a service. */
   } else {
     const subRows = currentRow ? rows.filter((/** @type {any} */ r) => r.id !== currentRow.id) : []
     if (subhead) subhead.hidden = subRows.length === 0
@@ -456,6 +456,8 @@ let _providerSwitchInflight = false
 let _providerMenuOutsideHandler = null
 /** @type {((ev: KeyboardEvent) => void) | null} */
 let _providerMenuKeyHandler = null
+/** @type {HTMLElement | null} */ let _providerMenuAnchor = null
+/** @type {(() => void) | null} */ let _providerMenuPosition = null
 
 // Throttle state for checkIncidentsOnPoll (Task 8 follow-up) — see that
 // function's doc comment.
@@ -579,18 +581,81 @@ export async function restartDaemon(deps) {
 }
 
 // Close the provider-switch dropdown and remove its one-shot listeners.
-export function closeProviderMenu() {
+export function closeProviderMenu(restoreFocus = false) {
   const menu = document.getElementById("provider-menu")
   if (menu) menu.hidden = true
   _providerMenuOpen = false
+  if (_providerMenuPosition) {
+    document.defaultView?.removeEventListener('resize', _providerMenuPosition)
+    document.removeEventListener('scroll', _providerMenuPosition, true)
+    _providerMenuPosition = null
+  }
+  _providerMenuAnchor?.setAttribute?.('aria-expanded', 'false')
+  if (restoreFocus) _providerMenuAnchor?.focus?.({ preventScroll: true })
+  _providerMenuAnchor = null
   if (_providerMenuOutsideHandler) {
     document.removeEventListener("click", _providerMenuOutsideHandler, true)
     _providerMenuOutsideHandler = null
   }
   if (_providerMenuKeyHandler) {
-    document.removeEventListener("keydown", _providerMenuKeyHandler)
+    document.removeEventListener("keydown", _providerMenuKeyHandler, true)
     _providerMenuKeyHandler = null
   }
+}
+
+/** Keep both service entry points within the viewport, including scrolled drawers.
+ * @param {HTMLElement} menu @param {HTMLElement} anchor */
+function openProviderMenu(menu, anchor) {
+  _providerMenuAnchor = anchor
+  anchor.setAttribute?.('aria-expanded', 'true')
+  anchor.setAttribute?.('aria-controls', 'provider-menu')
+  menu.setAttribute?.('role', 'group')
+  menu.setAttribute?.('aria-label', '已配置的 AI 服务')
+  menu.hidden = false
+  _providerMenuOpen = true
+  _providerMenuPosition = () => {
+    const rect = anchor.getBoundingClientRect()
+    const view = document.defaultView
+    const width = view?.innerWidth ?? 1024
+    const height = view?.innerHeight ?? 768
+    const gap = 8
+    const menuWidth = menu.getBoundingClientRect?.().width ?? 172
+    menu.style.left = `${Math.max(gap, Math.min(rect.left, width - menuWidth - gap))}px`
+    // Prefer below; use above when that side has more room. Bound the anchor
+    // too: a drawer can scroll it out of view while the menu is open.
+    const below = Math.max(0, height - Math.max(gap, rect.bottom + 4) - gap)
+    const above = Math.max(0, Math.min(height - gap, rect.top - 4) - gap)
+    const down = below >= Math.min(menu.scrollHeight || 320, 320) || below >= above
+    const available = Math.max(40, Math.min(height - gap * 2, down ? below : above))
+    menu.style.maxHeight = `${available}px`
+    const menuHeight = Math.min(menu.scrollHeight || available, available)
+    menu.style.top = `${Math.max(gap, Math.min(height - menuHeight - gap, down ? rect.bottom + 4 : rect.top - menuHeight - 4))}px`
+  }
+  _providerMenuPosition()
+  document.defaultView?.addEventListener('resize', _providerMenuPosition)
+  document.addEventListener('scroll', _providerMenuPosition, true)
+  const buttons = () => [...menu.querySelectorAll('button:not(:disabled)')]
+  /** @param {Element | undefined} button */
+  const focus = button => {
+    /** @type {HTMLElement | undefined} */ (button)?.focus?.({ preventScroll: true })
+    button?.scrollIntoView?.({ block: 'nearest' })
+  }
+  focus(buttons()[0])
+  _providerMenuKeyHandler = ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); closeProviderMenu(true); return }
+    if (ev.key === 'Tab') { closeProviderMenu(true); return }
+    const actions = buttons()
+    const index = actions.indexOf(/** @type {HTMLButtonElement} */ (document.activeElement))
+    let next
+    if (ev.key === 'Home') next = 0
+    else if (ev.key === 'End') next = actions.length - 1
+    else if (ev.key === 'ArrowDown') next = (index + 1) % actions.length
+    else if (ev.key === 'ArrowUp') next = (index - 1 + actions.length) % actions.length
+    else return
+    ev.preventDefault()
+    focus(actions[next])
+  }
+  document.addEventListener('keydown', _providerMenuKeyHandler, true)
 }
 
 // Toggle the provider-switch dropdown.
@@ -622,11 +687,7 @@ export async function toggleProviderMenu(deps, report) {
 
   // Position: fixed, anchored below the .provider-switch button.
   // Using getBoundingClientRect so it works regardless of scroll position.
-  const rect = anchor.getBoundingClientRect()
-  menu.style.top = `${rect.bottom + 4}px`
-  menu.style.left = `${rect.left}px`
-  menu.hidden = false
-  _providerMenuOpen = true
+  openProviderMenu(menu, /** @type {HTMLElement} */ (anchor))
 
   // Wire button clicks inside the menu
   ;/** @type {NodeListOf<HTMLButtonElement>} */ (menu.querySelectorAll("button[data-provider]")).forEach(btn => {
@@ -636,7 +697,7 @@ export async function toggleProviderMenu(deps, report) {
       const name = btn.dataset.provider
       if (!name) return
       if (name === currentProvider) {
-        closeProviderMenu()
+        closeProviderMenu(true)
         return
       }
       // Disable further clicks while switching
@@ -669,11 +730,6 @@ export async function toggleProviderMenu(deps, report) {
   }
   document.addEventListener("click", _providerMenuOutsideHandler, true)
 
-  // Escape key: close menu
-  _providerMenuKeyHandler = (ev) => {
-    if (ev.key === "Escape") closeProviderMenu()
-  }
-  document.addEventListener("keydown", _providerMenuKeyHandler)
 }
 
 /** @param {DashboardDeps} deps @param {any} anchor  测试里是假的元素 @param {DoctorReport} [_report] */
@@ -702,11 +758,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
     document.getElementById("brain-health")?.scrollIntoView?.({ block: "nearest" })
   })
 
-  const rect = anchor.getBoundingClientRect()
-  menu.style.top = `${rect.bottom + 4}px`
-  menu.style.left = `${Math.max(8, rect.right - 144)}px`
-  menu.hidden = false
-  _providerMenuOpen = true
+  openProviderMenu(menu, anchor)
 
   ;/** @type {NodeListOf<HTMLButtonElement>} */ (menu.querySelectorAll("button[data-provider]")).forEach(btn => {
     btn.addEventListener("click", async (ev) => {
@@ -715,7 +767,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
       const name = btn.dataset.provider
       if (!name) return
       if (name === currentProvider) {
-        closeProviderMenu()
+        closeProviderMenu(true)
         return
       }
       if (noChat) {
@@ -752,10 +804,6 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
   }
   document.addEventListener("click", _providerMenuOutsideHandler, true)
 
-  _providerMenuKeyHandler = (ev) => {
-    if (ev.key === "Escape") closeProviderMenu()
-  }
-  document.addEventListener("keydown", _providerMenuKeyHandler)
 }
 
 // Account row inline two-step confirm handler. Wired by main.js to the

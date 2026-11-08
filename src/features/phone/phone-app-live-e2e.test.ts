@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { makeProtocolClient, type ProtocolSocket } from '@wechat-cc/protocol'
+import { makeProtocolClient, WIRE_ROUTE_ALIASES, type ProtocolSocket } from '@wechat-cc/protocol'
 import { openDb, type Db } from '../../lib/db'
 import { removeTempDir } from '../../lib/test-temp'
 import { createProviderRegistry } from '../../app/provider-registry'
@@ -25,12 +25,16 @@ import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../workbench/service'
 import { encodeNativeHistoryKey, historyPreview, type NativeHistoryItem, type NativeHistoryReader } from '../../adapters/workbench/native-history'
 import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
-import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
+import { makeSettingsPanel as makePanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
+import { withPanelV1, type PanelDepsWithFakes } from './test-panel-v1'
+/** P3c-1:并成别名的旧路径翻到 /v1,面板要接上内部 API 的分发(test-panel-v1.ts 照 pipeline-deps.ts 拼)。 */
+const makeSettingsPanel = (d: PanelDepsWithFakes) => makePanel(withPanelV1(d))
 import { makeMemoryRelay, type MemoryRelay } from './memory-relay.fixture'
 import { makeTunnelClient, type TunnelClient, type TunnelWS } from './tunnel-client'
 import { makePhoneEventsWiring } from './phone-topic-sources'
 import { makePhoneOwner } from './mobile-chat'
 import { makePhoneChat } from './phone-chat'
+import { stickerPhoneRoutes } from '../stickers'
 import { buildConnections } from '../../daemon/connections'
 import { makeLiveBackend } from '../../../apps/app/src/backend/live'
 import type { Backend, ConnState } from '../../../apps/app/src/backend/types'
@@ -138,6 +142,8 @@ beforeEach(async () => {
       speak: async text => ({ audio: Buffer.from(`voice:${text}`), mime: 'audio/mpeg' }),
     },
     stickers: { list: () => [{ file: 'happy.png', tags: ['开心'] }], dir: join(root, 'stickers') },
+    // P3d-3 起表情原图归表情那个功能,经 featureRoutes 交进来(同 wire-settings-panel.ts)
+    featureRoutes: [stickerPhoneRoutes({ list: () => [{ file: 'happy.png' }], dir: join(root, 'stickers') })],
     // 连接:真 buildConnections(插件快照还没出来 ⇒ unknown;知识库没开 ⇒ 不出现)+ 真工作台;detail 只在 admin 视图里有,手机路由去掉。
     connections: () => buildConnections({
       plugins: () => null, wechatSyncedAt: () => null,
@@ -172,8 +178,10 @@ beforeEach(async () => {
     activeLinkToken: () => panel.activeLinkToken(),
     handleRequest: async req => {
       const key = `${req.method} ${new URL(req.url).pathname}`
-      handled.push(key)
-      const hold = holds.get(key)
+      // Keep fixture observations in the legacy vocabulary for either wire route.
+      const fixtureKey = WIRE_ROUTE_ALIASES.find(alias => alias.to === key)?.from ?? key
+      handled.push(fixtureKey)
+      const hold = holds.get(fixtureKey)
       if (hold) await hold.wait
       return panel.handleRequest(req)
     },

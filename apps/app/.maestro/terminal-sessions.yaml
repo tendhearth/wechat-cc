@@ -1,66 +1,86 @@
-# 终端里的会话 + 今天(2026-10-15,演示模式;10-16 改):此刻页「N 件事等你」在上、「过去 24 小时」在下(不再重复等你的数),
-# 终端那条等批准算进去(点进详情能拍)→ 一起做「终端里的会话」三行(等你批准 / 在跑 / 歇着),每行只有一个动作
-# (等批准那行是「看清楚 ›」)→ 在跑那条的详情:说一句是灰的 → 歇着那条的详情:说一句 → 收下
-# → 回到一起做,点「看清楚 ›」进详情「允许」→ 那条转成在跑。每一步截图。
+# T5: 原有功能验收移到唯一对话、搜索引用与原详情。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
 - tapOn:
     id: welcome-look-first
+- runFlow: subflows/_work.yaml
 - extendedWaitUntil:
     visible:
-      id: now-today
+      id: row-matter-a1b2c3d4
     timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-api
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: t01-home-back
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-blog
+    direction: UP
+    centerElement: true
 - assertVisible:
-    id: now-waiting-title
-- takeScreenshot: t01-now-today
-# 终端那条等批准排在「N 件事等你」里;点进去是终端会话详情,能拍
-# iOS 把滚动区下沿被裁掉的行也报成可见 ⇒ scrollUntilVisible 不滚;先实打实滚一下,免得点到下面「跟 CC 说一句」
-- scroll
-- assertVisible:
-    id: now-terminal-demo-cli-blog
+    id: row-terminal-demo-cli-blog
 - takeScreenshot: t01b-now-waiting-terminal
 - tapOn:
-    id: now-terminal-demo-cli-blog
+    id: row-terminal-demo-cli-blog
 - extendedWaitUntil:
     visible:
       id: terminal-detail-allow
     timeout: 5000
 - assertVisible:
     id: terminal-detail-pending
-# 等批准时说一句框下的提示是「先拍板」,不是「还在跑」
-- assertVisible: "它在等你决定，先拍板再说下一句。|It’s waiting for your approval. Decide first, then send the next message."
+- assertVisible:
+    id: terminal-say-send
+    enabled: false
+- assertVisible: 它在等你决定，先拍板再说下一句。|It’s waiting for your approval. Decide first,
+    then send the next message.
 - takeScreenshot: t01c-terminal-waiting
 - tapOn:
     id: topbar-back
-- retry:
-    maxRetries: 2
-    commands:
-      - tapOn:
-          id: tab-together
-      - extendedWaitUntil:
-          visible:
-            id: together-item-a1b2c3d4
-          timeout: 3000
-- scrollUntilVisible:
-    element:
-      id: together-terminal
-- scrollUntilVisible:
-    element:
-      id: terminal-item-demo-cli-api
-- assertVisible:
-    id: terminal-review-demo-cli-blog
-- assertNotVisible:
-    id: terminal-allow-demo-cli-blog
-- assertVisible:
-    id: terminal-item-demo-cli-docs
-- takeScreenshot: t02-together-terminal
-# 在跑那条:说一句的框是灰的,并说明为什么
-- tapOn:
-    id: terminal-open-demo-cli-docs
+- runFlow: subflows/_work.yaml
 - extendedWaitUntil:
     visible:
-      id: terminal-detail-summary
+      id: row-matter-a1b2c3d4
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-api
+    centerElement: true
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-blog
+    direction: UP
+    centerElement: true
+- assertVisible:
+    id: row-terminal-demo-cli-blog
+- assertNotVisible:
+    id: terminal-allow-demo-cli-blog
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-docs
+    direction: DOWN
+    centerElement: true
+- assertVisible:
+    id: row-terminal-demo-cli-docs
+- takeScreenshot: t02-all-terminal
+# 用搜索定位目标，避免把固定搜索栏下面已裁剪的无障碍行当成可点击行。
+- tapOn:
+    id: chat-search-input
+- inputText: docs
+- tapOn:
+    id: search-work
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-docs
+    direction: UP
+    centerElement: true
+- tapOn:
+    id: row-terminal-demo-cli-docs
+- extendedWaitUntil:
+    visible:
+      id: terminal-activity
     timeout: 5000
 - assertVisible:
     id: terminal-say-busy
@@ -70,12 +90,19 @@ appId: com.tendhearth.app
 - takeScreenshot: t03-terminal-running
 - tapOn:
     id: topbar-back
-# 歇着那条:接着说一句
+- tapOn:
+    id: chat-search-input
+- eraseText
+- inputText: api-server
+- tapOn:
+    id: search-work
 - scrollUntilVisible:
     element:
-      id: terminal-open-demo-cli-api
+      id: row-terminal-demo-cli-api
+    direction: UP
+    centerElement: true
 - tapOn:
-    id: terminal-open-demo-cli-api
+    id: row-terminal-demo-cli-api
 - extendedWaitUntil:
     visible:
       id: terminal-detail-summary
@@ -85,7 +112,7 @@ appId: com.tendhearth.app
 - takeScreenshot: t04-terminal-idle
 - tapOn:
     id: terminal-say-input
-- inputText: "再加一条测试"
+- inputText: Add one more test
 - tapOn:
     id: terminal-say-send
 - extendedWaitUntil:
@@ -97,12 +124,19 @@ appId: com.tendhearth.app
 - takeScreenshot: t05-terminal-sent
 - tapOn:
     id: topbar-back
-# 看清楚 › 进详情再允许:等批准那条转成在跑
+- tapOn:
+    id: chat-search-input
+- eraseText
+- inputText: blog
+- tapOn:
+    id: search-work
 - scrollUntilVisible:
     element:
-      id: terminal-review-demo-cli-blog
+      id: row-terminal-demo-cli-blog
+    direction: UP
+    centerElement: true
 - tapOn:
-    id: terminal-open-demo-cli-blog
+    id: row-terminal-demo-cli-blog
 - extendedWaitUntil:
     visible:
       id: terminal-detail-allow
@@ -113,11 +147,39 @@ appId: com.tendhearth.app
     visible:
       id: terminal-detail-note
     timeout: 5000
-- assertVisible: "好了，它在终端里接着做。|Done. It’s carrying on in the terminal."
+- assertVisible: 好了，它在终端里接着做。|Done. It’s carrying on in the terminal.
+- assertNotVisible:
+    id: terminal-detail-allow
+- assertNotVisible:
+    id: terminal-detail-pending
+- assertVisible:
+    id: terminal-say-send
+    enabled: false
 - tapOn:
     id: topbar-back
 - extendedWaitUntil:
-    notVisible:
-      id: terminal-review-demo-cli-blog
+    visible:
+      id: search-work
     timeout: 5000
-- takeScreenshot: t06-together-allowed
+# 演示执行者会异步做完；返回后核对同一事项的实际最终状态。
+- extendedWaitUntil:
+    visible:
+      id: row-terminal-demo-cli-blog
+      text: "blog, (这一轮做完了|Done for this round),.*"
+    timeout: 5000
+# 原 all-group-working 意图：仍有在做的会话可找到，迁到 docs 搜索引用。
+- tapOn:
+    id: chat-search-input
+- eraseText
+- inputText: docs
+- tapOn:
+    id: search-work
+- scrollUntilVisible:
+    element:
+      id: row-terminal-demo-cli-docs
+    direction: UP
+    centerElement: true
+- assertVisible:
+    id: row-terminal-demo-cli-docs
+    text: "docs, (在做|Working),.*"
+- takeScreenshot: t06-all-allowed
