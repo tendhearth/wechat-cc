@@ -85,13 +85,13 @@ export function terminalRoutes(deps: TerminalRoutesDeps): RouteTable {
       if (caller?.origin !== 'file') return { status: 403, body: { error: 'forbidden' } }
       return { status: 200, body: await deps.projectMemory(body as ProjectMemoryRequest) }
     },
-    'POST /v1/cli/event': async (_q, body) => {
+    'POST /v1/cli/event': async (_q, body, caller) => {
       const action = await deps.cliEvents.ingest(body as CliEvent)
       return { status: 200, body: { ok: true, action } }
     },
     // 权限中继(§6.3):PermissionRequest hook 先 POST 登记(主人在场就直接回
     // owner_present,终端自己问),再 GET 轮询到 y/n 或过期。
-    'POST /v1/cli/permission': async (_q, body) => {
+    'POST /v1/cli/permission': async (_q, body, caller) => {
       return { status: 200, body: await deps.cliPermissions.open(body as CliPermissionRequest) }
     },
     'GET /v1/cli/permission': async (q) => {

@@ -155,7 +155,7 @@ async function browser() {
   const phase=browserSnapshot?.phase ?? 'after'
   const specs=phase==='before' ? ['design-unify-shots.spec.ts'] : [
     'companion-controls.spec.ts','companion-entry.spec.ts','companion-life.spec.ts','now-hero.spec.ts','companion-status.spec.ts','pet-lab.spec.ts',
-    't5-conversation.spec.ts','workbench-layout.spec.ts','task-detail-minimal.spec.ts','workbench-line-review.spec.ts','design-unify-shots.spec.ts']
+    't5-conversation.spec.ts','workbench-layout.spec.ts','task-detail-minimal.spec.ts','workbench-line-review.spec.ts','design-unify-shots.spec.ts','hook-trust.spec.ts']
   const home=join(run,'home');await mkdir(home,{mode:0o700})
   const browserExecutable=mini.rustc?undefined:await insideLab(join(config.browserRuntimeRoot??config.root,'browser-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell'))
   const result=await command('browser',mini.bun,['x','--no-install','playwright','test','-c','playwright.config.ts',...specs],{

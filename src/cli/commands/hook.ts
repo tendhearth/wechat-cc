@@ -44,15 +44,24 @@ const hookInstallCmd = defineCommand({
   async run({ args }) {
     const { installHooks } = await import('../hook.ts')
     // 命令行与 daemon 的 POST /v1/cli/hooks/install(桌面「接上」)同一个出处:terminal-hooks.ts selfHookCommand。
-    const { selfHookCommand } = await import('../terminal-hooks.ts')
+    const { selfHookCommand, defaultTerminalHooksDeps, readTerminalHooksForCli } = await import('../terminal-hooks.ts')
+    const { codexTrustMessage, recordCodexHookDefinitionChange } = await import('../codex-hook-trust')
     const out: Record<string, unknown> = {}
     for (const source of hookTargets(args)) {
       const file = await hookFileFor(source)
       const command = selfHookCommand(source)
       try {
-        const { changed } = installHooks(file, source, command)
-        out[source] = { ok: true, file, changed, command }
+        const result = installHooks(file, source, command)
+        const { changed } = result
+        const deps = defaultTerminalHooksDeps()
+        if (result.reconfirmationRequired && deps.evidenceFile) recordCodexHookDefinitionChange(deps.evidenceFile)
+        const trust = source === 'codex' ? (await readTerminalHooksForCli(deps)).find(s => s.source === 'codex')?.trust : undefined
+        out[source] = { ok: true, file, ...result, command, ...(trust ? { trust } : {}) }
         if (!args.json) console.log(`${changed ? '✅' : '✔'} ${source}: ${changed ? '已写入' : '已是最新'} ${file}`)
+        if (!args.json && source === 'codex') {
+          if (result.reconfirmationRequired) console.log('Codex 需要重新确认一次。')
+          if (trust) console.log(codexTrustMessage(trust))
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         out[source] = { ok: false, file, error: msg }
@@ -63,7 +72,7 @@ const hookInstallCmd = defineCommand({
     console.log('之后终端里的 claude / codex(装了 --cursor 的话还有 Cursor)跑完一个长回合,主人微信会收到一条(压 45s;期间你再敲一句就不发;一次提问最多推一条)。')
     console.log('停下来等批准时:你最近 3 分钟没在终端敲过字 ⇒ 微信里收到卡片,回「y 码」/「n 码」就替终端拍板(120s 内);否则终端自己问。')
     console.log('daemon 自己拉起的会话不会推(回环守卫)。查看:wechat-cc hook status;撤掉:wechat-cc hook uninstall。')
-    console.log('新会话会收到 CC 记下的项目近况索引;设置中可关闭。Codex 新增的 hook 需先在 /hooks 中审阅并信任。')
+    console.log('连接完成后，新会话会收到 CC 记下的项目近况；设置中可关闭。')
   },
 })
 
@@ -98,13 +107,14 @@ const hookStatusCmd = defineCommand({
   meta: { name: 'status', description: '三家(Claude Code / Codex / Cursor)的 hook 装没装、命令行是什么' },
   args: { json: { type: 'boolean', description: 'JSON envelope' } },
   async run({ args }) {
-    const { hookStatus } = await import('../hook.ts')
+    const { defaultTerminalHooksDeps, readTerminalHooksForCli } = await import('../terminal-hooks.ts')
+    const { codexTrustMessage } = await import('../codex-hook-trust')
     const out: Record<string, unknown> = {}
-    for (const source of ALL_SOURCES) {
-      const file = await hookFileFor(source)
-      const st = hookStatus(file, source)
-      out[source] = { file, ...st }
+    for (const st of await readTerminalHooksForCli(defaultTerminalHooksDeps())) {
+      const { source, file } = st
+      out[source] = st
       if (!args.json) console.log(`${st.installed ? '✅' : '—'} ${source}: ${st.installed ? st.command : '未安装'}(${file})`)
+      if (!args.json && st.trust) console.log(codexTrustMessage(st.trust))
     }
     if (args.json) console.log(JSON.stringify(out))
   },

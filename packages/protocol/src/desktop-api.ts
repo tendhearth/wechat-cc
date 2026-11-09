@@ -1430,6 +1430,7 @@ const CliHooksChangeShape = z.object({
   command: z.string().optional(),
   error: z.string().optional(),
   skipped: z.literal('cli_not_found').optional(),
+  reconfirmationRequired: z.boolean().optional(),
 })
 const CliHooksSourceStateShape = z.object({
   source: CliD2Source,
@@ -1439,6 +1440,10 @@ const CliHooksSourceStateShape = z.object({
   command: z.string().nullable(),
   health: z.enum(['missing', 'stale', 'ok']),
   matchesSelf: z.boolean(),
+  trust: z.object({
+    state: z.enum(['untrusted', 'trusted', 'changed']), evidence: z.enum(['config', 'invocation', 'none']),
+    disabled: z.boolean().optional(), version: z.string().nullable().optional(),
+  }).optional(),
 })
 export const CliHooksResponse = z.object({
   ok: z.boolean(), results: z.array(CliHooksChangeShape), status: z.array(CliHooksSourceStateShape),

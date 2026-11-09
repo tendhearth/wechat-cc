@@ -11,9 +11,11 @@ import { ConversationMore as Home } from '../ui/ConversationMore'
 import Activity from '../app/activity'
 import Jobs from '../app/jobs'
 import Letters from '../app/letters'
+import Connections from '../app/connections'
 import Sessions from '../app/sessions'
 import { withProviders, type TestCtx } from './providers.test-support'
 import { useWork } from './useWork'
+import { CONNECTIONS_POLL_MS } from './useConnections'
 
 type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
@@ -66,6 +68,21 @@ afterEach(async () => {
 })
 
 describe('matter list loading evidence', () => {
+  it('connection confirmation updates while the page stays open, without a refresh tap', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const demo = makeDemoBackend({ lang: 'en' })
+      let code = 'terminal.codex_untrusted'
+      await mount({ ...demo, async connections() { return { generatedAt: Date.now(), sources: [], computers: [], recent: [], outputs: [], capabilities: [{ id: 'terminal', name: 'Codex', state: code === 'terminal.ok' ? 'ok' : 'needs_you', code, reason: 'fallback', params: { n: 0 } }] } } }, createElement(Connections))
+      expect(el('connections-cap-terminal')?.textContent).toContain('Codex needs one more step')
+      code = 'terminal.ok'
+      await act(async () => { await vi.advanceTimersByTimeAsync(CONNECTIONS_POLL_MS) })
+      expect(el('connections-cap-terminal')?.textContent).toContain('Connected: 0 terminal sessions')
+      code = 'terminal.codex_changed'
+      await act(async () => { await vi.advanceTimersByTimeAsync(CONNECTIONS_POLL_MS) })
+      expect(el('connections-cap-terminal')?.textContent).toContain('Codex needs your confirmation again')
+    } finally { vi.useRealTimers() }
+  })
   it('useWork distinguishes an unread list from a successfully read empty list', async () => {
     let resolve!: (rows: MatterT[]) => void
     await mount(backendWithMatters(() => new Promise(r => { resolve = r })), createElement(WorkProbe))
