@@ -1,3 +1,5 @@
+import { projectActivities } from '../../features/memory'
+import { makeMatterSeen } from '../../adapters/store/matter-seen'
 import { turnJudge } from '../../app/turn-judge'
 import { makeTopicBubbles } from '../../lib/topic-bubbles'
 import { makeOwnerConversationReader, ownerConversationWork, ownerConversationEvents, stopOwnerConversation } from './owner-conversation'
@@ -285,7 +287,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // 经 CC 开口那道门(guest_request,blocking);交给门就算办完,重试归待说队列(inbound/guest-notify.ts)
   const notifyOwnerOfGuest = makeGuestOwnerNotify({ speech: () => speech, adminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null), log: (t, l) => log(t, l) })
   // 记忆(src/features/memory,经 index.ts):LLM 记忆操作、每晚整理;欢迎时的观察(side-effects.ts)。
-  const { memoryLlmOps, memoryNightly } = wireMemory({ stateDir, db, boot, chatPrefs, careLedger, speech, log })
+  const { memoryLlmOps, memoryNightly } = wireMemory({ stateDir, db, boot, chatPrefs, careLedger, speech, log, seen:makeMatterSeen(db,opts.proposals?.desktop), taskActivity:opts.workbench?.projectActivity })
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
     db,
@@ -447,7 +449,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
   // 话题 T2:每一轮按话题调记忆,只在主人自己的对话里(微信入站在 mw-recall,App 那一轮在 wire-converse)。
+  const topicSeen=makeMatterSeen(db,opts.proposals?.desktop),topicExecutorName=(id:string)=>boot.registry.namesOf(id).name
   const topicRecall = makeTopicRecall({
+    activity: chatId => projectActivities(db, chatId, topicSeen, undefined, opts.workbench?.projectActivity, topicExecutorName),
     onAdopt: (chatId, requestId, r, messageIds) => makeTopicBubbles(db).adopt(chatId, requestId, 'recall', r.topicIds.map(id => ({ id, entryIds: r.entryIds, messageIds }))),
     threads: makeThreadsStore(db),
     isOwner: (chatId) => chatId === ownerChatId(),

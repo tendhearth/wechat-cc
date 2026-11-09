@@ -24,12 +24,14 @@ export interface DesktopSurface {
   willAnnounce(matterId: string): boolean
   /** 桌面读了这件事的详情。 */
   noteSeen(matterId: string): void
+  seenVersion():number
   /** 这件事 sinceMs 以后桌面读过没有。 */
   seenSince(matterId: string, sinceMs: number): boolean
 }
 
 export function makeDesktopSurface(now: () => number = Date.now): DesktopSurface {
   let last = Number.NEGATIVE_INFINITY
+  let seenVersion=0
   const seen = new Map<string, number>()
   let prev: Map<string, string> | null = null
   const announced = new Map<string, number>()
@@ -50,7 +52,9 @@ export function makeDesktopSurface(now: () => number = Date.now): DesktopSurface
       if (at !== undefined && now() - at < DESKTOP_FRESH_MS) return true
       return prev?.get(id) === 'working'
     },
+    seenVersion:()=>seenVersion,
     noteSeen(id) {
+      seenVersion++
       seen.delete(id); seen.set(id, now())
       while (seen.size > MAX_SEEN) { const oldest = seen.keys().next().value; if (oldest === undefined) break; seen.delete(oldest) }
     },

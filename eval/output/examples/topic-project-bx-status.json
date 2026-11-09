@@ -1,0 +1,13 @@
+{
+  "id": "topic-project-bx-status",
+  "kind": "topic",
+  "note": "虚构项目进度问句；使用生产话题匹配入口，活动注入另由离线 MatterLog 回归覆盖。",
+  "input": {
+    "text": "bx 那边怎么样了",
+    "topics": [
+      { "id": "bx", "title": "bx", "aliases": ["网络工具"], "entries": [{ "id": "bx-check", "kind": "progress", "line": "bx 的本地检查等主人确认" }] },
+      { "id": "garden", "title": "花园", "entries": [{ "id": "garden-plan", "kind": "progress", "line": "花园浇水安排已记下" }] }
+    ]
+  },
+  "rules": [{ "recalls": { "topic": "bx", "entry": "bx-check" } }]
+}

@@ -197,7 +197,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const phaseOf = (e: Entry) => e.detail.task?.phase ?? ((e.detail.matter.state === undefined ? e.detail.matter.status === 'replied' : e.detail.matter.state === 'done') ? 'replied' : 'working')
   function topicsList(p: { view?: 'recent' | 'all'; cursor?: string }) {
     const all = demoTopics({ view: 'all' }).topics.filter(t=>!topicDeleted.has(t.id)).map(t=>({...t,title:topicTitles.get(t.id)??t.title})).map(t => topicOpened.has(t.id) ? { ...t, bubbleState: 'open' as const, lastOpenedByOwnerAt: topicOpened.get(t.id)! } : t)
-      .sort((a, b) => (b.lastOpenedByOwnerAt ?? b.lastRecalledAt ?? '').localeCompare(a.lastOpenedByOwnerAt ?? a.lastRecalledAt ?? '') || a.id.localeCompare(b.id))
+      .sort((a, b) => Number(!!b.activity?.waiting)-Number(!!a.activity?.waiting) || Number(!!b.activity?.running)-Number(!!a.activity?.running) || (b.lastOpenedByOwnerAt ?? b.lastRecalledAt ?? '').localeCompare(a.lastOpenedByOwnerAt ?? a.lastRecalledAt ?? '') || a.id.localeCompare(b.id))
     return { topics: p.view === 'all' ? all : all.slice(0, 6), nextCursor: null, revision: `demo-topics:${topicRevision}` }
   }
   function snapshot(topic: Topic): unknown {
@@ -285,7 +285,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const into = topicMerged.get(p.id)
       const topic = topicsList({ view: 'all' }).topics.find(t => t.id === (into??p.id))
       if (!topic) throw new BackendError('not_found')
-      const matters = list().slice(0, 3).map(e => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null }))
+      const matters = list().slice(0, 3).map((e,i) => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null, ...(i===0?{session:{id:e.detail.matter.id,kind:'task' as const,title:titleOf(e,lastLang),executor:e.detail.task?.providerId??'claude',displayName:demoName(e.detail.task?.providerId??'claude'),activity:'waiting' as const,latestStep:lastLang==='zh-Hans'?'等你批准 · Bash':'Approval needed · Bash',updatedAt:e.detail.matter.updatedAt,requestId:e.detail.permissions[0]?.id??null}}:{}) }))
       return { topic: {...topic,mergedInto:into??null}, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: topicWrong?'superseded':'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: topicEntryTime, updatedTs: topicEntryTime, recalled: !topicWrong }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: `demo-topics:${topicRevision}` }
     },
     async topicEdit(action,input) {

@@ -170,3 +170,22 @@ it('daemon filters private/done/foreign/wrong entries and observes switch immedi
     expect(logs.join('\n')).not.toContain('secret')
   } finally { db.close() }
 })
+
+
+it('independent repositories with identical basenames and different full origins abstain',async()=>{
+ const d=temp(),a=join(d,'customer-one','app'),b=join(d,'customer-two','app'),db=openTestDb()
+ try{
+  for(const [path,namespace] of [[a,'customer-one'],[b,'customer-two']]){
+   mkdirSync(join(path!,'.git'),{recursive:true})
+   writeFileSync(join(path!,'.git','config'),`[remote "origin"]\n url = git@github.com:${namespace}/app.git\n`)
+  }
+  const threads=makeThreadsStore(db),matters=makeMatterStore(db),log=makeMatterLog(db),turns=makeTerminalTurnLog({db,matters,log})
+  const id=await threads.create({chatId:'owner',title:'app',private:false,summary:'',facets:[],tags:[],episodes:[]})
+  await threads.addEntry({threadId:id,kind:'fact',line:'唯一同名话题'})
+  turns.event({session_id:'one',source:'claude',cwd:a,kind:'prompt'},Date.now())
+  turns.event({session_id:'two',source:'claude',cwd:b,kind:'prompt'},Date.now())
+  expect((await projectIdentity(a))!.key).not.toBe((await projectIdentity(b))!.key)
+  const get=makeProjectMemory({db,config:()=>({enabled:true,owner:'owner'}),log:()=>{}})
+  for(const cwd of [a,b])expect(await get({source:'claude',session_id:'new',cwd})).toEqual({context:'',reason:'no_match'})
+ }finally{db.close()}
+})

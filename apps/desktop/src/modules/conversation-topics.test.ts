@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mountConversationTopics } from './conversation-topics.js'
+import { formatRelativeTime } from '../view.js'
 const topic = (id:string) => ({id,title:`话题${id}`,description:'说明',summary:'现状',bubbleState:'closed'})
 let current:ReturnType<typeof mountConversationTopics>|undefined
 afterEach(() => { current?.destroy(); vi.restoreAllMocks() })
@@ -116,4 +117,115 @@ it('a selected merged topic follows the authorized surviving id',async()=>{
   await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
   expect(detailReads).toBeGreaterThanOrEqual(2)
   expect(document.querySelector('h2')?.textContent).toBe('话题survivor')
+})
+
+it('shows one priority activity mark with full counts for readers and opens original project sessions',async()=>{
+  const activity={waiting:1,running:2,unread:1,lastActiveAt:100}
+  const session={id:'task',kind:'task',title:'检查文件',executor:'codex',activity:'waiting',latestStep:'需要读取文件',updatedAt:100,requestId:'permission'}
+  const {openMatter}=setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'project'}
+    if(path.includes('/detail'))return{topic:{...topic('project'),activity},entries:[],matters:[{id:'task',title:'检查文件',state:'waiting',session}],messages:[],pages:{}}
+    return{topics:[{...topic('project'),title:'bx',activity},{...topic('quiet'),activity:{waiting:0,running:0,unread:0,lastActiveAt:null}},{...topic('done'),activity:{waiting:0,running:0,unread:1,lastActiveAt:50}}],revision:'1'}
+  })
+  await settle()
+  const project=document.querySelector('[data-topic-id="project"]')!
+  expect(project.getAttribute('aria-label')).toBe('bx，1 个等你，2 个在跑，1 个做完未看')
+  expect(project.querySelector('[data-topic-activity]')?.getAttribute('data-topic-activity')).toBe('waiting')
+  expect(project.querySelector('[data-topic-activity]')?.textContent).toContain('1')
+  expect(document.querySelector('[data-topic-id="quiet"] [data-topic-activity]')).toBeNull()
+  expect(document.querySelector('[data-topic-id="done"] [data-topic-activity]')?.getAttribute('data-topic-activity')).toBe('unread')
+  ;(project as HTMLButtonElement).click();await settle()
+  const panel=document.querySelector('.conversation-topic-panel')!
+  expect(panel.textContent).toContain('这个项目的会话')
+  expect(panel.textContent).toContain('需要读取文件')
+  expect(panel.querySelector('[data-agent="codex"]')).not.toBeNull()
+  ;(panel.querySelector('[data-project-session="task"]') as HTMLButtonElement).click()
+  expect(openMatter).toHaveBeenCalledWith('task')
+})
+
+it('keeps expanded project sessions across activity revisions using fresh cursors and bounded pages',async()=>{
+  let revision='r1'
+  const reads:string[]=[]
+  const rows=Array.from({length:26},(_,i)=>({id:`session-${i+1}`,title:`会话 ${i+1}`,state:'running',session:{id:`session-${i+1}`,kind:'task',title:`会话 ${i+1}`,executor:'codex',activity:'running',latestStep:'正在核对',updatedAt:100,requestId:null}}))
+  setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'project'}
+    if(path.includes('/detail')){
+      reads.push(path)
+      const p=new URL(path,'https://fixture.test').searchParams,offset=Number(p.get('cursor')?.split(':')[1]??0),size=p.has('section')?20:3
+      if(p.has('cursor'))expect(p.get('cursor')!.startsWith(revision+':')).toBe(true)
+      return{topic:topic('project'),revision,entries:[],messages:[],matters:rows.slice(offset,offset+size),pages:{matters:{total:26,nextCursor:offset+size<26?`${revision}:${offset+size}`:null}}}
+    }
+    return{topics:[topic('project')],revision}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  for(let i=0;i<2;i++){const more=[...document.querySelectorAll('.conversation-topic-panel button')].find(b=>b.textContent?.startsWith('更多这个项目的会话')) as HTMLButtonElement;more.click();await settle()}
+  expect(document.querySelector('[data-project-session="session-26"]')).not.toBeNull()
+  revision='r2';reads.length=0;await current!.refresh()
+  expect(document.querySelector('[data-project-session="session-4"]')).not.toBeNull()
+  expect(document.querySelector('[data-project-session="session-26"]')).not.toBeNull()
+  expect(reads).toHaveLength(3)
+  expect(reads.slice(1).every(path=>new URL(path,'https://fixture.test').searchParams.get('limit')==='20')).toBe(true)
+})
+
+it('polishes project sessions: waiting and response then running precede summary; localized dates and names reach readers',async()=>{
+  const ts=Date.now()-7_200_000, iso=new Date(ts).toISOString()
+  const sessions=['idle','running','waiting'].map(activity=>({id:activity,title:`会话${activity}`,state:activity,session:{id:activity,kind:'task',title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}}))
+  const {openMatter}=setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'polish'}
+    if(path.includes('/detail'))return{topic:topic('polish'),matters:sessions,entries:[],messages:[{id:'msg',speaker:'cc',ts:iso,excerpt:'最近的消息'}],pages:{}}
+    return{topics:[topic('polish')],revision:'1'}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  const panel=document.querySelector('.conversation-topic-panel')!, text=panel.textContent!
+  expect.soft([...panel.querySelectorAll('[data-project-session]')].map(el=>el.getAttribute('data-project-session'))).toEqual(['waiting','running','idle'])
+  expect.soft(text.indexOf('会话waiting')).toBeLessThan(text.indexOf('说明'))
+  expect.soft(text.indexOf('会话running')).toBeLessThan(text.indexOf('说明'))
+  expect.soft(text.indexOf('说明')).toBeLessThan(text.indexOf('会话idle'))
+  const respond=panel.querySelector('[data-project-respond="waiting"]') as HTMLButtonElement
+  expect.soft(respond?.textContent).toBe('回应')
+  expect.soft(text.indexOf('回应')).toBeLessThan(text.indexOf('会话running'))
+  respond?.click();expect.soft(openMatter).toHaveBeenCalledWith('waiting')
+  const row=panel.querySelector('[data-project-session="waiting"]')!
+  expect.soft(row.textContent).toContain('Codex')
+  expect.soft(row.getAttribute('aria-label')).toContain('Codex')
+  expect.soft(row.textContent).toContain(formatRelativeTime(iso))
+  expect.soft(text).not.toContain(iso)
+  expect.soft(text).toContain(`CC · ${formatRelativeTime(iso)} · 最近的消息`)
+  expect.soft(text.indexOf('管理话题')).toBeGreaterThan(text.indexOf('最近聊到'))
+})
+
+it('keeps topic summary first when no waiting or running session needs attention',async()=>{
+  setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'quiet'}
+    if(path.includes('/detail'))return{topic:topic('quiet'),matters:[{id:'done',session:{title:'已看会话',executor:'claude',displayName:'Claude',activity:'idle',updatedAt:100}}],entries:[],messages:[],pages:{}}
+    return{topics:[topic('quiet')],revision:'1'}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  const text=document.querySelector('.conversation-topic-panel')!.textContent!
+  expect.soft(text.indexOf('说明')).toBeLessThan(text.indexOf('这个项目的会话'))
+})
+
+
+it.each(['refresh','subscribe'])('hides cached activity after %s failure while the panel is closed and restores it on sync',async(mode)=>{
+ let fail=false,rejectSubscribe:(e:Error)=>void=()=>{}
+ setup(async(_method:string,path:string)=>{
+   if(path.startsWith('/v1/subscribe'))return new Promise((_resolve,reject)=>{rejectSubscribe=reject})
+   if(fail)throw Error('503 topics unavailable')
+   return {topics:[{...topic('cached'),activity:{running:2,waiting:0,unread:0}}],revision:'1'}
+ });await settle()
+ expect(document.querySelector('[data-topic-activity]')).not.toBeNull()
+ fail=true
+ if(mode==='refresh')await current!.refresh();else{rejectSubscribe(Error('503'));await settle()}
+ const row=document.querySelector('[data-topic-id="cached"]')!
+ expect((document.querySelector('.conversation-topic-panel') as HTMLElement).hidden).toBe(true)
+ expect(row.querySelector('[data-topic-activity]')).toBeNull()
+ expect(row.getAttribute('aria-label')).not.toContain('2 个在跑')
+ expect(row.textContent).toContain('未同步')
+ fail=false;await current!.refresh()
+ expect(document.querySelector('[data-topic-activity]')).not.toBeNull()
+ expect(document.querySelector('[data-topic-id="cached"]')!.getAttribute('aria-label')).toContain('2 个在跑')
 })

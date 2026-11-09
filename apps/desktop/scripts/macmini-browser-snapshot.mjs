@@ -91,6 +91,7 @@ export function verifiedSourcePayload({repo,sha,phase='after'}) {
  const header=Buffer.from(JSON.stringify(meta)),length=Buffer.alloc(4);length.writeUInt32BE(header.length)
  return Buffer.concat([length,header,delta])
 }
+export const supportsBrowserSnapshot = branch => ['design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux','topics-are-projects'].includes(branch)
 
 export async function main() {
  if(process.argv[2]==='--receive') {
@@ -100,7 +101,7 @@ export async function main() {
  } else {
  const phase=process.argv[2]??'after';if(!['before','after'].includes(phase))throw Error('Use before or after')
  const repo=fileURLToPath(new URL('../../..',import.meta.url)),git=(...args)=>execFileSync('/usr/bin/git',['-C',repo,...args],{maxBuffer:128*1024*1024})
- if(!['design-unify-b1','design-unify-b1-fixes','codex-hook-trust-ux'].includes(git('branch','--show-current').toString().trim()))throw Error('This task transport requires an explicitly authorized UI branch')
+ if(!supportsBrowserSnapshot(git('branch','--show-current').toString().trim()))throw Error('This task transport requires an explicitly authorized UI branch')
  const sha=git(...(phase==='before'?['merge-base','HEAD','origin/dev']:['rev-parse','HEAD'])).toString().trim()
  const payload=verifiedSourcePayload({repo,sha,phase})
  const transport=sshInvocation('browser',process.argv[3]??'home',process.env.CC_UI_SSH_CONFIG,undefined,process.env),args=[...transport.args]

@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import { test, expect } from './fixtures'
 const task={id:'aabbccdd',title:'检查备份',path:'/offline/backup',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:1,pendingQuestionCount:0}
-const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,matterSummary:{waiting:1,running:0,total:1}})
+const topic=(id:string)=>({id,title:id==='backup'?'服务器':`旧话题 ${id}`,description:'家里的服务与备份',summary:'正在核对备份',bubbleState:'closed',lastRecalledAt:null,lastOpenedByOwnerAt:null,activityRevision:1,activity:id==='backup'?{waiting:1,running:2,unread:1,lastActiveAt:1793923200000}:id==='travel'?{waiting:0,running:1,unread:0,lastActiveAt:1793923100000}:id==='food'?{waiting:0,running:0,unread:1,lastActiveAt:1793923000000}:{waiting:0,running:0,unread:0,lastActiveAt:null},matterSummary:{waiting:1,running:0,total:1}})
 test.beforeEach(async({page,shim})=>{
   await shim.invoke('demo.unseed');await shim.invoke('demo.seed',{})
   await page.route('**/v1/protocol/capabilities',r=>r.fulfill({json:{routes:'v1',topics:'v1'}}))
@@ -17,7 +17,7 @@ test.beforeEach(async({page,shim})=>{
   await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,runId:'run1',events:[{id:'1',taskId:task.id,kind:'user',text:'请检查这周备份，告诉我哪些文件已经核验。',createdAt:1},{id:'2',taskId:task.id,kind:'tool_call',text:'核对本地文件',runId:'run1',createdAt:2,activity:{id:'read1',type:'read',status:'running',label:'核对本地文件'}},{id:'3',taskId:task.id,kind:'text',text:'正在核对文件，已保存本轮检查记录。',createdAt:3}],artifacts:[],permissions:[],questions:[]}}))
   await page.route('**/v1/memory/topics?*',r=>r.fulfill({json:{topics:['backup','travel','food','books','garden','letters'].map(topic),nextCursor:null,revision:'1'}}))
   await page.route('**/v1/memory/topics/open',r=>r.fulfill({json:{id:r.request().postDataJSON().id,bubbleState:'open',revision:'2'}}))
-  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting'}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:1,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
+  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting',session:{id:task.id,kind:'task',title:task.title,executor:'codex',displayName:'Codex',activity:'waiting',latestStep:'等你批准 · Read',updatedAt:1793923200000,requestId:'permission-backup'}}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:1,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
   await page.route('**/v1/subscribe/topics?*',r=>r.fulfill({json:{revision:'2',recentIds:['backup'],openIds:['backup'],hasMoreOpen:false}}))
 })
 
@@ -38,10 +38,19 @@ test('design unification captures the four owner-approved surfaces', async ({pag
   const row=page.locator('[data-matter-id="aabbccdd"]')
   await expect(row).toContainText('等你决定')
   await row.screenshot({path:join(out!,`desktop-home-row-${phase}.png`)})
-  await page.locator('.conversation-topics').getByRole('button',{name:'服务器',exact:true}).click()
+  await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
   const panel=page.locator('.conversation-topic-panel')
   await expect(panel).toContainText('这次想起')
   await page.screenshot({path:join(out!,`desktop-topic-${phase}.png`)})
+  await page.setViewportSize({width:2400,height:900})
+  const topics=page.locator('.conversation-topics')
+  await topics.evaluate(el=>{el.style.zoom='3'})
+  await topics.screenshot({path:join(out!,`desktop-topic-marks-3x-${phase}.png`)})
+  await topics.evaluate(el=>{el.style.removeProperty('zoom')})
+
+  await page.setViewportSize({width:390,height:844})
+  await page.screenshot({path:join(out!,`desktop-topic-narrow-${phase}.png`)})
+  await page.setViewportSize({width:1280,height:900})
   await panel.getByRole('button',{name:/检查备份/}).click()
   await expect(page.locator('.wb-task-head h2')).toHaveText('检查备份')
   await expect(page.locator('.wb-dialogue')).toContainText('正在核对文件')
@@ -68,7 +77,7 @@ test('design fixes keep toolbar semantics, final identity dimensions and current
  const dimensions=await page.locator('.now-figure').evaluate(el=>({width:getComputedStyle(el).width,height:getComputedStyle(el).height,image:getComputedStyle(el.querySelector('img')!).width}))
  expect(dimensions).toEqual({width:'53px',height:'53px',image:'37px'})
  await page.evaluate(()=>{document.documentElement.style.removeProperty('--th-identity-header-target');document.documentElement.style.removeProperty('--th-identity-header-image')})
- await page.locator('.conversation-topics').getByRole('button',{name:'服务器',exact:true}).click()
+ await page.locator('.conversation-topics').getByRole('button',{name:/^服务器(?:，|$)/}).click()
  await page.locator('.conversation-topic-panel').getByRole('button',{name:/检查备份/}).click()
  await expect(page.locator('.wb-dialogue')).toContainText('正在核对文件')
  await expect(page.locator('.wb-activity-now')).toHaveText('核对本地文件')

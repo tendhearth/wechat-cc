@@ -50,7 +50,7 @@ export const componentAppearance = {
     search: { radius: radius.control, borderWidth: 1, paddingX: space.l, paddingY: space.s, minHeight: { desktop: 36, phone: 44 } },
     comment: { radius: 0, borderWidth: 0, borderBottomWidth: 1, paddingX: 0, paddingY: space.s, minHeight: { desktop: 48, phone: 48 } },
   },
-  topic: { role: 'small', radius: radius.control, borderWidth: 1, border: 'hair', selectedBorder: 'ink', background: 'transparent', paddingX: space.m, paddingY: space.s, minHeight: { desktop: 36, phone: 44 }, pressedOpacity: 0.7 },
+  topic: { role: 'small', radius: radius.control, borderWidth: 1, border: 'hair', selectedBorder: 'ink', background: 'transparent', paddingX: space.m, paddingY: space.s, minHeight: { desktop: 36, phone: 44 }, pressedOpacity: 0.7, activity: { attentionDotSize: 7, dotSize: 5, lineWidth: 10, lineHeight: 1, gap: space.xs, attention: 'accent', passive: 'inkSoft' } },
   message: { userRole: 'bubble', replyRole: 'body', userBackground: 'rail', replyBackground: 'transparent', radius: radius.bubble, paddingX: space.l, paddingY: space.m },
   content: { borderWidth: 0, paddingY: space.l, referenceBorderWidth: 1, referenceRadius: radius.sheet, referencePadding: space.l, processBorderWidth: 0 },
   matterRow: { role: 'item', captionRole: 'caption', detailRole: 'small', minHeight: { desktop: 64, phone: 64 }, paddingY: space.m, gap: space.m },

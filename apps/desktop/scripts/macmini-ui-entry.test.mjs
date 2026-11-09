@@ -1,3 +1,5 @@
+import { supportsBrowserSnapshot } from './macmini-browser-snapshot.mjs'
+import { supportsAppSnapshot } from './macmini-app-snapshot.mjs'
 import { test, expect } from 'vitest'
 import { main } from './macmini-ui.mjs'
 import { readFileSync } from 'node:fs'
@@ -88,4 +90,13 @@ test('snapshot modules expose an explicit entry for trusted import wrappers and 
  expect(browser).toContain("readFile(join(cacheRoot,'snapshot.json')")
  expect(browser).toContain('PUBLIC_CACHE_COMMIT')
  expect(browser).toContain("gitObject('blob',bytes)!==file.blob")
+})
+
+test('project topic snapshots accept only the explicit task branch and preserve source ref boundaries',()=>{
+ expect(supportsBrowserSnapshot('topics-are-projects')).toBe(true)
+ expect(supportsAppSnapshot('topics-are-projects')).toBe(true)
+ for(const ref of ['master','unknown-task','topics-are-projects;echo x','../topics-are-projects']){
+  expect(supportsBrowserSnapshot(ref)).toBe(false)
+  expect(supportsAppSnapshot(ref)).toBe(false)
+ }
 })

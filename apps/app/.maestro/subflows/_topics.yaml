@@ -8,16 +8,39 @@ appId: com.tendhearth.app
 - tapOn:
     id: chat-input
 - inputText: "topic draft stays"
+- assertVisible:
+    text: "服务器，1 个等你，2 个在跑，1 个做完未看|服务器, 1 waiting for you, 2 running, 1 completed, unread"
+- takeScreenshot: topics-projects-topic-row
 - tapOn:
     id: topic-demo-backup
 - extendedWaitUntil:
     visible:
       id: topic-sheet
     timeout: 10000
-- assertVisible: "家里的服务与备份"
-- assertVisible: "上次：备份留在本地"
 - assertVisible:
     id: topic-matter-a1b2c3d4
+- assertVisible: "这个项目的会话|Sessions in this project"
+- assertVisible: ".*Claude.*(等你批准 · Bash|Approval needed · Bash).*"
+- assertVisible:
+    id: topic-session-a1b2c3d4
+- assertVisible: ".*(等你批准 · Bash|Approval needed · Bash).*"
+- takeScreenshot: topics-projects-sessions
+- scrollUntilVisible:
+    element:
+      id: topic-session-respond-a1b2c3d4
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: topic-session-respond-a1b2c3d4
+- extendedWaitUntil:
+    visible:
+      id: approval-title
+    timeout: 10000
+- takeScreenshot: topics-projects-existing-response
+- tapOn:
+    id: topbar-back
+- assertVisible:
+    id: topic-sheet
 - takeScreenshot: t5-topic-sheet
 # 长内容可从底部 sheet 展开为全屏，再读记忆与来源。
 - swipe:
@@ -26,6 +49,12 @@ appId: com.tendhearth.app
     duration: 600
 - waitForAnimationToEnd
 - takeScreenshot: t5-topic-expanded
+- scrollUntilVisible:
+    element:
+      text: "家里的服务与备份"
+    direction: DOWN
+- assertVisible: "家里的服务与备份"
+- assertVisible: "上次：备份留在本地"
 - scrollUntilVisible:
     element:
       id: topic-entry-demo-entry

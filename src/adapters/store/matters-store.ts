@@ -115,6 +115,7 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     bind(id,surface,surfaceKey){
       if(!SURFACES.has(surface))throw new Error('invalid_matter_surface');require(id)
       db.query('INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES(?,?,?,?) ON CONFLICT(matter_id,surface,surface_key) DO UPDATE SET last_seen_at=excluded.last_seen_at').run(id,surface,surfaceKey,now())
+      if(surface==='phone')hintWrite(db,{kind:'matter',matterId:id})
     },
     bindings:id=>db.query<{matter_id:string;surface:MatterSurface;surface_key:string;last_seen_at:number},[string]>('SELECT matter_id,surface,surface_key,last_seen_at FROM matter_bindings WHERE matter_id=? ORDER BY last_seen_at DESC, surface, surface_key').all(id).map(b=>({matterId:b.matter_id,surface:b.surface,surfaceKey:b.surface_key,lastSeenAt:b.last_seen_at})),
     findBySurface(surface,surfaceKey){
