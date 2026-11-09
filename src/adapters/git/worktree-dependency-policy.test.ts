@@ -1,4 +1,6 @@
 import { expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { dependencyInstallPlan, publicAddress } from './worktree-dependency-policy'
 const integrity = 'sha512-' + 'A'.repeat(86) + '=='
 function files(source = 'tool@1.0.0', url = '', sri: unknown = integrity) {
@@ -32,9 +34,40 @@ it('refuses the whole plan when only one transitive source is unsafe', () => {
   expect(() => dependencyInstallPlan(input)).toThrow()
 })
 it.each(['0.0.0.0','10.1.2.3','127.0.0.1','100.64.0.1','169.254.0.1','172.31.1.1','192.168.1.1','198.19.0.1','224.0.0.1','::ffff:127.0.0.1','2001:db8::1'])('rejects nonpublic DNS answer %s', address => expect(publicAddress(address)).toBe(false))
-it.each(['package-lock.json','yarn.lock','pnpm-lock.yaml','pkg/bun.lock'])('refuses mixed locks as a whole: %s',path=>{
+it.each(['package-lock.json','yarn.lock','pnpm-lock.yaml','pkg/yarn.lock'])('refuses mixed locks as a whole: %s',path=>{
   const input=files();input.set(path,Buffer.from('git+ssh://git@public.example/unsafe'))
+  input.set('package.json',Buffer.from('{"workspaces":["pkg"]}'));input.set('pkg/package.json',Buffer.from('{}'))
   expect(()=>dependencyInstallPlan(input)).toThrow('dependency_lock_unsupported')
+})
+
+it('accepts this repository HEAD Git blobs including unrelated nested projects and old member locks', () => {
+  const cwd = fileURLToPath(new URL('../../../', import.meta.url))
+  const git = (...args: string[]) => execFileSync('git', args, { cwd })
+  const paths = git('ls-tree','-r','--name-only','HEAD').toString().split('\n').filter(p => /(?:^|\/)(?:package\.json|bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(p))
+  const input = new Map(paths.map(path => [path, git('show', `HEAD:${path}`)]))
+  const plan = dependencyInstallPlan(input)
+  expect(input.has('apps/desktop/bun.lock')).toBe(true)
+  expect(input.has('tools/mutation/bun.lock')).toBe(true)
+  expect(plan.packages.length).toBeGreaterThan(500)
+  expect(plan.workspaces).toHaveLength(6)
+})
+it('ignores nonmember manifests, configs and locks but accepts legacy member bun.lock', () => {
+  const input = files()
+  input.set('package.json', Buffer.from('{"workspaces":["apps/*"]}'))
+  input.set('apps/member/package.json', Buffer.from('{}'))
+  input.set('apps/member/bun.lock', Buffer.from('legacy lock, not installation input'))
+  input.set('docs/spike/package.json', Buffer.from('{"dependencies":{"unsafe":"git+ssh://secret"}}'))
+  input.set('docs/spike/yarn.lock', Buffer.from('unsupported'))
+  expect(dependencyInstallPlan(input).packages).toHaveLength(1)
+})
+it.each(['bun.lockb','package-lock.json','npm-shrinkwrap.json','yarn.lock','pnpm-lock.yaml'])('still rejects %s in root or a declared member', lock => {
+  for (const directory of ['', 'apps/member/']) {
+    const input = files()
+    input.set('package.json', Buffer.from('{"workspaces":["apps/*"]}'))
+    input.set('apps/member/package.json', Buffer.from('{}'))
+    input.set(directory + lock, Buffer.from('unsupported'))
+    expect(() => dependencyInstallPlan(input)).toThrow('dependency_lock_unsupported')
+  }
 })
 it.each(['overrides','catalog','catalogs'])('checks top-level lock %s sources',field=>{
   const input=files(),lock=JSON.parse(input.get('bun.lock')!.toString());lock[field]={tool:'git+ssh://git@public.example/unsafe'};input.set('bun.lock',Buffer.from(JSON.stringify(lock)))

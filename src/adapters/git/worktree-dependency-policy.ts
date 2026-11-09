@@ -73,6 +73,13 @@ function location(key: string): string {
   return parts.map(p => `node_modules/${p}`).join('/')
 }
 const fields = ['dependencies','devDependencies','optionalDependencies','peerDependencies','overrides','resolutions','patchedDependencies','catalog','catalogs']
+/** Membership comes from the root manifest, never from an unrelated nested lock. */
+export function dependencyWorkspaceDirectories(root: Buffer, paths: Iterable<string>): Set<string> {
+  const patterns = JSON.parse(root.toString()).workspaces ?? []
+  if (!Array.isArray(patterns) || patterns.some((p: unknown) => typeof p !== 'string' || /(?:^|\/)\.\.(?:\/|$)|^[/.~]|\\|:/.test(p))) throw Error('dependency_workspace_policy')
+  const matches = patterns.map((pattern: string) => new RegExp('^' + pattern.split('/').map(part => part === '**' ? '.*' : part.split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('/') + '$'))
+  return new Set(['', ...[...paths].filter(p => p.endsWith('/package.json')).map(p => p.slice(0, -13)).filter(p => matches.some(re => re.test(p)))])
+}
 function sources(value: unknown): void {
   if (typeof value === 'string') {
     if (/(?:https?:|git(?:\+[^:]+)?:|ssh:|github:|gitlab:|bitbucket:|file:|link:|portal:|patch:|[\\/]|@.*:)/i.test(value.replace(/^npm:(?:@[^/]+\/)?[^@]+@/, '')) || /^\./.test(value) || /^~(?![0-9])/.test(value)) throw Error('dependency_source_policy')
@@ -81,6 +88,7 @@ function sources(value: unknown): void {
 /** Every source is checked before any download. Unsupported lock/config forms miss as a whole. */
 export function dependencyInstallPlan(files: Map<string, Buffer>): InstallPlan {
   if (!files.has('package.json') || !files.has('bun.lock')) throw Error('dependency_lock_unsupported')
+  const members = dependencyWorkspaceDirectories(files.get('package.json')!, files.keys())
   const registries = new Map<string, string>([['', 'https://registry.npmjs.org/']])
   const npmrc = files.get('.npmrc')?.toString()
   if (npmrc) for (const line of npmrc.split(/\r?\n/).map(s => s.trim()).filter(s => s && !/^[#;]/.test(s))) {
@@ -99,11 +107,12 @@ export function dependencyInstallPlan(files: Map<string, Buffer>): InstallPlan {
   if (!lock || lock.lockfileVersion !== 1 || !lock.packages || typeof lock.packages !== 'object' || Array.isArray(lock.packages)) throw Error('dependency_lock_unsupported')
   for (const field of fields) if (lock[field]) sources(lock[field])
   for (const [path, manifest] of Object.entries(lock.workspaces ?? {}) as [string, any][]) {
-    if (path && (!files.has(path + '/package.json') || path.split('/').some(p => !dependencySafePart(p) || dependencyPathIdentity(p) === 'NODE_MODULES'))) throw Error('dependency_workspace_policy')
+    if (!members.has(path) || path && (!files.has(path + '/package.json') || path.split('/').some(p => !dependencySafePart(p) || dependencyPathIdentity(p) === 'NODE_MODULES'))) throw Error('dependency_workspace_policy')
     for (const field of fields) if (manifest[field]) sources(manifest[field])
   }
-  if ([...files.keys()].some(path => /(?:^|\/)(?:bun\.lockb|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(path) || path.endsWith('/bun.lock'))) throw Error('dependency_lock_unsupported')
+  if ([...files.keys()].some(path => /(?:^|\/)(?:bun\.lockb|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(path) && members.has(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''))) throw Error('dependency_lock_unsupported')
   for (const [path, bytes] of files) if (path === 'package.json' || path.endsWith('/package.json')) {
+    if (!members.has(path === 'package.json' ? '' : path.slice(0, -13))) continue
     const manifest = JSON.parse(bytes.toString())
     for (const field of fields) if (manifest[field]) sources(manifest[field])
     if (manifest.workspaces && (!Array.isArray(manifest.workspaces) || manifest.workspaces.some((p: unknown) => typeof p !== 'string' || /(?:^|\/)\.\.(?:\/|$)|^[/.~]|\\|:/.test(p)))) throw Error('dependency_workspace_policy')
@@ -120,7 +129,7 @@ export function dependencyInstallPlan(files: Map<string, Buffer>): InstallPlan {
     if (workspace) {
       if (tuple.length !== 1) throw Error('dependency_lock_unsupported')
       const target = workspace[2]!
-      if (target.split('/').some(p => !dependencySafePart(p) || dependencyPathIdentity(p) === 'NODE_MODULES') || !files.has(target + '/package.json') || !packageName.test(workspace[1]!)) throw Error('dependency_workspace_policy')
+      if (!members.has(target) || target.split('/').some(p => !dependencySafePart(p) || dependencyPathIdentity(p) === 'NODE_MODULES') || !files.has(target + '/package.json') || !packageName.test(workspace[1]!)) throw Error('dependency_workspace_policy')
       plan.workspaces.push({ path, target }); selected.add(key); continue
     }
     const match = /^((?:@[^/]+\/)?[^@]+)@(\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?(?:\+[a-z0-9.-]+)?)$/i.exec(tuple[0])

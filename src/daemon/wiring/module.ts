@@ -27,6 +27,7 @@ import { buildInboundPipeline, type AppTurn } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
 import { startPendingFlush } from '../speech/pending-notices'
 import { registerSessions } from '../sessions-lifecycle'
+import { makeDependencyPrewarm } from '../dependency-prewarm'
 import { runStartupSweeps } from '../startup-sweeps'
 import { wireMain, type WiredDeps } from './index'
 
@@ -139,8 +140,13 @@ export function sessionsModule() {
 export function startupSweepsModule(f: Foundation): DaemonModule {
   return {
     name: 'startup-sweeps',
-    needs: ['wired', 'workbench-notifications', 'workbench-artifacts'],
+    needs: ['wired', 'workbench-notifications', 'workbench-artifacts', 'bootstrap'],
     init(ctx) {
+      const boot = ctx.get<Bootstrap>('bootstrap')
+      const dependencies = makeDependencyPrewarm({ stateDir: f.stateDir, db: f.db, log,
+        idle: () => !boot.sessionManager.anyInFlight() && boot.busyLabels().length === 0 })
+      ctx.own('dependency-cache', () => dependencies.stop())
+      ctx.interval('dependency-prewarm', 60_000, () => dependencies.tick())
       ctx.onStart('run', () => {
         runStartupSweeps({ ...ctx.get<WiredDeps>('wired').startupDeps, previousRun: f.previousRun })
         ctx.get<Deferred>('workbench-notifications').start()

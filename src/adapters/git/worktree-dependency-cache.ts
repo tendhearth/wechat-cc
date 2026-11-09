@@ -3,7 +3,8 @@ import * as fs from 'node:fs/promises'
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path'
 import { copyWorkspaceDependencies, DEPENDENCY_LOCKS, DEPENDENCY_NOTICE, readPreparationFile, samePreparationMetadata, type DependencyOptions } from './worktree-dependencies'
 import { Preparation } from './worktree-preparation'
-import { dependencyInstallPlan, dependencySafePart } from './worktree-dependency-policy'
+import { dependencyInstallPlan, dependencySafePart, dependencyWorkspaceDirectories } from './worktree-dependency-policy'
+import { dependencyBackground, DEPENDENCY_BACKGROUND_BUDGET } from './worktree-dependency-background'
 import { installDependencies } from './worktree-dependency-installer'
 import { mkdirAnchored, verifyFromFilesystemRoot } from '../workbench/anchored-fs'
 
@@ -42,24 +43,26 @@ const metadataName = (path: string) => /(?:^|\/)(?:package\.json|bun\.lockb?|pac
 async function metadata(root: string, budget: Preparation, baseSha?: string) {
   if (!baseSha || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(baseSha)) throw Error('dependency_origin_missing')
   const tree = (await budget.git(root, ['ls-tree', '-r', '-z', '--full-tree', baseSha])).split('\0').filter(Boolean)
-  const blobs = new Map<string, string>()
+  const blobs = new Map<string, { sha: string; mode: string }>()
   for (const row of tree) {
     const match = /^(\d+) blob ([a-f0-9]+)\t([\s\S]+)$/.exec(row)
     if (!match || !metadataName(match[3]!)) continue
-    if (!['100644','100755'].includes(match[1]!)) throw Error('unsafe_preparation_file')
-    if (match[3]!.split('/').some(p => !dependencySafePart(p))) throw Error('unsafe_preparation_file')
-    blobs.set(match[3]!, match[2]!)
+    blobs.set(match[3]!, { sha: match[2]!, mode: match[1]! })
   }
-  const paths = new Set(blobs.keys())
-  for (const path of [...paths].filter(p => p === 'package.json' || p.endsWith('/package.json'))) {
-    let dir = dirname(path)
-    for (;;) { for (const name of DEPENDENCY_LOCKS) paths.add(join(dir, name)); if (dir === '.') break; dir = dirname(dir) }
-  }
+  const rootBlob = blobs.get('package.json')
+  if (rootBlob && !['100644','100755'].includes(rootBlob.mode)) throw Error('unsafe_preparation_file')
+  const rootManifest = rootBlob ? Buffer.from(await budget.git(root, ['cat-file','blob',rootBlob.sha])) : null
+  if (rootManifest && rootManifest.length > 8 * 1024 ** 2) throw Error('preparation_metadata_budget')
+  const members = rootManifest ? dependencyWorkspaceDirectories(rootManifest, blobs.keys()) : new Set<string>()
+  const paths = new Set<string>(rootManifest ? ['.npmrc','bunfig.toml'].filter(path => blobs.has(path)) : [])
+  for (const member of members) for (const name of ['package.json', ...DEPENDENCY_LOCKS]) paths.add(member ? member + '/' + name : name)
   const files = new Map<string, Buffer>(), records: string[] = [], locks: string[] = []
   let bytes = 0
   for (const path of [...paths].sort()) {
     budget.check()
-    const value = blobs.has(path) ? Buffer.from(await budget.git(root, ['cat-file', 'blob', blobs.get(path)!])) : null
+    const blob = blobs.get(path)
+    if (path.split('/').some(p => !dependencySafePart(p)) || blob && !['100644','100755'].includes(blob.mode)) throw Error('unsafe_preparation_file')
+    const value = blob ? Buffer.from(await budget.git(root, ['cat-file', 'blob', blob.sha])) : null
     if (value && (value.length > 8 * 1024 ** 2 || (bytes += value.length) > 32 * 1024 ** 2)) throw Error('preparation_metadata_budget')
     records.push(`${path}\0${value === null ? 'missing' : hash(value)}`)
     if (value !== null) { files.set(path, value); if (DEPENDENCY_LOCKS.includes(path.split(/[\\/]/).at(-1)!)) locks.push(`${path}\0${hash(value)}`) }
@@ -67,7 +70,9 @@ async function metadata(root: string, budget: Preparation, baseSha?: string) {
   return { paths: [...paths].sort(), files, key: locks.length ? `${hash(locks.join('\0'))}-${hash(records.join('\0'))}` : null }
 }
 async function unchanged(root: string, expected: Awaited<ReturnType<typeof metadata>>, budget: Preparation): Promise<boolean> {
-  const paths = new Set([...expected.paths, ...(await budget.git(root, ['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(p => metadataName(p) && !['.npmrc','bunfig.toml'].includes(p))])
+  const listed = (await budget.git(root, ['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0')
+  const members = expected.files.has('package.json') ? dependencyWorkspaceDirectories(expected.files.get('package.json')!, listed) : new Set<string>()
+  const paths = new Set([...expected.paths, ...listed.filter(p => metadataName(p) && !['.npmrc','bunfig.toml'].includes(p) && members.has(p.includes('/') ? p.slice(0,p.lastIndexOf('/')) : ''))])
   for (const path of paths) {
     budget.check()
     const current = await readPreparationFile(root, path, 8 * 1024 ** 2), original = expected.files.get(path)
@@ -159,10 +164,12 @@ export async function recoverDependencyStages(stateDir: string): Promise<void> {
     await prune(root, MAX_CACHE_BYTES, budget)
   })
 }
-async function publish(source: string, stateDir: string, options: DependencyCacheOptions, budget: Preparation): Promise<void> {
-  budget.check(); if (options.canPublish && !options.canPublish()) return
-  const before = await metadata(source, budget, options.baseSha)
-  if (!before.key || !supportsCleanInstall(before.files) || !await unchanged(source, before, budget)) return
+async function publish(source: string, stateDir: string, options: DependencyCacheOptions, budget: Preparation, frozen?: Awaited<ReturnType<typeof metadata>>, compareSource = true): Promise<void> {
+  budget.check(); if (options.canPublish && !options.canPublish()) throw Error('dependency_publication_cancelled')
+  const before = frozen ?? await metadata(source, budget, options.baseSha)
+  if (!before.key) throw Error('dependency_lock_unsupported')
+  dependencyInstallPlan(before.files)
+  if (compareSource && !await unchanged(source, before, budget)) throw Error('dependency_metadata_changed')
   const root = await cacheRoot(stateDir), key = `${await scope(source, budget)}-${before.key}`, entry = join(root, key)
   const rel = relative(source, root)
   if (!rel || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + sep))) throw Error('unsafe_dependency_cache')
@@ -172,9 +179,9 @@ async function publish(source: string, stateDir: string, options: DependencyCach
   await prune(root, options.maxCacheBytes ?? MAX_CACHE_BYTES, budget)
   const metadataBytes = [...before.files.values()].reduce((sum, value) => sum + value.length, 0)
   const limit = options.maxCacheBytes ?? MAX_CACHE_BYTES
-  if (metadataBytes * 2 > limit || metadataBytes > (options.maxBytes ?? 1024 ** 3) || [...before.files.keys()].reduce((n, path) => n + path.split('/').length, 0) * 2 > (options.maxEntries ?? 100_000)) return
+  if (metadataBytes * 2 > limit || metadataBytes > (options.maxBytes ?? 1024 ** 3) || [...before.files.keys()].reduce((n, path) => n + path.split('/').length, 0) * 2 > (options.maxEntries ?? 100_000)) throw Error('preparation_metadata_budget')
   const disk = await fs.statfs(root)
-  if (Number(disk.bavail) * Number(disk.bsize) < metadataBytes * 2 + (options.minFreeBytes ?? 64 * 1024 ** 2)) return
+  if (Number(disk.bavail) * Number(disk.bsize) < metadataBytes * 2 + (options.minFreeBytes ?? 64 * 1024 ** 2)) throw Error('dependency_space_budget')
   let stage: string | undefined, snapshot: string | undefined
   try {
     stage = await createStage(root)
@@ -186,17 +193,17 @@ async function publish(source: string, stateDir: string, options: DependencyCach
     }
     await installDependencies(stage, budget, before.files, options, options.maxCacheBytes ?? MAX_CACHE_BYTES)
     budget.check()
-    for (const [path, value] of before.files) if (!(await readPreparationFile(stage, path, value.length))?.equals(value)) return
-    if (!await unchanged(source, before, budget) || (options.canPublish && !options.canPublish())) return
+    for (const [path, value] of before.files) if (!(await readPreparationFile(stage, path, value.length))?.equals(value)) throw Error('dependency_metadata_changed')
+    if (compareSource && !await unchanged(source, before, budget) || (options.canPublish && !options.canPublish())) throw Error('dependency_metadata_changed')
     const notices = await copyWorkspaceDependencies(stage, snapshot, { ...options, metadataPaths: before.paths, snapshotWorkspaceLinks: true, timeoutMs: budget.deadline - Date.now() })
-    if (notices.includes(DEPENDENCY_NOTICE) || !await installed(snapshot, before.paths)) return
+    if (notices.includes(DEPENDENCY_NOTICE) || !await installed(snapshot, before.paths)) throw Error('dependency_snapshot_failed')
     await fs.writeFile(join(snapshot, '.complete.json'), completion(key), { flag: 'wx', mode: 0o600 })
     const bytes = await sizeOf(snapshot, budget)
-    if (bytes > limit) return
+    if (bytes > limit) throw Error('dependency_cache_budget')
     // No writer remains; staging is outside every task's writable roots.
     await fs.rm(stage, { recursive: true, force: true })
     await prune(root, limit, budget, bytes, snapshot)
-    budget.check(); if (options.canPublish && !options.canPublish()) return
+    budget.check(); if (options.canPublish && !options.canPublish()) throw Error('dependency_publication_cancelled')
     await fs.rename(snapshot, entry)
     // The owner survives the rename. No ownerless publication window exists.
     await fs.unlink(join(entry, '.owner.json'))
@@ -216,7 +223,7 @@ export async function cacheWorkspaceDependencies(source: string, stateDir: strin
 /** Only the owner checkout or a completed CC installation may supply dependencies. */
 export async function restoreWorkspaceDependencies(repoRoot: string, target: string, stateDir: string, options: DependencyCacheOptions = {}): Promise<string[]> {
   const budget = new Preparation({ ...options, timeoutMs: options.timeoutMs ?? 15_000 })
-  return serial(stateDir, budget, async () => {
+  return (async () => {
     try {
       repoRoot = await fs.realpath(repoRoot); target = await fs.realpath(target)
       const expected = await metadata(target, budget, options.baseSha)
@@ -232,21 +239,37 @@ export async function restoreWorkspaceDependencies(repoRoot: string, target: str
       const namespace = await scope(repoRoot, budget)
       try {
         const root = await cacheRoot(stateDir)
-        await prune(root, options.maxCacheBytes ?? MAX_CACHE_BYTES, budget)
         const entry = expected.key ? join(root, `${namespace}-${expected.key}`) : null
         if (entry && await readPreparationFile(entry, '.complete.json', 1024).then(v => v?.toString() === completion(`${namespace}-${expected.key}`), () => false)) {
           const notices = await copyWorkspaceDependencies(entry, target, { ...options, metadataPaths: expected.paths, timeoutMs: budget.deadline - Date.now() })
           if (!notices.includes(DEPENDENCY_NOTICE) && await installed(target, expected.paths)) { const now = new Date(); await fs.utimes(entry, now, now); return notices }
         }
-        // A miss can install only in supervisor-owned clean staging. Sibling
-        // tasks are never candidates, even if they forge a completion marker.
-        await publish(target, stateDir, options, budget)
-        if (entry && await readPreparationFile(entry, '.complete.json', 1024).then(v => v?.toString() === completion(`${namespace}-${expected.key}`), () => false)) {
-          const notices = await copyWorkspaceDependencies(entry, target, { ...options, metadataPaths: expected.paths, timeoutMs: budget.deadline - Date.now() })
-          if (!notices.includes(DEPENDENCY_NOTICE) && await installed(target, expected.paths)) return notices
-        }
+        // Frozen Git blobs only. A task signal/deadline does not own daemon work.
+        enqueueInstall(target, stateDir, `${namespace}-${expected.key}`, expected, options)
       } catch { budget.check() /* Cache/install unavailable: preserve the locked-install notice. */ }
       return [DEPENDENCY_NOTICE]
     } catch { if (options.signal?.aborted) throw Error('worktree_preparation_cancelled'); return [DEPENDENCY_NOTICE] }
+  })()
+}
+
+function enqueueInstall(source: string, stateDir: string, key: string, expected: Awaited<ReturnType<typeof metadata>>, options: DependencyCacheOptions, compareSource = true, canStart: () => boolean = () => true): void {
+  dependencyBackground(stateDir).enqueue(key, async signal => {
+    const background = { ...DEPENDENCY_BACKGROUND_BUDGET, ...options, timeoutMs: DEPENDENCY_BACKGROUND_BUDGET.timeoutMs, signal }
+    const budget = new Preparation(background)
+    await serial(stateDir, budget, () => {
+      if (!canStart()) throw Error('dependency_prewarm_deferred')
+      return publish(source, stateDir, background, budget, expected, compareSource)
+    })
   })
+}
+/** Prewarming uses only the requested immutable commit, not checkout/owner bytes. */
+export async function prewarmWorkspaceDependencies(repoRoot: string, stateDir: string, options: DependencyCacheOptions, canStart: () => boolean = () => true): Promise<boolean> {
+  const budget = new Preparation(options)
+  repoRoot = await fs.realpath(repoRoot)
+  const expected = await metadata(repoRoot, budget, options.baseSha)
+  dependencyInstallPlan(expected.files)
+  let deferred = false
+  enqueueInstall(repoRoot, stateDir, `${await scope(repoRoot, budget)}-${expected.key}`, expected, options, false, () => { deferred = !canStart(); return !deferred })
+  await dependencyBackground(stateDir).drain()
+  return !deferred
 }

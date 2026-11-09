@@ -29,6 +29,17 @@ import {makeReviewHunkLog} from './review-hunk-log'
 import {makeMatterStore} from '../matters-store'
 import type {MatterOrigin,MatterStore} from '../../../ports/matters'
 
+/** Projects with an actual dispatch in the rolling window; no list() row limit. */
+export function recentDependencyProjects(db: Db, since: number): string[] {
+  return db.query<{path:string},[number,number]>(`SELECT DISTINCT COALESCE(w.repo_root,t.path) AS path
+    FROM workbench_tasks t LEFT JOIN workbench_worktrees w ON w.task_id=t.id
+    LEFT JOIN workbench_sources s ON s.task_id=t.id
+    WHERE t.workspace_kind='project' AND (
+      COALESCE(s.first_dispatched_at,CASE WHEN s.task_id IS NULL THEN t.created_at END)>=?
+      OR EXISTS (SELECT 1 FROM matter_turns mt WHERE mt.matter_id=t.matter_id AND mt.started_at>=?)
+    )`).all(since,since).map(row => row.path)
+}
+
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
   id: string; title: string; path: string; providerId: string; status: TaskStatus

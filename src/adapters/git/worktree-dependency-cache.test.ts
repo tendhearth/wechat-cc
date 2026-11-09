@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdir
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { cacheWorkspaceDependencies as cacheRaw, restoreWorkspaceDependencies as restoreRaw, recoverDependencyStages, type DependencyCacheOptions } from './worktree-dependency-cache'
+import { dependencyBackground } from './worktree-dependency-background'
 import { DEPENDENCY_NOTICE } from './worktree-dependencies'
 import { removeTempDir } from '../../lib/test-temp'
 import { installDependencies } from './worktree-dependency-installer'
@@ -17,7 +18,7 @@ const dirs: string[] = []
 const origins = new Map<string, string>()
 const cacheWorkspaceDependencies = (source: string, state: string, options: DependencyCacheOptions = {}) => cacheRaw(source, state, { baseSha: origins.get(source), ...options })
 const restoreWorkspaceDependencies = (source: string, target: string, state: string, options: DependencyCacheOptions = {}) => restoreRaw(source, target, state, { baseSha: origins.get(target), ...options })
-afterEach(() => { vi.restoreAllMocks(); dirs.splice(0).forEach(removeTempDir) })
+afterEach(async () => { for (const root of dirs) await dependencyBackground(join(root,'state')).stop(); vi.restoreAllMocks(); dirs.splice(0).forEach(removeTempDir) })
 function fixture() {
   vi.mocked(installDependencies).mockReset().mockImplementation(async stage => {
     mkdirSync(join(stage,'node_modules/tool'),{recursive:true});writeFileSync(join(stage,'node_modules/tool/index.js'),'installed')
@@ -204,6 +205,8 @@ it('reinstalls under a new namespace policy instead of restoring or colliding wi
   writeFileSync(join(legacy, '.complete.json'), JSON.stringify({ ...record, key: legacyKey, sourcePolicy: 'committed-public-registry-v1' }))
   writeFileSync(join(legacy, 'node_modules/tool/index.js'), 'legacy aliased payload')
   rmSync(join(f.source, 'node_modules'), { recursive: true })
+  expect(await restoreWorkspaceDependencies(f.source, f.target, f.state)).toContain(DEPENDENCY_NOTICE)
+  await dependencyBackground(f.state).drain()
   expect(await restoreWorkspaceDependencies(f.source, f.target, f.state)).not.toContain(DEPENDENCY_NOTICE)
   expect(readFileSync(join(f.target, 'node_modules/tool/index.js'), 'utf8')).toBe('installed')
   expect(readFileSync(join(legacy, 'node_modules/tool/index.js'), 'utf8')).toBe('legacy aliased payload')
@@ -277,6 +280,7 @@ it('falls back to executor installation without partial trees when symlink creat
   const f=fixture();rmSync(join(f.source,'node_modules'),{recursive:true})
   vi.spyOn(fsPromises,'symlink').mockRejectedValue(Object.assign(Error('symlink privilege unavailable'),{code:'EPERM'}))
   const notices=await restoreWorkspaceDependencies(f.source,f.target,f.state)
+  await dependencyBackground(f.state).drain()
   expect(notices).toContain(DEPENDENCY_NOTICE)
   expect(existsSync(join(f.target,'node_modules'))).toBe(false)
   expect(f.entries()).toEqual([])
@@ -289,6 +293,7 @@ it.each(['EPERM','EACCES','EBUSY'])('falls back and cleans owned stages when pub
     return rename(from,to)
   })
   expect(await restoreWorkspaceDependencies(f.source,f.target,f.state)).toContain(DEPENDENCY_NOTICE)
+  await dependencyBackground(f.state).drain()
   expect(existsSync(join(f.target,'node_modules'))).toBe(false)
   expect(f.entries()).toEqual([])
   expect(readdirSync(join(f.state,'dependency-cache/v2')).filter(n=>n.startsWith('.stage-'))).toEqual([])
@@ -314,4 +319,28 @@ it('cleans the first stage and its journal when creating the second stage fails'
   })
   await cacheWorkspaceDependencies(f.source,f.state)
   expect(readdirSync(join(f.state,'dependency-cache/v2'))).toEqual([])
+})
+
+it('keys legacy workspace bun.lock bytes, misses on member mutations, and ignores nonmember projects', async () => {
+  const f=fixture()
+  writeFileSync(join(f.source,'pkg/bun.lock'),'legacy member A')
+  mkdirSync(join(f.source,'docs/spike'),{recursive:true})
+  writeFileSync(join(f.source,'docs/spike/package.json'),'{"dependencies":{"unsafe":"git+ssh://secret"}}')
+  writeFileSync(join(f.source,'docs/spike/bun.lock'),'unrelated invalid lock')
+  f.commitOrigin()
+  const checkout=join(f.root,'fresh');f.git('worktree','add','-qb','fresh',checkout)
+  await cacheWorkspaceDependencies(f.source,f.state)
+  expect(f.entries()).toHaveLength(1)
+  writeFileSync(join(checkout,'pkg/bun.lock'),'member mutated')
+  expect(await restoreRaw(f.source,checkout,f.state,{baseSha:origins.get(f.source)})).toContain(DEPENDENCY_NOTICE)
+  expect(existsSync(join(checkout,'node_modules'))).toBe(false)
+  writeFileSync(join(checkout,'pkg/bun.lock'),'legacy member A')
+  writeFileSync(join(checkout,'docs/spike/bun.lock'),'unrelated mutation')
+  // Also ignore a lock in a nonmember ancestor of a workspace.
+  writeFileSync(join(checkout,'docs/yarn.lock'),'unrelated mixed lock')
+  rmSync(join(f.source,'node_modules'),{recursive:true})
+  expect(await restoreRaw(f.source,checkout,f.state,{baseSha:origins.get(f.source)})).not.toContain(DEPENDENCY_NOTICE)
+  writeFileSync(join(f.source,'pkg/bun.lock'),'legacy member B');f.commitOrigin()
+  await cacheWorkspaceDependencies(f.source,f.state)
+  expect(f.entries()).toHaveLength(2)
 })
