@@ -1,8 +1,8 @@
 import { afterEach, expect, it } from 'vitest'
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { commitWorktree } from '../git/worktree-workspaces'
 import { takeCheckpoint } from '../../features/workbench/checkpoints'
@@ -67,16 +67,54 @@ it('[P2-7] ignores runtime in a non-Node repository, commits, checkpoints and re
 
 it('[P2-8] the same task can run tools and use its cache after a real offline npm ci', async () => {
   const root=area(), user=area(), run=promisify(execFile)
-  writeFileSync(join(root,'package.json'),JSON.stringify({name:'task-fixture',version:'1.0.0'}))
-  writeFileSync(join(root,'package-lock.json'),JSON.stringify({name:'task-fixture',version:'1.0.0',lockfileVersion:3,packages:{'':{name:'task-fixture',version:'1.0.0'}}}))
   const env=await taskEnvironment(root,'abcd1234')
+  const childEnv = { ...process.env }
+  // npm config is case-insensitive, including on Windows. Never inherit a runner's
+  // cache/config overrides; every npm invocation uses this task's private cache.
+  for (const key of Object.keys(childEnv)) if (/^npm_config_/i.test(key)) delete childEnv[key]
+  Object.assign(childEnv, env, { HOME: user, USERPROFILE: user })
+  const config = ['--ignore-scripts','--offline','--no-audit','--no-fund','--update-notifier=false',
+    '--userconfig='+join(user,'empty-npmrc'),'--globalconfig='+join(user,'global-npmrc')]
+  writeFileSync(join(user,'empty-npmrc'),'')
+  writeFileSync(join(user,'global-npmrc'),'')
+  // npm's extensionless Windows launcher needs Bash; npm.cmd needs a shell.
+  // Resolve the installed CLI and run it with Node, without either shell shim.
+  const npmCmd = process.platform === 'win32'
+    ? execFileSync('where.exe',['npm.cmd'],{encoding:'utf8',timeout:10_000,windowsHide:true}).trim().split(/\r?\n/)[0]!
+    : undefined
+  const npmArgs = npmCmd ? [join(dirname(npmCmd),'node_modules/npm/bin/npm-cli.js')] : []
+  const npmNode = npmCmd && existsSync(join(dirname(npmCmd),'node.exe')) ? join(dirname(npmCmd),'node.exe') : 'node'
+  const npm = async (args: string[]) => {
+    try {
+      // Allow cold tool startup/I/O under suite load; this is not a product deadline.
+      return await run(npmCmd ? npmNode : 'npm',[...npmArgs,...args,...config],{cwd:root,env:childEnv,encoding:'utf8',timeout:30_000,windowsHide:true})
+    } catch (error) {
+      const failure = error as Error & { code?: string | number; signal?: string; killed?: boolean; stdout?: string; stderr?: string }
+      throw new Error(`${failure.message}\ncode: ${failure.code}; signal: ${failure.signal}; killed: ${failure.killed}\nstdout:\n${failure.stdout ?? ''}\nstderr:\n${failure.stderr ?? ''}`, { cause: error })
+    }
+  }
+  // Pack a local dependency and prime only this cache, entirely offline. Remove
+  // the tarball before ci so success requires cached content, not a runner cache
+  // or a file: directory link that could survive without reinstalling anything.
+  const pkg=join(user,'package'), tarball=join(user,'offline-fixture-1.0.0.tgz')
+  mkdirSync(pkg)
+  writeFileSync(join(pkg,'package.json'),JSON.stringify({name:'offline-fixture',version:'1.0.0',main:'index.js'}))
+  writeFileSync(join(pkg,'index.js'),"module.exports = 'offline-cache-ok'\n")
+  await npm(['pack',pkg,'--pack-destination='+user])
+  writeFileSync(join(root,'package.json'),JSON.stringify({name:'task-fixture',version:'1.0.0',dependencies:{'offline-fixture':'file:'+tarball.replaceAll('\\','/')}}))
+  await npm(['install'])
+  rmSync(tarball)
+  rmSync(join(root,'node_modules/offline-fixture'),{recursive:true})
+  writeFileSync(join(root,'node_modules/stale'),'ci must remove this')
   writeFileSync(join(env.BUN_INSTALL_CACHE_DIR!,'kept'),'cache')
-  const result=await run('npm',['ci','--ignore-scripts','--offline','--no-audit','--no-fund','--userconfig='+join(user,'empty-npmrc'),'--globalconfig='+join(user,'global-npmrc')],{cwd:root,env:{...process.env,...env,HOME:user},timeout:10_000})
+  const result=await npm(['ci'])
   expect(result.stderr).not.toContain('ERR!')
+  expect(existsSync(join(root,'node_modules/stale'))).toBe(false)
+  expect(execFileSync(process.execPath,['-e',"process.stdout.write(require('offline-fixture'))"],{cwd:root,env:childEnv,encoding:'utf8'})).toBe('offline-cache-ok')
   const next=mkdtempSync(join(env.TMPDIR!,'after-ci-'))
   expect(existsSync(next)).toBe(true)
   expect(readFileSync(join(env.BUN_INSTALL_CACHE_DIR!,'kept'),'utf8')).toBe('cache')
-})
+}, 120_000)
 
 it.each(['abcd1234','abcd1234/tmp','abcd1234/cache','.gitignore'])('rejects pre-existing runtime links at %s', async part => {
   const root=area(), outside=area()
