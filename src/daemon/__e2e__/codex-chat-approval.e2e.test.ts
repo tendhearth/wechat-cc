@@ -19,8 +19,11 @@ async function resolvePending(stateDir: string, decision: 'allow' | 'deny'): Pro
   const bearer = (file: string) => ({ authorization: `Bearer ${readFileSync(file, 'utf8').trim()}` })
   const auth = bearer(info.operatorTokenFilePath)
   const pet = (await (await fetch(`${info.baseUrl}/v1/subscribe/presence`, { headers: bearer(info.tokenFilePath) })).json() as { pet: { pending_permissions?: Array<{ hash: string; prompt: string }> } }).pet
-  const card = pet.pending_permissions?.find(i => i.prompt.includes('Codex 想'))
+  const items = (await (await fetch(`${info.baseUrl}/v1/permissions/pending`, { headers: auth })).json() as { items: Array<{ hash: string; prompt: string }> }).items
+  const card = items.find(i => i.prompt.includes('Codex 想'))
   expect(card, JSON.stringify(pet).slice(0, 500)).toBeTruthy()
+  expect(pet.pending_permissions?.some(i => i.hash === card!.hash)).toBe(true)
+  expect(pet.pending_permissions?.some(i => i.prompt.includes('Codex 想'))).toBe(false)
   const r = await fetch(`${info.baseUrl}/v1/permissions/resolve`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ hash: card!.hash, decision }) })
   expect(await r.json()).toEqual({ ok: true })
 }

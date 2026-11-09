@@ -1,4 +1,5 @@
 import { taskEnvironment } from '../../adapters/executors/task-environment'
+import { makeWorkbenchPermissionPrompt } from './permission-prompt'
 import {createClaudeHistoryReader} from '../../adapters/executors/claude/native-claude-history'
 import { makeIssueFetcher } from './issue-fetch'
 import { lessonsBlock, makeProjectLessons } from './project-lessons'
@@ -142,7 +143,8 @@ export function makeUnattendedAckStore(stateDir: string): { get(): number | null
 export function wireWorkbench(opts: {
   db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
-  askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
+  permissionRegistry?: Pick<import('../../ports/wechat').WechatPermissions,'registerPendingPermission'|'resolvePermission'|'pendingPermissionCodeOf'>
+  askUser: import('../../ports/wechat').WechatPermissions['askUser']; log: PermissionRelayDeps['log']
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
   matters?: import('../../ports/matters').MatterStore
   /** 回报(task-3,2026-09-23;功能目录 src/features/reports 造好交进来):与 matters 一起有才接得上,单传一个不够。 */
@@ -268,6 +270,7 @@ export function wireWorkbench(opts: {
     holdBusy:opts.boot.holdBusy,
   }):undefined
   return makeWorkbenchService({
+    ...(opts.permissionRegistry?{permissionPrompt:makeWorkbenchPermissionPrompt(opts.permissionRegistry,ownerChatId)}:{}),
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
     ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
     // 项目经验(第二轮对标 ★2):主人在微信「经验 <项目> …」写的,每家执行者的指令里都带上

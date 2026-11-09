@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, realpathSync, writeFileSync, symlinkSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../../lib/test-temp'
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '../../../ports/agent-provider'
 import { TIER_PROFILES } from '../../../domain/user-tier'
 import { createWorkbenchCodexProvider } from './codex-app-server'
+import { makeRunPermissions } from '../../workbench/permissions'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))
 vi.mock('node:child_process', async importOriginal => {
@@ -604,6 +605,46 @@ describe('workbench Codex app-server', () => {
     await expect.poll(() => child.sent.find(m => m.id === 42)?.result).toEqual({ decision: allow ? 'accept' : 'decline' })
     expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt'), command: 'rm report.txt', cwd: '/project' }, expect.any(AbortSignal))
     completed(child); await run.done
+  })
+
+  it('R2: the one-shot command/cwd stay complete and only the original RPC id receives accept', async () => {
+    const command = `echo ${'x'.repeat(2500)}; git status`, requestPermission = vi.fn(async () => true)
+    const { session, child } = await start({ requestPermission }), run = collect(session); await begun(child)
+    approval(child, 'full-command', undefined, { command, cwd: '/project/full' })
+    await expect.poll(() => child.sent.find(m => m.id === 'full-command')?.result).toEqual({ decision: 'accept' })
+    expect(requestPermission).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command, cwd: '/project/full' }), expect.any(AbortSignal))
+    expect(child.sent.filter(m => m.id === 'full-command')).toHaveLength(1)
+    completed(child); await run.done
+  })
+
+  it.each([false, true].flatMap(extraGrant => ['replace', 'symlink'].map(change => ({ extraGrant, change }))))('P1-4: sends exactly one accept for the owner-approved invocation ($change, extraGrant=$extraGrant)', async ({ change, extraGrant }) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-script-barrier-')))
+    const permissions = makeRunPermissions({ taskId: 'task', root, provider: 'codex' })
+    let release!: () => void
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    writeFileSync(join(root, 'check.py'), 'print("reviewed")\n')
+    try {
+      const { session, child } = await start({ requestPermission: async (request: Parameters<typeof permissions.request>[0], signal: AbortSignal) => {
+        const allowed = await permissions.request(request, signal)
+        await barrier // approval returned, before the external process can open it
+        return allowed
+      } })
+      const run = collect(session); await begun(child)
+      approval(child, 'script-barrier', undefined, { command: 'python3 check.py', cwd: root, ...(extraGrant ? { additionalPermissions: { network: { enabled: true } } } : {}) })
+      await expect.poll(() => permissions.pending().length).toBe(1)
+      const card = permissions.pending()[0]!
+      if (!extraGrant) expect(card.scripts?.[0]?.content).toBe('print("reviewed")\n')
+      expect(card.canAllowTask).not.toBe(true)
+      expect(permissions.resolve(card.id, 'allow')).toBe(true)
+      if (change === 'replace') writeFileSync(join(root, 'check.py'), 'print("replaced")\n')
+      else { writeFileSync(join(root, 'other.py'), 'print("replacement")\n'); unlinkSync(join(root, 'check.py')); symlinkSync('other.py', join(root, 'check.py')) }
+      expect(child.sent.some(m => m.id === 'script-barrier')).toBe(false)
+      release()
+      await expect.poll(() => child.sent.find(m => m.id === 'script-barrier')?.result).toEqual({ decision: 'accept' })
+      expect(child.sent.filter(m => m.id === 'script-barrier')).toHaveLength(1)
+      expect(permissions.resolve(card.id, 'allow')).toBe(false)
+      completed(child); await run.done
+    } finally { release(); permissions.rejectAll(); removeTempDir(root) }
   })
 
   it.each([true, false])('routes captured native local approval id zero using an offered one-shot decision: %s', async allow => {

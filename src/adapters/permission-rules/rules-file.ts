@@ -34,7 +34,7 @@ export function unsafePattern(src: string): string | null {
 }
 
 const VERDICTS: readonly Verdict[] = ['allow', 'ask', 'deny']
-const WHEN_KEYS: readonly (keyof RuleWhen)[] = ['surface', 'provider', 'project', 'tool', 'command', 'paths']
+const WHEN_KEYS: readonly (keyof RuleWhen)[] = ['surface', 'provider', 'project', 'tool', 'command', 'paths', 'scope', 'commandHash']
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -80,6 +80,7 @@ function parseRule(item: unknown, i: number): Rule | string {
     }
     ;(when as Record<string, string>)[k] = val
   }
+  if ((when.scope || when.commandHash) && (when.surface !== 'workbench' || !when.scope || !/^[a-f0-9]{64}$/.test(when.commandHash ?? ''))) return `规则 ${id}:任务规则必须限定 workbench、scope 和完整 commandHash,已丢弃`
   const rule: Rule = { id, when, then: o.then as Verdict }
   if (typeof o.note === 'string' && o.note.trim()) rule.note = o.note.trim()
   return rule
@@ -137,6 +138,8 @@ function chatPathsKnown(ask: PermissionAsk, platform: Platform): ask is Permissi
 }
 
 function matches(when: RuleWhen, ask: PermissionAsk, platform: Platform): boolean {
+  if (when.scope && when.scope !== ask.scope) return false
+  if (when.commandHash && when.commandHash !== ask.commandHash) return false
   if (when.surface && when.surface !== ask.surface) return false
   if (when.provider && when.provider !== ask.provider) return false
   if (when.project) {

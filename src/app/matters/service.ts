@@ -61,6 +61,7 @@ export interface MattersServiceDeps {
     submitInput?(id:string,input:{runId:string;requestId:string;text:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
     inputReceipt?(id:string,requestId:string):LiveInput|null
     resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void|Promise<void>
+    permissionScript?(id:string,requestId:string,path:string,sha256:string,offset:number):{content:string;nextOffset:number|null}
     /** 停下这一轮(与桌面「停止」同一个 cancel;expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮)。 */
     cancel?(id:string,expectedRunId?:string):Promise<unknown>
     /** 独立工作区:提交到分支 / 删除工作区(2026-10-07,手机也能做)。没接 ⇒ 手机没有这两个按钮。 */
@@ -111,6 +112,7 @@ export interface MattersService {
   /** 这件在手机上露过面(绑定 phone / pwa;手机令牌读列表、详情时记)。 */
   seenOnPhone(id:string):void
   detail(id:string):Promise<MatterDetail>
+  permissionScript(id:string,requestId:string,path:string,sha256:string,offset:number,phone?:boolean):{content:string;nextOffset:number|null}
   /** One durable workbench input, including its delivery reason; never loads or mutates the detail. */
   inputReceipt(id:string,requestId:string):MatterInput|null
   /** 主人那条对话(没有就建),并记下是从哪个表面看的;没配主人 → null。 */
@@ -314,7 +316,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         try{
           const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{base?:string;baseSha?:string;branch:string;projectPath?:string;removed:boolean;merged?:boolean;port?:number;scripts?:unknown}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{...(wt.base&&wt.baseSha?{base:wt.base,baseSha:wt.baseSha}:{}),branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{}),...(wt.removed?{}:phoneScripts(wt.scripts as never,wt.port,d.events as never,[d.task.path,wt.projectPath??'']))}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
-            permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt})=>({id,taskId,tool,description,createdAt})),
+            permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt,canAllowTask,scripts})=>({id,taskId,tool,description,createdAt,...(canAllowTask?{canAllowTask}:{}),...(scripts?{scripts}:{})})),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),
             artifacts:(d.artifacts??[]).filter(a=>a.taskId===id).map(({id,taskId,name,mime,size,sha256,createdAt,approvedAt})=>({id,taskId,name,mime,size,sha256,createdAt,approvedAt})),
             inputs:(d.inputs??[]).filter(input=>input.taskId===id).map(publicInput),
@@ -423,10 +425,16 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       return {matterId,created:r.created}
     },
     permission(id,runId,requestId,decision){
-      if(decision!=='allow'&&decision!=='deny')throw Error('invalid_decision')
+      if(decision!=='allow'&&decision!=='deny'&&decision!=='allow_task')throw Error('invalid_decision')
       current(id,runId,requestId,'permissions')
       if(!deps.workbench?.resolvePermission)throw Error('workbench_not_wired')
       deps.workbench.resolvePermission(id,requestId,decision)
+    },
+    permissionScript(id,requestId,path,sha256,offset,phone){
+      const matter=require(id)
+      if(phone&&!phoneMayOpenMatter(matter,(deps.ownerChatId??deps.chat?.ownerChatId)?.()??null))throw Error('matter_not_found')
+      if(!deps.workbench?.permissionScript)throw Error('workbench_not_wired')
+      return deps.workbench.permissionScript(id,requestId,path,sha256,offset)
     },
     async worktree(id,action){
       require(id)

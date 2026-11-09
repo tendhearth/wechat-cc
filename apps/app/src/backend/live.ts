@@ -445,6 +445,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async decide(p) {
       await api.matters.permission({ body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })
     },
+    async permissionScript(p) { return await api.permissions.script({query:p}) },
     async artifactChunk(p) {
       const r = strip(await api.matters.artifact({ query: { id: p.id, artifactId: p.artifactId, sha256: p.sha256, offset: p.offset } }))
       return { offset: r.offset, nextOffset: r.nextOffset, size: r.size, contentBase64: r.contentBase64 }

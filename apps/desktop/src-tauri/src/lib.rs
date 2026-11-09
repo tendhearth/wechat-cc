@@ -1633,9 +1633,9 @@ async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, 
     use std::time::Duration;
     use tokio::time::timeout;
 
-    // Reject anything that isn't one of the two decisions before touching the
+    // Reject anything that isn't one of the supported decisions before touching the
     // network: a typo must not reach the daemon as an unknown verb.
-    if decision != "allow" && decision != "deny" {
+    if decision != "allow" && decision != "deny" && decision != "allow_task" {
         return Err(format!("invalid decision: {decision}"));
     }
     if hash.trim().is_empty() {

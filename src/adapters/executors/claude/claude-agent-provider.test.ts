@@ -2,6 +2,10 @@ import { describe, it, expect, vi } from 'vitest'
 import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
 import type { AgentEvent } from '../../../ports/agent-provider'
 import { TIER_PROFILES } from '../../../domain/user-tier'
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { makeRunPermissions } from '../../workbench/permissions'
 
 // Helper: drain an async iterable into an array for assertion.
 async function drain(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
@@ -370,6 +374,40 @@ describe('claude-agent-provider', () => {
     approve(true)
     controller.abort()
     await expect(decision).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('R2: the one-shot request carries the complete command and the SDK receives one allow', async () => {
+    const command = `echo ${'x'.repeat(2500)}; rm -rf build`, requestPermission = vi.fn(async () => true)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission, undefined, [], null)
+    await expect(gate('Bash', { command }, { signal: new AbortController().signal } as never)).resolves.toMatchObject({ behavior: 'allow' })
+    expect(requestPermission).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command }), expect.any(AbortSignal))
+  })
+
+  it.each([false, true].flatMap(truncated => ['replace', 'symlink'].map(change => ({ truncated, change }))))('P1-4: honors one-shot invocation approval at the SDK continuation barrier ($change, longCommand=$truncated)', async ({ change, truncated }) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-claude-script-barrier-')))
+    const permissions = makeRunPermissions({ taskId: 'task', root, provider: 'claude' })
+    let release!: () => void
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    writeFileSync(join(root, 'check.sh'), 'echo reviewed\n')
+    try {
+      const gate = makeWorkbenchClaudeCanUseTool(async (request, signal) => {
+        const allowed = await permissions.request({ ...request, cwd: root }, signal)
+        await barrier // approval returned; SDK has not received its decision yet
+        return allowed
+      }, undefined, [], null)
+      const command = truncated ? `echo ${'x'.repeat(1995)}; bash check.sh rm -rf build` : 'bash check.sh rm -rf build'
+      const result = gate('Bash', { command }, { signal: new AbortController().signal } as never)
+      const card = permissions.pending()[0]!
+      if (!truncated) expect(card.scripts?.[0]?.content).toBe('echo reviewed\n')
+      expect(card.description).toContain('预览是批准时的快照，运行以当时内容为准')
+      expect(card.canAllowTask).not.toBe(true)
+      expect(permissions.resolve(card.id, 'allow')).toBe(true)
+      if (change === 'replace') writeFileSync(join(root, 'check.sh'), 'echo replaced\n')
+      else { writeFileSync(join(root, 'other.sh'), 'echo replacement\n'); unlinkSync(join(root, 'check.sh')); symlinkSync('other.sh', join(root, 'check.sh')) }
+      release()
+      await expect(result).resolves.toMatchObject({ behavior: 'allow' })
+      expect(permissions.resolve(card.id, 'allow')).toBe(false)
+    } finally { release(); permissions.rejectAll(); rmSync(root, { recursive: true, force: true }) }
   })
 
   it('yields init then text then result for a simple turn', async () => {

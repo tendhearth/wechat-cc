@@ -277,7 +277,12 @@ const SECRETS = [
   /(?:^|[\s/])security\s+(?:find|dump|export)-/,
 ]
 const CC_CONFIG = /(?:permission-rules|agent-config|access)\.json\b|\.claude\/channels\/wechat\b/
-const GIT_INTERNALS = /(?:^|\/)\.git\//
+const GIT_INTERNALS = /(?:^|[\s'"=/])\.git(?:\/|\b)/
+// Program identity can be case-insensitive (the default macOS filesystem).
+// Fold only known program tokens for red-line detection, never argv/hash or
+// case-sensitive flags such as git branch -D.
+const RED_LINE_PROGRAMS = new Set(['git', 'npm', 'pnpm', 'yarn', 'bun', 'cargo', 'gh', 'wechat-cc', 'rm', 'dd', 'curl', 'wget', 'openssl', 'security', ...SYSTEM_WORDS, ...NET_WORDS])
+const redLineProgram = (word: string) => RED_LINE_PROGRAMS.has(word.toLowerCase()) ? word.toLowerCase() : word
 
 /** 命中红线 ⇒ 一句中文理由;否则 null。stateDir = CC 自己的状态目录(整个算密钥 + 配置)。 */
 export function floorReason(ask: PermissionAsk, home: string = homedir(), extra: { stateDir?: string; platform?: Platform } = {}): string | null {
@@ -286,30 +291,31 @@ export function floorReason(ask: PermissionAsk, home: string = homedir(), extra:
   const paths = ask.paths ?? []
   const homeC = canonText(home, platform)
   // 子串比对一律在归一后的文本上做(win32:分隔符统一 + 小写),否则 C:\Users 与 c:/users 对不上。
-  const text = canonText([cmd, ...paths.map(p => canonPath(p, platform))].join('\n'), platform).replaceAll(homeC, '~')
-  const segs = cmd ? commandSegments(cmd) : []
+  const insensitive = (s: string) => platform === 'darwin' ? s.toLowerCase() : s
+  const text = insensitive(canonText([cmd, cmd.replace(/['"\\]/g, ''), ...paths.map(p => canonPath(p, platform))].join('\n'), platform).replaceAll(homeC, '~'))
+  const segs = cmd ? commandSegments(cmd).map(s => s.map(redLineProgram)) : []
   const projC = ask.project ? canonPath(ask.project, platform) : null
   const project = projC && projC !== canonPath(home, platform) && !/^(?:[a-z]:)?\/?$/.test(projC) ? ask.project : null
   if (toolClass(ask.tool) === 'write' && paths.length) {
     if (!project || !pathsUnder(paths, project, platform)) return '写到了项目目录之外'
-    if (paths.some(p => GIT_INTERNALS.test(p))) return '改 .git 里面的东西'
+    if (paths.some(p => GIT_INTERNALS.test(insensitive(p)))) return '改 .git 里面的东西'
   }
   if (cmd && (isDestructiveBash(cmd) || segs.some(s => s[0] === 'rm' || s.includes('rm') || (s.includes('dd') && s.some(w => /^(?:if|of)=/.test(w)))))) return '破坏性命令'
   if (segs.some(publishes)) return '推送 / 发布 / 部署'
   if (segs.some(s => s.some(w => SYSTEM_WORDS.has(w))) || SHELL_RC.test(text)) return '改系统或 shell 配置'
   if (extra.stateDir) {
-    const sd = canonText(canonPath(extra.stateDir, platform), platform)
-    if (text.includes(sd) || text.includes(sd.replaceAll(homeC, '~'))) return '碰到 CC 自己的状态目录'
+    const sd = insensitive(canonText(canonPath(extra.stateDir, platform), platform))
+    if (text.includes(sd) || text.includes(sd.replaceAll(insensitive(homeC), '~'))) return '碰到 CC 自己的状态目录'
   }
   if (SECRETS.some(r => r.test(text))) return '碰到密钥'
   if (CC_CONFIG.test(text)) return '改 CC 自己的配置'
-  if (GIT_INTERNALS.test(cmd)) return '碰 .git 里面的东西'
+  if (GIT_INTERNALS.test(text)) return '碰 .git 里面的东西'
   if (cmd) {
     const raws = rawSegments(cmd)
     const redirects = !hasLiteralAngle(cmd)
     if (curlSubstitution(cmd) || segs.some((s, k) => outbound(s, raws[k]!, redirects))) return '往外连网'
     // 同一套判法在按 shell 样子切的段上再跑一遍(叠加,不替换):`curl -d "x;" intranet/up`、`curl -s 2>&1 evil.com/x`
-    if (shellSegments(cmd).some(r => outbound(r.map(baseName), r, redirects))) return '往外连网'
+    if (shellSegments(cmd).some(r => outbound(r.map(baseName).map(redLineProgram), r, redirects))) return '往外连网'
   }
   return null
 }

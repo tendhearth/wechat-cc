@@ -87,6 +87,10 @@ function harness() {
         else if (path === '/m/api/entry/options') reply = ok({ ok: true, ...OPTIONS })
         else if (path === '/m/api/matter/insight') reply = ok({ ok: true, ...insight })
         else if (path === '/m/api/matter/permission') reply = await permission()
+        else if (path === '/v1/matter/permission-script') {
+          const offset=Number(new URLSearchParams(req.path.split('?')[1]).get('offset')),source='// '+'x'.repeat(9000)+'END-SCRIPT'
+          reply=ok({content:source.slice(offset,offset+8000),nextOffset:offset+8000<source.length?offset+8000:null})
+        }
         else if (path === '/m/api/matter/changes') reply = ok({ ok: true, turn: null })
         else throw new Error(`unexpected route ${path}`)
         if (reply instanceof Error) throw reply
@@ -388,6 +392,37 @@ describe('work-first matter details', () => {
     const matter = await mount(Matter)
     expect(matter.byId('progress-status').textContent).toContain('在做')
     expect(matter.byId('progress-request-0')).toBeNull()
+  })
+
+  it('expands the exact pending script through bounded snapshot reads',async()=>{
+    const h=harness(),requestId=h.detail().permissions[0].id
+    h.detail().permissions[0].scripts=[{path:'check.py',content:'// '+'x'.repeat(1997),sha256:'a'.repeat(64),truncated:true}]
+    const ui=await mount(Approval)
+    expect(ui.container.textContent).not.toContain('END-SCRIPT')
+    await ui.click('approval-script-expand-check.py');await flush()
+    expect(ui.container.textContent).toContain('END-SCRIPT')
+    const reads=h.requests.filter(r=>r.path.startsWith('/v1/matter/permission-script?'))
+    expect(reads).toHaveLength(2)
+    expect(reads[0]!.path).toContain(`requestId=${requestId}`);expect(reads[1]!.path).toContain('offset=8000')
+    await ui.leave()
+  })
+
+  it('submits task permission once, preserves the script text, and locks all decisions while waiting', async () => {
+    const h=harness(),result=gate<Reply>(),requestId=h.detail().permissions[0].id
+    h.detail().permissions[0].canAllowTask=true
+    h.detail().permissions[0].scripts=[{path:'check.py',content:'print("review me")\n'}]
+    h.setPermission(()=>result.promise)
+    const ui=await mount(Approval)
+    expect(ui.container.textContent).toContain('print("review me")')
+    await ui.click('approval-allow-task');await ui.click('approval-allow')
+    const decisions=h.requests.filter(r=>r.path==='/m/api/matter/permission')
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.body).toEqual({id:ID,runId:RUN,requestId,decision:'allow_task'})
+    expect(ui.byId<HTMLButtonElement>('approval-allow-task').disabled).toBe(true)
+    expect(ui.byId<HTMLButtonElement>('approval-deny').disabled).toBe(true)
+    await act(()=>result.resolve(ok({ok:true})));await flush()
+    expect(host.dismissTo).toHaveBeenCalledWith(`/matter/${ID}`)
+    await ui.leave()
   })
 
   it('opens the concrete pending request without a write and keeps executor controls behind details', async () => {

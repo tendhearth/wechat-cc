@@ -47,7 +47,7 @@ beforeEach(async()=>{
     return {async *dispatch(){
       yield {kind:'init' as const,sessionId:'phone-native'}
       if(project.path.endsWith('terminal')){if(ctx.resumeSessionId)await gate;yield {kind:'text' as const,text:'完成当前轮'};yield {kind:'result' as const,sessionId:'phone-native',numTurns:1,durationMs:1};return}
-      receipt.permission=await ctx.requestPermission!({tool:'Bash',description:'Remove the one scratch probe file'})
+      receipt.permission=await ctx.requestPermission!({tool:'Bash',command:'rm cc-permission-probe.txt',description:'Remove the one scratch probe file'})
       receipt.answers=await ctx.requestUserInput!({questions:[{id:'format',header:'格式',question:'保存成哪种？',options:[{label:'文字',description:'纯文本'}],allowOther:true}]})
       yield {kind:'text' as const,text:'已保存'};await gate
     },async steer(text){receipt.inputs.push(text)},async close(){finish()}}

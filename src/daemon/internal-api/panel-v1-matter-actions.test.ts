@@ -31,8 +31,8 @@ const CONTENT = Buffer.from('# 报告\n全过。\n')
 const ROUND = '77777777-7777-4777-8777-777777777777', OLD_ROUND = '88888888-8888-4888-8888-888888888888'
 const COMMENT = '99999999-9999-4999-8999-999999999999'
 
-let stateDir: string, api: InternalApi, panel: SettingsPanel, localBase: string, operator: string, device: string, link: string
-type WbFn = 'detail' | 'cancel' | 'resolvePermission' | 'resolveAnswer' | 'artifact' | 'handOff' | 'worktreeAction' | 'scriptAction' | 'createEntry' | 'entryReceipt'
+let stateDir: string, api: InternalApi, panel: SettingsPanel, localBase: string, operator: string, fileToken: string, device: string, link: string
+type WbFn = 'detail' | 'cancel' | 'resolvePermission' | 'permissionScript' | 'resolveAnswer' | 'artifact' | 'handOff' | 'worktreeAction' | 'scriptAction' | 'createEntry' | 'entryReceipt'
   | 'reviewList' | 'markReviewFile' | 'returnReviewFiles' | 'reviewComment' | 'sendReviewComments' | 'rewindPreview' | 'rewind' | 'undoRewind'
 let wb: Record<WbFn, ReturnType<typeof vi.fn>>
 
@@ -42,6 +42,7 @@ beforeEach(async () => {
     detail: vi.fn(() => ({ task: TASK, events: [], runId: RUN, permissions: [{ id: REQ, taskId: ID, tool: 'Bash', description: 'rm', createdAt: 1 }], questions: [{ id: REQ, taskId: ID }], artifacts: [{ id: ART, taskId: ID, name: 'r.md', mime: 'text/markdown', size: CONTENT.length, sha256: SHA }], inputs: [] })),
     cancel: vi.fn(async () => ({ ...TASK, status: 'cancelling' })),
     resolvePermission: vi.fn(), resolveAnswer: vi.fn(),
+    permissionScript:vi.fn(()=>({content:'print("snapshot")\n',nextOffset:null})),
     artifact: vi.fn(() => ({ name: 'r.md', mime: 'text/markdown', size: CONTENT.length, sha256: SHA, contentBase64: CONTENT.toString('base64') })),
     handOff: vi.fn(() => ({ taskId: 'cafebabe', created: true })),
     worktreeAction: vi.fn(() => ({ branch: 'cc/deadbeef', committed: true, sha: 'abc1234', mergeHint: 'git merge cc/deadbeef' })),
@@ -68,10 +69,17 @@ beforeEach(async () => {
   }
   const store = { get: (id: string) => id === ID ? { id, kind: 'task', ownerChatId: OWNER } : null, bind: vi.fn() }
   const matters = makeMattersService({ store: store as never, ownerChatId: () => OWNER, workbench: wb as never })
-  api = createInternalApi({ stateDir, daemonPid: 1, matters, resolveAdminChatId: () => OWNER })
+  api = createInternalApi({ stateDir, daemonPid: 1, matters, resolveAdminChatId: () => OWNER,
+    permissions: { list: () => [{ hash: REQ, code: '01', chatId: OWNER, prompt: 'private-script-body', since: 's', expires_at: 'e' }], resolve: () => false },
+    petTurn: async () => ({ owner_last_contact_at: null, turn: { phase: 'permission', since: null }, last_done_at: null,
+      pending_permissions: [{ hash: REQ, prompt: 'inline-private-script-body', since: '2026-11-09T00:00:00Z', expires_at: '2026-11-09T00:05:00Z',
+        scripts: [{ path: 'check.py', sha256: SHA, content: 'private-script-body' }] }],
+    }),
+  })
   const s = await api.start()
   localBase = `http://127.0.0.1:${s.port}`
   operator = readFileSync(s.operatorTokenFilePath, 'utf8').trim()
+  fileToken = readFileSync(s.tokenFilePath, 'utf8').trim()
   panel = makeSettingsPanel({
     stateDir, ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {},
     log: () => {}, tokens: api.panelTokens, v1: api.panelDispatch,
@@ -159,6 +167,38 @@ describe('手机令牌走新键:语义同并之前的 /m/api/matter/*,错误码�
     expect(desk.status).toBe(400); expect(await desk.json()).toEqual({ error: 'invalid_request' })
     expect(wb.cancel).not.toHaveBeenCalled()
   })
+  it('task decisions and script snapshots share the device/operator routes; link tokens cannot read scripts',async()=>{
+    const path=`/v1/matter/permission-script?id=${ID}&requestId=${REQ}&path=check.py&sha256=${SHA}&offset=0`
+    const response=await viaPanel(path,{d:device})
+    expect(response.status).toBe(200);expect(await response.json()).toEqual({content:'print("snapshot")\n',nextOffset:null})
+    expect(wb.permissionScript).toHaveBeenCalledWith(ID,REQ,'check.py',SHA,0)
+    expect((await viaPanel(path,{t:link})).status).toBe(403)
+    expect((await viaPanel('/v1/matter/permission',{d:device},post({id:ID,runId:RUN,requestId:REQ,decision:'allow_task'}))).status).toBe(200)
+    expect(wb.resolvePermission).toHaveBeenCalledWith(ID,REQ,'allow_task')
+  })
+
+  it('P2-5: FILE/trusted tokens see metadata through pet/presence while operator/device alone can fetch source', async () => {
+    const scriptPath = `/v1/matter/permission-script?id=${ID}&requestId=${REQ}&path=check.py&sha256=${SHA}&offset=0`
+    for (const token of [fileToken, api.mintSessionToken('trusted', 'test/default/owner')]) {
+      for (const path of ['/v1/companion/pet', '/v1/subscribe/presence']) {
+        const response = await fetch(`${localBase}${path}`, { headers: { Authorization: `Bearer ${token}` } })
+        expect(response.status).toBe(200)
+        const body = await response.text()
+        expect(body).toContain(REQ)
+        expect(body).not.toContain('private-script-body')
+        expect(body).not.toContain('inline-private-script-body')
+        expect(body).not.toContain('scripts')
+      }
+      expect((await fetch(`${localBase}${scriptPath}`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(403)
+      expect((await fetch(`${localBase}/v1/permissions/pending`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(403)
+    }
+    for (const response of [await viaLocal(scriptPath), await viaPanel(scriptPath, { d: device })]) {
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ content: 'print("snapshot")\n', nextOffset: null })
+    }
+    expect((await viaLocal('/v1/permissions/pending')).status).toBe(200)
+  })
+
   it('批准 / 回答:不是这一轮的、这一项不在了 ⇒ 409 permission_stale / question_stale,不批', async () => {
     expect((await viaPanel('/v1/matter/permission', { d: device }, post({ id: ID, runId: RUN, requestId: REQ, decision: 'allow' }))).status).toBe(200)
     expect(wb.resolvePermission).toHaveBeenCalledWith(ID, REQ, 'allow')

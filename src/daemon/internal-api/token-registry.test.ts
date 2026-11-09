@@ -30,6 +30,7 @@ describe('token-registry', () => {
     expect(opInfo?.tier).toBe('admin')
     expect(opInfo?.origin).toBe('operator')
     expect(opInfo?.routeAllow).toEqual(new Set([
+      'GET /v1/permissions/pending',
       'POST /v1/companion/converse',
       'POST /v1/companion/speak',
       'POST /v1/companion/transcribe',
@@ -50,7 +51,7 @@ describe('token-registry', () => {
       'GET /v1/workbench',
       'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','GET /v1/matter/owner-chat/file','GET /v1/matter/owner-chat/search','POST /v1/matter/say','POST /v1/matter/seen',
       // P3e 一件事上的动作(/v1/matter/*):operator 本来就能走它们的 /v1/workbench/* 双胞胎,新键是同一个处理器
-      'POST /v1/matter/stop','POST /v1/matter/permission','POST /v1/matter/answer','GET /v1/matter/artifact','POST /v1/matter/handoff','POST /v1/matter/worktree','POST /v1/matter/create','GET /v1/matter/create-receipt',
+      'POST /v1/matter/stop','POST /v1/matter/permission','POST /v1/matter/answer','GET /v1/matter/artifact','GET /v1/matter/permission-script','POST /v1/matter/handoff','POST /v1/matter/worktree','POST /v1/matter/create','GET /v1/matter/create-receipt',
       'GET /v1/matter/rewind','POST /v1/matter/rewind','GET /v1/matter/changes','POST /v1/matter/review-mark','POST /v1/matter/review-return','POST /v1/matter/review-comment','POST /v1/matter/review-comments-send',
       'GET /v1/connections',
       'POST /v1/phone/link',
@@ -210,13 +211,14 @@ describe('token-registry', () => {
 
   // 桌宠卡片上的「允许 / 拒绝」只有这一个 admin 档凭据够得着(Tauri 的
   // pet_permission_resolve)。少了这条路由,按钮按下去就是 403 route_not_allowed。
-  it('operator token 够得着桌宠权限卡片的 resolve 路由,但够不着待决列表', () => {
+  it('operator token 通过授权待批详情呈现批准卡，再走 resolve；FILE/trusted 仍受 admin 档限制', () => {
     const r = makeTokenRegistry()
     r.registerOperatorToken('dd'.repeat(32))
     const allow = r.resolve('dd'.repeat(32))?.routeAllow
     expect(allow?.has('POST /v1/permissions/resolve')).toBe(true)
-    // 待决列表桌面走 GET /v1/companion/pet 读,operator 不需要这一条。
-    expect(allow?.has('GET /v1/permissions/pending')).toBe(false)
+    // trusted presence no longer contains tool inputs or script previews.
+    expect(allow?.has('GET /v1/permissions/pending')).toBe(true)
+    expect(r.resolve('dd'.repeat(32))?.tier).toBe('admin')
   })
 
   it('file and session tokens carry no routeAllow (unrestricted by route, tier gate only)', () => {

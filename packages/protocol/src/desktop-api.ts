@@ -18,7 +18,7 @@ import { TOPIC_BUBBLE_RESPONSES } from './topic-bubbles'
 import z from 'zod'
 import { WIRE_ROUTE_ALIASES } from './wire-compat'
 import {
-  PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent,
+  PHONE_API_SCHEMAS, Attachment, CliSessionRow, Connections, EntryModelCatalog, EntryOptions, EntryReceipt, EntryResult, MATTER_ORIGINS, Matter, MatterArtifactChunk, MatterDetail, MatterEvent, MatterPermission, PermissionScript, PermissionScriptChunk,
   MatterHandoffResult, MatterSayResult, NativeSessionPage, NativeSessionRow, OverseerToday, PhoneChangesTurn, PhoneRewindPreview, PhoneWorktreeResult, WorkbenchExecutorCapabilities,
 } from './api'
 
@@ -1037,7 +1037,7 @@ export const WorkbenchTaskDetailResponse = z.object({
     undo: z.object({ rewindId: z.string(), createdAt: z.number() }).nullable(),
     blocked: z.object({ rewindId: z.string(), backupRef: z.string(), reason: z.string().nullable() }).nullable(),
   }).optional(),
-  permissions: z.array(z.object({ id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number() })),
+  permissions: z.array(MatterPermission),
   continuation: WorkbenchContinuation,
   requiresExternalClose: z.boolean(),
 }).partial().shape)
@@ -2134,6 +2134,8 @@ const PetPendingPermissionShape = z.object({
   prompt: z.string(),
   since: z.string(),
   expires_at: z.string(),
+  canAllowTask: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
+  taskId: z.string().optional(),
 })
 const PetTaskActivityShape = z.object({
   taskId:z.string().regex(/^[a-f0-9]{8}$/),
@@ -2286,6 +2288,9 @@ const PermissionsPendingItemShape = z.object({
   prompt: z.string(),
   since: z.string(),
   expires_at: z.string(),
+  taskId: z.string().optional(),
+  canAllowTask: z.boolean().optional(),
+  scripts: z.array(PermissionScript).optional(),
 })
 export const PermissionsPendingResponse = z.object({ items: z.array(PermissionsPendingItemShape) })
 export type PermissionsPendingResponseT = z.infer<typeof PermissionsPendingResponse>
@@ -2518,6 +2523,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 }
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  'GET /v1/matter/permission-script': PermissionScriptChunk,
   ...TOPIC_BUBBLE_RESPONSES,
   ...OWNER_CONVERSATION_RESPONSES,
   'POST /v1/cli/session-stop': z.object({ok:z.literal(true)}),

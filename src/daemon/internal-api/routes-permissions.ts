@@ -19,7 +19,7 @@ export function permissionRoutes(deps: InternalApiDeps): RouteTable {
     'POST /v1/permissions/resolve': async (_query, body) => {
       if (!deps.permissions) return { status: 503, body: { error: 'permissions_not_wired' } }
       const b = (body ?? {}) as { hash?: unknown; decision?: unknown }
-      if (typeof b.hash !== 'string' || b.hash === '' || (b.decision !== 'allow' && b.decision !== 'deny')) {
+      if (typeof b.hash !== 'string' || b.hash === '' || (b.decision !== 'allow' && b.decision !== 'deny' && b.decision !== 'allow_task')) {
         return { status: 400, body: { error: 'bad_request' } }
       }
       // ok=false 不是错误:hash 过期 / 已经被微信那边拍过了。桌面据此收掉卡片。

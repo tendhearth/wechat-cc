@@ -12,6 +12,12 @@ const base = {
 const model = { title: '可以清理旧文件吗?', what: '清理临时缓存', scope: '作品集', effect: '删除一些文件', source: 'model' as const }
 
 describe('approvalView', () => {
+  it('preserves server eligibility and the exact script snapshot independently of model summaries', () => {
+    const scripts=[{path:'check.py',content:'print("review me")\n',sha256:'a'.repeat(64)}]
+    const detail={...base,permissions:[{...base.permissions[0],canAllowTask:true,scripts}]}
+    expect(approvalView(detail,{p1:model})).toMatchObject({kind:'card',canAllowTask:true,scripts})
+    expect(approvalView(base,{})).not.toHaveProperty('canAllowTask')
+  })
   it('模型说明 ⇒ 原始命令首行与目录直接可见(aiSummary + showRawInline)', () => {
     const v = approvalView(base, { p1: model })
     expect(v).toMatchObject({ kind: 'card', requestId: 'p1', runId: 'run-1', aiSummary: true, showRawInline: true, rawFirstLine: 'rm -rf ~/Documents/old', workingDir: '/Users/me/portfolio', rawFull: 'rm -rf ~/Documents/old\n# cleanup', title: '可以清理旧文件吗?' })

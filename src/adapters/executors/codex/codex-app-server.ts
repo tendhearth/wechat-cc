@@ -8,6 +8,7 @@ import { spawnCodexAppServerProcess, type CodexAppServerSpawn } from './codex-ap
 import { wrapForProcessTree } from '../../../lib/jobspawn'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from '../../workbench/user-input'
+import { needsBoundExecution } from '../../workbench/permission-command'
 import { codexActivityEvent, codexItemId } from './codex-activity'
 import { codexMcpApproval, supportsCodexMcpApproval } from './codex-mcp-approval'
 import { codexNativeCapabilityNotice } from '../../workbench/native-capability-notice'
@@ -590,7 +591,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
               const to = object(change.kind) ? (change.kind.move_path ?? change.kind.movePath) : undefined
               return typeof to === 'string' && to ? [String(change.path), to] : [String(change.path)]
             }) } : {})
-          : (typeof command === 'string' && command.trim() ? { command: command.slice(0, 2000), ...(typeof params.cwd === 'string' && params.cwd ? { cwd: params.cwd } : {}) } : {})
+          : (typeof command === 'string' && command.trim() ? { command: chat ? command.slice(0, 2000) : command, ...(typeof params.cwd === 'string' && params.cwd ? { cwd: params.cwd } : {}) } : {})
         if (!supported) {
           send({ id, result: { decision: entry.rejection } })
           // 对话:只拒这一条(codex 会把它记成失败,模型看得到),会话照常 —— 和以前「一律拒」同一个落点。
@@ -600,7 +601,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         }
         const ask = chat ? chat.approve : context.requestPermission
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && ask
-          ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts }, controller.signal)
+          ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts,
+              ...(!chat && !file && typeof command === 'string' && needsBoundExecution(command) ? { requiresBoundExecution: true as const } : {}),
+            }, controller.signal)
           : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return

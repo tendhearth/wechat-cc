@@ -19,6 +19,18 @@ function find(el: any, sel: string): any { const cls = sel.replace(/^\./, ''); i
 const item = { hash: 'abcde', prompt: 'Bash: rm -rf ./tmp', since: 's', expires_at: 'e' }
 
 describe('createPermissionCard', () => {
+  it('shows the task option only when eligible, attaches script text and locks all decisions during submit', async () => {
+    const root=makeEl(),onResolve=vi.fn(async()=> 'resolved' as const)
+    const card=createPermissionCard({el:root,makeEl},{canResolve:true,onResolve})
+    card.show(item,1);expect(root.querySelector('.pet-card-allow-task')).toBeNull()
+    card.hide()
+    card.show({...item,canAllowTask:true,scripts:[{path:'check.py',content:'<script>literal</script>'+'x'.repeat(2200)}]},1)
+    expect(root.querySelector('.pet-card-script-full').children[1].textContent).toContain('<script>literal</script>')
+    const task=root.querySelector('.pet-card-allow-task');task.fire('click')
+    expect(task.disabled).toBe(true);expect(root.querySelector('.pet-card-allow').disabled).toBe(true)
+    await Promise.resolve();await Promise.resolve()
+    expect(onResolve).toHaveBeenCalledWith(item.hash,'allow_task');expect(root.hidden).toBe(true)
+  })
   it('show 渲染标题、三个真实按钮、隐藏的 prompt;查看切换展开;count>1 显示 +n', () => {
     const root = makeEl(); const card = createPermissionCard({ el: root, makeEl }, { canResolve: true, onResolve: vi.fn(async () => 'resolved' as const) })
     card.show(item, 3)

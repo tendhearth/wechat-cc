@@ -244,7 +244,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
         // 结束在这里补一次评估:请求**自己超时**(权限 5 分钟)那一下既没有事件、也不走
         // resolvePermission —— 会话早就静下来的话,没有人会回来起空闲收工的计时(终审 I4)。
-        requestPermission:(request,signal) => {running.interactionAt=Date.now();ctx.hub.bumped(task.id);return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})},
+        requestPermission:(request,signal) => {running.interactionAt=Date.now();ctx.hub.bumped(task.id);return running.permissions.request({...request,cwd:request.cwd??running.path},signal).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})},
         requestUserInput:(request,signal) => {running.interactionAt=Date.now();ctx.hub.bumped(task.id);return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now();ctx.hub.bumped(task.id);settleAfterDecision(running)})},
       }).catch(error => { spawnRejected=true; throw error })
       let spawnTimer:ReturnType<typeof setTimeout>|undefined
@@ -528,13 +528,26 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const done=new Promise<void>(resolve => { resolveDone=resolve })
     // 放行规则(2026-10-19):问主人之前先问它;规则拿了主意的那条不发通知,时间线里写明是谁批的。
     const ruleDecide=ctx.deps.permissionDecide
+    const permissionPrompts=new Map<string,()=>void>()
     const permissions=makeRunPermissions({
-      taskId:task.id,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
+      taskId:task.id,root:task.path,provider:task.providerId,stateDir:ctx.stateDir,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
       audit:event => {
         if(event.type==='request'){
           addRunEvent('system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
-          requestNotice(task,runId,'permission',event.permission.id,`${event.permission.tool} · ${event.permission.description}`)
-        }else addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)
+          let replyLine=''
+          if(ctx.deps.permissionPrompt){
+            const close=ctx.deps.permissionPrompt(task.title,event.permission,decision=>{
+              const resolved=permissions.resolve(event.permission.id,decision)
+              if(resolved)ctx.hub.bumped(task.id)
+              return resolved
+            },()=>permissions.deadline(event.permission.id))
+            permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??''
+          }
+          requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'))
+        }else {
+          permissionPrompts.get(event.permission.id)?.();permissionPrompts.delete(event.permission.id)
+          addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)
+        }
       },
       ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),firstUserText(task.id)??null,facts))}:{}),
     })

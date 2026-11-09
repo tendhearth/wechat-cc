@@ -362,7 +362,7 @@ describe('persistent workbench', () => {
     const other=join(root,'permission-other');mkdirSync(other)
     const answers=new Map<string,boolean>(); const cancelled:string[]=[],closed:string[]=[]
     setup({async spawn(p,ctx){return{async *dispatch(){
-      const answer=await ctx.requestPermission!({tool:'Bash',description:`permission:${p.path}`})
+      const answer=await ctx.requestPermission!({tool:'Bash',command: 'rm build', description:`permission:${p.path}`})
       answers.set(p.path,answer);yield {kind:'result',sessionId:`session:${p.path}`,numTurns:1,durationMs:1} as AgentEvent
     },async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)}}}})
     const one=createAt(project,'one'),two=createAt(other,'two')
@@ -532,7 +532,7 @@ describe('persistent workbench', () => {
     expect(contexts.map(c => c.resumeSessionId)).toEqual([undefined, 'session-one', undefined])
     expect(contexts.every(c => c.permissionMode === 'strict')).toBe(true)
     expect(contexts[0]!.requestPermission).not.toBe(contexts[1]!.requestPermission)
-    await expect(contexts[0]!.requestPermission!({tool:'Bash',description:'stale run'})).resolves.toBe(false)
+    await expect(contexts[0]!.requestPermission!({tool:'Bash',command: 'rm build', description:'stale run'})).resolves.toBe(false)
     expect(contexts[0]!.appendInstructions).toContain(one.id)
     expect(contexts[2]!.appendInstructions).not.toContain(one.id)
   })
@@ -541,7 +541,7 @@ describe('persistent workbench', () => {
     let requestPermission: NonNullable<SpawnContext['requestPermission']> | undefined
     setup({ async spawn(_p, ctx) { requestPermission=ctx.requestPermission; return {
       async *dispatch() {
-        const allowed = await requestPermission!({ tool:'Bash', description:'remove generated output' })
+        const allowed = await requestPermission!({ tool:'Bash', command: 'rm build', description:'remove generated output' })
         yield { kind:'text', text:allowed ? 'allowed' : 'denied' }
         yield result
       }, async close() {},
@@ -558,7 +558,7 @@ describe('persistent workbench', () => {
   it('shows only the active task permission count in the list and clears it after resolve or cancel', async () => {
     setup({ async spawn(_p, ctx) { return {
       async *dispatch() {
-        await ctx.requestPermission!({ tool:'Bash', description:'remove generated output' })
+        await ctx.requestPermission!({ tool:'Bash', command: 'rm build', description:'remove generated output' })
         yield result
       }, async cancel() {}, async close() {},
     } } }, () => null)
@@ -580,7 +580,7 @@ describe('persistent workbench', () => {
 
   it('denies, audits, and clears a pending request on explicit denial and expiry', async () => {
     setup({ async spawn(_p, ctx) { return { async *dispatch() {
-      const allowed=await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      const allowed=await ctx.requestPermission!({tool:'Bash',command: 'rm build', description:'remove output'})
       yield {kind:'text',text:allowed?'allowed':'denied'}; yield result
     },async close(){} } } }, () => null, 5)
     const task=create()
@@ -593,7 +593,7 @@ describe('persistent workbench', () => {
 
   it('records an explicit denial and never persists the pending card', async () => {
     setup({ async spawn(_p, ctx) { return { async *dispatch() {
-      const allowed=await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      const allowed=await ctx.requestPermission!({tool:'Bash',command: 'rm build', description:'remove output'})
       yield {kind:'text',text:allowed?'allowed':'denied'}; yield result
     },async close(){} } } }, () => null)
     const task=create()
@@ -616,7 +616,7 @@ describe('persistent workbench', () => {
   it('denies a detached pending callback when the provider finishes', async () => {
     let answer: Promise<boolean> | undefined
     setup({ async spawn(_p, ctx) { return { async *dispatch() {
-      answer=ctx.requestPermission!({tool:'Bash',description:'late request'})
+      answer=ctx.requestPermission!({tool:'Bash',command: 'rm build', description:'late request'})
       yield result
     },async close(){} } } }, () => null)
     const task=create(); await settle(task.id)
@@ -628,7 +628,7 @@ describe('persistent workbench', () => {
   it('rejects cross-task, stale-run, and cancelled permission responses', async () => {
     let firstRequest: string | undefined
     setup({ async spawn(_p, ctx) { return { async *dispatch() {
-      await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      await ctx.requestPermission!({tool:'Bash',command: 'rm build', description:'remove output'})
       yield result
     },async cancel(){},async close(){} } } }, () => null)
     const one=create()
@@ -984,7 +984,7 @@ describe('persistent workbench', () => {
     registry.register('claude',{async spawn(p,ctx){return{
       async *dispatch(){
         started.push(p.path)
-        permissionAnswers.push(ctx.requestPermission!({tool:'Bash',description:`approve ${p.path}`}))
+        permissionAnswers.push(ctx.requestPermission!({tool:'Bash',command: 'rm build', description:`approve ${p.path}`}))
         await gates.get(p.path)!.promise;yield result
       },
       async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)},

@@ -113,14 +113,14 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
     'POST /v1/matter/permission': action(async (m, _q, body) => {
       const b = objectBody(body)
       if (!b || typeof b.id !== 'string' || !ID.test(b.id) || typeof b.runId !== 'string' || !UUID.test(b.runId) || typeof b.requestId !== 'string' || !UUID.test(b.requestId)) return phoneInvalid('invalid_request')
-      if (b.decision !== 'allow' && b.decision !== 'deny') return phoneInvalid('invalid_decision')
+      if (b.decision !== 'allow' && b.decision !== 'deny' && b.decision !== 'allow_task') return phoneInvalid('invalid_decision')
       try { m.permission(b.id, b.runId, b.requestId, b.decision); return { status: 200, body: { ok: true } } } catch (err) { return phoneError(err) }
     }, async (m, _q, body) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
       const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
       const decision = value?.decision
-      if (!TASK_ID.test(id) || !UUID.test(requestId) || (decision !== 'allow' && decision !== 'deny')) return invalid()
+      if (!TASK_ID.test(id) || !UUID.test(requestId) || (decision !== 'allow' && decision !== 'deny' && decision !== 'allow_task')) return invalid()
       try { await m.desktop.resolvePermission(id, requestId, decision); return { status: 200, body: { ok: true } } } catch (err) { return mappedError(err) }
     }),
 

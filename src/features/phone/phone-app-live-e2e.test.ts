@@ -95,7 +95,7 @@ beforeEach(async () => {
     return {
       async *dispatch() {
         yield { kind: 'init' as const, sessionId: 'e2e-native' }
-        if (project.path.endsWith('ask')) await ctx.requestPermission!({ tool: 'Bash', description: 'Remove the one scratch probe file' })
+        if (project.path.endsWith('ask')) await ctx.requestPermission!({ tool: 'Bash', command: 'rm cc-permission-probe.txt', description: 'Remove the one scratch probe file' })
         await gate
         yield { kind: 'text' as const, text: '做完了' }
         yield { kind: 'result' as const, sessionId: 'e2e-native', numTurns: 1, durationMs: 1 }

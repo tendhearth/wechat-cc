@@ -186,8 +186,11 @@ export const MatterInput = z.object({
 export const MatterInputReceiptResult = z.object({ ok: z.literal(true), input: MatterInput })
 export type MatterInputReceiptResultT = z.infer<typeof MatterInputReceiptResult>
 
+export const PermissionScript = z.object({ path: z.string(), content: z.string(), sha256: z.string().optional(), error: z.string().optional(), truncated: z.boolean().optional() })
+export const PermissionScriptChunk = z.object({ content: z.string(), nextOffset: z.number().nullable() })
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
+  canAllowTask: z.boolean().optional(), scripts: z.array(PermissionScript).optional(),
 })
 
 const QuestionOption = z.object({ label: z.string(), description: z.string() })
@@ -736,6 +739,7 @@ const PHONE_API = {
   'POST /m/api/matter/worktree': z.union([PhoneWorktreeResult, PhoneErrorResponse]),
   'POST /m/api/matter/answer': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter/artifact': z.union([z.object({ ok: z.literal(true) }).extend(MatterArtifactChunk.shape), PhoneErrorResponse]),
+  'GET /v1/matter/permission-script': PermissionScriptChunk,
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),
   'POST /m/api/push/register': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/push/test': z.union([z.object({ ok: z.literal(true), result: z.object({ ok: z.boolean(), code: z.string() }) }), PhoneErrorResponse]),

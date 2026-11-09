@@ -306,7 +306,10 @@ export interface SpawnContext {
    * closed after that run is cancelled, completed, or restarted. */
   requestPermission?: (
     /** command / paths / cwd:放行规则要的原文(2026-10-19),执行者拿得到就给,拿不到就不给。 */
-    request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string },
+    request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string;
+      /** Requires an owner one-shot decision when execution is dynamic, even
+       * when extra grants withhold command facts from automatic allow rules. */
+      requiresBoundExecution?: true },
     signal?: AbortSignal,
   ) => Promise<boolean>
   requestUserInput?: (request: AgentUserInputRequest, signal?: AbortSignal) => Promise<AgentUserInputAnswers | null>

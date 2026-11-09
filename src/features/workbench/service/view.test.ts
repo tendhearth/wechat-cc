@@ -11,6 +11,7 @@ import type { AgentProvider, AgentRuntimeSnapshot } from '../../../ports/agent-p
 import { makeRuntimeState, type Active } from './state'
 import { makeViewDomain, ATTENTION_TEXT_MAX } from './view'
 import type { ServiceCtx } from './ctx'
+import { safePetTurn } from '../../../domain/pet-turn'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -123,6 +124,17 @@ describe('makeViewDomain · 列表与详情', () => {
 
 
 describe('pet owner activity projection',()=>{
+ it('P2-5: real pending script input never enters pet activity details or the trusted projection',()=>{
+  const {domain,state,running,task,store}=setup();store.update(task.id,'running')
+  state.runsByTask.set(task.id,running({permissions:{pending:()=>[{id:'p',taskId:task.id,tool:'Bash',description:'python3 -c "private-inline-source API_KEY=private-credential"',createdAt:1}]}} as never))
+  const activities=domain.petActivities()
+  expect(JSON.stringify(activities)).not.toContain('private-inline-source')
+  expect(JSON.stringify(activities)).not.toContain('private-credential')
+  const pet=safePetTurn({owner_last_contact_at:null,turn:{phase:'permission',since:null},last_done_at:null,pending_permissions:[],activities})
+  expect(JSON.stringify(pet)).not.toContain('private-inline-source')
+  expect(JSON.stringify(pet)).not.toContain('private-credential')
+  expect(pet.activities?.[0]?.phase).toBe('needs_input')
+ })
  it('includes older live owner decisions before truncation, excludes foreign and archived tasks, and stays read-only',()=>{
   const {store,state,domain,task,project,running,db,hub}=setup()
   store.update(task.id,'running')
@@ -136,7 +148,7 @@ describe('pet owner activity projection',()=>{
   const before=db.query<{n:number},[]>('SELECT total_changes() AS n').get()!.n
   const result=domain.petActivities()
   expect(result).toHaveLength(8)
-  expect(result[0]).toEqual({taskId:task.id,title:'事',phase:'needs_input',detail:'Bash: 运行本地检查',updatedAt:store.get(task.id).updatedAt})
+  expect(result[0]).toEqual({taskId:task.id,title:'事',phase:'needs_input',detail:'需要你决定',updatedAt:store.get(task.id).updatedAt})
   expect(result.some((a:any)=>a.taskId===foreign.id||a.taskId===archived.id||a.title==='他人的私事')).toBe(false)
   expect(db.query<{n:number},[]>('SELECT total_changes() AS n').get()!.n).toBe(before)
   expect(hub.bumped).not.toHaveBeenCalled()
@@ -154,7 +166,7 @@ describe('pet owner activity projection',()=>{
   const old=store.create({title:'旧答复',path:project,providerId:'claude',ownerChatId:'owner'});store.update(old.id,'completed');db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(Date.now()-600001,old.id)
   const cancel=store.create({title:'已取消',path:project,providerId:'claude',ownerChatId:'owner'});store.update(cancel.id,'cancelled')
   const result=domain.petActivities()
-  expect(result.find((x:any)=>x.taskId===task.id)).toMatchObject({phase:'needs_input',detail:'选择 哪一种?'})
+  expect(result.find((x:any)=>x.taskId===task.id)).toMatchObject({phase:'needs_input',detail:'需要你决定'})
   expect(result.find((x:any)=>x.taskId===paused.id)).toMatchObject({phase:'paused'})
   expect(result.find((x:any)=>x.taskId===stopping.id)).toMatchObject({phase:'stopping'})
   expect(result.find((x:any)=>x.taskId===reply.id)).toMatchObject({phase:'replied'})

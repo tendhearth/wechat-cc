@@ -5,6 +5,8 @@ import { createPet } from './pet/pet.js'
 import { createPresenceFeed } from './pet/bridge/presence-feed.js'
 import { createPetBridge } from './pet/bridge/pet-bridge.js'
 import { createPermissionCard } from './pet/permission/permission-card.js'
+import { createPermissionLoader } from './pet/permission/permission-loader.js'
+import { readPermissionScript } from './modules/permission-script.js'
 import { invokeApi, invokeWorkbenchApi } from './api.js'
 import { openSeenMatter } from './matter-seen.js'
 import { invoke } from './ipc.js'
@@ -87,13 +89,13 @@ function observeNow() { if (!document.hidden) void feed.refresh() }
 // 不能看 invoke 的返回 —— 浏览器预览的 mockInvoke 对任何未知命令都回 {}。
 const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {string} */ t) => document.createElement(t) }, {
   canResolve: !mock,
-  // 三种结局要分清楚(spec §6):真的拍板了 = resolved;请求通了但这条已经不在了
-  // (微信那端刚点过 / 过期)= gone —— 卡片直接收掉,别说「没送出去」;只有请求
-  // 本身挂了(没凭据、超时、403)才是 failed,那才该留下重试提示。
+  readScript: query => readPermissionScript(invokeWorkbenchApi,query),
+  // Only the server's true result acknowledges a decision. A false result may
+  // mean rejection rather than disappearance; the next feed clears stale cards.
   onResolve: async (hash, decision) => {
     try {
       const r = /** @type {any} */ (await invoke('pet_permission_resolve', { hash, decision }))
-      return r === true ? 'resolved' : 'gone'
+      return r === true ? 'resolved' : 'failed'
     } catch (err) { console.warn('pet_permission_resolve failed', err); return 'failed' }
     // 不管成没成:立刻要一份,让卡片的去留由 daemon 的列表说了算(微信那端也可能刚点过)。
     finally { void feed.refresh() }
@@ -101,6 +103,12 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
 })
 
 const tasksHost=$('pet-tasks'),taskPrimary=$('pet-task-primary'),taskToggle=$('pet-task-toggle'),taskList=$('pet-task-list')
+const permissionLoader = createPermissionLoader({
+  // 浏览器 shim 下也走同一个授权接口(由测试替身应答);别在 mock 里返回空 —— 那样卡片永远出不来、测不到。
+  read: async () => /** @type {{items:import('./pet/permission/permission-card.js').PermissionItem[]}} */ (await v1(invokeWorkbenchApi, V1.permissions.pending)).items,
+  show: (item, count) => { if (!document.hidden) card.show(item, count) },
+  hide: () => card.hide(),
+})
 const taskView=tasksHost&&taskPrimary&&taskToggle&&taskList?mountPetActivities({host:tasksHost,primary:taskPrimary,toggle:taskToggle,list:taskList,onOpen:target=>openDestination(target),onExpand:()=>closeSettings()}):null
 const closeSettings=()=>{const settings=document.querySelector('.pet-settings');if(settings instanceof HTMLDetailsElement)settings.open=false}
 document.querySelector('.pet-settings')?.addEventListener('toggle',event=>{if(event.target instanceof HTMLDetailsElement&&event.target.open)taskView?.closeList();syncLifeAvailability()})
@@ -142,7 +150,7 @@ const apply = (freshTurn = false) => {
   // 状态机直接落到目标形态 —— 省掉那 8 帧点火,而不用改 Phase A 的接口。
   // 哪一拍算「初次」由 bridge 说(开窗第一拍 + 第一次拿到端点回答那拍,见 pet-bridge.js)。
   if (r.first && pet.machine.snapshot().transition) pet.machine.notifyAnimationEnded()
-  if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
+  permissionLoader.update(r.permission, r.permissionCount)
   // Consume this snapshot under the previous quiet flag before wake-time expiry
   // enables motion; completion during suspend must not become a celebration.
   preferences.refresh()
@@ -237,7 +245,7 @@ stage?.addEventListener('pointerleave', () => { pointerNear = false; releaseNear
 stage?.addEventListener('focus', () => { keyboardNear = true; pet.acknowledgeAttention() })
 stage?.addEventListener('blur', () => { keyboardNear = false; releaseNearby() })
 window.addEventListener('blur', () => { pointerNear = false; keyboardNear = false;pointerInShell=false;focusInShell=false;pet.setLifeAvailable(false);void motion?.stop();syncLifeAvailability();pet.releaseAttention(); taskView?.closeList(); closeSettings() })
-window.addEventListener('pagehide',()=>{activityFeed.stop();ccActivity?.destroy();pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
+window.addEventListener('pagehide',()=>{permissionLoader.update(null,0);activityFeed.stop();ccActivity?.destroy();pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
 
 $('pet-reset-position')?.addEventListener('click', async () => {
   await motion?.stop()

@@ -63,7 +63,7 @@ export default function Approval() {
   }, [verKey, refreshDetail, refreshInsight])
 
   const [outcome, setOutcome] = useState<Outcome>(null)
-  const [pending, setPending] = useState<null | 'allow' | 'deny' | 'answer'>(null)
+  const [pending, setPending] = useState<null | 'allow' | 'deny' | 'allow_task' | 'answer'>(null)
   const [refreshing, setRefreshing] = useState(false)
   const alive = useRef(true)
   useEffect(() => () => { alive.current = false }, [])
@@ -74,7 +74,7 @@ export default function Approval() {
 
   const backToMatter = () => router.dismissTo(`/matter/${encodeURIComponent(id)}`)
 
-  async function send(requestId: string, key: string, kind: 'allow' | 'deny' | 'answer', run: () => Promise<void>) {
+  async function send(requestId: string, key: string, kind: 'allow' | 'deny' | 'allow_task' | 'answer', run: () => Promise<void>) {
     if (inflight.current || pending || refreshing || !detail.fresh || !online) return
     inflight.current = true
     setPending(kind)
@@ -225,11 +225,11 @@ export default function Approval() {
     )
   }
 
-  const decide = (decision: 'allow' | 'deny') =>
+  const decide = (decision: 'allow' | 'deny' | 'allow_task') =>
     void send(v.requestId, `approve:${v.requestId}`, decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision }))
 
   return shell(
-    <PermissionCard key={v.requestId} v={v} matterTitle={matterTitle} />,
+    <PermissionCard key={v.requestId} v={v} taskId={id} matterTitle={matterTitle} />,
     <View key={v.requestId} style={{ gap: space.s }}>
       {status}
       <View style={{ flexDirection: 'row', gap: space.m }}>
@@ -241,6 +241,7 @@ export default function Approval() {
         </View>
       </View>
       <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'approval.onlyThisRequest')}</Txt>
+      {v.canAllowTask ? <><Button kind="secondary" testID="approval-allow-task" label={t(lang, 'approval.allowTask')} onPress={() => decide('allow_task')} disabled={locked} busy={pending === 'allow_task'} /><Txt role="small" tone="inkSoft" style={{textAlign:'center'}}>{t(lang,'approval.taskExpires')}</Txt></> : null}
     </View>,
   )
 }
@@ -264,7 +265,33 @@ function MatterContext({ title, eventKey }: { title: string; eventKey?: string }
   </View>
 }
 
-function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }) {
+function PermissionScriptPreview({script,taskId,requestId}:{script:NonNullable<CardView['scripts']>[number];taskId:string;requestId:string}) {
+  const lang=useLang(),{backend}=useBackendCtx()
+  const [expanded,setExpanded]=useState(false),[full,setFull]=useState<string|null>(null),[busy,setBusy]=useState(false),[failed,setFailed]=useState(false)
+  async function toggle(){
+    if(busy)return
+    if(expanded){setExpanded(false);return}
+    if(!script.truncated||full!==null){setExpanded(true);return}
+    setBusy(true);setFailed(false)
+    try{
+      let text='',offset:number|null=0
+      for(let i=0;offset!==null&&i<32;i++){
+        const part=await backend.permissionScript({id:taskId,requestId,path:script.path,sha256:script.sha256!,offset})
+        text+=part.content;offset=part.nextOffset
+      }
+      if(offset!==null)throw Error('too_large')
+      setFull(text);setExpanded(true)
+    }catch{setFailed(true)}finally{setBusy(false)}
+  }
+  return <Card style={{gap:space.s}}>
+    <Txt role="caption">{t(lang,'approval.script')} · {script.path}</Txt>
+    <Txt selectable role="code">{script.error??(expanded?(full??script.content):script.content.slice(0,2000))}</Txt>
+    {!script.error&&(script.truncated||script.content.length>2000)?<Button kind="secondary" testID={`approval-script-expand-${script.path}`} label={t(lang,expanded?'approval.collapseScript':'approval.expandScript')} onPress={()=>void toggle()} busy={busy} disabled={busy}/>:null}
+    {failed?<Txt role="small">{t(lang,'approval.refreshFailed')}</Txt>:null}
+  </Card>
+}
+
+function PermissionCard({ v, taskId, matterTitle }: { v: CardView; taskId: string; matterTitle: string }) {
   const lang = useLang()
   // 没有模型说明时 what 就是原始命令:等宽、最多 4 行,完整内容在「查看具体操作」里。
   const rows: Array<[string, string, boolean]> = [
@@ -276,6 +303,7 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
   return (
     <>
       <MatterContext title={matterTitle} eventKey={v.requestId} />
+      {v.scripts?.map(script => <PermissionScriptPreview key={script.path} script={script} taskId={taskId} requestId={v.requestId} />)}
       <View style={{ gap: space.s }}>
         <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         {v.aiSummary ? (

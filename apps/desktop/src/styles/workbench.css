@@ -174,7 +174,8 @@
 .wb-permission p { margin:5px 0; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--th-ink); font:12px/1.65 var(--mono); }
 .wb-permission time { color:var(--wb-muted); font-size:10px; }
 .wb-permission-actions,.wb-control-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
-.wb-permission-actions { margin-top:9px; }
+.wb-permission-actions { margin-top:9px; flex-wrap:wrap; }
+.wb-permission-script pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--mono); }
 .wb-permission-actions .wb-btn { min-width:60px; }
 .wb-artifact-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px; padding:14px 0 2px; }
 .wb-artifact { min-width:0; width:100%; border:1px solid var(--wb-line); border-radius:7px; padding:11px 13px; background:var(--th-paper); color:inherit; text-align:left; cursor:pointer; }

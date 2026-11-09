@@ -25,6 +25,30 @@ afterEach(() => {
 })
 
 describe('companion placement recovery control', () => {
+  it('R2: a false server approval result keeps the pet card visible for retry', async () => {
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    const item = { hash: 'approval-one', prompt: 'python3 check.py', since: '2026-11-09T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' }
+    const presence = { cursor: 1, presence: { presence: 'online', activity: { kind: 'idle' }, news: { unread: 0 } }, pet: { owner_last_contact_at: null, turn: { phase: 'permission', since: null }, last_done_at: null, pending_permissions: [{ ...item, prompt: '有操作需要批准' }] } }
+    invoke.mockImplementation(async (cmd: unknown, args: any) => {
+      if (cmd === 'wechat_cli_json') return { ok: true, baseUrl: 'http://127.0.0.1:19999', token: 'test-only' } as any
+      if (cmd === 'daemon_request' && args.path.includes('permissions/pending')) return { items: [item] } as any
+      if (cmd === 'pet_permission_resolve') return false as any
+    })
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('subscribe')) return url.includes('since=1') ? new Promise(() => {}) : { ok: true, json: async () => presence }
+      return { ok: true, json: async () => manifest }
+    }))
+    await mount(true); await vi.advanceTimersByTimeAsync(0)
+    const allow = document.querySelector<HTMLButtonElement>('.pet-card-allow')!
+    expect(allow).not.toBeNull()
+    expect(document.querySelector('.pet-card-allow-task')).toBeNull()
+    allow.click(); await vi.advanceTimersByTimeAsync(0)
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'pet_permission_resolve')).toHaveLength(1)
+    expect(document.getElementById('pet-card')!.hidden).toBe(false)
+    expect(document.querySelector('.pet-card-title')!.textContent).toContain('没送出去')
+    expect(allow.disabled).toBe(false)
+    window.dispatchEvent(new Event('pagehide'))
+  })
   it.each(['reduced', 'quiet', 'drag'])('stops the activity reader immediately during %s and baselines on return', async mode => {
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
     const presence = { cursor: 1, presence: { presence: 'online', activity: { kind: 'idle' }, news: { unread: 0 } }, pet: { owner_last_contact_at: null, turn: { phase: 'idle', since: null }, last_done_at: null, pending_permissions: [] } }
