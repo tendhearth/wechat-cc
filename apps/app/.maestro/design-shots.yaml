@@ -60,6 +60,7 @@ appId: com.tendhearth.app
     timeout: 10000
 - waitForAnimationToEnd
 - assertVisible: "这个项目的会话|Sessions in this project"
+- assertVisible: ".*Claude.*(需要批准 npm install sharp|Approve npm install sharp).*"
 - takeScreenshot: topics-projects-sessions
 - takeScreenshot: p05a-topic-open
 - tapOn:

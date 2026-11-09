@@ -590,3 +590,11 @@ it('demo topic corrections persist across detail/list reads and reset',async()=>
     expect((await backend.topicDetail({id:'demo-backup'})).entries[0]?.status).toBe('live')
   }finally{backend.dispose()}
 })
+
+it('first topic read carries the registered demo executor name without a prior matter read',async()=>{
+  const backend=makeDemoBackend()
+  try{
+    const detail=await backend.topicDetail({id:'demo-backup'})
+    expect(detail.matters.find(m=>m.session)?.session).toMatchObject({executor:'claude',displayName:'Claude'})
+  }finally{backend.dispose()}
+})
