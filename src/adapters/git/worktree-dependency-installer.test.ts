@@ -24,7 +24,7 @@ it('real offline frozen staging install ignores task modules, scripts and config
   mkdirSync(join(source,'node_modules/task-poison'),{recursive:true});writeFileSync(join(source,'node_modules/task-poison/index.js'),'poison')
   // Even executable task config must not enter a supervisor installation.
   writeFileSync(join(source,'bunfig.toml'),'invalid task config')
-  await cacheWorkspaceDependencies(source,state)
+  await cacheWorkspaceDependencies(source,state,{baseSha:git('rev-parse','HEAD').toString().trim()})
   expect(existsSync(marker)).toBe(false)
   const entries=readdirSync(join(state,'dependency-cache/v2')).filter(n=>!n.startsWith('.'))
   expect(entries).toHaveLength(1)
@@ -34,7 +34,7 @@ it('real offline frozen staging install ignores task modules, scripts and config
   expect(existsSync(join(entry,'bunfig.toml'))).toBe(false)
   // Force the owner's direct copy to miss; only CC's cache can satisfy this.
   writeFileSync(join(source,'bun.lock'),'owner now differs')
-  expect(await restoreWorkspaceDependencies(source,target,state)).not.toContain(DEPENDENCY_NOTICE)
+  expect(await restoreWorkspaceDependencies(source,target,state,{baseSha:git('rev-parse','HEAD').toString().trim()})).not.toContain(DEPENDENCY_NOTICE)
   expect(realpathSync(join(target,'node_modules/offline-workspace'))).toBe(join(target,'pkg'))
   expect(existsSync(join(target,'node_modules/task-poison'))).toBe(false)
 },30_000)

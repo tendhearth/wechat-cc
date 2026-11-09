@@ -27,6 +27,11 @@ function rig(script: Partial<ScriptedCodexOptions> = {}, opts: CodexChatProvider
   return { scripted, provider, spawn }
 }
 const lastStart = (r: ReturnType<typeof rig>) => r.scripted.threadStarts.at(-1)!
+const corruptNetworkReceipt = (networkAccess: boolean | undefined): NonNullable<ScriptedCodexOptions['rewrite']> => message => {
+  if (!message.result?.sandbox) return message
+  const sandbox = { ...message.result.sandbox, networkAccess }
+  return { ...message, result: { ...message.result, sandbox } }
+}
 
 describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)', () => {
   it('dangerously ⇒ danger-full-access + never(不看档位),且 MCP 免审', async () => {
@@ -55,6 +60,16 @@ describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)
     const r = rig()
     await r.spawn({permissionMode:'strict',...(resume?{resumeSessionId:'old'}:{})})
     expect(lastStart(r).params.config).toMatchObject({sandbox_workspace_write:{network_access:false},features:{network_proxy:false}})
+  })
+
+  it.each((['admin', 'guest'] as const).flatMap(tier => [false, true].flatMap(resume => [true, undefined].map(networkAccess => ({ tier, resume, networkAccess })))) )('rejects enabled or missing network receipts for $tier (resume=$resume, networkAccess=$networkAccess)', async ({ tier, resume, networkAccess }) => {
+    // Resume rejection also triggers the fresh-thread fallback. Both replies
+    // stay malicious, so a failed resume cannot hide a missing receipt check.
+    const r = rig({ rewrite: corruptNetworkReceipt(networkAccess) })
+    await expect(r.spawn({ permissionMode: 'strict', tierProfile: TIER_PROFILES[tier], ...(resume ? { resumeSessionId: 'old' } : {}) })).rejects.toThrow('codex_unverified_thread_policy')
+    expect(r.scripted.threadStarts.map(call => call.method)).toEqual(resume ? ['thread/resume', 'thread/start'] : ['thread/start'])
+    expect(r.scripted.inputs).toEqual([])
+    expect(r.scripted.alive()).toBe(0)
   })
 
   it('模型:每次 spawn 钉的优先,其次构造时的,都没有就不传', async () => {
@@ -309,13 +324,36 @@ describe('Codex 对话 provider —— 错误码 / 超时 / 取消 / 插话 / �
   })
 })
 
+it.each([true, undefined])('rechecks offline network receipts after a crashed dialogue process (networkAccess=%s)', async networkAccess => {
+  let receipts = 0
+  const rewrite = corruptNetworkReceipt(networkAccess)
+  const r = rig({
+    turns: [{ steps: [{ crash: 'unexpected status 401 Unauthorized: Missing bearer or basic authentication' }] }],
+    rewrite: message => message.result?.sandbox && ++receipts > 1 ? rewrite(message) : message,
+  })
+  const session = await r.spawn({ permissionMode: 'strict' })
+  await drain(session.dispatch('first'))
+  const events = await drain(session.dispatch('again'))
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'error', message: expect.stringContaining('codex_unverified_thread_policy') }))
+  expect(r.scripted.threadStarts.map(call => call.method)).toEqual(['thread/start', 'thread/resume'])
+  expect(r.scripted.inputs).toEqual(['first'])
+  expect(r.scripted.alive()).toBe(0)
+})
+
 describe('Codex 对话 provider —— 一次性评估', () => {
   it('只读、不给网、低推理、cheap 模型、临时目录;拼起所有助理消息;用完就关', async () => {
     const r = rig({ cheapAnswer: p => `答:${p}` })
     expect(await r.provider.cheapEval!('一加一')).toBe('答:一加一')
-    expect(lastStart(r).params).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'never', config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false } } })
+    expect(lastStart(r).params).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'never', config: { web_search: 'disabled', model_reasoning_effort: 'low', sandbox_workspace_write: { network_access: false }, features: { network_proxy: false } } })
     expect(r.scripted.cheapPrompts).toEqual(['一加一'])
     expect(r.scripted.inputs).toEqual([])
+    expect(r.scripted.alive()).toBe(0)
+  })
+
+  it.each([true, undefined])('rejects enabled or missing network receipts for cheap evaluation (networkAccess=%s)', async networkAccess => {
+    const r = rig({ rewrite: corruptNetworkReceipt(networkAccess) })
+    await expect(r.provider.cheapEval!('must stay offline')).rejects.toThrow('codex_unverified_thread_policy')
+    expect(r.scripted.cheapPrompts).toEqual([])
     expect(r.scripted.alive()).toBe(0)
   })
 

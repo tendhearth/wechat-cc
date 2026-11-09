@@ -203,7 +203,7 @@ async function createWorktree(plan: WorktreePlan, options: PreparationOptions): 
       const save = () => writeJsonAtomicAsync(record, plan.start, { mode: 0o600 })
       await save()
       await copyIncludedFiles(plan.repoRoot, plan.root, { ...options, timeoutMs: Math.min(5000, budget.deadline - Date.now() - 250) })
-      const dependencyOptions = { ...options, timeoutMs: Math.min(15_000, budget.deadline - Date.now() - 250) }
+      const dependencyOptions = { ...options, baseSha: plan.start.sha, timeoutMs: Math.min(15_000, budget.deadline - Date.now() - 250) }
       plan.start.notices.push(...await (plan.stateDir ? restoreWorkspaceDependencies(plan.repoRoot, plan.root, plan.stateDir, dependencyOptions) : copyWorkspaceDependencies(plan.repoRoot, plan.root, dependencyOptions)))
       budget.check()
       await save()
@@ -328,10 +328,10 @@ export function mergeWorktree(repoRoot: string, root: string, branch: string): {
  * 目录已经在 ⇒ `worktree_conflict`;分支没了(主人删过)⇒ `worktree_branch_missing`;分支上没有任务目录 ⇒ 撤回检出、
  * `worktree_project_missing`。照常带上 .worktreeinclude 的文件。
  */
-export function reopenWorktree(repoRoot: string, root: string, branch: string, taskPath: string, options: PreparationOptions & { stateDir?: string } = {}): Promise<void> {
+export function reopenWorktree(repoRoot: string, root: string, branch: string, taskPath: string, options: PreparationOptions & { stateDir?: string; baseSha?: string } = {}): Promise<void> {
   return serializeCheckout(root, () => reopenCheckout(repoRoot, root, branch, taskPath, options))
 }
-async function reopenCheckout(repoRoot: string, root: string, branch: string, taskPath: string, options: PreparationOptions & { stateDir?: string }): Promise<void> {
+async function reopenCheckout(repoRoot: string, root: string, branch: string, taskPath: string, options: PreparationOptions & { stateDir?: string; baseSha?: string }): Promise<void> {
   const budget = new Preparation(options)
   const run = async (args: string[]) => (await budget.git(repoRoot, args)).trim()
   budget.check()

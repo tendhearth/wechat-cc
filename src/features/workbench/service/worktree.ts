@@ -58,7 +58,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx, domains: WorktreeDomains) {
         if (!wt) throw new Error('not_worktree')
         if (wt.removedAt === null) throw new Error('worktree_open')
         if (task.archivedAt !== null) throw new Error('workbench_archived')
-        await reopenWorktree(wt.repoRoot, wt.root, wt.branch, task.path,{signal:state.preparationAbort.signal,stateDir:ctx.stateDir})
+        await reopenWorktree(wt.repoRoot, wt.root, wt.branch, task.path,{signal:state.preparationAbort.signal,stateDir:ctx.stateDir,baseSha:wt.start?.sha})
         try {
           ctx.ensureAccepting()
           if(store.get(id).archivedAt!==null)throw Error('workbench_archived')

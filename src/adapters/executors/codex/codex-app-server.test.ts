@@ -784,6 +784,15 @@ describe('workbench Codex app-server', () => {
     expect(children.at(-1)!.kill).toHaveBeenCalled()
   })
 
+  it.each([false, true].flatMap(resume => [true, undefined].map(networkAccess => ({ resume, networkAccess }))))('rejects enabled or missing offline network receipts (resume=$resume, networkAccess=$networkAccess)', async ({ resume, networkAccess }) => {
+    // Every other field is valid: removing only the network check must turn
+    // this regression red, rather than failing for a different policy field.
+    threadResponse = { sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess, excludeTmpdirEnvVar: true, excludeSlashTmp: true } }
+    await expect(start(resume ? { resumeSessionId: 'old-thread' } : {})).rejects.toThrow('codex_unverified_thread_policy')
+    expect(children.at(-1)!.kill).toHaveBeenCalled()
+    expect(children.every(child => !child.sent.some(message => message.method === 'turn/start'))).toBe(true)
+  })
+
   it.each(['cancel', 'resolved', 'completed', 'exit'])('aborts pending approvals on %s and cannot apply a late allow', async action => {
     let approve!: (value: boolean) => void, signal!: AbortSignal
     const { session, child } = await start({ requestPermission: (_request: unknown, s: AbortSignal) => { signal = s; return new Promise<boolean>(resolve => { approve = resolve }) } })

@@ -10,11 +10,15 @@
 
 缓存使用 stateDir/dependency-cache/v2，完全忽略旧 v1 快照。键绑定 Git common-dir realpath、平台、架构、Node ABI，以及排序后的锁文件和 manifest 路径/内容指纹。无锁文件不缓存。已有 owner checkout 仍可走 #883 的独立复制快路，但它也不进入共享缓存。
 
-miss 时，CC 在任务可写根外的私有随机 staging 只写入有界捕获的 manifest / lock，不复制任务源码、node_modules、bunfig 或 npmrc。用宿主可信绝对路径 Bun 执行 `install --frozen-lockfile --ignore-scripts --no-cache --backend=copyfile`，指定空 config、独立 HOME/TMP/cache 和净化环境。任何生命周期脚本都不执行，不为脚本安装引入例外。暂只支持 root bun.lock 文本锁；拒绝 file/link/portal/patch 和越界本地来源（包含 JSON 转义），其他管理器或必须依赖源码/脚本的安装安全 miss，保留任务内锁定安装提示。
+安装输入只来自任务起点提交的 Git 对象。创建时传 `plan.start.sha`，重新打开时传持久化的 `worktree.start.sha`；缺少旧任务起点就安全 miss，不用任务分支 HEAD 替代。沿用 #883 的 SAFE_GIT、禁 hooks/filter/fsmonitor/lazy fetch/replace objects 参数，通过 ls-tree + cat-file 读取有界 blob。工作区字节仅用于比对；清单/锁增加、删除、未提交或已提交修改都不能改变安装输入，出现变化即退回执行者锁定安装提示。owner 复制快路也先做起点比对。
 
-安装进程树退出成功且无写入者，复核锁文件与 manifest，经过原复制器的链接/容量/条目/时间/实际复制字节/剩余空间预算，才写绑定完整 key 的完成记录并原子发布独立快照。取消、失败、超时、元数据变化均不入缓存。Windows 必须有 jobspawn 的进程树约束才安装；POSIX 清理进程组。恢复只接受同 key、带可信完成记录的 v2 条目。任务可写完成文件不参与判断。
+暂只支持 root 文本 bun.lock 的保守子集。全量检查来源后才允许任何下载：外部包必须是固定 npm 包名/版本、带 sha512 integrity、锁内无显式 tarball URL；git/git+ssh/github/file/link/http/私网等任一来源使整次 miss。混合锁、嵌套锁和不支持的布局也整次 miss。默认 registry.npmjs.org；仅解析同一起点提交内的 .npmrc/bunfig 明确 registry 配置（不接受 token、身份、环境替换或可执行配置）。只接受公共 https registry，无用户名、密码、查询、fragment 或非默认端口。下载前将 DNS 限定为公共 IPv4 并把验证过的地址固定到 TLS 请求；拒绝重定向，防止解析变化或跳转到内网。
 
-默认 4 GiB 逻辑容量、LRU、单 daemon 内串行；沿用死亡 stage 回收和中断只清理自身目录。workspace / .bin 端点仍仅保存逻辑位置，恢复使用新 checkout 的代码；不支持的端点安全 miss。
+CC 自己执行有界下载和 ustar 解包，不再启动 Bun/Git/SSH 安装进程。这样没有 SSH 配置、身份、known_hosts、agent、npmrc/bunfig 用户目录发现或子进程环境继承路径；不读主人配置，也不执行 package scripts。所有写入都在私有 stage，没有用户 HOME/XDG/缓存写入。宿主设置了代理环境时外部安装安全 miss，保留已有网络守护。只有工作区链接的离线安装仍可用。tar 的 PAX、稀疏、链接、特殊文件及 bundled/binDir 等未实现形状整次 miss；支持的 bin 链接只指向已校验的包内文件；workspace bin 只建立逻辑占位端点，恢复时使用新 checkout 的真实文件。先验证所有来源，再按 os/cpu 筛掉不适用的可选包，并检查物理布局中仍有全部必需依赖；libc 专属布局暂不支持，整次 miss。Windows 尾点/空格别名、设备名及 ADS 在所有平台一致拒绝。
+
+磁盘预算前置：写元数据前检查其双份大小、条目和剩余空间；按锁内包数及可选 unpackedSize/fileCount 做安装预检（普通 Bun 锁不声明体积，不能假装已有体积证明）。下载逐块计数，单包压缩数据最多 32 MiB；解压逐块有界，单包展开内存最多 128 MiB。tar 先校验完整 header、声明体积/条目和路径，再创建包文件。所有目录逐层计数，文件每 64 KiB 写入前检查共享字节预算、条目、剩余空间、取消与截止时间，超限立即停止，finally 清理整次 stage。默认安装数据预算 1 GiB，并受 maxCacheBytes 一半约束，为 snapshot 留出对应空间；条目也给 snapshot 留一半。完成缓存仍默认 4 GiB、LRU；在建 stage 另有上述硬上限，不把运行期计数替换为写完后扫描。
+
+安装成功后复核起点元数据与任务工作区，再经过原复制器的链接/容量/条目/时间/剩余空间预算，才写绑定完整 key 和 `committed-public-registry-v1` 策略的完成记录并原子 rename。旧 v2 记录没有新策略标记，不会命中。owner 一直保留到 rename 后；stage 在 mkdir 前先写外部 owner journal，避免第二次创建失败或崩溃留下不可追踪目录。daemon 启动扫尾和准备阶段共用串行锁，按死亡 PID 的记录回收 stage/journal；活跃或不明 owner 不删除。取消、失败、超时、元数据变化均不入缓存。workspace / .bin 端点仍仅保存逻辑位置，恢复使用新 checkout 的代码。
 
 ## 任务内 uptime
 
@@ -34,7 +38,7 @@ Bun 1.3.14 忽略环境预加载，因此任务 PATH 使用固定 Node/Bun wrapp
 
 原因：当前 sandbox 的广泛可读权限可读同用户的 discovery/operator 凭据；全机回环会把这些文件变成可用的主人 API 与审批权限。域名 deny、NO_PROXY、0700/0600、随机端口及任务端口约定都不能提供这条隔离；stock local-binding 也不能限制为某个任务的 TCP 端口。因此需要 listen 的测试仍走原生显式审批，交给「本任务同命令放行」降低重复打扰。
 
-将来若做，必须先有显式安全设计并以真实沙箱验证：例如凭据对执行者确实不可读的强保证、独立 OS 身份或私有网络隔离、不桥接宿主管理服务；daemon 拒绝执行者进程树请求亦须有可信内核身份而非自报 PID / 轮询父进程。只截断某份 token 不足以保护宿主其他回环服务。守卫测试写明此攻击链，任何放开先更新设计与隔离证据。
+将来若做，必须先有显式安全设计并以真实沙箱验证：例如凭据对执行者确实不可读的强保证、独立 OS 身份或私有网络隔离、不桥接宿主管理服务；daemon 拒绝执行者进程树请求亦须有可信内核身份而非自报 PID / 轮询父进程。只截断某份 token 不足以保护宿主其他回环服务。守卫测试写明此攻击链，任何放开先更新设计与隔离证据。离线启动守卫覆盖当前入口；新增执行者入口必须加入守卫。递归扫描 src 的已识别 app-server / thread start、resume / session 启动语法并精确登记入口；目录外、子目录或已有模块增加未登记入口都会红。它不证明任意未来动态构造语法都可被识别，仍须给新入口补实际离线配置和恶意/缺失回执负测。
 
 ## 协议缓冲
 
