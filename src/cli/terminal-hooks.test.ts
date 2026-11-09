@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { installHooks, hookStatus } from './hook'
 import {
   commandPaths, connectTerminalHooks, disconnectTerminalHooks, hookFileFor, hookHealth, readTerminalHooks, selfHookCommand,
@@ -36,7 +36,7 @@ describe('selfHookCommand / hookFileFor —— 与 `wechat-cc hook install` 同�
   })
   it('codex 认 CODEX_HOME,缺省 ~/.codex', () => {
     expect(hookFileFor('claude', '/h', {})).toBe(join('/h', '.claude', 'settings.json'))
-    expect(hookFileFor('codex', '/h', { CODEX_HOME: '/x' })).toBe(join('/x', 'hooks.json'))
+    expect(hookFileFor('codex', '/h', { CODEX_HOME: '/x' })).toBe(join(resolve('/x'), 'hooks.json'))
     expect(hookFileFor('codex', '/h', {})).toBe(join('/h', '.codex', 'hooks.json'))
   })
 })

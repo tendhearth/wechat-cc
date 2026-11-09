@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   normalizeHookPayload, shouldSkipHook, postCliEvent, hookCommandLine,
   installHooks, uninstallHooks, hookStatus, claudeSettingsPath, codexHooksPath, summarizeToolInput,
@@ -236,7 +236,7 @@ describe('installHooks / uninstallHooks / hookStatus', () => {
   it('路径:claude 在 ~/.claude/settings.json;codex 认 CODEX_HOME,缺省 ~/.codex/hooks.json', () => {
     expect(claudeSettingsPath('/home/u')).toBe(join('/home/u', '.claude', 'settings.json'))
     expect(codexHooksPath('/home/u', {})).toBe(join('/home/u', '.codex', 'hooks.json'))
-    expect(codexHooksPath('/home/u', { CODEX_HOME: '/x/codex' })).toBe(join('/x/codex', 'hooks.json'))
+    expect(codexHooksPath('/home/u', { CODEX_HOME: '/x/codex' })).toBe(join(resolve('/x/codex'), 'hooks.json')) // 与 Codex 一样先绝对化(Windows 上带盘符)
     expect(existsSync(dir)).toBe(true); mkdirSync(join(dir, 'z'))
   })
 })
