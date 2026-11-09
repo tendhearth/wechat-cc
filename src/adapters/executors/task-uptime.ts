@@ -32,7 +32,7 @@ const isRuntime = command => {
   if (command === process.execPath) return true;
   try { return fs.realpathSync(command) === runtime; } catch { return false; }
 };
-const preloadArgs = args => args.includes(__filename) ? args : ['--require', __filename, ...args];
+const preloadArgs = args => args.includes(__filename) || args.includes('--require=' + __filename) ? args : ['--require=' + __filename, ...args];
 const taskOptions = options => options && typeof options === 'object' && options.env
   ? {...options, env: {...options.env, CC_TASK_SYSTEM_BOOT_MS: String(boot)}} : options;
 for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) {

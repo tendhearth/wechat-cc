@@ -28,7 +28,9 @@ export function trustedTaskRuntime(workspace: string): { preload: string; bin: s
     const preload = `uptime-${fingerprint(contents)}.cjs`, files = new Map([[preload, contents]])
     const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
     for (const [name, binary] of binaries) {
-      files.set(name, `#!/bin/sh\nexec ${quote(binary)} --require ${quote(join(root, preload))} "$@"\n`)
+      // Bun treats a separate --require operand as the entrypoint before
+      // dispatching install/run. One argv token preserves subcommand parsing.
+      files.set(name, `#!/bin/sh\nexec ${quote(binary)} ${quote('--require=' + join(root, preload))} "$@"\n`)
     }
     try {
       for (const [name, value] of files) writeFileSync(join(root, name), value, { flag: 'wx', mode: name === preload ? 0o400 : 0o500 })
