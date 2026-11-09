@@ -1,5 +1,4 @@
 import { trackPreparation } from './state'
-import { publishTaskDependencies } from './dependencies'
 /**
  * execute 域:一条 run 的完整生命周期(派发 → 事件流 → 结算 → 终态),以及创建入口 create / continueTask / createWechat。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 10 项);spec §4:execute 跨九个域是事实,不再往下切。
@@ -400,7 +399,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           if (closePromise) void closePromise.then(() => confirmLateClose(running,true),() => {})
         } finally { if (closeTimer) clearTimeout(closeTimer) }
       }
-      if (!running.uncertain) { await collect(running); await publishTaskDependencies(ctx, task.id, () => !running.uncertain && state.runsByTask.get(task.id) === running) }
+      if (!running.uncertain) { await collect(running) }
       revokeCredentials(running)
       if (running.uncertain) { finalStatus='interrupted'; finalError='writer_not_closed' }
       let terminalCommitted=false

@@ -1,5 +1,4 @@
 import { taskEnvironment } from '../task-environment'
-import { TASK_LOOPBACK_PROXY, supportsTaskLoopback, verifyTaskLoopback, verifyEffectiveTaskLoopback, verifyTaskNetworkRequirements } from './codex-loopback'
 import { makePausableTimers, type PausableTimer } from '../../../lib/pausable-timers'
 import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../../../domain/turn-usage'
 import { makeProcessTreeFreezer } from '../../../lib/process-tree-freeze'
@@ -226,7 +225,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
 }
 
 /** 一条 app-server 会话(一个子进程、一个 thread)。工作台和对话侧共用这一份协议客户端;`chat` 见 CodexChatProfile。 */
-export async function spawnCodexAppServerSession(options: Options, project: AgentProject, context: SpawnContext, chat?: CodexChatProfile, loopbackVersionVerified = false): Promise<CodexAppServerSession> {
+export async function spawnCodexAppServerSession(options: Options, project: AgentProject, context: SpawnContext, chat?: CodexChatProfile): Promise<CodexAppServerSession> {
       const codexPath = (): string => typeof options.codexPathOverride === 'function' ? options.codexPathOverride() : options.codexPathOverride
       const execution = context.execution ? {...context.execution} : undefined
       const model = execution ? execution.model ?? (execution.defaults === 'provider' && !context.resumeSessionId ? context.model ?? options.model : undefined) : context.model ?? options.model
@@ -241,16 +240,15 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       const discovery = chat ? undefined : await discoverWorkbenchCodexConfig(binary, project.path)
       // Startup has no turn. Keep MCPs disabled while reading the native layers,
       // without overwriting the user's web-search mode before config/read.
-      // 对话侧启动参数里什么都不带:工具与策略都在线程配置里(令牌不进 argv)。
+      // 对话侧启动只钉离线开关:工具与完整策略在线程配置里(令牌不进 argv)。
       const taskEnv = !chat && context.workbenchTaskId ? await taskEnvironment(project.path, context.workbenchTaskId,{signal:context.preparationSignal}) : {}
       const taskConfig: ObjectValue = context.workbenchTaskId && !chat ? {
-        ...(loopbackVersionVerified ? { features: { ...discovery!.config.features, network_proxy: TASK_LOOPBACK_PROXY } } : {}),
         sandbox_workspace_write: { ...discovery!.config.sandbox_workspace_write, writable_roots: [taskEnv.TMPDIR!] },
         shell_environment_policy: { ...discovery!.config.shell_environment_policy, set: taskEnv, include_only: [...discovery!.config.shell_environment_policy.include_only, ...Object.keys(taskEnv)] },
       } : {}
-      const { web_search: _startupSearch, ...startupConfig } = { ...discovery?.config, ...taskConfig }
+      const { web_search: _startupSearch, ...startupConfig } = { ...discovery?.config, ...taskConfig, ...(chat ? {features:{network_proxy:false},sandbox_workspace_write:{network_access:false}} : {}) }
       const enabledMcp = new Set<string>()
-      const childEnv = chat ? chat.env : { ...workbenchCodexEnv(), ...taskEnv }
+      const childEnv = chat ? chat.env : workbenchCodexEnv()
       // 守护(评审 #193 P1-1 + 2026-10-03):app-server 是常驻子进程,端点在它起来那一刻按配置定下。
       // 先按配置层预测;initialize 之后问 codex 自己(config/read),用它报的有效配置覆盖。
       let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: chat ? chat.config : startupConfig })
@@ -268,7 +266,6 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       const questions = new Map<RpcId, UserQuestion>()
       let sequence = 0, threadId = '', active: Turn | undefined, buffer = ''
       let closing = false, exited = false, broken: Error | undefined, closePromise: Promise<void> | undefined
-      let taskLoopback = false
       let resolveExit!: () => void
       const exit = new Promise<void>(resolve => { resolveExit = resolve })
       const lifetime = context.workbenchLifecycle ? new EventQueue(() => fatal('codex_runtime_output_limit')) : undefined
@@ -977,27 +974,15 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (!closing) fatal(`codex_process_exited: ${signal ?? code ?? 'unknown'}${chat && stderrTail.trim() ? `\n${stderrTail.trim().slice(-1000)}` : ''}`)
       })
       try {
-        const initialized = await request('initialize', { clientInfo: chat ? { name: 'tendhearth_cc', title: 'Tendhearth CC', version: APP_VERSION } : { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime || loopbackVersionVerified, requestAttestation: false } })
-        // Probe old CLIs with the original offline config; only verified 0.167
-        // can parse the nested proxy table on the enhanced launch.
-        if (!chat && context.workbenchTaskId && !loopbackVersionVerified && supportsTaskLoopback(initialized.userAgent)) {
-          await close()
-          return spawnCodexAppServerSession(options, project, context, chat, true)
-        }
-        if (loopbackVersionVerified && !supportsTaskLoopback(initialized.userAgent)) throw Error('codex_unverified_loopback_policy')
+        const initialized = await request('initialize', { clientInfo: chat ? { name: 'tendhearth_cc', title: 'Tendhearth CC', version: APP_VERSION } : { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
         // Registration-before-parent-result was verified with this exact native
         // protocol version. New/unknown versions retain instead of claiming EOF.
         registrationVerified = typeof initialized.userAgent === 'string' && /^[^/\r\n]+\/0\.153\.4(?:\s|$)/.test(initialized.userAgent)
         if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
-        if (loopbackVersionVerified) {
-          verifyTaskLoopback(native.config)
-          verifyEffectiveTaskLoopback(await request('experimentalFeature/list', {}))
-          verifyTaskNetworkRequirements(await request('configRequirements/read', {}))
-          taskLoopback = true
-          taskConfig.sandbox_workspace_write!.network_access = true
-        }
+        const proxy = native.config?.features?.network_proxy
+        if (proxy != null && proxy !== false) throw Error('codex_unverified_thread_policy')
         // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
         spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
@@ -1036,16 +1021,16 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (chat) {
           // 起出来的线程必须就是 compilePolicy 要的那一档;codex 报回来的对不上(配置层盖掉了、版本不认)⇒ 不开。
           if (response.approvalPolicy !== chat.approvalPolicy || sandbox?.type !== SANDBOX_TYPE[chat.sandbox] ||
-              (chat.approve && response.approvalsReviewer !== 'user')) throw new Error('codex_unverified_thread_policy')
+              (chat.approve && response.approvalsReviewer !== 'user') ||
+              (chat.sandbox !== 'danger-full-access' && sandbox.networkAccess !== false)) throw new Error('codex_unverified_thread_policy')
         } else if (response.approvalPolicy !== 'on-request' || response.approvalsReviewer !== 'user' ||
-            sandbox?.type !== 'workspaceWrite' || sandbox.networkAccess !== taskLoopback ||
+            sandbox?.type !== 'workspaceWrite' || sandbox.networkAccess !== false ||
             sandbox.excludeTmpdirEnvVar !== true || sandbox.excludeSlashTmp !== true ||
             !Array.isArray(sandbox.writableRoots) || sandbox.writableRoots.some((root: unknown) => root !== project.path && root !== taskEnv.TMPDIR) ||
             (taskEnv.TMPDIR && !sandbox.writableRoots.includes(taskEnv.TMPDIR))) {
           throw new Error('codex_unverified_thread_policy')
         }
         threadId = response.thread.id
-        if (taskLoopback) verifyEffectiveTaskLoopback(await request('experimentalFeature/list', { threadId }))
         if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
       } catch (error) { await close(); throw error }
       const launch = (text: string, attachments?: readonly AgentAttachment[]) => {

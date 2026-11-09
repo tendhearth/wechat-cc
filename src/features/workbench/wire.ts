@@ -43,10 +43,11 @@ import { findOnPath } from '../../lib/util'
 export async function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}, taskId?: string, preparationSignal?: AbortSignal): Promise<Options> {
   const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
   const taskEnv = taskId ? await taskEnvironment(base.cwd!, taskId,{signal:preparationSignal}) : {}
+  const {NODE_OPTIONS: _preload, PATH: _taskPath, CC_TASK_SYSTEM_BOOT_MS: _boot, ...scratchEnv} = taskEnv
   return {
     cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,
-    env:{...workbenchClaudeEnvironment(base.env),...taskEnv},
+    env:{...workbenchClaudeEnvironment(base.env),...scratchEnv},
     ...tier,
     allowDangerouslySkipPermissions:false,
     allowedTools:[],
@@ -59,7 +60,7 @@ export async function workbenchClaudeOptions(base: Options, instructions: string
       ...native.nativeMcpPolicy,
       // Flag settings override disk env values. Empty values neutralize these
       // automatic companion pointers; this is not filesystem/process isolation.
-      env:{...Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),...taskEnv},
+      env:{...Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),...scratchEnv},
       disableAllHooks:true, disableSkillShellExecution:true,
       enabledPlugins:native.disabledPlugins ?? {},
       permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable',

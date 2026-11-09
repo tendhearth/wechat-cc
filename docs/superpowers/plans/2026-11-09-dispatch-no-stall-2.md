@@ -18,3 +18,11 @@
 - 缓存发布以同一轮安静/确认退出/setup 成功为准；扫描到的其他 worktree 只复制，不推断其安装完成并发布。缓存不可用仍检查其他候选。
 - 独立正确性评审发现的取消等待、可选缓存失败、残留 stage、活跃写入者、Unix socket、托管 profile、运行时升级和绝对 Bun 子进程问题均已修正并增加回归。
 - 单次提交遵守用户要求，只有 bun run verify 通过后才提交，不 push；无 UI 改动，不使用 mini。
+
+## 安全审查修复（2026-11-09，替代上文已撤销的实施决定）
+
+- 产品负责人确定撤掉回环增强。删除自动版本探测重启和 local binding 模块；工作台/对话启动与续接强制离线并守卫 managed proxy 禁用。
+- taskEnv 仅注入 Codex 沙箱 shell；固定指纹 runtime 在任务不可写目录，真实 Node 宿主通知不会加载任务 preload。Claude 入口也不传 preload/PATH。
+- 删除 quiet/close/setup 的任务快照提升及 sibling 扫描；改 v2 缓存，只接受 CC 干净 staging 的 frozen + ignore-scripts 安装与完成记录。旧 v1 不读。
+- 原要求“回环启用 / 任务安装传播 / sibling 命中”的测试按产品安全决定改为拒绝回归；保留并扩充独立复制、链接、LRU、取消覆盖，没有放松安全或预算断言。
+- 补全部预览、超限帧、uptime 非权限异常、外部 shim 写入/硬链接、真实离线安装回归。每条红/绿和最终验证写入外部交付报告。

@@ -7,12 +7,19 @@ import { join } from 'node:path'
 import { cacheWorkspaceDependencies, restoreWorkspaceDependencies } from './worktree-dependency-cache'
 import { DEPENDENCY_NOTICE } from './worktree-dependencies'
 import { removeTempDir } from '../../lib/test-temp'
+import { installDependencies } from './worktree-dependency-installer'
 import { preparationJobspawnFixture } from '../../test-support/preparation-jobspawn'
+vi.mock('./worktree-dependency-installer', () => ({ installDependencies: vi.fn() }))
 vi.mock('node:fs/promises', async original => ({ ...await original<typeof import('node:fs/promises')>() }))
 preparationJobspawnFixture()
 const dirs: string[] = []
 afterEach(() => { vi.restoreAllMocks(); dirs.splice(0).forEach(removeTempDir) })
 function fixture() {
+  vi.mocked(installDependencies).mockReset().mockImplementation(async stage => {
+    mkdirSync(join(stage,'node_modules/tool'),{recursive:true});writeFileSync(join(stage,'node_modules/tool/index.js'),'installed')
+    symlinkSync('tool',join(stage,'node_modules/alias'),'dir');symlinkSync('../pkg',join(stage,'node_modules/workspace'),'dir')
+    writeFileSync(join(stage,'pkg/cli.js'),'installer endpoint');mkdirSync(join(stage,'node_modules/.bin'));symlinkSync('../../pkg/cli.js',join(stage,'node_modules/.bin/workspace-cli'),'file')
+  })
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-dep-cache-'))); dirs.push(root)
   const source = join(root, 'source'), target = join(root, 'target'), state = join(root, 'state')
   mkdirSync(source); mkdirSync(state)
@@ -20,17 +27,20 @@ function fixture() {
   git('init', '-q'); git('config', 'user.email', 'test@localhost'); git('config', 'user.name', 'fixture')
   writeFileSync(join(source, 'package.json'), '{"name":"fixture","workspaces":["pkg"]}')
   mkdirSync(join(source, 'pkg')); writeFileSync(join(source, 'pkg/package.json'), '{"name":"workspace"}'); writeFileSync(join(source, 'pkg/cli.js'), 'workspace CLI from checkout')
-  writeFileSync(join(source, 'bun.lock'), 'lock A'); writeFileSync(join(source, '.gitignore'), 'node_modules/\n')
+  writeFileSync(join(source, 'bun.lock'), '{"lockfileVersion":1,"marker":"lock A"}'); writeFileSync(join(source, '.gitignore'), 'node_modules/\n')
   git('add', '.'); git('commit', '-qm', 'initial'); git('worktree', 'add', '-qb', 'target', target)
   mkdirSync(join(source, 'node_modules/tool'), { recursive: true }); writeFileSync(join(source, 'node_modules/tool/index.js'), 'installed')
   symlinkSync('tool', join(source, 'node_modules/alias'), 'dir')
   symlinkSync('../pkg', join(source, 'node_modules/workspace'), 'dir')
-  const entries = () => readdirSync(join(state, 'dependency-cache/v1')).filter(name => !name.startsWith('.')).map(name => join(state, 'dependency-cache/v1', name))
+  const entries = () => readdirSync(join(state, 'dependency-cache/v2')).filter(name => !name.startsWith('.')).map(name => join(state, 'dependency-cache/v2', name))
   return { root, source, target, state, git, entries }
 }
-it('publishes independent relocated links and restores after the publishing checkout disappears', async () => {
+it('installs in clean staging and publishes independent relocated links and restores after the publishing checkout disappears', async () => {
   const f = fixture(); await cacheWorkspaceDependencies(f.source, f.state)
   expect(f.entries()).toHaveLength(1)
+  const stage=vi.mocked(installDependencies).mock.calls[0]![0]
+  expect(stage.startsWith(f.source)).toBe(false);expect(stage.startsWith(f.target)).toBe(false)
+  expect(existsSync(stage)).toBe(false)
   rmSync(join(f.source, 'node_modules'), { recursive: true })
   await restoreWorkspaceDependencies(f.source, f.target, f.state)
   expect(readFileSync(join(f.target, 'node_modules/alias/index.js'), 'utf8')).toBe('installed')
@@ -40,6 +50,7 @@ it('publishes independent relocated links and restores after the publishing chec
 })
 it.each(['manifest', 'nested lock', 'shrinkwrap'])('rejects a cache hit after changing %s with the root lock unchanged', async kind => {
   const f = fixture(); await cacheWorkspaceDependencies(f.source, f.state); rmSync(join(f.source, 'node_modules'), { recursive: true })
+  vi.mocked(installDependencies).mockRejectedValueOnce(Error('frozen lock mismatch'))
   const path = kind === 'manifest' ? 'pkg/package.json' : kind === 'nested lock' ? 'pkg/yarn.lock' : 'npm-shrinkwrap.json'
   writeFileSync(join(f.target, path), 'changed')
   const result = await restoreWorkspaceDependencies(f.source, f.target, f.state)
@@ -53,14 +64,17 @@ it('rejects relocated workspace endpoints that escape the destination', async ()
   expect(existsSync(join(f.target, 'node_modules'))).toBe(false)
 })
 it('enforces total logical size, evicts least recently used snapshots, and refuses oversized entries', async () => {
-  const f = fixture(); await cacheWorkspaceDependencies(f.source, f.state, { maxCacheBytes: 2000 })
-  const first = f.entries()[0]!; utimesSync(first, new Date(1000), new Date(1000))
-  writeFileSync(join(f.source, 'bun.lock'), 'lock B'); await cacheWorkspaceDependencies(f.source, f.state, { maxCacheBytes: 2000 })
-  const second = f.entries().find(p => p !== first)!; expect(second).toBeTruthy()
-  await cacheWorkspaceDependencies(f.source, f.state, { maxCacheBytes: 100 })
+  const f=fixture(); await cacheWorkspaceDependencies(f.source,f.state,{maxCacheBytes:2000})
+  const first=f.entries()[0]!;utimesSync(first,new Date(1000),new Date(1000))
+  writeFileSync(join(f.source,'bun.lock'),'{"lockfileVersion":1,"marker":"lock B"}');await cacheWorkspaceDependencies(f.source,f.state,{maxCacheBytes:2000})
+  const second=f.entries().find(p=>p!==first)!;expect(second).toBeTruthy()
+  const size=(path:string):number=>readdirSync(path,{withFileTypes:true}).reduce((n,e)=>n+(e.isDirectory()?size(join(path,e.name)):e.isFile()?readFileSync(join(path,e.name)).length:0),0)
+  const limit=size(second)
+  await cacheWorkspaceDependencies(f.source,f.state,{maxCacheBytes:limit})
   expect(f.entries()).toEqual([second])
-  writeFileSync(join(f.source, 'bun.lock'), 'oversized'); writeFileSync(join(f.source, 'node_modules/tool/index.js'), 'x'.repeat(1000))
-  await cacheWorkspaceDependencies(f.source, f.state, { maxCacheBytes: 100 })
+  writeFileSync(join(f.source,'bun.lock'),'{"lockfileVersion":1,"marker":"oversized"}')
+  vi.mocked(installDependencies).mockImplementationOnce(async stage=>{mkdirSync(join(stage,'node_modules/tool'),{recursive:true});writeFileSync(join(stage,'node_modules/tool/index.js'),'x'.repeat(3000))})
+  await cacheWorkspaceDependencies(f.source,f.state,{maxCacheBytes:limit})
   expect(f.entries()).toEqual([second])
 })
 it('discards snapshots when a quiet writer resumes and cancellation leaves no stages', async () => {
@@ -69,15 +83,15 @@ it('discards snapshots when a quiet writer resumes and cancellation leaves no st
   expect(f.entries()).toEqual([])
   const abort = new AbortController(); abort.abort()
   await expect(cacheWorkspaceDependencies(f.source, f.state, { signal: abort.signal })).rejects.toThrow('worktree_preparation_cancelled')
-  expect(readdirSync(join(f.state, 'dependency-cache/v1'))).toEqual([])
+  expect(readdirSync(join(f.state, 'dependency-cache/v2'))).toEqual([])
 })
 
 it('reclaims a dead publisher stage and includes it in the global cache budget', async () => {
-  const f = fixture(), stale = join(f.state, 'dependency-cache/v1/.stage-dead00')
+  const f = fixture(), stale = join(f.state, 'dependency-cache/v2/.stage-dead00')
   mkdirSync(stale, { recursive: true })
   writeFileSync(join(stale, '.owner.json'), JSON.stringify({ pid: 2147483647 }))
   writeFileSync(join(stale, 'partial-dependencies'), 'x'.repeat(1000))
-  await cacheWorkspaceDependencies(f.source, f.state, { maxCacheBytes: 100 })
+  await cacheWorkspaceDependencies(f.source, f.state, { maxCacheBytes: 2000 })
   expect(existsSync(stale)).toBe(false)
   expect(f.entries()).toHaveLength(1)
 })
@@ -100,18 +114,16 @@ it.skipIf(process.platform === 'win32')('cancels and times out queued publicatio
     await expect(cacheWorkspaceDependencies(f.source,f.state,{timeoutMs:1})).rejects.toThrow('worktree_preparation_timeout')
   } finally { release(); await first }
   expect(f.entries()).toHaveLength(1)
-  expect(readdirSync(join(f.state,'dependency-cache/v1')).some(name=>name.startsWith('.stage-'))).toBe(false)
+  expect(readdirSync(join(f.state,'dependency-cache/v2')).some(name=>name.startsWith('.stage-'))).toBe(false)
 })
 
-it('uses a matching worktree when cache storage is unavailable without publishing an unproven snapshot', async () => {
-  const f = fixture(), sibling = join(f.root,'sibling')
+it('refuses sibling worktrees when cache storage is unavailable', async () => {
+  const f=fixture(), sibling=join(f.root,'sibling')
   f.git('worktree','add','-qb','sibling',sibling)
   mkdirSync(join(sibling,'node_modules/tool'),{recursive:true});writeFileSync(join(sibling,'node_modules/tool/index.js'),'sibling installation')
-  writeFileSync(join(f.source,'bun.lock'),'owner is old')
-  writeFileSync(join(f.state,'dependency-cache'),'unavailable cache')
-  const notices = await restoreWorkspaceDependencies(f.source,f.target,f.state)
-  expect(notices).not.toContain(DEPENDENCY_NOTICE)
-  expect(readFileSync(join(f.target,'node_modules/tool/index.js'),'utf8')).toBe('sibling installation')
+  writeFileSync(join(f.source,'bun.lock'),'owner is old');writeFileSync(join(f.state,'dependency-cache'),'unavailable cache')
+  expect(await restoreWorkspaceDependencies(f.source,f.target,f.state)).toContain(DEPENDENCY_NOTICE)
+  expect(existsSync(join(f.target,'node_modules'))).toBe(false)
   expect(readFileSync(join(f.state,'dependency-cache'),'utf8')).toBe('unavailable cache')
 })
 
@@ -127,4 +139,73 @@ it('restores workspace bin file links against the new checkout rather than retai
   expect(notices).not.toContain(DEPENDENCY_NOTICE)
   expect(realpathSync(join(f.target,'node_modules/.bin/workspace-cli'))).toBe(join(f.target,'pkg/cli.js'))
   expect(readFileSync(join(f.target,'node_modules/.bin/workspace-cli'),'utf8')).toBe('workspace CLI from checkout')
+})
+
+it('security: never promotes task-controlled node_modules or a forged completion record', async()=>{
+  const f=fixture()
+  writeFileSync(join(f.source,'node_modules/tool/index.js'),'untrusted-task-byte-marker')
+  writeFileSync(join(f.source,'.complete.json'),JSON.stringify({complete:true}))
+  await cacheWorkspaceDependencies(f.source,f.state)
+  rmSync(join(f.source,'node_modules'),{recursive:true})
+  await restoreWorkspaceDependencies(f.source,f.target,f.state)
+  const file=join(f.target,'node_modules/tool/index.js')
+  expect(existsSync(file) ? readFileSync(file,'utf8') : '').not.toBe('untrusted-task-byte-marker')
+})
+it('security: partial sibling installs never count as completed dependencies', async()=>{
+  const f=fixture(), sibling=join(f.root,'sibling')
+  f.git('worktree','add','-qb','sibling',sibling)
+  rmSync(join(f.source,'node_modules'),{recursive:true})
+  vi.mocked(installDependencies).mockRejectedValueOnce(Error('still installing'))
+  mkdirSync(join(sibling,'node_modules/partial'),{recursive:true});writeFileSync(join(sibling,'node_modules/partial/index.js'),'partial')
+  expect(await restoreWorkspaceDependencies(f.source,f.target,f.state)).toContain(DEPENDENCY_NOTICE)
+  expect(existsSync(join(f.target,'node_modules'))).toBe(false)
+})
+
+it.each(['failed','interrupted','metadata changed'])('does not cache %s installations',async kind=>{
+  const f=fixture()
+  vi.mocked(installDependencies).mockImplementationOnce(async stage=>{
+    mkdirSync(join(stage,'node_modules/partial'),{recursive:true})
+    if(kind==='metadata changed')writeFileSync(join(stage,'bun.lock'),'changed')
+    else throw Error(kind)
+  })
+  await cacheWorkspaceDependencies(f.source,f.state)
+  expect(f.entries()).toEqual([])
+  expect(readdirSync(join(f.state,'dependency-cache/v2'))).toEqual([])
+})
+it.each(['file:/task/pkg','link:../task','file:\\u002ftask/pkg','workspace:../../task'])('refuses mutable local source %s before installation',async spec=>{
+  const f=fixture();writeFileSync(join(f.source,'package.json'),JSON.stringify({dependencies:{untrusted:spec}}))
+  await cacheWorkspaceDependencies(f.source,f.state)
+  expect(installDependencies).not.toHaveBeenCalled()
+})
+it('never restores old v1 snapshots or incomplete entries',async()=>{
+  const f=fixture();await cacheWorkspaceDependencies(f.source,f.state)
+  const entry=f.entries()[0]!
+  rmSync(join(entry,'.complete.json'));rmSync(join(f.source,'node_modules'),{recursive:true})
+  vi.mocked(installDependencies).mockRejectedValue(Error('offline'))
+  mkdirSync(join(f.state,'dependency-cache/v1/poison/node_modules/tool'),{recursive:true})
+  writeFileSync(join(f.state,'dependency-cache/v1/poison/node_modules/tool/index.js'),'poison')
+  expect(await restoreWorkspaceDependencies(f.source,f.target,f.state)).toContain(DEPENDENCY_NOTICE)
+  expect(existsSync(join(f.target,'node_modules'))).toBe(false)
+})
+it('accepts ordinary bin paths inside a valid JSONC Bun lock',async()=>{
+  const f=fixture()
+  writeFileSync(join(f.source,'bun.lock'),'{"lockfileVersion":1,"packages":{"tool":["tool@1.0.0","",{"bin":"./bin/tool.js"},"sha512-fixture"],},}')
+  await cacheWorkspaceDependencies(f.source,f.state)
+  expect(installDependencies).toHaveBeenCalledOnce()
+  expect(f.entries()).toHaveLength(1)
+})
+it('refuses staging inside a task even when the child directory starts with two dots',async()=>{
+  const f=fixture()
+  await cacheWorkspaceDependencies(f.source,join(f.source,'..task-state'))
+  expect(installDependencies).not.toHaveBeenCalled()
+})
+it('refuses workspace globs that import another task directory',async()=>{
+  const f=fixture();writeFileSync(join(f.source,'package.json'),JSON.stringify({name:'fixture',workspaces:['../../task/*']}))
+  await cacheWorkspaceDependencies(f.source,f.state)
+  expect(installDependencies).not.toHaveBeenCalled()
+})
+it.each(['tool@file:/task/bytes','tool@workspace:../task','tool@workspace:./task'])('rejects local source in structured Bun lock: %s',async source=>{
+  const f=fixture();writeFileSync(join(f.source,'bun.lock'),JSON.stringify({lockfileVersion:1,packages:{tool:[source]}}))
+  await cacheWorkspaceDependencies(f.source,f.state)
+  expect(installDependencies).not.toHaveBeenCalled()
 })

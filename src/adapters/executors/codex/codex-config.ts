@@ -3,7 +3,7 @@ import { wrapForProcessTree } from '../../../lib/jobspawn'
 import { isCompanionMcp } from '../../../domain/workbench/native-tools'
 import { workbenchSubprocessEnv } from '../subprocess-env'
 
-export const workbenchFeatureConfig = { features: { plugins: false, apps: false, hooks: false } }
+export const workbenchFeatureConfig = { features: { plugins: false, apps: false, hooks: false, network_proxy: false } }
 const shellEnvironmentKeys = ['PATH', 'SHELL', 'TMPDIR', 'TEMP', 'TMP', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'USER']
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 const serverName = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]+$/.test(value)

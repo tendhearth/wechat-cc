@@ -1,4 +1,6 @@
-import { mkdtempSync, realpathSync, writeFileSync, symlinkSync, unlinkSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { findOnPath } from '../../../lib/util'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../../lib/test-temp'
@@ -1220,10 +1222,10 @@ describe('Codex retained workbench runtime', () => {
     expect(run.events.filter(e=>e.kind==='error')).toEqual([])
     await run.session.close();await run.done
   })
-  it('drops reconstructible root previews before acknowledgement outside a retained runtime too', async () => {
+  it.each(['item/commandExecution/outputDelta','item/fileChange/outputDelta','item/agentMessage/delta','item/reasoning/textDelta','item/reasoning/summaryTextDelta','item/reasoning/summaryPartAdded','item/plan/delta'])('drops reconstructible root preview %s before acknowledgement outside a retained runtime too', async method => {
     const {session,child}=await start();child.autoTurnStart=false
     const turn=collect(session);await begun(child)
-    for(let i=0;i<1200;i++)child.notify('item/agentMessage/delta',{threadId:'thread-1',turnId:'turn-1',itemId:'answer',delta:'preview'})
+    for(let i=0;i<1200;i++)child.notify(method,{threadId:'thread-1',turnId:'turn-1',itemId:'answer',delta:'preview'})
     const request=child.sent.find(m=>m.method==='turn/start')!
     child.send({id:request.id,result:{turn:{id:'turn-1'}}})
     child.notify('item/completed',{threadId:'thread-1',turnId:'turn-1',item:{type:'agentMessage',id:'answer',text:'final answer'}})
@@ -1475,7 +1477,7 @@ describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自�
   })
 })
 
-it.each([false,true])('pins task temp/cache in child and shell environments and writable roots (resume=%s)', async resume => {
+it.each([false,true])('pins task temp/cache only in sandbox shell environment and writable roots (resume=%s)', async resume => {
   const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-codex-env-')))
   try {
     const session=await createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234',...(resume?{resumeSessionId:'old-thread'}:{})}))
@@ -1483,9 +1485,9 @@ it.each([false,true])('pins task temp/cache in child and shell environments and 
     const request=children.at(-1)!.sent.find(m=>m.method===(resume?'thread/resume':'thread/start'))!
     const env=mocks.spawn.mock.calls.at(-1)![2].env
     const temp=join(path,'.cc-tasks/abcd1234/tmp')
-    expect(env).toMatchObject({TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')})
+    expect(JSON.stringify(env)).not.toContain(join(path,'.cc-tasks'))
     expect(request.params.config.sandbox_workspace_write).toEqual({writable_roots:[temp],network_access:false,exclude_tmpdir_env_var:true,exclude_slash_tmp:true})
-    expect(request.params.config.shell_environment_policy).toMatchObject({set:{TMPDIR:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:env.BUN_INSTALL_CACHE_DIR},include_only:expect.arrayContaining(['BUN_TMPDIR','BUN_INSTALL_CACHE_DIR'])})
+    expect(request.params.config.shell_environment_policy).toMatchObject({set:{TMPDIR:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')},include_only:expect.arrayContaining(['BUN_TMPDIR','BUN_INSTALL_CACHE_DIR'])})
     await session.close()
   } finally {removeTempDir(path)}
 })
@@ -1498,26 +1500,17 @@ it('still rejects a task thread with writable roots outside its workspace',async
   }finally{removeTempDir(path)}
 })
 
-it('allows task loopback on verified Codex 0.167 managed proxy while denying every remote proxy host', async () => {
-  const path = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-loopback-')))
+it('rejects an effective managed proxy before opening a task thread', async () => {
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-proxy-denied-')))
   try {
-    initializeResponse.userAgent = 'cc_workbench/0.167.0 (Mac OS; arm64)'
-    nativeConfig.features = { network_proxy: { enabled: true, allow_local_binding: true, allow_upstream_proxy: false,
-      enable_socks5: false, enable_socks5_udp: false, dangerously_allow_non_loopback_proxy: false,
-      dangerously_allow_all_unix_sockets: false, credential_broker: false, mode: 'full', domains: { '?*': 'deny', 'example.com': 'allow' } } }
-    const session = await createWorkbenchCodexProvider({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
-      .spawn({ alias: 'workbench:abcd1234', path }, context({ workbenchTaskId: 'abcd1234' }))
-    sessions.push(session)
-    const config = children.at(-1)!.sent.find(m => m.method === 'thread/start')!.params.config
-    expect(config.sandbox_workspace_write.network_access).toBe(true)
-    expect(config.features.network_proxy).toMatchObject({ enabled: true, allow_local_binding: true, domains: { '?*': 'deny' }, mode: 'full', allow_upstream_proxy: false, enable_socks5: false })
-    const args = mocks.spawn.mock.calls.at(-1)![1] as string[]
-    expect(args).toContain('features.network_proxy.domains."?*"="deny"')
-    await session.close()
-  } finally { removeTempDir(path) }
+    initializeResponse.userAgent='cc_workbench/0.167.0 (Mac OS; arm64)'
+    nativeConfig.features={network_proxy:{enabled:true,allow_local_binding:true}}
+    await expect(createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234'}))).rejects.toThrow('codex_unverified_thread_policy')
+    expect(children.every(child=>!child.sent.some(m=>m.method==='thread/start'))).toBe(true)
+  } finally {removeTempDir(path)}
 })
 
-it.each(['feature disabled', 'thread feature disabled', 'managed network', 'managed feature', 'managed profile', 'inherited unix socket', 'missing deny', 'upstream proxy'] as const)('fails closed before any turn when task loopback has %s', async defect => {
+it.each(['feature disabled', 'thread feature disabled', 'managed network', 'managed feature', 'managed profile', 'inherited unix socket', 'missing deny', 'upstream proxy'] as const)('rejects inherited managed proxy configuration with %s', async defect => {
   const path = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-loopback-denied-')))
   try {
     initializeResponse.userAgent = 'cc_workbench/0.167.0 (Mac OS; arm64)'
@@ -1534,8 +1527,47 @@ it.each(['feature disabled', 'thread feature disabled', 'managed network', 'mana
     if (defect === 'upstream proxy') proxy.allow_upstream_proxy = true
     nativeConfig.features = { network_proxy: proxy }
     await expect(createWorkbenchCodexProvider({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
-      .spawn({ alias: 'workbench:abcd1234', path }, context({ workbenchTaskId: 'abcd1234' }))).rejects.toThrow('codex_unverified_loopback_policy')
+      .spawn({ alias: 'workbench:abcd1234', path }, context({ workbenchTaskId: 'abcd1234' }))).rejects.toThrow('codex_unverified_thread_policy')
     expect(children.every(child => !child.sent.some(m => m.method === 'turn/start'))).toBe(true)
     expect(children.filter(child => !child.probe).every(child => child.exitCode !== null || child.signalCode !== null)).toBe(true)
   } finally { removeTempDir(path) }
+})
+
+// Full-disk reads + loopback would turn readable owner tokens into approvals.
+// Opening either network/proxy binding requires a new explicit security design.
+it.each([false,true])('security: task network stays offline even on verified 0.167 (resume=%s)', async resume => {
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-offline-')))
+  try {
+    initializeResponse.userAgent='cc_workbench/0.167.0 (Mac OS; arm64)'
+    const session=await createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234',...(resume?{resumeSessionId:'old'}:{})}));sessions.push(session)
+    const config=children.at(-1)!.sent.find(m=>m.method===(resume?'thread/resume':'thread/start'))!.params.config
+    expect(config.sandbox_workspace_write.network_access).toBe(false)
+    expect(config.features.network_proxy).toBe(false)
+    expect(mocks.spawn.mock.calls.at(-1)![1]).toContain('features.network_proxy=false')
+  } finally {removeTempDir(path)}
+})
+
+it('security: task-writable preload and bin never enter host helpers', async()=>{
+  const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-host-env-')))
+  try {
+    const session=await createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234'}));sessions.push(session)
+    const host=mocks.spawn.mock.calls.at(-1)![2].env
+    const config=children.at(-1)!.sent.find(m=>m.method==='thread/start')!.params.config
+    const marker=join(path,'host-marker'), task=join(path,'.cc-tasks/abcd1234')
+    writeFileSync(join(task,'uptime.cjs'),`require('node:fs').writeFileSync(${JSON.stringify(marker)},'escaped')`)
+    mkdirSync(join(task,'bin'),{recursive:true});writeFileSync(join(task,'bin/node'),'task code')
+    execFileSync(realpathSync(findOnPath('node')!),['-e','void 0'],{env:host})
+    expect(existsSync(marker)).toBe(false)
+    expect(host.NODE_OPTIONS ?? '').not.toContain(task)
+    expect(host.PATH).not.toContain(task)
+    expect(config.shell_environment_policy.set.NODE_OPTIONS).toContain('--require')
+  } finally {removeTempDir(path)}
+})
+
+it.each(['complete frame','unfinished tail'])('fails closed for an oversized %s',async kind=>{
+  const {session,child}=await start();const run=collect(session);await begun(child)
+  child.stdout.write(kind==='complete frame'?JSON.stringify({method:'item/agentMessage/delta',params:{delta:'x'.repeat(4_000_001)}})+'\n':'x'.repeat(4_000_001))
+  completed(child)
+  await run.done
+  expect(run.events).toContainEqual(expect.objectContaining({kind:'error',message:expect.stringContaining('codex_protocol_buffer_limit')}))
 })

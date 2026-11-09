@@ -600,6 +600,10 @@ it('pins the Claude task temp/cache in both process and settings environments',a
   const path=realpathSync(mkdtempSync(join(tmpdir(),'cc-claude-env-')))
   try {
     const options=(await workbenchClaudeOptions({cwd:path,env:{TMPDIR:'/tmp',BUN_INSTALL_CACHE_DIR:'/outside'}},'instructions',vi.fn(),{servers:{},omitted:[]},'abcd1234'))
+    expect(options.env?.NODE_OPTIONS).toBeUndefined()
+    if(typeof options.settings!=='object')throw Error('missing task settings')
+    expect(options.settings.env).not.toHaveProperty('NODE_OPTIONS')
+    expect(options.settings.env).not.toHaveProperty('PATH')
     const temp=join(path,'.cc-tasks/abcd1234/tmp')
     expect(options.env).toMatchObject({TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')})
     expect(options.settings).toMatchObject({env:{TMPDIR:temp,TEMP:temp,TMP:temp,BUN_TMPDIR:temp,BUN_INSTALL_CACHE_DIR:join(path,'.cc-tasks/abcd1234/cache')},permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable'}})

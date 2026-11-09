@@ -49,10 +49,12 @@ describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)
     expect(lastStart(r).params).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'untrusted', config: { web_search: 'disabled' } })
   })
 
-  it('会话线程从不设 network_access(只有一次性评估设;e2e 假 codex 靠它认出 cheapEval)', async () => {
+  // Full-disk reads plus loopback expose owner approval credentials; any change
+  // requires an explicit security design before opening sandbox networking.
+  it.each([false,true])('会话线程始终关闭 sandbox 网络和 managed proxy (resume=%s)', async resume => {
     const r = rig()
-    await r.spawn()
-    expect(JSON.stringify(lastStart(r).params)).not.toContain('network_access')
+    await r.spawn({permissionMode:'strict',...(resume?{resumeSessionId:'old'}:{})})
+    expect(lastStart(r).params.config).toMatchObject({sandbox_workspace_write:{network_access:false},features:{network_proxy:false}})
   })
 
   it('模型:每次 spawn 钉的优先,其次构造时的,都没有就不传', async () => {
@@ -92,7 +94,7 @@ describe('Codex 对话 provider —— 起会话(策略 / 模型 / 续接 / MCP)
     expect(servers.wechat.env).toEqual({ A: '1', WECHAT_SESSION_TOKEN: 'tok-secret', WECHAT_SESSION_TIER: 'trusted' })
     expect(servers.plugin.env).toBeUndefined()
     expect(JSON.stringify(r.scripted.spawned)).not.toContain('tok-secret')
-    expect(r.scripted.spawned.at(-1)!.args).toEqual(['app-server', '--listen', 'stdio://'])
+    expect(r.scripted.spawned.at(-1)!.args).toEqual(['-c','features.network_proxy=false','-c','sandbox_workspace_write.network_access=false','app-server', '--listen', 'stdio://'])
   })
 
   it('delegate 的工具超时放宽;admin 会话的 wechat 放宽到 terminal_say 要等的时长,trusted 照旧', () => {

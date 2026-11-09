@@ -10,7 +10,6 @@
  * 输出:时间线里一条 command 活动(run_id = script-<uuid>),尾巴先过 redactSecrets 再落库。
  */
 import { assertNotRewindBlocked } from '../../../adapters/store/workbench/rewind-store'
-import { publishTaskDependencies } from './dependencies'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { redactSecrets } from '../../../domain/cli-transcript'
@@ -94,7 +93,6 @@ export function makeScriptsDomain(ctx: ServiceCtx, opts: ScriptsOptions = {}) {
     persistGroups(id)
     if (l.kind !== 'setup') return
     if (succeeded(exit)) {
-      if (!ctx.state.runsByTask.has(id)) void publishTaskDependencies(ctx, id, () => !ctx.state.runsByTask.has(id) && !liveOf(id, 'run') && !stopping)
       setupFailed.delete(id)
       try { store.worktrees.markSetup(id) } catch { /* 下次照样再跑一遍 setup */ }
       if (runAfterSetup.delete(id) && !stopping) void launch(id, 'run').catch(() => { /* 批准撤了 / 工作区删了:不跑 */ })

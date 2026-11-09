@@ -543,7 +543,7 @@ it('normal shutdown waits for unaccepted worktree fetch preparation to roll back
 })
 
 
-it('publishes an executor-installed dependency snapshot after confirmed close and reuses it after task removal', async () => {
+it('never publishes executor-installed dependency bytes after confirmed close and task removal', async () => {
   const g=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'})
   g('init','-q');g('config','user.email','test@localhost');g('config','user.name','fixture')
   writeFileSync(join(project,'package.json'),'{}');writeFileSync(join(project,'bun.lock'),'fixture lock');writeFileSync(join(project,'.gitignore'),'node_modules/\n')
@@ -562,5 +562,5 @@ it('publishes an executor-installed dependency snapshot after confirmed close an
   const second=await service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
   await settle(second.receipt.taskId)
   expect(readFileSync(join(second.task.path,'node_modules/tool/index.js'),'utf8')).toBe('installed once')
-  expect(installs).toBe(1)
+  expect(installs).toBe(2)
 })

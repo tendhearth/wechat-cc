@@ -2,15 +2,19 @@
 
 用户已指定实施范围、验收与交付方式；本稿记录实施选择和安全边界。
 
-目标：相同锁文件的任务首次安装后可复用依赖；测试不因系统 uptime 或本机回环限制重复请求批准；大输出不再误杀任务。保持 workspace-write、任务独立临时目录及 #883 准备阶段全部安全约束，不操作真实 daemon。
+目标：相同锁文件可复用由 CC 安全安装的依赖；沙箱任务的 uptime 不误报；大输出不误杀任务。保持 workspace-write 离线、任务独立临时目录及 #883 准备阶段安全约束，不操作真实 daemon。
 
-## 依赖
+## 依赖（安全审查后修订）
 
-采用 stateDir 下独立快照缓存，而非仅依赖主工作区当前提交。键由排序后的相对锁文件路径与内容哈希组成，另校验清单内容与平台；同仓库其他匹配工作区作为补充来源。无锁文件不缓存。缓存是独立 COW/受预算复制，不共享可写 node_modules。
+共享缓存只接收 **CC 自己**在干净 staging 中按锁文件安装出的依赖，绝不提升任务或 sibling 的 node_modules；quiet、成功退出、setup 成功均不能证明任务字节可信。任务收尾和脚本完成的发布接线已删除，任意 sibling 自动发现亦已删除，进行中、失败或伪造完成记录的 sibling 一律不可复用。
 
-沿用原复制器的安全元数据读取、链接两端核验、分阶段发布、取消、时间/条目/实际复制字节/剩余空间预算；Windows 不假定支持 COW。缓存总量默认 4 GiB，另按逻辑文件大小计费，LRU 淘汰，写入和恢复串行；中断只清理本次拥有的临时目录。准备阶段不执行仓库代码。快照通过重定位复制形成，不保存指向发布任务的链接；workspace / .bin 指向普通工作区文件时只保留空的逻辑端点，恢复时仍使用并核验新 checkout 的实际文件，不从缓存覆盖源码；发布前后复核锁文件和清单。保留安装来源与任务目录隔离。
+缓存使用 stateDir/dependency-cache/v2，完全忽略旧 v1 快照。键绑定 Git common-dir realpath、平台、架构、Node ABI，以及排序后的锁文件和 manifest 路径/内容指纹。无锁文件不缓存。已有 owner checkout 仍可走 #883 的独立复制快路，但它也不进入共享缓存。
 
-执行者确认安静或退出、已批准的 setup 成功后，尽力发布安装快照；不确定仍有写入者时不发布。失败不影响任务结果。原项目匹配时保留 #883 直接复制快路，否则查询缓存和同仓库工作区；其他工作区仅作当前任务的复制源，不推断其安装已完成或直接入缓存，最终才提示锁定安装。
+miss 时，CC 在任务可写根外的私有随机 staging 只写入有界捕获的 manifest / lock，不复制任务源码、node_modules、bunfig 或 npmrc。用宿主可信绝对路径 Bun 执行 `install --frozen-lockfile --ignore-scripts --no-cache --backend=copyfile`，指定空 config、独立 HOME/TMP/cache 和净化环境。任何生命周期脚本都不执行，不为脚本安装引入例外。暂只支持 root bun.lock 文本锁；拒绝 file/link/portal/patch 和越界本地来源（包含 JSON 转义），其他管理器或必须依赖源码/脚本的安装安全 miss，保留任务内锁定安装提示。
+
+安装进程树退出成功且无写入者，复核锁文件与 manifest，经过原复制器的链接/容量/条目/时间/实际复制字节/剩余空间预算，才写绑定完整 key 的完成记录并原子发布独立快照。取消、失败、超时、元数据变化均不入缓存。Windows 必须有 jobspawn 的进程树约束才安装；POSIX 清理进程组。恢复只接受同 key、带可信完成记录的 v2 条目。任务可写完成文件不参与判断。
+
+默认 4 GiB 逻辑容量、LRU、单 daemon 内串行；沿用死亡 stage 回收和中断只清理自身目录。workspace / .bin 端点仍仅保存逻辑位置，恢复使用新 checkout 的代码；不支持的端点安全 miss。
 
 ## 任务内 uptime
 
@@ -18,26 +22,19 @@
 
 CC 生成固定任务 preload，仅 `uv_uptime` 的 EPERM/EACCES（包含 Node `ERR_SYSTEM_ERROR.info`）回落；其余异常原样抛出。真实沙箱发现 Bun 1.3.14 会返回 0，因此也处理该无效结果。正常 uptime 保持原值。父进程提供系统开机基线，子进程按单调时钟推进，不用进程存活时间代替系统开机时间。同步 builtin ESM 命名导出。
 
-Bun 1.3.14 实测忽略环境里的预加载参数，故任务 PATH 里生成固定 Node/Bun shim，显式附加 `--require`，Node 同时保留 NODE_OPTIONS。任务 preload 将当前运行时的直接 child_process / Bun.spawn 子进程附加同一预加载，覆盖 `process.execPath` 路径。帮助文件只在任务保留目录里，升级后原子更新独立 inode，拒绝链接；不会修改全局环境、系统权限或 daemon 的 os 模块。任意显式清空环境、另一个绝对运行时、手写绝对 shell 命令属于执行者自身选择，不将字符串 shell 改写成另一套命令。
+Bun 1.3.14 忽略环境预加载，因此任务 PATH 使用固定 Node/Bun wrapper 显式附加 `--require`，Node 同时用 NODE_OPTIONS。preload 只在沙箱任务及其直接运行时子进程中继承；主动清空环境或另写绝对 shell 命令不改写。
 
-## 本机回环
+固定 shim 和 wrapper 位于 CC 创建的独立随机只读 runtime 目录，处于所有任务工作区 / TMPDIR 可写根之外；文件名带 SHA256，每次使用均经锚定读取和固定内容指纹校验。权限位不是同 UID 隔离保证，真正边界是 Codex deny-default + workspace-write 且排除全局 /tmp。真实沙箱回归同时验证任务正常写入成功、外部 shim 的改写/替换/硬链接失败。宿主 Node/Bun 路径变化时建立新 bundle，旧 bundle 保留给运行中任务；进程正常退出时统一清理。
 
-核对版本是 **Codex rust-v0.167.0 / 086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a**。SandboxPolicy 只有网络布尔值，没有独立的回环字段；但 managed network proxy 支持 `allow_local_binding`，Seatbelt 将直接网络限制在代理端点与 localhost。采用此原生能力，不实现沙箱外测试命令代理。单凭命令白名单不能约束测试代码权限；改用 Unix socket 也不能覆盖现有任意 HTTP/WS 测试。
+宿主 app-server 仅使用干净 workbenchCodexEnv；任务 TMP / cache / preload / PATH 只通过 shell_environment_policy.set 进入沙箱 shell。宿主通知、MCP、helper 不继承任务环境；回归用真实绝对 Node helper 和任务改写的 preload 验证。Claude 的宿主及 settings 也不接任务 preload/PATH，只保留临时目录和包缓存位置，避免把 Codex 的兼容 shim 用到沙箱外。
 
-启动先用原有离线配置探明版本，只有精确 0.167.0 才关闭探针、重启增强配置，避免旧版无法解析 feature table。增强启动仍 `network_access=false`。配置：network_proxy.enabled / allow_local_binding=true；mode=full；upstream proxy、SOCKS/UDP、非回环代理、任意 Unix socket、credential broker 全关。domains 的 `?*` 明确 deny 所有非空主机：裸 `*` 被原生 denylist 拒绝，`?*` 根据官方 matcher 的 `?` 单字节加 `*` 任意后缀语义匹配所有非空主机；明确 deny 在 DNS、allow 与策略 decider 之前生效。该通配符结论是对以下源码的推导。
+## 本机回环：不做
 
-启动 `config/read` 必须逐项验证 table；`experimentalFeature/list` 验证有效 feature，`configRequirements/read` 拒绝影响网络/权限 profile 选择的 managed 覆盖。继承的 Unix socket allow 也拒绝，空 table 合并不能清除它们。然后 thread/start/resume 镜像配置并覆盖 `network_access=true`，核对线程 sandbox 与可写根，首次 turn 前再次核对线程有效 feature。任何核对失败都不开 turn。线程初始化先成功启动代理才发已配置事件，代理失败不会退回开放网络。旧/未知版本继续离线，不猜测兼容性。
+撤掉 managed proxy local binding 的启用路径与配置模块。工作台及对话的启动/续接线程明确 `sandbox_workspace_write.network_access=false`、`features.network_proxy=false`，核对有效 proxy 配置与 sandbox 网络回执；不符则不开 turn。原有显式 danger-full-access 模式仍属于用户选择的无沙箱入口，不代表沙箱网络可放开。
 
-[原生代理会为本机绑定模式设置 NO_PROXY](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/network-proxy/src/proxy.rs#L819)，使本机 HTTP 请求直连；代理绕过名单不会增加 OS 权限。
+原因：当前 sandbox 的广泛可读权限可读同用户的 discovery/operator 凭据；全机回环会把这些文件变成可用的主人 API 与审批权限。域名 deny、NO_PROXY、0700/0600、随机端口及任务端口约定都不能提供这条隔离；stock local-binding 也不能限制为某个任务的 TCP 端口。因此需要 listen 的测试仍走原生显式审批，交给「本任务同命令放行」降低重复打扰。
 
-原生能力允许**本机全部回环端口**，没有任务专属 TCP 端口选项；因而本地已有服务也在可达范围内。外部域名/IP 的代理访问明确拒绝，直接外部 TCP/UDP 仍由原生 OS 策略拒绝。Unix socket 不新增授权。此前已有的用户 execpolicy 前缀放行能够让原生 Codex 绕过沙箱，是原生原有边界，本次不增加任何该类规则。
-
-官方依据：
-
-- [SandboxPolicy 类型](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/app-server-protocol/schema/typescript/v2/SandboxPolicy.ts)、[回环 Seatbelt 规则](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/sandboxing/src/seatbelt.rs#L328)。
-- [denylist 通配符校验](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/network-proxy/src/policy.rs#L122)、[matcher](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/network-proxy/src/domain_matcher.rs#L162)、[deny 优先](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/network-proxy/src/runtime.rs#L883)。
-- [请求配置覆盖启动配置](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/app-server/src/config_manager.rs#L704)、[线程先启动代理](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/core/src/session/session.rs#L1624)。
-- [有效 feature 查询](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/app-server/src/request_processors/catalog_processor.rs#L358)、[原生网络回归](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/sandboxing/src/seatbelt_network_tests.rs#L18)。
+将来若做，必须先有显式安全设计并以真实沙箱验证：例如凭据对执行者确实不可读的强保证、独立 OS 身份或私有网络隔离、不桥接宿主管理服务；daemon 拒绝执行者进程树请求亦须有可信内核身份而非自报 PID / 轮询父进程。只截断某份 token 不足以保护宿主其他回环服务。守卫测试写明此攻击链，任何放开先更新设计与隔离证据。
 
 ## 协议缓冲
 
@@ -45,4 +42,4 @@ Bun 1.3.14 实测忽略环境里的预加载参数，故任务 PATH 里生成固
 
 ## 验证与评审重点
 
-四条分别留红/绿；大输出覆盖父轮确认前和子线程核验前。缓存覆盖源工作区删除、嵌套锁/清单变化、链接逃逸、LRU/容量、取消与受限复制。环境覆盖 Node/Bun 子进程继承和 ESM 命名导出。相关 Bun 与 Node 测试，随后在无游戏且负载低于 8 时运行 bun run verify。无 UI 改动，不使用 mini；不 push。
+四条分别留红/绿；大输出覆盖父轮确认前和子线程核验前。缓存覆盖可信安装后源删除、任务投毒、半成品 sibling、安装失败/中断、嵌套锁/清单变化、链接逃逸、LRU/容量、取消与受限复制。环境覆盖 Node/Bun 子进程继承、ESM 命名导出和宿主不加载任务 preload；大输出逐一枚举 7 类预览，单帧及未结束尾帧超限仍拒绝。相关 Bun 与 Node 测试，随后在无游戏且负载低于 8 时运行 bun run verify。无 UI 改动，不使用 mini；不 push。

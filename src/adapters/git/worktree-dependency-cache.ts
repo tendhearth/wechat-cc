@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path'
 import { copyWorkspaceDependencies, DEPENDENCY_LOCKS, DEPENDENCY_NOTICE, readPreparationFile, type DependencyOptions } from './worktree-dependencies'
 import { Preparation } from './worktree-preparation'
+import { installDependencies } from './worktree-dependency-installer'
 import { mkdirAnchored, verifyFromFilesystemRoot } from '../workbench/anchored-fs'
 
-export interface DependencyCacheOptions extends DependencyOptions { maxCacheBytes?: number; maxCandidates?: number; canPublish?: () => boolean }
+export interface DependencyCacheOptions extends DependencyOptions { maxCacheBytes?: number; canPublish?: () => boolean }
 const MAX_CACHE_BYTES = 4 * 1024 ** 3
 const operations = new Map<string, Promise<unknown>>()
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
@@ -53,7 +54,7 @@ async function metadata(root: string, budget: Preparation) {
 async function cacheRoot(stateDir: string) {
   await fs.mkdir(stateDir, { recursive: true, mode: 0o700 })
   const state = await fs.realpath(stateDir); verifyFromFilesystemRoot(state, 'unsafe_dependency_cache')
-  return mkdirAnchored(state, ['dependency-cache', 'v1'], 'unsafe_dependency_cache')
+  return mkdirAnchored(state, ['dependency-cache', 'v2'], 'unsafe_dependency_cache')
 }
 async function scope(root: string, budget: Preparation) {
   const common = await fs.realpath(resolve(root, (await budget.git(root, ['rev-parse', '--git-common-dir'])).trim()))
@@ -97,31 +98,88 @@ async function prune(root: string, limit: number, budget: Preparation, incoming 
   for (const entry of entries.sort((a, b) => a.used - b.used)) { if (total <= limit) break; budget.check(); await fs.rm(entry.path, { recursive: true, force: true }); total -= entry.bytes }
   if (total > limit) throw Error('dependency_cache_budget')
 }
+const completion = (key: string) => JSON.stringify({ key, installer: 'bun', frozen: true, scripts: false, version: 2 })
+function supportsCleanInstall(files: Map<string, Buffer>): boolean {
+  // Only text Bun locks are currently supported. Never import a mutable local
+  // file/directory (including encoded paths) into a host-side installation.
+  if (!files.has('bun.lock') || !files.has('package.json')) return false
+  const unsafe = (text: string) => /(?:file|link|portal|patch):/i.test(text) || /(?:^|@)(?:[./~]?[\\/]|[A-Za-z]:[\\/])/.test(text) || /(?:^|[\\/:@])\.\.(?:[\\/]|$)/.test(text) || /workspace:(?:[\\/~]|\.[\\/])/i.test(text)
+  const validate = (value: unknown): boolean => typeof value === 'string' ? !unsafe(value) :
+    value === null || typeof value !== 'object' || Object.entries(value).every(([key, item]) => !unsafe(key) && validate(item))
+  const manifestSafe = (manifest: Record<string, unknown>): boolean => {
+    for (const field of ['dependencies','devDependencies','optionalDependencies','peerDependencies','overrides','resolutions','patchedDependencies','workspaces','catalog','catalogs']) {
+      if (manifest[field] != null && !validate(manifest[field])) return false
+    }
+    return true
+  }
+  for (const [path, value] of files) if (path === 'package.json' || path.endsWith('/package.json')) {
+    try { if (!manifestSafe(JSON.parse(value.toString()))) return false } catch { return false }
+  }
+  // Bun text locks are JSONC. Preserve quoted strings while removing comments
+  // and trailing commas; JSON.parse rejects any other unsupported syntax.
+  const text = files.get('bun.lock')!.toString()
+    .replace(/"(?:[^"\\]|\\.)*"|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g, token => token.startsWith('"') ? token : '')
+    .replace(/"(?:[^"\\]|\\.)*"|,\s*([}\]])/g, (token, close: string | undefined) => close ?? token)
+  let lock: Record<string, unknown>
+  try { lock = JSON.parse(text) } catch { return false }
+  if (!lock || typeof lock !== 'object' || Array.isArray(lock)) return false
+  for (const [field, value] of Object.entries(lock)) {
+    if (field === 'packages') {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+      for (const [name, tuple] of Object.entries(value)) {
+        if (unsafe(name) || !Array.isArray(tuple)) return false
+        for (const [index, part] of tuple.entries()) {
+          // bin/main/exports are paths inside a package, never install sources.
+          if (index === 2 && part && typeof part === 'object' && !Array.isArray(part)) {
+            if (!Object.entries(part).every(([key, item]) => ['bin','main','exports'].includes(key) || validate(item))) return false
+          } else if (!validate(part)) return false
+        }
+      }
+    } else if (field === 'workspaces') {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+      for (const [name, manifest] of Object.entries(value)) if (unsafe(name) || !manifest || typeof manifest !== 'object' || !manifestSafe(manifest)) return false
+    } else if (!validate(value)) return false
+  }
+  return true
+}
 async function publish(source: string, stateDir: string, options: DependencyCacheOptions, budget: Preparation): Promise<void> {
   budget.check(); if (options.canPublish && !options.canPublish()) return
   const before = await metadata(source, budget)
-  if (!before.key || !await installed(source, before.paths)) return
+  if (!before.key || !supportsCleanInstall(before.files)) return
   const root = await cacheRoot(stateDir), key = `${await scope(source, budget)}-${before.key}`, entry = join(root, key)
-  if (await fs.lstat(entry).then(s => s.isDirectory() && !s.isSymbolicLink(), () => false)) { const now = new Date(); await fs.utimes(entry, now, now); await prune(root, options.maxCacheBytes ?? MAX_CACHE_BYTES, budget); return }
+  const rel = relative(source, root)
+  if (!rel || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + sep))) throw Error('unsafe_dependency_cache')
+  if (await readPreparationFile(entry, '.complete.json', 1024).then(v => v?.toString() === completion(key), () => false)) {
+    const now = new Date(); await fs.utimes(entry, now, now); await prune(root, options.maxCacheBytes ?? MAX_CACHE_BYTES, budget); return
+  }
   await prune(root, options.maxCacheBytes ?? MAX_CACHE_BYTES, budget)
   const stage = await fs.mkdtemp(join(root, '.stage-'))
+  const snapshot = await fs.mkdtemp(join(root, '.stage-'))
   try {
-    await fs.writeFile(join(stage, '.owner.json'), JSON.stringify({ pid: process.pid }), { flag: 'wx', mode: 0o600 })
-    // Metadata and empty logical endpoints keep workspace/.bin links portable;
-    // repository code itself always comes from the receiving checkout.
-    for (const [path, value] of before.files) { budget.check(); await fs.mkdir(dirname(join(stage, path)), { recursive: true }); await fs.writeFile(join(stage, path), value, { flag: 'wx', mode: 0o600 }) }
-    const notices = await copyWorkspaceDependencies(source, stage, { ...options, metadataPaths: before.paths, snapshotWorkspaceLinks: true, timeoutMs: budget.deadline - Date.now() })
-    if (notices.includes(DEPENDENCY_NOTICE) || !await installed(stage, before.paths)) return
+    for (const path of [stage, snapshot]) await fs.writeFile(join(path, '.owner.json'), JSON.stringify({ pid: process.pid }), { flag: 'wx', mode: 0o600 })
+    // No task node_modules, source, bunfig, npmrc, or hooks enter this stage.
+    for (const [path, value] of before.files) {
+      budget.check(); await fs.mkdir(dirname(join(stage, path)), { recursive: true }); await fs.writeFile(join(stage, path), value, { flag: 'wx', mode: 0o600 })
+      await fs.mkdir(dirname(join(snapshot, path)), { recursive: true }); await fs.writeFile(join(snapshot, path), value, { flag: 'wx', mode: 0o600 })
+    }
+    await installDependencies(stage, budget)
+    budget.check()
+    for (const [path, value] of before.files) if (!(await readPreparationFile(stage, path, value.length))?.equals(value)) return
     if ((await metadata(source, budget)).key !== before.key || (options.canPublish && !options.canPublish())) return
-    const bytes = await sizeOf(stage, budget), limit = options.maxCacheBytes ?? MAX_CACHE_BYTES
+    const notices = await copyWorkspaceDependencies(stage, snapshot, { ...options, metadataPaths: before.paths, snapshotWorkspaceLinks: true, timeoutMs: budget.deadline - Date.now() })
+    if (notices.includes(DEPENDENCY_NOTICE) || !await installed(snapshot, before.paths)) return
+    await fs.writeFile(join(snapshot, '.complete.json'), completion(key), { flag: 'wx', mode: 0o600 })
+    await fs.unlink(join(snapshot, '.owner.json'))
+    const bytes = await sizeOf(snapshot, budget), limit = options.maxCacheBytes ?? MAX_CACHE_BYTES
     if (bytes > limit) return
-    await prune(root, limit, budget, bytes, stage)
+    // The installer has exited and staging is outside every task's writable roots.
+    await fs.rm(stage, { recursive: true, force: true })
+    await prune(root, limit, budget, bytes, snapshot)
     budget.check(); if (options.canPublish && !options.canPublish()) return
-    await fs.rename(stage, entry)
-    await fs.unlink(join(entry, '.owner.json'))
-  } finally { await fs.rm(stage, { recursive: true, force: true }) }
+    await fs.rename(snapshot, entry)
+  } finally { await fs.rm(stage, { recursive: true, force: true }); await fs.rm(snapshot, { recursive: true, force: true }) }
 }
-/** Best effort snapshot, never executes a package manager or repository code. */
+/** CC installs from frozen metadata; task installations are NEVER promoted. */
 export async function cacheWorkspaceDependencies(source: string, stateDir: string, options: DependencyCacheOptions = {}): Promise<void> {
   const budget = new Preparation({ ...options, timeoutMs: options.timeoutMs ?? 15_000 })
   await serial(stateDir, budget, async () => {
@@ -129,7 +187,7 @@ export async function cacheWorkspaceDependencies(source: string, stateDir: strin
     catch { if (options.signal?.aborted) throw Error('worktree_preparation_cancelled') }
   })
 }
-/** Cache and same-repository candidates share the existing copy/link/space budgets. */
+/** Only the owner checkout or a completed CC installation may supply dependencies. */
 export async function restoreWorkspaceDependencies(repoRoot: string, target: string, stateDir: string, options: DependencyCacheOptions = {}): Promise<string[]> {
   const budget = new Preparation({ ...options, timeoutMs: options.timeoutMs ?? 15_000 })
   return serial(stateDir, budget, async () => {
@@ -148,26 +206,18 @@ export async function restoreWorkspaceDependencies(repoRoot: string, target: str
         const root = await cacheRoot(stateDir)
         await prune(root, options.maxCacheBytes ?? MAX_CACHE_BYTES, budget)
         const entry = expected.key ? join(root, `${namespace}-${expected.key}`) : null
-        if (entry && await fs.lstat(entry).then(s => s.isDirectory() && !s.isSymbolicLink(), () => false)) {
+        if (entry && await readPreparationFile(entry, '.complete.json', 1024).then(v => v?.toString() === completion(`${namespace}-${expected.key}`), () => false)) {
           const notices = await copyWorkspaceDependencies(entry, target, { ...options, metadataPaths: expected.paths, timeoutMs: budget.deadline - Date.now() })
           if (!notices.includes(DEPENDENCY_NOTICE) && await installed(target, expected.paths)) { const now = new Date(); await fs.utimes(entry, now, now); return notices }
         }
-      } catch { budget.check() /* Optional cache cannot block another usable worktree. */ }
-      const listing = await budget.git(repoRoot, ['worktree', 'list', '--porcelain', '-z'])
-      const candidates = [repoRoot, ...listing.split('\0').filter(line => line.startsWith('worktree ')).map(line => line.slice(9))]
-      for (const candidate of [...new Set(candidates)].slice(0, options.maxCandidates ?? 32)) {
-        budget.check()
-        try {
-        const source = await fs.realpath(candidate).catch(() => null)
-        if (!source || source === target || await scope(source, budget) !== namespace) continue
-        const observed = await metadata(source, budget)
-        if (observed.key !== expected.key || !await installed(source, observed.paths)) continue
-        const notices = await copyWorkspaceDependencies(source, target, { ...options, timeoutMs: budget.deadline - Date.now() })
-        // Only the lifecycle/setup boundary may publish a cache snapshot. A
-        // discovered worktree may still have an installer/writer in flight.
-        if (!notices.includes(DEPENDENCY_NOTICE) && await installed(target, expected.paths)) return notices
-        } catch { budget.check() /* stale candidate; continue to the next worktree */ }
-      }
+        // A miss can install only in supervisor-owned clean staging. Sibling
+        // tasks are never candidates, even if they forge a completion marker.
+        await publish(target, stateDir, options, budget)
+        if (entry && await readPreparationFile(entry, '.complete.json', 1024).then(v => v?.toString() === completion(`${namespace}-${expected.key}`), () => false)) {
+          const notices = await copyWorkspaceDependencies(entry, target, { ...options, metadataPaths: expected.paths, timeoutMs: budget.deadline - Date.now() })
+          if (!notices.includes(DEPENDENCY_NOTICE) && await installed(target, expected.paths)) return notices
+        }
+      } catch { budget.check() /* Cache/install unavailable: preserve the locked-install notice. */ }
       return [DEPENDENCY_NOTICE]
     } catch { if (options.signal?.aborted) throw Error('worktree_preparation_cancelled'); return [DEPENDENCY_NOTICE] }
   })
