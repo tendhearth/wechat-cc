@@ -5,7 +5,8 @@ import { Preparation, type PreparationOptions } from './worktree-preparation'
 
 export const DEPENDENCY_NOTICE = '未能完整复用项目依赖，请在此工作区运行锁定安装；临时目录和缓存已限制在任务工作区内。'
 export const DEPENDENCY_COPY_NOTICE = '此工作区的依赖已独立复制，会额外占用磁盘空间。'
-const LOCKS = ['bun.lock','bun.lockb','package-lock.json','npm-shrinkwrap.json','pnpm-lock.yaml','yarn.lock']
+export const DEPENDENCY_LOCKS = ['bun.lock','bun.lockb','package-lock.json','npm-shrinkwrap.json','pnpm-lock.yaml','yarn.lock']
+const LOCKS = DEPENDENCY_LOCKS
 const inside = (base: string, path: string) => path === base || path.startsWith(base + sep)
 const safeRelative = (path: string) => !isAbsolute(path) && !path.split(/[\\/]/).some(p => p === '..' || p === '.git')
 export interface DependencyOptions extends PreparationOptions {
@@ -14,6 +15,10 @@ export interface DependencyOptions extends PreparationOptions {
   maxBytes?: number
   maxMetadataBytes?: number
   minFreeBytes?: number
+  /** Internal cache snapshots contain safe metadata, not a fake Git repository. */
+  metadataPaths?: string[]
+  /** Only for a private cache stage: logical endpoints, never repository code. */
+  snapshotWorkspaceLinks?: boolean
 }
 /** No symlinks or devices, even for lockfiles. O_NONBLOCK also protects the open-before-fstat boundary. */
 export async function readPreparationFile(root: string, path: string, maxBytes: number): Promise<Buffer | null> {
@@ -54,7 +59,7 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
     source = await fs.realpath(source); target = await fs.realpath(target)
     await room(0)
     const patterns = ['package.json','**/package.json', ...LOCKS.flatMap(f => [f, `**/${f}`])]
-    const lists = await Promise.all([source, target].map(root => budget.git(root, ['ls-files','-z','--',...patterns])))
+    const lists = options.metadataPaths ? [options.metadataPaths.join('\0')] : await Promise.all([source, target].map(root => budget.git(root, ['ls-files','-z','--',...patterns])))
     const tracked = new Set(lists.flatMap(list => list.split('\0').filter(Boolean)))
     const manifests = [...tracked].filter(p => p === 'package.json' || p.endsWith('/package.json'))
     if (!manifests.length) return []
@@ -74,7 +79,7 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
       metadata += (a?.length ?? 0) + (b?.length ?? 0)
       if (metadata > (options.maxMetadataBytes ?? 32 * 1024 * 1024) || (a === null) !== (b === null) || (a && b && !a.equals(b))) throw Error('dependency_lock_mismatch')
     }
-    const links: Array<{ path: string; destination: string; directory: boolean }> = []
+    const links: Array<{ path: string; logicalPath: string; destination: string; directory: boolean }> = []
     const clone = async (from: string, to: string): Promise<void> => {
       budget.check()
       if (++entries > maxEntries) throw Error('dependency_entry_budget')
@@ -85,8 +90,24 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
       if (stat.isSymbolicLink()) {
         const actual = await fs.realpath(from)
         if (!inside(source, actual)) throw Error('external_dependency_link')
-        const destination = join(target, relative(source, actual))
-        links.push({ path: to, destination, directory: (await fs.stat(actual)).isDirectory() })
+        const rel = relative(source, actual), destination = join(target, rel), endpoint = await fs.stat(actual)
+        if (options.snapshotWorkspaceLinks && rel && !rel.split(sep).includes('node_modules')) {
+          if (!safeRelative(rel) || rel.split(sep).some(part => part.toLowerCase() === '.git')) throw Error('unsafe_dependency_directory')
+          // A workspace bin may point at pkg/cli.js rather than node_modules.
+          // Cache only its logical type/path; restore resolves to the actual
+          // new checkout and still validates that final endpoint exists inside it.
+          let cursor = target
+          for (const part of rel.split(sep)) {
+            budget.check(); cursor = join(cursor, part)
+            if (await fs.lstat(cursor).catch(e => { if (e.code === 'ENOENT') return null; throw e })) continue
+            if (++entries > maxEntries) throw Error('dependency_entry_budget')
+            if (entries % 256 === 0) await room(0)
+            if (cursor !== destination || endpoint.isDirectory()) await fs.mkdir(cursor, { mode: 0o700 })
+            else if (endpoint.isFile()) await fs.writeFile(cursor, '', { flag: 'wx', mode: 0o600 })
+            else throw Error('unsupported_dependency_file')
+          }
+        }
+        links.push({ path: to, logicalPath: join(target, relative(source, from)), destination, directory: endpoint.isDirectory() })
       } else if (stat.isDirectory()) {
         await fs.mkdir(to)
         // opendir bounds memory even for an adversarial flat directory.
@@ -166,7 +187,7 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
       const destination = stagedPath(link.destination)
       const actual = await fs.realpath(destination)
       if (!inside(target, actual)) throw Error('external_relocated_dependency_link')
-      await fs.symlink(link.destination, link.path, link.directory ? 'dir' : 'file')
+      await fs.symlink(relative(dirname(link.logicalPath), link.destination) || '.', link.path, link.directory ? 'dir' : 'file')
     }
     for (const stage of stages) { budget.check(); await fs.rename(join(stage.stage, 'tree'), stage.to) }
     // Validate the final target chain too (including links between installations).

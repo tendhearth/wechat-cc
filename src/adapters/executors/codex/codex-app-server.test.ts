@@ -20,7 +20,7 @@ type Rpc = { id?: string | number; method?: string; params?: any; result?: any; 
 class FakeProcess extends EventEmitter {
   stdin = new PassThrough(); stdout = new PassThrough(); stderr = new PassThrough()
   exitCode: number | null = null; signalCode: string | null = null
-  sent: Rpc[] = []; autoExit = true; autoTurnStart = true; autoInterrupt = true; autoTerminalList = true
+  sent: Rpc[] = []; autoExit = true; autoTurnStart = true; autoInterrupt = true; autoTerminalList = true; autoThreadRead = true
   kill = vi.fn((signal = 'SIGTERM') => { if (this.autoExit) queueMicrotask(() => this.exit(null, signal)); return true })
   constructor(readonly probe: boolean) {
     super()
@@ -33,10 +33,12 @@ class FakeProcess extends EventEmitter {
         this.sent.push(message)
         if (message.method === 'initialize') queueMicrotask(() => this.send({ id: message.id, result: initializeResponse }))
         if (message.method === 'config/read') queueMicrotask(() => this.send({ id: message.id, result: { config: nativeConfig } }))
+        if (message.method === 'experimentalFeature/list') queueMicrotask(() => this.send({ id: message.id, result: { data: [{ name: 'network_proxy', enabled: message.params?.threadId ? threadProxyEnabled : proxyEnabled }], nextCursor: null } }))
+        if (message.method === 'configRequirements/read') queueMicrotask(() => this.send({ id: message.id, result: { requirements: managedRequirements } }))
         if (message.method === 'model/list') queueMicrotask(() => this.send({ id: message.id, result: { data: [{id:modelPresetId,model:'native-model',displayName:'Native model',description:'Native',isDefault:true,defaultReasoningEffort:'deep-native',supportedReasoningEfforts:[{reasoningEffort:'deep-native',description:'Native'}],inputModalities:modelModalities}],nextCursor:null } }))
-        if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: message.params.cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: message.params.config?.sandbox_workspace_write?.writable_roots ?? [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
+        if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: message.params.cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: message.params.config?.sandbox_workspace_write?.writable_roots ?? [], networkAccess: message.params.config?.sandbox_workspace_write?.network_access ?? false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
         if (message.method === 'turn/start' && this.autoTurnStart) queueMicrotask(() => this.send({ id: message.id, result: { turn: { id: `turn-${this.sent.filter(m => m.method === 'turn/start').length}` } } }))
-        if (message.method === 'thread/read') queueMicrotask(() => this.send({ id: message.id, result: { thread: nativeThreads[message.params.threadId] } }))
+        if (message.method === 'thread/read' && this.autoThreadRead) queueMicrotask(() => this.send({ id: message.id, result: { thread: nativeThreads[message.params.threadId] } }))
         if (message.method === 'thread/backgroundTerminals/clean') queueMicrotask(() => this.send(terminalCleanup === 'unavailable' ? {id:message.id,error:{message:'unsupported terminal API'}} : {id:message.id,result:{}}))
         if (message.method === 'thread/backgroundTerminals/list' && this.autoTerminalList) queueMicrotask(() => this.send(terminalCleanup === 'unavailable' ? {id:message.id,error:{message:'unsupported terminal API'}} : {id:message.id,result:{data:terminalCleanup === 'running' ? [{processId:'owned-running'}] : [],nextCursor:null}}))
         if (message.method === 'turn/interrupt' && this.autoInterrupt) queueMicrotask(() => this.send({ id: message.id, result: {} }))
@@ -56,6 +58,7 @@ let nativeConfig: Record<string, unknown>, initializeResponse: Record<string, un
 let modelModalities: string[]
 let modelPresetId: string
 let nativeThreads: Record<string, any>
+let proxyEnabled = true, threadProxyEnabled = true, managedRequirements: unknown = null
 let terminalCleanup: 'normal' | 'unavailable' | 'running'
 const context = (extra = {}): SpawnContext => ({ tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'workbench:task', appendInstructions: 'task instructions', ...extra })
 async function start(extra = {}, options = {}) {
@@ -87,6 +90,7 @@ function enableExternal() {
   nativeConfig = { mcp_servers: { external: { command: '/tools/external', tools: { create_note: { approval_mode: 'approve' } } } } }
 }
 beforeEach(() => {
+  proxyEnabled = true; threadProxyEnabled = true; managedRequirements = null
   terminalCleanup = 'normal'
   nativeThreads = {}
   modelModalities=['text','image']
@@ -1182,6 +1186,58 @@ describe('Codex retained workbench runtime', () => {
     completed(child); await expect.poll(() => api.snapshot().backgroundCount).toBe(1)
     await session.close(); await done
   })
+  it.each(['lineage', 'parent acknowledgement'])('survives large child output while waiting for %s without granting early authority', async boundary => {
+    const permit = vi.fn(async () => true), reportNotice = vi.fn()
+    const { session, child } = await start({ workbenchLifecycle: true, requestPermission: permit, reportNotice })
+    child.autoThreadRead = false; child.autoTurnStart = boundary !== 'parent acknowledgement'
+    const api = session.workbenchRuntime!, events: AgentEvent[] = []
+    const done = (async () => { for await (const event of api.events) events.push(event) })()
+    api.start('parent'); await begun(child); launch(child)
+    approval(child, 'buffered-approval', undefined, { threadId: 'child-1', turnId: 'child-turn-1' })
+    for (let i = 0; i < 1200; i++) child.notify('item/commandExecution/outputDelta', { threadId: 'child-1', turnId: 'child-turn-1', itemId: 'noisy-command', delta: 'private command output\n'.repeat(400) })
+    expect(child.kill).not.toHaveBeenCalled(); expect(permit).not.toHaveBeenCalled()
+    if (!child.autoTurnStart) {
+      const request = child.sent.find(m => m.method === 'turn/start')!
+      child.send({ id: request.id, result: { turn: { id: 'turn-1' } } })
+    }
+    await expect.poll(() => child.sent.some(m => m.method === 'thread/read')).toBe(true)
+    const read = child.sent.find(m => m.method === 'thread/read')!
+    child.send({ id: read.id, result: { thread: nativeThreads['child-1'] } })
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    childEnd(child); completed(child)
+    await expect.poll(() => events.some(e => e.kind === 'result')).toBe(true)
+    expect(events.filter(e => e.kind === 'error')).toEqual([])
+    expect(reportNotice).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(reportNotice.mock.calls)).not.toContain('private command output')
+    await session.close(); await done
+  })
+  it('accepts a stdout chunk above 4MB when every JSONL frame is bounded', async () => {
+    const run = await runtime()
+    const frame = JSON.stringify({method:'item/commandExecution/outputDelta',params:{threadId:'thread-1',turnId:'turn-1',itemId:'output',delta:'x'.repeat(4096)}})+'\n'
+    run.child.stdout.write(frame.repeat(1100))
+    completed(run.child)
+    await expect.poll(()=>run.events.some(e=>e.kind==='result')).toBe(true)
+    expect(run.events.filter(e=>e.kind==='error')).toEqual([])
+    await run.session.close();await run.done
+  })
+  it('drops reconstructible root previews before acknowledgement outside a retained runtime too', async () => {
+    const {session,child}=await start();child.autoTurnStart=false
+    const turn=collect(session);await begun(child)
+    for(let i=0;i<1200;i++)child.notify('item/agentMessage/delta',{threadId:'thread-1',turnId:'turn-1',itemId:'answer',delta:'preview'})
+    const request=child.sent.find(m=>m.method==='turn/start')!
+    child.send({id:request.id,result:{turn:{id:'turn-1'}}})
+    child.notify('item/completed',{threadId:'thread-1',turnId:'turn-1',item:{type:'agentMessage',id:'answer',text:'final answer'}})
+    completed(child);await turn.done
+    expect(turn.events.filter(e=>e.kind==='error')).toEqual([])
+    expect(turn.events).toContainEqual(expect.objectContaining({kind:'text',text:'final answer'}))
+  })
+  it('still fails closed when unknown structural notifications exhaust early capacity', async () => {
+    const {session,child}=await start();child.autoTurnStart=false
+    const turn=collect(session);await begun(child)
+    for(let i=0;i<1002;i++)child.notify('item/futureAuthority/delta',{threadId:'thread-1',turnId:'turn-1',payload:'structural'})
+    await turn.done
+    expect(turn.events).toContainEqual(expect.objectContaining({kind:'error',message:expect.stringContaining('codex_protocol_buffer_limit')}))
+  })
   it('freezes submitted image bytes while waiting on the initial native start acknowledgement', async () => {
     const {session, child} = await start({workbenchLifecycle:true}); child.autoTurnStart = false
     const api = session.workbenchRuntime!, done = (async () => { for await (const _event of api.events) {} })()
@@ -1440,4 +1496,46 @@ it('still rejects a task thread with writable roots outside its workspace',async
     threadResponse={sandbox:{type:'workspaceWrite',writableRoots:['/tmp'],networkAccess:false,excludeTmpdirEnvVar:true,excludeSlashTmp:true}}
     await expect(createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250}).spawn({alias:'workbench:abcd1234',path},context({workbenchTaskId:'abcd1234'}))).rejects.toThrow('codex_unverified_thread_policy')
   }finally{removeTempDir(path)}
+})
+
+it('allows task loopback on verified Codex 0.167 managed proxy while denying every remote proxy host', async () => {
+  const path = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-loopback-')))
+  try {
+    initializeResponse.userAgent = 'cc_workbench/0.167.0 (Mac OS; arm64)'
+    nativeConfig.features = { network_proxy: { enabled: true, allow_local_binding: true, allow_upstream_proxy: false,
+      enable_socks5: false, enable_socks5_udp: false, dangerously_allow_non_loopback_proxy: false,
+      dangerously_allow_all_unix_sockets: false, credential_broker: false, mode: 'full', domains: { '?*': 'deny', 'example.com': 'allow' } } }
+    const session = await createWorkbenchCodexProvider({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
+      .spawn({ alias: 'workbench:abcd1234', path }, context({ workbenchTaskId: 'abcd1234' }))
+    sessions.push(session)
+    const config = children.at(-1)!.sent.find(m => m.method === 'thread/start')!.params.config
+    expect(config.sandbox_workspace_write.network_access).toBe(true)
+    expect(config.features.network_proxy).toMatchObject({ enabled: true, allow_local_binding: true, domains: { '?*': 'deny' }, mode: 'full', allow_upstream_proxy: false, enable_socks5: false })
+    const args = mocks.spawn.mock.calls.at(-1)![1] as string[]
+    expect(args).toContain('features.network_proxy.domains."?*"="deny"')
+    await session.close()
+  } finally { removeTempDir(path) }
+})
+
+it.each(['feature disabled', 'thread feature disabled', 'managed network', 'managed feature', 'managed profile', 'inherited unix socket', 'missing deny', 'upstream proxy'] as const)('fails closed before any turn when task loopback has %s', async defect => {
+  const path = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-loopback-denied-')))
+  try {
+    initializeResponse.userAgent = 'cc_workbench/0.167.0 (Mac OS; arm64)'
+    const proxy = { enabled: true, allow_local_binding: true, allow_upstream_proxy: false, enable_socks5: false, enable_socks5_udp: false,
+      dangerously_allow_non_loopback_proxy: false, dangerously_allow_all_unix_sockets: false, credential_broker: false,
+      mode: 'full', domains: { '?*': 'deny' } }
+    if (defect === 'feature disabled') proxyEnabled = false
+    if (defect === 'thread feature disabled') threadProxyEnabled = false
+    if (defect === 'managed network') managedRequirements = { network: { enabled: false } }
+    if (defect === 'managed feature') managedRequirements = { featureRequirements: { network_proxy: false } }
+    if (defect === 'managed profile') managedRequirements = { allowedPermissionProfiles: ['default'], defaultPermissions: 'default' }
+    if (defect === 'inherited unix socket') Object.assign(proxy, { unix_sockets: { '/var/run/docker.sock': 'allow' } })
+    if (defect === 'missing deny') proxy.domains['?*'] = 'allow'
+    if (defect === 'upstream proxy') proxy.allow_upstream_proxy = true
+    nativeConfig.features = { network_proxy: proxy }
+    await expect(createWorkbenchCodexProvider({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
+      .spawn({ alias: 'workbench:abcd1234', path }, context({ workbenchTaskId: 'abcd1234' }))).rejects.toThrow('codex_unverified_loopback_policy')
+    expect(children.every(child => !child.sent.some(m => m.method === 'turn/start'))).toBe(true)
+    expect(children.filter(child => !child.probe).every(child => child.exitCode !== null || child.signalCode !== null)).toBe(true)
+  } finally { removeTempDir(path) }
 })

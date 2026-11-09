@@ -12,6 +12,7 @@
  * quiet 是 isReplied 的别名(原文 `const quiet=isReplied`)。
  */
 import { findPathBlocker } from '../../../adapters/workbench/scheduler'
+import { publishTaskDependencies } from './dependencies'
 import { publicTask } from '../../../adapters/store/workbench/store'
 import { taskLifecycle } from '../../../domain/matters/legacy-status'
 import type { Active } from './state'
@@ -170,6 +171,11 @@ export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
     if (!snapshot?.retained||snapshot.foreground!=='idle'||snapshot.backgroundCount!==0) return
     collectTurnArtifacts(running)
     if (!quiet(running)) return
+    if (running.dependencyCacheTurn !== running.turnSeq) {
+      running.dependencyCacheTurn = running.turnSeq
+      const turn = running.turnSeq
+      void publishTaskDependencies(ctx, running.taskId, () => state.runsByTask.get(running.taskId) === running && running.turnSeq === turn && !running.uncertain && !running.finishing && quiet(running))
+    }
     // 取消归档、结局清回 open(以前写 replied 列的那一处;v102 删列后 replied 只看下面那一步)
     matterSync(m=>m.setLifecycle(running.taskId,'open'))
     // 「答完了、闲着」落成这件事最近一轮上的一步(ready:<turnId>,幂等;主人看不见)。线上旧 status 的 replied 读它(M6e)。

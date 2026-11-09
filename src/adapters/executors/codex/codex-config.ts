@@ -58,7 +58,10 @@ export function workbenchCodexArgs(config: Record<string, unknown>): string[] {
   const args: string[] = []
   const walk = (value: unknown, key: string) => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
-      for (const [name, child] of Object.entries(value)) walk(child, key ? `${key}.${name}` : name)
+      for (const [name, child] of Object.entries(value)) {
+        const part = /^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name)
+        walk(child, key ? `${key}.${part}` : part)
+      }
     } else args.push('-c', `${key}=${JSON.stringify(value)}`)
   }
   walk(config, '')

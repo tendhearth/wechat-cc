@@ -1,3 +1,4 @@
+import { cacheWorkspaceDependencies } from './worktree-dependency-cache'
 import { preparationJobspawnFixture } from '../../test-support/preparation-jobspawn'
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -24,6 +25,28 @@ function repo() {
 }
 
 describe('worktree workspaces (2026-10-07)', () => {
+  it('reuses a matching task installation when the original project is old, then survives source removal', async () => {
+    const { project, state } = repo()
+    git(project, ['checkout', '-b', 'new-dependencies'])
+    writeFileSync(join(project, 'package.json'), '{"name":"fixture","dependencies":{"tool":"1"}}')
+    writeFileSync(join(project, 'bun.lock'), 'new lock')
+    writeFileSync(join(project, '.gitignore'), 'node_modules/\n')
+    git(project, ['add', '.']); git(project, ['commit', '-m', 'new dependencies'])
+    git(project, ['checkout', 'main'])
+    const plan = (id: string) => planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot: project, id, base: 'new-dependencies' })
+    const first = plan('aa000001'); await ensureWorktree(first)
+    mkdirSync(join(first.root, 'node_modules/tool'), { recursive: true })
+    writeFileSync(join(first.root, 'node_modules/tool/index.js'), 'installed once')
+    const second = plan('aa000002'); await ensureWorktree(second)
+    expect(readFileSync(join(second.root, 'node_modules/tool/index.js'), 'utf8')).toBe('installed once')
+    writeFileSync(join(second.root, 'node_modules/tool/index.js'), 'task edit')
+    expect(readFileSync(join(first.root, 'node_modules/tool/index.js'), 'utf8')).toBe('installed once')
+    // Model the confirmed installation/quiet boundary used by the service.
+    await cacheWorkspaceDependencies(first.root, state)
+    removeWorktree(project, first.root); removeWorktree(project, second.root)
+    const third = plan('aa000003'); await ensureWorktree(third)
+    expect(readFileSync(join(third.root, 'node_modules/tool/index.js'), 'utf8')).toBe('installed once')
+  })
   it('plans, creates idempotently from HEAD (uncommitted changes stay behind), commits, and removes', async () => {
     const { project, state } = repo()
     writeFileSync(join(project, 'a.txt'), 'uncommitted\n')

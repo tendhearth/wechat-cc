@@ -1,6 +1,10 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, writeSync } from 'node:fs'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
+import { uptime } from 'node:os'
 import { mkdirAnchored, verifyChain } from '../workbench/anchored-fs'
+import { TASK_UPTIME_PRELOAD, TASK_SUBPROCESS_PRELOAD } from './task-uptime'
+import { taskRuntimeFile } from './task-runtime-files'
+import { findOnPath } from '../../lib/util'
 import { Preparation, type PreparationOptions } from '../git/worktree-preparation'
 
 export const TASK_RUNTIME_DIRECTORY = '.cc-tasks'
@@ -30,5 +34,17 @@ export async function taskEnvironment(workspace: string, taskId: string, options
   } finally { closeSync(fd) }
   const tmp = mkdirAnchored(root, [TASK_RUNTIME_DIRECTORY, taskId, 'tmp'], 'invalid_task_environment')
   const cache = mkdirAnchored(root, [TASK_RUNTIME_DIRECTORY, taskId, 'cache'], 'invalid_task_environment')
-  return { TMPDIR: tmp, TEMP: tmp, TMP: tmp, BUN_TMPDIR: tmp, BUN_INSTALL_CACHE_DIR: cache, npm_config_cache: cache, GIT_CEILING_DIRECTORIES: tmp }
+  const preload = taskRuntimeFile(root, [TASK_RUNTIME_DIRECTORY, taskId, 'uptime.cjs'], TASK_UPTIME_PRELOAD + TASK_SUBPROCESS_PRELOAD, 0o600, true)
+  const bin = mkdirAnchored(root, [TASK_RUNTIME_DIRECTORY, taskId, 'bin'], 'invalid_task_environment')
+  // Bun 1.3.14 ignores NODE_OPTIONS/BUN_OPTIONS preloads. Explicit argv also
+  // propagates through Bun's node shim and worker execArgv.
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
+  if (process.platform !== 'win32') for (const name of ['bun', 'node']) {
+    const binary = findOnPath(name)
+    if (binary) taskRuntimeFile(root, [TASK_RUNTIME_DIRECTORY, taskId, 'bin', name], `#!/bin/sh\nexec ${quote(realpathSync(binary))} --require ${quote(preload)} "$@"\n`, 0o700, true)
+  }
+  return { TMPDIR: tmp, TEMP: tmp, TMP: tmp, BUN_TMPDIR: tmp, BUN_INSTALL_CACHE_DIR: cache, npm_config_cache: cache, GIT_CEILING_DIRECTORIES: tmp,
+    NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
+    PATH: bin + delimiter + (process.env.PATH ?? ''),
+    CC_TASK_SYSTEM_BOOT_MS: String(Math.floor((Date.now() - uptime() * 1000) / 60_000) * 60_000) }
 }

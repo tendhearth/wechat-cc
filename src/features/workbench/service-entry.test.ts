@@ -29,12 +29,13 @@ vi.mock('node:fs',async importOriginal=>{
 vi.mock('node:fs/promises',async importOriginal=>({...await importOriginal<typeof import('node:fs/promises')>()}))
 
 let area:string,stateDir:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
+let onSpawn:((path:string)=>void)|undefined
 let owner:string|null,spawnCount:number,mintCount:number,seen:string[],spawnedTaskIds:(string|undefined)[]
 const context={ownerKey:'owner',surface:'desktop' as const}
 const input=(changes:Partial<EntryInput>={}):EntryInput=>({requestId:randomUUID(),text:'整理一份周报',target:{kind:'managed'},...changes})
 function setup(defaultProvider='claude',ids=['claude','codex']){
   const registry=createProviderRegistry()
-  for(const id of ids)registry.register(id,{async spawn(_project,spawnContext){spawnCount++;spawnedTaskIds.push(spawnContext.workbenchTaskId);return{
+  for(const id of ids)registry.register(id,{async spawn(_project,spawnContext){onSpawn?.(_project.path);spawnCount++;spawnedTaskIds.push(spawnContext.workbenchTaskId);return{
     async *dispatch(text){seen.push(text);yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){},
   }}},{displayName:id,canResume:()=>true,workbench:id==='unattended'?UNATTENDED_CAPABILITIES:MANAGED_NATIVE_CAPABILITIES,...(id==='openai'?{validateWorkbenchInput:validateApiTaskInput}:{})})
   store=makeWorkbenchStore(db)
@@ -43,7 +44,7 @@ function setup(defaultProvider='claude',ids=['claude','codex']){
 }
 beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-entry-service-')));stateDir=join(area,'state');project=join(area,'project');mkdirSync(stateDir);mkdirSync(project)
-  db=openDb({path:join(stateDir,'state.db')});owner='owner';spawnCount=0;mintCount=0;seen=[];spawnedTaskIds=[];setup()
+  db=openDb({path:join(stateDir,'state.db')});owner='owner';onSpawn=undefined;spawnCount=0;mintCount=0;seen=[];spawnedTaskIds=[];setup()
 })
 afterEach(async()=>{vi.restoreAllMocks();await service?.shutdown();db.close();removeTempDir(area)})
 // 真 git(worktree add / 基线 / 审阅 / checkpoint)的整轮在满载套件里放大好几倍:跟 service-one-session 同一个口径给足余量(10-21 负载下假红)
@@ -191,7 +192,7 @@ it('accepts owner-stamped material-only input while rejecting unbound legacy and
 
 it.each(['allocation','first material check'])('reuses the winner when another connection commits during %s',async(point)=>{
   const secondDb=openDb({path:join(stateDir,'state.db')}),secondStore=makeWorkbenchStore(secondDb),registry=createProviderRegistry()
-  registry.register('claude',{async spawn(_project,spawnContext){spawnCount++;spawnedTaskIds.push(spawnContext.workbenchTaskId);return{async *dispatch(){yield{kind:'result' as const,sessionId:'second',numTurns:1,durationMs:1}},async close(){}}}},
+  registry.register('claude',{async spawn(_project,spawnContext){onSpawn?.(_project.path);spawnCount++;spawnedTaskIds.push(spawnContext.workbenchTaskId);return{async *dispatch(){yield{kind:'result' as const,sessionId:'second',numTurns:1,durationMs:1}},async close(){}}}},
     {displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   const other=makeWorkbenchService({store:secondStore,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',matters:makeMatterStore(secondDb)})
   try{
@@ -539,4 +540,27 @@ it('normal shutdown waits for unaccepted worktree fetch preparation to roll back
     expect(store.list()).toEqual([])
     expect(spawnCount).toBe(0)
   } finally {await pending;server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()))}
+})
+
+
+it('publishes an executor-installed dependency snapshot after confirmed close and reuses it after task removal', async () => {
+  const g=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'})
+  g('init','-q');g('config','user.email','test@localhost');g('config','user.name','fixture')
+  writeFileSync(join(project,'package.json'),'{}');writeFileSync(join(project,'bun.lock'),'fixture lock');writeFileSync(join(project,'.gitignore'),'node_modules/\n')
+  g('add','.');g('commit','-qm','initial')
+  let installs=0
+  onSpawn=path=>{
+    if(existsSync(join(path,'node_modules/tool/index.js')))return
+    installs++;mkdirSync(join(path,'node_modules/tool'),{recursive:true});writeFileSync(join(path,'node_modules/tool/index.js'),'installed once')
+  }
+  const projectId=service.projects()[0]!.id
+  const first=await service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
+  await settle(first.receipt.taskId)
+  expect(installs).toBe(1)
+  await service.worktreeAction(first.receipt.taskId,'remove')
+  expect(existsSync(first.task.path)).toBe(false)
+  const second=await service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
+  await settle(second.receipt.taskId)
+  expect(readFileSync(join(second.task.path,'node_modules/tool/index.js'),'utf8')).toBe('installed once')
+  expect(installs).toBe(1)
 })

@@ -21,9 +21,10 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { copyWorkspaceDependencies, readPreparationFile } from './worktree-dependencies'
+import { restoreWorkspaceDependencies } from './worktree-dependency-cache'
 
 export interface WorktreeStart { base: string; sha: string; notices: string[] }
-export interface WorktreePlan { root: string; branch: string; taskPath: string; repoRoot: string; projectPath: string; /** 本地或远端跟踪分支;缺省 = 当前分支。 */ base?: string; start?: WorktreeStart }
+export interface WorktreePlan { root: string; branch: string; taskPath: string; repoRoot: string; projectPath: string; stateDir?: string; /** 本地或远端跟踪分支;缺省 = 当前分支。 */ base?: string; start?: WorktreeStart }
 
 const BRANCH_PREFIX = 'cc/'
 const TIMEOUT_MS = 30_000
@@ -163,7 +164,7 @@ export function planWorktree(input: { stateDir: string; projectId: string; proje
   const rel = relative(repoRoot, projectPath)
   if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('invalid_worktree')
   const root = join(input.stateDir, 'worktrees', input.projectId, input.id)
-  return { root, branch: `${BRANCH_PREFIX}${input.id}`, taskPath: rel ? join(root, rel) : root, repoRoot, projectPath: input.projectPath, ...(input.base !== undefined ? { base: input.base } : {}) }
+  return { root, branch: `${BRANCH_PREFIX}${input.id}`, taskPath: rel ? join(root, rel) : root, repoRoot, projectPath: input.projectPath, stateDir: input.stateDir, ...(input.base !== undefined ? { base: input.base } : {}) }
 }
 
 /**
@@ -202,7 +203,8 @@ async function createWorktree(plan: WorktreePlan, options: PreparationOptions): 
       const save = () => writeJsonAtomicAsync(record, plan.start, { mode: 0o600 })
       await save()
       await copyIncludedFiles(plan.repoRoot, plan.root, { ...options, timeoutMs: Math.min(5000, budget.deadline - Date.now() - 250) })
-      plan.start.notices.push(...await copyWorkspaceDependencies(plan.repoRoot, plan.root, { ...options, timeoutMs: Math.min(15_000, budget.deadline - Date.now() - 250) }))
+      const dependencyOptions = { ...options, timeoutMs: Math.min(15_000, budget.deadline - Date.now() - 250) }
+      plan.start.notices.push(...await (plan.stateDir ? restoreWorkspaceDependencies(plan.repoRoot, plan.root, plan.stateDir, dependencyOptions) : copyWorkspaceDependencies(plan.repoRoot, plan.root, dependencyOptions)))
       budget.check()
       await save()
     } catch (error) {
@@ -326,10 +328,10 @@ export function mergeWorktree(repoRoot: string, root: string, branch: string): {
  * 目录已经在 ⇒ `worktree_conflict`;分支没了(主人删过)⇒ `worktree_branch_missing`;分支上没有任务目录 ⇒ 撤回检出、
  * `worktree_project_missing`。照常带上 .worktreeinclude 的文件。
  */
-export function reopenWorktree(repoRoot: string, root: string, branch: string, taskPath: string, options: PreparationOptions = {}): Promise<void> {
+export function reopenWorktree(repoRoot: string, root: string, branch: string, taskPath: string, options: PreparationOptions & { stateDir?: string } = {}): Promise<void> {
   return serializeCheckout(root, () => reopenCheckout(repoRoot, root, branch, taskPath, options))
 }
-async function reopenCheckout(repoRoot: string, root: string, branch: string, taskPath: string, options: PreparationOptions): Promise<void> {
+async function reopenCheckout(repoRoot: string, root: string, branch: string, taskPath: string, options: PreparationOptions & { stateDir?: string }): Promise<void> {
   const budget = new Preparation(options)
   const run = async (args: string[]) => (await budget.git(repoRoot, args)).trim()
   budget.check()
@@ -341,7 +343,8 @@ async function reopenCheckout(repoRoot: string, root: string, branch: string, ta
   try {
     await run(['worktree', 'add', root, branch])
     await copyIncludedFiles(repoRoot, root, { ...options, timeoutMs: Math.min(5000, budget.deadline - Date.now() - 250) })
-    await copyWorkspaceDependencies(repoRoot, root, { ...options, timeoutMs: Math.min(15_000, budget.deadline - Date.now() - 250) })
+    const dependencyOptions = { ...options, timeoutMs: Math.min(15_000, budget.deadline - Date.now() - 250) }
+    await (options.stateDir ? restoreWorkspaceDependencies(repoRoot, root, options.stateDir, dependencyOptions) : copyWorkspaceDependencies(repoRoot, root, dependencyOptions))
     budget.check()
     if (!existsSync(taskPath)) throw Error('worktree_project_missing')
   } catch (error) { await discardCheckoutAsync(repoRoot, root); throw error }

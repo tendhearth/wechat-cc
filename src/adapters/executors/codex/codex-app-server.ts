@@ -1,4 +1,5 @@
 import { taskEnvironment } from '../task-environment'
+import { TASK_LOOPBACK_PROXY, supportsTaskLoopback, verifyTaskLoopback, verifyEffectiveTaskLoopback, verifyTaskNetworkRequirements } from './codex-loopback'
 import { makePausableTimers, type PausableTimer } from '../../../lib/pausable-timers'
 import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../../../domain/turn-usage'
 import { makeProcessTreeFreezer } from '../../../lib/process-tree-freeze'
@@ -225,7 +226,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
 }
 
 /** 一条 app-server 会话(一个子进程、一个 thread)。工作台和对话侧共用这一份协议客户端;`chat` 见 CodexChatProfile。 */
-export async function spawnCodexAppServerSession(options: Options, project: AgentProject, context: SpawnContext, chat?: CodexChatProfile): Promise<CodexAppServerSession> {
+export async function spawnCodexAppServerSession(options: Options, project: AgentProject, context: SpawnContext, chat?: CodexChatProfile, loopbackVersionVerified = false): Promise<CodexAppServerSession> {
       const codexPath = (): string => typeof options.codexPathOverride === 'function' ? options.codexPathOverride() : options.codexPathOverride
       const execution = context.execution ? {...context.execution} : undefined
       const model = execution ? execution.model ?? (execution.defaults === 'provider' && !context.resumeSessionId ? context.model ?? options.model : undefined) : context.model ?? options.model
@@ -242,7 +243,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       // without overwriting the user's web-search mode before config/read.
       // 对话侧启动参数里什么都不带:工具与策略都在线程配置里(令牌不进 argv)。
       const taskEnv = !chat && context.workbenchTaskId ? await taskEnvironment(project.path, context.workbenchTaskId,{signal:context.preparationSignal}) : {}
-      const taskConfig = context.workbenchTaskId && !chat ? {
+      const taskConfig: ObjectValue = context.workbenchTaskId && !chat ? {
+        ...(loopbackVersionVerified ? { features: { ...discovery!.config.features, network_proxy: TASK_LOOPBACK_PROXY } } : {}),
         sandbox_workspace_write: { ...discovery!.config.sandbox_workspace_write, writable_roots: [taskEnv.TMPDIR!] },
         shell_environment_policy: { ...discovery!.config.shell_environment_policy, set: taskEnv, include_only: [...discovery!.config.shell_environment_policy.include_only, ...Object.keys(taskEnv)] },
       } : {}
@@ -266,6 +268,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       const questions = new Map<RpcId, UserQuestion>()
       let sequence = 0, threadId = '', active: Turn | undefined, buffer = ''
       let closing = false, exited = false, broken: Error | undefined, closePromise: Promise<void> | undefined
+      let taskLoopback = false
       let resolveExit!: () => void
       const exit = new Promise<void>(resolve => { resolveExit = resolve })
       const lifetime = context.workbenchLifecycle ? new EventQueue(() => fatal('codex_runtime_output_limit')) : undefined
@@ -301,10 +304,30 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         return true
       }
       const retainUnknown = (key: string) => { if (!unknownBackground.has(key) && runtimeCapacity()) { unknownBackground.add(key); writerRevision++ } }
-      const bufferCapacity = (incoming?: Message) => {
-        const messages = [...candidates.values()].flat().concat(active?.early ?? [])
-        if (messages.length >= 1000 || messages.reduce((size, message) => size + JSON.stringify(message).length, incoming ? JSON.stringify(incoming).length : 0) > 4_000_000) { fatal('codex_protocol_buffer_limit'); return false }
-        return true
+      let bufferCompacted = false
+      let omittedPreviews = 0, omittedPreviewBytes = 0
+      const previews = new Set(['item/commandExecution/outputDelta', 'item/fileChange/outputDelta', 'item/agentMessage/delta', 'item/reasoning/textDelta', 'item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded', 'item/plan/delta'])
+      const reconstructible = (message: Message) => message.id === undefined && previews.has(message.method ?? '')
+      const bufferCapacity = (incoming: Message) => {
+        // Quarantined previews have no visible consumer until lineage/start is
+        // verified. Drop them immediately instead of repeatedly serializing MB
+        // of output just to discover it will never be rendered.
+        if (reconstructible(incoming)) {
+          omittedPreviews++; omittedPreviewBytes += JSON.stringify(incoming).length
+          if (!bufferCompacted && (omittedPreviews >= 1000 || omittedPreviewBytes >= 4_000_000)) {
+            bufferCompacted = true
+            context.reportNotice?.('输出较多，已省略部分实时预览；任务继续，最终结果仍会保留。')
+          }
+          return false
+        }
+        const queues = [...candidates.values(), ...(active ? [active.early] : [])]
+        const fits = () => {
+          let count = 1, bytes = JSON.stringify(incoming).length
+          for (const queue of queues) for (const message of queue) { count++; bytes += JSON.stringify(message).length }
+          return count <= 1000 && bytes <= 4_000_000
+        }
+        if (fits()) return true
+        fatal('codex_protocol_buffer_limit'); return false
       }
       const pruneFinishedTurn = (turn: Turn) => {
         for (const [id, item] of turn.items) if (item.type !== 'commandExecution' || (turn.completedItems.has(id) && item.status !== 'inProgress')) turn.items.delete(id)
@@ -749,7 +772,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             // Native notifications can precede turn/start's response. Keep their
             // wire order until the acknowledged root turn can establish lineage.
             if (active && !active.id && params.threadId !== threadId && params.threadId && !descendants.has(params.threadId) && !candidates.has(params.threadId)) {
-              if (!bufferCapacity(message)) { fatal('codex_protocol_buffer_limit'); return }
+              if (!bufferCapacity(message)) return
               active.early.push(message); return
             }
             if (message.method === 'thread/started' && object(params.thread)) { verifyChild(params.thread); return }
@@ -757,7 +780,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             if (senderOwned) registerBackground(message)
             if (params.threadId !== threadId && candidates.has(params.threadId)) {
               const waiting = candidates.get(params.threadId)!
-              if (!bufferCapacity(message)) { fatal('codex_protocol_buffer_limit'); return }
+              if (!bufferCapacity(message)) return
               waiting.push(message); return
             }
             if (message.method === 'turn/started' && descendants.has(params.threadId) && codexItemId(params.turn?.id)) {
@@ -806,7 +829,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             return
           }
           if (!turn.id) {
-            if (lifetime && !bufferCapacity(message)) return
+            if (!bufferCapacity(message)) return
             if (turn.early.length > 1_000) { fatal('codex_protocol_buffer_limit'); return }
             turn.early.push(message); return
           }
@@ -930,9 +953,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       child.stdout.on('data', chunk => {
         if (closing) return
         buffer += String(chunk)
-        if (buffer.length > 4_000_000) { fatal('codex_protocol_buffer_limit'); return }
         while (buffer.includes('\n') && !closing) {
           const end = buffer.indexOf('\n'), line = buffer.slice(0, end); buffer = buffer.slice(end + 1)
+          if (line.length > 4_000_000) { fatal('codex_protocol_buffer_limit'); return }
           if (!line.trim()) continue
           try {
             const message: unknown = JSON.parse(line)
@@ -940,6 +963,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             route(message)
           } catch { fatal('codex_invalid_protocol_message') }
         }
+        if (buffer.length > 4_000_000) fatal('codex_protocol_buffer_limit')
       })
       // 对话侧留住 stderr 的最后一段:app-server 自己退出时(登录失效、配置坏了)真因常在这里,用来给错误补码。
       let stderrTail = ''
@@ -953,13 +977,27 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (!closing) fatal(`codex_process_exited: ${signal ?? code ?? 'unknown'}${chat && stderrTail.trim() ? `\n${stderrTail.trim().slice(-1000)}` : ''}`)
       })
       try {
-        const initialized = await request('initialize', { clientInfo: chat ? { name: 'tendhearth_cc', title: 'Tendhearth CC', version: APP_VERSION } : { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
+        const initialized = await request('initialize', { clientInfo: chat ? { name: 'tendhearth_cc', title: 'Tendhearth CC', version: APP_VERSION } : { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime || loopbackVersionVerified, requestAttestation: false } })
+        // Probe old CLIs with the original offline config; only verified 0.167
+        // can parse the nested proxy table on the enhanced launch.
+        if (!chat && context.workbenchTaskId && !loopbackVersionVerified && supportsTaskLoopback(initialized.userAgent)) {
+          await close()
+          return spawnCodexAppServerSession(options, project, context, chat, true)
+        }
+        if (loopbackVersionVerified && !supportsTaskLoopback(initialized.userAgent)) throw Error('codex_unverified_loopback_policy')
         // Registration-before-parent-result was verified with this exact native
         // protocol version. New/unknown versions retain instead of claiming EOF.
         registrationVerified = typeof initialized.userAgent === 'string' && /^[^/\r\n]+\/0\.153\.4(?:\s|$)/.test(initialized.userAgent)
         if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
+        if (loopbackVersionVerified) {
+          verifyTaskLoopback(native.config)
+          verifyEffectiveTaskLoopback(await request('experimentalFeature/list', {}))
+          verifyTaskNetworkRequirements(await request('configRequirements/read', {}))
+          taskLoopback = true
+          taskConfig.sandbox_workspace_write!.network_access = true
+        }
         // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
         spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
         const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
@@ -986,7 +1024,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
             ...resumeParams,
             cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
-            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
+            developerInstructions: context.appendInstructions ?? '', config: {...config,...taskConfig,features:{...config.features,...taskConfig.features},...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
             ...(model ? {model} : {}),
           })
           if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
@@ -1000,13 +1038,14 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           if (response.approvalPolicy !== chat.approvalPolicy || sandbox?.type !== SANDBOX_TYPE[chat.sandbox] ||
               (chat.approve && response.approvalsReviewer !== 'user')) throw new Error('codex_unverified_thread_policy')
         } else if (response.approvalPolicy !== 'on-request' || response.approvalsReviewer !== 'user' ||
-            sandbox?.type !== 'workspaceWrite' || sandbox.networkAccess !== false ||
+            sandbox?.type !== 'workspaceWrite' || sandbox.networkAccess !== taskLoopback ||
             sandbox.excludeTmpdirEnvVar !== true || sandbox.excludeSlashTmp !== true ||
             !Array.isArray(sandbox.writableRoots) || sandbox.writableRoots.some((root: unknown) => root !== project.path && root !== taskEnv.TMPDIR) ||
             (taskEnv.TMPDIR && !sandbox.writableRoots.includes(taskEnv.TMPDIR))) {
           throw new Error('codex_unverified_thread_policy')
         }
         threadId = response.thread.id
+        if (taskLoopback) verifyEffectiveTaskLoopback(await request('experimentalFeature/list', { threadId }))
         if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
       } catch (error) { await close(); throw error }
       const launch = (text: string, attachments?: readonly AgentAttachment[]) => {
