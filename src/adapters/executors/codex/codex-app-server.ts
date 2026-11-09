@@ -128,29 +128,29 @@ function turnInput(text: string, attachments: readonly AgentAttachment[] = []) {
 }
 
 class EventQueue {
-  private events: AgentEvent[] = []
+  private events: Array<{ event: AgentEvent; ready?: Promise<void> }> = []
   private ended = false
   private wake?: () => void
   private consuming = false
   private queuedSize = 0
   private overflowed = false
   constructor(private onOverflow?: () => void) {}
-  push(event: AgentEvent) {
+  push(event: AgentEvent, ready?: Promise<void>) {
     if (this.ended || (this.overflowed && event.kind !== 'error')) return
     const size = this.onOverflow ? JSON.stringify(event).length : 0
     if (!this.overflowed && this.onOverflow && (this.events.length >= 2000 || this.queuedSize + size > 8_000_000)) {
       this.overflowed = true; this.events = []; this.queuedSize = 0
       this.onOverflow(); return
     }
-    this.events.push(event); this.queuedSize += size; this.wake?.()
+    this.events.push({ event, ready }); this.queuedSize += size; this.wake?.()
   }
   end() { this.ended = true; this.wake?.() }
   async *iterate(): AsyncIterable<AgentEvent> {
     if (this.consuming) throw new Error('codex_events_already_consumed')
     this.consuming = true
     for (;;) {
-      const event = this.events.shift()
-      if (event) { if (this.onOverflow) this.queuedSize -= JSON.stringify(event).length; yield event; continue }
+      const entry = this.events.shift()
+      if (entry) { if (this.onOverflow) this.queuedSize -= JSON.stringify(entry.event).length; if (entry.ready) await entry.ready; yield entry.event; continue }
       if (this.ended) return
       await new Promise<void>(resolve => { this.wake = resolve })
       this.wake = undefined
@@ -264,6 +264,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       const lifetime = context.workbenchLifecycle ? new EventQueue(() => fatal('codex_runtime_output_limit')) : undefined
       let registrationVerified = false
       let retained = false, runtimeStarted = false, runtimeEnded = false, stopped = false
+      let writerRevision = 0, backgroundObserved = false
       const pendingStarts = new Set<Turn>()
       const rootTurns = new Map<string, Turn>(), descendants = new Map<string, string>()
       const childTurns = new Map<string, Turn>(), occurrences = new Map<string, Turn>()
@@ -292,7 +293,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (rootTurns.size + descendants.size + childTurns.size + occurrences.size + candidates.size + unknownBackground.size >= 10_000) { fatal('codex_runtime_record_limit'); return false }
         return true
       }
-      const retainUnknown = (key: string) => { if (!unknownBackground.has(key) && runtimeCapacity()) unknownBackground.add(key) }
+      const retainUnknown = (key: string) => { if (!unknownBackground.has(key) && runtimeCapacity()) { unknownBackground.add(key); writerRevision++ } }
       const bufferCapacity = (incoming?: Message) => {
         const messages = [...candidates.values()].flat().concat(active?.early ?? [])
         if (messages.length >= 1000 || messages.reduce((size, message) => size + JSON.stringify(message).length, incoming ? JSON.stringify(incoming).length : 0) > 4_000_000) { fatal('codex_protocol_buffer_limit'); return false }
@@ -343,6 +344,35 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         for (const item of turn.items.values()) if (item.type === 'commandExecution' && !turn.completedItems.has(item.id)) { retained = true; retainUnknown(`command:${turn.id}:${item.id}`) }
       }
       /**
+       * Approval can publish a synthetic command start before spawning it. If
+       * native spawn fails after acceptance, no canonical completion follows.
+       * A completed producer plus an empty native terminal registry is evidence
+       * that these process-less entries are not live writers. Never infer this
+       * from silence, the reply text, or app-server process-group exit alone.
+       */
+      const reconcileUnstartedCommands = (): Promise<void> | undefined => {
+        if (!lifetime) return
+        const owners = new Map<string, Array<{ producer: Turn; item: ObjectValue; key: string }>>()
+        // Recheck older terminal producers too: a followup can invalidate the
+        // first probe, and its eventual completion must not strand that entry.
+        for (const producer of [...rootTurns.values(), ...occurrences.values()]) {
+          if (!producer.terminal) continue
+          for (const item of producer.items.values()) {
+            const key = `command:${producer.id}:${item.id}`
+            if (item.type !== 'commandExecution' || item.processId || !unknownBackground.has(key)) continue
+            const commands = owners.get(producer.threadId) ?? []
+            commands.push({ producer, item, key }); owners.set(producer.threadId, commands)
+          }
+        }
+        if (!owners.size) return
+        const revision = writerRevision
+        const deadline = Date.now() + Math.min(options.closeTimeoutMs ?? 2_000, 2_500)
+        return Promise.all([...owners].map(([owner, commands]) => cleanupRequest('thread/backgroundTerminals/list', { threadId: owner, limit: 100 }, deadline, 'cc-check').then(response => {
+          if (stopped || closing || exited || broken || writerRevision !== revision || !Array.isArray(response.data) || response.data.length || response.nextCursor != null) return
+          for (const { producer, item, key } of commands) { unknownBackground.delete(key); producer.items.delete(item.id) }
+        }).catch(() => { /* Without native evidence the writer remains unconfirmed. */ }))).then(() => {})
+      }
+      /**
        * 主回合的边界超时(arch backlog #4 第 2 步;对话侧与工作台同一个看门狗,B1 起)。
        * 连不上时 app-server 不停发 `error{willRetry:true}`,本轮永远不结束 —— 工作台以前只能等
        * 10 分钟空闲上限。first_event:起轮后一条有进展的消息都没有;connect:开始重试后再没有进展。
@@ -382,7 +412,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
           if (!turn.occurrence.running) return
           dropPendingRequests(turn); retainUnfinishedCommands(turn)
           turn.occurrence.finish(event.kind === 'result' ? 'completed' : turn.cancelled ? 'interrupted' : 'failed')
-          turn.events.push(turn.occurrence.event()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn)
+          turn.events.push(turn.occurrence.event(), event.kind === 'result' ? reconcileUnstartedCommands() : undefined); childTurns.delete(turn.threadId); pruneFinishedTurn(turn)
           return
         }
         if (active !== turn) return
@@ -390,7 +420,10 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         dropPendingRequests(turn)
         if (lifetime) {
           retainUnfinishedCommands(turn)
-          turn.events.push(event); active = undefined; pruneFinishedTurn(turn)
+          // Keep stream order, and deliver the result with the reconciled
+          // snapshot so the service arms idle-close rather than turn_timeout.
+          const ready = event.kind === 'result' ? reconcileUnstartedCommands() : undefined
+          turn.events.push(event, ready); active = undefined; pruneFinishedTurn(turn)
           if (event.kind === 'error' || !retained) endRuntime()
         } else { turn.events.push(event); turn.events.end(); active = undefined }
 
@@ -408,9 +441,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
       }
       // Cleanup RPCs remain readable after new input/authority has been blocked.
       // They use the single close deadline and never create a fresh turn.
-      const cleanupRequest = (method: string, params: ObjectValue, deadline: number): Promise<ObjectValue> => {
+      const cleanupRequest = (method: string, params: ObjectValue, deadline: number, prefix = 'cc-close'): Promise<ObjectValue> => {
         if (exited || Date.now() >= deadline) return Promise.reject(new Error('codex_terminal_cleanup_unverified'))
-        const id = `cc-close-${++sequence}`
+        const id = `${prefix}-${++sequence}`
         return new Promise((resolve, reject) => {
           const timer = setTimeout(() => { rpcs.delete(id); reject(new Error('codex_terminal_cleanup_unverified')) }, Math.max(1, deadline - Date.now()))
           rpcs.set(id, {resolve,reject,clear:()=>clearTimeout(timer)}); send({id,method,params})
@@ -428,9 +461,14 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         const timeout = Math.min(options.closeTimeoutMs ?? 2_000, 2_500), deadline = Date.now() + timeout
         closePromise = Promise.resolve().then(async () => {
           let cleanupFailure: Error | undefined
+          // The verified registration barrier and completed producers establish
+          // that there is nothing detached to clean. Retention alone (e.g. an
+          // accepted followup or a reconciled synthetic start) is not a writer.
+          const commandUnconfirmed = [...rootTurns.values()].some(turn => [...turn.items.values()].some(item => item.type === 'commandExecution'))
+          const noBackgroundWriters = registrationVerified && !backgroundObserved && !commandUnconfirmed && !stoppingTurns.length && !pendingStarts.size && !descendants.size && !childTurns.size && !candidates.size && !unknownBackground.size
           // 冻住期间被整棵杀掉(terminate):进程已经不在了,收尾 RPC 没人接;后台终端是它的后代,
           // 冻住时一起登记、一起 SIGKILL 了 —— 不再当成「清理没核实」。
-          if (lifetime && threadId && !exited && !terminated) {
+          if (lifetime && threadId && !exited && !terminated && !noBackgroundWriters) {
             const cleanupDeadline = Date.now() + Math.max(50, Math.floor((deadline - Date.now()) * .55))
             const fence = async (turn: Turn) => {
               if (!turn.id || turn.terminal) return
@@ -478,7 +516,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             const uncoveredChild = [...unknownBackground].some(key => key.startsWith('child:') && !cleanupOwners.has(key.slice(6)) && !unverifiedChildren.includes(key.slice(6)))
             if (uncoveredChild || [...descendants.keys()].some(id => !cleanupOwners.has(id)) || candidates.size || [...childTurns.values()].some(turn => !turn.terminal)) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
             if (cleanupResults.some(result => result.status === 'rejected')) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
-          } else if (lifetime && !terminated && (retained || unknownBackground.size || stoppingTurns.some(turn => [...turn.items.values()].some(item => item.type === 'commandExecution')))) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
+          } else if (lifetime && !terminated && !noBackgroundWriters && (retained || unknownBackground.size || stoppingTurns.some(turn => [...turn.items.values()].some(item => item.type === 'commandExecution')))) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
           closing = true; rejectRpcs(new Error('codex_session_closed'))
           if (active) { if (!lifetime) active.events.end(); active = undefined }
           for (const turn of childTurns.values()) { turn.occurrence!.finish('interrupted'); lifetime?.push(turn.occurrence!.event()) }
@@ -652,14 +690,23 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         const params = message.params!, item = params.item
         if (!object(item) || !['item/started', 'item/completed'].includes(message.method!)) return
         if (['collabAgentToolCall', 'collabToolCall', 'subAgentActivity'].includes(item.type)) {
+          backgroundObserved = true
           retained = true
           const ids: unknown[] = item.type === 'subAgentActivity' ? [item.agentThreadId] : [...(Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []), item.receiverThreadId, item.newThreadId]
           for (const id of ids) if (codexItemId(id)) discoverChild(id)
           // An unknown launch remains retained even when it cannot be counted.
         }
+        // New writers invalidate an in-flight empty-registry observation.
+        // A final completion only removes a writer, so it cannot stale that
+        // evidence or strand another orphan from the same terminal producer.
+        if (item.type === 'commandExecution' && message.method === 'item/started') {
+          const producer = params.threadId === threadId ? rootTurns.get(params.turnId) : occurrences.get(`${params.threadId}:${params.turnId}`)
+          const previous = producer?.items.get(item.id)
+          if (!previous || (item.processId && item.processId !== previous.processId)) writerRevision++
+        }
         if (item.type === 'commandExecution' && message.method === 'item/completed') {
           const key = `command:${params.turnId}:${item.id}`
-          if (item.processId && item.exitCode == null && item.status === 'inProgress') { retained = true; retainUnknown(key) }
+          if (item.processId && item.exitCode == null && item.status === 'inProgress') { writerRevision++; backgroundObserved = true; retained = true; retainUnknown(key) }
           else unknownBackground.delete(key)
         }
       }
@@ -712,7 +759,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
               if (!runtimeCapacity()) return
               const owned = makeTurn(params.threadId, params.turn.id)
               owned.occurrence = new CodexChildOccurrence(params.threadId, params.turn.id, descendants.get(params.threadId)!)
-              childTurns.set(params.threadId, owned); occurrences.set(key, owned)
+              writerRevision++; childTurns.set(params.threadId, owned); occurrences.set(key, owned)
               owned.events.push(owned.occurrence.event()); return
             }
           }
@@ -738,8 +785,8 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             const previous = params.threadId === threadId ? rootTurns.get(params.turnId) : occurrences.get(`${params.threadId}:${params.turnId}`)
             if (previous && !current(previous) && previous.items.has(params.item.id)) {
               const item = {...previous.items.get(params.item.id), ...params.item}, event = codexActivityEvent(item, true)
-              if (event?.kind === 'tool_call' && event.activity) lifetime.push(previous.occurrence ? {...event,activity:{...event.activity,id:`${previous.occurrence.id}:${event.activity.id}`,parentId:previous.occurrence.id}} : event)
               if (item.status !== 'inProgress') previous.items.delete(item.id)
+              if (event?.kind === 'tool_call' && event.activity) lifetime.push(previous.occurrence ? {...event,activity:{...event.activity,id:`${previous.occurrence.id}:${event.activity.id}`,parentId:previous.occurrence.id}} : event, reconcileUnstartedCommands())
               return
             }
           }
@@ -849,7 +896,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
             if (turn.occurrence) {
               for (const item of Array.isArray(params.turn?.items) ? params.turn.items : []) if (item.type === 'agentMessage' && codexItemId(item.id) && typeof item.text === 'string') turn.occurrence.text(item.id, item.text, true)
               dropPendingRequests(turn); retainUnfinishedCommands(turn); turn.occurrence.finish(params.turn?.status)
-              turn.events.push(turn.occurrence.event()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn); return
+              turn.events.push(turn.occurrence.event(), reconcileUnstartedCommands()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn); return
             }
             if (params.turn?.status === 'completed' && !turn.cancelled) finish(turn, { kind: 'result', sessionId: threadId, numTurns: 1, durationMs: typeof params.turn.durationMs === 'number' ? params.turn.durationMs : Date.now() - turn.startedAt, ...(turn.usage ? { usage: turn.usage } : {}) })
             else if (params.turn?.status === 'interrupted') finish(turn, { kind: 'error', message: turn.cancelled ? 'Codex 本轮已停止。' : turn.rejectedOperation ? '这次操作已被拒绝，Codex 已结束本轮。可以补充要求后继续。' : 'Codex 本轮已中断，未能确认完成。可以补充要求后继续。' })
@@ -957,7 +1004,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         if (closing || exited || broken || stopped || runtimeEnded) throw broken ?? new Error('codex_session_closed')
         validateAttachments(attachments)
         const input = turnInput(text, attachments), turn = makeTurn()
-        active = turn; if (lifetime) pendingStarts.add(turn); turn.events.push({ kind: 'init', sessionId: threadId })
+        writerRevision++; active = turn; if (lifetime) pendingStarts.add(turn); turn.events.push({ kind: 'init', sessionId: threadId })
         armWatchdog(turn, 'first_event')
         const accepted = request('turn/start', { threadId, input }).then(response => {
           if (closing) throw new Error('codex_session_closed')
