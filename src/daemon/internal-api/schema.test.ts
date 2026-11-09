@@ -663,6 +663,6 @@ describe('schema lookup tables', () => {
   })
   it('RESPONSE_SCHEMAS has one entry per route', () => {
     // F1(架构终态):每一条 /v1 路由都有响应契约 —— 257 条(P3f 补齐手机专用与文件块的 29 条契约;G6 加了收回的话两条,S5 加了 presence 主题一条,P3e-1 / P3e-2 加了 /v1/matter/* 八条 + 七条),与路由表里 /v1 的条数相同。
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(272)
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(273)
   })
 })

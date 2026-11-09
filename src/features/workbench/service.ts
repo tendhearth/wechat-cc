@@ -50,6 +50,7 @@ interface Options {
   writerWatchMs?: number
   timeoutMs?: number
   closeTimeoutMs?: number
+  permissionPrompt?: ServiceCtx['deps']['permissionPrompt']
   permissionTimeoutMs?: number; permissionDecide?: ServiceCtx['deps']['permissionDecide']   // 放行规则(2026-10-19);不传 ⇒ 每条权限都问主人
   /** 保留会话安静下来、**没人等这个文件夹**时的空闲自动收工时长(ms;缺省 10 分钟)。
    *  纯粹是别让一个闲着的原生进程占着资源。允许 0(=立刻关)与很大的数(封顶约 24.8 天,即
@@ -313,6 +314,10 @@ export function makeWorkbenchService(opts: Options) {
     stopSuspendedForNetwork:lifecycleDomain.stopSuspendedForNetwork,
     networkSuspended:lifecycleDomain.networkSuspended,
     artifact:artifactsDomain.artifact,
+    permissionScript:(id:string,requestId:string,path:string,sha256:string,offset:number)=>{
+      const running=state.runsByTask.get(id);if(!running)throw Error('permission_stale')
+      return running.permissions.script(requestId,path,sha256,offset)
+    },
     approve:artifactsDomain.approve,
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
     reviewList:review.reviewList,

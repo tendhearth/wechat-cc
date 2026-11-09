@@ -27,6 +27,9 @@ function call<K extends PhoneApiKey, Q = void, B = void>(key: K, types?: { query
 type JobsActionT = 'pause' | 'resume' | 'remove'
 
 export const PHONE_CALLS = {
+  permissions: {
+    script:call('GET /v1/matter/permission-script',{query:t<{id:string;requestId:string;path:string;sha256:string;offset:number}>()}),
+  },
   conversation: {
     events: call('GET /v1/matter/owner-chat/events', {query:t<{since?:number}>()}),
     stop: call('POST /v1/matter/owner-chat/stop', {body:t<{turnId:string}>()}),

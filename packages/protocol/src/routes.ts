@@ -236,6 +236,7 @@ const ROUTE_TABLE = {
   'POST /v1/matter/permission': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'POST /v1/matter/answer': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   'GET /v1/matter/artifact': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
+  'GET /v1/matter/permission-script': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3;桌面双胞胎是 quota-handoff)
   'POST /v1/matter/handoff': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true }, phone: { link: 'none' } },
   // 独立工作区:提交到分支 / 删除 / 合回 / 另开 + 工作区脚本 run / stop(2026-10-07 / 10-20)

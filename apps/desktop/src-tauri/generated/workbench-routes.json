@@ -1,6 +1,6 @@
 {
   "_comment": "生成物,别手改:改 packages/protocol/src/routes.ts 后跑 bun run gen:routes",
-  "version": 11,
+  "version": 12,
   "tauri": [
     "GET /v1/access/list",
     "GET /v1/avatar/info",
@@ -23,6 +23,7 @@
     "GET /v1/matter/owner-chat/search",
     "GET /v1/matter/owner-chat/window",
     "GET /v1/matter/owner-chat/work",
+    "GET /v1/matter/permission-script",
     "GET /v1/matter/rewind",
     "GET /v1/matters",
     "GET /v1/memory/file",
@@ -137,6 +138,7 @@
     "GET /v1/matter/owner-chat/events",
     "GET /v1/matter/owner-chat/window",
     "GET /v1/matter/owner-chat/work",
+    "GET /v1/matter/permission-script",
     "GET /v1/matter/rewind",
     "GET /v1/memory/file",
     "GET /v1/memory/files",

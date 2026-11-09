@@ -36,6 +36,7 @@ import { saveFile } from './save-file.js'
 import { armConfirm, showToast } from '../view.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 import { V1, v1, v1Request } from '../daemon-client.js'
+import { readPermissionScript, presentPermissionScript } from './permission-script.js'
 
 /**
  * 「没确认退出」的下一步(2026-10-06):进程组还在 ⇒ 说清要先结束它(结束后会自动解除);
@@ -82,7 +83,7 @@ function forkHtml(task, providers) {
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,turnId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
-/** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
+/** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number,canAllowTask?:boolean,scripts?:Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean,expanded?:boolean}>}} Permission */
 /** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null,refusal?:{code:string,since:string}|null}} Provider */
 /** 执行者名 + 额度状态:用完 / 限流一眼看得出来;订阅执行者带上真实窗口(5h / 周)—— 那不是估算,是厂商自己回的。 @param {Provider} p */
 function providerLabel(p) {
@@ -429,7 +430,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const earlierHtml = earlierEvents.length ? `<details id="wb-earlier-dialogue" class="wb-disclosure wb-earlier-dialogue" data-timeline-disclosure><summary>之前的对话</summary>${renderWorkbenchTimeline(earlierEvents, { status:'completed', renderMessage, escapeHtml:escapeWorkbenchHtml, formatTime:time })}</details>` : ''
   const dialogueHtml = dialogueEvents.length ? renderWorkbenchTimeline(dialogueEvents, { status:detail?.task.status ?? '', runId:detail?.runId, runtime:detail?.runtime, renderMessage, escapeHtml:escapeWorkbenchHtml, formatTime:time })
     : `<p class="wb-empty-copy">${detail?.task.status === 'running' && detail.task.phase !== 'replied' ? `${escapeWorkbenchHtml(helper)} 正在处理，有回复时会按顺序显示在这里。` : detail?.task.status === 'queued' ? queuedCopy : request ? '' : '这项任务还没有对话记录。'}</p>`
-  const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions">${['deny-permission','allow-permission'].map(action=>`<button id="${permissionControlId(permission.taskId,permission.id,action)}" class="wb-btn${action==='allow-permission'?' wb-btn-primary':''}" type="button" data-action="${action}" data-owner-task="${escapeWorkbenchHtml(permission.taskId)}" data-request-id="${escapeWorkbenchHtml(permission.id)}">${action==='allow-permission'?'允许':'拒绝'}</button>`).join('')}</div></article>`).join('')}</section>` : ''
+  const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p>${renderPermissionScripts(permission.scripts,permission.taskId,permission.id)}<time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions">${['deny-permission','allow-permission',...(permission.canAllowTask?['allow-task-permission']:[])].map(action=>`<button id="${permissionControlId(permission.taskId,permission.id,action)}" class="wb-btn${action==='allow-permission'?' wb-btn-primary':''}" type="button" data-action="${action}" data-owner-task="${escapeWorkbenchHtml(permission.taskId)}" data-request-id="${escapeWorkbenchHtml(permission.id)}">${action==='allow-task-permission'?'本任务同命令都允许':action==='allow-permission'?'允许':'拒绝'}</button>`).join('')}</div></article>`).join('')}</section>` : ''
   const listedArtifacts = promoteArtifacts ? [...(detail?.artifacts ?? [])].sort((a,b) => Number(reviewIds.has(a.id)) - Number(reviewIds.has(b.id))) : detail?.artifacts ?? []
   const artifacts = listedArtifacts.length ? listedArtifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifactDisplayName(artifact.name))}</span><small>${/\.preview\.json$/i.test(artifact.name) ? '网页预览' : `${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}`}</small></button>`).join('') : ''
   const artifactPanel = renderArtifactPanel(detail?.artifacts ?? [], state.previewOpen || (state.preview && state.previewOpen !== false) ? selectedArtifact : undefined, state.preview)
@@ -807,6 +808,7 @@ export function initWorkbenchPage(deps) {
   }
   /** @type {Map<string, {signature:string,scrollTop:number}>} */
   const permissionScrollPositions = new Map()
+  const permissionScriptCache = new Map()
   /** @type {Map<string, number>} */
   const taskInfoScrollPositions = new Map()
   /** @type {Map<string,number>} */
@@ -963,6 +965,10 @@ export function initWorkbenchPage(deps) {
     const focusedPreviewAction = document.activeElement?.closest?.('.wb-artifact-panel') ? /** @type {HTMLElement} */ (document.activeElement).dataset.action : null
     const previousPreview = root.querySelector('#wb-preview')
     const previewScroll = previousPreview?.scrollTop ?? 0
+    for(const p of state.detail?.permissions??[])for(const s of p.scripts??[]){
+      const full=permissionScriptCache.get(JSON.stringify([p.taskId,p.id,s.path,s.sha256]))
+      if(full!==undefined){s.content=full;s.truncated=false;s.expanded=true}
+    }
     paintWorkbenchWithPreview(root, renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{quotaAttempt:quotaHandoffAttempts.get(state.detail?.task.id??''),sidebarDisclosures,catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')}))
     const nextPreview = root.querySelector('#wb-preview')
     if (nextPreview && sameScope) nextPreview.scrollTop = previewScroll
@@ -1257,6 +1263,17 @@ export function initWorkbenchPage(deps) {
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
     let action = target.dataset.action
+    if(action==='expand-permission-script'){
+      const taskId=target.dataset.ownerTask,requestId=target.dataset.requestId,path=target.dataset.scriptPath,sha256=target.dataset.scriptSha
+      if(!taskId||!requestId||!path||!sha256)return
+      target.disabled=true
+      try{
+        const content=await readPermissionScript(deps.invokeWorkbenchApi,{id:taskId,requestId,path,sha256})
+        permissionScriptCache.set(JSON.stringify([taskId,requestId,path,sha256]),content)
+        presentPermissionScript(root,{id:taskId,requestId,path,sha256},content)
+      }catch{target.disabled=false;target.textContent='读取失败，重试展开'}
+      return
+    }
     const reloadLivePreview = action === 'refresh-artifact'
     if (action === 'show-decisions') {
       const panel = root.querySelector('.wb-permissions,.wb-questions')
@@ -1603,7 +1620,7 @@ export function initWorkbenchPage(deps) {
     }
     if (action === 'archive-task' && controller.state.detail?.task.canArchive === true) return mutate(V1.workbench.archive, { id: controller.state.selectedId, archived: true })
     if (action === 'restore-task' && controller.state.detail?.task.archivedAt != null) return mutate(V1.workbench.archive, { id: controller.state.selectedId, archived: false })
-    if ((action === 'allow-permission' || action === 'deny-permission') && target.dataset.requestId) return mutate(V1.workbench.permission, { id: controller.state.selectedId, requestId: target.dataset.requestId, decision: action === 'allow-permission' ? 'allow' : 'deny' })
+    if ((action === 'allow-permission' || action === 'deny-permission' || action === 'allow-task-permission') && target.dataset.requestId) return mutate(V1.workbench.permission, { id: controller.state.selectedId, requestId: target.dataset.requestId, decision: action === 'allow-task-permission' ? 'allow_task' : action === 'allow-permission' ? 'allow' : 'deny' })
     if (action === 'copy-wechat-command' && controller.state.selectedId) { try { await navigator.clipboard.writeText(`任务 ${controller.state.selectedId}`) } catch { fail(new Error('复制不了，请手动选中任务编号。')) } return }
     const artifact = controller.state.detail?.artifacts?.find(a => a.id === controller.state.selectedArtifactId)
     if (!artifact) return
@@ -2023,3 +2040,6 @@ export function getActiveWorkbenchTaskId() { return active?.getTaskId() ?? null 
 
 /** The detail actually rendered, excluding an in-flight navigation target. */
 export function getViewedWorkbenchTaskId() { return active?.getViewedTaskId() ?? null }
+
+/** @param {Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean,expanded?:boolean}>|undefined} scripts @param {string} taskId @param {string} requestId */
+function renderPermissionScripts(scripts,taskId,requestId) { return (scripts??[]).map(s=>`<div class="wb-permission-script"><span>脚本 · ${escapeWorkbenchHtml(s.path)}</span><pre>${escapeWorkbenchHtml(s.error??(s.expanded?s.content:s.content.slice(0,2000)))}</pre>${s.truncated?`<button type="button" class="wb-btn" data-action="expand-permission-script" data-owner-task="${escapeWorkbenchHtml(taskId)}" data-request-id="${escapeWorkbenchHtml(requestId)}" data-script-path="${escapeWorkbenchHtml(s.path)}" data-script-sha="${escapeWorkbenchHtml(s.sha256)}">展开全文</button>`:!s.expanded&&s.content.length>2000?`<details><summary>展开全文</summary><pre>${escapeWorkbenchHtml(s.content)}</pre></details>`:''}</div>`).join('') }

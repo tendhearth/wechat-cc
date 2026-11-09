@@ -61,7 +61,7 @@ export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):Notice
     }
   }
   function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
-    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${label.slice(0,600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
+    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${label.slice(0,kind==='permission'?3500:600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
   }
   /**
    * 终审后修复第二轮 Important②b:非 retained 执行者 completed 终态时,

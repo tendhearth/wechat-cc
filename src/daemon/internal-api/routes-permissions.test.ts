@@ -8,6 +8,11 @@ const qs = () => new URLSearchParams()
 const items = [{ hash: 'abcde', chatId: 'owner', prompt: 'Bash: ls', since: 's', expires_at: 'e' }]
 
 describe('/v1/permissions/*', () => {
+  it('passes an explicit task decision to the same registry as one-shot permission',async()=>{
+    const resolve=vi.fn(()=>true),route=permissionRoutes({permissions:{list:()=>[],resolve}} as unknown as InternalApiDeps)['POST /v1/permissions/resolve']!
+    expect(await route(qs(),{hash:'task-card',decision:'allow_task'})).toEqual({status:200,body:{ok:true}})
+    expect(resolve).toHaveBeenCalledWith('task-card','allow_task')
+  })
   it('pending:没接线 503;接了 → { items }', async () => {
     const off = permissionRoutes({} as InternalApiDeps)['GET /v1/permissions/pending']!
     expect(await off(qs(), undefined)).toEqual({ status: 503, body: { error: 'permissions_not_wired' } })

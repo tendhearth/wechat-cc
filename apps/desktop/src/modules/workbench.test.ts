@@ -17,6 +17,17 @@ afterEach(() => {
 })
 
 describe('workbench rendering', () => {
+  it('renders an eligible task decision and an escaped script disclosure without widening other cards',async()=>{
+    const {renderWorkbench}=await import('./workbench.js')
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const permission={id:'request',taskId:task.id,tool:'Bash',description:'python3 check.py',createdAt:1,canAllowTask:true,scripts:[{path:'check.py',content:'<script>literal</script>'+'x'.repeat(2200)}]}
+    const state={tasks:[task],providers:[],defaultProvider:'codex',selectedId:task.id,detail:{task,events:[],artifacts:[],permissions:[permission]},selectedArtifactId:null,error:'',preview:null,canWechat:false}
+    const html=renderWorkbench(state)
+    expect(html).toContain('data-action="allow-task-permission"');expect(html).toContain('本任务同命令都允许')
+    expect(html).toContain('<summary>展开全文</summary>');expect(html).toContain('&lt;script&gt;literal&lt;/script&gt;')
+    expect(html).not.toContain('<script>literal</script>')
+    expect(renderWorkbench({...state,detail:{...state.detail,permissions:[{...permission,canAllowTask:false}]}})).not.toContain('data-action="allow-task-permission"')
+  })
   it('keeps model controls in the existing disclosures and distinguishes observations from next-run choices',async()=>{
     const {renderWorkbench}=await import('./workbench.js')
     const execution={defaults:'native' as const,model:'requested-model',reasoningEffort:'deep'},task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}

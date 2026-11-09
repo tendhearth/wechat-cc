@@ -1,7 +1,7 @@
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 
 /** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
-export interface PendingPermissionMeta { chatId: string; prompt: string }
+export interface PendingPermissionMeta { chatId: string; prompt: string; taskId?: string; canAllowTask?: boolean; scripts?: import('../ports/workbench').PermissionScript[] }
 
 /** 登记处的留痕口(构造参数):开卡写一行、了结删一行 —— 实现在 pending-cards.ts(v91 pending_cards)。 */
 export interface PendingCardJournal {
@@ -11,9 +11,13 @@ export interface PendingCardJournal {
 
 /** Row shape returned by PendingPermissions.list(). */
 /** `code` 是主人在微信里回的两位数(01–99,滚动分配);`hash` 是调用方的原 id,桌面卡片与 hook 轮询仍用它。 */
-export interface PendingPermissionView { hash: string; code: string; chatId: string; prompt: string; since: string; expires_at: string }
+export interface PendingPermissionView extends Omit<PendingPermissionMeta, 'chatId' | 'prompt'> { hash: string; code: string; chatId: string; prompt: string; since: string; expires_at: string }
 
 interface Entry {
+  /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
+  deadline?: () => number | null
+  onAllowTask?: () => boolean
+  consuming?: boolean
   resolve: (d: PermissionDecision) => void
   expiresAt: number
   registeredAt: number
@@ -44,7 +48,7 @@ export class PendingPermissions {
     this.changed()
   }
 
-  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta): Promise<PermissionDecision> {
+  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta, onAllowTask?: () => boolean, deadline?: () => number | null): Promise<PermissionDecision> {
     // 同一个 id 还挂着就又来一条(gemini 重开会话后 seq 从 1 重来;Claude 缺 toolUseID 时都落到同一个 id):
     // 先把旧的按超时了结 —— 原先直接覆盖,旧 promise 永远不 resolve,主人回的「y」也落到新的那条上(2026-10-10)。
     const prev = this.entries.get(hash)
@@ -53,6 +57,8 @@ export class PendingPermissions {
     const expiresAt = now + timeoutMs
     const promise = new Promise<PermissionDecision>((resolve) => {
       this.entries.set(hash, {
+        onAllowTask,
+        deadline,
         resolve,
         expiresAt,
         registeredAt: now,
@@ -118,7 +124,7 @@ export class PendingPermissions {
    */
   list(): PendingPermissionView[] {
     return Array.from(this.entries.entries())
-      .map(([hash, e]) => ({ hash, code: e.code, chatId: e.meta?.chatId ?? '', prompt: e.meta?.prompt ?? '', since: new Date(e.registeredAt).toISOString(), expires_at: new Date(e.expiresAt).toISOString() }))
+      .map(([hash, e]) => ({ hash, code: e.code, chatId: e.meta?.chatId ?? '', prompt: e.meta?.prompt ?? '', since: new Date(e.registeredAt).toISOString(), expires_at: new Date(e.expiresAt).toISOString(), ...(e.meta?.taskId?{taskId:e.meta.taskId}:{}), ...(e.meta?.canAllowTask?{canAllowTask:true}:{}), ...(e.meta?.scripts?{scripts:e.meta.scripts}:{}) }))
       .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
   }
 
@@ -136,10 +142,20 @@ export class PendingPermissions {
     return this.entries.get(hash)?.meta?.chatId ?? null
   }
 
-  consume(hash: string, decision: 'allow' | 'deny'): boolean {
+  consume(hash: string, decision: 'allow' | 'deny' | 'allow_task'): boolean {
     const entry = this.entries.get(hash)
-    if (!entry) return false
-    this.settle(hash, entry, decision)
+    if (!entry || entry.consuming) return false
+    const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
+    if (expiresAt !== null && Date.now() >= expiresAt) { this.settle(hash, entry, 'timeout'); return false }
+    if (decision === 'allow_task') {
+      if (!entry.meta?.canAllowTask || !entry.onAllowTask) return false
+      entry.consuming = true
+      let accepted = false
+      try { accepted = entry.onAllowTask() } catch { /* fail closed */ }
+      entry.consuming = false
+      if (!accepted) { this.settle(hash, entry, 'deny'); return false }
+    }
+    this.settle(hash, entry, decision === 'allow_task' ? 'allow' : decision)
     return true
   }
 
@@ -151,7 +167,7 @@ export class PendingPermissions {
    */
   fail(hash: string): boolean {
     const entry = this.entries.get(hash)
-    if (!entry) return false
+    if (!entry || entry.consuming) return false
     this.settle(hash, entry, 'undelivered')
     return true
   }
@@ -159,7 +175,8 @@ export class PendingPermissions {
   sweep(): void {
     const now = Date.now()
     for (const [hash, entry] of Array.from(this.entries.entries())) {
-      if (entry.expiresAt <= now) this.settle(hash, entry, 'timeout')
+      const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
+      if (expiresAt !== null && expiresAt <= now) this.settle(hash, entry, 'timeout')
     }
   }
 
@@ -179,15 +196,15 @@ export class PendingPermissions {
  */
 const ALLOW_WORDS = ['y', 'yes', '同意', '允许', '放行']
 const DENY_WORDS = ['n', 'no', '拒绝', '不允许', '不行']
-const PERMISSION_REPLY_RE = new RegExp(`^(${[...ALLOW_WORDS, ...DENY_WORDS].join('|')})\\s*([0-9]{1,2}|[A-Za-z0-9]{5})?$`, 'i')
+const PERMISSION_REPLY_RE = new RegExp(`^(yt|${[...ALLOW_WORDS, ...DENY_WORDS].join('|')})\\s*([0-9]{1,2}|[A-Za-z0-9]{5})?$`, 'i')
 
 export type PermissionReplyRef = { kind: 'code'; value: string } | { kind: 'hash'; value: string }
 
-export function parsePermissionReply(text: string): { decision: 'allow' | 'deny'; ref: PermissionReplyRef | null } | null {
+export function parsePermissionReply(text: string): { decision: 'allow' | 'deny' | 'allow_task'; ref: PermissionReplyRef | null } | null {
   const m = PERMISSION_REPLY_RE.exec(text.trim())
   if (!m) return null
   const word = m[1]!.toLowerCase()
-  const decision = ALLOW_WORDS.includes(word) ? 'allow' : 'deny'
+  const decision = word === 'yt' ? 'allow_task' : ALLOW_WORDS.includes(word) ? 'allow' : 'deny'
   const raw = m[2]
   if (!raw) return { decision, ref: null }
   if (/^[0-9]{1,2}$/.test(raw)) return { decision, ref: { kind: 'code', value: raw.padStart(2, '0') } }

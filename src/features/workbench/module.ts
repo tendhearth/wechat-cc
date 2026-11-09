@@ -54,7 +54,7 @@ export function workbenchModule(f: Foundation): DaemonModule<WorkbenchService> {
           (!!nativeId && Object.values(boot.sessionStore.all()).some(s => s.provider === providerId && s.session_id === nativeId)) ||
           cli.legacyClaims.conflicts({ owner: 'workbench', path, providerId, nativeId }) ||
           (!!nativeId && cli.cliEvents.sessions().some(s => s.source === providerId && s.session_id === nativeId && !!s.origin_agent)),
-        askUser: wxPerm.askUser, log: (t, l) => log(t, l),
+        askUser: wxPerm.askUser, permissionRegistry:wxPerm, log: (t, l) => log(t, l),
       }
     },
   })

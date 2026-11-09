@@ -198,6 +198,14 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       const fitted=withoutOldNarrationFor(scoped,caller.frameBudget)
       return framedTooLargeFor(fitted,caller.frameBudget)?{status:413,body:{error:'detail_too_large'}}:{status:200,body:JSON.parse(fitted)}
     },
+    'GET /v1/matter/permission-script': async (q,_b,caller) => {
+      const id=q.get('id'),request=q.get('requestId'),path=q.get('path'),sha=q.get('sha256'),rawOffset=q.get('offset'),offset=Number(rawOffset)
+      if(!id||!ID.test(id)||!request||!UUID.test(request)||!path||!sha||!/^[a-f0-9]{64}$/.test(sha)||rawOffset===null||!Number.isSafeInteger(offset)||offset<0)return invalid()
+      const m=deps.matters;if(!m)return{status:503,body:{error:'matters_not_wired'}}
+      try{
+        return{status:200,body:m.permissionScript(id,request,path,sha,offset,fromPhone(caller))}
+      }catch(e){return e instanceof Error&&e.message==='matter_not_found'?{status:404,body:{error:'matter_not_found'}}:{status:409,body:{error:'permission_stale'}}}
+    },
     // 可选材料(P3c-1,手机从这里说):requestId / runId / draftId / attachmentIds,规矩同工作台输入回执;带附件时 text 可以空。
     // 手机令牌按手机表面说(附件按主人那一份查、出生地按传输);错误回包带 cause(原始码),手机别名据此换成手机那一列。
     'POST /v1/matter/say': async (_query,body,caller) => {

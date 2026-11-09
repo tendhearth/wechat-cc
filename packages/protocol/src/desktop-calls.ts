@@ -115,6 +115,7 @@ export const DESKTOP_CALLS = {
     keys: call('POST /v1/llm/keys', body()),
   },
   matter: {
+    permissionScript:call('GET /v1/matter/permission-script',{query:t<{id:string;requestId:string;path:string;sha256:string;offset:number}>()}),
     get:call('GET /v1/matter',{query:t<{id:string}>()}),
     seen: call('POST /v1/matter/seen', { body: t<{ id: string; surface?: 'desktop' }>() }),
     ownerChatFile: call('GET /v1/matter/owner-chat/file', { query: t<{ id:string; i:number; offset:number; sha256?:string; size?:number }>() }),

@@ -32,7 +32,7 @@ const ROUND = '77777777-7777-4777-8777-777777777777', OLD_ROUND = '88888888-8888
 const COMMENT = '99999999-9999-4999-8999-999999999999'
 
 let stateDir: string, api: InternalApi, panel: SettingsPanel, localBase: string, operator: string, device: string, link: string
-type WbFn = 'detail' | 'cancel' | 'resolvePermission' | 'resolveAnswer' | 'artifact' | 'handOff' | 'worktreeAction' | 'scriptAction' | 'createEntry' | 'entryReceipt'
+type WbFn = 'detail' | 'cancel' | 'resolvePermission' | 'permissionScript' | 'resolveAnswer' | 'artifact' | 'handOff' | 'worktreeAction' | 'scriptAction' | 'createEntry' | 'entryReceipt'
   | 'reviewList' | 'markReviewFile' | 'returnReviewFiles' | 'reviewComment' | 'sendReviewComments' | 'rewindPreview' | 'rewind' | 'undoRewind'
 let wb: Record<WbFn, ReturnType<typeof vi.fn>>
 
@@ -42,6 +42,7 @@ beforeEach(async () => {
     detail: vi.fn(() => ({ task: TASK, events: [], runId: RUN, permissions: [{ id: REQ, taskId: ID, tool: 'Bash', description: 'rm', createdAt: 1 }], questions: [{ id: REQ, taskId: ID }], artifacts: [{ id: ART, taskId: ID, name: 'r.md', mime: 'text/markdown', size: CONTENT.length, sha256: SHA }], inputs: [] })),
     cancel: vi.fn(async () => ({ ...TASK, status: 'cancelling' })),
     resolvePermission: vi.fn(), resolveAnswer: vi.fn(),
+    permissionScript:vi.fn(()=>({content:'print("snapshot")\n',nextOffset:null})),
     artifact: vi.fn(() => ({ name: 'r.md', mime: 'text/markdown', size: CONTENT.length, sha256: SHA, contentBase64: CONTENT.toString('base64') })),
     handOff: vi.fn(() => ({ taskId: 'cafebabe', created: true })),
     worktreeAction: vi.fn(() => ({ branch: 'cc/deadbeef', committed: true, sha: 'abc1234', mergeHint: 'git merge cc/deadbeef' })),
@@ -159,6 +160,16 @@ describe('手机令牌走新键:语义同并之前的 /m/api/matter/*,错误码�
     expect(desk.status).toBe(400); expect(await desk.json()).toEqual({ error: 'invalid_request' })
     expect(wb.cancel).not.toHaveBeenCalled()
   })
+  it('task decisions and script snapshots share the device/operator routes; link tokens cannot read scripts',async()=>{
+    const path=`/v1/matter/permission-script?id=${ID}&requestId=${REQ}&path=check.py&sha256=${SHA}&offset=0`
+    const response=await viaPanel(path,{d:device})
+    expect(response.status).toBe(200);expect(await response.json()).toEqual({content:'print("snapshot")\n',nextOffset:null})
+    expect(wb.permissionScript).toHaveBeenCalledWith(ID,REQ,'check.py',SHA,0)
+    expect((await viaPanel(path,{t:link})).status).toBe(403)
+    expect((await viaPanel('/v1/matter/permission',{d:device},post({id:ID,runId:RUN,requestId:REQ,decision:'allow_task'}))).status).toBe(200)
+    expect(wb.resolvePermission).toHaveBeenCalledWith(ID,REQ,'allow_task')
+  })
+
   it('批准 / 回答:不是这一轮的、这一项不在了 ⇒ 409 permission_stale / question_stale,不批', async () => {
     expect((await viaPanel('/v1/matter/permission', { d: device }, post({ id: ID, runId: RUN, requestId: REQ, decision: 'allow' }))).status).toBe(200)
     expect(wb.resolvePermission).toHaveBeenCalledWith(ID, REQ, 'allow')

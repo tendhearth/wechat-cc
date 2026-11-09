@@ -5,6 +5,7 @@ import { createPet } from './pet/pet.js'
 import { createPresenceFeed } from './pet/bridge/presence-feed.js'
 import { createPetBridge } from './pet/bridge/pet-bridge.js'
 import { createPermissionCard } from './pet/permission/permission-card.js'
+import { readPermissionScript } from './modules/permission-script.js'
 import { invokeApi, invokeWorkbenchApi } from './api.js'
 import { openSeenMatter } from './matter-seen.js'
 import { invoke } from './ipc.js'
@@ -87,6 +88,7 @@ function observeNow() { if (!document.hidden) void feed.refresh() }
 // 不能看 invoke 的返回 —— 浏览器预览的 mockInvoke 对任何未知命令都回 {}。
 const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {string} */ t) => document.createElement(t) }, {
   canResolve: !mock,
+  readScript: query => readPermissionScript(invokeWorkbenchApi,query),
   // 三种结局要分清楚(spec §6):真的拍板了 = resolved;请求通了但这条已经不在了
   // (微信那端刚点过 / 过期)= gone —— 卡片直接收掉,别说「没送出去」;只有请求
   // 本身挂了(没凭据、超时、403)才是 failed,那才该留下重试提示。

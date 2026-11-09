@@ -7,7 +7,7 @@
 //   「微信里有一条等你确认」;真要点的人去微信点,别给一个按下去必然 403 的按钮。
 // - 全部节点走注入的 makeEl,不用 innerHTML(prompt 是不可信文本)。
 
-/** @typedef {{ hash: string, prompt: string, since: string, expires_at: string }} PermissionItem */
+/** @typedef {{ hash: string, prompt: string, since: string, expires_at: string, taskId?:string, canAllowTask?:boolean, scripts?:Array<{path:string,content:string,error?:string,sha256?:string,truncated?:boolean}> }} PermissionItem */
 
 const TITLE = '这个要你看一下'
 const FAIL_NOTE = ' 没送出去,再试一次'
@@ -21,9 +21,9 @@ const FAIL_NOTE = ' 没送出去,再试一次'
  * @typedef {'resolved' | 'gone' | 'failed'} ResolveOutcome
  *
  * @param {{ el: any, makeEl: (tag: string) => any }} root
- * @param {{ canResolve: boolean, onResolve: (hash: string, decision: 'allow' | 'deny') => Promise<ResolveOutcome> }} opts
+ * @param {{ canResolve: boolean, readScript?:(query:{id:string,requestId:string,path:string,sha256:string})=>Promise<string>, onResolve: (hash: string, decision: 'allow' | 'deny' | 'allow_task') => Promise<ResolveOutcome> }} opts
  */
-export function createPermissionCard(root, { canResolve, onResolve }) {
+export function createPermissionCard(root, { canResolve, onResolve, readScript }) {
   const el = root.el
   /** @param {string} tag @param {string} cls @param {string} [text] */
   const make = (tag, cls, text) => {
@@ -41,6 +41,7 @@ export function createPermissionCard(root, { canResolve, onResolve }) {
   /** @type {any} */ let view = null
   /** @type {any} */ let allow = null
   /** @type {any} */ let deny = null
+  /** @type {any} */ let allowTask = null
 
   // 标题里还挂着计数 span:真 DOM 里改 textContent 会把子节点清掉,所以改完再挂回去。
   /** @param {string} text */
@@ -52,19 +53,20 @@ export function createPermissionCard(root, { canResolve, onResolve }) {
 
   function hide() {
     hash = null
-    title = count = pre = view = allow = deny = null
+    title = count = pre = view = allow = deny = allowTask = null
     el.replaceChildren()
     el.hidden = true
   }
 
   /**
-   * @param {'allow' | 'deny'} decision
+   * @param {'allow' | 'deny' | 'allow_task'} decision
    */
   async function decide(decision) {
     if (!hash) return
     const target = hash
     if (allow) allow.disabled = true
     if (deny) deny.disabled = true
+    if (allowTask) allowTask.disabled = true
     /** @type {ResolveOutcome} */
     let outcome = 'failed'
     try { outcome = await onResolve(target, decision) } catch { outcome = 'failed' }
@@ -74,6 +76,7 @@ export function createPermissionCard(root, { canResolve, onResolve }) {
     if (hash !== target) return
     if (allow) allow.disabled = false
     if (deny) deny.disabled = false
+    if (allowTask) allowTask.disabled = false
     setTitle(TITLE + FAIL_NOTE)
   }
 
@@ -93,6 +96,28 @@ export function createPermissionCard(root, { canResolve, onResolve }) {
       pre = make('pre', 'pet-card-prompt', item.prompt ?? '')
       pre.hidden = true
       card.appendChild(pre)
+      const scriptList=make('div','pet-card-scripts')
+      for (const script of item.scripts??[]) {
+        const block=make('div','pet-card-script')
+        block.appendChild(make('p','pet-card-note',`脚本 · ${script.path}`))
+        const preview=make('pre','pet-card-prompt',script.error??script.content.slice(0,2000));block.appendChild(preview)
+        if(script.truncated&&readScript&&item.taskId&&script.sha256){
+          const taskId=item.taskId,sha256=script.sha256
+          const expand=make('button','pet-card-script-expand','展开全文');expand.setAttribute('type','button')
+          expand.addEventListener('click',async()=>{
+            expand.disabled=true
+            try{preview.textContent=await readScript({id:taskId,requestId:item.hash,path:script.path,sha256});expand.remove()}
+            catch{expand.disabled=false;expand.textContent='读取失败，重试展开'}
+          });block.appendChild(expand)
+        }else if(script.content.length>2000){
+          const full=make('details','pet-card-script-full')
+          full.appendChild(make('summary','pet-card-note','展开全文'))
+          full.appendChild(make('pre','pet-card-prompt',script.content))
+          block.appendChild(full)
+        }
+        scriptList.appendChild(block)
+      }
+      if(item.scripts?.length)card.appendChild(scriptList)
 
       const actions = make('div', 'pet-card-actions')
       allow = make('button', 'pet-card-allow', '允许')
@@ -107,6 +132,12 @@ export function createPermissionCard(root, { canResolve, onResolve }) {
       view.addEventListener('click', () => { setExpanded(!!pre && pre.hidden) })
       actions.appendChild(allow)
       actions.appendChild(deny)
+      if(item.canAllowTask){
+        allowTask=make('button','pet-card-allow-task','本任务同命令都允许')
+        allowTask.setAttribute('type','button')
+        allowTask.addEventListener('click',()=>{decide('allow_task')})
+        actions.appendChild(allowTask)
+      }
       actions.appendChild(view)
       card.appendChild(actions)
     } else {

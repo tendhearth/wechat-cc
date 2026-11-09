@@ -235,7 +235,7 @@ export interface InternalApiDeps {
    */
   permissions?: {
     list(): import('../pending-permissions').PendingPermissionView[]
-    resolve(hash: string, decision: 'allow' | 'deny'): boolean
+    resolve(hash: string, decision: 'allow' | 'deny' | 'allow_task'): boolean
   }
   /**
    * 自改流水线跟主人打交道的三件事(spec 2026-09-18-self-change-pipeline)。

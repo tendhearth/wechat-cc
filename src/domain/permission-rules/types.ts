@@ -30,6 +30,8 @@ export interface PermissionAsk {
   tier: Tier
   /** 防一路放行的计数单位:任务 id / 终端 session_id。 */
   scope: string
+  /** 当前任务精确命令的内容指纹(含 cwd 和脚本快照),由批准适配器生成。 */
+  commandHash?: string
 }
 
 export interface Decision {
@@ -43,6 +45,9 @@ export interface Decision {
 }
 
 export interface RuleWhen {
+  /** 任务内临时规则;与 commandHash 成对,不生成全局前缀许可。 */
+  scope?: string
+  commandHash?: string
   surface?: Surface
   provider?: string
   /** 路径前缀(按分隔符边界;`~` 展开)。 */

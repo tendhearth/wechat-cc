@@ -191,7 +191,7 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
   }
   function resolvePermission(id:string,requestId:string,decision:PermissionDecision):void {
     store.get(id)
-    if (decision!=='allow' && decision!=='deny') throw new Error('invalid_decision')
+    if (decision!=='allow' && decision!=='deny' && decision!=='allow_task') throw new Error('invalid_decision')
     const running=state.runsByTask.get(id)
     if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
     ctx.hub.bumped(id)
