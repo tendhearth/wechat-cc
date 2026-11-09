@@ -7,6 +7,7 @@ import { matchRule } from '../permission-rules/rules-file'
 import type { Rule } from '../../domain/permission-rules/types'
 import { EDIT_REPORTING_PROVIDERS } from '../permission-rules/decide'
 import { redactSecrets } from '../../domain/cli-transcript'
+import type { PermissionExecutionEnvironment } from './permission-executable'
 
 /**
  * 执行者报上来要批准的调用(Claude 的 canUseTool 落到「问」、Codex app-server 的审批、ACP 的权限卡、OpenAI 兼容任务的
@@ -49,6 +50,9 @@ export function makeRunPermissions(opts: {
   root?: string
   provider?: string
   stateDir?: string
+  /** Only an adapter that owns direct execution can assert this contract.
+   * CLI boolean bridges do not supply it; even absolute names may be functions. */
+  executionEnvironment?: () => PermissionExecutionEnvironment | undefined
   timeoutMs?: number
   audit?: (event: WorkbenchPermissionAudit) => void
   /** 放行规则:登记之前先问。allow / deny ⇒ 不登记、不发 request 审计(主人收不到通知),只记 outcome 带 by。 */
@@ -110,7 +114,7 @@ export function makeRunPermissions(opts: {
       id: randomUUID(),
       taskId: opts.taskId,
       tool,
-      description: snapshot.requiresBoundExecution ? `${description}\n\n脚本预览仅为读取时快照。当前执行入口不能绑定执行字节，已阻止放行；请改用原生文件工具或可核实的逐条命令。` : description,
+      description: snapshot.scripts.length || snapshot.requiresBoundExecution ? `${description}\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。` : description,
       createdAt: Date.now(),
       ...(snapshot.hash ? { canAllowTask: true } : {}),
       ...(snapshot.scripts.length ? { scripts: snapshot.scripts.map(s => s.content.length > 2000 ? { ...s, content: s.content.slice(0, 2000), truncated: true } : { ...s }) } : {}),
@@ -150,7 +154,7 @@ export function makeRunPermissions(opts: {
       if (!entry) return ''
       const { permission, snapshot, facts } = entry
       const label = snapshot.requiresBoundExecution
-        ? `${permission.tool} · 此执行入口无法绑定批准字节，已阻止放行。详情请在批准卡查看。`
+        ? `${permission.tool} · 需要你单次批准，详情请在批准卡查看。`
         : `${permission.tool} · ${facts.command ? redactSecrets(facts.command).slice(0, 1200) : '详情请在批准卡查看。'}`
       const files = snapshot.scripts.filter(s => s.sha256).map(s => `脚本 ${s.path}\nSHA-256: ${s.sha256}\n内容请在桌面或手机批准卡查看。`)
       if (snapshot.scripts.some(s => !s.sha256)) files.push('有文件无法安全读取，详情请在批准卡查看。')
@@ -184,18 +188,6 @@ export function makeRunPermissions(opts: {
         entry.finish(false,'expired')
         return false
       }
-      // A boolean approval cannot bind bytes consumed later by a different
-      // process. Until the adapters support that, neither single nor task
-      // approval can authorize these executions, even when the hash is stable.
-      if ((decision === 'allow' || decision === 'allow_task') && entry.snapshot.requiresBoundExecution) {
-        entry.finish(false, 'ended')
-        return false
-      }
-      if ((decision === 'allow' || decision === 'allow_task') && entry.snapshot.scripts.some(s => s.sha256)) {
-        const current = inspectPermissionCommand(entry.facts, opts)
-        const hashes = (s: CommandSnapshot) => JSON.stringify(s.scripts.map(f => [f.path, f.sha256, f.error]))
-        if (hashes(current) !== hashes(entry.snapshot)) { entry.finish(false, 'ended'); return false }
-      }
       if (decision === 'allow_task') {
         if (!EDIT_REPORTING_PROVIDERS.has(opts.provider ?? '') || !entry.permission.canAllowTask || !entry.snapshot.hash) return false
         const current = inspectPermissionCommand(entry.facts, opts)
@@ -204,8 +196,7 @@ export function makeRunPermissions(opts: {
         if(audited)rules.push({ id: `task-${id}`, when: { surface: 'workbench', scope: opts.taskId, provider: opts.provider, tool: entry.facts.tool, commandHash: current.hash }, then: 'allow', note: '主人批准本任务内同命令' })
         return audited
       }
-      entry.finish(decision === 'allow', decision)
-      return true
+      return entry.finish(decision === 'allow', decision)
     },
     rejectAll(outcome: Extract<PermissionOutcome, 'cancelled' | 'ended'> = 'ended'): void {
       closed = true

@@ -17,6 +17,7 @@ interface Entry {
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
   deadline?: () => number | null
   onAllowTask?: () => boolean
+  onDecision?: (decision: 'allow' | 'deny' | 'allow_task') => boolean
   consuming?: boolean
   resolve: (d: PermissionDecision) => void
   expiresAt: number
@@ -48,7 +49,7 @@ export class PendingPermissions {
     this.changed()
   }
 
-  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta, onAllowTask?: () => boolean, deadline?: () => number | null): Promise<PermissionDecision> {
+  register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta, onAllowTask?: () => boolean, deadline?: () => number | null, onDecision?: Entry['onDecision']): Promise<PermissionDecision> {
     // 同一个 id 还挂着就又来一条(gemini 重开会话后 seq 从 1 重来;Claude 缺 toolUseID 时都落到同一个 id):
     // 先把旧的按超时了结 —— 原先直接覆盖,旧 promise 永远不 resolve,主人回的「y」也落到新的那条上(2026-10-10)。
     const prev = this.entries.get(hash)
@@ -58,6 +59,7 @@ export class PendingPermissions {
     const promise = new Promise<PermissionDecision>((resolve) => {
       this.entries.set(hash, {
         onAllowTask,
+        onDecision,
         deadline,
         resolve,
         expiresAt,
@@ -147,7 +149,17 @@ export class PendingPermissions {
     if (!entry || entry.consuming) return false
     const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
     if (expiresAt !== null && Date.now() >= expiresAt) { this.settle(hash, entry, 'timeout'); return false }
-    if (decision === 'allow_task') {
+    if (decision === 'allow_task' && !entry.meta?.canAllowTask) return false
+    if (entry.onDecision) {
+      entry.consuming = true
+      let accepted = false
+      try { accepted = entry.onDecision(decision) } catch { /* server did not acknowledge */ }
+      entry.consuming = false
+      if (!accepted) {
+        if (entry.deadline?.() === 0) this.settle(hash, entry, 'deny')
+        return false
+      }
+    } else if (decision === 'allow_task') {
       if (!entry.meta?.canAllowTask || !entry.onAllowTask) return false
       entry.consuming = true
       let accepted = false

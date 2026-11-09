@@ -106,7 +106,16 @@ beforeEach(() => {
 afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); Object.defineProperty(process, 'platform', platform); vi.restoreAllMocks() })
 
 describe('ACP provider — chat-side options', () => {
-  it.each([false, true])('P1-4: opaque/truncated ACP execution is denied by the real permission manager (truncated=%s)', async truncated => {
+  it('R2: a bridged one-shot request preserves its full command and selects allow-once', async () => {
+    const command = `echo ${'x'.repeat(2500)}; git status`, requestPermission = vi.fn(async () => true)
+    const { session, child } = await start({ requestPermission }, undefined, { text: 'append', permissions: 'bridge' })
+    const { done } = collect(session); await prompted(child)
+    permission(child, 'full-command', { toolCall: { toolCallId: 'full', kind: 'execute', title: 'full command', rawInput: { command } } })
+    await expect.poll(() => child.sent.find(m => m.id === 'full-command')?.result).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
+    expect(requestPermission).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command }), expect.any(AbortSignal))
+    child.finishPrompt(); await done
+  })
+  it.each([false, true])('P1-4: opaque/long ACP execution supports one-shot owner approval (longCommand=%s)', async truncated => {
     const permissions = makeRunPermissions({ taskId: 'task', provider: 'cursor' })
     try {
       const { session, child } = await start({ requestPermission: (request, signal) => permissions.request(request, signal) }, undefined, { text: 'append', permissions: 'bridge' })
@@ -117,8 +126,10 @@ describe('ACP provider — chat-side options', () => {
       await expect.poll(() => permissions.pending().length).toBe(1)
       const card = permissions.pending()[0]!
       expect(card.canAllowTask).not.toBe(true)
+      expect(permissions.resolve(card.id, 'allow_task')).toBe(false)
+      expect(permissions.resolve(card.id, 'allow')).toBe(true)
+      await expect.poll(() => child.sent.find(m => m.id === 'opaque-script')?.result).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
       expect(permissions.resolve(card.id, 'allow')).toBe(false)
-      await expect.poll(() => child.sent.find(m => m.id === 'opaque-script')?.result).toEqual({ outcome: { outcome: 'selected', optionId: 'reject-once' } })
       child.finishPrompt(); await done
     } finally { permissions.rejectAll() }
   })

@@ -155,7 +155,7 @@ export function makeWorkbenchClaudeCanUseTool(
     let allowed = false
     try {
       // 放行规则(2026-10-19)要原文:命令、文件路径(拿不到就不给)。
-      const facts = toolInputFacts(input)
+      const facts = toolInputFacts(input, true)
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,

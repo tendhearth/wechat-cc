@@ -12,10 +12,10 @@ afterEach(() => { for (const fn of cleanup.splice(0).reverse()) fn() })
 function fixture(provider = 'codex', gate?: PermissionDecide) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-approval-security-')))
   cleanup.push(() => rmSync(root, { recursive: true, force: true }))
-  const permissions = makeRunPermissions({ taskId: 'task', provider, root, decide: gate })
+  const permissions = makeRunPermissions({ taskId: 'task', provider, root, decide: gate, executionEnvironment: () => ({ kind: 'direct', env: { PATH: '/usr/bin:/bin' } }) })
   cleanup.push(() => permissions.rejectAll())
   const request = (command: string) => permissions.request({ tool: 'Bash', command, description: command, cwd: root })
-  const inspect = (command: string) => inspectPermissionCommand({ tool: 'Bash', command, cwd: root }, { taskId: 'task', provider, root })
+  const inspect = (command: string) => inspectPermissionCommand({ tool: 'Bash', command, cwd: root }, { taskId: 'task', provider, root, executionEnvironment: () => ({ kind: 'direct', env: { PATH: '/usr/bin:/bin' } }) })
   return { root, permissions, request, inspect }
 }
 
@@ -38,7 +38,7 @@ it.each(['cursor', 'custom-acp', 'agy', ''])('P1-1: %s cannot establish a task g
   }
 })
 
-it('P1-1: a failed gate cannot create a grant; an existing task grant cannot override later rule ask/deny', async () => {
+it.skipIf(process.platform === 'win32')('P1-1: a failed gate cannot create a grant; an existing task grant cannot override later rule ask/deny', async () => {
   const broken = fixture('codex', async () => { throw Error('gate unavailable') })
   const answer = broken.request('echo ok')
   await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
@@ -92,26 +92,32 @@ it('P1-3: rejects unquoted zsh equals expansion while preserving quoted/escaped 
   expect(literalCommand("echo '=git'")).toEqual(['echo', '=git'])
   expect(literalCommand('echo \\=git')).toEqual(['echo', '=git'])
   const f = fixture()
-  expect(f.inspect("echo '=git'").hash).toBeTruthy()
+  if (process.platform === 'win32') expect(f.inspect("echo '=git'").hash).toBeUndefined()
+  else expect(f.inspect("echo '=git'").hash).toBeTruthy()
   expect(f.inspect('echo =git').hash).toBeUndefined()
-  expect(f.inspect('echo Upper').hash).not.toBe(f.inspect('echo upper').hash)
+  if (process.platform === 'win32') expect(literalCommand('echo Upper')).not.toEqual(literalCommand('echo upper'))
+  else expect(f.inspect('echo Upper').hash).not.toBe(f.inspect('echo upper').hash)
 })
 
 it.each(['make check', 'just check', 'unknown-runner ./helper', 'bun test', 'npx vitest', 'python3 -c "pass"'])('P1-2/P1-4: unbound execution entry %s never gets reusable permission', command => {
   expect(fixture().inspect(command).hash).toBeUndefined()
 })
 
-it.each(['Bash', 'execute', 'shell', 'commandExecution'])('P1-4: opaque %s execution cannot bypass the byte-binding requirement', async tool => {
+it.each(['Bash', 'execute', 'shell', 'commandExecution'])('P1-4: opaque %s execution requires a fresh one-shot owner decision', async tool => {
   const f = fixture(), answer = f.permissions.request({ tool, description: 'opaque executor operation', cwd: f.root })
   const card = f.permissions.pending()[0]!
-  expect(f.permissions.resolve(card.id, 'allow')).toBe(false)
-  expect(await answer).toBe(false)
+  expect(card.canAllowTask).not.toBe(true)
+  expect(f.permissions.resolve(card.id, 'allow_task')).toBe(false)
+  expect(f.permissions.resolve(card.id, 'allow')).toBe(true)
+  expect(await answer).toBe(true)
 })
 
-it.each(['other', 'tool', 'custom-command'])('P1-4: a self-reported %s tool kind cannot hide explicit script command facts', async tool => {
+it.each(['other', 'tool', 'custom-command'])('P1-4: a self-reported %s tool kind cannot grant automatic permission for script facts', async tool => {
   const f = fixture(), answer = f.permissions.request({ tool, command: 'python3 helper.py', description: 'script operation', cwd: f.root })
-  expect(f.permissions.resolve(f.permissions.pending()[0]!.id, 'allow')).toBe(false)
-  expect(await answer).toBe(false)
+  expect(f.permissions.pending()[0]!.canAllowTask).not.toBe(true)
+  expect(f.permissions.resolve(f.permissions.pending()[0]!.id, 'allow_task')).toBe(false)
+  expect(f.permissions.resolve(f.permissions.pending()[0]!.id, 'allow')).toBe(true)
+  expect(await answer).toBe(true)
 })
 
 it('P2-6: permission notice command summaries redact tokens before their own length cap', async () => {
@@ -122,26 +128,27 @@ it('P2-6: permission notice command summaries redact tokens before their own len
   f.permissions.resolve(card.id, 'deny'); expect(await answer).toBe(false)
 })
 
-it.each(['sudo python3 helper', 'find . -exec ./helper \\;', 'rg --pre ./helper term', 'sort --compress-program=./helper input', 'git -c alias.check=helper check', 'git diff --ext-diff', 'git status', 'rg --hostname-bin=./helper --hyperlink-format=default term src', 'sort --compress-prog=./helper input', 'wget --use-askpass=./helper localhost'])('P1-4: native program delegation %s cannot bypass the script execution boundary', async command => {
+it.each(['sudo python3 helper', 'find . -exec ./helper \\;', 'rg --pre ./helper term', 'sort --compress-program=./helper input', 'git -c alias.check=helper check', 'git diff --ext-diff', 'git status', 'rg --hostname-bin=./helper --hyperlink-format=default term src', 'sort --compress-prog=./helper input', 'wget --use-askpass=./helper localhost'])('P1-4: native program delegation %s cannot create a reusable grant', async command => {
   const f = fixture(), answer = f.request(command), card = f.permissions.pending()[0]!
   expect(card.canAllowTask).not.toBe(true)
-  expect(f.permissions.resolve(card.id, 'allow')).toBe(false)
-  expect(await answer).toBe(false)
+  expect(f.permissions.resolve(card.id, 'allow_task')).toBe(false)
+  expect(f.permissions.resolve(card.id, 'allow')).toBe(true)
+  expect(await answer).toBe(true)
 })
 
-it.each(['allow', 'allow_task'] as const)('P1-4: %s cannot release unbound script bytes, including a shared allow rule', async decision => {
+it.each(['allow', 'allow_task'] as const)('P1-4: %s distinguishes one-shot script invocation from automatic approval', async decision => {
   for (const gate of [undefined, async () => ({ verdict: 'allow' as const, by: 'rule' })]) {
     const f = fixture('codex', gate); writeFileSync(join(f.root, 'check.py'), 'print("approved")\n')
     const answer = f.request('python3 check.py')
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
     const card = f.permissions.pending()[0]!
     expect(card).toBeDefined()
-    expect(card.description).toContain('不能绑定执行字节')
+    expect(card.description).toContain('预览是批准时的快照，运行以当时内容为准')
     expect(card.canAllowTask).not.toBe(true)
-    expect(f.permissions.resolve(card.id, decision)).toBe(false)
+    expect(f.permissions.resolve(card.id, decision)).toBe(decision === 'allow')
     if (decision === 'allow_task') f.permissions.resolve(card.id, 'deny')
-    // Controlled execution barrier: the adapter has not resumed/opened the file.
+    // Invocation approval explicitly permits runtime content and dependencies.
     writeFileSync(join(f.root, 'check.py'), 'print("replaced after approval")\n')
-    expect(await answer).toBe(false)
+    expect(await answer).toBe(decision === 'allow')
   }
 })

@@ -457,7 +457,7 @@ export function makeIlinkAdapter(opts: {
     listPendingPermissions() { return pending.list() },
     resolvePermission(hash, decision) { return pending.consume(hash, decision) },
     pendingPermissionCodeOf(hash) { return pending.codeOf(hash) },
-    registerPendingPermission(hash, timeoutMs, meta, options) { return pending.register(hash, timeoutMs, meta, options?.onAllowTask, options?.deadline) },
+    registerPendingPermission(hash, timeoutMs, meta, options) { return pending.register(hash, timeoutMs, meta, options?.onAllowTask, options?.deadline, options?.onDecision) },
     sweepPendingPermissions() { pending.sweep() },
 
     async flush() {

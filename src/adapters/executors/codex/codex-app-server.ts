@@ -591,7 +591,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
               const to = object(change.kind) ? (change.kind.move_path ?? change.kind.movePath) : undefined
               return typeof to === 'string' && to ? [String(change.path), to] : [String(change.path)]
             }) } : {})
-          : (typeof command === 'string' && command.trim() ? { command: command.slice(0, 2000), ...(typeof params.cwd === 'string' && params.cwd ? { cwd: params.cwd } : {}) } : {})
+          : (typeof command === 'string' && command.trim() ? { command: chat ? command.slice(0, 2000) : command, ...(typeof params.cwd === 'string' && params.cwd ? { cwd: params.cwd } : {}) } : {})
         if (!supported) {
           send({ id, result: { decision: entry.rejection } })
           // 对话:只拒这一条(codex 会把它记成失败,模型看得到),会话照常 —— 和以前「一律拒」同一个落点。

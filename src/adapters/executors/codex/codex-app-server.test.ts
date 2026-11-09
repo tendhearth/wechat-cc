@@ -607,7 +607,17 @@ describe('workbench Codex app-server', () => {
     completed(child); await run.done
   })
 
-  it.each([false, true].flatMap(extraGrant => ['replace', 'symlink'].map(change => ({ extraGrant, change }))))('P1-4: never sends accept for unbound script bytes at the RPC barrier ($change, extraGrant=$extraGrant)', async ({ change, extraGrant }) => {
+  it('R2: the one-shot command/cwd stay complete and only the original RPC id receives accept', async () => {
+    const command = `echo ${'x'.repeat(2500)}; git status`, requestPermission = vi.fn(async () => true)
+    const { session, child } = await start({ requestPermission }), run = collect(session); await begun(child)
+    approval(child, 'full-command', undefined, { command, cwd: '/project/full' })
+    await expect.poll(() => child.sent.find(m => m.id === 'full-command')?.result).toEqual({ decision: 'accept' })
+    expect(requestPermission).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command, cwd: '/project/full' }), expect.any(AbortSignal))
+    expect(child.sent.filter(m => m.id === 'full-command')).toHaveLength(1)
+    completed(child); await run.done
+  })
+
+  it.each([false, true].flatMap(extraGrant => ['replace', 'symlink'].map(change => ({ extraGrant, change }))))('P1-4: sends exactly one accept for the owner-approved invocation ($change, extraGrant=$extraGrant)', async ({ change, extraGrant }) => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-codex-script-barrier-')))
     const permissions = makeRunPermissions({ taskId: 'task', root, provider: 'codex' })
     let release!: () => void
@@ -624,13 +634,15 @@ describe('workbench Codex app-server', () => {
       await expect.poll(() => permissions.pending().length).toBe(1)
       const card = permissions.pending()[0]!
       if (!extraGrant) expect(card.scripts?.[0]?.content).toBe('print("reviewed")\n')
-      permissions.resolve(card.id, 'allow')
+      expect(card.canAllowTask).not.toBe(true)
+      expect(permissions.resolve(card.id, 'allow')).toBe(true)
       if (change === 'replace') writeFileSync(join(root, 'check.py'), 'print("replaced")\n')
       else { writeFileSync(join(root, 'other.py'), 'print("replacement")\n'); unlinkSync(join(root, 'check.py')); symlinkSync('other.py', join(root, 'check.py')) }
       expect(child.sent.some(m => m.id === 'script-barrier')).toBe(false)
       release()
-      await expect.poll(() => child.sent.find(m => m.id === 'script-barrier')?.result).toEqual({ decision: 'decline' })
+      await expect.poll(() => child.sent.find(m => m.id === 'script-barrier')?.result).toEqual({ decision: 'accept' })
       expect(child.sent.filter(m => m.id === 'script-barrier')).toHaveLength(1)
+      expect(permissions.resolve(card.id, 'allow')).toBe(false)
       completed(child); await run.done
     } finally { release(); permissions.rejectAll(); removeTempDir(root) }
   })

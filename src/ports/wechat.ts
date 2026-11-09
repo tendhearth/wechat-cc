@@ -197,7 +197,7 @@ export interface WechatPermissions {
   /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
   pendingPermissionCodeOf(hash: string): string | null
   /** 只登记一条待批,**不发卡**(外发不通时条目留着,主人换个面拍板)。= pending.register. */
-  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta, opts?: {onAllowTask?:()=>boolean;deadline?:()=>number|null}): Promise<PermissionDecision>
+  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta, opts?: {onAllowTask?:()=>boolean;deadline?:()=>number|null;onDecision?:(decision:'allow'|'deny'|'allow_task')=>boolean}): Promise<PermissionDecision>
   /** 到点扫一遍待批(把过期的 resolve 成 timeout)。= pending.sweep. */
   sweepPendingPermissions(): void
 }

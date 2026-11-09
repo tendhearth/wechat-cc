@@ -90,13 +90,12 @@ function observeNow() { if (!document.hidden) void feed.refresh() }
 const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {string} */ t) => document.createElement(t) }, {
   canResolve: !mock,
   readScript: query => readPermissionScript(invokeWorkbenchApi,query),
-  // 三种结局要分清楚(spec §6):真的拍板了 = resolved;请求通了但这条已经不在了
-  // (微信那端刚点过 / 过期)= gone —— 卡片直接收掉,别说「没送出去」;只有请求
-  // 本身挂了(没凭据、超时、403)才是 failed,那才该留下重试提示。
+  // Only the server's true result acknowledges a decision. A false result may
+  // mean rejection rather than disappearance; the next feed clears stale cards.
   onResolve: async (hash, decision) => {
     try {
       const r = /** @type {any} */ (await invoke('pet_permission_resolve', { hash, decision }))
-      return r === true ? 'resolved' : 'gone'
+      return r === true ? 'resolved' : 'failed'
     } catch (err) { console.warn('pet_permission_resolve failed', err); return 'failed' }
     // 不管成没成:立刻要一份,让卡片的去留由 daemon 的列表说了算(微信那端也可能刚点过)。
     finally { void feed.refresh() }

@@ -62,7 +62,7 @@ describe('run-bound Workbench permissions', () => {
     const outcomeFailure=makeRunPermissions({taskId:'deadbeef',timeoutMs:1000,audit:()=>{if(++calls===2)throw new Error('audit unavailable')}})
     const answer=outcomeFailure.request({tool:'Bash',command: 'rm build', description:'remove output'})
     const id=outcomeFailure.pending()[0]!.id
-    expect(outcomeFailure.resolve(id,'allow')).toBe(true)
+    expect(outcomeFailure.resolve(id,'allow')).toBe(false)
     await expect(answer).resolves.toBe(false)
     expect(outcomeFailure.pending()).toEqual([])
   })

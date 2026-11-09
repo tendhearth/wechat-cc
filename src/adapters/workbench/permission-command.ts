@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { realpathSync } from 'node:fs'
 import { readAnchoredFile } from './anchored-fs'
 import { floorReason, isLowRisk, toolClass } from '../permission-rules/floor'
 import { EDIT_REPORTING_PROVIDERS } from '../permission-rules/decide'
+import { inspectPermissionExecutable, PERMISSION_SYSTEM_DIRS, type PermissionExecutable, type PermissionExecutionEnvironment } from './permission-executable'
 import type { PermissionAsk } from '../../domain/permission-rules/types'
 import type { PermissionScript } from '../../ports/workbench'
 
@@ -40,18 +41,20 @@ export function literalCommand(command: string, assignments: boolean[] = []): st
 
 // These native commands do not take a script entry. This is only an execution
 // classification, not an allow list: existing rules/red lines still run first.
-// Unknown programs, shell syntax, wrappers and build tools fail closed until an
-// execution adapter can actually consume an approved immutable execution tree.
+// Unknown programs, shell syntax, wrappers and build tools require an explicit
+// one-shot decision. They never create automatic task grants.
 const NATIVE_COMMANDS = new Set(['echo', 'pwd', 'true', 'false', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'rm', 'mkdir', 'touch', 'cp', 'mv', 'chmod', 'diff', 'uniq', 'date', 'uname', 'sleep'])
 export function needsBoundExecution(command: string): boolean {
   const assignments: boolean[] = [], argv = literalCommand(command, assignments)
   if (!argv) return true
   const start = argv.findIndex((_w, i) => !assignments[i]), head = argv[start] ?? ''
-  return start !== 0 || !NATIVE_COMMANDS.has(head)
+  return start !== 0 || !NATIVE_COMMANDS.has(head.split(/[\\/]/).at(-1)!)
 }
 
-export interface CommandSnapshot { ask: PermissionAsk; scripts: PermissionScript[]; hash?: string; requiresBoundExecution?: boolean }
-export function inspectPermissionCommand(facts: { tool: string; command?: string; paths?: string[]; cwd?: string; requiresBoundExecution?: true }, opts: { taskId: string; root?: string; provider?: string; stateDir?: string }, depth = 0): CommandSnapshot {
+/** requiresBoundExecution is a legacy internal name for the automatic-approval
+ * veto. It never vetoes an explicit owner one-shot invocation decision. */
+export interface CommandSnapshot { ask: PermissionAsk; scripts: PermissionScript[]; hash?: string; requiresBoundExecution?: boolean; executable?: PermissionExecutable }
+export function inspectPermissionCommand(facts: { tool: string; command?: string; paths?: string[]; cwd?: string; requiresBoundExecution?: true }, opts: { taskId: string; root?: string; provider?: string; stateDir?: string; executionEnvironment?: () => PermissionExecutionEnvironment | undefined }, depth = 0): CommandSnapshot {
   const ask: PermissionAsk = { surface: 'workbench', provider: opts.provider ?? '', tool: facts.tool, command: facts.command,
     paths: facts.paths, cwd: facts.cwd ?? null, project: opts.root ?? null, isolatedWorktree: false, tier: 'admin', scope: opts.taskId }
   const snapshot: CommandSnapshot = { ask, scripts: [], requiresBoundExecution: facts.requiresBoundExecution || (facts.command
@@ -68,9 +71,14 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
   const start = argv.findIndex((_w, i) => !assignments[i])
   const head = argv[start] ?? ''
   const program = head.split(/[\\/]/).at(-1)!
+  let environment: PermissionExecutionEnvironment | undefined
+  try { environment = opts.executionEnvironment?.() } catch { /* Unknown execution identity: owner can still allow once. */ }
+  const executable = inspectPermissionExecutable(head, cwd, environment)
+  if (executable) snapshot.executable = executable
+  else eligible = false
   // Task permission only narrows the existing low-risk gate. Never infer that an
   // unrecognized runner has no mutable code just because scripts is empty.
-  if (!['echo', 'pwd', 'true', 'false'].includes(head) && !isLowRisk(ask)) eligible = false
+  if (!['echo', 'pwd', 'true', 'false'].includes(program) && !isLowRisk({ ...ask, command: [program, ...argv.slice(start + 1)].join(' ') })) eligible = false
   if(argv.some((word,i)=>i!==start&&((isAbsolute(word)&&!inside(word))||word.split(/[\\/]/).includes('..'))))eligible=false
   if(argv.some(word=>/^(?:--cwd|--prefix|--directory|--dir)(?:=|$)/.test(word)||word==='-C'))eligible=false
   if(argv.slice(0,start).some(word=>/^(?:PATH|BASH_ENV|ENV|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONSTARTUP)=/.test(word)))eligible=false
@@ -78,7 +86,8 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
   // Inline programs / modules may load mutable code invisible in the card.
   if (argv.some(w => /^(?:-[cem]|--eval|--require|--import|--preload)(?:=|$)/.test(w))) return snapshot
   const runtime = /^(?:python[\d.]*|node|bun|deno|bash|sh|zsh|ruby|perl)$/.test(head.split(/[\\/]/).at(-1)!)
-  const candidates = argv.filter((w, i) => /\.(?:py|[cm]?js|tsx?|sh|bash|zsh|rb|pl)$/i.test(w) || (i === start && !runtime && /[\\/]/.test(w)))
+  const systemNativeHead = isAbsolute(head) && NATIVE_COMMANDS.has(program) && PERMISSION_SYSTEM_DIRS.has(dirname(resolve(head)))
+  const candidates = argv.filter((w, i) => /\.(?:py|[cm]?js|tsx?|sh|bash|zsh|rb|pl)$/i.test(w) || (i === start && !runtime && !executable && !systemNativeHead && /[\\/]/.test(w)))
   if (program === 'source' || program === '.') {
     const entry = argv[start + 1]
     if (entry && !entry.startsWith('-') && !candidates.includes(entry)) candidates.push(entry)
@@ -137,8 +146,8 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
       if (floorReason({ ...ask, command: script.content }, undefined, { stateDir: opts.stateDir })) eligible = false
     } catch (e) { script.content = ''; script.error = e instanceof Error ? e.message : '脚本不可读'; eligible = false }
   }
-  if (eligible) {
-    snapshot.hash = hash(JSON.stringify([cwd, argv, assignments.slice(0, start + 1), snapshot.scripts.map(s => [s.path, s.sha256])]))
+  if (eligible && !snapshot.scripts.length) {
+    snapshot.hash = hash(JSON.stringify([cwd, argv, assignments.slice(0, start + 1), executable]))
     ask.commandHash = snapshot.hash
   }
   return snapshot

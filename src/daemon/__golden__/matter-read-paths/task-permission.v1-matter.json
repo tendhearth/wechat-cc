@@ -76,7 +76,7 @@
       },
       {
         "kind": "system",
-        "text": "权限请求：Bash · Run the migration against the local db\n\n脚本预览仅为读取时快照。当前执行入口不能绑定执行字节，已阻止放行；请改用原生文件工具或可核实的逐条命令。 · <uuid:7>",
+        "text": "权限请求：Bash · Run the migration against the local db\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。 · <uuid:7>",
         "createdAt": 1793412600000
       }
     ],
@@ -87,7 +87,7 @@
         "id": "<uuid:7>",
         "taskId": "<task:permission>",
         "tool": "Bash",
-        "description": "Run the migration against the local db\n\n脚本预览仅为读取时快照。当前执行入口不能绑定执行字节，已阻止放行；请改用原生文件工具或可核实的逐条命令。",
+        "description": "Run the migration against the local db\n\n预览是批准时的快照，运行以当时内容为准。允许仅限本请求、本轮和这一次调用；脚本及运行时依赖可能变化。",
         "createdAt": 1793412600000
       }
     ],
