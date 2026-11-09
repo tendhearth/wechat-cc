@@ -48,7 +48,9 @@ export function needsBoundExecution(command: string): boolean {
   const assignments: boolean[] = [], argv = literalCommand(command, assignments)
   if (!argv) return true
   const start = argv.findIndex((_w, i) => !assignments[i]), head = argv[start] ?? ''
-  return start !== 0 || !NATIVE_COMMANDS.has(head.split(/[\\/]/).at(-1)!)
+  // 只认不带路径的裸命令名:`./ls`、`/tmp/x/ls` 是可写脚本,同名也不能借此解除强制询问(第三轮复审 P1)。
+  // 真正的执行身份由 permission-executable 另外核对,只用于任务放行资格。
+  return start !== 0 || /[\\/]/.test(head) || !NATIVE_COMMANDS.has(head)
 }
 
 /** requiresBoundExecution is a legacy internal name for the automatic-approval
