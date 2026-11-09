@@ -1,3 +1,5 @@
+import { permissionReason } from '../domain/permission-denial'
+
 export type PermissionDecision = 'allow' | 'deny' | 'timeout' | 'undelivered'
 
 /** Desktop-facing description of a pending permission ask (CC 桌宠 Phase B). */
@@ -17,7 +19,7 @@ interface Entry {
   /** 工作台使用运行权限的时钟;null = 网络暂停、停表。 */
   deadline?: () => number | null
   onAllowTask?: () => boolean
-  onDecision?: (decision: 'allow' | 'deny' | 'allow_task') => boolean
+  onDecision?: (decision: 'allow' | 'deny' | 'allow_task', reason?: string) => boolean
   consuming?: boolean
   resolve: (d: PermissionDecision) => void
   expiresAt: number
@@ -144,7 +146,8 @@ export class PendingPermissions {
     return this.entries.get(hash)?.meta?.chatId ?? null
   }
 
-  consume(hash: string, decision: 'allow' | 'deny' | 'allow_task'): boolean {
+  consume(hash: string, decision: 'allow' | 'deny' | 'allow_task', rawReason?: string): boolean {
+    const reason = permissionReason(rawReason, decision)
     const entry = this.entries.get(hash)
     if (!entry || entry.consuming) return false
     const expiresAt = entry.deadline ? entry.deadline() : entry.expiresAt
@@ -153,7 +156,7 @@ export class PendingPermissions {
     if (entry.onDecision) {
       entry.consuming = true
       let accepted = false
-      try { accepted = entry.onDecision(decision) } catch { /* server did not acknowledge */ }
+      try { accepted = entry.onDecision(decision, reason) } catch { /* server did not acknowledge */ }
       entry.consuming = false
       if (!accepted) {
         if (entry.deadline?.() === 0) this.settle(hash, entry, 'deny')
@@ -212,7 +215,15 @@ const PERMISSION_REPLY_RE = new RegExp(`^(yt|${[...ALLOW_WORDS, ...DENY_WORDS].j
 
 export type PermissionReplyRef = { kind: 'code'; value: string } | { kind: 'hash'; value: string }
 
-export function parsePermissionReply(text: string): { decision: 'allow' | 'deny' | 'allow_task'; ref: PermissionReplyRef | null } | null {
+export function parsePermissionReply(text: string): { decision: 'allow' | 'deny' | 'allow_task'; ref: PermissionReplyRef | null; reason?: string } | null {
+  const refusal = /^(n|no|拒绝|不允许|不行)\s*([0-9]{1,2}|[A-Za-z0-9]{5})\s+([\s\S]+)$/i.exec(text.trim())
+  if (refusal) {
+    try {
+      const reason = permissionReason(refusal[3], 'deny')
+      const raw = refusal[2]!
+      return { decision: 'deny', ref: /^[0-9]{1,2}$/.test(raw) ? { kind: 'code', value: raw.padStart(2, '0') } : { kind: 'hash', value: raw }, ...(reason ? { reason } : {}) }
+    } catch { return null }
+  }
   const m = PERMISSION_REPLY_RE.exec(text.trim())
   if (!m) return null
   const word = m[1]!.toLowerCase()

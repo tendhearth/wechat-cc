@@ -92,9 +92,9 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
   readScript: query => readPermissionScript(invokeWorkbenchApi,query),
   // Only the server's true result acknowledges a decision. A false result may
   // mean rejection rather than disappearance; the next feed clears stale cards.
-  onResolve: async (hash, decision) => {
+  onResolve: async (hash, decision, reason) => {
     try {
-      const r = /** @type {any} */ (await invoke('pet_permission_resolve', { hash, decision }))
+      const r = /** @type {any} */ (await invoke('pet_permission_resolve', { hash, decision, ...(reason ? { reason } : {}) }))
       return r === true ? 'resolved' : 'failed'
     } catch (err) { console.warn('pet_permission_resolve failed', err); return 'failed' }
     // 不管成没成:立刻要一份,让卡片的去留由 daemon 的列表说了算(微信那端也可能刚点过)。

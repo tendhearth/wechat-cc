@@ -443,7 +443,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       return (await api.home.seen({ body: { until } })).seen_until
     },
     async decide(p) {
-      await api.matters.permission({ body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })
+      await api.matters.permission({ body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision, ...(p.reason ? { reason: p.reason } : {}) } })
     },
     async permissionScript(p) { return await api.permissions.script({query:p}) },
     async artifactChunk(p) {

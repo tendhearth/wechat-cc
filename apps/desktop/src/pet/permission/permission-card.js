@@ -21,7 +21,7 @@ const FAIL_NOTE = ' 没送出去,再试一次'
  * @typedef {'resolved' | 'gone' | 'failed'} ResolveOutcome
  *
  * @param {{ el: any, makeEl: (tag: string) => any }} root
- * @param {{ canResolve: boolean, readScript?:(query:{id:string,requestId:string,path:string,sha256:string})=>Promise<string>, onResolve: (hash: string, decision: 'allow' | 'deny' | 'allow_task') => Promise<ResolveOutcome> }} opts
+ * @param {{ canResolve: boolean, readScript?:(query:{id:string,requestId:string,path:string,sha256:string})=>Promise<string>, onResolve: (hash: string, decision: 'allow' | 'deny' | 'allow_task', reason?: string) => Promise<ResolveOutcome> }} opts
  */
 export function createPermissionCard(root, { canResolve, onResolve, readScript }) {
   const el = root.el
@@ -42,6 +42,7 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
   /** @type {any} */ let allow = null
   /** @type {any} */ let deny = null
   /** @type {any} */ let allowTask = null
+  /** @type {any} */ let denialReason = null
 
   // 标题里还挂着计数 span:真 DOM 里改 textContent 会把子节点清掉,所以改完再挂回去。
   /** @param {string} text */
@@ -53,7 +54,7 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
 
   function hide() {
     hash = null
-    title = count = pre = view = allow = deny = allowTask = null
+    title = count = pre = view = allow = deny = allowTask = denialReason = null
     el.replaceChildren()
     el.hidden = true
   }
@@ -67,9 +68,10 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
     if (allow) allow.disabled = true
     if (deny) deny.disabled = true
     if (allowTask) allowTask.disabled = true
+    if (denialReason) denialReason.disabled = true
     /** @type {ResolveOutcome} */
     let outcome = 'failed'
-    try { outcome = await onResolve(target, decision) } catch { outcome = 'failed' }
+    try { outcome = await onResolve(target, decision, ...(decision === 'deny' && denialReason?.value?.trim() ? [denialReason.value.trim()] : [])) } catch { outcome = 'failed' }
     // resolved 与 gone 都意味着「这条不用你再管了」——只有 failed 才留提示。
     if (outcome !== 'failed') { hide(); return }
     // 等待期间卡片可能已经换了一条(另一端 resolve 掉了这条)—— 那就别去动新卡片。
@@ -77,6 +79,7 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
     if (allow) allow.disabled = false
     if (deny) deny.disabled = false
     if (allowTask) allowTask.disabled = false
+    if (denialReason) denialReason.disabled = false
     setTitle(TITLE + FAIL_NOTE)
   }
 
@@ -119,6 +122,11 @@ export function createPermissionCard(root, { canResolve, onResolve, readScript }
       }
       if(item.scripts?.length)card.appendChild(scriptList)
 
+      denialReason = make('textarea', 'pet-card-denial-reason')
+      denialReason.setAttribute('placeholder', '拒绝理由（选填）')
+      denialReason.setAttribute('aria-label', '拒绝理由（选填）')
+      denialReason.setAttribute('maxlength', '2000')
+      card.appendChild(denialReason)
       const actions = make('div', 'pet-card-actions')
       allow = make('button', 'pet-card-allow', '允许')
       allow.setAttribute('type', 'button')

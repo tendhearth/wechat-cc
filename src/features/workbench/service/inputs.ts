@@ -189,11 +189,11 @@ export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
     finally{running.delivering=false}
     return store.liveInputs.get(saved.id)!
   }
-  function resolvePermission(id:string,requestId:string,decision:PermissionDecision):void {
+  function resolvePermission(id:string,requestId:string,decision:PermissionDecision,reason?:string):void {
     store.get(id)
     if (decision!=='allow' && decision!=='deny' && decision!=='allow_task') throw new Error('invalid_decision')
     const running=state.runsByTask.get(id)
-    if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
+    if (!running || !running.permissions.resolve(requestId,decision,reason)) throw new Error('permission_stale')
     ctx.hub.bumped(id)
     // 同 resolveAnswer:静默期里拍的板,得由拍板这一下把落定补上。
     settleAfterDecision(running)

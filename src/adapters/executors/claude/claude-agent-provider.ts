@@ -1,5 +1,6 @@
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { toolInputFacts } from '../../../domain/permission-rules/facts'
+import { permissionDenialMessage } from '../../../domain/permission-denial'
 import type { AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from '../../../domain/user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from '../../workbench/permissions'
@@ -130,8 +131,9 @@ export function makeWorkbenchClaudeCanUseTool(
       const inputPreview = nativeMcpInputPreview(input)
       if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return denied
       try {
-        const allowed = await requestPermission({tool:toolName,description:`${toolName}\n${inputPreview}`}, options.signal)
-        return allowed && !options.signal.aborted ? {behavior:'allow'} : denied
+        let feedback: string | undefined
+        const allowed = await requestPermission({tool:toolName,description:`${toolName}\n${inputPreview}`,onDenied:reason=>{feedback=permissionDenialMessage(`${toolName}\n${inputPreview}`,reason)}}, options.signal)
+        return allowed && !options.signal.aborted ? {behavior:'allow'} : feedback ? {behavior:'deny',message:feedback} : denied
       } catch { return denied }
     }
     const kind = classifyToolUse(toolName, input)
@@ -153,12 +155,14 @@ export function makeWorkbenchClaudeCanUseTool(
       return { behavior:'deny', message:'The complete permission detail is too large to review safely.' } satisfies PermissionResult
     }
     let allowed = false
+    let feedback: string | undefined
     try {
       // 放行规则(2026-10-19)要原文:命令、文件路径(拿不到就不给)。
       const facts = toolInputFacts(input, true)
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
+        onDenied: reason => { feedback = permissionDenialMessage(`${toolName}\n${description}`, reason) },
         ...(facts.command ? { command: facts.command } : {}),
         ...(facts.paths.length ? { paths: facts.paths } : {}),
       }, options.signal)
@@ -167,7 +171,7 @@ export function makeWorkbenchClaudeCanUseTool(
     }
     return allowed && !options.signal.aborted
       ? { behavior: 'allow' } satisfies PermissionResult
-      : { behavior: 'deny', message: 'The task permission request was denied or expired.' } satisfies PermissionResult
+      : { behavior: 'deny', message: feedback ?? 'The task permission request was denied or expired.' } satisfies PermissionResult
   }
 }
 

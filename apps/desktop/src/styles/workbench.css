@@ -175,6 +175,8 @@
 .wb-permission time { color:var(--wb-muted); font-size:10px; }
 .wb-permission-actions,.wb-control-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
 .wb-permission-actions { margin-top:9px; flex-wrap:wrap; }
+.wb-permission label { display:block; margin-top:8px; font-size:12px; color:var(--th-ink-soft); }
+.wb-permission textarea { box-sizing:border-box; width:100%; min-height:48px; resize:vertical; font:inherit; color:var(--th-ink); background:transparent; border:0; border-bottom:1px solid var(--th-hair); }
 .wb-permission-script pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--mono); }
 .wb-permission-actions .wb-btn { min-width:60px; }
 .wb-artifact-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px; padding:14px 0 2px; }

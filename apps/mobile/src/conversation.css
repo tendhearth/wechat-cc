@@ -38,6 +38,7 @@ body.conversation-ready header { display:flex; gap:12px; align-items:center; max
 .response fieldset { border:1px solid var(--line); margin:12px 0 }
 .response label { display:block; padding:10px 0; min-height:44px }
 .response input[type=radio],.response input[type=checkbox] { margin-right:10px }
+.response textarea[data-denial-reason] { display:block; box-sizing:border-box; width:100%; min-height:48px; margin:8px 0; padding:8px 0; font:inherit; color:var(--ink); background:transparent; border:0; border-bottom:1px solid var(--line); resize:vertical }
 
 .cc-mini { display:none; position:relative; width:44px; height:44px; flex-shrink:0; border:0; background:none; padding:0 }
 .cc-mini img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain }

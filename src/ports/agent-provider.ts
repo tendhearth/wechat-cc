@@ -309,7 +309,10 @@ export interface SpawnContext {
     request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string;
       /** Requires an owner one-shot decision when execution is dynamic, even
        * when extra grants withhold command facts from automatic allow rules. */
-      requiresBoundExecution?: true },
+      requiresBoundExecution?: true;
+      /** Only an explicit, audited owner rejection calls this. Expiry, rules,
+       * cancellation and unavailable approval channels are not owner feedback. */
+      onDenied?: (reason: string) => void },
     signal?: AbortSignal,
   ) => Promise<boolean>
   requestUserInput?: (request: AgentUserInputRequest, signal?: AbortSignal) => Promise<AgentUserInputAnswers | null>

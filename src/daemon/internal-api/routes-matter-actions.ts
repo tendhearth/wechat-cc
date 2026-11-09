@@ -13,6 +13,7 @@
  * 路由表这几行标 `module: 'workbench'`:工作台此刻不是 ok ⇒ 模块门原样回 503 workbench_not_wired(同搬来之前)。
  */
 import { isWorkbenchProviderId } from '../../domain/workbench/executor-capabilities'
+import { permissionReason } from '../../domain/permission-denial'
 import { parseEntryInput } from '../../adapters/workbench/task-entry'
 import { PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, workbenchErrorHttp, workbenchErrorSpec } from '@wechat-cc/protocol'
 import type { MattersService } from '../../app/matters/service'
@@ -114,14 +115,18 @@ export function matterActionRoutes(deps: InternalApiDeps): RouteTable {
       const b = objectBody(body)
       if (!b || typeof b.id !== 'string' || !ID.test(b.id) || typeof b.runId !== 'string' || !UUID.test(b.runId) || typeof b.requestId !== 'string' || !UUID.test(b.requestId)) return phoneInvalid('invalid_request')
       if (b.decision !== 'allow' && b.decision !== 'deny' && b.decision !== 'allow_task') return phoneInvalid('invalid_decision')
-      try { m.permission(b.id, b.runId, b.requestId, b.decision); return { status: 200, body: { ok: true } } } catch (err) { return phoneError(err) }
+      let reason: string | undefined
+      try { reason = permissionReason(b.reason, b.decision) } catch { return phoneInvalid('invalid_request') }
+      try { reason ? m.permission(b.id, b.runId, b.requestId, b.decision, reason) : m.permission(b.id, b.runId, b.requestId, b.decision); return { status: 200, body: { ok: true } } } catch (err) { return phoneError(err) }
     }, async (m, _q, body) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
       const requestId = typeof value?.requestId === 'string' ? value.requestId : ''
       const decision = value?.decision
       if (!TASK_ID.test(id) || !UUID.test(requestId) || (decision !== 'allow' && decision !== 'deny' && decision !== 'allow_task')) return invalid()
-      try { await m.desktop.resolvePermission(id, requestId, decision); return { status: 200, body: { ok: true } } } catch (err) { return mappedError(err) }
+      let reason: string | undefined
+      try { reason = permissionReason(value?.reason, decision) } catch { return invalid() }
+      try { await (reason ? m.desktop.resolvePermission(id, requestId, decision, reason) : m.desktop.resolvePermission(id, requestId, decision)); return { status: 200, body: { ok: true } } } catch (err) { return mappedError(err) }
     }),
 
     // 回答提问。手机:带 runId(换了 ⇒ question_stale),answers 至多 PHONE_ANSWER_MAX_JSON。桌面(原 /v1/workbench/answer):没有 runId,至多 20000。

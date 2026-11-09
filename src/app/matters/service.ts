@@ -60,7 +60,7 @@ export interface MattersServiceDeps {
     continueTask(id:string,text:string,options?:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):MatterTaskView
     submitInput?(id:string,input:{runId:string;requestId:string;text:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
     inputReceipt?(id:string,requestId:string):LiveInput|null
-    resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void|Promise<void>
+    resolvePermission?(id:string,requestId:string,decision:PermissionDecision,reason?:string):void|Promise<void>
     permissionScript?(id:string,requestId:string,path:string,sha256:string,offset:number):{content:string;nextOffset:number|null}
     /** 停下这一轮(与桌面「停止」同一个 cancel;expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮)。 */
     cancel?(id:string,expectedRunId?:string):Promise<unknown>
@@ -123,7 +123,7 @@ export interface MattersService {
   conversationWork?(input?:{cursor?:string;limit?:number}):Promise<unknown>
   ownerChatFile(input:{id:string;i:number;offset:number;sha256?:string;size?:number}):Promise<{status:number;body:Record<string,unknown>}>
   say(id:string,text:string,surface?:'desktop'|'phone',input?:MatterSayInput):Promise<{kind:'task';task:MatterTaskView;input?:MatterInput}|{kind:'chat';reply:string}>
-  permission(id:string,runId:string,requestId:string,decision:PermissionDecision):void
+  permission(id:string,runId:string,requestId:string,decision:PermissionDecision,reason?:string):void
   answer(id:string,runId:string,requestId:string,answers:unknown):void
   /** 手机上停下正在跑的这一轮(2026-10-06)。runId 必须是手机看到的那一轮;已经换了一轮 / 没在跑 ⇒ input_stale。 */
   stop(id:string,runId:string):Promise<void>
@@ -172,7 +172,7 @@ export interface MatterEntryContext {ownerKey:string;surface:'desktop'|'phone';o
 export interface MatterDesktopActions {
   /** 停下(桌面「停止」):expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮;回任务视图。 */
   cancel(id:string,expectedRunId?:string):Promise<unknown>
-  resolvePermission(id:string,requestId:string,decision:PermissionDecision):Promise<void>
+  resolvePermission(id:string,requestId:string,decision:PermissionDecision,reason?:string):Promise<void>
   resolveAnswer(id:string,requestId:string,answers:unknown):void
   /** 成果整份(桌面一次读完;手机按块读的是 artifactChunk)。 */
   artifact(id:string,artifactId:string):Promise<unknown>
@@ -424,11 +424,12 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(surface==='phone'){try{deps.store.bind(matterId,'phone','pwa')}catch{/* 只是露面登记 */}}
       return {matterId,created:r.created}
     },
-    permission(id,runId,requestId,decision){
+    permission(id,runId,requestId,decision,reason){
       if(decision!=='allow'&&decision!=='deny'&&decision!=='allow_task')throw Error('invalid_decision')
       current(id,runId,requestId,'permissions')
       if(!deps.workbench?.resolvePermission)throw Error('workbench_not_wired')
-      deps.workbench.resolvePermission(id,requestId,decision)
+      if(reason)deps.workbench.resolvePermission(id,requestId,decision,reason)
+      else deps.workbench.resolvePermission(id,requestId,decision)
     },
     permissionScript(id,requestId,path,sha256,offset,phone){
       const matter=require(id)
@@ -519,7 +520,11 @@ function desktopActions(w:MattersServiceDeps['workbench']):MatterDesktopActions{
   const need=<T>(fn:T|undefined):T=>{if(!fn)throw Error('workbench_not_wired');return fn}
   return {
     cancel:(id,expectedRunId)=>need(w?.cancel).call(w,id,expectedRunId),
-    resolvePermission:async(id,requestId,decision)=>{await need(w?.resolvePermission).call(w,id,requestId,decision)},
+    resolvePermission:async(id,requestId,decision,reason)=>{
+      const resolve=need(w?.resolvePermission)
+      if(reason)await resolve.call(w,id,requestId,decision,reason)
+      else await resolve.call(w,id,requestId,decision)
+    },
     resolveAnswer:(id,requestId,answers)=>{need(w?.resolveAnswer).call(w,id,requestId,answers)},
     artifact:async(id,artifactId)=>need(w?.artifact).call(w,id,artifactId),
     quotaHandoff:(id,input)=>need(w?.handOff).call(w,id,input),

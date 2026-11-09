@@ -52,7 +52,7 @@ export function internalApiModule(f: Foundation): DaemonModule<InternalApiLifecy
         // 从哪边拍板都算数。拍板本身也是「主人刚跟我说过话」的证据,所以成功时记一笔 contact。
         permissions: {
           list: () => wxPerm.listPendingPermissions(),
-          resolve: (h, d) => { const ok = wxPerm.resolvePermission(h, d); if (ok) f.petSignals.noteContact(); return ok },
+          resolve: (h, d, reason) => { const ok = wxPerm.resolvePermission(h, d, reason); if (ok) f.petSignals.noteContact(); return ok },
         },
         // 自改流水线的三个抓手(spec 2026-09-18-self-change-pipeline §daemon 侧):流水线是 daemon 外面的 CLI 进程,
         // 「报进展 / 问 y-n / 查拍板」都经这里回来;卡片和微信、桌面共用同一份 PendingPermissions。

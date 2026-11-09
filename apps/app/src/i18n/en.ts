@@ -191,6 +191,7 @@ const en = {
   'approval.rawCommand': 'Command',
   'approval.workingDir': 'Working directory',
   'approval.viewExact': 'See the exact operation',
+  'approval.denialReason': 'Reason for declining (optional)',
   'approval.deny': 'Not now',
   'approval.allowTask': 'Allow the same command in this task',
   'approval.taskExpires': 'Ends with this task. Script changes ask again.',
