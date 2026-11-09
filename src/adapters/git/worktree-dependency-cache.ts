@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path'
-import { copyWorkspaceDependencies, DEPENDENCY_LOCKS, DEPENDENCY_NOTICE, readPreparationFile, type DependencyOptions } from './worktree-dependencies'
+import { copyWorkspaceDependencies, DEPENDENCY_LOCKS, DEPENDENCY_NOTICE, readPreparationFile, samePreparationMetadata, type DependencyOptions } from './worktree-dependencies'
 import { Preparation } from './worktree-preparation'
 import { dependencyInstallPlan, dependencySafePart } from './worktree-dependency-policy'
 import { installDependencies } from './worktree-dependency-installer'
@@ -71,7 +71,7 @@ async function unchanged(root: string, expected: Awaited<ReturnType<typeof metad
   for (const path of paths) {
     budget.check()
     const current = await readPreparationFile(root, path, 8 * 1024 ** 2), original = expected.files.get(path)
-    if (original ? !current?.equals(original) : current !== null) return false
+    if (original ? !current || !samePreparationMetadata(path, original, current) : current !== null) return false
   }
   return true
 }

@@ -24,6 +24,12 @@ CC 自己执行有界下载和 ustar 解包，不再启动 Bun/Git/SSH 安装进
 
 安装成功后复核起点元数据与任务工作区，再经过原复制器的链接/容量/条目/时间/剩余空间预算，才写绑定完整 key 和 `committed-public-registry-portable-v2` 策略的完成记录并原子 rename。策略同时进入 scope 哈希，修复前的缓存树不会命中，也不会占据新缓存的发布路径；旧条目仍按原 LRU 预算回收。owner 一直保留到 rename 后；stage 在 mkdir 前先写外部 owner journal，避免第二次创建失败或崩溃留下不可追踪目录。daemon 启动扫尾和准备阶段共用串行锁，按死亡 PID 的记录回收 stage/journal；活跃或不明 owner 不删除。取消、失败、超时、元数据变化均不入缓存。workspace / .bin 端点仍仅保存逻辑位置，恢复使用新 checkout 的代码。
 
+Windows 的 Git autocrlf 会让未修改的检出文本使用 CRLF、Git blob 使用 LF。已知文本清单、锁及 registry 配置的工作区比较仅容许 CRLF/LF 差异；裸 CR、JSON 转义、其他字节、末尾换行以及二进制 bun.lockb 仍严格比较。缓存键与安装输入继续使用原始起点 Git blob，不把任务文本归一后送入安装。目录链接安装可用 junction，但缓存复制保留相对链接以跨越发布 rename；系统无 symlink 权限或发布文件被锁时清理自有半成品并返回执行者锁定安装提示，不用绝对 junction 替代导致发布后指向旧 stage。
+
+真实 Bun 锁夹具与产品准备路径一致，使用 native realpath 后再运行 Bun。Windows Bun 1.3.14 在仍含 8.3 别名的 cwd 下会生成 `../../.../pkg` workspace 锁位置；这类已提交锁仍按越界策略拒绝并退回安装提示，不能为让夹具通过而接受它。
+
+同步 Git 的过滤器配置探测和实际命令共用原有 30 秒总期限，不再让健康的 Windows 操作提前撞上独立 5 秒探测上限；配置探测失败仍拒绝执行，错误标记 filters/command 阶段以便定位。
+
 ## 任务内 uptime
 
 根因是 Seatbelt 默认拒绝的 sysctl 白名单没有 `kern.boottime`，而 libuv Darwin 的 `uv_uptime` 正好读取它。本仓库唯一直接调用是 `writer-exit.ts` 的系统开机时间核对；锁定 Vitest 4.1.10 不依赖 tinypool，扫描 Vitest/Vite/tinybench 未发现 uptime 调用。没有原始失败栈，不能断言实测具体测试调用链。[Codex 基础策略](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/sandboxing/src/seatbelt_base_policy.sbpl#L23)、[libuv 调用](https://github.com/libuv/libuv/blob/v1.51.0/src/unix/darwin.c#L167)。
@@ -56,4 +62,4 @@ Bun 1.3.14 忽略环境预加载，因此任务 PATH 使用固定 Node/Bun wrapp
 
 - 离线启动源码守卫无上下文统计 `thread/start`、`thread/resume`、`app-server` 字符串，类型声明或普通常量也可能误报。维护者应辨别调用语境，不能为压掉误报机械扩充入口白名单；将来可收窄到进程参数 / RPC 调用语境，本轮不改扫描器。
 - 静态漏报包含常见 namespace import（`import * as codex` 后调用 session factory）；只扫描 `.ts`，不扫描 `.tsx/.mts/.cts/.js`，并排除 `.d.ts`、测试、test-support、__e2e__。process factory 只登记 named import，不统计每次调用；同一已导入 factory 新增调用未必变红。动态构造也没有通用识别保证。复用现有 session factory 仍受运行时网络回执约束，源码守卫不能代替新入口的行为负测。
-- 路径身份有意比单一文件系统更保守；包含不可见 Unicode 字符、保留设备别名或大小写身份碰撞的包安全 miss。Unicode 映射来自运行时，无 Windows/HFS+ 真机设备 I/O 验证；夹具只证明在当前平台同样提前拒绝，不声称测试了各系统设备行为。
+- 路径身份有意比单一文件系统更保守；包含不可见 Unicode 字符、保留设备别名或大小写身份碰撞的包安全 miss。Unicode 映射来自运行时；Windows 已在独立临时目录实跑依赖安装、缓存、路径与命名空间回归，危险名称仍在写入前拒绝，不声称测试了 Windows 保留设备的实际 I/O 或 HFS+ 设备行为。

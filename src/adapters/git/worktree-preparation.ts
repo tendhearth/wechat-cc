@@ -27,8 +27,8 @@ export function neutralizeFilters(keys: string): string[] {
   })
 }
 const filterQuery = ['config', '--null', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|smudge|process|required)$']
-export function syncFilterOverrides(cwd: string, env: NodeJS.ProcessEnv): string[] {
-  try { return neutralizeFilters(execFileSync('git', [...SAFE_GIT, ...filterQuery], { cwd, env, encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 })) }
+export function syncFilterOverrides(cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number): string[] {
+  try { return neutralizeFilters(execFileSync('git', [...SAFE_GIT, ...filterQuery], { cwd, env, encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 })) }
   catch (e) { if ((e as {status?:number}).status === 1) return []; throw e }
 }
 export interface PreparationOptions { signal?: AbortSignal; timeoutMs?: number }

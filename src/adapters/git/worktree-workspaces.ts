@@ -35,15 +35,23 @@ const TIMEOUT_MS = 30_000
  */
 /** 跑一条 git;非零退出抛 `worktree_git_failed`(stderr 头几行带上,只给日志)。 */
 export function git(cwd: string, args: string[], opts: { ownerConfig?: boolean; input?: string } = {}): string {
+  const deadline = Date.now() + TIMEOUT_MS
+  let phase: 'filters' | 'command' = 'filters'
   try {
     const env = preparationEnv(opts.ownerConfig)
-    return execFileSync('git', [...SAFE_GIT, ...syncFilterOverrides(cwd, env), ...args], { cwd, env, encoding: 'utf8', timeout: TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024, ...(opts.input !== undefined ? { input: opts.input } : { stdio: ['ignore', 'pipe', 'pipe'] }) }).trim()
+    // Slow Windows process startup must fit the same total deadline, rather
+    // than failing an otherwise healthy command at a separate 5s probe limit.
+    const filters = syncFilterOverrides(cwd, env, TIMEOUT_MS)
+    phase = 'command'
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) throw Object.assign(Error('worktree_git_timeout'), { code: 'ETIMEDOUT' })
+    return execFileSync('git', [...SAFE_GIT, ...filters, ...args], { cwd, env, encoding: 'utf8', timeout: remaining, killSignal: 'SIGKILL', maxBuffer: 16 * 1024 * 1024, ...(opts.input !== undefined ? { input: opts.input } : { stdio: ['ignore', 'pipe', 'pipe'] }) }).trim()
   } catch (error) {
     const stderr = String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').slice(0, 3).join(' | ')
     // exitStatus:git 自己退出的码;超时被杀、起不来时没有 —— repoRootOrFail 靠它分「git 答了」和「这次没问成」,再看 stderr 判是不是仓库
     const status = (error as { status?: unknown }).status
     const timedOut = (error as { code?: unknown }).code === 'ETIMEDOUT' || (error as { signal?: unknown }).signal === 'SIGTERM'
-    throw Object.assign(new Error('worktree_git_failed'), { detail: stderr, ...(typeof status === 'number' ? { exitStatus: status } : {}), ...(timedOut ? { timedOut: true } : {}) })
+    throw Object.assign(new Error('worktree_git_failed'), { detail: stderr, phase, ...(typeof status === 'number' ? { exitStatus: status } : {}), ...(timedOut ? { timedOut: true } : {}) })
   }
 }
 

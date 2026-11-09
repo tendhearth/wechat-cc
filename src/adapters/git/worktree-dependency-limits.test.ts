@@ -108,7 +108,7 @@ it('puts bins beside the lock location for an npm alias rather than the resolved
   const f=fixture({}, {bin:{tool:'index.js'}}),lock=JSON.parse(f.files.get('bun.lock')!.toString())
   lock.packages['@alias/tool']=lock.packages.tool;delete lock.packages.tool;f.files.set('bun.lock',Buffer.from(JSON.stringify(lock)))
   await installDependencies(f.root,f.budget,f.files)
-  expect(await fs.realpath(join(f.root,'node_modules/.bin/tool'))).toBe(join(f.root,'node_modules/@alias/tool/index.js'))
+  expect(await fs.realpath(join(f.root,'node_modules/.bin/tool'))).toBe(await fs.realpath(join(f.root,'node_modules/@alias/tool/index.js')))
 })
 it('creates quota-counted logical endpoints for committed workspace bins',async()=>{
   const f=fixture();f.files.set('package.json',Buffer.from(JSON.stringify({workspaces:['pkg']})))
@@ -116,7 +116,7 @@ it('creates quota-counted logical endpoints for committed workspace bins',async(
   f.files.set('bun.lock',Buffer.from(JSON.stringify({lockfileVersion:1,packages:{local:['local@workspace:pkg']}})))
   await fs.mkdir(join(f.root,'pkg'));await fs.writeFile(join(f.root,'pkg/package.json'),f.files.get('pkg/package.json')!)
   await installDependencies(f.root,f.budget,f.files)
-  expect(await fs.realpath(join(f.root,'node_modules/.bin/local'))).toBe(join(f.root,'pkg/cli.js'))
+  expect(await fs.realpath(join(f.root,'node_modules/.bin/local'))).toBe(await fs.realpath(join(f.root,'pkg/cli.js')))
   expect((await fs.stat(join(f.root,'pkg/cli.js'))).size).toBe(0);expect(network.request).not.toHaveBeenCalled()
 })
 
@@ -141,6 +141,6 @@ it('installs nested workspace packages into their real workspace node_modules be
   f.files.set('bun.lock',Buffer.from(JSON.stringify(lock)))
   await fs.mkdir(join(f.root,'pkg'));await fs.writeFile(join(f.root,'pkg/package.json'),f.files.get('pkg/package.json')!)
   await installDependencies(f.root,f.budget,f.files)
-  expect(await fs.realpath(join(f.root,'node_modules/ws/node_modules/tool/index.js'))).toBe(join(f.root,'pkg/node_modules/tool/index.js'))
+  expect(await fs.realpath(join(f.root,'node_modules/ws/node_modules/tool/index.js'))).toBe(await fs.realpath(join(f.root,'pkg/node_modules/tool/index.js')))
   expect(await fs.readFile(join(f.root,'node_modules/ws/node_modules/tool/index.js'),'utf8')).toBe('trusted')
 })

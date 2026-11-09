@@ -9,6 +9,15 @@ export const DEPENDENCY_LOCKS = ['bun.lock','bun.lockb','package-lock.json','npm
 const LOCKS = DEPENDENCY_LOCKS
 const inside = (base: string, path: string) => path === base || path.startsWith(base + sep)
 const safeRelative = (path: string) => !isAbsolute(path) && !path.split(/[\\/]/).some(p => p === '..' || p === '.git')
+/** Git's autocrlf conversion changes text checkout bytes, not installation
+ * inputs. Compare only CRLF/LF equivalence; retain every other byte, including
+ * bare CR and escaped JSON strings. Binary bun.lockb stays byte-exact.
+ */
+export function samePreparationMetadata(path: string, a: Buffer, b: Buffer): boolean {
+  if (a.equals(b)) return true
+  if (!/(?:^|[\\/])(?:package\.json|bun\.lock|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|\.npmrc|bunfig\.toml)$/.test(path)) return false
+  return a.toString('latin1').replace(/\r\n/g, '\n') === b.toString('latin1').replace(/\r\n/g, '\n')
+}
 export interface DependencyOptions extends PreparationOptions {
   maxEntries?: number
   /** Actual fallback copy bytes. Successful COW clones consume no data-copy budget. */
@@ -77,7 +86,7 @@ export async function copyWorkspaceDependencies(source: string, target: string, 
       if (limit < 0) throw Error('preparation_metadata_budget')
       const a = await readPreparationFile(source, path, limit), b = await readPreparationFile(target, path, limit)
       metadata += (a?.length ?? 0) + (b?.length ?? 0)
-      if (metadata > (options.maxMetadataBytes ?? 32 * 1024 * 1024) || (a === null) !== (b === null) || (a && b && !a.equals(b))) throw Error('dependency_lock_mismatch')
+      if (metadata > (options.maxMetadataBytes ?? 32 * 1024 * 1024) || (a === null) !== (b === null) || (a && b && !samePreparationMetadata(path, a, b))) throw Error('dependency_lock_mismatch')
     }
     const links: Array<{ path: string; logicalPath: string; destination: string; directory: boolean }> = []
     const clone = async (from: string, to: string): Promise<void> => {

@@ -263,7 +263,7 @@ it('retains the owner through the atomic publication rename',async()=>{
   const f=fixture(),rename=fsPromises.rename
   let checked=false
   vi.spyOn(fsPromises,'rename').mockImplementation(async(from,to)=>{
-    if(String(from).includes('.stage-') && /^[a-f0-9]{64}-/.test(String(to).split('/').at(-1)!)) {
+    if(String(from).includes('.stage-') && /^[a-f0-9]{64}-/.test(basename(String(to)))) {
       expect(JSON.parse(readFileSync(join(String(from),'.owner.json'),'utf8')).pid).toBe(process.pid)
       checked=true
     }
@@ -272,6 +272,26 @@ it('retains the owner through the atomic publication rename',async()=>{
   await cacheWorkspaceDependencies(f.source,f.state)
   expect(checked).toBe(true);expect(f.entries()).toHaveLength(1)
   expect(existsSync(join(f.entries()[0]!,'.owner.json'))).toBe(false)
+})
+it('falls back to executor installation without partial trees when symlink creation is denied',async()=>{
+  const f=fixture();rmSync(join(f.source,'node_modules'),{recursive:true})
+  vi.spyOn(fsPromises,'symlink').mockRejectedValue(Object.assign(Error('symlink privilege unavailable'),{code:'EPERM'}))
+  const notices=await restoreWorkspaceDependencies(f.source,f.target,f.state)
+  expect(notices).toContain(DEPENDENCY_NOTICE)
+  expect(existsSync(join(f.target,'node_modules'))).toBe(false)
+  expect(f.entries()).toEqual([])
+  expect(readdirSync(join(f.state,'dependency-cache/v2')).filter(n=>n.startsWith('.stage-'))).toEqual([])
+})
+it.each(['EPERM','EACCES','EBUSY'])('falls back and cleans owned stages when publication rename is locked: %s',async code=>{
+  const f=fixture(),rename=fsPromises.rename;rmSync(join(f.source,'node_modules'),{recursive:true})
+  vi.spyOn(fsPromises,'rename').mockImplementation(async(from,to)=>{
+    if(/^[a-f0-9]{64}-/.test(basename(String(to))))throw Object.assign(Error('publication locked'),{code})
+    return rename(from,to)
+  })
+  expect(await restoreWorkspaceDependencies(f.source,f.target,f.state)).toContain(DEPENDENCY_NOTICE)
+  expect(existsSync(join(f.target,'node_modules'))).toBe(false)
+  expect(f.entries()).toEqual([])
+  expect(readdirSync(join(f.state,'dependency-cache/v2')).filter(n=>n.startsWith('.stage-'))).toEqual([])
 })
 it('startup recovers a journaled ownerless crash stage and a journal written before mkdir, preserving a live stage',async()=>{
   const f=fixture(),root=join(f.state,'dependency-cache/v2');mkdirSync(root,{recursive:true})
