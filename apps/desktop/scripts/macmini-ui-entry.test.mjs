@@ -95,6 +95,8 @@ test('snapshot modules expose an explicit entry for trusted import wrappers and 
 test('project topic snapshots accept only the explicit task branch and preserve source ref boundaries',()=>{
  expect(supportsBrowserSnapshot('topics-are-projects')).toBe(true)
  expect(supportsAppSnapshot('topics-are-projects')).toBe(true)
+ expect(supportsBrowserSnapshot('topics-waiting-honest')).toBe(true)
+ expect(supportsAppSnapshot('topics-waiting-honest')).toBe(true)
  for(const ref of ['master','unknown-task','topics-are-projects;echo x','../topics-are-projects']){
   expect(supportsBrowserSnapshot(ref)).toBe(false)
   expect(supportsAppSnapshot(ref)).toBe(false)

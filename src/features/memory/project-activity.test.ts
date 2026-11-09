@@ -34,6 +34,71 @@ async function fixture() {
   return { db,threads,matters,log,id,turns,cli,terminal,identify,now,tick:() => {at++} }
 }
 describe('project activity from existing session and task facts', () => {
+  it('six ranu-shaped terminal replies never claim owner attention or unread results, including weeks-old stops', async () => {
+    const f=await fixture()
+    await f.threads.update(f.id,{title:'ranu'})
+    f.identify.mockResolvedValue({...identity,names:['ranu']})
+    for(let n=0;n<6;n++){
+      const sid=`ranu-${n}`,at=f.now()-n*7*24*60*60_000
+      f.terminal(sid,f.now()-at)
+      f.turns.event({session_id:sid,source:'claude',cwd:root,kind:'stop',text:'已答复，等你看'},at)
+    }
+    const value=(await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!
+    expect(value.activity).toMatchObject({waiting:0,running:0,unread:0})
+    expect(value.sessions).toHaveLength(6)
+    expect(value.sessions.every(s=>s.activity==='idle'&&s.latestStep==='答完了')).toBe(true)
+    const recall=await resolveTopicRecall('ranu 那边怎么样了',[{id:f.id,title:'ranu',aliases:[],tags:[],summary:'',lastActive:'',entries:[]}],{activity:new Map([[f.id,value]]),bodies:false})
+    expect(recall!.block).not.toMatch(/[1-9] 个等你|[1-9] 个做完未看|已答复，等你看/)
+    expect(recall!.block).toContain('答完了')
+  })
+  it('a previous terminal reply cannot hide failure in the latest interrupted round',async()=>{
+    const f=await fixture(),m=f.terminal('reused')
+    f.turns.event({session_id:'reused',source:'claude',cwd:root,kind:'stop',text:'上一轮已答复'},f.now())
+    f.tick();f.turns.event({session_id:'reused',source:'claude',cwd:root,kind:'prompt'},f.now())
+    f.log.writeItem({matterId:m.id,kind:'error',status:'failed',payload:{text:'原会话中的错误正文'}})
+    f.tick();f.turns.event({session_id:'reused',source:'claude',cwd:root,kind:'session_end'},f.now())
+    const value=(await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!
+    expect(value.activity).toMatchObject({waiting:0,running:0,unread:0})
+    expect(value.sessions[0]).toMatchObject({activity:'idle',latestStep:'步骤失败'})
+  })
+  it('only actual pending permissions and questions wait, regardless of seen or terminal/task origin', async () => {
+    const f=await fixture(),m=f.terminal('requests'),seen=()=> 'desktop'
+    f.turns.permissionAsked({session_id:'requests',source:'claude',cwd:root,tool_name:'Read'},f.now())
+    const read=()=>projectActivities(f.db,'owner',seen,f.identify)
+    expect((await read()).get(f.id)!.activity.waiting).toBe(1)
+    f.turns.permissionSettled('requests','allow')
+    f.log.writeItem({matterId:m.id,kind:'question',status:'started',key:'question-terminal',payload:{questions:[{question:'留在原会话的问题'}]}})
+    expect((await read()).get(f.id)!.sessions[0]).toMatchObject({activity:'waiting',latestStep:'等你回答'})
+    f.log.writeItem({matterId:m.id,kind:'question',status:'completed',key:'question-terminal',payload:{}})
+    const task=f.matters.create({kind:'task',title:'CC 交办',projectPath:root,ownerChatId:'owner'})
+    f.log.writeItem({matterId:task.id,kind:'question',status:'started',key:'question-task',payload:{}})
+    expect((await read()).get(f.id)!.activity.waiting).toBe(1)
+  })
+  it.each(['desktop','phone'] as const)('CC task replied results count unread until seen on %s, including an idle reusable task',async(surface)=>{
+    const f=await fixture(),desktop=makeDesktopSurface(f.now),seen=makeMatterSeen(f.db,desktop)
+    const task=f.matters.create({kind:'task',title:'CC 交办结果',projectPath:root,ownerChatId:'owner'})
+    const turn=f.log.startTurn({matterId:task.id,executor:'codex'})
+    f.log.writeItem({matterId:task.id,turnId:turn.id,kind:'agent_message',status:'completed',payload:{text:'结果只在 CC 里看'}})
+    f.log.finishTurn(turn.id,{status:'completed'})
+    const source=()=>({phase:'replied',requestId:null,waitingFor:null})
+    const read=()=>projectActivities(f.db,'owner',seen,f.identify,source)
+    expect((await read()).get(f.id)!.activity).toMatchObject({waiting:0,running:0,unread:1})
+    f.tick()
+    if(surface==='desktop')desktop.noteSeen(task.id)
+    else f.matters.bind(task.id,'phone','app')
+    expect((await read()).get(f.id)!.activity).toMatchObject({waiting:0,running:0,unread:0})
+  })
+  it('queued and replied rounds do not run, and a leftover waiting state without a request does not wait',async()=>{
+    const f=await fixture(),task=f.matters.create({kind:'task',title:'排队的任务',projectPath:root,ownerChatId:'owner'})
+    f.log.startTurn({matterId:task.id,executor:'codex'})
+    const m=f.terminal('leftover')
+    f.turns.event({session_id:'leftover',source:'claude',cwd:root,kind:'stop'},f.now())
+    f.db.query("UPDATE matters SET state='waiting' WHERE id=?").run(m.id)
+    const queued=()=>({phase:'queued',requestId:null,waitingFor:null})
+    expect((await projectActivities(f.db,'owner',()=>null,f.identify,queued)).get(f.id)!.activity).toMatchObject({waiting:0,running:0,unread:0})
+    const working=()=>({phase:'working',requestId:null,waitingFor:null})
+    expect((await projectActivities(f.db,'owner',()=>null,f.identify,working)).get(f.id)!.activity).toMatchObject({waiting:0,running:1,unread:0})
+  })
   it('terminal permissions retain tool metadata and unresolved requests remain waiting after stale', async () => {
     const f = await fixture(), fresh = f.terminal('fresh'), old = f.terminal('old',CLI_SESSION_STALE_MS+1000)
     f.turns.permissionAsked({session_id:'fresh',source:'claude',cwd:root,tool_name:'Bash',summary:'检查迁移'},f.now())
@@ -56,14 +121,14 @@ describe('project activity from existing session and task facts', () => {
     expect((await read()).sessions[0]).toMatchObject({activity:'running',latestStep:'工具步骤'})
     f.log.writeItem({matterId:task.id,turnId:turn.id,kind:'agent_message',status:'completed',payload:{text:'这段正文不能进入话题活动'}})
     fact = {phase:'replied',requestId:null,waitingFor:null}
-    expect((await read()).activity.waiting).toBe(1)
+    expect((await read()).activity).toMatchObject({waiting:0,unread:1,running:0})
     expect(JSON.stringify(await read())).not.toContain('秘密正文')
     expect(JSON.stringify(await read())).not.toContain('这段正文不能进入')
   })
-  it('desktop and phone seen clear only the completed response; an open permission remains waiting', async () => {
+  it('terminal replies never need seen, while an open permission remains waiting even after seen', async () => {
     const f = await fixture(), terminal = f.terminal('done'), desktop = makeDesktopSurface(f.now), seen = makeMatterSeen(f.db,desktop)
     f.turns.event({session_id:'done',source:'claude',cwd:root,kind:'stop',text:'不把答复正文带进话题'},f.now())
-    expect((await projectActivities(f.db,'owner',seen,f.identify)).get(f.id)!.activity.waiting).toBe(1)
+    expect((await projectActivities(f.db,'owner',seen,f.identify)).get(f.id)!.activity).toMatchObject({waiting:0,unread:0})
     f.tick();desktop.noteSeen(terminal.id)
     expect((await projectActivities(f.db,'owner',seen,f.identify)).get(f.id)!.activity.waiting).toBe(0)
     const bubbles=makeTopicBubbles(f.db);bubbles.adopt('owner','open','owner',[{id:f.id}]);const sleep=bubbles.beginSleep('owner','sleep')
@@ -73,7 +138,7 @@ describe('project activity from existing session and task facts', () => {
     desktop.noteSeen(terminal.id);f.matters.bind(terminal.id,'phone','pwa')
     expect((await projectActivities(f.db,'owner',seen,f.identify)).get(f.id)!.activity.waiting).toBe(1)
     f.tick();f.turns.event({session_id:'done',source:'claude',cwd:root,kind:'session_end'},f.now())
-    expect((await projectActivities(f.db,'owner',seen,f.identify)).get(f.id)!.activity.unread).toBe(1)
+    expect((await projectActivities(f.db,'owner',seen,f.identify)).get(f.id)!.activity.unread).toBe(0)
     f.matters.bind(terminal.id,'phone','pwa')
     expect((await projectActivities(f.db,'owner',seen,f.identify)).get(f.id)!.activity.unread).toBe(0)
   })
@@ -85,19 +150,22 @@ describe('project activity from existing session and task facts', () => {
     expect((await topicsProjection(f.db,'owner')).summary.recentIds[0]).toBe(f.id)
   })
   it('activity and seen changes push through the existing topics source without polling', async () => {
-    const f=await fixture(), m=f.terminal('push'), desktop=makeDesktopSurface(f.now),seen=makeMatterSeen(f.db,desktop)
+    const f=await fixture(), m=f.matters.create({kind:'task',title:'CC 交办推送',projectPath:root,ownerChatId:'owner'}), desktop=makeDesktopSurface(f.now),seen=makeMatterSeen(f.db,desktop)
+    const turn=f.log.startTurn({matterId:m.id,executor:'codex'})
     const wiring=makePhoneEventsWiring({home:async()=>({}) as never,changes:matterFeed(f.db),hints:cb=>onWriteHint(f.db,cb),pollMs:60_000,
       topics:async()=>Object.fromEntries(await projectActivities(f.db,'owner',seen,f.identify))})
     const frames:any[]=[];const off=wiring.events.subscribe('topics',undefined,frame=>frames.push(frame.data))
     try {
       await expect.poll(()=>frames.length).toBe(1)
       expect(frames[0][f.id].activity.running).toBe(1)
-      f.tick();f.turns.event({session_id:'push',source:'claude',cwd:root,kind:'stop',text:'完整答复不入活动'},f.now())
+      f.tick();f.log.writeItem({matterId:m.id,turnId:turn.id,kind:'agent_message',status:'completed',payload:{text:'完整答复不入活动'}})
+      f.log.finishTurn(turn.id,{status:'completed',matterState:'done'})
       await expect.poll(()=>frames.length).toBe(2)
-      expect(frames[1][f.id].activity.waiting).toBe(1)
+      expect(frames[1][f.id].activity).toMatchObject({waiting:0,unread:1,running:0})
       f.tick();desktop.noteSeen(m.id);hintWrite(f.db,{kind:'matter',matterId:m.id})
       await expect.poll(()=>frames.length).toBe(3)
       expect(frames[2][f.id].activity.waiting).toBe(0)
+      expect(frames[2][f.id].activity.unread).toBe(0)
       expect(JSON.stringify(frames)).not.toContain('完整答复不入活动')
     } finally {off();wiring.dispose()}
   })
@@ -297,10 +365,10 @@ it('expires running activity without a write and invalidates cached association 
 })
 
 
-it.each(['stop','session_end'] as const)('old unseen %s results retain attention after thirty minutes',async(kind)=>{
+it.each(['stop','session_end'] as const)('old unseen terminal %s results stay idle after thirty minutes',async(kind)=>{
  const f=await fixture();f.terminal('old-result',CLI_SESSION_STALE_MS+1000)
  f.turns.event({session_id:'old-result',source:'claude',cwd:root,kind},f.now()-CLI_SESSION_STALE_MS-1000)
- expect((await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!.sessions[0]!.activity).toBe(kind==='stop'?'waiting':'unread')
+ expect((await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!.sessions[0]!.activity).toBe('idle')
 })
 
 it('a terminal moved across repositories cannot backfill new output into its original repository',async()=>{

@@ -611,3 +611,11 @@ it('topic demo activity uses approval metadata while original matter keeps the a
   expect(original.permissions[0]?.description).toBe('npm install sharp')
  }finally{backend.dispose()}
 })
+
+it('topic demo includes an idle replied terminal without another waiting or unread count and can open its original matter',async()=>{
+  const backend=makeDemoBackend({lang:'zh-Hans'})
+  const detail=await backend.topicDetail({id:'demo-backup'})
+  expect(detail.matters.find(m=>m.id==='b0b0cafe')?.session).toMatchObject({kind:'terminal',activity:'idle',latestStep:'答完了',requestId:null})
+  expect(detail.topic.activity).toMatchObject({waiting:1,unread:1})
+  expect((await backend.matter('b0b0cafe','zh-Hans')).matter).toMatchObject({kind:'terminal',state:'open'})
+})

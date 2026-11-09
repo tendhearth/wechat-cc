@@ -285,7 +285,9 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const into = topicMerged.get(p.id)
       const topic = topicsList({ view: 'all' }).topics.find(t => t.id === (into??p.id))
       if (!topic) throw new BackendError('not_found')
-      const matters = list().slice(0, 3).map((e,i) => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null, ...(i===0?{session:{id:e.detail.matter.id,kind:'task' as const,title:titleOf(e,lastLang),executor:e.detail.task?.providerId??'claude',displayName:demoName(e.detail.task?.providerId??'claude'),activity:'waiting' as const,latestStep:lastLang==='zh-Hans'?'等你批准 · Bash':'Approval needed · Bash',updatedAt:e.detail.matter.updatedAt,requestId:e.detail.permissions[0]?.id??null}}:{}) }))
+      const matters: import('./types').TopicDetailT['matters'] = list().slice(0, 3).map((e,i) => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), state: e.detail.matter.state ?? e.detail.matter.status, archivedAt: null, ...(i===0?{session:{id:e.detail.matter.id,kind:'task' as const,title:titleOf(e,lastLang),executor:e.detail.task?.providerId??'claude',displayName:demoName(e.detail.task?.providerId??'claude'),activity:'waiting' as const,latestStep:lastLang==='zh-Hans'?'等你批准 · Bash':'Approval needed · Bash',updatedAt:e.detail.matter.updatedAt,requestId:e.detail.permissions[0]?.id??null}}:{}) }))
+      const terminalTitle=lastLang==='zh-Hans'?'终端会话':'Terminal session'
+      matters.push({id:'b0b0cafe',title:terminalTitle,state:'open',archivedAt:null,session:{id:'b0b0cafe',kind:'terminal',title:terminalTitle,executor:'codex',displayName:'Codex',activity:'idle',latestStep:lastLang==='zh-Hans'?'答完了':'Replied',updatedAt:now()-10*60_000,requestId:null}})
       return { topic: {...topic,mergedInto:into??null}, entries: [{ id: 'demo-entry', threadId: topic.id, kind: 'fact', line: '备份留在本地', body: '每周核验一次备份。', due: null, status: topicWrong?'superseded':'live', source: '演示对话', matterId: null, supersededBy: null, createdTs: topicEntryTime, updatedTs: topicEntryTime, recalled: !topicWrong }], matters, messages: [], pages: { entries: { total: 1, nextCursor: null }, matters: { total: matters.length, nextCursor: null }, messages: { total: 0, nextCursor: null } }, revision: `demo-topics:${topicRevision}` }
     },
     async topicEdit(action,input) {
@@ -312,6 +314,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async ccActs(l) { noteLang(l); return demoCcActs(now()).map(d => d.matter) },
     async matter(id, l) {
       noteLang(l)
+      if(id==='b0b0cafe')return mkDetail({...mkMatter(id,'terminal',l==='zh-Hans'?'终端会话':'Terminal session','replied','/demo/api-server',now()-10*60_000,['codex']),state:'open'},null)
       const act = demoCcActs(now()).find(d => d.matter.id === id)
       return act ?? localize(get(id), l)
     },

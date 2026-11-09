@@ -100,13 +100,15 @@ it('keeps expanded project sessions after activity refresh and follows only new 
 
 it('formats topic dates and executor names and puts waiting/response and running before summary',async()=>{
  const ts=Date.now()-7_200_000,iso=new Date(ts).toISOString()
- const h=fixture(true,true,()=>({topic:{id:'server',title:'服务器',description:'项目说明',summary:'项目摘要',bubbleState:'open'},revision:'polish',entries:[],matters:['idle','running','waiting'].map(activity=>({id:activity,title:`会话${activity}`,state:activity,session:{id:activity,kind:'task',title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}})),messages:[{id:'msg',speaker:'cc',ts:iso,excerpt:'最近的消息'}],pages:{entries:{total:0,nextCursor:null},matters:{total:3,nextCursor:null},messages:{total:1,nextCursor:null}}}))
+ const h=fixture(true,true,()=>({topic:{id:'server',title:'服务器',description:'项目说明',summary:'项目摘要',bubbleState:'open'},revision:'polish',entries:[],matters:['idle','running','waiting'].map(activity=>({id:activity,title:`会话${activity}`,state:activity,session:{id:activity,kind:activity==='idle'?'terminal':'task',title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:activity==='idle'?'答完了':'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}})),messages:[{id:'msg',speaker:'cc',ts:iso,excerpt:'最近的消息'}],pages:{entries:{total:0,nextCursor:null},matters:{total:3,nextCursor:null},messages:{total:1,nextCursor:null}}}))
  h.tStart();await new Promise(r=>setTimeout(r,0));await h.tOpen('server')
  const body=h.w.document.getElementById('topic-body')!,text=body.textContent!
  expect.soft([...body.querySelectorAll('[data-project-session]')].map(el=>el.getAttribute('data-project-session'))).toEqual(['waiting','running','idle'])
  expect.soft(text.indexOf('会话waiting')).toBeLessThan(text.indexOf('项目说明'))
  expect.soft(text.indexOf('会话running')).toBeLessThan(text.indexOf('项目说明'))
  expect.soft(text.indexOf('项目摘要')).toBeLessThan(text.indexOf('会话idle'))
+ expect.soft(body.querySelector('[data-project-session="idle"]')?.textContent).toContain('答完了')
+ expect.soft(body.querySelector('[data-project-respond="idle"]')).toBeNull()
  expect.soft(body.querySelector('[data-project-session="waiting"]')?.textContent).toContain('Codex')
  expect.soft(text).toContain('2 小时前')
  expect.soft(text).not.toContain(iso)
