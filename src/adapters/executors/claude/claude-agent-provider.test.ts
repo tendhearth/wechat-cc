@@ -2,6 +2,10 @@ import { describe, it, expect, vi } from 'vitest'
 import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
 import type { AgentEvent } from '../../../ports/agent-provider'
 import { TIER_PROFILES } from '../../../domain/user-tier'
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { makeRunPermissions } from '../../workbench/permissions'
 
 // Helper: drain an async iterable into an array for assertion.
 async function drain(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
@@ -370,6 +374,31 @@ describe('claude-agent-provider', () => {
     approve(true)
     controller.abort()
     await expect(decision).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it.each([false, true].flatMap(truncated => ['replace', 'symlink'].map(change => ({ truncated, change }))))('P1-4: denies unbound script approval at the SDK continuation barrier ($change, truncated=$truncated)', async ({ change, truncated }) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-claude-script-barrier-')))
+    const permissions = makeRunPermissions({ taskId: 'task', root, provider: 'claude' })
+    let release!: () => void
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    writeFileSync(join(root, 'check.sh'), 'echo reviewed\n')
+    try {
+      const gate = makeWorkbenchClaudeCanUseTool(async (request, signal) => {
+        const allowed = await permissions.request({ ...request, cwd: root }, signal)
+        await barrier // approval returned; SDK has not received its decision yet
+        return allowed
+      }, undefined, [], null)
+      const command = truncated ? `echo ${'x'.repeat(1995)}; bash check.sh rm -rf build` : 'bash check.sh rm -rf build'
+      const result = gate('Bash', { command }, { signal: new AbortController().signal } as never)
+      const card = permissions.pending()[0]!
+      if (!truncated) expect(card.scripts?.[0]?.content).toBe('echo reviewed\n')
+      expect(card.description).toContain('不能绑定执行字节')
+      permissions.resolve(card.id, 'allow')
+      if (change === 'replace') writeFileSync(join(root, 'check.sh'), 'echo replaced\n')
+      else { writeFileSync(join(root, 'other.sh'), 'echo replacement\n'); unlinkSync(join(root, 'check.sh')); symlinkSync('other.sh', join(root, 'check.sh')) }
+      release()
+      await expect(result).resolves.toMatchObject({ behavior: 'deny' })
+    } finally { release(); permissions.rejectAll(); rmSync(root, { recursive: true, force: true }) }
   })
 
   it('yields init then text then result for a simple turn', async () => {

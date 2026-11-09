@@ -41,7 +41,7 @@ describe('original task/run attention and completion notices',()=>{
   it('binds permission/question notices to exact live requests and suppresses resolved requests',async()=>{
     let context!:SpawnContext
     const hold=gate()
-    setup({async spawn(_p,c){context=c;return{async *dispatch(){await c.requestPermission!({tool:'Bash',description:'write report'});await c.requestUserInput!({questions:[{id:'format',header:'格式',question:'选择格式',options:[{label:'PDF',description:''}]}]});await hold.promise;yield result},async close(){hold.resolve()}}}})
+    setup({async spawn(_p,c){context=c;return{async *dispatch(){await c.requestPermission!({tool:'Bash',command:'touch report.txt',description:'write report'});await c.requestUserInput!({questions:[{id:'format',header:'格式',question:'选择格式',options:[{label:'PDF',description:''}]}]});await hold.promise;yield result},async close(){hold.resolve()}}}})
     await create();const task=service.list().tasks[0]!
     await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
     const permission=service.detail(task.id).permissions[0]!,notice=store.wechatNotifications.list(task.id).find(n=>n.kind==='permission')!

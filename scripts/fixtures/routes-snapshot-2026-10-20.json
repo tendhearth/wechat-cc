@@ -1,5 +1,5 @@
 {
-  "_source": "origin/dev eb3c828c, captured before refactor batch 2 step 5a (route table). Do not regenerate from the table.",
+  "_source": "origin/dev eb3c828c, captured before refactor batch 2 step 5a (route table). Do not regenerate from the table. 2026-11-09: owner approval cards now fetch permissions/pending through operator/Tauri/devProxy; admin tier unchanged, trusted presence carries metadata only.",
   "ROUTE_MIN_TIER": {
     "GET /v1/a2a/activity": "trusted",
     "GET /v1/a2a/info": "trusted",
@@ -218,6 +218,7 @@
       "GET /v1/matter/owner-chat/search",
       "GET /v1/matters",
       "GET /v1/overseer/today",
+      "GET /v1/permissions/pending",
       "GET /v1/phone/devices",
       "GET /v1/self-change/decision",
       "GET /v1/settings/link",
@@ -482,6 +483,7 @@
     "GET /v1/matter/owner-chat",
     "GET /v1/matter/owner-chat/search",
     "GET /v1/matters",
+    "GET /v1/permissions/pending",
     "GET /v1/phone/devices",
     "GET /v1/workbench",
     "GET /v1/workbench/artifact",
@@ -535,6 +537,7 @@
   "devProxyRoutes": [
     "GET /v1/cli/sessions",
     "GET /v1/connections",
+    "GET /v1/permissions/pending",
     "GET /v1/phone/devices",
     "GET /v1/workbench",
     "GET /v1/workbench/artifact",

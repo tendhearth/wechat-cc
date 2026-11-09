@@ -5,6 +5,7 @@ import { createPet } from './pet/pet.js'
 import { createPresenceFeed } from './pet/bridge/presence-feed.js'
 import { createPetBridge } from './pet/bridge/pet-bridge.js'
 import { createPermissionCard } from './pet/permission/permission-card.js'
+import { createPermissionLoader } from './pet/permission/permission-loader.js'
 import { readPermissionScript } from './modules/permission-script.js'
 import { invokeApi, invokeWorkbenchApi } from './api.js'
 import { openSeenMatter } from './matter-seen.js'
@@ -103,6 +104,11 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
 })
 
 const tasksHost=$('pet-tasks'),taskPrimary=$('pet-task-primary'),taskToggle=$('pet-task-toggle'),taskList=$('pet-task-list')
+const permissionLoader = createPermissionLoader({
+  read: async () => mock ? [] : /** @type {{items:import('./pet/permission/permission-card.js').PermissionItem[]}} */ (await v1(invokeWorkbenchApi, V1.permissions.pending)).items,
+  show: (item, count) => { if (!document.hidden) card.show(item, count) },
+  hide: () => card.hide(),
+})
 const taskView=tasksHost&&taskPrimary&&taskToggle&&taskList?mountPetActivities({host:tasksHost,primary:taskPrimary,toggle:taskToggle,list:taskList,onOpen:target=>openDestination(target),onExpand:()=>closeSettings()}):null
 const closeSettings=()=>{const settings=document.querySelector('.pet-settings');if(settings instanceof HTMLDetailsElement)settings.open=false}
 document.querySelector('.pet-settings')?.addEventListener('toggle',event=>{if(event.target instanceof HTMLDetailsElement&&event.target.open)taskView?.closeList();syncLifeAvailability()})
@@ -144,7 +150,7 @@ const apply = (freshTurn = false) => {
   // 状态机直接落到目标形态 —— 省掉那 8 帧点火,而不用改 Phase A 的接口。
   // 哪一拍算「初次」由 bridge 说(开窗第一拍 + 第一次拿到端点回答那拍,见 pet-bridge.js)。
   if (r.first && pet.machine.snapshot().transition) pet.machine.notifyAnimationEnded()
-  if (r.permission) card.show(r.permission, r.permissionCount); else card.hide()
+  permissionLoader.update(r.permission, r.permissionCount)
   // Consume this snapshot under the previous quiet flag before wake-time expiry
   // enables motion; completion during suspend must not become a celebration.
   preferences.refresh()
@@ -239,7 +245,7 @@ stage?.addEventListener('pointerleave', () => { pointerNear = false; releaseNear
 stage?.addEventListener('focus', () => { keyboardNear = true; pet.acknowledgeAttention() })
 stage?.addEventListener('blur', () => { keyboardNear = false; releaseNearby() })
 window.addEventListener('blur', () => { pointerNear = false; keyboardNear = false;pointerInShell=false;focusInShell=false;pet.setLifeAvailable(false);void motion?.stop();syncLifeAvailability();pet.releaseAttention(); taskView?.closeList(); closeSettings() })
-window.addEventListener('pagehide',()=>{activityFeed.stop();ccActivity?.destroy();pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
+window.addEventListener('pagehide',()=>{permissionLoader.update(null,0);activityFeed.stop();ccActivity?.destroy();pet.setLifeAvailable(false);void motion?.destroy();pet.destroy();feed.stop();clearInterval(quietWatch);preferences.destroy()})
 
 $('pet-reset-position')?.addEventListener('click', async () => {
   await motion?.stop()

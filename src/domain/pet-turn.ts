@@ -42,6 +42,23 @@ export interface PetTurnPayload {
   activities?: PetTaskActivity[]
 }
 
+/** The trusted presence surface carries queue metadata, never tool input or
+ * script bytes. A TypeScript type does not remove runtime fields from objects. */
+export function safePetTurn(payload: PetTurnPayload): PetTurnPayload {
+  return {
+    owner_last_contact_at: payload.owner_last_contact_at,
+    turn: { phase: payload.turn.phase, since: payload.turn.since },
+    last_done_at: payload.last_done_at,
+    pending_permissions: payload.pending_permissions.map(p => ({
+      hash: p.hash, prompt: '有操作需要批准，请到工作台查看。', since: p.since, expires_at: p.expires_at,
+    })),
+    ...(payload.activities ? { activities: payload.activities.map(a => ({
+      taskId: a.taskId, title: a.title, phase: a.phase,
+      detail: a.phase === 'needs_input' ? '需要你决定' : null, updatedAt: a.updatedAt,
+    })) } : {}),
+  }
+}
+
 const iso = (ms: number | null): string | null =>
   (ms === null || !Number.isFinite(ms) ? null : new Date(ms).toISOString())
 
@@ -56,10 +73,10 @@ export function derivePetTurn(i: PetTurnInputs): PetTurnPayload {
   } else if (i.inFlight) {
     turn = { phase: 'thinking', since: iso(i.inFlightSinceMs) }
   }
-  return {
+  return safePetTurn({
     owner_last_contact_at: iso(i.ownerLastContactAtMs),
     turn,
     last_done_at: iso(i.lastResultAtMs),
     pending_permissions: i.pending,
-  }
+  })
 }

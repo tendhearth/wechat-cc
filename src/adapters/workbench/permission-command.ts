@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { realpathSync } from 'node:fs'
 import { readAnchoredFile } from './anchored-fs'
-import { floorReason, toolClass } from '../permission-rules/floor'
+import { floorReason, isLowRisk, toolClass } from '../permission-rules/floor'
+import { EDIT_REPORTING_PROVIDERS } from '../permission-rules/decide'
 import type { PermissionAsk } from '../../domain/permission-rules/types'
 import type { PermissionScript } from '../../ports/workbench'
 
@@ -26,7 +27,9 @@ export function literalCommand(command: string, assignments: boolean[] = []): st
     if (c === '$' || c === '`') return null
     if (quote) { if (c === quote) quote = ''; else word += c; continue }
     if (c === "'" || c === '"') { quote = c; started = true; continue }
-    if (/[;&|><(){}*?\[\]~#\r\n\0]/.test(c)) return null
+    // zsh expands an unquoted leading =command; quoted/escaped = stays literal.
+    if (c === '=' && !word) return null
+    if (/[;&|><(){}*?\[\]~#!^\r\n\0]/.test(c)) return null
     if (/[ \t]/.test(c)) { if (started) push(); word = ''; started = false }
     else { word += c; started = true }
   }
@@ -35,11 +38,25 @@ export function literalCommand(command: string, assignments: boolean[] = []): st
   return words.length ? words : null
 }
 
-export interface CommandSnapshot { ask: PermissionAsk; scripts: PermissionScript[]; hash?: string }
-export function inspectPermissionCommand(facts: { tool: string; command?: string; paths?: string[]; cwd?: string }, opts: { taskId: string; root?: string; provider?: string; stateDir?: string }, depth = 0): CommandSnapshot {
+// These native commands do not take a script entry. This is only an execution
+// classification, not an allow list: existing rules/red lines still run first.
+// Unknown programs, shell syntax, wrappers and build tools fail closed until an
+// execution adapter can actually consume an approved immutable execution tree.
+const NATIVE_COMMANDS = new Set(['echo', 'pwd', 'true', 'false', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'rm', 'mkdir', 'touch', 'cp', 'mv', 'chmod', 'diff', 'uniq', 'date', 'uname', 'sleep'])
+export function needsBoundExecution(command: string): boolean {
+  const assignments: boolean[] = [], argv = literalCommand(command, assignments)
+  if (!argv) return true
+  const start = argv.findIndex((_w, i) => !assignments[i]), head = argv[start] ?? ''
+  return start !== 0 || !NATIVE_COMMANDS.has(head)
+}
+
+export interface CommandSnapshot { ask: PermissionAsk; scripts: PermissionScript[]; hash?: string; requiresBoundExecution?: boolean }
+export function inspectPermissionCommand(facts: { tool: string; command?: string; paths?: string[]; cwd?: string; requiresBoundExecution?: true }, opts: { taskId: string; root?: string; provider?: string; stateDir?: string }, depth = 0): CommandSnapshot {
   const ask: PermissionAsk = { surface: 'workbench', provider: opts.provider ?? '', tool: facts.tool, command: facts.command,
     paths: facts.paths, cwd: facts.cwd ?? null, project: opts.root ?? null, isolatedWorktree: false, tier: 'admin', scope: opts.taskId }
-  const snapshot: CommandSnapshot = { ask, scripts: [] }
+  const snapshot: CommandSnapshot = { ask, scripts: [], requiresBoundExecution: facts.requiresBoundExecution || (facts.command
+    ? facts.command.length >= 2000 || needsBoundExecution(facts.command)
+    : toolClass(facts.tool) === 'shell') }
   const assignments: boolean[] = []
   const argv = facts.command && literalCommand(facts.command, assignments)
   if (!argv || !opts.root || !facts.cwd || toolClass(facts.tool) !== 'shell' || depth > 3) return snapshot
@@ -47,18 +64,25 @@ export function inspectPermissionCommand(facts: { tool: string; command?: string
   try { root = realpathSync.native(opts.root); cwd = realpathSync.native(facts.cwd) } catch { return snapshot }
   const inside = (p: string) => { const r = relative(root, p); return r !== '..' && !r.startsWith('../') && !r.startsWith('..\\') && !isAbsolute(r) }
   if (!inside(cwd)) return snapshot
-  let eligible = facts.command!.length < 2000 && !floorReason(ask, undefined, { stateDir: opts.stateDir })
+  let eligible = EDIT_REPORTING_PROVIDERS.has(opts.provider ?? '') && !snapshot.requiresBoundExecution && facts.command!.length < 2000 && !floorReason(ask, undefined, { stateDir: opts.stateDir })
   const start = argv.findIndex((_w, i) => !assignments[i])
   const head = argv[start] ?? ''
   const program = head.split(/[\\/]/).at(-1)!
+  // Task permission only narrows the existing low-risk gate. Never infer that an
+  // unrecognized runner has no mutable code just because scripts is empty.
+  if (!['echo', 'pwd', 'true', 'false'].includes(head) && !isLowRisk(ask)) eligible = false
   if(argv.some((word,i)=>i!==start&&((isAbsolute(word)&&!inside(word))||word.split(/[\\/]/).includes('..'))))eligible=false
   if(argv.some(word=>/^(?:--cwd|--prefix|--directory|--dir)(?:=|$)/.test(word)||word==='-C'))eligible=false
   if(argv.slice(0,start).some(word=>/^(?:PATH|BASH_ENV|ENV|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONSTARTUP)=/.test(word)))eligible=false
   if (['env', 'command', 'exec', 'time', 'nice', 'nohup', 'timeout', 'xargs', 'parallel', 'cmd', 'cmd.exe', 'powershell', 'pwsh'].includes(program)) eligible = false
   // Inline programs / modules may load mutable code invisible in the card.
-  if (argv.some(w => ['-c', '-e', '--eval', '-m', '--require', '--import', '--preload'].includes(w))) eligible = false
+  if (argv.some(w => /^(?:-[cem]|--eval|--require|--import|--preload)(?:=|$)/.test(w))) return snapshot
   const runtime = /^(?:python[\d.]*|node|bun|deno|bash|sh|zsh|ruby|perl)$/.test(head.split(/[\\/]/).at(-1)!)
   const candidates = argv.filter((w, i) => /\.(?:py|[cm]?js|tsx?|sh|bash|zsh|rb|pl)$/i.test(w) || (i === start && !runtime && /[\\/]/.test(w)))
+  if (program === 'source' || program === '.') {
+    const entry = argv[start + 1]
+    if (entry && !entry.startsWith('-') && !candidates.includes(entry)) candidates.push(entry)
+  }
   // Also show extensionless interpreter scripts behind a wrapper, without granting
   // the wrapper a reusable permission.
   for (let i = start; i < argv.length; i++) {

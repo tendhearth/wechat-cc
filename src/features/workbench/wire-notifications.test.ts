@@ -3,7 +3,7 @@ import { openTestDb } from '../../lib/db'
 import { openSqlite, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
 import { initializeWechatNotificationSchema, makeWechatNotificationStore } from '../../adapters/store/workbench/wechat-notifications'
 import { wireWorkbenchNotifications } from './wire-notifications'
-import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb } from '../../lib/db'
@@ -62,6 +62,47 @@ afterEach(() => { for (const db of databases.splice(0)) db.close(); for (const d
 const input = (overrides = {}) => ({ taskId: 'task-1', runId: 'run-1', ownerChatId: 'owner-1', accountId: 'account-1', kind: 'completed' as const, text: '完成', ...overrides })
 
 describe('wireWorkbenchNotifications', () => {
+  it.each([false, true].flatMap(inline => [false, true].map(lateWatch => ({ inline, lateWatch }))))('P2-6: script source stays in the authorized approval card, never in the notification DB or transport (inline=$inline, lateWatch=$lateWatch)', async ({ inline, lateWatch }) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-script-notice-'))); tempDirs.push(root)
+    const project = join(root, 'project'); mkdirSync(project)
+    const source = 'print("arbitrary-private-note-with-no-token-shape")\n'
+    writeFileSync(join(project, 'check.py'), source)
+    const command = inline ? `python3 -c '${source.trim()}'` : 'python3 check.py'
+    const db = openTestDb(), store = makeWorkbenchStore(db), registry = createProviderRegistry()
+    registry.register('claude', { async spawn(_project, context) { return {
+      async *dispatch() {
+        await context.requestPermission!({ tool: 'Bash', command, description: command, cwd: project })
+        yield { kind: 'result' as const, sessionId: 'notice-fixture', numTurns: 1, durationMs: 1 }
+      }, async close() {},
+    } } }, { displayName: 'Claude', canResume: () => false, workbench: MANAGED_NATIVE_CAPABILITIES })
+    const service = makeWorkbenchService({ store, registry, stateDir: root, ownerChatId: () => 'owner', registeredProjects: () => [{ alias: 'project', path: project }] })
+    const sendWorkbenchNotice = vi.fn(async (_notice: { text: string }) => ({ status: 'accepted' as const }))
+    const wired = wireWorkbenchNotifications({ workbench: service, ilink: { chatAccountId: () => 'account-1', sendWorkbenchNotice }, speech: speechHarness().speech })
+    try {
+      let task: ReturnType<typeof service.list>['tasks'][number]
+      if (lateWatch) {
+        task = service.create({ path: project, providerId: 'claude', text: '检查' })
+        await expect.poll(() => service.detail(task.id).permissions.length).toBe(1)
+        service.setWechatWatch(task.id, 'account-1', true)
+      } else {
+        await service.handleWechat('owner', `任务 新建 ${service.projects()[0]!.id} 检查`, { accountId: 'account-1', userId: 'owner', msgId: 'create', createTimeMs: 1 })
+        task = service.list().tasks[0]!
+      }
+      await expect.poll(() => sendWorkbenchNotice.mock.calls.length).toBe(1)
+      const permission = service.detail(task.id).permissions[0]!, script = permission.scripts?.[0]
+      if (inline) expect(permission.description).toContain(source.trim())
+      else {
+        expect(script!.content).toBe(source)
+        expect(service.permissionScript(task.id, permission.id, script!.path, script!.sha256!, 0).content).toBe(source)
+      }
+      const notice = store.wechatNotifications.list(task.id).find(n => n.kind === 'permission')!
+      expect(notice.text).not.toContain('arbitrary-private-note')
+      if (!inline) { expect(notice.text).toContain('check.py'); expect(notice.text).toContain(script!.sha256) }
+      expect(notice.text).toContain('批准卡')
+      expect(sendWorkbenchNotice.mock.calls[0]![0].text).toBe(notice.text)
+      expect(sendWorkbenchNotice.mock.calls[0]![0].text).not.toContain('arbitrary-private-note')
+    } finally { await wired.close(); await service.shutdown(); db.close() }
+  })
   it('binds workbench wakes and forwards one eligible notice through the strict adapter', async () => {
     const f = fixture(); f.notificationStore.watch('task-1', 'owner-1', 'account-1', true)
     const notice = f.notificationStore.enqueue(input())

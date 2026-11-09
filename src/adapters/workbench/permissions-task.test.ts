@@ -32,13 +32,14 @@ describe('explicit permission for the same command in this task', () => {
   })
 
   it('rechecks ordinary approvals and fingerprints the actual npm alias instead of a same-named file',async()=>{
-    const f=fixture();const old=f.request();writeFileSync(join(f.root,f.file),'print("changed")\n')
+    const f=fixture();const old=f.request(`cat ${f.file}`);writeFileSync(join(f.root,f.file),'print("changed")\n')
     expect(f.permissions.resolve(f.permissions.pending()[0]!.id,'allow')).toBe(false);expect(await old).toBe(false)
     writeFileSync(join(f.root,'check.py'),'print("decoy")\n')
     writeFileSync(join(f.root,'package.json'),JSON.stringify({scripts:{'check.py':`python3 ${f.file}`}}))
     const first=f.request('npm run check.py');const card=f.permissions.pending()[0]!
     expect(card.scripts?.map(s=>s.path)).toContain(f.file)
-    f.permissions.resolve(card.id,'allow_task');expect(await first).toBe(true)
+    expect(card.canAllowTask).not.toBe(true)
+    f.permissions.resolve(card.id,'allow_task');expect(await first).toBe(false)
     writeFileSync(join(f.root,f.file),'print("real entry changed")\n')
     const changed=f.request('npm run check.py');expect(f.permissions.pending()).toHaveLength(1)
     f.permissions.resolve(f.permissions.pending()[0]!.id,'deny');expect(await changed).toBe(false)
@@ -51,7 +52,7 @@ describe('explicit permission for the same command in this task', () => {
     f.permissions.resolve(f.permissions.pending()[0]!.id,'allow_task');expect(await first).toBe(true)
     const unicode=f.request('echo a\u00a0b');expect(f.permissions.pending()).toHaveLength(1)
     f.permissions.resolve(f.permissions.pending()[0]!.id,'deny');expect(await unicode).toBe(false)
-    const env=f.request('MODE=one echo test');f.permissions.resolve(f.permissions.pending()[0]!.id,'allow_task');expect(await env).toBe(true)
+    const env=f.request('MODE=one echo test');expect(f.permissions.pending()[0]!.canAllowTask).not.toBe(true);f.permissions.resolve(f.permissions.pending()[0]!.id,'allow_task');expect(await env).toBe(false)
     const quoted=f.request('"MODE=one" echo test');expect(f.permissions.pending()).toHaveLength(1)
     f.permissions.rejectAll();expect(await quoted).toBe(false)
   })
@@ -60,7 +61,8 @@ describe('explicit permission for the same command in this task', () => {
     const f=fixture();writeFileSync(join(f.root,'package.json'),JSON.stringify({scripts:{check:`python3 ${f.file}`}}))
     const first=f.request('bun run check'),card=f.permissions.pending()[0]!
     expect(card.scripts?.map(s=>s.path)).toContain(f.file)
-    expect(f.permissions.resolve(card.id,'allow_task')).toBe(true);expect(await first).toBe(true)
+    expect(card.canAllowTask).not.toBe(true)
+    expect(f.permissions.resolve(card.id,'allow_task')).toBe(false);expect(await first).toBe(false)
     writeFileSync(join(f.root,f.file),'print("changed alias source")\n')
     const changed=f.request('bun run check');expect(f.permissions.pending()).toHaveLength(1)
     f.permissions.resolve(f.permissions.pending()[0]!.id,'deny');expect(await changed).toBe(false)
@@ -70,19 +72,19 @@ describe('explicit permission for the same command in this task', () => {
     f.permissions.rejectAll();expect(await wrapped).toBe(false)
   })
   it('reuses an exact normalized command, preserving arguments, environment and cwd', async () => {
-    const f = fixture(); const first = f.request()
+    const f = fixture(); const first = f.request('echo hello')
     const card = f.permissions.pending()[0]!
     expect(card.canAllowTask).toBe(true)
     expect(f.permissions.resolve(card.id, 'allow_task')).toBe(true)
     expect(await first).toBe(true)
-    expect(await f.request(`  python3   '${f.file}'  `)).toBe(true)
+    expect(await f.request("  echo   'hello'  ")).toBe(true)
     expect(f.permissions.pending()).toHaveLength(0)
-    for (const command of [`python3 ${f.file} --changed`, `MODE=changed python3 ${f.file}`]) {
+    for (const command of ['echo hello --changed', 'MODE=changed echo hello']) {
       const next = f.request(command); expect(f.permissions.pending()).toHaveLength(1)
       f.permissions.resolve(f.permissions.pending()[0]!.id, 'deny'); expect(await next).toBe(false)
     }
     mkdirSync(join(f.root, 'other'))
-    const other = f.request(`python3 ../${f.file}`, join(f.root, 'other'))
+    const other = f.request('echo hello', join(f.root, 'other'))
     expect(f.permissions.pending()).toHaveLength(1)
     f.permissions.rejectAll(); expect(await other).toBe(false)
   })
@@ -94,23 +96,24 @@ describe('explicit permission for the same command in this task', () => {
     expect(f.permissions.resolve(card.id, 'allow_task')).toBe(false)
     expect(await first).toBe(false)
     const next = f.request(); const nextCard = f.permissions.pending()[0]!
-    expect(f.permissions.resolve(nextCard.id, 'allow_task')).toBe(true); expect(await next).toBe(true)
+    expect(nextCard.scripts?.[0]?.content).toBe('print("changed")\n')
+    expect(f.permissions.resolve(nextCard.id, 'allow_task')).toBe(false); expect(await next).toBe(false)
     writeFileSync(join(f.root, f.file), 'print("third version")\n')
     const third = f.request(); expect(f.permissions.pending()).toHaveLength(1)
     f.permissions.rejectAll(); expect(await third).toBe(false)
   })
 
   it('one-shot approvals, another task, and a finished run do not inherit permission', async () => {
-    const f = fixture(); const first = f.request()
+    const f = fixture(); const first = f.request('echo hello')
     f.permissions.resolve(f.permissions.pending()[0]!.id, 'allow'); expect(await first).toBe(true)
-    const again = f.request(); expect(f.permissions.pending()).toHaveLength(1)
+    const again = f.request('echo hello'); expect(f.permissions.pending()).toHaveLength(1)
     f.permissions.resolve(f.permissions.pending()[0]!.id, 'allow_task'); expect(await again).toBe(true)
     const other = makeRunPermissions({ taskId: 'task-two', root: f.root, provider: 'codex' })
-    const pending = other.request({ tool: 'Bash', description: 'test', command: `python3 ${f.file}`, cwd: f.root })
+    const pending = other.request({ tool: 'Bash', description: 'test', command: 'echo hello', cwd: f.root })
     expect(other.pending()).toHaveLength(1); other.rejectAll(); expect(await pending).toBe(false)
     f.permissions.rejectAll(); expect(await f.request()).toBe(false)
     const restarted = makeRunPermissions({ taskId: 'task-one', root: f.root, provider: 'codex' })
-    const rerun = restarted.request({ tool: 'Bash', description: 'test', command: `python3 ${f.file}`, cwd: f.root })
+    const rerun = restarted.request({ tool: 'Bash', description: 'test', command: 'echo hello', cwd: f.root })
     expect(restarted.pending()).toHaveLength(1); restarted.rejectAll(); expect(await rerun).toBe(false)
   })
 

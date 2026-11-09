@@ -354,7 +354,7 @@ describe('WeChat task control through the shared service',()=>{
   })
 
   it('requires the actual inbound sender to be the bound owner, even when chatId matches',async()=>{
-    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestPermission!({tool:'Bash',description:'read report'});yield result},async close(){}}}})
+    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestPermission!({tool:'Bash',command:'cat report.txt',description:'read report'});yield result},async close(){}}}})
     const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
     const request=service.detail(task.id).permissions[0]!,spoof={...identity,userId:'other-member'}
     expect(await service.handleWechat('owner',`任务 ${task.id}`,spoof)).toBeNull()
@@ -372,7 +372,7 @@ describe('WeChat task control through the shared service',()=>{
 
   it('shows and resolves only the exact permission, rejecting wrong task, owner and duplicate grants',async()=>{
     const allowed:boolean[]=[]
-    setup({async spawn(_p,ctx){return{async *dispatch(){allowed.push(await ctx.requestPermission!({tool:'Bash',description:'读取项目中的报告文件'}));yield result},async close(){}}}})
+    setup({async spawn(_p,ctx){return{async *dispatch(){allowed.push(await ctx.requestPermission!({tool:'Bash',command:'cat report.txt',description:'读取项目中的报告文件'}));yield result},async close(){}}}})
     const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
     const request=service.detail(task.id).permissions[0]!
     const other=store.create({title:'其他任务',path:project,providerId:'claude',ownerChatId:'owner'})
@@ -393,7 +393,7 @@ describe('WeChat task control through the shared service',()=>{
   })
 
   it('does not allow an oversized permission whose full action cannot be displayed on the phone',async()=>{
-    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestPermission!({tool:'Bash',description:'x'.repeat(7000)});yield result},async close(){}}}})
+    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestPermission!({tool:'Bash',command:'cat report.txt',description:'x'.repeat(7000)});yield result},async close(){}}}})
     const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
     const request=service.detail(task.id).permissions[0]!
     expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('桌面')
@@ -403,7 +403,7 @@ describe('WeChat task control through the shared service',()=>{
 
   it('never applies a stale desktop permission reply to the next phone request or vice versa',async()=>{
     const allowed:boolean[]=[]
-    setup({async spawn(_p,ctx){return{async *dispatch(){for(const description of ['first','second'])allowed.push(await ctx.requestPermission!({tool:'Bash',description}));yield result},async close(){}}}})
+    setup({async spawn(_p,ctx){return{async *dispatch(){for(const description of ['first','second'])allowed.push(await ctx.requestPermission!({tool:'Bash',command:'cat report.txt',description}));yield result},async close(){}}}})
     const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
     const first=service.detail(task.id).permissions[0]!.id
     service.resolvePermission(task.id,first,'allow')

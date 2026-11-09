@@ -125,11 +125,9 @@ export interface RouteSpec {
  * 点「允许 / 拒绝」,经 Tauri 的 pet_permission_resolve 命令走这一条。
  * 路由本身是 admin 档(route-tiers),所以只有这个 operator 凭据够得着;
  * 少了这一行,按钮按下去必然 403 route_not_allowed(2026-09-05 终审
- * Critical #1)。**只加 resolve,不加 GET /v1/permissions/pending**:
- * 这个集合的口径是「桌面 app 真会调的那几条」,而待决列表桌面是从
- * GET /v1/companion/pet(trusted 档)读的,operator 凭据永远不会去
- * 调 /v1/permissions/pending —— 不调的就不给。
- *   → POST /v1/permissions/resolve
+ * Critical #1)。presence / pet 只给安全元数据；批准卡通过宿主使用 operator
+ * 单独读取 admin 待批详情，拿到详情前不能批准。FILE / trusted 和链接令牌仍不可读。
+ *   → GET /v1/permissions/pending, POST /v1/permissions/resolve
  *
  * hearth federation mint (grant-gated, see routes-federation.ts) —
  * the operator token alone is not enough; readGrant(stateDir) must
@@ -449,7 +447,7 @@ const ROUTE_TABLE = {
   // admin — 待决权限的桌面面(spec §6)。读出来的是 agent 想动的手(命令原文),
   // 拍板等于替主人说「可以」—— 和 converse 同一个信任等级:主人本人的事,不是
   // 任何 trusted 联系人的事。微信侧的对应面是「y/n <hash>」,只认 admin 主人。
-  'GET /v1/permissions/pending': { desktop: { tier: 'admin' } },
+  'GET /v1/permissions/pending': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/permissions/resolve': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — 自改流水线的三个抓手(spec 2026-09-18-self-change-pipeline)。
   // notice 往主人微信里发字,ask 替主人开一张 y/n 卡片,decision 读主人拍了什么:

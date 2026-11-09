@@ -1,6 +1,6 @@
 {
   "_comment": "生成物,别手改:改 packages/protocol/src/routes.ts 后跑 bun run gen:routes",
-  "version": 12,
+  "version": 13,
   "tauri": [
     "GET /v1/access/list",
     "GET /v1/avatar/info",
@@ -36,6 +36,7 @@
     "GET /v1/memory/topics/detail",
     "GET /v1/milestones/list",
     "GET /v1/observations/list",
+    "GET /v1/permissions/pending",
     "GET /v1/phone/devices",
     "GET /v1/protocol/capabilities",
     "GET /v1/sessions/chats",
@@ -150,6 +151,7 @@
     "GET /v1/memory/topics/detail",
     "GET /v1/milestones/list",
     "GET /v1/observations/list",
+    "GET /v1/permissions/pending",
     "GET /v1/phone/devices",
     "GET /v1/protocol/capabilities",
     "GET /v1/sessions/chats",

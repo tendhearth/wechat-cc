@@ -14,6 +14,25 @@ const payload = {
 
 const deps = (petTurn?: PetTurnDep): InternalApiDeps => ({ petTurn } as unknown as InternalApiDeps)
 
+it('P2-5: both trusted endpoints explicitly project safe permission metadata', async () => {
+  const safe = { hash: 'abcde', prompt: '有操作需要批准，请到工作台查看。', since: '2026-11-09T00:00:00Z', expires_at: '2026-11-09T00:05:00Z' }
+  const privateItem = { ...safe, prompt: 'inline-private-script-body', scripts: [{ path: 'check.py', content: 'private-script-body', sha256: 'a'.repeat(64) }], extra: 'private-extra' }
+  const routes = petRoutes(deps(async () => ({ ...payload, pending_permissions: [privateItem],
+    activities: [{ taskId: 'deadbeef', title: '检查', phase: 'needs_input', detail: 'activity-private-script-body', updatedAt: 1, scripts: [{ content: 'activity-extra-source' }] }],
+  })))
+  const pet = await routes['GET /v1/companion/pet']!(qs(), undefined)
+  const presence = await routes['GET /v1/subscribe/presence']!(qs(), undefined)
+  expect((pet.body as typeof payload).pending_permissions).toEqual([safe])
+  expect((presence.body as { pet: { pending_permissions: unknown[] } }).pet.pending_permissions).toEqual([safe])
+  for (const response of [pet, presence]) {
+    expect(JSON.stringify(response.body)).not.toContain('private-script-body')
+    expect(JSON.stringify(response.body)).not.toContain('private-extra')
+    expect(JSON.stringify(response.body)).not.toContain('inline-private-script-body')
+    expect(JSON.stringify(response.body)).not.toContain('activity-private-script-body')
+    expect(JSON.stringify(response.body)).not.toContain('activity-extra-source')
+  }
+})
+
 describe('GET /v1/companion/pet', () => {
   it('没接线 → 503 pet_not_wired;接了 → 原样返回推导结果', async () => {
     const off = petRoutes(deps())['GET /v1/companion/pet']!

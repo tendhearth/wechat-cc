@@ -144,7 +144,7 @@ export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
       else if(run?.networkSuspended)phase='paused'
       else {
         const permissions=run?.permissions.pending()??[],questions=run?.questions.pending()??[]
-        if(permissions.length||questions.length){phase='needs_input';detail=firstPending(permissions,questions)?.text??null}
+        if(permissions.length||questions.length){phase='needs_input';detail='需要你决定'}
         else {const fact=phaseOf(task,run);if(fact==='cancelled')continue;phase=fact}
       }
       if(phase==='replied'&&task.updatedAt<recent)continue

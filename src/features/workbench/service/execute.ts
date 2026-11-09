@@ -543,9 +543,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             },()=>permissions.deadline(event.permission.id))
             permissionPrompts.set(event.permission.id,close);replyLine=close.replyLine??''
           }
-          const scripts=event.permission.scripts??[],previewBudget=Math.floor(1600/Math.max(1,scripts.length))
-          const scriptPreview=scripts.map(s=>`脚本 ${s.path}\n${(s.error??s.content).slice(0,previewBudget)}${s.truncated||s.content.length>previewBudget?'\n…完整内容可在桌面或手机批准卡展开。':''}`).join('\n\n')
-          requestNotice(task,runId,'permission',event.permission.id,[replyLine,`${event.permission.tool} · ${event.permission.description.slice(0,1200)}`,scriptPreview].filter(Boolean).join('\n\n'))
+          requestNotice(task,runId,'permission',event.permission.id,[replyLine,permissions.notice(event.permission.id)].filter(Boolean).join('\n\n'))
         }else {
           permissionPrompts.get(event.permission.id)?.();permissionPrompts.delete(event.permission.id)
           addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)

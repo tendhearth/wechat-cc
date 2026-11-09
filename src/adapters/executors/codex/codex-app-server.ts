@@ -8,6 +8,7 @@ import { spawnCodexAppServerProcess, type CodexAppServerSpawn } from './codex-ap
 import { wrapForProcessTree } from '../../../lib/jobspawn'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from '../../workbench/user-input'
+import { needsBoundExecution } from '../../workbench/permission-command'
 import { codexActivityEvent, codexItemId } from './codex-activity'
 import { codexMcpApproval, supportsCodexMcpApproval } from './codex-mcp-approval'
 import { codexNativeCapabilityNotice } from '../../workbench/native-capability-notice'
@@ -600,7 +601,9 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         }
         const ask = chat ? chat.approve : context.requestPermission
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && ask
-          ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts }, controller.signal)
+          ? ask({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts,
+              ...(!chat && !file && typeof command === 'string' && needsBoundExecution(command) ? { requiresBoundExecution: true as const } : {}),
+            }, controller.signal)
           : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return

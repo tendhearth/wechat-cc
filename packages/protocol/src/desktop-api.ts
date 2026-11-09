@@ -2288,6 +2288,9 @@ const PermissionsPendingItemShape = z.object({
   prompt: z.string(),
   since: z.string(),
   expires_at: z.string(),
+  taskId: z.string().optional(),
+  canAllowTask: z.boolean().optional(),
+  scripts: z.array(PermissionScript).optional(),
 })
 export const PermissionsPendingResponse = z.object({ items: z.array(PermissionsPendingItemShape) })
 export type PermissionsPendingResponseT = z.infer<typeof PermissionsPendingResponse>

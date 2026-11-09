@@ -10,6 +10,7 @@
  */
 import { computePresence } from './routes-presence'
 import { makePresenceTopic } from './presence-topic'
+import { safePetTurn } from '../../domain/pet-turn'
 import { errMsg, type InternalApiDeps, type RouteTable } from './types'
 
 /** 一次长轮询最多挂这么久(桌面用 20 秒,和一起做详情一样)。 */
@@ -18,7 +19,7 @@ export const PRESENCE_TOPIC_WAIT_CAP_MS = 25_000
 export function petRoutes(deps: InternalApiDeps): RouteTable {
   const topic = makePresenceTopic({
     computePresence: () => computePresence(deps),
-    computePet: async () => (deps.petTurn ? await deps.petTurn() : null),
+    computePet: async () => (deps.petTurn ? safePetTurn(await deps.petTurn()) : null),
   })
   deps.presenceChanged?.(() => topic.poke())
   return {
@@ -27,7 +28,7 @@ export function petRoutes(deps: InternalApiDeps): RouteTable {
     'GET /v1/companion/pet': async () => {
       if (!deps.petTurn) return { status: 503, body: { error: 'pet_not_wired' } }
       try {
-        return { status: 200, body: await deps.petTurn() }
+        return { status: 200, body: safePetTurn(await deps.petTurn()) }
       } catch (err) {
         // 一次推导失败(例如消息库正忙)不该让整块 UI 空白,
         // 更不该把 daemon 的这一路 dispatch 掀翻。

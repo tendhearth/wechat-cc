@@ -6,6 +6,7 @@ import { TIER_PROFILES } from '../../../domain/user-tier'
 import { classifyProviderError } from '../../../domain/provider-quota'
 import { acpPromptBlocks, createAcpProvider, type AcpProviderOptions } from './acp-agent-provider'
 import { APP_VERSION } from '../../../lib/app-version'
+import { makeRunPermissions } from '../../workbench/permissions'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), kill: vi.fn() }))
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
@@ -105,6 +106,22 @@ beforeEach(() => {
 afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); Object.defineProperty(process, 'platform', platform); vi.restoreAllMocks() })
 
 describe('ACP provider — chat-side options', () => {
+  it.each([false, true])('P1-4: opaque/truncated ACP execution is denied by the real permission manager (truncated=%s)', async truncated => {
+    const permissions = makeRunPermissions({ taskId: 'task', provider: 'cursor' })
+    try {
+      const { session, child } = await start({ requestPermission: (request, signal) => permissions.request(request, signal) }, undefined, { text: 'append', permissions: 'bridge' })
+      const { done } = collect(session); await prompted(child)
+      permission(child, 'opaque-script', { toolCall: { toolCallId: 'opaque', title: 'execute', kind: 'execute', status: 'pending',
+        ...(truncated ? { rawInput: { command: `echo ${'x'.repeat(1995)}; python3 helper.py` } } : {}),
+      } })
+      await expect.poll(() => permissions.pending().length).toBe(1)
+      const card = permissions.pending()[0]!
+      expect(card.canAllowTask).not.toBe(true)
+      expect(permissions.resolve(card.id, 'allow')).toBe(false)
+      await expect.poll(() => child.sent.find(m => m.id === 'opaque-script')?.result).toEqual({ outcome: { outcome: 'selected', optionId: 'reject-once' } })
+      child.finishPrompt(); await done
+    } finally { permissions.rejectAll() }
+  })
   it('passes mcpServers to session/new and session/load, sets the model only when offered, skips the notice', async () => {
     const reportNotice = vi.fn()
     const servers = [{ name: 'wechat', command: '/cli', args: ['mcp-server', 'wechat'], env: [{ name: 'WECHAT_SESSION_TOKEN', value: 't' }] }]
