@@ -104,7 +104,8 @@ const card = createPermissionCard({ el: $('pet-card'), makeEl: (/** @type {strin
 
 const tasksHost=$('pet-tasks'),taskPrimary=$('pet-task-primary'),taskToggle=$('pet-task-toggle'),taskList=$('pet-task-list')
 const permissionLoader = createPermissionLoader({
-  read: async () => mock ? [] : /** @type {{items:import('./pet/permission/permission-card.js').PermissionItem[]}} */ (await v1(invokeWorkbenchApi, V1.permissions.pending)).items,
+  // 浏览器 shim 下也走同一个授权接口(由测试替身应答);别在 mock 里返回空 —— 那样卡片永远出不来、测不到。
+  read: async () => /** @type {{items:import('./pet/permission/permission-card.js').PermissionItem[]}} */ (await v1(invokeWorkbenchApi, V1.permissions.pending)).items,
   show: (item, count) => { if (!document.hidden) card.show(item, count) },
   hide: () => card.hide(),
 })

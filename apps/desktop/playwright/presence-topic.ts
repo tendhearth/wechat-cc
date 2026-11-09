@@ -54,6 +54,14 @@ export async function routePresenceTopic(page: Page, o: { presence?: Source; pet
       await route.abort().catch(() => { /* spec 已经结束 / 页面已经走了:这一份没人要了 */ })
     }
   })
+  // 卡片正文只走授权接口 GET /v1/permissions/pending(presence 只给标识):spec 给了 pet.pending_permissions,
+  // 这里按同一份数据应答,让桌宠能拿到可批准的完整卡片。
+  await page.route('**/v1/permissions/pending**', async route => {
+    try {
+      const pet = o.pet ? await o.pet() as { pending_permissions?: unknown[] } | null : null
+      await route.fulfill({ json: { items: Array.isArray(pet?.pending_permissions) ? pet.pending_permissions : [] } })
+    } catch { await route.abort().catch(() => { /* spec 已经结束 */ }) }
+  })
   return { parked: request => parked.has(request) }
 }
 
