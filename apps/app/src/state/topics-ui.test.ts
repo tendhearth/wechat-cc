@@ -9,7 +9,7 @@ import { withProviders } from './providers.test-support'
 import { TopicRow } from '../ui/TopicRow'
 import { TopicBubble as Topic } from '../app/topic'
 const host = vi.hoisted(() => ({ params: {} as { id?: string; open?: string }, push: vi.fn(), back: vi.fn() }))
-vi.mock('react-native', async () => {const native=(await import('../ui/native-motion.test-support')).nativeBoundary();return {...native,ActivityIndicator:native.View}})
+vi.mock('react-native', async () => {const native=(await import('../ui/native-motion.test-support')).nativeBoundary();return {...native,ActivityIndicator:native.View,TextInput:({value,accessibilityLabel}:any)=>createElement('input',{value,'aria-label':accessibilityLabel,readOnly:true})}})
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
 vi.mock('react-native-safe-area-context', async () => { const { createElement } = await import('react'); return { SafeAreaView: ({ children }: any) => createElement('main', null, children) } })
 vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useLocalSearchParams: () => host.params, useRouter: () => ({ push: host.push, back: host.back, canGoBack: () => true }) }))
@@ -145,4 +145,52 @@ it('keeps expanded project sessions when an activity revision reloads the defaul
   failPage=false;await act(()=>ui.byId('topic-retry').click());await flush();await flush();await flush()
   expect(ui.byId('topic-session-session-26')).not.toBeNull()
   expect(ui.byId('topic-retry')).toBeNull()
+})
+
+it.each(['zh-Hans','en'] as const)('polishes sheet order, names, dates, management and interface copy in %s',async lang=>{
+  const zh=lang==='zh-Hans', demo=makeDemoBackend({lang}), ts=Date.now()-7_200_000, iso=new Date(ts).toISOString()
+  const backend:Backend={...demo,topicDetail:async p=>{
+    const base=await demo.topicDetail(p)
+    return{...base,topic:{...base.topic,description:'项目说明',summary:'项目摘要'},matters:(['idle','running','waiting'] as const).map(activity=>({id:activity,title:`会话${activity}`,state:activity,archivedAt:null,session:{id:activity,kind:'task' as const,title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}})),messages:[{id:'msg',speaker:'cc' as const,ts:iso,excerpt:'最近的消息',source:'recall' as const}]}
+  }}
+  host.params={id:'demo-backup'}
+  const ui=await mount(withProviders(createElement(Topic),{backend,lang}));await flush();await flush()
+  const text=ui.container.textContent!
+  expect.soft([...ui.container.querySelectorAll('[data-testid^="topic-session-"]')].filter(el=>!el.getAttribute('data-testid')!.includes('respond')).map(el=>el.getAttribute('data-testid'))).toEqual(['topic-session-waiting','topic-session-running','topic-session-idle'])
+  expect.soft(text.indexOf('会话waiting')).toBeLessThan(text.indexOf('项目说明'))
+  expect.soft(text.indexOf(zh?'回应':'Respond')).toBeLessThan(text.indexOf('会话running'))
+  expect.soft(text.indexOf('会话running')).toBeLessThan(text.indexOf('项目说明'))
+  expect.soft(text.indexOf('项目摘要')).toBeLessThan(text.indexOf('会话idle'))
+  expect.soft(ui.byId('topic-session-waiting').textContent).toContain('Codex')
+  expect.soft(ui.byId('topic-session-waiting').getAttribute('aria-label')).toContain('Codex')
+  expect.soft(text).toContain(zh?'2 小时前':'2 h ago')
+  expect.soft(ui.byId('topic-message-msg').textContent).toContain(zh?'2 小时前':'2 h ago')
+  expect.soft(text).not.toContain(iso)
+  expect.soft(text).toContain(zh?'这个项目的会话':'Sessions in this project')
+  expect.soft(text).toContain(zh?'最近聊到':'Recently discussed')
+  expect.soft(text).not.toContain(zh?'Sessions in this project':'这个项目的会话')
+  expect.soft(text.indexOf(zh?'管理话题':'Manage topic')).toBeGreaterThan(text.indexOf(zh?'最近聊到':'Recently discussed'))
+  const manage=ui.byId('topic-manage')
+  expect.soft(manage?.getAttribute('aria-expanded')).toBe('false')
+  expect.soft(ui.container.querySelector('input[aria-label="Topic name"],input[aria-label="话题名称"]')).toBeNull()
+  if(manage)await act(()=>manage.click());await flush()
+  expect.soft(manage?.getAttribute('aria-expanded')).toBe('true')
+  expect.soft(ui.container.textContent).toContain(zh?'改名':'Rename')
+})
+
+it('keeps description above sessions when no active session needs the owner',async()=>{
+  const demo=makeDemoBackend(),backend:Backend={...demo,topicDetail:async p=>{const base=await demo.topicDetail(p);return{...base,topic:{...base.topic,description:'项目说明'},matters:base.matters.map(m=>({...m,session:m.session?{...m.session,activity:'idle' as const}:undefined}))}}}
+  host.params={id:'demo-backup'}
+  const ui=await mount(withProviders(createElement(Topic),{backend,lang:'zh-Hans'}));await flush();await flush()
+  const text=ui.container.textContent!
+  expect.soft(text.indexOf('项目说明')).toBeLessThan(text.indexOf('这个项目的会话'))
+})
+
+it('distinguishes accent waiting dots, smaller inkSoft running dots, and unread hairlines',async()=>{
+  const demo=makeDemoBackend(),data=await demo.topics({}),backend:Backend={...demo,topics:async()=>({...data,topics:data.topics.slice(0,3).map((topic,i)=>({...topic,activity:{waiting:topic.id==='demo-backup'?1:0,running:topic.id==='demo-trip'?1:0,unread:topic.id==='demo-topic-2'?1:0,lastActiveAt:100}}))})}
+  const ui=await mount(withProviders(createElement(TopicRow),{backend,lang:'zh-Hans'}));await flush()
+  const mark=(id:string)=>JSON.parse(ui.byId(`topic-activity-${id}`).firstElementChild!.getAttribute('data-style')??'{}')
+  expect.soft(mark('demo-backup')).toMatchObject({backgroundColor:color.accent,width:7,height:7})
+  expect.soft(mark('demo-trip')).toMatchObject({backgroundColor:color.inkSoft,width:5,height:5})
+  expect.soft(mark('demo-topic-2')).toMatchObject({backgroundColor:color.inkSoft,width:10,height:1})
 })

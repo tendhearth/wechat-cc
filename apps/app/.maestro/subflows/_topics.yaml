@@ -17,8 +17,6 @@ appId: com.tendhearth.app
     visible:
       id: topic-sheet
     timeout: 10000
-- assertVisible: "家里的服务与备份"
-- assertVisible: "上次：备份留在本地"
 - assertVisible:
     id: topic-matter-a1b2c3d4
 - assertVisible: "这个项目的会话|Sessions in this project"
@@ -50,6 +48,12 @@ appId: com.tendhearth.app
     duration: 600
 - waitForAnimationToEnd
 - takeScreenshot: t5-topic-expanded
+- scrollUntilVisible:
+    element:
+      text: "家里的服务与备份"
+    direction: DOWN
+- assertVisible: "家里的服务与备份"
+- assertVisible: "上次：备份留在本地"
 - scrollUntilVisible:
     element:
       id: topic-entry-demo-entry

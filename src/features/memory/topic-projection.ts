@@ -26,8 +26,8 @@ export async function topicSummary(db: Db, owner: string, id: string, activities
 }
 /** Hub/list 不读条目与消息正文。历史正文只在被点开的话题中按 LIMIT/OFFSET 读取。 */
 type TopicsPage = { view: 'recent' | 'all'; offset: number; limit: number; q?: string }
-export async function topicsProjection(db: Db, owner: string, page?: TopicsPage, seen: MatterSeen = makeMatterSeen(db), taskActivity?: ProjectTaskActivitySource) {
-  const activities = await projectActivities(db, owner, seen, undefined, taskActivity)
+export async function topicsProjection(db: Db, owner: string, page?: TopicsPage, seen: MatterSeen = makeMatterSeen(db), taskActivity?: ProjectTaskActivitySource, executorName?: (id:string)=>string) {
+  const activities = await projectActivities(db, owner, seen, undefined, taskActivity, executorName)
   const ids = db.query<{ id: string }, [string]>(`SELECT t.id ${FROM} ORDER BY ${RECENT_ORDER}`).all(owner).map(t => t.id)
   const all = (await Promise.all(ids.map(id => topicSummary(db, owner, id, activities)))).filter((t): t is NonNullable<typeof t> => !!t)
   const at = (t: typeof all[number]) => Math.max(t.activity.lastActiveAt ?? 0, Date.parse(t.lastRecalledAt ?? '') || 0, Date.parse(t.lastOpenedByOwnerAt ?? '') || 0)

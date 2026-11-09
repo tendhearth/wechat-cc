@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mountConversationTopics } from './conversation-topics.js'
+import { formatRelativeTime } from '../view.js'
 const topic = (id:string) => ({id,title:`话题${id}`,description:'说明',summary:'现状',bubbleState:'closed'})
 let current:ReturnType<typeof mountConversationTopics>|undefined
 afterEach(() => { current?.destroy(); vi.restoreAllMocks() })
@@ -166,4 +167,44 @@ it('keeps expanded project sessions across activity revisions using fresh cursor
   expect(document.querySelector('[data-project-session="session-26"]')).not.toBeNull()
   expect(reads).toHaveLength(3)
   expect(reads.slice(1).every(path=>new URL(path,'https://fixture.test').searchParams.get('limit')==='20')).toBe(true)
+})
+
+it('polishes project sessions: waiting and response then running precede summary; localized dates and names reach readers',async()=>{
+  const ts=Date.now()-7_200_000, iso=new Date(ts).toISOString()
+  const sessions=['idle','running','waiting'].map(activity=>({id:activity,title:`会话${activity}`,state:activity,session:{id:activity,kind:'task',title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}}))
+  const {openMatter}=setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'polish'}
+    if(path.includes('/detail'))return{topic:topic('polish'),matters:sessions,entries:[],messages:[{id:'msg',speaker:'cc',ts:iso,excerpt:'最近的消息'}],pages:{}}
+    return{topics:[topic('polish')],revision:'1'}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  const panel=document.querySelector('.conversation-topic-panel')!, text=panel.textContent!
+  expect.soft([...panel.querySelectorAll('[data-project-session]')].map(el=>el.getAttribute('data-project-session'))).toEqual(['waiting','running','idle'])
+  expect.soft(text.indexOf('会话waiting')).toBeLessThan(text.indexOf('说明'))
+  expect.soft(text.indexOf('会话running')).toBeLessThan(text.indexOf('说明'))
+  expect.soft(text.indexOf('说明')).toBeLessThan(text.indexOf('会话idle'))
+  const respond=panel.querySelector('[data-project-respond="waiting"]') as HTMLButtonElement
+  expect.soft(respond?.textContent).toBe('回应')
+  expect.soft(text.indexOf('回应')).toBeLessThan(text.indexOf('会话running'))
+  respond?.click();expect.soft(openMatter).toHaveBeenCalledWith('waiting')
+  const row=panel.querySelector('[data-project-session="waiting"]')!
+  expect.soft(row.textContent).toContain('Codex')
+  expect.soft(row.getAttribute('aria-label')).toContain('Codex')
+  expect.soft(row.textContent).toContain(formatRelativeTime(iso))
+  expect.soft(text).not.toContain(iso)
+  expect.soft(text).toContain(`CC · ${formatRelativeTime(iso)} · 最近的消息`)
+  expect.soft(text.indexOf('管理话题')).toBeGreaterThan(text.indexOf('最近聊到'))
+})
+
+it('keeps topic summary first when no waiting or running session needs attention',async()=>{
+  setup(async(method:string,path:string)=>{
+    if(path.startsWith('/v1/subscribe'))return new Promise(()=>{})
+    if(method==='POST')return{id:'quiet'}
+    if(path.includes('/detail'))return{topic:topic('quiet'),matters:[{id:'done',session:{title:'已看会话',executor:'claude',displayName:'Claude',activity:'idle',updatedAt:100}}],entries:[],messages:[],pages:{}}
+    return{topics:[topic('quiet')],revision:'1'}
+  })
+  await settle();(document.querySelector('nav button') as HTMLButtonElement).click();await settle()
+  const text=document.querySelector('.conversation-topic-panel')!.textContent!
+  expect.soft(text.indexOf('说明')).toBeLessThan(text.indexOf('这个项目的会话'))
 })

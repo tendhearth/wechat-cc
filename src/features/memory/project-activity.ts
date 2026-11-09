@@ -1,4 +1,5 @@
 /** Owner-scoped project activity. No transcript/body reads, writes, CLI store pruning or model calls. */
+import { executorNames } from '../../domain/provider-display-names'
 import { redactIdentifiers } from '../../lib/redact-identifiers'
 import { hostname } from 'node:os'
 import type { Db } from '../../lib/db'
@@ -12,7 +13,7 @@ import type { TopicSessionT } from '../../../packages/protocol/src/topic-bubbles
 import type { ProjectActivity, ProjectTaskActivitySource } from '../../ports/topic-activity'
 export type { ProjectActivity } from '../../ports/topic-activity'
 
-export async function projectActivities(db: Db, owner: string, seen: MatterSeen = makeMatterSeen(db), identify = projectIdentity, taskActivity?: ProjectTaskActivitySource): Promise<Map<string, ProjectActivity>> {
+export async function projectActivities(db: Db, owner: string, seen: MatterSeen = makeMatterSeen(db), identify = projectIdentity, taskActivity?: ProjectTaskActivitySource, executorName: (id:string)=>string = id=>executorNames(id).name): Promise<Map<string, ProjectActivity>> {
   const topics: MatchTopic[] = (await makeThreadsStore(db).list(owner)).filter(t => !t.private && t.status !== 'done')
     .map(t => ({ id: t.id, title: t.title, aliases: t.aliases, tags: [], summary: '', lastActive:t.lastActive, entries: [] }))
   const resolve = makeProjectTopicResolver(db, owner, topics, identify)
@@ -81,7 +82,7 @@ export async function projectActivities(db: Db, owner: string, seen: MatterSeen 
     const latestStep = stale ? '会话久未更新' : runtime?.requestId ? runtime.waitingFor||'等你回应'
       : pending ? `${pending.kind === 'permission' ? '等你批准' : '等你回答'}${tool ? ` · ${tool}` : ''}${pending.label && pending.label!==tool ? ` · ${pending.label}` : ''}`
       : status === 'waiting' ? '已答复，等你看' : status === 'unread' ? '做完未看' : last?.label || (status === 'running' ? '正在执行' : '已看过')
-    entry.sessions.push({ id:m.id, kind:m.kind, title:m.title.slice(0,160), executor:m.executor ?? '', activity:status, latestStep:redactIdentifiers(latestStep), updatedAt,
+    entry.sessions.push({ id:m.id, kind:m.kind, title:m.title.slice(0,160), executor:m.executor ?? '', displayName:executorName(m.executor ?? ''), activity:status, latestStep:redactIdentifiers(latestStep), updatedAt,
       requestId: m.kind === 'task' ? runtime?.requestId ?? pending?.item_key ?? null : null })
     if (status !== 'idle') entry.activity[status]++
     entry.activity.lastActiveAt = Math.max(entry.activity.lastActiveAt ?? 0,updatedAt)

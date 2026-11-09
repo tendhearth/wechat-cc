@@ -1,7 +1,7 @@
 // @ts-check
 import { V1, v1 } from '../daemon-client.js'
 import { STATUS_WORDS } from '../generated/status-table.js'
-import { escapeHtml } from '../view.js'
+import { escapeHtml, formatRelativeTime } from '../view.js'
 import { createAgentAvatars } from '../shared/agent-avatars.js'
 const agents = createAgentAvatars()
 /** @param {any} t */
@@ -144,16 +144,23 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
     const h = document.createElement('h2'); h.id = 'conversation-topic-title'; panel.setAttribute('aria-labelledby',h.id); h.textContent = detail?.topic?.title ?? topics.find(t => t.id === selected)?.title ?? '话题'; panel.append(h)
     if (stale) { const note = document.createElement('p'); note.role = 'status'; note.textContent = '尚未同步 · 暂时读不到'; panel.append(note, button('重试', () => { if(pendingOpen?.id===selected)void open(selected,pendingOpen.requestId);else void readDetail(selected) })) }
     if (!detail) { if (!stale) panel.append(document.createTextNode('正在读取…')); restore(); return }
-    for (const text of [detail.topic.description, detail.topic.summary]) if (text) { const p = document.createElement('p'); p.textContent = text; panel.append(p) }
     const sessions=(detail.matters??[]).filter((/** @type {any} */ item)=>item.session)
-    const heading=document.createElement('h3');heading.textContent='这个项目的会话';panel.append(heading)
-    if(!sessions.length){const empty=document.createElement('p');empty.textContent='这个项目还没有会话';panel.append(empty)}
-    for(const item of sessions){
-      const session=item.session, el=button('',()=>openMatter(item.id));el.dataset.projectSession=item.id;el.dataset.topicFocusKey=`session:${item.id}`
-      el.ariaLabel=[session.title,session.executor,session.latestStep,new Date(session.updatedAt).toLocaleString()].filter(Boolean).join('，')
-      el.innerHTML=agents.agentAvatarsHtml([session.executor])+`<span class="topic-session-copy"><span>${escapeHtml(session.title)}</span><small>${escapeHtml(session.executor)} · ${escapeHtml(session.latestStep)}</small><time datetime="${new Date(session.updatedAt).toISOString()}">${escapeHtml(new Date(session.updatedAt).toLocaleString())}</time></span>`
-      panel.append(el)
+    const active=sessions.filter((/** @type {any} */ item)=>['waiting','running'].includes(item.session.activity)).sort((/** @type {any} */ a,/** @type {any} */ b)=>Number(a.session.activity!=='waiting')-Number(b.session.activity!=='waiting'))
+    const rest=sessions.filter((/** @type {any} */ item)=>!active.includes(item))
+    const drawSessions=(/** @type {any[]} */ items,/** @type {string} */ title)=>{
+      const heading=document.createElement('h3');heading.textContent=title;panel.append(heading)
+      if(!items.length){const empty=document.createElement('p');empty.textContent='这个项目还没有会话';panel.append(empty)}
+      for(const item of items){
+        const session=item.session, name=session.displayName||session.executor, time=formatRelativeTime(new Date(session.updatedAt).toISOString()), el=button('',()=>openMatter(item.id));el.dataset.projectSession=item.id;el.dataset.topicFocusKey=`session:${item.id}`
+        el.setAttribute('aria-label',[session.title,name,session.latestStep,time].filter(Boolean).join('，'))
+        el.innerHTML=agents.agentAvatarsHtml([session.executor],{nameOf:()=>name})+`<span class="topic-session-copy"><span>${escapeHtml(session.title)}</span><small>${escapeHtml(name)} · ${escapeHtml(session.latestStep)}</small><time datetime="${new Date(session.updatedAt).toISOString()}">${escapeHtml(time)}</time></span>`
+        panel.append(el)
+        if(session.activity==='waiting'){const respond=button(session.requestId?'回应':'查看回应',()=>openMatter(item.id));respond.dataset.projectRespond=item.id;respond.dataset.topicFocusKey=`respond:${item.id}`;respond.disabled=stale;panel.append(respond)}
+      }
     }
+    if(active.length)drawSessions(active,'这个项目的会话')
+    for (const text of [detail.topic.description, detail.topic.summary]) if (text) { const p = document.createElement('p'); p.textContent = text; panel.append(p) }
+    if(!active.length||rest.length)drawSessions(rest,active.length?'其他会话':'这个项目的会话')
     let count = sessions.length
     for (const [key,title] of /** @type {[string,string][]} */ ([['matters','相关事项'],['entries','CC 记得'],['messages','最近聊到']])) {
       const items = (detail[key] ?? []).filter((/** @type {any} */ item)=>key!=='matters'||!item.session); if (!items.length) { const page=detail.pages?.[key];if(page?.nextCursor)panel.append(button(`更多${key==='matters'?'这个项目的会话':title}（${page.total}）`,()=>{void more(key,page.nextCursor)}));continue }
@@ -161,10 +168,10 @@ export function mountConversationTopics({root,call,openMatter,locateMessage,mana
       const heading = document.createElement('h3'); heading.textContent = title; panel.append(heading)
       for (const item of items) {
         if (key === 'matters') panel.append(button(`${STATUS_WORDS[/** @type {import('../generated/status-table.js').StatusKey} */(item.state)]??'尚未同步'} · ${item.title}`, () => openMatter(item.id)))
-        else if (key === 'messages') panel.append(button(`${item.speaker === 'owner' ? '你' : 'CC'} · ${item.ts} · ${item.excerpt}${item.source === 'episode' ? '（相关记录）' : ''}`, () => {close();return locateMessage(item.id,item.excerpt)}))
+        else if (key === 'messages') panel.append(button(`${item.speaker === 'owner' ? '你' : 'CC'} · ${formatRelativeTime(item.ts)} · ${item.excerpt}${item.source === 'episode' ? '（相关记录）' : ''}`, () => {close();return locateMessage(item.id,item.excerpt)}))
         else {
           const disclosure = document.createElement('details');disclosure.dataset.entryId=item.id;disclosure.open=expanded.has(item.id)
-          disclosure.innerHTML = `<summary>${escapeHtml(item.line)}${item.status==='superseded'?' · 不再采用':''}${item.recalled && item.status === 'live' ? ' · 这次想起' : ''}</summary><p>${escapeHtml(item.body)}</p><small>${escapeHtml(item.source)} · ${escapeHtml(item.updatedTs)}</small>`
+          disclosure.innerHTML = `<summary>${escapeHtml(item.line)}${item.status==='superseded'?' · 不再采用':''}${item.recalled && item.status === 'live' ? ' · 这次想起' : ''}</summary><p>${escapeHtml(item.body)}</p><small>${escapeHtml(item.source)} · ${escapeHtml(formatRelativeTime(item.updatedTs))}</small>`
           const summary=disclosure.querySelector('summary');if(summary instanceof HTMLElement)summary.dataset.topicFocusKey=`entry:${item.id}`
           if(item.status==='live'&&!stale)disclosure.append(button('这条不对',()=>{void editTopic('wrong',{id:item.id})}))
           panel.append(disclosure)

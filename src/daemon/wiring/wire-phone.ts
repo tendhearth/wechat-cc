@@ -175,7 +175,7 @@ if (relay) {
     topics: async () => {
       const owner = ownerChatId()
       if (!owner) throw new Error('no_owner')
-      const projection = await topicsProjection(db, owner, undefined, makeMatterSeen(db, proposalDeps?.desktop), opts.workbench?.projectActivity)
+      const projection = await topicsProjection(db, owner, undefined, makeMatterSeen(db, proposalDeps?.desktop), opts.workbench?.projectActivity, id=>boot.registry.namesOf(id).name)
       if (ownerChatId() !== owner) throw new Error('owner_changed')
       return projection.summary
     },

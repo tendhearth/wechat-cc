@@ -26,3 +26,11 @@ Daemon 一处生成 `activity`（running / waiting / unread / lastActiveAt）及
 ## 验收
 
 测试只增不减，新增映射、状态/seen、排序截断、推送、召回与读屏/导航回归，记录撤掉实现的红与恢复后的绿。主 Mac 先 uptime 与 CivilizationVII 检查，负载 < 8 且无游戏才跑 `bun run verify`（含 App 配置）；UI 仅 mini lab browser + App Maestro，共享 `~/ci/lock`。同一合成 fixture 产前后图与 README 索引；收尾在锁内只清自己非 active 快照。报告记录全部回执与未完成项。
+
+## 看图后打磨（2026-11-09）
+
+三端会话与最近聊到、记忆来源的时间复用各端已有相对 / 本地化格式（App 跟随界面语言），原始 ISO 只保留作定位。会话的 displayName 由现有执行者登记下发，含双 Gemini 的账号区分，客户端不维护名字表。
+
+等待点用 accent、7px；运行点用 inkSoft、5px；做完未看用 inkSoft、10×1px 细线。等待与运行以尺寸和颜色共同区分，选中胶囊仍用 ink 边。
+
+有等待 / 运行会话时，先等待与原回应入口、再运行，随后话题说明 / 摘要、其余会话、相关事项、CC 记得、最近聊到；没有活动会话保持说明 / 摘要优先。App 管理话题移至底部灰字折叠入口，操作沿用原写口。桌面和网页的回应入口继续打开原会话详情，App task 请求沿用原 decide。

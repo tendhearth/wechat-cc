@@ -29,7 +29,7 @@ function offsetOf(cursor: string | undefined, scope: string): number {
   if (bound !== scope || !Number.isSafeInteger(offset) || offset < 0) throw new Error('invalid_cursor')
   return offset
 }
-export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null; seen?: MatterSeen; taskActivity?:ProjectTaskActivitySource }): RouteTable {
+export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null; seen?: MatterSeen; taskActivity?:ProjectTaskActivitySource; executorName?: (id:string)=>string }): RouteTable {
   const threads = makeThreadsStore(d.db)
   const bubbles = makeTopicBubbles(d.db)
   const wrap = (run: (q: URLSearchParams, body: unknown, owner: string, caller: NonNullable<Caller>, ctx: Parameters<RouteHandler>[3]) => ReturnType<RouteHandler>): RouteHandler => async (q, body, caller, ctx) => {
@@ -77,7 +77,7 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null; seen?: M
     'GET /v1/memory/topics': wrap(async (q, _body, owner, caller) => {
       const parsed = TopicsListQuery.safeParse(Object.fromEntries(q))
       if (!parsed.success || (parsed.data.q && parsed.data.view !== 'all')) return err(400, 'invalid_params')
-      const p = parsed.data, snapshot = await topicsProjection(d.db, owner, undefined, d.seen, d.taskActivity), revision=snapshot.revision
+      const p = parsed.data, snapshot = await topicsProjection(d.db, owner, undefined, d.seen, d.taskActivity, d.executorName), revision=snapshot.revision
       const scope = JSON.stringify([owner, 'list', p.view, p.q ?? '', revision])
       const offset = offsetOf(p.cursor, scope)
       let count = Math.min(p.limit, p.view === 'recent' ? 8 : 50)
@@ -91,7 +91,7 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null; seen?: M
     'GET /v1/memory/topics/detail': wrap(async (q, _body, owner, caller) => {
       const parsed = TopicDetailQuery.safeParse(Object.fromEntries(q))
       if (!parsed.success || (parsed.data.cursor && !parsed.data.section)) return err(400, 'invalid_params')
-      const p = parsed.data, snapshot = await topicsProjection(d.db, owner, undefined, d.seen, d.taskActivity), revision=snapshot.revision
+      const p = parsed.data, snapshot = await topicsProjection(d.db, owner, undefined, d.seen, d.taskActivity, d.executorName), revision=snapshot.revision
       const alias = d.db.query<{ surviving_id: string }, [string,string]>(`SELECT a.surviving_id FROM topic_merge_aliases a JOIN threads t ON t.id=a.surviving_id AND t.chat_id=a.chat_id WHERE a.chat_id=? AND a.old_id=?`).get(owner,p.id)
       if(alias) p.id=alias.surviving_id
       const sections = ['entries', 'matters', 'messages'] as const
@@ -127,14 +127,14 @@ export function bubbleRoutes(d: { db: Db; ownerChatId(): string | null; seen?: M
       const id=alias?.surviving_id??parsed.data.id
       if (!d.db.query('SELECT id FROM threads WHERE id=? AND chat_id=?').get(id, owner)) return err(404, 'not_found')
       bubbles.adopt(owner, `${id}:${requestId}`, 'owner', [{ id }])
-      const p = await topicsProjection(d.db, owner, undefined, d.seen, d.taskActivity)
+      const p = await topicsProjection(d.db, owner, undefined, d.seen, d.taskActivity, d.executorName)
       return { status: 200, body: { id, bubbleState: bubbles.get(id)?.state ?? 'closed', revision: p.revision } }
     }),
     'GET /v1/subscribe/topics': wrap(async (q, _body, owner, _caller, ctx) => {
       const parsed = TopicsSubscribeQuery.safeParse(Object.fromEntries(q))
       if (!parsed.success) return err(400, 'invalid_params')
       const { since, wait_ms } = parsed.data
-      const current = async () => { if (d.ownerChatId() !== owner) throw new Error('owner_changed'); return (await topicsProjection(d.db, owner, undefined, d.seen, d.taskActivity)).summary }
+      const current = async () => { if (d.ownerChatId() !== owner) throw new Error('owner_changed'); return (await topicsProjection(d.db, owner, undefined, d.seen, d.taskActivity, d.executorName)).summary }
       const initial = await current()
       if (!since || since !== initial.revision || !wait_ms || ctx?.signal.aborted) return { status: 200, body: initial }
       return new Promise(resolve => {

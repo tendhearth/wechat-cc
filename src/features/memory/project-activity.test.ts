@@ -150,3 +150,24 @@ it('uses the actual terminal transcript step summary without tool output or assi
  expect(value.sessions.find(s=>s.id===m.id)?.latestStep).toContain('bun test')
  expect(JSON.stringify(value)).not.toContain('PRIVATE_ASSISTANT_BODY')
 })
+
+it('sends executor registry display names with project sessions',async()=>{
+  const f=await fixture()
+  for(const executor of ['codex','claude','cursor','gemini']){
+    const task=f.matters.create({kind:'task',title:executor,projectPath:root,ownerChatId:'owner'})
+    f.log.startTurn({matterId:task.id,executor})
+  }
+  const sessions=(await projectActivities(f.db,'owner',()=>null,f.identify)).get(f.id)!.sessions
+  expect(Object.fromEntries(sessions.map(s=>[s.executor,(s as any).displayName]))).toEqual({codex:'Codex',claude:'Claude',cursor:'Cursor',gemini:'Gemini'})
+})
+
+it('preserves registered executor names, including the two Gemini connections',async()=>{
+  const {executorNames}=await import('../../domain/provider-display-names')
+  const f=await fixture()
+  for(const executor of ['agy','gemini']){
+    const task=f.matters.create({kind:'task',title:executor,projectPath:root,ownerChatId:'owner'})
+    f.log.startTurn({matterId:task.id,executor})
+  }
+  const sessions=(await projectActivities(f.db,'owner',()=>null,f.identify,undefined,id=>executorNames(id,['agy','gemini']).name)).get(f.id)!.sessions
+  expect(Object.fromEntries(sessions.map(s=>[s.executor,s.displayName]))).toEqual({agy:'Gemini(账号)',gemini:'Gemini'})
+})

@@ -17,7 +17,7 @@ test.beforeEach(async({page,shim})=>{
   await page.route('**/v1/workbench/task?*',r=>r.fulfill({json:{task,runId:'run1',events:[{id:'1',taskId:task.id,kind:'user',text:'请检查这周备份，告诉我哪些文件已经核验。',createdAt:1},{id:'2',taskId:task.id,kind:'tool_call',text:'核对本地文件',runId:'run1',createdAt:2,activity:{id:'read1',type:'read',status:'running',label:'核对本地文件'}},{id:'3',taskId:task.id,kind:'text',text:'正在核对文件，已保存本轮检查记录。',createdAt:3}],artifacts:[],permissions:[],questions:[]}}))
   await page.route('**/v1/memory/topics?*',r=>r.fulfill({json:{topics:['backup','travel','food','books','garden','letters'].map(topic),nextCursor:null,revision:'1'}}))
   await page.route('**/v1/memory/topics/open',r=>r.fulfill({json:{id:r.request().postDataJSON().id,bubbleState:'open',revision:'2'}}))
-  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting',session:{id:task.id,kind:'task',title:task.title,executor:'codex',activity:'waiting',latestStep:'需要读取备份文件夹',updatedAt:1793923200000,requestId:'permission-backup'}}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:1,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
+  await page.route('**/v1/memory/topics/detail?*',r=>r.fulfill({json:{topic:topic('backup'),entries:[{id:'e1',line:'每周核验一次',body:'备份留在本地。',source:'主人',updatedTs:'2026-11-06T00:00:00Z',recalled:true,status:'live'}],matters:[{id:task.id,title:task.title,state:'waiting',session:{id:task.id,kind:'task',title:task.title,executor:'codex',displayName:'Codex',activity:'waiting',latestStep:'需要读取备份文件夹',updatedAt:1793923200000,requestId:'permission-backup'}}],messages:[{id:'source2',speaker:'cc',ts:'2026-11-06T00:00:00Z',excerpt:'正在核对备份。',source:'recall'}],pages:{entries:{total:1,nextCursor:null},matters:{total:1,nextCursor:null},messages:{total:1,nextCursor:null}},revision:'2'}}))
   await page.route('**/v1/subscribe/topics?*',r=>r.fulfill({json:{revision:'2',recentIds:['backup'],openIds:['backup'],hasMoreOpen:false}}))
 })
 
@@ -42,6 +42,12 @@ test('design unification captures the four owner-approved surfaces', async ({pag
   const panel=page.locator('.conversation-topic-panel')
   await expect(panel).toContainText('这次想起')
   await page.screenshot({path:join(out!,`desktop-topic-${phase}.png`)})
+  await page.setViewportSize({width:2400,height:900})
+  const topics=page.locator('.conversation-topics')
+  await topics.evaluate(el=>{el.style.zoom='3'})
+  await topics.screenshot({path:join(out!,`desktop-topic-marks-3x-${phase}.png`)})
+  await topics.evaluate(el=>{el.style.removeProperty('zoom')})
+
   await page.setViewportSize({width:390,height:844})
   await page.screenshot({path:join(out!,`desktop-topic-narrow-${phase}.png`)})
   await page.setViewportSize({width:1280,height:900})

@@ -57,6 +57,7 @@ export interface MemoryFeature {
 }
 
 export interface MemoryFeatureDeps {
+  executorName?: (id:string)=>string
   taskActivity?: import('../../ports/topic-activity').ProjectTaskActivitySource
   seen?: import('../../adapters/store/matter-seen').MatterSeen
   stateDir: string
@@ -101,7 +102,7 @@ export function memoryFeature(o: { needs: readonly string[]; lazy?: readonly str
         ...memoryOwnerRoutes({ stateDir: d.stateDir, db: d.db, resolveAdminChatId: d.resolveAdminChatId }),
         // 话题(T2 后续 ①):topic_search 工具搜主人那条对话的话题
         ...topicRoutes({ db: d.db, ownerChatId: d.resolveAdminChatId }),
-        ...bubbleRoutes({ db: d.db, ownerChatId: d.resolveAdminChatId, seen: d.seen, taskActivity:d.taskActivity }),
+        ...bubbleRoutes({ db: d.db, ownerChatId: d.resolveAdminChatId, seen: d.seen, taskActivity:d.taskActivity, executorName:d.executorName }),
       })
       return { promptReads: makeMemoryPromptReads({ stateDir: d.stateDir, memory: d.memory, facts: makeMemoryWriter({ store: makeMemoryFactsStore(d.db), stateDir: d.stateDir }) }) }
     },

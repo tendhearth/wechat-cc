@@ -1,6 +1,7 @@
 /**
  * 记忆接进 daemon 的那一份(模块清单在 index.ts):路由那个模块 + 每晚整理那一拍。只有 daemon-modules.ts import 这个文件。
  */
+import { executorNames } from '../../domain/provider-display-names'
 import { makeMatterSeen } from '../../adapters/store/matter-seen'
 import { log } from '../../lib/log'
 import type { DaemonModule } from '../../daemon/modules/container'
@@ -28,6 +29,7 @@ export function memoryModule(f: Foundation): DaemonModule<MemoryFeature> {
       let llm: MemoryLlmOps | null = null
       return {
         stateDir, db, seen: makeMatterSeen(db, f.desktopSurface), memory: f.memoryFS, log: (t, l) => log(t, l),
+        executorName: id => boot()?.registry.namesOf(id).name ?? executorNames(id).name,
         taskActivity: id => workbench()?.projectActivity(id)??null,
         memoryLlm: () => {
           const b = boot()

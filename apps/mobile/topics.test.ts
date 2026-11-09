@@ -11,7 +11,8 @@ function fixture(device=true,project=false,detailLoader?: (path:string)=>any){
  let openFail=false,pageGate:Promise<any>|null=null,detailGate:Promise<any>|null=null
  const topic={id:'server',title:'服务器',description:'家里的备份',summary:'核对中',bubbleState:'closed',...(project?{activity:{waiting:1,running:2,unread:1,lastActiveAt:100}}:{})}
  const detail={topic,entries:[{id:'e',status:'live',line:'每周核验',body:'原始内容',recalled:true,source:'主人',createdTs:'2026-11-06T00:00:00Z'}],matters:project?[{id:'task',title:'检查文件',state:'waiting',session:{id:'task',kind:'task',title:'检查文件',executor:'codex',activity:'waiting',latestStep:'需要读取文件',updatedAt:100,requestId:'permission'}}]:[],messages:[],pages:{entries:{total:1,nextCursor:null},matters:{total:0,nextCursor:null},messages:{total:0,nextCursor:null}}}
- const env={mAgents:createAgentAvatars(),document:w.document,window:w,T:'dTEST',isDevice:device,REMOTE:null,preferTunnel:false,crypto:globalThis.crypto,setTimeout:()=>0,clearTimeout:()=>{},esc:(s:any)=>String(s).replace(/</g,'&lt;').replace(/"/g,'&quot;'),api:async(p:string)=>{calls.push(p);if(p.includes('/detail')&&detailGate){const pending=detailGate;detailGate=null;return await pending};if(p.includes('/detail')&&detailLoader)return {status:200,json:async()=>detailLoader(p)};return {status:200,json:async()=>p.includes('/owner-chat/page')&&pageGate?await pageGate:p.includes('/detail')?{...detail,topic:{...topic,id:new URL('https://fixture.test'+p).searchParams.get('id'),title:p.includes('id=other')?'另一个':'服务器'}}:{topics:[topic],nextCursor:null,revision:'1'}}},mPostOnce:async(p:string,o:any)=>{posts.push({p,body:JSON.parse(o.body)});if(openFail){openFail=false;throw Error('offline')};topic.bubbleState='open';return {status:200}},onUnauthorized:()=>{},cPrivacyRevision:0,cMessages:new Map(),cReady:true,cRender:()=>{},cNotice:()=>{},openMatter:(id:string)=>opened.push(id),tunnel:()=>({subscribe:()=>()=>{}})}
+ const ago=new Function(readMobileSource('home.js').match(/function ago\(iso\) \{[\s\S]*?\n\}/)![0]+';return ago')()
+ const env={ago,mAgents:createAgentAvatars(),document:w.document,window:w,T:'dTEST',isDevice:device,REMOTE:null,preferTunnel:false,crypto:globalThis.crypto,setTimeout:()=>0,clearTimeout:()=>{},esc:(s:any)=>String(s).replace(/</g,'&lt;').replace(/"/g,'&quot;'),api:async(p:string)=>{calls.push(p);if(p.includes('/detail')&&detailGate){const pending=detailGate;detailGate=null;return await pending};if(p.includes('/detail')&&detailLoader)return {status:200,json:async()=>detailLoader(p)};return {status:200,json:async()=>p.includes('/owner-chat/page')&&pageGate?await pageGate:p.includes('/detail')?{...detail,topic:{...topic,id:new URL('https://fixture.test'+p).searchParams.get('id'),title:p.includes('id=other')?'另一个':'服务器'}}:{topics:[topic],nextCursor:null,revision:'1'}}},mPostOnce:async(p:string,o:any)=>{posts.push({p,body:JSON.parse(o.body)});if(openFail){openFail=false;throw Error('offline')};topic.bubbleState='open';return {status:200}},onUnauthorized:()=>{},cPrivacyRevision:0,cMessages:new Map(),cReady:true,cRender:()=>{},cNotice:()=>{},openMatter:(id:string)=>opened.push(id),tunnel:()=>({subscribe:()=>()=>{}})}
  const f=new Function(...Object.keys(env),readMobileSource('topics.js')+'\nreturn {tStart,tOpen,tClose,tClear,tList,tRead,cLocateMessage,revoke(){isDevice=false;cReady=false;cPrivacyRevision++;cMessages.clear();tClear()},messageCount(){return cMessages.size},selected(){return tSelected}}')(...Object.values(env))
  return {w,calls,posts,opened,failOpenOnce(){openFail=true},sleep(){topic.bubbleState='closed'},delayDetail(){let release!:(r:any)=>void;detailGate=new Promise(r=>{release=r});return release},delayPage(){let release!:(b:any)=>void;pageGate=new Promise(r=>{release=r});return release},...f}
 }
@@ -95,4 +96,22 @@ it('keeps expanded project sessions after activity refresh and follows only new 
  expect(h.w.document.querySelector('[data-project-session="session-26"]')).not.toBeNull()
  expect(reads).toHaveLength(3)
  expect(reads.slice(1).every(path=>new URL(path,'https://fixture.test').searchParams.get('limit')==='20')).toBe(true)
+})
+
+it('formats topic dates and executor names and puts waiting/response and running before summary',async()=>{
+ const ts=Date.now()-7_200_000,iso=new Date(ts).toISOString()
+ const h=fixture(true,true,()=>({topic:{id:'server',title:'服务器',description:'项目说明',summary:'项目摘要',bubbleState:'open'},revision:'polish',entries:[],matters:['idle','running','waiting'].map(activity=>({id:activity,title:`会话${activity}`,state:activity,session:{id:activity,kind:'task',title:`会话${activity}`,executor:'codex',displayName:'Codex',activity,latestStep:'核对文件',updatedAt:ts,requestId:activity==='waiting'?'approval':null}})),messages:[{id:'msg',speaker:'cc',ts:iso,excerpt:'最近的消息'}],pages:{entries:{total:0,nextCursor:null},matters:{total:3,nextCursor:null},messages:{total:1,nextCursor:null}}}))
+ h.tStart();await new Promise(r=>setTimeout(r,0));await h.tOpen('server')
+ const body=h.w.document.getElementById('topic-body')!,text=body.textContent!
+ expect.soft([...body.querySelectorAll('[data-project-session]')].map(el=>el.getAttribute('data-project-session'))).toEqual(['waiting','running','idle'])
+ expect.soft(text.indexOf('会话waiting')).toBeLessThan(text.indexOf('项目说明'))
+ expect.soft(text.indexOf('会话running')).toBeLessThan(text.indexOf('项目说明'))
+ expect.soft(text.indexOf('项目摘要')).toBeLessThan(text.indexOf('会话idle'))
+ expect.soft(body.querySelector('[data-project-session="waiting"]')?.textContent).toContain('Codex')
+ expect.soft(text).toContain('2 小时前')
+ expect.soft(text).not.toContain(iso)
+ expect.soft(body.querySelector('[data-message="msg"]')?.getAttribute('data-at')).toBe(iso)
+ const respond=body.querySelector('[data-project-respond="waiting"]') as unknown as HTMLButtonElement
+ expect.soft(respond?.textContent).toBe('回应')
+ respond?.click();expect.soft(h.opened).toEqual(['waiting'])
 })

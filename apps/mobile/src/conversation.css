@@ -70,3 +70,5 @@ body.conversation-ready #chat-messages { flex:1 }
 #topic-row [data-topic-activity="unread"] i { width:var(--th-topic-activity-line-width); height:var(--th-topic-activity-line-height); border-radius:0 }
 #topic-body [data-project-session] { display:flex; align-items:flex-start; gap:var(--th-space-s); border:0; background:transparent; padding:var(--th-space-s) 0 }
 #topic-body [data-project-session] small { display:block; color:var(--ink-soft) }
+
+#topic-row [data-topic-activity="waiting"] i { width:var(--th-topic-activity-attention-dot-size); height:var(--th-topic-activity-attention-dot-size); }

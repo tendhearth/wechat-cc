@@ -7,7 +7,7 @@ export const TopicOpenRequest = z.object({ id: Id, requestId: Id })
 export const TopicsSubscribeQuery = z.object({ since: z.string().max(128).optional(), wait_ms: z.coerce.number().int().min(0).max(30000).default(25000) })
 export const TopicActivity = z.object({ running: z.number().int().nonnegative(), waiting: z.number().int().nonnegative(), unread: z.number().int().nonnegative(), lastActiveAt: z.number().nullable() })
 export type TopicActivityT = z.infer<typeof TopicActivity>
-export const TopicSession = z.object({ id: Id, kind: z.enum(['task','terminal']), title: z.string(), executor: z.string(), activity: z.enum(['running','waiting','unread','idle']), latestStep: z.string(), updatedAt: z.number(), requestId: z.string().nullable() })
+export const TopicSession = z.object({ id: Id, kind: z.enum(['task','terminal']), title: z.string(), executor: z.string(), displayName: z.string().optional(), activity: z.enum(['running','waiting','unread','idle']), latestStep: z.string(), updatedAt: z.number(), requestId: z.string().nullable() })
 export type TopicSessionT = z.infer<typeof TopicSession>
 export const TopicSummary = z.object({
   mergedInto: Id.nullable().optional(),
